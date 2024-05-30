@@ -589,6 +589,9 @@ function(_download_and_config_drogon)
 
     set(CMAKE_FOLDER "Asr3rd/jsoncpp")
 
+    set(BUILD_SHARED_LIBS OFF)
+    set(BUILD_OBJECT_LIBS OFF)
+
     FetchContent_Declare(
         jsoncpp
         URL ${GITHUB_MIRROR_URL}/open-source-parsers/jsoncpp/archive/refs/tags/1.9.5.tar.gz
@@ -596,6 +599,9 @@ function(_download_and_config_drogon)
     )
 
     FetchContent_MakeAvailable(jsoncpp)
+
+    include_directories(${CMAKE_BINARY_DIR}/_deps/jsoncpp-src/include)
+    add_library(Jsoncpp_lib ALIAS jsoncpp_static)
 
     set(CMAKE_FOLDER "Asr3rd/trantor")
 
@@ -607,13 +613,15 @@ function(_download_and_config_drogon)
 
     FetchContent_MakeAvailable(trantor)
 
+    add_library(Trantor::Trantor ALIAS trantor)
+
     set(CMAKE_FOLDER "Asr3rd/drogon")
 
     set(CMAKE_POLICY_DEFAULT_CMP0091 NEW)
 
     set(Trantor_DIR ${CMAKE_BINARY_DIR}/_deps/drogon-build)
 
-    set(USE_SUBMODULE OFF)
+    asr_force_set(USE_SUBMODULE OFF BOOL "Disallow drogon use trantor as submodule")
 
     FetchContent_Declare(
         drogon
