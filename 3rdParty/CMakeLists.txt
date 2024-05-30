@@ -1,6 +1,7 @@
 include(FetchContent)
 include(ExternalProject)
 
+
 if (POLICY CMP0135)
     # 减少不必要的第三方库下载
     cmake_policy(SET CMP0135 OLD)
@@ -584,6 +585,44 @@ function(_download_and_config_oatpp)
     FetchContent_MakeAvailable(oatpp)
 endfunction()
 
-_download_and_config_oatpp()
+function(_download_and_config_drogon)
+
+    set(CMAKE_FOLDER "Asr3rd/jsoncpp")
+
+    FetchContent_Declare(
+        jsoncpp
+        URL ${GITHUB_MIRROR_URL}/open-source-parsers/jsoncpp/archive/refs/tags/1.9.5.tar.gz
+        OVERRIDE_FIND_PACKAGE
+    )
+
+    FetchContent_MakeAvailable(jsoncpp)
+
+    set(CMAKE_FOLDER "Asr3rd/trantor")
+
+    FetchContent_Declare(
+        trantor
+        URL ${GITHUB_MIRROR_URL}/an-tao/trantor/archive/refs/tags/v1.5.18.tar.gz
+        OVERRIDE_FIND_PACKAGE
+    )
+
+    FetchContent_MakeAvailable(trantor)
+
+    set(CMAKE_FOLDER "Asr3rd/drogon")
+
+    set(CMAKE_POLICY_DEFAULT_CMP0091 NEW)
+
+    set(Trantor_DIR ${CMAKE_BINARY_DIR}/_deps/drogon-build)
+
+    set(USE_SUBMODULE OFF)
+
+    FetchContent_Declare(
+        drogon
+        URL ${GITHUB_MIRROR_URL}/drogonframework/drogon/archive/refs/tags/v1.9.4.tar.gz
+    )
+
+    FetchContent_MakeAvailable(drogon)
+endfunction()
+
+_download_and_config_drogon()
 
 message("================================================================")
