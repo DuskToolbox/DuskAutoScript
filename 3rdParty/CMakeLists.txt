@@ -585,6 +585,8 @@ function(_download_and_config_oatpp)
     FetchContent_MakeAvailable(oatpp)
 endfunction()
 
+_download_and_config_oatpp()
+
 function(_download_and_config_drogon)
 
     set(CMAKE_FOLDER "Asr3rd/jsoncpp")
