@@ -607,6 +607,8 @@ function(_download_and_config_drogon)
 
     set(CMAKE_FOLDER "Asr3rd/trantor")
 
+    set(USE_SPDLOG ON)
+
     FetchContent_Declare(
         trantor
         URL ${GITHUB_MIRROR_URL}/an-tao/trantor/archive/refs/tags/v1.5.18.tar.gz
@@ -624,6 +626,7 @@ function(_download_and_config_drogon)
     set(Trantor_DIR ${CMAKE_BINARY_DIR}/_deps/drogon-build)
 
     asr_force_set(USE_SUBMODULE OFF BOOL "Disallow drogon use trantor as submodule")
+    set(BUILD_EXAMPLES OFF)
 
     FetchContent_Declare(
         drogon
