@@ -627,6 +627,7 @@ function(_download_and_config_drogon)
 
     asr_force_set(USE_SUBMODULE OFF BOOL "Disallow drogon use trantor as submodule")
     set(BUILD_EXAMPLES OFF)
+    set(BUILD_TESTING OFF)
 
     FetchContent_Declare(
         drogon
