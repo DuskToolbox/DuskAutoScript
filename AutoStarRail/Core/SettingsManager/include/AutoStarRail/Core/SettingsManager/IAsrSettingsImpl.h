@@ -80,7 +80,8 @@ public:
     // IAsrSettingsForUi
     ASR_IMPL ToString(IAsrReadOnlyString** pp_out_string) override;
     ASR_IMPL FromString(IAsrReadOnlyString* p_in_settings) override;
-    ASR_IMPL SaveTo(IAsrReadOnlyString* p_path) override;
+    ASR_IMPL SaveToWorkingDirectory(IAsrReadOnlyString* p_relative_path) override;
+    ASR_IMPL Save() override;
 };
 
 /**
@@ -95,6 +96,7 @@ class AsrSettings
      *
      */
     nlohmann::json default_values_;
+    std::filesystem::path path_;
 
     IAsrSettingsForUiImpl cpp_projection_for_ui_{*this};
 
@@ -104,7 +106,12 @@ class AsrSettings
     auto FindTypeSettings(const char* p_type_name)
         -> Utils::Expected<std::reference_wrapper<const nlohmann::json>>;
 
+    auto SaveImpl(const std::filesystem::path& full_path) -> AsrResult;
+
 public:
+    AsrSettings(std::filesystem::path path);
+    ~AsrSettings() = default;
+
     int64_t AddRef();
     int64_t Release();
 
@@ -136,7 +143,8 @@ public:
     // IAsrSettingsForUi
     AsrResult ToString(IAsrReadOnlyString** pp_out_string);
     AsrResult FromString(IAsrReadOnlyString* p_in_settings);
-    AsrResult SaveTo(IAsrReadOnlyString* p_path);
+    AsrResult SaveToWorkingDirectory(IAsrReadOnlyString* p_relative_path);
+    AsrResult Save();
     // AsrSettings
     /**
      * @brief Set the Default Values object

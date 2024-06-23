@@ -1,5 +1,5 @@
-#ifndef ASR_STEEINGS_H
-#define ASR_STEEINGS_H
+#ifndef ASR_SETTINGS_H
+#define ASR_SETTINGS_H
 
 #include <AutoStarRail/AsrString.hpp>
 #include <AutoStarRail/IAsrBase.h>
@@ -97,9 +97,32 @@ ASR_DEFINE_GUID(
     0x2a);
 ASR_INTERFACE IAsrSettingsForUi : public IAsrBase
 {
+    /**
+     * @brief 将json序列化为文本
+     *
+     * @param pp_out_string 输出的文本
+     * @return AsrResult ASR_S_OK表示成功，否则失败
+     */
     ASR_METHOD ToString(IAsrReadOnlyString * *pp_out_string) = 0;
+    /**
+     * @brief 将文本反序列化为json对象
+     *
+     * @param p_in_settings 输入的文本
+     * @return AsrResult ASR_S_OK表示成功，否则失败
+     */
     ASR_METHOD FromString(IAsrReadOnlyString * p_in_settings) = 0;
-    ASR_METHOD SaveTo(IAsrReadOnlyString * p_path) = 0;
+    /**
+     * @brief 保存json对象到工作目录下的指定路径
+     *
+     * @return AsrResult ASR_S_OK表示成功，否则失败
+     */
+    ASR_METHOD SaveToWorkingDirectory(IAsrReadOnlyString * p_relative_path) = 0;
+    /**
+     * @brief 保存设置
+     * 
+     * @return AsrResult 保存设置文件
+     */
+    ASR_METHOD Save() = 0;
 };
 
 /**
@@ -118,8 +141,4 @@ GetPluginSettings(IAsrTypeInfo* p_plugin, IAsrSettings** pp_out_settings);
 
 #endif // SWIG
 
-ASR_DEFINE_RET_POINTER(AsrRetGlobalSettings, IAsrSwigSettings);
-
-ASR_API AsrRetGlobalSettings GetPluginSettins(IAsrSwigTypeInfo* p_plugin);
-
-#endif // ASR_STEEINGS_H
+#endif // ASR_SETTINGS_H

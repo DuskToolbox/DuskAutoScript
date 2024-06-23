@@ -227,10 +227,13 @@ ASR_IMPL IAsrSettingsForUiImpl::FromString(IAsrReadOnlyString* p_in_settings)
     return impl_.FromString(p_in_settings);
 }
 
-ASR_IMPL IAsrSettingsForUiImpl::SaveTo(IAsrReadOnlyString* p_path)
+ASR_IMPL IAsrSettingsForUiImpl::SaveToWorkingDirectory(
+    IAsrReadOnlyString* p_relative_path)
 {
-    return impl_.SaveTo(p_path);
+    return impl_.SaveToWorkingDirectory(p_relative_path);
 }
+
+AsrResult IAsrSettingsForUiImpl::Save() { return impl_.Save(); }
 
 auto AsrSettings::GetKey(const char* p_type_name, const char* key)
     -> Utils::Expected<std::reference_wrapper<const nlohmann::json>>
@@ -266,6 +269,36 @@ auto AsrSettings::FindTypeSettings(const char* p_type_name)
     }
     return tl::make_unexpected(ASR_E_OUT_OF_RANGE);
 }
+
+auto AsrSettings::SaveImpl(const std::filesystem::path& full_path) -> AsrResult
+{
+    std::ofstream ofs{};
+
+    try
+    {
+        Utils::EnableStreamException(
+            ofs,
+            std::ios::badbit | std::ios::failbit,
+            [&full_path](auto& stream) { stream.open(full_path); });
+        std::lock_guard guard{mutex_};
+        ofs << settings_;
+        ofs.flush();
+        return ASR_S_OK;
+    }
+    catch (const std::ios_base::failure& ex)
+    {
+        ASR_CORE_LOG_EXCEPTION(ex);
+        ASR_CORE_LOG_INFO(
+            "Error happened when saving settings. Error code = " ASR_STR(
+                ASR_E_INVALID_FILE) ".");
+        ASR_CORE_LOG_INFO(
+            "NOTE: Path = {}.",
+            reinterpret_cast<const char*>(full_path.u8string().c_str()));
+        return ASR_E_INVALID_FILE;
+    }
+}
+
+AsrSettings::AsrSettings(std::filesystem::path path) : path_{path} {}
 
 int64_t AsrSettings::AddRef() { return 1; }
 
@@ -528,39 +561,23 @@ AsrResult AsrSettings::FromString(IAsrReadOnlyString* p_in_settings)
     }
 }
 
-AsrResult AsrSettings::SaveTo(IAsrReadOnlyString* p_path)
+AsrResult AsrSettings::SaveToWorkingDirectory(
+    IAsrReadOnlyString* p_relative_path)
 {
-    ASR_UTILS_CHECK_POINTER(p_path)
+    ASR_UTILS_CHECK_POINTER(p_relative_path)
 
     std::filesystem::path path{};
-    if (const auto to_path_result = Utils::ToPath(p_path, path);
+    if (const auto to_path_result = Utils::ToPath(p_relative_path, path);
         IsFailed(to_path_result))
     {
         return to_path_result;
     }
-    std::ofstream ofs{};
+    const auto full_path = std::filesystem::absolute(path);
 
-    try
-    {
-        Utils::EnableStreamException(
-            ofs,
-            std::ios::badbit | std::ios::failbit,
-            [&path](auto& stream) { stream.open(path); });
-        std::lock_guard guard{mutex_};
-        ofs << settings_;
-        ofs.flush();
-        return ASR_S_OK;
-    }
-    catch (const std::ios_base::failure& ex)
-    {
-        ASR_CORE_LOG_EXCEPTION(ex);
-        ASR_CORE_LOG_INFO(
-            "Error happened when saving settings. Error code = " ASR_STR(
-                ASR_E_INVALID_FILE) ".");
-        ASR_CORE_LOG_INFO("NOTE: Path = {}.", AsrPtr{p_path});
-        return ASR_E_INVALID_FILE;
-    }
+    return SaveImpl(full_path);
 }
+
+AsrResult AsrSettings::Save() { return SaveImpl(path_); }
 
 AsrResult AsrSettings::SetDefaultValues(nlohmann::json&& rv_json)
 {
@@ -647,7 +664,7 @@ AsrResult InitializeGlobalSettings(
     return ASR_S_OK;
 }
 
-AsrResult GetPluginSettins(
+AsrResult GetPluginSettings(
     IAsrTypeInfo*  p_plugin,
     IAsrSettings** pp_out_settings)
 {
@@ -685,43 +702,43 @@ AsrResult GetPluginSettins(
     }
 }
 
-AsrRetGlobalSettings GetPluginSettins(IAsrSwigTypeInfo* p_plugin)
-{
-    if (p_plugin == nullptr)
-    {
-        ASR_CORE_LOG_ERROR("Nullptr found!");
-        return {ASR_E_INVALID_POINTER, nullptr};
-    }
+// AsrRetGlobalSettings GetPluginSettings(IAsrSwigTypeInfo* p_plugin)
+// {
+//     if (p_plugin == nullptr)
+//     {
+//         ASR_CORE_LOG_ERROR("Nullptr found!");
+//         return {ASR_E_INVALID_POINTER, nullptr};
+//     }
 
-    AsrRetGlobalSettings result{};
+//     AsrRetGlobalSettings result{};
 
-    try
-    {
-        const auto type_name =
-            ASR::Core::Utils::GetRuntimeClassNameFrom(p_plugin);
+//     try
+//     {
+//         const auto type_name =
+//             ASR::Core::Utils::GetRuntimeClassNameFrom(p_plugin);
 
-        const auto expected_result =
-            ASR::Utils::ToU8StringWithoutOwnership(type_name.Get())
-                .map(
-                    [&](const char* p_u8_name)
-                    {
-                        const auto p_result = ASR::MakeAsrPtr<
-                            IAsrSwigSettings,
-                            ASR::Core::SettingsManager::IAsrSwigSettingsImpl>(
-                            ASR::Core::SettingsManager::g_settings,
-                            p_u8_name);
-                        result.value = p_result.Get();
-                    });
-        result.error_code = ASR::Utils::GetResult(expected_result);
-        return result;
-    }
-    catch (const Asr::Core::AsrException& ex)
-    {
-        ASR_CORE_LOG_EXCEPTION(ex);
-        return {ex.GetErrorCode(), nullptr};
-    }
-    catch (const std::bad_alloc&)
-    {
-        return {ASR_E_OUT_OF_MEMORY, nullptr};
-    }
-}
+//         const auto expected_result =
+//             ASR::Utils::ToU8StringWithoutOwnership(type_name.Get())
+//                 .map(
+//                     [&](const char* p_u8_name)
+//                     {
+//                         const auto p_result = ASR::MakeAsrPtr<
+//                             IAsrSwigSettings,
+//                             ASR::Core::SettingsManager::IAsrSwigSettingsImpl>(
+//                             ASR::Core::SettingsManager::g_settings,
+//                             p_u8_name);
+//                         result.value = p_result.Get();
+//                     });
+//         result.error_code = ASR::Utils::GetResult(expected_result);
+//         return result;
+//     }
+//     catch (const Asr::Core::AsrException& ex)
+//     {
+//         ASR_CORE_LOG_EXCEPTION(ex);
+//         return {ex.GetErrorCode(), nullptr};
+//     }
+//     catch (const std::bad_alloc&)
+//     {
+//         return {ASR_E_OUT_OF_MEMORY, nullptr};
+//     }
+// }
