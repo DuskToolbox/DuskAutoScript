@@ -475,7 +475,7 @@ AsrReadOnlyStringWrapper::AsrReadOnlyStringWrapper(const char8_t* u8_string)
 AsrReadOnlyStringWrapper::AsrReadOnlyStringWrapper(
     const std::string& std_u8_string)
 {
-    ::CreateIAsrReadOnlyStringFromUtf8(std_u8_string.data(), p_impl_.Put());
+    ::CreateIAsrReadOnlyStringFromUtf8(std_u8_string.c_str(), p_impl_.Put());
 }
 
 void AsrReadOnlyStringWrapper::GetImpl(IAsrReadOnlyString** pp_impl) const
@@ -486,13 +486,13 @@ void AsrReadOnlyStringWrapper::GetImpl(IAsrReadOnlyString** pp_impl) const
 
 void from_json(nlohmann::json input, AsrReadOnlyStringWrapper& output)
 {
-    AsrReadOnlyStringWrapper result{input.get_ref<const std::string&>().data()};
+    AsrReadOnlyStringWrapper result{input.get_ref<const std::string&>().c_str()};
     output = result;
 }
 
 void from_json(nlohmann::json input, AsrReadOnlyString& output)
 {
-    AsrReadOnlyStringWrapper result{input.get_ref<const std::string&>().data()};
+    AsrReadOnlyStringWrapper result{input.get_ref<const std::string&>().c_str()};
     output = result;
 }
 
@@ -532,7 +532,7 @@ namespace Details
 
         AsrResult GetUtf8(const char** out_string) override
         {
-            *out_string = null_u8string_.data();
+            *out_string = null_u8string_.c_str();
             return ASR_S_OK;
         }
 

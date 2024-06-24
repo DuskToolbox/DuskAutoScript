@@ -222,7 +222,7 @@ public:
                 {
                     const auto error_message = ASR::fmt::format(
                         "Unexpected error when reading stdout for command: {}.\n Error code: {}. Message: {}",
-                        this->command.data(),
+                        this->command.c_str(),
                         error_code.value(),
                         error_code.message());
                     ASR_LOG_ERROR(error_message.c_str());
