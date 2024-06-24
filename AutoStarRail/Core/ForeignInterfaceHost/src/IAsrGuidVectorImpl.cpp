@@ -236,7 +236,7 @@ auto AsrGuidVectorImpl::At(size_t index, AsrGuid& out_guid) const noexcept
 auto AsrGuidVectorImpl::Find(const AsrGuid guid) noexcept -> AsrResult
 {
     const auto it_guid = std::find(ASR_FULL_RANGE_OF(iids_), guid);
-    return it_guid != iids_.end() ? ASR_TRUE : ASR_FALSE;
+    return it_guid != iids_.end() ? ASR_S_OK : ASR_E_OUT_OF_RANGE;
 }
 
 auto AsrGuidVectorImpl::PushBack(const AsrGuid guid) noexcept -> AsrResult

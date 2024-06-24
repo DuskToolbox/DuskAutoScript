@@ -102,8 +102,8 @@ void _asr_internal_DelayAddRef(T* pointer)
 
 #define ASR_SWIG_EXPORT_ATTRIBUTE(x) SWIG_UNREF_OBJECT(x)
 
-#define ASR_S_OK 1
-#define ASR_S_FALSE 0
+#define ASR_S_OK 0
+#define ASR_S_FALSE 1
 #define ASR_E_RESERVED -1073741824
 #define ASR_E_NO_INTERFACE ASR_E_RESERVED - 1
 #define ASR_E_UNDEFINED_RETURN_VALUE ASR_E_RESERVED - 2
@@ -180,8 +180,8 @@ ASR_DEFINE_RET_TYPE(AsrRetGuid, AsrGuid);
 
 typedef char AsrBool;
 
-#define ASR_TRUE ASR_S_OK
-#define ASR_FALSE ASR_S_FALSE
+#define ASR_TRUE 1
+#define ASR_FALSE 0
 
 /**
  * @brief input format should be "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
