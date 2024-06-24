@@ -1,6 +1,5 @@
 #include "AutoStarRail/IAsrBase.h"
 #include <AutoStarRail/Core/Exceptions/AsrException.h>
-#include <AutoStarRail/Core/ForeignInterfaceHost/AsrStringImpl.h>
 #include <AutoStarRail/Core/Logger/Logger.h>
 #include <AutoStarRail/Core/SettingsManager/IAsrSettingsImpl.h>
 #include <AutoStarRail/Core/Utils/InternalUtils.h>
@@ -297,8 +296,6 @@ auto AsrSettings::SaveImpl(const std::filesystem::path& full_path) -> AsrResult
         return ASR_E_INVALID_FILE;
     }
 }
-
-AsrSettings::AsrSettings(std::filesystem::path path) : path_{path} {}
 
 int64_t AsrSettings::AddRef() { return 1; }
 
@@ -647,58 +644,113 @@ ASR_DEFINE_VARIABLE(g_settings);
 
 ASR_CORE_SETTINGSMANAGER_NS_END
 
-AsrResult InitializeGlobalSettings(
-    IAsrReadOnlyString* p_settings_path,
-    IAsrSettingsForUi** pp_out_settings)
+ASR_NS_ANONYMOUS_DETAILS_BEGIN
+
+ASR::AsrPtr<IAsrReadOnlyString> g_p_ui_extra_settings_json_string{};
+
+constexpr auto UI_EXTRA_SETTINGS_FILE_NAME = "UiExtraSettings.json";
+
+ASR_NS_ANONYMOUS_DETAILS_END
+
+AsrResult AsrLoadGlobalSettings(IAsrReadOnlyString* p_settings_path)
 {
+    ASR_UTILS_CHECK_POINTER(p_settings_path)
+
     if (const auto set_result =
-            ASR::Core::SettingsManager::g_settings.LoadSettings(
+            ASR::Core::SettingsManager::g_settings->LoadSettings(
                 p_settings_path);
         ASR::IsFailed(set_result))
     {
         return set_result;
     }
 
-    ASR_UTILS_CHECK_POINTER(pp_out_settings);
-    *pp_out_settings = ASR::Core::SettingsManager::g_settings;
     return ASR_S_OK;
 }
 
-AsrResult GetPluginSettings(
-    IAsrTypeInfo*  p_plugin,
-    IAsrSettings** pp_out_settings)
+AsrResult AsrGetGlobalSettings(IAsrSettingsForUi** pp_out_settings)
 {
-    ASR_UTILS_CHECK_POINTER(p_plugin)
-    ASR_UTILS_CHECK_POINTER(pp_out_settings)
+    ASR_UTILS_CHECK_POINTER(pp_out_settings);
+
+    *pp_out_settings = *ASR::Core::SettingsManager::g_settings.Get();
+    (*pp_out_settings)->AddRef();
+    return ASR_S_OK;
+}
+
+AsrResult AsrLoadExtraStringForUi(
+    IAsrReadOnlyString** pp_out_ui_extra_settings_json_string)
+{
+    ASR_UTILS_CHECK_POINTER(pp_out_ui_extra_settings_json_string);
+
+    if (Details::g_p_ui_extra_settings_json_string) [[likely]]
+    {
+        *pp_out_ui_extra_settings_json_string =
+            Details::g_p_ui_extra_settings_json_string.Get();
+        return ASR_S_OK;
+    }
+    try
+    {
+        std::ifstream extra_string_file{};
+        std::string   buffer;
+        ASR::Utils::EnableStreamException(
+            extra_string_file,
+            std::ios::badbit | std::ios::failbit,
+            [&buffer](auto& stream)
+            {
+                stream.open(Details::UI_EXTRA_SETTINGS_FILE_NAME, std::ifstream::in);
+                buffer = {
+                    (std::istreambuf_iterator<char>(stream)),
+                    std::istreambuf_iterator<char>()};
+            });
+        return ::CreateIAsrReadOnlyStringFromUtf8(
+            buffer.c_str(),
+            Details::g_p_ui_extra_settings_json_string.Put());
+    }
+    catch (const std::exception& ex)
+    {
+        ASR_CORE_LOG_EXCEPTION(ex);
+        return ASR_E_INTERNAL_FATAL_ERROR;
+    }
+}
+
+AsrResult AsrSaveExtraStringForUi(
+    IAsrReadOnlyString* p_out_ui_extra_settings_json_string)
+{
+    ASR_UTILS_CHECK_POINTER(p_out_ui_extra_settings_json_string);
+
+    Details::g_p_ui_extra_settings_json_string =
+        p_out_ui_extra_settings_json_string;
+    const char* p_u8_ui_extra_settings_json_string{};
+    if (const auto get_u8_string_result =
+            p_out_ui_extra_settings_json_string->GetUtf8(
+                &p_u8_ui_extra_settings_json_string);
+        ASR::IsFailed(get_u8_string_result))
+    {
+        ASR_CORE_LOG_ERROR(
+            "GetUtf8 failed. Error code = {}",
+            get_u8_string_result);
+        return get_u8_string_result;
+    }
 
     try
     {
-        const auto type_name =
-            ASR::Core::Utils::GetRuntimeClassNameFrom(p_plugin);
-
-        const auto expected_result =
-            ASR::Utils::ToU8StringWithoutOwnership(type_name.Get())
-                .map(
-                    [&](const char* p_u8_name)
-                    {
-                        const auto p_result = ASR::MakeAsrPtr<
-                            IAsrSettings,
-                            ASR::Core::SettingsManager::IAsrSettingsImpl>(
-                            ASR::Core::SettingsManager::g_settings,
-                            p_u8_name);
-                        *pp_out_settings = p_result.Get();
-                        p_result->AddRef();
-                    });
-        return ASR::Utils::GetResult(expected_result);
+        std::ofstream extra_string_file{};
+        ASR::Utils::EnableStreamException(
+            extra_string_file,
+            std::ios::badbit | std::ios::failbit,
+            [p_u8_ui_extra_settings_json_string](auto& stream)
+            {
+                stream.open(
+                    Details::UI_EXTRA_SETTINGS_FILE_NAME,
+                    std::ios::ate | std::ios::out);
+                stream << p_u8_ui_extra_settings_json_string;
+                stream.close();
+            });
+        return ASR_S_OK;
     }
-    catch (const Asr::Core::AsrException& ex)
+    catch (const std::exception& ex)
     {
         ASR_CORE_LOG_EXCEPTION(ex);
-        return ex.GetErrorCode();
-    }
-    catch (const std::bad_alloc&)
-    {
-        return ASR_E_OUT_OF_MEMORY;
+        return ASR_E_INTERNAL_FATAL_ERROR;
     }
 }
 

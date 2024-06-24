@@ -85,7 +85,7 @@ public:
 };
 
 /**
- * @brief 全局单例
+ * @brief 全局单例，不需要释放
  */
 class AsrSettings
 {
@@ -109,9 +109,7 @@ class AsrSettings
     auto SaveImpl(const std::filesystem::path& full_path) -> AsrResult;
 
 public:
-    AsrSettings(std::filesystem::path path);
-    ~AsrSettings() = default;
-
+    // IAsrBase
     int64_t AddRef();
     int64_t Release();
 
@@ -158,7 +156,7 @@ public:
     operator IAsrSettingsForUiImpl*() noexcept;
 };
 
-extern AsrSettings g_settings;
+extern AsrPtr<AsrSettings> g_settings;
 
 ASR_CORE_SETTINGSMANAGER_NS_END
 

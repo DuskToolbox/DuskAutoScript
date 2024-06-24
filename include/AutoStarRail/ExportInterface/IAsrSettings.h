@@ -12,7 +12,8 @@ typedef enum AsrType
     ASR_TYPE_INT = 0,
     ASR_TYPE_FLOAT = 1,
     ASR_TYPE_STRING = 2,
-    ASR_TYPE_BOOL = 3,
+    ASR_TYPE_BOOL = 4,
+    ASR_TYPE_OBJECT = 8,
     ASR_TYPE_FORCE_DWORD = 0x7FFFFFFF
 } AsrType;
 
@@ -80,7 +81,7 @@ ASR_INTERFACE IAsrSwigSettings : public IAsrSwigBase
 
 #ifndef SWIG
 
-// {56E5529D-C4EB-498D-BFAA-EFEFA20EB02A}
+// {56E5529D-C4EB-498D-BFAA-EFFEA20EB02A}
 ASR_DEFINE_GUID(
     ASR_IID_SETTINGS_FOR_UI,
     IAsrSettingsForUi,
@@ -90,7 +91,7 @@ ASR_DEFINE_GUID(
     0xbf,
     0xaa,
     0xef,
-    0xef,
+    0xfe,
     0xa2,
     0xe,
     0xb0,
@@ -119,25 +120,40 @@ ASR_INTERFACE IAsrSettingsForUi : public IAsrBase
     ASR_METHOD SaveToWorkingDirectory(IAsrReadOnlyString * p_relative_path) = 0;
     /**
      * @brief 保存设置
-     * 
+     *
      * @return AsrResult 保存设置文件
      */
     ASR_METHOD Save() = 0;
 };
 
 /**
- * @brief 使用指定路径初始化Core设置，调用将从指定路径加载设置。
+ * @brief 使用指定路径加载Core设置，调用在整个程序生命周期中只能执行一次。
  *
  * @param p_settings_path 设置文件路径
  * @param pp_out_settings
  * @return AsrResult
  */
-ASR_C_API AsrResult InitializeGlobalSettings(
-    IAsrReadOnlyString* p_settings_path,
-    IAsrSettingsForUi** pp_out_settings);
+ASR_C_API AsrResult AsrLoadGlobalSettings(IAsrReadOnlyString* p_settings_path);
 
-ASR_C_API AsrResult
-GetPluginSettings(IAsrTypeInfo* p_plugin, IAsrSettings** pp_out_settings);
+/**
+ * @brief 读取加载的Core设置以供UI使用
+ *
+ * @param pp_out_settings 由UI使用的设置
+ * @return AsrResult ASR_S_OK 成功；若从未执行过AsrLoadGlobalSettings，则失败。
+ */
+ASR_C_API AsrResult AsrGetGlobalSettings(IAsrSettingsForUi** pp_out_settings);
+
+/**
+ * @brief 加载UI在Core中寄存的json设置信息
+ */
+ASR_C_API AsrResult AsrLoadExtraStringForUi(
+    IAsrReadOnlyString** pp_out_ui_extra_settings_json_string);
+
+/**
+ * @brief 保存UI在Core中寄存的json设置信息
+ */
+ASR_C_API AsrResult AsrSaveExtraStringForUi(
+    IAsrReadOnlyString* p_out_ui_extra_settings_json_string);
 
 #endif // SWIG
 
