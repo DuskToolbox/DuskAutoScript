@@ -22,6 +22,7 @@
 #include <AutoStarRail/PluginInterface/IAsrTask.h>
 
 #include <AutoStarRail/ExportInterface/AsrCV.h>
+#include <AutoStarRail/ExportInterface/AsrJson.h>
 #include <AutoStarRail/ExportInterface/AsrLogger.h>
 
 #include <AutoStarRail/ExportInterface/IAsrGuidVector.h>
@@ -162,6 +163,7 @@ PyInit__AsrCorePythonExport(void) {
 %include <AutoStarRail/PluginInterface/IAsrTask.h>
 
 %include <AutoStarRail/ExportInterface/AsrCV.h>
+%include <AutoStarRail/ExportInterface/AsrJson.h>
 %include <AutoStarRail/ExportInterface/AsrLogger.h>
 
 %include <AutoStarRail/ExportInterface/IAsrGuidVector.h>

@@ -2,7 +2,7 @@
 #define ASR_CORE_EXCEPTIONS_TYPEERROR_H
 
 #include <AutoStarRail/Core/Exceptions/Config.h>
-#include <AutoStarRail/ExportInterface/IAsrSettings.h>
+#include <AutoStarRail/ExportInterface/AsrJson.h>
 
 ASR_CORE_EXCEPTIONS_NS_BEGIN
 

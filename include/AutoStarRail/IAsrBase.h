@@ -57,7 +57,7 @@ void _asr_internal_DelayAddRef(T* pointer)
     struct type_name                                                           \
     {                                                                          \
         SWIG_PRIVATE                                                           \
-        AsrResult error_code;                                                  \
+        AsrResult error_code{ASR_E_UNDEFINED_RETURN_VALUE};                    \
         type      value{};                                                     \
                                                                                \
     public:                                                                    \
@@ -78,7 +78,7 @@ void _asr_internal_DelayAddRef(T* pointer)
     struct type_name                                                           \
     {                                                                          \
         SWIG_PRIVATE                                                           \
-        AsrResult                 error_code;                                  \
+        AsrResult                 error_code{ASR_E_UNDEFINED_RETURN_VALUE};    \
         ASR::AsrPtr<pointer_type> value{};                                     \
                                                                                \
     public:                                                                    \
@@ -102,8 +102,8 @@ void _asr_internal_DelayAddRef(T* pointer)
 
 #define ASR_SWIG_EXPORT_ATTRIBUTE(x) SWIG_UNREF_OBJECT(x)
 
-#define ASR_S_OK 0
-#define ASR_S_FALSE 1
+#define ASR_S_OK 1
+#define ASR_S_FALSE 0
 #define ASR_E_RESERVED -1073741824
 #define ASR_E_NO_INTERFACE ASR_E_RESERVED - 1
 #define ASR_E_UNDEFINED_RETURN_VALUE ASR_E_RESERVED - 2
@@ -138,6 +138,7 @@ void _asr_internal_DelayAddRef(T* pointer)
 #define ASR_E_TIMEOUT ASR_E_RESERVED - 27
 #define ASR_E_PERMISSION_DENIED ASR_E_RESERVED - 29
 #define ASR_E_SYMBOL_NOT_FOUND ASR_E_RESERVED - 30
+#define ASR_E_DANGLING_REFERENCE ASR_E_RESERVED - 31
 
 #ifdef ASR_WINDOWS
 // MSVC

@@ -1,8 +1,8 @@
 #ifndef ASR_STRING_HPP
 #define ASR_STRING_HPP
 
-#include <AutoStarRail/IAsrBase.h>
 #include <AutoStarRail/AsrPtr.hpp>
+#include <AutoStarRail/IAsrBase.h>
 
 // {C09E276A-B824-4667-A504-7609B4B7DD28}
 ASR_DEFINE_GUID(
@@ -85,15 +85,9 @@ ASR_INTERFACE IAsrString : public IAsrReadOnlyString
 
 #ifndef SWIG
 
-ASR_NS_BEGIN
+ASR_C_API void CreateNullAsrString(IAsrReadOnlyString** pp_out_null_string);
 
-namespace Details
-{
-    ASR_API AsrPtr<IAsrReadOnlyString> CreateNullAsrString();
-    ASR_API AsrPtr<IAsrString> CreateAsrString();
-}
-
-ASR_NS_END
+ASR_C_API void CreateAsrString(IAsrString** pp_out_string);
 
 #endif // SWIG
 
@@ -109,7 +103,13 @@ ASR_NS_END
 class AsrReadOnlyString
 {
     ASR::AsrPtr<IAsrReadOnlyString> p_impl_{
-        ASR::Details::CreateNullAsrString()};
+        []
+        {
+            ASR::AsrPtr<IAsrReadOnlyString> result{};
+            ::CreateNullAsrString(result.Put());
+            return result;
+        }()};
+    using Impl = decltype(p_impl_);
 
 public:
     AsrReadOnlyString() = default;
@@ -173,9 +173,11 @@ public:
  */
 #if defined(ASR_STRING_ENABLE_WHEN_CPP) || defined(SWIGPYTHON)
     AsrReadOnlyString(const char* p_utf8_string)
-        : p_impl_{ASR::Details::CreateAsrString()}
     {
-        static_cast<IAsrString*>(p_impl_.Get())->SetUtf8(p_utf8_string);
+        IAsrString* p_string;
+        CreateAsrString(&p_string);
+        p_string->SetUtf8(p_utf8_string);
+        p_impl_ = Impl::Attach(p_string);
     }
 
     const char* GetUtf8() const
@@ -195,9 +197,11 @@ public:
  */
 #if defined(ASR_STRING_ENABLE_WHEN_CPP) || defined(SWIGCSHARP)
     AsrReadOnlyString(const wchar_t* p_wstring)
-        : p_impl_{ASR::Details::CreateAsrString()}
     {
-        static_cast<IAsrString*>(p_impl_.Get())->SetSwigW(p_wstring);
+        IAsrString* p_string;
+        CreateAsrString(&p_string);
+        p_string->SetSwigW(p_wstring);
+        p_impl_ = Impl::Attach(p_string);
     }
 
     const wchar_t* GetW() const
@@ -215,9 +219,11 @@ public:
  */
 #if defined(ASR_STRING_ENABLE_WHEN_CPP) || defined(SWIGJAVA)
     AsrReadOnlyString(const char16_t* p_u16string, size_t length)
-        : p_impl_{ASR::Details::CreateAsrString()}
     {
-        static_cast<IAsrString*>(p_impl_.Get())->SetUtf16(p_u16string, length);
+        IAsrString* p_string;
+        CreateAsrString(&p_string);
+        p_string->SetUtf16(p_u16string, length);
+        p_impl_ = Impl::Attach(p_string);
     }
 
     void GetUtf16(const char16_t** out_string, size_t* out_string_size) const

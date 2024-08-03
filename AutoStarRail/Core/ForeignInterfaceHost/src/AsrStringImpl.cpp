@@ -3,6 +3,7 @@
 #include <AutoStarRail/Core/Logger/Logger.h>
 #include <AutoStarRail/Utils/QueryInterface.hpp>
 #include <algorithm>
+#include <boost/container_hash/hash.hpp>
 #include <cstring>
 #include <magic_enum_format.hpp>
 #include <new>
@@ -17,6 +18,26 @@ bool operator==(AsrReadOnlyString lhs, AsrReadOnlyString rhs)
     const char* p_rhs_str = rhs.GetUtf8();
 
     return std::strcmp(p_lhs_str, p_rhs_str) == 0;
+}
+
+std::size_t std::hash<AsrReadOnlyString>::operator()(
+    const AsrReadOnlyString& string) const noexcept
+{
+    auto* const p_string = string.Get();
+    if (p_string != nullptr) [[likely]]
+    {
+        const char16_t* p_u16_string{nullptr};
+        size_t          length{0};
+        p_string->GetUtf16(&p_u16_string, &length);
+        if (p_u16_string != nullptr) [[likely]]
+        {
+            return boost::hash_unordered_range(
+                p_u16_string,
+                p_u16_string + length);
+        }
+        return std::hash<void*>{}(p_string);
+    }
+    return std::hash<void*>{}(p_string);
 }
 
 auto(ASR_FMT_NS::formatter<ASR::AsrPtr<IAsrReadOnlyString>, char>::format)(
@@ -486,13 +507,15 @@ void AsrReadOnlyStringWrapper::GetImpl(IAsrReadOnlyString** pp_impl) const
 
 void from_json(nlohmann::json input, AsrReadOnlyStringWrapper& output)
 {
-    AsrReadOnlyStringWrapper result{input.get_ref<const std::string&>().c_str()};
+    AsrReadOnlyStringWrapper result{
+        input.get_ref<const std::string&>().c_str()};
     output = result;
 }
 
 void from_json(nlohmann::json input, AsrReadOnlyString& output)
 {
-    AsrReadOnlyStringWrapper result{input.get_ref<const std::string&>().c_str()};
+    AsrReadOnlyStringWrapper result{
+        input.get_ref<const std::string&>().c_str()};
     output = result;
 }
 
@@ -561,16 +584,28 @@ namespace Details
     ASR_DEFINE_VARIABLE(NullStringImpl::null_u32string_){};
 
     NullStringImpl null_asr_string_impl_{};
-
-    AsrPtr<IAsrReadOnlyString> CreateNullAsrString()
-    {
-        return {&null_asr_string_impl_};
-    }
-
-    AsrPtr<IAsrString> CreateAsrString() { return {new AsrStringCppImpl()}; }
 }
 
 ASR_NS_END
+
+void CreateNullAsrString(IAsrReadOnlyString** pp_out_null_string)
+{
+    *pp_out_null_string = &ASR::Details::null_asr_string_impl_;
+}
+
+ASR_C_API void CreateAsrString(IAsrString** pp_out_string)
+{
+    try
+    {
+        *pp_out_string = new AsrStringCppImpl();
+        (*pp_out_string)->AddRef();
+    }
+    catch (const std::bad_alloc& ex)
+    {
+        ASR_CORE_LOG_EXCEPTION(ex);
+        *pp_out_string = nullptr;
+    }
+}
 
 AsrResult CreateIAsrReadOnlyStringFromChar(
     const char*          p_char_literal,

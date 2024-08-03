@@ -2,11 +2,12 @@
 #define ASR_UTILS_ENUMTUILS_HPP
 
 #include <AutoStarRail/AsrConfig.h>
-#include <AutoStarRail/ExportInterface/IAsrSettings.h>
+#include <AutoStarRail/ExportInterface/AsrJson.h>
 #include <AutoStarRail/Utils/UnexpectedEnumException.h>
 #include <magic_enum.hpp>
 #include <nlohmann/json.hpp>
 #include <string_view>
+
 
 ASR_UTILS_NS_BEGIN
 

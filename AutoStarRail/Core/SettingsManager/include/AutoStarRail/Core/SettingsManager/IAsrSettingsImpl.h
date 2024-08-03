@@ -2,6 +2,7 @@
 #define ASR_CORE_SETTINGSMANAGER_GLOBALSETTINGSMANAGER_H
 
 #include <AutoStarRail/Core/SettingsManager/Config.h>
+#include <AutoStarRail/ExportInterface/AsrJson.h>
 #include <AutoStarRail/ExportInterface/IAsrSettings.h>
 #include <AutoStarRail/Utils/CommonUtils.hpp>
 #include <AutoStarRail/Utils/Expected.h>
@@ -19,54 +20,6 @@ ASR_CORE_SETTINGSMANAGER_NS_BEGIN
 
 class AsrSettings;
 
-class IAsrSettingsImpl final : public IAsrSettings
-{
-    AsrSettings& impl_;
-    std::string  u8_type_name_{};
-
-public:
-    IAsrSettingsImpl(AsrSettings& impl, const char* u8_type_name);
-    // IAsrBase
-    ASR_UTILS_IASRBASE_AUTO_IMPL(IAsrSettingsImpl)
-    ASR_IMPL QueryInterface(const AsrGuid& iid, void** pp_object) override;
-    // IAsrSettings
-    ASR_IMPL GetString(
-        IAsrReadOnlyString*  key,
-        IAsrReadOnlyString** pp_out_string) override;
-    ASR_IMPL GetBool(IAsrReadOnlyString* key, bool* p_out_bool) override;
-    ASR_IMPL GetInt(IAsrReadOnlyString* key, int64_t* p_out_int) override;
-    ASR_IMPL GetFloat(IAsrReadOnlyString* key, float* p_out_float) override;
-
-    ASR_METHOD SetString(IAsrReadOnlyString* key, IAsrReadOnlyString* value)
-        override;
-    ASR_METHOD SetBool(IAsrReadOnlyString* key, bool value) override;
-    ASR_METHOD SetInt(IAsrReadOnlyString* key, int64_t value) override;
-    ASR_METHOD SetFloat(IAsrReadOnlyString* key, float value) override;
-};
-
-class IAsrSwigSettingsImpl final : public IAsrSwigSettings
-{
-    AsrSettings& impl_;
-    std::string  u8_type_name_{};
-
-public:
-    IAsrSwigSettingsImpl(AsrSettings& impl, const char* u8_type_name);
-    // IAsrSwigBase
-    ASR_UTILS_IASRBASE_AUTO_IMPL(IAsrSwigSettingsImpl)
-    AsrRetSwigBase QueryInterface(const AsrGuid& iid) override;
-    // IAsrSwigSettings
-    AsrRetReadOnlyString GetString(AsrReadOnlyString key) override;
-    AsrRetBool           GetBool(AsrReadOnlyString key) override;
-    AsrRetInt            GetInt(AsrReadOnlyString key) override;
-    AsrRetFloat          GetFloat(AsrReadOnlyString key) override;
-
-    AsrResult SetString(AsrReadOnlyString key, AsrReadOnlyString value)
-        override;
-    AsrResult SetBool(AsrReadOnlyString key, bool value) override;
-    AsrResult SetInt(AsrReadOnlyString key, int64_t value) override;
-    AsrResult SetFloat(AsrReadOnlyString key, float value) override;
-};
-
 class IAsrSettingsForUiImpl final : public IAsrSettingsForUi
 {
     AsrSettings& impl_;
@@ -80,7 +33,8 @@ public:
     // IAsrSettingsForUi
     ASR_IMPL ToString(IAsrReadOnlyString** pp_out_string) override;
     ASR_IMPL FromString(IAsrReadOnlyString* p_in_settings) override;
-    ASR_IMPL SaveToWorkingDirectory(IAsrReadOnlyString* p_relative_path) override;
+    ASR_IMPL SaveToWorkingDirectory(
+        IAsrReadOnlyString* p_relative_path) override;
     ASR_IMPL Save() override;
 };
 
@@ -95,7 +49,7 @@ class AsrSettings
      * @brief 默认设置就是和设置一样的结构，只是里面存了默认值
      *
      */
-    nlohmann::json default_values_;
+    nlohmann::json        default_values_;
     std::filesystem::path path_;
 
     IAsrSettingsForUiImpl cpp_projection_for_ui_{*this};
@@ -113,31 +67,6 @@ public:
     int64_t AddRef();
     int64_t Release();
 
-    // IAsrSettings
-    AsrRetReadOnlyString GetString(
-        std::string_view  u8_type_string,
-        AsrReadOnlyString key);
-    AsrRetBool  GetBool(std::string_view u8_type_string, AsrReadOnlyString key);
-    AsrRetInt   GetInt(std::string_view u8_type_string, AsrReadOnlyString key);
-    AsrRetFloat GetFloat(
-        std::string_view  u8_type_string,
-        AsrReadOnlyString key);
-    AsrResult SetString(
-        std::string_view  u8_type_string,
-        AsrReadOnlyString key,
-        AsrReadOnlyString value);
-    AsrResult SetBool(
-        std::string_view  u8_type_string,
-        AsrReadOnlyString key,
-        bool              value);
-    AsrResult SetInt(
-        std::string_view  u8_type_string,
-        AsrReadOnlyString key,
-        int64_t           value);
-    AsrResult SetFloat(
-        std::string_view  u8_type_string,
-        AsrReadOnlyString key,
-        float             value);
     // IAsrSettingsForUi
     AsrResult ToString(IAsrReadOnlyString** pp_out_string);
     AsrResult FromString(IAsrReadOnlyString* p_in_settings);

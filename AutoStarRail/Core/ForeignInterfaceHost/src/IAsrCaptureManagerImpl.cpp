@@ -144,9 +144,7 @@ AsrResult CaptureManagerImpl::EnumCaptureLoadErrorState(
             [p_out_error_code, pp_out_error_explanation](const auto&)
             {
                 *p_out_error_code = ASR_S_OK;
-                const auto null_string = ASR::Details::CreateNullAsrString();
-                null_string->AddRef();
-                *pp_out_error_explanation = null_string.Get();
+                ::CreateNullAsrString(pp_out_error_explanation);
             });
     return ASR_S_OK;
 }
@@ -379,9 +377,9 @@ auto CreateAsrCaptureManagerImpl(IAsrReadOnlyString* p_json_config)
             ASR_CORE_LOG_ERROR("Get IAsrCapture object name failed.");
             ASR_CORE_LOG_EXCEPTION(ex);
             result = ASR_FALSE;
-            p_capture_manager->AddInstance(
-                ASR::Details::CreateNullAsrString(),
-                p_instance);
+            ASR::AsrPtr<IAsrReadOnlyString> p_null_string{};
+            ::CreateNullAsrString(p_null_string.Put());
+            p_capture_manager->AddInstance(p_null_string, p_instance);
         }
     }
 

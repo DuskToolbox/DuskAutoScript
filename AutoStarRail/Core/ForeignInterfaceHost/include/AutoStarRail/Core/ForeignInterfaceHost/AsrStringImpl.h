@@ -14,6 +14,12 @@
 bool operator==(AsrReadOnlyString lhs, AsrReadOnlyString rhs);
 
 template <>
+struct std::hash<AsrReadOnlyString>
+{
+    std::size_t operator()(const AsrReadOnlyString& string) const noexcept;
+};
+
+template <>
 struct ASR_FMT_NS::formatter<ASR::AsrPtr<IAsrReadOnlyString>, char>
     : public formatter<std::string, char>
 {

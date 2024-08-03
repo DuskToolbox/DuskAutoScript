@@ -3,6 +3,7 @@
 
 #include <AutoStarRail/Core/ForeignInterfaceHost/Config.h>
 #include <AutoStarRail/Core/ForeignInterfaceHost/ForeignInterfaceHostEnum.h>
+#include <AutoStarRail/ExportInterface/AsrJson.h>
 #include <AutoStarRail/ExportInterface/IAsrSettings.h>
 #include <AutoStarRail/IAsrBase.h>
 #include <AutoStarRail/Utils/fmt.h>
@@ -11,6 +12,7 @@
 #include <string>
 #include <variant>
 #include <vector>
+
 
 ASR_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
