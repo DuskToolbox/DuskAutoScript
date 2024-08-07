@@ -8,7 +8,6 @@
 #include <boost/signals2.hpp>
 #include <mutex>
 #include <nlohmann/json.hpp>
-#include <unordered_map>
 #include <variant>
 
 // {A9EC9C65-66E1-45B1-9C73-C95A6620BA6A}
@@ -31,6 +30,7 @@ ASR_CORE_UTILS_NS_BEGIN
 
 struct AsrJsonImplRefExpiredException : public std::exception
 {
+    [[nodiscard]]
     const char* what() const noexcept override
     {
         return "Dangling reference detected!";
@@ -115,11 +115,44 @@ public:
     AsrResult SetBoolByIndex(size_t index, bool in_bool) override;
     AsrResult SetObjectByIndex(size_t index, IAsrJson* p_in_asr_json) override;
 
+    AsrResult GetTypeByName(IAsrReadOnlyString* key, AsrType* p_out_type)
+        override;
+    AsrResult GetTypeByIndex(size_t index, AsrType* p_out_type) override;
+
     void SetConnection(const boost::signals2::connection& connection);
     void OnExpired();
 };
 
 ASR_NS_ANONYMOUS_DETAILS_BEGIN
+
+AsrType ToAsrType(nlohmann::json::value_t type)
+{
+    switch (type)
+    {
+    case nlohmann::json::value_t::null:
+        return ASR_TYPE_NULL;
+    case nlohmann::json::value_t::object:
+        return ASR_TYPE_JSON_OBJECT;
+    case nlohmann::json::value_t::array:
+        return ASR_TYPE_JSON_ARRAY;
+    case nlohmann::json::value_t::string:
+        return ASR_TYPE_STRING;
+    case nlohmann::json::value_t::boolean:
+        return ASR_TYPE_BOOL;
+    case nlohmann::json::value_t::number_integer:
+        return ASR_TYPE_UINT;
+    case nlohmann::json::value_t::number_unsigned:
+        return ASR_TYPE_INT;
+    case nlohmann::json::value_t::number_float:
+        return ASR_TYPE_FLOAT;
+    case nlohmann::json::value_t::binary:
+        [[fallthrough]];
+    case nlohmann::json::value_t::discarded:
+        [[fallthrough]];
+    default:
+        return ASR_TYPE_UNSUPPORTED;
+    }
+}
 
 template <class Arg>
 class CallOperatorSquareBrackets
@@ -207,6 +240,11 @@ AsrResult IAsrJsonImpl::GetToImpl(IAsrReadOnlyString* p_string, T* obj)
             .get_to(*obj);
         return ASR_S_OK;
     }
+    catch (const nlohmann::json::type_error& ex)
+    {
+        ASR_CORE_LOG_EXCEPTION(ex);
+        return ASR_E_TYPE_ERROR;
+    }
     catch (const nlohmann::json::exception& ex)
     {
         ASR_CORE_LOG_EXCEPTION(ex);
@@ -233,6 +271,11 @@ AsrResult IAsrJsonImpl::GetToImpl(size_t index, T* obj)
     try
     {
         return std::visit(Details::CallOperatorSquareBrackets{index}, impl_);
+    }
+    catch (const nlohmann::json::type_error& ex)
+    {
+        ASR_CORE_LOG_EXCEPTION(ex);
+        return ASR_E_TYPE_ERROR;
     }
     catch (const nlohmann::json::exception& ex)
     {
@@ -272,6 +315,12 @@ AsrResult IAsrJsonImpl::SetImpl(IAsrReadOnlyString* p_string, const T& value)
             impl_);
         return ASR_S_OK;
     }
+    catch (const nlohmann::json::type_error& ex)
+    {
+        ASR_CORE_LOG_EXCEPTION(ex);
+        ASR_CORE_LOG_ERROR("Note: key = {}", p_u8_key);
+        return ASR_E_TYPE_ERROR;
+    }
     catch (const nlohmann::json::exception& ex)
     {
         ASR_CORE_LOG_EXCEPTION(ex);
@@ -299,6 +348,12 @@ AsrResult IAsrJsonImpl::SetImpl(size_t index, const T& value)
             Details::CallOperatorSquareBracketsForAssign{index, value},
             impl_);
         return ASR_S_OK;
+    }
+    catch (const nlohmann::json::type_error& ex)
+    {
+        ASR_CORE_LOG_EXCEPTION(ex);
+        ASR_CORE_LOG_ERROR("Note: index = {}", index);
+        return ASR_E_TYPE_ERROR;
     }
     catch (const nlohmann::json::exception& ex)
     {
@@ -340,6 +395,12 @@ AsrResult IAsrJsonImpl::GetToImpl(
                 .c_str(),
             obj);
     }
+    catch (const nlohmann::json::type_error& ex)
+    {
+        ASR_CORE_LOG_EXCEPTION(ex);
+        ASR_CORE_LOG_ERROR("Note: key = {}", p_u8_key);
+        return ASR_E_TYPE_ERROR;
+    }
     catch (const nlohmann::json::exception& ex)
     {
         ASR_CORE_LOG_EXCEPTION(ex);
@@ -369,6 +430,12 @@ AsrResult IAsrJsonImpl::GetToImpl(size_t index, IAsrReadOnlyString** pp_out_obj)
                 .get_ref<const std::string&>()
                 .c_str(),
             pp_out_obj);
+    }
+    catch (const nlohmann::json::type_error& ex)
+    {
+        ASR_CORE_LOG_EXCEPTION(ex);
+        ASR_CORE_LOG_ERROR("Note: index = {}", index);
+        return ASR_E_TYPE_ERROR;
     }
     catch (const nlohmann::json::exception& ex)
     {
@@ -659,6 +726,37 @@ AsrResult IAsrJsonImpl::SetObjectByIndex(size_t index, IAsrJson* p_in_asr_json)
                 return ASR_E_DANGLING_REFERENCE;
             }},
         impl_);
+}
+
+AsrResult IAsrJsonImpl::GetTypeByName(
+    IAsrReadOnlyString* key,
+    AsrType*            p_out_type)
+{
+    ASR_UTILS_CHECK_POINTER(key)
+
+    const auto expected_u8_key = ToU8StringWithoutOwnership(key);
+    if (!expected_u8_key)
+    {
+        return expected_u8_key.error();
+    }
+    const auto p_u8_key = expected_u8_key.value();
+
+    const auto raw_type =
+        std::visit(Details::CallOperatorSquareBrackets{p_u8_key}, impl_).type();
+    *p_out_type = Details::ToAsrType(raw_type);
+
+    return ASR_S_OK;
+}
+
+AsrResult IAsrJsonImpl::GetTypeByIndex(size_t index, AsrType* p_out_type)
+{
+    ASR_UTILS_CHECK_POINTER(p_out_type)
+
+    const auto raw_type =
+        std::visit(Details::CallOperatorSquareBrackets{index}, impl_).type();
+    *p_out_type = Details::ToAsrType(raw_type);
+
+    return ASR_S_OK;
 }
 
 void IAsrJsonImpl::SetConnection(const boost::signals2::connection& connection)

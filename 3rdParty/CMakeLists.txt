@@ -400,7 +400,8 @@ if (${ASR_USE_BUNDLED_BOOST})
             Boost::container_hash
             Boost::pfr
             Boost::nowide
-            Boost::circular_buffer)
+            Boost::circular_buffer
+            Boost::signals2)
 else ()
     find_package(Boost 1.82 COMPONENTS filesystem url)
 

@@ -15,56 +15,6 @@
 
 ASR_CORE_SETTINGSMANAGER_NS_BEGIN
 
-ASR_NS_ANONYMOUS_DETAILS_BEGIN
-
-template <class T, class OnTypeError, class OnJsonError>
-T GetJsonValue(
-    const nlohmann::json& j,
-    const char*           key,
-    OnTypeError           on_type_error,
-    OnJsonError           on_json_error)
-{
-    T result{};
-    try
-    {
-        result.value = j.at(key).get<decltype(T::value)>();
-        result.error_code = ASR_S_OK;
-    }
-    catch (const nlohmann::json::type_error& ex)
-    {
-        result.error_code = ASR_E_TYPE_ERROR;
-        on_type_error(ex, j, key);
-    }
-    catch (const nlohmann::json::exception& ex)
-    {
-        result.error_code = ASR_E_INVALID_JSON;
-        on_json_error(ex, j, key);
-    }
-    return result;
-}
-
-constexpr auto default_on_type_error = [](const nlohmann::json::exception& ex,
-                                          const nlohmann::json&            j,
-                                          const char*                      key)
-{ ASR_CORE_LOG_JSON_EXCEPTION(ex, key, j); };
-
-constexpr auto default_on_json_error = [](const nlohmann::json::exception& ex,
-                                          const nlohmann::json&            j,
-                                          const char*                      key)
-{ ASR_CORE_LOG_JSON_EXCEPTION(ex, key, j); };
-
-template <class T>
-T GetJsonValueOnDefaultErrorHandle(const nlohmann::json& j, const char* key)
-{
-    return GetJsonValue<T>(
-        j,
-        key,
-        default_on_type_error,
-        default_on_json_error);
-}
-
-ASR_NS_ANONYMOUS_DETAILS_END
-
 IAsrSettingsForUiImpl::IAsrSettingsForUiImpl(AsrSettings& impl) : impl_{impl} {}
 
 int64_t IAsrSettingsForUiImpl::AddRef() { return impl_.AddRef(); }
@@ -309,21 +259,6 @@ ASR::AsrPtr<IAsrReadOnlyString> g_p_ui_extra_settings_json_string{};
 constexpr auto UI_EXTRA_SETTINGS_FILE_NAME = "UiExtraSettings.json";
 
 ASR_NS_ANONYMOUS_DETAILS_END
-
-AsrResult AsrLoadGlobalSettings(IAsrReadOnlyString* p_settings_path)
-{
-    ASR_UTILS_CHECK_POINTER(p_settings_path)
-
-    if (const auto set_result =
-            ASR::Core::SettingsManager::g_settings->LoadSettings(
-                p_settings_path);
-        ASR::IsFailed(set_result))
-    {
-        return set_result;
-    }
-
-    return ASR_S_OK;
-}
 
 AsrResult AsrGetGlobalSettings(IAsrSettingsForUi** pp_out_settings)
 {

@@ -7,10 +7,15 @@
 typedef enum AsrType
 {
     ASR_TYPE_INT = 0,
-    ASR_TYPE_FLOAT = 1,
-    ASR_TYPE_STRING = 2,
-    ASR_TYPE_BOOL = 4,
-    ASR_TYPE_JSON_OBJECT = 8,
+    ASR_TYPE_UINT = 1,
+    ASR_TYPE_FLOAT = 2,
+    ASR_TYPE_STRING = 4,
+    ASR_TYPE_BOOL = 8,
+    ASR_TYPE_JSON_OBJECT = 16,
+    ASR_TYPE_JSON_ARRAY = 32,
+    // 不常见
+    ASR_TYPE_NULL = 0x20000000,
+    ASR_TYPE_UNSUPPORTED = 0x40000000,
     ASR_TYPE_FORCE_DWORD = 0x7FFFFFFF
 } AsrType;
 
@@ -72,6 +77,10 @@ ASR_INTERFACE IAsrJson : public IAsrBase
         0;
     ASR_METHOD SetBoolByIndex(size_t index, bool in_bool) = 0;
     ASR_METHOD SetObjectByIndex(size_t index, IAsrJson * pin_asr_json) = 0;
+
+    ASR_METHOD GetTypeByName(IAsrReadOnlyString * key, AsrType * p_out_type) =
+        0;
+    ASR_METHOD GetTypeByIndex(size_t index, AsrType * p_out_type) = 0;
 };
 
 #endif // SWIG
@@ -199,71 +208,71 @@ public:
         return p_impl_->SetObjectByIndex(index, in_asr_json.p_impl_.Get());
     }
 
-    AsrResult GetTo(const AsrReadOnlyString& key, AsrReadOnlyString& value)
+    AsrResult GetTo(const AsrReadOnlyString& key, AsrReadOnlyString& OUTPUT)
     {
         ASR::AsrPtr<IAsrReadOnlyString> p_value{};
         const auto                      error_code =
             p_impl_->GetStringByName(key.Get(), p_value.Put());
         if (ASR::IsOk(error_code))
         {
-            value = {std::move(p_value)};
+            OUTPUT = {std::move(p_value)};
         }
         return error_code;
     }
-    AsrResult GetTo(const AsrReadOnlyString& key, float& value)
+    AsrResult GetTo(const AsrReadOnlyString& key, float& OUTPUT)
     {
-        return p_impl_->GetFloatByName(key.Get(), &value);
+        return p_impl_->GetFloatByName(key.Get(), &OUTPUT);
     }
-    AsrResult GetTo(const AsrReadOnlyString& key, int64_t& value)
+    AsrResult GetTo(const AsrReadOnlyString& key, int64_t& OUTPUT)
     {
-        return p_impl_->GetIntByName(key.Get(), &value);
+        return p_impl_->GetIntByName(key.Get(), &OUTPUT);
     }
-    AsrResult GetTo(const AsrReadOnlyString& key, bool& value)
+    AsrResult GetTo(const AsrReadOnlyString& key, bool& OUTPUT)
     {
-        return p_impl_->GetBoolByName(key.Get(), &value);
+        return p_impl_->GetBoolByName(key.Get(), &OUTPUT);
     }
-    AsrResult GetTo(const AsrReadOnlyString& key, AsrJson& value)
+    AsrResult GetTo(const AsrReadOnlyString& key, AsrJson& OUTPUT)
     {
-        ASR::AsrPtr<IAsrJson> p_value{};
+        ASR::AsrPtr<IAsrJson> p_OUTPUT{};
         const auto            error_code =
-            p_impl_->GetObjectRefByName(key.Get(), p_value.Put());
+            p_impl_->GetObjectRefByName(key.Get(), p_OUTPUT.Put());
         if (ASR::IsOk(error_code))
         {
-            value.p_impl_ = p_value;
+            OUTPUT.p_impl_ = p_OUTPUT;
         }
         return error_code;
     }
 
-    AsrResult GetTo(size_t index, AsrReadOnlyString& value)
+    AsrResult GetTo(size_t index, AsrReadOnlyString& OUTPUT)
     {
-        ASR::AsrPtr<IAsrReadOnlyString> p_value{};
-        const auto error_code = p_impl_->GetStringByIndex(index, p_value.Put());
+        ASR::AsrPtr<IAsrReadOnlyString> p_OUTPUT{};
+        const auto error_code = p_impl_->GetStringByIndex(index, p_OUTPUT.Put());
         if (ASR::IsOk(error_code))
         {
-            value = {std::move(p_value)};
+            OUTPUT = {std::move(p_OUTPUT)};
         }
         return error_code;
     }
-    AsrResult GetTo(size_t index, float& value)
+    AsrResult GetTo(size_t index, float& OUTPUT)
     {
-        return p_impl_->GetFloatByIndex(index, &value);
+        return p_impl_->GetFloatByIndex(index, &OUTPUT);
     }
-    AsrResult GetTo(size_t index, int64_t& value)
+    AsrResult GetTo(size_t index, int64_t& OUTPUT)
     {
-        return p_impl_->GetIntByIndex(index, &value);
+        return p_impl_->GetIntByIndex(index, &OUTPUT);
     }
-    AsrResult GetTo(size_t index, bool& value)
+    AsrResult GetTo(size_t index, bool& OUTPUT)
     {
-        return p_impl_->GetBoolByIndex(index, &value);
+        return p_impl_->GetBoolByIndex(index, &OUTPUT);
     }
-    AsrResult GetTo(size_t index, AsrJson& value)
+    AsrResult GetTo(size_t index, AsrJson& OUTPUT)
     {
-        ASR::AsrPtr<IAsrJson> p_value{};
+        ASR::AsrPtr<IAsrJson> p_OUTPUT{};
         const auto            error_code =
-            p_impl_->GetObjectRefByIndex(index, p_value.Put());
+            p_impl_->GetObjectRefByIndex(index, p_OUTPUT.Put());
         if (ASR::IsOk(error_code))
         {
-            value.p_impl_ = p_value;
+            OUTPUT.p_impl_ = p_OUTPUT;
         }
         return error_code;
     }
