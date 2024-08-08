@@ -77,15 +77,15 @@ public:
         auto response = Logs::createShared();
         response->code = ASR_S_OK;
         response->message = "";
-        response->result = LogsData::createShared();
-        response->result->logs = {};
+        response->data = LogsData::createShared();
+        response->data->logs = {};
         // const auto error_code = p_requester->RequestOne(p_reader.Get());
 
         // error_code = p_requester->RequestOne(p_reader.Get());
         // OATPP_LOGD("日志接口", std::to_string(i).c_str());
         // std::string str = sp_one_message->data();
         // OATPP_LOGD("日志接口", str.c_str());
-        // response->result->logs->push_back(reinterpret_cast<const
+        // response->data->logs->push_back(reinterpret_cast<const
         // char*>(str.c_str()));
 
         // int i = 0;
@@ -102,11 +102,11 @@ public:
             {
                 OATPP_LOGD("日志接口", "1");
                 // OATPP_LOGD("日志接口", sp_one_message->data());
-                response->result->logs->push_back(
+                response->data->logs->push_back(
                     p_reader->GetMessage().data());
             }
             // else if (
-            //     !response->result->logs->empty()
+            //     !response->data->logs->empty()
             //     && error_code == ASR_E_OUT_OF_RANGE)
             // {
             else if (error_code == ASR_E_OUT_OF_RANGE)
@@ -158,7 +158,7 @@ public:
             u8"様式ファイル2 長さが制限を超えています");
         profile3->profile_id = "2";
 
-        response->result = {profile1, profile2, profile3};
+        response->data = {profile1, profile2, profile3};
         // temp test code
 
         return createDtoResponse(
@@ -191,7 +191,7 @@ public:
         profile3_status->run = false;
         profile3_status->enable = false;
 
-        response->result = {profile1_status, profile2_status, profile3_status};
+        response->data = {profile1_status, profile2_status, profile3_status};
         // temp test code
 
         return createDtoResponse(
@@ -227,7 +227,7 @@ public:
     //         profile3_status->run = false;
     //         profile3_status->enable = false;
 
-    //         response->result = {
+    //         response->data = {
     //             profile1_status,
     //             profile2_status,
     //             profile3_status};
@@ -282,10 +282,10 @@ public:
             ApiResponse<oatpp::Object<ProfileRunning>>::createShared();
         response->code = ASR_S_OK;
         response->message = "";
-        response->result = ProfileRunning::createShared();
+        response->data = ProfileRunning::createShared();
 
-        response->result->profile_id = profile_id->profile_id;
-        response->result->run = true;
+        response->data->profile_id = profile_id->profile_id;
+        response->data->run = true;
 
         // // temp test code
         // auto profile1_status = ProfileStatus::createShared();
@@ -303,7 +303,7 @@ public:
         // profile3_status->run = false;
         // profile3_status->enable = false;
 
-        // response->result = {profile1_status, profile2_status,
+        // response->data = {profile1_status, profile2_status,
         // profile3_status};
         // // temp test code
 
@@ -331,10 +331,10 @@ public:
             ApiResponse<oatpp::Object<ProfileRunning>>::createShared();
         response->code = ASR_S_OK;
         response->message = "";
-        response->result = ProfileRunning::createShared();
+        response->data = ProfileRunning::createShared();
 
-        response->result->profile_id = profile_id->profile_id;
-        response->result->run = false;
+        response->data->profile_id = profile_id->profile_id;
+        response->data->run = false;
 
         // // temp test code
         // auto profile1_status = ProfileStatus::createShared();
@@ -352,7 +352,7 @@ public:
         // profile3_status->run = false;
         // profile3_status->enable = false;
 
-        // response->result = {profile1_status, profile2_status,
+        // response->data = {profile1_status, profile2_status,
         // profile3_status};
         // // temp test code
 
@@ -387,7 +387,7 @@ public:
         app2->name = reinterpret_cast<const char*>(u8"雷索纳斯-国服");
         app2->package_name = "com.hermes.goda";
 
-        response->result = {app1, app2};
+        response->data = {app1, app2};
         // temp test code
 
         return createDtoResponse(
@@ -421,7 +421,7 @@ public:
         plugin4->name = reinterpret_cast<const char*>(u8"雷索纳斯-国服-插件2");
         plugin4->plugin_id = "2FA49598-7DFF-7D3C-CC51-AE539EA41DEB";
 
-        response->result = {plugin1, plugin2, plugin3, plugin4};
+        response->data = {plugin1, plugin2, plugin3, plugin4};
         // temp test code
 
         return createDtoResponse(
@@ -475,7 +475,7 @@ public:
         task6->package_name = "com.hermes.goda";
         task6->sub_group = reinterpret_cast<const char*>(u8"每日");
 
-        response->result = {task1, task2, task3, task4, task5, task6};
+        response->data = {task1, task2, task3, task4, task5, task6};
         // temp test code
 
         return createDtoResponse(

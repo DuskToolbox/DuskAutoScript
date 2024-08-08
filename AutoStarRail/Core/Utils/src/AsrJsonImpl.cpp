@@ -545,7 +545,6 @@ AsrResult IAsrJsonImpl::GetObjectRefByName(
         ASR_CORE_LOG_EXCEPTION(ex);
         return ASR_E_OUT_OF_MEMORY;
     }
-    return ASR_S_OK;
 }
 
 AsrResult IAsrJsonImpl::SetIntByName(IAsrReadOnlyString* key, int64_t in_int)
@@ -669,7 +668,6 @@ AsrResult IAsrJsonImpl::GetObjectRefByIndex(
         ASR_CORE_LOG_EXCEPTION(ex);
         return ASR_E_OUT_OF_MEMORY;
     }
-    return ASR_S_OK;
 }
 
 AsrResult IAsrJsonImpl::SetIntByIndex(size_t index, int64_t in_int)

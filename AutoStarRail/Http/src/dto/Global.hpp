@@ -22,7 +22,7 @@ class ApiResponse : public oatpp::DTO
     DTO_FIELD(Int32, code);
     DTO_FIELD(String, message);
 
-    DTO_FIELD(T, result);
+    DTO_FIELD(T, data);
 };
 
 #include OATPP_CODEGEN_END(DTO)

@@ -85,7 +85,7 @@ ASR_INTERFACE IAsrJson : public IAsrBase
 
 #endif // SWIG
 
-class AsrRetJson;
+struct AsrRetJson;
 
 class AsrJson
 {
