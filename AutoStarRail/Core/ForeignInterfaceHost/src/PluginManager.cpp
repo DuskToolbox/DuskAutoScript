@@ -1,4 +1,6 @@
 #include "AutoStarRail/Core/Exceptions/PythonException.h"
+#include "AutoStarRail/ExportInterface/IAsrPluginManager.h"
+
 #include <AutoStarRail/AsrString.hpp>
 #include <AutoStarRail/Core/ForeignInterfaceHost/AsrGuid.h>
 #include <AutoStarRail/Core/ForeignInterfaceHost/AsrStringImpl.h>
@@ -209,7 +211,7 @@ auto CreateInterface(
                     return {};
                 }
                 AsrPtr<IAsrSwigBase> result{reinterpret_cast<IAsrSwigBase*>(
-                    cfi_result.value.GetVoidNoAddRef())};
+                    cfi_result.GetVoidNoAddRef())};
                 return result;
             }},
         common_p_plugin);
@@ -254,7 +256,7 @@ auto QueryTypeInfoFrom(
                     return {};
                 }
                 AsrPtr<IAsrSwigTypeInfo> result{static_cast<IAsrSwigTypeInfo*>(
-                    qi_result.value.GetVoidNoAddRef())};
+                    qi_result.GetVoidNoAddRef())};
                 return result;
             }},
         common_p_base);
@@ -375,7 +377,7 @@ ASR_NS_ANONYMOUS_DETAILS_BEGIN
  */
 template <class T, class SwigT, size_t N>
 auto QueryInterfaceFrom(
-    const char (&error_message)[N],
+    const char           (&error_message)[N],
     const char*          u8_plugin_name,
     const CommonBasePtr& common_p_base) -> ASR::Utils::Expected<AsrPtr<T>>
 {
@@ -416,7 +418,7 @@ auto QueryInterfaceFrom(
 
                 auto result = MakeAsrPtr<SwigToCpp<SwigT>>(
                     static_cast<IAsrSwigErrorLens*>(
-                        qi_result.value.GetVoidNoAddRef()));
+                        qi_result.GetVoidNoAddRef()));
 
                 qi_result.value.Get()->Release();
 
@@ -469,7 +471,7 @@ auto QueryErrorLensFrom(
 
                 AsrPtr<IAsrErrorLens> result{new SwigToCpp<IAsrSwigErrorLens>{
                     static_cast<IAsrSwigErrorLens*>(
-                        qi_result.value.GetVoidNoAddRef())}};
+                        qi_result.GetVoidNoAddRef())}};
 
                 return result;
             }},
@@ -546,7 +548,7 @@ auto RegisterTaskFromPlugin(T& task_manager, GetInterfaceFromPluginParam param)
                         return tl::make_unexpected(qi_result.error_code);
                     }
                     return AsrPtr{static_cast<IAsrSwigTask*>(
-                        qi_result.value.GetVoidNoAddRef())};
+                        qi_result.GetVoidNoAddRef())};
                 }
                 catch (...)
                 {
@@ -665,7 +667,7 @@ auto RegisterInputFactoryFromPlugin(
                         return tl::make_unexpected(qi_result.error_code);
                     }
                     return AsrPtr{static_cast<IAsrSwigInputFactory*>(
-                        qi_result.value.GetVoidNoAddRef())};
+                        qi_result.GetVoidNoAddRef())};
                 }},
             common_p_base);
 
@@ -1388,12 +1390,12 @@ PluginManager::operator IAsrPluginManagerImpl*() noexcept
 
 ASR_CORE_FOREIGNINTERFACEHOST_NS_END
 
-AsrResult CreateIAsrPluginManagerAndGetResult(
+AsrResult InitializeIAsrPluginManager(
     IAsrReadOnlyGuidVector* p_ignore_plugins_guid,
     IAsrPluginManager**     pp_out_result)
 {
-    ASR_UTILS_CHECK_POINTER(p_ignore_plugins_guid)
     ASR_UTILS_CHECK_POINTER(pp_out_result)
+    ASR_UTILS_CHECK_POINTER(p_ignore_plugins_guid)
 
     static size_t initialize_counter{0};
     ++initialize_counter;
@@ -1402,6 +1404,17 @@ AsrResult CreateIAsrPluginManagerAndGetResult(
         ASR_CORE_LOG_ERROR(
             "The plugin should be loaded only once while the program is running");
     }
+
+    return ASR_S_OK;
+}
+
+AsrResult CreateIAsrPluginManagerAndGetResult(
+    IAsrReadOnlyGuidVector* p_ignore_plugins_guid,
+    IAsrPluginManager**     pp_out_result)
+{
+    ASR_UTILS_CHECK_POINTER(p_ignore_plugins_guid)
+    ASR_UTILS_CHECK_POINTER(pp_out_result)
+
     auto& plugin_manager = ASR::Core::ForeignInterfaceHost::g_plugin_manager;
     const auto result = plugin_manager.Refresh(p_ignore_plugins_guid);
     *pp_out_result = plugin_manager;

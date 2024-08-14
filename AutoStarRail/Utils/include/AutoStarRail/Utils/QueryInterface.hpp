@@ -138,7 +138,7 @@ AsrRetSwigBase QueryInterface(TImpl* p_this, const AsrGuid& iid)
     void*      pointer{};
     const auto error_code = QueryInterfaceAsLastClassInInheritanceInfo<
         typename PresetTypeInheritanceInfo<T>::TypeInfo>(p_this, iid, &pointer);
-    return {error_code, AsrSwigBaseWrapper{pointer}};
+    return AsrRetSwigBase{error_code, pointer};
 }
 
 ASR_UTILS_NS_END

@@ -11,6 +11,7 @@
 #include <AutoStarRail/ExportInterface/IAsrImage.h>
 #include <AutoStarRail/IAsrBase.h>
 #include <AutoStarRail/PluginInterface/IAsrCapture.h>
+#include <AutoStarRail/PluginInterface/IAsrComponent.h>
 #include <AutoStarRail/PluginInterface/IAsrErrorLens.h>
 #include <AutoStarRail/PluginInterface/IAsrInput.h>
 #include <AutoStarRail/PluginInterface/IAsrPlugin.h>
@@ -195,7 +196,7 @@ public:
             IsOk(get_swig_query_interface_result.error_code)
             || get_swig_query_interface_result.error_code != ASR_E_NO_INTERFACE)
         {
-            *pp_out_object = get_swig_query_interface_result.value.Get();
+            *pp_out_object = get_swig_query_interface_result.value;
             return get_swig_query_interface_result.error_code;
         }
         // 最后看是不是要转换到子类
@@ -244,12 +245,14 @@ public:
     }
 
     [[nodiscard]]
-    T* operator->() const noexcept
+    T*
+    operator->() const noexcept
     {
         return static_cast<T*>(this);
     }
     [[nodiscard]]
-    T& operator*() const noexcept
+    T&
+    operator*() const noexcept
     {
         return static_cast<T&>(*this);
     }
@@ -422,6 +425,19 @@ public:
         IAsrInput**         pp_out_input) override;
 };
 
+template <>
+class SwigToCpp<IAsrSwigComponent> final
+    : public SwigToCppTypeInfo<IAsrSwigComponent, IAsrComponent>
+{
+public:
+    ASR_USING_BASE_CTOR(SwigToCppTypeInfo);
+
+    AsrResult Dispatch(
+        IAsrReadOnlyString* p_function_name,
+        IAsrVariantVector*  p_arguments,
+        IAsrVariantVector** pp_out_result) override;
+};
+
 AsrResult CommonPluginEnumFeature(
     const CommonPluginPtr& p_this,
     size_t                 index,
@@ -501,8 +517,7 @@ public:
             IsOk(get_cpp_query_interface_result)
             || get_cpp_query_interface_result != ASR_E_NO_INTERFACE)
         {
-            result.error_code = get_cpp_query_interface_result;
-            result.value = AsrSwigBaseWrapper{p_out_object};
+            result = {get_cpp_query_interface_result, p_out_object};
             return result;
         }
 
@@ -705,13 +720,30 @@ public:
     AsrRetInput CreateInstance(AsrReadOnlyString json_config) override;
 };
 
+template <>
+class CppToSwig<IAsrComponent> final
+    : public CppToSwigTypeInfo<IAsrSwigComponent, IAsrComponent>
+{
+public:
+    ASR_USING_BASE_CTOR(CppToSwigTypeInfo);
+
+    /**
+     * @brief 不支持自定义的 IAsrVariant 或 IAsrSwigVariant
+     * @param p_arguments 参数
+     * @return 操作的返回值
+     */
+    AsrRetVariantVector Dispatch(
+        AsrReadOnlyString function_name,
+        IAsrSwigVariantVector * p_arguments) override;
+};
+
 template <is_asr_interface ToCpp, is_asr_swig_interface FromSwig>
 auto MakeInterop(FromSwig* p_from) -> Utils::Expected<AsrPtr<ToCpp>>
 {
     if (const auto qi_result = p_from->QueryInterface(AsrIidOf<ToCpp>());
         IsOk(qi_result.error_code))
     {
-        return AsrPtr{static_cast<ToCpp*>(qi_result.value.GetVoidNoAddRef())};
+        return AsrPtr{static_cast<ToCpp*>(qi_result.GetVoidNoAddRef())};
     }
 
     try

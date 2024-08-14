@@ -5,7 +5,6 @@
 #include <AutoStarRail/Utils/CommonUtils.hpp>
 #include <cstring>
 
-
 AsrRetGuid AsrMakeAsrGuid(const char* p_guid_string)
 {
     ASR_CORE_TRACE_SCOPE;
@@ -43,80 +42,47 @@ AsrResult AsrMakeAsrGuid(const char* p_guid_string, AsrGuid* p_out_guid)
     return result.error_code;
 }
 
-void AsrSwigBaseWrapper::InternalAddRef()
-{
-    if (p_object_)
-    {
-        reinterpret_cast<IAsrSwigBase*>(p_object_)->AddRef();
-    }
-}
+void* AsrRetSwigBase::GetVoidNoAddRef() const noexcept { return value; }
 
-AsrSwigBaseWrapper::AsrSwigBaseWrapper() = default;
-
-AsrSwigBaseWrapper::AsrSwigBaseWrapper(const AsrSwigBaseWrapper& other)
-    : p_object_{other}
+void AsrRetSwigBase::SetValueAddRef(void* value)
 {
-    ASR_CORE_TRACE_SCOPE;
+    this->value = value;
     InternalAddRef();
 }
 
-AsrSwigBaseWrapper::AsrSwigBaseWrapper(AsrSwigBaseWrapper&& other) noexcept
-    : p_object_{std::exchange(other.p_object_, nullptr)}
+AsrRetSwigBase::AsrRetSwigBase(AsrResult error_code, void* value)
+    : error_code{error_code}, value{value}
 {
-    ASR_CORE_TRACE_SCOPE;
 }
 
-AsrSwigBaseWrapper& AsrSwigBaseWrapper::operator=(
-    const AsrSwigBaseWrapper& other)
+AsrRetSwigBase::AsrRetSwigBase(AsrResult error_code)
+    : error_code{error_code}, value{}
 {
-    ASR_CORE_TRACE_SCOPE;
-    *this = AsrSwigBaseWrapper{other};
+}
+
+AsrRetSwigBase::AsrRetSwigBase(const AsrRetSwigBase& rhs)
+    : error_code{rhs.error_code}, value{rhs.value}
+{
+    InternalAddRef();
+}
+AsrRetSwigBase& AsrRetSwigBase::operator=(const AsrRetSwigBase& rhs)
+{
+    error_code = rhs.error_code;
+    value = rhs.value;
     InternalAddRef();
     return *this;
 }
 
-AsrSwigBaseWrapper& AsrSwigBaseWrapper::operator=(
-    AsrSwigBaseWrapper&& other) noexcept
+AsrRetSwigBase::AsrRetSwigBase(AsrRetSwigBase&& other) noexcept
 {
-    ASR_CORE_TRACE_SCOPE;
-    p_object_ = std::exchange(other.p_object_, nullptr);
+    error_code = std::exchange(other.error_code, ASR_E_UNDEFINED_RETURN_VALUE);
+    value = std::exchange(other.value, nullptr);
+}
+
+AsrRetSwigBase& AsrRetSwigBase::operator=(AsrRetSwigBase&& other) noexcept
+{
+    this->error_code =
+        std::exchange(other.error_code, ASR_E_UNDEFINED_RETURN_VALUE);
+    this->value = std::exchange(other.value, nullptr);
     return *this;
 }
-
-AsrSwigBaseWrapper::~AsrSwigBaseWrapper()
-{
-    ASR_CORE_TRACE_SCOPE;
-    if (p_object_)
-    {
-        reinterpret_cast<IAsrSwigBase*>(p_object_)->Release();
-    }
-}
-
-AsrSwigBaseWrapper::AsrSwigBaseWrapper(void* p_object) noexcept
-    : p_object_{p_object}
-{
-    ASR_CORE_TRACE_SCOPE;
-}
-
-AsrSwigBaseWrapper::AsrSwigBaseWrapper(
-    ASR_INTERFACE IAsrSwigBase* p_base) noexcept
-    : p_object_{p_base}
-{
-    ASR_CORE_TRACE_SCOPE;
-}
-
-IAsrSwigBase* AsrSwigBaseWrapper::Get() const noexcept
-{
-    ASR_CORE_TRACE_SCOPE;
-    auto* const p_result = static_cast<IAsrSwigBase*>(p_object_);
-    p_result->AddRef();
-    return p_result;
-}
-
-void* AsrSwigBaseWrapper::GetVoidNoAddRef() const noexcept
-{
-    ASR_CORE_TRACE_SCOPE;
-    return p_object_;
-}
-
-AsrSwigBaseWrapper::operator void*() const noexcept { return p_object_; }

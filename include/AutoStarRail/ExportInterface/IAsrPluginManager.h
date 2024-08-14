@@ -117,6 +117,45 @@ ASR_INTERFACE IAsrSwigPluginInfoVector : public IAsrSwigBase
     virtual AsrRetPluginInfo At(size_t index) = 0;
 };
 
+// {166C3D1C-086E-46C0-BBDA-BF5DE074ACF2}
+ASR_DEFINE_GUID(
+    ASR_IID_SWIG_PLUGIN_MANAGER,
+    IAsrBasicPluginManager,
+    0x166c3d1c,
+    0x86e,
+    0x46c0,
+    0xbb,
+    0xda,
+    0xbf,
+    0x5d,
+    0xe0,
+    0x74,
+    0xac,
+    0xf2);
+SWIG_IGNORE(IAsrBasicPluginManager)
+ASR_INTERFACE IAsrBasicPluginManager{
+
+};
+
+// {064CBDE3-C1BC-40A7-9B8E-037F91727D46}
+ASR_DEFINE_GUID(
+    ASR_IID_SWIG_BASIC_PLUGIN_MANAGER,
+    IAsrSwigBasicPluginManager,
+    0x64cbde3,
+    0xc1bc,
+    0x40a7,
+    0x9b,
+    0x8e,
+    0x3,
+    0x7f,
+    0x91,
+    0x72,
+    0x7d,
+    0x46);
+ASR_INTERFACE IAsrSwigBasicPluginManager{
+
+};
+
 // {B2678FF8-720C-48E6-AC00-77D43D08F580}
 ASR_DEFINE_GUID(
     ASR_IID_PLUGIN_MANAGER,
@@ -140,6 +179,18 @@ ASR_INTERFACE IAsrPluginManager : public IAsrBase
     ASR_METHOD FindInterface(const AsrGuid& iid, void** pp_object) = 0;
 };
 
+ASR_DEFINE_RET_POINTER(AsrRetPluginManager, IAsrPluginManager);
+
+/**
+ * @brief 初始化插件管理器单例，提供需要被禁用的插件的GUID
+ *
+ * @return AsrResult S_OK表示成功初始化，S_FALSE表示已经初始化
+ */
+SWIG_IGNORE(InitializeIAsrPluginManager)
+ASR_C_API AsrResult InitializeIAsrPluginManager(
+    IAsrReadOnlyGuidVector* p_ignore_plugins_guid,
+    IAsrPluginManager**     pp_out_result);
+
 /**
  * @brief Call this function to load all plugin.
  *
@@ -150,5 +201,18 @@ SWIG_IGNORE(CreateIAsrPluginManagerAndGetResult)
 ASR_C_API AsrResult CreateIAsrPluginManagerAndGetResult(
     IAsrReadOnlyGuidVector* p_ignore_plugins_guid,
     IAsrPluginManager**     pp_out_result);
+
+/**
+ * @brief 获取现有的插件管理器单例
+ *
+ * @param pp_out_result
+ * @return AsrResult S_OK 返回现有的插件管理器；
+ * ASR_E_OBJECT_NOT_INIT 表示未初始化，调用者不应当遇到这一错误
+ */
+SWIG_IGNORE(CreateIAsrPluginManagerAndGetResult)
+ASR_C_API AsrResult
+GetExistingIAsrPluginManager(IAsrPluginManager** pp_out_result);
+
+ASR_API AsrRetPluginManager GetExistingIAsrPluginManager();
 
 #endif // ASR_PLUGINMANAGER_H

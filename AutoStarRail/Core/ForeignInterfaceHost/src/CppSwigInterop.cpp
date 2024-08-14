@@ -1,6 +1,5 @@
 #include <AutoStarRail/AsrPtr.hpp>
 #include <AutoStarRail/Core/ForeignInterfaceHost/CppSwigInterop.h>
-#include <AutoStarRail/ExportInterface/IAsrContext.h>
 #include <AutoStarRail/ExportInterface/IAsrPluginManager.h>
 #include <AutoStarRail/IAsrBase.h>
 #include <AutoStarRail/PluginInterface/IAsrPlugin.h>
@@ -382,6 +381,51 @@ AsrResult SwigToCpp<IAsrSwigInputFactory>::CreateInstance(
     return expected_result.error();
 }
 
+AsrResult SwigToCpp<IAsrSwigComponent>::Dispatch(
+IAsrReadOnlyString* p_function_name,
+    IAsrVariantVector*  p_arguments,
+    IAsrVariantVector** pp_out_result)
+{
+    AsrPtr<IAsrSwigVariantVector> p_swig_in;
+    if (const auto qi_in_result = p_arguments->QueryInterface(
+            AsrIidOf<IAsrSwigVariantVector>(),
+            p_swig_in.PutVoid());
+        IsFailed(qi_in_result))
+    {
+        ASR_CORE_LOG_ERROR(
+            "Unsupported IAsrVariantVector implementation. Error code = {}. Pointer = {}.",
+            qi_in_result,
+            Utils::VoidP(p_arguments));
+        return qi_in_result;
+    }
+
+    try
+    {
+        const auto value = p_impl_->Dispatch({p_function_name},p_swig_in.Get());
+        if (IsOk(value.error_code))
+        {
+            const auto qi_p_result =
+                value.value->QueryInterface(AsrIidOf<IAsrVariantVector>());
+            if (IsFailed(qi_p_result.error_code))
+            {
+                ASR_CORE_LOG_ERROR(
+                    "Unsupported IAsrSwigVariantVector implementation when reading result. Pointer = {}.",
+                    Utils::VoidP(value.value.Get()));
+                return qi_p_result.error_code;
+            }
+            auto& p_out_result = *pp_out_result;
+            p_out_result = static_cast<IAsrVariantVector*>(qi_p_result.value);
+            p_out_result->AddRef();
+        }
+        return value.error_code;
+    }
+    catch (const std::exception& ex)
+    {
+        ASR_CORE_LOG_EXCEPTION(ex);
+        return ASR_E_SWIG_INTERNAL_ERROR;
+    }
+}
+
 // TODO: IAsrSwigCaptureFactory CreateInstance
 
 AsrResult CommonPluginEnumFeature(
@@ -507,13 +551,61 @@ AsrResult CppToSwig<IAsrTouch>::Swipe(
 AsrRetInput CppToSwig<IAsrInputFactory>::CreateInstance(
     AsrReadOnlyString json_config)
 {
-    AsrRetInput       swig_result{};
-    AsrPtr<IAsrInput> p_cpp_result{};
-    swig_result.error_code =
-        p_impl_->CreateInstance(json_config.Get(), p_cpp_result.Put());
-    const auto expected_result = MakeInterop<IAsrSwigInput>(p_cpp_result.Get());
-    ToAsrRetType(expected_result, swig_result);
-    return swig_result;
+    try
+    {
+        AsrRetInput       swig_result{};
+        AsrPtr<IAsrInput> p_cpp_result{};
+        swig_result.error_code =
+            p_impl_->CreateInstance(json_config.Get(), p_cpp_result.Put());
+        const auto expected_result =
+            MakeInterop<IAsrSwigInput>(p_cpp_result.Get());
+        ToAsrRetType(expected_result, swig_result);
+        return swig_result;
+    }
+    catch (const std::exception& ex)
+    {
+        ASR_CORE_LOG_EXCEPTION(ex);
+        return {ASR_E_SWIG_INTERNAL_ERROR};
+    }
+}
+
+AsrRetVariantVector CppToSwig<IAsrComponent>::Dispatch(
+    AsrReadOnlyString function_name,
+    IAsrSwigVariantVector* p_arguments)
+{
+    const auto qi_result = p_arguments->QueryInterface(ASR_IID_VARIANT_VECTOR);
+    if (IsFailed(qi_result.error_code))
+    {
+        ASR_CORE_LOG_ERROR(
+            "Unsupported IAsrSwigVariantVector implementation. Pointer = {}.",
+            Utils::VoidP(p_arguments));
+        return {qi_result.error_code};
+    }
+    try
+    {
+        AsrRetVariantVector       result;
+        AsrPtr<IAsrVariantVector> p_result;
+        result.error_code = p_impl_->Dispatch(
+        function_name.Get(),
+            static_cast<IAsrVariantVector*>(qi_result.value),
+            p_result.Put());
+        AsrPtr<IAsrSwigVariantVector> p_swig_result;
+        if (const auto qi_p_result = p_result.As(p_swig_result);
+            IsFailed(qi_p_result))
+        {
+            ASR_CORE_LOG_ERROR(
+                "Unsupported IAsrVariantVector implementation when reading result. Pointer = {}.",
+                Utils::VoidP(p_result.Get()));
+            return {qi_p_result};
+        }
+        result.value = p_swig_result;
+        return result;
+    }
+    catch (const std::exception& ex)
+    {
+        ASR_CORE_LOG_EXCEPTION(ex);
+        return {ASR_E_SWIG_INTERNAL_ERROR};
+    }
 }
 
 ASR_CORE_FOREIGNINTERFACEHOST_NS_END

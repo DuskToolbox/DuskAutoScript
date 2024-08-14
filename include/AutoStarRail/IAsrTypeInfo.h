@@ -1,8 +1,8 @@
 #ifndef ASR_INSPECTABLE_H
 #define ASR_INSPECTABLE_H
 
-#include <AutoStarRail/IAsrBase.h>
 #include <AutoStarRail/AsrString.hpp>
+#include <AutoStarRail/IAsrBase.h>
 
 // {C66B4652-BEA9-4985-B8AC-F168BF0442E8}
 ASR_DEFINE_GUID(
@@ -57,5 +57,7 @@ ASR_INTERFACE IAsrSwigTypeInfo : public IAsrSwigBase
     virtual AsrRetGuid           GetGuid() = 0;
     virtual AsrRetReadOnlyString GetRuntimeClassName() = 0;
 };
+
+ASR_DEFINE_RET_POINTER(AsrRetTypeInfo, IAsrSwigTypeInfo);
 
 #endif // ASR_INSPECTABLE_H

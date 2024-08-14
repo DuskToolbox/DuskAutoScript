@@ -55,6 +55,12 @@ void _asr_internal_DelayAddRef(T* pointer)
     pointer->AddRef();
 }
 
+template <class T>
+void _asr_internal_DelayRelease(T* pointer) noexcept
+{
+    pointer->Release();
+}
+
 #define ASR_DEFINE_RET_TYPE(type_name, type)                                   \
     struct type_name                                                           \
     {                                                                          \
@@ -254,38 +260,71 @@ ASR_API inline bool IsAsrGuidEqual(
     return lhs == rhs;
 }
 
-/**
- * @brief
- * 注意：此类获取指针后不增加引用计数，因此提供指针时应该是已经执行过AddRef的指针
- *  这一特性使得它可以被QueryInterface参数中返回的指针正确初始化
- */
-class ASR_EXPORT AsrSwigBaseWrapper
-{
-    void* p_object_{nullptr};
+ASR_INTERFACE IAsrSwigBase;
 
-    void InternalAddRef();
+/**
+ * @brief 这个类持有的指针生命周期非常特殊：
+ *      1.
+ * 获取指针时它不获取指针所有权，但它确实持有指针所有权，即它专用于QueryInterface产生的指针
+ *      2. 因此释放时内部会Release指针
+ */
+struct AsrRetSwigBase
+{
+    SWIG_PRIVATE
+    AsrResult error_code{ASR_E_UNDEFINED_RETURN_VALUE};
+    // IAsrSwigBase
+    void* value{};
+
+    [[nodiscard]]
+    void* GetVoidNoAddRef() const noexcept;
+
+    void SetValueAddRef(void* value);
+
+    IAsrSwigBase* InternalAddRef()
+    {
+        auto* const p = static_cast<IAsrSwigBase*>(value);
+        if (p)
+        {
+            _asr_internal_DelayAddRef(p);
+        }
+        return p;
+    }
+
+    void InternalRelease() noexcept
+    {
+        auto* const p = static_cast<IAsrSwigBase*>(value);
+        if (p)
+        {
+            _asr_internal_DelayRelease(p);
+        }
+    }
+
+    AsrRetSwigBase(AsrResult error_code, void* value);
+    AsrRetSwigBase(AsrResult error_code);
 
 public:
-    AsrSwigBaseWrapper();
-    AsrSwigBaseWrapper(const AsrSwigBaseWrapper& other);
-#ifndef SWIG
-    AsrSwigBaseWrapper(AsrSwigBaseWrapper&& other) noexcept;
-    AsrSwigBaseWrapper& operator=(const AsrSwigBaseWrapper& other);
-    AsrSwigBaseWrapper& operator=(AsrSwigBaseWrapper&& other) noexcept;
-#endif // SWIG
-    ~AsrSwigBaseWrapper();
-#ifndef SWIG
-    explicit AsrSwigBaseWrapper(void* p_object) noexcept;
-#endif // SWIG
-    explicit AsrSwigBaseWrapper(ASR_INTERFACE IAsrSwigBase* p_base) noexcept;
-    ASR_INTERFACE IAsrSwigBase* Get() const noexcept;
-#ifndef SWIG
-    void* GetVoidNoAddRef() const noexcept;
-    operator void*() const noexcept;
-#endif // SWIG
-};
+    AsrRetSwigBase() = default;
+    ~AsrRetSwigBase() { InternalRelease(); }
 
-ASR_DEFINE_RET_TYPE(AsrRetSwigBase, AsrSwigBaseWrapper);
+#ifndef SWIG
+    ASR_API                 AsrRetSwigBase(const AsrRetSwigBase& rhs);
+    ASR_API AsrRetSwigBase& operator=(const AsrRetSwigBase& rhs);
+
+    ASR_API                 AsrRetSwigBase(AsrRetSwigBase&& other) noexcept;
+    ASR_API AsrRetSwigBase& operator=(AsrRetSwigBase&& other) noexcept;
+#endif // SWIG
+
+    AsrResult GetErrorCode() noexcept { return error_code; }
+
+    void SetErrorCode(AsrResult in_error_code) noexcept
+    {
+        this->error_code = in_error_code;
+    }
+
+    IAsrSwigBase* GetValue() { return InternalAddRef(); }
+
+    void SetValue(IAsrSwigBase* input_value) { value = input_value; }
+};
 
 // {FAF64DEB-0C0A-48CC-BA10-FCDE420350A2}
 ASR_DEFINE_GUID(

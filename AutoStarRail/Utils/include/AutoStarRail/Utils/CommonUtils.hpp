@@ -56,6 +56,7 @@ public:                                                                        \
 template <class Object, class T>
 class ProjectionGenerator
 {
+    [[no_unique_address]]
     T projection{*static_cast<std::add_pointer_t<Object>>(this)};
 
 public:

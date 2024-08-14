@@ -55,15 +55,6 @@ ASR_INTERFACE IAsrSettingsForUi : public IAsrBase
 };
 
 /**
- * @brief 使用指定路径加载Core设置，调用在整个程序生命周期中只能执行一次。
- *
- * @param p_settings_path 设置文件路径
- * @param pp_out_settings
- * @return AsrResult
- */
-ASR_C_API AsrResult AsrLoadGlobalSettings(IAsrReadOnlyString* p_settings_path);
-
-/**
  * @brief 读取加载的Core设置以供UI使用
  *
  * @param pp_out_settings 由UI使用的设置
