@@ -4,9 +4,6 @@
 #include <AutoStarRail/AsrString.hpp>
 #include <AutoStarRail/IAsrTypeInfo.h>
 
-ASR_INTERFACE IAsrContext;
-ASR_INTERFACE IAsrSwigContext;
-
 struct AsrDate
 {
     uint16_t year;

@@ -33,7 +33,7 @@ ASR_INTERFACE IAsrComponent : public IAsrTypeInfo
     ASR_METHOD Dispatch(
         IAsrReadOnlyString * p_function_name,
         IAsrVariantVector * p_arguments,
-        IAsrVariantVector * *pp_out_result);
+        IAsrVariantVector * *pp_out_result) = 0;
 };
 
 // {CF5730A3-D5F6-4422-A3D6-EF6145AC4DFF}
