@@ -4,9 +4,11 @@
 #include <AutoStarRail/AsrString.hpp>
 #include <AutoStarRail/IAsrBase.h>
 #include <AutoStarRail/IAsrTypeInfo.h>
-#include <AutoStarRail/PluginInterface/IAsrComponent.h>
 
 ASR_INTERFACE IAsrComponent;
+ASR_INTERFACE IAsrSwigComponent;
+
+struct AsrRetComponent;
 
 typedef enum AsrVariantType
 {
@@ -132,4 +134,7 @@ ASR_INTERFACE IAsrSwigVariantVector : public IAsrSwigBase
 
 ASR_DEFINE_RET_POINTER(AsrRetVariantVector, IAsrSwigVariantVector);
 
+#include <AutoStarRail/PluginInterface/IAsrComponent.h>
+
 #endif // ASR_VARIANT_H
+
