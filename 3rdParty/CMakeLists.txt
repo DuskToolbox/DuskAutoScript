@@ -589,6 +589,7 @@ endfunction()
 _download_and_config_oatpp()
 
 function(_download_and_config_drogon)
+    set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
 
     set(CMAKE_FOLDER "Asr3rd/jsoncpp")
 
