@@ -72,7 +72,7 @@ ASR_C_API AsrResult AsrLoadExtraStringForUi(
  * @brief 保存UI在Core中寄存的json设置信息
  */
 ASR_C_API AsrResult AsrSaveExtraStringForUi(
-    IAsrReadOnlyString* p_out_ui_extra_settings_json_string);
+    IAsrReadOnlyString* p_in_ui_extra_settings_json_string);
 
 #endif // SWIG
 

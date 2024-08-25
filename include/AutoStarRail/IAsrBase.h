@@ -223,6 +223,25 @@ ASR_NS_BEGIN
 inline bool IsOk(const AsrResult result) { return result >= 0; }
 inline bool IsFailed(const AsrResult result) { return result < 0; }
 
+#ifdef __cplusplus
+
+template <class T>
+concept is_asr_ret_type = requires { T::error_code; };
+
+template <is_asr_ret_type T>
+bool IsOk(const T& t)
+{
+    return t.error_code >= 0;
+}
+
+template <is_asr_ret_type T>
+bool IsFailed(const T& t)
+{
+    return t.error_code < 0;
+}
+
+#endif // __cplusplus
+
 ASR_NS_END
 
 #endif // __cplusplus

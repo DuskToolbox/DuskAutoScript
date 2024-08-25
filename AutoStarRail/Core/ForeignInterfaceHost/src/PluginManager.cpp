@@ -94,7 +94,7 @@ auto GetSupportedInterface(
  * @tparam F
  * @param error_code
  * @param p_locale_name
- * @param callback The function who return struct { AsrResult error_code,
+ * @param callback The function return struct { AsrResult error_code,
  * AsrReadOnlyString value; };
  * @return
  */
@@ -377,7 +377,7 @@ ASR_NS_ANONYMOUS_DETAILS_BEGIN
  */
 template <class T, class SwigT, size_t N>
 auto QueryInterfaceFrom(
-    const char           (&error_message)[N],
+    const char (&error_message)[N],
     const char*          u8_plugin_name,
     const CommonBasePtr& common_p_base) -> ASR::Utils::Expected<AsrPtr<T>>
 {
@@ -627,13 +627,12 @@ auto RegisterCaptureFactoryFromPlugin(
             qi_result);
         return qi_result;
     }
-    capture_factory_vector.emplace_back();
+    capture_factory_vector.emplace_back(std::move(p_result));
     return ASR_S_OK;
 }
 
-template <class T>
 auto RegisterInputFactoryFromPlugin(
-    T&                          input_factory_manager,
+    InputFactoryManager&        input_factory_manager,
     GetInterfaceFromPluginParam param) -> AsrResult
 {
     const auto& [u8_plugin_name, common_p_base] = param;
@@ -684,6 +683,57 @@ auto RegisterInputFactoryFromPlugin(
                 const AsrPtr<IAsrSwigInputFactory>& p_factory)
             { return input_factory_manager.Register(p_factory.Get()); }},
         expected_common_p_input_factory.value());
+}
+
+auto RegisterComponentFactoryFromPlugin(
+    ComponentFactoryManager&    component_factory_manager,
+    GetInterfaceFromPluginParam param) -> AsrResult
+{
+    const auto& [u8_plugin_name, common_p_base] = param;
+
+    using CommonComponentFactoryPointer = std::
+        variant<AsrPtr<IAsrComponentFactory>, AsrPtr<IAsrSwigComponentFactory>>;
+    using ExpectedCommonComponentFactoryPointer =
+        ASR::Utils::Expected<CommonComponentFactoryPointer>;
+
+    ExpectedCommonComponentFactoryPointer expected_common_p_component_factory =
+        std::visit(
+            ASR::Utils::overload_set{
+                [](const AsrPtr<IAsrBase>& p_base)
+                    -> ExpectedCommonComponentFactoryPointer
+                {
+                    AsrPtr<IAsrComponentFactory> p_component_factory{};
+                    if (const auto qi_result = p_base.As(p_component_factory);
+                        IsFailed(qi_result))
+                    {
+                        return tl::make_unexpected(qi_result);
+                    }
+                    return p_component_factory;
+                },
+                [](const AsrPtr<IAsrSwigBase>& p_base)
+                    -> ExpectedCommonComponentFactoryPointer
+                {
+                    const auto qi_result = p_base->QueryInterface(
+                        AsrIidOf<IAsrSwigComponentFactory>());
+                    if (IsFailed(qi_result.error_code))
+                    {
+                        return tl::make_unexpected(qi_result.error_code);
+                    }
+                    return AsrPtr{static_cast<IAsrSwigComponentFactory*>(
+                        qi_result.GetVoidNoAddRef())};
+                }},
+            common_p_base);
+
+    if (!expected_common_p_component_factory)
+    {
+        return expected_common_p_component_factory.error();
+    }
+
+    return std::visit(
+        Utils::overload_set{[&component_factory_manager](const auto& value) {
+            return component_factory_manager.Register(value.Get());
+        }},
+        expected_common_p_component_factory.value());
 }
 
 const std::string UPPER_CURRENT_PLATFORM = []
@@ -851,6 +901,21 @@ AsrResult PluginManager::AddInterface(
             }
             break;
         }
+        case ASR_PLUGIN_FEATURE_COMPONENT_FACTORY:
+            if (const auto rcffp_result =
+                    Details::RegisterComponentFactoryFromPlugin(
+                        component_factory_manager_,
+                        {u8_plugin_name, opt_common_p_base.value()});
+                IsFailed(rcffp_result))
+            {
+                ASR_CORE_LOG_ERROR(
+                    "Can not get component factory interface from plugin {}. "
+                    "Error code = {}.",
+                    u8_plugin_name,
+                    rcffp_result);
+                result = ASR_S_FALSE;
+            }
+            break;
         default:
             throw ASR::Utils::UnexpectedEnumException::FromEnum(feature);
         }
@@ -1277,7 +1342,7 @@ auto PluginManager::GetInterfaceStaticStorage(IAsrTypeInfo* p_type_info) const
 
 auto PluginManager::GetInterfaceStaticStorage(IAsrSwigTypeInfo* p_type_info)
     const -> Asr::Utils::Expected<
-        std::reference_wrapper<const InterfaceStaticStorage>>
+              std::reference_wrapper<const InterfaceStaticStorage>>
 {
     if (p_type_info == nullptr)
     {
@@ -1311,12 +1376,17 @@ bool CheckIsFindInterfaceResultSucceed(
     const AsrResult error_code,
     const char*     variable_name)
 {
-    if (IsFailed(error_code) && error_code != ASR_E_NO_INTERFACE)
+    if (IsFailed(error_code))
     {
-        ASR_CORE_LOG_ERROR(
-            "Error happend. Code = {}. Variable name = {}",
-            error_code,
-            variable_name);
+        if (error_code != ASR_E_NO_INTERFACE)
+        {
+            ASR_CORE_LOG_ERROR(
+                "Error happened. Code = {}. Variable name = {}",
+                error_code,
+                variable_name);
+            return false;
+        }
+        ASR_CORE_LOG_INFO("Interface not found in {}", variable_name);
         return false;
     }
     return true;
@@ -1358,6 +1428,17 @@ AsrResult PluginManager::FindInterface(const AsrGuid& iid, void** pp_out_object)
         *pp_out_object = factory_it->Get();
         factory_it->Get()->AddRef();
         return ASR_S_OK;
+    }
+
+    result = component_factory_manager_.CreateObject(
+        iid,
+        reinterpret_cast<IAsrComponent**>(pp_out_object));
+
+    if (Details::CheckIsFindInterfaceResultSucceed(
+            result,
+            "component_factory_manager_"))
+    {
+        return result;
     }
 
     result = error_lens_manager_.FindInterface(

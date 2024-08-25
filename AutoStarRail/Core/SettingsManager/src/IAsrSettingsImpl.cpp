@@ -306,15 +306,15 @@ AsrResult AsrLoadExtraStringForUi(
 }
 
 AsrResult AsrSaveExtraStringForUi(
-    IAsrReadOnlyString* p_out_ui_extra_settings_json_string)
+    IAsrReadOnlyString* p_in_ui_extra_settings_json_string)
 {
-    ASR_UTILS_CHECK_POINTER(p_out_ui_extra_settings_json_string);
+    ASR_UTILS_CHECK_POINTER(p_in_ui_extra_settings_json_string);
 
     Details::g_p_ui_extra_settings_json_string =
-        p_out_ui_extra_settings_json_string;
+        p_in_ui_extra_settings_json_string;
     const char* p_u8_ui_extra_settings_json_string{};
     if (const auto get_u8_string_result =
-            p_out_ui_extra_settings_json_string->GetUtf8(
+            p_in_ui_extra_settings_json_string->GetUtf8(
                 &p_u8_ui_extra_settings_json_string);
         ASR::IsFailed(get_u8_string_result))
     {
