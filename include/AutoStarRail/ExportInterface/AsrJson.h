@@ -208,7 +208,7 @@ public:
         return p_impl_->SetObjectByIndex(index, in_asr_json.p_impl_.Get());
     }
 
-#ifndef SWIGPYTHON
+#ifndef SWIG
     AsrResult GetTo(const AsrReadOnlyString& key, AsrReadOnlyString& OUTPUT)
     {
         ASR::AsrPtr<IAsrReadOnlyString> p_value{};
@@ -277,7 +277,7 @@ public:
         }
         return error_code;
     }
-#endif // SWIGPYTHON
+#endif // SWIG
 };
 
 ASR_DEFINE_RET_TYPE(AsrRetJson, AsrJson);
