@@ -96,7 +96,23 @@ public:
 
 class PluginManager;
 
-class IAsrPluginManagerImpl : public IAsrPluginManager
+class IAsrPluginManagerForUiImpl final : public IAsrPluginManagerForUi
+{
+    PluginManager& impl_;
+
+public:
+    IAsrPluginManagerForUiImpl(PluginManager& impl);
+    // IAsrBase
+    int64_t   AddRef() override;
+    int64_t   Release() override;
+    AsrResult QueryInterface(const AsrGuid& iid, void** pp_object) override;
+    // IAsrPluginManagerForUi
+    AsrResult GetAllPluginInfo(
+        IAsrPluginInfoVector** pp_out_plugin_info_vector) override;
+    AsrResult FindInterface(const AsrGuid& iid, void** pp_object) override;
+};
+
+class IAsrPluginManagerImpl final : public IAsrPluginManager
 {
     PluginManager& impl_;
 
@@ -107,12 +123,38 @@ public:
     int64_t   Release() override;
     AsrResult QueryInterface(const AsrGuid& iid, void** pp_object) override;
     // IAsrPluginManager
-    AsrResult GetAllPluginInfo(
-        IAsrPluginInfoVector** pp_out_plugin_info_vector) override;
-    AsrResult FindInterface(const AsrGuid& iid, void** pp_object) override;
+    AsrResult CreateComponent(
+        const AsrGuid&  iid,
+        IAsrComponent** pp_out_component) override;
+    AsrResult CreateCaptureManager(
+        IAsrReadOnlyString*  p_capture_config,
+        IAsrCaptureManager** pp_out_capture_manager) override;
+};
+
+class IAsrSwigPluginManagerImpl final : public IAsrSwigPluginManager
+{
+    PluginManager& impl_;
+
+public:
+    IAsrSwigPluginManagerImpl(PluginManager& impl);
+
+    // IAsrSwigBase
+    int64_t        AddRef() override;
+    int64_t        Release() override;
+    AsrRetSwigBase QueryInterface(const AsrGuid& iid) override;
+    // IAsrSwigPluginManager
+    AsrRetComponent      CreateComponent(const AsrGuid& iid) override;
+    AsrRetCaptureManager CreateCaptureManager(
+        AsrReadOnlyString capture_config) override;
 };
 
 class PluginManager
+    : ASR_UTILS_MULTIPLE_PROJECTION_GENERATORS(
+          PluginManager,
+          IAsrPluginManagerImpl,
+          IAsrSwigPluginManagerImpl),
+      public Utils::
+          ProjectionGenerator<PluginManager, IAsrPluginManagerForUiImpl>
 {
 public:
     /**
@@ -201,7 +243,16 @@ public:
 
     AsrResult FindInterface(const AsrGuid& iid, void** pp_out_object);
 
-    operator IAsrPluginManagerImpl*() noexcept;
+    static AsrResult CreateCaptureManager(
+        IAsrReadOnlyString*  p_capture_config,
+        IAsrCaptureManager** pp_out_manager);
+    static AsrRetCaptureManager CreateCaptureManager(
+        AsrReadOnlyString capture_config);
+
+    AsrResult CreateComponent(
+        const AsrGuid&  iid,
+        IAsrComponent** pp_out_component);
+    AsrRetComponent CreateComponent(const AsrGuid& iid);
 };
 
 extern PluginManager g_plugin_manager;

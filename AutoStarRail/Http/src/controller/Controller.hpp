@@ -260,23 +260,23 @@ public:
         std::string a = "启动配置文件" + profile_id->profile_id;
         ASR_LOG_INFO(a.c_str());
 
-        AsrGuid    touch_iid;
-        const auto create_result =
-            AsrMakeAsrGuid("6C78DCAD-9173-4EE3-84CC-546973658460", &touch_iid);
-        ASR::AsrPtr<IAsrTask> p_task{};
-        p_plugin_manager->FindInterface(touch_iid, p_task.PutVoid());
-        ASR::AsrPtr<IAsrReadOnlyString> p_profile{};
-        ::CreateIAsrReadOnlyStringFromUtf8(
-            R"(
-{
-    "input": {
-        "x": 100,
-        "y": 200
-    }
-}
-        )",
-            p_profile.Put());
-        p_task->Do(p_profile.Get());
+//         AsrGuid    touch_iid;
+//         const auto create_result =
+//             AsrMakeAsrGuid("6C78DCAD-9173-4EE3-84CC-546973658460", &touch_iid);
+//         ASR::AsrPtr<IAsrTask> p_task{};
+//         p_plugin_manager->FindInterface(touch_iid, p_task.PutVoid());
+//         ASR::AsrPtr<IAsrReadOnlyString> p_profile{};
+//         ::CreateIAsrReadOnlyStringFromUtf8(
+//             R"(
+// {
+//     "input": {
+//         "x": 100,
+//         "y": 200
+//     }
+// }
+//         )",
+//             p_profile.Put());
+//         p_task->Do(p_profile.Get());
 
         auto response =
             ApiResponse<oatpp::Object<ProfileRunning>>::createShared();

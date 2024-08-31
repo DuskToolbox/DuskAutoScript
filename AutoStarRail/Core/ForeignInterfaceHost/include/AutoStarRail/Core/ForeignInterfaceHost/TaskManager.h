@@ -8,6 +8,9 @@
 
 ASR_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
+/**
+* @brief task不得被外部调用，因此FindInterface不支持SWIG是符合预期的
+*/
 class TaskManager
 {
     std::unordered_map<AsrGuid, AsrPtr<IAsrTask>> map_;

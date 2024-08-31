@@ -6,6 +6,7 @@
 #include <AutoStarRail/Core/ForeignInterfaceHost/AsrStringImpl.h>
 #include <AutoStarRail/Core/ForeignInterfaceHost/CppSwigInterop.h>
 #include <AutoStarRail/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
+#include <AutoStarRail/Core/ForeignInterfaceHost/IAsrCaptureManagerImpl.h>
 #include <AutoStarRail/Core/ForeignInterfaceHost/IAsrPluginManagerImpl.h>
 #include <AutoStarRail/Core/ForeignInterfaceHost/PluginManager.h>
 #include <AutoStarRail/Core/Logger/Logger.h>
@@ -748,6 +749,47 @@ const std::string UPPER_CURRENT_PLATFORM = []
 
 ASR_NS_ANONYMOUS_DETAILS_END
 
+IAsrPluginManagerForUiImpl::IAsrPluginManagerForUiImpl(PluginManager& impl)
+    : impl_{impl}
+{
+}
+
+int64_t IAsrPluginManagerForUiImpl::AddRef() { return impl_.AddRef(); }
+
+int64_t IAsrPluginManagerForUiImpl::Release() { return impl_.Release(); }
+
+AsrResult IAsrPluginManagerForUiImpl::QueryInterface(
+    const AsrGuid& iid,
+    void**         pp_object)
+{
+    const auto qi_ui_result =
+        Utils::QueryInterface<IAsrPluginManagerForUi>(this, iid, pp_object);
+    if (IsOk(qi_ui_result))
+    {
+        return qi_ui_result;
+    }
+
+    const auto qi_result =
+        Utils::QueryInterface<IAsrPluginManager, IAsrPluginManagerImpl>(
+            impl_,
+            iid,
+            pp_object);
+    return qi_result;
+}
+
+AsrResult IAsrPluginManagerForUiImpl::GetAllPluginInfo(
+    IAsrPluginInfoVector** pp_out_plugin_info_vector)
+{
+    return impl_.GetAllPluginInfo(pp_out_plugin_info_vector);
+}
+
+AsrResult IAsrPluginManagerForUiImpl::FindInterface(
+    const AsrGuid& iid,
+    void**         pp_object)
+{
+    return impl_.FindInterface(iid, pp_object);
+}
+
 IAsrPluginManagerImpl::IAsrPluginManagerImpl(PluginManager& impl) : impl_{impl}
 {
 }
@@ -763,17 +805,44 @@ AsrResult IAsrPluginManagerImpl::QueryInterface(
     return Utils::QueryInterface<IAsrPluginManager>(this, iid, pp_object);
 }
 
-AsrResult IAsrPluginManagerImpl::GetAllPluginInfo(
-    IAsrPluginInfoVector** pp_out_plugin_info_vector)
+AsrResult IAsrPluginManagerImpl::CreateComponent(
+    const AsrGuid&  iid,
+    IAsrComponent** pp_out_component)
 {
-    return impl_.GetAllPluginInfo(pp_out_plugin_info_vector);
+    return impl_.CreateComponent(iid, pp_out_component);
 }
 
-AsrResult IAsrPluginManagerImpl::FindInterface(
-    const AsrGuid& iid,
-    void**         pp_object)
+AsrResult IAsrPluginManagerImpl::CreateCaptureManager(
+    IAsrReadOnlyString*  p_capture_config,
+    IAsrCaptureManager** pp_out_capture_manager)
 {
-    return impl_.FindInterface(iid, pp_object);
+    return PluginManager::CreateCaptureManager(
+        p_capture_config,
+        pp_out_capture_manager);
+}
+
+IAsrSwigPluginManagerImpl::IAsrSwigPluginManagerImpl(PluginManager& impl)
+    : impl_{impl}
+{
+}
+int64_t IAsrSwigPluginManagerImpl::AddRef() { return impl_.AddRef(); }
+
+int64_t IAsrSwigPluginManagerImpl::Release() { return impl_.Release(); }
+
+AsrRetSwigBase IAsrSwigPluginManagerImpl::QueryInterface(const AsrGuid& iid)
+{
+    return Utils::QueryInterface<IAsrSwigPluginManager>(this, iid);
+}
+
+AsrRetComponent IAsrSwigPluginManagerImpl::CreateComponent(const AsrGuid& iid)
+{
+    return impl_.CreateComponent(iid);
+}
+
+AsrRetCaptureManager IAsrSwigPluginManagerImpl::CreateCaptureManager(
+    AsrReadOnlyString capture_config)
+{
+    return impl_.CreateCaptureManager(capture_config);
 }
 
 AsrResult PluginManager::AddInterface(
@@ -1430,17 +1499,6 @@ AsrResult PluginManager::FindInterface(const AsrGuid& iid, void** pp_out_object)
         return ASR_S_OK;
     }
 
-    result = component_factory_manager_.CreateObject(
-        iid,
-        reinterpret_cast<IAsrComponent**>(pp_out_object));
-
-    if (Details::CheckIsFindInterfaceResultSucceed(
-            result,
-            "component_factory_manager_"))
-    {
-        return result;
-    }
-
     result = error_lens_manager_.FindInterface(
         iid,
         reinterpret_cast<IAsrErrorLens**>(pp_out_object));
@@ -1464,10 +1522,69 @@ AsrResult PluginManager::FindInterface(const AsrGuid& iid, void** pp_out_object)
     return ASR_E_NO_INTERFACE;
 }
 
-PluginManager::operator IAsrPluginManagerImpl*() noexcept
+AsrResult PluginManager::CreateCaptureManager(
+    IAsrReadOnlyString*  p_capture_config,
+    IAsrCaptureManager** pp_out_manager)
 {
-    return &cpp_projection_;
+    ASR_UTILS_CHECK_POINTER(p_capture_config)
+
+    auto [error_code, p_capture_manager_impl] =
+        CreateAsrCaptureManagerImpl(p_capture_config);
+
+    if (ASR::IsFailed(error_code))
+    {
+        return error_code;
+    }
+
+    ASR_UTILS_CHECK_POINTER(pp_out_manager)
+
+    IAsrCaptureManager* p_result =
+        static_cast<decltype(p_result)>(*p_capture_manager_impl);
+    p_result->AddRef();
+    *pp_out_manager = p_result;
+    return error_code;
 }
+
+AsrRetCaptureManager PluginManager::CreateCaptureManager(
+    AsrReadOnlyString capture_config)
+{
+    AsrRetCaptureManager result{};
+    auto* const          p_json_config = capture_config.Get();
+
+    auto [error_code, p_capture_manager_impl] =
+        CreateAsrCaptureManagerImpl(p_json_config);
+
+    result.error_code = error_code;
+    if (ASR::IsFailed(result.error_code))
+    {
+        return result;
+    }
+
+    result.SetValue(
+        static_cast<IAsrSwigCaptureManager*>(*p_capture_manager_impl));
+    return result;
+}
+
+AsrResult PluginManager::CreateComponent(
+    const AsrGuid&  iid,
+    IAsrComponent** pp_out_component)
+{
+    const auto result =
+        component_factory_manager_.CreateObject(iid, pp_out_component);
+
+    if (Details::CheckIsFindInterfaceResultSucceed(
+            result,
+            "component_factory_manager_"))
+    {
+        return result;
+    }
+    return result;
+}
+
+AsrRetComponent PluginManager::CreateComponent(const AsrGuid& iid)
+{
+    return component_factory_manager_.CreateObject(iid);
+};
 
 ASR_CORE_FOREIGNINTERFACEHOST_NS_END
 

@@ -14,8 +14,10 @@
 
 #include <AutoStarRail/AsrExport.h>
 #include <AutoStarRail/AsrString.hpp>
+#include <AutoStarRail/ExportInterface/IAsrCaptureManager.h>
 #include <AutoStarRail/ExportInterface/IAsrGuidVector.h>
 #include <AutoStarRail/IAsrBase.h>
+#include <AutoStarRail/PluginInterface/IAsrComponent.h>
 #include <cstddef>
 
 // {8179F162-5E1A-4248-AC67-758D2AFF18A7}
@@ -117,43 +119,26 @@ ASR_INTERFACE IAsrSwigPluginInfoVector : public IAsrSwigBase
     virtual AsrRetPluginInfo At(size_t index) = 0;
 };
 
-// {166C3D1C-086E-46C0-BBDA-BF5DE074ACF2}
+// {C665F0C7-F766-4151-802A-533BDCE72D90}
 ASR_DEFINE_GUID(
-    ASR_IID_SWIG_PLUGIN_MANAGER,
-    IAsrBasicPluginManager,
-    0x166c3d1c,
-    0x86e,
-    0x46c0,
-    0xbb,
-    0xda,
-    0xbf,
-    0x5d,
-    0xe0,
-    0x74,
-    0xac,
-    0xf2);
-SWIG_IGNORE(IAsrBasicPluginManager)
-ASR_INTERFACE IAsrBasicPluginManager{
-
-};
-
-// {064CBDE3-C1BC-40A7-9B8E-037F91727D46}
-ASR_DEFINE_GUID(
-    ASR_IID_SWIG_BASIC_PLUGIN_MANAGER,
-    IAsrSwigBasicPluginManager,
-    0x64cbde3,
-    0xc1bc,
-    0x40a7,
-    0x9b,
-    0x8e,
-    0x3,
-    0x7f,
-    0x91,
-    0x72,
-    0x7d,
-    0x46);
-ASR_INTERFACE IAsrSwigBasicPluginManager{
-
+    ASR_IID_PLUGIN_MANAGER_FOR_UI,
+    IAsrPluginManagerForUi,
+    0xc665f0c7,
+    0xf766,
+    0x4151,
+    0x80,
+    0x2a,
+    0x53,
+    0x3b,
+    0xdc,
+    0xe7,
+    0x2d,
+    0x90);
+ASR_INTERFACE IAsrPluginManagerForUi : public IAsrBase
+{
+    ASR_METHOD GetAllPluginInfo(
+        IAsrPluginInfoVector * *pp_out_plugin_info_vector) = 0;
+    ASR_METHOD FindInterface(const AsrGuid& iid, void** pp_object) = 0;
 };
 
 // {B2678FF8-720C-48E6-AC00-77D43D08F580}
@@ -174,9 +159,34 @@ ASR_DEFINE_GUID(
 SWIG_IGNORE(IAsrPluginManager)
 ASR_INTERFACE IAsrPluginManager : public IAsrBase
 {
-    ASR_METHOD GetAllPluginInfo(
-        IAsrPluginInfoVector * *pp_out_plugin_info_vector) = 0;
-    ASR_METHOD FindInterface(const AsrGuid& iid, void** pp_object) = 0;
+    ASR_METHOD CreateComponent(
+        const AsrGuid&  iid,
+        IAsrComponent** pp_out_component) = 0;
+    ASR_METHOD CreateCaptureManager(
+        IAsrReadOnlyString * p_capture_config,
+        IAsrCaptureManager * *pp_out_capture_manager) = 0;
+};
+
+// {064CBDE3-C1BC-40A7-9B8E-037F91727D46}
+ASR_DEFINE_GUID(
+    ASR_IID_SWIG_PLUGIN_MANAGER,
+    IAsrSwigPluginManager,
+    0x64cbde3,
+    0xc1bc,
+    0x40a7,
+    0x9b,
+    0x8e,
+    0x3,
+    0x7f,
+    0x91,
+    0x72,
+    0x7d,
+    0x46);
+ASR_INTERFACE IAsrSwigPluginManager : public IAsrSwigBase
+{
+    virtual AsrRetComponent      CreateComponent(const AsrGuid& iid) = 0;
+    virtual AsrRetCaptureManager CreateCaptureManager(
+        AsrReadOnlyString capture_config) = 0;
 };
 
 ASR_DEFINE_RET_POINTER(AsrRetPluginManager, IAsrPluginManager);

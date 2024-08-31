@@ -110,6 +110,11 @@ public:
     explicit operator IAsrSwigCaptureManager*() noexcept;
 };
 
+auto CreateAsrCaptureManagerImpl(IAsrReadOnlyString* p_json_config)
+    -> std::pair<
+        AsrResult,
+        ASR::AsrPtr<ASR::Core::ForeignInterfaceHost::CaptureManagerImpl>>;
+
 ASR_CORE_FOREIGNINTERFACEHOST_NS_END
 
 #endif // ASR_CORE_FOREIGNINTERFACEHOST_IASRCAPTUREIMPL_H

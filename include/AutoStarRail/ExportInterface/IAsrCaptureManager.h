@@ -68,12 +68,4 @@ ASR_INTERFACE IAsrSwigCaptureManager : public IAsrSwigBase
 
 ASR_DEFINE_RET_POINTER(AsrRetCaptureManager, IAsrSwigCaptureManager);
 
-SWIG_IGNORE(CreateIAsrCaptureManager)
-ASR_C_API AsrResult CreateIAsrCaptureManager(
-    IAsrReadOnlyString*  p_json_config,
-    IAsrCaptureManager** pp_out_capture_manager);
-
-ASR_API AsrRetCaptureManager
-CreateIAsrSwigCaptureManager(AsrReadOnlyString json_config);
-
 #endif // ASR_ASRCAPTUREMANAGER_H

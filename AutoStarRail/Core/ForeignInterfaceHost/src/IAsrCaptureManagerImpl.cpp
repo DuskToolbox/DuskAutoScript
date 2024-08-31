@@ -258,8 +258,6 @@ CaptureManagerImpl::operator IAsrSwigCaptureManager*() noexcept
     return &swig_projection_;
 }
 
-ASR_CORE_FOREIGNINTERFACEHOST_NS_END
-
 ASR_NS_ANONYMOUS_DETAILS_BEGIN
 
 void OnCreateCaptureInstanceFailed(
@@ -304,6 +302,8 @@ No error explanation found. Result: {}.)",
     p_capture_manager->AddInstance(p_capture_factory_name, in_error_info);
     ASR_CORE_LOG_ERROR(error_message);
 }
+
+ASR_NS_ANONYMOUS_DETAILS_END
 
 auto CreateAsrCaptureManagerImpl(IAsrReadOnlyString* p_json_config)
     -> std::pair<
@@ -386,47 +386,4 @@ auto CreateAsrCaptureManagerImpl(IAsrReadOnlyString* p_json_config)
     return {result, p_capture_manager};
 }
 
-ASR_NS_ANONYMOUS_DETAILS_END
-
-AsrResult CreateIAsrCaptureManager(
-    IAsrReadOnlyString*  p_json_config,
-    IAsrCaptureManager** pp_out_capture_manager)
-{
-    ASR_UTILS_CHECK_POINTER(p_json_config)
-
-    IAsrCaptureManager* p_result;
-
-    auto [error_code, p_capture_manager_impl] =
-        Details::CreateAsrCaptureManagerImpl(p_json_config);
-
-    if (ASR::IsFailed(error_code))
-    {
-        return error_code;
-    }
-
-    ASR_UTILS_CHECK_POINTER(pp_out_capture_manager)
-
-    p_result = static_cast<decltype(p_result)>(*p_capture_manager_impl);
-    p_result->AddRef();
-    *pp_out_capture_manager = p_result;
-    return error_code;
-}
-
-AsrRetCaptureManager CreateIAsrSwigCaptureManager(AsrReadOnlyString json_config)
-{
-    AsrRetCaptureManager result{};
-    auto* const          p_json_config = json_config.Get();
-
-    auto [error_code, p_capture_manager_impl] =
-        Details::CreateAsrCaptureManagerImpl(p_json_config);
-
-    result.error_code = error_code;
-    if (ASR::IsFailed(result.error_code))
-    {
-        return result;
-    }
-
-    result.SetValue(
-        static_cast<IAsrSwigCaptureManager*>(*p_capture_manager_impl));
-    return result;
-}
+ASR_CORE_FOREIGNINTERFACEHOST_NS_END
