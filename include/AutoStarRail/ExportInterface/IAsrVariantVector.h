@@ -96,6 +96,7 @@ ASR_DEFINE_GUID(
     0xdb,
     0xc5,
     0x44);
+ASR_SWIG_EXPORT_ATTRIBUTE(IAsrSwigVariantVector)
 ASR_INTERFACE IAsrSwigVariantVector : public IAsrSwigBase
 {
     virtual AsrRetInt            GetInt(size_t index) = 0;

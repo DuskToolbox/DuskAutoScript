@@ -134,6 +134,7 @@ ASR_DEFINE_GUID(
     0xe7,
     0x2d,
     0x90);
+SWIG_IGNORE(IAsrPluginManagerForUi)
 ASR_INTERFACE IAsrPluginManagerForUi : public IAsrBase
 {
     ASR_METHOD GetAllPluginInfo(
@@ -182,6 +183,7 @@ ASR_DEFINE_GUID(
     0x72,
     0x7d,
     0x46);
+ASR_SWIG_EXPORT_ATTRIBUTE(IAsrSwigPluginManager)
 ASR_INTERFACE IAsrSwigPluginManager : public IAsrSwigBase
 {
     virtual AsrRetComponent      CreateComponent(const AsrGuid& iid) = 0;

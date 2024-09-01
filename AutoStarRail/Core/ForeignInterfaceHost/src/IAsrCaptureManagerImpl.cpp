@@ -13,6 +13,64 @@
 #include <utility>
 #include <vector>
 
+AsrResult AsrRetCaptureManagerLoadErrorState::GetErrorCode() noexcept
+{
+    return error_code;
+}
+
+AsrResult AsrRetCaptureManagerLoadErrorState::GetLoadResult() noexcept
+{
+    return load_result;
+}
+
+AsrReadOnlyString AsrRetCaptureManagerLoadErrorState::GetErrorMessage()
+{
+    return error_message;
+}
+
+AsrRetCaptureManagerPerformanceTestResult::
+    AsrRetCaptureManagerPerformanceTestResult(
+        AsrResult         error_code,
+        AsrResult         test_result,
+        IAsrSwigCapture*  p_capture,
+        int32_t           time_spent_in_ms,
+        AsrReadOnlyString error_message)
+    : error_code_{error_code}, test_result_{test_result}, p_capture_{p_capture},
+      time_spent_in_ms_{time_spent_in_ms},
+      error_message_{std::move(error_message)}
+{
+}
+
+AsrResult AsrRetCaptureManagerPerformanceTestResult::GetErrorCode()
+    const noexcept
+{
+    return error_code_;
+}
+
+AsrResult AsrRetCaptureManagerPerformanceTestResult::GetTestResult()
+    const noexcept
+{
+    return test_result_;
+}
+
+IAsrSwigCapture*
+AsrRetCaptureManagerPerformanceTestResult::GetCapture() noexcept
+{
+    return p_capture_.Get();
+}
+
+int32_t AsrRetCaptureManagerPerformanceTestResult::GetTimeSpentInMs()
+    const noexcept
+{
+    return time_spent_in_ms_;
+}
+
+AsrReadOnlyString AsrRetCaptureManagerPerformanceTestResult::GetErrorMessage()
+    const noexcept
+{
+    return error_message_;
+}
+
 ASR_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
 IAsrCaptureManagerImpl::IAsrCaptureManagerImpl(CaptureManagerImpl& impl)
@@ -34,7 +92,7 @@ AsrResult IAsrCaptureManagerImpl::QueryInterface(
         pp_out_object);
 }
 
-ASR_IMPL IAsrCaptureManagerImpl::EnumCaptureLoadErrorState(
+ASR_IMPL IAsrCaptureManagerImpl::EnumLoadErrorState(
     const size_t         index,
     AsrResult*           p_error_code,
     IAsrReadOnlyString** pp_out_error_explanation)
@@ -45,28 +103,30 @@ ASR_IMPL IAsrCaptureManagerImpl::EnumCaptureLoadErrorState(
         pp_out_error_explanation);
 }
 
-ASR_IMPL IAsrCaptureManagerImpl::EnumCaptureInterface(
+ASR_IMPL IAsrCaptureManagerImpl::EnumInterface(
     const size_t  index,
     IAsrCapture** pp_out_interface)
 {
     return impl_.EnumCaptureInterface(index, pp_out_interface);
 }
 
-ASR_IMPL IAsrCaptureManagerImpl::RunCapturePerformanceTest()
+ASR_IMPL IAsrCaptureManagerImpl::RunPerformanceTest()
 {
     return impl_.RunCapturePerformanceTest();
 }
 
-ASR_IMPL IAsrCaptureManagerImpl::EnumCapturePerformanceTestResult(
+ASR_IMPL IAsrCaptureManagerImpl::EnumPerformanceTestResult(
     const size_t         index,
     AsrResult*           p_out_error_code,
     int32_t*             p_out_time_spent_in_ms,
+    IAsrCapture**        pp_out_capture,
     IAsrReadOnlyString** pp_out_error_explanation)
 {
     return impl_.EnumCapturePerformanceTestResult(
         index,
         p_out_error_code,
         p_out_time_spent_in_ms,
+        pp_out_capture,
         pp_out_error_explanation);
 }
 
@@ -84,8 +144,7 @@ AsrRetSwigBase IAsrSwigCaptureManagerImpl::QueryInterface(const AsrGuid& iid)
     return Utils::QueryInterface<IAsrSwigCaptureManager>(this, iid);
 }
 
-AsrRetCapture IAsrSwigCaptureManagerImpl::EnumCaptureInterface(
-    const size_t index)
+AsrRetCapture IAsrSwigCaptureManagerImpl::EnumInterface(const size_t index)
 {
     AsrRetCapture       result;
     AsrPtr<IAsrCapture> p_result;
@@ -108,6 +167,54 @@ AsrRetCapture IAsrSwigCaptureManagerImpl::EnumCaptureInterface(
         result.error_code = ASR_E_OUT_OF_MEMORY;
     }
     return result;
+}
+
+AsrRetCaptureManagerLoadErrorState
+IAsrSwigCaptureManagerImpl::EnumLoadErrorState(size_t index)
+{
+    AsrRetCaptureManagerLoadErrorState result{};
+    AsrPtr<IAsrReadOnlyString>         p_error_message{};
+    result.error_code = impl_.EnumCaptureLoadErrorState(
+        index,
+        &result.load_result,
+        p_error_message.Put());
+    result.error_message = std::move(p_error_message);
+    return result;
+}
+
+AsrResult IAsrSwigCaptureManagerImpl::RunPerformanceTest()
+{
+    return impl_.RunCapturePerformanceTest();
+}
+
+AsrRetCaptureManagerPerformanceTestResult
+IAsrSwigCaptureManagerImpl::EnumPerformanceTestResult(size_t index)
+{
+    AsrResult                  error_code{ASR_E_UNDEFINED_RETURN_VALUE};
+    AsrResult                  test_result{ASR_E_UNDEFINED_RETURN_VALUE};
+    AsrPtr<IAsrCapture>        p_capture{};
+    int32_t                    time_spent_in_ms{0};
+    AsrPtr<IAsrReadOnlyString> error_message{};
+
+    error_code = impl_.EnumCapturePerformanceTestResult(
+        index,
+        &test_result,
+        &time_spent_in_ms,
+        p_capture.Put(),
+        error_message.Put());
+    if (IsFailed(error_code))
+    {
+        return {error_code, test_result, nullptr, 0, {}};
+    }
+
+    const auto expected_p_swig_capture =
+        MakeInterop<IAsrSwigCapture, IAsrCapture>(p_capture);
+    if (!expected_p_swig_capture)
+    {
+        ASR_CORE_LOG_ERROR("Can not convert IAsrCapture to IAsrSwigCapture.");
+        return {expected_p_swig_capture.error(), test_result, nullptr, 0, {}};
+    }
+    return {error_code, test_result, expected_p_swig_capture.value().Get(), time_spent_in_ms, {error_message.Get()}};
 }
 
 int64_t CaptureManagerImpl::AddRef() { return ref_counter_.AddRef(); }
@@ -179,6 +286,7 @@ AsrResult CaptureManagerImpl::EnumCaptureInterface(
 
 AsrResult CaptureManagerImpl::RunCapturePerformanceTest()
 {
+    // 实现调度队列后再实现这个函数
     return ASR_E_NO_IMPLEMENTATION;
 }
 
@@ -186,12 +294,32 @@ AsrResult CaptureManagerImpl::EnumCapturePerformanceTestResult(
     const size_t         index,
     AsrResult*           p_out_error_code,
     int32_t*             p_out_time_spent_in_ms,
+    IAsrCapture**        pp_out_capture,
     IAsrReadOnlyString** pp_out_error_explanation)
 {
-    ErrorInfo* p_error_info{};
     try
     {
-        p_error_info = &performance_results_.at(index);
+        auto& [object, error_info] = performance_results_.at(index);
+
+        if (p_out_error_code)
+        {
+            *p_out_error_code = error_info.error_code;
+        }
+        if (p_out_time_spent_in_ms)
+        {
+            *p_out_time_spent_in_ms = error_info.time_spent_in_ms;
+        }
+        if (pp_out_capture)
+        {
+            *pp_out_capture = object.Get();
+            (*pp_out_capture)->AddRef();
+        }
+        if (pp_out_error_explanation)
+        {
+            *pp_out_error_explanation = error_info.p_error_message.Get();
+            (*pp_out_error_explanation)->AddRef();
+        }
+        return ASR_S_OK;
     }
     catch (const std::out_of_range& ex)
     {
@@ -202,20 +330,6 @@ AsrResult CaptureManagerImpl::EnumCapturePerformanceTestResult(
             ex.what());
         return ASR_E_OUT_OF_RANGE;
     }
-    if (p_out_error_code)
-    {
-        *p_out_error_code = p_error_info->error_code;
-    }
-    if (p_out_time_spent_in_ms)
-    {
-        *p_out_time_spent_in_ms = p_error_info->time_spent_in_ms;
-    }
-    if (pp_out_error_explanation)
-    {
-        *pp_out_error_explanation = p_error_info->p_error_message.Get();
-        (*pp_out_error_explanation)->AddRef();
-    }
-    return ASR_S_OK;
 }
 
 void CaptureManagerImpl::ReserveInstanceContainer(

@@ -21,18 +21,18 @@ public:
     int64_t  Release() override;
     ASR_IMPL QueryInterface(const AsrGuid& iid, void** pp_out_object) override;
     // IAsrCaptureManager
-    ASR_IMPL EnumCaptureLoadErrorState(
+    ASR_IMPL EnumLoadErrorState(
         const size_t         index,
         AsrResult*           p_error_code,
         IAsrReadOnlyString** pp_out_error_explanation) override;
-    ASR_IMPL EnumCaptureInterface(
-        const size_t  index,
-        IAsrCapture** pp_out_interface) override;
-    ASR_IMPL RunCapturePerformanceTest() override;
-    ASR_IMPL EnumCapturePerformanceTestResult(
+    ASR_IMPL EnumInterface(const size_t index, IAsrCapture** pp_out_interface)
+        override;
+    ASR_IMPL RunPerformanceTest() override;
+    ASR_IMPL EnumPerformanceTestResult(
         const size_t         index,
         AsrResult*           p_out_error_code,
         int32_t*             p_out_time_spent_in_ms,
+        IAsrCapture**        pp_out_capture,
         IAsrReadOnlyString** pp_out_error_explanation) override;
 };
 
@@ -47,7 +47,12 @@ public:
     int64_t        Release() override;
     AsrRetSwigBase QueryInterface(const AsrGuid& iid) override;
     // IAsrSwigCaptureManager
-    virtual AsrRetCapture EnumCaptureInterface(const size_t index) override;
+    AsrRetCapture EnumInterface(const size_t index) override;
+    AsrRetCaptureManagerLoadErrorState EnumLoadErrorState(
+        size_t index) override;
+    AsrResult                                 RunPerformanceTest() override;
+    AsrRetCaptureManagerPerformanceTestResult EnumPerformanceTestResult(
+        size_t index) override;
 };
 
 class CaptureManagerImpl
@@ -71,9 +76,10 @@ private:
 
     ASR::Utils::RefCounter<CaptureManagerImpl> ref_counter_{};
     std::vector<CaptureInstance>               instances_{};
-    std::vector<ErrorInfo>                     performance_results_{};
-    IAsrCaptureManagerImpl                     cpp_projection_{*this};
-    IAsrSwigCaptureManagerImpl                 swig_projection_{*this};
+    std::vector<std::tuple<AsrPtr<IAsrCapture>, ErrorInfo>>
+                               performance_results_{};
+    IAsrCaptureManagerImpl     cpp_projection_{*this};
+    IAsrSwigCaptureManagerImpl swig_projection_{*this};
 
 public:
     int64_t AddRef();
@@ -91,6 +97,7 @@ public:
         const size_t         index,
         AsrResult*           p_out_error_code,
         int32_t*             p_out_time_spent_in_ms,
+        IAsrCapture**        pp_out_capture,
         IAsrReadOnlyString** pp_out_error_explanation);
     // impl
     void AddInstance(

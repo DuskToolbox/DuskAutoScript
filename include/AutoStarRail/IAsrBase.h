@@ -27,6 +27,7 @@ using AsrResult = int32_t;
     static const AsrGuid name =                                                      \
         {l, w1, w2, {b1, b2, b3, b4, b5, b6, b7, b8}};
 #define SWIG_PRIVATE private:
+#define SWIG_PUBLIC public:
 #else
 #define SWIG_IGNORE(x)
 #define SWIG_ENABLE_DIRECTOR(x)
@@ -46,6 +47,7 @@ using AsrResult = int32_t;
     namespace ns { class type; }\
     ASR_DEFINE_CLASS_GUID_HOLDER_IN_NAMESPACE(ns ,type, l, w1, w2, b1, b2, b3, b4, b5, b6, b7, b8);
 #define SWIG_PRIVATE
+#define SWIG_PUBLIC
 #endif
 // clang-format on
 
