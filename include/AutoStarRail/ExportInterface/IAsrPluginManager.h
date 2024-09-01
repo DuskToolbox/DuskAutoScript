@@ -191,7 +191,7 @@ ASR_INTERFACE IAsrSwigPluginManager : public IAsrSwigBase
         AsrReadOnlyString capture_config) = 0;
 };
 
-ASR_DEFINE_RET_POINTER(AsrRetPluginManager, IAsrPluginManager);
+ASR_DEFINE_RET_POINTER(AsrRetPluginManager, IAsrSwigPluginManager);
 
 /**
  * @brief 初始化插件管理器单例，提供需要被禁用的插件的GUID

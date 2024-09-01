@@ -186,6 +186,7 @@ private:
     ComponentFactoryManager                 component_factory_manager_{};
     ErrorLensManager                        error_lens_manager_{};
     InputFactoryManager                     input_factory_manager_{};
+    bool                                    is_inited_{false};
 
     IAsrPluginManagerImpl cpp_projection_{*this};
 
@@ -227,6 +228,8 @@ public:
         const AsrGuid&       iid,
         AsrResult            error_code,
         IAsrReadOnlyString** pp_out_error_message);
+
+    bool IsInited() const noexcept;
 
     AsrResult GetAllPluginInfo(
         IAsrPluginInfoVector** pp_out_plugin_info_vector);

@@ -1338,7 +1338,7 @@ AsrResult PluginManager::Refresh(IAsrReadOnlyGuidVector* p_ignored_guid_vector)
     }
 
     name_plugin_map_ = std::move(map);
-
+    is_inited_ = true;
     return result;
 }
 
@@ -1367,6 +1367,8 @@ AsrResult PluginManager::GetErrorMessage(
 
     return result;
 }
+
+bool PluginManager::IsInited() const noexcept { return is_inited_; }
 
 AsrResult PluginManager::GetAllPluginInfo(
     IAsrPluginInfoVector** pp_out_plugin_info_vector)
@@ -1617,4 +1619,23 @@ AsrResult CreateIAsrPluginManagerAndGetResult(
     const auto result = plugin_manager.Refresh(p_ignore_plugins_guid);
     *pp_out_result = plugin_manager;
     return result;
+}
+
+AsrResult GetExistingIAsrPluginManager(IAsrPluginManager** pp_out_result)
+{
+    ASR_UTILS_CHECK_POINTER(pp_out_result)
+    if (Asr::Core::ForeignInterfaceHost::g_plugin_manager.IsInited())
+    {
+        *pp_out_result = Asr::Core::ForeignInterfaceHost::g_plugin_manager;
+        (*pp_out_result)->AddRef();
+        return ASR_S_OK;
+    }
+    return ASR_E_OBJECT_NOT_INIT;
+}
+
+AsrRetPluginManager GetExistingIAsrPluginManager()
+{
+    return Asr::Core::ForeignInterfaceHost::g_plugin_manager.IsInited()
+               ? AsrRetPluginManager{ASR_S_OK, static_cast<IAsrSwigPluginManager*>(Asr::Core::ForeignInterfaceHost::g_plugin_manager)}
+               : AsrRetPluginManager {ASR_E_OBJECT_NOT_INIT};
 }
