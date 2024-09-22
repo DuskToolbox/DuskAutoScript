@@ -102,6 +102,7 @@ ASR_DEFINE_GUID(
     0x5,
     0x98,
     0xec);
+ASR_SWIG_DIRECTOR_ATTRIBUTE(IAsrSwigTouch)
 ASR_INTERFACE IAsrSwigTouch : public IAsrSwigInput
 {
     ASR_METHOD Swipe(AsrPoint from, AsrPoint to, int32_t duration_ms) = 0;
@@ -147,6 +148,7 @@ ASR_DEFINE_GUID(
     0xc4,
     0x7,
     0x95);
+ASR_SWIG_EXPORT_ATTRIBUTE(IAsrSwigInputFactory)
 ASR_INTERFACE IAsrSwigInputFactory : public IAsrSwigTypeInfo
 {
     virtual AsrRetInput CreateInstance(AsrReadOnlyString json_config) = 0;

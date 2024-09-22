@@ -224,6 +224,7 @@ ASR_NS_BEGIN
 
 inline bool IsOk(const AsrResult result) { return result >= 0; }
 inline bool IsFailed(const AsrResult result) { return result < 0; }
+inline AsrResult GetErrorCodeFrom(const AsrResult result) {return result;}
 
 #ifdef __cplusplus
 
@@ -240,6 +241,12 @@ template <is_asr_ret_type T>
 bool IsFailed(const T& t)
 {
     return t.error_code < 0;
+}
+
+template <is_asr_ret_type T>
+AsrResult GetErrorCodeFrom(const T& t)
+{
+    return t.error_code;
 }
 
 #endif // __cplusplus

@@ -1,5 +1,5 @@
-#ifndef ASR_IASRINPUTFACTORYVECTOR_H
-#define ASR_IASRINPUTFACTORYVECTOR_H
+#ifndef ASR_ASRINPUTFACTORYVECTOR_H
+#define ASR_ASRINPUTFACTORYVECTOR_H
 
 #include <AutoStarRail/PluginInterface/IAsrInput.h>
 
@@ -51,4 +51,4 @@ ASR_INTERFACE IAsrSwigInputFactoryVector : public IAsrSwigBase
 
 ASR_DEFINE_RET_POINTER(AsrRetInputFactoryVector, IAsrSwigInputFactoryVector);
 
-#endif // ASR_IASRINPUTFACTORYVECTOR_H
+#endif // ASR_ASRINPUTFACTORYVECTOR_H

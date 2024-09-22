@@ -3,6 +3,8 @@
 
 #include <AutoStarRail/AsrPtr.hpp>
 #include <AutoStarRail/IAsrBase.h>
+#include <string>
+
 
 // {C09E276A-B824-4667-A504-7609B4B7DD28}
 ASR_DEFINE_GUID(
@@ -89,6 +91,39 @@ ASR_C_API void CreateNullAsrString(IAsrReadOnlyString** pp_out_null_string);
 
 ASR_C_API void CreateAsrString(IAsrString** pp_out_string);
 
+ASR_C_API AsrResult CreateIAsrReadOnlyStringFromChar(
+    const char*          p_char_literal,
+    IAsrReadOnlyString** pp_out_readonly_string);
+
+ASR_C_API AsrResult
+CreateIAsrStringFromUtf8(const char* p_utf8_string, IAsrString** pp_out_string);
+
+ASR_C_API AsrResult CreateIAsrReadOnlyStringFromUtf8(
+    const char*          p_utf8_string,
+    IAsrReadOnlyString** pp_out_readonly_string);
+
+/**
+ * @brief same as ASR_METHOD IAsrString::SetW(const wchar_t* p_string,
+ * size_t length) = 0
+ *
+ * @param p_wstring
+ * @param size
+ * @param pp_out_string
+ * @return ASR_C_API
+ */
+ASR_C_API AsrResult CreateIAsrStringFromWChar(
+    const wchar_t* p_wstring,
+    size_t         length,
+    IAsrString**   pp_out_string);
+
+/**
+ * @See CreateIAsrStringFromWChar
+ */
+ASR_C_API AsrResult CreateIAsrReadOnlyStringFromWChar(
+    const wchar_t*       p_wstring,
+    size_t               length,
+    IAsrReadOnlyString** pp_out_readonly_string);
+
 #endif // SWIG
 
 #ifndef SWIG
@@ -162,6 +197,29 @@ public:
     };
 
     IAsrReadOnlyString* Get() const noexcept { return p_impl_.Get(); }
+
+    static AsrReadOnlyString FromUtf8(
+        const char* p_u8_string,
+        AsrResult*  p_out_result)
+    {
+        AsrReadOnlyString               result{};
+        ASR::AsrPtr<IAsrReadOnlyString> p_result{};
+        const auto                      create_result =
+            ::CreateIAsrReadOnlyStringFromUtf8(p_u8_string, p_result.Put());
+        if (p_out_result)
+        {
+            *p_out_result = create_result;
+        }
+        result.p_impl_ = std::move(p_result);
+        return result;
+    }
+
+    static AsrReadOnlyString FromUtf8(
+        const std::string& u8_string,
+        AsrResult*         p_out_result)
+    {
+        return FromUtf8(u8_string.c_str(), p_out_result);
+    }
 #endif // SWIG
 
 /**
@@ -232,43 +290,6 @@ public:
     }
 #endif // defined(ASR_STRING_ENABLE_WHEN_CPP) || defined(SWIGJAVA)
 };
-
-#ifndef SWIG
-
-ASR_C_API AsrResult CreateIAsrReadOnlyStringFromChar(
-    const char*          p_char_literal,
-    IAsrReadOnlyString** pp_out_readonly_string);
-
-ASR_C_API AsrResult
-CreateIAsrStringFromUtf8(const char* p_utf8_string, IAsrString** pp_out_string);
-
-ASR_C_API AsrResult CreateIAsrReadOnlyStringFromUtf8(
-    const char*          p_utf8_string,
-    IAsrReadOnlyString** pp_out_readonly_string);
-
-/**
- * @brief same as ASR_METHOD IAsrString::SetW(const wchar_t* p_string,
- * size_t length) = 0
- *
- * @param p_wstring
- * @param size
- * @param pp_out_string
- * @return ASR_C_API
- */
-ASR_C_API AsrResult CreateIAsrStringFromWChar(
-    const wchar_t* p_wstring,
-    size_t         length,
-    IAsrString**   pp_out_string);
-
-/**
- * @See CreateIAsrStringFromWChar
- */
-ASR_C_API AsrResult CreateIAsrReadOnlyStringFromWChar(
-    const wchar_t*       p_wstring,
-    size_t               length,
-    IAsrReadOnlyString** pp_out_readonly_string);
-
-#endif // SWIG
 
 ASR_DEFINE_RET_TYPE(AsrRetReadOnlyString, AsrReadOnlyString);
 

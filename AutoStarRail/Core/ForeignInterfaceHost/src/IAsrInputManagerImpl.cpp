@@ -1,0 +1,7 @@
+#include <AutoStarRail/Core/ForeignInterfaceHost/IAsrInputManagerImpl.h>
+
+ASR_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
+
+
+
+ASR_CORE_FOREIGNINTERFACEHOST_NS_END
