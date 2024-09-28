@@ -65,7 +65,7 @@ message(STATUS "The third-party libraries listed later are globally shared in th
 function(_download_and_config_zlib_ng)
     set(CMAKE_FOLDER "Asr3rd/zlib_ng")
     # 修改此处版本时，需一并修改../cmake/FindZLIB.cmake的第26行
-    set(ASR_ZLIB_NG_VERSION "2.1.6")
+    set(ASR_ZLIB_NG_VERSION "2.2.2")
     message(STATUS "Downloading and configuring zlib-ng (VERSION ${ASR_ZLIB_NG_VERSION})")
     set(CMAKE_POSITION_INDEPENDENT_CODE ON)
     set(ZLIB_COMPAT ON)
@@ -74,7 +74,7 @@ function(_download_and_config_zlib_ng)
     FetchContent_Declare(
             zlib-ng
             URL "${GITHUB_MIRROR_URL}/zlib-ng/zlib-ng/archive/refs/tags/${ASR_ZLIB_NG_VERSION}.tar.gz"
-            URL_HASH SHA256=A5D504C0D52E2E2721E7E7D86988DEC2E290D723CED2307145DEDD06AEB6FEF2)
+            URL_HASH SHA256=fcb41dd59a3f17002aeb1bb21f04696c9b721404890bb945c5ab39d2cb69654c)
     FetchContent_MakeAvailable(zlib-ng)
 endfunction()
 
@@ -82,6 +82,7 @@ _download_and_config_zlib_ng()
 
 set(ZLIB_NG_INCLUDE_DIR ${CMAKE_BINARY_DIR}/_deps/zlib-ng-build)
 set(ZLIB_NG_LIBRARY zlib)
+target_link_libraries(Asr3rdParty INTERFACE zlib)
 
 function(_download_and_config_gtest)
     set(CMAKE_FOLDER "Asr3rd/gtest")
@@ -289,6 +290,27 @@ else ()
         message(FATAL_ERROR "OpenCV not found. Please install it manually or set ASR_USE_BUNDLED_OPENCV=ON.")
     endif ()
 endif ()
+
+function(_download_and_config_nv_stdexec)
+    set(CMAKE_FOLDER "Asr3rd/stdexec")
+
+    # config stdexec
+    set(ASR_STDEXEC_VERSION "nvhpc-24.09")
+    message(STATUS "Downloading and configuring stdexec (VERSION = ${ASR_STDEXEC_VERSION}).")
+    FetchContent_Declare(
+        stdexec
+        URL "${GITHUB_MIRROR_URL}/NVIDIA/stdexec/archive/refs/tags/${ASR_STDEXEC_VERSION}.tar.gz"
+        URL_HASH SHA256=D2D811C852DC6C53527A244A54AE343D6B65A50C23EA49F93723E3082435FFF4)
+
+    set(STDEXEC_BUILD_EXAMPLES OFF)
+    set(STDEXEC_ENABLE_IO_URING_TESTS OFF)
+    set(STDEXEC_BUILD_DOCS OFF)
+
+    FetchContent_MakeAvailable(stdexec)
+    target_link_libraries(Asr3rdParty INTERFACE STDEXEC::stdexec)
+endfunction()
+
+_download_and_config_nv_stdexec()
 
 function(_on_download_icu)
     message(STATUS "Downloading prebuilt icu binary...")
