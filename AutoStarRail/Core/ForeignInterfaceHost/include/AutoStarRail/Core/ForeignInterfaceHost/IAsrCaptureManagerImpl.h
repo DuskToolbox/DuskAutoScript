@@ -117,7 +117,9 @@ public:
     explicit operator IAsrSwigCaptureManager*() noexcept;
 };
 
-auto CreateAsrCaptureManagerImpl(IAsrReadOnlyString* p_json_config)
+auto CreateAsrCaptureManagerImpl(
+    const std::vector<AsrPtr<IAsrCaptureFactory>>& capture_factories,
+    IAsrReadOnlyString*                            p_json_config)
     -> std::pair<
         AsrResult,
         ASR::AsrPtr<ASR::Core::ForeignInterfaceHost::CaptureManagerImpl>>;

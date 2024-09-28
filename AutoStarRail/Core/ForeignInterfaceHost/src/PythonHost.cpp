@@ -7,7 +7,9 @@
 #include <AutoStarRail/Core/ForeignInterfaceHost/AsrStringImpl.h>
 #include <AutoStarRail/Core/ForeignInterfaceHost/PythonHost.h>
 #include <AutoStarRail/Core/Logger/Logger.h>
+#include <AutoStarRail/Core/TaskScheduler/TaskScheduler.h>
 #include <AutoStarRail/Utils/CommonUtils.hpp>
+
 
 ASR_DISABLE_WARNING_BEGIN
 ASR_IGNORE_UNUSED_PARAMETER
@@ -118,11 +120,6 @@ PyObjectPtr PyUnicodeFromU8String(const char8_t* u8_string)
 {
     return PyObjectPtr::Attach(
         PyUnicode_FromString(reinterpret_cast<const char*>(u8_string)));
-}
-
-PyObjectPtr PyUnicodeFromU8String(const std::string_view std_string_view)
-{
-    return PyObjectPtr::Attach(PyUnicode_FromString(std_string_view.data()));
 }
 
 template <class T>
@@ -292,7 +289,7 @@ public:
 
         size_t stack_trace_message_size{0};
         auto   string_list = ASR::Utils::MakeEmptyCOntainerOfReservedSize<
-            std::vector<std::pair<const char*, size_t>>>(10);
+              std::vector<std::pair<const char*, size_t>>>(10);
 
         const auto list_size = ::PyList_Size(formatted_list.Get());
         for (Py_ssize_t i = 0; i < list_size; ++i)
@@ -330,106 +327,6 @@ public:
     }
 };
 
-class PyInterpreter
-{
-    PyObjectPtr sys_module_;
-
-    struct InitException : std::runtime_error
-    {
-        using Base = std::runtime_error;
-        InitException()
-            : Base{"Error occurred when initialize Python interpreter."}
-        {
-        }
-        [[noreturn]]
-        static void Raise()
-        {
-            throw InitException();
-        }
-    };
-
-    void Init()
-    {
-        if (Py_IsInitialized())
-        {
-            return;
-        }
-
-        Py_Initialize();
-        if (!Py_IsInitialized())
-        {
-            InitException::Raise();
-        }
-
-        // create folder path string
-        const auto u8_plugin_folder =
-            std::u8string{u8"\""} + std::filesystem::current_path().u8string()
-            + std::u8string{u8"\""};
-        // {anonymous variable 0} = "CURRENT PATH"
-        auto py_plugin_folder_path =
-            PythonResult{
-                Details::PyUnicodeFromU8String(u8_plugin_folder.c_str())}
-                .CheckAndGet();
-        // {anonymous variable 1} = 0
-        auto py_zero =
-            PythonResult{PyObjectPtr::Attach(PyLong_FromLong(0))}.CheckAndGet();
-        // {anonymous variable 2} = ({anonymous variable 0}, {anonymous variable
-        // 1})
-        auto py_2_element_tuple =
-            PythonResult{PyObjectPtr::Attach(PyTuple_New(2))}
-                .then(
-                    [&py_zero, &py_plugin_folder_path](auto py_2_element_tuple)
-                    {
-                        int set_tuple_result{0};
-                        set_tuple_result = PyTuple_SetItem(
-                            py_2_element_tuple,
-                            0,
-                            py_zero.Get());
-                        if (set_tuple_result == -1)
-                        {
-                            PythonResult::RaiseIfError();
-                        }
-                        set_tuple_result = PyTuple_SetItem(
-                            py_2_element_tuple,
-                            1,
-                            py_plugin_folder_path.Get());
-                        if (set_tuple_result == -1)
-                        {
-                            PythonResult::RaiseIfError();
-                        }
-                        return PyObjectPtr{py_2_element_tuple};
-                    })
-                .CheckAndGet();
-        // import sys
-        auto py_str_sys = Details::PyUnicodeFromU8String(
-            ASR_UTILS_STRINGUTILS_DEFINE_U8STR("sys"));
-        sys_module_ = PyObjectPtr::Attach(PyImport_Import(py_str_sys.Get()));
-        PythonResult{sys_module_}
-            .then(
-                // {anonymous variable 3} = sys.path
-                [](auto py_sys_module) {
-                    return PyObjectPtr::Attach(
-                        PyObject_GetAttrString(py_sys_module, "path"));
-                })
-            .then(
-                // {anonymous variable 4} = sys.path.insert
-                [](auto py_sys_path) {
-                    return PyObjectPtr::Attach(
-                        PyObject_GetAttrString(py_sys_path, "path"));
-                })
-            .then(
-                // {anonymous variable 4}({anonymous variable 2})
-                [&py_2_element_tuple](auto py_sys_path_insert)
-                {
-                    return PyObjectPtr::Attach(PyObject_Call(
-                        py_sys_path_insert,
-                        py_2_element_tuple.Get(),
-                        nullptr));
-                })
-            .Check();
-    }
-};
-
 ASR_NS_ANONYMOUS_DETAILS_BEGIN
 
 class PythonRuntimeSingleton
@@ -440,16 +337,11 @@ class PythonRuntimeSingleton
 public:
     static bool Initialize()
     {
-        static bool is_initialized = []
+        if (!::Py_IsInitialized())
         {
             ::Py_Initialize();
-            if (!::Py_IsInitialized())
-            {
-                throw std::runtime_error("Failed to initialize Python");
-            }
-            return true;
-        }();
-        return is_initialized;
+        }
+        return ::Py_IsInitialized();
     }
 };
 

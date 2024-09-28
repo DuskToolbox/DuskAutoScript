@@ -3,13 +3,19 @@
 
 #include <chrono>
 #include <memory>
-#include <queue>
 #include <thread>
 #include <variant>
 #include <vector>
 
 #include <AutoStarRail/AsrPtr.hpp>
 #include <AutoStarRail/PluginInterface/IAsrTask.h>
+
+ASR_DISABLE_WARNING_BEGIN
+ASR_IGNORE_UNUSED_PARAMETER
+
+#include <exec/static_thread_pool.hpp>
+
+ASR_DISABLE_WARNING_END
 
 ASR_NS_BEGIN
 
@@ -31,14 +37,15 @@ namespace Core
             bool operator==(const SchedulingUnit& rhs);
         };
 
-        std::thread executor_;
-        bool        is_not_need_exit_{true};
+        // 语言VM绑定线程
+        exec::static_thread_pool thread_pool{1};
 
-        // 这里的函数是被优先执行的
-        std::mutex                  task_function_queue_mutex_;
-        std::queue<TaskFunction>    task_function_queue_;
+        // 单开一个线程检测是否需要执行任务，是的话调度到thread_pool去
+        bool                        is_not_need_exit_{true};
+        std::atomic_bool            is_task_working_{false};
         std::mutex                  task_queue_mutex_;
         std::vector<SchedulingUnit> task_queue_;
+        std::thread                 executor_;
 
         // 外部传递进来的config
         AsrPtr<IAsrReadOnlyString> config_;
@@ -49,8 +56,11 @@ namespace Core
         TaskScheduler();
         ~TaskScheduler() = default;
 
-        void SendTask(const TaskFunction& task);
         void UpdateConfig(const AsrReadOnlyString& config);
+        auto GetSchedulerImpl() { return thread_pool.get_scheduler(); }
+
+        template <class T>
+        void AddTask(T* p_task);
 
     private:
         void AddTask(SchedulingUnit task);
@@ -64,6 +74,8 @@ namespace Core
         void RunTaskQueue();
         void NotifyExit();
     };
+
+    extern TaskScheduler g_scheduler;
 } // namespace Core
 
 ASR_NS_END

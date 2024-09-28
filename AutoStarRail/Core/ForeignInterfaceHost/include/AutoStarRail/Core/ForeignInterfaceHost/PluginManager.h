@@ -148,13 +148,20 @@ public:
         AsrReadOnlyString capture_config) override;
 };
 
+/**
+ * @brief 构造函数中不得出现与IAsr系列API相关的操作，以保证线程安全。
+ *   调用此类的任意公开函数时，都会对线程id进行检查，不符合将返回
+ * ASR_E_UNEXPECTED_THREAD_DETECTED
+ *
+ */
 class PluginManager
     : ASR_UTILS_MULTIPLE_PROJECTION_GENERATORS(
           PluginManager,
           IAsrPluginManagerImpl,
           IAsrSwigPluginManagerImpl),
       public Utils::
-          ProjectionGenerator<PluginManager, IAsrPluginManagerForUiImpl>
+          ProjectionGenerator<PluginManager, IAsrPluginManagerForUiImpl>,
+      public Utils::ThreadVerifier
 {
 public:
     /**
@@ -176,6 +183,8 @@ public:
         std::unordered_map<AsrGuid, InterfaceStaticStorage>;
 
 private:
+    // 调用很乱，锁都不好加
+    mutable std::recursive_mutex mutex_{};
     /**
      * @brief 注意：如果连名字都没获取到，则以json路径为此处的名称
      */
@@ -241,16 +250,12 @@ public:
         -> ASR::Utils::Expected<
             std::reference_wrapper<const InterfaceStaticStorage>>;
 
-    auto GetAllCaptureFactory() const noexcept
-        -> const std::vector<AsrPtr<IAsrCaptureFactory>>&;
-
     AsrResult FindInterface(const AsrGuid& iid, void** pp_out_object);
 
-    static AsrResult CreateCaptureManager(
+    AsrResult CreateCaptureManager(
         IAsrReadOnlyString*  p_capture_config,
         IAsrCaptureManager** pp_out_manager);
-    static AsrRetCaptureManager CreateCaptureManager(
-        AsrReadOnlyString capture_config);
+    AsrRetCaptureManager CreateCaptureManager(AsrReadOnlyString capture_config);
 
     AsrResult CreateComponent(
         const AsrGuid&  iid,

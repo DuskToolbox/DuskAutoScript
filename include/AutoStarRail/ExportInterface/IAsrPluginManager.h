@@ -193,15 +193,62 @@ ASR_INTERFACE IAsrSwigPluginManager : public IAsrSwigBase
 
 ASR_DEFINE_RET_POINTER(AsrRetPluginManager, IAsrSwigPluginManager);
 
+// {550B0110-23D2-4755-A822-AB4CB2B6BF06}
+ASR_DEFINE_GUID(
+    ASR_IID_INITIALIZE_IASR_PLUGIN_MANAGER_CALLBACK,
+    IAsrInitializeIAsrPluginManagerCallback,
+    0x550b0110,
+    0x23d2,
+    0x4755,
+    0xa8,
+    0x22,
+    0xab,
+    0x4c,
+    0xb2,
+    0xb6,
+    0xbf,
+    0x6);
+SWIG_IGNORE(IAsrInitializeIAsrPluginManagerCallback)
+ASR_INTERFACE IAsrInitializeIAsrPluginManagerCallback : public IAsrBase
+{
+    ASR_METHOD OnFinished(AsrResult initialize_result) = 0;
+};
+
+// {32146CA1-C81F-4EBC-BE84-12F1F25114EE}
+ASR_DEFINE_GUID(
+    ASR_IID_INITIALIZE_IASR_PLUGIN_MANAGER_WAITER,
+    IAsrInitializeIAsrPluginManagerWaiter,
+    0x32146ca1,
+    0xc81f,
+    0x4ebc,
+    0xbe,
+    0x84,
+    0x12,
+    0xf1,
+    0xf2,
+    0x51,
+    0x14,
+    0xee);
+SWIG_IGNORE(IAsrInitializeIAsrPluginManagerWaiter)
+ASR_INTERFACE IAsrInitializeIAsrPluginManagerWaiter : public IAsrBase
+{
+    ASR_METHOD Wait() = 0;
+};
+
 /**
- * @brief 初始化插件管理器单例，提供需要被禁用的插件的GUID
+ * @brief
+ * 异步地初始化插件管理器单例，提供需要被禁用的插件的GUID，并内部记录调用线程的id
+ * 下列API调用顺序为：AsrHttp或其它host调用 InitializeIAsrPluginManager ->
+ * CreateIAsrPluginManagerAndGetResult
+ * 然后内部插件或AsrHttp或其它host才能调用 GetExistingIAsrPluginManager
  *
  * @return AsrResult S_OK表示成功初始化，S_FALSE表示已经初始化
  */
 SWIG_IGNORE(InitializeIAsrPluginManager)
 ASR_C_API AsrResult InitializeIAsrPluginManager(
-    IAsrReadOnlyGuidVector* p_ignore_plugins_guid,
-    IAsrPluginManager**     pp_out_result);
+    IAsrReadOnlyGuidVector*                   p_ignore_plugins_guid,
+    IAsrInitializeIAsrPluginManagerCallback*  p_on_finished,
+    IAsrInitializeIAsrPluginManagerWaiter** pp_out_waiter);
 
 /**
  * @brief Call this function to load all plugin.

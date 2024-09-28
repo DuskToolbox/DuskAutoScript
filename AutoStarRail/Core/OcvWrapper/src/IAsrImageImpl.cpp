@@ -300,12 +300,12 @@ AsrResult AsrPluginLoadImageFromResource(
     ASR_UTILS_CHECK_POINTER(p_relative_path)
     ASR_UTILS_CHECK_POINTER(pp_out_image)
 
-    const auto expected_storge =
+    const auto expected_storage =
         ASR::Core::ForeignInterfaceHost::g_plugin_manager
             .GetInterfaceStaticStorage(p_type_info);
-    if (!expected_storge)
+    if (!expected_storage)
     {
-        const auto error_code = expected_storge.error();
+        const auto error_code = expected_storage.error();
         ASR_CORE_LOG_ERROR(
             "Get interface static storage failed. Error code = {}.",
             error_code);
@@ -316,7 +316,7 @@ AsrResult AsrPluginLoadImageFromResource(
     p_relative_path->GetUtf8(&p_u8_relative_path);
 
     const auto full_path =
-        expected_storge.value().get().path / p_u8_relative_path;
+        expected_storage.value().get().path / p_u8_relative_path;
 
     try
     {

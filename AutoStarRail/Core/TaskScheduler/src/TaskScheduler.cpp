@@ -3,6 +3,7 @@
 #include <AutoStarRail/Core/Logger/Logger.h>
 #include <AutoStarRail/Core/TaskScheduler/TaskScheduler.h>
 #include <AutoStarRail/Core/Utils/InternalUtils.h>
+#include <AutoStarRail/Core/Utils/StdExecution.h>
 
 ASR_NS_BEGIN
 
@@ -14,43 +15,17 @@ namespace Core
     }
 
     TaskScheduler::TaskScheduler()
-        : executor_{
-              [sp_this = shared_from_this()]
-              {
-                  ASR_CORE_LOG_INFO("Task scheduler thread launched.");
-                  while (sp_this->is_not_need_exit_)
-                  {
-                      bool is_function_queue_empty = false;
-                      while (true)
-                      {
-                          sp_this->task_function_queue_mutex_.lock();
-                          is_function_queue_empty =
-                              sp_this->task_function_queue_.empty();
-                          if (is_function_queue_empty)
-                          {
-                              sp_this->task_function_queue_mutex_.unlock();
-                              break;
-                          }
-                          const auto function =
-                              sp_this->task_function_queue_.front();
-                          sp_this->task_function_queue_.pop();
-                          is_function_queue_empty =
-                              sp_this->task_function_queue_.empty();
-
-                          sp_this->task_function_queue_mutex_.unlock();
-
-                          function();
-                      }
-                      sp_this->RunTaskQueue();
-
-                      if (is_function_queue_empty)
-                      {
-                          using namespace std::literals;
-                          std::this_thread::sleep_for(1ms);
-                      }
-                  }
-                  ASR_CORE_LOG_INFO("Task scheduler thread exited.");
-              }}
+        : executor_{[sp_this = shared_from_this()]
+                    {
+                        ASR_CORE_LOG_INFO("Task scheduler thread launched.");
+                        while (sp_this->is_not_need_exit_)
+                        {
+                            sp_this->RunTaskQueue();
+                            using namespace std::literals;
+                            std::this_thread::sleep_for(100ms);
+                        }
+                        ASR_CORE_LOG_INFO("Task scheduler thread exited.");
+                    }}
     {
     }
     void TaskScheduler::AddTask(SchedulingUnit task)
@@ -95,40 +70,36 @@ namespace Core
     void TaskScheduler::DoTask(T* p_task)
     {
         ASR_CORE_LOG_INFO("Enter!");
+        bool      is_success{false};
+        AsrResult do_error_code{ASR_E_UNDEFINED_RETURN_VALUE};
         last_task_ = {p_task};
-        const auto do_result = p_task->Do({config_.Get()});
-        const auto do_error_code = GetErrorCodeFrom(do_result);
-        if (IsOk(do_result))
+        try
         {
-            try
+            const auto task_name = Utils::GetRuntimeClassNameFrom(p_task);
+            const auto guid = Utils::GetGuidFrom(p_task);
+            ASR_CORE_LOG_ERROR(
+                "Begin run task. Name = {}, guid = {}, code = {}.",
+                task_name,
+                guid,
+                do_error_code);
+            const auto do_result = p_task->Do({config_.Get()});
+            do_error_code = GetErrorCodeFrom(do_result);
+            if (IsOk(do_result))
             {
-                const auto task_name = Utils::GetRuntimeClassNameFrom(p_task);
-                const auto guid = Utils::GetGuidFrom(p_task);
+                is_success = true;
                 const auto message = ASR::fmt::format(
-                    "Task execution success. Task name = {}, task guid = {}, code = {}.",
+                    "Task execution success. Name = {}, guid = {}, code = {}.",
                     task_name,
                     guid,
                     do_error_code);
                 ASR_CORE_LOG_ERROR(message);
                 SetErrorMessage(message);
+                return;
             }
-            catch (const AsrException& ex)
-            {
-                ASR_CORE_LOG_EXCEPTION(ex);
-                const auto message = ASR::fmt::format(
-                    "Task execution success. Code = {}.",
-                    do_error_code);
-                SetErrorMessage(message);
-            }
-            return;
-        }
 
-        try
-        {
-            const auto task_name = Utils::GetRuntimeClassNameFrom(p_task);
-            const auto guid = Utils::GetGuidFrom(p_task);
+            // failed
             const auto error_message = ASR::fmt::format(
-                "Task execution failed. Task name = {}, task guid = {}, error code = {}.",
+                "Task execution failed. Name = {}, guid = {}, code = {}.",
                 task_name,
                 guid,
                 do_error_code);
@@ -146,7 +117,7 @@ namespace Core
                 if (IsFailed(create_task_error_message_result))
                 {
                     ASR_CORE_LOG_ERROR(
-                        "Get task error message failed. Error code = {}",
+                        "Get task error message failed. Error code = {}.",
                         create_task_error_message_result);
                     SetErrorMessage(error_message);
                     return;
@@ -160,7 +131,7 @@ namespace Core
                 if (IsFailed(create_task_error_message_result))
                 {
                     ASR_CORE_LOG_ERROR(
-                        "Get task error message failed. Error code = {}",
+                        "Get task error message failed. Error code = {}.",
                         GetErrorCodeFrom(create_task_error_message_result));
                     SetErrorMessage(error_message);
                     return;
@@ -169,7 +140,7 @@ namespace Core
             }
 
             const auto full_error_message = ASR::fmt::format(
-                "{}\n{}",
+                "{}\nMessage from task = \"{}\"",
                 error_message,
                 task_error_message.GetUtf8());
             SetErrorMessage(full_error_message);
@@ -177,23 +148,103 @@ namespace Core
         catch (const AsrException& ex)
         {
             ASR_CORE_LOG_EXCEPTION(ex);
+            std::string message;
+            if (is_success)
+            {
+                message = ASR::fmt::format(
+                    "Task execution success. Code = {}.",
+                    do_error_code);
+            }
+            else
+            {
+                message = ASR::fmt::format(
+                    "Task execution failed. Error code = {}.",
+                    do_error_code);
+            }
 
-            const auto message = ASR::fmt::format(
-                "Task execution failed. Error code = {}.",
-                do_error_code);
             ASR_CORE_LOG_ERROR(message);
-
             SetErrorMessage(message);
         }
-        catch (const std::exception& ex)
+        catch (const std::runtime_error& ex)
         {
             ASR_CORE_LOG_EXCEPTION(ex);
+            if (do_error_code == ASR_E_UNDEFINED_RETURN_VALUE)
+            {
+                do_error_code = ASR_E_INTERNAL_FATAL_ERROR;
+            }
+            SetErrorMessage(ex.what());
         }
     }
 
-    void TaskScheduler::SendTask(const TaskFunction& task)
+    template <class T>
+    void TaskScheduler::AddTask(T* p_task)
     {
-        task_function_queue_.push(task);
+        ASR_CORE_LOG_INFO("Enter!");
+        bool      is_success{false};
+        AsrResult do_error_code{ASR_E_UNDEFINED_RETURN_VALUE};
+        try
+        {
+            const auto task_name = Utils::GetRuntimeClassNameFrom(p_task);
+            const auto guid = Utils::GetGuidFrom(p_task);
+
+            AsrDate date{};
+            if constexpr (ForeignInterfaceHost::is_asr_interface<T>)
+            {
+                const auto get_date_result =
+                    p_task->GetNextExecutionTime(&date);
+                if (IsFailed(get_date_result))
+                {
+                    ASR_CORE_LOG_ERROR(
+                        "Can not get next execution time. Task name = {}, guid = {}",
+                        task_name,
+                        guid);
+                    return;
+                }
+            }
+            else
+            {
+                const auto get_date_result = p_task->GetNextExecutionTime();
+                if (IsFailed(get_date_result))
+                {
+                    ASR_CORE_LOG_ERROR(
+                        "Can not get next execution time. Task name = {}, guid = {}",
+                        task_name,
+                        guid);
+                    return;
+                }
+                date = get_date_result.value;
+            }
+
+            is_success = true;
+            // 构造一个时间出来
+        }
+        catch (const AsrException& ex)
+        {
+            ASR_CORE_LOG_EXCEPTION(ex);
+            std::string message;
+            if (is_success)
+            {
+                message = ASR::fmt::format(
+                    "Get next execution time success. Code = {}.",
+                    do_error_code);
+            }
+            else
+            {
+                message = ASR::fmt::format(
+                    "Get next execution time success. Error code = {}.",
+                    do_error_code);
+            }
+
+            ASR_CORE_LOG_ERROR(message);
+        }
+        catch (const std::runtime_error& ex)
+        {
+            ASR_CORE_LOG_EXCEPTION(ex);
+            if (do_error_code == ASR_E_UNDEFINED_RETURN_VALUE)
+            {
+                do_error_code = ASR_E_INTERNAL_FATAL_ERROR;
+            }
+        }
     }
 
     void TaskScheduler::UpdateConfig(const AsrReadOnlyString& config)
@@ -203,6 +254,11 @@ namespace Core
 
     void TaskScheduler::RunTaskQueue()
     {
+        if (is_task_working_)
+        {
+            return;
+        }
+
         SchedulingUnit current_task;
         {
             std::lock_guard _{task_queue_mutex_};
@@ -210,14 +266,30 @@ namespace Core
             task_queue_.pop_back();
         }
 
-        std::visit(
-            [this](const auto& task) { DoTask(task.Get()); },
-            current_task.p_task);
+        stdexec::start_on(
+            GetSchedulerImpl(),
+            stdexec::just()
+                | stdexec::then(
+                    [sp_this = shared_from_this(), current_task]
+                    {
+                        sp_this->is_task_working_ = true;
+                        std::visit(
+                            [sp_this](const auto& task)
+                            {
+                                sp_this->DoTask(task.Get());
+                                {
+                                    sp_this->AddTask(task.Get());
+                                }
+                            },
+                            current_task.p_task);
+                        sp_this->is_task_working_ = false;
+                    }));
     }
 
     void TaskScheduler::NotifyExit()
     {
         is_not_need_exit_ = false;
+        thread_pool.request_stop();
         executor_.detach();
     }
 
@@ -231,6 +303,8 @@ namespace Core
         const auto b_rhs = std::visit(visitor, rhs);
         return b_lhs == b_rhs;
     }
+
+    ASR_DEFINE_VARIABLE(g_scheduler);
 } // namespace Core
 
 ASR_NS_END

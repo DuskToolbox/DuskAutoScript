@@ -214,7 +214,12 @@ IAsrSwigCaptureManagerImpl::EnumPerformanceTestResult(size_t index)
         ASR_CORE_LOG_ERROR("Can not convert IAsrCapture to IAsrSwigCapture.");
         return {expected_p_swig_capture.error(), test_result, nullptr, 0, {}};
     }
-    return {error_code, test_result, expected_p_swig_capture.value().Get(), time_spent_in_ms, {error_message.Get()}};
+    return {
+        error_code,
+        test_result,
+        expected_p_swig_capture.value().Get(),
+        time_spent_in_ms,
+        {error_message.Get()}};
 }
 
 int64_t CaptureManagerImpl::AddRef() { return ref_counter_.AddRef(); }
@@ -419,7 +424,9 @@ No error explanation found. Result: {}.)",
 
 ASR_NS_ANONYMOUS_DETAILS_END
 
-auto CreateAsrCaptureManagerImpl(IAsrReadOnlyString* p_json_config)
+auto CreateAsrCaptureManagerImpl(
+    const std::vector<AsrPtr<IAsrCaptureFactory>>& capture_factories,
+    IAsrReadOnlyString*                            p_json_config)
     -> std::pair<
         AsrResult,
         ASR::AsrPtr<ASR::Core::ForeignInterfaceHost::CaptureManagerImpl>>
@@ -441,9 +448,6 @@ auto CreateAsrCaptureManagerImpl(IAsrReadOnlyString* p_json_config)
     }
 
     ::AsrGetDefaultLocale(p_locale_name.Put());
-    const auto& capture_factories =
-        ASR::Core::ForeignInterfaceHost::g_plugin_manager
-            .GetAllCaptureFactory();
     p_capture_manager->ReserveInstanceContainer(capture_factories.size());
     for (const auto& p_factory : capture_factories)
     {

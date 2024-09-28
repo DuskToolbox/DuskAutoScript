@@ -4,6 +4,7 @@
 #include <AutoStarRail/Utils/Config.h>
 #include <atomic>
 #include <cstring>
+#include <thread>
 #include <type_traits>
 
 ASR_UTILS_NS_BEGIN
@@ -115,7 +116,8 @@ class OnExit : public NonCopyableAndNonMovable
 {
     ASR_USING_BASE_CTOR(NonCopyableAndNonMovable);
 
-    [[no_unique_address]] OnExitFunc on_exit_func_;
+    [[no_unique_address]]
+    OnExitFunc on_exit_func_;
 
 public:
     template <class F>
@@ -135,8 +137,9 @@ class ScopeGuard : public NonCopyableAndNonMovable
 {
     ASR_USING_BASE_CTOR(NonCopyableAndNonMovable);
 
-    T                                value_;
-    [[no_unique_address]] OnExitFunc on_exit_func_;
+    T value_;
+    [[no_unique_address]]
+    OnExitFunc on_exit_func_;
 
 public:
     template <class F>
@@ -158,7 +161,8 @@ class ScopeGuardVoid : public NonCopyableAndNonMovable
 {
     ASR_USING_BASE_CTOR(NonCopyableAndNonMovable);
 
-    [[no_unique_address]] OnExitFunc on_exit_func_;
+    [[no_unique_address]]
+    OnExitFunc on_exit_func_;
 
 public:
     template <class FInit, class FDestroy>
@@ -298,6 +302,28 @@ struct overload_set : Ts...
 
 template <class... Ts>
 overload_set(Ts...) -> overload_set<Ts...>;
+
+class ThreadVerifier
+{
+public:
+    ThreadVerifier() : id_{std::this_thread::get_id()} {}
+    void UpdateBindingThread() noexcept { id_ = std::this_thread::get_id(); }
+    [[nodiscard]]
+    bool IsUnexpectedThread() const noexcept
+    {
+        return id_ != std::this_thread::get_id();
+    }
+
+private:
+    std::thread::id id_;
+};
+
+template <class R, class T>
+void SetResult(R&& result, T* p_result)
+{
+    (*p_result) = result;
+    (*p_result)->AddRef();
+}
 
 ASR_UTILS_NS_END
 

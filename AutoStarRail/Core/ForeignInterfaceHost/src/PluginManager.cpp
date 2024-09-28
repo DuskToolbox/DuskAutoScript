@@ -10,6 +10,7 @@
 #include <AutoStarRail/Core/ForeignInterfaceHost/IAsrPluginManagerImpl.h>
 #include <AutoStarRail/Core/ForeignInterfaceHost/PluginManager.h>
 #include <AutoStarRail/Core/Logger/Logger.h>
+#include <AutoStarRail/Core/TaskScheduler/TaskScheduler.h>
 #include <AutoStarRail/Core/Utils/InternalUtils.h>
 #include <AutoStarRail/Core/i18n/AsrResultTranslator.h>
 #include <AutoStarRail/Core/i18n/GlobalLocale.h>
@@ -816,7 +817,7 @@ AsrResult IAsrPluginManagerImpl::CreateCaptureManager(
     IAsrReadOnlyString*  p_capture_config,
     IAsrCaptureManager** pp_out_capture_manager)
 {
-    return PluginManager::CreateCaptureManager(
+    return g_plugin_manager.CreateCaptureManager(
         p_capture_config,
         pp_out_capture_manager);
 }
@@ -1113,7 +1114,12 @@ int64_t PluginManager::Release()
 
 AsrResult PluginManager::Refresh(IAsrReadOnlyGuidVector* p_ignored_guid_vector)
 {
-    AsrResult result{ASR_S_OK};
+    if (IsUnexpectedThread())
+    {
+        return ASR_E_UNEXPECTED_THREAD_DETECTED;
+    }
+    std::lock_guard _{mutex_};
+    AsrResult       result{ASR_S_OK};
 
     const auto ignored_guid_set = [p_ignored_guid_vector]
     {
@@ -1349,6 +1355,13 @@ AsrResult PluginManager::GetErrorMessage(
 {
     ASR_UTILS_CHECK_POINTER(pp_out_error_message)
 
+    if (IsUnexpectedThread())
+    {
+        return ASR_E_UNEXPECTED_THREAD_DETECTED;
+    }
+
+    std::lock_guard _{mutex_};
+
     AsrResult result{ASR_E_UNDEFINED_RETURN_VALUE};
 
     AsrPtr<IAsrReadOnlyString> p_default_locale_name{};
@@ -1368,12 +1381,23 @@ AsrResult PluginManager::GetErrorMessage(
     return result;
 }
 
-bool PluginManager::IsInited() const noexcept { return is_inited_; }
+bool PluginManager::IsInited() const noexcept
+{
+    std::lock_guard _{mutex_};
+    return is_inited_;
+}
 
 AsrResult PluginManager::GetAllPluginInfo(
     IAsrPluginInfoVector** pp_out_plugin_info_vector)
 {
     ASR_UTILS_CHECK_POINTER(pp_out_plugin_info_vector)
+
+    if (IsUnexpectedThread())
+    {
+        return ASR_E_UNEXPECTED_THREAD_DETECTED;
+    }
+
+    std::lock_guard _{mutex_};
 
     const auto p_vector = MakeAsrPtr<AsrPluginInfoVectorImpl>();
     for (const auto& pair : name_plugin_map_)
@@ -1399,6 +1423,13 @@ auto PluginManager::GetInterfaceStaticStorage(IAsrTypeInfo* p_type_info) const
         return tl::make_unexpected(ASR_E_INVALID_POINTER);
     }
 
+    if (IsUnexpectedThread())
+    {
+        return tl::make_unexpected(ASR_E_UNEXPECTED_THREAD_DETECTED);
+    }
+
+    std::lock_guard _{mutex_};
+
     AsrGuid guid;
     if (const auto gg_result = p_type_info->GetGuid(&guid); IsFailed(gg_result))
     {
@@ -1412,7 +1443,7 @@ auto PluginManager::GetInterfaceStaticStorage(IAsrTypeInfo* p_type_info) const
 }
 
 auto PluginManager::GetInterfaceStaticStorage(IAsrSwigTypeInfo* p_type_info)
-    const -> Asr::Utils::Expected<
+    const -> ASR::Utils::Expected<
               std::reference_wrapper<const InterfaceStaticStorage>>
 {
     if (p_type_info == nullptr)
@@ -1420,6 +1451,13 @@ auto PluginManager::GetInterfaceStaticStorage(IAsrSwigTypeInfo* p_type_info)
         ASR_CORE_LOG_ERROR("Null pointer found. Please check your code.");
         return tl::make_unexpected(ASR_E_INVALID_POINTER);
     }
+
+    if (IsUnexpectedThread())
+    {
+        return tl::make_unexpected(ASR_E_UNEXPECTED_THREAD_DETECTED);
+    }
+
+    std::lock_guard _{mutex_};
 
     const auto gg_result = p_type_info->GetGuid();
     if (IsFailed(gg_result.error_code))
@@ -1433,12 +1471,6 @@ auto PluginManager::GetInterfaceStaticStorage(IAsrSwigTypeInfo* p_type_info)
     return Details::GetInterfaceStaticStorage(
         guid_storage_map_,
         gg_result.value);
-}
-
-auto PluginManager::GetAllCaptureFactory() const noexcept
-    -> const std::vector<AsrPtr<IAsrCaptureFactory>>&
-{
-    return capture_factory_vector_;
 }
 
 ASR_NS_ANONYMOUS_DETAILS_BEGIN
@@ -1467,6 +1499,13 @@ ASR_NS_ANONYMOUS_DETAILS_END
 
 AsrResult PluginManager::FindInterface(const AsrGuid& iid, void** pp_out_object)
 {
+    if (IsUnexpectedThread())
+    {
+        return ASR_E_UNEXPECTED_THREAD_DETECTED;
+    }
+
+    std::lock_guard _{mutex_};
+
     AsrResult result{};
 
     result = task_manager_.FindInterface(
@@ -1529,16 +1568,22 @@ AsrResult PluginManager::CreateCaptureManager(
     IAsrCaptureManager** pp_out_manager)
 {
     ASR_UTILS_CHECK_POINTER(p_capture_config)
+    ASR_UTILS_CHECK_POINTER(pp_out_manager)
+
+    if (IsUnexpectedThread())
+    {
+        return ASR_E_UNEXPECTED_THREAD_DETECTED;
+    }
+
+    std::lock_guard _{mutex_};
 
     auto [error_code, p_capture_manager_impl] =
-        CreateAsrCaptureManagerImpl(p_capture_config);
+        CreateAsrCaptureManagerImpl(capture_factory_vector_, p_capture_config);
 
     if (ASR::IsFailed(error_code))
     {
         return error_code;
     }
-
-    ASR_UTILS_CHECK_POINTER(pp_out_manager)
 
     IAsrCaptureManager* p_result =
         static_cast<decltype(p_result)>(*p_capture_manager_impl);
@@ -1554,7 +1599,7 @@ AsrRetCaptureManager PluginManager::CreateCaptureManager(
     auto* const          p_json_config = capture_config.Get();
 
     auto [error_code, p_capture_manager_impl] =
-        CreateAsrCaptureManagerImpl(p_json_config);
+        CreateAsrCaptureManagerImpl(capture_factory_vector_, p_json_config);
 
     result.error_code = error_code;
     if (ASR::IsFailed(result.error_code))
@@ -1571,6 +1616,13 @@ AsrResult PluginManager::CreateComponent(
     const AsrGuid&  iid,
     IAsrComponent** pp_out_component)
 {
+    if (IsUnexpectedThread())
+    {
+        return ASR_E_UNEXPECTED_THREAD_DETECTED;
+    }
+
+    std::lock_guard _{mutex_};
+
     const auto result =
         component_factory_manager_.CreateObject(iid, pp_out_component);
 
@@ -1585,16 +1637,105 @@ AsrResult PluginManager::CreateComponent(
 
 AsrRetComponent PluginManager::CreateComponent(const AsrGuid& iid)
 {
+    if (IsUnexpectedThread())
+    {
+        return {ASR_E_UNEXPECTED_THREAD_DETECTED};
+    }
+
+    std::lock_guard _{mutex_};
+
     return component_factory_manager_.CreateObject(iid);
 };
+
+ASR_NS_ANONYMOUS_DETAILS_BEGIN
+
+ASR_INTERFACE IInternalIAsrInitializeIAsrPluginManagerWaiter
+{
+    virtual AsrResult Wait() = 0;
+    virtual ~IInternalIAsrInitializeIAsrPluginManagerWaiter() = default;
+};
+
+template <class Work>
+class InternalIAsrInitializeIAsrPluginManagerWaiterImpl final
+    : public IInternalIAsrInitializeIAsrPluginManagerWaiter
+{
+    Work                                            work_;
+    AsrPtr<IAsrInitializeIAsrPluginManagerCallback> p_on_finished_;
+
+    AsrResult Wait() override
+    {
+        ASR_CORE_LOG_INFO("Waiting...");
+        const auto [initialize_result] = stdexec::sync_wait(work_).value();
+        if (p_on_finished_)
+        {
+            ASR_CORE_LOG_INFO(
+                "Calling IAsrInitializeIAsrPluginManagerCallback::OnFinished()!");
+            const auto result = p_on_finished_->OnFinished(initialize_result);
+            ASR_CORE_LOG_INFO("Call finished. Result = {}.", result);
+            return result;
+        }
+
+        ASR_CORE_LOG_INFO("No callback found.");
+        return initialize_result;
+    }
+
+public:
+    InternalIAsrInitializeIAsrPluginManagerWaiterImpl(
+        Work&&                                   work,
+        IAsrInitializeIAsrPluginManagerCallback* p_on_finished)
+        : work_{std::move(work)}, p_on_finished_{p_on_finished}
+    {
+    }
+    ~InternalIAsrInitializeIAsrPluginManagerWaiterImpl() override = default;
+};
+
+class IAsrInitializeIAsrPluginManagerWaiterImpl final
+    : public IAsrInitializeIAsrPluginManagerWaiter
+{
+    std::unique_ptr<IInternalIAsrInitializeIAsrPluginManagerWaiter> up_waiter_;
+    ASR_UTILS_IASRBASE_AUTO_IMPL(IAsrInitializeIAsrPluginManagerWaiterImpl)
+    AsrResult QueryInterface(const AsrGuid& iid, void** pp_object) override
+    {
+        return Utils::QueryInterface<IAsrInitializeIAsrPluginManagerWaiter>(
+            this,
+            iid,
+            pp_object);
+    }
+    AsrResult Wait() override { return up_waiter_->Wait(); }
+
+public:
+    IAsrInitializeIAsrPluginManagerWaiterImpl(
+        IAsrReadOnlyGuidVector*                  p_ignore_plugins_guid,
+        IAsrInitializeIAsrPluginManagerCallback* p_on_finished)
+        : up_waiter_{new InternalIAsrInitializeIAsrPluginManagerWaiterImpl{
+              stdexec::when_all(stdexec::start_on(
+                  ASR::Core::g_scheduler.GetSchedulerImpl(),
+                  stdexec::just(AsrPtr{p_ignore_plugins_guid})
+                      | stdexec::then(
+                          [](AsrPtr<IAsrReadOnlyGuidVector> p_vector)
+                          {
+                              ASR_CORE_LOG_INFO(
+                                  "Initializing plugin manager...");
+                              auto& plugin_manager = ASR::Core::
+                                  ForeignInterfaceHost::g_plugin_manager;
+                              plugin_manager.UpdateBindingThread();
+                              return plugin_manager.Refresh(p_vector.Get());
+                          }))),
+              p_on_finished}}
+    {
+    }
+    ~IAsrInitializeIAsrPluginManagerWaiterImpl() = default;
+};
+
+ASR_NS_ANONYMOUS_DETAILS_END
 
 ASR_CORE_FOREIGNINTERFACEHOST_NS_END
 
 AsrResult InitializeIAsrPluginManager(
-    IAsrReadOnlyGuidVector* p_ignore_plugins_guid,
-    IAsrPluginManager**     pp_out_result)
+    IAsrReadOnlyGuidVector*                  p_ignore_plugins_guid,
+    IAsrInitializeIAsrPluginManagerCallback* p_on_finished,
+    IAsrInitializeIAsrPluginManagerWaiter**  pp_out_waiter)
 {
-    ASR_UTILS_CHECK_POINTER(pp_out_result)
     ASR_UTILS_CHECK_POINTER(p_ignore_plugins_guid)
 
     static size_t initialize_counter{0};
@@ -1602,7 +1743,31 @@ AsrResult InitializeIAsrPluginManager(
     if (initialize_counter > 1)
     {
         ASR_CORE_LOG_ERROR(
-            "The plugin should be loaded only once while the program is running");
+            "The plugin should be loaded only once while the program is running. initialize_counter = {}.",
+            initialize_counter);
+        if (ASR::Core::ForeignInterfaceHost::g_plugin_manager
+                .IsUnexpectedThread())
+        {
+            std::stringstream ss;
+            ss << std::this_thread::get_id();
+            ASR_CORE_LOG_ERROR(
+                "Try to initialize the plugin manager on an unexpected thread. Id = {}.",
+                ss.str());
+            return ASR_E_UNEXPECTED_THREAD_DETECTED;
+        }
+    }
+    else
+    {
+        if (pp_out_waiter)
+        {
+            const auto p_waiter = ASR::MakeAsrPtr<
+                IAsrInitializeIAsrPluginManagerWaiter,
+                ASR::Core::ForeignInterfaceHost::Details::
+                    IAsrInitializeIAsrPluginManagerWaiterImpl>(
+                p_ignore_plugins_guid,
+                p_on_finished);
+            ASR::Utils::SetResult(p_waiter.Get(), pp_out_waiter);
+        }
     }
 
     return ASR_S_OK;
@@ -1616,6 +1781,15 @@ AsrResult CreateIAsrPluginManagerAndGetResult(
     ASR_UTILS_CHECK_POINTER(pp_out_result)
 
     auto& plugin_manager = ASR::Core::ForeignInterfaceHost::g_plugin_manager;
+    if (plugin_manager.IsUnexpectedThread())
+    {
+        std::stringstream ss;
+        ss << std::this_thread::get_id();
+        ASR_CORE_LOG_ERROR(
+            "Try to create the plugin manager on an unexpected thread. Id = {}.",
+            ss.str());
+        return ASR_E_UNEXPECTED_THREAD_DETECTED;
+    }
     const auto result = plugin_manager.Refresh(p_ignore_plugins_guid);
     *pp_out_result = plugin_manager;
     return result;
@@ -1624,10 +1798,19 @@ AsrResult CreateIAsrPluginManagerAndGetResult(
 AsrResult GetExistingIAsrPluginManager(IAsrPluginManager** pp_out_result)
 {
     ASR_UTILS_CHECK_POINTER(pp_out_result)
-    if (Asr::Core::ForeignInterfaceHost::g_plugin_manager.IsInited())
+    auto& plugin_manager = ASR::Core::ForeignInterfaceHost::g_plugin_manager;
+    if (plugin_manager.IsUnexpectedThread())
     {
-        *pp_out_result = Asr::Core::ForeignInterfaceHost::g_plugin_manager;
-        (*pp_out_result)->AddRef();
+        std::stringstream ss;
+        ss << std::this_thread::get_id();
+        ASR_CORE_LOG_ERROR(
+            "Try to get existing plugin manager on an unexpected thread. Id = {}.",
+            ss.str());
+        return ASR_E_UNEXPECTED_THREAD_DETECTED;
+    }
+    if (plugin_manager.IsInited())
+    {
+        ASR::Utils::SetResult(plugin_manager, pp_out_result);
         return ASR_S_OK;
     }
     return ASR_E_OBJECT_NOT_INIT;
@@ -1635,7 +1818,17 @@ AsrResult GetExistingIAsrPluginManager(IAsrPluginManager** pp_out_result)
 
 AsrRetPluginManager GetExistingIAsrPluginManager()
 {
-    return Asr::Core::ForeignInterfaceHost::g_plugin_manager.IsInited()
+    auto& plugin_manager = ASR::Core::ForeignInterfaceHost::g_plugin_manager;
+    if (plugin_manager.IsUnexpectedThread())
+    {
+        std::stringstream ss;
+        ss << std::this_thread::get_id();
+        ASR_CORE_LOG_ERROR(
+            "Try to get existing plugin manager on an unexpected thread. Id = {}.",
+            ss.str());
+        return {ASR_E_UNEXPECTED_THREAD_DETECTED};
+    }
+    return plugin_manager.IsInited()
                ? AsrRetPluginManager{ASR_S_OK, static_cast<IAsrSwigPluginManager*>(Asr::Core::ForeignInterfaceHost::g_plugin_manager)}
-               : AsrRetPluginManager {ASR_E_OBJECT_NOT_INIT};
+               : AsrRetPluginManager{ASR_E_OBJECT_NOT_INIT};
 }
