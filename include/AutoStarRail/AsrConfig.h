@@ -54,30 +54,41 @@
 #define ASR_DISABLE_WARNING_BEGIN ASR_PRAGMA(warning(push))
 
 #define ASR_IGNORE_UNUSED_PARAMETER ASR_PRAGMA(warning(disable : 4100))
-#define ASR_IGNORE_OPENCV_WARNING                                              \
-    ASR_PRAGMA(warning(disable : 4100 4127 4244 4251 4275 4305 5054))
 #define ASR_IGNORE_UNUSED_FUNCTION
+
+#define ASR_IGNORE_OPENCV_WARNING                                              \
+    ASR_IGNORE_UNUSED_PARAMETER                                                \
+    ASR_PRAGMA(warning(disable : 4127 4244 4251 4275 4305 5054))
+
+#define ASR_IGNORE_STDEXEC_PARAMETERS                                          \
+    ASR_IGNORE_UNUSED_PARAMETER                                                \
+    ASR_PRAGMA(warning(disable : 4324 4456))
 
 #elif defined(__clang__)
 #define ASR_DISABLE_WARNING_BEGIN ASR_PRAGMA(clang diagnostic push)
-#define ASR_IGNORE_OPENCV_WARNING                                              \
-    ASR_PRAGMA(clang diagnostic ignored "-Wc11-extensions")
 
 #define ASR_IGNORE_UNUSED_PARAMETER                                            \
     ASR_PRAGMA(clang diagnostic ignored "-Wunused-parameter")
 #define ASR_IGNORE_UNUSED_FUNCTION                                             \
     ASR_PRAGMA(clang diagnostic ignored "-Wunused-function")
 
+#define ASR_IGNORE_OPENCV_WARNING                                              \
+    ASR_PRAGMA(clang diagnostic ignored "-Wc11-extensions")
+
+#define ASR_IGNORE_STDEXEC_PARAMETERS ASR_IGNORE_UNUSED_PARAMETER
+
 #elif defined(__GNUC__)
 #define ASR_DISABLE_WARNING_BEGIN ASR_PRAGMA(GCC diagnostic push)
 
 #define ASR_IGNORE_UNUSED_PARAMETER                                            \
     ASR_PRAGMA(GCC diagnostic ignored "-Wunused-parameter")
-#define ASR_IGNORE_OPENCV_WARNING                                              \
-    ASR_PRAGMA(GCC diagnostic ignored "-Wdeprecated-enum-enum-conversion")
 #define ASR_IGNORE_UNUSED_FUNCTION                                             \
     ASR_PRAGMA(GCC diagnostic ignored "-Wunused-function")
 
+#define ASR_IGNORE_OPENCV_WARNING                                              \
+    ASR_PRAGMA(GCC diagnostic ignored "-Wdeprecated-enum-enum-conversion")
+
+#define ASR_IGNORE_STDEXEC_PARAMETERS ASR_IGNORE_UNUSED_PARAMETER
 #endif
 
 #ifdef _MSC_VER

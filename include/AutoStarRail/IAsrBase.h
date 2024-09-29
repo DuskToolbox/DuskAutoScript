@@ -308,7 +308,7 @@ struct AsrRetSwigBase
     [[nodiscard]]
     void* GetVoidNoAddRef() const noexcept;
 
-    void SetValueAddRef(void* value);
+    void SetValueAddRef(void* value_need_add_ref);
 
     IAsrSwigBase* InternalAddRef()
     {

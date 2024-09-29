@@ -44,9 +44,9 @@ AsrResult AsrMakeAsrGuid(const char* p_guid_string, AsrGuid* p_out_guid)
 
 void* AsrRetSwigBase::GetVoidNoAddRef() const noexcept { return value; }
 
-void AsrRetSwigBase::SetValueAddRef(void* value)
+void AsrRetSwigBase::SetValueAddRef(void* value_need_add_ref)
 {
-    this->value = value;
+    this->value = value_need_add_ref;
     InternalAddRef();
 }
 

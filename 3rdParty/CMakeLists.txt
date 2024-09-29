@@ -71,6 +71,14 @@ function(_download_and_config_zlib_ng)
     set(ZLIB_COMPAT ON)
     set(ZLIB_ENABLE_TESTS OFF)
     set(BUILD_SHARED_LIBS OFF)
+    if(MSVC)
+        if(NOT CMAKE_C_FLAGS MATCHES "[\\/\\-]utf-8")
+            set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /utf-8")
+        endif()
+        if(NOT CMAKE_CXX_FLAGS MATCHES "[\\/\\-]utf-8")
+            set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /utf-8")
+        endif()
+    endif()
     FetchContent_Declare(
             zlib-ng
             URL "${GITHUB_MIRROR_URL}/zlib-ng/zlib-ng/archive/refs/tags/${ASR_ZLIB_NG_VERSION}.tar.gz"

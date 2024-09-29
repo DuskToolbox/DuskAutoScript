@@ -11,7 +11,7 @@
 #include <AutoStarRail/PluginInterface/IAsrTask.h>
 
 ASR_DISABLE_WARNING_BEGIN
-ASR_IGNORE_UNUSED_PARAMETER
+ASR_IGNORE_STDEXEC_PARAMETERS
 
 #include <exec/static_thread_pool.hpp>
 
