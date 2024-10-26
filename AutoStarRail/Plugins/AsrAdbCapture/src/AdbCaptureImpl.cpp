@@ -41,7 +41,6 @@ ASR_DISABLE_WARNING_END
 #include <boost/pfr.hpp>
 #include <boost/process.hpp>
 #include <boost/process/async_pipe.hpp>
-#include <boost/process/detail/child_decl.hpp>
 #include <sstream>
 #include <system_error>
 
