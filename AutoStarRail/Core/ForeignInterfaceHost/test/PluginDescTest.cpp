@@ -108,7 +108,7 @@ TEST(PluginSettingsDescTest, FromBasicJson)
     EXPECT_EQ(plugin_desc.supported_system, "Linux");
     EXPECT_EQ(plugin_desc.plugin_filename_extension, "py");
 
-    const auto& setting_desc = plugin_desc.settings[0];
+    const auto& setting_desc = plugin_desc.settings_desc[0];
 
     EXPECT_EQ(setting_desc.name, "test_setting_name");
     EXPECT_EQ(setting_desc.type, ASR_TYPE_INT);

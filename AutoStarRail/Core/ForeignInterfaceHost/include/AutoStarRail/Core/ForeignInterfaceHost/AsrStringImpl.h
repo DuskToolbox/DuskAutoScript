@@ -2,6 +2,7 @@
 #define ASR_CORE_FOREIGNINTERFACEHOST_ASRSTRINGIMPL_H
 
 #include <AutoStarRail/AsrString.hpp>
+#include <AutoStarRail/Core/Exceptions/AsrException.h>
 #include <AutoStarRail/Utils/CommonUtils.hpp>
 #include <AutoStarRail/Utils/Config.h>
 #include <AutoStarRail/Utils/Expected.h>
@@ -125,18 +126,96 @@ ASR_UTILS_NS_END
 
 class AsrReadOnlyStringWrapper
 {
-    mutable ASR::AsrPtr<IAsrReadOnlyString> p_impl_;
+    mutable ASR::AsrPtr<IAsrReadOnlyString> p_impl_{
+        []
+        {
+            IAsrReadOnlyString* result = nullptr;
+            CreateNullAsrString(&result);
+            return result;
+        }()};
 
 public:
     AsrReadOnlyStringWrapper();
     AsrReadOnlyStringWrapper(const char* p_u8_string);
     AsrReadOnlyStringWrapper(const char8_t* u8_string);
     AsrReadOnlyStringWrapper(const std::string& std_u8_string);
+    AsrReadOnlyStringWrapper(IAsrReadOnlyString* p_string);
+    AsrReadOnlyStringWrapper(ASR::AsrPtr<IAsrReadOnlyString> p_string);
+    AsrReadOnlyStringWrapper(const AsrReadOnlyString& ref_asr_string);
     ~AsrReadOnlyStringWrapper();
 
+    template <class T>
+    T To() const;
+
+    void GetTo(const char*& p_u8_string);
+    void GetTo(const char8_t*& p_u8_string);
+    void GetTo(std::string& std_u8_string);
+    void GetTo(ASR::AsrPtr<IAsrReadOnlyString>& p_string);
+    void GetTo(IAsrReadOnlyString**& pp_string);
+    void GetTo(IAsrReadOnlyString*& p_string);
+
     operator AsrReadOnlyString() const;
-    void GetImpl(IAsrReadOnlyString** pp_impl) const;
+    void                 GetImpl(IAsrReadOnlyString** pp_impl) const;
+    IAsrReadOnlyString*  Get() const noexcept;
+    IAsrReadOnlyString** Put();
 };
+
+template <>
+inline std::string AsrReadOnlyStringWrapper::To() const
+{
+    if (!p_impl_)
+    {
+        return {};
+    }
+    const char* p_string;
+    const auto  result = p_impl_->GetUtf8(&p_string);
+    if (ASR::IsFailed(result))
+    {
+        ASR::Core::AsrException::Throw(result);
+    }
+    return {p_string};
+}
+
+template <>
+inline const char* AsrReadOnlyStringWrapper::To() const
+{
+    if (!p_impl_)
+    {
+        return nullptr;
+    }
+    const char* p_string;
+    const auto  result = p_impl_->GetUtf8(&p_string);
+    if (ASR::IsFailed(result))
+    {
+        ASR::Core::AsrException::Throw(result);
+    }
+    return p_string;
+}
+
+template <>
+inline const char8_t* AsrReadOnlyStringWrapper::To() const
+{
+    const auto p_string = To<const char*>();
+    return reinterpret_cast<const char8_t*>(p_string);
+}
+
+template <>
+inline IAsrReadOnlyString* AsrReadOnlyStringWrapper::To() const
+{
+    return p_impl_.Get();
+}
+
+template <>
+inline ASR::AsrPtr<IAsrReadOnlyString> AsrReadOnlyStringWrapper::To() const
+{
+    return p_impl_;
+}
+
+template <>
+inline AsrReadOnlyString AsrReadOnlyStringWrapper::To() const
+{
+    return AsrReadOnlyString{p_impl_};
+}
 
 void from_json(nlohmann::json input, AsrReadOnlyStringWrapper& output);
 
@@ -245,5 +324,40 @@ public:
     AsrResult GetImpl(ICUString** out_icu_string) noexcept;
     AsrResult GetImpl(const ICUString** out_icu_string) const noexcept;
 };
+
+namespace nlohmann
+{
+    template <>
+    struct adl_serializer<AsrReadOnlyStringWrapper>
+    {
+        static void to_json(
+            json&                           j,
+            const AsrReadOnlyStringWrapper& asr_string);
+
+        static void from_json(
+            const json&               j,
+            AsrReadOnlyStringWrapper& asr_string);
+    };
+
+    template <>
+    struct adl_serializer<AsrReadOnlyString>
+    {
+        static void to_json(json& j, const AsrReadOnlyString& asr_string);
+
+        static void from_json(const json& j, AsrReadOnlyString& asr_string);
+    };
+
+    template <>
+    struct adl_serializer<ASR::AsrPtr<IAsrReadOnlyString>>
+    {
+        static void to_json(
+            json&                                  j,
+            const ASR::AsrPtr<IAsrReadOnlyString>& p_asr_string);
+
+        static void from_json(
+            const json&                      j,
+            ASR::AsrPtr<IAsrReadOnlyString>& p_asr_string);
+    };
+}
 
 #endif // ASR_CORE_FOREIGNINTERFACEHOST_ASRSTRINGIMPL_H

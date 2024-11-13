@@ -108,13 +108,19 @@ AsrGuid MakeAsrGuid(const std::string_view guid_string)
     return result;
 }
 
-void from_json(const nlohmann::json& input, AsrGuid& output)
+ASR_CORE_FOREIGNINTERFACEHOST_NS_END
+
+void nlohmann::adl_serializer<AsrGuid>::to_json(json& j, const AsrGuid& guid)
 {
-    const auto guid_string = input.get<std::string_view>();
-    output = MakeAsrGuid(guid_string);
+    const auto guid_string = ASR::fmt::format("{}", guid);
+    j = guid_string;
 }
 
-ASR_CORE_FOREIGNINTERFACEHOST_NS_END
+void nlohmann::adl_serializer<AsrGuid>::from_json(const json& j, AsrGuid& guid)
+{
+    const auto guid_string = j.get<std::string_view>();
+    guid = ASR::Core::ForeignInterfaceHost::MakeAsrGuid(guid_string);
+}
 
 AsrReadOnlyString AsrGuidToString(const AsrGuid& guid)
 {

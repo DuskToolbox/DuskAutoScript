@@ -110,6 +110,13 @@ public:
     AsrResult GetAllPluginInfo(
         IAsrPluginInfoVector** pp_out_plugin_info_vector) override;
     AsrResult FindInterface(const AsrGuid& iid, void** pp_object) override;
+    AsrResult GetPluginSettingsJson(
+        const AsrGuid&       plugin_guid,
+        IAsrReadOnlyString** pp_out_json) override;
+    AsrResult SetPluginSettingsJson(
+        const AsrGuid&      plugin_guid,
+        IAsrReadOnlyString* p_json) override;
+    AsrResult ResetPluginSettings(const AsrGuid& plugin_guid) override;
 };
 
 class IAsrPluginManagerImpl final : public IAsrPluginManager
@@ -127,7 +134,7 @@ public:
         const AsrGuid&  iid,
         IAsrComponent** pp_out_component) override;
     AsrResult CreateCaptureManager(
-        IAsrReadOnlyString*  p_capture_config,
+        IAsrReadOnlyString*  p_environment_config,
         IAsrCaptureManager** pp_out_capture_manager) override;
 };
 
@@ -145,7 +152,7 @@ public:
     // IAsrSwigPluginManager
     AsrRetComponent      CreateComponent(const AsrGuid& iid) override;
     AsrRetCaptureManager CreateCaptureManager(
-        AsrReadOnlyString capture_config) override;
+        AsrReadOnlyString environment_config) override;
 };
 
 /**
@@ -253,14 +260,26 @@ public:
     AsrResult FindInterface(const AsrGuid& iid, void** pp_out_object);
 
     AsrResult CreateCaptureManager(
-        IAsrReadOnlyString*  p_capture_config,
+        IAsrReadOnlyString*  environment_config,
         IAsrCaptureManager** pp_out_manager);
-    AsrRetCaptureManager CreateCaptureManager(AsrReadOnlyString capture_config);
+    AsrRetCaptureManager CreateCaptureManager(
+        AsrReadOnlyString environment_config);
 
     AsrResult CreateComponent(
         const AsrGuid&  iid,
         IAsrComponent** pp_out_component);
     AsrRetComponent CreateComponent(const AsrGuid& iid);
+
+    AsrResult GetPluginSettingsJson(
+        const AsrGuid&       plugin_guid,
+        IAsrReadOnlyString** pp_out_json);
+    AsrResult SetPluginSettingsJson(
+        const AsrGuid&      plugin_guid,
+        IAsrReadOnlyString* p_json);
+    AsrResult ResetPluginSettings(const AsrGuid& plugin_guid);
+    auto      FindInterfaceStaticStorage(AsrGuid iid)
+        -> Utils::Expected<
+            std::reference_wrapper<const InterfaceStaticStorage>>;
 };
 
 extern PluginManager g_plugin_manager;

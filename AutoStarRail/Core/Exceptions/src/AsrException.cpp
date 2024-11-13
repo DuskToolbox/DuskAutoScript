@@ -1,4 +1,6 @@
 #include <AutoStarRail/Core/Exceptions/AsrException.h>
+#include <AutoStarRail/Core/ForeignInterfaceHost/AsrStringImpl.h>
+#include <AutoStarRail/Core/Logger/Logger.h>
 #include <AutoStarRail/PluginInterface/IAsrErrorLens.h>
 #include <AutoStarRail/Utils/CommonUtils.hpp>
 #include <AutoStarRail/Utils/StringUtils.h>
@@ -27,48 +29,43 @@ AsrException::AsrException(AsrResult error_code, const char* p_string, borrow_t)
 void AsrException::Throw(AsrResult error_code)
 {
     AsrPtr<IAsrReadOnlyString> p_error_message{};
-    if (IsFailed(
-            ::AsrGetPredefinedErrorMessage(error_code, p_error_message.Put())))
+    const auto                 get_predefined_error_message_result =
+        ::AsrGetPredefinedErrorMessage(error_code, p_error_message.Put());
+    if (IsFailed(get_predefined_error_message_result))
     {
-        ThrowDefault(error_code);
-    }
-
-    const char* p_u8_error_message{};
-    if (IsFailed(p_error_message->GetUtf8(&p_u8_error_message)))
-    {
-        ThrowDefault(error_code);
+        ASR_CORE_LOG_ERROR(
+            "AsrGetPredefinedErrorMessage failed. Error code = {}.",
+            get_predefined_error_message_result);
+        ThrowDefault(get_predefined_error_message_result);
     }
 
     throw AsrException{
         error_code,
-        fmt::format(
-            "Operation failed. Error code = {}. Message = {}.",
-            p_u8_error_message,
+        ASR::fmt::format(
+            "Operation failed. Error code = {}. message = \"{}\".",
+            p_error_message,
             error_code)};
 }
 
 void AsrException::Throw(AsrResult error_code, IAsrTypeInfo* p_type_info)
 {
     AsrPtr<IAsrReadOnlyString> p_error_message{};
-    if (IsFailed(::AsrGetErrorMessage(
-            p_type_info,
-            error_code,
-            p_error_message.Put())))
-    {
-        ThrowDefault(error_code);
-    }
 
-    const char* p_u8_error_message{};
-    if (IsFailed(p_error_message->GetUtf8(&p_u8_error_message)))
+    const auto get_error_message_result =
+        ::AsrGetErrorMessage(p_type_info, error_code, p_error_message.Put());
+    if (IsFailed(get_error_message_result))
     {
-        ThrowDefault(error_code);
+        ASR_CORE_LOG_ERROR(
+            "AsrGetErrorMessage failed. Error code = {}.",
+            get_error_message_result);
+        ThrowDefault(get_error_message_result);
     }
 
     throw AsrException{
         error_code,
-        fmt::format(
-            "Operation failed. Error code = {}. Message = {}.",
-            p_u8_error_message,
+        ASR::fmt::format(
+            "Operation failed. Error code = {}. message = \"{}\".",
+            p_error_message,
             error_code)};
 }
 
@@ -76,19 +73,45 @@ void AsrException::Throw(AsrResult error_code, IAsrSwigTypeInfo* p_type_info)
 {
     const auto internal_error_message =
         ::AsrGetErrorMessage(p_type_info, error_code);
-    if (IsFailed(internal_error_message.error_code))
+    const auto get_error_message_result =
+        ASR::GetErrorCodeFrom(internal_error_message);
+    if (IsFailed(get_error_message_result))
     {
-        ThrowDefault(error_code);
+        ASR_CORE_LOG_ERROR(
+            "AsrGetErrorMessage failed. Error code = {}.",
+            get_error_message_result);
+        ThrowDefault(get_error_message_result);
     }
-
-    const char* p_u8_error_message = internal_error_message.value.GetUtf8();
 
     throw AsrException{
         error_code,
-        fmt::format(
-            "Operation failed. Error code = {}. Message = {}.",
-            p_u8_error_message,
+        ASR::fmt::format(
+            "Operation failed. Error code = {}. message = \"{}\".",
+            internal_error_message.value,
             error_code)};
+}
+
+void AsrException::Throw(AsrResult error_code, const std::string& ex_message)
+{
+    AsrPtr<IAsrReadOnlyString> p_error_message{};
+    const auto                 get_predefined_error_message_result =
+        ::AsrGetPredefinedErrorMessage(error_code, p_error_message.Put());
+    if (IsFailed(get_predefined_error_message_result))
+    {
+        ASR_CORE_LOG_ERROR(
+            "AsrGetPredefinedErrorMessage failed. Error code = {}. ExMessage = \"{}\".",
+            get_predefined_error_message_result,
+            ex_message);
+        ThrowDefault(get_predefined_error_message_result);
+    }
+
+    throw AsrException{
+        error_code,
+        ASR::fmt::format(
+            "Operation failed. Error code = {}. Message = \"{}\". ExMessage = \"{}\".",
+            p_error_message,
+            error_code,
+            ex_message)};
 }
 
 const char* AsrException::what() const noexcept

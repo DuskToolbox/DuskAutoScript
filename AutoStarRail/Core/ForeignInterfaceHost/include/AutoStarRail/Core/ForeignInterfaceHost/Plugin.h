@@ -4,10 +4,12 @@
 #include "ForeignInterfaceHost.h"
 #include "IAsrPluginManagerImpl.h"
 #include <AutoStarRail/AsrPtr.hpp>
+#include <AutoStarRail/Core/ForeignInterfaceHost/AsrGuid.h>
 #include <AutoStarRail/Core/ForeignInterfaceHost/Config.h>
 #include <AutoStarRail/Core/ForeignInterfaceHost/ForeignInterfaceHostEnum.h>
 #include <AutoStarRail/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
 #include <AutoStarRail/IAsrBase.h>
+#include <unordered_set>
 
 ASR_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 

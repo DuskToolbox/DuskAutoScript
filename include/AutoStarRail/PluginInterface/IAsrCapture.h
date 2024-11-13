@@ -5,7 +5,6 @@
 #include <AutoStarRail/ExportInterface/IAsrImage.h>
 #include <AutoStarRail/IAsrTypeInfo.h>
 
-
 ASR_INTERFACE IAsrImage;
 
 // {69A9BDB0-4657-45B6-8ECB-E4A8F0428E95}
@@ -50,12 +49,15 @@ ASR_INTERFACE IAsrCaptureFactory : public IAsrTypeInfo
     /**
      * @brief Create an instance
      *
+     * @param p_environment_json_config
+     * @param p_plugin_config
      * @param p_json_config
      * @param pp_out_object
      * @return ASR_METHOD
      */
     ASR_METHOD CreateInstance(
-        IAsrReadOnlyString * p_json_config,
+        IAsrReadOnlyString * p_environment_json_config,
+        IAsrReadOnlyString * p_plugin_config,
         IAsrCapture * *pp_out_object) = 0;
 };
 

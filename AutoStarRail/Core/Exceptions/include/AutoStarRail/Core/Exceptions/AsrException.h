@@ -28,6 +28,8 @@ public:
     static void Throw(AsrResult error_code);
     static void Throw(AsrResult error_code, IAsrTypeInfo* p_type_info);
     static void Throw(AsrResult error_code, IAsrSwigTypeInfo* p_type_info);
+    static void Throw(AsrResult error_code, const std::string& ex_message);
+    // ex message 支持p_type_info
 
     [[nodiscard]]
     const char* what() const noexcept override;

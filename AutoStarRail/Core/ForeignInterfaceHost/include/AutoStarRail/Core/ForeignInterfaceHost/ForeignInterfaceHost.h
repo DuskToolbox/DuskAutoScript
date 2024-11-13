@@ -1,18 +1,21 @@
 #ifndef ASR_CORE_FOREIGNINTERFACEHOST_FOREIGNINTERFACEHOST_H
 #define ASR_CORE_FOREIGNINTERFACEHOST_FOREIGNINTERFACEHOST_H
 
+#include <AutoStarRail/Core/ForeignInterfaceHost/AsrStringImpl.h>
 #include <AutoStarRail/Core/ForeignInterfaceHost/Config.h>
 #include <AutoStarRail/Core/ForeignInterfaceHost/ForeignInterfaceHostEnum.h>
 #include <AutoStarRail/ExportInterface/AsrJson.h>
 #include <AutoStarRail/ExportInterface/IAsrSettings.h>
 #include <AutoStarRail/IAsrBase.h>
 #include <AutoStarRail/Utils/fmt.h>
+#include <mutex>
 #include <nlohmann/json_fwd.hpp>
 #include <optional>
 #include <string>
 #include <variant>
 #include <vector>
 
+#include <boost/signals2/signal.hpp>
 
 ASR_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
@@ -80,7 +83,25 @@ struct PluginDesc
     std::string                    plugin_filename_extension;
     std::optional<std::string>     opt_resource_path;
     AsrGuid                        guid;
-    std::vector<PluginSettingDesc> settings;
+    std::vector<PluginSettingDesc> settings_desc;
+
+    class SettingsJson
+    {
+    public:
+        void SetValue(IAsrReadOnlyString* p_json);
+        void GetValue(IAsrReadOnlyString** pp_out_json);
+
+    private:
+        std::mutex                 mutex_{};
+        AsrPtr<IAsrReadOnlyString> settings_json_{};
+    };
+    // 下面的变量不被序列化到json
+    std::shared_ptr<SettingsJson> settings_json_ =
+        std::make_shared<SettingsJson>();
+    AsrReadOnlyStringWrapper settings_desc_json;
+    nlohmann::json           default_settings;
+    boost::signals2::signal<void(std::shared_ptr<SettingsJson>)>
+        on_settings_changed{};
 };
 
 void from_json(const ::nlohmann::json& input, PluginDesc& output);

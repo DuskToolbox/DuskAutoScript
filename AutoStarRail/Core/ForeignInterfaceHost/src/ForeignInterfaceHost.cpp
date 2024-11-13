@@ -10,6 +10,9 @@
 #include <magic_enum_format.hpp>
 #include <stdexcept>
 
+// Compatible with fmt
+#if ASR_USE_STD_FMT
+
 template <class T>
 struct ASR_FMT_NS::formatter<std::vector<T>, char>
     : public formatter<std::string, char>
@@ -31,6 +34,8 @@ struct ASR_FMT_NS::formatter<std::vector<T>, char>
         return result;
     }
 };
+
+#endif
 
 template <class T>
 struct ASR_FMT_NS::formatter<std::optional<std::vector<T>>, char>
@@ -167,7 +172,9 @@ auto(ASR_FMT_NS::formatter<ASR::Core::ForeignInterfaceHost::PluginDesc, char>::
         result,
         ASR_CORE_FOREIGNINTERFACEHOST_VAR(plugin_filename_extension));
     ASR_FMT_NS::format_to(result, ASR_CORE_FOREIGNINTERFACEHOST_VAR(guid));
-    ASR_FMT_NS::format_to(result, ASR_CORE_FOREIGNINTERFACEHOST_VAR(settings));
+    ASR_FMT_NS::format_to(
+        result,
+        ASR_CORE_FOREIGNINTERFACEHOST_VAR(settings_desc));
 
     return result;
 }
@@ -241,6 +248,18 @@ void from_json(const nlohmann::json& input, PluginSettingDesc& output)
         output.deprecation_message);
 }
 
+void PluginDesc::SettingsJson::SetValue(IAsrReadOnlyString* p_json)
+{
+    std::lock_guard _{mutex_};
+    settings_json_ = p_json;
+}
+
+void PluginDesc::SettingsJson::GetValue(IAsrReadOnlyString** pp_out_json)
+{
+    std::lock_guard _{mutex_};
+    Utils::SetResult(settings_json_, pp_out_json);
+}
+
 void from_json(const nlohmann::json& input, PluginDesc& output)
 {
     ASR_CORE_TRACE_SCOPE;
@@ -270,7 +289,41 @@ void from_json(const nlohmann::json& input, PluginDesc& output)
     {
         return;
     }
-    input.at("settings").get_to(output.settings);
+    const auto& settings = input.at("settings");
+    settings.get_to(output.settings_desc);
+    output.settings_desc_json = settings.dump();
+    output.default_settings = nlohmann::json{};
+    for (const auto& setting : output.settings_desc)
+    {
+        switch (setting.type)
+        {
+        case ASR_TYPE_BOOL:
+            output.default_settings[output.name] =
+                std::get<bool>(setting.default_value);
+            break;
+        case ASR_TYPE_INT:
+            output.default_settings[output.name] =
+                std::get<std::int64_t>(setting.default_value);
+            break;
+        case ASR_TYPE_FLOAT:
+            output.default_settings[output.name] =
+                std::get<float>(setting.default_value);
+            break;
+        case ASR_TYPE_STRING:
+            output.default_settings[output.name] =
+                std::get<std::string>(setting.default_value);
+            break;
+        default:
+            ASR_CORE_LOG_ERROR(
+                "Unexpected enum value. Setting name = {}, value = {}.",
+                setting.name,
+                setting.type);
+            throw Utils::UnexpectedEnumException::FromEnum(setting.type);
+        }
+    }
+    const AsrReadOnlyStringWrapper default_settings_json{
+        output.default_settings.dump()};
+    output.settings_json_->SetValue(default_settings_json.Get());
 }
 
 ASR_CORE_FOREIGNINTERFACEHOST_NS_END

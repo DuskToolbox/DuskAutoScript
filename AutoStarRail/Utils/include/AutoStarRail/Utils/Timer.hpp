@@ -12,6 +12,9 @@ class Timer
 
 public:
     void Begin() { start_ = std::chrono::high_resolution_clock::now(); }
+    /**
+     * @return 过去的时间，单位毫秒
+     */
     auto End()
     {
         const auto end = std::chrono::high_resolution_clock::now();

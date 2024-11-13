@@ -42,12 +42,14 @@ public:
     /**
      * @brief Require url property
      *
-     * @param p_json_config
+     * @param p_environment_json_config
+     * @param p_plugin_config
      * @param pp_object
      * @return ASR_METHOD
      */
     ASR_IMPL CreateInstance(
-        IAsrReadOnlyString* p_json_config,
+        IAsrReadOnlyString* p_environment_json_config,
+        IAsrReadOnlyString* p_plugin_config,
         IAsrCapture**       pp_object) override;
 };
 

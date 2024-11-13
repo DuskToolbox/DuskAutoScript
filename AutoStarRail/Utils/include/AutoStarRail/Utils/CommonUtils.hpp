@@ -41,7 +41,7 @@ const auto value = A;
 
 #define ASR_UTILS_IASRBASE_AUTO_IMPL(class_name)                               \
 private:                                                                       \
-    ASR::Utils::RefCounter<class_name> ref_counter_;                           \
+    ASR::Utils::RefCounter<class_name> ref_counter_{};                         \
                                                                                \
 public:                                                                        \
     int64_t AddRef() override { return ref_counter_.AddRef(); }                \
@@ -318,11 +318,23 @@ private:
     std::thread::id id_;
 };
 
+/**
+ * @brief 将result设置到p_result中，并调用AddRef
+ */
 template <class R, class T>
 void SetResult(R&& result, T* p_result)
 {
-    (*p_result) = result;
-    (*p_result)->AddRef();
+    constexpr bool has_Get = requires(const R& v) { v.Get(); };
+    if constexpr (has_Get)
+    {
+        (*p_result) = result.Get();
+        (*p_result)->AddRef();
+    }
+    else
+    {
+        (*p_result) = result;
+        (*p_result)->AddRef();
+    }
 }
 
 ASR_UTILS_NS_END

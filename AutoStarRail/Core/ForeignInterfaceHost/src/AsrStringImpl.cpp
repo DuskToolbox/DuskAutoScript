@@ -1,4 +1,5 @@
 #include <AutoStarRail/AsrConfig.h>
+#include <AutoStarRail/Core/Exceptions/AsrException.h>
 #include <AutoStarRail/Core/ForeignInterfaceHost/AsrStringImpl.h>
 #include <AutoStarRail/Core/Logger/Logger.h>
 #include <AutoStarRail/Utils/QueryInterface.hpp>
@@ -53,7 +54,7 @@ auto(ASR_FMT_NS::formatter<ASR::AsrPtr<IAsrReadOnlyString>, char>::format)(
 
     const char* p_string_data{nullptr};
     const auto  result = p_string->GetUtf8(&p_string_data);
-    if (ASR::IsOk(result))
+    if (ASR::IsOk(result)) [[likely]]
     {
         return ASR_FMT_NS::format_to(ctx.out(), "{}", p_string_data);
     }
@@ -483,20 +484,35 @@ AsrResult AsrStringCppImpl::GetImpl(
 
 AsrReadOnlyStringWrapper::AsrReadOnlyStringWrapper(const char* p_u8_string)
 {
-    ::CreateIAsrReadOnlyStringFromUtf8(p_u8_string, p_impl_.Put());
+    const auto result =
+        ::CreateIAsrReadOnlyStringFromUtf8(p_u8_string, p_impl_.Put());
+    if (ASR::IsFailed(result))
+    {
+        ASR::Core::AsrException::Throw(result);
+    }
 }
 
 AsrReadOnlyStringWrapper::AsrReadOnlyStringWrapper(const char8_t* u8_string)
 {
-    ::CreateIAsrReadOnlyStringFromUtf8(
+    const auto result = ::CreateIAsrReadOnlyStringFromUtf8(
         reinterpret_cast<const char*>(u8_string),
         p_impl_.Put());
+    if (ASR::IsFailed(result))
+    {
+        ASR::Core::AsrException::Throw(result);
+    }
 }
 
 AsrReadOnlyStringWrapper::AsrReadOnlyStringWrapper(
     const std::string& std_u8_string)
 {
-    ::CreateIAsrReadOnlyStringFromUtf8(std_u8_string.c_str(), p_impl_.Put());
+    const auto result = ::CreateIAsrReadOnlyStringFromUtf8(
+        std_u8_string.c_str(),
+        p_impl_.Put());
+    if (ASR::IsFailed(result))
+    {
+        ASR::Core::AsrException::Throw(result);
+    }
 }
 
 void AsrReadOnlyStringWrapper::GetImpl(IAsrReadOnlyString** pp_impl) const
@@ -504,6 +520,13 @@ void AsrReadOnlyStringWrapper::GetImpl(IAsrReadOnlyString** pp_impl) const
     p_impl_->AddRef();
     *pp_impl = p_impl_.Get();
 }
+
+IAsrReadOnlyString* AsrReadOnlyStringWrapper::Get() const noexcept
+{
+    return p_impl_.Get();
+}
+
+IAsrReadOnlyString** AsrReadOnlyStringWrapper::Put() { return p_impl_.Put(); }
 
 void from_json(nlohmann::json input, AsrReadOnlyStringWrapper& output)
 {
@@ -523,9 +546,64 @@ AsrReadOnlyStringWrapper::AsrReadOnlyStringWrapper() = default;
 
 AsrReadOnlyStringWrapper::~AsrReadOnlyStringWrapper() = default;
 
+void AsrReadOnlyStringWrapper::GetTo(const char*& p_u8_string)
+{
+    p_u8_string = To<const char*>();
+}
+
+void AsrReadOnlyStringWrapper::GetTo(const char8_t*& p_u8_string)
+{
+    p_u8_string = To<const char8_t*>();
+}
+
+void AsrReadOnlyStringWrapper::GetTo(std::string& std_u8_string)
+{
+    std_u8_string = To<std::string>();
+}
+
+void AsrReadOnlyStringWrapper::GetTo(ASR::AsrPtr<IAsrReadOnlyString>& p_string)
+{
+    p_string = p_impl_;
+}
+
+void AsrReadOnlyStringWrapper::GetTo(IAsrReadOnlyString**& pp_string)
+{
+    if (p_impl_)
+    {
+        ASR::Utils::SetResult(p_impl_, pp_string);
+    }
+    else
+    {
+        ASR_CORE_LOG_ERROR("Empty string!");
+        CreateNullAsrString(pp_string);
+    }
+}
+
+void AsrReadOnlyStringWrapper::GetTo(IAsrReadOnlyString*& p_string)
+{
+    p_string = p_impl_.Get();
+}
+
 AsrReadOnlyStringWrapper::operator AsrReadOnlyString() const
 {
     return AsrReadOnlyString{p_impl_};
+}
+
+AsrReadOnlyStringWrapper::AsrReadOnlyStringWrapper(IAsrReadOnlyString* p_string)
+    : p_impl_{p_string}
+{
+}
+
+AsrReadOnlyStringWrapper::AsrReadOnlyStringWrapper(
+    const AsrReadOnlyString& ref_asr_string)
+    : p_impl_{ref_asr_string.Get()}
+{
+}
+
+AsrReadOnlyStringWrapper::AsrReadOnlyStringWrapper(
+    ASR::AsrPtr<IAsrReadOnlyString> p_string)
+    : p_impl_{p_string.Get()}
+{
 }
 
 ASR_NS_BEGIN
@@ -683,4 +761,64 @@ AsrResult CreateIAsrReadOnlyStringFromWChar(
     auto result = CreateIAsrStringFromWChar(p_wstring, length, &p_string);
     *pp_out_readonly_string = p_string;
     return result;
+}
+
+void nlohmann::adl_serializer<AsrReadOnlyStringWrapper>::to_json(
+    json&                           j,
+    const AsrReadOnlyStringWrapper& asr_string)
+{
+    j = const_cast<AsrReadOnlyStringWrapper&>(asr_string).To<const char*>();
+}
+
+void nlohmann::adl_serializer<AsrReadOnlyStringWrapper>::from_json(
+    const json&               j,
+    AsrReadOnlyStringWrapper& asr_string)
+{
+    std::string string;
+    j.get_to(string);
+    asr_string = AsrReadOnlyStringWrapper{string};
+}
+
+void nlohmann::adl_serializer<AsrReadOnlyString>::to_json(
+    json&                    j,
+    const AsrReadOnlyString& asr_string)
+{
+    if (!asr_string.Get())
+    {
+        j = nullptr;
+        return;
+    }
+    j = AsrReadOnlyStringWrapper{asr_string}.To<const char*>();
+}
+
+void nlohmann::adl_serializer<AsrReadOnlyString>::from_json(
+    const json&        j,
+    AsrReadOnlyString& asr_string)
+{
+    std::string string;
+    j.get_to(string);
+    AsrReadOnlyStringWrapper wrapper{string};
+    asr_string = wrapper.To<AsrReadOnlyString>();
+}
+
+void nlohmann::adl_serializer<ASR::AsrPtr<IAsrReadOnlyString>>::to_json(
+    json&                                  j,
+    const ASR::AsrPtr<IAsrReadOnlyString>& p_asr_string)
+{
+    if (!p_asr_string)
+    {
+        j = nullptr;
+        return;
+    }
+    j = AsrReadOnlyStringWrapper{p_asr_string}.To<const char*>();
+}
+
+void nlohmann::adl_serializer<ASR::AsrPtr<IAsrReadOnlyString>>::from_json(
+    const json&                      j,
+    Asr::AsrPtr<IAsrReadOnlyString>& p_asr_string)
+{
+    std::string string;
+    j.get_to(string);
+    AsrReadOnlyStringWrapper wrapper{string};
+    p_asr_string = wrapper.To<ASR::AsrPtr<IAsrReadOnlyString>>();
 }

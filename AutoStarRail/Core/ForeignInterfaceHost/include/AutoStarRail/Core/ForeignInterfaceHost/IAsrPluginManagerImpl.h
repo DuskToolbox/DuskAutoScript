@@ -35,6 +35,8 @@ public:
     ASR_IMPL GetSupportedSystem(
         IAsrReadOnlyString** pp_out_supported_system) override;
     ASR_IMPL GetPluginIid(AsrGuid* p_out_guid) override;
+    ASR_IMPL GetPluginSettingsDescriptor(
+        IAsrReadOnlyString** pp_out_string) override;
 
     auto GetImpl() noexcept -> AsrPluginInfoImpl&;
 };
@@ -122,6 +124,7 @@ public:
     AsrResult GetVersion(IAsrReadOnlyString** pp_out_version);
     AsrResult GetSupportedSystem(IAsrReadOnlyString** pp_out_supported_system);
     AsrResult GetPluginIid(AsrGuid* p_out_guid);
+    AsrResult GetPluginSettingsDescriptor(IAsrReadOnlyString** pp_out_string);
     AsrRetReadOnlyString GetName();
     AsrRetReadOnlyString GetDescription();
     AsrRetReadOnlyString GetAuthor();

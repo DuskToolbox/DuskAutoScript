@@ -10,6 +10,7 @@
 #include <AutoStarRail/PluginInterface/IAsrErrorLens.h>
 #include <AutoStarRail/Utils/QueryInterface.hpp>
 #include <AutoStarRail/Utils/StringUtils.h>
+#include <AutoStarRail/Utils/Timer.hpp>
 #include <utility>
 #include <vector>
 
@@ -72,6 +73,64 @@ AsrReadOnlyString AsrRetCaptureManagerPerformanceTestResult::GetErrorMessage()
 }
 
 ASR_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
+
+ASR_NS_ANONYMOUS_DETAILS_BEGIN
+
+template <class T>
+auto MakeErrorInfo(AsrResult error_code, T* p_error_generator)
+    -> CaptureManagerImpl::ErrorInfo
+{
+    CaptureManagerImpl::ErrorInfo result{};
+    result.error_code = error_code;
+    std::string              error_message{};
+    AsrReadOnlyStringWrapper asr_error_message{};
+    const auto name = Utils::GetRuntimeClassNameFrom(p_error_generator);
+    if (const auto get_error_message_result = ::AsrGetErrorMessage(
+            p_error_generator,
+            error_code,
+            asr_error_message.Put());
+        ASR::IsOk(get_error_message_result))
+    {
+        const char* u8_error_message;
+        asr_error_message.GetTo(u8_error_message);
+        error_message = ASR::fmt::format(
+            R"(Error happened when creating capture instance.
+TypeName: {}.
+Error code: {}.
+Error explanation: "{}".)",
+            name,
+            result.error_code,
+            u8_error_message);
+        result.p_error_message = asr_error_message.Get();
+    }
+    else
+    {
+        error_message = ASR::fmt::format(
+            R"(Error happened when creating capture instance.
+TypeName: {}.
+Error code: {}.
+No error explanation found. Result: {}.)",
+            name,
+            result.error_code,
+            get_error_message_result);
+    }
+    ASR_CORE_LOG_ERROR(error_message);
+    return result;
+}
+
+void OnCreateCaptureInstanceFailed(
+    ASR::Core::ForeignInterfaceHost::CaptureManagerImpl::ErrorInfo&
+                                           in_error_info,
+    const ASR::AsrPtr<IAsrReadOnlyString>& p_capture_factory_name,
+    const ASR::AsrPtr<ASR::Core::ForeignInterfaceHost::CaptureManagerImpl>&
+        p_capture_manager)
+{
+    in_error_info =
+        MakeErrorInfo(in_error_info.error_code, p_capture_factory_name.Get());
+    p_capture_manager->AddInstance(p_capture_factory_name, in_error_info);
+}
+
+ASR_NS_ANONYMOUS_DETAILS_END
 
 IAsrCaptureManagerImpl::IAsrCaptureManagerImpl(CaptureManagerImpl& impl)
     : impl_{impl}
@@ -291,8 +350,39 @@ AsrResult CaptureManagerImpl::EnumCaptureInterface(
 
 AsrResult CaptureManagerImpl::RunCapturePerformanceTest()
 {
+    AsrResult result{ASR_S_OK};
+    performance_results_.clear();
+    performance_results_.reserve(instances_.size());
+    for (const auto& [_, instance] : instances_)
+    {
+        if (!instance)
+        {
+            continue;
+        }
+        AsrPtr<IAsrImage> p_image{};
+        ErrorInfo         capture_error_info{};
+        const auto        p_capture = instance.value();
+        ASR::Utils::Timer timer{};
+        timer.Begin();
+        const auto capture_result = p_capture->Capture(p_image.Put());
+        if (IsFailed(capture_result))
+        {
+            result = ASR_S_FALSE;
+            capture_error_info =
+                Details::MakeErrorInfo(capture_result, p_capture.Get());
+            performance_results_.emplace_back(p_capture, capture_error_info);
+
+            continue;
+        }
+        capture_error_info.time_spent_in_ms =
+            static_cast<decltype(capture_error_info.time_spent_in_ms)>(
+                timer.End());
+        capture_error_info.error_code = capture_result;
+        ::CreateNullAsrString(capture_error_info.p_error_message.Put());
+        performance_results_.emplace_back(p_capture, capture_error_info);
+    }
     // 实现调度队列后再实现这个函数
-    return ASR_E_NO_IMPLEMENTATION;
+    return result;
 }
 
 AsrResult CaptureManagerImpl::EnumCapturePerformanceTestResult(
@@ -302,6 +392,10 @@ AsrResult CaptureManagerImpl::EnumCapturePerformanceTestResult(
     IAsrCapture**        pp_out_capture,
     IAsrReadOnlyString** pp_out_error_explanation)
 {
+    if (index == instances_.size())
+    {
+        return ASR_E_OUT_OF_RANGE;
+    }
     try
     {
         auto& [object, error_info] = performance_results_.at(index);
@@ -377,56 +471,10 @@ CaptureManagerImpl::operator IAsrSwigCaptureManager*() noexcept
     return &swig_projection_;
 }
 
-ASR_NS_ANONYMOUS_DETAILS_BEGIN
-
-void OnCreateCaptureInstanceFailed(
-    ASR::Core::ForeignInterfaceHost::CaptureManagerImpl::ErrorInfo&
-                                           in_error_info,
-    const ASR::AsrPtr<IAsrReadOnlyString>& p_capture_factory_name,
-    const ASR::AsrPtr<ASR::Core::ForeignInterfaceHost::CaptureManagerImpl>&
-        p_capture_manager)
-{
-    std::string                     error_message;
-    ASR::AsrPtr<IAsrTypeInfo>       p_capture_base{};
-    ASR::AsrPtr<IAsrReadOnlyString> p_error_message{};
-    if (const auto get_error_message_result = ::AsrGetErrorMessage(
-            p_capture_base.Get(),
-            in_error_info.error_code,
-            p_error_message.Put());
-        ASR::IsOk(get_error_message_result))
-    {
-        const char* p_u8_explanation{nullptr};
-        p_error_message->GetUtf8(&p_u8_explanation);
-        error_message = ASR::fmt::format(
-            R"(Error happened when creating capture instance.
-FactoryName: {}.
-Error code: {}.
-Error explanation: "{}".)",
-            p_capture_factory_name,
-            in_error_info.error_code,
-            p_u8_explanation);
-        in_error_info.p_error_message = p_error_message;
-    }
-    else
-    {
-        error_message = ASR::fmt::format(
-            R"(Error happened when creating capture instance.
-FactoryName: {}.
-Error code: {}.
-No error explanation found. Result: {}.)",
-            p_capture_factory_name,
-            in_error_info.error_code,
-            get_error_message_result);
-    }
-    p_capture_manager->AddInstance(p_capture_factory_name, in_error_info);
-    ASR_CORE_LOG_ERROR(error_message);
-}
-
-ASR_NS_ANONYMOUS_DETAILS_END
-
 auto CreateAsrCaptureManagerImpl(
     const std::vector<AsrPtr<IAsrCaptureFactory>>& capture_factories,
-    IAsrReadOnlyString*                            p_json_config)
+    IAsrReadOnlyString*                            p_environment_json_config,
+    PluginManager&                                 plugin_manager)
     -> std::pair<
         AsrResult,
         ASR::AsrPtr<ASR::Core::ForeignInterfaceHost::CaptureManagerImpl>>
@@ -454,24 +502,43 @@ auto CreateAsrCaptureManagerImpl(
         ASR::Core::ForeignInterfaceHost::CaptureManagerImpl::ErrorInfo
                                         error_info{};
         ASR::AsrPtr<IAsrReadOnlyString> capture_factory_name;
+        AsrGuid                         factory_iid{};
         try
         {
             capture_factory_name =
                 ASR::Core::Utils::GetRuntimeClassNameFrom(p_factory.Get());
+            factory_iid = Utils::GetGuidFrom(p_factory.Get());
         }
         catch (const ASR::Core::AsrException& ex)
         {
-            ASR_CORE_LOG_ERROR("Can not resolve capture factory type name.");
+            ASR_CORE_LOG_ERROR(
+                "Can not resolve capture factory type name or iid.");
             ASR_CORE_LOG_EXCEPTION(ex);
-
             result = ASR_FALSE;
+            error_info.error_code = ex.GetErrorCode();
             continue;
         }
 
         ASR::AsrPtr<IAsrCapture> p_instance{};
-
-        if (const auto error_code =
-                p_factory->CreateInstance(p_json_config, p_instance.Put());
+        const auto               opt_ref_interface_static_storage =
+            plugin_manager.FindInterfaceStaticStorage(factory_iid);
+        if (!opt_ref_interface_static_storage)
+        {
+            ASR_CORE_LOG_ERROR(
+                "No matched interface storage! Iid = {}.",
+                factory_iid);
+            result = ASR_FALSE;
+            error_info.error_code = opt_ref_interface_static_storage.error();
+            continue;
+        }
+        AsrPtr<IAsrReadOnlyString> p_plugin_config{};
+        opt_ref_interface_static_storage.value()
+            .get()
+            .sp_desc->settings_json_->GetValue(p_plugin_config.Put());
+        if (const auto error_code = p_factory->CreateInstance(
+                p_environment_json_config,
+                p_plugin_config.Get(),
+                p_instance.Put());
             ASR::IsFailed(error_code))
         {
             result = ASR_S_FALSE;

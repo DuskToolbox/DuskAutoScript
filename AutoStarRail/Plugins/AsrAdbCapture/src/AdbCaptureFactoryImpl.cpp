@@ -1,15 +1,14 @@
 #include "AdbCaptureFactoryImpl.h"
-#include "tl/expected.hpp"
+#include "PluginImpl.h"
 #include <AutoStarRail/AsrConfig.h>
 #include <AutoStarRail/ExportInterface/AsrLogger.h>
 #include <AutoStarRail/IAsrBase.h>
 #include <AutoStarRail/Utils/QueryInterface.hpp>
 #include <AutoStarRail/Utils/StringUtils.h>
 #include <AutoStarRail/Utils/fmt.h>
-#include "PluginImpl.h"
 #include <boost/url.hpp>
 #include <nlohmann/json.hpp>
-#include <stdexcept>
+#include <tl/expected.hpp>
 
 ASR_NS_BEGIN
 
@@ -53,15 +52,16 @@ auto GetUrlFromJson(
 ASR_NS_ANONYMOUS_DETAILS_END
 
 AsrResult AdbCaptureFactoryImpl::CreateInstance(
-    IAsrReadOnlyString* p_json_config,
+    IAsrReadOnlyString* p_environment_json_config,
+    IAsrReadOnlyString* p_plugin_config,
     IAsrCapture**       pp_out_object)
 {
     const char* p_key_string = "";
     const char* p_json_config_string = nullptr;
-    AsrResult   result = p_json_config->GetUtf8(&p_json_config_string);
+    AsrResult   result = p_plugin_config->GetUtf8(&p_json_config_string);
     try
     {
-        const auto config = nlohmann::json::parse(p_json_config_string);
+        const auto config = nlohmann::json::parse(p_environment_json_config);
         Details::GetUrlFromJson(config, &p_key_string);
     }
     catch (const nlohmann::json::exception& ex)

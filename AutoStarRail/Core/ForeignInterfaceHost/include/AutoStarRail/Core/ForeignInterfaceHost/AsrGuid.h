@@ -25,8 +25,17 @@ ASR_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
 AsrGuid MakeAsrGuid(const std::string_view guid_string);
 
-void from_json(const nlohmann::json& input, AsrGuid& output);
-
 ASR_CORE_FOREIGNINTERFACEHOST_NS_END
+
+namespace nlohmann
+{
+    template <>
+    struct adl_serializer<AsrGuid>
+    {
+        static void to_json(json& j, const AsrGuid& guid);
+
+        static void from_json(const json& j, AsrGuid& guid);
+    };
+}
 
 #endif // ASR_CORE_FOREIGNINTERFACEHOST_ASRGUID_H

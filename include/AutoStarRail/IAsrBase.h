@@ -152,6 +152,7 @@ void _asr_internal_DelayRelease(T* pointer) noexcept
 #define ASR_E_DANGLING_REFERENCE -1073741861
 #define ASR_E_OBJECT_NOT_INIT -1073741862
 #define ASR_E_UNEXPECTED_THREAD_DETECTED -1073741863
+#define ASR_E_STRONG_REFERENCE_NOT_AVAILABLE -1073741864
 
 #ifdef ASR_WINDOWS
 // MSVC
@@ -224,9 +225,9 @@ inline bool operator==(const AsrGuid& lhs, const AsrGuid& rhs) noexcept
 
 ASR_NS_BEGIN
 
-inline bool IsOk(const AsrResult result) { return result >= 0; }
-inline bool IsFailed(const AsrResult result) { return result < 0; }
-inline AsrResult GetErrorCodeFrom(const AsrResult result) {return result;}
+inline bool      IsOk(const AsrResult result) { return result >= 0; }
+inline bool      IsFailed(const AsrResult result) { return result < 0; }
+inline AsrResult GetErrorCodeFrom(const AsrResult result) { return result; }
 
 #ifdef __cplusplus
 
@@ -276,6 +277,53 @@ ASR_INTERFACE IAsrBase
     virtual int64_t AddRef() = 0;
     virtual int64_t Release() = 0;
     ASR_METHOD      QueryInterface(const AsrGuid& iid, void** pp_object) = 0;
+};
+
+// {9CA2095E-3F1E-44C0-BB14-515446666892}
+ASR_DEFINE_GUID(
+    ASR_IID_WEAK_REFERENCE,
+    IAsrWeakReference,
+    0x9ca2095e,
+    0x3f1e,
+    0x44c0,
+    0xbb,
+    0x14,
+    0x51,
+    0x54,
+    0x46,
+    0x66,
+    0x68,
+    0x92);
+ASR_INTERFACE IAsrWeakReference : public IAsrBase
+{
+    /**
+     * @brief 获取对象的强引用
+     *
+     * @param pp_out_object 对象强引用指针，已AddRef
+     * @return AsrResult ASR_S_OK 表示成功，
+     * ASR_E_STRONG_REFERENCE_NOT_AVAILABLE 表示内部对象已不可用
+     */
+    ASR_METHOD Resolve(IAsrBase * *pp_out_object) = 0;
+};
+
+// {1A39C88A-CC59-4999-A828-2686F466DA05}
+ASR_DEFINE_GUID(
+    ASR_IID_WEAK_REFERENCE_SOURCE,
+    IAsrWeakReferenceSource,
+    0x1a39c88a,
+    0xcc59,
+    0x4999,
+    0xa8,
+    0x28,
+    0x26,
+    0x86,
+    0xf4,
+    0x66,
+    0xda,
+    0x5);
+ASR_INTERFACE IAsrWeakReferenceSource : public IAsrBase
+{
+    ASR_METHOD GetWeakReference(IAsrWeakReference * *pp_out_weak) = 0;
 };
 
 ASR_C_API AsrResult

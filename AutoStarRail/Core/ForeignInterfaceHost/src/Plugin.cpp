@@ -14,8 +14,7 @@ Plugin::Plugin(
 }
 
 Plugin::Plugin(AsrResult load_state, IAsrReadOnlyString* p_error_message)
-    : load_state_{load_state},
-      load_error_message_{p_error_message}
+    : load_state_{load_state}, load_error_message_{p_error_message}
 {
 }
 

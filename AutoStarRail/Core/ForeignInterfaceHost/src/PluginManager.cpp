@@ -27,6 +27,7 @@
 #include <fstream>
 #include <functional>
 #include <magic_enum.hpp>
+#include <magic_enum_format.hpp>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <unordered_set>
@@ -517,9 +518,10 @@ auto RegisterErrorLensFromPlugin(
     return ASR_S_OK;
 }
 
-template <class T>
-auto RegisterTaskFromPlugin(T& task_manager, GetInterfaceFromPluginParam param)
-    -> AsrResult
+auto RegisterTaskFromPlugin(
+    TaskManager&                task_manager,
+    std::shared_ptr<PluginDesc> sp_plugin_desc,
+    GetInterfaceFromPluginParam param) -> AsrResult
 {
     const auto& [u8_plugin_name, common_p_base] = param;
 
@@ -565,12 +567,16 @@ auto RegisterTaskFromPlugin(T& task_manager, GetInterfaceFromPluginParam param)
 
     return std::visit(
         ASR::Utils::overload_set{
-            [u8_plugin_name, &task_manager](const AsrPtr<IAsrTask>& p_task)
+            [u8_plugin_name, &task_manager, sp_plugin_desc](
+                const AsrPtr<IAsrTask>& p_task)
             {
                 try
                 {
                     const auto guid = Utils::GetGuidFrom(p_task.Get());
-                    return task_manager.Register(p_task.Get(), guid);
+                    return task_manager.Register(
+                        sp_plugin_desc,
+                        p_task.Get(),
+                        guid);
                 }
                 catch (const AsrException& ex)
                 {
@@ -583,12 +589,16 @@ auto RegisterTaskFromPlugin(T& task_manager, GetInterfaceFromPluginParam param)
                     return ex.GetErrorCode();
                 }
             },
-            [u8_plugin_name, &task_manager](const AsrPtr<IAsrSwigTask>& p_task)
+            [u8_plugin_name, &task_manager, sp_plugin_desc](
+                const AsrPtr<IAsrSwigTask>& p_task)
             {
                 try
                 {
                     const auto guid = Utils::GetGuidFrom(p_task.Get());
-                    return task_manager.Register(p_task.Get(), guid);
+                    return task_manager.Register(
+                        sp_plugin_desc,
+                        p_task.Get(),
+                        guid);
                 }
                 catch (const AsrException& ex)
                 {
@@ -791,6 +801,26 @@ AsrResult IAsrPluginManagerForUiImpl::FindInterface(
     return impl_.FindInterface(iid, pp_object);
 }
 
+AsrResult IAsrPluginManagerForUiImpl::GetPluginSettingsJson(
+    const AsrGuid&       plugin_guid,
+    IAsrReadOnlyString** pp_out_json)
+{
+    return impl_.GetPluginSettingsJson(plugin_guid, pp_out_json);
+}
+
+AsrResult IAsrPluginManagerForUiImpl::SetPluginSettingsJson(
+    const AsrGuid&      plugin_guid,
+    IAsrReadOnlyString* p_json)
+{
+    return impl_.SetPluginSettingsJson(plugin_guid, p_json);
+}
+
+AsrResult IAsrPluginManagerForUiImpl::ResetPluginSettings(
+    const AsrGuid& plugin_guid)
+{
+    return impl_.ResetPluginSettings(plugin_guid);
+}
+
 IAsrPluginManagerImpl::IAsrPluginManagerImpl(PluginManager& impl) : impl_{impl}
 {
 }
@@ -814,11 +844,11 @@ AsrResult IAsrPluginManagerImpl::CreateComponent(
 }
 
 AsrResult IAsrPluginManagerImpl::CreateCaptureManager(
-    IAsrReadOnlyString*  p_capture_config,
+    IAsrReadOnlyString*  p_environment_config,
     IAsrCaptureManager** pp_out_capture_manager)
 {
     return g_plugin_manager.CreateCaptureManager(
-        p_capture_config,
+        p_environment_config,
         pp_out_capture_manager);
 }
 
@@ -841,9 +871,9 @@ AsrRetComponent IAsrSwigPluginManagerImpl::CreateComponent(const AsrGuid& iid)
 }
 
 AsrRetCaptureManager IAsrSwigPluginManagerImpl::CreateCaptureManager(
-    AsrReadOnlyString capture_config)
+    AsrReadOnlyString environment_config)
 {
-    return impl_.CreateCaptureManager(capture_config);
+    return impl_.CreateCaptureManager(environment_config);
 }
 
 AsrResult PluginManager::AddInterface(
@@ -925,6 +955,7 @@ AsrResult PluginManager::AddInterface(
         {
             if (const auto rtfp_result = Details::RegisterTaskFromPlugin(
                     task_manager_,
+                    plugin.sp_desc_,
                     {u8_plugin_name, opt_common_p_base.value()});
                 IsFailed(rtfp_result))
             {
@@ -1564,10 +1595,10 @@ AsrResult PluginManager::FindInterface(const AsrGuid& iid, void** pp_out_object)
 }
 
 AsrResult PluginManager::CreateCaptureManager(
-    IAsrReadOnlyString*  p_capture_config,
+    IAsrReadOnlyString*  environment_config,
     IAsrCaptureManager** pp_out_manager)
 {
-    ASR_UTILS_CHECK_POINTER(p_capture_config)
+    ASR_UTILS_CHECK_POINTER(environment_config)
     ASR_UTILS_CHECK_POINTER(pp_out_manager)
 
     if (IsUnexpectedThread())
@@ -1577,8 +1608,10 @@ AsrResult PluginManager::CreateCaptureManager(
 
     std::lock_guard _{mutex_};
 
-    auto [error_code, p_capture_manager_impl] =
-        CreateAsrCaptureManagerImpl(capture_factory_vector_, p_capture_config);
+    auto [error_code, p_capture_manager_impl] = CreateAsrCaptureManagerImpl(
+        capture_factory_vector_,
+        environment_config,
+        *this);
 
     if (ASR::IsFailed(error_code))
     {
@@ -1593,13 +1626,15 @@ AsrResult PluginManager::CreateCaptureManager(
 }
 
 AsrRetCaptureManager PluginManager::CreateCaptureManager(
-    AsrReadOnlyString capture_config)
+    AsrReadOnlyString environment_config)
 {
     AsrRetCaptureManager result{};
-    auto* const          p_json_config = capture_config.Get();
+    auto* const          p_json_config = environment_config.Get();
 
-    auto [error_code, p_capture_manager_impl] =
-        CreateAsrCaptureManagerImpl(capture_factory_vector_, p_json_config);
+    auto [error_code, p_capture_manager_impl] = CreateAsrCaptureManagerImpl(
+        capture_factory_vector_,
+        p_json_config,
+        *this);
 
     result.error_code = error_code;
     if (ASR::IsFailed(result.error_code))
@@ -1646,6 +1681,67 @@ AsrRetComponent PluginManager::CreateComponent(const AsrGuid& iid)
 
     return component_factory_manager_.CreateObject(iid);
 };
+
+AsrResult PluginManager::GetPluginSettingsJson(
+    const AsrGuid&       plugin_guid,
+    IAsrReadOnlyString** pp_out_json)
+{
+    std::lock_guard l{mutex_};
+    for (const auto& [_, v] : name_plugin_map_)
+    {
+        if (v.sp_desc_->guid == plugin_guid)
+        {
+            v.sp_desc_->settings_json_->GetValue(pp_out_json);
+            return ASR_S_OK;
+        }
+    }
+    return ASR_E_OUT_OF_RANGE;
+}
+
+AsrResult PluginManager::SetPluginSettingsJson(
+    const AsrGuid&      plugin_guid,
+    IAsrReadOnlyString* p_json)
+{
+    std::lock_guard l{mutex_};
+    for (const auto& [_, v] : name_plugin_map_)
+    {
+        if (v.sp_desc_->guid == plugin_guid)
+        {
+            // 注意：这里的值就IPluginInfo中的值，因此设置后调度器可以直接拿到
+            v.sp_desc_->settings_json_->SetValue(p_json);
+            v.sp_desc_->on_settings_changed(v.sp_desc_->settings_json_);
+            return ASR_S_OK;
+        }
+    }
+    return ASR_E_OUT_OF_RANGE;
+}
+
+AsrResult PluginManager::ResetPluginSettings(const AsrGuid& plugin_guid)
+{
+    std::lock_guard l{mutex_};
+    for (const auto& [_, v] : name_plugin_map_)
+    {
+        if (v.sp_desc_->guid == plugin_guid)
+        {
+            AsrReadOnlyStringWrapper default_settings{
+                v.sp_desc_->default_settings.dump()};
+            v.sp_desc_->settings_json_->SetValue(default_settings.Get());
+            return ASR_S_OK;
+        }
+    }
+    return ASR_E_OUT_OF_RANGE;
+}
+
+auto PluginManager::FindInterfaceStaticStorage(AsrGuid iid)
+    -> Utils::Expected<std::reference_wrapper<const InterfaceStaticStorage>>
+{
+    if (const auto it = guid_storage_map_.find(iid);
+        it != guid_storage_map_.end())
+    {
+        return std::cref(it->second);
+    }
+    return tl::make_unexpected(ASR_E_OUT_OF_RANGE);
+}
 
 ASR_NS_ANONYMOUS_DETAILS_BEGIN
 

@@ -47,6 +47,12 @@ ASR_IMPL IAsrPluginInfoImpl::GetPluginIid(AsrGuid* p_out_guid)
     return impl_.GetPluginIid(p_out_guid);
 }
 
+AsrResult IAsrPluginInfoImpl::GetPluginSettingsDescriptor(
+    IAsrReadOnlyString** pp_out_string)
+{
+    return impl_.GetPluginSettingsDescriptor(pp_out_string);
+}
+
 auto IAsrPluginInfoImpl::GetImpl() noexcept
     -> IAsrPluginInfoImpl::AsrPluginInfoImpl&
 {
@@ -220,6 +226,14 @@ ASR_IMPL AsrPluginInfoImpl::GetPluginIid(AsrGuid* p_out_guid)
 {
     ASR_UTILS_CHECK_POINTER(p_out_guid)
     *p_out_guid = sp_desc_->guid;
+    return ASR_S_OK;
+}
+
+AsrResult AsrPluginInfoImpl::GetPluginSettingsDescriptor(
+    IAsrReadOnlyString** pp_out_string)
+{
+    ASR_UTILS_CHECK_POINTER(pp_out_string)
+    Utils::SetResult(sp_desc_->settings_desc_json.Get(), pp_out_string);
     return ASR_S_OK;
 }
 

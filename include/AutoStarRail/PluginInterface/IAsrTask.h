@@ -14,15 +14,6 @@ struct AsrDate
     uint8_t  second;
 };
 
-typedef enum AsrTaskType
-{
-    ASR_TASK_TYPE_NORMAL = 0,
-    ASR_TASK_TYPE_START_UP = 1,
-    ASR_TASK_TYPE_LOGIN = 2,
-    ASR_TASK_TYPE_EXIT = 3,
-    ASR_TASK_TYPE_FORCE_DWORD = 0x7FFFFFFF
-} AsrTaskType;
-
 // {5C30785F-C2BD-4B9A-B543-955432169F8E}
 ASR_DEFINE_GUID(
     ASR_IID_TASK,
@@ -42,17 +33,16 @@ SWIG_IGNORE(IAsrTask)
 ASR_INTERFACE IAsrTask : public IAsrTypeInfo
 {
     ASR_METHOD OnRequestExit() = 0;
-    ASR_METHOD Do(IAsrReadOnlyString * p_task_settings_json) = 0;
+    ASR_METHOD Do(
+        IAsrReadOnlyString * p_environment_json,
+        IAsrReadOnlyString * p_task_settings_json) = 0;
     ASR_METHOD GetNextExecutionTime(AsrDate * p_out_date) = 0;
     ASR_METHOD GetName(IAsrReadOnlyString * *pp_out_name) = 0;
     ASR_METHOD GetDescription(IAsrReadOnlyString * *pp_out_settings) = 0;
     ASR_METHOD GetLabel(IAsrReadOnlyString * *pp_out_label) = 0;
-    ASR_METHOD GetType(AsrTaskType * p_out_type) = 0;
 };
 
 ASR_DEFINE_RET_TYPE(AsrRetDate, AsrDate);
-
-ASR_DEFINE_RET_TYPE(AsrRetTaskType, AsrTaskType);
 
 // {3DE2D502-9621-4AF7-B88F-86458E0DDA46}
 ASR_DEFINE_GUID(
@@ -72,13 +62,14 @@ ASR_DEFINE_GUID(
 ASR_SWIG_DIRECTOR_ATTRIBUTE(IAsrSwigTask)
 ASR_INTERFACE IAsrSwigTask : public IAsrSwigTypeInfo
 {
-    virtual AsrResult            OnRequestExit() = 0;
-    virtual AsrResult            Do(AsrReadOnlyString task_settings_json) = 0;
+    virtual AsrResult OnRequestExit() = 0;
+    virtual AsrResult Do(
+        AsrReadOnlyString environment_json,
+        AsrReadOnlyString task_settings_json) = 0;
     virtual AsrRetDate           GetNextExecutionTime() = 0;
     virtual AsrRetReadOnlyString GetName() = 0;
     virtual AsrRetReadOnlyString GetDescription() = 0;
     virtual AsrRetReadOnlyString GetLabel() = 0;
-    virtual AsrRetTaskType       GetType() = 0;
 };
 
 #endif // ASR_ITASK_H

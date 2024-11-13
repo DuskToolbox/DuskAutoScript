@@ -45,6 +45,7 @@ ASR_INTERFACE IAsrPluginInfo : public IAsrBase
     ASR_METHOD GetSupportedSystem(
         IAsrReadOnlyString * *pp_out_supported_system) = 0;
     ASR_METHOD GetPluginIid(AsrGuid * p_out_guid) = 0;
+    ASR_METHOD GetPluginSettingsDescriptor(IAsrReadOnlyString** pp_out_string) = 0;
 };
 
 // {138DF2D2-A9E9-4A73-9B4F-AA6C754601CC}
@@ -140,6 +141,13 @@ ASR_INTERFACE IAsrPluginManagerForUi : public IAsrBase
     ASR_METHOD GetAllPluginInfo(
         IAsrPluginInfoVector * *pp_out_plugin_info_vector) = 0;
     ASR_METHOD FindInterface(const AsrGuid& iid, void** pp_object) = 0;
+    ASR_METHOD GetPluginSettingsJson(
+        const AsrGuid&       plugin_guid,
+        IAsrReadOnlyString** pp_out_json) = 0;
+    ASR_METHOD SetPluginSettingsJson(
+        const AsrGuid&      plugin_guid,
+        IAsrReadOnlyString* p_json) = 0;
+    ASR_METHOD ResetPluginSettings(const AsrGuid& plugin_guid) = 0;
 };
 
 // {B2678FF8-720C-48E6-AC00-77D43D08F580}
@@ -164,7 +172,7 @@ ASR_INTERFACE IAsrPluginManager : public IAsrBase
         const AsrGuid&  iid,
         IAsrComponent** pp_out_component) = 0;
     ASR_METHOD CreateCaptureManager(
-        IAsrReadOnlyString * p_capture_config,
+        IAsrReadOnlyString * p_environment_config,
         IAsrCaptureManager * *pp_out_capture_manager) = 0;
 };
 
@@ -188,7 +196,7 @@ ASR_INTERFACE IAsrSwigPluginManager : public IAsrSwigBase
 {
     virtual AsrRetComponent      CreateComponent(const AsrGuid& iid) = 0;
     virtual AsrRetCaptureManager CreateCaptureManager(
-        AsrReadOnlyString capture_config) = 0;
+        AsrReadOnlyString environment_config) = 0;
 };
 
 ASR_DEFINE_RET_POINTER(AsrRetPluginManager, IAsrSwigPluginManager);
@@ -246,9 +254,9 @@ ASR_INTERFACE IAsrInitializeIAsrPluginManagerWaiter : public IAsrBase
  */
 SWIG_IGNORE(InitializeIAsrPluginManager)
 ASR_C_API AsrResult InitializeIAsrPluginManager(
-    IAsrReadOnlyGuidVector*                   p_ignore_plugins_guid,
-    IAsrInitializeIAsrPluginManagerCallback*  p_on_finished,
-    IAsrInitializeIAsrPluginManagerWaiter** pp_out_waiter);
+    IAsrReadOnlyGuidVector*                  p_ignore_plugins_guid,
+    IAsrInitializeIAsrPluginManagerCallback* p_on_finished,
+    IAsrInitializeIAsrPluginManagerWaiter**  pp_out_waiter);
 
 /**
  * @brief Call this function to load all plugin.

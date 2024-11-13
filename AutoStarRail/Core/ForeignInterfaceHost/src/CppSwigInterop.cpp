@@ -193,11 +193,14 @@ AsrResult SwigToCpp<IAsrSwigTask>::OnRequestExit()
     return p_impl_->OnRequestExit();
 }
 
-AsrResult SwigToCpp<IAsrSwigTask>::Do(IAsrReadOnlyString* p_task_settings_json)
+AsrResult SwigToCpp<IAsrSwigTask>::Do(
+    IAsrReadOnlyString* p_environment_json,
+    IAsrReadOnlyString* p_task_settings_json)
 {
     try
     {
-        const auto result = p_impl_->Do({p_task_settings_json});
+        const auto result =
+            p_impl_->Do({p_environment_json}, {p_task_settings_json});
         return result;
     }
     catch (const std::exception& ex)
@@ -238,14 +241,6 @@ AsrResult SwigToCpp<IAsrSwigTask>::GetLabel(IAsrReadOnlyString** pp_out_label)
         p_impl_.Get(),
         &IAsrSwigTask::GetLabel,
         pp_out_label);
-}
-
-AsrResult SwigToCpp<IAsrSwigTask>::GetType(AsrTaskType* p_out_type)
-{
-    ASR_CORE_FOREIGNINTERFACEHOST_CALL_SWIG_METHOD_IMPL_AND_HANDLE_EXCEPTION(
-        p_impl_.Get(),
-        &IAsrSwigTask::GetType,
-        p_out_type);
 }
 
 ASR_IMPL SwigToCpp<IAsrSwigGuidVector>::Size(size_t* p_out_size)
@@ -382,7 +377,7 @@ AsrResult SwigToCpp<IAsrSwigInputFactory>::CreateInstance(
 }
 
 AsrResult SwigToCpp<IAsrSwigComponent>::Dispatch(
-IAsrReadOnlyString* p_function_name,
+    IAsrReadOnlyString* p_function_name,
     IAsrVariantVector*  p_arguments,
     IAsrVariantVector** pp_out_result)
 {
@@ -401,7 +396,8 @@ IAsrReadOnlyString* p_function_name,
 
     try
     {
-        const auto value = p_impl_->Dispatch({p_function_name},p_swig_in.Get());
+        const auto value =
+            p_impl_->Dispatch({p_function_name}, p_swig_in.Get());
         if (IsOk(value.error_code))
         {
             const auto qi_p_result =
@@ -570,7 +566,7 @@ AsrRetInput CppToSwig<IAsrInputFactory>::CreateInstance(
 }
 
 AsrRetVariantVector CppToSwig<IAsrComponent>::Dispatch(
-    AsrReadOnlyString function_name,
+    AsrReadOnlyString      function_name,
     IAsrSwigVariantVector* p_arguments)
 {
     const auto qi_result = p_arguments->QueryInterface(ASR_IID_VARIANT_VECTOR);
@@ -586,7 +582,7 @@ AsrRetVariantVector CppToSwig<IAsrComponent>::Dispatch(
         AsrRetVariantVector       result;
         AsrPtr<IAsrVariantVector> p_result;
         result.error_code = p_impl_->Dispatch(
-        function_name.Get(),
+            function_name.Get(),
             static_cast<IAsrVariantVector*>(qi_result.value),
             p_result.Put());
         AsrPtr<IAsrSwigVariantVector> p_swig_result;

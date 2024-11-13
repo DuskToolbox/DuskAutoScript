@@ -245,14 +245,12 @@ public:
     }
 
     [[nodiscard]]
-    T*
-    operator->() const noexcept
+    T* operator->() const noexcept
     {
         return static_cast<T*>(this);
     }
     [[nodiscard]]
-    T&
-    operator*() const noexcept
+    T& operator*() const noexcept
     {
         return static_cast<T&>(*this);
     }
@@ -346,12 +344,13 @@ public:
     ASR_USING_BASE_CTOR(SwigToCppTypeInfo);
 
     AsrResult OnRequestExit() override;
-    AsrResult Do(IAsrReadOnlyString* p_task_settings_json) override;
+    AsrResult Do(
+        IAsrReadOnlyString* p_environment_json,
+        IAsrReadOnlyString* p_task_settings_json) override;
     AsrResult GetNextExecutionTime(AsrDate* p_out_date) override;
     AsrResult GetName(IAsrReadOnlyString** pp_out_name) override;
     AsrResult GetDescription(IAsrReadOnlyString** pp_out_settings) override;
     AsrResult GetLabel(IAsrReadOnlyString** pp_out_label) override;
-    AsrResult GetType(AsrTaskType* p_out_type) override;
 };
 
 template <>
@@ -733,8 +732,8 @@ public:
      * @return 操作的返回值
      */
     AsrRetVariantVector Dispatch(
-        AsrReadOnlyString function_name,
-        IAsrSwigVariantVector * p_arguments) override;
+        AsrReadOnlyString      function_name,
+        IAsrSwigVariantVector* p_arguments) override;
 };
 
 template <is_asr_interface ToCpp, is_asr_swig_interface FromSwig>

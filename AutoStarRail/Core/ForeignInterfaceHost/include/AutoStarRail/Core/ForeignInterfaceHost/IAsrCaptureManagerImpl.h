@@ -2,6 +2,7 @@
 #define ASR_CORE_FOREIGNINTERFACEHOST_IASRCAPTUREIMPL_H
 
 #include <AutoStarRail/Core/ForeignInterfaceHost/Config.h>
+#include <AutoStarRail/Core/ForeignInterfaceHost/PluginManager.h>
 #include <AutoStarRail/ExportInterface/IAsrCaptureManager.h>
 #include <AutoStarRail/Utils/CommonUtils.hpp>
 #include <AutoStarRail/Utils/Expected.h>
@@ -119,7 +120,8 @@ public:
 
 auto CreateAsrCaptureManagerImpl(
     const std::vector<AsrPtr<IAsrCaptureFactory>>& capture_factories,
-    IAsrReadOnlyString*                            p_json_config)
+    IAsrReadOnlyString*                            p_environment_json_config,
+    PluginManager&                                 plugin_manager)
     -> std::pair<
         AsrResult,
         ASR::AsrPtr<ASR::Core::ForeignInterfaceHost::CaptureManagerImpl>>;
