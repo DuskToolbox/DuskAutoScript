@@ -4,6 +4,10 @@ project(AutoStarRail LANGUAGES CXX VERSION 0.1)
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
+if (POLICY CMP0169)
+    cmake_policy(SET CMP0169 OLD)
+endif()
+
 if(MSVC)
     if(MSVC_VERSION LESS 1939)
         message(FATAL_ERROR "MSVC STL has bug in this_thread::sleep_until and this_thread::sleep_for.\n"

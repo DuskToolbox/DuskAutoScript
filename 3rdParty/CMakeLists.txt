@@ -84,6 +84,9 @@ function(_download_and_config_zlib_ng)
             URL "${GITHUB_MIRROR_URL}/zlib-ng/zlib-ng/archive/refs/tags/${ASR_ZLIB_NG_VERSION}.tar.gz"
             URL_HASH SHA256=fcb41dd59a3f17002aeb1bb21f04696c9b721404890bb945c5ab39d2cb69654c)
     FetchContent_MakeAvailable(zlib-ng)
+    if(MSVC)
+        target_compile_options(zlib PUBLIC /wd4142)
+    endif()
 endfunction()
 
 _download_and_config_zlib_ng()
@@ -130,23 +133,23 @@ target_include_directories(Asr3rdParty INTERFACE ${tl_expected_SOURCE_DIR}/inclu
 message(STATUS "Downloading and collecting headers in magic enum.")
 FetchContent_Declare(
         magic_enum
-        URL "${GITHUB_MIRROR_URL}/Neargye/magic_enum/archive/refs/tags/v0.9.3.tar.gz"
-        URL_HASH SHA256=3CADD6A05F1BFFC5141E5E731C46B2B73C2DBFF025E723C8ABAA659E0A24F072
+        URL "${GITHUB_MIRROR_URL}/Neargye/magic_enum/archive/refs/tags/v0.9.6.tar.gz"
+        URL_HASH SHA256=FCDA8295256A2084F1F98A63B3D2C66B3D7140EEA008E1EF94EA015B2F6D3034
 )
 
 if (NOT magic_enum_POPULATED)
     FetchContent_Populate(magic_enum)
 endif ()
 
-target_include_directories(Asr3rdParty INTERFACE ${magic_enum_SOURCE_DIR}/include)
+target_include_directories(Asr3rdParty INTERFACE ${magic_enum_SOURCE_DIR}/include/magic_enum)
 
 if (ASR_USE_BUNDLED_FMT)
-    set(ASR_FMT_VERSION "10.1.1")
+    set(ASR_FMT_VERSION "11.0.2")
     message(STATUS "Downloading and configuring fmt (VERSION = ${ASR_FMT_VERSION}).")
     FetchContent_Declare(
             Asrfmt
             URL "${GITHUB_MIRROR_URL}/fmtlib/fmt/releases/download/${ASR_FMT_VERSION}/fmt-${ASR_FMT_VERSION}.zip"
-            URL_HASH SHA256=B84E58A310C9B50196CDA48D5678D5FA0849BCA19E5FDBA6B684F0EE93ED9D1B)
+            URL_HASH SHA256=40FC58BEBCF38C759E11A7BD8FDC163507D2423EF5058BBA7F26280C5B9C5465)
     FetchContent_MakeAvailable(Asrfmt)
     set_target_properties(fmt PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_link_libraries(Asr3rdParty INTERFACE fmt::fmt)
@@ -192,7 +195,8 @@ if (POLICY CMP0148)
 endif ()
 
 function(_download_and_config_opencv)
-    message(STATUS "Downloading OpenCV source.")
+    set(ASR_OPENCV_VERSION "4.10.0")
+    message(STATUS "Downloading OpenCV source. VERSION = ${ASR_OPENCV_VERSION}")
 
     # NOTICE: OpenCV wil turn this option ON automatically, so I explicitly set it.
     set(BUILD_SHARED_LIBS ON)
@@ -201,7 +205,7 @@ function(_download_and_config_opencv)
 
     FetchContent_Declare(
             opencv
-            URL ${GITHUB_MIRROR_URL}/opencv/opencv/archive/refs/tags/4.8.1.tar.gz
+            URL ${GITHUB_MIRROR_URL}/opencv/opencv/archive/refs/tags/${ASR_OPENCV_VERSION}.tar.gz
     )
 
     if (${ASR_USE_CCACHE})
@@ -313,6 +317,10 @@ function(_download_and_config_nv_stdexec)
     set(STDEXEC_BUILD_EXAMPLES OFF)
     set(STDEXEC_ENABLE_IO_URING_TESTS OFF)
     set(STDEXEC_BUILD_DOCS OFF)
+
+    if (POLICY CMP0169)
+        cmake_policy(SET CMP0169 OLD)
+    endif()
 
     FetchContent_MakeAvailable(stdexec)
     target_link_libraries(Asr3rdParty INTERFACE STDEXEC::stdexec)
@@ -668,7 +676,5 @@ function(_download_and_config_drogon)
 
     FetchContent_MakeAvailable(drogon)
 endfunction()
-
-_download_and_config_drogon()
 
 message("================================================================")
