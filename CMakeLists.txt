@@ -16,9 +16,9 @@ if(MSVC)
 endif()
 
 if(WIN32)
-    set(ASR_LIB_PREFIX "Asr")
+    set(DAS_LIB_PREFIX "Das")
 else()
-    set(ASR_LIB_PREFIX "libAsr")
+    set(DAS_LIB_PREFIX "libDas")
 endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
@@ -38,32 +38,32 @@ option(EXPORT_CSHARP "导出C#接口" OFF)
 option(EXPORT_PYTHON "导出Python接口" OFF)
 
 # See [C++ 20 Compiler support](https://en.cppreference.com/w/cpp/compiler_support/20)
-include(AsrCheckStdFmt)
+include(DasCheckStdFmt)
 
-set(ASR_SPD_FMT_OPTION_EXPLANATION "项目自带的spdlog使用标准库的fmt，OFF则会使用项目附带的fmt")
-if (ASR_STD_FMT_SUPPORT)
-    option(ASR_SPDLOG_USE_STD_FMT ${ASR_SPD_FMT_OPTION_EXPLANATION} ON)
-    option(ASR_USE_BUNDLED_FMT "" OFF)
+set(DAS_SPD_FMT_OPTION_EXPLANATION "项目自带的spdlog使用标准库的fmt，OFF则会使用项目附带的fmt")
+if (DAS_STD_FMT_SUPPORT)
+    option(DAS_SPDLOG_USE_STD_FMT ${DAS_SPD_FMT_OPTION_EXPLANATION} ON)
+    option(DAS_USE_BUNDLED_FMT "" OFF)
 else ()
-    option(ASR_SPDLOG_USE_STD_FMT ${ASR_SPD_FMT_OPTION_EXPLANATION} OFF)
-    option(ASR_USE_BUNDLED_FMT "" ON)
+    option(DAS_SPDLOG_USE_STD_FMT ${DAS_SPD_FMT_OPTION_EXPLANATION} OFF)
+    option(DAS_USE_BUNDLED_FMT "" ON)
 endif ()
 
-if (ASR_USE_BUNDLED_FMT)
-    set(ASR_SPDLOG_USE_STD_FMT OFF)
+if (DAS_USE_BUNDLED_FMT)
+    set(DAS_SPDLOG_USE_STD_FMT OFF)
 endif ()
 
-option(ASR_BUILD_TEST "构建测试，会下载GTEST库" OFF)
-option(ASR_BUILD_QT5_GUI "构建基于Qt5的GUI" ON)
-option(ASR_USE_LLD "Using lld instead of using ld." OFF)
-option(ASR_USE_CCACHE "Using CCACHE" OFF)
+option(DAS_BUILD_TEST "构建测试，会下载GTEST库" OFF)
+option(DAS_BUILD_QT5_GUI "构建基于Qt5的GUI" ON)
+option(DAS_USE_LLD "Using lld instead of using ld." OFF)
+option(DAS_USE_CCACHE "Using CCACHE" OFF)
 
-option(ASR_USE_BUNDLED_EIGEN "强制使用下载的Eigen源码构建OpenCV" OFF)
-option(ASR_USE_BUNDLED_BOOST "强制使用下载的Boost源码构建" OFF)
-option(ASR_USE_BUNDLED_OPENCV "强制使用下载的OpenCV源码构建" OFF)
+option(DAS_USE_BUNDLED_EIGEN "强制使用下载的Eigen源码构建OpenCV" OFF)
+option(DAS_USE_BUNDLED_BOOST "强制使用下载的Boost源码构建" OFF)
+option(DAS_USE_BUNDLED_OPENCV "强制使用下载的OpenCV源码构建" OFF)
 
-option(ASR_USE_LLD "使用lld进行链接（实验性）" OFF)
-option(ASR_USE_MOLD "使用mold进行链接（实验性）" OFF)
+option(DAS_USE_LLD "使用lld进行链接（实验性）" OFF)
+option(DAS_USE_MOLD "使用mold进行链接（实验性）" OFF)
 
 if (NOT DEFINED GITHUB_MIRROR_URL)
     set(GITHUB_MIRROR_URL "https://github.com")
@@ -72,16 +72,16 @@ endif ()
 # TODO: 配置时打印当前设置
 # get_property(result CACHE SampleOpt PROPERTY HELPSTRING)
 
-set(ASR_DEFAULT_SHARED_LIBRARY_PREFIX ${CMAKE_SHARED_LIBRARY_PREFIX})
-set(ASR_DEFAULT_STATIC_LIBRARY_PREFIX ${CMAKE_STATIC_LIBRARY_PREFIX})
-set(ASR_DEFAULT_SHARED_LIBRARY_PREFIX_CXX ${CMAKE_SHARED_LIBRARY_PREFIX_CXX})
-set(ASR_DEFAULT_STATIC_LIBRARY_PREFIX_CXX ${CMAKE_STATIC_LIBRARY_PREFIX_CXX})
-set(ASR_DEFAULT_SHARED_LIBRARY_PREFIX_C ${CMAKE_SHARED_LIBRARY_PREFIX_C})
-set(ASR_DEFAULT_STATIC_LIBRARY_PREFIX_C ${CMAKE_STATIC_LIBRARY_PREFIX_C})
+set(DAS_DEFAULT_SHARED_LIBRARY_PREFIX ${CMAKE_SHARED_LIBRARY_PREFIX})
+set(DAS_DEFAULT_STATIC_LIBRARY_PREFIX ${CMAKE_STATIC_LIBRARY_PREFIX})
+set(DAS_DEFAULT_SHARED_LIBRARY_PREFIX_CXX ${CMAKE_SHARED_LIBRARY_PREFIX_CXX})
+set(DAS_DEFAULT_STATIC_LIBRARY_PREFIX_CXX ${CMAKE_STATIC_LIBRARY_PREFIX_CXX})
+set(DAS_DEFAULT_SHARED_LIBRARY_PREFIX_C ${CMAKE_SHARED_LIBRARY_PREFIX_C})
+set(DAS_DEFAULT_STATIC_LIBRARY_PREFIX_C ${CMAKE_STATIC_LIBRARY_PREFIX_C})
 
-include(AsrUtils)
+include(DasUtils)
 
-include(AsrSetOutputPath)
+include(DasSetOutputPath)
 
 if (${EXPORT_PYTHON})
     set(Python3_FIND_STRATEGY LOCATION)
@@ -94,7 +94,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-if (${ASR_USE_CCACHE})
+if (${DAS_USE_CCACHE})
     find_program(CCACHE "ccache")
 
     if (CCACHE)
@@ -111,16 +111,16 @@ if (MSVC)
     add_compile_options(/Zc:__cplusplus /utf-8)
 endif ()
 
-if (${ASR_USE_LLD} AND NOT MSVC)
-    option(ASR_LLD_EXECUTABLE "lld")
+if (${DAS_USE_LLD} AND NOT MSVC)
+    option(DAS_LLD_EXECUTABLE "lld")
     find_program(
             LLD_FOUND
             lld REQUIRED)
     add_compile_options("-fuse-ld=lld")
 endif ()
 
-if (${ASR_USE_MOLD} AND NOT MSVC)
-    option(ASR_MOLD_EXECUTABLE "mold")
+if (${DAS_USE_MOLD} AND NOT MSVC)
+    option(DAS_MOLD_EXECUTABLE "mold")
     find_program(
             MOLD_FOUND
             mold REQUIRED)
@@ -130,9 +130,9 @@ endif ()
 configure_file(${CMAKE_SOURCE_DIR}/cmake/CTestCustom.cmake ${CMAKE_BINARY_DIR} @ONLY)
 
 add_custom_target(RemoveSwigOutput
-        COMMAND ${CMAKE_COMMAND} -P ${CMAKE_SOURCE_DIR}/cmake/AsrRemoveSwigOutput.cmake)
+        COMMAND ${CMAKE_COMMAND} -P ${CMAKE_SOURCE_DIR}/cmake/DasRemoveSwigOutput.cmake)
 
-if (${ASR_BUILD_TEST})
+if (${DAS_BUILD_TEST})
     enable_testing()
 endif ()
 

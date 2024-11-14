@@ -14,21 +14,21 @@ if (POLICY CMP0122)
     cmake_policy(SET CMP0122 NEW)
 endif ()
 
-set(ASR_EXPORT_LANGUAGES_LIST "")
+set(DAS_EXPORT_LANGUAGES_LIST "")
 set(SWIG_COMPONENTS "")
 
-asr_check_language_export(JAVA ASR_EXPORT_LANGUAGES_LIST)
-asr_check_language_export(CSHARP ASR_EXPORT_LANGUAGES_LIST)
-asr_check_language_export(PYTHON ASR_EXPORT_LANGUAGES_LIST)
+asr_check_language_export(JAVA DAS_EXPORT_LANGUAGES_LIST)
+asr_check_language_export(CSHARP DAS_EXPORT_LANGUAGES_LIST)
+asr_check_language_export(PYTHON DAS_EXPORT_LANGUAGES_LIST)
 
-if (NOT ASR_EXPORT_LANGUAGES_LIST)
+if (NOT DAS_EXPORT_LANGUAGES_LIST)
     message(STATUS "No interface needs to be exported.")
     message(STATUS "Skipping search SWIG executable.")
 else ()
-    message(STATUS "The project will be exported as an interface to the following languages:\n${ASR_EXPORT_LANGUAGES_LIST}")
+    message(STATUS "The project will be exported as an interface to the following languages:\n${DAS_EXPORT_LANGUAGES_LIST}")
 
-    # list(REMOVE_ITEM ASR_EXPORT_LANGUAGES_LIST lua)
-    find_package(SWIG 4.1.1 COMPONENTS ${ASR_EXPORT_LANGUAGES_LIST} REQUIRED)
+    # list(REMOVE_ITEM DAS_EXPORT_LANGUAGES_LIST lua)
+    find_package(SWIG 4.1.1 COMPONENTS ${DAS_EXPORT_LANGUAGES_LIST} REQUIRED)
 
     if (SWIG_FOUND)
         message(STATUS "SWIG found: ${SWIG_EXECUTABLE}")
@@ -36,10 +36,10 @@ else ()
     endif ()
 endif ()
 
-add_custom_target(AsrAutoCopyDll ALL)
+add_custom_target(DasAutoCopyDll ALL)
 
 set(CMAKE_CXX_STANDARD 20)
-add_library(Asr3rdParty INTERFACE)
+add_library(Das3rdParty INTERFACE)
 
 message("================================================================")
 
@@ -63,10 +63,10 @@ message("================================================================")
 message(STATUS "The third-party libraries listed later are globally shared in the project.")
 
 function(_download_and_config_zlib_ng)
-    set(CMAKE_FOLDER "Asr3rd/zlib_ng")
+    set(CMAKE_FOLDER "Das3rd/zlib_ng")
     # 修改此处版本时，需一并修改../cmake/FindZLIB.cmake的第26行
-    set(ASR_ZLIB_NG_VERSION "2.2.2")
-    message(STATUS "Downloading and configuring zlib-ng (VERSION ${ASR_ZLIB_NG_VERSION})")
+    set(DAS_ZLIB_NG_VERSION "2.2.2")
+    message(STATUS "Downloading and configuring zlib-ng (VERSION ${DAS_ZLIB_NG_VERSION})")
     set(CMAKE_POSITION_INDEPENDENT_CODE ON)
     set(ZLIB_COMPAT ON)
     set(ZLIB_ENABLE_TESTS OFF)
@@ -81,7 +81,7 @@ function(_download_and_config_zlib_ng)
     endif()
     FetchContent_Declare(
             zlib-ng
-            URL "${GITHUB_MIRROR_URL}/zlib-ng/zlib-ng/archive/refs/tags/${ASR_ZLIB_NG_VERSION}.tar.gz"
+            URL "${GITHUB_MIRROR_URL}/zlib-ng/zlib-ng/archive/refs/tags/${DAS_ZLIB_NG_VERSION}.tar.gz"
             URL_HASH SHA256=fcb41dd59a3f17002aeb1bb21f04696c9b721404890bb945c5ab39d2cb69654c)
     FetchContent_MakeAvailable(zlib-ng)
     if(MSVC)
@@ -93,10 +93,10 @@ _download_and_config_zlib_ng()
 
 set(ZLIB_NG_INCLUDE_DIR ${CMAKE_BINARY_DIR}/_deps/zlib-ng-build)
 set(ZLIB_NG_LIBRARY zlib)
-target_link_libraries(Asr3rdParty INTERFACE zlib)
+target_link_libraries(Das3rdParty INTERFACE zlib)
 
 function(_download_and_config_gtest)
-    set(CMAKE_FOLDER "Asr3rd/gtest")
+    set(CMAKE_FOLDER "Das3rd/gtest")
     # config GoogleTest
     # GoogleTest requires at least C++14
     message(STATUS "Downloading and configuring google test.")
@@ -112,7 +112,7 @@ function(_download_and_config_gtest)
     FetchContent_MakeAvailable(googletest)
 endfunction()
 
-if (${ASR_BUILD_TEST})
+if (${DAS_BUILD_TEST})
     _download_and_config_gtest()
 endif ()
 
@@ -127,7 +127,7 @@ if (NOT tl_expected_POPULATED)
     FetchContent_Populate(tl_expected)
 endif ()
 
-target_include_directories(Asr3rdParty INTERFACE ${tl_expected_SOURCE_DIR}/include)
+target_include_directories(Das3rdParty INTERFACE ${tl_expected_SOURCE_DIR}/include)
 
 # config magic_enum
 message(STATUS "Downloading and collecting headers in magic enum.")
@@ -141,25 +141,25 @@ if (NOT magic_enum_POPULATED)
     FetchContent_Populate(magic_enum)
 endif ()
 
-target_include_directories(Asr3rdParty INTERFACE ${magic_enum_SOURCE_DIR}/include/magic_enum)
+target_include_directories(Das3rdParty INTERFACE ${magic_enum_SOURCE_DIR}/include/magic_enum)
 
-if (ASR_USE_BUNDLED_FMT)
-    set(ASR_FMT_VERSION "11.0.2")
-    message(STATUS "Downloading and configuring fmt (VERSION = ${ASR_FMT_VERSION}).")
+if (DAS_USE_BUNDLED_FMT)
+    set(DAS_FMT_VERSION "11.0.2")
+    message(STATUS "Downloading and configuring fmt (VERSION = ${DAS_FMT_VERSION}).")
     FetchContent_Declare(
-            Asrfmt
-            URL "${GITHUB_MIRROR_URL}/fmtlib/fmt/releases/download/${ASR_FMT_VERSION}/fmt-${ASR_FMT_VERSION}.zip"
+            Dasfmt
+            URL "${GITHUB_MIRROR_URL}/fmtlib/fmt/releases/download/${DAS_FMT_VERSION}/fmt-${DAS_FMT_VERSION}.zip"
             URL_HASH SHA256=40FC58BEBCF38C759E11A7BD8FDC163507D2423EF5058BBA7F26280C5B9C5465)
-    FetchContent_MakeAvailable(Asrfmt)
+    FetchContent_MakeAvailable(Dasfmt)
     set_target_properties(fmt PROPERTIES POSITION_INDEPENDENT_CODE ON)
-    target_link_libraries(Asr3rdParty INTERFACE fmt::fmt)
-    target_compile_definitions(Asr3rdParty INTERFACE -DASR_USE_STD_FMT=0)
+    target_link_libraries(Das3rdParty INTERFACE fmt::fmt)
+    target_compile_definitions(Das3rdParty INTERFACE -DDAS_USE_STD_FMT=0)
 else ()
-    target_compile_definitions(Asr3rdParty INTERFACE -DASR_USE_STD_FMT=1)
+    target_compile_definitions(Das3rdParty INTERFACE -DDAS_USE_STD_FMT=1)
 endif ()
 
 function(_download_and_config_spdlog)
-    set(CMAKE_FOLDER "Asr3rd/spdlog")
+    set(CMAKE_FOLDER "Das3rd/spdlog")
     # config spdlog
     message(STATUS "Downloading and configuring spdlog.")
     FetchContent_Declare(
@@ -169,7 +169,7 @@ function(_download_and_config_spdlog)
 
     set(SPDLOG_BUILD_PIC ON)
 
-    if (ASR_SPDLOG_USE_STD_FMT)
+    if (DAS_SPDLOG_USE_STD_FMT)
         message(STATUS "spdlog will use std format library.")
         set(SPDLOG_USE_STD_FORMAT ON)
     else ()
@@ -184,7 +184,7 @@ function(_download_and_config_spdlog)
     endif ()
 
     FetchContent_MakeAvailable(spdlog)
-    target_link_libraries(Asr3rdParty INTERFACE spdlog::spdlog)
+    target_link_libraries(Das3rdParty INTERFACE spdlog::spdlog)
 endfunction()
 
 _download_and_config_spdlog()
@@ -195,20 +195,20 @@ if (POLICY CMP0148)
 endif ()
 
 function(_download_and_config_opencv)
-    set(ASR_OPENCV_VERSION "4.10.0")
-    message(STATUS "Downloading OpenCV source. VERSION = ${ASR_OPENCV_VERSION}")
+    set(DAS_OPENCV_VERSION "4.10.0")
+    message(STATUS "Downloading OpenCV source. VERSION = ${DAS_OPENCV_VERSION}")
 
     # NOTICE: OpenCV wil turn this option ON automatically, so I explicitly set it.
     set(BUILD_SHARED_LIBS ON)
 
-    include(AsrResetLibPrefix)
+    include(DasResetLibPrefix)
 
     FetchContent_Declare(
             opencv
-            URL ${GITHUB_MIRROR_URL}/opencv/opencv/archive/refs/tags/${ASR_OPENCV_VERSION}.tar.gz
+            URL ${GITHUB_MIRROR_URL}/opencv/opencv/archive/refs/tags/${DAS_OPENCV_VERSION}.tar.gz
     )
 
-    if (${ASR_USE_CCACHE})
+    if (${DAS_USE_CCACHE})
         set(ENABLE_CCACHE ON)
     endif ()
 
@@ -238,38 +238,38 @@ function(_download_and_config_opencv)
     set(BUILD_TESTS OFF)
     set(BUILD_ZLIB OFF)
 
-    list(APPEND ASR_OPENCV_COMPONENTS opencv_core opencv_imgcodecs opencv_imgproc)
-    foreach (ASR_OCV_LIB ${ASR_OPENCV_COMPONENTS})
-        set(BUILD_${ASR_OCV_LIB} ON)
-        asr_add_auto_copy_dll_path("$<TARGET_FILE:${ASR_OCV_LIB}>")
+    list(APPEND DAS_OPENCV_COMPONENTS opencv_core opencv_imgcodecs opencv_imgproc)
+    foreach (DAS_OCV_LIB ${DAS_OPENCV_COMPONENTS})
+        set(BUILD_${DAS_OCV_LIB} ON)
+        asr_add_auto_copy_dll_path("$<TARGET_FILE:${DAS_OCV_LIB}>")
     endforeach ()
 
     FetchContent_MakeAvailable(opencv)
 
-    set_target_properties(${ASR_OPENCV_COMPONENTS} PROPERTIES PREFIX ${ASR_LIB_PREFIX})
-    target_link_libraries(Asr3rdParty INTERFACE ${ASR_OPENCV_COMPONENTS})
+    set_target_properties(${DAS_OPENCV_COMPONENTS} PROPERTIES PREFIX ${DAS_LIB_PREFIX})
+    target_link_libraries(Das3rdParty INTERFACE ${DAS_OPENCV_COMPONENTS})
     file(COPY
             ${opencv_SOURCE_DIR}/include/opencv2/opencv.hpp
             ${CMAKE_BINARY_DIR}/opencv2/cvconfig.h
             ${CMAKE_BINARY_DIR}/opencv2/opencv_modules.hpp
-            DESTINATION  ${CMAKE_BINARY_DIR}/AsrOpenCV/opencv2)
+            DESTINATION  ${CMAKE_BINARY_DIR}/DasOpenCV/opencv2)
     file(COPY
             ${opencv_SOURCE_DIR}/modules/core/include/opencv2
             ${opencv_SOURCE_DIR}/modules/imgcodecs/include/opencv2
             ${opencv_SOURCE_DIR}/modules/imgproc/include/opencv2
-            DESTINATION  ${CMAKE_BINARY_DIR}/AsrOpenCV)
-    target_include_directories(Asr3rdParty INTERFACE ${CMAKE_BINARY_DIR}/AsrOpenCV)
+            DESTINATION  ${CMAKE_BINARY_DIR}/DasOpenCV)
+    target_include_directories(Das3rdParty INTERFACE ${CMAKE_BINARY_DIR}/DasOpenCV)
 endfunction()
 
-if (ASR_USE_BUNDLED_OPENCV)
-    if (ASR_USE_BUNDLED_OPENCV)
-        if (${ASR_USE_BUNDLED_EIGEN})
+if (DAS_USE_BUNDLED_OPENCV)
+    if (DAS_USE_BUNDLED_OPENCV)
+        if (${DAS_USE_BUNDLED_EIGEN})
             message(STATUS "Downloading Eigen3.4...")
             set(BUILD_TESTING OFF)
             set(EIGEN_BUILD_DOC OFF)
-            FetchContent_Declare(AsrEigen3
+            FetchContent_Declare(DasEigen3
                     URL https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.zip)
-            FetchContent_MakeAvailable(AsrEigen3)
+            FetchContent_MakeAvailable(DasEigen3)
             set(WITH_EIGEN ON)
         else ()
             find_package(Eigen3 3.4 NO_MODULE)
@@ -286,9 +286,9 @@ if (ASR_USE_BUNDLED_OPENCV)
         find_package(OpenCV 4.8)
 
         if (NOT OpenCV_FOUND)
-            target_link_libraries(Asr3rdParty INTERFACE ${OpenCV_LIBS})
+            target_link_libraries(Das3rdParty INTERFACE ${OpenCV_LIBS})
         else ()
-            message(FATAL_ERROR "OpenCV not found. Please install it manually or set ASR_USE_BUNDLED_OPENCV=ON.")
+            message(FATAL_ERROR "OpenCV not found. Please install it manually or set DAS_USE_BUNDLED_OPENCV=ON.")
         endif ()
     endif ()
 
@@ -297,21 +297,21 @@ else ()
     find_package(OpenCV 4.8)
 
     if (OpenCV_FOUND)
-        target_link_libraries(Asr3rdParty INTERFACE ${OpenCV_LIBS})
+        target_link_libraries(Das3rdParty INTERFACE ${OpenCV_LIBS})
     else ()
-        message(FATAL_ERROR "OpenCV not found. Please install it manually or set ASR_USE_BUNDLED_OPENCV=ON.")
+        message(FATAL_ERROR "OpenCV not found. Please install it manually or set DAS_USE_BUNDLED_OPENCV=ON.")
     endif ()
 endif ()
 
 function(_download_and_config_nv_stdexec)
-    set(CMAKE_FOLDER "Asr3rd/stdexec")
+    set(CMAKE_FOLDER "Das3rd/stdexec")
 
     # config stdexec
-    set(ASR_STDEXEC_VERSION "nvhpc-24.09")
-    message(STATUS "Downloading and configuring stdexec (VERSION = ${ASR_STDEXEC_VERSION}).")
+    set(DAS_STDEXEC_VERSION "nvhpc-24.09")
+    message(STATUS "Downloading and configuring stdexec (VERSION = ${DAS_STDEXEC_VERSION}).")
     FetchContent_Declare(
         stdexec
-        URL "${GITHUB_MIRROR_URL}/NVIDIA/stdexec/archive/refs/tags/${ASR_STDEXEC_VERSION}.tar.gz"
+        URL "${GITHUB_MIRROR_URL}/NVIDIA/stdexec/archive/refs/tags/${DAS_STDEXEC_VERSION}.tar.gz"
         URL_HASH SHA256=D2D811C852DC6C53527A244A54AE343D6B65A50C23EA49F93723E3082435FFF4)
 
     set(STDEXEC_BUILD_EXAMPLES OFF)
@@ -323,7 +323,7 @@ function(_download_and_config_nv_stdexec)
     endif()
 
     FetchContent_MakeAvailable(stdexec)
-    target_link_libraries(Asr3rdParty INTERFACE STDEXEC::stdexec)
+    target_link_libraries(Das3rdParty INTERFACE STDEXEC::stdexec)
 endfunction()
 
 _download_and_config_nv_stdexec()
@@ -333,7 +333,7 @@ function(_on_download_icu)
 endfunction()
 
 if (WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
-    set(ASR_ICU_VERSION 73)
+    set(DAS_ICU_VERSION 73)
 
     if (${PROCESSOR_ARCHITECTURE} MATCHES "ARM64")
         # arm64
@@ -347,10 +347,10 @@ if (WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
         FetchContent_MakeAvailable(icu_msvc_2019_binary_arm64)
         set(ICU_ROOT ${icu_msvc_2019_binary_arm64_SOURCE_DIR})
         set(ICU_DIR ${icu_msvc_2019_binary_arm64_SOURCE_DIR})
-        list(APPEND ASR_BUNDLED_ICU_LIBRARIES
-                ${icu_msvc_2019_binary_arm64_SOURCE_DIR}/binARM64/icudt${ASR_ICU_VERSION}.dll
-                ${icu_msvc_2019_binary_arm64_SOURCE_DIR}/binARM64/icuin${ASR_ICU_VERSION}.dll
-                ${icu_msvc_2019_binary_arm64_SOURCE_DIR}/binARM64/icuuc${ASR_ICU_VERSION}.dll)
+        list(APPEND DAS_BUNDLED_ICU_LIBRARIES
+                ${icu_msvc_2019_binary_arm64_SOURCE_DIR}/binARM64/icudt${DAS_ICU_VERSION}.dll
+                ${icu_msvc_2019_binary_arm64_SOURCE_DIR}/binARM64/icuin${DAS_ICU_VERSION}.dll
+                ${icu_msvc_2019_binary_arm64_SOURCE_DIR}/binARM64/icuuc${DAS_ICU_VERSION}.dll)
     else ()
         if (CMAKE_SIZEOF_VOID_P EQUAL 8)
             # 64 bits
@@ -364,10 +364,10 @@ if (WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
             FetchContent_MakeAvailable(icu_msvc_2019_binary_win64)
             set(ICU_ROOT ${icu_msvc_2019_binary_win64_SOURCE_DIR})
             set(ICU_DIR ${icu_msvc_2019_binary_win64_SOURCE_DIR})
-            list(APPEND ASR_BUNDLED_ICU_LIBRARIES
-                    ${icu_msvc_2019_binary_win64_SOURCE_DIR}/bin64/icudt${ASR_ICU_VERSION}.dll
-                    ${icu_msvc_2019_binary_win64_SOURCE_DIR}/bin64/icuin${ASR_ICU_VERSION}.dll
-                    ${icu_msvc_2019_binary_win64_SOURCE_DIR}/bin64/icuuc${ASR_ICU_VERSION}.dll)
+            list(APPEND DAS_BUNDLED_ICU_LIBRARIES
+                    ${icu_msvc_2019_binary_win64_SOURCE_DIR}/bin64/icudt${DAS_ICU_VERSION}.dll
+                    ${icu_msvc_2019_binary_win64_SOURCE_DIR}/bin64/icuin${DAS_ICU_VERSION}.dll
+                    ${icu_msvc_2019_binary_win64_SOURCE_DIR}/bin64/icuuc${DAS_ICU_VERSION}.dll)
         elseif (CMAKE_SIZEOF_VOID_P EQUAL 4)
             # 32 bits
             _on_download_icu()
@@ -380,34 +380,34 @@ if (WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
             FetchContent_MakeAvailable(icu_msvc_2019_binary_win32)
             set(ICU_ROOT ${icu_msvc_2019_binary_win32_SOURCE_DIR})
             set(ICU_DIR ${icu_msvc_2019_binary_win32_SOURCE_DIR})
-            list(APPEND ASR_BUNDLED_ICU_LIBRARIES
-                    ${icu_msvc_2019_binary_win32_SOURCE_DIR}/bin/icudt${ASR_ICU_VERSION}.dll
-                    ${icu_msvc_2019_binary_win32_SOURCE_DIR}/bin/icuin${ASR_ICU_VERSION}.dll
-                    ${icu_msvc_2019_binary_win32_SOURCE_DIR}/bin/icuuc${ASR_ICU_VERSION}.dll)
+            list(APPEND DAS_BUNDLED_ICU_LIBRARIES
+                    ${icu_msvc_2019_binary_win32_SOURCE_DIR}/bin/icudt${DAS_ICU_VERSION}.dll
+                    ${icu_msvc_2019_binary_win32_SOURCE_DIR}/bin/icuin${DAS_ICU_VERSION}.dll
+                    ${icu_msvc_2019_binary_win32_SOURCE_DIR}/bin/icuuc${DAS_ICU_VERSION}.dll)
         endif ()
     endif ()
 
-    asr_add_auto_copy_dll_path("${ASR_BUNDLED_ICU_LIBRARIES}")
+    asr_add_auto_copy_dll_path("${DAS_BUNDLED_ICU_LIBRARIES}")
 endif ()
 
 find_package(ICU COMPONENTS data i18n uc REQUIRED)
-target_link_libraries(Asr3rdParty INTERFACE ICU::data ICU::i18n ICU::uc)
+target_link_libraries(Das3rdParty INTERFACE ICU::data ICU::i18n ICU::uc)
 
 function(_download_and_config_boost)
     message(STATUS "Downloading and configuring boost 1.84.")
 
-    set(CMAKE_FOLDER "Asr3rd/boost")
+    set(CMAKE_FOLDER "Das3rd/boost")
 
     set(BUILD_SHARED_LIBS OFF)
     set(CMAKE_POSITION_INDEPENDENT_CODE ON)
     set(BUILD_TESTING OFF)
 
     FetchContent_Declare(
-        AsrBoost
+        DasBoost
         URL ${GITHUB_MIRROR_URL}/boostorg/boost/releases/download/boost-1.84.0/boost-1.84.0.7z
         URL_HASH SHA256=CE132F85FC706AA8B5C7E6E52A8338DE33A688E92E7C8FADA3713194B109232E
         PATCH_COMMAND ${CMAKE_COMMAND} -E copy
-        "${CMAKE_SOURCE_DIR}/cmake/AsrBoostContext184Patch.cmake" <SOURCE_DIR>/libs/context/CMakeLists.txt)
+        "${CMAKE_SOURCE_DIR}/cmake/DasBoostContext184Patch.cmake" <SOURCE_DIR>/libs/context/CMakeLists.txt)
 
     # See [Symbol redefinition on latest mingw gcc](https://github.com/boostorg/stacktrace/issues/133)
     # You should use boost from msys package manager to avoid this error.
@@ -422,15 +422,15 @@ function(_download_and_config_boost)
         link_libraries(ws2_32)
     endif ()
 
-    FetchContent_MakeAvailable(AsrBoost)
+    FetchContent_MakeAvailable(DasBoost)
 endfunction()
 
 set(BOOST_FILESYSTEM_NO_DEPRECATED ON)
 
-if (${ASR_USE_BUNDLED_BOOST})
+if (${DAS_USE_BUNDLED_BOOST})
     _download_and_config_boost()
-    set(ASR_USE_BUNDLED_BOOST TRUE)
-    list(APPEND ASR_BUNDLED_BOOST_LIBS
+    set(DAS_USE_BUNDLED_BOOST TRUE)
+    list(APPEND DAS_BUNDLED_BOOST_LIBS
             Boost::regex_icu
             Boost::dll
             Boost::predef
@@ -444,21 +444,21 @@ else ()
     find_package(Boost 1.82 COMPONENTS filesystem url)
 
     if (NOT Boost_FOUND)
-        message(FATAL_ERROR "Boost not found. Please install it manually or set ASR_USE_BUNDLED_BOOST=ON.")
+        message(FATAL_ERROR "Boost not found. Please install it manually or set DAS_USE_BUNDLED_BOOST=ON.")
     else ()
-        set(ASR_USE_BUNDLED_BOOST OFF)
+        set(DAS_USE_BUNDLED_BOOST OFF)
     endif ()
 endif ()
 
-add_compile_definitions(AsrUtils PUBLIC BOOST_FILESYSTEM_NO_DEPRECATED)
+add_compile_definitions(DasUtils PUBLIC BOOST_FILESYSTEM_NO_DEPRECATED)
 
 # config Nlohmann Json
 # Notice: This library assume string is encoded in UTF-8.
-set(ASR_NLOHMANN_JSON_VERSION v3.11.3)
-message(STATUS "Downloading and collecting headers in nlohmann json. (VERSION = ${ASR_NLOHMANN_JSON_VERSION})")
+set(DAS_NLOHMANN_JSON_VERSION v3.11.3)
+message(STATUS "Downloading and collecting headers in nlohmann json. (VERSION = ${DAS_NLOHMANN_JSON_VERSION})")
 FetchContent_Declare(
         nlohmann_json
-        URL ${GITHUB_MIRROR_URL}/nlohmann/json/releases/download/${ASR_NLOHMANN_JSON_VERSION}/include.zip
+        URL ${GITHUB_MIRROR_URL}/nlohmann/json/releases/download/${DAS_NLOHMANN_JSON_VERSION}/include.zip
         URL_HASH SHA256=A22461D13119AC5C78F205D3DF1DB13403E58CE1BB1794EDC9313677313F4A9D)
 
 if (NOT nlohmann_json_POPULATED)
@@ -466,7 +466,7 @@ if (NOT nlohmann_json_POPULATED)
 endif ()
 
 message(${nlohmann_json_SOURCE_DIR}/include)
-target_include_directories(Asr3rdParty INTERFACE ${nlohmann_json_SOURCE_DIR}/include)
+target_include_directories(Das3rdParty INTERFACE ${nlohmann_json_SOURCE_DIR}/include)
 
 # See [added support for cmake "find_package"](https://github.com/microsoft/onnxruntime/pull/8919)
 # prevent warning when package not found.
@@ -481,98 +481,98 @@ function(_download_and_config_onnxruntime TARGET_NAME URL)
     FetchContent_MakeAvailable(${TARGET_NAME})
     FetchContent_GetProperties(${TARGET_NAME})
 
-    add_library(AsrBundledOnnxRuntime INTERFACE IMPORTED)
+    add_library(DasBundledOnnxRuntime INTERFACE IMPORTED)
 
-    add_library(AsrBundledOnnxRuntimeDll SHARED IMPORTED)
+    add_library(DasBundledOnnxRuntimeDll SHARED IMPORTED)
     find_library(${TARGET_NAME}_DLL onnxruntime "${${TARGET_NAME}_SOURCE_DIR}/lib")
     set_target_properties(
-            AsrBundledOnnxRuntimeDll
+            DasBundledOnnxRuntimeDll
             PROPERTIES
             IMPORTED_CONFIGURATIONS RELEASE
             IMPORTED_LOCATION "${${TARGET_NAME}_DLL}"
             INTERFACE_INCLUDE_DIRECTORIES "${${TARGET_NAME}_SOURCE_DIR}/include"
             INTERFACE_COMPILE_OPTIONS "")
     set_property(
-            TARGET AsrBundledOnnxRuntime
+            TARGET DasBundledOnnxRuntime
             APPEND PROPERTY IMPORTED_CONFIGURATIONS RELWITHDEBINFO)
 
-    add_library(AsrBundledOnnxRuntimeProvidersSharedDll SHARED IMPORTED)
+    add_library(DasBundledOnnxRuntimeProvidersSharedDll SHARED IMPORTED)
     find_library(${TARGET_NAME}_ProvidersSharedDLL onnxruntime_providers_shared "${${TARGET_NAME}_SOURCE_DIR}/lib")
 
     if (WIN32 OR (NOT ${${TARGET_NAME}_ProvidersSharedDLL} STREQUAL "${TARGET_NAME}_ProvidersSharedDLL-NOTFOUND"))
         set_target_properties(
-                AsrBundledOnnxRuntimeProvidersSharedDll
+                DasBundledOnnxRuntimeProvidersSharedDll
                 PROPERTIES
                 IMPORTED_CONFIGURATIONS RELEASE
                 IMPORTED_LOCATION "${${TARGET_NAME}_ProvidersSharedDLL}"
                 INTERFACE_INCLUDE_DIRECTORIES "${${TARGET_NAME}_SOURCE_DIR}/include"
                 INTERFACE_COMPILE_OPTIONS "")
         set_property(
-                TARGET AsrBundledOnnxRuntime
+                TARGET DasBundledOnnxRuntime
                 APPEND PROPERTY IMPORTED_CONFIGURATIONS RELWITHDEBINFO)
 
         if (WIN32)
             set_property(
-                    TARGET AsrBundledOnnxRuntimeDll
+                    TARGET DasBundledOnnxRuntimeDll
                     PROPERTY IMPORTED_IMPLIB "${${TARGET_NAME}_SOURCE_DIR}/lib/onnxruntime.lib")
             set_property(
-                    TARGET AsrBundledOnnxRuntimeProvidersSharedDll
+                    TARGET DasBundledOnnxRuntimeProvidersSharedDll
                     PROPERTY IMPORTED_IMPLIB "${${TARGET_NAME}_SOURCE_DIR}/lib/onnxruntime_providers_shared.lib")
         endif ()
 
         set_property(
-                TARGET AsrBundledOnnxRuntime
+                TARGET DasBundledOnnxRuntime
                 PROPERTY
                 INTERFACE_LINK_LIBRARIES
-                AsrBundledOnnxRuntimeProvidersSharedDll)
+                DasBundledOnnxRuntimeProvidersSharedDll)
     endif ()
 
     set_property(
-            TARGET AsrBundledOnnxRuntime
+            TARGET DasBundledOnnxRuntime
             PROPERTY
             INTERFACE_LINK_LIBRARIES
-            AsrBundledOnnxRuntimeDll)
+            DasBundledOnnxRuntimeDll)
 
     if (WIN32)
-        set(ASR_ORT_DLL_PATH ${${TARGET_NAME}_SOURCE_DIR}/lib/onnxruntime.dll)
-        set(ASR_ORT_RUNTIME_PROVIDER_SHARED_DLL_PATH ${${TARGET_NAME}_SOURCE_DIR}/lib/onnxruntime_providers_shared.dll)
-        list(APPEND ASR_ONNXRUNTIME_DLL_PATH "${ASR_ORT_DLL_PATH}" "${ASR_ORT_RUNTIME_PROVIDER_SHARED_DLL_PATH}")
+        set(DAS_ORT_DLL_PATH ${${TARGET_NAME}_SOURCE_DIR}/lib/onnxruntime.dll)
+        set(DAS_ORT_RUNTIME_PROVIDER_SHARED_DLL_PATH ${${TARGET_NAME}_SOURCE_DIR}/lib/onnxruntime_providers_shared.dll)
+        list(APPEND DAS_ONNXRUNTIME_DLL_PATH "${DAS_ORT_DLL_PATH}" "${DAS_ORT_RUNTIME_PROVIDER_SHARED_DLL_PATH}")
     else ()
         if (NOT ${${TARGET_NAME}_ProvidersSharedDLL} STREQUAL "${TARGET_NAME}_ProvidersSharedDLL-NOTFOUND")
-            list(APPEND ASR_ONNXRUNTIME_DLL_PATH "${${TARGET_NAME}_ProvidersSharedDLL}")
+            list(APPEND DAS_ONNXRUNTIME_DLL_PATH "${${TARGET_NAME}_ProvidersSharedDLL}")
         endif ()
 
-        list(APPEND ASR_ONNXRUNTIME_DLL_PATH "${${TARGET_NAME}_DLL}")
+        list(APPEND DAS_ONNXRUNTIME_DLL_PATH "${${TARGET_NAME}_DLL}")
     endif ()
 
-    asr_add_auto_copy_dll_path(${ASR_ONNXRUNTIME_DLL_PATH})
+    asr_add_auto_copy_dll_path(${DAS_ONNXRUNTIME_DLL_PATH})
 endfunction()
 
 if (NOT onnxruntime_FOUND)
-    set(ASR_ONNXRUNTIME_BINARY_VERSION "1.16.1")
-    message(STATUS "Downloading prebuilt onnxruntime binary (VERSION = ${ASR_ONNXRUNTIME_BINARY_VERSION})...")
+    set(DAS_ONNXRUNTIME_BINARY_VERSION "1.16.1")
+    message(STATUS "Downloading prebuilt onnxruntime binary (VERSION = ${DAS_ONNXRUNTIME_BINARY_VERSION})...")
 
     if (WIN32)
         if (${PROCESSOR_ARCHITECTURE} MATCHES "ARM64")
             # arm64
             _download_and_config_onnxruntime(
                     "onnxruntime_msvc_amd64"
-                    "${GITHUB_MIRROR_URL}/microsoft/onnxruntime/releases/download/v${ASR_ONNXRUNTIME_BINARY_VERSION}/onnxruntime-win-arm64-${ASR_ONNXRUNTIME_BINARY_VERSION}.zip")
+                    "${GITHUB_MIRROR_URL}/microsoft/onnxruntime/releases/download/v${DAS_ONNXRUNTIME_BINARY_VERSION}/onnxruntime-win-arm64-${DAS_ONNXRUNTIME_BINARY_VERSION}.zip")
         elseif (${PROCESSOR_ARCHITECTURE} MATCHES "ARM")
             # arm
             _download_and_config_onnxruntime(
                     "onnxruntime_msvc_amd64"
-                    "${GITHUB_MIRROR_URL}/microsoft/onnxruntime/releases/download/v${ASR_ONNXRUNTIME_BINARY_VERSION}/onnxruntime-win-arm-${ASR_ONNXRUNTIME_BINARY_VERSION}.zip")
+                    "${GITHUB_MIRROR_URL}/microsoft/onnxruntime/releases/download/v${DAS_ONNXRUNTIME_BINARY_VERSION}/onnxruntime-win-arm-${DAS_ONNXRUNTIME_BINARY_VERSION}.zip")
         elseif (CMAKE_SIZEOF_VOID_P EQUAL 8)
             # amd64
             _download_and_config_onnxruntime(
                     "onnxruntime_msvc_amd64"
-                    "${GITHUB_MIRROR_URL}/microsoft/onnxruntime/releases/download/v${ASR_ONNXRUNTIME_BINARY_VERSION}/onnxruntime-win-x64-${ASR_ONNXRUNTIME_BINARY_VERSION}.zip")
+                    "${GITHUB_MIRROR_URL}/microsoft/onnxruntime/releases/download/v${DAS_ONNXRUNTIME_BINARY_VERSION}/onnxruntime-win-x64-${DAS_ONNXRUNTIME_BINARY_VERSION}.zip")
         elseif (CMAKE_SIZEOF_VOID_P EQUAL 4)
             # x86
             _download_and_config_onnxruntime(
                     "onnxruntime_msvc_x86"
-                    "${GITHUB_MIRROR_URL}/microsoft/onnxruntime/releases/download/v${ASR_ONNXRUNTIME_BINARY_VERSION}/onnxruntime-win-x86-${ASR_ONNXRUNTIME_BINARY_VERSION}.zip")
+                    "${GITHUB_MIRROR_URL}/microsoft/onnxruntime/releases/download/v${DAS_ONNXRUNTIME_BINARY_VERSION}/onnxruntime-win-x86-${DAS_ONNXRUNTIME_BINARY_VERSION}.zip")
         else ()
             message(FATAL_ERROR "Unsupported architecture.")
         endif ()
@@ -584,12 +584,12 @@ if (NOT onnxruntime_FOUND)
             # arm64
             _download_and_config_onnxruntime(
                     "onnxruntime_linux_arm64"
-                    "${GITHUB_MIRROR_URL}/microsoft/onnxruntime/releases/download/v${ASR_ONNXRUNTIME_BINARY_VERSION}/onnxruntime-linux-aarch64-${ASR_ONNXRUNTIME_BINARY_VERSION}.tgz")
+                    "${GITHUB_MIRROR_URL}/microsoft/onnxruntime/releases/download/v${DAS_ONNXRUNTIME_BINARY_VERSION}/onnxruntime-linux-aarch64-${DAS_ONNXRUNTIME_BINARY_VERSION}.tgz")
         elseif (CMAKE_SIZEOF_VOID_P EQUAL 8)
             # amd64
             _download_and_config_onnxruntime(
                     "onnxruntime_linux_amd64"
-                    "${GITHUB_MIRROR_URL}/microsoft/onnxruntime/releases/download/v${ASR_ONNXRUNTIME_BINARY_VERSION}/onnxruntime-linux-x64-${ASR_ONNXRUNTIME_BINARY_VERSION}.tgz")
+                    "${GITHUB_MIRROR_URL}/microsoft/onnxruntime/releases/download/v${DAS_ONNXRUNTIME_BINARY_VERSION}/onnxruntime-linux-x64-${DAS_ONNXRUNTIME_BINARY_VERSION}.tgz")
         elseif (CMAKE_SIZEOF_VOID_P EQUAL 4)
             # x86
             message(FATAL_ERROR "No official prebuilt binary for this architecture.")
@@ -598,19 +598,19 @@ if (NOT onnxruntime_FOUND)
         endif ()
     endif ()
 
-    target_link_libraries(Asr3rdParty INTERFACE AsrBundledOnnxRuntime)
+    target_link_libraries(Das3rdParty INTERFACE DasBundledOnnxRuntime)
 else ()
-    target_link_libraries(Asr3rdParty INTERFACE onnxruntime::onnxruntime)
+    target_link_libraries(Das3rdParty INTERFACE onnxruntime::onnxruntime)
 endif ()
 
 message("================================================================")
 
-message(STATUS "The third-party libraries listed later are only used for AsrHttp.")
+message(STATUS "The third-party libraries listed later are only used for DasHttp.")
 
 message(STATUS "Downloading and configuring oatpp 1.3.0.")
 
 function(_download_and_config_oatpp)
-    set(CMAKE_FOLDER "Asr3rd/oatpp")
+    set(CMAKE_FOLDER "Das3rd/oatpp")
 
     set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
 
@@ -629,7 +629,7 @@ _download_and_config_oatpp()
 function(_download_and_config_drogon)
     set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
 
-    set(CMAKE_FOLDER "Asr3rd/jsoncpp")
+    set(CMAKE_FOLDER "Das3rd/jsoncpp")
 
     set(BUILD_SHARED_LIBS OFF)
     set(BUILD_OBJECT_LIBS OFF)
@@ -645,7 +645,7 @@ function(_download_and_config_drogon)
     include_directories(${CMAKE_BINARY_DIR}/_deps/jsoncpp-src/include)
     add_library(Jsoncpp_lib ALIAS jsoncpp_static)
 
-    set(CMAKE_FOLDER "Asr3rd/trantor")
+    set(CMAKE_FOLDER "Das3rd/trantor")
 
     set(USE_SPDLOG ON)
     set(BUILD_TESTING OFF)
@@ -660,7 +660,7 @@ function(_download_and_config_drogon)
 
     add_library(Trantor::Trantor ALIAS trantor)
 
-    set(CMAKE_FOLDER "Asr3rd/drogon")
+    set(CMAKE_FOLDER "Das3rd/drogon")
 
     set(CMAKE_POLICY_DEFAULT_CMP0091 NEW)
 

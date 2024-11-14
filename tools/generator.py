@@ -45,16 +45,16 @@ class InheritTree:
             self.children_map[forward_declaration_name] = InheritTreeNode(forward_declaration_name)
 
     def to_official_iid_list(self):
-        result = """const std::unordered_set<AsrGuid> g_official_iids{
+        result = """const std::unordered_set<DasGuid> g_official_iids{
     []()
     {
-        std::unordered_set<AsrGuid> result{{"""
+        std::unordered_set<DasGuid> result{{"""
 
         result += '\n'
 
         keys = sorted(self.children_map.keys())
         for k in keys:
-            result += f"            AsrIidOf<{k}>(),\n"
+            result += f"            DasIidOf<{k}>(),\n"
         result = result[:-2]
         result += '\n'
         result += """}};
@@ -82,7 +82,7 @@ class InheritTree:
         result_list = []
         type_names = sorted(self.children_map.keys())
         for t in type_names:
-            result += f"ASR_INTERFACE {t};\n"
+            result += f"DAS_INTERFACE {t};\n"
         result += '\n'
         for t in self.children_map.values():
             type_parents = t.get_parents()
@@ -96,7 +96,7 @@ class InheritTree:
                 continue
             # 单继承，只有一个路径
             parents_name = [t.get_name() for t in reversed(parent_list[0])]
-            single_result = f"ASR_UTILS_DEFINE_PRESET_INHERITANCE_INFO({child_type}"
+            single_result = f"DAS_UTILS_DEFINE_PRESET_INHERITANCE_INFO({child_type}"
             for parent_name in parents_name:
                 single_result += f", {parent_name}"
             single_result += ");\n"
@@ -111,11 +111,11 @@ class InheritTree:
     def to_cpp_swig_map(self):
         result = ''
         keys = self.children_map.keys()
-        template = 'IAsrSwig'
+        template = 'IDasSwig'
         for k in keys:
             if k.find(template) != -1:
                 cpp_type_name = k[len(template):]
-                result += f'{{AsrIidOf<IAsr{cpp_type_name}>(), AsrIidOf<{k}>()}},\n'
+                result += f'{{DasIidOf<IDas{cpp_type_name}>(), DasIidOf<{k}>()}},\n'
         result = result[:-2]
         result += '\n'
         if g_debug:
@@ -126,7 +126,7 @@ class InheritTree:
         result = '''
 template <class SwigT>
 auto CreateCppToSwigObjectImpl(void* p_swig_object, void** pp_out_cpp_object)
-    -> AsrResult
+    -> DasResult
 {
     try
     {
@@ -134,11 +134,11 @@ auto CreateCppToSwigObjectImpl(void* p_swig_object, void** pp_out_cpp_object)
             new SwigToCpp<SwigT>(static_cast<SwigT*>(p_swig_object));
         p_cpp_object->AddRef();
         *pp_out_cpp_object = p_cpp_object;
-        return ASR_S_OK;
+        return DAS_S_OK;
     }
     catch (const std::bad_alloc&)
     {
-        return ASR_E_OUT_OF_MEMORY;
+        return DAS_E_OUT_OF_MEMORY;
     }
 }
 
@@ -150,16 +150,16 @@ auto CreateCppToSwigObjectImpl(void* p_swig_object, void** pp_out_cpp_object)
  * @return
  */
 template <class T>
-auto CreateSwigToCppObjectImpl(void* p_cpp_object) -> AsrRetSwigBase
+auto CreateSwigToCppObjectImpl(void* p_cpp_object) -> DasRetSwigBase
 {
-    AsrRetSwigBase result{};
+    DasRetSwigBase result{};
     try
     {
         using SwigType = CppToSwig<T>::SwigType;
         auto* const p_swig_object =
             new CppToSwig<T>(static_cast<T*>(p_cpp_object));
         p_swig_object->AddRef();
-        result.error_code = ASR_S_OK;
+        result.error_code = DAS_S_OK;
         // explicit 导致要decltype来显式写出类型，似乎没有必要explicit了
         result.value = decltype(result.value){
             static_cast<void*>(static_cast<SwigType*>(p_swig_object))};
@@ -168,7 +168,7 @@ auto CreateSwigToCppObjectImpl(void* p_cpp_object) -> AsrRetSwigBase
     }
     catch (const std::bad_alloc&)
     {
-        result.error_code = ASR_E_OUT_OF_MEMORY;
+        result.error_code = DAS_E_OUT_OF_MEMORY;
         return result;
     }
 }
@@ -176,12 +176,12 @@ auto CreateSwigToCppObjectImpl(void* p_cpp_object) -> AsrRetSwigBase
 '''
         cpp_to_swig_factory_list = []
         swig_to_cpp_factory_list = []
-        template = 'IAsrSwig'
+        template = 'IDasSwig'
         for k in self.children_map.keys():
             if k.find(template) != -1:
                 cpp_type_name = k[len(template):]
                 cpp_to_swig_factory_list.append(f'''
-{{AsrIidOf<{k}>(),
+{{DasIidOf<{k}>(),
     [](void* p_swig_object, void** pp_out_cpp_object)
 {{
     return CreateCppToSwigObjectImpl<{k}>(
@@ -189,12 +189,12 @@ auto CreateSwigToCppObjectImpl(void* p_cpp_object) -> AsrRetSwigBase
         pp_out_cpp_object);
 }}}},''')
                 swig_to_cpp_factory_list.append(f'''
-{{AsrIidOf<IAsr{cpp_type_name}>(), [](void* p_cpp_object)
-{{ return CreateSwigToCppObjectImpl<IAsr{cpp_type_name}>(p_cpp_object); }}}},''')
+{{DasIidOf<IDas{cpp_type_name}>(), [](void* p_cpp_object)
+{{ return CreateSwigToCppObjectImpl<IDas{cpp_type_name}>(p_cpp_object); }}}},''')
         result += '''
 std::unordered_map<
-    AsrGuid,
-    AsrResult (*)(void* p_swig_object, void** pp_out_cpp_object)>
+    DasGuid,
+    DasResult (*)(void* p_swig_object, void** pp_out_cpp_object)>
     g_cpp_to_swig_factory {
 '''
         for s in cpp_to_swig_factory_list:
@@ -202,7 +202,7 @@ std::unordered_map<
                 result += f'        {l}\n'
         result += '\n    };\n'
         result += '''
-const std::unordered_map<AsrGuid, AsrRetSwigBase (*)(void* p_cpp_object)>
+const std::unordered_map<DasGuid, DasRetSwigBase (*)(void* p_cpp_object)>
     g_swig_to_cpp_factory{
 '''
         for s in swig_to_cpp_factory_list:
@@ -215,8 +215,8 @@ const std::unordered_map<AsrGuid, AsrRetSwigBase (*)(void* p_cpp_object)>
 
 
 def parse_line(line):
-    if line.find('ASR_INTERFACE') != -1:
-        pattern = r"ASR_INTERFACE\s+(\w+)\s*:\s*public\s+(\w+)"
+    if line.find('DAS_INTERFACE') != -1:
+        pattern = r"DAS_INTERFACE\s+(\w+)\s*:\s*public\s+(\w+)"
         match = re.match(pattern, line)
         if match:
             child = match.group(1)
@@ -226,7 +226,7 @@ def parse_line(line):
 
             return [child, father]
         else:
-            forward_declare_pattern = r"ASR_INTERFACE\s+(\w+)"
+            forward_declare_pattern = r"DAS_INTERFACE\s+(\w+)"
             match = re.match(forward_declare_pattern, line)
             if match:
                 value = match.group(1)
@@ -237,7 +237,7 @@ def parse_line(line):
 
 
 def read_type_in_directory(directory_path):
-    type_tree = InheritTree(['IAsrBase', 'IAsrSwigBase'])
+    type_tree = InheritTree(['IDasBase', 'IDasSwigBase'])
 
     for root, dirs, files in os.walk(directory_path):
         for filename in files:
@@ -306,16 +306,16 @@ def mode0(output_path, type_tree, include_file_list):
 
 #include <boost/bimap/bimap.hpp>
 #include <boost/bimap/unordered_set_of.hpp>
-#include <AutoStarRail/IAsrBase.h>
-#include <AutoStarRail/Core/ForeignInterfaceHost/AsrGuid.h>
+#include <das/IDasBase.h>
+#include <das/Core/ForeignInterfaceHost/DasGuid.h>
 
 namespace Das{
     namespace _autogen{
         using CppSwigMap = boost::bimaps::bimap<
             // cpp iid
-            boost::bimaps::unordered_set_of<AsrGuid, std::hash<AsrGuid>>,
+            boost::bimaps::unordered_set_of<DasGuid, std::hash<DasGuid>>,
             // swig iid
-            boost::bimaps::unordered_set_of<AsrGuid, std::hash<AsrGuid>>>;
+            boost::bimaps::unordered_set_of<DasGuid, std::hash<DasGuid>>>;
         extern const CppSwigMap g_cpp_swig_map;
     }
 }
@@ -360,12 +360,12 @@ namespace Das{
 #ifndef DAS_AUTOGEN_IIDLIST_H
 #define DAS_AUTOGEN_IIDLIST_H
 
-#include <AutoStarRail/Core/ForeignInterfaceHost/AsrGuid.h>
+#include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <unordered_set>
 
 namespace Das{
     namespace _autogen{
-        extern const std::unordered_set<AsrGuid> g_official_iids;
+        extern const std::unordered_set<DasGuid> g_official_iids;
     }
 }
 
@@ -402,16 +402,16 @@ namespace Das{
 # #define DAS_AUTOGEN_CPPSWIGINTEROPFACTORY_H
 
 # #include <unordered_map>
-# #include <AutoStarRail/Core/ForeignInterfaceHost/AsrGuid.h>
+# #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 
 # namespace Das{
 #     namespace _autogen{
 #         extern std::unordered_map<
-#             AsrGuid,
-#             AsrResult (*)(void* p_swig_object, void** pp_out_cpp_object)>
+#             DasGuid,
+#             DasResult (*)(void* p_swig_object, void** pp_out_cpp_object)>
 #             g_cpp_to_swig_factory;
 
-#         extern const std::unordered_map<AsrGuid, AsrRetSwigBase (*)(void* p_cpp_object)>
+#         extern const std::unordered_map<DasGuid, DasRetSwigBase (*)(void* p_cpp_object)>
 #             g_swig_to_cpp_factory;
 #     }
 # }
@@ -424,10 +424,10 @@ namespace Das{
 #     write_file_info(cpp_swig_interop_factory_source)
 #     cpp_swig_interop_factory_source.write(include_files(include_file_list))
 #     cpp_swig_interop_factory_source.write('''
-# #include <AutoStarRail/Core/Logger/Logger.h>
-# #include <AutoStarRail/Core/ForeignInterfaceHost/CppSwigInterop.h>
+# #include <das/Core/Logger/Logger.h>
+# #include <das/Core/ForeignInterfaceHost/CppSwigInterop.h>
 
-# using namespace ASR::Core::ForeignInterfaceHost;
+# using namespace DAS::Core::ForeignInterfaceHost;
 
 # ''')
 #     cpp_swig_interop_factory_source.write(
@@ -452,25 +452,25 @@ def mode1(output_path, type_tree):
     preset_type_inheritance_info_virtual_header = ''
     preset_type_inheritance_info_virtual_header  += '// This file is automatically generated by generator.py\n// !!! DO NOT EDIT !!!\n'
     preset_type_inheritance_info_virtual_header  += '''
-#ifndef ASR_UTILS_PRESETTYPEINHERITANCEINFO_H
-#define ASR_UTILS_PRESETTYPEINHERITANCEINFO_H
+#ifndef DAS_UTILS_PRESETTYPEINHERITANCEINFO_H
+#define DAS_UTILS_PRESETTYPEINHERITANCEINFO_H
 
-#include <AutoStarRail/IAsrBase.h>
-#include <AutoStarRail/Utils/InternalTypeList.hpp>
+#include <das/IDasBase.h>
+#include <das/Utils/InternalTypeList.hpp>
 
-ASR_UTILS_NS_BEGIN
+DAS_UTILS_NS_BEGIN
 
 template <class T>
 struct PresetTypeInheritanceInfo;
 
 '''
-    preset_type_inheritance_info_virtual_header  += "#define ASR_UTILS_DEFINE_PRESET_INHERITANCE_INFO(EndType, ...)             \\"
+    preset_type_inheritance_info_virtual_header  += "#define DAS_UTILS_DEFINE_PRESET_INHERITANCE_INFO(EndType, ...)             \\"
     preset_type_inheritance_info_virtual_header  += '\n'
-    preset_type_inheritance_info_virtual_header  += "ASR_UTILS_NS_BEGIN                                                         \\"
+    preset_type_inheritance_info_virtual_header  += "DAS_UTILS_NS_BEGIN                                                         \\"
     preset_type_inheritance_info_virtual_header  += '\n'
     preset_type_inheritance_info_virtual_header  += "using EndType##InheritanceInfo =                                           \\"
     preset_type_inheritance_info_virtual_header  += '\n'
-    preset_type_inheritance_info_virtual_header  += "    ASR::Utils::internal_type_holder<__VA_ARGS__, EndType>;                \\"
+    preset_type_inheritance_info_virtual_header  += "    DAS::Utils::internal_type_holder<__VA_ARGS__, EndType>;                \\"
     preset_type_inheritance_info_virtual_header  += '\n'
     preset_type_inheritance_info_virtual_header  += "template <>                                                                \\"
     preset_type_inheritance_info_virtual_header  += '\n'
@@ -481,30 +481,30 @@ struct PresetTypeInheritanceInfo;
     preset_type_inheritance_info_virtual_header  += "    using TypeInfo = EndType##InheritanceInfo;                             \\"
     preset_type_inheritance_info_virtual_header  += '\n'
     preset_type_inheritance_info_virtual_header  += "};                                                                         \\"
-    preset_type_inheritance_info_virtual_header  += '\nASR_UTILS_NS_END'
+    preset_type_inheritance_info_virtual_header  += '\nDAS_UTILS_NS_END'
     preset_type_inheritance_info_virtual_header  += '''
 
-// IAsrBase.h
-using IAsrBaseInheritanceInfo = internal_type_holder<IAsrBase>;
+// IDasBase.h
+using IDasBaseInheritanceInfo = internal_type_holder<IDasBase>;
 template <>
-struct PresetTypeInheritanceInfo<::IAsrBase>
+struct PresetTypeInheritanceInfo<::IDasBase>
 {
-    using TypeInfo = IAsrBaseInheritanceInfo;
+    using TypeInfo = IDasBaseInheritanceInfo;
 };
 
-using IAsrSwigBaseInheritanceInfo = internal_type_holder<IAsrSwigBase>;
+using IDasSwigBaseInheritanceInfo = internal_type_holder<IDasSwigBase>;
 template <>
-struct PresetTypeInheritanceInfo<::IAsrSwigBase>
+struct PresetTypeInheritanceInfo<::IDasSwigBase>
 {
-    using TypeInfo = IAsrSwigBaseInheritanceInfo;
+    using TypeInfo = IDasSwigBaseInheritanceInfo;
 };
 
-ASR_UTILS_NS_END
+DAS_UTILS_NS_END
 
 '''
     preset_type_inheritance_info_virtual_header  += preset_type_inheritance_info
     preset_type_inheritance_info_virtual_header  += '''
-#endif // ASR_UTILS_PRESETTYPEINHERITANCEINFO_H
+#endif // DAS_UTILS_PRESETTYPEINHERITANCEINFO_H
 '''
     preset_type_inheritance_info_header_path = f'{output_path}/PresetTypeInheritanceInfo.h'
     if (os.path.exists(preset_type_inheritance_info_header_path)):

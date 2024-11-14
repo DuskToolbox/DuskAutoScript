@@ -10,35 +10,35 @@
 %include <wchar.i>
 
 %{
-#include <AutoStarRail/AsrExport.h>
-#include <AutoStarRail/IAsrBase.h>
-#include <AutoStarRail/AsrString.hpp>
-#include <AutoStarRail/IAsrTypeInfo.h>
+#include <das/DasExport.h>
+#include <das/IDasBase.h>
+#include <das/DasString.hpp>
+#include <das/IDasTypeInfo.h>
 
-#include <AutoStarRail/PluginInterface/IAsrCapture.h>
-#include <AutoStarRail/PluginInterface/IAsrErrorLens.h>
-#include <AutoStarRail/PluginInterface/IAsrInput.h>
-#include <AutoStarRail/PluginInterface/IAsrPlugin.h>
-#include <AutoStarRail/PluginInterface/IAsrTask.h>
+#include <das/PluginInterface/IDasCapture.h>
+#include <das/PluginInterface/IDasErrorLens.h>
+#include <das/PluginInterface/IDasInput.h>
+#include <das/PluginInterface/IDasPlugin.h>
+#include <das/PluginInterface/IDasTask.h>
 
-#include <AutoStarRail/ExportInterface/AsrCV.h>
-#include <AutoStarRail/ExportInterface/AsrJson.h>
-#include <AutoStarRail/ExportInterface/AsrLogger.h>
+#include <das/ExportInterface/DasCV.h>
+#include <das/ExportInterface/DasJson.h>
+#include <das/ExportInterface/DasLogger.h>
 
-#include <AutoStarRail/ExportInterface/IAsrGuidVector.h>
-#include <AutoStarRail/ExportInterface/IAsrBasicErrorLens.h>
+#include <das/ExportInterface/IDasGuidVector.h>
+#include <das/ExportInterface/IDasBasicErrorLens.h>
 
-#include <AutoStarRail/ExportInterface/IAsrImage.h>
-#include <AutoStarRail/ExportInterface/IAsrCaptureManager.h>
+#include <das/ExportInterface/IDasImage.h>
+#include <das/ExportInterface/IDasCaptureManager.h>
 
-#include <AutoStarRail/ExportInterface/IAsrOcr.h>
-#include <AutoStarRail/ExportInterface/IAsrPluginManager.h>
-#include <AutoStarRail/ExportInterface/IAsrSettings.h>
-#include <AutoStarRail/ExportInterface/IAsrTaskManager.h>
+#include <das/ExportInterface/IDasOcr.h>
+#include <das/ExportInterface/IDasPluginManager.h>
+#include <das/ExportInterface/IDasSettings.h>
+#include <das/ExportInterface/IDasTaskManager.h>
 
 #ifdef SWIGPYTHON
 
-#include <AutoStarRail/Core/ForeignInterfaceHost/PythonHost.h>
+#include <das/Core/ForeignInterfaceHost/PythonHost.h>
 
 #ifdef DEBUG
 
@@ -62,7 +62,7 @@ PyObject*
 #else
 void
 #endif
-PyInit__AsrCorePythonExport(void) {
+PyInit__DasCorePythonExport(void) {
 #if PY_VERSION_HEX >= 0x03000000
     return ::SWIG_init();
 #else
@@ -83,10 +83,10 @@ PyInit__AsrCorePythonExport(void) {
 %typemap(javadirectorin) char16_t* "$jniinput"
 %typemap(javadirectorout) char16_t* "$javacall"
 
-%typemap(jni) void AsrReadOnlyString::GetUtf16 "jstring"
-%typemap(jtype) void AsrReadOnlyString::GetUtf16 "String"
-%typemap(jstype) void AsrReadOnlyString::GetUtf16 "String"
-%typemap(javaout) void AsrReadOnlyString::GetUtf16 {
+%typemap(jni) void DasReadOnlyString::GetUtf16 "jstring"
+%typemap(jtype) void DasReadOnlyString::GetUtf16 "String"
+%typemap(jstype) void DasReadOnlyString::GetUtf16 "String"
+%typemap(javaout) void DasReadOnlyString::GetUtf16 {
     return $jnicall;
 }
 
@@ -140,39 +140,39 @@ PyInit__AsrCorePythonExport(void) {
 
 %feature("director:except") {
     if ($error != NULL) {
-        ASR_LOG_ERROR("SWIG Python exception found!");
-        ASR::Core::ForeignInterfaceHost::PythonHost::RaisePythonInterpreterException();
+        DAS_LOG_ERROR("SWIG Python exception found!");
+        DAS::Core::ForeignInterfaceHost::PythonHost::RaisePythonInterpreterException();
     }
 }
 
 #endif // SWIGPYTHON
 
-%include <AutoStarRail/AsrExport.h>
-%include <AutoStarRail/IAsrBase.h>
-%include <AutoStarRail/AsrString.hpp>
-%include <AutoStarRail/IAsrTypeInfo.h>
+%include <das/DasExport.h>
+%include <das/IDasBase.h>
+%include <das/DasString.hpp>
+%include <das/IDasTypeInfo.h>
 
 // 以下文件按照字母顺序排列！ The following files are in alphabetical order!
-// 例外：由于依赖关系的原因，IAsrImage.h必须在IAsrCaptureManager.h前
-// IAsrGuidVector.h必须在IAsrBasicErrorLens.h前
+// 例外：由于依赖关系的原因，IDasImage.h必须在IDasCaptureManager.h前
+// IDasGuidVector.h必须在IDasBasicErrorLens.h前
 
-%include <AutoStarRail/PluginInterface/IAsrCapture.h>
-%include <AutoStarRail/PluginInterface/IAsrErrorLens.h>
-%include <AutoStarRail/PluginInterface/IAsrInput.h>
-%include <AutoStarRail/PluginInterface/IAsrPlugin.h>
-%include <AutoStarRail/PluginInterface/IAsrTask.h>
+%include <das/PluginInterface/IDasCapture.h>
+%include <das/PluginInterface/IDasErrorLens.h>
+%include <das/PluginInterface/IDasInput.h>
+%include <das/PluginInterface/IDasPlugin.h>
+%include <das/PluginInterface/IDasTask.h>
 
-%include <AutoStarRail/ExportInterface/AsrCV.h>
-%include <AutoStarRail/ExportInterface/AsrJson.h>
-%include <AutoStarRail/ExportInterface/AsrLogger.h>
+%include <das/ExportInterface/DasCV.h>
+%include <das/ExportInterface/DasJson.h>
+%include <das/ExportInterface/DasLogger.h>
 
-%include <AutoStarRail/ExportInterface/IAsrGuidVector.h>
-%include <AutoStarRail/ExportInterface/IAsrBasicErrorLens.h>
+%include <das/ExportInterface/IDasGuidVector.h>
+%include <das/ExportInterface/IDasBasicErrorLens.h>
 
-%include <AutoStarRail/ExportInterface/IAsrImage.h>
-%include <AutoStarRail/ExportInterface/IAsrCaptureManager.h>
+%include <das/ExportInterface/IDasImage.h>
+%include <das/ExportInterface/IDasCaptureManager.h>
 
-%include <AutoStarRail/ExportInterface/IAsrOcr.h>
-%include <AutoStarRail/ExportInterface/IAsrPluginManager.h>
-%include <AutoStarRail/ExportInterface/IAsrSettings.h>
-%include <AutoStarRail/ExportInterface/IAsrTaskManager.h>
+%include <das/ExportInterface/IDasOcr.h>
+%include <das/ExportInterface/IDasPluginManager.h>
+%include <das/ExportInterface/IDasSettings.h>
+%include <das/ExportInterface/IDasTaskManager.h>
