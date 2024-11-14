@@ -1,0 +1,11 @@
+{
+  "name": "@CMAKE_SHARED_LIBRARY_PREFIX@DasAdbTouch",
+  "author": "Dusk",
+  "version": "0.1",
+  "guid" : "0527CD9E-1F26-44FB-BE5F-D63C5A11B754",
+  "description": "基于Adb的模拟点击插件",
+  "supportedSystem": "Windows",
+  "language": "Cpp",
+  "pluginFilenameExtension": "dll",
+  "settings": []
+}
