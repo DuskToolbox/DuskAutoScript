@@ -56,8 +56,8 @@ IDasImageImpl::IDasImageImpl(
     int         width,
     int         type,
     void*       p_data,
-    IDasMemory* p_asr_data)
-    : p_memory_{p_asr_data}, mat_{height, width, type, p_data}
+    IDasMemory* p_das_data)
+    : p_memory_{p_das_data}, mat_{height, width, type, p_data}
 {
 }
 

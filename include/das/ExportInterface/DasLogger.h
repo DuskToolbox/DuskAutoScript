@@ -6,7 +6,7 @@
 
 #ifndef SWIG
 
-typedef struct _asr_SourceLocation
+typedef struct _das_SourceLocation
 {
     const char* file_name;
     int         line;
@@ -16,13 +16,13 @@ typedef struct _asr_SourceLocation
 #define DAS_LOG_WITH_SOURCE_LOCATION(type, ...)                                \
     do                                                                         \
     {                                                                          \
-        DasSourceLocation _asr_internal_source_location = {                    \
+        DasSourceLocation _das_internal_source_location = {                    \
             __FILE__,                                                          \
             __LINE__,                                                          \
             __func__};                                                         \
         DasLog##type##U8WithSourceLocation(                                    \
             __VA_ARGS__,                                                       \
-            &_asr_internal_source_location);                                   \
+            &_das_internal_source_location);                                   \
     } while (false)
 
 #define DAS_LOG_ERROR(...) DAS_LOG_WITH_SOURCE_LOCATION(Error, __VA_ARGS__)
@@ -98,10 +98,10 @@ DAS_C_API DasResult CreateIDasLogRequester(
 
 #endif // SWIG
 
-DAS_API void DasLogError(DasReadOnlyString asr_string);
+DAS_API void DasLogError(DasReadOnlyString das_string);
 
-DAS_API void DasLogWarning(DasReadOnlyString asr_string);
+DAS_API void DasLogWarning(DasReadOnlyString das_string);
 
-DAS_API void DasLogInfo(DasReadOnlyString asr_string);
+DAS_API void DasLogInfo(DasReadOnlyString das_string);
 
 #endif // DAS_LOGGER_H

@@ -5,7 +5,7 @@
 #include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
 #include <das/Core/ForeignInterfaceHost/Config.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
-#include <das/ExportInterface/IDasScheduler.h>
+#include <das/ExportInterface/IDasTaskScheduler.h>
 #include <das/PluginInterface/IDasTask.h>
 #include <das/Utils/CommonUtils.hpp>
 

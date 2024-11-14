@@ -1,6 +1,6 @@
 // clang-format off
 
-%module(directors="1") AutoStarRail
+%module(directors="1") DuskAutoScript
 
 %include <stdint.i>
 %include <typemaps.i>
@@ -114,17 +114,17 @@ PyInit__DasCorePythonExport(void) {
 %typemap(javain) (const char16_t* p_u16string, size_t length) "p_u16string"
 
 %typemap(in, numinputs=1) (const char16_t* p_u16string, size_t length) %{
-    class _asr_InternalJavaString{
+    class _das_InternalJavaString{
         const jchar* p_jstring_;
         JNIEnv* jenv_;
         jstring java_string_;
     public:
-        _asr_InternalJavaString(JNIEnv* jenv, jstring java_string)
+        _das_InternalJavaString(JNIEnv* jenv, jstring java_string)
             : p_jstring_{jenv->GetStringChars(java_string, nullptr)},
               jenv_{jenv}, java_string_{java_string}
         {
         }
-        ~_asr_InternalJavaString() { jenv_->ReleaseStringChars(java_string_, p_jstring_); }
+        ~_das_InternalJavaString() { jenv_->ReleaseStringChars(java_string_, p_jstring_); }
         const jchar* Get() noexcept { return p_jstring_; }
     } jstring_wrapper{jenv, jarg1};
     const jsize string_length = jenv->GetStringLength(jarg1);

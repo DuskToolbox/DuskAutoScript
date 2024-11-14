@@ -50,7 +50,7 @@ DAS_INTERFACE IDasJson : public IDasBase
     DAS_METHOD GetBoolByName(IDasReadOnlyString * key, bool* p_out_bool) = 0;
     DAS_METHOD GetObjectRefByName(
         IDasReadOnlyString * key,
-        IDasJson * *pp_out_asr_json) = 0;
+        IDasJson * *pp_out_das_json) = 0;
 
     DAS_METHOD SetIntByName(IDasReadOnlyString * key, int64_t in_int) = 0;
     DAS_METHOD SetFloatByName(IDasReadOnlyString * key, float in_float) = 0;
@@ -60,7 +60,7 @@ DAS_INTERFACE IDasJson : public IDasBase
     DAS_METHOD SetBoolByName(IDasReadOnlyString * key, bool in_bool) = 0;
     DAS_METHOD SetObjectByName(
         IDasReadOnlyString * key,
-        IDasJson * pin_asr_json) = 0;
+        IDasJson * pin_das_json) = 0;
 
     DAS_METHOD GetIntByIndex(size_t index, int64_t * p_out_int) = 0;
     DAS_METHOD GetFloatByIndex(size_t index, float* p_out_float) = 0;
@@ -68,7 +68,7 @@ DAS_INTERFACE IDasJson : public IDasBase
         size_t index,
         IDasReadOnlyString * *pp_out_string) = 0;
     DAS_METHOD GetBoolByIndex(size_t index, bool* p_out_bool) = 0;
-    DAS_METHOD GetObjectRefByIndex(size_t index, IDasJson * *pp_out_asr_json) =
+    DAS_METHOD GetObjectRefByIndex(size_t index, IDasJson * *pp_out_das_json) =
         0;
 
     DAS_METHOD SetIntByIndex(size_t index, int64_t in_int) = 0;
@@ -76,7 +76,7 @@ DAS_INTERFACE IDasJson : public IDasBase
     DAS_METHOD SetStringByIndex(size_t index, IDasReadOnlyString * pin_string) =
         0;
     DAS_METHOD SetBoolByIndex(size_t index, bool in_bool) = 0;
-    DAS_METHOD SetObjectByIndex(size_t index, IDasJson * pin_asr_json) = 0;
+    DAS_METHOD SetObjectByIndex(size_t index, IDasJson * pin_das_json) = 0;
 
     DAS_METHOD GetTypeByName(IDasReadOnlyString * key, DasType * p_out_type) =
         0;
@@ -150,9 +150,9 @@ public:
 
     DasResult SetObjectByName(
         const DasReadOnlyString& key,
-        const DasJson&           in_asr_json)
+        const DasJson&           in_das_json)
     {
-        return p_impl_->SetObjectByName(key.Get(), in_asr_json.p_impl_.Get());
+        return p_impl_->SetObjectByName(key.Get(), in_das_json.p_impl_.Get());
     }
 
     [[nodiscard]]
@@ -203,9 +203,9 @@ public:
     {
         return p_impl_->SetBoolByIndex(index, in_bool);
     }
-    DasResult SetObjectByIndex(size_t index, DasJson in_asr_json)
+    DasResult SetObjectByIndex(size_t index, DasJson in_das_json)
     {
-        return p_impl_->SetObjectByIndex(index, in_asr_json.p_impl_.Get());
+        return p_impl_->SetObjectByIndex(index, in_das_json.p_impl_.Get());
     }
 
 #ifndef SWIG

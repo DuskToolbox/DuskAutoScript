@@ -67,9 +67,9 @@ std::size_t DasReadOnlyStringHash::operator()(
 }
 
 std::size_t DasReadOnlyStringHash::operator()(
-    const DasPtr<IDasReadOnlyString>& asr_ro_string) const noexcept
+    const DasPtr<IDasReadOnlyString>& das_ro_string) const noexcept
 {
-    const auto p_impl = asr_ro_string.Get();
+    const auto p_impl = das_ro_string.Get();
     return (*this)(p_impl);
 }
 

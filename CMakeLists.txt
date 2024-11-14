@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(AutoStarRail LANGUAGES CXX VERSION 0.1)
+project(DuskAutoScript LANGUAGES CXX VERSION 0.1)
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
@@ -136,4 +136,4 @@ if (${DAS_BUILD_TEST})
     enable_testing()
 endif ()
 
-add_subdirectory(AutoStarRail)
+add_subdirectory(das)

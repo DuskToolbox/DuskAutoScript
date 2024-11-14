@@ -34,7 +34,7 @@ template <>
 struct DAS_FMT_NS::formatter<DasReadOnlyString, char>
     : public formatter<std::string, char>
 {
-    auto format(const DasReadOnlyString& asr_string, format_context& ctx) const
+    auto format(const DasReadOnlyString& das_string, format_context& ctx) const
         -> typename std::remove_reference_t<decltype(ctx)>::iterator;
 };
 
@@ -141,7 +141,7 @@ public:
     DasReadOnlyStringWrapper(const std::string& std_u8_string);
     DasReadOnlyStringWrapper(IDasReadOnlyString* p_string);
     DasReadOnlyStringWrapper(DAS::DasPtr<IDasReadOnlyString> p_string);
-    DasReadOnlyStringWrapper(const DasReadOnlyString& ref_asr_string);
+    DasReadOnlyStringWrapper(const DasReadOnlyString& ref_das_string);
     ~DasReadOnlyStringWrapper();
 
     template <class T>
@@ -332,19 +332,19 @@ namespace nlohmann
     {
         static void to_json(
             json&                           j,
-            const DasReadOnlyStringWrapper& asr_string);
+            const DasReadOnlyStringWrapper& das_string);
 
         static void from_json(
             const json&               j,
-            DasReadOnlyStringWrapper& asr_string);
+            DasReadOnlyStringWrapper& das_string);
     };
 
     template <>
     struct adl_serializer<DasReadOnlyString>
     {
-        static void to_json(json& j, const DasReadOnlyString& asr_string);
+        static void to_json(json& j, const DasReadOnlyString& das_string);
 
-        static void from_json(const json& j, DasReadOnlyString& asr_string);
+        static void from_json(const json& j, DasReadOnlyString& das_string);
     };
 
     template <>
@@ -352,11 +352,11 @@ namespace nlohmann
     {
         static void to_json(
             json&                                  j,
-            const DAS::DasPtr<IDasReadOnlyString>& p_asr_string);
+            const DAS::DasPtr<IDasReadOnlyString>& p_das_string);
 
         static void from_json(
             const json&                      j,
-            DAS::DasPtr<IDasReadOnlyString>& p_asr_string);
+            DAS::DasPtr<IDasReadOnlyString>& p_das_string);
     };
 }
 

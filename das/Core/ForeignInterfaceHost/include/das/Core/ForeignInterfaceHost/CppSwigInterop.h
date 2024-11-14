@@ -30,10 +30,10 @@ DAS_NS_END
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
 template <class T>
-concept is_asr_swig_interface = std::is_base_of_v<IDasSwigBase, T>;
+concept is_das_swig_interface = std::is_base_of_v<IDasSwigBase, T>;
 
 template <class T>
-concept is_asr_interface = std::is_base_of_v<IDasBase, T>;
+concept is_das_interface = std::is_base_of_v<IDasBase, T>;
 
 template <class SwigT>
 class SwigToCpp;
@@ -64,13 +64,13 @@ DasResult CreateCppToSwigObject(
 auto CreateSwigToCppObject(const DasGuid& iid, void* p_cpp_object)
     -> DasRetSwigBase;
 
-template <is_asr_interface T>
+template <is_das_interface T>
 auto ConvertCppIidToSwigIid()
 {
     return ConvertCppIidToSwigIid(DasIidOf<T>());
 }
 
-template <is_asr_swig_interface T>
+template <is_das_swig_interface T>
 auto ConvertSwigIidToCppIid() -> DAS::Utils::Expected<DasGuid>
 {
     return ConvertSwigIidToCppIid(DasIidOf<T>());
@@ -93,7 +93,7 @@ struct FunctionArgumentsSeparator
 template <
     class T4Function,
     T4Function            FunctionPointer,
-    is_asr_swig_interface SwigT,
+    is_das_swig_interface SwigT,
     class OutputArg,
     class... InputArgs>
 [[nodiscard]]
@@ -123,7 +123,7 @@ auto CallSwigMethod(
  * @tparam SwigT
  * @tparam T
  */
-template <is_asr_swig_interface SwigT, is_asr_interface T>
+template <is_das_swig_interface SwigT, is_das_interface T>
 class SwigToCppBase : public T
 {
 protected:
@@ -140,7 +140,7 @@ public:
     {
     }
 
-    template <class Other, class = std::enable_if<is_asr_swig_interface<Other>>>
+    template <class Other, class = std::enable_if<is_das_swig_interface<Other>>>
     explicit SwigToCppBase(Other* p_other) : p_impl_{p_other}
     {
     }
@@ -273,7 +273,7 @@ public:
         return DAS_E_SWIG_INTERNAL_ERROR;                                         \
     }
 
-template <is_asr_swig_interface SwigT, is_asr_interface T>
+template <is_das_swig_interface SwigT, is_das_interface T>
 class SwigToCppTypeInfo : public SwigToCppBase<SwigT, T>
 {
     static_assert(
@@ -379,7 +379,7 @@ public:
     DAS_IMPL Find(const DasGuid& iid) override;
 };
 
-template <is_asr_swig_interface SwigT, is_asr_interface T>
+template <is_das_swig_interface SwigT, is_das_interface T>
 class SwigToCppInput : public SwigToCppTypeInfo<SwigT, T>
 {
     static_assert(
@@ -445,7 +445,7 @@ DasResult CommonPluginEnumFeature(
 template <class T>
 class CppToSwig;
 
-template <is_asr_swig_interface SwigT, is_asr_interface T>
+template <is_das_swig_interface SwigT, is_das_interface T>
 class CppToSwigBase : public SwigT
 {
 public:
@@ -465,7 +465,7 @@ public:
     {
     }
 
-    template <class Other, class = std::enable_if<is_asr_interface<Other>>>
+    template <class Other, class = std::enable_if<is_das_interface<Other>>>
     explicit CppToSwigBase(Other* p_other) : p_impl_{p_other}
     {
     }
@@ -565,7 +565,7 @@ template <
     class CppRetT,
     class T4Function,
     T4Function       FunctionPointer,
-    is_asr_interface T,
+    is_das_interface T,
     class... InputArgs>
 [[nodiscard]]
 DasRetT CallCppMethod(T* p_cpp_object, InputArgs&&... input_args)
@@ -596,7 +596,7 @@ DasRetT CallCppMethod(T* p_cpp_object, InputArgs&&... input_args)
     return result;
 }
 
-template <is_asr_swig_interface SwigT, is_asr_interface T>
+template <is_das_swig_interface SwigT, is_das_interface T>
 class CppToSwigTypeInfo : public CppToSwigBase<SwigT, T>
 {
     static_assert(
@@ -675,7 +675,7 @@ public:
     DasResult  Find(const DasGuid& guid) override;
 };
 
-template <is_asr_swig_interface SwigT, is_asr_interface T>
+template <is_das_swig_interface SwigT, is_das_interface T>
 class CppToSwigInput : public CppToSwigTypeInfo<SwigT, T>
 {
     static_assert(
@@ -736,7 +736,7 @@ public:
         IDasSwigVariantVector* p_arguments) override;
 };
 
-template <is_asr_interface ToCpp, is_asr_swig_interface FromSwig>
+template <is_das_interface ToCpp, is_das_swig_interface FromSwig>
 auto MakeInterop(FromSwig* p_from) -> Utils::Expected<DasPtr<ToCpp>>
 {
     if (const auto qi_result = p_from->QueryInterface(DasIidOf<ToCpp>());
@@ -756,13 +756,13 @@ auto MakeInterop(FromSwig* p_from) -> Utils::Expected<DasPtr<ToCpp>>
     }
 }
 
-template <is_asr_interface ToCpp, is_asr_swig_interface FromSwig>
+template <is_das_interface ToCpp, is_das_swig_interface FromSwig>
 auto MakeInterop(DasPtr<FromSwig> p_from) -> Utils::Expected<DasPtr<ToCpp>>
 {
     return MakeInterop<ToCpp>(p_from.Get());
 }
 
-template <is_asr_swig_interface ToSwig, is_asr_interface FromCpp>
+template <is_das_swig_interface ToSwig, is_das_interface FromCpp>
 auto MakeInterop(FromCpp* p_from) -> Utils::Expected<DasPtr<ToSwig>>
 {
     void*  p_out_object{};
@@ -785,13 +785,13 @@ auto MakeInterop(FromCpp* p_from) -> Utils::Expected<DasPtr<ToSwig>>
     }
 }
 
-template <is_asr_swig_interface ToSwig, is_asr_interface FromCpp>
+template <is_das_swig_interface ToSwig, is_das_interface FromCpp>
 auto MakeInterop(DasPtr<FromCpp> p_from) -> Utils::Expected<DasPtr<ToSwig>>
 {
     return MakeInterop<ToSwig>(p_from.Get());
 }
 
-template <class RetType, is_asr_swig_interface SwigT>
+template <class RetType, is_das_swig_interface SwigT>
 auto ToDasRetType(
     const Utils::Expected<DasPtr<SwigT>>& expected_result,
     RetType&                              ref_out_result)

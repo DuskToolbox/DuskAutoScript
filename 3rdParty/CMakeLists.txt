@@ -17,9 +17,9 @@ endif ()
 set(DAS_EXPORT_LANGUAGES_LIST "")
 set(SWIG_COMPONENTS "")
 
-asr_check_language_export(JAVA DAS_EXPORT_LANGUAGES_LIST)
-asr_check_language_export(CSHARP DAS_EXPORT_LANGUAGES_LIST)
-asr_check_language_export(PYTHON DAS_EXPORT_LANGUAGES_LIST)
+das_check_language_export(JAVA DAS_EXPORT_LANGUAGES_LIST)
+das_check_language_export(CSHARP DAS_EXPORT_LANGUAGES_LIST)
+das_check_language_export(PYTHON DAS_EXPORT_LANGUAGES_LIST)
 
 if (NOT DAS_EXPORT_LANGUAGES_LIST)
     message(STATUS "No interface needs to be exported.")
@@ -241,7 +241,7 @@ function(_download_and_config_opencv)
     list(APPEND DAS_OPENCV_COMPONENTS opencv_core opencv_imgcodecs opencv_imgproc)
     foreach (DAS_OCV_LIB ${DAS_OPENCV_COMPONENTS})
         set(BUILD_${DAS_OCV_LIB} ON)
-        asr_add_auto_copy_dll_path("$<TARGET_FILE:${DAS_OCV_LIB}>")
+        das_add_auto_copy_dll_path("$<TARGET_FILE:${DAS_OCV_LIB}>")
     endforeach ()
 
     FetchContent_MakeAvailable(opencv)
@@ -387,7 +387,7 @@ if (WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
         endif ()
     endif ()
 
-    asr_add_auto_copy_dll_path("${DAS_BUNDLED_ICU_LIBRARIES}")
+    das_add_auto_copy_dll_path("${DAS_BUNDLED_ICU_LIBRARIES}")
 endif ()
 
 find_package(ICU COMPONENTS data i18n uc REQUIRED)
@@ -545,7 +545,7 @@ function(_download_and_config_onnxruntime TARGET_NAME URL)
         list(APPEND DAS_ONNXRUNTIME_DLL_PATH "${${TARGET_NAME}_DLL}")
     endif ()
 
-    asr_add_auto_copy_dll_path(${DAS_ONNXRUNTIME_DLL_PATH})
+    das_add_auto_copy_dll_path(${DAS_ONNXRUNTIME_DLL_PATH})
 endfunction()
 
 if (NOT onnxruntime_FOUND)
@@ -666,7 +666,7 @@ function(_download_and_config_drogon)
 
     set(Trantor_DIR ${CMAKE_BINARY_DIR}/_deps/drogon-build)
 
-    asr_force_set(USE_SUBMODULE OFF BOOL "Disallow drogon use trantor as submodule")
+    das_force_set(USE_SUBMODULE OFF BOOL "Disallow drogon use trantor as submodule")
     set(BUILD_EXAMPLES OFF)
 
     FetchContent_Declare(

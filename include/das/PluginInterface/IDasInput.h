@@ -10,7 +10,7 @@ typedef enum DasClickType
     DAS_CLICK_MIDDLE = 4
 } DasClickType;
 
-typedef struct _asr_Point
+typedef struct _das_Point
 {
     int32_t x;
     int32_t y;

@@ -31,7 +31,7 @@
 
 #define DAS_CORE_TRACE_SCOPE                                                   \
     DAS::Core::TraceScope DAS_TOKEN_PASTE(                                     \
-        _asr_reserved_logger_tracer_,                                          \
+        _das_reserved_logger_tracer_,                                          \
         __LINE__)                                                              \
     {                                                                          \
         static_cast<const char*>(__FILE__), __LINE__,                          \

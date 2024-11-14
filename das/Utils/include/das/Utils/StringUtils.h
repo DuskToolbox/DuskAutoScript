@@ -21,7 +21,7 @@
 // reference from
 // https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2022/p2513r4.html
 #if defined(__cpp_char8_t)
-#define DAS_UTILS_STRINGUTILS_DEFINE_U8STR_IMPL(x) u8##x##_asr_as_char
+#define DAS_UTILS_STRINGUTILS_DEFINE_U8STR_IMPL(x) u8##x##_das_as_char
 #define DAS_UTILS_STRINGUTILS_DEFINE_U8STR(x)                                  \
     DAS_UTILS_STRINGUTILS_DEFINE_U8STR_IMPL(x)
 #else
@@ -90,15 +90,15 @@ struct DasReadOnlyStringHash
 {
     std::size_t operator()(IDasReadOnlyString* p_string) const noexcept;
     std::size_t operator()(
-        const DasPtr<IDasReadOnlyString>& asr_ro_string) const noexcept;
+        const DasPtr<IDasReadOnlyString>& das_ro_string) const noexcept;
 };
 
 DAS_UTILS_NS_END
 
-constexpr char operator""_asr_as_char(char8_t c) { return c; }
+constexpr char operator""_das_as_char(char8_t c) { return c; }
 
 template <DAS::Utils::char8_t_string_literal L>
-constexpr auto& operator""_asr_as_char()
+constexpr auto& operator""_das_as_char()
 {
     return DAS::Utils::make_as_char_buffer<L>(
         std::make_index_sequence<decltype(L)::size>());

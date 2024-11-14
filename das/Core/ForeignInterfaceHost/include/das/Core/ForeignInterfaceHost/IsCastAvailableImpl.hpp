@@ -30,10 +30,10 @@ DasResult IsCastAvailableImpl(const DasGuid& iid, SwigTypeInheritChain<Ts...>)
     }
 }
 
-using asr_task_inherit_chain = SwigTypeInheritChain<IDasSwigBase, IDasSwigTask>;
-using asr_capture_inherit_chain =
+using das_task_inherit_chain = SwigTypeInheritChain<IDasSwigBase, IDasSwigTask>;
+using das_capture_inherit_chain =
     SwigTypeInheritChain<IDasSwigBase, IDasSwigCapture>;
-using asr_plugin_inherit_chain =
+using das_plugin_inherit_chain =
     SwigTypeInheritChain<IDasSwigBase, IDasSwigPlugin>;
 
 template <class EndT, class Arg, class... ResultTs>

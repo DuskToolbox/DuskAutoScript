@@ -1,4 +1,4 @@
-function(asr_add_library TYPE SUB_DIRECTORY_NAME PRIVATE_EX_LIBS)
+function(das_add_library TYPE SUB_DIRECTORY_NAME PRIVATE_EX_LIBS)
     # file(GLOB_RECURSE HEADERS
     # ${CMAKE_CURRENT_SOURCE_DIR}/${SUB_DIRECTORY_NAME}/include/*)
     file(GLOB SOURCES ${SUB_DIRECTORY_NAME}/src/*)
@@ -16,7 +16,7 @@ function(asr_add_library TYPE SUB_DIRECTORY_NAME PRIVATE_EX_LIBS)
     target_link_libraries(${SUB_DIRECTORY_NAME} PUBLIC ${PRIVATE_EX_LIBS})
 endfunction()
 
-function(asr_add_plugin_library SUB_DIRECTORY_NAME PRIVATE_EX_LIBS)
+function(das_add_plugin_library SUB_DIRECTORY_NAME PRIVATE_EX_LIBS)
     # file(GLOB_RECURSE HEADERS
     # ${CMAKE_CURRENT_SOURCE_DIR}/${SUB_DIRECTORY_NAME}/include/*)
     file(GLOB SOURCES ${SUB_DIRECTORY_NAME}/src/*)
@@ -38,7 +38,7 @@ function(asr_add_plugin_library SUB_DIRECTORY_NAME PRIVATE_EX_LIBS)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_BINARY_DIR}/DAS/tmp/${SUB_DIRECTORY_NAME}.json $<TARGET_FILE_DIR:${SUB_DIRECTORY_NAME}>)
 endfunction()
 
-function(asr_add_core_component SUB_DIRECTORY_NAME)
+function(das_add_core_component SUB_DIRECTORY_NAME)
     file(GLOB_RECURSE HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/${SUB_DIRECTORY_NAME}/include/*)
     file(GLOB_RECURSE SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/${SUB_DIRECTORY_NAME}/src/*)
     SET(TMP_TARGET_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/${SUB_DIRECTORY_NAME}/include/)
@@ -50,11 +50,11 @@ function(asr_add_core_component SUB_DIRECTORY_NAME)
     source_group("${SUB_DIRECTORY_NAME}\\Sources" FILES ${SOURCES})
 endfunction()
 
-macro(asr_force_set VARIABLE_NAME VARIABLE_VALUE VARIABLE_TYPE DOC_VALUE)
+macro(das_force_set VARIABLE_NAME VARIABLE_VALUE VARIABLE_TYPE DOC_VALUE)
     set(${VARIABLE_NAME} ${VARIABLE_VALUE} CACHE ${VARIABLE_TYPE} ${DOC_VALUE} FORCE)
 endmacro()
 
-function(asr_add_additional_test ADDITIONAL_TEST_DIRECTORY_NAME)
+function(das_add_additional_test ADDITIONAL_TEST_DIRECTORY_NAME)
     aux_source_directory(${ADDITIONAL_TEST_DIRECTORY_NAME} SOURCES)
     add_executable(AdditionalTest ${SOURCES})
     target_link_libraries(AdditionalTest PRIVATE GTest::gtest_main GTest::gtest)
@@ -72,7 +72,7 @@ function(asr_add_additional_test ADDITIONAL_TEST_DIRECTORY_NAME)
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/Test)
 endfunction()
 
-function(asr_add_core_test TEST_FOLDER)
+function(das_add_core_test TEST_FOLDER)
     aux_source_directory(${TEST_FOLDER}/test TEST_SOURCES)
     set(TEST_NAME "${TEST_FOLDER}Test")
     add_executable(${TEST_NAME} ${TEST_SOURCES})
@@ -93,7 +93,7 @@ function(asr_add_core_test TEST_FOLDER)
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/Test)
 endfunction()
 
-function(asr_add_swig_export_library LANGUAGE RAW_NAME FILES)
+function(das_add_swig_export_library LANGUAGE RAW_NAME FILES)
     swig_add_library(
         ${RAW_NAME}
         TYPE SHARED
@@ -106,7 +106,7 @@ function(asr_add_swig_export_library LANGUAGE RAW_NAME FILES)
     target_compile_definitions(${RAW_NAME} PRIVATE -DSWIG_TYPE_TABLE=${RAW_NAME})
 endfunction()
 
-function(asr_check_language_export LANGUAGE EXPORT_LANGUAGES_LIST)
+function(das_check_language_export LANGUAGE EXPORT_LANGUAGES_LIST)
     if(${EXPORT_${LANGUAGE}})
         string(TOLOWER ${LANGUAGE} LOWERCASE_LANGUAGE)
         list(APPEND ${EXPORT_LANGUAGES_LIST} ${LOWERCASE_LANGUAGE})
@@ -114,7 +114,7 @@ function(asr_check_language_export LANGUAGE EXPORT_LANGUAGES_LIST)
     endif()
 endfunction()
 
-macro(asr_add_auto_copy_dll_path DLL_PATH)
+macro(das_add_auto_copy_dll_path DLL_PATH)
     add_custom_command(
         TARGET DasAutoCopyDll
         POST_BUILD

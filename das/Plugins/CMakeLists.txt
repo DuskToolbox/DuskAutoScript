@@ -16,8 +16,8 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_MINSIZEREL ${CMAKE_BINARY_DIR}/bin/MinSizeRel
 
 add_custom_target(DasAutoCopyPluginMetadataFile ALL)
 
-asr_add_plugin_library(DasAdbCapture DAS_EX_PRIVATE_LIBS)
-asr_add_plugin_library(DasAdbTouch DAS_EX_PRIVATE_LIBS)
+das_add_plugin_library(DasAdbCapture DAS_EX_PRIVATE_LIBS)
+das_add_plugin_library(DasAdbTouch DAS_EX_PRIVATE_LIBS)
 
 target_link_libraries(DasAdbCapture PRIVATE zlib)
 

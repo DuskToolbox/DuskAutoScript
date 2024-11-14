@@ -343,7 +343,7 @@ DAS_IMPL SwigToCpp<IDasSwigReadOnlyGuidVector>::Find(const DasGuid& iid)
     }
 }
 
-template <is_asr_swig_interface SwigT, is_asr_interface T>
+template <is_das_swig_interface SwigT, is_das_interface T>
 DasResult SwigToCppInput<SwigT, T>::Click(int32_t x, int32_t y)
 {
     return Base::p_impl_->Click(x, y);
@@ -530,7 +530,7 @@ DasResult CppToSwig<IDasReadOnlyGuidVector>::Find(const DasGuid& guid)
     return p_impl_->Find(guid);
 }
 
-template <is_asr_swig_interface SwigT, is_asr_interface T>
+template <is_das_swig_interface SwigT, is_das_interface T>
 DasResult CppToSwigInput<SwigT, T>::Click(const int32_t x, const int32_t y)
 {
     return Base::p_impl_->Click(x, y);

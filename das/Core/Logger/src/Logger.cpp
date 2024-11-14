@@ -50,7 +50,7 @@ namespace Core
                 2);
         const auto log_requester_sink =
             std::make_shared<DasLogRequesterSink<std::mutex>>();
-        g_asr_log_requester_sink = log_requester_sink;
+        g_das_log_requester_sink = log_requester_sink;
 
         const auto sinks = std::array<spdlog::sink_ptr, 3>{
             std_sink,
@@ -73,7 +73,7 @@ namespace Core
         return result;
     }();
 
-    const char* const g_logger_name = "asr_core_g_logger";
+    const char* const g_logger_name = "das_core_g_logger";
 
     TraceScope::TraceScope(
         const char* const file,

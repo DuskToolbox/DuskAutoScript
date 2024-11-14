@@ -89,7 +89,7 @@ public:
     DasResult GetBoolByName(IDasReadOnlyString* key, bool* p_out_bool) override;
     DasResult GetObjectRefByName(
         IDasReadOnlyString* key,
-        IDasJson**          pp_out_asr_json) override;
+        IDasJson**          pp_out_das_json) override;
 
     DasResult SetIntByName(IDasReadOnlyString* key, int64_t in_int) override;
     DasResult SetFloatByName(IDasReadOnlyString* key, float in_float) override;
@@ -97,7 +97,7 @@ public:
         IDasReadOnlyString* key,
         IDasReadOnlyString* p_in_string) override;
     DasResult SetBoolByName(IDasReadOnlyString* key, bool in_bool) override;
-    DasResult SetObjectByName(IDasReadOnlyString* key, IDasJson* p_in_asr_json)
+    DasResult SetObjectByName(IDasReadOnlyString* key, IDasJson* p_in_das_json)
         override;
 
     DasResult GetIntByIndex(size_t index, int64_t* p_out_int) override;
@@ -105,7 +105,7 @@ public:
     DasResult GetStringByIndex(size_t index, IDasReadOnlyString** pp_out_string)
         override;
     DasResult GetBoolByIndex(size_t index, bool* p_out_bool) override;
-    DasResult GetObjectRefByIndex(size_t index, IDasJson** pp_out_asr_json)
+    DasResult GetObjectRefByIndex(size_t index, IDasJson** pp_out_das_json)
         override;
 
     DasResult SetIntByIndex(size_t index, int64_t in_int) override;
@@ -113,7 +113,7 @@ public:
     DasResult SetStringByIndex(size_t index, IDasReadOnlyString* p_in_string)
         override;
     DasResult SetBoolByIndex(size_t index, bool in_bool) override;
-    DasResult SetObjectByIndex(size_t index, IDasJson* p_in_asr_json) override;
+    DasResult SetObjectByIndex(size_t index, IDasJson* p_in_das_json) override;
 
     DasResult GetTypeByName(IDasReadOnlyString* key, DasType* p_out_type)
         override;
@@ -497,10 +497,10 @@ DasResult IDasJsonImpl::GetBoolByName(IDasReadOnlyString* key, bool* p_out_bool)
 
 DasResult IDasJsonImpl::GetObjectRefByName(
     IDasReadOnlyString* key,
-    IDasJson**          pp_out_asr_json)
+    IDasJson**          pp_out_das_json)
 {
     DAS_UTILS_CHECK_POINTER(key)
-    DAS_UTILS_CHECK_POINTER(pp_out_asr_json)
+    DAS_UTILS_CHECK_POINTER(pp_out_das_json)
 
     const auto expected_u8_key = ToU8StringWithoutOwnership(key);
     if (!expected_u8_key)
@@ -515,9 +515,9 @@ DasResult IDasJsonImpl::GetObjectRefByName(
         auto&&           object =
             std::visit(Details::CallOperatorSquareBrackets{p_u8_key}, impl_);
         const auto ref_object = MakeDasPtr<IDasJsonImpl>(object);
-        auto&      ref_out_asr_json = *pp_out_asr_json;
-        ref_out_asr_json = ref_object.Get();
-        ref_out_asr_json->AddRef();
+        auto&      ref_out_das_json = *pp_out_das_json;
+        ref_out_das_json = ref_object.Get();
+        ref_out_das_json->AddRef();
 
         if (auto* const p_internal_object = std::get_if<Object>(&impl_);
             p_internal_object != nullptr) [[likely]]
@@ -578,11 +578,11 @@ DasResult IDasJsonImpl::SetBoolByName(IDasReadOnlyString* key, bool in_bool)
 
 DasResult IDasJsonImpl::SetObjectByName(
     IDasReadOnlyString* key,
-    IDasJson*           p_in_asr_json)
+    IDasJson*           p_in_das_json)
 {
     DasPtr<IDasJsonImpl> p_impl;
 
-    if (const auto qi_result = p_in_asr_json->QueryInterface(
+    if (const auto qi_result = p_in_das_json->QueryInterface(
             DasIidOf<IDasJsonImpl>(),
             p_impl.PutVoid());
         DAS::IsFailed(qi_result))
@@ -628,9 +628,9 @@ DasResult IDasJsonImpl::GetBoolByIndex(size_t index, bool* p_out_bool)
 
 DasResult IDasJsonImpl::GetObjectRefByIndex(
     size_t     index,
-    IDasJson** pp_out_asr_json)
+    IDasJson** pp_out_das_json)
 {
-    DAS_UTILS_CHECK_POINTER(pp_out_asr_json)
+    DAS_UTILS_CHECK_POINTER(pp_out_das_json)
 
     try
     {
@@ -638,9 +638,9 @@ DasResult IDasJsonImpl::GetObjectRefByIndex(
         auto&&           object =
             std::visit(Details::CallOperatorSquareBrackets{index}, impl_);
         const auto ref_object = MakeDasPtr<IDasJsonImpl>(object);
-        auto&      ref_out_asr_json = *pp_out_asr_json;
-        ref_out_asr_json = ref_object.Get();
-        ref_out_asr_json->AddRef();
+        auto&      ref_out_das_json = *pp_out_das_json;
+        ref_out_das_json = ref_object.Get();
+        ref_out_das_json->AddRef();
 
         if (auto* const p_internal_object = std::get_if<Object>(&impl_);
             p_internal_object != nullptr) [[likely]]
@@ -700,11 +700,11 @@ DasResult IDasJsonImpl::SetBoolByIndex(size_t index, bool in_bool)
     return SetImpl(index, in_bool);
 }
 
-DasResult IDasJsonImpl::SetObjectByIndex(size_t index, IDasJson* p_in_asr_json)
+DasResult IDasJsonImpl::SetObjectByIndex(size_t index, IDasJson* p_in_das_json)
 {
     DasPtr<IDasJsonImpl> p_impl;
 
-    if (const auto qi_result = p_in_asr_json->QueryInterface(
+    if (const auto qi_result = p_in_das_json->QueryInterface(
             DasIidOf<IDasJsonImpl>(),
             p_impl.PutVoid());
         DAS::IsFailed(qi_result))

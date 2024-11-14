@@ -19,7 +19,7 @@ add_library(DAS_EX_PRIVATE_LIBS ALIAS DasUtils)
 
 if(${DAS_BUILD_TEST})
     include(GoogleTest)
-    asr_add_additional_test(AdditionalTest)
+    das_add_additional_test(AdditionalTest)
     target_link_libraries(AdditionalTest PUBLIC DasUtils Boost::url)
 endif()
 

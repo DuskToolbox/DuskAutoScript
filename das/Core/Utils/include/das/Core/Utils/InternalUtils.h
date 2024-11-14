@@ -20,7 +20,7 @@ auto MakeDasReadOnlyStringFromUtf8(std::string_view u8_string)
 template <class T>
 auto GetGuidFrom(T* p_object) -> DasGuid
 {
-    if constexpr (DAS::Core::ForeignInterfaceHost::is_asr_swig_interface<T>)
+    if constexpr (DAS::Core::ForeignInterfaceHost::is_das_swig_interface<T>)
     {
         const auto ret_guid = p_object->GetGuid();
         if (IsFailed(ret_guid.error_code))
@@ -29,7 +29,7 @@ auto GetGuidFrom(T* p_object) -> DasGuid
         }
         return ret_guid.value;
     }
-    else if constexpr (DAS::Core::ForeignInterfaceHost::is_asr_interface<T>)
+    else if constexpr (DAS::Core::ForeignInterfaceHost::is_das_interface<T>)
     {
         DasGuid guid;
         if (const auto gg_result = p_object->GetGuid(&guid);
@@ -48,7 +48,7 @@ auto GetGuidFrom(T* p_object) -> DasGuid
 template <class T>
 auto GetRuntimeClassNameFrom(T* p_object) -> DasPtr<IDasReadOnlyString>
 {
-    if constexpr (DAS::Core::ForeignInterfaceHost::is_asr_swig_interface<T>)
+    if constexpr (DAS::Core::ForeignInterfaceHost::is_das_swig_interface<T>)
     {
         DasPtr<IDasReadOnlyString> result{};
         const auto                 ret_name = p_object->GetRuntimeClassName();
@@ -59,7 +59,7 @@ auto GetRuntimeClassNameFrom(T* p_object) -> DasPtr<IDasReadOnlyString>
         ret_name.value.GetImpl(result.Put());
         return result;
     }
-    else if constexpr (DAS::Core::ForeignInterfaceHost::is_asr_interface<T>)
+    else if constexpr (DAS::Core::ForeignInterfaceHost::is_das_interface<T>)
     {
         DasPtr<IDasReadOnlyString> result{};
         if (const auto error_code = p_object->GetRuntimeClassName(result.Put());

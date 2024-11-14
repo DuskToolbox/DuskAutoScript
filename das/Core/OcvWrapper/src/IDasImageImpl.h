@@ -45,14 +45,14 @@ public:
      * @param width
      * @param type
      * @param p_data
-     * @param p_asr_data
+     * @param p_das_data
      */
     IDasImageImpl(
         int         height,
         int         width,
         int         type,
         void*       p_data,
-        IDasMemory* p_asr_data);
+        IDasMemory* p_das_data);
 
     IDasImageImpl(cv::Mat mat);
 

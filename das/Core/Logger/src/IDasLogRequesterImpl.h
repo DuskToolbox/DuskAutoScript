@@ -80,6 +80,6 @@ public:
 };
 
 extern std::shared_ptr<DasLogRequesterSink<std::mutex>>
-    g_asr_log_requester_sink;
+    g_das_log_requester_sink;
 
 #endif // DAS_CORE_LOGGER_IDASLOGREQUESTERIMPL_H

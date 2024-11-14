@@ -58,7 +58,7 @@ DasResult CreateIDasLogRequester(
     try
     {
         const auto p_result =
-            new IDasLogRequesterImpl{max_line_count, g_asr_log_requester_sink};
+            new IDasLogRequesterImpl{max_line_count, g_das_log_requester_sink};
         *pp_out_requester = p_result;
         p_result->AddRef();
         return DAS_S_OK;
@@ -69,4 +69,4 @@ DasResult CreateIDasLogRequester(
     }
 }
 
-DAS_DEFINE_VARIABLE(g_asr_log_requester_sink);
+DAS_DEFINE_VARIABLE(g_das_log_requester_sink);

@@ -8,13 +8,13 @@
 DAS_UTILS_NS_BEGIN
 
 template <class T>
-struct _asr_internal_QueryInterfaceContext
+struct _das_internal_QueryInterfaceContext
 {
     T*             p_this;
     const DasGuid& iid;
     void**         pp_out_object;
 
-    _asr_internal_QueryInterfaceContext(
+    _das_internal_QueryInterfaceContext(
         T*             p_this,
         const DasGuid& iid,
         void**         pp_out_object)
@@ -24,8 +24,8 @@ struct _asr_internal_QueryInterfaceContext
 };
 
 template <class T>
-_asr_internal_QueryInterfaceContext(T*, const DasGuid&, void**)
-    -> _asr_internal_QueryInterfaceContext<T>;
+_das_internal_QueryInterfaceContext(T*, const DasGuid&, void**)
+    -> _das_internal_QueryInterfaceContext<T>;
 
 template <class T, class First>
 DasResult InternalQueryInterfaceImpl(T context)
@@ -85,7 +85,7 @@ DasResult QueryInterfaceAsLastClassInInheritanceInfo(
     using FullType =
         decltype(PresetTypeInheritanceInfo{} + internal_type_holder<AdditionalTs...>{});
 
-    _asr_internal_QueryInterfaceContext context{p_this, iid, pp_out_object};
+    _das_internal_QueryInterfaceContext context{p_this, iid, pp_out_object};
     return InternalQueryInterface(context, FullType{});
 }
 
@@ -96,7 +96,7 @@ DasResult QueryInterfaceAsLastClassInInheritanceInfo(
     const DasGuid&                            iid,
     void**                                    pp_out_object)
 {
-    _asr_internal_QueryInterfaceContext context{p_this, iid, pp_out_object};
+    _das_internal_QueryInterfaceContext context{p_this, iid, pp_out_object};
     return InternalQueryInterface(context, PresetTypeInheritanceInfo{});
 }
 

@@ -52,13 +52,13 @@ using DasResult = int32_t;
 // clang-format on
 
 template <class T>
-void _asr_internal_DelayAddRef(T* pointer)
+void _das_internal_DelayAddRef(T* pointer)
 {
     pointer->AddRef();
 }
 
 template <class T>
-void _asr_internal_DelayRelease(T* pointer) noexcept
+void _das_internal_DelayRelease(T* pointer) noexcept
 {
     pointer->Release();
 }
@@ -100,7 +100,7 @@ void _asr_internal_DelayRelease(T* pointer) noexcept
         pointer_type* GetValue() noexcept                                      \
         {                                                                      \
             auto* const result = value.Get();                                  \
-            _asr_internal_DelayAddRef(result);                                 \
+            _das_internal_DelayAddRef(result);                                 \
             return result;                                                     \
         }                                                                      \
         void SetValue(pointer_type* input_value) { value = input_value; }      \
@@ -178,7 +178,7 @@ void _asr_internal_DelayRelease(T* pointer) noexcept
  * @brief NOTE: Be careful about the lifetime of this structure.\n
  *       If you want to keep it, you MUST make a copy of it.
  */
-typedef struct _asr_GUID
+typedef struct _das_GUID
 {
 #ifdef SWIG
 private:
@@ -232,21 +232,21 @@ inline DasResult GetErrorCodeFrom(const DasResult result) { return result; }
 #ifdef __cplusplus
 
 template <class T>
-concept is_asr_ret_type = requires { T::error_code; };
+concept is_das_ret_type = requires { T::error_code; };
 
-template <is_asr_ret_type T>
+template <is_das_ret_type T>
 bool IsOk(const T& t)
 {
     return t.error_code >= 0;
 }
 
-template <is_asr_ret_type T>
+template <is_das_ret_type T>
 bool IsFailed(const T& t)
 {
     return t.error_code < 0;
 }
 
-template <is_asr_ret_type T>
+template <is_das_ret_type T>
 DasResult GetErrorCodeFrom(const T& t)
 {
     return t.error_code;
@@ -363,7 +363,7 @@ struct DasRetSwigBase
         auto* const p = static_cast<IDasSwigBase*>(value);
         if (p)
         {
-            _asr_internal_DelayAddRef(p);
+            _das_internal_DelayAddRef(p);
         }
         return p;
     }
@@ -373,7 +373,7 @@ struct DasRetSwigBase
         auto* const p = static_cast<IDasSwigBase*>(value);
         if (p)
         {
-            _asr_internal_DelayRelease(p);
+            _das_internal_DelayRelease(p);
         }
     }
 

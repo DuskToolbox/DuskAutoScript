@@ -1,10 +1,10 @@
-#include <das/DasConfig.h>
-#include <das/DasPtr.hpp>
-#include <das/DasString.hpp>
 #include <das/Core/ForeignInterfaceHost/IDasCaptureManagerImpl.h>
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Core/Utils/InternalUtils.h>
 #include <das/Core/i18n/DasResultTranslator.h>
+#include <das/DasConfig.h>
+#include <das/DasPtr.hpp>
+#include <das/DasString.hpp>
 #include <das/ExportInterface/IDasCaptureManager.h>
 #include <das/PluginInterface/IDasCapture.h>
 #include <das/PluginInterface/IDasErrorLens.h>
@@ -83,16 +83,16 @@ auto MakeErrorInfo(DasResult error_code, T* p_error_generator)
     CaptureManagerImpl::ErrorInfo result{};
     result.error_code = error_code;
     std::string              error_message{};
-    DasReadOnlyStringWrapper asr_error_message{};
+    DasReadOnlyStringWrapper das_error_message{};
     const auto name = Utils::GetRuntimeClassNameFrom(p_error_generator);
     if (const auto get_error_message_result = ::DasGetErrorMessage(
             p_error_generator,
             error_code,
-            asr_error_message.Put());
+            das_error_message.Put());
         DAS::IsOk(get_error_message_result))
     {
         const char* u8_error_message;
-        asr_error_message.GetTo(u8_error_message);
+        das_error_message.GetTo(u8_error_message);
         error_message = DAS::fmt::format(
             R"(Error happened when creating capture instance.
 TypeName: {}.
@@ -101,7 +101,7 @@ Error explanation: "{}".)",
             name,
             result.error_code,
             u8_error_message);
-        result.p_error_message = asr_error_message.Get();
+        result.p_error_message = das_error_message.Get();
     }
     else
     {
@@ -119,6 +119,7 @@ No error explanation found. Result: {}.)",
 }
 
 void OnCreateCaptureInstanceFailed(
+    const DasPtr<IDasCaptureFactory>& p_capture_factory,
     DAS::Core::ForeignInterfaceHost::CaptureManagerImpl::ErrorInfo&
                                            in_error_info,
     const DAS::DasPtr<IDasReadOnlyString>& p_capture_factory_name,
@@ -126,7 +127,7 @@ void OnCreateCaptureInstanceFailed(
         p_capture_manager)
 {
     in_error_info =
-        MakeErrorInfo(in_error_info.error_code, p_capture_factory_name.Get());
+        MakeErrorInfo(in_error_info.error_code, p_capture_factory.Get());
     p_capture_manager->AddInstance(p_capture_factory_name, in_error_info);
 }
 
@@ -543,8 +544,8 @@ auto CreateDasCaptureManagerImpl(
         {
             result = DAS_S_FALSE;
             error_info.error_code = error_code;
-            // 补个接口
             Details::OnCreateCaptureInstanceFailed(
+                p_factory,
                 error_info,
                 capture_factory_name,
                 p_capture_manager);

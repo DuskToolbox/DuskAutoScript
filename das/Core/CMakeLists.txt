@@ -18,23 +18,23 @@ set(DAS_AUTOGEN_OUTPUT_FILES
 )
 add_custom_command(
     OUTPUT ${DAS_AUTOGEN_OUTPUT_FILES}
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/generator.py -I${CMAKE_SOURCE_DIR}/include/AutoStarRail -O${CMAKE_BINARY_DIR}/DAS/include/DAS/_autogen -M0
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/generator.py -I${CMAKE_SOURCE_DIR}/include/das -O${CMAKE_BINARY_DIR}/DAS/include/DAS/_autogen -M0
     DEPENDS ${DAS_EXPORT_HEADERS} ${CMAKE_SOURCE_DIR}/tools/generator.py
     COMMENT "Scan header and generate sources."
 )
 add_custom_command(
     TARGET DasCoreObjectsPreBuild PRE_BUILD
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/generator.py -I${CMAKE_SOURCE_DIR}/include/AutoStarRail -O${CMAKE_SOURCE_DIR}/das/Utils/include/das/Utils -M1
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/generator.py -I${CMAKE_SOURCE_DIR}/include/das -O${CMAKE_SOURCE_DIR}/das/Utils/include/das/Utils -M1
     DEPENDS ${DAS_EXPORT_HEADERS} ${CMAKE_SOURCE_DIR}/tools/generator.py
     COMMENT "Generate PresetTypeInheritanceInfo.h."
 )
 
 message("Generating source...")
 execute_process(
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/generator.py -I${CMAKE_SOURCE_DIR}/include/AutoStarRail -O${CMAKE_BINARY_DIR}/DAS/include/DAS/_autogen -M0
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/generator.py -I${CMAKE_SOURCE_DIR}/include/das -O${CMAKE_BINARY_DIR}/DAS/include/DAS/_autogen -M0
 )
 execute_process(
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/generator.py -I${CMAKE_SOURCE_DIR}/include/AutoStarRail -O${CMAKE_SOURCE_DIR}/das/Utils/include/das/Utils -M1
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/generator.py -I${CMAKE_SOURCE_DIR}/include/das -O${CMAKE_SOURCE_DIR}/das/Utils/include/das/Utils -M1
 )
 
 target_compile_options(DasCoreObjects PRIVATE
@@ -71,15 +71,15 @@ else()
     message(FATAL_ERROR "Unsupported platform.")
 endif()
 
-asr_add_core_component(Utils)
-asr_add_core_component(OcvWrapper)
-asr_add_core_component(OrtWrapper)
-asr_add_core_component(ForeignInterfaceHost)
-asr_add_core_component(SettingsManager)
-asr_add_core_component(Logger)
-asr_add_core_component(Exceptions)
-asr_add_core_component(i18n)
-asr_add_core_component(TaskScheduler)
+das_add_core_component(Utils)
+das_add_core_component(OcvWrapper)
+das_add_core_component(OrtWrapper)
+das_add_core_component(ForeignInterfaceHost)
+das_add_core_component(SettingsManager)
+das_add_core_component(Logger)
+das_add_core_component(Exceptions)
+das_add_core_component(i18n)
+das_add_core_component(TaskScheduler)
 
 add_library(DasCore SHARED)
 add_dependencies(DasCore DasCoreObjects)
@@ -97,7 +97,7 @@ set_property(SOURCE ${DAS_SWIG_FILES} PROPERTY CPLUSPLUS ON)
 set_source_files_properties(${DAS_SWIG_FILES} PROPERTIES USE_SWIG_DEPENDENCIES TRUE)
 
 if(${EXPORT_CSHARP})
-    asr_add_swig_export_library(CSharp DasCoreCSharpExport "${DAS_SWIG_FILES}")
+    das_add_swig_export_library(CSharp DasCoreCSharpExport "${DAS_SWIG_FILES}")
     target_link_libraries(DasCoreCSharpExport PUBLIC DasCore)
     add_dependencies(DasCoreCSharpExport DasCore)
     list(APPEND DAS_EXPORT_MACRO_LIST DAS_EXPORT_CSHARP)
@@ -105,8 +105,8 @@ endif()
 
 if(${EXPORT_JAVA})
     find_package(JNI REQUIRED)
-    asr_add_swig_export_library(Java DasCoreJavaExport "${DAS_SWIG_FILES}")
-    set_property(TARGET DasCoreJavaExport PROPERTY SWIG_COMPILE_OPTIONS -package org.asr)
+    das_add_swig_export_library(Java DasCoreJavaExport "${DAS_SWIG_FILES}")
+    set_property(TARGET DasCoreJavaExport PROPERTY SWIG_COMPILE_OPTIONS -package org.das)
 
     target_link_libraries(DasCoreObjects PUBLIC JNI::JNI)
 
@@ -117,7 +117,7 @@ endif()
 
 if(${EXPORT_PYTHON})
     find_package(Python3 COMPONENTS Development REQUIRED)
-    asr_add_swig_export_library(Python DasCorePythonExport "${DAS_SWIG_FILES}")
+    das_add_swig_export_library(Python DasCorePythonExport "${DAS_SWIG_FILES}")
     set_property(TARGET DasCorePythonExport PROPERTY SWIG_COMPILE_OPTIONS -threads)
 
     target_include_directories(DasCoreObjects PUBLIC ${Python3_INCLUDE_DIRS})
@@ -164,6 +164,6 @@ target_compile_definitions(DasCoreObjects PUBLIC ${DAS_EXPORT_MACRO_LIST})
 target_link_libraries(DasCore PUBLIC DasCoreObjects)
 
 if(${DAS_BUILD_TEST})
-    asr_add_core_test(ForeignInterfaceHost)
-    asr_add_core_test(i18n)
+    das_add_core_test(ForeignInterfaceHost)
+    das_add_core_test(i18n)
 endif()

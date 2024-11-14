@@ -114,23 +114,23 @@ void DasLogInfoU8WithSourceLocation(
 
 // ----------------------------------------------------------------
 
-void DasLogError(DasReadOnlyString asr_string)
+void DasLogError(DasReadOnlyString das_string)
 {
     Das::DasPtr<IDasReadOnlyString> p_string{};
-    asr_string.GetImpl(p_string.Put());
+    das_string.GetImpl(p_string.Put());
     DasLogError(p_string.Get());
 }
 
-void DasLogWarning(DasReadOnlyString asr_string)
+void DasLogWarning(DasReadOnlyString das_string)
 {
     Das::DasPtr<IDasReadOnlyString> p_string{};
-    asr_string.GetImpl(p_string.Put());
+    das_string.GetImpl(p_string.Put());
     DasLogWarning(p_string.Get());
 }
 
-void DasLogInfo(DasReadOnlyString asr_string)
+void DasLogInfo(DasReadOnlyString das_string)
 {
     Das::DasPtr<IDasReadOnlyString> p_string{};
-    asr_string.GetImpl(p_string.Put());
+    das_string.GetImpl(p_string.Put());
     DasLogInfo(p_string.Get());
 }

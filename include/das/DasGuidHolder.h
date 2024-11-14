@@ -6,7 +6,7 @@ struct DasIidHolder;
 
 template <class T>
 [[nodiscard]]
-auto DasIidOf() -> const struct _asr_GUID&;
+auto DasIidOf() -> const struct _das_GUID&;
 
 #define DAS_DEFINE_GUID_HOLDER(                                                \
     type,                                                                      \

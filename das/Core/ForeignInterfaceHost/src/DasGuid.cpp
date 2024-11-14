@@ -10,13 +10,13 @@
 
 std::size_t std::hash<DasGuid>::operator()(const DasGuid& guid) const noexcept
 {
-    using _internal_asr_Guid = std::array<int64_t, 2>;
+    using _internal_das_Guid = std::array<int64_t, 2>;
 
     /**
      * @brief std::bit_cast require GCC 11 or Clang 14 or MSVC 19.27
      *
      */
-    const auto guid_data = std::bit_cast<_internal_asr_Guid>(guid);
+    const auto guid_data = std::bit_cast<_internal_das_Guid>(guid);
     return boost::hash_range(guid_data.cbegin(), guid_data.cend());
 }
 
