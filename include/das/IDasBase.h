@@ -153,6 +153,7 @@ void _das_internal_DelayRelease(T* pointer) noexcept
 #define DAS_E_OBJECT_NOT_INIT -1073741862
 #define DAS_E_UNEXPECTED_THREAD_DETECTED -1073741863
 #define DAS_E_STRONG_REFERENCE_NOT_AVAILABLE -1073741864
+#define DAS_E_TASK_WORKING -1073741865
 
 #ifdef DAS_WINDOWS
 // MSVC
@@ -172,7 +173,9 @@ void _das_internal_DelayRelease(T* pointer) noexcept
 
 #define DAS_METHOD virtual DasResult DAS_STD_CALL
 #define DAS_METHOD_(x) virtual x DAS_STD_CALL
-#define DAS_IMPL DasResult
+#define DAS_BOOL_METHOD virtual DasBool DAS_STD_CALL
+#define DAS_IMPL DasResult DAS_STD_CALL
+#define DAS_BOOL_IMPL DasBool DAS_STD_CALL
 
 /**
  * @brief NOTE: Be careful about the lifetime of this structure.\n
@@ -191,7 +194,7 @@ private:
 
 DAS_DEFINE_RET_TYPE(DasRetGuid, DasGuid);
 
-typedef char DasBool;
+typedef int32_t DasBool;
 
 #define DAS_TRUE 1
 #define DAS_FALSE 0
@@ -325,9 +328,6 @@ DAS_INTERFACE IDasWeakReferenceSource : public IDasBase
 {
     DAS_METHOD GetWeakReference(IDasWeakReference * *pp_out_weak) = 0;
 };
-
-DAS_C_API DasResult
-CreateIDasReadOnlyStringVector(DasGuid** p_in_guid_array, const size_t size);
 
 #endif // SWIG
 

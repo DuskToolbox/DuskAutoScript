@@ -1,6 +1,6 @@
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
-file(GLOB_RECURSE SOURCES src *.cpp)
+file(GLOB_RECURSE SOURCES src/*)
 
 add_executable(DasHttp ${SOURCES})
 

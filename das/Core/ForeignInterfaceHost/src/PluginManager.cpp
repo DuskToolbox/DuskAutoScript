@@ -1766,7 +1766,7 @@ class InternalIDasInitializeIDasPluginManagerWaiterImpl final
         {
             DAS_CORE_LOG_INFO(
                 "Calling IDasInitializeIDasPluginManagerCallback::OnFinished()!");
-            const auto result = p_on_finished_->OnFinished(initialize_result);
+            const auto result = p_on_finished_->OnFinished(initialize_result, &g_plugin_manager);
             DAS_CORE_LOG_INFO("Call finished. Result = {}.", result);
             return result;
         }
@@ -1867,28 +1867,6 @@ DasResult InitializeIDasPluginManager(
     }
 
     return DAS_S_OK;
-}
-
-DasResult CreateIDasPluginManagerAndGetResult(
-    IDasReadOnlyGuidVector* p_ignore_plugins_guid,
-    IDasPluginManager**     pp_out_result)
-{
-    DAS_UTILS_CHECK_POINTER(p_ignore_plugins_guid)
-    DAS_UTILS_CHECK_POINTER(pp_out_result)
-
-    auto& plugin_manager = DAS::Core::ForeignInterfaceHost::g_plugin_manager;
-    if (plugin_manager.IsUnexpectedThread())
-    {
-        std::stringstream ss;
-        ss << std::this_thread::get_id();
-        DAS_CORE_LOG_ERROR(
-            "Try to create the plugin manager on an unexpected thread. Id = {}.",
-            ss.str());
-        return DAS_E_UNEXPECTED_THREAD_DETECTED;
-    }
-    const auto result = plugin_manager.Refresh(p_ignore_plugins_guid);
-    *pp_out_result = plugin_manager;
-    return result;
 }
 
 DasResult GetExistingIDasPluginManager(IDasPluginManager** pp_out_result)

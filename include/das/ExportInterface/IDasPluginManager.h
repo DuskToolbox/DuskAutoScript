@@ -12,13 +12,14 @@
  *
  */
 
+#include <cstddef>
 #include <das/DasExport.h>
 #include <das/DasString.hpp>
 #include <das/ExportInterface/IDasCaptureManager.h>
 #include <das/ExportInterface/IDasGuidVector.h>
 #include <das/IDasBase.h>
 #include <das/PluginInterface/IDasComponent.h>
-#include <cstddef>
+
 
 // {8179F162-5E1A-4248-AC67-758D2AFF18A7}
 DAS_DEFINE_GUID(
@@ -45,7 +46,8 @@ DAS_INTERFACE IDasPluginInfo : public IDasBase
     DAS_METHOD GetSupportedSystem(
         IDasReadOnlyString * *pp_out_supported_system) = 0;
     DAS_METHOD GetPluginIid(DasGuid * p_out_guid) = 0;
-    DAS_METHOD GetPluginSettingsDescriptor(IDasReadOnlyString** pp_out_string) = 0;
+    DAS_METHOD GetPluginSettingsDescriptor(
+        IDasReadOnlyString * *pp_out_string) = 0;
 };
 
 // {138DF2D2-A9E9-4A73-9B4F-AA6C754601CC}
@@ -66,8 +68,8 @@ DAS_DEFINE_GUID(
 SWIG_IGNORE(IDasPluginInfoVector)
 DAS_INTERFACE IDasPluginInfoVector : public IDasBase
 {
-    DAS_METHOD Size(size_t * p_out_size) = 0;
-    DAS_METHOD At(size_t index, IDasPluginInfo * *pp_out_info) = 0;
+    DAS_METHOD Size(size_t* p_out_size) = 0;
+    DAS_METHOD At(size_t index, IDasPluginInfo** pp_out_info) = 0;
 };
 
 // {CBEBF351-F4EE-4981-A0AB-69EC5562F08D}
@@ -219,12 +221,14 @@ DAS_DEFINE_GUID(
 SWIG_IGNORE(IDasInitializeIDasPluginManagerCallback)
 DAS_INTERFACE IDasInitializeIDasPluginManagerCallback : public IDasBase
 {
-    DAS_METHOD OnFinished(DasResult initialize_result) = 0;
+    DAS_METHOD OnFinished(
+        DasResult initialize_result,
+        IDasPluginManagerForUi *p_in_manager_without_owner_ship) = 0;
 };
 
 // {32146CA1-C81F-4EBC-BE84-12F1F25114EE}
 DAS_DEFINE_GUID(
-    DAS_IID_INITIALIZE_IDAS_PLUGIN_MANAGER_WAITER,
+    DAS_IID_INITIALIZE_DAS_PLUGIN_MANAGER_WAITER,
     IDasInitializeIDasPluginManagerWaiter,
     0x32146ca1,
     0xc81f,
@@ -257,17 +261,6 @@ DAS_C_API DasResult InitializeIDasPluginManager(
     IDasReadOnlyGuidVector*                  p_ignore_plugins_guid,
     IDasInitializeIDasPluginManagerCallback* p_on_finished,
     IDasInitializeIDasPluginManagerWaiter**  pp_out_waiter);
-
-/**
- * @brief Call this function to load all plugin.
- *
- * @param pp_out_result
- * @return DasResult
- */
-SWIG_IGNORE(CreateIDasPluginManagerAndGetResult)
-DAS_C_API DasResult CreateIDasPluginManagerAndGetResult(
-    IDasReadOnlyGuidVector* p_ignore_plugins_guid,
-    IDasPluginManager**     pp_out_result);
 
 /**
  * @brief 获取现有的插件管理器单例

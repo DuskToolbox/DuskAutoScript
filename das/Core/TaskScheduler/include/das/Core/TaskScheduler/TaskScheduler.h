@@ -2,8 +2,10 @@
 #define DAS_CORE_TASKSCHEDULER_H
 
 #include "das/Core/ForeignInterfaceHost/TaskManager.h"
+#include "das/Core/Utils/IDasStopTokenImpl.h"
 
 #include <chrono>
+#include <functional>
 #include <thread>
 #include <vector>
 
@@ -41,11 +43,11 @@ namespace Core
 
     private:
         // 语言VM绑定线程
-        exec::static_thread_pool thread_pool{1};
+        exec::static_thread_pool vm_thread_pool_{1};
 
         // 单开一个线程检测是否需要执行任务，是的话调度到thread_pool去
         bool                        is_not_need_exit_{true};
-        std::atomic_bool            is_task_working_{false};
+        std::atomic_bool            is_profile_enabled_{true};
         std::mutex                  task_queue_mutex_;
         std::vector<SchedulingUnit> task_queue_;
         std::thread                 executor_;
@@ -64,6 +66,25 @@ namespace Core
         DasPtr<IDasTask>  last_task_{DasPtr<IDasTask>{}};
         DasReadOnlyString last_task_execute_message_{};
 
+        // 不受mutex_控制
+        class TaskController
+        {
+            friend TaskScheduler;
+
+            std::mutex                     mutex_{};
+            bool                           is_task_working_{false};
+            Utils::DasStopTokenImplOnStack stop_token_{};
+
+        public:
+            template <class F>
+            auto ExecuteAtomically(F&& f)
+            {
+                std::lock_guard _{mutex_};
+                return f(*this);
+            }
+        };
+        TaskController task_controller_{};
+
     public:
         TaskScheduler();
         ~TaskScheduler() = default;
@@ -78,9 +99,13 @@ namespace Core
         DAS_IMPL RemoveTask(IDasTaskInfo* p_task_info) override;
         DAS_IMPL UpdateEnvironmentConfig(
             IDasReadOnlyString* p_config_json) override;
+        DAS_BOOL_IMPL IsTaskExecuting() override;
+        DAS_IMPL      SetEnabled(DasBool enabled) override;
+        DAS_BOOL_IMPL GetEnabled() override;
+        DAS_IMPL      ForceStart() override;
+        DAS_IMPL      RequestStop() override;
 
-        void UpdateConfig(const DasReadOnlyString& config);
-        auto GetSchedulerImpl() { return thread_pool.get_scheduler(); }
+        auto GetSchedulerImpl() { return vm_thread_pool_.get_scheduler(); }
 
         DasResult AddTask(ForeignInterfaceHost::TaskManager::TaskInfo* p_task);
         /**
@@ -97,6 +122,7 @@ namespace Core
 
         void DoTask(const SchedulingUnit& schedule_unit);
 
+        // executor_
         void RunTaskQueue();
         void NotifyExit();
     };

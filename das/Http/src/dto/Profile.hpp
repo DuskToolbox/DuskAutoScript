@@ -19,10 +19,26 @@ class ProfileDesc : public oatpp::DTO
 
     DTO_FIELD(String, name, "name");
     DTO_FIELD(String, profile_id, "profile_id");
-
 };
 
 using ProfileDescList = ApiResponse<oatpp::List<oatpp::Object<ProfileDesc>>>;
+
+// 读取配置文件的返回值
+// GetProfile result
+class ProfileJson : public oatpp::DTO
+{
+    DTO_INIT(ProfileJson, DTO)
+
+    DTO_FIELD(String, profile, "profile");
+};
+
+// 忽略的GUID列表，初始化插件管理器时使用
+class IgnoredGuidList : public oatpp::DTO
+{
+    DTO_INIT(IgnoredGuidList, DTO)
+
+    DTO_FIELD(List<String>, ignoredGuidList, "ignoredGuidList");
+};
 
 // 配置文件描状态
 // Profile status
@@ -36,7 +52,8 @@ class ProfileStatus : public oatpp::DTO
     DTO_FIELD(Boolean, enable, "enable");
 };
 
-using ProfileStatusList = ApiResponse<oatpp::List<oatpp::Object<ProfileStatus>>>;
+using ProfileStatusList =
+    ApiResponse<oatpp::List<oatpp::Object<ProfileStatus>>>;
 
 // 配置文件运行状态
 // Profile is runing
@@ -52,9 +69,17 @@ class ProfileRunning : public oatpp::DTO
 class ProfileId : public oatpp::DTO
 {
 
-    DTO_INIT(ProfileRunning, DTO)
+    DTO_INIT(ProfileId, DTO)
 
     DTO_FIELD(String, profile_id, "profile_id");
+};
+
+class ProfileEnabled : public oatpp::DTO
+{
+    DTO_INIT(ProfileEnabled, DTO)
+
+    DTO_FIELD(String, profile_id, "profile_id");
+    DTO_FIELD(Int32, enabled, "enabled");
 };
 
 #include OATPP_CODEGEN_END(DTO)

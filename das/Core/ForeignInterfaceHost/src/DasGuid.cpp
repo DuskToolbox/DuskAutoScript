@@ -1,12 +1,14 @@
-#include "das/DasString.hpp"
-#include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <array>
 #include <bit>
 #include <boost/container_hash/hash.hpp>
 #include <cstdio>
 #include <cstring>
+#include <das/Core/ForeignInterfaceHost/DasGuid.h>
+#include <das/DasString.hpp>
+#include <das/Utils/CommonUtils.hpp>
 #include <functional>
 #include <nlohmann/json.hpp>
+
 
 std::size_t std::hash<DasGuid>::operator()(const DasGuid& guid) const noexcept
 {
@@ -120,6 +122,15 @@ void nlohmann::adl_serializer<DasGuid>::from_json(const json& j, DasGuid& guid)
 {
     const auto guid_string = j.get<std::string_view>();
     guid = DAS::Core::ForeignInterfaceHost::MakeDasGuid(guid_string);
+}
+
+DasResult DasGuidToString(
+    DasGuid*             p_in_guid,
+    IDasReadOnlyString** pp_out_guid_string)
+{
+    const auto result = DasGuidToString(*p_in_guid);
+    DAS::Utils::SetResult(result.Get(), pp_out_guid_string);
+    return DAS_S_OK;
 }
 
 DasReadOnlyString DasGuidToString(const DasGuid& guid)

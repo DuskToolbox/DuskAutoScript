@@ -14,6 +14,27 @@ struct DasDate
     uint8_t  second;
 };
 
+// {213B412C-46FE-47BB-9159-56B3EE9BBB1A}
+DAS_DEFINE_GUID(
+    DAS_IID_STOP_TOKEN,
+    IDasStopToken,
+    0x213b412c,
+    0x46fe,
+    0x47bb,
+    0x91,
+    0x59,
+    0x56,
+    0xb3,
+    0xee,
+    0x9b,
+    0xbb,
+    0x1a);
+SWIG_IGNORE(IDasStopToken)
+DAS_INTERFACE IDasStopToken : public IDasBase
+{
+    virtual DasBool StopRequested() = 0;
+};
+
 // {5C30785F-C2BD-4B9A-B543-955432169F8E}
 DAS_DEFINE_GUID(
     DAS_IID_TASK,
@@ -32,8 +53,8 @@ DAS_DEFINE_GUID(
 SWIG_IGNORE(IDasTask)
 DAS_INTERFACE IDasTask : public IDasTypeInfo
 {
-    DAS_METHOD OnRequestExit() = 0;
     DAS_METHOD Do(
+        IDasStopToken * stop_token,
         IDasReadOnlyString * p_environment_json,
         IDasReadOnlyString * p_task_settings_json) = 0;
     DAS_METHOD GetNextExecutionTime(DasDate * p_out_date) = 0;
@@ -43,6 +64,27 @@ DAS_INTERFACE IDasTask : public IDasTypeInfo
 };
 
 DAS_DEFINE_RET_TYPE(DasRetDate, DasDate);
+
+// {0EACCD4B-4D30-41AF-86AB-36D3F005C739}
+DAS_DEFINE_GUID(
+    DAS_IID_SWIG_STOP_TOKEN,
+    IDasSwigStopToken,
+    0xeaccd4b,
+    0x4d30,
+    0x41af,
+    0x86,
+    0xab,
+    0x36,
+    0xd3,
+    0xf0,
+    0x5,
+    0xc7,
+    0x39);
+DAS_SWIG_EXPORT_ATTRIBUTE(IDasSwigStopToken)
+DAS_INTERFACE IDasSwigStopToken : public IDasSwigBase
+{
+    virtual DasBool StopRequested() = 0;
+};
 
 // {3DE2D502-9621-4AF7-B88F-86458E0DDA46}
 DAS_DEFINE_GUID(
@@ -62,8 +104,8 @@ DAS_DEFINE_GUID(
 DAS_SWIG_DIRECTOR_ATTRIBUTE(IDasSwigTask)
 DAS_INTERFACE IDasSwigTask : public IDasSwigTypeInfo
 {
-    virtual DasResult OnRequestExit() = 0;
     virtual DasResult Do(
+        IDasSwigStopToken* stop_token,
         DasReadOnlyString environment_json,
         DasReadOnlyString task_settings_json) = 0;
     virtual DasRetDate           GetNextExecutionTime() = 0;

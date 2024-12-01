@@ -4,7 +4,9 @@
 #include "oatpp/network/Server.hpp"
 
 #include "./AppComponent.hpp"
-#include "./controller/Controller.hpp"
+#include "./controller/DasPluginManagerController.hpp"
+#include "./controller/DasProfileController.hpp"
+#include "./controller/DasLogController.hpp"
 
 void run()
 {
@@ -12,7 +14,12 @@ void run()
 
     OATPP_COMPONENT(std::shared_ptr<oatpp::web::server::HttpRouter>, router);
 
-    router->addController(std::make_shared<Controller>());
+    // 初始化Logger
+    router->addController(std::make_shared<DasLogController>());
+    // 从后端取回设置json
+    router->addController(std::make_shared<DasProfileManagerController>());
+    // 初始化Core
+    router->addController(std::make_shared<DasPluginManagerController>());
 
     OATPP_COMPONENT(
         std::shared_ptr<oatpp::network::ConnectionHandler>,
@@ -34,7 +41,6 @@ void run()
 
 int main(int argc, const char* argv[])
 {
-
     std::cout << "is start" << std::endl;
 
     oatpp::base::Environment::init();

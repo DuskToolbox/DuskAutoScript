@@ -762,6 +762,7 @@ void IDasJsonImpl::SetConnection(const boost::signals2::connection& connection)
     if (auto* const p_ref = std::get_if<Ref>(&impl_); p_ref)
     {
         p_ref->connection_ = connection;
+        return;
     }
     DAS_CORE_LOG_ERROR("Expect Ref but found Object!");
 }

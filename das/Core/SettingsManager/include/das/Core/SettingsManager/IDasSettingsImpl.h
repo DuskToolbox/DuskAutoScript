@@ -45,11 +45,6 @@ class DasSettings
 {
     std::mutex     mutex_;
     nlohmann::json settings_;
-    /**
-     * @brief 默认设置就是和设置一样的结构，只是里面存了默认值
-     *
-     */
-    nlohmann::json        default_values_;
     std::filesystem::path path_;
 
     IDasSettingsForUiImpl cpp_projection_for_ui_{*this};
@@ -73,13 +68,6 @@ public:
     DasResult SaveToWorkingDirectory(IDasReadOnlyString* p_relative_path);
     DasResult Save();
     // DasSettings
-    /**
-     * @brief Set the Default Values object
-     *
-     * @param rv_json rvalue of json. You should move it to this function.
-     * @return DasResult
-     */
-    DasResult SetDefaultValues(nlohmann::json&& rv_json);
     DasResult LoadSettings(IDasReadOnlyString* p_path);
     // to projection
     operator IDasSettingsForUiImpl*() noexcept;

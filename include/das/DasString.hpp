@@ -5,7 +5,6 @@
 #include <das/IDasBase.h>
 #include <string>
 
-
 // {C09E276A-B824-4667-A504-7609B4B7DD28}
 DAS_DEFINE_GUID(
     DAS_IID_READ_ONLY_STRING,
@@ -123,6 +122,15 @@ DAS_C_API DasResult CreateIDasReadOnlyStringFromWChar(
     const wchar_t*       p_wstring,
     size_t               length,
     IDasReadOnlyString** pp_out_readonly_string);
+
+/**
+ * @brief output format should be "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+ *
+ * @param p_guid_string
+ * @return DAS_S_OK if success.
+ */
+DAS_C_API DasResult
+DasGuidToString(DasGuid* p_in_guid, IDasReadOnlyString** pp_out_guid_string);
 
 #endif // SWIG
 

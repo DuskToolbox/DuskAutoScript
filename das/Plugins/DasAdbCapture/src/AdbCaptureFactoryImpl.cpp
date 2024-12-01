@@ -1,14 +1,15 @@
 #include "AdbCaptureFactoryImpl.h"
 #include "PluginImpl.h"
+#include <boost/url.hpp>
 #include <das/DasConfig.h>
 #include <das/ExportInterface/DasLogger.h>
 #include <das/IDasBase.h>
 #include <das/Utils/QueryInterface.hpp>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
-#include <boost/url.hpp>
 #include <nlohmann/json.hpp>
 #include <tl/expected.hpp>
+
 
 DAS_NS_BEGIN
 
@@ -56,12 +57,14 @@ DasResult AdbCaptureFactoryImpl::CreateInstance(
     IDasReadOnlyString* p_plugin_config,
     IDasCapture**       pp_out_object)
 {
+    (void)p_plugin_config;
     const char* p_key_string = "";
-    const char* p_json_config_string = nullptr;
-    DasResult   result = p_plugin_config->GetUtf8(&p_json_config_string);
+    const char* p_u8_environment_json = nullptr;
+    DasResult   result =
+        p_environment_json_config->GetUtf8(&p_u8_environment_json);
     try
     {
-        const auto config = nlohmann::json::parse(p_environment_json_config);
+        const auto config = nlohmann::json::parse(p_u8_environment_json);
         Details::GetUrlFromJson(config, &p_key_string);
     }
     catch (const nlohmann::json::exception& ex)
@@ -70,7 +73,7 @@ DasResult AdbCaptureFactoryImpl::CreateInstance(
         DasLogErrorU8(DAS_UTILS_STRINGUTILS_DEFINE_U8STR("JSON Key: url"));
         DasLogErrorU8(
             DAS_UTILS_STRINGUTILS_DEFINE_U8STR("----JSON dump begin----"));
-        DasLogErrorU8(p_json_config_string);
+        DasLogErrorU8(p_u8_environment_json);
         DasLogErrorU8(
             DAS_UTILS_STRINGUTILS_DEFINE_U8STR("----JSON dump end----"));
         DasLogErrorU8(ex.what());

@@ -2,6 +2,7 @@
 #include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/TaskScheduler/TaskScheduler.h>
+#include <das/Core/Utils/IDasStopTokenImpl.h>
 #include <das/Core/Utils/InternalUtils.h>
 #include <das/Core/Utils/StdExecution.h>
 
@@ -23,7 +24,7 @@ namespace Core
 
     auto CreateDateTime(const DasDate& date) noexcept
     {
-        tm time_info1 = tm();
+        auto time_info1 = tm();
         time_info1.tm_year = date.year - 1900;
         time_info1.tm_mon = date.month - 1;
         time_info1.tm_mday = date.day;
@@ -91,11 +92,17 @@ namespace Core
     TaskScheduler::TaskScheduler()
         : executor_{[sp_this = DasPtr{this}]
                     {
+                        using namespace std::literals;
                         DAS_CORE_LOG_INFO("Task scheduler thread launched.");
                         while (sp_this->is_not_need_exit_)
                         {
+                            if (!sp_this->is_profile_enabled_)
+                            {
+                                std::this_thread::sleep_for(100ms);
+                                continue;
+                            }
                             sp_this->RunTaskQueue();
-                            using namespace std::literals;
+
                             std::this_thread::sleep_for(100ms);
                         }
                         DAS_CORE_LOG_INFO("Task scheduler thread exited.");
@@ -223,6 +230,71 @@ namespace Core
         return DAS_S_OK;
     }
 
+    DasBool TaskScheduler::IsTaskExecuting()
+    {
+        return task_controller_.ExecuteAtomically(
+                   [](const TaskController& self)
+                   { return self.is_task_working_; })
+                   ? DAS_TRUE
+                   : DAS_FALSE;
+    }
+
+    DasResult TaskScheduler::SetEnabled(DasBool enabled)
+    {
+        is_profile_enabled_ = enabled;
+        return DAS_S_OK;
+    }
+
+    DasBool TaskScheduler::GetEnabled()
+    {
+        return is_profile_enabled_ ? DAS_TRUE : DAS_FALSE;
+    }
+
+    DasResult TaskScheduler::ForceStart()
+    {
+        return task_controller_.ExecuteAtomically(
+            [this](TaskController& self)
+            {
+                if (self.is_task_working_ || !is_profile_enabled_)
+                {
+                    DAS_CORE_LOG_ERROR("Task is running.");
+                    return DAS_E_TASK_WORKING;
+                }
+
+                std::lock_guard _{task_queue_mutex_};
+                if (task_queue_.empty())
+                {
+                    task_controller_.ExecuteAtomically(
+                        [](TaskController& self)
+                        { self.is_task_working_ = false; });
+                    return DAS_E_OUT_OF_RANGE;
+                }
+                auto&      task = task_queue_.back();
+                const auto now = std::chrono::system_clock::now();
+                time_t     time = std::chrono::system_clock::to_time_t(now);
+                task.utc_next_run_time = time;
+                return DAS_S_OK;
+            });
+    }
+
+    DasResult TaskScheduler::RequestStop()
+    {
+        return task_controller_.ExecuteAtomically(
+            [](TaskController& self)
+            {
+                if (self.is_task_working_)
+                {
+                    return DAS_E_TASK_WORKING;
+                }
+                if (self.stop_token_.StopRequested())
+                {
+                    return DAS_S_FALSE;
+                }
+                self.stop_token_.RequestStop();
+                return DAS_S_OK;
+            });
+    }
+
     void TaskScheduler::InternalAddTask(const SchedulingUnit& task)
     {
         std::lock_guard _{task_queue_mutex_};
@@ -269,11 +341,15 @@ namespace Core
             environment_config_.GetValue(p_environment_config.Put());
             DAS_CORE_LOG_INFO("Dump env config:\n{}", p_environment_config);
             DasPtr<IDasReadOnlyString> p_plugin_config{};
-            // taskinfo里面没有plugininfo的设置，看看怎么处理
-            DasPtr p_settings_json =
+            DasPtr                     p_settings_json =
                 schedule_unit.p_task_info->GetSettingsJson();
-            const auto do_result =
-                p_task->Do(p_environment_config.Get(), p_settings_json.Get());
+            const auto p_stop_token = task_controller_.ExecuteAtomically(
+                [](TaskController& self)
+                { return static_cast<IDasStopToken*>(self.stop_token_); });
+            const auto do_result = p_task->Do(
+                p_stop_token,
+                p_environment_config.Get(),
+                p_settings_json.Get());
             do_error_code = GetErrorCodeFrom(do_result);
             if (IsOk(do_result))
             {
@@ -378,7 +454,17 @@ namespace Core
 
     void TaskScheduler::RunTaskQueue()
     {
-        if (is_task_working_)
+        if (task_controller_.ExecuteAtomically(
+                [](TaskController& self)
+                {
+                    if (self.is_task_working_)
+                    {
+                        return true;
+                    }
+                    self.is_task_working_ = true;
+                    self.stop_token_.Reset();
+                    return false;
+                }))
         {
             return;
         }
@@ -388,6 +474,19 @@ namespace Core
             std::lock_guard _{task_queue_mutex_};
             if (task_queue_.empty())
             {
+                task_controller_.ExecuteAtomically(
+                    [](TaskController& self)
+                    { self.is_task_working_ = false; });
+                return;
+            }
+            const auto& current_task = task_queue_.back();
+            if (current_task.utc_next_run_time
+                > std::chrono::system_clock::to_time_t(
+                    std::chrono::system_clock::now()))
+            {
+                task_controller_.ExecuteAtomically(
+                    [](TaskController& self)
+                    { self.is_task_working_ = false; });
                 return;
             }
             opt_current_task = task_queue_.back();
@@ -400,7 +499,6 @@ namespace Core
                 | stdexec::then(
                     [sp_this = DasPtr{this}, opt_current_task]
                     {
-                        sp_this->is_task_working_ = true;
                         if (!opt_current_task)
                         {
                             DAS_CORE_LOG_ERROR(
@@ -410,14 +508,16 @@ namespace Core
                         const auto& schedule_unit = opt_current_task.value();
                         sp_this->DoTask(schedule_unit);
                         sp_this->AddTask(schedule_unit.p_task_info.Get());
-                        sp_this->is_task_working_ = false;
+                        sp_this->task_controller_.ExecuteAtomically(
+                            [](TaskController& self)
+                            { self.is_task_working_ = false; });
                     }));
     }
 
     void TaskScheduler::NotifyExit()
     {
         is_not_need_exit_ = false;
-        thread_pool.request_stop();
+        vm_thread_pool_.request_stop();
         executor_.detach();
     }
 
@@ -476,3 +576,9 @@ namespace Core
 } // namespace Core
 
 DAS_NS_END
+
+DasResult GetIDasTaskScheduler(IDasTaskScheduler** pp_out_task_scheduler)
+{
+    DAS::Utils::SetResult(&Das::Core::g_scheduler, pp_out_task_scheduler);
+    return DAS_S_OK;
+}

@@ -1,9 +1,10 @@
-#include <das/DasPtr.hpp>
+#include <DAS/_autogen/CppSwigBiMap.h>
 #include <das/Core/ForeignInterfaceHost/CppSwigInterop.h>
+#include <das/DasPtr.hpp>
 #include <das/ExportInterface/IDasPluginManager.h>
 #include <das/IDasBase.h>
 #include <das/PluginInterface/IDasPlugin.h>
-#include <DAS/_autogen/CppSwigBiMap.h>
+
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
 auto ConvertCppIidToSwigIid(const DasGuid& cpp_iid)
@@ -123,9 +124,9 @@ auto CreateSwigToCppObjectImpl(void* p_cpp_object) -> DasRetSwigBase
 DAS_NS_ANONYMOUS_DETAILS_END
 
 #define DAS_CORE_FOREIGNINTERFACEHOST_CREATE_SWIG_TO_CPP_OBJECT(Type)          \
-    {DasIidOf<Type>(), [](void* p_cpp_object) {                                \
-         return Details::CreateSwigToCppObjectImpl<Type>(p_cpp_object);        \
-     }}
+    {DasIidOf<Type>(),                                                         \
+     [](void* p_cpp_object)                                                    \
+     { return Details::CreateSwigToCppObjectImpl<Type>(p_cpp_object); }}
 
 // TODO: 添加所有PluginInterface中的导出类型
 const static std::unordered_map<DasGuid, DasRetSwigBase (*)(void* p_cpp_object)>
@@ -188,19 +189,28 @@ DasResult SwigToCpp<IDasSwigErrorLens>::GetErrorMessage(
         error_code);
 }
 
-DasResult SwigToCpp<IDasSwigTask>::OnRequestExit()
-{
-    return p_impl_->OnRequestExit();
-}
-
 DasResult SwigToCpp<IDasSwigTask>::Do(
+    IDasStopToken*      p_stop_token,
     IDasReadOnlyString* p_environment_json,
     IDasReadOnlyString* p_task_settings_json)
 {
+    DasPtr<IDasSwigStopToken> p_swig_stop_token{};
+    if (const auto qi_result = p_stop_token->QueryInterface(
+            DasIidOf<IDasSwigStopToken>(),
+            p_swig_stop_token.PutVoid());
+        IsFailed(qi_result))
+    {
+        DAS_CORE_LOG_ERROR(
+            "Can not get IDasSwigStopToken from a IDasStopToken Object. Error code = {}.",
+            qi_result);
+        return qi_result;
+    }
     try
     {
-        const auto result =
-            p_impl_->Do({p_environment_json}, {p_task_settings_json});
+        const auto result = p_impl_->Do(
+            p_swig_stop_token.Get(),
+            {p_environment_json},
+            {p_task_settings_json});
         return result;
     }
     catch (const std::exception& ex)

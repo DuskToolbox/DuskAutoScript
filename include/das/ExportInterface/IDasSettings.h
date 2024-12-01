@@ -60,7 +60,7 @@ DAS_INTERFACE IDasSettingsForUi : public IDasBase
  * @param pp_out_settings 由UI使用的设置
  * @return DasResult DAS_S_OK 成功；若从未执行过DasLoadGlobalSettings，则失败。
  */
-DAS_C_API DasResult DasGetGlobalSettings(IDasSettingsForUi** pp_out_settings);
+DAS_C_API DasResult GetIDasSettingsForUi(IDasSettingsForUi** pp_out_settings);
 
 /**
  * @brief 加载UI在Core中寄存的json设置信息

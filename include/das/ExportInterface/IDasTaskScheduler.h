@@ -1,8 +1,8 @@
 #ifndef DAS_SCHEDULER_H
 #define DAS_SCHEDULER_H
 
-#include <das/IDasBase.h>
 #include <das/DasString.hpp>
+#include <das/IDasBase.h>
 
 static const char* const DAS_TASK_INFO_PROPERTIES[] =
     {"name", "description", "label", "typeName"};
@@ -56,9 +56,8 @@ DAS_DEFINE_GUID(
 SWIG_IGNORE(IDasTaskInfoVector)
 DAS_INTERFACE IDasTaskInfoVector : public IDasBase
 {
-    DAS_METHOD EnumByIndex(size_t index, IDasTaskInfo * *pp_out_info) = 0;
-    DAS_METHOD EnumNextExecuteTimeByIndex(size_t index, time_t * p_out_time) =
-        0;
+    DAS_METHOD EnumByIndex(size_t index, IDasTaskInfo** pp_out_info) = 0;
+    DAS_METHOD EnumNextExecuteTimeByIndex(size_t index, time_t* p_out_time) = 0;
 };
 
 // {28DCD3C8-E528-414A-8649-F7E63C3C1715}
@@ -84,7 +83,14 @@ DAS_INTERFACE IDasTaskScheduler : public IDasBase
         IDasTaskInfoVector * *pp_out_task_info_vector) = 0;
     DAS_METHOD AddTask(IDasTaskInfo * p_task_info) = 0;
     DAS_METHOD RemoveTask(IDasTaskInfo * p_task_info) = 0;
-    DAS_METHOD UpdateEnvironmentConfig(IDasReadOnlyString* p_config_json) = 0;
+    DAS_METHOD UpdateEnvironmentConfig(IDasReadOnlyString * p_config_json) = 0;
+    DAS_BOOL_METHOD IsTaskExecuting() = 0;
+    DAS_METHOD      SetEnabled(DasBool enabled) = 0;
+    DAS_BOOL_METHOD GetEnabled() = 0;
+    DAS_METHOD ForceStart() = 0;
+    DAS_METHOD RequestStop() = 0;
 };
+
+DAS_C_API DasResult GetIDasTaskScheduler(IDasTaskScheduler ** pp_out_task_scheduler);
 
 #endif // DAS_SCHEDULER_H

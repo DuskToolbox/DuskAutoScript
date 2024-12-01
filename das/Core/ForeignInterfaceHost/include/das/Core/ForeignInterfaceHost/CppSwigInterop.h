@@ -343,8 +343,8 @@ class SwigToCpp<IDasSwigTask> final
 public:
     DAS_USING_BASE_CTOR(SwigToCppTypeInfo);
 
-    DasResult OnRequestExit() override;
     DasResult Do(
+        IDasStopToken*      p_stop_token,
         IDasReadOnlyString* p_environment_json,
         IDasReadOnlyString* p_task_settings_json) override;
     DasResult GetNextExecutionTime(DasDate* p_out_date) override;

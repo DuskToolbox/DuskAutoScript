@@ -40,7 +40,7 @@ SWIG_IGNORE(IDasPlugin)
  */
 DAS_INTERFACE IDasPlugin : public IDasBase
 {
-    DAS_METHOD EnumFeature(size_t index, DasPluginFeature * p_out_feature) = 0;
+    DAS_METHOD EnumFeature(size_t index, DasPluginFeature* p_out_feature) = 0;
     DAS_METHOD CreateFeatureInterface(size_t index, void** pp_out_interface) =
         0;
     /**
@@ -49,7 +49,7 @@ DAS_INTERFACE IDasPlugin : public IDasBase
      * @return DAS_FALSE 或 DAS_TRUE 。注意：非DAS_FALSE的值都会被认为是
      * DAS_TRUE。
      */
-    DAS_METHOD CanUnloadNow() = 0;
+    DAS_BOOL_METHOD CanUnloadNow() = 0;
 };
 
 SWIG_IGNORE(DASCOCREATEPLUGIN_NAME)

@@ -1,13 +1,12 @@
 #include "AdbTouchFactoryImpl.h"
+#include <array>
 #include <das/ExportInterface/DasLogger.h>
 #include <das/Utils/QueryInterface.hpp>
-#include <array>
 #include <stdexcept>
 
 #define DAS_BUILD_SHARED
 #include "AdbTouchFactoryImpl.h"
 #include "PluginImpl.h"
-
 
 DAS_NS_BEGIN
 
@@ -68,6 +67,9 @@ DAS_IMPL DasAdbTouchPlugin::CreateFeatureInterface(
     return DAS_E_OUT_OF_RANGE;
 }
 
-DAS_IMPL DasAdbTouchPlugin::CanUnloadNow() { return DAS_E_NO_IMPLEMENTATION; }
+DAS_BOOL_IMPL DasAdbTouchPlugin::CanUnloadNow()
+{
+    return DAS_E_NO_IMPLEMENTATION;
+}
 
 DAS_NS_END

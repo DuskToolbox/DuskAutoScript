@@ -1,10 +1,12 @@
 #include "das/IDasBase.h"
+#include <boost/filesystem/operations.hpp>
 #include <das/Core/Exceptions/DasException.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/SettingsManager/IDasSettingsImpl.h>
 #include <das/Core/Utils/InternalUtils.h>
 #include <das/ExportInterface/IDasSettings.h>
 #include <das/Utils/CommonUtils.hpp>
+#include <das/Utils/FileUtils.hpp>
 #include <das/Utils/QueryInterface.hpp>
 #include <das/Utils/StreamUtils.hpp>
 #include <fstream>
@@ -51,15 +53,6 @@ auto DasSettings::GetKey(const char* p_type_name, const char* key)
 {
     if (const auto global_setting_it = settings_.find(p_type_name);
         global_setting_it != settings_.end())
-    {
-        if (const auto setting_it = global_setting_it->find(key);
-            setting_it != global_setting_it->end())
-        {
-            return std::cref(*setting_it);
-        }
-    }
-    if (const auto global_setting_it = default_values_.find(p_type_name);
-        global_setting_it != default_values_.end())
     {
         if (const auto setting_it = global_setting_it->find(key);
             setting_it != global_setting_it->end())
@@ -184,15 +177,6 @@ DasResult DasSettings::SaveToWorkingDirectory(
 
 DasResult DasSettings::Save() { return SaveImpl(path_); }
 
-DasResult DasSettings::SetDefaultValues(nlohmann::json&& rv_json)
-{
-    std::lock_guard lock{mutex_};
-
-    default_values_ = std::move(rv_json);
-
-    return DAS_S_OK;
-}
-
 DasResult DasSettings::LoadSettings(IDasReadOnlyString* p_path)
 {
     try
@@ -209,6 +193,24 @@ DasResult DasSettings::LoadSettings(IDasReadOnlyString* p_path)
             IsFailed(to_path_result))
         {
             DasException::Throw(to_path_result);
+        }
+
+        std::error_code error_code;
+        Utils::CreateDirectoryRecursive(path.parent_path(), error_code);
+        if (!error_code)
+        {
+            DAS_CORE_LOG_ERROR(
+                "Failed to create directory {}. Error code = {}.",
+                reinterpret_cast<const char*>(path.u8string().c_str()),
+                error_code.value());
+            return DAS_E_INTERNAL_FATAL_ERROR;
+        }
+
+        path_ = path;
+
+        if (!exists(path))
+        {
+            return DAS_S_OK;
         }
 
         std::ifstream ifs;
@@ -260,12 +262,28 @@ constexpr auto UI_EXTRA_SETTINGS_FILE_NAME = "UiExtraSettings.json";
 
 DAS_NS_ANONYMOUS_DETAILS_END
 
-DasResult DasGetGlobalSettings(IDasSettingsForUi** pp_out_settings)
+DasResult GetIDasSettingsForUi(IDasSettingsForUi** pp_out_settings)
 {
     DAS_UTILS_CHECK_POINTER(pp_out_settings);
 
-    *pp_out_settings = *DAS::Core::SettingsManager::g_settings.Get();
-    (*pp_out_settings)->AddRef();
+    using namespace DAS::Core::SettingsManager;
+
+    if (!g_settings)
+    {
+        g_settings = DAS::MakeDasPtr<DasSettings>();
+        std::error_code error_code;
+        auto current_path = std::filesystem::current_path(error_code);
+        current_path /= u8"Settings";
+        current_path /= u8"CoreSettings.json";
+        const DasReadOnlyStringWrapper path{current_path.u8string().c_str()};
+        g_settings->LoadSettings(path.Get());
+    }
+    if (!g_settings)
+    {
+        DAS_CORE_LOG_ERROR("Nullptr!");
+        return DAS_E_INVALID_POINTER;
+    }
+    DAS::Utils::SetResult(*g_settings, pp_out_settings);
     return DAS_S_OK;
 }
 
@@ -289,7 +307,9 @@ DasResult DasLoadExtraStringForUi(
             std::ios::badbit | std::ios::failbit,
             [&buffer](auto& stream)
             {
-                stream.open(Details::UI_EXTRA_SETTINGS_FILE_NAME, std::ifstream::in);
+                stream.open(
+                    Details::UI_EXTRA_SETTINGS_FILE_NAME,
+                    std::ifstream::in);
                 buffer = {
                     (std::istreambuf_iterator<char>(stream)),
                     std::istreambuf_iterator<char>()};
@@ -346,44 +366,3 @@ DasResult DasSaveExtraStringForUi(
         return DAS_E_INTERNAL_FATAL_ERROR;
     }
 }
-
-// DasRetGlobalSettings GetPluginSettings(IDasSwigTypeInfo* p_plugin)
-// {
-//     if (p_plugin == nullptr)
-//     {
-//         DAS_CORE_LOG_ERROR("Nullptr found!");
-//         return {DAS_E_INVALID_POINTER, nullptr};
-//     }
-
-//     DasRetGlobalSettings result{};
-
-//     try
-//     {
-//         const auto type_name =
-//             DAS::Core::Utils::GetRuntimeClassNameFrom(p_plugin);
-
-//         const auto expected_result =
-//             DAS::Utils::ToU8StringWithoutOwnership(type_name.Get())
-//                 .map(
-//                     [&](const char* p_u8_name)
-//                     {
-//                         const auto p_result = DAS::MakeDasPtr<
-//                             IDasSwigSettings,
-//                             DAS::Core::SettingsManager::IDasSwigSettingsImpl>(
-//                             DAS::Core::SettingsManager::g_settings,
-//                             p_u8_name);
-//                         result.value = p_result.Get();
-//                     });
-//         result.error_code = DAS::Utils::GetResult(expected_result);
-//         return result;
-//     }
-//     catch (const Das::Core::DasException& ex)
-//     {
-//         DAS_CORE_LOG_EXCEPTION(ex);
-//         return {ex.GetErrorCode(), nullptr};
-//     }
-//     catch (const std::bad_alloc&)
-//     {
-//         return {DAS_E_OUT_OF_MEMORY, nullptr};
-//     }
-// }
