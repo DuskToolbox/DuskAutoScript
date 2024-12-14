@@ -1,6 +1,6 @@
 #include <das/ExportInterface/DasLogger.h>
 #include <das/IDasBase.h>
-#include <das/PluginInterface/IDasPlugin.h>
+#include <das/PluginInterface/IDasPluginPackage.h>
 #include <das/Utils/QueryInterface.hpp>
 #include <das/Utils/StringUtils.h>
 
@@ -22,7 +22,10 @@ DasResult AdbCapturePlugin::QueryInterface(
     const DasGuid& iid,
     void**         pp_out_object)
 {
-    return DAS::Utils::QueryInterface<IDasPlugin>(this, iid, pp_out_object);
+    return DAS::Utils::QueryInterface<IDasPluginPackage>(
+        this,
+        iid,
+        pp_out_object);
 }
 
 DasResult AdbCapturePlugin::EnumFeature(

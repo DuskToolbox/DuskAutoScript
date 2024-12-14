@@ -1,8 +1,8 @@
 #ifndef DAS_CORE_FOREIGNINTERFACEHOST_FOREIGNINTERFACEHOST_H
 #define DAS_CORE_FOREIGNINTERFACEHOST_FOREIGNINTERFACEHOST_H
 
-#include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
 #include <das/Core/ForeignInterfaceHost/Config.h>
+#include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHostEnum.h>
 #include <das/ExportInterface/DasJson.h>
 #include <das/ExportInterface/IDasSettings.h>
@@ -20,7 +20,7 @@
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
 struct PluginSettingDesc;
-struct PluginDesc;
+struct PluginPackageDesc;
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
 
@@ -36,12 +36,13 @@ struct DAS_FMT_NS::
 };
 
 template <>
-struct DAS_FMT_NS::formatter<DAS::Core::ForeignInterfaceHost::PluginDesc, char>
+struct DAS_FMT_NS::
+    formatter<DAS::Core::ForeignInterfaceHost::PluginPackageDesc, char>
     : public formatter<std::string, char>
 {
     auto format(
-        const DAS::Core::ForeignInterfaceHost::PluginDesc& desc,
-        format_context&                                    ctx) const ->
+        const DAS::Core::ForeignInterfaceHost::PluginPackageDesc& desc,
+        format_context&                                           ctx) const ->
         typename std::remove_reference_t<decltype(ctx)>::iterator;
 };
 
@@ -72,7 +73,7 @@ struct PluginSettingDesc
 void from_json(const ::nlohmann::json& input, PluginSettingDesc& output);
 // void to_json(const ::nlohmann::json& output, PluginSettingDesc& input);
 
-struct PluginDesc
+struct PluginPackageDesc
 {
     ForeignInterfaceLanguage       language;
     std::string                    name;
@@ -104,7 +105,7 @@ struct PluginDesc
         on_settings_changed{};
 };
 
-void from_json(const ::nlohmann::json& input, PluginDesc& output);
+void from_json(const ::nlohmann::json& input, PluginPackageDesc& output);
 // void to_json(const ::nlohmann::json& output, PluginDesc& input);
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END

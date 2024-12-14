@@ -5,7 +5,7 @@
 #include <das/PluginInterface/IDasCapture.h>
 #include <das/PluginInterface/IDasErrorLens.h>
 #include <das/PluginInterface/IDasTask.h>
-#include <das/PluginInterface/IDasPlugin.h>
+#include <das/PluginInterface/IDasPluginPackage.h>
 #include <das/DasString.hpp>
 #include <das/Core/ForeignInterfaceHost/Config.h>
 #include <type_traits>
@@ -34,7 +34,7 @@ using das_task_inherit_chain = SwigTypeInheritChain<IDasSwigBase, IDasSwigTask>;
 using das_capture_inherit_chain =
     SwigTypeInheritChain<IDasSwigBase, IDasSwigCapture>;
 using das_plugin_inherit_chain =
-    SwigTypeInheritChain<IDasSwigBase, IDasSwigPlugin>;
+    SwigTypeInheritChain<IDasSwigBase, IDasSwigPluginPackage>;
 
 template <class EndT, class Arg, class... ResultTs>
 auto SwigTypeInheritChainEndOfImpl(

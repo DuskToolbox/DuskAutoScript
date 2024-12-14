@@ -12,7 +12,7 @@ DAS_NS_BEGIN
 
 DAS_IMPL DasAdbTouchPlugin::QueryInterface(const DasGuid& iid, void** pp_object)
 {
-    return Utils::QueryInterface<IDasPlugin>(this, iid, pp_object);
+    return Utils::QueryInterface<IDasPluginPackage>(this, iid, pp_object);
 }
 
 DAS_IMPL DasAdbTouchPlugin::EnumFeature(

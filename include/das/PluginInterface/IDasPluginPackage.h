@@ -20,7 +20,7 @@ typedef enum DasPluginFeature
 // {09EA2A40-6A10-4756-AB2B-41B2FD75AB36}
 DAS_DEFINE_GUID(
     DAS_IID_PLUGIN,
-    IDasPlugin,
+    IDasPluginPackage,
     0x9ea2a40,
     0x6a10,
     0x4756,
@@ -32,13 +32,13 @@ DAS_DEFINE_GUID(
     0x75,
     0xab,
     0x36)
-SWIG_IGNORE(IDasPlugin)
+SWIG_IGNORE(IDasPluginPackage)
 /**
- * @brief plugin should define DasResult DasCoCreatePlugin(IDasPlugin**
+ * @brief plugin should define DasResult DasCoCreatePlugin(IDasPluginPackage**
  * pp_out_plugin);
  *
  */
-DAS_INTERFACE IDasPlugin : public IDasBase
+DAS_INTERFACE IDasPluginPackage : public IDasBase
 {
     DAS_METHOD EnumFeature(size_t index, DasPluginFeature* p_out_feature) = 0;
     DAS_METHOD CreateFeatureInterface(size_t index, void** pp_out_interface) =
@@ -55,14 +55,14 @@ DAS_INTERFACE IDasPlugin : public IDasBase
 SWIG_IGNORE(DASCOCREATEPLUGIN_NAME)
 #define DASCOCREATEPLUGIN_NAME "DasCoCreatePlugin"
 SWIG_IGNORE(DasCoCreatePluginFunction)
-using DasCoCreatePluginFunction = DasResult(IDasPlugin** pp_out_plugin);
+using DasCoCreatePluginFunction = DasResult(IDasPluginPackage** pp_out_plugin);
 
 DAS_DEFINE_RET_TYPE(DasRetPluginFeature, DasPluginFeature);
 
 // {3F11FBB2-B19F-4C3E-9502-B6D7F1FF9DAA}
 DAS_DEFINE_GUID(
     DAS_IID_SWIG_PLUGIN,
-    IDasSwigPlugin,
+    IDasSwigPluginPackage,
     0x3f11fbb2,
     0xb19f,
     0x4c3e,
@@ -74,21 +74,24 @@ DAS_DEFINE_GUID(
     0xff,
     0x9d,
     0xaa);
-DAS_SWIG_DIRECTOR_ATTRIBUTE(IDasSwigPlugin)
+DAS_SWIG_DIRECTOR_ATTRIBUTE(IDasSwigPluginPackage)
 /**
  * @brief Plugin should define DasRetPlugin DasCoCreatePlugin()
  *
  */
-DAS_INTERFACE IDasSwigPlugin : public IDasSwigBase
+DAS_INTERFACE IDasSwigPluginPackage : public IDasSwigBase
 {
     virtual DasRetPluginFeature EnumFeature(size_t index) = 0;
     virtual DasRetSwigBase      CreateFeatureInterface(size_t index) = 0;
     virtual DasResult           CanUnloadPlugin() = 0;
 };
 
-DAS_DEFINE_RET_POINTER(DasRetPlugin, IDasSwigPlugin);
+DAS_DEFINE_RET_POINTER(DasRetPlugin, IDasSwigPluginPackage);
 
+/**
+* @brief 非C/C++编写的插件，在初始化完插件对象后，调用这个函数注册到DasCore中
+*/
 DAS_API DasResult
-DasRegisterPluginObject(DasResult error_code, IDasSwigPlugin* p_swig_plugin);
+DasRegisterPluginPackageObject(DasResult error_code, IDasSwigPluginPackage* p_swig_plugin);
 
 #endif // DAS_IPLUGIN_H

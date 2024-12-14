@@ -1,9 +1,9 @@
 #ifndef DAS_PLUGINS_DASADBCAPTURE_PLUGINIMPL_H
 #define DAS_PLUGINS_DASADBCAPTURE_PLUGINIMPL_H
 
-#include <das/PluginInterface/IDasPlugin.h>
-#include <das/Utils/CommonUtils.hpp>
 #include <cstdint>
+#include <das/PluginInterface/IDasPluginPackage.h>
+#include <das/Utils/CommonUtils.hpp>
 #include <unordered_map>
 
 // {EAC73FD2-5674-4796-8298-71B80727E993}
@@ -24,7 +24,7 @@ DAS_DEFINE_CLASS_IN_NAMESPACE(
 
 DAS_NS_BEGIN
 
-class AdbCapturePlugin final : public IDasPlugin
+class AdbCapturePlugin final : public IDasPluginPackage
 {
 private:
     DAS::Utils::RefCounter<AdbCapturePlugin> ref_counter_;
@@ -35,7 +35,7 @@ public:
     int64_t   Release() override;
     DasResult QueryInterface(const DasGuid& guid, void** pp_out_object)
         override;
-    // IDasPlugin
+    // IDasPluginPackage
     DasResult EnumFeature(const size_t index, DasPluginFeature* p_out_feature)
         override;
     DasResult CreateFeatureInterface(size_t index, void** pp_out_interface)

@@ -2,11 +2,11 @@
 #define DAS_CORE_FOREIGNINTERFACEHOST_PLUGINFILEMANAGER_H
 
 #include "Plugin.h"
-#include <das/Core/ForeignInterfaceHost/DasGuid.h>
-#include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
 #include <das/Core/ForeignInterfaceHost/ComponentFactoryManager.h>
 #include <das/Core/ForeignInterfaceHost/Config.h>
 #include <das/Core/ForeignInterfaceHost/CppSwigInterop.h>
+#include <das/Core/ForeignInterfaceHost/DasGuid.h>
+#include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
 #include <das/Core/ForeignInterfaceHost/ErrorLensManager.h>
 #include <das/Core/ForeignInterfaceHost/InputFactoryManager.h>
 #include <das/Core/ForeignInterfaceHost/TaskManager.h>
@@ -183,8 +183,8 @@ public:
      */
     struct InterfaceStaticStorage
     {
-        std::filesystem::path       path;
-        std::shared_ptr<PluginDesc> sp_desc;
+        std::filesystem::path              path;
+        std::shared_ptr<PluginPackageDesc> sp_desc;
     };
     using InterfaceStaticStorageMap =
         std::unordered_map<DasGuid, InterfaceStaticStorage>;
@@ -214,7 +214,7 @@ private:
         IDasSwigTypeInfo*             p_swig_interface,
         const InterfaceStaticStorage& storage);
 
-    static std::unique_ptr<PluginDesc> GetPluginDesc(
+    static std::unique_ptr<PluginPackageDesc> GetPluginDesc(
         const std::filesystem::path& metadata_path,
         bool                         is_directory);
 
@@ -277,9 +277,8 @@ public:
         const DasGuid&      plugin_guid,
         IDasReadOnlyString* p_json);
     DasResult ResetPluginSettings(const DasGuid& plugin_guid);
-    auto      FindInterfaceStaticStorage(DasGuid iid)
-        -> Utils::Expected<
-            std::reference_wrapper<const InterfaceStaticStorage>>;
+    auto      FindInterfaceStaticStorage(DasGuid iid) -> Utils::Expected<
+             std::reference_wrapper<const InterfaceStaticStorage>>;
 };
 
 extern PluginManager g_plugin_manager;

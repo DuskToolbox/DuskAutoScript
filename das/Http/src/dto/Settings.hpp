@@ -25,16 +25,17 @@ using AppDescList = ApiResponse<oatpp::List<oatpp::Object<AppDesc>>>;
 
 // 插件描述符
 // Plugin descriptor
-class PluginDesc : public oatpp::DTO
+class PluginPackageDesc : public oatpp::DTO
 {
 
-    DTO_INIT(PluginDesc, DTO)
+    DTO_INIT(PluginPackageDesc, DTO)
 
     DTO_FIELD(String, name, "name");
     DTO_FIELD(String, plugin_id, "plugin_id");
 };
 
-using PluginDescList = ApiResponse<oatpp::List<oatpp::Object<PluginDesc>>>;
+using PluginPackageDescList =
+    ApiResponse<oatpp::List<oatpp::Object<PluginPackageDesc>>>;
 
 // 任务描述符
 // Task descriptor

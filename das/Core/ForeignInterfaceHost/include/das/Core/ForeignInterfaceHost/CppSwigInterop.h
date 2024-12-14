@@ -14,7 +14,7 @@
 #include <das/PluginInterface/IDasComponent.h>
 #include <das/PluginInterface/IDasErrorLens.h>
 #include <das/PluginInterface/IDasInput.h>
-#include <das/PluginInterface/IDasPlugin.h>
+#include <das/PluginInterface/IDasPluginPackage.h>
 #include <das/PluginInterface/IDasTask.h>
 #include <das/Utils/Expected.h>
 #include <das/Utils/QueryInterface.hpp>
@@ -350,7 +350,7 @@ public:
     DasResult GetNextExecutionTime(DasDate* p_out_date) override;
     DasResult GetName(IDasReadOnlyString** pp_out_name) override;
     DasResult GetDescription(IDasReadOnlyString** pp_out_settings) override;
-    DasResult GetLabel(IDasReadOnlyString** pp_out_label) override;
+    DasResult GetGameName(IDasReadOnlyString** pp_out_label) override;
 };
 
 template <>

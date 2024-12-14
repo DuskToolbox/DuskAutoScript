@@ -1,9 +1,9 @@
 #ifndef DAS_CORE_FOREIGNINTERFACEHOST_TASKMANAGER_H
 #define DAS_CORE_FOREIGNINTERFACEHOST_TASKMANAGER_H
 
+#include <das/Core/ForeignInterfaceHost/Config.h>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
-#include <das/Core/ForeignInterfaceHost/Config.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
 #include <das/ExportInterface/IDasTaskScheduler.h>
 #include <das/PluginInterface/IDasTask.h>
@@ -117,13 +117,13 @@ private:
 
 public:
     DasResult Register(
-        std::shared_ptr<PluginDesc> sp_desc,
-        IDasTask*                   p_task,
-        DasGuid                     guid);
+        std::shared_ptr<PluginPackageDesc> sp_desc,
+        IDasTask*                          p_task,
+        DasGuid                            guid);
     DasResult Register(
-        std::shared_ptr<PluginDesc> sp_desc,
-        IDasSwigTask*               p_swig_task,
-        DasGuid                     guid);
+        std::shared_ptr<PluginPackageDesc> sp_desc,
+        IDasSwigTask*                      p_swig_task,
+        DasGuid                            guid);
     DasResult FindInterface(const DasGuid& guid, IDasTask** pp_out_task);
 };
 

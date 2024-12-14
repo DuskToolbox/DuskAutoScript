@@ -18,7 +18,7 @@
 #include <das/PluginInterface/IDasCapture.h>
 #include <das/PluginInterface/IDasErrorLens.h>
 #include <das/PluginInterface/IDasInput.h>
-#include <das/PluginInterface/IDasPlugin.h>
+#include <das/PluginInterface/IDasPluginPackage.h>
 #include <das/PluginInterface/IDasTask.h>
 
 #include <das/ExportInterface/DasCV.h>
@@ -159,7 +159,7 @@ PyInit__DasCorePythonExport(void) {
 %include <das/PluginInterface/IDasCapture.h>
 %include <das/PluginInterface/IDasErrorLens.h>
 %include <das/PluginInterface/IDasInput.h>
-%include <das/PluginInterface/IDasPlugin.h>
+%include <das/PluginInterface/IDasPluginPackage.h>
 %include <das/PluginInterface/IDasTask.h>
 
 %include <das/ExportInterface/DasCV.h>

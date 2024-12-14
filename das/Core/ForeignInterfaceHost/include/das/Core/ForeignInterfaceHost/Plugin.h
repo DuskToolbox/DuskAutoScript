@@ -3,11 +3,11 @@
 
 #include "ForeignInterfaceHost.h"
 #include "IDasPluginManagerImpl.h"
-#include <das/DasPtr.hpp>
-#include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/Config.h>
+#include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHostEnum.h>
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
+#include <das/DasPtr.hpp>
 #include <das/IDasBase.h>
 #include <unordered_set>
 
@@ -21,18 +21,18 @@ class Plugin
 {
     friend class PluginManager;
 
-    DasPtr<IForeignLanguageRuntime> p_runtime_{};
-    CommonPluginPtr                 p_plugin_{};
-    std::shared_ptr<PluginDesc>     sp_desc_{};
-    DasResult                       load_state_{
+    DasPtr<IForeignLanguageRuntime>    p_runtime_{};
+    CommonPluginPtr                    p_plugin_{};
+    std::shared_ptr<PluginPackageDesc> sp_desc_{};
+    DasResult                          load_state_{
         DAS_E_UNDEFINED_RETURN_VALUE}; // NOTE: 4 byte padding here.
     DasPtr<IDasReadOnlyString> load_error_message_{};
 
 public:
     Plugin(
-        DasPtr<IForeignLanguageRuntime> p_runtime,
-        CommonPluginPtr                 p_plugin,
-        std::unique_ptr<PluginDesc>     up_desc);
+        DasPtr<IForeignLanguageRuntime>    p_runtime,
+        CommonPluginPtr                    p_plugin,
+        std::unique_ptr<PluginPackageDesc> up_desc);
     /**
      * @brief 出错时使用此构造函数
      *

@@ -1,10 +1,11 @@
 #include "das/Core/Exceptions/PythonException.h"
 #include "das/ExportInterface/IDasPluginManager.h"
 
-#include <das/DasString.hpp>
+#include <algorithm>
+#include <boost/pfr/core.hpp>
+#include <das/Core/ForeignInterfaceHost/CppSwigInterop.h>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
-#include <das/Core/ForeignInterfaceHost/CppSwigInterop.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
 #include <das/Core/ForeignInterfaceHost/IDasCaptureManagerImpl.h>
 #include <das/Core/ForeignInterfaceHost/IDasPluginManagerImpl.h>
@@ -14,6 +15,7 @@
 #include <das/Core/Utils/InternalUtils.h>
 #include <das/Core/i18n/DasResultTranslator.h>
 #include <das/Core/i18n/GlobalLocale.h>
+#include <das/DasString.hpp>
 #include <das/IDasBase.h>
 #include <das/PluginInterface/IDasErrorLens.h>
 #include <das/PluginInterface/IDasTask.h>
@@ -22,8 +24,6 @@
 #include <das/Utils/StreamUtils.hpp>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/UnexpectedEnumException.h>
-#include <algorithm>
-#include <boost/pfr/core.hpp>
 #include <fstream>
 #include <functional>
 #include <magic_enum.hpp>
@@ -183,8 +183,8 @@ auto CreateInterface(
         "Error code = {}. Plugin Name = {}.";
     return std::visit(
         DAS::Utils::overload_set{
-            [index, u8_plugin_name](
-                DasPtr<IDasPlugin> p_plugin) -> std::optional<CommonBasePtr>
+            [index, u8_plugin_name](DasPtr<IDasPluginPackage> p_plugin)
+                -> std::optional<CommonBasePtr>
             {
                 DasPtr<IDasBase> result{};
                 if (const auto cfi_result = p_plugin->CreateFeatureInterface(
@@ -200,8 +200,8 @@ auto CreateInterface(
                 }
                 return result;
             },
-            [index, u8_plugin_name](
-                DasPtr<IDasSwigPlugin> p_plugin) -> std::optional<CommonBasePtr>
+            [index, u8_plugin_name](DasPtr<IDasSwigPluginPackage> p_plugin)
+                -> std::optional<CommonBasePtr>
             {
                 DasRetSwigBase cfi_result{};
                 cfi_result = p_plugin->CreateFeatureInterface(index);
@@ -519,9 +519,9 @@ auto RegisterErrorLensFromPlugin(
 }
 
 auto RegisterTaskFromPlugin(
-    TaskManager&                task_manager,
-    std::shared_ptr<PluginDesc> sp_plugin_desc,
-    GetInterfaceFromPluginParam param) -> DasResult
+    TaskManager&                       task_manager,
+    std::shared_ptr<PluginPackageDesc> sp_plugin_desc,
+    GetInterfaceFromPluginParam        param) -> DasResult
 {
     const auto& [u8_plugin_name, common_p_base] = param;
 
@@ -742,9 +742,9 @@ auto RegisterComponentFactoryFromPlugin(
     }
 
     return std::visit(
-        Utils::overload_set{[&component_factory_manager](const auto& value) {
-            return component_factory_manager.Register(value.Get());
-        }},
+        Utils::overload_set{
+            [&component_factory_manager](const auto& value)
+            { return component_factory_manager.Register(value.Get()); }},
         expected_common_p_component_factory.value());
 }
 
@@ -918,13 +918,15 @@ DasResult PluginManager::AddInterface(
                 std::visit(
                     DAS::Utils::overload_set{
                         [this,
-                         &storage](const DasPtr<IDasTypeInfo>& p_type_info) {
+                         &storage](const DasPtr<IDasTypeInfo>& p_type_info)
+                        {
                             RegisterInterfaceStaticStorage(
                                 p_type_info.Get(),
                                 storage);
                         },
-                        [this, &storage](
-                            const DasPtr<IDasSwigTypeInfo>& p_type_info) {
+                        [this,
+                         &storage](const DasPtr<IDasSwigTypeInfo>& p_type_info)
+                        {
                             RegisterInterfaceStaticStorage(
                                 p_type_info.Get(),
                                 storage);
@@ -1053,12 +1055,12 @@ void PluginManager::RegisterInterfaceStaticStorage(
     guid_storage_map_[ret_guid.value] = storage;
 }
 
-std::unique_ptr<PluginDesc> PluginManager::GetPluginDesc(
+std::unique_ptr<PluginPackageDesc> PluginManager::GetPluginDesc(
     const std::filesystem::path& metadata_path,
     bool                         is_directory)
 {
-    std::unique_ptr<PluginDesc> result{};
-    std::ifstream               plugin_config_stream{};
+    std::unique_ptr<PluginPackageDesc> result{};
+    std::ifstream                      plugin_config_stream{};
 
     DAS::Utils::EnableStreamException(
         plugin_config_stream,
@@ -1066,7 +1068,8 @@ std::unique_ptr<PluginDesc> PluginManager::GetPluginDesc(
         [&metadata_path](auto& stream) { stream.open(metadata_path.c_str()); });
 
     const auto config = nlohmann::json::parse(plugin_config_stream);
-    result = std::make_unique<PluginDesc>(config.get<PluginDesc>());
+    result =
+        std::make_unique<PluginPackageDesc>(config.get<PluginPackageDesc>());
 
     if (!is_directory)
     {
@@ -1203,7 +1206,7 @@ DasResult PluginManager::Refresh(IDasReadOnlyGuidVector* p_ignored_guid_vector)
         if (DAS_UTILS_STRINGUTILS_COMPARE_STRING(extension, ".json"))
         {
             DasResult plugin_create_result{DAS_E_UNDEFINED_RETURN_VALUE};
-            std::unique_ptr<PluginDesc> up_plugin_desc{};
+            std::unique_ptr<PluginPackageDesc> up_plugin_desc{};
 
             try
             {
@@ -1475,7 +1478,7 @@ auto PluginManager::GetInterfaceStaticStorage(IDasTypeInfo* p_type_info) const
 
 auto PluginManager::GetInterfaceStaticStorage(IDasSwigTypeInfo* p_type_info)
     const -> DAS::Utils::Expected<
-              std::reference_wrapper<const InterfaceStaticStorage>>
+        std::reference_wrapper<const InterfaceStaticStorage>>
 {
     if (p_type_info == nullptr)
     {
@@ -1766,7 +1769,9 @@ class InternalIDasInitializeIDasPluginManagerWaiterImpl final
         {
             DAS_CORE_LOG_INFO(
                 "Calling IDasInitializeIDasPluginManagerCallback::OnFinished()!");
-            const auto result = p_on_finished_->OnFinished(initialize_result, &g_plugin_manager);
+            const auto result = p_on_finished_->OnFinished(
+                initialize_result,
+                g_plugin_manager);
             DAS_CORE_LOG_INFO("Call finished. Result = {}.", result);
             return result;
         }

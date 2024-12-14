@@ -15,7 +15,8 @@ Das::Core::ForeignInterfaceHost::TemporaryPluginObjectStorage::
 }
 
 auto Das::Core::ForeignInterfaceHost::TemporaryPluginObjectStorage::
-    TemporaryPluginObjectStorageReader::GetObject() -> DasPtr<IDasSwigPlugin>
+    TemporaryPluginObjectStorageReader::GetObject()
+        -> DasPtr<IDasSwigPluginPackage>
 {
     return std::exchange(storage_.p_plugin_, {});
 }

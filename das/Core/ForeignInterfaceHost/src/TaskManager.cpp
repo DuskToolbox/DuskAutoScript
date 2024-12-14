@@ -11,10 +11,10 @@ DAS_NS_ANONYMOUS_DETAILS_BEGIN
 
 template <class Map>
 DasResult AddTask(
-    Map&                          map,
-    std::shared_ptr<PluginDesc>   sp_desc,
-    DasGuid                       key,
-    DasPtr<TaskManager::TaskInfo> value)
+    Map&                               map,
+    std::shared_ptr<PluginPackageDesc> sp_desc,
+    DasGuid                            key,
+    DasPtr<TaskManager::TaskInfo>      value)
 {
     if (const auto it = map.find(key); it != map.end())
     {
@@ -27,7 +27,8 @@ DasResult AddTask(
     const boost::signals2::scoped_connection connection =
         sp_desc->on_settings_changed.connect(
             [p_same_weak_task_info = std::move(p_weak_task_info)](
-                std::shared_ptr<PluginDesc::SettingsJson> sp_settings_json)
+                std::shared_ptr<PluginPackageDesc::SettingsJson>
+                    sp_settings_json)
             {
                 DasPtr<IDasBase> p_base{};
                 const auto       resolve_result =
@@ -331,9 +332,9 @@ DasResult TaskManager::TaskInfoWeakRefImpl::Resolve(IDasBase** pp_out_object)
 }
 
 DasResult TaskManager::Register(
-    std::shared_ptr<PluginDesc> sp_desc,
-    IDasTask*                   p_task,
-    DasGuid                     guid)
+    std::shared_ptr<PluginPackageDesc> sp_desc,
+    IDasTask*                          p_task,
+    DasGuid                            guid)
 {
     const auto p_task_info = MakeDasPtr<TaskInfo>(p_task);
     const auto error_code = Details::AddTask(map_, sp_desc, guid, p_task_info);
@@ -349,9 +350,9 @@ DasResult TaskManager::Register(
 }
 
 DasResult TaskManager::Register(
-    std::shared_ptr<PluginDesc> sp_desc,
-    IDasSwigTask*               p_swig_task,
-    DasGuid                     guid)
+    std::shared_ptr<PluginPackageDesc> sp_desc,
+    IDasSwigTask*                      p_swig_task,
+    DasGuid                            guid)
 {
     auto expected_p_task = MakeInterop<IDasTask>(p_swig_task);
     if (!expected_p_task)

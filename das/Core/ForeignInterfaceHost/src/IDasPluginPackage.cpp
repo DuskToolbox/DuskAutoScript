@@ -1,9 +1,9 @@
 #include "TemporaryPluginObjectStorage.h"
 #include <das/Core/ForeignInterfaceHost/CppSwigInterop.h>
 #include <das/Core/Logger/Logger.h>
-#include <das/PluginInterface/IDasPlugin.h>
+#include <das/PluginInterface/IDasPluginPackage.h>
 
-DasResult DasRegisterPluginObject(DasResult error_code, IDasSwigPlugin* p_swig_plugin)
+DasResult DasRegisterPluginPackageObject(DasResult error_code, IDasSwigPluginPackage* p_swig_plugin)
 {
     DasResult result{DAS_S_OK};
 

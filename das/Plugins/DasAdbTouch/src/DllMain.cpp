@@ -4,7 +4,7 @@
 #include "PluginImpl.h"
 #include <new>
 
-DAS_C_API DasResult DasCoCreatePlugin(IDasPlugin** pp_out_plugin)
+DAS_C_API DasResult DasCoCreatePlugin(IDasPluginPackage** pp_out_plugin)
 {
     if (pp_out_plugin == nullptr)
     {

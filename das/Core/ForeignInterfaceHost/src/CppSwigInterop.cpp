@@ -3,7 +3,7 @@
 #include <das/DasPtr.hpp>
 #include <das/ExportInterface/IDasPluginManager.h>
 #include <das/IDasBase.h>
-#include <das/PluginInterface/IDasPlugin.h>
+#include <das/PluginInterface/IDasPluginPackage.h>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
@@ -245,11 +245,11 @@ DasResult SwigToCpp<IDasSwigTask>::GetDescription(
         pp_out_settings);
 }
 
-DasResult SwigToCpp<IDasSwigTask>::GetLabel(IDasReadOnlyString** pp_out_label)
+DasResult SwigToCpp<IDasSwigTask>::GetGameName(IDasReadOnlyString** pp_out_label)
 {
     DAS_CORE_FOREIGNINTERFACEHOST_CALL_SWIG_METHOD_IMPL_AND_HANDLE_EXCEPTION(
         p_impl_.Get(),
-        &IDasSwigTask::GetLabel,
+        &IDasSwigTask::GetGameName,
         pp_out_label);
 }
 
@@ -446,10 +446,11 @@ DasResult CommonPluginEnumFeature(
 
     return std::visit(
         DAS::Utils::overload_set{
-            [index, p_out_feature](DasPtr<IDasPlugin> p_plugin) -> DasResult
-            { return p_plugin->EnumFeature(index, p_out_feature); },
             [index,
-             p_out_feature](DasPtr<IDasSwigPlugin> p_swig_plugin) -> DasResult
+             p_out_feature](DasPtr<IDasPluginPackage> p_plugin) -> DasResult
+            { return p_plugin->EnumFeature(index, p_out_feature); },
+            [index, p_out_feature](
+                DasPtr<IDasSwigPluginPackage> p_swig_plugin) -> DasResult
             {
                 const auto result = p_swig_plugin->EnumFeature(index);
                 if (DAS::IsOk(result.error_code))

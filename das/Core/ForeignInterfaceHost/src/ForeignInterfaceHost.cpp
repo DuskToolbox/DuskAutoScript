@@ -1,4 +1,6 @@
+// clang-format off
 #include <das/DasConfig.h>
+// clang-format on
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
 #include <das/Core/Logger/Logger.h>
@@ -150,10 +152,11 @@ auto(DAS_FMT_NS::formatter<
     return result;
 }
 
-auto(DAS_FMT_NS::formatter<DAS::Core::ForeignInterfaceHost::PluginDesc, char>::
-         format)(
-    const DAS::Core::ForeignInterfaceHost::PluginDesc& desc,
-    format_context&                                    ctx) const ->
+auto(DAS_FMT_NS::formatter<
+     DAS::Core::ForeignInterfaceHost::PluginPackageDesc,
+     char>::format)(
+    const DAS::Core::ForeignInterfaceHost::PluginPackageDesc& desc,
+    format_context&                                           ctx) const ->
     typename std::remove_reference_t<decltype(ctx)>::iterator
 {
     auto result = ctx.out();
@@ -248,19 +251,19 @@ void from_json(const nlohmann::json& input, PluginSettingDesc& output)
         output.deprecation_message);
 }
 
-void PluginDesc::SettingsJson::SetValue(IDasReadOnlyString* p_json)
+void PluginPackageDesc::SettingsJson::SetValue(IDasReadOnlyString* p_json)
 {
     std::lock_guard _{mutex_};
     settings_json_ = p_json;
 }
 
-void PluginDesc::SettingsJson::GetValue(IDasReadOnlyString** pp_out_json)
+void PluginPackageDesc::SettingsJson::GetValue(IDasReadOnlyString** pp_out_json)
 {
     std::lock_guard _{mutex_};
     Utils::SetResult(settings_json_, pp_out_json);
 }
 
-void from_json(const nlohmann::json& input, PluginDesc& output)
+void from_json(const nlohmann::json& input, PluginPackageDesc& output)
 {
     DAS_CORE_TRACE_SCOPE;
 

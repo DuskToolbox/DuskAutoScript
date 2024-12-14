@@ -5,9 +5,9 @@
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
 Plugin::Plugin(
-    DasPtr<IForeignLanguageRuntime> p_runtime,
-    CommonPluginPtr                 p_plugin,
-    std::unique_ptr<PluginDesc>     up_desc)
+    DasPtr<IForeignLanguageRuntime>    p_runtime,
+    CommonPluginPtr                    p_plugin,
+    std::unique_ptr<PluginPackageDesc> up_desc)
     : p_runtime_{std::move(p_runtime)}, p_plugin_{std::move(p_plugin)},
       sp_desc_{std::move(up_desc)}, load_state_{DAS_S_OK}, load_error_message_{}
 {

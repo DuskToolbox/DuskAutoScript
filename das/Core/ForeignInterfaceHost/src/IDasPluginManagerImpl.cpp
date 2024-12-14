@@ -184,7 +184,7 @@ DasRetReadOnlyString DasPluginInfoImpl::GetDasStringImpl()
     return {error_code, DasReadOnlyString{std::move(p_result)}};
 }
 
-DasPluginInfoImpl::DasPluginInfoImpl(std::shared_ptr<PluginDesc> sp_desc)
+DasPluginInfoImpl::DasPluginInfoImpl(std::shared_ptr<PluginPackageDesc> sp_desc)
     : ref_counter_{}, sp_desc_{sp_desc}, cpp_projection_{*this},
       swig_projection_{*this}
 {
@@ -196,29 +196,29 @@ int64_t DasPluginInfoImpl::Release() { return ref_counter_.Release(this); }
 
 DAS_IMPL DasPluginInfoImpl::GetName(IDasReadOnlyString** pp_out_name)
 {
-    return GetStringImpl<&PluginDesc::name>(pp_out_name);
+    return GetStringImpl<&PluginPackageDesc::name>(pp_out_name);
 }
 
 DAS_IMPL DasPluginInfoImpl::GetDescription(
     IDasReadOnlyString** pp_out_description)
 {
-    return GetStringImpl<&PluginDesc::description>(pp_out_description);
+    return GetStringImpl<&PluginPackageDesc::description>(pp_out_description);
 }
 
 DAS_IMPL DasPluginInfoImpl::GetAuthor(IDasReadOnlyString** pp_out_author)
 {
-    return GetStringImpl<&PluginDesc::author>(pp_out_author);
+    return GetStringImpl<&PluginPackageDesc::author>(pp_out_author);
 }
 
 DAS_IMPL DasPluginInfoImpl::GetVersion(IDasReadOnlyString** pp_out_version)
 {
-    return GetStringImpl<&PluginDesc::version>(pp_out_version);
+    return GetStringImpl<&PluginPackageDesc::version>(pp_out_version);
 }
 
 DAS_IMPL DasPluginInfoImpl::GetSupportedSystem(
     IDasReadOnlyString** pp_out_supported_system)
 {
-    return GetStringImpl<&PluginDesc::supported_system>(
+    return GetStringImpl<&PluginPackageDesc::supported_system>(
         pp_out_supported_system);
 }
 
@@ -239,27 +239,27 @@ DasResult DasPluginInfoImpl::GetPluginSettingsDescriptor(
 
 DasRetReadOnlyString DasPluginInfoImpl::GetName()
 {
-    return GetDasStringImpl<&PluginDesc::name>();
+    return GetDasStringImpl<&PluginPackageDesc::name>();
 }
 
 DasRetReadOnlyString DasPluginInfoImpl::GetDescription()
 {
-    return GetDasStringImpl<&PluginDesc::description>();
+    return GetDasStringImpl<&PluginPackageDesc::description>();
 }
 
 DasRetReadOnlyString DasPluginInfoImpl::GetAuthor()
 {
-    return GetDasStringImpl<&PluginDesc::author>();
+    return GetDasStringImpl<&PluginPackageDesc::author>();
 }
 
 DasRetReadOnlyString DasPluginInfoImpl::GetVersion()
 {
-    return GetDasStringImpl<&PluginDesc::version>();
+    return GetDasStringImpl<&PluginPackageDesc::version>();
 }
 
 DasRetReadOnlyString DasPluginInfoImpl::GetSupportedSystem()
 {
-    return GetDasStringImpl<&PluginDesc::supported_system>();
+    return GetDasStringImpl<&PluginPackageDesc::supported_system>();
 }
 
 DasRetGuid DasPluginInfoImpl::GetPluginIid()

@@ -1,11 +1,11 @@
 #include "CppHost.h"
-#include <das/DasPtr.hpp>
+#include <boost/dll/shared_library.hpp>
 #include <das/Core/Logger/Logger.h>
+#include <das/DasPtr.hpp>
 #include <das/IDasBase.h>
-#include <das/PluginInterface/IDasPlugin.h>
+#include <das/PluginInterface/IDasPluginPackage.h>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/Expected.h>
-#include <boost/dll/shared_library.hpp>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
@@ -33,8 +33,8 @@ public:
             const auto& p_init_function =
                 plugin_lib_.get<::DasCoCreatePluginFunction>(
                     DASCOCREATEPLUGIN_NAME);
-            DasPtr<IDasPlugin> p_plugin{};
-            const auto         error_code = p_init_function(p_plugin.Put());
+            DasPtr<IDasPluginPackage> p_plugin{};
+            const auto error_code = p_init_function(p_plugin.Put());
             if (DAS::IsOk(error_code))
             {
                 return p_plugin;

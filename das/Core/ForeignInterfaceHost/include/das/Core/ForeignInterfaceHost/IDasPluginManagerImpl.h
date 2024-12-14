@@ -103,7 +103,7 @@ DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 class DasPluginInfoImpl
 {
     DAS::Utils::RefCounter<DasPluginInfoImpl> ref_counter_;
-    std::shared_ptr<PluginDesc>               sp_desc_;
+    std::shared_ptr<PluginPackageDesc>               sp_desc_;
     IDasPluginInfoImpl                        cpp_projection_;
     IDasSwigPluginInfoImpl                    swig_projection_;
 
@@ -113,7 +113,7 @@ class DasPluginInfoImpl
     DasRetReadOnlyString GetDasStringImpl();
 
 public:
-    DasPluginInfoImpl(std::shared_ptr<PluginDesc> sp_desc);
+    DasPluginInfoImpl(std::shared_ptr<PluginPackageDesc> sp_desc);
 
     int64_t AddRef();
     int64_t Release();

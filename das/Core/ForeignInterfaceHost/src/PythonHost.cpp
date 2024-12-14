@@ -10,7 +10,6 @@
 #include <das/Core/TaskScheduler/TaskScheduler.h>
 #include <das/Utils/CommonUtils.hpp>
 
-
 DAS_DISABLE_WARNING_BEGIN
 DAS_IGNORE_UNUSED_PARAMETER
 
@@ -359,7 +358,7 @@ auto PythonRuntime::LoadPlugin(const std::filesystem::path& path)
 {
     DAS::Utils::OnExit on_exit{
         [] { ::PyEval_ReleaseThread(::PyThreadState_Get()); }};
-    DasPtr<IDasSwigPlugin> result{};
+    DasPtr<IDasSwigPluginPackage> result{};
 
     const auto expected_py_module = ImportPluginModule(path);
     if (!expected_py_module)
@@ -475,7 +474,8 @@ auto PythonRuntime::ImportPluginModule(
         return PythonResult{
             Details::PyUnicodeFromU8String(package_path.value().c_str())}
             .then(
-                [](auto py_package_path) {
+                [](auto py_package_path)
+                {
                     return PyObjectPtr::Attach(
                         PyImport_Import(py_package_path));
                 })

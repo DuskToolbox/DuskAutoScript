@@ -167,12 +167,12 @@ public:
     ENDPOINT("GET", "/api/settings/plugin/list", get_plugin_list)
     {
 
-        auto response = PluginDescList::createShared();
+        auto response = PluginPackageDescList::createShared();
         response->code = DAS_S_OK;
         response->message = "";
 
         // temp test code
-        auto plugin1 = PluginDesc::createShared(); // AzurPromilia1
+        auto plugin1 = PluginPackageDesc::createShared(); // AzurPromilia1
         plugin1->name = reinterpret_cast<const char*>(u8"蓝色星原-国服-插件1");
         plugin1->plugin_id = "4227E5C2-D23B-6CEA-407A-5EA189019626";
 

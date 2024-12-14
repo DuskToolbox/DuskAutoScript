@@ -111,7 +111,7 @@ DAS_INTERFACE IDasSwigTask : public IDasSwigTypeInfo
     virtual DasRetDate           GetNextExecutionTime() = 0;
     virtual DasRetReadOnlyString GetName() = 0;
     virtual DasRetReadOnlyString GetDescription() = 0;
-    virtual DasRetReadOnlyString GetLabel() = 0;
+    virtual DasRetReadOnlyString GetGameName() = 0;
 };
 
 #endif // DAS_ITASK_H

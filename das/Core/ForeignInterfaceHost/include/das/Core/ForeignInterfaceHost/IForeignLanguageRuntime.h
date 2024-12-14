@@ -2,7 +2,7 @@
 #define DAS_CORE_FOREIGNINTERFACEHOST_IFOREIGNLANGUAGERUNTIME_H
 
 #include <das/DasPtr.hpp>
-#include <das/PluginInterface/IDasPlugin.h>
+#include <das/PluginInterface/IDasPluginPackage.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHostEnum.h>
 #include <variant>
 #include <das/IDasBase.h>
@@ -11,7 +11,7 @@
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
 using CommonPluginPtr =
-    std::variant<DasPtr<IDasPlugin>, DasPtr<IDasSwigPlugin>>;
+    std::variant<DasPtr<IDasPluginPackage>, DasPtr<IDasSwigPluginPackage>>;
 
 /**
  * @brief 创建语言runtime必须的内容，一次性给够够全部语言runtime创建的信息

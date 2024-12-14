@@ -3,19 +3,19 @@
 
 #include <das/Core/ForeignInterfaceHost/Config.h>
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
-#include <das/PluginInterface/IDasPlugin.h>
+#include <das/PluginInterface/IDasPluginPackage.h>
 #include <mutex>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
 class TemporaryPluginObjectStorage
 {
-    std::mutex             mutex_{};
-    DasPtr<IDasSwigPlugin> p_plugin_{};
+    std::mutex                    mutex_{};
+    DasPtr<IDasSwigPluginPackage> p_plugin_{};
 
-    friend DasResult(::DasRegisterPluginObject)(
-        DasResult       error_code,
-        IDasSwigPlugin* p_swig_plugin);
+    friend DasResult(::DasRegisterPluginPackageObject)(
+        DasResult              error_code,
+        IDasSwigPluginPackage* p_swig_plugin);
 
     void ObtainOwnership();
     void ReleaseOwnership();
@@ -30,7 +30,7 @@ public:
             TemporaryPluginObjectStorage& storage);
         ~TemporaryPluginObjectStorageReader();
 
-        auto GetObject() -> DasPtr<IDasSwigPlugin>;
+        auto GetObject() -> DasPtr<IDasSwigPluginPackage>;
     };
 
     friend TemporaryPluginObjectStorageReader;
