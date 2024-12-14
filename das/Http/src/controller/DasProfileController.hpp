@@ -201,14 +201,14 @@ public:
     }
 
 private:
-    void ReadProperty(
+    static void ReadProperty(
         oatpp::data::mapping::type::String& property_string,
         IDasTaskInfo*                       p_task_info,
         size_t                              property_index)
     {
         const char* p_property{nullptr};
         if (const auto error_code = p_task_info->GetProperty(
-                DAS_TASK_INFO_PROPERTIES[DAS_TASK_INFO_PROPERTIES_NAME_INDEX],
+                DAS_TASK_INFO_PROPERTIES[property_index],
                 &p_property);
             DAS::IsFailed(error_code))
         {
@@ -246,18 +246,18 @@ private:
                 json_object_mapper_->writeToString(response));
         }
 
-        size_t index;
-        do
+        for (auto [error_code, index, p_task_info] =
+                 std::tuple<DasResult, size_t, DAS::DasPtr<IDasTaskInfo>>{
+                     DAS_E_UNDEFINED_RETURN_VALUE,
+                     0,
+                     {}};
+             error_code =
+                 p_task_info_vector->EnumByIndex(index, p_task_info.Put()),
+                                      error_code != DAS_E_OUT_OF_RANGE;
+             ++index)
         {
-            DAS::DasPtr<IDasTaskInfo> p_task_info;
-            if (const auto error_code =
-                    p_task_info_vector->EnumByIndex(index, p_task_info.Put());
-                DAS::IsFailed(error_code))
+            if (DAS::IsFailed(error_code))
             {
-                if (error_code == DAS_E_OUT_OF_RANGE)
-                {
-                    break;
-                }
                 response->code = error_code;
                 const auto message = DAS_FMT_NS::format(
                     "EnumByIndex failed. Error code = {}.",
@@ -268,6 +268,7 @@ private:
                     Status::CODE_200,
                     json_object_mapper_->writeToString(response));
             }
+
             auto    task_info = TaskDesc::createShared();
             DasGuid iid;
             p_task_info->GetIid(&iid);
@@ -281,17 +282,12 @@ private:
                 task_info->name,
                 p_task_info.Get(),
                 DAS_TASK_INFO_PROPERTIES_NAME_INDEX);
-            // TODO: plugin desc 的定义需要调整
-
-            response->data->emplace_back(task_info);
-        } while (true);
-
-        // temp test code
-        auto task1 = TaskDesc::createShared();
-        task1->name = reinterpret_cast<const char*>(u8"主线关卡");
-        task1->plugin_id = "4227E5C2-D23B-6CEA-407A-5EA189019626";
-        task1->package_name = "com.manjuu.azurpromilia";
-        task1->sub_group = reinterpret_cast<const char*>(u8"每日");
+            ReadProperty(
+                task_info->game_name,
+                p_task_info.Get(),
+                DAS_TASK_INFO_PROPERTIES_GAME_NAME_INDEX);
+            response->data->emplace_back(std::move(task_info));
+        }
 
         return createDtoResponse(
             Status::CODE_200,

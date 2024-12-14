@@ -24,7 +24,7 @@ namespace Details
 
         IDasReadOnlyString* GetName() const noexcept;
         IDasReadOnlyString* GetDescription() const noexcept;
-        IDasReadOnlyString* GetLabel() const noexcept;
+        IDasReadOnlyString* GetGameName() const noexcept;
         IDasReadOnlyString* GetTypeName() const noexcept;
         IDasReadOnlyString* GetSettingsJson() const noexcept;
         void                SetSettingsJson(IDasReadOnlyString* p_settings);
@@ -47,7 +47,7 @@ namespace Details
         DasPtr<IDasTask>                   p_task_;
         DasReadOnlyStringWrapper           name_;
         DasReadOnlyStringWrapper           description_;
-        DasReadOnlyStringWrapper           label_;
+        DasReadOnlyStringWrapper           game_name_;
         DasReadOnlyStringWrapper           type_name_;
         DasGuid                            iid_;
         DasReadOnlyStringWrapper           settings_json_;
@@ -72,7 +72,7 @@ public:
 
         IDasReadOnlyString* GetName() const noexcept;
         IDasReadOnlyString* GetDescription() const noexcept;
-        IDasReadOnlyString* GetLabel() const noexcept;
+        IDasReadOnlyString* GetGameName() const noexcept;
         IDasReadOnlyString* GetTypeName() const noexcept;
         IDasReadOnlyString* GetSettingsJson() const noexcept;
         void                SetSettingsJson(IDasReadOnlyString* p_settings);

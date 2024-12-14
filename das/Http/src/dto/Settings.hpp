@@ -10,8 +10,7 @@
  *  Define settings related data type
  */
 
-
-// 应用描述符
+// 应用描述符-
 // App descriptor
 class AppDesc : public oatpp::DTO
 {
@@ -46,14 +45,12 @@ class TaskDesc : public oatpp::DTO
 
     DTO_FIELD(String, name, "name");
     DTO_FIELD(String, plugin_id, "plugin_id");
-    DTO_FIELD(String, package_name, "package_name");
-    DTO_FIELD(String, sub_group, "sub_group");
+    DTO_FIELD(String, game_name, "game_name");
+    // 此字段由前端内部管理
+    // DTO_FIELD(String, sub_group, "sub_group");
 };
 
 using TaskDescList = ApiResponse<oatpp::List<oatpp::Object<TaskDesc>>>;
-
-
-
 
 #include OATPP_CODEGEN_END(DTO)
 

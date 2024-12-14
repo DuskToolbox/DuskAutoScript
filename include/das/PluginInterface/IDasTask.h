@@ -60,7 +60,7 @@ DAS_INTERFACE IDasTask : public IDasTypeInfo
     DAS_METHOD GetNextExecutionTime(DasDate * p_out_date) = 0;
     DAS_METHOD GetName(IDasReadOnlyString * *pp_out_name) = 0;
     DAS_METHOD GetDescription(IDasReadOnlyString * *pp_out_settings) = 0;
-    DAS_METHOD GetLabel(IDasReadOnlyString * *pp_out_label) = 0;
+    DAS_METHOD GetGameName(IDasReadOnlyString * *pp_out_label) = 0;
 };
 
 DAS_DEFINE_RET_TYPE(DasRetDate, DasDate);

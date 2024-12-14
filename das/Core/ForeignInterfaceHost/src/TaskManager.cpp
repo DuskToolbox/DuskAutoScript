@@ -104,7 +104,7 @@ Details::TaskInfoImpl::TaskInfoImpl(IDasTask* p_task)
     constexpr static char GET_LABEL_FAILED_MESSAGE[] =
         "Failed to get task label. Error code = {}.";
     result = Details::GetTaskProperty<GET_LABEL_FAILED_MESSAGE>(
-        [this, p_task] { return p_task->GetLabel(label_.Put()); });
+        [this, p_task] { return p_task->GetGameName(game_name_.Put()); });
     SetStateByCheckResult(result);
 }
 
@@ -118,9 +118,9 @@ IDasReadOnlyString* Details::TaskInfoImpl::GetDescription() const noexcept
     return description_.To<IDasReadOnlyString*>();
 }
 
-IDasReadOnlyString* Details::TaskInfoImpl::GetLabel() const noexcept
+IDasReadOnlyString* Details::TaskInfoImpl::GetGameName() const noexcept
 {
-    return label_.To<IDasReadOnlyString*>();
+    return game_name_.To<IDasReadOnlyString*>();
 }
 
 IDasReadOnlyString* Details::TaskInfoImpl::GetTypeName() const noexcept
@@ -171,9 +171,9 @@ DasResult Details::TaskInfoImpl::GetProperty(
     }
     else if (
         property_name
-        == DAS_TASK_INFO_PROPERTIES[DAS_TASK_INFO_PROPERTIES_LABEL_INDEX])
+        == DAS_TASK_INFO_PROPERTIES[DAS_TASK_INFO_PROPERTIES_GAME_NAME_INDEX])
     {
-        *pp_out_value = label_.To<const char*>();
+        *pp_out_value = game_name_.To<const char*>();
     }
     else if (
         property_name
@@ -228,9 +228,9 @@ IDasReadOnlyString* TaskManager::TaskInfo::GetDescription() const noexcept
     return sp_impl_->GetDescription();
 }
 
-IDasReadOnlyString* TaskManager::TaskInfo::GetLabel() const noexcept
+IDasReadOnlyString* TaskManager::TaskInfo::GetGameName() const noexcept
 {
-    return sp_impl_->GetLabel();
+    return sp_impl_->GetGameName();
 }
 
 IDasReadOnlyString* TaskManager::TaskInfo::GetTypeName() const noexcept
