@@ -87,8 +87,8 @@ DAS_INTERFACE IDasTaskScheduler : public IDasBase
     DAS_BOOL_METHOD IsTaskExecuting() = 0;
     DAS_METHOD      SetEnabled(DasBool enabled) = 0;
     DAS_BOOL_METHOD GetEnabled() = 0;
-    DAS_METHOD ForceStart() = 0;
-    DAS_METHOD RequestStop() = 0;
+    DAS_METHOD      ForceStart() = 0;
+    DAS_METHOD      RequestStop() = 0;
 };
 
 DAS_C_API DasResult GetIDasTaskScheduler(IDasTaskScheduler ** pp_out_task_scheduler);

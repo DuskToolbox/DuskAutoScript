@@ -82,6 +82,14 @@ class ProfileEnabled : public oatpp::DTO
     DTO_FIELD(Int32, enabled, "enabled");
 };
 
+class ProfileInfo : public oatpp::DTO
+{
+    DTO_INIT(ProfileInfo, DTO)
+
+    DTO_FIELD(String, profile_id, "profile_id");
+    DTO_FIELD(Int32, enabled, "enabled");
+};
+
 #include OATPP_CODEGEN_END(DTO)
 
 #endif // DAS_HTTP_DTO_PROFILE_HPP

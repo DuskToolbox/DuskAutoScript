@@ -35,7 +35,7 @@ public:
      *  定义日志相关API
      *  Define log related APIs
      */
-    ENDPOINT("GET", "/api/logs", get_logs)
+    ENDPOINT("POST", "/api/logs", get_logs)
     {
 
         auto response = Logs::createShared();
@@ -77,7 +77,7 @@ public:
             json_object_mapper_->writeToString(response));
     }
 
-    ENDPOINT("GET", "/api/alive", get_alive)
+    ENDPOINT("POST", "/api/alive", get_alive)
     {
         return createDtoResponse(Status::CODE_200, String{"1"});
     }

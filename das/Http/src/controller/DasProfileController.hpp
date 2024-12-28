@@ -1,6 +1,7 @@
 #ifndef DAS_HTTP_CONTROLLER_DASPROFILECONTROLLER_HPP
 #define DAS_HTTP_CONTROLLER_DASPROFILECONTROLLER_HPP
 
+#include "component/Helper.hpp"
 #include "das/ExportInterface/DasLogger.h"
 #include "das/ExportInterface/IDasSettings.h"
 #include "das/ExportInterface/IDasTaskScheduler.h"
@@ -38,9 +39,50 @@ public:
         GetIDasTaskScheduler(p_task_scheduler_.Put());
     }
 
+    ENDPOINT("POST", "/api/profile/global", get_global_profile)
+    {
+        auto response = ProfileDescList::createShared();
+        response->code = DAS_S_OK;
+        response->message = "";
+
+        DAS::DasPtr<IDasReadOnlyString> p_settings_json{};
+        const auto                      get_result =
+            ::DasLoadExtraStringForUi(p_settings_json.Put());
+        if (DAS::IsFailed(get_result))
+        {
+            const auto message =
+                DAS::Http::GetPredefinedErrorMessage(get_result);
+            DAS_LOG_ERROR(message.c_str());
+            response->code = get_result;
+            response->message = message;
+            return createDtoResponse(
+                Status::CODE_200,
+                json_object_mapper_->writeToString(response));
+        }
+
+        const char* p_u8_settings{nullptr};
+        if (const auto get_u8_result = p_settings_json->GetUtf8(&p_u8_settings);
+            DAS::IsFailed(get_result))
+        {
+            response->code = get_u8_result;
+            response->message = DAS_FMT_NS::format(
+                "Call GetUtf8 failed. Error code = {}.",
+                get_result);
+            return createDtoResponse(
+                Status::CODE_200,
+                json_object_mapper_->writeToString(response));
+        }
+
+        response->code = get_result;
+        response->data = p_u8_settings;
+        return createDtoResponse(
+            Status::CODE_200,
+            json_object_mapper_->writeToString(response));
+    }
+
     // 获取配置文件列表
     // Get profile list
-    ENDPOINT("GET", "/api/profile/list", get_profile_list)
+    ENDPOINT("POST", "/api/profile/list", get_profile_list)
     {
         auto response = ProfileDescList::createShared();
         response->code = DAS_S_OK;
@@ -99,7 +141,7 @@ public:
 
     // 获取配置文件状态
     // Get profile status
-    ENDPOINT("GET", "/api/profile/status", get_profile_status)
+    ENDPOINT("POST", "/api/profile/status", get_profile_status)
     {
         auto response = ProfileStatusList::createShared();
         response->code = DAS_S_OK;
@@ -223,7 +265,7 @@ private:
 
     // 获取任务列表
     // Get task list
-    ENDPOINT("GET", "/api/settings/task/list", get_task_list)
+    ENDPOINT("POST", "/api/settings/task/list", get_task_list)
     {
 
         auto response = TaskDescList::createShared();

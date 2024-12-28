@@ -87,7 +87,7 @@ public:
     // 获取应用列表
     // 激活指定配置文件
     ENDPOINT(
-        "GET",
+        "POST",
         "/api/profile/initialize",
         get_initialize,
         BODY_DTO(Object<IgnoredGuidList>, ignoredGuidList))
@@ -164,7 +164,11 @@ public:
 
     // 获取插件列表
     // Get plugin list
-    ENDPOINT("GET", "/api/settings/plugin/list", get_plugin_list)
+    ENDPOINT(
+        "POST",
+        "/api/settings/plugin/list",
+        get_plugin_list,
+        BODY_DTO(oatpp::data::mapping::type::Int32, profileId))
     {
 
         auto response = PluginPackageDescList::createShared();

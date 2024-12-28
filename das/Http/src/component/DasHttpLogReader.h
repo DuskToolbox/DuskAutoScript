@@ -1,5 +1,5 @@
-#ifndef DAS_HTTP_CONTROLLER_DASHTTPLOGREADER_H
-#define DAS_HTTP_CONTROLLER_DASHTTPLOGREADER_H
+#ifndef DAS_HTTP_COMPONENT_DASHTTPLOGREADER_H
+#define DAS_HTTP_COMPONENT_DASHTTPLOGREADER_H
 
 #include <memory>
 #include <string>
@@ -22,4 +22,4 @@ class DasHttpLogReader final : public IDasLogReader
     auto GetMessage() const noexcept -> std::string_view;
 };
 
-#endif // DAS_HTTP_CONTROLLER_DASHTTPLOGREADER_H
+#endif // DAS_HTTP_COMPONENT_DASHTTPLOGREADER_H
