@@ -1,11 +1,11 @@
-#include <das/DasConfig.h>
-#include <das/Core/Exceptions/DasException.h>
-#include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
-#include <das/Core/Logger/Logger.h>
-#include <das/Utils/QueryInterface.hpp>
 #include <algorithm>
 #include <boost/container_hash/hash.hpp>
 #include <cstring>
+#include <das/Core/Exceptions/DasException.h>
+#include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
+#include <das/Core/Logger/Logger.h>
+#include <das/DasConfig.h>
+#include <das/Utils/QueryInterface.hpp>
 #include <magic_enum_format.hpp>
 #include <new>
 #include <nlohmann/json.hpp>
@@ -488,7 +488,7 @@ DasReadOnlyStringWrapper::DasReadOnlyStringWrapper(const char* p_u8_string)
         ::CreateIDasReadOnlyStringFromUtf8(p_u8_string, p_impl_.Put());
     if (DAS::IsFailed(result))
     {
-        DAS::Core::DasException::Throw(result);
+        DAS_THROW_EC(result);
     }
 }
 
@@ -499,7 +499,7 @@ DasReadOnlyStringWrapper::DasReadOnlyStringWrapper(const char8_t* u8_string)
         p_impl_.Put());
     if (DAS::IsFailed(result))
     {
-        DAS::Core::DasException::Throw(result);
+        DAS_THROW_EC(result);
     }
 }
 
@@ -511,7 +511,7 @@ DasReadOnlyStringWrapper::DasReadOnlyStringWrapper(
         p_impl_.Put());
     if (DAS::IsFailed(result))
     {
-        DAS::Core::DasException::Throw(result);
+        DAS_THROW_EC(result);
     }
 }
 

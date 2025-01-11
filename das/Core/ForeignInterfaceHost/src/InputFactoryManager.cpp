@@ -1,6 +1,6 @@
 #include <das/Core/Exceptions/DasException.h>
-#include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/CppSwigInterop.h>
+#include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/InputFactoryManager.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/Utils/InternalUtils.h>
@@ -112,7 +112,7 @@ void InputFactoryManager::Find(
 {
     if (pp_out_factory == nullptr)
     {
-        DasException::Throw(DAS_E_INVALID_POINTER);
+        DAS_THROW_EC(DAS_E_INVALID_POINTER);
         return;
     }
 
@@ -130,7 +130,7 @@ void InputFactoryManager::Find(
 
     if (result == common_input_factory_vector_.end())
     {
-        DasException::Throw(DAS_E_OUT_OF_RANGE);
+        DAS_THROW_EC(DAS_E_OUT_OF_RANGE);
     }
 
     const auto p_result = result->first.Get();
@@ -144,7 +144,7 @@ void InputFactoryManager::Find(
 {
     if (pp_out_swig_factory == nullptr)
     {
-        DasException::Throw(DAS_E_INVALID_POINTER);
+        DAS_THROW_EC(DAS_E_INVALID_POINTER);
         return;
     }
 
@@ -162,7 +162,7 @@ void InputFactoryManager::Find(
 
     if (result == common_input_factory_vector_.end())
     {
-        DasException::Throw(DAS_E_OUT_OF_RANGE);
+        DAS_THROW_EC(DAS_E_OUT_OF_RANGE);
     }
 
     const auto p_result = result->second.Get();

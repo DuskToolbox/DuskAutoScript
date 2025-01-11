@@ -185,14 +185,14 @@ DasResult DasSettings::LoadSettings(IDasReadOnlyString* p_path)
         {
             DAS_CORE_LOG_ERROR("Null pointer found! Variable name is p_path."
                                " Please check your code.");
-            DasException::Throw(DAS_E_INVALID_POINTER);
+            DAS_THROW_EC(DAS_E_INVALID_POINTER);
         }
 
         std::filesystem::path path;
         if (const auto to_path_result = Utils::ToPath(p_path, path);
             IsFailed(to_path_result))
         {
-            DasException::Throw(to_path_result);
+            DAS_THROW_EC(to_path_result);
         }
 
         std::error_code error_code;

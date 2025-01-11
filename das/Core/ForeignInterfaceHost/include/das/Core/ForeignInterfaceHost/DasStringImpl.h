@@ -171,7 +171,7 @@ inline std::string DasReadOnlyStringWrapper::To() const
     const auto  result = p_impl_->GetUtf8(&p_string);
     if (DAS::IsFailed(result))
     {
-        DAS::Core::DasException::Throw(result);
+        DAS_THROW_EC(result);
     }
     return {p_string};
 }
@@ -187,7 +187,7 @@ inline const char* DasReadOnlyStringWrapper::To() const
     const auto  result = p_impl_->GetUtf8(&p_string);
     if (DAS::IsFailed(result))
     {
-        DAS::Core::DasException::Throw(result);
+        DAS_THROW_EC(result);
     }
     return p_string;
 }

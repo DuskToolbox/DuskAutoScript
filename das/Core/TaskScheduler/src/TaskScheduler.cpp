@@ -70,7 +70,7 @@ namespace Core
                 p_name,
                 guid,
                 get_date_error_code);
-            DasException::Throw(get_date_error_code);
+            DAS_THROW_EC(get_date_error_code);
         }
         utc_next_run_time = Details::CreateDateTime(date);
     }

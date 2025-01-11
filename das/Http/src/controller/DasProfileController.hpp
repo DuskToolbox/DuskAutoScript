@@ -10,7 +10,6 @@
 #include "dto/Settings.hpp"
 #include "nlohmann/json.hpp"
 #include "oatpp/core/macro/codegen.hpp"
-#include "oatpp/core/macro/component.hpp"
 #include "oatpp/parser/json/mapping/ObjectMapper.hpp"
 #include "oatpp/web/server/api/ApiController.hpp"
 
@@ -25,61 +24,18 @@
 class DasProfileManagerController final
     : public oatpp::web::server::api::ApiController
 {
-    std::shared_ptr<ObjectMapper> json_object_mapper_{
-        oatpp::parser::json::mapping::ObjectMapper::createShared()};
+    std::shared_ptr<ObjectMapper> json_object_mapper_{};
     DAS::DasPtr<IDasTaskScheduler> p_task_scheduler_{};
     DAS::DasPtr<IDasSettingsForUi> p_settings_for_ui_{};
 
 public:
-    DasProfileManagerController(
-        OATPP_COMPONENT(std::shared_ptr<ObjectMapper>, objectMapper))
-        : ApiController{objectMapper}
+    DasProfileManagerController(std::shared_ptr<ObjectMapper> object_mapper =
+            oatpp::parser::json::mapping::ObjectMapper::createShared())
+        : ApiController{object_mapper}, json_object_mapper_{object_mapper}
     {
         GetIDasSettingsForUi(p_settings_for_ui_.Put());
         GetIDasTaskScheduler(p_task_scheduler_.Put());
     }
-
-    ENDPOINT("POST", "/api/profile/global", get_global_profile)
-    {
-        auto response = ProfileDescList::createShared();
-        response->code = DAS_S_OK;
-        response->message = "";
-
-        DAS::DasPtr<IDasReadOnlyString> p_settings_json{};
-        const auto                      get_result =
-            ::DasLoadExtraStringForUi(p_settings_json.Put());
-        if (DAS::IsFailed(get_result))
-        {
-            const auto message =
-                DAS::Http::GetPredefinedErrorMessage(get_result);
-            DAS_LOG_ERROR(message.c_str());
-            response->code = get_result;
-            response->message = message;
-            return createDtoResponse(
-                Status::CODE_200,
-                json_object_mapper_->writeToString(response));
-        }
-
-        const char* p_u8_settings{nullptr};
-        if (const auto get_u8_result = p_settings_json->GetUtf8(&p_u8_settings);
-            DAS::IsFailed(get_result))
-        {
-            response->code = get_u8_result;
-            response->message = DAS_FMT_NS::format(
-                "Call GetUtf8 failed. Error code = {}.",
-                get_result);
-            return createDtoResponse(
-                Status::CODE_200,
-                json_object_mapper_->writeToString(response));
-        }
-
-        response->code = get_result;
-        response->data = p_u8_settings;
-        return createDtoResponse(
-            Status::CODE_200,
-            json_object_mapper_->writeToString(response));
-    }
-
     // 获取配置文件列表
     // Get profile list
     ENDPOINT("POST", "/api/profile/list", get_profile_list)

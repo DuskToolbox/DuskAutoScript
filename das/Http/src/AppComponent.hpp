@@ -1,5 +1,5 @@
-#ifndef AppComponent_hpp
-#define AppComponent_hpp
+#ifndef DAS_HTTP_APP_COMPONENT_HPP
+#define DAS_HTTP_APP_COMPONENT_HPP
 
 #include "oatpp/web/server/HttpConnectionHandler.hpp"
 
@@ -37,14 +37,6 @@ public:
     OATPP_COMPONENT(std::shared_ptr<oatpp::web::server::HttpRouter>, router); // get Router component
     return oatpp::web::server::HttpConnectionHandler::createShared(router);
   }());
-  
-  /**
-   *  Create ObjectMapper component to serialize/deserialize DTOs in Contoller's API
-   */
-  OATPP_CREATE_COMPONENT(std::shared_ptr<oatpp::data::mapping::ObjectMapper>, apiObjectMapper)([] {
-    return oatpp::parser::json::mapping::ObjectMapper::createShared();
-  }());
-
 };
 
-#endif /* AppComponent_hpp */
+#endif // DAS_HTTP_APP_COMPONENT_HPP

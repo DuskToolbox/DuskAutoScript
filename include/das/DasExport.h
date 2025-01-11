@@ -28,6 +28,16 @@
 #endif
 
 #define DAS_C_API DAS_EXTERN_C DAS_EXPORT
+/**
+ * @brief
+ * 使用此宏定义的接口，不具有且未来也不计划具有ABI兼容性，使用DasCore的用户也不应该调用这些接口
+ */
 #define DAS_API DAS_DLL_EXPORT
+
+#ifdef _MSC_VER
+#define DAS_FUNCTION __FUNCTION__
+#else
+#define DAS_FUNCTION __PRETTY_FUNCTION__
+#endif // _MSC_VER
 
 #endif // DAS_EXPORT_H

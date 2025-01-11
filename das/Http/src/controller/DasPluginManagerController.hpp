@@ -8,7 +8,6 @@
 #include "das/IDasBase.h"
 #include "das/Utils/fmt.h"
 #include "oatpp/core/macro/codegen.hpp"
-#include "oatpp/core/macro/component.hpp"
 #include "oatpp/parser/json/mapping/ObjectMapper.hpp"
 #include "oatpp/web/server/api/ApiController.hpp"
 
@@ -23,8 +22,7 @@ class DasPluginManagerController final
     DAS::DasPtr<IDasPluginManager>      p_plugin_manager_{};
     DAS::DasPtr<IDasPluginManagerForUi> p_plugin_manager_for_ui_{};
 
-    std::shared_ptr<ObjectMapper> json_object_mapper_{
-        oatpp::parser::json::mapping::ObjectMapper::createShared()};
+    std::shared_ptr<ObjectMapper> json_object_mapper_{};
 
     static auto CreatePluginManager(
         IDasReadOnlyGuidVector*  p_guid_vector,
@@ -79,8 +77,9 @@ class DasPluginManagerController final
 
 public:
     DasPluginManagerController(
-        OATPP_COMPONENT(std::shared_ptr<ObjectMapper>, objectMapper))
-        : ApiController{objectMapper}
+        std::shared_ptr<ObjectMapper> object_mapper =
+            oatpp::parser::json::mapping::ObjectMapper::createShared())
+        : ApiController{object_mapper}, json_object_mapper_{object_mapper}
     {
     }
 

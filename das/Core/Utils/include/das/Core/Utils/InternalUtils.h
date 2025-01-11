@@ -1,10 +1,10 @@
 #ifndef DAS_CORE_UTILS_INTERNALUTILS_H
 #define DAS_CORE_UTILS_INTERNALUTILS_H
 
-#include <das/DasString.hpp>
 #include <das/Core/Exceptions/DasException.h>
 #include <das/Core/ForeignInterfaceHost/CppSwigInterop.h>
 #include <das/Core/Utils/Config.h>
+#include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/Expected.h>
 #include <string_view>
@@ -25,7 +25,7 @@ auto GetGuidFrom(T* p_object) -> DasGuid
         const auto ret_guid = p_object->GetGuid();
         if (IsFailed(ret_guid.error_code))
         {
-            DasException::Throw(ret_guid.error_code, p_object);
+            DAS_THROW_EC_EX(ret_guid.error_code, p_object);
         }
         return ret_guid.value;
     }
@@ -35,7 +35,7 @@ auto GetGuidFrom(T* p_object) -> DasGuid
         if (const auto gg_result = p_object->GetGuid(&guid);
             IsFailed(gg_result))
         {
-            DasException::Throw(gg_result, p_object);
+            DAS_THROW_EC_EX(gg_result, p_object);
         }
         return guid;
     }
@@ -54,7 +54,7 @@ auto GetRuntimeClassNameFrom(T* p_object) -> DasPtr<IDasReadOnlyString>
         const auto                 ret_name = p_object->GetRuntimeClassName();
         if (IsFailed(ret_name.error_code))
         {
-            DasException::Throw(ret_name.error_code, p_object);
+            DAS_THROW_EC_EX(ret_name.error_code, p_object);
         }
         ret_name.value.GetImpl(result.Put());
         return result;
@@ -65,7 +65,7 @@ auto GetRuntimeClassNameFrom(T* p_object) -> DasPtr<IDasReadOnlyString>
         if (const auto error_code = p_object->GetRuntimeClassName(result.Put());
             IsFailed(error_code)) [[unlikely]]
         {
-            DasException::Throw(error_code, p_object);
+            DAS_THROW_EC_EX(error_code, p_object);
         }
         return result;
     }

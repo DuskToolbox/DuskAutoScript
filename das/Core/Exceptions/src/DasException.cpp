@@ -26,28 +26,57 @@ DasException::DasException(DasResult error_code, const char* p_string, borrow_t)
 {
 }
 
-void DasException::Throw(DasResult error_code)
+void DasException::Throw(
+    DasResult               error_code,
+    DasExceptionSourceInfo* p_source_info)
 {
     DasPtr<IDasReadOnlyString> p_error_message{};
     const auto                 get_predefined_error_message_result =
         ::DasGetPredefinedErrorMessage(error_code, p_error_message.Put());
     if (IsFailed(get_predefined_error_message_result))
     {
-        DAS_CORE_LOG_ERROR(
-            "DasGetPredefinedErrorMessage failed. Error code = {}.",
-            get_predefined_error_message_result);
-        ThrowDefault(get_predefined_error_message_result);
+        if (p_source_info)
+        {
+            DAS_CORE_LOG_ERROR(
+                "|[{}][{}][{}] DasGetPredefinedErrorMessage failed. Error code = {}.",
+                p_source_info->file,
+                p_source_info->line,
+                p_source_info->function,
+                get_predefined_error_message_result);
+            ThrowDefault(get_predefined_error_message_result);
+        }
+        else
+        {
+            DAS_CORE_LOG_ERROR(
+                "DasGetPredefinedErrorMessage failed. Error code = {}.",
+                get_predefined_error_message_result);
+            ThrowDefault(get_predefined_error_message_result);
+        }
     }
-
+    if (p_source_info)
+    {
+        throw DasException{
+            error_code,
+            DAS::fmt::format(
+                "|[{}][{}][{}] Operation failed. Error code = {}. Message = \"{}\".",
+                p_source_info->file,
+                p_source_info->line,
+                p_source_info->function,
+                p_error_message,
+                error_code)};
+    }
     throw DasException{
         error_code,
         DAS::fmt::format(
-            "Operation failed. Error code = {}. message = \"{}\".",
+            "Operation failed. Error code = {}. Message = \"{}\".",
             p_error_message,
             error_code)};
 }
 
-void DasException::Throw(DasResult error_code, IDasTypeInfo* p_type_info)
+void DasException::Throw(
+    DasResult               error_code,
+    IDasTypeInfo*           p_type_info,
+    DasExceptionSourceInfo* p_source_info)
 {
     DasPtr<IDasReadOnlyString> p_error_message{};
 
@@ -55,21 +84,49 @@ void DasException::Throw(DasResult error_code, IDasTypeInfo* p_type_info)
         ::DasGetErrorMessage(p_type_info, error_code, p_error_message.Put());
     if (IsFailed(get_error_message_result))
     {
-        DAS_CORE_LOG_ERROR(
-            "DasGetErrorMessage failed. Error code = {}.",
-            get_error_message_result);
-        ThrowDefault(get_error_message_result);
+        if (p_source_info)
+        {
+            DAS_CORE_LOG_ERROR(
+                "|[{}][{}][{}] DasGetErrorMessage failed. Error code = {}.",
+                p_source_info->file,
+                p_source_info->line,
+                p_source_info->function,
+                get_error_message_result);
+            ThrowDefault(get_error_message_result);
+        }
+        else
+        {
+            DAS_CORE_LOG_ERROR(
+                "DasGetErrorMessage failed. Error code = {}.",
+                get_error_message_result);
+            ThrowDefault(get_error_message_result);
+        }
     }
 
+    if (p_source_info)
+    {
+        throw DasException{
+            error_code,
+            DAS::fmt::format(
+                "|[{}][{}][{}] Operation failed. Error code = {}. Message = \"{}\".",
+                p_source_info->file,
+                p_source_info->line,
+                p_source_info->function,
+                p_error_message,
+                error_code)};
+    }
     throw DasException{
         error_code,
         DAS::fmt::format(
-            "Operation failed. Error code = {}. message = \"{}\".",
+            "Operation failed. Error code = {}. Message = \"{}\".",
             p_error_message,
             error_code)};
 }
 
-void DasException::Throw(DasResult error_code, IDasSwigTypeInfo* p_type_info)
+void DasException::Throw(
+    DasResult               error_code,
+    IDasSwigTypeInfo*       p_type_info,
+    DasExceptionSourceInfo* p_source_info)
 {
     const auto internal_error_message =
         ::DasGetErrorMessage(p_type_info, error_code);
@@ -77,38 +134,91 @@ void DasException::Throw(DasResult error_code, IDasSwigTypeInfo* p_type_info)
         DAS::GetErrorCodeFrom(internal_error_message);
     if (IsFailed(get_error_message_result))
     {
-        DAS_CORE_LOG_ERROR(
-            "DasGetErrorMessage failed. Error code = {}.",
-            get_error_message_result);
-        ThrowDefault(get_error_message_result);
+        if (p_source_info)
+        {
+            DAS_CORE_LOG_ERROR(
+                "|[{}][{}][{}] DasGetErrorMessage failed. Error code = {}.",
+                p_source_info->file,
+                p_source_info->line,
+                p_source_info->function,
+                get_error_message_result);
+            ThrowDefault(get_error_message_result);
+        }
+        else
+        {
+            DAS_CORE_LOG_ERROR(
+                "DasGetErrorMessage failed. Error code = {}.",
+                get_error_message_result);
+            ThrowDefault(get_error_message_result);
+        }
     }
 
+    if (p_source_info)
+    {
+        throw DasException{
+            error_code,
+            DAS::fmt::format(
+                "|[{}][{}][{}] Operation failed. Error code = {}. Message = \"{}\".",
+                p_source_info->file,
+                p_source_info->line,
+                p_source_info->function,
+                internal_error_message.value,
+                error_code)};
+    }
     throw DasException{
         error_code,
         DAS::fmt::format(
-            "Operation failed. Error code = {}. message = \"{}\".",
+            "Operation failed. Error code = {}. Message = \"{}\".",
             internal_error_message.value,
             error_code)};
 }
 
-void DasException::Throw(DasResult error_code, const std::string& ex_message)
+void DasException::Throw(
+    DasResult               error_code,
+    const std::string&      ex_message,
+    DasExceptionSourceInfo* p_source_info)
 {
     DasPtr<IDasReadOnlyString> p_error_message{};
     const auto                 get_predefined_error_message_result =
         ::DasGetPredefinedErrorMessage(error_code, p_error_message.Put());
     if (IsFailed(get_predefined_error_message_result))
     {
-        DAS_CORE_LOG_ERROR(
-            "DasGetPredefinedErrorMessage failed. Error code = {}. ExMessage = \"{}\".",
-            get_predefined_error_message_result,
-            ex_message);
-        ThrowDefault(get_predefined_error_message_result);
+        if (p_source_info)
+        {
+            DAS_CORE_LOG_ERROR(
+                "|[{}][{}][{}] DasGetErrorMessage failed. Error code = {}.",
+                p_source_info->file,
+                p_source_info->line,
+                p_source_info->function,
+                ex_message);
+            ThrowDefault(get_predefined_error_message_result);
+        }
+        else
+        {
+            DAS_CORE_LOG_ERROR(
+                "DasGetErrorMessage failed. Error code = {}.",
+                ex_message);
+            ThrowDefault(get_predefined_error_message_result);
+        }
     }
 
+    if (p_source_info)
+    {
+        throw DasException{
+            error_code,
+            DAS::fmt::format(
+                R"(|[{}][{}][{}] Operation failed. Error code = {}. Message = "{}". ExMessage = "{}".)",
+                p_source_info->file,
+                p_source_info->line,
+                p_source_info->function,
+                p_error_message,
+                error_code,
+                ex_message)};
+    }
     throw DasException{
         error_code,
         DAS::fmt::format(
-            "Operation failed. Error code = {}. Message = \"{}\". ExMessage = \"{}\".",
+            R"(Operation failed. Error code = {}. Message = "{}". ExMessage = "{}".)",
             p_error_message,
             error_code,
             ex_message)};

@@ -7,6 +7,7 @@
 #include "./controller/DasPluginManagerController.hpp"
 #include "./controller/DasProfileController.hpp"
 #include "./controller/DasLogController.hpp"
+#include "./controller/UISettingsController.hpp"
 
 void run()
 {

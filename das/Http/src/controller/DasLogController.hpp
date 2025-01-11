@@ -5,7 +5,6 @@
 
 #include "oatpp/core/base/Environment.hpp"
 #include "oatpp/core/macro/codegen.hpp"
-#include "oatpp/core/macro/component.hpp"
 #include "oatpp/parser/json/mapping/ObjectMapper.hpp"
 #include "oatpp/web/server/api/ApiController.hpp"
 
@@ -15,8 +14,6 @@
 
 class DasLogController final : public oatpp::web::server::api::ApiController
 {
-    std::shared_ptr<ObjectMapper> json_object_mapper_{
-        oatpp::parser::json::mapping::ObjectMapper::createShared()};
     DAS::DasPtr<DasHttpLogReader> p_reader{DAS::MakeDasPtr<DasHttpLogReader>()};
     DAS::DasPtr<IDasLogRequester> p_requester{};
 
@@ -24,8 +21,9 @@ class DasLogController final : public oatpp::web::server::api::ApiController
 
 public:
     DasLogController(
-        OATPP_COMPONENT(std::shared_ptr<ObjectMapper>, objectMapper))
-        : ApiController{objectMapper}
+        std::shared_ptr<ObjectMapper> object_mapper =
+            oatpp::parser::json::mapping::ObjectMapper::createShared())
+        : ApiController{object_mapper}
     {
         constexpr auto LOG_RING_BUFFER_SIZE = 64;
         ::CreateIDasLogRequester(LOG_RING_BUFFER_SIZE, p_requester.Put());
@@ -74,7 +72,7 @@ public:
 
         return createDtoResponse(
             Status::CODE_200,
-            json_object_mapper_->writeToString(response));
+            getDefaultObjectMapper()->writeToString(response));
     }
 
     ENDPOINT("POST", "/api/alive", get_alive)
