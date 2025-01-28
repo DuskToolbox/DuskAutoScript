@@ -8,11 +8,30 @@ DAS_INTERFACE IDasTypeInfo;
 DAS_INTERFACE IDasSwigTypeInfo;
 
 #ifndef SWIG
+// {15D1BCD7-7922-447F-AD2C-17B838C1D53A}
+DAS_DEFINE_GUID(
+    DAS_IID_JSON_SETTING_ON_DELETED_HANDLER,
+    IDasJsonSettingOnDeletedHandler,
+    0x15d1bcd7,
+    0x7922,
+    0x447f,
+    0xad,
+    0x2c,
+    0x17,
+    0xb8,
+    0x38,
+    0xc1,
+    0xd5,
+    0x3a)
+DAS_INTERFACE IDasJsonSettingOnDeletedHandler : public IDasBase
+{
+    DAS_METHOD OnDeleted() = 0;
+};
 
 // {56E5529D-C4EB-498D-BFAA-EFFEA20EB02A}
 DAS_DEFINE_GUID(
-    DAS_IID_SETTINGS_FOR_UI,
-    IDasSettingsForUi,
+    DAS_IID_JSON_SETTING,
+    IDasJsonSetting,
     0x56e5529d,
     0xc4eb,
     0x498d,
@@ -24,7 +43,7 @@ DAS_DEFINE_GUID(
     0xe,
     0xb0,
     0x2a);
-DAS_INTERFACE IDasSettingsForUi : public IDasBase
+DAS_INTERFACE IDasJsonSetting : public IDasBase
 {
     /**
      * @brief 将json序列化为文本
@@ -52,27 +71,69 @@ DAS_INTERFACE IDasSettingsForUi : public IDasBase
      * @return DasResult 保存设置文件
      */
     DAS_METHOD Save() = 0;
+    /**
+     * @brief 当设置项被删除时需要执行的回调
+     */
+    DAS_METHOD SetOnDeletedHandler(
+        IDasJsonSettingOnDeletedHandler * p_handler) = 0;
+};
+
+typedef enum DasProfileProperty
+{
+    DAS_PROFILE_PROPERTY_PROFILE = 0,
+    DAS_PROFILE_PROPERTY_SCHEDULER_STATE = 1,
+    // -------------------------------------------------------------------------
+    DAS_PROFILE_PROPERTY_NAME = 1001,
+    DAS_PROFILE_PROPERTY_ID = 1002,
+    DAS_PROFILE_PROPERTY_FORCE_DWORD = 0x7FFFFFFF
+} DasProfileProperty;
+
+// {774869F9-B453-4CA5-8512-B08E659383EA}
+DAS_DEFINE_GUID(
+    DAS_PROFILE,
+    IDasProfile,
+    0x774869f9,
+    0xb453,
+    0x4ca5,
+    0x85,
+    0x12,
+    0xb0,
+    0x8e,
+    0x65,
+    0x93,
+    0x83,
+    0xea);
+DAS_INTERFACE IDasProfile : public IDasBase
+{
+    DAS_METHOD GetStringProperty(
+        DasProfileProperty profile_property,
+        IDasReadOnlyString * *pp_out_property) = 0;
+    DAS_METHOD GetJsonSettingProperty(
+        DasProfileProperty profile_property,
+        IDasJsonSetting * *pp_out_json) = 0;
 };
 
 /**
- * @brief 读取加载的Core设置以供UI使用
- *
- * @param pp_out_settings 由UI使用的设置
- * @return DasResult DAS_S_OK 成功；若从未执行过DasLoadGlobalSettings，则失败。
+ * @brief 将 ppp_out_profile
+ * 置空，buffer_size将被忽略，返回值指示内部Profile数量
  */
-DAS_C_API DasResult GetIDasSettingsForUi(IDasSettingsForUi** pp_out_settings);
+DAS_GATEWAY_C_API DasResult
+GetAllIDasProfile(size_t buffer_size, IDasProfile*** ppp_out_profile);
+
+DAS_GATEWAY_C_API DasResult
+FindIDasProfile(IDasReadOnlyString* p_name, IDasProfile** pp_out_profile);
 
 /**
  * @brief 加载UI在Core中寄存的json设置信息
  */
-DAS_C_API DasResult DasLoadExtraStringForUi(
+DAS_GATEWAY_C_API DasResult DasLoadExtraStringForUi(
     IDasReadOnlyString** pp_out_ui_extra_settings_json_string);
 
 /**
  * @brief 保存UI在Core中寄存的json设置信息
  */
-DAS_C_API DasResult DasSaveExtraStringForUi(
-    IDasReadOnlyString* p_in_ui_extra_settings_json_string);
+DAS_GATEWAY_C_API DasResult
+DasSaveExtraStringForUi(IDasReadOnlyString* p_in_ui_extra_settings_json_string);
 
 #endif // SWIG
 

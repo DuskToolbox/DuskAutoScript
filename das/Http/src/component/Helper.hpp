@@ -8,8 +8,18 @@
 #include <nlohmann/json.hpp>
 #include <oatpp/web/protocol/http/outgoing/BufferBody.hpp>
 
+#define DAS_HTTP_MAKE_RESPONSE(error_code)                                     \
+    MakeResponse(error_code, {__FILE__, __LINE__, DAS_FUNCTION});
+
 namespace Das::Http
 {
+    struct DasResponseSourceLocation
+    {
+        const char* file;
+        int         line;
+        const char* function;
+    };
+
     inline std::string GetPredefinedErrorMessage(DasResult error_code)
     {
         DasPtr<IDasReadOnlyString> p_error_message{};
@@ -46,9 +56,7 @@ namespace Das::Http
 
         auto MakeResponse(const oatpp::Void& p_response) const
         {
-            return createDtoResponse(
-                Status::CODE_200,
-                getDefaultObjectMapper()->writeToString(p_response));
+            return createDtoResponse(Status::CODE_200, p_response);
         }
 
         static auto MakeResponse(const Core::DasException& ex)
@@ -58,7 +66,28 @@ namespace Das::Http
             response["message"] = ex.what();
             response["data"] = nlohmann::json{};
             return oatpp::web::protocol::http::outgoing::Response::createShared(
-                Status::CODE_500,
+                Status::CODE_200,
+                oatpp::web::protocol::http::outgoing::BufferBody::createShared(
+                    String{response.dump()},
+                    "application/json"));
+        }
+
+        static auto MakeResponse(
+            DasResult                        error_code,
+            const DasResponseSourceLocation& source_location)
+        {
+            nlohmann::json response;
+            response["code"] = error_code;
+            const auto message = DAS_FMT_NS::format(
+                "[{} {}:{}] {}.",
+                source_location.function,
+                source_location.file,
+                source_location.line,
+                GetPredefinedErrorMessage(error_code));
+            response["message"] = message;
+            response["data"] = nlohmann::json{};
+            return oatpp::web::protocol::http::outgoing::Response::createShared(
+                Status::CODE_200,
                 oatpp::web::protocol::http::outgoing::BufferBody::createShared(
                     String{response.dump()},
                     "application/json"));

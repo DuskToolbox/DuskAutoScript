@@ -1,103 +1,152 @@
 #ifndef DAS_HTTP_CONTROLLER_DASPROFILECONTROLLER_HPP
 #define DAS_HTTP_CONTROLLER_DASPROFILECONTROLLER_HPP
 
+#include "Config.h"
 #include "component/Helper.hpp"
 #include "das/ExportInterface/DasLogger.h"
 #include "das/ExportInterface/IDasSettings.h"
 #include "das/ExportInterface/IDasTaskScheduler.h"
 #include "das/IDasBase.h"
+#include "das/Utils/StringUtils.h"
 #include "dto/Profile.hpp"
 #include "dto/Settings.hpp"
-#include "nlohmann/json.hpp"
 #include "oatpp/core/macro/codegen.hpp"
 #include "oatpp/parser/json/mapping/ObjectMapper.hpp"
 #include "oatpp/web/server/api/ApiController.hpp"
 
 #include OATPP_CODEGEN_BEGIN(ApiController)
 
-#include <das/Utils/StringUtils.h>
-
 /**
  *  @brief 定义配置文件管理相关API
  *  Define profile related APIs
  */
-class DasProfileManagerController final
-    : public oatpp::web::server::api::ApiController
+class DasProfileManagerController final : public DAS::Http::DasApiController
 {
-    std::shared_ptr<ObjectMapper> json_object_mapper_{};
     DAS::DasPtr<IDasTaskScheduler> p_task_scheduler_{};
-    DAS::DasPtr<IDasSettingsForUi> p_settings_for_ui_{};
+    DAS::DasPtr<IDasJsonSetting>   p_settings_for_ui_{};
 
 public:
-    DasProfileManagerController(std::shared_ptr<ObjectMapper> object_mapper =
+    DasProfileManagerController(
+        std::shared_ptr<ObjectMapper> object_mapper =
             oatpp::parser::json::mapping::ObjectMapper::createShared())
-        : ApiController{object_mapper}, json_object_mapper_{object_mapper}
     {
-        GetIDasSettingsForUi(p_settings_for_ui_.Put());
+        // GetIDasSettingsForUi(p_settings_for_ui_.Put());
         GetIDasTaskScheduler(p_task_scheduler_.Put());
     }
     // 获取配置文件列表
     // Get profile list
-    ENDPOINT("POST", "/api/profile/list", get_profile_list)
+    ENDPOINT("POST", DAS_HTTP_API_PREFIX "profile/list", get_profile_list)
     {
-        auto response = ProfileDescList::createShared();
+        auto response = ProfileDescListResponse::createShared();
         response->code = DAS_S_OK;
         response->message = "";
 
-        DAS::DasPtr<IDasReadOnlyString> p_settings_json{};
+        std::vector<DAS::DasPtr<IDasProfile>> profiles(0);
+        const auto profile_size = GetAllIDasProfile(0, nullptr);
+        profiles.resize(profile_size);
+        std::vector<IDasProfile**> profiles_pp{profiles.size()};
+        std::transform(
+            DAS_FULL_RANGE_OF(profiles),
+            profiles_pp.begin(),
+            [](auto& profile) { return profile.Put(); });
+
         if (const auto get_result =
-                p_settings_for_ui_->ToString(p_settings_json.Put());
+                GetAllIDasProfile(profile_size, profiles_pp.data());
             DAS::IsFailed(get_result))
         {
-            const auto message = DAS_FMT_NS::format(
-                "Get settings json failed. Error code: {}",
-                get_result);
-            DAS_LOG_ERROR(message.c_str());
-            response->code = get_result;
-            response->message = message;
-            return createDtoResponse(
-                Status::CODE_200,
-                json_object_mapper_->writeToString(response));
+            return DAS_HTTP_MAKE_RESPONSE(get_result);
         }
 
-        const char* p_u8_settings_json;
-        if (const auto get_result =
-                p_settings_json->GetUtf8(&p_u8_settings_json);
-            DAS::IsFailed(get_result))
+        response->data = ProfileDescList::createShared();
+        response->data->profile_list =
+            decltype(response->data->profile_list)::createShared();
+        for (const auto& profile : profiles)
         {
-            const auto message = DAS_FMT_NS::format(
-                "Get settings json string failed. Error code: {}",
-                get_result);
-            DAS_LOG_ERROR(message.c_str());
-            response->code = get_result;
-            response->message = message;
-            return createDtoResponse(
-                Status::CODE_200,
-                json_object_mapper_->writeToString(response));
+            try
+            {
+                DAS::DasPtr<IDasReadOnlyString> p_profile_name{};
+                if (const auto get_result = profile->GetStringProperty(
+                        DAS_PROFILE_PROPERTY_NAME,
+                        p_profile_name.Put());
+                    DAS::IsFailed(get_result))
+                {
+                    DAS_THROW_EC(get_result);
+                }
+                const auto name =
+                    DAS::Http::DasString2RawString(p_profile_name.Get());
+                DAS::DasPtr<IDasReadOnlyString> p_profile_id{};
+                if (const auto get_result = profile->GetStringProperty(
+                        DAS_PROFILE_PROPERTY_ID,
+                        p_profile_id.Put());
+                    DAS::IsFailed(get_result))
+                {
+                    DAS_THROW_EC(get_result);
+                }
+                const auto id =
+                    DAS::Http::DasString2RawString(p_profile_id.Get());
+                auto data = ProfileDesc::createShared();
+                data->profile_id = id;
+                data->name = name;
+                response->data->profile_list->emplace_back(std::move(data));
+            }
+            catch (const DAS::Core::DasException& ex)
+            {
+                DAS_LOG_ERROR(ex.what());
+            }
         }
 
-        std::string profile_name{
-            DAS_UTILS_STRINGUTILS_DEFINE_U8STR("默认配置0")};
-        const auto settings = nlohmann::json::parse(p_u8_settings_json);
-        if (settings.contains("name"))
+        return MakeResponse(response);
+    }
+
+    ENDPOINT(
+        "POST",
+        DAS_HTTP_API_PREFIX "profile/get",
+        get_profile,
+        BODY_DTO(Object<ProfileId>, profile_id))
+    {
+        if (profile_id.get() == nullptr)
         {
-            settings["name"].get_to(profile_name);
+            return DAS_HTTP_MAKE_RESPONSE(DAS_E_INVALID_POINTER);
         }
 
-        const auto profile0 = ProfileDesc::createShared();
-        profile0->name = profile_name;
-        profile0->profile_id = "0";
+        const auto p_profile_id = profile_id.get()->profile_id;
+        if (p_profile_id.get() == nullptr)
+        {
+            return DAS_HTTP_MAKE_RESPONSE(DAS_E_INVALID_POINTER);
+        }
 
-        response->data = {profile0};
-
-        return createDtoResponse(
-            Status::CODE_200,
-            json_object_mapper_->writeToString(response));
+        try
+        {
+            const auto profile_id_string = DAS::Http::RawString2DasString(
+                profile_id.get()->profile_id.get()->c_str());
+            DAS::DasPtr<IDasProfile> p_profile{};
+            DAS_THROW_IF_FAILED_EC(
+                FindIDasProfile(profile_id_string.Get(), p_profile.Put()));
+            DAS::DasPtr<IDasJsonSetting> p_settings{};
+            DAS_THROW_IF_FAILED_EC(p_profile->GetJsonSettingProperty(
+                DAS_PROFILE_PROPERTY_PROFILE,
+                p_settings.Put()));
+            DAS::DasPtr<IDasReadOnlyString> p_json_settings{};
+            DAS_THROW_IF_FAILED_EC(p_settings->ToString(p_json_settings.Put()));
+            const auto response = DAS_FMT_NS::format(
+                "{{code: " DAS_STR(DAS_S_OK) ", message: \"\", data: {}}}",
+                DAS::Http::DasString2RawString(p_json_settings.Get()));
+            return oatpp::web::protocol::http::outgoing::Response::createShared(
+                Status::CODE_200,
+                oatpp::web::protocol::http::outgoing::BufferBody::createShared(
+                    String{response},
+                    "application/json"));
+        }
+        catch (const DAS::Core::DasException& ex)
+        {
+            DAS_LOG_ERROR(ex.what());
+            return MakeResponse(ex);
+        }
     }
 
     // 获取配置文件状态
     // Get profile status
-    ENDPOINT("POST", "/api/profile/status", get_profile_status)
+    ENDPOINT("POST", DAS_HTTP_API_PREFIX "profile/status", get_profile_status)
     {
         auto response = ProfileStatusList::createShared();
         response->code = DAS_S_OK;
@@ -111,14 +160,12 @@ public:
 
         response->data = {profile1_status};
 
-        return createDtoResponse(
-            Status::CODE_200,
-            json_object_mapper_->writeToString(response));
+        return MakeResponse(response);
     }
 
     ENDPOINT(
         "POST",
-        "/api/profile/enable",
+        DAS_HTTP_API_PREFIX "profile/enable",
         set_enable,
         BODY_DTO(Object<ProfileEnabled>, profile_enabled))
     {
@@ -131,22 +178,18 @@ public:
                 profile_enabled->profile_id->c_str());
             DAS_LOG_ERROR(message.c_str());
             response->message = message;
-            return createDtoResponse(
-                Status::CODE_200,
-                json_object_mapper_->writeToString(response));
+            return createDtoResponse(Status::CODE_200, response);
         }
 
         response->code =
             p_task_scheduler_->SetEnabled(profile_enabled->enabled);
         response->message = "";
-        return createDtoResponse(
-            Status::CODE_200,
-            json_object_mapper_->writeToString(response));
+        return createDtoResponse(Status::CODE_200, response);
     }
 
     ENDPOINT(
         "POST",
-        "/api/profile/start",
+        DAS_HTTP_API_PREFIX "profile/start",
         start_profile,
         BODY_DTO(Object<ProfileId>, profile_id))
     {
@@ -159,21 +202,17 @@ public:
                 profile_id->profile_id->c_str());
             DAS_LOG_ERROR(message.c_str());
             response->message = message;
-            return createDtoResponse(
-                Status::CODE_200,
-                json_object_mapper_->writeToString(response));
+            return createDtoResponse(Status::CODE_200, response);
         }
 
         response->code = p_task_scheduler_->ForceStart();
         response->message = "";
-        return createDtoResponse(
-            Status::CODE_200,
-            json_object_mapper_->writeToString(response));
+        return createDtoResponse(Status::CODE_200, response);
     }
 
     ENDPOINT(
         "POST",
-        "/api/profile/stop",
+        DAS_HTTP_API_PREFIX "profile/stop",
         stop_profile,
         BODY_DTO(Object<ProfileId>, profile_id))
     {
@@ -186,16 +225,12 @@ public:
                 profile_id->profile_id->c_str());
             DAS_LOG_ERROR(message.c_str());
             response->message = message;
-            return createDtoResponse(
-                Status::CODE_200,
-                json_object_mapper_->writeToString(response));
+            return createDtoResponse(Status::CODE_200, response);
         }
 
         response->code = p_task_scheduler_->RequestStop();
         response->message = "";
-        return createDtoResponse(
-            Status::CODE_200,
-            json_object_mapper_->writeToString(response));
+        return createDtoResponse(Status::CODE_200, response);
     }
 
 private:
@@ -239,9 +274,7 @@ private:
                 error_code);
             DAS_LOG_ERROR(message.c_str());
             response->message = message;
-            return createDtoResponse(
-                Status::CODE_200,
-                json_object_mapper_->writeToString(response));
+            return createDtoResponse(Status::CODE_200, response);
         }
 
         for (auto [error_code, index, p_task_info] =
@@ -262,9 +295,7 @@ private:
                     error_code);
                 DAS_LOG_ERROR(message.c_str());
                 response->message = message;
-                return createDtoResponse(
-                    Status::CODE_200,
-                    json_object_mapper_->writeToString(response));
+                return createDtoResponse(Status::CODE_200, response);
             }
 
             auto    task_info = TaskDesc::createShared();
@@ -287,9 +318,7 @@ private:
             response->data->emplace_back(std::move(task_info));
         }
 
-        return createDtoResponse(
-            Status::CODE_200,
-            json_object_mapper_->writeToString(response));
+        return createDtoResponse(Status::CODE_200, response);
     }
 };
 

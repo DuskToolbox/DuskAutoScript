@@ -12,7 +12,7 @@
 
 #include OATPP_CODEGEN_BEGIN(ApiController)
 
-class DasLogController final : public oatpp::web::server::api::ApiController
+class DasLogController final : public DAS::Http::DasApiController
 {
     DAS::DasPtr<DasHttpLogReader> p_reader{DAS::MakeDasPtr<DasHttpLogReader>()};
     DAS::DasPtr<IDasLogRequester> p_requester{};
@@ -23,7 +23,6 @@ public:
     DasLogController(
         std::shared_ptr<ObjectMapper> object_mapper =
             oatpp::parser::json::mapping::ObjectMapper::createShared())
-        : ApiController{object_mapper}
     {
         constexpr auto LOG_RING_BUFFER_SIZE = 64;
         ::CreateIDasLogRequester(LOG_RING_BUFFER_SIZE, p_requester.Put());
@@ -70,14 +69,20 @@ public:
 
         OATPP_LOGI(DAS_HTTP_LOG_THEME, "Logger loaded.");
 
-        return createDtoResponse(
-            Status::CODE_200,
-            getDefaultObjectMapper()->writeToString(response));
+        return createDtoResponse(Status::CODE_200, response);
     }
 
     ENDPOINT("POST", "/api/alive", get_alive)
     {
-        return createDtoResponse(Status::CODE_200, String{"1"});
+        nlohmann::json response;
+        response["code"] = 0;
+        response["message"] = "";
+        response["data"]["alive"] = 1;
+        return oatpp::web::protocol::http::outgoing::Response::createShared(
+            Status::CODE_200,
+            oatpp::web::protocol::http::outgoing::BufferBody::createShared(
+                String{response.dump()},
+                "application/json"));
     }
 };
 

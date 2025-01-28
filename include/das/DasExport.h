@@ -21,6 +21,12 @@
 #define DAS_EXPORT DAS_DLL_IMPORT
 #endif
 
+#ifdef DAS_GATEWAY_BUILD_SHARED
+#define DAS_GATEWAY_EXPORT DAS_DLL_EXPORT
+#else
+#define DAS_GATEWAY_EXPORT DAS_DLL_IMPORT
+#endif // DAS_GATEWAY_BUILD_SHARED
+
 #ifdef __cplusplus
 #define DAS_EXTERN_C extern "C"
 #else
@@ -33,6 +39,8 @@
  * 使用此宏定义的接口，不具有且未来也不计划具有ABI兼容性，使用DasCore的用户也不应该调用这些接口
  */
 #define DAS_API DAS_DLL_EXPORT
+
+#define DAS_GATEWAY_C_API DAS_EXTERN_C DAS_GATEWAY_EXPORT
 
 #ifdef _MSC_VER
 #define DAS_FUNCTION __FUNCTION__

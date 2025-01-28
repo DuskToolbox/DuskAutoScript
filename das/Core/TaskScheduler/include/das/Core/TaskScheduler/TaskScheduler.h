@@ -122,6 +122,8 @@ namespace Core
 
         void DoTask(const SchedulingUnit& schedule_unit);
 
+        void DumpStateToFile();
+
         // executor_
         void RunTaskQueue();
         void NotifyExit();

@@ -65,7 +65,7 @@ message(STATUS "The third-party libraries listed later are globally shared in th
 function(_download_and_config_zlib_ng)
     set(CMAKE_FOLDER "Das3rd/zlib_ng")
     # 修改此处版本时，需一并修改../cmake/FindZLIB.cmake的第26行
-    set(DAS_ZLIB_NG_VERSION "2.2.2")
+    set(DAS_ZLIB_NG_VERSION "2.2.3")
     message(STATUS "Downloading and configuring zlib-ng (VERSION ${DAS_ZLIB_NG_VERSION})")
     set(CMAKE_POSITION_INDEPENDENT_CODE ON)
     set(ZLIB_COMPAT ON)
@@ -82,7 +82,7 @@ function(_download_and_config_zlib_ng)
     FetchContent_Declare(
             zlib-ng
             URL "${GITHUB_MIRROR_URL}/zlib-ng/zlib-ng/archive/refs/tags/${DAS_ZLIB_NG_VERSION}.tar.gz"
-            URL_HASH SHA256=fcb41dd59a3f17002aeb1bb21f04696c9b721404890bb945c5ab39d2cb69654c)
+            URL_HASH SHA256=F2FB245C35082FE9EA7A22B332730F63CF1D42F04D84FE48294207D033CBA4DD)
     FetchContent_MakeAvailable(zlib-ng)
     if(MSVC)
         target_compile_options(zlib PUBLIC /wd4142)
@@ -441,7 +441,7 @@ if (${DAS_USE_BUNDLED_BOOST})
             Boost::circular_buffer
             Boost::signals2)
 else ()
-    find_package(Boost 1.82 COMPONENTS filesystem url)
+    find_package(Boost CONFIG 1.82 COMPONENTS filesystem url)
 
     if (NOT Boost_FOUND)
         message(FATAL_ERROR "Boost not found. Please install it manually or set DAS_USE_BUNDLED_BOOST=ON.")

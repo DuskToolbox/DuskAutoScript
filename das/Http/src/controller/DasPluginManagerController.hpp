@@ -14,15 +14,14 @@
 #include "dto/Profile.hpp"
 #include "dto/Settings.hpp"
 
+#include "component/Helper.hpp"
+
 #include OATPP_CODEGEN_BEGIN(ApiController)
 
-class DasPluginManagerController final
-    : public oatpp::web::server::api::ApiController
+class DasPluginManagerController final : public DAS::Http::DasApiController
 {
     DAS::DasPtr<IDasPluginManager>      p_plugin_manager_{};
     DAS::DasPtr<IDasPluginManagerForUi> p_plugin_manager_for_ui_{};
-
-    std::shared_ptr<ObjectMapper> json_object_mapper_{};
 
     static auto CreatePluginManager(
         IDasReadOnlyGuidVector*  p_guid_vector,
@@ -79,7 +78,6 @@ public:
     DasPluginManagerController(
         std::shared_ptr<ObjectMapper> object_mapper =
             oatpp::parser::json::mapping::ObjectMapper::createShared())
-        : ApiController{object_mapper}, json_object_mapper_{object_mapper}
     {
     }
 
@@ -104,9 +102,7 @@ public:
             DAS_LOG_ERROR(message.c_str());
             response->code = create_guid_result;
             response->message = message;
-            return createDtoResponse(
-                Status::CODE_200,
-                json_object_mapper_->writeToString(response));
+            return createDtoResponse(Status::CODE_200, response);
         }
         for (const auto& guidString : *ignoredGuidList.get()->ignoredGuidList)
         {
@@ -151,14 +147,10 @@ public:
             DAS_LOG_ERROR(message.c_str());
             response->code = error_code;
             response->message = message;
-            return createDtoResponse(
-                Status::CODE_200,
-                json_object_mapper_->writeToString(response));
+            return createDtoResponse(Status::CODE_200, response);
         }
 
-        return createDtoResponse(
-            Status::CODE_200,
-            json_object_mapper_->writeToString(response));
+        return createDtoResponse(Status::CODE_200, response);
     }
 
     // 获取插件列表
@@ -181,9 +173,7 @@ public:
 
         response->data = {plugin1};
 
-        return createDtoResponse(
-            Status::CODE_200,
-            json_object_mapper_->writeToString(response));
+        return createDtoResponse(Status::CODE_200, response);
     }
 };
 

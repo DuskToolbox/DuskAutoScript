@@ -5,7 +5,7 @@
 #include <das/Core/Logger/Logger.h>
 #include <optional>
 
-namespace AC = DAS::Core;
+namespace DC = DAS::Core;
 
 DAS_NS_ANONYMOUS_DETAILS_BEGIN
 
@@ -39,7 +39,7 @@ void DasLogError(IDasReadOnlyString* p_string)
     DasLogErrorU8(p_u8_string);
 }
 
-void DasLogErrorU8(const char* p_string) { AC::g_logger->info(p_string); }
+void DasLogErrorU8(const char* p_string) { DC::g_logger->info(p_string); }
 
 void DasLogErrorU8WithSourceLocation(
     const char*              p_string,
@@ -48,7 +48,7 @@ void DasLogErrorU8WithSourceLocation(
     const auto opt_location = Details::ToSpdlogSourceLocation(p_location);
     if (opt_location)
     {
-        AC::g_logger->log(opt_location.value(), spdlog::level::err, p_string);
+        DC::g_logger->log(opt_location.value(), spdlog::level::err, p_string);
     }
     else
     {
@@ -67,7 +67,7 @@ void DasLogWarning(IDasReadOnlyString* p_string)
     DasLogWarningU8(p_u8_string);
 }
 
-void DasLogWarningU8(const char* p_string) { AC::g_logger->warn(p_string); }
+void DasLogWarningU8(const char* p_string) { DC::g_logger->warn(p_string); }
 
 void DasLogWarningU8WithSourceLocation(
     const char*              p_string,
@@ -76,7 +76,7 @@ void DasLogWarningU8WithSourceLocation(
     const auto opt_location = Details::ToSpdlogSourceLocation(p_location);
     if (opt_location)
     {
-        AC::g_logger->log(opt_location.value(), spdlog::level::warn, p_string);
+        DC::g_logger->log(opt_location.value(), spdlog::level::warn, p_string);
     }
     else
     {
@@ -95,7 +95,7 @@ void DasLogInfo(IDasReadOnlyString* p_string)
     DasLogInfoU8(p_u8_string);
 }
 
-void DasLogInfoU8(const char* p_string) { AC::g_logger->info(p_string); }
+void DasLogInfoU8(const char* p_string) { DC::g_logger->info(p_string); }
 
 void DasLogInfoU8WithSourceLocation(
     const char*              p_string,
@@ -104,7 +104,7 @@ void DasLogInfoU8WithSourceLocation(
     const auto opt_location = Details::ToSpdlogSourceLocation(p_location);
     if (opt_location)
     {
-        AC::g_logger->log(opt_location.value(), spdlog::level::info, p_string);
+        DC::g_logger->log(opt_location.value(), spdlog::level::info, p_string);
     }
     else
     {

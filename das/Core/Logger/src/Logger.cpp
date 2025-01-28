@@ -1,6 +1,6 @@
 #include "IDasLogRequesterImpl.h"
-#include <das/Core/Logger/Logger.h>
 #include <array>
+#include <das/Core/Logger/Logger.h>
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/sinks/stdout_sinks.h>
 
@@ -45,7 +45,7 @@ namespace Core
         const auto std_sink = std::make_shared<spdlog::sinks::stdout_sink_mt>();
         const auto file_sink =
             std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
-                "logs/libDasCore.log",
+                "logs/" DAS_CORE_NAME ".log",
                 50 * 1024 * 1024, // 50mb
                 2);
         const auto log_requester_sink =
@@ -62,7 +62,7 @@ namespace Core
             std::end(sinks));
         spdlog::register_logger(result);
         spdlog::set_pattern(
-            "[%Y-%m-%d %H:%M:%S.%e][%t][%l][%s:%!():%#][%i] %v");
+            "[%Y-%m-%d %H:%M:%S.%e][%t][%l][%!()][%s:%#][%i] %v");
 
         spdlog::set_level(spdlog::level::trace);
 

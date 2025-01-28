@@ -17,6 +17,7 @@ DasResult DasInitializePluginManagerCallback::OnFinished(
 {
     initialize_result_ = initialize_result;
     plugin_manager_for_ui_ = p_in_manager_without_owner_ship;
+    return DAS_S_OK;
 }
 
 DasResult DasInitializePluginManagerCallback::GetInitializeResult()

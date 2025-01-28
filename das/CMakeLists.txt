@@ -23,6 +23,9 @@ if(${DAS_BUILD_TEST})
     target_link_libraries(AdditionalTest PUBLIC DasUtils Boost::url)
 endif()
 
+# 未来Gateway将以独立进程的形式来转发请求到具体的DasCore实例上，但是目前，Gateway即为Core
+add_subdirectory(Gateway)
+
 add_subdirectory(Core)
 
 add_subdirectory(Plugins)

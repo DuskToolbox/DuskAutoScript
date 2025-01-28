@@ -113,10 +113,6 @@ DAS_NS_END
 
 DAS_UTILS_NS_BEGIN
 
-DasResult ToPath(
-    IDasReadOnlyString*    p_string,
-    std::filesystem::path& ref_out_path);
-
 auto ToU8StringWithoutOwnership(IDasReadOnlyString* p_string)
     -> Expected<const char*>;
 

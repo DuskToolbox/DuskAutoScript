@@ -270,7 +270,7 @@ auto ReadFromFile(const std::filesystem::path& full_path) -> cv::Mat
     DAS::Utils::EnableStreamException(
         ifs,
         std::ios::badbit | std::ios::failbit,
-        [&full_path, &binary](auto& stream)
+        [&full_path, &binary](std::ifstream& stream)
         {
             stream.open(full_path, std::ios::binary);
             // Stop eating new lines in binary mode!
@@ -283,7 +283,7 @@ auto ReadFromFile(const std::filesystem::path& full_path) -> cv::Mat
             std::copy(
                 std::istream_iterator<char>{stream},
                 std::istream_iterator<char>{},
-                binary.begin());
+                std::back_inserter(binary));
         });
 
     return cv::imdecode(binary, cv::IMREAD_COLOR);

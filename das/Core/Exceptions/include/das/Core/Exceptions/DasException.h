@@ -19,7 +19,7 @@ struct DasExceptionSourceInfo
     const char* function;
 };
 
-#define DAS_THROW_IF_FAILED_EC(...)                                                \
+#define DAS_THROW_IF_FAILED_EC(...)                                            \
     {                                                                          \
         if (const auto result = __VA_ARGS__; ::Das::IsFailed(result))          \
         {                                                                      \

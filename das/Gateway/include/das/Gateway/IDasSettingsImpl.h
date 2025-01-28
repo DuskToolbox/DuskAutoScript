@@ -1,9 +1,10 @@
-#ifndef DAS_CORE_SETTINGSMANAGER_GLOBALSETTINGSMANAGER_H
-#define DAS_CORE_SETTINGSMANAGER_GLOBALSETTINGSMANAGER_H
+#ifndef DAS_GATEWAY_IDASSETTINSIMPL_H
+#define DAS_GATEWAY_IDASSETTINSIMPL_H
 
-#include <das/Core/SettingsManager/Config.h>
 #include <das/ExportInterface/DasJson.h>
 #include <das/ExportInterface/IDasSettings.h>
+#include <das/Gateway/Config.h>
+#include <das/Gateway/IDasSettingsImpl.h>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/Expected.h>
 #include <mutex>
@@ -16,16 +17,16 @@ NLOHMANN_JSON_SERIALIZE_ENUM(
      {DAS_TYPE_STRING, "string"},
      {DAS_TYPE_BOOL, "bool"}})
 
-DAS_CORE_SETTINGSMANAGER_NS_BEGIN
+DAS_GATEWAY_NS_BEGIN
 
 class DasSettings;
 
-class IDasSettingsForUiImpl final : public IDasSettingsForUi
+class IDasJsonSettingImpl final : public IDasJsonSetting
 {
     DasSettings& impl_;
 
 public:
-    IDasSettingsForUiImpl(DasSettings& impl);
+    IDasJsonSettingImpl(DasSettings& impl);
     // IDasBase
     int64_t  AddRef() override;
     int64_t  Release() override;
@@ -36,18 +37,19 @@ public:
     DAS_IMPL SaveToWorkingDirectory(
         IDasReadOnlyString* p_relative_path) override;
     DAS_IMPL Save() override;
+    DAS_IMPL SetOnDeletedHandler(
+        IDasJsonSettingOnDeletedHandler* p_handler) override;
 };
 
-/**
- * @brief 全局单例，不需要释放
- */
 class DasSettings
 {
-    std::mutex     mutex_;
-    nlohmann::json settings_;
-    std::filesystem::path path_;
+    Utils::RefCounter<DasSettings>          ref_counter_;
+    std::mutex                              mutex_;
+    nlohmann::json                          settings_;
+    std::filesystem::path                   path_;
+    DasPtr<IDasJsonSettingOnDeletedHandler> p_handler_;
 
-    IDasSettingsForUiImpl cpp_projection_for_ui_{*this};
+    IDasJsonSettingImpl cpp_projection_for_ui_{*this};
 
     auto GetKey(const char* p_type_name, const char* key)
         -> Utils::Expected<std::reference_wrapper<const nlohmann::json>>;
@@ -62,19 +64,22 @@ public:
     int64_t AddRef();
     int64_t Release();
 
-    // IDasSettingsForUi
+    // IDasJsonSetting
     DasResult ToString(IDasReadOnlyString** pp_out_string);
     DasResult FromString(IDasReadOnlyString* p_in_settings);
     DasResult SaveToWorkingDirectory(IDasReadOnlyString* p_relative_path);
     DasResult Save();
+    DasResult SetOnDeletedHandler(IDasJsonSettingOnDeletedHandler* p_handler);
     // DasSettings
     DasResult LoadSettings(IDasReadOnlyString* p_path);
     // to projection
-    operator IDasSettingsForUiImpl*() noexcept;
+    operator IDasJsonSettingImpl*() noexcept;
+
+    void Delete();
 };
 
 extern DasPtr<DasSettings> g_settings;
 
-DAS_CORE_SETTINGSMANAGER_NS_END
+DAS_GATEWAY_NS_END
 
-#endif // DAS_CORE_SETTINGSMANAGER_GLOBALSETTINGSMANAGER_H
+#endif // DAS_GATEWAY_IDASSETTINSIMPL_H

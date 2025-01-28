@@ -79,30 +79,6 @@ auto(DAS_FMT_NS::formatter<DasReadOnlyString, char>::format)(
 
 DAS_UTILS_NS_BEGIN
 
-DasResult ToPath(
-    IDasReadOnlyString*    p_string,
-    std::filesystem::path& ref_out_path)
-{
-    DAS_UTILS_CHECK_POINTER(p_string);
-#ifdef DAS_WINDOWS
-    const wchar_t* w_path;
-    const auto     get_result = p_string->GetW(&w_path);
-    if (DAS::IsFailed(get_result))
-    {
-        return get_result;
-    }
-    ref_out_path = std::filesystem::path{w_path};
-#else
-    const char* u8_path;
-    const auto  get_result = p_string->GetUtf8(&u8_path);
-    if (DAS::IsFailed(get_result))
-    {
-        return get_result;
-    }
-    ref_out_path = std::filesystem::path{u8_path};
-#endif // DAS_WINDOWS
-    return get_result;
-}
 auto ToU8StringWithoutOwnership(IDasReadOnlyString* p_string)
     -> Expected<const char*>
 {

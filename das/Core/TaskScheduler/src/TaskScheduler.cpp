@@ -425,6 +425,8 @@ namespace Core
         }
     }
 
+    void TaskScheduler::DumpStateToFile() {}
+
     DasResult TaskScheduler::AddTask(
         ForeignInterfaceHost::TaskManager::TaskInfo* p_task)
     {

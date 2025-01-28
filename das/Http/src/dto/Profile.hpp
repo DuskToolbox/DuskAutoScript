@@ -18,19 +18,17 @@ class ProfileDesc : public oatpp::DTO
     DTO_INIT(ProfileDesc, DTO)
 
     DTO_FIELD(String, name, "name");
-    DTO_FIELD(String, profile_id, "profile_id");
+    DTO_FIELD(String, profile_id, "profileId");
 };
 
-using ProfileDescList = ApiResponse<oatpp::List<oatpp::Object<ProfileDesc>>>;
-
-// 读取配置文件的返回值
-// GetProfile result
-class ProfileJson : public oatpp::DTO
+class ProfileDescList : public oatpp::DTO
 {
-    DTO_INIT(ProfileJson, DTO)
+    DTO_INIT(ProfileDescList, DTO)
 
-    DTO_FIELD(String, profile, "profile");
+    DTO_FIELD(List<Object<ProfileDesc>>, profile_list, "profileList");
 };
+
+using ProfileDescListResponse = ApiResponse<oatpp::Object<ProfileDescList>>;
 
 // 忽略的GUID列表，初始化插件管理器时使用
 class IgnoredGuidList : public oatpp::DTO
@@ -47,7 +45,7 @@ class ProfileStatus : public oatpp::DTO
 
     DTO_INIT(ProfileStatus, DTO)
 
-    DTO_FIELD(String, profile_id, "profile_id");
+    DTO_FIELD(String, profile_id, "profileId");
     DTO_FIELD(Boolean, run, "run");
     DTO_FIELD(Boolean, enable, "enable");
 };
@@ -62,7 +60,7 @@ class ProfileRunning : public oatpp::DTO
 
     DTO_INIT(ProfileRunning, DTO)
 
-    DTO_FIELD(String, profile_id, "profile_id");
+    DTO_FIELD(String, profile_id, "profileId");
     DTO_FIELD(Boolean, run, "run");
 };
 
@@ -71,14 +69,14 @@ class ProfileId : public oatpp::DTO
 
     DTO_INIT(ProfileId, DTO)
 
-    DTO_FIELD(String, profile_id, "profile_id");
+    DTO_FIELD(String, profile_id, "profileId");
 };
 
 class ProfileEnabled : public oatpp::DTO
 {
     DTO_INIT(ProfileEnabled, DTO)
 
-    DTO_FIELD(String, profile_id, "profile_id");
+    DTO_FIELD(String, profile_id, "profileId");
     DTO_FIELD(Int32, enabled, "enabled");
 };
 
@@ -86,7 +84,7 @@ class ProfileInfo : public oatpp::DTO
 {
     DTO_INIT(ProfileInfo, DTO)
 
-    DTO_FIELD(String, profile_id, "profile_id");
+    DTO_FIELD(String, profile_id, "profileId");
     DTO_FIELD(Int32, enabled, "enabled");
 };
 
