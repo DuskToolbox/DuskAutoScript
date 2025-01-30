@@ -1,13 +1,12 @@
 #ifndef DAS_CORE_FOREIGNINTERFACEHOST_DASSTRINGIMPL_H
 #define DAS_CORE_FOREIGNINTERFACEHOST_DASSTRINGIMPL_H
 
+#include <array>
 #include <das/DasString.hpp>
-#include <das/Core/Exceptions/DasException.h>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/Config.h>
 #include <das/Utils/Expected.h>
 #include <das/Utils/fmt.h>
-#include <array>
 #include <filesystem>
 #include <nlohmann/json_fwd.hpp>
 #include <unicode/unistr.h>
@@ -130,6 +129,9 @@ class DasReadOnlyStringWrapper
             return result;
         }()};
 
+    template <class T>
+    T To() const;
+
 public:
     DasReadOnlyStringWrapper();
     DasReadOnlyStringWrapper(const char* p_u8_string);
@@ -140,78 +142,18 @@ public:
     DasReadOnlyStringWrapper(const DasReadOnlyString& ref_das_string);
     ~DasReadOnlyStringWrapper();
 
-    template <class T>
-    T To() const;
-
-    void GetTo(const char*& p_u8_string);
-    void GetTo(const char8_t*& p_u8_string);
-    void GetTo(std::string& std_u8_string);
-    void GetTo(DAS::DasPtr<IDasReadOnlyString>& p_string);
-    void GetTo(IDasReadOnlyString**& pp_string);
-    void GetTo(IDasReadOnlyString*& p_string);
+    void GetTo(const char*& p_u8_string) const;
+    void GetTo(const char8_t*& p_u8_string) const;
+    void GetTo(std::string& std_u8_string) const;
+    void GetTo(DAS::DasPtr<IDasReadOnlyString>& p_string) const;
+    void GetTo(IDasReadOnlyString**& pp_string) const;
+    void GetTo(IDasReadOnlyString*& p_string) const;
 
     operator DasReadOnlyString() const;
     void                 GetImpl(IDasReadOnlyString** pp_impl) const;
     IDasReadOnlyString*  Get() const noexcept;
     IDasReadOnlyString** Put();
 };
-
-template <>
-inline std::string DasReadOnlyStringWrapper::To() const
-{
-    if (!p_impl_)
-    {
-        return {};
-    }
-    const char* p_string;
-    const auto  result = p_impl_->GetUtf8(&p_string);
-    if (DAS::IsFailed(result))
-    {
-        DAS_THROW_EC(result);
-    }
-    return {p_string};
-}
-
-template <>
-inline const char* DasReadOnlyStringWrapper::To() const
-{
-    if (!p_impl_)
-    {
-        return nullptr;
-    }
-    const char* p_string;
-    const auto  result = p_impl_->GetUtf8(&p_string);
-    if (DAS::IsFailed(result))
-    {
-        DAS_THROW_EC(result);
-    }
-    return p_string;
-}
-
-template <>
-inline const char8_t* DasReadOnlyStringWrapper::To() const
-{
-    const auto p_string = To<const char*>();
-    return reinterpret_cast<const char8_t*>(p_string);
-}
-
-template <>
-inline IDasReadOnlyString* DasReadOnlyStringWrapper::To() const
-{
-    return p_impl_.Get();
-}
-
-template <>
-inline DAS::DasPtr<IDasReadOnlyString> DasReadOnlyStringWrapper::To() const
-{
-    return p_impl_;
-}
-
-template <>
-inline DasReadOnlyString DasReadOnlyStringWrapper::To() const
-{
-    return DasReadOnlyString{p_impl_};
-}
 
 void from_json(nlohmann::json input, DasReadOnlyStringWrapper& output);
 

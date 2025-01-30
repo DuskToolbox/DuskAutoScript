@@ -1,7 +1,6 @@
+#include <cstring>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
-#include <das/ExportInterface/IDasSettings.h>
-#include <cstring>
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 
@@ -16,7 +15,7 @@ namespace
     }
 } // Annonymous namespace
 
-TEST(PluginDescTest, FromBasicJson)
+TEST(PluginPackageDescTest, FromBasicJson)
 {
     constexpr auto test_string = R"(
     {
@@ -33,7 +32,8 @@ TEST(PluginDescTest, FromBasicJson)
     )";
 
     const auto plugin_desc =
-        JsonToStruct<DAS::Core::ForeignInterfaceHost::PluginDesc>(test_string);
+        JsonToStruct<DAS::Core::ForeignInterfaceHost::PluginPackageDesc>(
+            test_string);
 
     EXPECT_EQ(plugin_desc.name, "test_name");
     EXPECT_EQ(plugin_desc.author, "test_author");
@@ -48,7 +48,7 @@ TEST(PluginDescTest, FromBasicJson)
     EXPECT_EQ(plugin_desc.guid, guid);
 }
 
-TEST(PluginDescTest, FromUnexpectedGuidJson)
+TEST(PluginPackageDescTest, FromUnexpectedGuidJson)
 {
     constexpr auto test_string = R"(
 {
@@ -66,9 +66,9 @@ TEST(PluginDescTest, FromUnexpectedGuidJson)
 
     EXPECT_THROW(
         {
-            const auto plugin_desc =
-                JsonToStruct<DAS::Core::ForeignInterfaceHost::PluginDesc>(
-                    test_string);
+            const auto plugin_desc = JsonToStruct<
+                DAS::Core::ForeignInterfaceHost::PluginPackageDesc>(
+                test_string);
         },
         DAS::Core::InvalidGuidStringSizeException);
 }
@@ -95,7 +95,8 @@ TEST(PluginSettingsDescTest, FromBasicJson)
     )";
 
     auto plugin_desc =
-        JsonToStruct<DAS::Core::ForeignInterfaceHost::PluginDesc>(test_string);
+        JsonToStruct<DAS::Core::ForeignInterfaceHost::PluginPackageDesc>(
+            test_string);
     EXPECT_EQ(plugin_desc.name, "test_name");
     EXPECT_EQ(plugin_desc.author, "test_author");
     EXPECT_EQ(plugin_desc.version, "test_version");

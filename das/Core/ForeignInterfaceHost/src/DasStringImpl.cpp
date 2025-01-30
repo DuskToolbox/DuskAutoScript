@@ -504,6 +504,63 @@ IDasReadOnlyString* DasReadOnlyStringWrapper::Get() const noexcept
 
 IDasReadOnlyString** DasReadOnlyStringWrapper::Put() { return p_impl_.Put(); }
 
+template <>
+inline std::string DasReadOnlyStringWrapper::To() const
+{
+    if (!p_impl_)
+    {
+        return {};
+    }
+    const char* p_string;
+    const auto  result = p_impl_->GetUtf8(&p_string);
+    if (DAS::IsFailed(result))
+    {
+        DAS_THROW_EC(result);
+    }
+    return {p_string};
+}
+
+template <>
+inline const char* DasReadOnlyStringWrapper::To() const
+{
+    if (!p_impl_)
+    {
+        return nullptr;
+    }
+    const char* p_string;
+    const auto  result = p_impl_->GetUtf8(&p_string);
+    if (DAS::IsFailed(result))
+    {
+        DAS_THROW_EC(result);
+    }
+    return p_string;
+}
+
+template <>
+inline const char8_t* DasReadOnlyStringWrapper::To() const
+{
+    const auto p_string = To<const char*>();
+    return reinterpret_cast<const char8_t*>(p_string);
+}
+
+template <>
+inline IDasReadOnlyString* DasReadOnlyStringWrapper::To() const
+{
+    return p_impl_.Get();
+}
+
+template <>
+inline DAS::DasPtr<IDasReadOnlyString> DasReadOnlyStringWrapper::To() const
+{
+    return p_impl_;
+}
+
+template <>
+inline DasReadOnlyString DasReadOnlyStringWrapper::To() const
+{
+    return DasReadOnlyString{p_impl_};
+}
+
 void from_json(nlohmann::json input, DasReadOnlyStringWrapper& output)
 {
     DasReadOnlyStringWrapper result{
@@ -522,27 +579,27 @@ DasReadOnlyStringWrapper::DasReadOnlyStringWrapper() = default;
 
 DasReadOnlyStringWrapper::~DasReadOnlyStringWrapper() = default;
 
-void DasReadOnlyStringWrapper::GetTo(const char*& p_u8_string)
+void DasReadOnlyStringWrapper::GetTo(const char*& p_u8_string) const
 {
     p_u8_string = To<const char*>();
 }
 
-void DasReadOnlyStringWrapper::GetTo(const char8_t*& p_u8_string)
+void DasReadOnlyStringWrapper::GetTo(const char8_t*& p_u8_string) const
 {
     p_u8_string = To<const char8_t*>();
 }
 
-void DasReadOnlyStringWrapper::GetTo(std::string& std_u8_string)
+void DasReadOnlyStringWrapper::GetTo(std::string& std_u8_string) const
 {
     std_u8_string = To<std::string>();
 }
 
-void DasReadOnlyStringWrapper::GetTo(DAS::DasPtr<IDasReadOnlyString>& p_string)
+void DasReadOnlyStringWrapper::GetTo(DAS::DasPtr<IDasReadOnlyString>& p_string) const
 {
     p_string = p_impl_;
 }
 
-void DasReadOnlyStringWrapper::GetTo(IDasReadOnlyString**& pp_string)
+void DasReadOnlyStringWrapper::GetTo(IDasReadOnlyString**& pp_string) const
 {
     if (p_impl_)
     {
@@ -555,7 +612,7 @@ void DasReadOnlyStringWrapper::GetTo(IDasReadOnlyString**& pp_string)
     }
 }
 
-void DasReadOnlyStringWrapper::GetTo(IDasReadOnlyString*& p_string)
+void DasReadOnlyStringWrapper::GetTo(IDasReadOnlyString*& p_string) const
 {
     p_string = p_impl_.Get();
 }
@@ -743,7 +800,9 @@ void nlohmann::adl_serializer<DasReadOnlyStringWrapper>::to_json(
     json&                           j,
     const DasReadOnlyStringWrapper& das_string)
 {
-    j = const_cast<DasReadOnlyStringWrapper&>(das_string).To<const char*>();
+    const char* j_string;
+    das_string.GetTo(j_string);
+    j = j_string;
 }
 
 void nlohmann::adl_serializer<DasReadOnlyStringWrapper>::from_json(
@@ -764,7 +823,9 @@ void nlohmann::adl_serializer<DasReadOnlyString>::to_json(
         j = nullptr;
         return;
     }
-    j = DasReadOnlyStringWrapper{das_string}.To<const char*>();
+    const char* j_string;
+    DasReadOnlyStringWrapper{das_string}.GetTo(j_string);
+    j = j_string;
 }
 
 void nlohmann::adl_serializer<DasReadOnlyString>::from_json(
@@ -774,7 +835,9 @@ void nlohmann::adl_serializer<DasReadOnlyString>::from_json(
     std::string string;
     j.get_to(string);
     DasReadOnlyStringWrapper wrapper{string};
-    das_string = wrapper.To<DasReadOnlyString>();
+    DAS::DasPtr<IDasReadOnlyString> p_das_string;
+    wrapper.GetTo(p_das_string);
+    das_string = std::move(p_das_string);
 }
 
 void nlohmann::adl_serializer<DAS::DasPtr<IDasReadOnlyString>>::to_json(
@@ -786,7 +849,9 @@ void nlohmann::adl_serializer<DAS::DasPtr<IDasReadOnlyString>>::to_json(
         j = nullptr;
         return;
     }
-    j = DasReadOnlyStringWrapper{p_das_string}.To<const char*>();
+    const char* j_string;
+    DasReadOnlyStringWrapper{p_das_string}.GetTo(j_string);
+    j = j_string;
 }
 
 void nlohmann::adl_serializer<DAS::DasPtr<IDasReadOnlyString>>::from_json(
@@ -796,5 +861,5 @@ void nlohmann::adl_serializer<DAS::DasPtr<IDasReadOnlyString>>::from_json(
     std::string string;
     j.get_to(string);
     DasReadOnlyStringWrapper wrapper{string};
-    p_das_string = wrapper.To<DAS::DasPtr<IDasReadOnlyString>>();
+    wrapper.GetTo(p_das_string);
 }

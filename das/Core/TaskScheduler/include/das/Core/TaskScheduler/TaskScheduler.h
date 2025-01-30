@@ -87,7 +87,7 @@ namespace Core
 
     public:
         TaskScheduler();
-        ~TaskScheduler() = default;
+        ~TaskScheduler();
 
         // IDasBase
         DAS_UTILS_IDASBASE_AUTO_IMPL(TaskScheduler)

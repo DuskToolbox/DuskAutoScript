@@ -111,22 +111,30 @@ Details::TaskInfoImpl::TaskInfoImpl(IDasTask* p_task)
 
 IDasReadOnlyString* Details::TaskInfoImpl::GetName() const noexcept
 {
-    return name_.To<IDasReadOnlyString*>();
+    IDasReadOnlyString* result{};
+    name_.GetTo(result);
+    return result;
 }
 
 IDasReadOnlyString* Details::TaskInfoImpl::GetDescription() const noexcept
 {
-    return description_.To<IDasReadOnlyString*>();
+    IDasReadOnlyString* result{};
+    description_.GetTo(result);
+    return result;
 }
 
 IDasReadOnlyString* Details::TaskInfoImpl::GetGameName() const noexcept
 {
-    return game_name_.To<IDasReadOnlyString*>();
+    IDasReadOnlyString* result{};
+    game_name_.GetTo(result);
+    return result;
 }
 
 IDasReadOnlyString* Details::TaskInfoImpl::GetTypeName() const noexcept
 {
-    return type_name_.To<IDasReadOnlyString*>();
+    IDasReadOnlyString* result{};
+    type_name_.GetTo(result);
+    return result;
 }
 
 IDasReadOnlyString* Details::TaskInfoImpl::GetSettingsJson() const noexcept
@@ -162,25 +170,25 @@ DasResult Details::TaskInfoImpl::GetProperty(
     if (property_name
         == DAS_TASK_INFO_PROPERTIES[DAS_TASK_INFO_PROPERTIES_NAME_INDEX])
     {
-        *pp_out_value = name_.To<const char*>();
+        name_.GetTo(*pp_out_value);
     }
     else if (
         property_name
         == DAS_TASK_INFO_PROPERTIES[DAS_TASK_INFO_PROPERTIES_DESCRIPTION_INDEX])
     {
-        *pp_out_value = description_.To<const char*>();
+        description_.GetTo(*pp_out_value);
     }
     else if (
         property_name
         == DAS_TASK_INFO_PROPERTIES[DAS_TASK_INFO_PROPERTIES_GAME_NAME_INDEX])
     {
-        *pp_out_value = game_name_.To<const char*>();
+        game_name_.GetTo(*pp_out_value);
     }
     else if (
         property_name
         == DAS_TASK_INFO_PROPERTIES[DAS_TASK_INFO_PROPERTIES_TYPE_NAME_INDEX])
     {
-        *pp_out_value = type_name_.To<const char*>();
+        type_name_.GetTo(*pp_out_value);
     }
     return DAS_S_OK;
 }

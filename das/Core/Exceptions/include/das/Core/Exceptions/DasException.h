@@ -29,22 +29,18 @@ struct DasExceptionSourceInfo
 
 #define DAS_THROW_EC(error_code)                                               \
     {                                                                          \
-        ::Das::Core::DasExceptionSourceInfo __das_internal_source_location{    \
-            __FILE__,                                                          \
-            __LINE__,                                                          \
-            DAS_FUNCTION};                                                     \
-        ::Das::Core::DasException::DasException::Throw(                        \
+        ::Das::Core::Exceptions::DasExceptionSourceInfo                        \
+            __das_internal_source_location{__FILE__, __LINE__, DAS_FUNCTION};  \
+        ::Das::Core::Exceptions::Throw(                                        \
             error_code,                                                        \
             &__das_internal_source_location);                                  \
     }
 
 #define DAS_THROW_EC_EX(error_code, p_type_info)                               \
     {                                                                          \
-        ::Das::Core::DasExceptionSourceInfo __das_internal_source_location{    \
-            __FILE__,                                                          \
-            __LINE__,                                                          \
-            DAS_FUNCTION};                                                     \
-        ::Das::Core::DasException::DasException::Throw(                        \
+        ::Das::Core::Exceptions::DasExceptionSourceInfo                        \
+            __das_internal_source_location{__FILE__, __LINE__, DAS_FUNCTION};  \
+        ::Das::Core::Exceptions::Throw(                                        \
             error_code,                                                        \
             p_type_info,                                                       \
             &__das_internal_source_location);                                  \
@@ -52,50 +48,109 @@ struct DasExceptionSourceInfo
 
 #define DAS_THROW_MSG(error_code, error_message)                               \
     {                                                                          \
-        ::Das::Core::DasExceptionSourceInfo __das_internal_source_location{    \
-            __FILE__,                                                          \
-            __LINE__,                                                          \
-            DAS_FUNCTION};                                                     \
-        ::Das::Core::DasException::DasException::Throw(                        \
+        ::Das::Core::Exceptions::DasExceptionSourceInfo                        \
+            __das_internal_source_location{__FILE__, __LINE__, DAS_FUNCTION};  \
+        ::Das::Core::Exceptions::Throw(                                        \
             error_code,                                                        \
             error_message,                                                     \
             &__das_internal_source_location);                                  \
     }
 
-class DAS_API DasException final : public std::exception
+DAS_API void Throw(DasResult error_code, DasExceptionSourceInfo* p_source_info);
+DAS_API void Throw(
+    DasResult               error_code,
+    IDasTypeInfo*           p_type_info,
+    DasExceptionSourceInfo* p_source_info);
+DAS_API void Throw(
+    DasResult               error_code,
+    IDasSwigTypeInfo*       p_type_info,
+    DasExceptionSourceInfo* p_source_info);
+// ex message 支持p_type_info
+DAS_API void Throw(
+    DasResult               error_code,
+    const std::string&      ex_message,
+    DasExceptionSourceInfo* p_source_info);
+
+DAS_API void ThrowDefault(DasResult error_code);
+
+class DasException final : public std::exception
 {
+    friend void Throw(
+        DasResult               error_code,
+        DasExceptionSourceInfo* p_source_info);
+    friend void Throw(
+        DasResult               error_code,
+        IDasTypeInfo*           p_type_info,
+        DasExceptionSourceInfo* p_source_info);
+    friend void Throw(
+        DasResult               error_code,
+        IDasSwigTypeInfo*       p_type_info,
+        DasExceptionSourceInfo* p_source_info);
+    friend void Throw(
+        DasResult               error_code,
+        const std::string&      ex_message,
+        DasExceptionSourceInfo* p_source_info);
+    friend void ThrowDefault(DasResult error_code);
+
+    template <class... Ts>
+    struct overload_set : Ts...
+    {
+        using Ts::operator()...;
+    };
+
+    template <class... Ts>
+    overload_set(Ts...) -> overload_set<Ts...>;
+
     DasResult                              error_code_;
     std::variant<const char*, std::string> common_string_;
 
     using Base = std::runtime_error;
 
-    static void ThrowDefault(DasResult error_code);
-
     DasException(DasResult error_code, std::string&& string);
     DasException(DasResult error_code, const char* p_string, borrow_t);
 
 public:
-    static void Throw(
-        DasResult               error_code,
-        DasExceptionSourceInfo* p_source_info);
-    static void Throw(
-        DasResult               error_code,
-        IDasTypeInfo*           p_type_info,
-        DasExceptionSourceInfo* p_source_info);
-    static void Throw(
-        DasResult               error_code,
-        IDasSwigTypeInfo*       p_type_info,
-        DasExceptionSourceInfo* p_source_info);
-    static void Throw(
-        DasResult               error_code,
-        const std::string&      ex_message,
-        DasExceptionSourceInfo* p_source_info);
-    // ex message 支持p_type_info
-
     [[nodiscard]]
     const char* what() const noexcept override;
     auto        GetErrorCode() const noexcept -> DasResult;
 };
+
+// ----------------------------------- IMPL ------------------------------------
+
+inline DasException::DasException(DasResult error_code, std::string&& string)
+    : error_code_{error_code}, common_string_{std::move(string)}
+{
+}
+
+inline DasException::DasException(
+    DasResult   error_code,
+    const char* p_string,
+    borrow_t)
+    : error_code_{error_code}, common_string_{p_string}
+{
+}
+
+inline const char* DasException::what() const noexcept
+{
+
+    try
+    {
+        return std::visit(
+            overload_set{
+                [](const char* result) { return result; },
+                [](const std::string& result) { return result.c_str(); }},
+            common_string_);
+    }
+    catch (const std::exception& ex)
+    {
+        return ex.what();
+    }
+}
+
+inline auto DasException::GetErrorCode() const noexcept -> DasResult
+{
+    return error_code_;
+}
 
 DAS_CORE_EXCEPTIONS_NS_END
 

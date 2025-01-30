@@ -574,6 +574,10 @@ namespace Core
         return error_code;
     }
 
+    TaskScheduler::~TaskScheduler() {
+        NotifyExit();
+    }
+
     DAS_DEFINE_VARIABLE(g_scheduler);
 } // namespace Core
 

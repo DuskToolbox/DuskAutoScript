@@ -1,6 +1,7 @@
 #include <das/Gateway/Logger.h>
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/sinks/stdout_sinks.h>
+#include <array>
 
 DAS_GATEWAY_NS_BEGIN
 
@@ -13,7 +14,7 @@ DAS_DEFINE_VARIABLE(g_logger) = []()
             50 * 1024 * 1024, // 50mb
             2);
 
-    const auto sinks = std::array<spdlog::sink_ptr, 3>{std_sink, file_sink};
+    const auto sinks = std::array<spdlog::sink_ptr, 2>{std_sink, file_sink};
     const auto result = std::make_shared<spdlog::logger>(
         "g_das_gateway_name",
         std::begin(sinks),

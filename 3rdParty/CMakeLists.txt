@@ -96,14 +96,15 @@ set(ZLIB_NG_LIBRARY zlib)
 target_link_libraries(Das3rdParty INTERFACE zlib)
 
 function(_download_and_config_gtest)
+    set(DAS_GTESTS_VERSION "1.15.2")
     set(CMAKE_FOLDER "Das3rd/gtest")
     # config GoogleTest
     # GoogleTest requires at least C++14
-    message(STATUS "Downloading and configuring google test.")
+    message(STATUS "Downloading and configuring google test. VERSION = ${DAS_GTESTS_VERSION}")
     FetchContent_Declare(
         googletest
-        URL ${GITHUB_MIRROR_URL}/google/googletest/archive/refs/tags/v1.14.0.tar.gz
-        URL_HASH SHA256=8AD598C73AD796E0D8280B082CEBD82A630D73E73CD3C70057938A6501BBA5D7
+        URL ${GITHUB_MIRROR_URL}/google/googletest/releases/download/v${DAS_GTESTS_VERSION}/googletest-${DAS_GTESTS_VERSION}.tar.gz
+        URL_HASH SHA256=7B42B4D6ED48810C5362C265A17FAEBE90DC2373C885E5216439D37927F02926
     )
 
     # For Windows: Prevent overriding the parent project's compiler/linker settings
