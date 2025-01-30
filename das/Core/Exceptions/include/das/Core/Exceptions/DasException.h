@@ -31,7 +31,7 @@ struct DasExceptionSourceInfo
     {                                                                          \
         ::Das::Core::Exceptions::DasExceptionSourceInfo                        \
             __das_internal_source_location{__FILE__, __LINE__, DAS_FUNCTION};  \
-        ::Das::Core::Exceptions::Throw(                                        \
+        ::Das::Core::Exceptions::ThrowDasExceptionEc(                          \
             error_code,                                                        \
             &__das_internal_source_location);                                  \
     }
@@ -40,7 +40,7 @@ struct DasExceptionSourceInfo
     {                                                                          \
         ::Das::Core::Exceptions::DasExceptionSourceInfo                        \
             __das_internal_source_location{__FILE__, __LINE__, DAS_FUNCTION};  \
-        ::Das::Core::Exceptions::Throw(                                        \
+        ::Das::Core::Exceptions::ThrowDasException(                            \
             error_code,                                                        \
             p_type_info,                                                       \
             &__das_internal_source_location);                                  \
@@ -50,47 +50,49 @@ struct DasExceptionSourceInfo
     {                                                                          \
         ::Das::Core::Exceptions::DasExceptionSourceInfo                        \
             __das_internal_source_location{__FILE__, __LINE__, DAS_FUNCTION};  \
-        ::Das::Core::Exceptions::Throw(                                        \
+        ::Das::Core::Exceptions::ThrowDasException(                            \
             error_code,                                                        \
             error_message,                                                     \
             &__das_internal_source_location);                                  \
     }
 
-DAS_API void Throw(DasResult error_code, DasExceptionSourceInfo* p_source_info);
-DAS_API void Throw(
+DAS_API void ThrowDasExceptionEc(
+    DasResult               error_code,
+    DasExceptionSourceInfo* p_source_info);
+DAS_API void ThrowDasException(
     DasResult               error_code,
     IDasTypeInfo*           p_type_info,
     DasExceptionSourceInfo* p_source_info);
-DAS_API void Throw(
+DAS_API void ThrowDasException(
     DasResult               error_code,
     IDasSwigTypeInfo*       p_type_info,
     DasExceptionSourceInfo* p_source_info);
 // ex message 支持p_type_info
-DAS_API void Throw(
+DAS_API void ThrowDasException(
     DasResult               error_code,
     const std::string&      ex_message,
     DasExceptionSourceInfo* p_source_info);
 
-DAS_API void ThrowDefault(DasResult error_code);
+DAS_API void ThrowDefaultDasException(DasResult error_code);
 
 class DasException final : public std::exception
 {
-    friend void Throw(
+    friend void ThrowDasExceptionEc(
         DasResult               error_code,
         DasExceptionSourceInfo* p_source_info);
-    friend void Throw(
+    friend void ThrowDasException(
         DasResult               error_code,
         IDasTypeInfo*           p_type_info,
         DasExceptionSourceInfo* p_source_info);
-    friend void Throw(
+    friend void ThrowDasException(
         DasResult               error_code,
         IDasSwigTypeInfo*       p_type_info,
         DasExceptionSourceInfo* p_source_info);
-    friend void Throw(
+    friend void ThrowDasException(
         DasResult               error_code,
         const std::string&      ex_message,
         DasExceptionSourceInfo* p_source_info);
-    friend void ThrowDefault(DasResult error_code);
+    friend void ThrowDefaultDasException(DasResult error_code);
 
     template <class... Ts>
     struct overload_set : Ts...

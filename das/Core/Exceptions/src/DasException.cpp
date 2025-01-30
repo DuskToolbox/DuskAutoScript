@@ -1,3 +1,4 @@
+#include <boost/dll.hpp>
 #include <das/Core/Exceptions/DasException.h>
 #include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
 #include <das/Core/Logger/Logger.h>
@@ -11,12 +12,14 @@ DAS_CORE_EXCEPTIONS_NS_BEGIN
 static const auto FATAL_ERROR_MESSAGE = DAS_UTILS_STRINGUTILS_DEFINE_U8STR(
     "Can not get error message from error code. Fatal error happened!");
 
-void ThrowDefault(DasResult error_code)
+void ThrowDefaultDasException(DasResult error_code)
 {
     throw DasException{error_code, FATAL_ERROR_MESSAGE, borrow_t{}};
 }
 
-void Throw(DasResult error_code, DasExceptionSourceInfo* p_source_info)
+void ThrowDasExceptionEc(
+    DasResult               error_code,
+    DasExceptionSourceInfo* p_source_info)
 {
     DasPtr<IDasReadOnlyString> p_error_message{};
     const auto                 get_predefined_error_message_result =
@@ -31,14 +34,14 @@ void Throw(DasResult error_code, DasExceptionSourceInfo* p_source_info)
                 p_source_info->line,
                 p_source_info->function,
                 get_predefined_error_message_result);
-            ThrowDefault(get_predefined_error_message_result);
+            ThrowDefaultDasException(get_predefined_error_message_result);
         }
         else
         {
             DAS_CORE_LOG_ERROR(
                 "DasGetPredefinedErrorMessage failed. Error code = {}.",
                 get_predefined_error_message_result);
-            ThrowDefault(get_predefined_error_message_result);
+            ThrowDefaultDasException(get_predefined_error_message_result);
         }
     }
     if (p_source_info)
@@ -61,7 +64,7 @@ void Throw(DasResult error_code, DasExceptionSourceInfo* p_source_info)
             p_error_message)};
 }
 
-void Throw(
+void ThrowDasException(
     DasResult               error_code,
     IDasTypeInfo*           p_type_info,
     DasExceptionSourceInfo* p_source_info)
@@ -80,14 +83,14 @@ void Throw(
                 p_source_info->line,
                 p_source_info->function,
                 get_error_message_result);
-            ThrowDefault(get_error_message_result);
+            ThrowDefaultDasException(get_error_message_result);
         }
         else
         {
             DAS_CORE_LOG_ERROR(
                 "DasGetErrorMessage failed. Error code = {}.",
                 get_error_message_result);
-            ThrowDefault(get_error_message_result);
+            ThrowDefaultDasException(get_error_message_result);
         }
     }
 
@@ -111,7 +114,7 @@ void Throw(
             error_code)};
 }
 
-void Throw(
+void ThrowDasException(
     DasResult               error_code,
     IDasSwigTypeInfo*       p_type_info,
     DasExceptionSourceInfo* p_source_info)
@@ -130,14 +133,14 @@ void Throw(
                 p_source_info->line,
                 p_source_info->function,
                 get_error_message_result);
-            ThrowDefault(get_error_message_result);
+            ThrowDefaultDasException(get_error_message_result);
         }
         else
         {
             DAS_CORE_LOG_ERROR(
                 "DasGetErrorMessage failed. Error code = {}.",
                 get_error_message_result);
-            ThrowDefault(get_error_message_result);
+            ThrowDefaultDasException(get_error_message_result);
         }
     }
 
@@ -161,7 +164,7 @@ void Throw(
             error_code)};
 }
 
-void Throw(
+void ThrowDasException(
     DasResult               error_code,
     const std::string&      ex_message,
     DasExceptionSourceInfo* p_source_info)
@@ -180,7 +183,7 @@ void Throw(
                 p_source_info->function,
                 get_predefined_error_message_result,
                 ex_message);
-            ThrowDefault(get_predefined_error_message_result);
+            ThrowDefaultDasException(get_predefined_error_message_result);
         }
         else
         {
@@ -188,7 +191,7 @@ void Throw(
                 "DasGetErrorMessage failed. Error code = {}. ExMessage = \"{}\".",
                 get_predefined_error_message_result,
                 ex_message);
-            ThrowDefault(get_predefined_error_message_result);
+            ThrowDefaultDasException(get_predefined_error_message_result);
         }
     }
 
@@ -215,3 +218,7 @@ void Throw(
 }
 
 DAS_CORE_EXCEPTIONS_NS_END
+
+BOOST_DLL_ALIAS(
+    DAS::Core::Exceptions::ThrowDasExceptionEc,
+    ThrowDasExceptionEc)

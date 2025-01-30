@@ -146,6 +146,9 @@ ProfileManager::ProfileManager()
             const auto  info_json = nlohmann::json::parse(ifs);
             std::string name{};
             info_json.at("name").get_to(name);
+            DasPtr<IDasReadOnlyString> p_name;
+            DAS_GATEWAY_THROW_IF_FAILED(g_pfnCreateIDasReadOnlyStringFromUtf8(name.c_str(), p_name.Put()))
+            profile->SetName(p_name.Get());
 
             const auto settings_path =
                 (subDirectory.path() / DAS_GATEWAY_SETTINGS_FILE).u8string();
@@ -214,6 +217,9 @@ ProfileManager::ProfileManager()
     }
     catch (const std::filesystem::filesystem_error& ex)
     {
+        SPDLOG_LOGGER_ERROR(g_logger, ex.what());
+    }
+    catch (const DAS::Core::DasException& ex) {
         SPDLOG_LOGGER_ERROR(g_logger, ex.what());
     }
 }
