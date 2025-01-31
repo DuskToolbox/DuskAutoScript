@@ -72,6 +72,9 @@ public:
     DasResult SetOnDeletedHandler(IDasJsonSettingOnDeletedHandler* p_handler);
     // DasSettings
     DasResult LoadSettings(IDasReadOnlyString* p_path);
+    DasResult InitSettings(
+        IDasReadOnlyString* p_path,
+        IDasReadOnlyString* p_json_string);
     // to projection
     operator IDasJsonSettingImpl*() noexcept;
 

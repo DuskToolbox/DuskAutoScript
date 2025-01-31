@@ -15,6 +15,10 @@ inline bool CreateDirectoryRecursive(
     std::error_code&            err)
 {
     err.clear();
+    if (std::filesystem::exists(dirName))
+    {
+        return true;
+    }
     if (!std::filesystem::create_directories(dirName, err))
     {
         if (std::filesystem::exists(dirName))

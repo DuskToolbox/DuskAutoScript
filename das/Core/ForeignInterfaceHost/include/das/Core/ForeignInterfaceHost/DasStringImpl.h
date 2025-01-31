@@ -2,6 +2,7 @@
 #define DAS_CORE_FOREIGNINTERFACEHOST_DASSTRINGIMPL_H
 
 #include <array>
+#include <das/Core/ForeignInterfaceHost/DasStringJsonInterop.h>
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/Config.h>
@@ -275,26 +276,6 @@ namespace nlohmann
         static void from_json(
             const json&               j,
             DasReadOnlyStringWrapper& das_string);
-    };
-
-    template <>
-    struct adl_serializer<DasReadOnlyString>
-    {
-        static void to_json(json& j, const DasReadOnlyString& das_string);
-
-        static void from_json(const json& j, DasReadOnlyString& das_string);
-    };
-
-    template <>
-    struct adl_serializer<DAS::DasPtr<IDasReadOnlyString>>
-    {
-        static void to_json(
-            json&                                  j,
-            const DAS::DasPtr<IDasReadOnlyString>& p_das_string);
-
-        static void from_json(
-            const json&                      j,
-            DAS::DasPtr<IDasReadOnlyString>& p_das_string);
     };
 }
 

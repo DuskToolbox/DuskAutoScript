@@ -9,7 +9,7 @@
 #include <oatpp/web/protocol/http/outgoing/BufferBody.hpp>
 
 #define DAS_HTTP_MAKE_RESPONSE(error_code)                                     \
-    MakeResponse(error_code, {__FILE__, __LINE__, DAS_FUNCTION});
+    MakeResponse(error_code, {__FILE__, __LINE__, DAS_FUNCTION})
 
 namespace Das::Http
 {

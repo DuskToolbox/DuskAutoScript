@@ -3,7 +3,6 @@
 #include <boost/dll.hpp>
 #include <das/Gateway/Logger.h>
 #include <das/Utils/fmt.h>
-#include <optional>
 
 DAS_GATEWAY_NS_BEGIN
 

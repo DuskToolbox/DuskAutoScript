@@ -40,6 +40,10 @@ public:
     DasResult GetAllIDasProfile(
         size_t         buffer_size,
         IDasProfile*** ppp_out_profile);
+    DasResult CreateIDasProfile(
+        IDasReadOnlyString* p_profile_id,
+        IDasReadOnlyString* p_profile_name,
+        IDasReadOnlyString* p_profile_json);
     DasResult FindIDasProfile(
         IDasReadOnlyString* p_name,
         IDasProfile**       pp_out_profile);

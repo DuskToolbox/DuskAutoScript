@@ -24,12 +24,12 @@ extern decltype(&DAS::Core::Exceptions::ThrowDasExceptionEc)
 DAS_GATEWAY_NS_END
 
 #define DAS_GATEWAY_THROW_IF_FAILED(...)                                       \
-    if (const auto result = __VA_ARGS__; ::Das::IsFailed(result))              \
+    if (const auto __result = __VA_ARGS__; ::Das::IsFailed(__result))          \
     {                                                                          \
         ::Das::Core::Exceptions::DasExceptionSourceInfo                        \
             __das_internal_source_location{__FILE__, __LINE__, DAS_FUNCTION};  \
         ::Das::Gateway::g_pfnThrowDasExceptionEc(                              \
-            result,                                                            \
+            __result,                                                          \
             &__das_internal_source_location);                                  \
     }
 

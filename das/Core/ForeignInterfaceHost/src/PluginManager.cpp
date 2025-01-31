@@ -116,7 +116,7 @@ auto GetErrorMessageAndAutoFallBack(
     const auto result_1_error_code =
         boost::pfr::get<ERROR_CODE_INDEX>(result_1);
 
-    if (DAS::IsOk(result_1_error_code))
+    if (DAS::IsFailed(result_1_error_code))
     {
         // use default locale and retry.
         if (result_1_error_code == DAS_E_OUT_OF_RANGE)

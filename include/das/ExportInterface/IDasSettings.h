@@ -120,6 +120,13 @@ DAS_INTERFACE IDasProfile : public IDasBase
 DAS_GATEWAY_C_API DasResult
 GetAllIDasProfile(size_t buffer_size, IDasProfile*** ppp_out_profile);
 
+DAS_GATEWAY_C_API DasResult CreateIDasProfile(
+    IDasReadOnlyString* p_profile_id,
+    IDasReadOnlyString* p_profile_name,
+    IDasReadOnlyString* p_profile_json);
+
+DAS_GATEWAY_C_API DasResult DeleteIDasProfile(IDasReadOnlyString* p_profile_id);
+
 DAS_GATEWAY_C_API DasResult
 FindIDasProfile(IDasReadOnlyString* p_name, IDasProfile** pp_out_profile);
 

@@ -268,14 +268,17 @@ DasResult DasSettings::LoadSettings(IDasReadOnlyString* p_path)
         }
 
         std::error_code error_code;
-        Utils::CreateDirectoryRecursive(path.parent_path(), error_code);
-        if (!error_code)
+        if (!Utils::CreateDirectoryRecursive(path.parent_path(), error_code))
         {
             const auto message = DAS_FMT_NS::format(
                 "Failed to create directory {}. Error code = {}.",
                 reinterpret_cast<const char*>(path.u8string().c_str()),
                 error_code.value());
             SPDLOG_LOGGER_ERROR(g_logger, message.c_str());
+            SPDLOG_LOGGER_ERROR(
+                g_logger,
+                "Message = \"{}\".",
+                error_code.message());
             return DAS_E_INTERNAL_FATAL_ERROR;
         }
 
@@ -329,6 +332,56 @@ void DasSettings::Delete()
     if (settings_ != nullptr)
     {
         p_handler_->OnDeleted();
+    }
+}
+
+DasResult DasSettings::InitSettings(
+    IDasReadOnlyString* p_path,
+    IDasReadOnlyString* p_json_string)
+{
+    if (!p_path)
+    {
+        SPDLOG_LOGGER_ERROR(g_logger, "p_path is nullptr.");
+        return DAS_E_INVALID_POINTER;
+    }
+
+    std::filesystem::path path{};
+    if (const auto to_path_result = Details::ToPath(p_path, path);
+        IsFailed(to_path_result))
+    {
+        return to_path_result;
+    }
+
+    path_ = std::move(path);
+
+    try
+    {
+
+        const char* json_string{};
+        DAS_GATEWAY_THROW_IF_FAILED(p_json_string->GetUtf8(&json_string));
+        settings_ = nlohmann::json::parse(json_string);
+
+        return Save();
+    }
+    catch (const nlohmann::json::exception& ex)
+    {
+        SPDLOG_LOGGER_ERROR(
+            g_logger,
+            "Parse json failed. Id = {}. What = {}",
+            ex.id,
+            ex.what());
+        const char* json_string{};
+        p_json_string->GetUtf8(&json_string);
+        SPDLOG_LOGGER_ERROR(
+            g_logger,
+            "json = {}",
+            json_string ? json_string : "nullptr");
+        return DAS_E_INVALID_JSON;
+    }
+    catch (const DAS::Core::DasException& ex)
+    {
+        SPDLOG_LOGGER_ERROR(g_logger, ex.what());
+        return DAS_E_INTERNAL_FATAL_ERROR;
     }
 }
 

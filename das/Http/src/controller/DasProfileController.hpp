@@ -3,6 +3,7 @@
 
 #include "Config.h"
 #include "component/Helper.hpp"
+#include "das/Core/ForeignInterfaceHost/DasStringJsonInterop.h"
 #include "das/ExportInterface/DasLogger.h"
 #include "das/ExportInterface/IDasSettings.h"
 #include "das/ExportInterface/IDasTaskScheduler.h"
@@ -161,6 +162,55 @@ public:
         response->data = {profile1_status};
 
         return MakeResponse(response);
+    }
+
+    ENDPOINT(
+        "POST",
+        DAS_HTTP_API_PREFIX "profile/create",
+        create_profile,
+        BODY_STRING(String, body))
+    {
+        if (!body)
+        {
+            return DAS_HTTP_MAKE_RESPONSE(DAS_E_INVALID_POINTER);
+        }
+        try
+        {
+            const auto request = nlohmann::json::parse(*body);
+
+            DAS::DasPtr<IDasReadOnlyString> p_profile_id{};
+            request.at("profileId").get_to(p_profile_id);
+
+            DAS::DasPtr<IDasReadOnlyString> p_profile_name{};
+            request.at("profileName").get_to(p_profile_name);
+
+            const auto data_string = request.at("profile").dump();
+            DAS::DasPtr<IDasReadOnlyString> p_data_string{};
+            DAS_THROW_IF_FAILED_EC(
+                ::CreateIDasReadOnlyStringFromUtf8(
+                    data_string.c_str(),
+                    p_data_string.Put()))
+
+            DAS_THROW_IF_FAILED_EC(
+                ::CreateIDasProfile(
+                    p_profile_id.Get(),
+                    p_profile_name.Get(),
+                    p_data_string.Get()))
+
+            auto response = ApiResponse<void>::createShared();
+            response->code = DAS_S_OK;
+            response->message = "";
+            return MakeResponse(response);
+        }
+        catch (const nlohmann::json::exception& ex)
+        {
+            DAS_LOG_ERROR(ex.what());
+            return DAS_HTTP_MAKE_RESPONSE(DAS_E_INVALID_JSON);
+        }
+        catch (const DAS::Core::DasException& ex)
+        {
+            return MakeResponse(ex);
+        }
     }
 
     ENDPOINT(
