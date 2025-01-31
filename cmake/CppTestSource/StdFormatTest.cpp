@@ -13,8 +13,8 @@ template <>
 struct std::formatter<::Test::CustomType, char>
     : public formatter<std::string, char>
 {
-    static auto format(const ::Test::CustomType& test_impl, format_context& ctx)
-        const -> typename std::remove_reference_t<decltype(ctx)>::iterator
+    auto format(const ::Test::CustomType& test_impl, format_context& ctx) const
+        -> typename std::remove_reference_t<decltype(ctx)>::iterator
     {
         return std::format_to(ctx.out(), "{}", test_impl.value);
     }
