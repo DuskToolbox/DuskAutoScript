@@ -15,8 +15,9 @@ DAS_GATEWAY_NS_BEGIN
 
 namespace
 {
-    constexpr auto DAS_GATEWAY_SETTINGS_FILE = u8"Settings.json";
+    constexpr auto DAS_GATEWAY_SETTINGS_FILE = u8"settings.json";
     constexpr auto DAS_GATEWAY_SCHEDULER_STATE_FILE = u8"SchedulerState.json";
+    constexpr auto DAS_GATEWAY_PROFILE_INFO_FILE = u8"info.json";
 
     auto GetDataDirectory() -> std::filesystem::path
     {
@@ -159,8 +160,16 @@ ProfileManager::ProfileManager()
             Utils::EnableStreamException(
                 ifs,
                 std::ios::badbit | std::ios::failbit,
-                [json_path = subDirectory.path() / u8"info.json"](auto& stream)
-                { stream.open(json_path); });
+                [json_path = subDirectory.path()
+                             / DAS_GATEWAY_PROFILE_INFO_FILE](auto& stream)
+                {
+                    SPDLOG_LOGGER_ERROR(
+                        g_logger,
+                        "json_path = {}",
+                        reinterpret_cast<const char*>(
+                            json_path.u8string().c_str()));
+                    stream.open(json_path);
+                });
             const auto  info_json = nlohmann::json::parse(ifs);
             std::string name{};
             info_json.at("name").get_to(name);
@@ -242,6 +251,16 @@ ProfileManager::ProfileManager()
     catch (const DAS::Core::DasException& ex)
     {
         SPDLOG_LOGGER_ERROR(g_logger, ex.what());
+    }
+    catch (const std::ios_base::failure& ex)
+    {
+        SPDLOG_LOGGER_ERROR(g_logger, ex.what());
+        const auto& error_code = ex.code();
+        SPDLOG_LOGGER_INFO(
+            g_logger,
+            "Error happened when reading file. Error code = {}",
+            error_code.value());
+        SPDLOG_LOGGER_INFO(g_logger, error_code.message());
     }
 }
 
@@ -340,6 +359,20 @@ DasResult ProfileManager::CreateIDasProfile(
         {
             return error_code;
         }
+
+        nlohmann::json info;
+        const char*    profile_name;
+        DAS_GATEWAY_THROW_IF_FAILED(p_profile_id->GetUtf8(&profile_name))
+        info["name"] = profile_name;
+
+        const auto info_path = data_directory / DAS_GATEWAY_PROFILE_INFO_FILE;
+        std::ofstream ofs{};
+        Utils::EnableStreamException(
+            ofs,
+            std::ios::badbit | std::ios::failbit,
+            [&info_path](auto& stream) { stream.open(info_path); });
+        ofs << info;
+        ofs.flush();
 
         auto profile = MakeDasPtr<IDasProfileImpl>();
         profile->SetId(p_profile_id);
