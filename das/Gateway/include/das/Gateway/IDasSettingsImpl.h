@@ -17,9 +17,23 @@ NLOHMANN_JSON_SERIALIZE_ENUM(
      {DAS_TYPE_STRING, "string"},
      {DAS_TYPE_BOOL, "bool"}})
 
-DAS_GATEWAY_NS_BEGIN
+// {A59BFE7D-1A4D-4988-8A18-8A3D86CC2C9E}
+DAS_DEFINE_CLASS_IN_NAMESPACE(
+    Das::Gateway,
+    DasSettings,
+    0xa59bfe7d,
+    0x1a4d,
+    0x4988,
+    0x8a,
+    0x18,
+    0x8a,
+    0x3d,
+    0x86,
+    0xcc,
+    0x2c,
+    0x9e);
 
-class DasSettings;
+DAS_GATEWAY_NS_BEGIN
 
 class IDasJsonSettingImpl final : public IDasJsonSetting
 {
@@ -75,6 +89,7 @@ public:
     DasResult InitSettings(
         IDasReadOnlyString* p_path,
         IDasReadOnlyString* p_json_string);
+    DasResult OnDeleted();
     // to projection
     operator IDasJsonSettingImpl*() noexcept;
 

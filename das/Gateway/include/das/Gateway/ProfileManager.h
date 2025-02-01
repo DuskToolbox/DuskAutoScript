@@ -24,6 +24,7 @@ public:
         IDasJsonSetting*   p_property);
     void SetName(IDasReadOnlyString* p_name);
     void SetId(IDasReadOnlyString* p_id);
+    void OnDeleted();
 
 private:
     DasPtr<IDasReadOnlyString> p_name_;
@@ -44,6 +45,7 @@ public:
         IDasReadOnlyString* p_profile_id,
         IDasReadOnlyString* p_profile_name,
         IDasReadOnlyString* p_profile_json);
+    DasResult DeleteIDasProfile(IDasReadOnlyString* p_profile_id);
     DasResult FindIDasProfile(
         IDasReadOnlyString* p_name,
         IDasProfile**       pp_out_profile);

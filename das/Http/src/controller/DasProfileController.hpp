@@ -209,6 +209,39 @@ public:
         }
         catch (const DAS::Core::DasException& ex)
         {
+            DAS_LOG_ERROR(ex.what());
+            return MakeResponse(ex);
+        }
+    }
+
+    ENDPOINT(
+        "POST",
+        DAS_HTTP_API_PREFIX "profile/delete",
+        delete_profile,
+        BODY_DTO(Object<ProfileId>, body_object))
+    {
+        if (!body_object || !body_object->profile_id)
+        {
+            return DAS_HTTP_MAKE_RESPONSE(DAS_E_INVALID_POINTER);
+        }
+
+        try
+        {
+            DAS::DasPtr<IDasReadOnlyString> p_profile_id{};
+            DAS_THROW_IF_FAILED_EC(
+                ::CreateIDasReadOnlyStringFromUtf8(
+                    body_object->profile_id->c_str(),
+                    p_profile_id.Put()))
+            DAS_THROW_IF_FAILED_EC(::DeleteIDasProfile(p_profile_id.Get()))
+
+            const auto response = ApiResponse<void>::createShared();
+            response->code = DAS_S_OK;
+            response->message = "";
+            return MakeResponse(response);
+        }
+        catch (const DAS::Core::DasException& ex)
+        {
+            DAS_LOG_ERROR(ex.what());
             return MakeResponse(ex);
         }
     }

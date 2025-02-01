@@ -34,6 +34,16 @@ namespace
         }
         return result;
     }
+
+    void OnDeleteJsonSettings(IDasJsonSetting* p_json_settings)
+    {
+        DasPtr<DasSettings> p_settings{};
+        DAS_GATEWAY_THROW_IF_FAILED(p_json_settings->QueryInterface(
+            DasIidOf<DasSettings>(),
+            p_settings.PutVoid()))
+        p_settings->OnDeleted();
+        p_json_settings->SetOnDeletedHandler(nullptr);
+    }
 }
 
 DAS_DEFINE_VARIABLE(g_profileManager);
@@ -127,6 +137,27 @@ DasResult IDasProfileImpl::SetProperty(
 void IDasProfileImpl::SetName(IDasReadOnlyString* p_name) { p_name_ = p_name; }
 
 void IDasProfileImpl::SetId(IDasReadOnlyString* p_id) { p_id_ = p_id; }
+
+void IDasProfileImpl::OnDeleted()
+{
+    if (!p_settings_)
+    {
+        SPDLOG_LOGGER_ERROR(g_logger, "p_settings_ is nullptr.");
+    }
+    else
+    {
+        OnDeleteJsonSettings(p_settings_.Get());
+    }
+
+    if (!p_scheduler_state_)
+    {
+        SPDLOG_LOGGER_ERROR(g_logger, "p_scheduler_state_ is nullptr.");
+    }
+    else
+    {
+        OnDeleteJsonSettings(p_scheduler_state_.Get());
+    }
+}
 
 ProfileManager::ProfileManager()
 {
@@ -362,7 +393,7 @@ DasResult ProfileManager::CreateIDasProfile(
 
         nlohmann::json info;
         const char*    profile_name;
-        DAS_GATEWAY_THROW_IF_FAILED(p_profile_id->GetUtf8(&profile_name))
+        DAS_GATEWAY_THROW_IF_FAILED(p_profile_name->GetUtf8(&profile_name))
         info["name"] = profile_name;
 
         const auto info_path = data_directory / DAS_GATEWAY_PROFILE_INFO_FILE;
@@ -396,6 +427,60 @@ DasResult ProfileManager::CreateIDasProfile(
     catch (const std::bad_alloc& ex)
     {
         return DAS_E_OUT_OF_MEMORY;
+    }
+}
+
+DasResult ProfileManager::DeleteIDasProfile(IDasReadOnlyString* p_profile_id)
+{
+    if (!p_profile_id)
+    {
+        SPDLOG_LOGGER_ERROR(DAS::Gateway::g_logger, "p_profile_id is null!");
+        return DAS_E_INVALID_POINTER;
+    }
+
+    try
+    {
+        auto data_directory = DAS::Gateway::GetDataDirectory();
+
+        const char* profile_id;
+        DAS_GATEWAY_THROW_IF_FAILED(p_profile_id->GetUtf8(&profile_id))
+        auto profile_directory =
+            data_directory / reinterpret_cast<const char8_t*>(profile_id);
+        if (!std::filesystem::exists(profile_directory))
+        {
+            SPDLOG_LOGGER_WARN(
+                DAS::Gateway::g_logger,
+                "Profile not exist. Path = {}",
+                reinterpret_cast<const char*>(
+                    profile_directory.u8string().c_str()));
+            return DAS_S_FALSE;
+        }
+
+        std::filesystem::remove_all(data_directory);
+
+        auto it = profiles_.find(profile_id);
+        if (it == profiles_.end())
+        {
+            SPDLOG_LOGGER_ERROR(
+                DAS::Gateway::g_logger,
+                "Profile not found. Id = {}",
+                profile_id);
+            return DAS_E_OUT_OF_RANGE;
+        }
+        it->second->OnDeleted();
+        profiles_.erase(profile_id);
+
+        return DAS_S_OK;
+    }
+    catch (DAS::Core::DasException& ex)
+    {
+        SPDLOG_LOGGER_ERROR(DAS::Gateway::g_logger, ex.what());
+        return DAS_E_INTERNAL_FATAL_ERROR;
+    }
+    catch (const std::filesystem::filesystem_error& ex)
+    {
+        SPDLOG_LOGGER_ERROR(DAS::Gateway::g_logger, ex.what());
+        return DAS_E_INVALID_PATH;
     }
 }
 
@@ -453,7 +538,10 @@ DasResult CreateIDasProfile(
         p_profile_json);
 }
 
-DasResult DeleteIDasProfile(IDasReadOnlyString* p_profile_id) { return 0; }
+DasResult DeleteIDasProfile(IDasReadOnlyString* p_profile_id)
+{
+    return DAS::Gateway::g_profileManager.DeleteIDasProfile(p_profile_id);
+}
 
 DasResult FindIDasProfile(
     IDasReadOnlyString* p_name,

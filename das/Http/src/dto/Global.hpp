@@ -25,6 +25,11 @@ class ApiResponse : public oatpp::DTO
     DTO_FIELD(T, data);
 };
 
+class EmptyObject : public oatpp::DTO
+{
+    DTO_INIT(EmptyObject, DTO)
+};
+
 template <>
 class ApiResponse<void> : public oatpp::DTO
 {
@@ -32,6 +37,7 @@ class ApiResponse<void> : public oatpp::DTO
 
     DTO_FIELD(Int32, code);
     DTO_FIELD(String, message);
+    DTO_FIELD(Object<EmptyObject>, data);
 };
 
 #include OATPP_CODEGEN_END(DTO)

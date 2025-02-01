@@ -63,7 +63,17 @@ DAS_IMPL IDasJsonSettingImpl::QueryInterface(
     const DasGuid& iid,
     void**         pp_object)
 {
-    return Utils::QueryInterface<IDasJsonSetting>(this, iid, pp_object);
+    if (Utils::QueryInterface<IDasJsonSetting>(this, iid, pp_object)
+        == DAS_E_NO_INTERFACE)
+    {
+        if (iid == DasIidOf<DasSettings>())
+        {
+            impl_.AddRef();
+            *pp_object = &impl_;
+            return DAS_S_OK;
+        }
+    }
+    return DAS_E_NO_INTERFACE;
 }
 
 DAS_IMPL IDasJsonSettingImpl::ToString(IDasReadOnlyString** pp_out_string)
@@ -287,10 +297,11 @@ DasResult DasSettings::LoadSettings(IDasReadOnlyString* p_path)
         if (!exists(path))
         {
             const auto message = DAS_FMT_NS::format(
-                "Path not exists. Path = {}.",
+                "Path not exists. File will be create. Path = {}.",
                 reinterpret_cast<const char*>(path.u8string().c_str()));
-            SPDLOG_LOGGER_ERROR(g_logger, message.c_str());
-            return DAS_E_INVALID_PATH;
+            SPDLOG_LOGGER_WARN(g_logger, message.c_str());
+            settings_ = {};
+            return DAS_S_FALSE;
         }
 
         std::ifstream ifs;
@@ -383,6 +394,16 @@ DasResult DasSettings::InitSettings(
         SPDLOG_LOGGER_ERROR(g_logger, ex.what());
         return DAS_E_INTERNAL_FATAL_ERROR;
     }
+}
+
+DasResult DasSettings::OnDeleted()
+{
+    if (!p_handler_)
+    {
+        // 回调不存在，无需执行，认为成功
+        return DAS_S_OK;
+    }
+    return p_handler_->OnDeleted();
 }
 
 DAS_DEFINE_VARIABLE(g_settings);
