@@ -19,7 +19,7 @@ class DasHttpLogReader final : public IDasLogReader
     DAS_IMPL QueryInterface(const DasGuid& iid, void** pp_object) override;
 
     [[nodiscard]]
-    auto GetMessage() const noexcept -> std::string_view;
+    auto GetLog() const noexcept -> std::string_view;
 };
 
 #endif // DAS_HTTP_COMPONENT_DASHTTPLOGREADER_H

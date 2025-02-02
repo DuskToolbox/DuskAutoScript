@@ -1810,7 +1810,7 @@ public:
         IDasInitializeIDasPluginManagerCallback* p_on_finished)
         : up_waiter_{new InternalIDasInitializeIDasPluginManagerWaiterImpl{
               stdexec::when_all(stdexec::start_on(
-                  DAS::Core::g_scheduler.GetSchedulerImpl(),
+                  DAS::Core::g_scheduler->GetSchedulerImpl(),
                   stdexec::just(DasPtr{p_ignore_plugins_guid})
                       | stdexec::then(
                           [](DasPtr<IDasReadOnlyGuidVector> p_vector)

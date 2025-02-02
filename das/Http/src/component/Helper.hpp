@@ -3,7 +3,10 @@
 
 #include "das/Core/Exceptions/DasException.h"
 #include "das/PluginInterface/IDasErrorLens.h"
+#include "das/Utils/fmt.h"
 #include "oatpp/web/server/api/ApiController.hpp"
+
+#include "dto/Global.hpp"
 
 #include <nlohmann/json.hpp>
 #include <oatpp/web/protocol/http/outgoing/BufferBody.hpp>
@@ -59,38 +62,37 @@ namespace Das::Http
             return createDtoResponse(Status::CODE_200, p_response);
         }
 
-        static auto MakeResponse(const Core::DasException& ex)
+        auto MakeResponse(const Core::DasException& ex)
         {
-            nlohmann::json response;
-            response["code"] = ex.GetErrorCode();
-            response["message"] = ex.what();
-            response["data"] = nlohmann::json{};
-            return oatpp::web::protocol::http::outgoing::Response::createShared(
-                Status::CODE_200,
-                oatpp::web::protocol::http::outgoing::BufferBody::createShared(
-                    String{response.dump()},
-                    "application/json"));
+            const auto response = ApiResponse<void>::createShared();
+            response->code = ex.GetErrorCode();
+            response->message = ex.what();
+            return MakeResponse(response);
         }
 
-        static auto MakeResponse(
+        auto MakeResponse(
             DasResult                        error_code,
             const DasResponseSourceLocation& source_location)
         {
-            nlohmann::json response;
-            response["code"] = error_code;
+
+            const auto response = ApiResponse<void>::createShared();
+            response->code = error_code;
             const auto message = DAS_FMT_NS::format(
                 "[{} {}:{}] {}.",
                 source_location.function,
                 source_location.file,
                 source_location.line,
                 GetPredefinedErrorMessage(error_code));
-            response["message"] = message;
-            response["data"] = nlohmann::json{};
-            return oatpp::web::protocol::http::outgoing::Response::createShared(
-                Status::CODE_200,
-                oatpp::web::protocol::http::outgoing::BufferBody::createShared(
-                    String{response.dump()},
-                    "application/json"));
+            response->message = std::move(message);
+            return MakeResponse(response);
+        }
+
+        auto MakeSuccessResponse() const
+        {
+            const auto response = ApiResponse<void>::createShared();
+            response->code = DAS_S_OK;
+            response->message = "";
+            return MakeResponse(response);
         }
     };
 

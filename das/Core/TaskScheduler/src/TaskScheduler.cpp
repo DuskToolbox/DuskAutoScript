@@ -5,6 +5,7 @@
 #include <das/Core/Utils/IDasStopTokenImpl.h>
 #include <das/Core/Utils/InternalUtils.h>
 #include <das/Core/Utils/StdExecution.h>
+#include <das/Utils/ThreadUtils.h>
 
 DAS_NS_BEGIN
 
@@ -90,24 +91,34 @@ namespace Core
     }
 
     TaskScheduler::TaskScheduler()
-        : executor_{[sp_this = DasPtr{this}]
-                    {
-                        using namespace std::literals;
-                        DAS_CORE_LOG_INFO("Task scheduler thread launched.");
-                        while (sp_this->is_not_need_exit_)
-                        {
-                            if (!sp_this->is_profile_enabled_)
-                            {
-                                std::this_thread::sleep_for(100ms);
-                                continue;
-                            }
-                            sp_this->RunTaskQueue();
+        : executor_{
+              [sp_this = DasPtr{this}]
+              {
+                  DAS::Utils::SetCurrentThreadName(L"TaskScheduler COMMAND");
+                  using namespace std::literals;
+                  DAS_CORE_LOG_INFO("Task scheduler thread launched.");
+                  while (sp_this->is_not_need_exit_)
+                  {
+                      if (!sp_this->is_profile_enabled_)
+                      {
+                          std::this_thread::sleep_for(100ms);
+                          continue;
+                      }
+                      sp_this->RunTaskQueue();
 
-                            std::this_thread::sleep_for(100ms);
-                        }
-                        DAS_CORE_LOG_INFO("Task scheduler thread exited.");
-                    }}
+                      std::this_thread::sleep_for(100ms);
+                  }
+                  DAS_CORE_LOG_INFO("Task scheduler thread exited.");
+              }}
     {
+        stdexec::sync_wait(
+            stdexec::then(
+                stdexec::schedule(GetSchedulerImpl()),
+                []
+                {
+                    DAS_CORE_LOG_INFO("Set thread vm pool thread 1 name.");
+                    DAS::Utils::SetCurrentThreadName(L"VM POOL 1");
+                }));
     }
 
     DasResult TaskScheduler::QueryInterface(
@@ -574,17 +585,26 @@ namespace Core
         return error_code;
     }
 
-    TaskScheduler::~TaskScheduler() {
-        NotifyExit();
-    }
+    TaskScheduler::~TaskScheduler() { NotifyExit(); }
 
-    DAS_DEFINE_VARIABLE(g_scheduler);
+    DAS_DEFINE_VARIABLE(g_scheduler){};
 } // namespace Core
 
 DAS_NS_END
 
+DasResult InitializeGlobalTaskScheduler()
+{
+    if (DAS::Core::g_scheduler)
+    {
+        DAS_CORE_LOG_ERROR("Global scheduler has been initialized.");
+        return DAS_E_INTERNAL_FATAL_ERROR;
+    }
+    DAS::Core::g_scheduler = DAS::MakeDasPtr<DAS::Core::TaskScheduler>();
+    return DAS_S_OK;
+}
+
 DasResult GetIDasTaskScheduler(IDasTaskScheduler** pp_out_task_scheduler)
 {
-    DAS::Utils::SetResult(&Das::Core::g_scheduler, pp_out_task_scheduler);
+    DAS::Utils::SetResult(Das::Core::g_scheduler, pp_out_task_scheduler);
     return DAS_S_OK;
 }

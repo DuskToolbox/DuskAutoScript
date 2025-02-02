@@ -1,6 +1,8 @@
 #ifndef DAS_HTTP_CONTROLLER_DASPLUGINMANAGERCONTROLLER_HPP
 #define DAS_HTTP_CONTROLLER_DASPLUGINMANAGERCONTROLLER_HPP
 
+#include "Config.h"
+
 #include "../component/DasInitializePluginManagerCallback.h"
 
 #include "das/ExportInterface/DasLogger.h"
@@ -75,17 +77,13 @@ class DasPluginManagerController final : public DAS::Http::DasApiController
     };
 
 public:
-    DasPluginManagerController(
-        std::shared_ptr<ObjectMapper> object_mapper =
-            oatpp::parser::json::mapping::ObjectMapper::createShared())
-    {
-    }
+    DasPluginManagerController() {}
 
     // 获取应用列表
     // 激活指定配置文件
     ENDPOINT(
         "POST",
-        "/api/profile/initialize",
+        DAS_HTTP_API_PREFIX "profile/initialize",
         get_initialize,
         BODY_DTO(Object<IgnoredGuidList>, ignoredGuidList))
     {
@@ -157,7 +155,7 @@ public:
     // Get plugin list
     ENDPOINT(
         "POST",
-        "/api/settings/plugin/list",
+        DAS_HTTP_API_PREFIX "settings/plugin/list",
         get_plugin_list,
         BODY_DTO(oatpp::data::mapping::type::Int32, profileId))
     {

@@ -9,6 +9,17 @@ set_property(TARGET DasUtils PROPERTY POSITION_INDEPENDENT_CODE ON)
 target_include_directories(DasUtils PUBLIC Utils/include)
 target_link_libraries(DasUtils PUBLIC Das3rdParty)
 
+if(WIN32)
+    target_compile_definitions(DasUtils PRIVATE DAS_WINDOWS)
+endif()
+
+if(DAS_USE_BUNDLED_BOOST)
+    target_link_libraries(DasUtils PUBLIC Boost::dll)
+else()
+    target_include_directories(DasUtils PUBLIC ${Boost_INCLUDE_DIRS})
+    target_link_libraries(DasUtils PRIVATE ${Boost_LIBRARIES})
+endif()
+
 # Prevent visual studio treat headers as sources.
 #file(GLOB_RECURSE DAS_COMMON_HEADERS ${CMAKE_SOURCE_DIR}/include/*) ${DAS_COMMON_HEADERS}
 add_library(DasCommonHeaders INTERFACE)

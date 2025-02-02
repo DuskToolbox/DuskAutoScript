@@ -4,6 +4,7 @@
 #include "Config.h"
 #include "component/Helper.hpp"
 #include "das/DasPtr.hpp"
+#include "das/ExportInterface/DasLogger.h"
 #include "das/ExportInterface/IDasSettings.h"
 #include "dto/Global.hpp"
 #include "oatpp/core/macro/codegen.hpp"
@@ -18,10 +19,6 @@
  */
 struct DasUiSettingsController final : public DAS::Http::DasApiController
 {
-    DasUiSettingsController(
-        std::shared_ptr<ObjectMapper> object_mapper =
-            oatpp::parser::json::mapping::ObjectMapper::createShared());
-
     ENDPOINT("POST", DAS_HTTP_API_PREFIX "settings/get", v1_settings_get)
     {
         const auto response = ApiResponse<String>::createShared();
@@ -64,10 +61,12 @@ struct DasUiSettingsController final : public DAS::Http::DasApiController
                 DAS_THROW_EC(DAS_E_INVALID_STRING);
             }
             DAS::DasPtr<IDasReadOnlyString> p_ui_json;
-            DAS_THROW_IF_FAILED_EC(::CreateIDasReadOnlyStringFromUtf8(
-                body.get()->c_str(),
-                p_ui_json.Put()));
+            DAS_THROW_IF_FAILED_EC(
+                ::CreateIDasReadOnlyStringFromUtf8(
+                    body.get()->c_str(),
+                    p_ui_json.Put()));
             DAS_THROW_IF_FAILED_EC(DasSaveExtraStringForUi(p_ui_json.Get()));
+            return MakeSuccessResponse();
         }
         catch (const DAS::Core::DasException& ex)
         {

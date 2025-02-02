@@ -12,7 +12,7 @@ DasResult DasHttpLogReader::QueryInterface(const DasGuid& iid, void** pp_object)
     return DAS::Utils::QueryInterface<IDasLogReader>(this, iid, pp_object);
 }
 
-auto DasHttpLogReader::GetMessage() const noexcept -> std::string_view
+auto DasHttpLogReader::GetLog() const noexcept -> std::string_view
 {
     return message_;
 }

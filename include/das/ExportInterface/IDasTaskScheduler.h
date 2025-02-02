@@ -91,6 +91,9 @@ DAS_INTERFACE IDasTaskScheduler : public IDasBase
     DAS_METHOD      RequestStop() = 0;
 };
 
-DAS_C_API DasResult GetIDasTaskScheduler(IDasTaskScheduler ** pp_out_task_scheduler);
+DAS_C_API DasResult
+GetIDasTaskScheduler(IDasTaskScheduler** pp_out_task_scheduler);
+
+DAS_API DasResult InitializeGlobalTaskScheduler();
 
 #endif // DAS_SCHEDULER_H

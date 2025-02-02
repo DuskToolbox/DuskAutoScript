@@ -26,8 +26,6 @@ namespace Core
     class TaskScheduler final : public IDasTaskScheduler
     {
     public:
-        using TaskFunction = std::function<void()>;
-
         struct SchedulingUnit
         {
             // time_since_epoch
@@ -43,7 +41,7 @@ namespace Core
 
     private:
         // 语言VM绑定线程
-        exec::static_thread_pool vm_thread_pool_{1};
+        exec::static_thread_pool vm_thread_pool_{8};
 
         // 单开一个线程检测是否需要执行任务，是的话调度到thread_pool去
         bool                        is_not_need_exit_{true};
@@ -129,7 +127,7 @@ namespace Core
         void NotifyExit();
     };
 
-    extern TaskScheduler g_scheduler;
+    extern DAS::DasPtr<TaskScheduler> g_scheduler;
 
     void to_json(nlohmann::json& out, const TaskScheduler::SchedulingUnit& in);
 } // namespace Core

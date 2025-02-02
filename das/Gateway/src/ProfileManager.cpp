@@ -142,7 +142,7 @@ void IDasProfileImpl::OnDeleted()
 {
     if (!p_settings_)
     {
-        SPDLOG_LOGGER_ERROR(g_logger, "p_settings_ is nullptr.");
+        SPDLOG_LOGGER_WARN(g_logger, "p_settings_ is nullptr.");
     }
     else
     {
@@ -151,7 +151,7 @@ void IDasProfileImpl::OnDeleted()
 
     if (!p_scheduler_state_)
     {
-        SPDLOG_LOGGER_ERROR(g_logger, "p_scheduler_state_ is nullptr.");
+        SPDLOG_LOGGER_WARN(g_logger, "p_scheduler_state_ is nullptr.");
     }
     else
     {

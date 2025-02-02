@@ -23,6 +23,9 @@ DAS_DEFINE_GUID(
     0xc1,
     0xd5,
     0x3a)
+/**
+ * @brief 注意：回调会从其它线程发起，请注意线程安全
+ */
 DAS_INTERFACE IDasJsonSettingOnDeletedHandler : public IDasBase
 {
     DAS_METHOD OnDeleted() = 0;

@@ -27,9 +27,7 @@ class DasProfileManagerController final : public DAS::Http::DasApiController
     DAS::DasPtr<IDasJsonSetting>   p_settings_for_ui_{};
 
 public:
-    DasProfileManagerController(
-        std::shared_ptr<ObjectMapper> object_mapper =
-            oatpp::parser::json::mapping::ObjectMapper::createShared())
+    DasProfileManagerController()
     {
         // GetIDasSettingsForUi(p_settings_for_ui_.Put());
         GetIDasTaskScheduler(p_task_scheduler_.Put());
@@ -339,7 +337,7 @@ private:
 
     // 获取任务列表
     // Get task list
-    ENDPOINT("POST", "/api/settings/task/list", get_task_list)
+    ENDPOINT("POST", DAS_HTTP_API_PREFIX "settings/task/list", get_task_list)
     {
 
         auto response = TaskDescList::createShared();
