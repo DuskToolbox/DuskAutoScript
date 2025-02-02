@@ -29,10 +29,11 @@ void ThrowDasExceptionEc(
         if (p_source_info)
         {
             DAS_CORE_LOG_ERROR(
-                "|[{}][{}][{}] DasGetPredefinedErrorMessage failed. Error code = {}.",
+                "| [{}][{}:{}] DasGetPredefinedErrorMessage failed. Error code = {}.",
+                p_source_info->function,
                 p_source_info->file,
                 p_source_info->line,
-                p_source_info->function,
+
                 get_predefined_error_message_result);
             ThrowDefaultDasException(get_predefined_error_message_result);
         }
@@ -49,10 +50,10 @@ void ThrowDasExceptionEc(
         throw DasException{
             error_code,
             DAS::fmt::format(
-                "|[{}][{}][{}] Operation failed. Error code = {}. Message = \"{}\".",
+                "| [{}][{}:{}] Operation failed. Error code = {}. Message = \"{}\".",
+                p_source_info->function,
                 p_source_info->file,
                 p_source_info->line,
-                p_source_info->function,
                 error_code,
                 p_error_message)};
     }
@@ -78,10 +79,10 @@ void ThrowDasException(
         if (p_source_info)
         {
             DAS_CORE_LOG_ERROR(
-                "|[{}][{}][{}] DasGetErrorMessage failed. Error code = {}.",
+                "| [{}][{}:{}] DasGetErrorMessage failed. Error code = {}.",
+                p_source_info->function,
                 p_source_info->file,
                 p_source_info->line,
-                p_source_info->function,
                 get_error_message_result);
             ThrowDefaultDasException(get_error_message_result);
         }
@@ -99,10 +100,10 @@ void ThrowDasException(
         throw DasException{
             error_code,
             DAS::fmt::format(
-                "|[{}][{}][{}] Operation failed. Error code = {}. Message = \"{}\".",
+                "| [{}][{}:{}] Operation failed. Error code = {}. Message = \"{}\".",
+                p_source_info->function,
                 p_source_info->file,
                 p_source_info->line,
-                p_source_info->function,
                 p_error_message,
                 error_code)};
     }
@@ -128,10 +129,10 @@ void ThrowDasException(
         if (p_source_info)
         {
             DAS_CORE_LOG_ERROR(
-                "|[{}][{}][{}] DasGetErrorMessage failed. Error code = {}.",
+                "| [{}][{}:{}] DasGetErrorMessage failed. Error code = {}.",
+                p_source_info->function,
                 p_source_info->file,
                 p_source_info->line,
-                p_source_info->function,
                 get_error_message_result);
             ThrowDefaultDasException(get_error_message_result);
         }
@@ -149,10 +150,10 @@ void ThrowDasException(
         throw DasException{
             error_code,
             DAS::fmt::format(
-                "|[{}][{}][{}] Operation failed. Error code = {}. Message = \"{}\".",
+                "| [{}][{}:{}] Operation failed. Error code = {}. Message = \"{}\".",
+                p_source_info->function,
                 p_source_info->file,
                 p_source_info->line,
-                p_source_info->function,
                 internal_error_message.value,
                 error_code)};
     }
@@ -177,10 +178,10 @@ void ThrowDasException(
         if (p_source_info)
         {
             DAS_CORE_LOG_ERROR(
-                "|[{}][{}][{}] DasGetErrorMessage failed. Error code = {}. ExMessage = \"{}\".",
+                "| [{}][{}:{}] DasGetErrorMessage failed. Error code = {}. ExMessage = \"{}\".",
+                p_source_info->function,
                 p_source_info->file,
                 p_source_info->line,
-                p_source_info->function,
                 get_predefined_error_message_result,
                 ex_message);
             ThrowDefaultDasException(get_predefined_error_message_result);
@@ -200,10 +201,10 @@ void ThrowDasException(
         throw DasException{
             error_code,
             DAS::fmt::format(
-                R"(|[{}][{}][{}] Operation failed. Error code = {}. Message = "{}". ExMessage = "{}".)",
+                R"(|[{}][{}:{}] Operation failed. Error code = {}. Message = "{}". ExMessage = "{}".)",
+                p_source_info->function,
                 p_source_info->file,
                 p_source_info->line,
-                p_source_info->function,
                 p_error_message,
                 error_code,
                 ex_message)};
@@ -219,6 +220,4 @@ void ThrowDasException(
 
 DAS_CORE_EXCEPTIONS_NS_END
 
-BOOST_DLL_ALIAS(
-    DAS::Core::Exceptions::ThrowDasExceptionEc,
-    ThrowDasExceptionEc)
+BOOST_DLL_ALIAS(DAS::Core::Exceptions::ThrowDasExceptionEc, ThrowDasExceptionEc)

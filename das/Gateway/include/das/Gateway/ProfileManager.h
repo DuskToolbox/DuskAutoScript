@@ -12,6 +12,7 @@ public:
     // IDasBase
     DAS_UTILS_IDASBASE_AUTO_IMPL(IDasProfileImpl)
     DasResult QueryInterface(const DasGuid& iid, void** pp_object) override;
+    // IDasProfile
     DasResult GetJsonSettingProperty(
         DasProfileProperty profile_property,
         IDasJsonSetting**  pp_out_json) override;
@@ -19,7 +20,7 @@ public:
         DasProfileProperty   profile_property,
         IDasReadOnlyString** pp_out_property) override;
     // IDasProfileImpl
-    DasResult SetProperty(
+    DasResult SetJsonSettingProperty(
         DasProfileProperty profile_property,
         IDasJsonSetting*   p_property);
     void SetName(IDasReadOnlyString* p_name);

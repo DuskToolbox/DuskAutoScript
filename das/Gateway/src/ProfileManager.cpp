@@ -107,7 +107,7 @@ DasResult IDasProfileImpl::GetStringProperty(
     return DAS_S_OK;
 }
 
-DasResult IDasProfileImpl::SetProperty(
+DasResult IDasProfileImpl::SetJsonSettingProperty(
     DasProfileProperty profile_property,
     IDasJsonSetting*   p_property)
 {
@@ -236,7 +236,7 @@ ProfileManager::ProfileManager()
                 SPDLOG_LOGGER_ERROR(g_logger, message.c_str());
                 continue;
             }
-            profile->SetProperty(
+            profile->SetJsonSettingProperty(
                 DAS_PROFILE_PROPERTY_PROFILE,
                 *p_settings.Get());
 
@@ -268,7 +268,7 @@ ProfileManager::ProfileManager()
                 SPDLOG_LOGGER_ERROR(g_logger, message.c_str());
                 continue;
             }
-            profile->SetProperty(
+            profile->SetJsonSettingProperty(
                 DAS_PROFILE_PROPERTY_SCHEDULER_STATE,
                 *p_scheduler_state.Get());
 
@@ -408,7 +408,9 @@ DasResult ProfileManager::CreateIDasProfile(
         auto profile = MakeDasPtr<IDasProfileImpl>();
         profile->SetId(p_profile_id);
         profile->SetName(p_profile_name);
-        profile->SetProperty(DAS_PROFILE_PROPERTY_PROFILE, *p_settings.Get());
+        profile->SetJsonSettingProperty(
+            DAS_PROFILE_PROPERTY_PROFILE,
+            *p_settings.Get());
 
         profiles_[profile_id] = std::move(profile);
 

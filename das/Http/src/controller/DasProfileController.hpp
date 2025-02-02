@@ -246,6 +246,54 @@ public:
 
     ENDPOINT(
         "POST",
+        DAS_HTTP_API_PREFIX "profile/save",
+        save_profile,
+        BODY_STRING(String, body))
+    {
+        if (!body)
+        {
+            return DAS_HTTP_MAKE_RESPONSE(DAS_E_INVALID_POINTER);
+        }
+        try
+        {
+            const auto request = nlohmann::json::parse(*body);
+
+            DAS::DasPtr<IDasReadOnlyString> p_profile_id{};
+            request.at("profileId").get_to(p_profile_id);
+
+            DAS::DasPtr<IDasProfile> p_profile{};
+            DAS_THROW_IF_FAILED_EC(
+                ::FindIDasProfile(p_profile_id.Get(), p_profile.Put()))
+
+            const auto profile = request.at("profile").dump();
+            DAS::DasPtr<IDasReadOnlyString> p_profile_string{};
+            DAS_THROW_IF_FAILED_EC(
+                ::CreateIDasReadOnlyStringFromUtf8(
+                    profile.c_str(),
+                    p_profile_string.Put()))
+            DAS::DasPtr<IDasJsonSetting> p_profile_json{};
+            DAS_THROW_IF_FAILED_EC(p_profile->GetJsonSettingProperty(
+                DAS_PROFILE_PROPERTY_PROFILE,
+                p_profile_json.Put()))
+            DAS_THROW_IF_FAILED_EC(
+                p_profile_json->FromString(p_profile_string.Get()))
+            DAS_THROW_IF_FAILED_EC(p_profile_json->Save())
+            return MakeSuccessResponse();
+        }
+        catch (const nlohmann::json::exception& ex)
+        {
+            DAS_LOG_ERROR(ex.what());
+            return DAS_HTTP_MAKE_RESPONSE(DAS_E_INVALID_JSON);
+        }
+        catch (const DAS::Core::DasException& ex)
+        {
+            DAS_LOG_ERROR(ex.what());
+            return MakeResponse(ex);
+        }
+    }
+
+    ENDPOINT(
+        "POST",
         DAS_HTTP_API_PREFIX "profile/enable",
         set_enable,
         BODY_DTO(Object<ProfileEnabled>, profile_enabled))
