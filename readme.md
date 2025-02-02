@@ -24,7 +24,6 @@ git clone git@github.com:BombaxCeiba/AutoStarRail.git
 | DAS_SPDLOG_USE_STD_FMT | 由DAS_STD_FMT_SUPPORT决定 | 是否将项目自带的spdlog设置为使用标准库的fmt                    |
 | DAS_USE_BUNDLED_FMT    | 由DAS_STD_FMT_SUPPORT决定 | 是否使用下载的fmt，此项为ON时，DAS_SPDLOG_USE_STD_FMT默认为OFF |
 | DAS_BUILD_TEST         | OFF                       | 是否构建测试                                                   |
-| DAS_BUILD_QT5_GUI      | ON                        | 是否构建GUI                                                    |
 | DAS_USE_LLD            | OFF                       | 是否添加编译选项（非MSVC时）-fuse-ld=lld                       |
 | DAS_USE_CCACHE         | OFF                       | 是否使用ccache                                                 |
 | DAS_USE_BUNDLED_BOOST  | OFF                       | 是否下载Boost源码编译                                          |
