@@ -26,7 +26,10 @@ public:
     DasLogController()
     {
         constexpr auto LOG_RING_BUFFER_SIZE = 64;
+
+        OATPP_LOGI(DAS_HTTP_LOG_THEME, "Preparing to load logger.");
         ::CreateIDasLogRequester(LOG_RING_BUFFER_SIZE, p_requester.Put());
+        OATPP_LOGI(DAS_HTTP_LOG_THEME, "Logger loaded.");
     }
 
     /**
@@ -41,8 +44,6 @@ public:
         response->message = "";
         response->data = LogsData::createShared();
         response->data->logs = {};
-
-        OATPP_LOGI(DAS_HTTP_LOG_THEME, "Preparing to load logger.");
 
         while (true)
         {
@@ -66,8 +67,6 @@ public:
                 break;
             }
         }
-
-        OATPP_LOGI(DAS_HTTP_LOG_THEME, "Logger loaded.");
 
         return createDtoResponse(Status::CODE_200, response);
     }
