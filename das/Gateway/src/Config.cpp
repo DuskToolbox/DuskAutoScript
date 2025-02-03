@@ -35,8 +35,8 @@ DAS_DEFINE_VARIABLE(g_pfnCreateIDasReadOnlyStringFromUtf8){
                 " .Error code = {}. Message = {}",
                 code.value(),
                 code.message());
-            SPDLOG_LOGGER_ERROR(g_logger, message.c_str());
-            SPDLOG_LOGGER_ERROR(g_logger, ex.what());
+            SPDLOG_LOGGER_ERROR(GetLogger(), message.c_str());
+            SPDLOG_LOGGER_ERROR(GetLogger(), ex.what());
         }
         return nullptr;
     }()};
@@ -60,8 +60,8 @@ DAS_DEFINE_VARIABLE(g_pfnThrowDasExceptionEc){
                 " .Error code = {}. Message = {}",
                 code.value(),
                 code.message());
-            SPDLOG_LOGGER_ERROR(g_logger, message.c_str());
-            SPDLOG_LOGGER_ERROR(g_logger, ex.what());
+            SPDLOG_LOGGER_ERROR(GetLogger(), message.c_str());
+            SPDLOG_LOGGER_ERROR(GetLogger(), ex.what());
         }
         return nullptr;
     }()};

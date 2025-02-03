@@ -19,7 +19,7 @@ DasResult ToPath(
 {
     if (p_string == nullptr)
     {
-        SPDLOG_LOGGER_ERROR(DAS::Gateway::g_logger, "p_string is nullptr.");
+        SPDLOG_LOGGER_ERROR(DAS::Gateway::GetLogger(), "p_string is nullptr.");
         return DAS_E_INVALID_POINTER;
     }
 #ifdef DAS_WINDOWS
@@ -100,32 +100,6 @@ DasResult IDasJsonSettingImpl::SetOnDeletedHandler(
     return impl_.SetOnDeletedHandler(p_handler);
 }
 
-auto DasSettings::GetKey(const char* p_type_name, const char* key)
-    -> Utils::Expected<std::reference_wrapper<const nlohmann::json>>
-{
-    if (const auto global_setting_it = settings_.find(p_type_name);
-        global_setting_it != settings_.end())
-    {
-        if (const auto setting_it = global_setting_it->find(key);
-            setting_it != global_setting_it->end())
-        {
-            return std::cref(*setting_it);
-        }
-    }
-    return tl::make_unexpected(DAS_E_OUT_OF_RANGE);
-}
-
-auto DasSettings::FindTypeSettings(const char* p_type_name)
-    -> Utils::Expected<std::reference_wrapper<const nlohmann::json>>
-{
-    if (const auto global_setting_it = settings_.find(p_type_name);
-        global_setting_it != settings_.end())
-    {
-        return std::cref(*global_setting_it);
-    }
-    return tl::make_unexpected(DAS_E_OUT_OF_RANGE);
-}
-
 auto DasSettings::SaveImpl(const std::filesystem::path& full_path) -> DasResult
 {
     std::ofstream ofs{};
@@ -143,9 +117,9 @@ auto DasSettings::SaveImpl(const std::filesystem::path& full_path) -> DasResult
     }
     catch (const std::ios_base::failure& ex)
     {
-        SPDLOG_LOGGER_ERROR(g_logger, ex.what());
+        SPDLOG_LOGGER_ERROR(GetLogger(), ex.what());
         SPDLOG_LOGGER_INFO(
-            g_logger,
+            GetLogger(),
             "Error happened when saving settings. Error code = " DAS_STR(
                 DAS_E_INVALID_FILE) ".");
         const auto message = DAS_FMT_NS::format(
@@ -163,7 +137,7 @@ DasResult DasSettings::ToString(IDasReadOnlyString** pp_out_string)
 {
     if (!pp_out_string)
     {
-        SPDLOG_LOGGER_ERROR(g_logger, "pp_out_string is nullptr.");
+        SPDLOG_LOGGER_ERROR(GetLogger(), "pp_out_string is nullptr.");
         return DAS_E_INVALID_POINTER;
     }
 
@@ -194,7 +168,7 @@ DasResult DasSettings::FromString(IDasReadOnlyString* p_in_settings)
 {
     if (!p_in_settings)
     {
-        SPDLOG_LOGGER_ERROR(g_logger, "p_in_settings is nullptr.");
+        SPDLOG_LOGGER_ERROR(GetLogger(), "p_in_settings is nullptr.");
         return DAS_E_INVALID_POINTER;
     }
 
@@ -209,9 +183,9 @@ DasResult DasSettings::FromString(IDasReadOnlyString* p_in_settings)
             auto message = DAS_FMT_NS::format(
                 "Can not get utf8 string. Error code = {}",
                 get_u8_result);
-            SPDLOG_LOGGER_ERROR(g_logger, message.c_str());
+            SPDLOG_LOGGER_ERROR(GetLogger(), message.c_str());
             message = DAS_FMT_NS::format("Note: text = {}", p_u8_string);
-            SPDLOG_LOGGER_INFO(g_logger, message.c_str());
+            SPDLOG_LOGGER_INFO(GetLogger(), message.c_str());
             return get_u8_result;
         }
         auto tmp_result = nlohmann::json::parse(p_u8_string);
@@ -220,7 +194,7 @@ DasResult DasSettings::FromString(IDasReadOnlyString* p_in_settings)
     }
     catch (const nlohmann::json::exception& ex)
     {
-        SPDLOG_LOGGER_ERROR(g_logger, ex.what());
+        SPDLOG_LOGGER_ERROR(GetLogger(), ex.what());
         return DAS_E_INTERNAL_FATAL_ERROR;
     }
 }
@@ -230,7 +204,7 @@ DasResult DasSettings::SaveToWorkingDirectory(
 {
     if (p_relative_path == nullptr)
     {
-        SPDLOG_LOGGER_ERROR(g_logger, "p_relative_path is nullptr.");
+        SPDLOG_LOGGER_ERROR(GetLogger(), "p_relative_path is nullptr.");
         return DAS_E_INVALID_POINTER;
     }
 
@@ -261,7 +235,7 @@ DasResult DasSettings::LoadSettings(IDasReadOnlyString* p_path)
         if (p_path == nullptr) [[unlikely]]
         {
             SPDLOG_LOGGER_ERROR(
-                g_logger,
+                GetLogger(),
                 "Null pointer found! Variable name is p_path."
                 " Please check your code.");
             return DAS_E_INVALID_POINTER;
@@ -274,7 +248,7 @@ DasResult DasSettings::LoadSettings(IDasReadOnlyString* p_path)
             const auto message = DAS_FMT_NS::format(
                 "Call ToPath failed. Error code = {}.",
                 to_path_result);
-            SPDLOG_LOGGER_ERROR(g_logger, message.c_str());
+            SPDLOG_LOGGER_ERROR(GetLogger(), message.c_str());
         }
 
         std::error_code error_code;
@@ -284,9 +258,9 @@ DasResult DasSettings::LoadSettings(IDasReadOnlyString* p_path)
                 "Failed to create directory {}. Error code = {}.",
                 reinterpret_cast<const char*>(path.u8string().c_str()),
                 error_code.value());
-            SPDLOG_LOGGER_ERROR(g_logger, message.c_str());
+            SPDLOG_LOGGER_ERROR(GetLogger(), message.c_str());
             SPDLOG_LOGGER_ERROR(
-                g_logger,
+                GetLogger(),
                 "Message = \"{}\".",
                 error_code.message());
             return DAS_E_INTERNAL_FATAL_ERROR;
@@ -299,7 +273,7 @@ DasResult DasSettings::LoadSettings(IDasReadOnlyString* p_path)
             const auto message = DAS_FMT_NS::format(
                 "Path not exists. File will be create. Path = {}.",
                 reinterpret_cast<const char*>(path.u8string().c_str()));
-            SPDLOG_LOGGER_WARN(g_logger, message.c_str());
+            SPDLOG_LOGGER_WARN(GetLogger(), message.c_str());
             settings_ = {};
             return DAS_S_FALSE;
         }
@@ -315,18 +289,18 @@ DasResult DasSettings::LoadSettings(IDasReadOnlyString* p_path)
     }
     catch (const std::ios_base::failure& ex)
     {
-        SPDLOG_LOGGER_ERROR(g_logger, ex.what());
+        SPDLOG_LOGGER_ERROR(GetLogger(), ex.what());
         SPDLOG_LOGGER_ERROR(
-            g_logger,
+            GetLogger(),
             "Error happened when reading settings file. Error code = " DAS_STR(
                 DAS_E_INVALID_FILE) ".");
         return DAS_E_INVALID_FILE;
     }
     catch (const nlohmann::json::exception& ex)
     {
-        SPDLOG_LOGGER_ERROR(g_logger, ex.what());
+        SPDLOG_LOGGER_ERROR(GetLogger(), ex.what());
         SPDLOG_LOGGER_ERROR(
-            g_logger,
+            GetLogger(),
             "Error happened when reading settings json. Error code = " DAS_STR(
                 DAS_E_INVALID_JSON) ".");
         return DAS_E_INVALID_JSON;
@@ -352,7 +326,7 @@ DasResult DasSettings::InitSettings(
 {
     if (!p_path)
     {
-        SPDLOG_LOGGER_ERROR(g_logger, "p_path is nullptr.");
+        SPDLOG_LOGGER_ERROR(GetLogger(), "p_path is nullptr.");
         return DAS_E_INVALID_POINTER;
     }
 
@@ -377,21 +351,21 @@ DasResult DasSettings::InitSettings(
     catch (const nlohmann::json::exception& ex)
     {
         SPDLOG_LOGGER_ERROR(
-            g_logger,
+            GetLogger(),
             "Parse json failed. Id = {}. What = {}",
             ex.id,
             ex.what());
         const char* json_string{};
         p_json_string->GetUtf8(&json_string);
         SPDLOG_LOGGER_ERROR(
-            g_logger,
+            GetLogger(),
             "json = {}",
             json_string ? json_string : "nullptr");
         return DAS_E_INVALID_JSON;
     }
     catch (const DAS::Core::DasException& ex)
     {
-        SPDLOG_LOGGER_ERROR(g_logger, ex.what());
+        SPDLOG_LOGGER_ERROR(GetLogger(), ex.what());
         return DAS_E_INTERNAL_FATAL_ERROR;
     }
 }
@@ -406,6 +380,8 @@ DasResult DasSettings::OnDeleted()
     return p_handler_->OnDeleted();
 }
 
+nlohmann::json& DasSettings::GetJson() { return settings_; }
+
 DAS_DEFINE_VARIABLE(g_settings);
 
 DAS_GATEWAY_NS_END
@@ -416,7 +392,7 @@ DasResult DasLoadExtraStringForUi(
     if (pp_out_ui_extra_settings_json_string == nullptr)
     {
         SPDLOG_LOGGER_ERROR(
-            DAS::Gateway::g_logger,
+            DAS::Gateway::GetLogger(),
             "pp_out_ui_extra_settings_json_string is nullptr.");
         return DAS_E_INVALID_POINTER;
     }
@@ -449,7 +425,7 @@ DasResult DasLoadExtraStringForUi(
     }
     catch (const std::exception& ex)
     {
-        SPDLOG_LOGGER_ERROR(DAS::Gateway::g_logger, ex.what());
+        SPDLOG_LOGGER_ERROR(DAS::Gateway::GetLogger(), ex.what());
         return DAS_E_INTERNAL_FATAL_ERROR;
     }
 }
@@ -460,7 +436,7 @@ DasResult DasSaveExtraStringForUi(
     if (p_in_ui_extra_settings_json_string == nullptr)
     {
         SPDLOG_LOGGER_ERROR(
-            DAS::Gateway::g_logger,
+            DAS::Gateway::GetLogger(),
             "p_in_ui_extra_settings_json_string is nullptr.");
         return DAS_E_INVALID_POINTER;
     }
@@ -476,7 +452,7 @@ DasResult DasSaveExtraStringForUi(
         const auto message = DAS_FMT_NS::format(
             "GetUtf8 failed. Error code = {}",
             get_u8_string_result);
-        SPDLOG_LOGGER_ERROR(DAS::Gateway::g_logger, message.c_str());
+        SPDLOG_LOGGER_ERROR(DAS::Gateway::GetLogger(), message.c_str());
         return get_u8_string_result;
     }
 
@@ -498,7 +474,7 @@ DasResult DasSaveExtraStringForUi(
     }
     catch (const std::exception& ex)
     {
-        SPDLOG_LOGGER_ERROR(DAS::Gateway::g_logger, ex.what());
+        SPDLOG_LOGGER_ERROR(DAS::Gateway::GetLogger(), ex.what());
         return DAS_E_INTERNAL_FATAL_ERROR;
     }
 }

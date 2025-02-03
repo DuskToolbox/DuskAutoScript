@@ -8,7 +8,7 @@
 
 DAS_GATEWAY_NS_BEGIN
 
-extern std::shared_ptr<spdlog::logger> g_logger;
+std::shared_ptr<spdlog::logger>& GetLogger();
 
 DAS_GATEWAY_NS_END
 

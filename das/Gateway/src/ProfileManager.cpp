@@ -29,7 +29,7 @@ namespace
                 "Failed to create directory {}. Error code = {}.",
                 reinterpret_cast<const char*>(result.u8string().c_str()),
                 error.value());
-            SPDLOG_LOGGER_ERROR(g_logger, message.c_str());
+            SPDLOG_LOGGER_ERROR(GetLogger(), message.c_str());
             DAS_GATEWAY_THROW_IF_FAILED(DAS_E_INVALID_FILE)
         }
         return result;
@@ -59,7 +59,7 @@ DasResult IDasProfileImpl::GetJsonSettingProperty(
 {
     if (!pp_out_json)
     {
-        SPDLOG_LOGGER_ERROR(g_logger, "pp_out_json is null!");
+        SPDLOG_LOGGER_ERROR(GetLogger(), "pp_out_json is null!");
         return DAS_E_INVALID_POINTER;
     }
     switch (profile_property)
@@ -74,7 +74,7 @@ DasResult IDasProfileImpl::GetJsonSettingProperty(
         const auto error_message = DAS_FMT_NS::format(
             "Unexpected DasProfileProperty. Value = {}",
             static_cast<int32_t>(profile_property));
-        SPDLOG_LOGGER_ERROR(g_logger, error_message.c_str());
+        SPDLOG_LOGGER_ERROR(GetLogger(), error_message.c_str());
         return DAS_E_INVALID_ENUM;
     }
     return DAS_S_OK;
@@ -86,7 +86,7 @@ DasResult IDasProfileImpl::GetStringProperty(
 {
     if (!pp_out_property)
     {
-        SPDLOG_LOGGER_ERROR(g_logger, "pp_out_property is null!");
+        SPDLOG_LOGGER_ERROR(GetLogger(), "pp_out_property is null!");
         return DAS_E_INVALID_POINTER;
     }
     switch (profile_property)
@@ -101,7 +101,7 @@ DasResult IDasProfileImpl::GetStringProperty(
         const auto error_message = DAS_FMT_NS::format(
             "Unexpected DasProfileProperty. Value = {}",
             static_cast<int32_t>(profile_property));
-        SPDLOG_LOGGER_ERROR(g_logger, error_message.c_str());
+        SPDLOG_LOGGER_ERROR(GetLogger(), error_message.c_str());
         return DAS_E_INVALID_ENUM;
     }
     return DAS_S_OK;
@@ -113,7 +113,7 @@ DasResult IDasProfileImpl::SetJsonSettingProperty(
 {
     if (!p_property)
     {
-        SPDLOG_LOGGER_ERROR(g_logger, "p_property is null!");
+        SPDLOG_LOGGER_ERROR(GetLogger(), "p_property is null!");
         return DAS_E_INVALID_POINTER;
     }
     switch (profile_property)
@@ -128,7 +128,7 @@ DasResult IDasProfileImpl::SetJsonSettingProperty(
         const auto error_message = DAS_FMT_NS::format(
             "Unknown IDasProfileProperty. Value = {}",
             static_cast<int32_t>(profile_property));
-        SPDLOG_LOGGER_ERROR(g_logger, error_message.c_str());
+        SPDLOG_LOGGER_ERROR(GetLogger(), error_message.c_str());
         return DAS_E_INVALID_ENUM;
     }
     return DAS_S_OK;
@@ -142,7 +142,7 @@ void IDasProfileImpl::OnDeleted()
 {
     if (!p_settings_)
     {
-        SPDLOG_LOGGER_WARN(g_logger, "p_settings_ is nullptr.");
+        SPDLOG_LOGGER_WARN(GetLogger(), "p_settings_ is nullptr.");
     }
     else
     {
@@ -151,7 +151,7 @@ void IDasProfileImpl::OnDeleted()
 
     if (!p_scheduler_state_)
     {
-        SPDLOG_LOGGER_WARN(g_logger, "p_scheduler_state_ is nullptr.");
+        SPDLOG_LOGGER_WARN(GetLogger(), "p_scheduler_state_ is nullptr.");
     }
     else
     {
@@ -182,7 +182,7 @@ ProfileManager::ProfileManager()
                 const auto message = DAS_FMT_NS::format(
                     "Failed to create IDasReadOnlyString. Error code = {}",
                     create_result);
-                SPDLOG_LOGGER_ERROR(g_logger, message.c_str());
+                SPDLOG_LOGGER_ERROR(GetLogger(), message.c_str());
                 continue;
             }
             profile->SetId(p_id.Get());
@@ -195,7 +195,7 @@ ProfileManager::ProfileManager()
                              / DAS_GATEWAY_PROFILE_INFO_FILE](auto& stream)
                 {
                     SPDLOG_LOGGER_ERROR(
-                        g_logger,
+                        GetLogger(),
                         "json_path = {}",
                         reinterpret_cast<const char*>(
                             json_path.u8string().c_str()));
@@ -222,7 +222,7 @@ ProfileManager::ProfileManager()
                 const auto message = DAS_FMT_NS::format(
                     "Failed to create IDasReadOnlyString. Error code = {}",
                     create_result);
-                SPDLOG_LOGGER_ERROR(g_logger, message.c_str());
+                SPDLOG_LOGGER_ERROR(GetLogger(), message.c_str());
                 continue;
             }
             auto p_settings = MakeDasPtr<DasSettings>();
@@ -233,7 +233,7 @@ ProfileManager::ProfileManager()
                 const auto message = DAS_FMT_NS::format(
                     "Failed to call LoadSettings. Error code = {}",
                     load_result);
-                SPDLOG_LOGGER_ERROR(g_logger, message.c_str());
+                SPDLOG_LOGGER_ERROR(GetLogger(), message.c_str());
                 continue;
             }
             profile->SetJsonSettingProperty(
@@ -254,7 +254,7 @@ ProfileManager::ProfileManager()
                 const auto message = DAS_FMT_NS::format(
                     "Failed to create IDasReadOnlyString. Error code = {}",
                     create_result);
-                SPDLOG_LOGGER_ERROR(g_logger, message.c_str());
+                SPDLOG_LOGGER_ERROR(GetLogger(), message.c_str());
                 continue;
             }
             auto p_scheduler_state = MakeDasPtr<DasSettings>();
@@ -265,7 +265,7 @@ ProfileManager::ProfileManager()
                 const auto message = DAS_FMT_NS::format(
                     "Failed to call LoadSettings. Error code = {}",
                     load_result);
-                SPDLOG_LOGGER_ERROR(g_logger, message.c_str());
+                SPDLOG_LOGGER_ERROR(GetLogger(), message.c_str());
                 continue;
             }
             profile->SetJsonSettingProperty(
@@ -277,21 +277,21 @@ ProfileManager::ProfileManager()
     }
     catch (const std::filesystem::filesystem_error& ex)
     {
-        SPDLOG_LOGGER_ERROR(g_logger, ex.what());
+        SPDLOG_LOGGER_ERROR(GetLogger(), ex.what());
     }
     catch (const DAS::Core::DasException& ex)
     {
-        SPDLOG_LOGGER_ERROR(g_logger, ex.what());
+        SPDLOG_LOGGER_ERROR(GetLogger(), ex.what());
     }
     catch (const std::ios_base::failure& ex)
     {
-        SPDLOG_LOGGER_ERROR(g_logger, ex.what());
+        SPDLOG_LOGGER_ERROR(GetLogger(), ex.what());
         const auto& error_code = ex.code();
         SPDLOG_LOGGER_INFO(
-            g_logger,
+            GetLogger(),
             "Error happened when reading file. Error code = {}",
             error_code.value());
-        SPDLOG_LOGGER_INFO(g_logger, error_code.message());
+        SPDLOG_LOGGER_INFO(GetLogger(), error_code.message());
     }
 }
 
@@ -310,7 +310,7 @@ DasResult ProfileManager::GetAllIDasProfile(
             "Profile buffer size not equal to profile size. Expected = {}. Got = {}.",
             profiles_.size(),
             buffer_size);
-        SPDLOG_LOGGER_ERROR(g_logger, message.c_str());
+        SPDLOG_LOGGER_ERROR(GetLogger(), message.c_str());
         return DAS_E_MAYBE_OVERFLOW;
     }
 
@@ -330,19 +330,19 @@ DasResult ProfileManager::CreateIDasProfile(
 {
     if (!p_profile_id)
     {
-        SPDLOG_LOGGER_ERROR(DAS::Gateway::g_logger, "p_profile_id is null!");
+        SPDLOG_LOGGER_ERROR(DAS::Gateway::GetLogger(), "p_profile_id is null!");
         return DAS_E_INVALID_POINTER;
     }
 
     if (!p_profile_name)
     {
-        SPDLOG_LOGGER_ERROR(DAS::Gateway::g_logger, "p_profile_name is null!");
+        SPDLOG_LOGGER_ERROR(DAS::Gateway::GetLogger(), "p_profile_name is null!");
         return DAS_E_INVALID_POINTER;
     }
 
     if (!p_profile_json)
     {
-        SPDLOG_LOGGER_ERROR(DAS::Gateway::g_logger, "p_profile_json is null!");
+        SPDLOG_LOGGER_ERROR(DAS::Gateway::GetLogger(), "p_profile_json is null!");
         return DAS_E_INVALID_POINTER;
     }
 
@@ -355,7 +355,7 @@ DasResult ProfileManager::CreateIDasProfile(
         if (std::filesystem::exists(data_directory))
         {
             SPDLOG_LOGGER_ERROR(
-                DAS::Gateway::g_logger,
+                DAS::Gateway::GetLogger(),
                 "Path already exist. Value = {}.",
                 reinterpret_cast<const char*>(
                     data_directory.u8string().c_str()));
@@ -365,13 +365,13 @@ DasResult ProfileManager::CreateIDasProfile(
             !Utils::CreateDirectoryRecursive(data_directory, error_code))
         {
             SPDLOG_LOGGER_ERROR(
-                DAS::Gateway::g_logger,
+                DAS::Gateway::GetLogger(),
                 "Can not create path {}. Error code = {}.",
                 reinterpret_cast<const char*>(
                     data_directory.u8string().c_str()),
                 error_code.value());
             SPDLOG_LOGGER_ERROR(
-                DAS::Gateway::g_logger,
+                DAS::Gateway::GetLogger(),
                 "Message = \"{}\".",
                 error_code.message());
             return DAS_E_INVALID_FILE;
@@ -418,12 +418,12 @@ DasResult ProfileManager::CreateIDasProfile(
     }
     catch (const std::filesystem::filesystem_error& ex)
     {
-        SPDLOG_LOGGER_ERROR(DAS::Gateway::g_logger, ex.what());
+        SPDLOG_LOGGER_ERROR(DAS::Gateway::GetLogger(), ex.what());
         return DAS_E_INTERNAL_FATAL_ERROR;
     }
     catch (const DAS::Core::DasException& ex)
     {
-        SPDLOG_LOGGER_ERROR(DAS::Gateway::g_logger, ex.what());
+        SPDLOG_LOGGER_ERROR(DAS::Gateway::GetLogger(), ex.what());
         return ex.GetErrorCode();
     }
     catch (const std::bad_alloc& ex)
@@ -436,7 +436,7 @@ DasResult ProfileManager::DeleteIDasProfile(IDasReadOnlyString* p_profile_id)
 {
     if (!p_profile_id)
     {
-        SPDLOG_LOGGER_ERROR(DAS::Gateway::g_logger, "p_profile_id is null!");
+        SPDLOG_LOGGER_ERROR(DAS::Gateway::GetLogger(), "p_profile_id is null!");
         return DAS_E_INVALID_POINTER;
     }
 
@@ -451,7 +451,7 @@ DasResult ProfileManager::DeleteIDasProfile(IDasReadOnlyString* p_profile_id)
         if (!std::filesystem::exists(profile_directory))
         {
             SPDLOG_LOGGER_WARN(
-                DAS::Gateway::g_logger,
+                DAS::Gateway::GetLogger(),
                 "Profile not exist. Path = {}",
                 reinterpret_cast<const char*>(
                     profile_directory.u8string().c_str()));
@@ -464,7 +464,7 @@ DasResult ProfileManager::DeleteIDasProfile(IDasReadOnlyString* p_profile_id)
         if (it == profiles_.end())
         {
             SPDLOG_LOGGER_ERROR(
-                DAS::Gateway::g_logger,
+                DAS::Gateway::GetLogger(),
                 "Profile not found. Id = {}",
                 profile_id);
             return DAS_E_OUT_OF_RANGE;
@@ -476,12 +476,12 @@ DasResult ProfileManager::DeleteIDasProfile(IDasReadOnlyString* p_profile_id)
     }
     catch (DAS::Core::DasException& ex)
     {
-        SPDLOG_LOGGER_ERROR(DAS::Gateway::g_logger, ex.what());
+        SPDLOG_LOGGER_ERROR(DAS::Gateway::GetLogger(), ex.what());
         return DAS_E_INTERNAL_FATAL_ERROR;
     }
     catch (const std::filesystem::filesystem_error& ex)
     {
-        SPDLOG_LOGGER_ERROR(DAS::Gateway::g_logger, ex.what());
+        SPDLOG_LOGGER_ERROR(DAS::Gateway::GetLogger(), ex.what());
         return DAS_E_INVALID_PATH;
     }
 }
@@ -492,13 +492,13 @@ DasResult ProfileManager::FindIDasProfile(
 {
     if (!p_name)
     {
-        SPDLOG_LOGGER_ERROR(g_logger, "p_name is null!");
+        SPDLOG_LOGGER_ERROR(GetLogger(), "p_name is null!");
         return DAS_E_INVALID_POINTER;
     }
 
     if (!pp_out_profile)
     {
-        SPDLOG_LOGGER_ERROR(g_logger, "pp_out_profile is null!");
+        SPDLOG_LOGGER_ERROR(GetLogger(), "pp_out_profile is null!");
         return DAS_E_INVALID_POINTER;
     }
 
@@ -509,7 +509,7 @@ DasResult ProfileManager::FindIDasProfile(
         const auto message = DAS_FMT_NS::format(
             "Failed to get utf8 string. Error code = {}",
             get_result);
-        SPDLOG_LOGGER_ERROR(g_logger, message.c_str());
+        SPDLOG_LOGGER_ERROR(GetLogger(), message.c_str());
         return get_result;
     }
 

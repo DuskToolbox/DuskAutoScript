@@ -1,3 +1,4 @@
+#include "../das/Gateway/include/das/Gateway/IDasSettingsImpl.h"
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
 #include <das/Core/Logger/Logger.h>
@@ -436,7 +437,16 @@ namespace Core
         }
     }
 
-    void TaskScheduler::DumpStateToFile() {}
+    void TaskScheduler::DumpStateToFile()
+    {
+        DasPtr<DAS::Gateway::DasSettings> p_settings{};
+        DAS_THROW_IF_FAILED_EC(p_state_json_->QueryInterface(
+            DasIidOf<DAS::Gateway::DasSettings>(),
+            p_settings.PutVoid()))
+        nlohmann::json j;
+        p_settings->GetJson() = j;
+        DAS_THROW_IF_FAILED_EC(p_settings->Save())
+    }
 
     DasResult TaskScheduler::AddTask(
         ForeignInterfaceHost::TaskManager::TaskInfo* p_task)

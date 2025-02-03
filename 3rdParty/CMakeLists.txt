@@ -679,3 +679,6 @@ function(_download_and_config_drogon)
 endfunction()
 
 message("================================================================")
+
+# 因为cmake限制，只能在这里写需要copy到测试目录的二进制，后续命令多了就改成文件include一下
+das_add_auto_copy_dll_path($<TARGET_FILE:DasGateway>)
