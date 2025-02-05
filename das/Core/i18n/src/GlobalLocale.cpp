@@ -4,29 +4,26 @@
 
 DAS_CORE_I18N_NS_BEGIN
 
-GlobalLocaleSingleton InitializeGlobalLocaleSingleton()
-{
-    return GlobalLocaleSingleton{};
-}
-
 GlobalLocaleSingleton::GlobalLocaleSingleton()
 {
-    ::CreateIDasReadOnlyStringFromUtf8("en", p_locale_name.Put());
+    ::CreateIDasReadOnlyStringFromUtf8("en", p_locale_name_.Put());
 }
 
-const Das::DasPtr<IDasReadOnlyString>& GlobalLocaleSingleton::GetInstance()
-    const
+GlobalLocaleSingleton& GlobalLocaleSingleton::GetInstance()
 {
-    return p_locale_name;
+    static GlobalLocaleSingleton instance{};
+    return instance;
 }
 
-void GlobalLocaleSingleton::SetInstance(
-    DasPtr<IDasReadOnlyString> p_new_locale_name)
+void GlobalLocaleSingleton::SetLocale(IDasReadOnlyString* p_new_locale_name)
 {
-    p_locale_name = p_new_locale_name;
+    p_locale_name_ = p_new_locale_name;
 }
 
-DAS_DEFINE_VARIABLE(g_locale) = InitializeGlobalLocaleSingleton();
+const DasPtr<IDasReadOnlyString>& GlobalLocaleSingleton::GetLocale()
+{
+    return p_locale_name_;
+}
 
 const auto g_fallback_locale_name{
     MakeDasPtr<IDasReadOnlyString, ::DasStringCppImpl>(
@@ -43,14 +40,15 @@ DAS_CORE_I18N_NS_END
 
 DasResult DasSetDefaultLocale(IDasReadOnlyString* locale_name)
 {
-    DAS::DasPtr holder{locale_name};
-    DAS::Core::i18n::g_locale.SetInstance(holder);
+    DAS::Core::i18n::GlobalLocaleSingleton::GetInstance().SetLocale(
+        locale_name);
     return DAS_S_OK;
 }
 
 DasResult DasGetDefaultLocale(IDasReadOnlyString** pp_out_locale_name)
 {
-    auto* p_result = DAS::Core::i18n::g_locale.GetInstance().Get();
+    auto& instance = DAS::Core::i18n::GlobalLocaleSingleton::GetInstance();
+    auto* p_result = instance.GetLocale().Get();
     p_result->AddRef();
     *pp_out_locale_name = p_result;
     return DAS_S_OK;

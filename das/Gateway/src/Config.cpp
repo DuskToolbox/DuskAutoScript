@@ -16,54 +16,64 @@ auto GetDasCore() -> boost::dll::shared_library
 
 DAS_NS_ANONYMOUS_DETAILS_END
 
-DAS_DEFINE_VARIABLE(g_pfnCreateIDasReadOnlyStringFromUtf8){
-    []() -> decltype(&::CreateIDasReadOnlyStringFromUtf8)
-    {
-        try
+decltype(&::CreateIDasReadOnlyStringFromUtf8)
+GetCreateIDasReadOnlyStringFromUtf8Function()
+{
+    static decltype(&::CreateIDasReadOnlyStringFromUtf8) result{
+        []() -> decltype(&::CreateIDasReadOnlyStringFromUtf8)
         {
-            auto       das_core = Details::GetDasCore();
-            const auto result =
-                das_core.get<decltype(::CreateIDasReadOnlyStringFromUtf8)>(
-                    "CreateIDasReadOnlyStringFromUtf8");
-            return result;
-        }
-        catch (const boost::dll::fs::system_error& ex)
-        {
-            const auto code = ex.code();
-            const auto message = DAS_FMT_NS::format(
-                "Can not load library " DAS_CORE_DLL
-                " .Error code = {}. Message = {}",
-                code.value(),
-                code.message());
-            SPDLOG_LOGGER_ERROR(GetLogger(), message.c_str());
-            SPDLOG_LOGGER_ERROR(GetLogger(), ex.what());
-        }
-        return nullptr;
-    }()};
+            try
+            {
+                auto       das_core = Details::GetDasCore();
+                const auto result =
+                    das_core.get<decltype(::CreateIDasReadOnlyStringFromUtf8)>(
+                        "CreateIDasReadOnlyStringFromUtf8");
+                return result;
+            }
+            catch (const boost::dll::fs::system_error& ex)
+            {
+                const auto code = ex.code();
+                const auto message = DAS_FMT_NS::format(
+                    "Can not load library " DAS_CORE_DLL
+                    " .Error code = {}. Message = {}",
+                    code.value(),
+                    code.message());
+                SPDLOG_LOGGER_ERROR(GetLogger(), message.c_str());
+                SPDLOG_LOGGER_ERROR(GetLogger(), ex.what());
+            }
+            return nullptr;
+        }()};
+    return result;
+}
 
-DAS_DEFINE_VARIABLE(g_pfnThrowDasExceptionEc){
-    []() -> decltype(g_pfnThrowDasExceptionEc)
-    {
-        try
+decltype(&DAS::Core::Exceptions::ThrowDasExceptionEc)
+GetThrowDasExceptionEcFunction()
+{
+    static decltype(&DAS::Core::Exceptions::ThrowDasExceptionEc) result{
+        []() -> decltype(&DAS::Core::Exceptions::ThrowDasExceptionEc)
         {
-            auto       das_core = Details::GetDasCore();
-            const auto result = das_core.get_alias<
-                std::remove_pointer_t<decltype(g_pfnThrowDasExceptionEc)>>(
-                "ThrowDasExceptionEc");
-            return result;
-        }
-        catch (const boost::dll::fs::system_error& ex)
-        {
-            const auto code = ex.code();
-            const auto message = DAS_FMT_NS::format(
-                "Can not load library " DAS_CORE_DLL
-                " .Error code = {}. Message = {}",
-                code.value(),
-                code.message());
-            SPDLOG_LOGGER_ERROR(GetLogger(), message.c_str());
-            SPDLOG_LOGGER_ERROR(GetLogger(), ex.what());
-        }
-        return nullptr;
-    }()};
+            try
+            {
+                auto       das_core = Details::GetDasCore();
+                const auto result = das_core.get<void*>("ThrowDasExceptionEc");
+                return reinterpret_cast<
+                    decltype(&DAS::Core::Exceptions::ThrowDasExceptionEc)>(
+                    result);
+            }
+            catch (const boost::dll::fs::system_error& ex)
+            {
+                const auto code = ex.code();
+                const auto message = DAS_FMT_NS::format(
+                    "Can not load library " DAS_CORE_DLL
+                    " .Error code = {}. Message = {}",
+                    code.value(),
+                    code.message());
+                SPDLOG_LOGGER_ERROR(GetLogger(), message.c_str());
+                SPDLOG_LOGGER_ERROR(GetLogger(), ex.what());
+            }
+            return nullptr;
+        }()};
+    return result;
+}
 
 DAS_GATEWAY_NS_END

@@ -15,11 +15,11 @@
 
 DAS_GATEWAY_NS_BEGIN
 
-extern decltype(&::CreateIDasReadOnlyStringFromUtf8)
-    g_pfnCreateIDasReadOnlyStringFromUtf8;
+decltype(&::CreateIDasReadOnlyStringFromUtf8)
+GetCreateIDasReadOnlyStringFromUtf8Function();
 
-extern decltype(&DAS::Core::Exceptions::ThrowDasExceptionEc)
-    g_pfnThrowDasExceptionEc;
+decltype(&DAS::Core::Exceptions::ThrowDasExceptionEc)
+GetThrowDasExceptionEcFunction();
 
 DAS_GATEWAY_NS_END
 
@@ -28,7 +28,7 @@ DAS_GATEWAY_NS_END
     {                                                                          \
         ::Das::Core::Exceptions::DasExceptionSourceInfo                        \
             __das_internal_source_location{__FILE__, __LINE__, DAS_FUNCTION};  \
-        ::Das::Gateway::g_pfnThrowDasExceptionEc(                              \
+        ::Das::Gateway::GetThrowDasExceptionEcFunction()(                      \
             __result,                                                          \
             &__das_internal_source_location);                                  \
     }

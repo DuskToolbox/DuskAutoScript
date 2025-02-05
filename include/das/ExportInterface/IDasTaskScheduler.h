@@ -2,6 +2,7 @@
 #define DAS_SCHEDULER_H
 
 #include <das/DasString.hpp>
+#include <das/ExportInterface/IDasSettings.h>
 #include <das/IDasBase.h>
 
 static const char* const DAS_TASK_INFO_PROPERTIES[] =
@@ -95,5 +96,8 @@ DAS_C_API DasResult
 GetIDasTaskScheduler(IDasTaskScheduler** pp_out_task_scheduler);
 
 DAS_API DasResult InitializeGlobalTaskScheduler();
+
+DAS_C_API DasResult SetIDasTaskSchedulerJsonState(
+    IDasJsonSetting* p_scheduler_state);
 
 #endif // DAS_SCHEDULER_H

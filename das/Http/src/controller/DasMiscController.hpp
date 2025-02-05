@@ -4,7 +4,6 @@
 #include "../component/Helper.hpp"
 #include "Config.h"
 #include "das/ExportInterface/DasLogger.h"
-#include "dto/Global.hpp"
 
 #include OATPP_CODEGEN_BEGIN(ApiController)
 

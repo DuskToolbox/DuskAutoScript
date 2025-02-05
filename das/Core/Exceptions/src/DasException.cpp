@@ -220,4 +220,11 @@ void ThrowDasException(
 
 DAS_CORE_EXCEPTIONS_NS_END
 
-BOOST_DLL_ALIAS(DAS::Core::Exceptions::ThrowDasExceptionEc, ThrowDasExceptionEc)
+extern "C" DAS_DLL_EXPORT void* ThrowDasExceptionEc;
+
+static_assert(
+    sizeof(void*) == sizeof(&DAS::Core::Exceptions::ThrowDasExceptionEc),
+    "Size not matched!");
+
+DAS_DEFINE_VARIABLE(ThrowDasExceptionEc){
+    reinterpret_cast<void*>(&DAS::Core::Exceptions::ThrowDasExceptionEc)};

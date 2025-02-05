@@ -163,6 +163,7 @@ ProfileManager::ProfileManager()
 {
     try
     {
+        DAS_GATEWAY_THROW_IF_FAILED(-2)
         const auto data_dir = GetDataDirectory();
         for (const auto& subDirectory :
              std::filesystem::directory_iterator(data_dir))
@@ -173,7 +174,7 @@ ProfileManager::ProfileManager()
 
             DasPtr<IDasReadOnlyString> p_id{};
             if (const auto create_result =
-                    g_pfnCreateIDasReadOnlyStringFromUtf8(
+                    GetCreateIDasReadOnlyStringFromUtf8Function()(
                         reinterpret_cast<const char*>(
                             u8_directory_name.c_str()),
                         p_id.Put());
@@ -205,16 +206,17 @@ ProfileManager::ProfileManager()
             std::string name{};
             info_json.at("name").get_to(name);
             DasPtr<IDasReadOnlyString> p_name;
-            DAS_GATEWAY_THROW_IF_FAILED(g_pfnCreateIDasReadOnlyStringFromUtf8(
-                name.c_str(),
-                p_name.Put()))
+            DAS_GATEWAY_THROW_IF_FAILED(
+                GetCreateIDasReadOnlyStringFromUtf8Function()(
+                    name.c_str(),
+                    p_name.Put()))
             profile->SetName(p_name.Get());
 
             const auto settings_path =
                 (subDirectory.path() / DAS_GATEWAY_SETTINGS_FILE).u8string();
             DasPtr<IDasReadOnlyString> p_settings_path{};
             if (const auto create_result =
-                    g_pfnCreateIDasReadOnlyStringFromUtf8(
+                    GetCreateIDasReadOnlyStringFromUtf8Function()(
                         reinterpret_cast<const char*>(settings_path.c_str()),
                         p_settings_path.Put());
                 DAS::IsFailed(create_result))
@@ -245,7 +247,7 @@ ProfileManager::ProfileManager()
                     .u8string();
             DasPtr<IDasReadOnlyString> p_scheduler_state_path{};
             if (const auto create_result =
-                    g_pfnCreateIDasReadOnlyStringFromUtf8(
+                    GetCreateIDasReadOnlyStringFromUtf8Function()(
                         reinterpret_cast<const char*>(
                             scheduler_state_path.c_str()),
                         p_scheduler_state_path.Put());
@@ -272,7 +274,9 @@ ProfileManager::ProfileManager()
                 DAS_PROFILE_PROPERTY_SCHEDULER_STATE,
                 *p_scheduler_state.Get());
 
-            profiles_[name] = std::move(profile);
+            const char* profile_id;
+            DAS_GATEWAY_THROW_IF_FAILED(p_id->GetUtf8(&profile_id))
+            profiles_[profile_id] = std::move(profile);
         }
     }
     catch (const std::filesystem::filesystem_error& ex)
@@ -336,13 +340,17 @@ DasResult ProfileManager::CreateIDasProfile(
 
     if (!p_profile_name)
     {
-        SPDLOG_LOGGER_ERROR(DAS::Gateway::GetLogger(), "p_profile_name is null!");
+        SPDLOG_LOGGER_ERROR(
+            DAS::Gateway::GetLogger(),
+            "p_profile_name is null!");
         return DAS_E_INVALID_POINTER;
     }
 
     if (!p_profile_json)
     {
-        SPDLOG_LOGGER_ERROR(DAS::Gateway::GetLogger(), "p_profile_json is null!");
+        SPDLOG_LOGGER_ERROR(
+            DAS::Gateway::GetLogger(),
+            "p_profile_json is null!");
         return DAS_E_INVALID_POINTER;
     }
 
@@ -380,9 +388,10 @@ DasResult ProfileManager::CreateIDasProfile(
         const auto u8_path =
             (data_directory / DAS_GATEWAY_SETTINGS_FILE).u8string();
         DasPtr<IDasReadOnlyString> p_path;
-        DAS_GATEWAY_THROW_IF_FAILED(g_pfnCreateIDasReadOnlyStringFromUtf8(
-            reinterpret_cast<const char*>(u8_path.c_str()),
-            p_path.Put()))
+        DAS_GATEWAY_THROW_IF_FAILED(
+            GetCreateIDasReadOnlyStringFromUtf8Function()(
+                reinterpret_cast<const char*>(u8_path.c_str()),
+                p_path.Put()))
         auto p_settings = MakeDasPtr<DasSettings>();
         if (const auto error_code =
                 p_settings->InitSettings(p_path.Get(), p_profile_json);
@@ -487,12 +496,12 @@ DasResult ProfileManager::DeleteIDasProfile(IDasReadOnlyString* p_profile_id)
 }
 
 DasResult ProfileManager::FindIDasProfile(
-    IDasReadOnlyString* p_name,
+    IDasReadOnlyString* p_profile_id,
     IDasProfile**       pp_out_profile)
 {
-    if (!p_name)
+    if (!p_profile_id)
     {
-        SPDLOG_LOGGER_ERROR(GetLogger(), "p_name is null!");
+        SPDLOG_LOGGER_ERROR(GetLogger(), "p_profile_id is null!");
         return DAS_E_INVALID_POINTER;
     }
 
@@ -502,8 +511,8 @@ DasResult ProfileManager::FindIDasProfile(
         return DAS_E_INVALID_POINTER;
     }
 
-    const char* u8_name{};
-    if (const auto get_result = p_name->GetUtf8(&u8_name);
+    const char* u8_id{};
+    if (const auto get_result = p_profile_id->GetUtf8(&u8_id);
         DAS::IsFailed(get_result))
     {
         const auto message = DAS_FMT_NS::format(
@@ -513,7 +522,7 @@ DasResult ProfileManager::FindIDasProfile(
         return get_result;
     }
 
-    if (const auto it = profiles_.find(u8_name); it != profiles_.end())
+    if (const auto it = profiles_.find(u8_id); it != profiles_.end())
     {
         Utils::SetResult(it->second.Get(), pp_out_profile);
         return DAS_S_OK;
@@ -546,10 +555,10 @@ DasResult DeleteIDasProfile(IDasReadOnlyString* p_profile_id)
 }
 
 DasResult FindIDasProfile(
-    IDasReadOnlyString* p_name,
+    IDasReadOnlyString* p_profile_id,
     IDasProfile**       pp_out_profile)
 {
     using namespace DAS::Gateway;
 
-    return g_profileManager.FindIDasProfile(p_name, pp_out_profile);
+    return g_profileManager.FindIDasProfile(p_profile_id, pp_out_profile);
 }

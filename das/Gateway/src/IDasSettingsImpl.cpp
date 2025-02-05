@@ -147,7 +147,7 @@ DasResult DasSettings::ToString(IDasReadOnlyString** pp_out_string)
     {
         auto                       json_string = settings_.dump();
         DasPtr<IDasReadOnlyString> p_json_string{};
-        const auto crate_result = g_pfnCreateIDasReadOnlyStringFromUtf8(
+        const auto crate_result = GetCreateIDasReadOnlyStringFromUtf8Function()(
             json_string.data(),
             p_json_string.Put());
         ;
@@ -419,7 +419,7 @@ DasResult DasLoadExtraStringForUi(
                     (std::istreambuf_iterator<char>(stream)),
                     std::istreambuf_iterator<char>()};
             });
-        return DAS::Gateway::g_pfnCreateIDasReadOnlyStringFromUtf8(
+        return DAS::Gateway::GetCreateIDasReadOnlyStringFromUtf8Function()(
             buffer.c_str(),
             Details::g_p_ui_extra_settings_json_string.Put());
     }

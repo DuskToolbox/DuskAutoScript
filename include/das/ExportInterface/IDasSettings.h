@@ -131,7 +131,7 @@ DAS_GATEWAY_C_API DasResult CreateIDasProfile(
 DAS_GATEWAY_C_API DasResult DeleteIDasProfile(IDasReadOnlyString* p_profile_id);
 
 DAS_GATEWAY_C_API DasResult
-FindIDasProfile(IDasReadOnlyString* p_name, IDasProfile** pp_out_profile);
+FindIDasProfile(IDasReadOnlyString* p_profile_id, IDasProfile** pp_out_profile);
 
 /**
  * @brief 加载UI在Core中寄存的json设置信息

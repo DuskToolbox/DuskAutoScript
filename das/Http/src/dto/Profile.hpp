@@ -5,6 +5,8 @@
 
 #include OATPP_CODEGEN_BEGIN(DTO)
 
+#include <oatpp/codegen/dto/base_define.hpp>
+
 /**
  *  定义配置文件相关数据类型
  *  Define profile related data types
@@ -31,11 +33,12 @@ class ProfileDescList : public oatpp::DTO
 using ProfileDescListResponse = ApiResponse<oatpp::Object<ProfileDescList>>;
 
 // 忽略的GUID列表，初始化插件管理器时使用
-class IgnoredGuidList : public oatpp::DTO
+class ProfileInitializeParms : public oatpp::DTO
 {
-    DTO_INIT(IgnoredGuidList, DTO)
+    DTO_INIT(ProfileInitializeParms, DTO)
 
-    DTO_FIELD(List<String>, ignoredGuidList, "ignoredGuidList");
+    DTO_FIELD(List<String>, ignored_guid_list, "ignoredGuidList");
+    DTO_FIELD(String, profile_id, "profileId");
 };
 
 // 配置文件描状态

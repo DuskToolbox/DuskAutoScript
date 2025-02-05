@@ -112,14 +112,13 @@ namespace Core
                   DAS_CORE_LOG_INFO("Task scheduler thread exited.");
               }}
     {
-        stdexec::sync_wait(
-            stdexec::then(
-                stdexec::schedule(GetSchedulerImpl()),
-                []
-                {
-                    DAS_CORE_LOG_INFO("Set thread vm pool thread 1 name.");
-                    DAS::Utils::SetCurrentThreadName(L"VM POOL 1");
-                }));
+        stdexec::sync_wait(stdexec::then(
+            stdexec::schedule(GetSchedulerImpl()),
+            []
+            {
+                DAS_CORE_LOG_INFO("Set thread vm pool thread 1 name.");
+                DAS::Utils::SetCurrentThreadName(L"VM POOL 1");
+            }));
     }
 
     DasResult TaskScheduler::QueryInterface(
@@ -595,6 +594,11 @@ namespace Core
         return error_code;
     }
 
+    void TaskScheduler::SetStateJson(IDasJsonSetting& state)
+    {
+        p_state_json_ = &state;
+    }
+
     TaskScheduler::~TaskScheduler() { NotifyExit(); }
 
     DAS_DEFINE_VARIABLE(g_scheduler){};
@@ -609,6 +613,7 @@ DasResult InitializeGlobalTaskScheduler()
         DAS_CORE_LOG_ERROR("Global scheduler has been initialized.");
         return DAS_E_INTERNAL_FATAL_ERROR;
     }
+
     DAS::Core::g_scheduler = DAS::MakeDasPtr<DAS::Core::TaskScheduler>();
     return DAS_S_OK;
 }
@@ -616,5 +621,17 @@ DasResult InitializeGlobalTaskScheduler()
 DasResult GetIDasTaskScheduler(IDasTaskScheduler** pp_out_task_scheduler)
 {
     DAS::Utils::SetResult(Das::Core::g_scheduler, pp_out_task_scheduler);
+    return DAS_S_OK;
+}
+
+DasResult SetIDasTaskSchedulerJsonState(IDasJsonSetting* p_scheduler_state)
+{
+    if (!p_scheduler_state)
+    {
+        DAS_CORE_LOG_ERROR("p_scheduler_state is nullptr.");
+        return DAS_E_INVALID_POINTER;
+    }
+
+    DAS::Core::g_scheduler->SetStateJson(*p_scheduler_state);
     return DAS_S_OK;
 }

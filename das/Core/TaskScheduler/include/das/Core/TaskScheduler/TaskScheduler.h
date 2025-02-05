@@ -114,6 +114,8 @@ namespace Core
          */
         DasResult GetAllTaskSchedulerInfo(IDasReadOnlyString** pp_out_json);
 
+        void SetStateJson(IDasJsonSetting& state);
+
     private:
         void InternalAddTask(const SchedulingUnit& task);
 

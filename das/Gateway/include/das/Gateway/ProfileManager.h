@@ -48,7 +48,7 @@ public:
         IDasReadOnlyString* p_profile_json);
     DasResult DeleteIDasProfile(IDasReadOnlyString* p_profile_id);
     DasResult FindIDasProfile(
-        IDasReadOnlyString* p_name,
+        IDasReadOnlyString* p_profile_id,
         IDasProfile**       pp_out_profile);
 
 private:
