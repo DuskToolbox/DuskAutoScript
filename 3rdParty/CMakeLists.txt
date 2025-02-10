@@ -162,11 +162,12 @@ endif ()
 function(_download_and_config_spdlog)
     set(CMAKE_FOLDER "Das3rd/spdlog")
     # config spdlog
-    message(STATUS "Downloading and configuring spdlog.")
+    set(DAS_SPDLOG_VERSION "1.15.1")
+    message(STATUS "Downloading and configuring spdlog. VERSION = ${DAS_SPDLOG_VERSION}")
     FetchContent_Declare(
         spdlog
-        URL "${GITHUB_MIRROR_URL}/gabime/spdlog/archive/refs/tags/v1.12.0.zip"
-        URL_HASH SHA256=6174BF8885287422A6C6A0312EB8A30E8D22BCFCEE7C48A6D02D1835D7769232)
+        URL "${GITHUB_MIRROR_URL}/gabime/spdlog/archive/refs/tags/v${DAS_SPDLOG_VERSION}.tar.gz"
+        URL_HASH SHA256=25C843860F039A1600F232C6EB9E01E6627F7D030A2AE5E232BDD3C9205D26CC)
 
     set(SPDLOG_BUILD_PIC ON)
 
