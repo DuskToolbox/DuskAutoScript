@@ -163,7 +163,6 @@ ProfileManager::ProfileManager()
 {
     try
     {
-        DAS_GATEWAY_THROW_IF_FAILED(-2)
         const auto data_dir = GetDataDirectory();
         for (const auto& subDirectory :
              std::filesystem::directory_iterator(data_dir))
@@ -530,12 +529,21 @@ DasResult ProfileManager::FindIDasProfile(
     return DAS_E_OUT_OF_RANGE;
 }
 
+void InitializeProfileManager()
+{
+    if (g_profileManager.has_value())
+    {
+        DAS_GATEWAY_THROW_IF_FAILED(DAS_E_OBJECT_ALREADY_INIT)
+    }
+    g_profileManager.emplace();
+}
+
 DAS_GATEWAY_NS_END
 
 DasResult GetAllIDasProfile(size_t buffer_size, IDasProfile*** ppp_out_profile)
 {
     using namespace DAS::Gateway;
-    return g_profileManager.GetAllIDasProfile(buffer_size, ppp_out_profile);
+    return g_profileManager->GetAllIDasProfile(buffer_size, ppp_out_profile);
 }
 
 DasResult CreateIDasProfile(
@@ -543,7 +551,7 @@ DasResult CreateIDasProfile(
     IDasReadOnlyString* p_profile_name,
     IDasReadOnlyString* p_profile_json)
 {
-    return DAS::Gateway::g_profileManager.CreateIDasProfile(
+    return DAS::Gateway::g_profileManager->CreateIDasProfile(
         p_profile_id,
         p_profile_name,
         p_profile_json);
@@ -551,7 +559,7 @@ DasResult CreateIDasProfile(
 
 DasResult DeleteIDasProfile(IDasReadOnlyString* p_profile_id)
 {
-    return DAS::Gateway::g_profileManager.DeleteIDasProfile(p_profile_id);
+    return DAS::Gateway::g_profileManager->DeleteIDasProfile(p_profile_id);
 }
 
 DasResult FindIDasProfile(
@@ -560,5 +568,5 @@ DasResult FindIDasProfile(
 {
     using namespace DAS::Gateway;
 
-    return g_profileManager.FindIDasProfile(p_profile_id, pp_out_profile);
+    return g_profileManager->FindIDasProfile(p_profile_id, pp_out_profile);
 }

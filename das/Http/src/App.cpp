@@ -1,8 +1,8 @@
 #include <iostream>
 #include <ostream>
 
-#include "oatpp/network/Server.hpp"
 #include "das/Utils/ThreadUtils.h"
+#include "oatpp/network/Server.hpp"
 
 #include "./AppComponent.hpp"
 #include "./controller/DasLogController.hpp"
@@ -26,13 +26,21 @@ namespace Das::Http
     }
 }
 
-void run()
+DasResult run()
 {
     AppComponent components;
 
     OATPP_COMPONENT(std::shared_ptr<oatpp::web::server::HttpRouter>, router);
 
-    InitializeGlobalTaskScheduler();
+    const auto init_result = InitializeDasCore();
+    if (DAS::IsFailed(init_result))
+    {
+        OATPP_LOGE(
+            "DuskAutoScriptHttp",
+            "Init DAS Core failed. Error code = %d",
+            init_result);
+        return init_result;
+    }
 
     // 初始化基础api
     router->addController(std::make_shared<DasMiscController>());
@@ -67,6 +75,8 @@ void run()
     /* Now stop the connection handler and wait until all running connections
      * are served */
     connectionHandler->stop();
+
+    return DAS_S_OK;
 }
 
 int main(int argc, const char* argv[])
@@ -78,7 +88,11 @@ int main(int argc, const char* argv[])
 
     oatpp::base::Environment::init();
 
-    run();
+    const auto run_result = run();
+    if (DAS::IsFailed(run_result))
+    {
+        return run_result;
+    }
 
     std::cout << "\nEnvironment:\n";
     std::cout << "objectsCount = "
@@ -88,5 +102,5 @@ int main(int argc, const char* argv[])
 
     oatpp::base::Environment::destroy();
 
-    return 0;
+    return run_result;
 }

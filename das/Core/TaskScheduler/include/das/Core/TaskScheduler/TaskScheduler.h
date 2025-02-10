@@ -60,9 +60,9 @@ namespace Core
             void SetValue(IDasReadOnlyString* p_config);
             void GetValue(IDasReadOnlyString** pp_out_config);
         };
-        EnvironmentConfig environment_config_;
-        DasPtr<IDasTask>  last_task_{DasPtr<IDasTask>{}};
-        DasReadOnlyString last_task_execute_message_{};
+        EnvironmentConfig       environment_config_;
+        DasPtr<IDasTask>        last_task_{DasPtr<IDasTask>{}};
+        DasReadOnlyString       last_task_execute_message_{};
         DasPtr<IDasJsonSetting> p_state_json_{};
 
         // 不受mutex_控制
@@ -133,6 +133,8 @@ namespace Core
     extern DAS::DasPtr<TaskScheduler> g_scheduler;
 
     void to_json(nlohmann::json& out, const TaskScheduler::SchedulingUnit& in);
+
+    DasResult InitializeGlobalTaskScheduler();
 } // namespace Core
 
 DAS_NS_END

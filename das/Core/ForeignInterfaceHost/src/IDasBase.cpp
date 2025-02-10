@@ -1,9 +1,12 @@
+#include <cstring>
+#include <das/Core/Exceptions/DasException.h>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/Logger/Logger.h>
+#include <das/Core/TaskScheduler/TaskScheduler.h>
+#include <das/Gateway/ProfileManager.h>
 #include <das/IDasBase.h>
 #include <das/PluginInterface/IDasTask.h>
 #include <das/Utils/CommonUtils.hpp>
-#include <cstring>
 
 DasRetGuid DasMakeDasGuid(const char* p_guid_string)
 {
@@ -85,4 +88,18 @@ DasRetSwigBase& DasRetSwigBase::operator=(DasRetSwigBase&& other) noexcept
         std::exchange(other.error_code, DAS_E_UNDEFINED_RETURN_VALUE);
     this->value = std::exchange(other.value, nullptr);
     return *this;
+}
+
+DasResult InitializeDasCore()
+{
+    try
+    {
+        DAS::Gateway::InitializeProfileManager();
+        return DAS::Core::InitializeGlobalTaskScheduler();
+    }
+    catch (const DAS::Core::DasException& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        return ex.GetErrorCode();
+    }
 }

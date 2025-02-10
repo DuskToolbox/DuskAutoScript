@@ -95,8 +95,6 @@ DAS_INTERFACE IDasTaskScheduler : public IDasBase
 DAS_C_API DasResult
 GetIDasTaskScheduler(IDasTaskScheduler** pp_out_task_scheduler);
 
-DAS_API DasResult InitializeGlobalTaskScheduler();
-
 DAS_C_API DasResult SetIDasTaskSchedulerJsonState(
     IDasJsonSetting* p_scheduler_state);
 

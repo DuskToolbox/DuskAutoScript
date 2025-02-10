@@ -8,20 +8,18 @@ DAS_CORE_I18N_NS_BEGIN
 
 class GlobalLocaleSingleton
 {
-    DasPtr<IDasReadOnlyString> p_locale_name_;
+    friend GlobalLocaleSingleton InitializeGlobalLocaleSingleton();
+
+    DasPtr<IDasReadOnlyString> p_locale_name;
 
     GlobalLocaleSingleton();
 
 public:
-    GlobalLocaleSingleton(const GlobalLocaleSingleton&) = delete;
-    GlobalLocaleSingleton& operator=(const GlobalLocaleSingleton&) = delete;
-    GlobalLocaleSingleton(GlobalLocaleSingleton&&) = delete;
-    GlobalLocaleSingleton& operator=(GlobalLocaleSingleton&&) = delete;
-
-    static GlobalLocaleSingleton& GetInstance();
-    void SetLocale(IDasReadOnlyString* p_new_locale_name);
-    const DasPtr<IDasReadOnlyString>& GetLocale();
+    const DasPtr<IDasReadOnlyString>& GetInstance() const;
+    void SetInstance(IDasReadOnlyString& p_new_locale_name);
 };
+
+extern GlobalLocaleSingleton g_locale;
 
 auto GetFallbackLocale() -> DasPtr<IDasReadOnlyString>;
 

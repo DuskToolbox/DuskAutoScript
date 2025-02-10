@@ -2,6 +2,8 @@
 #define DAS_GATEWAY_PROFILEMANAGER_H
 
 #include <das/ExportInterface/IDasSettings.h>
+#include <das/Gateway/Config.h>
+#include <das/Utils/CommonUtils.hpp>
 #include <unordered_map>
 
 DAS_GATEWAY_NS_BEGIN
@@ -55,7 +57,12 @@ private:
     std::unordered_map<std::string, DasPtr<IDasProfileImpl>> profiles_;
 };
 
-extern ProfileManager g_profileManager;
+extern std::optional<ProfileManager> g_profileManager;
+
+/**
+ * @brief 直接抛异常，外面自己接
+ */
+DAS_GATEWAY_API void InitializeProfileManager();
 
 DAS_GATEWAY_NS_END
 

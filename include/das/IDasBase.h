@@ -154,6 +154,7 @@ void _das_internal_DelayRelease(T* pointer) noexcept
 #define DAS_E_UNEXPECTED_THREAD_DETECTED -1073741863
 #define DAS_E_STRONG_REFERENCE_NOT_AVAILABLE -1073741864
 #define DAS_E_TASK_WORKING -1073741865
+#define DAS_E_OBJECT_ALREADY_INIT -1073741866
 
 #ifdef DAS_WINDOWS
 // MSVC
@@ -232,8 +233,6 @@ inline bool      IsOk(const DasResult result) { return result >= 0; }
 inline bool      IsFailed(const DasResult result) { return result < 0; }
 inline DasResult GetErrorCodeFrom(const DasResult result) { return result; }
 
-#ifdef __cplusplus
-
 template <class T>
 concept is_das_ret_type = requires { T::error_code; };
 
@@ -255,11 +254,11 @@ DasResult GetErrorCodeFrom(const T& t)
     return t.error_code;
 }
 
-#endif // __cplusplus
-
 DAS_NS_END
 
 #endif // __cplusplus
+
+DAS_C_API DasResult InitializeDasCore();
 
 DAS_DEFINE_GUID(
     DAS_IID_BASE,
