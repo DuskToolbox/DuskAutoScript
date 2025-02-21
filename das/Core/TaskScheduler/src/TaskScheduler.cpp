@@ -443,8 +443,7 @@ namespace Core
         DAS_THROW_IF_FAILED_EC(p_state_json_->QueryInterface(
             DasIidOf<DAS::Gateway::DasSettings>(),
             p_settings.PutVoid()))
-        nlohmann::json j;
-        p_settings->GetJson() = j;
+        // TODO: 将状态翻译成json并设置
         DAS_THROW_IF_FAILED_EC(p_settings->Save())
     }
 

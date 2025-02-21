@@ -1,7 +1,7 @@
 add_library(DasCoreObjects OBJECT)
 add_custom_target(DasCoreObjectsPreBuild ALL)
 add_dependencies(DasCoreObjects DasCoreObjectsPreBuild)
-add_dependencies(DasCoreObjectsPreBuild DasAutoCopyDll)
+add_dependencies(DasGateway DasCoreObjectsPreBuild)
 
 message("Python3 is required because we need to run script.")
 find_package(Python3 COMPONENTS Interpreter REQUIRED)

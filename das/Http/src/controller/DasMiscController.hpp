@@ -9,7 +9,7 @@
 
 class DasMiscController final : public DAS::Http::DasApiController
 {
-    ENDPOINT("POST", DAS_HTTP_API_PREFIX "alive", get_alive)
+    ENDPOINT("POST", DAS_HTTP_API_PREFIX "alive", alive)
     {
         nlohmann::json response;
         response["code"] = 0;

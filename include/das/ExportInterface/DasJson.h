@@ -42,7 +42,7 @@ DAS_DEFINE_GUID(
     0x64)
 DAS_INTERFACE IDasJson : public IDasBase
 {
-    DAS_METHOD GetIntByName(IDasReadOnlyString * key, int64_t * p_out_int) = 0;
+    DAS_METHOD GetIntByName(IDasReadOnlyString * key, int64_t* p_out_int) = 0;
     DAS_METHOD GetFloatByName(IDasReadOnlyString * key, float* p_out_float) = 0;
     DAS_METHOD GetStringByName(
         IDasReadOnlyString * key,
@@ -62,26 +62,31 @@ DAS_INTERFACE IDasJson : public IDasBase
         IDasReadOnlyString * key,
         IDasJson * pin_das_json) = 0;
 
-    DAS_METHOD GetIntByIndex(size_t index, int64_t * p_out_int) = 0;
+    DAS_METHOD GetIntByIndex(size_t index, int64_t* p_out_int) = 0;
     DAS_METHOD GetFloatByIndex(size_t index, float* p_out_float) = 0;
     DAS_METHOD GetStringByIndex(
-        size_t index,
-        IDasReadOnlyString * *pp_out_string) = 0;
+        size_t               index,
+        IDasReadOnlyString** pp_out_string) = 0;
     DAS_METHOD GetBoolByIndex(size_t index, bool* p_out_bool) = 0;
-    DAS_METHOD GetObjectRefByIndex(size_t index, IDasJson * *pp_out_das_json) =
+    DAS_METHOD GetObjectRefByIndex(size_t index, IDasJson** pp_out_das_json) =
         0;
 
     DAS_METHOD SetIntByIndex(size_t index, int64_t in_int) = 0;
     DAS_METHOD SetFloatByIndex(size_t index, float in_float) = 0;
-    DAS_METHOD SetStringByIndex(size_t index, IDasReadOnlyString * pin_string) =
+    DAS_METHOD SetStringByIndex(size_t index, IDasReadOnlyString* pin_string) =
         0;
     DAS_METHOD SetBoolByIndex(size_t index, bool in_bool) = 0;
-    DAS_METHOD SetObjectByIndex(size_t index, IDasJson * pin_das_json) = 0;
+    DAS_METHOD SetObjectByIndex(size_t index, IDasJson* pin_das_json) = 0;
 
     DAS_METHOD GetTypeByName(IDasReadOnlyString * key, DasType * p_out_type) =
         0;
-    DAS_METHOD GetTypeByIndex(size_t index, DasType * p_out_type) = 0;
+    DAS_METHOD GetTypeByIndex(size_t index, DasType* p_out_type) = 0;
+
+    DAS_METHOD ToString(int32_t indent, IDasReadOnlyString** pp_out_string) = 0;
 };
+
+DAS_C_API DasResult
+ParseDasJsonFromString(const char* p_u8_string, IDasJson** pp_out_json);
 
 #endif // SWIG
 
@@ -247,7 +252,8 @@ public:
     DasResult GetTo(size_t index, DasReadOnlyString& OUTPUT)
     {
         DAS::DasPtr<IDasReadOnlyString> p_OUTPUT{};
-        const auto error_code = p_impl_->GetStringByIndex(index, p_OUTPUT.Put());
+        const auto                      error_code =
+            p_impl_->GetStringByIndex(index, p_OUTPUT.Put());
         if (DAS::IsOk(error_code))
         {
             OUTPUT = {std::move(p_OUTPUT)};

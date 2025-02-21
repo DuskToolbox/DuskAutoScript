@@ -1,3 +1,4 @@
+#include <boost/signals2.hpp>
 #include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/Utils/Config.h>
@@ -5,7 +6,6 @@
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/Expected.h>
 #include <das/Utils/QueryInterface.hpp>
-#include <boost/signals2.hpp>
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <variant>
@@ -74,6 +74,7 @@ private:
 
 public:
     IDasJsonImpl();
+    IDasJsonImpl(const char* p_json_string);
     IDasJsonImpl(nlohmann::json& ref_json);
     ~IDasJsonImpl();
 
@@ -118,6 +119,8 @@ public:
     DasResult GetTypeByName(IDasReadOnlyString* key, DasType* p_out_type)
         override;
     DasResult GetTypeByIndex(size_t index, DasType* p_out_type) override;
+    DasResult ToString(int32_t indent, IDasReadOnlyString** pp_out_string)
+        override;
 
     void SetConnection(const boost::signals2::connection& connection);
     void OnExpired();
@@ -780,4 +783,80 @@ void IDasJsonImpl::OnExpired()
         impl_);
 }
 
+IDasJsonImpl::IDasJsonImpl(const char* p_json_string)
+    : impl_{Object{nlohmann::json::parse(p_json_string), {}}}
+{
+}
+
+DasResult IDasJsonImpl::ToString(
+    int32_t              indent,
+    IDasReadOnlyString** pp_out_string)
+{
+    return std::visit(
+        Utils::overload_set{
+            [pp_out_string, indent](const Object& j)
+            {
+                try
+                {
+                    const auto json_string = j.json_.dump(indent);
+                    return ::CreateIDasReadOnlyStringFromUtf8(
+                        json_string.c_str(),
+                        pp_out_string);
+                }
+                catch (const std::bad_alloc&)
+                {
+                    return DAS_E_OUT_OF_MEMORY;
+                }
+            },
+            [pp_out_string, indent](const Ref& j)
+            {
+                if (j.json_ != nullptr)
+                {
+                    try
+                    {
+                        const auto json_string = j.json_->dump(indent);
+                        return ::CreateIDasReadOnlyStringFromUtf8(
+                            json_string.c_str(),
+                            pp_out_string);
+                    }
+                    catch (const std::bad_alloc&)
+                    {
+                        return DAS_E_OUT_OF_MEMORY;
+                    }
+                }
+                return DAS_E_DANGLING_REFERENCE;
+            }},
+        impl_);
+}
+
 DAS_CORE_UTILS_NS_END
+
+DasResult ParseDasJsonFromString(
+    const char* p_u8_string,
+    IDasJson**  pp_out_json)
+{
+    DAS_UTILS_CHECK_POINTER(p_u8_string)
+    DAS_UTILS_CHECK_POINTER(pp_out_json)
+
+    try
+    {
+        const auto p_result =
+            DAS::MakeDasPtr<DAS::Core::Utils::IDasJsonImpl>(p_u8_string);
+        DAS::Utils::SetResult(p_result, pp_out_json);
+        return DAS_S_OK;
+    }
+    catch (const nlohmann::json::exception& ex)
+    {
+        DAS_CORE_LOG_ERROR(
+            "Parse json failed. Id = {}. What = {}",
+            ex.id,
+            ex.what());
+        DAS_CORE_LOG_ERROR("json = {}", p_u8_string);
+        return DAS_E_INVALID_JSON;
+    }
+    catch (const std::bad_alloc& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        return DAS_E_OUT_OF_MEMORY;
+    }
+}

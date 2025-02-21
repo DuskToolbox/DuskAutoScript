@@ -2,7 +2,7 @@
 #include <array>
 #include <das/Core/Logger/Logger.h>
 #include <spdlog/sinks/rotating_file_sink.h>
-#include <spdlog/sinks/stdout_sinks.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
 
 #if defined(_WIN32) || defined(__CYGWIN__)
 #include <windows.h>
@@ -30,10 +30,26 @@ void UseUtf8Console()
             error_code);
     }
 }
+
+void EnableVirtualTerminalProcessing()
+{
+    HANDLE handle = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (handle != INVALID_HANDLE_VALUE)
+    {
+        DWORD mode = 0;
+        if (GetConsoleMode(handle, &mode))
+        {
+            mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+            SetConsoleMode(handle, mode);
+        }
+    }
+}
 DAS_NS_ANONYMOUS_DETAILS_END
-#define DAS_FORCE_CONSOLE_UTF8 ::Details::UseUtf8Console()
+#define DAS_CONFIG_WIN32_CONSOLE                                               \
+    ::Details::UseUtf8Console();                                               \
+    ::Details::EnableVirtualTerminalProcessing()
 #else
-#define DAS_FORCE_CONSOLE_UTF8
+#define DAS_CONFIG_WIN32_CONSOLE
 #endif // DAS_WINDOWS
 
 DAS_NS_BEGIN
@@ -42,7 +58,8 @@ namespace Core
 {
     const std::shared_ptr<spdlog::logger> g_logger = []()
     {
-        const auto std_sink = std::make_shared<spdlog::sinks::stdout_sink_mt>();
+        const auto std_sink =
+            std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
         const auto file_sink =
             std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
                 "logs/" DAS_CORE_NAME ".log",
@@ -66,7 +83,7 @@ namespace Core
 
         spdlog::set_level(spdlog::level::trace);
 
-        DAS_FORCE_CONSOLE_UTF8;
+        DAS_CONFIG_WIN32_CONSOLE;
 
         SPDLOG_LOGGER_INFO(result, "The logger has been initialized.");
 

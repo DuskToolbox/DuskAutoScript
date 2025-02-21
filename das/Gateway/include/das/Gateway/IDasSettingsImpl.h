@@ -56,13 +56,14 @@ public:
 };
 
 /**
- * @brief Core 里面会直接使用DasSettings，但是直接导出类会报warning，所以这里只导出必要接口
+ * @brief Core
+ * 里面会直接使用DasSettings，但是直接导出类会报warning，所以这里只导出必要接口
  */
 class DasSettings
 {
     Utils::RefCounter<DasSettings>          ref_counter_;
     std::mutex                              mutex_;
-    nlohmann::json                          settings_;
+    DasPtr<IDasJson>                        settings_;
     std::filesystem::path                   path_;
     DasPtr<IDasJsonSettingOnDeletedHandler> p_handler_;
 
@@ -78,16 +79,19 @@ public:
     // IDasJsonSetting
     DAS_GATEWAY_API DasResult ToString(IDasReadOnlyString** pp_out_string);
     DAS_GATEWAY_API DasResult FromString(IDasReadOnlyString* p_in_settings);
-    DAS_GATEWAY_API DasResult SaveToWorkingDirectory(IDasReadOnlyString* p_relative_path);
+    DAS_GATEWAY_API DasResult
+    SaveToWorkingDirectory(IDasReadOnlyString* p_relative_path);
     DAS_GATEWAY_API DasResult Save();
-    DAS_GATEWAY_API DasResult SetOnDeletedHandler(IDasJsonSettingOnDeletedHandler* p_handler);
+    DAS_GATEWAY_API DasResult
+    SetOnDeletedHandler(IDasJsonSettingOnDeletedHandler* p_handler);
     // DasSettings
     DasResult LoadSettings(IDasReadOnlyString* p_path);
     DasResult InitSettings(
         IDasReadOnlyString* p_path,
         IDasReadOnlyString* p_json_string);
-    DasResult OnDeleted();
-    DAS_GATEWAY_API nlohmann::json& GetJson();
+    DasResult            OnDeleted();
+    DAS_GATEWAY_API void SetJson(IDasJson* p_json);
+    DAS_GATEWAY_API void GetJson(IDasJson** pp_out_json);
     // to projection
     operator IDasJsonSettingImpl*() noexcept;
 

@@ -109,9 +109,20 @@ auto DasSettings::SaveImpl(const std::filesystem::path& full_path) -> DasResult
         Utils::EnableStreamException(
             ofs,
             std::ios::badbit | std::ios::failbit,
-            [&full_path](auto& stream) { stream.open(full_path); });
-        std::lock_guard guard{mutex_};
-        ofs << settings_;
+            [&full_path](auto& stream)
+            {
+                stream.open(full_path);
+                stream.width(2);
+            });
+        DasPtr<IDasReadOnlyString> p_json_string{};
+        {
+            std::lock_guard guard{mutex_};
+            DAS_GATEWAY_THROW_IF_FAILED(
+                settings_->ToString(ofs.width(0), p_json_string.Put()))
+        }
+        const char* p_u8_json_string{nullptr};
+        DAS_GATEWAY_THROW_IF_FAILED(p_json_string->GetUtf8(&p_u8_json_string))
+        ofs << p_u8_json_string;
         ofs.flush();
         return DAS_S_OK;
     }
@@ -126,6 +137,11 @@ auto DasSettings::SaveImpl(const std::filesystem::path& full_path) -> DasResult
             "NOTE: Path = {}.",
             reinterpret_cast<const char*>(full_path.u8string().c_str()));
         return DAS_E_INVALID_FILE;
+    }
+    catch (const DAS::Core::DasException& ex)
+    {
+        SPDLOG_LOGGER_ERROR(GetLogger(), ex.what());
+        return ex.GetErrorCode();
     }
 }
 
@@ -143,25 +159,7 @@ DasResult DasSettings::ToString(IDasReadOnlyString** pp_out_string)
 
     std::lock_guard lock{mutex_};
 
-    try
-    {
-        auto                       json_string = settings_.dump();
-        DasPtr<IDasReadOnlyString> p_json_string{};
-        const auto crate_result = GetCreateIDasReadOnlyStringFromUtf8Function()(
-            json_string.data(),
-            p_json_string.Put());
-        ;
-        if (IsFailed(crate_result))
-        {
-            return crate_result;
-        }
-        Utils::SetResult(p_json_string, pp_out_string);
-        return crate_result;
-    }
-    catch (const std::bad_alloc&)
-    {
-        return DAS_E_OUT_OF_MEMORY;
-    }
+    return settings_->ToString(0, pp_out_string);
 }
 
 DasResult DasSettings::FromString(IDasReadOnlyString* p_in_settings)
@@ -172,31 +170,21 @@ DasResult DasSettings::FromString(IDasReadOnlyString* p_in_settings)
         return DAS_E_INVALID_POINTER;
     }
 
-    std::lock_guard lock{mutex_};
+    const char* p_u8_string{};
+    if (const auto get_u8_result = p_in_settings->GetUtf8(&p_u8_string);
+        IsFailed(get_u8_result))
+    {
+        auto message = DAS_FMT_NS::format(
+            "Can not get utf8 string. Error code = {}",
+            get_u8_result);
+        SPDLOG_LOGGER_ERROR(GetLogger(), message.c_str());
+        message = DAS_FMT_NS::format("Note: text = {}", p_u8_string);
+        SPDLOG_LOGGER_INFO(GetLogger(), message.c_str());
+        return get_u8_result;
+    }
 
-    try
-    {
-        const char* p_u8_string{};
-        if (const auto get_u8_result = p_in_settings->GetUtf8(&p_u8_string);
-            IsFailed(get_u8_result))
-        {
-            auto message = DAS_FMT_NS::format(
-                "Can not get utf8 string. Error code = {}",
-                get_u8_result);
-            SPDLOG_LOGGER_ERROR(GetLogger(), message.c_str());
-            message = DAS_FMT_NS::format("Note: text = {}", p_u8_string);
-            SPDLOG_LOGGER_INFO(GetLogger(), message.c_str());
-            return get_u8_result;
-        }
-        auto tmp_result = nlohmann::json::parse(p_u8_string);
-        settings_ = std::move(tmp_result);
-        return DAS_S_OK;
-    }
-    catch (const nlohmann::json::exception& ex)
-    {
-        SPDLOG_LOGGER_ERROR(GetLogger(), ex.what());
-        return DAS_E_INTERNAL_FATAL_ERROR;
-    }
+    std::lock_guard lock{mutex_};
+    return GetParseDasJsonFromStringFunction()(p_u8_string, settings_.Put());
 }
 
 DasResult DasSettings::SaveToWorkingDirectory(
@@ -283,9 +271,12 @@ DasResult DasSettings::LoadSettings(IDasReadOnlyString* p_path)
             ifs,
             std::ios::badbit | std::ios::failbit,
             [&path](auto& stream) { stream.open(path); });
-        settings_ = nlohmann::json::parse(ifs);
-
-        return DAS_S_OK;
+        std::string ifs_string(
+            std::istreambuf_iterator<char>{ifs},
+            std::istreambuf_iterator<char>{});
+        return GetParseDasJsonFromStringFunction()(
+            ifs_string.c_str(),
+            settings_.Put());
     }
     catch (const std::ios_base::failure& ex)
     {
@@ -295,15 +286,6 @@ DasResult DasSettings::LoadSettings(IDasReadOnlyString* p_path)
             "Error happened when reading settings file. Error code = " DAS_STR(
                 DAS_E_INVALID_FILE) ".");
         return DAS_E_INVALID_FILE;
-    }
-    catch (const nlohmann::json::exception& ex)
-    {
-        SPDLOG_LOGGER_ERROR(GetLogger(), ex.what());
-        SPDLOG_LOGGER_ERROR(
-            GetLogger(),
-            "Error happened when reading settings json. Error code = " DAS_STR(
-                DAS_E_INVALID_JSON) ".");
-        return DAS_E_INVALID_JSON;
     }
 }
 
@@ -343,8 +325,9 @@ DasResult DasSettings::InitSettings(
     {
 
         const char* json_string{};
-        DAS_GATEWAY_THROW_IF_FAILED(p_json_string->GetUtf8(&json_string));
-        settings_ = nlohmann::json::parse(json_string);
+        DAS_GATEWAY_THROW_IF_FAILED(p_json_string->GetUtf8(&json_string))
+        DAS_GATEWAY_THROW_IF_FAILED(
+            GetParseDasJsonFromStringFunction()(json_string, settings_.Put()))
 
         return Save();
     }
@@ -379,8 +362,6 @@ DasResult DasSettings::OnDeleted()
     }
     return p_handler_->OnDeleted();
 }
-
-nlohmann::json& DasSettings::GetJson() { return settings_; }
 
 DAS_DEFINE_VARIABLE(g_settings);
 

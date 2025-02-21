@@ -1,7 +1,7 @@
 #include <array>
 #include <das/Gateway/Logger.h>
 #include <spdlog/sinks/rotating_file_sink.h>
-#include <spdlog/sinks/stdout_sinks.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
 
 DAS_GATEWAY_NS_BEGIN
 
@@ -11,7 +11,7 @@ std::shared_ptr<spdlog::logger>& GetLogger()
         []
         {
             const auto std_sink =
-                std::make_shared<spdlog::sinks::stdout_sink_mt>();
+                std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
             const auto file_sink =
                 std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
                     "logs/" DAS_GATEWAY_NAME ".log",

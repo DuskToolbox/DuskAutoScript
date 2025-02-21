@@ -4,6 +4,7 @@
 #include <das/Core/Exceptions/DasException.h>
 #include <das/DasConfig.h>
 #include <das/DasString.hpp>
+#include <das/ExportInterface/DasJson.h>
 
 #define DAS_GATEWAY_NS_BEGIN                                                   \
     DAS_NS_BEGIN namespace Gateway                                             \
@@ -15,11 +16,16 @@
 
 DAS_GATEWAY_NS_BEGIN
 
+[[nodiscard]]
 decltype(&::CreateIDasReadOnlyStringFromUtf8)
 GetCreateIDasReadOnlyStringFromUtf8Function();
 
+[[nodiscard]]
 decltype(&DAS::Core::Exceptions::ThrowDasExceptionEc)
 GetThrowDasExceptionEcFunction();
+
+[[nodiscard]]
+decltype(&::ParseDasJsonFromString) GetParseDasJsonFromStringFunction();
 
 DAS_GATEWAY_NS_END
 
