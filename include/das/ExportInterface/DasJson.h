@@ -83,6 +83,7 @@ DAS_INTERFACE IDasJson : public IDasBase
     DAS_METHOD GetTypeByIndex(size_t index, DasType* p_out_type) = 0;
 
     DAS_METHOD ToString(int32_t indent, IDasReadOnlyString** pp_out_string) = 0;
+    DAS_METHOD Clear() = 0;
 };
 
 DAS_C_API DasResult

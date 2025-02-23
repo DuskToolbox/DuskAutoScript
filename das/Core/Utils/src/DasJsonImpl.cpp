@@ -121,6 +121,7 @@ public:
     DasResult GetTypeByIndex(size_t index, DasType* p_out_type) override;
     DasResult ToString(int32_t indent, IDasReadOnlyString** pp_out_string)
         override;
+    DasResult Clear() override;
 
     void SetConnection(const boost::signals2::connection& connection);
     void OnExpired();
@@ -823,6 +824,27 @@ DasResult IDasJsonImpl::ToString(
                     {
                         return DAS_E_OUT_OF_MEMORY;
                     }
+                }
+                return DAS_E_DANGLING_REFERENCE;
+            }},
+        impl_);
+}
+
+DasResult IDasJsonImpl::Clear()
+{
+    return std::visit(
+        Utils::overload_set{
+            [](Object& j)
+            {
+                j.signal_();
+                j.json_ = {};
+                return DAS_S_OK;
+            },
+            [](Ref& j)
+            {
+                if (j.json_ != nullptr)
+                {
+                    *j.json_ = {};
                 }
                 return DAS_E_DANGLING_REFERENCE;
             }},
