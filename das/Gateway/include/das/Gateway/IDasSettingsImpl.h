@@ -53,6 +53,7 @@ public:
     DAS_IMPL Save() override;
     DAS_IMPL SetOnDeletedHandler(
         IDasJsonSettingOnDeletedHandler* p_handler) override;
+    DAS_IMPL ExecuteAtomically(IDasJsonSettingOperator* p_operator) override;
 };
 
 /**
@@ -84,14 +85,14 @@ public:
     DAS_GATEWAY_API DasResult Save();
     DAS_GATEWAY_API DasResult
     SetOnDeletedHandler(IDasJsonSettingOnDeletedHandler* p_handler);
+    DAS_GATEWAY_API DasResult
+    ExecuteAtomically(IDasJsonSettingOperator* p_operator);
     // DasSettings
     DasResult LoadSettings(IDasReadOnlyString* p_path);
     DasResult InitSettings(
         IDasReadOnlyString* p_path,
         IDasReadOnlyString* p_json_string);
-    DasResult            OnDeleted();
-    DAS_GATEWAY_API void SetJson(IDasJson* p_json);
-    DAS_GATEWAY_API void GetJson(IDasJson** pp_out_json);
+    DasResult OnDeleted();
     // to projection
     operator IDasJsonSettingImpl*() noexcept;
 

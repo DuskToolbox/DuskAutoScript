@@ -61,6 +61,10 @@ namespace Details
 class TaskManager
 {
 public:
+    /**
+     * @brief
+     * 因为实时地找插件拿信息需要切线程，所以把插件信息都缓存在这个类型里面
+     */
     class TaskInfo final : public IDasTaskInfo
     {
         using SPImpl = std::shared_ptr<Details::TaskInfoImpl>;

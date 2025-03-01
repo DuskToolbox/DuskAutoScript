@@ -36,7 +36,7 @@ class DasLogRequesterSink final : public spdlog::sinks::base_sink<Mutex>
 private:
     Mutex                                          mutex_;
     std::vector<DAS::DasPtr<IDasLogRequesterImpl>> logger_requester_vector_ =
-        DAS::Utils::MakeEmptyCOntainerOfReservedSize<
+        DAS::Utils::MakeEmptyContainerOfReservedSize<
             decltype(logger_requester_vector_)>(5);
 
 protected:

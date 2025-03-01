@@ -6,6 +6,7 @@
 
 DAS_INTERFACE IDasTypeInfo;
 DAS_INTERFACE IDasSwigTypeInfo;
+DAS_INTERFACE IDasJson;
 
 #ifndef SWIG
 // {15D1BCD7-7922-447F-AD2C-17B838C1D53A}
@@ -29,6 +30,26 @@ DAS_DEFINE_GUID(
 DAS_INTERFACE IDasJsonSettingOnDeletedHandler : public IDasBase
 {
     DAS_METHOD OnDeleted() = 0;
+};
+
+// {ADDD433F-D822-43FA-9367-B83D551FB80D}
+DAS_DEFINE_GUID(
+    DAS_IID_JSON_SETTING_OPERATOR,
+    IDasJsonSettingOperator,
+    0xaddd433f,
+    0xd822,
+    0x43fa,
+    0x93,
+    0x67,
+    0xb8,
+    0x3d,
+    0x55,
+    0x1f,
+    0xb8,
+    0xd)
+DAS_INTERFACE IDasJsonSettingOperator : public IDasBase
+{
+    DAS_METHOD Apply(IDasJson * p_json) = 0;
 };
 
 // {56E5529D-C4EB-498D-BFAA-EFFEA20EB02A}
@@ -79,6 +100,10 @@ DAS_INTERFACE IDasJsonSetting : public IDasBase
      */
     DAS_METHOD SetOnDeletedHandler(
         IDasJsonSettingOnDeletedHandler * p_handler) = 0;
+    /**
+     * @brief 加锁后使用自定义函数对json进行读写
+     */
+    DAS_METHOD ExecuteAtomically(IDasJsonSettingOperator * p_operator) = 0;
 };
 
 typedef enum DasProfileProperty

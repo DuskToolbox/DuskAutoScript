@@ -287,7 +287,7 @@ public:
         }
 
         size_t stack_trace_message_size{0};
-        auto   string_list = DAS::Utils::MakeEmptyCOntainerOfReservedSize<
+        auto   string_list = DAS::Utils::MakeEmptyContainerOfReservedSize<
               std::vector<std::pair<const char*, size_t>>>(10);
 
         const auto list_size = ::PyList_Size(formatted_list.Get());

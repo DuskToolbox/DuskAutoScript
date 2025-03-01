@@ -37,6 +37,13 @@ namespace Core
             explicit SchedulingUnit(
                 ForeignInterfaceHost::TaskManager::TaskInfo* p_task);
             void RefreshNextRunTime();
+
+            struct JsonData{
+                decltype(std::chrono::system_clock::duration{}
+                        .count()) utc_next_run_time;
+                        DasGuid task_iid;
+
+            };
         };
 
     private:
@@ -63,7 +70,7 @@ namespace Core
         EnvironmentConfig       environment_config_;
         DasPtr<IDasTask>        last_task_{DasPtr<IDasTask>{}};
         DasReadOnlyString       last_task_execute_message_{};
-        DasPtr<IDasJsonSetting> p_state_json_{};
+        DasPtr<IDasJsonSetting> p_state_saver_{};
 
         // 不受mutex_控制
         class TaskController
@@ -114,7 +121,8 @@ namespace Core
          */
         DasResult GetAllTaskSchedulerInfo(IDasReadOnlyString** pp_out_json);
 
-        void SetStateJson(IDasJsonSetting& state);
+        DasResult SetState(IDasJsonSetting* p_state);
+        DasResult SaveState();
 
     private:
         void InternalAddTask(const SchedulingUnit& task);
@@ -123,7 +131,7 @@ namespace Core
 
         void DoTask(const SchedulingUnit& schedule_unit);
 
-        void DumpStateToFile();
+        void SaveStateToFile();
 
         // executor_
         void RunTaskQueue();
@@ -133,6 +141,8 @@ namespace Core
     extern DAS::DasPtr<TaskScheduler> g_scheduler;
 
     void to_json(nlohmann::json& out, const TaskScheduler::SchedulingUnit& in);
+    void ToJson(DasJson& out, const TaskScheduler::SchedulingUnit& in);
+    void FromJson(DasJson& in, TaskScheduler::SchedulingUnit::JsonData& out);
 
     DasResult InitializeGlobalTaskScheduler();
 } // namespace Core

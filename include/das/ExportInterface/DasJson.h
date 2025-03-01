@@ -89,6 +89,8 @@ DAS_INTERFACE IDasJson : public IDasBase
 DAS_C_API DasResult
 ParseDasJsonFromString(const char* p_u8_string, IDasJson** pp_out_json);
 
+DAS_C_API DasResult CreateEmptyDasJson(IDasJson** pp_out_json);
+
 #endif // SWIG
 
 struct DasRetJson;
@@ -213,8 +215,19 @@ public:
     {
         return p_impl_->SetObjectByIndex(index, in_das_json.p_impl_.Get());
     }
+    DasRetReadOnlyString ToString(int32_t indent)
+    {
+        DasRetReadOnlyString result{};
+        DAS::DasPtr<IDasReadOnlyString> p_value{};
+        result.error_code = p_impl_->ToString(indent, p_value.Put());
+        result.value = std::move(p_value);
+        return result;
+    }
 
+    DasJson() { ::CreateEmptyDasJson(p_impl_.Put()); }
 #ifndef SWIG
+    DasJson(IDasJson* p_json) : p_impl_{p_json} {}
+    IDasJson* Get() { return p_impl_.Get(); }
     DasResult GetTo(const DasReadOnlyString& key, DasReadOnlyString& OUTPUT)
     {
         DAS::DasPtr<IDasReadOnlyString> p_value{};
@@ -283,6 +296,48 @@ public:
             OUTPUT.p_impl_ = p_OUTPUT;
         }
         return error_code;
+    }
+    DasResult SetTo(
+        const DasReadOnlyString& key,
+        const DasReadOnlyString& value)
+    {
+        return p_impl_->SetStringByName(key.Get(), value.Get());
+    }
+    DasResult SetTo(const DasReadOnlyString& key, float value)
+    {
+        return p_impl_->SetFloatByName(key.Get(), value);
+    }
+    DasResult SetTo(const DasReadOnlyString& key, int64_t value)
+    {
+        return p_impl_->SetIntByName(key.Get(), value);
+    }
+    DasResult SetTo(const DasReadOnlyString& key, bool value)
+    {
+        return p_impl_->SetBoolByName(key.Get(), value);
+    }
+    DasResult SetTo(const DasReadOnlyString& key, const DasJson& value)
+    {
+        return p_impl_->SetObjectByName(key.Get(), value.p_impl_.Get());
+    }
+    DasResult SetTo(size_t index, const DasReadOnlyString& value)
+    {
+        return p_impl_->SetStringByIndex(index, value.Get());
+    }
+    DasResult SetTo(size_t index, float value)
+    {
+        return p_impl_->SetFloatByIndex(index, value);
+    }
+    DasResult SetTo(size_t index, int64_t value)
+    {
+        return p_impl_->SetIntByIndex(index, value);
+    }
+    DasResult SetTo(size_t index, bool value)
+    {
+        return p_impl_->SetBoolByIndex(index, value);
+    }
+    DasResult SetTo(size_t index, const DasJson& value)
+    {
+        return p_impl_->SetObjectByIndex(index, value.p_impl_.Get());
     }
 #endif // SWIG
 };

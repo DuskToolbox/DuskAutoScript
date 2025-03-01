@@ -112,14 +112,13 @@ namespace Core
                   DAS_CORE_LOG_INFO("Task scheduler thread exited.");
               }}
     {
-        stdexec::sync_wait(
-            stdexec::then(
-                stdexec::schedule(GetSchedulerImpl()),
-                []
-                {
-                    DAS_CORE_LOG_INFO("Set thread vm pool thread 1 name.");
-                    DAS::Utils::SetCurrentThreadName(L"VM POOL 1");
-                }));
+        stdexec::sync_wait(stdexec::then(
+            stdexec::schedule(GetSchedulerImpl()),
+            []
+            {
+                DAS_CORE_LOG_INFO("Set thread vm pool thread 1 name.");
+                DAS::Utils::SetCurrentThreadName(L"VM POOL 1");
+            }));
     }
 
     DasResult TaskScheduler::QueryInterface(
@@ -196,7 +195,8 @@ namespace Core
             IsFailed(qi_result))
         {
             DAS_CORE_LOG_ERROR(
-                "Can not find class ForeignInterfaceHost::TaskManager::TaskInfo.");
+                "Can not find class of guid {}.",
+                DasIidOf<ForeignInterfaceHost::TaskManager::TaskInfo>());
             return qi_result;
         }
         return AddTask(p_task_info_impl.Get());
@@ -211,7 +211,8 @@ namespace Core
             IsFailed(qi_result))
         {
             DAS_CORE_LOG_ERROR(
-                "Can not find class ForeignInterfaceHost::TaskManager::TaskInfo.");
+                "Can not find class of guid {}.",
+                DasIidOf<ForeignInterfaceHost::TaskManager::TaskInfo>());
             return qi_result;
         }
         DasGuid target_iid;
@@ -437,13 +438,12 @@ namespace Core
         }
     }
 
-    void TaskScheduler::DumpStateToFile()
+    void TaskScheduler::SaveStateToFile()
     {
         DasPtr<DAS::Gateway::DasSettings> p_settings{};
-        DAS_THROW_IF_FAILED_EC(p_state_json_->QueryInterface(
+        DAS_THROW_IF_FAILED_EC(p_state_saver_->QueryInterface(
             DasIidOf<DAS::Gateway::DasSettings>(),
             p_settings.PutVoid()))
-        // TODO: 将状态翻译成json并设置
         DAS_THROW_IF_FAILED_EC(p_settings->Save())
     }
 
@@ -559,6 +559,41 @@ namespace Core
             {"guid", guid.c_str()}};
     }
 
+    static auto utc_next_run_time_key =
+        DasReadOnlyString::FromUtf8("utcNextRunTime", nullptr);
+    static auto name_key = DasReadOnlyString::FromUtf8("name", nullptr);
+    static auto guid_key = DasReadOnlyString::FromUtf8("guid", nullptr);
+
+    void ToJson(DasJson& out, const TaskScheduler::SchedulingUnit& in)
+    {
+        DasGuid iid;
+        DAS_THROW_IF_FAILED_EC(IsFailed(in.p_task_info->GetIid(&iid)));
+
+        const auto                 guid = DAS::fmt::format("{}", iid);
+        DasPtr<IDasReadOnlyString> p_guid_string{};
+        DAS_THROW_IF_FAILED_EC(::CreateIDasReadOnlyStringFromUtf8(
+            guid.c_str(),
+            p_guid_string.Put()))
+
+        DAS_THROW_IF_FAILED_EC(
+            out.SetTo(utc_next_run_time_key, in.utc_next_run_time))
+        DAS_THROW_IF_FAILED_EC(
+            out.SetTo(name_key, DasReadOnlyString{in.p_task_info->GetName()}))
+        DAS_THROW_IF_FAILED_EC(
+            out.SetTo(guid_key, DasReadOnlyString{p_guid_string}))
+    }
+
+    void FromJson(DasJson& in, TaskScheduler::SchedulingUnit::JsonData& out)
+    {
+        DAS_THROW_IF_FAILED_EC(
+            in.GetTo(utc_next_run_time_key, out.utc_next_run_time))
+        DasReadOnlyString guid_string{};
+        DAS_THROW_IF_FAILED_EC(in.GetTo(guid_key, guid_string))
+        const char* p_guid_string{};
+        DAS_THROW_IF_FAILED_EC(guid_string.Get()->GetUtf8(&p_guid_string))
+        DAS_THROW_IF_FAILED_EC(::DasMakeDasGuid(p_guid_string, &out.task_iid))
+    }
+
     DasResult TaskScheduler::GetAllTaskSchedulerInfo(
         IDasReadOnlyString** pp_out_json)
     {
@@ -594,9 +629,76 @@ namespace Core
         return error_code;
     }
 
-    void TaskScheduler::SetStateJson(IDasJsonSetting& state)
+    DasResult TaskScheduler::SetState(IDasJsonSetting* p_state)
     {
-        p_state_json_ = &state;
+        std::vector<SchedulingUnit::JsonData> json_data{};
+        auto callback = Utils::MakeApplyWrapperOnStack<IDasJsonSettingOperator>(
+            [&json_data](IDasJson* p_json)
+            {
+                size_t    index{0};
+                DasJson   json{p_json};
+                DasJson   item{nullptr};
+                DasResult get_result{DAS_E_UNDEFINED_RETURN_VALUE};
+                do
+                {
+                    get_result = json.GetTo(index, item);
+                    if (get_result != DAS_S_OK)
+                    {
+                        break;
+                    }
+                    json_data.emplace_back();
+                    auto data = json_data.back();
+                    FromJson(item, data);
+                    ++index;
+                } while (true);
+                if (get_result == DAS_E_OUT_OF_RANGE)
+                {
+                    get_result = DAS_S_OK;
+                }
+                return get_result;
+            });
+        p_state->ExecuteAtomically(&callback);
+        for (const auto& data : json_data) {
+            // TODO: 查找任务并添加进队列
+        }
+    }
+
+    DasResult TaskScheduler::SaveState()
+    {
+        auto callback = Utils::MakeApplyWrapperOnStack<IDasJsonSettingOperator>(
+            [this](IDasJson* p_json) -> DasResult
+            {
+                DasJson empty_value{};
+                DasJson root{p_json};
+
+                auto task_jsons = Utils::MakeEmptyContainerOfReservedSize<
+                    std::vector<DasJson>>(task_queue_.size());
+
+                {
+                    std::lock_guard _{task_queue_mutex_};
+
+                    for (const auto& item : task_queue_)
+                    {
+                        task_jsons.emplace_back();
+                        DasJson& item_json = task_jsons.back();
+                        ToJson(item_json, item);
+                    }
+                }
+
+                static auto queue_key =
+                    DasReadOnlyString::FromUtf8("queue", nullptr);
+                DasJson queue_json{};
+                size_t  index{0};
+                for (const auto& item_json : task_jsons)
+                {
+                    queue_json.SetTo(index, item_json);
+                    ++index;
+                }
+                root.SetTo(queue_key, queue_json);
+
+                return DAS_S_OK;
+            });
+        return p_state_saver_->ExecuteAtomically(&callback);
     }
 
     TaskScheduler::~TaskScheduler() { NotifyExit(); }
@@ -633,6 +735,5 @@ DasResult SetIDasTaskSchedulerJsonState(IDasJsonSetting* p_scheduler_state)
         return DAS_E_INVALID_POINTER;
     }
 
-    DAS::Core::g_scheduler->SetStateJson(*p_scheduler_state);
-    return DAS_S_OK;
+    return DAS::Core::g_scheduler->SaveState();
 }

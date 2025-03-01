@@ -1,9 +1,9 @@
 #ifndef DAS_UTILS_UTILS_HPP
 #define DAS_UTILS_UTILS_HPP
 
-#include <das/Utils/Config.h>
 #include <atomic>
 #include <cstring>
+#include <das/Utils/Config.h>
 #include <thread>
 #include <type_traits>
 
@@ -251,7 +251,7 @@ public:
 };
 
 template <class C>
-C MakeEmptyCOntainerOfReservedSize(std::size_t reserved_size)
+C MakeEmptyContainerOfReservedSize(std::size_t reserved_size)
 {
     using Allocator = typename C::allocator_type;
     C result{std::size_t{0}, {}, Allocator{}};
@@ -335,6 +335,137 @@ void SetResult(R&& result, T* p_result)
         (*p_result) = result;
         (*p_result)->AddRef();
     }
+}
+
+namespace Details
+{
+    template <bool OnStack, class I, class Impl, class R, class... Args>
+    struct apply_impl_base;
+    template <class I, class Impl, class R, class... Args>
+    struct apply_impl_base<true, I, Impl, R, Args...>
+    {
+        struct apply_impl final : public I
+        {
+            Impl impl_;
+            apply_impl(Impl&& impl) : impl_{std::forward<Impl>(impl)} {}
+
+            // IDasBase
+            virtual int64_t AddRef() override { return 1; }
+            virtual int64_t Release() override { return 1; }
+            DAS_IMPL        QueryInterface(const DasGuid& iid, void** pp_object)
+                override
+            {
+                if (iid == DasIidOf<IDasBase>())
+                {
+                    *pp_object = static_cast<IDasBase*>(this);
+                }
+                else if (iid == DasIidOf<I>())
+                {
+                    *pp_object = static_cast<I*>(this);
+                }
+                else
+                {
+                    return DAS_E_NO_INTERFACE;
+                }
+                return DAS_S_OK;
+            }
+            // I
+            DAS_IMPL Apply(Args... args) override
+            {
+                return impl_(std::forward<Args>(args)...);
+            }
+        };
+    };
+    template <class I, class Impl, class R, class... Args>
+    struct apply_impl_base<false, I, Impl, R, Args...>
+    {
+        struct apply_impl final : public I
+        {
+            DAS_UTILS_IDASBASE_AUTO_IMPL(apply_impl)
+            Impl impl_;
+            apply_impl(Impl&& impl) : impl_{std::forward<Impl>(impl)} {}
+
+            // IDasBase
+            DAS_IMPL QueryInterface(const DasGuid& iid, void** pp_object)
+                override
+            {
+                if (iid == DasIidOf<IDasBase>())
+                {
+                    *pp_object = static_cast<IDasBase*>(this);
+                }
+                else if (iid == DasIidOf<I>())
+                {
+                    *pp_object = static_cast<I*>(this);
+                }
+                else
+                {
+                    return DAS_E_NO_INTERFACE;
+                }
+                return DAS_S_OK;
+            }
+            // I
+            DAS_IMPL Apply(Args... args) override
+            {
+                return impl_(std::forward<Args>(args)...);
+            }
+        };
+    };
+
+    template <bool OnStack, class I, class Impl, class F>
+    struct apply_traits;
+    template <bool OnStack, class I, class Impl, class F>
+    struct apply_traits<OnStack, I, Impl, std::reference_wrapper<F>>
+        : public apply_traits<OnStack, I, Impl, F>
+    {
+    };
+    template <bool OnStack, class I, class Impl, class R, class... Args>
+    struct apply_traits<OnStack, I, Impl, R (*)(Args...)>
+        : public apply_impl_base<OnStack, I, Impl, R, Args...>
+    {
+    };
+    template <
+        bool OnStack,
+        class I,
+        class Impl,
+        class R,
+        class C,
+        class... Args>
+    struct apply_traits<OnStack, I, Impl, R (C::*)(Args...)>
+        : public apply_impl_base<OnStack, I, Impl, R, Args...>
+    {
+    };
+    template <
+        bool OnStack,
+        class I,
+        class Impl,
+        class R,
+        class C,
+        class... Args>
+    struct apply_traits<OnStack, I, Impl, R (C::*)(Args...) const>
+        : public apply_impl_base<OnStack, I, Impl, R, Args...>
+    {
+    };
+    template <bool OnStack, class I, class Impl, class F>
+    struct apply_traits
+        : public apply_traits<OnStack, I, F, decltype(&F::operator())>
+    {
+    };
+}
+
+template <bool OnStack, class I, class F, class MemberFunction>
+struct apply_traits
+    : public Details::apply_traits<OnStack, I, std::decay_t<F>, MemberFunction>
+{
+};
+
+template <class Interface, class Function>
+auto MakeApplyWrapperOnStack(Function&& f)
+{
+    return typename apply_traits<
+        true,
+        Interface,
+        Function,
+        decltype(&Interface::Apply)>::apply_impl{std::forward<Function>(f)};
 }
 
 DAS_UTILS_NS_END

@@ -29,7 +29,11 @@ DAS_DEFINE_GUID(
     0x89,
     0xfb);
 SWIG_IGNORE(IDasTaskInfo)
-// pure C++ API
+/**
+ * @brief
+ * 因为实时地找插件拿信息需要切线程，所以把插件信息都缓存在这个类型里面。
+ * 这是纯C++ API，没有考虑为其它语言提供服务
+ */
 DAS_INTERFACE IDasTaskInfo : public IDasWeakReferenceSource
 {
     DAS_METHOD GetProperty(
@@ -95,7 +99,7 @@ DAS_INTERFACE IDasTaskScheduler : public IDasBase
 DAS_C_API DasResult
 GetIDasTaskScheduler(IDasTaskScheduler** pp_out_task_scheduler);
 
-DAS_C_API DasResult SetIDasTaskSchedulerJsonState(
-    IDasJsonSetting* p_scheduler_state);
+DAS_C_API DasResult
+SetIDasTaskSchedulerJsonState(IDasJsonSetting* p_scheduler_state);
 
 #endif // DAS_SCHEDULER_H

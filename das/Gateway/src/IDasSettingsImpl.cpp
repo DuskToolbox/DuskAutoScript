@@ -100,6 +100,12 @@ DasResult IDasJsonSettingImpl::SetOnDeletedHandler(
     return impl_.SetOnDeletedHandler(p_handler);
 }
 
+DasResult IDasJsonSettingImpl::ExecuteAtomically(
+    IDasJsonSettingOperator* p_operator)
+{
+    return impl_.ExecuteAtomically(p_operator);
+}
+
 auto DasSettings::SaveImpl(const std::filesystem::path& full_path) -> DasResult
 {
     std::ofstream ofs{};
@@ -214,6 +220,22 @@ DasResult DasSettings::SetOnDeletedHandler(
 {
     p_handler_ = p_handler;
     return DAS_S_OK;
+}
+
+DasResult DasSettings::ExecuteAtomically(IDasJsonSettingOperator* p_operator)
+{
+    if (p_operator == nullptr) [[unlikely]]
+    {
+        SPDLOG_LOGGER_ERROR(
+            GetLogger(),
+            "Null pointer found! Variable name is p_operator."
+            " Please check your code.");
+        return DAS_E_INVALID_POINTER;
+    }
+
+    DasPtr          p_holder{p_operator};
+    std::lock_guard _{mutex_};
+    return p_operator->Apply(settings_.Get());
 }
 
 DasResult DasSettings::LoadSettings(IDasReadOnlyString* p_path)
