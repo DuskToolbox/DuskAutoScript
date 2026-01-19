@@ -3,56 +3,97 @@
 
 #include "Global.hpp"
 
-#include OATPP_CODEGEN_BEGIN(DTO)
-
 /**
  *  定义设置相关数据类型
  *  Define settings related data type
  */
 
-// 应用描述符-
-// App descriptor
-class AppDesc : public oatpp::DTO
+namespace Das::Http::Dto
 {
 
-    DTO_INIT(AppDesc, DTO)
-
-    DTO_FIELD(String, name, "name");
-    DTO_FIELD(String, package_name, "packageName");
+// 应用描述符
+// App descriptor
+struct AppDesc
+{
+    std::string name;
+    std::string package_name;
+    
+    nlohmann::json ToJson() const
+    {
+        nlohmann::json j;
+        j["name"] = name;
+        j["packageName"] = package_name;
+        return j;
+    }
+    
+    static AppDesc FromJson(const nlohmann::json& j)
+    {
+        AppDesc desc;
+        desc.name = j.value("name", "");
+        desc.package_name = j.value("packageName", "");
+        return desc;
+    }
 };
 
-using AppDescList = ApiResponse<oatpp::List<oatpp::Object<AppDesc>>>;
+using AppDescList = ApiResponse<std::vector<AppDesc>>;
 
 // 插件描述符
 // Plugin descriptor
-class PluginPackageDesc : public oatpp::DTO
+struct PluginPackageDesc
 {
-
-    DTO_INIT(PluginPackageDesc, DTO)
-
-    DTO_FIELD(String, name, "name");
-    DTO_FIELD(String, plugin_id, "pluginId");
+    std::string name;
+    std::string plugin_id;
+    
+    nlohmann::json ToJson() const
+    {
+        nlohmann::json j;
+        j["name"] = name;
+        j["pluginId"] = plugin_id;
+        return j;
+    }
+    
+    static PluginPackageDesc FromJson(const nlohmann::json& j)
+    {
+        PluginPackageDesc desc;
+        desc.name = j.value("name", "");
+        desc.plugin_id = j.value("pluginId", "");
+        return desc;
+    }
 };
 
-using PluginPackageDescList =
-    ApiResponse<oatpp::List<oatpp::Object<PluginPackageDesc>>>;
+using PluginPackageDescList = ApiResponse<std::vector<PluginPackageDesc>>;
 
 // 任务描述符
 // Task descriptor
-class TaskDesc : public oatpp::DTO
+struct TaskDesc
 {
-
-    DTO_INIT(TaskDesc, DTO)
-
-    DTO_FIELD(String, name, "name");
-    DTO_FIELD(String, plugin_id, "pluginId");
-    DTO_FIELD(String, game_name, "gameName");
+    std::string name;
+    std::string plugin_id;
+    std::string game_name;
     // 此字段由前端内部管理
-    // DTO_FIELD(String, sub_group, "sub_group");
+    // std::string sub_group;
+    
+    nlohmann::json ToJson() const
+    {
+        nlohmann::json j;
+        j["name"] = name;
+        j["pluginId"] = plugin_id;
+        j["gameName"] = game_name;
+        return j;
+    }
+    
+    static TaskDesc FromJson(const nlohmann::json& j)
+    {
+        TaskDesc desc;
+        desc.name = j.value("name", "");
+        desc.plugin_id = j.value("pluginId", "");
+        desc.game_name = j.value("gameName", "");
+        return desc;
+    }
 };
 
-using TaskDescList = ApiResponse<oatpp::List<oatpp::Object<TaskDesc>>>;
+using TaskDescList = ApiResponse<std::vector<TaskDesc>>;
 
-#include OATPP_CODEGEN_END(DTO)
+} // namespace Das::Http::Dto
 
 #endif // DAS_HTTP_DTO_SETTINGS_HPP

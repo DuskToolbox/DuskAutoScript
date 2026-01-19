@@ -9,16 +9,16 @@ namespace
     class TestImpl : public IDasBase
     {
     private:
-        std::atomic_int64_t count_{0};
+        std::atomic_uint32_t count_{0};
 
     public:
                      TestImpl() {}
-        std::int64_t AddRef() override
+        uint32_t AddRef() override
         {
             count_ += 1;
             return count_;
         }
-        std::int64_t Release() override
+        uint32_t Release() override
         {
             count_ -= 1;
             if (count_ == 0)
@@ -28,7 +28,7 @@ namespace
             }
             return count_;
         }
-        std::int64_t GetRefCount() const noexcept { return count_; }
+        uint32_t GetRefCount() const noexcept { return count_; }
         DAS_METHOD QueryInterface(const DasGuid& id, void** pp_object) override
         {
             *pp_object = nullptr;

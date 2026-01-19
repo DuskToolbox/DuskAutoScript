@@ -2,7 +2,7 @@
 #define DAS_CORE_OCVWRAPPER_CONFIG_H
 
 #include <das/DasConfig.h>
-#include <das/ExportInterface/IDasImage.h>
+#include <DAS/_autogen/idl/abi/IDasImage.h>
 
 DAS_DISABLE_WARNING_BEGIN
 
@@ -24,7 +24,7 @@ DAS_DISABLE_WARNING_END
 
 DAS_CORE_OCVWRAPPER_NS_BEGIN
 
-inline auto ToMat(DasRect rect) -> cv::Rect
+inline auto ToMat(ExportInterface::DasRect rect) -> cv::Rect
 {
     return {rect.x, rect.y, rect.width, rect.height};
 }

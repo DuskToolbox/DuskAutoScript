@@ -1,7 +1,6 @@
-#include <das/ExportInterface/DasLogger.h>
+#include <DAS/_autogen/idl/abi/DasLogger.h>
 #include <das/IDasBase.h>
-#include <das/PluginInterface/IDasPluginPackage.h>
-#include <das/Utils/QueryInterface.hpp>
+#include <DAS/_autogen/idl/abi/IDasPluginPackage.h>
 #include <das/Utils/StringUtils.h>
 
 #define DAS_BUILD_SHARED
@@ -14,27 +13,13 @@
 
 DAS_NS_BEGIN
 
-int64_t AdbCapturePlugin::AddRef() { return ref_counter_.AddRef(); }
-
-int64_t AdbCapturePlugin::Release() { return ref_counter_.Release(this); }
-
-DasResult AdbCapturePlugin::QueryInterface(
-    const DasGuid& iid,
-    void**         pp_out_object)
-{
-    return DAS::Utils::QueryInterface<IDasPluginPackage>(
-        this,
-        iid,
-        pp_out_object);
-}
-
 DasResult AdbCapturePlugin::EnumFeature(
-    const size_t      index,
-    DasPluginFeature* p_out_feature)
+    const size_t                         index,
+    PluginInterface::DasPluginFeature* p_out_feature)
 {
     static std::array features{
-        DAS_PLUGIN_FEATURE_CAPTURE_FACTORY,
-        DAS_PLUGIN_FEATURE_ERROR_LENS};
+        PluginInterface::DAS_PLUGIN_FEATURE_CAPTURE_FACTORY,
+        PluginInterface::DAS_PLUGIN_FEATURE_ERROR_LENS};
     try
     {
         const auto result = features.at(index);
@@ -59,7 +44,7 @@ DasResult AdbCapturePlugin::CreateFeatureInterface(
     case 0:
     {
         const auto p_result =
-            MakeDasPtr<IDasCaptureFactory, AdbCaptureFactoryImpl>();
+            MakeDasPtr<PluginInterface::IDasCaptureFactory, AdbCaptureFactoryImpl>();
         *pp_out_interface = p_result.Get();
         p_result->AddRef();
         return DAS_S_OK;

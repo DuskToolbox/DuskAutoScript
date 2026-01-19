@@ -1,10 +1,10 @@
 #include "ErrorLensImpl.h"
 #include "PluginImpl.h"
 
-#include <das/ExportInterface/DasLogger.h>
-#include <das/Utils/QueryInterface.hpp>
+#include <DAS/_autogen/idl/abi/DasLogger.h>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
+#include <das/DasApi.h>
 
 DAS_NS_BEGIN
 
@@ -32,21 +32,10 @@ AdbCaptureErrorLens::AdbCaptureErrorLens() { DAS::AdbCaptureAddRef(); }
 
 AdbCaptureErrorLens::~AdbCaptureErrorLens() { DAS::AdbCaptureRelease(); }
 
-int64_t AdbCaptureErrorLens::AddRef() { return ref_counter_.AddRef(); }
-
-int64_t AdbCaptureErrorLens::Release() { return ref_counter_.Release(this); }
-
-DasResult AdbCaptureErrorLens::QueryInterface(
-    const DasGuid& iid,
-    void**         pp_out_object)
-{
-    return DAS::Utils::QueryInterface<IDasErrorLens>(this, iid, pp_out_object);
-}
-
 DasResult AdbCaptureErrorLens::GetSupportedIids(
-    IDasReadOnlyGuidVector** pp_out_iids)
+    ExportInterface::IDasReadOnlyGuidVector** pp_out_iids)
 {
-    DasPtr<IDasGuidVector> p_iids{};
+    DasPtr<ExportInterface::IDasGuidVector> p_iids{};
     if (const auto error_code =
             ::CreateIDasGuidVector(iids_.data(), iids_.size(), p_iids.Put());
         IsFailed(error_code))

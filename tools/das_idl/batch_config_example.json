@@ -1,0 +1,13 @@
+[
+    {
+        "-i": "tools/das_idl/examples/IDasGuidVector.idl",
+        "--output-dir": "generated/IDasGuidVector",
+        "--all": true
+    },
+    {
+        "-i": "tools/das_idl/examples/test_namespace.idl",
+        "--output-dir": "generated/test_namespace",
+        "--swig": true,
+        "--cpp-wrapper": true
+    }
+]

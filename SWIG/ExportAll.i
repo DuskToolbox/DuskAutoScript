@@ -13,35 +13,17 @@
 #include <das/DasExport.h>
 #include <das/IDasBase.h>
 #include <das/DasString.hpp>
-#include <das/IDasTypeInfo.h>
+#include <das/Core/Exceptions/DasException.h>
 
-#include <das/PluginInterface/IDasCapture.h>
-#include <das/PluginInterface/IDasErrorLens.h>
-#include <das/PluginInterface/IDasInput.h>
-#include <das/PluginInterface/IDasPluginPackage.h>
-#include <das/PluginInterface/IDasTask.h>
-
-#include <das/ExportInterface/DasCV.h>
-#include <das/ExportInterface/DasJson.h>
 #include <das/ExportInterface/DasLogger.h>
 
-#include <das/ExportInterface/IDasGuidVector.h>
-#include <das/ExportInterface/IDasBasicErrorLens.h>
-
-#include <das/ExportInterface/IDasImage.h>
-#include <das/ExportInterface/IDasCaptureManager.h>
-
-#include <das/ExportInterface/IDasOcr.h>
-#include <das/ExportInterface/IDasPluginManager.h>
-#include <das/ExportInterface/IDasSettings.h>
-#include <das/ExportInterface/IDasTaskManager.h>
-
 #ifdef SWIGPYTHON
-
 #include <das/Core/ForeignInterfaceHost/PythonHost.h>
 
 #ifdef DEBUG
 
+// 修复 dll 文件带 _d 后缀时，PyInit 函数名称不正确的问题。
+// TODO: 后续在CMake中配置更名，而不再靠这里修复
 #ifdef __cplusplus
 extern "C"
 #endif
@@ -74,7 +56,33 @@ PyInit__DasCorePythonExport(void) {
 
 #endif // SWIGPYTHON
 
+// ============================================================================
+// DasException Support for Python
+// ============================================================================
+
+// Extend DasException to add error_code attribute for Python access
+%extend DasException {
+    int GetErrorCode() const {
+        return $self->GetErrorCode();
+    }
+    const char* GetMessage() const {
+        return $self->what();
+    }
+}
+
+%pythoncode %{
+# Python can access exception.error_code attribute
 %}
+
+// Exception handling for DasResult return values
+%exception {
+    try {
+        $action
+    }
+    catch (const DasException& ex) {
+        SWIG_exception_fail(SWIG_RuntimeError, ex.what());
+    }
+}
 
 #ifdef SWIGJAVA
 %typemap(jni) char16_t* "jstring"
@@ -112,6 +120,48 @@ PyInit__DasCorePythonExport(void) {
 }
 
 %typemap(javain) (const char16_t* p_u16string, size_t length) "p_u16string"
+
+// ============================================================================
+// DasException Support for Java
+// ============================================================================
+
+// Rename DasException methods for Java naming convention
+%rename(ErrorCode) DasException::GetErrorCode;
+%rename(Message) DasException::what;
+
+// Exception handling for DasException
+%javaexception("DasException") DasException {
+    $action
+    try {
+        return $result;
+    }
+    catch (const DasException& ex) {
+        jclass exc = jenv->FindClass("DasException");
+        jmethodID ctor = jenv->GetMethodID(exc, "<init>", "(ILjava/lang/String;)V");
+        jstring msg = jenv->NewStringUTF(ex.what());
+        jobject jexc = jenv->NewObject(exc, ctor, ex.GetErrorCode(), msg);
+        jenv->Throw(jexc);
+        return $null;
+    }
+}
+
+%typemap(javabody) DasException %{
+    private int errorCode;
+    private String message;
+
+    public DasException(int errorCode, String message) {
+        this.errorCode = errorCode;
+        this.message = message;
+    }
+
+    public int getErrorCode() {
+        return errorCode;
+    }
+
+    public String getMessage() {
+        return message;
+    }
+%}
 
 %typemap(in, numinputs=1) (const char16_t* p_u16string, size_t length) %{
     class _das_InternalJavaString{
@@ -152,27 +202,51 @@ PyInit__DasCorePythonExport(void) {
 %include <das/DasString.hpp>
 %include <das/IDasTypeInfo.h>
 
-// 以下文件按照字母顺序排列！ The following files are in alphabetical order!
-// 例外：由于依赖关系的原因，IDasImage.h必须在IDasCaptureManager.h前
-// IDasGuidVector.h必须在IDasBasicErrorLens.h前
+// !!! 包含CMake从IDL自动生成的SWIG接口汇总文件 !!!
+// 该文件包含所有从IDL生成的SWIG接口（如DasCV, IDasCapture, IDasPluginManager等）
+%include "DAS/_autogen/idl/swig/swig_all.i"
 
-%include <das/PluginInterface/IDasCapture.h>
-%include <das/PluginInterface/IDasErrorLens.h>
-%include <das/PluginInterface/IDasInput.h>
-%include <das/PluginInterface/IDasPluginPackage.h>
-%include <das/PluginInterface/IDasTask.h>
-
-%include <das/ExportInterface/DasCV.h>
-%include <das/ExportInterface/DasJson.h>
+// 以下接口文件没有对应的IDL定义，需要手动包含（按字母顺序排列）
 %include <das/ExportInterface/DasLogger.h>
 
-%include <das/ExportInterface/IDasGuidVector.h>
-%include <das/ExportInterface/IDasBasicErrorLens.h>
+%include <das/ExportInterface/IDasMemory.h>
 
-%include <das/ExportInterface/IDasImage.h>
-%include <das/ExportInterface/IDasCaptureManager.h>
+// ============================================================================
+// DasException Support for C#
+// ============================================================================
 
-%include <das/ExportInterface/IDasOcr.h>
-%include <das/ExportInterface/IDasPluginManager.h>
-%include <das/ExportInterface/IDasSettings.h>
-%include <das/ExportInterface/IDasTaskManager.h>
+%rename(ErrorCode) DasException::GetErrorCode;
+%rename(Message) DasException::what;
+
+%typemap(cscode) DasException %{
+    private int errorCode;
+    private string message;
+
+    public DasException(int errorCode, string message) {
+        this.errorCode = errorCode;
+        this.message = message;
+    }
+
+    public int ErrorCode {
+        get { return errorCode; }
+    }
+
+    public string Message {
+        get { return message; }
+    }
+%}
+
+%typemap(csout) DasException %{
+    SWIG_CSharpSetPendingException(SWIG_CSharpApplicationException, "DasException occurred");
+    throw $modulePINVOKE.SWIGPendingException.Retrieve();
+%}
+
+%exception DasException {
+    try {
+        $action
+    }
+    catch (const DasException& ex) {
+        SWIG_CSharpSetPendingException(SWIG_CSharpApplicationException, ex.what());
+    }
+}
+

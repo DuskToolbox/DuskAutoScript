@@ -1,13 +1,12 @@
 #ifndef DAS_UTILS_ENUMTUILS_HPP
 #define DAS_UTILS_ENUMTUILS_HPP
 
+#include <DAS/_autogen/idl/abi/DasJson.h>
 #include <das/DasConfig.h>
-#include <das/ExportInterface/DasJson.h>
 #include <das/Utils/UnexpectedEnumException.h>
 #include <magic_enum.hpp>
 #include <nlohmann/json.hpp>
 #include <string_view>
-
 
 DAS_UTILS_NS_BEGIN
 
@@ -32,10 +31,10 @@ Enum JsonToEnum(const nlohmann::json& json, const char* key)
 DAS_UTILS_NS_END
 
 NLOHMANN_JSON_SERIALIZE_ENUM(
-    DasType,
-    {{DAS_TYPE_INT, "int"},
-     {DAS_TYPE_FLOAT, "float"},
-     {DAS_TYPE_STRING, "string"},
-     {DAS_TYPE_BOOL, "bool"}});
+    Das::ExportInterface::DasType,
+    {{Das::ExportInterface::DAS_TYPE_INT, "int"},
+     {Das::ExportInterface::DAS_TYPE_FLOAT, "float"},
+     {Das::ExportInterface::DAS_TYPE_STRING, "string"},
+     {Das::ExportInterface::DAS_TYPE_BOOL, "bool"}});
 
 #endif // DAS_UTILS_ENUMTUILS_HPP

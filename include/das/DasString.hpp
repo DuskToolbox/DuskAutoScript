@@ -130,7 +130,7 @@ DAS_C_API DasResult CreateIDasReadOnlyStringFromWChar(
  * @return DAS_S_OK if success.
  */
 DAS_C_API DasResult
-DasGuidToString(DasGuid* p_in_guid, IDasReadOnlyString** pp_out_guid_string);
+DasGuidToString(const DasGuid* p_in_guid, IDasReadOnlyString** pp_out_guid_string);
 
 #endif // SWIG
 
@@ -156,6 +156,14 @@ class DasReadOnlyString
 
 public:
     DasReadOnlyString() = default;
+    DasReadOnlyString(const DasGuid* p_guid) : p_impl_{[p_guid]
+    {
+        DAS::DasPtr<IDasReadOnlyString> result;
+        DasGuidToString(p_guid, result.Put());
+        return result;
+    }()}
+    {
+    }
 #ifndef SWIG
     explicit DasReadOnlyString(DAS::DasPtr<IDasString> p_impl)
         : p_impl_{std::move(p_impl)}

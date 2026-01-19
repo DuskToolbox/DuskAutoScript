@@ -18,6 +18,7 @@ git clone git@github.com:BombaxCeiba/AutoStarRail.git
 
 | 名称                   | 默认值                    | 说明                                                           |
 | ---------------------- | ------------------------- | -------------------------------------------------------------- |
+|                        |                           |                                                                |
 | EXPORT_JAVA            | OFF                       | 是否导出Java接口                                               |
 | EXPORT_CSHARP          | OFF                       | 是否导出C#接口                                                 |
 | EXPORT_PYTHON          | OFF                       | 是否导出Python接口                                             |

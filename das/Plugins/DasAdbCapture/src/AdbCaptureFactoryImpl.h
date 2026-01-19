@@ -1,7 +1,8 @@
 #ifndef DAS_PLUGINS_DASADBCAPTURE_ADBCAPTUREFACTORYIMPL_H
 #define DAS_PLUGINS_DASADBCAPTURE_ADBCAPTUREFACTORYIMPL_H
 
-#include <das/PluginInterface/IDasCapture.h>
+#include <DAS/_autogen/idl/abi/IDasCapture.h>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasCaptureFactory.Implements.hpp>
 #include <das/Utils/CommonUtils.hpp>
 
 // {23290FC8-CD40-4C4E-9F58-20EC404F1F3C}
@@ -22,22 +23,12 @@ DAS_DEFINE_CLASS_IN_NAMESPACE(
 
 DAS_NS_BEGIN
 
-class AdbCaptureFactoryImpl final : public IDasCaptureFactory
+class AdbCaptureFactoryImpl final
+    : public PluginInterface::DasCaptureFactoryImplBase<AdbCaptureFactoryImpl>
 {
-private:
-    DAS::Utils::RefCounter<AdbCaptureFactoryImpl> ref_counter_{};
-
 public:
     AdbCaptureFactoryImpl();
     ~AdbCaptureFactoryImpl();
-    // IDasBase
-    int64_t  AddRef() override;
-    int64_t  Release() override;
-    DAS_IMPL QueryInterface(const DasGuid& iid, void** pp_object) override;
-    // IDasTypeInfo
-    DAS_IMPL GetGuid(DasGuid* p_out_guid) override;
-    DAS_IMPL GetRuntimeClassName(
-        IDasReadOnlyString** pp_out_class_name) override;
     // IDasCaptureFactory
     /**
      * @brief Require url property
@@ -50,7 +41,7 @@ public:
     DAS_IMPL CreateInstance(
         IDasReadOnlyString* p_environment_json_config,
         IDasReadOnlyString* p_plugin_config,
-        IDasCapture**       pp_object) override;
+        PluginInterface::IDasCapture** pp_object) override;
 };
 
 DAS_NS_END

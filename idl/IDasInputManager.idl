@@ -1,0 +1,9 @@
+import "DasTypes.idl";
+
+namespace Das::ExportInterface {
+
+[uuid("53D6A1A0-FB5B-46BC-8108-3D98095AF2B9")]
+interface IDasInputManager : IDasBase {
+}
+
+}

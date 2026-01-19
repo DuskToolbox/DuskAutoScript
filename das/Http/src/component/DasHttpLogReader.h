@@ -4,15 +4,17 @@
 #include <memory>
 #include <string>
 
-#include "das/ExportInterface/DasLogger.h"
+#include "das/DasApi.h"
 #include "das/IDasBase.h"
 #include "das/Utils/CommonUtils.hpp"
+#include "das/_autogen/idl/wrapper/Das.ExportInterface.IDasLogReader.Implements.hpp"
 
-class DasHttpLogReader final : public IDasLogReader
+class DasHttpLogReader final
+    : public DAS::ExportInterface::DasLogReaderImplBase<DasHttpLogReader>
 {
     std::string message_{};
 
-    DasResult ReadOne(const char* message, size_t size) override;
+    DAS_IMPL ReadOne(::IDasReadOnlyString* message, uint64_t size) override;
 
     DAS_UTILS_IDASBASE_AUTO_IMPL(DasHttpLogReader)
 

@@ -1,0 +1,36 @@
+import "DasTypes.idl";
+import "IDasTypeInfo.idl";
+
+namespace Das::PluginInterface {
+
+enum DasClickType {
+    DAS_CLICK_LEFT = 1,
+    DAS_CLICK_RIGHT = 2,
+    DAS_CLICK_MIDDLE = 4
+}
+
+struct DasPoint {
+    int32_t x;
+    int32_t y;
+}
+
+[uuid("02F6A16A-01FD-4303-886A-9B60373EBE8C")]
+interface IDasInput : IDasTypeInfo {
+    /**
+     * @brief If the implementation is a mouse, then the function assumes that
+     * the left button is pressed.
+     */
+    DasResult Click(int32_t x, int32_t y);
+}
+
+[uuid("DDB17BB3-E6B2-4FD8-8E06-C037EEF18D65")]
+interface IDasTouch : IDasInput {
+    DasResult Swipe(DasPoint from, DasPoint to, int32_t duration_ms);
+}
+
+[uuid("B03F0BB5-B328-45C4-99D1-04DBC7FC5BA7")]
+interface IDasInputFactory : IDasTypeInfo {
+    DasResult CreateInstance(IDasReadOnlyString* p_json_config, [out] IDasInput** pp_out_input);
+}
+
+}

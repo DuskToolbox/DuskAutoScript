@@ -1,0 +1,52 @@
+import "IDasComponent.idl";
+
+namespace Das::ExportInterface {
+
+enum DasVariantType {
+    DAS_VARIANT_TYPE_INT = 0,
+    DAS_VARIANT_TYPE_FLOAT = 1,
+    DAS_VARIANT_TYPE_STRING = 2,
+    DAS_VARIANT_TYPE_BOOL = 3,
+    DAS_VARIANT_TYPE_BASE = 4,
+    DAS_VARIANT_TYPE_COMPONENT = 5,
+    DAS_VARIANT_TYPE_FORCE_DWORD = 0x7FFFFFFF
+}
+
+[uuid("AEA97E84-4FFC-4E9D-B627-AA8A590AE444")]
+interface IDasVariantVector : IDasBase {
+    DasResult GetInt(uint64_t index, [out] int64_t* p_out_int);
+    DasResult GetFloat(uint64_t index, [out] float* p_out_float);
+    DasResult GetString(uint64_t index, [out] IDasReadOnlyString** pp_out_string);
+    DasResult GetBool(uint64_t index, [out] bool* p_out_bool);
+    /**
+     * @brief 如果访问的值恰好是IDasBase或IDasSwigBase，则内部会尝试转换到IDasComponent
+     */
+    DasResult GetComponent(uint64_t index, [out] IDasComponent** pp_out_component);
+    DasResult GetBase(uint64_t index, [out] IDasBase** pp_out_base);
+
+    DasResult SetInt(uint64_t index, int64_t in_int);
+    DasResult SetFloat(uint64_t index, float in_float);
+    DasResult SetString(uint64_t index, IDasReadOnlyString* in_string);
+    DasResult SetBool(uint64_t index, bool in_bool);
+    DasResult SetComponent(uint64_t index, IDasComponent* in_component);
+    DasResult SetBase(uint64_t index, IDasBase* in_base);
+
+    DasResult PushBackInt(int64_t in_int);
+    DasResult PushBackFloat(float in_float);
+    DasResult PushBackString(IDasReadOnlyString* in_string);
+    DasResult PushBackBool(bool in_bool);
+    DasResult PushBackComponent(IDasComponent* in_component);
+    DasResult PushBackBase(IDasBase* in_base);
+
+    DasResult GetType(uint64_t index, [out] DasVariantType* p_out_type);
+
+    DasResult RemoveAt(uint64_t index);
+
+    /**
+     * @brief 此函数一定成功，因此返回值即为大小
+     * @return 参数数组大小
+     */
+    DasResult GetSize();
+}
+
+}

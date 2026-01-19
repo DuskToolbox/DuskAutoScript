@@ -230,8 +230,8 @@ public:
         U_NAMESPACE_QUALIFIER UnicodeString&& impl) noexcept;
     ~DasStringCppImpl();
     // * IDasBase
-    int64_t   AddRef() override;
-    int64_t   Release() override;
+    uint32_t  AddRef() override;
+    uint32_t  Release() override;
     DasResult QueryInterface(const DasGuid& iid, void** pp_object) override;
     // * IDasReadOnlyString
     const UChar32* CBegin() override;

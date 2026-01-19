@@ -1,17 +1,14 @@
 #ifndef DAS_CORE_FOREIGNINTERFACEHOST_IFOREIGNLANGUAGERUNTIME_H
 #define DAS_CORE_FOREIGNINTERFACEHOST_IFOREIGNLANGUAGERUNTIME_H
 
-#include <das/DasPtr.hpp>
-#include <das/PluginInterface/IDasPluginPackage.h>
+#include <DAS/_autogen/idl/abi/IDasPluginPackage.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHostEnum.h>
-#include <variant>
+#include <das/DasPtr.hpp>
 #include <das/IDasBase.h>
 #include <das/Utils/Expected.h>
+#include <variant>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
-
-using CommonPluginPtr =
-    std::variant<DasPtr<IDasPluginPackage>, DasPtr<IDasSwigPluginPackage>>;
 
 /**
  * @brief 创建语言runtime必须的内容，一次性给够够全部语言runtime创建的信息
@@ -25,7 +22,8 @@ struct ForeignLanguageRuntimeFactoryDesc
 DAS_INTERFACE IForeignLanguageRuntime : public IDasBase
 {
     virtual auto LoadPlugin(const std::filesystem::path& path)
-        -> DAS::Utils::Expected<CommonPluginPtr> = 0;
+        -> DAS::Utils::Expected<
+            DasPtr<Das::PluginInterface::IDasPluginPackage>> = 0;
 };
 
 /**

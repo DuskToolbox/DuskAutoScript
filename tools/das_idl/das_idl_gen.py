@@ -1,0 +1,388 @@
+#!/usr/bin/env python3
+"""
+DAS IDL 代码生成器入口脚本
+
+用法:
+    python das_idl_gen.py --input <idl_file> --output-dir <output_dir> [options]
+
+示例:
+    python das_idl_gen.py --input interfaces.idl --output-dir ./generated
+    python das_idl_gen.py -i interfaces.idl -o ./generated -n DAS --swig
+    python das_idl_gen.py -i interfaces.idl --raw-output-dir ./raw --wrapper-output-dir ./wrapper --swig-output-dir ./swig
+
+生成内容:
+    1. C++ 头文件 (IDasXxx.h) - 原始接口定义
+    2. C++ 包装头文件 (Das.Xxx.hpp) - C++/WinRT 风格的便捷包装类
+    3. C++ 实现基类模板 (Das.Xxx.Implements.hpp) - 类似 winrt::implements 的实现基类
+    4. SWIG .i 文件 (IDasXxx.i) - 每个接口的 SWIG 配置
+    5. 汇总 .i 文件 (base_name_all.i) - include 所有接口的 .i 文件
+"""
+
+import argparse
+import os
+import sys
+from pathlib import Path
+from typing import List, Optional
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='DAS IDL Code Generator - 从 IDL 文件生成 C++ 接口代码和 SWIG 配置',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例:
+  %(prog)s --input interfaces.idl --output-dir ./generated
+  %(prog)s -i interfaces.idl -o ./generated --namespace DAS
+  %(prog)s -i interfaces.idl -o ./generated --swig --cpp-wrapper
+
+  # 将不同类型的文件输出到不同目录
+  %(prog)s -i interfaces.idl \\
+      --raw-output-dir ./include/das/raw \\
+      --wrapper-output-dir ./include/das/wrapper \\
+      --swig-output-dir ./swig
+
+IDL 语法示例:
+  // 枚举定义
+  enum MyEnum {
+      Value1 = 0,
+      Value2,
+  }
+
+  // 接口定义
+  [uuid("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")]
+  interface IDasMyInterface : IDasBase {
+      DasResult DoSomething([out] IOutputType** pp_out);
+      [get, set] int32 PropertyName
+  }
+
+  // 嵌套命名空间定义（支持 C++17 语法）
+  namespace DAS::ExportInterface {
+      enum MyEnum { Value1 = 0 }
+
+      [uuid("xxx")]
+      interface IDasMyInterface : IDasBase {
+          DasResult DoSomething([out] IOutputType** pp_out);
+      }
+  }
+"""
+    )
+    parser.add_argument(
+        '-i', '--input',
+        required=True,
+        help='输入的 IDL 文件路径（支持多个文件，用逗号分隔）'
+    )
+
+    # === 输出目录选项 ===
+    output_group = parser.add_argument_group('输出目录选项')
+
+    output_group.add_argument(
+        '-o', '--output-dir',
+        help='通用输出目录（当未指定具体类型的输出目录时使用）'
+    )
+
+    output_group.add_argument(
+        '--raw-output-dir',
+        help='原始 C++ 头文件 (IDasXxx.h) 的输出目录'
+    )
+
+    output_group.add_argument(
+        '--wrapper-output-dir',
+        help='C++ 包装文件 (Das.Xxx.hpp) 的输出目录'
+    )
+
+    output_group.add_argument(
+        '--implements-output-dir',
+        help='C++ 实现基类模板文件 (Das.Xxx.Implements.hpp) 的输出目录'
+    )
+
+    output_group.add_argument(
+        '--swig-output-dir',
+        help='SWIG .i 文件的输出目录'
+    )
+
+    # === 生成选项 ===
+    gen_group = parser.add_argument_group('生成选项')
+
+    gen_group.add_argument(
+        '-n', '--namespace',
+        default='',
+        help='C++ 命名空间 (可选)'
+    )
+
+    gen_group.add_argument(
+        '--wrapper-namespace',
+        default='Das',
+        help='C++ 包装类的命名空间 (默认: Das)'
+    )
+
+    gen_group.add_argument(
+        '--base-name',
+        help='生成文件的基础名称，默认使用 IDL 文件名'
+    )
+
+    gen_group.add_argument(
+        '--swig',
+        action='store_true',
+        help='生成 SWIG .i 文件'
+    )
+
+    gen_group.add_argument(
+        '--cpp-wrapper',
+        action='store_true',
+        help='生成 C++/WinRT 风格的包装文件 (Das.Xxx.hpp)'
+    )
+
+    gen_group.add_argument(
+        '--cpp-implements',
+        action='store_true',
+        help='生成 C++ 实现基类模板文件 (Das.Xxx.Implements.hpp)，类似 winrt::implements'
+    )
+
+    gen_group.add_argument(
+        '--all',
+        action='store_true',
+        help='生成所有类型的文件（等同于 --swig --cpp-wrapper --cpp-implements）'
+    )
+
+    # === 调试选项 ===
+    debug_group = parser.add_argument_group('调试选项')
+
+    debug_group.add_argument(
+        '-v', '--verbose',
+        action='store_true',
+        help='显示详细输出'
+    )
+
+    debug_group.add_argument(
+        '--dry-run',
+        action='store_true',
+        help='只解析不生成文件，用于测试'
+    )
+
+    args = parser.parse_args()
+
+    # 验证输出目录参数
+    if not args.output_dir and not args.raw_output_dir:
+        parser.error("必须指定 --output-dir 或 --raw-output-dir")
+
+    # 如果指定了 --all，启用所有生成选项
+    if args.all:
+        args.swig = True
+        args.cpp_wrapper = True
+        args.cpp_implements = True
+
+    # 确定各类型文件的输出目录
+    default_output = args.output_dir or args.raw_output_dir
+    raw_output_dir = args.raw_output_dir or default_output
+    wrapper_output_dir = args.wrapper_output_dir or default_output
+    implements_output_dir = args.implements_output_dir or default_output
+    swig_output_dir = args.swig_output_dir or default_output
+
+    # 处理多个输入文件
+    input_files = [f.strip() for f in args.input.split(',')]
+    all_generated_files: List[str] = []
+    all_swig_files: List[str] = []
+
+    for input_file in input_files:
+        # 验证输入文件
+        input_path = Path(input_file)
+        if not input_path.exists():
+            print(f"错误: 输入文件不存在: {input_path}", file=sys.stderr)
+            return 1
+
+        # 确定基础名称
+        base_name = args.base_name or input_path.stem
+
+        # 解析 IDL 文件
+        try:
+            from das_idl_parser import parse_idl_file
+
+            if args.verbose:
+                print(f"解析 IDL 文件: {input_path}")
+
+            document = parse_idl_file(str(input_path))
+
+            if args.verbose:
+                print(f"  找到 {len(document.enums)} 个枚举")
+                print(f"  找到 {len(document.interfaces)} 个接口")
+                for enum in document.enums:
+                    print(f"    - 枚举: {enum.name} ({len(enum.values)} 个值)")
+                for iface in document.interfaces:
+                    print(f"    - 接口: {iface.name} : {iface.base_interface}")
+                    print(f"        UUID: {iface.uuid}")
+                    print(f"        方法: {len(iface.methods)}, 属性: {len(iface.properties)}")
+
+        except SyntaxError as e:
+            print(f"语法错误: {e}", file=sys.stderr)
+            return 2
+        except Exception as e:
+            print(f"解析错误: {e}", file=sys.stderr)
+            if args.verbose:
+                import traceback
+                traceback.print_exc()
+            return 2
+
+        # 检查是否只是测试运行
+        if args.dry_run:
+            print(f"Dry run 模式，跳过 {input_path} 的代码生成")
+            continue
+
+        # === 生成原始 C++ 代码 ===
+        try:
+            from das_cpp_generator import generate_cpp_files
+
+            output_dir = Path(raw_output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            if args.verbose:
+                print(f"生成原始 C++ 代码到: {output_dir}")
+
+            cpp_files = generate_cpp_files(
+                document=document,
+                output_dir=str(output_dir),
+                base_name=base_name,
+                namespace=args.namespace,
+                idl_file_path=str(input_path)
+            )
+            all_generated_files.extend(cpp_files)
+
+        except Exception as e:
+            print(f"C++ 生成错误: {e}", file=sys.stderr)
+            if args.verbose:
+                import traceback
+                traceback.print_exc()
+            return 3
+
+        # === 生成 C++ 包装文件（如果启用）===
+        if args.cpp_wrapper:
+            try:
+                from das_cpp_wrapper_generator import generate_cpp_wrapper_files
+
+                output_dir = Path(wrapper_output_dir)
+                output_dir.mkdir(parents=True, exist_ok=True)
+
+                if args.verbose:
+                    print(f"生成 C++ 包装文件到: {output_dir}")
+
+                wrapper_files = generate_cpp_wrapper_files(
+                    document=document,
+                    output_dir=str(output_dir),
+                    base_name=base_name,
+                    namespace=args.wrapper_namespace,
+                    idl_file_path=str(input_path)
+                )
+                all_generated_files.extend(wrapper_files)
+
+            except Exception as e:
+                print(f"C++ 包装文件生成错误: {e}", file=sys.stderr)
+                if args.verbose:
+                    import traceback
+                    traceback.print_exc()
+                return 4
+
+        # === 生成 C++ 实现基类模板（如果启用）===
+        if args.cpp_implements:
+            try:
+                from das_cpp_implements_generator import generate_cpp_implements_files
+
+                output_dir = Path(implements_output_dir)
+                output_dir.mkdir(parents=True, exist_ok=True)
+
+                if args.verbose:
+                    print(f"生成 C++ 实现基类模板到: {output_dir}")
+
+                implements_files = generate_cpp_implements_files(
+                    document=document,
+                    output_dir=str(output_dir),
+                    base_name=base_name,
+                    namespace=args.wrapper_namespace,
+                    idl_file_path=str(input_path)
+                )
+                all_generated_files.extend(implements_files)
+
+            except Exception as e:
+                print(f"C++ 实现基类模板生成错误: {e}", file=sys.stderr)
+                if args.verbose:
+                    import traceback
+                    traceback.print_exc()
+                return 5
+
+        # === 生成 SWIG 代码（如果启用）===
+        if args.swig:
+            try:
+                from das_swig_generator import generate_swig_files
+
+                output_dir = Path(swig_output_dir)
+                output_dir.mkdir(parents=True, exist_ok=True)
+
+                if args.verbose:
+                    print(f"生成 SWIG .i 文件到: {output_dir}")
+
+                swig_files = generate_swig_files(
+                    document=document,
+                    output_dir=str(output_dir),
+                    base_name=base_name,
+                    idl_file_path=str(input_path)
+                )
+                all_swig_files.extend(swig_files)
+                all_generated_files.extend(swig_files)
+
+            except Exception as e:
+                print(f"SWIG 生成错误: {e}", file=sys.stderr)
+                if args.verbose:
+                    import traceback
+                    traceback.print_exc()
+                return 6
+
+    # 如果有多个 IDL 文件且启用了 SWIG，生成一个总汇总文件
+    if args.swig and len(input_files) > 1 and not args.dry_run:
+        try:
+            output_dir = Path(swig_output_dir)
+            master_i_path = output_dir / "DasGenerated.i"
+
+            # 收集所有单独的汇总 .i 文件
+            individual_i_files = [f for f in all_swig_files if f.endswith('.i') and not f.endswith('DasGenerated.i')]
+            # 只包含每个 base_name 的汇总文件
+            base_i_files = [f for f in individual_i_files if not any(
+                iface_name in os.path.basename(f)
+                for input_file in input_files
+                for iface_name in ['IDas']  # 简化判断
+            )]
+
+            with open(master_i_path, 'w', encoding='utf-8') as f:
+                f.write("// Master SWIG interface file - includes all generated .i files\n")
+                f.write("// !!! DO NOT EDIT !!!\n\n")
+                for i_file in sorted(set(os.path.basename(p) for p in all_swig_files if p.endswith('.i'))):
+                    # 只包含汇总文件（不包含单个接口的 .i 文件）
+                    if not i_file.startswith('IDas'):
+                        f.write(f'%include "{i_file}"\n')
+
+            print(f"Generated master: {master_i_path}")
+            all_generated_files.append(str(master_i_path))
+        except Exception as e:
+            print(f"生成总汇总文件错误: {e}", file=sys.stderr)
+
+    # 打印总结
+    if not args.dry_run:
+        print(f"\n{'='*60}")
+        print(f"成功生成 {len(all_generated_files)} 个文件:")
+        print(f"{'='*60}")
+
+        # 按目录分组显示
+        files_by_dir = {}
+        for f in all_generated_files:
+            dir_path = os.path.dirname(f)
+            if dir_path not in files_by_dir:
+                files_by_dir[dir_path] = []
+            files_by_dir[dir_path].append(os.path.basename(f))
+
+        for dir_path, files in sorted(files_by_dir.items()):
+            print(f"\n[{dir_path}]")
+            for f in sorted(files):
+                print(f"  - {f}")
+
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

@@ -1,10 +1,11 @@
 #include "AdbTouchFactoryImpl.h"
 #include "AdbTouch.h"
-#include <das/ExportInterface/DasLogger.h>
-#include <das/Utils/QueryInterface.hpp>
-#include <das/Utils/StringUtils.h>
+#include <DAS/_autogen/idl/abi/DasLogger.h>
 #include <boost/url.hpp>
+#include <das/DasApi.h>
+#include <das/Utils/StringUtils.h>
 #include <nlohmann/json.hpp>
+
 
 DAS_NS_BEGIN
 
@@ -37,7 +38,32 @@ DasResult AdbTouchFactory::QueryInterface(const DasGuid& iid, void** pp_object)
 {
     DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(pp_object);
 
-    return Utils::QueryInterface<IDasInputFactory>(this, iid, pp_object);
+    // 检查IID_IDasInputFactory
+    if (iid == DasIidOf<PluginInterface::IDasInputFactory>())
+    {
+        *pp_object = static_cast<PluginInterface::IDasInputFactory*>(this);
+        this->AddRef();
+        return DAS_S_OK;
+    }
+
+    // 检查IID_IDasTypeInfo
+    if (iid == DAS_IID_TYPE_INFO)
+    {
+        *pp_object = static_cast<IDasTypeInfo*>(this);
+        this->AddRef();
+        return DAS_S_OK;
+    }
+
+    // 检查IID_IDasBase
+    if (iid == DAS_IID_BASE)
+    {
+        *pp_object = static_cast<IDasBase*>(this);
+        this->AddRef();
+        return DAS_S_OK;
+    }
+
+    *pp_object = nullptr;
+    return DAS_E_NO_INTERFACE;
 }
 
 DasResult AdbTouchFactory::GetRuntimeClassName(IDasReadOnlyString** pp_out_name)

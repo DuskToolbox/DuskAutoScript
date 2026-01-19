@@ -1,32 +1,20 @@
 #include "AdbCaptureFactoryImpl.h"
 #include "PluginImpl.h"
 #include <boost/url.hpp>
+#include <das/DasApi.h>
 #include <das/DasConfig.h>
-#include <das/ExportInterface/DasLogger.h>
 #include <das/IDasBase.h>
-#include <das/Utils/QueryInterface.hpp>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
+#include <das/_autogen/idl/abi/DasLogger.h>
 #include <nlohmann/json.hpp>
 #include <tl/expected.hpp>
-
 
 DAS_NS_BEGIN
 
 AdbCaptureFactoryImpl::AdbCaptureFactoryImpl() { AdbCaptureAddRef(); }
 
 AdbCaptureFactoryImpl::~AdbCaptureFactoryImpl() { AdbCaptureRelease(); }
-
-int64_t AdbCaptureFactoryImpl::AddRef() { return ref_counter_.AddRef(); }
-
-int64_t AdbCaptureFactoryImpl::Release() { return ref_counter_.Release(this); }
-
-DasResult AdbCaptureFactoryImpl::QueryInterface(
-    const DasGuid& iid,
-    void**         pp_object)
-{
-    return Utils::QueryInterface<IDasCaptureFactory>(this, iid, pp_object);
-}
 
 DAS_NS_ANONYMOUS_DETAILS_BEGIN
 
@@ -53,9 +41,9 @@ auto GetUrlFromJson(
 DAS_NS_ANONYMOUS_DETAILS_END
 
 DasResult AdbCaptureFactoryImpl::CreateInstance(
-    IDasReadOnlyString* p_environment_json_config,
-    IDasReadOnlyString* p_plugin_config,
-    IDasCapture**       pp_out_object)
+    IDasReadOnlyString*            p_environment_json_config,
+    IDasReadOnlyString*            p_plugin_config,
+    PluginInterface::IDasCapture** pp_out_object)
 {
     (void)p_plugin_config;
     const char* p_key_string = "";
@@ -80,21 +68,6 @@ DasResult AdbCaptureFactoryImpl::CreateInstance(
         result = DAS_E_INVALID_JSON;
     }
     return result;
-}
-
-DAS_IMPL AdbCaptureFactoryImpl::GetGuid(DasGuid* p_out_guid)
-{
-    *p_out_guid = DasIidOf<std::remove_pointer_t<decltype(this)>>();
-
-    return DAS_S_OK;
-}
-
-DasResult AdbCaptureFactoryImpl::GetRuntimeClassName(
-    IDasReadOnlyString** pp_out_class_name)
-{
-    DAS_UTILS_GET_RUNTIME_CLASS_NAME_IMPL(
-        Das::AdbCaptureFactoryImpl,
-        pp_out_class_name);
 }
 
 DAS_NS_END

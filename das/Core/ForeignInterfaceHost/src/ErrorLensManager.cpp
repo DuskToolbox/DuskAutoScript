@@ -1,14 +1,17 @@
-#include <das/Core/ForeignInterfaceHost/CppSwigInterop.h>
 #include <das/Core/ForeignInterfaceHost/ErrorLensManager.h>
 #include <das/Core/Logger/Logger.h>
-#include <DAS/_autogen/OfficialIids.h>
+#include <das/DasApi.h>
+#include <das/Utils/CommonUtils.hpp>
+#include <das/Utils/Expected.h>
+#include <das/_autogen/idl/iids/OfficialIids.h>
 #include <unordered_set>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
 DAS_NS_ANONYMOUS_DETAILS_BEGIN
 
-auto GetIidVectorSize(IDasReadOnlyGuidVector* p_iid_vector)
+auto GetIidVectorSize(
+    Das::ExportInterface::IDasReadOnlyGuidVector* p_iid_vector)
     -> DAS::Utils::Expected<size_t>
 {
     size_t     iid_size{};
@@ -20,7 +23,8 @@ auto GetIidVectorSize(IDasReadOnlyGuidVector* p_iid_vector)
             get_iid_size_result,
             p_error_message.Put());
         DAS_CORE_LOG_ERROR(
-            "Error happened in class IDasGuidVector. Pointer = {}. Error code = {}. Error message = \"{}\".",
+            "Error happened in class IDasGuidVector. Pointer = {}. "
+            "Error code = {}. Error message = \"{}\".",
             static_cast<void*>(p_iid_vector),
             get_iid_size_result,
             p_error_message);
@@ -29,8 +33,9 @@ auto GetIidVectorSize(IDasReadOnlyGuidVector* p_iid_vector)
     return iid_size;
 }
 
-auto GetIidFromIidVector(IDasReadOnlyGuidVector* p_iid_vector, size_t iid_index)
-    -> DAS::Utils::Expected<DasGuid>
+auto GetIidFromIidVector(
+    Das::ExportInterface::IDasReadOnlyGuidVector* p_iid_vector,
+    size_t iid_index) -> DAS::Utils::Expected<DasGuid>
 {
     DasGuid    iid{DasIidOf<IDasBase>()};
     const auto get_iid_result = p_iid_vector->At(iid_index, &iid);
@@ -39,7 +44,8 @@ auto GetIidFromIidVector(IDasReadOnlyGuidVector* p_iid_vector, size_t iid_index)
         DasPtr<IDasReadOnlyString> p_error_message{};
         ::DasGetPredefinedErrorMessage(get_iid_result, p_error_message.Put());
         DAS_CORE_LOG_ERROR(
-            "Error happened in class IDasGuidVector. Pointer = {}. Error code = {}. Error message = \"{}\".",
+            "Error happened in class IDasGuidVector. Pointer = {}. "
+            "Error code = {}. Error message = \"{}\".",
             static_cast<void*>(p_iid_vector),
             get_iid_result,
             p_error_message);
@@ -51,8 +57,8 @@ auto GetIidFromIidVector(IDasReadOnlyGuidVector* p_iid_vector, size_t iid_index)
 DAS_NS_ANONYMOUS_DETAILS_END
 
 DasResult ErrorLensManager::Register(
-    IDasReadOnlyGuidVector* p_iid_vector,
-    IDasErrorLens*          p_error_lens)
+    Das::ExportInterface::IDasReadOnlyGuidVector* p_iid_vector,
+    PluginInterface::IDasErrorLens*               p_error_lens)
 {
     const auto get_iid_size_result = Details::GetIidVectorSize(p_iid_vector);
     if (!get_iid_size_result)
@@ -86,7 +92,8 @@ DasResult ErrorLensManager::Register(
             if (map_.count(iid) == 1)
             {
                 DAS_CORE_LOG_WARN(
-                    "Trying to register duplicate IDasErrorLens instance. Operation ignored."
+                    "Trying to register duplicate IDasErrorLens "
+                    "instance. Operation ignored."
                     "Pointer = {}. Iid = {}.",
                     static_cast<void*>(p_error_lens),
                     iid);
@@ -98,20 +105,9 @@ DasResult ErrorLensManager::Register(
     return DAS_S_OK;
 }
 
-DasResult ErrorLensManager::Register(
-    IDasSwigReadOnlyGuidVector* p_guid_vector,
-    IDasSwigErrorLens*          p_error_lens)
-{
-    const DasPtr<IDasErrorLens> p_cpp_error_lens =
-        MakeDasPtr<SwigToCpp<IDasSwigErrorLens>>(p_error_lens);
-    const auto p_cpp_guid_vector = DAS::MakeDasPtr<
-        IDasReadOnlyGuidVector,
-        SwigToCpp<IDasSwigReadOnlyGuidVector>>(p_guid_vector);
-    return Register(p_cpp_guid_vector.Get(), p_cpp_error_lens.Get());
-}
 DasResult ErrorLensManager::FindInterface(
-    const DasGuid&  iid,
-    IDasErrorLens** pp_out_lens)
+    const DasGuid&                   iid,
+    PluginInterface::IDasErrorLens** pp_out_lens)
 {
     DAS_UTILS_CHECK_POINTER(pp_out_lens)
     if (const auto it = map_.find(iid); it != map_.end())

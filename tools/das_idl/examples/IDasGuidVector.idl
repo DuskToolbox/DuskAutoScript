@@ -1,0 +1,55 @@
+// DAS IDL 示例文件
+// 用于演示代码生成器的功能
+// 此文件模拟 IDasGuidVector.h 的 IDL 定义
+
+namespace DAS::ExportInterface {
+
+// 枚举示例
+enum DasGuidVectorError {
+    None = 0,
+    InvalidIndex = -1,
+    NotFound = -2,
+}
+
+// 只读 GUID 向量接口
+[uuid("8ae436fe-590b-4b70-b24f-ed1327e9841c")]
+interface IDasReadOnlyGuidVector : IDasBase {
+    // 获取向量大小
+    DasResult Size([out] size_t* p_out_size);
+    
+    // 获取指定索引的 GUID
+    DasResult At(size_t index, [out] DasGuid* p_out_iid);
+    
+    // 查找 GUID 是否存在
+    DasResult Find(const DasGuid& iid);
+}
+
+// 可写 GUID 向量接口
+[uuid("ebc40f58-f1a6-49ff-9241-18d155576f9e")]
+interface IDasGuidVector : IDasBase {
+    // 获取向量大小
+    DasResult Size([out] size_t* p_out_size);
+    
+    // 获取指定索引的 GUID
+    DasResult At(size_t index, [out] DasGuid* p_out_iid);
+    
+    // 查找 GUID 是否存在
+    DasResult Find(const DasGuid& iid);
+    
+    // 添加新的 GUID
+    DasResult PushBack(const DasGuid& iid);
+    
+    // 转换为只读版本
+    DasResult ToConst([out] IDasReadOnlyGuidVector** pp_out_object);
+}
+
+// 带属性的接口示例
+[uuid("813fd58d-5632-4a43-a87e-26e412d9eadd")]
+interface IDasTestResult : IDasBase {
+    // 使用属性语法，自动生成 getter/setter
+    [get, set] int32 Id
+    [get, set] DasReadOnlyString Name
+    [get] DasGuid Guid
+}
+
+}

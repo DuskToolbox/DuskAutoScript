@@ -1,0 +1,21 @@
+import "DasTypes.idl";
+
+namespace Das::ExportInterface {
+
+[uuid("8AE436FE-590B-4B70-B24F-ED1327E9841C")]
+interface IDasReadOnlyGuidVector : IDasBase {
+    DasResult Size([out] uint64_t* p_out_size);
+    DasResult At(uint64_t index, [out] DasGuid* p_out_iid);
+    DasResult Find(const DasGuid& iid);
+}
+
+[uuid("EBC40F58-F1A6-49FF-9241-18D155576F9E")]
+interface IDasGuidVector : IDasBase {
+    DasResult Size([out] uint64_t* p_out_size);
+    DasResult At(uint64_t index, [out] DasGuid* p_out_iid);
+    DasResult Find(const DasGuid& iid);
+    DasResult PushBack(const DasGuid& iid);
+    DasResult ToConst([out] IDasReadOnlyGuidVector** pp_out_object);
+}
+
+}

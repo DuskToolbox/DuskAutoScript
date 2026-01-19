@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <cstring>
+#include <das/IDasBase.h>
 #include <das/Utils/Config.h>
 #include <thread>
 #include <type_traits>
@@ -44,8 +45,8 @@ private:                                                                       \
     DAS::Utils::RefCounter<class_name> ref_counter_{};                         \
                                                                                \
 public:                                                                        \
-    int64_t AddRef() override { return ref_counter_.AddRef(); }                \
-    int64_t Release() override { return ref_counter_.Release(this); }
+    uint32_t AddRef() override { return ref_counter_.AddRef(); }               \
+    uint32_t Release() override { return ref_counter_.Release(this); }
 
 #define DAS_UTILS_GET_RUNTIME_CLASS_NAME_IMPL(class_name, pp_out_class_name)   \
     static DasReadOnlyString result{static_cast<const char*>(                  \
@@ -204,17 +205,17 @@ template <class T>
 class RefCounter
 {
 private:
-    std::atomic_uint64_t ref_count_{0};
+    std::atomic_uint32_t ref_count_{0};
 
 public:
     RefCounter() = default;
     ~RefCounter() = default;
-    int64_t AddRef()
+    uint32_t AddRef()
     {
         ref_count_ += 1;
         return ref_count_;
     }
-    int64_t Release(T* p_managed_object)
+    uint32_t Release(T* p_managed_object)
     {
         ref_count_ -= 1;
         if (ref_count_ == 0)
@@ -350,8 +351,8 @@ namespace Details
             apply_impl(Impl&& impl) : impl_{std::forward<Impl>(impl)} {}
 
             // IDasBase
-            virtual int64_t AddRef() override { return 1; }
-            virtual int64_t Release() override { return 1; }
+            virtual uint32_t AddRef() override { return 1; }
+            virtual uint32_t Release() override { return 1; }
             DAS_IMPL        QueryInterface(const DasGuid& iid, void** pp_object)
                 override
             {

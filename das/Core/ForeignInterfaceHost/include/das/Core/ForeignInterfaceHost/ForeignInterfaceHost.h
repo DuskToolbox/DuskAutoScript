@@ -4,8 +4,7 @@
 #include <das/Core/ForeignInterfaceHost/Config.h>
 #include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHostEnum.h>
-#include <das/ExportInterface/DasJson.h>
-#include <das/ExportInterface/IDasSettings.h>
+#include <DAS/_autogen/idl/abi/DasJson.h>
 #include <das/IDasBase.h>
 #include <das/Utils/fmt.h>
 #include <mutex>
@@ -62,7 +61,7 @@ struct PluginSettingDesc
     std::optional<std::vector<std::string>> enum_descriptions;
     std::optional<std::string>              deprecation_message;
 
-    DasType type = DAS_TYPE_STRING;
+    ExportInterface::DasType type = Das::ExportInterface::DAS_TYPE_STRING;
     /**
      * @brief 保留参数，不参与序列化
      *

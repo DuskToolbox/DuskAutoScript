@@ -1,10 +1,10 @@
 // clang-format off
 #include <das/DasConfig.h>
 // clang-format on
+#include <DAS/_autogen/idl/abi/DasSettings.h>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
 #include <das/Core/Logger/Logger.h>
-#include <das/ExportInterface/IDasSettings.h>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/EnumUtils.hpp>
 #include <das/Utils/StringUtils.h>
@@ -115,16 +115,16 @@ auto(DAS_FMT_NS::formatter<
         switch (desc.type)
         {
             DAS_CORE_FOREIGNINTERFACEHOST_VERIFY_AND_FORMAT(
-                DAS_TYPE_BOOL,
+                Das::ExportInterface::DAS_TYPE_BOOL,
                 bool);
             DAS_CORE_FOREIGNINTERFACEHOST_VERIFY_AND_FORMAT(
-                DAS_TYPE_INT,
+                Das::ExportInterface::DAS_TYPE_INT,
                 std::int64_t);
             DAS_CORE_FOREIGNINTERFACEHOST_VERIFY_AND_FORMAT(
-                DAS_TYPE_FLOAT,
+                Das::ExportInterface::DAS_TYPE_FLOAT,
                 float);
             DAS_CORE_FOREIGNINTERFACEHOST_VERIFY_AND_FORMAT(
-                DAS_TYPE_STRING,
+                Das::ExportInterface::DAS_TYPE_STRING,
                 std::string);
         default:
             throw DAS::Utils::UnexpectedEnumException::FromEnum(desc.type);
@@ -224,16 +224,16 @@ void from_json(const nlohmann::json& input, PluginSettingDesc& output)
     input.at("type").get_to(output.type);
     switch (output.type)
     {
-    case DAS_TYPE_BOOL:
+    case Das::ExportInterface::DAS_TYPE_BOOL:
         output.default_value = input.at("defaultValue").get<bool>();
         break;
-    case DAS_TYPE_INT:
+    case Das::ExportInterface::DAS_TYPE_INT:
         output.default_value = input.at("defaultValue").get<std::int64_t>();
         break;
-    case DAS_TYPE_FLOAT:
+    case Das::ExportInterface::DAS_TYPE_FLOAT:
         output.default_value = input.at("defaultValue").get<float>();
         break;
-    case DAS_TYPE_STRING:
+    case Das::ExportInterface::DAS_TYPE_STRING:
         output.default_value = input.at("defaultValue").get<std::string>();
         break;
     default:
@@ -300,19 +300,19 @@ void from_json(const nlohmann::json& input, PluginPackageDesc& output)
     {
         switch (setting.type)
         {
-        case DAS_TYPE_BOOL:
+        case Das::ExportInterface::DAS_TYPE_BOOL:
             output.default_settings[output.name] =
                 std::get<bool>(setting.default_value);
             break;
-        case DAS_TYPE_INT:
+        case Das::ExportInterface::DAS_TYPE_INT:
             output.default_settings[output.name] =
                 std::get<std::int64_t>(setting.default_value);
             break;
-        case DAS_TYPE_FLOAT:
+        case Das::ExportInterface::DAS_TYPE_FLOAT:
             output.default_settings[output.name] =
                 std::get<float>(setting.default_value);
             break;
-        case DAS_TYPE_STRING:
+        case Das::ExportInterface::DAS_TYPE_STRING:
             output.default_settings[output.name] =
                 std::get<std::string>(setting.default_value);
             break;

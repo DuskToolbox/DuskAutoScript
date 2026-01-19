@@ -1,0 +1,49 @@
+import "DasTypes.idl";
+import "IDasCaptureManager.idl";
+import "IDasComponent.idl";
+
+namespace Das::ExportInterface {
+
+[uuid("8179F162-5E1A-4248-AC67-758D2AFF18A7")]
+interface IDasPluginInfo : IDasBase {
+    DasResult GetName([out] IDasReadOnlyString** pp_out_name);
+    DasResult GetDescription([out] IDasReadOnlyString** pp_out_description);
+    DasResult GetAuthor([out] IDasReadOnlyString** pp_out_author);
+    DasResult GetVersion([out] IDasReadOnlyString** pp_out_version);
+    DasResult GetSupportedSystem([out] IDasReadOnlyString** pp_out_supported_system);
+    DasResult GetPluginIid([out] DasGuid* p_out_guid);
+    DasResult GetPluginSettingsDescriptor([out] IDasReadOnlyString** pp_out_string);
+}
+
+[uuid("138DF2D2-A9E9-4A73-9B4F-AA6C754601CC")]
+interface IDasPluginInfoVector : IDasBase {
+    DasResult Size([out] uint64_t* p_out_size);
+    DasResult At(uint64_t index, [out] IDasPluginInfo** pp_out_info);
+}
+
+[uuid("C665F0C7-F766-4151-802A-533BDCE72D90")]
+interface IDasPluginManagerForUi : IDasBase {
+    DasResult GetAllPluginInfo([out] IDasPluginInfoVector** pp_out_plugin_info_vector);
+    DasResult FindInterface(const DasGuid& iid, [out] void** pp_object);
+    DasResult GetPluginSettingsJson(const DasGuid& plugin_guid, [out] IDasReadOnlyString** pp_out_json);
+    DasResult SetPluginSettingsJson(const DasGuid& plugin_guid, IDasReadOnlyString* p_json);
+    DasResult ResetPluginSettings(const DasGuid& plugin_guid);
+}
+
+[uuid("B2678FF8-720C-48E6-AC00-77D43D08F580")]
+interface IDasPluginManager : IDasBase {
+    DasResult CreateComponent(const DasGuid& iid, [out] IDasComponent** pp_out_component);
+    DasResult CreateCaptureManager(IDasReadOnlyString* p_environment_config, [out] IDasCaptureManager** pp_out_capture_manager);
+}
+
+[uuid("550B0110-23D2-4755-A822-AB4CB2B6BF06")]
+interface IDasInitializeIDasPluginManagerCallback : IDasBase {
+    DasResult OnFinished(DasResult initialize_result, IDasPluginManagerForUi* p_in_manager_without_owner_ship);
+}
+
+[uuid("32146CA1-C81F-4EBC-BE84-12F1F25114EE")]
+interface IDasInitializeIDasPluginManagerWaiter : IDasBase {
+    DasResult Wait();
+}
+
+}

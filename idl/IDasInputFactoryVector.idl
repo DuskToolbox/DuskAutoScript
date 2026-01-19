@@ -1,0 +1,13 @@
+import "DasTypes.idl";
+import "IDasInput.idl";
+
+namespace Das::ExportInterface {
+
+[uuid("43103B54-B9D6-404D-99D5-67328111A07C")]
+interface IDasInputFactoryVector : IDasBase {
+    DasResult Size([out] uint64_t* p_out_size);
+    DasResult At(uint64_t index, [out] IDasInputFactory** pp_out_factory);
+    DasResult Find(const DasGuid& iid, [out] IDasInputFactory** pp_out_factory);
+}
+
+}

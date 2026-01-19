@@ -1,16 +1,17 @@
 #ifndef DAS_CORE_EXCEPTIONS_UNEXPECTEDENUMEXCEPTION_H
 #define DAS_CORE_EXCEPTIONS_UNEXPECTEDENUMEXCEPTION_H
 
-#include <das/Utils/Config.h>
 #include <cstdint>
-#include <stdexcept>
+#include <das/DasException.hpp>
+#include <das/IDasBase.h>
+#include <das/Utils/Config.h>
 #include <string_view>
 
 DAS_UTILS_NS_BEGIN
 
-struct UnexpectedEnumException : public std::runtime_error
+struct UnexpectedEnumException : public DasException
 {
-    using Base = std::runtime_error;
+    using Base = DasException;
 
     explicit(false)
         UnexpectedEnumException(const std::string_view u8_enum_value);

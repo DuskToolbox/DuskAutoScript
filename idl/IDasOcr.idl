@@ -1,0 +1,19 @@
+import "DasTypes.idl";
+
+namespace Das::ExportInterface {
+
+[uuid("C3E877F4-C8F2-4F54-8755-45F145935589")]
+interface IDasOcrResult : IDasBase {
+}
+
+[uuid("FD7FE14E-BA30-4992-B114-F2CCC67A64E2")]
+interface IDasOcrResultVector : IDasBase {
+    DasResult EnumResult(uint64_t index, [out] IDasOcrResult** pp_out_result);
+}
+
+[uuid("E809216C-6C3B-4562-95E6-88B7BC4AA6C1")]
+interface IDasOcr : IDasBase {
+    DasResult FindText([out] IDasOcrResult** result, [out] uint64_t* result_count);
+}
+
+}

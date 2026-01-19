@@ -2,16 +2,15 @@
 #define DAS_CORE_EXCEPTIONS_PYTHONEXCEPTION_H
 
 #include <das/Core/Exceptions/Config.h>
+#include <das/DasException.hpp>
 #include <das/IDasBase.h>
 
 DAS_CORE_EXCEPTIONS_NS_BEGIN
 
-class PythonException : public std::runtime_error
+class PythonException : public DasException
 {
-    using Base = std::runtime_error;
-
 public:
-    DAS_USING_BASE_CTOR(Base);
+    explicit PythonException(const std::string& message);
 };
 
 DAS_CORE_EXCEPTIONS_NS_END

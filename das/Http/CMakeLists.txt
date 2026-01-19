@@ -9,7 +9,8 @@ target_link_libraries(DasHttp PRIVATE
         DasCore
         DasGateway
         DAS_EX_PRIVATE_LIBS
-        oatpp)
+        Boost::beast
+        Boost::asio)
 
 set_target_properties(DasHttp PROPERTIES
         CXX_STANDARD 20

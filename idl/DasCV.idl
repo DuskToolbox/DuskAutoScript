@@ -1,0 +1,34 @@
+import "DasTypes.idl";
+import "IDasImage.idl";
+
+namespace Das::ExportInterface {
+
+[uuid("DD8AE823-3493-4106-86DD-2B9C14C5655F")]
+interface IDasTemplateMatchResult : IDasBase {
+    [get, set] double score;
+    [get, set] DasRect match_rect;
+}
+
+enum DasTemplateMatchType {
+    /**
+     * @brief 归一化差的平方和（Normalized Sum of Squared Difference）
+     */
+    DAS_TEMPLATE_MATCH_TYPE_SQDIFF_NORMED = 1,
+    /**
+     * @brief 归一化互相关（Normalized Cross Correlation ）
+     */
+    DAS_TEMPLATE_MATCH_TYPE_CCORR_NORMED = 3,
+    /**
+     * @brief 归一化相关系数，即零均值归一化互相关（Zero-mean Normalized Cross
+     * Correlation）
+     */
+    DAS_TEMPLATE_MATCH_TYPE_CCOEFF_NORMED = 5,
+    DAS_TEMPLATE_MATCH_TYPE_FORCE_DWORD = 0x7FFFFFFF
+};
+
+[uuid("5D8E5986-E0C2-4AB8-9802-475E60EE55C0")]
+interface IDasCv : IDasBase {
+    DasResult TemplateMatchBest(IDasImage* p_image, IDasImage* p_template, DasTemplateMatchType type, [out] IDasTemplateMatchResult** pp_out_result);
+}
+
+}

@@ -1,0 +1,17 @@
+import "DasTypes.idl";
+import "IDasTypeInfo.idl";
+import "IDasImage.idl";
+
+namespace Das::PluginInterface {
+
+[uuid("69A9BDB0-4657-45B6-8ECB-E4A8F0428E95")]
+interface IDasCapture : IDasTypeInfo {
+    DasResult Capture([out] IDasImage** pp_out_image);
+}
+
+[uuid("35264072-8F42-46B5-99EA-3A83E0227CF9")]
+interface IDasCaptureFactory : IDasTypeInfo {
+    DasResult CreateInstance(IDasReadOnlyString* p_environment_json_config, IDasReadOnlyString* p_plugin_config, [out] IDasCapture** pp_out_object);
+}
+
+}

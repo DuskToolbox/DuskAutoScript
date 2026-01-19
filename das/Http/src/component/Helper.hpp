@@ -4,15 +4,15 @@
 #include "das/Core/Exceptions/DasException.h"
 #include "das/PluginInterface/IDasErrorLens.h"
 #include "das/Utils/fmt.h"
-#include "oatpp/web/server/api/ApiController.hpp"
+#include "beast/Request.hpp"
+#include "beast/JsonUtils.hpp"
 
 #include "dto/Global.hpp"
 
 #include <nlohmann/json.hpp>
-#include <oatpp/web/protocol/http/outgoing/BufferBody.hpp>
 
 #define DAS_HTTP_MAKE_RESPONSE(error_code)                                     \
-    MakeResponse(error_code, {__FILE__, __LINE__, DAS_FUNCTION})
+    Beast::HttpResponse::CreateErrorResponse(error_code, Das::Http::GetPredefinedErrorMessage(error_code))
 
 namespace Das::Http
 {
@@ -46,55 +46,6 @@ namespace Das::Http
 
         return p_u8_error_message;
     }
-
-    class DasApiController : public oatpp::web::server::api::ApiController
-    {
-    public:
-        DasApiController(
-            std::shared_ptr<ObjectMapper> object_mapper =
-                oatpp::parser::json::mapping::ObjectMapper::createShared())
-            : ApiController{std::move(object_mapper)}
-        {
-        }
-
-        auto MakeResponse(const oatpp::Void& p_response) const
-        {
-            return createDtoResponse(Status::CODE_200, p_response);
-        }
-
-        auto MakeResponse(const Core::DasException& ex)
-        {
-            const auto response = ApiResponse<void>::createShared();
-            response->code = ex.GetErrorCode();
-            response->message = ex.what();
-            return MakeResponse(response);
-        }
-
-        auto MakeResponse(
-            DasResult                        error_code,
-            const DasResponseSourceLocation& source_location)
-        {
-
-            const auto response = ApiResponse<void>::createShared();
-            response->code = error_code;
-            const auto message = DAS_FMT_NS::format(
-                "[{} {}:{}] {}.",
-                source_location.function,
-                source_location.file,
-                source_location.line,
-                GetPredefinedErrorMessage(error_code));
-            response->message = std::move(message);
-            return MakeResponse(response);
-        }
-
-        auto MakeSuccessResponse() const
-        {
-            const auto response = ApiResponse<void>::createShared();
-            response->code = DAS_S_OK;
-            response->message = "";
-            return MakeResponse(response);
-        }
-    };
 
     inline const char* DasString2RawString(IDasReadOnlyString* p_string)
     {

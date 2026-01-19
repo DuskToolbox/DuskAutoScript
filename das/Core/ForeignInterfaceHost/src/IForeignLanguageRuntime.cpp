@@ -33,7 +33,8 @@ auto CreateForeignLanguageRuntime(
     case Lua:
         goto on_no_interface;
     case Cpp:
-        return CppHost::CreateForeignLanguageRuntime(desc_base);
+        // TODO: 未来将重写 CppHost
+        goto on_no_interface;
     default:
         throw DAS::Utils::UnexpectedEnumException::FromEnum(desc_base.language);
     }

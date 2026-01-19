@@ -110,6 +110,77 @@ auto DasIidOf() -> const struct _das_GUID&;
         }                                                                      \
     }
 
+#define DAS_DEFINE_GUID_HOLDER_IN_NAMESPACE(                                  \
+    ns,                                                                        \
+    type,                                                                      \
+    l,                                                                         \
+    w1,                                                                        \
+    w2,                                                                        \
+    b1,                                                                        \
+    b2,                                                                        \
+    b3,                                                                        \
+    b4,                                                                        \
+    b5,                                                                        \
+    b6,                                                                        \
+    b7,                                                                        \
+    b8)                                                                        \
+    extern "C++"                                                               \
+    {                                                                          \
+        template <>                                                            \
+        struct DasIidHolder<ns::type>                                          \
+        {                                                                      \
+            static constexpr DasGuid iid =                                     \
+                {l, w1, w2, {b1, b2, b3, b4, b5, b6, b7, b8}};                 \
+        };                                                                     \
+        template <>                                                            \
+        constexpr const DasGuid& DasIidOf<ns::type>()                          \
+        {                                                                      \
+            return DasIidHolder<ns::type>::iid;                                \
+        }                                                                      \
+        template <>                                                            \
+        constexpr const DasGuid& DasIidOf<ns::type*>()                         \
+        {                                                                      \
+            return DasIidHolder<ns::type>::iid;                                \
+        }                                                                      \
+    }
+
+#define DAS_DEFINE_GUID_HOLDER_IN_NAMESPACE_WITH_IID(                         \
+    iid_name,                                                                  \
+    ns,                                                                        \
+    type,                                                                      \
+    l,                                                                         \
+    w1,                                                                        \
+    w2,                                                                        \
+    b1,                                                                        \
+    b2,                                                                        \
+    b3,                                                                        \
+    b4,                                                                        \
+    b5,                                                                        \
+    b6,                                                                        \
+    b7,                                                                        \
+    b8)                                                                        \
+    static const DasGuid iid_name =                                            \
+        {l, w1, w2, {b1, b2, b3, b4, b5, b6, b7, b8}};                         \
+    extern "C++"                                                               \
+    {                                                                          \
+        template <>                                                            \
+        struct DasIidHolder<ns::type>                                          \
+        {                                                                      \
+            static constexpr DasGuid iid =                                     \
+                {l, w1, w2, {b1, b2, b3, b4, b5, b6, b7, b8}};                 \
+        };                                                                     \
+        template <>                                                            \
+        constexpr const DasGuid& DasIidOf<ns::type>()                          \
+        {                                                                      \
+            return DasIidHolder<ns::type>::iid;                                \
+        }                                                                      \
+        template <>                                                            \
+        constexpr const DasGuid& DasIidOf<ns::type*>()                         \
+        {                                                                      \
+            return DasIidHolder<ns::type>::iid;                                \
+        }                                                                      \
+    }
+
 #define DAS_UUID_OF(type) DasIidOf<decltype(type)>()
 
 #endif // DAS_GUIDHOLDER_H

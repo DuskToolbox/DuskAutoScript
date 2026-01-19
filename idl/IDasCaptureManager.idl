@@ -1,0 +1,19 @@
+import "DasTypes.idl";
+import "IDasCapture.idl";
+
+namespace Das::ExportInterface {
+[uuid("9ED8685E-050E-4FF5-9E6C-2A2C25CAC117")]
+interface IDasCaptureManager : IDasBase {
+    DasResult EnumLoadErrorState(uint64_t index, [out] DasResult* p_error_code, [out] IDasReadOnlyString** pp_out_error_explanation);
+    /**
+     * @brief Enumerates all interfaces.
+     * @param index
+     * @param pp_out_interface
+     * @return DAS_S_OK if interface is valid. Otherwise return error code which is created by IDasCaptureFactory.
+     */
+    DasResult EnumInterface(uint64_t index, [out] IDasCapture** pp_out_interface);
+    DasResult RunPerformanceTest();
+    DasResult EnumPerformanceTestResult(uint64_t index, [out] DasResult* p_out_error_code, [out] int32_t* p_out_time_spent_in_ms, [out] IDasCapture** pp_out_capture, [out] IDasReadOnlyString** pp_out_error_explanation);
+}
+
+}

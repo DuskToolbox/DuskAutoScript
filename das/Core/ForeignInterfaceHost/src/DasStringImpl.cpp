@@ -1,11 +1,10 @@
 #include <algorithm>
 #include <boost/container_hash/hash.hpp>
 #include <cstring>
-#include <das/Core/Exceptions/DasException.h>
 #include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasConfig.h>
-#include <das/Utils/QueryInterface.hpp>
+#include <das/DasException.hpp>
 #include <magic_enum_format.hpp>
 #include <new>
 #include <nlohmann/json.hpp>
@@ -195,13 +194,43 @@ DasStringCppImpl::DasStringCppImpl(
 
 DasStringCppImpl::~DasStringCppImpl() = default;
 
-int64_t DasStringCppImpl::AddRef() { return ref_counter_.AddRef(); }
+uint32_t DasStringCppImpl::AddRef() { return ref_counter_.AddRef(); }
 
-int64_t DasStringCppImpl::Release() { return ref_counter_.Release(this); }
+uint32_t DasStringCppImpl::Release() { return ref_counter_.Release(this); }
 
 DasResult DasStringCppImpl::QueryInterface(const DasGuid& iid, void** pp_object)
 {
-    return DAS::Utils::QueryInterface<IDasReadOnlyString>(this, iid, pp_object);
+    if (pp_object == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    // 检查IID_IDasString
+    if (iid == DAS_IID_STRING)
+    {
+        *pp_object = static_cast<IDasString*>(this);
+        this->AddRef();
+        return DAS_S_OK;
+    }
+
+    // 检查IID_IDasReadOnlyString
+    if (iid == DAS_IID_READ_ONLY_STRING)
+    {
+        *pp_object = static_cast<IDasReadOnlyString*>(this);
+        this->AddRef();
+        return DAS_S_OK;
+    }
+
+    // 检查IID_IDasBase
+    if (iid == DAS_IID_BASE)
+    {
+        *pp_object = static_cast<IDasBase*>(this);
+        this->AddRef();
+        return DAS_S_OK;
+    }
+
+    *pp_object = nullptr;
+    return DAS_E_NO_INTERFACE;
 }
 
 const UChar32* DasStringCppImpl::CBegin()
@@ -655,14 +684,33 @@ namespace Details
         static NullString<UChar32>  null_u32string_;
 
     public:
-        int64_t   AddRef() override { return 1; }
-        int64_t   Release() override { return 1; }
+        uint32_t  AddRef() override { return 1; }
+        uint32_t  Release() override { return 1; }
         DasResult QueryInterface(const DasGuid& iid, void** pp_object) override
         {
-            return DAS::Utils::QueryInterface<IDasReadOnlyString>(
-                this,
-                iid,
-                pp_object);
+            if (pp_object == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+
+            // 检查IID_IDasReadOnlyString
+            if (iid == DAS_IID_READ_ONLY_STRING)
+            {
+                *pp_object = static_cast<IDasReadOnlyString*>(this);
+                this->AddRef();
+                return DAS_S_OK;
+            }
+
+            // 检查IID_IDasBase
+            if (iid == DAS_IID_BASE)
+            {
+                *pp_object = static_cast<IDasBase*>(this);
+                this->AddRef();
+                return DAS_S_OK;
+            }
+
+            *pp_object = nullptr;
+            return DAS_E_NO_INTERFACE;
         }
 
         DasResult GetUtf8(const char** out_string) override

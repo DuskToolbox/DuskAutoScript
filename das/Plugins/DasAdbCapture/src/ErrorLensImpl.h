@@ -1,7 +1,7 @@
 #ifndef DAS_PLUGINS_DASADBCAPTURE_ERRORLENSIMPL_H
 #define DAS_PLUGINS_DASADBCAPTURE_ERRORLENSIMPL_H
 
-#include <das/PluginInterface/IDasErrorLens.h>
+#include <DAS/_autogen/idl/wrapper/Das.PluginInterface.IDasErrorLens.Implements.hpp>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/StringUtils.h>
 #include <string>
@@ -12,7 +12,8 @@ DAS_NS_BEGIN
 constexpr DasResult CAPTURE_DATA_TOO_LESS = -1;
 constexpr DasResult UNSUPPORTED_COLOR_FORMAT = -2;
 
-class AdbCaptureErrorLens final : public IDasErrorLens
+class AdbCaptureErrorLens final
+    : public PluginInterface::DasErrorLensImplBase<AdbCaptureErrorLens>
 {
     using ErrorCodeMap =
         std::unordered_map<DasResult, DasPtr<IDasReadOnlyString>>;
@@ -32,12 +33,9 @@ class AdbCaptureErrorLens final : public IDasErrorLens
 public:
     AdbCaptureErrorLens();
     ~AdbCaptureErrorLens();
-    // IDasBase
-    int64_t   AddRef() override;
-    int64_t   Release() override;
-    DasResult QueryInterface(const DasGuid& iid, void** pp_out_object) override;
     // IDasErrorLens
-    DasResult GetSupportedIids(IDasReadOnlyGuidVector** pp_out_iids) override;
+    DasResult GetSupportedIids(
+        ExportInterface::IDasReadOnlyGuidVector** pp_out_iids) override;
     DasResult GetErrorMessage(
         IDasReadOnlyString*  locale_name,
         DasResult            error_code,

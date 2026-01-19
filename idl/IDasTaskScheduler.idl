@@ -1,0 +1,36 @@
+import "DasTypes.idl";
+
+namespace Das::ExportInterface {
+
+/**
+ * @brief 因为实时地找插件拿信息需要切线程，所以把插件信息都缓存在这个类型里面。
+ * 这是纯C++ API，没有考虑为其它语言提供服务
+ */
+[uuid("CAD61DC0-CFFF-4069-BBE5-349D371189FB")]
+interface IDasTaskInfo : IDasWeakReferenceSource {
+    DasResult GetProperty(IDasReadOnlyString* property_name, [out] IDasReadOnlyString** pp_out_value);
+    DasResult GetInitializeState();
+    DasResult GetIid([out] DasGuid* p_out_iid);
+}
+
+[uuid("E997A124-CCCD-47A8-A632-91C5991FC639")]
+interface IDasTaskInfoVector : IDasBase {
+    DasResult EnumByIndex(uint64_t index, [out] IDasTaskInfo** pp_out_info);
+    DasResult EnumNextExecuteTimeByIndex(uint64_t index, [out] int64_t* p_out_time);
+}
+
+// pure C++ API
+[uuid("28DCD3C8-E528-414A-8649-F7E63C3C1715")]
+interface IDasTaskScheduler : IDasBase {
+    DasResult GetAllWorkingTasks([out] IDasTaskInfoVector** pp_out_task_info_vector);
+    DasResult AddTask(IDasTaskInfo* p_task_info);
+    DasResult RemoveTask(IDasTaskInfo* p_task_info);
+    DasResult UpdateEnvironmentConfig(IDasReadOnlyString* p_config_json);
+    DasResult IsTaskExecuting([out] bool* p_out_is_executing);
+    DasResult SetEnabled(bool enabled);
+    DasResult GetEnabled([out] bool* p_out_enabled);
+    DasResult ForceStart();
+    DasResult RequestStop();
+}
+
+}

@@ -1,0 +1,22 @@
+namespace Das::PluginInterface {
+
+enum DasPluginFeature {
+    DAS_PLUGIN_FEATURE_CAPTURE_FACTORY = 0,
+    DAS_PLUGIN_FEATURE_ERROR_LENS = 1,
+    DAS_PLUGIN_FEATURE_TASK = 2,
+    DAS_PLUGIN_FEATURE_INPUT_FACTORY = 4,
+    DAS_PLUGIN_FEATURE_COMPONENT_FACTORY = 8,
+    DAS_PLUGIN_FEATURE_FORCE_DWORD = 0x7FFFFFFF
+}
+
+[uuid("09EA2A40-6A10-4756-AB2B-41B2FD75AB36")]
+interface IDasPluginPackage : IDasBase {
+    DasResult EnumFeature(uint64_t index, [out] DasPluginFeature* p_out_feature);
+    DasResult CreateFeatureInterface(uint64_t index, [out] void** pp_out_interface);
+    /**
+     * @brief 插件检查是否还有已创建的接口实例存活，若有，返回 false；否则返回 true。
+     */
+    bool CanUnloadNow();
+}
+
+}

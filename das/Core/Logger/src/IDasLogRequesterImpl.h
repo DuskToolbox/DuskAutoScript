@@ -1,7 +1,8 @@
 #ifndef DAS_CORE_LOGGER_IDASLOGREQUESTERIMPL_H
 #define DAS_CORE_LOGGER_IDASLOGREQUESTERIMPL_H
 
-#include <das/ExportInterface/DasLogger.h>
+#include "das/DasString.hpp"
+#include <DAS/_autogen/idl/abi/DasLogger.h>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/fmt.h>
 #include <boost/circular_buffer.hpp>
@@ -11,23 +12,27 @@
 template <typename Mutex>
 class DasLogRequesterSink;
 
-class IDasLogRequesterImpl final : public IDasLogRequester
+class IDasLogRequesterImpl final : public Das::ExportInterface::IDasLogRequester
 {
-    using Type = std::shared_ptr<std::string>;
+    using Type = DasReadOnlyString;
     using SpLogRequesterSink = std::shared_ptr<DasLogRequesterSink<std::mutex>>;
     std::mutex                                         mutex_{};
     boost::circular_buffer<Type, std::allocator<Type>> buffer_;
     SpLogRequesterSink                                 sp_log_requester_sink_;
-    DAS_UTILS_IDASBASE_AUTO_IMPL(IDasLogRequesterImpl)
+
 public:
     IDasLogRequesterImpl(uint32_t max_buffer_size, SpLogRequesterSink sp_sink);
     ~IDasLogRequesterImpl();
     // IDasBase
-    DasResult QueryInterface(const DasGuid& iid, void** pp_object) override;
-    // IDasLogRequester
-    DasResult RequestOne(IDasLogReader* p_reader) override;
+    uint32_t AddRef() override;
+    uint32_t Release() override;
+    DasResult QueryInterface(const DasGuid& iid, void** pp_out_object) override;    // IDasLogRequester
+    DasResult RequestOne(Das::ExportInterface::IDasLogReader* p_reader) override;
     // IDasLogRequesterImpl
-    void Accept(std::shared_ptr<std::string> sp_message);
+    void Accept(const std::shared_ptr<std::string>& sp_message);
+
+private:
+    uint32_t ref_counter_{};
 };
 
 template <typename Mutex>

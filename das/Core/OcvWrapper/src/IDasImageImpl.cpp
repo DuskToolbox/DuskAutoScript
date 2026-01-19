@@ -1,16 +1,15 @@
 #include "IDasImageImpl.h"
 #include "Config.h"
-#include <das/Core/ForeignInterfaceHost/CppSwigInterop.h>
+#include "IDasMemory.h"
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Core/Logger/Logger.h>
-#include <das/ExportInterface/IDasImage.h>
+#include <DAS/_autogen/idl/abi/IDasImage.h>
 #include <das/Utils/Expected.h>
-#include <das/Utils/QueryInterface.hpp>
 #include <das/Utils/StreamUtils.hpp>
 #include <filesystem>
 #include <fstream>
 #include <utility>
-#include <vector>
+#include <utility>
 
 DAS_DISABLE_WARNING_BEGIN
 
@@ -21,28 +20,18 @@ DAS_IGNORE_OPENCV_WARNING
 
 DAS_DISABLE_WARNING_END
 
-DasSwigImage::DasSwigImage() = default;
-
-DasSwigImage::DasSwigImage(DAS::DasPtr<IDasImage> p_image)
-    : p_image_{std::move(p_image)}
-{
-}
-
-IDasImage* DasSwigImage::Get() const { return p_image_.Get(); }
-
 DAS_CORE_OCVWRAPPER_NS_BEGIN
-
 DAS_NS_ANONYMOUS_DETAILS_BEGIN
 
-auto ToOcvType(DasImageFormat format) -> DAS::Utils::Expected<int>
+auto ToOcvType(ExportInterface::DasImageFormat format) -> DAS::Utils::Expected<int>
 {
     switch (format)
     {
-    case DAS_IMAGE_FORMAT_RGB_888:
+    case Das::ExportInterface::DAS_IMAGE_FORMAT_RGB_888:
         return CV_8UC3;
-    case DAS_IMAGE_FORMAT_RGBA_8888:
+    case Das::ExportInterface::DAS_IMAGE_FORMAT_RGBA_8888:
         [[fallthrough]];
-    case DAS_IMAGE_FORMAT_RGBX_8888:
+    case Das::ExportInterface::DAS_IMAGE_FORMAT_RGBX_8888:
         return CV_8UC4;
     default:
         return tl::make_unexpected(DAS_E_INVALID_ENUM);
@@ -52,25 +41,67 @@ auto ToOcvType(DasImageFormat format) -> DAS::Utils::Expected<int>
 DAS_NS_ANONYMOUS_DETAILS_END
 
 IDasImageImpl::IDasImageImpl(
-    int         height,
-    int         width,
-    int         type,
-    void*       p_data,
-    IDasMemory* p_das_data)
+    int                                        height,
+    int                                        width,
+    int                                        type,
+    void*                                      p_data,
+    Das::ExportInterface::IDasMemory* p_das_data)
     : p_memory_{p_das_data}, mat_{height, width, type, p_data}
 {
 }
 
 IDasImageImpl::IDasImageImpl(cv::Mat mat) : p_memory_{}, mat_{std::move(mat)} {}
 
+uint32_t IDasImageImpl::AddRef()
+{
+    ++ref_counter_;
+    return ref_counter_;
+}
+
+uint32_t IDasImageImpl::Release()
+{
+    --ref_counter_;
+    return ref_counter_;
+}
+
 DasResult IDasImageImpl::QueryInterface(
     const DasGuid& iid,
     void**         pp_out_object)
 {
-    return DAS::Utils::QueryInterface<IDasImage>(this, iid, pp_out_object);
+    if (pp_out_object == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    // 检查IID_IDasImage
+    if (iid == DasIidOf<Das::ExportInterface::IDasImage>())
+    {
+        *pp_out_object = static_cast<Das::ExportInterface::IDasImage*>(this);
+        this->AddRef();
+        return DAS_S_OK;
+    }
+
+    // 检查IID_IDasImageImpl
+    if (iid == DasIidOf<IDasImageImpl>())
+    {
+        *pp_out_object = static_cast<IDasImageImpl*>(this);
+        this->AddRef();
+        return DAS_S_OK;
+    }
+
+    // 检查IID_IDasBase
+    if (iid == DasIidOf<Das::ExportInterface::IDasBase>())
+    {
+        *pp_out_object = static_cast<Das::ExportInterface::IDasBase*>(this);
+        this->AddRef();
+        return DAS_S_OK;
+    }
+
+    *pp_out_object = nullptr;
+    return DAS_E_NO_INTERFACE;
 }
 
-DasResult IDasImageImpl::GetSize(DasSize* p_out_size)
+DasResult IDasImageImpl::GetSize(Das::ExportInterface::DasSize* p_out_size)
 {
     DAS_UTILS_CHECK_POINTER(p_out_size)
 
@@ -80,7 +111,7 @@ DasResult IDasImageImpl::GetSize(DasSize* p_out_size)
     return DAS_S_OK;
 }
 
-DasResult IDasImageImpl::GetChannelCount(int* p_out_channel_count)
+DasResult IDasImageImpl::GetChannelCount(int32_t* p_out_channel_count)
 {
     DAS_UTILS_CHECK_POINTER(p_out_channel_count)
 
@@ -89,7 +120,7 @@ DasResult IDasImageImpl::GetChannelCount(int* p_out_channel_count)
     return DAS_S_OK;
 }
 
-DasResult IDasImageImpl::Clip(const DasRect* p_rect, IDasImage** pp_out_image)
+DasResult IDasImageImpl::Clip(const Das::ExportInterface::DasRect* p_rect, Das::ExportInterface::IDasImage** pp_out_image)
 {
     DAS_UTILS_CHECK_POINTER(p_rect)
     DAS_UTILS_CHECK_POINTER(pp_out_image)
@@ -110,27 +141,27 @@ DasResult IDasImageImpl::Clip(const DasRect* p_rect, IDasImage** pp_out_image)
     }
 }
 
-DasResult IDasImageImpl::GetDataSize(size_t* p_out_size)
+DasResult IDasImageImpl::GetDataSize(uint64_t* p_out_size)
 {
     DAS_UTILS_CHECK_POINTER(p_out_size)
 
-    size_t result = mat_.total();
+    uint64_t result = mat_.total();
     result *= mat_.elemSize1();
     *p_out_size = result;
 
     return DAS_S_OK;
 }
 
-DasResult IDasImageImpl::CopyTo(unsigned char* p_out_memory)
+DasResult IDasImageImpl::GetData(unsigned char* p_out_data)
 {
-    DAS_UTILS_CHECK_POINTER(p_out_memory)
+    DAS_UTILS_CHECK_POINTER(p_out_data)
 
     try
     {
         size_t data_size;
         GetDataSize(&data_size);
         const auto int_data_size = static_cast<int>(data_size);
-        mat_.copyTo({p_out_memory, int_data_size});
+        mat_.copyTo({p_out_data, int_data_size});
     }
     catch (cv::Exception& ex)
     {
@@ -161,9 +192,9 @@ DasResult CreateIDasImageFromEncodedData(
     const auto int_data_size = static_cast<int>(data_size);
     switch (data_format)
     {
-    case DAS_IMAGE_FORMAT_JPG:
+    case Das::ExportInterface::DAS_IMAGE_FORMAT_JPG:
         [[fallthrough]];
-    case DAS_IMAGE_FORMAT_PNG:
+    case Das::ExportInterface::DAS_IMAGE_FORMAT_PNG:
     {
         if (data_size == 0)
         {
@@ -346,25 +377,4 @@ DasResult DasPluginLoadImageFromResource(
     }
 }
 
-DasRetImage DasPluginLoadImageFromResource(
-    IDasSwigTypeInfo* p_type_info,
-    DasReadOnlyString relative_path)
-{
-    DasRetImage            result{};
-    DAS::DasPtr<IDasImage> p_image;
-
-    Das::Core::ForeignInterfaceHost::SwigToCpp<IDasSwigTypeInfo> cpp_type_info{
-        p_type_info};
-
-    result.error_code = DasPluginLoadImageFromResource(
-        &cpp_type_info,
-        relative_path.Get(),
-        p_image.Put());
-
-    if (DAS::IsOk(result.error_code))
-    {
-        result.value = p_image;
-    }
-
-    return result;
-}
+DAS_CORE_OCVWRAPPER_NS_END

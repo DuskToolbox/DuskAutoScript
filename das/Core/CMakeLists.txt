@@ -3,78 +3,234 @@ add_custom_target(DasCoreObjectsPreBuild ALL)
 add_dependencies(DasCoreObjects DasCoreObjectsPreBuild)
 add_dependencies(DasGateway DasCoreObjectsPreBuild)
 
-message("Python3 is required because we need to run script.")
-find_package(Python3 COMPONENTS Interpreter REQUIRED)
+# 引入 DasIdlGenerator.cmake 模块
+if (NOT EXISTS "${CMAKE_SOURCE_DIR}/cmake/DasIdlGenerator.cmake")
+    message(FATAL_ERROR "DasIdlGenerator.cmake not found at ${CMAKE_SOURCE_DIR}/cmake/DasIdlGenerator.cmake")
+endif ()
+include("${CMAKE_SOURCE_DIR}/cmake/DasIdlGenerator.cmake")
+message(STATUS "[DAS IDL] DasIdlGenerator.cmake module loaded successfully")
 
-# 枚举所有头文件
-file(GLOB_RECURSE DAS_EXPORT_HEADERS "${CMAKE_SOURCE_DIR}/include/das/*")
-set(DAS_AUTOGEN_OUTPUT_FILES
-    "${CMAKE_BINARY_DIR}/DAS/include/DAS/_autogen/OfficialIids.h"
-    "${CMAKE_BINARY_DIR}/DAS/include/DAS/_autogen/OfficialIids.cpp"
-    "${CMAKE_BINARY_DIR}/DAS/include/DAS/_autogen/CppSwigBiMap.h"
-    "${CMAKE_BINARY_DIR}/DAS/include/DAS/_autogen/CppSwigBiMap.cpp"
-    # "${CMAKE_BINARY_DIR}/DAS/include/DAS/_autogen/CppSwigInteropFactory.h"
-    # "${CMAKE_BINARY_DIR}/DAS/include/DAS/_autogen/CppSwigInteropFactory.cpp"
-)
+# 确保Python虚拟环境已创建（在CMake配置阶段运行）
+message(STATUS "[DAS IDL] Setting up Python virtual environment...")
+das_idl_setup_venv()
+if (NOT EXISTS "${DAS_IDL_VENV_PYTHON}")
+    message(FATAL_ERROR "[DAS IDL] Python virtual environment setup failed. ${DAS_IDL_VENV_PYTHON} does not exist.")
+endif ()
+message(STATUS "[DAS IDL] Python virtual environment is ready at ${DAS_IDL_VENV_PYTHON}")
+
+# 收集所有IDL文件
+file(GLOB DAS_IDL_ROOT "${CMAKE_SOURCE_DIR}/idl/*.idl")
+set(DAS_IDL_FILES ${DAS_IDL_ROOT})
+
+# 设置IDL生成器输出目录
+set(DAS_IDL_ABI_OUTPUT_DIR "${CMAKE_BINARY_DIR}/das/include/das/_autogen/idl/abi")
+set(DAS_IDL_WRAPPER_OUTPUT_DIR "${CMAKE_BINARY_DIR}/das/include/das/_autogen/idl/wrapper")
+set(DAS_IDL_IMPLEMENTS_OUTPUT_DIR "${CMAKE_BINARY_DIR}/das/include/das/_autogen/idl/wrapper")
+set(DAS_IDL_SWIG_OUTPUT_DIR "${CMAKE_BINARY_DIR}/das/include/das/_autogen/idl/swig")
+set(DAS_IDL_BATCH_CONFIG "${CMAKE_BINARY_DIR}/das/idl_batch_config.json")
+
+# 在CMake中生成IDL批量配置JSON文件
+set(DAS_IDL_JSON_CONFIG "[\n")
+set(IS_FIRST_ITEM TRUE)
+
+foreach (IDL_FILE ${DAS_IDL_FILES})
+    if (IS_FIRST_ITEM)
+        set(IS_FIRST_ITEM FALSE)
+    else ()
+        string(APPEND DAS_IDL_JSON_CONFIG ",\n")
+    endif ()
+
+    get_filename_component(IDL_FILENAME "${IDL_FILE}" NAME_WE)
+    set(IDL_ABI_SUBDIR "${DAS_IDL_ABI_OUTPUT_DIR}")
+    set(IDL_WRAPPER_SUBDIR "${DAS_IDL_WRAPPER_OUTPUT_DIR}")
+    set(IDL_IMPLEMENTS_SUBDIR "${DAS_IDL_IMPLEMENTS_OUTPUT_DIR}")
+    set(IDL_SWIG_SUBDIR "${DAS_IDL_SWIG_OUTPUT_DIR}")
+
+    string(APPEND DAS_IDL_JSON_CONFIG "    {\n")
+    string(APPEND DAS_IDL_JSON_CONFIG "        \"-i\": \"${IDL_FILE}\",\n")
+    string(APPEND DAS_IDL_JSON_CONFIG "        \"--raw-output-dir\": \"${IDL_ABI_SUBDIR}\",\n")
+    string(APPEND DAS_IDL_JSON_CONFIG "        \"--wrapper-output-dir\": \"${IDL_WRAPPER_SUBDIR}\",\n")
+    string(APPEND DAS_IDL_JSON_CONFIG "        \"--implements-output-dir\": \"${IDL_IMPLEMENTS_SUBDIR}\",\n")
+    string(APPEND DAS_IDL_JSON_CONFIG "        \"--swig-output-dir\": \"${IDL_SWIG_SUBDIR}\",\n")
+    string(APPEND DAS_IDL_JSON_CONFIG "        \"--swig\": true,\n")
+    string(APPEND DAS_IDL_JSON_CONFIG "        \"--cpp-wrapper\": true,\n")
+    string(APPEND DAS_IDL_JSON_CONFIG "        \"--cpp-implements\": true\n")
+    string(APPEND DAS_IDL_JSON_CONFIG "    }")
+endforeach ()
+
+string(APPEND DAS_IDL_JSON_CONFIG "\n]")
+
+# 将JSON配置写入文件
+file(WRITE "${DAS_IDL_BATCH_CONFIG}" "${DAS_IDL_JSON_CONFIG}")
+message(STATUS "Generated IDL batch configuration: ${DAS_IDL_BATCH_CONFIG}")
+
+# 设置更新列表文件路径
+set(DAS_IDL_UPDATE_LIST "${CMAKE_BINARY_DIR}/das/idl_update_list.txt")
+
+# IDL增量检查命令（检查哪些IDL需要重新生成）
 add_custom_command(
-    OUTPUT ${DAS_AUTOGEN_OUTPUT_FILES}
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/generator.py -I${CMAKE_SOURCE_DIR}/include/das -O${CMAKE_BINARY_DIR}/DAS/include/DAS/_autogen -M0
-    DEPENDS ${DAS_EXPORT_HEADERS} ${CMAKE_SOURCE_DIR}/tools/generator.py
-    COMMENT "Scan header and generate sources."
-)
-add_custom_command(
-    TARGET DasCoreObjectsPreBuild PRE_BUILD
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/generator.py -I${CMAKE_SOURCE_DIR}/include/das -O${CMAKE_SOURCE_DIR}/das/Utils/include/das/Utils -M1
-    DEPENDS ${DAS_EXPORT_HEADERS} ${CMAKE_SOURCE_DIR}/tools/generator.py
-    COMMENT "Generate PresetTypeInheritanceInfo.h."
+        OUTPUT ${DAS_IDL_UPDATE_LIST}
+        COMMAND ${DAS_IDL_VENV_PYTHON} ${CMAKE_SOURCE_DIR}/tools/das_idl/check_idl_updates.py
+        --config ${DAS_IDL_BATCH_CONFIG}
+        --output ${DAS_IDL_UPDATE_LIST}
+        DEPENDS ${DAS_IDL_FILES} ${DAS_IDL_BATCH_CONFIG}
+        ${CMAKE_SOURCE_DIR}/tools/das_idl/das_idl_gen.py
+        ${CMAKE_SOURCE_DIR}/tools/das_idl/das_idl_parser.py
+        ${CMAKE_SOURCE_DIR}/tools/das_idl/das_cpp_generator.py
+        ${CMAKE_SOURCE_DIR}/tools/das_idl/das_cpp_wrapper_generator.py
+        ${CMAKE_SOURCE_DIR}/tools/das_idl/das_swig_generator.py
+        ${CMAKE_SOURCE_DIR}/tools/das_idl/check_idl_updates.py
+        COMMENT "Check which IDL files need to be regenerated"
+        VERBATIM
 )
 
-message("Generating source...")
-execute_process(
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/generator.py -I${CMAKE_SOURCE_DIR}/include/das -O${CMAKE_BINARY_DIR}/DAS/include/DAS/_autogen -M0
+# 创建IDL增量检查目标
+add_custom_target(DasCoreIdlUpdateList DEPENDS ${DAS_IDL_UPDATE_LIST})
+
+# 执行IDL批量生成的自定义命令（使用虚拟环境，只生成需要更新的IDL）
+add_custom_command(
+        OUTPUT ${DAS_IDL_ABI_OUTPUT_DIR}/.generated_stamp
+        COMMAND ${DAS_IDL_VENV_PYTHON} ${CMAKE_SOURCE_DIR}/tools/das_idl/das_idl_batch_gen.py
+        --config ${DAS_IDL_BATCH_CONFIG}
+        --update-list ${DAS_IDL_UPDATE_LIST}
+        COMMAND ${CMAKE_COMMAND} -E touch ${DAS_IDL_ABI_OUTPUT_DIR}/.generated_stamp
+        DEPENDS ${DAS_IDL_UPDATE_LIST}
+        ${CMAKE_SOURCE_DIR}/tools/das_idl/das_idl_batch_gen.py
+        ${CMAKE_SOURCE_DIR}/tools/das_idl/das_idl_gen.py
+        ${CMAKE_SOURCE_DIR}/tools/das_idl/das_idl_parser.py
+        ${CMAKE_SOURCE_DIR}/tools/das_idl/das_cpp_generator.py
+        ${CMAKE_SOURCE_DIR}/tools/das_idl/das_cpp_wrapper_generator.py
+        ${CMAKE_SOURCE_DIR}/tools/das_idl/das_swig_generator.py
+        COMMENT "Generate code from IDL files using virtual environment (incremental)"
+        VERBATIM
 )
-execute_process(
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/generator.py -I${CMAKE_SOURCE_DIR}/include/das -O${CMAKE_SOURCE_DIR}/das/Utils/include/das/Utils -M1
+
+# 创建IDL批量生成目标
+add_custom_target(DasCoreIdlGenerated DEPENDS ${DAS_IDL_ABI_OUTPUT_DIR}/.generated_stamp)
+add_dependencies(DasCoreIdlGenerated DasCoreIdlUpdateList)
+
+# 创建强制重新生成所有IDL的自定义目标（可在IDE中右键点击执行）
+add_custom_target(DasCoreIdlForceRegenerate
+    COMMAND ${CMAKE_COMMAND} -E echo "[DAS IDL] Force regenerating all IDL files..."
+    COMMAND ${CMAKE_COMMAND} -E remove_directory ${DAS_IDL_ABI_OUTPUT_DIR}
+    COMMAND ${CMAKE_COMMAND} -E remove_directory ${DAS_IDL_WRAPPER_OUTPUT_DIR}
+    COMMAND ${CMAKE_COMMAND} -E remove_directory ${DAS_IDL_SWIG_OUTPUT_DIR}
+    COMMAND ${CMAKE_COMMAND} -E echo "[DAS IDL] Removing old update list file..."
+    COMMAND ${CMAKE_COMMAND} -E remove ${DAS_IDL_UPDATE_LIST}
+    COMMAND ${CMAKE_COMMAND} -E echo "[DAS IDL] Touching update list file to force regeneration..."
+    COMMAND ${CMAKE_COMMAND} -E touch ${DAS_IDL_UPDATE_LIST}
+    COMMAND ${CMAKE_COMMAND} -E echo "[DAS IDL] Running IDL generation with force flag..."
+    COMMAND ${DAS_IDL_VENV_PYTHON} ${CMAKE_SOURCE_DIR}/tools/das_idl/check_idl_updates.py
+        --config ${DAS_IDL_BATCH_CONFIG}
+        --output ${DAS_IDL_UPDATE_LIST}
+        --force
+    COMMAND ${DAS_IDL_VENV_PYTHON} ${CMAKE_SOURCE_DIR}/tools/das_idl/das_idl_batch_gen.py
+        --config ${DAS_IDL_BATCH_CONFIG}
+        --update-list ${DAS_IDL_UPDATE_LIST}
+    COMMAND ${CMAKE_COMMAND} -E touch ${DAS_IDL_ABI_OUTPUT_DIR}/.generated_stamp
+    COMMAND ${CMAKE_COMMAND} -E echo "[DAS IDL] All IDL files force regenerated successfully!"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    COMMENT "Force regenerate all IDL files"
 )
+
+# 生成swig_all.i文件的自定义命令（汇总所有SWIG接口）
+add_custom_command(
+        OUTPUT ${DAS_IDL_SWIG_OUTPUT_DIR}/.swig_all_generated
+        COMMAND ${CMAKE_COMMAND} -DTIME=%<TARGET_PROPERTY:DasCore,GENERATOR_TIME>
+        -DSWIG_OUTPUT_DIR=${DAS_IDL_SWIG_OUTPUT_DIR}
+        -DABI_OUTPUT_DIR=${DAS_IDL_ABI_OUTPUT_DIR}
+        -P ${CMAKE_SOURCE_DIR}/cmake/generate_swig_all_i.cmake
+        COMMAND ${CMAKE_COMMAND} -E touch ${DAS_IDL_SWIG_OUTPUT_DIR}/.swig_all_generated
+        DEPENDS ${DAS_IDL_ABI_OUTPUT_DIR}/.generated_stamp
+        COMMENT "Generate SWIG _all.i summary file"
+        VERBATIM
+)
+
+# 创建SWIG汇总文件生成目标
+add_custom_target(DasCoreSwigAllGenerated DEPENDS ${DAS_IDL_SWIG_OUTPUT_DIR}/.swig_all_generated)
+add_dependencies(DasCoreSwigAllGenerated DasCoreIdlGenerated)
+
+# 让预构建目标依赖IDL生成目标，确保增量检查脚本被执行
+add_dependencies(DasCoreObjectsPreBuild DasCoreIdlUpdateList DasCoreIdlGenerated DasCoreSwigAllGenerated)
+
+# ====== 官方IID列表生成 ======
+# 设置OfficialIids输出目录
+set(DAS_OFFICIAL_IIDS_OUTPUT_DIR "${CMAKE_BINARY_DIR}/das/include/das/_autogen/idl/iids")
+set(DAS_OFFICIAL_IIDS_HEADER "${DAS_OFFICIAL_IIDS_OUTPUT_DIR}/OfficialIids.h")
+set(DAS_OFFICIAL_IIDS_SOURCE "${DAS_OFFICIAL_IIDS_OUTPUT_DIR}/OfficialIids.cpp")
+set(DAS_OFFICIAL_IIDS_DEPS_FILE "${CMAKE_BINARY_DIR}/das/official_iids_deps.txt")
+
+# 生成官方IID列表的自定义命令
+add_custom_command(
+        OUTPUT ${DAS_OFFICIAL_IIDS_HEADER} ${DAS_OFFICIAL_IIDS_SOURCE}
+        COMMAND ${DAS_IDL_VENV_PYTHON} ${CMAKE_SOURCE_DIR}/tools/generate_official_iids.py
+        -i ${DAS_IDL_FILES}
+        -o ${DAS_OFFICIAL_IIDS_OUTPUT_DIR}
+        --check-deps ${DAS_OFFICIAL_IIDS_DEPS_FILE}
+        -v
+        DEPENDS ${DAS_IDL_FILES}
+        ${CMAKE_SOURCE_DIR}/tools/generate_official_iids.py
+        ${CMAKE_SOURCE_DIR}/tools/das_idl/das_idl_parser.py
+        COMMENT "Generate official IIDs from IDL files"
+        VERBATIM
+)
+
+# 创建官方IID列表生成目标
+add_custom_target(DasCoreOfficialIidsGenerated DEPENDS ${DAS_OFFICIAL_IIDS_HEADER} ${DAS_OFFICIAL_IIDS_SOURCE})
+add_dependencies(DasCoreObjectsPreBuild DasCoreOfficialIidsGenerated)
+# ====== 官方IID列表生成结束 ======
 
 target_compile_options(DasCoreObjects PRIVATE
-    $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX /MP>
-    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic -Werror>
+        $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX /MP>
+        $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic -Werror>
 )
 set_property(TARGET DasCoreObjects PROPERTY POSITION_INDEPENDENT_CODE ON)
 
-target_include_directories(DasCoreObjects PUBLIC ${CMAKE_BINARY_DIR}/DAS/include/)
-target_sources(DasCoreObjects PRIVATE ${DAS_AUTOGEN_OUTPUT_FILES})
+target_include_directories(DasCoreObjects PUBLIC ${CMAKE_BINARY_DIR}/das/include/)
+target_include_directories(DasCoreObjects PUBLIC ${DAS_IDL_ABI_OUTPUT_DIR})
+target_include_directories(DasCoreObjects PUBLIC ${DAS_IDL_WRAPPER_OUTPUT_DIR})
 target_compile_definitions(DasCoreObjects PRIVATE -DDAS_BUILD_SHARED)
 target_link_libraries(DasCoreObjects PUBLIC
-    Boost::filesystem
-    ICU::data
-    ICU::i18n
-    ICU::uc)
+        Boost::filesystem
+        ICU::data
+        ICU::i18n
+        ICU::uc)
 
-if(DAS_USE_BUNDLED_BOOST)
+if (DAS_USE_BUNDLED_BOOST)
     target_link_libraries(DasCoreObjects PUBLIC ${DAS_BUNDLED_BOOST_LIBS})
-else()
+else ()
     # 对于使用msys包管理器安装boost的用户，使用msys的clangd或使用这个语句强制将Boost_INCLUDE_DIRS添加到compile_commands.json
     # target_compile_options(DasCoreObjects PRIVATE "-I${Boost_INCLUDE_DIRS}")
     target_include_directories(DasCoreObjects PUBLIC ${Boost_INCLUDE_DIRS})
     target_link_libraries(DasCoreObjects PRIVATE ${Boost_LIBRARIES})
-endif()
+endif ()
 
-if(WIN32)
+if (WIN32)
     target_compile_definitions(DasCoreObjects PRIVATE DAS_PLATFORM="WINDOWS" DAS_WINDOWS)
-elseif(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+elseif (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
     target_compile_definitions(DasCoreObjects PRIVATE DAS_PLATFORM="MACOS")
-elseif(UNIX)
+elseif (UNIX)
     target_compile_definitions(DasCoreObjects PRIVATE DAS_PLATFORM="LINUX")
-else()
+else ()
     message(FATAL_ERROR "Unsupported platform.")
-endif()
+endif ()
 
 das_add_core_component(Utils)
 das_add_core_component(OcvWrapper)
 das_add_core_component(OrtWrapper)
 das_add_core_component(ForeignInterfaceHost)
+
+# 将OfficialIids生成的文件添加到DasCoreObjects
+set(DAS_OFFICIAL_IIDS_OUTPUT_DIR "${CMAKE_BINARY_DIR}/das/include/das/_autogen/idl/iids")
+if (EXISTS "${DAS_OFFICIAL_IIDS_OUTPUT_DIR}/OfficialIids.cpp" AND EXISTS "${DAS_OFFICIAL_IIDS_OUTPUT_DIR}/OfficialIids.h")
+    target_sources(DasCoreObjects PRIVATE
+            "${DAS_OFFICIAL_IIDS_OUTPUT_DIR}/OfficialIids.cpp"
+            "${DAS_OFFICIAL_IIDS_OUTPUT_DIR}/OfficialIids.h"
+    )
+    target_include_directories(DasCoreObjects PUBLIC ${DAS_OFFICIAL_IIDS_OUTPUT_DIR})
+    source_group("Autogen\\OfficialIids" FILES "${DAS_OFFICIAL_IIDS_OUTPUT_DIR}/OfficialIids.cpp" "${DAS_OFFICIAL_IIDS_OUTPUT_DIR}/OfficialIids.h")
+endif ()
+
 das_add_core_component(SettingsManager)
 das_add_core_component(Logger)
 das_add_core_component(Exceptions)
@@ -96,14 +252,16 @@ file(GLOB DAS_SWIG_FILES ${CMAKE_SOURCE_DIR}/SWIG/*.i)
 set_property(SOURCE ${DAS_SWIG_FILES} PROPERTY CPLUSPLUS ON)
 set_source_files_properties(${DAS_SWIG_FILES} PROPERTIES USE_SWIG_DEPENDENCIES TRUE)
 
-if(${EXPORT_CSHARP})
+if (${EXPORT_CSHARP})
     das_add_swig_export_library(CSharp DasCoreCSharpExport "${DAS_SWIG_FILES}")
     target_link_libraries(DasCoreCSharpExport PUBLIC DasCore)
     add_dependencies(DasCoreCSharpExport DasCore)
+    # 确保SWIG导出库在swig_all.i重新生成后重新构建
+    add_dependencies(DasCoreCSharpExport DasCoreSwigAllGenerated)
     list(APPEND DAS_EXPORT_MACRO_LIST DAS_EXPORT_CSHARP)
-endif()
+endif ()
 
-if(${EXPORT_JAVA})
+if (${EXPORT_JAVA})
     find_package(JNI REQUIRED)
     das_add_swig_export_library(Java DasCoreJavaExport "${DAS_SWIG_FILES}")
     set_property(TARGET DasCoreJavaExport PROPERTY SWIG_COMPILE_OPTIONS -package org.das)
@@ -112,26 +270,25 @@ if(${EXPORT_JAVA})
 
     target_link_libraries(DasCoreJavaExport PUBLIC DasCore)
     add_dependencies(DasCoreJavaExport DasCore)
+    # 确保SWIG导出库在swig_all.i重新生成后重新构建
+    add_dependencies(DasCoreJavaExport DasCoreSwigAllGenerated)
     list(APPEND DAS_EXPORT_MACRO_LIST DAS_EXPORT_JAVA)
-endif()
+endif ()
 
-if(${EXPORT_PYTHON})
+if (${EXPORT_PYTHON})
     find_package(Python3 COMPONENTS Development REQUIRED)
     das_add_swig_export_library(Python DasCorePythonExport "${DAS_SWIG_FILES}")
     set_property(TARGET DasCorePythonExport PROPERTY SWIG_COMPILE_OPTIONS -threads)
 
     target_include_directories(DasCoreObjects PUBLIC ${Python3_INCLUDE_DIRS})
-    target_link_libraries(DasCoreObjects PUBLIC ${Python3_LIBRARIES})
+    target_link_libraries(DasCoreObjects PUBLIC Python3::Python)
 
     target_link_libraries(DasCorePythonExport PUBLIC DasCore)
     add_dependencies(DasCorePythonExport DasCore)
-    set_target_properties(
-        DasCorePythonExport
-        PROPERTIES
-        DEBUG_POSTFIX "_d"
-    )
+    # 确保SWIG导出库在swig_all.i重新生成后重新构建
+    add_dependencies(DasCorePythonExport DasCoreSwigAllGenerated)
     list(APPEND DAS_EXPORT_MACRO_LIST DAS_EXPORT_PYTHON)
-endif()
+endif ()
 
 # FetchContent_Declare(
 # Sol2
@@ -158,14 +315,15 @@ endif()
 
 # list(APPEND DAS_EXPORT_MACRO_LIST DAS_EXPORT_LUA)
 target_link_libraries(DasCoreObjects
-    PUBLIC DasUtils DasGateway ${DAS_FOREIGN_LANGUAGE_LIB_LIST})
+        PUBLIC DasUtils DasGateway ${DAS_FOREIGN_LANGUAGE_LIB_LIST})
 target_compile_definitions(DasCoreObjects PUBLIC ${DAS_EXPORT_MACRO_LIST})
 target_compile_definitions(DasCoreObjects PRIVATE DAS_CORE_NAME="$<TARGET_FILE_NAME:DasCore>")
 
 target_link_libraries(DasCore PUBLIC DasCoreObjects)
 
-if(${DAS_BUILD_TEST})
-    das_add_core_test(ForeignInterfaceHost)
-    das_add_core_test(i18n)
-    das_add_core_test(Utils)
-endif()
+ if (${DAS_BUILD_TEST})
+     das_add_core_test(ForeignInterfaceHost)
+     das_add_core_test(i18n)
+     das_add_core_test(Utils)
+     das_add_core_test(Exceptions)
+ endif ()

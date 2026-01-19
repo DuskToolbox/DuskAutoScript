@@ -1,0 +1,18 @@
+[
+    {
+        "-i": "tools/das_idl/examples/IDasGuidVector.idl",
+        "--output-dir": "generated/IDasGuidVector",
+        "--all": true
+    },
+    {
+        "-i": "tools/das_idl/examples/IDasGuidVector.idl",
+        "--output-dir": "generated/IDasGuidVector_copy",
+        "--all": true
+    },
+    {
+        "-i": "tools/das_idl/examples/IDasGuidVector.idl",
+        "--output-dir": "generated/IDasGuidVector_copy2",
+        "--swig": true,
+        "--cpp-wrapper": true
+    }
+]

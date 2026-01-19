@@ -1,0 +1,18 @@
+import "DasTypes.idl";
+
+namespace Das {
+
+[uuid("C66B4652-BEA9-4985-B8AC-F168BF0442E8")]
+interface IDasTypeInfo : IDasBase {
+    /**
+     * @brief return guid of implementation.
+     */
+    DasResult GetGuid([out] DasGuid* p_out_guid);
+    
+    /**
+     * Get derived class name.
+     */
+    DasResult GetRuntimeClassName([out] IDasReadOnlyString** pp_out_name);
+}
+
+}

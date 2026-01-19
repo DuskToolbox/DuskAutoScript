@@ -1,0 +1,50 @@
+namespace Das::ExportInterface {
+
+enum DasType {
+    DAS_TYPE_INT = 0,
+    DAS_TYPE_UINT = 1,
+    DAS_TYPE_FLOAT = 2,
+    DAS_TYPE_STRING = 4,
+    DAS_TYPE_BOOL = 8,
+    DAS_TYPE_JSON_OBJECT = 16,
+    DAS_TYPE_JSON_ARRAY = 32,
+    // 不常见
+    DAS_TYPE_NULL = 0x20000000,
+    DAS_TYPE_UNSUPPORTED = 0x40000000,
+    DAS_TYPE_FORCE_DWORD = 0x7FFFFFFF
+};
+
+[uuid("F1EF951F-84F3-4E9D-A78F-4B862C9B9C57")]
+interface IDasJson : IDasBase {
+    DasResult GetIntByName(DasString key, [out] int64_t* p_out_int);
+    DasResult GetFloatByName(DasString key, [out] float* p_out_float);
+    DasResult GetStringByName(DasString key, [out] IDasReadOnlyString** pp_out_string);
+    DasResult GetBoolByName(DasString key, [out] bool* p_out_bool);
+    DasResult GetObjectRefByName(DasString key, [out] IDasJson** pp_out_das_json);
+
+    DasResult SetIntByName(DasString key, int64_t in_int);
+    DasResult SetFloatByName(DasString key, float in_float);
+    DasResult SetStringByName(DasString key, IDasReadOnlyString* p_in_string);
+    DasResult SetBoolByName(DasString key, bool in_bool);
+    DasResult SetObjectByName(DasString key, IDasJson* p_in_das_json);
+
+    DasResult GetIntByIndex(size_t index, [out] int64_t* p_out_int);
+    DasResult GetFloatByIndex(size_t index, [out] float* p_out_float);
+    DasResult GetStringByIndex(size_t index, [out] IDasReadOnlyString** pp_out_string);
+    DasResult GetBoolByIndex(size_t index, [out] bool* p_out_bool);
+    DasResult GetObjectRefByIndex(size_t index, [out] IDasJson** pp_out_das_json);
+
+    DasResult SetIntByIndex(size_t index, int64_t in_int);
+    DasResult SetFloatByIndex(size_t index, float in_float);
+    DasResult SetStringByIndex(size_t index, IDasReadOnlyString* p_in_string);
+    DasResult SetBoolByIndex(size_t index, bool in_bool);
+    DasResult SetObjectByIndex(size_t index, IDasJson* pin_das_json);
+
+    DasResult GetTypeByName(DasString key, [out] DasType* p_out_type);
+    DasResult GetTypeByIndex(size_t index, [out] DasType* p_out_type);
+
+    DasResult ToString(int32_t indent, [out] IDasReadOnlyString** pp_out_string);
+    DasResult Clear();
+}
+
+}

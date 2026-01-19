@@ -1,42 +1,25 @@
 #ifndef DAS_HTTP_APP_COMPONENT_HPP
 #define DAS_HTTP_APP_COMPONENT_HPP
 
-#include "oatpp/web/server/HttpConnectionHandler.hpp"
+#include "beast/Server.hpp"
+#include "beast/Router.hpp"
+#include <string>
 
-#include "oatpp/network/tcp/server/ConnectionProvider.hpp"
+namespace Das::Http
+{
 
-#include "oatpp/parser/json/mapping/ObjectMapper.hpp"
-
-#include "oatpp/core/macro/component.hpp"
-
-/**
- *  Class which creates and holds Application components and registers components in oatpp::base::Environment
- *  Order of components initialization is from top to bottom
- */
-class AppComponent {
+class AppComponent
+{
 public:
-  
-  /**
-   *  Create ConnectionProvider component which listens on the port
-   */
-  OATPP_CREATE_COMPONENT(std::shared_ptr<oatpp::network::ServerConnectionProvider>, serverConnectionProvider)([] {
-    return oatpp::network::tcp::server::ConnectionProvider::createShared({"0.0.0.0", 8000, oatpp::network::Address::IP_4});
-  }());
-  
-  /**
-   *  Create Router component
-   */
-  OATPP_CREATE_COMPONENT(std::shared_ptr<oatpp::web::server::HttpRouter>, httpRouter)([] {
-    return oatpp::web::server::HttpRouter::createShared();
-  }());
-  
-  /**
-   *  Create ConnectionHandler component which uses Router component to route requests
-   */
-  OATPP_CREATE_COMPONENT(std::shared_ptr<oatpp::network::ConnectionHandler>, serverConnectionHandler)([] {
-    OATPP_COMPONENT(std::shared_ptr<oatpp::web::server::HttpRouter>, router); // get Router component
-    return oatpp::web::server::HttpConnectionHandler::createShared(router);
-  }());
+    std::shared_ptr<Beast::Router> router;
+    std::function<bool()> stop_condition;
+    
+    AppComponent()
+    {
+        router = std::make_shared<Beast::Router>();
+    }
 };
+
+} // namespace Das::Http
 
 #endif // DAS_HTTP_APP_COMPONENT_HPP

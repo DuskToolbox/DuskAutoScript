@@ -45,19 +45,19 @@ class InheritTree:
             self.children_map[forward_declaration_name] = InheritTreeNode(forward_declaration_name)
 
     def to_official_iid_list(self):
-        result = """const std::unordered_set<DasGuid> g_official_iids{
+        result = """const std::set<DasGuid> g_official_iids{
     []()
     {
-        std::unordered_set<DasGuid> result{{"""
+        std::set<DasGuid> result{"""
 
         result += '\n'
 
         keys = sorted(self.children_map.keys())
         for k in keys:
-            result += f"            DasIidOf<{k}>(),\n"
+            result += f'            DasIidOf<{k}>(),\n'
         result = result[:-2]
         result += '\n'
-        result += """}};
+        result += """};
         return result;
     }()};\n"""
         if g_debug:
@@ -361,11 +361,11 @@ namespace Das{
 #define DAS_AUTOGEN_IIDLIST_H
 
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
-#include <unordered_set>
+#include <set>
 
 namespace Das{
     namespace _autogen{
-        extern const std::unordered_set<DasGuid> g_official_iids;
+        extern const std::set<DasGuid> g_official_iids;
     }
 }
 

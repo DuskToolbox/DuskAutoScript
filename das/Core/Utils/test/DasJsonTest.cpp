@@ -1,4 +1,4 @@
-#include <das/ExportInterface/DasJson.h>
+#include <DAS/_autogen/idl/abi/DasJson.h>
 #include <das/Utils/fmt.h>
 #include <gtest/gtest.h>
 

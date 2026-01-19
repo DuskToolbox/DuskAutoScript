@@ -1,0 +1,24 @@
+import "DasTypes.idl";
+
+namespace Das::ExportInterface {
+
+[uuid("0E8E6129-512E-4AAB-A4A6-327ADCACB019")]
+interface IDasMemory : IDasBase {
+    /**
+     * @brief 获取原始数据指针（不考虑偏移量）
+     * @note [binary_buffer] 方法：参数类型必须为 unsigned char** 或 const unsigned char**
+     *       SWIG: 同 GetData，提供目标语言友好的访问方法
+     */
+    [binary_buffer]
+    DasResult GetRawData([out] unsigned char** pp_out_data);
+
+    /**
+    DasResult GetSize([out] uint64_t* p_out_size);
+     * @brief 如果确定输入的指针不是空指针，则返回值可以忽略
+     */
+    DasResult GetOffset([out] int64_t* p_out_offset);
+    DasResult SetOffset(int64_t offset);
+    DasResult Resize(uint64_t new_size_in_byte);
+}
+
+}

@@ -46,19 +46,18 @@ GetCreateIDasReadOnlyStringFromUtf8Function()
     return result;
 }
 
-decltype(&DAS::Core::Exceptions::ThrowDasExceptionEc)
-GetThrowDasExceptionEcFunction()
+decltype(&::CreateDasExceptionString) GetCreateDasExceptionStringFunction()
 {
-    static decltype(&DAS::Core::Exceptions::ThrowDasExceptionEc) result{
-        []() -> decltype(&DAS::Core::Exceptions::ThrowDasExceptionEc)
+    static decltype(&::CreateDasExceptionString) result{
+        []() -> decltype(&::CreateDasExceptionString)
         {
             try
             {
                 auto       das_core = Details::GetDasCore();
-                const auto result = das_core.get<void*>("ThrowDasExceptionEc");
-                return reinterpret_cast<
-                    decltype(&DAS::Core::Exceptions::ThrowDasExceptionEc)>(
-                    result);
+                const auto result =
+                    das_core.get<decltype(::CreateDasExceptionString)>(
+                        "CreateDasExceptionString");
+                return result;
             }
             catch (const boost::dll::fs::system_error& ex)
             {

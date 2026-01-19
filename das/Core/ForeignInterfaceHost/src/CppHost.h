@@ -2,6 +2,7 @@
 #define DAS_CORE_FOREIGNINTERFACEHOST_CPPINTERFACE_H
 
 #include <das/Core/ForeignInterfaceHost/Config.h>
+#include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
 #include <das/Core/ForeignInterfaceHost/Plugin.h>
 
 #define DAS_NS_CPPHOST_BEGIN                                                   \

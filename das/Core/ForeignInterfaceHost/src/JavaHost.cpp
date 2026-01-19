@@ -39,8 +39,8 @@ class JavaRuntime final : public IForeignLanguageRuntime
 {
 public:
     JavaRuntime();
-    int64_t   AddRef() override { return 1; };
-    int64_t   Release() override { return 1; };
+    uint32_t  AddRef() override { return 1; };
+    uint32_t  Release() override { return 1; };
     DasResult QueryInterface(const DasGuid&, void**) override
     {
         return DAS_E_NO_IMPLEMENTATION;

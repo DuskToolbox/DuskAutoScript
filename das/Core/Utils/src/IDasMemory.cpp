@@ -1,18 +1,14 @@
+#include <DAS/_autogen/idl/wrapper/Das.ExportInterface.IDasMemory.Implements.hpp>
+#include <cstring>
 #include <das/Core/Logger/Logger.h>
-#include <das/ExportInterface/IDasMemory.h>
-#include <das/Utils/QueryInterface.hpp>
 #include <das/Utils/CommonUtils.hpp>
 #include <memory>
-#include <cstring>
 
 namespace
 {
-    class DasMemoryImpl final : public IDasMemory
+    class DasMemoryImpl final
+        : public DAS::ExportInterface::DasMemoryImplBase<DasMemoryImpl>
     {
-        unsigned char*                   p_offset_data_;
-        size_t                           size;
-        std::unique_ptr<unsigned char[]> up_data_{};
-
     public:
         DasMemoryImpl(const size_t size_in_bytes) : size{size_in_bytes}
         {
@@ -20,34 +16,11 @@ namespace
             p_offset_data_ = up_data_.get();
         }
 
-        DAS_UTILS_IDASBASE_AUTO_IMPL(DasMemoryImpl);
-
-        DAS_IMPL QueryInterface(const DasGuid& iid, void** pp_object) override
-        {
-            return DAS::Utils::QueryInterface<IDasMemory>(this, iid, pp_object);
-        }
-
-        DAS_IMPL GetData(unsigned char** pp_out_data) override
-        {
-            DAS_UTILS_CHECK_POINTER(pp_out_data)
-
-            *pp_out_data = p_offset_data_;
-            return DAS_S_OK;
-        }
-
         DAS_IMPL GetRawData(unsigned char** pp_out_data) override
         {
             DAS_UTILS_CHECK_POINTER(pp_out_data);
 
             *pp_out_data = up_data_.get();
-            return DAS_S_OK;
-        }
-
-        DAS_IMPL GetSize(size_t* p_out_size) override
-        {
-            DAS_UTILS_CHECK_POINTER(p_out_size)
-
-            *p_out_size = size;
             return DAS_S_OK;
         }
 
@@ -92,10 +65,17 @@ namespace
             }
             return DAS_S_FALSE;
         }
+
+    private:
+        unsigned char*                   p_offset_data_;
+        size_t                           size;
+        std::unique_ptr<unsigned char[]> up_data_{};
     };
 } // namespace
 
-DasResult CreateIDasMemory(size_t size_in_byte, IDasMemory** pp_out_memory)
+DasResult CreateIDasMemory(
+    size_t                             size_in_byte,
+    Das::ExportInterface::IDasMemory** pp_out_memory)
 {
     DAS_UTILS_CHECK_POINTER(pp_out_memory)
 

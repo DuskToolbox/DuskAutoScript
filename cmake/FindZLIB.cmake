@@ -21,7 +21,7 @@ set(ZLIB_PATCH_VERSION "${ZLIB_VERSION_PATCH}")
 
 set(ZLIB_VERSION ${ZLIB_VERSION_STRING})
 
-message(STATUS "Find zlib-ng version: 2.2.2, which has zlib headers compatible with version ${ZLIB_VERSION} .")
+message(STATUS "Find zlib-ng version: 2.3.2, which has zlib headers compatible with version ${ZLIB_VERSION} .")
 
 if(NOT ZLIB_VERSION VERSION_EQUAL 1.3.1)
     message(FATAL_ERROR "Unexpected zlib-ng compatible version. Please check if bundled zlib-ng has already upgreade."

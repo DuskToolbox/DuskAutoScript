@@ -1,0 +1,21 @@
+import "DasTypes.idl";
+import "IDasGuidVector.idl";
+
+namespace Das::PluginInterface {
+
+[uuid("10963BC9-72FD-4B57-A7BA-98F431C234E4")]
+interface IDasErrorLens : IDasBase {
+    DasResult GetSupportedIids([out] IDasReadOnlyGuidVector** pp_out_iids);
+    DasResult GetErrorMessage(IDasReadOnlyString* locale_name, DasResult error_code, [out] IDasReadOnlyString** out_string);
+}
+
+/**
+ * @brief A basic error lens implementation for developers.
+ */
+[uuid("813FD58D-5632-4A43-A87E-26E412D9EADD")]
+interface IDasBasicErrorLens : IDasErrorLens {
+    DasResult RegisterErrorMessage(IDasReadOnlyString* locale_name, DasResult error_code, IDasReadOnlyString* p_error_message);
+    DasResult GetWritableSupportedIids([out] IDasGuidVector** pp_out_iids);
+}
+
+}

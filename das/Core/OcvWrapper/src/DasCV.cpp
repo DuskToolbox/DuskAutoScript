@@ -1,10 +1,9 @@
 #include "Config.h"
 #include "IDasImageImpl.h"
 #include <das/Core/Logger/Logger.h>
-#include <das/ExportInterface/DasCV.h>
+#include <DAS/_autogen/idl/abi/DasCV.h>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/Expected.h>
-#include <das/Utils/QueryInterface.hpp>
 #include <das/Utils/Timer.hpp>
 
 DAS_DISABLE_WARNING_BEGIN
@@ -95,7 +94,7 @@ DasResult TemplateMatchBest(
 
     cv::Point matched_location{};
     double    score{};
-    if (type == DAS_TEMPLATE_MATCH_TYPE_SQDIFF_NORMED)
+    if (type == Das::ExportInterface::DAS_TEMPLATE_MATCH_TYPE_SQDIFF_NORMED)
     {
         matched_location = min_location;
         score = 1 - min_score;
@@ -106,7 +105,7 @@ DasResult TemplateMatchBest(
         score = max_score;
     }
 
-    p_out_result->match_rect = DasRect{
+    p_out_result->match_rect = DAS::DasRect{
         matched_location.x,
         matched_location.y,
         template_mat.cols,

@@ -5,7 +5,6 @@
 #include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/i18n/Config.h>
-#include <das/ExportInterface/IDasSettings.h>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/StreamUtils.hpp>
 #include <filesystem>
@@ -29,13 +28,13 @@ using TranslateResources =
 namespace Details
 {
     template <class T>
-    void CheckInput(const DasType type)
+    void CheckInput(const ExportInterface::DasType type)
     {
         if constexpr (std::is_same_v<T, std::int32_t>)
         {
-            if (type != DAS_TYPE_INT)
+            if (type != Das::ExportInterface::DAS_TYPE_INT)
             {
-                throw DAS::Core::TypeError{DAS_TYPE_INT, type};
+                throw DAS::Core::TypeError{Das::ExportInterface::DAS_TYPE_INT, type};
             }
         }
         else
@@ -110,7 +109,7 @@ public:
     }
     explicit I18n(const nlohmann::json& json)
     {
-        const auto type = json.at("type").get<DasType>();
+        const auto type = json.at("type").get<ExportInterface::DasType>();
         // NOTE: If T changes, we need to add code to handle this situation.
         Details::CheckInput<T>(type);
         const auto string_to_number_converter = Details::GetConverter<T>();

@@ -1,0 +1,54 @@
+import "DasTypes.idl";
+
+namespace Das::ExportInterface {
+
+enum DasImageFormat {
+    DAS_IMAGE_FORMAT_PNG = 0,
+    DAS_IMAGE_FORMAT_RGBA_8888 = 1,
+    DAS_IMAGE_FORMAT_RGBX_8888 = 2,
+    DAS_IMAGE_FORMAT_RGB_888 = 3,
+    DAS_IMAGE_FORMAT_JPG = 4,
+    DAS_IMAGE_FORMAT_FORCE_DWORD = 0x7FFFFFFF
+};
+
+struct DasSize {
+    int32_t width;
+    int32_t height;
+};
+
+[uuid("A8E52933-05AC-46E3-927A-0F10B462EBB3")]
+interface IDasImageDesc {
+    /**
+     * @brief Pointer to the image data pointer.
+     */
+    [get, set] IDasReadOnlyString* p_data;
+    /**
+     * @brief Size of image data in bytes. Can be 0 when both width and height
+     * are set and data is decoded.
+     */
+    [get, set] uint64_t data_size;
+    /**
+     * @brief Supported image format.
+     */
+    [get, set] DasImageFormat data_format;
+};
+
+[uuid("6C98E79F-2342-4B98-AC8A-2B29EA53F951")]
+interface IDasImage : IDasBase {
+    DasResult GetSize([out] DasSize* p_out_size);
+    DasResult GetChannelCount([out] int32_t* p_out_channel_count);
+    DasResult Clip(const DasRect* p_rect, [out] IDasImage** p_out_image);
+    DasResult GetDataSize([out] uint64_t* p_out_size);
+
+    /**
+     * @brief 获取图像原始数据指针
+     * @note [binary_buffer] 方法：参数类型必须为 unsigned char** 或 const unsigned char**
+     *       SWIG: Python 提供 GetImageDataAsMemoryView()/GetImageDataAsBytes()
+     *             C# 提供 GetImageDataAsSpan()/GetImageDataAsByteArray()
+     *             Java 提供 getImageDataAsDirectBuffer()
+     */
+    [binary_buffer]
+    DasResult GetData([out] unsigned char** pp_out_data);
+}
+
+}

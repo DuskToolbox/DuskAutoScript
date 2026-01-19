@@ -1,8 +1,11 @@
 #define DAS_BUILD_SHARED
 
 #include "PluginImpl.h"
-#include <das/ExportInterface/DasLogger.h>
+#include <DAS/_autogen/idl/abi/DasLogger.h>
 #include <das/Utils/CommonUtils.hpp>
+
+// Bring PluginInterface types into global namespace for C API
+using Das::PluginInterface::IDasPluginPackage;
 
 DAS_C_API DasResult DasCoCreatePlugin(IDasPluginPackage** pp_out_plugin)
 {

@@ -1,0 +1,67 @@
+import "DasTypes.idl";
+import "DasJson.idl";
+
+namespace Das::ExportInterface {
+
+/**
+ * @brief 注意：回调会从其它线程发起，请注意线程安全
+ */
+[uuid("15D1BCD7-7922-447F-AD2C-17B838C1D53A")]
+interface IDasJsonSettingOnDeletedHandler : IDasBase {
+    DasResult OnDeleted();
+}
+
+[uuid("ADDD433F-D822-43FA-9367-B83D551FB80D")]
+interface IDasJsonSettingOperator : IDasBase {
+    DasResult Apply(IDasJson* p_json);
+}
+
+[uuid("56E5529D-C4EB-498D-BFAA-EFFEA20EB02A")]
+interface IDasJsonSetting : IDasBase {
+    /**
+     * @brief 将json序列化为文本
+     * @param pp_out_string 输出的文本
+     * @return DasResult DAS_S_OK表示成功，否则失败
+     */
+    DasResult ToString([out] IDasReadOnlyString** pp_out_string);
+    /**
+     * @brief 将文本反序列化为json对象
+     * @param p_in_settings 输入的文本
+     * @return DasResult DAS_S_OK表示成功，否则失败
+     */
+    DasResult FromString(IDasReadOnlyString* p_in_settings);
+    /**
+     * @brief 保存json对象到工作目录下的指定路径
+     * @return DasResult DAS_S_OK表示成功，否则失败
+     */
+    DasResult SaveToWorkingDirectory(IDasReadOnlyString* p_relative_path);
+    /**
+     * @brief 保存设置
+     * @return DasResult 保存设置文件
+     */
+    DasResult Save();
+    /**
+     * @brief 当设置项被删除时需要执行的回调
+     */
+    DasResult SetOnDeletedHandler(IDasJsonSettingOnDeletedHandler* p_handler);
+    /**
+     * @brief 加锁后使用自定义函数对json进行读写
+     */
+    DasResult ExecuteAtomically(IDasJsonSettingOperator* p_operator);
+}
+
+enum DasProfileProperty {
+    DAS_PROFILE_PROPERTY_PROFILE = 0,
+    DAS_PROFILE_PROPERTY_SCHEDULER_STATE = 1,
+    DAS_PROFILE_PROPERTY_NAME = 1001,
+    DAS_PROFILE_PROPERTY_ID = 1002,
+    DAS_PROFILE_PROPERTY_FORCE_DWORD = 0x7FFFFFFF
+}
+
+[uuid("774869F9-B453-4CA5-8512-B08E659383EA")]
+interface IDasProfile : IDasBase {
+    DasResult GetStringProperty(DasProfileProperty profile_property, [out] IDasReadOnlyString** pp_out_property);
+    DasResult GetJsonSettingProperty(DasProfileProperty profile_property, [out] IDasJsonSetting** pp_out_json);
+}
+
+}

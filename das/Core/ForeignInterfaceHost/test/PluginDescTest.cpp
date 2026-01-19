@@ -112,7 +112,7 @@ TEST(PluginSettingsDescTest, FromBasicJson)
     const auto& setting_desc = plugin_desc.settings_desc[0];
 
     EXPECT_EQ(setting_desc.name, "test_setting_name");
-    EXPECT_EQ(setting_desc.type, DAS_TYPE_INT);
+    EXPECT_EQ(setting_desc.type, Das::ExportInterface::DAS_TYPE_INT);
     EXPECT_EQ(std::get<std::int64_t>(setting_desc.default_value), 1);
     EXPECT_EQ(setting_desc.description, "test_setting_description");
 }

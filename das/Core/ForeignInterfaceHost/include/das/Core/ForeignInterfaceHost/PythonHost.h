@@ -62,14 +62,18 @@ public:
     PythonRuntime();
     ~PythonRuntime();
 
-    int64_t   AddRef() override { return 1; };
-    int64_t   Release() override { return 1; };
+    uint32_t  AddRef() override { return 1; };
+    uint32_t  Release() override { return 1; };
     DasResult QueryInterface(const DasGuid&, void**) override
     {
         return DAS_E_NO_IMPLEMENTATION;
     }
+    // TODO: 未来将重写 PythonHost
+    /*
     auto LoadPlugin(const std::filesystem::path& path)
-        -> DAS::Utils::Expected<CommonPluginPtr> override;
+        ->
+     * DAS::Utils::Expected<CommonPluginPtr> override;
+    */
 
     static auto ImportPluginModule(
         const std::filesystem::path& py_plugin_initializer)

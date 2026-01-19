@@ -6,40 +6,96 @@
  *  API global type
  */
 
-#include "oatpp/core/Types.hpp"
-#include "oatpp/core/macro/codegen.hpp"
+#include <nlohmann/json.hpp>
+#include <optional>
 
-#include OATPP_CODEGEN_BEGIN(DTO)
+namespace Das::Http::Dto
+{
 
-// 定义统一响应包装类型
+// 统一响应包装类型
 // Define unified response wrapper type
-template <class T>
-class ApiResponse : public oatpp::DTO
+template <typename T>
+struct ApiResponse
 {
-
-    DTO_INIT(ApiResponse, DTO)
-
-    DTO_FIELD(Int32, code);
-    DTO_FIELD(String, message);
-
-    DTO_FIELD(T, data);
+    int32_t code;
+    std::string message;
+    T data;
+    
+    // 转换为JSON
+    nlohmann::json ToJson() const
+    {
+        nlohmann::json j;
+        j["code"] = code;
+        j["message"] = message;
+        if constexpr (std::is_same_v<T, nlohmann::json>)
+        {
+            j["data"] = data;
+        }
+        else
+        {
+            j["data"] = data;
+        }
+        return j;
+    }
+    
+    // 从JSON构造
+    static ApiResponse<T> FromJson(const nlohmann::json& j)
+    {
+        ApiResponse<T> response;
+        response.code = j.value("code", 0);
+        response.message = j.value("message", "");
+        if constexpr (std::is_same_v<T, nlohmann::json>)
+        {
+            response.data = j.value("data", nlohmann::json());
+        }
+        else
+        {
+            response.data = j.value("data", T{});
+        }
+        return response;
+    }
+    
+    // 创建成功响应
+    static ApiResponse<T> Success(const T& data = T{}, const std::string& message = "")
+    {
+        return ApiResponse<T>{DAS_S_OK, message, data};
+    }
+    
+    // 创建错误响应
+    static ApiResponse<T> Error(DasResult code, const std::string& message)
+    {
+        return ApiResponse<T>{code, message, T{}};
+    }
 };
 
-class EmptyObject : public oatpp::DTO
-{
-    DTO_INIT(EmptyObject, DTO)
-};
-
+// void特化
 template <>
-class ApiResponse<void> : public oatpp::DTO
+struct ApiResponse<void>
 {
-    DTO_INIT(ApiResponse, DTO)
-
-    DTO_FIELD(Int32, code);
-    DTO_FIELD(String, message);
-    DTO_FIELD(Object<EmptyObject>, data);
+    int32_t code;
+    std::string message;
+    nlohmann::json data;
+    
+    nlohmann::json ToJson() const
+    {
+        nlohmann::json j;
+        j["code"] = code;
+        j["message"] = message;
+        j["data"] = data;
+        return j;
+    }
+    
+    static ApiResponse<void> Success(const std::string& message = "")
+    {
+        return ApiResponse<void>{DAS_S_OK, message, nullptr};
+    }
+    
+    static ApiResponse<void> Error(DasResult code, const std::string& message)
+    {
+        return ApiResponse<void>{code, message, nullptr};
+    }
 };
 
-#include OATPP_CODEGEN_END(DTO)
+} // namespace Das::Http::Dto
 
 #endif // DAS_HTTP_DTO_GLOBAL_HPP

@@ -2,14 +2,13 @@
 #define DAS_CORE_EXCEPTIONS_INTERFACENOTFOUNDEXCEPTION_H
 
 #include <das/Core/Exceptions/Config.h>
+#include <das/DasException.hpp>
 #include <das/IDasBase.h>
 
 DAS_CORE_EXCEPTIONS_NS_BEGIN
 
-class InterfaceNotFoundException : public std::runtime_error
+class InterfaceNotFoundException : public DasException
 {
-    using Base = std::runtime_error;
-
 public:
     explicit InterfaceNotFoundException(const DasGuid& iid);
 };

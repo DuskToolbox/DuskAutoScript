@@ -65,7 +65,7 @@ elseif(_bits EQUAL 32)
   endif()
 else()
   if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64" OR
-    CMAKE_SYSTEM_PROCESSOR MATCHES "^[Aa][Rr][Mm]") # armv8
+          CMAKE_SYSTEM_PROCESSOR MATCHES "^[Aa][Rr][Mm]") # armv8
     set(_default_arch arm64)
   elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^mips")
     set(_default_arch mips64)
@@ -125,30 +125,28 @@ unset(_default_impl)
 #
 
 message(STATUS "Boost.Context: "
-  "architecture ${BOOST_CONTEXT_ARCHITECTURE}, "
-  "binary format ${BOOST_CONTEXT_BINARY_FORMAT}, "
-  "ABI ${BOOST_CONTEXT_ABI}, "
-  "assembler ${BOOST_CONTEXT_ASSEMBLER}, "
-  "suffix ${BOOST_CONTEXT_ASM_SUFFIX}, "
-  "implementation ${BOOST_CONTEXT_IMPLEMENTATION}")
+        "architecture ${BOOST_CONTEXT_ARCHITECTURE}, "
+        "binary format ${BOOST_CONTEXT_BINARY_FORMAT}, "
+        "ABI ${BOOST_CONTEXT_ABI}, "
+        "assembler ${BOOST_CONTEXT_ASSEMBLER}, "
+        "suffix ${BOOST_CONTEXT_ASM_SUFFIX}, "
+        "implementation ${BOOST_CONTEXT_IMPLEMENTATION}")
 
 # Enable the right assembler
 
 if(BOOST_CONTEXT_IMPLEMENTATION STREQUAL "fcontext")
   if(BOOST_CONTEXT_ASSEMBLER STREQUAL gas)
     if(CMAKE_CXX_PLATFORM_ID MATCHES "Cygwin")
-      set(BOOST_CONTEXT_ASM_TYPE ASM-ATT)
+      enable_language(ASM-ATT)
     else()
-      set(BOOST_CONTEXT_ASM_TYPE ASM)
+      enable_language(ASM)
     endif()
   elseif(BOOST_CONTEXT_ASSEMBLER STREQUAL armasm)
-    set(BOOST_CONTEXT_ASM_TYPE ASM_ARMASM)
+    enable_language(ASM_ARMASM)
   else()
-    set(BOOST_CONTEXT_ASM_TYPE ASM_MASM)
+    enable_language(ASM_MASM)
   endif()
 endif()
-
-enable_language(${BOOST_CONTEXT_ASM_TYPE})
 
 # Choose .asm sources
 
@@ -159,12 +157,10 @@ endif()
 set(_asm_suffix ${BOOST_CONTEXT_ARCHITECTURE}_${BOOST_CONTEXT_ABI}_${BOOST_CONTEXT_BINARY_FORMAT}_${BOOST_CONTEXT_ASSEMBLER}${BOOST_CONTEXT_ASM_SUFFIX})
 
 set(ASM_SOURCES
-  src/asm/make_${_asm_suffix}
-  src/asm/jump_${_asm_suffix}
-  src/asm/ontop_${_asm_suffix}
+        src/asm/make_${_asm_suffix}
+        src/asm/jump_${_asm_suffix}
+        src/asm/ontop_${_asm_suffix}
 )
-
-set_source_files_properties(${ASM_SOURCES} PROPERTIES LANGUAGE ${BOOST_CONTEXT_ASM_TYPE})
 
 unset(_asm_suffix)
 
@@ -175,7 +171,7 @@ if(BOOST_CONTEXT_IMPLEMENTATION STREQUAL "fcontext")
   set(IMPL_SOURCES ${ASM_SOURCES})
 
   if(BOOST_CONTEXT_ASSEMBLER STREQUAL masm AND BOOST_CONTEXT_ARCHITECTURE STREQUAL i386)
-      set_source_files_properties(${ASM_SOURCES} PROPERTIES COMPILE_FLAGS "/safeseh")
+    set_source_files_properties(${ASM_SOURCES} PROPERTIES COMPILE_FLAGS "/safeseh")
   endif()
 
   if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
@@ -183,24 +179,24 @@ if(BOOST_CONTEXT_IMPLEMENTATION STREQUAL "fcontext")
   endif()
 else()
   set(IMPL_SOURCES
-    src/continuation.cpp
-    src/fiber.cpp
+          src/continuation.cpp
+          src/fiber.cpp
   )
 endif()
 
 if(WIN32 AND NOT CMAKE_CXX_PLATFORM_ID MATCHES "Cygwin")
   set(STACK_TRAITS_SOURCES
-    src/windows/stack_traits.cpp
+          src/windows/stack_traits.cpp
   )
 else()
   set(STACK_TRAITS_SOURCES
-    src/posix/stack_traits.cpp
+          src/posix/stack_traits.cpp
   )
 endif()
 
 add_library(boost_context
-  ${IMPL_SOURCES}
-  ${STACK_TRAITS_SOURCES}
+        ${IMPL_SOURCES}
+        ${STACK_TRAITS_SOURCES}
 )
 
 add_library(Boost::context ALIAS boost_context)
@@ -208,22 +204,22 @@ add_library(Boost::context ALIAS boost_context)
 target_include_directories(boost_context PUBLIC include)
 
 target_link_libraries(boost_context
-  PUBLIC
-    Boost::assert
-    Boost::config
-    Boost::core
-    Boost::mp11
-    Boost::pool
-    Boost::predef
-    Boost::smart_ptr
+        PUBLIC
+        Boost::assert
+        Boost::config
+        Boost::core
+        Boost::mp11
+        Boost::pool
+        Boost::predef
+        Boost::smart_ptr
 )
 
 # ATTENTION. Some assemblers are picky to get --defsym,KEY=VALUE pairs where '=' is non-optional!
 # Be sure all defines have the '=' character. Overkill solution: always put '=' throughout this module.
 
 target_compile_definitions(boost_context
-  PUBLIC BOOST_CONTEXT_NO_LIB=
-  PRIVATE BOOST_CONTEXT_SOURCE=
+        PUBLIC BOOST_CONTEXT_NO_LIB=
+        PRIVATE BOOST_CONTEXT_SOURCE=
 )
 
 if(BUILD_SHARED_LIBS)

@@ -1,14 +1,25 @@
+#include <DAS/_autogen/idl/abi/DasJson.h>
+#include <DAS/_autogen/idl/wrapper/Das.ExportInterface.IDasJson.Implements.hpp>
 #include <boost/signals2.hpp>
 #include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/Utils/Config.h>
-#include <das/ExportInterface/DasJson.h>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/Expected.h>
-#include <das/Utils/QueryInterface.hpp>
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <variant>
+
+using Das::ExportInterface::DAS_TYPE_BOOL;
+using Das::ExportInterface::DAS_TYPE_FLOAT;
+using Das::ExportInterface::DAS_TYPE_INT;
+using Das::ExportInterface::DAS_TYPE_JSON_ARRAY;
+using Das::ExportInterface::DAS_TYPE_JSON_OBJECT;
+using Das::ExportInterface::DAS_TYPE_NULL;
+using Das::ExportInterface::DAS_TYPE_STRING;
+using Das::ExportInterface::DAS_TYPE_UINT;
+using Das::ExportInterface::DAS_TYPE_UNSUPPORTED;
+using Das::ExportInterface::DasType;
 
 // {A9EC9C65-66E1-45B1-9C73-C95A6620BA6A}
 DAS_DEFINE_CLASS_IN_NAMESPACE(
@@ -46,7 +57,8 @@ struct DasJsonImplJsonIsNotArray : public std::exception
     }
 };
 
-class IDasJsonImpl final : public IDasJson
+class IDasJsonImpl final
+    : public DAS::ExportInterface::DasJsonImplBase<IDasJsonImpl>
 {
 public:
     struct Object
@@ -64,6 +76,7 @@ public:
 private:
     std::recursive_mutex      mutex_;
     std::variant<Object, Ref> impl_;
+    uint32_t                  ref_counter_{};
 
     template <class T>
     DasResult GetToImpl(IDasReadOnlyString* p_string, T* obj);
@@ -87,7 +100,9 @@ public:
     IDasJsonImpl(nlohmann::json& ref_json);
     ~IDasJsonImpl();
 
-    DAS_UTILS_IDASBASE_AUTO_IMPL(IDasJsonImpl)
+    // IDasBase
+    uint32_t  AddRef() override;
+    uint32_t  Release() override;
     DasResult QueryInterface(const DasGuid& iid, void** pp_out_object) override;
     DasResult GetIntByName(IDasReadOnlyString* key, int64_t* p_out_int)
         override;
@@ -143,27 +158,27 @@ DasType ToDasType(nlohmann::json::value_t type)
     switch (type)
     {
     case nlohmann::json::value_t::null:
-        return DAS_TYPE_NULL;
+        return Das::ExportInterface::DAS_TYPE_NULL;
     case nlohmann::json::value_t::object:
-        return DAS_TYPE_JSON_OBJECT;
+        return Das::ExportInterface::DAS_TYPE_JSON_OBJECT;
     case nlohmann::json::value_t::array:
-        return DAS_TYPE_JSON_ARRAY;
+        return Das::ExportInterface::DAS_TYPE_JSON_ARRAY;
     case nlohmann::json::value_t::string:
-        return DAS_TYPE_STRING;
+        return Das::ExportInterface::DAS_TYPE_STRING;
     case nlohmann::json::value_t::boolean:
-        return DAS_TYPE_BOOL;
+        return Das::ExportInterface::DAS_TYPE_BOOL;
     case nlohmann::json::value_t::number_integer:
-        return DAS_TYPE_UINT;
+        return Das::ExportInterface::DAS_TYPE_UINT;
     case nlohmann::json::value_t::number_unsigned:
-        return DAS_TYPE_INT;
+        return Das::ExportInterface::DAS_TYPE_INT;
     case nlohmann::json::value_t::number_float:
-        return DAS_TYPE_FLOAT;
+        return Das::ExportInterface::DAS_TYPE_FLOAT;
     case nlohmann::json::value_t::binary:
         [[fallthrough]];
     case nlohmann::json::value_t::discarded:
         [[fallthrough]];
     default:
-        return DAS_TYPE_UNSUPPORTED;
+        return Das::ExportInterface::DAS_TYPE_UNSUPPORTED;
     }
 }
 
@@ -514,11 +529,51 @@ IDasJsonImpl::IDasJsonImpl(nlohmann::json& ref_json) : impl_{Ref{&ref_json, {}}}
 
 IDasJsonImpl::~IDasJsonImpl() {}
 
+uint32_t IDasJsonImpl::AddRef()
+{
+    ++ref_counter_;
+    return ref_counter_;
+}
+
+uint32_t IDasJsonImpl::Release()
+{
+    --ref_counter_;
+    return ref_counter_;
+}
+
 DasResult IDasJsonImpl::QueryInterface(const DasGuid& iid, void** pp_out_object)
 {
-    return Utils::QueryInterfaceAsLastClassInInheritanceInfo<
-        Utils::IDasJsonInheritanceInfo,
-        IDasJsonImpl>(this, iid, pp_out_object);
+    if (pp_out_object == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    // 检查IID_IDasJson
+    if (iid == DasIidOf<ExportInterface::IDasJson>())
+    {
+        *pp_out_object = static_cast<ExportInterface::IDasJson*>(this);
+        this->AddRef();
+        return DAS_S_OK;
+    }
+
+    // 检查IID_IDasJsonImpl
+    if (iid == DasIidOf<IDasJsonImpl>())
+    {
+        *pp_out_object = static_cast<IDasJsonImpl*>(this);
+        this->AddRef();
+        return DAS_S_OK;
+    }
+
+    // 检查IID_IDasBase
+    if (iid == DAS_IID_BASE)
+    {
+        *pp_out_object = static_cast<IDasBase*>(this);
+        this->AddRef();
+        return DAS_S_OK;
+    }
+
+    *pp_out_object = nullptr;
+    return DAS_E_NO_INTERFACE;
 }
 
 DasResult IDasJsonImpl::GetIntByName(
@@ -904,8 +959,8 @@ DasResult IDasJsonImpl::Clear()
 DAS_CORE_UTILS_NS_END
 
 DasResult ParseDasJsonFromString(
-    const char* p_u8_string,
-    IDasJson**  pp_out_json)
+    const char*                      p_u8_string,
+    DAS::ExportInterface::IDasJson** pp_out_json)
 {
     DAS_UTILS_CHECK_POINTER(p_u8_string)
     DAS_UTILS_CHECK_POINTER(pp_out_json)
@@ -933,7 +988,7 @@ DasResult ParseDasJsonFromString(
     }
 }
 
-DasResult CreateEmptyDasJson(IDasJson** pp_out_json)
+DasResult CreateEmptyDasJson(Das::ExportInterface::IDasJson** pp_out_json)
 {
     DAS_UTILS_CHECK_POINTER(pp_out_json)
 

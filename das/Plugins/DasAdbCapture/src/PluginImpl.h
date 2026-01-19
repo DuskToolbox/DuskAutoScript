@@ -2,7 +2,8 @@
 #define DAS_PLUGINS_DASADBCAPTURE_PLUGINIMPL_H
 
 #include <cstdint>
-#include <das/PluginInterface/IDasPluginPackage.h>
+#include <DAS/_autogen/idl/abi/IDasPluginPackage.h>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasPluginPackage.Implements.hpp>
 #include <das/Utils/CommonUtils.hpp>
 #include <unordered_map>
 
@@ -24,23 +25,18 @@ DAS_DEFINE_CLASS_IN_NAMESPACE(
 
 DAS_NS_BEGIN
 
-class AdbCapturePlugin final : public IDasPluginPackage
+class AdbCapturePlugin final
+    : public PluginInterface::DasPluginPackageImplBase<AdbCapturePlugin>
 {
-private:
-    DAS::Utils::RefCounter<AdbCapturePlugin> ref_counter_;
-
 public:
-    // IDasBase
-    int64_t   AddRef() override;
-    int64_t   Release() override;
-    DasResult QueryInterface(const DasGuid& guid, void** pp_out_object)
-        override;
     // IDasPluginPackage
-    DasResult EnumFeature(const size_t index, DasPluginFeature* p_out_feature)
+    DAS_IMPL EnumFeature(
+        const size_t                         index,
+        PluginInterface::DasPluginFeature* p_out_feature)
         override;
-    DasResult CreateFeatureInterface(size_t index, void** pp_out_interface)
+    DAS_IMPL CreateFeatureInterface(size_t index, void** pp_out_interface)
         override;
-    DasResult CanUnloadNow() override;
+    DAS_IMPL CanUnloadNow() override;
 };
 
 void AdbCaptureAddRef();

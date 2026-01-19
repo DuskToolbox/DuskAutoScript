@@ -5,7 +5,7 @@
 #include <das/Utils/fmt.h>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/Expected.h>
-#include <das/PluginInterface/IDasErrorLens.h>
+#include <DAS/_autogen/idl/abi/IDasErrorLens.h>
 
 DAS_CORE_I18N_NS_BEGIN
 

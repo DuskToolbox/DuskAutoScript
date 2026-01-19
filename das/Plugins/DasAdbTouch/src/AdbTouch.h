@@ -1,7 +1,7 @@
 #ifndef DAS_PLUGINS_DASADBTOUCH_ADBTOUCH_H
 #define DAS_PLUGINS_DASADBTOUCH_ADBTOUCH_H
 
-#include <das/PluginInterface/IDasInput.h>
+#include <DAS/_autogen/idl/abi/IDasInput.h>
 #include <das/Utils/CommonUtils.hpp>
 #include <string>
 #include <string_view>

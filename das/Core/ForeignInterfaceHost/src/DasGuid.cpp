@@ -125,7 +125,7 @@ void nlohmann::adl_serializer<DasGuid>::from_json(const json& j, DasGuid& guid)
 }
 
 DasResult DasGuidToString(
-    DasGuid*             p_in_guid,
+    const DasGuid*             p_in_guid,
     IDasReadOnlyString** pp_out_guid_string)
 {
     const auto result = DasGuidToString(*p_in_guid);

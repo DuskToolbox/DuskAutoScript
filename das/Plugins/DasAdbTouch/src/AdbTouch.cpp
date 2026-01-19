@@ -1,6 +1,5 @@
 #include "AdbTouch.h"
-#include <das/ExportInterface/DasLogger.h>
-#include <das/Utils/QueryInterface.hpp>
+#include <DAS/_autogen/idl/abi/DasLogger.h>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
 
@@ -127,11 +126,40 @@ AdbTouch::AdbTouch(std::string_view adb_path, std::string_view adb_serial)
 {
 }
 
-DAS_IMPL AdbTouch::QueryInterface(const DasGuid& iid, void** pp_out_object)
+DasResult AdbTouch::QueryInterface(const DasGuid& iid, void** pp_out_object)
 {
-    return Utils::QueryInterface<IDasTouch>(this, iid, pp_out_object);
-}
+    if (pp_out_object == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
 
+    // 检查IID_IDasTouch
+    if (iid == DasIidOf<PluginInterface::IDasTouch>())
+    {
+        *pp_out_object = static_cast<PluginInterface::IDasTouch*>(this);
+        this->AddRef();
+        return DAS_S_OK;
+    }
+
+    // 检查IID_IDasTypeInfo
+    if (iid == DAS_IID_TYPE_INFO)
+    {
+        *pp_out_object = static_cast<IDasTypeInfo*>(this);
+        this->AddRef();
+        return DAS_S_OK;
+    }
+
+    // 检查IID_IDasBase
+    if (iid == DAS_IID_BASE)
+    {
+        *pp_out_object = static_cast<IDasBase*>(this);
+        this->AddRef();
+        return DAS_S_OK;
+    }
+
+    *pp_out_object = nullptr;
+    return DAS_E_NO_INTERFACE;
+}
 DAS_IMPL AdbTouch::GetGuid(DasGuid* p_out_guid)
 {
     DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_out_guid)

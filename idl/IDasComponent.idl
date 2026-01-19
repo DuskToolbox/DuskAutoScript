@@ -1,0 +1,18 @@
+import "DasTypes.idl";
+import "IDasTypeInfo.idl";
+import "IDasVariantVector.idl";
+
+namespace Das::PluginInterface {
+
+[uuid("15FF0855-E031-4602-829D-040230515C55")]
+interface IDasComponent : IDasTypeInfo {
+    DasResult Dispatch(IDasReadOnlyString* p_function_name, IDasVariantVector* p_arguments, [out] IDasVariantVector** pp_out_result);
+}
+
+[uuid("104C288C-5970-40B9-8E3F-B0B7E4ED509A")]
+interface IDasComponentFactory : IDasTypeInfo {
+    DasResult IsSupported(const DasGuid& component_iid);
+    DasResult CreateInstance(const DasGuid& component_iid, [out] IDasComponent** pp_out_component);
+}
+
+}

@@ -2,25 +2,25 @@
 #define DAS_HTTP_CONTROLLER_DASPLUGINMANAGERCONTROLLER_HPP
 
 #include "Config.h"
-
 #include "../component/DasInitializePluginManagerCallback.h"
-
 #include "das/ExportInterface/DasLogger.h"
 #include "das/ExportInterface/IDasPluginManager.h"
 #include "das/ExportInterface/IDasTaskScheduler.h"
 #include "das/IDasBase.h"
 #include "das/Utils/fmt.h"
-#include "oatpp/core/macro/codegen.hpp"
-#include "oatpp/web/server/api/ApiController.hpp"
-
 #include "dto/Profile.hpp"
 #include "dto/Settings.hpp"
-
 #include "component/Helper.hpp"
+#include "beast/Request.hpp"
+#include "beast/JsonUtils.hpp"
+#include <nlohmann/json.hpp>
+#include <string>
+#include <vector>
 
-#include OATPP_CODEGEN_BEGIN(ApiController)
+namespace Das::Http
+{
 
-class DasPluginManagerController final : public DAS::Http::DasApiController
+class DasPluginManagerController
 {
     DAS::DasPtr<IDasPluginManager>      p_plugin_manager_{};
     DAS::DasPtr<IDasPluginManagerForUi> p_plugin_manager_for_ui_{};
@@ -57,18 +57,17 @@ class DasPluginManagerController final : public DAS::Http::DasApiController
         return SetIDasTaskSchedulerJsonState(p_scheduler_state.Get());
     }
 
-    static auto CreatePluginManager(
+    static DasResult CreatePluginManager(
         IDasReadOnlyGuidVector*  p_guid_vector,
         IDasPluginManager**      pp_out_plugin_manager,
-        IDasPluginManagerForUi** pp_out_plugin_manager_for_ui) -> DasResult
+        IDasPluginManagerForUi** pp_out_plugin_manager_for_ui)
     {
         DAS::DasPtr<IDasGuidVector> p_empty_guids{};
         ::CreateIDasGuidVector(nullptr, 0, p_empty_guids.Put());
         DAS::DasPtr<IDasReadOnlyGuidVector> p_const_empty_guids{};
         p_empty_guids->ToConst(p_const_empty_guids.Put());
         DAS::DasPtr<IDasInitializeIDasPluginManagerWaiter> p_waiter{};
-        const auto                                         p_callback =
-            Das::MakeDasPtr<DasInitializePluginManagerCallback>();
+        const auto p_callback = Das::MakeDasPtr<DasInitializePluginManagerCallback>();
         const auto error_code = ::InitializeIDasPluginManager(
             p_guid_vector,
             p_callback.Get(),
@@ -113,128 +112,119 @@ public:
 
     // 获取应用列表
     // 激活指定配置文件
-    ENDPOINT(
-        "POST",
-        DAS_HTTP_API_PREFIX "profile/initialize",
-        get_initialize,
-        BODY_DTO(Object<ProfileInitializeParms>, profile_initialize_params))
+    Beast::HttpResponse Initialize(const Beast::HttpRequest& request)
     {
-        auto response = ApiResponse<void>::createShared();
-        DAS::DasPtr<IDasGuidVector> p_guids{};
+        try
+        {
+            const auto& json_body = request.JsonBody();
+            
+            DAS::DasPtr<IDasGuidVector> p_guids{};
 
-        if (const auto create_guid_result =
-                ::CreateIDasGuidVector(nullptr, 0, p_guids.Put());
-            DAS::IsFailed(create_guid_result))
-        {
-            const auto message = DAS_FMT_NS::format(
-                "CreateIDasGuidVector failed. Error code = {}",
-                create_guid_result);
-            DAS_LOG_ERROR(message.c_str());
-            response->code = create_guid_result;
-            response->message = message;
-            return createDtoResponse(Status::CODE_200, response);
-        }
-        for (const auto& guid_string :
-             *profile_initialize_params->ignored_guid_list.get())
-        {
-            DasGuid pluginGuid{};
-            if (const auto make_guid_result =
-                    ::DasMakeDasGuid(guid_string->c_str(), &pluginGuid);
-                DAS::IsFailed(make_guid_result))
+            if (const auto create_guid_result =
+                    ::CreateIDasGuidVector(nullptr, 0, p_guids.Put());
+                DAS::IsFailed(create_guid_result))
             {
                 const auto message = DAS_FMT_NS::format(
-                    "Make das guid failed. Error code = {}. Input = {}.",
-                    make_guid_result,
-                    guid_string->c_str());
+                    "CreateIDasGuidVector failed. Error code = {}",
+                    create_guid_result);
                 DAS_LOG_ERROR(message.c_str());
-                response->message = message;
-                response->code = DAS_S_FALSE;
-                continue;
+                return Beast::HttpResponse::CreateErrorResponse(create_guid_result, message);
             }
-            if (const auto push_back_result = p_guids->PushBack(pluginGuid);
-                DAS::IsFailed(push_back_result))
+            
+            if (json_body.contains("ignoredGuidList") && json_body["ignoredGuidList"].is_array())
+            {
+                for (const auto& guid_string : json_body["ignoredGuidList"])
+                {
+                    if (!guid_string.is_string()) continue;
+                    
+                    DasGuid pluginGuid{};
+                    if (const auto make_guid_result =
+                            ::DasMakeDasGuid(guid_string.get<std::string>().c_str(), &pluginGuid);
+                        DAS::IsFailed(make_guid_result))
+                    {
+                        const auto message = DAS_FMT_NS::format(
+                            "Make das guid failed. Error code = {}. Input = {}.",
+                            make_guid_result,
+                            guid_string.get<std::string>());
+                        DAS_LOG_ERROR(message.c_str());
+                        continue;
+                    }
+                    if (const auto push_back_result = p_guids->PushBack(pluginGuid);
+                        DAS::IsFailed(push_back_result))
+                    {
+                        const auto message = DAS_FMT_NS::format(
+                            "Push guid failed. Error code = {}. GUID = {}.",
+                            push_back_result,
+                            guid_string.get<std::string>());
+                        DAS_LOG_ERROR(message.c_str());
+                    }
+                }
+            }
+
+            DAS::DasPtr<IDasReadOnlyString> p_profile_id{};
+            const auto profile_id = json_body.value("profileId", "");
+            if (const auto get_result = CreateIDasReadOnlyStringFromUtf8(
+                    profile_id.c_str(),
+                    p_profile_id.Put());
+                DAS::IsFailed(get_result))
             {
                 const auto message = DAS_FMT_NS::format(
-                    "Push guid failed. Error code = {}. GUID = {}.",
-                    push_back_result,
-                    guid_string->c_str());
+                    "Get profile id failed. Error code = {}.",
+                    get_result);
                 DAS_LOG_ERROR(message.c_str());
-                response->code = DAS_S_FALSE;
-                response->message = message;
+                return Beast::HttpResponse::CreateErrorResponse(get_result, message);
             }
-        }
+            // 必须先初始化调度器，再初始化PluginManager
+            if (const auto error_code = SetGlobalSchedulerJsonState(*p_profile_id);
+                DAS::IsFailed(error_code))
+            {
+                const auto message = DAS_FMT_NS::format(
+                    "InitializeGlobalScheduler failed. Error code = {}.",
+                    error_code);
+                DAS_LOG_ERROR(message.c_str());
+                return Beast::HttpResponse::CreateErrorResponse(error_code, message);
+            }
 
-        DAS::DasPtr<IDasReadOnlyString> p_profile_id{};
-        if (const auto get_result = CreateIDasReadOnlyStringFromUtf8(
-                profile_initialize_params->profile_id->c_str(),
-                p_profile_id.Put());
-            DAS::IsFailed(get_result))
-        {
-            const auto message = DAS_FMT_NS::format(
-                "Get profile id failed. Error code = {}.",
-                get_result);
-            DAS_LOG_ERROR(message.c_str());
-            response->code = get_result;
-            response->message = message;
-            return createDtoResponse(Status::CODE_200, response);
-        }
-        // 必须先初始化调度器，再初始化PluginManager
-        if (const auto error_code = SetGlobalSchedulerJsonState(*p_profile_id);
-            DAS::IsFailed(error_code))
-        {
-            const auto message = DAS_FMT_NS::format(
-                "InitializeGlobalScheduler failed. Error code = {}.",
-                error_code);
-            DAS_LOG_ERROR(message.c_str());
-            response->code = error_code;
-            response->message = message;
-            return createDtoResponse(Status::CODE_200, response);
-        }
+            DAS::DasPtr<IDasReadOnlyGuidVector> p_const_guids{};
+            p_guids->ToConst(p_const_guids.Put());
+            if (const auto error_code = CreatePluginManager(
+                    p_const_guids.Get(),
+                    p_plugin_manager_.Put(),
+                    p_plugin_manager_for_ui_.Put());
+                DAS::IsFailed(error_code))
+            {
+                const auto message = DAS_FMT_NS::format(
+                    "CreatePluginManager failed. Error code = {}",
+                    error_code);
+                DAS_LOG_ERROR(message.c_str());
+                return Beast::HttpResponse::CreateErrorResponse(error_code, message);
+            }
 
-        DAS::DasPtr<IDasReadOnlyGuidVector> p_const_guids{};
-        p_guids->ToConst(p_const_guids.Put());
-        if (const auto error_code = CreatePluginManager(
-                p_const_guids.Get(),
-                p_plugin_manager_.Put(),
-                p_plugin_manager_for_ui_.Put());
-            DAS::IsFailed(error_code))
-        {
-            const auto message = DAS_FMT_NS::format(
-                "CreatePluginManager failed. Error code = {}",
-                error_code);
-            DAS_LOG_ERROR(message.c_str());
-            response->code = error_code;
-            response->message = message;
-            return createDtoResponse(Status::CODE_200, response);
+            return Beast::HttpResponse::CreateSuccessResponse(nullptr);
         }
-
-        return createDtoResponse(Status::CODE_200, response);
+        catch (const std::exception& ex)
+        {
+            DAS_LOG_ERROR(ex.what());
+            return Beast::HttpResponse::CreateErrorResponse(DAS_E_UNEXPECTED, ex.what());
+        }
     }
 
     // 获取插件列表
     // Get plugin list
-    ENDPOINT(
-        "POST",
-        DAS_HTTP_API_PREFIX "settings/plugin/list",
-        get_plugin_list,
-        BODY_DTO(oatpp::data::mapping::type::String, profileId))
+    Beast::HttpResponse GetPluginList(const Beast::HttpRequest& request)
     {
-
-        auto response = PluginPackageDescList::createShared();
-        response->code = DAS_S_OK;
-        response->message = "";
-
         // temp test code
-        auto plugin1 = PluginPackageDesc::createShared(); // AzurPromilia1
-        plugin1->name = reinterpret_cast<const char*>(u8"蓝色星原-国服-插件1");
-        plugin1->plugin_id = "4227E5C2-D23B-6CEA-407A-5EA189019626";
+        Dto::PluginPackageDesc plugin1;
+        plugin1.name = reinterpret_cast<const char*>(u8"蓝色星原-国服-插件1");
+        plugin1.plugin_id = "4227E5C2-D23B-6CEA-407A-5EA189019626";
 
-        response->data = {plugin1};
+        nlohmann::json data = nlohmann::json::array();
+        data.push_back(plugin1.ToJson());
 
-        return createDtoResponse(Status::CODE_200, response);
+        return Beast::HttpResponse::CreateSuccessResponse(data);
     }
 };
 
-#include OATPP_CODEGEN_END(ApiController)
+} // namespace Das::Http
 
 #endif // DAS_HTTP_CONTROLLER_DASPLUGINMANAGERCONTROLLER_HPP

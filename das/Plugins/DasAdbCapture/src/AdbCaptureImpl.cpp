@@ -29,8 +29,8 @@ DAS_DISABLE_WARNING_END
 
 #include "AdbCaptureImpl.h"
 #include "ErrorLensImpl.h"
-#include <das/ExportInterface/DasLogger.h>
-#include <das/ExportInterface/IDasImage.h>
+#include <DAS/_autogen/idl/abi/DasLogger.h>
+#include <DAS/_autogen/idl/abi/IDasImage.h>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/QueryInterface.hpp>
@@ -54,7 +54,7 @@ DAS_NS_BEGIN
  * href="https://android.googlesource.com/platform/frameworks/base/+/android-4.3_r2.3/cmds/screencap/screencap.cpp">screencap.cpp
  * in Android 4.23</a> <a
  * href="https://android.googlesource.com/platform/frameworks/base/+/refs/heads/android-s-beta-4/cmds/screencap/screencap.cpp">screencap.cpp
- * in Android S Beta 4</a> \n NOTE: kN32_SkColorType selects the native 32-bit
+ * in Android S Beta 4</a> \n NOTE: kN32_SkColorType selects native 32-bit
  * ARGB format.\n On little endian processors, pixels containing 8-bit ARGB
  * components pack into 32-bit kBGRA_8888_SkColorType.\n On big endian
  * processors, pixels pack into 32-bit kRGBA_8888_SkColorType.\n In this plugin,
@@ -120,6 +120,55 @@ std::size_t ComputeScreenshotSize(
     return ADB_CAPTURE_HEADER_SIZE
            + static_cast<std::size_t>(width * height * 4);
 }
+
+// DasMemoryImpl - 包装类，提供便捷的 C++ API
+class DasMemoryImpl
+{
+    DasPtr<IDasMemory> p_data_;
+
+public:
+    DasMemoryImpl(size_t size_in_bytes)
+    {
+        CreateIDasMemory(size_in_bytes, p_data_.Put());
+    }
+
+    ~DasMemoryImpl() = default;
+
+    unsigned char* GetData() const
+    {
+        unsigned char* p_data{nullptr};
+        p_data_->GetRawData(&p_data);
+        return p_data;
+    }
+
+    size_t GetSize() const
+    {
+        size_t size{};
+        p_data_->GetSize(&size);
+        return size;
+    }
+
+    void SetOffset(const int64_t offset)
+    {
+        p_data_->SetOffset(offset);
+    }
+
+    // stl-like api
+    unsigned char& operator[](size_t size_in_bytes)
+    {
+        return *(GetData() + size_in_bytes);
+    }
+
+    void resize(size_t new_size)
+    {
+        if (new_size > GetSize())
+        {
+            CreateIDasMemory(new_size, p_data_.Put());
+        }
+    }
+
+    IDasMemory* GetImpl() const noexcept { return p_data_.Get(); }
+};
 
 template <class Buffer>
 struct CommandExecutorContext : public DAS::Utils::NonCopyableAndNonMovable
@@ -242,8 +291,8 @@ public:
                 }
             });
     }
-    Buffer                     buffer;
-    boost::asio::io_context    ioc{};
+    Buffer                    buffer;
+    boost::asio::io_context   ioc{};
     boost::process::async_pipe process_out{ioc};
     boost::process::child      process;
     boost::asio::steady_timer  timer;
@@ -355,9 +404,10 @@ DasResult AdbCapture::CaptureRawWithGZip()
         Details::PROCESS_TIMEOUT_IN_S,
         std::move(adb_output_buffer)};
     // Initialize the objects that need to be used later.
-    auto decompressed_data = DasMemory(Details::ComputeScreenshotSize(
-        adb_device_screen_size_.width,
-        adb_device_screen_size_.height));
+    auto decompressed_data = DasMemoryImpl(
+        Details::ComputeScreenshotSize(
+            adb_device_screen_size_.width,
+            adb_device_screen_size_.height));
     const gzip::Decompressor decompressor{};
     // wait for the process to exit.
     context.ioc.run();
@@ -367,8 +417,10 @@ DasResult AdbCapture::CaptureRawWithGZip()
         context.buffer.data(),
         context.buffer.size());
 
+    unsigned char* p_decompressed_data = nullptr;
+    DAS_THROW_IF_FAILED(decompressed_data.GetImpl()->GetRawData(&p_decompressed_data));
     const auto header = Details::ResolveHeader(
-        reinterpret_cast<char*>(decompressed_data.GetData()));
+        reinterpret_cast<char*>(p_decompressed_data));
     Details::ComputeDataSizeFromHeader(header)
         .and_then(
             [&decompressed_data, &header](const std::size_t expected_data_size)
@@ -393,13 +445,14 @@ DasResult AdbCapture::CaptureRawWithGZip()
                     static_cast<AdbCaptureFormat>(header.f));
             })
         .and_then(
-            [&decompressed_data, &header](
-                const DasImageFormat color_format) -> DAS::Utils::Expected<void>
+            [&decompressed_data,
+             &header](const DasImageFormat color_format)
+                -> DAS::Utils::Expected<void>
             {
                 DasSize size{
                     static_cast<int32_t>(header.w),
                     static_cast<int32_t>(header.h)};
-                decompressed_data.SetBeginOffset(ADB_CAPTURE_HEADER_SIZE);
+                decompressed_data.SetOffset(ADB_CAPTURE_HEADER_SIZE);
 
                 // 格式符合预期则直接避免拷贝
                 if (color_format == DAS_IMAGE_FORMAT_RGB_888)
@@ -407,7 +460,7 @@ DasResult AdbCapture::CaptureRawWithGZip()
                     DasPtr<IDasImage> p_image{};
                     const auto        create_image_result =
                         ::CreateIDasImageFromRgb888(
-                            decompressed_data.Get(),
+                            decompressed_data.GetImpl(),
                             &size,
                             p_image.Put());
                     if (IsOk(create_image_result)) [[likely]]
@@ -417,9 +470,12 @@ DasResult AdbCapture::CaptureRawWithGZip()
                     return tl::make_unexpected(create_image_result);
                 }
 
+                unsigned char* p_decompressed_data_for_desc = nullptr;
+                DAS_THROW_IF_FAILED(
+                    decompressed_data.GetImpl()->GetRawData(&p_decompressed_data_for_desc));
                 DasImageDesc desc{
                     .p_data =
-                        reinterpret_cast<char*>(decompressed_data.GetData()),
+                        reinterpret_cast<char*>(p_decompressed_data_for_desc),
                     .data_size =
                         decompressed_data.GetSize() - ADB_CAPTURE_HEADER_SIZE,
                     .data_format = color_format};

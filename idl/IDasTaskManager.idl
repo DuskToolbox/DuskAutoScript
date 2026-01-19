@@ -1,0 +1,15 @@
+import "DasTypes.idl";
+import "IDasTask.idl";
+
+namespace Das::ExportInterface {
+
+[uuid("23B3F3A7-40E4-4A04-B1F0-9F2F15B8775C")]
+interface IDasTaskManager : IDasBase {
+    DasResult SetEnable(const DasGuid& plugin_id);
+    DasResult EnumTask(uint64_t index, [out] IDasTask* p_out_info);
+    DasResult Resume([out] IDasReadOnlyString** pp_out_error_string);
+    DasResult Pause([out] IDasReadOnlyString** pp_out_error_string);
+    DasResult UpdateConnectionJson(IDasReadOnlyString* p_connection_json, [out] IDasReadOnlyString** pp_out_error_string);
+}
+
+}

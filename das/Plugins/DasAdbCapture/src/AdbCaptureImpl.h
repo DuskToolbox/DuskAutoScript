@@ -3,7 +3,8 @@
 
 #include <das/DasConfig.h>
 #include <das/IDasBase.h>
-#include <das/PluginInterface/IDasCapture.h>
+#include <DAS/_autogen/idl/abi/IDasCapture.h>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasCapture.Implements.hpp>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/Expected.h>
 #include <filesystem>
@@ -27,10 +28,9 @@ DAS_DEFINE_CLASS_IN_NAMESPACE(
 
 DAS_NS_BEGIN
 
-class AdbCapture final : public IDasCapture
+class AdbCapture final : public PluginInterface::DasCaptureImplBase<AdbCapture>
 {
 private:
-    DAS::Utils::RefCounter<AdbCapture> ref_counter_{};
     std::string                        capture_png_command_;
     std::string                        capture_raw_by_nc_command_;
     std::string                        capture_gzip_raw_command_;
@@ -70,16 +70,8 @@ public:
         const std::filesystem::path& adb_path,
         std::string_view             adb_device_serial);
     ~AdbCapture();
-    // IDasBase
-    int64_t  AddRef() override;
-    int64_t  Release() override;
-    DAS_IMPL QueryInterface(const DasGuid& iid, void** pp_out_object) override;
-    // IDasTypeInfo
-    DAS_IMPL GetGuid(DasGuid* p_out_guid) override;
-    DAS_IMPL GetRuntimeClassName(
-        IDasReadOnlyString** pp_out_class_name) override;
     // IDasCapture
-    DAS_IMPL Capture(IDasImage** pp_out_image) override;
+    DAS_IMPL Capture(ExportInterface::IDasImage** pp_out_image) override;
 };
 
 DAS_NS_END

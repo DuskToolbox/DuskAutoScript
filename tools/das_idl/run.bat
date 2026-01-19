@@ -1,0 +1,1 @@
+python das_idl_gen.py -i examples/IDasGuidVector.idl --raw-output-dir examples/output/raw --wrapper-output-dir examples/output/wrapper --swig-output-dir examples/output/swig --swig --cpp-wrapper -v

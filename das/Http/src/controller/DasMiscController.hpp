@@ -1,35 +1,34 @@
 #ifndef DAS_HTTP_CONTROLLER_DASMISCCONTROLLER_H
 #define DAS_HTTP_CONTROLLER_DASMISCCONTROLLER_H
 
-#include "../component/Helper.hpp"
 #include "Config.h"
+#include "../component/Helper.hpp"
+#include "beast/Request.hpp"
+#include "beast/JsonUtils.hpp"
 #include "das/ExportInterface/DasLogger.h"
+#include <nlohmann/json.hpp>
 
-#include OATPP_CODEGEN_BEGIN(ApiController)
-
-class DasMiscController final : public DAS::Http::DasApiController
+namespace Das::Http
 {
-    ENDPOINT("POST", DAS_HTTP_API_PREFIX "alive", alive)
+
+class DasMiscController
+{
+public:
+    Beast::HttpResponse Alive(const Beast::HttpRequest& request)
     {
-        nlohmann::json response;
-        response["code"] = 0;
-        response["message"] = "";
-        response["data"]["alive"] = 1;
-        return oatpp::web::protocol::http::outgoing::Response::createShared(
-            Status::CODE_200,
-            oatpp::web::protocol::http::outgoing::BufferBody::createShared(
-                String{response.dump()},
-                "application/json"));
+        nlohmann::json data;
+        data["alive"] = 1;
+        return Beast::HttpResponse::CreateSuccessResponse(data);
     }
 
-    ENDPOINT("POST", DAS_HTTP_API_PREFIX "request_shutdown", request_shutdown)
+    Beast::HttpResponse RequestShutdown(const Beast::HttpRequest& request)
     {
         DAS::Http::g_server_condition.RequestServerStop();
         DAS_LOG_INFO("RequestServerStop!");
-        return MakeSuccessResponse();
+        return Beast::HttpResponse::CreateSuccessResponse(nullptr);
     }
 };
 
-#include OATPP_CODEGEN_END(ApiController)
+} // namespace Das::Http
 
 #endif // DAS_HTTP_CONTROLLER_DASMISCCONTROLLER_H
