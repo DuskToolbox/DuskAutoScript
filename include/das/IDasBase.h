@@ -1,11 +1,11 @@
 #ifndef DAS_BASE_H
 #define DAS_BASE_H
 
+#include <cstddef>
+#include <cstdint>
 #include <das/DasConfig.h>
 #include <das/DasGuidHolder.h>
-#include <stddef.h>
-#include <stdint.h>
-#include <string.h>
+#include <string>
 #include <type_traits>
 
 using DasResult = int32_t;
@@ -46,6 +46,12 @@ using DasResult = int32_t;
 #define DAS_DEFINE_CLASS_IN_NAMESPACE(ns, type, l, w1, w2, b1, b2, b3, b4, b5, b6, b7, b8) \
     namespace ns { class type; }\
     DAS_DEFINE_CLASS_GUID_HOLDER_IN_NAMESPACE(ns ,type, l, w1, w2, b1, b2, b3, b4, b5, b6, b7, b8);
+#define DAS_DEFINE_STRUCT_IN_NAMESPACE(ns, type, l, w1, w2, b1, b2, b3, b4, b5, b6, b7, b8) \
+    namespace ns { struct type; }\
+    DAS_DEFINE_GUID_HOLDER_IN_NAMESPACE(ns ,type, l, w1, w2, b1, b2, b3, b4, b5, b6, b7, b8);
+#define DAS_DEFINE_GUID_IN_NAMESPACE(iid_name, ns, type, l, w1, w2, b1, b2, b3, b4, b5, b6, b7, b8) \
+    namespace ns { struct type; }\
+    DAS_DEFINE_GUID_HOLDER_IN_NAMESPACE_WITH_IID(iid_name, ns, type, l, w1, w2, b1, b2, b3, b4, b5, b6, b7, b8);
 #define SWIG_PRIVATE
 #define SWIG_PUBLIC
 #endif
@@ -276,9 +282,9 @@ DAS_DEFINE_GUID(
     0x46)
 DAS_INTERFACE IDasBase
 {
-    virtual int64_t AddRef() = 0;
-    virtual int64_t Release() = 0;
-    DAS_METHOD      QueryInterface(const DasGuid& iid, void** pp_object) = 0;
+    virtual uint32_t AddRef() = 0;
+    virtual uint32_t Release() = 0;
+    DAS_METHOD       QueryInterface(const DasGuid& iid, void** pp_object) = 0;
 };
 
 // {9CA2095E-3F1E-44C0-BB14-515446666892}
@@ -337,109 +343,6 @@ DAS_API inline bool IsDasGuidEqual(
     return lhs == rhs;
 }
 
-DAS_INTERFACE IDasSwigBase;
-
-/**
- * @brief 这个类持有的指针生命周期非常特殊：
- *      1.
- * 获取指针时它不获取指针所有权，但它确实持有指针所有权，即它专用于QueryInterface产生的指针
- *      2. 因此释放时内部会Release指针
- */
-struct DasRetSwigBase
-{
-    SWIG_PRIVATE
-    DasResult error_code{DAS_E_UNDEFINED_RETURN_VALUE};
-    // IDasSwigBase
-    void* value{};
-
-    [[nodiscard]]
-    void* GetVoidNoAddRef() const noexcept;
-
-    void SetValueAddRef(void* value_need_add_ref);
-
-    IDasSwigBase* InternalAddRef()
-    {
-        auto* const p = static_cast<IDasSwigBase*>(value);
-        if (p)
-        {
-            _das_internal_DelayAddRef(p);
-        }
-        return p;
-    }
-
-    void InternalRelease() noexcept
-    {
-        auto* const p = static_cast<IDasSwigBase*>(value);
-        if (p)
-        {
-            _das_internal_DelayRelease(p);
-        }
-    }
-
-    DasRetSwigBase(DasResult error_code, void* value);
-    DasRetSwigBase(DasResult error_code);
-
-public:
-    DasRetSwigBase() = default;
-    ~DasRetSwigBase() { InternalRelease(); }
-
-#ifndef SWIG
-    DAS_API                 DasRetSwigBase(const DasRetSwigBase& rhs);
-    DAS_API DasRetSwigBase& operator=(const DasRetSwigBase& rhs);
-
-    DAS_API                 DasRetSwigBase(DasRetSwigBase&& other) noexcept;
-    DAS_API DasRetSwigBase& operator=(DasRetSwigBase&& other) noexcept;
-#endif // SWIG
-
-    DasResult GetErrorCode() noexcept { return error_code; }
-
-    void SetErrorCode(DasResult in_error_code) noexcept
-    {
-        this->error_code = in_error_code;
-    }
-
-    IDasSwigBase* GetValue() { return InternalAddRef(); }
-
-    void SetValue(IDasSwigBase* input_value) { value = input_value; }
-};
-
-// {FAF64DEB-0C0A-48CC-BA10-FCDE420350A2}
-DAS_DEFINE_GUID(
-    DAS_IID_SWIG_BASE,
-    IDasSwigBase,
-    0xfaf64deb,
-    0xc0a,
-    0x48cc,
-    0xba,
-    0x10,
-    0xfc,
-    0xde,
-    0x42,
-    0x3,
-    0x50,
-    0xa2)
-DAS_SWIG_DIRECTOR_ATTRIBUTE(IDasSwigBase)
-DAS_INTERFACE IDasSwigBase
-{
-    virtual int64_t AddRef() = 0;
-    virtual int64_t Release() = 0;
-    /**
-     * @brief Implementation should only return DAS_S_OK or
-     * DAS_E_NO_INTERFACE. NOTICE: If returned value is not equal to
-     * DAS_S_OK, then the interface is considered not supported.
-     *
-     * @param iid
-     * @return DasResult
-     */
-    virtual DasRetSwigBase QueryInterface(const DasGuid& iid) = 0;
-#ifdef SWIG
-    /*
-     * @brief Avoid SWIG warning.
-     */
-    virtual ~IDasSwigBase() {}
-#endif // SWIG
-};
-
 DAS_DEFINE_RET_TYPE(DasRetBool, bool);
 
 DAS_DEFINE_RET_TYPE(DasRetInt, int64_t);
@@ -447,5 +350,88 @@ DAS_DEFINE_RET_TYPE(DasRetInt, int64_t);
 DAS_DEFINE_RET_TYPE(DasRetUInt, uint64_t);
 
 DAS_DEFINE_RET_TYPE(DasRetFloat, float);
+
+// ============================================
+// 异常处理宏和函数声明（用于代码生成器）
+// ============================================
+
+#ifdef __cplusplus
+DAS_NS_BEGIN
+
+// 前置声明 IDasException 接口
+namespace ExportInterface
+{
+    DAS_INTERFACE IDasException;
+} // namespace ExportInterface
+
+/**
+ * @brief 源代码位置信息结构
+ */
+struct DasExceptionSourceInfo
+{
+    const char* file;
+    int         line;
+    const char* function;
+};
+
+/**
+ * @brief 抛出 IDasException* 的函数声明
+ *
+ * 这个函数在 DasCore.dll 中实现，会抛出 IDasException* 指针。
+ * 调用方使用完毕后需要调用 Release 释放资源。
+ *
+ * @param error_code 错误码
+ * @param p_source_info 源代码位置信息
+ */
+extern "C" DAS_API void ThrowDasExceptionPtr(
+    DasResult               error_code,
+    DasExceptionSourceInfo* p_source_info);
+
+/**
+ * @brief 创建 IDasException 的 C 函数声明
+ *
+ * @param error_code 错误码
+ * @param message 错误消息
+ * @return IDasException* 异常接口指针，调用方使用后需调用 Release
+ */
+extern "C" DAS_API ExportInterface::IDasException* DasCreateException(
+    DasResult   error_code,
+    const char* message);
+
+/**
+ * @brief 从 IDasException* 获取消息的辅助函数声明
+ *
+ * @param p_exception 异常指针
+ * @return std::string 异常消息
+ */
+DAS_API std::string DasGetExceptionMessage(
+    ExportInterface::IDasException* p_exception);
+
+/**
+ * @brief 从 IDasException* 获取错误码的辅助函数声明
+ *
+ * @param p_exception 异常指针
+ * @return DasResult 错误码
+ */
+DAS_API DasResult
+DasGetExceptionErrorCode(ExportInterface::IDasException* p_exception);
+
+DAS_NS_END
+#endif // __cplusplus
+
+// 宏定义
+#define DAS_THROW_IF_FAILED(result)                                            \
+    {                                                                          \
+        if (::Das::IsFailed(result))                                           \
+        {                                                                      \
+            ::Das::DasExceptionSourceInfo __das_internal_source_location{      \
+                __FILE__,                                                      \
+                __LINE__,                                                      \
+                DAS_FUNCTION};                                                 \
+            ::Das::ThrowDasExceptionPtr(                                       \
+                result,                                                        \
+                &__das_internal_source_location);                              \
+        }                                                                      \
+    }
 
 #endif // DAS_BASE_H

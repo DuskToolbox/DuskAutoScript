@@ -1,7 +1,6 @@
 #include "AdbTouchFactoryImpl.h"
 #include <array>
-#include <das/ExportInterface/DasLogger.h>
-#include <das/Utils/QueryInterface.hpp>
+#include <das/Core/Logger/Logger.h>
 #include <stdexcept>
 
 #define DAS_BUILD_SHARED
@@ -12,7 +11,29 @@ DAS_NS_BEGIN
 
 DAS_IMPL DasAdbTouchPlugin::QueryInterface(const DasGuid& iid, void** pp_object)
 {
-    return Utils::QueryInterface<IDasPluginPackage>(this, iid, pp_object);
+    if (pp_object == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    // 检查IID_IDasPluginPackage
+    if (iid == DasIidOf<PluginInterface::IDasPluginPackage>())
+    {
+        *pp_object = static_cast<PluginInterface::IDasPluginPackage*>(this);
+        this->AddRef();
+        return DAS_S_OK;
+    }
+
+    // 检查IID_IDasBase
+    if (iid == DAS_IID_BASE)
+    {
+        *pp_object = static_cast<IDasBase*>(this);
+        this->AddRef();
+        return DAS_S_OK;
+    }
+
+    *pp_object = nullptr;
+    return DAS_E_NO_INTERFACE;
 }
 
 DAS_IMPL DasAdbTouchPlugin::EnumFeature(
@@ -25,7 +46,7 @@ DAS_IMPL DasAdbTouchPlugin::EnumFeature(
         return DAS_E_INVALID_POINTER;
     }
 
-    std::array features{DAS_PLUGIN_FEATURE_INPUT_FACTORY};
+    std::array features{Das::PluginInterface::DAS_PLUGIN_FEATURE_INPUT_FACTORY};
 
     try
     {
