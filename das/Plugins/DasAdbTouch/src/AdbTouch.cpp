@@ -20,7 +20,8 @@ DAS_PRAGMA(warning(disable : 4189 4245))
 #endif // _MSC_VER
 
 #include <boost/asio.hpp>
-#include <boost/process/v2.hpp>
+#include <boost/process/v2/execute.hpp>
+#include <boost/process/v2/process.hpp>
 
 DAS_DISABLE_WARNING_END
 #include <chrono>

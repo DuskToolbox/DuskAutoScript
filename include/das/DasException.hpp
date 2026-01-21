@@ -1,6 +1,7 @@
 #ifndef DAS_DASEXCEPTION_HPP
 #define DAS_DASEXCEPTION_HPP
 
+#include <das/DasExport.h>
 #include <das/IDasBase.h>
 #include <exception>
 #include <memory>
@@ -10,26 +11,8 @@
 // Forward declaration
 struct IDasTypeInfo;
 
-typedef struct DasExceptionStringHandle DasExceptionStringHandle;
-
-// Custom deleter for DasExceptionStringHandle
-// Converts handle to std::string* using std::launder, then deletes via
-// DeleteDasExceptionString
-struct DasExceptionStringHandleDeleter
-{
-    void operator()(DasExceptionStringHandle* p) const noexcept
-    {
-        if (p)
-        {
-            // CRITICAL: Convert handle to std::string* BEFORE delete
-            // The handle is a laundered std::string*, so we must launder it
-            // back to std::string*
-            std::string* p_string =
-                std::launder(reinterpret_cast<std::string*>(p));
-            delete p_string;
-        }
-    }
-};
+// Win32 风格 opaque handle
+typedef struct DasExceptionStringHandle_* DasExceptionStringHandle;
 
 class das_borrow_t
 {
@@ -79,6 +62,7 @@ struct DasExceptionSourceInfo
         throw DasException{error_code, p_handle};                              \
     }
 
+// C API 函数声明（实现在 DasExceptionSupport.cpp）
 DAS_C_API void CreateDasExceptionString(
     DasResult                  error_code,
     DasExceptionSourceInfo*    p_source_info,
@@ -89,15 +73,8 @@ DAS_C_API void DeleteDasExceptionString(DasExceptionStringHandle* p_handle);
 DAS_C_API const char* GetDasExceptionStringCStr(
     DasExceptionStringHandle* p_handle);
 
-class DasException : public std::exception
+class DasException : public std::runtime_error
 {
-    friend void CreateDasExceptionString(
-        DasResult,
-        DasExceptionSourceInfo*,
-        DasExceptionStringHandle**);
-
-    friend void DeleteDasExceptionString(DasExceptionStringHandle*);
-
     template <class... Ts>
     struct overload_set : Ts...
     {
@@ -105,48 +82,54 @@ class DasException : public std::exception
     };
 
     DasResult error_code_;
-    std::variant<
-        std::string,
-        std::unique_ptr<
-            DasExceptionStringHandle,
-            DasExceptionStringHandleDeleter>>
+    std::variant<std::string, std::shared_ptr<DasExceptionStringHandle>>
         common_string_;
 
     using Base = std::runtime_error;
 
-protected:
-    DasException(DasResult error_code, std::string&& string);
-    DasException(DasResult error_code, const char* p_string, das_borrow_t);
-    DasException(DasResult error_code, const std::string& message);
-
 public:
+    DasException(DasResult error_code, std::string&& string)
+        : Base{string.c_str()}, error_code_{error_code},
+          common_string_{std::move(string)}
+    {
+    }
+
+    DasException(DasResult error_code, const char* p_string, das_borrow_t)
+        : Base{p_string}, error_code_{error_code}, common_string_{p_string}
+    {
+    }
+
+    DasException(DasResult error_code, const std::string& message)
+        : DasException{error_code, std::string{message}}
+    {
+    }
+
+    DasException(DasResult error_code, DasExceptionStringHandle* p_handle)
+        : Base{GetDasExceptionStringCStr(p_handle)}, error_code_{error_code},
+          common_string_{std::shared_ptr<DasExceptionStringHandle>{
+              p_handle,
+              DeleteDasExceptionString}}
+    {
+    }
     [[nodiscard]]
     const char* what() const noexcept override
     {
-        try
-        {
-            return std::visit(
-                overload_set{
-                    [](const std::string& result) { return result.c_str(); },
-                    [](const std::unique_ptr<
-                        DasExceptionStringHandle,
-                        DasExceptionStringHandleDeleter>& result)
-                    {
-                        // The handle points to std::string internally, use
-                        // std::launder to convert
-                        std::string* p_string = std::launder(
-                            reinterpret_cast<std::string*>(result.get()));
-                        return p_string->c_str();
-                    }},
-                common_string_);
-        }
-        catch (const std::exception& ex)
-        {
-            return ex.what();
-        }
+        return std::visit(
+            overload_set{
+                [](const std::string& result) { return result.c_str(); },
+                [](const std::shared_ptr<DasExceptionStringHandle>& result)
+                {
+                    // 安全访问，无需 std::launder
+                    return GetDasExceptionStringCStr(result.get());
+                }},
+            common_string_);
     }
 
-    auto GetErrorCode() const noexcept -> DasResult { return error_code_; }
+    [[nodiscard]]
+    auto GetErrorCode() const noexcept -> DasResult
+    {
+        return error_code_;
+    }
 };
 
 // ----------------------------------- IMPL ------------------------------------

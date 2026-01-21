@@ -64,6 +64,8 @@ namespace Core
                 const uint8_t*          body,
                 size_t                  body_size);
 
+            void RunInternal();
+
             struct Impl;
             std::unique_ptr<Impl> impl_;
         };

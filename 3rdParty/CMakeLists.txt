@@ -441,6 +441,7 @@ function(_download_and_config_boost)
         circular_buffer
         signals2
         process
+        interprocess
     )
 
     FetchContent_MakeAvailable(DasBoost)
@@ -465,7 +466,8 @@ if (${DAS_USE_BUNDLED_BOOST})
             Boost::nowide
             Boost::circular_buffer
             Boost::signals2
-            Boost::process)
+            Boost::process
+            Boost::interprocess)
 else ()
     # 这里先不改，只是自用boost版本拉上去先
     find_package(Boost CONFIG 1.82 COMPONENTS filesystem url beast asio process)

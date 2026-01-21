@@ -474,7 +474,8 @@ auto PythonRuntime::ResolveClassName(const std::filesystem::path& relative_path)
          ++it, ++it_next)
     {
         part_string = it->u8string();
-        if (part_string == Details::GetPreferredSeparator())
+        if (std::u8string_view{part_string}
+            == std::u8string_view{Details::GetPreferredSeparator()})
         {
             return tl::make_unexpected(DAS_E_INVALID_PATH);
         }
@@ -592,12 +593,9 @@ auto PythonRuntime::GetPluginInitializer(PyObject& py_module) ->
 
  * PyObject_GetAttrString(&py_module, DASCOCREATEPLUGIN_NAME))}
 
- * .CheckAndGet();
+    * .CheckAndGet();
 }
 */
-
-// TODO: 未来将重写 PythonHost
-// void RaisePythonInterpreterException() { PythonResult::RaiseIfError(); }
 
 DAS_NS_PYTHONHOST_END
 

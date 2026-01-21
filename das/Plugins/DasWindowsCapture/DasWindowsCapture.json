@@ -1,0 +1,11 @@
+{
+  "name": "@CMAKE_SHARED_LIBRARY_PREFIX@DasWindowsCapture",
+  "author": "Dusk",
+  "version": "0.1",
+  "guid": "383C85E9-BD34-8D85-AF24-6FE96FE9B",
+  "description": "Windows平台窗口/全屏截图插件（支持Windows.Graphics.Capture和BitBlt双方案）",
+  "supportedSystem": "Windows",
+  "language": "Cpp",
+  "pluginFilenameExtension": "dll",
+  "settings": []
+}

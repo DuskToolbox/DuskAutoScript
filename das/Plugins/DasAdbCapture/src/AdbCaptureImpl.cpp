@@ -1,5 +1,5 @@
+#include <DAS/_autogen/idl/abi/IDasMemory.h>
 #include <das/DasConfig.h>
-#include <das/ExportInterface/IDasMemory.h>
 
 #if defined(_WIN32) || defined(__CYGWIN__)
 
@@ -29,18 +29,18 @@ DAS_DISABLE_WARNING_END
 
 #include "AdbCaptureImpl.h"
 #include "ErrorLensImpl.h"
+#include "PluginImpl.h"
 #include <DAS/_autogen/idl/abi/DasLogger.h>
 #include <DAS/_autogen/idl/abi/IDasImage.h>
-#include <das/Utils/CommonUtils.hpp>
-#include <das/Utils/StringUtils.h>
-#include <das/Utils/QueryInterface.hpp>
-#include <das/Utils/fmt.h>
-#include "PluginImpl.h"
 #include <array>
 #include <boost/asio.hpp>
 #include <boost/pfr.hpp>
 #include <boost/process.hpp>
 #include <boost/process/async_pipe.hpp>
+#include <das/Utils/CommonUtils.hpp>
+#include <das/Utils/QueryInterface.hpp>
+#include <das/Utils/StringUtils.h>
+#include <das/Utils/fmt.h>
 #include <sstream>
 #include <system_error>
 
@@ -148,10 +148,7 @@ public:
         return size;
     }
 
-    void SetOffset(const int64_t offset)
-    {
-        p_data_->SetOffset(offset);
-    }
+    void SetOffset(const int64_t offset) { p_data_->SetOffset(offset); }
 
     // stl-like api
     unsigned char& operator[](size_t size_in_bytes)
@@ -291,8 +288,8 @@ public:
                 }
             });
     }
-    Buffer                    buffer;
-    boost::asio::io_context   ioc{};
+    Buffer                     buffer;
+    boost::asio::io_context    ioc{};
     boost::process::async_pipe process_out{ioc};
     boost::process::child      process;
     boost::asio::steady_timer  timer;
@@ -418,9 +415,10 @@ DasResult AdbCapture::CaptureRawWithGZip()
         context.buffer.size());
 
     unsigned char* p_decompressed_data = nullptr;
-    DAS_THROW_IF_FAILED(decompressed_data.GetImpl()->GetRawData(&p_decompressed_data));
-    const auto header = Details::ResolveHeader(
-        reinterpret_cast<char*>(p_decompressed_data));
+    DAS_THROW_IF_FAILED(
+        decompressed_data.GetImpl()->GetRawData(&p_decompressed_data));
+    const auto header =
+        Details::ResolveHeader(reinterpret_cast<char*>(p_decompressed_data));
     Details::ComputeDataSizeFromHeader(header)
         .and_then(
             [&decompressed_data, &header](const std::size_t expected_data_size)
@@ -440,14 +438,14 @@ DasResult AdbCapture::CaptureRawWithGZip()
                 return {};
             })
         .and_then(
-            [&header] {
+            [&header]
+            {
                 return Details::Convert(
                     static_cast<AdbCaptureFormat>(header.f));
             })
         .and_then(
-            [&decompressed_data,
-             &header](const DasImageFormat color_format)
-                -> DAS::Utils::Expected<void>
+            [&decompressed_data, &header](
+                const DasImageFormat color_format) -> DAS::Utils::Expected<void>
             {
                 DasSize size{
                     static_cast<int32_t>(header.w),
@@ -471,8 +469,8 @@ DasResult AdbCapture::CaptureRawWithGZip()
                 }
 
                 unsigned char* p_decompressed_data_for_desc = nullptr;
-                DAS_THROW_IF_FAILED(
-                    decompressed_data.GetImpl()->GetRawData(&p_decompressed_data_for_desc));
+                DAS_THROW_IF_FAILED(decompressed_data.GetImpl()->GetRawData(
+                    &p_decompressed_data_for_desc));
                 DasImageDesc desc{
                     .p_data =
                         reinterpret_cast<char*>(p_decompressed_data_for_desc),

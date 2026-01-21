@@ -1,0 +1,86 @@
+#include <das/Core/IPC/IpcErrors.h>
+#include <das/IDasBase.h>
+#include <gtest/gtest.h>
+
+// Test IPC error code base value
+TEST(IpcErrorsTest, ErrorCodeBaseValue)
+{
+    EXPECT_EQ(DAS_E_IPC_BASE, -1073741867);
+}
+
+// Test all IPC error codes are within correct range
+TEST(IpcErrorsTest, ErrorCodesInRange)
+{
+    EXPECT_EQ(DAS_E_IPC_INVALID_MESSAGE_HEADER, -1073741868);
+    EXPECT_EQ(DAS_E_IPC_INVALID_MESSAGE_TYPE, -1073741869);
+    EXPECT_EQ(DAS_E_IPC_INVALID_MESSAGE_BODY, -1073741870);
+    EXPECT_EQ(DAS_E_IPC_INVALID_OBJECT_ID, -1073741871);
+    EXPECT_EQ(DAS_E_IPC_STALE_OBJECT_HANDLE, -1073741872);
+    EXPECT_EQ(DAS_E_IPC_OBJECT_NOT_FOUND, -1073741873);
+    EXPECT_EQ(DAS_E_IPC_TIMEOUT, -1073741874);
+    EXPECT_EQ(DAS_E_IPC_CONNECTION_LOST, -1073741875);
+    EXPECT_EQ(DAS_E_IPC_SHM_FAILED, -1073741876);
+    EXPECT_EQ(DAS_E_IPC_MESSAGE_QUEUE_FAILED, -1073741877);
+    EXPECT_EQ(DAS_E_IPC_INVALID_INTERFACE_ID, -1073741878);
+    EXPECT_EQ(DAS_E_IPC_REMOTE_ERROR, -1073741879);
+    EXPECT_EQ(DAS_E_IPC_DEADLOCK_DETECTED, -1073741880);
+    EXPECT_EQ(DAS_E_IPC_SERIALIZATION_FAILED, -1073741881);
+    EXPECT_EQ(DAS_E_IPC_DESERIALIZATION_FAILED, -1073741882);
+    EXPECT_EQ(DAS_E_IPC_BUFFER_TOO_SMALL, -1073741883);
+}
+
+// Test IPC error codes do not conflict with existing error codes
+TEST(IpcErrorsTest, NoConflictWithExistingErrors)
+{
+    EXPECT_NE(DAS_E_IPC_BASE, DAS_E_RESERVED);
+    EXPECT_NE(DAS_E_IPC_BASE, DAS_E_NO_INTERFACE);
+    EXPECT_NE(DAS_E_IPC_BASE, DAS_E_UNDEFINED_RETURN_VALUE);
+    EXPECT_NE(DAS_E_IPC_BASE, DAS_E_INVALID_STRING);
+    EXPECT_NE(DAS_E_IPC_BASE, DAS_E_OUT_OF_MEMORY);
+    EXPECT_NE(DAS_E_IPC_BASE, DAS_E_TIMEOUT);
+
+    EXPECT_NE(DAS_E_IPC_INVALID_MESSAGE_HEADER, DAS_E_TIMEOUT);
+    EXPECT_NE(DAS_E_IPC_TIMEOUT, DAS_E_TIMEOUT);
+
+    EXPECT_LT(DAS_E_IPC_BASE, 0);
+    EXPECT_LT(DAS_E_IPC_BASE, -10000000);
+}
+
+// Test error codes follow sequential pattern
+TEST(IpcErrorsTest, SequentialPattern)
+{
+    for (int i = 0; i < 16; ++i)
+    {
+        int expected = DAS_E_IPC_BASE - (i + 1);
+        EXPECT_LE(expected, -1073741868);
+        EXPECT_GE(expected, -1073741883);
+    }
+}
+
+// Test IPC error codes do not conflict with existing error codes
+TEST(IpcErrorsTest, NoConflictWithExistingErrors)
+{
+    EXPECT_NE(DAS_E_IPC_BASE, DAS_E_RESERVED);
+    EXPECT_NE(DAS_E_IPC_BASE, DAS_E_NO_INTERFACE);
+    EXPECT_NE(DAS_E_IPC_BASE, DAS_E_UNDEFINED_RETURN_VALUE);
+    EXPECT_NE(DAS_E_IPC_BASE, DAS_E_INVALID_STRING);
+    EXPECT_NE(DAS_E_IPC_BASE, DAS_E_OUT_OF_MEMORY);
+    EXPECT_NE(DAS_E_IPC_BASE, DAS_E_TIMEOUT);
+
+    EXPECT_NE(DAS_E_IPC_INVALID_MESSAGE_HEADER, DAS_E_TIMEOUT);
+    EXPECT_NE(DAS_E_IPC_TIMEOUT, DAS_E_TIMEOUT);
+
+    EXPECT_LT(DAS_E_IPC_BASE, 0);
+    EXPECT_GT(DAS_E_IPC_BASE, -10000);
+}
+
+// Test error codes follow sequential pattern
+TEST(IpcErrorsTest, SequentialPattern)
+{
+    for (int i = 0; i < 16; ++i)
+    {
+        int expected = DAS_E_IPC_BASE - (i + 1);
+        EXPECT_LE(expected, -2001);
+        EXPECT_GE(expected, -2016);
+    }
+}

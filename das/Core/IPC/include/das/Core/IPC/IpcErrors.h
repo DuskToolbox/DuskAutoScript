@@ -3,7 +3,7 @@
 
 #include <das/IDasBase.h>
 
-#define DAS_E_IPC_BASE (-2000)
+#define DAS_E_IPC_BASE (-1073741867)
 
 #define DAS_E_IPC_INVALID_MESSAGE_HEADER (DAS_E_IPC_BASE - 1)
 #define DAS_E_IPC_INVALID_MESSAGE_TYPE (DAS_E_IPC_BASE - 2)

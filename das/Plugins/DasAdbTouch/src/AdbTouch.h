@@ -8,6 +8,8 @@
 
 DAS_NS_BEGIN
 
+using namespace Das::PluginInterface;
+
 class AdbTouch final : public IDasTouch
 {
     // should be f"{adb_path} -s {adb_serial} "

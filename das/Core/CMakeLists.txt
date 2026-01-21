@@ -236,6 +236,7 @@ das_add_core_component(Logger)
 das_add_core_component(Exceptions)
 das_add_core_component(i18n)
 das_add_core_component(TaskScheduler)
+das_add_core_component(IPC)
 
 add_library(DasCore SHARED)
 add_dependencies(DasCore DasCoreObjects)

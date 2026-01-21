@@ -6,6 +6,8 @@
 
 DAS_NS_BEGIN
 
+using namespace Das::PluginInterface;
+
 class AdbTouchFactory final : public IDasInputFactory
 {
 public:

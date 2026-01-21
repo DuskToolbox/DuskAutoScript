@@ -34,6 +34,7 @@ function(das_idl_setup_venv)
             RESULT_VARIABLE VENV_RESULT
             OUTPUT_VARIABLE VENV_OUTPUT
             ERROR_VARIABLE VENV_ERROR
+            TIMEOUT 120
         )
         if(NOT VENV_RESULT EQUAL 0)
             message(FATAL_ERROR "[DAS IDL] Failed to create virtual environment: ${VENV_ERROR}")
@@ -55,7 +56,7 @@ function(das_idl_setup_venv)
             # 检查是否是因为requirements.txt为空而导致的错误
             file(READ "${DAS_IDL_REQUIREMENTS}" REQUIREMENTS_CONTENT)
             string(STRIP "${REQUIREMENTS_CONTENT}" REQUIREMENTS_CONTENT)
-            
+
             # 如果requirements.txt为空或只有注释，这是正常情况，不报错
             if(REQUIREMENTS_CONTENT STREQUAL "" OR REQUIREMENTS_CONTENT MATCHES "^[#\\s]*$")
                 message(STATUS "[DAS IDL] No dependencies to install (requirements.txt is empty or contains only comments)")

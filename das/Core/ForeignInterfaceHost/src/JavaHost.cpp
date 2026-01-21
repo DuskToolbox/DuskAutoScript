@@ -1,9 +1,12 @@
 #ifdef DAS_EXPORT_JAVA
 
 #include "JavaHost.h"
-#include <jni.h>
 #include <das/Utils/CommonUtils.hpp>
-#include <boost/dll/shared_library.hpp>
+#include <jni.h>
+
+// CommonPluginPtr is a type alias for DasPtr<IForeignLanguageRuntime>
+// It's defined in PythonHost.h (LoadPlugin function's return type)
+using CommonPluginPtr = DasPtr<IForeignLanguageRuntime>;
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 

@@ -23,7 +23,11 @@ endif()
 # Prevent visual studio treat headers as sources.
 #file(GLOB_RECURSE DAS_COMMON_HEADERS ${CMAKE_SOURCE_DIR}/include/*) ${DAS_COMMON_HEADERS}
 add_library(DasCommonHeaders INTERFACE)
-target_include_directories(DasCommonHeaders INTERFACE ${CMAKE_SOURCE_DIR}/das/_shims ${CMAKE_SOURCE_DIR}/include/)
+target_include_directories(DasCommonHeaders INTERFACE
+    ${CMAKE_SOURCE_DIR}/das/_shims
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_BINARY_DIR}/das/include
+)
 target_link_libraries(DasUtils PUBLIC DasCommonHeaders)
 
 add_library(DAS_EX_PRIVATE_LIBS ALIAS DasUtils)
@@ -31,7 +35,9 @@ add_library(DAS_EX_PRIVATE_LIBS ALIAS DasUtils)
 if(${DAS_BUILD_TEST})
     include(GoogleTest)
     das_add_additional_test(AdditionalTest)
-    target_include_directories(AdditionalTest PRIVATE Core/ForeignInterfaceHost/include)
+    target_include_directories(AdditionalTest PRIVATE
+        ${CMAKE_SOURCE_DIR}/das/_shims
+        Core/ForeignInterfaceHost/include)
     target_link_libraries(AdditionalTest PUBLIC DasUtils Boost::url)
 endif()
 
