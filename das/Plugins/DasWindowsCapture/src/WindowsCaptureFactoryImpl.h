@@ -5,21 +5,21 @@
 #include <das/Utils/CommonUtils.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasCaptureFactory.Implements.hpp>
 
-// {23290FC8-CD40-4C4E-9F58-20EC404F1F3C}
+// {C9225681-DFE3-45D2-B6DA-FE2FC9452513}
 DAS_DEFINE_CLASS_IN_NAMESPACE(
     Das,
     WindowsCaptureFactoryImpl,
-    0x23290fc8,
-    0xcd40,
-    0x4c4e,
-    0x9f,
-    0x58,
-    0x20,
-    0xec,
-    0x40,
-    0x4f,
-    0x1f,
-    0x3c)
+    0xc9225681,
+    0xdfe3,
+    0x45d2,
+    0xb6,
+    0xda,
+    0xfe,
+    0x2f,
+    0xc9,
+    0x45,
+    0x25,
+    0x13)
 
 DAS_NS_BEGIN
 

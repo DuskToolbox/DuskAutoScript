@@ -1,6 +1,9 @@
 
 #define DAS_BUILD_SHARED
 
+#include "das/IDasBase.h"
+#include <das/_autogen/idl/abi/IDasPluginPackage.h>
+
 #include "PluginImpl.h"
 #include <new>
 

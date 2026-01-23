@@ -3,8 +3,18 @@
 DasResult DasHttpLogReader::ReadOne(const char* message, size_t size)
 {
     message_ = {message, size};
-    return DAS_S_OK;
+
+    std::string_view str_view{message, size};
+    return str_view;
 }
+
+DasResult DasHttpLogReader::ReadOne(const char* message, size_t size)
+{
+    std::string_view str_view{message, size};
+    return ReadOne(str_view);
+}
+
+std::string_view DasHttpLogReader::GetLog() const noexcept { return message_; }
 
 DasResult DasHttpLogReader::QueryInterface(const DasGuid& iid, void** pp_object)
 {

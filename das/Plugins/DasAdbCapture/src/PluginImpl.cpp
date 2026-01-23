@@ -1,6 +1,6 @@
 #include <DAS/_autogen/idl/abi/DasLogger.h>
-#include <das/IDasBase.h>
 #include <DAS/_autogen/idl/abi/IDasPluginPackage.h>
+#include <das/IDasBase.h>
 #include <das/Utils/StringUtils.h>
 
 #define DAS_BUILD_SHARED
@@ -14,7 +14,7 @@
 DAS_NS_BEGIN
 
 DasResult AdbCapturePlugin::EnumFeature(
-    const size_t                         index,
+    const size_t                       index,
     PluginInterface::DasPluginFeature* p_out_feature)
 {
     static std::array features{
@@ -28,7 +28,7 @@ DasResult AdbCapturePlugin::EnumFeature(
     }
     catch (const std::out_of_range& ex)
     {
-        DAS_LOG_ERROR(ex.what());
+        DAS_CORE_LOG_ERROR(ex.what());
         return DAS_E_OUT_OF_RANGE;
     }
 }
@@ -43,8 +43,9 @@ DasResult AdbCapturePlugin::CreateFeatureInterface(
         // Capture Factory
     case 0:
     {
-        const auto p_result =
-            MakeDasPtr<PluginInterface::IDasCaptureFactory, AdbCaptureFactoryImpl>();
+        const auto p_result = MakeDasPtr<
+            PluginInterface::IDasCaptureFactory,
+            AdbCaptureFactoryImpl>();
         *pp_out_interface = p_result.Get();
         p_result->AddRef();
         return DAS_S_OK;

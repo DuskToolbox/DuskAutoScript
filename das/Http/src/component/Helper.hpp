@@ -1,18 +1,25 @@
 #ifndef DAS_HTTP_COMPONENT_HELPER_HPP
 #define DAS_HTTP_COMPONENT_HELPER_HPP
 
-#include "das/Core/Exceptions/DasException.h"
-#include "das/PluginInterface/IDasErrorLens.h"
-#include "das/Utils/fmt.h"
-#include "beast/Request.hpp"
 #include "beast/JsonUtils.hpp"
+#include "beast/Request.hpp"
+#include "das/DasException.hpp"
+#include "das/Utils/fmt.h"
+#include <boost/beast/core.hpp>
 
 #include "dto/Global.hpp"
+
+namespace Das
+{
+    using DasResult = int32_t;
+}
 
 #include <nlohmann/json.hpp>
 
 #define DAS_HTTP_MAKE_RESPONSE(error_code)                                     \
-    Beast::HttpResponse::CreateErrorResponse(error_code, Das::Http::GetPredefinedErrorMessage(error_code))
+    Beast::HttpResponse::CreateErrorResponse(                                  \
+        error_code,                                                            \
+        Das::Http::GetPredefinedErrorMessage(error_code))
 
 namespace Das::Http
 {

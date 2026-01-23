@@ -1,36 +1,33 @@
 #ifndef DAS_PLUGINS_DASWINDOWSCAPTURE_WINDOWS_CAPTURE_IMPL_H
 #define DAS_PLUGINS_DASWINDOWSCAPTURE_WINDOWS_CAPTURE_IMPL_H
 
-#include <DAS/_autogen/idl/abi/IDasCapture.h>
-#include <DAS/_autogen/idl/wrapper/Das.PluginInterface.IDasCapture.Implements.hpp>
+#include <Windows.h>
 #include <cstdint>
 #include <das/IDasBase.h>
 #include <das/Utils/StringUtils.h>
+#include <das/_autogen/idl/abi/IDasCapture.h>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasCapture.Implements.hpp>
+#include <winrt/base.h>
+#include <winrt/windows.graphics.capture.h>
 
-DAS_NS_BEGIN
-
-// {383C85E9-BD34-8D85-AF24-6FE96FE9B} GUID 定义将在 WindowsCaptureImpl.cpp
-// 中实现
+// {5D277A77-FB65-4613-B10A-91905F617F74} GUID 定义将在
+// WindowsCaptureImpl.cpp 中实现
 DAS_DEFINE_CLASS_IN_NAMESPACE(
     Das,
     WindowsCapture,
-    0xeac73fd2,
-    0x5674,
-    0x4796,
-    0x8298,
-    0x82,
-    0xb8,
-    0xe7 0xfb0,
+    0x5d277a77,
+    0xfb65,
+    0x4613,
+    0xb1,
+    0xa,
     0x91,
-    0x82,
-    0x85,
-    0x98 0x97,
-    0x9c,
-    0xda,
-    0x8b,
-    0x9f 0x94,
-    0x82,
-    0x9b);
+    0x90,
+    0x5f,
+    0x61,
+    0x7f,
+    0x74);
+
+DAS_NS_BEGIN
 
 enum CaptureMode
 {
@@ -45,9 +42,10 @@ private:
     // 配置存储
     CaptureMode mode_;
     std::string capture_mode_;
-    std::string target_param_; // 存储
-                               // window_title/window_handle/process_name/process_id/monitor_index
-                               // 之一
+    std::string
+        target_param_; // 存储
+                       // window_title/window_handle/process_name/process_id/monitor_index
+                       // 之一
     std::string window_title_;
     HWND        target_window_handle_;
     std::string process_name_;

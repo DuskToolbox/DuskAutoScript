@@ -7,21 +7,21 @@
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasPluginPackage.Implements.hpp>
 #include <unordered_map>
 
-// {EAC73FD2-5674-4796-8298-71B80727E993}
+// {26E90F16-FB71-42C1-BE3C-C5C7721B6D2D}
 DAS_DEFINE_CLASS_IN_NAMESPACE(
     Das,
     WindowsCapturePlugin,
-    0xeac73fd2,
-    0x5674,
-    0x4796,
-    0x82,
-    0x98,
-    0x71,
-    0xb8,
-    0x7,
-    0x27,
-    0xe9,
-    0x93);
+    0x26e90f16,
+    0xfb71,
+    0x42c1,
+    0xbe,
+    0x3c,
+    0xc5,
+    0xc7,
+    0x72,
+    0x1b,
+    0x6d,
+    0x2d);
 
 DAS_NS_BEGIN
 

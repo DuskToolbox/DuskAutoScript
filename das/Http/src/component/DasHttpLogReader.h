@@ -14,7 +14,7 @@ class DasHttpLogReader final
 {
     std::string message_{};
 
-    DAS_IMPL ReadOne(::IDasReadOnlyString* message, uint64_t size) override;
+    DAS_IMPL ReadOne(::IDasReadOnlyString* message);
 
     DAS_UTILS_IDASBASE_AUTO_IMPL(DasHttpLogReader)
 
