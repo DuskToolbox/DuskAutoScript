@@ -3,7 +3,6 @@
 #include "das/IDasBase.h"
 
 #include "PluginImpl.h"
-#include <DAS/_autogen/idl/abi/DasLogger.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Utils/CommonUtils.hpp>
 

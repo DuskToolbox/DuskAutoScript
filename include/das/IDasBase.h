@@ -10,6 +10,15 @@
 
 #include <das/DasTypes.hpp>
 
+#include <cstddef>
+#include <cstdint>
+#include <das/DasConfig.h>
+#include <das/DasGuidHolder.h>
+#include <string>
+#include <type_traits>
+
+#include <das/DasTypes.hpp>
+
 // clang-format off
 #ifdef SWIG
 #define SWIG_IGNORE(x) %ignore x;
@@ -294,6 +303,12 @@ DAS_DEFINE_RET_TYPE(DasRetUInt, uint64_t);
 
 DAS_DEFINE_RET_TYPE(DasRetFloat, float);
 
+#ifdef __cplusplus
+DAS_NS_BEGIN
+
+DAS_NS_END
+#endif // __cplusplus
+
 // ============================================
 // 异常处理宏和函数声明（用于代码生成器）
 // ============================================
@@ -301,126 +316,17 @@ DAS_DEFINE_RET_TYPE(DasRetFloat, float);
 #ifdef __cplusplus
 DAS_NS_BEGIN
 
-// 前置声明 IDasException 接口
-#include <das/DasTypes.hpp>
-
-namespace ExportInterface
-{
-    DAS_INTERFACE IDasException;
-}
-} // namespace ExportInterface
-
-/**
- * @brief 源代码位置信息结构
- */
-struct DasExceptionSourceInfo
-{
-    const char* file;
-    int         line;
-    const char* function;
-};
-
-/**
- * @brief 抛出 IDasException* 的函数声明
- *
- * 这个函数在 DasCore.dll 中实现，会抛出 IDasException* 指针。
- * 调用方使用完毕后需要调用 Release 释放资源。
- *
- * @param error_code 错误码
- * @param p_source_info 源代码位置信息
- */
-extern "C" DAS_API void ThrowDasExceptionPtr(
-    DasResult               error_code,
-    DasExceptionSourceInfo* p_source_info);
-
-/**
- * @brief 创建 IDasException 的 C 函数声明
- *
- * @param error_code 错误码
- * @param message 错误消息
- * @return IDasException* 异常接口指针，调用方使用后需调用 Release
- */
-extern "C" DAS_API ExportInterface::IDasException* DasCreateException(
-    DasResult   error_code,
-    const char* message);
-
-/**
- * @brief 从 IDasException* 获取消息的辅助函数声明
- *
- * @param p_exception 异常指针
- * @return std::string 异常消息
- */
-DAS_API std::string DasGetExceptionMessage(
-    ExportInterface::IDasException* p_exception);
-
-/**
- * @brief 从 IDasException* 获取错误码的辅助函数声明
- *
- * @param p_exception 异常指针
- * @return DasResult 错误码
- */
-DAS_API DasResult
-#include <das/DasPtr.hpp>
-    DAS_NS_BEGIN
-
-    // DasBase wrapper class for RAII memory management (全局命名空间）
-
-    class DasBase
-
-{
-private:
-    DasPtr<IDasBase> ptr_;
-
-public:
-    /// @brief Default constructor, creates null wrapper
-
-    DasBase() noexcept = default;
-
-    /// @brief Construct from raw interface pointer (takes ownership)
-
-    explicit DasBase(IDasBase* p) noexcept : ptr_(p) {}
-
-    /// @brief Construct from DasPtr
-
-    DasBase(Das::DasPtr<IDasBase> ptr) noexcept : ptr_(std::move(ptr)) {}
-
-    /// @brief Get underlying raw interface pointer
-
-    IDasBase* Get() const noexcept { return ptr_.Get(); }
-
-    /// @brief Get underlying DasPtr
-
-    const DasPtr<IDasBase>& GetPtr() const noexcept { return ptr_; }
-
-    /// @brief Implicit conversion to raw pointer
-
-    operator IDasBase*() const noexcept { return ptr_.Get(); }
-
-    /// @brief Check if holding valid object
-
-    explicit operator bool() const noexcept { return ptr_ != nullptr; }
-
-    /// @brief Access raw interface members
-
-    IDasBase* operator->() const noexcept { return ptr_.Get(); }
-};
-DasGetExceptionErrorCode(ExportInterface::IDasException* p_exception);
+// Note: 代码生成器使用 DAS_THROW_IF_FAILED 宏（在 IDasBase.h:423 定义）
+// 该宏使用 DAS_THROW_IF_FAILED_EC 的实现
 
 DAS_NS_END
 #endif // __cplusplus
 
-// 宏定义
 #define DAS_THROW_IF_FAILED(result)                                            \
     {                                                                          \
         if (::Das::IsFailed(result))                                           \
         {                                                                      \
-            ::Das::DasExceptionSourceInfo __das_internal_source_location{      \
-                __FILE__,                                                      \
-                __LINE__,                                                      \
-                DAS_FUNCTION};                                                 \
-            ::Das::ThrowDasExceptionPtr(                                       \
-                result,                                                        \
-                &__das_internal_source_location);                              \
+            DAS_THROW_EC(result);                                              \
         }                                                                      \
     }
 

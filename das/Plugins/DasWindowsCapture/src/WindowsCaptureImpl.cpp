@@ -26,7 +26,7 @@ bool WindowsCapture::ParseConfigAndSelectMode(const nlohmann::json& config)
 {
     if (!config.contains("capture_mode"))
     {
-        DAS_CORE_LOG_ERROR("Missing capture_mode in config");
+        DAS_LOG_ERROR("Missing capture_mode in config");
         return false;
     }
 
@@ -39,7 +39,7 @@ bool WindowsCapture::ParseConfigAndSelectMode(const nlohmann::json& config)
         pInitializeGDICapture_ = nullptr;
         pInitializeGraphicsCapture_ =
             &WindowsCapture::InitializeGraphicsCapture;
-        DAS_CORE_LOG_INFO("Selected Windows.Graphics.Capture mode");
+        DAS_LOG_INFO("Selected Windows.Graphics.Capture mode");
         return true;
     }
     else if (mode_str == "gdi_bitblt")
@@ -47,12 +47,12 @@ bool WindowsCapture::ParseConfigAndSelectMode(const nlohmann::json& config)
         mode_ = CaptureMode::GDI;
         pInitializeGDICapture_ = &WindowsCapture::InitializeGDICapture;
         pInitializeGraphicsCapture_ = nullptr;
-        DAS_CORE_LOG_INFO("Selected GDI BitBlt mode");
+        DAS_LOG_INFO("Selected GDI BitBlt mode");
         return true;
     }
     else
     {
-        DAS_CORE_LOG_ERROR(
+        DAS_LOG_ERROR(
             "Invalid capture_mode: {}. Expected 'windows_graphics_capture' or 'gdi_bitblt'",
             mode_str);
         return false;
@@ -75,7 +75,7 @@ DasResult WindowsCapture::InitializeGDICapture()
         {
             target_hwnd = reinterpret_cast<HWND>(std::stoull(handle_str));
         }
-        DAS_CORE_LOG_INFO(
+        DAS_LOG_INFO(
             "Target window handle: 0x{:X}",
             reinterpret_cast<uintptr_t>(target_hwnd));
     }
@@ -85,10 +85,10 @@ DasResult WindowsCapture::InitializeGDICapture()
         target_hwnd = FindWindowByTitle(title.c_str());
         if (target_hwnd == nullptr)
         {
-            DAS_CORE_LOG_ERROR("Window not found with title: {}", title);
+            DAS_LOG_ERROR("Window not found with title: {}", title);
             return DAS_E_NOT_FOUND;
         }
-        DAS_CORE_LOG_INFO("Target window by title: {}", title);
+        DAS_LOG_INFO("Target window by title: {}", title);
     }
     else if (config.contains("process_name"))
     {
@@ -96,18 +96,18 @@ DasResult WindowsCapture::InitializeGDICapture()
         DWORD       pid = FindProcessByName(proc_name.c_str());
         if (pid == 0)
         {
-            DAS_CORE_LOG_ERROR("Process not found: {}", proc_name);
+            DAS_LOG_ERROR("Process not found: {}", proc_name);
             return DAS_E_NOT_FOUND;
         }
         target_hwnd = FindMainWindowForProcess(pid);
         if (target_hwnd == nullptr)
         {
-            DAS_CORE_LOG_ERROR(
+            DAS_LOG_ERROR(
                 "Main window not found for process: {}",
                 proc_name);
             return DAS_E_NOT_FOUND;
         }
-        DAS_CORE_LOG_INFO("Target process: {}", proc_name);
+        DAS_LOG_INFO("Target process: {}", proc_name);
     }
     else if (config.contains("process_id"))
     {
@@ -115,20 +115,20 @@ DasResult WindowsCapture::InitializeGDICapture()
         target_hwnd = FindMainWindowForProcess(pid);
         if (target_hwnd == nullptr)
         {
-            DAS_CORE_LOG_ERROR("Main window not found for PID: {}", pid);
+            DAS_LOG_ERROR("Main window not found for PID: {}", pid);
             return DAS_E_NOT_FOUND;
         }
-        DAS_CORE_LOG_INFO("Target PID: {}", pid);
+        DAS_LOG_INFO("Target PID: {}", pid);
     }
     else if (config.contains("monitor_index"))
     {
         target_hwnd = GetDesktopWindow();
         target_monitor_index_ = config["monitor_index"];
-        DAS_CORE_LOG_INFO("Target monitor index: {}", target_monitor_index_);
+        DAS_LOG_INFO("Target monitor index: {}", target_monitor_index_);
     }
     else
     {
-        DAS_CORE_LOG_ERROR("No valid target key in config");
+        DAS_LOG_ERROR("No valid target key in config");
         return DAS_E_INVALID_ARGUMENT;
     }
 
@@ -137,7 +137,7 @@ DasResult WindowsCapture::InitializeGDICapture()
     auto hr = gdi_capture_.Initialize(target_hwnd);
     if (FAILED(hr))
     {
-        DAS_CORE_LOG_ERROR("Failed to initialize GDI capture: 0x{:08X}", hr);
+        DAS_LOG_ERROR("Failed to initialize GDI capture: 0x{:08X}", hr);
         return hr;
     }
 
@@ -188,7 +188,7 @@ DasResult WindowsCapture::InitializeGraphicsCapture()
 
     if (target_hwnd == nullptr)
     {
-        DAS_CORE_LOG_ERROR("No valid target found");
+        DAS_LOG_ERROR("No valid target found");
         return DAS_E_NOT_FOUND;
     }
 
@@ -197,7 +197,7 @@ DasResult WindowsCapture::InitializeGraphicsCapture()
     auto hr = graphics_capture_.Initialize(target_hwnd);
     if (FAILED(hr))
     {
-        DAS_CORE_LOG_ERROR(
+        DAS_LOG_ERROR(
             "Failed to initialize Windows.Graphics.Capture: 0x{:08X}",
             hr);
         return hr;
@@ -215,7 +215,7 @@ DasResult WindowsCapture::Capture(IDasImage** pp_out_image)
         auto hr = StartCapture();
         if (FAILED(hr))
         {
-            DAS_CORE_LOG_ERROR("Failed to start capture: 0x{:08X}", hr);
+            DAS_LOG_ERROR("Failed to start capture: 0x{:08X}", hr);
             return hr;
         }
     }
@@ -236,7 +236,7 @@ DasResult WindowsCapture::Capture(IDasImage** pp_out_image)
 
     if (FAILED(hr))
     {
-        DAS_CORE_LOG_ERROR("Capture failed: 0x{:08X}", hr);
+        DAS_LOG_ERROR("Capture failed: 0x{:08X}", hr);
         return hr;
     }
 
@@ -244,7 +244,7 @@ DasResult WindowsCapture::Capture(IDasImage** pp_out_image)
         CreateIDasImageFromRgb888(frame_data, width, height, pp_out_image);
     if (FAILED(create_result))
     {
-        DAS_CORE_LOG_ERROR(
+        DAS_LOG_ERROR(
             "Failed to create IDasImage: 0x{:08X}",
             create_result);
         return create_result;
@@ -257,13 +257,13 @@ DasResult WindowsCapture::StartCapture()
 {
     if (initialized_)
     {
-        DAS_CORE_LOG_WARN("Capture already started");
+        DAS_LOG_WARNING("Capture already started");
         return DAS_S_OK;
     }
 
     if (!pInitializeGDICapture_ && !pInitializeGraphicsCapture_)
     {
-        DAS_CORE_LOG_ERROR("No capture mode initialized");
+        DAS_LOG_ERROR("No capture mode initialized");
         return DAS_E_INVALID_ARGUMENT;
     }
 

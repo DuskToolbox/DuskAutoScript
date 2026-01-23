@@ -1,6 +1,7 @@
 #define DAS_BUILD_SHARED
 
 #include "das/IDasBase.h"
+#include <das/Utils/CommonUtils.hpp>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
 
 // Bring PluginInterface types into global namespace for C API
@@ -18,7 +19,7 @@ DAS_C_API DasResult DasCoCreatePlugin(IDasPluginPackage** pp_out_plugin)
     }
     catch (const std::bad_alloc&)
     {
-        DAS_CORE_LOG_ERROR("Out of memory");
+        DAS_LOG_ERROR("Out of memory");
         return DAS_E_OUT_OF_MEMORY;
     }
     catch (...)

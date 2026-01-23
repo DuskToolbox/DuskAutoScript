@@ -66,6 +66,9 @@ typedef struct _das_GUID
 #define DAS_E_STRONG_REFERENCE_NOT_AVAILABLE -1073741864
 #define DAS_E_TASK_WORKING -1073741865
 #define DAS_E_OBJECT_ALREADY_INIT -1073741866
+#define DAS_E_FAIL -1073741867
+#define DAS_E_INVALID_ARGUMENT -1073741868
+#define DAS_E_CAPTURE_FAILED -1073741869
 
 // ============================================================================
 // 接口前置声明（用于打破循环依赖）

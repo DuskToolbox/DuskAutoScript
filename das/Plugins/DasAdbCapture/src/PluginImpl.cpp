@@ -1,7 +1,7 @@
-#include <DAS/_autogen/idl/abi/DasLogger.h>
-#include <DAS/_autogen/idl/abi/IDasPluginPackage.h>
 #include <das/IDasBase.h>
 #include <das/Utils/StringUtils.h>
+#include <das/_autogen/idl/abi/DasLogger.h>
+#include <das/_autogen/idl/abi/IDasPluginPackage.h>
 
 #define DAS_BUILD_SHARED
 
@@ -28,7 +28,7 @@ DasResult AdbCapturePlugin::EnumFeature(
     }
     catch (const std::out_of_range& ex)
     {
-        DAS_CORE_LOG_ERROR(ex.what());
+        DAS_LOG_ERROR(ex.what());
         return DAS_E_OUT_OF_RANGE;
     }
 }

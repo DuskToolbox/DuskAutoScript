@@ -31,7 +31,7 @@ DasResult WindowsGraphicsCapture::CreateD3DDevice()
 
     if (FAILED(hr))
     {
-        DAS_CORE_LOG_ERROR("Failed to create D3D11 device: 0x{:08X}", hr);
+        DAS_LOG_ERROR("Failed to create D3D11 device: 0x{:08X}", hr);
         return DAS_E_CAPTURE_FAILED;
     }
 
@@ -50,7 +50,7 @@ DasResult WindowsGraphicsCapture::CreateCaptureItem(HWND hwnd)
         auto hr = interop->CreateForWindow(hwnd, &item);
         if (FAILED(hr))
         {
-            DAS_CORE_LOG_ERROR(
+            DAS_LOG_ERROR(
                 "Failed to create capture item for window: 0x{:08X}",
                 hr);
             return DAS_E_CAPTURE_FAILED;
@@ -66,14 +66,14 @@ DasResult WindowsGraphicsCapture::CreateCaptureItem(HWND hwnd)
     }
     catch (const winrt::hresult_error& ex)
     {
-        DAS_CORE_LOG_ERROR(
+        DAS_LOG_ERROR(
             "WinRT error creating capture item: 0x{:08X}",
             ex.code());
         return DAS_E_CAPTURE_FAILED;
     }
     catch (const std::exception& ex)
     {
-        DAS_CORE_LOG_ERROR("Exception creating capture item: {}", ex.what());
+        DAS_LOG_ERROR("Exception creating capture item: {}", ex.what());
         return DAS_E_CAPTURE_FAILED;
     }
 }
@@ -103,14 +103,14 @@ DasResult WindowsGraphicsCapture::StartCaptureSession()
     }
     catch (const winrt::hresult_error& ex)
     {
-        DAS_CORE_LOG_ERROR(
+        DAS_LOG_ERROR(
             "WinRT error starting capture session: 0x{:08X}",
             ex.code());
         return DAS_E_CAPTURE_FAILED;
     }
     catch (const std::exception& ex)
     {
-        DAS_CORE_LOG_ERROR("Exception starting capture session: {}", ex.what());
+        DAS_LOG_ERROR("Exception starting capture session: {}", ex.what());
         return DAS_E_CAPTURE_FAILED;
     }
 }
@@ -121,7 +121,7 @@ DasResult WindowsGraphicsCapture::Initialize(HWND hwnd)
 {
     if (hwnd == nullptr)
     {
-        DAS_CORE_LOG_ERROR("Invalid HWND for Windows.Graphics.Capture");
+        DAS_LOG_ERROR("Invalid HWND for Windows.Graphics.Capture");
         return DAS_E_INVALID_ARGUMENT;
     }
 
@@ -160,7 +160,7 @@ DasResult WindowsGraphicsCapture::Capture(
 {
     if (!initialized_)
     {
-        DAS_CORE_LOG_ERROR("WindowsGraphicsCapture not initialized");
+        DAS_LOG_ERROR("WindowsGraphicsCapture not initialized");
         return DAS_E_CAPTURE_FAILED;
     }
 

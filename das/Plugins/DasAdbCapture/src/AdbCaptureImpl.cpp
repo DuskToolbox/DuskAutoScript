@@ -1,5 +1,5 @@
-#include <DAS/_autogen/idl/abi/IDasMemory.h>
 #include <das/DasConfig.h>
+#include <das/_autogen/idl/abi/IDasMemory.h>
 
 #if defined(_WIN32) || defined(__CYGWIN__)
 
@@ -12,8 +12,6 @@
 
 DAS_DISABLE_WARNING_BEGIN
 DAS_IGNORE_UNUSED_PARAMETER
-
-#include <boost/process/async.hpp>
 
 DAS_DISABLE_WARNING_END
 
@@ -30,17 +28,21 @@ DAS_DISABLE_WARNING_END
 #include "AdbCaptureImpl.h"
 #include "ErrorLensImpl.h"
 #include "PluginImpl.h"
-#include <DAS/_autogen/idl/abi/DasLogger.h>
-#include <DAS/_autogen/idl/abi/IDasImage.h>
+
+// 任务3: 删除不存在的 boost/process/async.hpp include (boost.Process无此文件)
+// 异步功能已由 boost/asio.hpp 和 boost/process/v2/async_pipe.hpp 提供
+// 注意：async_pipe.hpp路径已更新为 boost/process/v2/async_pipe.hpp
 #include <array>
 #include <boost/asio.hpp>
 #include <boost/pfr.hpp>
 #include <boost/process.hpp>
-#include <boost/process/async_pipe.hpp>
+#include <boost/process/v2/async_pipe.hpp>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/QueryInterface.hpp>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
+#include <das/_autogen/idl/abi/DasLogger.h>
+#include <das/_autogen/idl/abi/IDasImage.h>
 #include <sstream>
 #include <system_error>
 

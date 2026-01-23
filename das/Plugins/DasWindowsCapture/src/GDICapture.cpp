@@ -1,7 +1,6 @@
 #include "GDICapture.h"
 #include <DAS/_autogen/idl/abi/DasLogger.h>
 #include <das/IDasBase.h>
-#include <das/Logger/Logger.h>
 #include <windows.h>
 #include <wingdi.h>
 
@@ -15,13 +14,13 @@ DasResult GDICapture::Initialize(HWND hwnd)
 {
     if (hwnd == nullptr)
     {
-        DAS_CORE_LOG_ERROR("Invalid HWND for GDI capture");
+        DAS_LOG_ERROR("Invalid HWND for GDI capture");
         return DAS_E_INVALID_ARGUMENT;
     }
 
     if (IsIconic(hwnd))
     {
-        DAS_CORE_LOG_ERROR("GDI capture does not support minimized windows");
+        DAS_LOG_ERROR("GDI capture does not support minimized windows");
         return DAS_E_INVALID_ARGUMENT;
     }
 
@@ -34,14 +33,14 @@ DasResult GDICapture::Initialize(HWND hwnd)
     hdc_screen_ = GetDC(nullptr);
     if (hdc_screen_ == nullptr)
     {
-        DAS_CORE_LOG_ERROR("Failed to get screen DC");
+        DAS_LOG_ERROR("Failed to get screen DC");
         return DAS_E_CAPTURE_FAILED;
     }
 
     hdc_memory_ = CreateCompatibleDC(hdc_screen_);
     if (hdc_memory_ == nullptr)
     {
-        DAS_CORE_LOG_ERROR("Failed to create compatible DC");
+        DAS_LOG_ERROR("Failed to create compatible DC");
         ReleaseDC(nullptr, hdc_screen_);
         hdc_screen_ = nullptr;
         return DAS_E_CAPTURE_FAILED;
@@ -50,7 +49,7 @@ DasResult GDICapture::Initialize(HWND hwnd)
     h_bitmap_ = CreateCompatibleBitmap(hdc_screen_, width_, height_);
     if (h_bitmap_ == nullptr)
     {
-        DAS_CORE_LOG_ERROR("Failed to create compatible bitmap");
+        DAS_LOG_ERROR("Failed to create compatible bitmap");
         DeleteDC(hdc_memory_);
         hdc_memory_ = nullptr;
         ReleaseDC(nullptr, hdc_screen_);
@@ -71,7 +70,7 @@ DasResult GDICapture::Capture(
 {
     if (!initialized_)
     {
-        DAS_CORE_LOG_ERROR("GDICapture not initialized");
+        DAS_LOG_ERROR("GDICapture not initialized");
         return DAS_E_CAPTURE_FAILED;
     }
 
@@ -89,10 +88,10 @@ DasResult GDICapture::Capture(
             target_rect_.top,
             SRCCOPY | CAPTUREBLT))
     {
-        DAS_CORE_LOG_ERROR("BitBlt failed, trying PrintWindow");
+        DAS_LOG_ERROR("BitBlt failed, trying PrintWindow");
         if (!PrintWindow(hwnd_, hdc_memory_, PW_RENDERFULLCONTENT))
         {
-            DAS_CORE_LOG_ERROR("PrintWindow failed");
+            DAS_LOG_ERROR("PrintWindow failed");
             return DAS_E_CAPTURE_FAILED;
         }
     }
@@ -111,7 +110,7 @@ DasResult GDICapture::Capture(
     bitmap_data_ = new (std::nothrow) uint8_t[data_size_];
     if (bitmap_data_ == nullptr)
     {
-        DAS_CORE_LOG_ERROR("Failed to allocate bitmap data");
+        DAS_LOG_ERROR("Failed to allocate bitmap data");
         return DAS_E_CAPTURE_FAILED;
     }
 
@@ -124,7 +123,7 @@ DasResult GDICapture::Capture(
             &bmi,
             DIB_RGB_COLORS))
     {
-        DAS_CORE_LOG_ERROR("GetDIBits failed");
+        DAS_LOG_ERROR("GetDIBits failed");
         delete[] bitmap_data_;
         bitmap_data_ = nullptr;
         return DAS_E_CAPTURE_FAILED;
