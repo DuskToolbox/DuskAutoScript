@@ -383,9 +383,17 @@ class CppWrapperGenerator:
         # 为当前 IDL 文件中定义的接口添加 ABI 头文件 include
         # 例如：IDasMemory.idl -> IDasMemory.h
         # ABI和wrapper在同一目录下，直接使用文件名
+        # 只为实际存在的 ABI 头文件生成 include（如 IDasImageDesc.h 不存在，应使用 IDasImage.h）
         abi_includes = []
         for interface in self.document.interfaces:
-            abi_includes.append(f"{interface.name}.h")
+            # 检查是否是"描述性接口"（如 IDasImageDesc），需要映射到主接口头文件
+            if interface.name.endswith("Desc"):
+                # 例如：IDasImageDesc -> IDasImage.h
+                base_name = interface.name.replace("Desc", "")
+                abi_includes.append(f"{base_name}.h")
+            else:
+                # 普通接口，直接使用接口名
+                abi_includes.append(f"{interface.name}.h")
 
         # 合并 ABI 头文件和 import 头文件
         includes = import_includes + abi_includes
