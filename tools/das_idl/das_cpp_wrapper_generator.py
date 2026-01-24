@@ -578,15 +578,16 @@ class CppWrapperGenerator:
         return type_name
 
     def _generate_wrapper_class(self, interface: InterfaceDef) -> str:
-        """生成包装类"""
+        """生成包装类（声明与实现分离）"""
         self._collect_dependent_interfaces(interface)
 
         raw_name = interface.name
         wrapper_name = CppWrapperTypeMapper.get_wrapper_class_name(raw_name)
 
+        implementations = []
+
         lines = []
 
-        # 类注释
         lines.append(f"/**")
         lines.append(f" * @brief wrapper for {raw_name}")
         lines.append(f" * ")
@@ -594,7 +595,6 @@ class CppWrapperGenerator:
         lines.append(f" * and convenient property/method APIs.")
         lines.append(f" */")
 
-        # 类定义
         lines.append(f"class {wrapper_name}")
         lines.append("{")
         lines.append("private:")
@@ -602,71 +602,89 @@ class CppWrapperGenerator:
         lines.append("")
         lines.append("public:")
 
-        # 默认构造函数
         lines.append(f"{self.indent}/// @brief 默认构造函数，创建空包装")
         lines.append(f"{self.indent}{wrapper_name}() noexcept = default;")
         lines.append("")
 
-        # 从原始指针构造
         lines.append(f"{self.indent}/// @brief 从原始接口指针构造（获取所有权）")
-        lines.append(f"{self.indent}explicit {wrapper_name}({raw_name}* p) noexcept : ptr_(p) {{}}")
+        lines.append(f"{self.indent}explicit {wrapper_name}({raw_name}* p) noexcept;")
         lines.append("")
 
-        # 从 DasPtr 构造
         lines.append(f"{self.indent}/// @brief 从 DasPtr 构造")
-        lines.append(f"{self.indent}{wrapper_name}(DasPtr<{raw_name}> ptr) noexcept : ptr_(std::move(ptr)) {{}}")
+        lines.append(f"{self.indent}{wrapper_name}(DasPtr<{raw_name}> ptr) noexcept;")
         lines.append("")
 
-        # 获取原始指针
         lines.append(f"{self.indent}/// @brief 获取底层原始接口指针")
-        lines.append(f"{self.indent}{raw_name}* Get() const noexcept {{ return ptr_.Get(); }}")
+        lines.append(f"{self.indent}{raw_name}* Get() const noexcept;")
         lines.append("")
 
-        # 获取 DasPtr
         lines.append(f"{self.indent}/// @brief 获取底层 DasPtr")
-        lines.append(f"{self.indent}const DasPtr<{raw_name}>& GetPtr() const noexcept {{ return ptr_; }}")
+        lines.append(f"{self.indent}const DasPtr<{raw_name}>& GetPtr() const noexcept;")
         lines.append("")
 
-        # 隐式转换到原始指针
         lines.append(f"{self.indent}/// @brief 隐式转换到原始指针")
-        lines.append(f"{self.indent}operator {raw_name}*() const noexcept {{ return ptr_.Get(); }}")
+        lines.append(f"{self.indent}operator {raw_name}*() const noexcept;")
         lines.append("")
 
-        # 布尔转换
         lines.append(f"{self.indent}/// @brief 检查是否持有有效对象")
-        lines.append(f"{self.indent}explicit operator bool() const noexcept {{ return ptr_ != nullptr; }}")
+        lines.append(f"{self.indent}explicit operator bool() const noexcept;")
         lines.append("")
 
-        # -> 操作符
         lines.append(f"{self.indent}/// @brief 访问原始接口成员")
-        lines.append(f"{self.indent}{raw_name}* operator->() const noexcept {{ return ptr_.Get(); }}")
+        lines.append(f"{self.indent}{raw_name}* operator->() const noexcept;")
         lines.append("")
 
-        # 生成方法包装
         for method in interface.methods:
-            method_code = self._generate_method_wrapper(interface, method)
-            lines.append(method_code)
+            method_decl = self._generate_method_wrapper(interface, method, mode='declaration')
+            lines.append(method_decl)
+            method_impl = self._generate_method_wrapper(interface, method, mode='implementation')
+            implementations.append(method_impl)
 
-        # 生成属性包装
         for prop in interface.properties:
-            prop_code = self._generate_property_wrapper(interface, prop)
-            lines.append(prop_code)
+            prop_decl, prop_impls = self._generate_property_wrapper(interface, prop, mode='declaration')
+            lines.append(prop_decl)
+            implementations.extend(prop_impls)
 
         lines.append("};")
+        lines.append("")
+
+        implementations.append(f"{wrapper_name}::{wrapper_name}({raw_name}* p) noexcept : ptr_(p) {{}}")
+        implementations.append("")
+        implementations.append(f"{wrapper_name}::{wrapper_name}(DasPtr<{raw_name}> ptr) noexcept : ptr_(std::move(ptr)) {{}}")
+        implementations.append("")
+        implementations.append(f"{raw_name}* {wrapper_name}::Get() const noexcept {{ return ptr_.Get(); }}")
+        implementations.append("")
+        implementations.append(f"const DasPtr<{raw_name}>& {wrapper_name}::GetPtr() const noexcept {{ return ptr_; }}")
+        implementations.append("")
+        implementations.append(f"{wrapper_name}::operator {raw_name}*() const noexcept {{ return ptr_.Get(); }}")
+        implementations.append("")
+        implementations.append(f"{wrapper_name}::operator bool() const noexcept {{ return ptr_ != nullptr; }}")
+        implementations.append("")
+        implementations.append(f"{raw_name}* {wrapper_name}::operator->() const noexcept {{ return ptr_.Get(); }}")
+        implementations.append("")
+
+        for impl in implementations:
+            lines.append(impl)
 
         return "\n".join(lines) + "\n"
 
-    def _generate_method_wrapper(self, interface: InterfaceDef, method: MethodDef) -> str:
-        """生成方法包装"""
+    def _generate_method_wrapper(self, interface: InterfaceDef, method: MethodDef, mode: str = 'inline') -> str:
+        """生成方法包装
+
+        Args:
+            interface: 接口定义
+            method: 方法定义
+            mode: 生成模式，'inline'（默认，向后兼容）、'declaration'（只生成声明）、'implementation'（只生成类外实现）
+
+        Returns:
+            生成的代码字符串
+        """
         lines = []
 
-        # 获取当前命名空间
+        wrapper_name = CppWrapperTypeMapper.get_wrapper_class_name(interface.name)
         current_namespace = interface.namespace
-
-        # 检查方法是否有 [binary_buffer] 属性
         has_binary_buffer = method.attributes.get('binary_buffer', False) if method.attributes else False
 
-        # 分析参数：分离输入参数和输出参数
         in_params = []
         out_params = []
 
@@ -676,29 +694,23 @@ class CppWrapperGenerator:
             else:
                 in_params.append(param)
 
-        # 确定返回类型
         if out_params:
             if len(out_params) == 1:
-                # 单个 [out] 参数 -> 直接返回
                 ret_type = CppWrapperTypeMapper.get_return_type_for_out_param(out_params[0].type_info, has_binary_buffer)
                 ret_type = self._get_qualified_type_name(ret_type, current_namespace)
             else:
-                # 多个 [out] 参数 -> 返回 std::tuple
                 ret_types = [CppWrapperTypeMapper.get_return_type_for_out_param(p.type_info) for p in out_params]
                 ret_types = [self._get_qualified_type_name(t, current_namespace) for t in ret_types]
                 ret_type = f"std::tuple<{', '.join(ret_types)}>"
         else:
-            # 没有 [out] 参数
             if method.return_type.base_type == 'DasResult' or method.return_type.base_type == 'bool':
-                ret_type = "void"  # DasResult 错误通过异常抛出，bool也转换为DasResult处理
+                ret_type = "void"
             else:
                 ret_type = CppWrapperTypeMapper.get_cpp_type(method.return_type)
 
-        # 生成输入参数列表
         param_decls = []
         for param in in_params:
             param_type = CppWrapperTypeMapper.get_cpp_type(param.type_info)
-            # 接口类型参数使用包装类
             if CppWrapperTypeMapper.is_interface_type(param.type_info.base_type):
                 wrapper_type = CppWrapperTypeMapper.get_wrapper_class_name(param.type_info.base_type)
                 wrapper_type = self._get_qualified_type_name(wrapper_type, current_namespace)
@@ -710,92 +722,168 @@ class CppWrapperGenerator:
 
         param_str = ", ".join(param_decls)
 
-        # 方法签名
-        lines.append(f"{self.indent}/// @brief 调用 {interface.name}::{method.name}")
-        if out_params:
-            lines.append(f"{self.indent}/// @return {'返回输出值' if len(out_params) == 1 else '返回多个输出值的 tuple'}")
-        lines.append(f"{self.indent}/// @throws DasException 当操作失败时")
-        lines.append(f"{self.indent}{ret_type} {method.name}({param_str})")
-        lines.append(f"{self.indent}{{")
+        if mode == 'declaration':
+            lines.append(f"{self.indent}/// @brief 调用 {interface.name}::{method.name}")
+            if out_params:
+                lines.append(f"{self.indent}/// @return {'返回输出值' if len(out_params) == 1 else '返回多个输出值的 tuple'}")
+            lines.append(f"{self.indent}/// @throws DasException 当操作失败时")
+            lines.append(f"{self.indent}{ret_type} {method.name}({param_str}) const;")
+            lines.append("")
+            return "\n".join(lines)
 
-        # 方法体
-        body_indent = self.indent * 2
+        elif mode == 'implementation':
+            body_indent = self.indent
+            lines.append(f"{ret_type} {wrapper_name}::{method.name}({param_str}) const")
+            lines.append("{")
 
-        # 声明 [out] 参数的临时变量
-        for param in out_params:
-            base_type = param.type_info.base_type
-            if CppWrapperTypeMapper.is_interface_type(base_type):
-                lines.append(f"{body_indent}{base_type}* {param.name}_raw = nullptr;")
-            else:
-                # 处理 [binary_buffer] 属性：对于 unsigned char**，声明为 unsigned char*
-                if has_binary_buffer and base_type == 'unsigned char' and param.type_info.pointer_level == 2:
-                    cpp_type = 'unsigned char*'
-                    lines.append(f"{body_indent}{cpp_type} {param.name}_value{{}};")
-                else:
-                    cpp_type = CppWrapperTypeMapper.TYPE_MAP.get(base_type, base_type)
-                    lines.append(f"{body_indent}{cpp_type} {param.name}_value{{}};")
-
-        # 构建调用参数
-        call_args = []
-        for param in method.parameters:
-            if param.direction == ParamDirection.OUT:
+            for param in out_params:
                 base_type = param.type_info.base_type
                 if CppWrapperTypeMapper.is_interface_type(base_type):
-                    call_args.append(f"&{param.name}_raw")
+                    lines.append(f"{body_indent}{base_type}* {param.name}_raw = nullptr;")
                 else:
-                    call_args.append(f"&{param.name}_value")
+                    if has_binary_buffer and base_type == 'unsigned char' and param.type_info.pointer_level == 2:
+                        cpp_type = 'unsigned char*'
+                        lines.append(f"{body_indent}{cpp_type} {param.name}_value{{}};")
+                    else:
+                        cpp_type = CppWrapperTypeMapper.TYPE_MAP.get(base_type, base_type)
+                        lines.append(f"{body_indent}{cpp_type} {param.name}_value{{}};")
+
+            call_args = []
+            for param in method.parameters:
+                if param.direction == ParamDirection.OUT:
+                    base_type = param.type_info.base_type
+                    if CppWrapperTypeMapper.is_interface_type(base_type):
+                        call_args.append(f"&{param.name}_raw")
+                    else:
+                        call_args.append(f"&{param.name}_value")
+                else:
+                    if CppWrapperTypeMapper.is_interface_type(param.type_info.base_type):
+                        call_args.append(f"{param.name}.Get()")
+                    else:
+                        call_args.append(param.name)
+
+            call_args_str = ", ".join(call_args)
+
+            if method.return_type.base_type == 'DasResult' or method.return_type.base_type == 'bool':
+                lines.append(f"{body_indent}const DasResult result = ptr_->{method.name}({call_args_str});")
             else:
-                # 接口类型使用 .Get()
-                if CppWrapperTypeMapper.is_interface_type(param.type_info.base_type):
-                    call_args.append(f"{param.name}.Get()")
-                else:
-                    call_args.append(param.name)
+                lines.append(f"{body_indent}auto result = ptr_->{method.name}({call_args_str});")
 
-        call_args_str = ", ".join(call_args)
-
-        # 调用原始方法
-        if method.return_type.base_type == 'DasResult' or method.return_type.base_type == 'bool':
-            lines.append(f"{body_indent}const DasResult result = ptr_->{method.name}({call_args_str});")
             lines.append(f"{body_indent}DAS_THROW_IF_FAILED(result);")
-        else:
-            lines.append(f"{body_indent}auto result = ptr_->{method.name}({call_args_str});")
 
-        # 返回值处理
-        if out_params:
-            if len(out_params) == 1:
-                param = out_params[0]
-                base_type = param.type_info.base_type
-                if CppWrapperTypeMapper.is_interface_type(base_type):
-                    wrapper_type = CppWrapperTypeMapper.get_wrapper_class_name(base_type)
-                    wrapper_type = self._get_qualified_type_name(wrapper_type, current_namespace)
-                    lines.append(f"{body_indent}return {wrapper_type}({param.name}_raw);")
-                else:
-                    lines.append(f"{body_indent}return {param.name}_value;")
-            else:
-                # 多个输出参数 -> 返回 tuple
-                ret_values = []
-                for param in out_params:
+            if out_params:
+                if len(out_params) == 1:
+                    param = out_params[0]
                     base_type = param.type_info.base_type
                     if CppWrapperTypeMapper.is_interface_type(base_type):
                         wrapper_type = CppWrapperTypeMapper.get_wrapper_class_name(base_type)
                         wrapper_type = self._get_qualified_type_name(wrapper_type, current_namespace)
-                        ret_values.append(f"{wrapper_type}({param.name}_raw)")
+                        lines.append(f"{body_indent}return {wrapper_type}({param.name}_raw);")
                     else:
-                        ret_values.append(f"{param.name}_value")
-                lines.append(f"{body_indent}return {{{', '.join(ret_values)}}};")
-        elif ret_type != "void" and method.return_type.base_type != 'DasResult':
-            lines.append(f"{body_indent}return result;")
+                        lines.append(f"{body_indent}return {param.name}_value;")
+                else:
+                    ret_values = []
+                    for param in out_params:
+                        base_type = param.type_info.base_type
+                        if CppWrapperTypeMapper.is_interface_type(base_type):
+                            wrapper_type = CppWrapperTypeMapper.get_wrapper_class_name(base_type)
+                            wrapper_type = self._get_qualified_type_name(wrapper_type, current_namespace)
+                            ret_values.append(f"{wrapper_type}({param.name}_raw)")
+                        else:
+                            ret_values.append(f"{param.name}_value")
+                    lines.append(f"{body_indent}return {{{', '.join(ret_values)}}};")
+            elif ret_type != "void" and method.return_type.base_type != 'DasResult':
+                lines.append(f"{body_indent}return result;")
 
-        lines.append(f"{self.indent}}}")
-        lines.append("")
+            lines.append("}")
+            lines.append("")
+            return "\n".join(lines)
 
-        return "\n".join(lines)
+        else:
+            lines.append(f"{self.indent}/// @brief 调用 {interface.name}::{method.name}")
+            if out_params:
+                lines.append(f"{self.indent}/// @return {'返回输出值' if len(out_params) == 1 else '返回多个输出值的 tuple'}")
+            lines.append(f"{self.indent}/// @throws DasException 当操作失败时")
+            lines.append(f"{self.indent}{ret_type} {method.name}({param_str})")
+            lines.append(f"{self.indent}{{")
 
-    def _generate_property_wrapper(self, interface: InterfaceDef, prop: PropertyDef) -> str:
-        """生成属性包装"""
-        lines = []
+            body_indent = self.indent * 2
 
-        # 获取当前命名空间
+            for param in out_params:
+                base_type = param.type_info.base_type
+                if CppWrapperTypeMapper.is_interface_type(base_type):
+                    lines.append(f"{body_indent}{base_type}* {param.name}_raw = nullptr;")
+                else:
+                    if has_binary_buffer and base_type == 'unsigned char' and param.type_info.pointer_level == 2:
+                        cpp_type = 'unsigned char*'
+                        lines.append(f"{body_indent}{cpp_type} {param.name}_value{{}};")
+                    else:
+                        cpp_type = CppWrapperTypeMapper.TYPE_MAP.get(base_type, base_type)
+                        lines.append(f"{body_indent}{cpp_type} {param.name}_value{{}};")
+
+            call_args = []
+            for param in method.parameters:
+                if param.direction == ParamDirection.OUT:
+                    base_type = param.type_info.base_type
+                    if CppWrapperTypeMapper.is_interface_type(base_type):
+                        call_args.append(f"&{param.name}_raw")
+                    else:
+                        call_args.append(f"&{param.name}_value")
+                else:
+                    if CppWrapperTypeMapper.is_interface_type(param.type_info.base_type):
+                        call_args.append(f"{param.name}.Get()")
+                    else:
+                        call_args.append(param.name)
+
+            call_args_str = ", ".join(call_args)
+
+            if method.return_type.base_type == 'DasResult' or method.return_type.base_type == 'bool':
+                lines.append(f"{body_indent}const DasResult result = ptr_->{method.name}({call_args_str});")
+                lines.append(f"{body_indent}DAS_THROW_IF_FAILED(result);")
+            else:
+                lines.append(f"{body_indent}auto result = ptr_->{method.name}({call_args_str});")
+
+            if out_params:
+                if len(out_params) == 1:
+                    param = out_params[0]
+                    base_type = param.type_info.base_type
+                    if CppWrapperTypeMapper.is_interface_type(base_type):
+                        wrapper_type = CppWrapperTypeMapper.get_wrapper_class_name(base_type)
+                        wrapper_type = self._get_qualified_type_name(wrapper_type, current_namespace)
+                        lines.append(f"{body_indent}return {wrapper_type}({param.name}_raw);")
+                    else:
+                        lines.append(f"{body_indent}return {param.name}_value;")
+                else:
+                    ret_values = []
+                    for param in out_params:
+                        base_type = param.type_info.base_type
+                        if CppWrapperTypeMapper.is_interface_type(base_type):
+                            wrapper_type = CppWrapperTypeMapper.get_wrapper_class_name(base_type)
+                            wrapper_type = self._get_qualified_type_name(wrapper_type, current_namespace)
+                            ret_values.append(f"{wrapper_type}({param.name}_raw)")
+                        else:
+                            ret_values.append(f"{param.name}_value")
+                    lines.append(f"{body_indent}return {{{', '.join(ret_values)}}};")
+            elif ret_type != "void" and method.return_type.base_type != 'DasResult':
+                lines.append(f"{body_indent}return result;")
+
+            lines.append(f"{self.indent}}}")
+            lines.append("")
+
+            return "\n".join(lines)
+
+    def _generate_property_wrapper(self, interface: InterfaceDef, prop: PropertyDef, mode: str = 'inline'):
+        """生成属性包装
+
+        Args:
+            interface: 接口定义
+            prop: 属性定义
+            mode: 生成模式，'inline'（默认，向后兼容）、'declaration'（只生成声明）、'implementation'（只生成类外实现）
+
+        Returns:
+            'inline' 模式返回字符串，其他模式返回元组 (declaration, [implementations])
+        """
+        wrapper_name = CppWrapperTypeMapper.get_wrapper_class_name(interface.name)
         current_namespace = interface.namespace
 
         base_type = prop.type_info.base_type
@@ -803,73 +891,161 @@ class CppWrapperGenerator:
         is_string = CppWrapperTypeMapper.is_string_type(base_type)
         cpp_type = CppWrapperTypeMapper.TYPE_MAP.get(base_type, base_type)
 
-        # Getter
-        if prop.has_getter:
-            if is_interface:
-                ret_type = CppWrapperTypeMapper.get_wrapper_class_name(base_type)
-                ret_type = self._get_qualified_type_name(ret_type, current_namespace)
-                lines.append(f"{self.indent}/// @brief 获取 {prop.name} 属性")
-                lines.append(f"{self.indent}/// @throws DasException 当操作失败时")
-                lines.append(f"{self.indent}{ret_type} {prop.name}() const")
-                lines.append(f"{self.indent}{{")
-                lines.append(f"{self.indent}{self.indent}{base_type}* p_out = nullptr;")
-                lines.append(f"{self.indent}{self.indent}const DasResult result = ptr_->Get{prop.name}(&p_out);")
-                lines.append(f"{self.indent}{self.indent}DAS_THROW_IF_FAILED(result);")
-                lines.append(f"{self.indent}{self.indent}return {ret_type}(p_out);")
-                lines.append(f"{self.indent}}}")
-            elif is_string:
-                lines.append(f"{self.indent}/// @brief 获取 {prop.name} 属性")
-                lines.append(f"{self.indent}/// @throws DasException 当操作失败时")
-                lines.append(f"{self.indent}DasReadOnlyString {prop.name}() const")
-                lines.append(f"{self.indent}{{")
-                lines.append(f"{self.indent}{self.indent}IDasReadOnlyString* p_out = nullptr;")
-                lines.append(f"{self.indent}{self.indent}const DasResult result = ptr_->Get{prop.name}(&p_out);")
-                lines.append(f"{self.indent}{self.indent}DAS_THROW_IF_FAILED(result);")
-                lines.append(f"{self.indent}{self.indent}return DasReadOnlyString(p_out);")
-                lines.append(f"{self.indent}}}")
-            else:
-                lines.append(f"{self.indent}/// @brief 获取 {prop.name} 属性")
-                lines.append(f"{self.indent}/// @throws DasException 当操作失败时")
-                lines.append(f"{self.indent}{cpp_type} {prop.name}() const")
-                lines.append(f"{self.indent}{{")
-                lines.append(f"{self.indent}{self.indent}{cpp_type} value{{}};")
-                lines.append(f"{self.indent}{self.indent}const DasResult result = ptr_->Get{prop.name}(&value);")
-                lines.append(f"{self.indent}{self.indent}DAS_THROW_IF_FAILED(result);")
-                lines.append(f"{self.indent}{self.indent}return value;")
-                lines.append(f"{self.indent}}}")
-            lines.append("")
+        if mode == 'inline':
+            lines = []
 
-        # Setter
-        if prop.has_setter:
-            if is_interface:
-                wrapper_type = CppWrapperTypeMapper.get_wrapper_class_name(base_type)
-                wrapper_type = self._get_qualified_type_name(wrapper_type, current_namespace)
-                lines.append(f"{self.indent}/// @brief 设置 {prop.name} 属性")
-                lines.append(f"{self.indent}/// @throws DasException 当操作失败时")
-                lines.append(f"{self.indent}void {prop.name}(const {wrapper_type}& value)")
-                lines.append(f"{self.indent}{{")
-                lines.append(f"{self.indent}{self.indent}const DasResult result = ptr_->Set{prop.name}(value.Get());")
-                lines.append(f"{self.indent}{self.indent}DAS_THROW_IF_FAILED(result);")
-                lines.append(f"{self.indent}}}")
-            elif is_string:
-                lines.append(f"{self.indent}/// @brief 设置 {prop.name} 属性")
-                lines.append(f"{self.indent}/// @throws DasException 当操作失败时")
-                lines.append(f"{self.indent}void {prop.name}(const DasReadOnlyString& value)")
-                lines.append(f"{self.indent}{{")
-                lines.append(f"{self.indent}{self.indent}const DasResult result = ptr_->Set{prop.name}(value.Get());")
-                lines.append(f"{self.indent}{self.indent}DAS_THROW_IF_FAILED(result);")
-                lines.append(f"{self.indent}}}")
-            else:
-                lines.append(f"{self.indent}/// @brief 设置 {prop.name} 属性")
-                lines.append(f"{self.indent}/// @throws DasException 当操作失败时")
-                lines.append(f"{self.indent}void {prop.name}({cpp_type} value)")
-                lines.append(f"{self.indent}{{")
-                lines.append(f"{self.indent}{self.indent}const DasResult result = ptr_->Set{prop.name}(value);")
-                lines.append(f"{self.indent}{self.indent}DAS_THROW_IF_FAILED(result);")
-                lines.append(f"{self.indent}}}")
-            lines.append("")
+            if prop.has_getter:
+                if is_interface:
+                    ret_type = CppWrapperTypeMapper.get_wrapper_class_name(base_type)
+                    ret_type = self._get_qualified_type_name(ret_type, current_namespace)
+                    lines.append(f"{self.indent}/// @brief 获取 {prop.name} 属性")
+                    lines.append(f"{self.indent}/// @throws DasException 当操作失败时")
+                    lines.append(f"{self.indent}{ret_type} {prop.name}() const")
+                    lines.append(f"{self.indent}{{")
+                    lines.append(f"{self.indent}{self.indent}{base_type}* p_out = nullptr;")
+                    lines.append(f"{self.indent}{self.indent}const DasResult result = ptr_->Get{prop.name}(&p_out);")
+                    lines.append(f"{self.indent}{self.indent}DAS_THROW_IF_FAILED(result);")
+                    lines.append(f"{self.indent}{self.indent}return {ret_type}(p_out);")
+                    lines.append(f"{self.indent}}}")
+                elif is_string:
+                    lines.append(f"{self.indent}/// @brief 获取 {prop.name} 属性")
+                    lines.append(f"{self.indent}/// @throws DasException 当操作失败时")
+                    lines.append(f"{self.indent}DasReadOnlyString {prop.name}() const")
+                    lines.append(f"{self.indent}{{")
+                    lines.append(f"{self.indent}{self.indent}IDasReadOnlyString* p_out = nullptr;")
+                    lines.append(f"{self.indent}{self.indent}const DasResult result = ptr_->Get{prop.name}(&p_out);")
+                    lines.append(f"{self.indent}{self.indent}DAS_THROW_IF_FAILED(result);")
+                    lines.append(f"{self.indent}{self.indent}return DasReadOnlyString(p_out);")
+                    lines.append(f"{self.indent}}}")
+                else:
+                    lines.append(f"{self.indent}/// @brief 获取 {prop.name} 属性")
+                    lines.append(f"{self.indent}/// @throws DasException 当操作失败时")
+                    lines.append(f"{self.indent}{cpp_type} {prop.name}() const")
+                    lines.append(f"{self.indent}{{")
+                    lines.append(f"{self.indent}{self.indent}{cpp_type} value{{}};")
+                    lines.append(f"{self.indent}{self.indent}const DasResult result = ptr_->Get{prop.name}(&value);")
+                    lines.append(f"{self.indent}{self.indent}DAS_THROW_IF_FAILED(result);")
+                    lines.append(f"{self.indent}{self.indent}return value;")
+                    lines.append(f"{self.indent}}}")
+                lines.append("")
 
-        return "\n".join(lines)
+            if prop.has_setter:
+                if is_interface:
+                    wrapper_type = CppWrapperTypeMapper.get_wrapper_class_name(base_type)
+                    wrapper_type = self._get_qualified_type_name(wrapper_type, current_namespace)
+                    lines.append(f"{self.indent}/// @brief 设置 {prop.name} 属性")
+                    lines.append(f"{self.indent}/// @throws DasException 当操作失败时")
+                    lines.append(f"{self.indent}void {prop.name}(const {wrapper_type}& value)")
+                    lines.append(f"{self.indent}{{")
+                    lines.append(f"{self.indent}{self.indent}const DasResult result = ptr_->Set{prop.name}(value.Get());")
+                    lines.append(f"{self.indent}{self.indent}DAS_THROW_IF_FAILED(result);")
+                    lines.append(f"{self.indent}}}")
+                elif is_string:
+                    lines.append(f"{self.indent}/// @brief 设置 {prop.name} 属性")
+                    lines.append(f"{self.indent}/// @throws DasException 当操作失败时")
+                    lines.append(f"{self.indent}void {prop.name}(const DasReadOnlyString& value)")
+                    lines.append(f"{self.indent}{{")
+                    lines.append(f"{self.indent}{self.indent}const DasResult result = ptr_->Set{prop.name}(value.Get());")
+                    lines.append(f"{self.indent}{self.indent}DAS_THROW_IF_FAILED(result);")
+                    lines.append(f"{self.indent}}}")
+                else:
+                    lines.append(f"{self.indent}/// @brief 设置 {prop.name} 属性")
+                    lines.append(f"{self.indent}/// @throws DasException 当操作失败时")
+                    lines.append(f"{self.indent}void {prop.name}({cpp_type} value)")
+                    lines.append(f"{self.indent}{{")
+                    lines.append(f"{self.indent}{self.indent}const DasResult result = ptr_->Set{prop.name}(value);")
+                    lines.append(f"{self.indent}{self.indent}DAS_THROW_IF_FAILED(result);")
+                    lines.append(f"{self.indent}}}")
+                lines.append("")
+
+            return "\n".join(lines)
+
+        else:
+            declaration_lines = []
+            implementation_lines = []
+
+            if prop.has_getter:
+                if is_interface:
+                    ret_type = CppWrapperTypeMapper.get_wrapper_class_name(base_type)
+                    ret_type = self._get_qualified_type_name(ret_type, current_namespace)
+                    declaration_lines.append(f"{self.indent}/// @brief 获取 {prop.name} 属性")
+                    declaration_lines.append(f"{self.indent}/// @throws DasException 当操作失败时")
+                    declaration_lines.append(f"{self.indent}{ret_type} {prop.name}() const;")
+
+                    implementation_lines.append(f"{ret_type} {wrapper_name}::{prop.name}() const")
+                    implementation_lines.append("{")
+                    implementation_lines.append(f"{self.indent}{base_type}* p_out = nullptr;")
+                    implementation_lines.append(f"{self.indent}const DasResult result = ptr_->Get{prop.name}(&p_out);")
+                    implementation_lines.append(f"{self.indent}DAS_THROW_IF_FAILED(result);")
+                    implementation_lines.append(f"{self.indent}return {ret_type}(p_out);")
+                    implementation_lines.append("}")
+                    implementation_lines.append("")
+                elif is_string:
+                    declaration_lines.append(f"{self.indent}/// @brief 获取 {prop.name} 属性")
+                    declaration_lines.append(f"{self.indent}/// @throws DasException 当操作失败时")
+                    declaration_lines.append(f"{self.indent}DasReadOnlyString {prop.name}() const;")
+
+                    implementation_lines.append(f"DasReadOnlyString {wrapper_name}::{prop.name}() const")
+                    implementation_lines.append("{")
+                    implementation_lines.append(f"{self.indent}IDasReadOnlyString* p_out = nullptr;")
+                    implementation_lines.append(f"{self.indent}const DasResult result = ptr_->Get{prop.name}(&p_out);")
+                    implementation_lines.append(f"{self.indent}DAS_THROW_IF_FAILED(result);")
+                    implementation_lines.append(f"{self.indent}return DasReadOnlyString(p_out);")
+                    implementation_lines.append("}")
+                    implementation_lines.append("")
+                else:
+                    declaration_lines.append(f"{self.indent}/// @brief 获取 {prop.name} 属性")
+                    declaration_lines.append(f"{self.indent}/// @throws DasException 当操作失败时")
+                    declaration_lines.append(f"{self.indent}{cpp_type} {prop.name}() const;")
+
+                    implementation_lines.append(f"{cpp_type} {wrapper_name}::{prop.name}() const")
+                    implementation_lines.append("{")
+                    implementation_lines.append(f"{self.indent}{cpp_type} value{{}};")
+                    implementation_lines.append(f"{self.indent}const DasResult result = ptr_->Get{prop.name}(&value);")
+                    implementation_lines.append(f"{self.indent}DAS_THROW_IF_FAILED(result);")
+                    implementation_lines.append(f"{self.indent}return value;")
+                    implementation_lines.append("}")
+                    implementation_lines.append("")
+
+            if prop.has_setter:
+                if is_interface:
+                    wrapper_type = CppWrapperTypeMapper.get_wrapper_class_name(base_type)
+                    wrapper_type = self._get_qualified_type_name(wrapper_type, current_namespace)
+                    declaration_lines.append(f"{self.indent}/// @brief 设置 {prop.name} 属性")
+                    declaration_lines.append(f"{self.indent}/// @throws DasException 当操作失败时")
+                    declaration_lines.append(f"{self.indent}void {prop.name}(const {wrapper_type}& value);")
+
+                    implementation_lines.append(f"void {wrapper_name}::{prop.name}(const {wrapper_type}& value)")
+                    implementation_lines.append("{")
+                    implementation_lines.append(f"{self.indent}const DasResult result = ptr_->Set{prop.name}(value.Get());")
+                    implementation_lines.append(f"{self.indent}DAS_THROW_IF_FAILED(result);")
+                    implementation_lines.append("}")
+                    implementation_lines.append("")
+                elif is_string:
+                    declaration_lines.append(f"{self.indent}/// @brief 设置 {prop.name} 属性")
+                    declaration_lines.append(f"{self.indent}/// @throws DasException 当操作失败时")
+                    declaration_lines.append(f"{self.indent}void {prop.name}(const DasReadOnlyString& value);")
+
+                    implementation_lines.append(f"void {wrapper_name}::{prop.name}(const DasReadOnlyString& value)")
+                    implementation_lines.append("{")
+                    implementation_lines.append(f"{self.indent}const DasResult result = ptr_->Set{prop.name}(value.Get());")
+                    implementation_lines.append(f"{self.indent}DAS_THROW_IF_FAILED(result);")
+                    implementation_lines.append("}")
+                    implementation_lines.append("")
+                else:
+                    declaration_lines.append(f"{self.indent}/// @brief 设置 {prop.name} 属性")
+                    declaration_lines.append(f"{self.indent}/// @throws DasException 当操作失败时")
+                    declaration_lines.append(f"{self.indent}void {prop.name}({cpp_type} value);")
+
+                    implementation_lines.append(f"void {wrapper_name}::{prop.name}({cpp_type} value)")
+                    implementation_lines.append("{")
+                    implementation_lines.append(f"{self.indent}const DasResult result = ptr_->Set{prop.name}(value);")
+                    implementation_lines.append(f"{self.indent}DAS_THROW_IF_FAILED(result);")
+                    implementation_lines.append("}")
+                    implementation_lines.append("")
+
+            declaration = "\n".join(declaration_lines) + "\n"
+            return (declaration, implementation_lines)
 
     def generate_wrapper_header(self, base_name: str) -> str:
         """生成 C++ 包装头文件"""
