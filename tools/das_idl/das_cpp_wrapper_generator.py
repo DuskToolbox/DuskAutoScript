@@ -8,6 +8,13 @@ DAS C++ 包装代码生成器
 3. [get]/[set] 属性转换为便捷方法调用
 4. DasResult 错误自动抛出 DasException
 
+依赖边界规则:
+- Wrapper头文件（Das.Xxx.hpp）仅包含类声明
+- 包装实现文件（Das.Xxx.impl.hpp）仅包含方法实现
+- Wrapper头文件 -> ABI头文件（单向依赖）
+- 包装实现文件 -> Wrapper头文件（单向依赖）
+- 禁止循环依赖
+
 生成文件命名: Das.Xxx.hpp (类似 winrt/Windows.Foundation.h)
 """
 
@@ -362,11 +369,92 @@ class CppWrapperGenerator:
                                 wrapper_filename = f"{import_name}.hpp"
                             break
 
-            # 优先使用 wrapper 头文件，如果没有则使用 ABI 头文件
+            # 只使用 ABI 头文件，不使用包装实现文件
+            # 包装实现文件的 include 将在类声明之后生成
+            includes.append(h_path)
+
+        return includes
+
+    def _get_wrapper_impl_includes(self) -> list:
+        """获取包装实现文件的 include 列表（Das.ExportInterface.*.hpp）
+
+        这个方法返回所有 import 语句对应的包装实现文件路径，
+        用于在类声明块之后、ctor/dtor 实现之前 include。
+
+        Returns:
+            包装实现文件路径列表，例如: ["Das.ExportInterface.IDasImage.hpp"]
+        """
+        includes = []
+
+        # 获取当前IDL文件的目录（相对于idl目录）
+        current_idl_dir = ""
+        if self.idl_file_path:
+            from pathlib import Path
+            idl_path = Path(self.idl_file_path)
+            parts_lower = [p.lower() for p in idl_path.parts]
+            if 'idl' in parts_lower:
+                idx = parts_lower.index('idl')
+                idl_dir = Path(*idl_path.parts[:idx+1])
+                if idl_path != idl_dir:
+                    current_idl_dir = str(idl_path.parent.relative_to(idl_dir))
+                    if current_idl_dir == '.':
+                        current_idl_dir = ""
+
+        for imp in self.document.imports:
+            # 从IDL文件路径中提取文件名（不含扩展名）
+            idl_path = imp.idl_path
+            idl_path = idl_path.strip('"')
+
+            # 获取文件名部分
+            import_name = os.path.basename(idl_path)
+            if import_name.endswith('.idl'):
+                import_name = import_name[:-4]
+
+            # 构建wrapper头文件路径
+            wrapper_filename = None
+            for interface in self.document.interfaces:
+                if interface.name == import_name:
+                    if interface.namespace:
+                        namespace_path = self._to_namespace_path(interface.namespace)
+                        wrapper_filename = f"{namespace_path}.{import_name}.hpp"
+                    else:
+                        wrapper_filename = f"{import_name}.hpp"
+                    break
+            for enum in self.document.enums:
+                if enum.name == import_name:
+                    if enum.namespace:
+                        namespace_path = self._to_namespace_path(enum.namespace)
+                        wrapper_filename = f"{namespace_path}.{import_name}.hpp"
+                    else:
+                        wrapper_filename = f"{import_name}.hpp"
+                    break
+
+            # 如果在当前文档中找不到，尝试从导入的文档中查找
+            if wrapper_filename is None and import_name in self._imported_documents:
+                imported_doc = self._imported_documents[import_name]
+
+                for interface in imported_doc.interfaces:
+                    if interface.name == import_name:
+                        if interface.namespace:
+                            namespace_path = self._to_namespace_path(interface.namespace)
+                            wrapper_filename = f"{namespace_path}.{import_name}.hpp"
+                        else:
+                            wrapper_filename = f"{import_name}.hpp"
+                        break
+
+                if wrapper_filename is None:
+                    for enum in imported_doc.enums:
+                        if enum.name == import_name:
+                            if enum.namespace:
+                                namespace_path = self._to_namespace_path(enum.namespace)
+                                wrapper_filename = f"{namespace_path}.{import_name}.hpp"
+                            else:
+                                wrapper_filename = f"{import_name}.hpp"
+                            break
+
+            # 只添加包装实现文件（.hpp 文件）
             if wrapper_filename:
                 includes.append(wrapper_filename)
-            else:
-                includes.append(h_path)
 
         return includes
 
@@ -374,71 +462,69 @@ class CppWrapperGenerator:
         """生成文件头"""
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
-        # 从import语句生成include列表
         import_includes = self._get_import_includes()
 
-        # 从import语句生成include列表
-        import_includes = self._get_import_includes()
-
-        # 为当前 IDL 文件中定义的接口添加 ABI 头文件 include
-        # 例如：IDasMemory.idl -> IDasMemory.h
-        # ABI和wrapper在同一目录下，直接使用文件名
-        # 只为实际存在的 ABI 头文件生成 include（如 IDasImageDesc.h 不存在，应使用 IDasImage.h）
+        # ABI 头文件：一个 IDL 文件对应一个 ABI 头文件（IDasImage.idl -> IDasImage.h）
         abi_includes = []
-        for interface in self.document.interfaces:
-            # 检查是否是"描述性接口"（如 IDasImageDesc），需要映射到主接口头文件
-            if interface.name.endswith("Desc"):
-                # 例如：IDasImageDesc -> IDasImage.h
-                base_name = interface.name.replace("Desc", "")
-                abi_includes.append(f"{base_name}.h")
-            else:
-                # 普通接口，直接使用接口名
-                abi_includes.append(f"{interface.name}.h")
+        if self.idl_file_name:
+            abi_header = os.path.splitext(self.idl_file_name)[0] + ".h"
+            abi_includes.append(abi_header)
 
-        # 合并 ABI 头文件和 import 头文件
         includes = import_includes + abi_includes
 
-        # 为每个include添加#include前缀
         includes_str = "\n".join(f'#include "{inc}"' for inc in sorted(set(includes)))
 
-        # 生成IDL文件名注释
         idl_file_comment = ""
         if self.idl_file_name:
             idl_file_comment = f"// Source IDL file: {self.idl_file_name}\n"
 
-        # 类型相关的 include
         type_includes_str = "#include <das/DasException.hpp>\n#include <das/DasBase.hpp>\n#include <das/DasString.hpp>\n"
 
-        # 前向声明（Allman 风格）
-        # 为跨命名空间类型生成前向声明（如 DasComponent 在 DAS::Core 中）
-        forward_declarations_str = """namespace DAS
-{
-    namespace Core
-    {
-        struct DasComponent;
-    }
-}
+        namespace_declarations = {}
+        type_namespace_map = self._collect_type_namespace_mapping()
+
+        for interface in self.document.interfaces:
+            current_ns = interface.namespace
+
+            for type_name in self._dependent_interfaces:
+                # 将 ABI 接口名映射为 wrapper 类名（IDasXxx -> DasXxx）
+                wrapper_type = CppWrapperTypeMapper.get_wrapper_class_name(type_name)
+                if wrapper_type in type_namespace_map:
+                    type_ns = type_namespace_map[wrapper_type]
+                    if type_ns and type_ns != current_ns:
+                        if type_ns not in namespace_declarations:
+                            namespace_declarations[type_ns] = set()
+                        namespace_declarations[type_ns].add(wrapper_type)
+
+        forward_declarations_str = ""
+        if namespace_declarations:
+            lines = []
+            for namespace in sorted(namespace_declarations.keys()):
+                lines.append(self._generate_namespace_open(namespace))
+                indent = "    " * len(namespace.split("::"))
+                for type_name in sorted(namespace_declarations[namespace]):
+                    lines.append(f"{indent}class {type_name};")
+                lines.append(self._generate_namespace_close(namespace))
+            forward_declarations_str = "\n".join(lines)
+
+        return f"""#if !defined({guard_name})
+#define {guard_name}
+
+// This file is automatically generated by DAS IDL Generator
+// Generated at: {timestamp}
+{idl_file_comment}// !!! DO NOT EDIT !!!
+//
+// wrapper classes for DAS interfaces
+// Provides RAII, exception-based error handling, and convenient APIs
+//
+
+#include <das/DasPtr.hpp>
+#include <das/IDasBase.h>
+{type_includes_str}
+{forward_declarations_str}
+
+{includes_str}
 """
-
-        return f"""// This file is automatically generated by DAS IDL Generator
-  // Generated at: {timestamp}
-  {idl_file_comment}// !!! DO NOT EDIT !!!
-  //
-  // wrapper classes for DAS interfaces
-  // Provides RAII, exception-based error handling, and convenient APIs
-  //
-  // {guard_name}
-  // {guard_name}
-
-  #pragma once
-
-  #include <das/DasPtr.hpp>
-  #include <das/IDasBase.h>
-  {type_includes_str}
-  {forward_declarations_str}
-
-  {includes_str}
-   """
 
     def _file_footer(self, guard_name: str) -> str:
         """生成文件尾"""
@@ -476,7 +562,8 @@ class CppWrapperGenerator:
             # 例如："Das::Core" -> "    }\n}\n// namespace Das::Core"
             parts = namespace.split("::")
             result = []
-            for i, part in enumerate(reversed(parts)):
+            # 从内层到外层关闭，indent 从 len(parts)-1 递减到 0
+            for i in range(len(parts) - 1, -1, -1):
                 indent = "    " * i
                 result.append(f"{indent}}}")
             result.append(f"// namespace {namespace}")
@@ -486,11 +573,9 @@ class CppWrapperGenerator:
     def _collect_dependent_interfaces(self, interface: InterfaceDef):
         """收集接口依赖的其他接口类型"""
         for method in interface.methods:
-            # 检查返回类型
             if CppWrapperTypeMapper.is_interface_type(method.return_type.base_type):
                 self._dependent_interfaces.add(method.return_type.base_type)
 
-            # 检查参数
             for param in method.parameters:
                 if CppWrapperTypeMapper.is_interface_type(param.type_info.base_type):
                     self._dependent_interfaces.add(param.type_info.base_type)
@@ -509,90 +594,23 @@ class CppWrapperGenerator:
             return self._type_namespace_map
 
         mapping = {}
+        
         for interface in self.document.interfaces:
             wrapper_name = CppWrapperTypeMapper.get_wrapper_class_name(interface.name)
             mapping[wrapper_name] = interface.namespace
             mapping[interface.name] = interface.namespace
+        
+        for doc_name, doc in self._imported_documents.items():
+            for interface in doc.interfaces:
+                wrapper_name = CppWrapperTypeMapper.get_wrapper_class_name(interface.name)
+                mapping[wrapper_name] = interface.namespace
+                mapping[interface.name] = interface.namespace
+            for enum in doc.enums:
+                mapping[enum.name] = enum.namespace
 
         self._type_namespace_map = mapping
         return mapping
 
-    def _collect_cross_namespace_types(self, namespace_name: str) -> set:
-        """收集指定命名空间中使用的跨命名空间类型
-
-        Args:
-            namespace_name: 当前命名空间名称
-
-        Returns:
-            需要添加 using 声明的类型集合
-        """
-        cross_namespace_types = set()
-        type_namespace_map = self._collect_type_namespace_mapping()
-
-        # 已知的跨命名空间类型映射（从 import 来的类型）
-        # 这些类型在其他 IDL 文件中定义，但在此处被引用
-        known_cross_namespace_map = {
-            'DasVariantVector': 'Das::ExportInterface',
-            'DasComponent': 'Das::PluginInterface',
-            'DasComponentFactory': 'Das::PluginInterface',
-            'DasBase': '',  # 全局命名空间
-            'DasReadOnlyString': '',  # 全局命名空间
-            'DasGuid': '',  # 全局命名空间
-            'DasString': '',  # 全局命名空间
-        }
-
-        # 遍历当前命名空间中的所有接口
-        for interface in self.document.interfaces:
-            if interface.namespace != namespace_name:
-                continue
-
-            # 检查方法中的类型引用
-            for method in interface.methods:
-                # 检查返回类型
-                if CppWrapperTypeMapper.is_interface_type(method.return_type.base_type):
-                    wrapper_type = CppWrapperTypeMapper.get_wrapper_class_name(method.return_type.base_type)
-                    # 首先检查已知映射
-                    if wrapper_type in known_cross_namespace_map:
-                        type_ns = known_cross_namespace_map[wrapper_type]
-                        if type_ns and type_ns != namespace_name:
-                            cross_namespace_types.add((wrapper_type, type_ns))
-                    # 然后检查当前文档映射
-                    elif wrapper_type in type_namespace_map:
-                        type_ns = type_namespace_map[wrapper_type]
-                        if type_ns and type_ns != namespace_name:
-                            cross_namespace_types.add((wrapper_type, type_ns))
-
-                # 检查参数类型
-                for param in method.parameters:
-                    if CppWrapperTypeMapper.is_interface_type(param.type_info.base_type):
-                        wrapper_type = CppWrapperTypeMapper.get_wrapper_class_name(param.type_info.base_type)
-                        # 首先检查已知映射
-                        if wrapper_type in known_cross_namespace_map:
-                            type_ns = known_cross_namespace_map[wrapper_type]
-                            if type_ns and type_ns != namespace_name:
-                                cross_namespace_types.add((wrapper_type, type_ns))
-                        # 然后检查当前文档映射
-                        elif wrapper_type in type_namespace_map:
-                            type_ns = type_namespace_map[wrapper_type]
-                            if type_ns and type_ns != namespace_name:
-                                cross_namespace_types.add((wrapper_type, type_ns))
-
-            # 检查属性中的类型引用
-            for prop in interface.properties:
-                if CppWrapperTypeMapper.is_interface_type(prop.type_info.base_type):
-                    wrapper_type = CppWrapperTypeMapper.get_wrapper_class_name(prop.type_info.base_type)
-                    # 首先检查已知映射
-                    if wrapper_type in known_cross_namespace_map:
-                        type_ns = known_cross_namespace_map[wrapper_type]
-                        if type_ns and type_ns != namespace_name:
-                            cross_namespace_types.add((wrapper_type, type_ns))
-                    # 然后检查当前文档映射
-                    elif wrapper_type in type_namespace_map:
-                        type_ns = type_namespace_map[wrapper_type]
-                        if type_ns and type_ns != namespace_name:
-                            cross_namespace_types.add((wrapper_type, type_ns))
-
-        return cross_namespace_types
 
     def _get_qualified_type_name(self, type_name: str, current_namespace: str) -> str:
         """获取带命名空间限定符的完整类型名
@@ -614,8 +632,140 @@ class CppWrapperGenerator:
 
         return type_name
 
+    def _generate_wrapper_class_declaration(self, interface: InterfaceDef, namespace_depth: int = 0) -> str:
+        """生成包装类声明（仅声明，不包含实现）
+
+        根据依赖边界规则，wrapper头文件仅包含类声明。
+        
+        Args:
+            interface: 接口定义
+            namespace_depth: 命名空间嵌套深度（默认 0，表示无命名空间或外层命名空间）
+        """
+        self._collect_dependent_interfaces(interface)
+
+        raw_name = interface.name
+        wrapper_name = CppWrapperTypeMapper.get_wrapper_class_name(raw_name)
+
+        # 基于命名空间深度计算缩进
+        # 无命名空间：0 空格（类体内容 4 空格）
+        # 1 层命名空间（Das）：4 空格（类体内容 8 空格）
+        # 2 层命名空间（Das::PluginInterface）：8 空格（类体内容 12 空格）
+        class_indent = "    " * namespace_depth
+        member_indent = "    " * (namespace_depth + 1)
+
+        lines = []
+
+        lines.append(f"/**")
+        lines.append(f" * @brief wrapper for {raw_name}")
+        lines.append(f" * ")
+        lines.append(f" * Provides RAII memory management, exception-based error handling,")
+        lines.append(f" * and convenient property/method APIs.")
+        lines.append(f" */")
+
+        lines.append(f"{class_indent}class {wrapper_name}")
+        lines.append(f"{class_indent}{{")
+        lines.append(f"{class_indent}private:")
+        lines.append(f"{member_indent}DasPtr<{raw_name}> ptr_;")
+        lines.append("")
+        lines.append(f"{class_indent}public:")
+
+        lines.append(f"{member_indent}/// @brief 默认构造函数，创建空包装")
+        lines.append(f"{member_indent}{wrapper_name}() noexcept = default;")
+        lines.append("")
+
+        lines.append(f"{member_indent}/// @brief 从原始接口指针构造（获取所有权）")
+        lines.append(f"{member_indent}explicit {wrapper_name}({raw_name}* p) noexcept;")
+        lines.append("")
+
+        lines.append(f"{member_indent}/// @brief 从 DasPtr 构造")
+        lines.append(f"{member_indent}{wrapper_name}(DasPtr<{raw_name}> ptr) noexcept;")
+        lines.append("")
+
+        lines.append(f"{member_indent}/// @brief 获取底层原始接口指针")
+        lines.append(f"{member_indent}{raw_name}* Get() const noexcept;")
+        lines.append("")
+
+        lines.append(f"{member_indent}/// @brief 获取底层 DasPtr")
+        lines.append(f"{member_indent}const DasPtr<{raw_name}>& GetPtr() const noexcept;")
+        lines.append("")
+
+        lines.append(f"{member_indent}/// @brief 隐式转换到原始指针")
+        lines.append(f"{member_indent}operator {raw_name}*() const noexcept;")
+        lines.append("")
+
+        lines.append(f"{member_indent}/// @brief 检查是否持有有效对象")
+        lines.append(f"{member_indent}explicit operator bool() const noexcept;")
+        lines.append("")
+
+        lines.append(f"{member_indent}/// @brief 访问原始接口成员")
+        lines.append(f"{member_indent}{raw_name}* operator->() const noexcept;")
+        lines.append("")
+
+        lines.append(f"{member_indent}/// @brief 附加到现有指针")
+        lines.append(f"{member_indent}static {wrapper_name} Attach({raw_name}* p) noexcept;")
+        lines.append("")
+
+        lines.append(f"{member_indent}/// @brief 获取指针的指针")
+        lines.append(f"{member_indent}{raw_name}** Put() noexcept;")
+        lines.append("")
+
+        lines.append(f"{member_indent}/// @brief 获取 void 指针的指针")
+        lines.append(f"{member_indent}void** PutVoid() noexcept;")
+        lines.append("")
+
+        for method in interface.methods:
+            method_decl = self._generate_method_wrapper(interface, method, mode='declaration')
+            lines.append(method_decl)
+
+        for prop in interface.properties:
+            prop_decl, _ = self._generate_property_wrapper(interface, prop, mode='declaration')
+            lines.append(prop_decl)
+
+        lines.append("};")
+        lines.append("")
+
+        return "\n".join(lines) + "\n"
+
+    def _generate_wrapper_class_implementation(self, interface: InterfaceDef) -> str:
+        """生成包装类实现（仅实现，不包含声明）
+
+        根据依赖边界规则，包装实现文件仅包含方法实现。
+        """
+        raw_name = interface.name
+        wrapper_name = CppWrapperTypeMapper.get_wrapper_class_name(raw_name)
+        current_namespace = interface.namespace
+
+        lines = []
+
+        lines.append(f"{wrapper_name}::{wrapper_name}({raw_name}* p) noexcept : ptr_(p) {{}}")
+        lines.append("")
+        lines.append(f"{wrapper_name}::{wrapper_name}(DasPtr<{raw_name}> ptr) noexcept : ptr_(std::move(ptr)) {{}}")
+        lines.append("")
+        lines.append(f"{raw_name}* {wrapper_name}::Get() const noexcept {{ return ptr_.Get(); }}")
+        lines.append("")
+        lines.append(f"const DasPtr<{raw_name}>& {wrapper_name}::GetPtr() const noexcept {{ return ptr_; }}")
+        lines.append("")
+        lines.append(f"{wrapper_name}::operator {raw_name}*() const noexcept {{ return ptr_.Get(); }}")
+        lines.append("")
+        lines.append(f"{wrapper_name}::operator bool() const noexcept {{ return ptr_ != nullptr; }}")
+        lines.append("")
+
+        for method in interface.methods:
+            method_impl = self._generate_method_wrapper(interface, method, mode='implementation')
+            lines.append(method_impl)
+
+        for prop in interface.properties:
+            _, prop_impls = self._generate_property_wrapper(interface, prop, mode='implementation')
+            lines.extend(prop_impls)
+
+        return "\n".join(lines) + "\n"
+
     def _generate_wrapper_class(self, interface: InterfaceDef) -> str:
-        """生成包装类（声明与实现分离）"""
+        """生成包装类（声明与实现分离）
+
+        保留此方法以向后兼容，默认生成 inline 模式。
+        建议使用 _generate_wrapper_class_declaration 和 _generate_wrapper_class_implementation 分离声明和实现。
+        """
         self._collect_dependent_interfaces(interface)
 
         raw_name = interface.name
@@ -671,6 +821,18 @@ class CppWrapperGenerator:
         lines.append(f"{self.indent}{raw_name}* operator->() const noexcept;")
         lines.append("")
 
+        lines.append(f"{self.indent}/// @brief 附加到现有指针")
+        lines.append(f"{self.indent}static {wrapper_name} Attach({raw_name}* p) noexcept;")
+        lines.append("")
+
+        lines.append(f"{self.indent}/// @brief 获取指针的指针")
+        lines.append(f"{self.indent}{raw_name}** Put() noexcept;")
+        lines.append("")
+
+        lines.append(f"{self.indent}/// @brief 获取 void 指针的指针")
+        lines.append(f"{self.indent}void** PutVoid() noexcept;")
+        lines.append("")
+
         for method in interface.methods:
             method_decl = self._generate_method_wrapper(interface, method, mode='declaration')
             lines.append(method_decl)
@@ -684,6 +846,15 @@ class CppWrapperGenerator:
 
         lines.append("};")
         lines.append("")
+
+        # 类声明块之后、ctor/dtor 实现之前：添加包装实现文件 include
+        # 这样可以确保包装实现文件在类声明之后被 include，避免循环依赖
+        wrapper_impl_includes_str = ""
+        wrapper_impl_includes = self._get_wrapper_impl_includes()
+        if wrapper_impl_includes:
+            wrapper_impl_includes_str = "\n".join(f'#include "{inc}"' for inc in sorted(set(wrapper_impl_includes)))
+            wrapper_impl_includes_str = "\n" + wrapper_impl_includes_str + "\n"
+            lines.append(wrapper_impl_includes_str)
 
         implementations.append(f"{wrapper_name}::{wrapper_name}({raw_name}* p) noexcept : ptr_(p) {{}}")
         implementations.append("")
@@ -700,18 +871,37 @@ class CppWrapperGenerator:
         implementations.append(f"{raw_name}* {wrapper_name}::operator->() const noexcept {{ return ptr_.Get(); }}")
         implementations.append("")
 
+        implementations.append(f"{wrapper_name} {wrapper_name}::Attach({raw_name}* p) noexcept")
+        implementations.append(f"{{")
+        implementations.append(f"    return {wrapper_name}(DAS::DasPtr<{raw_name}>::Attach(p));")
+        implementations.append(f"}}")
+        implementations.append("")
+
+        implementations.append(f"{raw_name}** {wrapper_name}::Put() noexcept")
+        implementations.append(f"{{")
+        implementations.append(f"    return ptr_.Put();")
+        implementations.append(f"}}")
+        implementations.append("")
+
+        implementations.append(f"void** {wrapper_name}::PutVoid() noexcept")
+        implementations.append(f"{{")
+        implementations.append(f"    return ptr_.PutVoid();")
+        implementations.append(f"}}")
+        implementations.append("")
+
         for impl in implementations:
             lines.append(impl)
 
         return "\n".join(lines) + "\n"
 
-    def _generate_method_wrapper(self, interface: InterfaceDef, method: MethodDef, mode: str = 'inline') -> str:
+    def _generate_method_wrapper(self, interface: InterfaceDef, method: MethodDef, mode: str = 'inline', namespace_depth: int = 0) -> str:
         """生成方法包装
 
         Args:
             interface: 接口定义
             method: 方法定义
             mode: 生成模式，'inline'（默认，向后兼容）、'declaration'（只生成声明）、'implementation'（只生成类外实现）
+            namespace_depth: 命名空间嵌套深度（默认 0）
 
         Returns:
             生成的代码字符串
@@ -760,11 +950,13 @@ class CppWrapperGenerator:
         param_str = ", ".join(param_decls)
 
         if mode == 'declaration':
-            lines.append(f"{self.indent}/// @brief 调用 {interface.name}::{method.name}")
+            # 使用动态缩进，基于命名空间深度
+            indent = "    " * (namespace_depth + 1)
+            lines.append(f"{indent}/// @brief 调用 {interface.name}::{method.name}")
             if out_params:
-                lines.append(f"{self.indent}/// @return {'返回输出值' if len(out_params) == 1 else '返回多个输出值的 tuple'}")
-            lines.append(f"{self.indent}/// @throws DasException 当操作失败时")
-            lines.append(f"{self.indent}{ret_type} {method.name}({param_str}) const;")
+                lines.append(f"{indent}/// @return {'返回输出值' if len(out_params) == 1 else '返回多个输出值的 tuple'}")
+            lines.append(f"{indent}/// @throws DasException 当操作失败时")
+            lines.append(f"{indent}{ret_type} {method.name}({param_str}) const;")
             lines.append("")
             return "\n".join(lines)
 
@@ -1090,6 +1282,9 @@ class CppWrapperGenerator:
 
         interface_names = [iface.name for iface in self.document.interfaces]
 
+        for interface in self.document.interfaces:
+            self._collect_dependent_interfaces(interface)
+
         content = self._file_header(guard_name, interface_names)
 
         # 按命名空间分组
@@ -1128,7 +1323,8 @@ class CppWrapperGenerator:
 
             # 生成所有无命名空间的包装类
             for interface in no_namespace_interfaces:
-                content += self._generate_wrapper_class(interface)
+                # 无命名空间的类缩进深度为 0，但内容需要 1 层缩进（4 空格）
+                content += self._generate_wrapper_class_declaration(interface, namespace_depth=0)
                 content += "\n"
 
         # 生成有命名空间的代码（支持 C++17 嵌套命名空间语法）
@@ -1142,28 +1338,39 @@ class CppWrapperGenerator:
 
             # 前向声明包装类
             if items['interfaces']:
-                content += "// Forward declarations\n"
+                # 计算正确的缩进深度（基于 namespace 嵌套层级）
+                ns_depth = len(namespace_name.split("::"))
+                ns_indent = "    " * ns_depth
+                content += f"{ns_indent}// Forward declarations\n"
                 for interface in items['interfaces']:
                     wrapper_name = CppWrapperTypeMapper.get_wrapper_class_name(interface.name)
-                    content += f"class {wrapper_name};\n"
+                    content += f"{ns_indent}class {wrapper_name};\n"
                 content += "\n"
 
-                # 添加跨命名空间类型的 using 声明
-                cross_namespace_types = self._collect_cross_namespace_types(namespace_name)
-                if cross_namespace_types:
-                    content += "// Using declarations for cross-namespace types\n"
-                    for type_name, type_ns in sorted(cross_namespace_types):
-                        content += f"using {type_ns}::{type_name};\n"
-                    content += "\n"
-
-                # 生成包装类
-                for interface in items['interfaces']:
-                    content += self._generate_wrapper_class(interface)
-                    content += "\n"
+            # 生成包装类
+            ns_depth = len(namespace_name.split("::"))
+            for interface in items['interfaces']:
+                content += self._generate_wrapper_class_declaration(interface, namespace_depth=ns_depth)
+                content += "\n"
 
             content += self._generate_namespace_close(namespace_name)
 
         content += self._file_footer(guard_name)
+        return content
+
+    def generate_wrapper_implementation(self, base_name: str) -> str:
+        """生成 C++ 包装实现文件（.cpp）"""
+        content = f"// Wrapper implementation for {base_name}\n\n"
+
+        # 包含对应的包装头文件
+        content += f"#include <das/_autogen/idl/wrapper/{base_name}.hpp>\n\n"
+
+        # 生成所有接口的实现（不使用命名空间包装）
+        for interface in self.document.interfaces:
+            impl_content = self._generate_wrapper_class_implementation(interface)
+            content += impl_content
+            content += "\n\n"
+
         return content
 
 
@@ -1207,21 +1414,31 @@ def generate_cpp_wrapper_files(document: IdlDocument, output_dir: str, base_name
 
     # 构建文件名
     if namespace_path:
-        filename = f"{namespace_path}.{base_name}.hpp"
+        header_filename = f"{namespace_path}.{base_name}.hpp"
+        impl_filename = f"{namespace_path}.{base_name}.cpp"
     else:
-        filename = f"{base_name}.hpp"
+        header_filename = f"{base_name}.hpp"
+        impl_filename = f"{base_name}.cpp"
 
-    filepath = os.path.join(actual_output_dir, filename)
+    # 生成头文件（仅声明）
+    header_filepath = os.path.join(actual_output_dir, header_filename)
+    header_content = generator.generate_wrapper_header(base_name)
 
-    # 生成所有内容
-    content = generator.generate_wrapper_header(base_name)
+    if header_content:
+        with open(header_filepath, 'w', encoding='utf-8') as f:
+            f.write(header_content)
+        print(f"Generated: {header_filepath}")
+        generated_files.append(header_filepath)
 
-    if content:  # 只有内容非空时才写入文件
-        with open(filepath, 'w', encoding='utf-8') as f:
-            f.write(content)
+    # 生成实现文件（仅实现）
+    impl_filepath = os.path.join(actual_output_dir, impl_filename)
+    impl_content = generator.generate_wrapper_implementation(base_name)
 
-        print(f"Generated: {filepath}")
-        generated_files.append(filepath)
+    if impl_content:
+        with open(impl_filepath, 'w', encoding='utf-8') as f:
+            f.write(impl_content)
+        print(f"Generated: {impl_filepath}")
+        generated_files.append(impl_filepath)
 
     return generated_files
 
