@@ -398,8 +398,8 @@ class CppWrapperGenerator:
         if self.idl_file_name:
             idl_file_comment = f"// Source IDL file: {self.idl_file_name}\n"
 
-        # 类型相关的 include（暂不支持）
-        type_includes_str = "#include <das/DasBase.hpp>\n"
+        # 类型相关的 include
+        type_includes_str = "#include <das/DasException.hpp>\n#include <das/DasBase.hpp>\n#include <das/DasString.hpp>\n"
 
         # 前向声明（暂不支持）
         forward_declarations_str = ""
