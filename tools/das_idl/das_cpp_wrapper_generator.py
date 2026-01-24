@@ -45,6 +45,7 @@ class CppWrapperTypeMapper:
         'DasGuid': 'DasGuid',
         'DasString': 'DasReadOnlyString',
         'DasReadOnlyString': 'DasReadOnlyString',
+        'IDasBase': 'DasBase',
         'void': 'void',
     }
 
@@ -94,6 +95,10 @@ class CppWrapperTypeMapper:
         # 处理 [binary_buffer] 属性：对于 unsigned char** 返回 unsigned char*
         if has_binary_buffer and base == 'unsigned char' and type_info.pointer_level == 2:
             return 'unsigned char*'
+
+        # IDasBase 特殊处理：返回 DasBase
+        if base == 'IDasBase':
+            return 'DasBase'
 
         # 接口类型返回智能指针包装
         if cls.is_interface_type(base):
@@ -394,7 +399,7 @@ class CppWrapperGenerator:
             idl_file_comment = f"// Source IDL file: {self.idl_file_name}\n"
 
         # 类型相关的 include（暂不支持）
-        type_includes_str = ""
+        type_includes_str = "#include <das/DasBase.hpp>\n"
 
         # 前向声明（暂不支持）
         forward_declarations_str = ""
@@ -778,7 +783,7 @@ class CppWrapperGenerator:
                     if CppWrapperTypeMapper.is_interface_type(base_type):
                         wrapper_type = CppWrapperTypeMapper.get_wrapper_class_name(base_type)
                         wrapper_type = self._get_qualified_type_name(wrapper_type, current_namespace)
-                        lines.append(f"{body_indent}return {wrapper_type}({param.name}_raw);")
+                        lines.append(f"{body_indent}return {wrapper_type}::Attach({param.name}_raw);")
                     else:
                         lines.append(f"{body_indent}return {param.name}_value;")
                 else:
@@ -788,7 +793,7 @@ class CppWrapperGenerator:
                         if CppWrapperTypeMapper.is_interface_type(base_type):
                             wrapper_type = CppWrapperTypeMapper.get_wrapper_class_name(base_type)
                             wrapper_type = self._get_qualified_type_name(wrapper_type, current_namespace)
-                            ret_values.append(f"{wrapper_type}({param.name}_raw)")
+                            ret_values.append(f"{wrapper_type}::Attach({param.name}_raw)")
                         else:
                             ret_values.append(f"{param.name}_value")
                     lines.append(f"{body_indent}return {{{', '.join(ret_values)}}};")
@@ -850,7 +855,7 @@ class CppWrapperGenerator:
                     if CppWrapperTypeMapper.is_interface_type(base_type):
                         wrapper_type = CppWrapperTypeMapper.get_wrapper_class_name(base_type)
                         wrapper_type = self._get_qualified_type_name(wrapper_type, current_namespace)
-                        lines.append(f"{body_indent}return {wrapper_type}({param.name}_raw);")
+                        lines.append(f"{body_indent}return {wrapper_type}::Attach({param.name}_raw);")
                     else:
                         lines.append(f"{body_indent}return {param.name}_value;")
                 else:
@@ -860,7 +865,7 @@ class CppWrapperGenerator:
                         if CppWrapperTypeMapper.is_interface_type(base_type):
                             wrapper_type = CppWrapperTypeMapper.get_wrapper_class_name(base_type)
                             wrapper_type = self._get_qualified_type_name(wrapper_type, current_namespace)
-                            ret_values.append(f"{wrapper_type}({param.name}_raw)")
+                            ret_values.append(f"{wrapper_type}::Attach({param.name}_raw)")
                         else:
                             ret_values.append(f"{param.name}_value")
                     lines.append(f"{body_indent}return {{{', '.join(ret_values)}}};")
@@ -905,7 +910,7 @@ class CppWrapperGenerator:
                     lines.append(f"{self.indent}{self.indent}{base_type}* p_out = nullptr;")
                     lines.append(f"{self.indent}{self.indent}const DasResult result = ptr_->Get{prop.name}(&p_out);")
                     lines.append(f"{self.indent}{self.indent}DAS_THROW_IF_FAILED(result);")
-                    lines.append(f"{self.indent}{self.indent}return {ret_type}(p_out);")
+                    lines.append(f"{self.indent}{self.indent}return {ret_type}::Attach(p_out);")
                     lines.append(f"{self.indent}}}")
                 elif is_string:
                     lines.append(f"{self.indent}/// @brief 获取 {prop.name} 属性")
@@ -977,7 +982,7 @@ class CppWrapperGenerator:
                     implementation_lines.append(f"{self.indent}{base_type}* p_out = nullptr;")
                     implementation_lines.append(f"{self.indent}const DasResult result = ptr_->Get{prop.name}(&p_out);")
                     implementation_lines.append(f"{self.indent}DAS_THROW_IF_FAILED(result);")
-                    implementation_lines.append(f"{self.indent}return {ret_type}(p_out);")
+                    implementation_lines.append(f"{self.indent}return {ret_type}::Attach(p_out);")
                     implementation_lines.append("}")
                     implementation_lines.append("")
                 elif is_string:
