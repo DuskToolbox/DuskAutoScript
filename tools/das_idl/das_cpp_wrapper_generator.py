@@ -21,11 +21,30 @@ DAS C++ 包装代码生成器
 import os
 from pathlib import Path
 from datetime import datetime, timezone
+import importlib
+import sys
 from typing import List, Set, Optional
-from das_idl_parser import (
-    IdlDocument, InterfaceDef, EnumDef, MethodDef, PropertyDef,
-    ParameterDef, TypeInfo, ParamDirection
-)
+
+# 既支持作为包内模块导入（tools.das_idl.*），也支持直接脚本运行。
+# 注意：避免使用 `from das_idl_parser import ...` 这种“隐式相对导入”形式，
+# 否则 LSP/pyright 会报 reportImplicitRelativeImport。
+try:
+    from . import das_idl_parser as _das_idl_parser
+except ImportError:  # pragma: no cover
+    # 直接运行该脚本时（__package__ 为空），确保同目录可被导入。
+    this_dir = str(Path(__file__).resolve().parent)
+    if this_dir not in sys.path:
+        sys.path.insert(0, this_dir)
+    _das_idl_parser = importlib.import_module("das_idl_parser")
+
+IdlDocument = _das_idl_parser.IdlDocument
+InterfaceDef = _das_idl_parser.InterfaceDef
+EnumDef = _das_idl_parser.EnumDef
+MethodDef = _das_idl_parser.MethodDef
+PropertyDef = _das_idl_parser.PropertyDef
+ParameterDef = _das_idl_parser.ParameterDef
+TypeInfo = _das_idl_parser.TypeInfo
+ParamDirection = _das_idl_parser.ParamDirection
 
 
 class CppWrapperTypeMapper:
@@ -144,7 +163,7 @@ class CppWrapperGenerator:
             return
 
         from pathlib import Path
-        from das_idl_parser import parse_idl_file
+        parse_idl_file = _das_idl_parser.parse_idl_file
 
         # 获取当前 IDL 文件所在的目录（相对于 idl 根目录）
         idl_path = Path(self.idl_file_path)
@@ -500,11 +519,20 @@ class CppWrapperGenerator:
         if namespace_declarations:
             lines = []
             for namespace in sorted(namespace_declarations.keys()):
-                lines.append(self._generate_namespace_open(namespace))
+                # _generate_namespace_open/_close 会返回末尾带换行的多行字符串。
+                # 这里逐行拼接，避免 join 时引入多余空行。
+                namespace_open = self._generate_namespace_open(namespace).rstrip("\n")
+                if namespace_open:
+                    lines.extend(namespace_open.splitlines())
+
                 indent = "    " * len(namespace.split("::"))
                 for type_name in sorted(namespace_declarations[namespace]):
                     lines.append(f"{indent}class {type_name};")
-                lines.append(self._generate_namespace_close(namespace))
+
+                namespace_close = self._generate_namespace_close(namespace).rstrip("\n")
+                if namespace_close:
+                    lines.extend(namespace_close.splitlines())
+
             forward_declarations_str = "\n".join(lines)
 
         return f"""#if !defined({guard_name})
@@ -714,11 +742,24 @@ class CppWrapperGenerator:
         lines.append("")
 
         for method in interface.methods:
-            method_decl = self._generate_method_wrapper(interface, method, mode='declaration')
+            method_decl = self._generate_method_wrapper(interface, method, mode='declaration', namespace_depth=namespace_depth)
             lines.append(method_decl)
 
         for prop in interface.properties:
             prop_decl, _ = self._generate_property_wrapper(interface, prop, mode='declaration')
+
+            # _generate_property_wrapper 当前使用 self.indent（固定 4 空格）。
+            # 为了让声明缩进与 wrapper class 成员一致，这里根据 namespace_depth
+            # 将首层缩进从 self.indent 替换为 member_indent。
+            if namespace_depth > 0:
+                reindented_lines = []
+                for line in prop_decl.splitlines(keepends=True):
+                    if line.strip() and line.startswith(self.indent):
+                        reindented_lines.append(member_indent + line[len(self.indent):])
+                    else:
+                        reindented_lines.append(line)
+                prop_decl = "".join(reindented_lines)
+
             lines.append(prop_decl)
 
         lines.append(f"{class_indent}}};")
@@ -1286,6 +1327,44 @@ class CppWrapperGenerator:
 
         content = self._file_header(guard_name, interface_names)
 
+        def _generate_dependent_wrapper_includes(current_namespace: Optional[str]) -> str:
+            """基于 _file_header() 生成的前向声明信息，生成依赖 wrapper include。
+
+            约束：
+            - 不能移除前向声明（仍用于解决编译顺序）
+            - include 必须放在类声明之后、类外实现之前
+            - 文件名格式: Das.<NamespaceParts>.<TypeName>.hpp
+
+            Args:
+                current_namespace: 当前生成块所在的命名空间，例如 "Das::PluginInterface"
+
+            Returns:
+                include 语句块（末尾包含一个空行），若无依赖则返回空字符串。
+            """
+            if not current_namespace:
+                return ""
+
+            type_namespace_map = self._collect_type_namespace_mapping()
+
+            includes: Set[str] = set()
+            for type_name in self._dependent_interfaces:
+                # 注意：wrapper 文件命名使用“接口名”（IDL/ABI 名称，如 IDasVariantVector），
+                # 而不是 wrapper 类名（如 DasVariantVector）。
+                type_ns = type_namespace_map.get(type_name)
+
+                # 只处理“跨命名空间”的依赖：同命名空间依赖一般无需额外 wrapper include。
+                if not type_ns or type_ns == current_namespace:
+                    continue
+
+                ns_path = self._to_namespace_path(type_ns)
+                includes.add(f"{ns_path}.{type_name}.hpp")
+
+            if not includes:
+                return ""
+
+            include_lines = [f'#include "{inc}"' for inc in sorted(includes)]
+            return "\n".join(include_lines) + "\n\n"
+
         def _indent_and_inline_impl(impl: str, wrapper_name: str, indent_prefix: str) -> str:
             """将类外实现追加到头文件：整体缩进 + 为定义签名添加 inline。
 
@@ -1389,6 +1468,15 @@ class CppWrapperGenerator:
                 content += self._generate_wrapper_class_declaration(interface, namespace_depth=ns_depth)
                 content += "\n"
 
+            # 在类声明之后、类外实现之前 include 依赖 wrapper 文件。
+            # 注意：#include 不能放在 namespace 作用域内，否则会把被 include 文件“嵌套进当前 namespace”。
+            # 所以这里采用：关闭命名空间 -> include -> 重新打开命名空间 的方式。
+            dependent_includes = _generate_dependent_wrapper_includes(namespace_name)
+            if dependent_includes:
+                content += self._generate_namespace_close(namespace_name)
+                content += dependent_includes
+                content += self._generate_namespace_open(namespace_name)
+
             # 生成类外实现，并追加到同一个命名空间内（header-only, all inline）
             ns_indent = "    " * ns_depth
             for interface in items['interfaces']:
@@ -1489,7 +1577,7 @@ def generate_cpp_wrapper_files(document: IdlDocument, output_dir: str, base_name
 
 # 测试代码
 if __name__ == '__main__':
-    from das_idl_parser import parse_idl
+    parse_idl = _das_idl_parser.parse_idl
 
     test_idl = '''
     [uuid("d5bd3213-b7c4-1b94-0e99-5cefFF064f8d")]
