@@ -1008,7 +1008,8 @@ class CppWrapperGenerator:
             for param in out_params:
                 base_type = param.type_info.base_type
                 if CppWrapperTypeMapper.is_interface_type(base_type):
-                    lines.append(f"{body_indent}{base_type}* {param.name}_raw = nullptr;")
+                    qualified_base_type = self._get_qualified_type_name(base_type, current_namespace)
+                    lines.append(f"{body_indent}{qualified_base_type}* {param.name}_raw = nullptr;")
                 else:
                     if has_binary_buffer and base_type == 'unsigned char' and param.type_info.pointer_level == 2:
                         cpp_type = 'unsigned char*'
@@ -1081,7 +1082,8 @@ class CppWrapperGenerator:
             for param in out_params:
                 base_type = param.type_info.base_type
                 if CppWrapperTypeMapper.is_interface_type(base_type):
-                    lines.append(f"{body_indent}{base_type}* {param.name}_raw = nullptr;")
+                    qualified_base_type = self._get_qualified_type_name(base_type, current_namespace)
+                    lines.append(f"{body_indent}{qualified_base_type}* {param.name}_raw = nullptr;")
                 else:
                     if has_binary_buffer and base_type == 'unsigned char' and param.type_info.pointer_level == 2:
                         cpp_type = 'unsigned char*'
