@@ -594,12 +594,12 @@ class CppWrapperGenerator:
             return self._type_namespace_map
 
         mapping = {}
-        
+
         for interface in self.document.interfaces:
             wrapper_name = CppWrapperTypeMapper.get_wrapper_class_name(interface.name)
             mapping[wrapper_name] = interface.namespace
             mapping[interface.name] = interface.namespace
-        
+
         for doc_name, doc in self._imported_documents.items():
             for interface in doc.interfaces:
                 wrapper_name = CppWrapperTypeMapper.get_wrapper_class_name(interface.name)
@@ -636,7 +636,7 @@ class CppWrapperGenerator:
         """生成包装类声明（仅声明，不包含实现）
 
         根据依赖边界规则，wrapper头文件仅包含类声明。
-        
+
         Args:
             interface: 接口定义
             namespace_depth: 命名空间嵌套深度（默认 0，表示无命名空间或外层命名空间）
@@ -655,12 +655,12 @@ class CppWrapperGenerator:
 
         lines = []
 
-        lines.append(f"/**")
-        lines.append(f" * @brief wrapper for {raw_name}")
-        lines.append(f" * ")
-        lines.append(f" * Provides RAII memory management, exception-based error handling,")
-        lines.append(f" * and convenient property/method APIs.")
-        lines.append(f" */")
+        lines.append(f"{class_indent}/**")
+        lines.append(f"{class_indent} * @brief wrapper for {raw_name}")
+        lines.append(f"{class_indent} * ")
+        lines.append(f"{class_indent}* Provides RAII memory management, exception-based error handling,")
+        lines.append(f"{class_indent}* and convenient property/method APIs.")
+        lines.append(f"{class_indent}*/")
 
         lines.append(f"{class_indent}class {wrapper_name}")
         lines.append(f"{class_indent}{{")
@@ -721,9 +721,8 @@ class CppWrapperGenerator:
             prop_decl, _ = self._generate_property_wrapper(interface, prop, mode='declaration')
             lines.append(prop_decl)
 
-        lines.append("};")
+        lines.append(f"{class_indent}}};")
         lines.append("")
-
         return "\n".join(lines) + "\n"
 
     def _generate_wrapper_class_implementation(self, interface: InterfaceDef) -> str:
