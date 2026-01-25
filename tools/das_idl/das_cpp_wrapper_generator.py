@@ -239,7 +239,7 @@ class CppWrapperGenerator:
             return ""
         return namespace.replace("::", ".")
 
-    def _get_import_includes(self) -> list:
+    def _get_import_includes(self) -> List[str]:
         """根据 imports 生成 include 路径列表
 
         import语句使用相对路径，需要转换为正确的abi头文件路径。
@@ -375,7 +375,7 @@ class CppWrapperGenerator:
 
         return includes
 
-    def _get_wrapper_impl_includes(self) -> list:
+    def _get_wrapper_impl_includes(self) -> List[str]:
         """获取包装实现文件的 include 列表（Das.ExportInterface.*.hpp）
 
         这个方法返回所有 import 语句对应的包装实现文件路径，
@@ -584,7 +584,7 @@ class CppWrapperGenerator:
             if CppWrapperTypeMapper.is_interface_type(prop.type_info.base_type):
                 self._dependent_interfaces.add(prop.type_info.base_type)
 
-    def _collect_type_namespace_mapping(self) -> dict:
+    def _collect_type_namespace_mapping(self) -> dict[str, Optional[str]]:
         """收集所有接口类型到其命名空间的映射
 
         Returns:
@@ -1286,6 +1286,40 @@ class CppWrapperGenerator:
 
         content = self._file_header(guard_name, interface_names)
 
+        def _indent_and_inline_impl(impl: str, wrapper_name: str, indent_prefix: str) -> str:
+            """将类外实现追加到头文件：整体缩进 + 为定义签名添加 inline。
+
+            注意：实现被放进 .hpp 后必须为 inline，否则会产生 ODR 问题。
+            """
+
+            out_lines = []
+            for line in impl.splitlines():
+                if line == "":
+                    out_lines.append("")
+                    continue
+
+                stripped = line.lstrip()
+                leading_ws_len = len(line) - len(stripped)
+
+                # 粗略判断“函数定义签名行”：包含 Wrapper:: 且包含 '('。
+                # implementation 生成器中，函数定义签名行不以 inline 开头。
+                is_def_sig = (
+                    f"{wrapper_name}::" in stripped
+                    and "(" in stripped
+                    and not stripped.startswith("//")
+                    and not stripped.startswith("#")
+                    and not stripped.startswith("inline ")
+                )
+
+                if is_def_sig:
+                    out_lines.append(
+                        f"{indent_prefix}{' ' * leading_ws_len}inline {stripped}"
+                    )
+                else:
+                    out_lines.append(f"{indent_prefix}{line}")
+
+            return "\n".join(out_lines) + "\n"
+
         # 按命名空间分组
         namespace_groups = {}
         no_namespace_enums = []
@@ -1324,6 +1358,9 @@ class CppWrapperGenerator:
             for interface in no_namespace_interfaces:
                 # 无命名空间的类缩进深度为 0，但内容需要 1 层缩进（4 空格）
                 content += self._generate_wrapper_class_declaration(interface, namespace_depth=0)
+                wrapper_name = CppWrapperTypeMapper.get_wrapper_class_name(interface.name)
+                impl_content = self._generate_wrapper_class_implementation(interface)
+                content += _indent_and_inline_impl(impl_content, wrapper_name, indent_prefix="")
                 content += "\n"
 
         # 生成有命名空间的代码（支持 C++17 嵌套命名空间语法）
@@ -1350,6 +1387,14 @@ class CppWrapperGenerator:
             ns_depth = len(namespace_name.split("::"))
             for interface in items['interfaces']:
                 content += self._generate_wrapper_class_declaration(interface, namespace_depth=ns_depth)
+                content += "\n"
+
+            # 生成类外实现，并追加到同一个命名空间内（header-only, all inline）
+            ns_indent = "    " * ns_depth
+            for interface in items['interfaces']:
+                wrapper_name = CppWrapperTypeMapper.get_wrapper_class_name(interface.name)
+                impl_content = self._generate_wrapper_class_implementation(interface)
+                content += _indent_and_inline_impl(impl_content, wrapper_name, indent_prefix=ns_indent)
                 content += "\n"
 
             content += self._generate_namespace_close(namespace_name)
@@ -1447,7 +1492,7 @@ if __name__ == '__main__':
     from das_idl_parser import parse_idl
 
     test_idl = '''
-    [uuid("d5bD3213-B7C41b94-0E995cef-FF064F8d")]
+    [uuid("d5bd3213-b7c4-1b94-0e99-5cefFF064f8d")]
     interface IDasGuidVector : IDasBase {
         DasResult Size([out] size_t* p_out_size);
         DasResult At(size_t index, [out] DasGuid* p_out_iid);
@@ -1482,5 +1527,3 @@ if __name__ == '__main__':
 
     print("=== 生成的 C++ 包装头文件 ===")
     print(generator.generate_wrapper_header("TestInterfaces"))
-
-
