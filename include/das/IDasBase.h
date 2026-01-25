@@ -303,25 +303,6 @@ DAS_DEFINE_RET_TYPE(DasRetUInt, uint64_t);
 
 DAS_DEFINE_RET_TYPE(DasRetFloat, float);
 
-#ifdef __cplusplus
-DAS_NS_BEGIN
-
-DAS_NS_END
-#endif // __cplusplus
-
-// ============================================
-// 异常处理宏和函数声明（用于代码生成器）
-// ============================================
-
-#ifdef __cplusplus
-DAS_NS_BEGIN
-
-// Note: 代码生成器使用 DAS_THROW_IF_FAILED 宏（在 IDasBase.h:423 定义）
-// 该宏使用 DAS_THROW_IF_FAILED_EC 的实现
-
-DAS_NS_END
-#endif // __cplusplus
-
 #define DAS_THROW_IF_FAILED(result)                                            \
     {                                                                          \
         if (::Das::IsFailed(result))                                           \

@@ -1,45 +1,48 @@
 #ifndef DAS_DASBASE_HPP
 #define DAS_DASBASE_HPP
 
+#include <das/DasConfig.h>
 #include <das/DasPtr.hpp>
+#include <das/DasTypes.hpp>
 #include <das/IDasBase.h>
 
-namespace DAS
+class DasBase
 {
+private:
+    DAS::DasPtr<IDasBase> p_impl_;
 
-    class DasBase
+public:
+    DasBase(IDasBase* p, bool add_ref = true) : p_impl_(p)
     {
-    private:
-        DasPtr<IDasBase> p_impl_;
-
-    public:
-        explicit DasBase(IDasBase* p) : p_impl_(p) {}
-
-        static DasBase Attach(IDasBase* p)
+        // DasPtr 构造函数会自动调用 AddRef
+        // 如果是 Attach 语义（add_ref=false），需要抵消这个 AddRef
+        if (!add_ref && p != nullptr)
         {
-            return DasBase(DasPtr<IDasBase>::Attach(p));
+            p->Release();
         }
+    }
 
-        // 获取原始接口指针
-        IDasBase* Get() const { return p_impl_.Get(); }
+    static DasBase Attach(IDasBase* p) { return {p, false}; }
 
-        // Put 方法：使用 DasPtr::Put
-        IDasBase** Put() { return p_impl_.Put(); }
+    [[nodiscard]]
+    IDasBase* Get() const
+    {
+        return p_impl_.Get();
+    }
 
-        // As 模板方法
-        template <class T>
-        DasResult As(T& other) const
-        {
-            return p_impl_.As(other);
-        }
+    IDasBase** Put() { return p_impl_.Put(); }
 
-        template <class T>
-        DasResult As(T** pp_out_other) const
-        {
-            return p_impl_.As(pp_out_other);
-        }
-    };
+    template <class T>
+    DasResult As(T& other) const
+    {
+        return p_impl_.As(other);
+    }
 
-} // namespace DAS
+    template <class T>
+    DasResult As(T** pp_out_other) const
+    {
+        return p_impl_.As(pp_out_other);
+    }
+};
 
 #endif // DAS_DASBASE_HPP
