@@ -110,8 +110,15 @@ DasResult CreateIDasGuidVector(
             DAS::Utils::CopyArray(p_iids, iid_count, impl.data());
         }
 
-        *pp_out_iid_vector = result->ToConst();
-        return DAS_S_OK;
+        if (const auto expected_result = result->ToConst(); expected_result)
+        {
+            DAS::Utils::SetResult(expected_result.value(), pp_out_iid_vector);
+            return DAS_S_OK;
+        }
+        else
+        {
+            return expected_result.error();
+        }
     }
     catch (std::bad_alloc&)
     {
@@ -122,6 +129,6 @@ DasResult CreateIDasGuidVector(
         DAS_CORE_LOG_ERROR(
             "Error happened because iids_count > iids_.max_size().]\nNOTE: iid_count = {}.",
             iid_count);
-        return DAS_E_OUT_OF_MEMORY;
+        return DAS_E_INVALID_SIZE;
     }
 }

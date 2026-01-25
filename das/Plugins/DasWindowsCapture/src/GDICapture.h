@@ -1,8 +1,8 @@
 #ifndef DAS_PLUGINS_DASWINDOWSCAPTURE_GDICAPTURE_H
 #define DAS_PLUGINS_DASWINDOWSCAPTURE_GDICAPTURE_H
 
-#include <das/IDasBase.h>
 #include <cstdint>
+#include <das/IDasBase.h>
 #include <windows.h>
 #include <wingdi.h>
 
@@ -22,6 +22,8 @@ private:
     HBITMAP  h_bitmap_{nullptr};
     RECT     target_rect_{};
     HWND     hwnd_{nullptr};
+    int32_t  width_{0};
+    int32_t  height_{0};
     bool     initialized_{false};
     uint8_t* bitmap_data_{nullptr};
     size_t   data_size_{0};

@@ -1,14 +1,17 @@
 #include "IDasImageImpl.h"
 #include "Config.h"
 #include "IDasMemory.h"
+#include "das/DasApi.h"
+
+#include <DAS/_autogen/idl/abi/IDasImage.h>
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Core/Logger/Logger.h>
-#include <DAS/_autogen/idl/abi/IDasImage.h>
+#include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/Expected.h>
 #include <das/Utils/StreamUtils.hpp>
 #include <filesystem>
 #include <fstream>
-#include <utility>
+#include <iterator>
 #include <utility>
 
 DAS_DISABLE_WARNING_BEGIN
@@ -23,7 +26,8 @@ DAS_DISABLE_WARNING_END
 DAS_CORE_OCVWRAPPER_NS_BEGIN
 DAS_NS_ANONYMOUS_DETAILS_BEGIN
 
-auto ToOcvType(ExportInterface::DasImageFormat format) -> DAS::Utils::Expected<int>
+auto ToOcvType(ExportInterface::DasImageFormat format)
+    -> DAS::Utils::Expected<int>
 {
     switch (format)
     {
@@ -41,65 +45,16 @@ auto ToOcvType(ExportInterface::DasImageFormat format) -> DAS::Utils::Expected<i
 DAS_NS_ANONYMOUS_DETAILS_END
 
 IDasImageImpl::IDasImageImpl(
-    int                                        height,
-    int                                        width,
-    int                                        type,
-    void*                                      p_data,
+    int                               height,
+    int                               width,
+    int                               type,
+    void*                             p_data,
     Das::ExportInterface::IDasMemory* p_das_data)
     : p_memory_{p_das_data}, mat_{height, width, type, p_data}
 {
 }
 
 IDasImageImpl::IDasImageImpl(cv::Mat mat) : p_memory_{}, mat_{std::move(mat)} {}
-
-uint32_t IDasImageImpl::AddRef()
-{
-    ++ref_counter_;
-    return ref_counter_;
-}
-
-uint32_t IDasImageImpl::Release()
-{
-    --ref_counter_;
-    return ref_counter_;
-}
-
-DasResult IDasImageImpl::QueryInterface(
-    const DasGuid& iid,
-    void**         pp_out_object)
-{
-    if (pp_out_object == nullptr)
-    {
-        return DAS_E_INVALID_POINTER;
-    }
-
-    // 检查IID_IDasImage
-    if (iid == DasIidOf<Das::ExportInterface::IDasImage>())
-    {
-        *pp_out_object = static_cast<Das::ExportInterface::IDasImage*>(this);
-        this->AddRef();
-        return DAS_S_OK;
-    }
-
-    // 检查IID_IDasImageImpl
-    if (iid == DasIidOf<IDasImageImpl>())
-    {
-        *pp_out_object = static_cast<IDasImageImpl*>(this);
-        this->AddRef();
-        return DAS_S_OK;
-    }
-
-    // 检查IID_IDasBase
-    if (iid == DasIidOf<Das::ExportInterface::IDasBase>())
-    {
-        *pp_out_object = static_cast<Das::ExportInterface::IDasBase*>(this);
-        this->AddRef();
-        return DAS_S_OK;
-    }
-
-    *pp_out_object = nullptr;
-    return DAS_E_NO_INTERFACE;
-}
 
 DasResult IDasImageImpl::GetSize(Das::ExportInterface::DasSize* p_out_size)
 {
@@ -120,7 +75,9 @@ DasResult IDasImageImpl::GetChannelCount(int32_t* p_out_channel_count)
     return DAS_S_OK;
 }
 
-DasResult IDasImageImpl::Clip(const Das::ExportInterface::DasRect* p_rect, Das::ExportInterface::IDasImage** pp_out_image)
+DasResult IDasImageImpl::Clip(
+    const Das::ExportInterface::DasRect* p_rect,
+    Das::ExportInterface::IDasImage**    pp_out_image)
 {
     DAS_UTILS_CHECK_POINTER(p_rect)
     DAS_UTILS_CHECK_POINTER(pp_out_image)
@@ -151,17 +108,18 @@ DasResult IDasImageImpl::GetDataSize(uint64_t* p_out_size)
 
     return DAS_S_OK;
 }
-
-DasResult IDasImageImpl::GetData(unsigned char* p_out_data)
+DasResult IDasImageImpl::GetData(unsigned char** pp_out_data)
 {
-    DAS_UTILS_CHECK_POINTER(p_out_data)
+    DAS_UTILS_CHECK_POINTER(pp_out_data)
 
     try
     {
         size_t data_size;
         GetDataSize(&data_size);
         const auto int_data_size = static_cast<int>(data_size);
-        mat_.copyTo({p_out_data, int_data_size});
+        const auto umat = mat_.getUMat(cv::ACCESS_READ, cv::USAGE_DEFAULT);
+        // TODO: 未来这个接口返回 IDasMemory 否则不好实现
+        pp_out_data = nullptr;
     }
     catch (cv::Exception& ex)
     {
@@ -181,8 +139,8 @@ auto IDasImageImpl::GetImpl() -> cv::Mat { return mat_; }
 DAS_CORE_OCVWRAPPER_NS_END
 
 DasResult CreateIDasImageFromEncodedData(
-    DasImageDesc* p_desc,
-    IDasImage**   pp_out_image)
+    DasImageDesc*                     p_desc,
+    Das::ExportInterface::IDasImage** pp_out_image)
 {
     DAS_UTILS_CHECK_POINTER(p_desc)
     DAS_UTILS_CHECK_POINTER(pp_out_image)
@@ -216,9 +174,9 @@ DasResult CreateIDasImageFromEncodedData(
 }
 
 DasResult CreateIDasImageFromDecodedData(
-    const DasImageDesc* p_desc,
-    const DasSize*      p_size,
-    IDasImage**         pp_out_image)
+    const DasImageDesc*                  p_desc,
+    const DAS::ExportInterface::DasSize* p_size,
+    DAS::ExportInterface::IDasImage**    pp_out_image)
 {
     DAS_UTILS_CHECK_POINTER(p_desc)
     DAS_UTILS_CHECK_POINTER(p_size)
@@ -249,16 +207,16 @@ DasResult CreateIDasImageFromDecodedData(
 }
 
 DasResult CreateIDasImageFromRgb888(
-    IDasMemory*    p_alias_memory,
-    const DasSize* p_size,
-    IDasImage**    pp_out_image)
+    DAS::ExportInterface::IDasMemory*    p_alias_memory,
+    const DAS::ExportInterface::DasSize* p_size,
+    DAS::ExportInterface::IDasImage**    pp_out_image)
 {
     DAS_UTILS_CHECK_POINTER(p_alias_memory)
     DAS_UTILS_CHECK_POINTER(p_size)
     DAS_UTILS_CHECK_POINTER(pp_out_image)
 
     const auto&    size = *p_size;
-    size_t         data_size;
+    uint64_t       data_size;
     unsigned char* p_data;
 
     if (const auto get_size_result = p_alias_memory->GetSize(&data_size);
@@ -267,7 +225,7 @@ DasResult CreateIDasImageFromRgb888(
         return get_size_result;
     }
 
-    if (const auto get_pointer_result = p_alias_memory->GetData(&p_data);
+    if (const auto get_pointer_result = p_alias_memory->GetRawData(&p_data);
         DAS::IsFailed(get_pointer_result)) [[unlikely]]
     {
         return get_pointer_result;
@@ -323,58 +281,60 @@ auto ReadFromFile(const std::filesystem::path& full_path) -> cv::Mat
 DAS_NS_ANONYMOUS_DETAILS_END
 
 DasResult DasPluginLoadImageFromResource(
-    IDasTypeInfo*       p_type_info,
-    IDasReadOnlyString* p_relative_path,
-    IDasImage**         pp_out_image)
+    IDasTypeInfo*                     p_type_info,
+    IDasReadOnlyString*               p_relative_path,
+    DAS::ExportInterface::IDasImage** pp_out_image)
 {
     DAS_UTILS_CHECK_POINTER(p_type_info)
     DAS_UTILS_CHECK_POINTER(p_relative_path)
     DAS_UTILS_CHECK_POINTER(pp_out_image)
 
-    const auto expected_storage =
-        DAS::Core::ForeignInterfaceHost::g_plugin_manager
-            .GetInterfaceStaticStorage(p_type_info);
-    if (!expected_storage)
-    {
-        const auto error_code = expected_storage.error();
-        DAS_CORE_LOG_ERROR(
-            "Get interface static storage failed. Error code = {}.",
-            error_code);
-        return error_code;
-    }
+    // todo: plugin manager 相关，未来重写
 
-    const char* p_u8_relative_path{};
-    p_relative_path->GetUtf8(&p_u8_relative_path);
-
-    const auto full_path =
-        expected_storage.value().get().path / p_u8_relative_path;
-
-    try
-    {
-        const auto mat = Details::ReadFromFile(full_path);
-        auto*      p_result = new Das::Core::OcvWrapper::IDasImageImpl{mat};
-        *pp_out_image = p_result;
-        p_result->AddRef();
-        return DAS_S_OK;
-    }
-    catch (const std::ios_base::failure& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        DAS_CORE_LOG_ERROR(
-            "Error happened when reading resource file. Error code = " DAS_STR(
-                DAS_E_INVALID_FILE) ".");
-        return DAS_E_INVALID_FILE;
-    }
-    catch (cv::Exception& ex)
-    {
-        DAS_CORE_LOG_ERROR(ex.err);
-        DAS_CORE_LOG_ERROR(
-            "NOTE:\nfile = {}\nline = {}\nfunction = {}",
-            ex.file,
-            ex.line,
-            ex.func);
-        return DAS_E_OPENCV_ERROR;
-    }
+    // const auto expected_storage =
+    //     DAS::Core::ForeignInterfaceHost::g_plugin_manager
+    //         .GetInterfaceStaticStorage(p_type_info);
+    // if (!expected_storage)
+    // {
+    //     const auto error_code = expected_storage.error();
+    //     DAS_CORE_LOG_ERROR(
+    //         "Get interface static storage failed. Error code = {}.",
+    //         error_code);
+    //     return error_code;
+    // }
+    //
+    // const char* p_u8_relative_path{};
+    // p_relative_path->GetUtf8(&p_u8_relative_path);
+    //
+    // const auto full_path =
+    //     expected_storage.value().get().path / p_u8_relative_path;
+    //
+    // try
+    // {
+    //     const auto mat = Details::ReadFromFile(full_path);
+    //     auto*      p_result = new Das::Core::OcvWrapper::IDasImageImpl{mat};
+    //     *pp_out_image = p_result;
+    //     p_result->AddRef();
+    //     return DAS_S_OK;
+    // }
+    // catch (const std::ios_base::failure& ex)
+    // {
+    //     DAS_CORE_LOG_EXCEPTION(ex);
+    //     DAS_CORE_LOG_ERROR(
+    //         "Error happened when reading resource file. Error code = "
+    //         DAS_STR(
+    //             DAS_E_INVALID_FILE) ".");
+    //     return DAS_E_INVALID_FILE;
+    // }
+    // catch (cv::Exception& ex)
+    // {
+    //     DAS_CORE_LOG_ERROR(ex.err);
+    //     DAS_CORE_LOG_ERROR(
+    //         "NOTE:\nfile = {}\nline = {}\nfunction = {}",
+    //         ex.file,
+    //         ex.line,
+    //         ex.func);
+    //     return DAS_E_OPENCV_ERROR;
+    // }
+    return DAS_E_NO_IMPLEMENTATION;
 }
-
-DAS_CORE_OCVWRAPPER_NS_END

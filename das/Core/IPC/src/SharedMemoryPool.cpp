@@ -88,7 +88,7 @@ namespace Core
                 void* ptr = impl_->segment_->allocate(size);
                 if (!ptr)
                 {
-                    return DAS_E_OUTOFMEMORY;
+                    return DAS_E_OUT_OF_MEMORY;
                 }
 
                 std::string block_name =

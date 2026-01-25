@@ -20,7 +20,7 @@ public:
     DAS_IMPL EnumFeature(
         size_t                             index,
         PluginInterface::DasPluginFeature* p_out_feature) override;
-    DAS_IMPL CreateFeatureInterface(size_t index, void* pp_out_interface)
+    DAS_IMPL CreateFeatureInterface(uint64_t index, void** pp_out_interface)
         override;
     DAS_IMPL CanUnloadNow() override;
 };

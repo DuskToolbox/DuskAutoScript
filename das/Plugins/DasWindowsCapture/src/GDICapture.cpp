@@ -1,5 +1,5 @@
 #include "GDICapture.h"
-#include <DAS/_autogen/idl/abi/DasLogger.h>
+#include <das/DasApi.h>
 #include <das/IDasBase.h>
 #include <windows.h>
 #include <wingdi.h>

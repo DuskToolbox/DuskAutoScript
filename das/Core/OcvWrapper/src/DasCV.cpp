@@ -1,7 +1,7 @@
 #include "Config.h"
 #include "IDasImageImpl.h"
-#include <das/Core/Logger/Logger.h>
 #include <DAS/_autogen/idl/abi/DasCV.h>
+#include <das/Core/Logger/Logger.h>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/Expected.h>
 #include <das/Utils/Timer.hpp>
@@ -18,7 +18,7 @@ DAS_CORE_OCVWRAPPER_NS_BEGIN
 
 DAS_NS_ANONYMOUS_DETAILS_BEGIN
 
-auto GetDasImageImpl(IDasImage* p_image)
+auto GetDasImageImpl(ExportInterface::IDasImage* p_image)
     -> DAS::Utils::Expected<DasPtr<IDasImageImpl>>
 {
     DasPtr<IDasImageImpl> p_result{};
@@ -42,10 +42,10 @@ DAS_NS_ANONYMOUS_DETAILS_END
 DAS_CORE_OCVWRAPPER_NS_END
 
 DasResult TemplateMatchBest(
-    IDasImage*              p_image,
-    IDasImage*              p_template,
-    DasTemplateMatchType    type,
-    DasTemplateMatchResult* p_out_result)
+    Das::ExportInterface::IDasImage*               p_image,
+    Das::ExportInterface::IDasImage*               p_template,
+    Das::ExportInterface::DasTemplateMatchType     type,
+    Das::ExportInterface::IDasTemplateMatchResult* p_out_result)
 {
     DAS_UTILS_CHECK_POINTER(p_out_result)
 
@@ -85,7 +85,9 @@ DasResult TemplateMatchBest(
     cv::minMaxLoc(output, &min_score, &max_score, &min_location, &max_location);
 
     const auto cv_cost = timer.End();
-    DAS_CORE_LOG_INFO("Function matchTemplate and minMaxLoc cost {} ms.", cv_cost);
+    DAS_CORE_LOG_INFO(
+        "Function matchTemplate and minMaxLoc cost {} ms.",
+        cv_cost);
 
     if (std::isnan(max_score) || std::isinf(max_score))
     {
@@ -105,27 +107,13 @@ DasResult TemplateMatchBest(
         score = max_score;
     }
 
-    p_out_result->match_rect = DAS::DasRect{
-        matched_location.x,
-        matched_location.y,
-        template_mat.cols,
-        template_mat.rows};
-    p_out_result->score = score;
+    // TODO: NEW 一个IDasTemplateMatchResult的实现类出来，然后把值都赋进去
+    // p_out_result->match_rect = DAS::DasRect{
+    //     matched_location.x,
+    //     matched_location.y,
+    //     template_mat.cols,
+    //     template_mat.rows};
+    // p_out_result->score = score;
 
     return DAS_S_OK;
-}
-
-DasRetTemplateMatchResult TemplateMatchBest(
-    DasSwigImage         image,
-    DasSwigImage         template_image,
-    DasTemplateMatchType type)
-{
-    auto* const p_image = image.Get();
-    auto* const p_template = template_image.Get();
-
-    DasRetTemplateMatchResult result;
-    result.error_code =
-        TemplateMatchBest(p_image, p_template, type, &result.value);
-
-    return result;
 }

@@ -640,9 +640,9 @@ endif ()
 
 message("================================================================")
 
-message(STATUS "The third-party libraries listed later are only used for DasHttp.")
+# message(STATUS "The third-party libraries listed later are only used for Plugin.")
 
-message("================================================================")
+# message("================================================================")
 
 # 因为cmake限制，只能在这里写需要copy到测试目录的二进制，后续命令多了就改成文件include一下
 das_add_auto_copy_dll_path($<TARGET_FILE:DasGateway>)

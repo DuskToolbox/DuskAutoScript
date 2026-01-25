@@ -1,6 +1,6 @@
 #include "AdbTouchFactoryImpl.h"
 #include <array>
-#include <das/Core/Logger/Logger.h>
+#include <das/DasApi.h>
 #include <stdexcept>
 
 #define DAS_BUILD_SHARED
@@ -61,8 +61,8 @@ DAS_IMPL DasAdbTouchPlugin::EnumFeature(
 }
 
 DAS_IMPL DasAdbTouchPlugin::CreateFeatureInterface(
-    size_t index,
-    void** pp_out_interface)
+    uint64_t index,
+    void**   pp_out_interface)
 {
     if (pp_out_interface == nullptr)
     {

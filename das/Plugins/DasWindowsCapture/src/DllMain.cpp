@@ -3,7 +3,7 @@
 #include "das/IDasBase.h"
 
 #include "PluginImpl.h"
-#include <das/Core/Logger/Logger.h>
+#include <das/DasApi.h>
 #include <das/Utils/CommonUtils.hpp>
 
 // Bring PluginInterface types into global namespace for C API

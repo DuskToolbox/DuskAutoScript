@@ -1,8 +1,6 @@
 #include "WindowsGraphicsCapture.h"
-#include <DAS/_autogen/idl/abi/DasLogger.h>
+#include <das/DasApi.h>
 #include <das/IDasBase.h>
-#include <das/IDasBase.h>
-#include <das/Logger/Logger.h>
 
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Graphics.Capture.h>
@@ -66,9 +64,7 @@ DasResult WindowsGraphicsCapture::CreateCaptureItem(HWND hwnd)
     }
     catch (const winrt::hresult_error& ex)
     {
-        DAS_LOG_ERROR(
-            "WinRT error creating capture item: 0x{:08X}",
-            ex.code());
+        DAS_LOG_ERROR("WinRT error creating capture item: 0x{:08X}", ex.code());
         return DAS_E_CAPTURE_FAILED;
     }
     catch (const std::exception& ex)

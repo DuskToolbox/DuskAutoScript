@@ -1,21 +1,10 @@
 #ifndef DAS_BASE_H
 #define DAS_BASE_H
 
-#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <das/DasConfig.h>
 #include <das/DasGuidHolder.h>
-#include <string>
-#include <type_traits>
-
-#include <das/DasTypes.hpp>
-
-#include <cstddef>
-#include <cstdint>
-#include <das/DasConfig.h>
-#include <das/DasGuidHolder.h>
-#include <string>
-#include <type_traits>
 
 #include <das/DasTypes.hpp>
 

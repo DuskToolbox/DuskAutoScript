@@ -17,12 +17,12 @@ DasRetGuid DasMakeDasGuid(const char* p_guid_string)
             DAS::Core::ForeignInterfaceHost::MakeDasGuid(p_guid_string);
         result.error_code = DAS_S_OK;
     }
-    catch (const InvalidGuidStringException& ex)
+    catch (const DAS::Core::InvalidGuidStringException& ex)
     {
         DAS_CORE_LOG_EXCEPTION(ex);
         result = {DAS_E_INVALID_STRING, DAS_IID_BASE};
     }
-    catch (const InvalidGuidStringSizeException& ex)
+    catch (const DAS::Core::InvalidGuidStringSizeException& ex)
     {
         DAS_CORE_LOG_EXCEPTION(ex);
         result = {DAS_E_INVALID_STRING_SIZE, DAS_IID_BASE};

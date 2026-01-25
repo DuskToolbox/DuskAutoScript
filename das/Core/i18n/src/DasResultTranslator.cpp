@@ -1,11 +1,13 @@
 #include <das/Core/i18n/DasResultTranslator.h>
-#include <das/Core/i18n/GlobalLocale.h>
-#include <das/Core/Logger/Logger.h>
-#include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
-#include <das/Utils/fmt.h>
-#include <das/Utils/StringUtils.h>
-#include <das/Utils/Expected.h>
+
 #include <DAS/_autogen/idl/abi/IDasErrorLens.h>
+#include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
+#include <das/Core/Logger/Logger.h>
+#include <das/Core/i18n/GlobalLocale.h>
+#include <das/DasApi.h>
+#include <das/Utils/Expected.h>
+#include <das/Utils/StringUtils.h>
+#include <das/Utils/fmt.h>
 
 DAS_CORE_I18N_NS_BEGIN
 
@@ -152,8 +154,10 @@ DasResult GetExplanationWhenTranslateErrorFailed(
 {
     DasResult                       result{DAS_E_UNDEFINED_RETURN_VALUE};
     DAS::DasPtr<IDasReadOnlyString> p_error_string{};
-    auto                            default_locale = ::DasGetDefaultLocale();
-    const auto* const p_locale_name = default_locale.value.GetUtf8();
+    DAS::DasPtr<IDasReadOnlyString> default_locale;
+    ::DasGetDefaultLocale(default_locale.Put());
+    const char* p_locale_name{nullptr};
+    default_locale->GetUtf8(&p_locale_name);
 
     if (const auto it =
             Details::g_translate_error_failed_explanation.find(p_locale_name);

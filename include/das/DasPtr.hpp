@@ -1,8 +1,10 @@
 #ifndef DAS_DASPTR_HPP
 #define DAS_DASPTR_HPP
 
+#include <das/DasConfig.h>
+#include <das/DasGuidHolder.h>
 #include <das/DasTypes.hpp>
-#include <das/Utils/fmt.h>
+#include <utility>
 
 DAS_NS_BEGIN
 
@@ -190,6 +192,12 @@ DasPtr(T*) -> DasPtr<T>;
 
 DAS_NS_END
 
+namespace std
+{
+    template <class T>
+    struct hash;
+}
+
 template <class T>
 struct std::hash<DAS::DasPtr<T>>
 {
@@ -198,21 +206,5 @@ struct std::hash<DAS::DasPtr<T>>
         return std::hash<T*>()(ptr.Get());
     }
 };
-
-#if __cplusplus >= 202002L && DAS_USE_STD_FMT
-// Formatter specialization for DasPtr<T>
-template <class T>
-struct DAS_FMT_NS::formatter<DAS::DasPtr<T>, char>
-    : public formatter<void*, char>
-{
-    auto format(const DAS::DasPtr<T>& ptr, auto& ctx) const
-    {
-        return DAS_FMT_NS::format_to(
-            ctx.out(),
-            "{}",
-            static_cast<void*>(ptr.Get()));
-    }
-};
-#endif
 
 #endif // DAS_DASPTR_HPP

@@ -3,26 +3,37 @@
 
 #include <das/DasExport.h>
 #include <das/IDasBase.h>
-#include <exception>
-#include <memory>
 #include <stdexcept>
-#include <variant>
 
 // Forward declaration
 struct IDasTypeInfo;
-
-// Win32 风格 opaque handle
-typedef struct DasExceptionStringHandle_* DasExceptionStringHandle;
-
-class das_borrow_t
-{
-};
 
 struct DasExceptionSourceInfo
 {
     const char* file;
     int         line;
     const char* function;
+};
+
+SWIG_IGNORE(IDasExceptionString)
+// {6073A186-16C9-41E5-9A02-BE76CCB94951}
+DAS_DEFINE_GUID(
+    DAS_IID_EXCEPTION_STRING,
+    IDasExceptionString,
+    0x6073a186,
+    0x16c9,
+    0x41e5,
+    0x9a,
+    0x2,
+    0xbe,
+    0x76,
+    0xcc,
+    0xb9,
+    0x49,
+    0x51);
+struct IDasExceptionString : IDasBase
+{
+    DAS_METHOD GetU8(const char** pp_out_string) = 0;
 };
 
 #define DAS_THROW_IF_FAILED_EC(...)                                            \
@@ -39,12 +50,27 @@ struct DasExceptionSourceInfo
             __FILE__,                                                          \
             __LINE__,                                                          \
             DAS_FUNCTION};                                                     \
-        ::DasExceptionStringHandle* p_handle = nullptr;                        \
+        ::IDasExceptionString* __das_internal_p_string{};                      \
         ::CreateDasExceptionString(                                            \
             error_code,                                                        \
             &__das_internal_source_location,                                   \
-            &p_handle);                                                        \
-        throw DasException{error_code, p_handle};                              \
+            &__das_internal_p_string);                                         \
+        throw DasException{error_code, __das_internal_p_string};               \
+    }
+
+#define DAS_THROW_EC_EX(error_code, p_type_info)                               \
+    {                                                                          \
+        ::DasExceptionSourceInfo __das_internal_source_location{               \
+            __FILE__,                                                          \
+            __LINE__,                                                          \
+            DAS_FUNCTION};                                                     \
+        ::IDasExceptionString* __das_internal_p_string{};                      \
+        ::CreateDasExceptionStringWithTypeInfo(                                \
+            error_code,                                                        \
+            &__das_internal_source_location,                                   \
+            p_type_info,                                                       \
+            &__das_internal_p_string);                                         \
+        throw DasException{error_code, __das_internal_p_string};               \
     }
 
 #define DAS_THROW_MSG(error_code, error_message)                               \
@@ -53,25 +79,32 @@ struct DasExceptionSourceInfo
             __FILE__,                                                          \
             __LINE__,                                                          \
             DAS_FUNCTION};                                                     \
-        ::DasExceptionStringHandle* p_handle = nullptr;                        \
-        ::CreateDasExceptionString(                                            \
+        ::IDasExceptionString* __das_internal_p_string{};                      \
+        ::CreateDasExceptionStringWithMessage(                                 \
             error_code,                                                        \
-            error_message,                                                     \
             &__das_internal_source_location,                                   \
-            &p_handle);                                                        \
-        throw DasException{error_code, p_handle};                              \
+            error_message,                                                     \
+            &__das_internal_p_string);                                         \
+        throw DasException{error_code, __das_internal_p_string};               \
     }
 
 // C API 函数声明（实现在 DasExceptionSupport.cpp）
 DAS_C_API void CreateDasExceptionString(
-    DasResult                  error_code,
-    DasExceptionSourceInfo*    p_source_info,
-    DasExceptionStringHandle** pp_out_handle);
+    DasResult               error_code,
+    DasExceptionSourceInfo* p_source_info,
+    IDasExceptionString**   pp_out_handle);
 
-DAS_C_API void DeleteDasExceptionString(DasExceptionStringHandle* p_handle);
+DAS_C_API void CreateDasExceptionStringWithMessage(
+    DasResult               error_code,
+    DasExceptionSourceInfo* p_source_info,
+    const char*             message,
+    IDasExceptionString**   pp_out_handle);
 
-DAS_C_API const char* GetDasExceptionStringCStr(
-    DasExceptionStringHandle* p_handle);
+DAS_C_API void CreateDasExceptionStringWithTypeInfo(
+    DasResult               error_code,
+    DasExceptionSourceInfo* p_source_info,
+    IDasTypeInfo*           p_type_info,
+    IDasExceptionString**   pp_out_handle);
 
 class DasException : public std::runtime_error
 {
@@ -82,20 +115,17 @@ class DasException : public std::runtime_error
     };
 
     DasResult error_code_;
-    std::variant<std::string, std::shared_ptr<DasExceptionStringHandle>>
-        common_string_;
 
     using Base = std::runtime_error;
 
 public:
     DasException(DasResult error_code, std::string&& string)
-        : Base{string.c_str()}, error_code_{error_code},
-          common_string_{std::move(string)}
+        : Base{string.c_str()}, error_code_{error_code}
     {
     }
 
-    DasException(DasResult error_code, const char* p_string, das_borrow_t)
-        : Base{p_string}, error_code_{error_code}, common_string_{p_string}
+    DasException(DasResult error_code, const char* p_string)
+        : Base{p_string}, error_code_{error_code}
     {
     }
 
@@ -104,25 +134,15 @@ public:
     {
     }
 
-    DasException(DasResult error_code, DasExceptionStringHandle* p_handle)
-        : Base{GetDasExceptionStringCStr(p_handle)}, error_code_{error_code},
-          common_string_{std::shared_ptr<DasExceptionStringHandle>{
-              p_handle,
-              DeleteDasExceptionString}}
+    DasException(DasResult error_code, IDasExceptionString* p_string)
+        : Base{[p_string]
+               {
+                   const char* result;
+                   p_string->GetU8(&result);
+                   return result;
+               }()},
+          error_code_{error_code}
     {
-    }
-    [[nodiscard]]
-    const char* what() const noexcept override
-    {
-        return std::visit(
-            overload_set{
-                [](const std::string& result) { return result.c_str(); },
-                [](const std::shared_ptr<DasExceptionStringHandle>& result)
-                {
-                    // 安全访问，无需 std::launder
-                    return GetDasExceptionStringCStr(result.get());
-                }},
-            common_string_);
     }
 
     [[nodiscard]]
@@ -131,7 +151,4 @@ public:
         return error_code_;
     }
 };
-
-// ----------------------------------- IMPL ------------------------------------
-
 #endif // DAS_DASEXCEPTION_HPP

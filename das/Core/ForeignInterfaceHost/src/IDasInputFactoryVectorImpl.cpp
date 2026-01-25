@@ -13,12 +13,15 @@ auto DasInputFactoryVectorImpl::InternalFind(const DasGuid& iid)
         input_factory_vector_,
         [iid](const auto& factory)
         {
-            const auto ret_guid = factory
-            if (IsFailed(ret_guid.error_code))
+            try
             {
+                return factory.GetGuid() == iid;
+            }
+            catch (const DasException& ex)
+            {
+                DAS_CORE_LOG_EXCEPTION(ex);
                 return false;
             }
-            return ret_guid.value == iid;
         });
 }
 
@@ -40,8 +43,8 @@ DasResult DasInputFactoryVectorImpl::Size(size_t* p_out_size)
 }
 
 DasResult DasInputFactoryVectorImpl::At(
-    size_t             index,
-    IDasInputFactory** pp_out_factory)
+    size_t                              index,
+    PluginInterface::IDasInputFactory** pp_out_factory)
 {
     if (index < input_factory_vector_.size())
     {
@@ -55,8 +58,8 @@ DasResult DasInputFactoryVectorImpl::At(
 }
 
 DasResult DasInputFactoryVectorImpl::Find(
-    const DasGuid&     iid,
-    IDasInputFactory** pp_out_factory)
+    const DasGuid&                      iid,
+    PluginInterface::IDasInputFactory** pp_out_factory)
 {
     const auto it = InternalFind(iid);
     if (it != input_factory_vector_.end())

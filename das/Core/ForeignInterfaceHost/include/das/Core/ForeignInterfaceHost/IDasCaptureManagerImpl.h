@@ -12,7 +12,7 @@
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
 class CaptureManagerImpl
-    : ExportInterface::DasCaptureManagerImplBase<CaptureManagerImpl>
+    : public ExportInterface::DasCaptureManagerImplBase<CaptureManagerImpl>
 {
 public:
     struct ErrorInfo
@@ -38,20 +38,27 @@ private:
         performance_results_{};
 
 public:
-    DasResult EnumCaptureLoadErrorState(
-        const size_t         index,
-        DasResult*           p_out_error_code,
-        IDasReadOnlyString** pp_out_error_explanation);
-    DasResult EnumCaptureInterface(
-        const size_t                   index,
-        PluginInterface::IDasCapture** pp_out_interface);
-    DasResult RunCapturePerformanceTest();
-    DasResult EnumCapturePerformanceTestResult(
-        const size_t                   index,
+    DAS_IMPL EnumLoadErrorState(
+        uint64_t             index,
+        DasResult*           p_error_code,
+        IDasReadOnlyString** pp_out_error_explanation) override;
+    DAS_IMPL EnumInterface(
+        uint64_t                            index,
+        DAS::PluginInterface::IDasCapture** pp_out_interface) override;
+    DAS_IMPL RunPerformanceTest() override;
+    // TODO: EnumCapturePerformanceTestResult 重构到 EnumPerformanceTestResult
+    DAS_IMPL EnumCapturePerformanceTestResult(
+        uint64_t                       index,
         DasResult*                     p_out_error_code,
         int32_t*                       p_out_time_spent_in_ms,
         PluginInterface::IDasCapture** pp_out_capture,
         IDasReadOnlyString**           pp_out_error_explanation);
+    DAS_IMPL EnumPerformanceTestResult(
+        uint64_t                            index,
+        DasResult*                          p_out_error_code,
+        int32_t*                            p_out_time_spent_in_ms,
+        Das::PluginInterface::IDasCapture** pp_out_capture,
+        IDasReadOnlyString**                pp_out_error_explanation) override;
     // impl
     void AddInstance(
         DasPtr<IDasReadOnlyString>           p_name,

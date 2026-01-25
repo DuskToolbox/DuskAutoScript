@@ -3,6 +3,7 @@
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
 #include <das/_autogen/idl/abi/DasLogger.h>
+#include <das/DasApi.h>
 
 #if defined(_WIN32) || defined(__CYGWIN__)
 

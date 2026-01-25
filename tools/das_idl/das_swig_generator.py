@@ -683,7 +683,7 @@ if __name__ == '__main__':
     from das_idl_parser import parse_idl
 
     test_idl = '''
-    [uuid("d5bD3213-B7C41b94-0E995cef-FF064F8d")]
+    [uuid("D5B3213B-B7C4-4194-0E99-5CEFFF064F8D")]
     interface IDasGuidVector : IDasBase {
         DasResult Size([out] size_t* p_out_size);
         DasResult At(size_t index, [out] DasGuid* p_out_iid);

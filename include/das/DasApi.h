@@ -2,6 +2,7 @@
 #define DAS_API_H
 
 #include "DasLogger.h"
+#include "IDasImage.h"
 #include <das/DasString.hpp>
 #include <das/IDasBase.h>
 #include <limits>
@@ -31,9 +32,25 @@ namespace Das::PluginInterface
 
 struct IDasTypeInfo;
 
-struct DasImageDesc;
-struct DasSize;
-struct DasTemplateMatchResult;
+struct DasImageDesc
+{
+    /**
+     * @brief Pointer to the image data pointer.
+     *
+     */
+    char* p_data;
+    /**
+     * @brief Size of image data in bytes. Can be 0 when both width and height
+     * are set and data is decoded.
+     *
+     */
+    size_t data_size;
+    /**
+     * @brief Supported image format. @see DasImageFormat
+     *
+     */
+    Das::ExportInterface::DasImageFormat data_format;
+};
 
 DAS_C_API DasResult ParseDasJsonFromString(
     const char*                      p_u8_string,
@@ -113,14 +130,14 @@ DAS_C_API DasResult CreateIDasImageFromEncodedData(
     Das::ExportInterface::IDasImage** pp_out_image);
 
 DAS_C_API DasResult CreateIDasImageFromDecodedData(
-    const DasImageDesc*               p_desc,
-    const DasSize*                    p_size,
-    Das::ExportInterface::IDasImage** pp_out_image);
+    const DasImageDesc*                  p_desc,
+    const DAS::ExportInterface::DasSize* p_size,
+    Das::ExportInterface::IDasImage**    pp_out_image);
 
 DAS_C_API DasResult CreateIDasImageFromRgb888(
-    Das::ExportInterface::IDasMemory* p_alias_memory,
-    const DasSize*                    p_size,
-    Das::ExportInterface::IDasImage** pp_out_image);
+    Das::ExportInterface::IDasMemory*    p_alias_memory,
+    const DAS::ExportInterface::DasSize* p_size,
+    Das::ExportInterface::IDasImage**    pp_out_image);
 
 DAS_C_API DasResult DasPluginLoadImageFromResource(
     IDasTypeInfo*                     p_type_info,
@@ -266,7 +283,7 @@ struct DasSourceLocationOnStack final : DAS::ExportInterface::IDasSourceLocation
     DasResult SetLine(int32_t) override { return DAS_E_NO_IMPLEMENTATION; }
 
     DasU8StringOnStack file_name;
-    int         line;
+    int                line;
     DasU8StringOnStack function_name;
 };
 

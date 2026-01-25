@@ -3,8 +3,6 @@
 
 #include <das/DasApi.h>
 #include <das/DasConfig.h>
-#include <das/DasException.hpp>
-#include <das/DasString.hpp>
 
 #define DAS_GATEWAY_NS_BEGIN                                                   \
     DAS_NS_BEGIN namespace Gateway                                             \
@@ -16,18 +14,8 @@
 
 DAS_GATEWAY_NS_BEGIN
 
-// Type aliases for function pointers
-using DasExceptionSourceInfo_t = DasExceptionSourceInfo;
-using CreateDasExceptionString_t =
-    void (*)(DasResult, DasExceptionSourceInfo_t*, DasExceptionStringHandle**);
-using ParseDasJsonFromString_t =
-    void (*)(const char*, DasExceptionStringHandle*);
-
 [[nodiscard]]
-CreateDasExceptionString_t GetCreateDasExceptionStringFunction();
-
-[[nodiscard]]
-ParseDasJsonFromString_t GetParseDasJsonFromStringFunction();
+decltype(&::ParseDasJsonFromString) GetParseDasJsonFromStringFunction();
 
 DAS_GATEWAY_NS_END
 

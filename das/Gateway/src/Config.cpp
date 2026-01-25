@@ -46,35 +46,6 @@ GetCreateIDasReadOnlyStringFromUtf8Function()
     return result;
 }
 
-decltype(&::CreateDasExceptionString) GetCreateDasExceptionStringFunction()
-{
-    static decltype(&::CreateDasExceptionString) result{
-        []() -> decltype(&::CreateDasExceptionString)
-        {
-            try
-            {
-                auto       das_core = Details::GetDasCore();
-                const auto result =
-                    das_core.get<decltype(::CreateDasExceptionString)>(
-                        "CreateDasExceptionString");
-                return result;
-            }
-            catch (const boost::dll::fs::system_error& ex)
-            {
-                const auto code = ex.code();
-                const auto message = DAS_FMT_NS::format(
-                    "Can not load library " DAS_CORE_DLL
-                    " .Error code = {}. Message = {}",
-                    code.value(),
-                    code.message());
-                SPDLOG_LOGGER_ERROR(GetLogger(), message.c_str());
-                SPDLOG_LOGGER_ERROR(GetLogger(), ex.what());
-            }
-            return nullptr;
-        }()};
-    return result;
-}
-
 decltype(&::ParseDasJsonFromString) GetParseDasJsonFromStringFunction()
 {
     static decltype(&::ParseDasJsonFromString) result{

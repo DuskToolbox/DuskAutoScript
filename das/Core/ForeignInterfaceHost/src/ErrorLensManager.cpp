@@ -22,12 +22,13 @@ auto GetIidVectorSize(
         ::DasGetPredefinedErrorMessage(
             get_iid_size_result,
             p_error_message.Put());
-        DAS_CORE_LOG_ERROR(
+        auto final_message = DAS_FMT_NS::format(
             "Error happened in class IDasGuidVector. Pointer = {}. "
             "Error code = {}. Error message = \"{}\".",
             static_cast<void*>(p_iid_vector),
             get_iid_size_result,
-            p_error_message);
+            *p_error_message);
+        DAS_LOG_ERROR(final_message.c_str());
         return tl::make_unexpected(get_iid_size_result);
     }
     return iid_size;
@@ -48,7 +49,7 @@ auto GetIidFromIidVector(
             "Error code = {}. Error message = \"{}\".",
             static_cast<void*>(p_iid_vector),
             get_iid_result,
-            p_error_message);
+            *p_error_message);
         return tl::make_unexpected(get_iid_result);
     }
     return iid;

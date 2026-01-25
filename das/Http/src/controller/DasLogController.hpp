@@ -6,7 +6,6 @@
 #include "Config.h"
 #include "beast/JsonUtils.hpp"
 #include "beast/Request.hpp"
-#include "das/ExportInterface/DasLogger.h"
 #include "dto/Log.hpp"
 #include <das/_autogen/idl/abi/DasLogger.h>
 
@@ -21,7 +20,7 @@ namespace Das::Http
     {
         DAS::DasPtr<DasHttpLogReader> p_reader{
             DAS::MakeDasPtr<DasHttpLogReader>()};
-        DAS::DasPtr<IDasLogRequester> p_requester{};
+        DAS::DasPtr<ExportInterface::IDasLogRequester> p_requester{};
 
     public:
         DasLogController()

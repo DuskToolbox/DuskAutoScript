@@ -1,10 +1,5 @@
-#include "Das.PluginInterface.IDasCapture.hpp"
-#include <DAS/_autogen/idl/abi/IDasCapture.h>
-#include <DAS/_autogen/idl/abi/IDasCaptureManager.h>
-#include <DAS/_autogen/idl/abi/IDasErrorLens.h>
 #include <das/Core/ForeignInterfaceHost/IDasCaptureManagerImpl.h>
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
-#include <das/Core/Utils/InternalUtils.h>
 #include <das/Core/i18n/DasResultTranslator.h>
 #include <das/DasApi.h>
 #include <das/DasConfig.h>
@@ -12,23 +7,24 @@
 #include <das/DasString.hpp>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/Timer.hpp>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasCapture.hpp>
+#include <das/_autogen/idl/wrapper/IDasTypeInfo.hpp>
 #include <vector>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
 DAS_NS_ANONYMOUS_DETAILS_BEGIN
 
-template <class T>
-auto MakeErrorInfo(DasResult error_code, T* p_error_generator)
+auto MakeErrorInfo(DasResult error_code, DasTypeInfo p_error_generator)
     -> CaptureManagerImpl::ErrorInfo
 {
     CaptureManagerImpl::ErrorInfo result{};
     result.error_code = error_code;
     std::string              error_message{};
     DasReadOnlyStringWrapper das_error_message{};
-    const auto name = Utils::GetRuntimeClassNameFrom(p_error_generator);
+    const auto               name = p_error_generator.GetRuntimeClassName();
     if (const auto get_error_message_result = ::DasGetErrorMessage(
-            p_error_generator,
+            p_error_generator.Get(),
             error_code,
             das_error_message.Put());
         DAS::IsOk(get_error_message_result))
@@ -47,7 +43,7 @@ Error explanation: "{}".)",
     }
     else
     {
-        error_message = DAS::fmt::format(
+        error_message = DAS_FMT_NS::format(
             R"(Error happened when creating capture instance.
 TypeName: {}.
 Error code: {}.
@@ -57,6 +53,28 @@ No error explanation found. Result: {}.)",
             get_error_message_result);
     }
     DAS_CORE_LOG_ERROR(error_message);
+    return result;
+}
+
+auto MakeErrorInfo(
+    DasResult           error_code,
+    IDasReadOnlyString* p_capture_factory_name) -> CaptureManagerImpl::ErrorInfo
+{
+    CaptureManagerImpl::ErrorInfo result{};
+
+    result.error_code = error_code;
+    const auto error_message = DAS_FMT_NS::format(
+        R"(Error happened when creating capture instance.
+TypeName: {}.
+Error code: {}.)",
+        *p_capture_factory_name,
+        result.error_code);
+    DAS::DasPtr<IDasReadOnlyString> p_error_message{};
+    DAS_THROW_IF_FAILED(
+        ::CreateIDasReadOnlyStringFromUtf8(
+            error_message.c_str(),
+            p_error_message.Put()))
+    result.p_error_message = p_error_message.Get();
     return result;
 }
 
@@ -75,7 +93,7 @@ void OnCreateCaptureInstanceFailed(
 DAS_NS_ANONYMOUS_DETAILS_END
 
 DasResult CaptureManagerImpl::EnumLoadErrorState(
-    const size_t         index,
+    uint64_t             index,
     DasResult*           p_out_error_code,
     IDasReadOnlyString** pp_out_error_explanation)
 {
@@ -110,8 +128,8 @@ DasResult CaptureManagerImpl::EnumLoadErrorState(
 }
 
 DasResult CaptureManagerImpl::EnumInterface(
-    const size_t  index,
-    IDasCapture** pp_out_interface)
+    const size_t                   index,
+    PluginInterface::IDasCapture** pp_out_interface)
 {
     DasResult result{DAS_E_UNDEFINED_RETURN_VALUE};
     if (index >= instances_.size())
@@ -148,10 +166,10 @@ DasResult CaptureManagerImpl::RunPerformanceTest()
         {
             continue;
         }
-        DasPtr<IDasImage> p_image{};
-        ErrorInfo         capture_error_info{};
-        const auto        p_capture = instance.value();
-        DAS::Utils::Timer timer{};
+        DasPtr<ExportInterface::IDasImage> p_image{};
+        ErrorInfo                          capture_error_info{};
+        const auto                         p_capture = instance.value();
+        DAS::Utils::Timer                  timer{};
         timer.Begin();
         const auto capture_result = p_capture->Capture(p_image.Put());
         if (IsFailed(capture_result))
@@ -175,11 +193,11 @@ DasResult CaptureManagerImpl::RunPerformanceTest()
 }
 
 DasResult CaptureManagerImpl::EnumPerformanceTestResult(
-    const size_t         index,
-    DasResult*           p_out_error_code,
-    int32_t*             p_out_time_spent_in_ms,
-    PluginInterface::IDasCapture**        pp_out_capture,
-    IDasReadOnlyString** pp_out_error_explanation)
+    uint64_t                       index,
+    DasResult*                     p_out_error_code,
+    int32_t*                       p_out_time_spent_in_ms,
+    PluginInterface::IDasCapture** pp_out_capture,
+    IDasReadOnlyString**           pp_out_error_explanation)
 {
     if (index == instances_.size())
     {
@@ -199,7 +217,7 @@ DasResult CaptureManagerImpl::EnumPerformanceTestResult(
         }
         if (pp_out_capture)
         {
-            *pp_out_capture = object.Get()->Get();
+            *pp_out_capture = object.Get();
             (*pp_out_capture)->AddRef();
         }
         if (pp_out_error_explanation)

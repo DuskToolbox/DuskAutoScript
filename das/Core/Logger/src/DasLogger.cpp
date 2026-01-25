@@ -39,7 +39,7 @@ void DasLogErrorU8WithSourceLocation(
     const char*                               p_string,
     DAS::ExportInterface::IDasSourceLocation* p_location)
 {
-    if (const auto opt_location = Details::ToSpdlogSourceLocation(p_location))
+    if (const auto opt_location = Details::ToSpdlogSourceLocation({p_location}))
     {
         DC::g_logger->log(opt_location.value(), spdlog::level::err, p_string);
     }

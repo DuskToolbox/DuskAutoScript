@@ -3,7 +3,8 @@
 
 #include <das/IDasBase.h>
 
-#define DAS_E_IPC_BASE (-1073741867)
+// 之前的值比较容易冲突，这里搞大些避免冲突
+#define DAS_E_IPC_BASE (-1080000000)
 
 #define DAS_E_IPC_INVALID_MESSAGE_HEADER (DAS_E_IPC_BASE - 1)
 #define DAS_E_IPC_INVALID_MESSAGE_TYPE (DAS_E_IPC_BASE - 2)

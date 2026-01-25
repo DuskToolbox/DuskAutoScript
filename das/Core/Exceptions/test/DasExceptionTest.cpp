@@ -25,9 +25,13 @@ TEST(DasExceptionTest, CreateDasExceptionString_WithMessage)
     std::string               custom_msg = "Custom error message";
     DasExceptionStringHandle* p_handle = nullptr;
 
-    CreateDasExceptionString(error_code, custom_msg, &source_info, &p_handle);
+    CreateDasExceptionStringWithMessage(
+        error_code,
+        &source_info,
+        custom_msg.c_str(),
+        &p_handle);
 
-    ASSERT_NE(p_handle, nullptr);
+        ASSERT_NE(p_handle, nullptr);
 
     // Clean up
     DeleteDasExceptionString(p_handle);

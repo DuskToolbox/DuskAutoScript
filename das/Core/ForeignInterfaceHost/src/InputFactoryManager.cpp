@@ -1,8 +1,9 @@
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/InputFactoryManager.h>
+
 #include <das/Core/Logger/Logger.h>
-#include <das/Core/Utils/InternalUtils.h>
 #include <das/DasException.hpp>
+#include <das/Utils/CommonUtils.hpp>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
@@ -31,8 +32,7 @@ DasResult InputFactoryManager::FindInterface(
             {
                 try
                 {
-                    const auto factory_iid =
-                        Utils::GetGuidFrom(p_factory.Get());
+                    const auto factory_iid = p_factory.GetGuid();
                     return factory_iid == iid;
                 }
                 catch (const DasException& ex)
@@ -55,7 +55,7 @@ void InputFactoryManager::At(
     size_t                                          index,
     DasPtr<Das::PluginInterface::IDasInputFactory>& ref_out_factory)
 {
-    ref_out_factory = common_input_factory_vector_.at(index);
+    ref_out_factory = common_input_factory_vector_.at(index).GetPtr();
 }
 
 void InputFactoryManager::Find(
@@ -65,19 +65,19 @@ void InputFactoryManager::Find(
     if (pp_out_factory == nullptr)
     {
         DAS_THROW_EC(DAS_E_INVALID_POINTER);
-        return;
     }
 
     const auto result = std::ranges::find_if(
         common_input_factory_vector_,
         [iid](const auto& item)
         {
-            const auto gg_result = item->GetGuid();
-            if (IsFailed(gg_result.error_code))
+            DasGuid    guid;
+            const auto gg_result = item->GetGuid(&guid);
+            if (DAS::IsFailed(gg_result))
             {
                 return false;
             }
-            return gg_result.value == iid;
+            return guid == iid;
         });
 
     if (result == common_input_factory_vector_.end())

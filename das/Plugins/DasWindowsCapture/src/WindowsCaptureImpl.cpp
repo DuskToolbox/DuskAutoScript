@@ -1,24 +1,17 @@
-#include <DAS/_autogen/idl/abi/DasLogger.h>
-#include <DAS/_autogen/idl/abi/IDasImage.h>
-#include <das/DasString.hpp>
+
+#include "GDICapture.h"
+#include "WindowsGraphicsCapture.h"
+#include <das/Core/DasWindowsCapture/WindowsCaptureImpl.h>
+#include <das/DasApi.h>
 #include <das/IDasBase.h>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/fmt.h>
-#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasCapture.Implements.hpp>
-#include <nlohmann/json.hpp>
-
-#include "GDICapture.h"
-#include "WindowsCaptureImpl.h"
-#include "WindowsGraphicsCapture.h"
-
 #include <dwmapi.h>
+#include <memory>
+#include <nlohmann/json.hpp>
 #include <psapi.h>
 #include <tlhelp32.h>
 #include <windows.h>
-
-#include <memory>
-#include <stdexcept>
-#include <unordered_map>
 
 DAS_NS_BEGIN
 
@@ -102,9 +95,7 @@ DasResult WindowsCapture::InitializeGDICapture()
         target_hwnd = FindMainWindowForProcess(pid);
         if (target_hwnd == nullptr)
         {
-            DAS_LOG_ERROR(
-                "Main window not found for process: {}",
-                proc_name);
+            DAS_LOG_ERROR("Main window not found for process: {}", proc_name);
             return DAS_E_NOT_FOUND;
         }
         DAS_LOG_INFO("Target process: {}", proc_name);
@@ -115,10 +106,12 @@ DasResult WindowsCapture::InitializeGDICapture()
         target_hwnd = FindMainWindowForProcess(pid);
         if (target_hwnd == nullptr)
         {
-            DAS_LOG_ERROR("Main window not found for PID: {}", pid);
+            DAS_LOG_ERROR(
+                DAS_FMT_NS::format("Main window not found for PID: {}", pid)
+                    .c_str());
             return DAS_E_NOT_FOUND;
         }
-        DAS_LOG_INFO("Target PID: {}", pid);
+        DAS_LOG_INFO(DAS_FMT_NS::format("Target PID: {}", pid));
     }
     else if (config.contains("monitor_index"))
     {
@@ -244,9 +237,7 @@ DasResult WindowsCapture::Capture(IDasImage** pp_out_image)
         CreateIDasImageFromRgb888(frame_data, width, height, pp_out_image);
     if (FAILED(create_result))
     {
-        DAS_LOG_ERROR(
-            "Failed to create IDasImage: 0x{:08X}",
-            create_result);
+        DAS_LOG_ERROR("Failed to create IDasImage: 0x{:08X}", create_result);
         return create_result;
     }
 

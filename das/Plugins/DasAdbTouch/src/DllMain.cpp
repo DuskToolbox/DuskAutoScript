@@ -5,6 +5,7 @@
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
 
 // 任务5扩展：添加必要的头文件以定义使用的宏
+#include <das/DasApi.h>
 #include <das/Utils/CommonUtils.hpp> // 提供 DAS_UTILS_CHECK_POINTER_FOR_PLUGIN
 
 // Bring PluginInterface types into global namespace for C API

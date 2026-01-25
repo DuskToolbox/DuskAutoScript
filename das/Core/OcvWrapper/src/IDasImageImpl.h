@@ -57,13 +57,13 @@ public:
 
     IDasImageImpl(cv::Mat mat);
 
-    DAS_IMPL GetSize(uint64_t* p_out_size) override;
+    DAS_IMPL GetSize(ExportInterface::DasSize* p_out_size) override;
     DAS_IMPL GetChannelCount(int32_t* p_out_channel_count) override;
     DAS_IMPL Clip(
         const Das::ExportInterface::DasRect* p_rect,
         Das::ExportInterface::IDasImage**    pp_out_image) override;
     DAS_IMPL GetDataSize(uint64_t* p_out_size) override;
-    DAS_IMPL GetData(unsigned char** p_out_data) override;
+    DAS_IMPL GetData(unsigned char** pp_out_data) override;
 
     auto GetImpl() -> cv::Mat;
 };

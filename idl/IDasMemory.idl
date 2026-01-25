@@ -13,9 +13,9 @@ interface IDasMemory : IDasBase {
     DasResult GetRawData([out] unsigned char** pp_out_data);
 
     /**
-    DasResult GetSize([out] uint64_t* p_out_size);
      * @brief 如果确定输入的指针不是空指针，则返回值可以忽略
      */
+    DasResult GetSize([out] uint64_t* p_out_size);
     DasResult GetOffset([out] int64_t* p_out_offset);
     DasResult SetOffset(int64_t offset);
     DasResult Resize(uint64_t new_size_in_byte);

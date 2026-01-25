@@ -3,12 +3,14 @@
 
 #include <Windows.h>
 #include <cstdint>
+#include <d3d11.h>
 #include <das/IDasBase.h>
 #include <das/Utils/StringUtils.h>
 #include <das/_autogen/idl/abi/IDasCapture.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasCapture.Implements.hpp>
+#include <nlohmann/json_fwd.hpp>
+#include <winrt/Windows.Graphics.Capture.h>
 #include <winrt/base.h>
-#include <winrt/windows.graphics.capture.h>
 
 // {5D277A77-FB65-4613-B10A-91905F617F74} GUID 定义将在
 // WindowsCaptureImpl.cpp 中实现
@@ -53,12 +55,12 @@ private:
     uint32_t    target_monitor_index_;
 
     // Windows.Graphics.Capture 成员
-    winrt::com_ptr<winrt::Windows::Graphics::Capture::CaptureItem>
+    winrt::com_ptr<winrt::Windows::Graphics::Capture::GraphicsCaptureItem>
         capture_item_;
     winrt::com_ptr<
-        winrt::Windows::Graphics::Direct3D11::Direct3D11CaptureFramePool>
+        winrt::Windows::Graphics::Capture::Direct3D11CaptureFramePool>
         frame_pool_;
-    winrt::com_ptr<winrt::Windows::Graphics::Direct3D11::GraphicsCaptureSession>
+    winrt::com_ptr<winrt::Windows::Graphics::Capture::GraphicsCaptureSession>
                                  session_;
     winrt::com_ptr<ID3D11Device> d3d11_device_;
 
@@ -79,11 +81,11 @@ public:
     virtual ~WindowsCapture() = default;
 
     // IDasCapture 接口
-    DAS_IMPL DasResult Capture([out] IDasImage** pp_out_image) override;
+    DAS_IMPL Capture(ExportInterface::IDasImage** pp_out_image) override;
 
     // IDasCaptureFactory 接口
-    DAS_IMPL DasResult StartCapture() override;
-    DAS_IMPL DasResult StopCapture() override;
+    DAS_IMPL StartCapture() override;
+    DAS_IMPL StopCapture() override;
 
 private:
     // 解析配置并选择捕获模式

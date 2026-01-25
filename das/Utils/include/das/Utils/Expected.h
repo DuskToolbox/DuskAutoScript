@@ -72,6 +72,23 @@ struct DAS_FMT_NS::formatter<DAS::Utils::VariantString, char>
         const -> typename std::remove_reference_t<decltype(ctx)>::iterator;
 };
 
+template <>
+struct DAS_FMT_NS::formatter<IDasReadOnlyString, char>
+    : public formatter<const char*, char>
+{
+    auto format(IDasReadOnlyString& string, format_context& ctx) const ->
+        typename std::remove_reference_t<decltype(ctx)>::iterator
+    {
+        const char* p_string_data = nullptr;
+        if (const auto get_result = string.GetUtf8(&p_string_data);
+            DAS::IsOk(get_result))
+        {
+            return DAS_FMT_NS::format_to(ctx.out(), "{}", p_string_data);
+        }
+        return ctx.out();
+    }
+};
+
 using DASE = DAS::Utils::ErrorAndExplanation;
 
 #endif // DAS_UTILS_EXPECTED_H

@@ -3,10 +3,9 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 
-#include "das/DasApi.h"
 #include "das/IDasBase.h"
-#include "das/Utils/CommonUtils.hpp"
 #include "das/_autogen/idl/wrapper/Das.ExportInterface.IDasLogReader.Implements.hpp"
 
 class DasHttpLogReader final
@@ -15,10 +14,6 @@ class DasHttpLogReader final
     std::string message_{};
 
     DAS_IMPL ReadOne(::IDasReadOnlyString* message);
-
-    DAS_UTILS_IDASBASE_AUTO_IMPL(DasHttpLogReader)
-
-    DAS_IMPL QueryInterface(const DasGuid& iid, void** pp_object) override;
 
     [[nodiscard]]
     auto GetLog() const noexcept -> std::string_view;

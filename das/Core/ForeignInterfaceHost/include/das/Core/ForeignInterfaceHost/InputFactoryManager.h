@@ -1,10 +1,9 @@
 #ifndef DAS_CORE_FOREIGNINTERFACEHOST_INPUTFACTORYMANAGER_H
 #define DAS_CORE_FOREIGNINTERFACEHOST_INPUTFACTORYMANAGER_H
 
-#include <DAS/_autogen/idl/abi/IDasInput.h>
+#include "das/_autogen/idl/wrapper/Das.ExportInterface.IDasInputFactoryVector.hpp"
 #include <das/Core/ForeignInterfaceHost/Config.h>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
-#include <utility>
 #include <vector>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
@@ -12,8 +11,7 @@ DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 class InputFactoryManager
 {
 private:
-    std::vector<DasPtr<Das::PluginInterface::IDasInputFactory>>
-        common_input_factory_vector_;
+    std::vector<PluginInterface::DasInputFactory> common_input_factory_vector_;
 
 public:
     DasResult Register(Das::PluginInterface::IDasInputFactory* p_factory);

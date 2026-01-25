@@ -66,6 +66,13 @@ namespace
             return DAS_S_FALSE;
         }
 
+        DAS_IMPL GetSize(uint64_t* p_out_size) override
+        {
+            DAS_UTILS_CHECK_POINTER(p_out_size)
+            *p_out_size = size;
+            return DAS_S_OK;
+        }
+
     private:
         unsigned char*                   p_offset_data_;
         size_t                           size;

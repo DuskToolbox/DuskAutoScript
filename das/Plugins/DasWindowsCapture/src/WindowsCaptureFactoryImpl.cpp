@@ -1,11 +1,11 @@
 #include "WindowsCaptureFactoryImpl.h"
 #include "PluginImpl.h"
 #include <das/Core/DasWindowsCapture/WindowsCaptureImpl.h>
+#include <das/DasApi.h>
+#include <das/DasString.hpp>
 #include <das/IDasBase.h>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/fmt.h>
-#include <das/_autogen/idl/abi/DasLogger.h>
-#include <das/_autogen/idl/abi/IDasReadOnlyString.h>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 
@@ -48,7 +48,8 @@ DasResult WindowsCaptureFactoryImpl::CreateInstance(
     }
     catch (const nlohmann::json::exception& ex)
     {
-        DAS_LOG_ERROR("Failed to parse plugin config JSON: {}", ex.what());
+        DAS_LOG_ERROR("Failed to parse plugin config JSON");
+        DAS_LOG_ERROR(ex.what());
         *pp_out_object = nullptr;
         return DAS_E_INVALID_JSON;
     }
@@ -64,9 +65,7 @@ DasResult WindowsCaptureFactoryImpl::CreateInstance(
     if (capture_mode != "windows_graphics_capture"
         && capture_mode != "gdi_bitblt")
     {
-        DAS_LOG_ERROR(
-            "Invalid capture_mode: {}. Expected 'windows_graphics_capture' or 'gdi_bitblt'",
-            capture_mode);
+        DAS_LOG_ERROR("Invalid capture_mode");
         *pp_out_object = nullptr;
         return DAS_E_INVALID_ARGUMENT;
     }
