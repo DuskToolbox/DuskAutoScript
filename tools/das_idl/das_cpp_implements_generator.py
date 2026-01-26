@@ -353,6 +353,40 @@ class CppImplementsGenerator:
         lines.append(f"{self.indent}}}")
         lines.append("")
 
+        # IDasTypeInfo 接口方法实现（如果继承链包含 IDasTypeInfo）
+        if 'IDasTypeInfo' in inheritance_chain:
+            # 推导运行时类名：从接口名中移除 'I' 前缀
+            runtime_class_name = raw_name[1:] if raw_name.startswith('I') else raw_name
+
+            # GetGuid 实现
+            lines.append(f"{self.indent}/// @brief Get the GUID of the implementing type")
+            lines.append(f"{self.indent}/// @param p_out_guid Output pointer for the GUID")
+            lines.append(f"{self.indent}/// @return DAS_S_OK on success, DAS_E_INVALID_POINTER if p_out_guid is null")
+            lines.append(f"{self.indent}DasResult DAS_STD_CALL GetGuid(DasGuid* p_out_guid) override")
+            lines.append(f"{self.indent}{{")
+            lines.append(f"{self.indent}{self.indent}if (p_out_guid == nullptr)")
+            lines.append(f"{self.indent}{self.indent}{{")
+            lines.append(f"{self.indent}{self.indent}{self.indent}return DAS_E_INVALID_POINTER;")
+            lines.append(f"{self.indent}{self.indent}}}")
+            lines.append(f"{self.indent}{self.indent}*p_out_guid = DasIidOf<TImpl>();")
+            lines.append(f"{self.indent}{self.indent}return DAS_S_OK;")
+            lines.append(f"{self.indent}}}")
+            lines.append("")
+
+            # GetRuntimeClassName 实现
+            lines.append(f"{self.indent}/// @brief Get the runtime class name of the implementing type")
+            lines.append(f"{self.indent}/// @param pp_out_name Output pointer for the class name string")
+            lines.append(f"{self.indent}/// @return DAS_S_OK on success, DAS_E_INVALID_POINTER if pp_out_name is null")
+            lines.append(f"{self.indent}DasResult DAS_STD_CALL GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override")
+            lines.append(f"{self.indent}{{")
+            lines.append(f"{self.indent}{self.indent}if (pp_out_name == nullptr)")
+            lines.append(f"{self.indent}{self.indent}{{")
+            lines.append(f"{self.indent}{self.indent}{self.indent}return DAS_E_INVALID_POINTER;")
+            lines.append(f"{self.indent}{self.indent}}}")
+            lines.append(f"{self.indent}{self.indent}return CreateIDasReadOnlyStringFromUtf8(\"{runtime_class_name}\", pp_out_name);")
+            lines.append(f"{self.indent}}}")
+            lines.append("")
+            
         # Make 工厂方法
         lines.append(f"{self.indent}/// @brief Factory method to create instance wrapped in DasPtr")
         lines.append(f"{self.indent}/// @tparam Args Constructor argument types")

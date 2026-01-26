@@ -1,7 +1,7 @@
+#include <DAS/_autogen/idl/abi/IDasErrorLens.h>
 #include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/i18n/GlobalLocale.h>
-#include <DAS/_autogen/idl/abi/IDasErrorLens.h>
 
 DAS_CORE_I18N_NS_BEGIN
 
@@ -41,7 +41,7 @@ DAS_CORE_I18N_NS_END
 
 // ----------------------------------------------------------------
 
-DasResult DasSetDefaultLocale(IDasReadOnlyString* locale_name)
+DAS_C_API DasResult DasSetDefaultLocale(IDasReadOnlyString* locale_name)
 {
     DAS_UTILS_CHECK_POINTER(locale_name)
 
@@ -49,7 +49,7 @@ DasResult DasSetDefaultLocale(IDasReadOnlyString* locale_name)
     return DAS_S_OK;
 }
 
-DasResult DasGetDefaultLocale(IDasReadOnlyString** pp_out_locale_name)
+DAS_C_API DasResult DasGetDefaultLocale(IDasReadOnlyString** pp_out_locale_name)
 {
     DAS_UTILS_CHECK_POINTER(pp_out_locale_name)
 

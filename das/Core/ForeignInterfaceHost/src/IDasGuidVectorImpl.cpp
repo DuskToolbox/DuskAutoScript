@@ -11,8 +11,51 @@ DasGuidVectorImpl::DasGuidVectorImpl(const std::vector<DasGuid>& iids)
 {
 }
 
-// Note: AddRef(), Release(), QueryInterface() are now provided by
-// DasGuidVectorImplBase
+uint32_t DasGuidVectorImpl::AddRef() { return ++ref_count_; }
+
+uint32_t DasGuidVectorImpl::Release()
+{
+    const auto count = --ref_count_;
+    if (count == 0)
+    {
+        delete this;
+        return 0;
+    }
+    return count;
+}
+
+DasResult DasGuidVectorImpl::QueryInterface(
+    const DasGuid& iid,
+    void**         pp_out_object)
+{
+    if (pp_out_object == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    *pp_out_object = nullptr;
+
+    if (iid == DasIidOf<IDasBase>())
+    {
+        *pp_out_object = static_cast<IDasBase*>(
+            static_cast<ExportInterface::IDasGuidVector*>(this));
+    }
+    else if (iid == DasIidOf<IDasReadOnlyGuidVector>())
+    {
+        *pp_out_object = static_cast<IDasReadOnlyGuidVector*>(this);
+    }
+    else if (iid == DasIidOf<IDasGuidVector>())
+    {
+        *pp_out_object = static_cast<IDasGuidVector*>(this);
+    }
+    else
+    {
+        return DAS_E_NO_INTERFACE;
+    }
+
+    AddRef();
+    return DAS_S_OK;
+}
 
 DasResult DasGuidVectorImpl::Size(size_t* p_out_size)
 {

@@ -1,3 +1,4 @@
+#include <boost/interprocess/managed_shared_memory.hpp>
 #include <cstdint>
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <mutex>
@@ -12,11 +13,12 @@ namespace Core
         struct SharedMemoryPool::Impl
         {
             std::unique_ptr<boost::interprocess::managed_shared_memory>
-                               segment_;
-            std::string        name_;
-            size_t             total_size_;
-            size_t             used_size_{0};
-            mutable std::mutex mutex_;
+                                                    segment_;
+            std::string                             name_;
+            size_t                                  total_size_;
+            size_t                                  used_size_{0};
+            std::unordered_map<std::string, size_t> block_sizes_;
+            mutable std::mutex                      mutex_;
         };
 
         SharedMemoryPool::SharedMemoryPool() : impl_(std::make_unique<Impl>())
@@ -47,7 +49,7 @@ namespace Core
 
                 return DAS_S_OK;
             }
-            catch (const boost::interprocess::interprocess_exception& ex)
+            catch (...)
             {
                 return DAS_E_IPC_SHM_FAILED;
             }
@@ -98,10 +100,11 @@ namespace Core
                 block.size = size;
                 block.name = block_name;
 
+                impl_->block_sizes_[block_name] = size;
                 impl_->used_size_ += size;
                 return DAS_S_OK;
             }
-            catch (const boost::interprocess::interprocess_exception& ex)
+            catch (...)
             {
                 return DAS_E_IPC_SHM_FAILED;
             }
@@ -116,22 +119,25 @@ namespace Core
                 return DAS_E_IPC_SHM_FAILED;
             }
 
+            auto it = impl_->block_sizes_.find(block_name);
+            if (it == impl_->block_sizes_.end())
+            {
+                return DAS_E_IPC_SHM_FAILED;
+            }
+
             try
             {
-                auto* ptr =
-                    impl_->segment_->find<void>(block_name.c_str()).first;
-                if (ptr)
-                {
-                    impl_->segment_->deallocate(ptr);
+                uintptr_t addr = std::stoull(block_name.substr(6));
+                void*     ptr = reinterpret_cast<void*>(addr);
 
-                    size_t dealloc_size = 0;
-                    impl_->segment_->deallocate(ptr);
-                    impl_->used_size_ -= dealloc_size;
-                }
+                impl_->segment_->deallocate(ptr);
+
+                impl_->used_size_ -= it->second;
+                impl_->block_sizes_.erase(it);
 
                 return DAS_S_OK;
             }
-            catch (const boost::interprocess::interprocess_exception& ex)
+            catch (...)
             {
                 return DAS_E_IPC_SHM_FAILED;
             }
@@ -177,7 +183,8 @@ namespace Core
             const std::string& pool_id,
             size_t             size)
         {
-            std::string pool_name = MakePoolName(1, std::stoul(pool_id));
+            std::string pool_name =
+                MakePoolName(1, static_cast<uint16_t>(std::stoul(pool_id)));
 
             auto pool = std::make_unique<SharedMemoryPool>();
             auto result = pool->Initialize(pool_name, size);

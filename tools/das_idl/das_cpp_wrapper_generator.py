@@ -764,6 +764,32 @@ class CppWrapperGenerator:
 
         return type_name
 
+    def _get_dasptr_qualified_type(self, current_namespace: Optional[str]) -> str:
+        """获取 DasPtr 的完全限定名称
+
+        根据 current_namespace 决定是否需要添加 DAS:: 前缀：
+        - 如果 current_namespace 为空（全局命名空间），返回 DAS::DasPtr
+        - 如果 current_namespace 以 Das 开头（例如 Das 或 Das::PluginInterface），返回 DasPtr
+        - 否则返回 DAS::DasPtr
+
+        Args:
+            current_namespace: 当前命名空间（如 "Das", "Das::PluginInterface", None）
+
+        Returns:
+            DasPtr 类型名（根据命名空间决定是否带 DAS:: 前缀）
+        """
+        if current_namespace is None:
+            # 全局命名空间，需要 DAS:: 前缀
+            return "DAS::DasPtr"
+
+        # 检查当前命名空间是否以 Das 开头
+        if current_namespace == "Das" or current_namespace.startswith("Das::"):
+            # 已在 Das 命名空间内，直接使用 DasPtr
+            return "DasPtr"
+
+        # 不在 Das 命名空间内，需要 DAS:: 前缀
+        return "DAS::DasPtr"
+
     def _generate_wrapper_class_declaration(self, interface: InterfaceDef, namespace_depth: int = 0) -> str:
         """生成包装类声明（仅声明，不包含实现）
 
@@ -780,6 +806,10 @@ class CppWrapperGenerator:
 
         raw_name = interface.name
         wrapper_name = CppWrapperTypeMapper.get_wrapper_class_name(raw_name)
+        current_namespace = interface.namespace
+
+        # 获取 DasPtr 的完全限定名称
+        dasptr_qualified_type = self._get_dasptr_qualified_type(current_namespace)
 
         # 基于命名空间深度计算缩进
         # 无命名空间：0 空格（类体内容 4 空格）
@@ -800,7 +830,7 @@ class CppWrapperGenerator:
         lines.append(f"{class_indent}class {wrapper_name}")
         lines.append(f"{class_indent}{{")
         lines.append(f"{class_indent}private:")
-        lines.append(f"{member_indent}DasPtr<{raw_name}> ptr_;")
+        lines.append(f"{member_indent}{dasptr_qualified_type}<{raw_name}> ptr_;")
         lines.append("")
         lines.append(f"{class_indent}public:")
 
@@ -813,7 +843,7 @@ class CppWrapperGenerator:
         lines.append("")
 
         lines.append(f"{member_indent}/// @brief 从 DasPtr 构造")
-        lines.append(f"{member_indent}{wrapper_name}(DasPtr<{raw_name}> ptr) noexcept;")
+        lines.append(f"{member_indent}{wrapper_name}({dasptr_qualified_type}<{raw_name}> ptr) noexcept;")
         lines.append("")
 
         lines.append(f"{member_indent}/// @brief 获取底层原始接口指针")
@@ -821,7 +851,7 @@ class CppWrapperGenerator:
         lines.append("")
 
         lines.append(f"{member_indent}/// @brief 获取底层 DasPtr")
-        lines.append(f"{member_indent}const DasPtr<{raw_name}>& GetPtr() const noexcept;")
+        lines.append(f"{member_indent}const {dasptr_qualified_type}<{raw_name}>& GetPtr() const noexcept;")
         lines.append("")
 
         lines.append(f"{member_indent}/// @brief 隐式转换到原始指针")
@@ -885,19 +915,24 @@ class CppWrapperGenerator:
         wrapper_name = CppWrapperTypeMapper.get_wrapper_class_name(raw_name)
         current_namespace = interface.namespace
 
+        # 获取 DasPtr 的完全限定名称
+        dasptr_qualified_type = self._get_dasptr_qualified_type(current_namespace)
+
         lines = []
 
         lines.append(f"{wrapper_name}::{wrapper_name}({raw_name}* p) noexcept : ptr_(p) {{}}")
         lines.append("")
-        lines.append(f"{wrapper_name}::{wrapper_name}(DasPtr<{raw_name}> ptr) noexcept : ptr_(std::move(ptr)) {{}}")
+        lines.append(f"{wrapper_name}::{wrapper_name}({dasptr_qualified_type}<{raw_name}> ptr) noexcept : ptr_(std::move(ptr)) {{}}")
         lines.append("")
         lines.append(f"inline {raw_name}* {wrapper_name}::Get() const noexcept {{ return ptr_.Get(); }}")
         lines.append("")
-        lines.append(f"inline const DasPtr<{raw_name}>& {wrapper_name}::GetPtr() const noexcept {{ return ptr_; }}")
+        lines.append(f"inline const {dasptr_qualified_type}<{raw_name}>& {wrapper_name}::GetPtr() const noexcept {{ return ptr_; }}")
         lines.append("")
         lines.append(f"{wrapper_name}::operator {raw_name}*() const noexcept {{ return ptr_.Get(); }}")
         lines.append("")
         lines.append(f"{wrapper_name}::operator bool() const noexcept {{ return ptr_ != nullptr; }}")
+        lines.append("")
+        lines.append(f"inline {raw_name}* {wrapper_name}::operator->() const noexcept {{ return ptr_.Get(); }}")
         lines.append("")
 
         for method in all_methods:
@@ -958,6 +993,8 @@ class CppWrapperGenerator:
                 wrapper_type = CppWrapperTypeMapper.get_wrapper_class_name(param.type_info.base_type)
                 wrapper_type = self._get_qualified_type_name(wrapper_type, current_namespace)
                 param_decls.append(f"const {wrapper_type}& {param.name}")
+            elif CppWrapperTypeMapper.is_string_type(param.type_info.base_type):
+                param_decls.append(f"const {param_type}& {param.name}")
             elif param.type_info.is_reference and not param.type_info.is_const:
                 param_decls.append(f"{param_type} {param.name}")
             else:
@@ -1004,6 +1041,8 @@ class CppWrapperGenerator:
                         call_args.append(f"&{param.name}_value")
                 else:
                     if CppWrapperTypeMapper.is_interface_type(param.type_info.base_type):
+                        call_args.append(f"{param.name}.Get()")
+                    elif CppWrapperTypeMapper.is_string_type(param.type_info.base_type):
                         call_args.append(f"{param.name}.Get()")
                     else:
                         call_args.append(param.name)
@@ -1078,6 +1117,8 @@ class CppWrapperGenerator:
                         call_args.append(f"&{param.name}_value")
                 else:
                     if CppWrapperTypeMapper.is_interface_type(param.type_info.base_type):
+                        call_args.append(f"{param.name}.Get()")
+                    elif CppWrapperTypeMapper.is_string_type(param.type_info.base_type):
                         call_args.append(f"{param.name}.Get()")
                     else:
                         call_args.append(param.name)

@@ -24,7 +24,10 @@ namespace Das::Exception::Impl
     {
     public:
         uint32_t DAS_STD_CALL AddRef() override { return counter_.AddRef(); }
-        uint32_t DAS_STD_CALL Release() override { return counter_.Release(); }
+        uint32_t DAS_STD_CALL Release() override
+        {
+            return counter_.Release(this);
+        }
 
         explicit DasExceptionStringImpl(std::string&& msg)
             : error_msg_(std::move(msg))
