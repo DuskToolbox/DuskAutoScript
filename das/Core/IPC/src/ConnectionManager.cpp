@@ -1,6 +1,7 @@
 #include <atomic>
 #include <chrono>
 #include <das/Core/IPC/ConnectionManager.h>
+#include <shared_mutex>
 #include <unordered_map>
 
 DAS_NS_BEGIN
@@ -55,10 +56,10 @@ namespace Core
                 .host_id = remote_id,
                 .plugin_id = local_id,
                 .is_alive = true,
-                .last_heartbeat_ms =
+                .last_heartbeat_ms = static_cast<uint64_t>(
                     std::chrono::duration_cast<std::chrono::milliseconds>(
                         std::chrono::steady_clock::now().time_since_epoch())
-                        .count()};
+                        .count())};
 
             std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
             impl_->connections_[remote_id] = info;
@@ -182,6 +183,8 @@ namespace Core
             uint16_t remote_id,
             uint16_t local_id)
         {
+            (void)remote_id;
+            (void)local_id;
             // TODO: Clean up message queues and shared memory
             // This will be implemented when MessageQueueTransport and
             // SharedMemoryPool are ready

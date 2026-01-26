@@ -117,6 +117,7 @@ DasResult IDasImageImpl::GetData(unsigned char** pp_out_data)
         size_t data_size;
         GetDataSize(&data_size);
         const auto int_data_size = static_cast<int>(data_size);
+        (void)int_data_size;
         const auto umat = mat_.getUMat(cv::ACCESS_READ, cv::USAGE_DEFAULT);
         // TODO: 未来这个接口返回 IDasMemory 否则不好实现
         pp_out_data = nullptr;

@@ -30,7 +30,6 @@ DasResult WindowsCaptureFactoryImpl::CreateInstance(
 
     DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(pp_out_object);
 
-    const char* p_config_string = "";
     const char* p_u8_plugin_config = nullptr;
 
     DasResult result = p_plugin_config->GetUtf8(&p_u8_plugin_config);
@@ -72,7 +71,14 @@ DasResult WindowsCaptureFactoryImpl::CreateInstance(
 
     try
     {
-        const auto p_capture = new DAS::WindowsCapture{config};
+        auto p_capture = new DAS::WindowsCapture{};
+        if (!p_capture->ParseConfigAndSelectMode(config))
+        {
+            DAS_LOG_ERROR("Failed to parse config and select capture mode");
+            delete p_capture;
+            *pp_out_object = nullptr;
+            return DAS_E_INVALID_ARGUMENT;
+        }
         *pp_out_object = p_capture;
         p_capture->AddRef();
         return DAS_S_OK;

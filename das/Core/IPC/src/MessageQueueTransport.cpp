@@ -1,3 +1,4 @@
+#include <boost/date_time/posix_time/posix_time.hpp>
 #include <cstdint>
 #include <cstring>
 #include <das/Core/IPC/MessageQueueTransport.h>
@@ -61,7 +62,7 @@ namespace Core
                 impl_->initialized_ = true;
                 return DAS_S_OK;
             }
-            catch (const boost::interprocess::interprocess_exception& ex)
+            catch (const boost::interprocess::interprocess_exception&)
             {
                 return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
             }
@@ -167,7 +168,7 @@ namespace Core
 
                 return DAS_S_OK;
             }
-            catch (const boost::interprocess::interprocess_exception& ex)
+            catch (const boost::interprocess::interprocess_exception&)
             {
                 return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
             }
@@ -221,7 +222,7 @@ namespace Core
                 impl_->host_queue_->send(buffer.data(), buffer.size(), 0);
                 return DAS_S_OK;
             }
-            catch (const boost::interprocess::interprocess_exception& ex)
+            catch (const boost::interprocess::interprocess_exception&)
             {
                 return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
             }

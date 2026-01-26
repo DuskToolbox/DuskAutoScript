@@ -1,6 +1,8 @@
 #ifndef DAS_PLUGINS_DASWINDOWSCAPTURE_WINDOWS_CAPTURE_IMPL_H
 #define DAS_PLUGINS_DASWINDOWSCAPTURE_WINDOWS_CAPTURE_IMPL_H
 
+#include "../../../../src/GDICapture.h"
+#include "../../../../src/WindowsGraphicsCapture.h"
 #include <Windows.h>
 #include <cstdint>
 #include <d3d11.h>
@@ -8,7 +10,7 @@
 #include <das/Utils/StringUtils.h>
 #include <das/_autogen/idl/abi/IDasCapture.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasCapture.Implements.hpp>
-#include <nlohmann/json_fwd.hpp>
+#include <nlohmann/json.hpp>
 #include <winrt/Windows.Graphics.Capture.h>
 #include <winrt/base.h>
 
@@ -76,6 +78,12 @@ private:
     DasResult (WindowsCapture::*pInitializeGDICapture)();
     DasResult (WindowsCapture::*pInitializeGraphicsCapture)();
 
+    // 捕获实例
+    bool                         initialized_ = false;
+    GDICapture                   gdi_capture_;
+    class WindowsGraphicsCapture graphics_capture_;
+    nlohmann::json               config_;
+
 public:
     WindowsCapture() = default;
     virtual ~WindowsCapture() = default;
@@ -84,13 +92,17 @@ public:
     DAS_IMPL Capture(ExportInterface::IDasImage** pp_out_image) override;
 
     // IDasCaptureFactory 接口
-    DAS_IMPL StartCapture() override;
-    DAS_IMPL StopCapture() override;
+    DAS_IMPL StartCapture();
+    DAS_IMPL StopCapture();
 
-private:
-    // 解析配置并选择捕获模式
+    // IDasTypeInfo 接口
+    DAS_IMPL GetGuid(DasGuid* p_out_guid) override;
+    DAS_IMPL GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override;
+
+    // 解析配置并选择捕获模式（公有方法，供工厂类调用）
     bool ParseConfigAndSelectMode(const nlohmann::json& config);
 
+private:
     // 初始化选择的捕获方法
     DasResult InitializeGDICapture();
     DasResult InitializeGraphicsCapture();

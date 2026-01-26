@@ -353,6 +353,16 @@ PythonRuntime::PythonRuntime()
 
 PythonRuntime::~PythonRuntime() = default;
 
+auto PythonRuntime::LoadPlugin(
+    [[maybe_unused]] const std::filesystem::path& path)
+    -> DAS::Utils::Expected<
+        DAS::DasPtr<DAS::PluginInterface::IDasPluginPackage>>
+{
+    // TODO: 未来将重写 PythonHost
+    // 临时实现以满足 IForeignLanguageRuntime 接口要求
+    return tl::make_unexpected(DAS_E_NO_IMPLEMENTATION);
+}
+
 // TODO: 未来将重写 PythonHost
 /*
 auto PythonRuntime::LoadPlugin(const std::filesystem::path& path)
@@ -420,71 +430,98 @@ auto PythonRuntime::LoadPlugin(const std::filesystem::path& path)
  * tl::make_unexpected(DAS_E_PYTHON_ERROR);
     }
 }
-*/
 const auto& py_module = expected_py_module.value();
-p_plugin_module = py_module;
+p_plugin_module =
+py_module;
 
 try
 {
-    const auto py_plugin_initializer = GetPluginInitializer(*py_module.Get());
-    PythonResult{PyObjectPtr::Attach(PyTuple_New(0))}
+    const auto py_plugin_initializer =
+GetPluginInitializer(*py_module.Get());
+
+PythonResult{PyObjectPtr::Attach(PyTuple_New(0))}
         .then(
-            [&result, &py_plugin_initializer](auto py_null_tuple)
+ [&result,
+&py_plugin_initializer](auto py_null_tuple)
             {
-                auto owner = g_plugin_object.GetOwnership();
-                auto lambda_result = PyObjectPtr::Attach(PyObject_Call(
-                    py_plugin_initializer.Get(),
-                    py_null_tuple,
+                auto
+owner = g_plugin_object.GetOwnership();
+                auto lambda_result =
+PyObjectPtr::Attach(PyObject_Call(
+ py_plugin_initializer.Get(),
+
+py_null_tuple,
                     nullptr));
-                if (lambda_result)
+                if
+(lambda_result)
                 {
-                    result = owner.GetObject();
+                    result =
+owner.GetObject();
                 }
                 return lambda_result;
-            })
-        .Check();
+ })
+
+.Check();
 
     // Initialize successfully. Store the module to member variable.
-    p_plugin_module = py_module;
+
+p_plugin_module = py_module;
     return result;
 }
-catch (const PythonException& ex)
+catch (const PythonException&
+ex)
 {
     DAS_CORE_LOG_EXCEPTION(ex);
-    return tl::make_unexpected(DAS_E_PYTHON_ERROR);
+    return
+tl::make_unexpected(DAS_E_PYTHON_ERROR);
 }
-}
+ */
 
-auto PythonRuntime::ResolveClassName(const std::filesystem::path& relative_path)
+// TODO: 未来将重写 PythonHost
+/*
+auto PythonRuntime::ResolveClassName(const std::filesystem::path&
+ * relative_path)
     -> DAS::Utils::Expected<std::u8string>
 {
-    std::u8string result{};
+    std::u8string
+ * result{};
 
     if (relative_path.begin() == relative_path.end())
     {
-        return tl::make_unexpected(DAS_E_INVALID_PATH);
+
+ * return tl::make_unexpected(DAS_E_INVALID_PATH);
     }
 
-    const auto it_end = std::end(relative_path);
+    const auto it_end
+ * = std::end(relative_path);
     auto       it = relative_path.begin();
 
-    std::u8string part_string{};
 
-    for (auto it_next = std::next(relative_path.begin()); it_next != it_end;
-         ++it, ++it_next)
+ * std::u8string part_string{};
+
+    for (auto it_next =
+ * std::next(relative_path.begin()); it_next != it_end;
+         ++it,
+ * ++it_next)
     {
         part_string = it->u8string();
-        if (std::u8string_view{part_string}
-            == std::u8string_view{Details::GetPreferredSeparator()})
+        if
+ * (std::u8string_view{part_string}
+            ==
+ * std::u8string_view{Details::GetPreferredSeparator()})
         {
-            return tl::make_unexpected(DAS_E_INVALID_PATH);
+ return
+ * tl::make_unexpected(DAS_E_INVALID_PATH);
         }
-        result += part_string;
+        result +=
+ * part_string;
         result += u8'.';
     }
-    result += it->stem().u8string();
+    result +=
+ * it->stem().u8string();
     return result;
 }
+*/
 
 // TODO: 未来将重写 PythonHost
 /*

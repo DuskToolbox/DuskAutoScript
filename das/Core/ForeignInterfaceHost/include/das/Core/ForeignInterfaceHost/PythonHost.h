@@ -68,19 +68,24 @@ public:
     {
         return DAS_E_NO_IMPLEMENTATION;
     }
-    // TODO: 未来将重写 PythonHost
-    /*
-    auto LoadPlugin(const std::filesystem::path& path)
-        ->
-     * DAS::Utils::Expected<CommonPluginPtr> override;
-    */
 
+    // TODO: 未来将重写 PythonHost
+    // 临时实现以满足 IForeignLanguageRuntime 接口要求
+    auto LoadPlugin(const std::filesystem::path& path) -> DAS::Utils::Expected<
+        DAS::DasPtr<DAS::PluginInterface::IDasPluginPackage>> override;
+
+    /*
     static auto ImportPluginModule(
-        const std::filesystem::path& py_plugin_initializer)
+        const std::filesystem::path&
+     * py_plugin_initializer)
         -> DAS::Utils::Expected<PyObjectPtr>;
-    static auto ResolveClassName(const std::filesystem::path& relative_path)
-        -> DAS::Utils::Expected<std::u8string>;
-    auto GetPluginInitializer(_object& py_module) -> PyObjectPtr;
+
+     * static auto ResolveClassName(const std::filesystem::path& relative_path)
+
+     * -> DAS::Utils::Expected<std::u8string>;
+    auto
+     * GetPluginInitializer(_object& py_module) -> PyObjectPtr;
+    */
 };
 
 DAS_API void RaisePythonInterpreterException();

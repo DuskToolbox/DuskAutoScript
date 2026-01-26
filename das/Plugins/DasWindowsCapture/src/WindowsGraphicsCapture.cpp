@@ -2,6 +2,8 @@
 #include <das/DasApi.h>
 #include <das/IDasBase.h>
 
+#include <Windows.Graphics.Capture.Interop.h>
+#include <Windows.Graphics.DirectX.Direct3D11.Interop.h>
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Graphics.Capture.h>
 #include <winrt/Windows.Graphics.DirectX.Direct3D11.h>
@@ -15,21 +17,28 @@ WindowsGraphicsCapture::~WindowsGraphicsCapture() { Cleanup(); }
 
 DasResult WindowsGraphicsCapture::CreateD3DDevice()
 {
-    D3D_FEATURE_LEVEL        feature_level{};
-    D3D11_CREATE_DEVICE_FLAG flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
+    D3D_FEATURE_LEVEL feature_levels[] = {
+        D3D_FEATURE_LEVEL_11_0,
+        D3D_FEATURE_LEVEL_10_1,
+        D3D_FEATURE_LEVEL_10_0};
+    D3D_FEATURE_LEVEL feature_level{};
+    UINT              flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
 
     auto hr = D3D11CreateDevice(
         nullptr,
         D3D_DRIVER_TYPE_HARDWARE,
         0,
-        &feature_level,
         flags,
-        0,
-        d3d_device_.put());
+        feature_levels,
+        ARRAYSIZE(feature_levels),
+        D3D11_SDK_VERSION,
+        d3d_device_.put(),
+        &feature_level,
+        nullptr);
 
     if (FAILED(hr))
     {
-        DAS_LOG_ERROR("Failed to create D3D11 device: 0x{:08X}", hr);
+        DAS_LOG_ERROR("Failed to create D3D11 device");
         return DAS_E_CAPTURE_FAILED;
     }
 
@@ -40,17 +49,19 @@ DasResult WindowsGraphicsCapture::CreateCaptureItem(HWND hwnd)
 {
     try
     {
-        winrt::init_apartment(apartment_type::multi_threaded);
+        winrt::init_apartment(winrt::apartment_type::multi_threaded);
 
-        auto interop = capture_item_.as<IGraphicsCaptureItemInterop>();
+        winrt::com_ptr<IGraphicsCaptureItemInterop>            interop;
         winrt::Windows::Graphics::Capture::GraphicsCaptureItem item{nullptr};
 
-        auto hr = interop->CreateForWindow(hwnd, &item);
+        auto hr = interop->CreateForWindow(
+            hwnd,
+            winrt::guid_of<
+                winrt::Windows::Graphics::Capture::GraphicsCaptureItem>(),
+            winrt::put_abi(item));
         if (FAILED(hr))
         {
-            DAS_LOG_ERROR(
-                "Failed to create capture item for window: 0x{:08X}",
-                hr);
+            DAS_LOG_ERROR("Failed to create capture item for window");
             return DAS_E_CAPTURE_FAILED;
         }
 
@@ -64,12 +75,14 @@ DasResult WindowsGraphicsCapture::CreateCaptureItem(HWND hwnd)
     }
     catch (const winrt::hresult_error& ex)
     {
-        DAS_LOG_ERROR("WinRT error creating capture item: 0x{:08X}", ex.code());
+        (void)ex;
+        DAS_LOG_ERROR("WinRT error creating capture item");
         return DAS_E_CAPTURE_FAILED;
     }
     catch (const std::exception& ex)
     {
-        DAS_LOG_ERROR("Exception creating capture item: {}", ex.what());
+        (void)ex;
+        DAS_LOG_ERROR("Exception creating capture item");
         return DAS_E_CAPTURE_FAILED;
     }
 }
@@ -78,20 +91,33 @@ DasResult WindowsGraphicsCapture::StartCaptureSession()
 {
     try
     {
-        auto                           device = d3d_device_.get();
-        winrt::com_ptr<IDXGISwapChain> swapchain;
+        auto                        d3d_device = d3d_device_.get();
+        winrt::com_ptr<IDXGIDevice> dxgi_device;
+        d3d_device->QueryInterface(dxgi_device.put());
 
-        frame_pool_ = winrt::Windows::Graphics::Direct3D11::
+        winrt::com_ptr<IInspectable> inspectable_device;
+        auto                         hr = CreateDirect3D11DeviceFromDXGIDevice(
+            dxgi_device.get(),
+            inspectable_device.put());
+
+        if (FAILED(hr))
+        {
+            DAS_LOG_ERROR("Failed to create Direct3D device");
+            return DAS_E_CAPTURE_FAILED;
+        }
+
+        auto device = inspectable_device.as<
+            winrt::Windows::Graphics::DirectX::Direct3D11::IDirect3DDevice>();
+
+        frame_pool_ = winrt::Windows::Graphics::Capture::
             Direct3D11CaptureFramePool::Create(
-                capture_item_,
-                static_cast<float>(width_),
-                static_cast<float>(height_),
-                static_cast<float>(
-                    winrt::Windows::Graphics::Direct3D11::Direct3DPixelFormat::
-                        B8G8R8A8UIntNormalized),
-                2);
+                device,
+                winrt::Windows::Graphics::DirectX::DirectXPixelFormat::
+                    B8G8R8A8UIntNormalized,
+                2,
+                {width_, height_});
 
-        session_ = frame_pool_.CreateSession(capture_item_);
+        session_ = frame_pool_.CreateCaptureSession(capture_item_);
 
         session_.StartCapture();
 
@@ -99,14 +125,14 @@ DasResult WindowsGraphicsCapture::StartCaptureSession()
     }
     catch (const winrt::hresult_error& ex)
     {
-        DAS_LOG_ERROR(
-            "WinRT error starting capture session: 0x{:08X}",
-            ex.code());
+        (void)ex;
+        DAS_LOG_ERROR("WinRT error starting capture session");
         return DAS_E_CAPTURE_FAILED;
     }
     catch (const std::exception& ex)
     {
-        DAS_LOG_ERROR("Exception starting capture session: {}", ex.what());
+        (void)ex;
+        DAS_LOG_ERROR("Exception starting capture session");
         return DAS_E_CAPTURE_FAILED;
     }
 }
@@ -154,6 +180,8 @@ DasResult WindowsGraphicsCapture::Capture(
     int32_t*  p_width,
     int32_t*  p_height)
 {
+    (void)pp_data; // Unused parameter
+
     if (!initialized_)
     {
         DAS_LOG_ERROR("WindowsGraphicsCapture not initialized");

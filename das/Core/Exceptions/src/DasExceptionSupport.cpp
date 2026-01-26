@@ -22,11 +22,15 @@ namespace Das::Exception::Impl
 
     class DasExceptionStringImpl final : public IDasExceptionString
     {
-        Utils::RefCounter<DasExceptionStringImpl> counter_;
-        std::string                               error_msg_;
+    public:
+        uint32_t DAS_STD_CALL AddRef() override { return counter_.AddRef(); }
+        uint32_t DAS_STD_CALL Release() override { return counter_.Release(); }
 
-        uint32_t DAS_STD_CALL AddRef() override;
-        uint32_t DAS_STD_CALL Release() override;
+        explicit DasExceptionStringImpl(std::string&& msg)
+            : error_msg_(std::move(msg))
+        {
+        }
+
         DAS_IMPL
         QueryInterface(const DasGuid& iid, void** pp_object) override
         {
@@ -51,11 +55,9 @@ namespace Das::Exception::Impl
             return DAS_S_OK;
         }
 
-    public:
-        explicit DasExceptionStringImpl(std::string&& msg)
-            : error_msg_(std::move(msg))
-        {
-        }
+    private:
+        Utils::RefCounter<DasExceptionStringImpl> counter_;
+        std::string                               error_msg_;
     };
 }
 
