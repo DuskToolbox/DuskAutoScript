@@ -101,7 +101,13 @@ function(das_add_swig_export_library LANGUAGE RAW_NAME FILES)
         OUTPUT_DIR ${CMAKE_BINARY_DIR}/include/das/${LANGUAGE}
         OUTFILE_DIR ${CMAKE_BINARY_DIR}/SwigCpp
         SOURCES ${FILES})
-    set_property(TARGET ${RAW_NAME} PROPERTY SWIG_INCLUDE_DIRECTORIES ${CMAKE_SOURCE_DIR}/include/)
+    set_property(
+        TARGET ${RAW_NAME}
+        PROPERTY SWIG_INCLUDE_DIRECTORIES
+            ${CMAKE_SOURCE_DIR}/include/
+            ${CMAKE_BINARY_DIR}/das/include
+            ${CMAKE_BINARY_DIR}/das/include/das/_autogen/idl/abi
+            ${CMAKE_BINARY_DIR}/das/include/das/_autogen/idl/swig)
     add_library(${PROJECT_NAME}::${LANGUAGE}Export ALIAS ${RAW_NAME})
     target_compile_definitions(${RAW_NAME} PRIVATE -DSWIG_TYPE_TABLE=${RAW_NAME})
 endfunction()
