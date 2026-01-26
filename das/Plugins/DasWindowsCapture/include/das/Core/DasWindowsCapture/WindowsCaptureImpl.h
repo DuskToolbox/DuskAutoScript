@@ -57,14 +57,10 @@ private:
     uint32_t    target_monitor_index_;
 
     // Windows.Graphics.Capture 成员
-    winrt::com_ptr<winrt::Windows::Graphics::Capture::GraphicsCaptureItem>
-        capture_item_;
-    winrt::com_ptr<
-        winrt::Windows::Graphics::Capture::Direct3D11CaptureFramePool>
-        frame_pool_;
-    winrt::com_ptr<winrt::Windows::Graphics::Capture::GraphicsCaptureSession>
-                                 session_;
-    winrt::com_ptr<ID3D11Device> d3d11_device_;
+    winrt::Windows::Graphics::Capture::GraphicsCaptureItem        capture_item_;
+    winrt::Windows::Graphics::Capture::Direct3D11CaptureFramePool frame_pool_;
+    winrt::Windows::Graphics::Capture::GraphicsCaptureSession     session_;
+    winrt::com_ptr<ID3D11Device>                                  d3d11_device_;
 
     // BitBlt 成员
     HDC     hdc_screen_;
@@ -85,7 +81,11 @@ private:
     nlohmann::json               config_;
 
 public:
-    WindowsCapture() = default;
+    WindowsCapture()
+        : capture_item_(nullptr), frame_pool_(nullptr), session_(nullptr),
+          d3d11_device_(nullptr)
+    {
+    }
     virtual ~WindowsCapture() = default;
 
     // IDasCapture 接口

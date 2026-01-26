@@ -7,6 +7,7 @@
 #include "beast/JsonUtils.hpp"
 #include "beast/Request.hpp"
 #include "dto/Log.hpp"
+#include <das/DasApi.h>
 #include <das/_autogen/idl/abi/DasLogger.h>
 
 #include <string>

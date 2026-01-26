@@ -15,6 +15,7 @@ class DasHttpLogReader final
 
     DAS_IMPL ReadOne(::IDasReadOnlyString* message);
 
+public:
     [[nodiscard]]
     auto GetLog() const noexcept -> std::string_view;
 };

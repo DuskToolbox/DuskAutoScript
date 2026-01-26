@@ -29,16 +29,12 @@ DAS_DISABLE_WARNING_END
 #include "ErrorLensImpl.h"
 #include "PluginImpl.h"
 
-// 任务3: 删除不存在的 boost/process/async.hpp include (boost.Process无此文件)
-// 异步功能已由 boost/asio.hpp 和 boost/process/v2/async_pipe.hpp 提供
-// 注意：async_pipe.hpp路径已更新为 boost/process/v2/async_pipe.hpp
+#define BOOST_PROCESS_VERSION 1
 #include <array>
 #include <boost/asio.hpp>
 #include <boost/pfr.hpp>
 #include <boost/process.hpp>
-#include <boost/process/v2/async_pipe.hpp>
 #include <das/Utils/CommonUtils.hpp>
-#include <das/Utils/QueryInterface.hpp>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
 #include <das/_autogen/idl/abi/DasLogger.h>

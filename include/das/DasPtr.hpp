@@ -1,9 +1,11 @@
 #ifndef DAS_DASPTR_HPP
 #define DAS_DASPTR_HPP
 
+#include <cstddef>
 #include <das/DasConfig.h>
 #include <das/DasGuidHolder.h>
 #include <das/DasTypes.hpp>
+#include <functional>
 #include <utility>
 
 DAS_NS_BEGIN

@@ -8,6 +8,7 @@
 #include <boost/beast/core.hpp>
 
 #include "dto/Global.hpp"
+#include <das/DasApi.h>
 
 namespace Das
 {

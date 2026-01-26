@@ -200,16 +200,16 @@ PyInit__DasCorePythonExport(void) {
 %include <das/DasExport.h>
 %include <das/IDasBase.h>
 %include <das/DasString.hpp>
-%include <das/IDasTypeInfo.h>
+%include <das/_autogen/idl/abi/IDasTypeInfo.h>
 
 // !!! 包含CMake从IDL自动生成的SWIG接口汇总文件 !!!
 // 该文件包含所有从IDL生成的SWIG接口（如DasCV, IDasCapture, IDasPluginManager等）
-%include "DAS/_autogen/idl/swig/swig_all.i"
+%include <das/_autogen/idl/swig/swig_all.i>
 
 // 以下接口文件没有对应的IDL定义，需要手动包含（按字母顺序排列）
-%include <das/ExportInterface/DasLogger.h>
+%include <das/_autogen/idl/abi/DasLogger.h>
 
-%include <das/ExportInterface/IDasMemory.h>
+%include <das/_autogen/idl/abi/IDasMemory.h>
 
 // ============================================================================
 // DasException Support for C#
