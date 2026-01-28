@@ -32,7 +32,7 @@ namespace Das::Http
         {
             // TODO: GetIDasSettingsForUi is not available, will be rewritten
             // GetIDasSettingsForUi(p_settings_for_ui_.Put());
-            GetIDasTaskScheduler(p_task_scheduler_.Put());
+            // GetIDasTaskScheduler(p_task_scheduler_.Put());
         }
 
         // 获取配置文件列表

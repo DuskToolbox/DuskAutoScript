@@ -13,9 +13,9 @@
 #include <das/DasExport.h>
 #include <das/IDasBase.h>
 #include <das/DasString.hpp>
-#include <das/Core/Exceptions/DasException.h>
+#include <das/DasException.hpp>
 
-#include <das/ExportInterface/DasLogger.h>
+#include <das/DasApi.h>
 
 #ifdef SWIGPYTHON
 #include <das/Core/ForeignInterfaceHost/PythonHost.h>
@@ -69,10 +69,6 @@ PyInit__DasCorePythonExport(void) {
         return $self->what();
     }
 }
-
-%pythoncode %{
-# Python can access exception.error_code attribute
-%}
 
 // Exception handling for DasResult return values
 %exception {

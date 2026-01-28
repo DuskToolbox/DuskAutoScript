@@ -133,20 +133,20 @@ namespace Das::Http
 
         return DAS_S_OK;
     }
+}
 
-    int main(int argc, const char* argv[])
+int main(int argc, const char* argv[])
+{
+    std::cout << "[DasHttp] " << (argv[0] ? argv[0] : "") << " is start"
+              << std::endl;
+
+    DAS::Utils::SetCurrentThreadName(L"MAIN");
+
+    const auto run_result = Das::Http::run();
+    if (DAS::IsFailed(run_result))
     {
-        std::cout << "[DasHttp] " << (argv[0] ? argv[0] : "") << " is start"
-                  << std::endl;
-
-        DAS::Utils::SetCurrentThreadName(L"MAIN");
-
-        const auto run_result = run();
-        if (DAS::IsFailed(run_result))
-        {
-            return run_result;
-        }
-
         return run_result;
     }
+
+    return run_result;
 }

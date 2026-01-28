@@ -24,6 +24,10 @@
 #define DAS_DEFINE_CLASS_GUID(name, type, l, w1, w2, b1, b2, b3, b4, b5, b6, b7, b8) \
     static const DasGuid name =                                                      \
         {l, w1, w2, {b1, b2, b3, b4, b5, b6, b7, b8}};
+#define DAS_DEFINE_GUID_IN_NAMESPACE(iid_name, ns, type, l, w1, w2, b1, b2, b3, b4, b5, b6, b7, b8) \
+    namespace ns { struct type; }\
+    static const DasGuid iid_name =                                                \
+        {l, w1, w2, {b1, b2, b3, b4, b5, b6, b7, b8}};
 #define SWIG_PRIVATE private:
 #define SWIG_PUBLIC public:
 #else

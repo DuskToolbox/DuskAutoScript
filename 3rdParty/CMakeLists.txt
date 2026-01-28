@@ -444,6 +444,14 @@ function(_download_and_config_boost)
         interprocess
     )
 
+    # Fix boost toolset for MSVC 19.5 and later (vc145)
+    if(MSVC AND MSVC_VERSION GREATER_EQUAL 1950)
+        set(BOOST_DETECTED_TOOLSET "vc145" CACHE STRING "Boost toolset for MSVC 19.5+" FORCE)
+        # Define BOOST_LIB_TOOLSET to bypass auto_link.hpp detection
+        add_compile_definitions(BOOST_LIB_TOOLSET="vc145")
+        message(STATUS "Setting BOOST_LIB_TOOLSET to vc145 for MSVC_VERSION ${MSVC_VERSION}")
+    endif()
+
     FetchContent_MakeAvailable(DasBoost)
 endfunction()
 
@@ -646,3 +654,17 @@ message("================================================================")
 
 # 因为cmake限制，只能在这里写需要copy到测试目录的二进制，后续命令多了就改成文件include一下
 das_add_auto_copy_dll_path($<TARGET_FILE:DasGateway>)
+das_add_auto_copy_dll_path($<TARGET_FILE:DasCore>)
+
+# 拷贝外部 OpenCV DLL（如果使用外部 OpenCV）
+# 注意：OpenCV 找到后会设置 OpenCV_DIR 变量，指向构建目录
+if(DEFINED OpenCV_DIR AND NOT BUILD_opencv_world)
+    # 外部 OpenCV 通常提供 opencv_world DLL
+    if(EXISTS "${OpenCV_DIR}/bin/opencv_world4130d.dll")
+        das_add_auto_copy_dll_path("${OpenCV_DIR}/bin/opencv_world4130d.dll")
+        message(STATUS "Configuring to copy opencv_world4130d.dll from ${OpenCV_DIR}/bin/")
+    elseif(EXISTS "${OpenCV_DIR}/x64/vc16/bin/opencv_world4130d.dll")
+        das_add_auto_copy_dll_path("${OpenCV_DIR}/x64/vc16/bin/opencv_world4130d.dll")
+        message(STATUS "Configuring to copy opencv_world4130d.dll from ${OpenCV_DIR}/x64/vc16/bin/")
+    endif()
+endif()

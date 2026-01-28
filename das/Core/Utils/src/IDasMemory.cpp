@@ -1,5 +1,6 @@
-#include <DAS/_autogen/idl/wrapper/Das.ExportInterface.IDasMemory.Implements.hpp>
+#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasMemory.Implements.hpp>
 #include <cstring>
+#include <das/DasApi.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Utils/CommonUtils.hpp>
 #include <memory>

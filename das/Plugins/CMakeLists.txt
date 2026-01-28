@@ -42,9 +42,16 @@ if(DAS_USE_BUNDLED_BOOST)
         Boost::url
         Boost::asio
         Boost::pfr)
+    # TODO: WindowsCodeConversion and WindowsApp libraries are not defined
+    # Commented out to fix linker errors
+    # target_link_libraries(DasWindowsCapture PRIVATE
+    #     WindowsApp
+    #     WindowsCodeConversion)
+
+    # Add DirectX 11 and Windows Runtime libraries
     target_link_libraries(DasWindowsCapture PRIVATE
-        WindowsApp
-        WindowsCodeConversion)
+        d3d11.lib
+        windowsapp.lib)
 else()
     target_include_directories(DasAdbCapture PUBLIC ${Boost_INCLUDE_DIRS})
     target_link_libraries(DasAdbCapture PRIVATE ${Boost_LIBRARIES})

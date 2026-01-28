@@ -29,11 +29,18 @@ DAS_DISABLE_WARNING_END
 #include "ErrorLensImpl.h"
 #include "PluginImpl.h"
 
-#define BOOST_PROCESS_VERSION 1
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4100) // Unreferenced parameter in boost::process::v2
+#endif
+
 #include <array>
 #include <boost/asio.hpp>
 #include <boost/pfr.hpp>
-#include <boost/process.hpp>
+#include <boost/process/v2/execute.hpp>
+#include <boost/process/v2/process.hpp>
+#include <das/DasApi.h>
+#include <das/DasException.hpp>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
@@ -41,6 +48,10 @@ DAS_DISABLE_WARNING_END
 #include <das/_autogen/idl/abi/IDasImage.h>
 #include <sstream>
 #include <system_error>
+
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 DAS_NS_BEGIN
 
@@ -90,21 +101,10 @@ AdbCapture::AdbCapture(
           R"({} -s {} shell dumpsys window displays | grep -o -E cur=+[^\\ ]+ | grep -o -E [0-9]+)",
           adb_path.string(),
           adb_device_serial)}
-//   get_nc_address_command_{DAS::fmt::format(
-//       R"({} -s {} shell " cat /proc/net/arp | grep : ")",
-//       adb_path.string(),
-//       adb_device_serial)}
-//   capture_raw_by_nc_command_{DAS::fmt::format(
-//       R"({} -s {} exec-out "screencap | nc -w 3 {} {}")",
-//       adb_path.string(),
-//       adb_device_serial,
-//       nc_address_,
-//       nc_port_)},
 {
-    DAS::AdbCaptureAddRef();
 }
 
-AdbCapture::~AdbCapture() { DAS::AdbCaptureRelease(); }
+AdbCapture::~AdbCapture() = default;
 
 DAS_NS_ANONYMOUS_DETAILS_BEGIN
 
@@ -122,12 +122,12 @@ std::size_t ComputeScreenshotSize(
 // DasMemoryImpl - 包装类，提供便捷的 C++ API
 class DasMemoryImpl
 {
-    DasPtr<IDasMemory> p_data_;
+    DasPtr<ExportInterface::IDasMemory> p_data_;
 
 public:
     DasMemoryImpl(size_t size_in_bytes)
     {
-        CreateIDasMemory(size_in_bytes, p_data_.Put());
+        ::CreateIDasMemory(size_in_bytes, p_data_.Put());
     }
 
     ~DasMemoryImpl() = default;
@@ -158,141 +158,102 @@ public:
     {
         if (new_size > GetSize())
         {
-            CreateIDasMemory(new_size, p_data_.Put());
+            ::CreateIDasMemory(new_size, p_data_.Put());
         }
     }
 
-    IDasMemory* GetImpl() const noexcept { return p_data_.Get(); }
+    ExportInterface::IDasMemory* GetImpl() const noexcept
+    {
+        return p_data_.Get();
+    }
 };
 
 template <class Buffer>
 struct CommandExecutorContext : public DAS::Utils::NonCopyableAndNonMovable
 {
 private:
-    void OnProcessExited(int exit_code, const std::error_code& error_code)
-    {
-        timer.cancel();
-
-        if (exit_code || error_code)
-        {
-            constexpr const auto& string_template =
-                R"(Executing command: "{}".\nExit code: {}.\nError code: {}. Message: "{}".)";
-            const auto error_code_message = error_code.message();
-            const auto error_message = DAS::fmt::format(
-                string_template,
-                this->command,
-                exit_code,
-                error_code.value(),
-                error_code_message);
-            DasLogErrorU8(error_message.c_str());
-        }
-        else
-        {
-            constexpr const auto& string_template =
-                R"(Executing command: "{}" successfully.)";
-            const auto error_message =
-                DAS::fmt::format(string_template, this->command);
-            DasLogInfoU8(error_message.c_str());
-        }
-    }
-
-    boost::asio::awaitable<void> WaitProcessTimeout()
-    {
-        while (true)
-        {
-            const auto [error_code] = co_await timer.async_wait(
-                boost::asio::as_tuple(boost::asio::use_awaitable));
-            if (error_code != boost::asio::error::operation_aborted) [[likely]]
-            {
-                break;
-            }
-            else if (error_code == boost::system::errc::success)
-            {
-                process.terminate();
-                process_out.close();
-                const auto error_message = DAS::fmt::format(
-                    R"(Process timeout ({}s has been waiting).\n Error code: {}. Message: "{}".)",
-                    timeout,
-                    error_code.value(),
-                    error_code.message());
-                DasLogErrorU8(error_message.c_str());
-            }
-            else
-            {
-                const auto error_message = DAS::fmt::format(
-                    R"(Unexpected error when waiting timeout.\n Error code: {}. Message: "{}".)",
-                    error_code.value(),
-                    error_code.message());
-                DasLogErrorU8(error_message.c_str());
-            }
-        }
-    }
+    boost::asio::io_context          ioc_;
+    boost::asio::steady_timer        timeout_timer_;
+    boost::asio::cancellation_signal sig_;
+    std::chrono::milliseconds        timeout_in_ms_;
+    std::string                      command_;
+    DasResult                        result_;
+    Buffer                           buffer_;
 
 public:
-    template <class T>
     CommandExecutorContext(
         std::string_view    command,
-        const std::uint32_t timeout,
-        T&&                 buffer)
-        requires(!std::is_lvalue_reference_v<T>)
-        : buffer{std::forward<T>(buffer)},
-          process{
-              command.data(),
-              boost::process::std_out > process_out,
-              ioc,
-              boost::process::on_exit(
-                  [this](int exit_code, const std::error_code& error_code)
-                  { this->OnProcessExited(exit_code, error_code); })},
-          timer{ioc, std::chrono::seconds(timeout)}, timeout{timeout},
-          command{command}
+        const std::uint32_t timeout)
+        : ioc_{}, timeout_timer_{ioc_, std::chrono::seconds(timeout)}, sig_{},
+          timeout_in_ms_{timeout * 1000}, command_{command},
+          result_{DAS_E_UNDEFINED_RETURN_VALUE}, buffer_{}
     {
-        // 超时
-        boost::asio::co_spawn(
-            ioc,
-            [this]() { return this->WaitProcessTimeout(); }(),
-            boost::asio::detached);
-        // 读取输出
-        boost::asio::co_spawn(
-            ioc,
-            [this]() -> boost::asio::awaitable<void>
-            {
-                const auto [error_code, read_length] =
-                    co_await boost::asio::async_read(
-                        process_out,
-                        boost::asio::dynamic_buffer(this->buffer),
-                        boost::asio::as_tuple(boost::asio::use_awaitable));
-                if (!error_code) [[unlikely]]
+        boost::process::v2::async_execute(
+            boost::process::v2::process{ioc_, command_, {}},
+            boost::asio::bind_cancellation_slot(
+                sig_.slot(),
+                [this](boost::system::error_code ec, int exit_code)
                 {
-                    const auto error_message = DAS::fmt::format(
-                        "Unexpected error when reading stdout for command: {}.\n Error code: {}. Message: {}",
-                        this->command.c_str(),
-                        error_code.value(),
-                        error_code.message());
-                    DAS_LOG_ERROR(error_message.c_str());
-                }
-            }(),
-            [](std::exception_ptr p_ex)
-            {
-                try
-                {
-                    if (p_ex)
+                    const auto info =
+                        DAS::fmt::format("{} return {}.", command_, exit_code);
+                    if (ec)
                     {
-                        std::rethrow_exception(p_ex);
+                        DAS_LOG_ERROR(info.c_str());
+                        const auto error_message = DAS::fmt::format(
+                            "Error happened when executing command {}. Message = {}.",
+                            command_,
+                            ec.message());
+                        DAS_LOG_ERROR(error_message.c_str());
+                        if (result_ != DAS_E_TIMEOUT)
+                        {
+                            result_ = DAS_E_INTERNAL_FATAL_ERROR;
+                        }
+                        return;
                     }
-                }
-                catch (const std::runtime_error& ex)
+                    else [[likely]]
+                    {
+                        DAS_LOG_INFO(info.c_str());
+                        result_ = DAS_S_OK;
+                    }
+
+                    timeout_timer_.cancel(); // we're done earlier
+                }));
+
+        timeout_timer_.async_wait(
+            [this](boost::system::error_code ec)
+            {
+                if (ec) // we were cancelled, do nothing
                 {
-                    DasLogErrorU8(ex.what());
+                    return;
                 }
+                result_ = DAS_E_TIMEOUT;
+                const auto error_message = DAS::fmt::format(
+                    "Timeout detected when executing command {}.",
+                    command_);
+                DAS_LOG_ERROR(error_message.c_str());
+                sig_.emit(boost::asio::cancellation_type::partial);
+                // request exit first, but terminate after another
+                // timeout_in_ms_
+                timeout_timer_.expires_after(this->timeout_in_ms_);
+                timeout_timer_.async_wait(
+                    [this](boost::system::error_code timer_ec)
+                    {
+                        if (!timer_ec)
+                        {
+                            sig_.emit(boost::asio::cancellation_type::terminal);
+                        }
+                    });
             });
     }
-    Buffer                     buffer;
-    boost::asio::io_context    ioc{};
-    boost::process::async_pipe process_out{ioc};
-    boost::process::child      process;
-    boost::asio::steady_timer  timer;
-    std::uint32_t              timeout;
-    std::string                command;
+
+    DasResult Run()
+    {
+        ioc_.run();
+        return result_;
+    }
+
+    const Buffer& GetBuffer() const { return buffer_; }
+    Buffer&       GetBuffer() { return buffer_; }
 };
 
 AdbCaptureHeader ResolveHeader(const char* p_header)
@@ -322,17 +283,18 @@ auto ComputeDataSizeFromHeader(const AdbCaptureHeader header)
     }
 }
 
-DAS::Utils::Expected<DasImageFormat> Convert(const AdbCaptureFormat format)
+DAS::Utils::Expected<ExportInterface::DasImageFormat> Convert(
+    const AdbCaptureFormat format)
 {
     switch (format)
     {
         using enum AdbCaptureFormat;
     case RGBA_8888:
-        [[likely]] return DAS_IMAGE_FORMAT_RGBA_8888;
+        [[likely]] return ExportInterface::DAS_IMAGE_FORMAT_RGBA_8888;
     case RGBX_8888:
-        return DAS_IMAGE_FORMAT_RGBX_8888;
+        return ExportInterface::DAS_IMAGE_FORMAT_RGBX_8888;
     case RGB_888:
-        return DAS_IMAGE_FORMAT_RGB_888;
+        return ExportInterface::DAS_IMAGE_FORMAT_RGB_888;
     default:
         return tl::make_unexpected(UNSUPPORTED_COLOR_FORMAT);
     }
@@ -361,12 +323,21 @@ auto MakeCommandExecutorContext(
 
 DAS::Utils::Expected<AdbCapture::Size> AdbCapture::GetDeviceSize() const
 {
-    auto context = MakeCommandExecutorContext<std::string>(
+    Details::CommandExecutorContext<std::string> context{
         get_screen_size_command_,
-        Details::PROCESS_TIMEOUT_IN_S);
-    Size result{};
-    context.ioc.run();
-    std::stringstream output_string_stream{context.buffer};
+        Details::PROCESS_TIMEOUT_IN_S};
+    const auto result_code = context.Run();
+    if (!IsOk(result_code))
+    {
+        const auto error_message = DAS::fmt::format(
+            "Failed to execute command: {}. Error code: {}.",
+            get_screen_size_command_,
+            result_code);
+        DAS_LOG_ERROR(error_message.c_str());
+        return tl::make_unexpected(result_code);
+    }
+    Size              result{};
+    std::stringstream output_string_stream{context.GetBuffer()};
     int               size_1{0};
     int               size_2{0};
     output_string_stream >> size_1 >> size_2;
@@ -375,7 +346,7 @@ DAS::Utils::Expected<AdbCapture::Size> AdbCapture::GetDeviceSize() const
     {
         const auto error_message = DAS::fmt::format(
             "Unexpected error when getting screen size. Received output: {}",
-            context.buffer);
+            context.GetBuffer());
         DAS_LOG_ERROR(error_message.c_str());
         // todo return tl::make_unexpected();
     }
@@ -396,21 +367,24 @@ DasResult AdbCapture::CaptureRawWithGZip()
     // Run adb and receive screen capture.
     Details::CommandExecutorContext<decltype(adb_output_buffer)> context{
         capture_gzip_raw_command_,
-        Details::PROCESS_TIMEOUT_IN_S,
-        std::move(adb_output_buffer)};
+        Details::PROCESS_TIMEOUT_IN_S};
     // Initialize the objects that need to be used later.
-    auto decompressed_data = DasMemoryImpl(
+    auto decompressed_data = Details::DasMemoryImpl(
         Details::ComputeScreenshotSize(
             adb_device_screen_size_.width,
             adb_device_screen_size_.height));
     const gzip::Decompressor decompressor{};
     // wait for the process to exit.
-    context.ioc.run();
+    const auto exec_result = context.Run();
+    if (!IsOk(exec_result))
+    {
+        return exec_result;
+    }
 
     decompressor.decompress(
         decompressed_data,
-        context.buffer.data(),
-        context.buffer.size());
+        context.GetBuffer().data(),
+        context.GetBuffer().size());
 
     unsigned char* p_decompressed_data = nullptr;
     DAS_THROW_IF_FAILED(
@@ -442,19 +416,20 @@ DasResult AdbCapture::CaptureRawWithGZip()
                     static_cast<AdbCaptureFormat>(header.f));
             })
         .and_then(
-            [&decompressed_data, &header](
-                const DasImageFormat color_format) -> DAS::Utils::Expected<void>
+            [&decompressed_data,
+             &header](const ExportInterface::DasImageFormat color_format)
+                -> DAS::Utils::Expected<void>
             {
-                DasSize size{
+                ExportInterface::DasSize size{
                     static_cast<int32_t>(header.w),
                     static_cast<int32_t>(header.h)};
                 decompressed_data.SetOffset(ADB_CAPTURE_HEADER_SIZE);
 
                 // 格式符合预期则直接避免拷贝
-                if (color_format == DAS_IMAGE_FORMAT_RGB_888)
+                if (color_format == ExportInterface::DAS_IMAGE_FORMAT_RGB_888)
                 {
-                    DasPtr<IDasImage> p_image{};
-                    const auto        create_image_result =
+                    DasPtr<ExportInterface::IDasImage> p_image{};
+                    const auto                         create_image_result =
                         ::CreateIDasImageFromRgb888(
                             decompressed_data.GetImpl(),
                             &size,
@@ -476,8 +451,8 @@ DasResult AdbCapture::CaptureRawWithGZip()
                         decompressed_data.GetSize() - ADB_CAPTURE_HEADER_SIZE,
                     .data_format = color_format};
 
-                DasPtr<IDasImage> p_image{};
-                const auto        create_image_result =
+                DasPtr<ExportInterface::IDasImage> p_image{};
+                const auto                         create_image_result =
                     ::CreateIDasImageFromDecodedData(
                         &desc,
                         &size,
@@ -520,34 +495,7 @@ auto AdbCapture::AutoDetectType()
     return tl::make_unexpected(result);
 }
 
-int64_t AdbCapture::AddRef() { return ref_counter_.AddRef(); }
-
-int64_t AdbCapture::Release() { return ref_counter_.Release(this); }
-
-DasResult AdbCapture::QueryInterface(const DasGuid& iid, void** pp_object)
-{
-    return DAS::Utils::QueryInterface<IDasCapture>(this, iid, pp_object);
-}
-
-DAS_IMPL AdbCapture::GetGuid(DasGuid* p_out_guid)
-{
-    if (p_out_guid == nullptr)
-    {
-        return DAS_E_INVALID_POINTER;
-    }
-
-    *p_out_guid = DasIidOf<AdbCapture>();
-
-    return DAS_S_OK;
-}
-
-DasResult AdbCapture::GetRuntimeClassName(
-    IDasReadOnlyString** pp_out_class_name)
-{
-    DAS_UTILS_GET_RUNTIME_CLASS_NAME_IMPL(Das::AdbCapture, pp_out_class_name);
-}
-
-DasResult AdbCapture::Capture(IDasImage** pp_out_image)
+DasResult AdbCapture::Capture(ExportInterface::IDasImage** pp_out_image)
 {
     (void)pp_out_image;
     DasResult result{DAS_S_OK};

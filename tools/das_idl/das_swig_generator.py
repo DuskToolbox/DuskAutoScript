@@ -211,6 +211,10 @@ class SwigCodeGenerator:
 
     def _generate_out_param_typemap(self, interface: InterfaceDef, method: MethodDef, param: ParameterDef) -> str:
         """生成 [out] 参数的 typemap"""
+        # 跳过binary_buffer方法的typemap生成
+        # binary_buffer方法已经有专门的_binary_buffer_typemaps方法处理
+        if self._is_binary_data_method(interface, method):
+            return ""
         base_type = param.type_info.base_type
         is_interface = SwigTypeMapper.is_interface_type(base_type)
 
@@ -321,6 +325,7 @@ class SwigCodeGenerator:
             self._validate_binary_buffer_method(interface, method)
 
         qualified_name = self._get_qualified_name(interface.name, interface.namespace)
+        native_name = f'{interface.name}_createDirectByteBuffer'
         lines = []
 
         lines.append(f"""
@@ -443,13 +448,13 @@ class SwigCodeGenerator:
             throw new RuntimeException("Failed to get data size");
         }}
 
-        return createDirectByteBuffer(ptrHolder[0], (int)sizeHolder[0]);
+        return {native_name}(ptrHolder[0], (int)sizeHolder[0]);
     }}
 
-    private static native java.nio.ByteBuffer createDirectByteBuffer(long address, int capacity);
+    private static native java.nio.ByteBuffer {native_name}(long address, int capacity);
 %}}
 
-%native(createDirectByteBuffer) java.nio.ByteBuffer createDirectByteBuffer(long address, int capacity);
+%native({native_name}) jobject {native_name}(jlong address, jint capacity);
 %{{
 JNIEXPORT jobject JNICALL Java_{qualified_name.replace('::', '_')}_createDirectByteBuffer(
     JNIEnv *jenv, jclass jcls, jlong address, jint capacity) {{

@@ -924,17 +924,43 @@ class CppWrapperGenerator:
         lines.append("")
         lines.append(f"{wrapper_name}::{wrapper_name}({dasptr_qualified_type}<{raw_name}> ptr) noexcept : ptr_(std::move(ptr)) {{}}")
         lines.append("")
-        lines.append(f"inline {raw_name}* {wrapper_name}::Get() const noexcept {{ return ptr_.Get(); }}")
-        lines.append("")
-        lines.append(f"inline const {dasptr_qualified_type}<{raw_name}>& {wrapper_name}::GetPtr() const noexcept {{ return ptr_; }}")
-        lines.append("")
         lines.append(f"{wrapper_name}::operator {raw_name}*() const noexcept {{ return ptr_.Get(); }}")
         lines.append("")
         lines.append(f"{wrapper_name}::operator bool() const noexcept {{ return ptr_ != nullptr; }}")
         lines.append("")
-        lines.append(f"inline {raw_name}* {wrapper_name}::operator->() const noexcept {{ return ptr_.Get(); }}")
+        lines.append(f"{wrapper_name} {wrapper_name}::Attach({raw_name}* p) noexcept")
+        lines.append("{")
+        lines.append(f"    {wrapper_name} wrapper;")
+        lines.append(f"    wrapper.ptr_ = {dasptr_qualified_type}<{raw_name}>::Attach(p);")
+        lines.append(f"    return wrapper;")
+        lines.append(f"}}")
         lines.append("")
-
+        lines.append(f"{raw_name}** {wrapper_name}::Put() noexcept")
+        lines.append("{")
+        lines.append(f"    return ptr_.Put();")
+        lines.append(f"}}")
+        lines.append("")
+        lines.append(f"void** {wrapper_name}::PutVoid() noexcept")
+        lines.append("{")
+        lines.append(f"    return ptr_.PutVoid();")
+        lines.append(f"}}")
+        lines.append("")
+        lines.append(f"{raw_name}* {wrapper_name}::Get() const noexcept")
+        lines.append("{")
+        lines.append(f"    return ptr_.Get();")
+        lines.append(f"}}")
+        lines.append("")
+        lines.append(f"const {dasptr_qualified_type}<{raw_name}>& {wrapper_name}::GetPtr() const noexcept")
+        lines.append("{")
+        lines.append(f"    return ptr_;")
+        lines.append(f"}}")
+        lines.append("")
+        lines.append(f"{raw_name}* {wrapper_name}::operator->() const noexcept")
+        lines.append("{")
+        lines.append(f"    return ptr_.Get();")
+        lines.append(f"}}")
+        lines.append("")
+ 
         for method in all_methods:
             method_impl = self._generate_method_wrapper(interface, method, mode='implementation')
             lines.append(method_impl)
@@ -1399,17 +1425,25 @@ class CppWrapperGenerator:
                 stripped = line.lstrip()
                 leading_ws_len = len(line) - len(stripped)
 
-                # 粗略判断“函数定义签名行”：包含 Wrapper:: 且包含 '('。
+                # 判断"函数定义签名行"：包含 Wrapper:: 且包含 '('。
                 # implementation 生成器中，函数定义签名行不以 inline 开头。
+                # 支持两种格式：
+                # 1. DasImage::GetSize()
+                # 2. DasSize DasImage::GetSize()
                 is_def_sig = (
-                    stripped.startswith(f"{wrapper_name}::")
+                    ("::" in stripped and f"{wrapper_name}::" in stripped)
                     and "(" in stripped
                     and not stripped.startswith("//")
                     and not stripped.startswith("#")
                     and not stripped.startswith("inline ")
+                    and not stripped.startswith("return ")
                 )
 
                 if is_def_sig:
+                    # 添加 inline 关键字到函数定义前
+                    # 支持两种格式：
+                    # 1. DasImage::GetSize() -> inline DasImage::GetSize()
+                    # 2. DasSize DasImage::GetSize() -> inline DasSize DasImage::GetSize()
                     out_lines.append(
                         f"{indent_prefix}{' ' * leading_ws_len}inline {stripped}"
                     )
@@ -1571,7 +1605,7 @@ def generate_cpp_wrapper_files(document: IdlDocument, output_dir: str, base_name
         header_filename = f"{base_name}.hpp"
         impl_filename = f"{base_name}.cpp"
 
-    # 生成头文件（仅声明）
+    # 生成头文件（包含声明和内联实现）
     header_filepath = os.path.join(actual_output_dir, header_filename)
     header_content = generator.generate_wrapper_header(base_name)
 
@@ -1581,15 +1615,7 @@ def generate_cpp_wrapper_files(document: IdlDocument, output_dir: str, base_name
         print(f"Generated: {header_filepath}")
         generated_files.append(header_filepath)
 
-    # 生成实现文件（仅实现）
-    impl_filepath = os.path.join(actual_output_dir, impl_filename)
-    impl_content = generator.generate_wrapper_implementation(base_name)
-
-    if impl_content:
-        with open(impl_filepath, 'w', encoding='utf-8') as f:
-            f.write(impl_content)
-        print(f"Generated: {impl_filepath}")
-        generated_files.append(impl_filepath)
+    # 注意：不再生成 .cpp 实现文件，所有实现都在头文件中以 inline 方式提供
 
     return generated_files
 

@@ -1,4 +1,5 @@
-#include <DAS/_autogen/idl/abi/IDasGuidVector.h>
+#include <das/_autogen/idl/abi/IDasGuidVector.h>
+#include <das/DasApi.h>
 #include <algorithm>
 #include <das/Core/ForeignInterfaceHost/IDasGuidVectorImpl.h>
 #include <das/Core/Logger/Logger.h>

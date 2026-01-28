@@ -12,14 +12,6 @@
 // Win32 风格 opaque handle 实现（在全局命名空间）
 namespace Das::Exception::Impl
 {
-    // 无用类型别名，用于避免 std::launder 警告
-    typedef struct DasExceptionStringHandle_* DasExceptionStringHandleUnused;
-
-    struct DasExceptionStringHandleImpl
-    {
-        std::unique_ptr<std::string> string_;
-    };
-
     class DasExceptionStringImpl final : public IDasExceptionString
     {
     public:

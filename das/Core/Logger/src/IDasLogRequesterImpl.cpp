@@ -1,5 +1,6 @@
 #include "IDasLogRequesterImpl.h"
 #include <das/Core/Logger/Logger.h>
+#include <das/DasApi.h>
 #include <das/Utils/CommonUtils.hpp>
 
 IDasLogRequesterImpl::IDasLogRequesterImpl(
@@ -73,12 +74,13 @@ DasResult IDasLogRequesterImpl::RequestOne(
     DAS_UTILS_CHECK_POINTER(p_reader);
     const auto& message = buffer_.front();
     buffer_.pop_front();
-    const auto  result = p_reader->ReadOne(message.Get());
+    const auto result = p_reader->ReadOne(message.Get());
 
     return result;
 }
 
-void IDasLogRequesterImpl::Accept(const std::shared_ptr<std::string>& sp_message)
+void IDasLogRequesterImpl::Accept(
+    const std::shared_ptr<std::string>& sp_message)
 {
     buffer_.push_back({sp_message->c_str()});
 }

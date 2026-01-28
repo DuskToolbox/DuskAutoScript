@@ -9,7 +9,7 @@ interface IDasSourceLocation {
     [get, set] IDasReadOnlyString FunctionName;
 };
 
-[uuid("9BC34D72-E442-4944-ACE6-69257D262568")]
+[uuid("F4191604-D061-49A4-85EC-28EFC376119F")]
 interface IDasLogReader : IDasBase {
     DasResult ReadOne(IDasReadOnlyString* message);
 }

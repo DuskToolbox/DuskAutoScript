@@ -190,11 +190,12 @@ target_include_directories(DasCoreObjects PUBLIC ${CMAKE_BINARY_DIR}/das/include
 target_include_directories(DasCoreObjects PUBLIC ${DAS_IDL_ABI_OUTPUT_DIR})
 target_include_directories(DasCoreObjects PUBLIC ${DAS_IDL_WRAPPER_OUTPUT_DIR})
 target_compile_definitions(DasCoreObjects PRIVATE -DDAS_BUILD_SHARED)
-target_link_libraries(DasCoreObjects PUBLIC
+ target_link_libraries(DasCoreObjects PUBLIC
         Boost::filesystem
         ICU::data
         ICU::i18n
-        ICU::uc)
+        ICU::uc
+        Das3rdParty)
 
 if (DAS_USE_BUNDLED_BOOST)
     target_link_libraries(DasCoreObjects PUBLIC ${DAS_BUNDLED_BOOST_LIBS})
@@ -222,15 +223,13 @@ das_add_core_component(ForeignInterfaceHost)
 
 # 将OfficialIids生成的文件添加到DasCoreObjects
 set(DAS_OFFICIAL_IIDS_OUTPUT_DIR "${CMAKE_BINARY_DIR}/das/include/das/_autogen/idl/iids")
-if (EXISTS "${DAS_OFFICIAL_IIDS_OUTPUT_DIR}/OfficialIids.cpp" AND EXISTS "${DAS_OFFICIAL_IIDS_OUTPUT_DIR}/OfficialIids.h")
-    target_sources(DasCoreObjects PRIVATE
-            "${DAS_OFFICIAL_IIDS_OUTPUT_DIR}/OfficialIids.cpp"
-            "${DAS_OFFICIAL_IIDS_OUTPUT_DIR}/OfficialIids.h"
-    )
-    target_include_directories(DasCoreObjects PUBLIC ${DAS_OFFICIAL_IIDS_OUTPUT_DIR})
-    source_group("Autogen\\OfficialIids" FILES "${DAS_OFFICIAL_IIDS_OUTPUT_DIR}/OfficialIids.cpp" "${DAS_OFFICIAL_IIDS_OUTPUT_DIR}/OfficialIids.h")
-endif ()
-
+# 注意：无条件添加这些文件，因为 add_custom_command 会确保文件在编译前生成
+target_sources(DasCoreObjects PRIVATE
+        ${DAS_OFFICIAL_IIDS_SOURCE}
+        ${DAS_OFFICIAL_IIDS_HEADER}
+)
+target_include_directories(DasCoreObjects PUBLIC ${DAS_OFFICIAL_IIDS_OUTPUT_DIR})
+source_group("Autogen\\OfficialIids" FILES "${DAS_OFFICIAL_IIDS_SOURCE}" "${DAS_OFFICIAL_IIDS_HEADER}")
 das_add_core_component(SettingsManager)
 das_add_core_component(Logger)
 das_add_core_component(Exceptions)
