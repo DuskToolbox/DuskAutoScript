@@ -1,4 +1,4 @@
-import "DasTypes.idl";
+import "DasBasicTypes.idl";
 import "IDasTypeInfo.idl";
 import "IDasVariantVector.idl";
 

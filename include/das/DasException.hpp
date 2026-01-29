@@ -8,6 +8,7 @@
 // Forward declaration
 struct IDasTypeInfo;
 
+SWIG_IGNORE(DasExceptionSourceInfo)
 struct DasExceptionSourceInfo
 {
     const char* file;
@@ -106,19 +107,15 @@ DAS_C_API void CreateDasExceptionStringWithTypeInfo(
     IDasTypeInfo*           p_type_info,
     IDasExceptionString**   pp_out_handle);
 
+SWIG_IGNORE(std::runtime_error)
 class DasException : public std::runtime_error
 {
-    template <class... Ts>
-    struct overload_set : Ts...
-    {
-        using Ts::operator()...;
-    };
-
     DasResult error_code_;
 
     using Base = std::runtime_error;
 
 public:
+#ifndef SWIG
     DasException(DasResult error_code, std::string&& string)
         : Base{string.c_str()}, error_code_{error_code}
     {
@@ -144,6 +141,8 @@ public:
           error_code_{error_code}
     {
     }
+
+#endif // SWIG
 
     [[nodiscard]]
     auto GetErrorCode() const noexcept -> DasResult

@@ -16,7 +16,7 @@ interface IDasPluginPackage : IDasBase {
     /**
      * @brief 插件检查是否还有已创建的接口实例存活，若有，返回 false；否则返回 true。
      */
-    bool CanUnloadNow();
+    DasResult CanUnloadNow([out] bool* canUnloadNow);
 }
 
 }

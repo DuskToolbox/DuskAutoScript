@@ -630,32 +630,45 @@ class Parser:
     
     def parse_type(self) -> TypeInfo:
         """解析类型
-        
+
         支持复合类型如:
             unsigned char
             signed int
             const unsigned char*
+
+        支持命名空间限定符:
+            Das::ExportInterface::DasDate*
         """
         is_const = False
-        
+
         # 检查 const
         if self.match(TokenType.IDENTIFIER) and self.current().value == 'const':
             is_const = True
             self.advance()
-        
+
         # 基础类型（支持复合类型如 unsigned char）
         base_type = self.expect(TokenType.IDENTIFIER).value
-        
+
+        # 支持命名空间限定符（如 Das::ExportInterface::DasDate）
+        while self.match(TokenType.COLON):
+            # 跳过第一个冒号
+            self.advance()
+            # 确保是第二个冒号
+            self.expect(TokenType.COLON)
+            # 读取下一个标识符
+            next_part = self.expect(TokenType.IDENTIFIER).value
+            base_type = f"{base_type}::{next_part}"
+
         # 如果是复合类型前缀（unsigned/signed），继续读取下一个标识符
         if base_type in self.COMPOUND_TYPE_PREFIXES:
             if self.match(TokenType.IDENTIFIER):
                 next_type = self.advance().value
                 base_type = f"{base_type} {next_type}"
-        
+
         # 检查指针和引用
         pointer_level = 0
         is_reference = False
-        
+
         while True:
             if self.match(TokenType.STAR):
                 pointer_level += 1
@@ -665,7 +678,7 @@ class Parser:
                 self.advance()
             else:
                 break
-        
+
         return TypeInfo(
             base_type=base_type,
             is_pointer=pointer_level > 0,

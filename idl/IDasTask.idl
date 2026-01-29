@@ -1,26 +1,17 @@
-import "DasTypes.idl";
+import "DasBasicTypes.idl";
 import "IDasTypeInfo.idl";
 
 namespace Das::PluginInterface {
 
-struct DasDate {
-    uint16_t year;
-    uint8_t month;
-    uint8_t day;
-    uint8_t hour;
-    uint8_t minute;
-    uint8_t second;
-}
-
 [uuid("213B412C-46FE-47BB-9159-56B3EE9BBB1A")]
 interface IDasStopToken : IDasBase {
-    bool StopRequested();
+    DasResult StopRequested([out] bool* canStop);
 }
 
 [uuid("5C30785F-C2BD-4B9A-B543-955432169F8E")]
 interface IDasTask : IDasTypeInfo {
     DasResult Do(IDasStopToken* stop_token, IDasReadOnlyString* p_environment_json, IDasReadOnlyString* p_task_settings_json);
-    DasResult GetNextExecutionTime([out] DasDate* p_out_date);
+    DasResult GetNextExecutionTime([out] Das::ExportInterface::DasDate* p_out_date);
     DasResult GetName([out] IDasReadOnlyString** pp_out_name);
     DasResult GetDescription([out] IDasReadOnlyString** pp_out_settings);
     DasResult GetGameName([out] IDasReadOnlyString** pp_out_label);

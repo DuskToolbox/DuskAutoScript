@@ -140,7 +140,7 @@ class CppImplementsGenerator:
         """根据 imports 生成 include 路径列表
 
         import语句使用相对路径，但生成时只使用文件名。
-        例如: import "../DasTypes.idl"; -> #include "DasTypes.h"
+        例如: import "../DasBasicTypes.idl"; -> #include "DasTypes.h"
               import "./IDasImage.idl"; -> #include "IDasImage.h"
               import "../ExportInterface/IDasCapture.idl"; -> #include "IDasCapture.h"
 
@@ -386,7 +386,7 @@ class CppImplementsGenerator:
             lines.append(f"{self.indent}{self.indent}return CreateIDasReadOnlyStringFromUtf8(\"{runtime_class_name}\", pp_out_name);")
             lines.append(f"{self.indent}}}")
             lines.append("")
-            
+
         # Make 工厂方法
         lines.append(f"{self.indent}/// @brief Factory method to create instance wrapped in DasPtr")
         lines.append(f"{self.indent}/// @tparam Args Constructor argument types")

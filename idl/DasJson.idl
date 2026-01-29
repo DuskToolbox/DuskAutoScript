@@ -16,17 +16,17 @@ enum DasType {
 
 [uuid("F1EF951F-84F3-4E9D-A78F-4B862C9B9C57")]
 interface IDasJson : IDasBase {
-    DasResult GetIntByName(DasString key, [out] int64_t* p_out_int);
-    DasResult GetFloatByName(DasString key, [out] float* p_out_float);
-    DasResult GetStringByName(DasString key, [out] IDasReadOnlyString** pp_out_string);
-    DasResult GetBoolByName(DasString key, [out] bool* p_out_bool);
-    DasResult GetObjectRefByName(DasString key, [out] IDasJson** pp_out_das_json);
+    DasResult GetIntByName(IDasReadOnlyString* key, [out] int64_t* p_out_int);
+    DasResult GetFloatByName(IDasReadOnlyString* key, [out] float* p_out_float);
+    DasResult GetStringByName(IDasReadOnlyString* key, [out] IDasReadOnlyString** pp_out_string);
+    DasResult GetBoolByName(IDasReadOnlyString* key, [out] bool* p_out_bool);
+    DasResult GetObjectRefByName(IDasReadOnlyString* key, [out] IDasJson** pp_out_das_json);
 
-    DasResult SetIntByName(DasString key, int64_t in_int);
-    DasResult SetFloatByName(DasString key, float in_float);
-    DasResult SetStringByName(DasString key, IDasReadOnlyString* p_in_string);
-    DasResult SetBoolByName(DasString key, bool in_bool);
-    DasResult SetObjectByName(DasString key, IDasJson* p_in_das_json);
+    DasResult SetIntByName(IDasReadOnlyString* key, int64_t in_int);
+    DasResult SetFloatByName(IDasReadOnlyString* key, float in_float);
+    DasResult SetStringByName(IDasReadOnlyString* key, IDasReadOnlyString* p_in_string);
+    DasResult SetBoolByName(IDasReadOnlyString* key, bool in_bool);
+    DasResult SetObjectByName(IDasReadOnlyString* key, IDasJson* p_in_das_json);
 
     DasResult GetIntByIndex(size_t index, [out] int64_t* p_out_int);
     DasResult GetFloatByIndex(size_t index, [out] float* p_out_float);
@@ -40,7 +40,7 @@ interface IDasJson : IDasBase {
     DasResult SetBoolByIndex(size_t index, bool in_bool);
     DasResult SetObjectByIndex(size_t index, IDasJson* pin_das_json);
 
-    DasResult GetTypeByName(DasString key, [out] DasType* p_out_type);
+    DasResult GetTypeByName(IDasReadOnlyString* key, [out] DasType* p_out_type);
     DasResult GetTypeByIndex(size_t index, [out] DasType* p_out_type);
 
     DasResult ToString(int32_t indent, [out] IDasReadOnlyString** pp_out_string);

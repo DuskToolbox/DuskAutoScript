@@ -56,29 +56,7 @@ PyInit__DasCorePythonExport(void) {
 
 #endif // SWIGPYTHON
 
-// ============================================================================
-// DasException Support for Python
-// ============================================================================
-
-// Extend DasException to add error_code attribute for Python access
-%extend DasException {
-    int GetErrorCode() const {
-        return $self->GetErrorCode();
-    }
-    const char* GetMessage() const {
-        return $self->what();
-    }
-}
-
-// Exception handling for DasResult return values
-%exception {
-    try {
-        $action
-    }
-    catch (const DasException& ex) {
-        SWIG_exception_fail(SWIG_RuntimeError, ex.what());
-    }
-}
+%}
 
 #ifdef SWIGJAVA
 %typemap(jni) char16_t* "jstring"
@@ -117,47 +95,6 @@ PyInit__DasCorePythonExport(void) {
 
 %typemap(javain) (const char16_t* p_u16string, size_t length) "p_u16string"
 
-// ============================================================================
-// DasException Support for Java
-// ============================================================================
-
-// Rename DasException methods for Java naming convention
-%rename(ErrorCode) DasException::GetErrorCode;
-%rename(Message) DasException::what;
-
-// Exception handling for DasException
-%javaexception("DasException") DasException {
-    $action
-    try {
-        return $result;
-    }
-    catch (const DasException& ex) {
-        jclass exc = jenv->FindClass("DasException");
-        jmethodID ctor = jenv->GetMethodID(exc, "<init>", "(ILjava/lang/String;)V");
-        jstring msg = jenv->NewStringUTF(ex.what());
-        jobject jexc = jenv->NewObject(exc, ctor, ex.GetErrorCode(), msg);
-        jenv->Throw(jexc);
-        return $null;
-    }
-}
-
-%typemap(javabody) DasException %{
-    private int errorCode;
-    private String message;
-
-    public DasException(int errorCode, String message) {
-        this.errorCode = errorCode;
-        this.message = message;
-    }
-
-    public int getErrorCode() {
-        return errorCode;
-    }
-
-    public String getMessage() {
-        return message;
-    }
-%}
 
 %typemap(in, numinputs=1) (const char16_t* p_u16string, size_t length) %{
     class _das_InternalJavaString{
@@ -196,17 +133,86 @@ PyInit__DasCorePythonExport(void) {
 %include <das/DasExport.h>
 %include <das/IDasBase.h>
 %include <das/DasString.hpp>
-%include <das/_autogen/idl/abi/IDasTypeInfo.h>
+%include <das/DasException.hpp>
+
+%nodefaultctor DasException;
 
 // !!! 包含CMake从IDL自动生成的SWIG接口汇总文件 !!!
 // 该文件包含所有从IDL生成的SWIG接口（如DasCV, IDasCapture, IDasPluginManager等）
 %include <das/_autogen/idl/swig/swig_all.i>
 
-// 以下接口文件没有对应的IDL定义，需要手动包含（按字母顺序排列）
-%include <das/_autogen/idl/abi/DasLogger.h>
+#ifdef SWIGPYTHON
 
-%include <das/_autogen/idl/abi/IDasMemory.h>
+// ============================================================================
+// DasException Support for Python
+// ============================================================================
 
+// Extend DasException to add error_code attribute for Python access
+%extend DasException {
+    const char* GetMessage() const {
+        return $self->what();
+    }
+}
+
+// Exception handling for DasResult return values
+%exception {
+    try {
+        $action
+    }
+    catch (const DasException& ex) {
+        SWIG_exception_fail(SWIG_RuntimeError, ex.what());
+    }
+}
+
+#endif // SWIGPYTHON
+
+#ifdef SWIGJAVA
+
+// ============================================================================
+// DasException Support for Java
+// ============================================================================
+
+// Rename DasException methods for Java naming convention
+%rename(ErrorCode) DasException::GetErrorCode;
+%rename(Message) DasException::what;
+
+// Exception handling for DasException
+%javaexception("DasException") DasException {
+    // $action
+    // try {
+    //     return $result;
+    // }
+    // catch (const DasException& ex) {
+    //     jclass exc = jenv->FindClass("DasException");
+    //     jmethodID ctor = jenv->GetMethodID(exc, "<init>", "(ILjava/lang/String;)V");
+    //     jstring msg = jenv->NewStringUTF(ex.what());
+    //     jobject jexc = jenv->NewObject(exc, ctor, ex.GetErrorCode(), msg);
+    //     jenv->Throw(jexc);
+    //     return $null;
+    // }
+}
+
+%typemap(javabody) DasException %{
+    private int errorCode;
+    private String message;
+
+    public DasException(int errorCode, String message) {
+        this.errorCode = errorCode;
+        this.message = message;
+    }
+
+    public int getErrorCode() {
+        return errorCode;
+    }
+
+    public String getMessage() {
+        return message;
+    }
+%}
+
+#endif // SWIGJAVA
+
+#ifdef SWIGCSHARP
 // ============================================================================
 // DasException Support for C#
 // ============================================================================
@@ -246,3 +252,5 @@ PyInit__DasCorePythonExport(void) {
     }
 }
 
+
+#endif // SWIGCSHARP

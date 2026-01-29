@@ -506,12 +506,11 @@ DAS_DEFINE_GUID(
         """生成接口体定义（不包含 UUID，用于命名空间内）"""
         lines = []
 
-        # SWIG_IGNORE 宏 - 原始接口在 SWIG 中忽略，由 .i 文件的 typemap 处理
-        lines.append(f"SWIG_IGNORE({interface.name})")
-
         # 接口声明
         lines.append(f"DAS_INTERFACE {interface.name} : public {interface.base_interface}")
         lines.append("{")
+
+        lines.append(f"{self.indent}SWIG_PRIVATE")
 
         # 方法
         for method in interface.methods:

@@ -1,4 +1,4 @@
-import "DasTypes.idl";
+import "DasBasicTypes.idl";
 import "IDasImage.idl";
 
 namespace Das::ExportInterface {

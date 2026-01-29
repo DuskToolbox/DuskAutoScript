@@ -262,7 +262,7 @@ class CppWrapperGenerator:
         """根据 imports 生成 include 路径列表
 
         import语句使用相对路径，需要转换为正确的abi头文件路径。
-        例如: import "../DasTypes.idl"; -> #include "DasTypes.h"
+        例如: import "../DasBasicTypes.idl"; -> #include "DasTypes.h"
               import "./IDasImage.idl"; -> #include "ExportInterface/IDasImage.h"
               import "IDasImage.idl"; -> #include "ExportInterface/IDasImage.h"
               import "../ExportInterface/IDasCapture.idl"; -> #include "ExportInterface/IDasCapture.h"
@@ -960,7 +960,7 @@ class CppWrapperGenerator:
         lines.append(f"    return ptr_.Get();")
         lines.append(f"}}")
         lines.append("")
- 
+
         for method in all_methods:
             method_impl = self._generate_method_wrapper(interface, method, mode='implementation')
             lines.append(method_impl)

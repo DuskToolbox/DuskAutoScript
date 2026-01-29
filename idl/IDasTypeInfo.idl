@@ -1,4 +1,4 @@
-import "DasTypes.idl";
+import "DasBasicTypes.idl";
 
 [uuid("C66B4652-BEA9-4985-B8AC-F168BF0442E8")]
 interface IDasTypeInfo : IDasBase {
