@@ -134,8 +134,10 @@ public:
 
     unsigned char* GetData() const
     {
+        DasPtr<ExportInterface::IDasBinaryBuffer> p_binary_buffer{};
+        DAS_THROW_IF_FAILED(p_data_->GetBinaryBuffer(p_binary_buffer.Put()));
         unsigned char* p_data{nullptr};
-        p_data_->GetRawData(&p_data);
+        DAS_THROW_IF_FAILED(p_binary_buffer->GetData(&p_data));
         return p_data;
     }
 
@@ -386,9 +388,12 @@ DasResult AdbCapture::CaptureRawWithGZip()
         context.GetBuffer().data(),
         context.GetBuffer().size());
 
+    DasPtr<ExportInterface::IDasBinaryBuffer> p_decompressed_binary_buffer{};
+    DAS_THROW_IF_FAILED(decompressed_data.GetImpl()->GetBinaryBuffer(
+        p_decompressed_binary_buffer.Put()));
     unsigned char* p_decompressed_data = nullptr;
     DAS_THROW_IF_FAILED(
-        decompressed_data.GetImpl()->GetRawData(&p_decompressed_data));
+        p_decompressed_binary_buffer->GetData(&p_decompressed_data));
     const auto header =
         Details::ResolveHeader(reinterpret_cast<char*>(p_decompressed_data));
     Details::ComputeDataSizeFromHeader(header)
@@ -441,8 +446,13 @@ DasResult AdbCapture::CaptureRawWithGZip()
                     return tl::make_unexpected(create_image_result);
                 }
 
+                DasPtr<ExportInterface::IDasBinaryBuffer>
+                    p_desc_binary_buffer{};
+                DAS_THROW_IF_FAILED(
+                    decompressed_data.GetImpl()->GetBinaryBuffer(
+                        p_desc_binary_buffer.Put()));
                 unsigned char* p_decompressed_data_for_desc = nullptr;
-                DAS_THROW_IF_FAILED(decompressed_data.GetImpl()->GetRawData(
+                DAS_THROW_IF_FAILED(p_desc_binary_buffer->GetData(
                     &p_decompressed_data_for_desc));
                 DasImageDesc desc{
                     .p_data =
