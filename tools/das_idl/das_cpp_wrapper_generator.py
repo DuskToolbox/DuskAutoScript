@@ -270,6 +270,11 @@ class CppWrapperGenerator:
         同时生成wrapper头文件的include，例如: import "IDasVariantVector.idl"; -> #include "Das.ExportInterface.IDasVariantVector.hpp"
 
         ABI头文件与wrapper文件在同一目录中。
+
+        当IDL文件导入其他IDL文件时（例如 IDasImage.idl 导入 IDasBinaryBuffer.idl），
+        生成的wrapper头文件应同时包含 ABI 头文件和 wrapper 头文件：
+        - #include "IDasBinaryBuffer.h"         (ABI 头文件)
+        - #include "Das.ExportInterface.IDasBinaryBuffer.hpp"  (Wrapper 头文件)
         """
         includes = []
 
@@ -340,6 +345,9 @@ class CppWrapperGenerator:
             else:
                 h_path = f"{import_name}.h"
 
+            # 添加 ABI 头文件
+            includes.append(h_path)
+
             # 构建wrapper头文件路径
             # 文件名格式: Das.Namespace.FileName.hpp
             # 需要确定该IDL文件中的命名空间
@@ -388,9 +396,9 @@ class CppWrapperGenerator:
                                 wrapper_filename = f"{import_name}.hpp"
                             break
 
-            # 只使用 ABI 头文件，不使用包装实现文件
-            # 包装实现文件的 include 将在类声明之后生成
-            includes.append(h_path)
+            # 添加 wrapper 头文件（如果找到）
+            if wrapper_filename:
+                includes.append(wrapper_filename)
 
         return includes
 
@@ -510,7 +518,12 @@ class CppWrapperGenerator:
                 wrapper_type = CppWrapperTypeMapper.get_wrapper_class_name(type_name)
                 if wrapper_type in type_namespace_map:
                     type_ns = type_namespace_map[wrapper_type]
-                    if type_ns and type_ns != current_ns:
+                    type_included = False
+                    for inc in includes:
+                        if wrapper_type in inc and '.hpp' in inc:
+                            type_included = True
+                            break
+                    if type_ns and type_ns != current_ns and not type_included:
                         if type_ns not in namespace_declarations:
                             namespace_declarations[type_ns] = set()
                         namespace_declarations[type_ns].add(wrapper_type)
@@ -549,9 +562,9 @@ class CppWrapperGenerator:
 #include <das/DasPtr.hpp>
 #include <das/IDasBase.h>
 {type_includes_str}
-{forward_declarations_str}
 
 {includes_str}
+{forward_declarations_str}
 """
 
     def _file_footer(self, guard_name: str) -> str:
