@@ -22,9 +22,6 @@ from das_idl_parser import (
 )
 from das_idl_parser import parse_idl_file as _das_idl_parser_parse_idl_file
 
-# 二进制缓冲区接口列表（需要特殊处理的接口）
-BINARY_BUFFER_INTERFACES = {'IDasMemory'}
-
 # [binary_buffer] 方法允许的参数类型（只支持 unsigned char** 系列）
 BINARY_BUFFER_ALLOWED_TYPES = {
     'unsigned char',   # unsigned char**
@@ -163,8 +160,15 @@ class SwigCodeGenerator:
         parse_imports_recursive(self.document.imports, current_idl_dir)
 
     def _is_binary_buffer_interface(self, interface_name: str) -> bool:
-        """判断是否是二进制缓冲区接口"""
-        return interface_name in BINARY_BUFFER_INTERFACES
+        """判断是否是二进制缓冲区接口（动态检测）"""
+        interface = self._find_interface_by_name(interface_name)
+        if not interface:
+            return False
+
+        for method in interface.methods:
+            if method.attributes.get('binary_buffer', False):
+                return True
+        return False
 
     def _get_interface_namespace(self, interface_name: str) -> str | None:
         """根据接口名查找其命名空间
