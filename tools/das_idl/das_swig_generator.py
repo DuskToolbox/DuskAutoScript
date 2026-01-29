@@ -178,6 +178,11 @@ class SwigCodeGenerator:
         # 提取简单名称
         simple_name = interface_name.split('::')[-1]
 
+        # 先在当前文档中查找接口
+        for interface in self.document.interfaces:
+            if interface.name == simple_name:
+                return interface.namespace
+
         # 在所有导入的文档中查找接口
         for doc in self._imported_documents.values():
             for interface in doc.interfaces:
@@ -590,122 +595,21 @@ JNIEXPORT jobject JNICALL Java_{qualified_name.replace('::', '_')}_createDirectB
 
         return None
 
-    def _collect_inherited_methods(self, interface: InterfaceDef) -> List[tuple]:
-        """收集所有继承链上的方法
 
-        返回: List[tuple] - 每个元组包含 (method: MethodDef, interface_name: str, namespace: str)
-        """
-        all_methods = []
-        visited = set()  # 防止循环继承
-
-        # 当前接口的方法
-        current_interface = interface
-        current_namespace = interface.namespace
-
-        while current_interface:
-            # 防止循环继承
-            interface_key = (current_interface.name, current_interface.namespace)
-            if interface_key in visited:
-                break
-            visited.add(interface_key)
-
-            # 收集当前接口的所有方法
-            for method in current_interface.methods:
-                all_methods.append((method, current_interface.name, current_interface.namespace))
-
-            # 获取基类
-            base_interface_name = current_interface.base_interface
-            if not base_interface_name or base_interface_name == "IDasBase":
-                break
-
-            # 查找基类接口
-            base_interface = self._find_interface_by_name(base_interface_name, current_interface.namespace)
-            if base_interface:
-                current_interface = base_interface
-            else:
-                # 没有找到基类定义，可能是在外部 IDL 中定义的
-                # 停止向上查找
-                break
-
-        return all_methods
-
-    def _generate_method_declaration(self, method: MethodDef, current_namespace: str = "") -> str:
-        """生成单个方法的声明，为接口类型使用完全限定名称"""
-        # 返回类型
-        ret_type_str = self._format_type_info(method.return_type, current_namespace)
-
-        # 参数列表
-        params = []
-        for param in method.parameters:
-            param_str = f"{self._format_type_info(param.type_info, current_namespace)} {param.name}"
-            params.append(param_str)
-
-        params_str = ", ".join(params)
-
-        # 方法声明
-        return f"    virtual {ret_type_str} {method.name}({params_str}) = 0;"
-
-    def _format_type_info(self, type_info: TypeInfo, current_namespace: str = "") -> str:
-        """格式化类型信息为 C++ 类型字符串，为接口类型使用完全限定名称"""
-        parts = []
-
-        if type_info.is_const:
-            parts.append("const")
-
-        # 处理复合类型（如 unsigned char）
-        base_type = type_info.base_type
-
-        # 添加基础类型（为接口类型添加完全限定名称）
-        if SwigTypeMapper.is_interface_type(base_type):
-            # 查找接口的命名空间（不使用 current_namespace，直接查找所有文档中的接口）
-            interface_def = self._find_interface_by_name(base_type)
-            if interface_def and interface_def.namespace:
-                qualified_name = f"{interface_def.namespace}::{base_type}"
-                parts.append(qualified_name)
-            else:
-                # 没有找到命名空间，直接使用类型名称
-                parts.append(base_type)
-        else:
-            # 非接口类型，直接使用类型名称
-            parts.append(base_type)
-
-        # 处理指针和引用
-        if type_info.is_pointer:
-            pointer_suffix = "*" * type_info.pointer_level
-            parts.append(pointer_suffix)
-        elif type_info.is_reference:
-            parts.append("&")
-
-        return " ".join(parts)
 
     def _generate_ref_impl_class(self, interface: InterfaceDef) -> str:
         """生成引用计数实现基类（供目标语言继承）"""
         swig_name = self._get_swig_interface_name(interface.name)
 
-        # 获取基类的完全限定名称（两个分支都需要）
-        base_class_name = interface.name
-        if interface.base_interface:
-            base_namespace = self._get_interface_namespace(interface.base_interface)
-            if base_namespace:
-                base_class_name = f"{base_namespace}::{interface.base_interface}"
-            else:
-                # 基类在全局命名空间，需要显式使用::
-                base_class_name = f"::{interface.base_interface}"
+        # ISwig 接口应该继承当前接口，而不是基接口
+        # 使用当前接口的完全限定名称作为基类
+        if interface.namespace:
+            base_class_name = f"{interface.namespace}::{interface.name}"
+        else:
+            # 接口在全局命名空间，需要显式使用::
+            base_class_name = f"::{interface.name}"
 
-        # 收集所有继承链上的方法
-        inherited_methods = self._collect_inherited_methods(interface)
 
-        # 生成纯虚函数声明（排除 AddRef 和 Release）
-        virtual_declarations = []
-        for method, method_interface_name, method_namespace in inherited_methods:
-            if method.name not in ("AddRef", "Release", "QueryInterface"):
-                decl = self._generate_method_declaration(method, method_namespace)
-                virtual_declarations.append(decl)
-                # 添加注释说明方法来自哪个接口
-                if method_interface_name != interface.name:
-                    virtual_declarations.append(f"    // Inherited from {method_interface_name}")
-
-        virtual_methods_str = "\n".join(virtual_declarations)
 
         # 如果接口有命名空间，引用计数类需要定义在同一个命名空间中
         if interface.namespace:
@@ -729,7 +633,7 @@ public:
     virtual ~{swig_name}() = default;
 
     // 纯虚函数声明（从基类继承）
-{virtual_methods_str}
+    // 注意：这些方法由基类提供，无需在此重新声明
 
     // 实现引用计数方法（标记为 final）
     uint32_t AddRef() final {{
@@ -779,7 +683,7 @@ public:
 // Target language should inherit from this class
 // Exported as {swig_name} to SWIG
 %inline %{{
- 
+
 class {swig_name} : public {base_class_name} {{
 private:
     std::atomic<uint32_t> ref_count_{{1}};
@@ -788,7 +692,7 @@ public:
     virtual ~{swig_name}() = default;
 
     // 纯虚函数声明（从基类继承）
-{virtual_methods_str}
+    // 注意：这些方法由基类提供，无需在此重新声明
 
     // 实现引用计数方法（标记为 final）
     uint32_t AddRef() final {{

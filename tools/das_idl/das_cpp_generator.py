@@ -507,10 +507,9 @@ DAS_DEFINE_GUID(
         lines = []
 
         # 接口声明
+        lines.append(f"DAS_SWIG_EXPORT_ATTRIBUTE({interface.name})")
         lines.append(f"DAS_INTERFACE {interface.name} : public {interface.base_interface}")
         lines.append("{")
-
-        lines.append(f"{self.indent}SWIG_PRIVATE")
 
         # 方法
         for method in interface.methods:

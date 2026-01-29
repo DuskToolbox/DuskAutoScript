@@ -252,7 +252,6 @@ DAS_DEFINE_GUID(
     0x92);
 DAS_INTERFACE IDasWeakReference : public IDasBase
 {
-    SWIG_PRIVATE
     /**
      * @brief 获取对象的强引用
      *
@@ -280,7 +279,6 @@ DAS_DEFINE_GUID(
     0x5);
 DAS_INTERFACE IDasWeakReferenceSource : public IDasBase
 {
-    SWIG_PRIVATE
     DAS_METHOD GetWeakReference(IDasWeakReference * *pp_out_weak) = 0;
 };
 
