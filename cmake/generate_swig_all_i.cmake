@@ -19,29 +19,11 @@ file(GLOB SWIG_I_FILES "${SWIG_OUTPUT_DIR}/*.i")
 if(SWIG_I_FILES)
     foreach(I_FILE ${SWIG_I_FILES})
         get_filename_component(I_FILENAME ${I_FILE} NAME_WE)
-        
+
         # 排除_all.i文件本身
         if(NOT "${I_FILENAME}" MATCHES "_all$")
-            # 尝试从文件名中提取IDL名称
-            # 假设文件名格式为: *.IDL名称*.i
-            # 提取最后一个句号之前的部分作为IDL名称
-            string(REGEX REPLACE ".*\\.([^.]*)$" "\\1" IDL_NAME "${I_FILENAME}")
-            
-            # 如果提取不到，使用整个文件名
-            if("${IDL_NAME}" STREQUAL "${I_FILENAME}")
-                set(IDL_NAME "${I_FILENAME}")
-            endif()
-            
-            # 查找对应的ABI头文件（在ABI输出目录根目录下）
-            set(HEADER_FILE "${ABI_OUTPUT_DIR}/${IDL_NAME}.h")
-            if(EXISTS ${HEADER_FILE})
-                file(APPEND ${ALL_I_FILE} "%{\n")
-                file(APPEND ${ALL_I_FILE} "// ABI Header file for ${IDL_NAME}\n")
-                file(APPEND ${ALL_I_FILE} "#include \"${IDL_NAME}.h\"\n")
-                file(APPEND ${ALL_I_FILE} "%}\n\n")
-            endif()
-            
-            # 包含该.i文件
+            # 每个SWIG .i 文件已经自己包含了所需的ABI头文件
+            # 这里直接包含 .i 文件即可
             file(APPEND ${ALL_I_FILE} "%include \"${I_FILENAME}.i\"\n\n")
         endif()
     endforeach()
