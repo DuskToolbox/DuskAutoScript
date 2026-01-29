@@ -1,0 +1,18 @@
+import "DasBasicTypes.idl";
+
+namespace Das::ExportInterface {
+
+[uuid("A4AFC0D0-2926-49DA-9567-AEA0307D4BA8")]
+interface IDasBinaryBuffer : IDasBase {
+    /**
+     * @brief 获取二进制数据指针
+     *
+     * @note 接口持有数据所有权。
+     *       GetData 返回的指针由调用者管理内存（调用者负责释放/回收）。
+     *       GetSize 返回数据大小（字节）。
+     */
+    [binary_buffer] DasResult GetData([out] unsigned char** pp_out_data);
+    DasResult GetSize([out] uint64_t* p_out_size);
+}
+
+}
