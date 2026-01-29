@@ -1,4 +1,5 @@
 import "DasBasicTypes.idl";
+import "IDasBinaryBuffer.idl";
 
 namespace Das::ExportInterface {
 
@@ -24,14 +25,23 @@ interface IDasImage : IDasBase {
     DasResult GetDataSize([out] uint64_t* p_out_size);
 
     /**
-     * @brief 获取图像原始数据指针
-     * @note [binary_buffer] 方法：参数类型必须为 unsigned char** 或 const unsigned char**
-     *       SWIG: Python 提供 GetImageDataAsMemoryView()/GetImageDataAsBytes()
-     *             C# 提供 GetImageDataAsSpan()/GetImageDataAsByteArray()
-     *             Java 提供 getImageDataAsDirectBuffer()
+     * @brief 获取图像原始数据缓冲区
+     *
+     * @note 此方法替代了旧的 GetData 方法。
+     *       旧方法：GetData([out] unsigned char**) - 返回裸指针
+     *       新方法：GetBinaryBuffer([out, ref] IDasBinaryBuffer*) - 返回包装好的缓冲区对象
+     *
+     *       优势：
+     *       - IDasBinaryBuffer 明确持有数据所有权，避免内存管理歧义
+     *       - 跨语言绑定更清晰（Python/C#/Java 均有对应的缓冲区对象）
+     *       - 类型安全，减少内存泄漏风险
+     *
+     * @param p_out_buffer 输出参数，返回 IDasBinaryBuffer 指针
+     *                     [ref] 修饰符表示调用者负责释放
+     *
+     * @return DasResult 操作结果
      */
-    [binary_buffer]
-    DasResult GetData([out] unsigned char** pp_out_data);
+    DasResult GetBinaryBuffer([out, ref] IDasBinaryBuffer* p_out_buffer);
 }
 
 }

@@ -23,7 +23,7 @@ from das_idl_parser import (
 from das_idl_parser import parse_idl_file as _das_idl_parser_parse_idl_file
 
 # 二进制缓冲区接口列表（需要特殊处理的接口）
-BINARY_BUFFER_INTERFACES = {'IDasMemory', 'IDasImage'}
+BINARY_BUFFER_INTERFACES = {'IDasMemory'}
 
 # [binary_buffer] 方法允许的参数类型（只支持 unsigned char** 系列）
 BINARY_BUFFER_ALLOWED_TYPES = {
@@ -410,6 +410,22 @@ class SwigCodeGenerator:
         for method in interface.methods:
             self._validate_binary_buffer_method(interface, method)
 
+        # 获取 binary_buffer 方法的实际名称（支持自定义方法名）
+        # 例如: IDasImage::GetData, IDasMemory::GetRawData
+        binary_buffer_method_name = None
+        for method in interface.methods:
+            if method.attributes.get('binary_buffer', False):
+                binary_buffer_method_name = method.name
+                break
+
+        # 根据 interface.name 选择正确的 GetSize 方法
+        # IDasImage 使用 GetDataSize() 返回数据字节数，而不是 GetSize()
+        # IDasMemory 使用 GetSize() 返回数据字节数
+        if interface.name == "IDasImage":
+            size_method_name = "GetDataSize"
+        else:
+            size_method_name = "GetSize"
+
         qualified_name = self._get_qualified_name(interface.name, interface.namespace)
         native_name = f'{interface.name}_createDirectByteBuffer'
         lines = []
@@ -428,15 +444,15 @@ class SwigCodeGenerator:
         unsigned char* data = nullptr;
         uint64_t size = 0;
 
-        // 获取数据指针 (unsigned char**)
-        DasResult hr = $self->GetData(&data);
+        // 获取数据指针 (unsigned char**) - 使用 IDL 中标记的实际方法名
+        DasResult hr = $self->{binary_buffer_method_name}(&data);
         if (hr < 0) {{
             PyErr_SetString(PyExc_RuntimeError, "Failed to get data pointer");
             return nullptr;
         }}
 
-        // 获取数据大小
-        hr = $self->GetSize(&size);
+        // 获取数据大小 - 使用正确的 GetSize 方法
+        hr = $self->{size_method_name}(&size);
         if (hr < 0) {{
             PyErr_SetString(PyExc_RuntimeError, "Failed to get data size");
             return nullptr;
@@ -450,15 +466,15 @@ class SwigCodeGenerator:
         unsigned char* data = nullptr;
         uint64_t size = 0;
 
-        // 获取数据指针 (unsigned char**)
-        DasResult hr = $self->GetData(&data);
+        // 获取数据指针 (unsigned char**) - 使用 IDL 中标记的实际方法名
+        DasResult hr = $self->{binary_buffer_method_name}(&data);
         if (hr < 0) {{
             PyErr_SetString(PyExc_RuntimeError, "Failed to get data pointer");
             return nullptr;
         }}
 
-        // 获取数据大小
-        hr = $self->GetSize(&size);
+        // 获取数据大小 - 使用正确的 GetSize 方法
+        hr = $self->{size_method_name}(&size);
         if (hr < 0) {{
             PyErr_SetString(PyExc_RuntimeError, "Failed to get data size");
             return nullptr;
