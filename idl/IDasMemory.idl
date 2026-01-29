@@ -1,16 +1,17 @@
 import "DasBasicTypes.idl";
+import "IDasBinaryBuffer.idl";
 
 namespace Das::ExportInterface {
 
 [uuid("0E8E6129-512E-4AAB-A4A6-327ADCACB019")]
 interface IDasMemory : IDasBase {
     /**
-     * @brief 获取原始数据指针（不考虑偏移量）
-     * @note [binary_buffer] 方法：参数类型必须为 unsigned char** 或 const unsigned char**
-     *       SWIG: 同 GetData，提供目标语言友好的访问方法
+     * @brief 获取二进制缓冲区对象
+     * @note 此方法替代了原来的 GetRawData 方法
+     *       提供更安全的二进制数据访问方式
+     *       SWIG: 提供目标语言友好的访问方法
      */
-    [binary_buffer]
-    DasResult GetRawData([out] unsigned char** pp_out_data);
+    DasResult GetBinaryBuffer([out, ref] IDasBinaryBuffer* p_out_buffer);
 
     /**
      * @brief 如果确定输入的指针不是空指针，则返回值可以忽略
