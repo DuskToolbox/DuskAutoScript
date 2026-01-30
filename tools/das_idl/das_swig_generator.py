@@ -301,47 +301,103 @@ class SwigCodeGenerator:
 
     def _generate_out_param_typemap(self, interface: InterfaceDef, method: MethodDef, param: ParameterDef) -> str:
         """生成 [out] 参数的 typemap"""
-        # 跳过binary_buffer方法的typemap生成
-        # binary_buffer方法已经有专门的_binary_buffer_typemaps方法处理
         if self._is_binary_data_method(interface, method):
             return ""
         base_type = param.type_info.base_type
         is_interface = SwigTypeMapper.is_interface_type(base_type)
 
-        # 获取带命名空间的限定名称
         qualified_interface_name = self._get_qualified_name(interface.name, interface.namespace)
-
         lines = []
+        lines.append(f"// {qualified_interface_name}::{method.name} - {param.name} parameter")
 
-        # 根据类型生成不同的 typemap
         if is_interface:
-            # 接口类型：pp_out 参数
             typemap_sig = f"{base_type}** {param.name}"
             self._current_typemaps.append(typemap_sig)
             lines.append(f"""
-// Typemap for {qualified_interface_name}::{method.name} - {param.name} parameter
 %typemap(in, numinputs=0) {typemap_sig} ({base_type}* temp_{param.name} = nullptr) {{
     $1 = &temp_{param.name};
 }}
 %typemap(argout) {typemap_sig} {{
-    // Return the interface pointer, SWIG will handle the wrapping
     $result = SWIG_NewPointerObj(SWIG_as_voidptr(temp_{param.name}), $descriptor({base_type}*), SWIG_POINTER_OWN);
 }}
+
+#ifdef SWIGJAVA
+%rename("{method.name}_java_impl") {qualified_interface_name}::{method.name};
+%javamethodmodifiers {qualified_interface_name}::{method.name} "private"
+%typemap(javacode) {qualified_interface_name} %{{
+    public {base_type} {method.name}(""")
+
+            params = []
+            for p in method.parameters:
+                if p.direction != ParamDirection.OUT:
+                    params.append(f"{self._get_java_type(p.type_info.base_type)} {p.name}")
+            params_str = ", ".join(params)
+            lines.append(f"{params_str}")
+
+            lines.append(f""") throws DasException {{
+        {self._get_java_type(base_type)}[] out_holder = new {self._get_java_type(base_type)}[1];
+        DasResult hr = {method.name}_java_impl(""")
+
+            param_names = []
+            for p in method.parameters:
+                if p.direction != ParamDirection.OUT:
+                    param_names.append(p.name)
+            param_names_str = ", ".join(param_names)
+            lines.append(f"{param_names_str}")
+
+            lines.append(f""", out_holder);
+        if (hr < 0) {{
+            throw new DasException(hr);
+        }}
+        return out_holder[0];
+    }}
+%}}
+#endif
 """)
         else:
-            # 基本类型：p_out 参数
             cpp_type = self._get_cpp_type(base_type)
             typemap_sig = f"{cpp_type}* {param.name}"
             self._current_typemaps.append(typemap_sig)
             lines.append(f"""
-// Typemap for {qualified_interface_name}::{method.name} - {param.name} parameter
 %typemap(in, numinputs=0) {typemap_sig} ({cpp_type} temp_{param.name}) {{
     $1 = &temp_{param.name};
 }}
 %typemap(argout) {typemap_sig} {{
-    // Return the output value
     %append_output(SWIG_From_{self._get_swig_from_type(base_type)}(temp_{param.name}));
 }}
+
+#ifdef SWIGJAVA
+%rename("{method.name}_java_impl") {qualified_interface_name}::{method.name};
+%javamethodmodifiers {qualified_interface_name}::{method.name} "private"
+%typemap(javacode) {qualified_interface_name} %{{
+    public {self._get_java_type(base_type)} {method.name}(""")
+
+            params = []
+            for p in method.parameters:
+                if p.direction != ParamDirection.OUT:
+                    params.append(f"{self._get_java_type(p.type_info.base_type)} {p.name}")
+            params_str = ", ".join(params)
+            lines.append(f"{params_str}")
+
+            lines.append(f""") throws DasException {{
+        {self._get_java_type(base_type)}[] out_holder = new {self._get_java_type(base_type)}[1];
+        DasResult hr = {method.name}_java_impl(""")
+
+            param_names = []
+            for p in method.parameters:
+                if p.direction != ParamDirection.OUT:
+                    param_names.append(p.name)
+            param_names_str = ", ".join(param_names)
+            lines.append(f"{param_names_str}")
+
+            lines.append(f""", out_holder);
+        if (hr < 0) {{
+            throw new DasException(hr);
+        }}
+        return out_holder[0];
+    }}
+%}}
+#endif
 """)
 
         return "\n".join(lines)
@@ -388,6 +444,40 @@ class SwigCodeGenerator:
             'uint': 'unsigned_SS_int',
         }
         return SWIG_FROM_MAP.get(type_name, 'int')
+
+    def _get_java_type(self, type_name: str) -> str:
+        """获取 Java 类型"""
+        JAVA_TYPE_MAP = {
+            'bool': 'boolean',
+            'int8': 'byte',
+            'int16': 'short',
+            'int32': 'int',
+            'int64': 'long',
+            'int64_t': 'long',
+            'uint8': 'short',
+            'uint16': 'int',
+            'uint32': 'long',
+            'uint64': 'java.math.BigInteger',
+            'uint64_t': 'java.math.BigInteger',
+            'float': 'float',
+            'double': 'double',
+            'size_t': 'long',
+            'int': 'int',
+            'uint': 'long',
+            'DasBool': 'boolean',
+            'DasGuid': 'DasGuid',
+            'DasString': 'String',
+            'DasReadOnlyString': 'String',
+            'DasResult': 'DasResult',
+        }
+
+        if type_name in JAVA_TYPE_MAP:
+            return JAVA_TYPE_MAP[type_name]
+
+        if SwigTypeMapper.is_interface_type(type_name):
+            return type_name
+
+        return 'Object'
 
     def _generate_exception_check(self, interface: InterfaceDef) -> str:
         """生成 DasResult 异常检查"""
