@@ -21,6 +21,9 @@ from das_idl_parser import (
     ParameterDef, TypeInfo, ParamDirection
 )
 from das_idl_parser import parse_idl_file as _das_idl_parser_parse_idl_file
+from swig_java_generator import JavaSwigGenerator
+from swig_csharp_generator import CSharpSwigGenerator
+from swig_python_generator import PythonSwigGenerator
 
 # [binary_buffer] 方法允许的参数类型（只支持 unsigned char** 系列）
 BINARY_BUFFER_ALLOWED_TYPES = {
@@ -93,18 +96,20 @@ class SwigTypeMapper:
 class SwigCodeGenerator:
     """SWIG .i 文件生成器"""
 
-    def __init__(self, document: IdlDocument, idl_file_name: Optional[str] = None, idl_file_path: Optional[str] = None):
+    def __init__(self, document: IdlDocument, idl_file_name: Optional[str] = None, idl_file_path: Optional[str] = None, lang_generators: Optional[List] = None):
         self.document = document
-        self.idl_file_name = idl_file_name  # IDL文件名
-        self.idl_file_path = idl_file_path  # IDL文件路径
+        self.idl_file_name = idl_file_name
+        self.idl_file_path = idl_file_path
         self.indent = "    "
-        # 收集所有需要的接口类型（用于生成 DAS_DEFINE_RET_POINTER）
         self._collected_interface_types: Set[str] = set()
-        # 收集当前接口的所有 typemap，用于最后清除
         self._current_typemaps: List[str] = []
-        # 解析导入的 IDL 文档
         self._imported_documents: Dict[str, IdlDocument] = {}
         self._parse_imported_documents()
+
+        if lang_generators is None:
+            self.lang_generators = [JavaSwigGenerator(), CSharpSwigGenerator(), PythonSwigGenerator()]
+        else:
+            self.lang_generators = lang_generators
 
     def _parse_imported_documents(self) -> None:
         """解析导入的 IDL 文件，构建导入文档映射"""
@@ -159,11 +164,15 @@ class SwigCodeGenerator:
 
         parse_imports_recursive(self.document.imports, current_idl_dir)
 
-    def _is_binary_buffer_interface(self, interface_name: str) -> bool:
-        """判断是否是二进制缓冲区接口（动态检测）"""
-        interface = self._find_interface_by_name(interface_name)
-        if not interface:
-            return False
+    def _is_binary_buffer_interface(self, interface: InterfaceDef) -> bool:
+        """判断是否是二进制缓冲区接口"""
+        return interface.name.endswith('BinaryBuffer')
+
+    def _is_binary_data_method(self, interface: InterfaceDef, method: MethodDef) -> bool:
+        """判断是否是 binary_buffer 方法"""
+        if method.name == 'GetData' and self._is_binary_buffer_interface(interface):
+            return True
+        return False
 
         for method in interface.methods:
             if method.attributes.get('binary_buffer', False):
@@ -320,39 +329,6 @@ class SwigCodeGenerator:
 %typemap(argout) {typemap_sig} {{
     $result = SWIG_NewPointerObj(SWIG_as_voidptr(temp_{param.name}), $descriptor({base_type}*), SWIG_POINTER_OWN);
 }}
-
-#ifdef SWIGJAVA
-%rename("{method.name}_java_impl") {qualified_interface_name}::{method.name};
-%javamethodmodifiers {qualified_interface_name}::{method.name} "private"
-%typemap(javacode) {qualified_interface_name} %{{
-    public {base_type} {method.name}(""")
-
-            params = []
-            for p in method.parameters:
-                if p.direction != ParamDirection.OUT:
-                    params.append(f"{self._get_java_type(p.type_info.base_type)} {p.name}")
-            params_str = ", ".join(params)
-            lines.append(f"{params_str}")
-
-            lines.append(f""") throws DasException {{
-        {self._get_java_type(base_type)}[] out_holder = new {self._get_java_type(base_type)}[1];
-        DasResult hr = {method.name}_java_impl(""")
-
-            param_names = []
-            for p in method.parameters:
-                if p.direction != ParamDirection.OUT:
-                    param_names.append(p.name)
-            param_names_str = ", ".join(param_names)
-            lines.append(f"{param_names_str}")
-
-            lines.append(f""", out_holder);
-        if (hr < 0) {{
-            throw new DasException(hr);
-        }}
-        return out_holder[0];
-    }}
-%}}
-#endif
 """)
         else:
             cpp_type = self._get_cpp_type(base_type)
@@ -365,41 +341,15 @@ class SwigCodeGenerator:
 %typemap(argout) {typemap_sig} {{
     %append_output(SWIG_From_{self._get_swig_from_type(base_type)}(temp_{param.name}));
 }}
-
-#ifdef SWIGJAVA
-%rename("{method.name}_java_impl") {qualified_interface_name}::{method.name};
-%javamethodmodifiers {qualified_interface_name}::{method.name} "private"
-%typemap(javacode) {qualified_interface_name} %{{
-    public {self._get_java_type(base_type)} {method.name}(""")
-
-            params = []
-            for p in method.parameters:
-                if p.direction != ParamDirection.OUT:
-                    params.append(f"{self._get_java_type(p.type_info.base_type)} {p.name}")
-            params_str = ", ".join(params)
-            lines.append(f"{params_str}")
-
-            lines.append(f""") throws DasException {{
-        {self._get_java_type(base_type)}[] out_holder = new {self._get_java_type(base_type)}[1];
-        DasResult hr = {method.name}_java_impl(""")
-
-            param_names = []
-            for p in method.parameters:
-                if p.direction != ParamDirection.OUT:
-                    param_names.append(p.name)
-            param_names_str = ", ".join(param_names)
-            lines.append(f"{param_names_str}")
-
-            lines.append(f""", out_holder);
-        if (hr < 0) {{
-            throw new DasException(hr);
-        }}
-        return out_holder[0];
-    }}
-%}}
-#endif
 """)
 
+        lang_codes = []
+        for lang_generator in self.lang_generators:
+            lang_code = lang_generator.generate_out_param_wrapper(interface, method, param)
+            if lang_code:
+                lang_codes.append(lang_code)
+
+        lines.append("\n".join(lang_codes))
         return "\n".join(lines)
 
     def _get_cpp_type(self, type_name: str) -> str:
@@ -445,40 +395,6 @@ class SwigCodeGenerator:
         }
         return SWIG_FROM_MAP.get(type_name, 'int')
 
-    def _get_java_type(self, type_name: str) -> str:
-        """获取 Java 类型"""
-        JAVA_TYPE_MAP = {
-            'bool': 'boolean',
-            'int8': 'byte',
-            'int16': 'short',
-            'int32': 'int',
-            'int64': 'long',
-            'int64_t': 'long',
-            'uint8': 'short',
-            'uint16': 'int',
-            'uint32': 'long',
-            'uint64': 'java.math.BigInteger',
-            'uint64_t': 'java.math.BigInteger',
-            'float': 'float',
-            'double': 'double',
-            'size_t': 'long',
-            'int': 'int',
-            'uint': 'long',
-            'DasBool': 'boolean',
-            'DasGuid': 'DasGuid',
-            'DasString': 'String',
-            'DasReadOnlyString': 'String',
-            'DasResult': 'DasResult',
-        }
-
-        if type_name in JAVA_TYPE_MAP:
-            return JAVA_TYPE_MAP[type_name]
-
-        if SwigTypeMapper.is_interface_type(type_name):
-            return type_name
-
-        return 'Object'
-
     def _generate_exception_check(self, interface: InterfaceDef) -> str:
         """生成 DasResult 异常检查"""
         return f"""
@@ -497,31 +413,24 @@ class SwigCodeGenerator:
         为 Python/C#/Java 生成目标语言友好的二进制数据访问方法
         [binary_buffer] 方法的参数类型限定为 unsigned char** 或 const unsigned char**
         """
-        if not self._is_binary_buffer_interface(interface.name):
+        if not self._is_binary_buffer_interface(interface):
             return ""
 
-        # 验证所有 binary_buffer 方法的参数类型
         for method in interface.methods:
             self._validate_binary_buffer_method(interface, method)
 
-        # 获取 binary_buffer 方法的实际名称（支持自定义方法名）
-        # 例如: IDasImage::GetData, IDasMemory::GetRawData
         binary_buffer_method_name = None
         for method in interface.methods:
             if method.attributes.get('binary_buffer', False):
                 binary_buffer_method_name = method.name
                 break
 
-        # 根据 interface.name 选择正确的 GetSize 方法
-        # IDasImage 使用 GetDataSize() 返回数据字节数，而不是 GetSize()
-        # IDasMemory 使用 GetSize() 返回数据字节数
         if interface.name == "IDasImage":
             size_method_name = "GetDataSize"
         else:
             size_method_name = "GetSize"
 
         qualified_name = self._get_qualified_name(interface.name, interface.namespace)
-        native_name = f'{interface.name}_createDirectByteBuffer'
         lines = []
 
         lines.append(f"""
@@ -530,136 +439,15 @@ class SwigCodeGenerator:
 // 为二进制数据提供目标语言友好的访问方式
 // [binary_buffer] 方法参数类型: unsigned char** (统一类型，简化处理)
 // ============================================================================
-
-// Python: 提供 memoryview 零拷贝视图
-#ifdef SWIGPYTHON
-%extend {qualified_name} {{
-    PyObject* GetDataAsMemoryView() {{
-        unsigned char* data = nullptr;
-        uint64_t size = 0;
-
-        // 获取数据指针 (unsigned char**) - 使用 IDL 中标记的实际方法名
-        DasResult hr = $self->{binary_buffer_method_name}(&data);
-        if (hr < 0) {{
-            PyErr_SetString(PyExc_RuntimeError, "Failed to get data pointer");
-            return nullptr;
-        }}
-
-        // 获取数据大小 - 使用正确的 GetSize 方法
-        hr = $self->{size_method_name}(&size);
-        if (hr < 0) {{
-            PyErr_SetString(PyExc_RuntimeError, "Failed to get data size");
-            return nullptr;
-        }}
-
-        // 创建 memoryview（零拷贝）
-        return PyMemoryView_FromMemory(reinterpret_cast<char*>(data), static_cast<Py_ssize_t>(size), PyBUF_READ);
-    }}
-
-    PyObject* GetDataAsBytes() {{
-        unsigned char* data = nullptr;
-        uint64_t size = 0;
-
-        // 获取数据指针 (unsigned char**) - 使用 IDL 中标记的实际方法名
-        DasResult hr = $self->{binary_buffer_method_name}(&data);
-        if (hr < 0) {{
-            PyErr_SetString(PyExc_RuntimeError, "Failed to get data pointer");
-            return nullptr;
-        }}
-
-        // 获取数据大小 - 使用正确的 GetSize 方法
-        hr = $self->{size_method_name}(&size);
-        if (hr < 0) {{
-            PyErr_SetString(PyExc_RuntimeError, "Failed to get data size");
-            return nullptr;
-        }}
-
-        // 创建 bytes 对象（拷贝数据）
-        return PyBytes_FromStringAndSize(reinterpret_cast<const char*>(data), static_cast<Py_ssize_t>(size));
-    }}
-}}
-#endif // SWIGPYTHON
-
-// C#: 提供 IntPtr 和 Span<byte> 支持
-#ifdef SWIGCSHARP
-%typemap(csclassmodifiers) {qualified_name} "public partial class"
-
-%typemap(cscode) {qualified_name} %{{
-    /// <summary>
-    /// 获取数据的原始指针（用于高性能场景）
-    /// </summary>
-    public System.IntPtr GetDataPointer() {{
-        System.IntPtr ptr = System.IntPtr.Zero;
-        var result = GetData(out ptr);
-        if (result < 0) {{
-            throw new System.Exception("Failed to get data pointer");
-        }}
-        return ptr;
-    }}
-
-    /// <summary>
-    /// 获取数据的 Span 视图（零拷贝，需要 unsafe 上下文）
-    /// </summary>
-    public unsafe System.Span<byte> GetDataAsSpan() {{
-        var ptr = GetDataPointer();
-        ulong size;
-        GetSize(out size);
-        return new System.Span<byte>(ptr.ToPointer(), (int)size);
-    }}
-
-    /// <summary>
-    /// 获取数据的字节数组副本
-    /// </summary>
-    public byte[] GetDataAsByteArray() {{
-        var ptr = GetDataPointer();
-        ulong size;
-        GetSize(out size);
-        var array = new byte[size];
-        System.Runtime.InteropServices.Marshal.Copy(ptr, array, 0, (int)size);
-        return array;
-    }}
-%}}
-#endif // SWIGCSHARP
-
-// Java: 提供 ByteBuffer 支持
-#ifdef SWIGJAVA
-%typemap(javaclassmodifiers) {qualified_name} "public class"
-
-%typemap(javacode) {qualified_name} %{{
-    /**
-     * 获取数据的直接 ByteBuffer（零拷贝）
-     * @return 直接 ByteBuffer 视图
-     */
-    public java.nio.ByteBuffer getDataAsDirectBuffer() {{
-        long[] ptrHolder = new long[1];
-        long[] sizeHolder = new long[1];
-
-        int hr = GetDataNative(ptrHolder);
-        if (hr < 0) {{
-            throw new RuntimeException("Failed to get data pointer");
-        }}
-
-        hr = GetSizeNative(sizeHolder);
-        if (hr < 0) {{
-            throw new RuntimeException("Failed to get data size");
-        }}
-
-        return {native_name}(ptrHolder[0], (int)sizeHolder[0]);
-    }}
-
-    private static native java.nio.ByteBuffer {native_name}(long address, int capacity);
-%}}
-
-%native({native_name}) jobject {native_name}(jlong address, jint capacity);
-%{{
-JNIEXPORT jobject JNICALL Java_{qualified_name.replace('::', '_')}_createDirectByteBuffer(
-    JNIEnv *jenv, jclass jcls, jlong address, jint capacity) {{
-    return jenv->NewDirectByteBuffer((void*)address, capacity);
-}}
-%}}
-#endif // SWIGJAVA
 """)
 
+        lang_codes = []
+        for lang_generator in self.lang_generators:
+            lang_code = lang_generator.generate_binary_buffer_helpers(interface, binary_buffer_method_name, size_method_name)
+            if lang_code:
+                lang_codes.append(lang_code)
+
+        lines.append("\n".join(lang_codes))
         return "\n".join(lines)
 
     def _generate_clear_typemaps(self) -> str:
