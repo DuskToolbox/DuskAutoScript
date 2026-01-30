@@ -670,9 +670,15 @@ public:
         lines.append("")
 
         # %{ %} 块 - SWIG 形式 include
+        same_name_include = None
         for abi_include in abi_includes:
-            if not abi_include.startswith(f"{interface.name}."):
+            if abi_include.startswith(f"{interface.name}."):
+                same_name_include = abi_include
+            else:
                 lines.append(f"%include <{abi_include}>")
+
+        if same_name_include:
+            lines.append(f"%include <{same_name_include}>")
 
         # ignore 指令（原始接口）
         lines.append(self._generate_ignore_directives(interface))
