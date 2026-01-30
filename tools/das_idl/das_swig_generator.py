@@ -24,6 +24,8 @@ from das_idl_parser import parse_idl_file as _das_idl_parser_parse_idl_file
 from swig_java_generator import JavaSwigGenerator
 from swig_csharp_generator import CSharpSwigGenerator
 from swig_python_generator import PythonSwigGenerator
+from swig_lang_generator_base import SwigLangGenerator
+BaseSwigGenerator = SwigLangGenerator
 
 # [binary_buffer] 方法允许的参数类型（只支持 unsigned char** 系列）
 BINARY_BUFFER_ALLOWED_TYPES = {
@@ -96,7 +98,7 @@ class SwigTypeMapper:
 class SwigCodeGenerator:
     """SWIG .i 文件生成器"""
 
-    def __init__(self, document: IdlDocument, idl_file_name: Optional[str] = None, idl_file_path: Optional[str] = None, lang_generators: Optional[List] = None):
+    def __init__(self, document: IdlDocument, idl_file_name: Optional[str] = None, idl_file_path: Optional[str] = None, lang_generators: Optional[List[SwigLangGenerator]] = None):
         self.document = document
         self.idl_file_name = idl_file_name
         self.idl_file_path = idl_file_path
@@ -168,16 +170,7 @@ class SwigCodeGenerator:
         """判断是否是二进制缓冲区接口"""
         return interface.name.endswith('BinaryBuffer')
 
-    def _is_binary_data_method(self, interface: InterfaceDef, method: MethodDef) -> bool:
-        """判断是否是 binary_buffer 方法"""
-        if method.name == 'GetData' and self._is_binary_buffer_interface(interface):
-            return True
-        return False
 
-        for method in interface.methods:
-            if method.attributes.get('binary_buffer', False):
-                return True
-        return False
 
     def _get_interface_namespace(self, interface_name: str) -> str | None:
         """根据接口名查找其命名空间
@@ -424,6 +417,9 @@ class SwigCodeGenerator:
             if method.attributes.get('binary_buffer', False):
                 binary_buffer_method_name = method.name
                 break
+
+        if not binary_buffer_method_name:
+            return ""
 
         if interface.name == "IDasImage":
             size_method_name = "GetDataSize"
@@ -675,7 +671,8 @@ public:
 
         # %{ %} 块 - SWIG 形式 include
         for abi_include in abi_includes:
-            lines.append(f"%include <{abi_include}>")
+            if not abi_include.startswith(f"{interface.name}."):
+                lines.append(f"%include <{abi_include}>")
 
         # ignore 指令（原始接口）
         lines.append(self._generate_ignore_directives(interface))

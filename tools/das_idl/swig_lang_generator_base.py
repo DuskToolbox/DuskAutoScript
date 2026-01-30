@@ -36,7 +36,7 @@ class SwigLangGenerator(ABC):
 
         Args:
             interface: 接口定义
-            method_name: 获取数据的方法名（如 GetData）
+            method_name: 获取数据的方法名（如 GetData），如果不提供则为空字符串
             size_method_name: 获取大小的方法名（如 GetSize）
 
         Returns:
