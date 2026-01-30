@@ -19,6 +19,7 @@ DAS C++ 包装代码生成器
 """
 
 import os
+import glob
 from pathlib import Path
 from datetime import datetime, timezone
 import importlib
@@ -106,11 +107,35 @@ class CppWrapperTypeMapper:
 
     @classmethod
     def get_wrapper_class_name(cls, interface_name: str) -> str:
-        """获取包装类名称: IDasXxx -> DasXxx"""
+        """获取包装类名称: IDasXxx -> DasXxx
+
+        支持带命名空间的接口类型，例如：
+        - IDasComponent -> DasComponent
+        - ::Das::PluginInterface::IDasComponent -> ::Das::PluginInterface::DasComponent
+        """
+        # 处理带命名空间的类型（如 ::Das::PluginInterface::IDasComponent）
+        if '::' in interface_name:
+            parts = interface_name.split('::')
+            last_part = parts[-1]
+
+            # 转换最后一部分的接口名为包装类名
+            if last_part.startswith('IDas'):
+                wrapper_name = last_part[1:]
+            elif last_part.startswith('I'):
+                wrapper_name = last_part[1:]
+            else:
+                wrapper_name = last_part
+
+            # 保留命名空间前缀，只替换最后一部分
+            if parts[0] == '':  # 全局命名空间前缀
+                return '::' + '::'.join(parts[1:-1] + [wrapper_name])
+            return '::'.join(parts[:-1] + [wrapper_name])
+
+        # 处理不带命名空间的简单接口名
         if interface_name.startswith('IDas'):
-            return interface_name[1:]  # IDasXxx -> DasXxx
-        elif interface_name.startswith('I'):
-            return interface_name[1:]  # IXxx -> Xxx
+            return interface_name[1:]
+        if interface_name.startswith('I'):
+            return interface_name[1:]
         return interface_name
 
     @classmethod
@@ -128,6 +153,8 @@ class CppWrapperTypeMapper:
 
         # 接口类型返回智能指针包装
         if cls.is_interface_type(base):
+            # 对于带命名空间的接口类型，get_wrapper_class_name 已经返回完整的命名空间限定符
+            # 例如: ::Das::PluginInterface::IDasComponent -> ::Das::PluginInterface::DasComponent
             wrapper_name = cls.get_wrapper_class_name(base)
             return wrapper_name
 
@@ -348,57 +375,8 @@ class CppWrapperGenerator:
             # 添加 ABI 头文件
             includes.append(h_path)
 
-            # 构建wrapper头文件路径
-            # 文件名格式: Das.Namespace.FileName.hpp
-            # 需要确定该IDL文件中的命名空间
-            wrapper_filename = None
-            for interface in self.document.interfaces:
-                if interface.name == import_name:
-                    # 找到对应的接口，使用其命名空间
-                    if interface.namespace:
-                        namespace_path = self._to_namespace_path(interface.namespace)
-                        wrapper_filename = f"{namespace_path}.{import_name}.hpp"
-                    else:
-                        wrapper_filename = f"{import_name}.hpp"
-                    break
-            for enum in self.document.enums:
-                if enum.name == import_name:
-                    if enum.namespace:
-                        namespace_path = self._to_namespace_path(enum.namespace)
-                        wrapper_filename = f"{namespace_path}.{import_name}.hpp"
-                    else:
-                        wrapper_filename = f"{import_name}.hpp"
-                    break
-
-            # 如果在当前文档中找不到，尝试从导入的文档中查找
-            if wrapper_filename is None and import_name in self._imported_documents:
-                # 从导入的文档中查找
-                imported_doc = self._imported_documents[import_name]
-
-                # 在接口中查找
-                for interface in imported_doc.interfaces:
-                    if interface.name == import_name:
-                        if interface.namespace:
-                            namespace_path = self._to_namespace_path(interface.namespace)
-                            wrapper_filename = f"{namespace_path}.{import_name}.hpp"
-                        else:
-                            wrapper_filename = f"{import_name}.hpp"
-                        break
-
-                # 如果在接口中没找到，在枚举中查找
-                if wrapper_filename is None:
-                    for enum in imported_doc.enums:
-                        if enum.name == import_name:
-                            if enum.namespace:
-                                namespace_path = self._to_namespace_path(enum.namespace)
-                                wrapper_filename = f"{namespace_path}.{import_name}.hpp"
-                            else:
-                                wrapper_filename = f"{import_name}.hpp"
-                            break
-
-            # 添加 wrapper 头文件（如果找到）
-            if wrapper_filename:
-                includes.append(wrapper_filename)
+            # 注意：wrapper头文件的include由 _generate_dependent_wrapper_includes() 在类声明后生成
+            # 这里不再生成wrapper include，以避免在文件头部错误包含wrapper文件
 
         return includes
 
@@ -510,11 +488,13 @@ class CppWrapperGenerator:
         namespace_declarations = {}
         type_namespace_map = self._collect_type_namespace_mapping()
 
+        # 验证依赖的接口类型是否存在
+        self._validate_dependent_interfaces()
+
         for interface in self.document.interfaces:
             current_ns = interface.namespace
 
             for type_name in self._dependent_interfaces:
-                # 将 ABI 接口名映射为 wrapper 类名（IDasXxx -> DasXxx）
                 wrapper_type = CppWrapperTypeMapper.get_wrapper_class_name(type_name)
                 if wrapper_type in type_namespace_map:
                     type_ns = type_namespace_map[wrapper_type]
@@ -523,7 +503,16 @@ class CppWrapperGenerator:
                         if wrapper_type in inc and '.hpp' in inc:
                             type_included = True
                             break
+
                     if type_ns and type_ns != current_ns and not type_included:
+                        abi_name = type_name
+                        if abi_name.startswith('::'):
+                            abi_name = abi_name[2:]
+                        abi_name = abi_name.replace('::', '/')
+                        abi_include = f"{abi_name}.h"
+                        if abi_include not in includes:
+                            includes.append(abi_include)
+
                         if type_ns not in namespace_declarations:
                             namespace_declarations[type_ns] = set()
                         namespace_declarations[type_ns].add(wrapper_type)
@@ -652,6 +641,49 @@ class CppWrapperGenerator:
         self._type_namespace_map = mapping
         return mapping
 
+    def _validate_dependent_interfaces(self) -> None:
+        """验证依赖的接口类型是否存在
+
+        检查所有依赖的接口类型是否在 import 的 IDL 文件或当前 IDL 文件中定义。
+        如果某个接口类型不存在，报错并退出。
+
+        跳过内置接口类型（IDasReadOnlyString、IDasBase、IDasSwigBase）。
+
+        Raises:
+            RuntimeError: 当接口类型未找到时
+        """
+        builtin_interfaces = {'IDasReadOnlyString', 'IDasBase', 'IDasSwigBase'}
+
+        for type_name in self._dependent_interfaces:
+            # 跳过内置接口类型
+            simple_name = type_name.split('::')[-1]
+            if simple_name in builtin_interfaces:
+                continue
+
+            found = False
+
+            for interface in self.document.interfaces:
+                if interface.name == simple_name:
+                    found = True
+                    break
+
+            if not found:
+                for doc in self._imported_documents.values():
+                    for interface in doc.interfaces:
+                        if interface.name == simple_name:
+                            found = True
+                            break
+                    if found:
+                        break
+
+            if not found:
+                error_msg = (
+                    f"Error: Interface type '{type_name}' not found.\n"
+                    f"Please ensure that interface is defined in an IDL file and "
+                    f"imported in {self.idl_file_path}"
+                )
+                raise RuntimeError(error_msg)
+
     def _collect_type_to_idl_file_mapping(self) -> dict[str, str]:
         """收集接口类型名到其所在IDL文件名的映射
 
@@ -761,12 +793,16 @@ class CppWrapperGenerator:
         """获取带命名空间限定符的完整类型名
 
         Args:
-            type_name: 类型名称（如 DasVariantVector）
+            type_name: 类型名称（如 DasVariantVector 或 ::Das::PluginInterface::DasComponent）
             current_namespace: 当前命名空间（如 Das::PluginInterface）
 
         Returns:
             完整的类型名，如果类型在不同命名空间则添加命名空间限定符
         """
+        # 如果类型已经包含命名空间限定符（全局命名空间或嵌套命名空间），直接返回
+        if '::' in type_name:
+            return type_name
+
         type_namespace_map = self._collect_type_namespace_mapping()
 
         # 如果类型在映射中且不在当前命名空间，添加命名空间限定符

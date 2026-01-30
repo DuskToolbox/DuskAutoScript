@@ -26,12 +26,15 @@ namespace Das::Http::Beast
             ParseBody();
         }
 
-        const std::string& Method() const noexcept
+        std::string Method() const noexcept
         {
-            return request_.method_string();
+            return std::string{request_.method_string()};
         }
 
-        const std::string& Target() const noexcept { return request_.target(); }
+        std::string Target() const noexcept
+        {
+            return std::string{request_.target()};
+        }
 
         const std::string& Body() const noexcept { return request_.body(); }
 

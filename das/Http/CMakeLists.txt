@@ -12,6 +12,8 @@ target_link_libraries(DasHttp PRIVATE
         Boost::beast
         Boost::asio)
 
+target_compile_definitions(DasHttp PRIVATE _WIN32_WINNT=0x0601)
+
 set_target_properties(DasHttp PROPERTIES
         CXX_STANDARD 20
         CXX_EXTENSIONS OFF

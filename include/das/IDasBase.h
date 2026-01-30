@@ -227,11 +227,12 @@ DAS_DEFINE_GUID(
     0x00,
     0x00,
     0x46)
+DAS_SWIG_EXPORT_ATTRIBUTE(IDasBase)
 DAS_INTERFACE IDasBase
 {
-    SWIG_PRIVATE
     virtual uint32_t AddRef() = 0;
     virtual uint32_t Release() = 0;
+    SWIG_PRIVATE
     DAS_METHOD       QueryInterface(const DasGuid& iid, void** pp_object) = 0;
 };
 
@@ -250,6 +251,7 @@ DAS_DEFINE_GUID(
     0x66,
     0x68,
     0x92);
+DAS_SWIG_EXPORT_ATTRIBUTE(IDasWeakReference)
 DAS_INTERFACE IDasWeakReference : public IDasBase
 {
     /**
@@ -277,6 +279,7 @@ DAS_DEFINE_GUID(
     0x66,
     0xda,
     0x5);
+DAS_SWIG_EXPORT_ATTRIBUTE(IDasWeakReferenceSource)
 DAS_INTERFACE IDasWeakReferenceSource : public IDasBase
 {
     DAS_METHOD GetWeakReference(IDasWeakReference * *pp_out_weak) = 0;
