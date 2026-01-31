@@ -614,6 +614,14 @@ class CppWrapperGenerator:
             if CppWrapperTypeMapper.is_interface_type(prop.type_info.base_type):
                 self._dependent_interfaces.add(prop.type_info.base_type)
 
+        for method in interface.methods:
+            for param in method.parameters:
+                if param.direction == ParamDirection.OUT:
+                    wrapper_type = CppWrapperTypeMapper.get_return_type_for_out_param(param.type_info)
+                    if wrapper_type and wrapper_type != "void":
+                        # 对于[out]参数，参数的base_type就是接口类型
+                        self._dependent_interfaces.add(param.type_info.base_type)
+
     def _collect_type_namespace_mapping(self) -> dict[str, Optional[str]]:
         """收集所有接口类型到其命名空间的映射
 
@@ -658,6 +666,10 @@ class CppWrapperGenerator:
             # 跳过内置接口类型
             simple_name = type_name.split('::')[-1]
             if simple_name in builtin_interfaces:
+                continue
+
+            # 跳过非接口类型（不是以'I'开头的类型，如int64_t、uint64_t）
+            if not simple_name.startswith('I'):
                 continue
 
             found = False
@@ -1446,12 +1458,24 @@ class CppWrapperGenerator:
             for type_name in self._dependent_interfaces:
                 type_ns = type_namespace_map.get(type_name)
 
-                if not type_ns or type_ns == current_namespace:
+                if not type_ns:
                     continue
 
-                ns_path = self._to_namespace_path(type_ns)
+                # 跳过非接口类型（如enum）
+                simple_name = type_name.split('::')[-1]
+                if not simple_name.startswith('I'):
+                    continue
+
+                # 获取依赖接口所在的IDL文件名
                 idl_file_name = type_to_idl_map.get(type_name, type_name)
-                includes.add(f"{ns_path}.{idl_file_name}.hpp")
+
+                # 检查是否需要include：
+                # 1. 如果依赖接口在不同命名空间，必须include
+                # 2. 如果依赖接口在同一命名空间但在不同IDL文件，也必须include
+                current_idl_basename = self.idl_file_name.rsplit('.', 1)[0] if self.idl_file_name else None
+                if type_ns != current_namespace or (type_ns == current_namespace and idl_file_name != current_idl_basename):
+                    ns_path = self._to_namespace_path(type_ns)
+                    includes.add(f"{ns_path}.{idl_file_name}.hpp")
 
             if not includes:
                 return ""
@@ -1562,6 +1586,14 @@ class CppWrapperGenerator:
                 for interface in items['interfaces']:
                     wrapper_name = CppWrapperTypeMapper.get_wrapper_class_name(interface.name)
                     content += f"{ns_indent}class {wrapper_name};\n"
+
+                # 前向声明依赖接口的包装类（只处理接口类型，以'I'开头）
+                type_namespace_map = self._collect_type_namespace_mapping()
+                for dep_interface_name in sorted(self._dependent_interfaces):
+                    dep_ns = type_namespace_map.get(dep_interface_name)
+                    if dep_ns == namespace_name and dep_interface_name.startswith('I'):
+                        dep_wrapper_name = CppWrapperTypeMapper.get_wrapper_class_name(dep_interface_name)
+                        content += f"{ns_indent}class {dep_wrapper_name};\n"
                 content += "\n"
 
             # 生成包装类
