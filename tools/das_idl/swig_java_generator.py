@@ -216,8 +216,12 @@ class JavaSwigGenerator(SwigLangGenerator):
         
         if is_interface:
             java_type = out_type
-            # 接口类型：存储指针
-            cpp_value_type = f"{out_type}*"
+            # 接口类型：存储指针，使用完全限定名
+            namespace = self.get_type_namespace(out_type)
+            if namespace:
+                cpp_value_type = f"{namespace}::{out_type}*"
+            else:
+                cpp_value_type = f"{out_type}*"
             cpp_default_value = "nullptr"
             return f"""
 // ============================================================================
