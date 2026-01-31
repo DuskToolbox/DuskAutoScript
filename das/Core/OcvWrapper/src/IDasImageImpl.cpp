@@ -2,6 +2,9 @@
 #include "Config.h"
 #include "IDasMemory.h"
 #include "das/DasApi.h"
+#include <das/DasPtr.hpp>
+#include <das/_autogen/idl/abi/IDasBinaryBuffer.h>
+#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasBinaryBuffer.Implements.hpp>
 
 #include <DAS/_autogen/idl/abi/IDasImage.h>
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
@@ -24,6 +27,39 @@ DAS_IGNORE_OPENCV_WARNING
 DAS_DISABLE_WARNING_END
 
 DAS_CORE_OCVWRAPPER_NS_BEGIN
+
+namespace
+{
+    class DasBinaryBufferImpl final
+        : public DAS::ExportInterface::DasBinaryBufferImplBase<
+              DasBinaryBufferImpl>
+    {
+    public:
+        DasBinaryBufferImpl(const size_t size_in_bytes) : size_{size_in_bytes}
+        {
+            up_data_ = std::make_unique<unsigned char[]>(size_in_bytes);
+        }
+
+        DAS_IMPL GetData(unsigned char** pp_out_data) override
+        {
+            DAS_UTILS_CHECK_POINTER(pp_out_data);
+            *pp_out_data = up_data_.get();
+            return DAS_S_OK;
+        }
+
+        DAS_IMPL GetSize(uint64_t* p_out_size) override
+        {
+            DAS_UTILS_CHECK_POINTER(p_out_size);
+            *p_out_size = size_;
+            return DAS_S_OK;
+        }
+
+    private:
+        size_t                           size_;
+        std::unique_ptr<unsigned char[]> up_data_;
+    };
+}
+
 DAS_NS_ANONYMOUS_DETAILS_BEGIN
 
 auto ToOcvType(ExportInterface::DasImageFormat format)
@@ -108,31 +144,39 @@ DasResult IDasImageImpl::GetDataSize(uint64_t* p_out_size)
 
     return DAS_S_OK;
 }
-DasResult IDasImageImpl::GetData(unsigned char** pp_out_data)
+
+DasResult IDasImageImpl::GetBinaryBuffer(
+    Das::ExportInterface::IDasBinaryBuffer** pp_out_buffer)
 {
-    DAS_UTILS_CHECK_POINTER(pp_out_data)
+    DAS_UTILS_CHECK_POINTER(pp_out_buffer);
 
     try
     {
-        size_t data_size;
-        GetDataSize(&data_size);
-        const auto int_data_size = static_cast<int>(data_size);
-        (void)int_data_size;
-        const auto umat = mat_.getUMat(cv::ACCESS_READ, cv::USAGE_DEFAULT);
-        // TODO: 未来这个接口返回 IDasMemory 否则不好实现
-        pp_out_data = nullptr;
-    }
-    catch (cv::Exception& ex)
-    {
-        DAS_CORE_LOG_ERROR(ex.err);
-        DAS_CORE_LOG_ERROR(
-            "NOTE:\nfile = {}\nline = {}\nfunction = {}",
-            ex.file,
-            ex.line,
-            ex.func);
-    }
+        uint64_t   data_size{};
+        const auto get_size_result = GetDataSize(&data_size);
+        if (DAS::IsFailed(get_size_result))
+        {
+            return get_size_result;
+        }
 
-    return DAS_S_OK;
+        auto* const    p_buffer = DasBinaryBufferImpl::MakeRaw(data_size);
+        unsigned char* p_buffer_data{};
+        const auto     get_data_result = p_buffer->GetData(&p_buffer_data);
+        if (DAS::IsFailed(get_data_result))
+        {
+            p_buffer->Release();
+            return get_data_result;
+        }
+
+        std::memcpy(p_buffer_data, mat_.data, data_size);
+
+        *pp_out_buffer = p_buffer;
+        return DAS_S_OK;
+    }
+    catch (std::bad_alloc&)
+    {
+        return DAS_E_OUT_OF_MEMORY;
+    }
 }
 
 auto IDasImageImpl::GetImpl() -> cv::Mat { return mat_; }
@@ -226,10 +270,22 @@ DasResult CreateIDasImageFromRgb888(
         return get_size_result;
     }
 
-    if (const auto get_pointer_result = p_alias_memory->GetRawData(&p_data);
-        DAS::IsFailed(get_pointer_result)) [[unlikely]]
+    // 使用新的 GetBinaryBuffer API 替代已废弃的 GetRawData
+    DAS::ExportInterface::IDasBinaryBuffer* p_buffer = nullptr;
+    if (const auto get_buffer_result =
+            p_alias_memory->GetBinaryBuffer(&p_buffer);
+        DAS::IsFailed(get_buffer_result)) [[unlikely]]
     {
-        return get_pointer_result;
+        return get_buffer_result;
+    }
+
+    // 使用 DasPtr 管理生命周期，确保资源释放
+    DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer> buffer_guard(p_buffer);
+
+    if (const auto get_data_result = p_buffer->GetData(&p_data);
+        DAS::IsFailed(get_data_result)) [[unlikely]]
+    {
+        return get_data_result;
     }
 
     const size_t required_size = std::abs(size.height * size.width * 4);

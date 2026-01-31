@@ -61,9 +61,10 @@ DasResult AdbCapturePlugin::CreateFeatureInterface(
 
 static std::atomic_int32_t g_ref_count;
 
-DasResult AdbCapturePlugin::CanUnloadNow()
+DasResult AdbCapturePlugin::CanUnloadNow(bool* p_can_unload)
 {
-    return g_ref_count == 0 ? DAS_TRUE : DAS_FALSE;
+    *p_can_unload = g_ref_count == 0;
+    return DAS_S_OK;
 }
 
 void AdbCaptureAddRef() { g_ref_count++; }

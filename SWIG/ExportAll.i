@@ -11,6 +11,7 @@
 
 %{
 #include <das/DasExport.h>
+#include <das/DasTypes.hpp>
 #include <das/IDasBase.h>
 #include <das/DasString.hpp>
 #include <das/DasException.hpp>
@@ -131,6 +132,7 @@ PyInit__DasCorePythonExport(void) {
 #endif // SWIGPYTHON
 
 %include <das/DasExport.h>
+%include <das/DasTypes.hpp>
 %include <das/IDasBase.h>
 %include <das/DasString.hpp>
 %include <das/DasException.hpp>

@@ -63,7 +63,8 @@ public:
         const Das::ExportInterface::DasRect* p_rect,
         Das::ExportInterface::IDasImage**    pp_out_image) override;
     DAS_IMPL GetDataSize(uint64_t* p_out_size) override;
-    DAS_IMPL GetData(unsigned char** pp_out_data) override;
+    DAS_IMPL GetBinaryBuffer(
+        Das::ExportInterface::IDasBinaryBuffer** pp_out_buffer) override;
 
     auto GetImpl() -> cv::Mat;
 };

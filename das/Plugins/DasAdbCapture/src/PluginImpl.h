@@ -36,7 +36,7 @@ public:
         override;
     DAS_IMPL CreateFeatureInterface(size_t index, void** pp_out_interface)
         override;
-    DAS_IMPL CanUnloadNow() override;
+    DAS_IMPL CanUnloadNow(bool* p_can_unload) override;
 };
 
 void AdbCaptureAddRef();

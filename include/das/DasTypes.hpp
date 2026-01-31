@@ -86,6 +86,5 @@ struct IDasWeakReference;
 struct IDasWeakReferenceSource;
 struct IDasReadOnlyString;
 struct IDasString;
-struct IDasException;
 
 #endif // DAS_TYPES_HPP

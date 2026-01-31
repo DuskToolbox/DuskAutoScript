@@ -163,6 +163,7 @@ set(DAS_OFFICIAL_IIDS_DEPS_FILE "${CMAKE_BINARY_DIR}/das/official_iids_deps.txt"
 # 生成官方IID列表的自定义命令
 add_custom_command(
         OUTPUT ${DAS_OFFICIAL_IIDS_HEADER} ${DAS_OFFICIAL_IIDS_SOURCE}
+        COMMAND ${CMAKE_COMMAND} -E remove -f ${DAS_OFFICIAL_IIDS_DEPS_FILE}
         COMMAND ${DAS_IDL_VENV_PYTHON} ${CMAKE_SOURCE_DIR}/tools/generate_official_iids.py
         -i ${DAS_IDL_FILES}
         -o ${DAS_OFFICIAL_IIDS_OUTPUT_DIR}

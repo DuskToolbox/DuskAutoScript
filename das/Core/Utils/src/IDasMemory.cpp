@@ -1,12 +1,45 @@
-#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasMemory.Implements.hpp>
 #include <cstring>
-#include <das/DasApi.h>
 #include <das/Core/Logger/Logger.h>
+#include <das/DasApi.h>
 #include <das/Utils/CommonUtils.hpp>
+#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasMemory.Implements.hpp>
 #include <memory>
+
+#include <das/_autogen/idl/abi/IDasBinaryBuffer.h>
+#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasBinaryBuffer.Implements.hpp>
+#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasBinaryBuffer.hpp>
 
 namespace
 {
+    class DasBinaryBufferImpl final
+        : public DAS::ExportInterface::DasBinaryBufferImplBase<
+              DasBinaryBufferImpl>
+    {
+    public:
+        explicit DasBinaryBufferImpl(const size_t size) : size_{size}
+        {
+            up_data_ = std::make_unique<unsigned char[]>(size);
+        }
+
+        DasResult GetData(unsigned char** pp_out_data) override
+        {
+            DAS_UTILS_CHECK_POINTER(pp_out_data);
+            *pp_out_data = up_data_.get();
+            return DAS_S_OK;
+        }
+
+        DasResult GetSize(uint64_t* p_out_size) override
+        {
+            DAS_UTILS_CHECK_POINTER(p_out_size);
+            *p_out_size = size_;
+            return DAS_S_OK;
+        }
+
+    private:
+        size_t                           size_;
+        std::unique_ptr<unsigned char[]> up_data_;
+    };
+
     class DasMemoryImpl final
         : public DAS::ExportInterface::DasMemoryImplBase<DasMemoryImpl>
     {
@@ -17,12 +50,31 @@ namespace
             p_offset_data_ = up_data_.get();
         }
 
-        DAS_IMPL GetRawData(unsigned char** pp_out_data) override
+        DAS_IMPL GetBinaryBuffer(
+            DAS::ExportInterface::IDasBinaryBuffer** pp_out_buffer) override
         {
-            DAS_UTILS_CHECK_POINTER(pp_out_data);
+            DAS_UTILS_CHECK_POINTER(pp_out_buffer);
 
-            *pp_out_data = up_data_.get();
-            return DAS_S_OK;
+            try
+            {
+                auto* const    p_buffer = DasBinaryBufferImpl::MakeRaw(size);
+                unsigned char* p_buffer_data{};
+                const auto get_data_result = p_buffer->GetData(&p_buffer_data);
+                if (DAS::IsFailed(get_data_result))
+                {
+                    p_buffer->Release();
+                    return get_data_result;
+                }
+
+                std::memcpy(p_buffer_data, up_data_.get(), size);
+
+                *pp_out_buffer = p_buffer;
+                return DAS_S_OK;
+            }
+            catch (std::bad_alloc&)
+            {
+                return DAS_E_OUT_OF_MEMORY;
+            }
         }
 
         DAS_IMPL SetOffset(ptrdiff_t offset) override
@@ -44,7 +96,7 @@ namespace
 
         DAS_IMPL GetOffset(ptrdiff_t* p_out_offset) override
         {
-            DAS_UTILS_CHECK_POINTER(p_out_offset)
+            DAS_UTILS_CHECK_POINTER(p_out_offset);
 
             *p_out_offset = p_offset_data_ - up_data_.get();
 
@@ -55,12 +107,14 @@ namespace
         {
             if (new_size_in_byte > size)
             {
-                auto up_new_data = std::make_unique<unsigned char[]>(size);
+                auto up_new_data =
+                    std::make_unique<unsigned char[]>(new_size_in_byte);
 
                 std::memcpy(up_new_data.get(), up_data_.get(), size);
 
                 up_data_ = std::move(up_new_data);
                 size = new_size_in_byte;
+                p_offset_data_ = up_data_.get();
 
                 return DAS_S_OK;
             }
@@ -69,7 +123,7 @@ namespace
 
         DAS_IMPL GetSize(uint64_t* p_out_size) override
         {
-            DAS_UTILS_CHECK_POINTER(p_out_size)
+            DAS_UTILS_CHECK_POINTER(p_out_size);
             *p_out_size = size;
             return DAS_S_OK;
         }
@@ -77,13 +131,13 @@ namespace
     private:
         unsigned char*                   p_offset_data_;
         size_t                           size;
-        std::unique_ptr<unsigned char[]> up_data_{};
+        std::unique_ptr<unsigned char[]> up_data_;
     };
 } // namespace
 
 DasResult CreateIDasMemory(
     size_t                             size_in_byte,
-    Das::ExportInterface::IDasMemory** pp_out_memory)
+    DAS::ExportInterface::IDasMemory** pp_out_memory)
 {
     DAS_UTILS_CHECK_POINTER(pp_out_memory)
 

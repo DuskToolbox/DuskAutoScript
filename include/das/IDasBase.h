@@ -230,9 +230,10 @@ DAS_DEFINE_GUID(
 DAS_SWIG_EXPORT_ATTRIBUTE(IDasBase)
 DAS_INTERFACE IDasBase
 {
+    SWIG_PRIVATE
     virtual uint32_t AddRef() = 0;
     virtual uint32_t Release() = 0;
-    SWIG_PRIVATE
+    SWIG_PUBLIC
     DAS_METHOD       QueryInterface(const DasGuid& iid, void** pp_object) = 0;
 };
 
