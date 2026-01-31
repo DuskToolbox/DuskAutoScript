@@ -5,12 +5,59 @@ SWIG 语言生成器基类
 """
 
 from abc import ABC, abstractmethod
-from typing import List
+from typing import Callable, Optional
 from das_idl_parser import InterfaceDef, MethodDef, ParameterDef
+
+
+class SwigLangGeneratorContext:
+    """SWIG 语言生成器上下文
+    
+    提供语言生成器需要的外部信息，如类型命名空间查找等
+    """
+    
+    def __init__(self, get_interface_namespace_func: Optional[Callable[[str], Optional[str]]] = None):
+        """
+        Args:
+            get_interface_namespace_func: 根据接口名获取其命名空间的函数
+        """
+        self._get_interface_namespace = get_interface_namespace_func
+    
+    def get_type_namespace(self, type_name: str) -> Optional[str]:
+        """获取类型的命名空间
+        
+        Args:
+            type_name: 类型名称（可以是简单名或完全限定名）
+            
+        Returns:
+            命名空间字符串，如果未找到则返回 None
+        """
+        if self._get_interface_namespace:
+            return self._get_interface_namespace(type_name)
+        return None
 
 
 class SwigLangGenerator(ABC):
     """SWIG 语言生成器基类"""
+    
+    def __init__(self):
+        self._context: Optional[SwigLangGeneratorContext] = None
+
+    def set_context(self, context: SwigLangGeneratorContext) -> None:
+        """设置生成器上下文"""
+        self._context = context
+    
+    def get_type_namespace(self, type_name: str) -> Optional[str]:
+        """获取类型的命名空间
+        
+        Args:
+            type_name: 类型名称
+            
+        Returns:
+            命名空间字符串，如果未找到或无上下文则返回 None
+        """
+        if self._context:
+            return self._context.get_type_namespace(type_name)
+        return None
 
     @abstractmethod
     def get_language_name(self) -> str:
@@ -22,13 +69,48 @@ class SwigLangGenerator(ABC):
         """获取 SWIG 宏定义（如 'SWIGJAVA', 'SWIGCSHARP', 'SWIGPYTHON'）"""
         pass
 
+    def handles_out_param_completely(self) -> bool:
+        """声明此语言生成器是否完全处理 [out] 参数
+        
+        如果返回 True，表示此语言生成器通过 generate_pre_include_directives 
+        完全处理了 [out] 参数（例如使用 %ignore + %extend 替换原始方法），
+        主生成器将跳过为该语言生成通用的 typemap。
+        
+        如果返回 False（默认），主生成器会生成通用的 typemap，
+        并调用 generate_out_param_wrapper 生成语言特定的补充代码。
+        
+        Returns:
+            True 如果完全处理 [out] 参数，False 否则
+        """
+        return False
+
     @abstractmethod
     def generate_out_param_wrapper(self, interface: InterfaceDef, method: MethodDef, param: ParameterDef) -> str:
         """生成 [out] 参数的语言特定包装代码
 
         返回 SWIG .i 文件中的代码片段
+        注意：此方法生成的代码会放在 %include 之后
+        
+        如果 handles_out_param_completely() 返回 True，此方法可能不会被调用。
         """
         pass
+
+    def generate_pre_include_directives(self, interface: InterfaceDef) -> str:
+        """生成必须在 %include 之前的 SWIG 指令
+        
+        例如 Java 的 %rename、%javamethodmodifiers 等指令必须在 %include 之前
+        才能正确应用到目标方法上。
+        
+        如果 handles_out_param_completely() 返回 True，此方法应该生成完整的
+        [out] 参数处理代码（包括 %ignore、%extend、DasRetXxx 类定义等）。
+        
+        Args:
+            interface: 接口定义
+            
+        Returns:
+            SWIG .i 文件中的代码片段，将插入到 %include 指令之前
+        """
+        return ""  # 默认实现返回空字符串
 
     @abstractmethod
     def generate_binary_buffer_helpers(self, interface: InterfaceDef, method_name: str, size_method_name: str) -> str:

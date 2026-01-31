@@ -24,7 +24,7 @@ from das_idl_parser import parse_idl_file as _das_idl_parser_parse_idl_file
 from swig_java_generator import JavaSwigGenerator
 from swig_csharp_generator import CSharpSwigGenerator
 from swig_python_generator import PythonSwigGenerator
-from swig_lang_generator_base import SwigLangGenerator
+from swig_lang_generator_base import SwigLangGenerator, SwigLangGeneratorContext
 BaseSwigGenerator = SwigLangGenerator
 
 # [binary_buffer] 方法允许的参数类型（只支持 unsigned char** 系列）
@@ -112,6 +112,17 @@ class SwigCodeGenerator:
             self.lang_generators = [JavaSwigGenerator(), CSharpSwigGenerator(), PythonSwigGenerator()]
         else:
             self.lang_generators = lang_generators
+        
+        # 为所有语言生成器设置上下文
+        self._setup_lang_generator_contexts()
+
+    def _setup_lang_generator_contexts(self) -> None:
+        """为所有语言生成器设置上下文"""
+        context = SwigLangGeneratorContext(
+            get_interface_namespace_func=self._get_interface_namespace
+        )
+        for lang_generator in self.lang_generators:
+            lang_generator.set_context(context)
 
     def _parse_imported_documents(self) -> None:
         """解析导入的 IDL 文件，构建导入文档映射"""
@@ -302,7 +313,11 @@ class SwigCodeGenerator:
 """
 
     def _generate_out_param_typemap(self, interface: InterfaceDef, method: MethodDef, param: ParameterDef) -> str:
-        """生成 [out] 参数的 typemap"""
+        """生成 [out] 参数的 typemap（仅基础 typemap，不含语言特定代码）
+        
+        如果有语言生成器完全处理 [out] 参数（handles_out_param_completely() 返回 True），
+        则为这些语言生成 #ifndef 包裹，避免重复定义。
+        """
         if self._is_binary_data_method(interface, method):
             return ""
         base_type = param.type_info.base_type
@@ -311,6 +326,20 @@ class SwigCodeGenerator:
         qualified_interface_name = self._get_qualified_name(interface.name, interface.namespace)
         lines = []
         lines.append(f"// {qualified_interface_name}::{method.name} - {param.name} parameter")
+
+        # 收集完全处理 [out] 参数的语言生成器的宏定义
+        skip_defines = []
+        for lang_generator in self.lang_generators:
+            if lang_generator.handles_out_param_completely():
+                skip_defines.append(lang_generator.get_swig_define())
+
+        # 如果有语言生成器完全处理，需要用 #ifndef 包裹
+        need_ifndef = len(skip_defines) > 0
+        
+        if need_ifndef:
+            # 生成 #if !(defined(SWIGJAVA) || defined(SWIGCSHARP) || ...) 形式
+            ifndef_conditions = ' || '.join(f"defined({d})" for d in skip_defines)
+            lines.append(f"#if !({ifndef_conditions})")
 
         if is_interface:
             typemap_sig = f"{base_type}** {param.name}"
@@ -336,14 +365,32 @@ class SwigCodeGenerator:
 }}
 """)
 
-        lang_codes = []
-        for lang_generator in self.lang_generators:
-            lang_code = lang_generator.generate_out_param_wrapper(interface, method, param)
-            if lang_code:
-                lang_codes.append(lang_code)
+        if need_ifndef:
+            lines.append(f"#endif // !({ifndef_conditions})")
 
-        lines.append("\n".join(lang_codes))
+        # 注意：语言特定代码（包括 DasRetXxx 定义）现在延迟到 %include 之后生成
+        # 见 _generate_lang_specific_out_param_wrappers 方法
+
         return "\n".join(lines)
+
+    def _generate_lang_specific_out_param_wrappers(self, interface: InterfaceDef) -> str:
+        """生成语言特定的 [out] 参数包装代码（包含 DasRetXxx 类型定义）
+        
+        此方法应该在 %include 指令之后调用，以确保 SWIG 已经看到所有类型定义
+        """
+        lang_codes = []
+        for method in interface.methods:
+            for param in method.parameters:
+                if param.direction == ParamDirection.OUT:
+                    if self._is_binary_data_method(interface, method):
+                        continue
+                    for lang_generator in self.lang_generators:
+                        lang_code = lang_generator.generate_out_param_wrapper(interface, method, param)
+                        if lang_code:
+                            lang_codes.append(lang_code)
+                    # 只处理第一个 out 参数（每个方法只生成一次包装）
+                    break
+        return "\n".join(lang_codes)
 
     def _get_cpp_type(self, type_name: str) -> str:
         """获取 C++ 类型"""
@@ -669,7 +716,20 @@ public:
         lines.append("%}")
         lines.append("")
 
-        # %{ %} 块 - SWIG 形式 include
+        # 为所有 [out] 参数生成基础 typemap（不含语言特定代码）
+        for method in interface.methods:
+            for param in method.parameters:
+                if param.direction == ParamDirection.OUT:
+                    lines.append(self._generate_out_param_typemap(interface, method, param))
+
+        # 生成语言特定的预处理指令（%rename、%javamethodmodifiers、%typemap(javacode) 等）
+        # 这些指令必须在 %include 之前才能正确生效
+        for lang_generator in self.lang_generators:
+            pre_include_code = lang_generator.generate_pre_include_directives(interface)
+            if pre_include_code:
+                lines.append(pre_include_code)
+
+        # %include 指令 - SWIG 形式 include
         same_name_include = None
         for abi_include in abi_includes:
             if abi_include.startswith(f"{interface.name}."):
@@ -680,6 +740,12 @@ public:
         if same_name_include:
             lines.append(f"%include <{same_name_include}>")
 
+        # 生成语言特定的 [out] 参数包装代码（包含 DasRetXxx 类型定义）
+        # 放在 %include 之后，确保 SWIG 已经看到所有类型定义
+        lang_specific_code = self._generate_lang_specific_out_param_wrappers(interface)
+        if lang_specific_code:
+            lines.append(lang_specific_code)
+
         # ignore 指令（原始接口）
         lines.append(self._generate_ignore_directives(interface))
         lines.append("")
@@ -687,12 +753,6 @@ public:
         # director 指令（原始接口，用于 C++ 回调）
         # lines.append(self._generate_director_directive(interface))
         # lines.append("")
-
-        # 为所有 [out] 参数生成 typemap
-        for method in interface.methods:
-            for param in method.parameters:
-                if param.direction == ParamDirection.OUT:
-                    lines.append(self._generate_out_param_typemap(interface, method, param))
 
         # 生成引用计数实现基类 (IDasSwigXxx)
         lines.append(self._generate_ref_impl_class(interface))

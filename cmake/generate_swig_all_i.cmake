@@ -13,20 +13,36 @@ file(APPEND ${ALL_I_FILE} "// Generated at: ${CURRENT_TIME}\n")
 file(APPEND ${ALL_I_FILE} "// !!! DO NOT EDIT !!!\n\n")
 file(APPEND ${ALL_I_FILE} "// Master SWIG interface file - includes all generated SWIG interfaces\n\n")
 
-# 遍历SWIG输出目录下的所有.i文件
-file(GLOB SWIG_I_FILES "${SWIG_OUTPUT_DIR}/*.i")
+# 读取sorted_interfaces.txt获取按依赖关系排序的接口列表
+set(SORTED_INTERFACES_FILE "${CMAKE_CURRENT_LIST_DIR}/../sorted_interfaces.txt")
 
-if(SWIG_I_FILES)
-    foreach(I_FILE ${SWIG_I_FILES})
-        get_filename_component(I_FILENAME ${I_FILE} NAME_WE)
+# 检查sorted_interfaces.txt是否存在
+if(NOT EXISTS "${SORTED_INTERFACES_FILE}")
+    message(FATAL_ERROR "sorted_interfaces.txt not found at: ${SORTED_INTERFACES_FILE}")
+endif()
 
-        # 排除_all.i文件本身
-        if(NOT "${I_FILENAME}" MATCHES "_all$")
+# 读取排序后的接口列表
+file(STRINGS "${SORTED_INTERFACES_FILE}" INTERFACE_LIST)
+
+# 按排序顺序处理接口
+foreach(INTERFACE_NAME ${INTERFACE_LIST})
+    # 跳过空行
+    if("${INTERFACE_NAME}" STREQUAL "")
+        continue()
+    endif()
+
+    # 排除_all.i文件本身（虽然sorted_interfaces.txt中应该不会包含）
+    if(NOT "${INTERFACE_NAME}" MATCHES "_all$")
+        # 检查对应的 .i 文件是否存在
+        set(INTERFACE_I_FILE "${SWIG_OUTPUT_DIR}/${INTERFACE_NAME}.i")
+        if(EXISTS "${INTERFACE_I_FILE}")
             # 每个SWIG .i 文件已经自己包含了所需的ABI头文件
             # 这里直接包含 .i 文件即可
-            file(APPEND ${ALL_I_FILE} "%include \"${I_FILENAME}.i\"\n\n")
+            file(APPEND ${ALL_I_FILE} "%include \"${INTERFACE_NAME}.i\"\n\n")
+        else()
+            message(STATUS "Skipping ${INTERFACE_NAME} (no .i file found)")
         endif()
-    endforeach()
-endif()
+    endif()
+endforeach()
 
 message(STATUS "Generated summary SWIG all.i file: ${ALL_I_FILE}")
