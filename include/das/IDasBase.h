@@ -293,13 +293,9 @@ inline bool IsDasGuidEqual(
     return lhs == rhs;
 }
 
-DAS_DEFINE_RET_TYPE(DasRetBool, bool);
-
 DAS_DEFINE_RET_TYPE(DasRetInt, int64_t);
 
 DAS_DEFINE_RET_TYPE(DasRetUInt, uint64_t);
-
-DAS_DEFINE_RET_TYPE(DasRetFloat, float);
 
 #define DAS_THROW_IF_FAILED(result)                                            \
     {                                                                          \

@@ -131,6 +131,168 @@ PyInit__DasCorePythonExport(void) {
 
 #endif // SWIGPYTHON
 
+// ============================================================================
+// IDasBase Java Support - as() 泛型方法
+// 提供类型安全的接口转换，通过反射和缓存机制实现
+// ============================================================================
+#ifdef SWIGJAVA
+
+// ============================================================================
+// DasRetBase - IDasBase 的返回包装类
+// 用于封装 QueryInterface 的返回值
+// ============================================================================
+%inline %{
+#ifndef DAS_RET_BASE
+#define DAS_RET_BASE
+struct DasRetBase {
+    DasResult error_code;
+    IDasBase* value;
+
+    DasRetBase() : error_code(DAS_E_UNDEFINED_RETURN_VALUE), value(nullptr) {}
+
+    DasResult GetErrorCode() const { return error_code; }
+
+    IDasBase* GetValue() const { return value; }
+
+    bool IsOk() const { return DAS::IsOk(error_code); }
+};
+#endif // DAS_RET_BASE
+%}
+
+// 为 DasRetBase 添加 Java 便捷方法
+%typemap(javacode) DasRetBase %{
+    /**
+     * 获取值，如果操作失败则抛出异常
+     * @return 结果值
+     * @throws DasException 当操作失败时
+     */
+    public IDasBase getValueOrThrow() throws DasException {
+        if (!IsOk()) {
+            throw new DasException(GetErrorCode(), "DasRetBase operation failed");
+        }
+        return GetValue();
+    }
+%}
+
+// 隐藏原始的 QueryInterface 方法
+%ignore IDasBase::QueryInterface;
+
+// 添加返回 DasRetBase 的 QueryInterface 包装方法
+%extend IDasBase {
+    DasRetBase QueryInterface(const DasGuid& iid) {
+        DasRetBase result;
+        result.error_code = $self->QueryInterface(iid, reinterpret_cast<void**>(&result.value));
+        return result;
+    }
+}
+
+%typemap(javacode) IDasBase %{
+    // ========================================================================
+    // 反射缓存 - 用于优化 as() 方法的性能
+    // ========================================================================
+    private static final java.util.concurrent.ConcurrentHashMap<Class<?>, java.lang.reflect.Constructor<?>> ctorCache = 
+        new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.ConcurrentHashMap<Class<?>, java.lang.reflect.Method> iidCache = 
+        new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * 类型安全的接口转换
+     * <p>
+     * 内部调用 QueryInterface 验证类型，确保转换安全。
+     * 首次调用时会进行反射查找，后续调用使用缓存，性能接近直接调用。
+     * </p>
+     * <p>
+     * <b>引用计数说明：</b><br>
+     * QueryInterface 会增加引用计数，返回的新对象拥有独立的引用。
+     * 原对象不受影响，仍然有效。
+     * </p>
+     * 
+     * @param <T> 目标接口类型，必须继承自 IDasBase
+     * @param targetClass 目标接口的 Class 对象
+     * @return 转换后的接口对象
+     * @throws DasException 如果转换失败（类型不兼容）
+     * @throws IllegalStateException 如果当前对象不拥有内存所有权
+     * @throws IllegalArgumentException 如果目标类不是有效的接口类型
+     */
+    @SuppressWarnings("unchecked")
+    public final <T extends IDasBase> T as(Class<T> targetClass) throws DasException {
+        if (!swigCMemOwn) {
+            throw new IllegalStateException(
+                "Cannot convert: this object does not own memory.");
+        }
+        
+        try {
+            // 获取目标类型的 IID（使用缓存）
+            java.lang.reflect.Method iidMethod = iidCache.computeIfAbsent(targetClass, cls -> {
+                try {
+                    return cls.getMethod("IID");
+                } catch (NoSuchMethodException e) {
+                    throw new RuntimeException("Target class " + cls.getName() + " does not have IID() method", e);
+                }
+            });
+            DasGuid targetIid = (DasGuid) iidMethod.invoke(null);
+            
+            // 调用 QueryInterface 验证类型并获取新的引用
+            // 注意：QueryInterface 会增加引用计数，返回的指针有独立的引用
+            DasRetBase ret = QueryInterface(targetIid);
+            if (DuskAutoScript.IsFailed(ret.GetErrorCode())) {
+                throw new DasException(ret.GetErrorCode(), 
+                    "QueryInterface failed for " + targetClass.getName());
+            }
+            
+            // 使用工厂方法创建目标类型实例（使用缓存）
+            java.lang.reflect.Method factoryMethod = targetClass.getMethod("createFromPtr", long.class, boolean.class);
+            long newPtr = IDasBase.getCPtr(ret.GetValue());
+            return (T) factoryMethod.invoke(null, newPtr, true);
+        } catch (DasException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to convert to " + targetClass.getName(), e);
+        }
+    }
+
+    /**
+     * 检查是否可以转换为目标类型
+     * <p>
+     * 此方法通过 QueryInterface 验证类型兼容性，但不创建新对象。
+     * 可用于在执行实际转换前进行检查。
+     * </p>
+     * 
+     * @param targetClass 目标接口的 Class 对象
+     * @return true 如果可以转换，false 如果不兼容
+     */
+    public final boolean canCastTo(Class<? extends IDasBase> targetClass) {
+        if (!swigCMemOwn) {
+            return false;
+        }
+        
+        try {
+            java.lang.reflect.Method iidMethod = iidCache.computeIfAbsent(targetClass, cls -> {
+                try {
+                    return cls.getMethod("IID");
+                } catch (NoSuchMethodException e) {
+                    throw new RuntimeException(e);
+                }
+            });
+            DasGuid targetIid = (DasGuid) iidMethod.invoke(null);
+            
+            DasRetBase ret = QueryInterface(targetIid);
+            if (DuskAutoScript.IsOk(ret.GetErrorCode())) {
+                // QueryInterface 成功，需要释放返回的引用
+                IDasBase tempObj = ret.GetValue();
+                if (tempObj != null) {
+                    tempObj.delete();
+                }
+                return true;
+            }
+            return false;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+%}
+#endif // SWIGJAVA
+
 %include <das/DasExport.h>
 %include <das/DasTypes.hpp>
 %include <das/IDasBase.h>
