@@ -11,8 +11,9 @@ DAS SWIG 代码生成器
 
 2. 汇总的 .i 文件，用于 include 所有生成的 .i 文件
 """
-
+import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional, Set, Dict
@@ -97,6 +98,9 @@ class SwigTypeMapper:
 
 class SwigCodeGenerator:
     """SWIG .i 文件生成器"""
+
+    _global_typemaps: set[str] = set()
+    _global_ret_classes: dict[str, str] = {}
 
     def __init__(self, document: IdlDocument, idl_file_name: Optional[str] = None, idl_file_path: Optional[str] = None, lang_generators: Optional[List[SwigLangGenerator]] = None):
         self.document = document
@@ -508,22 +512,20 @@ class SwigCodeGenerator:
             lang_code = lang_generator.generate_binary_buffer_helpers(interface, binary_buffer_method_name, size_method_name)
             if lang_code:
                 lang_codes.append(lang_code)
+                typemap_pattern = re.compile(r'%typemap\s*\(([^)]+)\)\s*(\S+)\s*\{')
+                for match in typemap_pattern.finditer(lang_code):
+                    typemap_sig = f"{match.group(2)} ({match.group(1)})"
+                    self._global_typemaps.add(typemap_sig)
 
         lines.append("\n".join(lang_codes))
         return "\n".join(lines)
 
     def _generate_clear_typemaps(self) -> str:
-        """生成 %clear 指令，清除所有已定义的 typemap"""
-        if not self._current_typemaps:
-            return ""
+        """检查是否有typemap需要清除
 
-        lines = []
-        lines.append("// Clear typemaps to avoid redefinition in other interfaces")
-        for typemap_sig in self._current_typemaps:
-            lines.append(f"%clear {typemap_sig};")
-        lines.append("")
-
-        return "\n".join(lines)
+        不再在文件末尾生成%clear指令，因为typemap将统一在DasTypeMaps.i中定义。
+        """
+        return ""
 
     def _generate_iid_static_method(self, interface: InterfaceDef) -> str:
         """为接口生成 %extend IID() 静态方法
@@ -736,7 +738,7 @@ public:
 
         return includes
 
-    def generate_interface_i_file(self, interface: InterfaceDef) -> str:
+    def generate_interface_i_file(self, interface: InterfaceDef, output_typemap_info: bool = False, task_id: str = "") -> str:
         """生成单个接口的 .i 文件内容"""
         self._collect_interface_types(interface)
         # 重置 typemap 收集列表
@@ -817,7 +819,24 @@ public:
         # 在文件末尾清除所有 typemap
         lines.append(self._generate_clear_typemaps())
 
-        return "\n".join(lines)
+        result = "\n".join(lines)
+
+        if output_typemap_info:
+            source_dir = Path(__file__).parent.parent.parent.parent
+            typemap_info = {
+                "schema_version": "1.0",
+                "typemaps": list(self._global_typemaps),
+                "ret_classes": self._global_ret_classes
+            }
+            if task_id:
+                json_file = source_dir / "SWIG" / f"typemap_info_{task_id}.json"
+            else:
+                json_file = source_dir / "SWIG" / "typemap_info.json"
+            json_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(json_file, 'w', encoding='utf-8') as f:
+                json.dump(typemap_info, f, indent=2, ensure_ascii=False)
+
+        return result
 
 def generate_swig_files(document: IdlDocument, output_dir: str, base_name: str, idl_file_path: Optional[str] = None) -> List[str]:
     """生成所有 SWIG .i 文件（不包含_all.i文件，由CMake生成）"""

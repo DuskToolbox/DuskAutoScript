@@ -25,33 +25,33 @@
 
 // 修复 dll 文件带 _d 后缀时，PyInit 函数名称不正确的问题。
 // TODO: 后续在CMake中配置更名，而不再靠这里修复
-#ifdef __cplusplus
-extern "C"
-#endif
-SWIGEXPORT
-#if PY_VERSION_HEX >= 0x03000000
-PyObject*
-#else
-void
-#endif
-SWIG_init(void);
+// #ifdef __cplusplus
+// extern "C"
+// #endif
+// SWIGEXPORT
+// #if PY_VERSION_HEX >= 0x03000000
+// PyObject*
+// #else
+// void
+// #endif
+// SWIG_init(void);
 
-#ifdef __cplusplus
-extern "C"
-#endif
-SWIGEXPORT
-#if PY_VERSION_HEX >= 0x03000000
-PyObject*
-#else
-void
-#endif
-PyInit__DasCorePythonExport(void) {
-#if PY_VERSION_HEX >= 0x03000000
-    return ::SWIG_init();
-#else
-    ::SWIG_init();
-#endif
-}
+// #ifdef __cplusplus
+// extern "C"
+// #endif
+// SWIGEXPORT
+// #if PY_VERSION_HEX >= 0x03000000
+// PyObject*
+// #else
+// void
+// #endif
+// PyInit__DasCorePythonExport(void) {
+// #if PY_VERSION_HEX >= 0x03000000
+//     return ::SWIG_init();
+// #else
+//     ::SWIG_init();
+// #endif
+// }
 
 #endif // DEBUG
 
@@ -59,94 +59,11 @@ PyInit__DasCorePythonExport(void) {
 
 %}
 
-#ifdef SWIGJAVA
-%typemap(jni) char16_t* "jstring"
-%typemap(jtype) char16_t* "String"
-%typemap(jstype) char16_t* "String"
-%typemap(javadirectorin) char16_t* "$jniinput"
-%typemap(javadirectorout) char16_t* "$javacall"
-
 // ============================================================================
-// IDasReadOnlyString* 参数映射到 DasReadOnlyString
-// 由于 IDasReadOnlyString 被 SWIG_IGNORE，需要手动定义 typemap
+// 包含所有typemap定义（静态+动态）
+// 该文件由生成工具自动维护
 // ============================================================================
-%typemap(jni) IDasReadOnlyString* "jlong"
-%typemap(jtype) IDasReadOnlyString* "long"
-%typemap(jstype) IDasReadOnlyString* "DasReadOnlyString"
-%typemap(javain) IDasReadOnlyString* "DasReadOnlyString.getCPtr($javainput)"
-%typemap(javaout) IDasReadOnlyString* {
-    long cPtr = $jnicall;
-    return (cPtr == 0) ? null : new DasReadOnlyString(cPtr, $owner);
-}
-%typemap(in) IDasReadOnlyString* %{
-    $1 = *(IDasReadOnlyString **)&$input;
-%}
-%typemap(out) IDasReadOnlyString* %{
-    *(IDasReadOnlyString **)&$result = $1;
-%}
-// Director typemaps for IDasReadOnlyString*
-%typemap(directorin, descriptor="J") IDasReadOnlyString* %{
-    *(IDasReadOnlyString **)&$input = $1;
-%}
-%typemap(directorout) IDasReadOnlyString* %{
-    $result = *(IDasReadOnlyString **)&$input;
-%}
-%typemap(javadirectorin) IDasReadOnlyString* "new DasReadOnlyString($jniinput, false)"
-%typemap(javadirectorout) IDasReadOnlyString* "DasReadOnlyString.getCPtr($javacall)"
-
-%typemap(jni) void DasReadOnlyString::GetUtf16 "jstring"
-%typemap(jtype) void DasReadOnlyString::GetUtf16 "String"
-%typemap(jstype) void DasReadOnlyString::GetUtf16 "String"
-%typemap(javaout) void DasReadOnlyString::GetUtf16 {
-    return $jnicall;
-}
-
-%typemap(in, numinputs=0) (const char16_t** out_string, size_t* out_string_size) %{
-    char16_t* p_u16string;
-    $1 = &p_u16string;
-
-    size_t u16string_size;
-    $2 = &u16string_size;
-%}
-
-%typemap(argout) (const char16_t** out_string, size_t* out_string_size) {
-    if($1 && $2)
-    {
-        jsize j_length = (jsize)u16string_size;
-        $result = jenv->NewString((jchar*)p_u16string, j_length);
-    }
-    else
-    {
-        jclass null_pointer_exception = jenv->FindClass("java/lang/NullPointerException");
-        jenv->ThrowNew(null_pointer_exception, "Input pointer is null");
-    }
-}
-
-%typemap(javain) (const char16_t* p_u16string, size_t length) "p_u16string"
-
-
-%typemap(in, numinputs=1) (const char16_t* p_u16string, size_t length) %{
-    class _das_InternalJavaString{
-        const jchar* p_jstring_;
-        JNIEnv* jenv_;
-        jstring java_string_;
-    public:
-        _das_InternalJavaString(JNIEnv* jenv, jstring java_string)
-            : p_jstring_{jenv->GetStringChars(java_string, nullptr)},
-              jenv_{jenv}, java_string_{java_string}
-        {
-        }
-        ~_das_InternalJavaString() { jenv_->ReleaseStringChars(java_string_, p_jstring_); }
-        const jchar* Get() noexcept { return p_jstring_; }
-    } jstring_wrapper{jenv, jarg1};
-    const jsize string_length = jenv->GetStringLength(jarg1);
-    static_assert(sizeof(jchar) == sizeof(char16_t), "Size of jchar is NOT equal to size of char16_t.");
-    jchar* p_non_const_jstring = const_cast<jchar*>(jstring_wrapper.Get());
-    $1 = reinterpret_cast<decltype($1)>(p_non_const_jstring);
-    $2 = string_length;
-%}
-
-#endif
+%include "DasTypeMaps.i"
 
 #ifdef SWIGPYTHON
 
@@ -218,9 +135,9 @@ struct DasRetBase {
     // ========================================================================
     // 反射缓存 - 用于优化 as() 方法的性能
     // ========================================================================
-    private static final java.util.concurrent.ConcurrentHashMap<Class<?>, java.lang.reflect.Constructor<?>> ctorCache = 
+    private static final java.util.concurrent.ConcurrentHashMap<Class<?>, java.lang.reflect.Constructor<?>> ctorCache =
         new java.util.concurrent.ConcurrentHashMap<>();
-    private static final java.util.concurrent.ConcurrentHashMap<Class<?>, java.lang.reflect.Method> iidCache = 
+    private static final java.util.concurrent.ConcurrentHashMap<Class<?>, java.lang.reflect.Method> iidCache =
         new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
@@ -234,7 +151,7 @@ struct DasRetBase {
      * QueryInterface 会增加引用计数，返回的新对象拥有独立的引用。
      * 原对象不受影响，仍然有效。
      * </p>
-     * 
+     *
      * @param <T> 目标接口类型，必须继承自 IDasBase
      * @param targetClass 目标接口的 Class 对象
      * @return 转换后的接口对象
@@ -248,7 +165,7 @@ struct DasRetBase {
             throw new IllegalStateException(
                 "Cannot convert: this object does not own memory.");
         }
-        
+
         try {
             // 获取目标类型的 IID（使用缓存）
             java.lang.reflect.Method iidMethod = iidCache.computeIfAbsent(targetClass, cls -> {
@@ -259,15 +176,15 @@ struct DasRetBase {
                 }
             });
             DasGuid targetIid = (DasGuid) iidMethod.invoke(null);
-            
+
             // 调用 QueryInterface 验证类型并获取新的引用
             // 注意：QueryInterface 会增加引用计数，返回的指针有独立的引用
             DasRetBase ret = QueryInterface(targetIid);
             if (DuskAutoScript.IsFailed(ret.GetErrorCode())) {
-                throw new DasException(ret.GetErrorCode(), 
+                throw new DasException(ret.GetErrorCode(),
                     "QueryInterface failed for " + targetClass.getName());
             }
-            
+
             // 使用工厂方法创建目标类型实例（使用缓存）
             java.lang.reflect.Method factoryMethod = targetClass.getMethod("createFromPtr", long.class, boolean.class);
             long newPtr = IDasBase.getCPtr(ret.GetValue());
@@ -285,7 +202,7 @@ struct DasRetBase {
      * 此方法通过 QueryInterface 验证类型兼容性，但不创建新对象。
      * 可用于在执行实际转换前进行检查。
      * </p>
-     * 
+     *
      * @param targetClass 目标接口的 Class 对象
      * @return true 如果可以转换，false 如果不兼容
      */
@@ -293,7 +210,7 @@ struct DasRetBase {
         if (!swigCMemOwn) {
             return false;
         }
-        
+
         try {
             java.lang.reflect.Method iidMethod = iidCache.computeIfAbsent(targetClass, cls -> {
                 try {
@@ -303,7 +220,7 @@ struct DasRetBase {
                 }
             });
             DasGuid targetIid = (DasGuid) iidMethod.invoke(null);
-            
+
             DasRetBase ret = QueryInterface(targetIid);
             if (DuskAutoScript.IsOk(ret.GetErrorCode())) {
                 // QueryInterface 成功，需要释放返回的引用
