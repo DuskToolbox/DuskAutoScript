@@ -191,6 +191,27 @@ class JavaSwigGenerator(SwigLangGenerator):
                 result.append((method, out_params[0]))
         return result
 
+    def _to_include_guard(self, name: str) -> str:
+        """将类名转换为 include guard 宏名
+        
+        将驼峰命名转换为全大写下划线命名
+        例如: DasRetDasReadOnlyGuidVector -> DAS_RET_DAS_READ_ONLY_GUID_VECTOR
+        
+        Args:
+            name: 类名
+            
+        Returns:
+            include guard 宏名
+        """
+        # 使用正则表达式将驼峰命名转换为全大写下划线命名
+        import re
+        # 在每个大写字母前添加下划线，然后转换为大写，最后去除开头的下划线
+        result = re.sub(r'([A-Z])', r'_\1', name).upper()
+        # 去除开头的下划线
+        if result.startswith('_'):
+            result = result[1:]
+        return result
+
     def _generate_ret_class(self, out_type: str) -> str:
         """生成 DasRetXxx 返回包装类
         
@@ -201,7 +222,7 @@ class JavaSwigGenerator(SwigLangGenerator):
         
         Args:
             out_type: [out] 参数的类型名
-            
+             
         Returns:
             Java 类定义（通过 %inline 嵌入）
         """
@@ -223,12 +244,15 @@ class JavaSwigGenerator(SwigLangGenerator):
             else:
                 cpp_value_type = f"{out_type}*"
             cpp_default_value = "nullptr"
+            include_guard = self._to_include_guard(ret_class_name)
             return f"""
 // ============================================================================
 // {ret_class_name} - 返回包装类（接口类型）
 // 用于封装带有 [out] 参数的方法返回值
 // ============================================================================
-%inline %{{
+#ifndef {include_guard}
+#define {include_guard}
+%inline {{
 struct {ret_class_name} {{
     DasResult error_code;
     {cpp_value_type} value;
@@ -242,6 +266,7 @@ struct {ret_class_name} {{
     bool IsOk() const {{ return DAS::IsOk(error_code); }}
 }};
 %}}
+#endif // {include_guard}
 
 // 为 {ret_class_name} 添加 Java 便捷方法
 %typemap(javacode) {ret_class_name} %{{
@@ -262,12 +287,15 @@ struct {ret_class_name} {{
             # 值类型：存储值本身
             cpp_value_type = out_type
             cpp_default_value = "{}"
+            include_guard = self._to_include_guard(ret_class_name)
             return f"""
 // ============================================================================
 // {ret_class_name} - 返回包装类（值类型）
 // 用于封装带有 [out] 参数的方法返回值
 // ============================================================================
-%inline %{{
+#ifndef {include_guard}
+#define {include_guard}
+%inline {{
 struct {ret_class_name} {{
     DasResult error_code;
     {cpp_value_type} value;
@@ -281,6 +309,7 @@ struct {ret_class_name} {{
     bool IsOk() const {{ return DAS::IsOk(error_code); }}
 }};
 %}}
+#endif // {include_guard}
 
 // 为 {ret_class_name} 添加 Java 便捷方法
 %typemap(javacode) {ret_class_name} %{{
