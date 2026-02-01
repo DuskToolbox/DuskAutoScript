@@ -198,3 +198,28 @@ DAS_C_API void CreateDasExceptionStringWithTypeInfo(
         *pp_out_handle = nullptr;
     }
 }
+
+DAS_API IDasExceptionString* CreateDasExceptionStringSwig(
+    DasResult                   error_code,
+    DasExceptionSourceInfoSwig* p_source_info)
+{
+    IDasExceptionString* p_result = nullptr;
+    DasExceptionSourceInfo info{.file=p_source_info->file, .line=p_source_info->line, .function=p_source_info->function};
+    CreateDasExceptionString(error_code, &info, &p_result);
+    return p_result;
+}
+
+DAS_API IDasExceptionString* CreateDasExceptionStringWithTypeInfoSwig(
+    DasResult                   error_code,
+    DasExceptionSourceInfoSwig* p_source_info,
+    IDasTypeInfo*               p_type_info)
+{
+    IDasExceptionString* p_result = nullptr;
+    DasExceptionSourceInfo info{.file=p_source_info->file, .line=p_source_info->line, .function=p_source_info->function};
+    CreateDasExceptionStringWithTypeInfo(
+        error_code,
+        &info,
+        p_type_info,
+        &p_result);
+    return p_result;
+}

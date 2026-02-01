@@ -37,6 +37,46 @@ class JavaSwigGenerator(SwigLangGenerator):
         self._generated_ret_classes: set[str] = set()
         # 已生成 javacode typemap 的接口集合
         self._generated_javacode_interfaces: set[str] = set()
+        # 所有接口列表（用于检查接口继承链）
+        self._all_interfaces: list[InterfaceDef] = []
+        # 所有枚举列表（用于查找枚举的 FORCE_DWORD 值）
+        self._all_enums: list = []
+
+    def set_all_interfaces(self, all_interfaces: list[InterfaceDef]) -> None:
+        self._all_interfaces = all_interfaces
+
+    def set_all_enums(self, all_enums: list) -> None:
+        self._all_enums = all_enums
+
+    def _get_enum_default_value(self, type_name: str) -> str | None:
+        """获取枚举类型的 FORCE_DWORD 默认值
+
+        Args:
+            type_name: 类型名称（可能包含命名空间前缀）
+
+        Returns:
+            枚举的 FORCE_DWORD 值字符串，如果不是枚举则返回 None
+        """
+        from das_idl_parser import EnumDef
+
+        # 提取类型名（去除命名空间前缀）
+        if "::" in type_name:
+            type_name = type_name.split("::")[-1]
+
+        # 在所有枚举中查找
+        for enum_def in self._all_enums:
+            if enum_def.name == type_name:
+                # 查找 FORCE_DWORD 值
+                for enum_value in enum_def.values:
+                    if enum_value.name.endswith("FORCE_DWORD"):
+                        # 构造完全限定名
+                        namespace = enum_def.namespace if enum_def.namespace else ""
+                        if namespace:
+                            return f"{namespace}::{type_name}::{enum_value.name}"
+                        else:
+                            return f"{type_name}::{enum_value.name}"
+
+        return None
 
     @staticmethod
     def _get_java_type(type_name: str) -> str:
@@ -159,11 +199,11 @@ class JavaSwigGenerator(SwigLangGenerator):
         - DasGuid -> DasRetGuid (预定义)
         """
         simple_name = out_type.split('::')[-1]
-        
+
         # 优先使用预定义的返回类型
         if simple_name in cls._PREDEFINED_RET_TYPES:
             return cls._PREDEFINED_RET_TYPES[simple_name]
-        
+
         # 否则生成新的类名
         normalized = cls._normalize_type_name_for_class(out_type)
         return f"DasRet{normalized}"
@@ -305,7 +345,15 @@ class JavaSwigGenerator(SwigLangGenerator):
                     cpp_value_type = f"{namespace}::{out_type}"
             else:
                 cpp_value_type = out_type
-            cpp_default_value = "{}"
+
+            # 判断是否是枚举类型
+            enum_default_value = self._get_enum_default_value(out_type)
+            if enum_default_value:
+                # 枚举类型：使用 FORCE_DWORD 值
+                cpp_default_value = enum_default_value
+            else:
+                # 基本类型：不填默认值，使用 () 默认初始化
+                cpp_default_value = ""
             include_guard = self._to_include_guard(ret_class_name)
             return f"""
 // ============================================================================
@@ -320,7 +368,7 @@ struct {ret_class_name} {{
     DasResult error_code;
     {cpp_value_type} value;
 
-    {ret_class_name}() : error_code(DAS_E_UNDEFINED_RETURN_VALUE), value({cpp_default_value}) {{}}
+    {ret_class_name}() : error_code(DAS_E_UNDEFINED_RETURN_VALUE){f", value({cpp_default_value})" if cpp_default_value else ""} {{}}
 
     DasResult GetErrorCode() const {{ return error_code; }}
 
@@ -354,6 +402,45 @@ struct {ret_class_name} {{
             if p.direction != ParamDirection.OUT:
                 if p.type_info.base_type == 'IDasReadOnlyString':
                     return True
+        return False
+
+    def _has_idas_typeinfo_in_interface_hierarchy(
+        self, interface: InterfaceDef, all_interfaces: list[InterfaceDef]
+    ) -> bool:
+        """检查接口的继承链上是否存在 IDasTypeInfo
+
+        Args:
+            interface: 接口定义
+            all_interfaces: 所有接口列表（用于查找基接口）
+
+        Returns:
+            如果继承链上存在 IDasTypeInfo 则返回 True
+        """
+        current = interface
+
+        while current:
+            # 检查当前接口是否是 IDasTypeInfo
+            if current.name == 'IDasTypeInfo':
+                return True
+
+            # 查找基接口
+            if current.base_interface:
+                # 在所有接口中查找基接口
+                base_interface = None
+                for intf in all_interfaces:
+                    if intf.name == current.base_interface:
+                        base_interface = intf
+                        break
+
+                if base_interface:
+                    current = base_interface
+                else:
+                    # 找不到基接口，停止搜索
+                    break
+            else:
+                # 没有基接口，停止搜索
+                break
+
         return False
 
     @staticmethod
@@ -412,7 +499,7 @@ struct {ret_class_name} {{
             call_args_with_temp = call_args.copy()
             call_args_with_temp.append("&p_out_string")
             call_args_str = ", ".join(call_args_with_temp)
-            
+
             lines.append(f"""
 // 隐藏原始的 {method.name} 方法
 %ignore {qualified_interface}::{method.name};
@@ -434,7 +521,7 @@ struct {ret_class_name} {{
             # 值类型：传递 &result.value（因为 value 是值，所以传递值的地址）
             call_args.append("&result.value")
             call_args_str = ", ".join(call_args)
-            
+
             lines.append(f"""
 // 隐藏原始的 {method.name} 方法
 %ignore {qualified_interface}::{method.name};
@@ -471,7 +558,7 @@ struct {ret_class_name} {{
             if is_idas_readonly_string_out:
                 das_call_args.append("&p_out_string")
                 das_call_args_str = ", ".join(das_call_args)
-                
+
                 lines.append(f"""
 // 添加 DasReadOnlyString 参数版本的 {method.name} 方法
 %extend {qualified_interface} {{
@@ -487,7 +574,7 @@ struct {ret_class_name} {{
             else:
                 das_call_args.append("&result.value")
                 das_call_args_str = ", ".join(das_call_args)
-                
+
                 lines.append(f"""
 // 添加 DasReadOnlyString 参数版本的 {method.name} 方法
 %extend {qualified_interface} {{
@@ -501,7 +588,12 @@ struct {ret_class_name} {{
 
         return "\n".join(lines)
 
-    def _generate_convenience_method(self, method: MethodDef, out_param: ParameterDef) -> str:
+    def _generate_convenience_method(
+        self,
+        interface: InterfaceDef,
+        method: MethodDef,
+        out_param: ParameterDef,
+    ) -> str:
         """生成便捷方法（Ez 后缀）
 
         这个方法直接返回结果，失败时抛出 DasException。
@@ -544,20 +636,59 @@ struct {ret_class_name} {{
 
         result_lines: list[str] = []
 
+        # 检查接口的继承链是否包含 IDasTypeInfo
+        has_idas_typeinfo = self._has_idas_typeinfo_in_interface_hierarchy(
+            interface, self._all_interfaces
+        )
+
+        # 根据接口类型生成不同的异常处理代码
+        if has_idas_typeinfo:
+            # 继承链上存在 IDasTypeInfo：使用 CreateDasExceptionStringWithTypeInfoSwig
+            exception_code = f"""
+    public {return_type} {method_name}Ez({java_params_str}) throws DasException {{
+        {ret_class_name} ret = {method_name}({call_params_str});
+        if (!ret.IsOk()) {{
+            DasExceptionSourceInfoSwig sourceInfo = new DasExceptionSourceInfoSwig();
+            sourceInfo.setFile("{interface.name}.java");
+            sourceInfo.setLine(-1);
+            sourceInfo.setFunction("{method_name}Ez");
+            throw new DasException(
+                ret.GetErrorCode(),
+                das.CreateDasExceptionStringWithTypeInfoSwig(
+                    ret.GetErrorCode(),
+                    sourceInfo,
+                    this
+                )
+            );
+        }}
+        return ret.GetValue();
+    }}"""
+        else:
+            # 继承链上不存在 IDasTypeInfo：使用 CreateDasExceptionStringSwig
+            exception_code = f"""
+    public {return_type} {method_name}Ez({java_params_str}) throws DasException {{
+        {ret_class_name} ret = {method_name}({call_params_str});
+        if (!ret.IsOk()) {{
+            DasExceptionSourceInfoSwig sourceInfo = new DasExceptionSourceInfoSwig();
+            sourceInfo.setFile("{interface.name}.java");
+            sourceInfo.setLine(-1);
+            sourceInfo.setFunction("{method_name}Ez");
+            throw new DasException(
+                ret.GetErrorCode(),
+                das.CreateDasExceptionStringSwig(ret.GetErrorCode(), sourceInfo)
+            );
+        }}
+        return ret.GetValue();
+    }}"""
+
         result_lines.append(f"""
     /**
      * {method_name} 的便捷版本
      * 直接返回结果，失败时抛出异常
      * @return {return_type} 结果
      * @throws DasException 当操作失败时
-     */
-    public {return_type} {method_name}Ez({java_params_str}) throws DasException {{
-        {ret_class_name} ret = {method_name}({call_params_str});
-        if (!ret.IsOk()) {{
-            throw new DasException(ret.GetErrorCode());
-        }}
-        return ret.GetValue();
-    }}""")
+     */""")
+        result_lines.append(exception_code)
 
         # 检查是否有 IDasReadOnlyString* 参数，如果有则生成 String 参数版本的便捷方法
         has_idas_readonly_string = self._has_idas_readonly_string_param(method)
@@ -566,7 +697,7 @@ struct {ret_class_name} {{
             string_java_params: list[str] = []
             string_call_params: list[str] = []
             conversion_code_lines: list[str] = []
-            
+
             for p in in_params:
                 if p.type_info.base_type == 'IDasReadOnlyString':
                     string_java_params.append(f"String {p.name}")
@@ -583,6 +714,46 @@ struct {ret_class_name} {{
             string_call_params_str = ", ".join(string_call_params)
             conversion_code = "\n        ".join(conversion_code_lines)
 
+            # 根据接口类型生成不同的异常处理代码
+            if has_idas_typeinfo:
+                string_exception_code = f"""
+    public final {return_type} {method_name}({string_java_params_str}) throws DasException {{
+        {conversion_code}
+        {ret_class_name} ret = {method_name}({string_call_params_str});
+        if (DuskAutoScript.IsFailed(ret.GetErrorCode())) {{
+            DasExceptionSourceInfoSwig sourceInfo = new DasExceptionSourceInfoSwig();
+            sourceInfo.setFile("{interface.name}.java");
+            sourceInfo.setLine(-1);
+            sourceInfo.setFunction("{method_name}");
+            throw new DasException(
+                ret.GetErrorCode(),
+                das.CreateDasExceptionStringWithTypeInfoSwig(
+                    ret.GetErrorCode(),
+                    sourceInfo,
+                    this
+                )
+            );
+        }}
+        return ret.GetValue();
+    }}"""
+            else:
+                string_exception_code = f"""
+    public final {return_type} {method_name}({string_java_params_str}) throws DasException {{
+        {conversion_code}
+        {ret_class_name} ret = {method_name}({string_call_params_str});
+        if (DuskAutoScript.IsFailed(ret.GetErrorCode())) {{
+            DasExceptionSourceInfoSwig sourceInfo = new DasExceptionSourceInfoSwig();
+            sourceInfo.setFile("{interface.name}.java");
+            sourceInfo.setLine(-1);
+            sourceInfo.setFunction("{method_name}");
+            throw new DasException(
+                ret.GetErrorCode(),
+                das.CreateDasExceptionStringSwig(ret.GetErrorCode(), sourceInfo)
+            );
+        }}
+        return ret.GetValue();
+    }}"""
+
             result_lines.append(f"""
 
     /**
@@ -590,15 +761,8 @@ struct {ret_class_name} {{
      * 直接返回结果，失败时抛出异常
      * @return {return_type} 结果
      * @throws DasException 当操作失败时
-     */
-    public final {return_type} {method_name}({string_java_params_str}) throws DasException {{
-        {conversion_code}
-        {ret_class_name} ret = {method_name}({string_call_params_str});
-        if (DuskAutoScript.IsFailed(ret.GetErrorCode())) {{
-            throw new DasException(ret.GetErrorCode());
-        }}
-        return ret.GetValue();
-    }}""")
+     */""")
+            result_lines.append(string_exception_code)
 
         return "".join(result_lines)
 
@@ -653,7 +817,7 @@ struct {ret_class_name} {{
 
             # 生成 [out] 参数的便捷方法
             for method, out_param in out_param_methods:
-                lines.append(self._generate_convenience_method(method, out_param))
+                lines.append(self._generate_convenience_method(interface, method, out_param))
 
             # 生成 castFrom 和 createFromPtr 方法
             lines.append(self._generate_interface_helper_methods(interface))

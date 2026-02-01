@@ -2,8 +2,10 @@
 #define DAS_DASEXCEPTION_HPP
 
 #include <das/DasExport.h>
+#include <das/DasString.hpp>
 #include <das/IDasBase.h>
 #include <stdexcept>
+
 
 // Forward declaration
 struct IDasTypeInfo;
@@ -16,7 +18,20 @@ struct DasExceptionSourceInfo
     const char* function;
 };
 
-SWIG_IGNORE(IDasExceptionString)
+struct DasExceptionSourceInfoSwig
+{
+    const char* file;
+    int         line;
+    const char* function;
+
+    ~DasExceptionSourceInfoSwig()
+    {
+        delete file;
+        delete function;
+    }
+};
+
+DAS_SWIG_EXPORT_ATTRIBUTE(IDasExceptionString)
 // {6073A186-16C9-41E5-9A02-BE76CCB94951}
 DAS_DEFINE_GUID(
     DAS_IID_EXCEPTION_STRING,
@@ -34,6 +49,7 @@ DAS_DEFINE_GUID(
     0x51);
 struct IDasExceptionString : IDasBase
 {
+    SWIG_PRIVATE
     DAS_METHOD GetU8(const char** pp_out_string) = 0;
 };
 
@@ -90,22 +106,34 @@ struct IDasExceptionString : IDasBase
     }
 
 // C API 函数声明（实现在 DasExceptionSupport.cpp）
+SWIG_IGNORE(CreateDasExceptionString)
 DAS_C_API void CreateDasExceptionString(
     DasResult               error_code,
     DasExceptionSourceInfo* p_source_info,
     IDasExceptionString**   pp_out_handle);
 
+SWIG_IGNORE(CreateDasExceptionStringWithMessage)
 DAS_C_API void CreateDasExceptionStringWithMessage(
     DasResult               error_code,
     DasExceptionSourceInfo* p_source_info,
     const char*             message,
     IDasExceptionString**   pp_out_handle);
 
+SWIG_IGNORE(CreateDasExceptionStringWithTypeInfo)
 DAS_C_API void CreateDasExceptionStringWithTypeInfo(
     DasResult               error_code,
     DasExceptionSourceInfo* p_source_info,
     IDasTypeInfo*           p_type_info,
     IDasExceptionString**   pp_out_handle);
+
+DAS_API IDasExceptionString* CreateDasExceptionStringSwig(
+    DasResult                   error_code,
+    DasExceptionSourceInfoSwig* p_source_info);
+
+DAS_API IDasExceptionString* CreateDasExceptionStringWithTypeInfoSwig(
+    DasResult                   error_code,
+    DasExceptionSourceInfoSwig* p_source_info,
+    IDasTypeInfo*               p_type_info);
 
 SWIG_IGNORE(std::runtime_error)
 class DasException : public std::runtime_error
@@ -115,6 +143,16 @@ class DasException : public std::runtime_error
     using Base = std::runtime_error;
 
 public:
+    DasException(DasResult error_code, IDasExceptionString* p_string)
+        : Base{[p_string]
+               {
+                   const char* result;
+                   p_string->GetU8(&result);
+                   return result;
+               }()},
+          error_code_{error_code}
+    {
+    }
 #ifndef SWIG
     DasException(DasResult error_code, std::string&& string)
         : Base{string.c_str()}, error_code_{error_code}
@@ -130,18 +168,6 @@ public:
         : DasException{error_code, std::string{message}}
     {
     }
-
-    DasException(DasResult error_code, IDasExceptionString* p_string)
-        : Base{[p_string]
-               {
-                   const char* result;
-                   p_string->GetU8(&result);
-                   return result;
-               }()},
-          error_code_{error_code}
-    {
-    }
-
 #endif // SWIG
 
     [[nodiscard]]

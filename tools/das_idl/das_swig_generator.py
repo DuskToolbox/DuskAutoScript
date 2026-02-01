@@ -802,6 +802,24 @@ public:
         # 重置 typemap 收集列表
         self._current_typemaps = []
 
+        # 收集所有接口列表（包括导入的文档）
+        all_interfaces = []
+        all_interfaces.extend(self.document.interfaces)
+        for doc in self._imported_documents.values():
+            all_interfaces.extend(doc.interfaces)
+
+        # 收集所有枚举列表（包括导入的文档）
+        all_enums = []
+        all_enums.extend(self.document.enums)
+        for doc in self._imported_documents.values():
+            all_enums.extend(doc.enums)
+
+        # 为 Java 生成器设置所有接口和枚举列表
+        for lang_generator in self.lang_generators:
+            if lang_generator.__class__.__name__ == 'JavaSwigGenerator':
+                lang_generator.set_all_interfaces(all_interfaces)
+                lang_generator.set_all_enums(all_enums)
+
         lines = []
         lines.append(self._file_header(interface.name))
 
