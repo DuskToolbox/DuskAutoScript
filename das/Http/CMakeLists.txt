@@ -7,7 +7,6 @@ add_executable(DasHttp ${SOURCES})
 target_include_directories(DasHttp PRIVATE src)
 target_link_libraries(DasHttp PRIVATE
         DasCore
-        DasGateway
         DAS_EX_PRIVATE_LIBS
         Boost::beast
         Boost::asio)
