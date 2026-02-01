@@ -28,6 +28,8 @@ class JavaSwigGenerator(SwigLangGenerator):
         'int64_t': 'DasRetInt',
         'uint64_t': 'DasRetUInt',
         'DasReadOnlyString': 'DasRetReadOnlyString',
+        # void** 类型 -> 映射到 DasRetBase（返回 IDasBase）
+        'void': 'DasRetBase',
     }
     def __init__(self) -> None:
         super().__init__()
@@ -263,11 +265,8 @@ class JavaSwigGenerator(SwigLangGenerator):
             out_params = [p for p in method.parameters if p.direction == ParamDirection.OUT]
             if out_params:
                 out_param = out_params[0]
-                # 检查是否是 void** 类型，如果是则打印警告并跳过
-                if self._is_void_pointer_pointer(out_param.type_info.base_type):
-                    print(f"Warning: Skipping method {interface.name}::{method.name} - void** output parameter is not supported for Java binding")
-                    continue
                 # 每个方法只取第一个 [out] 参数
+                # void** 类型会被特殊处理，映射到 DasRetBase（返回 IDasBase）
                 result.append((method, out_param))
         return result
 
@@ -334,6 +333,47 @@ class JavaSwigGenerator(SwigLangGenerator):
             else:
                 cpp_value_type = f"{out_type}*"
             cpp_default_value = "nullptr"
+            include_guard = self._to_include_guard(ret_class_name)
+            return f"""
+// ============================================================================
+// {ret_class_name} - 返回包装类（接口类型）
+// 用于封装带有 [out] 参数的方法返回值
+// ============================================================================
+%inline %{{
+
+#ifndef {include_guard}
+#define {include_guard}
+struct {ret_class_name} {{
+    DasResult error_code;
+    {cpp_value_type} value;
+
+    {ret_class_name}() : error_code(DAS_E_UNDEFINED_RETURN_VALUE), value({cpp_default_value}) {{}}
+
+    DasResult GetErrorCode() const {{ return error_code; }}
+
+    {cpp_value_type} GetValue() const {{ return value; }}
+
+    bool IsOk() const {{ return DAS::IsOk(error_code); }}
+}};
+#endif // {include_guard}
+
+%}}
+
+// 为 {ret_class_name} 添加 Java 便捷方法
+%typemap(javacode) {ret_class_name} %{{
+    /**
+     * 获取值，如果操作失败则抛出异常
+     * @return 结果值
+     * @throws DasException 当操作失败时
+     */
+    public {java_type} getValueOrThrow() throws DasException {{
+        if (!IsOk()) {{
+            throw new DasException(GetErrorCode());
+        }}
+        return GetValue();
+    }}
+%}}
+ """
         else:
             # 值类型：存储值本身
             namespace = self.get_type_namespace(out_type)
@@ -468,6 +508,7 @@ struct {ret_class_name} {{
         ret_class_name = self._get_ret_class_name(out_type)
         is_interface = self._is_interface_type(out_type)
         is_idas_readonly_string_out = self._is_idas_readonly_string_out_param(out_type)
+        is_void_pointer_pointer = self._is_void_pointer_pointer(out_type)
 
         # 收集非 [out] 参数
         in_params: list[ParameterDef] = []
@@ -492,10 +533,27 @@ struct {ret_class_name} {{
 
         lines: list[str] = []
 
+        # 对于 void** 类型的 [out] 参数，映射到 DasRetBase（返回 IDasBase）
+        if is_void_pointer_pointer:
+            call_args_with_temp = call_args.copy()
+            call_args_with_temp.append("reinterpret_cast<void**>(&result.value)")
+            call_args_str = ", ".join(call_args_with_temp)
+
+            lines.append(f"""
+// 隐藏原始的 {method.name} 方法
+%ignore {qualified_interface}::{method.name};
+
+// 添加返回 DasRetBase 的包装方法（void** -> IDasBase*）
+%extend {qualified_interface} {{
+    DasRetBase {method.name}({cpp_params_str}) {{
+        DasRetBase result;
+        result.error_code = $self->{method.name}({call_args_str});
+        return result;
+    }}
+}}
+""")
         # 对于 IDasReadOnlyString** 类型的 [out] 参数，需要特殊处理
-        # 因为 DasRetReadOnlyString.value 是 DasReadOnlyString 类型（包装类），
-        # 而方法需要的是 IDasReadOnlyString** 类型
-        if is_idas_readonly_string_out:
+        elif is_idas_readonly_string_out:
             call_args_with_temp = call_args.copy()
             call_args_with_temp.append("&p_out_string")
             call_args_str = ", ".join(call_args_with_temp)
@@ -629,7 +687,10 @@ struct {ret_class_name} {{
         call_params_str = ", ".join(param_names)
 
         # 确定返回类型
-        if self._is_interface_type(out_type):
+        # void** 类型映射到 IDasBase
+        if self._is_void_pointer_pointer(out_type):
+            return_type = "IDasBase"
+        elif self._is_interface_type(out_type):
             return_type = out_type
         else:
             return_type = self._get_java_type(out_type)
