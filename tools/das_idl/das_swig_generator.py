@@ -112,14 +112,14 @@ class SwigCodeGenerator:
             self.lang_generators = [JavaSwigGenerator(), CSharpSwigGenerator(), PythonSwigGenerator()]
         else:
             self.lang_generators = lang_generators
-        
+
         # 为所有语言生成器设置上下文
         self._setup_lang_generator_contexts()
 
     def _setup_lang_generator_contexts(self) -> None:
         """为所有语言生成器设置上下文"""
         context = SwigLangGeneratorContext(
-            get_interface_namespace_func=self._get_interface_namespace
+            get_interface_namespace_func=self._get_type_namespace
         )
         for lang_generator in self.lang_generators:
             lang_generator.set_context(context)
@@ -205,6 +205,53 @@ class SwigCodeGenerator:
             for interface in doc.interfaces:
                 if interface.name == simple_name:
                     return interface.namespace
+        return None
+
+    def _get_type_namespace(self, type_name: str) -> str | None:
+        """根据类型名查找其命名空间（支持接口、结构体、枚举）
+
+        Args:
+            type_name: 类型名称（可以是简单名或完全限定名）
+
+        Returns:
+            命名空间字符串，如果未找到则返回 None
+        """
+        # 提取简单名称
+        simple_name = type_name.split('::')[-1]
+
+        # 先在当前文档中查找
+        # 1. 查找接口
+        for interface in self.document.interfaces:
+            if interface.name == simple_name:
+                return interface.namespace
+
+        # 2. 查找结构体
+        for struct in self.document.structs:
+            if struct.name == simple_name:
+                return struct.namespace
+
+        # 3. 查找枚举
+        for enum in self.document.enums:
+            if enum.name == simple_name:
+                return enum.namespace
+
+        # 在所有导入的文档中查找
+        for doc in self._imported_documents.values():
+            # 查找接口
+            for interface in doc.interfaces:
+                if interface.name == simple_name:
+                    return interface.namespace
+
+            # 查找结构体
+            for struct in doc.structs:
+                if struct.name == simple_name:
+                    return struct.namespace
+
+            # 查找枚举
+            for enum in doc.enums:
+                if enum.name == simple_name:
+                    return enum.namespace
+
         return None
 
     def _is_binary_data_method(self, interface: InterfaceDef, method: MethodDef) -> bool:
@@ -314,7 +361,7 @@ class SwigCodeGenerator:
 
     def _generate_out_param_typemap(self, interface: InterfaceDef, method: MethodDef, param: ParameterDef) -> str:
         """生成 [out] 参数的 typemap（仅基础 typemap，不含语言特定代码）
-        
+
         如果有语言生成器完全处理 [out] 参数（handles_out_param_completely() 返回 True），
         则为这些语言生成 #ifndef 包裹，避免重复定义。
         """
@@ -335,7 +382,7 @@ class SwigCodeGenerator:
 
         # 如果有语言生成器完全处理，需要用 #ifndef 包裹
         need_ifndef = len(skip_defines) > 0
-        
+
         if need_ifndef:
             # 生成 #if !(defined(SWIGJAVA) || defined(SWIGCSHARP) || ...) 形式
             ifndef_conditions = ' || '.join(f"defined({d})" for d in skip_defines)
@@ -375,7 +422,7 @@ class SwigCodeGenerator:
 
     def _generate_lang_specific_out_param_wrappers(self, interface: InterfaceDef) -> str:
         """生成语言特定的 [out] 参数包装代码（包含 DasRetXxx 类型定义）
-        
+
         此方法应该在 %include 指令之后调用，以确保 SWIG 已经看到所有类型定义
         """
         lang_codes = []
@@ -764,13 +811,6 @@ public:
         lines.append(self._generate_clear_typemaps())
 
         return "\n".join(lines)
-
-    def generate_all_i_file(self, base_name: str, i_files: List[str], header_file: str) -> str:
-        """生成汇总的 .i 文件（已弃用，由CMake生成）"""
-        # 此方法已弃用，现在由CMake在代码生成后统一生成_all.i文件
-        return ""
-
-
 
 def generate_swig_files(document: IdlDocument, output_dir: str, base_name: str, idl_file_path: Optional[str] = None) -> List[str]:
     """生成所有 SWIG .i 文件（不包含_all.i文件，由CMake生成）"""
