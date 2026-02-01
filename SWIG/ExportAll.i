@@ -66,6 +66,34 @@ PyInit__DasCorePythonExport(void) {
 %typemap(javadirectorin) char16_t* "$jniinput"
 %typemap(javadirectorout) char16_t* "$javacall"
 
+// ============================================================================
+// IDasReadOnlyString* 参数映射到 DasReadOnlyString
+// 由于 IDasReadOnlyString 被 SWIG_IGNORE，需要手动定义 typemap
+// ============================================================================
+%typemap(jni) IDasReadOnlyString* "jlong"
+%typemap(jtype) IDasReadOnlyString* "long"
+%typemap(jstype) IDasReadOnlyString* "DasReadOnlyString"
+%typemap(javain) IDasReadOnlyString* "DasReadOnlyString.getCPtr($javainput)"
+%typemap(javaout) IDasReadOnlyString* {
+    long cPtr = $jnicall;
+    return (cPtr == 0) ? null : new DasReadOnlyString(cPtr, $owner);
+}
+%typemap(in) IDasReadOnlyString* %{
+    $1 = *(IDasReadOnlyString **)&$input;
+%}
+%typemap(out) IDasReadOnlyString* %{
+    *(IDasReadOnlyString **)&$result = $1;
+%}
+// Director typemaps for IDasReadOnlyString*
+%typemap(directorin, descriptor="J") IDasReadOnlyString* %{
+    *(IDasReadOnlyString **)&$input = $1;
+%}
+%typemap(directorout) IDasReadOnlyString* %{
+    $result = *(IDasReadOnlyString **)&$input;
+%}
+%typemap(javadirectorin) IDasReadOnlyString* "new DasReadOnlyString($jniinput, false)"
+%typemap(javadirectorout) IDasReadOnlyString* "DasReadOnlyString.getCPtr($javacall)"
+
 %typemap(jni) void DasReadOnlyString::GetUtf16 "jstring"
 %typemap(jtype) void DasReadOnlyString::GetUtf16 "String"
 %typemap(jstype) void DasReadOnlyString::GetUtf16 "String"
@@ -305,30 +333,7 @@ struct DasRetBase {
 // 该文件包含所有从IDL生成的SWIG接口（如DasCV, IDasCapture, IDasPluginManager等）
 %include <das/_autogen/idl/swig/swig_all.i>
 
-#ifdef SWIGPYTHON
 
-// ============================================================================
-// DasException Support for Python
-// ============================================================================
-
-// Extend DasException to add error_code attribute for Python access
-%extend DasException {
-    const char* GetMessage() const {
-        return $self->what();
-    }
-}
-
-// Exception handling for DasResult return values
-%exception {
-    try {
-        $action
-    }
-    catch (const DasException& ex) {
-        SWIG_exception_fail(SWIG_RuntimeError, ex.what());
-    }
-}
-
-#endif // SWIGPYTHON
 
 #ifdef SWIGJAVA
 
@@ -376,45 +381,3 @@ struct DasRetBase {
 
 #endif // SWIGJAVA
 
-#ifdef SWIGCSHARP
-// ============================================================================
-// DasException Support for C#
-// ============================================================================
-
-%rename(ErrorCode) DasException::GetErrorCode;
-%rename(Message) DasException::what;
-
-%typemap(cscode) DasException %{
-    private int errorCode;
-    private string message;
-
-    public DasException(int errorCode, string message) {
-        this.errorCode = errorCode;
-        this.message = message;
-    }
-
-    public int ErrorCode {
-        get { return errorCode; }
-    }
-
-    public string Message {
-        get { return message; }
-    }
-%}
-
-%typemap(csout) DasException %{
-    SWIG_CSharpSetPendingException(SWIG_CSharpApplicationException, "DasException occurred");
-    throw $modulePINVOKE.SWIGPendingException.Retrieve();
-%}
-
-%exception DasException {
-    try {
-        $action
-    }
-    catch (const DasException& ex) {
-        SWIG_CSharpSetPendingException(SWIG_CSharpApplicationException, ex.what());
-    }
-}
-
-
-#endif // SWIGCSHARP

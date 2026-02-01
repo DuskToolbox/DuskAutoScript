@@ -391,66 +391,6 @@ class SwigCodeGenerator:
 %feature("director") {qualified_name};
 """
 
-    def _generate_out_param_typemap(self, interface: InterfaceDef, method: MethodDef, param: ParameterDef) -> str:
-        """生成 [out] 参数的 typemap（仅基础 typemap，不含语言特定代码）
-
-        如果有语言生成器完全处理 [out] 参数（handles_out_param_completely() 返回 True），
-        则为这些语言生成 #ifndef 包裹，避免重复定义。
-        """
-        if self._is_binary_data_method(interface, method):
-            return ""
-        base_type = param.type_info.base_type
-        is_interface = SwigTypeMapper.is_interface_type(base_type)
-
-        qualified_interface_name = self._get_qualified_name(interface.name, interface.namespace)
-        lines = []
-        lines.append(f"// {qualified_interface_name}::{method.name} - {param.name} parameter")
-
-        # 收集完全处理 [out] 参数的语言生成器的宏定义
-        skip_defines = []
-        for lang_generator in self.lang_generators:
-            if lang_generator.handles_out_param_completely():
-                skip_defines.append(lang_generator.get_swig_define())
-
-        # 如果有语言生成器完全处理，需要用 #ifndef 包裹
-        need_ifndef = len(skip_defines) > 0
-
-        if need_ifndef:
-            # 生成 #if !(defined(SWIGJAVA) || defined(SWIGCSHARP) || ...) 形式
-            ifndef_conditions = ' || '.join(f"defined({d})" for d in skip_defines)
-            lines.append(f"#if !({ifndef_conditions})")
-
-        if is_interface:
-            typemap_sig = f"{base_type}** {param.name}"
-            self._current_typemaps.append(typemap_sig)
-            lines.append(f"""
-%typemap(in, numinputs=0) {typemap_sig} ({base_type}* temp_{param.name} = nullptr) {{
-    $1 = &temp_{param.name};
-}}
-%typemap(argout) {typemap_sig} {{
-    $result = SWIG_NewPointerObj(SWIG_as_voidptr(temp_{param.name}), $descriptor({base_type}*), SWIG_POINTER_OWN);
-}}
-""")
-        else:
-            cpp_type = self._get_cpp_type(base_type)
-            typemap_sig = f"{cpp_type}* {param.name}"
-            self._current_typemaps.append(typemap_sig)
-            lines.append(f"""
-%typemap(in, numinputs=0) {typemap_sig} ({cpp_type} temp_{param.name}) {{
-    $1 = &temp_{param.name};
-}}
-%typemap(argout) {typemap_sig} {{
-    %append_output(SWIG_From_{self._get_swig_from_type(base_type)}(temp_{param.name}));
-}}
-""")
-
-        if need_ifndef:
-            lines.append(f"#endif // !({ifndef_conditions})")
-
-        # 注意：语言特定代码（包括 DasRetXxx 定义）现在延迟到 %include 之后生成
-        # 见 _generate_lang_specific_out_param_wrappers 方法
-
-        return "\n".join(lines)
 
     def _generate_lang_specific_out_param_wrappers(self, interface: InterfaceDef) -> str:
         """生成语言特定的 [out] 参数包装代码（包含 DasRetXxx 类型定义）
@@ -832,18 +772,16 @@ public:
         lines.append("%}")
         lines.append("")
 
-        # 为所有 [out] 参数生成基础 typemap（不含语言特定代码）
-        for method in interface.methods:
-            for param in method.parameters:
-                if param.direction == ParamDirection.OUT:
-                    lines.append(self._generate_out_param_typemap(interface, method, param))
-
         # 生成语言特定的预处理指令（%rename、%javamethodmodifiers、%typemap(javacode) 等）
         # 这些指令必须在 %include 之前才能正确生效
         for lang_generator in self.lang_generators:
             pre_include_code = lang_generator.generate_pre_include_directives(interface)
             if pre_include_code:
                 lines.append(pre_include_code)
+
+        # 为二进制缓冲区接口生成特殊的 typemap
+        # 必须在 %include 之前生成，这样 SWIG 才能在处理头文件时应用这些 typemap
+        lines.append(self._generate_binary_buffer_typemaps(interface))
 
         # %include 指令 - SWIG 形式 include
         same_name_include = None
@@ -875,9 +813,6 @@ public:
 
         # 生成引用计数实现基类 (IDasSwigXxx)
         lines.append(self._generate_ref_impl_class(interface))
-
-        # 为二进制缓冲区接口生成特殊的 typemap
-        lines.append(self._generate_binary_buffer_typemaps(interface))
 
         # 在文件末尾清除所有 typemap
         lines.append(self._generate_clear_typemaps())
