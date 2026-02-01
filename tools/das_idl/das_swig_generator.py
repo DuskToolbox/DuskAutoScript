@@ -99,7 +99,7 @@ class SwigTypeMapper:
 class SwigCodeGenerator:
     """SWIG .i 文件生成器"""
 
-    _global_typemaps: set[str] = set()
+    _global_typemaps: dict[str, str] = {}
     _global_ret_classes: dict[str, str] = {}
 
     def __init__(self, document: IdlDocument, idl_file_name: Optional[str] = None, idl_file_path: Optional[str] = None, lang_generators: Optional[List[SwigLangGenerator]] = None):
@@ -515,7 +515,7 @@ class SwigCodeGenerator:
                 typemap_pattern = re.compile(r'%typemap\s*\(([^)]+)\)\s*(\S+)\s*\{')
                 for match in typemap_pattern.finditer(lang_code):
                     typemap_sig = f"{match.group(2)} ({match.group(1)})"
-                    self._global_typemaps.add(typemap_sig)
+                    self._global_typemaps[typemap_sig] = lang_code
 
         lines.append("\n".join(lang_codes))
         return "\n".join(lines)
@@ -526,6 +526,16 @@ class SwigCodeGenerator:
         不再在文件末尾生成%clear指令，因为typemap将统一在DasTypeMaps.i中定义。
         """
         return ""
+
+    @classmethod
+    def get_global_typemaps(cls) -> dict:
+        """获取全局typemap字典"""
+        return cls._global_typemaps
+
+    @classmethod
+    def get_global_ret_classes(cls) -> dict:
+        """获取全局ret_classes字典"""
+        return cls._global_ret_classes
 
     def _generate_iid_static_method(self, interface: InterfaceDef) -> str:
         """为接口生成 %extend IID() 静态方法
@@ -823,10 +833,34 @@ public:
 
         if output_typemap_info:
             source_dir = Path(__file__).parent.parent.parent.parent
+
+            typemaps_info = {}
+            for sig, code in self._global_typemaps.items():
+                typemaps_info[sig] = {
+                    "code": code,
+                    "meta": {
+                        "signature": sig,
+                        "origin": self.idl_file_name or "unknown"
+                    }
+                }
+
+            ret_classes_info = {}
+            for class_name, class_code in self._global_ret_classes.items():
+                ret_classes_info[class_name] = {
+                    "code": class_code,
+                    "meta": {
+                        "origin": self.idl_file_name or "unknown"
+                    }
+                }
+
             typemap_info = {
                 "schema_version": "1.0",
-                "typemaps": list(self._global_typemaps),
-                "ret_classes": self._global_ret_classes
+                "generator": {
+                    "name": "das_idl_gen",
+                    "version": "1.0.0"
+                },
+                "typemaps": typemaps_info,
+                "ret_classes": ret_classes_info
             }
             if task_id:
                 json_file = source_dir / "SWIG" / f"typemap_info_{task_id}.json"
@@ -838,7 +872,7 @@ public:
 
         return result
 
-def generate_swig_files(document: IdlDocument, output_dir: str, base_name: str, idl_file_path: Optional[str] = None) -> List[str]:
+def generate_swig_files(document: IdlDocument, output_dir: str, base_name: str, idl_file_path: Optional[str] = None, output_typemap_info: bool = False, task_id: str = "") -> List[str]:
     """生成所有 SWIG .i 文件（不包含_all.i文件，由CMake生成）"""
     import os
 
@@ -855,7 +889,7 @@ def generate_swig_files(document: IdlDocument, output_dir: str, base_name: str, 
 
     # 为每个接口生成单独的 .i 文件
     for interface in document.interfaces:
-        i_content = generator.generate_interface_i_file(interface)
+        i_content = generator.generate_interface_i_file(interface, output_typemap_info=output_typemap_info, task_id=task_id)
         i_filename = f"{interface.name}.i"
         i_path = os.path.join(output_dir, i_filename)
 
