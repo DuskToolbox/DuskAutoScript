@@ -20,7 +20,7 @@ class DasStopTokenImplOnStack final
     uint32_t Release() override;
 
 public:
-    DasResult StopRequested() override;
+    DasResult StopRequested(bool* canStop) override;
 
     void RequestStop();
     void Reset();

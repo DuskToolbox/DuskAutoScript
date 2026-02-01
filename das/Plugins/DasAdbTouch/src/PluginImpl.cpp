@@ -88,9 +88,14 @@ DAS_IMPL DasAdbTouchPlugin::CreateFeatureInterface(
     return DAS_E_OUT_OF_RANGE;
 }
 
-DAS_BOOL_IMPL DasAdbTouchPlugin::CanUnloadNow()
+DAS_IMPL DasAdbTouchPlugin::CanUnloadNow(bool* p_can_unload)
 {
-    return DAS_E_NO_IMPLEMENTATION;
+    if (p_can_unload == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+    *p_can_unload = true;
+    return DAS_S_OK;
 }
 
 DAS_NS_END
