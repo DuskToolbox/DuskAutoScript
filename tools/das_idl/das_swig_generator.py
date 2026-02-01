@@ -216,43 +216,75 @@ class SwigCodeGenerator:
         Returns:
             命名空间字符串，如果未找到则返回 None
         """
-        # 提取简单名称
-        simple_name = type_name.split('::')[-1]
+        # 检查 type_name 是否已经包含命名空间（完全限定名）
+        if '::' in type_name:
+            # 提取最后一个命名空间部分
+            parts = type_name.split('::')
+            simple_name = parts[-1]
+            # 命名空间是除了最后一个部分之外的所有部分
+            namespace = '::'.join(parts[:-1])
+            # 验证简单名称是否存在于类型定义中
+            # 先在当前文档中查找
+            for interface in self.document.interfaces:
+                if interface.name == simple_name and interface.namespace == namespace:
+                    return namespace
+            for struct in self.document.structs:
+                if struct.name == simple_name and struct.namespace == namespace:
+                    return namespace
+            for enum in self.document.enums:
+                if enum.name == simple_name and enum.namespace == namespace:
+                    return namespace
+            # 在所有导入的文档中查找
+            for doc in self._imported_documents.values():
+                for interface in doc.interfaces:
+                    if interface.name == simple_name and interface.namespace == namespace:
+                        return namespace
+                for struct in doc.structs:
+                    if struct.name == simple_name and struct.namespace == namespace:
+                        return namespace
+                for enum in doc.enums:
+                    if enum.name == simple_name and enum.namespace == namespace:
+                        return namespace
+            # 如果找不到完全匹配的类型，返回 None
+            return None
+        else:
+            # 提取简单名称
+            simple_name = type_name
 
-        # 先在当前文档中查找
-        # 1. 查找接口
-        for interface in self.document.interfaces:
-            if interface.name == simple_name:
-                return interface.namespace
-
-        # 2. 查找结构体
-        for struct in self.document.structs:
-            if struct.name == simple_name:
-                return struct.namespace
-
-        # 3. 查找枚举
-        for enum in self.document.enums:
-            if enum.name == simple_name:
-                return enum.namespace
-
-        # 在所有导入的文档中查找
-        for doc in self._imported_documents.values():
-            # 查找接口
-            for interface in doc.interfaces:
+            # 先在当前文档中查找
+            # 1. 查找接口
+            for interface in self.document.interfaces:
                 if interface.name == simple_name:
                     return interface.namespace
 
-            # 查找结构体
-            for struct in doc.structs:
+            # 2. 查找结构体
+            for struct in self.document.structs:
                 if struct.name == simple_name:
                     return struct.namespace
 
-            # 查找枚举
-            for enum in doc.enums:
+            # 3. 查找枚举
+            for enum in self.document.enums:
                 if enum.name == simple_name:
                     return enum.namespace
 
-        return None
+            # 在所有导入的文档中查找
+            for doc in self._imported_documents.values():
+                # 查找接口
+                for interface in doc.interfaces:
+                    if interface.name == simple_name:
+                        return interface.namespace
+
+                # 查找结构体
+                for struct in doc.structs:
+                    if struct.name == simple_name:
+                        return struct.namespace
+
+                # 查找枚举
+                for enum in doc.enums:
+                    if enum.name == simple_name:
+                        return enum.namespace
+
+            return None
 
     def _is_binary_data_method(self, interface: InterfaceDef, method: MethodDef) -> bool:
         """判断是否是返回二进制数据的方法
@@ -553,6 +585,25 @@ class SwigCodeGenerator:
 
         return "\n".join(lines)
 
+    def _generate_iid_static_method(self, interface: InterfaceDef) -> str:
+        """为接口生成 %extend IID() 静态方法
+
+        在 C++ 层注入静态函数，返回 DasIidOf<Interface> 的值。
+        这样 Java 端可以通过 Interface.IID() 获取接口的 IID，无需反射。
+        """
+        qualified_name = self._get_qualified_name(interface.name, interface.namespace)
+
+        return f"""
+// ============================================================================
+// Static IID method for {interface.name}
+// ============================================================================
+%extend {qualified_name} {{
+    static DasGuid IID() {{
+        return DasIidOf<{qualified_name}>();
+    }}
+}}
+"""
+
     def _get_swig_interface_name(self, interface_name: str) -> str:
         """获取导出给 SWIG 的接口名称 (IDasXxx -> ISwigDasXxx)"""
         if interface_name.startswith('I'):
@@ -792,6 +843,9 @@ public:
         lang_specific_code = self._generate_lang_specific_out_param_wrappers(interface)
         if lang_specific_code:
             lines.append(lang_specific_code)
+
+        # 生成 IID 静态方法（%extend）
+        lines.append(self._generate_iid_static_method(interface))
 
         # ignore 指令（原始接口）
         lines.append(self._generate_ignore_directives(interface))

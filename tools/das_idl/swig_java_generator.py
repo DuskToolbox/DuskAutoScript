@@ -10,7 +10,7 @@
 """
 
 from das_idl_parser import InterfaceDef, MethodDef, ParameterDef, ParamDirection
-from typing import Any, Optional
+from typing import Any, Optional, Dict
 
 from swig_lang_generator_base import SwigLangGenerator
 
@@ -18,6 +18,17 @@ from swig_lang_generator_base import SwigLangGenerator
 class JavaSwigGenerator(SwigLangGenerator):
     """Java 特定的 SWIG 代码生成器"""
 
+    # 预定义的返回类型映射表
+    # 这些类型在项目中已通过 DAS_DEFINE_RET_TYPE/DAS_DEFINE_RET_POINTER 宏定义
+    # 使用这些预定义类型，而不是生成新的类型
+    _PREDEFINED_RET_TYPES: Dict[str, str] = {
+        # 接口类型 -> 预定义的返回类型名
+        'IDasReadOnlyString': 'DasRetReadOnlyString',
+        # 值类型 -> 预定义的返回类型名
+        'int64_t': 'DasRetInt',
+        'uint64_t': 'DasRetUInt',
+        'DasReadOnlyString': 'DasRetReadOnlyString',
+    }
     def __init__(self) -> None:
         super().__init__()
         # 已生成 typemap 的方法集合，避免重复定义 (interface::method)
@@ -64,6 +75,12 @@ class JavaSwigGenerator(SwigLangGenerator):
         """判断是否是接口类型（以 I 开头，后跟大写字母）"""
         simple_name = type_name.split('::')[-1]
         return simple_name.startswith('I') and len(simple_name) > 1 and simple_name[1:2].isupper()
+
+    @staticmethod
+    def _is_void_pointer_pointer(type_name: str) -> bool:
+        """判断是否是 void** 类型"""
+        simple_name = type_name.split('::')[-1].strip()
+        return simple_name == 'void'
 
     @staticmethod
     def _normalize_type_name_for_class(type_name: str) -> str:
@@ -127,17 +144,35 @@ class JavaSwigGenerator(SwigLangGenerator):
             result += 'Ptr'
         return result
 
-    @staticmethod
-    def _get_ret_class_name(out_type: str) -> str:
+    @classmethod
+    def _get_ret_class_name(cls, out_type: str) -> str:
         """根据 [out] 参数类型生成返回包装类名
 
+        首先检查预定义的返回类型映射表，如果有则使用预定义名称。
+        否则生成新的类名。
+
         例如：
-        - IDasVariantVector -> DasRetVariantVector
-        - size_t -> DasRetSizeT
-        - DasGuid -> DasRetDasGuid
+        - IDasVariantVector -> DasRetVariantVector (预定义)
+        - IDasReadOnlyString -> DasRetReadOnlyString (预定义)
+        - IDasGuidVector -> DasRetGuidVector (生成)
+        - size_t -> DasRetSizeT (生成)
+        - DasGuid -> DasRetGuid (预定义)
         """
-        normalized = JavaSwigGenerator._normalize_type_name_for_class(out_type)
+        simple_name = out_type.split('::')[-1]
+        
+        # 优先使用预定义的返回类型
+        if simple_name in cls._PREDEFINED_RET_TYPES:
+            return cls._PREDEFINED_RET_TYPES[simple_name]
+        
+        # 否则生成新的类名
+        normalized = cls._normalize_type_name_for_class(out_type)
         return f"DasRet{normalized}"
+
+    @classmethod
+    def _is_predefined_ret_type(cls, out_type: str) -> bool:
+        """判断返回类型是否是预定义的（不需要生成类定义）"""
+        simple_name = out_type.split('::')[-1]
+        return simple_name in cls._PREDEFINED_RET_TYPES
 
     def get_language_name(self) -> str:
         return 'java'
@@ -187,8 +222,13 @@ class JavaSwigGenerator(SwigLangGenerator):
                 continue
             out_params = [p for p in method.parameters if p.direction == ParamDirection.OUT]
             if out_params:
+                out_param = out_params[0]
+                # 检查是否是 void** 类型，如果是则打印警告并跳过
+                if self._is_void_pointer_pointer(out_param.type_info.base_type):
+                    print(f"Warning: Skipping method {interface.name}::{method.name} - void** output parameter is not supported for Java binding")
+                    continue
                 # 每个方法只取第一个 [out] 参数
-                result.append((method, out_params[0]))
+                result.append((method, out_param))
         return result
 
     def _to_include_guard(self, name: str) -> str:
@@ -220,17 +260,23 @@ class JavaSwigGenerator(SwigLangGenerator):
         对于接口类型（如 IDasVariantVector），value 是指针类型
         对于值类型（如 size_t、DasGuid），value 是值类型
 
+        注意：如果是预定义的返回类型，则不生成类定义（类已存在）
+
         Args:
             out_type: [out] 参数的类型名
 
         Returns:
-            Java 类定义（通过 %inline 嵌入）
+            Java 类定义（通过 %inline 嵌入），如果是预定义类型则返回空字符串
         """
         ret_class_name = self._get_ret_class_name(out_type)
 
         if ret_class_name in self._generated_ret_classes:
             return ""
         self._generated_ret_classes.add(ret_class_name)
+
+        # 如果是预定义的返回类型，不需要生成类定义
+        if self._is_predefined_ret_type(out_type):
+            return ""
 
         java_type = self._get_java_type(out_type)
         is_interface = self._is_interface_type(out_type)
@@ -240,10 +286,26 @@ class JavaSwigGenerator(SwigLangGenerator):
             # 接口类型：存储指针，使用完全限定名
             namespace = self.get_type_namespace(out_type)
             if namespace:
-                cpp_value_type = f"{namespace}::{out_type}*"
+                # 检查 out_type 是否已经包含命名空间前缀，避免重复
+                if out_type.startswith(f"{namespace}::"):
+                    cpp_value_type = f"{out_type}*"
+                else:
+                    cpp_value_type = f"{namespace}::{out_type}*"
             else:
                 cpp_value_type = f"{out_type}*"
             cpp_default_value = "nullptr"
+        else:
+            # 值类型：存储值本身
+            namespace = self.get_type_namespace(out_type)
+            if namespace:
+                # 检查 out_type 是否已经包含命名空间前缀，避免重复
+                if out_type.startswith(f"{namespace}::"):
+                    cpp_value_type = out_type
+                else:
+                    cpp_value_type = f"{namespace}::{out_type}"
+            else:
+                cpp_value_type = out_type
+            cpp_default_value = "{}"
             include_guard = self._to_include_guard(ret_class_name)
             return f"""
 // ============================================================================
@@ -284,54 +346,21 @@ struct {ret_class_name} {{
         return GetValue();
     }}
 %}}
-"""
-        else:
-            # 值类型：存储值本身
-            namespace = self.get_type_namespace(out_type)
-            if namespace:
-                cpp_value_type = f"{namespace}::{out_type}"
-            else:
-                cpp_value_type = out_type
-            cpp_default_value = "{}"
-            include_guard = self._to_include_guard(ret_class_name)
-            return f"""
-// ============================================================================
-// {ret_class_name} - 返回包装类（值类型）
-// 用于封装带有 [out] 参数的方法返回值
-// ============================================================================
-%inline %{{
-#ifndef {include_guard}
-#define {include_guard}
-struct {ret_class_name} {{
-    DasResult error_code;
-    {cpp_value_type} value;
+ """
 
-    {ret_class_name}() : error_code(DAS_E_UNDEFINED_RETURN_VALUE), value{cpp_default_value} {{}}
+    def _has_idas_readonly_string_param(self, method: MethodDef) -> bool:
+        """判断方法是否有 IDasReadOnlyString* 参数（非 [out]）"""
+        for p in method.parameters:
+            if p.direction != ParamDirection.OUT:
+                if p.type_info.base_type == 'IDasReadOnlyString':
+                    return True
+        return False
 
-    DasResult GetErrorCode() const {{ return error_code; }}
-
-    {cpp_value_type} GetValue() const {{ return value; }}
-
-    bool IsOk() const {{ return DAS::IsOk(error_code); }}
-}};
-#endif // {include_guard}
-%}}
-
-// 为 {ret_class_name} 添加 Java 便捷方法
-%typemap(javacode) {ret_class_name} %{{
-    /**
-     * 获取值，如果操作失败则抛出异常
-     * @return 结果值
-     * @throws DasException 当操作失败时
-     */
-    public {java_type} getValueOrThrow() throws DasException {{
-        if (!IsOk()) {{
-            throw new DasException(GetErrorCode());
-        }}
-        return GetValue();
-    }}
-%}}
-"""
+    @staticmethod
+    def _is_idas_readonly_string_out_param(out_type: str) -> bool:
+        """判断是否是 IDasReadOnlyString** 类型的 [out] 参数"""
+        simple_name = out_type.split('::')[-1]
+        return simple_name == 'IDasReadOnlyString'
 
     def _generate_extend_wrapper(self, interface: InterfaceDef, method: MethodDef, out_param: ParameterDef) -> str:
         """生成 %extend 包装方法
@@ -351,12 +380,16 @@ struct {ret_class_name} {{
         out_type = out_param.type_info.base_type
         ret_class_name = self._get_ret_class_name(out_type)
         is_interface = self._is_interface_type(out_type)
+        is_idas_readonly_string_out = self._is_idas_readonly_string_out_param(out_type)
 
         # 收集非 [out] 参数
         in_params: list[ParameterDef] = []
         for p in method.parameters:
             if p.direction != ParamDirection.OUT:
                 in_params.append(p)
+
+        # 检查是否需要生成 DasReadOnlyString 参数版本
+        has_idas_readonly_string = self._has_idas_readonly_string_param(method)
 
         # 生成 C++ 参数列表
         cpp_params: list[str] = []
@@ -370,13 +403,39 @@ struct {ret_class_name} {{
 
         cpp_params_str = ", ".join(cpp_params)
 
-        # 调用原始方法的参数（包含 out 参数）
-        # 接口类型：传递 &result.value（因为 value 是指针，所以传递指针的地址）
-        # 值类型：传递 &result.value（因为 value 是值，所以传递值的地址）
-        call_args.append("&result.value")
-        call_args_str = ", ".join(call_args)
+        lines: list[str] = []
 
-        return f"""
+        # 对于 IDasReadOnlyString** 类型的 [out] 参数，需要特殊处理
+        # 因为 DasRetReadOnlyString.value 是 DasReadOnlyString 类型（包装类），
+        # 而方法需要的是 IDasReadOnlyString** 类型
+        if is_idas_readonly_string_out:
+            call_args_with_temp = call_args.copy()
+            call_args_with_temp.append("&p_out_string")
+            call_args_str = ", ".join(call_args_with_temp)
+            
+            lines.append(f"""
+// 隐藏原始的 {method.name} 方法
+%ignore {qualified_interface}::{method.name};
+
+// 添加返回 {ret_class_name} 的包装方法
+%extend {qualified_interface} {{
+    {ret_class_name} {method.name}({cpp_params_str}) {{
+        {ret_class_name} result;
+        IDasReadOnlyString* p_out_string = nullptr;
+        result.error_code = $self->{method.name}({call_args_str});
+        result.value = p_out_string;  // DasReadOnlyString 可以从 IDasReadOnlyString* 隐式构造
+        return result;
+    }}
+}}
+""")
+        else:
+            # 调用原始方法的参数（包含 out 参数）
+            # 接口类型：传递 &result.value（因为 value 是指针，所以传递指针的地址）
+            # 值类型：传递 &result.value（因为 value 是值，所以传递值的地址）
+            call_args.append("&result.value")
+            call_args_str = ", ".join(call_args)
+            
+            lines.append(f"""
 // 隐藏原始的 {method.name} 方法
 %ignore {qualified_interface}::{method.name};
 
@@ -388,7 +447,59 @@ struct {ret_class_name} {{
         return result;
     }}
 }}
-"""
+""")
+
+        # 如果方法有 IDasReadOnlyString* 参数，生成额外的 DasReadOnlyString 参数版本
+        if has_idas_readonly_string:
+            # 生成 DasReadOnlyString 参数版本
+            das_cpp_params: list[str] = []
+            das_call_args: list[str] = []
+            for p in in_params:
+                if p.type_info.base_type == 'IDasReadOnlyString':
+                    das_cpp_params.append(f"DasReadOnlyString {p.name}")
+                    das_call_args.append(f"{p.name}.Get()")
+                else:
+                    cpp_type = self._get_cpp_type(p.type_info.base_type)
+                    if self._is_interface_type(p.type_info.base_type):
+                        cpp_type = f"{p.type_info.base_type}*"
+                    das_cpp_params.append(f"{cpp_type} {p.name}")
+                    das_call_args.append(p.name)
+
+            das_cpp_params_str = ", ".join(das_cpp_params)
+
+            # 对于 IDasReadOnlyString** 类型的 [out] 参数，需要特殊处理
+            if is_idas_readonly_string_out:
+                das_call_args.append("&p_out_string")
+                das_call_args_str = ", ".join(das_call_args)
+                
+                lines.append(f"""
+// 添加 DasReadOnlyString 参数版本的 {method.name} 方法
+%extend {qualified_interface} {{
+    {ret_class_name} {method.name}({das_cpp_params_str}) {{
+        {ret_class_name} result;
+        IDasReadOnlyString* p_out_string = nullptr;
+        result.error_code = $self->{method.name}({das_call_args_str});
+        result.value = p_out_string;  // DasReadOnlyString 可以从 IDasReadOnlyString* 隐式构造
+        return result;
+    }}
+}}
+""")
+            else:
+                das_call_args.append("&result.value")
+                das_call_args_str = ", ".join(das_call_args)
+                
+                lines.append(f"""
+// 添加 DasReadOnlyString 参数版本的 {method.name} 方法
+%extend {qualified_interface} {{
+    {ret_class_name} {method.name}({das_cpp_params_str}) {{
+        {ret_class_name} result;
+        result.error_code = $self->{method.name}({das_call_args_str});
+        return result;
+    }}
+}}
+""")
+
+        return "\n".join(lines)
 
     def _generate_convenience_method(self, method: MethodDef, out_param: ParameterDef) -> str:
         """生成便捷方法（Ex 后缀）
@@ -431,7 +542,9 @@ struct {ret_class_name} {{
         else:
             return_type = self._get_java_type(out_type)
 
-        return f"""
+        result_lines: list[str] = []
+
+        result_lines.append(f"""
     /**
      * {method_name} 的便捷版本
      * 直接返回结果，失败时抛出异常
@@ -444,7 +557,50 @@ struct {ret_class_name} {{
             throw new DasException(ret.GetErrorCode());
         }}
         return ret.GetValue();
-    }}"""
+    }}""")
+
+        # 检查是否有 IDasReadOnlyString* 参数，如果有则生成 String 参数版本的便捷方法
+        has_idas_readonly_string = self._has_idas_readonly_string_param(method)
+        if has_idas_readonly_string:
+            # 生成 String 参数版本的便捷方法（标记为 final）
+            string_java_params: list[str] = []
+            string_call_params: list[str] = []
+            conversion_code_lines: list[str] = []
+            
+            for p in in_params:
+                if p.type_info.base_type == 'IDasReadOnlyString':
+                    string_java_params.append(f"String {p.name}")
+                    string_call_params.append(f"das_{p.name}")
+                    conversion_code_lines.append(f"DasReadOnlyString das_{p.name} = new DasReadOnlyString({p.name});")
+                else:
+                    java_type = self._get_java_type(p.type_info.base_type)
+                    if self._is_interface_type(p.type_info.base_type):
+                        java_type = p.type_info.base_type
+                    string_java_params.append(f"{java_type} {p.name}")
+                    string_call_params.append(p.name)
+
+            string_java_params_str = ", ".join(string_java_params)
+            string_call_params_str = ", ".join(string_call_params)
+            conversion_code = "\n        ".join(conversion_code_lines)
+
+            result_lines.append(f"""
+
+    /**
+     * {method_name} 的便捷版本（使用 Java String 参数）
+     * 直接返回结果，失败时抛出异常
+     * @return {return_type} 结果
+     * @throws DasException 当操作失败时
+     */
+    public final {return_type} {method_name}({string_java_params_str}) throws DasException {{
+        {conversion_code}
+        {ret_class_name} ret = {method_name}({string_call_params_str});
+        if (DuskAutoScript.IsFailed(ret.GetErrorCode())) {{
+            throw new DasException(ret.GetErrorCode());
+        }}
+        return ret.GetValue();
+    }}""")
+
+        return "".join(result_lines)
 
     def generate_pre_include_directives(self, interface: InterfaceDef) -> str:
         """生成必须在 %include 之前的 SWIG 指令
@@ -452,7 +608,7 @@ struct {ret_class_name} {{
         包括：
         1. 生成 DasRetXxx 返回包装类
         2. 生成 %ignore 和 %extend 包装
-        3. 生成 %typemap(javacode) 便捷方法
+        3. 生成 %typemap(javacode) 便捷方法（包括 castFrom 和 createFromPtr）
 
         注意：对于 binary_buffer 接口（如 IDasBinaryBuffer），不生成任何代码，
         因为所有代码会在 generate_binary_buffer_helpers 中统一生成。
@@ -465,41 +621,42 @@ struct {ret_class_name} {{
         lines: list[str] = []
         qualified_interface_name = f"{interface.namespace}::{interface.name}" if interface.namespace else interface.name
 
-        # 获取带有 [out] 参数的方法（已自动排除 [binary_buffer] 方法）
+        # 获取带有 [out] 参数的方法（已自动排除 [binary_buffer] 方法和 void** 类型）
         out_param_methods = self._get_out_param_methods(interface)
-
-        # 如果没有 [out] 参数方法，直接返回
-        if not out_param_methods:
-            return ""
 
         lines.append("#ifdef SWIGJAVA")
 
-        # 1. 生成所有需要的 DasRetXxx 类
-        generated_ret_types: set[str] = set()
-        for method, out_param in out_param_methods:
-            out_type = out_param.type_info.base_type
-            if out_type not in generated_ret_types:
-                generated_ret_types.add(out_type)
-                ret_class_code = self._generate_ret_class(out_type)
-                if ret_class_code:
-                    lines.append(ret_class_code)
+        # 1. 生成所有需要的 DasRetXxx 类（跳过预定义类型）
+        if out_param_methods:
+            generated_ret_types: set[str] = set()
+            for method, out_param in out_param_methods:
+                out_type = out_param.type_info.base_type
+                if out_type not in generated_ret_types:
+                    generated_ret_types.add(out_type)
+                    ret_class_code = self._generate_ret_class(out_type)
+                    if ret_class_code:
+                        lines.append(ret_class_code)
 
-        # 2. 生成 %ignore 和 %extend 包装
-        for method, out_param in out_param_methods:
-            lines.append(self._generate_extend_wrapper(interface, method, out_param))
+            # 2. 生成 %ignore 和 %extend 包装
+            for method, out_param in out_param_methods:
+                lines.append(self._generate_extend_wrapper(interface, method, out_param))
 
-        # 3. 生成 %typemap(javacode) 便捷方法
+        # 3. 生成 %typemap(javacode) 方法（包括便捷方法、castFrom 和 createFromPtr）
         if qualified_interface_name not in self._generated_javacode_interfaces:
             self._generated_javacode_interfaces.add(qualified_interface_name)
 
             lines.append(f"""
 // ============================================================================
-// {interface.name} 的便捷方法
+// {interface.name} 的 Java 辅助方法
 // ============================================================================
 %typemap(javacode) {qualified_interface_name} %{{""")
 
+            # 生成 [out] 参数的便捷方法
             for method, out_param in out_param_methods:
                 lines.append(self._generate_convenience_method(method, out_param))
+
+            # 生成 castFrom 和 createFromPtr 方法
+            lines.append(self._generate_interface_helper_methods(interface))
 
             lines.append("%}")
 
@@ -513,6 +670,59 @@ struct {ret_class_name} {{
         由于我们使用 %extend 方案，这里不需要额外的包装代码。
         """
         return ""
+
+    def _generate_interface_helper_methods(self, interface: InterfaceDef) -> str:
+        """为接口生成 Java 辅助方法（castFrom 和 createFromPtr）
+
+        这些方法用于支持类型安全的接口转换：
+        - castFrom(IDasBase base): 从 IDasBase 转换到目标类型（零开销，需确保类型正确）
+        - createFromPtr(long ptr, boolean own): 内部工厂方法，供 as() 使用
+
+        Args:
+            interface: 接口定义
+
+        Returns:
+            Java 代码字符串
+        """
+        interface_name = interface.name
+
+        return f"""
+    /**
+     * 从 IDasBase 转换到 {interface_name}（零开销转换）
+     * <p>
+     * 此方法执行零 C++ 调用的转换，适用于你确定类型正确的场景。
+     * 如果不确定类型，请使用 as() 方法，它会通过 QueryInterface 验证类型。
+     * </p>
+     * @param base 源对象，必须拥有内存所有权（swigCMemOwn == true）
+     * @return 转换后的 {interface_name} 对象
+     * @throws IllegalStateException 如果 base 为 null 或不拥有内存所有权
+     */
+    public static {interface_name} castFrom(IDasBase base) {{
+        if (base == null) {{
+            throw new IllegalStateException("Cannot cast from null IDasBase");
+        }}
+        if (!base.swigCMemOwn) {{
+            throw new IllegalStateException(
+                "Cannot cast from IDasBase: source object does not own memory. " +
+                "The object may have already been converted or released.");
+        }}
+        long ptr = IDasBase.getCPtr(base);
+        base.swigCMemOwn = false;  // 转移所有权
+        return new {interface_name}(ptr, true);
+    }}
+
+    /**
+     * 内部工厂方法，从 C++ 指针创建 {interface_name} 实例
+     * <p>
+     * 此方法供 as() 反射调用使用。
+     * </p>
+     * @param cPtr C++ 对象指针
+     * @param cMemoryOwn 是否拥有内存所有权
+     * @return 新的 {interface_name} 实例
+     */
+    public static {interface_name} createFromPtr(long cPtr, boolean cMemoryOwn) {{
+        return new {interface_name}(cPtr, cMemoryOwn);
+    }}"""
 
     def _get_cpp_type(self, type_name: str) -> str:
         """获取 C++ 类型"""
