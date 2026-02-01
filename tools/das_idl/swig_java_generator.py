@@ -5,8 +5,8 @@
 核心设计：
 1. 通过 SWIG typemap 完全隐藏 [out] 参数，让 Java 用户完全不感知 C++ 的通过参数传递返回值的模式。
 2. 对于带 [out] 参数的方法，Java 端：
-   - 主方法直接返回 DasRetXxx 包装类，包含错误码和结果
-   - 便捷方法（Ex后缀）直接返回结果，失败时抛出 DasException
+    - 主方法直接返回 DasRetXxx 包装类，包含错误码和结果
+    - 便捷方法（Ez后缀）直接返回结果，失败时抛出 DasException
 """
 
 from das_idl_parser import InterfaceDef, MethodDef, ParameterDef, ParamDirection
@@ -502,7 +502,7 @@ struct {ret_class_name} {{
         return "\n".join(lines)
 
     def _generate_convenience_method(self, method: MethodDef, out_param: ParameterDef) -> str:
-        """生成便捷方法（Ex 后缀）
+        """生成便捷方法（Ez 后缀）
 
         这个方法直接返回结果，失败时抛出 DasException。
 
@@ -551,7 +551,7 @@ struct {ret_class_name} {{
      * @return {return_type} 结果
      * @throws DasException 当操作失败时
      */
-    public {return_type} {method_name}Ex({java_params_str}) throws DasException {{
+    public {return_type} {method_name}Ez({java_params_str}) throws DasException {{
         {ret_class_name} ret = {method_name}({call_params_str});
         if (!ret.IsOk()) {{
             throw new DasException(ret.GetErrorCode());
