@@ -29,7 +29,7 @@ interface IDasImage : IDasBase {
      *
      * @note 此方法替代了旧的 GetData 方法。
      *       旧方法：GetData([out] unsigned char**) - 返回裸指针
-     *       新方法：GetBinaryBuffer([out, ref] IDasBinaryBuffer*) - 返回包装好的缓冲区对象
+     *       新方法：GetBinaryBuffer([out] IDasBinaryBuffer*) - 返回包装好的缓冲区对象
      *
      *       优势：
      *       - IDasBinaryBuffer 明确持有数据所有权，避免内存管理歧义

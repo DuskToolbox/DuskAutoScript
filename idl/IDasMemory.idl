@@ -11,7 +11,7 @@ interface IDasMemory : IDasBase {
      *       提供更安全的二进制数据访问方式
      *       SWIG: 提供目标语言友好的访问方法
      */
-    DasResult GetBinaryBuffer([out, ref] IDasBinaryBuffer* p_out_buffer);
+    DasResult GetBinaryBuffer([out] IDasBinaryBuffer* p_out_buffer);
 
     /**
      * @brief 如果确定输入的指针不是空指针，则返回值可以忽略
