@@ -310,8 +310,12 @@ class JavaSwigGenerator(SwigLangGenerator):
         ret_class_name = self._get_ret_class_name(out_type)
 
         if ret_class_name in self._generated_ret_classes:
+            if self.debug:
+                print(f"[DEBUG] Ret class {ret_class_name} already generated, skipping")
             return ""
         self._generated_ret_classes.add(ret_class_name)
+        if self.debug:
+            print(f"[DEBUG] _generate_ret_class called for {out_type}, ret_class_name={ret_class_name}")
 
         # 如果是预定义的返回类型，不需要生成类定义
         if self._is_predefined_ret_type(out_type):
@@ -373,7 +377,9 @@ struct {ret_class_name} {{
         return GetValue();
     }}
 %}}
- """
+  """
+            if self.debug:
+                print(f"[DEBUG] Returning ret_class_code for {ret_class_name}, length={len(ret_class_code)} chars")
         else:
             # 值类型：存储值本身
             namespace = self.get_type_namespace(out_type)
@@ -434,7 +440,9 @@ struct {ret_class_name} {{
         return GetValue();
     }}
 %}}
- """
+  """
+            if self.debug:
+                print(f"[DEBUG] Returning ret_class_code for {ret_class_name}, length={len(ret_class_code)} chars")
 
     def _has_idas_readonly_string_param(self, method: MethodDef) -> bool:
         """判断方法是否有 IDasReadOnlyString* 参数（非 [out]）"""
@@ -849,18 +857,37 @@ struct {ret_class_name} {{
         # 获取带有 [out] 参数的方法（已自动排除 [binary_buffer] 方法和 void** 类型）
         out_param_methods = self._get_out_param_methods(interface)
 
+        if self.debug:
+            print(f"[DEBUG] Out param methods found: {len(out_param_methods)}")
+            for method, _ in out_param_methods:
+                out_params = [p.name for p in method.parameters if p.direction == ParamDirection.OUT]
+                print(f"[DEBUG]   - {method.name} with {out_params}")
+
         lines.append("#ifdef SWIGJAVA")
 
         # 1. 生成所有需要的 DasRetXxx 类（跳过预定义类型）
         if out_param_methods:
             generated_ret_types: set[str] = set()
             for method, out_param in out_param_methods:
+                if self.debug:
+                    print(f"[DEBUG] Processing method: {method.name}")
                 out_type = out_param.type_info.base_type
                 if out_type not in generated_ret_types:
                     generated_ret_types.add(out_type)
                     ret_class_code = self._generate_ret_class(out_type)
                     if ret_class_code:
+                        # 收集到全局字典（用于 typemap_info.json）
+                        ret_class_name = self._get_ret_class_name(out_type)
+                        if ret_class_name not in self._context._global_ret_classes:
+                            self._context._global_ret_classes[ret_class_name] = ret_class_code
+                            if self.debug:
+                                print(f"[DEBUG] Collected ret_class: {ret_class_name}")
+                                print(f"[DEBUG]   _global_ret_classes keys now: {list(self._context._global_ret_classes.keys())}")
                         lines.append(ret_class_code)
+                    if self.debug:
+                        ret_class_name = self._get_ret_class_name(out_type)
+                        print(f"[DEBUG] Generated ret_class_code for {method.name} (type: {out_type})")
+                        print(f"[DEBUG]   ret_class_name: {ret_class_name}")
 
             # 2. 生成 %ignore 和 %extend 包装
             for method, out_param in out_param_methods:
@@ -886,6 +913,12 @@ struct {ret_class_name} {{
             lines.append("%}")
 
         lines.append("#endif // SWIGJAVA")
+
+        if self.debug:
+            print(f"[DEBUG] generate_pre_include_directives() complete")
+            print(f"[DEBUG]   Total ret_classes collected: {len(self._context._global_ret_classes)}")
+            if self._context._global_ret_classes:
+                print(f"[DEBUG]   _global_ret_classes keys: {list(self._context._global_ret_classes.keys())}")
 
         return "\n".join(lines)
 

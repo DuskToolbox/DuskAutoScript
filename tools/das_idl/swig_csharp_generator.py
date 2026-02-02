@@ -21,16 +21,15 @@ class CSharpSwigGenerator(SwigLangGenerator):
         """C# 不需要特殊的 [out] 参数包装代码，返回空字符串"""
         return ""
 
-    def generate_binary_buffer_helpers(self, interface: InterfaceDef, method_name: str, size_method_name: str) -> str:
+    def generate_binary_buffer_helpers(self, interface: InterfaceDef, method_name: str, size_method_name: str) -> dict:
         """生成 C# 的二进制缓冲区辅助方法"""
         qualified_name = f"{interface.namespace}::{interface.name}" if interface.namespace else interface.name
 
-        return f"""
+        code = f"""
 #ifdef SWIGCSHARP
 %typemap(csclassmodifiers) {qualified_name} "public partial class"
 
 %typemap(cscode) {qualified_name} %{{
-
     public System.IntPtr GetDataPointer() {{
         System.IntPtr ptr = System.IntPtr.Zero;
         var result = GetData(out ptr);
@@ -58,3 +57,12 @@ class CSharpSwigGenerator(SwigLangGenerator):
 %}}
 #endif
 """
+        typemaps = [
+            ('csclassmodifiers', qualified_name, f'%typemap(csclassmodifiers) {qualified_name} "public partial class"\n'),
+            ('cscode', qualified_name, f'%typemap(cscode) {qualified_name} %{{\n    public System.IntPtr GetDataPointer() {{\n        System.IntPtr ptr = System.IntPtr.Zero;\n        var result = GetData(out ptr);\n        if (result < 0) {{\n            throw new System.Exception("Failed to get data pointer");\n        }}\n        return ptr;\n    }}\n\n    public unsafe System.Span<byte> GetDataAsSpan() {{\n        var ptr = GetDataPointer();\n        ulong size;\n        {size_method_name}(out size);\n        return new System.Span<byte>(ptr.ToPointer(), (int)size);\n    }}\n\n    public byte[] GetDataAsByteArray() {{\n        var ptr = GetDataPointer();\n        ulong size;\n        {size_method_name}(out size);\n        var array = new byte[size];\n        System.Runtime.InteropServices.Marshal.Copy(ptr, array, 0, (int)size);\n        return array;\n    }}\n%}}\n')
+        ]
+
+        return {
+            'typemaps': typemaps,
+            'code': code
+        }

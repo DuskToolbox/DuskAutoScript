@@ -145,9 +145,9 @@ IDL 语法示例:
     )
 
     gen_group.add_argument(
-        '--output-typemap-info',
-        metavar='PATH',
-        help='输出typemap信息到指定路径（用于汇总生成DasTypeMaps.i）'
+        '--generate-type-maps',
+        action='store_true',
+        help='生成typemap_info.json文件（用于汇总生成DasTypeMaps.i）'
     )
 
     # === 调试选项 ===
@@ -157,6 +157,12 @@ IDL 语法示例:
         '-v', '--verbose',
         action='store_true',
         help='显示详细输出'
+    )
+
+    debug_group.add_argument(
+        '--debug',
+        action='store_true',
+        help='启用调试输出（显示详细的生成过程信息）'
     )
 
     debug_group.add_argument(
@@ -324,10 +330,10 @@ IDL 语法示例:
                 if args.verbose:
                     print(f"生成 SWIG .i 文件到: {output_dir}")
 
-                # 如果指定了output_typemap_info，使用文件名作为task_id
+                # 如果指定了generate_type_maps，使用文件名作为task_id
                 task_id = ""
                 output_typemap_info = False
-                if args.output_typemap_info:
+                if args.generate_type_maps:
                     task_id = base_name
                     output_typemap_info = True
 
@@ -337,7 +343,8 @@ IDL 语法示例:
                     base_name=base_name,
                     idl_file_path=str(input_path),
                     output_typemap_info=output_typemap_info,
-                    task_id=task_id
+                    task_id=task_id,
+                    debug=args.debug
                 )
                 all_swig_files.extend(swig_files)
                 all_generated_files.extend(swig_files)
@@ -393,46 +400,26 @@ IDL 语法示例:
 
         for dir_path, files in sorted(files_by_dir.items()):
             print(f"\n[{dir_path}]")
-        for f in sorted(files):
+            for f in sorted(files):
                 print(f"  - {f}")
 
     return 0
 
 
-def generate_type_maps_from_jsons(json_files: List[str], output_path: str) -> None:
+def generate_type_maps_from_jsons(json_files: List[str], output_path: str, build_dir: Optional[Path] = None) -> None:
     """从typemap_info_*.json文件汇总生成DasTypeMaps.i
 
     Args:
         json_files: typemap_info JSON文件路径列表
-        output_path: 输出DasTypeMaps.i的路径（相对于SOURCE_DIR）
+        output_path: 输出DasTypeMaps.i的路径（相对于SOURCE_DIR或build_dir）
+        build_dir: 构建目录（可选），如果提供则输出到该目录
     """
     import json
     from pathlib import Path
 
     SOURCE_DIR = Path(__file__).parent.parent.parent.parent
 
-    all_typemaps: dict = {}
-    all_ret_classes: dict = {}
-
-    for json_file in json_files:
-        json_path = Path(json_file)
-        if not json_path.exists():
-            print(f"Warning: JSON file not found: {json_file}", file=sys.stderr)
-            continue
-
-        try:
-            with open(json_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-
-            if 'typemaps' in data:
-                all_typemaps.update(data['typemaps'])
-
-            if 'ret_classes' in data:
-                all_ret_classes.update(data['ret_classes'])
-
-        except Exception as e:
-            print(f"Warning: Failed to read JSON file {json_file}: {e}", file=sys.stderr)
-            continue
+    output_dir = build_dir if build_dir else SOURCE_DIR
 
     lines = []
     lines.append("// DasTypeMaps.i - Unified typemap definitions for all interfaces")
@@ -442,42 +429,48 @@ def generate_type_maps_from_jsons(json_files: List[str], output_path: str) -> No
     try:
         from das_swig_generator import SwigCodeGenerator
 
+        # Collect all typemaps and ret_classes from all typemap_info JSON files
+        # These files contain both static and dynamic typemaps from IDL processing
+        all_typemaps = {}
+        ret_classes = {}
+
+        for json_file in json_files:
+            try:
+                with open(json_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                if 'typemaps' in data:
+                    for sig, info in data['typemaps'].items():
+                        if sig not in all_typemaps:  # Use first occurrence (deduplicate)
+                            all_typemaps[sig] = info
+                if 'ret_classes' in data:
+                    for class_name, info in data['ret_classes'].items():
+                        if class_name not in ret_classes:  # Use first occurrence (deduplicate)
+                            ret_classes[class_name] = info
+            except Exception as e:
+                print(f"Warning: Failed to read typemap_info from {json_file}: {e}", file=sys.stderr)
+
         lines.append("// ============================================================================\n")
-        lines.append("// Static typemaps (from ExportAll.i lines 62-161)\n")
+        lines.append("// Typemaps (collected from typemap_info JSON files)\n")
         lines.append("// ============================================================================\n")
 
-        static_typemaps = SwigCodeGenerator.get_global_typemaps()
-        for sig, code in static_typemaps.items():
-            lines.append(code)
+        for sig in sorted(all_typemaps.keys()):
+            lines.append(f"// {sig} from {all_typemaps[sig].get('meta', {}).get('origin', 'unknown')}")
+            lines.append(all_typemaps[sig]['code'])
             lines.append("")
 
         lines.append("// ============================================================================\n")
         lines.append("// DasRetXxx class definitions\n")
         lines.append("// ============================================================================\n")
 
-        ret_classes = SwigCodeGenerator.get_global_ret_classes()
-        for class_name, class_info in ret_classes.items():
+        for class_name in sorted(ret_classes.keys()):
             lines.append(f"// {class_name}")
-            lines.append(class_info['code'])
+            lines.append(ret_classes[class_name]['code'])
             lines.append("")
 
-        lines.append("// ============================================================================\n")
-        lines.append("// Dynamic typemaps (from individual interface .i files)\n")
-        lines.append("// ============================================================================\n")
-
-        included_typemaps = set()
-        for sig in sorted(all_typemaps.keys()):
-            if sig not in included_typemaps:
-                typemap_info = all_typemaps[sig]
-                lines.append(f"// {sig} from {typemap_info.get('meta', {}).get('origin', 'unknown')}")
-                lines.append(typemap_info['code'])
-                lines.append("")
-                included_typemaps.add(sig)
-
     except Exception as e:
-        print(f"Warning: Failed to get global typemaps: {e}", file=sys.stderr)
+        print(f"Warning: Failed to read typemap_info JSON files: {e}", file=sys.stderr)
 
-    output_file = SOURCE_DIR / output_path
+    output_file = output_dir / output_path
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
     with open(output_file, 'w', encoding='utf-8') as f:

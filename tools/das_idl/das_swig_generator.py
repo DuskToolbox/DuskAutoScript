@@ -102,10 +102,11 @@ class SwigCodeGenerator:
     _global_typemaps: dict[str, str] = {}
     _global_ret_classes: dict[str, str] = {}
 
-    def __init__(self, document: IdlDocument, idl_file_name: Optional[str] = None, idl_file_path: Optional[str] = None, lang_generators: Optional[List[SwigLangGenerator]] = None):
+    def __init__(self, document: IdlDocument, idl_file_name: Optional[str] = None, idl_file_path: Optional[str] = None, lang_generators: Optional[List[SwigLangGenerator]] = None, debug: bool = False):
         self.document = document
         self.idl_file_name = idl_file_name
         self.idl_file_path = idl_file_path
+        self.debug = debug
         self.indent = "    "
         self._collected_interface_types: Set[str] = set()
         self._current_typemaps: List[str] = []
@@ -123,10 +124,13 @@ class SwigCodeGenerator:
     def _setup_lang_generator_contexts(self) -> None:
         """为所有语言生成器设置上下文"""
         context = SwigLangGeneratorContext(
-            get_interface_namespace_func=self._get_type_namespace
+            get_interface_namespace_func=self._get_type_namespace,
+            global_ret_classes=self._global_ret_classes,
+            global_typemaps=self._global_typemaps
         )
         for lang_generator in self.lang_generators:
             lang_generator.set_context(context)
+            lang_generator.debug = self.debug
 
     def _parse_imported_documents(self) -> None:
         """解析导入的 IDL 文件，构建导入文档映射"""
@@ -831,48 +835,9 @@ public:
 
         result = "\n".join(lines)
 
-        if output_typemap_info:
-            source_dir = Path(__file__).parent.parent.parent.parent
-
-            typemaps_info = {}
-            for sig, code in self._global_typemaps.items():
-                typemaps_info[sig] = {
-                    "code": code,
-                    "meta": {
-                        "signature": sig,
-                        "origin": self.idl_file_name or "unknown"
-                    }
-                }
-
-            ret_classes_info = {}
-            for class_name, class_code in self._global_ret_classes.items():
-                ret_classes_info[class_name] = {
-                    "code": class_code,
-                    "meta": {
-                        "origin": self.idl_file_name or "unknown"
-                    }
-                }
-
-            typemap_info = {
-                "schema_version": "1.0",
-                "generator": {
-                    "name": "das_idl_gen",
-                    "version": "1.0.0"
-                },
-                "typemaps": typemaps_info,
-                "ret_classes": ret_classes_info
-            }
-            if task_id:
-                json_file = source_dir / "SWIG" / f"typemap_info_{task_id}.json"
-            else:
-                json_file = source_dir / "SWIG" / "typemap_info.json"
-            json_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(json_file, 'w', encoding='utf-8') as f:
-                json.dump(typemap_info, f, indent=2, ensure_ascii=False)
-
         return result
 
-def generate_swig_files(document: IdlDocument, output_dir: str, base_name: str, idl_file_path: Optional[str] = None, output_typemap_info: bool = False, task_id: str = "") -> List[str]:
+def generate_swig_files(document: IdlDocument, output_dir: str, base_name: str, idl_file_path: Optional[str] = None, output_typemap_info: bool = False, task_id: str = "", debug: bool = False) -> List[str]:
     """生成所有 SWIG .i 文件（不包含_all.i文件，由CMake生成）"""
     import os
 
@@ -881,7 +846,7 @@ def generate_swig_files(document: IdlDocument, output_dir: str, base_name: str, 
     if idl_file_path:
         idl_file_name = os.path.basename(idl_file_path)
 
-    generator = SwigCodeGenerator(document, idl_file_name, idl_file_path)
+    generator = SwigCodeGenerator(document, idl_file_name, idl_file_path, debug=debug)
     generated_files = []
 
     # 确保输出目录存在
@@ -900,6 +865,49 @@ def generate_swig_files(document: IdlDocument, output_dir: str, base_name: str, 
         generated_files.append(i_path)
 
     # 不再生成_all.i文件，由CMake在代码生成后统一生成
+
+    # 生成 typemap_info.json 文件（所有接口完成后统一生成）
+    if output_typemap_info:
+        source_dir = Path(__file__).parent.parent.parent.parent
+
+        typemaps_info = {}
+        for sig, code in generator._global_typemaps.items():
+            typemaps_info[sig] = {
+                "code": code,
+                "meta": {
+                    "signature": sig,
+                    "origin": idl_file_name or "unknown"
+                }
+            }
+
+        ret_classes_info = {}
+        for class_name, class_code in generator._global_ret_classes.items():
+            ret_classes_info[class_name] = {
+                "code": class_code,
+                "meta": {
+                    "origin": idl_file_name or "unknown"
+                }
+            }
+
+        typemap_info = {
+            "schema_version": "1.0",
+            "generator": {
+                "name": "das_idl_gen",
+                "version": "1.0.0"
+            },
+            "typemaps": typemaps_info,
+            "ret_classes": ret_classes_info
+        }
+
+        if task_id:
+            json_file = source_dir / "SWIG" / f"typemap_info_{task_id}.json"
+        else:
+            json_file = source_dir / "SWIG" / "typemap_info.json"
+        json_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(json_file, 'w', encoding='utf-8') as f:
+            json.dump(typemap_info, f, indent=2, ensure_ascii=False)
+
+        print(f"Generated: {json_file}")
 
     return generated_files
 
