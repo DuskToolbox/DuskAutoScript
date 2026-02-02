@@ -45,4 +45,42 @@ foreach(INTERFACE_NAME ${INTERFACE_LIST})
     endif()
 endforeach()
 
+# ====== 生成DasTypeMaps.i（汇总所有typemap） ======
+message(STATUS "Aggregating typemaps to DasTypeMaps.i...")
+
+# 查找所有typemap_info_*.json文件（在SWIG输出目录中）
+file(GLOB TYPEMAP_JSON_FILES "${SWIG_OUTPUT_DIR}/typemap_info_*.json")
+
+ # 检查是否有typemap_info文件
+ if(TYPEMAP_JSON_FILES)
+     message(STATUS "Found ${TYPEMAP_JSON_FILES} typemap_info JSON files")
+
+    # 将CMake列表转换为Python列表字符串
+    # 注意：需要正确处理Windows路径中的反斜杠
+    string(REPLACE ";" "','" PYTHON_JSON_LIST "'${TYPEMAP_JSON_FILES}'")
+
+    # 获取CMake脚本的目录（cmake/generate_swig_all_i.cmake）
+    # CMAKE_CURRENT_LIST_DIR指向脚本所在目录
+    get_filename_component(DAS_ROOT_DIR "${CMAKE_CURRENT_LIST_DIR}" DIRECTORY)
+
+    # 调用Python脚本汇总typemap到DasTypeMaps.i
+    # 注意：在cmake -P脚本模式下，使用Python的-c参数直接调用函数
+    # Python会使用generate_type_maps_from_jsons函数中的SOURCE_DIR来处理输出路径
+    execute_process(
+        COMMAND ${Python3_EXECUTABLE} -c
+            "import sys, ast; sys.path.insert(0, '${DAS_ROOT_DIR}/tools/das_idl'); from das_idl_gen import generate_type_maps_from_jsons; json_files = ast.literal_eval('''[${PYTHON_JSON_LIST}]'''); result = generate_type_maps_from_jsons(json_files, 'SWIG/DasTypeMaps.i'); print(f'STDOUT: {result}'); sys.exit(0 if result is None else 1)"
+        RESULT_VARIABLE PYTHON_RESULT
+        OUTPUT_VARIABLE PYTHON_OUTPUT
+        ERROR_VARIABLE PYTHON_ERROR
+    )
+ 
+    if(NOT PYTHON_RESULT EQUAL 0)
+        message(FATAL_ERROR "Failed to aggregate typemaps: ${PYTHON_ERROR}")
+    else()
+        message(STATUS "${PYTHON_OUTPUT}")
+    endif()
+else()
+    message(STATUS "No typemap_info JSON files found, skipping DasTypeMaps.i generation")
+endif()
+
 message(STATUS "Generated summary SWIG all.i file: ${ALL_I_FILE}")
