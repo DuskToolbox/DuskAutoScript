@@ -101,6 +101,7 @@ class SwigCodeGenerator:
 
     _global_typemaps: dict[str, str] = {}
     _global_ret_classes: dict[str, str] = {}
+    _global_header_blocks: dict[str, str] = {}
 
     def __init__(self, document: IdlDocument, idl_file_name: Optional[str] = None, idl_file_path: Optional[str] = None, lang_generators: Optional[List[SwigLangGenerator]] = None, debug: bool = False):
         self.document = document
@@ -126,7 +127,8 @@ class SwigCodeGenerator:
         context = SwigLangGeneratorContext(
             get_interface_namespace_func=self._get_type_namespace,
             global_ret_classes=self._global_ret_classes,
-            global_typemaps=self._global_typemaps
+            global_typemaps=self._global_typemaps,
+            global_header_blocks=self._global_header_blocks
         )
         for lang_generator in self.lang_generators:
             lang_generator.set_context(context)
@@ -781,12 +783,21 @@ public:
 
         abi_includes = self._get_abi_includes(interface.name)
         # %{ %} 块 - 包含 C++ 头文件
-        lines.append("%{")
-        lines.append(f"#include <atomic>")
+        header_lines = []
+        header_lines.append("%{")
+        header_lines.append(f"#include <atomic>")
         for abi_include in abi_includes:
-            lines.append(f"#include <{abi_include}>")
-        lines.append("%}")
+            header_lines.append(f"#include <{abi_include}>")
+        header_lines.append("%}")
+        header_block = "\n".join(header_lines)
+        lines.append(header_block)
         lines.append("")
+
+        # 收集 header block 到全局字典（用于 DasTypeMaps.i）
+        if interface.name not in self._global_header_blocks:
+            self._global_header_blocks[interface.name] = header_block
+            if self.debug:
+                print(f"[DEBUG] Collected header block for {interface.name}")
 
         # 生成语言特定的预处理指令（%rename、%javamethodmodifiers、%typemap(javacode) 等）
         # 这些指令必须在 %include 之前才能正确生效
@@ -868,7 +879,8 @@ def generate_swig_files(document: IdlDocument, output_dir: str, base_name: str, 
 
     # 生成 typemap_info.json 文件（所有接口完成后统一生成）
     if output_typemap_info:
-        source_dir = Path(__file__).parent.parent.parent.parent
+        # 使用 output_dir 参数指定的目录，而不是硬编码的源代码目录
+        output_path = Path(output_dir)
 
         typemaps_info = {}
         for sig, code in generator._global_typemaps.items():
@@ -889,6 +901,15 @@ def generate_swig_files(document: IdlDocument, output_dir: str, base_name: str, 
                 }
             }
 
+        header_blocks_info = {}
+        for interface_name, header_block in generator._global_header_blocks.items():
+            header_blocks_info[interface_name] = {
+                "code": header_block,
+                "meta": {
+                    "origin": idl_file_name or "unknown"
+                }
+            }
+
         typemap_info = {
             "schema_version": "1.0",
             "generator": {
@@ -896,13 +917,14 @@ def generate_swig_files(document: IdlDocument, output_dir: str, base_name: str, 
                 "version": "1.0.0"
             },
             "typemaps": typemaps_info,
-            "ret_classes": ret_classes_info
+            "ret_classes": ret_classes_info,
+            "header_blocks": header_blocks_info
         }
 
         if task_id:
-            json_file = source_dir / "SWIG" / f"typemap_info_{task_id}.json"
+            json_file = output_path / f"typemap_info_{task_id}.json"
         else:
-            json_file = source_dir / "SWIG" / "typemap_info.json"
+            json_file = output_path / "typemap_info.json"
         json_file.parent.mkdir(parents=True, exist_ok=True)
         with open(json_file, 'w', encoding='utf-8') as f:
             json.dump(typemap_info, f, indent=2, ensure_ascii=False)

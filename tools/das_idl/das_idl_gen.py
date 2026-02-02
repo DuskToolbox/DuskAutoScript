@@ -433,6 +433,7 @@ def generate_type_maps_from_jsons(json_files: List[str], output_path: str, build
         # These files contain both static and dynamic typemaps from IDL processing
         all_typemaps = {}
         ret_classes = {}
+        header_blocks = {}
 
         for json_file in json_files:
             try:
@@ -446,8 +447,22 @@ def generate_type_maps_from_jsons(json_files: List[str], output_path: str, build
                     for class_name, info in data['ret_classes'].items():
                         if class_name not in ret_classes:  # Use first occurrence (deduplicate)
                             ret_classes[class_name] = info
+                if 'header_blocks' in data:
+                    for interface_name, info in data['header_blocks'].items():
+                        if interface_name not in header_blocks:  # Use first occurrence (deduplicate)
+                            header_blocks[interface_name] = info
             except Exception as e:
                 print(f"Warning: Failed to read typemap_info from {json_file}: {e}", file=sys.stderr)
+
+        lines.append("// ============================================================================\n")
+        lines.append("// Header blocks (collected from interface .i files)\n")
+        lines.append("// These %{ ... %} blocks contain necessary headers for DasRetXxx classes\n")
+        lines.append("// ============================================================================\n")
+
+        for interface_name in sorted(header_blocks.keys()):
+            lines.append(f"// Header block from {interface_name}")
+            lines.append(header_blocks[interface_name]['code'])
+            lines.append("")
 
         lines.append("// ============================================================================\n")
         lines.append("// Typemaps (collected from typemap_info JSON files)\n")
