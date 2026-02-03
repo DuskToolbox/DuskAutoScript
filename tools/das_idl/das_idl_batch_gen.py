@@ -604,7 +604,53 @@ JSON 配置格式:
 
     # 返回状态
     failed_count = sum(1 for t in timings if t.status == "failed")
-    return 1 if failed_count > 0 else 0
+    batch_result = 1 if failed_count > 0 else 0
+
+    # ====== 执行 Typemap 聚合 ======
+    # 只有在没有失败任务时才执行聚合
+    if batch_result == 0:
+        # 从第一个任务获取SWIG输出目录（所有任务的输出目录应该一致）
+        if tasks and len(tasks) > 0:
+            # 获取SWIG输出目录
+            swig_output_dir = None
+            first_task = tasks[0]
+            
+            # 从任务配置中提取SWIG输出目录
+            # 配置中使用 --swig-output-dir 指定SWIG文件输出目录
+            for task in tasks:
+                if "--swig-output-dir" in task:
+                    swig_output_dir = Path(task["--swig-output-dir"])
+                    break
+            
+            if swig_output_dir and swig_output_dir.exists():
+                aggregate_script = Path(__file__).parent / "aggregate_typemaps.py"
+                if aggregate_script.exists():
+                    cmd = [
+                        sys.executable,
+                        str(aggregate_script),
+                        "--swig-output-dir", str(swig_output_dir),
+                        "--output-file", "DasTypeMaps.i"
+                    ]
+                    
+                    try:
+                        result = subprocess.run(
+                            cmd,
+                            capture_output=True,
+                            text=True,
+                            timeout=30
+                        )
+                        
+                        if result.returncode == 0:
+                            print(f"\n[Typemap聚合] {result.stdout.strip()}")
+                        else:
+                            print(f"\n[Typemap聚合失败] {result.stderr}", file=sys.stderr)
+                            # Typemap聚合失败不视为致命错误，但记录警告
+                            print(f"[警告] Typemap聚合失败，但IDL生成成功", file=sys.stderr)
+                    except Exception as e:
+                        print(f"\n[Typemap聚合错误] {e}", file=sys.stderr)
+                        print(f"[警告] Typemap聚合出错，但IDL生成成功", file=sys.stderr)
+    
+    return batch_result
 
 
 if __name__ == '__main__':
