@@ -346,6 +346,8 @@ public:
 
 DAS_NS_ANONYMOUS_DETAILS_END
 
+void RaisePythonInterpreterException() { PythonResult::RaiseIfError(); }
+
 PythonRuntime::PythonRuntime()
 {
     Details::PythonRuntimeSingleton::Initialize();
