@@ -232,28 +232,91 @@ struct DasRetBase {
 %}
 #endif // SWIGJAVA
 
+// ============================================================================
+// 包含所有%ignore定义（必须在类定义之前）
+// 这些%ignore指令用于隐藏带[out]参数的原始方法
+// ============================================================================
+%include <DasTypeMapsIgnore.i>
+
 %include <das/DasExport.h>
 %include <das/DasTypes.hpp>
 %include <das/IDasBase.h>
 
-// ============================================================================
-// 包含所有typemap定义（静态+动态）
-// 该文件由生成工具自动维护，生成在构建目录
-// ============================================================================
-%include <DasTypeMaps.i>
-
-%include <das/DasString.hpp>
-%include <das/DasException.hpp>
-
-%nodefaultctor DasException;
-
-// !!! 包含CMake从IDL自动生成的SWIG接口汇总文件 !!!
-// 该文件包含所有从IDL生成的SWIG接口（如DasCV, IDasCapture, IDasPluginManager等）
-%include <das/_autogen/idl/swig/swig_all.i>
-
-
-
 #ifdef SWIGJAVA
+// ============================================================================
+// DasReadOnlyString Java Support - 从 Java String 创建
+// ============================================================================
+%typemap(javacode) DasReadOnlyString %{
+    /**
+     * 从 Java String 创建 DasReadOnlyString
+     * <p>
+     * Java String 内部使用 UTF-16 编码，此方法将其转换为 DasReadOnlyString。
+     * </p>
+     * @param str Java 字符串
+     * @return 新的 DasReadOnlyString 实例
+     */
+    public static DasReadOnlyString fromString(String str) {
+        if (str == null) {
+            return new DasReadOnlyString();
+        }
+        // Java String 是 UTF-16 编码，获取 char 数组
+        char[] chars = str.toCharArray();
+        // 转换为 SWIGTYPE_p_char16_t（Java char 就是 16 位，与 char16_t 兼容）
+        return new DasReadOnlyString(
+            DuskAutoScriptJNI.new_DasReadOnlyString__SWIG_2_helper(str),
+            true
+        );
+    }
+    
+    /**
+     * 将 DasReadOnlyString 转换为 Java String
+     * @return Java 字符串，如果转换失败则返回空字符串
+     */
+    public String toJavaString() {
+        return DuskAutoScriptJNI.DasReadOnlyString_toJavaString_helper(swigCPtr, this);
+    }
+%}
+
+// JNI 辅助方法 - 从 Java String 创建 DasReadOnlyString
+%native(new_DasReadOnlyString__SWIG_2_helper) jlong new_DasReadOnlyString__SWIG_2_helper(jstring str);
+%{
+SWIGEXPORT jlong JNICALL Java_org_das_DuskAutoScriptJNI_new_1DasReadOnlyString_1_1SWIG_12_1helper(
+    JNIEnv *jenv, jclass jcls, jstring jstr) {
+    DasReadOnlyString *result = nullptr;
+    if (jstr) {
+        const jchar *chars = jenv->GetStringChars(jstr, nullptr);
+        jsize len = jenv->GetStringLength(jstr);
+        if (chars) {
+            result = new DasReadOnlyString(reinterpret_cast<const char16_t*>(chars), static_cast<size_t>(len));
+            jenv->ReleaseStringChars(jstr, chars);
+        }
+    }
+    if (!result) {
+        result = new DasReadOnlyString();
+    }
+    return (jlong)result;
+}
+%}
+
+// JNI 辅助方法 - 将 DasReadOnlyString 转换为 Java String
+%native(DasReadOnlyString_toJavaString_helper) jstring DasReadOnlyString_toJavaString_helper(jlong ptr, jobject obj);
+%{
+SWIGEXPORT jstring JNICALL Java_org_das_DuskAutoScriptJNI_DasReadOnlyString_1toJavaString_1helper(
+    JNIEnv *jenv, jclass jcls, jlong jptr, jobject jobj) {
+    DasReadOnlyString *self = reinterpret_cast<DasReadOnlyString*>(jptr);
+    if (!self) {
+        return jenv->NewStringUTF("");
+    }
+    const char16_t* utf16_str = nullptr;
+    size_t utf16_len = 0;
+    self->GetUtf16(&utf16_str, &utf16_len);
+    if (utf16_str && utf16_len > 0) {
+        return jenv->NewString(reinterpret_cast<const jchar*>(utf16_str), static_cast<jsize>(utf16_len));
+    }
+    return jenv->NewStringUTF("");
+}
+%}
+#endif // SWIGJAVA
 
 // ============================================================================
 // DasException Support for Java
@@ -263,39 +326,102 @@ struct DasRetBase {
 %rename(ErrorCode) DasException::GetErrorCode;
 %rename(Message) DasException::what;
 
-// Exception handling for DasException
-%javaexception("DasException") DasException {
-    // $action
-    // try {
-    //     return $result;
-    // }
-    // catch (const DasException& ex) {
-    //     jclass exc = jenv->FindClass("DasException");
-    //     jmethodID ctor = jenv->GetMethodID(exc, "<init>", "(ILjava/lang/String;)V");
-    //     jstring msg = jenv->NewStringUTF(ex.what());
-    //     jobject jexc = jenv->NewObject(exc, ctor, ex.GetErrorCode(), msg);
-    //     jenv->Throw(jexc);
-    //     return $null;
-    // }
-}
+#ifdef SWIGJAVA
+// Make DasException extend RuntimeException
+%typemap(javabase) DasException "RuntimeException"
 
 %typemap(javabody) DasException %{
-    private int errorCode;
-    private String message;
+    private transient long swigCPtr;
+    protected transient boolean swigCMemOwn;
 
-    public DasException(int errorCode, String message) {
-        this.errorCode = errorCode;
-        this.message = message;
+    protected $javaclassname(long cPtr, boolean cMemoryOwn) {
+        super(getMessageFromPtr(cPtr));
+        swigCMemOwn = cMemoryOwn;
+        swigCPtr = cPtr;
     }
 
-    public int getErrorCode() {
-        return errorCode;
+    protected static long getCPtr($javaclassname obj) {
+        return (obj == null) ? 0 : obj.swigCPtr;
     }
 
-    public String getMessage() {
-        return message;
+    protected static long swigRelease($javaclassname obj) {
+        long ptr = 0;
+        if (obj != null) {
+            if (!obj.swigCMemOwn)
+                throw new RuntimeException("Cannot release ownership as memory is not owned");
+            ptr = obj.swigCPtr;
+            obj.swigCMemOwn = false;
+            obj.delete();
+        }
+        return ptr;
+    }
+
+    private static String getMessageFromPtr(long cPtr) {
+        if (cPtr == 0) return "";
+        return DasExportJNI.DasException_Message(cPtr, null);
     }
 %}
 
+%typemap(javacode) DasException %{
+    /**
+     * 创建一个 DasException
+     * @param errorCode 错误码
+     * @param sourceFile 源文件名
+     * @param sourceLine 源文件行号
+     * @param sourceFunction 源函数名
+     * @return 新创建的 DasException
+     */
+    public static DasException create(int errorCode, String sourceFile, int sourceLine, String sourceFunction) {
+        DasExceptionSourceInfoSwig sourceInfo = new DasExceptionSourceInfoSwig();
+        sourceInfo.setFile(sourceFile);
+        sourceInfo.setLine(sourceLine);
+        sourceInfo.setFunction(sourceFunction);
+        IDasExceptionString exStr = DasExport.CreateDasExceptionStringSwig(errorCode, sourceInfo);
+        return new DasException(errorCode, exStr);
+    }
+
+    /**
+     * 创建一个带类型信息的 DasException
+     * @param errorCode 错误码
+     * @param sourceFile 源文件名
+     * @param sourceLine 源文件行号
+     * @param sourceFunction 源函数名
+     * @param typeInfo 类型信息
+     * @return 新创建的 DasException
+     */
+    public static DasException createWithTypeInfo(int errorCode, String sourceFile, int sourceLine, String sourceFunction, IDasTypeInfo typeInfo) {
+        DasExceptionSourceInfoSwig sourceInfo = new DasExceptionSourceInfoSwig();
+        sourceInfo.setFile(sourceFile);
+        sourceInfo.setLine(sourceLine);
+        sourceInfo.setFunction(sourceFunction);
+        IDasExceptionString exStr = DasExport.CreateDasExceptionStringWithTypeInfoSwig(errorCode, sourceInfo, typeInfo);
+        return new DasException(errorCode, exStr);
+    }
+
+    /**
+     * 用于 Ez 便捷方法抛出异常
+     * @param errorCode 错误码
+     * @param methodName 方法名
+     * @return 新创建的 DasException
+     */
+    public static DasException fromErrorCode(int errorCode, String methodName) {
+        return create(errorCode, "Java", 0, methodName);
+    }
+%}
 #endif // SWIGJAVA
+
+%include <das/DasString.hpp>;
+%include <das/DasException.hpp>;
+
+%nodefaultctor DasException;
+
+// !!! 包含CMake从IDL自动生成的SWIG接口汇总文件 !!!
+// 该文件包含所有从IDL生成的SWIG接口（如DasCV, IDasCapture, IDasPluginManager等）
+%include <das/_autogen/idl/swig/swig_all.i>
+
+// ============================================================================
+// 包含所有%extend和DasRetXxx定义（必须在类定义之后）
+// 这些%extend指令用于添加返回DasRetXxx的包装方法
+// ============================================================================
+%include <DasTypeMapsExtend.i>
 

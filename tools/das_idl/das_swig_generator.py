@@ -102,6 +102,7 @@ class SwigCodeGenerator:
     _global_typemaps: dict[str, str] = {}
     _global_ret_classes: dict[str, str] = {}
     _global_header_blocks: dict[str, str] = {}
+    _global_typemaps_ignore: dict[str, str] = {}
 
     def __init__(self, document: IdlDocument, idl_file_name: Optional[str] = None, idl_file_path: Optional[str] = None, lang_generators: Optional[List[SwigLangGenerator]] = None, debug: bool = False):
         self.document = document
@@ -128,7 +129,8 @@ class SwigCodeGenerator:
             get_interface_namespace_func=self._get_type_namespace,
             global_ret_classes=self._global_ret_classes,
             global_typemaps=self._global_typemaps,
-            global_header_blocks=self._global_header_blocks
+            global_header_blocks=self._global_header_blocks,
+            global_typemaps_ignore=self._global_typemaps_ignore
         )
         for lang_generator in self.lang_generators:
             lang_generator.set_context(context)
@@ -910,6 +912,17 @@ def generate_swig_files(document: IdlDocument, output_dir: str, base_name: str, 
                 }
             }
 
+        typemaps_ignore_info = {}
+        if hasattr(generator, '_global_typemaps_ignore'):
+            for sig, code in generator._global_typemaps_ignore.items():
+                typemaps_ignore_info[sig] = {
+                    "code": code,
+                    "meta": {
+                        "signature": sig,
+                        "origin": idl_file_name or "unknown"
+                    }
+                }
+
         typemap_info = {
             "schema_version": "1.0",
             "generator": {
@@ -917,6 +930,7 @@ def generate_swig_files(document: IdlDocument, output_dir: str, base_name: str, 
                 "version": "1.0.0"
             },
             "typemaps": typemaps_info,
+            "typemaps_ignore": typemaps_ignore_info,
             "ret_classes": ret_classes_info,
             "header_blocks": header_blocks_info
         }

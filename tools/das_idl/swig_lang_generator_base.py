@@ -15,18 +15,20 @@ class SwigLangGeneratorContext:
     提供语言生成器需要的外部信息，如类型命名空间查找等
     """
     
-    def __init__(self, get_interface_namespace_func: Optional[Callable[[str], Optional[str]]] = None, global_ret_classes: Optional[dict] = None, global_typemaps: Optional[dict] = None, global_header_blocks: Optional[dict] = None):
+    def __init__(self, get_interface_namespace_func: Optional[Callable[[str], Optional[str]]] = None, global_ret_classes: Optional[dict] = None, global_typemaps: Optional[dict] = None, global_header_blocks: Optional[dict] = None, global_typemaps_ignore: Optional[dict] = None):
         """
         Args:
             get_interface_namespace_func: 根据接口名获取其命名空间的函数
             global_ret_classes: 全局返回包装类字典（用于收集 DasRetXxx 类定义）
-            global_typemaps: 全局 typemap 字典（用于收集 typemap 定义）
+            global_typemaps: 全局 typemap 字典（用于收集 %extend 定义）
             global_header_blocks: 全局 header block 字典（用于收集 %{ ... %} 块）
+            global_typemaps_ignore: 全局 %ignore 字典（用于收集 %ignore 定义）
         """
         self._get_interface_namespace = get_interface_namespace_func
         self._global_ret_classes = global_ret_classes if global_ret_classes is not None else {}
         self._global_typemaps = global_typemaps if global_typemaps is not None else {}
         self._global_header_blocks = global_header_blocks if global_header_blocks is not None else {}
+        self._global_typemaps_ignore = global_typemaps_ignore if global_typemaps_ignore is not None else {}
     
     def get_type_namespace(self, type_name: str) -> Optional[str]:
         """获取类型的命名空间
