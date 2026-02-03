@@ -59,12 +59,6 @@
 
 %}
 
-// ============================================================================
-// 包含所有typemap定义（静态+动态）
-// 该文件由生成工具自动维护
-// ============================================================================
-%include "DasTypeMaps.i"
-
 #ifdef SWIGPYTHON
 
 %feature("director:except") {
@@ -241,6 +235,13 @@ struct DasRetBase {
 %include <das/DasExport.h>
 %include <das/DasTypes.hpp>
 %include <das/IDasBase.h>
+
+// ============================================================================
+// 包含所有typemap定义（静态+动态）
+// 该文件由生成工具自动维护，生成在构建目录
+// ============================================================================
+%include <DasTypeMaps.i>
+
 %include <das/DasString.hpp>
 %include <das/DasException.hpp>
 

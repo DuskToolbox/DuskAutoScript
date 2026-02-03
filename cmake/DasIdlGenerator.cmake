@@ -86,7 +86,7 @@ endfunction()
 function(das_idl_generate)
     cmake_parse_arguments(
         DAS_IDL                         # 前缀
-        "SWIG;CPP_WRAPPER"              # 选项 (无值参数)
+        "SWIG;CPP_WRAPPER;TYPEMAPS"     # 选项 (无值参数)
         "IDL_FILE;OUTPUT_DIR;NAMESPACE;RAW_OUTPUT_DIR;WRAPPER_OUTPUT_DIR;SWIG_OUTPUT_DIR" # 单值参数
         "GENERATED_FILES;GENERATED_ABI_FILES;GENERATED_WRAPPER_FILES;GENERATED_SWIG_FILES" # 多值参数
         ${ARGN}
@@ -181,6 +181,10 @@ function(das_idl_generate)
         list(APPEND _IDL_CMD_ARGS "--cpp-wrapper")
     endif()
 
+    if(DAS_IDL_TYPEMAPS)
+        list(APPEND _IDL_CMD_ARGS "--generate-type-maps")
+    endif()
+
     if(DAS_IDL_NAMESPACE)
         list(APPEND _IDL_CMD_ARGS "--namespace" "${DAS_IDL_NAMESPACE}")
     endif()
@@ -224,7 +228,7 @@ function(das_idl_generate_all)
     cmake_parse_arguments(
         DAS_IDL
         ""
-        "IDL_DIR;OUTPUT_DIR;NAMESPACE"
+        "IDL_DIR;OUTPUT_DIR;NAMESPACE;TYPEMAPS"
         "GENERATED_FILES"
         ${ARGN}
     )
@@ -243,12 +247,22 @@ function(das_idl_generate_all)
     set(_ALL_GENERATED_FILES)
 
     foreach(IDL_FILE ${IDL_FILES})
-        das_idl_generate(
-            IDL_FILE "${IDL_FILE}"
-            OUTPUT_DIR "${DAS_IDL_OUTPUT_DIR}"
-            NAMESPACE "${DAS_IDL_NAMESPACE}"
-            GENERATED_FILES _SINGLE_GENERATED
-        )
+        if(DAS_IDL_TYPEMAPS)
+            das_idl_generate(
+                IDL_FILE "${IDL_FILE}"
+                OUTPUT_DIR "${DAS_IDL_OUTPUT_DIR}"
+                NAMESPACE "${DAS_IDL_NAMESPACE}"
+                GENERATED_FILES _SINGLE_GENERATED
+                TYPEMAPS
+            )
+        else()
+            das_idl_generate(
+                IDL_FILE "${IDL_FILE}"
+                OUTPUT_DIR "${DAS_IDL_OUTPUT_DIR}"
+                NAMESPACE "${DAS_IDL_NAMESPACE}"
+                GENERATED_FILES _SINGLE_GENERATED
+            )
+        endif()
         list(APPEND _ALL_GENERATED_FILES ${_SINGLE_GENERATED})
     endforeach()
 
@@ -263,17 +277,27 @@ function(das_idl_add_generate_target TARGET_NAME)
     cmake_parse_arguments(
         DAS_IDL
         ""
-        "IDL_DIR;OUTPUT_DIR;NAMESPACE"
+        "IDL_DIR;OUTPUT_DIR;NAMESPACE;TYPEMAPS"
         ""
         ${ARGN}
     )
 
-    das_idl_generate_all(
-        IDL_DIR "${DAS_IDL_IDL_DIR}"
-        OUTPUT_DIR "${DAS_IDL_OUTPUT_DIR}"
-        NAMESPACE "${DAS_IDL_NAMESPACE}"
-        GENERATED_FILES _GENERATED_FILES
-    )
+    if(DAS_IDL_TYPEMAPS)
+        das_idl_generate_all(
+            IDL_DIR "${DAS_IDL_IDL_DIR}"
+            OUTPUT_DIR "${DAS_IDL_OUTPUT_DIR}"
+            NAMESPACE "${DAS_IDL_NAMESPACE}"
+            GENERATED_FILES _GENERATED_FILES
+            TYPEMAPS
+        )
+    else()
+        das_idl_generate_all(
+            IDL_DIR "${DAS_IDL_IDL_DIR}"
+            OUTPUT_DIR "${DAS_IDL_OUTPUT_DIR}"
+            NAMESPACE "${DAS_IDL_NAMESPACE}"
+            GENERATED_FILES _GENERATED_FILES
+        )
+    endif()
 
     add_custom_target(${TARGET_NAME}
         DEPENDS ${_GENERATED_FILES}

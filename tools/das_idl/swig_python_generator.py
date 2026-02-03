@@ -21,7 +21,7 @@ class PythonSwigGenerator(SwigLangGenerator):
         """Python 不需要特殊的 [out] 参数包装代码，返回空字符串"""
         return ""
 
-    def generate_binary_buffer_helpers(self, interface: InterfaceDef, method_name: str, size_method_name: str) -> dict:
+    def generate_binary_buffer_helpers(self, interface: InterfaceDef, method_name: str, size_method_name: str) -> str:
         """生成 Python 的二进制缓冲区辅助方法"""
         qualified_name = f"{interface.namespace}::{interface.name}" if interface.namespace else interface.name
 
@@ -68,7 +68,4 @@ class PythonSwigGenerator(SwigLangGenerator):
 }}
 #endif
 """
-        return {
-            'typemaps': [],
-            'code': code
-        }
+        return code
