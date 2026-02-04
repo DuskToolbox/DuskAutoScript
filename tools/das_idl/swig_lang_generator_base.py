@@ -15,16 +15,10 @@ class SwigLangGeneratorContext:
     提供语言生成器需要的外部信息，如类型命名空间查找等
     """
     
-    def __init__(self, get_interface_namespace_func: Optional[Callable[[str], Optional[str]]] = None, global_ret_classes: Optional[dict] = None, global_typemaps: Optional[dict] = None, global_header_blocks: Optional[dict] = None, global_typemaps_ignore: Optional[dict] = None):
-        """
-        Args:
-            get_interface_namespace_func: 根据接口名获取其命名空间的函数
-            global_ret_classes: 全局返回包装类字典（用于收集 DasRetXxx 类定义）
-            global_typemaps: 全局 typemap 字典（用于收集 %extend 定义）
-            global_header_blocks: 全局 header block 字典（用于收集 %{ ... %} 块）
-            global_typemaps_ignore: 全局 %ignore 字典（用于收集 %ignore 定义）
-        """
+    def __init__(self, get_interface_namespace_func: Optional[Callable[[str], Optional[str]]] = None, get_interface_idl_file_func: Optional[Callable[[str], Optional[str]]] = None, get_enum_idl_file_func: Optional[Callable[[str], Optional[str]]] = None, global_ret_classes: Optional[dict] = None, global_typemaps: Optional[dict] = None, global_header_blocks: Optional[dict] = None, global_typemaps_ignore: Optional[dict] = None):
         self._get_interface_namespace = get_interface_namespace_func
+        self._get_interface_idl_file = get_interface_idl_file_func
+        self._get_enum_idl_file = get_enum_idl_file_func
         self._global_ret_classes = global_ret_classes if global_ret_classes is not None else {}
         self._global_typemaps = global_typemaps if global_typemaps is not None else {}
         self._global_header_blocks = global_header_blocks if global_header_blocks is not None else {}
@@ -42,6 +36,16 @@ class SwigLangGeneratorContext:
         if self._get_interface_namespace:
             return self._get_interface_namespace(type_name)
         return None
+    
+    def get_interface_idl_file(self, type_name: str) -> Optional[str]:
+        if self._get_interface_idl_file:
+            return self._get_interface_idl_file(type_name)
+        return None
+    
+    def get_enum_idl_file(self, type_name: str) -> Optional[str]:
+        if self._get_enum_idl_file:
+            return self._get_enum_idl_file(type_name)
+        return None
 
 
 class SwigLangGenerator(ABC):
@@ -56,18 +60,20 @@ class SwigLangGenerator(ABC):
         self._context = context
     
     def get_type_namespace(self, type_name: str) -> Optional[str]:
-        """获取类型的命名空间
-        
-        Args:
-            type_name: 类型名称
-            
-        Returns:
-            命名空间字符串，如果未找到或无上下文则返回 None
-        """
         if self._context:
             return self._context.get_type_namespace(type_name)
         return None
-
+    
+    def get_interface_idl_file(self, type_name: str) -> Optional[str]:
+        if self._context:
+            return self._context.get_interface_idl_file(type_name)
+        return None
+    
+    def get_enum_idl_file(self, type_name: str) -> Optional[str]:
+        if self._context:
+            return self._context.get_enum_idl_file(type_name)
+        return None
+    
     @abstractmethod
     def get_language_name(self) -> str:
         """获取语言名称（如 'java', 'csharp', 'python'）"""

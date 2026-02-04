@@ -199,6 +199,8 @@ function(das_idl_generate)
                 "${DAS_IDL_TOOLS_DIR}/das_cpp_generator.py"
                 "${DAS_IDL_TOOLS_DIR}/das_cpp_wrapper_generator.py"
                 "${DAS_IDL_TOOLS_DIR}/das_swig_generator.py"
+                "${DAS_IDL_TOOLS_DIR}/swig_java_generator.py"
+                "${DAS_IDL_TOOLS_DIR}/swig_lang_generator_base.py"
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
         COMMENT "[DAS IDL] Generating code from ${IDL_NAME}.idl"
         VERBATIM

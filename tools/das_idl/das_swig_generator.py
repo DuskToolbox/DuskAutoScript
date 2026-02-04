@@ -127,6 +127,8 @@ class SwigCodeGenerator:
         """为所有语言生成器设置上下文"""
         context = SwigLangGeneratorContext(
             get_interface_namespace_func=self._get_type_namespace,
+            get_interface_idl_file_func=self._get_interface_idl_file_name,
+            get_enum_idl_file_func=self._get_enum_idl_file_name,
             global_ret_classes=self._global_ret_classes,
             global_typemaps=self._global_typemaps,
             global_header_blocks=self._global_header_blocks,
@@ -298,6 +300,58 @@ class SwigCodeGenerator:
 
             return None
 
+    def _get_interface_idl_file_name(self, type_name: str) -> str | None:
+        """根据类型名查找其所在的 IDL 文件名（不含扩展名）
+        
+        Args:
+            type_name: 类型名称（可以是简单名或完全限定名）
+            
+        Returns:
+            IDL 文件名（不含扩展名），如果未找到则返回 None
+        """
+        simple_name = type_name.split('::')[-1]
+        
+        # 先在当前文档中查找
+        for interface in self.document.interfaces:
+            if interface.name == simple_name:
+                if self.idl_file_name:
+                    return Path(self.idl_file_name).stem
+                return None
+        
+        # 在所有导入的文档中查找
+        for doc_path, doc in self._imported_documents.items():
+            for interface in doc.interfaces:
+                if interface.name == simple_name:
+                    return Path(doc_path).stem
+        
+        return None
+
+    def _get_enum_idl_file_name(self, type_name: str) -> str | None:
+        """根据枚举类型名查找其所在的 IDL 文件名
+        
+        Args:
+            type_name: 枚举类型名称
+            
+        Returns:
+            IDL 文件名（不含扩展名），如果未找到则返回 None
+        """
+        simple_name = type_name.split('::')[-1]
+        
+        # 在当前文档中查找枚举
+        for enum in self.document.enums:
+            if enum.name == simple_name:
+                if self.idl_file_name:
+                    return Path(self.idl_file_name).stem
+                return None
+        
+        # 在所有导入的文档中查找枚举
+        for doc_path, doc in self._imported_documents.items():
+            for enum in doc.enums:
+                if enum.name == simple_name:
+                    return Path(doc_path).stem
+        
+        return None
+
     def _is_binary_data_method(self, interface: InterfaceDef, method: MethodDef) -> bool:
         """判断是否是返回二进制数据的方法
 
@@ -305,7 +359,7 @@ class SwigCodeGenerator:
         1. 有 [binary_buffer] 属性标记
         2. 输出参数类型为 unsigned char** 或 const unsigned char**
         """
-        return method.attributes.get('binary_buffer', False)
+        return method.attributes.get('binary_buffer', False) if method.attributes else False
 
     def _validate_binary_buffer_method(self, interface: InterfaceDef, method: MethodDef) -> bool:
         """验证 [binary_buffer] 方法的参数类型是否合法
@@ -410,17 +464,46 @@ class SwigCodeGenerator:
         此方法应该在 %include 指令之后调用，以确保 SWIG 已经看到所有类型定义
         """
         lang_codes = []
+        
+        # 处理单 [out] 参数的方法
         for method in interface.methods:
-            for param in method.parameters:
-                if param.direction == ParamDirection.OUT:
-                    if self._is_binary_data_method(interface, method):
-                        continue
-                    for lang_generator in self.lang_generators:
-                        lang_code = lang_generator.generate_out_param_wrapper(interface, method, param)
-                        if lang_code:
-                            lang_codes.append(lang_code)
-                    # 只处理第一个 out 参数（每个方法只生成一次包装）
-                    break
+            out_params = [p for p in method.parameters if p.direction == ParamDirection.OUT]
+            if len(out_params) == 1:
+                if self._is_binary_data_method(interface, method):
+                    continue
+                # 检查是否是多返回值方法（Java专用）
+                is_multi_out = False
+                for lang_generator in self.lang_generators:
+                    if lang_generator.__class__.__name__ == 'JavaSwigGenerator':
+                        if hasattr(lang_generator, '_get_multi_out_param_methods'):
+                            multi_out_methods = lang_generator._get_multi_out_param_methods(interface)
+                            if any(m.name == method.name for m, _ in multi_out_methods):
+                                is_multi_out = True
+                                break
+                if is_multi_out:
+                    continue
+                for lang_generator in self.lang_generators:
+                    lang_code = lang_generator.generate_out_param_wrapper(interface, method, out_params[0])
+                    if lang_code:
+                        lang_codes.append(lang_code)
+        
+        # 处理多 [out] 参数的方法（Java 专用）
+        for lang_generator in self.lang_generators:
+            if lang_generator.__class__.__name__ == 'JavaSwigGenerator':
+                if hasattr(lang_generator, '_get_multi_out_param_methods'):
+                    multi_out_methods = lang_generator._get_multi_out_param_methods(interface)
+                    for method, out_params in multi_out_methods:
+                        # 生成多返回值类型定义
+                        if hasattr(lang_generator, '_generate_multi_ret_class'):
+                            ret_class_code = lang_generator._generate_multi_ret_class(out_params, interface.name)
+                            if ret_class_code:
+                                lang_codes.append(ret_class_code)
+                        # 生成多返回值包装代码
+                        if hasattr(lang_generator, '_generate_multi_out_wrapper'):
+                            wrapper_code = lang_generator._generate_multi_out_wrapper(interface, method, out_params)
+                            if wrapper_code:
+                                lang_codes.append(wrapper_code)
+        
         return "\n".join(lang_codes)
 
     def _get_cpp_type(self, type_name: str) -> str:
