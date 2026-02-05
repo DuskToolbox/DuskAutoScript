@@ -602,9 +602,11 @@ class JavaSwigGenerator(SwigLangGenerator):
             param_type = param.type_info.base_type
             param_type_with_prefix = param_type
 
-            # 对于全局命名空间的类型，添加 :: 前缀
-            if param_type == 'IDasReadOnlyString' or param_type == 'unsigned char' or param_type == 'size_t':
+            # 对于全局命名空间的接口类型，添加 :: 前缀
+            # 注意：unsigned char 和 size_t 是 C++ 原生类型，不能添加 :: 前缀（会导致非法语法）
+            if param_type == 'IDasReadOnlyString':
                 param_type_with_prefix = f'::{param_type}'
+            # unsigned char 和 size_t 保持原样，不添加 :: 前缀
             # 对于其他接口类型，检查命名空间
             elif self._is_interface_type(param_type):
                 namespace = self.get_type_namespace(param_type)
@@ -997,108 +999,159 @@ struct {ret_class_name} {{
                 print(f"[DEBUG] Returning ret_class_code for {ret_class_name}, length={len(ret_class_code)} chars")
 
     def _generate_multi_ret_class(self, out_params: list[ParameterDef], interface_name: str | None = None) -> str:
-        """生成多返回值包装类 (如 DasRetDasResultIDasReadOnlyString)
+        """生成多返回值包装类 (如 DasRetDasResultDasReadOnlyString)
         
         Args:
             out_params: 多个输出参数列表
             interface_name: 可选的接口名称，用于确定头文件包含
             
         Returns:
-            生成的 C++ 类定义代码
+            生成的 C++ 类定义代码（使用 %begin/%inline 块）
         """
         if not out_params:
             return ""
         
-        # 生成类名：DasRet + Type1 + Type2 + ...
         class_name_parts = []
         for param in out_params:
             type_name = param.type_info.base_type.split('::')[-1]
-            # 去除 IDas 前缀和 * 后缀
             clean_name = type_name.lstrip('I').rstrip('*')
             class_name_parts.append(clean_name)
         class_name = "DasRet" + "".join(class_name_parts)
         
-        # 确定需要包含的头文件
+        if class_name in self._generated_ret_classes:
+            if self.debug:
+                print(f"[DEBUG] Multi-ret class {class_name} already generated, skipping")
+            return ""
+        self._generated_ret_classes.add(class_name)
+        
+        CORE_TYPES_IN_IDASBASE = {'IDasBase', 'IDasReadOnlyString', 'IDasSwigBase'}
+        
         header_includes = []
         for i, param in enumerate(out_params):
             out_type = param.type_info.base_type
+            simple_type_name = out_type.split('::')[-1]
+            
             if "DasGuid" in out_type:
                 header_includes.append('#include <DasBasicTypes.h>')
+            elif simple_type_name in CORE_TYPES_IN_IDASBASE:
+                header_includes.append('#include <das/IDasBase.h>')
             elif self._is_interface_type(out_type):
-                simple_interface_name = out_type.split('::')[-1]
-                if simple_interface_name == 'IDasBase':
-                    header_includes.append('#include <das/IDasBase.h>')
+                idl_file_name = self.get_interface_idl_file(out_type)
+                if idl_file_name:
+                    header_includes.append(f'#include <das/_autogen/idl/abi/{idl_file_name}.h>')
                 else:
-                    idl_file_name = self.get_interface_idl_file(out_type)
-                    if idl_file_name:
-                        header_includes.append(f'#include <das/_autogen/idl/abi/{idl_file_name}.h>')
-                    else:
-                        header_includes.append(f'#include <das/_autogen/idl/abi/{simple_interface_name}.h>')
+                    header_includes.append('#include <das/IDasBase.h>')
             else:
-                # 尝试作为枚举类型查找
                 idl_file_name = self.get_enum_idl_file(out_type)
                 if idl_file_name:
                     header_includes.append(f'#include <das/_autogen/idl/abi/{idl_file_name}.h>')
         
-        # 去重头文件
         header_includes = list(dict.fromkeys(header_includes))
         header_block = ""
         if header_includes:
-            header_block = "\n".join(header_includes) + "\n\n"
+            includes_str = '\n'.join(header_includes)
+            header_block = f"""
+#ifndef SWIG
+{includes_str}
+#endif
+"""
         
-        # 生成 value 字段
         value_fields = []
+        value_initializers = []
+        getter_methods = []
+        java_types = []
+        
         for i, param in enumerate(out_params):
             out_type = param.type_info.base_type
             cpp_type = self._get_cpp_type(out_type)
+            java_type = self._get_java_type(out_type)
+            is_interface = self._is_interface_type(out_type)
+            pointer_level = getattr(param.type_info, 'pointer_level', 1 if param.type_info.is_pointer else 0)
             
-            if self._is_interface_type(out_type):
+            if pointer_level >= 2:
                 namespace = self.get_type_namespace(out_type)
                 if namespace:
                     cpp_type = f"{namespace}::{out_type.split('::')[-1]}*"
                 else:
                     cpp_type = f"{out_type.split('::')[-1]}*"
-            elif param.type_info.is_pointer and not out_type.endswith('**'):
-                # 处理单指针类型（如 DasResult*）
+                if is_interface:
+                    java_type = out_type.split('::')[-1]
+                value_initializers.append(f"value{i+1}(nullptr)")
+            elif pointer_level == 1:
+                simple_type = out_type.split('::')[-1]
                 namespace = self.get_type_namespace(out_type)
                 if namespace:
-                    cpp_type = f"{namespace}::{out_type.split('::')[-1]}*"
+                    cpp_type = f"{namespace}::{simple_type}"
                 else:
-                    cpp_type = f"{out_type.split('::')[-1]}*"
+                    cpp_type = simple_type
+                value_initializers.append(f"value{i+1}()")
+            else:
+                value_initializers.append(f"value{i+1}()")
             
             value_fields.append(f"    {cpp_type} value{i+1};")
-        
-        # 生成 GetValue 方法
-        getter_methods = []
-        for i, param in enumerate(out_params):
-            out_type = param.type_info.base_type
-            cpp_type = self._get_cpp_type(out_type)
-            
-            if self._is_interface_type(out_type):
-                namespace = self.get_type_namespace(out_type)
-                if namespace:
-                    cpp_type = f"{namespace}::{out_type.split('::')[-1]}*"
-                else:
-                    cpp_type = f"{out_type.split('::')[-1]}*"
-            elif param.type_info.is_pointer and not out_type.endswith('**'):
-                namespace = self.get_type_namespace(out_type)
-                if namespace:
-                    cpp_type = f"{namespace}::{out_type.split('::')[-1]}*"
-                else:
-                    cpp_type = f"{out_type.split('::')[-1]}*"
-            
             getter_methods.append(f"    {cpp_type} GetValue{i+1}() const {{ return value{i+1}; }}")
+            java_types.append(java_type)
         
-        class_code = f"""{header_block}struct {class_name}
-{{
+        include_guard = self._to_include_guard(class_name)
+        initializer_list = ", ".join(value_initializers)
+        
+        struct_definition = f"""
+#ifndef {include_guard}
+#define {include_guard}
+struct {class_name} {{
     DasResult error_code;
-{'\n'.join(value_fields)}
+{chr(10).join(value_fields)}
+
+    {class_name}() : error_code(DAS_E_UNDEFINED_RETURN_VALUE), {initializer_list} {{}}
 
     DasResult GetErrorCode() const {{ return error_code; }}
-{'\n'.join(getter_methods)}
+{chr(10).join(getter_methods)}
+
+    bool IsOk() const {{ return DAS::IsOk(error_code); }}
 }};
+#endif // {include_guard}
 """
-        return class_code
+        
+        java_getters = []
+        for i, java_type in enumerate(java_types):
+            java_getters.append(f"""
+    /**
+     * 获取值{i+1}，如果操作失败则抛出异常
+     * @return 结果值{i+1}
+     * @throws DasException 当操作失败时
+     */
+    public {java_type} getValue{i+1}OrThrow() throws DasException {{
+        if (!IsOk()) {{
+            throw new DasException(GetErrorCode());
+        }}
+        return GetValue{i+1}();
+    }}""")
+        
+        ret_class_code = f"""
+// ============================================================================
+// {class_name} - 多返回值包装类
+// 用于封装带有多个 [out] 参数的方法返回值
+// ============================================================================
+
+%begin %{{
+{header_block}
+{struct_definition}
+%}}
+
+%inline %{{
+{struct_definition}
+%}}
+
+%typemap(javacode) {class_name} %{{{"".join(java_getters)}
+%}}
+"""
+        
+        if self._context:
+            ret_class_key = f"ret_class_{class_name}"
+            if ret_class_key not in self._context._global_ret_classes:
+                self._context._global_ret_classes[ret_class_key] = ret_class_code
+        
+        return ret_class_code
 
     def _generate_multi_out_wrapper(self, interface: InterfaceDef, method: MethodDef, out_params: list[ParameterDef]) -> str:
         """生成多返回值方法的 %extend 包装代码
@@ -1111,10 +1164,9 @@ struct {ret_class_name} {{
         Returns:
             %extend 包装代码字符串
         """
-        interface_name = interface.name
+        qualified_interface = f"{interface.namespace}::{interface.name}" if interface.namespace else interface.name
         method_name = method.name
         
-        # 生成返回类型名称
         ret_class_name_parts = []
         for param in out_params:
             type_name = param.type_info.base_type.split('::')[-1]
@@ -1122,10 +1174,8 @@ struct {ret_class_name} {{
             ret_class_name_parts.append(clean_name)
         ret_class_name = "DasRet" + "".join(ret_class_name_parts)
         
-        # 生成输入参数列表（排除 [out] 参数）
         in_params = [p for p in method.parameters if p.direction != ParamDirection.OUT]
         
-        # 生成 C++ 参数列表
         cpp_params: list[str] = []
         call_args: list[str] = []
         for p in in_params:
@@ -1145,20 +1195,24 @@ struct {ret_class_name} {{
             cpp_params.append(f"{cpp_type} {p.name}")
             call_args.append(p.name)
         
-        # 生成对每个 [out] 参数的调用参数
         for i, param in enumerate(out_params):
             call_args.append(f"&result.value{i+1}")
         
-        # 生成完整的包装代码
         extend_code = f"""
-%extend {interface_name} {{
+%extend {qualified_interface} {{
     {ret_class_name} {method_name}({', '.join(cpp_params)}) {{
         {ret_class_name} result;
         result.error_code = $self->{method_name}({', '.join(call_args)});
         return result;
     }}
-}};
+}}
 """
+        
+        if self._context:
+            typemap_key = f"{qualified_interface}::{method_name}_multi_out"
+            if typemap_key not in self._context._global_typemaps:
+                self._context._global_typemaps[typemap_key] = extend_code
+        
         return extend_code
 
     @staticmethod
