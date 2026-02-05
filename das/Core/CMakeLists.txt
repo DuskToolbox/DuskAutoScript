@@ -3,6 +3,17 @@ add_custom_target(DasCoreObjectsPreBuild ALL)
 add_dependencies(DasCoreObjects DasCoreObjectsPreBuild)
 add_dependencies(DasGateway DasCoreObjectsPreBuild)
 
+# ===== das_idl模块工具集（未来独立模块）=====
+# 使用GLOB自动收集das_idl目录下的所有Python脚本
+file(GLOB DAS_IDL_MODULE_TOOLS
+    "${CMAKE_SOURCE_DIR}/tools/das_idl/*.py"
+)
+
+message(STATUS "[DAS IDL] Module tools (${CMAKE_COUNT_VAR} files):")
+foreach(tool ${DAS_IDL_MODULE_TOOLS})
+    message(STATUS "  - ${tool}")
+endforeach()
+
 # 引入 DasIdlGenerator.cmake 模块
 if (NOT EXISTS "${CMAKE_SOURCE_DIR}/cmake/DasIdlGenerator.cmake")
     message(FATAL_ERROR "DasIdlGenerator.cmake not found at ${CMAKE_SOURCE_DIR}/cmake/DasIdlGenerator.cmake")
@@ -75,12 +86,7 @@ add_custom_command(
         --config ${DAS_IDL_BATCH_CONFIG}
         --output ${DAS_IDL_UPDATE_LIST}
         DEPENDS ${DAS_IDL_FILES} ${DAS_IDL_BATCH_CONFIG}
-        ${CMAKE_SOURCE_DIR}/tools/das_idl/das_idl_gen.py
-        ${CMAKE_SOURCE_DIR}/tools/das_idl/das_idl_parser.py
-        ${CMAKE_SOURCE_DIR}/tools/das_idl/das_cpp_generator.py
-        ${CMAKE_SOURCE_DIR}/tools/das_idl/das_cpp_wrapper_generator.py
-        ${CMAKE_SOURCE_DIR}/tools/das_idl/das_swig_generator.py
-        ${CMAKE_SOURCE_DIR}/tools/das_idl/check_idl_updates.py
+        ${DAS_IDL_MODULE_TOOLS}
         COMMENT "Check which IDL files need to be regenerated"
         VERBATIM
 )
@@ -96,12 +102,7 @@ add_custom_command(
         --update-list ${DAS_IDL_UPDATE_LIST}
         COMMAND ${CMAKE_COMMAND} -E touch ${DAS_IDL_ABI_OUTPUT_DIR}/.generated_stamp
         DEPENDS ${DAS_IDL_UPDATE_LIST}
-        ${CMAKE_SOURCE_DIR}/tools/das_idl/das_idl_batch_gen.py
-        ${CMAKE_SOURCE_DIR}/tools/das_idl/das_idl_gen.py
-        ${CMAKE_SOURCE_DIR}/tools/das_idl/das_idl_parser.py
-        ${CMAKE_SOURCE_DIR}/tools/das_idl/das_cpp_generator.py
-        ${CMAKE_SOURCE_DIR}/tools/das_idl/das_cpp_wrapper_generator.py
-        ${CMAKE_SOURCE_DIR}/tools/das_idl/das_swig_generator.py
+        ${DAS_IDL_MODULE_TOOLS}
         COMMENT "Generate code from IDL files using virtual environment (incremental)"
         VERBATIM
 )
@@ -110,46 +111,62 @@ add_custom_command(
 add_custom_target(DasCoreIdlGenerated DEPENDS ${DAS_IDL_ABI_OUTPUT_DIR}/.generated_stamp)
 add_dependencies(DasCoreIdlGenerated DasCoreIdlUpdateList)
 
-# 创建强制重新生成所有IDL的自定义目标（可在IDE中右键点击执行）
-add_custom_target(DasCoreIdlForceRegenerate
-    COMMAND ${CMAKE_COMMAND} -E echo "[DAS IDL] Force regenerating all IDL files..."
-    COMMAND ${CMAKE_COMMAND} -E remove_directory ${DAS_IDL_ABI_OUTPUT_DIR}
-    COMMAND ${CMAKE_COMMAND} -E remove_directory ${DAS_IDL_WRAPPER_OUTPUT_DIR}
-    COMMAND ${CMAKE_COMMAND} -E remove_directory ${DAS_IDL_SWIG_OUTPUT_DIR}
-    COMMAND ${CMAKE_COMMAND} -E echo "[DAS IDL] Removing old update list file..."
-    COMMAND ${CMAKE_COMMAND} -E remove ${DAS_IDL_UPDATE_LIST}
-    COMMAND ${CMAKE_COMMAND} -E echo "[DAS IDL] Touching update list file to force regeneration..."
-    COMMAND ${CMAKE_COMMAND} -E touch ${DAS_IDL_UPDATE_LIST}
-    COMMAND ${CMAKE_COMMAND} -E echo "[DAS IDL] Running IDL generation with force flag..."
-    COMMAND ${DAS_IDL_VENV_PYTHON} ${CMAKE_SOURCE_DIR}/tools/das_idl/check_idl_updates.py
-        --config ${DAS_IDL_BATCH_CONFIG}
-        --output ${DAS_IDL_UPDATE_LIST}
-        --force
-    COMMAND ${DAS_IDL_VENV_PYTHON} ${CMAKE_SOURCE_DIR}/tools/das_idl/das_idl_batch_gen.py
-        --config ${DAS_IDL_BATCH_CONFIG}
-        --update-list ${DAS_IDL_UPDATE_LIST}
-    COMMAND ${CMAKE_COMMAND} -E touch ${DAS_IDL_ABI_OUTPUT_DIR}/.generated_stamp
-    COMMAND ${CMAKE_COMMAND} -E echo "[DAS IDL] All IDL files force regenerated successfully!"
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-    COMMENT "Force regenerate all IDL files"
+# ====== IDL依赖关系提取与拓扑排序 ======
+# 设置依赖关系文件输出路径（放在构建目录中，不污染源码目录）
+set(DAS_SWIG_DEPS_FILE "${CMAKE_BINARY_DIR}/das/swig_deps.json")
+set(DAS_SORTED_INTERFACES_FILE "${CMAKE_BINARY_DIR}/das/sorted_interfaces.txt")
+
+# 提取IDL依赖关系的自定义命令
+add_custom_command(
+        OUTPUT ${DAS_SWIG_DEPS_FILE}
+        COMMAND ${DAS_IDL_VENV_PYTHON} ${CMAKE_SOURCE_DIR}/tools/extract_idl_deps.py
+        --idl-dir ${CMAKE_SOURCE_DIR}/idl
+        --output ${DAS_SWIG_DEPS_FILE}
+        DEPENDS ${DAS_IDL_FILES}
+        ${CMAKE_SOURCE_DIR}/tools/extract_idl_deps.py
+        COMMENT "Extract IDL interface dependencies"
+        VERBATIM
 )
+
+# 创建IDL依赖提取目标
+add_custom_target(DasCoreIdlDepsExtracted DEPENDS ${DAS_SWIG_DEPS_FILE})
+add_dependencies(DasCoreIdlDepsExtracted DasCoreIdlGenerated)
+
+# 执行拓扑排序的自定义命令
+add_custom_command(
+        OUTPUT ${DAS_SORTED_INTERFACES_FILE}
+        COMMAND ${DAS_IDL_VENV_PYTHON} ${CMAKE_SOURCE_DIR}/tools/topological_sort.py
+        --deps-file ${DAS_SWIG_DEPS_FILE}
+        --output ${DAS_SORTED_INTERFACES_FILE}
+        DEPENDS ${DAS_SWIG_DEPS_FILE}
+        ${CMAKE_SOURCE_DIR}/tools/topological_sort.py
+        COMMENT "Topological sort of SWIG interfaces"
+        VERBATIM
+)
+
+# 创建拓扑排序目标
+add_custom_target(DasCoreSwigInterfacesSorted DEPENDS ${DAS_SORTED_INTERFACES_FILE})
+add_dependencies(DasCoreSwigInterfacesSorted DasCoreIdlDepsExtracted)
+# ====== IDL依赖关系提取与拓扑排序结束 ======
 
 # 生成swig_all.i文件的自定义命令（汇总所有SWIG接口）
 add_custom_command(
         OUTPUT ${DAS_IDL_SWIG_OUTPUT_DIR}/.swig_all_generated
-        COMMAND ${CMAKE_COMMAND} -DTIME=%<TARGET_PROPERTY:DasCore,GENERATOR_TIME>
+        COMMAND ${CMAKE_COMMAND}
         -DSWIG_OUTPUT_DIR=${DAS_IDL_SWIG_OUTPUT_DIR}
         -DABI_OUTPUT_DIR=${DAS_IDL_ABI_OUTPUT_DIR}
+        -DSORTED_INTERFACES_FILE=${DAS_SORTED_INTERFACES_FILE}
         -P ${CMAKE_SOURCE_DIR}/cmake/generate_swig_all_i.cmake
         COMMAND ${CMAKE_COMMAND} -E touch ${DAS_IDL_SWIG_OUTPUT_DIR}/.swig_all_generated
-        DEPENDS ${DAS_IDL_ABI_OUTPUT_DIR}/.generated_stamp
+        DEPENDS ${DAS_SORTED_INTERFACES_FILE}
+        ${CMAKE_SOURCE_DIR}/cmake/generate_swig_all_i.cmake
         COMMENT "Generate SWIG _all.i summary file"
         VERBATIM
 )
 
 # 创建SWIG汇总文件生成目标
 add_custom_target(DasCoreSwigAllGenerated DEPENDS ${DAS_IDL_SWIG_OUTPUT_DIR}/.swig_all_generated)
-add_dependencies(DasCoreSwigAllGenerated DasCoreIdlGenerated)
+add_dependencies(DasCoreSwigAllGenerated DasCoreSwigInterfacesSorted)
 
 # 让预构建目标依赖IDL生成目标，确保增量检查脚本被执行
 add_dependencies(DasCoreObjectsPreBuild DasCoreIdlUpdateList DasCoreIdlGenerated DasCoreSwigAllGenerated)

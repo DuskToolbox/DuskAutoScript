@@ -14,7 +14,11 @@ file(APPEND ${ALL_I_FILE} "// !!! DO NOT EDIT !!!\n\n")
 file(APPEND ${ALL_I_FILE} "// Master SWIG interface file - includes all generated SWIG interfaces\n\n")
 
 # 读取sorted_interfaces.txt获取按依赖关系排序的接口列表
-set(SORTED_INTERFACES_FILE "${CMAKE_CURRENT_LIST_DIR}/../sorted_interfaces.txt")
+# 文件路径通过 -DSORTED_INTERFACES_FILE=... 从 CMake 传递
+if(NOT DEFINED SORTED_INTERFACES_FILE)
+    # 默认路径（构建目录）
+    set(SORTED_INTERFACES_FILE "${CMAKE_BINARY_DIR}/das/sorted_interfaces.txt")
+endif()
 
 # 检查sorted_interfaces.txt是否存在
 if(NOT EXISTS "${SORTED_INTERFACES_FILE}")
