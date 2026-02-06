@@ -7,6 +7,25 @@
 2. 对于带 [out] 参数的方法，Java 端：
     - 主方法直接返回 DasRetXxx 包装类，包含错误码和结果
     - 便捷方法（Ez后缀）直接返回结果，失败时抛出 DasException
+
+============================================================================
+DasRetXxx 类的生命周期管理策略
+============================================================================
+
+DasRetXxx 类用于封装多返回值方法的返回结果。由于这些类可能包含
+接口指针类型成员，需要正确管理引用计数，避免内存泄漏或悬垂指针。
+
+设计原则：
+1. 删除复制构造函数和复制赋值运算符，防止意外的浅拷贝
+2. 提供移动构造函数和移动赋值运算符，使用 std::swap 高效转移资源所有权
+3. 接口指针成员的生命周期管理：
+   - Get 方法：在返回指针前调用 AddRef() 增加引用计数
+   - Set 方法：在设置新指针前先 Release() 旧指针，再设置新指针并 AddRef()
+   - 析构函数：如果接口指针有值则调用 Release() 释放资源
+
+通过 &value 成员获取的指针具有完全所有权，可以安全地调用 Release()。
+这确保接口指针的生命周期由 DasRetXxx 类管理，符合 COM 风格的引用计数规则。
+============================================================================
 """
 
 from das_idl_parser import InterfaceDef, MethodDef, ParameterDef, ParamDirection, PropertyDef, TypeInfo
@@ -467,6 +486,9 @@ class JavaSwigGenerator(SwigLangGenerator):
             # 优先查找明确的 [out] 参数
             out_params = [p for p in method.parameters if p.direction == ParamDirection.OUT]
             if out_params:
+                # 如果有多个 [out] 参数，跳过此方法，由多返回值处理逻辑处理
+                if len(out_params) >= 2:
+                    continue
                 out_param = out_params[0]
                 # 每个方法只取第一个 [out] 参数
                 # void** 类型会被特殊处理，映射到 DasRetBase（返回 IDasBase）
@@ -1001,6 +1023,12 @@ struct {ret_class_name} {{
     def _generate_multi_ret_class(self, out_params: list[ParameterDef], interface_name: str | None = None) -> str:
         """生成多返回值包装类 (如 DasRetDasResultDasReadOnlyString)
         
+        该类包含完整的生命周期管理：
+        - 删除复制构造函数和复制赋值运算符
+        - 提供移动构造函数和移动赋值运算符
+        - 接口指针类型成员的引用计数管理（AddRef/Release）
+        - 析构函数自动释放资源
+        
         Args:
             out_params: 多个输出参数列表
             interface_name: 可选的接口名称，用于确定头文件包含
@@ -1027,6 +1055,9 @@ struct {ret_class_name} {{
         CORE_TYPES_IN_IDASBASE = {'IDasBase', 'IDasReadOnlyString', 'IDasSwigBase'}
         
         header_includes = []
+        # 添加 utility 头文件用于 std::swap
+        header_includes.append('#include <utility>')
+        
         for i, param in enumerate(out_params):
             out_type = param.type_info.base_type
             simple_type_name = out_type.split('::')[-1]
@@ -1059,7 +1090,11 @@ struct {ret_class_name} {{
         value_fields = []
         value_initializers = []
         getter_methods = []
+        setter_methods = []
+        swap_code_lines = []
+        destructor_lines = []
         java_types = []
+        interface_indices = []  # 记录哪些 value 成员是接口指针类型
         
         for i, param in enumerate(out_params):
             out_type = param.type_info.base_type
@@ -1076,6 +1111,7 @@ struct {ret_class_name} {{
                     cpp_type = f"{out_type.split('::')[-1]}*"
                 if is_interface:
                     java_type = out_type.split('::')[-1]
+                    interface_indices.append(i)
                 value_initializers.append(f"value{i+1}(nullptr)")
             elif pointer_level == 1:
                 simple_type = out_type.split('::')[-1]
@@ -1089,11 +1125,77 @@ struct {ret_class_name} {{
                 value_initializers.append(f"value{i+1}()")
             
             value_fields.append(f"    {cpp_type} value{i+1};")
-            getter_methods.append(f"    {cpp_type} GetValue{i+1}() const {{ return value{i+1}; }}")
+            
+            # 生成 Get 方法 - 接口指针类型需要 AddRef
+            if i in interface_indices:
+                getter_methods.append(f"""    {cpp_type} GetValue{i+1}() const {{
+        if (value{i+1}) {{
+            value{i+1}->AddRef();
+        }}
+        return value{i+1};
+    }}""")
+            else:
+                getter_methods.append(f"    {cpp_type} GetValue{i+1}() const {{ return value{i+1}; }}")
+            
+            # 生成 Set 方法 - 接口指针类型需要 Release/AddRef
+            if i in interface_indices:
+                setter_methods.append(f"""    void SetValue{i+1}({cpp_type} new_value) {{
+        if (value{i+1}) {{
+            value{i+1}->Release();
+        }}
+        value{i+1} = new_value;
+        if (value{i+1}) {{
+            value{i+1}->AddRef();
+        }}
+    }}""")
+            else:
+                setter_methods.append(f"    void SetValue{i+1}({cpp_type} new_value) {{ value{i+1} = new_value; }}")
+            
+            # 生成 swap 代码
+            swap_code_lines.append(f"        std::swap(value{i+1}, other.value{i+1});")
+            
+            # 生成析构函数代码 - 接口指针类型需要 Release
+            if i in interface_indices:
+                destructor_lines.append(f"        if (value{i+1}) {{ value{i+1}->Release(); }}")
+            
             java_types.append(java_type)
         
         include_guard = self._to_include_guard(class_name)
         initializer_list = ", ".join(value_initializers)
+        
+        # 构建析构函数
+        destructor = ""
+        if destructor_lines:
+            destructor_body = "\n".join(destructor_lines)
+            destructor = f"""
+    ~{class_name}() {{
+{destructor_body}
+    }}"""
+        
+        # 构建移动构造函数和移动赋值运算符
+        move_constructor = f"""
+    // 移动构造函数
+    {class_name}({class_name}&& other) noexcept
+        : error_code(DAS_E_UNDEFINED_RETURN_VALUE), {initializer_list} {{
+        std::swap(error_code, other.error_code);
+{chr(10).join(swap_code_lines)}
+    }}"""
+        
+        move_assignment = f"""
+#ifndef SWIG
+    // 移动赋值运算符（仅C++使用，SWIG忽略）
+    {class_name}& operator=({class_name}&& other) noexcept {{
+        if (this != &other) {{
+            // 释放当前资源
+{chr(10).join(destructor_lines) if destructor_lines else '            // 无接口指针需要释放'}
+            error_code = DAS_E_UNDEFINED_RETURN_VALUE;
+            // 移动新资源
+            std::swap(error_code, other.error_code);
+{chr(10).join(swap_code_lines)}
+        }}
+        return *this;
+    }}
+#endif // SWIG"""
         
         struct_definition = f"""
 #ifndef {include_guard}
@@ -1102,10 +1204,24 @@ struct {class_name} {{
     DasResult error_code;
 {chr(10).join(value_fields)}
 
+    // 默认构造函数
     {class_name}() : error_code(DAS_E_UNDEFINED_RETURN_VALUE), {initializer_list} {{}}
+    
+    // 删除复制构造函数和复制赋值运算符
+    {class_name}(const {class_name}&) = delete;
+    {class_name}& operator=(const {class_name}&) = delete;
+    
+    // 移动构造函数和移动赋值运算符
+{move_constructor}
+{move_assignment}
+    
+    // 析构函数
+{destructor}
 
     DasResult GetErrorCode() const {{ return error_code; }}
 {chr(10).join(getter_methods)}
+
+{chr(10).join(setter_methods)}
 
     bool IsOk() const {{ return DAS::IsOk(error_code); }}
 }};
@@ -1131,6 +1247,7 @@ struct {class_name} {{
 // ============================================================================
 // {class_name} - 多返回值包装类
 // 用于封装带有多个 [out] 参数的方法返回值
+// 包含完整的生命周期管理（移动语义、引用计数）
 // ============================================================================
 
 %begin %{{
@@ -1208,10 +1325,72 @@ struct {class_name} {{
 }}
 """
         
+        # 存储到 _global_typemaps，由 DasTypeMapsExtend.i 统一包含
+        # 避免直接写入接口的 .i 文件导致重复定义（Warning 302）
         if self._context:
             typemap_key = f"{qualified_interface}::{method_name}_multi_out"
             if typemap_key not in self._context._global_typemaps:
                 self._context._global_typemaps[typemap_key] = extend_code
+            
+            # 生成 %ignore 代码，隐藏原始方法
+            # 生成 %ignore 代码，使用与 _generate_ignore_directive 相同的逻辑
+            # 同时生成带前缀和不带前缀的版本
+            param_signatures_with_prefix = []
+            param_signatures_without_prefix = []
+            current_namespace = interface.namespace
+            for param in method.parameters:
+                param_type = param.type_info.base_type
+                param_type_with_prefix = param_type
+                if param_type == 'IDasReadOnlyString':
+                    param_type_with_prefix = '::IDasReadOnlyString'
+                elif self._is_interface_type(param_type):
+                    namespace = self.get_type_namespace(param_type)
+                    if namespace:
+                        if namespace == current_namespace:
+                            param_type_with_prefix = param_type
+                        else:
+                            param_type_with_prefix = f'::{namespace}::{param_type}'
+                
+                is_out_param = param.direction == ParamDirection.OUT
+                if param.type_info.is_pointer or (is_out_param and self._is_interface_type(param_type)):
+                    if is_out_param:
+                        if self._is_interface_type(param_type) or param_type == 'IDasReadOnlyString':
+                            pointer_level = 2
+                        else:
+                            pointer_level = param.type_info.pointer_level if param.type_info.is_pointer else 1
+                    else:
+                        pointer_level = param.type_info.pointer_level
+                    stars = '*' * pointer_level
+                    const_prefix = "const " if param.type_info.is_const else ""
+                    param_signatures_with_prefix.append(f"{const_prefix}{param_type_with_prefix}{stars}")
+                    param_signatures_without_prefix.append(f"{const_prefix}{param_type}{stars}")
+                elif param.type_info.is_reference:
+                    if param.type_info.is_const:
+                        param_signatures_with_prefix.append(f"const {param_type_with_prefix}&")
+                        param_signatures_without_prefix.append(f"const {param_type}&")
+                    else:
+                        param_signatures_with_prefix.append(f"{param_type_with_prefix}&")
+                        param_signatures_without_prefix.append(f"{param_type}&")
+                else:
+                    param_signatures_with_prefix.append(param_type_with_prefix)
+                    param_signatures_without_prefix.append(param_type)
+            
+            param_list_with_prefix = ", ".join(param_signatures_with_prefix)
+            param_list_without_prefix = ", ".join(param_signatures_without_prefix)
+            
+            ignore_code = f"""
+%ignore {qualified_interface}::{method_name}({param_list_with_prefix});
+"""
+            if param_list_with_prefix != param_list_without_prefix:
+                ignore_code += f"""
+%ignore {qualified_interface}::{method_name}({param_list_without_prefix});
+"""
+            
+            ignore_key = f"{qualified_interface}::{method_name}_multi_out"
+            if not hasattr(self._context, '_global_typemaps_ignore'):
+                self._context._global_typemaps_ignore = {}
+            if ignore_key not in self._context._global_typemaps_ignore:
+                self._context._global_typemaps_ignore[ignore_key] = ignore_code
         
         return extend_code
 
@@ -1280,7 +1459,8 @@ struct {class_name} {{
         Returns:
             SWIG %ignore 指令代码（带完整参数签名）
         """
-        qualified_interface = f"{interface.namespace}::{interface.name}"
+        # 对于全局命名空间的接口，不使用 :: 前缀
+        qualified_interface = f"{interface.namespace}::{interface.name}" if interface.namespace else interface.name
         
         # 构建完整参数签名：包括所有参数
         # 对于全局命名空间的类型，使用 :: 前缀（与头文件生成保持一致）
