@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 IDL 增量构建检查脚本
 
@@ -12,12 +13,23 @@ IDL 增量构建检查脚本
 """
 
 import argparse
+import glob
 import json
 import os
 import sys
 import time
 from pathlib import Path
 from typing import List, Set, Tuple
+
+
+def safe_print(text: str) -> None:
+    """安全打印，处理Unicode编码错误"""
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        # 如果终端不支持Unicode，使用ASCII替代
+        ascii_text = text.encode('ascii', 'replace').decode('ascii')
+        print(ascii_text)
 
 
 def get_file_modtime(filepath: Path) -> float:
@@ -136,26 +148,25 @@ def needs_regeneration(idl_file: Path, generated_files: List[Path], verbose: boo
     return False
 
 
-def check_tool_file_modified(tool_file: Path, generated_files_dir: Path, verbose: bool = False) -> bool:
+def check_tool_file_modified(tool_file: Path, generated_files_dir: Path) -> Tuple[bool, float, float]:
     """
     检查工具文件是否被修改（如果工具被修改，所有IDL都需要重新生成）
     
     Args:
         tool_file: 工具文件路径
         generated_files_dir: 所有生成文件的根目录
-        verbose: 是否输出详细信息
         
     Returns:
-        True表示工具被修改，需要重新生成所有IDL
+        Tuple[是否修改, 工具文件修改时间, 最新生成文件修改时间]
     """
     if not tool_file.exists():
-        return False
+        return False, 0.0, 0.0
     
     tool_mtime = get_file_modtime(tool_file)
     
     # 查找所有生成文件的最新修改时间
     if not generated_files_dir.exists():
-        return False
+        return False, tool_mtime, 0.0
     
     latest_gen_mtime = 0.0
     for gen_file in generated_files_dir.rglob("*"):
@@ -164,12 +175,8 @@ def check_tool_file_modified(tool_file: Path, generated_files_dir: Path, verbose
             if mtime > latest_gen_mtime:
                 latest_gen_mtime = mtime
     
-    if tool_mtime > latest_gen_mtime:
-        if verbose:
-            print(f"  ⚠ 工具文件已修改，需要重新生成所有IDL: {tool_file}")
-        return True
-    
-    return False
+    is_modified = tool_mtime > latest_gen_mtime
+    return is_modified, tool_mtime, latest_gen_mtime
 
 
 def main():
@@ -220,15 +227,9 @@ def main():
         print("错误: 配置文件必须包含任务列表", file=sys.stderr)
         return 1
     
-    # 工具目录
+    # 工具目录 - 使用glob自动收集所有Python脚本
     tools_dir = Path(__file__).parent
-    tool_files = [
-        tools_dir / "das_idl_gen.py",
-        tools_dir / "das_idl_parser.py",
-        tools_dir / "das_cpp_generator.py",
-        tools_dir / "das_cpp_wrapper_generator.py",
-        tools_dir / "das_swig_generator.py",
-    ]
+    tool_files = [Path(f) for f in glob.glob(str(tools_dir / "*.py"))]
     
     # 检查工具文件是否被修改
     output_dirs = set()
@@ -240,22 +241,35 @@ def main():
         if "--swig-output-dir" in config:
             output_dirs.add(Path(config["--swig-output-dir"]))
     
-    tool_modified = False
+    # 检查工具文件修改情况
+    modified_tools = []
     if output_dirs:
         for output_dir in output_dirs:
             for tool_file in tool_files:
-                if check_tool_file_modified(tool_file, output_dir, args.verbose):
-                    tool_modified = True
-                    break
-            if tool_modified:
-                break
+                is_modified, tool_mtime, latest_gen_mtime = check_tool_file_modified(tool_file, output_dir)
+                if is_modified:
+                    modified_tools.append({
+                        'file': tool_file,
+                        'tool_mtime': tool_mtime,
+                        'gen_mtime': latest_gen_mtime
+                    })
+    
+    tool_modified = len(modified_tools) > 0
     
     # 如果工具被修改或指定了强制模式，所有IDL都需要重新生成
     if tool_modified or args.force:
         if args.force:
             print("强制模式：需要重新生成所有IDL")
         else:
-            print("工具文件已修改，需要重新生成所有IDL")
+            print(f"\n检测到 {len(modified_tools)} 个工具文件已修改，需要重新生成所有IDL:")
+            print("-" * 80)
+            for info in modified_tools:
+                tool_time_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(info['tool_mtime']))
+                gen_time_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(info['gen_mtime'])) if info['gen_mtime'] > 0 else 'N/A'
+                safe_print(f"  📄 {info['file'].name}")
+                safe_print(f"     工具修改时间: {tool_time_str}")
+                safe_print(f"     生成文件时间: {gen_time_str}")
+            print("-" * 80)
         updated_idls = [config.get("-i", config.get("--input", "")) for config in configs]
     else:
         # 逐个检查每个IDL文件

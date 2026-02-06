@@ -80,6 +80,18 @@
 // DasRetBase - IDasBase 的返回包装类
 // 用于封装 QueryInterface 的返回值
 // ============================================================================
+
+// Java 命名规范：将 PascalCase 方法 rename 为小驼峰
+// 注意：%rename 和 %ignore 必须放在 struct 定义之前才能生效
+%rename("getErrorCode") DasRetBase::GetErrorCode;
+%rename("setErrorCode") DasRetBase::SetErrorCode;
+%rename("getValue") DasRetBase::GetValue;
+%rename("setValue") DasRetBase::SetValue;
+%rename("isOk") DasRetBase::IsOk;
+// 隐藏 public 字段的自动 getter/setter，避免重复方法
+%ignore DasRetBase::error_code;
+%ignore DasRetBase::value;
+
 %inline %{
 #ifndef DAS_RET_BASE
 #define DAS_RET_BASE
@@ -90,8 +102,10 @@ struct DasRetBase {
     DasRetBase() : error_code(DAS_E_UNDEFINED_RETURN_VALUE), value(nullptr) {}
 
     DasResult GetErrorCode() const { return error_code; }
+    void SetErrorCode(DasResult code) { error_code = code; }
 
     IDasBase* GetValue() const { return value; }
+    void SetValue(IDasBase* v) { value = v; }
 
     bool IsOk() const { return DAS::IsOk(error_code); }
 };
@@ -106,10 +120,10 @@ struct DasRetBase {
      * @throws DasException 当操作失败时
      */
     public IDasBase getValueOrThrow() throws DasException {
-        if (!IsOk()) {
-            throw new DasException(GetErrorCode(), "DasRetBase operation failed");
+        if (!isOk()) {
+            throw new DasException(getErrorCode(), "DasRetBase operation failed");
         }
-        return GetValue();
+        return getValue();
     }
 %}
 
@@ -174,14 +188,14 @@ struct DasRetBase {
             // 调用 QueryInterface 验证类型并获取新的引用
             // 注意：QueryInterface 会增加引用计数，返回的指针有独立的引用
             DasRetBase ret = QueryInterface(targetIid);
-            if (DuskAutoScript.IsFailed(ret.GetErrorCode())) {
-                throw new DasException(ret.GetErrorCode(),
+            if (DuskAutoScript.IsFailed(ret.getErrorCode())) {
+                throw new DasException(ret.getErrorCode(),
                     "QueryInterface failed for " + targetClass.getName());
             }
 
             // 使用工厂方法创建目标类型实例（使用缓存）
             java.lang.reflect.Method factoryMethod = targetClass.getMethod("createFromPtr", long.class, boolean.class);
-            long newPtr = IDasBase.getCPtr(ret.GetValue());
+            long newPtr = IDasBase.getCPtr(ret.getValue());
             return (T) factoryMethod.invoke(null, newPtr, true);
         } catch (DasException e) {
             throw e;
@@ -216,9 +230,9 @@ struct DasRetBase {
             DasGuid targetIid = (DasGuid) iidMethod.invoke(null);
 
             DasRetBase ret = QueryInterface(targetIid);
-            if (DuskAutoScript.IsOk(ret.GetErrorCode())) {
+            if (DuskAutoScript.IsOk(ret.getErrorCode())) {
                 // QueryInterface 成功，需要释放返回的引用
-                IDasBase tempObj = ret.GetValue();
+                IDasBase tempObj = ret.getValue();
                 if (tempObj != null) {
                     tempObj.delete();
                 }
@@ -316,6 +330,55 @@ SWIGEXPORT jstring JNICALL Java_org_das_DuskAutoScriptJNI_DasReadOnlyString_1toJ
     return jenv->NewStringUTF("");
 }
 %}
+
+// ============================================================================
+// IDasReadOnlyString* Java Typemap -> DasReadOnlyString
+//
+// 背景：IDasReadOnlyString 被 SWIG_IGNORE，因此不会生成 Java 包装类。
+// 当某些自动生成的返回结构体字段类型为 IDasReadOnlyString* 时，SWIG 默认只能用
+// SWIGTYPE_p_IDasReadOnlyString，导致 Java API 不友好。
+// 这里通过 typemap 将 IDasReadOnlyString* 映射为 Java 的 DasReadOnlyString。
+// ============================================================================
+
+// 1) jni: JNI C/C++ 包装层使用的 JNI 类型（这里用 jlong 传递指针）
+%typemap(jni) IDasReadOnlyString * "jlong"
+
+// 2) jtype: 生成的 *JNI.java 中对应的 Java 类型（与 jni 对应，这里是 long）
+%typemap(jtype) IDasReadOnlyString * "long"
+
+// 3) jstype: 对最终用户暴露的 Java 类型（这里希望看到 DasReadOnlyString）
+%typemap(jstype) IDasReadOnlyString * "DasReadOnlyString"
+
+// 4) javain: Java -> JNI 的参数转换
+//    用户传入 DasReadOnlyString，JNI 侧拿到的是它内部持有的 C++ 指针（DasReadOnlyString*）
+%typemap(javain) IDasReadOnlyString * "$javainput == null ? 0 : DasReadOnlyString.getCPtr($javainput)"
+
+// 5) javaout: JNI -> Java 的返回值转换
+//    约定：%typemap(out) 会返回一个"新分配的 DasReadOnlyString*"，因此这里用 (cPtr,true) 让 Java 拥有并 delete()
+%typemap(javaout) IDasReadOnlyString * {
+    long cPtr = $jnicall;
+    return (cPtr == 0) ? null : new DasReadOnlyString(cPtr, true);
+}
+
+// 6) (配套) in: JNI 输入到 C++ 真实类型的转换
+//    $input 是 jlong（实际是 DasReadOnlyString*），这里取出其底层接口指针 IDasReadOnlyString*
+%typemap(in) IDasReadOnlyString * %{
+    DasReadOnlyString* tmp = reinterpret_cast<DasReadOnlyString*>($input);
+    $1 = tmp ? tmp->Get() : nullptr;
+%}
+
+// 7) (配套) out: C++ 返回到 JNI 的转换
+//    C++ 层返回的是 IDasReadOnlyString*；为了让 Java 侧始终拿到 DasReadOnlyString 代理对象，
+//    这里创建一个新的 DasReadOnlyString 包装它，然后把 DasReadOnlyString* 作为 jlong 返回。
+%typemap(out) IDasReadOnlyString * %{
+    if ($1) {
+        DasReadOnlyString* tmp = new DasReadOnlyString($1);
+        $result = (jlong)tmp;
+    } else {
+        $result = 0;
+    }
+%}
+
 #endif // SWIGJAVA
 
 // ============================================================================
@@ -408,6 +471,15 @@ SWIGEXPORT jstring JNICALL Java_org_das_DuskAutoScriptJNI_DasReadOnlyString_1toJ
         return create(errorCode, "Java", 0, methodName);
     }
 %}
+#endif // SWIGJAVA
+
+// ============================================================================
+// 隐藏 DasReadOnlyString 中暴露 SWIGTYPE 的方法
+// char16_t 构造函数和 GetUtf16 已由 fromString/toJavaString 替代
+// ============================================================================
+#ifdef SWIGJAVA
+%ignore DasReadOnlyString::DasReadOnlyString(const char16_t*, size_t);
+%ignore DasReadOnlyString::GetUtf16;
 #endif // SWIGJAVA
 
 %include <das/DasString.hpp>;

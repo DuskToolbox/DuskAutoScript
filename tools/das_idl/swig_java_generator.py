@@ -145,6 +145,35 @@ class JavaSwigGenerator(SwigLangGenerator):
         return simple_name == 'void'
 
     @staticmethod
+    def _to_java_method_name(prefix: str, prop_name: str) -> str:
+        """将属性名和前缀组合为 Java 小驼峰方法名
+        
+        将 C++ PascalCase 的 Get/Set + 属性名转换为 Java 小驼峰命名：
+        - ("get", "Score") -> "getScore"
+        - ("set", "Score") -> "setScore"
+        - ("get", "score") -> "getScore"
+        - ("set", "match_rect") -> "setMatchRect"
+        - ("get", "FileName") -> "getFileName"
+        - ("is", "Ok") -> "isOk"
+        
+        Args:
+            prefix: 方法前缀，如 "get", "set", "is"
+            prop_name: 属性名（可能是 PascalCase 或 snake_case）
+            
+        Returns:
+            Java 小驼峰方法名
+        """
+        # 如果是 snake_case（含下划线），转为 PascalCase
+        if '_' in prop_name:
+            parts = prop_name.split('_')
+            pascal_name = ''.join(part.capitalize() for part in parts if part)
+        else:
+            # 确保首字母大写（PascalCase）
+            pascal_name = prop_name[0].upper() + prop_name[1:] if prop_name else prop_name
+        
+        return f"{prefix}{pascal_name}"
+
+    @staticmethod
     def _normalize_type_name_for_class(type_name: str) -> str:
         """规范化类型名用于生成类名
 
@@ -408,21 +437,33 @@ class JavaSwigGenerator(SwigLangGenerator):
         java_params_str = ", ".join(java_params)
         call_args_str = ", ".join(call_args)
         
+        # 确定 Java 侧方法名（属性方法用小驼峰）
+        if method.attributes and method.attributes.get('_is_property'):
+            prop_name = method.attributes['_prop_name']
+            if method.name.startswith('Get'):
+                java_method_name = self._to_java_method_name('get', prop_name)
+            elif method.name.startswith('Set'):
+                java_method_name = self._to_java_method_name('set', prop_name)
+            else:
+                java_method_name = method.name
+        else:
+            java_method_name = method.name
+        
         return f"""
     /**
-     * {method.name} 的便捷方法（Ez 版本）
+     * {java_method_name} 的便捷方法（Ez 版本）
      * <p>
      * 接受 Java String 参数，失败时抛出 DasException。
      * </p>
      * @return 结果值
      * @throws DasException 当操作失败时
      */
-    public final {java_return_type} {method.name}Ez({java_params_str}) throws DasException {{
-        {ret_class_name} result = {method.name}({call_args_str});
-        if (DuskAutoScript.IsFailed(result.GetErrorCode())) {{
-            throw DasException.fromErrorCode(result.GetErrorCode(), "{interface.name}.{method.name}");
+    public final {java_return_type} {java_method_name}Ez({java_params_str}) throws DasException {{
+        {ret_class_name} result = {java_method_name}({call_args_str});
+        if (DuskAutoScript.IsFailed(result.getErrorCode())) {{
+            throw DasException.fromErrorCode(result.getErrorCode(), "{interface.name}.{java_method_name}");
         }}
-        return result.GetValue();
+        return result.getValue();
     }}"""
 
     @staticmethod
@@ -546,7 +587,7 @@ class JavaSwigGenerator(SwigLangGenerator):
                 name=method_name,
                 return_type=TypeInfo(base_type='DasResult'),
                 parameters=[out_param],
-                attributes={}
+                attributes={'_is_property': True, '_prop_name': prop.name}
             )
             
             result.append((virtual_method, out_param))
@@ -579,6 +620,7 @@ class JavaSwigGenerator(SwigLangGenerator):
         """获取接口中所有不带 [out] 参数但有 IDasReadOnlyString* 输入参数的方法
 
         这些方法需要生成 DasReadOnlyString 参数版本，以便 Java 用户可以直接使用。
+        包括属性 setter 中使用 IDasReadOnlyString 类型的方法。
 
         Args:
             interface: 接口定义
@@ -598,6 +640,44 @@ class JavaSwigGenerator(SwigLangGenerator):
             # 检查是否有 IDasReadOnlyString* 输入参数
             if JavaSwigGenerator._has_idas_readonly_string_param(method):
                 result.append(method)
+        
+        # 为属性 setter 创建虚拟方法（如果属性类型为 IDasReadOnlyString）
+        # ABI 生成器会为 [set] IDasReadOnlyString 属性生成:
+        #   SetXxx(::IDasReadOnlyString* p_value)
+        for prop in interface.properties:
+            if not prop.has_setter:
+                continue
+            if prop.type_info.base_type != 'IDasReadOnlyString':
+                continue
+            
+            method_name = f"Set{prop.name}"
+            # 检查是否已经在 interface.methods 中
+            already_in_methods = any(m.name == method_name for m in interface.methods)
+            if already_in_methods:
+                continue
+            
+            # 创建虚拟的 setter 方法
+            setter_param = ParameterDef(
+                name='p_value',
+                type_info=TypeInfo(
+                    base_type='IDasReadOnlyString',
+                    is_pointer=True,
+                    pointer_level=1,
+                    is_const=False,
+                    is_reference=False
+                ),
+                direction=ParamDirection.IN
+            )
+            
+            virtual_method = MethodDef(
+                name=method_name,
+                return_type=TypeInfo(base_type='DasResult'),
+                parameters=[setter_param],
+                attributes={'_is_property': True, '_prop_name': prop.name}
+            )
+            
+            result.append(virtual_method)
+        
         return result
 
     def _generate_ignore_directive_for_binary_buffer(self, interface: InterfaceDef, method: MethodDef) -> str:
@@ -678,16 +758,33 @@ class JavaSwigGenerator(SwigLangGenerator):
         # 同时生成带 :: 前缀和不带前缀的版本
         param_signatures_with_prefix = []
         param_signatures_without_prefix = []
+        current_namespace = interface.namespace
         for param in method.parameters:
             param_type = param.type_info.base_type
             param_type_with_prefix = param_type
             # 对于全局命名空间的类型，添加 :: 前缀
             if param_type == 'IDasReadOnlyString':
                 param_type_with_prefix = '::IDasReadOnlyString'
+            elif self._is_interface_type(param_type):
+                namespace = self.get_type_namespace(param_type)
+                if namespace:
+                    if namespace == current_namespace:
+                        param_type_with_prefix = param_type
+                    else:
+                        param_type_with_prefix = f'::{namespace}::{param_type}'
             if param.type_info.is_pointer:
                 stars = '*' * param.type_info.pointer_level
-                param_signatures_with_prefix.append(f"{param_type_with_prefix}{stars}")
-                param_signatures_without_prefix.append(f"{param_type}{stars}")
+                const_prefix = "const " if param.type_info.is_const else ""
+                param_signatures_with_prefix.append(f"{const_prefix}{param_type_with_prefix}{stars}")
+                param_signatures_without_prefix.append(f"{const_prefix}{param_type}{stars}")
+            elif param.type_info.is_reference:
+                # 处理引用类型（如 const DasGuid&）
+                if param.type_info.is_const:
+                    param_signatures_with_prefix.append(f"const {param_type_with_prefix}&")
+                    param_signatures_without_prefix.append(f"const {param_type}&")
+                else:
+                    param_signatures_with_prefix.append(f"{param_type_with_prefix}&")
+                    param_signatures_without_prefix.append(f"{param_type}&")
             else:
                 param_signatures_with_prefix.append(param_type_with_prefix)
                 param_signatures_without_prefix.append(param_type)
@@ -745,11 +842,24 @@ class JavaSwigGenerator(SwigLangGenerator):
         # 获取返回类型
         return_type = method.return_type.base_type if method.return_type else "DasResult"
         
+        # 确定 Java 侧方法名
+        cpp_method_name = method.name
+        if method.attributes and method.attributes.get('_is_property'):
+            prop_name = method.attributes['_prop_name']
+            if method.name.startswith('Get'):
+                java_method_name = self._to_java_method_name('get', prop_name)
+            elif method.name.startswith('Set'):
+                java_method_name = self._to_java_method_name('set', prop_name)
+            else:
+                java_method_name = method.name
+        else:
+            java_method_name = method.name
+        
         return f"""
 // 添加 DasReadOnlyString 参数版本的 {method.name} 方法
 %extend {qualified_interface} {{
-    {return_type} {method.name}({das_cpp_params_str}) {{
-        return $self->{method.name}({das_call_args_str});
+    {return_type} {java_method_name}({das_cpp_params_str}) {{
+        return $self->{cpp_method_name}({das_call_args_str});
     }}
 }}
 """
@@ -874,8 +984,10 @@ struct {ret_class_name} {{
     {ret_class_name}() : error_code(DAS_E_UNDEFINED_RETURN_VALUE), value({cpp_default_value}) {{}}
 
     DasResult GetErrorCode() const {{ return error_code; }}
+    void SetErrorCode(DasResult code) {{ error_code = code; }}
 
     {cpp_value_type} GetValue() const {{ return value; }}
+    void SetValue({cpp_value_type} v) {{ value = v; }}
 
     bool IsOk() const {{ return DAS::IsOk(error_code); }}
 }};
@@ -894,6 +1006,18 @@ struct {ret_class_name} {{
 {struct_definition}
 %}}
 
+#ifdef SWIGJAVA
+// Java 命名规范：将 PascalCase 方法 rename 为小驼峰
+%rename("getErrorCode") {ret_class_name}::GetErrorCode;
+%rename("setErrorCode") {ret_class_name}::SetErrorCode;
+%rename("getValue") {ret_class_name}::GetValue;
+%rename("setValue") {ret_class_name}::SetValue;
+%rename("isOk") {ret_class_name}::IsOk;
+// 隐藏 public 字段的自动 getter/setter，避免重复方法
+%ignore {ret_class_name}::error_code;
+%ignore {ret_class_name}::value;
+#endif // SWIGJAVA
+
 // 让 SWIG 解析 struct 并生成 Java 包装类
 %inline %{{
 {struct_definition}
@@ -907,10 +1031,10 @@ struct {ret_class_name} {{
      * @throws DasException 当操作失败时
      */
     public {java_type} getValueOrThrow() throws DasException {{
-        if (!IsOk()) {{
-            throw new DasException(GetErrorCode());
+        if (!isOk()) {{
+            throw new DasException(getErrorCode());
         }}
-        return GetValue();
+        return getValue();
     }}
 %}}
   """
@@ -977,8 +1101,10 @@ struct {ret_class_name} {{
     {ret_class_name}() : error_code(DAS_E_UNDEFINED_RETURN_VALUE){f", value({cpp_default_value})" if cpp_default_value else ""} {{}}
 
     DasResult GetErrorCode() const {{ return error_code; }}
+    void SetErrorCode(DasResult code) {{ error_code = code; }}
 
     {cpp_value_type} GetValue() const {{ return value; }}
+    void SetValue({cpp_value_type} v) {{ value = v; }}
 
     bool IsOk() const {{ return DAS::IsOk(error_code); }}
 }};
@@ -987,7 +1113,7 @@ struct {ret_class_name} {{
             
             return f"""
 // ============================================================================
-// {ret_class_name} - 返回包装类（接口类型）
+// {ret_class_name} - 返回包装类（值类型）
 // 用于封装带有 [out] 参数的方法返回值
 // ============================================================================
 
@@ -996,6 +1122,18 @@ struct {ret_class_name} {{
 {header_block}
 {struct_definition}
 %}}
+
+#ifdef SWIGJAVA
+// Java 命名规范：将 PascalCase 方法 rename 为小驼峰
+%rename("getErrorCode") {ret_class_name}::GetErrorCode;
+%rename("setErrorCode") {ret_class_name}::SetErrorCode;
+%rename("getValue") {ret_class_name}::GetValue;
+%rename("setValue") {ret_class_name}::SetValue;
+%rename("isOk") {ret_class_name}::IsOk;
+// 隐藏 public 字段的自动 getter/setter，避免重复方法
+%ignore {ret_class_name}::error_code;
+%ignore {ret_class_name}::value;
+#endif // SWIGJAVA
 
 // 让 SWIG 解析 struct 并生成 Java 包装类
 %inline %{{
@@ -1010,10 +1148,10 @@ struct {ret_class_name} {{
      * @throws DasException 当操作失败时
      */
     public {java_type} getValueOrThrow() throws DasException {{
-        if (!IsOk()) {{
-            throw new DasException(GetErrorCode());
+        if (!isOk()) {{
+            throw new DasException(getErrorCode());
         }}
-        return GetValue();
+        return getValue();
     }}
 %}}
   """
@@ -1219,6 +1357,7 @@ struct {class_name} {{
 {destructor}
 
     DasResult GetErrorCode() const {{ return error_code; }}
+    void SetErrorCode(DasResult code) {{ error_code = code; }}
 {chr(10).join(getter_methods)}
 
 {chr(10).join(setter_methods)}
@@ -1227,6 +1366,18 @@ struct {class_name} {{
 }};
 #endif // {include_guard}
 """
+        
+        # 生成 %rename 和 %ignore 指令（多返回值的 GetValue{i}/SetValue{i} 和 value{i} 字段）
+        rename_getter_lines = []
+        rename_setter_lines = []
+        ignore_field_lines = []
+        for i in range(len(out_params)):
+            rename_getter_lines.append(f'%rename("getValue{i+1}") {class_name}::GetValue{i+1};')
+            rename_setter_lines.append(f'%rename("setValue{i+1}") {class_name}::SetValue{i+1};')
+            ignore_field_lines.append(f'%ignore {class_name}::value{i+1};')
+        rename_getters = "\n".join(rename_getter_lines)
+        rename_setters = "\n".join(rename_setter_lines)
+        ignore_value_fields = "\n".join(ignore_field_lines)
         
         java_getters = []
         for i, java_type in enumerate(java_types):
@@ -1237,10 +1388,10 @@ struct {class_name} {{
      * @throws DasException 当操作失败时
      */
     public {java_type} getValue{i+1}OrThrow() throws DasException {{
-        if (!IsOk()) {{
-            throw new DasException(GetErrorCode());
+        if (!isOk()) {{
+            throw new DasException(getErrorCode());
         }}
-        return GetValue{i+1}();
+        return getValue{i+1}();
     }}""")
         
         ret_class_code = f"""
@@ -1255,14 +1406,25 @@ struct {class_name} {{
 {struct_definition}
 %}}
 
+#ifdef SWIGJAVA
+// Java 命名规范：将 PascalCase 方法 rename 为小驼峰
+%rename("getErrorCode") {class_name}::GetErrorCode;
+%rename("setErrorCode") {class_name}::SetErrorCode;
+%rename("isOk") {class_name}::IsOk;
+{rename_getters}
+{rename_setters}
+// 隐藏 public 字段的自动 getter/setter，避免重复方法
+%ignore {class_name}::error_code;
+{ignore_value_fields}
+#endif // SWIGJAVA
+
 %inline %{{
 {struct_definition}
 %}}
 
-%typemap(javacode) {class_name} %{{{"".join(java_getters)}
+%typemap(javacode) {class_name} %{{{{"".join(java_getters)}}
 %}}
-"""
-        
+"""        
         if self._context:
             ret_class_key = f"ret_class_{class_name}"
             if ret_class_key not in self._context._global_ret_classes:
@@ -1588,6 +1750,20 @@ struct {class_name} {{
         is_idas_readonly_string_out = self._is_idas_readonly_string_out_param(out_type)
         is_void_pointer_pointer = self._is_void_pointer_pointer(out_type)
 
+        # 确定 Java 侧方法名和 C++ 侧方法名
+        # 对于属性方法，Java 侧使用小驼峰命名
+        cpp_method_name = method.name  # 用于 $self-> 调用
+        if method.attributes and method.attributes.get('_is_property'):
+            prop_name = method.attributes['_prop_name']
+            if method.name.startswith('Get'):
+                java_method_name = self._to_java_method_name('get', prop_name)
+            elif method.name.startswith('Set'):
+                java_method_name = self._to_java_method_name('set', prop_name)
+            else:
+                java_method_name = method.name
+        else:
+            java_method_name = method.name
+
         # 收集非 [out] 参数
         # 注意：对于属性 getter，参数的 direction 可能不是 OUT，但它实际上是输出参数
         # 通过 p is out_param 来识别这种情况
@@ -1633,9 +1809,9 @@ struct {class_name} {{
             lines.append(f"""
 // 添加返回 DasRetBase 的包装方法（void** -> IDasBase*）
 %extend {qualified_interface} {{
-    DasRetBase {method.name}({cpp_params_str}) {{
+    DasRetBase {java_method_name}({cpp_params_str}) {{
         DasRetBase result;
-        result.error_code = $self->{method.name}({call_args_str});
+        result.error_code = $self->{cpp_method_name}({call_args_str});
         return result;
     }}
 }}
@@ -1649,10 +1825,10 @@ struct {class_name} {{
             lines.append(f"""
 // 添加返回 {ret_class_name} 的包装方法
 %extend {qualified_interface} {{
-    {ret_class_name} {method.name}({cpp_params_str}) {{
+    {ret_class_name} {java_method_name}({cpp_params_str}) {{
         {ret_class_name} result;
         IDasReadOnlyString* p_out_string = nullptr;
-        result.error_code = $self->{method.name}({call_args_str});
+        result.error_code = $self->{cpp_method_name}({call_args_str});
         result.value = p_out_string;  // DasReadOnlyString 可以从 IDasReadOnlyString* 隐式构造
         return result;
     }}
@@ -1668,9 +1844,9 @@ struct {class_name} {{
             lines.append(f"""
 // 添加返回 {ret_class_name} 的包装方法
 %extend {qualified_interface} {{
-    {ret_class_name} {method.name}({cpp_params_str}) {{
+    {ret_class_name} {java_method_name}({cpp_params_str}) {{
         {ret_class_name} result;
-        result.error_code = $self->{method.name}({call_args_str});
+        result.error_code = $self->{cpp_method_name}({call_args_str});
         return result;
     }}
 }}
@@ -1712,10 +1888,10 @@ struct {class_name} {{
                 lines.append(f"""
 // 添加 DasReadOnlyString 参数版本的 {method.name} 方法
 %extend {qualified_interface} {{
-    {ret_class_name} {method.name}({das_cpp_params_str}) {{
+    {ret_class_name} {java_method_name}({das_cpp_params_str}) {{
         {ret_class_name} result;
         IDasReadOnlyString* p_out_string = nullptr;
-        result.error_code = $self->{method.name}({das_call_args_str});
+        result.error_code = $self->{cpp_method_name}({das_call_args_str});
         result.value = p_out_string;  // DasReadOnlyString 可以从 IDasReadOnlyString* 隐式构造
         return result;
     }}
@@ -1728,9 +1904,9 @@ struct {class_name} {{
                 lines.append(f"""
 // 添加 DasReadOnlyString 参数版本的 {method.name} 方法
 %extend {qualified_interface} {{
-    {ret_class_name} {method.name}({das_cpp_params_str}) {{
+    {ret_class_name} {java_method_name}({das_cpp_params_str}) {{
         {ret_class_name} result;
-        result.error_code = $self->{method.name}({das_call_args_str});
+        result.error_code = $self->{cpp_method_name}({das_call_args_str});
         return result;
     }}
 }}

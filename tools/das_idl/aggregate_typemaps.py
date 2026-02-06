@@ -13,6 +13,7 @@ Typemap 聚合脚本
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 
@@ -33,27 +34,32 @@ def aggregate_typemaps(swig_output_dir: Path, output_filename: str = "DasTypeMap
     
     # 查找所有 typemap_info JSON 文件
     json_files = list(swig_output_dir.glob("typemap_info_*.json"))
-    
+
     if not json_files:
         print(f"No typemap_info JSON files found in {swig_output_dir}")
         return 0  # 没有文件也是成功的
-    
+
     print(f"Found {len(json_files)} typemap_info JSON files")
-    
+
+    start_time = time.time()
+
     try:
         result = generate_type_maps_from_jsons(
             [str(f) for f in json_files],
             output_filename,
             swig_output_dir
         )
-        
+
+        end_time = time.time()
+        elapsed_ms = int((end_time - start_time) * 1000)
+
         if result is None:
-            print(f"Successfully generated {output_filename}")
+            print(f"Successfully generated {output_filename} in {elapsed_ms} ms")
             return 0
         else:
             print(f"Unexpected result: {result}")
             return 1
-            
+
     except Exception as e:
         print(f"Error aggregating typemaps: {e}", file=sys.stderr)
         import traceback

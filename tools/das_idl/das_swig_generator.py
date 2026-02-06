@@ -488,21 +488,19 @@ class SwigCodeGenerator:
                         lang_codes.append(lang_code)
         
         # 处理多 [out] 参数的方法（Java 专用）
+        # 注意：多返回值类型定义和包装代码都通过 _global_typemaps 写入 DasTypeMapsExtend.i
+        # 不要直接添加到 lang_codes，避免重复定义（Warning 302）
         for lang_generator in self.lang_generators:
             if lang_generator.__class__.__name__ == 'JavaSwigGenerator':
                 if hasattr(lang_generator, '_get_multi_out_param_methods'):
                     multi_out_methods = lang_generator._get_multi_out_param_methods(interface)
                     for method, out_params in multi_out_methods:
-                        # 生成多返回值类型定义
+                        # 生成多返回值类型定义（通过 _global_ret_classes 存储）
                         if hasattr(lang_generator, '_generate_multi_ret_class'):
-                            ret_class_code = lang_generator._generate_multi_ret_class(out_params, interface.name)
-                            if ret_class_code:
-                                lang_codes.append(ret_class_code)
-                        # 生成多返回值包装代码
+                            lang_generator._generate_multi_ret_class(out_params, interface.name)
+                        # 生成多返回值包装代码（通过 _global_typemaps 存储）
                         if hasattr(lang_generator, '_generate_multi_out_wrapper'):
-                            wrapper_code = lang_generator._generate_multi_out_wrapper(interface, method, out_params)
-                            if wrapper_code:
-                                lang_codes.append(wrapper_code)
+                            lang_generator._generate_multi_out_wrapper(interface, method, out_params)
         
         return "\n".join(lang_codes)
 
