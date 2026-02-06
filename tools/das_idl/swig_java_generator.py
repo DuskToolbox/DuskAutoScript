@@ -936,6 +936,8 @@ class JavaSwigGenerator(SwigLangGenerator):
             
             # 确定需要包含的头文件
             header_includes = []
+            # 添加 utility 头文件用于 std::swap（移动语义）
+            header_includes.append('#include <utility>')
             if "DasGuid" in out_type:
                 header_includes.append('#include <DasBasicTypes.h>')
             
@@ -981,13 +983,62 @@ struct {ret_class_name} {{
     DasResult error_code;
     {cpp_value_type} value;
 
+    // 默认构造函数
     {ret_class_name}() : error_code(DAS_E_UNDEFINED_RETURN_VALUE), value({cpp_default_value}) {{}}
+
+    // 删除复制构造函数和复制赋值运算符
+    {ret_class_name}(const {ret_class_name}&) = delete;
+    {ret_class_name}& operator=(const {ret_class_name}&) = delete;
+
+    // 移动构造函数
+    {ret_class_name}({ret_class_name}&& other) noexcept
+        : error_code(DAS_E_UNDEFINED_RETURN_VALUE), value({cpp_default_value}) {{
+        std::swap(error_code, other.error_code);
+        std::swap(value, other.value);
+    }}
+
+    // 移动赋值运算符（仅C++使用，SWIG忽略）
+#ifndef SWIG
+    {ret_class_name}& operator=({ret_class_name}&& other) noexcept {{
+        if (this != &other) {{
+            // 释放当前资源
+            if (value) {{
+                value->Release();
+            }}
+            error_code = DAS_E_UNDEFINED_RETURN_VALUE;
+            // 移动新资源
+            std::swap(error_code, other.error_code);
+            std::swap(value, other.value);
+        }}
+        return *this;
+    }}
+#endif // SWIG
+
+    // 析构函数
+    ~{ret_class_name}() {{
+        if (value) {{
+            value->Release();
+        }}
+    }}
 
     DasResult GetErrorCode() const {{ return error_code; }}
     void SetErrorCode(DasResult code) {{ error_code = code; }}
 
-    {cpp_value_type} GetValue() const {{ return value; }}
-    void SetValue({cpp_value_type} v) {{ value = v; }}
+    {cpp_value_type} GetValue() const {{
+        if (value) {{
+            value->AddRef();
+        }}
+        return value;
+    }}
+    void SetValue({cpp_value_type} v) {{
+        if (value) {{
+            value->Release();
+        }}
+        value = v;
+        if (value) {{
+            value->AddRef();
+        }}
+    }}
 
     bool IsOk() const {{ return DAS::IsOk(error_code); }}
 }};
