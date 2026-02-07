@@ -591,7 +591,17 @@ class Parser:
         base_interface = "IDasBase"
         if self.match(TokenType.COLON):
             self.advance()
+            # 检查是否是非法关键字（C++ 访问修饰符、存储类说明符、虚函数说明符等）
+            ILLEGAL_BASE_CLASS_KEYWORDS = {'public', 'private', 'protected', 'virtual', 'static', 'const', 'volatile'}
+            next_token = self.current()
+            if next_token.type == TokenType.IDENTIFIER and next_token.value in ILLEGAL_BASE_CLASS_KEYWORDS:
+                raise SyntaxError(
+                    f"Interface base class cannot use C++ access modifier '{next_token.value}' at line {next_token.line}. "
+                    f"Expected: interface identifier (e.g., IDasBase, IDasTypeInfo). "
+                    f"Note: IDL interface inheritance does not support C++ modifiers like 'public'."
+                )
             base_interface = self.expect(TokenType.IDENTIFIER).value
+
         
         interface = InterfaceDef(
             name=name,
