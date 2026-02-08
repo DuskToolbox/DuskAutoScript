@@ -2,6 +2,14 @@ import "DasBasicTypes.idl";
 
 namespace Das::ExportInterface {
 
+// 部分日志接口依赖该类型
+[uuid("9BC34D72-E442-4944-ACE6-69257D262568")]
+interface IDasSourceLocation {
+    [get, set] IDasReadOnlyString FileName;
+    [get, set] int32_t Line;
+    [get, set] IDasReadOnlyString FunctionName;
+};
+
 [uuid("F4191604-D061-49A4-85EC-28EFC376119F")]
 interface IDasLogReader : IDasBase {
     DasResult ReadOne(IDasReadOnlyString* message);
