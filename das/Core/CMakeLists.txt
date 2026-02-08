@@ -119,11 +119,11 @@ set(DAS_SORTED_INTERFACES_FILE "${CMAKE_BINARY_DIR}/das/sorted_interfaces.txt")
 # 提取IDL依赖关系的自定义命令
 add_custom_command(
         OUTPUT ${DAS_SWIG_DEPS_FILE}
-        COMMAND ${DAS_IDL_VENV_PYTHON} ${CMAKE_SOURCE_DIR}/tools/extract_idl_deps.py
+        COMMAND ${DAS_IDL_VENV_PYTHON} ${CMAKE_SOURCE_DIR}/tools/das_idl/extract_idl_deps.py
         --idl-dir ${CMAKE_SOURCE_DIR}/idl
         --output ${DAS_SWIG_DEPS_FILE}
         DEPENDS ${DAS_IDL_FILES}
-        ${CMAKE_SOURCE_DIR}/tools/extract_idl_deps.py
+        ${CMAKE_SOURCE_DIR}/tools/das_idl/extract_idl_deps.py
         COMMENT "Extract IDL interface dependencies"
         VERBATIM
 )
@@ -135,11 +135,11 @@ add_dependencies(DasCoreIdlDepsExtracted DasCoreIdlGenerated)
 # 执行拓扑排序的自定义命令
 add_custom_command(
         OUTPUT ${DAS_SORTED_INTERFACES_FILE}
-        COMMAND ${DAS_IDL_VENV_PYTHON} ${CMAKE_SOURCE_DIR}/tools/topological_sort.py
+        COMMAND ${DAS_IDL_VENV_PYTHON} ${CMAKE_SOURCE_DIR}/tools/das_idl/topological_sort.py
         --deps-file ${DAS_SWIG_DEPS_FILE}
         --output ${DAS_SORTED_INTERFACES_FILE}
         DEPENDS ${DAS_SWIG_DEPS_FILE}
-        ${CMAKE_SOURCE_DIR}/tools/topological_sort.py
+        ${CMAKE_SOURCE_DIR}/tools/das_idl/topological_sort.py
         COMMENT "Topological sort of SWIG interfaces"
         VERBATIM
 )
