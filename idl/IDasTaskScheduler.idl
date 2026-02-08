@@ -1,4 +1,5 @@
 import "DasBasicTypes.idl";
+import "IDasWeakReference.idl";
 
 namespace Das::ExportInterface {
 

@@ -1,0 +1,9 @@
+[uuid("B0397D85-1EC0-4AC8-AB73-05CBFBB3E1D1")]
+interface IDasWeakReference : IDasBase {
+    DasResult Resolve([out] IDasBase** pp_out_object);
+}
+
+[uuid("7D441727-A6DE-4F78-AF6F-32542288B9EE")]
+interface IDasWeakReferenceSource : IDasBase {
+    DasResult GetWeakReference([out] IDasWeakReference** pp_out_weak);
+}

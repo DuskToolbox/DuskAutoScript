@@ -237,65 +237,12 @@ DAS_INTERFACE IDasBase
     DAS_METHOD       QueryInterface(const DasGuid& iid, void** pp_object) = 0;
 };
 
-// {9CA2095E-3F1E-44C0-BB14-515446666892}
-DAS_DEFINE_GUID(
-    DAS_IID_WEAK_REFERENCE,
-    IDasWeakReference,
-    0x9ca2095e,
-    0x3f1e,
-    0x44c0,
-    0xbb,
-    0x14,
-    0x51,
-    0x54,
-    0x46,
-    0x66,
-    0x68,
-    0x92);
-DAS_SWIG_EXPORT_ATTRIBUTE(IDasWeakReference)
-DAS_INTERFACE IDasWeakReference : public IDasBase
-{
-    /**
-     * @brief 获取对象的强引用
-     *
-     * @param pp_out_object 对象强引用指针，已AddRef
-     * @return DasResult DAS_S_OK 表示成功，
-     * DAS_E_STRONG_REFERENCE_NOT_AVAILABLE 表示内部对象已不可用
-     */
-    DAS_METHOD Resolve(IDasBase * *pp_out_object) = 0;
-};
-
-// {1A39C88A-CC59-4999-A828-2686F466DA05}
-DAS_DEFINE_GUID(
-    DAS_IID_WEAK_REFERENCE_SOURCE,
-    IDasWeakReferenceSource,
-    0x1a39c88a,
-    0xcc59,
-    0x4999,
-    0xa8,
-    0x28,
-    0x26,
-    0x86,
-    0xf4,
-    0x66,
-    0xda,
-    0x5);
-DAS_SWIG_EXPORT_ATTRIBUTE(IDasWeakReferenceSource)
-DAS_INTERFACE IDasWeakReferenceSource : public IDasBase
-{
-    DAS_METHOD GetWeakReference(IDasWeakReference * *pp_out_weak) = 0;
-};
-
 inline bool IsDasGuidEqual(
     const DasGuid& lhs,
     const DasGuid& rhs) noexcept
 {
     return lhs == rhs;
 }
-
-DAS_DEFINE_RET_TYPE(DasRetInt, int64_t);
-
-DAS_DEFINE_RET_TYPE(DasRetUInt, uint64_t);
 
 #define DAS_THROW_IF_FAILED(result)                                            \
     {                                                                          \
