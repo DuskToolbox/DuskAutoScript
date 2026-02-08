@@ -126,6 +126,20 @@ class SwigLangGenerator(ABC):
             SWIG .i 文件中的代码片段，将插入到 %include 指令之前
         """
         return ""  # 默认实现返回空字符串
+    
+    def generate_post_include_directives(self, interface: InterfaceDef) -> str:
+        """生成在 %include 之后的 SWIG 指令
+        
+        某些 typemap（如 javacode）需要在 %include 之后生成，
+        以避免在类的前置声明时被过早应用。
+        
+        Args:
+            interface: 接口定义
+            
+        Returns:
+            SWIG .i 文件中的代码片段，将插入到 %include 指令之后
+        """
+        return ""  # 默认实现返回空字符串
 
     @abstractmethod
     def generate_binary_buffer_helpers(self, interface: InterfaceDef, method_name: str, size_method_name: str) -> str:

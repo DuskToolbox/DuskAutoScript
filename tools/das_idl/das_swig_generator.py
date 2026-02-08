@@ -913,6 +913,13 @@ public:
         # 生成 IID 静态方法（%extend）
         lines.append(self._generate_iid_static_method(interface))
 
+        # 生成语言特定的后置指令（javacode typemap）
+        # 放在 IID 方法之后，这是用户指定的位置
+        for lang_generator in self.lang_generators:
+            post_include_code = lang_generator.generate_post_include_directives(interface)
+            if post_include_code:
+                lines.append(post_include_code)
+
         # ignore 指令（原始接口）
         lines.append(self._generate_ignore_directives(interface))
         lines.append("")
