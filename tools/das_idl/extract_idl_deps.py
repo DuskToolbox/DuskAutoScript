@@ -108,22 +108,62 @@ class IDLParser:
         
         print(f"\n共找到 {len(self.interfaces)} 个接口")
     
+    def _would_create_cycle(self, graph: Dict[str, Set[str]], node: str, target: str) -> bool:
+        """检查添加 node -> target 依赖是否会形成环"""
+        if node == target:
+            return True
+
+        visited: Set[str] = set()
+        stack: List[str] = [target]
+
+        while stack:
+            current = stack.pop()
+            if current == node:
+                return True
+            if current in visited:
+                continue
+            visited.add(current)
+            stack.extend(graph.get(current, set()))
+
+        return False
+
     def get_dependency_graph(self) -> Dict[str, List[str]]:
-        """获取依赖关系图（用于拓扑排序）"""
-        # 构建邻接表：interface -> [dependent_interfaces]
+        """获取依赖关系图（用于拓扑排序）
+
+        依赖关系语义：
+        - 如果 interface A 继承自 interface B，则 A 依赖于 B
+        - graph[A] 包含 B，表示 A 依赖 B
+        - 拓扑排序时，B 应该在 A 之前出现
+        - 如果文件 A import 了文件 B，而文件 B 中定义了接口，那么文件 A 中的接口也依赖这些接口
+        """
         graph: Dict[str, Set[str]] = {name: set() for name in self.interfaces.keys()}
-        
+
+        file_to_interfaces: Dict[str, Set[str]] = {}
+        for name, interface in self.interfaces.items():
+            file_name = Path(interface.file_path).name
+            if file_name not in file_to_interfaces:
+                file_to_interfaces[file_name] = set()
+            file_to_interfaces[file_name].add(name)
+
         for name, interface in self.interfaces.items():
             base = interface.base
-            if base in self.interfaces:
-                graph[base].add(name)
-            else:
-                # 基类不在当前文件中（如 IDasBase），需要添加到图中
-                if base not in graph:
-                    graph[base] = set()
-                graph[base].add(name)
-        
-        # 转换为列表格式
+            if base and not self._would_create_cycle(graph, name, base):
+                graph[name].add(base)
+            if base not in graph:
+                graph[base] = set()
+
+        for file_name, imported_files in self.imports.items():
+            if file_name not in file_to_interfaces:
+                continue
+            for imported_file in imported_files:
+                if imported_file not in file_to_interfaces:
+                    continue
+                imported_interfaces = file_to_interfaces[imported_file]
+                for interface_name in file_to_interfaces[file_name]:
+                    for dep in imported_interfaces:
+                        if not self._would_create_cycle(graph, interface_name, dep):
+                            graph[interface_name].add(dep)
+
         return {name: sorted(list(deps)) for name, deps in graph.items()}
     
     def save_to_json(self, output_path: str) -> None:

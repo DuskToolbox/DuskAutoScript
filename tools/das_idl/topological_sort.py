@@ -14,19 +14,24 @@ from pathlib import Path
 from collections import deque
 
 
-def load_dependencies(deps_file: Path) -> dict:
-    """加载依赖关系图
+def load_dependencies(deps_file: Path) -> tuple:
+    """加载依赖关系图和接口-文件映射
 
     Args:
         deps_file: swig_deps.json 文件路径
 
     Returns:
+        (依赖关系图, 接口-文件映射)
         依赖关系图: {interface: [dependencies], ...}
+        接口-文件映射: {interface: file_path, ...}
     """
     with open(deps_file, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
-    return data['dependency_graph']
+    # 构建接口到文件的映射
+    interface_to_file = {i['name']: i['file'] for i in data['interfaces']}
+
+    return data['dependency_graph'], interface_to_file
 
 
 def topological_sort_kahn(graph: dict) -> list:
@@ -116,19 +121,30 @@ def main():
         print(f"错误: 依赖文件不存在: {deps_file}", file=sys.stderr)
         sys.exit(1)
 
-    # 加载依赖关系
-    graph = load_dependencies(deps_file)
+    graph, interface_to_file = load_dependencies(deps_file)
     print(f"加载依赖关系: {len(graph)} 个接口")
 
-    # 执行拓扑排序
     sorted_interfaces = topological_sort_kahn(graph)
     print(f"拓扑排序完成: {len(sorted_interfaces)} 个接口")
 
-    # 输出到文件
+    file_to_interfaces = {}
+    for idx, interface in enumerate(sorted_interfaces):
+        file_path = interface_to_file.get(interface)
+        if file_path:
+            if file_path not in file_to_interfaces:
+                file_to_interfaces[file_path] = []
+            file_to_interfaces[file_path].append((idx, interface))
+
+    sorted_files = sorted(
+        file_to_interfaces.items(),
+        key=lambda x: max(idx for idx, _ in x[1])
+    )
+
     output_file.parent.mkdir(parents=True, exist_ok=True)
     with open(output_file, 'w', encoding='utf-8') as f:
-        for interface in sorted_interfaces:
-            f.write(f"{interface}\n")
+        for file_path, interfaces_list in sorted_files:
+            for idx, interface in interfaces_list:
+                f.write(f"{interface}\n")
 
     print(f"排序结果已写入: {output_file}")
 
