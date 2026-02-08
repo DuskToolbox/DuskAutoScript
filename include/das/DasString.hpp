@@ -2,6 +2,7 @@
 #define DAS_STRING_HPP
 
 #include <das/DasConfig.h>
+#include <das/DasException.hpp>
 #include <das/DasPtr.hpp>
 #include <das/IDasBase.h>
 #include <string>
@@ -89,7 +90,7 @@ DAS_INTERFACE IDasString : public IDasReadOnlyString
 
 DAS_C_API void CreateNullDasString(IDasReadOnlyString** pp_out_null_string);
 
-DAS_C_API void CreateDasString(IDasString** pp_out_string);
+DAS_C_API DasResult CreateDasString(IDasString** pp_out_string);
 
 DAS_C_API DasResult CreateIDasReadOnlyStringFromChar(
     const char*          p_char_literal,
@@ -258,15 +259,15 @@ public:
     DasReadOnlyString(const char* p_utf8_string)
     {
         IDasString* p_string;
-        CreateDasString(&p_string);
-        p_string->SetUtf8(p_utf8_string);
+        DAS_THROW_IF_FAILED(CreateDasString(&p_string));
+        DAS_THROW_IF_FAILED(p_string->SetUtf8(p_utf8_string));
         p_impl_ = Impl::Attach(p_string);
     }
 
     const char* GetUtf8() const
     {
         const char* result;
-        p_impl_->GetUtf8(&result);
+        DAS_THROW_IF_FAILED(p_impl_->GetUtf8(&result));
         return result;
     }
 #endif // defined(DAS_STRING_ENABLE_WHEN_CPP) || defined(SWIGPYTHON)
@@ -282,15 +283,15 @@ public:
     DasReadOnlyString(const wchar_t* p_wstring)
     {
         IDasString* p_string;
-        CreateDasString(&p_string);
-        p_string->SetSwigW(p_wstring);
+        DAS_THROW_IF_FAILED(CreateDasString(&p_string));
+        DAS_THROW_IF_FAILED(p_string->SetSwigW(p_wstring));
         p_impl_ = Impl::Attach(p_string);
     }
 
     const wchar_t* GetW() const
     {
         const wchar_t* p_wstring = nullptr;
-        p_impl_->GetW(&p_wstring);
+        DAS_THROW_IF_FAILED(p_impl_->GetW(&p_wstring));
         return p_wstring;
     }
 
@@ -304,14 +305,14 @@ public:
     DasReadOnlyString(const char16_t* p_u16string, size_t length)
     {
         IDasString* p_string;
-        CreateDasString(&p_string);
-        p_string->SetUtf16(p_u16string, length);
+        DAS_THROW_IF_FAILED(CreateDasString(&p_string));
+        DAS_THROW_IF_FAILED(p_string->SetUtf16(p_u16string, length));
         p_impl_ = Impl::Attach(p_string);
     }
 
     void GetUtf16(const char16_t** out_string, size_t* out_string_size) const
     {
-        p_impl_->GetUtf16(out_string, out_string_size);
+        DAS_THROW_IF_FAILED(p_impl_->GetUtf16(out_string, out_string_size));
     }
 #endif // defined(DAS_STRING_ENABLE_WHEN_CPP) || defined(SWIGJAVA)
 };

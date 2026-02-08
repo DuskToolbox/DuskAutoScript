@@ -753,17 +753,19 @@ void CreateNullDasString(IDasReadOnlyString** pp_out_null_string)
     *pp_out_null_string = &DAS::Details::null_das_string_impl_;
 }
 
-DAS_C_API void CreateDasString(IDasString** pp_out_string)
+DAS_C_API DasResult CreateDasString(IDasString** pp_out_string)
 {
     try
     {
         *pp_out_string = new DasStringCppImpl();
         (*pp_out_string)->AddRef();
+        return DAS_S_OK;
     }
     catch (const std::bad_alloc& ex)
     {
         DAS_CORE_LOG_EXCEPTION(ex);
         *pp_out_string = nullptr;
+        return DAS_E_OUT_OF_MEMORY;
     }
 }
 

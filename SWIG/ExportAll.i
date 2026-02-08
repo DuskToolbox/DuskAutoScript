@@ -10,6 +10,8 @@
 %include <wchar.i>
 
 %{
+#include <memory>
+#include <string>
 #include <das/DasExport.h>
 #include <das/DasTypes.hpp>
 #include <das/IDasBase.h>
@@ -25,12 +27,18 @@ struct JniLocalRefGuard {
     jobject ref_;
 
     JniLocalRefGuard(JNIEnv* env, jobject ref) : env_(env), ref_(ref) {}
-    ~JniLocalRefGuard() { if (ref_) env_->DeleteLocalRef(ref_); }
-
-    // Explicitly release the reference and clear it
-    void Release()
+    ~JniLocalRefGuard()
     {
-        if (ref_)
+        if (env_ && ref_)
+        {
+            env_->DeleteLocalRef(ref_);
+        }
+    }
+
+    // Reset the reference and clear it
+    void Reset()
+    {
+        if (env_ && ref_)
         {
             env_->DeleteLocalRef(ref_);
             ref_ = nullptr;
@@ -43,7 +51,368 @@ struct JniLocalRefGuard {
     // Disable copy
     JniLocalRefGuard(const JniLocalRefGuard&) = delete;
     JniLocalRefGuard& operator=(const JniLocalRefGuard&) = delete;
+
+    // Disable move (explicitly delete to avoid misuse)
+    JniLocalRefGuard(JniLocalRefGuard&&) = delete;
+    JniLocalRefGuard& operator=(JniLocalRefGuard&&) = delete;
 };
+
+// RAII wrapper for JNI string critical sections (GetStringChars/ReleaseStringChars)
+// Automatically releases the string chars when it goes out of scope
+struct JniStringCharsGuard {
+    JNIEnv* env_;
+    jstring jstr_;
+    const jchar* chars_;
+
+    JniStringCharsGuard(JNIEnv* env, jstring jstr)
+        : env_(env), jstr_(jstr), chars_(nullptr)
+    {
+        if (env_ && jstr_)
+        {
+            chars_ = env_->GetStringChars(jstr_, nullptr);
+        }
+    }
+
+    ~JniStringCharsGuard()
+    {
+        if (env_ && jstr_ && chars_)
+        {
+            env_->ReleaseStringChars(jstr_, chars_);
+        }
+    }
+
+    // Get the underlying chars pointer
+    const jchar* Get() const { return chars_; }
+
+    // Check if the chars pointer is valid
+    bool IsValid() const { return chars_ != nullptr; }
+
+    // Disable copy and move
+    JniStringCharsGuard(const JniStringCharsGuard&) = delete;
+    JniStringCharsGuard& operator=(const JniStringCharsGuard&) = delete;
+    JniStringCharsGuard(JniStringCharsGuard&&) = delete;
+    JniStringCharsGuard& operator=(JniStringCharsGuard&&) = delete;
+};
+
+// Log JNI pending exception with stack trace (Reference: Oracle JNI best practices)
+static void DasLogPendingJniException(JNIEnv* jenv, const char* context_u8)
+{
+    if (!jenv)
+    {
+        DasLogErrorU8("[JNI] JNIEnv is null in DasLogPendingJniException");
+        return;
+    }
+
+    // Step 1: Immediately check and clear the pending exception (Oracle best practice)
+    jthrowable exception = jenv->ExceptionOccurred();
+    if (!exception)
+    {
+        // No pending exception
+        return;
+    }
+    jenv->ExceptionClear(); // Clear immediately to allow further JNI calls
+
+    // Use RAII guard for the exception object
+    JniLocalRefGuard exception_guard(jenv, exception);
+
+    // Step 2: Get Throwable class
+    JniLocalRefGuard throwableClass_guard(jenv, jenv->FindClass("java/lang/Throwable"));
+    if (jenv->ExceptionCheck() || !throwableClass_guard.Get())
+    {
+        jenv->ExceptionClear();
+        DasLogErrorU8("[JNI] Failed to find java/lang/Throwable class");
+        return;
+    }
+    jclass throwableClass = (jclass)throwableClass_guard.Get();
+
+    // Step 3: Get toString method
+    jmethodID toStringMethod = jenv->GetMethodID(throwableClass, "toString", "()Ljava/lang/String;");
+    if (jenv->ExceptionCheck() || !toStringMethod)
+    {
+        jenv->ExceptionClear();
+        DasLogErrorU8("[JNI] Failed to get toString method");
+        return;
+    }
+
+    // Step 4: Call toString to get exception description
+    JniLocalRefGuard toStringResult_guard(jenv, jenv->CallObjectMethod(exception, toStringMethod));
+    if (jenv->ExceptionCheck() || !toStringResult_guard.Get())
+    {
+        jenv->ExceptionClear();
+        DasLogErrorU8("[JNI] Failed to call toString on exception");
+        return;
+    }
+    jstring jtoStringResult = (jstring)toStringResult_guard.Get();
+
+    // Helper to log with context prefix
+    auto logWithContext = [context_u8](const char* message) {
+        if (context_u8 && *context_u8)
+        {
+            std::string full_message = std::string("[JNI] ") + context_u8 + ": " + message;
+            DasLogErrorU8(full_message.c_str());
+        }
+        else
+        {
+            DasLogErrorU8(message);
+        }
+    };
+
+    // Step 5: Get full stack trace using StringWriter + PrintWriter (Oracle best practice)
+    // Find StringWriter class
+    JniLocalRefGuard stringWriterClass_guard(jenv, jenv->FindClass("java/io/StringWriter"));
+    if (jenv->ExceptionCheck() || !stringWriterClass_guard.Get())
+    {
+        jenv->ExceptionClear();
+        // Log basic info and return
+        const char* toString_u8 = jenv->GetStringUTFChars(jtoStringResult, nullptr);
+        if (toString_u8)
+        {
+            logWithContext(toString_u8);
+            jenv->ReleaseStringUTFChars(jtoStringResult, toString_u8);
+        }
+        else
+        {
+            if (jenv->ExceptionCheck())
+            {
+                jenv->ExceptionClear();
+            }
+            logWithContext("Failed to get string from exception (GetStringUTFChars failed)");
+        }
+        return;
+    }
+    jclass stringWriterClass = (jclass)stringWriterClass_guard.Get();
+
+    // Get StringWriter constructor
+    jmethodID stringWriterConstructor = jenv->GetMethodID(stringWriterClass, "<init>", "()V");
+    if (jenv->ExceptionCheck() || !stringWriterConstructor)
+    {
+        jenv->ExceptionClear();
+        const char* toString_u8 = jenv->GetStringUTFChars(jtoStringResult, nullptr);
+        if (toString_u8)
+        {
+            logWithContext(toString_u8);
+            jenv->ReleaseStringUTFChars(jtoStringResult, toString_u8);
+        }
+        else
+        {
+            if (jenv->ExceptionCheck())
+            {
+                jenv->ExceptionClear();
+            }
+            logWithContext("Failed to get string from exception (GetStringUTFChars failed)");
+        }
+        return;
+    }
+
+    // Create StringWriter instance
+    JniLocalRefGuard stringWriter_guard(jenv, jenv->NewObject(stringWriterClass, stringWriterConstructor));
+    if (jenv->ExceptionCheck() || !stringWriter_guard.Get())
+    {
+        jenv->ExceptionClear();
+        const char* toString_u8 = jenv->GetStringUTFChars(jtoStringResult, nullptr);
+        if (toString_u8)
+        {
+            logWithContext(toString_u8);
+            jenv->ReleaseStringUTFChars(jtoStringResult, toString_u8);
+        }
+        else
+        {
+            if (jenv->ExceptionCheck())
+            {
+                jenv->ExceptionClear();
+            }
+            logWithContext("Failed to get string from exception (GetStringUTFChars failed)");
+        }
+        return;
+    }
+    jobject stringWriter = stringWriter_guard.Get();
+
+    // Find PrintWriter class
+    JniLocalRefGuard printWriterClass_guard(jenv, jenv->FindClass("java/io/PrintWriter"));
+    if (jenv->ExceptionCheck() || !printWriterClass_guard.Get())
+    {
+        jenv->ExceptionClear();
+        const char* toString_u8 = jenv->GetStringUTFChars(jtoStringResult, nullptr);
+        if (toString_u8)
+        {
+            logWithContext(toString_u8);
+            jenv->ReleaseStringUTFChars(jtoStringResult, toString_u8);
+        }
+        else
+        {
+            if (jenv->ExceptionCheck())
+            {
+                jenv->ExceptionClear();
+            }
+            logWithContext("Failed to get string from exception (GetStringUTFChars failed)");
+        }
+        return;
+    }
+    jclass printWriterClass = (jclass)printWriterClass_guard.Get();
+
+    // Get PrintWriter constructor: (Ljava/io/Writer;)V
+    jmethodID printWriterConstructor = jenv->GetMethodID(printWriterClass, "<init>", "(Ljava/io/Writer;)V");
+    if (jenv->ExceptionCheck() || !printWriterConstructor)
+    {
+        jenv->ExceptionClear();
+        const char* toString_u8 = jenv->GetStringUTFChars(jtoStringResult, nullptr);
+        if (toString_u8)
+        {
+            logWithContext(toString_u8);
+            jenv->ReleaseStringUTFChars(jtoStringResult, toString_u8);
+        }
+        else
+        {
+            if (jenv->ExceptionCheck())
+            {
+                jenv->ExceptionClear();
+            }
+            logWithContext("Failed to get string from exception (GetStringUTFChars failed)");
+        }
+        return;
+    }
+
+    // Create PrintWriter instance with StringWriter
+    JniLocalRefGuard printWriter_guard(jenv, jenv->NewObject(printWriterClass, printWriterConstructor, stringWriter));
+    if (jenv->ExceptionCheck() || !printWriter_guard.Get())
+    {
+        jenv->ExceptionClear();
+        const char* toString_u8 = jenv->GetStringUTFChars(jtoStringResult, nullptr);
+        if (toString_u8)
+        {
+            logWithContext(toString_u8);
+            jenv->ReleaseStringUTFChars(jtoStringResult, toString_u8);
+        }
+        else
+        {
+            if (jenv->ExceptionCheck())
+            {
+                jenv->ExceptionClear();
+            }
+            logWithContext("Failed to get string from exception (GetStringUTFChars failed)");
+        }
+        return;
+    }
+    jobject printWriter = printWriter_guard.Get();
+
+    // Get printStackTrace method: (Ljava/io/PrintWriter;)V
+    jmethodID printStackTraceMethod = jenv->GetMethodID(throwableClass, "printStackTrace", "(Ljava/io/PrintWriter;)V");
+    if (jenv->ExceptionCheck() || !printStackTraceMethod)
+    {
+        jenv->ExceptionClear();
+        const char* toString_u8 = jenv->GetStringUTFChars(jtoStringResult, nullptr);
+        if (toString_u8)
+        {
+            logWithContext(toString_u8);
+            jenv->ReleaseStringUTFChars(jtoStringResult, toString_u8);
+        }
+        else
+        {
+            if (jenv->ExceptionCheck())
+            {
+                jenv->ExceptionClear();
+            }
+            logWithContext("Failed to get string from exception (GetStringUTFChars failed)");
+        }
+        return;
+    }
+
+    // Call printStackTrace to write to PrintWriter
+    jenv->CallVoidMethod(exception, printStackTraceMethod, printWriter);
+    if (jenv->ExceptionCheck())
+    {
+        jenv->ExceptionClear();
+        const char* toString_u8 = jenv->GetStringUTFChars(jtoStringResult, nullptr);
+        if (toString_u8)
+        {
+            logWithContext(toString_u8);
+            jenv->ReleaseStringUTFChars(jtoStringResult, toString_u8);
+        }
+        else
+        {
+            if (jenv->ExceptionCheck())
+            {
+                jenv->ExceptionClear();
+            }
+            logWithContext("Failed to get string from exception (GetStringUTFChars failed)");
+        }
+        return;
+    }
+
+    // Get StringWriter.toString() method
+    jmethodID stringWriterToString = jenv->GetMethodID(stringWriterClass, "toString", "()Ljava/lang/String;");
+    if (jenv->ExceptionCheck() || !stringWriterToString)
+    {
+        jenv->ExceptionClear();
+        const char* toString_u8 = jenv->GetStringUTFChars(jtoStringResult, nullptr);
+        if (toString_u8)
+        {
+            logWithContext(toString_u8);
+            jenv->ReleaseStringUTFChars(jtoStringResult, toString_u8);
+        }
+        else
+        {
+            if (jenv->ExceptionCheck())
+            {
+                jenv->ExceptionClear();
+            }
+            logWithContext("Failed to get string from exception (GetStringUTFChars failed)");
+        }
+        return;
+    }
+
+    // Call toString on StringWriter to get the full stack trace
+    JniLocalRefGuard stackTraceString_guard(jenv, jenv->CallObjectMethod(stringWriter, stringWriterToString));
+    if (jenv->ExceptionCheck() || !stackTraceString_guard.Get())
+    {
+        jenv->ExceptionClear();
+        const char* toString_u8 = jenv->GetStringUTFChars(jtoStringResult, nullptr);
+        if (toString_u8)
+        {
+            logWithContext(toString_u8);
+            jenv->ReleaseStringUTFChars(jtoStringResult, toString_u8);
+        }
+        else
+        {
+            if (jenv->ExceptionCheck())
+            {
+                jenv->ExceptionClear();
+            }
+            logWithContext("Failed to get string from exception (GetStringUTFChars failed)");
+        }
+        return;
+    }
+    jstring jstackTrace = (jstring)stackTraceString_guard.Get();
+
+    // Step 6: Log the full exception with stack trace
+    const char* stackTrace_u8 = jenv->GetStringUTFChars(jstackTrace, nullptr);
+    if (stackTrace_u8)
+    {
+        logWithContext(stackTrace_u8);
+        jenv->ReleaseStringUTFChars(jstackTrace, stackTrace_u8);
+    }
+    else
+    {
+        if (jenv->ExceptionCheck())
+        {
+            jenv->ExceptionClear();
+        }
+        const char* toString_u8 = jenv->GetStringUTFChars(jtoStringResult, nullptr);
+        if (toString_u8)
+        {
+            logWithContext(toString_u8);
+            jenv->ReleaseStringUTFChars(jtoStringResult, toString_u8);
+        }
+        else
+        {
+            if (jenv->ExceptionCheck())
+            {
+                jenv->ExceptionClear();
+            }
+            logWithContext("Failed to get string from exception (GetStringUTFChars failed)");
+        }
+    }
+}
 
 #ifdef SWIGPYTHON
 #include <das/Core/ForeignInterfaceHost/PythonHost.h>
@@ -327,29 +696,37 @@ SWIGEXPORT jlong JNICALL Java_org_das_DuskAutoScriptJNI_new_1DasReadOnlyString_1
         return (jlong)new DasReadOnlyString();
     }
 
-    const jchar* u16str = jenv->GetStringChars(jstr, NULL);
-    if (!u16str) {
+    // Use RAII guard to manage string chars
+    JniStringCharsGuard u16str_guard(jenv, jstr);
+    if (!u16str_guard.IsValid()) {
+        // GetStringChars failed, JVM has already set an exception
         return (jlong)new DasReadOnlyString();
     }
 
     jsize len = jenv->GetStringLength(jstr);
-    const char16_t* p_u16string = reinterpret_cast<const char16_t*>(u16str);
+    const char16_t* p_u16string = reinterpret_cast<const char16_t*>(u16str_guard.Get());
     size_t length = static_cast<size_t>(len);
 
     try {
         DasReadOnlyString *result = new DasReadOnlyString(p_u16string, length);
-        jenv->ReleaseStringChars(jstr, u16str);
         return (jlong)result;
+    } catch (const std::bad_alloc&) {
+        // Memory allocation failed, use ThrowNew to simplify
+        jenv->ThrowNew(jenv->FindClass("java/lang/OutOfMemoryError"),
+                       "Failed to allocate memory for DasReadOnlyString");
+        return 0;
     } catch (const DasException& e) {
         // 清除可能残留的JNI异常
         if (jenv->ExceptionCheck()) {
-            jenv->ExceptionClear();
+            DasLogPendingJniException(jenv, "[JNI] Detected pending exception before rethrowing DasException.");
         }
 
-        // 复制DasException对象
-        DasException* pNewException = new DasException(e.GetErrorCode(), e.what());
+        // 复制DasException对象 - 使用unique_ptr防止内存泄漏
+        std::unique_ptr<DasException> pNewException(new (std::nothrow) DasException(e.GetErrorCode(), e.what()));
         if (!pNewException) {
-            jenv->ReleaseStringChars(jstr, u16str);
+            // 无法分配内存，使用ThrowNew简化
+            jenv->ThrowNew(jenv->FindClass("java/lang/OutOfMemoryError"),
+                           "Failed to allocate memory for DasException wrapper");
             return 0;
         }
 
@@ -358,33 +735,36 @@ SWIGEXPORT jlong JNICALL Java_org_das_DuskAutoScriptJNI_new_1DasReadOnlyString_1
         jclass dasExClass = (jclass)dasExClass_guard.Get();
         if (!dasExClass || jenv->ExceptionCheck()) {
             jenv->ExceptionClear();
-            jenv->ReleaseStringChars(jstr, u16str);
-            delete pNewException;
+            // unique_ptr会自动释放pNewException
             return 0;
         }
 
         jmethodID exConstructor = jenv->GetMethodID(dasExClass, "<init>", "(JZ)V");
         if (!exConstructor || jenv->ExceptionCheck()) {
             jenv->ExceptionClear();
-            jenv->ReleaseStringChars(jstr, u16str);
-            delete pNewException;
+            // unique_ptr会自动释放pNewException
             return 0;
         }
 
         JniLocalRefGuard exObj_guard(jenv, jenv->NewObject(dasExClass, exConstructor,
-            reinterpret_cast<jlong>(pNewException), JNI_TRUE));
+            reinterpret_cast<jlong>(pNewException.get()), JNI_TRUE));
         jobject exObj = exObj_guard.Get();
 
         if (!exObj || jenv->ExceptionCheck()) {
             jenv->ExceptionClear();
-            jenv->ReleaseStringChars(jstr, u16str);
-            delete pNewException;
+            // unique_ptr会自动释放pNewException
             return 0;
         }
 
+        // 成功创建Java异常对象，释放unique_ptr的所有权
+        pNewException.release();
         jenv->Throw((jthrowable)exObj);
-        jenv->ReleaseStringChars(jstr, u16str);
 
+        return 0;
+    } catch (...) {
+        // Unknown exception
+        jenv->ThrowNew(jenv->FindClass("java/lang/RuntimeException"),
+                       "Unknown exception occurred in new_DasReadOnlyString__SWIG_2_helper");
         return 0;
     }
 }
@@ -411,12 +791,23 @@ SWIGEXPORT jstring JNICALL Java_org_das_DuskAutoScriptJNI_DasReadOnlyString_1toJ
     } catch (const DasException& e) {
         // 清除可能残留的JNI异常
         if (jenv->ExceptionCheck()) {
-            jenv->ExceptionClear();
+            DasLogPendingJniException(jenv, "[JNI] Detected pending exception before rethrowing DasException.");
         }
 
-        // 复制DasException对象
-        DasException* pNewException = new DasException(e.GetErrorCode(), e.what());
+        // 复制DasException对象 - 使用unique_ptr防止内存泄漏
+        std::unique_ptr<DasException> pNewException(new (std::nothrow) DasException(e.GetErrorCode(), e.what()));
         if (!pNewException) {
+            // 无法分配内存，仍然抛出一个简单的异常
+            JniLocalRefGuard oomExClass_guard(jenv, jenv->FindClass("java/lang/OutOfMemoryError"));
+            if (oomExClass_guard.Get() && !jenv->ExceptionCheck()) {
+                jmethodID oomConstructor = jenv->GetMethodID((jclass)oomExClass_guard.Get(), "<init>", "()V");
+                if (oomConstructor && !jenv->ExceptionCheck()) {
+                    JniLocalRefGuard oomExObj_guard(jenv, jenv->NewObject((jclass)oomExClass_guard.Get(), oomConstructor));
+                    if (oomExObj_guard.Get() && !jenv->ExceptionCheck()) {
+                        jenv->Throw((jthrowable)oomExObj_guard.Get());
+                    }
+                }
+            }
             return jenv->NewStringUTF("");
         }
 
@@ -425,27 +816,29 @@ SWIGEXPORT jstring JNICALL Java_org_das_DuskAutoScriptJNI_DasReadOnlyString_1toJ
         jclass dasExClass = (jclass)dasExClass_guard.Get();
         if (!dasExClass || jenv->ExceptionCheck()) {
             jenv->ExceptionClear();
-            delete pNewException;
+            // unique_ptr会自动释放pNewException
             return jenv->NewStringUTF("");
         }
 
         jmethodID exConstructor = jenv->GetMethodID(dasExClass, "<init>", "(JZ)V");
         if (!exConstructor || jenv->ExceptionCheck()) {
             jenv->ExceptionClear();
-            delete pNewException;
+            // unique_ptr会自动释放pNewException
             return jenv->NewStringUTF("");
         }
 
         JniLocalRefGuard exObj_guard(jenv, jenv->NewObject(dasExClass, exConstructor,
-            reinterpret_cast<jlong>(pNewException), JNI_TRUE));
+            reinterpret_cast<jlong>(pNewException.get()), JNI_TRUE));
         jobject exObj = exObj_guard.Get();
 
         if (!exObj || jenv->ExceptionCheck()) {
             jenv->ExceptionClear();
-            delete pNewException;
+            // unique_ptr会自动释放pNewException
             return jenv->NewStringUTF("");
         }
 
+        // 成功创建Java异常对象，释放unique_ptr的所有权
+        pNewException.release();
         jenv->Throw((jthrowable)exObj);
 
         return jenv->NewStringUTF("");

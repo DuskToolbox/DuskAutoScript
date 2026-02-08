@@ -2,10 +2,8 @@
 #define DAS_DASEXCEPTION_HPP
 
 #include <das/DasExport.h>
-#include <das/DasString.hpp>
 #include <das/IDasBase.h>
 #include <stdexcept>
-
 
 // Forward declaration
 struct IDasTypeInfo;
@@ -52,14 +50,6 @@ struct IDasExceptionString : IDasBase
     SWIG_PRIVATE
     DAS_METHOD GetU8(const char** pp_out_string) = 0;
 };
-
-#define DAS_THROW_IF_FAILED_EC(...)                                            \
-    {                                                                          \
-        if (const auto result = __VA_ARGS__; ::Das::IsFailed(result))          \
-        {                                                                      \
-            DAS_THROW_EC(result);                                              \
-        }                                                                      \
-    }
 
 #define DAS_THROW_EC(error_code)                                               \
     {                                                                          \
