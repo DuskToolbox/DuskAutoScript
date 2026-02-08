@@ -117,39 +117,20 @@ function(das_add_swig_export_library LANGUAGE RAW_NAME FILES)
     add_library(${PROJECT_NAME}::${LANGUAGE}Export ALIAS ${RAW_NAME})
     target_compile_definitions(${RAW_NAME} PRIVATE -DSWIG_TYPE_TABLE=${RAW_NAME})
 
-    # 添加SWIG清理命令，清理未使用的SWIGTYPE_p类型文件（仅Java和C#）
-    # 创建独立的清理命令，依赖于SWIG输出文件，确保每次SWIG编译后都执行清理
+    # 添加SWIG清理命令（POST_BUILD），清理未使用的SWIGTYPE_p类型文件（仅Java和C#）
+    # 使用 POST_BUILD 确保每次 SWIG 编译后都执行清理
     if(LANGUAGE STREQUAL "Java" OR LANGUAGE STREQUAL "CSharp")
         # 转换为小写用于参数名
-        string(TOLOWER ${LANGUAGE} LANGUAGE_LOWER)
-        
-        # 清理报告文件路径
-        set(CLEANUP_REPORT_FILE ${CMAKE_BINARY_DIR}/das/swig_cleanup_${LANGUAGE_LOWER}_${RAW_NAME}.json)
-        
-        # 获取SWIG生成的文件列表
-        get_target_property(SWIG_OUTPUT_FILES ${RAW_NAME} SWIG_OUTPUT_FILES)
-        
-        # 创建清理命令，依赖所有SWIG输出文件
-        add_custom_command(
-            OUTPUT ${CLEANUP_REPORT_FILE}
-            COMMAND ${DAS_IDL_VENV_PYTHON}
-                ${CMAKE_SOURCE_DIR}/tools/das_idl/clean_swig_unused_types.py
-                --${LANGUAGE_LOWER}-dir ${SWIG_OUTPUT_DIR}
+        string(TOLOWER "${LANGUAGE}" LANGUAGE_LOWER)
+
+        add_custom_command(TARGET ${RAW_NAME} POST_BUILD
+            COMMAND "${DAS_IDL_VENV_PYTHON}"
+                "${CMAKE_SOURCE_DIR}/tools/das_idl/clean_swig_unused_types.py"
+                --${LANGUAGE_LOWER}-dir "${SWIG_OUTPUT_DIR}"
                 --delete
-                --report ${CLEANUP_REPORT_FILE}
             COMMENT "Cleaning unused SWIGTYPE_p files for ${LANGUAGE}"
-            DEPENDS ${SWIG_OUTPUT_FILES}
             VERBATIM
         )
-        
-        # 创建清理目标
-        add_custom_target(${RAW_NAME}SwigOutputCleanUp
-            DEPENDS ${CLEANUP_REPORT_FILE}
-            COMMENT "SWIG cleanup target for ${LANGUAGE}"
-        )
-        
-        # 将清理目标添加到SWIG导出目标的依赖中
-        add_dependencies(${RAW_NAME} ${RAW_NAME}SwigOutputCleanUp)
     endif()
 endfunction()
 

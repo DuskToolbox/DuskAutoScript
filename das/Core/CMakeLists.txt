@@ -149,9 +149,12 @@ add_custom_target(DasCoreSwigInterfacesSorted DEPENDS ${DAS_SORTED_INTERFACES_FI
 add_dependencies(DasCoreSwigInterfacesSorted DasCoreIdlDepsExtracted)
 # ====== IDL依赖关系提取与拓扑排序结束 ======
 
+# 设置 swig_all.i 文件路径
+set(DAS_SWIG_ALL_I "${DAS_IDL_SWIG_OUTPUT_DIR}/swig_all.i")
+
 # 生成swig_all.i文件的自定义命令（汇总所有SWIG接口）
 add_custom_command(
-        OUTPUT ${DAS_IDL_SWIG_OUTPUT_DIR}/.swig_all_generated
+        OUTPUT "${DAS_SWIG_ALL_I}"
         COMMAND ${CMAKE_COMMAND}
         -DSWIG_OUTPUT_DIR=${DAS_IDL_SWIG_OUTPUT_DIR}
         -DABI_OUTPUT_DIR=${DAS_IDL_ABI_OUTPUT_DIR}
@@ -160,12 +163,13 @@ add_custom_command(
         COMMAND ${CMAKE_COMMAND} -E touch ${DAS_IDL_SWIG_OUTPUT_DIR}/.swig_all_generated
         DEPENDS ${DAS_SORTED_INTERFACES_FILE}
         ${CMAKE_SOURCE_DIR}/cmake/generate_swig_all_i.cmake
+        BYPRODUCTS ${DAS_IDL_SWIG_OUTPUT_DIR}/.swig_all_generated
         COMMENT "Generate SWIG _all.i summary file"
         VERBATIM
 )
 
 # 创建SWIG汇总文件生成目标
-add_custom_target(DasCoreSwigAllGenerated DEPENDS ${DAS_IDL_SWIG_OUTPUT_DIR}/.swig_all_generated)
+add_custom_target(DasCoreSwigAllGenerated DEPENDS "${DAS_SWIG_ALL_I}")
 add_dependencies(DasCoreSwigAllGenerated DasCoreSwigInterfacesSorted)
 
 # 让预构建目标依赖IDL生成目标，确保增量检查脚本被执行
@@ -272,6 +276,8 @@ set_property(SOURCE ${DAS_SWIG_FILES} PROPERTY CPLUSPLUS ON)
 set_source_files_properties(${DAS_SWIG_FILES} PROPERTIES USE_SWIG_DEPENDENCIES TRUE)
 
 if (${EXPORT_CSHARP})
+    # 显式添加对 swig_all.i 的依赖
+    set(SWIG_MODULE_DasCoreCSharpExport_EXTRA_DEPS "${DAS_SWIG_ALL_I}")
     das_add_swig_export_library(CSharp DasCoreCSharpExport "${DAS_SWIG_FILES}")
     target_link_libraries(DasCoreCSharpExport PUBLIC DasCore)
     add_dependencies(DasCoreCSharpExport DasCore)
@@ -282,6 +288,8 @@ endif ()
 
 if (${EXPORT_JAVA})
     find_package(JNI REQUIRED)
+    # 显式添加对 swig_all.i 的依赖
+    set(SWIG_MODULE_DasCoreJavaExport_EXTRA_DEPS "${DAS_SWIG_ALL_I}")
     das_add_swig_export_library(Java DasCoreJavaExport "${DAS_SWIG_FILES}")
     set_property(TARGET DasCoreJavaExport PROPERTY SWIG_COMPILE_OPTIONS -package org.das)
 
@@ -296,6 +304,8 @@ endif ()
 
 if (${EXPORT_PYTHON})
     find_package(Python3 COMPONENTS Development REQUIRED)
+    # 显式添加对 swig_all.i 的依赖
+    set(SWIG_MODULE_DasCorePythonExport_EXTRA_DEPS "${DAS_SWIG_ALL_I}")
     das_add_swig_export_library(Python DasCorePythonExport "${DAS_SWIG_FILES}")
     set_property(TARGET DasCorePythonExport PROPERTY SWIG_COMPILE_OPTIONS -threads)
 
