@@ -26,6 +26,7 @@ from swig_java_generator import JavaSwigGenerator
 from swig_csharp_generator import CSharpSwigGenerator
 from swig_python_generator import PythonSwigGenerator
 from swig_lang_generator_base import SwigLangGenerator, SwigLangGeneratorContext
+from swig_api_model import build_swig_interface_model, build_interface_map, SwigInterfaceModel
 BaseSwigGenerator = SwigLangGenerator
 
 # [binary_buffer] 方法允许的参数类型（只支持 unsigned char** 系列）
@@ -609,6 +610,40 @@ class SwigCodeGenerator:
         lines.append("\n".join(lang_codes))
         return "\n".join(lines)
 
+
+    def _generate_director_out_param_typemaps(self, interface: InterfaceDef) -> str:
+        """为 Director 类生成所有 out 参数的 typemap
+        
+        Director 类需要实现原始方法签名，但 Java 端需要将 out 参数转换为返回值。
+        此方法生成所有带有单个 [out] 参数的方法的 javadirectorout typemap。
+        
+        Args:
+            interface: 接口定义
+            
+        Returns:
+            javadirectorout typemap 代码字符串
+        """
+        typemaps = []
+        
+        for method in interface.methods:
+            # 查找带有单个 [out] 参数的方法
+            out_params = [p for p in method.parameters if p.direction == ParamDirection.OUT]
+            
+            # 只处理有且仅有一个 [out] 参数的方法
+            if len(out_params) == 1:
+                out_param = out_params[0]
+                
+                # 为每个语言生成器调用 _generate_director_out_param_typemap
+                for lang_generator in self.lang_generators:
+                    if hasattr(lang_generator, '_generate_director_out_param_typemap'):
+                        typemap = lang_generator._generate_director_out_param_typemap(
+                            interface, method, out_param
+                        )
+                        if typemap:
+                            typemaps.append(typemap)
+        
+        return "\n".join(typemaps)
+
     def _generate_clear_typemaps(self) -> str:
         """检查是否有typemap需要清除
 
@@ -861,6 +896,25 @@ public:
                 lang_generator.set_all_interfaces(all_interfaces)
                 lang_generator.set_all_enums(all_enums)
 
+        # ============================================================================
+        # 构建 SWIG 接口分析模型（Phase 1 集成）
+        # ============================================================================
+        # 构建接口映射用于继承链解析
+        interface_map = build_interface_map(all_interfaces)
+        
+        # 构建当前接口的模型
+        interface_model = build_swig_interface_model(interface, interface_map)
+        
+        # 通知所有语言生成器处理模型（扩展点）
+        for lang_generator in self.lang_generators:
+            lang_generator.on_interface_model(interface_model, interface)
+        
+        if self.debug:
+            print(f"[DEBUG] Built SwigInterfaceModel for {interface.name}: "
+                  f"inherits_idas_type_info={interface_model.inherits_idas_type_info}, "
+                  f"out_methods={len(interface_model.out_methods)}, "
+                  f"multi_out_methods={len(interface_model.multi_out_methods)}")
+
         lines = []
         lines.append(self._file_header(interface.name))
 
@@ -920,6 +974,13 @@ public:
             if post_include_code:
                 lines.append(post_include_code)
 
+        # 调用新的 emit_post_include 扩展点（基于 SwigInterfaceModel）
+        # 这是 Phase 1 集成新增的方法，用于生成基于模型的后置代码
+        for lang_generator in self.lang_generators:
+            post_code = lang_generator.emit_post_include(interface_model, interface)
+            if post_code:
+                lines.append(post_code)
+
         # ignore 指令（原始接口）
         lines.append(self._generate_ignore_directives(interface))
         lines.append("")
@@ -928,6 +989,14 @@ public:
         # lines.append(self._generate_director_directive(interface))
         # lines.append("")
 
+        # 生成 Director out 参数 typemap（在 Director 类定义之前）
+        director_typemaps = self._generate_director_out_param_typemaps(interface)
+        if director_typemaps:
+            lines.append("\n// Director out 参数 typemap\n")
+            lines.extend(director_typemaps.split("\n"))
+            lines.append("")
+        
+        
         # 生成引用计数实现基类 (IDasSwigXxx)
         lines.append(self._generate_ref_impl_class(interface))
 

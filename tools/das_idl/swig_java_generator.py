@@ -2027,6 +2027,64 @@ struct {class_name} {{
         """
         return ""
 
+
+    def _generate_director_out_param_typemap(self, interface: InterfaceDef, 
+                                             method: MethodDef, 
+                                             out_param: ParameterDef) -> str:
+        """为 Director 生成 out 参数的 typemap
+        
+        Director 类需要实现原始方法签名，但 Java 端需要将 out 参数转换为返回值。
+        通过 javadirectorout typemap 实现：将 C++ 的 out 参数转换为 Java 返回值。
+        
+        Director 方法的签名示例：DasResult GetBase(uint64_t index, ::IDasBase** pp_out_base)
+        javadirectorout typemap 将：
+        - $javainput: C++ 方法的返回值（DasResult）
+        - $2: 第二个参数（::IDasBase** pp_out_base）
+        - *$2: 解引用，得到 ::IDasBase*
+        
+        最终返回 DasRetXxx 对象给 Java
+        
+        Args:
+            interface: 接口定义
+            method: 方法定义
+            out_param: [out] 参数定义
+            
+        Returns:
+            javadirectorout typemap 代码
+        """
+        out_type = out_param.type_info.base_type
+        ret_class_name = self._get_ret_class_name(out_type)
+        
+        
+        # 构建完整的参数类型（包含 const、指针等修饰符）
+        type_parts = []
+        if out_param.type_info.is_const:
+            type_parts.append('const')
+        type_parts.append(out_type)
+        if out_param.type_info.is_pointer:
+            type_parts.append('*' * out_param.type_info.pointer_level)
+        elif out_param.type_info.is_reference:
+            type_parts.append('&')
+        full_type = ' '.join(type_parts)
+        
+        
+        # javadirectorout typemap：将 C++ out 参数转换为 Java 返回值
+        # $javainput = C++ 方法的返回值（DasResult）
+        # $2 = 第 2 个参数（out 参数，如 ::IDasBase** pp_out_base）
+        # *$2 = 解引用 out 参数（如 ::IDasBase*）
+        
+        
+        typemap = f"""// Director out 参数 typemap: 将 C++ out 参数转换为 Java 返回值
+// 方法: {interface.name}::{method.name}
+// 原始签名: DasResult {method.name}(...)
+%typemap(javadirectorout) ({full_type} {out_param.name}) %{{    {ret_class_name} result = new {ret_class_name}();
+    result.error_code = $javainput;
+    if (*$2 != null) {{
+        result.value = *$2;
+    }}
+    return result;
+%}}"""
+        return typemap
     def _generate_interface_helper_methods(self, interface: InterfaceDef) -> str:
         """为接口生成 Java 辅助方法（castFrom 和 createFromPtr）
 
