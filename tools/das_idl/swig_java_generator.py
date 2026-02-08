@@ -286,13 +286,11 @@ class JavaSwigGenerator(SwigLangGenerator):
         并将它们收集到不同的全局字典中，以便分别聚合到 
         DasTypeMapsIgnore.i（%ignore）和 DasTypeMapsExtend.i（%extend）。
         
-        同时生成 Ez 便捷方法的 javacode typemap，直接返回写入当前接口的 .i 文件。
-        
         Args:
             interface: 接口定义
             
         Returns:
-            javacode typemap 代码（如果有 Ez 便捷方法）
+            空字符串（javacode typemap 现在由 generate_post_include_directives 生成）
         """
         # 收集当前接口的所有 Ez 便捷方法
         ez_methods: list[str] = []
@@ -346,7 +344,28 @@ class JavaSwigGenerator(SwigLangGenerator):
                 if typemap_key not in self._context._global_typemaps:
                     self._context._global_typemaps[typemap_key] = extend_code
         
-        # 检查是否需要为接口生成 javacode typemap
+        # 存储 Ez 方法列表，供 generate_post_include_directives 使用
+        self._pending_ez_methods = ez_methods
+        self._pending_interface = interface
+        
+        return ""
+    
+    def generate_post_include_directives(self, interface: InterfaceDef) -> str:
+        """生成在 %include 之后的 SWIG 指令（javacode typemap）
+        
+        在用户指定的时间点（IID 方法之后）生成 javacode typemap。
+        
+        Args:
+            interface: 接口定义
+            
+        Returns:
+            javacode typemap 代码（如果有 Ez 便捷方法或接口辅助方法）
+        """
+        # 使用之前存储的 Ez 方法列表
+        ez_methods = getattr(self, '_pending_ez_methods', [])
+        pending_interface = getattr(self, '_pending_interface', None)
+        
+        # 检查是否需要生成 javacode typemap
         # 需要生成的条件：
         # 1. 有 Ez 便捷方法，或者
         # 2. 尚未为该接口生成过 javacode typemap（用于生成接口辅助方法）
@@ -377,14 +396,19 @@ class JavaSwigGenerator(SwigLangGenerator):
             javacode_parts.append(self._generate_interface_helper_methods(interface))
             
             javacode_content = "\n".join(javacode_parts)
+            # 使用 %extend + %proxycode 替代 typemap(javacode)
+            # %proxycode 可以在类定义后向 Java 代理类添加代码（SWIG 4.1.0+）
             return f"""
 #ifdef SWIGJAVA
 // ============================================================================
 // {interface.name} Java 辅助方法
+// 使用 %extend + %proxycode 在类定义后添加 Ez 方法和辅助方法
 // ============================================================================
-%typemap(javacode) {qualified_interface} %{{
+%extend {qualified_interface} {{
+%proxycode %{{
 {javacode_content}
 %}}
+}}
 #endif // SWIGJAVA
 """
         
@@ -395,6 +419,12 @@ class JavaSwigGenerator(SwigLangGenerator):
         
         Ez 便捷方法接受 Java String 参数，调用内部的 Dispatch 方法，
         检查返回的错误码，失败时抛出 DasException，成功时返回结果。
+        
+        异常抛出规则：
+        - sourceFile: Java 文件名（如 IDasJsonSetting.java）
+        - sourceLine: 0
+        - sourceFunction: Ez 方法名
+        - 如果接口继承 IDasTypeInfo，使用 createWithTypeInfo(this)
         
         Args:
             interface: 接口定义
@@ -449,6 +479,16 @@ class JavaSwigGenerator(SwigLangGenerator):
         else:
             java_method_name = method.name
         
+        inherits_type_info = interface.base_interface == 'IDasTypeInfo'
+        source_file = f"{interface.name}.java"
+        source_line = "0"
+        source_function = f"{java_method_name}Ez"
+        
+        if inherits_type_info:
+            exception_throw = f'DasException.createWithTypeInfo(result.getErrorCode(), "{source_file}", {source_line}, "{source_function}", this)'
+        else:
+            exception_throw = f'DasException.create(result.getErrorCode(), "{source_file}", {source_line}, "{source_function}")'
+        
         return f"""
     /**
      * {java_method_name} 的便捷方法（Ez 版本）
@@ -461,7 +501,7 @@ class JavaSwigGenerator(SwigLangGenerator):
     public final {java_return_type} {java_method_name}Ez({java_params_str}) throws DasException {{
         {ret_class_name} result = {java_method_name}({call_args_str});
         if (DuskAutoScript.IsFailed(result.getErrorCode())) {{
-            throw DasException.fromErrorCode(result.getErrorCode(), "{interface.name}.{java_method_name}");
+            throw {exception_throw};
         }}
         return result.getValue();
     }}"""
