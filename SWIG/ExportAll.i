@@ -18,6 +18,33 @@
 
 #include <das/DasApi.h>
 
+// RAII wrapper for JNI local references
+// Automatically deletes the local reference when it goes out of scope
+struct JniLocalRefGuard {
+    JNIEnv* env_;
+    jobject ref_;
+
+    JniLocalRefGuard(JNIEnv* env, jobject ref) : env_(env), ref_(ref) {}
+    ~JniLocalRefGuard() { if (ref_) env_->DeleteLocalRef(ref_); }
+
+    // Explicitly release the reference and clear it
+    void Release()
+    {
+        if (ref_)
+        {
+            env_->DeleteLocalRef(ref_);
+            ref_ = nullptr;
+        }
+    }
+
+    // Get the underlying reference
+    jobject Get() const { return ref_; }
+
+    // Disable copy
+    JniLocalRefGuard(const JniLocalRefGuard&) = delete;
+    JniLocalRefGuard& operator=(const JniLocalRefGuard&) = delete;
+};
+
 #ifdef SWIGPYTHON
 #include <das/Core/ForeignInterfaceHost/PythonHost.h>
 
@@ -327,7 +354,8 @@ SWIGEXPORT jlong JNICALL Java_org_das_DuskAutoScriptJNI_new_1DasReadOnlyString_1
         }
 
         // 调用Java的DasException(long cPtr, boolean cMemoryOwn)构造函数
-        jclass dasExClass = jenv->FindClass("org/das/DasException");
+        JniLocalRefGuard dasExClass_guard(jenv, jenv->FindClass("org/das/DasException"));
+        jclass dasExClass = (jclass)dasExClass_guard.Get();
         if (!dasExClass || jenv->ExceptionCheck()) {
             jenv->ExceptionClear();
             jenv->ReleaseStringChars(jstr, u16str);
@@ -343,8 +371,9 @@ SWIGEXPORT jlong JNICALL Java_org_das_DuskAutoScriptJNI_new_1DasReadOnlyString_1
             return 0;
         }
 
-        jobject exObj = jenv->NewObject(dasExClass, exConstructor,
-            reinterpret_cast<jlong>(pNewException), JNI_TRUE);
+        JniLocalRefGuard exObj_guard(jenv, jenv->NewObject(dasExClass, exConstructor,
+            reinterpret_cast<jlong>(pNewException), JNI_TRUE));
+        jobject exObj = exObj_guard.Get();
 
         if (!exObj || jenv->ExceptionCheck()) {
             jenv->ExceptionClear();
@@ -354,7 +383,6 @@ SWIGEXPORT jlong JNICALL Java_org_das_DuskAutoScriptJNI_new_1DasReadOnlyString_1
         }
 
         jenv->Throw((jthrowable)exObj);
-        jenv->DeleteLocalRef(exObj);
         jenv->ReleaseStringChars(jstr, u16str);
 
         return 0;
@@ -393,7 +421,8 @@ SWIGEXPORT jstring JNICALL Java_org_das_DuskAutoScriptJNI_DasReadOnlyString_1toJ
         }
 
         // 调用Java的DasException构造函数
-        jclass dasExClass = jenv->FindClass("org/das/DasException");
+        JniLocalRefGuard dasExClass_guard(jenv, jenv->FindClass("org/das/DasException"));
+        jclass dasExClass = (jclass)dasExClass_guard.Get();
         if (!dasExClass || jenv->ExceptionCheck()) {
             jenv->ExceptionClear();
             delete pNewException;
@@ -407,8 +436,9 @@ SWIGEXPORT jstring JNICALL Java_org_das_DuskAutoScriptJNI_DasReadOnlyString_1toJ
             return jenv->NewStringUTF("");
         }
 
-        jobject exObj = jenv->NewObject(dasExClass, exConstructor,
-            reinterpret_cast<jlong>(pNewException), JNI_TRUE);
+        JniLocalRefGuard exObj_guard(jenv, jenv->NewObject(dasExClass, exConstructor,
+            reinterpret_cast<jlong>(pNewException), JNI_TRUE));
+        jobject exObj = exObj_guard.Get();
 
         if (!exObj || jenv->ExceptionCheck()) {
             jenv->ExceptionClear();
@@ -417,7 +447,6 @@ SWIGEXPORT jstring JNICALL Java_org_das_DuskAutoScriptJNI_DasReadOnlyString_1toJ
         }
 
         jenv->Throw((jthrowable)exObj);
-        jenv->DeleteLocalRef(exObj);
 
         return jenv->NewStringUTF("");
     }
