@@ -296,19 +296,69 @@ struct DasRetBase {
 %{
 SWIGEXPORT jlong JNICALL Java_org_das_DuskAutoScriptJNI_new_1DasReadOnlyString_1_1SWIG_12_1helper(
     JNIEnv *jenv, jclass jcls, jstring jstr) {
-    DasReadOnlyString *result = nullptr;
-    if (jstr) {
-        const jchar *chars = jenv->GetStringChars(jstr, nullptr);
-        jsize len = jenv->GetStringLength(jstr);
-        if (chars) {
-            result = new DasReadOnlyString(reinterpret_cast<const char16_t*>(chars), static_cast<size_t>(len));
-            jenv->ReleaseStringChars(jstr, chars);
+    if (!jstr) {
+        return (jlong)new DasReadOnlyString();
+    }
+
+    const jchar* u16str = jenv->GetStringChars(jstr, NULL);
+    if (!u16str) {
+        return (jlong)new DasReadOnlyString();
+    }
+
+    jsize len = jenv->GetStringLength(jstr);
+    const char16_t* p_u16string = reinterpret_cast<const char16_t*>(u16str);
+    size_t length = static_cast<size_t>(len);
+
+    try {
+        DasReadOnlyString *result = new DasReadOnlyString(p_u16string, length);
+        jenv->ReleaseStringChars(jstr, u16str);
+        return (jlong)result;
+    } catch (const DasException& e) {
+        // 清除可能残留的JNI异常
+        if (jenv->ExceptionCheck()) {
+            jenv->ExceptionClear();
         }
+
+        // 复制DasException对象
+        DasException* pNewException = new DasException(e.GetErrorCode(), e.what());
+        if (!pNewException) {
+            jenv->ReleaseStringChars(jstr, u16str);
+            return 0;
+        }
+
+        // 调用Java的DasException(long cPtr, boolean cMemoryOwn)构造函数
+        jclass dasExClass = jenv->FindClass("org/das/DasException");
+        if (!dasExClass || jenv->ExceptionCheck()) {
+            jenv->ExceptionClear();
+            jenv->ReleaseStringChars(jstr, u16str);
+            delete pNewException;
+            return 0;
+        }
+
+        jmethodID exConstructor = jenv->GetMethodID(dasExClass, "<init>", "(JZ)V");
+        if (!exConstructor || jenv->ExceptionCheck()) {
+            jenv->ExceptionClear();
+            jenv->ReleaseStringChars(jstr, u16str);
+            delete pNewException;
+            return 0;
+        }
+
+        jobject exObj = jenv->NewObject(dasExClass, exConstructor,
+            reinterpret_cast<jlong>(pNewException), JNI_TRUE);
+
+        if (!exObj || jenv->ExceptionCheck()) {
+            jenv->ExceptionClear();
+            jenv->ReleaseStringChars(jstr, u16str);
+            delete pNewException;
+            return 0;
+        }
+
+        jenv->Throw((jthrowable)exObj);
+        jenv->DeleteLocalRef(exObj);
+        jenv->ReleaseStringChars(jstr, u16str);
+
+        return 0;
     }
-    if (!result) {
-        result = new DasReadOnlyString();
-    }
-    return (jlong)result;
 }
 %}
 
@@ -321,13 +371,56 @@ SWIGEXPORT jstring JNICALL Java_org_das_DuskAutoScriptJNI_DasReadOnlyString_1toJ
     if (!self) {
         return jenv->NewStringUTF("");
     }
-    const char16_t* utf16_str = nullptr;
-    size_t utf16_len = 0;
-    self->GetUtf16(&utf16_str, &utf16_len);
-    if (utf16_str && utf16_len > 0) {
-        return jenv->NewString(reinterpret_cast<const jchar*>(utf16_str), static_cast<jsize>(utf16_len));
+
+    try {
+        const char16_t* utf16_str = nullptr;
+        size_t utf16_len = 0;
+        self->GetUtf16(&utf16_str, &utf16_len);
+        if (utf16_str && utf16_len > 0) {
+            return jenv->NewString(reinterpret_cast<const jchar*>(utf16_str), static_cast<jsize>(utf16_len));
+        }
+        return jenv->NewStringUTF("");
+    } catch (const DasException& e) {
+        // 清除可能残留的JNI异常
+        if (jenv->ExceptionCheck()) {
+            jenv->ExceptionClear();
+        }
+
+        // 复制DasException对象
+        DasException* pNewException = new DasException(e.GetErrorCode(), e.what());
+        if (!pNewException) {
+            return jenv->NewStringUTF("");
+        }
+
+        // 调用Java的DasException构造函数
+        jclass dasExClass = jenv->FindClass("org/das/DasException");
+        if (!dasExClass || jenv->ExceptionCheck()) {
+            jenv->ExceptionClear();
+            delete pNewException;
+            return jenv->NewStringUTF("");
+        }
+
+        jmethodID exConstructor = jenv->GetMethodID(dasExClass, "<init>", "(JZ)V");
+        if (!exConstructor || jenv->ExceptionCheck()) {
+            jenv->ExceptionClear();
+            delete pNewException;
+            return jenv->NewStringUTF("");
+        }
+
+        jobject exObj = jenv->NewObject(dasExClass, exConstructor,
+            reinterpret_cast<jlong>(pNewException), JNI_TRUE);
+
+        if (!exObj || jenv->ExceptionCheck()) {
+            jenv->ExceptionClear();
+            delete pNewException;
+            return jenv->NewStringUTF("");
+        }
+
+        jenv->Throw((jthrowable)exObj);
+        jenv->DeleteLocalRef(exObj);
+
+        return jenv->NewStringUTF("");
     }
-    return jenv->NewStringUTF("");
 }
 %}
 
