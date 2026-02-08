@@ -13,11 +13,11 @@ set(DAS_IDL_REQUIREMENTS "${DAS_IDL_TOOLS_DIR}/requirements.txt")
 # 根据平台设置虚拟环境中的 Python 可执行文件路径
 if(WIN32)
     set(DAS_IDL_VENV_PYTHON "${DAS_IDL_VENV_DIR}/Scripts/python.exe")
-    set(DAS_IDL_VENV_PIP "${DAS_IDL_VENV_DIR}/Scripts/pip.exe")
+    set(DAS_IDL_VENV_PIP "${DAS_IDL_VENV_DIR}/Scripts/python.exe -m pip")
     # 某些环境下，Windows的venv可能使用bin目录而不是Scripts目录
     if(NOT EXISTS "${DAS_IDL_VENV_PYTHON}")
         set(DAS_IDL_VENV_PYTHON "${DAS_IDL_VENV_DIR}/bin/python.exe")
-        set(DAS_IDL_VENV_PIP "${DAS_IDL_VENV_DIR}/bin/pip.exe")
+        set(DAS_IDL_VENV_PIP "${DAS_IDL_VENV_DIR}/bin/python.exe -m pip")
     endif()
 else()
     set(DAS_IDL_VENV_PYTHON "${DAS_IDL_VENV_DIR}/bin/python")
