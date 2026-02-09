@@ -20,6 +20,127 @@
 
 #include <das/DasApi.h>
 
+#ifdef SWIGPYTHON
+#include <das/Core/ForeignInterfaceHost/PythonHost.h>
+
+#ifdef DEBUG
+
+// 修复 dll 文件带 _d 后缀时，PyInit 函数名称不正确的问题。
+// TODO: 后续在CMake中配置更名，而不再靠这里修复
+// #ifdef __cplusplus
+// extern "C"
+// #endif
+// SWIGEXPORT
+// #if PY_VERSION_HEX >= 0x03000000
+// PyObject*
+// #else
+// void
+// #endif
+// SWIG_init(void);
+
+// #ifdef __cplusplus
+// extern "C"
+// #endif
+// SWIGEXPORT
+// #if PY_VERSION_HEX >= 0x03000000
+// PyObject*
+// #else
+// void
+// #endif
+// PyInit__DasCorePythonExport(void) {
+// #if PY_VERSION_HEX >= 0x03000000
+//     return ::SWIG_init();
+// #else
+//     ::SWIG_init();
+// #endif
+// }
+
+#endif // DEBUG
+
+#endif // SWIGPYTHON
+
+%}
+
+#ifdef SWIGJAVA
+// 为 DasRetBase 添加 Java 便捷方法
+%typemap(javacode) DasRetBase %{
+    /**
+     * 获取值，如果操作失败则抛出异常
+     * @return 结果值
+     * @throws DasException 当操作失败时
+     */
+    public IDasBase getValueOrThrow() throws DasException {
+        if (!isOk()) {
+            throw new DasException(getErrorCode(), "DasRetBase operation failed");
+        }
+        return getValue();
+    }
+%}
+#endif // SWIGJAVA
+
+%inline %{
+#ifndef DAS_RET_BASE
+#define DAS_RET_BASE
+// ============================================================================
+// DasRetBase - IDasBase 的返回包装类
+// 用于封装 QueryInterface 的返回值
+// ============================================================================
+struct DasRetBase {
+    DasResult error_code;
+    IDasBase* value;
+
+    DasRetBase() : error_code(DAS_E_UNDEFINED_RETURN_VALUE), value(nullptr) {}
+
+    DasResult GetErrorCode() const { return error_code; }
+    void SetErrorCode(DasResult code) { error_code = code; }
+
+    IDasBase* GetValue() const { return value; }
+    void SetValue(IDasBase* v) { value = v; }
+
+    bool IsOk() const { return DAS::IsOk(error_code); }
+};
+#endif // DAS_RET_BASE
+
+%}
+
+#ifdef SWIGPYTHON
+
+%feature("director:except") {
+    if ($error != NULL) {
+        DAS_LOG_ERROR("SWIG Python exception found!");
+        DAS::Core::ForeignInterfaceHost::PythonHost::RaisePythonInterpreterException();
+    }
+}
+
+#endif // SWIGPYTHON
+
+// 添加返回 DasRetBase 的 QueryInterface 包装方法
+%extend IDasBase {
+    DasRetBase QueryInterface(const DasGuid& iid) {
+        DasRetBase result;
+        result.error_code = $self->QueryInterface(iid, reinterpret_cast<void**>(&result.value));
+        return result;
+    }
+}
+
+// 隐藏原始的 QueryInterface 方法
+%ignore IDasBase::QueryInterface;
+
+#ifdef SWIGJAVA
+
+// Java 命名规范：将 PascalCase 方法 rename 为小驼峰
+// 注意：%rename 和 %ignore 必须放在 struct 定义之前才能生效
+%rename("getErrorCode") DasRetBase::GetErrorCode;
+%rename("setErrorCode") DasRetBase::SetErrorCode;
+%rename("getValue") DasRetBase::GetValue;
+%rename("setValue") DasRetBase::SetValue;
+%rename("isOk") DasRetBase::IsOk;
+// 隐藏 public 字段的自动 getter/setter，避免重复方法
+%ignore DasRetBase::error_code;
+%ignore DasRetBase::value;
+
+%{
+
 // RAII wrapper for JNI local references
 // Automatically deletes the local reference when it goes out of scope
 struct JniLocalRefGuard {
@@ -414,127 +535,12 @@ static void DasLogPendingJniException(JNIEnv* jenv, const char* context_u8)
     }
 }
 
-#ifdef SWIGPYTHON
-#include <das/Core/ForeignInterfaceHost/PythonHost.h>
-
-#ifdef DEBUG
-
-// 修复 dll 文件带 _d 后缀时，PyInit 函数名称不正确的问题。
-// TODO: 后续在CMake中配置更名，而不再靠这里修复
-// #ifdef __cplusplus
-// extern "C"
-// #endif
-// SWIGEXPORT
-// #if PY_VERSION_HEX >= 0x03000000
-// PyObject*
-// #else
-// void
-// #endif
-// SWIG_init(void);
-
-// #ifdef __cplusplus
-// extern "C"
-// #endif
-// SWIGEXPORT
-// #if PY_VERSION_HEX >= 0x03000000
-// PyObject*
-// #else
-// void
-// #endif
-// PyInit__DasCorePythonExport(void) {
-// #if PY_VERSION_HEX >= 0x03000000
-//     return ::SWIG_init();
-// #else
-//     ::SWIG_init();
-// #endif
-// }
-
-#endif // DEBUG
-
-#endif // SWIGPYTHON
-
 %}
-
-#ifdef SWIGPYTHON
-
-%feature("director:except") {
-    if ($error != NULL) {
-        DAS_LOG_ERROR("SWIG Python exception found!");
-        DAS::Core::ForeignInterfaceHost::PythonHost::RaisePythonInterpreterException();
-    }
-}
-
-#endif // SWIGPYTHON
 
 // ============================================================================
 // IDasBase Java Support - as() 泛型方法
 // 提供类型安全的接口转换，通过反射和缓存机制实现
 // ============================================================================
-#ifdef SWIGJAVA
-
-// ============================================================================
-// DasRetBase - IDasBase 的返回包装类
-// 用于封装 QueryInterface 的返回值
-// ============================================================================
-
-// Java 命名规范：将 PascalCase 方法 rename 为小驼峰
-// 注意：%rename 和 %ignore 必须放在 struct 定义之前才能生效
-%rename("getErrorCode") DasRetBase::GetErrorCode;
-%rename("setErrorCode") DasRetBase::SetErrorCode;
-%rename("getValue") DasRetBase::GetValue;
-%rename("setValue") DasRetBase::SetValue;
-%rename("isOk") DasRetBase::IsOk;
-// 隐藏 public 字段的自动 getter/setter，避免重复方法
-%ignore DasRetBase::error_code;
-%ignore DasRetBase::value;
-
-%inline %{
-#ifndef DAS_RET_BASE
-#define DAS_RET_BASE
-struct DasRetBase {
-    DasResult error_code;
-    IDasBase* value;
-
-    DasRetBase() : error_code(DAS_E_UNDEFINED_RETURN_VALUE), value(nullptr) {}
-
-    DasResult GetErrorCode() const { return error_code; }
-    void SetErrorCode(DasResult code) { error_code = code; }
-
-    IDasBase* GetValue() const { return value; }
-    void SetValue(IDasBase* v) { value = v; }
-
-    bool IsOk() const { return DAS::IsOk(error_code); }
-};
-#endif // DAS_RET_BASE
-%}
-
-// 为 DasRetBase 添加 Java 便捷方法
-%typemap(javacode) DasRetBase %{
-    /**
-     * 获取值，如果操作失败则抛出异常
-     * @return 结果值
-     * @throws DasException 当操作失败时
-     */
-    public IDasBase getValueOrThrow() throws DasException {
-        if (!isOk()) {
-            throw new DasException(getErrorCode(), "DasRetBase operation failed");
-        }
-        return getValue();
-    }
-%}
-
-// 隐藏原始的 QueryInterface 方法
-%ignore IDasBase::QueryInterface;
-
-// 添加返回 DasRetBase 的 QueryInterface 包装方法
-%extend IDasBase {
-    DasRetBase QueryInterface(const DasGuid& iid) {
-        DasRetBase result;
-        result.error_code = $self->QueryInterface(iid, reinterpret_cast<void**>(&result.value));
-        return result;
-    }
-}
-
 %typemap(javacode) IDasBase %{
     // ========================================================================
     // 反射缓存 - 用于优化 as() 方法的性能
@@ -640,6 +646,7 @@ struct DasRetBase {
         }
     }
 %}
+
 #endif // SWIGJAVA
 
 // ============================================================================
@@ -671,13 +678,13 @@ struct DasRetBase {
         }
         // Java String 是 UTF-16 编码，获取 char 数组
         char[] chars = str.toCharArray();
-        // 转换为 SWIGTYPE_p_char16_t（Java char 就是 16 位，与 char16_t 兼容）
+        // 转换为 DasReadOnlyString （Java char 就是 16 位，与 char16_t 兼容）
         return new DasReadOnlyString(
             DuskAutoScriptJNI.new_DasReadOnlyString__SWIG_2_helper(str),
             true
         );
     }
-    
+
     /**
      * 将 DasReadOnlyString 转换为 Java String
      * @return Java 字符串，如果转换失败则返回空字符串
@@ -996,6 +1003,110 @@ SWIGEXPORT jstring JNICALL Java_org_das_DuskAutoScriptJNI_DasReadOnlyString_1toJ
 %ignore DasReadOnlyString::DasReadOnlyString(const char16_t*, size_t);
 %ignore DasReadOnlyString::GetUtf16;
 #endif // SWIGJAVA
+
+#ifdef SWIGCSHARP
+// ============================================================================
+// IDasReadOnlyString* C# Typemap -> DasReadOnlyString
+//
+// 目的：当返回结构/参数出现 IDasReadOnlyString* 时，避免生成不透明的
+//      SWIGTYPE_p_IDasReadOnlyString，让 C# API 直接使用 DasReadOnlyString。
+// 关键点：
+//   - C++ %typemap(out) 把 IDasReadOnlyString* 包装成 new DasReadOnlyString($1)
+//   - C# %typemap(csout) 用 IntPtr.Zero 判空，并以 (cPtr, true) 接管释放
+// ============================================================================
+// 1) 对外暴露给用户的 C# 类型
+%typemap(cstype) IDasReadOnlyString * "DasReadOnlyString"
+// 2) P/Invoke 中间类型：返回用 IntPtr，入参用 HandleRef（匹配 getCPtr()）
+%typemap(imtype) IDasReadOnlyString * "global::System.IntPtr"
+// 3) C# -> native 入参转换：DasReadOnlyString.getCPtr(null) 会给 Zero HandleRef
+%typemap(csin) IDasReadOnlyString * "DasReadOnlyString.getCPtr($csinput)"
+// 4) native -> C# 返回值转换：判空 + 接管所有权（因为 native out 中 new 了包装对象）
+%typemap(csout) IDasReadOnlyString * %{
+    global::System.IntPtr cPtr = $imcall;
+    return (cPtr == global::System.IntPtr.Zero) ? null : new DasReadOnlyString(cPtr, true);
+%}
+// 5) (配套) C++ in：$input 实际上传的是 DasReadOnlyString*（被当成 IDasReadOnlyString* 透传）
+//    取出其底层接口指针 IDasReadOnlyString*
+%typemap(in) IDasReadOnlyString * %{
+    DasReadOnlyString* tmp = reinterpret_cast<DasReadOnlyString*>($input);
+    $1 = tmp ? tmp->Get() : nullptr;
+%}
+// 6) (配套) C++ out：把 IDasReadOnlyString* 包装成一个新的 DasReadOnlyString*
+//    再把这个"包装对象指针"透传回 C#（C# 侧用 (cPtr,true) 释放它）
+%typemap(out) IDasReadOnlyString * %{
+    if ($1) {
+        DasReadOnlyString* tmp = new DasReadOnlyString($1);
+        $result = reinterpret_cast<IDasReadOnlyString*>(tmp);
+    } else {
+        $result = nullptr;
+    }
+%}
+#endif // SWIGCSHARP
+
+#ifdef SWIGPYTHON
+/* IDasReadOnlyString*  <->  Python DasReadOnlyString */
+/* Python 侧类型显示为 DasReadOnlyString（而不是 SWIGTYPE_p_xxx） */
+%typemap(pytype) IDasReadOnlyString * "DasReadOnlyString"
+/* ---------- 输入：Python -> C++ (IDasReadOnlyString*) ---------- */
+/* 允许传 None；否则必须是 DasReadOnlyString*（包装对象） */
+%typemap(typecheck) IDasReadOnlyString * {
+    if ($input == Py_None) {
+        $1 = 1;
+    } else {
+        void *ptr = nullptr;
+        int res = SWIG_ConvertPtr($input, &ptr, SWIGTYPE_p_DasReadOnlyString, 0);
+        $1 = SWIG_IsOK(res) && ptr;
+    }
+}
+%typemap(in) IDasReadOnlyString * %{
+    if ($input == Py_None) {
+        $1 = nullptr;
+    } else {
+        DasReadOnlyString *tmp = nullptr;
+        int res = SWIG_ConvertPtr($input, (void **)&tmp, SWIGTYPE_p_DasReadOnlyString, 0);
+        if (!SWIG_IsOK(res) || !tmp) {
+            SWIG_exception_fail(SWIG_TypeError,
+                "Expected DasReadOnlyString (or None) for IDasReadOnlyString*");
+        }
+        $1 = tmp->Get();
+    }
+%}
+/* director 输入（仅当该参数用于 director 虚函数签名时需要；加上通常无害） */
+%typemap(directorin) IDasReadOnlyString * %{
+    if ($input == Py_None) {
+        $result = nullptr;
+    } else {
+        DasReadOnlyString *tmp = nullptr;
+        int res = SWIG_ConvertPtr($input, (void **)&tmp, SWIGTYPE_p_DasReadOnlyString, 0);
+        if (!SWIG_IsOK(res) || !tmp) {
+            SWIG_exception_fail(SWIG_TypeError,
+                "Expected DasReadOnlyString (or None) for IDasReadOnlyString* (director)");
+        }
+        $result = tmp->Get();
+    }
+%}
+/* ---------- 输出：C++ -> Python ---------- */
+/* 关键：把 IDasReadOnlyString* 包一层 new DasReadOnlyString($1)，Python 看到 DasReadOnlyString */
+%typemap(out) IDasReadOnlyString * %{
+    if (!$1) {
+        Py_INCREF(Py_None);
+        $result = Py_None;
+    } else {
+        DasReadOnlyString *tmp = new DasReadOnlyString($1);
+        $result = SWIG_NewPointerObj((void *)tmp, SWIGTYPE_p_DasReadOnlyString, SWIG_POINTER_OWN);
+    }
+%}
+/* director 输出（仅当返回值/出参用于 director 虚函数签名时需要） */
+%typemap(directorout) IDasReadOnlyString * %{
+    if (!$input) {
+        $result = Py_None;
+        Py_INCREF($result);
+    } else {
+        DasReadOnlyString *tmp = new DasReadOnlyString($input);
+        $result = SWIG_NewPointerObj((void *)tmp, SWIGTYPE_p_DasReadOnlyString, SWIG_POINTER_OWN);
+    }
+%}
+#endif // SWIGPYTHON
 
 %include <das/DasString.hpp>;
 %include <das/DasException.hpp>;

@@ -51,6 +51,7 @@ class JavaSwigGenerator(SwigLangGenerator):
         # void** 类型 -> 映射到 DasRetBase（返回 IDasBase）
         'void': 'DasRetBase',
     }
+
     def __init__(self) -> None:
         super().__init__()
         # 已生成 typemap 的方法集合，避免重复定义 (interface::method)
@@ -746,18 +747,17 @@ class JavaSwigGenerator(SwigLangGenerator):
 
             # 对于全局命名空间的接口类型，添加 :: 前缀
             # 注意：unsigned char 和 size_t 是 C++ 原生类型，不能添加 :: 前缀（会导致非法语法）
-            if param_type == 'IDasReadOnlyString':
+            namespace = self.get_type_namespace(param_type)
+            if not namespace and self._is_interface_type(param_type):
+                # namespace 为 None 或空字符串，说明是全局命名空间
                 param_type_with_prefix = f'::{param_type}'
-            # unsigned char 和 size_t 保持原样，不添加 :: 前缀
             # 对于其他接口类型，检查命名空间
-            elif self._is_interface_type(param_type):
-                namespace = self.get_type_namespace(param_type)
-                if namespace:
-                    if namespace == current_namespace:
-                        param_type_with_prefix = param_type
-                    else:
-                        param_type_with_prefix = f'::{namespace}::{param_type}'
-
+            elif namespace:
+                if namespace == current_namespace:
+                    param_type_with_prefix = param_type
+                else:
+                    param_type_with_prefix = f'::{namespace}::{param_type}'
+            
             # 构建完整的类型签名，包括 const、指针和引用修饰符
             if param.type_info.is_pointer:
                 stars = '*' * param.type_info.pointer_level
@@ -803,15 +803,15 @@ class JavaSwigGenerator(SwigLangGenerator):
             param_type = param.type_info.base_type
             param_type_with_prefix = param_type
             # 对于全局命名空间的类型，添加 :: 前缀
-            if param_type == 'IDasReadOnlyString':
-                param_type_with_prefix = '::IDasReadOnlyString'
-            elif self._is_interface_type(param_type):
-                namespace = self.get_type_namespace(param_type)
-                if namespace:
-                    if namespace == current_namespace:
-                        param_type_with_prefix = param_type
-                    else:
-                        param_type_with_prefix = f'::{namespace}::{param_type}'
+            namespace = self.get_type_namespace(param_type)
+            if not namespace and self._is_interface_type(param_type):
+                # namespace 为 None 或空字符串，说明是全局命名空间
+                param_type_with_prefix = f'::{param_type}'
+            elif namespace:
+                if namespace == current_namespace:
+                    param_type_with_prefix = param_type
+                else:
+                    param_type_with_prefix = f'::{namespace}::{param_type}'
             if param.type_info.is_pointer:
                 stars = '*' * param.type_info.pointer_level
                 const_prefix = "const " if param.type_info.is_const else ""
@@ -1485,6 +1485,9 @@ struct {class_name} {{
         return getValue{i+1}();
     }}""")
         
+        # 生成 C# %ignore 指令
+        ignore_value_fields_csharp = "\n".join([f'%ignore {class_name}::value{i+1};' for i in range(len(out_params))])
+        
         ret_class_code = f"""
 // ============================================================================
 // {class_name} - 多返回值包装类
@@ -1509,13 +1512,19 @@ struct {class_name} {{
 {ignore_value_fields}
 #endif // SWIGJAVA
 
+#ifdef SWIGCSHARP
+// C# 命名规范：隐藏 public 字段的自动 getter/setter，避免重复方法
+%ignore {class_name}::error_code;
+{ignore_value_fields_csharp}
+#endif // SWIGCSHARP
+
 %inline %{{
 {struct_definition}
 %}}
 
-%typemap(javacode) {class_name} %{{{{"".join(java_getters)}}
+%typemap(javacode) {class_name} %{{{{{"".join(java_getters)}
 %}}
-"""        
+"""
         if self._context:
             ret_class_key = f"ret_class_{class_name}"
             if ret_class_key not in self._context._global_ret_classes:
@@ -1594,20 +1603,20 @@ struct {class_name} {{
             for param in method.parameters:
                 param_type = param.type_info.base_type
                 param_type_with_prefix = param_type
-                if param_type == 'IDasReadOnlyString':
-                    param_type_with_prefix = '::IDasReadOnlyString'
-                elif self._is_interface_type(param_type):
-                    namespace = self.get_type_namespace(param_type)
-                    if namespace:
-                        if namespace == current_namespace:
-                            param_type_with_prefix = param_type
-                        else:
-                            param_type_with_prefix = f'::{namespace}::{param_type}'
-                
+                # 对于全局命名空间的类型，添加 :: 前缀
+                namespace = self.get_type_namespace(param_type)
+                if not namespace and self._is_interface_type(param_type):
+                    param_type_with_prefix = f'::{param_type}'
+                elif namespace:
+                    if namespace == current_namespace:
+                        param_type_with_prefix = param_type
+                    else:
+                        param_type_with_prefix = f'::{namespace}::{param_type}'
+
                 is_out_param = param.direction == ParamDirection.OUT
                 if param.type_info.is_pointer or (is_out_param and self._is_interface_type(param_type)):
                     if is_out_param:
-                        if self._is_interface_type(param_type) or param_type == 'IDasReadOnlyString':
+                        if self._is_interface_type(param_type):
                             pointer_level = 2
                         else:
                             pointer_level = param.type_info.pointer_level if param.type_info.is_pointer else 1
@@ -1724,20 +1733,15 @@ struct {class_name} {{
         for param in method.parameters:
             param_type = param.type_info.base_type
             param_type_with_prefix = param_type
-            # 对于全局命名空间的类型（IDasReadOnlyString），添加 :: 前缀
-            if param_type == 'IDasReadOnlyString':
-                param_type_with_prefix = '::IDasReadOnlyString'
-            # 对于其他接口类型，检查命名空间
-            elif self._is_interface_type(param_type):
-                namespace = self.get_type_namespace(param_type)
-                if namespace:
-                    # 如果参数类型与当前接口在同一命名空间，使用相对名称（不带命名空间前缀）
-                    # 否则使用完整命名空间
-                    if namespace == current_namespace:
-                        # 同一命名空间，头文件中使用相对名称
-                        param_type_with_prefix = param_type
-                    else:
-                        param_type_with_prefix = f'::{namespace}::{param_type}'
+            # 对于全局命名空间的类型，添加 :: 前缀
+            namespace = self.get_type_namespace(param_type)
+            if not namespace and self._is_interface_type(param_type):
+                param_type_with_prefix = f'::{param_type}'
+            elif namespace:
+                if namespace == current_namespace:
+                    param_type_with_prefix = param_type
+                else:
+                    param_type_with_prefix = f'::{namespace}::{param_type}'
             
             # 构建完整的类型签名，包括 const、指针和引用修饰符
             # 对于 [out] 参数，ABI 生成器的处理逻辑是：
@@ -1750,7 +1754,7 @@ struct {class_name} {{
             if param.type_info.is_pointer or (is_out_param and self._is_interface_type(param_type)):
                 if is_out_param:
                     # [out] 参数：接口类型和字符串类型固定为 **，其他类型增加一级指针
-                    if self._is_interface_type(param_type) or param_type == 'IDasReadOnlyString':
+                    if self._is_interface_type(param_type):
                         pointer_level = 2  # 固定为2级指针
                     else:
                         # 对于非接口类型的 [out] 参数（如属性 getter 的 double* p_out），

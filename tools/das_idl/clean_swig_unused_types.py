@@ -16,6 +16,14 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 import json
+from dataclasses import dataclass
+
+
+@dataclass
+class TypeReference:
+    """类型引用信息"""
+    file: str  # 引用该类型的文件名
+    line: int  # 引用所在的行号
 
 
 def safe_print(text: str) -> None:
@@ -35,17 +43,19 @@ class SwigTypeCleaner:
         self,
         java_dir: Optional[Path],
         csharp_dir: Optional[Path],
-        verbose: bool = False
+        verbose: bool = False,
+        debug: bool = False
     ):
         self.java_dir = java_dir
         self.csharp_dir = csharp_dir
         self.verbose = verbose
+        self.debug = debug
 
         # 存储分析结果
         self.java_unused: List[str] = []
         self.csharp_unused: List[str] = []
-        self.java_used: Set[str] = set()
-        self.csharp_used: Set[str] = set()
+        self.java_used: Dict[str, List[TypeReference]] = {}
+        self.csharp_used: Dict[str, List[TypeReference]] = {}
 
     def find_swigtype_files(self, directory: Optional[Path], extension: str) -> List[Path]:
         """查找目录中所有SWIGTYPE_p文件"""
@@ -53,12 +63,12 @@ class SwigTypeCleaner:
             return []
         return list(directory.glob(f"SWIGTYPE_p_*{extension}"))
 
-    def analyze_swigtype_usage(self, directory: Optional[Path], extension: str) -> Set[str]:
+    def analyze_swigtype_usage(self, directory: Optional[Path], extension: str) -> Dict[str, List[TypeReference]]:
         """分析目录中所有源文件对SWIGTYPE_p类型的引用"""
         if not directory:
-            return set()
+            return {}
 
-        used_types = set()
+        used_types: Dict[str, List[TypeReference]] = {}
         pattern = re.compile(r'\b(SWIGTYPE_p(?:_p)?_\w+)\b')
 
         for source_file in directory.glob(f"*{extension}"):
@@ -67,9 +77,16 @@ class SwigTypeCleaner:
 
             try:
                 with open(source_file, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                    matches = pattern.findall(content)
-                    used_types.update(matches)
+                    lines = f.readlines()
+                    for line_num, line in enumerate(lines, start=1):
+                        matches = pattern.finditer(line)
+                        for match in matches:
+                            type_name = match.group(1)
+                            if type_name not in used_types:
+                                used_types[type_name] = []
+                            used_types[type_name].append(
+                                TypeReference(file=source_file.name, line=line_num)
+                            )
             except Exception as e:
                 print(f"Warning: Failed to read {source_file}: {e}", file=sys.stderr)
 
@@ -79,7 +96,7 @@ class SwigTypeCleaner:
         self,
         directory: Optional[Path],
         extension: str,
-        used_types: Set[str]
+        used_types: Dict[str, List[TypeReference]]
     ) -> List[str]:
         """获取未使用的SWIGTYPE_p文件列表"""
         if not directory:
@@ -142,39 +159,130 @@ class SwigTypeCleaner:
         # Java报告
         if self.java_dir:
             print(f"\nJava (Directory: {self.java_dir}):")
-            print(f"  Total SWIGTYPE_p files: {len(self.find_swigtype_files(self.java_dir, '.java'))}")
-            print(f"  Used types: {len(self.java_used)}")
-            print(f"  Unused files: {len(self.java_unused)}")
-            total_unused += len(self.java_unused)
             if self.java_unused:
                 print(f"  Unused files to delete:")
                 for f in self.java_unused:
                     print(f"    - {f}")
             else:
                 print(f"  No unused files found.")
+            total_unused += len(self.java_unused)
 
         # C#报告
         if self.csharp_dir:
             print(f"\nC# (Directory: {self.csharp_dir}):")
-            print(f"  Total SWIGTYPE_p files: {len(self.find_swigtype_files(self.csharp_dir, '.cs'))}")
-            print(f"  Used types: {len(self.csharp_used)}")
-            print(f"  Unused files: {len(self.csharp_unused)}")
-            total_unused += len(self.csharp_unused)
             if self.csharp_unused:
                 print(f"  Unused files to delete:")
                 for f in self.csharp_unused:
                     print(f"    - {f}")
             else:
                 print(f"  No unused files found.")
+            total_unused += len(self.csharp_unused)
 
         print("\n" + "="*60)
         if total_unused > 0:
-            java_count = len(self.java_unused) if self.java_dir else 0
-            csharp_count = len(self.csharp_unused) if self.csharp_dir else 0
-            print(f"\nTotal unused files: {total_unused} (Java: {java_count}, C#: {csharp_count})")
+            if self.java_dir:
+                print(f"\nJava:")
+                print(f"  Total SWIGTYPE_p files: {len(self.find_swigtype_files(self.java_dir, '.java'))}")
+                print(f"  Used types: {len(self.java_used)}")
+                print(f"  Unused files: {len(self.java_unused)}")
+
+                if self.debug:
+                    print(f"\n  [DEBUG] Used types found in source code:")
+                    if self.java_used:
+                        for used_type in sorted(self.java_used.keys()):
+                            refs = self.java_used[used_type]
+                            print(f"    - {used_type}")
+                            for ref in refs:
+                                print(f"      {ref.file}:{ref.line}")
+                    else:
+                        print(f"    (none)")
+
+                    print(f"\n  [DEBUG] All SWIGTYPE_p files:")
+                    swigtype_files = self.find_swigtype_files(self.java_dir, '.java')
+                    for f in sorted(swigtype_files, key=lambda p: p.name):
+                        is_used = f.stem in self.java_used
+                        status = "USED" if is_used else "UNUSED"
+                        print(f"    - {f.name} [{status}]")
+
+            if self.csharp_dir:
+                print(f"\nC#:")
+                print(f"  Total SWIGTYPE_p files: {len(self.find_swigtype_files(self.csharp_dir, '.cs'))}")
+                print(f"  Used types: {len(self.csharp_used)}")
+                print(f"  Unused files: {len(self.csharp_unused)}")
+
+                if self.debug:
+                    print(f"\n  [DEBUG] Used types found in source code:")
+                    if self.csharp_used:
+                        for used_type in sorted(self.csharp_used.keys()):
+                            refs = self.csharp_used[used_type]
+                            print(f"    - {used_type}")
+                            for ref in refs:
+                                print(f"      {ref.file}:{ref.line}")
+                    else:
+                        print(f"    (none)")
+
+                    print(f"\n  [DEBUG] All SWIGTYPE_p files:")
+                    swigtype_files = self.find_swigtype_files(self.csharp_dir, '.cs')
+                    for f in sorted(swigtype_files, key=lambda p: p.name):
+                        is_used = f.stem in self.csharp_used
+                        status = "USED" if is_used else "UNUSED"
+                        print(f"    - {f.name} [{status}]")
+
+            lang_counts = []
+            if self.java_dir:
+                lang_counts.append(f"Java: {len(self.java_unused)}")
+            if self.csharp_dir:
+                lang_counts.append(f"C#: {len(self.csharp_unused)}")
+            print(f"\nTotal unused files: {total_unused} ({', '.join(lang_counts)})")
         else:
             print(f"\nNo unused files found.")
         print("="*60)
+
+    def print_used_types_warning(self) -> bool:
+        """
+        打印正在被使用但无法删除的类型警告
+
+        Returns:
+            bool: 如果有任何正在被使用的类型，返回True；否则返回False
+        """
+        has_used_types = False
+
+        # 检查 Java
+        if self.java_dir and self.java_used:
+            if not has_used_types:
+                print("\n" + "!"*60)
+                print("WARNING: Found SWIGTYPE_p types that are in use!")
+                print("These types cannot be deleted safely.")
+                print("!"*60)
+                has_used_types = True
+
+            print(f"\nJava used types ({len(self.java_used)}):")
+            for type_name, refs in sorted(self.java_used.items()):
+                print(f"\n  {type_name}:")
+                print(f"    Referenced in {len(refs)} location(s):")
+                for ref in refs:
+                    print(f"      - {ref.file}:{ref.line}")
+
+        # 检查 C#
+        if self.csharp_dir and self.csharp_used:
+            if not has_used_types:
+                print("\n" + "!"*60)
+                print("WARNING: Found SWIGTYPE_p types that are in use!")
+                print("These types cannot be deleted safely.")
+                print("!"*60)
+                has_used_types = True
+
+            print(f"\nC# used types ({len(self.csharp_used)}):")
+            for type_name, refs in sorted(self.csharp_used.items()):
+                print(f"\n  {type_name}:")
+                print(f"    Referenced in {len(refs)} location(s):")
+                for ref in refs:
+                    print(f"      - {ref.file}:{ref.line}")
+
+        if has_used_types:
+            print("\n" + "!"*60)
+
+        return has_used_types
 
     def generate_json_report(self, report_file: Path):
         """生成JSON格式的报告"""
@@ -208,6 +316,10 @@ class SwigTypeCleaner:
 
         # 打印报告
         self.print_report()
+
+        has_used_types = self.print_used_types_warning()
+        if has_used_types:
+            return -1
 
         # 生成JSON报告（如果指定）
         if report_file:
@@ -287,6 +399,12 @@ Examples:
         help='Show verbose output'
     )
 
+    parser.add_argument(
+        '--debug',
+        action='store_true',
+        help='Show debug information (used types and all files with status)'
+    )
+
     args = parser.parse_args()
 
     if args.required and not args.java_dir and not args.csharp_dir:
@@ -295,15 +413,21 @@ Examples:
     cleaner = SwigTypeCleaner(
         java_dir=args.java_dir,
         csharp_dir=args.csharp_dir,
-        verbose=args.verbose
+        verbose=args.verbose,
+        debug=args.debug
     )
 
     # 执行清理
     try:
-        deleted_count = cleaner.run(
+        result = cleaner.run(
             delete=args.delete,
             report_file=args.report
         )
+
+        if result == -1:
+            return -1
+
+        deleted_count = result
 
         if args.delete and deleted_count > 0:
             safe_print("\n✓ Cleanup completed successfully!")

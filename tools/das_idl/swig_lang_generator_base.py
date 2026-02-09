@@ -5,8 +5,11 @@ SWIG 语言生成器基类
 """
 
 from abc import ABC, abstractmethod
-from typing import Callable, Optional
+from typing import Callable, Optional, TYPE_CHECKING
 from das_idl_parser import InterfaceDef, MethodDef, ParameterDef
+
+if TYPE_CHECKING:
+    from swig_api_model import SwigInterfaceModel
 
 
 class SwigLangGeneratorContext:
@@ -154,3 +157,31 @@ class SwigLangGenerator(ABC):
             SWIG .i 文件中的代码片段
         """
         pass
+
+    def on_interface_model(self, model: "SwigInterfaceModel", interface_def: InterfaceDef) -> None:
+        """处理接口分析模型
+        
+        当主生成器构建好 SwigInterfaceModel 后，会调用此方法让语言生成器
+        有机会消费模型数据。默认实现为空，子类可以覆盖此方法。
+        
+        Args:
+            model: 接口分析模型（包含分类好的方法信息等）
+            interface_def: 原始的接口定义
+        """
+        pass
+
+    def emit_post_include(self, model: "SwigInterfaceModel", interface_def: InterfaceDef) -> str:
+        """生成后置包含指令（Ez方法）
+        
+        在生成 %include 指令之后调用，用于生成语言特定的后置代码。
+        与 generate_post_include_directives 的区别是此方法接收 SwigInterfaceModel，
+        包含了预分析好的接口元数据。
+        
+        Args:
+            model: 接口分析模型
+            interface_def: 原始的接口定义
+            
+        Returns:
+            SWIG .i 文件中的代码片段，将插入到 %include 指令之后
+        """
+        return ""

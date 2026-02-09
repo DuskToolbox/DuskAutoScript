@@ -132,6 +132,75 @@ namespace Das::ExportInterface {
         qualified = namespaced_iface.namespace + "::" + namespaced_iface.name if namespaced_iface.namespace else namespaced_iface.name
         self.assertEqual(qualified, "Das::ExportInterface::IDasMultiOut")
 
+    def test_ignore_directive_with_global_namespace_prefix(self):
+        """测试生成的 ignore 语句包含 :: 前缀（针对全局命名空间类型）"""
+        # 创建测试 IDL - 带有全局命名空间类型参数的方法
+        idl_content = """
+namespace Das::ExportInterface {
+    [uuid(\"12345678-1234-1234-1234-123456789020\")]
+    interface IDasTestGlobalNamespace : IDasBase {
+        DasResult GetBase([out] IDasBase** pp_out_base);
+        DasResult GetString([out] IDasReadOnlyString** pp_out_string);
+        DasResult GetWeakRef([out] IDasWeakReference** pp_out_weak);
+    }
+}
+"""
+        idl_path = self.create_test_idl(idl_content)
+        
+        # 解析 IDL
+        document = parse_idl_file(idl_path)
+        self.assertEqual(len(document.interfaces), 1)
+        
+        iface = document.interfaces[0]
+        self.assertEqual(iface.name, "IDasTestGlobalNamespace")
+        self.assertEqual(iface.namespace, "Das::ExportInterface")
+        
+        # 验证方法
+        self.assertEqual(len(iface.methods), 3)
+        
+        # 测试 GetBase 方法 - 应该包含 ::IDasBase**
+        method = iface.methods[0]
+        self.assertEqual(method.name, "GetBase")
+        self.assertEqual(len(method.parameters), 1)
+        param = method.parameters[0]
+        self.assertEqual(param.direction, ParamDirection.OUT)
+        self.assertEqual(param.type_info.base_type, "IDasBase")
+        
+        # 生成 %ignore 指令
+        ignore_code = self.generator._generate_ignore_directive(iface, method, param)
+        
+        # 验证生成的 ignore 代码包含 ::IDasBase**
+        self.assertIn("::IDasBase**", ignore_code)
+        
+        # 测试 GetString 方法 - 应该包含 ::IDasReadOnlyString**
+        method = iface.methods[1]
+        self.assertEqual(method.name, "GetString")
+        self.assertEqual(len(method.parameters), 1)
+        param = method.parameters[0]
+        self.assertEqual(param.direction, ParamDirection.OUT)
+        self.assertEqual(param.type_info.base_type, "IDasReadOnlyString")
+        
+        # 生成 %ignore 指令
+        ignore_code = self.generator._generate_ignore_directive(iface, method, param)
+        
+        # 验证生成的 ignore 代码包含 ::IDasReadOnlyString**
+        self.assertIn("::IDasReadOnlyString**", ignore_code)
+        
+        # 测试 GetWeakRef 方法 - 应该包含 ::IDasWeakReference**
+        method = iface.methods[2]
+        self.assertEqual(method.name, "GetWeakRef")
+        self.assertEqual(len(method.parameters), 1)
+        param = method.parameters[0]
+        self.assertEqual(param.direction, ParamDirection.OUT)
+        self.assertEqual(param.type_info.base_type, "IDasWeakReference")
+        
+        # 生成 %ignore 指令
+        ignore_code = self.generator._generate_ignore_directive(iface, method, param)
+        
+        # 验证生成的 ignore 代码包含 ::IDasWeakReference**
+        self.assertIn("::IDasWeakReference**", ignore_code)
+
+
 
 class TestAbiSignatureMatching(unittest.TestCase):
     """测试 ABI 签名与 SWIG %ignore 签名匹配"""
