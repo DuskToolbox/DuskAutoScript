@@ -5,6 +5,7 @@
 #include <cstring>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/IDasBase.h>
+#include <string>
 #include <vector>
 
 DAS_NS_BEGIN
@@ -89,6 +90,40 @@ namespace Core
                 return WriteBytes(
                     reinterpret_cast<const uint8_t*>(str),
                     length);
+            }
+
+            DasResult WriteString(const std::string& value)
+            {
+                return WriteString(value.c_str(), value.size());
+            }
+
+            DasResult WriteGuid(const DasGuid& value)
+            {
+                // GUID 作为连续 16 字节序列化（小端序）
+                return Write(&value, sizeof(DasGuid));
+            }
+
+            DasResult WriteArray(const void* data, size_t size)
+            {
+                // 先写大小，再写数据
+                DasResult result = WriteUInt64(static_cast<uint64_t>(size));
+                if (result != DAS_S_OK)
+                {
+                    return result;
+                }
+                return Write(data, size);
+            }
+
+            DasResult WriteObjectBegin()
+            {
+                // 写入对象开始标记 (0xDEADBEEF)
+                return WriteUInt32(0xDEADBEEF);
+            }
+
+            DasResult WriteObjectEnd()
+            {
+                // 写入对象结束标记 (0xCAFEBABE)
+                return WriteUInt32(0xCAFEBABE);
             }
         };
 
@@ -192,6 +227,58 @@ namespace Core
                         buffer.size());
                 }
                 return result;
+            }
+
+            DasResult ReadGuid(DasGuid* value)
+            {
+                return Read(value, sizeof(DasGuid));
+            }
+
+            DasResult ReadArray(void* data, size_t size)
+            {
+                uint64_t stored_size;
+                auto     result = ReadUInt64(&stored_size);
+                if (result != DAS_S_OK)
+                {
+                    return result;
+                }
+
+                if (stored_size != size)
+                {
+                    return DAS_E_IPC_DESERIALIZATION_FAILED;
+                }
+
+                return Read(data, size);
+            }
+
+            DasResult ReadObjectBegin()
+            {
+                uint32_t marker;
+                auto     result = ReadUInt32(&marker);
+                if (result != DAS_S_OK)
+                {
+                    return result;
+                }
+                if (marker != 0xDEADBEEF)
+                {
+                    return DAS_E_IPC_DESERIALIZATION_FAILED;
+                }
+                return DAS_S_OK;
+            }
+
+            DasResult ReadObjectEnd()
+            {
+                uint32_t marker;
+                auto     result = ReadUInt32(&marker);
+                if (result != DAS_S_OK)
+                {
+                    return result;
+                }
+                if (marker != 0xCAFEBABE)
+                {
+                    return DAS_E_IPC_DESERIALIZATION_FAILED;
+                }
+                return DAS_S_OK;
             }
         };
     }

@@ -65,6 +65,8 @@ add_subdirectory(Plugins)
 
 add_subdirectory(Http)
 
+add_subdirectory(Host)
+
 # Add lock dependencies to all targets that were created after DasBuildLockCreate
 # This ensures all build targets depend on creating the lock first
 function(add_build_lock_dependencies)

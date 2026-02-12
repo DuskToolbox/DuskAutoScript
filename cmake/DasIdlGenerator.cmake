@@ -79,16 +79,21 @@ endfunction()
 #   RAW_OUTPUT_DIR - ABI文件输出目录（可选，优先级高于OUTPUT_DIR）
 #   WRAPPER_OUTPUT_DIR - C++包装文件输出目录（可选）
 #   SWIG_OUTPUT_DIR - SWIG接口文件输出目录（可选）
+#   IPC_PROXY - 是否生成IPC Proxy代码（可选，默认false）
+#   IPC_STUB - 是否生成IPC Stub代码（可选，默认false）
+#   IPC_MESSAGE - 是否生成IPC消息结构（可选，默认false）
+#   IPC_OUTPUT_DIR - IPC生成文件输出目录（可选，默认${CMAKE_BINARY_DIR}/ipc）
 #   GENERATED_FILES - 输出变量，包含生成的文件列表（兼容旧参数）
 #   GENERATED_ABI_FILES - 输出变量，包含ABI文件列表
 #   GENERATED_WRAPPER_FILES - 输出变量，包含Wrapper文件列表
 #   GENERATED_SWIG_FILES - 输出变量，包含SWIG文件列表
+#   GENERATED_IPC_FILES - 输出变量，包含IPC文件列表
 function(das_idl_generate)
     cmake_parse_arguments(
         DAS_IDL                         # 前缀
-        "SWIG;CPP_WRAPPER;TYPEMAPS"     # 选项 (无值参数)
-        "IDL_FILE;OUTPUT_DIR;NAMESPACE;RAW_OUTPUT_DIR;WRAPPER_OUTPUT_DIR;SWIG_OUTPUT_DIR" # 单值参数
-        "GENERATED_FILES;GENERATED_ABI_FILES;GENERATED_WRAPPER_FILES;GENERATED_SWIG_FILES" # 多值参数
+        "SWIG;CPP_WRAPPER;TYPEMAPS;IPC_PROXY;IPC_STUB;IPC_MESSAGE"     # 选项 (无值参数)
+        "IDL_FILE;OUTPUT_DIR;NAMESPACE;RAW_OUTPUT_DIR;WRAPPER_OUTPUT_DIR;SWIG_OUTPUT_DIR;IPC_OUTPUT_DIR" # 单值参数
+        "GENERATED_FILES;GENERATED_ABI_FILES;GENERATED_WRAPPER_FILES;GENERATED_SWIG_FILES;GENERATED_IPC_FILES" # 多值参数
         ${ARGN}
     )
 
@@ -111,6 +116,11 @@ function(das_idl_generate)
     endif()
     if(NOT DAS_IDL_SWIG_OUTPUT_DIR AND DAS_IDL_SWIG)
         set(DAS_IDL_SWIG_OUTPUT_DIR "${DAS_IDL_ABI_DIR}/swig")
+    endif()
+
+    # IPC输出目录默认值
+    if(NOT DAS_IDL_IPC_OUTPUT_DIR AND (DAS_IDL_IPC_PROXY OR DAS_IDL_IPC_STUB OR DAS_IDL_IPC_MESSAGE))
+        set(DAS_IDL_IPC_OUTPUT_DIR "${CMAKE_BINARY_DIR}/ipc")
     endif()
 
     if(NOT DAS_IDL_OUTPUT_DIR)
@@ -146,6 +156,26 @@ function(das_idl_generate)
         )
     endif()
 
+    # 定义生成的文件列表 - IPC文件
+    set(_GENERATED_IPC_FILES "")
+    if(DAS_IDL_IPC_OUTPUT_DIR)
+        if(DAS_IDL_IPC_MESSAGE)
+            list(APPEND _GENERATED_IPC_FILES
+                "${DAS_IDL_IPC_OUTPUT_DIR}/messages/${IDL_NAME}Messages.h"
+            )
+        endif()
+        if(DAS_IDL_IPC_PROXY)
+            list(APPEND _GENERATED_IPC_FILES
+                "${DAS_IDL_IPC_OUTPUT_DIR}/proxy/${IDL_NAME}Proxy.h"
+            )
+        endif()
+        if(DAS_IDL_IPC_STUB)
+            list(APPEND _GENERATED_IPC_FILES
+                "${DAS_IDL_IPC_OUTPUT_DIR}/stub/${IDL_NAME}Stub.h"
+            )
+        endif()
+    endif()
+
     # 合并所有生成的文件（向后兼容）
     set(_GENERATED_FILES ${_GENERATED_ABI_FILES})
     if(_GENERATED_WRAPPER_FILES)
@@ -153,6 +183,9 @@ function(das_idl_generate)
     endif()
     if(_GENERATED_SWIG_FILES)
         list(APPEND _GENERATED_FILES ${_GENERATED_SWIG_FILES})
+    endif()
+    if(_GENERATED_IPC_FILES)
+        list(APPEND _GENERATED_FILES ${_GENERATED_IPC_FILES})
     endif()
 
     # 构建命令参数
@@ -189,6 +222,20 @@ function(das_idl_generate)
         list(APPEND _IDL_CMD_ARGS "--namespace" "${DAS_IDL_NAMESPACE}")
     endif()
 
+    # 添加IPC选项参数
+    if(DAS_IDL_IPC_OUTPUT_DIR)
+        list(APPEND _IDL_CMD_ARGS "--ipc-output-dir" "${DAS_IDL_IPC_OUTPUT_DIR}")
+    endif()
+    if(DAS_IDL_IPC_MESSAGE)
+        list(APPEND _IDL_CMD_ARGS "--ipc-message")
+    endif()
+    if(DAS_IDL_IPC_PROXY)
+        list(APPEND _IDL_CMD_ARGS "--ipc-proxy")
+    endif()
+    if(DAS_IDL_IPC_STUB)
+        list(APPEND _IDL_CMD_ARGS "--ipc-stub")
+    endif()
+
     # 添加自定义命令
     add_custom_command(
         OUTPUT ${_GENERATED_FILES}
@@ -201,6 +248,10 @@ function(das_idl_generate)
                 "${DAS_IDL_TOOLS_DIR}/das_swig_generator.py"
                 "${DAS_IDL_TOOLS_DIR}/swig_java_generator.py"
                 "${DAS_IDL_TOOLS_DIR}/swig_lang_generator_base.py"
+                "${DAS_IDL_TOOLS_DIR}/das_ipc_generator.py"
+                "${DAS_IDL_TOOLS_DIR}/das_ipc_message_generator.py"
+                "${DAS_IDL_TOOLS_DIR}/das_ipc_proxy_generator.py"
+                "${DAS_IDL_TOOLS_DIR}/das_ipc_stub_generator.py"
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
         COMMENT "[DAS IDL] Generating code from ${IDL_NAME}.idl"
         VERBATIM
@@ -218,6 +269,9 @@ function(das_idl_generate)
     endif()
     if(DAS_IDL_GENERATED_SWIG_FILES)
         set(${DAS_IDL_GENERATED_SWIG_FILES} ${_GENERATED_SWIG_FILES} PARENT_SCOPE)
+    endif()
+    if(DAS_IDL_GENERATED_IPC_FILES)
+        set(${DAS_IDL_GENERATED_IPC_FILES} ${_GENERATED_IPC_FILES} PARENT_SCOPE)
     endif()
 endfunction()
 

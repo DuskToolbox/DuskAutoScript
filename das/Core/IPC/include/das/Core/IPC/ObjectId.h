@@ -11,14 +11,14 @@ namespace Core
     {
         struct ObjectId
         {
-            uint16_t process_id;
+            uint16_t session_id;
             uint16_t generation;
             uint32_t local_id;
         };
 
         constexpr uint64_t EncodeObjectId(const ObjectId& obj_id) noexcept
         {
-            return (static_cast<uint64_t>(obj_id.process_id) << 48)
+            return (static_cast<uint64_t>(obj_id.session_id) << 48)
                    | (static_cast<uint64_t>(obj_id.generation) << 32)
                    | static_cast<uint64_t>(obj_id.local_id);
         }
@@ -26,7 +26,7 @@ namespace Core
         constexpr ObjectId DecodeObjectId(uint64_t encoded_id) noexcept
         {
             return ObjectId{
-                .process_id = static_cast<uint16_t>(encoded_id >> 48),
+                .session_id = static_cast<uint16_t>(encoded_id >> 48),
                 .generation =
                     static_cast<uint16_t>((encoded_id >> 32) & 0xFFFF),
                 .local_id = static_cast<uint32_t>(encoded_id & 0xFFFFFFFF)};
@@ -46,7 +46,7 @@ namespace Core
 
         constexpr bool IsNullObjectId(const ObjectId& obj_id) noexcept
         {
-            return obj_id.process_id == 0 && obj_id.generation == 0
+            return obj_id.session_id == 0 && obj_id.generation == 0
                    && obj_id.local_id == 0;
         }
 

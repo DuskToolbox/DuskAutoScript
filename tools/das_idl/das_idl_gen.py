@@ -150,6 +150,43 @@ IDL 语法示例:
         help='生成typemap_info.json文件（用于汇总生成DasTypeMaps.i）'
     )
 
+    # === IPC 生成选项 ===
+    ipc_group = parser.add_argument_group('IPC 生成选项（跨进程通信代理/存根生成）')
+
+    ipc_group.add_argument(
+        '--ipc',
+        action='store_true',
+        help='启用 IPC 代码生成（等同于 --ipc-proxy --ipc-stub --ipc-message）'
+    )
+
+    ipc_group.add_argument(
+        '--ipc-proxy',
+        action='store_true',
+        help='生成 IPC Proxy 代码（客户端代理）'
+    )
+
+    ipc_group.add_argument(
+        '--ipc-stub',
+        action='store_true',
+        help='生成 IPC Stub 代码（服务端存根）'
+    )
+
+    ipc_group.add_argument(
+        '--ipc-message',
+        action='store_true',
+        help='生成 IPC 消息结构定义'
+    )
+
+    ipc_group.add_argument(
+        '--ipc-output-dir',
+        help='IPC 生成文件的输出目录（默认：使用 --output-dir）'
+    )
+
+    ipc_group.add_argument(
+        '--ipc-cache-dir',
+        help='IPC 中间缓存目录（默认：<ipc-output-dir>/.cache）'
+    )
+
     # === 调试选项 ===
     debug_group = parser.add_argument_group('调试选项')
 
@@ -183,12 +220,22 @@ IDL 语法示例:
         args.cpp_wrapper = True
         args.cpp_implements = True
 
+    # 如果指定了 --ipc，启用所有 IPC 生成选项
+    if args.ipc:
+        args.ipc_proxy = True
+        args.ipc_stub = True
+        args.ipc_message = True
+
     # 确定各类型文件的输出目录
     default_output = args.output_dir or args.raw_output_dir
     raw_output_dir = args.raw_output_dir or default_output
     wrapper_output_dir = args.wrapper_output_dir or default_output
     implements_output_dir = args.implements_output_dir or default_output
     swig_output_dir = args.swig_output_dir or default_output
+
+    # 确定 IPC 输出目录
+    ipc_output_dir = args.ipc_output_dir or default_output
+    ipc_cache_dir = args.ipc_cache_dir or (str(Path(ipc_output_dir) / '.cache') if ipc_output_dir else None)
 
     # 处理多个输入文件
     input_files = [f.strip() for f in args.input.split(',')]
@@ -355,6 +402,47 @@ IDL 语法示例:
                     import traceback
                     traceback.print_exc()
                 return 6
+
+        # === 生成 IPC 代码（如果启用）===
+        if args.ipc_proxy or args.ipc_stub or args.ipc_message:
+            if args.verbose:
+                ipc_features = []
+                if args.ipc_proxy:
+                    ipc_features.append("Proxy")
+                if args.ipc_stub:
+                    ipc_features.append("Stub")
+                if args.ipc_message:
+                    ipc_features.append("Message")
+                print(f"IPC 生成已启用 ({', '.join(ipc_features)})")
+                print(f"  IPC 输出目录: {ipc_output_dir}")
+                print(f"  IPC 缓存目录: {ipc_cache_dir}")
+
+            try:
+                from das_ipc_generator import generate_ipc_files
+
+                output_dir = Path(ipc_output_dir)
+                output_dir.mkdir(parents=True, exist_ok=True)
+
+                ipc_files = generate_ipc_files(
+                    document=document,
+                    output_dir=str(output_dir),
+                    cache_dir=ipc_cache_dir,
+                    base_name=base_name,
+                    idl_file_path=str(input_path),
+                    generate_proxy=args.ipc_proxy,
+                    generate_stub=args.ipc_stub,
+                    generate_message=args.ipc_message
+                )
+                all_generated_files.extend(ipc_files)
+
+            except ImportError:
+                print(f"警告: IPC 生成器尚未实现，跳过 IPC 代码生成", file=sys.stderr)
+            except Exception as e:
+                print(f"IPC 生成错误: {e}", file=sys.stderr)
+                if args.verbose:
+                    import traceback
+                    traceback.print_exc()
+                return 7
 
     # 如果有多个 IDL 文件且启用了 SWIG，生成一个总汇总文件
     if args.swig and len(input_files) > 1 and not args.dry_run:

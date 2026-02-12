@@ -11,6 +11,8 @@ namespace Core
 {
     namespace IPC
     {
+        constexpr uint16_t kFlagLargeMessage = 0x01;
+
         struct IpcTransport::Impl
         {
             std::unique_ptr<boost::interprocess::message_queue> host_queue_;
@@ -155,6 +157,44 @@ namespace Core
 
                 out_header = FromV1(v1_header);
 
+                if (out_header.flags & kFlagLargeMessage)
+                {
+                    if (impl_->shm_pool_ == nullptr)
+                    {
+                        return DAS_E_IPC_SHM_FAILED;
+                    }
+
+                    if (received_size
+                        < sizeof(MessageHeaderV1) + sizeof(uint64_t))
+                    {
+                        return DAS_E_IPC_INVALID_MESSAGE;
+                    }
+
+                    uint64_t handle;
+                    std::memcpy(
+                        &handle,
+                        buffer.data() + sizeof(MessageHeaderV1),
+                        sizeof(uint64_t));
+
+                    SharedMemoryBlock shm_block;
+                    auto              result =
+                        impl_->shm_pool_->GetBlockByHandle(handle, shm_block);
+                    if (result != DAS_S_OK)
+                    {
+                        return result;
+                    }
+
+                    out_body.resize(shm_block.size);
+                    std::memcpy(
+                        out_body.data(),
+                        shm_block.data,
+                        shm_block.size);
+
+                    impl_->shm_pool_->Deallocate(handle);
+
+                    return DAS_S_OK;
+                }
+
                 if (received_size > sizeof(MessageHeaderV1))
                 {
                     out_body.assign(
@@ -248,9 +288,21 @@ namespace Core
             std::memcpy(block.data, body, body_size);
 
             IPCMessageHeader shm_header = header;
-            shm_header.flags = 0x01;
+            shm_header.flags |= kFlagLargeMessage;
 
-            return SendSmallMessage(shm_header, nullptr, 0);
+            std::vector<uint8_t> handle_buffer(sizeof(uint64_t));
+            std::memcpy(handle_buffer.data(), &block.handle, sizeof(uint64_t));
+
+            result = SendSmallMessage(
+                shm_header,
+                handle_buffer.data(),
+                sizeof(uint64_t));
+            if (result != DAS_S_OK)
+            {
+                impl_->shm_pool_->Deallocate(block.handle);
+            }
+
+            return result;
         }
     }
 }

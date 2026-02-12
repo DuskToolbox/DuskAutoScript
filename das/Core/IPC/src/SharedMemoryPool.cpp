@@ -1,24 +1,44 @@
 #include <boost/interprocess/managed_shared_memory.hpp>
+#include <chrono>
 #include <cstdint>
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 DAS_NS_BEGIN
 namespace Core
 {
     namespace IPC
     {
+        /**
+         * @brief 共享内存块元数据
+         *
+         *
+         * 用于跟踪块的引用计数和分配时间，支持 CleanupStaleBlocks
+         * 功能
+
+         */
+        struct BlockMetadata
+        {
+            size_t   size;      ///< 块大小（字节）
+            uint32_t ref_count; ///< 引用计数（0 表示无活跃引用）
+            std::chrono::steady_clock::time_point
+                allocation_time; ///< 分配时间（用于超时清理判断）
+        };
+
         struct SharedMemoryPool::Impl
         {
             std::unique_ptr<boost::interprocess::managed_shared_memory>
-                                                    segment_;
-            std::string                             name_;
-            size_t                                  total_size_;
-            size_t                                  used_size_{0};
-            std::unordered_map<std::string, size_t> block_sizes_;
-            mutable std::mutex                      mutex_;
+                                                        segment_;
+            std::string                                 name_;
+            size_t                                      total_size_;
+            size_t                                      used_size_{0};
+            std::unordered_map<uint64_t, BlockMetadata> block_metadata_;
+            mutable std::mutex                          mutex_;
+
+            static constexpr std::chrono::seconds kStaleThreshold{60};
         };
 
         SharedMemoryPool::SharedMemoryPool() : impl_(std::make_unique<Impl>())
@@ -59,6 +79,14 @@ namespace Core
         {
             std::lock_guard<std::mutex> lock(impl_->mutex_);
 
+            // 幂等性检查：如果已经关闭，直接返回成功
+            // 这防止了 DestroyPool 中显式调用 Shutdown() 后，
+            // 析构函数再次调用 Shutdown() 导致的重复操作
+            if (!impl_->segment_)
+            {
+                return DAS_S_OK;
+            }
+
             impl_->segment_.reset();
 
             try
@@ -71,6 +99,7 @@ namespace Core
             }
 
             impl_->used_size_ = 0;
+            impl_->block_metadata_.clear();
             return DAS_S_OK;
         }
 
@@ -93,14 +122,14 @@ namespace Core
                     return DAS_E_OUT_OF_MEMORY;
                 }
 
-                std::string block_name =
-                    "block_" + std::to_string(reinterpret_cast<uintptr_t>(ptr));
+                auto handle = impl_->segment_->get_handle_from_address(ptr);
 
                 block.data = ptr;
                 block.size = size;
-                block.name = block_name;
+                block.handle = static_cast<uint64_t>(handle);
 
-                impl_->block_sizes_[block_name] = size;
+                impl_->block_metadata_[block.handle] =
+                    BlockMetadata{size, 1, std::chrono::steady_clock::now()};
                 impl_->used_size_ += size;
                 return DAS_S_OK;
             }
@@ -110,7 +139,7 @@ namespace Core
             }
         }
 
-        DasResult SharedMemoryPool::Deallocate(const std::string& block_name)
+        DasResult SharedMemoryPool::Deallocate(uint64_t handle)
         {
             std::lock_guard<std::mutex> lock(impl_->mutex_);
 
@@ -119,21 +148,24 @@ namespace Core
                 return DAS_E_IPC_SHM_FAILED;
             }
 
-            auto it = impl_->block_sizes_.find(block_name);
-            if (it == impl_->block_sizes_.end())
+            auto it = impl_->block_metadata_.find(handle);
+            if (it == impl_->block_metadata_.end())
             {
                 return DAS_E_IPC_SHM_FAILED;
             }
 
             try
             {
-                uintptr_t addr = std::stoull(block_name.substr(6));
-                void*     ptr = reinterpret_cast<void*>(addr);
+                auto managed_handle = static_cast<
+                    boost::interprocess::managed_shared_memory::handle_t>(
+                    handle);
+                void* ptr =
+                    impl_->segment_->get_address_from_handle(managed_handle);
 
                 impl_->segment_->deallocate(ptr);
 
-                impl_->used_size_ -= it->second;
-                impl_->block_sizes_.erase(it);
+                impl_->used_size_ -= it->second.size;
+                impl_->block_metadata_.erase(it);
 
                 return DAS_S_OK;
             }
@@ -143,7 +175,94 @@ namespace Core
             }
         }
 
-        DasResult SharedMemoryPool::CleanupStaleBlocks() { return DAS_S_OK; }
+        DasResult SharedMemoryPool::GetBlockByHandle(
+            uint64_t           handle,
+            SharedMemoryBlock& block)
+        {
+            std::lock_guard<std::mutex> lock(impl_->mutex_);
+
+            if (!impl_->segment_)
+            {
+                return DAS_E_IPC_SHM_FAILED;
+            }
+
+            auto it = impl_->block_metadata_.find(handle);
+            if (it == impl_->block_metadata_.end())
+            {
+                return DAS_E_IPC_OBJECT_NOT_FOUND;
+            }
+
+            try
+            {
+                auto managed_handle = static_cast<
+                    boost::interprocess::managed_shared_memory::handle_t>(
+                    handle);
+                void* ptr =
+                    impl_->segment_->get_address_from_handle(managed_handle);
+
+                block.data = ptr;
+                block.size = it->second.size;
+                block.handle = handle;
+
+                return DAS_S_OK;
+            }
+            catch (...)
+            {
+                return DAS_E_IPC_SHM_FAILED;
+            }
+        }
+
+        DasResult SharedMemoryPool::CleanupStaleBlocks()
+        {
+            std::lock_guard<std::mutex> lock(impl_->mutex_);
+
+            if (!impl_->segment_)
+            {
+                return DAS_E_IPC_SHM_FAILED;
+            }
+
+            auto                  now = std::chrono::steady_clock::now();
+            std::vector<uint64_t> blocks_to_remove;
+
+            for (const auto& [handle, metadata] : impl_->block_metadata_)
+            {
+                if (metadata.ref_count == 0)
+                {
+                    auto elapsed =
+                        std::chrono::duration_cast<std::chrono::seconds>(
+                            now - metadata.allocation_time);
+                    if (elapsed >= Impl::kStaleThreshold)
+                    {
+                        blocks_to_remove.push_back(handle);
+                    }
+                }
+            }
+
+            for (uint64_t handle : blocks_to_remove)
+            {
+                auto it = impl_->block_metadata_.find(handle);
+                if (it != impl_->block_metadata_.end())
+                {
+                    try
+                    {
+                        auto managed_handle =
+                            static_cast<boost::interprocess::
+                                            managed_shared_memory::handle_t>(
+                                handle);
+                        void* ptr = impl_->segment_->get_address_from_handle(
+                            managed_handle);
+                        impl_->segment_->deallocate(ptr);
+                        impl_->used_size_ -= it->second.size;
+                        impl_->block_metadata_.erase(it);
+                    }
+                    catch (...)
+                    {
+                    }
+                }
+            }
+
+            return DAS_S_OK;
+        }
 
         size_t SharedMemoryPool::GetTotalSize() const
         {
@@ -207,7 +326,8 @@ namespace Core
                 return DAS_E_IPC_OBJECT_NOT_FOUND;
             }
 
-            it->second->Shutdown();
+            // 直接 erase 即可，SharedMemoryPool 析构函数会自动调用 Shutdown()
+            // 无需显式调用 Shutdown()，避免重复调用
             impl_->pools_.erase(it);
             return DAS_S_OK;
         }

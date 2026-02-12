@@ -84,7 +84,7 @@ public:
 };
 
 // Test basic integer types
-TEST(SerializerTest, WriteReadInt8)
+TEST(IpcSerializerTest, WriteReadInt8)
 {
     MemorySerializerWriter writer;
     int8_t                 value = -42;
@@ -96,7 +96,7 @@ TEST(SerializerTest, WriteReadInt8)
     EXPECT_EQ(read_value, value);
 }
 
-TEST(SerializerTest, WriteReadUInt8)
+TEST(IpcSerializerTest, WriteReadUInt8)
 {
     MemorySerializerWriter writer;
     uint8_t                value = 255;
@@ -108,7 +108,7 @@ TEST(SerializerTest, WriteReadUInt8)
     EXPECT_EQ(read_value, value);
 }
 
-TEST(SerializerTest, WriteReadInt16)
+TEST(IpcSerializerTest, WriteReadInt16)
 {
     MemorySerializerWriter writer;
     int16_t                value = -1000;
@@ -120,7 +120,7 @@ TEST(SerializerTest, WriteReadInt16)
     EXPECT_EQ(read_value, value);
 }
 
-TEST(SerializerTest, WriteReadInt32)
+TEST(IpcSerializerTest, WriteReadInt32)
 {
     MemorySerializerWriter writer;
     int32_t                value = -1234567;
@@ -133,7 +133,7 @@ TEST(SerializerTest, WriteReadInt32)
 }
 
 // Test floating point types
-TEST(SerializerTest, WriteReadFloat)
+TEST(IpcSerializerTest, WriteReadFloat)
 {
     MemorySerializerWriter writer;
     float                  value = 3.14159f;
@@ -142,10 +142,10 @@ TEST(SerializerTest, WriteReadFloat)
     MemorySerializerReader reader(writer.GetBuffer());
     float                  read_value;
     EXPECT_EQ(reader.ReadFloat(&read_value), DAS_S_OK);
-    EXPECT_FLOAT_EQ(read_value, value, 0.00001f);
+    EXPECT_FLOAT_EQ(read_value, value);
 }
 
-TEST(SerializerTest, WriteReadDouble)
+TEST(IpcSerializerTest, WriteReadDouble)
 {
     MemorySerializerWriter writer;
     double                 value = 2.718281828459045;
@@ -158,7 +158,7 @@ TEST(SerializerTest, WriteReadDouble)
 }
 
 // Test boolean type
-TEST(SerializerTest, WriteReadBool)
+TEST(IpcSerializerTest, WriteReadBool)
 {
     MemorySerializerWriter writer;
     EXPECT_EQ(writer.WriteBool(true), DAS_S_OK);
@@ -173,7 +173,7 @@ TEST(SerializerTest, WriteReadBool)
 }
 
 // Test bytes type
-TEST(SerializerTest, WriteReadBytes)
+TEST(IpcSerializerTest, WriteReadBytes)
 {
     MemorySerializerWriter writer;
     std::vector<uint8_t>   data = {1, 2, 3, 4, 5};
@@ -186,7 +186,7 @@ TEST(SerializerTest, WriteReadBytes)
 }
 
 // Test string type
-TEST(SerializerTest, WriteReadString)
+TEST(IpcSerializerTest, WriteReadString)
 {
     MemorySerializerWriter writer;
     const char*            str = "Hello, World!";
@@ -200,7 +200,7 @@ TEST(SerializerTest, WriteReadString)
 }
 
 // Test empty buffer
-TEST(SerializerTest, ReadEmptyBuffer)
+TEST(IpcSerializerTest, ReadEmptyBuffer)
 {
     std::vector<uint8_t>   empty_buffer;
     MemorySerializerReader reader(empty_buffer);
@@ -210,7 +210,7 @@ TEST(SerializerTest, ReadEmptyBuffer)
 }
 
 // Test seek functionality
-TEST(SerializerTest, SeekAndRead)
+TEST(IpcSerializerTest, SeekAndRead)
 {
     MemorySerializerWriter writer;
     writer.WriteInt8(1);
@@ -233,7 +233,7 @@ TEST(SerializerTest, SeekAndRead)
 }
 
 // Test buffer position tracking
-TEST(SerializerTest, PositionTracking)
+TEST(IpcSerializerTest, PositionTracking)
 {
     MemorySerializerWriter writer;
     EXPECT_EQ(writer.GetPosition(), 0);
@@ -249,7 +249,7 @@ TEST(SerializerTest, PositionTracking)
 }
 
 // Test remaining bytes calculation
-TEST(SerializerTest, RemainingBytesCalculation)
+TEST(IpcSerializerTest, RemainingBytesCalculation)
 {
     MemorySerializerWriter writer;
     writer.WriteInt8(1);

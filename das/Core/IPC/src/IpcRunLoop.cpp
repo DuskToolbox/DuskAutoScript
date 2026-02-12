@@ -1,4 +1,5 @@
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <das/Core/IPC/IpcRunLoop.h>
@@ -12,6 +13,11 @@ namespace Core
 {
     namespace IPC
     {
+        // 线程局部嵌套深度跟踪（用于 re-entrant 调用检测）
+        thread_local uint32_t     t_nested_depth = 0;
+        static constexpr uint32_t MAX_NESTED_DEPTH = 32;
+        static constexpr uint32_t PUMP_POLL_TIMEOUT_MS = 10;
+
         struct IpcRunLoop::Impl
         {
             std::unordered_map<uint64_t, NestedCallContext> pending_calls_;
@@ -22,8 +28,6 @@ namespace Core
             std::thread                                     io_thread_;
             std::mutex                                      pending_mutex_;
             std::condition_variable                         pending_cv_;
-            uint32_t                                        nested_depth_{0};
-            static constexpr uint32_t MAX_NESTED_DEPTH = 32;
         };
 
         IpcRunLoop::IpcRunLoop() : impl_(std::make_unique<Impl>()) {}
@@ -94,7 +98,7 @@ namespace Core
             size_t                  body_size,
             std::vector<uint8_t>&   response_body)
         {
-            if (impl_->nested_depth_ >= Impl::MAX_NESTED_DEPTH)
+            if (t_nested_depth >= MAX_NESTED_DEPTH)
             {
                 return DAS_E_IPC_DEADLOCK_DETECTED;
             }
@@ -107,7 +111,7 @@ namespace Core
             {
                 std::unique_lock<std::mutex> lock(impl_->pending_mutex_);
                 impl_->pending_calls_[call_id] =
-                    NestedCallContext{.call_id = call_id, .completed = false};
+                    NestedCallContext{call_id, {}, false};
             }
 
             auto send_result = impl_->transport_->Send(header, body, body_size);
@@ -118,36 +122,77 @@ namespace Core
                 return send_result;
             }
 
-            impl_->nested_depth_++;
+            t_nested_depth++;
 
+            auto deadline =
+                std::chrono::steady_clock::now() + std::chrono::seconds(30);
+
+            while (std::chrono::steady_clock::now() < deadline)
             {
-                std::unique_lock<std::mutex> lock(impl_->pending_mutex_);
-                auto it = impl_->pending_calls_.find(call_id);
-
-                if (it != impl_->pending_calls_.end())
                 {
-                    impl_->pending_cv_.wait(
-                        lock,
-                        [&, this]
-                        {
-                            return it->second.completed
-                                   || !impl_->running_.load();
-                        });
+                    std::unique_lock<std::mutex> lock(impl_->pending_mutex_);
+                    auto it = impl_->pending_calls_.find(call_id);
 
-                    if (!it->second.completed)
+                    if (it != impl_->pending_calls_.end()
+                        && it->second.completed)
                     {
+                        response_body = std::move(it->second.response_buffer);
                         impl_->pending_calls_.erase(it);
-                        impl_->nested_depth_--;
-                        return DAS_E_IPC_TIMEOUT;
+                        t_nested_depth--;
+                        return DAS_S_OK;
+                    }
+                }
+
+                IPCMessageHeader     msg_header;
+                std::vector<uint8_t> msg_body;
+
+                auto result = impl_->transport_->Receive(
+                    msg_header,
+                    msg_body,
+                    PUMP_POLL_TIMEOUT_MS);
+
+                if (result == DAS_S_OK)
+                {
+                    if (msg_header.message_type == MessageType::RESPONSE
+                        && msg_header.call_id == call_id)
+                    {
+                        std::unique_lock<std::mutex> lock(
+                            impl_->pending_mutex_);
+                        auto it = impl_->pending_calls_.find(call_id);
+                        if (it != impl_->pending_calls_.end())
+                        {
+                            response_body = std::move(msg_body);
+                            impl_->pending_calls_.erase(it);
+                        }
+                        t_nested_depth--;
+                        return DAS_S_OK;
                     }
 
-                    response_body = std::move(it->second.response_buffer);
-                    impl_->pending_calls_.erase(it);
+                    ProcessMessage(
+                        msg_header,
+                        msg_body.data(),
+                        msg_body.size());
+                }
+                else if (result != DAS_E_IPC_TIMEOUT)
+                {
+                    break;
+                }
+
+                if (!impl_->running_.load())
+                {
+                    std::unique_lock<std::mutex> lock(impl_->pending_mutex_);
+                    impl_->pending_calls_.erase(call_id);
+                    t_nested_depth--;
+                    return DAS_E_IPC_TIMEOUT;
                 }
             }
 
-            impl_->nested_depth_--;
-            return DAS_S_OK;
+            {
+                std::unique_lock<std::mutex> lock(impl_->pending_mutex_);
+                impl_->pending_calls_.erase(call_id);
+            }
+            t_nested_depth--;
+            return DAS_E_IPC_TIMEOUT;
         }
 
         DasResult IpcRunLoop::SendResponse(

@@ -15,12 +15,29 @@ namespace Core
 {
     namespace IPC
     {
+        class IpcTransport;
+        class SharedMemoryPool;
+        class IpcRunLoop;
+
+        /**
+         * @brief 连接资源信息
+         *
+         * 根据 B3.1 握手规范：
+         * - Host 进程创建资源（消息队列、共享内存）
+         * - Child 进程仅打开资源引用
+         * - CleanupConnectionResources 清理时：
+         *   - Host: 关闭并可能删除资源
+         *   - Child: 仅释放引用，不删除资源
+         */
         struct ConnectionInfo
         {
-            uint16_t host_id;
-            uint16_t plugin_id;
-            bool     is_alive;
-            uint64_t last_heartbeat_ms;
+            uint16_t          host_id;
+            uint16_t          plugin_id;
+            bool              is_alive;
+            uint64_t          last_heartbeat_ms;
+            IpcTransport*     transport; ///< 消息队列传输（非拥有指针）
+            SharedMemoryPool* shm_pool;  ///< 共享内存池（非拥有指针）
+            IpcRunLoop* run_loop; ///< 运行循环（非拥有指针，含 pending_calls）
         };
 
         class ConnectionManager

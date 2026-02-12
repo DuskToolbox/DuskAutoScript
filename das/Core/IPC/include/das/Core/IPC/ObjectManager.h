@@ -28,7 +28,7 @@ namespace Core
             DistributedObjectManager();
             ~DistributedObjectManager();
 
-            DasResult Initialize(uint16_t local_process_id);
+            DasResult Initialize(uint16_t local_session_id);
             DasResult Shutdown();
 
             DasResult RegisterLocalObject(

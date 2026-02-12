@@ -510,6 +510,11 @@ JSON 配置格式:
         help='包含需要重新生成的IDL文件列表（每行一个），如果指定则只生成这些IDL'
     )
 
+    parser.add_argument(
+        '--ipc-cache-dir',
+        help='IPC 中间缓存目录（用于批量生成时的 IPC 缓存共享）'
+    )
+
     args = parser.parse_args()
 
     # 读取配置文件
@@ -573,6 +578,12 @@ JSON 配置格式:
     if len(tasks) == 0:
         print("没有任务需要生成")
         return 0
+
+    # 如果指定了全局 IPC 缓存目录，添加到每个任务配置
+    if args.ipc_cache_dir:
+        for task in tasks:
+            if "--ipc-cache-dir" not in task:
+                task["--ipc-cache-dir"] = args.ipc_cache_dir
 
     print(f"从配置文件加载了 {len(tasks)} 个任务")
     print(f"配置文件: {config_path}")

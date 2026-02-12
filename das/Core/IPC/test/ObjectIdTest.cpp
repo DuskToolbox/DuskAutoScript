@@ -1,16 +1,21 @@
 #include <das/Core/IPC/ObjectId.h>
 #include <gtest/gtest.h>
 
+using DAS::Core::IPC::DecodeObjectId;
+using DAS::Core::IPC::EncodeObjectId;
+using DAS::Core::IPC::IncrementGeneration;
+using DAS::Core::IPC::IsNullObjectId;
+using DAS::Core::IPC::IsValidObjectId;
 using DAS::Core::IPC::ObjectId;
 
 // Test basic encode/decode with non-zero values
 TEST(ObjectIdTest, EncodeDecode_BasicValues)
 {
-    ObjectId original{.process_id = 1, .generation = 2, .local_id = 3};
+    ObjectId original{.session_id = 1, .generation = 2, .local_id = 3};
     uint64_t encoded = EncodeObjectId(original);
     ObjectId decoded = DecodeObjectId(encoded);
 
-    EXPECT_EQ(decoded.process_id, 1);
+    EXPECT_EQ(decoded.session_id, 1);
     EXPECT_EQ(decoded.generation, 2);
     EXPECT_EQ(decoded.local_id, 3);
 }
@@ -19,13 +24,13 @@ TEST(ObjectIdTest, EncodeDecode_BasicValues)
 TEST(ObjectIdTest, EncodeDecode_BoundaryValues)
 {
     ObjectId max_values{
-        .process_id = 0xFFFF,
+        .session_id = 0xFFFF,
         .generation = 0xFFFF,
         .local_id = 0xFFFFFFFF};
     uint64_t encoded = EncodeObjectId(max_values);
     ObjectId decoded = DecodeObjectId(encoded);
 
-    EXPECT_EQ(decoded.process_id, 0xFFFF);
+    EXPECT_EQ(decoded.session_id, 0xFFFF);
     EXPECT_EQ(decoded.generation, 0xFFFF);
     EXPECT_EQ(decoded.local_id, 0xFFFFFFFF);
 }
@@ -33,12 +38,12 @@ TEST(ObjectIdTest, EncodeDecode_BoundaryValues)
 // Test encode/decode with all zero values
 TEST(ObjectIdTest, EncodeDecode_ZeroValues)
 {
-    ObjectId zero{.process_id = 0, .generation = 0, .local_id = 0};
+    ObjectId zero{.session_id = 0, .generation = 0, .local_id = 0};
     uint64_t encoded = EncodeObjectId(zero);
     ObjectId decoded = DecodeObjectId(encoded);
 
     EXPECT_EQ(encoded, 0);
-    EXPECT_EQ(decoded.process_id, 0);
+    EXPECT_EQ(decoded.session_id, 0);
     EXPECT_EQ(decoded.generation, 0);
     EXPECT_EQ(decoded.local_id, 0);
 }
@@ -59,28 +64,28 @@ TEST(ObjectIdTest, IncrementGeneration_Overflow)
 // Test IsValidObjectId with matching generation
 TEST(ObjectIdTest, IsValidObjectId_MatchingGeneration)
 {
-    ObjectId obj{.generation = 5, .local_id = 100, .process_id = 1};
+    ObjectId obj{.session_id = 1, .generation = 5, .local_id = 100};
     EXPECT_TRUE(IsValidObjectId(obj, 5));
 }
 
 // Test IsValidObjectId with non-matching generation
 TEST(ObjectIdTest, IsValidObjectId_NonMatchingGeneration)
 {
-    ObjectId obj{.generation = 5, .local_id = 100, .process_id = 1};
+    ObjectId obj{.session_id = 1, .generation = 5, .local_id = 100};
     EXPECT_FALSE(IsValidObjectId(obj, 10));
 }
 
 // Test IsNullObjectId with all-zero struct
 TEST(ObjectIdTest, IsNullObjectId_Struct_AllZero)
 {
-    ObjectId zero{.process_id = 0, .generation = 0, .local_id = 0};
+    ObjectId zero{.session_id = 0, .generation = 0, .local_id = 0};
     EXPECT_TRUE(IsNullObjectId(zero));
 }
 
 // Test IsNullObjectId with non-zero struct
 TEST(ObjectIdTest, IsNullObjectId_Struct_NonZero)
 {
-    ObjectId non_zero{.process_id = 1, .generation = 0, .local_id = 0};
+    ObjectId non_zero{.session_id = 1, .generation = 0, .local_id = 0};
     EXPECT_FALSE(IsNullObjectId(non_zero));
 }
 
@@ -93,7 +98,7 @@ TEST(ObjectIdTest, IsNullObjectId_EncodedZero)
 // Test IsNullObjectId with encoded non-zero
 TEST(ObjectIdTest, IsNullObjectId_EncodedNonZero)
 {
-    ObjectId obj{.process_id = 1, .generation = 0, .local_id = 0};
+    ObjectId obj{.session_id = 1, .generation = 0, .local_id = 0};
     uint64_t encoded = EncodeObjectId(obj);
     EXPECT_FALSE(IsNullObjectId(encoded));
 }

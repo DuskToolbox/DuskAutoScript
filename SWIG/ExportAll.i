@@ -1123,3 +1123,7 @@ SWIGEXPORT jstring JNICALL Java_org_das_DuskAutoScriptJNI_DasReadOnlyString_1toJ
 // ============================================================================
 %include <DasTypeMapsExtend.i>
 
+%{
+#include <das/DasInternalRetPluginPackage.h>
+%}
+%include <das/DasInternalRetPluginPackage.h>

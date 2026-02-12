@@ -7,6 +7,11 @@
 #include <das/IDasBase.h>
 #include <limits>
 
+namespace Das::PluginInterface
+{
+    DAS_INTERFACE IDasPluginPackage;
+} // namespace Das::PluginInterface
+
 namespace Das::ExportInterface
 {
     struct IDasSourceLocation;
@@ -298,5 +303,7 @@ struct DasSourceLocationOnStack final : DAS::ExportInterface::IDasSourceLocation
             __VA_ARGS__,                                                       \
             &_das_internal_source_location);                                   \
     } while (false)
+
+typedef DasResult(DAS_STD_CALL *DasCoCreatePluginFunc)(Das::PluginInterface::IDasPluginPackage);
 
 #endif // DAS_API_H

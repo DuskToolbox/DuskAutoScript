@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
+#include <das/DasExport.h>
 #include <das/IDasBase.h>
 #include <memory>
 #include <string>
@@ -17,7 +18,13 @@ namespace Core
     {
         class SharedMemoryPool;
 
-        class IpcTransport
+// Disable C4251 warning for std::unique_ptr in exported classes
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4251)
+#endif
+
+        class DAS_API IpcTransport
         {
         public:
             IpcTransport();
@@ -63,6 +70,11 @@ namespace Core
             struct Impl;
             std::unique_ptr<Impl> impl_;
         };
+
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+
     }
 }
 DAS_NS_END
