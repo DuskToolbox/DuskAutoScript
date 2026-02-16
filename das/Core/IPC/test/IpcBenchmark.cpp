@@ -604,8 +604,7 @@ TEST_F(IpcBenchmark, Concurrent_32Threads)
 // Static member definition
 std::vector<BenchmarkSuite> IpcBenchmark::benchmark_suites_;
 
-// ====== Main Function ======
-
+#ifdef DAS_ENABLE_BENCHMARK_MAIN
 int main(int argc, char** argv)
 {
     testing::InitGoogleTest(&argc, argv);
@@ -650,3 +649,4 @@ int main(int argc, char** argv)
 
     return result;
 }
+#endif
