@@ -353,7 +353,9 @@ TEST(RemoteObjectRegistryTest, LookupByInterface)
     registry.RegisterObject(obj_id, iid, 1, "test_object", 1);
 
     RemoteObjectInfo info;
-    DasResult        result = registry.LookupByInterface(iid, info);
+    DasResult        result = registry.LookupByInterface(
+        RemoteObjectRegistry::ComputeInterfaceId(iid),
+        info);
 
     EXPECT_EQ(result, DAS_S_OK);
     EXPECT_EQ(info.object_id.session_id, 1);
@@ -398,7 +400,9 @@ TEST(RemoteObjectRegistryTest, LookupByInterface_NotFound)
         0xF0);
 
     RemoteObjectInfo info;
-    DasResult        result = registry.LookupByInterface(other_iid, info);
+    DasResult        result = registry.LookupByInterface(
+        RemoteObjectRegistry::ComputeInterfaceId(other_iid),
+        info);
 
     EXPECT_EQ(result, DAS_E_IPC_OBJECT_NOT_FOUND);
 }

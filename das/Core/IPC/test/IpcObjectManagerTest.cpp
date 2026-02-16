@@ -47,19 +47,15 @@ TEST_F(
     RegisterLocalObject_MultipleObjectsHaveDifferentLocalIds)
 {
     int      obj1 = 1, obj2 = 2, obj3 = 3;
-    uint64_t id1 = 0, id2 = 0, id3 = 0;
+    ObjectId id1{}, id2{}, id3{};
 
     ASSERT_EQ(manager_->RegisterLocalObject(&obj1, id1), DAS_S_OK);
     ASSERT_EQ(manager_->RegisterLocalObject(&obj2, id2), DAS_S_OK);
     ASSERT_EQ(manager_->RegisterLocalObject(&obj3, id3), DAS_S_OK);
 
-    ObjectId decoded1 = DecodeObjectId(id1);
-    ObjectId decoded2 = DecodeObjectId(id2);
-    ObjectId decoded3 = DecodeObjectId(id3);
-
-    EXPECT_NE(decoded1.local_id, decoded2.local_id);
-    EXPECT_NE(decoded2.local_id, decoded3.local_id);
-    EXPECT_NE(decoded1.local_id, decoded3.local_id);
+    EXPECT_NE(id1.local_id, id2.local_id);
+    EXPECT_NE(id2.local_id, id3.local_id);
+    EXPECT_NE(id1.local_id, id3.local_id);
 }
 
 // ====== ValidateHandle Tests ======
@@ -67,7 +63,7 @@ TEST_F(
 TEST_F(IpcObjectManagerTest, IsValidObject_ValidHandle)
 {
     int      dummy = 42;
-    uint64_t object_id = 0;
+    ObjectId object_id{.session_id = 0, .generation = 0, .local_id = 0};
 
     ASSERT_EQ(manager_->RegisterLocalObject(&dummy, object_id), DAS_S_OK);
     EXPECT_TRUE(manager_->IsValidObject(object_id));
@@ -75,15 +71,15 @@ TEST_F(IpcObjectManagerTest, IsValidObject_ValidHandle)
 
 TEST_F(IpcObjectManagerTest, IsValidObject_NullHandle)
 {
-    EXPECT_FALSE(manager_->IsValidObject(0));
+    ObjectId null_id{.session_id = 0, .generation = 0, .local_id = 0};
+    EXPECT_FALSE(manager_->IsValidObject(null_id));
 }
 
 TEST_F(IpcObjectManagerTest, IsValidObject_UnregisteredHandle)
 {
     ObjectId fake_id{.session_id = 1, .generation = 1, .local_id = 99999};
-    uint64_t encoded = EncodeObjectId(fake_id);
 
-    EXPECT_FALSE(manager_->IsValidObject(encoded));
+    EXPECT_FALSE(manager_->IsValidObject(fake_id));
 }
 
 // ====== IsLocal Tests ======
@@ -91,7 +87,7 @@ TEST_F(IpcObjectManagerTest, IsValidObject_UnregisteredHandle)
 TEST_F(IpcObjectManagerTest, IsLocalObject_LocalObject)
 {
     int      dummy = 42;
-    uint64_t object_id = 0;
+    ObjectId object_id{0, 0, 0};
 
     ASSERT_EQ(manager_->RegisterLocalObject(&dummy, object_id), DAS_S_OK);
     EXPECT_TRUE(manager_->IsLocalObject(object_id));
@@ -104,18 +100,16 @@ TEST_F(IpcObjectManagerTest, IsLocalObject_RemoteObject)
         .session_id = 2, // different process
         .generation = 1,
         .local_id = 100};
-    uint64_t remote_encoded = EncodeObjectId(remote_id);
 
-    ASSERT_EQ(manager_->RegisterRemoteObject(remote_encoded), DAS_S_OK);
-    EXPECT_FALSE(manager_->IsLocalObject(remote_encoded));
+    ASSERT_EQ(manager_->RegisterRemoteObject(remote_id), DAS_S_OK);
+    EXPECT_FALSE(manager_->IsLocalObject(remote_id));
 }
 
 TEST_F(IpcObjectManagerTest, IsLocalObject_NonExistentObject)
 {
     ObjectId fake_id{.session_id = 1, .generation = 1, .local_id = 99999};
-    uint64_t encoded = EncodeObjectId(fake_id);
 
-    EXPECT_FALSE(manager_->IsLocalObject(encoded));
+    EXPECT_FALSE(manager_->IsLocalObject(fake_id));
 }
 
 // ====== Stale Handle Tests ======
@@ -123,7 +117,7 @@ TEST_F(IpcObjectManagerTest, IsLocalObject_NonExistentObject)
 TEST_F(IpcObjectManagerTest, StaleHandle_AfterUnregister)
 {
     int      dummy = 42;
-    uint64_t object_id = 0;
+    ObjectId object_id{0, 0, 0};
 
     ASSERT_EQ(manager_->RegisterLocalObject(&dummy, object_id), DAS_S_OK);
     EXPECT_TRUE(manager_->IsValidObject(object_id));
@@ -138,7 +132,7 @@ TEST_F(IpcObjectManagerTest, StaleHandle_AfterUnregister)
 TEST_F(IpcObjectManagerTest, StaleHandle_AfterRelease)
 {
     int      dummy = 42;
-    uint64_t object_id = 0;
+    ObjectId object_id{0, 0, 0};
 
     ASSERT_EQ(manager_->RegisterLocalObject(&dummy, object_id), DAS_S_OK);
 
@@ -154,7 +148,7 @@ TEST_F(IpcObjectManagerTest, StaleHandle_AfterRelease)
 TEST_F(IpcObjectManagerTest, AddRef_IncrementsRefcount)
 {
     int      dummy = 42;
-    uint64_t object_id = 0;
+    ObjectId object_id{0, 0, 0};
 
     ASSERT_EQ(manager_->RegisterLocalObject(&dummy, object_id), DAS_S_OK);
 
@@ -180,7 +174,7 @@ TEST_F(IpcObjectManagerTest, AddRef_IncrementsRefcount)
 TEST_F(IpcObjectManagerTest, LookupObject_LocalObject)
 {
     int      dummy = 42;
-    uint64_t object_id = 0;
+    ObjectId object_id{0, 0, 0};
 
     ASSERT_EQ(manager_->RegisterLocalObject(&dummy, object_id), DAS_S_OK);
 
@@ -195,17 +189,17 @@ TEST_F(IpcObjectManagerTest, LookupObject_RemoteObjectFails)
     ObjectId remote_id{.session_id = 2, .generation = 1, .local_id = 100};
     uint64_t remote_encoded = EncodeObjectId(remote_id);
 
-    ASSERT_EQ(manager_->RegisterRemoteObject(remote_encoded), DAS_S_OK);
+    ASSERT_EQ(manager_->RegisterRemoteObject(remote_id), DAS_S_OK);
 
     void* ptr = nullptr;
-    auto  result = manager_->LookupObject(remote_encoded, &ptr);
+    auto  result = manager_->LookupObject(remote_id, &ptr);
     EXPECT_NE(result, DAS_S_OK); // Should fail for remote objects
 }
 
 TEST_F(IpcObjectManagerTest, LookupObject_NullPointer)
 {
     int      dummy = 42;
-    uint64_t object_id = 0;
+    ObjectId object_id{0, 0, 0};
 
     ASSERT_EQ(manager_->RegisterLocalObject(&dummy, object_id), DAS_S_OK);
 

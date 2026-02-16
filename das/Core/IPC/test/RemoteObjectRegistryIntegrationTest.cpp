@@ -236,7 +236,9 @@ TEST_F(RemoteObjectRegistryIntegrationTest, DuplicateNames)
     EXPECT_EQ(found_info.session_id, session_id1);
 
     RemoteObjectInfo info1;
-    result = registry_->LookupByInterface(iid1, info1);
+    result = registry_->LookupByInterface(
+        RemoteObjectRegistry::ComputeInterfaceId(iid1),
+        info1);
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_EQ(info1.session_id, session_id1);
 
