@@ -129,7 +129,11 @@ namespace Core
         RouteKey ForwardingRouter::CreateRouteKey(
             const IPCMessageHeader& header) const
         {
-            return RouteKey(header.object_id, header.interface_id);
+            return RouteKey(
+                header.session_id,
+                header.generation,
+                header.local_id,
+                header.interface_id);
         }
 
     }

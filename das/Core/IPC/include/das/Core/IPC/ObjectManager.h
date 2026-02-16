@@ -16,7 +16,7 @@ namespace Core
     {
         struct RemoteObjectHandle
         {
-            uint64_t object_id;
+            ObjectId object_id;
             uint32_t refcount;
             void*    object_ptr;
             bool     is_local;
@@ -33,21 +33,22 @@ namespace Core
 
             DasResult RegisterLocalObject(
                 void*     object_ptr,
-                uint64_t& out_object_id);
-            DasResult RegisterRemoteObject(uint64_t object_id);
-            DasResult UnregisterObject(uint64_t object_id);
+                ObjectId& out_object_id);
+            DasResult RegisterRemoteObject(const ObjectId& object_id);
+            DasResult UnregisterObject(const ObjectId& object_id);
 
-            DasResult AddRef(uint64_t object_id);
-            DasResult Release(uint64_t object_id);
+            DasResult AddRef(const ObjectId& object_id);
+            DasResult Release(const ObjectId& object_id);
 
-            DasResult LookupObject(uint64_t object_id, void** object_ptr);
+            DasResult LookupObject(
+                const ObjectId& object_id,
+                void**          object_ptr);
 
-            bool IsValidObject(uint64_t object_id) const;
-            bool IsLocalObject(uint64_t object_id) const;
+            bool IsValidObject(const ObjectId& object_id) const;
+            bool IsLocalObject(const ObjectId& object_id) const;
 
         private:
-            DasResult ValidateObjectId(uint64_t object_id, ObjectId& out_id)
-                const;
+            static DasResult ValidateObjectId(const ObjectId& object_id);
 
             struct Impl;
             std::unique_ptr<Impl> impl_;

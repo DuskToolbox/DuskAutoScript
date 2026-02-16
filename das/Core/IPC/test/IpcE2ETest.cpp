@@ -22,10 +22,7 @@
 #include <thread>
 
 using DAS::Core::IPC::ConnectionManager;
-using DAS::Core::IPC::DecodeObjectId;
 using DAS::Core::IPC::DistributedObjectManager;
-using DAS::Core::IPC::EncodeObjectId;
-using DAS::Core::IPC::FromV1;
 using DAS::Core::IPC::IPCMessageHeader;
 using DAS::Core::IPC::IpcRunLoop;
 using DAS::Core::IPC::IpcTransport;
@@ -36,7 +33,6 @@ using DAS::Core::IPC::SerializerWriter;
 using DAS::Core::IPC::SharedMemoryBlock;
 using DAS::Core::IPC::SharedMemoryManager;
 using DAS::Core::IPC::SharedMemoryPool;
-using DAS::Core::IPC::ToV1;
 
 // Helper classes for in-memory serialization testing
 class MemorySerializerWriter : public SerializerWriter
@@ -237,13 +233,17 @@ TEST_F(IpcE2ETest, ProxyStub_MultipleObjects)
 
 TEST_F(IpcE2ETest, ProxyStub_MessageRoundTrip)
 {
-    // Create a message
+    // Create a message with V2 header format
     IPCMessageHeader request{};
+    request.magic = IPCMessageHeader::MAGIC;
+    request.version = IPCMessageHeader::CURRENT_VERSION;
     request.call_id = 1;
-    request.message_type = MessageType::REQUEST;
+    request.message_type = static_cast<uint8_t>(MessageType::REQUEST);
     request.interface_id = 12345;
-    request.object_id = 0;
-    request.version = 1;
+    request.method_id = 42;
+    request.session_id = 0;
+    request.generation = 0;
+    request.local_id = 0;
 
     std::string method_args = "test_argument_data";
 
@@ -252,8 +252,7 @@ TEST_F(IpcE2ETest, ProxyStub_MessageRoundTrip)
     writer.WriteInt32(42); // Method ID
     writer.WriteString(method_args.c_str(), method_args.size());
 
-    // Convert header to wire format
-    auto v1_header = ToV1(request);
+    // V2 header is already in wire format, no conversion needed
 
     // Deserialize
     MemorySerializerReader reader(writer.GetBuffer());
@@ -265,11 +264,10 @@ TEST_F(IpcE2ETest, ProxyStub_MessageRoundTrip)
     ASSERT_EQ(reader.ReadString(received_args), DAS_S_OK);
     EXPECT_EQ(received_args, method_args);
 
-    // Verify header round-trip
-    auto restored = FromV1(v1_header);
-    EXPECT_EQ(restored.call_id, request.call_id);
-    EXPECT_EQ(restored.message_type, request.message_type);
-    EXPECT_EQ(restored.interface_id, request.interface_id);
+    // Verify header fields are correct
+    EXPECT_EQ(request.call_id, 1ULL);
+    EXPECT_EQ(request.message_type, static_cast<uint8_t>(MessageType::REQUEST));
+    EXPECT_EQ(request.interface_id, 12345U);
 }
 
 // ====== Connection Management E2E Tests ======
@@ -410,48 +408,55 @@ TEST_F(IpcE2ETest, FullPipeline_RequestResponse)
         plugin_object_manager_->RegisterRemoteObject(service_id),
         DAS_S_OK);
 
-    // 3. Plugin creates request
+    // 3. Plugin creates request with V2 header format
     IPCMessageHeader request{};
+    request.magic = IPCMessageHeader::MAGIC;
+    request.version = IPCMessageHeader::CURRENT_VERSION;
     request.call_id = 1;
-    request.message_type = MessageType::REQUEST;
+    request.message_type = static_cast<uint8_t>(MessageType::REQUEST);
     request.interface_id = 1;
-    request.object_id = service_id;
-    request.version = 1;
+    request.method_id = 1;
+    request.session_id = static_cast<uint16_t>(service_id >> 48);
+    request.generation = static_cast<uint16_t>((service_id >> 32) & 0xFFFF);
+    request.local_id = static_cast<uint32_t>(service_id & 0xFFFFFFFF);
 
     MemorySerializerWriter request_writer;
-    request_writer.WriteInt32(1); // Method ID: GetValue
-    request_writer.WriteInt32(0); // No arguments
+    request_writer.WriteInt32(1);
+    request_writer.WriteInt32(0);
 
-    // 4. Simulate request serialization -> transport -> deserialization
-    auto             v1_request = ToV1(request);
-    IPCMessageHeader received_request = FromV1(v1_request);
+    // 4. V2 header is already in wire format, no conversion needed
+    IPCMessageHeader received_request = request;
 
     MemorySerializerReader request_reader(request_writer.GetBuffer());
     int32_t                method_id;
     ASSERT_EQ(request_reader.ReadInt32(&method_id), DAS_S_OK);
     EXPECT_EQ(method_id, 1);
 
-    // 5. Host processes request
+    // 5. Host processes request - reconstruct object_id from
+    // session/generation/local_id
+    uint64_t received_object_id =
+        (static_cast<uint64_t>(received_request.session_id) << 48)
+        | (static_cast<uint64_t>(received_request.generation) << 32)
+        | static_cast<uint64_t>(received_request.local_id);
     void* obj_ptr = nullptr;
     ASSERT_EQ(
-        host_object_manager_->LookupObject(
-            received_request.object_id,
-            &obj_ptr),
+        host_object_manager_->LookupObject(received_object_id, &obj_ptr),
         DAS_S_OK);
     EXPECT_NE(obj_ptr, nullptr);
 
     // 6. Host sends response
     IPCMessageHeader response{};
+    response.magic = IPCMessageHeader::MAGIC;
+    response.version = IPCMessageHeader::CURRENT_VERSION;
     response.call_id = request.call_id;
-    response.message_type = MessageType::RESPONSE;
+    response.message_type = static_cast<uint8_t>(MessageType::RESPONSE);
     response.error_code = DAS_S_OK;
 
     MemorySerializerWriter response_writer;
-    response_writer.WriteInt32(100); // Return value
+    response_writer.WriteInt32(100);
 
-    // 7. Plugin receives response
-    auto             v1_response = ToV1(response);
-    IPCMessageHeader received_response = FromV1(v1_response);
+    // 7. Plugin receives response - no conversion needed for V2
+    IPCMessageHeader received_response = response;
     EXPECT_EQ(received_response.call_id, request.call_id);
     EXPECT_EQ(received_response.error_code, DAS_S_OK);
 

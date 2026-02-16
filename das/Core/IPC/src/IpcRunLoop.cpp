@@ -106,7 +106,7 @@ namespace Core
             uint64_t         call_id = impl_->next_call_id_.fetch_add(1);
             IPCMessageHeader header = request_header;
             header.call_id = call_id;
-            header.message_type = MessageType::REQUEST;
+            header.message_type = static_cast<uint8_t>(MessageType::REQUEST);
 
             {
                 std::unique_lock<std::mutex> lock(impl_->pending_mutex_);
@@ -153,7 +153,8 @@ namespace Core
 
                 if (result == DAS_S_OK)
                 {
-                    if (msg_header.message_type == MessageType::RESPONSE
+                    if (msg_header.message_type
+                            == static_cast<uint8_t>(MessageType::RESPONSE)
                         && msg_header.call_id == call_id)
                     {
                         std::unique_lock<std::mutex> lock(
@@ -201,7 +202,7 @@ namespace Core
             size_t                  body_size)
         {
             IPCMessageHeader header = response_header;
-            header.message_type = MessageType::RESPONSE;
+            header.message_type = static_cast<uint8_t>(MessageType::RESPONSE);
 
             return impl_->transport_->Send(header, body, body_size);
         }
@@ -212,7 +213,7 @@ namespace Core
             size_t                  body_size)
         {
             IPCMessageHeader header = event_header;
-            header.message_type = MessageType::EVENT;
+            header.message_type = static_cast<uint8_t>(MessageType::EVENT);
 
             return impl_->transport_->Send(header, body, body_size);
         }
@@ -247,7 +248,8 @@ namespace Core
             const uint8_t*          body,
             size_t                  body_size)
         {
-            if (header.message_type == MessageType::RESPONSE)
+            if (header.message_type
+                == static_cast<uint8_t>(MessageType::RESPONSE))
             {
                 std::unique_lock<std::mutex> lock(impl_->pending_mutex_);
                 auto it = impl_->pending_calls_.find(header.call_id);
@@ -265,12 +267,14 @@ namespace Core
                 return DAS_S_OK;
             }
 
-            if (header.message_type == MessageType::REQUEST)
+            if (header.message_type
+                == static_cast<uint8_t>(MessageType::REQUEST))
             {
                 if (!impl_->request_handler_)
                 {
                     IPCMessageHeader response = header;
-                    response.message_type = MessageType::RESPONSE;
+                    response.message_type =
+                        static_cast<uint8_t>(MessageType::RESPONSE);
                     response.error_code = DAS_E_IPC_INVALID_INTERFACE_ID;
 
                     impl_->transport_->Send(response, nullptr, 0);
@@ -282,12 +286,13 @@ namespace Core
                 return result;
             }
 
-            if (header.message_type == MessageType::EVENT)
+            if (header.message_type == static_cast<uint8_t>(MessageType::EVENT))
             {
                 return DAS_S_OK;
             }
 
-            if (header.message_type == MessageType::HEARTBEAT)
+            if (header.message_type
+                == static_cast<uint8_t>(MessageType::HEARTBEAT))
             {
                 return DAS_S_OK;
             }

@@ -105,7 +105,7 @@ namespace Core
                 return DAS_E_IPC_CONNECTION_LOST;
             }
 
-            size_t total_size = sizeof(MessageHeaderV1) + body_size;
+            size_t total_size = sizeof(IPCMessageHeader) + body_size;
 
             if (total_size <= impl_->max_message_size_)
             {
@@ -147,15 +147,22 @@ namespace Core
                     return DAS_E_IPC_TIMEOUT;
                 }
 
-                if (received_size < sizeof(MessageHeaderV1))
+                if (received_size < sizeof(IPCMessageHeader))
                 {
                     return DAS_E_IPC_INVALID_MESSAGE_HEADER;
                 }
 
-                MessageHeaderV1 v1_header;
-                std::memcpy(&v1_header, buffer.data(), sizeof(MessageHeaderV1));
+                std::memcpy(
+                    &out_header,
+                    buffer.data(),
+                    sizeof(IPCMessageHeader));
 
-                out_header = FromV1(v1_header);
+                // 验证 magic 和 version
+                if (out_header.magic != IPCMessageHeader::MAGIC
+                    || out_header.version != IPCMessageHeader::CURRENT_VERSION)
+                {
+                    return DAS_E_IPC_INVALID_MESSAGE_HEADER;
+                }
 
                 if (out_header.flags & kFlagLargeMessage)
                 {
@@ -165,7 +172,7 @@ namespace Core
                     }
 
                     if (received_size
-                        < sizeof(MessageHeaderV1) + sizeof(uint64_t))
+                        < sizeof(IPCMessageHeader) + sizeof(uint64_t))
                     {
                         return DAS_E_IPC_INVALID_MESSAGE;
                     }
@@ -173,7 +180,7 @@ namespace Core
                     uint64_t handle;
                     std::memcpy(
                         &handle,
-                        buffer.data() + sizeof(MessageHeaderV1),
+                        buffer.data() + sizeof(IPCMessageHeader),
                         sizeof(uint64_t));
 
                     SharedMemoryBlock shm_block;
@@ -195,10 +202,10 @@ namespace Core
                     return DAS_S_OK;
                 }
 
-                if (received_size > sizeof(MessageHeaderV1))
+                if (received_size > sizeof(IPCMessageHeader))
                 {
                     out_body.assign(
-                        buffer.data() + sizeof(MessageHeaderV1),
+                        buffer.data() + sizeof(IPCMessageHeader),
                         buffer.data() + received_size);
                 }
                 else
@@ -244,15 +251,13 @@ namespace Core
             const uint8_t*          body,
             size_t                  body_size)
         {
-            MessageHeaderV1 v1_header = ToV1(header);
+            std::vector<uint8_t> buffer(sizeof(IPCMessageHeader) + body_size);
 
-            std::vector<uint8_t> buffer(sizeof(MessageHeaderV1) + body_size);
-
-            std::memcpy(buffer.data(), &v1_header, sizeof(MessageHeaderV1));
+            std::memcpy(buffer.data(), &header, sizeof(IPCMessageHeader));
             if (body != nullptr && body_size > 0)
             {
                 std::memcpy(
-                    buffer.data() + sizeof(MessageHeaderV1),
+                    buffer.data() + sizeof(IPCMessageHeader),
                     body,
                     body_size);
             }

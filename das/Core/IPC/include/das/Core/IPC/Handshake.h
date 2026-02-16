@@ -53,11 +53,11 @@ namespace Core
          */
         struct alignas(8) HelloRequestV1
         {
-            uint32_t protocol_version; ///< 协议版本（当前为 1）
+            uint32_t protocol_version; ///< 协议版本（当前为 2）
             uint32_t pid;              ///< Child 进程 ID
             char     plugin_name[64];  ///< 插件名称（UTF-8，null-terminated）
 
-            static constexpr uint32_t CURRENT_PROTOCOL_VERSION = 1;
+            static constexpr uint32_t CURRENT_PROTOCOL_VERSION = 2;
             static constexpr size_t   PLUGIN_NAME_SIZE = 64;
         };
 

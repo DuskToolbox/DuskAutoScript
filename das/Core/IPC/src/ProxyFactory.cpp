@@ -82,7 +82,7 @@ namespace Core
                 // 减少对象的引用计数（即使失败也不影响缓存清理）
                 if (object_manager_)
                 {
-                    object_manager_->Release(EncodeObjectId(object_id));
+                    object_manager_->Release(object_id);
                 }
 
                 return DAS_S_OK;
@@ -113,7 +113,7 @@ namespace Core
             {
                 if (object_manager_)
                 {
-                    object_manager_->Release(entry.first);
+                    object_manager_->Release(DecodeObjectId(entry.first));
                 }
             }
 
@@ -140,7 +140,7 @@ namespace Core
                 // 增加引用计数
                 if (object_manager_)
                 {
-                    object_manager_->AddRef(encoded_id);
+                    object_manager_->AddRef(DecodeObjectId(encoded_id));
                 }
                 return it->second.proxy;
             }

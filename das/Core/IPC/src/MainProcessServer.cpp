@@ -428,7 +428,10 @@ namespace Core
         DasResult MainProcessServer::ValidateTargetObject(
             const IPCMessageHeader& header) const
         {
-            ObjectId obj_id = DecodeObjectId(header.object_id);
+            ObjectId obj_id = {
+                .session_id = header.session_id,
+                .generation = header.generation,
+                .local_id = header.local_id};
 
             if (IsNullObjectId(obj_id))
             {

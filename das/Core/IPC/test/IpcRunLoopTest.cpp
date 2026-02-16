@@ -28,12 +28,16 @@ protected:
     IPCMessageHeader CreateTestHeader(MessageType type = MessageType::REQUEST)
     {
         IPCMessageHeader header{};
+        header.magic = IPCMessageHeader::MAGIC;
+        header.version = IPCMessageHeader::CURRENT_VERSION;
         header.call_id = 1;
-        header.message_type = type;
+        header.message_type = static_cast<uint8_t>(type);
         header.error_code = DAS_S_OK;
         header.interface_id = 1;
-        header.object_id = 0;
-        header.version = 1;
+        header.method_id = 0;
+        header.session_id = 0;
+        header.generation = 0;
+        header.local_id = 0;
         header.flags = 0;
         header.body_size = 0;
         return header;

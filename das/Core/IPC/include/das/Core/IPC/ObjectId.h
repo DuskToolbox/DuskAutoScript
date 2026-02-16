@@ -54,8 +54,36 @@ namespace Core
         {
             return encoded_id == 0;
         }
+
+        /// @brief ObjectId 比较运算符（用于容器）
+        constexpr bool operator==(
+            const ObjectId& lhs,
+            const ObjectId& rhs) noexcept
+        {
+            return lhs.session_id == rhs.session_id
+                   && lhs.generation == rhs.generation
+                   && lhs.local_id == rhs.local_id;
+        }
+
+        constexpr bool operator!=(
+            const ObjectId& lhs,
+            const ObjectId& rhs) noexcept
+        {
+            return !(lhs == rhs);
+        }
     }
 }
 DAS_NS_END
+
+/// @brief std::hash 特化，用于 unordered_map/unordered_set
+template <>
+struct std::hash<DAS::Core::IPC::ObjectId>
+{
+    size_t operator()(const DAS::Core::IPC::ObjectId& obj_id) const noexcept
+    {
+        // 使用 EncodeObjectId 得到的 uint64_t 作为 hash 值
+        return static_cast<size_t>(DAS::Core::IPC::EncodeObjectId(obj_id));
+    }
+};
 
 #endif // DAS_CORE_IPC_OBJECT_ID_H

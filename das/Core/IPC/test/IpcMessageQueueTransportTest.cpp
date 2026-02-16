@@ -3,11 +3,9 @@
 #include <thread>
 #include <vector>
 
-using DAS::Core::IPC::FromV1;
 using DAS::Core::IPC::IPCMessageHeader;
 using DAS::Core::IPC::IpcTransport;
 using DAS::Core::IPC::MessageType;
-using DAS::Core::IPC::ToV1;
 
 // Test fixture for MessageQueueTransport tests
 class IpcMessageQueueTransportTest : public ::testing::Test
@@ -33,12 +31,16 @@ protected:
     IPCMessageHeader CreateTestHeader(MessageType type = MessageType::REQUEST)
     {
         IPCMessageHeader header{};
+        header.magic = IPCMessageHeader::MAGIC;
+        header.version = IPCMessageHeader::CURRENT_VERSION;
         header.call_id = 1;
-        header.message_type = type;
+        header.message_type = static_cast<uint8_t>(type);
         header.error_code = DAS_S_OK;
         header.interface_id = 1;
-        header.object_id = 0;
-        header.version = 1;
+        header.method_id = 0;
+        header.session_id = 0;
+        header.generation = 0;
+        header.local_id = 0;
         header.flags = 0;
         header.body_size = 0;
         return header;
@@ -202,29 +204,31 @@ TEST_F(IpcMessageQueueTransportTest, Receive_Timeout)
     EXPECT_EQ(result, DAS_E_IPC_TIMEOUT);
 }
 
-// ====== Message Header Conversion Tests ======
+// ====== Message Header V2 Tests ======
 
-TEST_F(IpcMessageQueueTransportTest, ToV1_FromV1_RoundTrip)
+TEST_F(IpcMessageQueueTransportTest, HeaderV2_FieldsCorrect)
 {
-    IPCMessageHeader original = CreateTestHeader();
-    original.call_id = 12345;
-    original.error_code = -42;
-    original.interface_id = 999;
-    original.object_id = 0xDEADBEEF;
-    original.flags = 0xFF;
-    original.body_size = 1024;
+    IPCMessageHeader header = CreateTestHeader();
+    header.call_id = 12345;
+    header.error_code = -42;
+    header.interface_id = 999;
+    header.method_id = 42;
+    header.session_id = 1;
+    header.generation = 2;
+    header.local_id = 0xDEAD;
+    header.flags = 0xFF;
+    header.body_size = 1024;
 
-    auto v1 = ToV1(original);
-    auto restored = FromV1(v1);
-
-    EXPECT_EQ(restored.call_id, original.call_id);
-    EXPECT_EQ(restored.message_type, original.message_type);
-    EXPECT_EQ(restored.error_code, original.error_code);
-    EXPECT_EQ(restored.interface_id, original.interface_id);
-    EXPECT_EQ(restored.object_id, original.object_id);
-    EXPECT_EQ(restored.version, original.version);
-    EXPECT_EQ(restored.flags, original.flags);
-    EXPECT_EQ(restored.body_size, original.body_size);
+    EXPECT_EQ(header.magic, IPCMessageHeader::MAGIC);
+    EXPECT_EQ(header.version, IPCMessageHeader::CURRENT_VERSION);
+    EXPECT_EQ(header.call_id, 12345ULL);
+    EXPECT_EQ(header.interface_id, 999U);
+    EXPECT_EQ(header.method_id, 42U);
+    EXPECT_EQ(header.session_id, 1U);
+    EXPECT_EQ(header.generation, 2U);
+    EXPECT_EQ(header.local_id, 0xDEADU);
+    EXPECT_EQ(header.flags, 0xFFU);
+    EXPECT_EQ(header.body_size, 1024U);
 }
 
 // ====== Concurrency Tests ======

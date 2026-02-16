@@ -40,26 +40,36 @@ namespace Core
 
         struct RouteKey
         {
-            uint64_t object_id;    // 对象ID
+            uint16_t session_id;   // 会话ID
+            uint16_t generation;   // 对象版本
+            uint32_t local_id;     // 本地对象ID
             uint32_t interface_id; // 接口ID
 
-            RouteKey() : object_id(0), interface_id(0) {}
+            RouteKey()
+                : session_id(0), generation(0), local_id(0), interface_id(0)
+            {
+            }
 
-            RouteKey(uint64_t oid, uint32_t iid)
-                : object_id(oid), interface_id(iid)
+            RouteKey(uint16_t sid, uint16_t gen, uint32_t lid, uint32_t iid)
+                : session_id(sid), generation(gen), local_id(lid),
+                  interface_id(iid)
             {
             }
 
             bool operator==(const RouteKey& other) const
             {
-                return object_id == other.object_id
+                return session_id == other.session_id
+                       && generation == other.generation
+                       && local_id == other.local_id
                        && interface_id == other.interface_id;
             }
 
             size_t hash() const
             {
-                return static_cast<size_t>(object_id)
-                       ^ (static_cast<size_t>(interface_id) << 32);
+                return static_cast<size_t>(session_id)
+                       | (static_cast<size_t>(generation) << 16)
+                       | (static_cast<size_t>(local_id) << 32)
+                       | (static_cast<size_t>(interface_id) << 48);
             }
         };
 

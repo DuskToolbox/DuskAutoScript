@@ -84,17 +84,19 @@ namespace Core
                 MessageType       message_type = MessageType::REQUEST,
                 size_t            body_size = 0) const
             {
-                (void)method_id; // 避免未使用参数警告
-                header.call_id = call_id;
-                header.message_type = message_type;
-                header.error_code = DAS_S_OK;
-                header.type_id =
-                    DasGuid{}; // Will be filled by derived class if needed
-                header.interface_id = interface_id_;
-                header.object_id = EncodeObjectId(object_id_);
+                header.magic = IPCMessageHeader::MAGIC;
                 header.version = IPCMessageHeader::CURRENT_VERSION;
+                header.message_type = static_cast<uint8_t>(message_type);
+                header.header_flags = 0;
+                header.call_id = call_id;
+                header.interface_id = interface_id_;
+                header.method_id = method_id;
                 header.flags = 0;
+                header.error_code = DAS_S_OK;
                 header.body_size = static_cast<uint32_t>(body_size);
+                header.session_id = object_id_.session_id;
+                header.generation = object_id_.generation;
+                header.local_id = object_id_.local_id;
             }
 
         private:

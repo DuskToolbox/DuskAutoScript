@@ -12,12 +12,10 @@ namespace Core
     {
         struct DistributedObjectManager::Impl
         {
-            std::unordered_map<uint64_t, RemoteObjectHandle> objects_;
+            std::unordered_map<ObjectId, RemoteObjectHandle> objects_;
             mutable std::shared_mutex                        objects_mutex_;
-            uint16_t local_session_id_{0};
-            uint32_t next_local_id_{1};
-            // Track current generation for each local_id (for stale handle
-            // detection)
+            uint16_t                               local_session_id_{0};
+            uint32_t                               next_local_id_{1};
             std::unordered_map<uint32_t, uint16_t> local_id_generations_;
         };
 
@@ -43,12 +41,9 @@ namespace Core
         }
 
         DasResult DistributedObjectManager::ValidateObjectId(
-            uint64_t  object_id,
-            ObjectId& out_id) const
+            const ObjectId& object_id)
         {
-            out_id = DecodeObjectId(object_id);
-
-            if (IsNullObjectId(out_id))
+            if (IsNullObjectId(object_id))
             {
                 return DAS_E_IPC_INVALID_OBJECT_ID;
             }
@@ -58,7 +53,7 @@ namespace Core
 
         DasResult DistributedObjectManager::RegisterLocalObject(
             void*     object_ptr,
-            uint64_t& out_object_id)
+            ObjectId& out_object_id)
         {
             if (object_ptr == nullptr)
             {
@@ -86,31 +81,28 @@ namespace Core
                 .generation = generation,
                 .local_id = local_id};
 
-            uint64_t encoded_id = EncodeObjectId(obj_id);
-
             RemoteObjectHandle handle{
-                .object_id = encoded_id,
+                .object_id = obj_id,
                 .refcount = 1,
                 .object_ptr = object_ptr,
                 .is_local = true};
 
             {
                 std::unique_lock<std::shared_mutex> lock(impl_->objects_mutex_);
-                impl_->objects_[encoded_id] = handle;
+                impl_->objects_[obj_id] = handle;
             }
 
-            out_object_id = encoded_id;
+            out_object_id = obj_id;
             return DAS_S_OK;
         }
 
         DasResult DistributedObjectManager::RegisterRemoteObject(
-            uint64_t object_id)
+            const ObjectId& object_id)
         {
-            ObjectId obj_id = DecodeObjectId(object_id);
-
-            if (IsNullObjectId(obj_id))
+            auto result = ValidateObjectId(object_id);
+            if (result != DAS_S_OK)
             {
-                return DAS_E_IPC_INVALID_OBJECT_ID;
+                return result;
             }
 
             RemoteObjectHandle handle{
@@ -127,10 +119,10 @@ namespace Core
             return DAS_S_OK;
         }
 
-        DasResult DistributedObjectManager::UnregisterObject(uint64_t object_id)
+        DasResult DistributedObjectManager::UnregisterObject(
+            const ObjectId& object_id)
         {
-            ObjectId obj_id;
-            auto     result = ValidateObjectId(object_id, obj_id);
+            auto result = ValidateObjectId(object_id);
             if (result != DAS_S_OK)
             {
                 return result;
@@ -145,18 +137,17 @@ namespace Core
 
             if (it->second.is_local)
             {
-                impl_->local_id_generations_[obj_id.local_id] =
-                    IncrementGeneration(obj_id.generation);
+                impl_->local_id_generations_[object_id.local_id] =
+                    IncrementGeneration(object_id.generation);
             }
 
             impl_->objects_.erase(it);
             return DAS_S_OK;
         }
 
-        DasResult DistributedObjectManager::AddRef(uint64_t object_id)
+        DasResult DistributedObjectManager::AddRef(const ObjectId& object_id)
         {
-            ObjectId obj_id;
-            auto     result = ValidateObjectId(object_id, obj_id);
+            auto result = ValidateObjectId(object_id);
             if (result != DAS_S_OK)
             {
                 return result;
@@ -166,12 +157,12 @@ namespace Core
             auto it = impl_->objects_.find(object_id);
             if (it == impl_->objects_.end())
             {
-                if (obj_id.session_id == impl_->local_session_id_)
+                if (object_id.session_id == impl_->local_session_id_)
                 {
                     auto gen_it =
-                        impl_->local_id_generations_.find(obj_id.local_id);
+                        impl_->local_id_generations_.find(object_id.local_id);
                     if (gen_it != impl_->local_id_generations_.end()
-                        && gen_it->second != obj_id.generation)
+                        && gen_it->second != object_id.generation)
                     {
                         return DAS_E_IPC_STALE_OBJECT_HANDLE;
                     }
@@ -183,10 +174,9 @@ namespace Core
             return DAS_S_OK;
         }
 
-        DasResult DistributedObjectManager::Release(uint64_t object_id)
+        DasResult DistributedObjectManager::Release(const ObjectId& object_id)
         {
-            ObjectId obj_id;
-            auto     result = ValidateObjectId(object_id, obj_id);
+            auto result = ValidateObjectId(object_id);
             if (result != DAS_S_OK)
             {
                 return result;
@@ -196,12 +186,12 @@ namespace Core
             auto it = impl_->objects_.find(object_id);
             if (it == impl_->objects_.end())
             {
-                if (obj_id.session_id == impl_->local_session_id_)
+                if (object_id.session_id == impl_->local_session_id_)
                 {
                     auto gen_it =
-                        impl_->local_id_generations_.find(obj_id.local_id);
+                        impl_->local_id_generations_.find(object_id.local_id);
                     if (gen_it != impl_->local_id_generations_.end()
-                        && gen_it->second != obj_id.generation)
+                        && gen_it->second != object_id.generation)
                     {
                         return DAS_E_IPC_STALE_OBJECT_HANDLE;
                     }
@@ -214,8 +204,8 @@ namespace Core
             {
                 if (it->second.is_local)
                 {
-                    impl_->local_id_generations_[obj_id.local_id] =
-                        IncrementGeneration(obj_id.generation);
+                    impl_->local_id_generations_[object_id.local_id] =
+                        IncrementGeneration(object_id.generation);
                 }
                 impl_->objects_.erase(it);
             }
@@ -224,16 +214,15 @@ namespace Core
         }
 
         DasResult DistributedObjectManager::LookupObject(
-            uint64_t object_id,
-            void**   object_ptr)
+            const ObjectId& object_id,
+            void**          object_ptr)
         {
             if (object_ptr == nullptr)
             {
                 return DAS_E_INVALID_POINTER;
             }
 
-            ObjectId obj_id;
-            auto     result = ValidateObjectId(object_id, obj_id);
+            auto result = ValidateObjectId(object_id);
             if (result != DAS_S_OK)
             {
                 return result;
@@ -243,12 +232,12 @@ namespace Core
             auto it = impl_->objects_.find(object_id);
             if (it == impl_->objects_.end())
             {
-                if (obj_id.session_id == impl_->local_session_id_)
+                if (object_id.session_id == impl_->local_session_id_)
                 {
                     auto gen_it =
-                        impl_->local_id_generations_.find(obj_id.local_id);
+                        impl_->local_id_generations_.find(object_id.local_id);
                     if (gen_it != impl_->local_id_generations_.end()
-                        && gen_it->second != obj_id.generation)
+                        && gen_it->second != object_id.generation)
                     {
                         return DAS_E_IPC_STALE_OBJECT_HANDLE;
                     }
@@ -265,10 +254,10 @@ namespace Core
             return DAS_S_OK;
         }
 
-        bool DistributedObjectManager::IsValidObject(uint64_t object_id) const
+        bool DistributedObjectManager::IsValidObject(
+            const ObjectId& object_id) const
         {
-            ObjectId obj_id;
-            auto     result = ValidateObjectId(object_id, obj_id);
+            auto result = ValidateObjectId(object_id);
             if (result != DAS_S_OK)
             {
                 return false;
@@ -280,12 +269,12 @@ namespace Core
                 return true;
             }
 
-            if (obj_id.session_id == impl_->local_session_id_)
+            if (object_id.session_id == impl_->local_session_id_)
             {
                 auto gen_it =
-                    impl_->local_id_generations_.find(obj_id.local_id);
+                    impl_->local_id_generations_.find(object_id.local_id);
                 if (gen_it != impl_->local_id_generations_.end()
-                    && gen_it->second != obj_id.generation)
+                    && gen_it->second != object_id.generation)
                 {
                     return false;
                 }
@@ -294,16 +283,16 @@ namespace Core
             return false;
         }
 
-        bool DistributedObjectManager::IsLocalObject(uint64_t object_id) const
+        bool DistributedObjectManager::IsLocalObject(
+            const ObjectId& object_id) const
         {
-            ObjectId obj_id;
-            auto     result = ValidateObjectId(object_id, obj_id);
+            auto result = ValidateObjectId(object_id);
             if (result != DAS_S_OK)
             {
                 return false;
             }
 
-            if (obj_id.session_id != impl_->local_session_id_)
+            if (object_id.session_id != impl_->local_session_id_)
             {
                 return false;
             }
@@ -313,9 +302,9 @@ namespace Core
             if (it == impl_->objects_.end())
             {
                 auto gen_it =
-                    impl_->local_id_generations_.find(obj_id.local_id);
+                    impl_->local_id_generations_.find(object_id.local_id);
                 if (gen_it != impl_->local_id_generations_.end()
-                    && gen_it->second != obj_id.generation)
+                    && gen_it->second != object_id.generation)
                 {
                     return false;
                 }
