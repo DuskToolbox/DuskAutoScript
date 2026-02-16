@@ -1,0 +1,14 @@
+namespace Das::TestInterface {
+
+[uuid("A1B2C3D4-E5F6-4A5B-8C9D-0E1F2A3B4C5D")]
+interface IDasTestInterface : IDasBase {
+    DasResult GetTestId([out] uint64_t* p_out_id);
+    DasResult SetTestId(uint64_t id);
+    DasResult Add(int32_t a, int32_t b, [out] int32_t* p_result);
+    DasResult Multiply(int32_t a, int32_t b, [out] int32_t* p_result);
+    DasResult Concatenate(IDasReadOnlyString* a, IDasReadOnlyString* b, [out] IDasReadOnlyString** p_result);
+    DasResult GetProcessId([out] uint32_t* p_out_pid);
+    DasResult Ping([out] bool* p_pong);
+}
+
+}
