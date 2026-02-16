@@ -2,6 +2,8 @@
 #define DAS_CORE_IPC_PROXY_FACTORY_H
 
 #include <das/Core/IPC/IPCProxyBase.h>
+#include <das/Core/IPC/IpcErrors.h>
+#include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/ObjectManager.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
@@ -38,17 +40,32 @@ namespace Core
              * @brief 初始化 ProxyFactory
              * @param object_manager 分布式对象管理器
              * @param object_registry 远程对象注册表
+             * @param run_loop IPC运行循环
              * @return DasResult 初始化结果
              */
             DasResult Initialize(
                 DistributedObjectManager* object_manager,
-                RemoteObjectRegistry*     object_registry);
+                RemoteObjectRegistry*     object_registry,
+                IpcRunLoop*               run_loop = nullptr);
 
             /**
              * @brief 检查是否已初始化
              * @return 如果已初始化返回 true，否则返回 false
              */
             bool IsInitialized() const;
+
+            /**
+             * @brief 获取当前的 IPC 运行循环
+             * @return IpcRunLoop* 运行循环指针，如果未初始化则返回 nullptr
+             */
+            IpcRunLoop* GetRunLoop() const { return run_loop_; }
+
+            /**
+             * @brief 设置 IPC 运行循环
+             * @param run_loop 运行循环指针
+             * @return DasResult 操作结果
+             */
+            DasResult SetRunLoop(IpcRunLoop* run_loop);
 
             /**
              * @brief 创建指定类型的 Proxy 实例
@@ -63,8 +80,7 @@ namespace Core
                 uint64_t encoded_id = EncodeObjectId(object_id);
 
                 // 验证对象是否存在
-                if (!object_registry_
-                    || !object_registry_->ObjectExists(object_id))
+                if (!object_registry_ || !IsInitialized())
                 {
                     return nullptr;
                 }
@@ -85,17 +101,25 @@ namespace Core
                     }
                 }
 
+                // 验证对象并获取信息
+                RemoteObjectInfo info;
+                DasResult        result = ValidateObject(object_id, info);
+                if (result != DAS_S_OK)
+                {
+                    return nullptr;
+                }
+
                 // 创建新的代理
                 try
                 {
-                    // 获取对象的接口 ID
-                    uint32_t interface_id = GetObjectInterfaceId(object_id);
+                    // 使用对象信息中的接口ID (FNV-1a hash)
+                    uint32_t interface_id = info.interface_id;
 
-                    // 创建代理实例（这里需要实际的 IpcRunLoop）
+                    // 创建代理实例（使用实际的 IpcRunLoop）
                     auto proxy = std::make_shared<Proxy<T>>(
                         interface_id,
                         object_id,
-                        nullptr);
+                        run_loop_);
 
                     // 缓存代理信息
                     std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
@@ -209,6 +233,9 @@ namespace Core
 
             // 远程对象注册表
             RemoteObjectRegistry* object_registry_ = nullptr;
+
+            // IPC运行循环
+            IpcRunLoop* run_loop_ = nullptr;
         };
 
         /**
@@ -243,8 +270,15 @@ namespace Core
              */
             T* Get() const noexcept
             {
+                // 如果没有运行循环，返回 nullptr
+                if (!GetRunLoop())
+                {
+                    return nullptr;
+                }
+
                 // 这里需要根据实际的 IPC 机制来实现
-                // 暂时返回 nullptr，实际实现需要根据 IPC 协议来调用远程方法
+                // 目前返回 nullptr，实际实现需要根据 IPC 协议来调用远程方法
+                // 可以通过 SendRequest 方法调用远程方法来获取接口指针
                 return nullptr;
             }
 
@@ -263,7 +297,34 @@ namespace Core
              */
             bool IsValid() const noexcept
             {
-                return GetObjectId() != 0; // 检查对象 ID 是否为空
+                return GetObjectId() != 0
+                       && GetRunLoop()
+                              != nullptr; // 检查对象 ID 和运行循环是否存在
+            }
+
+            /**
+             * @brief 示例：调用远程方法
+             * @param method_id 方法ID
+             * @param request_body 请求体
+             * @param response_body 响应体
+             * @return DasResult 调用结果
+             */
+            DasResult CallRemoteMethod(
+                uint16_t                    method_id,
+                const std::vector<uint8_t>& request_body,
+                std::vector<uint8_t>&       response_body) const
+            {
+                if (!GetRunLoop())
+                {
+                    return DAS_E_FAIL;
+                }
+
+                // 使用基类的 SendRequest 方法发送请求
+                return SendRequest(
+                    method_id,
+                    request_body.data(),
+                    request_body.size(),
+                    response_body);
             }
         };
 

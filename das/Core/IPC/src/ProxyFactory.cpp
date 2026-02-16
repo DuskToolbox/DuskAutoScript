@@ -20,7 +20,8 @@ namespace Core
 
         DasResult ProxyFactory::Initialize(
             DistributedObjectManager* object_manager,
-            RemoteObjectRegistry*     object_registry)
+            RemoteObjectRegistry*     object_registry,
+            IpcRunLoop*               run_loop)
         {
             if (!object_manager || !object_registry)
             {
@@ -29,9 +30,10 @@ namespace Core
 
             std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
 
-            // 设置对象管理器和注册表
+            // 设置对象管理器、注册表和运行循环
             object_manager_ = object_manager;
             object_registry_ = object_registry;
+            run_loop_ = run_loop;
 
             return DAS_S_OK;
         }
@@ -40,6 +42,20 @@ namespace Core
         {
             return (object_manager_ != nullptr)
                    && (object_registry_ != nullptr);
+        }
+
+        DasResult ProxyFactory::SetRunLoop(IpcRunLoop* run_loop)
+        {
+            std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
+
+            // 如果已经存在运行循环，先清理现有代理
+            if (run_loop_ && run_loop_ != run_loop)
+            {
+                ClearAllProxies();
+            }
+
+            run_loop_ = run_loop;
+            return DAS_S_OK;
         }
 
         std::shared_ptr<IPCProxyBase> ProxyFactory::GetProxy(
@@ -60,19 +76,15 @@ namespace Core
             auto it = proxy_cache_.find(EncodeObjectId(object_id));
             if (it != proxy_cache_.end())
             {
-                // 减少对象的引用计数
-                if (object_manager_)
-                {
-                    DasResult result =
-                        object_manager_->Release(EncodeObjectId(object_id));
-                    if (result != DAS_S_OK)
-                    {
-                        return result;
-                    }
-                }
-
                 // 从缓存中移除Proxy
                 proxy_cache_.erase(it);
+
+                // 减少对象的引用计数（即使失败也不影响缓存清理）
+                if (object_manager_)
+                {
+                    object_manager_->Release(EncodeObjectId(object_id));
+                }
+
                 return DAS_S_OK;
             }
 
@@ -137,17 +149,17 @@ namespace Core
             try
             {
                 // 这里需要根据实际的接口类型创建相应的代理
-                // 目前我们先创建一个基础的 IPC 代理
+                // 使用 FNV-1a hash 的 interface_id
                 auto proxy = std::make_shared<Proxy<void>>(
-                    info.iid.data1,
+                    info.interface_id,
                     object_id,
-                    nullptr);
+                    run_loop_);
 
                 // 缓存代理信息
                 ProxyEntry entry;
                 entry.proxy = proxy;
                 entry.object_id_encoded = encoded_id;
-                entry.interface_id = info.iid.data1;
+                entry.interface_id = info.interface_id;
                 entry.session_id = object_id.session_id;
 
                 proxy_cache_[encoded_id] = entry;
@@ -198,8 +210,8 @@ namespace Core
                 throw std::runtime_error("Cannot get object interface id");
             }
 
-            // 返回接口ID（这里使用DasGuid的低32位作为接口ID）
-            return info.iid.data1;
+            // 返回接口ID (FNV-1a hash)
+            return info.interface_id;
         }
 
     }
