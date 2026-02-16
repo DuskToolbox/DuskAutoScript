@@ -41,11 +41,14 @@ protected:
     {
         IPCMessageHeader header{};
         header.call_id = 1;
-        header.message_type = type;
+        header.message_type = static_cast<uint8_t>(type);
         header.error_code = DAS_S_OK;
         header.interface_id = 1;
-        header.object_id = object_id;
-        header.version = 1;
+        // Decode object_id into session_id, generation, local_id
+        header.session_id = static_cast<uint16_t>((object_id >> 48) & 0xFFFF);
+        header.generation = static_cast<uint16_t>((object_id >> 32) & 0xFFFF);
+        header.local_id = static_cast<uint32_t>(object_id & 0xFFFFFFFF);
+        header.version = 2;
         header.flags = 0;
         header.body_size = 0;
         return header;

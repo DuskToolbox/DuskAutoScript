@@ -34,13 +34,12 @@ protected:
 TEST_F(IpcObjectManagerTest, RegisterLocalObject_GenerationStartsAtOne)
 {
     int      dummy_object = 42;
-    uint64_t object_id = 0;
+    ObjectId object_id{1, 0, 0};
 
     auto result = manager_->RegisterLocalObject(&dummy_object, object_id);
     EXPECT_EQ(result, DAS_S_OK);
 
-    ObjectId decoded = DecodeObjectId(object_id);
-    EXPECT_EQ(decoded.generation, 1);
+    EXPECT_EQ(object_id.generation, 1);
 }
 
 TEST_F(
@@ -218,32 +217,35 @@ TEST_F(IpcObjectManagerTest, LookupObject_NullPointer)
 
 TEST_F(IpcObjectManagerTest, RegisterLocalObject_NullPointer)
 {
-    uint64_t object_id = 0;
+    ObjectId object_id{0, 0, 0};
     auto     result = manager_->RegisterLocalObject(nullptr, object_id);
     EXPECT_NE(result, DAS_S_OK);
 }
 
 TEST_F(IpcObjectManagerTest, RegisterRemoteObject_NullObjectId)
 {
-    auto result = manager_->RegisterRemoteObject(0);
+    auto result = manager_->RegisterRemoteObject(ObjectId{0, 0, 0});
     EXPECT_NE(result, DAS_S_OK);
 }
 
 TEST_F(IpcObjectManagerTest, UnregisterObject_InvalidId)
 {
-    auto result = manager_->UnregisterObject(0);
+    ObjectId invalid_id{0, 0, 0};
+    auto     result = manager_->UnregisterObject(invalid_id);
     EXPECT_NE(result, DAS_S_OK);
 }
 
 TEST_F(IpcObjectManagerTest, AddRef_InvalidId)
 {
-    auto result = manager_->AddRef(0);
+    ObjectId invalid_id{0, 0, 0};
+    auto     result = manager_->AddRef(invalid_id);
     EXPECT_NE(result, DAS_S_OK);
 }
 
 TEST_F(IpcObjectManagerTest, Release_InvalidId)
 {
-    auto result = manager_->Release(0);
+    ObjectId invalid_id{0, 0, 0};
+    auto     result = manager_->Release(invalid_id);
     EXPECT_NE(result, DAS_S_OK);
 }
 
@@ -252,16 +254,17 @@ TEST_F(IpcObjectManagerTest, Release_InvalidId)
 TEST_F(IpcObjectManagerTest, Shutdown_ClearsAllObjects)
 {
     int      obj1 = 1, obj2 = 2;
-    uint64_t id1 = 0, id2 = 0;
+    uint32_t id1_val = 0, id2_val = 0;
+    ObjectId oid1{1, 1, id1_val}, oid2{1, 1, id2_val};
 
-    ASSERT_EQ(manager_->RegisterLocalObject(&obj1, id1), DAS_S_OK);
-    ASSERT_EQ(manager_->RegisterLocalObject(&obj2, id2), DAS_S_OK);
+    ASSERT_EQ(manager_->RegisterLocalObject(&obj1, oid1), DAS_S_OK);
+    ASSERT_EQ(manager_->RegisterLocalObject(&obj2, oid2), DAS_S_OK);
 
     // Shutdown and reinitialize
     manager_->Shutdown();
     ASSERT_EQ(manager_->Initialize(1), DAS_S_OK);
 
     // Old handles should be invalid
-    EXPECT_FALSE(manager_->IsValidObject(id1));
-    EXPECT_FALSE(manager_->IsValidObject(id2));
+    EXPECT_FALSE(manager_->IsValidObject(oid1));
+    EXPECT_FALSE(manager_->IsValidObject(oid2));
 }

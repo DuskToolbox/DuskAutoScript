@@ -90,10 +90,12 @@ IPCMessageHeader MakeHeader(IpcCommandType cmd_type)
 {
     IPCMessageHeader header{};
     header.call_id = 1;
-    header.message_type = MessageType::REQUEST;
+    header.message_type = static_cast<uint8_t>(MessageType::REQUEST);
     header.error_code = 0;
     header.interface_id = static_cast<uint32_t>(cmd_type);
-    header.object_id = 0;
+    header.session_id = 0;
+    header.generation = 0;
+    header.local_id = 0;
     header.version = 1;
     header.flags = 0;
     header.body_size = 0;

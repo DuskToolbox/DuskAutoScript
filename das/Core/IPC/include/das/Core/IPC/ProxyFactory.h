@@ -94,7 +94,7 @@ namespace Core
                         // 已存在，增加引用计数并返回类型转换后的代理
                         if (object_manager_)
                         {
-                            object_manager_->AddRef(encoded_id);
+                            object_manager_->AddRef(object_id);
                         }
                         return std::static_pointer_cast<Proxy<T>>(
                             it->second.proxy);
@@ -134,7 +134,7 @@ namespace Core
                     // 增加对象引用计数
                     if (object_manager_)
                     {
-                        object_manager_->AddRef(encoded_id);
+                        object_manager_->AddRef(object_id);
                     }
 
                     return proxy;
@@ -304,15 +304,18 @@ namespace Core
 
             /**
              * @brief 示例：调用远程方法
-             * @param method_id 方法ID
+             * @param
+             * method_id 方法ID
              * @param request_body 请求体
-             * @param response_body 响应体
-             * @return DasResult 调用结果
+
+             * * @param response_body 响应体
+             * @return DasResult
+             * 调用结果
              */
             DasResult CallRemoteMethod(
                 uint16_t                    method_id,
                 const std::vector<uint8_t>& request_body,
-                std::vector<uint8_t>&       response_body) const
+                std::vector<uint8_t>&       response_body)
             {
                 if (!GetRunLoop())
                 {
