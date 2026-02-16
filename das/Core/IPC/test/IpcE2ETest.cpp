@@ -22,7 +22,9 @@
 #include <thread>
 
 using DAS::Core::IPC::ConnectionManager;
+using DAS::Core::IPC::DecodeObjectId;
 using DAS::Core::IPC::DistributedObjectManager;
+using DAS::Core::IPC::EncodeObjectId;
 using DAS::Core::IPC::IPCMessageHeader;
 using DAS::Core::IPC::IpcRunLoop;
 using DAS::Core::IPC::IpcTransport;
@@ -187,7 +189,7 @@ TEST_F(IpcE2ETest, ProxyStub_ObjectRegistration)
 {
     // Host registers a local object
     int      dummy_service = 42;
-    uint64_t host_object_id = 0;
+    ObjectId host_object_id{};
     auto     result = host_object_manager_->RegisterLocalObject(
         &dummy_service,
         host_object_id);
@@ -206,7 +208,7 @@ TEST_F(IpcE2ETest, ProxyStub_MultipleObjects)
 {
     // Register multiple objects
     int      service1 = 1, service2 = 2, service3 = 3;
-    uint64_t id1 = 0, id2 = 0, id3 = 0;
+    ObjectId id1{}, id2{}, id3{};
 
     ASSERT_EQ(
         host_object_manager_->RegisterLocalObject(&service1, id1),
@@ -296,7 +298,7 @@ TEST_F(IpcE2ETest, ObjectLifecycle_ReleaseAndGC)
 {
     // Register object
     int      dummy = 42;
-    uint64_t object_id = 0;
+    ObjectId object_id{};
     ASSERT_EQ(
         host_object_manager_->RegisterLocalObject(&dummy, object_id),
         DAS_S_OK);
@@ -321,14 +323,15 @@ TEST_F(IpcE2ETest, ObjectLifecycle_ReleaseAndGC)
 
 TEST_F(IpcE2ETest, ErrorHandling_InvalidObjectId)
 {
-    void* ptr = nullptr;
-    auto  result = host_object_manager_->LookupObject(0xDEADBEEF, &ptr);
+    void*    ptr = nullptr;
+    ObjectId invalid_id{0xFFFF, 0xFFFF, 0xFFFFFFFF};
+    auto     result = host_object_manager_->LookupObject(invalid_id, &ptr);
     EXPECT_NE(result, DAS_S_OK);
 }
 
 TEST_F(IpcE2ETest, ErrorHandling_NullObject)
 {
-    uint64_t id = 0;
+    ObjectId id{};
     auto     result = host_object_manager_->RegisterLocalObject(nullptr, id);
     EXPECT_NE(result, DAS_S_OK);
 }
@@ -375,7 +378,7 @@ TEST_F(IpcE2ETest, Concurrent_MultipleRegistrations)
             [&, t]()
             {
                 int      dummy = t;
-                uint64_t id = 0;
+                ObjectId id{};
                 if (host_object_manager_->RegisterLocalObject(&dummy, id)
                     == DAS_S_OK)
                 {
@@ -398,7 +401,7 @@ TEST_F(IpcE2ETest, FullPipeline_RequestResponse)
 {
     // 1. Setup: Host registers service
     int      service_impl = 100;
-    uint64_t service_id = 0;
+    ObjectId service_id{};
     ASSERT_EQ(
         host_object_manager_->RegisterLocalObject(&service_impl, service_id),
         DAS_S_OK);
@@ -416,9 +419,9 @@ TEST_F(IpcE2ETest, FullPipeline_RequestResponse)
     request.message_type = static_cast<uint8_t>(MessageType::REQUEST);
     request.interface_id = 1;
     request.method_id = 1;
-    request.session_id = static_cast<uint16_t>(service_id >> 48);
-    request.generation = static_cast<uint16_t>((service_id >> 32) & 0xFFFF);
-    request.local_id = static_cast<uint32_t>(service_id & 0xFFFFFFFF);
+    request.session_id = service_id.session_id;
+    request.generation = service_id.generation;
+    request.local_id = service_id.local_id;
 
     MemorySerializerWriter request_writer;
     request_writer.WriteInt32(1);
@@ -432,12 +435,11 @@ TEST_F(IpcE2ETest, FullPipeline_RequestResponse)
     ASSERT_EQ(request_reader.ReadInt32(&method_id), DAS_S_OK);
     EXPECT_EQ(method_id, 1);
 
-    // 5. Host processes request - reconstruct object_id from
-    // session/generation/local_id
-    uint64_t received_object_id =
-        (static_cast<uint64_t>(received_request.session_id) << 48)
-        | (static_cast<uint64_t>(received_request.generation) << 32)
-        | static_cast<uint64_t>(received_request.local_id);
+    // 5. Host processes request - reconstruct ObjectId from header fields
+    ObjectId received_object_id{
+        received_request.session_id,
+        received_request.generation,
+        received_request.local_id};
     void* obj_ptr = nullptr;
     ASSERT_EQ(
         host_object_manager_->LookupObject(received_object_id, &obj_ptr),

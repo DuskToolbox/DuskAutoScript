@@ -8,6 +8,7 @@ using DAS::Core::IPC::DecodeObjectId;
 using DAS::Core::IPC::DistributedObjectManager;
 using DAS::Core::IPC::EncodeObjectId;
 using DAS::Core::IPC::IPCProxyBase;
+using DAS::Core::IPC::IpcRunLoop;
 using DAS::Core::IPC::ObjectId;
 using DAS::Core::IPC::ProxyFactory;
 using DAS::Core::IPC::RemoteObjectRegistry;
@@ -394,11 +395,11 @@ TEST(ProxyFactoryTest, IntegrationWithIpcRunLoop)
     // 测试不带 IpcRunLoop 的初始化
     EXPECT_EQ(factory.Initialize(&obj_manager, &registry), DAS_S_OK);
     EXPECT_TRUE(factory.IsInitialized());
-    EXPECT_EQ(factory.GetRunLoop(), nullptr);
+    EXPECT_TRUE(factory.GetRunLoop() == nullptr);
 
     // 测试设置 IpcRunLoop
     EXPECT_EQ(factory.SetRunLoop(runloop.get()), DAS_S_OK);
-    EXPECT_EQ(factory.GetRunLoop(), runloop.get());
+    EXPECT_TRUE(factory.GetRunLoop() == runloop.get());
 
     // 创建代理并验证 IpcRunLoop 集成
     auto proxy = factory.CreateProxy<void>(test_obj);

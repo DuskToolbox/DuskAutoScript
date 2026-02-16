@@ -630,9 +630,11 @@ TEST_F(IPCIntegrationTest, MessageDispatch)
     // 创建测试消息
     IPCMessageHeader header{};
     header.call_id = 1;
-    header.message_type = MessageType::REQUEST;
+    header.message_type = static_cast<uint8_t>(MessageType::REQUEST);
     header.interface_id = iid.data1;
-    header.object_id = EncodeObjectId(obj_id);
+    header.session_id = obj_id.session_id;
+    header.generation = obj_id.generation;
+    header.local_id = obj_id.local_id;
     header.version = 1;
 
     std::string          body = "test_request_body";
