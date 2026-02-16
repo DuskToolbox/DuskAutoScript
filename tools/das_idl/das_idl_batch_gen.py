@@ -660,6 +660,42 @@ JSON 配置格式:
                     except Exception as e:
                         print(f"\n[Typemap聚合错误] {e}", file=sys.stderr)
                         print(f"[警告] Typemap聚合出错，但IDL生成成功", file=sys.stderr)
+        
+        # ====== 执行 IPC Registry 生成 ======
+        if args.ipc_cache_dir and batch_result == 0:
+            ipc_output_dir = None
+            for task in tasks:
+                if "--ipc-output-dir" in task:
+                    ipc_output_dir = Path(task["--ipc-output-dir"])
+                    break
+                elif "-o" in task:
+                    ipc_output_dir = Path(task["-o"])
+                    break
+            
+            if ipc_output_dir:
+                registry_script = Path(__file__).parent / "das_ipc_registry_generator.py"
+                if registry_script.exists():
+                    cmd = [
+                        sys.executable,
+                        str(registry_script),
+                        "--cache-dir", args.ipc_cache_dir,
+                        "--output-dir", str(ipc_output_dir)
+                    ]
+                    
+                    try:
+                        result = subprocess.run(
+                            cmd,
+                            capture_output=True,
+                            text=True,
+                            timeout=30
+                        )
+                        
+                        if result.returncode == 0:
+                            print(f"\n[IPC Registry] {result.stdout.strip()}")
+                        else:
+                            print(f"\n[IPC Registry 失败] {result.stderr}", file=sys.stderr)
+                    except Exception as e:
+                        print(f"\n[IPC Registry 错误] {e}", file=sys.stderr)
     
     return batch_result
 

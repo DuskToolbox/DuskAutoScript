@@ -356,4 +356,48 @@ target_link_libraries(DasCore PUBLIC DasCoreObjects)
      das_add_core_test(Utils)
      das_add_core_test(Exceptions)
      das_add_core_test(IPC)
+
+     # ====== 测试 IDL 生成 ======
+     # 为测试接口生成独立的代码（避免与主 IDL 冲突）
+     set(DAS_TEST_IDL_DIR "${CMAKE_SOURCE_DIR}/das/Core/IPC/test/idl")
+     set(DAS_TEST_IDL_OUTPUT_DIR "${CMAKE_BINARY_DIR}/das_test/include/das/_autogen/idl/abi")
+
+     # 收集测试 IDL 文件
+     file(GLOB DAS_TEST_IDL_FILES "${DAS_TEST_IDL_DIR}/*.idl")
+
+     if(DAS_TEST_IDL_FILES)
+         message(STATUS "[TEST IDL] Found test IDL files: ${DAS_TEST_IDL_FILES}")
+
+         # 为每个测试 IDL 文件生成代码
+         foreach(IDL_FILE ${DAS_TEST_IDL_FILES})
+             get_filename_component(IDL_NAME ${IDL_FILE} NAME_WE)
+
+             # 设置输出路径
+             set(TEST_ABI_OUTPUT "${DAS_TEST_IDL_OUTPUT_DIR}/${IDL_NAME}.h")
+
+             # 生成测试 IDL 代码
+             add_custom_command(
+                 OUTPUT ${TEST_ABI_OUTPUT}
+                 COMMAND ${DAS_IDL_VENV_PYTHON} ${CMAKE_SOURCE_DIR}/tools/das_idl/das_idl_gen.py
+                     -i ${IDL_FILE}
+                     --raw-output-dir ${DAS_TEST_IDL_OUTPUT_DIR}
+                     --namespace "Das::TestInterface"
+                 DEPENDS ${IDL_FILE}
+                     ${CMAKE_SOURCE_DIR}/tools/das_idl/das_idl_gen.py
+                 COMMENT "Generate test IDL: ${IDL_NAME}"
+                 VERBATIM
+             )
+
+             list(APPEND DAS_TEST_IDL_GENERATED ${TEST_ABI_OUTPUT})
+         endforeach()
+
+         # 创建测试 IDL 生成目标
+         add_custom_target(DasTestIdlGenerated DEPENDS ${DAS_TEST_IDL_GENERATED})
+
+         # 添加 include 路径
+         target_include_directories(IPCTest PRIVATE ${DAS_TEST_IDL_OUTPUT_DIR})
+
+         # 确保测试目标依赖测试 IDL 生成
+         add_dependencies(IPCTest DasTestIdlGenerated)
+     endif()
  endif ()

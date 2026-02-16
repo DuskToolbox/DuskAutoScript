@@ -304,6 +304,6 @@ struct DasSourceLocationOnStack final : DAS::ExportInterface::IDasSourceLocation
             &_das_internal_source_location);                                   \
     } while (false)
 
-typedef DasResult(DAS_STD_CALL *DasCoCreatePluginFunc)(Das::PluginInterface::IDasPluginPackage);
+typedef DasResult(DAS_STD_CALL *DasCoCreatePluginFunc)(IDasBase**);
 
 #endif // DAS_API_H
