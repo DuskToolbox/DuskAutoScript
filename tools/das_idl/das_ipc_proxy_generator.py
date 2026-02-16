@@ -4,27 +4,30 @@ DAS IPC Proxy 代码生成器
 从 IDL 接口定义生成 IPC Proxy 代码，用于客户端调用远程对象。
 
 功能:
-1. 为每个接口生成 Proxy 类
-2. 使用 FNV-1a hash 计算 InterfaceId
+1. 为每个接口生成 Proxy 类，继承 IPCProxyBase
+2. 使用 FNV-1a hash 计算 InterfaceId（基于接口 UUID）
 3. 生成 MethodTable 元数据
 4. 为每个方法生成代理调用代码
+5. 写入 interface.json 到 cache_dir 用于 Registry 生成
 
 输出文件命名: proxy/<InterfaceName>Proxy.h
 
 Proxy 代码规范 (B6):
-- static constexpr uint32_t InterfaceId = <FNV-1a hash>;
+- static constexpr uint32_t InterfaceId = <FNV-1a hash of UUID>;
 - static constexpr MethodMetadata MethodTable[] = {...};
+- 继承 IPCProxyBase
 - 每个方法:
   1. 序列化参数
   2. 填充消息头
-  3. 发送消息（调用 transport）
+  3. 发送消息（调用 SendRequest）
   4. 等待响应（同步）或返回 future（异步）
 """
 
+import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional, Any
 import importlib
 import sys
 
@@ -54,13 +57,41 @@ def fnv1a_hash(data: str) -> int:
     Returns:
         32-bit FNV-1a hash 值
     """
-    # FNV-1a parameters for 32-bit
     FNV_PRIME = 0x01000193
     FNV_OFFSET_BASIS = 0x811c9dc5
     
     hash_value = FNV_OFFSET_BASIS
     for char in data.encode('utf-8'):
         hash_value ^= char
+        hash_value = (hash_value * FNV_PRIME) & 0xFFFFFFFF
+    
+    return hash_value
+
+
+def fnv1a_hash_guid(guid_str: str) -> int:
+    """计算 GUID 字符串的 FNV-1a 32-bit hash（用于生成 interface_id）
+    
+    处理两种格式:
+    - {xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}
+    - xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    
+    大小写不敏感
+    
+    Args:
+        guid_str: GUID 字符串
+        
+    Returns:
+        32-bit FNV-1a hash 值
+    """
+    FNV_PRIME = 0x01000193
+    FNV_OFFSET_BASIS = 0x811c9dc5
+    
+    hash_value = FNV_OFFSET_BASIS
+    for char in guid_str:
+        if char == '{' or char == '}':
+            continue
+        upper_char = char.upper() if 'a' <= char <= 'z' else char
+        hash_value ^= ord(upper_char)
         hash_value = (hash_value * FNV_PRIME) & 0xFFFFFFFF
     
     return hash_value
@@ -93,8 +124,7 @@ class IpcProxyGenerator:
 // IPC Proxy for {interface_name}
 //
 
-#include <das/Core/IPC/IPCMessageHeader.h>
-#include <das/Core/IPC/IPCProxyBase.h>
+#include <das/Core/IPC/DasProxyBase.h>
 #include <cstdint>
 #include <string>
 
@@ -241,7 +271,7 @@ class IpcProxyGenerator:
         # Step 1: 创建请求消息
         lines.append(f"{inner_indent}// Create request message")
         lines.append(f"{inner_indent}{request_type} request;")
-        lines.append(f"{inner_indent}request.header.object_id = target_.ToUint64();")
+        lines.append(f"{inner_indent}request.header.object_id = EncodeObjectId(target_);")
         lines.append(f"{inner_indent}request.header.interface_id = InterfaceId;")
         lines.append(f"{inner_indent}request.header.method_id = {method_index};")
         lines.append(f"{inner_indent}request.header.call_id = next_call_id_++;")
@@ -284,6 +314,83 @@ class IpcProxyGenerator:
         return "\n".join(lines)
     
     def _generate_proxy_class(self, interface: InterfaceDef, namespace_depth: int = 0) -> str:
+        """为接口生成 Proxy 类，继承 IPCProxyBase"""
+        lines = []
+        indent = "    " * namespace_depth
+        class_indent = "    " * (namespace_depth + 1)
+        method_indent = "    " * (namespace_depth + 2)
+        
+        interface_short_name = self._get_interface_short_name(interface.name)
+        class_name = f"{interface_short_name}Proxy"
+        interface_id = fnv1a_hash_guid(interface.uuid)
+        
+        lines.append(f"{indent}class {class_name} : public DasProxyBase<{interface.name}>")
+        lines.append(f"{indent}{{")
+        lines.append(f"{indent}public:")
+        lines.append(f"{class_indent}static constexpr uint32_t InterfaceId = 0x{interface_id:08X}u;")
+        lines.append("")
+        lines.append(f"{class_indent}static constexpr MethodMetadata MethodTable[] = {{")
+        for i, method in enumerate(interface.methods):
+            method_hash = fnv1a_hash(f"{interface.name}::{method.name}")
+            lines.append(f"{method_indent}{{ {i}, \"{method.name}\", 0x{method_hash:08X}u }},")
+        lines.append(f"{class_indent}}};")
+        lines.append("")
+        lines.append(f"{class_indent}{class_name}(")
+        lines.append(f"{class_indent}    const ObjectId& object_id,")
+        lines.append(f"{class_indent}    IpcRunLoop* run_loop,")
+        lines.append(f"{class_indent}    DistributedObjectManager* object_manager)")
+        lines.append(f"{class_indent}    : DasProxyBase<{interface.name}>(InterfaceId, object_id, run_loop, object_manager)")
+        lines.append(f"{class_indent}{{")
+        lines.append(f"{class_indent}}}")
+        lines.append("")
+        
+        for i, method in enumerate(interface.methods):
+            method_sig = self._generate_method_signature(interface, method)
+            lines.append(f"{class_indent}{method_sig}")
+            lines.append(f"{class_indent}{{")
+            method_body = self._generate_method_body_v2(interface, method, i, namespace_depth)
+            for line in method_body.splitlines():
+                lines.append(f"{line}")
+            lines.append(f"{class_indent}}}")
+            lines.append("")
+        
+        lines.append(f"{indent}private:")
+        lines.append(f"{class_indent}{interface.name}* local_impl_ = nullptr;")
+        lines.append(f"{indent}}};")
+        lines.append("")
+        
+        return "\n".join(lines)
+    
+    def _generate_method_body_v2(self, interface: InterfaceDef, method: MethodDef, method_index: int, namespace_depth: int = 0) -> str:
+        """生成方法体，使用基类的 SendRequest 方法"""
+        indent = "    " * (namespace_depth + 2)
+        inner_indent = "    " * (namespace_depth + 3)
+        lines = []
+        
+        return_type = method.return_type.base_type
+        has_return = return_type != 'void'
+        
+        lines.append(f"{indent}IPCMessageHeader header;")
+        lines.append(f"{indent}FillMessageHeader(header, {method_index}, AllocateCallId());")
+        lines.append(f"{indent}header.body_size = 0;")
+        lines.append("")
+        lines.append(f"{indent}std::vector<uint8_t> response_body;")
+        lines.append(f"{indent}DasResult result = SendRequest({method_index}, nullptr, 0, response_body);")
+        lines.append(f"{indent}if (DAS_FAILED(result))")
+        lines.append(f"{indent}{{")
+        lines.append(f"{indent}    return result;")
+        lines.append(f"{indent}}}")
+        lines.append("")
+        
+        if has_return:
+            lines.append(f"{indent}// TODO: Deserialize return value from response_body")
+            lines.append(f"{indent}return DAS_E_NOT_IMPLEMENTED;")
+        else:
+            lines.append(f"{indent}return DAS_S_OK;")
+        
+        return "\n".join(lines)
+    
+    def _generate_proxy_class_old(self, interface: InterfaceDef, namespace_depth: int = 0) -> str:
         """为接口生成混合模式 Proxy 类 (B7)
         
         模板参数:
@@ -297,7 +404,7 @@ class IpcProxyGenerator:
         
         interface_short_name = self._get_interface_short_name(interface.name)
         class_name = f"{interface_short_name}Proxy"
-        interface_id = fnv1a_hash(interface.name)
+        interface_id = fnv1a_hash_guid(interface.uuid)
         
         # 类文档注释
         lines.append(f"{indent}// ============================================================================")
@@ -378,43 +485,62 @@ class IpcProxyGenerator:
         
         return "\n".join(lines)
     
-    def generate_proxy_headers(self, output_dir: str) -> List[str]:
+    def _generate_interface_json(self, interface: InterfaceDef) -> Dict[str, Any]:
+        """生成接口元数据 JSON"""
+        interface_id = fnv1a_hash_guid(interface.uuid)
+        methods = []
+        for i, method in enumerate(interface.methods):
+            method_hash = fnv1a_hash(f"{interface.name}::{method.name}")
+            methods.append({
+                "method_id": i,
+                "name": method.name,
+                "hash": f"0x{method_hash:08X}"
+            })
+        
+        return {
+            "interface_name": interface.name,
+            "interface_id": f"0x{interface_id:08X}",
+            "uuid": interface.uuid,
+            "namespace": interface.namespace or "",
+            "base_interface": interface.base_interface or "",
+            "methods": methods
+        }
+    
+    def generate_proxy_headers(self, output_dir: str, cache_dir: Optional[str] = None) -> List[str]:
         """生成所有接口的 IPC Proxy 头文件
         
         Args:
             output_dir: 输出目录
+            cache_dir: 缓存目录（用于写入 interface.json）
             
         Returns:
             生成的文件路径列表
         """
         generated_files = []
         
-        # 确保 proxy 子目录存在
         proxy_dir = os.path.join(output_dir, "proxy")
         os.makedirs(proxy_dir, exist_ok=True)
         
-        # 为每个接口生成一个 Proxy 文件
+        if cache_dir:
+            os.makedirs(cache_dir, exist_ok=True)
+        
         for interface in self.document.interfaces:
             interface_short_name = self._get_interface_short_name(interface.name)
             filename = f"{interface_short_name}Proxy.h"
             filepath = os.path.join(proxy_dir, filename)
             
-            # 生成 guard name
             ns_prefix = ""
             if interface.namespace:
                 ns_prefix = interface.namespace.replace("::", "_") + "_"
             guard_name = f"DAS_IPC_{ns_prefix}{interface_short_name.upper()}_PROXY_H"
             
-            # 生成内容
             content = self._file_header(guard_name, interface.name)
             
-            # 生成命名空间包装
             ns_depth = 0
             if interface.namespace:
                 content += self._generate_namespace_open(interface.namespace)
                 ns_depth = len(interface.namespace.split("::"))
                 
-                # 添加 Proxy 命名空间
                 ns_indent = "    " * ns_depth
                 ns_indent_inner = "    " * (ns_depth + 1)
                 content += f"{ns_indent}namespace IPC\n"
@@ -423,10 +549,8 @@ class IpcProxyGenerator:
                 content += f"{ns_indent_inner}{{\n"
                 ns_depth += 2
             
-            # 生成 Proxy 类
             content += self._generate_proxy_class(interface, ns_depth)
             
-            # 关闭命名空间
             if interface.namespace:
                 ns_indent = "    " * (ns_depth - 2)
                 ns_indent_inner = "    " * (ns_depth - 1)
@@ -438,12 +562,19 @@ class IpcProxyGenerator:
             
             content += self._file_footer(guard_name)
             
-            # 写入文件
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(content)
             
             print(f"Generated: {filepath}")
             generated_files.append(filepath)
+            
+            if cache_dir:
+                json_data = self._generate_interface_json(interface)
+                json_filename = f"{interface_short_name}.json"
+                json_filepath = os.path.join(cache_dir, json_filename)
+                with open(json_filepath, 'w', encoding='utf-8') as f:
+                    json.dump(json_data, f, indent=2)
+                print(f"Generated: {json_filepath}")
         
         return generated_files
 
@@ -452,7 +583,8 @@ def generate_ipc_proxy_files(
     document: IdlDocument,
     output_dir: str,
     base_name: Optional[str] = None,
-    idl_file_path: Optional[str] = None
+    idl_file_path: Optional[str] = None,
+    cache_dir: Optional[str] = None
 ) -> List[str]:
     """生成 IPC Proxy 文件
     
@@ -461,12 +593,13 @@ def generate_ipc_proxy_files(
         output_dir: 输出目录
         base_name: 基础文件名（可选，默认使用 IDL 文件名）
         idl_file_path: IDL 文件路径（可选）
+        cache_dir: 缓存目录（用于写入 interface.json）
         
     Returns:
         生成的文件路径列表
     """
     generator = IpcProxyGenerator(document, idl_file_path)
-    return generator.generate_proxy_headers(output_dir)
+    return generator.generate_proxy_headers(output_dir, cache_dir)
 
 
 # 测试代码

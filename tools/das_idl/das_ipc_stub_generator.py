@@ -4,32 +4,23 @@ DAS IPC Stub 代码生成器
 从 IDL 接口定义生成 IPC Stub 代码，用于服务端接收和处理 IPC 调用。
 
 功能:
-1. 为每个接口生成 Stub 类
-2. 使用 FNV-1a hash 计算 InterfaceId（与 Proxy 一致）
+1. 为每个接口生成 Stub 类，继承 IStubBase
+2. 使用 FNV-1a hash 计算 InterfaceId（基于 UUID，与 Proxy 一致）
 3. 生成 MethodTable 元数据（与 Proxy 一致）
 4. 实现 Dispatch 方法，根据 method_id 分发到具体处理函数
-5. 为每个方法生成 Handle 处理函数（解包参数 → 调用实现 → 打包返回值）
+5. 写入 interface.json 到 cache_dir
 
 输出文件命名: stub/<InterfaceName>Stub.h
-
-Stub 代码规范 (B6):
-- static constexpr uint32_t InterfaceId = <FNV-1a hash>;
-- static constexpr MethodMetadata MethodTable[] = {...};
-- void Dispatch(uint16_t method_id, const void* request, void* response) override;
-- 每个 Handle 方法:
-  1. 从 request 解包参数
-  2. 调用 impl_->Method(...)
-  3. 将结果打包到 response
 """
 
+import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 import importlib
 import sys
 
-# 既支持作为包内模块导入（tools.das_idl.*），也支持直接脚本运行。
 try:
     from . import das_idl_parser as _das_idl_parser
 except ImportError:
@@ -47,21 +38,32 @@ ParamDirection = _das_idl_parser.ParamDirection
 
 
 def fnv1a_hash(data: str) -> int:
-    """计算字符串的 FNV-1a 32-bit hash
-    
-    Args:
-        data: 要计算 hash 的字符串
-        
-    Returns:
-        32-bit FNV-1a hash 值
-    """
-    # FNV-1a parameters for 32-bit
+    """计算字符串的 FNV-1a 32-bit hash"""
     FNV_PRIME = 0x01000193
     FNV_OFFSET_BASIS = 0x811c9dc5
     
     hash_value = FNV_OFFSET_BASIS
     for char in data.encode('utf-8'):
         hash_value ^= char
+        hash_value = (hash_value * FNV_PRIME) & 0xFFFFFFFF
+    
+    return hash_value
+
+
+def fnv1a_hash_guid(guid_str: str) -> int:
+    """计算 GUID 字符串的 FNV-1a 32-bit hash（用于生成 interface_id）
+    
+    处理两种格式，大小写不敏感
+    """
+    FNV_PRIME = 0x01000193
+    FNV_OFFSET_BASIS = 0x811c9dc5
+    
+    hash_value = FNV_OFFSET_BASIS
+    for char in guid_str:
+        if char == '{' or char == '}':
+            continue
+        upper_char = char.upper() if 'a' <= char <= 'z' else char
+        hash_value ^= ord(upper_char)
         hash_value = (hash_value * FNV_PRIME) & 0xFFFFFFFF
     
     return hash_value
@@ -192,8 +194,9 @@ class IpcStubGenerator:
         indent = "    " * (namespace_depth + 2)  # class + public
         inner_indent = "    " * (namespace_depth + 3)
         
-        lines.append(f"{indent}void Dispatch(uint16_t method_id, const void* request, void* response) override")
+        lines.append(f"{indent}void Dispatch(uint16_t method_id, const void* request, void* response, IPCMessageHeader& out_response_header) override")
         lines.append(f"{indent}{{")
+        lines.append(f"{inner_indent}(void)out_response_header;")
         lines.append(f"{inner_indent}switch (method_id)")
         lines.append(f"{inner_indent}{{")
         
@@ -294,7 +297,7 @@ class IpcStubGenerator:
         
         interface_short_name = self._get_interface_short_name(interface.name)
         class_name = f"{interface_short_name}Stub"
-        interface_id = fnv1a_hash(interface.name)
+        interface_id = fnv1a_hash_guid(interface.uuid)
         
         # 类文档注释
         lines.append(f"{indent}// ============================================================================")
@@ -312,6 +315,26 @@ class IpcStubGenerator:
         
         # InterfaceId 常量
         lines.append(f"{class_indent}static constexpr uint32_t InterfaceId = 0x{interface_id:08X}u;")
+        lines.append("")
+        
+        # IStubBase 接口实现
+        lines.append(f"{class_indent}[[nodiscard]] uint32_t GetInterfaceId() const noexcept override")
+        lines.append(f"{class_indent}{{")
+        lines.append(f"{class_indent}    return InterfaceId;")
+        lines.append(f"{class_indent}}}")
+        lines.append("")
+        
+        num_methods = len(interface.methods)
+        lines.append(f"{class_indent}[[nodiscard]] const MethodMetadata* GetMethodTable() const noexcept override")
+        lines.append(f"{class_indent}{{")
+        lines.append(f"{class_indent}    return MethodTable;")
+        lines.append(f"{class_indent}}}")
+        lines.append("")
+        
+        lines.append(f"{class_indent}[[nodiscard]] size_t GetMethodCount() const noexcept override")
+        lines.append(f"{class_indent}{{")
+        lines.append(f"{class_indent}    return {num_methods};")
+        lines.append(f"{class_indent}}}")
         lines.append("")
         
         # MethodTable 常量
@@ -354,43 +377,62 @@ class IpcStubGenerator:
         
         return "\n".join(lines)
     
-    def generate_stub_headers(self, output_dir: str) -> List[str]:
+    def _generate_interface_json(self, interface: InterfaceDef) -> Dict[str, Any]:
+        """生成接口元数据 JSON"""
+        interface_id = fnv1a_hash_guid(interface.uuid)
+        methods = []
+        for i, method in enumerate(interface.methods):
+            method_hash = fnv1a_hash(f"{interface.name}::{method.name}")
+            methods.append({
+                "method_id": i,
+                "name": method.name,
+                "hash": f"0x{method_hash:08X}"
+            })
+        
+        return {
+            "interface_name": interface.name,
+            "interface_id": f"0x{interface_id:08X}",
+            "uuid": interface.uuid,
+            "namespace": interface.namespace or "",
+            "base_interface": interface.base_interface or "",
+            "methods": methods
+        }
+    
+    def generate_stub_headers(self, output_dir: str, cache_dir: Optional[str] = None) -> List[str]:
         """生成所有接口的 IPC Stub 头文件
         
         Args:
             output_dir: 输出目录
+            cache_dir: 缓存目录（用于写入 interface.json）
             
         Returns:
             生成的文件路径列表
         """
         generated_files = []
         
-        # 确保 stub 子目录存在
         stub_dir = os.path.join(output_dir, "stub")
         os.makedirs(stub_dir, exist_ok=True)
         
-        # 为每个接口生成一个 Stub 文件
+        if cache_dir:
+            os.makedirs(cache_dir, exist_ok=True)
+        
         for interface in self.document.interfaces:
             interface_short_name = self._get_interface_short_name(interface.name)
             filename = f"{interface_short_name}Stub.h"
             filepath = os.path.join(stub_dir, filename)
             
-            # 生成 guard name
             ns_prefix = ""
             if interface.namespace:
                 ns_prefix = interface.namespace.replace("::", "_") + "_"
             guard_name = f"DAS_IPC_{ns_prefix}{interface_short_name.upper()}_STUB_H"
             
-            # 生成内容
             content = self._file_header(guard_name, interface.name)
             
-            # 生成命名空间包装
             ns_depth = 0
             if interface.namespace:
                 content += self._generate_namespace_open(interface.namespace)
                 ns_depth = len(interface.namespace.split("::"))
                 
-                # 添加 Stub 命名空间
                 ns_indent = "    " * ns_depth
                 ns_indent_inner = "    " * (ns_depth + 1)
                 content += f"{ns_indent}namespace IPC\n"
@@ -399,10 +441,8 @@ class IpcStubGenerator:
                 content += f"{ns_indent_inner}{{\n"
                 ns_depth += 2
             
-            # 生成 Stub 类
             content += self._generate_stub_class(interface, ns_depth)
             
-            # 关闭命名空间
             if interface.namespace:
                 ns_indent = "    " * (ns_depth - 2)
                 ns_indent_inner = "    " * (ns_depth - 1)
@@ -414,12 +454,19 @@ class IpcStubGenerator:
             
             content += self._file_footer(guard_name)
             
-            # 写入文件
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(content)
             
             print(f"Generated: {filepath}")
             generated_files.append(filepath)
+            
+            if cache_dir:
+                json_data = self._generate_interface_json(interface)
+                json_filename = f"{interface_short_name}.json"
+                json_filepath = os.path.join(cache_dir, json_filename)
+                with open(json_filepath, 'w', encoding='utf-8') as f:
+                    json.dump(json_data, f, indent=2)
+                print(f"Generated: {json_filepath}")
         
         return generated_files
 
@@ -428,21 +475,23 @@ def generate_ipc_stub_files(
     document: IdlDocument,
     output_dir: str,
     base_name: Optional[str] = None,
-    idl_file_path: Optional[str] = None
+    idl_file_path: Optional[str] = None,
+    cache_dir: Optional[str] = None
 ) -> List[str]:
     """生成 IPC Stub 文件
     
     Args:
         document: IDL 文档对象
         output_dir: 输出目录
-        base_name: 基础文件名（可选，默认使用 IDL 文件名）
+        base_name: 基础文件名（可选）
         idl_file_path: IDL 文件路径（可选）
+        cache_dir: 缓存目录（用于写入 interface.json）
         
     Returns:
         生成的文件路径列表
     """
     generator = IpcStubGenerator(document, idl_file_path)
-    return generator.generate_stub_headers(output_dir)
+    return generator.generate_stub_headers(output_dir, cache_dir)
 
 
 # 测试代码
