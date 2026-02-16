@@ -1,0 +1,11 @@
+{
+  "name": "@CMAKE_SHARED_LIBRARY_PREFIX@IpcTestPlugin",
+  "author": "Dusk",
+  "version": "0.1",
+  "guid": "1A2B3C4D-5E6F-4A5B-8C9D-0E1F2A3B4C5D",
+  "description": "IPC Test Plugin - Provides test interface for IPC integration testing",
+  "supportedSystem": "Windows",
+  "language": "Cpp",
+  "pluginFilenameExtension": "dll",
+  "settings": []
+}
