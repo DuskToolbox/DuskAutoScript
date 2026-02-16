@@ -1,3 +1,17 @@
+/**
+ * @file RemoteObjectRegistryTest.cpp
+ * @brief RemoteObjectRegistry 单元测试
+ *
+ * ⚠️ [未来移除] 此测试将被 IPC端到端多进程测试计划 替代
+ *
+ * 计划位置: .sisyphus/plans/IPC端到端多进程测试计划.md
+ * 替代测试: IpcE2EMultiProcessTest.cpp (Task 8)
+ *
+ * 原因: 端到端测试会真实模拟多进程场景，比单元测试更全面
+ *
+ * TODO: 当 IpcE2EMultiProcessTest 完成时，删除此文件
+ */
+
 #include <cstdint>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
