@@ -11,7 +11,7 @@
 DAS_NS_BEGIN
 
 class TestInterfaceImpl final
-    : public TestInterface::IDasTestInterfaceImplBase<TestInterfaceImpl>
+    : public TestInterface::DasTestInterfaceImplBase<TestInterfaceImpl>
 {
 public:
     TestInterfaceImpl();
@@ -21,8 +21,10 @@ public:
     DAS_IMPL SetTestId(uint64_t id) override;
     DAS_IMPL Add(int32_t a, int32_t b, int32_t* p_result) override;
     DAS_IMPL Multiply(int32_t a, int32_t b, int32_t* p_result) override;
-    DAS_IMPL Concatenate(const char* a, const char* b, char** p_result)
-        override;
+    DAS_IMPL Concatenate(
+        IDasReadOnlyString*  a,
+        IDasReadOnlyString*  b,
+        IDasReadOnlyString** p_result) override;
     DAS_IMPL GetProcessId(uint32_t* p_out_pid) override;
     DAS_IMPL Ping(bool* p_pong) override;
 
