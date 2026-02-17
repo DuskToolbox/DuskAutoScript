@@ -22,7 +22,7 @@ typedef struct _das_GUID
     uint16_t data2;
     uint16_t data3;
     uint8_t  data4[8];
-#endif SWIG
+#endif // SWIG
 } DasGuid;
 
 // ============================================================================
