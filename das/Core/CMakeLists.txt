@@ -31,6 +31,14 @@ message(STATUS "[DAS IDL] Python virtual environment is ready at ${DAS_IDL_VENV_
 
 # 收集所有IDL文件
 file(GLOB DAS_IDL_ROOT "${CMAKE_SOURCE_DIR}/idl/*.idl")
+
+# ===== 测试用 IDL 文件 =====
+# 测试 IDL 文件有独立的目录结构: das/*/test/idl/*.idl
+# 这些 IDL 文件仅用于测试目的，不参与 SWIG 导出
+file(GLOB_RECURSE DAS_IDL_TEST
+    "${CMAKE_SOURCE_DIR}/das/*/test/idl/*.idl"
+)
+
 set(DAS_IDL_FILES ${DAS_IDL_ROOT})
 
 # 设置IDL生成器输出目录
