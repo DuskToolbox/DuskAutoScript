@@ -19,7 +19,10 @@ add_custom_target(DasAutoCopyPluginMetadataFile ALL)
 das_add_plugin_library(DasAdbCapture DAS_EX_PRIVATE_LIBS)
 das_add_plugin_library(DasAdbTouch DAS_EX_PRIVATE_LIBS)
 das_add_plugin_library(DasWindowsCapture DAS_EX_PRIVATE_LIBS)
-das_add_plugin_library(IpcTestPlugin DAS_EX_PRIVATE_LIBS)
+
+if(DAS_BUILD_TEST)
+    das_add_plugin_library(IpcTestPlugin DAS_EX_PRIVATE_LIBS)
+endif()
 
 target_link_libraries(DasAdbCapture PRIVATE zlib)
 
