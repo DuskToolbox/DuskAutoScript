@@ -319,6 +319,7 @@ class SwigTypeCleaner:
 
         has_used_types = self.print_used_types_warning()
         if has_used_types:
+            print("\nAborting cleanup due to used types. Please review the report and remove references before deleting files.")
             return -1
 
         # 生成JSON报告（如果指定）
