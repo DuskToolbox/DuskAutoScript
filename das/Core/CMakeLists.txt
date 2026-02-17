@@ -1,3 +1,11 @@
+# 根据导出语言查找依赖包
+if(EXPORT_JAVA)
+    find_package(JNI REQUIRED)
+endif()
+if(EXPORT_PYTHON)
+    find_package(Python3 COMPONENTS Development REQUIRED)
+endif()
+
 add_library(DasCoreObjects OBJECT)
 add_custom_target(DasCoreObjectsPreBuild ALL)
 add_dependencies(DasCoreObjects DasCoreObjectsPreBuild)
@@ -20,6 +28,7 @@ if (NOT EXISTS "${CMAKE_SOURCE_DIR}/cmake/DasIdlGenerator.cmake")
 endif ()
 include("${CMAKE_SOURCE_DIR}/cmake/DasIdlGenerator.cmake")
 message(STATUS "[DAS IDL] DasIdlGenerator.cmake module loaded successfully")
+include("${CMAKE_SOURCE_DIR}/cmake/DasAddIdlExport.cmake")
 
 # 确保Python虚拟环境已创建（在CMake配置阶段运行）
 message(STATUS "[DAS IDL] Setting up Python virtual environment...")
@@ -41,147 +50,52 @@ file(GLOB_RECURSE DAS_IDL_TEST
 
 set(DAS_IDL_FILES ${DAS_IDL_ROOT})
 
-# 设置IDL生成器输出目录
-set(DAS_IDL_ABI_OUTPUT_DIR "${CMAKE_BINARY_DIR}/das/include/das/_autogen/idl/abi")
-set(DAS_IDL_WRAPPER_OUTPUT_DIR "${CMAKE_BINARY_DIR}/das/include/das/_autogen/idl/wrapper")
-set(DAS_IDL_IMPLEMENTS_OUTPUT_DIR "${CMAKE_BINARY_DIR}/das/include/das/_autogen/idl/wrapper")
-set(DAS_IDL_SWIG_OUTPUT_DIR "${CMAKE_BINARY_DIR}/das/include/das/_autogen/idl/swig")
-set(DAS_IDL_BATCH_CONFIG "${CMAKE_BINARY_DIR}/das/idl_batch_config.json")
+# 使用 das_add_idl_export 函数替换现有的 IDL 生成和 SWIG 导出代码
+# 动态构建 LANGUAGES 参数
+set(_LANGUAGES "")
+if(EXPORT_PYTHON)
+    list(APPEND _LANGUAGES "Python")
+endif()
+if(EXPORT_JAVA)
+    list(APPEND _LANGUAGES "Java")
+endif()
+if(EXPORT_CSHARP)
+    list(APPEND _LANGUAGES "CSharp")
+endif()
 
-# 在CMake中生成IDL批量配置JSON文件
-set(DAS_IDL_JSON_CONFIG "[\n")
-set(IS_FIRST_ITEM TRUE)
+# 获取 idl/ 目录下所有 .idl 文件名
+file(GLOB _IDL_FILES "${CMAKE_SOURCE_DIR}/idl/*.idl")
+set(_IDL_FILE_NAMES "")
+foreach(_FILE ${_IDL_FILES})
+    get_filename_component(_NAME ${_FILE} NAME)
+    list(APPEND _IDL_FILE_NAMES ${_NAME})
+endforeach()
 
-foreach (IDL_FILE ${DAS_IDL_FILES})
-    if (IS_FIRST_ITEM)
-        set(IS_FIRST_ITEM FALSE)
-    else ()
-        string(APPEND DAS_IDL_JSON_CONFIG ",\n")
-    endif ()
+# 指定用户自定义的 SWIG 文件（SWIG/ExportAll.i 通过 %include 包含自动生成的内容）
+set(_USER_SWIG_FILES "${CMAKE_SOURCE_DIR}/SWIG/ExportAll.i")
 
-    get_filename_component(IDL_FILENAME "${IDL_FILE}" NAME_WE)
-    set(IDL_ABI_SUBDIR "${DAS_IDL_ABI_OUTPUT_DIR}")
-    set(IDL_WRAPPER_SUBDIR "${DAS_IDL_WRAPPER_OUTPUT_DIR}")
-    set(IDL_IMPLEMENTS_SUBDIR "${DAS_IDL_IMPLEMENTS_OUTPUT_DIR}")
-    set(IDL_SWIG_SUBDIR "${DAS_IDL_SWIG_OUTPUT_DIR}")
-
-    string(APPEND DAS_IDL_JSON_CONFIG "    {\n")
-    string(APPEND DAS_IDL_JSON_CONFIG "        \"-i\": \"${IDL_FILE}\",\n")
-    string(APPEND DAS_IDL_JSON_CONFIG "        \"--raw-output-dir\": \"${IDL_ABI_SUBDIR}\",\n")
-    string(APPEND DAS_IDL_JSON_CONFIG "        \"--wrapper-output-dir\": \"${IDL_WRAPPER_SUBDIR}\",\n")
-    string(APPEND DAS_IDL_JSON_CONFIG "        \"--implements-output-dir\": \"${IDL_IMPLEMENTS_SUBDIR}\",\n")
-    string(APPEND DAS_IDL_JSON_CONFIG "        \"--swig-output-dir\": \"${IDL_SWIG_SUBDIR}\",\n")
-    string(APPEND DAS_IDL_JSON_CONFIG "        \"--swig\": true,\n")
-    string(APPEND DAS_IDL_JSON_CONFIG "        \"--cpp-wrapper\": true,\n")
-    string(APPEND DAS_IDL_JSON_CONFIG "        \"--cpp-implements\": true,\n")
-    string(APPEND DAS_IDL_JSON_CONFIG "        \"--generate-type-maps\": true\n")
-    string(APPEND DAS_IDL_JSON_CONFIG "    }")
-endforeach ()
-
-string(APPEND DAS_IDL_JSON_CONFIG "\n]")
-
-# 将JSON配置写入文件
-file(WRITE "${DAS_IDL_BATCH_CONFIG}" "${DAS_IDL_JSON_CONFIG}")
-message(STATUS "Generated IDL batch configuration: ${DAS_IDL_BATCH_CONFIG}")
-
-# 设置更新列表文件路径
-set(DAS_IDL_UPDATE_LIST "${CMAKE_BINARY_DIR}/das/idl_update_list.txt")
-
-# IDL增量检查命令（检查哪些IDL需要重新生成）
-add_custom_command(
-        OUTPUT ${DAS_IDL_UPDATE_LIST}
-        COMMAND ${DAS_IDL_VENV_PYTHON} ${CMAKE_SOURCE_DIR}/tools/das_idl/check_idl_updates.py
-        --config ${DAS_IDL_BATCH_CONFIG}
-        --output ${DAS_IDL_UPDATE_LIST}
-        DEPENDS ${DAS_IDL_FILES} ${DAS_IDL_BATCH_CONFIG}
-        ${DAS_IDL_MODULE_TOOLS}
-        COMMENT "Check which IDL files need to be regenerated"
-        VERBATIM
+# 使用新函数替换现有的 IDL 生成和 SWIG 导出代码
+das_add_idl_export(
+    NAME DasCore
+    IDL_DIR "${CMAKE_SOURCE_DIR}/idl"
+    OUTPUT_DIR "${CMAKE_BINARY_DIR}/das/include/das"
+    IDL_FILES ${_IDL_FILE_NAMES}
+    LANGUAGES ${_LANGUAGES}
+    USER_SWIG_FILES ${_USER_SWIG_FILES}
+    SWIG_OPTIONS_Python -threads
+    SWIG_OPTIONS_Java -package org.das
+    SWIG_INCLUDE_DIRS
+        "${CMAKE_SOURCE_DIR}/include/"
+        "${CMAKE_BINARY_DIR}/das/include"
+    DEPENDS_ON DasCore
 )
 
-# 创建IDL增量检查目标
-add_custom_target(DasCoreIdlUpdateList DEPENDS ${DAS_IDL_UPDATE_LIST})
-
-# 执行IDL批量生成的自定义命令（使用虚拟环境，只生成需要更新的IDL）
-add_custom_command(
-        OUTPUT ${DAS_IDL_ABI_OUTPUT_DIR}/.generated_stamp
-        COMMAND ${DAS_IDL_VENV_PYTHON} ${CMAKE_SOURCE_DIR}/tools/das_idl/das_idl_batch_gen.py
-        --config ${DAS_IDL_BATCH_CONFIG}
-        --update-list ${DAS_IDL_UPDATE_LIST}
-        COMMAND ${CMAKE_COMMAND} -E touch ${DAS_IDL_ABI_OUTPUT_DIR}/.generated_stamp
-        DEPENDS ${DAS_IDL_UPDATE_LIST}
-        ${DAS_IDL_MODULE_TOOLS}
-        COMMENT "Generate code from IDL files using virtual environment (incremental)"
-        VERBATIM
-)
-
-# 创建IDL批量生成目标
-add_custom_target(DasCoreIdlGenerated DEPENDS ${DAS_IDL_ABI_OUTPUT_DIR}/.generated_stamp)
-add_dependencies(DasCoreIdlGenerated DasCoreIdlUpdateList)
-
-# ====== IDL依赖关系提取与拓扑排序 ======
-# 设置依赖关系文件输出路径（放在构建目录中，不污染源码目录）
-set(DAS_SWIG_DEPS_FILE "${CMAKE_BINARY_DIR}/das/swig_deps.json")
-set(DAS_SORTED_INTERFACES_FILE "${CMAKE_BINARY_DIR}/das/sorted_interfaces.txt")
-
-# 提取IDL依赖关系的自定义命令
-add_custom_command(
-        OUTPUT ${DAS_SWIG_DEPS_FILE}
-        COMMAND ${DAS_IDL_VENV_PYTHON} ${CMAKE_SOURCE_DIR}/tools/das_idl/extract_idl_deps.py
-        --idl-dir ${CMAKE_SOURCE_DIR}/idl
-        --output ${DAS_SWIG_DEPS_FILE}
-        DEPENDS ${DAS_IDL_FILES}
-        ${CMAKE_SOURCE_DIR}/tools/das_idl/extract_idl_deps.py
-        COMMENT "Extract IDL interface dependencies"
-        VERBATIM
-)
-
-# 创建IDL依赖提取目标
-add_custom_target(DasCoreIdlDepsExtracted DEPENDS ${DAS_SWIG_DEPS_FILE})
-add_dependencies(DasCoreIdlDepsExtracted DasCoreIdlGenerated)
-
-# 执行拓扑排序的自定义命令
-add_custom_command(
-        OUTPUT ${DAS_SORTED_INTERFACES_FILE}
-        COMMAND ${DAS_IDL_VENV_PYTHON} ${CMAKE_SOURCE_DIR}/tools/das_idl/topological_sort.py
-        --deps-file ${DAS_SWIG_DEPS_FILE}
-        --output ${DAS_SORTED_INTERFACES_FILE}
-        DEPENDS ${DAS_SWIG_DEPS_FILE}
-        ${CMAKE_SOURCE_DIR}/tools/das_idl/topological_sort.py
-        COMMENT "Topological sort of SWIG interfaces"
-        VERBATIM
-)
-
-# 创建拓扑排序目标
-add_custom_target(DasCoreSwigInterfacesSorted DEPENDS ${DAS_SORTED_INTERFACES_FILE})
-add_dependencies(DasCoreSwigInterfacesSorted DasCoreIdlDepsExtracted)
-# ====== IDL依赖关系提取与拓扑排序结束 ======
-
-# 设置 swig_all.i 文件路径
-set(DAS_SWIG_ALL_I "${DAS_IDL_SWIG_OUTPUT_DIR}/swig_all.i")
-
-# 生成swig_all.i文件的自定义命令（汇总所有SWIG接口）
-add_custom_command(
-        OUTPUT "${DAS_SWIG_ALL_I}"
-        COMMAND ${CMAKE_COMMAND}
-        -DSWIG_OUTPUT_DIR=${DAS_IDL_SWIG_OUTPUT_DIR}
-        -DABI_OUTPUT_DIR=${DAS_IDL_ABI_OUTPUT_DIR}
-        -DSORTED_INTERFACES_FILE=${DAS_SORTED_INTERFACES_FILE}
-        -P ${CMAKE_SOURCE_DIR}/cmake/generate_swig_all_i.cmake
-        COMMAND ${CMAKE_COMMAND} -E touch ${DAS_IDL_SWIG_OUTPUT_DIR}/.swig_all_generated
-        DEPENDS ${DAS_SORTED_INTERFACES_FILE}
-        ${CMAKE_SOURCE_DIR}/cmake/generate_swig_all_i.cmake
-        BYPRODUCTS ${DAS_IDL_SWIG_OUTPUT_DIR}/.swig_all_generated
-        COMMENT "Generate SWIG _all.i summary file"
-        VERBATIM
-)
-
-# 创建SWIG汇总文件生成目标
-add_custom_target(DasCoreSwigAllGenerated DEPENDS "${DAS_SWIG_ALL_I}")
-add_dependencies(DasCoreSwigAllGenerated DasCoreSwigInterfacesSorted)
-
-# 让预构建目标依赖IDL生成目标，确保增量检查脚本被执行
-add_dependencies(DasCoreObjectsPreBuild DasCoreIdlUpdateList DasCoreIdlGenerated DasCoreSwigAllGenerated)
+# 让预构建目标依赖IDL生成目标
+# 注意：DasCoreSwigAllGenerated 目标只在启用 SWIG 导出时才存在
+add_dependencies(DasCoreObjectsPreBuild DasCoreIdlUpdateList DasCoreIdlGenerated)
+if(_LANGUAGES)
+    add_dependencies(DasCoreObjectsPreBuild DasCoreSwigAllGenerated)
+endif()
 
 # ====== 官方IID列表生成 ======
 # 设置OfficialIids输出目录
@@ -217,9 +131,32 @@ target_compile_options(DasCoreObjects PRIVATE
 )
 set_property(TARGET DasCoreObjects PROPERTY POSITION_INDEPENDENT_CODE ON)
 
+# 初始化外部语言库列表
+set(DAS_FOREIGN_LANGUAGE_LIB_LIST "")
+
+# 设置导出宏列表
+set(DAS_EXPORT_MACRO_LIST "")
+if(EXPORT_PYTHON)
+    list(APPEND DAS_EXPORT_MACRO_LIST DAS_EXPORT_PYTHON)
+    list(APPEND DAS_FOREIGN_LANGUAGE_LIB_LIST Python3::Python)
+    target_include_directories(DasCoreObjects PUBLIC ${Python3_INCLUDE_DIRS})
+endif()
+if(EXPORT_JAVA)
+    list(APPEND DAS_EXPORT_MACRO_LIST DAS_EXPORT_JAVA)
+    list(APPEND DAS_FOREIGN_LANGUAGE_LIB_LIST JNI::JNI)
+endif()
+if(EXPORT_CSHARP)
+    list(APPEND DAS_EXPORT_MACRO_LIST DAS_EXPORT_CSHARP)
+endif()
+
+# 应用导出宏定义
+if(DAS_EXPORT_MACRO_LIST)
+    target_compile_definitions(DasCoreObjects PUBLIC ${DAS_EXPORT_MACRO_LIST})
+endif()
+
 target_include_directories(DasCoreObjects PUBLIC ${CMAKE_BINARY_DIR}/das/include/)
-target_include_directories(DasCoreObjects PUBLIC ${DAS_IDL_ABI_OUTPUT_DIR})
-target_include_directories(DasCoreObjects PUBLIC ${DAS_IDL_WRAPPER_OUTPUT_DIR})
+target_include_directories(DasCoreObjects PUBLIC ${DasCore_ABI_OUTPUT_DIR})
+target_include_directories(DasCoreObjects PUBLIC ${DasCore_WRAPPER_OUTPUT_DIR})
 target_compile_definitions(DasCoreObjects PRIVATE -DDAS_BUILD_SHARED)
  target_link_libraries(DasCoreObjects PUBLIC
         Boost::filesystem
@@ -273,59 +210,21 @@ add_dependencies(DasCore DasCoreObjects)
 
 add_compile_definitions(DAS_BUILD_SHARED)
 
-# 配置导出库
-set(DAS_EXPORT_MACRO_LIST "")
-set(DAS_FOREIGN_LANGUAGE_LIB_LIST "")
-
-cmake_policy(SET CMP0078 NEW)
-
-file(GLOB DAS_SWIG_FILES ${CMAKE_SOURCE_DIR}/SWIG/*.i)
-set_property(SOURCE ${DAS_SWIG_FILES} PROPERTY CPLUSPLUS ON)
-set_source_files_properties(${DAS_SWIG_FILES} PROPERTIES USE_SWIG_DEPENDENCIES TRUE)
-
-if (${EXPORT_CSHARP})
-    # 显式添加对 swig_all.i 的依赖
-    set(SWIG_MODULE_DasCoreCSharpExport_EXTRA_DEPS "${DAS_SWIG_ALL_I}")
-    das_add_swig_export_library(CSharp DasCoreCSharpExport "${DAS_SWIG_FILES}")
-    target_link_libraries(DasCoreCSharpExport PUBLIC DasCore)
-    add_dependencies(DasCoreCSharpExport DasCore)
-    # 确保SWIG导出库在swig_all.i重新生成后重新构建
-    add_dependencies(DasCoreCSharpExport DasCoreSwigAllGenerated)
-    list(APPEND DAS_EXPORT_MACRO_LIST DAS_EXPORT_CSHARP)
-endif ()
-
-if (${EXPORT_JAVA})
-    find_package(JNI REQUIRED)
-    # 显式添加对 swig_all.i 的依赖
-    set(SWIG_MODULE_DasCoreJavaExport_EXTRA_DEPS "${DAS_SWIG_ALL_I}")
-    das_add_swig_export_library(Java DasCoreJavaExport "${DAS_SWIG_FILES}")
-    set_property(TARGET DasCoreJavaExport PROPERTY SWIG_COMPILE_OPTIONS -package org.das)
-
-    target_link_libraries(DasCoreObjects PUBLIC JNI::JNI)
-
-    target_link_libraries(DasCoreJavaExport PUBLIC DasCore)
-    add_dependencies(DasCoreJavaExport DasCore)
-    # 确保SWIG导出库在swig_all.i重新生成后重新构建
-    add_dependencies(DasCoreJavaExport DasCoreSwigAllGenerated)
-    list(APPEND DAS_EXPORT_MACRO_LIST DAS_EXPORT_JAVA)
-endif ()
-
-if (${EXPORT_PYTHON})
-    find_package(Python3 COMPONENTS Development REQUIRED)
-    # 显式添加对 swig_all.i 的依赖
-    set(SWIG_MODULE_DasCorePythonExport_EXTRA_DEPS "${DAS_SWIG_ALL_I}")
-    das_add_swig_export_library(Python DasCorePythonExport "${DAS_SWIG_FILES}")
-    set_property(TARGET DasCorePythonExport PROPERTY SWIG_COMPILE_OPTIONS -threads)
-
-    target_include_directories(DasCoreObjects PUBLIC ${Python3_INCLUDE_DIRS})
-    target_link_libraries(DasCoreObjects PUBLIC Python3::Python)
-
-    target_link_libraries(DasCorePythonExport PUBLIC DasCore)
-    add_dependencies(DasCorePythonExport DasCore)
-    # 确保SWIG导出库在swig_all.i重新生成后重新构建
-    add_dependencies(DasCorePythonExport DasCoreSwigAllGenerated)
-    list(APPEND DAS_EXPORT_MACRO_LIST DAS_EXPORT_PYTHON)
-endif ()
+# === DasTest IDL Export ===
+# 测试用的 IDL 导出，使用 das_add_idl_export 函数
+# 注意：DasTest 不需要 SWIG 导出，只需要 IPC 代码生成
+# set(_TEST_IDL_FILES "IDasTestInterface.idl")
+#
+# das_add_idl_export(
+#     NAME DasTest
+#     IDL_DIR "${CMAKE_SOURCE_DIR}/das/Core/IPC/test/idl"
+#     OUTPUT_DIR "${CMAKE_BINARY_DIR}/das_test/include/das"
+#     IDL_FILES ${_TEST_IDL_FILES}
+#     LANGUAGES ""  # 测试不需要 SWIG 导出
+#     GENERATE_IPC_PROXY ON
+#     GENERATE_IPC_STUB ON
+#     GENERATE_IPC_MESSAGE ON
+# )
 
 # FetchContent_Declare(
 # Sol2
@@ -364,48 +263,4 @@ target_link_libraries(DasCore PUBLIC DasCoreObjects)
      das_add_core_test(Utils)
      das_add_core_test(Exceptions)
      das_add_core_test(IPC)
-
-     # ====== 测试 IDL 生成 ======
-     # 为测试接口生成独立的代码（避免与主 IDL 冲突）
-     set(DAS_TEST_IDL_DIR "${CMAKE_SOURCE_DIR}/das/Core/IPC/test/idl")
-     set(DAS_TEST_IDL_OUTPUT_DIR "${CMAKE_BINARY_DIR}/das_test/include/das/_autogen/idl/abi")
-
-     # 收集测试 IDL 文件
-     file(GLOB DAS_TEST_IDL_FILES "${DAS_TEST_IDL_DIR}/*.idl")
-
-     if(DAS_TEST_IDL_FILES)
-         message(STATUS "[TEST IDL] Found test IDL files: ${DAS_TEST_IDL_FILES}")
-
-         # 为每个测试 IDL 文件生成代码
-         foreach(IDL_FILE ${DAS_TEST_IDL_FILES})
-             get_filename_component(IDL_NAME ${IDL_FILE} NAME_WE)
-
-             # 设置输出路径
-             set(TEST_ABI_OUTPUT "${DAS_TEST_IDL_OUTPUT_DIR}/${IDL_NAME}.h")
-
-             # 生成测试 IDL 代码
-             add_custom_command(
-                 OUTPUT ${TEST_ABI_OUTPUT}
-                 COMMAND ${DAS_IDL_VENV_PYTHON} ${CMAKE_SOURCE_DIR}/tools/das_idl/das_idl_gen.py
-                     -i ${IDL_FILE}
-                     --raw-output-dir ${DAS_TEST_IDL_OUTPUT_DIR}
-                     --namespace "Das::TestInterface"
-                 DEPENDS ${IDL_FILE}
-                     ${CMAKE_SOURCE_DIR}/tools/das_idl/das_idl_gen.py
-                 COMMENT "Generate test IDL: ${IDL_NAME}"
-                 VERBATIM
-             )
-
-             list(APPEND DAS_TEST_IDL_GENERATED ${TEST_ABI_OUTPUT})
-         endforeach()
-
-         # 创建测试 IDL 生成目标
-         add_custom_target(DasTestIdlGenerated DEPENDS ${DAS_TEST_IDL_GENERATED})
-
-         # 添加 include 路径
-         target_include_directories(IPCTest PRIVATE ${DAS_TEST_IDL_OUTPUT_DIR})
-
-         # 确保测试目标依赖测试 IDL 生成
-         add_dependencies(IPCTest DasTestIdlGenerated)
-     endif()
  endif ()
