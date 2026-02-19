@@ -224,7 +224,10 @@ class IpcProxyGenerator:
 
 #include <das/Core/IPC/DasProxyBase.h>
 #include <das/Core/IPC/MemorySerializer.h>
+#include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/Serializer.h>
+#include <das/Core/Logger/Logger.h>
+#include <atomic>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -415,11 +418,12 @@ class IpcProxyGenerator:
         return "\n".join(lines)
     
     def _generate_proxy_class(self, interface: InterfaceDef, namespace_depth: int = 0) -> str:
-        """为接口生成 Proxy 类，继承 IPCProxyBase"""
+        """为接口生成 Proxy 类，继承 DasProxyBase 和接口"""
         lines = []
         indent = "    " * namespace_depth
         class_indent = "    " * (namespace_depth + 1)
         method_indent = "    " * (namespace_depth + 2)
+        inner_indent = "    " * (namespace_depth + 3)
         
         interface_short_name = self._get_interface_short_name(interface.name)
         class_name = f"{interface_short_name}Proxy"
@@ -445,6 +449,29 @@ class IpcProxyGenerator:
         lines.append(f"{class_indent}}}")
         lines.append("")
         
+        # AddRef/Release final 实现
+        lines.append(f"{class_indent}uint32_t AddRef() final")
+        lines.append(f"{class_indent}{{")
+        lines.append(f"{method_indent}return ++ref_count_;")
+        lines.append(f"{class_indent}}}")
+        lines.append("")
+        lines.append(f"{class_indent}uint32_t Release() final")
+        lines.append(f"{class_indent}{{")
+        lines.append(f"{method_indent}uint32_t count = --ref_count_;")
+        lines.append(f"{method_indent}if (count == 0)")
+        lines.append(f"{method_indent}{{")
+        lines.append(f"{inner_indent}DAS_LOG_TRACE(\"Proxy {class_name} ref_count reached 0, cleaning up\");")
+        lines.append(f"{inner_indent}ProxyFactory::GetInstance().RemoveFromCache(object_id_);")
+        lines.append(f"{inner_indent}if (GetObjectManager())")
+        lines.append(f"{inner_indent}{{")
+        lines.append(f"{inner_indent}    GetObjectManager()->Release(object_id_);")
+        lines.append(f"{inner_indent}}}")
+        lines.append(f"{inner_indent}delete this;")
+        lines.append(f"{method_indent}}}")
+        lines.append(f"{method_indent}return count;")
+        lines.append(f"{class_indent}}}")
+        lines.append("")
+        
         for i, method in enumerate(interface.methods):
             method_sig = self._generate_method_signature(interface, method)
             lines.append(f"{class_indent}{method_sig}")
@@ -456,6 +483,7 @@ class IpcProxyGenerator:
             lines.append("")
         
         lines.append(f"{indent}private:")
+        lines.append(f"{class_indent}std::atomic<uint32_t> ref_count_{{1}};")
         lines.append(f"{class_indent}{interface.name}* local_impl_ = nullptr;")
         lines.append(f"{indent}}};")
         lines.append("")
