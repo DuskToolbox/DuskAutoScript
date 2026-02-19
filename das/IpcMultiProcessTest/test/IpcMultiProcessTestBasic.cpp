@@ -47,14 +47,14 @@ using DAS::Core::IPC::SessionCoordinator;
 
 // ====== 测试辅助类 ======
 
-/**
- * @brief 模拟 Host 进程环境
- *
- * 提供 Host 进程的核心功能：
- * - Session ID 分配
- * - 远程对象注册
- * - 对象生命周期管理
- */
+struct LocalObjectInfo
+{
+    ObjectId    object_id;
+    DasGuid     iid;
+    std::string name;
+    uint16_t    version;
+};
+
 class MockHostProcess
 {
 public:
@@ -64,7 +64,6 @@ public:
 
     DasResult Initialize()
     {
-        // 分配 session ID
         auto& coordinator = SessionCoordinator::GetInstance();
         session_id_ = coordinator.AllocateSessionId();
         if (session_id_ == 0)
@@ -73,10 +72,8 @@ public:
             return DAS_E_IPC_SESSION_ALLOC_FAILED;
         }
 
-        // 设置本地 session ID
         coordinator.SetLocalSessionId(session_id_);
 
-        // 初始化对象管理器
         object_manager_ = std::make_unique<DistributedObjectManager>();
         DasResult result = object_manager_->Initialize(session_id_);
         if (result != DAS_S_OK)
@@ -100,12 +97,8 @@ public:
         }
 
         is_running_ = false;
+        local_objects_.clear();
 
-        // 注销所有对象
-        auto& registry = RemoteObjectRegistry::GetInstance();
-        registry.UnregisterAllFromSession(session_id_);
-
-        // 释放 session ID
         auto& coordinator = SessionCoordinator::GetInstance();
         coordinator.ReleaseSessionId(session_id_);
         DAS_LOG_INFO("MockHostProcess shutdown");
@@ -135,22 +128,51 @@ public:
             return DAS_E_IPC_NOT_INITIALIZED;
         }
 
-        // 注册到远程对象注册表
-        auto& registry = RemoteObjectRegistry::GetInstance();
-        return registry
-            .RegisterObject(object_id, iid, session_id_, name, version);
+        for (const auto& info : local_objects_)
+        {
+            if (info.object_id.session_id == object_id.session_id
+                && info.object_id.generation == object_id.generation
+                && info.object_id.local_id == object_id.local_id)
+            {
+                return DAS_E_DUPLICATE_ELEMENT;
+            }
+        }
+
+        LocalObjectInfo info;
+        info.object_id = object_id;
+        info.iid = iid;
+        info.name = name;
+        info.version = version;
+        local_objects_.push_back(info);
+
+        return DAS_S_OK;
     }
 
     DasResult UnregisterObject(const ObjectId& object_id)
     {
-        auto& registry = RemoteObjectRegistry::GetInstance();
-        return registry.UnregisterObject(object_id);
+        for (auto it = local_objects_.begin(); it != local_objects_.end(); ++it)
+        {
+            if (it->object_id.session_id == object_id.session_id
+                && it->object_id.generation == object_id.generation
+                && it->object_id.local_id == object_id.local_id)
+            {
+                local_objects_.erase(it);
+                return DAS_S_OK;
+            }
+        }
+        return DAS_E_IPC_OBJECT_NOT_FOUND;
+    }
+
+    const std::vector<LocalObjectInfo>& GetLocalObjects() const
+    {
+        return local_objects_;
     }
 
 private:
     uint16_t                                  session_id_;
     bool                                      is_running_;
     std::unique_ptr<DistributedObjectManager> object_manager_;
+    std::vector<LocalObjectInfo>              local_objects_;
 };
 
 /**
@@ -259,13 +281,18 @@ protected:
 
     void TearDown() override
     {
-        // 关闭 Host 进程
         host_process_.Shutdown();
 
-        // 关闭主进程
         main_process_.Shutdown();
 
-        // 清理注册表
+        MainProcessServer::GetInstance().SetMessageDispatchHandler(nullptr);
+        MainProcessServer::GetInstance().SetOnSessionConnectedCallback(nullptr);
+        MainProcessServer::GetInstance().SetOnSessionDisconnectedCallback(
+            nullptr);
+        MainProcessServer::GetInstance().SetOnObjectRegisteredCallback(nullptr);
+        MainProcessServer::GetInstance().SetOnObjectUnregisteredCallback(
+            nullptr);
+
         auto& registry = RemoteObjectRegistry::GetInstance();
         registry.Clear();
     }
@@ -615,6 +642,9 @@ TEST_F(IpcMultiProcessTest, MessageDispatch)
             1),
         DAS_S_OK);
 
+    // 启动 MainProcessServer 以便进行消息分发
+    ASSERT_EQ(MainProcessServer::GetInstance().Start(), DAS_S_OK);
+
     // 创建测试消息
     IPCMessageHeader header{};
     header.call_id = 1;
@@ -764,7 +794,6 @@ TEST_F(IpcMultiProcessTest, Performance_ObjectRegistration)
     const int num_objects = 1000;
     auto      start = std::chrono::high_resolution_clock::now();
 
-    // 注册大量对象
     for (int i = 0; i < num_objects; ++i)
     {
         ObjectId    obj_id = {host_session_id, 1, static_cast<uint32_t>(i)};
@@ -772,16 +801,16 @@ TEST_F(IpcMultiProcessTest, Performance_ObjectRegistration)
         std::string name = "PerfObject" + std::to_string(i);
 
         host_process_.RegisterObject(obj_id, iid, name, 1);
+        MainProcessServer::GetInstance()
+            .OnRemoteObjectRegistered(obj_id, iid, host_session_id, name, 1);
     }
 
     auto end = std::chrono::high_resolution_clock::now();
     auto duration =
         std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-    // 验证性能：1000 个对象注册应该在 1 秒内完成
     EXPECT_LT(duration.count(), 1000);
 
-    // 验证所有对象都已注册
     std::vector<RemoteObjectInfo> objects;
     MainProcessServer::GetInstance().GetRemoteObjects(objects);
     EXPECT_EQ(objects.size(), static_cast<size_t>(num_objects));
