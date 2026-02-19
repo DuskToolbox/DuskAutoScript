@@ -22,5 +22,5 @@ if(WIN32)
 endif()
 
 set_target_properties(DasHost PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Host"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
 )
