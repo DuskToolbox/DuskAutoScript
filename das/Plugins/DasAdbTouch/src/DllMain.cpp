@@ -5,6 +5,7 @@
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
 
 // 任务5扩展：添加必要的头文件以定义使用的宏
+#include "PluginImpl.h" // 提供正确的 DasAdbTouchPlugin 类定义
 #include <das/DasApi.h>
 #include <das/Utils/CommonUtils.hpp> // 提供 DAS_UTILS_CHECK_POINTER_FOR_PLUGIN
 
@@ -20,7 +21,7 @@ DAS_C_API DasResult DasCoCreatePlugin(IDasBase** pp_out_plugin)
 
     try
     {
-        const auto p_result = new DAS::DasAdbTouchPlugin{};
+        const auto p_result = new Das::DasAdbTouchPlugin{};
         *pp_out_plugin = p_result;
         p_result->AddRef();
         return DAS_S_OK;
