@@ -384,115 +384,108 @@ namespace Core
             RemoteObjectInfo info{};
             info.name = plugin_path;
             return std::make_tuple(ObjectId{}, info);
-            RemoteObjectInfo object_info;
-            DasResult        result = SendLoadPlugin(plugin_path, object_info);
+        }
 
-            if (result != DAS_S_OK)
+        DasResult MainProcessServer::DispatchMessage(
+            const IPCMessageHeader& header,
+            const uint8_t*          body,
+            size_t                  body_size,
+            std::vector<uint8_t>&   response_body)
+        {
+            if (!is_initialized_.load() || !is_running_.load())
             {
-                // 如果发送失败，抛出异常或返回错误
-                throw std::runtime_error("Failed to send LOAD_PLUGIN command");
+                return DAS_E_IPC_INVALID_STATE;
             }
 
-            return std::make_tuple(object_info.object_id, object_info);
-        });
-    }
+            DasResult result = ValidateTargetObject(header);
+            if (DAS_FAILED(result))
+            {
+                return result;
+            }
 
-    DasResult MainProcessServer::DispatchMessage(
-        const IPCMessageHeader& header,
-        const uint8_t*          body,
-        size_t                  body_size,
-        std::vector<uint8_t>&   response_body)
-    {
-        if (!is_initialized_.load() || !is_running_.load())
-        {
-            return DAS_E_IPC_INVALID_STATE;
+            if (dispatch_handler_)
+            {
+                return dispatch_handler_(
+                    header,
+                    body,
+                    body_size,
+                    response_body);
+            }
+
+            response_body.clear();
+            return DAS_E_NOT_IMPLEMENTED;
         }
 
-        DasResult result = ValidateTargetObject(header);
-        if (DAS_FAILED(result))
+        void MainProcessServer::SetMessageDispatchHandler(
+            MessageDispatchHandler handler)
         {
-            return result;
+            dispatch_handler_ = std::move(handler);
         }
 
-        if (dispatch_handler_)
+        void MainProcessServer::SetOnSessionConnectedCallback(
+            SessionEventCallback callback)
         {
-            return dispatch_handler_(header, body, body_size, response_body);
+            on_session_connected_ = std::move(callback);
         }
 
-        response_body.clear();
-        return DAS_E_NOT_IMPLEMENTED;
-    }
-
-    void MainProcessServer::SetMessageDispatchHandler(
-        MessageDispatchHandler handler)
-    {
-        dispatch_handler_ = std::move(handler);
-    }
-
-    void MainProcessServer::SetOnSessionConnectedCallback(
-        SessionEventCallback callback)
-    {
-        on_session_connected_ = std::move(callback);
-    }
-
-    void MainProcessServer::SetOnSessionDisconnectedCallback(
-        SessionEventCallback callback)
-    {
-        on_session_disconnected_ = std::move(callback);
-    }
-
-    void MainProcessServer::SetOnObjectRegisteredCallback(
-        ObjectEventCallback callback)
-    {
-        on_object_registered_ = std::move(callback);
-    }
-
-    void MainProcessServer::SetOnObjectUnregisteredCallback(
-        ObjectEventCallback callback)
-    {
-        on_object_unregistered_ = std::move(callback);
-    }
-
-    uint64_t MainProcessServer::GetCurrentTimeMs()
-    {
-        auto now = std::chrono::system_clock::now();
-        auto duration = now.time_since_epoch();
-        return static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(duration)
-                .count());
-    }
-
-    bool MainProcessServer::ValidateSessionId(uint16_t session_id) const
-    {
-        // session_id = 0 和 0xFFFF 是保留的
-        return SessionCoordinator::IsValidSessionId(session_id);
-    }
-
-    DasResult MainProcessServer::ValidateTargetObject(
-        const IPCMessageHeader& header) const
-    {
-        ObjectId obj_id = {
-            .session_id = header.session_id,
-            .generation = header.generation,
-            .local_id = header.local_id};
-
-        if (IsNullObjectId(obj_id))
+        void MainProcessServer::SetOnSessionDisconnectedCallback(
+            SessionEventCallback callback)
         {
-            return DAS_E_IPC_INVALID_OBJECT_ID;
+            on_session_disconnected_ = std::move(callback);
         }
 
-        if (!RemoteObjectRegistry::GetInstance().ObjectExists(obj_id))
+        void MainProcessServer::SetOnObjectRegisteredCallback(
+            ObjectEventCallback callback)
         {
-            return DAS_E_IPC_OBJECT_NOT_FOUND;
+            on_object_registered_ = std::move(callback);
         }
 
-        if (!IsSessionConnected(obj_id.session_id))
+        void MainProcessServer::SetOnObjectUnregisteredCallback(
+            ObjectEventCallback callback)
         {
-            return DAS_E_IPC_CONNECTION_LOST;
+            on_object_unregistered_ = std::move(callback);
         }
 
-        return DAS_S_OK;
+        uint64_t MainProcessServer::GetCurrentTimeMs()
+        {
+            auto now = std::chrono::system_clock::now();
+            auto duration = now.time_since_epoch();
+            return static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(duration)
+                    .count());
+        }
+
+        bool MainProcessServer::ValidateSessionId(uint16_t session_id) const
+        {
+            // session_id = 0 和 0xFFFF 是保留的
+            return SessionCoordinator::IsValidSessionId(session_id);
+        }
+
+        DasResult MainProcessServer::ValidateTargetObject(
+            const IPCMessageHeader& header) const
+        {
+            ObjectId obj_id = {
+                .session_id = header.session_id,
+                .generation = header.generation,
+                .local_id = header.local_id};
+
+            if (IsNullObjectId(obj_id))
+            {
+                return DAS_E_IPC_INVALID_OBJECT_ID;
+            }
+
+            if (!RemoteObjectRegistry::GetInstance().ObjectExists(obj_id))
+            {
+                return DAS_E_IPC_OBJECT_NOT_FOUND;
+            }
+
+            if (!IsSessionConnected(obj_id.session_id))
+            {
+                return DAS_E_IPC_CONNECTION_LOST;
+            }
+
+            return DAS_S_OK;
+        }
     }
-}
 }
 DAS_NS_END
