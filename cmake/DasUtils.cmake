@@ -93,6 +93,34 @@ function(das_add_core_test TEST_FOLDER)
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/Test)
 endfunction()
 
+# das_add_custom_test - 添加自定义测试目标，不链接 gtest_main（允许自定义 main 函数）
+# 用法: das_add_custom_test(TEST_NAME)
+# 参数:
+#   TEST_NAME - 测试目标名称
+# 功能:
+#   - 创建自定义测试可执行文件
+#   - 仅链接 GTest::gtest（不链接 gtest_main）
+#   - 输出到 ${CMAKE_BINARY_DIR}/Test
+#   - 使用 gtest_discover_tests 注册测试
+function(das_add_custom_test TEST_NAME)
+    add_executable(${TEST_NAME} ${ARGN})
+    target_link_libraries(${TEST_NAME} PUBLIC Das3rdParty GTest::gtest DasCoreObjects)
+
+    get_target_property(INCLUDE_DIRS DasCoreObjects INCLUDE_DIRECTORIES)
+    target_include_directories(${TEST_NAME} PRIVATE ${INCLUDE_DIRS})
+
+    # force cmake output test executable to ${CMAKE_BINARY_DIR}/Test
+    set_target_properties(${TEST_NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/Test)
+    set_target_properties(${TEST_NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_BINARY_DIR}/Test)
+    set_target_properties(${TEST_NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/Test)
+    set_target_properties(${TEST_NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_BINARY_DIR}/Test)
+    set_target_properties(${TEST_NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL ${CMAKE_BINARY_DIR}/Test)
+
+    gtest_discover_tests(
+        ${TEST_NAME}
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/Test)
+endfunction()
+
 function(das_add_swig_export_library LANGUAGE RAW_NAME FILES)
     # 计算SWIG输出目录
     set(SWIG_OUTPUT_DIR ${CMAKE_BINARY_DIR}/include/das/${LANGUAGE})
