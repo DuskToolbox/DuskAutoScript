@@ -37,6 +37,102 @@ TypeInfo = _das_idl_parser.TypeInfo
 ParamDirection = _das_idl_parser.ParamDirection
 
 
+class StubTypeMapper:
+    """Stub 类型映射器
+    
+    将 IDL 类型映射到序列化方法：
+    1. 基本类型 → SerializerWriter/SerializerReader 方法
+    2. Struct 类型 → Serialize_/Deserialize_ 函数调用
+    """
+    
+    # IDL 基本类型 → (C++类型, Write方法名, Read方法名)
+    TYPE_MAP = {
+        # 有符号整数
+        'int8': ('int8_t', 'WriteInt8', 'ReadInt8'),
+        'int16': ('int16_t', 'WriteInt16', 'ReadInt16'),
+        'int32': ('int32_t', 'WriteInt32', 'ReadInt32'),
+        'int32_t': ('int32_t', 'WriteInt32', 'ReadInt32'),
+        'int64': ('int64_t', 'WriteInt64', 'ReadInt64'),
+        'int64_t': ('int64_t', 'WriteInt64', 'ReadInt64'),
+        'int': ('int32_t', 'WriteInt32', 'ReadInt32'),
+        # 无符号整数
+        'uint8': ('uint8_t', 'WriteUInt8', 'ReadUInt8'),
+        'uint16': ('uint16_t', 'WriteUInt16', 'ReadUInt16'),
+        'uint32': ('uint32_t', 'WriteUInt32', 'ReadUInt32'),
+        'uint32_t': ('uint32_t', 'WriteUInt32', 'ReadUInt32'),
+        'uint64': ('uint64_t', 'WriteUInt64', 'ReadUInt64'),
+        'uint64_t': ('uint64_t', 'WriteUInt64', 'ReadUInt64'),
+        'uint': ('uint32_t', 'WriteUInt32', 'ReadUInt32'),
+        # 浮点数
+        'float': ('float', 'WriteFloat', 'ReadFloat'),
+        'double': ('double', 'WriteDouble', 'ReadDouble'),
+        # 布尔
+        'bool': ('bool', 'WriteBool', 'ReadBool'),
+        # 字符
+        'char': ('char', 'WriteInt8', 'ReadInt8'),
+        # 大小类型
+        'size_t': ('size_t', 'WriteUInt64', 'ReadUInt64'),
+    }
+    
+    # 特殊类型（需要特殊处理）
+    SPECIAL_TYPES = {
+        'string': ('std::string', 'WriteString', 'ReadString'),
+        'DasGuid': ('DasGuid', 'WriteGuid', 'ReadGuid'),
+        'DasResult': ('DasResult', 'WriteInt32', 'ReadInt32'),
+        'DasBool': ('DasBool', 'WriteBool', 'ReadBool'),
+    }
+    
+    def __init__(self, document: IdlDocument):
+        """初始化类型映射器
+        
+        Args:
+            document: IDL 文档，用于获取 struct 定义
+        """
+        self.document = document
+        # 收集所有 struct 类型
+        self.struct_types = set()
+        for struct in document.structs:
+            self.struct_types.add(struct.name)
+            # 也支持带命名空间的 struct
+            if struct.namespace:
+                full_name = f"{struct.namespace}::{struct.name}"
+                self.struct_types.add(full_name)
+    
+    def get_type_info(self, idl_type: str):
+        """获取类型信息
+        
+        Args:
+            idl_type: IDL 类型名称
+            
+        Returns:
+            (cpp_type, write_method, read_method, is_struct) 或 None
+        """
+        # 检查基本类型
+        if idl_type in self.TYPE_MAP:
+            cpp_type, write_method, read_method = self.TYPE_MAP[idl_type]
+            return (cpp_type, write_method, read_method, False)
+        
+        # 检查特殊类型
+        if idl_type in self.SPECIAL_TYPES:
+            cpp_type, write_method, read_method = self.SPECIAL_TYPES[idl_type]
+            return (cpp_type, write_method, read_method, False)
+        
+        # 检查 struct 类型
+        if idl_type in self.struct_types:
+            # struct 类型使用 Serialize_/Deserialize_ 函数
+            return (idl_type, None, None, True)
+        
+        return None
+    
+    def is_basic_type(self, idl_type: str) -> bool:
+        """检查是否是基本类型（可以直接序列化）"""
+        return idl_type in self.TYPE_MAP or idl_type in self.SPECIAL_TYPES
+    
+    def is_struct_type(self, idl_type: str) -> bool:
+        """检查是否是 struct 类型"""
+        return idl_type in self.struct_types
+
+
 def fnv1a_hash(data: str) -> int:
     """计算字符串的 FNV-1a 32-bit hash"""
     FNV_PRIME = 0x01000193
@@ -77,6 +173,7 @@ class IpcStubGenerator:
         self.idl_file_path = idl_file_path
         self.idl_file_name = os.path.basename(idl_file_path) if idl_file_path else None
         self.indent = "    "  # 4 空格缩进
+        self.type_mapper = StubTypeMapper(document)
     
     def _file_header(self, guard_name: str, interface_name: str) -> str:
         """生成文件头"""
@@ -98,8 +195,13 @@ class IpcStubGenerator:
 
 #include <das/Core/IPC/IPCMessageHeader.h>
 #include <das/Core/IPC/IStubBase.h>
+#include <das/Core/IPC/MemorySerializer.h>
+#include <das/Core/IPC/Serializer.h>
+#include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <string>
+#include <vector>
 
 """
     
@@ -196,17 +298,19 @@ class IpcStubGenerator:
         
         lines.append(f"{indent}void Dispatch(uint16_t method_id, const void* request, void* response, IPCMessageHeader& out_response_header) override")
         lines.append(f"{indent}{{")
-        lines.append(f"{inner_indent}(void)out_response_header;")
         lines.append(f"{inner_indent}switch (method_id)")
         lines.append(f"{inner_indent}{{")
         
         for i, method in enumerate(interface.methods):
             lines.append(f"{inner_indent}case {i}:")
-            lines.append(f"{inner_indent}    Handle{method.name}(request, response);")
+            lines.append(f"{inner_indent}{{")
+            lines.append(f"{inner_indent}    size_t response_size = 4096;")
+            lines.append(f"{inner_indent}    Handle{method.name}(request, out_response_header.payload_size, response, &response_size);")
+            lines.append(f"{inner_indent}    out_response_header.payload_size = static_cast<uint32_t>(response_size);")
             lines.append(f"{inner_indent}    break;")
+            lines.append(f"{inner_indent}}}")
         
         lines.append(f"{inner_indent}default:")
-        lines.append(f"{inner_indent}    // Unknown method_id, ignore or return error")
         lines.append(f"{inner_indent}    break;")
         lines.append(f"{inner_indent}}}")
         lines.append(f"{indent}}}")
@@ -214,74 +318,170 @@ class IpcStubGenerator:
         return "\n".join(lines)
     
     def _generate_handle_method(self, interface: InterfaceDef, method: MethodDef, method_index: int, namespace_depth: int = 0) -> str:
-        """生成单个方法的 Handle 处理函数（混合模式）
+        """生成单个方法的 Handle 处理函数
         
-        混合模式 (B7):
-        - IsLocal=true: 直接转发调用（本地模式通常不需要 Stub）
-        - IsLocal=false: 解包参数 → 调用实现 → 打包返回值
+        Stub 处理流程：
+        1. 从请求体反序列化输入参数
+        2. 调用实际接口方法
+        3. 序列化返回结果和输出参数到响应体
         """
         lines = []
         indent = "    " * (namespace_depth + 2)  # class + private
         inner_indent = "    " * (namespace_depth + 3)
-        
-        interface_short_name = self._get_interface_short_name(interface.name)
-        request_type = f"{interface_short_name}_{method.name}_Request"
-        response_type = f"{interface_short_name}_{method.name}_Response"
+        deeper_indent = "    " * (namespace_depth + 4)
         
         return_type = method.return_type.base_type
         has_return = return_type != 'void'
         
-        # 方法签名
-        lines.append(f"{indent}void Handle{method.name}(const void* request, void* response)")
+        in_params = [p for p in method.parameters if p.direction != ParamDirection.OUT]
+        out_params = [p for p in method.parameters if p.direction in (ParamDirection.OUT, ParamDirection.INOUT)]
+        
+        has_request_body = bool(in_params)
+        has_response_body = bool(out_params) or has_return
+        
+        lines.append(f"{indent}void Handle{method.name}(const void* request, size_t request_size, void* response, size_t* response_size)")
         lines.append(f"{indent}{{")
+        lines.append(f"{inner_indent}(void)request_size;")
+        lines.append(f"{inner_indent}DasResult serial_result = DAS_S_OK;")
         
-        # if constexpr (IsLocal) 分支
-        lines.append(f"{inner_indent}if constexpr (IsLocal)")
-        lines.append(f"{inner_indent}{{")
-        lines.append(f"{inner_indent}    // Local mode: direct call (should not reach here in normal usage)")
-        lines.append(f"{inner_indent}    (void)request;")
-        lines.append(f"{inner_indent}    (void)response;")
-        lines.append(f"{inner_indent}}}")
-        lines.append(f"{inner_indent}else")
-        lines.append(f"{inner_indent}{{")
+        if has_request_body:
+            lines.append(f"{inner_indent}MemorySerializerReader reader(static_cast<const uint8_t*>(request), request_size);")
+            lines.append("")
+            
+            for param in in_params:
+                deserialize_code = self._generate_deserialize_param_for_stub(param, inner_indent)
+                for line in deserialize_code:
+                    lines.append(f"{line}")
+            lines.append("")
         
-        deeper_indent = inner_indent + "    "
+        for param in out_params:
+            cpp_type = self._get_cpp_type(param.type_info)
+            lines.append(f"{inner_indent}{cpp_type} {param.name} = {{}};")
         
-        # Step 1: Cast request and response pointers
-        lines.append(f"{deeper_indent}const {request_type}* req = static_cast<const {request_type}*>(request);")
-        lines.append(f"{deeper_indent}{response_type}* resp = static_cast<{response_type}*>(response);")
-        lines.append(f"{deeper_indent}(void)resp;")
+        lines.append(f"{inner_indent}MemorySerializerWriter writer;")
         lines.append("")
         
-        # Step 2: Unpack parameters (placeholder)
-        lines.append(f"{deeper_indent}// TODO: Unpack parameters from request")
-        unpack_params = []
+        call_params = []
         for param in method.parameters:
-            param_type = self._get_cpp_type(param.type_info)
-            lines.append(f"{deeper_indent}// {param.name}: {param_type}")
-            unpack_params.append(f"/* {param.name} */")
-        lines.append("")
+            if param.direction in (ParamDirection.OUT, ParamDirection.INOUT):
+                if param.type_info.is_pointer and param.type_info.pointer_level >= 1:
+                    call_params.append(f"{param.name}")
+                else:
+                    call_params.append(f"&{param.name}")
+            else:
+                call_params.append(f"{param.name}")
         
-        # Step 3: Call implementation
-        params_str = ", ".join(unpack_params) if unpack_params else ""
+        params_str = ", ".join(call_params) if call_params else ""
+        
         if has_return:
             cpp_return_type = self._get_cpp_type(method.return_type)
-            lines.append(f"{deeper_indent}// {cpp_return_type} result = impl_->{method.name}({params_str});")
-            lines.append(f"{deeper_indent}impl_->{method.name}({params_str});")
+            lines.append(f"{inner_indent}{cpp_return_type} call_result = impl_->{method.name}({params_str});")
         else:
-            lines.append(f"{deeper_indent}impl_->{method.name}({params_str});")
+            lines.append(f"{inner_indent}impl_->{method.name}({params_str});")
         lines.append("")
         
-        # Step 4: Pack response (placeholder)
-        lines.append(f"{deeper_indent}// TODO: Pack response")
-        if has_return:
-            lines.append(f"{deeper_indent}// resp->result = result;")
-        
+        lines.append(f"{inner_indent}serial_result = writer.WriteInt32(DAS_S_OK);")
+        lines.append(f"{inner_indent}if (DAS_FAILED(serial_result))")
+        lines.append(f"{inner_indent}{{")
+        lines.append(f"{inner_indent}    *response_size = 0;")
+        lines.append(f"{inner_indent}    return;")
         lines.append(f"{inner_indent}}}")
+        lines.append("")
+        
+        if has_return:
+            serialize_return_code = self._generate_serialize_return_for_stub(method.return_type, inner_indent)
+            for line in serialize_return_code:
+                lines.append(f"{line}")
+        
+        for param in out_params:
+            serialize_code = self._generate_serialize_param_for_stub(param, inner_indent)
+            for line in serialize_code:
+                lines.append(f"{line}")
+        
+        lines.append(f"{inner_indent}const std::vector<uint8_t>& buffer = writer.GetBuffer();")
+        lines.append(f"{inner_indent}size_t copy_size = std::min(*response_size, buffer.size());")
+        lines.append(f"{inner_indent}std::memcpy(response, buffer.data(), copy_size);")
+        lines.append(f"{inner_indent}*response_size = buffer.size();")
         
         lines.append(f"{indent}}}")
         
         return "\n".join(lines)
+    
+    def _generate_deserialize_param_for_stub(self, param: ParameterDef, indent: str) -> List[str]:
+        """生成参数反序列化代码（用于 Stub 从请求体读取参数）"""
+        lines = []
+        type_info = self.type_mapper.get_type_info(param.type_info.base_type)
+        
+        if type_info is None:
+            cpp_type = self._get_cpp_type(param.type_info)
+            lines.append(f"{indent}{cpp_type} {param.name} = {{}};")
+            lines.append(f"{indent}// TODO: Deserialize type {param.type_info.base_type}")
+            return lines
+        
+        cpp_type, _, read_method, is_struct = type_info
+        
+        if is_struct:
+            lines.append(f"{indent}{param.type_info.base_type} {param.name};")
+            lines.append(f"{indent}serial_result = Deserialize_{param.type_info.base_type}(reader, &{param.name});")
+        else:
+            lines.append(f"{indent}{cpp_type} {param.name};")
+            lines.append(f"{indent}serial_result = reader.{read_method}(&{param.name});")
+        
+        lines.append(f"{indent}if (DAS_FAILED(serial_result))")
+        lines.append(f"{indent}{{")
+        lines.append(f"{indent}    return;")
+        lines.append(f"{indent}}}")
+        
+        return lines
+    
+    def _generate_serialize_param_for_stub(self, param: ParameterDef, indent: str) -> List[str]:
+        """生成参数序列化代码（用于 Stub 向响应体写入输出参数）"""
+        lines = []
+        type_info = self.type_mapper.get_type_info(param.type_info.base_type)
+        
+        if type_info is None:
+            lines.append(f"{indent}// TODO: Serialize type {param.type_info.base_type}")
+            return lines
+        
+        cpp_type, write_method, _, is_struct = type_info
+        
+        if is_struct:
+            lines.append(f"{indent}serial_result = Serialize_{param.type_info.base_type}(writer, {param.name});")
+        else:
+            if param.type_info.is_pointer and param.type_info.pointer_level >= 1:
+                lines.append(f"{indent}serial_result = writer.{write_method}(*{param.name});")
+            else:
+                lines.append(f"{indent}serial_result = writer.{write_method}({param.name});")
+        
+        lines.append(f"{indent}if (DAS_FAILED(serial_result))")
+        lines.append(f"{indent}{{")
+        lines.append(f"{indent}    return;")
+        lines.append(f"{indent}}}")
+        
+        return lines
+    
+    def _generate_serialize_return_for_stub(self, return_type: TypeInfo, indent: str) -> List[str]:
+        """生成返回值序列化代码（用于 Stub 向响应体写入返回值）"""
+        lines = []
+        type_info = self.type_mapper.get_type_info(return_type.base_type)
+        
+        if type_info is None:
+            lines.append(f"{indent}// TODO: Serialize return value of type {return_type.base_type}")
+            return lines
+        
+        cpp_type, write_method, _, is_struct = type_info
+        
+        if is_struct:
+            lines.append(f"{indent}serial_result = Serialize_{return_type.base_type}(writer, call_result);")
+        else:
+            lines.append(f"{indent}serial_result = writer.{write_method}(call_result);")
+        
+        lines.append(f"{indent}if (DAS_FAILED(serial_result))")
+        lines.append(f"{indent}{{")
+        lines.append(f"{indent}    return;")
+        lines.append(f"{indent}}}")
+        
+        return lines
     
     def _generate_stub_class(self, interface: InterfaceDef, namespace_depth: int = 0) -> str:
         """为接口生成混合模式 Stub 类 (B7)
