@@ -159,6 +159,29 @@ DAS_C_API DasResult CreateIDasLogRequester(
 using DasCoCreatePluginFunction =
     DasResult (*)(IDasBase** pp_out_plugin_package);
 
+/**
+ * @brief 通过 IPC 加载远程插件
+ *
+ * 此函数向已连接的 Host
+ * 进程发送加载插件命令，
+ * 并返回一个代理对象用于访问插件接口。
+ *
+ * @param
+ * p_plugin_path 插件路径（UTF-8 编码）
+ * @param pp_out_plugin
+ * 输出插件代理对象的 IDasBase 接口指针
+ * @return DasResult 操作结果
+ *
+ * - DAS_S_OK: 成功加载插件
+ *         - DAS_E_INVALID_POINTER: 参数为空
+ *
+ * - DAS_E_IPC_NO_CONNECTIONS: 没有连接的 Host 进程
+ *         -
+ * DAS_E_IPC_INVALID_STATE: IPC 服务未初始化或未运行
+ */
+DAS_C_API DasResult
+IpcLoadPlugin(const char* p_plugin_path, IDasBase** pp_out_plugin);
+
 #define DAS_LOG_ERROR(...) DAS_LOG_WITH_SOURCE_LOCATION(Error, __VA_ARGS__)
 #define DAS_LOG_WARNING(...) DAS_LOG_WITH_SOURCE_LOCATION(Warning, __VA_ARGS__)
 #define DAS_LOG_INFO(...) DAS_LOG_WITH_SOURCE_LOCATION(Info, __VA_ARGS__)

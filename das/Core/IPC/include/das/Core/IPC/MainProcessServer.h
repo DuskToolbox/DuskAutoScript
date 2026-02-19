@@ -200,36 +200,72 @@ namespace Core
             /**
              * @brief 通过名称查找远程对象
              *
-             * @param name 对象名称
-             * @param out_info 输出对象信息
+
+             * * @param name 对象名称
+             * @param out_info
+             * 输出对象信息
              * @return DasResult 查询结果
+
              */
             DasResult LookupRemoteObjectByName(
                 const std::string& name,
                 RemoteObjectInfo&  out_info) const;
 
             /**
-             * @brief 通过接口类型查找远程对象
+             * @brief 通过接口ID查找远程对象
              *
-             * @param iid 接口ID
+
+             * * @param iid 接口ID
              * @param out_info 输出对象信息
-             * @return DasResult 查询结果
+
+             * * @return DasResult 查询结果
              */
             DasResult LookupRemoteObjectByInterface(
                 const DasGuid&    iid,
                 RemoteObjectInfo& out_info) const;
 
+            /**
+             * @brief 发送 LOAD_PLUGIN 命令
+             *
+
+             * * @param plugin_path 插件路径
+             * @param
+             * out_object_info 输出插件对象信息
+             * @return
+             * DasResult 发送结果
+             */
+            DasResult SendLoadPlugin(
+                const std::string& plugin_path,
+                RemoteObjectInfo&  out_object_info);
+
+            /**
+             * @brief 异步发送 LOAD_PLUGIN 命令 (使用
+             * stdexec)
+ *
+             * @param plugin_path 插件路径
+ *
+             * @return 返回 stdexec sender，包含 ObjectId 和
+             * RemoteObjectInfo
+
+             */
+            auto SendLoadPluginAsync(const std::string& plugin_path);
+
             // ====== 消息分发 ======
 
             /**
              * @brief 分发消息到目标对象
-             *
-             * @param header 消息头
-             * @param body 消息体数据
-             * @param body_size 消息体大小
-             * @param response_body 输出响应体
-             * @return DasResult 处理结果
-             */
+ *
+
+             * * @param header 消息头
+             * @param body
+             * 消息体数据
+
+             * * @param body_size 消息体大小
+             * @param
+             * response_body 输出响应体
+             * @return DasResult
+             * 处理结果
+ */
             DasResult DispatchMessage(
                 const IPCMessageHeader& header,
                 const uint8_t*          body,

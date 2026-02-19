@@ -123,6 +123,9 @@ namespace Core
             case IpcCommandType::GET_OBJECT_COUNT:
                 return OnGetObjectCount(header, payload, response);
 
+            case IpcCommandType::LOAD_PLUGIN:
+                return OnLoadPlugin(header, payload, response);
+
             default:
                 response.error_code = DAS_E_IPC_INVALID_MESSAGE_TYPE;
                 return DAS_E_IPC_INVALID_MESSAGE_TYPE;
@@ -525,6 +528,72 @@ namespace Core
             response.error_code = DAS_S_OK;
             response.response_data.clear();
             SerializeValue(response.response_data, count);
+
+            return DAS_S_OK;
+        }
+
+        DasResult IpcCommandHandler::OnLoadPlugin(
+            const IPCMessageHeader&  header,
+            std::span<const uint8_t> payload,
+            IpcCommandResponse&      response)
+        {
+            (void)header;
+
+            if (payload.size() < sizeof(LoadPluginPayload) - sizeof(uint16_t))
+            {
+                response.error_code = DAS_E_IPC_INVALID_MESSAGE_BODY;
+                return DAS_E_IPC_INVALID_MESSAGE_BODY;
+            }
+
+            size_t offset = 0;
+
+            uint16_t plugin_path_len = 0;
+            if (!DeserializeValue(payload, offset, plugin_path_len))
+            {
+                response.error_code = DAS_E_IPC_DESERIALIZATION_FAILED;
+                return DAS_E_IPC_DESERIALIZATION_FAILED;
+            }
+
+            if (plugin_path_len == 0 || plugin_path_len > 1024)
+            {
+                response.error_code = DAS_E_IPC_INVALID_ARGUMENT;
+                return DAS_E_IPC_INVALID_ARGUMENT;
+            }
+
+            if (offset + plugin_path_len > payload.size())
+            {
+                response.error_code = DAS_E_IPC_DESERIALIZATION_FAILED;
+                return DAS_E_IPC_DESERIALIZATION_FAILED;
+            }
+
+            std::string plugin_path;
+            plugin_path.assign(
+                reinterpret_cast<const char*>(payload.data() + offset),
+                plugin_path_len);
+            offset += plugin_path_len;
+
+            // TODO: 实际的插件加载逻辑
+            // 这里暂时创建一个模拟的响应
+
+            // 生成一个新的对象ID
+            ObjectId object_id;
+            object_id.session_id = header.session_id;
+            object_id.generation = 1;
+            object_id.local_id = 100; // 临时分配的ID
+
+            DasGuid iid = DasIidOf<IDasBase>();
+
+            uint16_t session_id = header.session_id;
+            uint16_t version = 1;
+
+            response.error_code = DAS_S_OK;
+            response.response_data.clear();
+
+            // 返回 LoadPluginResponsePayload
+            SerializeValue(response.response_data, object_id);
+            SerializeValue(response.response_data, iid);
+            SerializeValue(response.response_data, session_id);
+            SerializeValue(response.response_data, version);
 
             return DAS_S_OK;
         }

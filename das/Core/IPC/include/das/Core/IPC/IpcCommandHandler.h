@@ -164,6 +164,11 @@ namespace Core
                 std::span<const uint8_t> payload,
                 IpcCommandResponse&      response);
 
+            DasResult OnLoadPlugin(
+                const IPCMessageHeader&  header,
+                std::span<const uint8_t> payload,
+                IpcCommandResponse&      response);
+
             // 从 interface_id 字段提取命令类型
             static IpcCommandType ExtractCommandType(
                 const IPCMessageHeader& header);
