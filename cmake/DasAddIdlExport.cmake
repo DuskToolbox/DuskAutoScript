@@ -337,7 +337,7 @@ function(das_add_idl_export)
                 -DSORTED_INTERFACES_FILE=${_SORTED_INTERFACES_FILE}
                 -P ${CMAKE_SOURCE_DIR}/cmake/generate_swig_all_i.cmake
             COMMAND ${CMAKE_COMMAND} -E touch ${_SWIG_OUTPUT_DIR}/.swig_all_generated
-            DEPENDS 
+            DEPENDS
                 ${_SORTED_INTERFACES_FILE}
                 ${CMAKE_SOURCE_DIR}/cmake/generate_swig_all_i.cmake
             BYPRODUCTS ${_SWIG_OUTPUT_DIR}/.swig_all_generated
@@ -493,23 +493,20 @@ function(das_add_idl_export)
                 TARGET ${_EXPORT_LIB_NAME}
                 PROPERTY SWIG_INCLUDE_DIRECTORIES ${_SWIG_INCLUDE_DIRS})
 
+            # 设置编译器包含目录（使 wrapper 文件能正确找到头文件）
+            # 使用外部传入的包含目录（如果有的话）
+            if(DAS_IDL_EXPORT_SWIG_INCLUDE_DIRS)
+                target_include_directories(${_EXPORT_LIB_NAME} PRIVATE
+                    ${_SWIG_INCLUDE_DIRS}
+                )
+            endif()
+
             # 设置额外依赖（确保 swig_all.i 被包含）
             set(SWIG_MODULE_${_EXPORT_LIB_NAME}_EXTRA_DEPS "${_SWIG_ALL_I}")
 
-            # 为每个语言设置 SWIG_COMPILE_OPTIONS
-            # Python: 使用用户指定的选项
-            if(_LANG_NAME STREQUAL "Python" AND DAS_IDL_EXPORT_SWIG_OPTIONS_Python)
-                set_property(TARGET ${_EXPORT_LIB_NAME} PROPERTY SWIG_COMPILE_OPTIONS ${DAS_IDL_EXPORT_SWIG_OPTIONS_Python})
-            endif()
-
-            # Java: 使用用户指定的选项
-            if(_LANG_NAME STREQUAL "Java" AND DAS_IDL_EXPORT_SWIG_OPTIONS_Java)
-                set_property(TARGET ${_EXPORT_LIB_NAME} PROPERTY SWIG_COMPILE_OPTIONS ${DAS_IDL_EXPORT_SWIG_OPTIONS_Java})
-            endif()
-
-            # CSharp: 使用用户指定的选项
-            if(_LANG_NAME STREQUAL "CSharp" AND DAS_IDL_EXPORT_SWIG_OPTIONS_CSharp)
-                set_property(TARGET ${_EXPORT_LIB_NAME} PROPERTY SWIG_COMPILE_OPTIONS ${DAS_IDL_EXPORT_SWIG_OPTIONS_CSharp})
+            # 设置 SWIG_COMPILE_OPTIONS（使用用户指定的选项）
+            if(DAS_IDL_EXPORT_SWIG_OPTIONS_${_LANG_NAME})
+                set_property(TARGET ${_EXPORT_LIB_NAME} PROPERTY SWIG_COMPILE_OPTIONS ${DAS_IDL_EXPORT_SWIG_OPTIONS_${_LANG_NAME}})
             endif()
 
             # 设置导出库的包含目录（追加 IDL 源文件目录）
@@ -522,10 +519,18 @@ function(das_add_idl_export)
             # 确保 SWIG 导出库在 swig_all.i 重新生成后重新构建
             add_dependencies(${_EXPORT_LIB_NAME} ${_SWIG_ALL_TARGET})
 
-            # 添加对外部目标的依赖（如 DasCore）
+            # 链接外部依赖库（如 DasCore）
             if(DAS_IDL_EXPORT_DEPENDS_ON)
-                add_dependencies(${_EXPORT_LIB_NAME} ${DAS_IDL_EXPORT_DEPENDS_ON})
+                target_link_libraries(${_EXPORT_LIB_NAME} PRIVATE ${DAS_IDL_EXPORT_DEPENDS_ON})
             endif()
+
+            # 链接对应语言的虚拟机库
+            if(_LANG_NAME STREQUAL "Python")
+                target_link_libraries(${_EXPORT_LIB_NAME} PRIVATE Python3::Python)
+            elseif(_LANG_NAME STREQUAL "Java")
+                target_link_libraries(${_EXPORT_LIB_NAME} PRIVATE JNI::JNI)
+            endif()
+            # CSharp 不需要链接额外的虚拟机库
         endforeach()
     endif()
 
