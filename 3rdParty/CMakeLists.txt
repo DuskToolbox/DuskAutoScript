@@ -442,6 +442,7 @@ function(_download_and_config_boost)
         signals2
         process
         interprocess
+        program_options
     )
 
     # Fix boost toolset for MSVC 19.5 and later (vc145)
@@ -475,7 +476,8 @@ if (${DAS_USE_BUNDLED_BOOST})
             Boost::circular_buffer
             Boost::signals2
             Boost::process
-            Boost::interprocess)
+            Boost::interprocess
+            Boost::program_options)
 else ()
     # 这里先不改，只是自用boost版本拉上去先
     find_package(Boost CONFIG 1.82 COMPONENTS filesystem url beast asio process)
