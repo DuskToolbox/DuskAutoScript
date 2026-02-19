@@ -93,11 +93,16 @@ IDL 语法示例:
     output_group.add_argument(
         '--implements-output-dir',
         help='C++ 实现基类模板文件 (Das.Xxx.Implements.hpp) 的输出目录'
-    )
+)
 
     output_group.add_argument(
         '--swig-output-dir',
         help='SWIG .i 文件的输出目录'
+    )
+
+    output_group.add_argument(
+        '--aggregation-output-dir',
+        help='汇总文件（如 DasGenerated.i）的输出目录（默认使用 --swig-output-dir）'
     )
 
     # === 生成选项 ===
@@ -232,6 +237,7 @@ IDL 语法示例:
     wrapper_output_dir = args.wrapper_output_dir or default_output
     implements_output_dir = args.implements_output_dir or default_output
     swig_output_dir = args.swig_output_dir or default_output
+    aggregation_output_dir = args.aggregation_output_dir or swig_output_dir
 
     # 确定 IPC 输出目录
     ipc_output_dir = args.ipc_output_dir or default_output
@@ -444,10 +450,10 @@ IDL 语法示例:
                     traceback.print_exc()
                 return 7
 
-    # 如果有多个 IDL 文件且启用了 SWIG，生成一个总汇总文件
+# 如果有多个 IDL 文件且启用了 SWIG，生成一个总汇总文件
     if args.swig and len(input_files) > 1 and not args.dry_run:
         try:
-            output_dir = Path(swig_output_dir)
+            output_dir = Path(aggregation_output_dir)
             master_i_path = output_dir / "DasGenerated.i"
 
             # 收集所有单独的汇总 .i 文件

@@ -79,6 +79,7 @@ endfunction()
 #   RAW_OUTPUT_DIR - ABI文件输出目录（可选，优先级高于OUTPUT_DIR）
 #   WRAPPER_OUTPUT_DIR - C++包装文件输出目录（可选）
 #   SWIG_OUTPUT_DIR - SWIG接口文件输出目录（可选）
+#   AGGREGATION_OUTPUT_DIR - 汇总文件输出目录（可选，默认使用SWIG_OUTPUT_DIR）
 #   IPC_PROXY - 是否生成IPC Proxy代码（可选，默认false）
 #   IPC_STUB - 是否生成IPC Stub代码（可选，默认false）
 #   IPC_MESSAGE - 是否生成IPC消息结构（可选，默认false）
@@ -92,7 +93,7 @@ function(das_idl_generate)
     cmake_parse_arguments(
         DAS_IDL                         # 前缀
         "SWIG;CPP_WRAPPER;TYPEMAPS;IPC_PROXY;IPC_STUB;IPC_MESSAGE"     # 选项 (无值参数)
-        "IDL_FILE;OUTPUT_DIR;NAMESPACE;RAW_OUTPUT_DIR;WRAPPER_OUTPUT_DIR;SWIG_OUTPUT_DIR;IPC_OUTPUT_DIR" # 单值参数
+        "IDL_FILE;OUTPUT_DIR;NAMESPACE;RAW_OUTPUT_DIR;WRAPPER_OUTPUT_DIR;SWIG_OUTPUT_DIR;AGGREGATION_OUTPUT_DIR;IPC_OUTPUT_DIR" # 单值参数
         "GENERATED_FILES;GENERATED_ABI_FILES;GENERATED_WRAPPER_FILES;GENERATED_SWIG_FILES;GENERATED_IPC_FILES" # 多值参数
         ${ARGN}
     )
@@ -116,6 +117,15 @@ function(das_idl_generate)
     endif()
     if(NOT DAS_IDL_SWIG_OUTPUT_DIR AND DAS_IDL_SWIG)
         set(DAS_IDL_SWIG_OUTPUT_DIR "${DAS_IDL_ABI_DIR}/swig")
+    endif()
+
+    # 聚合输出目录默认值
+    if(NOT DAS_IDL_AGGREGATION_OUTPUT_DIR)
+        if(DAS_IDL_SWIG_OUTPUT_DIR)
+            set(DAS_IDL_AGGREGATION_OUTPUT_DIR "${DAS_IDL_SWIG_OUTPUT_DIR}")
+        else()
+            set(DAS_IDL_AGGREGATION_OUTPUT_DIR "${DAS_IDL_ABI_DIR}")
+        endif()
     endif()
 
     # IPC输出目录默认值
@@ -201,8 +211,12 @@ function(das_idl_generate)
         list(APPEND _IDL_CMD_ARGS "--wrapper-output-dir" "${DAS_IDL_WRAPPER_OUTPUT_DIR}")
     endif()
 
-    if(DAS_IDL_SWIG AND DAS_IDL_SWIG_OUTPUT_DIR)
+if(DAS_IDL_SWIG AND DAS_IDL_SWIG_OUTPUT_DIR)
         list(APPEND _IDL_CMD_ARGS "--swig-output-dir" "${DAS_IDL_SWIG_OUTPUT_DIR}")
+    endif()
+
+    if(DAS_IDL_AGGREGATION_OUTPUT_DIR)
+        list(APPEND _IDL_CMD_ARGS "--aggregation-output-dir" "${DAS_IDL_AGGREGATION_OUTPUT_DIR}")
     endif()
 
     # 添加布尔选项参数
