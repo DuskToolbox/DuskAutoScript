@@ -425,7 +425,7 @@ class IpcProxyGenerator:
         class_name = f"{interface_short_name}Proxy"
         interface_id = fnv1a_hash_guid(interface.uuid)
         
-        lines.append(f"{indent}class {class_name} : public DasProxyBase<{interface.name}>")
+        lines.append(f"{indent}class {class_name} : public DasProxyBase<{interface.name}>, public {interface.name}")
         lines.append(f"{indent}{{")
         lines.append(f"{indent}public:")
         lines.append(f"{class_indent}static constexpr uint32_t InterfaceId = 0x{interface_id:08X}u;")
