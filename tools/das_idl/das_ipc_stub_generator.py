@@ -290,45 +290,62 @@ class IpcStubGenerator:
             return interface_name[1:]
         return interface_name
     
-    def _generate_dispatch_method(self, interface: InterfaceDef, namespace_depth: int = 0) -> str:
-        """生成 Dispatch 方法"""
+    def _generate_method_constants(self, interface: InterfaceDef, namespace_depth: int = 0) -> str:
+        """生成 Method ID 常量定义"""
         lines = []
-        indent = "    " * (namespace_depth + 2)  # class + public
-        inner_indent = "    " * (namespace_depth + 3)
+        indent = "    " * (namespace_depth + 1)
         
-        lines.append(f"{indent}void Dispatch(uint16_t method_id, const void* request, void* response, IPCMessageHeader& out_response_header) override")
+        for i, method in enumerate(interface.methods):
+            lines.append(f"{indent}static constexpr uint16_t METHOD_{method.name.upper()} = {i};")
+        
+        return "\n".join(lines)
+    
+    def _generate_dispatch_method(self, interface: InterfaceDef, namespace_depth: int = 0) -> str:
+        """生成 Dispatch 静态方法（使用 switch case 跳转）"""
+        lines = []
+        indent = "    " * (namespace_depth + 1)
+        inner_indent = "    " * (namespace_depth + 2)
+        
+        lines.append(f"{indent}static DasResult Dispatch(")
+        lines.append(f"{indent}    uint16_t method_id,")
+        lines.append(f"{indent}    const void* request,")
+        lines.append(f"{indent}    void* response)")
         lines.append(f"{indent}{{")
         lines.append(f"{inner_indent}switch (method_id)")
         lines.append(f"{inner_indent}{{")
         
-        for i, method in enumerate(interface.methods):
-            lines.append(f"{inner_indent}case {i}:")
-            lines.append(f"{inner_indent}{{")
-            lines.append(f"{inner_indent}    size_t response_size = 4096;")
-            lines.append(f"{inner_indent}    Handle{method.name}(request, out_response_header.payload_size, response, &response_size);")
-            lines.append(f"{inner_indent}    out_response_header.payload_size = static_cast<uint32_t>(response_size);")
-            lines.append(f"{inner_indent}    break;")
-            lines.append(f"{inner_indent}}}")
+        for method in interface.methods:
+            lines.append(f"{inner_indent}case METHOD_{method.name.upper()}:")
+            lines.append(f"{inner_indent}    return Handle{method.name}(request, response);")
         
         lines.append(f"{inner_indent}default:")
-        lines.append(f"{inner_indent}    break;")
+        lines.append(f"{inner_indent}    return DAS_E_IPC_UNKNOWN_METHOD;")
         lines.append(f"{inner_indent}}}")
         lines.append(f"{indent}}}")
         
         return "\n".join(lines)
     
-    def _generate_handle_method(self, interface: InterfaceDef, method: MethodDef, method_index: int, namespace_depth: int = 0) -> str:
-        """生成单个方法的 Handle 处理函数
-        
-        Stub 处理流程：
-        1. 从请求体反序列化输入参数
-        2. 调用实际接口方法
-        3. 序列化返回结果和输出参数到响应体
-        """
+    def _generate_handle_method_declaration(self, interface: InterfaceDef, method: MethodDef, namespace_depth: int = 0) -> str:
+        """生成 Handle 方法声明"""
+        indent = "    " * (namespace_depth + 1)
+        return f"{indent}static DasResult Handle{method.name}(const void* request, void* response);"
+    
+    def _generate_handle_method_definition(self, interface: InterfaceDef, method: MethodDef, method_index: int) -> str:
+        """生成单个方法的 Handle 处理函数定义"""
         lines = []
-        indent = "    " * (namespace_depth + 2)  # class + private
-        inner_indent = "    " * (namespace_depth + 3)
-        deeper_indent = "    " * (namespace_depth + 4)
+        interface_short_name = self._get_interface_short_name(interface.name)
+        class_name = f"{interface_short_name}Stub"
+        
+        ns_parts = []
+        if interface.namespace:
+            ns_parts = interface.namespace.split("::")
+        full_ns = ns_parts + ["IPC", "Stub"]
+        
+        inner_indent = "    "
+        
+        full_class_name = "::".join(full_ns + [class_name])
+        lines.append(f"DasResult {full_class_name}::Handle{method.name}(const void* request, void* response)")
+        lines.append(f"{{")
         
         return_type = method.return_type.base_type
         has_return = return_type != 'void'
@@ -337,15 +354,12 @@ class IpcStubGenerator:
         out_params = [p for p in method.parameters if p.direction in (ParamDirection.OUT, ParamDirection.INOUT)]
         
         has_request_body = bool(in_params)
-        has_response_body = bool(out_params) or has_return
         
-        lines.append(f"{indent}void Handle{method.name}(const void* request, size_t request_size, void* response, size_t* response_size)")
-        lines.append(f"{indent}{{")
-        lines.append(f"{inner_indent}(void)request_size;")
         lines.append(f"{inner_indent}DasResult serial_result = DAS_S_OK;")
+        lines.append(f"{inner_indent}(void)serial_result;")
         
         if has_request_body:
-            lines.append(f"{inner_indent}MemorySerializerReader reader(static_cast<const uint8_t*>(request), request_size);")
+            lines.append(f"{inner_indent}MemorySerializerReader reader(static_cast<const uint8_t*>(request), 4096);")
             lines.append("")
             
             for param in in_params:
@@ -373,18 +387,24 @@ class IpcStubGenerator:
         
         params_str = ", ".join(call_params) if call_params else ""
         
+        lines.append(f"{inner_indent}auto* impl = GetImpl();")
+        lines.append(f"{inner_indent}if (!impl)")
+        lines.append(f"{inner_indent}{{")
+        lines.append(f"{inner_indent}    return DAS_E_POINTER;")
+        lines.append(f"{inner_indent}}}")
+        lines.append("")
+        
         if has_return:
             cpp_return_type = self._get_cpp_type(method.return_type)
-            lines.append(f"{inner_indent}{cpp_return_type} call_result = impl_->{method.name}({params_str});")
+            lines.append(f"{inner_indent}{cpp_return_type} call_result = impl->{method.name}({params_str});")
         else:
-            lines.append(f"{inner_indent}impl_->{method.name}({params_str});")
+            lines.append(f"{inner_indent}impl->{method.name}({params_str});")
         lines.append("")
         
         lines.append(f"{inner_indent}serial_result = writer.WriteInt32(DAS_S_OK);")
         lines.append(f"{inner_indent}if (DAS_FAILED(serial_result))")
         lines.append(f"{inner_indent}{{")
-        lines.append(f"{inner_indent}    *response_size = 0;")
-        lines.append(f"{inner_indent}    return;")
+        lines.append(f"{inner_indent}    return serial_result;")
         lines.append(f"{inner_indent}}}")
         lines.append("")
         
@@ -399,11 +419,10 @@ class IpcStubGenerator:
                 lines.append(f"{line}")
         
         lines.append(f"{inner_indent}const std::vector<uint8_t>& buffer = writer.GetBuffer();")
-        lines.append(f"{inner_indent}size_t copy_size = std::min(*response_size, buffer.size());")
-        lines.append(f"{inner_indent}std::memcpy(response, buffer.data(), copy_size);")
-        lines.append(f"{inner_indent}*response_size = buffer.size();")
-        
-        lines.append(f"{indent}}}")
+        lines.append(f"{inner_indent}std::memcpy(response, buffer.data(), buffer.size());")
+        lines.append("")
+        lines.append(f"{inner_indent}return DAS_S_OK;")
+        lines.append(f"}}")
         
         return "\n".join(lines)
     
@@ -429,7 +448,7 @@ class IpcStubGenerator:
         
         lines.append(f"{indent}if (DAS_FAILED(serial_result))")
         lines.append(f"{indent}{{")
-        lines.append(f"{indent}    return;")
+        lines.append(f"{indent}    return serial_result;")
         lines.append(f"{indent}}}")
         
         return lines
@@ -455,7 +474,7 @@ class IpcStubGenerator:
         
         lines.append(f"{indent}if (DAS_FAILED(serial_result))")
         lines.append(f"{indent}{{")
-        lines.append(f"{indent}    return;")
+        lines.append(f"{indent}    return serial_result;")
         lines.append(f"{indent}}}")
         
         return lines
@@ -478,18 +497,13 @@ class IpcStubGenerator:
         
         lines.append(f"{indent}if (DAS_FAILED(serial_result))")
         lines.append(f"{indent}{{")
-        lines.append(f"{indent}    return;")
+        lines.append(f"{indent}    return serial_result;")
         lines.append(f"{indent}}}")
         
         return lines
     
     def _generate_stub_class(self, interface: InterfaceDef, namespace_depth: int = 0) -> str:
-        """为接口生成混合模式 Stub 类 (B7)
-        
-        模板参数:
-        - IsLocal=true: 本地模式（通常不需要 Stub，直接调用实现）
-        - IsLocal=false: IPC 远程模式，接收并处理 IPC 调用
-        """
+        """为接口生成 Stub 类（静态 Dispatch 方法）"""
         lines = []
         indent = "    " * namespace_depth
         class_indent = "    " * (namespace_depth + 1)
@@ -499,45 +513,24 @@ class IpcStubGenerator:
         class_name = f"{interface_short_name}Stub"
         interface_id = fnv1a_hash_guid(interface.uuid)
         
-        # 类文档注释
         lines.append(f"{indent}// ============================================================================")
-        lines.append(f"{indent}// {class_name}<IsLocal>")
-        lines.append(f"{indent}// Hybrid IPC Stub for {interface.name}")
+        lines.append(f"{indent}// {class_name}")
+        lines.append(f"{indent}// IPC Stub for {interface.name}")
         lines.append(f"{indent}// Interface UUID: {interface.uuid}")
         lines.append(f"{indent}// ============================================================================")
         lines.append("")
         
-        # 模板类定义
-        lines.append(f"{indent}template <bool IsLocal>")
-        lines.append(f"{indent}class {class_name} : public IStubBase")
+        lines.append(f"{indent}class {class_name}")
         lines.append(f"{indent}{{")
         lines.append(f"{indent}public:")
         
-        # InterfaceId 常量
         lines.append(f"{class_indent}static constexpr uint32_t InterfaceId = 0x{interface_id:08X}u;")
         lines.append("")
         
-        # IStubBase 接口实现
-        lines.append(f"{class_indent}[[nodiscard]] uint32_t GetInterfaceId() const noexcept override")
-        lines.append(f"{class_indent}{{")
-        lines.append(f"{class_indent}    return InterfaceId;")
-        lines.append(f"{class_indent}}}")
+        lines.append(self._generate_method_constants(interface, namespace_depth))
         lines.append("")
         
         num_methods = len(interface.methods)
-        lines.append(f"{class_indent}[[nodiscard]] const MethodMetadata* GetMethodTable() const noexcept override")
-        lines.append(f"{class_indent}{{")
-        lines.append(f"{class_indent}    return MethodTable;")
-        lines.append(f"{class_indent}}}")
-        lines.append("")
-        
-        lines.append(f"{class_indent}[[nodiscard]] size_t GetMethodCount() const noexcept override")
-        lines.append(f"{class_indent}{{")
-        lines.append(f"{class_indent}    return {num_methods};")
-        lines.append(f"{class_indent}}}")
-        lines.append("")
-        
-        # MethodTable 常量
         lines.append(f"{class_indent}static constexpr MethodMetadata MethodTable[] = {{")
         for i, method in enumerate(interface.methods):
             method_hash = fnv1a_hash(f"{interface.name}::{method.name}")
@@ -545,36 +538,40 @@ class IpcStubGenerator:
         lines.append(f"{class_indent}}};")
         lines.append("")
         
-        # 构造函数
-        lines.append(f"{class_indent}explicit {class_name}({interface.name}* impl)")
-        lines.append(f"{class_indent}    : impl_(impl)")
+        lines.append(f"{class_indent}[[nodiscard]] static constexpr size_t GetMethodCount() noexcept")
         lines.append(f"{class_indent}{{")
+        lines.append(f"{class_indent}    return {num_methods};")
         lines.append(f"{class_indent}}}")
         lines.append("")
         
-        # Dispatch 方法
+        lines.append(f"{class_indent}[[nodiscard]] static constexpr uint32_t GetInterfaceId() noexcept")
+        lines.append(f"{class_indent}{{")
+        lines.append(f"{class_indent}    return InterfaceId;")
+        lines.append(f"{class_indent}}}")
+        lines.append("")
+        
         lines.append(self._generate_dispatch_method(interface, namespace_depth))
         lines.append("")
         
-        # 私有成员
         lines.append(f"{indent}private:")
         
-        # Handle 方法
-        for i, method in enumerate(interface.methods):
-            lines.append(self._generate_handle_method(interface, method, i, namespace_depth))
-            lines.append("")
-        
-        # 实现指针
-        lines.append(f"{class_indent}{interface.name}* impl_;")
+        for method in interface.methods:
+            lines.append(self._generate_handle_method_declaration(interface, method, namespace_depth))
         
         lines.append(f"{indent}}};")
         lines.append("")
         
-        # 类型别名
-        lines.append(f"{indent}using {interface_short_name}StubLocal = {class_name}<true>;")
-        lines.append(f"{indent}using {interface_short_name}StubRemote = {class_name}<false>;")
-        lines.append("")
-        
+        return "\n".join(lines)
+    
+    def _generate_handle_method_definitions(self, interface: InterfaceDef, namespace_depth: int = 0) -> str:
+        """生成所有 Handle 方法的定义"""
+        lines = []
+        indent = "    " * namespace_depth
+        for i, method in enumerate(interface.methods):
+            definition = self._generate_handle_method_definition(interface, method, i)
+            for line in definition.split('\n'):
+                lines.append(f"{indent}{line}")
+            lines.append("")
         return "\n".join(lines)
     
     def _generate_interface_json(self, interface: InterfaceDef) -> Dict[str, Any]:
@@ -642,6 +639,7 @@ class IpcStubGenerator:
                 ns_depth += 2
             
             content += self._generate_stub_class(interface, ns_depth)
+            content += self._generate_handle_method_definitions(interface, ns_depth)
             
             if interface.namespace:
                 ns_indent = "    " * (ns_depth - 2)
