@@ -69,10 +69,8 @@ public:
         return DAS_E_NO_IMPLEMENTATION;
     }
 
-    // TODO: 未来将重写 PythonHost
-    // 临时实现以满足 IForeignLanguageRuntime 接口要求
-    auto LoadPlugin(const std::filesystem::path& path) -> DAS::Utils::Expected<
-        DAS::DasPtr<DAS::PluginInterface::IDasPluginPackage>> override;
+    auto LoadPlugin(const std::filesystem::path& path)
+        -> DAS::Utils::Expected<DasPtr<IDasBase>> override;
 
     /*
     static auto ImportPluginModule(

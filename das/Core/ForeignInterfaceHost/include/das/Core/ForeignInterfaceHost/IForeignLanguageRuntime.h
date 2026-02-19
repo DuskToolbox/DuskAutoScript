@@ -22,8 +22,7 @@ struct ForeignLanguageRuntimeFactoryDesc
 DAS_INTERFACE IForeignLanguageRuntime : public IDasBase
 {
     virtual auto LoadPlugin(const std::filesystem::path& path)
-        -> DAS::Utils::Expected<
-            DasPtr<Das::PluginInterface::IDasPluginPackage>> = 0;
+        -> DAS::Utils::Expected<DasPtr<IDasBase>> = 0;
 };
 
 /**

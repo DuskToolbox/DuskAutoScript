@@ -112,7 +112,19 @@ DasResult PluginManager::LoadPlugin(
 
     LoadedPlugin plugin;
     plugin.plugin_path = normalized_path;
-    plugin.package = *result;
+
+    DasPtr<Das::PluginInterface::IDasPluginPackage> package;
+    auto qi_result = (*result)->QueryInterface(
+        DAS_IID_PLUGIN_PACKAGE,
+        reinterpret_cast<void**>(package.Put()));
+    if (DAS::IsFailed(qi_result))
+    {
+        DAS_CORE_LOG_ERROR(
+            "Plugin does not implement IDasPluginPackage: {}",
+            path_str);
+        return DAS_E_NO_INTERFACE;
+    }
+    plugin.package = std::move(package);
 
     // 枚举插件的 Features 并创建接口
     uint64_t index = 0;

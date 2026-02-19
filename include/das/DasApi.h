@@ -157,7 +157,7 @@ DAS_C_API DasResult CreateIDasLogRequester(
     Das::ExportInterface::IDasLogRequester** pp_out_requester);
 
 using DasCoCreatePluginFunction =
-    DasResult (*)(Das::IDasBase** pp_out_plugin_package);
+    DasResult (*)(IDasBase** pp_out_plugin_package);
 
 #define DAS_LOG_ERROR(...) DAS_LOG_WITH_SOURCE_LOCATION(Error, __VA_ARGS__)
 #define DAS_LOG_WARNING(...) DAS_LOG_WITH_SOURCE_LOCATION(Warning, __VA_ARGS__)

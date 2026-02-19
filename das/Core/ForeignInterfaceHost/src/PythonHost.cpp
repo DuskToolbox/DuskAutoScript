@@ -357,11 +357,8 @@ PythonRuntime::~PythonRuntime() = default;
 
 auto PythonRuntime::LoadPlugin(
     [[maybe_unused]] const std::filesystem::path& path)
-    -> DAS::Utils::Expected<
-        DAS::DasPtr<DAS::PluginInterface::IDasPluginPackage>>
+    -> DAS::Utils::Expected<DasPtr<IDasBase>>
 {
-    // TODO: 未来将重写 PythonHost
-    // 临时实现以满足 IForeignLanguageRuntime 接口要求
     return tl::make_unexpected(DAS_E_NO_IMPLEMENTATION);
 }
 
