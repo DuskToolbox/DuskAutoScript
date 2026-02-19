@@ -224,6 +224,16 @@ namespace Core
 
         bool IpcRunLoop::IsRunning() const { return impl_->running_.load(); }
 
+        void IpcRunLoop::SetTransport(std::unique_ptr<IpcTransport> transport)
+        {
+            impl_->transport_ = std::move(transport);
+        }
+
+        IpcTransport* IpcRunLoop::GetTransport() const
+        {
+            return impl_->transport_.get();
+        }
+
         void IpcRunLoop::RunInternal()
         {
             DasResult exit_code = DAS_S_OK;
@@ -309,25 +319,25 @@ namespace Core
             return DAS_E_IPC_INVALID_MESSAGE_TYPE;
         }
 
-        stdexec::sender auto IpcRunLoop::RunAsync()
+        DasResult IpcRunLoop::StartInternal()
         {
             if (impl_->running_.load())
             {
-                return stdexec::just(DAS_E_IPC_DEADLOCK_DETECTED);
+                return DAS_E_IPC_DEADLOCK_DETECTED;
             }
 
             impl_->shutdown_promise_ = std::promise<DasResult>{};
             impl_->running_.store(true);
             impl_->io_thread_ = std::thread([this]() { this->RunInternal(); });
 
-            return stdexec::just(DAS_S_OK);
+            return DAS_S_OK;
         }
 
-        stdexec::sender auto IpcRunLoop::WaitForShutdown()
+        DasResult IpcRunLoop::WaitForShutdownInternal()
         {
             if (!impl_->running_.load())
             {
-                return stdexec::just(DAS_S_OK);
+                return DAS_S_OK;
             }
 
             auto future = impl_->shutdown_promise_.get_future();
@@ -337,15 +347,14 @@ namespace Core
             {
                 try
                 {
-                    DasResult result = future.get();
-                    return stdexec::just(result);
+                    return future.get();
                 }
                 catch (...)
                 {
                 }
             }
 
-            return stdexec::just(DAS_S_OK);
+            return DAS_S_OK;
         }
     }
 }

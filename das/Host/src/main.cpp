@@ -2,15 +2,19 @@
 // B8 Host 进程模型实现
 
 #include <atomic>
+#include <chrono>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <das/Core/IPC/ConnectionManager.h>
+#include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/MessageQueueTransport.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <das/DasApi.h>
 #include <das/Host/HostConfig.h>
+#include <stdexec/execution.hpp>
 #include <string>
+#include <thread>
 
 #ifdef _WIN32
 #include <process.h>
@@ -28,8 +32,8 @@ using namespace Das::Host;
 // Global state
 static std::atomic<bool>                 g_running{true};
 static std::atomic<uint16_t>             g_next_session_id{MIN_SESSION_ID};
-static std::unique_ptr<IpcTransport>     g_transport;
 static std::unique_ptr<SharedMemoryPool> g_shared_memory;
+static IpcRunLoop                        g_run_loop;
 static uint32_t                          g_host_pid = 0;
 
 // B8.1: session_id 分配（全局原子计数器）
@@ -101,8 +105,21 @@ static DasResult InitializeIpcResources()
     std::string plugin_to_host_queue = MakeMessageQueueName(g_host_pid, false);
     std::string shm_name = MakeSharedMemoryName(g_host_pid);
 
-    g_transport = std::make_unique<IpcTransport>();
-    DasResult result = g_transport->Initialize(
+    DasResult result = g_run_loop.Initialize();
+    if (DAS_HOST_FAILED(result))
+    {
+        DAS_LOG_ERROR("Failed to initialize IPC run loop");
+        return result;
+    }
+
+    IpcTransport* transport = g_run_loop.GetTransport();
+    if (!transport)
+    {
+        DAS_LOG_ERROR("Failed to get transport from run loop");
+        return DAS_E_FAIL;
+    }
+
+    result = transport->Initialize(
         host_to_plugin_queue,
         plugin_to_host_queue,
         DEFAULT_MAX_MESSAGE_SIZE,
@@ -121,7 +138,7 @@ static DasResult InitializeIpcResources()
         return result;
     }
 
-    result = g_transport->SetSharedMemoryPool(g_shared_memory.get());
+    result = transport->SetSharedMemoryPool(g_shared_memory.get());
     if (DAS_HOST_FAILED(result))
     {
         DAS_LOG_ERROR("Failed to set shared memory pool for transport");
@@ -134,11 +151,7 @@ static DasResult InitializeIpcResources()
 
 static void ShutdownIpcResources()
 {
-    if (g_transport)
-    {
-        g_transport->Shutdown();
-        g_transport.reset();
-    }
+    g_run_loop.Shutdown();
 
     if (g_shared_memory)
     {
@@ -149,7 +162,6 @@ static void ShutdownIpcResources()
     DAS_LOG_INFO("IPC resources shutdown complete");
 }
 
-// Event loop placeholder
 static void RunEventLoop(bool verbose)
 {
     char buffer[256];
@@ -160,49 +172,39 @@ static void RunEventLoop(bool verbose)
         g_host_pid);
     DAS_LOG_INFO(buffer);
 
-    while (g_running.load())
-    {
-        IPCMessageHeader     header;
-        std::vector<uint8_t> body;
-
-        DasResult result =
-            g_transport->Receive(header, body, HEARTBEAT_INTERVAL_MS);
-
-        if (result == DAS_E_IPC_TIMEOUT)
+    g_run_loop.SetRequestHandler(
+        [verbose](
+            const IPCMessageHeader& header,
+            const uint8_t*          body,
+            size_t                  body_size) -> DasResult
         {
-            continue;
-        }
+            (void)body;
+            (void)body_size;
 
-        if (DAS_HOST_FAILED(result))
-        {
             if (verbose)
             {
+                char buf[256];
                 std::snprintf(
-                    buffer,
-                    sizeof(buffer),
-                    "Receive failed: 0x%08X",
-                    result);
-                DAS_LOG_WARNING(buffer);
+                    buf,
+                    sizeof(buf),
+                    "Received message: call_id=%llu, type=%d",
+                    static_cast<unsigned long long>(header.call_id),
+                    static_cast<int>(header.message_type));
+                DAS_LOG_INFO(buf);
             }
-            continue;
-        }
 
-        if (verbose)
-        {
-            std::snprintf(
-                buffer,
-                sizeof(buffer),
-                "Received message: call_id=%llu, type=%d",
-                static_cast<unsigned long long>(header.call_id),
-                static_cast<int>(header.message_type));
-            DAS_LOG_INFO(buffer);
-        }
+            return DAS_S_OK;
+        });
 
-        // TODO: Implement message dispatch (Task 7.2+)
-        // 1. Parse message type
-        // 2. Dispatch to appropriate handler
-        // 3. Send response
+    auto sender = g_run_loop.RunAsync();
+    stdexec::sync_wait(std::move(sender));
+
+    while (g_running.load())
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
+
+    g_run_loop.Stop();
 
     DAS_LOG_INFO("Host process exiting event loop");
 }

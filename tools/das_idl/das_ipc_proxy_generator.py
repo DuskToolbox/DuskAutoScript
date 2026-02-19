@@ -46,6 +46,103 @@ MethodDef = _das_idl_parser.MethodDef
 ParameterDef = _das_idl_parser.ParameterDef
 TypeInfo = _das_idl_parser.TypeInfo
 ParamDirection = _das_idl_parser.ParamDirection
+StructDef = _das_idl_parser.StructDef
+
+
+class ProxyTypeMapper:
+    """Proxy 类型映射器
+    
+    将 IDL 类型映射到序列化方法：
+    1. 基本类型 → SerializerWriter/SerializerReader 方法
+    2. Struct 类型 → Serialize_/Deserialize_ 函数调用
+    """
+    
+    # IDL 基本类型 → (C++类型, Write方法名, Read方法名)
+    TYPE_MAP = {
+        # 有符号整数
+        'int8': ('int8_t', 'WriteInt8', 'ReadInt8'),
+        'int16': ('int16_t', 'WriteInt16', 'ReadInt16'),
+        'int32': ('int32_t', 'WriteInt32', 'ReadInt32'),
+        'int32_t': ('int32_t', 'WriteInt32', 'ReadInt32'),
+        'int64': ('int64_t', 'WriteInt64', 'ReadInt64'),
+        'int64_t': ('int64_t', 'WriteInt64', 'ReadInt64'),
+        'int': ('int32_t', 'WriteInt32', 'ReadInt32'),
+        # 无符号整数
+        'uint8': ('uint8_t', 'WriteUInt8', 'ReadUInt8'),
+        'uint16': ('uint16_t', 'WriteUInt16', 'ReadUInt16'),
+        'uint32': ('uint32_t', 'WriteUInt32', 'ReadUInt32'),
+        'uint32_t': ('uint32_t', 'WriteUInt32', 'ReadUInt32'),
+        'uint64': ('uint64_t', 'WriteUInt64', 'ReadUInt64'),
+        'uint64_t': ('uint64_t', 'WriteUInt64', 'ReadUInt64'),
+        'uint': ('uint32_t', 'WriteUInt32', 'ReadUInt32'),
+        # 浮点数
+        'float': ('float', 'WriteFloat', 'ReadFloat'),
+        'double': ('double', 'WriteDouble', 'ReadDouble'),
+        # 布尔
+        'bool': ('bool', 'WriteBool', 'ReadBool'),
+        # 字符
+        'char': ('char', 'WriteInt8', 'ReadInt8'),
+        # 大小类型
+        'size_t': ('size_t', 'WriteUInt64', 'ReadUInt64'),
+    }
+    
+    # 特殊类型（需要特殊处理）
+    SPECIAL_TYPES = {
+        'string': ('std::string', 'WriteString', 'ReadString'),
+        'DasGuid': ('DasGuid', 'WriteGuid', 'ReadGuid'),
+        'DasResult': ('DasResult', 'WriteInt32', 'ReadInt32'),
+        'DasBool': ('DasBool', 'WriteBool', 'ReadBool'),
+    }
+    
+    def __init__(self, document: IdlDocument):
+        """初始化类型映射器
+        
+        Args:
+            document: IDL 文档，用于获取 struct 定义
+        """
+        self.document = document
+        # 收集所有 struct 类型
+        self.struct_types = set()
+        for struct in document.structs:
+            self.struct_types.add(struct.name)
+            # 也支持带命名空间的 struct
+            if struct.namespace:
+                full_name = f"{struct.namespace}::{struct.name}"
+                self.struct_types.add(full_name)
+    
+    def get_type_info(self, idl_type: str):
+        """获取类型信息
+        
+        Args:
+            idl_type: IDL 类型名称
+            
+        Returns:
+            (cpp_type, write_method, read_method, is_struct) 或 None
+        """
+        # 检查基本类型
+        if idl_type in self.TYPE_MAP:
+            cpp_type, write_method, read_method = self.TYPE_MAP[idl_type]
+            return (cpp_type, write_method, read_method, False)
+        
+        # 检查特殊类型
+        if idl_type in self.SPECIAL_TYPES:
+            cpp_type, write_method, read_method = self.SPECIAL_TYPES[idl_type]
+            return (cpp_type, write_method, read_method, False)
+        
+        # 检查 struct 类型
+        if idl_type in self.struct_types:
+            # struct 类型使用 Serialize_/Deserialize_ 函数
+            return (idl_type, None, None, True)
+        
+        return None
+    
+    def is_basic_type(self, idl_type: str) -> bool:
+        """检查是否是基本类型（可以直接序列化）"""
+        return idl_type in self.TYPE_MAP or idl_type in self.SPECIAL_TYPES
+    
+    def is_struct_type(self, idl_type: str) -> bool:
+        """检查是否是 struct 类型"""
+        return idl_type in self.struct_types
 
 
 def fnv1a_hash(data: str) -> int:
@@ -105,6 +202,7 @@ class IpcProxyGenerator:
         self.idl_file_path = idl_file_path
         self.idl_file_name = os.path.basename(idl_file_path) if idl_file_path else None
         self.indent = "    "  # 4 空格缩进
+        self.type_mapper = ProxyTypeMapper(document)
     
     def _file_header(self, guard_name: str, interface_name: str) -> str:
         """生成文件头"""
@@ -125,8 +223,10 @@ class IpcProxyGenerator:
 //
 
 #include <das/Core/IPC/DasProxyBase.h>
+#include <das/Core/IPC/Serializer.h>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 """
     
@@ -370,25 +470,158 @@ class IpcProxyGenerator:
         return_type = method.return_type.base_type
         has_return = return_type != 'void'
         
-        lines.append(f"{indent}IPCMessageHeader header;")
-        lines.append(f"{indent}FillMessageHeader(header, {method_index}, AllocateCallId());")
-        lines.append(f"{indent}header.body_size = 0;")
+        in_params = [p for p in method.parameters if p.direction != ParamDirection.OUT]
+        out_params = [p for p in method.parameters if p.direction in (ParamDirection.OUT, ParamDirection.INOUT)]
+        
+        need_request_body = bool(in_params)
+        need_response_body = bool(out_params) or has_return
+        
+        if need_request_body:
+            lines.append(f"{indent}SerializerWriter writer;")
+            lines.append(f"{indent}DasResult result = DAS_S_OK;")
+            for param in in_params:
+                serialize_code = self._generate_serialize_param(param, inner_indent)
+                for line in serialize_code:
+                    lines.append(f"{line}")
+            lines.append("")
+            lines.append(f"{indent}std::vector<uint8_t> request_body = writer.GetBuffer();")
+        else:
+            lines.append(f"{indent}std::vector<uint8_t> request_body;")
+        
         lines.append("")
         lines.append(f"{indent}std::vector<uint8_t> response_body;")
-        lines.append(f"{indent}DasResult result = SendRequest({method_index}, nullptr, 0, response_body);")
+        if need_request_body:
+            lines.append(f"{indent}result = SendRequest({method_index},")
+        else:
+            lines.append(f"{indent}DasResult result = SendRequest({method_index},")
+        lines.append(f"{indent}    request_body.data(), request_body.size(), response_body);")
+        lines.append(f"{indent}if (DAS_FAILED(result))")
+        lines.append(f"{indent}{{")
+        if has_return:
+            lines.append(f"{indent}    return result;")
+        else:
+            lines.append(f"{indent}    return;")
+        lines.append(f"{indent}}}")
+        lines.append("")
+        
+        if need_response_body:
+            lines.append(f"{indent}SerializerReader reader;")
+            lines.append(f"{indent}result = reader.SetBuffer(response_body.data(), response_body.size());")
+            lines.append(f"{indent}if (DAS_FAILED(result))")
+            lines.append(f"{indent}{{")
+            if has_return:
+                lines.append(f"{indent}    return result;")
+            else:
+                lines.append(f"{indent}    return;")
+            lines.append(f"{indent}}}")
+            
+            for param in out_params:
+                deserialize_code = self._generate_deserialize_param(param, inner_indent, has_return)
+                for line in deserialize_code:
+                    lines.append(f"{line}")
+            
+            if has_return:
+                return_code = self._generate_return_deserialize(method.return_type, inner_indent)
+                for line in return_code:
+                    lines.append(f"{line}")
+            else:
+                lines.append(f"{indent}return;")
+        else:
+            lines.append(f"{indent}return;")
+        
+        return "\n".join(lines)
+    
+    def _generate_serialize_param(self, param: ParameterDef, indent: str) -> List[str]:
+        """生成参数序列化代码"""
+        lines = []
+        type_info = self.type_mapper.get_type_info(param.type_info.base_type)
+        
+        if type_info is None:
+            lines.append(f"{indent}// TODO: Unknown type {param.type_info.base_type}")
+            lines.append(f"{indent}// result = writer.WriteCustom<{param.type_info.base_type}>({param.name});")
+            return lines
+        
+        cpp_type, write_method, _, is_struct = type_info
+        
+        if is_struct:
+            lines.append(f"{indent}result = Serialize_{param.type_info.base_type}(writer, {param.name});")
+        else:
+            # 处理指针和引用
+            if param.type_info.is_pointer or param.type_info.is_reference:
+                if param.type_info.pointer_level == 1:
+                    lines.append(f"{indent}result = writer.{write_method}(*{param.name});")
+                else:
+                    lines.append(f"{indent}result = writer.{write_method}({param.name});")
+            else:
+                lines.append(f"{indent}result = writer.{write_method}({param.name});")
+        
         lines.append(f"{indent}if (DAS_FAILED(result))")
         lines.append(f"{indent}{{")
         lines.append(f"{indent}    return result;")
         lines.append(f"{indent}}}")
-        lines.append("")
         
-        if has_return:
-            lines.append(f"{indent}// TODO: Deserialize return value from response_body")
-            lines.append(f"{indent}return DAS_E_NOT_IMPLEMENTED;")
+        return lines
+    
+    def _generate_deserialize_param(self, param: ParameterDef, indent: str, has_return: bool = True) -> List[str]:
+        """生成参数反序列化代码（用于 [out] 和 [inout] 参数）"""
+        lines = []
+        type_info = self.type_mapper.get_type_info(param.type_info.base_type)
+        
+        if type_info is None:
+            lines.append(f"{indent}// TODO: Unknown type {param.type_info.base_type}")
+            lines.append(f"{indent}// result = reader.ReadCustom<{param.type_info.base_type}>({param.name});")
+            return lines
+        
+        cpp_type, _, read_method, is_struct = type_info
+        
+        if is_struct:
+            lines.append(f"{indent}result = Deserialize_{param.type_info.base_type}(reader, {param.name});")
         else:
-            lines.append(f"{indent}return DAS_S_OK;")
+            if param.type_info.is_pointer and param.type_info.pointer_level >= 1:
+                lines.append(f"{indent}result = reader.{read_method}({param.name});")
+            else:
+                lines.append(f"{indent}result = reader.{read_method}(&{param.name});")
         
-        return "\n".join(lines)
+        lines.append(f"{indent}if (DAS_FAILED(result))")
+        lines.append(f"{indent}{{")
+        if has_return:
+            lines.append(f"{indent}    return result;")
+        else:
+            lines.append(f"{indent}    return;")
+        lines.append(f"{indent}}}")
+        
+        return lines
+    
+    def _generate_return_deserialize(self, return_type: TypeInfo, indent: str) -> List[str]:
+        """生成返回值反序列化代码"""
+        lines = []
+        type_info = self.type_mapper.get_type_info(return_type.base_type)
+        
+        if type_info is None:
+            lines.append(f"{indent}// TODO: Deserialize return value of type {return_type.base_type}")
+            lines.append(f"{indent}return DAS_E_NOT_IMPLEMENTED;")
+            return lines
+        
+        cpp_type, _, read_method, is_struct = type_info
+        
+        if is_struct:
+            lines.append(f"{indent}{return_type.base_type} ret_value;")
+            lines.append(f"{indent}result = Deserialize_{return_type.base_type}(reader, &ret_value);")
+            lines.append(f"{indent}if (DAS_FAILED(result))")
+            lines.append(f"{indent}{{")
+            lines.append(f"{indent}    return result;")
+            lines.append(f"{indent}}}")
+            lines.append(f"{indent}return ret_value;")
+        else:
+            lines.append(f"{indent}{cpp_type} ret_value;")
+            lines.append(f"{indent}result = reader.{read_method}(&ret_value);")
+            lines.append(f"{indent}if (DAS_FAILED(result))")
+            lines.append(f"{indent}{{")
+            lines.append(f"{indent}    return result;")
+            lines.append(f"{indent}}}")
+            lines.append(f"{indent}return ret_value;")
+        
+        return lines
     
     def _generate_proxy_class_old(self, interface: InterfaceDef, namespace_depth: int = 0) -> str:
         """为接口生成混合模式 Proxy 类 (B7)

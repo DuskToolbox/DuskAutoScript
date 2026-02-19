@@ -11,6 +11,11 @@
 #include <stdexec/execution.hpp>
 #include <vector>
 
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4251)
+#endif
+
 DAS_NS_BEGIN
 namespace Core
 {
@@ -25,7 +30,7 @@ namespace Core
 
         class IpcTransport;
 
-        class IpcRunLoop
+        class DAS_API IpcRunLoop
         {
         public:
             using RequestHandler = std::function<
@@ -39,15 +44,13 @@ namespace Core
             DasResult Run();
             DasResult Stop();
 
-            // stdexec sender 接口
-            // 启动 IPC 线程，返回一个在正常关闭时完成的 sender
-            // 使用方式：auto sender = run_loop.RunAsync();
-            //          stdexec::sync_wait(std::move(sender)); // 等待线程退出
+            void SetTransport(std::unique_ptr<IpcTransport> transport);
+
+            IpcTransport* GetTransport() const;
+
             [[nodiscard]]
             stdexec::sender auto RunAsync();
 
-            // 等待 IPC 线程关闭，返回一个在关闭完成时完成的 sender
-            // 调用 Stop() 并等待线程退出
             [[nodiscard]]
             stdexec::sender auto WaitForShutdown();
 
@@ -79,11 +82,28 @@ namespace Core
 
             void RunInternal();
 
+            DasResult StartInternal();
+            DasResult WaitForShutdownInternal();
+
             struct Impl;
             std::unique_ptr<Impl> impl_;
         };
+
+        inline stdexec::sender auto IpcRunLoop::RunAsync()
+        {
+            return stdexec::just(StartInternal());
+        }
+
+        inline stdexec::sender auto IpcRunLoop::WaitForShutdown()
+        {
+            return stdexec::just(WaitForShutdownInternal());
+        }
     }
 }
 DAS_NS_END
+
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 #endif // DAS_CORE_IPC_IPC_RUN_LOOP_H
