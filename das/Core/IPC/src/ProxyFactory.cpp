@@ -5,7 +5,6 @@
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/IDasBase.h>
-#include <memory>
 
 DAS_NS_BEGIN
 namespace Core
@@ -30,7 +29,6 @@ namespace Core
 
             std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
 
-            // 设置对象管理器、注册表和运行循环
             object_manager_ = object_manager;
             object_registry_ = object_registry;
             run_loop_ = run_loop;
@@ -48,7 +46,6 @@ namespace Core
         {
             std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
 
-            // 如果已经存在运行循环，先清理现有代理
             if (run_loop_ && run_loop_ != run_loop)
             {
                 ClearAllProxies();
@@ -58,8 +55,7 @@ namespace Core
             return DAS_S_OK;
         }
 
-        std::shared_ptr<IPCProxyBase> ProxyFactory::GetProxy(
-            const ObjectId& object_id)
+        IPCProxyBase* ProxyFactory::GetProxy(const ObjectId& object_id)
         {
             std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
             auto it = proxy_cache_.find(EncodeObjectId(object_id));
@@ -76,10 +72,23 @@ namespace Core
             auto it = proxy_cache_.find(EncodeObjectId(object_id));
             if (it != proxy_cache_.end())
             {
-                // 从缓存中移除Proxy
+                IPCProxyBase* proxy = it->second.proxy;
+                proxy_cache_.erase(it);
+                proxy->Release();
+                return DAS_S_OK;
+            }
+
+            return DAS_E_IPC_OBJECT_NOT_FOUND;
+        }
+
+        DasResult ProxyFactory::RemoveFromCache(const ObjectId& object_id)
+        {
+            std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
+            auto it = proxy_cache_.find(EncodeObjectId(object_id));
+            if (it != proxy_cache_.end())
+            {
                 proxy_cache_.erase(it);
 
-                // 减少对象的引用计数（即使失败也不影响缓存清理）
                 if (object_manager_)
                 {
                     object_manager_->Release(object_id);
@@ -108,24 +117,25 @@ namespace Core
         {
             std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
 
-            // 释放所有对象的引用
             for (const auto& entry : proxy_cache_)
             {
                 if (object_manager_)
                 {
                     object_manager_->Release(DecodeObjectId(entry.first));
                 }
+                if (entry.second.proxy)
+                {
+                    entry.second.proxy->Release();
+                }
             }
 
             proxy_cache_.clear();
         }
 
-        std::shared_ptr<IPCProxyBase> ProxyFactory::CreateIPCProxy(
-            const ObjectId& object_id)
+        IPCProxyBase* ProxyFactory::CreateIPCProxy(const ObjectId& object_id)
         {
             uint64_t encoded_id = EncodeObjectId(object_id);
 
-            // 验证对象信息
             RemoteObjectInfo info;
             DasResult        result = ValidateObject(object_id, info);
             if (result != DAS_S_OK)
@@ -133,11 +143,9 @@ namespace Core
                 return nullptr;
             }
 
-            // 检查是否已存在该对象的代理
             auto it = proxy_cache_.find(encoded_id);
             if (it != proxy_cache_.end())
             {
-                // 增加引用计数
                 if (object_manager_)
                 {
                     object_manager_->AddRef(DecodeObjectId(encoded_id));
@@ -145,17 +153,11 @@ namespace Core
                 return it->second.proxy;
             }
 
-            // 创建新的代理实例
             try
             {
-                // 这里需要根据实际的接口类型创建相应的代理
-                // 使用 FNV-1a hash 的 interface_id
-                auto proxy = std::make_shared<Proxy<void>>(
-                    info.interface_id,
-                    object_id,
-                    run_loop_);
+                auto* proxy =
+                    new Proxy<void>(info.interface_id, object_id, run_loop_);
 
-                // 缓存代理信息
                 ProxyEntry entry;
                 entry.proxy = proxy;
                 entry.object_id_encoded = encoded_id;
@@ -168,9 +170,6 @@ namespace Core
             }
             catch (const std::exception&)
             {
-                // 暂时注释掉日志，避免编译错误
-                // DAS_LOG_ERROR("Failed to create IPC proxy for object {}: {}",
-                //     encoded_id, e.what());
                 return nullptr;
             }
         }
@@ -184,7 +183,6 @@ namespace Core
                 return DAS_E_IPC_INVALID_STATE;
             }
 
-            // 获取对象信息
             DasResult result =
                 object_registry_->GetObjectInfo(object_id, out_info);
             if (result != DAS_S_OK)
@@ -192,7 +190,6 @@ namespace Core
                 return result;
             }
 
-            // 验证对象是否仍然存在
             if (!object_registry_->ObjectExists(object_id))
             {
                 return DAS_E_IPC_OBJECT_NOT_FOUND;
@@ -210,7 +207,6 @@ namespace Core
                 throw std::runtime_error("Cannot get object interface id");
             }
 
-            // 返回接口ID (FNV-1a hash)
             return info.interface_id;
         }
 

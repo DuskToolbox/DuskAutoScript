@@ -4,7 +4,9 @@
 #include <cstdint>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/MessageQueueTransport.h>
+#include <future>
 #include <mutex>
+#include <stdexec/execution.hpp>
 #include <thread>
 #include <unordered_map>
 
@@ -28,6 +30,7 @@ namespace Core
             std::thread                                     io_thread_;
             std::mutex                                      pending_mutex_;
             std::condition_variable                         pending_cv_;
+            std::promise<DasResult>                         shutdown_promise_;
         };
 
         IpcRunLoop::IpcRunLoop() : impl_(std::make_unique<Impl>()) {}
@@ -54,6 +57,7 @@ namespace Core
                 return DAS_E_IPC_DEADLOCK_DETECTED;
             }
 
+            impl_->shutdown_promise_ = std::promise<DasResult>{};
             impl_->running_.store(true);
             impl_->io_thread_ = std::thread([this]() { this->RunInternal(); });
 
@@ -222,6 +226,8 @@ namespace Core
 
         void IpcRunLoop::RunInternal()
         {
+            DasResult exit_code = DAS_S_OK;
+
             while (impl_->running_.load())
             {
                 IPCMessageHeader     header;
@@ -236,11 +242,14 @@ namespace Core
 
                 if (result != DAS_S_OK)
                 {
+                    exit_code = result;
                     break;
                 }
 
                 ProcessMessage(header, body.data(), body.size());
             }
+
+            impl_->shutdown_promise_.set_value(exit_code);
         }
 
         DasResult IpcRunLoop::ProcessMessage(
@@ -298,6 +307,45 @@ namespace Core
             }
 
             return DAS_E_IPC_INVALID_MESSAGE_TYPE;
+        }
+
+        stdexec::sender auto IpcRunLoop::RunAsync()
+        {
+            if (impl_->running_.load())
+            {
+                return stdexec::just(DAS_E_IPC_DEADLOCK_DETECTED);
+            }
+
+            impl_->shutdown_promise_ = std::promise<DasResult>{};
+            impl_->running_.store(true);
+            impl_->io_thread_ = std::thread([this]() { this->RunInternal(); });
+
+            return stdexec::just(DAS_S_OK);
+        }
+
+        stdexec::sender auto IpcRunLoop::WaitForShutdown()
+        {
+            if (!impl_->running_.load())
+            {
+                return stdexec::just(DAS_S_OK);
+            }
+
+            auto future = impl_->shutdown_promise_.get_future();
+            Stop();
+
+            if (future.valid())
+            {
+                try
+                {
+                    DasResult result = future.get();
+                    return stdexec::just(result);
+                }
+                catch (...)
+                {
+                }
+            }
+
+            return stdexec::just(DAS_S_OK);
         }
     }
 }

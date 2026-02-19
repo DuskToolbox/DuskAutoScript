@@ -1,6 +1,7 @@
 #ifndef DAS_CORE_IPC_PROXY_FACTORY_H
 #define DAS_CORE_IPC_PROXY_FACTORY_H
 
+#include <atomic>
 #include <das/Core/IPC/IPCProxyBase.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcRunLoop.h>
@@ -8,8 +9,8 @@
 #include <das/Core/IPC/ObjectManager.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/Logger/Logger.h>
+#include <das/DasPtr.hpp>
 #include <das/IDasBase.h>
-#include <memory>
 #include <mutex>
 #include <unordered_map>
 
@@ -69,39 +70,35 @@ namespace Core
 
             /**
              * @brief 创建指定类型的 Proxy 实例
+ *
              * @tparam T 要创建的 Proxy 类型
-             * @param object_id 对象 ID
-             * @return Proxy 实例的共享指针
-             * @throws DasException 当无法创建 Proxy 时抛出异常
+             * @param
+             * object_id 对象 ID
+             * @return DasPtr<T> Proxy
+             * 实例的智能指针
+
              */
             template <typename T>
-            std::shared_ptr<Proxy<T>> CreateProxy(const ObjectId& object_id)
+            DasPtr<T> CreateProxy(const ObjectId& object_id)
             {
                 uint64_t encoded_id = EncodeObjectId(object_id);
 
-                // 验证对象是否存在
                 if (!object_registry_ || !IsInitialized())
                 {
                     return nullptr;
                 }
 
-                // 检查是否已存在该对象的代理
                 {
                     std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
                     auto it = proxy_cache_.find(encoded_id);
                     if (it != proxy_cache_.end())
                     {
-                        // 已存在，增加引用计数并返回类型转换后的代理
-                        if (object_manager_)
-                        {
-                            object_manager_->AddRef(object_id);
-                        }
-                        return std::static_pointer_cast<Proxy<T>>(
-                            it->second.proxy);
+                        auto* proxy = static_cast<Proxy<T>*>(it->second.proxy);
+                        proxy->AddRef();
+                        return DasPtr<T>(proxy);
                     }
                 }
 
-                // 验证对象并获取信息
                 RemoteObjectInfo info;
                 DasResult        result = ValidateObject(object_id, info);
                 if (result != DAS_S_OK)
@@ -109,35 +106,30 @@ namespace Core
                     return nullptr;
                 }
 
-                // 创建新的代理
                 try
                 {
-                    // 使用对象信息中的接口ID (FNV-1a hash)
                     uint32_t interface_id = info.interface_id;
 
-                    // 创建代理实例（使用实际的 IpcRunLoop）
-                    auto proxy = std::make_shared<Proxy<T>>(
-                        interface_id,
-                        object_id,
-                        run_loop_);
+                    auto* proxy =
+                        new Proxy<T>(interface_id, object_id, run_loop_);
 
-                    // 缓存代理信息
-                    std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
-                    ProxyEntry                  entry;
-                    entry.proxy = proxy;
-                    entry.object_id_encoded = encoded_id;
-                    entry.interface_id = interface_id;
-                    entry.session_id = object_id.session_id;
+                    {
+                        std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
+                        ProxyEntry                  entry;
+                        entry.proxy = proxy;
+                        entry.object_id_encoded = encoded_id;
+                        entry.interface_id = interface_id;
+                        entry.session_id = object_id.session_id;
 
-                    proxy_cache_[encoded_id] = entry;
+                        proxy_cache_[encoded_id] = entry;
+                    }
 
-                    // 增加对象引用计数
                     if (object_manager_)
                     {
                         object_manager_->AddRef(object_id);
                     }
 
-                    return proxy;
+                    return DasPtr<T>(proxy);
                 }
                 catch (const std::exception&)
                 {
@@ -147,17 +139,33 @@ namespace Core
 
             /**
              * @brief 获取现有的 Proxy 实例
+ *
              * @param object_id 对象 ID
-             * @return 对应的 Proxy 实例，如果不存在则返回 nullptr
+             * @return 对应的 Proxy
+             * 实例，如果不存在则返回 nullptr
              */
-            std::shared_ptr<IPCProxyBase> GetProxy(const ObjectId& object_id);
+            IPCProxyBase* GetProxy(const ObjectId& object_id);
 
             /**
              * @brief 释放 Proxy 实例
-             * @param object_id 对象 ID
-             * @return DasResult 操作结果
+             * @param
+             * object_id 对象 ID
+             * @return DasResult
+             * 操作结果
+
              */
             DasResult ReleaseProxy(const ObjectId& object_id);
+
+            /**
+             * @brief 从缓存中移除
+             * Proxy（内部方法，供
+             * Proxy::Release 调用）
+             * @param object_id 对象
+             * ID
+
+             * * @return DasResult 操作结果
+             */
+            DasResult RemoveFromCache(const ObjectId& object_id);
 
             /**
              * @brief 检查 Proxy 实例是否存在
@@ -182,18 +190,10 @@ namespace Core
             ProxyFactory& operator=(const ProxyFactory&) = delete;
 
         private:
-            // 私有构造函数（单例模式）
             ProxyFactory() = default;
             ~ProxyFactory() = default;
 
-            /**
-             * @brief 创建 IPCProxyBase 实例
-             * @param object_id 对象 ID
-             * @return IPCProxyBase 实例的共享指针
-             * @throws DasException 当无法创建 Proxy 时抛出异常
-             */
-            std::shared_ptr<IPCProxyBase> CreateIPCProxy(
-                const ObjectId& object_id);
+            IPCProxyBase* CreateIPCProxy(const ObjectId& object_id);
 
             /**
              * @brief 验证对象是否存在且可访问
@@ -216,10 +216,10 @@ namespace Core
             // 内部数据结构：Proxy 缓存
             struct ProxyEntry
             {
-                std::shared_ptr<IPCProxyBase> proxy;
-                uint64_t                      object_id_encoded;
-                uint32_t                      interface_id;
-                uint16_t                      session_id;
+                IPCProxyBase* proxy; // 使用原始指针，生命周期由引用计数管理
+                uint64_t      object_id_encoded;
+                uint32_t      interface_id;
+                uint16_t      session_id;
             };
 
             // 缓存已创建的 Proxy
@@ -241,6 +241,7 @@ namespace Core
         /**
          * @brief Proxy 模板类
          * @tparam T 接口类型
+
          */
         template <typename T>
         class Proxy : public IPCProxyBase
@@ -250,68 +251,58 @@ namespace Core
                 uint32_t        interface_id,
                 const ObjectId& object_id,
                 IpcRunLoop*     run_loop)
-                : IPCProxyBase(interface_id, object_id, run_loop)
+                : IPCProxyBase(interface_id, object_id, run_loop), ref_count_(1)
             {
             }
 
             ~Proxy() override = default;
 
+            uint32_t AddRef() { return ++ref_count_; }
+
+            uint32_t Release()
+            {
+                uint32_t new_count = --ref_count_;
+                if (new_count == 0)
+                {
+                    ObjectId obj_id = GetObjectIdStruct();
+                    ProxyFactory::GetInstance().RemoveFromCache(obj_id);
+                    delete this;
+                }
+                return new_count;
+            }
+
             // 禁止拷贝
             Proxy(const Proxy&) = delete;
             Proxy& operator=(const Proxy&) = delete;
 
-            // 允许移动
-            Proxy(Proxy&&) = default;
-            Proxy& operator=(Proxy&&) = default;
+            // 禁止移动（因为引用计数不支持移动语义）
+            Proxy(Proxy&&) = delete;
+            Proxy& operator=(Proxy&&) = delete;
 
             /**
              * @brief 获取原始接口指针
+             *
              * @return T* 接口指针
              */
             T* Get() const noexcept
             {
-                // 如果没有运行循环，返回 nullptr
                 if (!GetRunLoop())
                 {
                     return nullptr;
                 }
-
-                // 这里需要根据实际的 IPC 机制来实现
-                // 目前返回 nullptr，实际实现需要根据 IPC 协议来调用远程方法
-                // 可以通过 SendRequest 方法调用远程方法来获取接口指针
                 return nullptr;
             }
 
             /**
-             * @brief 转换为智能指针
-             * @return std::shared_ptr<T>
-             */
-            std::shared_ptr<T> AsSharedPtr() const
-            {
-                return std::shared_ptr<T>(Get(), [](T*) {}); // 不拥有所有权
-            }
-
-            /**
              * @brief 检查 Proxy 是否有效
+             *
              * @return 如果有效返回 true，否则返回 false
-             */
+ */
             bool IsValid() const noexcept
             {
-                return GetObjectId() != 0
-                       && GetRunLoop()
-                              != nullptr; // 检查对象 ID 和运行循环是否存在
+                return GetObjectId() != 0 && GetRunLoop() != nullptr;
             }
 
-            /**
-             * @brief 示例：调用远程方法
-             * @param
-             * method_id 方法ID
-             * @param request_body 请求体
-
-             * * @param response_body 响应体
-             * @return DasResult
-             * 调用结果
-             */
             DasResult CallRemoteMethod(
                 uint16_t                    method_id,
                 const std::vector<uint8_t>& request_body,
@@ -322,13 +313,15 @@ namespace Core
                     return DAS_E_FAIL;
                 }
 
-                // 使用基类的 SendRequest 方法发送请求
                 return SendRequest(
                     method_id,
                     request_body.data(),
                     request_body.size(),
                     response_body);
             }
+
+        private:
+            std::atomic<uint32_t> ref_count_;
         };
 
     }

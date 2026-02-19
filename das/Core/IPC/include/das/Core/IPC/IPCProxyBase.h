@@ -20,6 +20,9 @@ namespace Core
         public:
             virtual ~IPCProxyBase() = default;
 
+            virtual uint32_t AddRef() = 0;
+            virtual uint32_t Release() = 0;
+
             [[nodiscard]]
             uint32_t GetInterfaceId() const noexcept
             {
