@@ -16,9 +16,15 @@ if (${DAS_BUILD_TEST})
         DasCoreObjects
     )
 
+    # Windows 平台定义 WIN32_LEAN_AND_MEAN 避免头文件冲突
+    if (WIN32)
+        target_compile_definitions(${IpcMultiProcessTest_NAME} PRIVATE WIN32_LEAN_AND_MEAN)
+    endif()
+
     # 添加包含目录 - IPC 核心头文件
     target_include_directories(${IpcMultiProcessTest_NAME} PRIVATE
         ${CMAKE_SOURCE_DIR}/das/Core/IPC/include
+        ${CMAKE_SOURCE_DIR}/das/Host/include
         ${CMAKE_SOURCE_DIR}/include
         ${CMAKE_BINARY_DIR}/das/include
     )
