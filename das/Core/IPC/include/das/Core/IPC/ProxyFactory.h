@@ -139,7 +139,7 @@ namespace Core
 
             /**
              * @brief 获取现有的 Proxy 实例
- *
+             *
              * @param object_id 对象 ID
              * @return 对应的 Proxy
              * 实例，如果不存在则返回 nullptr
@@ -238,28 +238,28 @@ namespace Core
             IpcRunLoop* run_loop_ = nullptr;
         };
 
-        /**
-         * @brief Proxy 模板类
-         * @tparam T 接口类型
-
-         */
         template <typename T>
-        class Proxy : public IPCProxyBase
+        class Proxy : public T, public IPCProxyBase
         {
+            static_assert(
+                std::is_base_of_v<IDasBase, T>,
+                "T must derive from IDasBase");
+
         public:
             explicit Proxy(
                 uint32_t        interface_id,
                 const ObjectId& object_id,
                 IpcRunLoop*     run_loop)
-                : IPCProxyBase(interface_id, object_id, run_loop), ref_count_(1)
+                : T{}, IPCProxyBase(interface_id, object_id, run_loop),
+                  ref_count_(1)
             {
             }
 
             ~Proxy() override = default;
 
-            uint32_t AddRef() { return ++ref_count_; }
+            uint32_t AddRef() override { return ++ref_count_; }
 
-            uint32_t Release()
+            uint32_t Release() override
             {
                 uint32_t new_count = --ref_count_;
                 if (new_count == 0)
@@ -271,33 +271,41 @@ namespace Core
                 return new_count;
             }
 
-            // 禁止拷贝
+            DasResult QueryInterface(const DasGuid& iid, void** pp_object)
+                override
+            {
+                if (pp_object == nullptr)
+                {
+                    return DAS_E_INVALID_POINTER;
+                }
+
+                *pp_object = nullptr;
+
+                if (IsDasGuidEqual(iid, DAS_IID_BASE))
+                {
+                    *pp_object = static_cast<IDasBase*>(this);
+                    AddRef();
+                    return DAS_S_OK;
+                }
+
+                return DAS_E_NO_INTERFACE;
+            }
+
             Proxy(const Proxy&) = delete;
             Proxy& operator=(const Proxy&) = delete;
 
-            // 禁止移动（因为引用计数不支持移动语义）
             Proxy(Proxy&&) = delete;
             Proxy& operator=(Proxy&&) = delete;
 
-            /**
-             * @brief 获取原始接口指针
-             *
-             * @return T* 接口指针
-             */
-            T* Get() const noexcept
+            T* Get() noexcept
             {
                 if (!GetRunLoop())
                 {
                     return nullptr;
                 }
-                return nullptr;
+                return static_cast<T*>(this);
             }
 
-            /**
-             * @brief 检查 Proxy 是否有效
-             *
-             * @return 如果有效返回 true，否则返回 false
- */
             bool IsValid() const noexcept
             {
                 return GetObjectId() != 0 && GetRunLoop() != nullptr;
@@ -319,6 +327,43 @@ namespace Core
                     request_body.size(),
                     response_body);
             }
+
+        private:
+            std::atomic<uint32_t> ref_count_;
+        };
+
+        class GenericProxy : public IPCProxyBase
+        {
+        public:
+            explicit GenericProxy(
+                uint32_t        interface_id,
+                const ObjectId& object_id,
+                IpcRunLoop*     run_loop)
+                : IPCProxyBase(interface_id, object_id, run_loop), ref_count_(1)
+            {
+            }
+
+            ~GenericProxy() override = default;
+
+            uint32_t AddRef() override { return ++ref_count_; }
+
+            uint32_t Release() override
+            {
+                uint32_t new_count = --ref_count_;
+                if (new_count == 0)
+                {
+                    ObjectId obj_id = GetObjectIdStruct();
+                    ProxyFactory::GetInstance().RemoveFromCache(obj_id);
+                    delete this;
+                }
+                return new_count;
+            }
+
+            GenericProxy(const GenericProxy&) = delete;
+            GenericProxy& operator=(const GenericProxy&) = delete;
+
+            GenericProxy(GenericProxy&&) = delete;
+            GenericProxy& operator=(GenericProxy&&) = delete;
 
         private:
             std::atomic<uint32_t> ref_count_;

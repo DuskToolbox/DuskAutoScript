@@ -83,14 +83,12 @@ public:
         {
             coordinator.ReleaseSessionId(session_id_);
             session_id_ = 0;
-            DAS_LOG_ERROR("Failed to initialize object manager: {}", result);
+            DAS_LOG_ERROR("Failed to initialize object manager");
             return result;
         }
 
         is_running_ = true;
-        DAS_LOG_INFO(
-            "MockHostProcess initialized with session_id={}",
-            session_id_);
+        DAS_LOG_INFO("MockHostProcess initialized");
         return DAS_S_OK;
     }
 
@@ -110,9 +108,7 @@ public:
         // 释放 session ID
         auto& coordinator = SessionCoordinator::GetInstance();
         coordinator.ReleaseSessionId(session_id_);
-        DAS_LOG_INFO(
-            "MockHostProcess shutdown, released session_id={}",
-            session_id_);
+        DAS_LOG_INFO("MockHostProcess shutdown");
         session_id_ = 0;
 
         if (object_manager_)
@@ -178,7 +174,7 @@ public:
         DasResult result = server.Initialize();
         if (result != DAS_S_OK)
         {
-            DAS_LOG_ERROR("Failed to initialize MainProcessServer: {}", result);
+            DAS_LOG_ERROR("Failed to initialize MainProcessServer");
             return result;
         }
 

@@ -156,7 +156,7 @@ namespace Core
             try
             {
                 auto* proxy =
-                    new Proxy<void>(info.interface_id, object_id, run_loop_);
+                    new GenericProxy(info.interface_id, object_id, run_loop_);
 
                 ProxyEntry entry;
                 entry.proxy = proxy;
