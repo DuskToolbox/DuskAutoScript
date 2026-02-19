@@ -84,5 +84,7 @@ function(add_build_lock_dependencies)
     endforeach()
 endfunction()
 
+add_subdirectory(IpcMultiProcessTest)
+
 # Apply lock dependencies after all targets are defined
 add_build_lock_dependencies()

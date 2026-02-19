@@ -9,15 +9,19 @@ if (${DAS_BUILD_TEST})
     
     # 链接必要的库
     target_link_libraries(${IpcMultiProcessTest_NAME} 
-        PUBLIC Das3rdParty 
+        PUBLIC 
+        Das3rdParty 
         GTest::gtest_main 
         GTest::gtest 
         DasCoreObjects
     )
 
-    # 获取 DasCoreObjects 的包含目录
-    get_target_property(INCLUDE_DIRS DasCoreObjects INCLUDE_DIRECTORIES)
-    target_include_directories(${IpcMultiProcessTest_NAME} PRIVATE ${INCLUDE_DIRS})
+    # 添加包含目录 - IPC 核心头文件
+    target_include_directories(${IpcMultiProcessTest_NAME} PRIVATE
+        ${CMAKE_SOURCE_DIR}/das/Core/IPC/include
+        ${CMAKE_SOURCE_DIR}/include
+        ${CMAKE_BINARY_DIR}/das/include
+    )
 
     # 强制 cmake 输出测试可执行文件到 ${CMAKE_BINARY_DIR}/Test
     set_target_properties(${IpcMultiProcessTest_NAME} PROPERTIES 
