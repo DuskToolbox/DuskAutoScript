@@ -7,7 +7,7 @@
 
 using Das::PluginInterface::IDasPluginPackage;
 
-DAS_C_API DasResult DasCoCreatePlugin(IDasPluginPackage** pp_out_plugin)
+DAS_C_API DasResult DasCoCreatePlugin(IDasBase** pp_out_plugin)
 {
     DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(pp_out_plugin)
     try

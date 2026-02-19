@@ -156,8 +156,8 @@ DAS_C_API DasResult CreateIDasLogRequester(
     uint32_t                                 max_line_count,
     Das::ExportInterface::IDasLogRequester** pp_out_requester);
 
-using DasCoCreatePluginFunction = DasResult (*)(
-    Das::PluginInterface::IDasPluginPackage** pp_out_plugin_package);
+using DasCoCreatePluginFunction =
+    DasResult (*)(Das::IDasBase** pp_out_plugin_package);
 
 #define DAS_LOG_ERROR(...) DAS_LOG_WITH_SOURCE_LOCATION(Error, __VA_ARGS__)
 #define DAS_LOG_WARNING(...) DAS_LOG_WITH_SOURCE_LOCATION(Warning, __VA_ARGS__)
@@ -304,6 +304,6 @@ struct DasSourceLocationOnStack final : DAS::ExportInterface::IDasSourceLocation
             &_das_internal_source_location);                                   \
     } while (false)
 
-typedef DasResult(DAS_STD_CALL *DasCoCreatePluginFunc)(IDasBase**);
+typedef DasResult(DAS_STD_CALL* DasCoCreatePluginFunc)(IDasBase**);
 
 #endif // DAS_API_H

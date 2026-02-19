@@ -11,10 +11,7 @@
 // Bring PluginInterface types into global namespace for C API
 using Das::PluginInterface::IDasPluginPackage;
 
-#include "PluginImpl.h"
-#include <new>
-
-DAS_C_API DasResult DasCoCreatePlugin(IDasPluginPackage** pp_out_plugin)
+DAS_C_API DasResult DasCoCreatePlugin(IDasBase** pp_out_plugin)
 {
     if (pp_out_plugin == nullptr)
     {
