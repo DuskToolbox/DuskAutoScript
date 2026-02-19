@@ -223,6 +223,7 @@ class IpcProxyGenerator:
 //
 
 #include <das/Core/IPC/DasProxyBase.h>
+#include <das/Core/IPC/MemorySerializer.h>
 #include <das/Core/IPC/Serializer.h>
 #include <cstdint>
 #include <string>
@@ -462,7 +463,15 @@ class IpcProxyGenerator:
         return "\n".join(lines)
     
     def _generate_method_body_v2(self, interface: InterfaceDef, method: MethodDef, method_index: int, namespace_depth: int = 0) -> str:
-        """生成方法体，使用基类的 SendRequest 方法"""
+        """生成方法体，使用基类的 SendRequest 方法
+        
+        Generated Code Pattern:
+        1. 序列化输入参数
+        2. 调用 SendRequest
+        3. 反序列化远程返回码
+        4. 如果远程返回码失败则返回
+        5. 反序列化输出参数
+        """
         indent = "    " * (namespace_depth + 2)
         inner_indent = "    " * (namespace_depth + 3)
         lines = []
@@ -477,24 +486,26 @@ class IpcProxyGenerator:
         need_response_body = bool(out_params) or has_return
         
         if need_request_body:
-            lines.append(f"{indent}SerializerWriter writer;")
+            lines.append(f"{indent}MemorySerializerWriter writer;")
             lines.append(f"{indent}DasResult result = DAS_S_OK;")
             for param in in_params:
-                serialize_code = self._generate_serialize_param(param, inner_indent)
+                serialize_code = self._generate_serialize_param(param, indent)
                 for line in serialize_code:
                     lines.append(f"{line}")
             lines.append("")
-            lines.append(f"{indent}std::vector<uint8_t> request_body = writer.GetBuffer();")
+            lines.append(f"{indent}const std::vector<uint8_t>& request_body = writer.GetBuffer();")
         else:
-            lines.append(f"{indent}std::vector<uint8_t> request_body;")
+            lines.append(f"{indent}const uint8_t* request_body = nullptr;")
+            lines.append(f"{indent}size_t request_body_size = 0;")
         
         lines.append("")
         lines.append(f"{indent}std::vector<uint8_t> response_body;")
         if need_request_body:
             lines.append(f"{indent}result = SendRequest({method_index},")
+            lines.append(f"{indent}    request_body.data(), request_body.size(), response_body);")
         else:
             lines.append(f"{indent}DasResult result = SendRequest({method_index},")
-        lines.append(f"{indent}    request_body.data(), request_body.size(), response_body);")
+            lines.append(f"{indent}    request_body, request_body_size, response_body);")
         lines.append(f"{indent}if (DAS_FAILED(result))")
         lines.append(f"{indent}{{")
         if has_return:
@@ -505,8 +516,10 @@ class IpcProxyGenerator:
         lines.append("")
         
         if need_response_body:
-            lines.append(f"{indent}SerializerReader reader;")
-            lines.append(f"{indent}result = reader.SetBuffer(response_body.data(), response_body.size());")
+            lines.append(f"{indent}MemorySerializerReader reader(response_body);")
+            lines.append("")
+            lines.append(f"{indent}DasResult remote_result;")
+            lines.append(f"{indent}result = reader.ReadInt32(&remote_result);")
             lines.append(f"{indent}if (DAS_FAILED(result))")
             lines.append(f"{indent}{{")
             if has_return:
@@ -514,20 +527,28 @@ class IpcProxyGenerator:
             else:
                 lines.append(f"{indent}    return;")
             lines.append(f"{indent}}}")
+            lines.append(f"{indent}if (DAS_FAILED(remote_result))")
+            lines.append(f"{indent}{{")
+            if has_return:
+                lines.append(f"{indent}    return remote_result;")
+            else:
+                lines.append(f"{indent}    return;")
+            lines.append(f"{indent}}}")
+            lines.append("")
             
             for param in out_params:
-                deserialize_code = self._generate_deserialize_param(param, inner_indent, has_return)
+                deserialize_code = self._generate_deserialize_param(param, indent, has_return)
                 for line in deserialize_code:
                     lines.append(f"{line}")
             
             if has_return:
-                return_code = self._generate_return_deserialize(method.return_type, inner_indent)
+                return_code = self._generate_return_deserialize(method.return_type, indent)
                 for line in return_code:
                     lines.append(f"{line}")
             else:
-                lines.append(f"{indent}return;")
+                lines.append(f"{indent}return DAS_S_OK;")
         else:
-            lines.append(f"{indent}return;")
+            lines.append(f"{indent}return DAS_S_OK;")
         
         return "\n".join(lines)
     
