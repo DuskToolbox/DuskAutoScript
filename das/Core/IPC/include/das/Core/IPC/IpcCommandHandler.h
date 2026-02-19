@@ -31,6 +31,7 @@ namespace Core
             LIST_OBJECTS = 6,         // 列出所有对象
             LIST_SESSION_OBJECTS = 7, // 列出指定会话的对象
             CLEAR_SESSION = 8,        // 清除指定会话的所有对象
+            LOAD_PLUGIN = 9,          // 加载插件
 
             // 心跳和状态命令
             PING = 10, // 心跳请求
@@ -261,6 +262,26 @@ namespace Core
         struct ObjectCountResponsePayload
         {
             uint64_t count; // 对象数量
+        };
+
+        /**
+         * @brief 加载插件请求 payload
+         */
+        struct LoadPluginPayload
+        {
+            uint16_t plugin_path_len; // 路径长度
+            // char plugin_path[plugin_path_len]  // 插件路径 (UTF-8)
+        };
+
+        /**
+         * @brief 加载插件响应 payload
+         */
+        struct LoadPluginResponsePayload
+        {
+            ObjectId object_id;  // 创建的插件对象ID
+            DasGuid  iid;        // 接口ID (IDasBase)
+            uint16_t session_id; // 会话ID
+            uint16_t version;    // 版本
         };
 
     }
