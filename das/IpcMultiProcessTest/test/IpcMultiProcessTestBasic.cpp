@@ -561,7 +561,7 @@ TEST_F(IpcMultiProcessTest, DirectoryStructureTest)
 
 // ====== 进程启动与 IPC 连接测试 ======
 
-TEST_F(IpcMultiProcessTest, DISABLED_ProcessLaunch)
+TEST_F(IpcMultiProcessTest, ProcessLaunch)
 {
     // 测试进程启动（禁用：需要 DasHost.exe 存在）
     if (!std::filesystem::exists(host_exe_path_))
@@ -575,7 +575,7 @@ TEST_F(IpcMultiProcessTest, DISABLED_ProcessLaunch)
     EXPECT_GT(launcher_.GetPid(), 0u);
 }
 
-TEST_F(IpcMultiProcessTest, DISABLED_WaitForHostReady)
+TEST_F(IpcMultiProcessTest, WaitForHostReady)
 {
     // 测试等待 Host 进程 IPC 资源就绪（禁用：需要 DasHost.exe 存在）
     if (!std::filesystem::exists(host_exe_path_))
@@ -587,7 +587,7 @@ TEST_F(IpcMultiProcessTest, DISABLED_WaitForHostReady)
     EXPECT_TRUE(WaitForHostReady(10000));
 }
 
-TEST_F(IpcMultiProcessTest, DISABLED_IpcClientConnect)
+TEST_F(IpcMultiProcessTest, IpcClientConnect)
 {
     // 测试 IPC 客户端连接（禁用：需要 DasHost.exe 存在）
     if (!std::filesystem::exists(host_exe_path_))
@@ -603,7 +603,7 @@ TEST_F(IpcMultiProcessTest, DISABLED_IpcClientConnect)
     EXPECT_TRUE(client_.IsConnected());
 }
 
-TEST_F(IpcMultiProcessTest, DISABLED_FullHandshake)
+TEST_F(IpcMultiProcessTest, FullHandshake)
 {
     // 测试完整握手流程（禁用：需要 DasHost.exe 存在）
     if (!std::filesystem::exists(host_exe_path_))
