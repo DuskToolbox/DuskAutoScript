@@ -15,7 +15,3 @@ target_link_libraries(DasHost PRIVATE DasCore DasCommonHeaders)
 if(WIN32)
     target_compile_definitions(DasHost PRIVATE DAS_WINDOWS)
 endif()
-
-set_target_properties(DasHost PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
-)

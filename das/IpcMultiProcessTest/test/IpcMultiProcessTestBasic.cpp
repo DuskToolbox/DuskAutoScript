@@ -487,17 +487,13 @@ protected:
 
     std::string GetDasHostPath()
     {
-        const char* build_dir = std::getenv("CMAKE_BINARY_DIR");
-        if (build_dir != nullptr)
+        const char* path = std::getenv("DAS_HOST_EXE_PATH");
+        if (path != nullptr && std::filesystem::exists(path))
         {
-            std::string path = std::string(build_dir) + "/DasHost.exe";
-            if (std::filesystem::exists(path))
-            {
-                return path;
-            }
+            return path;
         }
-
-        return "C:/vmbuild/DasHost.exe";
+        // 默认路径
+        return "C:/vmbuild/bin/Debug/DasHost.exe";
     }
 
     bool WaitForHostReady(uint32_t timeout_ms = 5000)
