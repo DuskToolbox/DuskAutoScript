@@ -33,6 +33,7 @@
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
+#include <cstring>
 #include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
@@ -488,12 +489,17 @@ protected:
     std::string GetDasHostPath()
     {
         const char* path = std::getenv("DAS_HOST_EXE_PATH");
-        if (path != nullptr && std::filesystem::exists(path))
+        if (path == nullptr || strlen(path) == 0)
         {
-            return path;
+            throw std::runtime_error(
+                "DAS_HOST_EXE_PATH environment variable is not set");
         }
-        // 默认路径
-        return "C:/vmbuild/bin/Debug/DasHost.exe";
+        if (!std::filesystem::exists(path))
+        {
+            throw std::runtime_error(
+                std::string("DasHost.exe not found at: ") + path);
+        }
+        return path;
     }
 
     bool WaitForHostReady(uint32_t timeout_ms = 5000)
