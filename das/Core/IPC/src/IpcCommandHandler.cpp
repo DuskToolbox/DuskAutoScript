@@ -1,8 +1,10 @@
 #include "das/Core/IPC/IpcCommandHandler.h"
 #include <chrono>
 #include <cstring>
+#include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
+#include <filesystem>
 #include <unordered_map>
 
 DAS_NS_BEGIN
@@ -67,6 +69,11 @@ namespace Core
                 offset += len;
                 return true;
             }
+
+            // 自定义处理器映射
+            std::
+                unordered_map<IpcCommandType, IpcCommandHandler::CommandHandler>
+                    g_custom_handlers;
         }
 
         IpcCommandHandler::IpcCommandHandler() : session_id_(0) {}
@@ -90,6 +97,13 @@ namespace Core
             IpcCommandResponse&      response)
         {
             IpcCommandType cmd_type = ExtractCommandType(header);
+
+            // 检查是否有自定义处理器
+            auto it = g_custom_handlers.find(cmd_type);
+            if (it != g_custom_handlers.end())
+            {
+                return it->second(header, payload, response);
+            }
 
             switch (cmd_type)
             {
@@ -136,9 +150,7 @@ namespace Core
             IpcCommandType command_type,
             CommandHandler handler)
         {
-            (void)command_type;
-            (void)handler;
-            // 自定义处理器注册暂时不实现
+            g_custom_handlers[command_type] = std::move(handler);
         }
 
         DasResult IpcCommandHandler::OnRegisterObject(
@@ -554,7 +566,7 @@ namespace Core
                 return DAS_E_IPC_DESERIALIZATION_FAILED;
             }
 
-            if (plugin_path_len == 0 || plugin_path_len > 1024)
+            if (plugin_path_len == 0 || plugin_path_len > 4096)
             {
                 response.error_code = DAS_E_IPC_INVALID_ARGUMENT;
                 return DAS_E_IPC_INVALID_ARGUMENT;
@@ -566,34 +578,72 @@ namespace Core
                 return DAS_E_IPC_DESERIALIZATION_FAILED;
             }
 
-            std::string plugin_path;
-            plugin_path.assign(
+            std::string manifest_path;
+            manifest_path.assign(
                 reinterpret_cast<const char*>(payload.data() + offset),
                 plugin_path_len);
             offset += plugin_path_len;
 
-            // TODO: 实际的插件加载逻辑
-            // 这里暂时创建一个模拟的响应
+            auto& plugin_manager =
+                ForeignInterfaceHost::PluginManager::GetInstance();
 
-            // 生成一个新的对象ID
-            ObjectId object_id;
-            object_id.session_id = header.session_id;
-            object_id.generation = 1;
-            object_id.local_id = 100; // 临时分配的ID
+            Das::PluginInterface::IDasPluginPackage* p_package = nullptr;
+            DasResult result = plugin_manager.LoadPlugin(
+                std::filesystem::path(manifest_path),
+                &p_package);
 
-            DasGuid iid = DasIidOf<IDasBase>();
+            if (result != DAS_S_OK)
+            {
+                response.error_code = result;
+                response.response_data.clear();
+                return result;
+            }
 
-            uint16_t session_id = header.session_id;
-            uint16_t version = 1;
+            result = plugin_manager.RegisterPluginObjects(
+                std::filesystem::path(manifest_path));
+
+            if (result != DAS_S_OK)
+            {
+                response.error_code = result;
+                response.response_data.clear();
+                return result;
+            }
+
+            RemoteObjectRegistry& registry =
+                RemoteObjectRegistry::GetInstance();
+
+            std::vector<ForeignInterfaceHost::FeatureInfo> features;
+            result = plugin_manager.GetPluginFeatures(
+                std::filesystem::path(manifest_path),
+                features);
+
+            if (result != DAS_S_OK || features.empty())
+            {
+                response.error_code =
+                    result == DAS_S_OK ? DAS_E_IPC_PLUGIN_ENTRY_POINT_NOT_FOUND
+                                       : result;
+                response.response_data.clear();
+                return response.error_code;
+            }
+
+            const auto&      main_feature = features[0];
+            RemoteObjectInfo info;
+            result = registry.GetObjectInfo(main_feature.object_id, info);
+
+            if (result != DAS_S_OK)
+            {
+                response.error_code = result;
+                response.response_data.clear();
+                return result;
+            }
 
             response.error_code = DAS_S_OK;
             response.response_data.clear();
 
-            // 返回 LoadPluginResponsePayload
-            SerializeValue(response.response_data, object_id);
-            SerializeValue(response.response_data, iid);
-            SerializeValue(response.response_data, session_id);
-            SerializeValue(response.response_data, version);
+            SerializeValue(response.response_data, info.object_id);
+            SerializeValue(response.response_data, info.iid);
+            SerializeValue(response.response_data, info.session_id);
+            SerializeValue(response.response_data, info.version);
 
             return DAS_S_OK;
         }

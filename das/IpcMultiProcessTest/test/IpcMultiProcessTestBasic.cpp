@@ -35,6 +35,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <das/Core/IPC/Handshake.h>
+#include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/MessageQueueTransport.h>
@@ -453,6 +454,137 @@ public:
         std::string info_msg = DAS_FMT_NS::format(
             "Full handshake completed: session_id={}",
             out_session_id);
+        DAS_LOG_INFO(info_msg.c_str());
+
+        return DAS_S_OK;
+    }
+
+    DasResult SendLoadPlugin(const std::string& json_manifest_path)
+    {
+        if (!transport_)
+        {
+            DAS_LOG_ERROR("Transport not initialized");
+            return DAS_E_IPC_NOT_INITIALIZED;
+        }
+
+        uint16_t path_len = static_cast<uint16_t>(json_manifest_path.size());
+
+        size_t               payload_size = sizeof(uint16_t) + path_len;
+        std::vector<uint8_t> payload_buffer(payload_size);
+
+        size_t offset = 0;
+        std::memcpy(
+            payload_buffer.data() + offset,
+            &path_len,
+            sizeof(path_len));
+        offset += sizeof(path_len);
+        std::memcpy(
+            payload_buffer.data() + offset,
+            json_manifest_path.c_str(),
+            path_len);
+
+        DAS::Core::IPC::IPCMessageHeader header{};
+        header.magic = DAS::Core::IPC::IPCMessageHeader::MAGIC;
+        header.version = DAS::Core::IPC::IPCMessageHeader::CURRENT_VERSION;
+        header.message_type =
+            static_cast<uint8_t>(DAS::Core::IPC::MessageType::REQUEST);
+        header.header_flags = 0;
+        header.call_id = next_call_id_++;
+        header.interface_id =
+            static_cast<uint32_t>(DAS::Core::IPC::IpcCommandType::LOAD_PLUGIN);
+        header.method_id = 0;
+        header.flags = 0;
+        header.error_code = 0;
+        header.body_size = static_cast<uint32_t>(payload_buffer.size());
+        header.session_id = 0;
+        header.generation = 0;
+        header.local_id = 0;
+
+        DasResult result = transport_->Send(
+            header,
+            payload_buffer.data(),
+            static_cast<uint32_t>(payload_buffer.size()));
+
+        if (result != DAS_S_OK)
+        {
+            std::string msg = DAS_FMT_NS::format(
+                "Failed to send LoadPlugin: error={}",
+                result);
+            DAS_LOG_ERROR(msg.c_str());
+            return result;
+        }
+
+        std::string info_msg =
+            DAS_FMT_NS::format("Sent LoadPlugin: path={}", json_manifest_path);
+        DAS_LOG_INFO(info_msg.c_str());
+
+        return DAS_S_OK;
+    }
+
+    DasResult ReceiveLoadPluginResponse(
+        DAS::Core::IPC::ObjectId& out_object_id,
+        uint32_t&                 out_error_code,
+        uint32_t                  timeout_ms = 5000)
+    {
+        if (!transport_)
+        {
+            DAS_LOG_ERROR("Transport not initialized");
+            return DAS_E_IPC_NOT_INITIALIZED;
+        }
+
+        DAS::Core::IPC::IPCMessageHeader header;
+        std::vector<uint8_t>             body;
+
+        DasResult result = transport_->Receive(header, body, timeout_ms);
+        if (result != DAS_S_OK)
+        {
+            std::string msg = DAS_FMT_NS::format(
+                "Failed to receive LoadPlugin response: error={}",
+                result);
+            DAS_LOG_ERROR(msg.c_str());
+            return result;
+        }
+
+        if (header.interface_id
+            != static_cast<uint32_t>(
+                DAS::Core::IPC::IpcCommandType::LOAD_PLUGIN))
+        {
+            std::string msg = DAS_FMT_NS::format(
+                "Unexpected interface_id: {}",
+                header.interface_id);
+            DAS_LOG_ERROR(msg.c_str());
+            return DAS_E_IPC_UNEXPECTED_MESSAGE;
+        }
+
+        out_error_code = header.error_code;
+
+        if (out_error_code != DAS_S_OK)
+        {
+            std::string err_msg = DAS_FMT_NS::format(
+                "LoadPlugin failed with error code: {}",
+                out_error_code);
+            DAS_LOG_ERROR(err_msg.c_str());
+            return DAS_S_OK; // DAS_S_OK 表示成功接收响应,但操作失败(error_code
+                             // 包含失败信息)
+        }
+
+        using LoadPluginResponsePayload =
+            DAS::Core::IPC::LoadPluginResponsePayload;
+        if (body.size() < sizeof(LoadPluginResponsePayload))
+        {
+            DAS_LOG_ERROR("LoadPlugin response body too small");
+            return DAS_E_IPC_INVALID_MESSAGE_BODY;
+        }
+
+        const LoadPluginResponsePayload* response =
+            reinterpret_cast<const LoadPluginResponsePayload*>(body.data());
+        out_object_id = response->object_id;
+
+        std::string info_msg = DAS_FMT_NS::format(
+            "Received LoadPlugin response: object_id=[{}, {}, {}]",
+            out_object_id.session_id,
+            out_object_id.generation,
+            out_object_id.local_id);
         DAS_LOG_INFO(info_msg.c_str());
 
         return DAS_S_OK;
@@ -1021,4 +1153,75 @@ TEST_F(IpcMultiProcessTest, SharedMemoryNameGeneration)
     std::string shm_name = DAS::Host::MakeSharedMemoryName(12345);
 
     EXPECT_TRUE(shm_name.find("DAS_Host_12345_SHM") != std::string::npos);
+}
+
+// ====== LOAD_PLUGIN 命令测试 ======
+
+TEST_F(IpcMultiProcessTest, LoadPlugin_Success)
+{
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+    }
+
+    ASSERT_EQ(launcher_.Launch(host_exe_path_), DAS_S_OK);
+    ASSERT_TRUE(WaitForHostReady(10000));
+    ASSERT_EQ(client_.Connect(launcher_.GetPid()), DAS_S_OK);
+
+    uint16_t  session_id = 0;
+    DasResult result = client_.PerformFullHandshake(session_id, 10000);
+    ASSERT_EQ(result, DAS_S_OK);
+    EXPECT_GT(session_id, static_cast<uint16_t>(0));
+
+    std::string cmake_binary_dir = std::getenv("CMAKE_BINARY_DIR")
+                                       ? std::getenv("CMAKE_BINARY_DIR")
+                                       : "C:/vmbuild";
+    std::string config = std::getenv("CMAKE_BUILD_TYPE")
+                             ? std::getenv("CMAKE_BUILD_TYPE")
+                             : "Debug";
+    std::string plugin_path =
+        cmake_binary_dir + "/bin/" + config + "/plugins/IpcTestPlugin.json";
+
+    if (!std::filesystem::exists(plugin_path))
+    {
+        GTEST_SKIP() << "IpcTestPlugin.json not found at: " << plugin_path;
+    }
+
+    result = client_.SendLoadPlugin(plugin_path);
+    ASSERT_EQ(result, DAS_S_OK);
+
+    DAS::Core::IPC::ObjectId object_id;
+    uint32_t                 error_code = 0;
+    result = client_.ReceiveLoadPluginResponse(object_id, error_code, 10000);
+    ASSERT_EQ(result, DAS_S_OK);
+    EXPECT_EQ(error_code, DAS_S_OK);
+    EXPECT_GT(object_id.local_id, 0u);
+}
+
+TEST_F(IpcMultiProcessTest, LoadPlugin_InvalidPath)
+{
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+    }
+
+    ASSERT_EQ(launcher_.Launch(host_exe_path_), DAS_S_OK);
+    ASSERT_TRUE(WaitForHostReady(10000));
+    ASSERT_EQ(client_.Connect(launcher_.GetPid()), DAS_S_OK);
+
+    uint16_t  session_id = 0;
+    DasResult result = client_.PerformFullHandshake(session_id, 10000);
+    ASSERT_EQ(result, DAS_S_OK);
+    EXPECT_GT(session_id, static_cast<uint16_t>(0));
+
+    std::string invalid_path = "C:/nonexistent/InvalidPlugin.json";
+
+    result = client_.SendLoadPlugin(invalid_path);
+    ASSERT_EQ(result, DAS_S_OK);
+
+    DAS::Core::IPC::ObjectId object_id;
+    uint32_t                 error_code = 0;
+    result = client_.ReceiveLoadPluginResponse(object_id, error_code, 10000);
+    ASSERT_EQ(result, DAS_S_OK);
+    EXPECT_NE(error_code, DAS_S_OK);
 }

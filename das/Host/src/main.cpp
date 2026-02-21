@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/Host/HandshakeHandler.h>
+#include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/MessageQueueTransport.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
@@ -33,6 +34,7 @@
 // Global state
 static std::atomic<bool>                                 g_running{true};
 static Das::Core::IPC::Host::HandshakeHandler            g_handshake_handler;
+static Das::Core::IPC::IpcCommandHandler                 g_command_handler;
 static std::unique_ptr<Das::Core::IPC::SharedMemoryPool> g_shared_memory;
 static Das::Core::IPC::IpcRunLoop                        g_run_loop;
 static uint32_t                                          g_host_pid = 0;
@@ -68,6 +70,9 @@ static DasResult InitializeIpcResources()
         DAS_LOG_ERROR("Failed to initialize IPC run loop");
         return result;
     }
+
+    // Set session ID for command handler
+    g_command_handler.SetSessionId(g_host_pid);
 
     // Initialize handshake handler
     DasResult handshake_result = g_handshake_handler.Initialize(g_host_pid);
@@ -146,8 +151,42 @@ static void RunEventLoop(bool verbose)
            size_t                                  body_size) -> DasResult
         {
             std::vector<uint8_t> response_body;
-            return g_handshake_handler
-                .HandleMessage(header, body, body_size, response_body);
+
+            // First try handshake handler
+            DasResult result = g_handshake_handler.HandleMessage(
+                header,
+                body,
+                body_size,
+                response_body);
+
+            // If handshake handler doesn't handle it, try command handler
+            if (result != DAS_S_OK)
+            {
+                Das::Core::IPC::IpcCommandResponse cmd_response;
+                result = g_command_handler.HandleCommand(
+                    header,
+                    std::span<const uint8_t>(body, body_size),
+                    cmd_response);
+
+                if (result == DAS_S_OK)
+                {
+                    // Combine error code and response data
+                    response_body.clear();
+                    uint32_t       error_code = cmd_response.error_code;
+                    const uint8_t* err_ptr =
+                        reinterpret_cast<const uint8_t*>(&error_code);
+                    response_body.insert(
+                        response_body.end(),
+                        err_ptr,
+                        err_ptr + sizeof(error_code));
+                    response_body.insert(
+                        response_body.end(),
+                        cmd_response.response_data.begin(),
+                        cmd_response.response_data.end());
+                }
+            }
+
+            return result;
         });
 
     auto sender = g_run_loop.RunAsync();

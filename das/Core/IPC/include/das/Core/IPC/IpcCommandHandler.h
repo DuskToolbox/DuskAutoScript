@@ -59,7 +59,7 @@ namespace Core
          * 处理主进程和 Host 进程之间的控制命令，
          * 与 RemoteObjectRegistry 集成进行对象管理
          */
-        class IpcCommandHandler
+        class DAS_API IpcCommandHandler
         {
         public:
             // 命令处理函数类型
@@ -90,9 +90,11 @@ namespace Core
 
             /**
              * @brief 注册自定义命令处理器
-             *
-             * @param command_type 命令类型
-             * @param handler 处理函数
+ *
+
+             * * @param command_type 命令类型
+             * @param handler
+             * 处理函数
              */
             void RegisterHandler(
                 IpcCommandType command_type,
