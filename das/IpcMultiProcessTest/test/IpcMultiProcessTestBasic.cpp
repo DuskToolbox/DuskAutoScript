@@ -43,6 +43,7 @@
 #include <das/Core/IPC/SessionCoordinator.h>
 #include <das/DasApi.h>
 #include <das/Host/HostConfig.h>
+#include <das/Utils/fmt.h>
 #include <filesystem>
 #include <gtest/gtest.h>
 #include <memory>
@@ -73,7 +74,8 @@ public:
     {
         if (!std::filesystem::exists(exe_path))
         {
-            std::string msg = std::string("Executable not found: ") + exe_path;
+            std::string msg =
+                DAS_FMT_NS::format("Executable not found: {}", exe_path);
             DAS_LOG_ERROR(msg.c_str());
             return DAS_E_INVALID_ARGUMENT;
         }
@@ -96,14 +98,14 @@ public:
             is_running_ = true;
 
             std::string msg =
-                std::string("Process launched: PID=") + std::to_string(pid_);
+                DAS_FMT_NS::format("Process launched: PID={}", pid_);
             DAS_LOG_INFO(msg.c_str());
             return DAS_S_OK;
         }
         catch (const std::exception& e)
         {
             std::string msg =
-                std::string("Exception launching process: ") + e.what();
+                DAS_FMT_NS::format("Exception launching process: {}", e.what());
             DAS_LOG_ERROR(msg.c_str());
             return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
         }
@@ -114,7 +116,7 @@ public:
         if (process_)
         {
             std::string msg =
-                std::string("Terminating process: PID=") + std::to_string(pid_);
+                DAS_FMT_NS::format("Terminating process: PID={}", pid_);
             DAS_LOG_INFO(msg.c_str());
 
             boost::system::error_code ec;
@@ -155,8 +157,10 @@ public:
         std::string plugin_to_host_queue =
             DAS::Host::MakeMessageQueueName(host_pid, false);
 
-        std::string msg = std::string("Connecting to Host IPC: ")
-                          + host_to_plugin_queue + ", " + plugin_to_host_queue;
+        std::string msg = DAS_FMT_NS::format(
+            "Connecting to Host IPC: {}, {}",
+            host_to_plugin_queue,
+            plugin_to_host_queue);
         DAS_LOG_INFO(msg.c_str());
 
         transport_ = std::make_unique<DAS::Core::IPC::IpcTransport>();
@@ -169,9 +173,9 @@ public:
 
         if (result != DAS_S_OK)
         {
-            std::string err_msg =
-                std::string("Failed to connect to Host IPC: error=")
-                + std::to_string(result);
+            std::string err_msg = DAS_FMT_NS::format(
+                "Failed to connect to Host IPC: error={}",
+                result);
             DAS_LOG_ERROR(err_msg.c_str());
             return result;
         }
@@ -230,15 +234,16 @@ public:
 
         if (result != DAS_S_OK)
         {
-            std::string msg = std::string("Failed to send Hello: error=")
-                              + std::to_string(result);
+            std::string msg =
+                DAS_FMT_NS::format("Failed to send Hello: error={}", result);
             DAS_LOG_ERROR(msg.c_str());
             return result;
         }
 
-        std::string info_msg = std::string("Sent Hello: pid=")
-                               + std::to_string(my_pid)
-                               + ", name=" + plugin_name;
+        std::string info_msg = DAS_FMT_NS::format(
+            "Sent Hello: pid={}, name={}",
+            my_pid,
+            plugin_name);
         DAS_LOG_INFO(info_msg.c_str());
         return DAS_S_OK;
     }
@@ -259,8 +264,9 @@ public:
         DasResult result = transport_->Receive(header, body, timeout_ms);
         if (result != DAS_S_OK)
         {
-            std::string msg = std::string("Failed to receive Welcome: error=")
-                              + std::to_string(result);
+            std::string msg = DAS_FMT_NS::format(
+                "Failed to receive Welcome: error={}",
+                result);
             DAS_LOG_ERROR(msg.c_str());
             return result;
         }
@@ -269,8 +275,9 @@ public:
             != static_cast<uint32_t>(
                 DAS::Core::IPC::HandshakeInterfaceId::HandshakeHello))
         {
-            std::string msg = std::string("Unexpected interface_id: ")
-                              + std::to_string(header.interface_id);
+            std::string msg = DAS_FMT_NS::format(
+                "Unexpected interface_id: {}",
+                header.interface_id);
             DAS_LOG_ERROR(msg.c_str());
             return DAS_E_IPC_UNEXPECTED_MESSAGE;
         }
@@ -284,10 +291,10 @@ public:
         out_welcome =
             *reinterpret_cast<DAS::Core::IPC::WelcomeResponseV1*>(body.data());
 
-        std::string info_msg =
-            std::string("Received Welcome: session_id=")
-            + std::to_string(out_welcome.session_id)
-            + ", status=" + std::to_string(out_welcome.status);
+        std::string info_msg = DAS_FMT_NS::format(
+            "Received Welcome: session_id={}, status={}",
+            out_welcome.session_id,
+            out_welcome.status);
         DAS_LOG_INFO(info_msg.c_str());
 
         return DAS_S_OK;
@@ -328,14 +335,14 @@ public:
 
         if (result != DAS_S_OK)
         {
-            std::string msg = std::string("Failed to send Ready: error=")
-                              + std::to_string(result);
+            std::string msg =
+                DAS_FMT_NS::format("Failed to send Ready: error={}", result);
             DAS_LOG_ERROR(msg.c_str());
             return result;
         }
 
         std::string info_msg =
-            std::string("Sent Ready: session_id=") + std::to_string(session_id);
+            DAS_FMT_NS::format("Sent Ready: session_id={}", session_id);
         DAS_LOG_INFO(info_msg.c_str());
         return DAS_S_OK;
     }
@@ -356,8 +363,9 @@ public:
         DasResult result = transport_->Receive(header, body, timeout_ms);
         if (result != DAS_S_OK)
         {
-            std::string msg = std::string("Failed to receive ReadyAck: error=")
-                              + std::to_string(result);
+            std::string msg = DAS_FMT_NS::format(
+                "Failed to receive ReadyAck: error={}",
+                result);
             DAS_LOG_ERROR(msg.c_str());
             return result;
         }
@@ -366,8 +374,9 @@ public:
             != static_cast<uint32_t>(
                 DAS::Core::IPC::HandshakeInterfaceId::HandshakeReady))
         {
-            std::string msg = std::string("Unexpected interface_id: ")
-                              + std::to_string(header.interface_id);
+            std::string msg = DAS_FMT_NS::format(
+                "Unexpected interface_id: {}",
+                header.interface_id);
             DAS_LOG_ERROR(msg.c_str());
             return DAS_E_IPC_UNEXPECTED_MESSAGE;
         }
@@ -380,8 +389,8 @@ public:
 
         out_ack = *reinterpret_cast<DAS::Core::IPC::ReadyAckV1*>(body.data());
 
-        std::string info_msg = std::string("Received ReadyAck: status=")
-                               + std::to_string(out_ack.status);
+        std::string info_msg =
+            DAS_FMT_NS::format("Received ReadyAck: status={}", out_ack.status);
         DAS_LOG_INFO(info_msg.c_str());
 
         return DAS_S_OK;
@@ -406,8 +415,8 @@ public:
 
         if (welcome.status != DAS::Core::IPC::WelcomeResponseV1::STATUS_SUCCESS)
         {
-            std::string msg = std::string("Welcome status error: ")
-                              + std::to_string(welcome.status);
+            std::string msg =
+                DAS_FMT_NS::format("Welcome status error: {}", welcome.status);
             DAS_LOG_ERROR(msg.c_str());
             return DAS_E_IPC_HANDSHAKE_FAILED;
         }
@@ -435,15 +444,15 @@ public:
 
         if (ack.status != DAS::Core::IPC::ReadyAckV1::STATUS_SUCCESS)
         {
-            std::string msg = std::string("ReadyAck status error: ")
-                              + std::to_string(ack.status);
+            std::string msg =
+                DAS_FMT_NS::format("ReadyAck status error: {}", ack.status);
             DAS_LOG_ERROR(msg.c_str());
             return DAS_E_IPC_HANDSHAKE_FAILED;
         }
 
-        std::string info_msg =
-            std::string("Full handshake completed: session_id=")
-            + std::to_string(out_session_id);
+        std::string info_msg = DAS_FMT_NS::format(
+            "Full handshake completed: session_id={}",
+            out_session_id);
         DAS_LOG_INFO(info_msg.c_str());
 
         return DAS_S_OK;
@@ -474,7 +483,8 @@ protected:
     {
         host_exe_path_ = GetDasHostPath();
 
-        std::string msg = std::string("DasHost path: ") + host_exe_path_;
+        std::string msg =
+            DAS_FMT_NS::format("DasHost path: {}", host_exe_path_);
         DAS_LOG_INFO(msg.c_str());
     }
 

@@ -5,7 +5,9 @@
 #include <cstdint>
 #include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
+#include <das/DasApi.h>
 #include <das/IDasBase.h>
+#include <das/Utils/fmt.h>
 #include <functional>
 #include <mutex>
 #include <unordered_map>
@@ -65,9 +67,11 @@ namespace Core
              *
              * // 设置回调
              * handler.SetOnClientConnected([](const Host::ConnectedClient&
-             * client) { DAS_LOG_INFO("Client connected: session_id=%u,
-             * plugin=%s", client.session_id, client.plugin_name.c_str());
-             * });
+             * client) {
+             *     std::string msg = DAS_FMT_NS::format(
+             *         "Client connected: session_id={}, plugin={}",
+             *         client.session_id, client.plugin_name.c_str());
+             *     DAS_LOG_INFO(msg.c_str()); });
              *
              * // 作为 IpcRunLoop 的请求处理器
              * run_loop.SetRequestHandler([&handler](
