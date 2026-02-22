@@ -1,8 +1,8 @@
 #ifndef DAS_CORE_FOREIGNINTERFACEHOST_ERRORLENSMANAGER_H
 #define DAS_CORE_FOREIGNINTERFACEHOST_ERRORLENSMANAGER_H
 
-#include <DAS/_autogen/idl/abi/IDasErrorLens.h>
-#include <DAS/_autogen/idl/abi/IDasGuidVector.h>
+#include <das/_autogen/idl/abi/IDasErrorLens.h>
+#include <das/_autogen/idl/abi/IDasGuidVector.h>
 #include <das/Core/ForeignInterfaceHost/Config.h>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/DasString.hpp>

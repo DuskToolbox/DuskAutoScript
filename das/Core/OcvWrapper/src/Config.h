@@ -2,7 +2,7 @@
 #define DAS_CORE_OCVWRAPPER_CONFIG_H
 
 #include <das/DasConfig.h>
-#include <DAS/_autogen/idl/abi/IDasImage.h>
+#include <das/_autogen/idl/abi/IDasImage.h>
 
 DAS_DISABLE_WARNING_BEGIN
 

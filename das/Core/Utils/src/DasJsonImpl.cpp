@@ -1,5 +1,5 @@
-#include <DAS/_autogen/idl/abi/DasJson.h>
-#include <DAS/_autogen/idl/wrapper/Das.ExportInterface.IDasJson.Implements.hpp>
+#include <das/_autogen/idl/abi/DasJson.h>
+#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasJson.Implements.hpp>
 #include <boost/signals2.hpp>
 #include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
 #include <das/Core/Logger/Logger.h>

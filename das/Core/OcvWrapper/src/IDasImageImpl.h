@@ -3,9 +3,9 @@
 
 #include "Config.h"
 
-#include <DAS/_autogen/idl/wrapper/Das.ExportInterface.IDasImage.Implements.hpp>
-#include <DAS/_autogen/idl/wrapper/Das.ExportInterface.IDasImage.hpp>
-#include <DAS/_autogen/idl/wrapper/Das.ExportInterface.IDasMemory.hpp>
+#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasImage.Implements.hpp>
+#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasImage.hpp>
+#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasMemory.hpp>
 
 DAS_DISABLE_WARNING_BEGIN
 

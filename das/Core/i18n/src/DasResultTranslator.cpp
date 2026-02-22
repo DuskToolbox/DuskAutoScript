@@ -1,6 +1,6 @@
 #include <das/Core/i18n/DasResultTranslator.h>
 
-#include <DAS/_autogen/idl/abi/IDasErrorLens.h>
+#include <das/_autogen/idl/abi/IDasErrorLens.h>
 #include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/i18n/GlobalLocale.h>

@@ -1,7 +1,7 @@
 #ifndef DAS_UTILS_ENUMTUILS_HPP
 #define DAS_UTILS_ENUMTUILS_HPP
 
-#include <DAS/_autogen/idl/abi/DasJson.h>
+#include <das/_autogen/idl/abi/DasJson.h>
 #include <das/DasConfig.h>
 #include <das/Utils/UnexpectedEnumException.h>
 #include <magic_enum.hpp>

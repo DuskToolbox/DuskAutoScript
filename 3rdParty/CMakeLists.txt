@@ -480,7 +480,7 @@ if (${DAS_USE_BUNDLED_BOOST})
             Boost::program_options)
 else ()
     # 这里先不改，只是自用boost版本拉上去先
-    find_package(Boost CONFIG 1.82 COMPONENTS filesystem url beast asio process)
+    find_package(Boost CONFIG 1.82 COMPONENTS filesystem url)
 
     if (NOT Boost_FOUND)
         message(FATAL_ERROR "Boost not found. Please install it manually or set DAS_USE_BUNDLED_BOOST=ON.")

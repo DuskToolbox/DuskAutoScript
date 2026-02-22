@@ -2,10 +2,10 @@
 #define DAS_CORE_FOREIGNINTERFACEHOST_ISCASTAVAILABLE_HPP
 
 #include "das/IDasBase.h"
-#include <DAS/_autogen/idl/abi/IDasCapture.h>
-#include <DAS/_autogen/idl/abi/IDasErrorLens.h>
-#include <DAS/_autogen/idl/abi/IDasTask.h>
-#include <DAS/_autogen/idl/abi/IDasPluginPackage.h>
+#include <das/_autogen/idl/abi/IDasCapture.h>
+#include <das/_autogen/idl/abi/IDasErrorLens.h>
+#include <das/_autogen/idl/abi/IDasTask.h>
+#include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <das/DasString.hpp>
 #include <das/Core/ForeignInterfaceHost/Config.h>
 #include <type_traits>

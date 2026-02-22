@@ -1,7 +1,7 @@
 // clang-format off
 #include <das/DasConfig.h>
 // clang-format on
-#include <DAS/_autogen/idl/abi/DasSettings.h>
+#include <das/_autogen/idl/abi/DasSettings.h>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
 #include <das/Core/Logger/Logger.h>

@@ -1,7 +1,7 @@
 #include "ErrorLensImpl.h"
 #include "PluginImpl.h"
 
-#include <DAS/_autogen/idl/abi/DasLogger.h>
+#include <das/_autogen/idl/abi/DasLogger.h>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
 #include <das/DasApi.h>

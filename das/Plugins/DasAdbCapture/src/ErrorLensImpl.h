@@ -1,7 +1,7 @@
 #ifndef DAS_PLUGINS_DASADBCAPTURE_ERRORLENSIMPL_H
 #define DAS_PLUGINS_DASADBCAPTURE_ERRORLENSIMPL_H
 
-#include <DAS/_autogen/idl/wrapper/Das.PluginInterface.IDasErrorLens.Implements.hpp>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasErrorLens.Implements.hpp>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/StringUtils.h>
 #include <string>

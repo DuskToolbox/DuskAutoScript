@@ -1,4 +1,4 @@
-#include <DAS/_autogen/idl/abi/IDasTypeInfo.h>
+#include <das/_autogen/idl/abi/IDasTypeInfo.h>
 #include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
 #include <das/Core/ForeignInterfaceHost/ErrorLensManager.h>
 #include <das/Core/Logger/Logger.h>

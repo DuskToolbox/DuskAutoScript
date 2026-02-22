@@ -1,8 +1,8 @@
 #ifndef DAS_CORE_UTILS_IDASSTOPTOKENIMPL_H
 #define DAS_CORE_UTILS_IDASSTOPTOKENIMPL_H
 
-#include <DAS/_autogen/idl/abi/IDasTask.h>
-#include <DAS/_autogen/idl/wrapper/Das.PluginInterface.IDasStopToken.Implements.hpp>
+#include <das/_autogen/idl/abi/IDasTask.h>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasStopToken.Implements.hpp>
 #include <atomic>
 #include <das/Core/Utils/Config.h>
 

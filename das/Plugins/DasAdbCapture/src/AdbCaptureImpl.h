@@ -3,7 +3,7 @@
 
 #include <das/DasConfig.h>
 #include <das/IDasBase.h>
-#include <DAS/_autogen/idl/abi/IDasCapture.h>
+#include <das/_autogen/idl/abi/IDasCapture.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasCapture.Implements.hpp>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/Expected.h>

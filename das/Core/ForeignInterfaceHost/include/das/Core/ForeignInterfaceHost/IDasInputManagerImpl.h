@@ -2,7 +2,7 @@
 #define DAS_CORE_FOREIGNINTERFACEHOST_IDASINPUTMANAGERIMPL_H
 
 #include <das/Core/ForeignInterfaceHost/Config.h>
-#include <DAS/_autogen/idl/abi/IDasInputManager.h>
+#include <das/_autogen/idl/abi/IDasInputManager.h>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 

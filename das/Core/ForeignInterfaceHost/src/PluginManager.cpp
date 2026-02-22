@@ -1,10 +1,10 @@
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
 
-#include <DAS/_autogen/idl/abi/IDasCapture.h>
-#include <DAS/_autogen/idl/abi/IDasComponent.h>
-#include <DAS/_autogen/idl/abi/IDasErrorLens.h>
-#include <DAS/_autogen/idl/abi/IDasInput.h>
-#include <DAS/_autogen/idl/abi/IDasTask.h>
+#include <das/_autogen/idl/abi/IDasCapture.h>
+#include <das/_autogen/idl/abi/IDasComponent.h>
+#include <das/_autogen/idl/abi/IDasErrorLens.h>
+#include <das/_autogen/idl/abi/IDasInput.h>
+#include <das/_autogen/idl/abi/IDasTask.h>
 #include <das/Core/Logger/Logger.h>
 
 #include <algorithm>

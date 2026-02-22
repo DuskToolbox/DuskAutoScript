@@ -1,7 +1,7 @@
 #ifndef DAS_CORE_FOREIGNINTERFACEHOST_IFOREIGNLANGUAGERUNTIME_H
 #define DAS_CORE_FOREIGNINTERFACEHOST_IFOREIGNLANGUAGERUNTIME_H
 
-#include <DAS/_autogen/idl/abi/IDasPluginPackage.h>
+#include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHostEnum.h>
 #include <das/DasPtr.hpp>
 #include <das/IDasBase.h>

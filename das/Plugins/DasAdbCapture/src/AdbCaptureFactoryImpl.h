@@ -1,7 +1,7 @@
 #ifndef DAS_PLUGINS_DASADBCAPTURE_ADBCAPTUREFACTORYIMPL_H
 #define DAS_PLUGINS_DASADBCAPTURE_ADBCAPTUREFACTORYIMPL_H
 
-#include <DAS/_autogen/idl/abi/IDasCapture.h>
+#include <das/_autogen/idl/abi/IDasCapture.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasCaptureFactory.Implements.hpp>
 #include <das/Utils/CommonUtils.hpp>
 

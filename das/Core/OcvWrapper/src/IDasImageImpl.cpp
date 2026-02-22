@@ -6,7 +6,7 @@
 #include <das/_autogen/idl/abi/IDasBinaryBuffer.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasBinaryBuffer.Implements.hpp>
 
-#include <DAS/_autogen/idl/abi/IDasImage.h>
+#include <das/_autogen/idl/abi/IDasImage.h>
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Utils/CommonUtils.hpp>

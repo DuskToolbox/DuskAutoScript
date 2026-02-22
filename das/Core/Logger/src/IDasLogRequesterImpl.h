@@ -2,7 +2,7 @@
 #define DAS_CORE_LOGGER_IDASLOGREQUESTERIMPL_H
 
 #include "das/DasString.hpp"
-#include <DAS/_autogen/idl/abi/DasLogger.h>
+#include <das/_autogen/idl/abi/DasLogger.h>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/fmt.h>
 #include <boost/circular_buffer.hpp>
