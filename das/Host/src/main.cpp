@@ -151,13 +151,11 @@ static void RunEventLoop(bool verbose)
            size_t                                  body_size) -> DasResult
         {
             std::vector<uint8_t> response_body;
+            DasResult            result = DAS_E_FAIL;
 
             // First try handshake handler
-            DasResult result = g_handshake_handler.HandleMessage(
-                header,
-                body,
-                body_size,
-                response_body);
+            result = g_handshake_handler
+                         .HandleMessage(header, body, body_size, response_body);
 
             // If handshake handler doesn't handle it, try command handler
             if (result != DAS_S_OK)
@@ -184,6 +182,18 @@ static void RunEventLoop(bool verbose)
                         cmd_response.response_data.begin(),
                         cmd_response.response_data.end());
                 }
+            }
+
+            // Send response back to client
+            if (result == DAS_S_OK)
+            {
+                Das::Core::IPC::IPCMessageHeader response_header = header;
+                response_header.message_type =
+                    static_cast<uint8_t>(Das::Core::IPC::MessageType::RESPONSE);
+                g_run_loop.SendResponse(
+                    response_header,
+                    response_body.data(),
+                    response_body.size());
             }
 
             return result;
