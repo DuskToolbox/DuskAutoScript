@@ -21,7 +21,7 @@ DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
 DAS_NS_PYTHONHOST_BEGIN
 
-auto CreateForeignLanguageRuntime(const ForeignLanguageRuntimeFactoryDesc& desc)
+DAS_API auto CreateForeignLanguageRuntime(const ForeignLanguageRuntimeFactoryDesc& desc)
     -> DAS::Utils::Expected<DasPtr<IForeignLanguageRuntime>>;
 
 class PyObjectPtr

@@ -15,6 +15,10 @@
 #include <vector>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
+// Disable C4251 warning for DLL export with STL types
+#ifdef _MSC_VER
+#pragma warning(disable : 4251)
+#endif
 
 /**
  * @brief Feature 名称到接口 IID 的映射信息
@@ -49,7 +53,7 @@ struct LoadedPlugin
  * - 将插件对象注册到 RemoteObjectRegistry
  * - 通过 Feature 名称查找对象
  */
-class PluginManager
+class DAS_API PluginManager
 {
 public:
     /**
@@ -205,6 +209,10 @@ private:
     std::unordered_map<std::string, FeatureInfo*>
         feature_map_; // feature_name -> FeatureInfo
 };
+
+#ifdef _MSC_VER
+#pragma warning(default : 4251)
+#endif
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
 

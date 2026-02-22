@@ -35,6 +35,9 @@ namespace Core
                 const std::string& plugin_queue_name,
                 uint32_t           max_message_size,
                 uint32_t           max_messages);
+            DasResult Connect(
+                const std::string& host_queue_name,
+                const std::string& plugin_queue_name);
             DasResult Shutdown();
 
             DasResult Send(

@@ -70,6 +70,43 @@ namespace Core
             }
         }
 
+        DasResult IpcTransport::Connect(
+            const std::string& host_queue_name,
+            const std::string& plugin_queue_name)
+        {
+            impl_->host_queue_name_ = host_queue_name;
+            impl_->plugin_queue_name_ = plugin_queue_name;
+
+            try
+            {
+                // 客户端角色：交换队列方向
+                // host_queue_ 用于 Send，应指向 P2H（Plugin -> Host）
+                // plugin_queue_ 用于 Receive，应指向 H2P（Host -> Plugin）
+                impl_->host_queue_ =
+                    std::make_unique<boost::interprocess::message_queue>(
+                        boost::interprocess::open_only,
+                        plugin_queue_name.c_str());  // P2H - 客户端发送用
+
+                impl_->plugin_queue_ =
+                    std::make_unique<boost::interprocess::message_queue>(
+                        boost::interprocess::open_only,
+                        host_queue_name.c_str());  // H2P - 客户端接收用
+
+                // 从已存在的队列获取配置
+                impl_->max_message_size_ = static_cast<uint32_t>(
+                    impl_->host_queue_->get_max_msg_size());
+                impl_->max_messages_ = static_cast<uint32_t>(
+                    impl_->host_queue_->get_max_msg());
+
+                impl_->initialized_ = true;
+                return DAS_S_OK;
+            }
+            catch (const boost::interprocess::interprocess_exception&)
+            {
+                return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
+            }
+        }
+
         DasResult IpcTransport::Shutdown()
         {
             if (!impl_->initialized_)

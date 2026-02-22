@@ -27,6 +27,10 @@
 #else
 #include <unistd.h>
 #endif
+#ifdef DAS_EXPORT_PYTHON
+#include <das/Core/ForeignInterfaceHost/PythonHost.h>
+#include <das/Core/ForeignInterfaceHost/PluginManager.h>
+#endif
 
 // DAS error check macro (errors are negative, success >= 0)
 #define DAS_HOST_FAILED(x) ((x) < 0)
@@ -157,7 +161,7 @@ static void RunEventLoop(bool verbose)
             // First try handshake handler
             result = g_handshake_handler
                          .HandleMessage(header, body, body_size, response_body);
-            std::cout << "[Host] Handshake result=" << result.code << std::endl;
+            std::cout << "[Host] Handshake result=" << result << std::endl;
 
             // If handshake handler doesn't handle it, try command handler
             if (result != DAS_S_OK)
@@ -245,6 +249,23 @@ int main(int argc, char* argv[])
 #endif
 
         DAS_LOG_INFO("DAS Host Process starting...");
+#ifdef DAS_EXPORT_PYTHON
+        {
+            using namespace DAS::Core::ForeignInterfaceHost;
+            auto runtime_result = PythonHost::CreateForeignLanguageRuntime({});
+            if (runtime_result.has_value())
+            {
+                auto& manager = PluginManager::GetInstance();
+                manager.SetRuntime(std::move(runtime_result.value()));
+                DAS_LOG_INFO("Python runtime initialized successfully");
+            }
+            else
+            {
+                DAS_LOG_ERROR("Failed to create Python runtime");
+                return EXIT_FAILURE;
+            }
+        }
+#endif
 
         DasResult result = InitializeIpcResources();
         if (DAS_HOST_FAILED(result))

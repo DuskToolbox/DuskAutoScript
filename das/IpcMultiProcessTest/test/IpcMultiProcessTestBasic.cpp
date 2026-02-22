@@ -166,11 +166,9 @@ public:
 
         transport_ = std::make_unique<DAS::Core::IPC::IpcTransport>();
 
-        DasResult result = transport_->Initialize(
+        DasResult result = transport_->Connect(
             host_to_plugin_queue,
-            plugin_to_host_queue,
-            DAS::Host::DEFAULT_MAX_MESSAGE_SIZE,
-            DAS::Host::DEFAULT_MAX_MESSAGES);
+            plugin_to_host_queue);
 
         if (result != DAS_S_OK)
         {
