@@ -153,9 +153,11 @@ static void RunEventLoop(bool verbose)
             std::vector<uint8_t> response_body;
             DasResult            result = DAS_E_FAIL;
 
+            std::cout << "[Host] Received message, type=" << (int)header.message_type << std::endl;
             // First try handshake handler
             result = g_handshake_handler
                          .HandleMessage(header, body, body_size, response_body);
+            std::cout << "[Host] Handshake result=" << result.code << std::endl;
 
             // If handshake handler doesn't handle it, try command handler
             if (result != DAS_S_OK)
