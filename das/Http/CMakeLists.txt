@@ -8,7 +8,7 @@ target_include_directories(DasHttp PRIVATE src)
 target_link_libraries(DasHttp PRIVATE
         DasCore
         DAS_EX_PRIVATE_LIBS
-        DAS_BUNDLED_BOOST_LIBS)
+        ${DAS_BUNDLED_BOOST_LIBS})
 
 target_compile_definitions(DasHttp PRIVATE _WIN32_WINNT=0x0601)
 
