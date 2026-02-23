@@ -1,4 +1,4 @@
-#include <das/Core/IPC/MainProcessServer.h>
+#include <das/Core/IPC/MainProcess/MainProcessServer.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/DasApi.h>
 #include <das/IDasBase.h>
@@ -19,7 +19,7 @@ namespace Core
 
             *pp_out_plugin = nullptr;
 
-            auto& server = MainProcessServer::GetInstance();
+            auto& server = MainProcess::MainProcessServer::GetInstance();
 
             RemoteObjectInfo object_info;
             DasResult result = server.SendLoadPlugin(plugin_path, object_info);

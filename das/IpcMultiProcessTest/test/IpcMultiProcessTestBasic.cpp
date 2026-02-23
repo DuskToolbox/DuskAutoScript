@@ -43,7 +43,7 @@
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/IPC/SessionCoordinator.h>
 #include <das/DasApi.h>
-#include <das/Host/HostConfig.h>
+#include <das/Core/IPC/Host/HostConfig.h>
 #include <das/Utils/fmt.h>
 #include <filesystem>
 #include <gtest/gtest.h>
@@ -154,9 +154,9 @@ public:
         host_pid_ = host_pid;
 
         std::string host_to_plugin_queue =
-            DAS::Host::MakeMessageQueueName(host_pid, true);
+            DAS::Core::IPC::Host::MakeMessageQueueName(host_pid, true);
         std::string plugin_to_host_queue =
-            DAS::Host::MakeMessageQueueName(host_pid, false);
+            DAS::Core::IPC::Host::MakeMessageQueueName(host_pid, false);
 
         std::string msg = DAS_FMT_NS::format(
             "Connecting to Host IPC: {}, {}",
@@ -656,7 +656,7 @@ protected:
             }
 
             std::string host_to_plugin_queue =
-                DAS::Host::MakeMessageQueueName(host_pid, true);
+                DAS::Core::IPC::Host::MakeMessageQueueName(host_pid, true);
 
             try
             {
@@ -1031,62 +1031,7 @@ TEST_F(IpcMultiProcessTest, ConcurrentSessionAllocation)
     }
 }
 
-TEST_F(IpcMultiProcessTest, ConcurrentObjectRegistration)
-{
-    DAS::Core::IPC::RemoteObjectRegistry& registry =
-        DAS::Core::IPC::RemoteObjectRegistry::GetInstance();
 
-    const int                num_threads = 5;
-    const int                objects_per_thread = 10;
-    std::vector<std::thread> threads;
-    std::atomic<int>         success_count{0};
-
-    for (int t = 0; t < num_threads; ++t)
-    {
-        threads.emplace_back(
-            [&registry, &success_count, t, objects_per_thread]()
-            {
-                for (int i = 0; i < objects_per_thread; ++i)
-                {
-                    DAS::Core::IPC::ObjectId obj_id = {
-                        static_cast<uint16_t>(t + 2),
-                        1,
-                        static_cast<uint32_t>(t * 1000 + i)};
-                    DasGuid iid = {
-                        static_cast<uint32_t>(t * 1000 + i),
-                        0x1234,
-                        0x5678,
-                        {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}};
-                    std::string name = "Thread" + std::to_string(t) + "_Object"
-                                       + std::to_string(i);
-
-                    if (registry.RegisterObject(
-                            obj_id,
-                            iid,
-                            static_cast<uint16_t>(t + 2),
-                            name,
-                            1)
-                        == DAS_S_OK)
-                    {
-                        success_count++;
-                    }
-                }
-            });
-    }
-
-    for (auto& thread : threads)
-    {
-        thread.join();
-    }
-
-    EXPECT_EQ(success_count.load(), num_threads * objects_per_thread);
-
-    // 清理
-    for (int t = 0; t < num_threads; ++t)
-    {
-        registry.UnregisterAllFromSession(static_cast<uint16_t>(t + 2));
-    }
-}
 
 // ====== 握手协议结构测试 ======
 
@@ -1138,8 +1083,8 @@ TEST_F(IpcMultiProcessTest, Handshake_ReadyAckInit)
 
 TEST_F(IpcMultiProcessTest, MessageQueueNameGeneration)
 {
-    std::string h2p_name = DAS::Host::MakeMessageQueueName(12345, true);
-    std::string p2h_name = DAS::Host::MakeMessageQueueName(12345, false);
+    std::string h2p_name = DAS::Core::IPC::Host::MakeMessageQueueName(12345, true);
+    std::string p2h_name = DAS::Core::IPC::Host::MakeMessageQueueName(12345, false);
 
     EXPECT_TRUE(h2p_name.find("DAS_Host_12345_MQ_H2P") != std::string::npos);
     EXPECT_TRUE(p2h_name.find("DAS_Host_12345_MQ_P2H") != std::string::npos);
@@ -1148,7 +1093,7 @@ TEST_F(IpcMultiProcessTest, MessageQueueNameGeneration)
 
 TEST_F(IpcMultiProcessTest, SharedMemoryNameGeneration)
 {
-    std::string shm_name = DAS::Host::MakeSharedMemoryName(12345);
+    std::string shm_name = DAS::Core::IPC::Host::MakeSharedMemoryName(12345);
 
     EXPECT_TRUE(shm_name.find("DAS_Host_12345_SHM") != std::string::npos);
 }

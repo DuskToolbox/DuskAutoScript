@@ -20,6 +20,8 @@ namespace Core
 {
     namespace IPC
     {
+        namespace MainProcess
+        {
         class IpcRunLoop;
         class ConnectionManager;
 
@@ -360,8 +362,9 @@ namespace Core
             std::atomic<bool> is_running_{false};
             std::atomic<bool> is_initialized_{false};
         };
-    }
-}
+        } // namespace MainProcess
+    } // namespace IPC
+} // namespace Core
 DAS_NS_END
 
 #endif // DAS_CORE_IPC_MAIN_PROCESS_SERVER_H

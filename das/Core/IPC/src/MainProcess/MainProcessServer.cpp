@@ -1,4 +1,4 @@
-#include "das/Core/IPC/MainProcessServer.h"
+#include "das/Core/IPC/MainProcess/MainProcessServer.h"
 
 #include <chrono>
 #include <das/Core/IPC/ObjectId.h>
@@ -17,6 +17,8 @@ namespace Core
 {
     namespace IPC
     {
+        namespace MainProcess
+        {
         MainProcessServer& MainProcessServer::GetInstance()
         {
             static MainProcessServer instance;
@@ -486,6 +488,7 @@ namespace Core
 
             return DAS_S_OK;
         }
+        } // namespace MainProcess
     }
 }
 DAS_NS_END

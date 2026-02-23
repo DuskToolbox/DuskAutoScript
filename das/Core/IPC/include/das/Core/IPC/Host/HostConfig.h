@@ -1,11 +1,15 @@
-#ifndef DAS_HOST_HOST_CONFIG_H
-#define DAS_HOST_HOST_CONFIG_H
+#ifndef DAS_CORE_IPC_HOST_HOST_CONFIG_H
+#define DAS_CORE_IPC_HOST_HOST_CONFIG_H
 
 #include <cstdint>
 #include <das/IDasBase.h>
 #include <string>
 
 DAS_NS_BEGIN
+namespace Core
+{
+namespace IPC
+{
 namespace Host
 {
     // B8 Host 进程配置常量
@@ -54,7 +58,9 @@ namespace Host
     {
         return std::string("DAS_Host_") + std::to_string(host_pid) + "_SHM";
     }
-}
+} // namespace Host
+} // namespace IPC
+} // namespace Core
 DAS_NS_END
 
-#endif // DAS_HOST_HOST_CONFIG_H
+#endif // DAS_CORE_IPC_HOST_HOST_CONFIG_H

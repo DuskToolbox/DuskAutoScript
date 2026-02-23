@@ -12,7 +12,7 @@
 #include <das/Core/IPC/MessageQueueTransport.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <das/DasApi.h>
-#include <das/Host/HostConfig.h>
+#include <das/Core/IPC/Host/HostConfig.h>
 #include <das/Utils/fmt.h>
 #include <iostream>
 #include <stdexec/execution.hpp>
@@ -63,10 +63,10 @@ static DasResult InitializeIpcResources()
     g_host_pid = GetCurrentPid();
 
     std::string host_to_plugin_queue =
-        Das::Host::MakeMessageQueueName(g_host_pid, true);
+        Das::Core::IPC::Host::MakeMessageQueueName(g_host_pid, true);
     std::string plugin_to_host_queue =
-        Das::Host::MakeMessageQueueName(g_host_pid, false);
-    std::string shm_name = Das::Host::MakeSharedMemoryName(g_host_pid);
+        Das::Core::IPC::Host::MakeMessageQueueName(g_host_pid, false);
+    std::string shm_name = Das::Core::IPC::Host::MakeSharedMemoryName(g_host_pid);
 
     DasResult result = g_run_loop.Initialize();
     if (DAS_HOST_FAILED(result))
@@ -98,8 +98,8 @@ static DasResult InitializeIpcResources()
     result = transport->Initialize(
         host_to_plugin_queue,
         plugin_to_host_queue,
-        Das::Host::DEFAULT_MAX_MESSAGE_SIZE,
-        Das::Host::DEFAULT_MAX_MESSAGES);
+        Das::Core::IPC::Host::DEFAULT_MAX_MESSAGE_SIZE,
+        Das::Core::IPC::Host::DEFAULT_MAX_MESSAGES);
     if (DAS_HOST_FAILED(result))
     {
         DAS_LOG_ERROR("Failed to initialize IPC transport");
@@ -109,7 +109,7 @@ static DasResult InitializeIpcResources()
     g_shared_memory = std::make_unique<Das::Core::IPC::SharedMemoryPool>();
     result = g_shared_memory->Initialize(
         shm_name,
-        Das::Host::DEFAULT_SHARED_MEMORY_SIZE);
+        Das::Core::IPC::Host::DEFAULT_SHARED_MEMORY_SIZE);
     if (DAS_HOST_FAILED(result))
     {
         DAS_LOG_ERROR("Failed to initialize shared memory pool");

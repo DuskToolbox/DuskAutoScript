@@ -21,7 +21,7 @@
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
-#include <das/Core/IPC/MainProcessServer.h>
+#include <das/Core/IPC/MainProcess/MainProcessServer.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/ObjectManager.h>
 #include <das/Core/IPC/ProxyFactory.h>
@@ -37,11 +37,11 @@ using DAS::Core::IPC::ConnectionManager;
 using DAS::Core::IPC::DecodeObjectId;
 using DAS::Core::IPC::DistributedObjectManager;
 using DAS::Core::IPC::EncodeObjectId;
-using DAS::Core::IPC::HostSessionInfo;
+using DAS::Core::IPC::MainProcess::HostSessionInfo;
 using DAS::Core::IPC::IPCMessageHeader;
 using DAS::Core::IPC::IPCProxyBase;
 using DAS::Core::IPC::IsNullObjectId;
-using DAS::Core::IPC::MainProcessServer;
+using DAS::Core::IPC::MainProcess::MainProcessServer;
 using DAS::Core::IPC::MessageType;
 using DAS::Core::IPC::ObjectId;
 using DAS::Core::IPC::ProxyFactory;
