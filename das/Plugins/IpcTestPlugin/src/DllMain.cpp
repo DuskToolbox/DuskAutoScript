@@ -9,12 +9,17 @@ using Das::PluginInterface::IDasPluginPackage;
 
 DAS_C_API DasResult DasCoCreatePlugin(IDasBase** pp_out_plugin)
 {
+    DAS_LOG_INFO("[DasCoCreatePlugin] Entry");
     DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(pp_out_plugin)
     try
     {
+        DAS_LOG_INFO("[DasCoCreatePlugin] Creating IpcTestPlugin...");
         const auto p_result = new DAS::IpcTestPlugin{};
+        DAS_LOG_INFO("[DasCoCreatePlugin] IpcTestPlugin created");
         *pp_out_plugin = p_result;
+        DAS_LOG_INFO("[DasCoCreatePlugin] Calling AddRef...");
         p_result->AddRef();
+        DAS_LOG_INFO("[DasCoCreatePlugin] AddRef done, returning DAS_S_OK");
         return DAS_S_OK;
     }
     catch (const std::bad_alloc&)
@@ -24,6 +29,7 @@ DAS_C_API DasResult DasCoCreatePlugin(IDasBase** pp_out_plugin)
     }
     catch (...)
     {
+        DAS_LOG_ERROR("[DasCoCreatePlugin] Unknown exception");
         return DAS_E_INTERNAL_FATAL_ERROR;
     }
 }

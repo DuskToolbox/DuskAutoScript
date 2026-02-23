@@ -6,6 +6,7 @@
 #include <das/Core/IPC/ObjectId.h>
 #include <das/IDasBase.h>
 #include <functional>
+#include <unordered_map>
 #include <span>
 #include <string>
 #include <vector>
@@ -176,6 +177,11 @@ namespace Core
                 const IPCMessageHeader& header);
 
             uint16_t session_id_;
+            
+#pragma warning(push)
+#pragma warning(disable: 4251) // DLL 导出类中使用 STL 容器
+            std::unordered_map<IpcCommandType, CommandHandler> custom_handlers_;
+#pragma warning(pop)
         };
 
         // 命令 payload 序列化辅助结构

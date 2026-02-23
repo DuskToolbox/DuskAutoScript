@@ -30,7 +30,7 @@ DAS_INTERFACE IForeignLanguageRuntime : public IDasBase
  * @param desc_base
  * @return DAS_E_NO_IMPLEMENTATION 意味着对应语言的接口未实现
  */
-auto CreateForeignLanguageRuntime(
+DAS_API auto CreateForeignLanguageRuntime(
     const ForeignLanguageRuntimeFactoryDesc& desc_base)
     -> DAS::Utils::Expected<DasPtr<IForeignLanguageRuntime>>;
 

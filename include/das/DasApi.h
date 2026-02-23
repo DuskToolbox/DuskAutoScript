@@ -156,9 +156,6 @@ DAS_C_API DasResult CreateIDasLogRequester(
     uint32_t                                 max_line_count,
     Das::ExportInterface::IDasLogRequester** pp_out_requester);
 
-using DasCoCreatePluginFunction =
-    DasResult (*)(IDasBase** pp_out_plugin_package);
-
 /**
  * @brief 通过 IPC 加载远程插件
  *
@@ -327,6 +324,8 @@ struct DasSourceLocationOnStack final : DAS::ExportInterface::IDasSourceLocation
             &_das_internal_source_location);                                   \
     } while (false)
 
-typedef DasResult(DAS_STD_CALL* DasCoCreatePluginFunc)(IDasBase**);
+typedef DasResult(DAS_STD_CALL DasCoCreatePluginFunction)(IDasBase**);
+
+constexpr const char* DAS_COCREATE_PLUGIN_NAME = "DasCoCreatePlugin";
 
 #endif // DAS_API_H

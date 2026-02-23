@@ -5,32 +5,35 @@
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
+#include <cstring>
+#include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
+#include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/Host/HandshakeHandler.h>
+#include <das/Core/IPC/Host/HostConfig.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/MessageQueueTransport.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <das/DasApi.h>
-#include <das/Core/IPC/Host/HostConfig.h>
 #include <das/Utils/fmt.h>
 #include <iostream>
 #include <stdexec/execution.hpp>
 #include <string>
+#include <filesystem>
+#include <fstream>
 #include <thread>
-
 #include <boost/program_options.hpp>
-
 #ifdef _WIN32
+#include <nlohmann/json.hpp>
 #include <process.h>
 #include <windows.h>
 #else
 #include <unistd.h>
 #endif
-#ifdef DAS_EXPORT_PYTHON
-#include <das/Core/ForeignInterfaceHost/PythonHost.h>
-#include <das/Core/ForeignInterfaceHost/PluginManager.h>
-#endif
+
+
+
 
 // DAS error check macro (errors are negative, success >= 0)
 #define DAS_HOST_FAILED(x) ((x) < 0)
@@ -42,6 +45,45 @@ static Das::Core::IPC::IpcCommandHandler                 g_command_handler;
 static std::unique_ptr<Das::Core::IPC::SharedMemoryPool> g_shared_memory;
 static Das::Core::IPC::IpcRunLoop                        g_run_loop;
 static uint32_t                                          g_host_pid = 0;
+
+namespace
+{
+    // 序列化辅助函数
+    template <typename T>
+    bool
+    DeserializeValue(std::span<const uint8_t> buffer, size_t& offset, T& value)
+    {
+        if (offset + sizeof(T) > buffer.size())
+        {
+            return false;
+        }
+        std::memcpy(&value, buffer.data() + offset, sizeof(T));
+        offset += sizeof(T);
+        return true;
+    }
+
+    bool DeserializeString(
+        std::span<const uint8_t> buffer,
+        size_t&                  offset,
+        std::string&             str,
+        uint16_t                 max_len = 1024)
+    {
+        uint16_t len = 0;
+        if (!DeserializeValue(buffer, offset, len))
+        {
+            return false;
+        }
+        if (len > max_len || offset + len > buffer.size())
+        {
+            return false;
+        }
+        str.assign(reinterpret_cast<const char*>(buffer.data() + offset), len);
+        offset += len;
+        return true;
+    }
+
+    static Das::DasPtr<DAS::Core::ForeignInterfaceHost::IForeignLanguageRuntime> g_runtime;
+}
 
 static uint32_t GetCurrentPid()
 {
@@ -66,7 +108,8 @@ static DasResult InitializeIpcResources()
         Das::Core::IPC::Host::MakeMessageQueueName(g_host_pid, true);
     std::string plugin_to_host_queue =
         Das::Core::IPC::Host::MakeMessageQueueName(g_host_pid, false);
-    std::string shm_name = Das::Core::IPC::Host::MakeSharedMemoryName(g_host_pid);
+    std::string shm_name =
+        Das::Core::IPC::Host::MakeSharedMemoryName(g_host_pid);
 
     DasResult result = g_run_loop.Initialize();
     if (DAS_HOST_FAILED(result))
@@ -157,7 +200,8 @@ static void RunEventLoop(bool verbose)
             std::vector<uint8_t> response_body;
             DasResult            result = DAS_E_FAIL;
 
-            std::cout << "[Host] Received message, type=" << (int)header.message_type << std::endl;
+            std::cout << "[Host] Received message, type="
+                      << (int)header.message_type << std::endl;
             // First try handshake handler
             result = g_handshake_handler
                          .HandleMessage(header, body, body_size, response_body);
@@ -171,6 +215,10 @@ static void RunEventLoop(bool verbose)
                     header,
                     std::span<const uint8_t>(body, body_size),
                     cmd_response);
+                std::string _log_msg = DAS_FMT_NS::format(
+                    "[Host] CommandHandler result={}",
+                    result);
+                DAS_LOG_INFO(_log_msg.c_str());
 
                 if (result == DAS_S_OK)
                 {
@@ -249,23 +297,124 @@ int main(int argc, char* argv[])
 #endif
 
         DAS_LOG_INFO("DAS Host Process starting...");
-#ifdef DAS_EXPORT_PYTHON
+
+        // 初始化 Foreign Language Runtime（根据配置自动选择 C++ 或 Python）
         {
             using namespace DAS::Core::ForeignInterfaceHost;
-            auto runtime_result = PythonHost::CreateForeignLanguageRuntime({});
-            if (runtime_result.has_value())
+            auto result = CreateForeignLanguageRuntime(
+                ForeignLanguageRuntimeFactoryDesc{ForeignInterfaceLanguage::Cpp});
+            if (result.has_value())
             {
-                auto& manager = PluginManager::GetInstance();
-                manager.SetRuntime(std::move(runtime_result.value()));
-                DAS_LOG_INFO("Python runtime initialized successfully");
+                g_runtime = std::move(result.value());
+                std::string _log_msg = DAS_FMT_NS::format(
+                    "Foreign language runtime initialized successfully");
+                DAS_LOG_INFO(_log_msg.c_str());
             }
             else
             {
-                DAS_LOG_ERROR("Failed to create Python runtime");
-                return EXIT_FAILURE;
+                std::string _log_msg =
+                    DAS_FMT_NS::format("Failed to initialize foreign language runtime");
+                DAS_LOG_WARNING(_log_msg.c_str());
             }
         }
-#endif
+
+        // Register LOAD_PLUGIN handler
+        g_command_handler.RegisterHandler(
+            Das::Core::IPC::IpcCommandType::LOAD_PLUGIN,
+            [](const Das::Core::IPC::IPCMessageHeader& header,
+               std::span<const uint8_t>                payload,
+               Das::Core::IPC::IpcCommandResponse&     response) -> DasResult
+            {
+                (void)header;
+
+                if (!g_runtime)
+                {
+                    response.error_code = DAS_E_OBJECT_NOT_INIT;
+                    return DAS_E_OBJECT_NOT_INIT;
+                }
+
+                // Deserialize manifest_path from payload
+                std::string manifest_path;
+                size_t      offset = 0;
+                if (!DeserializeString(payload, offset, manifest_path))
+                {
+                    response.error_code = DAS_E_IPC_INVALID_MESSAGE_BODY;
+                    return DAS_E_IPC_INVALID_MESSAGE_BODY;
+                }
+
+                // Read and parse manifest JSON file
+                std::ifstream json_file(manifest_path);
+                if (!json_file.is_open())
+                {
+                    std::string msg = DAS_FMT_NS::format(
+                        "Failed to open manifest file: {}",
+                        manifest_path);
+                    DAS_LOG_ERROR(msg.c_str());
+                    response.error_code = DAS_E_IPC_PLUGIN_LOAD_FAILED;
+                    return DAS_E_IPC_PLUGIN_LOAD_FAILED;
+                }
+
+                nlohmann::json manifest_json;
+                try
+                {
+                    json_file >> manifest_json;
+                }
+                catch (const nlohmann::json::exception& e)
+                {
+                    std::string msg = DAS_FMT_NS::format(
+                        "Failed to parse manifest JSON: {} - Error: {}",
+                        manifest_path,
+                        e.what());
+                    DAS_LOG_ERROR(msg.c_str());
+                    response.error_code = DAS_E_IPC_PLUGIN_LOAD_FAILED;
+                    return DAS_E_IPC_PLUGIN_LOAD_FAILED;
+                }
+
+                // Extract plugin name and extension
+                std::string plugin_name;
+                std::string plugin_extension;
+                try
+                {
+                    plugin_name = manifest_json["name"].get<std::string>();
+                    plugin_extension =
+                        manifest_json["pluginFilenameExtension"].get<std::string>();
+                }
+                catch (const nlohmann::json::exception& e)
+                {
+                    std::string msg = DAS_FMT_NS::format(
+                        "Failed to extract plugin info from JSON: {}",
+                        e.what());
+                    DAS_LOG_ERROR(msg.c_str());
+                    response.error_code = DAS_E_IPC_PLUGIN_LOAD_FAILED;
+                    return DAS_E_IPC_PLUGIN_LOAD_FAILED;
+                }
+
+                // Build DLL path: {manifest_dir}/{name}.{extension}
+                std::filesystem::path manifest_dir =
+                    std::filesystem::path(manifest_path).parent_path();
+                std::filesystem::path dll_path =
+                    manifest_dir / (plugin_name + "." + plugin_extension);
+
+                std::string msg = DAS_FMT_NS::format(
+                    "Loading plugin from: {}", dll_path.string());
+                DAS_LOG_INFO(msg.c_str());
+
+                // Load plugin
+                auto result = g_runtime->LoadPlugin(dll_path.string());
+                if (!result.has_value())
+                {
+                    msg = DAS_FMT_NS::format(
+                        "Failed to load plugin: {}",
+                        dll_path.string());
+                    DAS_LOG_ERROR(msg.c_str());
+                    response.error_code = DAS_E_IPC_PLUGIN_LOAD_FAILED;
+                    return DAS_E_IPC_PLUGIN_LOAD_FAILED;
+                }
+
+                // TODO: Serialize plugin info to response
+                response.error_code = DAS_S_OK;
+                return DAS_S_OK;
+            });
 
         DasResult result = InitializeIpcResources();
         if (DAS_HOST_FAILED(result))

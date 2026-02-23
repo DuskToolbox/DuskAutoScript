@@ -2,6 +2,7 @@
 #include <boost/dll/shared_library.hpp>
 #include <cstdint>
 #include <das/Core/Logger/Logger.h>
+#include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/IDasBase.h>
 #include <das/Utils/CommonUtils.hpp>
@@ -10,10 +11,6 @@
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
 DAS_NS_CPPHOST_BEGIN
-
-using DasCoCreatePluginFunction = DasResult (*)(IDasBase**);
-
-constexpr const char* DAS_COCREATE_PLUGIN_NAME = "DasCoCreatePlugin";
 
 class CppRuntime final : public IForeignLanguageRuntime
 {
@@ -41,10 +38,24 @@ public:
     auto LoadPlugin(const std::filesystem::path& path)
         -> DAS::Utils::Expected<DasPtr<IDasBase>> override
     {
+        DAS_CORE_LOG_INFO(
+            "[CppRuntime::LoadPlugin] Starting load for path: {}",
+            path.string());
+
         try
         {
             boost::system::error_code ec;
+            DAS_CORE_LOG_INFO(
+                "[CppRuntime::LoadPlugin] Path as string: {}",
+                path.string());
+
+            DAS_CORE_LOG_INFO(
+                "[CppRuntime::LoadPlugin] Calling plugin_lib_.load()...");
+
             plugin_lib_.load(path.wstring(), ec);
+
+            DAS_CORE_LOG_INFO(
+                "[CppRuntime::LoadPlugin] plugin_lib_.load() returned.");
             if (ec)
             {
                 DAS_CORE_LOG_ERROR(
@@ -54,9 +65,19 @@ public:
                 return tl::make_unexpected(DAS_E_INVALID_FILE);
             }
 
+            DAS_CORE_LOG_INFO(
+                "[CppRuntime::LoadPlugin] Getting export function...");
+
+            // Try to get the function and log the result
+            DAS_CORE_LOG_INFO(
+                "[CppRuntime::LoadPlugin] Has DasCoCreatePlugin: {}",
+                plugin_lib_.has(DAS_COCREATE_PLUGIN_NAME));
             const auto p_init_function =
                 plugin_lib_.get<DasCoCreatePluginFunction>(
                     DAS_COCREATE_PLUGIN_NAME);
+            DAS_CORE_LOG_INFO(
+                "[CppRuntime::LoadPlugin] Function pointer address: {}",
+                reinterpret_cast<void*>(p_init_function));
             if (p_init_function == nullptr)
             {
                 DAS_CORE_LOG_ERROR(
@@ -66,10 +87,16 @@ public:
                 return tl::make_unexpected(DAS_E_SYMBOL_NOT_FOUND);
             }
 
+            DAS_CORE_LOG_INFO(
+                "[CppRuntime::LoadPlugin] Calling DasCoCreatePlugin...");
             DasPtr<IDasBase> p_plugin{};
             const auto       error_code = p_init_function(p_plugin.Put());
+            DAS_CORE_LOG_INFO(
+                "[CppRuntime::LoadPlugin] DasCoCreatePlugin returned: {:#x}",
+                static_cast<uint32_t>(error_code));
             if (DAS::IsOk(error_code))
             {
+                DAS_CORE_LOG_INFO("[CppRuntime::LoadPlugin] Success!");
                 return p_plugin;
             }
             DAS_CORE_LOG_ERROR(

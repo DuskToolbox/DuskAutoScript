@@ -1,4 +1,6 @@
 #include "das/Core/IPC/IpcCommandHandler.h"
+#include <das/DasApi.h>
+#include <das/Utils/fmt.h>
 #include <chrono>
 #include <cstring>
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
@@ -70,10 +72,6 @@ namespace Core
                 return true;
             }
 
-            // 自定义处理器映射
-            std::
-                unordered_map<IpcCommandType, IpcCommandHandler::CommandHandler>
-                    g_custom_handlers;
         }
 
         IpcCommandHandler::IpcCommandHandler() : session_id_(0) {}
@@ -98,11 +96,21 @@ namespace Core
         {
             IpcCommandType cmd_type = ExtractCommandType(header);
 
+            std::string _find_log = DAS_FMT_NS::format("[IpcCommandHandler] HandleCommand: cmd_type={}, custom_handlers_.size()={}", 
+                static_cast<int>(cmd_type), custom_handlers_.size());
+            DAS_LOG_INFO(_find_log.c_str());
             // 检查是否有自定义处理器
-            auto it = g_custom_handlers.find(cmd_type);
-            if (it != g_custom_handlers.end())
+            auto it = custom_handlers_.find(cmd_type);
+            if (it != custom_handlers_.end())
             {
+                std::string _found_log = DAS_FMT_NS::format("[IpcCommandHandler] Found custom handler for cmd_type={}", static_cast<int>(cmd_type));
+                DAS_LOG_INFO(_found_log.c_str());
                 return it->second(header, payload, response);
+            }
+            else
+            {
+                std::string _not_found_log = DAS_FMT_NS::format("[IpcCommandHandler] No custom handler for cmd_type={}", static_cast<int>(cmd_type));
+                DAS_LOG_INFO(_not_found_log.c_str());
             }
 
             switch (cmd_type)
@@ -150,7 +158,9 @@ namespace Core
             IpcCommandType command_type,
             CommandHandler handler)
         {
-            g_custom_handlers[command_type] = std::move(handler);
+            std::string _log_msg = DAS_FMT_NS::format("[IpcCommandHandler] RegisterHandler: command_type={}", static_cast<int>(command_type));
+            DAS_LOG_INFO(_log_msg.c_str());
+            custom_handlers_[command_type] = std::move(handler);
         }
 
         DasResult IpcCommandHandler::OnRegisterObject(
@@ -550,102 +560,10 @@ namespace Core
             IpcCommandResponse&      response)
         {
             (void)header;
-
-            if (payload.size() < sizeof(LoadPluginPayload) - sizeof(uint16_t))
-            {
-                response.error_code = DAS_E_IPC_INVALID_MESSAGE_BODY;
-                return DAS_E_IPC_INVALID_MESSAGE_BODY;
-            }
-
-            size_t offset = 0;
-
-            uint16_t plugin_path_len = 0;
-            if (!DeserializeValue(payload, offset, plugin_path_len))
-            {
-                response.error_code = DAS_E_IPC_DESERIALIZATION_FAILED;
-                return DAS_E_IPC_DESERIALIZATION_FAILED;
-            }
-
-            if (plugin_path_len == 0 || plugin_path_len > 4096)
-            {
-                response.error_code = DAS_E_IPC_INVALID_ARGUMENT;
-                return DAS_E_IPC_INVALID_ARGUMENT;
-            }
-
-            if (offset + plugin_path_len > payload.size())
-            {
-                response.error_code = DAS_E_IPC_DESERIALIZATION_FAILED;
-                return DAS_E_IPC_DESERIALIZATION_FAILED;
-            }
-
-            std::string manifest_path;
-            manifest_path.assign(
-                reinterpret_cast<const char*>(payload.data() + offset),
-                plugin_path_len);
-            offset += plugin_path_len;
-
-            auto& plugin_manager =
-                ForeignInterfaceHost::PluginManager::GetInstance();
-
-            Das::PluginInterface::IDasPluginPackage* p_package = nullptr;
-            DasResult result = plugin_manager.LoadPlugin(
-                std::filesystem::path(manifest_path),
-                &p_package);
-
-            if (result != DAS_S_OK)
-            {
-                response.error_code = result;
-                response.response_data.clear();
-                return result;
-            }
-
-            result = plugin_manager.RegisterPluginObjects(
-                std::filesystem::path(manifest_path));
-
-            if (result != DAS_S_OK)
-            {
-                response.error_code = result;
-                response.response_data.clear();
-                return result;
-            }
-
-            RemoteObjectRegistry& registry =
-                RemoteObjectRegistry::GetInstance();
-
-            std::vector<ForeignInterfaceHost::FeatureInfo> features;
-            result = plugin_manager.GetPluginFeatures(
-                std::filesystem::path(manifest_path),
-                features);
-
-            if (result != DAS_S_OK || features.empty())
-            {
-                response.error_code =
-                    result == DAS_S_OK ? DAS_E_IPC_PLUGIN_ENTRY_POINT_NOT_FOUND
-                                       : result;
-                response.response_data.clear();
-                return response.error_code;
-            }
-
-            const auto&      main_feature = features[0];
-            RemoteObjectInfo info;
-            result = registry.GetObjectInfo(main_feature.object_id, info);
-
-            if (result != DAS_S_OK)
-            {
-                response.error_code = result;
-                response.response_data.clear();
-                return result;
-            }
-
-            response.error_code = DAS_S_OK;
-            response.response_data.clear();
-
-            SerializeValue(response.response_data, info.object_id);
-            SerializeValue(response.response_data, info.iid);
-            SerializeValue(response.response_data, info.session_id);
-            SerializeValue(response.response_data, info.version);
-
-            return DAS_S_OK;
+            (void)payload;
+            (void)response;
+            response.error_code = DAS_E_IPC_COMMAND_NOT_REGISTERED;
+            return DAS_E_IPC_COMMAND_NOT_REGISTERED;
         }
 
     }

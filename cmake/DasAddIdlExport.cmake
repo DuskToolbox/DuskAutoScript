@@ -56,6 +56,12 @@
 #   - ${NAME}_GENERATED_WRAPPER_FILES: Wrapper 文件列表
 #   - ${NAME}_GENERATED_SWIG_FILES: SWIG 文件列表（代码生成器生成）
 #   - ${NAME}_USER_SWIG_FILES: 用户指定的 SWIG 文件列表
+#   - ${NAME}_EXPORT_DEFINITIONS: 导出宏定义列表（如 DAS_EXPORT_PYTHON, DAS_EXPORT_JAVA, DAS_EXPORT_CSHARP）
+#   - ${NAME}_GENERATED_FILES: 所有生成的文件列表
+#   - ${NAME}_GENERATED_ABI_FILES: ABI 文件列表
+#   - ${NAME}_GENERATED_WRAPPER_FILES: Wrapper 文件列表
+#   - ${NAME}_GENERATED_SWIG_FILES: SWIG 文件列表（代码生成器生成）
+#   - ${NAME}_USER_SWIG_FILES: 用户指定的 SWIG 文件列表
 
 # 引入依赖模块
 if(NOT COMMAND das_idl_generate)
@@ -89,6 +95,12 @@ endif()
 #   DEPENDS_ON            - SWIG 导出库依赖的其他目标列表（可选，如 DasCore）
 #
 # 输出变量 (通过 PARENT_SCOPE 输出):
+#   ${NAME}_GENERATED_FILES        - 所有生成的文件列表
+#   ${NAME}_GENERATED_ABI_FILES    - ABI 文件列表
+#   ${NAME}_GENERATED_WRAPPER_FILES - Wrapper 文件列表
+#   ${NAME}_GENERATED_SWIG_FILES   - SWIG 文件列表（代码生成器生成）
+#   ${NAME}_USER_SWIG_FILES        - 用户指定的 SWIG 文件列表
+#   ${NAME}_EXPORT_DEFINITIONS     - 导出宏定义列表（如 DAS_EXPORT_PYTHON, DAS_EXPORT_JAVA, DAS_EXPORT_CSHARP）
 #   ${NAME}_GENERATED_FILES        - 所有生成的文件列表
 #   ${NAME}_GENERATED_ABI_FILES    - ABI 文件列表
 #   ${NAME}_GENERATED_WRAPPER_FILES - Wrapper 文件列表
@@ -534,6 +546,21 @@ function(das_add_idl_export)
         endforeach()
     endif()
 
+    # ====== 构建导出宏列表 ======
+    set(_EXPORT_DEFINITIONS "")
+    if(DAS_IDL_EXPORT_LANGUAGES)
+        foreach(_LANG ${DAS_IDL_EXPORT_LANGUAGES})
+            string(TOLOWER "${_LANG}" _LANG_LOWER)
+            if(_LANG_LOWER STREQUAL "python")
+                list(APPEND _EXPORT_DEFINITIONS "DAS_EXPORT_PYTHON")
+            elseif(_LANG_LOWER STREQUAL "java")
+                list(APPEND _EXPORT_DEFINITIONS "DAS_EXPORT_JAVA")
+            elseif(_LANG_LOWER STREQUAL "csharp")
+                list(APPEND _EXPORT_DEFINITIONS "DAS_EXPORT_CSHARP")
+            endif()
+        endforeach()
+    endif()
+
     # ====== 设置输出变量 ======
     if(DAS_IDL_EXPORT_GENERATED_FILES)
         set(${DAS_IDL_EXPORT_GENERATED_FILES} ${_ALL_GENERATED_FILES} PARENT_SCOPE)
@@ -550,6 +577,9 @@ function(das_add_idl_export)
     if(DAS_IDL_EXPORT_GENERATED_IPC_FILES)
         set(${DAS_IDL_EXPORT_GENERATED_IPC_FILES} ${_ALL_IPC_FILES} PARENT_SCOPE)
     endif()
+
+    # 输出导出宏定义列表
+    set(${DAS_IDL_EXPORT_NAME}_EXPORT_DEFINITIONS ${_EXPORT_DEFINITIONS} PARENT_SCOPE)
 
     # 输出目录变量（供外部使用）
     set(${DAS_IDL_EXPORT_NAME}_ABI_OUTPUT_DIR ${_ABI_OUTPUT_DIR} PARENT_SCOPE)
