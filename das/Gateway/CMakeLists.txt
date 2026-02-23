@@ -5,7 +5,7 @@ add_library(DasGateway SHARED ${DAS_GATEWAY_SOURCES} ${DAS_GATEWAY_HEADERS})
 target_include_directories(DasGateway PUBLIC include)
 target_include_directories(DasGateway PRIVATE ../Core/Exceptions/include)
 # 添加abi目录包含路径，以便访问生成的IDL ABI文件（如IDasTypeInfo.h）
-target_include_directories(DasGateway PRIVATE ${CMAKE_BINARY_DIR}/das/include/DAS/_autogen/idl/abi)
+target_include_directories(DasGateway PRIVATE ${CMAKE_BINARY_DIR}/das/include/das/_autogen/idl/abi)
 target_link_libraries(DasGateway PUBLIC Das3rdParty DasUtils DasCommonHeaders Boost::filesystem)
 if(DAS_USE_BUNDLED_BOOST)
     target_link_libraries(DasGateway PUBLIC Boost::dll)

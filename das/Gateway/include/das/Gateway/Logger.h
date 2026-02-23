@@ -4,7 +4,7 @@
 #include <memory>
 #include <spdlog/spdlog.h>
 
-#include <das/gateway/Config.h>
+#include <das/Gateway/Config.h>
 
 DAS_GATEWAY_NS_BEGIN
 

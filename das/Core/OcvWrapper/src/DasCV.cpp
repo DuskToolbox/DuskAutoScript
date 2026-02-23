@@ -5,6 +5,7 @@
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/Expected.h>
 #include <das/Utils/Timer.hpp>
+#include "IDasTemplateMatchResultImpl.h"
 
 DAS_DISABLE_WARNING_BEGIN
 
@@ -45,9 +46,9 @@ DasResult TemplateMatchBest(
     Das::ExportInterface::IDasImage*               p_image,
     Das::ExportInterface::IDasImage*               p_template,
     Das::ExportInterface::DasTemplateMatchType     type,
-    Das::ExportInterface::IDasTemplateMatchResult* p_out_result)
+    Das::ExportInterface::IDasTemplateMatchResult** pp_out_result)
 {
-    DAS_UTILS_CHECK_POINTER(p_out_result)
+    DAS_UTILS_CHECK_POINTER(pp_out_result)
 
     const auto expected_p_image =
         DAS::Core::OcvWrapper::Details::GetDasImageImpl(p_image);
@@ -107,13 +108,13 @@ DasResult TemplateMatchBest(
         score = max_score;
     }
 
-    // TODO: NEW 一个IDasTemplateMatchResult的实现类出来，然后把值都赋进去
-    // p_out_result->match_rect = DAS::DasRect{
-    //     matched_location.x,
-    //     matched_location.y,
-    //     template_mat.cols,
-    //     template_mat.rows};
-    // p_out_result->score = score;
-
+    // Create result object and set values
+    *pp_out_result = DAS::Core::OcvWrapper::IDasTemplateMatchResultImpl::MakeRaw(
+        score,
+        Das::ExportInterface::DasRect{
+            matched_location.x,
+            matched_location.y,
+            template_mat.cols,
+            template_mat.rows});
     return DAS_S_OK;
 }
