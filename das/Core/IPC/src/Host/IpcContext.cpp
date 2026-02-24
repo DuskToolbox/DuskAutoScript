@@ -12,6 +12,12 @@
 #include <atomic>
 #include <thread>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
+
 DAS_NS_BEGIN
 namespace Core
 {
@@ -25,8 +31,8 @@ namespace Core
             class IpcContextImpl
             {
             public:
-                explicit IpcContextImpl(const IpcContextConfig& config)
-                    : config_(config), is_connected_(false), is_running_(false),
+                explicit IpcContextImpl(IpcContext* owner, const IpcContextConfig& config)
+                    : owner_(owner), config_(config), is_connected_(false), is_running_(false),
                       handshake_complete_handler_(nullptr),
                       handshake_user_data_(nullptr)
                 {
@@ -97,7 +103,7 @@ namespace Core
                             if (handshake_complete_handler_ != nullptr)
                             {
                                 handshake_complete_handler_(
-                                    reinterpret_cast<IIpcContext*>(this),
+                                    static_cast<IIpcContext*>(owner_),
                                     DAS_S_OK,
                                     handshake_user_data_);
                             }
@@ -153,11 +159,18 @@ namespace Core
                         });
 
                     // 8. 初始化 Transport（消息队列）
+                    // 使用当前进程 PID 作为消息队列和共享内存的命名基础
+                    uint32_t pid;
+#ifdef _WIN32
+                    pid = GetCurrentProcessId();
+#else
+                    pid = getpid();
+#endif
                     std::string host_to_plugin_queue =
-                        MakeMessageQueueName(session_id_, true);
+                        MakeMessageQueueName(pid, true);
                     std::string plugin_to_host_queue =
-                        MakeMessageQueueName(session_id_, false);
-                    std::string shm_name = MakeSharedMemoryName(session_id_);
+                        MakeMessageQueueName(pid, false);
+                    std::string shm_name = MakeSharedMemoryName(pid);
 
                     IpcTransport* transport = run_loop_->GetTransport();
                     if (!transport)
@@ -375,6 +388,7 @@ namespace Core
                 bool IsConnected() const { return is_connected_; }
 
             private:
+                IpcContext* owner_ = nullptr;
                 IpcContextConfig                          config_;
                 uint16_t                                  session_id_ = 0;
                 std::unique_ptr<DistributedObjectManager> object_manager_;
@@ -394,7 +408,7 @@ namespace Core
             // ====== IpcContext 实现 ======
 
             IpcContext::IpcContext(const IpcContextConfig& config)
-                : impl_(std::make_unique<IpcContextImpl>(config))
+                : impl_(std::make_unique<IpcContextImpl>(this, config))
             {
                 impl_->Initialize();
             }

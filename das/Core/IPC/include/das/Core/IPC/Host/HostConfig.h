@@ -34,7 +34,7 @@ namespace Host
     // 连接超时
     constexpr uint32_t DEFAULT_CONNECTION_TIMEOUT_MS = 30000; // 30 seconds
 
-    // 消息队列命名格式: DAS_Host_<host_pid>_MQ_H2P / DAS_Host_<host_pid>_MQ_P2H
+    // 消息队列命名格式: DAS_Host_<host_pid>_MQ_M2P / DAS_Host_<host_pid>_MQ_H2M
     // 共享内存命名格式: DAS_Host_<host_pid>_SHM
 
     /**
@@ -47,7 +47,7 @@ namespace Host
         bool     is_host_to_plugin)
     {
         return std::string("DAS_Host_") + std::to_string(host_pid) + "_MQ_"
-               + (is_host_to_plugin ? "H2P" : "P2H");
+               + (is_host_to_plugin ? "M2P" : "H2M");
     }
 
     /**

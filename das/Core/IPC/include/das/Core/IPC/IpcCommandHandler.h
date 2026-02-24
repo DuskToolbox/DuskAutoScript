@@ -177,7 +177,7 @@ namespace Core
                 const IPCMessageHeader& header);
 
             uint16_t session_id_;
-            
+
 #pragma warning(push)
 #pragma warning(disable: 4251) // DLL 导出类中使用 STL 容器
             std::unordered_map<IpcCommandType, CommandHandler> custom_handlers_;

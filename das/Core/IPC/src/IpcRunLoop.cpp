@@ -61,7 +61,9 @@ namespace Core
             impl_->running_.store(true);
             impl_->io_thread_ = std::thread([this]() { this->RunInternal(); });
 
-            return DAS_S_OK;
+            // Wait for the message loop to complete
+            auto future = impl_->shutdown_promise_.get_future();
+            return future.get();
         }
 
         DasResult IpcRunLoop::Stop()
