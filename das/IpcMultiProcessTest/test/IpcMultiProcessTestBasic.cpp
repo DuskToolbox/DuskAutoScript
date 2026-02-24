@@ -556,6 +556,7 @@ public:
 
         out_error_code = header.error_code;
 
+        // 如果返回错误码，直接返回成功（表示成功接收了错误响应）
         if (out_error_code != DAS_S_OK)
         {
             std::string err_msg = DAS_FMT_NS::format(
@@ -566,6 +567,7 @@ public:
                              // 包含失败信息)
         }
 
+        // 只有在成功时才解析 body
         using LoadPluginResponsePayload =
             DAS::Core::IPC::LoadPluginResponsePayload;
         if (body.size() < sizeof(LoadPluginResponsePayload))

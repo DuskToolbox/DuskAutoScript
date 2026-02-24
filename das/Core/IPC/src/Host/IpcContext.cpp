@@ -146,11 +146,15 @@ namespace Core
                                 header,
                                 std::span<const uint8_t>(body, body_size),
                                 cmd_response);
-                            if (result == DAS_S_OK
-                                && !cmd_response.response_data.empty())
+                            // 发送响应（成功时需要响应体，失败时只需要错误码）
+                            if ((result == DAS_S_OK && !cmd_response.response_data.empty())
+                                || result != DAS_S_OK)
                             {
+                                // 创建响应头副本并设置错误码
+                                IPCMessageHeader response_header = header;
+                                response_header.error_code = cmd_response.error_code;
                                 run_loop_->SendResponse(
-                                    header,
+                                    response_header,
                                     cmd_response.response_data.data(),
                                     cmd_response.response_data.size());
                             }

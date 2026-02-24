@@ -168,6 +168,7 @@ void HostOnHandshakeComplete(
                     manifest_path);
                 DAS_LOG_ERROR(msg.c_str());
                 response.error_code = DAS_E_IPC_PLUGIN_LOAD_FAILED;
+                response.response_data.clear();
                 return DAS_E_IPC_PLUGIN_LOAD_FAILED;
             }
             
@@ -184,6 +185,7 @@ void HostOnHandshakeComplete(
                     e.what());
                 DAS_LOG_ERROR(msg.c_str());
                 response.error_code = DAS_E_IPC_PLUGIN_LOAD_FAILED;
+                response.response_data.clear();
                 return DAS_E_IPC_PLUGIN_LOAD_FAILED;
             }
             
@@ -203,6 +205,7 @@ void HostOnHandshakeComplete(
                     e.what());
                 DAS_LOG_ERROR(msg.c_str());
                 response.error_code = DAS_E_IPC_PLUGIN_LOAD_FAILED;
+                response.response_data.clear();
                 return DAS_E_IPC_PLUGIN_LOAD_FAILED;
             }
             
@@ -225,6 +228,7 @@ void HostOnHandshakeComplete(
                     dll_path.string());
                 DAS_LOG_ERROR(msg.c_str());
                 response.error_code = DAS_E_IPC_PLUGIN_LOAD_FAILED;
+                response.response_data.clear();
                 return DAS_E_IPC_PLUGIN_LOAD_FAILED;
             }
             
@@ -242,6 +246,7 @@ void HostOnHandshakeComplete(
                     static_cast<uint32_t>(reg_result));
                 DAS_LOG_ERROR(msg.c_str());
                 response.error_code = reg_result;
+                response.response_data.clear();
                 return reg_result;
             }
             
