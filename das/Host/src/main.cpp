@@ -24,6 +24,7 @@
 
 
 #include <das/DasApi.h>
+#include <das/IDasBase.h>
 #include <das/Utils/fmt.h>
 #include <iostream>
 #include <stdexec/execution.hpp>
@@ -244,16 +245,40 @@ void HostOnHandshakeComplete(
                 return reg_result;
             }
             
-            // 序列化响应：编码 object_id 并写入 response_data
-            uint64_t encoded_id = Das::Core::IPC::EncodeObjectId(object_id);
-            
+            // 序列化响应：LoadPluginResponsePayload (28 bytes)
+            // object_id (8 bytes) + iid (16 bytes) + session_id (2 bytes) + version (2 bytes)
             response.error_code = DAS_S_OK;
-            response.response_data.resize(8);
-            std::memcpy(response.response_data.data(), &encoded_id, 8);
+            
+            // Write object_id fields (8 bytes total): session_id(2) + generation(2) + local_id(4)
+            response.response_data.push_back(object_id.session_id & 0xFF);
+            response.response_data.push_back((object_id.session_id >> 8) & 0xFF);
+            response.response_data.push_back(object_id.generation & 0xFF);
+            response.response_data.push_back((object_id.generation >> 8) & 0xFF);
+            response.response_data.push_back(object_id.local_id & 0xFF);
+            response.response_data.push_back((object_id.local_id >> 8) & 0xFF);
+            response.response_data.push_back((object_id.local_id >> 16) & 0xFF);  // byte 2
+            response.response_data.push_back((object_id.local_id >> 24) & 0xFF);  // byte 3
+            
+            // Write iid (16 bytes)
+            const auto& iid = DAS_IID_BASE;
+            response.response_data.insert(
+                response.response_data.end(),
+                reinterpret_cast<const uint8_t*>(&iid),
+                reinterpret_cast<const uint8_t*>(&iid) + sizeof(DasGuid));
+            
+            // Write session_id (2 bytes)
+            response.response_data.push_back(object_id.session_id & 0xFF);
+            response.response_data.push_back((object_id.session_id >> 8) & 0xFF);
+            
+            // Write version (2 bytes) - use 1 as default
+            uint16_t version = 1;
+            response.response_data.push_back(version & 0xFF);
+            response.response_data.push_back((version >> 8) & 0xFF);
             
             std::string log_msg = DAS_FMT_NS::format(
-                "[LOAD_PLUGIN] Plugin loaded, object_id={:#x}",
-                encoded_id);
+                "[LOAD_PLUGIN] Plugin loaded, object_id={{session:{}, gen:{}, local:{}}}, response_size={}",
+                object_id.session_id, object_id.generation, object_id.local_id,
+                response.response_data.size());
             DAS_LOG_INFO(log_msg.c_str());
     return DAS_S_OK;
         });
