@@ -22,7 +22,10 @@ namespace Core
             bool     is_local;
         };
 
-        class DistributedObjectManager
+#ifdef _MSC_VER
+#pragma warning(disable : 4251)
+#endif
+        class DAS_API DistributedObjectManager
         {
         public:
             DistributedObjectManager();
@@ -53,8 +56,12 @@ namespace Core
             struct Impl;
             std::unique_ptr<Impl> impl_;
         };
+#ifdef _MSC_VER
+#pragma warning(default : 4251)
+#endif
     }
 }
+
 DAS_NS_END
 
 #endif // DAS_CORE_IPC_OBJECT_MANAGER_H

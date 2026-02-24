@@ -194,7 +194,14 @@ function(das_add_idl_export)
     set(_UPDATE_LIST_FILE "${DAS_IDL_EXPORT_OUTPUT_DIR}/${DAS_IDL_EXPORT_NAME}_idl_update_list.txt")
     set(_SWIG_DEPS_FILE "${DAS_IDL_EXPORT_OUTPUT_DIR}/${DAS_IDL_EXPORT_NAME}_swig_deps.json")
     set(_SORTED_INTERFACES_FILE "${DAS_IDL_EXPORT_OUTPUT_DIR}/${DAS_IDL_EXPORT_NAME}_sorted_interfaces.txt")
-    set(_GENERATED_STAMP "${_ABI_OUTPUT_DIR}/.generated_stamp")
+
+    # ====== 设置 stamp 目录和文件路径 ======
+    set(_DAS_IDL_STAMP_DIR "${CMAKE_BINARY_DIR}/stamps/das_idl")
+    set(_UPDATE_LIST_STAMP "${_DAS_IDL_STAMP_DIR}/${DAS_IDL_EXPORT_NAME}_idl_update_list.stamp")
+    set(_GENERATED_STAMP "${_DAS_IDL_STAMP_DIR}/${DAS_IDL_EXPORT_NAME}_idl_generated.stamp")
+    set(_SWIG_DEPS_STAMP "${_DAS_IDL_STAMP_DIR}/${DAS_IDL_EXPORT_NAME}_swig_deps.stamp")
+    set(_SORTED_STAMP "${_DAS_IDL_STAMP_DIR}/${DAS_IDL_EXPORT_NAME}_sorted_interfaces.stamp")
+    set(_SWIG_ALL_STAMP "${_DAS_IDL_STAMP_DIR}/${DAS_IDL_EXPORT_NAME}_swig_all.stamp")
 
     # ====== 1. 生成批量配置 JSON 文件 ======
     set(_BATCH_JSON_CONFIG "[\n")
@@ -257,10 +264,11 @@ function(das_add_idl_export)
 
     # ====== 2. 创建增量检查命令和目标 ======
     add_custom_command(
-        OUTPUT ${_UPDATE_LIST_FILE}
+        OUTPUT ${_UPDATE_LIST_FILE} ${_UPDATE_LIST_STAMP}
         COMMAND "${DAS_IDL_VENV_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/das_idl/check_idl_updates.py"
             --config "${_BATCH_CONFIG_FILE}"
             --output "${_UPDATE_LIST_FILE}"
+        COMMAND "${CMAKE_COMMAND}" -E touch "${_UPDATE_LIST_STAMP}"
         DEPENDS ${_FULL_IDL_PATHS} "${_BATCH_CONFIG_FILE}"
             ${_DAS_IDL_MODULE_TOOLS}
         COMMENT "[das_add_idl_export] Check which IDL files need to be regenerated for ${DAS_IDL_EXPORT_NAME}"
@@ -270,7 +278,7 @@ function(das_add_idl_export)
     set(_UPDATE_LIST_TARGET "${DAS_IDL_EXPORT_NAME}IdlUpdateList")
     if(NOT TARGET ${_UPDATE_LIST_TARGET})
         add_custom_target(${_UPDATE_LIST_TARGET}
-            DEPENDS ${_UPDATE_LIST_FILE}
+            DEPENDS ${_UPDATE_LIST_FILE} ${_UPDATE_LIST_STAMP}
         )
     endif()
 
@@ -299,10 +307,11 @@ function(das_add_idl_export)
     if(_NEED_SWIG)
         # 依赖提取命令
         add_custom_command(
-            OUTPUT ${_SWIG_DEPS_FILE}
+            OUTPUT ${_SWIG_DEPS_FILE} ${_SWIG_DEPS_STAMP}
             COMMAND "${DAS_IDL_VENV_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/das_idl/extract_idl_deps.py"
                 --idl-dir "${DAS_IDL_EXPORT_IDL_DIR}"
                 --output "${_SWIG_DEPS_FILE}"
+            COMMAND "${CMAKE_COMMAND}" -E touch "${_SWIG_DEPS_STAMP}"
             DEPENDS ${_FULL_IDL_PATHS}
                 "${CMAKE_SOURCE_DIR}/tools/das_idl/extract_idl_deps.py"
             COMMENT "[das_add_idl_export] Extract IDL interface dependencies for ${DAS_IDL_EXPORT_NAME}"
@@ -312,17 +321,18 @@ function(das_add_idl_export)
         set(_DEPS_EXTRACTED_TARGET "${DAS_IDL_EXPORT_NAME}IdlDepsExtracted")
         if(NOT TARGET ${_DEPS_EXTRACTED_TARGET})
             add_custom_target(${_DEPS_EXTRACTED_TARGET}
-                DEPENDS ${_SWIG_DEPS_FILE}
+                DEPENDS ${_SWIG_DEPS_FILE} ${_SWIG_DEPS_STAMP}
             )
             add_dependencies(${_DEPS_EXTRACTED_TARGET} ${_GENERATED_TARGET})
         endif()
 
         # 拓扑排序命令
         add_custom_command(
-            OUTPUT ${_SORTED_INTERFACES_FILE}
+            OUTPUT ${_SORTED_INTERFACES_FILE} ${_SORTED_STAMP}
             COMMAND "${DAS_IDL_VENV_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/das_idl/topological_sort.py"
                 --deps-file "${_SWIG_DEPS_FILE}"
                 --output "${_SORTED_INTERFACES_FILE}"
+            COMMAND "${CMAKE_COMMAND}" -E touch "${_SORTED_STAMP}"
             DEPENDS ${_SWIG_DEPS_FILE}
                 "${CMAKE_SOURCE_DIR}/tools/das_idl/topological_sort.py"
             COMMENT "[das_add_idl_export] Topological sort of SWIG interfaces for ${DAS_IDL_EXPORT_NAME}"
@@ -332,7 +342,7 @@ function(das_add_idl_export)
         set(_SORTED_TARGET "${DAS_IDL_EXPORT_NAME}SwigInterfacesSorted")
         if(NOT TARGET ${_SORTED_TARGET})
             add_custom_target(${_SORTED_TARGET}
-                DEPENDS ${_SORTED_INTERFACES_FILE}
+                DEPENDS ${_SORTED_INTERFACES_FILE} ${_SORTED_STAMP}
             )
             add_dependencies(${_SORTED_TARGET} ${_DEPS_EXTRACTED_TARGET})
         endif()
@@ -342,17 +352,16 @@ function(das_add_idl_export)
 
         # 生成 swig_all.i 文件（汇总所有 SWIG 接口）
         add_custom_command(
-            OUTPUT "${_SWIG_ALL_I}"
+            OUTPUT "${_SWIG_ALL_I}" ${_SWIG_ALL_STAMP}
             COMMAND ${CMAKE_COMMAND}
                 -DSWIG_OUTPUT_DIR=${_SWIG_OUTPUT_DIR}
                 -DABI_OUTPUT_DIR=${_ABI_OUTPUT_DIR}
                 -DSORTED_INTERFACES_FILE=${_SORTED_INTERFACES_FILE}
                 -P ${CMAKE_SOURCE_DIR}/cmake/generate_swig_all_i.cmake
-            COMMAND ${CMAKE_COMMAND} -E touch ${_SWIG_OUTPUT_DIR}/.swig_all_generated
+            COMMAND ${CMAKE_COMMAND} -E touch "${_SWIG_ALL_STAMP}"
             DEPENDS
                 ${_SORTED_INTERFACES_FILE}
                 ${CMAKE_SOURCE_DIR}/cmake/generate_swig_all_i.cmake
-            BYPRODUCTS ${_SWIG_OUTPUT_DIR}/.swig_all_generated
             COMMENT "Generate SWIG swig_all.i summary file for ${DAS_IDL_EXPORT_NAME}"
             VERBATIM
         )
@@ -361,7 +370,7 @@ function(das_add_idl_export)
         set(_SWIG_ALL_TARGET "${DAS_IDL_EXPORT_NAME}SwigAllGenerated")
         if(NOT TARGET ${_SWIG_ALL_TARGET})
             add_custom_target(${_SWIG_ALL_TARGET}
-                DEPENDS "${_SWIG_ALL_I}"
+                DEPENDS "${_SWIG_ALL_I}" ${_SWIG_ALL_STAMP}
             )
             add_dependencies(${_SWIG_ALL_TARGET} ${_SORTED_TARGET})
         endif()

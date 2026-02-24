@@ -1,0 +1,200 @@
+#include <das/Core/IPC/MainProcess/IIpcContext.h>
+#include <das/Core/IPC/MainProcess/IpcContext.h>
+#include <das/Core/IPC/MainProcess/MainProcessServer.h>
+#include <das/Core/IPC/ObjectManager.h>
+#include <das/Core/IPC/ProxyFactory.h>
+#include <das/Core/IPC/RemoteObjectRegistry.h>
+#include <das/Core/IPC/SessionCoordinator.h>
+
+DAS_NS_BEGIN
+namespace Core
+{
+    namespace IPC
+    {
+        namespace MainProcess
+        {
+            /**
+             * @brief IpcContext 的实现类
+             */
+            class IpcContextImpl
+            {
+            public:
+                IpcContextImpl() = default;
+                ~IpcContextImpl() = default;
+
+                DasResult Initialize()
+                {
+                    DasResult result = DAS_S_OK;
+
+                    // 1. 初始化 SessionCoordinator（主进程 session_id = 1）
+                    auto& coordinator = SessionCoordinator::GetInstance();
+                    coordinator.SetLocalSessionId(1);
+
+                    // 2. 创建并初始化 DistributedObjectManager
+                    object_manager_ =
+                        std::make_unique<DistributedObjectManager>();
+                    result = object_manager_->Initialize(1);
+                    if (result != DAS_S_OK)
+                    {
+                        object_manager_.reset();
+                        return result;
+                    }
+
+                    // 3. 初始化 ProxyFactory
+                    auto& proxy_factory = ProxyFactory::GetInstance();
+                    result = proxy_factory.Initialize(
+                        object_manager_.get(),
+                        &RemoteObjectRegistry::GetInstance(),
+                        nullptr); // run_loop 留空，由 MainProcessServer 设置
+                    if (result != DAS_S_OK)
+                    {
+                        object_manager_->Shutdown();
+                        object_manager_.reset();
+                        return result;
+                    }
+
+                    // 4. 初始化 MainProcessServer
+                    auto& server = MainProcessServer::GetInstance();
+                    result = server.Initialize();
+                    if (result != DAS_S_OK)
+                    {
+                        object_manager_->Shutdown();
+                        object_manager_.reset();
+                        return result;
+                    }
+
+                    is_initialized_ = true;
+                    return DAS_S_OK;
+                }
+
+                DasResult Shutdown()
+                {
+                    if (!is_initialized_)
+                    {
+                        return DAS_S_OK;
+                    }
+
+                    DasResult result = DAS_S_OK;
+
+                    // 停止 MainProcessServer
+                    auto&     server = MainProcessServer::GetInstance();
+                    DasResult shutdown_result = server.Shutdown();
+                    if (shutdown_result != DAS_S_OK)
+                    {
+                        result = shutdown_result;
+                    }
+
+                    // 清理 ProxyFactory
+                    auto& proxy_factory = ProxyFactory::GetInstance();
+                    proxy_factory.ClearAllProxies();
+
+                    // 关闭 DistributedObjectManager
+                    if (object_manager_)
+                    {
+                        DasResult object_result = object_manager_->Shutdown();
+                        if (object_result != DAS_S_OK)
+                        {
+                            result = object_result;
+                        }
+                        object_manager_.reset();
+                    }
+
+                    is_initialized_ = false;
+                    return result;
+                }
+
+                MainProcessServer& GetServer()
+                {
+                    return MainProcessServer::GetInstance();
+                }
+
+                DistributedObjectManager& GetObjectManager()
+                {
+                    return *object_manager_;
+                }
+
+                ProxyFactory& GetProxyFactory()
+                {
+                    return ProxyFactory::GetInstance();
+                }
+
+                RemoteObjectRegistry& GetRegistry()
+                {
+                    return RemoteObjectRegistry::GetInstance();
+                }
+
+            private:
+                std::unique_ptr<DistributedObjectManager> object_manager_;
+                bool is_initialized_ = false;
+            };
+
+            // ====== IpcContext 实现（RAII 风格）======
+
+            IpcContext::IpcContext() : impl_(std::make_unique<IpcContextImpl>())
+            {
+                // 构造即初始化
+                impl_->Initialize();
+            }
+
+            IpcContext::~IpcContext()
+            {
+                // 析构即清理
+                if (impl_)
+                {
+                    impl_->Shutdown();
+                }
+            }
+
+            MainProcessServer& IpcContext::GetServer()
+            {
+                return impl_->GetServer();
+            }
+
+            DistributedObjectManager& IpcContext::GetObjectManager()
+            {
+                return impl_->GetObjectManager();
+            }
+
+            ProxyFactory& IpcContext::GetProxyFactory()
+            {
+                return impl_->GetProxyFactory();
+            }
+
+            RemoteObjectRegistry& IpcContext::GetRegistry()
+            {
+                return impl_->GetRegistry();
+            }
+
+            // ====== C API 实现 ======
+
+            DAS_API IIpcContext* CreateIpcContext()
+            {
+                try
+                {
+                    // 构造即初始化（RAII）
+                    auto* context{new IpcContext()};
+                    return context;
+                }
+                catch (...)
+                {
+                    return nullptr;
+                }
+            }
+
+            DAS_API void DestroyIpcContext(IIpcContext* ctx)
+            {
+                // 析构即清理（RAII）
+                delete ctx;
+            }
+
+            // ====== IpcContextDeleter 实现 ======
+
+            void IpcContextDeleter::operator()(IIpcContext* ctx) const
+            {
+                DestroyIpcContext(ctx);
+            }
+
+        } // namespace MainProcess
+    } // namespace IPC
+} // namespace Core
+DAS_NS_END
