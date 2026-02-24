@@ -661,12 +661,24 @@ das_add_auto_copy_dll_path($<TARGET_FILE:DasCore>)
 # 拷贝外部 OpenCV DLL（如果使用外部 OpenCV）
 # 注意：OpenCV 找到后会设置 OpenCV_DIR 变量，指向构建目录
 if(DEFINED OpenCV_DIR AND NOT BUILD_opencv_world)
-    # 外部 OpenCV 通常提供 opencv_world DLL
-    if(EXISTS "${OpenCV_DIR}/bin/opencv_world4130d.dll")
-        das_add_auto_copy_dll_path("${OpenCV_DIR}/bin/opencv_world4130d.dll")
-        message(STATUS "Configuring to copy opencv_world4130d.dll from ${OpenCV_DIR}/bin/")
-    elseif(EXISTS "${OpenCV_DIR}/x64/vc16/bin/opencv_world4130d.dll")
-        das_add_auto_copy_dll_path("${OpenCV_DIR}/x64/vc16/bin/opencv_world4130d.dll")
-        message(STATUS "Configuring to copy opencv_world4130d.dll from ${OpenCV_DIR}/x64/vc16/bin/")
+    # 外部 OpenCV 通常提供 opencv_world DLL，动态匹配版本号
+    file(GLOB_RECURSE OPENCV_WORLD_DLL "${OpenCV_DIR}/bin/opencv_world*d.dll")
+    if(OPENCV_WORLD_DLL)
+        das_add_auto_copy_dll_path("${OPENCV_WORLD_DLL}")
+        message(STATUS "Configuring to copy opencv_world DLL from ${OpenCV_DIR}//bin/")
+    else()
+        file(GLOB_RECURSE OPENCV_WORLD_DLL "${OpenCV_DIR}/x64/vc16/bin/opencv_world*d.dll")
+        if(OPENCV_WORLD_DLL)
+            das_add_auto_copy_dll_path("${OPENCV_WORLD_DLL}")
+            message(STATUS "Configuring to copy opencv_world DLL from ${OpenCV_DIR}/x64/vc16/bin/")
+        endif()
+    endif()
+endif()
+
+if (NOT ${DAS_USE_BUNDLED_BOOST})
+    link_directories(${Boost_LIBRARY_DIRS})
+    if (${DAS_USE_ASAN})
+        # Boost 不提供ASAN的静态库
+        target_link_libraries(Das3rdParty INTERFACE Boost::dynamic_linking)
     endif()
 endif()
