@@ -30,39 +30,13 @@ if(WIN32)
     target_link_libraries(DasAdbCapture PRIVATE Ws2_32)
     target_link_libraries(DasAdbTouch PRIVATE Ws2_32)
     target_link_libraries(DasWindowsCapture PRIVATE Ws2_32)
-endif()
-
-target_include_directories(DasAdbCapture PRIVATE ${gzip-hpp_SOURCE_DIR}/include)
-
-if(DAS_USE_BUNDLED_BOOST)
-    target_link_libraries(DasAdbCapture PUBLIC
-        Boost::process
-        Boost::container_hash
-        Boost::url
-        Boost::asio
-        Boost::pfr)
-    target_link_libraries(DasAdbTouch PUBLIC
-        Boost::process
-        Boost::url
-        Boost::asio
-        Boost::pfr)
-    # TODO: WindowsCodeConversion and WindowsApp libraries are not defined
-    # Commented out to fix linker errors
-    # target_link_libraries(DasWindowsCapture PRIVATE
-    #     WindowsApp
-    #     WindowsCodeConversion)
-
-    # Add DirectX 11 and Windows Runtime libraries
+    # DirectX 11 and Windows Runtime libraries for WindowsGraphicsCapture
     target_link_libraries(DasWindowsCapture PRIVATE
         d3d11.lib
         windowsapp.lib)
-else()
-    target_include_directories(DasAdbCapture PUBLIC ${Boost_INCLUDE_DIRS})
-    target_link_libraries(DasAdbCapture PRIVATE ${Boost_LIBRARIES})
-
-    target_include_directories(DasAdbTouch PUBLIC ${Boost_INCLUDE_DIRS})
-    target_link_libraries(DasAdbTouch PRIVATE ${Boost_LIBRARIES})
 endif()
+
+
 
 target_include_directories(DasAdbCapture PRIVATE ${gzip-hpp_SOURCE_DIR}/include)
 
