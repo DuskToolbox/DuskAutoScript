@@ -6,6 +6,11 @@
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
+#include <das/Core/IPC/ObjectManager.h>
+#include <das/Core/IPC/ProxyFactory.h>
+#include <das/Core/IPC/ObjectId.h>
+
+
 #include <filesystem>
 #include <unordered_map>
 
@@ -562,8 +567,53 @@ namespace Core
             (void)header;
             (void)payload;
             (void)response;
-            response.error_code = DAS_E_IPC_COMMAND_NOT_REGISTERED;
-            return DAS_E_IPC_COMMAND_NOT_REGISTERED;
+
+            // 1. 解析响应：encoded_object_id
+            if (payload.size() < 8)
+            {
+                response.error_code = DAS_E_IPC_INVALID_MESSAGE_BODY;
+                return DAS_E_IPC_INVALID_MESSAGE_BODY;
+            }
+
+            uint64_t encoded_id;
+            std::memcpy(&encoded_id, payload.data(), 8);
+            ObjectId object_id = DecodeObjectId(encoded_id);
+
+            // 2. 注册到 RemoteObjectRegistry
+            auto& registry = RemoteObjectRegistry::GetInstance();
+            DasResult result = registry.RegisterObject(
+                object_id,
+                DAS_IID_BASE,        // iid = IDasBase
+                header.session_id,   // 来自哪个 Host
+                "loaded_plugin",     // name
+                1                    // version
+            );
+
+            if (DAS::IsFailed(result))
+            {
+                response.error_code = result;
+                return result;
+            }
+
+            // TODO: DistributedObjectManager 没有 GetInstance() 单例方法，需要后续实现
+            // // 3. 注册到 DistributedObjectManager（标记为远程对象）
+            // result = DistributedObjectManager::GetInstance().RegisterRemoteObject(object_id);
+            // if (DAS::IsFailed(result))
+            // {
+            //     response.error_code = result;
+            //     return result;
+            // }
+
+            // 4. 创建 Proxy<IDasBase>
+            auto proxy = ProxyFactory::GetInstance().CreateProxy<IDasBase>(object_id);
+            if (!proxy)
+            {
+                response.error_code = DAS_E_FAIL;
+                return DAS_E_FAIL;
+            }
+
+            response.error_code = DAS_S_OK;
+            return DAS_S_OK;
         }
 
     }

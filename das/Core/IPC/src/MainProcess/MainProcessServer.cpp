@@ -4,10 +4,6 @@
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/SessionCoordinator.h>
 
-#ifndef DAS_FAILED
-#define DAS_FAILED(result) ((result) != DAS_S_OK)
-#endif
-
 #ifndef DAS_E_NOT_IMPLEMENTED
 #define DAS_E_NOT_IMPLEMENTED DAS_E_NO_IMPLEMENTATION
 #endif
@@ -253,7 +249,7 @@ namespace Core
                 registry
                     .RegisterObject(object_id, iid, session_id, name, version);
 
-            if (DAS_FAILED(result))
+            if (DAS::IsFailed(result))
             {
                 return result;
             }
@@ -295,7 +291,7 @@ namespace Core
                     object_id,
                     info);
 
-            if (DAS_FAILED(result))
+            if (DAS::IsFailed(result))
             {
                 return result;
             }
@@ -303,7 +299,7 @@ namespace Core
             result =
                 RemoteObjectRegistry::GetInstance().UnregisterObject(object_id);
 
-            if (DAS_FAILED(result))
+            if (DAS::IsFailed(result))
             {
                 return result;
             }
@@ -400,7 +396,7 @@ namespace Core
             }
 
             DasResult result = ValidateTargetObject(header);
-            if (DAS_FAILED(result))
+            if (DAS::IsFailed(result))
             {
                 return result;
             }

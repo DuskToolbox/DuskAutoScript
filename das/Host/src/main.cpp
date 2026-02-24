@@ -15,6 +15,11 @@
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/MessageQueueTransport.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
+#include <das/Core/IPC/ObjectManager.h>
+#include <das/Core/IPC/ObjectId.h>
+
+
+
 #include <das/DasApi.h>
 #include <das/Utils/fmt.h>
 #include <iostream>
@@ -45,6 +50,7 @@ static Das::Core::IPC::IpcCommandHandler                 g_command_handler;
 static std::unique_ptr<Das::Core::IPC::SharedMemoryPool> g_shared_memory;
 static Das::Core::IPC::IpcRunLoop                        g_run_loop;
 static uint32_t                                          g_host_pid = 0;
+static Das::Core::IPC::DistributedObjectManager g_object_manager;
 
 namespace
 {
@@ -120,6 +126,17 @@ static DasResult InitializeIpcResources()
 
     // Set session ID for command handler
     g_command_handler.SetSessionId(g_host_pid);
+
+    // Initialize distributed object manager
+    DasResult obj_mgr_result = g_object_manager.Initialize(g_host_pid);
+    if (obj_mgr_result != DAS_S_OK)
+    {
+        std::string msg = DAS_FMT_NS::format(
+            "Failed to initialize distributed object manager: 0x{:08X}",
+            obj_mgr_result);
+        DAS_LOG_ERROR(msg.c_str());
+        return obj_mgr_result;
+    }
 
     // Initialize handshake handler
     DasResult handshake_result = g_handshake_handler.Initialize(g_host_pid);
@@ -411,8 +428,35 @@ int main(int argc, char* argv[])
                     return DAS_E_IPC_PLUGIN_LOAD_FAILED;
                 }
 
-                // TODO: Serialize plugin info to response
+                // 注册插件对象到 DistributedObjectManager
+                auto plugin_ptr = result.value();
+                Das::Core::IPC::ObjectId object_id;
+                DasResult reg_result = g_object_manager.RegisterLocalObject(
+                    plugin_ptr.Get(),
+                    object_id);
+
+                if (DAS::IsFailed(reg_result))
+                {
+                    std::string msg = DAS_FMT_NS::format(
+                        "[LOAD_PLUGIN] Failed to register object: {:#x}",
+                        static_cast<uint32_t>(reg_result));
+                    DAS_LOG_ERROR(msg.c_str());
+                    response.error_code = reg_result;
+                    return reg_result;
+                }
+
+                // 序列化响应：编码 object_id 并写入 response_data
+                uint64_t encoded_id = Das::Core::IPC::EncodeObjectId(object_id);
+
                 response.error_code = DAS_S_OK;
+                response.response_data.resize(8);
+                std::memcpy(response.response_data.data(), &encoded_id, 8);
+
+                std::string log_msg = DAS_FMT_NS::format(
+                    "[LOAD_PLUGIN] Plugin loaded, object_id={:#x}",
+                    encoded_id);
+                DAS_LOG_INFO(log_msg.c_str());
+
                 return DAS_S_OK;
             });
 
