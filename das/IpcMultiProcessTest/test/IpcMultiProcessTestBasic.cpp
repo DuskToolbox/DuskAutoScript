@@ -1083,12 +1083,12 @@ TEST_F(IpcMultiProcessTest, Handshake_ReadyAckInit)
 
 TEST_F(IpcMultiProcessTest, MessageQueueNameGeneration)
 {
-    std::string h2p_name = DAS::Core::IPC::Host::MakeMessageQueueName(12345, true);
-    std::string p2h_name = DAS::Core::IPC::Host::MakeMessageQueueName(12345, false);
+    std::string m2p_name = DAS::Core::IPC::Host::MakeMessageQueueName(12345, true);
+    std::string h2m_name = DAS::Core::IPC::Host::MakeMessageQueueName(12345, false);
 
-    EXPECT_TRUE(h2p_name.find("DAS_Host_12345_MQ_H2P") != std::string::npos);
-    EXPECT_TRUE(p2h_name.find("DAS_Host_12345_MQ_P2H") != std::string::npos);
-    EXPECT_NE(h2p_name, p2h_name);
+    EXPECT_TRUE(m2p_name.find("DAS_Host_12345_MQ_M2P") != std::string::npos);
+    EXPECT_TRUE(h2m_name.find("DAS_Host_12345_MQ_H2M") != std::string::npos);
+    EXPECT_NE(m2p_name, h2m_name);
 }
 
 TEST_F(IpcMultiProcessTest, SharedMemoryNameGeneration)
