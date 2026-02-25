@@ -254,7 +254,7 @@ class IpcSerializerCodeGenerator:
         
         # 写入对象开始标记
         lines.append(f"{inner_indent}DasResult result = writer.WriteObjectBegin();")
-        lines.append(f"{inner_indent}if (DAS_FAILED(result))")
+        lines.append(f"{inner_indent}if (DAS::IsFailed(result))")
         lines.append(f"{inner_indent}{{")
         lines.append(f"{inner_indent}    return result;")
         lines.append(f"{inner_indent}}}")
@@ -271,7 +271,7 @@ class IpcSerializerCodeGenerator:
                 # 假设是另一个 struct，递归调用
                 lines.append(f"{inner_indent}result = Serialize_{field.type_name}(writer, value.{field.name});")
             
-            lines.append(f"{inner_indent}if (DAS_FAILED(result))")
+        lines.append(f"{inner_indent}if (DAS::IsFailed(result))")
             lines.append(f"{inner_indent}{{")
             lines.append(f"{inner_indent}    return result;")
             lines.append(f"{inner_indent}}}")
@@ -291,7 +291,7 @@ class IpcSerializerCodeGenerator:
         
         # 读取对象开始标记
         lines.append(f"{inner_indent}DasResult result = reader.ReadObjectBegin();")
-        lines.append(f"{inner_indent}if (DAS_FAILED(result))")
+        lines.append(f"{inner_indent}if (DAS::IsFailed(result))")
         lines.append(f"{inner_indent}{{")
         lines.append(f"{inner_indent}    return result;")
         lines.append(f"{inner_indent}}}")
@@ -308,7 +308,7 @@ class IpcSerializerCodeGenerator:
                 # 假设是另一个 struct，递归调用
                 lines.append(f"{inner_indent}result = Deserialize_{field.type_name}(reader, &value->{field.name});")
             
-            lines.append(f"{inner_indent}if (DAS_FAILED(result))")
+        lines.append(f"{inner_indent}if (DAS::IsFailed(result))")
             lines.append(f"{inner_indent}{{")
             lines.append(f"{inner_indent}    return result;")
             lines.append(f"{inner_indent}}}")
@@ -361,7 +361,7 @@ class IpcSerializerCodeGenerator:
         lines.append(f"{indent}{{")
         lines.append(f"{inner_indent}int32_t temp;")
         lines.append(f"{inner_indent}DasResult result = reader.ReadInt32(&temp);")
-        lines.append(f"{inner_indent}if (DAS_SUCCEEDED(result))")
+        lines.append(f"{inner_indent}if (DAS::IsOk(result))")
         lines.append(f"{inner_indent}{{")
         lines.append(f"{inner_indent}    *value = static_cast<{enum.name}>(temp);")
         lines.append(f"{inner_indent}}}")
