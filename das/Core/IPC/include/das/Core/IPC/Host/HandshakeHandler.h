@@ -80,7 +80,7 @@ namespace Core
              * run_loop.RegisterHandler(std::move(handler));
              * @endcode
              */
-            class DAS_API HandshakeHandler : public IMessageHandler
+            class HandshakeHandler : public IMessageHandler
             {
             public:
                 static constexpr uint32_t INTERFACE_ID = 0x00000001; // 握手协议
@@ -216,6 +216,15 @@ namespace Core
                  */
                 bool IsInitialized() const;
 
+                /**
+                 * @brief 设置 IpcRunLoop 指针
+                 *
+                 * 用于 WAKEUP 消息处理时触发 RunLoop 处理投递的回调。
+                 *
+                 * @param run_loop RunLoop 指针
+                 */
+                void SetRunLoop(IpcRunLoop* run_loop);
+
             private:
                 /**
                  * @brief 处理 HelloRequestV1
@@ -290,6 +299,9 @@ namespace Core
                     on_client_connected_; ///< 客户端连接回调
                 ClientDisconnectedCallback
                     on_client_disconnected_; ///< 客户端断开回调
+
+                IpcRunLoop* run_loop_ =
+                    nullptr; ///< RunLoop 指针（用于 WAKEUP 消息）
             };
 
         } // namespace Host

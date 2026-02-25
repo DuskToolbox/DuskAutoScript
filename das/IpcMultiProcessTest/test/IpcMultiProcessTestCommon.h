@@ -197,7 +197,7 @@ public:
         header.header_flags = 0;
         header.call_id = next_call_id_++;
         header.interface_id = static_cast<uint32_t>(
-            DAS::Core::IPC::HandshakeInterfaceId::HandshakeHello);
+            DAS::Core::IPC::HANDSHAKE_IFACE_HELLO);
         header.method_id = 0;
         header.flags = 0;
         header.error_code = 0;
@@ -252,7 +252,7 @@ public:
 
         if (header.interface_id
             != static_cast<uint32_t>(
-                DAS::Core::IPC::HandshakeInterfaceId::HandshakeHello))
+                DAS::Core::IPC::HANDSHAKE_IFACE_HELLO))
         {
             std::string msg = DAS_FMT_NS::format(
                 "Unexpected interface_id: {}",
@@ -298,7 +298,7 @@ public:
         header.header_flags = 0;
         header.call_id = next_call_id_++;
         header.interface_id = static_cast<uint32_t>(
-            DAS::Core::IPC::HandshakeInterfaceId::HandshakeReady);
+            DAS::Core::IPC::HANDSHAKE_IFACE_READY);
         header.method_id = 0;
         header.flags = 0;
         header.error_code = 0;
@@ -351,7 +351,7 @@ public:
 
         if (header.interface_id
             != static_cast<uint32_t>(
-                DAS::Core::IPC::HandshakeInterfaceId::HandshakeReady))
+                DAS::Core::IPC::HANDSHAKE_IFACE_READY))
         {
             std::string msg = DAS_FMT_NS::format(
                 "Unexpected interface_id: {}",

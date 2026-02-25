@@ -67,9 +67,27 @@ namespace Core
                         return result;
                     }
 
-                    // 3. 创建 IpcRunLoop
-                    run_loop_ = std::make_unique<IpcRunLoop>();
-                    result = run_loop_->Initialize();
+                    // 3. 先创建并初始化 Transport（确保 Transport 在 RunLoop
+                    // 之前就绪） 使用当前进程 PID
+                    // 作为消息队列和共享内存的命名基础
+                    uint32_t pid;
+#ifdef _WIN32
+                    pid = GetCurrentProcessId();
+#else
+                    pid = getpid();
+#endif
+                    std::string host_to_plugin_queue =
+                        MakeMessageQueueName(pid, true);
+                    std::string plugin_to_host_queue =
+                        MakeMessageQueueName(pid, false);
+                    std::string shm_name = MakeSharedMemoryName(pid);
+
+                    auto transport = std::make_unique<IpcTransport>();
+                    result = transport->Initialize(
+                        host_to_plugin_queue,
+                        plugin_to_host_queue,
+                        DEFAULT_MAX_MESSAGE_SIZE,
+                        DEFAULT_MAX_MESSAGES);
                     if (result != DAS_S_OK)
                     {
                         object_manager_->Shutdown();
@@ -78,11 +96,43 @@ namespace Core
                         return result;
                     }
 
-                    // 4. 创建并初始化 IpcCommandHandler
+                    // 4. 初始化 SharedMemoryPool
+                    shared_memory_ = std::make_unique<SharedMemoryPool>();
+                    result = shared_memory_->Initialize(
+                        shm_name,
+                        DEFAULT_SHARED_MEMORY_SIZE);
+                    if (result != DAS_S_OK)
+                    {
+                        object_manager_->Shutdown();
+                        object_manager_.reset();
+                        coordinator.ReleaseSessionId(session_id_);
+                        return result;
+                    }
+
+                    // 5. 将 SharedMemoryPool 设置到 Transport
+                    result =
+                        transport->SetSharedMemoryPool(shared_memory_.get());
+                    if (result != DAS_S_OK)
+                    {
+                        shared_memory_->Shutdown();
+                        shared_memory_.reset();
+                        object_manager_->Shutdown();
+                        object_manager_.reset();
+                        coordinator.ReleaseSessionId(session_id_);
+                        return result;
+                    }
+
+                    // 6. 创建 IpcRunLoop（此时 Transport 已就绪）
+                    run_loop_ = std::make_unique<IpcRunLoop>();
+                    run_loop_->SetTransport(std::move(transport));
+                    // 注意：不再调用 run_loop_->Initialize()，因为 Transport
+                    // 已通过 SetTransport 设置
+
+                    // 7. 创建并初始化 IpcCommandHandler
                     command_handler_ = std::make_unique<IpcCommandHandler>();
                     command_handler_->SetSessionId(session_id_);
 
-                    // 5. 创建并初始化 HandshakeHandler
+                    // 8. 创建并初始化 HandshakeHandler
                     handshake_handler_ = std::make_unique<HandshakeHandler>();
                     result = handshake_handler_->Initialize(session_id_);
                     if (result != DAS_S_OK)
@@ -95,7 +145,7 @@ namespace Core
                         return result;
                     }
 
-                    // 6. 设置 HandshakeHandler 的客户端连接回调
+                    // 9. 设置 HandshakeHandler 的客户端连接回调
                     handshake_handler_->SetOnClientConnected(
                         [this](const ConnectedClient& /*client*/)
                         {
@@ -119,7 +169,7 @@ namespace Core
                             is_connected_ = false;
                         });
 
-                    // 7. 注册消息处理器
+                    // 10. 注册消息处理器
                     run_loop_->RegisterHandler(
                         std::make_unique<MessageHandlerRef>(
                             handshake_handler_.get()));
@@ -127,84 +177,6 @@ namespace Core
                     run_loop_->RegisterHandler(
                         std::make_unique<MessageHandlerRef>(
                             command_handler_.get()));
-
-                    // 8. 初始化 Transport（消息队列）
-                    // 使用当前进程 PID 作为消息队列和共享内存的命名基础
-                    uint32_t pid;
-#ifdef _WIN32
-                    pid = GetCurrentProcessId();
-#else
-                    pid = getpid();
-#endif
-                    std::string host_to_plugin_queue =
-                        MakeMessageQueueName(pid, true);
-                    std::string plugin_to_host_queue =
-                        MakeMessageQueueName(pid, false);
-                    std::string shm_name = MakeSharedMemoryName(pid);
-
-                    IpcTransport* transport = run_loop_->GetTransport();
-                    if (!transport)
-                    {
-                        handshake_handler_->Shutdown();
-                        handshake_handler_.reset();
-                        run_loop_->Shutdown();
-                        run_loop_.reset();
-                        object_manager_->Shutdown();
-                        object_manager_.reset();
-                        coordinator.ReleaseSessionId(session_id_);
-                        return DAS_E_FAIL;
-                    }
-
-                    result = transport->Initialize(
-                        host_to_plugin_queue,
-                        plugin_to_host_queue,
-                        DEFAULT_MAX_MESSAGE_SIZE,
-                        DEFAULT_MAX_MESSAGES);
-                    if (result != DAS_S_OK)
-                    {
-                        handshake_handler_->Shutdown();
-                        handshake_handler_.reset();
-                        run_loop_->Shutdown();
-                        run_loop_.reset();
-                        object_manager_->Shutdown();
-                        object_manager_.reset();
-                        coordinator.ReleaseSessionId(session_id_);
-                        return result;
-                    }
-
-                    // 9. 初始化 SharedMemoryPool
-                    shared_memory_ = std::make_unique<SharedMemoryPool>();
-                    result = shared_memory_->Initialize(
-                        shm_name,
-                        DEFAULT_SHARED_MEMORY_SIZE);
-                    if (result != DAS_S_OK)
-                    {
-                        handshake_handler_->Shutdown();
-                        handshake_handler_.reset();
-                        run_loop_->Shutdown();
-                        run_loop_.reset();
-                        object_manager_->Shutdown();
-                        object_manager_.reset();
-                        coordinator.ReleaseSessionId(session_id_);
-                        return result;
-                    }
-
-                    // 10. 将 SharedMemoryPool 设置到 Transport
-                    result =
-                        transport->SetSharedMemoryPool(shared_memory_.get());
-                    if (result != DAS_S_OK)
-                    {
-                        shared_memory_->Shutdown();
-                        shared_memory_.reset();
-                        handshake_handler_->Shutdown();
-                        handshake_handler_.reset();
-                        run_loop_->Shutdown();
-                        run_loop_.reset();
-                        object_manager_->Shutdown();
-                        object_manager_.reset();
-                        coordinator.ReleaseSessionId(session_id_);
-                        return result;
-                    }
 
                     is_initialized_ = true;
                     return DAS_S_OK;

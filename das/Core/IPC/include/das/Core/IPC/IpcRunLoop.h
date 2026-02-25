@@ -9,6 +9,8 @@
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcResponseSender.h>
 #include <das/IDasBase.h>
+#include <functional>
+#include <queue>
 
 #include <memory>
 #include <mutex>
@@ -25,6 +27,11 @@ namespace Core
     {
         class IMessageHandler;
         class IpcTransport;
+
+        namespace Host
+        {
+            class HandshakeHandler;
+        }
     }
 }
 DAS_NS_END
@@ -46,12 +53,13 @@ namespace Core
             bool                 completed;
         };
 
+        /// 投递的回调类型
+        using PostedCallback = std::function<void()>;
+
         // 内部类型，不对外导出
         class IpcRunLoop
         {
         public:
-
-
             IpcRunLoop();
             ~IpcRunLoop();
 
@@ -69,7 +77,6 @@ namespace Core
             // 等待消息循环结束
             DasResult WaitForShutdown();
 
-
             /**
              * @brief 注册消息处理器
              * @param handler 处理器实例（所有权转移）
@@ -83,8 +90,6 @@ namespace Core
              */
             [[nodiscard]]
             IMessageHandler* GetHandler(uint32_t interface_id) const;
-
-
 
             /**
              * @brief 同步阻塞 IPC 调用（类似 Win32 SendMessage）
@@ -134,7 +139,39 @@ namespace Core
 
             bool IsRunning() const;
 
-        private:
+            //=========================================================================
+            // PostMessage API
+            //=========================================================================
+
+            /// 投递一个回调到 RunLoop 线程执行
+            /// 线程安全，可从任意线程调用
+            /// @param callback 要执行的回调
+            void PostMessage(PostedCallback callback);
+
+            /// 投递"启动 Host"任务
+            /// RunLoop 会管理 HostLauncher 的生命周期
+            /// @param plugin_path 插件 manifest 路径
+            /// @param on_complete 完成回调（可选）
+            void PostStartHost(
+                const std::string& plugin_path,
+                std::function<void(DasResult result, uint16_t session_id)>
+                    on_complete = nullptr);
+
+            /// 投递"停止 Host"任务
+            /// @param session_id 要停止的 Host 的 session_id
+            void PostStopHost(uint16_t session_id);
+            friend class ::Das::Core::IPC::Host::HandshakeHandler;
+
+            //=========================================================================
+            // PostMessage 内部实现
+            //=========================================================================
+
+            /// 发送唤醒消息（内部使用）
+            void SendWakeupMessage();
+
+            /// 处理投递的回调（由 HandshakeHandler 调用）
+            void ProcessPostedCallbacks();
+
             DasResult ProcessMessage(
                 const IPCMessageHeader& header,
                 const uint8_t*          body,
@@ -165,6 +202,19 @@ namespace Core
             std::atomic<DasResult> exit_code_{DAS_S_OK};
             std::thread            io_thread_;
             std::mutex             pending_mutex_;
+
+            //=========================================================================
+            // PostMessage 成员
+            //=========================================================================
+
+            /// 投递回调队列
+            std::mutex                 post_queue_mutex_;
+            std::queue<PostedCallback> post_queue_;
+
+            /// 管理的 Host 进程（预留，HostLauncher 在 Wave 5 实现）
+            std::mutex hosts_mutex_;
+            std::unordered_map<uint16_t, void*>
+                hosts_; // 先用 void*，后续替换为 HostLauncher*
         };
 
     }
@@ -188,7 +238,8 @@ namespace Core
         {
             // 使用同步实现包装
             std::vector<uint8_t> response;
-            DasResult result = SendMessage(request_header, body, body_size, response);
+            DasResult            result =
+                SendMessage(request_header, body, body_size, response);
             return stdexec::just(std::make_pair(result, std::move(response)));
         }
     }

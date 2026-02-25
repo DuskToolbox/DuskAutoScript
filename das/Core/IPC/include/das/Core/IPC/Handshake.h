@@ -15,22 +15,21 @@ namespace Core
 {
     namespace IPC
     {
-        /**
-         * @brief 控制平面 interface_id 枚举
-         *
-         * 根据 B3.1 握手规范，控制平面消息的特征：
-         * - object_id = 0
-         * - type_id = 0
-         * - interface_id 用于区分不同的控制消息
-         */
+        /// 控制平面 interface_id
+        /// 控制平面特征: object_id = 0, type_id = 0
         enum class HandshakeInterfaceId : uint32_t
         {
-            HandshakeHello = 1, ///< HelloRequestV1 / WelcomeResponseV1
-            HandshakeReady = 2, ///< ReadyRequestV1 / ReadyAckV1
-            Heartbeat = 3,      ///< HeartbeatV1
-            Goodbye = 4         ///< GoodbyeV1
+            HANDSHAKE_IFACE_HELLO = 1,     // 客户端发起握手
+            HANDSHAKE_IFACE_WELCOME = 2,   // 服务端响应握手
+            HANDSHAKE_IFACE_READY = 3,     // 客户端就绪
+            HANDSHAKE_IFACE_READY_ACK = 4, // 服务端确认就绪
+            HANDSHAKE_IFACE_WAKEUP = 5,    // 唤醒消息（新增）
+            HANDSHAKE_IFACE_HEARTBEAT = 6, // 心跳
+            HANDSHAKE_IFACE_GOODBYE = 7    // 断开连接
         };
 
+        /// 用户自定义 interface_id 起始值
+        constexpr uint32_t IPC_IFACE_USER_START = 100;
         /**
          * @brief Goodbye 原因枚举
          */
@@ -49,7 +48,7 @@ namespace Core
          * 控制平面消息：
          * - object_id = 0
          * - type_id = 0
-         * - interface_id = HandshakeInterfaceId::HandshakeHello
+         * - interface_id = HANDSHAKE_IFACE_HELLO
          */
         struct alignas(8) HelloRequestV1
         {
@@ -67,7 +66,7 @@ namespace Core
          * 控制平面消息：
          * - object_id = 0
          * - type_id = 0
-         * - interface_id = HandshakeInterfaceId::HandshakeHello
+         * - interface_id = HANDSHAKE_IFACE_HELLO
          */
         struct alignas(8) WelcomeResponseV1
         {
@@ -87,7 +86,7 @@ namespace Core
          * 控制平面消息：
          * - object_id = 0
          * - type_id = 0
-         * - interface_id = HandshakeInterfaceId::HandshakeReady
+         * - interface_id = HANDSHAKE_IFACE_READY
          */
         struct alignas(8) ReadyRequestV1
         {
@@ -101,7 +100,7 @@ namespace Core
          * 控制平面消息：
          * - object_id = 0
          * - type_id = 0
-         * - interface_id = HandshakeInterfaceId::HandshakeReady
+         * - interface_id = HANDSHAKE_IFACE_READY
          */
         struct alignas(8) ReadyAckV1
         {
@@ -118,7 +117,7 @@ namespace Core
          * 控制平面消息：
          * - object_id = 0
          * - type_id = 0
-         * - interface_id = HandshakeInterfaceId::Heartbeat
+         * - interface_id = HANDSHAKE_IFACE_HEARTBEAT
          */
         struct alignas(8) HeartbeatV1
         {
@@ -131,7 +130,7 @@ namespace Core
          * 控制平面消息：
          * - object_id = 0
          * - type_id = 0
-         * - interface_id = HandshakeInterfaceId::Goodbye
+         * - interface_id = HANDSHAKE_IFACE_GOODBYE
          */
         struct alignas(8) GoodbyeV1
         {

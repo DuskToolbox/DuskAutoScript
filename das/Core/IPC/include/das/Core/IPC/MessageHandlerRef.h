@@ -20,7 +20,7 @@ namespace Core
          * @note 适配器不拥有处理器的所有权，调用者必须确保被包装的处理器
          *       在适配器生命周期内保持有效。
          */
-        class DAS_API MessageHandlerRef : public IMessageHandler
+        class MessageHandlerRef : public IMessageHandler
         {
         public:
             /**

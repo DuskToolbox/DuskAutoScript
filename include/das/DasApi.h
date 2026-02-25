@@ -179,6 +179,29 @@ DAS_C_API DasResult CreateIDasLogRequester(
 DAS_C_API DasResult
 IpcLoadPlugin(const char* p_plugin_path, IDasBase** pp_out_plugin);
 
+//=============================================================================
+// IPC 超时配置 API
+//=============================================================================
+
+/**
+ * @brief 设置当前 IPC 调用的超时时间
+ *
+ * 此设置是线程局部的，仅影响当前线程的下一次 IPC 调用。
+ * 调用后超时值会被自动清零（恢复为无限超时）。
+ *
+ * @param timeout_ms 超时时间（毫秒），0 表示无限超时
+ * @return DasResult 成功返回 DAS_S_OK
+ */
+DAS_C_API DasResult DasSetIpcTimeout(uint32_t timeout_ms);
+
+/**
+ * @brief 获取当前 IPC 调用的超时时间
+ *
+ * @param p_out_timeout_ms 输出参数，接收超时值（毫秒）
+ * @return DasResult 成功返回 DAS_S_OK
+ */
+DAS_C_API DasResult DasGetIpcTimeout(uint32_t* p_out_timeout_ms);
+
 #define DAS_LOG_ERROR(...) DAS_LOG_WITH_SOURCE_LOCATION(Error, __VA_ARGS__)
 #define DAS_LOG_WARNING(...) DAS_LOG_WITH_SOURCE_LOCATION(Warning, __VA_ARGS__)
 #define DAS_LOG_INFO(...) DAS_LOG_WITH_SOURCE_LOCATION(Info, __VA_ARGS__)

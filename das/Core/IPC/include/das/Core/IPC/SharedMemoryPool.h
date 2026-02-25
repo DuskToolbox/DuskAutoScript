@@ -53,7 +53,7 @@ namespace Core
          *
          * 线程安全：所有公共方法都是线程安全的
          */
-        class DAS_API SharedMemoryPool
+        class SharedMemoryPool
         {
         public:
             SharedMemoryPool();
@@ -80,7 +80,7 @@ namespace Core
             std::unique_ptr<Impl> impl_;
         };
 
-        class DAS_API SharedMemoryManager
+        class SharedMemoryManager
         {
         public:
             SharedMemoryManager();

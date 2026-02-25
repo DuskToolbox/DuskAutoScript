@@ -25,7 +25,7 @@ namespace Core
 #ifdef _MSC_VER
 #pragma warning(disable : 4251)
 #endif
-        class DAS_API DistributedObjectManager
+        class DistributedObjectManager
         {
         public:
             DistributedObjectManager();

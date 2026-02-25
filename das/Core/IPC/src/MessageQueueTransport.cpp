@@ -170,18 +170,30 @@ namespace Core
 
             try
             {
-                bool received = impl_->plugin_queue_->timed_receive(
-                    buffer.data(),
-                    impl_->max_message_size_,
-                    received_size,
-                    priority,
-                    boost::posix_time::ptime(
-                        boost::posix_time::microsec_clock::local_time()
-                        + boost::posix_time::milliseconds(timeout_ms)));
-
-                if (!received)
+                if (timeout_ms == 0)
                 {
-                    return DAS_E_IPC_TIMEOUT;
+                    // 无限超时 - 使用阻塞接收
+                    impl_->plugin_queue_->receive(
+                        buffer.data(),
+                        impl_->max_message_size_,
+                        received_size,
+                        priority);
+                }
+                else
+                {
+                    // 有限超时 - 使用带超时的接收
+                    bool received = impl_->plugin_queue_->timed_receive(
+                        buffer.data(),
+                        impl_->max_message_size_,
+                        received_size,
+                        priority,
+                        boost::posix_time::ptime(
+                            boost::posix_time::microsec_clock::local_time()
+                            + boost::posix_time::milliseconds(timeout_ms)));
+                    if (!received)
+                    {
+                        return DAS_E_IPC_TIMEOUT;
+                    }
                 }
 
                 if (received_size < sizeof(IPCMessageHeader))

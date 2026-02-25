@@ -1,6 +1,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/IMessageHandler.h>
 #include <das/Core/IPC/IpcResponseSender.h>
 #include <das/Core/IPC/IpcRunLoop.h>
@@ -36,7 +37,6 @@ namespace Core
             return DAS_S_OK;
         }
 
-
         DasResult IpcRunLoop::Stop()
         {
             if (!running_.load())
@@ -63,8 +63,6 @@ namespace Core
             return DAS_S_OK;
         }
 
-
-
         void IpcRunLoop::RegisterHandler(
             std::unique_ptr<IMessageHandler> handler)
         {
@@ -88,11 +86,15 @@ namespace Core
             // 握手消息 interface_id 1-4
             if (header.interface_id >= 1 && header.interface_id <= 4)
             {
-                auto* handshake_handler = GetHandler(1); // HandshakeHandler::INTERFACE_ID = 1
+                auto* handshake_handler =
+                    GetHandler(1); // HandshakeHandler::INTERFACE_ID = 1
                 if (handshake_handler)
                 {
                     IpcResponseSender sender(*this);
-                    return handshake_handler->HandleMessage(header, body, sender);
+                    return handshake_handler->HandleMessage(
+                        header,
+                        body,
+                        sender);
                 }
             }
 
@@ -103,15 +105,16 @@ namespace Core
                 IpcResponseSender sender(*this);
                 return handler->HandleMessage(header, body, sender);
             }
-            
+
             // 回退到 IpcCommandHandler (处理所有命令类型)
-            auto* cmd_handler = GetHandler(2); // IpcCommandHandler::INTERFACE_ID = 2
+            auto* cmd_handler =
+                GetHandler(2); // IpcCommandHandler::INTERFACE_ID = 2
             if (cmd_handler)
             {
                 IpcResponseSender sender(*this);
                 return cmd_handler->HandleMessage(header, body, sender);
             }
-            
+
             return DAS_E_NOT_FOUND;
         }
 
@@ -147,8 +150,6 @@ namespace Core
             }
             return false;
         }
-
-
 
         DasResult IpcRunLoop::SendMessage(
             const IPCMessageHeader&   request_header,
@@ -318,8 +319,6 @@ namespace Core
                     return dispatch_result;
                 }
 
-
-
                 // 没有处理器，发送错误响应
                 IPCMessageHeader response = header;
                 response.message_type =
@@ -370,6 +369,85 @@ namespace Core
                 io_thread_.join();
             }
             return exit_code_.load();
+        }
+
+        //=========================================================================
+        // PostMessage 实现
+        //=========================================================================
+
+        void IpcRunLoop::PostMessage(PostedCallback callback)
+        {
+            {
+                std::lock_guard<std::mutex> lock(post_queue_mutex_);
+                post_queue_.push(std::move(callback));
+            }
+
+            // 发送唤醒消息，让 Receive() 返回
+            SendWakeupMessage();
+        }
+
+        void IpcRunLoop::SendWakeupMessage()
+        {
+            if (!transport_)
+            {
+                return;
+            }
+
+            // 构造唤醒消息（控制平面，interface_id=5）
+            IPCMessageHeader header{};
+            header.magic = IPCMessageHeader::MAGIC;
+            header.version = IPCMessageHeader::CURRENT_VERSION;
+            header.session_id = 0; // 控制平面
+            header.generation = 0;
+            header.local_id = 0;
+            header.interface_id = static_cast<uint32_t>(HandshakeInterfaceId::HANDSHAKE_IFACE_WAKEUP);
+            header.body_size = 0;
+
+            transport_->Send(header, nullptr, 0);
+        }
+
+        void IpcRunLoop::ProcessPostedCallbacks()
+        {
+            std::queue<PostedCallback> local_queue;
+
+            {
+                std::lock_guard<std::mutex> lock(post_queue_mutex_);
+                local_queue = std::move(post_queue_);
+                post_queue_ = std::queue<PostedCallback>();
+            }
+
+            while (!local_queue.empty())
+            {
+                auto callback = std::move(local_queue.front());
+                local_queue.pop();
+                callback(); // 执行
+            }
+        }
+
+        void IpcRunLoop::PostStartHost(
+            const std::string&                       plugin_path,
+            std::function<void(DasResult, uint16_t)> on_complete)
+        {
+            // Wave 5 会实现真正的 HostLauncher
+            // 这里先预留接口
+            PostMessage(
+                [this, plugin_path, on_complete]()
+                {
+                    // TODO: 实现 HostLauncher
+                    if (on_complete)
+                    {
+                        on_complete(DAS_E_NO_IMPLEMENTATION, 0);
+                    }
+                });
+}
+        void IpcRunLoop::PostStopHost(uint16_t session_id)
+        {
+            PostMessage(
+                [this, session_id]()
+                {
+                    // TODO: 实现 HostLauncher
+                    (void)session_id;
+                });
         }
 
     }
