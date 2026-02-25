@@ -1,8 +1,8 @@
 #ifndef DAS_UTILS_TIMER_HPP
 #define DAS_UTILS_TIMER_HPP
 
-#include <das/Utils/Config.h>
 #include <chrono>
+#include <das/Utils/Config.h>
 
 DAS_UTILS_NS_BEGIN
 

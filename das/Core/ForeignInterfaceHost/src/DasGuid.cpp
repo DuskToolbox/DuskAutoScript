@@ -9,7 +9,6 @@
 #include <functional>
 #include <nlohmann/json.hpp>
 
-
 std::size_t std::hash<DasGuid>::operator()(const DasGuid& guid) const noexcept
 {
     using _internal_das_Guid = std::array<int64_t, 2>;
@@ -125,7 +124,7 @@ void nlohmann::adl_serializer<DasGuid>::from_json(const json& j, DasGuid& guid)
 }
 
 DasResult DasGuidToString(
-    const DasGuid*             p_in_guid,
+    const DasGuid*       p_in_guid,
     IDasReadOnlyString** pp_out_guid_string)
 {
     const auto result = DasGuidToString(*p_in_guid);

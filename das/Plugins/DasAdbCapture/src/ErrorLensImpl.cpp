@@ -1,10 +1,10 @@
 #include "ErrorLensImpl.h"
 #include "PluginImpl.h"
 
-#include <das/_autogen/idl/abi/DasLogger.h>
+#include <das/DasApi.h>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
-#include <das/DasApi.h>
+#include <das/_autogen/idl/abi/DasLogger.h>
 
 DAS_NS_BEGIN
 

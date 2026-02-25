@@ -6,9 +6,9 @@
 #include <das/Core/IPC/ObjectId.h>
 #include <das/IDasBase.h>
 #include <functional>
-#include <unordered_map>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 DAS_NS_BEGIN
@@ -179,7 +179,7 @@ namespace Core
             uint16_t session_id_;
 
 #pragma warning(push)
-#pragma warning(disable: 4251) // DLL 导出类中使用 STL 容器
+#pragma warning(disable : 4251) // DLL 导出类中使用 STL 容器
             std::unordered_map<IpcCommandType, CommandHandler> custom_handlers_;
 #pragma warning(pop)
         };

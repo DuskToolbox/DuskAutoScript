@@ -110,7 +110,7 @@ auto DasIidOf() -> const struct _das_GUID&;
         }                                                                      \
     }
 
-#define DAS_DEFINE_GUID_HOLDER_IN_NAMESPACE(                                  \
+#define DAS_DEFINE_GUID_HOLDER_IN_NAMESPACE(                                   \
     ns,                                                                        \
     type,                                                                      \
     l,                                                                         \
@@ -144,7 +144,7 @@ auto DasIidOf() -> const struct _das_GUID&;
         }                                                                      \
     }
 
-#define DAS_DEFINE_GUID_HOLDER_IN_NAMESPACE_WITH_IID(                         \
+#define DAS_DEFINE_GUID_HOLDER_IN_NAMESPACE_WITH_IID(                          \
     iid_name,                                                                  \
     ns,                                                                        \
     type,                                                                      \

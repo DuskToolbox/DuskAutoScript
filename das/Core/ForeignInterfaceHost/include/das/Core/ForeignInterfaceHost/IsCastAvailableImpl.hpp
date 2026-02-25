@@ -2,12 +2,12 @@
 #define DAS_CORE_FOREIGNINTERFACEHOST_ISCASTAVAILABLE_HPP
 
 #include "das/IDasBase.h"
+#include <das/Core/ForeignInterfaceHost/Config.h>
+#include <das/DasString.hpp>
 #include <das/_autogen/idl/abi/IDasCapture.h>
 #include <das/_autogen/idl/abi/IDasErrorLens.h>
-#include <das/_autogen/idl/abi/IDasTask.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
-#include <das/DasString.hpp>
-#include <das/Core/ForeignInterfaceHost/Config.h>
+#include <das/_autogen/idl/abi/IDasTask.h>
 #include <type_traits>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
@@ -26,9 +26,9 @@ DasResult IsCastAvailableImpl(const DasGuid& iid, SwigTypeInheritChain<Ts...>)
     }
     else
     {
-    return DAS_E_NO_INTERFACE;
-}
+        return DAS_E_NO_INTERFACE;
+    }
 
-DAS_CORE_FOREIGNINTERFACEHOST_NS_END
+    DAS_CORE_FOREIGNINTERFACEHOST_NS_END
 
 #endif // DAS_CORE_FOREIGNINTERFACEHOST_ISCASTAVAILABLE_HPP

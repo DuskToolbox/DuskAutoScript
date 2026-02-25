@@ -1,8 +1,8 @@
 #ifndef DAS_CORE_EXCEPTIONS_TYPEERROR_H
 #define DAS_CORE_EXCEPTIONS_TYPEERROR_H
 
-#include <das/_autogen/idl/abi/DasJson.h>
 #include <das/Core/Exceptions/Config.h>
+#include <das/_autogen/idl/abi/DasJson.h>
 
 DAS_CORE_EXCEPTIONS_NS_BEGIN
 

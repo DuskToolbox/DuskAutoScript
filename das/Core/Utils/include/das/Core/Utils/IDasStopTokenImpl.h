@@ -1,10 +1,10 @@
 #ifndef DAS_CORE_UTILS_IDASSTOPTOKENIMPL_H
 #define DAS_CORE_UTILS_IDASSTOPTOKENIMPL_H
 
-#include <das/_autogen/idl/abi/IDasTask.h>
-#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasStopToken.Implements.hpp>
 #include <atomic>
 #include <das/Core/Utils/Config.h>
+#include <das/_autogen/idl/abi/IDasTask.h>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasStopToken.Implements.hpp>
 
 DAS_CORE_UTILS_NS_BEGIN
 

@@ -48,8 +48,8 @@ const ORTCHAR_T* ToOrtChar(IDasReadOnlyString* p_string);
 class DasOrt
 {
 protected:
-    Ort::Env env_{};
-    Ort::SessionOptions Session_options_{};
+    Ort::Env                         env_{};
+    Ort::SessionOptions              Session_options_{};
     Ort::AllocatorWithDefaultOptions allocator_{};
 
     static Ort::MemoryInfo& GetDefaultCpuMemoryInfo();

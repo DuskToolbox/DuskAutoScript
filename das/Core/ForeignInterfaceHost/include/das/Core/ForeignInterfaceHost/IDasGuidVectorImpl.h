@@ -1,10 +1,10 @@
 #ifndef DAS_CORE_FOREIGNINTERFACEHOST_DASIIDVECTOR_H
 #define DAS_CORE_FOREIGNINTERFACEHOST_DASIIDVECTOR_H
 
-#include <das/_autogen/idl/abi/IDasGuidVector.h>
-#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasGuidVector.Implements.hpp>
 #include <das/Core/ForeignInterfaceHost/Config.h>
 #include <das/Utils/Expected.h>
+#include <das/_autogen/idl/abi/IDasGuidVector.h>
+#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasGuidVector.Implements.hpp>
 #include <vector>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN

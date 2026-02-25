@@ -15,7 +15,8 @@ enum class ForeignInterfaceLanguage
     Lua
 };
 
-#define DAS_CORE_FOREIGNINTERFACEHOST_DEFAULT_ENUM_SERIALIZE(x) {ForeignInterfaceLanguage::x, #x}
+#define DAS_CORE_FOREIGNINTERFACEHOST_DEFAULT_ENUM_SERIALIZE(x)                \
+    {ForeignInterfaceLanguage::x, #x}
 
 NLOHMANN_JSON_SERIALIZE_ENUM(
     ForeignInterfaceLanguage,

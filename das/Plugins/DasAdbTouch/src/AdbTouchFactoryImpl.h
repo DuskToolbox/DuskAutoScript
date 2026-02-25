@@ -1,8 +1,8 @@
 #ifndef DAS_PLUGINS_DASADBTOUCH_ADBTOUCHFACTORYIMPL_H
 #define DAS_PLUGINS_DASADBTOUCH_ADBTOUCHFACTORYIMPL_H
 
-#include <das/_autogen/idl/abi/IDasInput.h>
 #include <das/Utils/CommonUtils.hpp>
+#include <das/_autogen/idl/abi/IDasInput.h>
 
 DAS_NS_BEGIN
 

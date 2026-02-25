@@ -10,9 +10,9 @@
 #ifndef DAS_CORE_EXCEPTION_CONFIG_H
 #define DAS_CORE_EXCEPTION_CONFIG_H
 
+#include <cstdint>
 #include <das/DasConfig.h>
 #include <stdexcept>
-#include <cstdint>
 
 #define DAS_CORE_EXCEPTIONS_NS_BEGIN                                           \
     DAS_NS_BEGIN                                                               \

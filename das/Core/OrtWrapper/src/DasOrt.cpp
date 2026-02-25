@@ -1,6 +1,6 @@
 #include "DasOrt.h"
-#include <das/DasString.hpp>
 #include <boost/predef/os.h>
+#include <das/DasString.hpp>
 
 DAS_CORE_ORTWRAPPER_NS_BEGIN
 

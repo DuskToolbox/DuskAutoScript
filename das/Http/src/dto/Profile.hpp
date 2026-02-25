@@ -11,203 +11,205 @@
 namespace Das::Http::Dto
 {
 
-// 配置文件描述符
-// Profile descriptor
-struct ProfileDesc
-{
-    std::string name;
-    std::string profile_id;
-    
-    nlohmann::json ToJson() const
+    // 配置文件描述符
+    // Profile descriptor
+    struct ProfileDesc
     {
-        nlohmann::json j;
-        j["name"] = name;
-        j["profileId"] = profile_id;
-        return j;
-    }
-    
-    static ProfileDesc FromJson(const nlohmann::json& j)
-    {
-        ProfileDesc desc;
-        desc.name = j.value("name", "");
-        desc.profile_id = j.value("profileId", "");
-        return desc;
-    }
-};
+        std::string name;
+        std::string profile_id;
 
-struct ProfileDescList
-{
-    std::vector<ProfileDesc> profile_list;
-    
-    nlohmann::json ToJson() const
-    {
-        nlohmann::json j;
-        nlohmann::json arr = nlohmann::json::array();
-        for (const auto& desc : profile_list)
+        nlohmann::json ToJson() const
         {
-            arr.push_back(desc.ToJson());
+            nlohmann::json j;
+            j["name"] = name;
+            j["profileId"] = profile_id;
+            return j;
         }
-        j["profileList"] = arr;
-        return j;
-    }
-    
-    static ProfileDescList FromJson(const nlohmann::json& j)
-    {
-        ProfileDescList list;
-        if (j.contains("profileList") && j["profileList"].is_array())
+
+        static ProfileDesc FromJson(const nlohmann::json& j)
         {
-            for (const auto& item : j["profileList"])
+            ProfileDesc desc;
+            desc.name = j.value("name", "");
+            desc.profile_id = j.value("profileId", "");
+            return desc;
+        }
+    };
+
+    struct ProfileDescList
+    {
+        std::vector<ProfileDesc> profile_list;
+
+        nlohmann::json ToJson() const
+        {
+            nlohmann::json j;
+            nlohmann::json arr = nlohmann::json::array();
+            for (const auto& desc : profile_list)
             {
-                list.profile_list.push_back(ProfileDesc::FromJson(item));
+                arr.push_back(desc.ToJson());
             }
+            j["profileList"] = arr;
+            return j;
         }
-        return list;
-    }
-};
 
-using ProfileDescListResponse = ApiResponse<ProfileDescList>;
-
-// 忽略的GUID列表，初始化插件管理器时使用
-struct ProfileInitializeParms
-{
-    std::vector<std::string> ignored_guid_list;
-    std::string profile_id;
-    
-    nlohmann::json ToJson() const
-    {
-        nlohmann::json j;
-        j["ignoredGuidList"] = ignored_guid_list;
-        j["profileId"] = profile_id;
-        return j;
-    }
-    
-    static ProfileInitializeParms FromJson(const nlohmann::json& j)
-    {
-        ProfileInitializeParms parms;
-        if (j.contains("ignoredGuidList") && j["ignoredGuidList"].is_array())
+        static ProfileDescList FromJson(const nlohmann::json& j)
         {
-            parms.ignored_guid_list = j["ignoredGuidList"].get<std::vector<std::string>>();
+            ProfileDescList list;
+            if (j.contains("profileList") && j["profileList"].is_array())
+            {
+                for (const auto& item : j["profileList"])
+                {
+                    list.profile_list.push_back(ProfileDesc::FromJson(item));
+                }
+            }
+            return list;
         }
-        parms.profile_id = j.value("profileId", "");
-        return parms;
-    }
-};
+    };
 
-// 配置文件描状态
-// Profile status
-struct ProfileStatus
-{
-    std::string profile_id;
-    bool run;
-    bool enable;
-    
-    nlohmann::json ToJson() const
-    {
-        nlohmann::json j;
-        j["profileId"] = profile_id;
-        j["run"] = run;
-        j["enable"] = enable;
-        return j;
-    }
-    
-    static ProfileStatus FromJson(const nlohmann::json& j)
-    {
-        ProfileStatus status;
-        status.profile_id = j.value("profileId", "");
-        status.run = j.value("run", false);
-        status.enable = j.value("enable", false);
-        return status;
-    }
-};
+    using ProfileDescListResponse = ApiResponse<ProfileDescList>;
 
-using ProfileStatusList = ApiResponse<std::vector<ProfileStatus>>;
+    // 忽略的GUID列表，初始化插件管理器时使用
+    struct ProfileInitializeParms
+    {
+        std::vector<std::string> ignored_guid_list;
+        std::string              profile_id;
 
-// 配置文件运行状态
-// Profile is runing
-struct ProfileRunning
-{
-    std::string profile_id;
-    bool run;
-    
-    nlohmann::json ToJson() const
-    {
-        nlohmann::json j;
-        j["profileId"] = profile_id;
-        j["run"] = run;
-        return j;
-    }
-    
-    static ProfileRunning FromJson(const nlohmann::json& j)
-    {
-        ProfileRunning running;
-        running.profile_id = j.value("profileId", "");
-        running.run = j.value("run", false);
-        return running;
-    }
-};
+        nlohmann::json ToJson() const
+        {
+            nlohmann::json j;
+            j["ignoredGuidList"] = ignored_guid_list;
+            j["profileId"] = profile_id;
+            return j;
+        }
 
-struct ProfileId
-{
-    std::string profile_id;
-    
-    nlohmann::json ToJson() const
-    {
-        nlohmann::json j;
-        j["profileId"] = profile_id;
-        return j;
-    }
-    
-    static ProfileId FromJson(const nlohmann::json& j)
-    {
-        ProfileId id;
-        id.profile_id = j.value("profileId", "");
-        return id;
-    }
-};
+        static ProfileInitializeParms FromJson(const nlohmann::json& j)
+        {
+            ProfileInitializeParms parms;
+            if (j.contains("ignoredGuidList")
+                && j["ignoredGuidList"].is_array())
+            {
+                parms.ignored_guid_list =
+                    j["ignoredGuidList"].get<std::vector<std::string>>();
+            }
+            parms.profile_id = j.value("profileId", "");
+            return parms;
+        }
+    };
 
-struct ProfileEnabled
-{
-    std::string profile_id;
-    int32_t enabled;
-    
-    nlohmann::json ToJson() const
+    // 配置文件描状态
+    // Profile status
+    struct ProfileStatus
     {
-        nlohmann::json j;
-        j["profileId"] = profile_id;
-        j["enabled"] = enabled;
-        return j;
-    }
-    
-    static ProfileEnabled FromJson(const nlohmann::json& j)
-    {
-        ProfileEnabled enabled;
-        enabled.profile_id = j.value("profileId", "");
-        enabled.enabled = j.value("enabled", 0);
-        return enabled;
-    }
-};
+        std::string profile_id;
+        bool        run;
+        bool        enable;
 
-struct ProfileInfo
-{
-    std::string profile_id;
-    int32_t enabled;
-    
-    nlohmann::json ToJson() const
+        nlohmann::json ToJson() const
+        {
+            nlohmann::json j;
+            j["profileId"] = profile_id;
+            j["run"] = run;
+            j["enable"] = enable;
+            return j;
+        }
+
+        static ProfileStatus FromJson(const nlohmann::json& j)
+        {
+            ProfileStatus status;
+            status.profile_id = j.value("profileId", "");
+            status.run = j.value("run", false);
+            status.enable = j.value("enable", false);
+            return status;
+        }
+    };
+
+    using ProfileStatusList = ApiResponse<std::vector<ProfileStatus>>;
+
+    // 配置文件运行状态
+    // Profile is runing
+    struct ProfileRunning
     {
-        nlohmann::json j;
-        j["profileId"] = profile_id;
-        j["enabled"] = enabled;
-        return j;
-    }
-    
-    static ProfileInfo FromJson(const nlohmann::json& j)
+        std::string profile_id;
+        bool        run;
+
+        nlohmann::json ToJson() const
+        {
+            nlohmann::json j;
+            j["profileId"] = profile_id;
+            j["run"] = run;
+            return j;
+        }
+
+        static ProfileRunning FromJson(const nlohmann::json& j)
+        {
+            ProfileRunning running;
+            running.profile_id = j.value("profileId", "");
+            running.run = j.value("run", false);
+            return running;
+        }
+    };
+
+    struct ProfileId
     {
-        ProfileInfo info;
-        info.profile_id = j.value("profileId", "");
-        info.enabled = j.value("enabled", 0);
-        return info;
-    }
-};
+        std::string profile_id;
+
+        nlohmann::json ToJson() const
+        {
+            nlohmann::json j;
+            j["profileId"] = profile_id;
+            return j;
+        }
+
+        static ProfileId FromJson(const nlohmann::json& j)
+        {
+            ProfileId id;
+            id.profile_id = j.value("profileId", "");
+            return id;
+        }
+    };
+
+    struct ProfileEnabled
+    {
+        std::string profile_id;
+        int32_t     enabled;
+
+        nlohmann::json ToJson() const
+        {
+            nlohmann::json j;
+            j["profileId"] = profile_id;
+            j["enabled"] = enabled;
+            return j;
+        }
+
+        static ProfileEnabled FromJson(const nlohmann::json& j)
+        {
+            ProfileEnabled enabled;
+            enabled.profile_id = j.value("profileId", "");
+            enabled.enabled = j.value("enabled", 0);
+            return enabled;
+        }
+    };
+
+    struct ProfileInfo
+    {
+        std::string profile_id;
+        int32_t     enabled;
+
+        nlohmann::json ToJson() const
+        {
+            nlohmann::json j;
+            j["profileId"] = profile_id;
+            j["enabled"] = enabled;
+            return j;
+        }
+
+        static ProfileInfo FromJson(const nlohmann::json& j)
+        {
+            ProfileInfo info;
+            info.profile_id = j.value("profileId", "");
+            info.enabled = j.value("enabled", 0);
+            return info;
+        }
+    };
 
 } // namespace Das::Http::Dto
 

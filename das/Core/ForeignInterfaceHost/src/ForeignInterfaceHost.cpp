@@ -1,7 +1,6 @@
 // clang-format off
 #include <das/DasConfig.h>
 // clang-format on
-#include <das/_autogen/idl/abi/DasSettings.h>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
 #include <das/Core/Logger/Logger.h>
@@ -9,6 +8,7 @@
 #include <das/Utils/EnumUtils.hpp>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/UnexpectedEnumException.h>
+#include <das/_autogen/idl/abi/DasSettings.h>
 #include <magic_enum_format.hpp>
 #include <stdexcept>
 

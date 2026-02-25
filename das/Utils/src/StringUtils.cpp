@@ -1,5 +1,5 @@
-#include <das/Utils/StringUtils.h>
 #include <algorithm>
+#include <das/Utils/StringUtils.h>
 
 DAS_UTILS_NS_BEGIN
 

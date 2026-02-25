@@ -1,8 +1,8 @@
 #include <atomic>
-#include <string_view>
 #include <das/DasPtr.hpp>
 #include <das/IDasBase.h>
 #include <gtest/gtest.h>
+#include <string_view>
 
 namespace
 {
@@ -12,7 +12,7 @@ namespace
         std::atomic_uint32_t count_{0};
 
     public:
-                     TestImpl() {}
+        TestImpl() {}
         uint32_t AddRef() override
         {
             count_ += 1;
@@ -28,7 +28,7 @@ namespace
             }
             return count_;
         }
-        uint32_t GetRefCount() const noexcept { return count_; }
+        uint32_t   GetRefCount() const noexcept { return count_; }
         DAS_METHOD QueryInterface(const DasGuid& id, void** pp_object) override
         {
             *pp_object = nullptr;

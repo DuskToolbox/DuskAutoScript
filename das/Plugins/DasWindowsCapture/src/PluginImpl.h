@@ -1,9 +1,9 @@
 #ifndef DAS_PLUGINS_DASWINDOWSCAPTURE_PLUGINIMPL_H
 #define DAS_PLUGINS_DASWINDOWSCAPTURE_PLUGINIMPL_H
 
-#include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <cstdint>
 #include <das/Utils/CommonUtils.hpp>
+#include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasPluginPackage.Implements.hpp>
 #include <unordered_map>
 

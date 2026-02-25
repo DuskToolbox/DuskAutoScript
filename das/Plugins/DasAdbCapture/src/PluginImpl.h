@@ -2,9 +2,9 @@
 #define DAS_PLUGINS_DASADBCAPTURE_PLUGINIMPL_H
 
 #include <cstdint>
+#include <das/Utils/CommonUtils.hpp>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasPluginPackage.Implements.hpp>
-#include <das/Utils/CommonUtils.hpp>
 #include <unordered_map>
 
 // {EAC73FD2-5674-4796-8298-71B80727E993}
@@ -31,9 +31,8 @@ class AdbCapturePlugin final
 public:
     // IDasPluginPackage
     DAS_IMPL EnumFeature(
-        const size_t                         index,
-        PluginInterface::DasPluginFeature* p_out_feature)
-        override;
+        const size_t                       index,
+        PluginInterface::DasPluginFeature* p_out_feature) override;
     DAS_IMPL CreateFeatureInterface(size_t index, void** pp_out_interface)
         override;
     DAS_IMPL CanUnloadNow(bool* p_can_unload) override;

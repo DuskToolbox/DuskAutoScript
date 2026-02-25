@@ -1,13 +1,13 @@
 #include <das/Core/IPC/Host/HandshakeHandler.h>
+#include <das/Core/IPC/Host/HostConfig.h>
 #include <das/Core/IPC/Host/IIpcContext.h>
 #include <das/Core/IPC/Host/IpcContext.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcRunLoop.h>
-#include <das/Core/IPC/ObjectManager.h>
-#include <das/Core/IPC/SharedMemoryPool.h>
-#include <das/Core/IPC/SessionCoordinator.h>
-#include <das/Core/IPC/Host/HostConfig.h>
 #include <das/Core/IPC/MessageQueueTransport.h>
+#include <das/Core/IPC/ObjectManager.h>
+#include <das/Core/IPC/SessionCoordinator.h>
+#include <das/Core/IPC/SharedMemoryPool.h>
 
 #include <atomic>
 #include <thread>
@@ -31,9 +31,11 @@ namespace Core
             class IpcContextImpl
             {
             public:
-                explicit IpcContextImpl(IpcContext* owner, const IpcContextConfig& config)
-                    : owner_(owner), config_(config), is_connected_(false), is_running_(false),
-                      handshake_complete_handler_(nullptr),
+                explicit IpcContextImpl(
+                    IpcContext*             owner,
+                    const IpcContextConfig& config)
+                    : owner_(owner), config_(config), is_connected_(false),
+                      is_running_(false), handshake_complete_handler_(nullptr),
                       handshake_user_data_(nullptr)
                 {
                 }
@@ -147,12 +149,14 @@ namespace Core
                                 std::span<const uint8_t>(body, body_size),
                                 cmd_response);
                             // 发送响应（成功时需要响应体，失败时只需要错误码）
-                            if ((result == DAS_S_OK && !cmd_response.response_data.empty())
+                            if ((result == DAS_S_OK
+                                 && !cmd_response.response_data.empty())
                                 || result != DAS_S_OK)
                             {
                                 // 创建响应头副本并设置错误码
                                 IPCMessageHeader response_header = header;
-                                response_header.error_code = cmd_response.error_code;
+                                response_header.error_code =
+                                    cmd_response.error_code;
                                 run_loop_->SendResponse(
                                     response_header,
                                     cmd_response.response_data.data(),
@@ -224,7 +228,8 @@ namespace Core
                     }
 
                     // 10. 将 SharedMemoryPool 设置到 Transport
-                    result = transport->SetSharedMemoryPool(shared_memory_.get());
+                    result =
+                        transport->SetSharedMemoryPool(shared_memory_.get());
                     if (result != DAS_S_OK)
                     {
                         shared_memory_->Shutdown();
@@ -275,8 +280,6 @@ namespace Core
                     }
 
                     // 关闭 SharedMemoryPool
-
-
 
                     // 关闭 SharedMemoryPool
                     if (shared_memory_)
@@ -333,7 +336,7 @@ namespace Core
                 }
 
                 void RegisterCommandHandler(
-                    uint32_t      cmd_type,
+                    uint32_t       cmd_type,
                     CommandHandler handler)
                 {
                     command_handler_->RegisterHandler(
@@ -392,7 +395,7 @@ namespace Core
                 bool IsConnected() const { return is_connected_; }
 
             private:
-                IpcContext* owner_ = nullptr;
+                IpcContext*                               owner_ = nullptr;
                 IpcContextConfig                          config_;
                 uint16_t                                  session_id_ = 0;
                 std::unique_ptr<DistributedObjectManager> object_manager_;
@@ -431,13 +434,11 @@ namespace Core
             }
 
             void IpcContext::RegisterCommandHandler(
-                uint32_t      cmd_type,
+                uint32_t       cmd_type,
                 CommandHandler handler)
             {
                 impl_->RegisterCommandHandler(cmd_type, handler);
             }
-
-
 
             void IpcContext::SetOnHandshakeComplete(
                 OnHandshakeComplete handler,
@@ -464,7 +465,8 @@ namespace Core
 
             // ====== C API 实现 ======
 
-            DAS_API IIpcContext* CreateIpcContext(const IpcContextConfig& config)
+            DAS_API IIpcContext* CreateIpcContext(
+                const IpcContextConfig& config)
             {
                 try
                 {

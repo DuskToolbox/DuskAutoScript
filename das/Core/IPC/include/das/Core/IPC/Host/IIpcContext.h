@@ -1,11 +1,11 @@
 #pragma once
-#include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
+#include <das/Core/IPC/ObjectId.h>
 #include <das/DasApi.h>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <span>
-#include <functional>
 
 DAS_NS_BEGIN
 namespace Core
@@ -37,9 +37,9 @@ namespace Core
 
             // 命令处理器类型
             using CommandHandler = std::function<DasResult(
-                const IPCMessageHeader& header,
+                const IPCMessageHeader&  header,
                 std::span<const uint8_t> payload,
-                IpcCommandResponse& response)>;
+                IpcCommandResponse&      response)>;
 
             /**
              * @brief Host 进程 IPC 上下文接口
@@ -47,8 +47,8 @@ namespace Core
             class IIpcContext
             {
             public:
-                virtual IpcRunLoop&        GetRunLoop() = 0;
-                virtual IpcCommandHandler& GetCommandHandler() = 0;
+                virtual IpcRunLoop&               GetRunLoop() = 0;
+                virtual IpcCommandHandler&        GetCommandHandler() = 0;
                 virtual DistributedObjectManager& GetObjectManager() = 0;
 
                 virtual void SetOnHandshakeComplete(
@@ -65,7 +65,7 @@ namespace Core
 
                 // 注册自定义命令处理器
                 virtual void RegisterCommandHandler(
-                    uint32_t      cmd_type,
+                    uint32_t       cmd_type,
                     CommandHandler handler) = 0;
 
             protected:

@@ -1,10 +1,10 @@
 #ifndef DAS_CORE_UTILS_IDASBASICERRORLENSIMPL_H
 #define DAS_CORE_UTILS_IDASBASICERRORLENSIMPL_H
 
-#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasBasicErrorLens.Implements.hpp>
 #include <das/Core/ForeignInterfaceHost/IDasGuidVectorImpl.h>
 #include <das/Core/Utils/Config.h>
 #include <das/Utils/StringUtils.h>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasBasicErrorLens.Implements.hpp>
 
 DAS_CORE_UTILS_NS_BEGIN
 

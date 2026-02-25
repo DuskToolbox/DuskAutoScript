@@ -1,8 +1,8 @@
 #ifndef DAS_PLUGINS_DASWINDOWSCAPTURE_WINDOWSCAPTUREFACTORYIMPL_H
 #define DAS_PLUGINS_DASWINDOWSCAPTURE_WINDOWSCAPTUREFACTORYIMPL_H
 
-#include <das/_autogen/idl/abi/IDasCapture.h>
 #include <das/Utils/CommonUtils.hpp>
+#include <das/_autogen/idl/abi/IDasCapture.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasCaptureFactory.Implements.hpp>
 
 // {C9225681-DFE3-45D2-B6DA-FE2FC9452513}

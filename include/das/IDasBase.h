@@ -3,9 +3,9 @@
 
 #include <cstdint>
 #include <cstring>
-#include <utility>
 #include <das/DasConfig.h>
 #include <das/DasGuidHolder.h>
+#include <utility>
 
 #include <das/DasTypes.hpp>
 
@@ -235,12 +235,10 @@ DAS_INTERFACE IDasBase
     virtual uint32_t AddRef() = 0;
     virtual uint32_t Release() = 0;
     SWIG_PUBLIC
-    DAS_METHOD       QueryInterface(const DasGuid& iid, void** pp_object) = 0;
+    DAS_METHOD QueryInterface(const DasGuid& iid, void** pp_object) = 0;
 };
 
-inline bool IsDasGuidEqual(
-    const DasGuid& lhs,
-    const DasGuid& rhs) noexcept
+inline bool IsDasGuidEqual(const DasGuid& lhs, const DasGuid& rhs) noexcept
 {
     return lhs == rhs;
 }

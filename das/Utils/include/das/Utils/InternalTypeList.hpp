@@ -1,8 +1,8 @@
 #ifndef DAS_UTILS_INTERNALTYPELIST_H
 #define DAS_UTILS_INTERNALTYPELIST_H
 
-#include <das/Utils/Config.h>
 #include <cstdint>
+#include <das/Utils/Config.h>
 
 DAS_UTILS_NS_BEGIN
 
@@ -11,8 +11,7 @@ struct at_impl;
 
 template <
     std::size_t I,
-    template <class...>
-    class C,
+    template <class...> class C,
     class First,
     class... Other>
 struct at_impl<I, C<First, Other...>>

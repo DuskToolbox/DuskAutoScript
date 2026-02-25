@@ -27,16 +27,18 @@ const auto value = A;
 #define DAS_UTILS_CHECK_POINTER(pointer)                                       \
     if (pointer == nullptr) [[unlikely]]                                       \
     {                                                                          \
-        DAS_CORE_LOG_ERROR("Null pointer found! Variable name is " #pointer    \
-                           ". Please check your code.");                       \
+        DAS_CORE_LOG_ERROR(                                                    \
+            "Null pointer found! Variable name is " #pointer                   \
+            ". Please check your code.");                                      \
         return DAS_E_INVALID_POINTER;                                          \
     }
 
 #define DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(pointer)                            \
     if (pointer == nullptr) [[unlikely]]                                       \
     {                                                                          \
-        DAS_LOG_ERROR("Null pointer found! Variable name is " #pointer         \
-                      ". Please check your code.");                            \
+        DAS_LOG_ERROR(                                                         \
+            "Null pointer found! Variable name is " #pointer                   \
+            ". Please check your code.");                                      \
         return DAS_E_INVALID_POINTER;                                          \
     }
 
@@ -353,7 +355,7 @@ namespace Details
             // IDasBase
             virtual uint32_t AddRef() override { return 1; }
             virtual uint32_t Release() override { return 1; }
-            DAS_IMPL        QueryInterface(const DasGuid& iid, void** pp_object)
+            DAS_IMPL QueryInterface(const DasGuid& iid, void** pp_object)
                 override
             {
                 if (iid == DasIidOf<IDasBase>())

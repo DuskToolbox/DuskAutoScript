@@ -7,7 +7,7 @@
 
 #ifdef _MSC_VER
 #pragma warning(push)
-#pragma warning(disable: 4251)
+#pragma warning(disable : 4251)
 #endif
 
 DAS_NS_BEGIN
@@ -47,7 +47,7 @@ namespace Core
             {
             public:
                 IpcContext();
-                ~IpcContext();  // 自动清理
+                ~IpcContext(); // 自动清理
 
                 IpcContext(const IpcContext&) = delete;
                 IpcContext& operator=(const IpcContext&) = delete;

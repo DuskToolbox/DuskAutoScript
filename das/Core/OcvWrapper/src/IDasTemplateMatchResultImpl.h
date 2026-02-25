@@ -24,9 +24,10 @@ DAS_DEFINE_CLASS_IN_NAMESPACE(
 DAS_CORE_OCVWRAPPER_NS_BEGIN
 
 class IDasTemplateMatchResultImpl final
-    : public ExportInterface::DasTemplateMatchResultImplBase<IDasTemplateMatchResultImpl>
+    : public ExportInterface::DasTemplateMatchResultImplBase<
+          IDasTemplateMatchResultImpl>
 {
-    double  score_{};
+    double                   score_{};
     ExportInterface::DasRect match_rect_{};
 
 public:

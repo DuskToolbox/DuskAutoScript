@@ -1,11 +1,11 @@
 #include "Config.h"
 #include "IDasImageImpl.h"
-#include <das/_autogen/idl/abi/DasCV.h>
+#include "IDasTemplateMatchResultImpl.h"
 #include <das/Core/Logger/Logger.h>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/Expected.h>
 #include <das/Utils/Timer.hpp>
-#include "IDasTemplateMatchResultImpl.h"
+#include <das/_autogen/idl/abi/DasCV.h>
 
 DAS_DISABLE_WARNING_BEGIN
 
@@ -43,9 +43,9 @@ DAS_NS_ANONYMOUS_DETAILS_END
 DAS_CORE_OCVWRAPPER_NS_END
 
 DasResult TemplateMatchBest(
-    Das::ExportInterface::IDasImage*               p_image,
-    Das::ExportInterface::IDasImage*               p_template,
-    Das::ExportInterface::DasTemplateMatchType     type,
+    Das::ExportInterface::IDasImage*                p_image,
+    Das::ExportInterface::IDasImage*                p_template,
+    Das::ExportInterface::DasTemplateMatchType      type,
     Das::ExportInterface::IDasTemplateMatchResult** pp_out_result)
 {
     DAS_UTILS_CHECK_POINTER(pp_out_result)
@@ -109,12 +109,13 @@ DasResult TemplateMatchBest(
     }
 
     // Create result object and set values
-    *pp_out_result = DAS::Core::OcvWrapper::IDasTemplateMatchResultImpl::MakeRaw(
-        score,
-        Das::ExportInterface::DasRect{
-            matched_location.x,
-            matched_location.y,
-            template_mat.cols,
-            template_mat.rows});
+    *pp_out_result =
+        DAS::Core::OcvWrapper::IDasTemplateMatchResultImpl::MakeRaw(
+            score,
+            Das::ExportInterface::DasRect{
+                matched_location.x,
+                matched_location.y,
+                template_mat.cols,
+                template_mat.rows});
     return DAS_S_OK;
 }

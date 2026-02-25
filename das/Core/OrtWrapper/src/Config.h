@@ -3,13 +3,13 @@
 
 #include <das/DasConfig.h>
 
-#define DAS_CORE_ORTWRAPPER_NS_BEGIN                                                 \
+#define DAS_CORE_ORTWRAPPER_NS_BEGIN                                           \
     DAS_NS_BEGIN namespace Core                                                \
     {                                                                          \
-        namespace OrtWrapper                                                         \
+        namespace OrtWrapper                                                   \
         {
 
-#define DAS_CORE_ORTWRAPPER_NS_END                                                   \
+#define DAS_CORE_ORTWRAPPER_NS_END                                             \
     }                                                                          \
     }                                                                          \
     DAS_NS_END

@@ -1,9 +1,9 @@
 #ifndef DAS_PLUGINS_DASADBCAPTURE_ADBCAPTUREFACTORYIMPL_H
 #define DAS_PLUGINS_DASADBCAPTURE_ADBCAPTUREFACTORYIMPL_H
 
+#include <das/Utils/CommonUtils.hpp>
 #include <das/_autogen/idl/abi/IDasCapture.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasCaptureFactory.Implements.hpp>
-#include <das/Utils/CommonUtils.hpp>
 
 // {23290FC8-CD40-4C4E-9F58-20EC404F1F3C}
 DAS_DEFINE_CLASS_IN_NAMESPACE(
@@ -39,8 +39,8 @@ public:
      * @return DAS_METHOD
      */
     DAS_IMPL CreateInstance(
-        IDasReadOnlyString* p_environment_json_config,
-        IDasReadOnlyString* p_plugin_config,
+        IDasReadOnlyString*            p_environment_json_config,
+        IDasReadOnlyString*            p_plugin_config,
         PluginInterface::IDasCapture** pp_object) override;
 };
 

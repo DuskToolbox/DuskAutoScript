@@ -1,7 +1,7 @@
-#include <das/_autogen/idl/abi/IDasErrorLens.h>
 #include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/i18n/GlobalLocale.h>
+#include <das/_autogen/idl/abi/IDasErrorLens.h>
 
 DAS_CORE_I18N_NS_BEGIN
 

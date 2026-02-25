@@ -1,11 +1,10 @@
 #include "AdbTouchFactoryImpl.h"
 #include "AdbTouch.h"
-#include <das/_autogen/idl/abi/DasLogger.h>
 #include <boost/url.hpp>
 #include <das/DasApi.h>
 #include <das/Utils/StringUtils.h>
+#include <das/_autogen/idl/abi/DasLogger.h>
 #include <nlohmann/json.hpp>
-
 
 DAS_NS_BEGIN
 

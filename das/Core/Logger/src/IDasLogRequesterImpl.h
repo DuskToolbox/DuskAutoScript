@@ -2,10 +2,10 @@
 #define DAS_CORE_LOGGER_IDASLOGREQUESTERIMPL_H
 
 #include "das/DasString.hpp"
-#include <das/_autogen/idl/abi/DasLogger.h>
+#include <boost/circular_buffer.hpp>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/fmt.h>
-#include <boost/circular_buffer.hpp>
+#include <das/_autogen/idl/abi/DasLogger.h>
 #include <mutex>
 #include <spdlog/sinks/base_sink.h>
 
@@ -24,10 +24,12 @@ public:
     IDasLogRequesterImpl(uint32_t max_buffer_size, SpLogRequesterSink sp_sink);
     ~IDasLogRequesterImpl();
     // IDasBase
-    uint32_t AddRef() override;
-    uint32_t Release() override;
-    DasResult QueryInterface(const DasGuid& iid, void** pp_out_object) override;    // IDasLogRequester
-    DasResult RequestOne(Das::ExportInterface::IDasLogReader* p_reader) override;
+    uint32_t  AddRef() override;
+    uint32_t  Release() override;
+    DasResult QueryInterface(const DasGuid& iid, void** pp_out_object)
+        override; // IDasLogRequester
+    DasResult RequestOne(
+        Das::ExportInterface::IDasLogReader* p_reader) override;
     // IDasLogRequesterImpl
     void Accept(const std::shared_ptr<std::string>& sp_message);
 

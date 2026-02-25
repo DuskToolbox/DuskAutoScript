@@ -8,8 +8,7 @@
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
 #include <memory>
 
-
-#define DAS_NS_JAVAHOST_BEGIN                                                 \
+#define DAS_NS_JAVAHOST_BEGIN                                                  \
     namespace JavaHost                                                         \
     {
 

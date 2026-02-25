@@ -2,14 +2,14 @@
 #define DAS_CORE_IPC_HOST_IPC_CONTEXT_H
 
 #include <das/Core/IPC/Host/IIpcContext.h>
-#include <das/DasApi.h>
 #include <das/Core/IPC/ObjectId.h>
+#include <das/DasApi.h>
 #include <filesystem>
 #include <memory>
 
 #ifdef _MSC_VER
 #pragma warning(push)
-#pragma warning(disable: 4251)
+#pragma warning(disable : 4251)
 #endif
 
 DAS_NS_BEGIN
@@ -24,8 +24,6 @@ namespace Core
         namespace Host
         {
             class IpcContextImpl;
-
-
 
             /**
              * @brief Host 进程 IPC 上下文实现
@@ -75,7 +73,7 @@ namespace Core
                  */
                 void SetOnHandshakeComplete(
                     OnHandshakeComplete handler,
-                    void*              user_data);
+                    void*               user_data);
 
                 /**
                  * @brief 启动事件循环
@@ -110,9 +108,8 @@ namespace Core
                  * @param handler 处理函数
                  */
                 void RegisterCommandHandler(
-                    uint32_t      cmd_type,
+                    uint32_t       cmd_type,
                     CommandHandler handler);
-
 
                 bool IsConnected() const;
 
@@ -120,9 +117,9 @@ namespace Core
                 std::unique_ptr<IpcContextImpl> impl_;
             };
 
-        }  // namespace Host
-    }  // namespace IPC
-}  // namespace Core
+        } // namespace Host
+    } // namespace IPC
+} // namespace Core
 DAS_NS_END
 
 #ifdef _MSC_VER

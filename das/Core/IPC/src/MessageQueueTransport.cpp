@@ -85,18 +85,18 @@ namespace Core
                 impl_->host_queue_ =
                     std::make_unique<boost::interprocess::message_queue>(
                         boost::interprocess::open_only,
-                        plugin_queue_name.c_str());  // M2H - 客户端发送用
+                        plugin_queue_name.c_str()); // M2H - 客户端发送用
 
                 impl_->plugin_queue_ =
                     std::make_unique<boost::interprocess::message_queue>(
                         boost::interprocess::open_only,
-                        host_queue_name.c_str());  // H2M - 客户端接收用
+                        host_queue_name.c_str()); // H2M - 客户端接收用
 
                 // 从已存在的队列获取配置
                 impl_->max_message_size_ = static_cast<uint32_t>(
                     impl_->host_queue_->get_max_msg_size());
-                impl_->max_messages_ = static_cast<uint32_t>(
-                    impl_->host_queue_->get_max_msg());
+                impl_->max_messages_ =
+                    static_cast<uint32_t>(impl_->host_queue_->get_max_msg());
 
                 impl_->initialized_ = true;
                 return DAS_S_OK;

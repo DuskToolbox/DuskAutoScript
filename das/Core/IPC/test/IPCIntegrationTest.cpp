@@ -37,17 +37,17 @@ using DAS::Core::IPC::ConnectionManager;
 using DAS::Core::IPC::DecodeObjectId;
 using DAS::Core::IPC::DistributedObjectManager;
 using DAS::Core::IPC::EncodeObjectId;
-using DAS::Core::IPC::MainProcess::HostSessionInfo;
 using DAS::Core::IPC::IPCMessageHeader;
 using DAS::Core::IPC::IPCProxyBase;
 using DAS::Core::IPC::IsNullObjectId;
-using DAS::Core::IPC::MainProcess::MainProcessServer;
 using DAS::Core::IPC::MessageType;
 using DAS::Core::IPC::ObjectId;
 using DAS::Core::IPC::ProxyFactory;
 using DAS::Core::IPC::RemoteObjectInfo;
 using DAS::Core::IPC::RemoteObjectRegistry;
 using DAS::Core::IPC::SessionCoordinator;
+using DAS::Core::IPC::MainProcess::HostSessionInfo;
+using DAS::Core::IPC::MainProcess::MainProcessServer;
 
 // ====== 测试辅助类 ======
 

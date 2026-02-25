@@ -1,4 +1,3 @@
-#include <das/_autogen/idl/abi/IDasErrorLens.h>
 #include <boost/dll.hpp>
 #include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
 #include <das/Core/Logger/Logger.h>
@@ -8,6 +7,7 @@
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
+#include <das/_autogen/idl/abi/IDasErrorLens.h>
 
 // Win32 风格 opaque handle 实现（在全局命名空间）
 namespace Das::Exception::Impl
@@ -203,8 +203,11 @@ DAS_API IDasExceptionString* CreateDasExceptionStringSwig(
     DasResult                   error_code,
     DasExceptionSourceInfoSwig* p_source_info)
 {
-    IDasExceptionString* p_result = nullptr;
-    DasExceptionSourceInfo info{.file=p_source_info->file, .line=p_source_info->line, .function=p_source_info->function};
+    IDasExceptionString*   p_result = nullptr;
+    DasExceptionSourceInfo info{
+        .file = p_source_info->file,
+        .line = p_source_info->line,
+        .function = p_source_info->function};
     CreateDasExceptionString(error_code, &info, &p_result);
     return p_result;
 }
@@ -214,8 +217,11 @@ DAS_API IDasExceptionString* CreateDasExceptionStringWithTypeInfoSwig(
     DasExceptionSourceInfoSwig* p_source_info,
     IDasTypeInfo*               p_type_info)
 {
-    IDasExceptionString* p_result = nullptr;
-    DasExceptionSourceInfo info{.file=p_source_info->file, .line=p_source_info->line, .function=p_source_info->function};
+    IDasExceptionString*   p_result = nullptr;
+    DasExceptionSourceInfo info{
+        .file = p_source_info->file,
+        .line = p_source_info->line,
+        .function = p_source_info->function};
     CreateDasExceptionStringWithTypeInfo(
         error_code,
         &info,

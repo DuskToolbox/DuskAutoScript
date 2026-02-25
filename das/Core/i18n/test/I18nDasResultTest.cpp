@@ -1,8 +1,8 @@
-#include <gtest/gtest.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/i18n/i18n.hpp>
-#include <das/Utils/StringUtils.h>
 #include <das/Utils/EnumUtils.hpp>
+#include <das/Utils/StringUtils.h>
+#include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 
 const static auto text = DAS_UTILS_STRINGUTILS_DEFINE_U8STR(R"(
@@ -31,7 +31,7 @@ auto GetJson()
 TEST(DasCoreI18n, DasResultDefaultLocaleTest)
 {
     const DAS::Core::i18n::I18n<DasResult> test_instance{GetJson()};
-    DAS::DasPtr<IDasReadOnlyString>  en_expected{};
+    DAS::DasPtr<IDasReadOnlyString>        en_expected{};
     ::CreateIDasReadOnlyStringFromUtf8(
         "Testing error message.",
         en_expected.Put());

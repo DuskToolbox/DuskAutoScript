@@ -1,15 +1,14 @@
 #include "das/Core/IPC/IpcCommandHandler.h"
-#include <das/DasApi.h>
-#include <das/Utils/fmt.h>
 #include <chrono>
 #include <cstring>
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Core/IPC/IpcErrors.h>
-#include <das/Core/IPC/RemoteObjectRegistry.h>
+#include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/ObjectManager.h>
 #include <das/Core/IPC/ProxyFactory.h>
-#include <das/Core/IPC/ObjectId.h>
-
+#include <das/Core/IPC/RemoteObjectRegistry.h>
+#include <das/DasApi.h>
+#include <das/Utils/fmt.h>
 
 #include <filesystem>
 #include <unordered_map>
@@ -101,20 +100,26 @@ namespace Core
         {
             IpcCommandType cmd_type = ExtractCommandType(header);
 
-            std::string _find_log = DAS_FMT_NS::format("[IpcCommandHandler] HandleCommand: cmd_type={}, custom_handlers_.size()={}", 
-                static_cast<int>(cmd_type), custom_handlers_.size());
+            std::string _find_log = DAS_FMT_NS::format(
+                "[IpcCommandHandler] HandleCommand: cmd_type={}, custom_handlers_.size()={}",
+                static_cast<int>(cmd_type),
+                custom_handlers_.size());
             DAS_LOG_INFO(_find_log.c_str());
             // 检查是否有自定义处理器
             auto it = custom_handlers_.find(cmd_type);
             if (it != custom_handlers_.end())
             {
-                std::string _found_log = DAS_FMT_NS::format("[IpcCommandHandler] Found custom handler for cmd_type={}", static_cast<int>(cmd_type));
+                std::string _found_log = DAS_FMT_NS::format(
+                    "[IpcCommandHandler] Found custom handler for cmd_type={}",
+                    static_cast<int>(cmd_type));
                 DAS_LOG_INFO(_found_log.c_str());
                 return it->second(header, payload, response);
             }
             else
             {
-                std::string _not_found_log = DAS_FMT_NS::format("[IpcCommandHandler] No custom handler for cmd_type={}", static_cast<int>(cmd_type));
+                std::string _not_found_log = DAS_FMT_NS::format(
+                    "[IpcCommandHandler] No custom handler for cmd_type={}",
+                    static_cast<int>(cmd_type));
                 DAS_LOG_INFO(_not_found_log.c_str());
             }
 
@@ -163,7 +168,9 @@ namespace Core
             IpcCommandType command_type,
             CommandHandler handler)
         {
-            std::string _log_msg = DAS_FMT_NS::format("[IpcCommandHandler] RegisterHandler: command_type={}", static_cast<int>(command_type));
+            std::string _log_msg = DAS_FMT_NS::format(
+                "[IpcCommandHandler] RegisterHandler: command_type={}",
+                static_cast<int>(command_type));
             DAS_LOG_INFO(_log_msg.c_str());
             custom_handlers_[command_type] = std::move(handler);
         }
@@ -580,13 +587,13 @@ namespace Core
             ObjectId object_id = DecodeObjectId(encoded_id);
 
             // 2. 注册到 RemoteObjectRegistry
-            auto& registry = RemoteObjectRegistry::GetInstance();
+            auto&     registry = RemoteObjectRegistry::GetInstance();
             DasResult result = registry.RegisterObject(
                 object_id,
-                DAS_IID_BASE,        // iid = IDasBase
-                header.session_id,   // 来自哪个 Host
-                "loaded_plugin",     // name
-                1                    // version
+                DAS_IID_BASE,      // iid = IDasBase
+                header.session_id, // 来自哪个 Host
+                "loaded_plugin",   // name
+                1                  // version
             );
 
             if (DAS::IsFailed(result))
@@ -595,9 +602,11 @@ namespace Core
                 return result;
             }
 
-            // TODO: DistributedObjectManager 没有 GetInstance() 单例方法，需要后续实现
+            // TODO: DistributedObjectManager 没有 GetInstance()
+            // 单例方法，需要后续实现
             // // 3. 注册到 DistributedObjectManager（标记为远程对象）
-            // result = DistributedObjectManager::GetInstance().RegisterRemoteObject(object_id);
+            // result =
+            // DistributedObjectManager::GetInstance().RegisterRemoteObject(object_id);
             // if (DAS::IsFailed(result))
             // {
             //     response.error_code = result;
@@ -605,7 +614,8 @@ namespace Core
             // }
 
             // 4. 创建 Proxy<IDasBase>
-            auto proxy = ProxyFactory::GetInstance().CreateProxy<IDasBase>(object_id);
+            auto proxy =
+                ProxyFactory::GetInstance().CreateProxy<IDasBase>(object_id);
             if (!proxy)
             {
                 response.error_code = DAS_E_FAIL;

@@ -34,7 +34,9 @@ namespace Details
         {
             if (type != Das::ExportInterface::DAS_TYPE_INT)
             {
-                throw DAS::Core::TypeError{Das::ExportInterface::DAS_TYPE_INT, type};
+                throw DAS::Core::TypeError{
+                    Das::ExportInterface::DAS_TYPE_INT,
+                    type};
             }
         }
         else

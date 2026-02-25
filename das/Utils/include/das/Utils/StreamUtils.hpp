@@ -2,8 +2,8 @@
 #define DAS_UTILS_STREAMUILS_HPP
 
 #include <das/Utils/Config.h>
-#include <utility>
 #include <fstream>
+#include <utility>
 
 DAS_UTILS_NS_BEGIN
 
@@ -11,10 +11,8 @@ template <class Input, class Target>
 struct change_template_container;
 
 template <
-    template <class...>
-    class Input,
-    template <class...>
-    class Target,
+    template <class...> class Input,
+    template <class...> class Target,
     class... Args,
     class... DiscardArgs>
 struct change_template_container<Input<DiscardArgs...>, Target<Args...>>

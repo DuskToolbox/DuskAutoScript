@@ -1,10 +1,10 @@
 #ifndef DAS_CORE_FOREIGNINTERFACEHOST_IDASINPUTFACTORYVECTORIMPL_H
 #define DAS_CORE_FOREIGNINTERFACEHOST_IDASINPUTFACTORYVECTORIMPL_H
 
-#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasInputFactoryVector.Implements.hpp>
-#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasInputFactoryVector.hpp>
 #include <das/Core/ForeignInterfaceHost/Config.h>
 #include <das/Core/ForeignInterfaceHost/InputFactoryManager.h>
+#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasInputFactoryVector.Implements.hpp>
+#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasInputFactoryVector.hpp>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 

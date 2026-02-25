@@ -1,11 +1,10 @@
 #ifndef DAS_CORE_FOREIGNINTERFACEHOST_COMPONENTFACTORYMANAGER_H
 #define DAS_CORE_FOREIGNINTERFACEHOST_COMPONENTFACTORYMANAGER_H
 
-#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasComponent.hpp>
 #include <das/Core/ForeignInterfaceHost/Config.h>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasComponent.hpp>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
-
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
 
