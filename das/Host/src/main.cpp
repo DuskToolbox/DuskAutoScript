@@ -22,17 +22,11 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <nlohmann/json.hpp>
 #include <sstream>
 #include <stdexec/execution.hpp>
 #include <string>
 #include <thread>
-#ifdef _WIN32
-#include <nlohmann/json.hpp>
-#include <process.h>
-#include <windows.h>
-#else
-#include <unistd.h>
-#endif
 
 // DAS error check macro (errors are negative, success >= 0)
 #define DAS_HOST_FAILED(x) ((x) < 0)
