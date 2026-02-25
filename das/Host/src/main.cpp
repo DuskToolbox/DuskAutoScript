@@ -9,30 +9,23 @@
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
 
-
 #include <das/Core/IPC/Host/IIpcContext.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
-
-
-
-
-
 
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/ObjectManager.h>
 
-
-
+#include <boost/program_options.hpp>
 #include <das/DasApi.h>
 #include <das/IDasBase.h>
 #include <das/Utils/fmt.h>
-#include <iostream>
-#include <stdexec/execution.hpp>
-#include <string>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
+#include <sstream>
+#include <stdexec/execution.hpp>
+#include <string>
 #include <thread>
-#include <boost/program_options.hpp>
 #ifdef _WIN32
 #include <nlohmann/json.hpp>
 #include <process.h>
@@ -40,9 +33,6 @@
 #else
 #include <unistd.h>
 #endif
-
-
-
 
 // DAS error check macro (errors are negative, success >= 0)
 #define DAS_HOST_FAILED(x) ((x) < 0)
@@ -53,7 +43,6 @@ static Das::Core::IPC::Host::IIpcContext* g_ipc_context = nullptr;
 // 信号处理函数
 static std::atomic<bool> g_shutdown_requested{false};
 
-
 void SignalHandler(int signal)
 {
     (void)signal;
@@ -63,12 +52,6 @@ void SignalHandler(int signal)
         g_ipc_context->RequestStop();
     }
 }
-
-
-
-
-
-
 
 namespace
 {
@@ -106,21 +89,19 @@ namespace
         return true;
     }
 
-    static Das::DasPtr<DAS::Core::ForeignInterfaceHost::IForeignLanguageRuntime> g_runtime;
+    static Das::DasPtr<DAS::Core::ForeignInterfaceHost::IForeignLanguageRuntime>
+        g_runtime;
 }
-
-
 
 // 握手完成回调
 
-
 void HostOnHandshakeComplete(
     Das::Core::IPC::Host::IIpcContext* ctx,
-    DasResult                           result,
-    void*                               user_data)
+    DasResult                          result,
+    void*                              user_data)
 {
     (void)user_data;
-    
+
     if (Das::IsFailed(result))
     {
         std::string msg = DAS_FMT_NS::format(
@@ -130,26 +111,27 @@ void HostOnHandshakeComplete(
         ctx->RequestStop();
         return;
     }
-    
-    std::string msg = DAS_FMT_NS::format(
-        "[OnHandshakeComplete] Handshake succeeded");
+
+    std::string msg =
+        DAS_FMT_NS::format("[OnHandshakeComplete] Handshake succeeded");
     DAS_LOG_INFO(msg.c_str());
-    
+
     // 注册 LOAD_PLUGIN 处理器
     ctx->RegisterCommandHandler(
         static_cast<uint32_t>(Das::Core::IPC::IpcCommandType::LOAD_PLUGIN),
-        [ctx](const Das::Core::IPC::IPCMessageHeader& header,
-              std::span<const uint8_t>                payload,
-              Das::Core::IPC::IpcCommandResponse&     response) -> DasResult
+        [ctx](
+            const Das::Core::IPC::IPCMessageHeader& header,
+            std::span<const uint8_t>                payload,
+            Das::Core::IPC::IpcCommandResponse&     response) -> DasResult
         {
             (void)header;
-            
+
             if (!g_runtime)
             {
                 response.error_code = DAS_E_OBJECT_NOT_INIT;
                 return DAS_E_OBJECT_NOT_INIT;
             }
-            
+
             // Deserialize manifest_path from payload
             std::string manifest_path;
             size_t      offset = 0;
@@ -158,7 +140,7 @@ void HostOnHandshakeComplete(
                 response.error_code = DAS_E_IPC_INVALID_MESSAGE_BODY;
                 return DAS_E_IPC_INVALID_MESSAGE_BODY;
             }
-            
+
             // Read and parse manifest JSON file
             std::ifstream json_file(manifest_path);
             if (!json_file.is_open())
@@ -171,7 +153,7 @@ void HostOnHandshakeComplete(
                 response.response_data.clear();
                 return DAS_E_IPC_PLUGIN_LOAD_FAILED;
             }
-            
+
             nlohmann::json manifest_json;
             try
             {
@@ -188,7 +170,7 @@ void HostOnHandshakeComplete(
                 response.response_data.clear();
                 return DAS_E_IPC_PLUGIN_LOAD_FAILED;
             }
-            
+
             // Extract plugin name and extension
             std::string plugin_name;
             std::string plugin_extension;
@@ -208,17 +190,18 @@ void HostOnHandshakeComplete(
                 response.response_data.clear();
                 return DAS_E_IPC_PLUGIN_LOAD_FAILED;
             }
-            
+
             // Build DLL path: {manifest_dir}/{name}.{extension}
             std::filesystem::path manifest_dir =
                 std::filesystem::path(manifest_path).parent_path();
             std::filesystem::path dll_path =
                 manifest_dir / (plugin_name + "." + plugin_extension);
-            
+
             std::string msg = DAS_FMT_NS::format(
-                "Loading plugin from: {}", dll_path.string());
+                "Loading plugin from: {}",
+                dll_path.string());
             DAS_LOG_INFO(msg.c_str());
-            
+
             // Load plugin
             auto result = g_runtime->LoadPlugin(dll_path.string());
             if (!result.has_value())
@@ -231,14 +214,14 @@ void HostOnHandshakeComplete(
                 response.response_data.clear();
                 return DAS_E_IPC_PLUGIN_LOAD_FAILED;
             }
-            
+
             // 注册插件对象到 DistributedObjectManager
-            auto                    plugin_ptr = result.value();
+            auto                     plugin_ptr = result.value();
             Das::Core::IPC::ObjectId object_id;
             DasResult reg_result = ctx->GetObjectManager().RegisterLocalObject(
                 plugin_ptr.Get(),
                 object_id);
-            
+
             if (Das::IsFailed(reg_result))
             {
                 std::string msg = DAS_FMT_NS::format(
@@ -249,43 +232,52 @@ void HostOnHandshakeComplete(
                 response.response_data.clear();
                 return reg_result;
             }
-            
+
             // 序列化响应：LoadPluginResponsePayload (28 bytes)
-            // object_id (8 bytes) + iid (16 bytes) + session_id (2 bytes) + version (2 bytes)
+            // object_id (8 bytes) + iid (16 bytes) + session_id (2 bytes) +
+            // version (2 bytes)
             response.error_code = DAS_S_OK;
-            
-            // Write object_id fields (8 bytes total): session_id(2) + generation(2) + local_id(4)
+
+            // Write object_id fields (8 bytes total): session_id(2) +
+            // generation(2) + local_id(4)
             response.response_data.push_back(object_id.session_id & 0xFF);
-            response.response_data.push_back((object_id.session_id >> 8) & 0xFF);
+            response.response_data.push_back(
+                (object_id.session_id >> 8) & 0xFF);
             response.response_data.push_back(object_id.generation & 0xFF);
-            response.response_data.push_back((object_id.generation >> 8) & 0xFF);
+            response.response_data.push_back(
+                (object_id.generation >> 8) & 0xFF);
             response.response_data.push_back(object_id.local_id & 0xFF);
             response.response_data.push_back((object_id.local_id >> 8) & 0xFF);
-            response.response_data.push_back((object_id.local_id >> 16) & 0xFF);  // byte 2
-            response.response_data.push_back((object_id.local_id >> 24) & 0xFF);  // byte 3
-            
+            response.response_data.push_back(
+                (object_id.local_id >> 16) & 0xFF); // byte 2
+            response.response_data.push_back(
+                (object_id.local_id >> 24) & 0xFF); // byte 3
+
             // Write iid (16 bytes)
             const auto& iid = DAS_IID_BASE;
             response.response_data.insert(
                 response.response_data.end(),
                 reinterpret_cast<const uint8_t*>(&iid),
                 reinterpret_cast<const uint8_t*>(&iid) + sizeof(DasGuid));
-            
+
             // Write session_id (2 bytes)
             response.response_data.push_back(object_id.session_id & 0xFF);
-            response.response_data.push_back((object_id.session_id >> 8) & 0xFF);
-            
+            response.response_data.push_back(
+                (object_id.session_id >> 8) & 0xFF);
+
             // Write version (2 bytes) - use 1 as default
             uint16_t version = 1;
             response.response_data.push_back(version & 0xFF);
             response.response_data.push_back((version >> 8) & 0xFF);
-            
+
             std::string log_msg = DAS_FMT_NS::format(
                 "[LOAD_PLUGIN] Plugin loaded, object_id={{session:{}, gen:{}, local:{}}}, response_size={}",
-                object_id.session_id, object_id.generation, object_id.local_id,
+                object_id.session_id,
+                object_id.generation,
+                object_id.local_id,
                 response.response_data.size());
             DAS_LOG_INFO(log_msg.c_str());
-    return DAS_S_OK;
+            return DAS_S_OK;
         });
 }
 
@@ -307,7 +299,10 @@ int main(int argc, char* argv[])
 
         if (vm.count("help"))
         {
-            std::cout << desc << "\n";
+            std::ostringstream oss;
+            oss << desc;
+            std::string help_msg = oss.str();
+            DAS_LOG_INFO(help_msg.c_str());
             return EXIT_SUCCESS;
         }
 
@@ -325,7 +320,8 @@ int main(int argc, char* argv[])
         {
             using namespace DAS::Core::ForeignInterfaceHost;
             auto result = CreateForeignLanguageRuntime(
-                ForeignLanguageRuntimeFactoryDesc{ForeignInterfaceLanguage::Cpp});
+                ForeignLanguageRuntimeFactoryDesc{
+                    ForeignInterfaceLanguage::Cpp});
             if (result.has_value())
             {
                 g_runtime = std::move(result.value());
@@ -335,15 +331,15 @@ int main(int argc, char* argv[])
             }
             else
             {
-                std::string _log_msg =
-                    DAS_FMT_NS::format("Failed to initialize foreign language runtime");
+                std::string _log_msg = DAS_FMT_NS::format(
+                    "Failed to initialize foreign language runtime");
                 DAS_LOG_WARNING(_log_msg.c_str());
             }
         }
 
         // 创建 IPC Context
         using namespace Das::Core::IPC::Host;
-        
+
         IpcContextConfig config{};
         IpcContextPtr    ctx{CreateIpcContext(config)};
         if (!ctx)
@@ -351,17 +347,17 @@ int main(int argc, char* argv[])
             DAS_LOG_ERROR("Failed to create IPC context");
             return EXIT_FAILURE;
         }
-        
+
         g_ipc_context = ctx.get();
-        
+
         // 设置握手完成回调
         ctx->SetOnHandshakeComplete(HostOnHandshakeComplete, nullptr);
-        
+
         // 运行 IPC 事件循环
         DasResult result = ctx->Run();
-        
+
         g_ipc_context = nullptr;
-        
+
         if (Das::IsFailed(result))
         {
             std::string err_msg = DAS_FMT_NS::format(
@@ -375,7 +371,8 @@ int main(int argc, char* argv[])
     }
     catch (const std::exception& e)
     {
-        std::cerr << "Error: " << e.what() << "\n";
+        std::string err_msg = DAS_FMT_NS::format("Error: {}", e.what());
+        DAS_LOG_ERROR(err_msg.c_str());
         return EXIT_FAILURE;
     }
 }
