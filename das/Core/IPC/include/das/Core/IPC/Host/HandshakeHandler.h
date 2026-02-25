@@ -54,7 +54,8 @@ namespace Core
              * - HeartbeatV1
              * - GoodbyeV1
              *
-             * 该类可以作为 IpcRunLoop::SetRequestHandler 的处理器使用。
+             * 该类实现 IMessageHandler 接口，可以直接通过 RegisterHandler
+             * 注册到 IpcRunLoop。
              *
              * @note 线程安全：所有公共方法都是线程安全的。
              *
@@ -64,27 +65,19 @@ namespace Core
              * using namespace Das::Core::IPC;
              *
              * // 创建握手处理器
-             * Host::HandshakeHandler handler;
-             * handler.Initialize(1);  // Host 的 session_id
+             * auto handler = std::make_unique<Host::HandshakeHandler>();
+             * handler->Initialize(1);  // Host 的 session_id
              *
              * // 设置回调
-             * handler.SetOnClientConnected([](const Host::ConnectedClient&
+             * handler->SetOnClientConnected([](const Host::ConnectedClient&
              * client) {
              *     std::string msg = DAS_FMT_NS::format(
              *         "Client connected: session_id={}, plugin={}",
              *         client.session_id, client.plugin_name.c_str());
              *     DAS_LOG_INFO(msg.c_str()); });
              *
-             * // 作为 IpcRunLoop 的请求处理器
-             * run_loop.SetRequestHandler([&handler](
-             *     const IPCMessageHeader& header,
-             *     const uint8_t* body,
-             *     size_t body_size) -> DasResult
-             * {
-             *     std::vector<uint8_t> response;
-             *     return handler.HandleMessage(header, body, body_size,
-             * response);
-             * });
+             * // 注册到 IpcRunLoop
+             * run_loop.RegisterHandler(std::move(handler));
              * @endcode
              */
             class DAS_API HandshakeHandler : public IMessageHandler
@@ -135,19 +128,15 @@ namespace Core
                 DasResult Shutdown();
 
                 /**
-                 * @brief 处理握手消息
+                 * @brief 处理握手消息（旧接口）
                  *
-                 * 可作为 IpcRunLoop::SetRequestHandler 的参数使用。
-                 * 根据 interface_id 分发到对应的处理方法。
+                 * 内部使用的旧接口，用于向后兼容。
                  *
                  * @param header 消息头
                  * @param body 消息体
                  * @param body_size 消息体大小
                  * @param response_body 输出响应体
                  * @return DasResult 成功返回 DAS_S_OK
-                 * @deprecated 请使用新接口 HandleMessage(const
-                 * IPCMessageHeader&, const std::vector<uint8_t>&,
-                 * IpcResponseSender&)
                  */
                 DasResult HandleMessage(
                     const IPCMessageHeader& header,

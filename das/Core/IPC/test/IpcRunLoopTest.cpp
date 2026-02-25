@@ -1,12 +1,16 @@
 #include <atomic>
 #include <chrono>
+#include <das/Core/IPC/IMessageHandler.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
+#include <das/Core/IPC/IpcResponseSender.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <gtest/gtest.h>
 #include <thread>
 #include <vector>
 
+using DAS::Core::IPC::IMessageHandler;
 using DAS::Core::IPC::IPCMessageHeader;
+using DAS::Core::IPC::IpcResponseSender;
 using DAS::Core::IPC::IpcRunLoop;
 using DAS::Core::IPC::MessageType;
 
@@ -125,17 +129,39 @@ TEST_F(IpcRunLoopTest, Stop_Idempotent)
     EXPECT_EQ(result, DAS_S_OK);
 }
 
-// ====== Request Handler Tests ======
+// ====== Message Handler Tests ======
 
-TEST_F(IpcRunLoopTest, SetRequestHandler_Succeeds)
+// 简单的测试用消息处理器
+class TestMessageHandler : public IMessageHandler
+{
+public:
+    [[nodiscard]]
+    uint32_t GetInterfaceId() const override
+    {
+        return 1;
+    }
+
+    DasResult HandleMessage(
+        const IPCMessageHeader&     header,
+        const std::vector<uint8_t>& body,
+        IpcResponseSender&          sender) override
+    {
+        // 简单返回成功
+        return DAS_S_OK;
+    }
+};
+
+TEST_F(IpcRunLoopTest, RegisterHandler_Succeeds)
 {
     ASSERT_EQ(runloop_->Initialize(), DAS_S_OK);
 
-    runloop_->SetRequestHandler(
-        [](const IPCMessageHeader&, const uint8_t*, size_t)
-        { return DAS_S_OK; });
-    // Handler is set via std::move, no return value
-    // This test just verifies it compiles and doesn't crash
+    // 注册处理器
+    auto handler = std::make_unique<TestMessageHandler>();
+    runloop_->RegisterHandler(std::move(handler));
+
+    // 验证可以通过 GetHandler 获取
+    IMessageHandler* retrieved = runloop_->GetHandler(1);
+    EXPECT_NE(retrieved, nullptr);
 }
 
 // ====== Concurrency Tests ======
