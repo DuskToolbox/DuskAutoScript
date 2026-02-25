@@ -31,7 +31,7 @@ namespace Core
 
             // 调用 IpcRunLoop 发送请求
             return run_loop_
-                ->SendRequest(header, body, body_size, response_body);
+                ->SendMessage(header, body, body_size, response_body);
         }
 
         DasResult IPCProxyBase::SendRequestNoResponse(

@@ -2,6 +2,7 @@
 #define DAS_CORE_IPC_IPC_COMMAND_HANDLER_H
 
 #include <cstdint>
+#include <das/Core/IPC/IMessageHandler.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/IDasBase.h>
@@ -60,9 +61,12 @@ namespace Core
          * 处理主进程和 Host 进程之间的控制命令，
          * 与 RemoteObjectRegistry 集成进行对象管理
          */
-        class DAS_API IpcCommandHandler
+        class DAS_API IpcCommandHandler : public IMessageHandler
         {
         public:
+            static constexpr uint32_t INTERFACE_ID = 0x00000002;
+
+            // 命令处理函数类型
             // 命令处理函数类型
             using CommandHandler = std::function<DasResult(
                 const IPCMessageHeader&  header,
@@ -114,6 +118,17 @@ namespace Core
              * @return uint16_t 会话ID
              */
             uint16_t GetSessionId() const;
+
+            [[nodiscard]]
+            uint32_t GetInterfaceId() const override
+            {
+                return INTERFACE_ID;
+            }
+
+            DasResult HandleMessage(
+                const IPCMessageHeader&     header,
+                const std::vector<uint8_t>& body,
+                IpcResponseSender&          sender) override;
 
         private:
             // 内置命令处理器
@@ -296,7 +311,6 @@ namespace Core
             uint16_t session_id; // 会话ID
             uint16_t version;    // 版本
         };
-
     }
 }
 DAS_NS_END

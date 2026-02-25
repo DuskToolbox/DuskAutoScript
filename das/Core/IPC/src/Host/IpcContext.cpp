@@ -4,6 +4,7 @@
 #include <das/Core/IPC/Host/IpcContext.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcRunLoop.h>
+#include <das/Core/IPC/MessageHandlerRef.h>
 #include <das/Core/IPC/MessageQueueTransport.h>
 #include <das/Core/IPC/ObjectManager.h>
 #include <das/Core/IPC/SessionCoordinator.h>
@@ -118,53 +119,14 @@ namespace Core
                             is_connected_ = false;
                         });
 
-                    // 7. 设置 IpcRunLoop 的请求处理器
-                    run_loop_->SetRequestHandler(
-                        [this](
-                            const IPCMessageHeader& header,
-                            const uint8_t*          body,
-                            size_t                  body_size) -> DasResult
-                        {
-                            // 优先处理握手消息
-                            std::vector<uint8_t> response;
-                            DasResult            result =
-                                handshake_handler_->HandleMessage(
-                                    header,
-                                    body,
-                                    body_size,
-                                    response);
-                            if (result == DAS_S_OK && !response.empty())
-                            {
-                                run_loop_->SendResponse(
-                                    header,
-                                    response.data(),
-                                    response.size());
-                                return DAS_S_OK;
-                            }
+                    // 7. 注册消息处理器
+                    run_loop_->RegisterHandler(
+                        std::make_unique<MessageHandlerRef>(
+                            handshake_handler_.get()));
 
-                            // 处理命令消息
-                            IpcCommandResponse cmd_response;
-                            result = command_handler_->HandleCommand(
-                                header,
-                                std::span<const uint8_t>(body, body_size),
-                                cmd_response);
-                            // 发送响应（成功时需要响应体，失败时只需要错误码）
-                            if ((result == DAS_S_OK
-                                 && !cmd_response.response_data.empty())
-                                || result != DAS_S_OK)
-                            {
-                                // 创建响应头副本并设置错误码
-                                IPCMessageHeader response_header = header;
-                                response_header.error_code =
-                                    cmd_response.error_code;
-                                run_loop_->SendResponse(
-                                    response_header,
-                                    cmd_response.response_data.data(),
-                                    cmd_response.response_data.size());
-                            }
-
-                            return result;
-                        });
+                    run_loop_->RegisterHandler(
+                        std::make_unique<MessageHandlerRef>(
+                            command_handler_.get()));
 
                     // 8. 初始化 Transport（消息队列）
                     // 使用当前进程 PID 作为消息队列和共享内存的命名基础

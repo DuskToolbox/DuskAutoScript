@@ -3,6 +3,7 @@
 #include <cstring>
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Core/IPC/IpcErrors.h>
+#include <das/Core/IPC/IpcResponseSender.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/ObjectManager.h>
 #include <das/Core/IPC/ProxyFactory.h>
@@ -86,6 +87,29 @@ namespace Core
         }
 
         uint16_t IpcCommandHandler::GetSessionId() const { return session_id_; }
+        DasResult IpcCommandHandler::HandleMessage(
+            const IPCMessageHeader&     header,
+            const std::vector<uint8_t>& body,
+            IpcResponseSender&          sender)
+        {
+            IpcCommandResponse       response;
+            std::span<const uint8_t> payload(body);
+
+            DasResult result = HandleCommand(header, payload, response);
+
+            // 构建响应 header
+            IPCMessageHeader response_header = header;
+            response_header.message_type =
+                static_cast<uint8_t>(MessageType::RESPONSE);
+            response_header.error_code =
+                static_cast<int32_t>(response.error_code);
+            response_header.body_size =
+                static_cast<uint32_t>(response.response_data.size());
+
+            sender.SendResponse(response_header, response.response_data);
+
+            return result;
+        }
 
         IpcCommandType IpcCommandHandler::ExtractCommandType(
             const IPCMessageHeader& header)

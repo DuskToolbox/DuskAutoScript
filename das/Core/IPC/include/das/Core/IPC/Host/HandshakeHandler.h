@@ -4,7 +4,9 @@
 #include <chrono>
 #include <cstdint>
 #include <das/Core/IPC/Handshake.h>
+#include <das/Core/IPC/IMessageHandler.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
+#include <das/Core/IPC/IpcResponseSender.h>
 #include <das/DasApi.h>
 #include <das/IDasBase.h>
 #include <das/Utils/fmt.h>
@@ -85,9 +87,17 @@ namespace Core
              * });
              * @endcode
              */
-            class DAS_API HandshakeHandler
+            class DAS_API HandshakeHandler : public IMessageHandler
             {
             public:
+                static constexpr uint32_t INTERFACE_ID = 0x00000001; // 握手协议
+
+                [[nodiscard]]
+                uint32_t GetInterfaceId() const override
+                {
+                    return INTERFACE_ID;
+                }
+
                 using ClientConnectedCallback =
                     std::function<void(const ConnectedClient&)>;
                 using ClientDisconnectedCallback =
@@ -135,12 +145,31 @@ namespace Core
                  * @param body_size 消息体大小
                  * @param response_body 输出响应体
                  * @return DasResult 成功返回 DAS_S_OK
+                 * @deprecated 请使用新接口 HandleMessage(const
+                 * IPCMessageHeader&, const std::vector<uint8_t>&,
+                 * IpcResponseSender&)
                  */
                 DasResult HandleMessage(
                     const IPCMessageHeader& header,
                     const uint8_t*          body,
                     size_t                  body_size,
                     std::vector<uint8_t>&   response_body);
+
+                /**
+                 * @brief 处理握手消息（新接口）
+                 *
+                 * 实现 IMessageHandler 接口。
+                 * 内部调用现有实现逻辑。
+                 *
+                 * @param header 消息头
+                 * @param body 消息体
+                 * @param sender 响应发送器
+                 * @return DasResult 成功返回 DAS_S_OK
+                 */
+                DasResult HandleMessage(
+                    const IPCMessageHeader&     header,
+                    const std::vector<uint8_t>& body,
+                    IpcResponseSender&          sender) override;
 
                 /**
                  * @brief 设置客户端连接回调

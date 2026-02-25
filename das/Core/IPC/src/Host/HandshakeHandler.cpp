@@ -178,6 +178,26 @@ namespace Core
                 }
             }
 
+            DasResult HandshakeHandler::HandleMessage(
+                const IPCMessageHeader&     header,
+                const std::vector<uint8_t>& body,
+                IpcResponseSender&          sender)
+            {
+                std::vector<uint8_t> response_body;
+                DasResult            result = HandleMessage(
+                    header,
+                    body.data(),
+                    body.size(),
+                    response_body);
+
+                if (DAS::IsOk(result) && !response_body.empty())
+                {
+                    sender.SendResponse(header, response_body);
+                }
+
+                return result;
+            }
+
             void HandshakeHandler::SetOnClientConnected(
                 ClientConnectedCallback callback)
             {

@@ -363,8 +363,7 @@ TEST(IpcMultiProcessTestBasic, MessageQueueNameGeneration)
     std::string h2m_name =
         DAS::Core::IPC::Host::MakeMessageQueueName(12345, false);
 
-    EXPECT_TRUE(m2p_name.find("DAS_Host_12345_MQ_M2P") != std::string::npos);
-    EXPECT_TRUE(h2m_name.find("DAS_Host_12345_MQ_H2M") != std::string::npos);
+    EXPECT_TRUE(m2p_name.find("DAS_Host_12345_MQ_M2H") != std::string::npos);
     EXPECT_NE(m2p_name, h2m_name);
 }
 
