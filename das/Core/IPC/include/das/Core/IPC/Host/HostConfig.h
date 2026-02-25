@@ -34,20 +34,20 @@ namespace Host
     // 连接超时
     constexpr uint32_t DEFAULT_CONNECTION_TIMEOUT_MS = 30000; // 30 seconds
 
-    // 消息队列命名格式: DAS_Host_<host_pid>_MQ_M2P / DAS_Host_<host_pid>_MQ_H2M
+    // 消息队列命名格式: DAS_Host_<host_pid>_MQ_M2H / DAS_Host_<host_pid>_MQ_H2M
     // 共享内存命名格式: DAS_Host_<host_pid>_SHM
 
     /**
      * @brief 生成消息队列名称
      * @param host_pid Host 进程 PID
-     * @param is_host_to_plugin true 表示 Host->Plugin 方向
+     * @param is_main_to_host true 表示 Main->Host 方向
      */
     inline std::string MakeMessageQueueName(
         uint32_t host_pid,
-        bool     is_host_to_plugin)
+        bool     is_main_to_host)
     {
         return std::string("DAS_Host_") + std::to_string(host_pid) + "_MQ_"
-               + (is_host_to_plugin ? "M2P" : "H2M");
+               + (is_main_to_host ? "M2H" : "H2M");
     }
 
     /**

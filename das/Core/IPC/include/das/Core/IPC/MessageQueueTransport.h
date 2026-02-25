@@ -57,7 +57,7 @@ namespace Core
             static std::string MakeQueueName(
                 uint16_t host_id,
                 uint16_t plugin_id,
-                bool     is_host_to_plugin);
+                bool     is_main_to_host);
 
         private:
             DasResult SendSmallMessage(

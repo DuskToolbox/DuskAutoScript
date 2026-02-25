@@ -161,13 +161,13 @@ TEST_F(IpcMessageQueueTransportTest, Send_LargeMessageRequiresSharedMemory)
 TEST_F(IpcMessageQueueTransportTest, MakeQueueName_HostToPlugin)
 {
     auto name = IpcTransport::MakeQueueName(1, 2, true);
-    EXPECT_EQ(name, "das_ipc_1_2_h2p");
+    EXPECT_EQ(name, "das_ipc_1_2_m2h");
 }
 
 TEST_F(IpcMessageQueueTransportTest, MakeQueueName_PluginToHost)
 {
     auto name = IpcTransport::MakeQueueName(1, 2, false);
-    EXPECT_EQ(name, "das_ipc_1_2_p2h");
+    EXPECT_EQ(name, "das_ipc_1_2_h2m");
 }
 
 // ====== Error Cases ======

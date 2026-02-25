@@ -80,17 +80,17 @@ namespace Core
             try
             {
                 // 客户端角色：交换队列方向
-                // host_queue_ 用于 Send，应指向 P2H（Plugin -> Host）
-                // plugin_queue_ 用于 Receive，应指向 H2P（Host -> Plugin）
+                // host_queue_ 用于 Send，应指向 M2H（Main -> Host）
+                // plugin_queue_ 用于 Receive，应指向 H2M（Host -> Main）
                 impl_->host_queue_ =
                     std::make_unique<boost::interprocess::message_queue>(
                         boost::interprocess::open_only,
-                        plugin_queue_name.c_str());  // P2H - 客户端发送用
+                        plugin_queue_name.c_str());  // M2H - 客户端发送用
 
                 impl_->plugin_queue_ =
                     std::make_unique<boost::interprocess::message_queue>(
                         boost::interprocess::open_only,
-                        host_queue_name.c_str());  // H2P - 客户端接收用
+                        host_queue_name.c_str());  // H2M - 客户端接收用
 
                 // 从已存在的队列获取配置
                 impl_->max_message_size_ = static_cast<uint32_t>(
@@ -269,17 +269,17 @@ namespace Core
         std::string IpcTransport::MakeQueueName(
             uint16_t host_id,
             uint16_t plugin_id,
-            bool     is_host_to_plugin)
+            bool     is_main_to_host)
         {
-            if (is_host_to_plugin)
+            if (is_main_to_host)
             {
                 return "das_ipc_" + std::to_string(host_id) + "_"
-                       + std::to_string(plugin_id) + "_h2p";
+                       + std::to_string(plugin_id) + "_m2h";
             }
             else
             {
                 return "das_ipc_" + std::to_string(host_id) + "_"
-                       + std::to_string(plugin_id) + "_p2h";
+                       + std::to_string(plugin_id) + "_h2m";
             }
         }
 
