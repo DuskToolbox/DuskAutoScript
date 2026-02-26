@@ -1,4 +1,5 @@
 #include <cstring>
+#include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/Host/HandshakeHandler.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcRunLoop.h>
@@ -203,7 +204,25 @@ namespace Core
 
                 if (DAS::IsOk(result) && !response_body.empty())
                 {
-                    sender.SendResponse(header, response_body);
+                    // 根据请求类型设置响应的 interface_id
+                    IPCMessageHeader response_header = header;
+                    switch (static_cast<HandshakeInterfaceId>(header.interface_id))
+                    {
+                    case HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO:
+                        response_header.interface_id =
+                            static_cast<uint32_t>(
+                                HandshakeInterfaceId::HANDSHAKE_IFACE_WELCOME);
+                        break;
+                    case HandshakeInterfaceId::HANDSHAKE_IFACE_READY:
+                        response_header.interface_id =
+                            static_cast<uint32_t>(
+                                HandshakeInterfaceId::HANDSHAKE_IFACE_READY_ACK);
+                        break;
+                    default:
+                        // 其他消息保持原 interface_id
+                        break;
+                    }
+                    sender.SendResponse(response_header, response_body);
                 }
 
                 return result;
