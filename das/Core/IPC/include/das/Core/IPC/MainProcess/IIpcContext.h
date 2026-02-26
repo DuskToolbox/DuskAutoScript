@@ -27,9 +27,8 @@ namespace Core
              * 纯虚函数接口，protected 析构函数防止用户直接 delete。
              * 使用 CreateIpcContext() 创建实例。
              */
-            class IIpcContext
+            struct IIpcContext
             {
-            public:
                 virtual MainProcessServer&        GetServer() = 0;
                 virtual DistributedObjectManager& GetObjectManager() = 0;
                 virtual ProxyFactory&             GetProxyFactory() = 0;

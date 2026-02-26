@@ -8,6 +8,7 @@
 #include <das/IDasBase.h>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <unordered_map>
 
 #include <das/Core/IPC/Config.h>
@@ -21,9 +22,6 @@ struct RemoteObjectHandle
     bool     is_local;
 };
 
-#ifdef _MSC_VER
-#pragma warning(disable : 4251)
-#endif
 class DistributedObjectManager : public IDistributedObjectManager
 {
 public:
@@ -50,12 +48,12 @@ public:
 private:
     static DasResult ValidateObjectId(const ObjectId& object_id);
 
-    struct Impl;
-    std::unique_ptr<Impl> impl_;
+    std::unordered_map<ObjectId, RemoteObjectHandle> objects_;
+    mutable std::shared_mutex                        objects_mutex_;
+    uint16_t                                         local_session_id_{0};
+    uint32_t                                         next_local_id_{1};
+    std::unordered_map<uint32_t, uint16_t>           local_id_generations_;
 };
-#ifdef _MSC_VER
-#pragma warning(default : 4251)
-#endif
 DAS_CORE_IPC_NS_END
 
 #endif // DAS_CORE_IPC_OBJECT_MANAGER_H

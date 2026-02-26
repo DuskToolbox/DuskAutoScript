@@ -9,10 +9,8 @@ DAS_CORE_IPC_NS_BEGIN
 
 /// 分布式对象管理器接口（抽象基类）
 /// 外部调用者通过此接口调用，无需导出 DistributedObjectManager 具体类
-class IDistributedObjectManager
+struct IDistributedObjectManager
 {
-public:
-
 
     /// 注册本地对象
     /// @param object_ptr 对象指针

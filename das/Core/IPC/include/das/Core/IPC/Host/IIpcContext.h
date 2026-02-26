@@ -25,13 +25,13 @@ namespace Core
                 const char* main_process_queue_name;
             };
 
-            class IIpcContext;
+            struct IIpcContext;
 
             // 前置声明 DestroyIpcContext，用于友元
             DAS_API void DestroyIpcContext(IIpcContext* ctx);
 
             using OnHandshakeComplete = void (*)(
-                class IIpcContext* ctx,
+                struct IIpcContext* ctx,
                 DasResult          result,
                 void*              user_data);
 
@@ -44,9 +44,8 @@ namespace Core
             /**
              * @brief Host 进程 IPC 上下文接口
              */
-            class IIpcContext
+            struct IIpcContext
             {
-            public:
                 virtual IpcRunLoop&                GetRunLoop() = 0;
                 virtual IpcCommandHandler&         GetCommandHandler() = 0;
                 virtual IDistributedObjectManager& GetObjectManager() = 0;
