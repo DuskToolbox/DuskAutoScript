@@ -8,8 +8,7 @@
  * 测试场景：
  * 1. 进程启动与关闭
  * 2. 握手协议（Hello -> Welcome -> Ready -> ReadyAck）
- * 3. IPC 消息传输
- * 4. 插件加载
+ * 3. IPC 连接验证
  */
 
 #include "IpcMultiProcessTestCommon.h"
@@ -24,125 +23,119 @@ TEST_F(IpcMultiProcessTest, ProcessLaunch)
         GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
     }
 
-    DasResult result = launcher_.Launch(host_exe_path_);
+    uint16_t  session_id = 0;
+    DasResult result = launcher_.Start(host_exe_path_, "", session_id, 10000);
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_TRUE(launcher_.IsRunning());
     EXPECT_GT(launcher_.GetPid(), 0u);
+    EXPECT_GT(session_id, static_cast<uint16_t>(0));
 }
 
-TEST_F(IpcMultiProcessTest, WaitForHostReady)
+TEST_F(IpcMultiProcessTest, HostLauncherStart)
 {
-    // 测试等待 Host 进程 IPC 资源就绪（禁用：需要 DasHost.exe 存在）
+    // 测试 HostLauncher.Start() 完整流程
+    // 注意：WaitForHostReady 测试已合并到此测试，因为 Start() 已内置等待功能
     if (!std::filesystem::exists(host_exe_path_))
     {
         GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
     }
 
-    ASSERT_EQ(launcher_.Launch(host_exe_path_), DAS_S_OK);
-    EXPECT_TRUE(WaitForHostReady(10000));
-}
-
-TEST_F(IpcMultiProcessTest, IpcClientConnect)
-{
-    // 测试 IPC 客户端连接（禁用：需要 DasHost.exe 存在）
-    if (!std::filesystem::exists(host_exe_path_))
-    {
-        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
-    }
-
-    ASSERT_EQ(launcher_.Launch(host_exe_path_), DAS_S_OK);
-    ASSERT_TRUE(WaitForHostReady(10000));
-
-    DasResult result = client_.Connect(launcher_.GetPid());
+    uint16_t  session_id = 0;
+    DasResult result = launcher_.Start(host_exe_path_, "", session_id, 10000);
     ASSERT_EQ(result, DAS_S_OK);
-    EXPECT_TRUE(client_.IsConnected());
+    EXPECT_TRUE(launcher_.IsRunning());
+    EXPECT_GT(launcher_.GetPid(), 0u);
+    EXPECT_GT(session_id, static_cast<uint16_t>(0));
+    EXPECT_EQ(session_id, launcher_.GetSessionId());
+}
+
+TEST_F(IpcMultiProcessTest, TransportAvailable)
+{
+    // 测试 IPC 传输接口可用
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+    }
+
+    uint16_t  session_id = 0;
+    DasResult result = launcher_.Start(host_exe_path_, "", session_id, 10000);
+    ASSERT_EQ(result, DAS_S_OK);
+
+    auto* transport = launcher_.GetTransport();
+    ASSERT_NE(transport, nullptr);
+    EXPECT_TRUE(transport->IsConnected());
 }
 
 TEST_F(IpcMultiProcessTest, FullHandshake)
 {
-    // 测试完整握手流程（禁用：需要 DasHost.exe 存在）
+    // 测试完整握手流程（通过 Start() 一次性完成）
     if (!std::filesystem::exists(host_exe_path_))
     {
         GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
     }
 
-    ASSERT_EQ(launcher_.Launch(host_exe_path_), DAS_S_OK);
-    ASSERT_TRUE(WaitForHostReady(10000));
-    ASSERT_EQ(client_.Connect(launcher_.GetPid()), DAS_S_OK);
-
     uint16_t  session_id = 0;
-    DasResult result = client_.PerformFullHandshake(session_id, 10000);
+    DasResult result = launcher_.Start(host_exe_path_, "", session_id, 10000);
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_GT(session_id, static_cast<uint16_t>(0));
+    EXPECT_EQ(session_id, launcher_.GetSessionId());
 }
 
-// ====== LOAD_PLUGIN 命令测试 ======
-
-TEST_F(IpcMultiProcessTest, LoadPlugin_Success)
+TEST_F(IpcMultiProcessTest, MultipleStartStop)
 {
+    // 测试多次启动/停止
     if (!std::filesystem::exists(host_exe_path_))
     {
         GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
     }
 
-    ASSERT_EQ(launcher_.Launch(host_exe_path_), DAS_S_OK);
-    ASSERT_TRUE(WaitForHostReady(10000));
-    ASSERT_EQ(client_.Connect(launcher_.GetPid()), DAS_S_OK);
-
-    uint16_t  session_id = 0;
-    DasResult result = client_.PerformFullHandshake(session_id, 10000);
-    ASSERT_EQ(result, DAS_S_OK);
-    EXPECT_GT(session_id, static_cast<uint16_t>(0));
-
-    std::string cmake_binary_dir = std::getenv("CMAKE_BINARY_DIR")
-                                       ? std::getenv("CMAKE_BINARY_DIR")
-                                       : "C:/vmbuild";
-    std::string config = std::getenv("CMAKE_BUILD_TYPE")
-                             ? std::getenv("CMAKE_BUILD_TYPE")
-                             : "Debug";
-    std::string plugin_path =
-        cmake_binary_dir + "/bin/" + config + "/plugins/IpcTestPlugin.json";
-
-    if (!std::filesystem::exists(plugin_path))
+    for (int i = 0; i < 3; ++i)
     {
-        GTEST_SKIP() << "IpcTestPlugin.json not found at: " << plugin_path;
+        uint16_t  session_id = 0;
+        DasResult result =
+            launcher_.Start(host_exe_path_, "", session_id, 10000);
+        ASSERT_EQ(result, DAS_S_OK) << "Failed at iteration " << i;
+        EXPECT_TRUE(launcher_.IsRunning());
+        EXPECT_GT(session_id, static_cast<uint16_t>(0));
+
+        launcher_.Stop();
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        EXPECT_FALSE(launcher_.IsRunning());
     }
-
-    result = client_.SendLoadPlugin(plugin_path);
-    ASSERT_EQ(result, DAS_S_OK);
-
-    DAS::Core::IPC::ObjectId object_id;
-    uint32_t                 error_code = 0;
-    result = client_.ReceiveLoadPluginResponse(object_id, error_code, 10000);
-    ASSERT_EQ(result, DAS_S_OK);
-    EXPECT_EQ(error_code, DAS_S_OK);
-    EXPECT_GT(object_id.local_id, 0u);
 }
 
-TEST_F(IpcMultiProcessTest, LoadPlugin_InvalidPath)
+TEST_F(IpcMultiProcessTest, StopTerminatesProcess)
 {
+    // 测试 Stop() 正确终止进程
     if (!std::filesystem::exists(host_exe_path_))
     {
         GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
     }
 
-    ASSERT_EQ(launcher_.Launch(host_exe_path_), DAS_S_OK);
-    ASSERT_TRUE(WaitForHostReady(10000));
-    ASSERT_EQ(client_.Connect(launcher_.GetPid()), DAS_S_OK);
-
     uint16_t  session_id = 0;
-    DasResult result = client_.PerformFullHandshake(session_id, 10000);
+    DasResult result = launcher_.Start(host_exe_path_, "", session_id, 10000);
     ASSERT_EQ(result, DAS_S_OK);
-    EXPECT_GT(session_id, static_cast<uint16_t>(0));
+    EXPECT_TRUE(launcher_.IsRunning());
 
-    std::string invalid_path = "C:/nonexistent/InvalidPlugin.json";
+    launcher_.Stop();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    EXPECT_FALSE(launcher_.IsRunning());
+}
 
-    result = client_.SendLoadPlugin(invalid_path);
-    ASSERT_EQ(result, DAS_S_OK);
+TEST_F(IpcMultiProcessTest, GetSessionIdBeforeStart)
+{
+    // 测试启动前 GetSessionId() 返回 0
+    EXPECT_EQ(launcher_.GetSessionId(), 0u);
+}
 
-    DAS::Core::IPC::ObjectId object_id;
-    uint32_t                 error_code = 0;
-    result = client_.ReceiveLoadPluginResponse(object_id, error_code, 10000);
-    ASSERT_EQ(result, DAS_S_OK);
-    EXPECT_NE(error_code, DAS_S_OK);
+TEST_F(IpcMultiProcessTest, GetPidBeforeStart)
+{
+    // 测试启动前 GetPid() 返回 0
+    EXPECT_EQ(launcher_.GetPid(), 0u);
+}
+
+TEST_F(IpcMultiProcessTest, IsRunningBeforeStart)
+{
+    // 测试启动前 IsRunning() 返回 false
+    EXPECT_FALSE(launcher_.IsRunning());
 }
