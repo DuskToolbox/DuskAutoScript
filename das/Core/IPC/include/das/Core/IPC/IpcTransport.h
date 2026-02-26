@@ -22,7 +22,7 @@ class SharedMemoryPool;
 #pragma warning(disable : 4251)
 #endif
 
-class DAS_API IpcTransport
+class IpcTransport
 {
 public:
     IpcTransport();

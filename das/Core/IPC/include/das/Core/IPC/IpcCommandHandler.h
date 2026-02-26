@@ -59,7 +59,7 @@ struct IpcCommandResponse
  * 处理主进程和 Host 进程之间的控制命令，
  * 与 RemoteObjectRegistry 集成进行对象管理
  */
-class DAS_API IpcCommandHandler : public IMessageHandler
+class IpcCommandHandler : public IMessageHandler
 {
 public:
     static constexpr uint32_t INTERFACE_ID = 0x00000002;

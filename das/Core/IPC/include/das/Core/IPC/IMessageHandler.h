@@ -18,7 +18,7 @@ class IpcResponseSender;
  * 所有 IPC 消息处理器必须实现此接口。
  * 通过 RegisterHandler() 注册到 IpcRunLoop。
  */
-class DAS_API IMessageHandler
+class IMessageHandler
 {
 public:
     virtual ~IMessageHandler() = default;
