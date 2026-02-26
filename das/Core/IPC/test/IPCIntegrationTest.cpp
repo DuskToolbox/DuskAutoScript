@@ -19,15 +19,14 @@
 #include <atomic>
 #include <chrono>
 #include <das/Core/IPC/ConnectionManager.h>
+#include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/MainProcess/MainProcessServer.h>
 #include <das/Core/IPC/ObjectId.h>
-#include <das/Core/IPC/ObjectManager.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/IPC/SessionCoordinator.h>
-#include <das/IDasBase.h>
 #include <gtest/gtest.h>
 #include <mutex>
 #include <thread>

@@ -2,22 +2,17 @@
 // B8 Host 进程模型实现
 
 #include <atomic>
+#include <boost/program_options.hpp>
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
-#include <cstring>
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
-
+#include <das/Core/IPC/DistributedObjectManager.h>
+#include <das/Core/IPC/HandshakeSerialization.h>
 #include <das/Core/IPC/Host/IIpcContext.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
-
-#include <das/Core/IPC/HandshakeSerialization.h>
 #include <das/Core/IPC/ObjectId.h>
-
-#include <das/Core/IPC/ObjectManager.h>
-
-#include <boost/program_options.hpp>
 #include <das/DasApi.h>
 #include <das/IDasBase.h>
 #include <das/Utils/fmt.h>
@@ -26,9 +21,7 @@
 #include <iostream>
 #include <nlohmann/json.hpp>
 #include <sstream>
-#include <stdexec/execution.hpp>
 #include <string>
-#include <thread>
 
 // Global IPC context pointer for signal handler
 static Das::Core::IPC::Host::IIpcContext* g_ipc_context = nullptr;
@@ -283,8 +276,8 @@ int main(int argc, char* argv[])
         // 初始化 Foreign Language Runtime（根据配置自动选择 C++ 或 Python）
         {
             using namespace DAS::Core::ForeignInterfaceHost;
-            auto result = CreateForeignLanguageRuntime(
-                ForeignLanguageRuntimeFactoryDesc{
+            auto result =
+                CreateForeignLanguageRuntime(ForeignLanguageRuntimeFactoryDesc{
                     ForeignInterfaceLanguage::Cpp});
             if (result.has_value())
             {

@@ -1,4 +1,4 @@
-#include <das/Core/IPC/MessageQueueTransport.h>
+#include <das/Core/IPC/IpcTransport.h>
 #include <gtest/gtest.h>
 #include <thread>
 #include <vector>

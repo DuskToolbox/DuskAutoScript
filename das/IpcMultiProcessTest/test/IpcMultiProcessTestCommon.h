@@ -18,7 +18,7 @@
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
-#include <das/Core/IPC/MessageQueueTransport.h>
+#include <das/Core/IPC/IpcTransport.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/IPC/SessionCoordinator.h>
@@ -77,6 +77,6 @@ protected:
 
     // WaitForHostReady 已移除 - HostLauncher.Start() 已内置此功能
 
-    std::string                   host_exe_path_;
-    DAS::Core::IPC::HostLauncher   launcher_;
+    std::string                  host_exe_path_;
+    DAS::Core::IPC::HostLauncher launcher_;
 };
