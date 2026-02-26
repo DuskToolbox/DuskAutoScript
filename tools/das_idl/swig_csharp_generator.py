@@ -39,32 +39,95 @@ class CSharpSwigGenerator(SwigLangGenerator):
 
         code = f"""
 #ifdef SWIGCSHARP
-%typemap(csclassmodifiers) {qualified_name} "public partial class"
+// 将 GetData 重命名为内部方法，并设为私有
+// 类似于 Java 端的处理方式
+%rename("GetData_internal") {qualified_name}::GetData;
+%csmethodmodifiers {qualified_name}::GetData "private";
 
+// 禁用 GetData 的 Director 功能
+%feature("nodirector") {qualified_name}::GetData;
+
+// GetData 的 [out] 参数转换为 System.IntPtr
+// ctype: C/C++ 端类型
+// imtype: P/Invoke 中间类型
+// cstype: C# 公开类型
+// csin: C# 调用时的参数转换
+%typemap(ctype) unsigned char** pp_out_data "unsigned char**"
+%typemap(imtype) unsigned char** pp_out_data "out System.IntPtr"
+%typemap(cstype) unsigned char** pp_out_data "out System.IntPtr"
+%typemap(csin) unsigned char** pp_out_data "out $csinput"
+%typemap(in) unsigned char** pp_out_data (unsigned char* temp = nullptr) {{
+    $1 = &temp;
+}}
+%typemap(freearg) unsigned char** pp_out_data ""  // 不释放临时变量
+%typemap(argout) unsigned char** pp_out_data ""  // argout 不需要处理，SWIG 会自动传递指针值
+// 注意：不使用 csargout，让 SWIG 自动处理 out 参数
+// 注入 C# 便捷方法 - 高效零拷贝内存访问
 %typemap(cscode) {qualified_name} %{{
+    /// <summary>
+    /// 获取数据指针（零拷贝）
+    /// </summary>
     public System.IntPtr GetDataPointer() {{
         System.IntPtr ptr = System.IntPtr.Zero;
-        var result = GetData(out ptr);
+        var result = GetData_internal(out ptr);
         if (result < 0) {{
             throw new System.Exception("Failed to get data pointer");
         }}
         return ptr;
     }}
 
-    public unsafe System.Span<byte> GetDataAsSpan() {{
-        var ptr = GetDataPointer();
+    /// <summary>
+    /// 获取数据大小
+    /// </summary>
+    public ulong GetDataSize() {{
         ulong size;
         {size_method_name}(out size);
+        return size;
+    }}
+
+    /// <summary>
+    /// 获取数据作为 Span（零拷贝，高性能）
+    /// 警告：Span 生命周期与底层内存绑定，请勿在释放内存后使用
+    /// </summary>
+    public unsafe System.Span<byte> GetDataAsSpan() {{
+        var ptr = GetDataPointer();
+        var size = GetDataSize();
         return new System.Span<byte>(ptr.ToPointer(), (int)size);
     }}
 
-    public byte[] GetDataAsByteArray() {{
+    /// <summary>
+    /// 获取数据作为只读 Span（零拷贝，高性能）
+    /// </summary>
+    public unsafe System.ReadOnlySpan<byte> GetDataAsReadOnlySpan() {{
         var ptr = GetDataPointer();
-        ulong size;
-        {size_method_name}(out size);
-        var array = new byte[size];
-        System.Runtime.InteropServices.Marshal.Copy(ptr, array, 0, (int)size);
-        return array;
+        var size = GetDataSize();
+        return new System.ReadOnlySpan<byte>(ptr.ToPointer(), (int)size);
+    }}
+
+    /// <summary>
+    /// 直接拷贝到目标缓冲区（零中间分配，高性能）
+    /// </summary>
+    /// <param name="destination">目标缓冲区</param>
+    /// <returns>实际拷贝的字节数</returns>
+    public int CopyTo(System.Span<byte> destination) {{
+        var source = GetDataAsSpan();
+        var copyLength = System.Math.Min(source.Length, destination.Length);
+        source.Slice(0, copyLength).CopyTo(destination);
+        return copyLength;
+    }}
+
+    /// <summary>
+    /// 异步拷贝到目标流（高性能）
+    /// </summary>
+    public async System.Threading.Tasks.Task CopyToAsync(System.IO.Stream destination) {{
+        var span = GetDataAsSpan();
+        await destination.WriteAsync(span).ConfigureAwait(false);
+    }}
+
+    /// <summary>
+    /// 获取数据副本（分配新数组，用于需要独立所有权的场景）
+    /// 注意：此方法会分配新内存并拷贝数据
+    /// </summary>
     }}
 %}}
 #endif
