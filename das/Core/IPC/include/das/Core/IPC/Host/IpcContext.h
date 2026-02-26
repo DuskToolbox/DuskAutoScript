@@ -60,10 +60,10 @@ namespace Core
                 class IpcCommandHandler& GetCommandHandler();
 
                 /**
-                 * @brief 获取 DistributedObjectManager 实例
-                 * @return DistributedObjectManager& 对象管理器实例
+                 * @brief 获取 IDistributedObjectManager 实例
+                 * @return IDistributedObjectManager& 对象管理器实例
                  */
-                class DistributedObjectManager& GetObjectManager();
+                class IDistributedObjectManager& GetObjectManager();
 
                 /**
                  * @brief 设置握手完成回调

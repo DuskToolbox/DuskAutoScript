@@ -2,6 +2,7 @@
 #define DAS_CORE_IPC_OBJECT_MANAGER_H
 
 #include <cstdint>
+#include <das/Core/IPC/IDistributedObjectManager.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/IDasBase.h>
@@ -23,7 +24,7 @@ struct RemoteObjectHandle
 #ifdef _MSC_VER
 #pragma warning(disable : 4251)
 #endif
-class DistributedObjectManager
+class DistributedObjectManager : public IDistributedObjectManager
 {
 public:
     DistributedObjectManager();
@@ -32,17 +33,19 @@ public:
     DasResult Initialize(uint16_t local_session_id);
     DasResult Shutdown();
 
-    DasResult RegisterLocalObject(void* object_ptr, ObjectId& out_object_id);
-    DasResult RegisterRemoteObject(const ObjectId& object_id);
-    DasResult UnregisterObject(const ObjectId& object_id);
+    DasResult RegisterLocalObject(void* object_ptr, ObjectId& out_object_id)
+        override;
+    DasResult RegisterRemoteObject(const ObjectId& object_id) override;
+    DasResult UnregisterObject(const ObjectId& object_id) override;
 
-    DasResult AddRef(const ObjectId& object_id);
-    DasResult Release(const ObjectId& object_id);
+    DasResult AddRef(const ObjectId& object_id) override;
+    DasResult Release(const ObjectId& object_id) override;
 
-    DasResult LookupObject(const ObjectId& object_id, void** object_ptr);
+    DasResult LookupObject(const ObjectId& object_id, void** object_ptr)
+        override;
 
-    bool IsValidObject(const ObjectId& object_id) const;
-    bool IsLocalObject(const ObjectId& object_id) const;
+    bool IsValidObject(const ObjectId& object_id) const override;
+    bool IsLocalObject(const ObjectId& object_id) const override;
 
 private:
     static DasResult ValidateObjectId(const ObjectId& object_id);

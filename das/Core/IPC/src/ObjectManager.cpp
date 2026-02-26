@@ -21,7 +21,10 @@ DistributedObjectManager::DistributedObjectManager()
 {
 }
 
-DistributedObjectManager::~DistributedObjectManager() { Shutdown(); }
+DistributedObjectManager::~DistributedObjectManager()
+{
+    Shutdown();
+}
 
 DasResult DistributedObjectManager::Initialize(uint16_t local_session_id)
 {

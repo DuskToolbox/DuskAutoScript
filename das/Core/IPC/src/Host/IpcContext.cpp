@@ -264,7 +264,7 @@ namespace Core
                     return *command_handler_;
                 }
 
-                DistributedObjectManager& GetObjectManager()
+                IDistributedObjectManager& GetObjectManager()
                 {
                     return *object_manager_;
                 }
@@ -362,7 +362,7 @@ namespace Core
             {
                 return impl_->GetCommandHandler();
             }
-            DistributedObjectManager& IpcContext::GetObjectManager()
+            IDistributedObjectManager& IpcContext::GetObjectManager()
             {
                 return impl_->GetObjectManager();
             }

@@ -15,7 +15,7 @@ namespace Core
         // 前置声明（在 IPC 命名空间内）
         class IpcRunLoop;
         class IpcCommandHandler;
-        class DistributedObjectManager;
+        class IDistributedObjectManager;
         struct IpcCommandResponse;
 
         namespace Host
@@ -47,9 +47,9 @@ namespace Core
             class IIpcContext
             {
             public:
-                virtual IpcRunLoop&               GetRunLoop() = 0;
-                virtual IpcCommandHandler&        GetCommandHandler() = 0;
-                virtual DistributedObjectManager& GetObjectManager() = 0;
+                virtual IpcRunLoop&                GetRunLoop() = 0;
+                virtual IpcCommandHandler&         GetCommandHandler() = 0;
+                virtual IDistributedObjectManager& GetObjectManager() = 0;
 
                 virtual void SetOnHandshakeComplete(
                     OnHandshakeComplete handler,
