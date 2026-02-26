@@ -12,14 +12,15 @@
 #include <atomic>
 #include <chrono>
 #include <das/Core/IPC/ConnectionManager.h>
+#include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcRunLoop.h>
-#include <das/Core/IPC/MessageQueueTransport.h>
-#include <das/Core/IPC/ObjectManager.h>
+#include <das/Core/IPC/IpcTransport.h>
 #include <das/Core/IPC/Serializer.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <gtest/gtest.h>
 #include <thread>
+
 
 using DAS::Core::IPC::ConnectionManager;
 using DAS::Core::IPC::DecodeObjectId;
