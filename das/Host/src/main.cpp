@@ -12,7 +12,9 @@
 #include <das/Core/IPC/Host/IIpcContext.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
 
+#include <das/Core/IPC/HandshakeSerialization.h>
 #include <das/Core/IPC/ObjectId.h>
+
 #include <das/Core/IPC/ObjectManager.h>
 
 #include <boost/program_options.hpp>
@@ -27,9 +29,6 @@
 #include <stdexec/execution.hpp>
 #include <string>
 #include <thread>
-
-// DAS error check macro (errors are negative, success >= 0)
-#define DAS_HOST_FAILED(x) ((x) < 0)
 
 // Global IPC context pointer for signal handler
 static Das::Core::IPC::Host::IIpcContext* g_ipc_context = nullptr;
@@ -49,39 +48,7 @@ void SignalHandler(int signal)
 
 namespace
 {
-    // 序列化辅助函数
-    template <typename T>
-    bool
-    DeserializeValue(std::span<const uint8_t> buffer, size_t& offset, T& value)
-    {
-        if (offset + sizeof(T) > buffer.size())
-        {
-            return false;
-        }
-        std::memcpy(&value, buffer.data() + offset, sizeof(T));
-        offset += sizeof(T);
-        return true;
-    }
-
-    bool DeserializeString(
-        std::span<const uint8_t> buffer,
-        size_t&                  offset,
-        std::string&             str,
-        uint16_t                 max_len = 1024)
-    {
-        uint16_t len = 0;
-        if (!DeserializeValue(buffer, offset, len))
-        {
-            return false;
-        }
-        if (len > max_len || offset + len > buffer.size())
-        {
-            return false;
-        }
-        str.assign(reinterpret_cast<const char*>(buffer.data() + offset), len);
-        offset += len;
-        return true;
-    }
+    // 序列化辅助函数来自 HandshakeSerialization.h
 
     static Das::DasPtr<DAS::Core::ForeignInterfaceHost::IForeignLanguageRuntime>
         g_runtime;
@@ -129,7 +96,10 @@ void HostOnHandshakeComplete(
             // Deserialize manifest_path from payload
             std::string manifest_path;
             size_t      offset = 0;
-            if (!DeserializeString(payload, offset, manifest_path))
+            if (!Das::Core::IPC::DeserializeString(
+                    payload,
+                    offset,
+                    manifest_path))
             {
                 response.error_code = DAS_E_IPC_INVALID_MESSAGE_BODY;
                 return DAS_E_IPC_INVALID_MESSAGE_BODY;

@@ -1,3 +1,5 @@
+#include <das/Core/IPC/HandshakeSerialization.h>
+
 #include "das/Core/IPC/IpcCommandHandler.h"
 #include <chrono>
 #include <cstring>
@@ -16,59 +18,6 @@
 #include <unordered_map>
 
 DAS_CORE_IPC_NS_BEGIN
-namespace
-{
-    // 序列化辅助函数
-    template <typename T>
-    void SerializeValue(std::vector<uint8_t>& buffer, const T& value)
-    {
-        const uint8_t* ptr = reinterpret_cast<const uint8_t*>(&value);
-        buffer.insert(buffer.end(), ptr, ptr + sizeof(T));
-    }
-
-    template <typename T>
-    bool
-    DeserializeValue(std::span<const uint8_t> buffer, size_t& offset, T& value)
-    {
-        if (offset + sizeof(T) > buffer.size())
-        {
-            return false;
-        }
-        std::memcpy(&value, buffer.data() + offset, sizeof(T));
-        offset += sizeof(T);
-        return true;
-    }
-
-    void SerializeString(std::vector<uint8_t>& buffer, const std::string& str)
-    {
-        SerializeValue(buffer, static_cast<uint16_t>(str.size()));
-        buffer.insert(
-            buffer.end(),
-            reinterpret_cast<const uint8_t*>(str.data()),
-            reinterpret_cast<const uint8_t*>(str.data()) + str.size());
-    }
-
-    bool DeserializeString(
-        std::span<const uint8_t> buffer,
-        size_t&                  offset,
-        std::string&             str,
-        uint16_t                 max_len = 1024)
-    {
-        uint16_t len = 0;
-        if (!DeserializeValue(buffer, offset, len))
-        {
-            return false;
-        }
-        if (len > max_len || offset + len > buffer.size())
-        {
-            return false;
-        }
-        str.assign(reinterpret_cast<const char*>(buffer.data() + offset), len);
-        offset += len;
-        return true;
-    }
-
-}
 
 IpcCommandHandler::IpcCommandHandler() : session_id_(0) {}
 
