@@ -143,14 +143,15 @@ public:
           error_code_{error_code}
     {
     }
+
+    // const char* 构造函数对 SWIG 可见，用于生成 Java String 构造函数
+    DasException(DasResult error_code, const char* p_string)
+        : Base{p_string}, error_code_{error_code}
+    {
+    }
 #ifndef SWIG
     DasException(DasResult error_code, std::string&& string)
         : Base{string.c_str()}, error_code_{error_code}
-    {
-    }
-
-    DasException(DasResult error_code, const char* p_string)
-        : Base{p_string}, error_code_{error_code}
     {
     }
 
@@ -164,6 +165,11 @@ public:
     auto GetErrorCode() const noexcept -> DasResult
     {
         return error_code_;
+    }
+
+    const char* what() const override
+    {
+        return Base::what();
     }
 };
 #endif // DAS_DASEXCEPTION_HPP

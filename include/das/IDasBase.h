@@ -72,7 +72,26 @@ void _das_internal_DelayRelease(T* pointer) noexcept
     pointer->Release();
 }
 
+#ifdef SWIGJAVA
+
+// Java 命名规范：将 PascalCase 方法 rename 为小驼峰
+// 注意：%rename 和 %ignore 必须放在 struct 定义之前才能生效
+// clang-format off
+#define DAS_SWIG_JAVA_RET_TYPE_RENAME(type_name)                         \
+%rename("getErrorCode") type_name::GetErrorCode;                         \
+%rename("setErrorCode") type_name::SetErrorCode;                         \
+%rename("getValue") type_name::GetValue;                                 \
+%rename("setValue") type_name::SetValue;                                 \
+%rename("isOk") type_name::IsOk;                                         \
+%ignore type_name::error_code;                                           \
+%ignore type_name::value;
+// clang-format on
+#else
+#define DAS_SWIG_JAVA_RET_TYPE_RENAME(type_name)
+#endif // SWIGJAVA
+
 #define DAS_DEFINE_RET_TYPE(type_name, type)                                   \
+    DAS_SWIG_JAVA_RET_TYPE_RENAME(type_name)                                   \
     struct type_name                                                           \
     {                                                                          \
         SWIG_PRIVATE                                                           \
@@ -170,6 +189,14 @@ SWIG_IGNORE(DasMakeDasGuid)
 DAS_C_API DasResult
 DasMakeDasGuid(const char* p_guid_string, DasGuid* p_out_guid);
 
+// IsOk/IsFailed 需要导出到 SWIG，供 Java Ez 方法使用
+#ifdef __cplusplus
+DAS_NS_BEGIN
+inline bool IsOk(const DasResult result) { return result >= 0; }
+inline bool IsFailed(const DasResult result) { return result < 0; }
+DAS_NS_END
+#endif // __cplusplus
+
 #ifndef SWIG
 
 #ifdef __cplusplus
@@ -181,8 +208,6 @@ inline bool operator==(const DasGuid& lhs, const DasGuid& rhs) noexcept
 
 DAS_NS_BEGIN
 
-inline bool      IsOk(const DasResult result) { return result >= 0; }
-inline bool      IsFailed(const DasResult result) { return result < 0; }
 inline DasResult GetErrorCodeFrom(const DasResult result) { return result; }
 
 template <class T>

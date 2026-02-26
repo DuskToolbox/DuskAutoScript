@@ -73,6 +73,17 @@ if(NOT COMMAND das_add_swig_export_library)
     include("${CMAKE_CURRENT_LIST_DIR}/DasUtils.cmake")
 endif()
 
+# ============================================
+# 语言绑定输出路径变量
+# ============================================
+# 语言绑定输出路径变量
+# ============================================
+if(NOT DEFINED DAS_LANGUAGE_BIN_DIR)
+    set(DAS_LANGUAGE_BIN_DIR "${CMAKE_BINARY_DIR}/bin/das"
+        CACHE PATH "DAS language bindings output directory")
+endif()
+
+
 # das_add_idl_export 函数
 # 参数:
 #   NAME                  - 库名称 (如 DasCore, DasTest)，用于目标命名
@@ -550,8 +561,47 @@ function(das_add_idl_export)
                 target_link_libraries(${_EXPORT_LIB_NAME} PRIVATE Python3::Python)
             elseif(_LANG_NAME STREQUAL "Java")
                 target_link_libraries(${_EXPORT_LIB_NAME} PRIVATE JNI::JNI)
+                
+                # ============================================
+                # Java JAR 打包
+                # ============================================
+                find_package(Java COMPONENTS Development REQUIRED)
+                
+                # 设置 JAR 路径变量
+                set(DAS_JAVA_JAR_DIR "${DAS_LANGUAGE_BIN_DIR}/Java")
+                set(_JAR_OUTPUT_PATH "${DAS_JAVA_JAR_DIR}/${DAS_IDL_EXPORT_NAME}JavaExport.jar")
+                
+                # 确保 JAR 输出目录存在
+                file(MAKE_DIRECTORY "${DAS_JAVA_JAR_DIR}")
+                
+                # 使用 CMake 脚本在构建时编译打包
+                add_custom_command(
+                    OUTPUT "${_JAR_OUTPUT_PATH}"
+                    COMMAND "${CMAKE_COMMAND}"
+                        -DJAVAC_EXECUTABLE="${Java_JAVAC_EXECUTABLE}"
+                        -DJAR_EXECUTABLE="${Java_JAR_EXECUTABLE}"
+                        -DJAVA_SRC_DIR="${CMAKE_BINARY_DIR}/include/das/Java"
+                        -DJAR_OUTPUT_PATH="${_JAR_OUTPUT_PATH}"
+                        -P "${CMAKE_SOURCE_DIR}/cmake/DasCompileJavaJar.cmake"
+                    DEPENDS ${_EXPORT_LIB_NAME}
+                    COMMENT "[das_add_idl_export] Compiling and packaging ${DAS_IDL_EXPORT_NAME}JavaExport.jar"
+                    WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
+                )
+                
+                add_custom_target(${_EXPORT_LIB_NAME}Jar ALL
+                    DEPENDS "${_JAR_OUTPUT_PATH}"
+                )
+                
+                # 设置插件输出目录属性（供 JavaTestPlugin 等引用）
+                set_target_properties(${_EXPORT_LIB_NAME}Jar PROPERTIES
+                    PLUGIN_OUTPUT_DIR "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/plugins"
+                )
+                # 导出 JAR 路径变量
+                set(DAS_CORE_JAVA_JAR "${_JAR_OUTPUT_PATH}" PARENT_SCOPE)
+                set(DAS_JAVA_JAR_DIR "${DAS_JAVA_JAR_DIR}" PARENT_SCOPE)
+                
+                message(STATUS "[das_add_idl_export]   JAR output: ${_JAR_OUTPUT_PATH}")
             endif()
-            # CSharp 不需要链接额外的虚拟机库
         endforeach()
     endif()
 

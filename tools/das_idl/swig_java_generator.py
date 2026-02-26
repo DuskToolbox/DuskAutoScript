@@ -103,15 +103,21 @@ class JavaSwigGenerator(SwigLangGenerator):
 
     @staticmethod
     def _get_java_type(type_name: str) -> str:
-        """获取 Java 类型"""
+        """获取 Java 类型
+        
+        处理命名空间类型，提取简单类型名（如 Das::ExportInterface::DasDate -> DasDate）
+        """
+        # 处理命名空间类型（如 Das::ExportInterface::DasDate -> DasDate）
+        simple_name = type_name.split('::')[-1]
+        
         JAVA_TYPE_MAP = {
             'bool': 'boolean',
             'int8': 'byte',
             'int16': 'short',
             'int32': 'int',
+            'int32_t': 'int',
             'int64': 'long',
             'int64_t': 'long',
-            'uint8': 'short',
             'uint16': 'int',
             'uint32': 'long',
             'uint64': 'java.math.BigInteger',
@@ -125,14 +131,13 @@ class JavaSwigGenerator(SwigLangGenerator):
             'DasGuid': 'DasGuid',
             'DasString': 'String',
             'DasReadOnlyString': 'String',
-            'DasResult': 'DasResult',
+            'DasResult': 'int',
         }
 
-        if type_name in JAVA_TYPE_MAP:
-            return JAVA_TYPE_MAP[type_name]
+        if simple_name in JAVA_TYPE_MAP:
+            return JAVA_TYPE_MAP[simple_name]
 
-        return type_name
-
+        return simple_name
     @staticmethod
     def _is_interface_type(type_name: str) -> bool:
         """判断是否是接口类型（以 I 开头，后跟大写字母）"""
@@ -296,18 +301,13 @@ class JavaSwigGenerator(SwigLangGenerator):
         # 收集当前接口的所有 Ez 便捷方法
         ez_methods: list[str] = []
         
-        # 为 [binary_buffer] 方法生成 %ignore 指令（阻止 SWIG 默认行为）
-        for method in interface.methods:
-            if self._is_binary_buffer_method(method):
-                # 生成 %ignore 代码并存储
-                ignore_code = self._generate_ignore_directive_for_binary_buffer(interface, method)
-                if self._context:
-                    typemap_key = f"{interface.namespace}::{interface.name}::{method.name}"
-                    if not hasattr(self._context, '_global_typemaps_ignore'):
-                        self._context._global_typemaps_ignore = {}
-                    if typemap_key not in self._context._global_typemaps_ignore:
-                        self._context._global_typemaps_ignore[typemap_key] = ignore_code
-        
+        # 注意：[binary_buffer] 方法不生成 %ignore，因为：
+        # 1. GetData 需要通过 %rename 重命名为 GetData_internal
+        # 2. GetSize 没有 [binary_buffer] 标记，会被当作普通 out 参数处理，生成 GetSizeEz
+        # 如果生成 %ignore，%rename 也会失效
+        # for method in interface.methods:
+        #     if self._is_binary_buffer_method(method):
+        #         ... (不生成 %ignore)
         # 处理带 [out] 参数的方法（排除 [binary_buffer]）
         for method, out_param in self._get_out_param_methods(interface, exclude_binary_buffer=True):
             # 生成 %ignore 代码并存储
@@ -441,7 +441,13 @@ class JavaSwigGenerator(SwigLangGenerator):
         out_type = out_param.type_info.base_type
         ret_class_name = self._get_ret_class_name(out_type)
         is_interface = self._is_interface_type(out_type)
-        java_return_type = out_type if is_interface else self._get_java_type(out_type)
+        
+        # 特殊处理：IDasReadOnlyString 的 Ez 方法返回 DasReadOnlyString（值类型），不是接口类型
+        # 因为 DasRetReadOnlyString.getValue() 返回 DasReadOnlyString
+        if out_type == 'IDasReadOnlyString':
+            java_return_type = 'DasReadOnlyString'
+        else:
+            java_return_type = out_type if is_interface else self._get_java_type(out_type)
         
         # 收集非 [out] 参数
         # 注意：对于属性 getter，参数的 direction 可能不是 OUT，但它实际上是输出参数
@@ -2173,13 +2179,14 @@ struct {class_name} {{
         - JNI native 方法：创建 DirectByteBuffer
 
         实现原理：
-        1. 将 GetData 和 GetSize 重命名为私有方法（GetData_internal, GetSize_internal）
+        1. 将 GetData 重命名为私有方法（GetData_internal）
         2. 通过 %typemap(in) 将 [out] 参数转换为 jlongArray 输出
         3. 通过 %native 声明 JNI 方法创建 DirectByteBuffer
-        4. 在 javacode 中调用私有方法获取地址和大小，然后创建 ByteBuffer
+        4. 在 javacode 中调用私有方法获取地址，使用 GetSizeEz() 获取大小
 
-        注意：对于 binary_buffer 接口，不为其他 [out] 方法生成便捷方法，
-        因为这些方法已被重命名为私有方法，用户应通过 getDataAsDirectBuffer() 访问数据。
+        注意：
+        - GetSize 没有 [binary_buffer] 标记，会通过 Ez 便捷方法访问（GetSizeEz）
+        - 不为 GetData 生成 %ignore，以便 %rename 能生效
         """
         qualified_name = f"{interface.namespace}::{interface.name}" if interface.namespace else interface.name
         native_name = f'{interface.name}_createDirectByteBuffer'
@@ -2190,11 +2197,10 @@ struct {class_name} {{
 #ifdef SWIGJAVA
 %typemap(javaclassmodifiers) {qualified_name} "public class"
 
-// 将 GetData 和 GetSize 重命名为内部方法，并设为私有
+// 将 GetData 重命名为内部方法，并设为私有
+// 注意：GetSize 没有 [binary_buffer] 标记，通过 Ez 便捷方法访问
 %rename("GetData_internal") {qualified_name}::GetData;
 %javamethodmodifiers {qualified_name}::GetData "private";
-%rename("GetSize_internal") {qualified_name}::{size_method_name};
-%javamethodmodifiers {qualified_name}::{size_method_name} "private";
 
 // GetData 的 [out] 参数转换为 jlongArray 输出（存储指针地址）
 %typemap(jni) unsigned char** pp_out_data "jlongArray"
@@ -2210,20 +2216,6 @@ struct {class_name} {{
     JCALL4(SetLongArrayRegion, jenv, $input, 0, 1, &ptr_value);
 }}
 
-// GetSize 的 [out] 参数转换为 jlongArray 输出
-%typemap(jni) uint64_t* p_out_size "jlongArray"
-%typemap(jtype) uint64_t* p_out_size "long[]"
-%typemap(jstype) uint64_t* p_out_size "long[]"
-%typemap(javain) uint64_t* p_out_size "$javainput"
-%typemap(in) uint64_t* p_out_size (uint64_t temp = 0) {{
-    $1 = &temp;
-}}
-%typemap(argout) uint64_t* p_out_size {{
-    // 将大小写入 Java long[] 数组
-    jlong size_value = (jlong)temp$argnum;
-    JCALL4(SetLongArrayRegion, jenv, $input, 0, 1, &size_value);
-}}
-
 %typemap(javacode) {qualified_name} %{{
     private static native java.nio.ByteBuffer {native_name}(long address, int capacity);
 
@@ -2234,19 +2226,16 @@ struct {class_name} {{
      */
     public java.nio.ByteBuffer getDataAsDirectBuffer() {{
         long[] ptrHolder = new long[1];
-        long[] sizeHolder = new long[1];
 
         int hr = GetData_internal(ptrHolder);
         if (hr < 0) {{
             throw new RuntimeException("Failed to get data pointer, error code: " + hr);
         }}
 
-        hr = {size_method_name}_internal(sizeHolder);
-        if (hr < 0) {{
-            throw new RuntimeException("Failed to get data size, error code: " + hr);
-        }}
+        // 使用 GetSizeEz() 获取大小（GetSize 没有 [binary_buffer] 标记）
+        long size = GetSizeEz().GetValue();
 
-        return {native_name}(ptrHolder[0], (int)sizeHolder[0]);
+        return {native_name}(ptrHolder[0], (int)size);
     }}
 %}}
 

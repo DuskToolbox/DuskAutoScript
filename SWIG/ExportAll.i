@@ -12,6 +12,7 @@
 %{
 #include <memory>
 #include <string>
+#include <das/DasConfig.h>
 #include <das/DasExport.h>
 #include <das/DasTypes.hpp>
 #include <das/IDasBase.h>
@@ -76,6 +77,17 @@
         return getValue();
     }
 %}
+
+// Java 命名规范：将 PascalCase 方法 rename 为小驼峰
+// 注意：%rename 和 %ignore 必须放在 struct 定义之前才能生效
+%rename("getErrorCode") DasRetBase::GetErrorCode;
+%rename("setErrorCode") DasRetBase::SetErrorCode;
+%rename("getValue") DasRetBase::GetValue;
+%rename("setValue") DasRetBase::SetValue;
+%rename("isOk") DasRetBase::IsOk;
+// 隐藏 public 字段的自动 getter/setter，避免重复方法
+%ignore DasRetBase::error_code;
+%ignore DasRetBase::value;
 #endif // SWIGJAVA
 
 %inline %{
@@ -127,17 +139,6 @@ struct DasRetBase {
 %ignore IDasBase::QueryInterface;
 
 #ifdef SWIGJAVA
-
-// Java 命名规范：将 PascalCase 方法 rename 为小驼峰
-// 注意：%rename 和 %ignore 必须放在 struct 定义之前才能生效
-%rename("getErrorCode") DasRetBase::GetErrorCode;
-%rename("setErrorCode") DasRetBase::SetErrorCode;
-%rename("getValue") DasRetBase::GetValue;
-%rename("setValue") DasRetBase::SetValue;
-%rename("isOk") DasRetBase::IsOk;
-// 隐藏 public 字段的自动 getter/setter，避免重复方法
-%ignore DasRetBase::error_code;
-%ignore DasRetBase::value;
 
 %{
 
@@ -655,6 +656,7 @@ static void DasLogPendingJniException(JNIEnv* jenv, const char* context_u8)
 // ============================================================================
 %include <DasTypeMapsIgnore.i>
 
+%include <das/DasConfig.h>
 %include <das/DasExport.h>
 %include <das/DasTypes.hpp>
 %include <das/IDasBase.h>
@@ -680,7 +682,7 @@ static void DasLogPendingJniException(JNIEnv* jenv, const char* context_u8)
         char[] chars = str.toCharArray();
         // 转换为 DasReadOnlyString （Java char 就是 16 位，与 char16_t 兼容）
         return new DasReadOnlyString(
-            DuskAutoScriptJNI.new_DasReadOnlyString__SWIG_2_helper(str),
+            DuskAutoScript.new_DasReadOnlyString__SWIG_2_helper(str),
             true
         );
     }
@@ -690,7 +692,7 @@ static void DasLogPendingJniException(JNIEnv* jenv, const char* context_u8)
      * @return Java 字符串，如果转换失败则返回空字符串
      */
     public String toJavaString() {
-        return DuskAutoScriptJNI.DasReadOnlyString_toJavaString_helper(swigCPtr, this);
+        return DuskAutoScript.DasReadOnlyString_toJavaString_helper(swigCPtr, this);
     }
 %}
 
@@ -908,8 +910,8 @@ SWIGEXPORT jstring JNICALL Java_org_das_DuskAutoScriptJNI_DasReadOnlyString_1toJ
 // ============================================================================
 
 // Rename DasException methods for Java naming convention
-%rename(ErrorCode) DasException::GetErrorCode;
-%rename(Message) DasException::what;
+// 不重命名 what()，保留原始方法名
+// %rename(Message) DasException::what;
 
 #ifdef SWIGJAVA
 // Make DasException extend RuntimeException
@@ -943,7 +945,7 @@ SWIGEXPORT jstring JNICALL Java_org_das_DuskAutoScriptJNI_DasReadOnlyString_1toJ
 
     private static String getMessageFromPtr(long cPtr) {
         if (cPtr == 0) return "";
-        return DasExportJNI.DasException_Message(cPtr, null);
+        return DuskAutoScriptJNI.DasException_what(cPtr, null);
     }
 %}
 
@@ -961,7 +963,7 @@ SWIGEXPORT jstring JNICALL Java_org_das_DuskAutoScriptJNI_DasReadOnlyString_1toJ
         sourceInfo.setFile(sourceFile);
         sourceInfo.setLine(sourceLine);
         sourceInfo.setFunction(sourceFunction);
-        IDasExceptionString exStr = DasExport.CreateDasExceptionStringSwig(errorCode, sourceInfo);
+        IDasExceptionString exStr = DuskAutoScript.CreateDasExceptionStringSwig(errorCode, sourceInfo);
         return new DasException(errorCode, exStr);
     }
 
@@ -979,7 +981,7 @@ SWIGEXPORT jstring JNICALL Java_org_das_DuskAutoScriptJNI_DasReadOnlyString_1toJ
         sourceInfo.setFile(sourceFile);
         sourceInfo.setLine(sourceLine);
         sourceInfo.setFunction(sourceFunction);
-        IDasExceptionString exStr = DasExport.CreateDasExceptionStringWithTypeInfoSwig(errorCode, sourceInfo, typeInfo);
+        IDasExceptionString exStr = DuskAutoScript.CreateDasExceptionStringWithTypeInfoSwig(errorCode, sourceInfo, typeInfo);
         return new DasException(errorCode, exStr);
     }
 

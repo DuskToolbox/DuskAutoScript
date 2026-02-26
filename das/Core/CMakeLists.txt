@@ -90,6 +90,13 @@ das_add_idl_export(
     DEPENDS_ON DasCore
 )
 
+# 将 Java JAR 路径变量导出到父作用域（供 Plugins 使用）
+if(EXPORT_JAVA AND DEFINED DAS_CORE_JAVA_JAR)
+    set(DAS_CORE_JAVA_JAR "${DAS_CORE_JAVA_JAR}" PARENT_SCOPE)
+    set(DAS_JAVA_JAR_DIR "${DAS_JAVA_JAR_DIR}" PARENT_SCOPE)
+    message(STATUS "[DasCore] Exporting DAS_CORE_JAVA_JAR: ${DAS_CORE_JAVA_JAR}")
+endif()
+
 # 让预构建目标依赖IDL生成目标
 # 注意：DasCoreSwigAllGenerated 目标只在启用 SWIG 导出时才存在
 add_dependencies(DasCoreObjectsPreBuild DasCoreIdlUpdateList DasCoreIdlGenerated)
@@ -209,21 +216,6 @@ add_dependencies(DasCore DasCoreObjects)
 
 add_compile_definitions(DAS_BUILD_SHARED)
 
-# === DasTest IDL Export ===
-# 测试用的 IDL 导出，使用 das_add_idl_export 函数
-# 注意：DasTest 不需要 SWIG 导出，只需要 IPC 代码生成
-# set(_TEST_IDL_FILES "IDasTestInterface.idl")
-#
-# das_add_idl_export(
-#     NAME DasTest
-#     IDL_DIR "${CMAKE_SOURCE_DIR}/das/Core/IPC/test/idl"
-#     OUTPUT_DIR "${CMAKE_BINARY_DIR}/das_test/include/das"
-#     IDL_FILES ${_TEST_IDL_FILES}
-#     LANGUAGES ""  # 测试不需要 SWIG 导出
-#     GENERATE_IPC_PROXY ON
-#     GENERATE_IPC_STUB ON
-#     GENERATE_IPC_MESSAGE ON
-# )
 
 # FetchContent_Declare(
 # Sol2

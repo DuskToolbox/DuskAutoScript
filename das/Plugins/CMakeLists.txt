@@ -22,7 +22,23 @@ das_add_plugin_library(DasWindowsCapture DAS_EX_PRIVATE_LIBS)
 
 if(DAS_BUILD_TEST)
     das_add_plugin_library(IpcTestPlugin DAS_EX_PRIVATE_LIBS)
+    
+    # Java 测试插件（仅在启用 Java 导出时构建）
+    if(EXPORT_JAVA)
+        add_subdirectory(JavaTestPlugin)
+    endif()
 endif()
+
+# IpcTestPlugin1 - IDasTouch Mock for IPC testing
+if(DAS_BUILD_TEST)
+    das_add_plugin_library(IpcTestPlugin1 DAS_EX_PRIVATE_LIBS)
+endif()
+
+# IpcTestPlugin2 - IDasComponent + Factory for IPC testing
+if(DAS_BUILD_TEST)
+    das_add_plugin_library(IpcTestPlugin2 DAS_EX_PRIVATE_LIBS)
+endif()
+
 
 target_link_libraries(DasAdbCapture PRIVATE zlib)
 
