@@ -63,7 +63,7 @@ namespace Core
                  * @brief 获取 IDistributedObjectManager 实例
                  * @return IDistributedObjectManager& 对象管理器实例
                  */
-                class IDistributedObjectManager& GetObjectManager();
+                struct IDistributedObjectManager& GetObjectManager();
 
                 /**
                  * @brief 设置握手完成回调

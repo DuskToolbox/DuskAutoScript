@@ -15,7 +15,7 @@ namespace Core
         // 前置声明（在 IPC 命名空间内）
         class IpcRunLoop;
         class IpcCommandHandler;
-        class IDistributedObjectManager;
+        struct IDistributedObjectManager;
         struct IpcCommandResponse;
 
         namespace Host

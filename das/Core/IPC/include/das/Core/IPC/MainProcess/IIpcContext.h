@@ -16,7 +16,7 @@ namespace Core
         {
             // 前置声明
             class MainProcessServer;
-            class IIpcContext;
+            struct IIpcContext;
 
             // 前置声明 DestroyIpcContext，用于友元
             DAS_API void DestroyIpcContext(IIpcContext* ctx);
