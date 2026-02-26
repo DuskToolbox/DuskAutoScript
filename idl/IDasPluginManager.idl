@@ -24,7 +24,7 @@ interface IDasPluginInfoVector : IDasBase {
 [uuid("C665F0C7-F766-4151-802A-533BDCE72D90")]
 interface IDasPluginManagerForUi : IDasBase {
     DasResult GetAllPluginInfo([out] IDasPluginInfoVector** pp_out_plugin_info_vector);
-    DasResult FindInterface(const DasGuid& iid, [out] void** pp_object);
+    DasResult FindInterface(const DasGuid& iid, [out] IDasBase** pp_object);
     DasResult GetPluginSettingsJson(const DasGuid& plugin_guid, [out] IDasReadOnlyString** pp_out_json);
     DasResult SetPluginSettingsJson(const DasGuid& plugin_guid, IDasReadOnlyString* p_json);
     DasResult ResetPluginSettings(const DasGuid& plugin_guid);

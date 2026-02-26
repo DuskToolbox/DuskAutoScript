@@ -12,7 +12,7 @@ enum DasPluginFeature {
 [uuid("09EA2A40-6A10-4756-AB2B-41B2FD75AB36")]
 interface IDasPluginPackage : IDasBase {
     DasResult EnumFeature(uint64_t index, [out] DasPluginFeature* p_out_feature);
-    DasResult CreateFeatureInterface(uint64_t index, [out] void** pp_out_interface);
+    DasResult CreateFeatureInterface(uint64_t index, [out] IDasBase** pp_out_interface);
     /**
      * @brief 插件检查是否还有已创建的接口实例存活，若有，返回 false；否则返回 true。
      */
