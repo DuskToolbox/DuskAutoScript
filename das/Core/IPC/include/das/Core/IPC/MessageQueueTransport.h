@@ -11,12 +11,10 @@
 #include <string>
 #include <vector>
 
-DAS_NS_BEGIN
-namespace Core
-{
-    namespace IPC
-    {
-        class SharedMemoryPool;
+#include <das/Core/IPC/Config.h>
+
+DAS_CORE_IPC_NS_BEGIN
+class SharedMemoryPool;
 
 // Disable C4251 warning for std::unique_ptr in exported classes
 #ifdef _MSC_VER
@@ -24,62 +22,60 @@ namespace Core
 #pragma warning(disable : 4251)
 #endif
 
-        class DAS_API IpcTransport
-        {
-        public:
-            IpcTransport();
-            ~IpcTransport();
+class DAS_API IpcTransport
+{
+public:
+    IpcTransport();
+    ~IpcTransport();
 
-            DasResult Initialize(
-                const std::string& host_queue_name,
-                const std::string& plugin_queue_name,
-                uint32_t           max_message_size,
-                uint32_t           max_messages);
-            DasResult Connect(
-                const std::string& host_queue_name,
-                const std::string& plugin_queue_name);
-            DasResult Shutdown();
+    DasResult Initialize(
+        const std::string& host_queue_name,
+        const std::string& plugin_queue_name,
+        uint32_t           max_message_size,
+        uint32_t           max_messages);
+    DasResult Connect(
+        const std::string& host_queue_name,
+        const std::string& plugin_queue_name);
+    DasResult Shutdown();
 
-            DasResult Send(
-                const IPCMessageHeader& header,
-                const uint8_t*          body,
-                size_t                  body_size);
+    DasResult Send(
+        const IPCMessageHeader& header,
+        const uint8_t*          body,
+        size_t                  body_size);
 
-            DasResult Receive(
-                IPCMessageHeader&     out_header,
-                std::vector<uint8_t>& out_body,
-                uint32_t              timeout_ms);
+    DasResult Receive(
+        IPCMessageHeader&     out_header,
+        std::vector<uint8_t>& out_body,
+        uint32_t              timeout_ms);
 
-            DasResult SetSharedMemoryPool(SharedMemoryPool* pool);
+    DasResult SetSharedMemoryPool(SharedMemoryPool* pool);
 
-            bool IsConnected() const;
+    bool IsConnected() const;
 
-            static std::string MakeQueueName(
-                uint16_t host_id,
-                uint16_t plugin_id,
-                bool     is_main_to_host);
+    static std::string MakeQueueName(
+        uint16_t host_id,
+        uint16_t plugin_id,
+        bool     is_main_to_host);
 
-        private:
-            DasResult SendSmallMessage(
-                const IPCMessageHeader& header,
-                const uint8_t*          body,
-                size_t                  body_size);
+private:
+    DasResult SendSmallMessage(
+        const IPCMessageHeader& header,
+        const uint8_t*          body,
+        size_t                  body_size);
 
-            DasResult SendLargeMessage(
-                const IPCMessageHeader& header,
-                const uint8_t*          body,
-                size_t                  body_size);
+    DasResult SendLargeMessage(
+        const IPCMessageHeader& header,
+        const uint8_t*          body,
+        size_t                  body_size);
 
-            struct Impl;
-            std::unique_ptr<Impl> impl_;
-        };
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
 
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
 
-    }
-}
-DAS_NS_END
+DAS_CORE_IPC_NS_END
 
 #endif // DAS_CORE_IPC_MESSAGE_QUEUE_TRANSPORT_H
