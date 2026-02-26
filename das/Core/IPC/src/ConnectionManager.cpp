@@ -24,6 +24,14 @@ ConnectionManager::~ConnectionManager()
 {
     StopHeartbeatThread();
     Shutdown();
+    StopHeartbeatThread();
+    Shutdown();
+}
+
+ConnectionManager& ConnectionManager::GetInstance()
+{
+    static ConnectionManager instance;
+    return instance;
 }
 
 DasResult ConnectionManager::Initialize(uint16_t local_id)
@@ -110,8 +118,96 @@ bool ConnectionManager::IsConnectionAlive(uint16_t remote_id) const
     {
         return false;
     }
+    return true;
+}
 
-    return it->second.is_alive;
+DasResult ConnectionManager::GetConnection(
+    uint16_t        session_id,
+    ConnectionInfo& out_info) const
+{
+    std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+
+    auto it = impl_->connections_.find(session_id);
+    if (it == impl_->connections_.end())
+    {
+        return DAS_E_IPC_OBJECT_NOT_FOUND;
+    }
+
+    out_info = it->second;
+    return DAS_S_OK;
+}
+
+IpcTransport* ConnectionManager::GetTransport(uint16_t session_id) const
+{
+    std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+
+    auto it = impl_->connections_.find(session_id);
+    if (it == impl_->connections_.end())
+    {
+        return nullptr;
+    }
+
+    return it->second.transport;
+}
+
+DasResult ConnectionManager::RegisterHostTransport(
+    uint16_t          session_id,
+    IpcTransport*     transport,
+    SharedMemoryPool* shm_pool,
+    IpcRunLoop*       run_loop)
+{
+    std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+
+    // 如果连接已存在，更新 transport
+    auto it = impl_->connections_.find(session_id);
+    if (it != impl_->connections_.end())
+    {
+        it->second.transport = transport;
+        it->second.shm_pool = shm_pool;
+        it->second.run_loop = run_loop;
+        it->second.is_alive = true;
+        return DAS_S_OK;
+    }
+
+    // 创建新连接条目
+    ConnectionInfo info{
+        .host_id = session_id,
+        .plugin_id = 0,
+        .is_alive = true,
+        .last_heartbeat_ms = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count()),
+        .transport = transport,
+        .shm_pool = shm_pool,
+        .run_loop = run_loop};
+
+    impl_->connections_[session_id] = info;
+    return DAS_S_OK;
+}
+
+DasResult ConnectionManager::SetConnectionAlive(
+    uint16_t session_id,
+    bool     is_alive)
+{
+    std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+
+    auto it = impl_->connections_.find(session_id);
+    if (it == impl_->connections_.end())
+    {
+        return DAS_E_IPC_OBJECT_NOT_FOUND;
+    }
+
+    it->second.is_alive = is_alive;
+    if (is_alive)
+    {
+        it->second.last_heartbeat_ms =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count();
+    }
+
+    return DAS_S_OK;
 }
 
 void ConnectionManager::StartHeartbeatThread()

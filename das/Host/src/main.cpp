@@ -131,6 +131,17 @@ void HostOnHandshakeComplete(
             // Extract plugin name and extension
             std::string plugin_name;
             std::string plugin_extension;
+            // 检查 g_runtime 是否已初始化
+            if (!g_runtime)
+            {
+                std::string msg = DAS_FMT_NS::format(
+                    "Foreign language runtime not initialized");
+                DAS_LOG_ERROR(msg.c_str());
+                response.error_code = DAS_E_IPC_PLUGIN_LOAD_FAILED;
+                response.response_data.clear();
+                return DAS_E_IPC_PLUGIN_LOAD_FAILED;
+            }
+
             try
             {
                 plugin_name = manifest_json["name"].get<std::string>();
@@ -276,8 +287,8 @@ int main(int argc, char* argv[])
         // 初始化 Foreign Language Runtime（根据配置自动选择 C++ 或 Python）
         {
             using namespace DAS::Core::ForeignInterfaceHost;
-            auto result =
-                CreateForeignLanguageRuntime(ForeignLanguageRuntimeFactoryDesc{
+            auto result = CreateForeignLanguageRuntime(
+                ForeignLanguageRuntimeFactoryDesc{
                     ForeignInterfaceLanguage::Cpp});
             if (result.has_value())
             {

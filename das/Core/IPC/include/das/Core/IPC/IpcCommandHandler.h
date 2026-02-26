@@ -62,8 +62,6 @@ struct IpcCommandResponse
 class IpcCommandHandler : public IMessageHandler
 {
 public:
-    static constexpr uint32_t INTERFACE_ID = 0x00000002;
-
     // 命令处理函数类型
     // 命令处理函数类型
     using CommandHandler = std::function<DasResult(
@@ -118,7 +116,9 @@ public:
     [[nodiscard]]
     uint32_t GetInterfaceId() const override
     {
-        return INTERFACE_ID;
+        // IpcCommandHandler 不是基于 interface_id 路由的处理器
+        // 它通过 IpcContext 直接访问，不通过 IpcRunLoop::GetHandler() 查找
+        return 0;
     }
 
     DasResult HandleMessage(

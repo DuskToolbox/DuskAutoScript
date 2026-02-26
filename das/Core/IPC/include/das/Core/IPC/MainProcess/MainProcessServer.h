@@ -346,13 +346,35 @@ namespace Core
                  */
                 bool ValidateSessionId(uint16_t session_id) const;
 
-                /**
-                 * @brief 验证消息目标对象是否存在
-                 */
                 DasResult ValidateTargetObject(
                     const IPCMessageHeader& header) const;
 
-                // 成员变量
+                /**
+                 * @brief 检查消息是否需要转发到其他 Host
+                 *
+                 * @param header 消息头
+                 * @return true 如果目标对象在远程 Host 进程中
+                 */
+                bool ShouldForwardMessage(const IPCMessageHeader& header) const;
+
+                /**
+                 * @brief 转发消息到目标 Host 进程
+                 *
+                 * 当目标对象的 session_id 不是本地（主进程）时调用此方法。
+                 * 消息会被转发到目标 Host 进程处理。
+                 *
+                 * @param header 原始消息头
+                 * @param body 原始消息体
+                 * @param body_size 消息体大小
+                 * @param response_body 输出响应体（从目标 Host 返回）
+                 * @return DasResult 转发结果
+                 */
+                DasResult ForwardMessageToHost(
+                    const IPCMessageHeader& header,
+                    const uint8_t*          body,
+                    size_t                  body_size,
+                    std::vector<uint8_t>&   response_body);
+
                 mutable std::mutex                            sessions_mutex_;
                 std::unordered_map<uint16_t, HostSessionInfo> sessions_;
 

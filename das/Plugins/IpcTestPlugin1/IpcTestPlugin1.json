@@ -1,0 +1,11 @@
+{
+  "name": "@CMAKE_SHARED_LIBRARY_PREFIX@IpcTestPlugin1",
+  "author": "Dusk",
+  "version": "0.1",
+  "guid": "2A3B4C5D-6E7F-4B5C-9D0E-1F2A3B4C5D6E",
+  "description": "IPC测试插件1 - IDasTouch Mock实现",
+  "supportedSystem": "Windows",
+  "language": "Cpp",
+  "pluginFilenameExtension": "dll",
+  "settings": []
+}

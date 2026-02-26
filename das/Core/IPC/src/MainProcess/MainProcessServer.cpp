@@ -1,8 +1,13 @@
 #include "das/Core/IPC/MainProcess/MainProcessServer.h"
 
 #include <chrono>
+
+#include <das/Core/IPC/ConnectionManager.h>
+#include <das/Core/IPC/IpcTransport.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/SessionCoordinator.h>
+#include <das/DasApi.h>
+#include <das/Utils/fmt.h>
 
 #ifndef DAS_E_NOT_IMPLEMENTED
 #define DAS_E_NOT_IMPLEMENTED DAS_E_NO_IMPLEMENTATION
@@ -409,6 +414,16 @@ namespace Core
                     return result;
                 }
 
+                // 检查是否需要转发到其他 Host 进程
+                if (ShouldForwardMessage(header))
+                {
+                    return ForwardMessageToHost(
+                        header,
+                        body,
+                        body_size,
+                        response_body);
+                }
+
                 if (dispatch_handler_)
                 {
                     return dispatch_handler_(
@@ -493,6 +508,56 @@ namespace Core
 
                 return DAS_S_OK;
             }
+            bool MainProcessServer::ShouldForwardMessage(
+                const IPCMessageHeader& header) const
+            {
+                // 主进程的 session_id 是 1
+                // 如果目标对象的 session_id 不是本地（主进程），则需要转发
+                uint16_t local_session_id =
+                    SessionCoordinator::GetInstance().GetLocalSessionId();
+                return header.session_id != local_session_id;
+            }
+
+            DasResult MainProcessServer::ForwardMessageToHost(
+                const IPCMessageHeader& header,
+                const uint8_t*          body,
+                size_t                  body_size,
+                std::vector<uint8_t>&   response_body)
+            {
+                // 通过 ConnectionManager 获取传输层
+                IpcTransport* transport =
+                    ::Das::Core::IPC::ConnectionManager::GetInstance()
+                        .GetTransport(header.session_id);
+                if (!transport)
+                {
+                    std::string msg = DAS_FMT_NS::format(
+                        "Failed to get transport for session_id: {}",
+                        header.session_id);
+                    DAS_LOG_ERROR(msg.c_str());
+                    return DAS_E_IPC_NO_CONNECTIONS;
+                }
+
+                // 发送消息到目标 Host
+                DasResult result = transport->Send(header, body, body_size);
+                if (DAS::IsFailed(result))
+                {
+                    std::string msg = DAS_FMT_NS::format(
+                        "Failed to forward message to session_id: {}, error: {}",
+                        header.session_id,
+                        static_cast<int32_t>(result));
+                    DAS_LOG_ERROR(msg.c_str());
+                    return result;
+                }
+
+                // TODO: 等待响应 - 当前简化实现，只发送不接收响应
+                // 完整实现需要：
+                // 1. 使用 IpcRunLoop 的 pending_calls_ 等待响应
+                // 2. 设置超时机制
+                // 3. 解析响应并填充 response_body
+                response_body.clear();
+                return DAS_S_OK;
+            }
+
         } // namespace MainProcess
     }
 }

@@ -44,6 +44,8 @@ public:
     ConnectionManager();
     ~ConnectionManager();
 
+    static ConnectionManager& GetInstance();
+
     DasResult Initialize(uint16_t local_id);
     DasResult Shutdown();
 
@@ -53,6 +55,50 @@ public:
     DasResult SendHeartbeat(uint16_t remote_id);
 
     bool IsConnectionAlive(uint16_t remote_id) const;
+
+    /**
+     * @brief 获取到指定 session 的连接信息
+     *
+     * @param session_id 目标会话ID
+     * @param out_info 输出连接信息
+     * @return DasResult DAS_S_OK 成功，DAS_E_IPC_OBJECT_NOT_FOUND 未找到
+     */
+    DasResult GetConnection(uint16_t session_id, ConnectionInfo& out_info)
+        const;
+
+    /**
+     * @brief 获取连接的传输层（用于发送消息）
+     *
+     * @param session_id 目标会话ID
+     * @return IpcTransport* 传输层指针（不持有所有权），不存在返回 nullptr
+     */
+    IpcTransport* GetTransport(uint16_t session_id) const;
+
+    /**
+     * @brief 注册 Host 进程的传输层
+     *
+     * 用于主进程转发消息到目标 Host
+     *
+     * @param session_id 目标会话ID
+     * @param transport 传输层指针（不持有所有权）
+     * @param shm_pool 共享内存池指针（可选，不持有所有权）
+     * @param run_loop 运行循环指针（可选，不持有所有权）
+     * @return DasResult DAS_S_OK 成功
+     */
+    DasResult RegisterHostTransport(
+        uint16_t          session_id,
+        IpcTransport*     transport,
+        SharedMemoryPool* shm_pool = nullptr,
+        IpcRunLoop*       run_loop = nullptr);
+
+    /**
+     * @brief 更新连接的活跃状态
+     *
+     * @param session_id 目标会话ID
+     * @param is_alive 是否活跃
+     * @return DasResult DAS_S_OK 成功
+     */
+    DasResult SetConnectionAlive(uint16_t session_id, bool is_alive);
 
     void StartHeartbeatThread();
     void StopHeartbeatThread();

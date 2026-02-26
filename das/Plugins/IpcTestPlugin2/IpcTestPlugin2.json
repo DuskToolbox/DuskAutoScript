@@ -1,0 +1,11 @@
+{
+    "name": "@CMAKE_SHARED_LIBRARY_PREFIX@IpcTestPlugin2",
+    "author": "Dusk",
+    "version": "0.1",
+    "guid": "2B3C4D5E-6F7A-5B6C-9D0E-1F2A3B4C5D6E",
+    "description": "IPC测试插件2 - IDasComponent + IDasComponentFactory实现",
+    "supportedSystem": "Windows",
+    "language": "Cpp",
+    "pluginFilenameExtension": "dll",
+    "settings": []
+}

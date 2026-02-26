@@ -18,6 +18,13 @@ thread_local uint32_t     t_nested_depth = 0;
 static constexpr uint32_t MAX_NESTED_DEPTH = 32;
 static constexpr uint32_t PUMP_POLL_TIMEOUT_MS = 10;
 
+// 握手消息 interface_id 范围常量
+// HandshakeInterfaceId 枚举范围: 1=HELLO, 2=WELCOME, 3=READY, 4=READY_ACK,
+// 5=WAKEUP, 6=HEARTBEAT, 7=GOODBYE
+static constexpr uint32_t kHandshakeInterfaceIdStart = 1;
+static constexpr uint32_t kHandshakeInterfaceIdEnd =
+    static_cast<uint32_t>(HandshakeInterfaceId::HANDSHAKE_IFACE_GOODBYE);
+
 IpcRunLoop::IpcRunLoop() = default;
 
 IpcRunLoop::~IpcRunLoop() { Stop(); }
@@ -80,11 +87,14 @@ DasResult IpcRunLoop::DispatchToHandler(
     const IPCMessageHeader&     header,
     const std::vector<uint8_t>& body)
 {
-    // 握手消息 interface_id 1-4
-    if (header.interface_id >= 1 && header.interface_id <= 4)
+    // 握手消息范围检查（控制平面消息，包括
+    // HELLO/WELCOME/READY/READY_ACK/WAKEUP/HEARTBEAT/GOODBYE） 所有这些消息都由
+    // HandshakeHandler 处理
+    if (header.interface_id >= kHandshakeInterfaceIdStart
+        && header.interface_id <= kHandshakeInterfaceIdEnd)
     {
-        auto* handshake_handler =
-            GetHandler(1); // HandshakeHandler::INTERFACE_ID = 1
+        auto* handshake_handler = GetHandler(
+            kHandshakeInterfaceIdStart); // HandshakeHandler::INTERFACE_ID = 1
         if (handshake_handler)
         {
             IpcResponseSender sender(*this);
@@ -92,7 +102,21 @@ DasResult IpcRunLoop::DispatchToHandler(
         }
     }
 
-    // 精确匹配
+    // 控制平面消息：method_id = 0，由 IpcCommandHandler 处理
+    // 根据 IpcMessageHeader 注释："method_id: 业务方法ID（控制平面固定 0）"
+    constexpr uint16_t kControlPlaneMethodId = 0;
+    if (header.method_id == kControlPlaneMethodId)
+    {
+        // IpcCommandHandler 注册在 interface_id = 0
+        auto* command_handler = GetHandler(0);
+        if (command_handler)
+        {
+            IpcResponseSender sender(*this);
+            return command_handler->HandleMessage(header, body, sender);
+        }
+    }
+
+    // 业务平面消息：精确匹配 interface_id
     auto* handler = GetHandler(header.interface_id);
     if (handler)
     {
@@ -100,14 +124,7 @@ DasResult IpcRunLoop::DispatchToHandler(
         return handler->HandleMessage(header, body, sender);
     }
 
-    // 回退到 IpcCommandHandler (处理所有命令类型)
-    auto* cmd_handler = GetHandler(2); // IpcCommandHandler::INTERFACE_ID = 2
-    if (cmd_handler)
-    {
-        IpcResponseSender sender(*this);
-        return cmd_handler->HandleMessage(header, body, sender);
-    }
-
+    // 没有找到对应的处理器
     return DAS_E_NOT_FOUND;
 }
 
