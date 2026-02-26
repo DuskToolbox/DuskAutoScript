@@ -2046,13 +2046,10 @@ struct {class_name} {{
         Director 类需要实现原始方法签名，但 Java 端需要将 out 参数转换为返回值。
         通过 javadirectorout typemap 实现：将 C++ 的 out 参数转换为 Java 返回值。
         
-        Director 方法的签名示例：DasResult GetBase(uint64_t index, ::IDasBase** pp_out_base)
-        javadirectorout typemap 将：
-        - $javainput: C++ 方法的返回值（DasResult）
-        - $2: 第二个参数（::IDasBase** pp_out_base）
-        - *$2: 解引用，得到 ::IDasBase*
-        
-        最终返回 DasRetXxx 对象给 Java
+        注意：[binary_buffer] 方法跳过此 typemap，因为：
+        1. getDataAsDirectBuffer() 已提供替代方案
+        2. unsigned char** 类型没有对应的 DasRetXxx 类
+        3. Director 不需要支持二进制缓冲区方法
         
         Args:
             interface: 接口定义
@@ -2060,11 +2057,14 @@ struct {class_name} {{
             out_param: [out] 参数定义
             
         Returns:
-            javadirectorout typemap 代码
+            javadirectorout typemap 代码，或空字符串（如果跳过）
         """
+        # 跳过 [binary_buffer] 方法，因为 getDataAsDirectBuffer() 已提供替代方案
+        if self._is_binary_buffer_method(method):
+            return ""
+        
         out_type = out_param.type_info.base_type
         ret_class_name = self._get_ret_class_name(out_type)
-        
         
         # 构建完整的参数类型（包含 const、指针等修饰符）
         type_parts = []
@@ -2077,13 +2077,7 @@ struct {class_name} {{
             type_parts.append('&')
         full_type = ' '.join(type_parts)
         
-        
         # javadirectorout typemap：将 C++ out 参数转换为 Java 返回值
-        # $javainput = C++ 方法的返回值（DasResult）
-        # $2 = 第 2 个参数（out 参数，如 ::IDasBase** pp_out_base）
-        # *$2 = 解引用 out 参数（如 ::IDasBase*）
-        
-        
         typemap = f"""// Director out 参数 typemap: 将 C++ out 参数转换为 Java 返回值
 // 方法: {interface.name}::{method.name}
 // 原始签名: DasResult {method.name}(...)
@@ -2216,6 +2210,9 @@ struct {class_name} {{
     JCALL4(SetLongArrayRegion, jenv, $input, 0, 1, &ptr_value);
 }}
 
+// 禁用 GetData 的 Director 功能，避免生成 SWIGTYPE_p_p_unsigned_char
+// 因为二进制缓冲区方法不适合被 Java 重写
+%feature("nodirector") {qualified_name}::GetData;
 %typemap(javacode) {qualified_name} %{{
     private static native java.nio.ByteBuffer {native_name}(long address, int capacity);
 
@@ -2233,7 +2230,7 @@ struct {class_name} {{
         }}
 
         // 使用 GetSizeEz() 获取大小（GetSize 没有 [binary_buffer] 标记）
-        long size = GetSizeEz().GetValue();
+        long size = GetSizeEz().longValue();
 
         return {native_name}(ptrHolder[0], (int)size);
     }}

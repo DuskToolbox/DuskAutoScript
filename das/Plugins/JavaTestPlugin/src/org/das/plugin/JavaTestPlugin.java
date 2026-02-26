@@ -26,11 +26,11 @@ public class JavaTestPlugin extends ISwigDasPluginPackage {
         DasRetBase result = new DasRetBase();
         try {
             JavaTestPlugin plugin = new JavaTestPlugin();
-            result.SetErrorCode(DasResult.DAS_S_OK);
-            result.SetValue(plugin);
+            result.setErrorCode(DuskAutoScriptConstants.DAS_S_OK);
+            result.setValue(plugin);
             return result;
         } catch (Exception e) {
-            result.SetErrorCode(DasResult.DAS_E_OUT_OF_MEMORY);
+            result.setErrorCode(DuskAutoScriptConstants.DAS_E_OUT_OF_MEMORY);
             return result;
         }
     }
@@ -49,10 +49,10 @@ public class JavaTestPlugin extends ISwigDasPluginPackage {
         int idx = index.intValue();
         
         if (idx >= 0 && idx < FEATURES.length) {
-            result.setErrorCode(DasResult.DAS_S_OK);
+            result.setErrorCode(DuskAutoScriptConstants.DAS_S_OK);
             result.setValue(FEATURES[idx]);
         } else {
-            result.setErrorCode(DasResult.DAS_E_OUT_OF_RANGE);
+            result.setErrorCode(DuskAutoScriptConstants.DAS_E_OUT_OF_RANGE);
         }
         
         return result;
@@ -68,12 +68,12 @@ public class JavaTestPlugin extends ISwigDasPluginPackage {
      * @return 包含错误码和接口对象的返回对象
      */
     @Override
-    public DasRetBase CreateFeatureInterface(BigInteger index) {
-        DasRetBase result = new DasRetBase();
+    public DasRetDasBase CreateFeatureInterface(BigInteger index) {
+        DasRetDasBase result = new DasRetDasBase();
         
         // 对照 C++ IpcTestPlugin 返回 DAS_E_NO_IMPLEMENTATION
-        result.SetErrorCode(DasResult.DAS_E_NO_IMPLEMENTATION);
-        result.SetValue(null);
+        result.setErrorCode(DuskAutoScriptConstants.DAS_E_NO_IMPLEMENTATION);
+        result.setValue(null);
         
         return result;
     }
@@ -88,7 +88,7 @@ public class JavaTestPlugin extends ISwigDasPluginPackage {
     @Override
     public DasRetBool CanUnloadNow() {
         DasRetBool result = new DasRetBool();
-        result.setErrorCode(DasResult.DAS_S_OK);
+        result.setErrorCode(DuskAutoScriptConstants.DAS_S_OK);
         // 简单实现：总是返回 true（可以卸载）
         result.setValue(true);
         return result;

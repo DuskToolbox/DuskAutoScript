@@ -29,10 +29,19 @@ find_package(Java COMPONENTS Development REQUIRED)
 # ============================================
 
 set(PLUGIN_NAME "JavaTestPlugin")
-set(_JAR_OUTPUT_DIR "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/plugins")
-set(_OUTPUT_JAR "${_JAR_OUTPUT_DIR}/${PLUGIN_NAME}.jar")
 
-# ============================================
+# 根据生成器类型确定输出路径
+# 单配置生成器（Ninja）：配置时确定路径
+# 多配置生成器（MSVC）：构建时通过生成器表达式确定路径
+if(CMAKE_CONFIGURATION_TYPES)
+    # 多配置生成器（MSVC）- 使用生成器表达式
+    set(_JAR_OUTPUT_DIR "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/plugins")
+else()
+    # 单配置生成器（Ninja）- 配置时确定路径
+    set(_JAR_OUTPUT_DIR "${CMAKE_BINARY_DIR}/bin/${CMAKE_BUILD_TYPE}/plugins")
+endif()
+
+set(_OUTPUT_JAR "${_JAR_OUTPUT_DIR}/${PLUGIN_NAME}.jar")
 # 收集 Java 源文件
 # ============================================
 
