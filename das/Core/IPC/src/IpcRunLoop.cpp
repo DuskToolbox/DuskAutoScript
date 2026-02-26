@@ -6,7 +6,7 @@
 #include <das/Core/IPC/IMessageHandler.h>
 #include <das/Core/IPC/IpcResponseSender.h>
 #include <das/Core/IPC/IpcRunLoop.h>
-#include <das/Core/IPC/MessageQueueTransport.h>
+#include <das/Core/IPC/IpcTransport.h>
 #include <mutex>
 #include <stdexec/execution.hpp>
 #include <thread>

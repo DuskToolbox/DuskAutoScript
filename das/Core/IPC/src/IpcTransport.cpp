@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <cstring>
 #include <das/Core/IPC/Config.h>
-#include <das/Core/IPC/MessageQueueTransport.h>
+#include <das/Core/IPC/IpcTransport.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <string>
 #include <vector>

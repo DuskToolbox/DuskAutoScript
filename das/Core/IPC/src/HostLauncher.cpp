@@ -9,7 +9,7 @@
 #include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
-#include <das/Core/IPC/MessageQueueTransport.h>
+#include <das/Core/IPC/IpcTransport.h>
 #include <das/Utils/fmt.h>
 #include <thread>
 

@@ -1,6 +1,6 @@
 #include <das/Core/IPC/HandshakeSerialization.h>
 
-#include "das/Core/IPC/IpcCommandHandler.h"
+#include <das/Core/IPC/IpcCommandHandler.h>
 #include <chrono>
 #include <cstring>
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
@@ -8,7 +8,7 @@
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcResponseSender.h>
 #include <das/Core/IPC/ObjectId.h>
-#include <das/Core/IPC/ObjectManager.h>
+#include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/DasApi.h>

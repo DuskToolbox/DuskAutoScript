@@ -1,6 +1,6 @@
 #include <cstdint>
 #include <das/Core/IPC/Config.h>
-#include <das/Core/IPC/ObjectManager.h>
+#include <das/Core/IPC/DistributedObjectManager.h>
 #include <memory>
 #include <mutex>
 #include <shared_mutex>

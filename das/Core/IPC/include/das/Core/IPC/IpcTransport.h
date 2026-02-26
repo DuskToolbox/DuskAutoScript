@@ -1,5 +1,5 @@
-#ifndef DAS_CORE_IPC_MESSAGE_QUEUE_TRANSPORT_H
-#define DAS_CORE_IPC_MESSAGE_QUEUE_TRANSPORT_H
+#ifndef DAS_CORE_IPC_IPC_TRANSPORT_H
+#define DAS_CORE_IPC_IPC_TRANSPORT_H
 
 #include <boost/interprocess/ipc/message_queue.hpp>
 #include <cstdint>
@@ -78,4 +78,4 @@ private:
 
 DAS_CORE_IPC_NS_END
 
-#endif // DAS_CORE_IPC_MESSAGE_QUEUE_TRANSPORT_H
+#endif // DAS_CORE_IPC_IPC_TRANSPORT_H

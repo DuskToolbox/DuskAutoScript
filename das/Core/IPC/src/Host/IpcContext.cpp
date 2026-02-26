@@ -5,8 +5,8 @@
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/MessageHandlerRef.h>
-#include <das/Core/IPC/MessageQueueTransport.h>
-#include <das/Core/IPC/ObjectManager.h>
+#include <das/Core/IPC/IpcTransport.h>
+#include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/SessionCoordinator.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
 

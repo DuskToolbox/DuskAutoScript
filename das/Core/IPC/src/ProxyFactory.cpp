@@ -1,7 +1,7 @@
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcRunLoop.h>
-#include <das/Core/IPC/ObjectManager.h>
+#include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/Logger/Logger.h>

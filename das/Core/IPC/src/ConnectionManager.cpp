@@ -3,7 +3,7 @@
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/IpcRunLoop.h>
-#include <das/Core/IPC/MessageQueueTransport.h>
+#include <das/Core/IPC/IpcTransport.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <shared_mutex>
 #include <unordered_map>

@@ -1,7 +1,7 @@
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/IPC/MainProcess/IpcContext.h>
 #include <das/Core/IPC/MainProcess/MainProcessServer.h>
-#include <das/Core/IPC/ObjectManager.h>
+#include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/IPC/SessionCoordinator.h>
