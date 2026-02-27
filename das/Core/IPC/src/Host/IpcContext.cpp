@@ -1,16 +1,16 @@
+#include <das/Core/IPC/DistributedObjectManager.h>
+#include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/Host/HandshakeHandler.h>
 #include <das/Core/IPC/Host/HostConfig.h>
 #include <das/Core/IPC/Host/IIpcContext.h>
 #include <das/Core/IPC/Host/IpcContext.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
+#include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcRunLoop.h>
-#include <das/Core/IPC/MessageHandlerRef.h>
 #include <das/Core/IPC/IpcTransport.h>
-#include <das/Core/IPC/DistributedObjectManager.h>
+#include <das/Core/IPC/MessageHandlerRef.h>
 #include <das/Core/IPC/SessionCoordinator.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
-#include <das/Core/IPC/Handshake.h>
-#include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/DasApi.h>
 #include <das/Utils/fmt.h>
 
@@ -59,181 +59,21 @@ namespace Core
                     host_pid_ = getpid();
 #endif
 
-                    // 如果 config_.main_pid != 0，使用 Host 模式连接主进程
-                    // 否则使用独立模式
-                    if (config_.main_pid != 0)
+                    // 如果 config_.main_pid == 0，返回错误
+                    if (config_.main_pid == 0)
                     {
-                        main_pid_ = config_.main_pid;
-                        std::string msg = DAS_FMT_NS::format(
-                            "IpcContext: Host 模式初始化，main_pid={}, host_pid={}",
-                            main_pid_,
-                            host_pid_);
-                        DAS_LOG_INFO(msg.c_str());
-                        return InitializeAsHost();
-                    }
-                    else
-                    {
-                        std::string msg = DAS_FMT_NS::format(
-                            "IpcContext: 独立模式初始化，host_pid={}",
-                            host_pid_);
-                        DAS_LOG_INFO(msg.c_str());
-                        return InitializeAsStandalone();
-                    }
-                }
-
-                /**
-                 * @brief 独立模式初始化（旧格式队列名）
-                 * 用于向后兼容，Host 自行分配 session_id
-                 */
-                DasResult InitializeAsStandalone()
-                {
-                    DasResult result = DAS_S_OK;
-
-                    // 1. 分配 session_id
-                    auto& coordinator = SessionCoordinator::GetInstance();
-                    session_id_ = coordinator.AllocateSessionId();
-                    if (session_id_ == 0)
-                    {
-                        DAS_LOG_ERROR("IpcContext: 分配 session_id 失败");
-                        return DAS_E_FAIL;
-                    }
-                    coordinator.SetLocalSessionId(session_id_);
-
-                    // 2. 创建并初始化 DistributedObjectManager
-                    object_manager_ =
-                        std::make_unique<DistributedObjectManager>();
-                    result = object_manager_->Initialize(session_id_);
-                    if (result != DAS_S_OK)
-                    {
-                        std::string msg = DAS_FMT_NS::format(
-                            "IpcContext: DistributedObjectManager 初始化失败，result=0x{:08X}",
-                            result);
-                        DAS_LOG_ERROR(msg.c_str());
-                        coordinator.ReleaseSessionId(session_id_);
-                        object_manager_.reset();
-                        return result;
+                        DAS_LOG_ERROR(
+                            "IpcContext: main_pid 不能为 0，必须连接主进程");
+                        return DAS_E_INVALID_ARGUMENT;
                     }
 
-                    // 3. 创建 Transport（使用旧格式队列名）
-                    std::string host_to_plugin_queue =
-                        MakeLegacyMessageQueueName(host_pid_, true);
-                    std::string plugin_to_host_queue =
-                        MakeLegacyMessageQueueName(host_pid_, false);
-                    std::string shm_name = MakeLegacySharedMemoryName(host_pid_);
-
-                    auto transport = std::make_unique<IpcTransport>();
-                    result = transport->Initialize(
-                        host_to_plugin_queue,
-                        plugin_to_host_queue,
-                        DEFAULT_MAX_MESSAGE_SIZE,
-                        DEFAULT_MAX_MESSAGES);
-                    if (result != DAS_S_OK)
-                    {
-                        std::string msg = DAS_FMT_NS::format(
-                            "IpcContext: Transport 初始化失败，result=0x{:08X}",
-                            result);
-                        DAS_LOG_ERROR(msg.c_str());
-                        object_manager_->Shutdown();
-                        object_manager_.reset();
-                        coordinator.ReleaseSessionId(session_id_);
-                        return result;
-                    }
-
-                    // 4. 初始化 SharedMemoryPool
-                    shared_memory_ = std::make_unique<SharedMemoryPool>();
-                    result = shared_memory_->Initialize(
-                        shm_name,
-                        DEFAULT_SHARED_MEMORY_SIZE);
-                    if (result != DAS_S_OK)
-                    {
-                        std::string msg = DAS_FMT_NS::format(
-                            "IpcContext: SharedMemoryPool 初始化失败，result=0x{:08X}",
-                            result);
-                        DAS_LOG_ERROR(msg.c_str());
-                        object_manager_->Shutdown();
-                        object_manager_.reset();
-                        coordinator.ReleaseSessionId(session_id_);
-                        return result;
-                    }
-
-                    // 5. 将 SharedMemoryPool 设置到 Transport
-                    result =
-                        transport->SetSharedMemoryPool(shared_memory_.get());
-                    if (result != DAS_S_OK)
-                    {
-                        std::string msg = DAS_FMT_NS::format(
-                            "IpcContext: 设置 SharedMemoryPool 到 Transport 失败，result=0x{:08X}",
-                            result);
-                        DAS_LOG_ERROR(msg.c_str());
-                        shared_memory_->Shutdown();
-                        shared_memory_.reset();
-                        object_manager_->Shutdown();
-                        object_manager_.reset();
-                        coordinator.ReleaseSessionId(session_id_);
-                        return result;
-                    }
-
-                    // 6. 创建 IpcRunLoop
-                    run_loop_ = std::make_unique<IpcRunLoop>();
-                    run_loop_->SetTransport(std::move(transport));
-
-                    // 7. 创建并初始化 IpcCommandHandler
-                    command_handler_ = std::make_unique<IpcCommandHandler>();
-                    command_handler_->SetSessionId(session_id_);
-
-                    // 8. 创建并初始化 HandshakeHandler
-                    handshake_handler_ = std::make_unique<HandshakeHandler>();
-                    result = handshake_handler_->Initialize(session_id_);
-                    if (result != DAS_S_OK)
-                    {
-                        std::string msg = DAS_FMT_NS::format(
-                            "IpcContext: HandshakeHandler 初始化失败，result=0x{:08X}",
-                            result);
-                        DAS_LOG_ERROR(msg.c_str());
-                        run_loop_->Shutdown();
-                        run_loop_.reset();
-                        object_manager_->Shutdown();
-                        object_manager_.reset();
-                        coordinator.ReleaseSessionId(session_id_);
-                        return result;
-                    }
-
-                    // 9. 设置 HandshakeHandler 的客户端连接回调
-                    handshake_handler_->SetOnClientConnected(
-                        [this](const ConnectedClient& /*client*/)
-                        {
-                            is_connected_ = true;
-
-                            if (handshake_complete_handler_ != nullptr)
-                            {
-                                handshake_complete_handler_(
-                                    static_cast<IIpcContext*>(owner_),
-                                    DAS_S_OK,
-                                    handshake_user_data_);
-                            }
-                        });
-
-                    handshake_handler_->SetOnClientDisconnected(
-                        [this](uint16_t /*session_id*/)
-                        {
-                            is_connected_ = false;
-                        });
-
-                    // 10. 注册消息处理器
-                    run_loop_->RegisterHandler(
-                        std::make_unique<MessageHandlerRef>(
-                            handshake_handler_.get()));
-
-                    run_loop_->RegisterHandler(
-                        std::make_unique<MessageHandlerRef>(
-                            command_handler_.get()));
-
-                    is_initialized_ = true;
+                    main_pid_ = config_.main_pid;
                     std::string msg = DAS_FMT_NS::format(
-                        "IpcContext: 独立模式初始化完成，session_id={}",
-                        session_id_);
+                        "IpcContext: Host 模式初始化，main_pid={}, host_pid={}",
+                        main_pid_,
+                        host_pid_);
                     DAS_LOG_INFO(msg.c_str());
-                    return DAS_S_OK;
+                    return InitializeAsHost();
                 }
 
                 /**
@@ -288,10 +128,10 @@ namespace Core
                     // 主进程监听队列名称
                     // M2H: Host 发送给主进程
                     // H2M: 主进程发送给 Host
-                    std::string main_m2h = IpcTransport::MakeQueueName(
-                        main_pid_, 0, true);
-                    std::string main_h2m = IpcTransport::MakeQueueName(
-                        main_pid_, 0, false);
+                    std::string main_m2h =
+                        IpcTransport::MakeQueueName(main_pid_, 0, true);
+                    std::string main_h2m =
+                        IpcTransport::MakeQueueName(main_pid_, 0, false);
 
                     std::string msg = DAS_FMT_NS::format(
                         "IpcContext: 连接主进程，M2H={}, H2M={}",
@@ -325,11 +165,12 @@ namespace Core
                     IPCMessageHeader header{};
                     header.magic = IPCMessageHeader::MAGIC;
                     header.version = IPCMessageHeader::CURRENT_VERSION;
-                    header.message_type = static_cast<uint8_t>(MessageType::REQUEST);
+                    header.message_type =
+                        static_cast<uint8_t>(MessageType::REQUEST);
                     header.header_flags = 0;
                     header.call_id = 1;
-                    header.interface_id =
-                        static_cast<uint32_t>(HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO);
+                    header.interface_id = static_cast<uint32_t>(
+                        HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO);
                     header.method_id = 0;
                     header.flags = 0;
                     header.error_code = 0;
@@ -358,7 +199,7 @@ namespace Core
                     DAS_LOG_INFO(msg.c_str());
 
                     // 等待 WELCOME 响应
-                    IPCMessageHeader  resp_header;
+                    IPCMessageHeader     resp_header;
                     std::vector<uint8_t> resp_body;
                     result = main_transport_->Receive(
                         resp_header,
@@ -376,8 +217,9 @@ namespace Core
                     }
 
                     // 验证响应
-                    if (resp_header.interface_id !=
-                        static_cast<uint32_t>(HandshakeInterfaceId::HANDSHAKE_IFACE_WELCOME))
+                    if (resp_header.interface_id
+                        != static_cast<uint32_t>(
+                            HandshakeInterfaceId::HANDSHAKE_IFACE_WELCOME))
                     {
                         std::string err_msg = DAS_FMT_NS::format(
                             "IpcContext: 收到非 WELCOME 响应，interface_id={}",
@@ -457,12 +299,12 @@ namespace Core
                     }
 
                     // 2. 创建 Host 专用队列（新格式）
-                    std::string host_m2h = MakeMessageQueueName(
-                        main_pid_, host_pid_, true);
-                    std::string host_h2m = MakeMessageQueueName(
-                        main_pid_, host_pid_, false);
-                    std::string shm_name = MakeSharedMemoryName(
-                        main_pid_, host_pid_);
+                    std::string host_m2h =
+                        MakeMessageQueueName(main_pid_, host_pid_, true);
+                    std::string host_h2m =
+                        MakeMessageQueueName(main_pid_, host_pid_, false);
+                    std::string shm_name =
+                        MakeSharedMemoryName(main_pid_, host_pid_);
 
                     std::string msg = DAS_FMT_NS::format(
                         "IpcContext: 创建 Host 资源，M2H={}, H2M={}, SHM={}",
@@ -561,9 +403,7 @@ namespace Core
 
                     handshake_handler_->SetOnClientDisconnected(
                         [this](uint16_t /*session_id*/)
-                        {
-                            is_connected_ = false;
-                        });
+                        { is_connected_ = false; });
 
                     // 9. 注册消息处理器
                     run_loop_->RegisterHandler(
@@ -581,11 +421,12 @@ namespace Core
                     IPCMessageHeader ready_header{};
                     ready_header.magic = IPCMessageHeader::MAGIC;
                     ready_header.version = IPCMessageHeader::CURRENT_VERSION;
-                    ready_header.message_type = static_cast<uint8_t>(MessageType::REQUEST);
+                    ready_header.message_type =
+                        static_cast<uint8_t>(MessageType::REQUEST);
                     ready_header.header_flags = 0;
                     ready_header.call_id = 2;
-                    ready_header.interface_id =
-                        static_cast<uint32_t>(HandshakeInterfaceId::HANDSHAKE_IFACE_READY);
+                    ready_header.interface_id = static_cast<uint32_t>(
+                        HandshakeInterfaceId::HANDSHAKE_IFACE_READY);
                     ready_header.method_id = 0;
                     ready_header.flags = 0;
                     ready_header.error_code = 0;
@@ -642,8 +483,9 @@ namespace Core
                     }
 
                     // 验证 READYACK
-                    if (ack_header.interface_id !=
-                        static_cast<uint32_t>(HandshakeInterfaceId::HANDSHAKE_IFACE_READY_ACK))
+                    if (ack_header.interface_id
+                        != static_cast<uint32_t>(
+                            HandshakeInterfaceId::HANDSHAKE_IFACE_READY_ACK))
                     {
                         std::string err_msg = DAS_FMT_NS::format(
                             "IpcContext: 收到非 READYACK 响应，interface_id={}",
@@ -699,7 +541,8 @@ namespace Core
                     DAS_LOG_INFO(msg.c_str());
 
                     // 关闭与主进程的临时连接（后续通过 Host 专用队列通信）
-                    // 注意：这里不关闭 main_transport_，因为可能还需要与主进程通信
+                    // 注意：这里不关闭
+                    // main_transport_，因为可能还需要与主进程通信
                     // 如果后续不需要，可以在这里关闭
 
                     return DAS_S_OK;
@@ -865,13 +708,14 @@ namespace Core
                 bool is_connected_ = false;
                 bool is_running_ = false;
 
-OnHandshakeComplete handshake_complete_handler_;
+                OnHandshakeComplete handshake_complete_handler_;
                 void*               handshake_user_data_ = nullptr;
 
                 // Host 模式专用成员变量
-                uint32_t                          host_pid_ = 0;
-                uint32_t                          main_pid_ = 0;
-                std::unique_ptr<IpcTransport>     main_transport_; // 与主进程通信的 Transport（握手阶段）
+                uint32_t host_pid_ = 0;
+                uint32_t main_pid_ = 0;
+                std::unique_ptr<IpcTransport>
+                    main_transport_; // 与主进程通信的 Transport（握手阶段）
             };
 
             // ====== IpcContext 实现 ======
