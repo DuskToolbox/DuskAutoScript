@@ -144,13 +144,12 @@ DasResult PluginManager::LoadPlugin(
         feature_info.plugin_name = normalized_path.stem().string();
 
         // 创建 Feature 接口
-        void* p_interface = nullptr;
-        auto  create_result =
+        IDasBase* p_interface = nullptr;
+        auto      create_result =
             plugin.package->CreateFeatureInterface(index, &p_interface);
         if (create_result == DAS_S_OK && p_interface)
         {
-            feature_info.interface_ptr =
-                DasPtr<IDasBase>(static_cast<IDasBase*>(p_interface));
+            feature_info.interface_ptr = DasPtr{p_interface};
         }
 
         plugin.features.push_back(std::move(feature_info));
