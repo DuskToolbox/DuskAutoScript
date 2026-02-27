@@ -34,7 +34,7 @@ DasResult IpcTestPlugin::EnumFeature(
 
 DasResult IpcTestPlugin::CreateFeatureInterface(
     size_t index,
-    void** pp_out_interface)
+    IDasBase** pp_out_interface)
 {
     std::ignore = index;
     pp_out_interface = nullptr;
