@@ -36,16 +36,44 @@ namespace Core
             constexpr uint32_t DEFAULT_CONNECTION_TIMEOUT_MS =
                 30000; // 30 seconds
 
-            // 消息队列命名格式: DAS_Host_<host_pid>_MQ_M2H /
-            // DAS_Host_<host_pid>_MQ_H2M 共享内存命名格式:
-            // DAS_Host_<host_pid>_SHM
+            // 新命名格式: das_ipc_<main_pid>_<host_pid>_m2h/h2m
+            // 旧命名格式: DAS_Host_<host_pid>_MQ_M2H/H2M (兼容保留)
 
             /**
-             * @brief 生成消息队列名称
+             * @brief 生成消息队列名称（新格式）
+             * @param main_pid 主进程 PID
              * @param host_pid Host 进程 PID
              * @param is_main_to_host true 表示 Main->Host 方向
              */
             inline std::string MakeMessageQueueName(
+                uint32_t main_pid,
+                uint32_t host_pid,
+                bool     is_main_to_host)
+            {
+                return std::string("das_ipc_") + std::to_string(main_pid)
+                       + "_" + std::to_string(host_pid) + "_"
+                       + (is_main_to_host ? "m2h" : "h2m");
+            }
+
+            /**
+             * @brief 生成共享内存名称（新格式）
+             * @param main_pid 主进程 PID
+             * @param host_pid Host 进程 PID
+             */
+            inline std::string MakeSharedMemoryName(
+                uint32_t main_pid,
+                uint32_t host_pid)
+            {
+                return std::string("das_ipc_") + std::to_string(main_pid)
+                       + "_" + std::to_string(host_pid) + "_shm";
+            }
+
+            /**
+             * @brief 生成消息队列名称（旧格式，兼容用）
+             * @param host_pid Host 进程 PID
+             * @param is_main_to_host true 表示 Main->Host 方向
+             */
+            inline std::string MakeLegacyMessageQueueName(
                 uint32_t host_pid,
                 bool     is_main_to_host)
             {
@@ -54,10 +82,10 @@ namespace Core
             }
 
             /**
-             * @brief 生成共享内存名称
+             * @brief 生成共享内存名称（旧格式，兼容用）
              * @param host_pid Host 进程 PID
              */
-            inline std::string MakeSharedMemoryName(uint32_t host_pid)
+            inline std::string MakeLegacySharedMemoryName(uint32_t host_pid)
             {
                 return std::string("DAS_Host_") + std::to_string(host_pid)
                        + "_SHM";

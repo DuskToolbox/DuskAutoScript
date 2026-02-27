@@ -2,6 +2,7 @@
 #define DAS_CORE_IPC_MAIN_PROCESS_SERVER_H
 
 #include <cstdint>
+#include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/ObjectId.h>
@@ -10,6 +11,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <thread>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -20,6 +22,8 @@ namespace Core
 {
     namespace IPC
     {
+        class IpcTransport;
+
         namespace MainProcess
         {
             class IpcRunLoop;
@@ -107,6 +111,36 @@ namespace Core
                  * @return true 如果正在运行
                  */
                 bool IsRunning() const;
+
+                /**
+                 * @brief 开始监听 Host 进程连接
+                 *
+                 * 创建监听消息队列，等待 Host 进程发送 HELLO 消息。
+                 *
+                 * @return DasResult 启动结果
+                 */
+                DasResult StartListening();
+
+                /**
+                 * @brief 停止监听 Host 进程连接
+                 *
+                 * @return DasResult 停止结果
+                 */
+                DasResult StopListening();
+
+                /**
+                 * @brief 检查是否正在监听
+                 *
+                 * @return true 如果正在监听
+                 */
+                bool IsListening() const;
+
+                /**
+                 * @brief 获取主进程 PID
+                 *
+                 * @return 主进程 PID
+                 */
+                uint32_t GetMainPid() const;
 
                 // ====== 会话管理 ======
 
@@ -375,6 +409,35 @@ namespace Core
                     size_t                  body_size,
                     std::vector<uint8_t>&   response_body);
 
+                /**
+                 * @brief 监听循环
+                 *
+                 * 在独立线程中运行，等待 Host 进程的连接请求。
+                 */
+                void ListenLoop();
+
+                /**
+                 * @brief 处理 Host 的 HELLO 请求
+                 *
+                 * @param req Hello 请求
+                 * @param resp Welcome 响应
+                 * @return DasResult 处理结果
+                 */
+                DasResult HandleHostHello(
+                    const HelloRequestV1&  req,
+                    WelcomeResponseV1&     resp);
+
+                /**
+                 * @brief 处理 Host 的 READY 请求
+                 *
+                 * @param req Ready 请求
+                 * @param ack ReadyAck 响应
+                 * @return DasResult 处理结果
+                 */
+            DasResult HandleHostReady(
+                const ReadyRequestV1& req,
+                ReadyAckV1&           ack);
+
                 mutable std::mutex                            sessions_mutex_;
                 std::unordered_map<uint16_t, HostSessionInfo> sessions_;
 
@@ -386,6 +449,14 @@ namespace Core
 
                 std::atomic<bool> is_running_{false};
                 std::atomic<bool> is_initialized_{false};
+
+                // ====== 监听相关成员 ======
+                uint32_t                                      main_pid_{0};
+                std::unique_ptr<IPC::IpcTransport>            listen_transport_;
+                std::thread                                   listen_thread_;
+                std::atomic<bool> is_listening_{false};
+                std::unordered_map<uint32_t, uint16_t> host_pid_to_session_;
+                mutable std::mutex                     host_pid_mutex_;
             };
         } // namespace MainProcess
     } // namespace IPC

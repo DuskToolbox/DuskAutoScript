@@ -358,18 +358,21 @@ TEST(IpcMultiProcessTestBasic, Handshake_ReadyAckInit)
 
 TEST(IpcMultiProcessTestBasic, MessageQueueNameGeneration)
 {
-    std::string m2p_name =
-        DAS::Core::IPC::Host::MakeMessageQueueName(12345, true);
+    // 新格式: das_ipc_<main_pid>_<host_pid>_m2h/h2m
+    std::string m2h_name =
+        DAS::Core::IPC::Host::MakeMessageQueueName(100, 12345, true);
     std::string h2m_name =
-        DAS::Core::IPC::Host::MakeMessageQueueName(12345, false);
+        DAS::Core::IPC::Host::MakeMessageQueueName(100, 12345, false);
 
-    EXPECT_TRUE(m2p_name.find("DAS_Host_12345_MQ_M2H") != std::string::npos);
-    EXPECT_NE(m2p_name, h2m_name);
+    EXPECT_TRUE(m2h_name.find("das_ipc_100_12345_m2h") != std::string::npos);
+    EXPECT_TRUE(h2m_name.find("das_ipc_100_12345_h2m") != std::string::npos);
+    EXPECT_NE(m2h_name, h2m_name);
 }
 
 TEST(IpcMultiProcessTestBasic, SharedMemoryNameGeneration)
 {
-    std::string shm_name = DAS::Core::IPC::Host::MakeSharedMemoryName(12345);
+    // 新格式: das_ipc_<main_pid>_<host_pid>_shm
+    std::string shm_name = DAS::Core::IPC::Host::MakeSharedMemoryName(100, 12345);
 
-    EXPECT_TRUE(shm_name.find("DAS_Host_12345_SHM") != std::string::npos);
+    EXPECT_TRUE(shm_name.find("das_ipc_100_12345_shm") != std::string::npos);
 }

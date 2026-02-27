@@ -53,8 +53,8 @@ public:
     bool IsConnected() const;
 
     static std::string MakeQueueName(
-        uint16_t host_id,
-        uint16_t plugin_id,
+        uint32_t main_pid,
+        uint32_t host_pid,
         bool     is_main_to_host);
 
 private:

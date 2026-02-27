@@ -5,6 +5,7 @@
 #include <das/Core/IPC/IpcTransport.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <string>
+#include <das/Utils/fmt.h>
 #include <vector>
 
 DAS_CORE_IPC_NS_BEGIN
@@ -266,19 +267,23 @@ DasResult IpcTransport::SetSharedMemoryPool(SharedMemoryPool* pool)
 bool IpcTransport::IsConnected() const { return impl_->initialized_; }
 
 std::string IpcTransport::MakeQueueName(
-    uint16_t host_id,
-    uint16_t plugin_id,
+    uint32_t main_pid,
+    uint32_t host_pid,
     bool     is_main_to_host)
 {
     if (is_main_to_host)
     {
-        return "das_ipc_" + std::to_string(host_id) + "_"
-               + std::to_string(plugin_id) + "_m2h";
+        return DAS_FMT_NS::format(
+            "das_ipc_{}_{}_m2h",
+            main_pid,
+            host_pid);
     }
     else
     {
-        return "das_ipc_" + std::to_string(host_id) + "_"
-               + std::to_string(plugin_id) + "_h2m";
+        return DAS_FMT_NS::format(
+            "das_ipc_{}_{}_h2m",
+            main_pid,
+            host_pid);
     }
 }
 

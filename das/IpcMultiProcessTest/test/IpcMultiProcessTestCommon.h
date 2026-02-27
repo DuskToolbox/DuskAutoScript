@@ -19,6 +19,7 @@
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcTransport.h>
+#include <das/Core/IPC/MainProcess/MainProcessServer.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/IPC/SessionCoordinator.h>
@@ -52,14 +53,47 @@ protected:
         std::string msg =
             DAS_FMT_NS::format("DasHost path: {}", host_exe_path_);
         DAS_LOG_INFO(msg.c_str());
-    }
 
+        // 初始化 MainProcessServer（新架构：Host 主动连接主进程获取
+        // session_id）
+        auto& server =
+            DAS::Core::IPC::MainProcess::MainProcessServer::GetInstance();
+        DasResult result = server.Initialize();
+        if (DAS::IsFailed(result))
+        {
+            throw std::runtime_error(
+                DAS_FMT_NS::format(
+                    "Failed to initialize MainProcessServer: {}",
+                    static_cast<int32_t>(result)));
+        }
+
+        result = server.StartListening();
+        if (DAS::IsFailed(result))
+        {
+            server.Shutdown();
+            throw std::runtime_error(
+                DAS_FMT_NS::format(
+                    "Failed to start MainProcessServer listening: {}",
+                    static_cast<int32_t>(result)));
+        }
+
+        DAS_LOG_INFO(
+            "MainProcessServer initialized and listening for Host connections");
+    }
     void TearDown() override
     {
         launcher_.Stop();
+
+        // 停止 MainProcessServer 监听并关闭（新架构）
+        auto& server =
+            DAS::Core::IPC::MainProcess::MainProcessServer::GetInstance();
+        server.StopListening();
+        server.Shutdown();
+
+        DAS_LOG_INFO("MainProcessServer stopped and shutdown");
+
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
-
     std::string GetDasHostPath()
     {
         const char* path = std::getenv("DAS_HOST_EXE_PATH");

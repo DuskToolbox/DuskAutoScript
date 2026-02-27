@@ -2,12 +2,31 @@
 
 #include <chrono>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#endif
+
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/IpcTransport.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/SessionCoordinator.h>
 #include <das/DasApi.h>
 #include <das/Utils/fmt.h>
+
+#ifdef _WIN32
+#include <windows.h>
+// 取消 Windows API 宏，避免与代码冲突
+#ifdef DispatchMessage
+#undef DispatchMessage
+#endif
+#else
+#include <unistd.h>
+#endif
 
 #ifndef DAS_E_NOT_IMPLEMENTED
 #define DAS_E_NOT_IMPLEMENTED DAS_E_NO_IMPLEMENTATION
@@ -43,6 +62,13 @@ namespace Core
                     return DAS_S_OK;
                 }
 
+                // 获取主进程 PID
+#ifdef _WIN32
+                main_pid_ = GetCurrentProcessId();
+#else
+                main_pid_ = static_cast<uint32_t>(getpid());
+#endif
+
                 // 主进程 session_id = 1
                 SessionCoordinator::GetInstance().SetLocalSessionId(1);
 
@@ -58,10 +84,16 @@ namespace Core
                 }
 
                 Stop();
+                StopListening();
 
                 {
                     std::lock_guard<std::mutex> lock(sessions_mutex_);
                     sessions_.clear();
+                }
+
+                {
+                    std::lock_guard<std::mutex> lock(host_pid_mutex_);
+                    host_pid_to_session_.clear();
                 }
 
                 RemoteObjectRegistry::GetInstance().Clear();
@@ -100,6 +132,102 @@ namespace Core
             bool MainProcessServer::IsRunning() const
             {
                 return is_running_.load();
+            }
+
+            DasResult MainProcessServer::StartListening()
+            {
+                if (!is_initialized_.load())
+                {
+                    return DAS_E_IPC_INVALID_STATE;
+                }
+
+                if (is_listening_.load())
+                {
+                    return DAS_S_OK;
+                }
+
+                if (main_pid_ == 0)
+                {
+                    std::string msg = DAS_FMT_NS::format(
+                        "StartListening failed: main_pid_ is 0");
+                    DAS_LOG_ERROR(msg.c_str());
+                    return DAS_E_IPC_INVALID_STATE;
+                }
+
+                // 创建监听队列名: das_ipc_{main_pid}_0_m2h/h2m
+                std::string m2h_queue = IpcTransport::MakeQueueName(
+                    main_pid_, 0, true);
+                std::string h2m_queue = IpcTransport::MakeQueueName(
+                    main_pid_, 0, false);
+
+                // 创建监听传输
+                listen_transport_ = std::make_unique<IpcTransport>();
+                DasResult result = listen_transport_->Initialize(
+                    m2h_queue,
+                    h2m_queue,
+                    4096,  // max_message_size
+                    100);  // max_messages
+
+                if (DAS::IsFailed(result))
+                {
+                    std::string msg = DAS_FMT_NS::format(
+                        "StartListening failed to initialize transport: {}",
+                        static_cast<int32_t>(result));
+                    DAS_LOG_ERROR(msg.c_str());
+                    listen_transport_.reset();
+                    return result;
+                }
+
+                is_listening_.store(true);
+
+                // 启动监听线程
+                listen_thread_ = std::thread(&MainProcessServer::ListenLoop, this);
+
+                {
+                    std::string msg = DAS_FMT_NS::format(
+                        "MainProcessServer started listening on queues: {} / {}",
+                        m2h_queue,
+                        h2m_queue);
+                    DAS_LOG_INFO(msg.c_str());
+                }
+
+                return DAS_S_OK;
+            }
+
+            DasResult MainProcessServer::StopListening()
+            {
+                if (!is_listening_.load())
+                {
+                    return DAS_S_OK;
+                }
+
+                is_listening_.store(false);
+
+                // 等待监听线程结束
+                if (listen_thread_.joinable())
+                {
+                    listen_thread_.join();
+                }
+
+                // 关闭传输
+                if (listen_transport_)
+                {
+                    listen_transport_->Shutdown();
+                    listen_transport_.reset();
+                }
+
+                DAS_LOG_INFO("MainProcessServer stopped listening");
+                return DAS_S_OK;
+            }
+
+            bool MainProcessServer::IsListening() const
+            {
+                return is_listening_.load();
+            }
+
+            uint32_t MainProcessServer::GetMainPid() const
+            {
+                return main_pid_;
             }
 
             DasResult MainProcessServer::OnHostConnected(uint16_t session_id)
@@ -555,6 +683,261 @@ namespace Core
                 // 2. 设置超时机制
                 // 3. 解析响应并填充 response_body
                 response_body.clear();
+                return DAS_S_OK;
+            }
+
+            void MainProcessServer::ListenLoop()
+            {
+                std::string msg = DAS_FMT_NS::format(
+                    "ListenLoop started, main_pid={}",
+                    main_pid_);
+                DAS_LOG_INFO(msg.c_str());
+
+                while (is_listening_.load())
+                {
+                    if (!listen_transport_)
+                    {
+                        break;
+                    }
+
+                    // 接收消息
+                    IPCMessageHeader     header{};
+                    std::vector<uint8_t> body;
+                    DasResult result = listen_transport_->Receive(
+                        header,
+                        body,
+                        1000);  // 1 second timeout
+
+                    if (DAS::IsFailed(result))
+                    {
+                        // 超时或错误，继续循环
+                        if (result != DAS_E_IPC_TIMEOUT)
+                        {
+                            std::string err_msg = DAS_FMT_NS::format(
+                                "ListenLoop receive error: {}",
+                                static_cast<int32_t>(result));
+                            DAS_LOG_ERROR(err_msg.c_str());
+                        }
+                        continue;
+                    }
+
+                    // 处理握手消息
+                    if (header.interface_id ==
+                        static_cast<uint32_t>(
+                            HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO))
+                    {
+                        if (body.size() >= sizeof(HelloRequestV1))
+                        {
+                            HelloRequestV1 hello_req{};
+                            std::memcpy(
+                                &hello_req,
+                                body.data(),
+                                sizeof(HelloRequestV1));
+
+                            WelcomeResponseV1 welcome_resp{};
+                            DasResult         handle_result =
+                                HandleHostHello(hello_req, welcome_resp);
+
+                            if (DAS::IsFailed(handle_result))
+                            {
+                                std::string err_msg = DAS_FMT_NS::format(
+                                    "HandleHostHello failed: {}",
+                                    static_cast<int32_t>(handle_result));
+                                DAS_LOG_ERROR(err_msg.c_str());
+                            }
+
+                            // 发送 WELCOME 响应
+                            std::vector<uint8_t> resp_body(
+                                sizeof(WelcomeResponseV1));
+                            std::memcpy(
+                                resp_body.data(),
+                                &welcome_resp,
+                                sizeof(WelcomeResponseV1));
+
+                            IPCMessageHeader resp_header{};
+                            resp_header.magic = IPCMessageHeader::MAGIC;
+                            resp_header.version = IPCMessageHeader::CURRENT_VERSION;
+                            resp_header.message_type = static_cast<uint8_t>(MessageType::RESPONSE);
+                            resp_header.header_flags = 0;
+                            resp_header.call_id = header.call_id;
+                            resp_header.interface_id = static_cast<uint32_t>(
+                                HandshakeInterfaceId::HANDSHAKE_IFACE_WELCOME);
+                            resp_header.method_id = 0;
+                            resp_header.flags = 0;
+                            resp_header.error_code = 0;
+                            resp_header.body_size = static_cast<uint32_t>(resp_body.size());
+                            resp_header.session_id = 1;
+                            resp_header.generation = 0;
+                            resp_header.local_id = 0;
+
+                            listen_transport_->Send(
+                                resp_header,
+                                resp_body.data(),
+                                resp_body.size());
+                        }
+                    }
+                    else if (
+                        header.interface_id ==
+                        static_cast<uint32_t>(
+                            HandshakeInterfaceId::HANDSHAKE_IFACE_READY))
+                    {
+                        if (body.size() >= sizeof(ReadyRequestV1))
+                        {
+                            ReadyRequestV1 ready_req{};
+                            std::memcpy(
+                                &ready_req,
+                                body.data(),
+                                sizeof(ReadyRequestV1));
+
+                            ReadyAckV1 ready_ack{};
+                            DasResult  handle_result =
+                                HandleHostReady(ready_req, ready_ack);
+
+                            if (DAS::IsFailed(handle_result))
+                            {
+                                std::string err_msg = DAS_FMT_NS::format(
+                                    "HandleHostReady failed: {}",
+                                    static_cast<int32_t>(handle_result));
+                                DAS_LOG_ERROR(err_msg.c_str());
+                            }
+
+                            // 发送 READYACK 响应
+                            std::vector<uint8_t> resp_body(sizeof(ReadyAckV1));
+                            std::memcpy(
+                                resp_body.data(),
+                                &ready_ack,
+                                sizeof(ReadyAckV1));
+
+                            IPCMessageHeader resp_header{};
+                            resp_header.magic = IPCMessageHeader::MAGIC;
+                            resp_header.version = IPCMessageHeader::CURRENT_VERSION;
+                            resp_header.message_type = static_cast<uint8_t>(MessageType::RESPONSE);
+                            resp_header.header_flags = 0;
+                            resp_header.call_id = header.call_id;
+                            resp_header.interface_id = static_cast<uint32_t>(
+                                HandshakeInterfaceId::HANDSHAKE_IFACE_READY_ACK);
+                            resp_header.method_id = 0;
+                            resp_header.flags = 0;
+                            resp_header.error_code = 0;
+                            resp_header.body_size = static_cast<uint32_t>(resp_body.size());
+                            resp_header.session_id = 1;
+                            resp_header.generation = 0;
+                            resp_header.local_id = 0;
+
+                            listen_transport_->Send(
+                                resp_header,
+                                resp_body.data(),
+                                resp_body.size());
+                        }
+                    }
+                }
+
+                DAS_LOG_INFO("ListenLoop ended");
+            }
+
+            DasResult MainProcessServer::HandleHostHello(
+                const HelloRequestV1&  req,
+                WelcomeResponseV1&     resp)
+            {
+                // 检查协议版本
+                if (req.protocol_version != HelloRequestV1::CURRENT_PROTOCOL_VERSION)
+                {
+                    InitWelcomeResponse(
+                        resp,
+                        0,
+                        WelcomeResponseV1::STATUS_VERSION_MISMATCH);
+                    std::string msg = DAS_FMT_NS::format(
+                        "HandleHostHello: version mismatch, expected={}, got={}",
+                        HelloRequestV1::CURRENT_PROTOCOL_VERSION,
+                        req.protocol_version);
+                    DAS_LOG_ERROR(msg.c_str());
+                    return DAS_E_IPC_VERSION_MISMATCH;
+                }
+
+                // 分配 session_id
+                uint16_t session_id =
+                    SessionCoordinator::GetInstance().AllocateSessionId();
+                if (session_id == 0)
+                {
+                    InitWelcomeResponse(
+                        resp,
+                        0,
+                        WelcomeResponseV1::STATUS_TOO_MANY_CLIENTS);
+                    DAS_LOG_ERROR("HandleHostHello: failed to allocate session_id");
+                    return DAS_E_IPC_TOO_MANY_CLIENTS;
+                }
+
+                // 记录 host_pid 到 session_id 的映射
+                {
+                    std::lock_guard<std::mutex> lock(host_pid_mutex_);
+                    host_pid_to_session_[req.pid] = session_id;
+                }
+
+                // 初始化响应
+                InitWelcomeResponse(resp, session_id, WelcomeResponseV1::STATUS_SUCCESS);
+
+                {
+                    std::string msg = DAS_FMT_NS::format(
+                        "HandleHostHello: allocated session_id={} for host_pid={}, plugin={}",
+                        session_id,
+                        req.pid,
+                        req.plugin_name);
+                    DAS_LOG_INFO(msg.c_str());
+                }
+
+                return DAS_S_OK;
+            }
+
+            DasResult MainProcessServer::HandleHostReady(
+                const ReadyRequestV1& req,
+                ReadyAckV1&           ack)
+            {
+                // 验证 session_id
+                if (!ValidateSessionId(req.session_id))
+                {
+                    InitReadyAck(ack, ReadyAckV1::STATUS_INVALID_SESSION);
+                    std::string msg = DAS_FMT_NS::format(
+                        "HandleHostReady: invalid session_id={}",
+                        req.session_id);
+                    DAS_LOG_ERROR(msg.c_str());
+                    return DAS_E_INVALID_ARGUMENT;
+                }
+
+                // 检查 session_id 是否已分配
+                if (!SessionCoordinator::GetInstance().IsSessionIdAllocated(
+                        req.session_id))
+                {
+                    InitReadyAck(ack, ReadyAckV1::STATUS_SESSION_NOT_READY);
+                    std::string msg = DAS_FMT_NS::format(
+                        "HandleHostReady: session_id={} not allocated",
+                        req.session_id);
+                    DAS_LOG_ERROR(msg.c_str());
+                    return DAS_E_IPC_INVALID_STATE;
+                }
+
+                // 注册 Host 连接
+                DasResult result = OnHostConnected(req.session_id);
+                if (DAS::IsFailed(result))
+                {
+                    InitReadyAck(ack, ReadyAckV1::STATUS_SESSION_NOT_READY);
+                    std::string msg = DAS_FMT_NS::format(
+                        "HandleHostReady: OnHostConnected failed for session_id={}, error={}",
+                        req.session_id,
+                        static_cast<int32_t>(result));
+                    DAS_LOG_ERROR(msg.c_str());
+                    return result;
+                }
+
+                // 初始化响应
+                InitReadyAck(ack, ReadyAckV1::STATUS_SUCCESS);
+
+                {
+                    std::string msg = DAS_FMT_NS::format(
+                        "HandleHostReady: host ready, session_id={}",
+                        req.session_id);
+                    DAS_LOG_INFO(msg.c_str());
+                }
+
                 return DAS_S_OK;
             }
 

@@ -23,6 +23,11 @@ namespace Core
             struct IpcContextConfig
             {
                 const char* main_process_queue_name;
+
+                // 主进程 PID
+                // - 0: 独立模式，Host 自行生成 session_id
+                // - 非0: 连接模式，通过 IPC 向主进程请求 session_id
+                uint32_t main_pid = 0;
             };
 
             struct IIpcContext;

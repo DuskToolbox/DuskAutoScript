@@ -13,6 +13,19 @@
 #include <das/Utils/fmt.h>
 #include <thread>
 
+// 获取当前进程 PID 的跨平台方法
+#ifdef _WIN32
+// 必须在 windows.h 之前定义，避免 WinSock 冲突
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#define GET_CURRENT_PID() GetCurrentProcessId()
+#else
+#include <unistd.h>
+#define GET_CURRENT_PID() getpid()
+#endif
+
 // Disable warnings from boost::process headers
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -73,8 +86,13 @@ DasResult HostLauncher::Start(
         return DAS_E_INVALID_ARGUMENT;
     }
 
+    // 获取当前进程 PID（主进程 PID）
+    uint32_t main_pid = static_cast<uint32_t>(GET_CURRENT_PID());
+
     // 构建命令行参数
     std::vector<std::string> args;
+    args.push_back("--main-pid");
+    args.push_back(std::to_string(main_pid));
     if (!plugin_path.empty())
     {
         args.push_back("--plugin");
@@ -193,6 +211,7 @@ DasResult HostLauncher::LaunchProcess(
 DasResult HostLauncher::WaitForHostReady(uint32_t timeout_ms)
 {
     auto     start = std::chrono::steady_clock::now();
+    uint32_t main_pid = static_cast<uint32_t>(GET_CURRENT_PID());
     uint32_t host_pid = impl_->pid;
 
     while (true)
@@ -204,7 +223,7 @@ DasResult HostLauncher::WaitForHostReady(uint32_t timeout_ms)
         }
 
         std::string host_to_plugin_queue =
-            Host::MakeMessageQueueName(host_pid, true);
+            Host::MakeMessageQueueName(main_pid, host_pid, false);
 
         try
         {
@@ -235,12 +254,13 @@ DasResult HostLauncher::WaitForHostReady(uint32_t timeout_ms)
 
 DasResult HostLauncher::ConnectToHost()
 {
+    uint32_t main_pid = static_cast<uint32_t>(GET_CURRENT_PID());
     uint32_t host_pid = impl_->pid;
 
     std::string host_to_plugin_queue =
-        Host::MakeMessageQueueName(host_pid, true);
+        Host::MakeMessageQueueName(main_pid, host_pid, false);
     std::string plugin_to_host_queue =
-        Host::MakeMessageQueueName(host_pid, false);
+        Host::MakeMessageQueueName(main_pid, host_pid, true);
 
     std::string msg = DAS_FMT_NS::format(
         "Connecting to Host IPC: {}, {}",
@@ -317,7 +337,7 @@ DasResult HostLauncher::SendHandshakeHello(const std::string& client_name)
         return DAS_E_IPC_NOT_INITIALIZED;
     }
 
-    uint32_t my_pid = static_cast<uint32_t>(boost::process::v2::current_pid());
+    uint32_t my_pid = static_cast<uint32_t>(GET_CURRENT_PID());
 
     HelloRequestV1 hello;
     InitHelloRequest(hello, my_pid, client_name.c_str());

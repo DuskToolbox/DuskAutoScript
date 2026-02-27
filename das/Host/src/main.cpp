@@ -257,7 +257,10 @@ int main(int argc, char* argv[])
             "DAS Host Process - IPC Resource Owner");
         desc.add_options()("verbose,v", "Enable verbose logging")(
             "help,h",
-            "Show this help message");
+            "Show this help message")(
+            "main-pid",
+            boost::program_options::value<uint32_t>(),
+            "Main process PID (enables connect mode)");
 
         boost::program_options::variables_map vm;
         boost::program_options::store(
@@ -309,7 +312,18 @@ int main(int argc, char* argv[])
         using namespace Das::Core::IPC::Host;
 
         IpcContextConfig config{};
-        IpcContextPtr    ctx{CreateIpcContext(config)};
+
+        // 如果提供了 --main-pid 参数，设置连接模式
+        if (vm.count("main-pid"))
+        {
+            config.main_pid = vm["main-pid"].as<uint32_t>();
+            std::string _log_msg = DAS_FMT_NS::format(
+                "Host process running in CONNECT mode, main PID: {}",
+                config.main_pid);
+            DAS_LOG_INFO(_log_msg.c_str());
+        }
+
+        IpcContextPtr ctx{CreateIpcContext(config)};
         if (!ctx)
         {
             DAS_LOG_ERROR("Failed to create IPC context");
