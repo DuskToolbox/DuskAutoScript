@@ -112,10 +112,10 @@ DasResult HandshakeClient::SendReadyAndWaitAck(
     header.flags = 0;
     header.error_code = 0;
     header.body_size = sizeof(ready);
-    header.session_id = session_id;
+    // 控制平面消息: ObjectId = {0, 0, 0}
+    header.session_id = 0;
     header.generation = 0;
     header.local_id = 0;
-
     // 使用 SendMessage 发送并等待响应
     std::vector<uint8_t> response_body;
     DasResult            result = run_loop_.SendMessage(

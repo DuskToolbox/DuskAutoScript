@@ -766,10 +766,10 @@ namespace Core
                             resp_header.flags = 0;
                             resp_header.error_code = 0;
                             resp_header.body_size = static_cast<uint32_t>(resp_body.size());
-                            resp_header.session_id = 1;
+                            // 控制平面消息: ObjectId = {0, 0, 0}
+                            resp_header.session_id = 0;
                             resp_header.generation = 0;
                             resp_header.local_id = 0;
-
                             listen_transport_->Send(
                                 resp_header,
                                 resp_body.data(),
@@ -820,10 +820,10 @@ namespace Core
                             resp_header.flags = 0;
                             resp_header.error_code = 0;
                             resp_header.body_size = static_cast<uint32_t>(resp_body.size());
-                            resp_header.session_id = 1;
+                            // 控制平面消息: ObjectId = {0, 0, 0}
+                            resp_header.session_id = 0;
                             resp_header.generation = 0;
                             resp_header.local_id = 0;
-
                             listen_transport_->Send(
                                 resp_header,
                                 resp_body.data(),

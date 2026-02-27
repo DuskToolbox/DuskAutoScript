@@ -430,7 +430,8 @@ namespace Core
                     ready_header.method_id = 0;
                     ready_header.flags = 0;
                     ready_header.error_code = 0;
-                    ready_header.session_id = session_id_;
+                    // 控制平面消息: ObjectId = {0, 0, 0}
+                    ready_header.session_id = 0;
                     ready_header.generation = 0;
                     ready_header.local_id = 0;
                     ready_header.body_size = sizeof(ReadyRequestV1);

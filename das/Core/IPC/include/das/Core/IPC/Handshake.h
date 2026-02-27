@@ -14,7 +14,7 @@
 
 DAS_CORE_IPC_NS_BEGIN
 /// 控制平面 interface_id
-/// 控制平面特征: object_id = 0, type_id = 0
+/// 控制平面特征: ObjectId = {0, 0, 0} (session_id=0, generation=0, local_id=0)
 enum class HandshakeInterfaceId : uint32_t
 {
     HANDSHAKE_IFACE_HELLO = 1,     // 客户端发起握手
@@ -44,8 +44,8 @@ enum class GoodbyeReason : uint32_t
  * @brief HelloRequestV1: Child → Host（请求连接）
  *
  * 控制平面消息：
- * - object_id = 0
- * - type_id = 0
+ * - ObjectId = {0, 0, 0}
+ * - interface_id = HANDSHAKE_IFACE_HELLO
  * - interface_id = HANDSHAKE_IFACE_HELLO
  */
 struct alignas(8) HelloRequestV1
@@ -62,8 +62,8 @@ struct alignas(8) HelloRequestV1
  * @brief WelcomeResponseV1: Host → Child（分配 session_id）
  *
  * 控制平面消息：
- * - object_id = 0
- * - type_id = 0
+ * - ObjectId = {0, 0, 0}
+ * - interface_id = HANDSHAKE_IFACE_WELCOME
  * - interface_id = HANDSHAKE_IFACE_HELLO
  */
 struct alignas(8) WelcomeResponseV1
@@ -82,8 +82,8 @@ struct alignas(8) WelcomeResponseV1
  * @brief ReadyRequestV1: Child → Host（确认就绪）
  *
  * 控制平面消息：
- * - object_id = 0
- * - type_id = 0
+ * - ObjectId = {0, 0, 0}
+ * - interface_id = HANDSHAKE_IFACE_READY
  * - interface_id = HANDSHAKE_IFACE_READY
  */
 struct alignas(8) ReadyRequestV1
@@ -96,8 +96,8 @@ struct alignas(8) ReadyRequestV1
  * @brief ReadyAckV1: Host → Child（确认）
  *
  * 控制平面消息：
- * - object_id = 0
- * - type_id = 0
+ * - ObjectId = {0, 0, 0}
+ * - interface_id = HANDSHAKE_IFACE_READY_ACK
  * - interface_id = HANDSHAKE_IFACE_READY
  */
 struct alignas(8) ReadyAckV1
@@ -113,8 +113,8 @@ struct alignas(8) ReadyAckV1
  * @brief HeartbeatV1: 双向（心跳）
  *
  * 控制平面消息：
- * - object_id = 0
- * - type_id = 0
+ * - ObjectId = {0, 0, 0}
+ * - interface_id = HANDSHAKE_IFACE_HEARTBEAT
  * - interface_id = HANDSHAKE_IFACE_HEARTBEAT
  */
 struct alignas(8) HeartbeatV1
@@ -126,8 +126,8 @@ struct alignas(8) HeartbeatV1
  * @brief GoodbyeV1: 双向（断开连接）
  *
  * 控制平面消息：
- * - object_id = 0
- * - type_id = 0
+ * - ObjectId = {0, 0, 0}
+ * - interface_id = HANDSHAKE_IFACE_GOODBYE
  * - interface_id = HANDSHAKE_IFACE_GOODBYE
  */
 struct alignas(8) GoodbyeV1

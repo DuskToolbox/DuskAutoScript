@@ -460,10 +460,10 @@ DasResult HostLauncher::SendHandshakeReady(uint16_t session_id)
     header.flags = 0;
     header.error_code = 0;
     header.body_size = sizeof(ready);
-    header.session_id = session_id;
+    // 控制平面消息: ObjectId = {0, 0, 0}
+    header.session_id = 0;
     header.generation = 0;
     header.local_id = 0;
-
     DasResult result = impl_->transport->Send(
         header,
         reinterpret_cast<const uint8_t*>(&ready),
