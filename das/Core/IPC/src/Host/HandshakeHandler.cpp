@@ -240,6 +240,12 @@ namespace Core
                 on_client_disconnected_ = std::move(callback);
             }
 
+            void HandshakeHandler::SetOnShutdownRequested(
+                ShutdownRequestedCallback callback)
+            {
+                on_shutdown_requested_ = std::move(callback);
+            }
+
             void HandshakeHandler::SetRunLoop(IpcRunLoop* run_loop)
             {
                 run_loop_ = run_loop;
@@ -502,6 +508,13 @@ namespace Core
                 }
 
                 (void)goodbye;
+
+                // 触发关闭请求回调，通知 Host 进程退出
+                if (on_shutdown_requested_)
+                {
+                    on_shutdown_requested_();
+                }
+
                 return DAS_S_OK;
             }
 

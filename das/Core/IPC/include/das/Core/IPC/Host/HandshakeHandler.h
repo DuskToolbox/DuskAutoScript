@@ -95,6 +95,8 @@ namespace Core
                     std::function<void(const ConnectedClient&)>;
                 using ClientDisconnectedCallback =
                     std::function<void(uint16_t session_id)>;
+                using ShutdownRequestedCallback =
+                    std::function<void()>;
 
                 /**
                  * @brief 构造函数
@@ -178,6 +180,15 @@ namespace Core
                  */
                 void SetOnClientDisconnected(
                     ClientDisconnectedCallback callback);
+
+                /**
+                 * @brief 设置关闭请求回调
+                 *
+                 * 当收到 GOODBYE 消息时触发，用于通知 Host 进程退出。
+                 *
+                 * @param callback 回调函数
+                 */
+                void SetOnShutdownRequested(ShutdownRequestedCallback callback);
 
                 /**
                  * @brief 检查是否存在指定客户端
@@ -299,6 +310,9 @@ namespace Core
                     on_client_connected_; ///< 客户端连接回调
                 ClientDisconnectedCallback
                     on_client_disconnected_; ///< 客户端断开回调
+
+                ShutdownRequestedCallback
+                    on_shutdown_requested_; ///< 关闭请求回调（收到 GOODBYE 时触发）
 
                 IpcRunLoop* run_loop_ =
                     nullptr; ///< RunLoop 指针（用于 WAKEUP 消息）

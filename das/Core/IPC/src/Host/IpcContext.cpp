@@ -405,6 +405,22 @@ namespace Core
                         [this](uint16_t /*session_id*/)
                         { is_connected_ = false; });
 
+                    // 收到 GOODBYE 时请求进程退出
+                    // 使用独立线程触发退出，避免在 io_thread_ 中调用 Stop() 导致死锁
+                    handshake_handler_->SetOnShutdownRequested(
+                        [this]()
+                        {
+                            std::string msg = DAS_FMT_NS::format(
+                                "IpcContext: 收到 GOODBYE，请求退出");
+                            DAS_LOG_INFO(msg.c_str());
+                            
+                            // 在独立线程中触发退出，避免 io_thread_ join 自己
+                            std::thread([this]()
+                            {
+                                RequestStop();
+                            }).detach();
+                        });
+
                     // 9. 注册消息处理器
                     run_loop_->RegisterHandler(
                         std::make_unique<MessageHandlerRef>(
