@@ -279,6 +279,7 @@ function(das_add_idl_export)
         COMMAND "${DAS_IDL_VENV_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/das_idl/check_idl_updates.py"
             --config "${_BATCH_CONFIG_FILE}"
             --output "${_UPDATE_LIST_FILE}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${_DAS_IDL_STAMP_DIR}"
         COMMAND "${CMAKE_COMMAND}" -E touch "${_UPDATE_LIST_STAMP}"
         DEPENDS ${_FULL_IDL_PATHS} "${_BATCH_CONFIG_FILE}"
             ${_DAS_IDL_MODULE_TOOLS}
@@ -299,6 +300,7 @@ function(das_add_idl_export)
         COMMAND "${DAS_IDL_VENV_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/das_idl/das_idl_batch_gen.py"
             --config "${_BATCH_CONFIG_FILE}"
             --update-list "${_UPDATE_LIST_FILE}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${_DAS_IDL_STAMP_DIR}"
         COMMAND "${CMAKE_COMMAND}" -E touch "${_GENERATED_STAMP}"
         DEPENDS ${_UPDATE_LIST_FILE}
             ${_DAS_IDL_MODULE_TOOLS}
@@ -322,6 +324,7 @@ function(das_add_idl_export)
             COMMAND "${DAS_IDL_VENV_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/das_idl/extract_idl_deps.py"
                 --idl-dir "${DAS_IDL_EXPORT_IDL_DIR}"
                 --output "${_SWIG_DEPS_FILE}"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${_DAS_IDL_STAMP_DIR}"
             COMMAND "${CMAKE_COMMAND}" -E touch "${_SWIG_DEPS_STAMP}"
             DEPENDS ${_FULL_IDL_PATHS}
                 "${CMAKE_SOURCE_DIR}/tools/das_idl/extract_idl_deps.py"
@@ -343,6 +346,7 @@ function(das_add_idl_export)
             COMMAND "${DAS_IDL_VENV_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/das_idl/topological_sort.py"
                 --deps-file "${_SWIG_DEPS_FILE}"
                 --output "${_SORTED_INTERFACES_FILE}"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${_DAS_IDL_STAMP_DIR}"
             COMMAND "${CMAKE_COMMAND}" -E touch "${_SORTED_STAMP}"
             DEPENDS ${_SWIG_DEPS_FILE}
                 "${CMAKE_SOURCE_DIR}/tools/das_idl/topological_sort.py"
@@ -369,6 +373,7 @@ function(das_add_idl_export)
                 -DABI_OUTPUT_DIR=${_ABI_OUTPUT_DIR}
                 -DSORTED_INTERFACES_FILE=${_SORTED_INTERFACES_FILE}
                 -P ${CMAKE_SOURCE_DIR}/cmake/generate_swig_all_i.cmake
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${_DAS_IDL_STAMP_DIR}"
             COMMAND ${CMAKE_COMMAND} -E touch "${_SWIG_ALL_STAMP}"
             DEPENDS
                 ${_SORTED_INTERFACES_FILE}
