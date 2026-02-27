@@ -406,7 +406,8 @@ namespace Core
                         { is_connected_ = false; });
 
                     // 收到 GOODBYE 时请求进程退出
-                    // 使用独立线程触发退出，避免在 io_thread_ 中调用 Stop() 导致死锁
+                    // 直接设置 running_ 标志为 false，io_thread_ 会在下次循环检查时退出
+                    // 不能在 io_thread_ 上调用 Stop()（会 join 自己导致死锁）
                     handshake_handler_->SetOnShutdownRequested(
                         [this]()
                         {
@@ -414,11 +415,11 @@ namespace Core
                                 "IpcContext: 收到 GOODBYE，请求退出");
                             DAS_LOG_INFO(msg.c_str());
                             
-                            // 在独立线程中触发退出，避免 io_thread_ join 自己
-                            std::thread([this]()
+                            // 仅设置标志，不 join 线程
+                            if (run_loop_)
                             {
-                                RequestStop();
-                            }).detach();
+                                run_loop_->RequestStop();
+                            }
                         });
 
                     // 9. 注册消息处理器
@@ -692,7 +693,7 @@ namespace Core
                 {
                     if (run_loop_)
                     {
-                        run_loop_->Stop();
+                        run_loop_->RequestStop();
                     }
                 }
 

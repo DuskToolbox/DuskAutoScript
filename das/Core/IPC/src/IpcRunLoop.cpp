@@ -68,6 +68,20 @@ DasResult IpcRunLoop::Stop()
     return DAS_S_OK;
 }
 
+void IpcRunLoop::RequestStop()
+{
+    running_.store(false);
+
+    // 通知所有 pending calls 完成，避免阻塞
+    {
+        std::unique_lock<std::mutex> lock(pending_mutex_);
+        for (auto& [call_id, ctx] : pending_calls_)
+        {
+            ctx.completed = true;
+        }
+    }
+}
+
 void IpcRunLoop::RegisterHandler(std::unique_ptr<IMessageHandler> handler)
 {
     if (handler)

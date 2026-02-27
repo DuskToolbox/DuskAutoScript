@@ -64,6 +64,15 @@ public:
 
     DasResult Stop();
 
+    /**
+     * @brief 仅设置 running_ 标志为 false，不 join 线程
+     *
+     * 用于在 io_thread_ 内部（如 GOODBYE 回调中）安全请求退出，
+     * 避免在 io_thread_ 上调用 join 导致死锁。
+     * 线程的 join 由 Run() 或 Stop() 完成。
+     */
+    void RequestStop();
+
     void SetTransport(std::unique_ptr<IpcTransport> transport);
 
     IpcTransport* GetTransport() const;
