@@ -11,6 +11,7 @@
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcTransport.h>
 #include <das/Utils/fmt.h>
+#include <das/Core/IPC/SessionCoordinator.h>
 #include <thread>
 
 // 获取当前进程 PID 的跨平台方法
@@ -397,8 +398,18 @@ DasResult HostLauncher::SendHandshakeHello(const std::string& client_name)
 
     uint32_t my_pid = static_cast<uint32_t>(GET_CURRENT_PID());
 
+    // 为主进程分配 session_id 给 Host
+    uint16_t assigned_session_id =
+        SessionCoordinator::GetInstance().AllocateSessionId();
+    if (assigned_session_id == 0)
+    {
+        DAS_LOG_ERROR("Failed to allocate session_id for Host");
+        return DAS_E_IPC_SESSION_ALLOC_FAILED;
+    }
+
     HelloRequestV1 hello;
     InitHelloRequest(hello, my_pid, client_name.c_str());
+    hello.assigned_session_id = assigned_session_id;  // 设置分配的 session_id
 
     IPCMessageHeader header{};
     header.magic = IPCMessageHeader::MAGIC;

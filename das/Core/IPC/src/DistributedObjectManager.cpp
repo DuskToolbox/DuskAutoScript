@@ -2,38 +2,15 @@
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <memory>
-#include <mutex>
-#include <shared_mutex>
 #include <unordered_map>
 
 DAS_CORE_IPC_NS_BEGIN
 
 DistributedObjectManager::DistributedObjectManager() = default;
 
-DistributedObjectManager::~DistributedObjectManager() { Shutdown(); }
+DistributedObjectManager::~DistributedObjectManager() { objects_.clear(); }
 
-DasResult DistributedObjectManager::Initialize(uint16_t local_session_id)
-{
-    local_session_id_ = local_session_id;
-    return DAS_S_OK;
-}
 
-DasResult DistributedObjectManager::Shutdown()
-{
-    std::unique_lock<std::shared_mutex> lock(objects_mutex_);
-    objects_.clear();
-    return DAS_S_OK;
-}
-
-DasResult DistributedObjectManager::ValidateObjectId(const ObjectId& object_id)
-{
-    if (IsNullObjectId(object_id))
-    {
-        return DAS_E_IPC_INVALID_OBJECT_ID;
-    }
-
-    return DAS_S_OK;
-}
 
 DasResult DistributedObjectManager::RegisterLocalObject(
     void*     object_ptr,
@@ -47,21 +24,18 @@ DasResult DistributedObjectManager::RegisterLocalObject(
     uint32_t local_id = next_local_id_++;
 
     uint16_t generation = 1;
+    auto it = local_id_generations_.find(local_id);
+    if (it != local_id_generations_.end())
     {
-        std::unique_lock<std::shared_mutex> lock(objects_mutex_);
-        auto it = local_id_generations_.find(local_id);
-        if (it != local_id_generations_.end())
-        {
-            generation = it->second;
-        }
-        else
-        {
-            local_id_generations_[local_id] = generation;
-        }
+        generation = it->second;
+    }
+    else
+    {
+        local_id_generations_[local_id] = generation;
     }
 
     ObjectId obj_id{
-        .session_id = local_session_id_,
+        .session_id = *SessionCoordinator::GetInstance().GetLocalSessionId(),  // 直接解引用，未初始化会崩溃
         .generation = generation,
         .local_id = local_id};
 
@@ -71,10 +45,7 @@ DasResult DistributedObjectManager::RegisterLocalObject(
         .object_ptr = object_ptr,
         .is_local = true};
 
-    {
-        std::unique_lock<std::shared_mutex> lock(objects_mutex_);
-        objects_[obj_id] = handle;
-    }
+    objects_[obj_id] = handle;
 
     out_object_id = obj_id;
     return DAS_S_OK;
@@ -95,10 +66,7 @@ DasResult DistributedObjectManager::RegisterRemoteObject(
         .object_ptr = nullptr,
         .is_local = false};
 
-    {
-        std::unique_lock<std::shared_mutex> lock(objects_mutex_);
-        objects_[object_id] = handle;
-    }
+    objects_[object_id] = handle;
 
     return DAS_S_OK;
 }
@@ -111,8 +79,7 @@ DasResult DistributedObjectManager::UnregisterObject(const ObjectId& object_id)
         return result;
     }
 
-    std::unique_lock<std::shared_mutex> lock(objects_mutex_);
-    auto                                it = objects_.find(object_id);
+    auto it = objects_.find(object_id);
     if (it == objects_.end())
     {
         return DAS_E_IPC_OBJECT_NOT_FOUND;
@@ -136,11 +103,10 @@ DasResult DistributedObjectManager::AddRef(const ObjectId& object_id)
         return result;
     }
 
-    std::unique_lock<std::shared_mutex> lock(objects_mutex_);
-    auto                                it = objects_.find(object_id);
+    auto it = objects_.find(object_id);
     if (it == objects_.end())
     {
-        if (object_id.session_id == local_session_id_)
+        if (object_id.session_id == *SessionCoordinator::GetInstance().GetLocalSessionId())
         {
             auto gen_it = local_id_generations_.find(object_id.local_id);
             if (gen_it != local_id_generations_.end()
@@ -164,11 +130,10 @@ DasResult DistributedObjectManager::Release(const ObjectId& object_id)
         return result;
     }
 
-    std::unique_lock<std::shared_mutex> lock(objects_mutex_);
-    auto                                it = objects_.find(object_id);
+    auto it = objects_.find(object_id);
     if (it == objects_.end())
     {
-        if (object_id.session_id == local_session_id_)
+        if (object_id.session_id == *SessionCoordinator::GetInstance().GetLocalSessionId())
         {
             auto gen_it = local_id_generations_.find(object_id.local_id);
             if (gen_it != local_id_generations_.end()
@@ -209,11 +174,10 @@ DasResult DistributedObjectManager::LookupObject(
         return result;
     }
 
-    std::shared_lock<std::shared_mutex> lock(objects_mutex_);
-    auto                                it = objects_.find(object_id);
+    auto it = objects_.find(object_id);
     if (it == objects_.end())
     {
-        if (object_id.session_id == local_session_id_)
+        if (object_id.session_id == *SessionCoordinator::GetInstance().GetLocalSessionId())
         {
             auto gen_it = local_id_generations_.find(object_id.local_id);
             if (gen_it != local_id_generations_.end()
@@ -242,13 +206,12 @@ bool DistributedObjectManager::IsValidObject(const ObjectId& object_id) const
         return false;
     }
 
-    std::shared_lock<std::shared_mutex> lock(objects_mutex_);
     if (objects_.find(object_id) != objects_.end())
     {
         return true;
     }
 
-    if (object_id.session_id == local_session_id_)
+    if (object_id.session_id == *SessionCoordinator::GetInstance().GetLocalSessionId())
     {
         auto gen_it = local_id_generations_.find(object_id.local_id);
         if (gen_it != local_id_generations_.end()
@@ -269,13 +232,12 @@ bool DistributedObjectManager::IsLocalObject(const ObjectId& object_id) const
         return false;
     }
 
-    if (object_id.session_id != local_session_id_)
+    if (object_id.session_id != *SessionCoordinator::GetInstance().GetLocalSessionId())
     {
         return false;
     }
 
-    std::shared_lock<std::shared_mutex> lock(objects_mutex_);
-    auto                                it = objects_.find(object_id);
+    auto it = objects_.find(object_id);
     if (it == objects_.end())
     {
         auto gen_it = local_id_generations_.find(object_id.local_id);
@@ -289,4 +251,14 @@ bool DistributedObjectManager::IsLocalObject(const ObjectId& object_id) const
 
     return it->second.is_local;
 }
+
+DasResult DistributedObjectManager::ValidateObjectId(const ObjectId& object_id)
+{
+    if (IsNullObjectId(object_id))
+    {
+        return DAS_E_IPC_INVALID_OBJECT_ID;
+    }
+    return DAS_S_OK;
+}
+
 DAS_CORE_IPC_NS_END

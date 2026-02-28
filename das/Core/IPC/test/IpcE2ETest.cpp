@@ -17,6 +17,7 @@
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/IpcTransport.h>
 #include <das/Core/IPC/Serializer.h>
+#include <das/Core/IPC/SessionCoordinator.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <gtest/gtest.h>
 #include <thread>
@@ -33,6 +34,7 @@ using DAS::Core::IPC::MessageType;
 using DAS::Core::IPC::ObjectId;
 using DAS::Core::IPC::SerializerReader;
 using DAS::Core::IPC::SerializerWriter;
+using DAS::Core::IPC::SessionCoordinator;
 using DAS::Core::IPC::SharedMemoryBlock;
 using DAS::Core::IPC::SharedMemoryManager;
 using DAS::Core::IPC::SharedMemoryPool;
@@ -159,24 +161,24 @@ class IpcE2ETest : public ::testing::Test
 protected:
     void SetUp() override
     {
+        // 主进程 session_id 初始化
+        SessionCoordinator::GetInstance().SetAsMainProcess();
+        
         host_object_manager_ = std::make_unique<DistributedObjectManager>();
         plugin_object_manager_ = std::make_unique<DistributedObjectManager>();
         connection_manager_ = std::make_unique<ConnectionManager>();
 
-        ASSERT_EQ(
-            host_object_manager_->Initialize(1),
-            DAS_S_OK); // Host process ID = 1
-        ASSERT_EQ(
-            plugin_object_manager_->Initialize(2),
-            DAS_S_OK); // Plugin process ID = 2
+        // DistributedObjectManager 不再需要 Initialize
+        // session_id 从 SessionCoordinator 获取
         ASSERT_EQ(connection_manager_->Initialize(1), DAS_S_OK);
     }
 
     void TearDown() override
     {
         connection_manager_->Shutdown();
-        host_object_manager_->Shutdown();
-        plugin_object_manager_->Shutdown();
+        // DistributedObjectManager 不再需要 Shutdown（析构函数自动清理）
+        host_object_manager_.reset();
+        plugin_object_manager_.reset();
     }
 
     std::unique_ptr<DistributedObjectManager> host_object_manager_;

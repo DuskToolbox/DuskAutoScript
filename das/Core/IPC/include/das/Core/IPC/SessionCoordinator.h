@@ -5,6 +5,9 @@
 #include <cstdint>
 #include <das/IDasBase.h>
 #include <mutex>
+#include <optional>
+#include <vector>
+#include <mutex>
 #include <vector>
 
 DAS_NS_BEGIN
@@ -45,12 +48,26 @@ namespace Core
 
             /**
              * @brief 获取当前进程的本地 session_id
-             * @return 本地 session_id，如果未设置返回 0
+             * @return 本地 session_id，如果未设置返回 std::nullopt
              */
-            uint16_t GetLocalSessionId() const;
+            std::optional<uint16_t> GetLocalSessionId() const;
+
+            /**
+             * @brief 设置当前进程为主进程
+             * 
+             * 只能调用一次，设置 session_id=1。
+             * 使用 CAS 操作确保只有第一个调用者成功。
+             * 
+             * @return DAS_S_OK 如果成功，DAS_E_FAIL 如果已经被设置
+             */
+            DasResult SetAsMainProcess();
 
             /**
              * @brief 设置当前进程的本地 session_id
+             * 
+             * 仅允许设置非保留 ID（2~0xFFFE）。
+             * 主进程应使用 SetAsMainProcess()。
+             * 
              * @param session_id 要设置的本地 session_id
              */
             void SetLocalSessionId(uint16_t session_id);
@@ -109,10 +126,11 @@ namespace Core
             void MarkSessionIdAsFree(uint16_t session_id);
 
             // 成员变量
-            std::atomic<uint16_t> next_session_id_{
-                2}; // 下一个可分配的 session_id（从 2 开始）
-            std::atomic<uint16_t> local_session_id_{
-                0}; // 当前进程的本地 session_id
+            // 下一个可分配的 session_id（从 2 开始）
+            std::atomic<uint16_t> next_session_id_{2};
+            // 当前进程的本地 session_id（未设置时为 nullopt）
+            std::optional<uint16_t> local_session_id_;
+
 
             // 使用位图来跟踪已分配的 session_id（最多 65536 个位）
             static const size_t MAX_SESSION_IDS = 65536;

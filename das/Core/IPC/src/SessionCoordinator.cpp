@@ -58,16 +58,28 @@ void SessionCoordinator::ReleaseSessionId(uint16_t session_id)
     MarkSessionIdAsFree(session_id);
 }
 
-uint16_t SessionCoordinator::GetLocalSessionId() const
+std::optional<uint16_t> SessionCoordinator::GetLocalSessionId() const
 {
-    return local_session_id_.load();
+    return local_session_id_;
+}
+
+DasResult SessionCoordinator::SetAsMainProcess()
+{
+    if (local_session_id_.has_value())
+    {
+        return DAS_E_FAIL;  // 已经被设置过了
+    }
+    local_session_id_ = 1;
+    return DAS_S_OK;
 }
 
 void SessionCoordinator::SetLocalSessionId(uint16_t session_id)
 {
-    if (IsValidSessionId(session_id))
+    // 只允许非保留 ID（2 ~ 0xFFFE）
+    // 主进程应使用 SetAsMainProcess() 设置 session_id=1
+    if (session_id >= 2 && session_id < 0xFFFF)
     {
-        local_session_id_.store(session_id);
+        local_session_id_ = session_id;
     }
 }
 

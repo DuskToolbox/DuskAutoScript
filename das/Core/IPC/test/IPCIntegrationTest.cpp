@@ -73,15 +73,8 @@ public:
         // 设置本地 session ID
         coordinator.SetLocalSessionId(session_id_);
 
-        // 初始化对象管理器
+        // 创建对象管理器（不再需要 Initialize）
         object_manager_ = std::make_unique<DistributedObjectManager>();
-        DasResult result = object_manager_->Initialize(session_id_);
-        if (result != DAS_S_OK)
-        {
-            coordinator.ReleaseSessionId(session_id_);
-            session_id_ = 0;
-            return result;
-        }
 
         is_running_ = true;
         return DAS_S_OK;
@@ -105,12 +98,8 @@ public:
         coordinator.ReleaseSessionId(session_id_);
         session_id_ = 0;
 
-        if (object_manager_)
-        {
-            object_manager_->Shutdown();
-            object_manager_.reset();
-        }
-
+        // 销毁对象管理器（析构函数自动清理）
+        object_manager_.reset();
         return DAS_S_OK;
     }
 
@@ -128,17 +117,16 @@ public:
         {
             return DAS_E_IPC_NOT_INITIALIZED;
         }
-
-        // 注册到远程对象注册表
-        auto& registry = RemoteObjectRegistry::GetInstance();
-        return registry
-            .RegisterObject(object_id, iid, session_id_, name, version);
+        // 模拟真实 IPC 流程：Host 进程通过 IPC 发送注册请求到主进程
+        // 主进程收到请求后调用 OnRemoteObjectRegistered
+        return MainProcessServer::GetInstance().OnRemoteObjectRegistered(
+            object_id, iid, session_id_, name, version);
     }
 
     DasResult UnregisterObject(const ObjectId& object_id)
     {
-        auto& registry = RemoteObjectRegistry::GetInstance();
-        return registry.UnregisterObject(object_id);
+        // 模拟真实 IPC 流程：Host 进程通过 IPC 发送注销请求到主进程
+        return MainProcessServer::GetInstance().OnRemoteObjectUnregistered(object_id);
     }
 
 private:
@@ -166,9 +154,13 @@ public:
             return result;
         }
 
-        // 设置主进程 session ID
-        auto& coordinator = SessionCoordinator::GetInstance();
-        coordinator.SetLocalSessionId(1); // 主进程 session ID = 1
+        // 启动服务（使 DispatchMessage 可用）
+        result = server.Start();
+        if (result != DAS_S_OK)
+        {
+            server.Shutdown();
+            return result;
+        }
 
         is_initialized_ = true;
         return DAS_S_OK;
@@ -182,6 +174,7 @@ public:
         }
 
         auto& server = MainProcessServer::GetInstance();
+        server.Stop();
         server.Shutdown();
         is_initialized_ = false;
         return DAS_S_OK;
@@ -331,23 +324,12 @@ TEST_F(IPCIntegrationTest, RemoteObjectRegisterAndLookup)
     uint16_t host_session_id = host_process_.GetSessionId();
     ASSERT_EQ(main_process_.OnHostConnected(host_session_id), DAS_S_OK);
 
-    // Host 注册远程对象
+    // Host 注册远程对象（内部会调用 OnRemoteObjectRegistered）
     ObjectId    obj_id = {host_session_id, 1, 100};
     DasGuid     iid = CreateTestGuid(0x12345678);
     std::string obj_name = "TestRemoteObject";
 
     ASSERT_EQ(host_process_.RegisterObject(obj_id, iid, obj_name, 1), DAS_S_OK);
-
-    // 主进程收到对象注册通知
-    ASSERT_EQ(
-        MainProcessServer::GetInstance().OnRemoteObjectRegistered(
-            obj_id,
-            iid,
-            host_session_id,
-            obj_name,
-            1),
-        DAS_S_OK);
-
     // 主进程查找远程对象
     RemoteObjectInfo found_info;
     ASSERT_EQ(main_process_.LookupRemoteObject(obj_name, found_info), DAS_S_OK);
@@ -381,14 +363,6 @@ TEST_F(IPCIntegrationTest, MultipleRemoteObjectsFromSameHost)
         ASSERT_EQ(
             host_process_.RegisterObject(obj_id, iid, obj_names[i], 1),
             DAS_S_OK);
-        ASSERT_EQ(
-            MainProcessServer::GetInstance().OnRemoteObjectRegistered(
-                obj_id,
-                iid,
-                host_session_id,
-                obj_names[i],
-                1),
-            DAS_S_OK);
     }
 
     // 查找所有对象
@@ -420,23 +394,12 @@ TEST_F(IPCIntegrationTest, RemoteObjectUnregistration)
     std::string obj_name = "TestObject";
 
     ASSERT_EQ(host_process_.RegisterObject(obj_id, iid, obj_name, 1), DAS_S_OK);
-    ASSERT_EQ(
-        MainProcessServer::GetInstance().OnRemoteObjectRegistered(
-            obj_id,
-            iid,
-            host_session_id,
-            obj_name,
-            1),
-        DAS_S_OK);
 
     // 验证对象存在
     RemoteObjectInfo info;
     ASSERT_EQ(main_process_.LookupRemoteObject(obj_name, info), DAS_S_OK);
 
-    // 注销对象
-    ASSERT_EQ(
-        MainProcessServer::GetInstance().OnRemoteObjectUnregistered(obj_id),
-        DAS_S_OK);
+    // 注销对象（内部会调用 OnRemoteObjectUnregistered）
     ASSERT_EQ(host_process_.UnregisterObject(obj_id), DAS_S_OK);
 
     // 验证对象不存在
@@ -517,7 +480,7 @@ TEST_F(IPCIntegrationTest, DISABLED_ProxyCreationAndBasicUsage)
     // 初始化 ProxyFactory
     auto&                    registry = RemoteObjectRegistry::GetInstance();
     DistributedObjectManager object_manager;
-    ASSERT_EQ(object_manager.Initialize(1), DAS_S_OK); // 主进程 session ID = 1
+    // session_id 从 SessionCoordinator 获取
 
     auto& factory = ProxyFactory::GetInstance();
     ASSERT_EQ(factory.Initialize(&object_manager, &registry), DAS_S_OK);
@@ -529,8 +492,6 @@ TEST_F(IPCIntegrationTest, DISABLED_ProxyCreationAndBasicUsage)
 
     // 验证 Proxy 状态
     // EXPECT_TRUE(factory.HasProxy(obj_id));
-
-    object_manager.Shutdown();
 }
 
 // ====== 错误处理测试 ======
@@ -620,14 +581,6 @@ TEST_F(IPCIntegrationTest, MessageDispatch)
     std::string obj_name = "DispatchTestObject";
 
     ASSERT_EQ(host_process_.RegisterObject(obj_id, iid, obj_name, 1), DAS_S_OK);
-    ASSERT_EQ(
-        MainProcessServer::GetInstance().OnRemoteObjectRegistered(
-            obj_id,
-            iid,
-            host_session_id,
-            obj_name,
-            1),
-        DAS_S_OK);
 
     // 创建测试消息
     IPCMessageHeader header{};
@@ -746,22 +699,12 @@ TEST_F(IPCIntegrationTest, ObjectEventCallbacks)
     std::string obj_name = "CallbackTestObject";
 
     ASSERT_EQ(host_process_.RegisterObject(obj_id, iid, obj_name, 1), DAS_S_OK);
-    ASSERT_EQ(
-        MainProcessServer::GetInstance().OnRemoteObjectRegistered(
-            obj_id,
-            iid,
-            host_session_id,
-            obj_name,
-            1),
-        DAS_S_OK);
 
     EXPECT_TRUE(registered_called);
     EXPECT_EQ(registered_object_name, obj_name);
 
-    // 注销对象
-    ASSERT_EQ(
-        MainProcessServer::GetInstance().OnRemoteObjectUnregistered(obj_id),
-        DAS_S_OK);
+    // 注销对象（内部会调用 OnRemoteObjectUnregistered）
+    ASSERT_EQ(host_process_.UnregisterObject(obj_id), DAS_S_OK);
 
     // 注意：unregistered_called 取决于实现是否在注销时调用回调
     // 如果实现中没有调用回调，这个检查可能需要调整

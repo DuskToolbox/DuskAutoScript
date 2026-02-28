@@ -299,9 +299,8 @@ namespace Core
                 FindClientBySessionId(uint16_t session_id);
 
                 // 成员变量
-                uint16_t local_session_id_; ///< 本 Host 进程的 session_id
-                bool     initialized_;      ///< 是否已初始化
-
+                std::optional<uint16_t> local_session_id_; ///< 本 Host 进程的 session_id（未设置时为 nullopt）
+                bool                    initialized_;      ///< 是否已初始化
                 mutable std::mutex clients_mutex_; ///< 客户端列表锁
                 std::unordered_map<uint16_t, ConnectedClient>
                     clients_; ///< 已连接客户端

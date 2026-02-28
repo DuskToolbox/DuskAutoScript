@@ -30,15 +30,8 @@ namespace Core
                     auto& coordinator = SessionCoordinator::GetInstance();
                     coordinator.SetLocalSessionId(1);
 
-                    // 2. 创建并初始化 DistributedObjectManager
-                    object_manager_ =
-                        std::make_unique<DistributedObjectManager>();
-                    result = object_manager_->Initialize(1);
-                    if (result != DAS_S_OK)
-                    {
-                        object_manager_.reset();
-                        return result;
-                    }
+                    // 2. 创建 DistributedObjectManager
+                    object_manager_ = std::make_unique<DistributedObjectManager>();
 
                     // 3. 初始化 ProxyFactory
                     auto& proxy_factory = ProxyFactory::GetInstance();
@@ -47,8 +40,8 @@ namespace Core
                         &RemoteObjectRegistry::GetInstance(),
                         nullptr); // run_loop 留空，由 MainProcessServer 设置
                     if (result != DAS_S_OK)
+
                     {
-                        object_manager_->Shutdown();
                         object_manager_.reset();
                         return result;
                     }
@@ -57,8 +50,8 @@ namespace Core
                     auto& server = MainProcessServer::GetInstance();
                     result = server.Initialize();
                     if (result != DAS_S_OK)
+
                     {
-                        object_manager_->Shutdown();
                         object_manager_.reset();
                         return result;
                     }
@@ -88,16 +81,8 @@ namespace Core
                     auto& proxy_factory = ProxyFactory::GetInstance();
                     proxy_factory.ClearAllProxies();
 
-                    // 关闭 DistributedObjectManager
-                    if (object_manager_)
-                    {
-                        DasResult object_result = object_manager_->Shutdown();
-                        if (object_result != DAS_S_OK)
-                        {
-                            result = object_result;
-                        }
-                        object_manager_.reset();
-                    }
+                    // 销毁 DistributedObjectManager
+                    object_manager_.reset();
 
                     is_initialized_ = false;
                     return result;

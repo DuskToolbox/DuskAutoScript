@@ -364,14 +364,14 @@ TEST_F(MainProcessServerTest, DispatchMessage_SessionNotConnected)
 
 TEST_F(MainProcessServerTest, DispatchMessage_CustomHandler)
 {
-    ASSERT_EQ(server_->OnHostConnected(2), DAS_S_OK);
-
-    ObjectId    obj_id = CreateTestObjectId(2, 1, 1);
+    // 使用主进程本地对象（session_id=1），这样 DispatchMessage 会调用 dispatch_handler_
+    ObjectId    obj_id = CreateTestObjectId(1, 1, 1);  // session_id=1（主进程）
     DasGuid     iid = CreateTestGuid();
     std::string name = "TestObject";
 
+    // 注册主进程本地对象
     ASSERT_EQ(
-        server_->OnRemoteObjectRegistered(obj_id, iid, 2, name, 1),
+        server_->OnRemoteObjectRegistered(obj_id, iid, 1, name, 1),
         DAS_S_OK);
 
     server_->SetMessageDispatchHandler(

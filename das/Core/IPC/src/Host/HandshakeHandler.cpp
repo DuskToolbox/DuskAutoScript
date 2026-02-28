@@ -16,7 +16,7 @@ namespace Core
         {
 
             HandshakeHandler::HandshakeHandler()
-                : local_session_id_(0), initialized_(false)
+                : local_session_id_(std::nullopt), initialized_(false)
             {
             }
 
@@ -35,7 +35,10 @@ namespace Core
                     return DAS_S_OK;
                 }
 
-                if (!SessionCoordinator::IsValidSessionId(local_session_id))
+                // local_session_id = 0 表示等待握手时由主进程分配
+                // 非 0 值需要是有效的 session_id
+                if (local_session_id != 0 &&
+                    !SessionCoordinator::IsValidSessionId(local_session_id))
                 {
                     std::string msg = DAS_FMT_NS::format(
                         "HandshakeHandler: Invalid local_session_id: {}",
@@ -44,7 +47,10 @@ namespace Core
                     return DAS_E_IPC_INVALID_ARGUMENT;
                 }
 
-                local_session_id_ = local_session_id;
+                // 0 表示未设置（等待握手分配），存储为 nullopt
+                local_session_id_ =
+                    (local_session_id == 0) ? std::nullopt
+                                            : std::optional<uint16_t>(local_session_id);
                 initialized_ = true;
 
                 std::string msg = DAS_FMT_NS::format(
@@ -339,28 +345,29 @@ namespace Core
                     return DAS_E_IPC_INVALID_MESSAGE;
                 }
 
-                auto&    coordinator = SessionCoordinator::GetInstance();
-                uint16_t session_id = coordinator.AllocateSessionId();
-
-                if (session_id == 0)
+                // 使用主进程分配的 session_id
+                uint16_t session_id = request.assigned_session_id;
+                if (session_id == 0 || session_id == 0xFFFF)
                 {
                     std::string msg = DAS_FMT_NS::format(
-                        "HandshakeHandler: Failed to allocate session_id");
+                        "HandshakeHandler: Invalid assigned_session_id: {}",
+                        session_id);
                     DAS_LOG_ERROR(msg.c_str());
 
                     WelcomeResponseV1 response;
                     InitWelcomeResponse(
                         response,
                         0,
-                        WelcomeResponseV1::STATUS_TOO_MANY_CLIENTS);
+                        WelcomeResponseV1::STATUS_INVALID_SESSION);
 
                     response_body.resize(sizeof(response));
-                    std::memcpy(
-                        response_body.data(),
-                        &response,
-                        sizeof(response));
-                    return DAS_E_IPC_SESSION_ALLOC_FAILED;
+                    std::memcpy(response_body.data(), &response, sizeof(response));
+                    return DAS_E_IPC_INVALID_MESSAGE;
                 }
+
+                // 设置 Host 进程的本地 session_id
+                SessionCoordinator::GetInstance().SetLocalSessionId(session_id);
+                local_session_id_ = session_id;  // 同步更新本地存储
 
                 ConnectedClient client;
                 client.session_id = session_id;

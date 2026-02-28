@@ -1,11 +1,13 @@
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/ObjectId.h>
+#include <das/Core/IPC/SessionCoordinator.h>
 #include <gtest/gtest.h>
 
 using DAS::Core::IPC::DecodeObjectId;
 using DAS::Core::IPC::DistributedObjectManager;
 using DAS::Core::IPC::EncodeObjectId;
 using DAS::Core::IPC::ObjectId;
+using DAS::Core::IPC::SessionCoordinator;
 
 // Test fixture for ObjectManager tests
 class IpcObjectManagerTest : public ::testing::Test
@@ -13,17 +15,13 @@ class IpcObjectManagerTest : public ::testing::Test
 protected:
     void SetUp() override
     {
+        SessionCoordinator::GetInstance().SetAsMainProcess();
         manager_ = std::make_unique<DistributedObjectManager>();
-        auto result = manager_->Initialize(1); // local_session_id = 1
-        ASSERT_EQ(result, DAS_S_OK);
     }
 
     void TearDown() override
     {
-        if (manager_)
-        {
-            manager_->Shutdown();
-        }
+        manager_.reset();
     }
 
     std::unique_ptr<DistributedObjectManager> manager_;
@@ -254,9 +252,9 @@ TEST_F(IpcObjectManagerTest, Shutdown_ClearsAllObjects)
     ASSERT_EQ(manager_->RegisterLocalObject(&obj1, oid1), DAS_S_OK);
     ASSERT_EQ(manager_->RegisterLocalObject(&obj2, oid2), DAS_S_OK);
 
-    // Shutdown and reinitialize
-    manager_->Shutdown();
-    ASSERT_EQ(manager_->Initialize(1), DAS_S_OK);
+    // Re-create manager to clear all objects
+    manager_.reset();
+    manager_ = std::make_unique<DistributedObjectManager>();
 
     // Old handles should be invalid
     EXPECT_FALSE(manager_->IsValidObject(oid1));

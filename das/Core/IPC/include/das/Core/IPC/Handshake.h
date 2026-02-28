@@ -41,18 +41,21 @@ enum class GoodbyeReason : uint32_t
 };
 
 /**
- * @brief HelloRequestV1: Child → Host（请求连接）
+ * @brief HelloRequestV1: 主进程 → Host（请求连接）
  *
  * 控制平面消息：
  * - ObjectId = {0, 0, 0}
  * - interface_id = HANDSHAKE_IFACE_HELLO
- * - interface_id = HANDSHAKE_IFACE_HELLO
+ *
+ * 主进程在发送 HELLO 时为 Host 分配 session_id。
  */
 struct alignas(8) HelloRequestV1
 {
-    uint32_t protocol_version; ///< 协议版本（当前为 2）
-    uint32_t pid;              ///< Child 进程 ID
-    char     plugin_name[64];  ///< 插件名称（UTF-8，null-terminated）
+    uint32_t protocol_version;       ///< 协议版本（当前为 2）
+    uint32_t pid;                    ///< 主进程 ID
+    char     plugin_name[64];        ///< 插件名称（UTF-8，null-terminated）
+    uint16_t assigned_session_id;    ///< 主进程分配给 Host 的 session_id
+    uint16_t reserved;               ///< 保留字段
 
     static constexpr uint32_t CURRENT_PROTOCOL_VERSION = 2;
     static constexpr size_t   PLUGIN_NAME_SIZE = 64;
@@ -76,6 +79,7 @@ struct alignas(8) WelcomeResponseV1
     static constexpr uint32_t STATUS_VERSION_MISMATCH = 1;
     static constexpr uint32_t STATUS_TOO_MANY_CLIENTS = 2;
     static constexpr uint32_t STATUS_INVALID_NAME = 3;
+    static constexpr uint32_t STATUS_INVALID_SESSION = 4;
 };
 
 /**

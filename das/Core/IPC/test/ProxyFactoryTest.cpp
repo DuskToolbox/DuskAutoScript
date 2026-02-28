@@ -252,8 +252,6 @@ TEST(ProxyFactoryTest, IntegrationWithRemoteObjectRegistry)
 
     // 测试初始化后创建代理
     DistributedObjectManager obj_manager;
-    result = obj_manager.Initialize(1);
-    EXPECT_EQ(result, DAS_S_OK);
 
     result = factory.Initialize(&obj_manager, &registry);
     EXPECT_TRUE(factory.IsInitialized());
@@ -268,7 +266,6 @@ TEST(ProxyFactoryTest, IntegrationWithRemoteObjectRegistry)
     // 清理
     factory.ClearAllProxies();
     registry.UnregisterObject(test_obj_id);
-    obj_manager.Shutdown();
 }
 
 // 测试 CreateProxy 方法的类型安全特性
@@ -298,7 +295,7 @@ TEST(ProxyFactoryTest, CreateProxy_TypeSafety)
 
     // 创建分布式对象管理器并初始化工厂
     DistributedObjectManager obj_manager;
-    EXPECT_EQ(obj_manager.Initialize(1), DAS_S_OK);
+    EXPECT_EQ(factory.Initialize(&obj_manager, &registry), DAS_S_OK);
     EXPECT_EQ(factory.Initialize(&obj_manager, &registry), DAS_S_OK);
 
     // 测试类型安全的代理创建
@@ -314,7 +311,6 @@ TEST(ProxyFactoryTest, CreateProxy_TypeSafety)
     factory.ClearAllProxies();
     registry.UnregisterObject(obj1);
     registry.UnregisterObject(obj2);
-    obj_manager.Shutdown();
 }
 
 // 测试代理的生命周期管理
@@ -337,7 +333,7 @@ TEST(ProxyFactoryTest, ProxyLifecycleManagement)
 
     // 初始化工厂
     DistributedObjectManager obj_manager;
-    EXPECT_EQ(obj_manager.Initialize(1), DAS_S_OK);
+    EXPECT_EQ(factory.Initialize(&obj_manager, &registry), DAS_S_OK);
     EXPECT_EQ(factory.Initialize(&obj_manager, &registry), DAS_S_OK);
 
     // 测试初始状态
@@ -368,7 +364,6 @@ TEST(ProxyFactoryTest, ProxyLifecycleManagement)
     // 清理
     factory.ClearAllProxies();
     registry.UnregisterObject(test_obj);
-    obj_manager.Shutdown();
 }
 
 // 测试 ProxyFactory 与 IpcRunLoop 的集成
@@ -395,9 +390,6 @@ TEST(ProxyFactoryTest, IntegrationWithIpcRunLoop)
 
     // 创建分布式对象管理器并初始化工厂
     DistributedObjectManager obj_manager;
-    EXPECT_EQ(obj_manager.Initialize(1), DAS_S_OK);
-
-    // 测试不带 IpcRunLoop 的初始化
     EXPECT_EQ(factory.Initialize(&obj_manager, &registry), DAS_S_OK);
     EXPECT_TRUE(factory.IsInitialized());
     EXPECT_TRUE(factory.GetRunLoop() == nullptr);
@@ -424,7 +416,6 @@ TEST(ProxyFactoryTest, IntegrationWithIpcRunLoop)
     // 清理
     factory.ClearAllProxies();
     registry.UnregisterObject(test_obj);
-    obj_manager.Shutdown();
     runloop->Stop();
     runloop->Shutdown();
 }
