@@ -1,8 +1,9 @@
+#include <chrono>
 #include <das/Core/IPC/SharedMemoryPool.h>
+#include <das/Utils/fmt.h>
 #include <gtest/gtest.h>
 #include <thread>
 #include <vector>
-
 using DAS::Core::IPC::SharedMemoryBlock;
 using DAS::Core::IPC::SharedMemoryManager;
 using DAS::Core::IPC::SharedMemoryPool;
@@ -14,11 +15,19 @@ protected:
     void SetUp() override
     {
         pool_ = std::make_unique<SharedMemoryPool>();
-        // Use unique name to avoid conflicts
-        pool_name_ =
-            "test_shm_"
-            + std::to_string(
-                std::hash<std::thread::id>{}(std::this_thread::get_id()));
+
+        // Generate unique name using high-resolution timer + PID + test name
+        auto now_ns = std::chrono::high_resolution_clock::now()
+                          .time_since_epoch()
+                          .count();
+        auto test_info =
+            ::testing::UnitTest::GetInstance()->current_test_info();
+        std::string test_name = test_info ? test_info->name() : "unknown";
+        pool_name_ = DAS_FMT_NS::format(
+            "das_shm_test_{}_{}_{}",
+            GetCurrentProcessId(),
+            now_ns,
+            test_name);
     }
 
     void TearDown() override
@@ -27,6 +36,8 @@ protected:
         {
             pool_->Shutdown();
         }
+        // Force remove shared memory on Windows to ensure cleanup
+        boost::interprocess::shared_memory_object::remove(pool_name_.c_str());
     }
 
     std::unique_ptr<SharedMemoryPool> pool_;
@@ -173,6 +184,13 @@ protected:
     void SetUp() override
     {
         manager_ = std::make_unique<SharedMemoryManager>();
+
+        // Generate unique pool ID: nanoseconds % 65535 (must fit in uint16_t)
+        // NOTE: pool_id is converted to uint16_t internally
+        auto now_ns = std::chrono::high_resolution_clock::now()
+                          .time_since_epoch()
+                          .count();
+        unique_pool_name_ = DAS_FMT_NS::format("{}", now_ns % 65535);
     }
 
     void TearDown() override
@@ -184,6 +202,7 @@ protected:
     }
 
     std::unique_ptr<SharedMemoryManager> manager_;
+    std::string                          unique_pool_name_;
 };
 
 TEST_F(IpcSharedMemoryManagerTest, Initialize_Succeeds)
@@ -196,17 +215,17 @@ TEST_F(IpcSharedMemoryManagerTest, CreatePool_Succeeds)
 {
     ASSERT_EQ(manager_->Initialize(), DAS_S_OK);
 
-    auto result = manager_->CreatePool("test_pool", 65536);
+    auto result = manager_->CreatePool(unique_pool_name_, 65536);
     EXPECT_EQ(result, DAS_S_OK);
 }
 
 TEST_F(IpcSharedMemoryManagerTest, GetPool_ReturnsCreatedPool)
 {
     ASSERT_EQ(manager_->Initialize(), DAS_S_OK);
-    ASSERT_EQ(manager_->CreatePool("test_pool", 65536), DAS_S_OK);
+    ASSERT_EQ(manager_->CreatePool(unique_pool_name_, 65536), DAS_S_OK);
 
     SharedMemoryPool* pool = nullptr;
-    auto              result = manager_->GetPool("test_pool", pool);
+    auto              result = manager_->GetPool(unique_pool_name_, pool);
     EXPECT_EQ(result, DAS_S_OK);
     EXPECT_NE(pool, nullptr);
 }
@@ -223,14 +242,14 @@ TEST_F(IpcSharedMemoryManagerTest, GetPool_NonExistentPool)
 TEST_F(IpcSharedMemoryManagerTest, DestroyPool_Succeeds)
 {
     ASSERT_EQ(manager_->Initialize(), DAS_S_OK);
-    ASSERT_EQ(manager_->CreatePool("test_pool", 65536), DAS_S_OK);
+    ASSERT_EQ(manager_->CreatePool(unique_pool_name_, 65536), DAS_S_OK);
 
-    auto result = manager_->DestroyPool("test_pool");
+    auto result = manager_->DestroyPool(unique_pool_name_);
     EXPECT_EQ(result, DAS_S_OK);
 
     // Pool should no longer be accessible
     SharedMemoryPool* pool = nullptr;
-    EXPECT_NE(manager_->GetPool("test_pool", pool), DAS_S_OK);
+    EXPECT_NE(manager_->GetPool(unique_pool_name_, pool), DAS_S_OK);
 }
 
 TEST_F(IpcSharedMemoryManagerTest, MakePoolName_GeneratesCorrectFormat)

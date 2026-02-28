@@ -4,21 +4,39 @@
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcResponseSender.h>
 #include <das/Core/IPC/IpcRunLoop.h>
+#include <das/Core/IPC/IpcTransport.h>
+#include <das/Utils/fmt.h>
 #include <gtest/gtest.h>
 #include <thread>
 #include <vector>
-
 using DAS::Core::IPC::IMessageHandler;
 using DAS::Core::IPC::IPCMessageHeader;
 using DAS::Core::IPC::IpcResponseSender;
 using DAS::Core::IPC::IpcRunLoop;
+using DAS::Core::IPC::IpcTransport;
 using DAS::Core::IPC::MessageType;
 
 // Test fixture for IpcRunLoop tests
 class IpcRunLoopTest : public ::testing::Test
 {
 protected:
-    void SetUp() override { runloop_ = std::make_unique<IpcRunLoop>(); }
+    void SetUp() override
+    {
+        runloop_ = std::make_unique<IpcRunLoop>();
+
+        // Generate unique queue names for this test using high-resolution timer
+        auto now_ns = std::chrono::high_resolution_clock::now()
+                          .time_since_epoch()
+                          .count();
+        host_queue_name_ = DAS_FMT_NS::format(
+            "das_runloop_host_{}_{}",
+            GetCurrentProcessId(),
+            now_ns);
+        plugin_queue_name_ = DAS_FMT_NS::format(
+            "das_runloop_plugin_{}_{}",
+            GetCurrentProcessId(),
+            now_ns);
+    }
 
     void TearDown() override
     {
@@ -27,6 +45,27 @@ protected:
             runloop_->Stop();
             runloop_->Shutdown();
         }
+    }
+
+    // Helper to setup runloop with a valid transport
+    // Returns true on success, false on failure
+    bool SetupRunLoopWithTransport()
+    {
+        if (runloop_->Initialize() != DAS_S_OK)
+        {
+            return false;
+        }
+
+        auto transport = std::make_unique<IpcTransport>();
+        if (transport
+                ->Initialize(host_queue_name_, plugin_queue_name_, 4096, 10)
+            != DAS_S_OK)
+        {
+            return false;
+        }
+
+        runloop_->SetTransport(std::move(transport));
+        return true;
     }
 
     IPCMessageHeader CreateTestHeader(MessageType type = MessageType::REQUEST)
@@ -48,6 +87,8 @@ protected:
     }
 
     std::unique_ptr<IpcRunLoop> runloop_;
+    std::string                 host_queue_name_;
+    std::string                 plugin_queue_name_;
 };
 
 // ====== Initialize/Shutdown Tests ======
@@ -69,32 +110,70 @@ TEST_F(IpcRunLoopTest, Shutdown_Succeeds)
 
 TEST_F(IpcRunLoopTest, Run_Succeeds)
 {
-    ASSERT_EQ(runloop_->Initialize(), DAS_S_OK);
-    auto result = runloop_->Run();
-    EXPECT_EQ(result, DAS_S_OK);
+    ASSERT_TRUE(SetupRunLoopWithTransport());
+
+    // Run() is blocking, run in separate thread
+    std::thread run_thread([this]() { runloop_->Run(); });
+
+    // Wait for running state
+    for (int i = 0; i < 100 && !runloop_->IsRunning(); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_TRUE(runloop_->IsRunning());
+
+    // Use RequestStop() - Run() will join io_thread_ internally
+    runloop_->RequestStop();
+    if (run_thread.joinable())
+    {
+        run_thread.join();
+    }
 }
 
 TEST_F(IpcRunLoopTest, Stop_Succeeds)
 {
-    ASSERT_EQ(runloop_->Initialize(), DAS_S_OK);
-    ASSERT_EQ(runloop_->Run(), DAS_S_OK);
+    ASSERT_TRUE(SetupRunLoopWithTransport());
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    // Run() is blocking, run in separate thread
+    std::thread run_thread([this]() { runloop_->Run(); });
 
-    auto result = runloop_->Stop();
-    EXPECT_EQ(result, DAS_S_OK);
+    // Wait for running state
+    for (int i = 0; i < 100 && !runloop_->IsRunning(); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_TRUE(runloop_->IsRunning());
+
+    // Use RequestStop() - Run() will join io_thread_ internally
+    runloop_->RequestStop();
+
+    if (run_thread.joinable())
+    {
+        run_thread.join();
+    }
+    EXPECT_FALSE(runloop_->IsRunning());
 }
 
 TEST_F(IpcRunLoopTest, IsRunning_AfterRun)
 {
-    ASSERT_EQ(runloop_->Initialize(), DAS_S_OK);
-    ASSERT_EQ(runloop_->Run(), DAS_S_OK);
+    ASSERT_TRUE(SetupRunLoopWithTransport());
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    // Run() is blocking, run in separate thread
+    std::thread run_thread([this]() { runloop_->Run(); });
+
+    // Wait for running state
+    for (int i = 0; i < 100 && !runloop_->IsRunning(); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
     EXPECT_TRUE(runloop_->IsRunning());
 
-    runloop_->Stop();
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    // Use RequestStop() - Run() will join io_thread_ internally
+    runloop_->RequestStop();
+    if (run_thread.joinable())
+    {
+        run_thread.join();
+    }
     EXPECT_FALSE(runloop_->IsRunning());
 }
 
@@ -102,16 +181,27 @@ TEST_F(IpcRunLoopTest, IsRunning_AfterRun)
 
 TEST_F(IpcRunLoopTest, Run_ReentrantFails)
 {
-    ASSERT_EQ(runloop_->Initialize(), DAS_S_OK);
-    ASSERT_EQ(runloop_->Run(), DAS_S_OK);
+    ASSERT_TRUE(SetupRunLoopWithTransport());
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    // Run() is blocking, run in separate thread
+    std::thread run_thread([this]() { runloop_->Run(); });
 
-    // Second Run() should fail
+    // Wait for running state
+    for (int i = 0; i < 100 && !runloop_->IsRunning(); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    // Second Run() should fail (re-entrant detection)
     auto result = runloop_->Run();
     EXPECT_EQ(result, DAS_E_IPC_DEADLOCK_DETECTED);
 
-    runloop_->Stop();
+    // Use RequestStop() - Run() will join io_thread_ internally
+    runloop_->RequestStop();
+    if (run_thread.joinable())
+    {
+        run_thread.join();
+    }
 }
 
 // =====> Stop Idempotent Tests ======
@@ -168,14 +258,20 @@ TEST_F(IpcRunLoopTest, RegisterHandler_Succeeds)
 
 TEST_F(IpcRunLoopTest, Stop_FromDifferentThread)
 {
-    ASSERT_EQ(runloop_->Initialize(), DAS_S_OK);
-    ASSERT_EQ(runloop_->Run(), DAS_S_OK);
+    ASSERT_TRUE(SetupRunLoopWithTransport());
 
-    std::thread stopper([this]() { runloop_->Stop(); });
+    // Run() is blocking, run in separate thread
+    std::thread run_thread([this]() { runloop_->Run(); });
+
+    // RequestStop from another thread (no join, safe for concurrent use)
+    std::thread stopper([this]() { runloop_->RequestStop(); });
 
     stopper.join();
+    if (run_thread.joinable())
+    {
+        run_thread.join();
+    }
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
     EXPECT_FALSE(runloop_->IsRunning());
 }
 
@@ -193,19 +289,37 @@ TEST_F(IpcRunLoopTest, MaxNestedDepth_LimitIs32)
 
 TEST_F(IpcRunLoopTest, Run_AfterStopAndReinitialize)
 {
-    ASSERT_EQ(runloop_->Initialize(), DAS_S_OK);
-    ASSERT_EQ(runloop_->Run(), DAS_S_OK);
+    ASSERT_TRUE(SetupRunLoopWithTransport());
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    runloop_->Stop();
+    // First run cycle
+    std::thread run_thread1([this]() { runloop_->Run(); });
+    for (int i = 0; i < 100 && !runloop_->IsRunning(); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    // Use RequestStop() - Run() will join io_thread_ internally
+    runloop_->RequestStop();
+    if (run_thread1.joinable())
+    {
+        run_thread1.join();
+    }
     runloop_->Shutdown();
 
-    // Reinitialize
-    ASSERT_EQ(runloop_->Initialize(), DAS_S_OK);
-    auto result = runloop_->Run();
-    EXPECT_EQ(result, DAS_S_OK);
+    // Reinitialize and run again
+    ASSERT_TRUE(SetupRunLoopWithTransport());
+    std::thread run_thread2([this]() { runloop_->Run(); });
+    for (int i = 0; i < 100 && !runloop_->IsRunning(); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_TRUE(runloop_->IsRunning());
 
-    runloop_->Stop();
+    // Use RequestStop() - Run() will join io_thread_ internally
+    runloop_->RequestStop();
+    if (run_thread2.joinable())
+    {
+        run_thread2.join();
+    }
 }
 
 // ====== Event Message Tests ======
@@ -241,13 +355,23 @@ TEST_F(IpcRunLoopTest, SendResponse_WithoutTransport)
 
 TEST_F(IpcRunLoopTest, Stop_CancelsPendingCalls)
 {
-    ASSERT_EQ(runloop_->Initialize(), DAS_S_OK);
-    ASSERT_EQ(runloop_->Run(), DAS_S_OK);
+    ASSERT_TRUE(SetupRunLoopWithTransport());
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    // Run() is blocking, run in separate thread
+    std::thread run_thread([this]() { runloop_->Run(); });
 
-    // Stop should cancel any pending calls
-    runloop_->Stop();
+    // Wait for running state
+    for (int i = 0; i < 100 && !runloop_->IsRunning(); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    // RequestStop should cancel any pending calls
+    runloop_->RequestStop();
+    if (run_thread.joinable())
+    {
+        run_thread.join();
+    }
 
     // Verify clean shutdown
     EXPECT_FALSE(runloop_->IsRunning());
@@ -257,15 +381,26 @@ TEST_F(IpcRunLoopTest, Stop_CancelsPendingCalls)
 
 TEST_F(IpcRunLoopTest, MultipleRunStopCycles)
 {
-    ASSERT_EQ(runloop_->Initialize(), DAS_S_OK);
+    ASSERT_TRUE(SetupRunLoopWithTransport());
 
     for (int i = 0; i < 3; ++i)
     {
-        EXPECT_EQ(runloop_->Run(), DAS_S_OK);
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        runloop_->Stop();
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
+        std::thread run_thread([this]() { runloop_->Run(); });
 
-    EXPECT_FALSE(runloop_->IsRunning());
+        // Wait for running state
+        for (int j = 0; j < 100 && !runloop_->IsRunning(); ++j)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        EXPECT_TRUE(runloop_->IsRunning());
+
+        // Use RequestStop() - Run() will join io_thread_ internally
+        runloop_->RequestStop();
+        if (run_thread.joinable())
+        {
+            run_thread.join();
+        }
+
+        EXPECT_FALSE(runloop_->IsRunning());
+    }
 }

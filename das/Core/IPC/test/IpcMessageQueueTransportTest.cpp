@@ -117,24 +117,32 @@ TEST_F(IpcMessageQueueTransportTest, Send_SmallMessageWithNullBody)
 
 TEST_F(IpcMessageQueueTransportTest, Receive_SmallMessage)
 {
+    // Server creates queues
     ASSERT_EQ(
         transport_->Initialize(host_queue_name_, plugin_queue_name_, 4096, 10),
         DAS_S_OK);
+
+    // Client connects to server's queues (swap direction)
+    auto client = std::make_unique<IpcTransport>();
+    ASSERT_EQ(client->Connect(host_queue_name_, plugin_queue_name_), DAS_S_OK);
 
     auto         header = CreateTestHeader();
     uint8_t      body[] = {1, 2, 3, 4, 5};
     const size_t body_size = sizeof(body);
     header.body_size = static_cast<uint32_t>(body_size);
 
+    // Server sends, client receives
     ASSERT_EQ(transport_->Send(header, body, body_size), DAS_S_OK);
 
     IPCMessageHeader     recv_header;
     std::vector<uint8_t> recv_body;
-    auto result = transport_->Receive(recv_header, recv_body, 1000);
+    auto                 result = client->Receive(recv_header, recv_body, 1000);
 
     EXPECT_EQ(result, DAS_S_OK);
     EXPECT_EQ(recv_header.call_id, header.call_id);
     EXPECT_EQ(recv_body.size(), body_size);
+
+    client->Shutdown();
 }
 
 // ====== Large Message Tests (> 4KB) ======

@@ -178,13 +178,14 @@ DasResult IpcTransport::Receive(
         else
         {
             // 有限超时 - 使用带超时的接收
+            // NOTE: 使用 universal_time() 以确保与 Windows 兼容
             bool received = impl_->plugin_queue_->timed_receive(
                 buffer.data(),
                 impl_->max_message_size_,
                 received_size,
                 priority,
                 boost::posix_time::ptime(
-                    boost::posix_time::microsec_clock::local_time()
+                    boost::posix_time::microsec_clock::universal_time()
                     + boost::posix_time::milliseconds(timeout_ms)));
             if (!received)
             {
