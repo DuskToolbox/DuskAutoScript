@@ -53,9 +53,7 @@ protected:
         std::string msg =
             DAS_FMT_NS::format("DasHost path: {}", host_exe_path_);
         DAS_LOG_INFO(msg.c_str());
-
-        // 初始化 MainProcessServer（新架构：Host 主动连接主进程获取
-        // session_id）
+        // 初始化 MainProcessServer
         auto& server =
             DAS::Core::IPC::MainProcess::MainProcessServer::GetInstance();
         DasResult result = server.Initialize();
@@ -67,33 +65,23 @@ protected:
                     static_cast<int32_t>(result)));
         }
 
-        result = server.StartListening();
-        if (DAS::IsFailed(result))
-        {
-            server.Shutdown();
-            throw std::runtime_error(
-                DAS_FMT_NS::format(
-                    "Failed to start MainProcessServer listening: {}",
-                    static_cast<int32_t>(result)));
-        }
-
-        DAS_LOG_INFO(
-            "MainProcessServer initialized and listening for Host connections");
+        DAS_LOG_INFO("MainProcessServer initialized");
     }
+
     void TearDown() override
     {
         launcher_.Stop();
 
-        // 停止 MainProcessServer 监听并关闭（新架构）
+        // 关闭 MainProcessServer
         auto& server =
             DAS::Core::IPC::MainProcess::MainProcessServer::GetInstance();
-        server.StopListening();
         server.Shutdown();
 
-        DAS_LOG_INFO("MainProcessServer stopped and shutdown");
+        DAS_LOG_INFO("MainProcessServer shutdown");
 
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
+
     std::string GetDasHostPath()
     {
         const char* path = std::getenv("DAS_HOST_EXE_PATH");
