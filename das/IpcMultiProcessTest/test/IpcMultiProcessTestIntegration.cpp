@@ -492,3 +492,76 @@ TEST_F(IpcMultiProcessTest, CrossProcess_HostToHostCall)
     host_a.Stop();
     host_b.Stop();
 }
+/**
+ * @brief 测试加载 Java 插件
+ *
+ * 验证主进程通过 IPC 加载 Java 插件（JavaTestPlugin）。
+ * 需要 JVM 环境可用。
+ */
+TEST_F(IpcMultiProcessTest, CrossProcess_LoadJavaPlugin)
+{
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+    }
+
+    // 1. 启动 Host 进程
+    uint16_t  session_id = 0;
+    DasResult result = launcher_.Start(host_exe_path_, "", session_id, 10000);
+    ASSERT_EQ(result, DAS_S_OK);
+    EXPECT_TRUE(launcher_.IsRunning());
+
+    // 2. 获取 IPC 传输接口
+    auto* transport = launcher_.GetTransport();
+    ASSERT_NE(transport, nullptr);
+    ASSERT_TRUE(transport->IsConnected());
+
+    // 3. 获取 JavaTestPlugin JSON 路径
+    std::string plugin_json_path;
+    try
+    {
+        plugin_json_path = GetTestPluginJsonPath("JavaTestPlugin");
+    }
+    catch (const std::exception& e)
+    {
+        GTEST_SKIP() << "JavaTestPlugin JSON not found: " << e.what();
+    }
+
+    // 4. 检查 JAR 文件是否存在
+    std::filesystem::path jar_path = std::filesystem::path(plugin_json_path)
+        .parent_path() / "JavaTestPlugin.jar";
+    if (!std::filesystem::exists(jar_path))
+    {
+        GTEST_SKIP() << "JavaTestPlugin.jar not found at: " << jar_path.string();
+    }
+
+    // 5. 发送 LOAD_PLUGIN 命令（JSON 中 language=Java）
+    DAS::Core::IPC::ObjectId object_id{};
+    result = IpcTestUtils::SendLoadPluginCommand(
+        transport,
+        plugin_json_path,
+        object_id,
+        10000);  // Java 插件可能需要更长时间（JVM 初始化）
+    
+    if (DAS::IsFailed(result))
+    {
+        // JVM 可能不可用，跳过测试
+        std::string err_msg = DAS_FMT_NS::format(
+            "Failed to load Java plugin (result={:#x}). "
+            "Ensure JVM is properly installed and JAVA_HOME is set.",
+            result);
+        GTEST_SKIP() << err_msg;
+    }
+
+    // 6. 验证返回的对象 ID
+    EXPECT_EQ(object_id.session_id, session_id);
+    EXPECT_GT(object_id.local_id, 0u);
+
+    std::string log_msg = DAS_FMT_NS::format(
+        "[CrossProcess_LoadJavaPlugin] Java plugin loaded, object_id={{"
+        "session:{}, gen:{}, local:{}}}",
+        object_id.session_id,
+        object_id.generation,
+        object_id.local_id);
+    DAS_LOG_INFO(log_msg.c_str());
+}

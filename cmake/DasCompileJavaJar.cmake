@@ -7,8 +7,8 @@
 #         -DJAVA_SRC_DIR=<Java源文件目录>
 #         -DJAR_OUTPUT_PATH=<输出JAR完整路径>
 #         [-DCLASSPATH=<依赖classpath>]
+#         [-DDEPENDS_JAR=<要合并的依赖JAR>]
 #         -P DasCompileJavaJar.cmake
-
 # ============================================
 # 参数检查
 # ============================================
@@ -84,9 +84,30 @@ endif()
 message(STATUS "DasCompileJavaJar: Java compilation successful")
 
 # ============================================
-# 打包 JAR
+# 合并依赖 JAR（如果有）
 # ============================================
 
+if(DEFINED DEPENDS_JAR AND NOT DEPENDS_JAR STREQUAL "")
+    if(EXISTS "${DEPENDS_JAR}")
+        message(STATUS "DasCompileJavaJar: Extracting dependent JAR: ${DEPENDS_JAR}")
+        execute_process(
+            COMMAND "${JAR_EXECUTABLE}" xf "${DEPENDS_JAR}"
+            WORKING_DIRECTORY "${_CLASSES_DIR}"
+            RESULT_VARIABLE _EXTRACT_RESULT
+            ERROR_VARIABLE _EXTRACT_ERROR
+        )
+        if(NOT _EXTRACT_RESULT EQUAL 0)
+            message(FATAL_ERROR "DasCompileJavaJar: Failed to extract dependent JAR:\n${_EXTRACT_ERROR}")
+        endif()
+        message(STATUS "DasCompileJavaJar: Dependent JAR extracted successfully")
+    else()
+        message(WARNING "DasCompileJavaJar: DEPENDS_JAR specified but file not found: ${DEPENDS_JAR}")
+    endif()
+endif()
+
+# ============================================
+# 打包 JAR
+# ============================================
 message(STATUS "DasCompileJavaJar: Creating JAR: ${JAR_OUTPUT_PATH}")
 execute_process(
     COMMAND "${JAR_EXECUTABLE}" cf "${JAR_OUTPUT_PATH}" -C "${_CLASSES_DIR}" .
@@ -99,3 +120,11 @@ if(NOT _JAR_RESULT EQUAL 0)
 endif()
 
 message(STATUS "DasCompileJavaJar: JAR created successfully: ${JAR_OUTPUT_PATH}")
+
+# ============================================
+# 清理临时目录
+# ============================================
+if(EXISTS "${_CLASSES_DIR}")
+    file(REMOVE_RECURSE "${_CLASSES_DIR}")
+    message(STATUS "DasCompileJavaJar: Cleaned up temporary directory")
+endif()
