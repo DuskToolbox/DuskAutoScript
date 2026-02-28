@@ -167,7 +167,11 @@ public:
         return error_code_;
     }
 
-    const char* what() const override
+    #ifndef SWIG
+    const char* what() const noexcept(noexcept(Base::what())) override
+#else
+    const char* what() const noexcept override
+#endif
     {
         return Base::what();
     }
