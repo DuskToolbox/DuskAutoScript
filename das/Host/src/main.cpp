@@ -1,6 +1,7 @@
 // DAS Host Process - IPC Host Entry Point
 // B8 Host 进程模型实现
 
+#include <algorithm> // std::transform, std::tolower
 #include <atomic>
 #include <boost/program_options.hpp>
 #include <chrono>
@@ -22,10 +23,9 @@
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include <string>
-#include <algorithm>  // std::transform, std::tolower
 
 // Global IPC context pointer for signal handler
-static Das::Core::IPC::Host::IIpcContext* g_ipc_context = nullptr;
+static DAS::Core::IPC::Host::IIpcContext* g_ipc_context = nullptr;
 
 // 信号处理函数
 static std::atomic<bool> g_shutdown_requested{false};
@@ -44,20 +44,20 @@ namespace
 {
     // 序列化辅助函数来自 HandshakeSerialization.h
 
-    static Das::DasPtr<DAS::Core::ForeignInterfaceHost::IForeignLanguageRuntime>
+    static DAS::DasPtr<DAS::Core::ForeignInterfaceHost::IForeignLanguageRuntime>
         g_runtime;
 }
 
 // 握手完成回调
 
 void HostOnHandshakeComplete(
-    Das::Core::IPC::Host::IIpcContext* ctx,
+    DAS::Core::IPC::Host::IIpcContext* ctx,
     DasResult                          result,
     void*                              user_data)
 {
     (void)user_data;
 
-    if (Das::IsFailed(result))
+    if (DAS::IsFailed(result))
     {
         std::string msg = DAS_FMT_NS::format(
             "[OnHandshakeComplete] Handshake failed: 0x{:08X}",
@@ -73,24 +73,18 @@ void HostOnHandshakeComplete(
 
     // 注册 LOAD_PLUGIN 处理器
     ctx->RegisterCommandHandler(
-        static_cast<uint32_t>(Das::Core::IPC::IpcCommandType::LOAD_PLUGIN),
+        static_cast<uint32_t>(DAS::Core::IPC::IpcCommandType::LOAD_PLUGIN),
         [ctx](
-            const Das::Core::IPC::IPCMessageHeader& header,
+            const DAS::Core::IPC::IPCMessageHeader& header,
             std::span<const uint8_t>                payload,
-            Das::Core::IPC::IpcCommandResponse&     response) -> DasResult
+            DAS::Core::IPC::IpcCommandResponse&     response) -> DasResult
         {
             (void)header;
-
-            if (!g_runtime)
-            {
-                response.error_code = DAS_E_OBJECT_NOT_INIT;
-                return DAS_E_OBJECT_NOT_INIT;
-            }
 
             // Deserialize manifest_path from payload
             std::string manifest_path;
             size_t      offset = 0;
-            if (!Das::Core::IPC::DeserializeString(
+            if (!DAS::Core::IPC::DeserializeString(
                     payload,
                     offset,
                     manifest_path))
@@ -152,10 +146,11 @@ void HostOnHandshakeComplete(
             }
 
             // 根据语言初始化 Runtime（如果尚未初始化）
+            std::filesystem::path manifest_dir =
+                std::filesystem::path(manifest_path).parent_path();
+
             if (!g_runtime)
             {
-                using namespace DAS::Core::ForeignInterfaceHost;
-                
                 // 转换为小写进行比较（不区分大小写）
                 std::string lang_lower;
                 std::transform(
@@ -163,15 +158,30 @@ void HostOnHandshakeComplete(
                     plugin_language.end(),
                     std::back_inserter(lang_lower),
                     [](unsigned char c) { return std::tolower(c); });
-                
-                ForeignInterfaceLanguage language = ForeignInterfaceLanguage::Cpp;
+
+                // 构建 plugin 路径
+                std::filesystem::path plugin_path =
+                    manifest_dir / (plugin_name + "." + plugin_extension);
+
+                DAS::Core::ForeignInterfaceHost::
+                    ForeignLanguageRuntimeFactoryDesc desc;
+
                 if (lang_lower == "java")
                 {
-                    language = ForeignInterfaceLanguage::Java;
+                    desc.language = DAS::Core::ForeignInterfaceHost::
+                        ForeignInterfaceLanguage::Java;
+                    std::u8string plugin_path_u8 = plugin_path.u8string();
+                    desc.class_path =
+                        reinterpret_cast<const char*>(plugin_path_u8.c_str());
                 }
-                
-                auto result = CreateForeignLanguageRuntime(
-                    ForeignLanguageRuntimeFactoryDesc{language});
+                else
+                {
+                    desc.language = DAS::Core::ForeignInterfaceHost::
+                        ForeignInterfaceLanguage::Cpp;
+                }
+
+                auto result = DAS::Core::ForeignInterfaceHost::
+                    CreateForeignLanguageRuntime(desc);
                 if (result.has_value())
                 {
                     g_runtime = std::move(result.value());
@@ -193,8 +203,6 @@ void HostOnHandshakeComplete(
             }
 
             // Build DLL path: {manifest_dir}/{name}.{extension}
-            std::filesystem::path manifest_dir =
-                std::filesystem::path(manifest_path).parent_path();
             std::filesystem::path dll_path =
                 manifest_dir / (plugin_name + "." + plugin_extension);
 
@@ -218,12 +226,12 @@ void HostOnHandshakeComplete(
 
             // 注册插件对象到 DistributedObjectManager
             auto                     plugin_ptr = result.value();
-            Das::Core::IPC::ObjectId object_id;
+            DAS::Core::IPC::ObjectId object_id;
             DasResult reg_result = ctx->GetObjectManager().RegisterLocalObject(
                 plugin_ptr.Get(),
                 object_id);
 
-            if (Das::IsFailed(reg_result))
+            if (DAS::IsFailed(reg_result))
             {
                 std::string msg = DAS_FMT_NS::format(
                     "[LOAD_PLUGIN] Failed to register object: {:#x}",
@@ -288,11 +296,12 @@ int main(int argc, char* argv[])
     {
         boost::program_options::options_description desc(
             "DAS Host Process - IPC Resource Owner");
-        desc.add_options()
-            ("verbose,v", "Enable verbose logging")
-            ("help,h", "Show this help message")
-            ("main-pid", boost::program_options::value<uint32_t>(),
-             "Main process PID (enables connect mode)");
+        desc.add_options()("verbose,v", "Enable verbose logging")(
+            "help,h",
+            "Show this help message")(
+            "main-pid",
+            boost::program_options::value<uint32_t>(),
+            "Main process PID (enables connect mode)");
 
         boost::program_options::variables_map vm;
         boost::program_options::store(
@@ -319,9 +328,7 @@ int main(int argc, char* argv[])
         DAS_LOG_INFO("DAS Host Process starting...");
 
         // 创建 IPC Context
-        using namespace Das::Core::IPC::Host;
-
-        IpcContextConfig config{};
+        DAS::Core::IPC::Host::IpcContextConfig config{};
 
         // 如果提供了 --main-pid 参数，设置连接模式
         if (vm.count("main-pid"))
@@ -333,7 +340,8 @@ int main(int argc, char* argv[])
             DAS_LOG_INFO(_log_msg.c_str());
         }
 
-        IpcContextPtr ctx{CreateIpcContext(config)};
+        DAS::Core::IPC::Host::IpcContextPtr ctx{
+            DAS::Core::IPC::Host::CreateIpcContext(config)};
         if (!ctx)
         {
             DAS_LOG_ERROR("Failed to create IPC context");
@@ -350,7 +358,7 @@ int main(int argc, char* argv[])
 
         g_ipc_context = nullptr;
 
-        if (Das::IsFailed(result))
+        if (DAS::IsFailed(result))
         {
             std::string err_msg = DAS_FMT_NS::format(
                 "IPC context run failed: 0x{:08X}",
