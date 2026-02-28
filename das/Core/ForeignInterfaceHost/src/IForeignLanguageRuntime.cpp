@@ -24,13 +24,21 @@ auto CreateForeignLanguageRuntime(
 #ifndef DAS_EXPORT_CSHARP
         goto on_no_interface;
 #else
+        goto on_no_interface; // CSharp 尚未实现
 #endif // DAS_EXPORT_CSHARP
     case Java:
 #ifndef DAS_EXPORT_JAVA
         goto on_no_interface;
 #else
-        return JavaHost::CreateJavaRuntime(
-            static_cast<const JavaHost::JavaRuntimeDesc&>(desc_base));
+    {
+        JavaHost::JavaRuntimeDesc java_desc;
+        if (desc_base.class_path)
+        {
+            java_desc.class_path = { std::filesystem::path(
+                reinterpret_cast<const char8_t*>(desc_base.class_path)) };
+        }
+        return JavaHost::CreateJavaRuntime(java_desc);
+    }
 #endif // DAS_EXPORT_JAVA
     case Lua:
         goto on_no_interface;

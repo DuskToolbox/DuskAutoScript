@@ -17,8 +17,8 @@ DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 struct ForeignLanguageRuntimeFactoryDesc
 {
     ForeignInterfaceLanguage language;
+    const char* class_path = nullptr;  // Java/JVM 类路径（UTF-8）
 };
-
 DAS_INTERFACE IForeignLanguageRuntime : public IDasBase
 {
     virtual auto LoadPlugin(const std::filesystem::path& path)
