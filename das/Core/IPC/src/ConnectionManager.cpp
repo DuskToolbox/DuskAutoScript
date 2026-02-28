@@ -24,8 +24,6 @@ ConnectionManager::~ConnectionManager()
 {
     StopHeartbeatThread();
     Shutdown();
-    StopHeartbeatThread();
-    Shutdown();
 }
 
 ConnectionManager& ConnectionManager::GetInstance()
