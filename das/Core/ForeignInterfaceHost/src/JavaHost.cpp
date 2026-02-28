@@ -257,7 +257,7 @@ JavaVM* JvmManager::CreateJVM(
 
 std::filesystem::path JvmManager::FindJvmDllPath()
 {
-    // 从环境变量查找
+    // 从环境变量 JAVA_HOME 查找
     char* java_home = nullptr;
     size_t len = 0;
     if (_dupenv_s(&java_home, &len, "JAVA_HOME") == 0 && java_home)
@@ -268,22 +268,6 @@ std::filesystem::path JvmManager::FindJvmDllPath()
         if (std::filesystem::exists(jvm_path))
         {
             return jvm_path;
-        }
-    }
-
-    // 尝试常见路径
-    std::vector<std::filesystem::path> common_paths = {
-        "C:/Program Files/Microsoft/jdk-21.0.6.7-hotspot/bin/server/jvm.dll",
-        "C:/Program Files/Java/jdk-21/bin/server/jvm.dll",
-        "C:/Program Files/Java/jdk-17/bin/server/jvm.dll",
-        "C:/Program Files/Java/jdk-11/bin/server/jvm.dll",
-    };
-
-    for (const auto& path : common_paths)
-    {
-        if (std::filesystem::exists(path))
-        {
-            return path;
         }
     }
 
