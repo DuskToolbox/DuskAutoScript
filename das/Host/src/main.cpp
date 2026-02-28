@@ -22,6 +22,7 @@
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include <string>
+#include <algorithm>  // std::transform, std::tolower
 
 // Global IPC context pointer for signal handler
 static Das::Core::IPC::Host::IIpcContext* g_ipc_context = nullptr;
@@ -128,25 +129,16 @@ void HostOnHandshakeComplete(
                 return DAS_E_IPC_PLUGIN_LOAD_FAILED;
             }
 
-            // Extract plugin name and extension
+            // Extract plugin name, extension, and language
             std::string plugin_name;
             std::string plugin_extension;
-            // 检查 g_runtime 是否已初始化
-            if (!g_runtime)
-            {
-                std::string msg = DAS_FMT_NS::format(
-                    "Foreign language runtime not initialized");
-                DAS_LOG_ERROR(msg.c_str());
-                response.error_code = DAS_E_IPC_PLUGIN_LOAD_FAILED;
-                response.response_data.clear();
-                return DAS_E_IPC_PLUGIN_LOAD_FAILED;
-            }
-
+            std::string plugin_language;
             try
             {
                 plugin_name = manifest_json["name"].get<std::string>();
                 plugin_extension =
                     manifest_json["pluginFilenameExtension"].get<std::string>();
+                plugin_language = manifest_json.value("language", "Cpp");
             }
             catch (const nlohmann::json::exception& e)
             {
@@ -157,6 +149,47 @@ void HostOnHandshakeComplete(
                 response.error_code = DAS_E_IPC_PLUGIN_LOAD_FAILED;
                 response.response_data.clear();
                 return DAS_E_IPC_PLUGIN_LOAD_FAILED;
+            }
+
+            // 根据语言初始化 Runtime（如果尚未初始化）
+            if (!g_runtime)
+            {
+                using namespace DAS::Core::ForeignInterfaceHost;
+                
+                // 转换为小写进行比较（不区分大小写）
+                std::string lang_lower;
+                std::transform(
+                    plugin_language.begin(),
+                    plugin_language.end(),
+                    std::back_inserter(lang_lower),
+                    [](unsigned char c) { return std::tolower(c); });
+                
+                ForeignInterfaceLanguage language = ForeignInterfaceLanguage::Cpp;
+                if (lang_lower == "java")
+                {
+                    language = ForeignInterfaceLanguage::Java;
+                }
+                
+                auto result = CreateForeignLanguageRuntime(
+                    ForeignLanguageRuntimeFactoryDesc{language});
+                if (result.has_value())
+                {
+                    g_runtime = std::move(result.value());
+                    std::string msg = DAS_FMT_NS::format(
+                        "Foreign language runtime initialized: {}",
+                        plugin_language);
+                    DAS_LOG_INFO(msg.c_str());
+                }
+                else
+                {
+                    std::string msg = DAS_FMT_NS::format(
+                        "Failed to create {} runtime",
+                        plugin_language);
+                    DAS_LOG_ERROR(msg.c_str());
+                    response.error_code = DAS_E_IPC_PLUGIN_LOAD_FAILED;
+                    response.response_data.clear();
+                    return DAS_E_IPC_PLUGIN_LOAD_FAILED;
+                }
             }
 
             // Build DLL path: {manifest_dir}/{name}.{extension}
@@ -255,12 +288,11 @@ int main(int argc, char* argv[])
     {
         boost::program_options::options_description desc(
             "DAS Host Process - IPC Resource Owner");
-        desc.add_options()("verbose,v", "Enable verbose logging")(
-            "help,h",
-            "Show this help message")(
-            "main-pid",
-            boost::program_options::value<uint32_t>(),
-            "Main process PID (enables connect mode)");
+        desc.add_options()
+            ("verbose,v", "Enable verbose logging")
+            ("help,h", "Show this help message")
+            ("main-pid", boost::program_options::value<uint32_t>(),
+             "Main process PID (enables connect mode)");
 
         boost::program_options::variables_map vm;
         boost::program_options::store(
@@ -278,7 +310,6 @@ int main(int argc, char* argv[])
         }
 
         bool verbose = vm.count("verbose") > 0;
-
         std::signal(SIGINT, SignalHandler);
         std::signal(SIGTERM, SignalHandler);
 #ifdef SIGBREAK
@@ -286,27 +317,6 @@ int main(int argc, char* argv[])
 #endif
 
         DAS_LOG_INFO("DAS Host Process starting...");
-
-        // 初始化 Foreign Language Runtime（根据配置自动选择 C++ 或 Python）
-        {
-            using namespace DAS::Core::ForeignInterfaceHost;
-            auto result = CreateForeignLanguageRuntime(
-                ForeignLanguageRuntimeFactoryDesc{
-                    ForeignInterfaceLanguage::Cpp});
-            if (result.has_value())
-            {
-                g_runtime = std::move(result.value());
-                std::string _log_msg = DAS_FMT_NS::format(
-                    "Foreign language runtime initialized successfully");
-                DAS_LOG_INFO(_log_msg.c_str());
-            }
-            else
-            {
-                std::string _log_msg = DAS_FMT_NS::format(
-                    "Failed to initialize foreign language runtime");
-                DAS_LOG_WARNING(_log_msg.c_str());
-            }
-        }
 
         // 创建 IPC Context
         using namespace Das::Core::IPC::Host;

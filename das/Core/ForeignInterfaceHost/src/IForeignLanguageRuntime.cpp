@@ -29,6 +29,8 @@ auto CreateForeignLanguageRuntime(
 #ifndef DAS_EXPORT_JAVA
         goto on_no_interface;
 #else
+        return JavaHost::CreateJavaRuntime(
+            static_cast<const JavaHost::JavaRuntimeDesc&>(desc_base));
 #endif // DAS_EXPORT_JAVA
     case Lua:
         goto on_no_interface;
