@@ -2,6 +2,7 @@
 #define DAS_CORE_FOREIGNINTERFACEHOST_JAVAHOST_H
 
 #include <filesystem>
+#include <boost/dll.hpp>
 #ifdef DAS_EXPORT_JAVA
 
 #include <jni.h>
@@ -158,8 +159,9 @@ private:
         const std::vector<std::filesystem::path>& class_path);
 
 private:
-    JavaVM*    jvm_ = nullptr;
-    std::mutex mutex_;
+    JavaVM*                         jvm_ = nullptr;
+    boost::dll::shared_library         jvm_dll_;
+    std::mutex                        mutex_;
 };
 
 /**

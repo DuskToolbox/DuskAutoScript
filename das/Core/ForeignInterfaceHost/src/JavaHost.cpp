@@ -8,17 +8,12 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 
-#ifdef _WIN32
-#include <windows.h>
-#define DAS_DLOPEN(path) LoadLibraryW(path.wstring().c_str())
-#define DLSYM(handle, name) GetProcAddress(reinterpret_cast<HMODULE>(handle), name)
-#define DLCLOSE(handle) FreeLibrary(reinterpret_cast<HMODULE>(handle))
-#else
-#include <dlfcn.h>
-#define DAS_DLOPEN(path) dlopen(path.string().c_str(), RTLD_LAZY)
-#define DLSYM(handle, name) dlsym(handle, name)
-#define DLCLOSE(handle) dlclose(handle)
-#endif
+#include <boost/dll.hpp>
+
+namespace jvm_dll
+{
+    using JNI_CreateJavaVM_t = jint (*)(JavaVM**, void**, void*);
+}
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 DAS_NS_JAVAHOST_BEGIN
@@ -188,23 +183,29 @@ JavaVM* JvmManager::CreateJVM(
     const std::vector<std::string>&           jvm_options,
     const std::vector<std::filesystem::path>& class_path)
 {
-    // 1. 动态加载 jvm.dll
-    void* jvm_handle = DAS_DLOPEN(jvm_dll_path);
-    if (!jvm_handle)
+    // 1. 使用 boost::dll 加载 jvm.dll (RAII 自动管理生命周期)
+    try
     {
-        DAS_CORE_LOG_ERROR("Failed to load JVM DLL: {}", jvm_dll_path.string());
+        jvm_dll_ = boost::dll::shared_library(boost::dll::fs::path(jvm_dll_path));
+    }
+    catch (const boost::system::system_error& e)
+    {
+        DAS_CORE_LOG_ERROR("Failed to load JVM DLL: {} - {}", jvm_dll_path.string(), e.what());
         return nullptr;
     }
 
     // 2. 获取 JNI_CreateJavaVM 函数
-    using JNI_CreateJavaVM_t = jint (*)(JavaVM**, void**, void*);
-    auto p_JNI_CreateJavaVM = reinterpret_cast<JNI_CreateJavaVM_t>(
-        DLSYM(jvm_handle, "JNI_CreateJavaVM"));
-
+    if (!jvm_dll_.has("JNI_CreateJavaVM"))
+    {
+        DAS_CORE_LOG_ERROR("Failed to find JNI_CreateJavaVM function");
+        jvm_dll_ = {};  // 显式卸载
+        return nullptr;
+    }
+    auto p_JNI_CreateJavaVM = jvm_dll_.get<jvm_dll::JNI_CreateJavaVM_t>("JNI_CreateJavaVM");
     if (!p_JNI_CreateJavaVM)
     {
         DAS_CORE_LOG_ERROR("Failed to find JNI_CreateJavaVM function");
-        DLCLOSE(jvm_handle);
+        jvm_dll_ = {};  // 显式卸载
         return nullptr;
     }
 
@@ -240,7 +241,7 @@ JavaVM* JvmManager::CreateJVM(
     if (result != JNI_OK)
     {
         DAS_CORE_LOG_ERROR("Failed to create JVM, error: {}", result);
-        DLCLOSE(jvm_handle);
+        jvm_dll_ = {};  // 显式卸载
         return nullptr;
     }
 
@@ -248,8 +249,8 @@ JavaVM* JvmManager::CreateJVM(
         "JVM created successfully with class path: {}",
         class_path_str);
 
-    // 注意：不关闭 jvm_handle，因为 JVM 需要保持加载
-    // jvm_handle 在进程生命周期内保持打开
+    // jvm_dll_ 作为成员变量，由 RAII 自动管理生命周期
+    // 在进程结束前保持加载状态
 
     return jvm;
 }
