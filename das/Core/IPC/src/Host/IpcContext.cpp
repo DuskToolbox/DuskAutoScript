@@ -1,5 +1,4 @@
 #include <das/Core/IPC/DistributedObjectManager.h>
-#include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/Host/HandshakeHandler.h>
 #include <das/Core/IPC/Host/HostConfig.h>
 #include <das/Core/IPC/Host/IIpcContext.h>
@@ -11,10 +10,9 @@
 #include <das/Core/IPC/MessageHandlerRef.h>
 #include <das/Core/IPC/SessionCoordinator.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
+#include <boost/process/v2/pid.hpp>
 #include <das/DasApi.h>
 #include <das/Utils/fmt.h>
-
-#include <das/Core/IPC/IpcMessageHeader.h>
 
 #include <atomic>
 #include <chrono>
@@ -23,8 +21,48 @@
 #ifdef _WIN32
 #include <windows.h>
 #else
+#include <signal.h>
 #include <unistd.h>
 #endif
+
+namespace
+{
+    /**
+     * @brief 跨平台检测指定 PID 的进程是否存活
+     * @param pid 目标进程 PID
+     * @return true 表示进程存在，false 表示进程已退出
+     */
+    bool IsProcessAlive(uint32_t pid)
+    {
+        if (pid == 0)
+        {
+            return false;
+        }
+#ifdef _WIN32
+        HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(pid));
+        if (process == nullptr)
+        {
+            // 无法打开进程句柄，说明进程不存在或无权限
+            return false;
+        }
+        DWORD exit_code = 0;
+        BOOL  result = GetExitCodeProcess(process, &exit_code);
+        CloseHandle(process);
+        if (!result)
+        {
+            return false;
+        }
+        // STILL_ACTIVE 表示进程仍在运行
+        return exit_code == STILL_ACTIVE;
+#else
+        // Linux/macOS: kill(pid, 0) 检查进程是否存在
+        return kill(static_cast<pid_t>(pid), 0) == 0;
+#endif
+    }
+
+    // 父进程存活检测间隔（毫秒）
+    constexpr uint32_t PARENT_PROCESS_CHECK_INTERVAL_MS = 1000;
+} // namespace
 
 DAS_NS_BEGIN
 namespace Core
@@ -53,11 +91,7 @@ namespace Core
                 DasResult Initialize()
                 {
                     // 获取当前进程 PID
-#ifdef _WIN32
-                    host_pid_ = GetCurrentProcessId();
-#else
-                    host_pid_ = getpid();
-#endif
+                    host_pid_ = static_cast<uint32_t>(boost::process::v2::current_pid());
 
                     // 如果 config_.main_pid == 0，返回错误
                     if (config_.main_pid == 0)
@@ -272,6 +306,9 @@ namespace Core
 
                     DasResult result = DAS_S_OK;
 
+                    // 停止父进程监控线程
+                    StopParentProcessMonitor();
+
                     // 停止事件循环
                     if (run_loop_)
                     {
@@ -370,8 +407,15 @@ namespace Core
                     }
 
                     is_running_ = true;
+
+                    // 启动父进程存活检测线程
+                    StartParentProcessMonitor();
+
                     DasResult result = run_loop_->Run();
                     is_running_ = false;
+
+                    // 停止父进程监控线程
+                    StopParentProcessMonitor();
 
                     return result;
                 }
@@ -419,6 +463,78 @@ namespace Core
                 // Host 模式专用成员变量
                 uint32_t host_pid_ = 0;
                 uint32_t main_pid_ = 0;
+
+                // 父进程存活检测线程
+                std::thread         parent_monitor_thread_;
+                std::atomic<bool>   parent_monitor_running_{false};
+
+                /**
+                 * @brief 启动父进程存活检测线程
+                 *
+                 * 仅当 main_pid_ != 0 时启动。
+                 * 定期检查主进程是否存活，若主进程退出则请求 Host 退出。
+                 */
+                void StartParentProcessMonitor()
+                {
+                    if (main_pid_ == 0)
+                    {
+                        return;
+                    }
+
+                    parent_monitor_running_.store(true);
+                    parent_monitor_thread_ = std::thread(
+                        [this]()
+                        {
+                            std::string start_msg = DAS_FMT_NS::format(
+                                "IpcContext: 父进程监控线程启动，监控 main_pid={}",
+                                main_pid_);
+                            DAS_LOG_INFO(start_msg.c_str());
+
+                            while (parent_monitor_running_.load())
+                            {
+                                if (!IsProcessAlive(main_pid_))
+                                {
+                                    std::string msg = DAS_FMT_NS::format(
+                                        "IpcContext: 检测到主进程 (PID={}) 已退出，Host 将自动退出",
+                                        main_pid_);
+                                    DAS_LOG_INFO(msg.c_str());
+
+                                    // 请求 RunLoop 停止
+                                    if (run_loop_)
+                                    {
+                                        run_loop_->RequestStop();
+                                    }
+                                    break;
+                                }
+
+                                // 等待一段时间后再次检测
+                                for (uint32_t i = 0;
+                                     i < PARENT_PROCESS_CHECK_INTERVAL_MS / 100
+                                     && parent_monitor_running_.load();
+                                     ++i)
+                                {
+                                    std::this_thread::sleep_for(
+                                        std::chrono::milliseconds(100));
+                                }
+                            }
+
+                            std::string stop_msg = DAS_FMT_NS::format(
+                                "IpcContext: 父进程监控线程结束");
+                            DAS_LOG_INFO(stop_msg.c_str());
+                        });
+                }
+
+                /**
+                 * @brief 停止父进程存活检测线程
+                 */
+                void StopParentProcessMonitor()
+                {
+                    parent_monitor_running_.store(false);
+                    if (parent_monitor_thread_.joinable())
+                    {
+                        parent_monitor_thread_.join();
+                    }
+                }
 
             };
 

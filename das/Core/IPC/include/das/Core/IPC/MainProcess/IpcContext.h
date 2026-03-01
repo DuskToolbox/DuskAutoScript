@@ -5,11 +5,6 @@
 #include <das/DasApi.h>
 #include <memory>
 
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable : 4251)
-#endif
-
 DAS_NS_BEGIN
 namespace Core
 {
@@ -86,9 +81,5 @@ namespace Core
     } // namespace IPC
 } // namespace Core
 DAS_NS_END
-
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
 
 #endif // DAS_CORE_IPC_MAIN_PROCESS_IPC_CONTEXT_H
