@@ -129,10 +129,10 @@ void HostOnHandshakeComplete(
             std::string plugin_language;
             try
             {
-                plugin_name = manifest_json["name"].get<std::string>();
-                plugin_extension =
-                    manifest_json["pluginFilenameExtension"].get<std::string>();
-                plugin_language = manifest_json.value("language", "Cpp");
+                manifest_json["name"].get_to(plugin_name);
+                manifest_json["pluginFilenameExtension"].get_to(
+                    plugin_extension);
+                manifest_json["language"].get_to(plugin_language);
             }
             catch (const nlohmann::json::exception& e)
             {
@@ -149,28 +149,29 @@ void HostOnHandshakeComplete(
             std::filesystem::path manifest_dir =
                 std::filesystem::path(manifest_path).parent_path();
 
+            // 转换为小写进行比较（不区分大小写）
+            std::string lang_lower;
+            std::transform(
+                plugin_language.begin(),
+                plugin_language.end(),
+                std::back_inserter(lang_lower),
+                [](unsigned char c) { return std::tolower(c); });
+
             if (!g_runtime)
             {
-                // 转换为小写进行比较（不区分大小写）
-                std::string lang_lower;
-                std::transform(
-                    plugin_language.begin(),
-                    plugin_language.end(),
-                    std::back_inserter(lang_lower),
-                    [](unsigned char c) { return std::tolower(c); });
-
                 // 构建 plugin 路径
-                std::filesystem::path plugin_path =
+                std::filesystem::path runtime_path =
                     manifest_dir / (plugin_name + "." + plugin_extension);
 
                 DAS::Core::ForeignInterfaceHost::
                     ForeignLanguageRuntimeFactoryDesc desc;
+                // 避免生命周期问题
+                std::u8string plugin_path_u8 = runtime_path.u8string();
 
                 if (lang_lower == "java")
                 {
                     desc.language = DAS::Core::ForeignInterfaceHost::
                         ForeignInterfaceLanguage::Java;
-                    std::u8string plugin_path_u8 = plugin_path.u8string();
                     desc.class_path =
                         reinterpret_cast<const char*>(plugin_path_u8.c_str());
                 }
@@ -202,22 +203,32 @@ void HostOnHandshakeComplete(
                 }
             }
 
-            // Build DLL path: {manifest_dir}/{name}.{extension}
-            std::filesystem::path dll_path =
-                manifest_dir / (plugin_name + "." + plugin_extension);
+            // For Java plugins, pass JSON config path instead of JAR path
+            // JavaRuntime::LoadPlugin reads entryPoint from JSON config
+            std::filesystem::path plugin_path;
+            if (lang_lower == "java")
+            {
+                plugin_path = manifest_path; // JSON config path
+            }
+            else
+            {
+                // For native plugins, use DLL/SO path
+                plugin_path =
+                    manifest_dir / (plugin_name + "." + plugin_extension);
+            }
 
             std::string msg = DAS_FMT_NS::format(
                 "Loading plugin from: {}",
-                dll_path.string());
+                plugin_path.string());
             DAS_LOG_INFO(msg.c_str());
 
             // Load plugin
-            auto result = g_runtime->LoadPlugin(dll_path.string());
+            auto result = g_runtime->LoadPlugin(plugin_path.string());
             if (!result.has_value())
             {
                 msg = DAS_FMT_NS::format(
                     "Failed to load plugin: {}",
-                    dll_path.string());
+                    plugin_path.string());
                 DAS_LOG_ERROR(msg.c_str());
                 response.error_code = DAS_E_IPC_PLUGIN_LOAD_FAILED;
                 response.response_data.clear();

@@ -6,13 +6,13 @@ if (${DAS_BUILD_TEST})
     aux_source_directory(test IpcMultiProcessTest_SOURCES)
     set(IpcMultiProcessTest_NAME "IpcMultiProcessTest")
     add_executable(${IpcMultiProcessTest_NAME} ${IpcMultiProcessTest_SOURCES})
-    
+
     # 链接必要的库
-    target_link_libraries(${IpcMultiProcessTest_NAME} 
-        PUBLIC 
-        Das3rdParty 
-        GTest::gtest_main 
-        GTest::gtest 
+    target_link_libraries(${IpcMultiProcessTest_NAME}
+        PUBLIC
+        Das3rdParty
+        GTest::gtest_main
+        GTest::gtest
         DasCoreObjects
     )
 
@@ -30,7 +30,7 @@ if (${DAS_BUILD_TEST})
     )
 
 # 强制 cmake 输出测试可执行文件到 ${CMAKE_BINARY_DIR}
-    set_target_properties(${IpcMultiProcessTest_NAME} PROPERTIES 
+    set_target_properties(${IpcMultiProcessTest_NAME} PROPERTIES
         RUNTIME_DIRECTORY ${CMAKE_BINARY_DIR}
         RUNTIME_DIRECTORY_DEBUG ${CMAKE_BINARY_DIR}
         RUNTIME_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}
@@ -44,6 +44,7 @@ if (${DAS_BUILD_TEST})
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/Test
         PROPERTIES
             ENVIRONMENT "DAS_HOST_EXE_PATH=${CMAKE_BINARY_DIR}/bin/$<CONFIG>/DasHost.exe"
+            ENVIRONMENT "DAS_PLUGIN_DIR=${CMAKE_BINARY_DIR}/bin/$<CONFIG>/plugins"
     )
 
     # 将测试添加到构建锁依赖中

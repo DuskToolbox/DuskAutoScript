@@ -107,18 +107,24 @@ protected:
      */
     std::string GetTestPluginJsonPath(const std::string& plugin_name)
     {
-        // 从环境变量获取构建目录，或使用默认值
-        const char* build_dir = std::getenv("DAS_BUILD_DIR");
-        std::string base_dir =
-            build_dir ? build_dir : "C:/vmbuild/bin/Debug/plugins";
+        // 从环境变量获取插件目录
+        const char* plugin_dir = std::getenv("DAS_PLUGIN_DIR");
+        if (plugin_dir == nullptr || strlen(plugin_dir) == 0)
+        {
+            throw std::runtime_error(
+                "DAS_PLUGIN_DIR environment variable is not set");
+        }
 
-        std::string json_path = base_dir + "/" + plugin_name + ".json";
+        std::filesystem::path json_path =
+            std::filesystem::path{plugin_dir}
+            / DAS_FMT_NS::format("{}.json", plugin_name);
 
         if (!std::filesystem::exists(json_path))
         {
-            throw std::runtime_error("Plugin JSON not found at: " + json_path);
+            throw std::runtime_error(
+                "Plugin JSON not found at: " + json_path.string());
         }
-        return json_path;
+        return json_path.string();
     }
 
     std::string                  host_exe_path_;
