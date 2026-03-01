@@ -172,7 +172,7 @@ bool IpcRunLoop::ReceiveAndDispatch(std::chrono::milliseconds timeout)
     return false;
 }
 
-DasResult IpcRunLoop::SendMessage(
+DasResult IpcRunLoop::SendRequest(
     const IPCMessageHeader&   request_header,
     const uint8_t*            body,
     size_t                    body_size,

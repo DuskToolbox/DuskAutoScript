@@ -33,12 +33,6 @@ namespace Host
 }
 DAS_CORE_IPC_NS_END
 
-#ifdef _MSC_VER
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable : 4251)
-#endif
-
 DAS_CORE_IPC_NS_BEGIN
 struct NestedCallContext
 {
@@ -95,9 +89,9 @@ public:
     IMessageHandler* GetHandler(uint32_t interface_id) const;
 
     /**
-     * @brief 同步阻塞 IPC 调用（类似 Win32 SendMessage）
+     * @brief 同步阻塞 IPC 调用
      *
-     * 发送消息后进入消息循环等待，支持可重入调用。
+     * 发送请求后进入消息循环等待，支持可重入调用。
      * 内部使用 ReceiveAndDispatch() 处理消息。
      *
      * @param request_header 请求头
@@ -107,7 +101,7 @@ public:
      * @param timeout 超时时间（默认30秒）
      * @return 调用结果
      */
-    DasResult SendMessage(
+    DasResult SendRequest(
         const IPCMessageHeader&   request_header,
         const uint8_t*            body,
         size_t                    body_size,
@@ -220,10 +214,6 @@ public:
 };
 DAS_CORE_IPC_NS_END
 
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
-
 // stdexec 方法实现（必须在头文件中，因为返回 auto 类型）
 DAS_CORE_IPC_NS_BEGIN
 inline stdexec::sender auto IpcRunLoop::SendMessageAsync(
@@ -233,11 +223,9 @@ inline stdexec::sender auto IpcRunLoop::SendMessageAsync(
 {
     // 使用同步实现包装
     std::vector<uint8_t> response;
-    DasResult result = SendMessage(request_header, body, body_size, response);
+    DasResult result = SendRequest(request_header, body, body_size, response);
     return stdexec::just(std::make_pair(result, std::move(response)));
 }
 DAS_CORE_IPC_NS_END
-
-#endif // DAS_CORE_IPC_IPC_RUN_LOOP_H
 
 #endif // DAS_CORE_IPC_IPC_RUN_LOOP_H

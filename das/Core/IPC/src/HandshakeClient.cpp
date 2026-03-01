@@ -28,7 +28,7 @@ DasResult HandshakeClient::SendHelloAndWaitWelcome(
     header.version = IPCMessageHeader::CURRENT_VERSION;
     header.message_type = static_cast<uint8_t>(MessageType::REQUEST);
     header.header_flags = 0;
-    header.call_id = 0; // 由 SendMessage 内部分配
+    header.call_id = 0; // 由 SendRequest 内部分配
     header.interface_id =
         static_cast<uint32_t>(HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO);
     header.method_id = 0;
@@ -39,9 +39,9 @@ DasResult HandshakeClient::SendHelloAndWaitWelcome(
     header.generation = 0;
     header.local_id = 0;
 
-    // 使用 SendMessage 发送并等待响应
+    // 使用 SendRequest 发送并等待响应
     std::vector<uint8_t> response_body;
-    DasResult            result = run_loop_.SendMessage(
+    DasResult            result = run_loop_.SendRequest(
         header,
         reinterpret_cast<const uint8_t*>(&hello),
         sizeof(hello),
@@ -116,15 +116,14 @@ DasResult HandshakeClient::SendReadyAndWaitAck(
     header.session_id = 0;
     header.generation = 0;
     header.local_id = 0;
-    // 使用 SendMessage 发送并等待响应
+    // 使用 SendRequest 发送并等待响应
     std::vector<uint8_t> response_body;
-    DasResult            result = run_loop_.SendMessage(
+    DasResult            result = run_loop_.SendRequest(
         header,
         reinterpret_cast<const uint8_t*>(&ready),
         sizeof(ready),
         response_body,
         timeout);
-
     if (DAS::IsFailed(result))
     {
         std::string msg =

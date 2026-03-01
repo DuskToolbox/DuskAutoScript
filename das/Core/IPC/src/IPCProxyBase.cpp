@@ -27,9 +27,8 @@ DasResult IPCProxyBase::SendRequest(
         body_size);
 
     // 调用 IpcRunLoop 发送请求
-    return run_loop_->SendMessage(header, body, body_size, response_body);
+    return run_loop_->SendRequest(header, body, body_size, response_body);
 }
-
 DasResult IPCProxyBase::SendRequestNoResponse(
     uint16_t       method_id,
     const uint8_t* body,
