@@ -90,14 +90,22 @@ if(TARGET DasCoreJavaExportJar)
     add_dependencies(${_JAR_TARGET_NAME} DasCoreJavaExportJar)
 endif()
 
+# 设置配置文件输出目录（与 JAR 相同）
+# 可通过 JAVATESTPLUGIN_CONFIG_OUTPUT_DIR 变量外部传入自定义输出路径
+if(JAVATESTPLUGIN_CONFIG_OUTPUT_DIR)
+    set(_CONFIG_OUTPUT_DIR "${JAVATESTPLUGIN_CONFIG_OUTPUT_DIR}")
+else()
+    set(_CONFIG_OUTPUT_DIR "$<TARGET_PROPERTY:${_JAR_TARGET_NAME},PLUGIN_OUTPUT_DIR>")
+endif()
+
 # 复制插件配置文件到运行时目录
 add_custom_command(
     TARGET ${_JAR_TARGET_NAME}
     POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_PROPERTY:${_JAR_TARGET_NAME},PLUGIN_OUTPUT_DIR>"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${_CONFIG_OUTPUT_DIR}"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_CURRENT_SOURCE_DIR}/${PLUGIN_NAME}.json"
-        "$<TARGET_PROPERTY:${_JAR_TARGET_NAME},PLUGIN_OUTPUT_DIR>/${PLUGIN_NAME}.json"
+        "${_CONFIG_OUTPUT_DIR}/${PLUGIN_NAME}.json"
     COMMENT "[JavaTestPlugin] Copying plugin config file"
 )
 

@@ -142,5 +142,11 @@ add_custom_target(RemoveSwigOutput
 if (${DAS_BUILD_TEST})
     enable_testing()
 endif ()
+# 设置 JavaTestPlugin 配置文件输出目录
+# 多配置生成器下 TARGET_PROPERTY 无法正确展开，使用明确路径
+if(CMAKE_CONFIGURATION_TYPES)
+    set(JAVATESTPLUGIN_CONFIG_OUTPUT_DIR "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/plugins")
+endif()
+
 
 add_subdirectory(das)

@@ -8,13 +8,12 @@
 #include <csignal>
 #include <cstdlib>
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
-#include <das/Core/ForeignInterfaceHost/PluginManager.h>
-#include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/HandshakeSerialization.h>
 #include <das/Core/IPC/Host/IIpcContext.h>
+#include <das/Core/IPC/IDistributedObjectManager.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
+#include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/ObjectId.h>
-#include <das/DasApi.h>
 #include <das/IDasBase.h>
 #include <das/Utils/fmt.h>
 #include <filesystem>
@@ -165,20 +164,28 @@ void HostOnHandshakeComplete(
 
                 DAS::Core::ForeignInterfaceHost::
                     ForeignLanguageRuntimeFactoryDesc desc;
-                // 避免生命周期问题
-                std::u8string plugin_path_u8 = runtime_path.u8string();
+
+                // Java 特定配置
+                // 使用 JavaRuntimeDescPtr 管理 IDasJavaRuntimeDesc 生命周期
+                DAS::Core::ForeignInterfaceHost::JavaRuntimeDescPtr java_desc;
 
                 if (lang_lower == "java")
                 {
                     desc.language = DAS::Core::ForeignInterfaceHost::
                         ForeignInterfaceLanguage::Java;
-                    desc.class_path =
-                        reinterpret_cast<const char*>(plugin_path_u8.c_str());
+
+                    // 创建 Java 配置
+                    java_desc.reset(
+                        DAS::Core::ForeignInterfaceHost::
+                            CreateJavaRuntimeDesc());
+                    java_desc->SetClassPath({runtime_path});
+                    desc.p_user_data = java_desc.get();
                 }
                 else
                 {
                     desc.language = DAS::Core::ForeignInterfaceHost::
                         ForeignInterfaceLanguage::Cpp;
+                    desc.p_user_data = nullptr;
                 }
 
                 auto result = DAS::Core::ForeignInterfaceHost::
