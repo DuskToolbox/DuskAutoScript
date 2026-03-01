@@ -89,7 +89,7 @@ public:
     IMessageHandler* GetHandler(uint32_t interface_id) const;
 
     /**
-     * @brief 同步阻塞 IPC 调用
+     * @brief 同步阻塞 IPC 调用（使用内部 transport）
      *
      * 发送请求后进入消息循环等待，支持可重入调用。
      * 内部使用 ReceiveAndDispatch() 处理消息。
@@ -107,6 +107,30 @@ public:
         size_t                    body_size,
         std::vector<uint8_t>&     response_body,
         std::chrono::milliseconds timeout = std::chrono::seconds(30));
+
+    /**
+     * @brief 同步阻塞 IPC 调用（指定 transport）
+     *
+     * 用于主进程转发场景：可以在处理 A 的消息时，
+     * 使用 Transport_B 发送请求到 Host B。
+     *
+     * @param transport 指定使用的传输层
+     * @param request_header 请求头
+     * @param body 请求体
+     * @param body_size 请求体大小
+     * @param response_body [out] 响应体
+     * @param timeout 超时时间（默认30秒）
+     * @return 调用结果
+     */
+    DasResult SendRequest(
+        IpcTransport*             transport,
+        const IPCMessageHeader&   request_header,
+        const uint8_t*            body,
+        size_t                    body_size,
+        std::vector<uint8_t>&     response_body,
+        std::chrono::milliseconds timeout = std::chrono::seconds(30));
+
+
 
     /**
      * @brief 异步 IPC 调用（返回 sender）
@@ -185,6 +209,22 @@ public:
      * @brief 内部 receive 方法 - 核心可重入逻辑
      */
     bool ReceiveAndDispatch(std::chrono::milliseconds timeout);
+
+    /**
+     * @brief 使用指定 transport 的 receive 方法 - 用于转发场景
+     *
+     * 在主进程转发场景中，需要在处理 Transport_A 的消息时，
+     * 使用 Transport_B 发送请求。此方法允许指定 transport 接收消息。
+     *
+     * @param transport 指定的传输层
+     * @param timeout 超时时间
+     * @return 是否收到并处理了消息
+     */
+    bool ReceiveAndDispatchFromTransport(
+        IpcTransport*           transport,
+        std::chrono::milliseconds timeout);
+
+
 
     void RunInternal();
 

@@ -4,6 +4,7 @@
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/IMessageHandler.h>
+#include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcResponseSender.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/IpcTransport.h>
@@ -172,6 +173,43 @@ bool IpcRunLoop::ReceiveAndDispatch(std::chrono::milliseconds timeout)
     return false;
 }
 
+bool IpcRunLoop::ReceiveAndDispatchFromTransport(
+    IpcTransport*           transport,
+    std::chrono::milliseconds timeout)
+{
+    if (!transport)
+    {
+        return false;
+    }
+
+    IPCMessageHeader     header;
+    std::vector<uint8_t> body;
+
+    auto result = transport->Receive(header, body, static_cast<int>(timeout.count()));
+
+    if (result == DAS_S_OK)
+    {
+        // 1. 优先检查是否是响应消息
+        if (header.message_type == static_cast<uint8_t>(MessageType::RESPONSE))
+        {
+            std::unique_lock<std::mutex> lock(pending_mutex_);
+            auto it = pending_calls_.find(header.call_id);
+            if (it != pending_calls_.end())
+            {
+                it->second.response_buffer = std::move(body);
+                it->second.completed = true;
+            }
+            return true;
+        }
+
+        // 2. 分发到注册的处理器
+        DispatchToHandler(header, body);
+        return true;
+    }
+    return false;
+}
+
+
 DasResult IpcRunLoop::SendRequest(
     const IPCMessageHeader&   request_header,
     const uint8_t*            body,
@@ -179,6 +217,32 @@ DasResult IpcRunLoop::SendRequest(
     std::vector<uint8_t>&     response_body,
     std::chrono::milliseconds timeout)
 {
+    if (!transport_)
+    {
+        return DAS_E_IPC_INVALID_ARGUMENT;
+    }
+    return SendRequest(
+        transport_.get(),
+        request_header,
+        body,
+        body_size,
+        response_body,
+        timeout);
+}
+
+DasResult IpcRunLoop::SendRequest(
+    IpcTransport*             transport,
+    const IPCMessageHeader&   request_header,
+    const uint8_t*            body,
+    size_t                    body_size,
+    std::vector<uint8_t>&     response_body,
+    std::chrono::milliseconds timeout)
+{
+    if (!transport)
+    {
+        return DAS_E_IPC_INVALID_ARGUMENT;
+    }
+
     if (t_nested_depth >= MAX_NESTED_DEPTH)
     {
         return DAS_E_IPC_DEADLOCK_DETECTED;
@@ -196,7 +260,7 @@ DasResult IpcRunLoop::SendRequest(
     }
 
     // 发送请求
-    auto send_result = transport_->Send(header, body, body_size);
+    auto send_result = transport->Send(header, body, body_size);
     if (send_result != DAS_S_OK)
     {
         std::unique_lock<std::mutex> lock(pending_mutex_);
@@ -207,7 +271,7 @@ DasResult IpcRunLoop::SendRequest(
     t_nested_depth++;
     auto deadline = std::chrono::steady_clock::now() + timeout;
 
-    // 使用 ReceiveAndDispatch 等待响应
+    // 使用 ReceiveAndDispatchFromTransport 等待响应
     while (std::chrono::steady_clock::now() < deadline)
     {
         // 检查是否已收到响应
@@ -223,8 +287,10 @@ DasResult IpcRunLoop::SendRequest(
             }
         }
 
-        // 使用 ReceiveAndDispatch 处理消息（关键可重入点）
-        ReceiveAndDispatch(std::chrono::milliseconds(PUMP_POLL_TIMEOUT_MS));
+        // 使用指定的 transport 接收消息
+        ReceiveAndDispatchFromTransport(
+            transport,
+            std::chrono::milliseconds(PUMP_POLL_TIMEOUT_MS));
 
         if (!running_.load())
         {

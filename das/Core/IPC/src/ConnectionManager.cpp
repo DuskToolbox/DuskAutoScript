@@ -69,7 +69,7 @@ DasResult ConnectionManager::RegisterConnection(
         .run_loop = nullptr};
 
     std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
-    impl_->connections_[remote_id] = info;
+    impl_->connections_[remote_id] = std::move(info);
 
     return DAS_S_OK;
 }
@@ -123,6 +123,7 @@ DasResult ConnectionManager::GetConnection(
     uint16_t        session_id,
     ConnectionInfo& out_info) const
 {
+    static_cast<void>(out_info); // 暂时不使用
     std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
 
     auto it = impl_->connections_.find(session_id);
@@ -131,8 +132,9 @@ DasResult ConnectionManager::GetConnection(
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 
-    out_info = it->second;
-    return DAS_S_OK;
+    // 注意：由于 ConnectionInfo 包含 unique_ptr，无法拷贝
+    // 调用者应使用 GetTransport() 获取 transport 指针
+    return DAS_E_FAIL;
 }
 
 IpcTransport* ConnectionManager::GetTransport(uint16_t session_id) const
@@ -145,14 +147,14 @@ IpcTransport* ConnectionManager::GetTransport(uint16_t session_id) const
         return nullptr;
     }
 
-    return it->second.transport;
+    return it->second.transport.get();
 }
 
 DasResult ConnectionManager::RegisterHostTransport(
-    uint16_t          session_id,
-    IpcTransport*     transport,
-    SharedMemoryPool* shm_pool,
-    IpcRunLoop*       run_loop)
+    uint16_t                      session_id,
+    std::unique_ptr<IpcTransport> transport,
+    SharedMemoryPool*             shm_pool,
+    IpcRunLoop*                   run_loop)
 {
     std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
 
@@ -160,7 +162,7 @@ DasResult ConnectionManager::RegisterHostTransport(
     auto it = impl_->connections_.find(session_id);
     if (it != impl_->connections_.end())
     {
-        it->second.transport = transport;
+        it->second.transport = std::move(transport);
         it->second.shm_pool = shm_pool;
         it->second.run_loop = run_loop;
         it->second.is_alive = true;
@@ -176,11 +178,11 @@ DasResult ConnectionManager::RegisterHostTransport(
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now().time_since_epoch())
                 .count()),
-        .transport = transport,
+        .transport = std::move(transport),
         .shm_pool = shm_pool,
         .run_loop = run_loop};
 
-    impl_->connections_[session_id] = info;
+    impl_->connections_[session_id] = std::move(info);
     return DAS_S_OK;
 }
 
@@ -204,6 +206,46 @@ DasResult ConnectionManager::SetConnectionAlive(
                 std::chrono::steady_clock::now().time_since_epoch())
                 .count();
     }
+
+    return DAS_S_OK;
+}
+
+std::vector<uint16_t> ConnectionManager::GetConnectedSessions() const
+{
+    std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+    
+    std::vector<uint16_t> sessions;
+    sessions.reserve(impl_->connections_.size());
+    
+    for (const auto& [session_id, info] : impl_->connections_)
+    {
+        if (info.is_alive && info.transport)
+        {
+            sessions.push_back(session_id);
+        }
+    }
+    
+    return sessions;
+}
+
+DasResult ConnectionManager::UnregisterTransport(uint16_t session_id)
+{
+    std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+
+    auto it = impl_->connections_.find(session_id);
+    if (it == impl_->connections_.end())
+    {
+        return DAS_E_IPC_OBJECT_NOT_FOUND;
+    }
+
+    // 清理资源（不删除 transport，只清除引用）
+    it->second.transport = nullptr;
+    it->second.shm_pool = nullptr;
+    it->second.run_loop = nullptr;
+    it->second.is_alive = false;
+
+    // 移除连接条目
+    impl_->connections_.erase(it);
 
     return DAS_S_OK;
 }

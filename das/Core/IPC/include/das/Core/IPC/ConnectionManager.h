@@ -29,13 +29,13 @@ class IpcRunLoop;
  */
 struct ConnectionInfo
 {
-    uint16_t          host_id;
-    uint16_t          plugin_id;
-    bool              is_alive;
-    uint64_t          last_heartbeat_ms;
-    IpcTransport*     transport; ///< 消息队列传输（非拥有指针）
-    SharedMemoryPool* shm_pool;  ///< 共享内存池（非拥有指针）
-    IpcRunLoop*       run_loop;  ///< 运行循环（非拥有指针，含 pending_calls）
+    uint16_t                      host_id;
+    uint16_t                      plugin_id;
+    bool                          is_alive;
+    uint64_t                      last_heartbeat_ms;
+    std::unique_ptr<IpcTransport> transport; ///< 消息队列传输（拥有所有权）
+    SharedMemoryPool*             shm_pool;  ///< 共享内存池（非拥有指针）
+    IpcRunLoop*                   run_loop;  ///< 运行循环（非拥有指针，含 pending_calls）
 };
 
 class ConnectionManager
@@ -57,6 +57,14 @@ public:
     bool IsConnectionAlive(uint16_t remote_id) const;
 
     /**
+     * @brief 获取所有已连接的 session_id 列表
+     *
+     * @return std::vector<uint16_t> session_id 列表
+     */
+    std::vector<uint16_t> GetConnectedSessions() const;
+
+    /**
+     * @brief 获取到指定 session 的连接信息
      * @brief 获取到指定 session 的连接信息
      *
      * @param session_id 目标会话ID
@@ -77,19 +85,27 @@ public:
     /**
      * @brief 注册 Host 进程的传输层
      *
-     * 用于主进程转发消息到目标 Host
+     * 用于主进程转发消息到目标 Host。ConnectionManager 持有 Transport 的所有权。
      *
      * @param session_id 目标会话ID
-     * @param transport 传输层指针（不持有所有权）
+     * @param transport 传输层（转移所有权）
      * @param shm_pool 共享内存池指针（可选，不持有所有权）
      * @param run_loop 运行循环指针（可选，不持有所有权）
      * @return DasResult DAS_S_OK 成功
      */
     DasResult RegisterHostTransport(
-        uint16_t          session_id,
-        IpcTransport*     transport,
-        SharedMemoryPool* shm_pool = nullptr,
-        IpcRunLoop*       run_loop = nullptr);
+        uint16_t                      session_id,
+        std::unique_ptr<IpcTransport> transport,
+        SharedMemoryPool*             shm_pool = nullptr,
+        IpcRunLoop*                   run_loop = nullptr);
+
+    /**
+     * @brief 取消注册 Host 进程的传输层
+     *
+     * @param session_id 目标会话ID
+     * @return DasResult DAS_S_OK 成功，DAS_E_IPC_OBJECT_NOT_FOUND 未找到
+     */
+    DasResult UnregisterTransport(uint16_t session_id);
 
     /**
      * @brief 更新连接的活跃状态

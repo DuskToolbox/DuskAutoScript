@@ -1,4 +1,5 @@
 #include <das/Core/IPC/Config.h>
+#include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/MainProcess/MainProcessServer.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/DasApi.h>
@@ -18,8 +19,20 @@ DasResult IpcLoadPluginImpl(
 
     auto& server = MainProcess::MainProcessServer::GetInstance();
 
-    RemoteObjectInfo object_info;
-    DasResult        result = server.SendLoadPlugin(plugin_path, object_info);
+    // 获取第一个可用的 session_id
+    // TODO: 需要调用者显式指定 session_id
+    auto&  conn_manager = ConnectionManager::GetInstance();
+    auto   sessions = conn_manager.GetConnectedSessions();
+    
+    if (sessions.empty())
+    {
+        return DAS_E_IPC_NO_CONNECTIONS;
+    }
+    
+    uint16_t session_id = sessions[0];
+
+    ObjectId object_id{};
+    DasResult result = server.SendLoadPlugin(plugin_path, object_id, session_id);
 
     if (result != DAS_S_OK)
     {
@@ -33,8 +46,7 @@ DasResult IpcLoadPluginImpl(
         return DAS_E_IPC_INVALID_STATE;
     }
 
-    DasPtr<IDasBase> proxy =
-        factory.CreateProxy<IDasBase>(object_info.object_id);
+    DasPtr<IDasBase> proxy = factory.CreateProxy<IDasBase>(object_id);
 
     if (!proxy)
     {

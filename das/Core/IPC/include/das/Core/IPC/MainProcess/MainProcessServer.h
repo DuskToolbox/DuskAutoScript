@@ -5,6 +5,7 @@
 #include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
+#include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/IDasBase.h>
@@ -238,30 +239,19 @@ namespace Core
                     RemoteObjectInfo& out_info) const;
 
                 /**
-                 * @brief 发送 LOAD_PLUGIN 命令
+                 * @brief 发送 LOAD_PLUGIN 命令到指定 Host
                  *
-
-                 * * @param plugin_path 插件路径
-                 * @param
-                 * out_object_info 输出插件对象信息
-                 * @return
-                 * DasResult 发送结果
+                 * @param plugin_path 插件路径
+                 * @param out_object_id 输出插件对象 ID
+                 * @param target_session_id 目标 Host 的 session_id
+                 * @param timeout 超时时间（默认30秒）
+                 * @return DasResult 发送结果
                  */
                 DasResult SendLoadPlugin(
-                    const std::string& plugin_path,
-                    RemoteObjectInfo&  out_object_info);
-
-                /**
-                 * @brief 异步发送 LOAD_PLUGIN 命令 (使用
-                 * stdexec)
-     *
-                 * @param plugin_path 插件路径
-     *
-                 * @return 返回 stdexec sender，包含 ObjectId 和
-                 * RemoteObjectInfo
-
-                 */
-                auto SendLoadPluginAsync(const std::string& plugin_path);
+                    const std::string&          plugin_path,
+                    ObjectId&                   out_object_id,
+                    uint16_t                    target_session_id,
+                    std::chrono::milliseconds   timeout = std::chrono::seconds(30));
 
                 // ====== 消息分发 ======
 
@@ -386,6 +376,10 @@ namespace Core
                     size_t                  body_size,
                     std::vector<uint8_t>&   response_body);
 
+
+
+                // IPC 消息处理（用于 SendRequest）
+                Das::Core::IPC::IpcRunLoop runloop_;
 
                 mutable std::mutex                            sessions_mutex_;
                 std::unordered_map<uint16_t, HostSessionInfo> sessions_;

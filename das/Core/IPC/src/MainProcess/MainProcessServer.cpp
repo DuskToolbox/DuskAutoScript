@@ -12,6 +12,7 @@
 #endif
 
 #include <das/Core/IPC/ConnectionManager.h>
+#include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcTransport.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/SessionCoordinator.h>
@@ -401,41 +402,7 @@ namespace Core
                     out_info);
             }
 
-            DasResult MainProcessServer::SendLoadPlugin(
-                const std::string& plugin_path,
-                RemoteObjectInfo&  out_object_info)
-            {
-                if (!is_initialized_.load() || !is_running_.load())
-                {
-                    return DAS_E_IPC_INVALID_STATE;
-                }
 
-                // 检查是否有连接的 Host 进程
-                auto connected_sessions = GetConnectedSessions();
-                if (connected_sessions.empty())
-                {
-                    return DAS_E_IPC_NO_CONNECTIONS;
-                }
-
-                // TODO: 实现完整的 IPC 传输逻辑
-                // 当前需要:
-                // 1. IpcTransport 实例
-                // 2. 序列化/反序列化工具函数
-                // 3. stdexec 异步支持
-                (void)plugin_path;
-                (void)out_object_info;
-                return DAS_E_NOT_IMPLEMENTED;
-            }
-
-            auto MainProcessServer::SendLoadPluginAsync(
-                const std::string& plugin_path)
-            {
-                // TODO: 实现基于 stdexec 的异步加载
-                // 当前返回未实现错误
-                RemoteObjectInfo info{};
-                info.name = plugin_path;
-                return std::make_tuple(ObjectId{}, info);
-            }
 
             DasResult MainProcessServer::DispatchMessage(
                 const IPCMessageHeader& header,
@@ -598,6 +565,82 @@ namespace Core
                 response_body.clear();
                 return DAS_S_OK;
             }
+
+            DasResult MainProcessServer::SendLoadPlugin(
+                const std::string&        plugin_path,
+                ObjectId&                 out_object_id,
+                uint16_t                  target_session_id,
+                std::chrono::milliseconds timeout)
+            {
+                // 1. 获取目标 Transport
+                IpcTransport* transport =
+                    ::Das::Core::IPC::ConnectionManager::GetInstance()
+                        .GetTransport(target_session_id);
+                if (!transport)
+                {
+                    std::string msg = DAS_FMT_NS::format(
+                        "SendLoadPlugin: No transport for session_id: {}",
+                        target_session_id);
+                    DAS_LOG_ERROR(msg.c_str());
+                    return DAS_E_IPC_NO_CONNECTIONS;
+                }
+
+                // 2. 构造消息头
+                IPCMessageHeader header{};
+                header.interface_id = static_cast<uint64_t>(
+                    IpcCommandType::LOAD_PLUGIN);
+                header.session_id =
+                    *SessionCoordinator::GetInstance().GetLocalSessionId();
+                header.message_type =
+                    static_cast<uint8_t>(MessageType::REQUEST);
+
+                // 3. 构造 payload: [path_len(2)][path_bytes...]
+                std::vector<uint8_t> payload;
+                uint16_t              path_len =
+                    static_cast<uint16_t>(plugin_path.size());
+                payload.push_back(static_cast<uint8_t>(path_len & 0xFF));
+                payload.push_back(static_cast<uint8_t>((path_len >> 8) & 0xFF));
+                payload.insert(
+                    payload.end(),
+                    plugin_path.begin(),
+                    plugin_path.end());
+
+                // 4. 发送请求并等待响应
+                std::vector<uint8_t> response_body;
+                DasResult            result = runloop_.SendRequest(
+                    transport,
+                    header,
+                    payload.data(),
+                    payload.size(),
+                    response_body,
+                    timeout);
+
+                if (DAS::IsFailed(result))
+                {
+                    std::string msg = DAS_FMT_NS::format(
+                        "SendLoadPlugin: SendRequest failed for session_id: {}, result: {:#x}",
+                        target_session_id,
+                        static_cast<uint32_t>(result));
+                    DAS_LOG_ERROR(msg.c_str());
+                    return result;
+                }
+
+                // 5. 解析响应 (ObjectId: 8 bytes)
+                if (response_body.size() < 8)
+                {
+                    std::string msg = DAS_FMT_NS::format(
+                        "SendLoadPlugin: Invalid response size: {}",
+                        response_body.size());
+                    DAS_LOG_ERROR(msg.c_str());
+                    return DAS_E_IPC_INVALID_MESSAGE;
+                }
+
+                std::memcpy(&out_object_id, response_body.data(), 8);
+
+                return DAS_S_OK;
+            }
+
+
 
 
         } // namespace MainProcess
