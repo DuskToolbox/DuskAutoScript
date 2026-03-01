@@ -15,6 +15,7 @@
 #include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/Host/HostConfig.h>
 #include <das/Core/IPC/HostLauncher.h>
+#include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
@@ -67,36 +68,18 @@ protected:
         }
 
         DAS_LOG_INFO("MainProcessServer initialized");
-
-        // 创建并启动 IpcRunLoop（在单独线程中阻塞运行）
-        runloop_ = std::make_unique<DAS::Core::IPC::IpcRunLoop>();
-        runloop_thread_ = std::thread([this]() { runloop_->Run(); });
-
-        DAS_LOG_INFO("IpcRunLoop started");
     }
 
     void TearDown() override
     {
-        launcher_.Stop();
-
-        // 停止 IpcRunLoop
-        if (runloop_)
-        {
-            runloop_->RequestStop();
-        }
-        if (runloop_thread_.joinable())
-        {
-            runloop_thread_.join();
-        }
-        runloop_.reset();
-        DAS_LOG_INFO("IpcRunLoop stopped");
-
         // 关闭 MainProcessServer
         auto& server =
             DAS::Core::IPC::MainProcess::MainProcessServer::GetInstance();
         server.Shutdown();
 
         DAS_LOG_INFO("MainProcessServer shutdown");
+
+        launcher_.Stop();
 
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
@@ -147,19 +130,16 @@ protected:
     }
 
     /**
-     * @brief 启动 Host 进程并将传输层设置到 IpcRunLoop
-     * @param plugin_name 插件名称
+     * @brief 启动 Host 进程并注册到 ConnectionManager
      * @return DasResult 成功返回 DAS_S_OK
      */
-    DasResult StartHostAndSetupRunLoop(const std::string& plugin_name)
+    DasResult StartHostAndSetupRunLoop()
     {
-        std::string plugin_json_path = GetTestPluginJsonPath(plugin_name);
-
         // 启动 Host 进程
         uint16_t  session_id = 0;
         DasResult result = launcher_.Start(
             host_exe_path_,
-            plugin_json_path,
+            "",
             session_id,
             10000); // 10秒超时
         if (DAS::IsFailed(result))
@@ -168,7 +148,7 @@ protected:
             return result;
         }
 
-        // 将 HostLauncher 的传输层转移到 IpcRunLoop
+        // 将 Transport 注册到 ConnectionManager
         auto transport = launcher_.ReleaseTransport();
         if (!transport)
         {
@@ -176,20 +156,32 @@ protected:
             return DAS_E_FAIL;
         }
 
-        runloop_->SetTransport(std::move(transport));
+        // 注册到 ConnectionManager（MainProcessServer.SendLoadPlugin 需要）
+        // ConnectionManager 持有 Transport 的所有权
+        auto& conn_manager =
+            DAS::Core::IPC::ConnectionManager::GetInstance();
+        result = conn_manager.RegisterHostTransport(
+            session_id,
+            std::move(transport),
+            nullptr, // shm_pool
+            nullptr  // run_loop (主进程不需要)
+        );
+        if (DAS::IsFailed(result))
+        {
+            DAS_LOG_ERROR("Failed to register transport to ConnectionManager");
+            return result;
+        }
+
         std::string msg = DAS_FMT_NS::format(
-            "Transport set to IpcRunLoop, session_id={}",
+            "Transport registered to ConnectionManager, session_id={}",
             session_id);
         DAS_LOG_INFO(msg.c_str());
         return DAS_S_OK;
     }
 
-    std::string                                 host_exe_path_;
-    DAS::Core::IPC::HostLauncher                launcher_;
-    std::unique_ptr<DAS::Core::IPC::IpcRunLoop> runloop_;
-    std::thread                                 runloop_thread_;
+    std::string                            host_exe_path_;
+    DAS::Core::IPC::HostLauncher           launcher_;
 };
-
 // ============================================================
 // 辅助函数 - 发送 IPC 命令
 // ============================================================

@@ -139,15 +139,12 @@ TEST_F(IpcMultiProcessTest, CrossProcess_LoadPlugin)
         GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
     }
 
-    // 1. 启动 Host 进程并设置 IpcRunLoop
-    DasResult result = StartHostAndSetupRunLoop("IpcTestPlugin1");
+    // 1. 启动 Host 进程并注册到 ConnectionManager
+    DasResult result = StartHostAndSetupRunLoop();
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_TRUE(launcher_.IsRunning());
 
-    // 2. IpcRunLoop 已设置传输层，可以直接发送消息
-    // 注意：不再需要显式获取 transport
-
-    // 3. 获取插件 JSON 路径
+    // 2. 获取插件 JSON 路径
     std::string plugin_json_path;
     try
     {
@@ -158,15 +155,16 @@ TEST_F(IpcMultiProcessTest, CrossProcess_LoadPlugin)
         GTEST_SKIP() << "Plugin JSON not found: " << e.what();
     }
 
-    // 4. 发送 LOAD_PLUGIN 命令
-    DAS::Core::IPC::ObjectId object_id{};
-    result = IpcTestUtils::SendLoadPluginCommand(
-        runloop_.get(),
+    // 3. 通过 MainProcessServer 发送 LOAD_PLUGIN 命令
+    auto&                         server = DAS::Core::IPC::MainProcess::MainProcessServer::GetInstance();
+    DAS::Core::IPC::ObjectId      object_id{};
+    result = server.SendLoadPlugin(
         plugin_json_path,
-        object_id);
+        object_id,
+        launcher_.GetSessionId());
     ASSERT_EQ(result, DAS_S_OK);
 
-    // 5. 验证返回的对象 ID
+    // 4. 验证返回的对象 ID
     EXPECT_EQ(object_id.session_id, launcher_.GetSessionId());
 
     std::string log_msg = DAS_FMT_NS::format(
@@ -190,26 +188,25 @@ TEST_F(IpcMultiProcessTest, CrossProcess_CallComponent)
         GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
     }
 
-    // 1. 启动 Host 进程并设置 IpcRunLoop
-    DasResult result = StartHostAndSetupRunLoop("IpcTestPlugin2");
+    // 1. 启动 Host 进程并注册到 ConnectionManager
+    DasResult result = StartHostAndSetupRunLoop();
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_TRUE(launcher_.IsRunning());
 
     // 2. 获取 IpcTestPlugin2 JSON 路径
     std::string plugin_json_path = GetTestPluginJsonPath("IpcTestPlugin2");
 
-    // 4. 加载 IpcTestPlugin2（包含 IDasComponent + Factory）
+    // 3. 通过 MainProcessServer 加载插件
+    auto&                    server = DAS::Core::IPC::MainProcess::MainProcessServer::GetInstance();
     DAS::Core::IPC::ObjectId factory_id{};
-    result = IpcTestUtils::SendLoadPluginCommand(
-        runloop_.get(),
+    result = server.SendLoadPlugin(
         plugin_json_path,
         factory_id,
-        std::chrono::milliseconds(5000));
+        launcher_.GetSessionId());
     ASSERT_EQ(result, DAS_S_OK);
 
-    // 5. 验证 Factory 对象在正确的 Host 进程中
+    // 4. 验证 Factory 对象在正确的 Host 进程中
     EXPECT_EQ(factory_id.session_id, launcher_.GetSessionId());
-
 
     std::string log_msg = DAS_FMT_NS::format(
         "[CrossProcess_CallComponent] IpcTestPlugin2 loaded, factory_id={{"
@@ -249,19 +246,18 @@ TEST_F(IpcMultiProcessTest, CrossProcess_VerifySessionId)
     // 3. 验证两个 session_id 不同
     EXPECT_NE(session_a, session_b);
 
-    // 4. 为每个 Host 创建独立的 IpcRunLoop
-    auto        runloop_a = std::make_unique<DAS::Core::IPC::IpcRunLoop>();
-    auto        runloop_b = std::make_unique<DAS::Core::IPC::IpcRunLoop>();
-    std::thread thread_a([&]() { runloop_a->Run(); });
-    std::thread thread_b([&]() { runloop_b->Run(); });
-
-    // 将 Transport 转移到 IpcRunLoop
+    // 4. 注册 Transport 到 ConnectionManager
     auto transport_a = host_a.ReleaseTransport();
     auto transport_b = host_b.ReleaseTransport();
     ASSERT_NE(transport_a, nullptr);
     ASSERT_NE(transport_b, nullptr);
-    runloop_a->SetTransport(std::move(transport_a));
-    runloop_b->SetTransport(std::move(transport_b));
+
+    auto& conn_manager = DAS::Core::IPC::ConnectionManager::GetInstance();
+    result = conn_manager.RegisterHostTransport(
+        session_a, std::move(transport_a), nullptr, nullptr);
+    ASSERT_EQ(result, DAS_S_OK);
+    result = conn_manager.RegisterHostTransport(
+        session_b, std::move(transport_b), nullptr, nullptr);
 
     // 5. 获取插件 JSON 路径
     std::string plugin1_path, plugin2_path;
@@ -272,32 +268,23 @@ TEST_F(IpcMultiProcessTest, CrossProcess_VerifySessionId)
     }
     catch (const std::exception& e)
     {
-        runloop_a->RequestStop();
-        runloop_b->RequestStop();
-        thread_a.join();
-        thread_b.join();
+        conn_manager.UnregisterTransport(session_a);
+        conn_manager.UnregisterTransport(session_b);
         host_a.Stop();
         host_b.Stop();
         GTEST_SKIP() << "Plugin JSON not found: " << e.what();
     }
 
-    // 6. 在 Host A 加载 IpcTestPlugin1
+    // 6. 通过 MainProcessServer 在 Host A 加载 IpcTestPlugin1
+    auto&                    server = DAS::Core::IPC::MainProcess::MainProcessServer::GetInstance();
     DAS::Core::IPC::ObjectId object_a{};
-    result = IpcTestUtils::SendLoadPluginCommand(
-        runloop_a.get(),
-        plugin1_path,
-        object_a,
-        std::chrono::milliseconds(5000));
+    result = server.SendLoadPlugin(plugin1_path, object_a, session_a);
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_EQ(object_a.session_id, session_a);
 
-    // 7. 在 Host B 加载 IpcTestPlugin2
+    // 7. 通过 MainProcessServer 在 Host B 加载 IpcTestPlugin2
     DAS::Core::IPC::ObjectId object_b{};
-    result = IpcTestUtils::SendLoadPluginCommand(
-        runloop_b.get(),
-        plugin2_path,
-        object_b,
-        std::chrono::milliseconds(5000));
+    result = server.SendLoadPlugin(plugin2_path, object_b, session_b);
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_EQ(object_b.session_id, session_b);
 
@@ -314,10 +301,8 @@ TEST_F(IpcMultiProcessTest, CrossProcess_VerifySessionId)
     DAS_LOG_INFO(log_msg.c_str());
 
     // 9. 清理
-    runloop_a->RequestStop();
-    runloop_b->RequestStop();
-    thread_a.join();
-    thread_b.join();
+    conn_manager.UnregisterTransport(session_a);
+    conn_manager.UnregisterTransport(session_b);
     host_a.Stop();
     host_b.Stop();
 }
@@ -344,150 +329,69 @@ TEST_F(IpcMultiProcessTest, CrossProcess_HostToHostCall)
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_GT(session_b, static_cast<uint16_t>(0));
 
-    // 2. 获取 IpcTestPlugin2 JSON 路径（包含 IDasComponent）
-    std::string plugin2_path;
-    try
-    {
-        plugin2_path = GetTestPluginJsonPath("IpcTestPlugin2");
-    }
-    catch (const std::exception& e)
-    {
-        host_b.Stop();
-        GTEST_SKIP() << "Plugin JSON not found: " << e.what();
-    }
-
-    // 3. 为 Host B 创建 IpcRunLoop
-    auto        runloop_b = std::make_unique<DAS::Core::IPC::IpcRunLoop>();
-    std::thread thread_b([&]() { runloop_b->Run(); });
-    auto        transport_b = host_b.ReleaseTransport();
-    ASSERT_NE(transport_b, nullptr);
-    runloop_b->SetTransport(std::move(transport_b));
-
-    // 诊断：打印 JSON 路径
-    std::string diag_msg = DAS_FMT_NS::format(
-        "[CrossProcess_HostToHostCall] Loading plugin: {}",
-        plugin2_path);
-    DAS_LOG_INFO(diag_msg.c_str());
-
-    // 检查文件是否存在
-    if (!std::filesystem::exists(plugin2_path))
-    {
-        std::string err_msg =
-            DAS_FMT_NS::format("Plugin JSON not found: {}", plugin2_path);
-        DAS_LOG_ERROR(err_msg.c_str());
-        runloop_b->RequestStop();
-        thread_b.join();
-        host_b.Stop();
-        FAIL() << err_msg;
-    }
-
-    // 4. 在 Host B 加载 IpcTestPlugin2
-    DAS::Core::IPC::ObjectId factory_id_b{};
-    result = IpcTestUtils::SendLoadPluginCommand(
-        runloop_b.get(),
-        plugin2_path,
-        factory_id_b,
-        std::chrono::milliseconds(5000));
-    ASSERT_EQ(result, DAS_S_OK);
-    EXPECT_EQ(factory_id_b.session_id, session_b);
-
-    std::string log_msg = DAS_FMT_NS::format(
-        "[CrossProcess_HostToHostCall] HostB loaded plugin, factory_id={{"
-        "session:{}, gen:{}, local:{}}}",
-        factory_id_b.session_id,
-        factory_id_b.generation,
-        factory_id_b.local_id);
-    DAS_LOG_INFO(log_msg.c_str());
-
-    // 5. 启动 Host A（调用方进程）
+    // 2. 启动 Host A（调用方进程）
     DAS::Core::IPC::HostLauncher host_a;
     uint16_t                     session_a = 0;
     result = host_a.Start(host_exe_path_, "", session_a, 10000);
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_GT(session_a, static_cast<uint16_t>(0));
-    EXPECT_NE(session_a, session_b); // 两个 Host 必须有不同的 session_id
+    EXPECT_NE(session_a, session_b);
 
-    // 6. 为 Host A 创建 IpcRunLoop
-    auto        runloop_a = std::make_unique<DAS::Core::IPC::IpcRunLoop>();
-    std::thread thread_a([&]() { runloop_a->Run(); });
-    auto        transport_a = host_a.ReleaseTransport();
+    // 3. 注册 Transport 到 ConnectionManager
+    auto transport_a = host_a.ReleaseTransport();
+    auto transport_b = host_b.ReleaseTransport();
     ASSERT_NE(transport_a, nullptr);
-    runloop_a->SetTransport(std::move(transport_a));
+    ASSERT_NE(transport_b, nullptr);
 
-    // 7. 获取 IpcTestPlugin1 JSON 路径（调用方）
-    std::string plugin1_path;
+    auto& conn_manager = DAS::Core::IPC::ConnectionManager::GetInstance();
+    result = conn_manager.RegisterHostTransport(
+        session_a, std::move(transport_a), nullptr, nullptr);
+    ASSERT_EQ(result, DAS_S_OK);
+    result = conn_manager.RegisterHostTransport(
+        session_b, std::move(transport_b), nullptr, nullptr);
+
+    // 4. 获取插件 JSON 路径
+    std::string plugin1_path, plugin2_path;
     try
     {
         plugin1_path = GetTestPluginJsonPath("IpcTestPlugin1");
+        plugin2_path = GetTestPluginJsonPath("IpcTestPlugin2");
     }
     catch (const std::exception& e)
     {
-        runloop_a->RequestStop();
-        runloop_b->RequestStop();
-        thread_a.join();
-        thread_b.join();
+        conn_manager.UnregisterTransport(session_a);
+        conn_manager.UnregisterTransport(session_b);
         host_a.Stop();
         host_b.Stop();
         GTEST_SKIP() << "Plugin JSON not found: " << e.what();
     }
 
-    // 8. 在 Host A 加载 IpcTestPlugin1
-    DAS::Core::IPC::ObjectId factory_id_a{};
-    result = IpcTestUtils::SendLoadPluginCommand(
-        runloop_a.get(),
-        plugin1_path,
-        factory_id_a,
-        std::chrono::milliseconds(5000));
+    // 5. 通过 MainProcessServer 加载插件
+    auto&                    server = DAS::Core::IPC::MainProcess::MainProcessServer::GetInstance();
+    DAS::Core::IPC::ObjectId factory_id_a{}, factory_id_b{};
+
+    result = server.SendLoadPlugin(plugin1_path, factory_id_a, session_a);
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_EQ(factory_id_a.session_id, session_a);
 
-    // 9. 注册 Host A 和 Host B 的 Transport 到 ConnectionManager
-    //    使用 IpcRunLoop::GetTransport() 获取底层 transport 指针
-    auto& conn_manager = DAS::Core::IPC::ConnectionManager::GetInstance();
-    result = conn_manager.RegisterHostTransport(
-        session_a,
-        runloop_a->GetTransport(),
-        nullptr, // shm_pool
-        runloop_a.get());
-    EXPECT_EQ(result, DAS_S_OK);
+    result = server.SendLoadPlugin(plugin2_path, factory_id_b, session_b);
+    ASSERT_EQ(result, DAS_S_OK);
+    EXPECT_EQ(factory_id_b.session_id, session_b);
 
-    result = conn_manager.RegisterHostTransport(
-        session_b,
-        runloop_b->GetTransport(),
-        nullptr, // shm_pool
-        runloop_b.get());
-    EXPECT_EQ(result, DAS_S_OK);
-
-    // 10. 验证 ConnectionManager 可以获取 Transport
+    // 6. 验证 ConnectionManager 可以获取 Transport
     auto* transport_from_a = conn_manager.GetTransport(session_b);
     EXPECT_NE(transport_from_a, nullptr);
-    EXPECT_EQ(transport_from_a, runloop_b->GetTransport()); // 应该是同一个 Transport
 
-    // 11. 【关键】Host A 通过主进程调用 Host B 的对象
-    //    构造一个目标为 Host B 对象的调用消息
-    //    由于测试进程不是主进程，这里模拟转发逻辑
-
-    //    实际的转发流程：
-    //    Host A 构造消息(session_id=session_b) → 发送到主进程
-    //    → 主进程检查 session_id != local → 转发到 Host B
-    //    → Host B 处理并返回响应
-    //    → 响应原路返回给 Host A
-
-    //    当前测试验证：ConnectionManager 正确注册和获取 Transport
-    //    完整的转发测试需要主进程参与，这里验证基础设施
-
-    log_msg = DAS_FMT_NS::format(
+    std::string log_msg = DAS_FMT_NS::format(
         "[CrossProcess_HostToHostCall] Cross-process infrastructure verified: "
         "HostA(session={}) can reach HostB(session={}) via ConnectionManager",
         session_a,
         session_b);
     DAS_LOG_INFO(log_msg.c_str());
 
-    // 12. 清理
-    runloop_a->RequestStop();
-    runloop_b->RequestStop();
-    thread_a.join();
-    thread_b.join();
+    // 7. 清理
+    conn_manager.UnregisterTransport(session_a);
+    conn_manager.UnregisterTransport(session_b);
     host_a.Stop();
     host_b.Stop();
 }
@@ -525,17 +429,18 @@ TEST_F(IpcMultiProcessTest, CrossProcess_LoadJavaPlugin)
                      << jar_path.string();
     }
 
-    // 3. 启动 Host 进程并设置 IpcRunLoop
-    DasResult result = StartHostAndSetupRunLoop("JavaTestPlugin");
+    // 3. 启动 Host 进程并注册到 ConnectionManager
+    DasResult result = StartHostAndSetupRunLoop();
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_TRUE(launcher_.IsRunning());
 
-    // 4. 发送 LOAD_PLUGIN 命令（使用 IpcRunLoop，支持可重入消息处理）
+    // 4. 通过 MainProcessServer 发送 LOAD_PLUGIN 命令
+    auto&                    server = DAS::Core::IPC::MainProcess::MainProcessServer::GetInstance();
     DAS::Core::IPC::ObjectId object_id{};
-    result = IpcTestUtils::SendLoadPluginCommand(
-        runloop_.get(),
+    result = server.SendLoadPlugin(
         plugin_json_path,
         object_id,
+        launcher_.GetSessionId(),
         std::chrono::milliseconds(30000)); // Java 插件可能需要更长时间（JVM 初始化）
 
     if (DAS::IsFailed(result))
