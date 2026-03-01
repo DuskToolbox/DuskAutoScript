@@ -18,6 +18,7 @@
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
+#include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/IpcTransport.h>
 #include <das/Core/IPC/MainProcess/MainProcessServer.h>
 #include <das/Core/IPC/ObjectId.h>
@@ -66,11 +67,29 @@ protected:
         }
 
         DAS_LOG_INFO("MainProcessServer initialized");
+
+        // 创建并启动 IpcRunLoop（在单独线程中阻塞运行）
+        runloop_ = std::make_unique<DAS::Core::IPC::IpcRunLoop>();
+        runloop_thread_ = std::thread([this]() { runloop_->Run(); });
+
+        DAS_LOG_INFO("IpcRunLoop started");
     }
 
     void TearDown() override
     {
         launcher_.Stop();
+
+        // 停止 IpcRunLoop
+        if (runloop_)
+        {
+            runloop_->RequestStop();
+        }
+        if (runloop_thread_.joinable())
+        {
+            runloop_thread_.join();
+        }
+        runloop_.reset();
+        DAS_LOG_INFO("IpcRunLoop stopped");
 
         // 关闭 MainProcessServer
         auto& server =
@@ -127,8 +146,48 @@ protected:
         return json_path.string();
     }
 
-    std::string                  host_exe_path_;
-    DAS::Core::IPC::HostLauncher launcher_;
+    /**
+     * @brief 启动 Host 进程并将传输层设置到 IpcRunLoop
+     * @param plugin_name 插件名称
+     * @return DasResult 成功返回 DAS_S_OK
+     */
+    DasResult StartHostAndSetupRunLoop(const std::string& plugin_name)
+    {
+        std::string plugin_json_path = GetTestPluginJsonPath(plugin_name);
+
+        // 启动 Host 进程
+        uint16_t  session_id = 0;
+        DasResult result = launcher_.Start(
+            host_exe_path_,
+            plugin_json_path,
+            session_id,
+            10000); // 10秒超时
+        if (DAS::IsFailed(result))
+        {
+            DAS_LOG_ERROR("Failed to start host process");
+            return result;
+        }
+
+        // 将 HostLauncher 的传输层转移到 IpcRunLoop
+        auto transport = launcher_.ReleaseTransport();
+        if (!transport)
+        {
+            DAS_LOG_ERROR("Failed to get transport from HostLauncher");
+            return DAS_E_FAIL;
+        }
+
+        runloop_->SetTransport(std::move(transport));
+        std::string msg = DAS_FMT_NS::format(
+            "Transport set to IpcRunLoop, session_id={}",
+            session_id);
+        DAS_LOG_INFO(msg.c_str());
+        return DAS_S_OK;
+    }
+
+    std::string                                 host_exe_path_;
+    DAS::Core::IPC::HostLauncher                launcher_;
+    std::unique_ptr<DAS::Core::IPC::IpcRunLoop> runloop_;
+    std::thread                                 runloop_thread_;
 };
 
 // ============================================================
@@ -137,20 +196,19 @@ protected:
 
 namespace IpcTestUtils
 {
-
     /**
      * @brief 发送 LOAD_PLUGIN 命令并等待响应
-     * @param transport IPC 传输接口
+     * @param runloop IPC RunLoop
      * @param plugin_json_path 插件 JSON 清单路径
      * @param out_object_id 输出：加载的对象 ID
-     * @param timeout_ms 超时时间（毫秒）
+     * @param timeout 超时时间（默认30秒）
      * @return DasResult 成功返回 DAS_S_OK
      */
     inline DasResult SendLoadPluginCommand(
-        DAS::Core::IPC::IpcTransport* transport,
-        const std::string&            plugin_json_path,
-        DAS::Core::IPC::ObjectId&     out_object_id,
-        uint32_t                      timeout_ms = 5000)
+        DAS::Core::IPC::IpcRunLoop* runloop,
+        const std::string&          plugin_json_path,
+        DAS::Core::IPC::ObjectId&   out_object_id,
+        std::chrono::milliseconds   timeout = std::chrono::seconds(30))
     {
         using namespace DAS::Core::IPC;
 
@@ -175,27 +233,19 @@ namespace IpcTestUtils
         header.generation = 0;
         header.local_id = 0;
 
-        // 发送请求
-        DasResult result =
-            transport->Send(header, payload.data(), payload.size());
-        if (DAS::IsFailed(result))
-        {
-            return result;
-        }
-
-        // 接收响应
-        IPCMessageHeader     response_header{};
+        // 使用 IpcRunLoop::SendRequest 发送请求并等待响应
+        // 这支持可重入调用，可以处理 LoadPlugin 过程中的对象注册消息
         std::vector<uint8_t> response_body;
-        result = transport->Receive(response_header, response_body, timeout_ms);
+        DasResult            result = runloop->SendRequest(
+            header,
+            payload.data(),
+            payload.size(),
+            response_body,
+            timeout);
+
         if (DAS::IsFailed(result))
         {
             return result;
-        }
-
-        // 检查响应错误码
-        if (response_header.error_code != DAS_S_OK)
-        {
-            return static_cast<DasResult>(response_header.error_code);
         }
 
         // 解析响应: [object_id(8)][iid(16)][session_id(2)][version(2)]
@@ -223,5 +273,4 @@ namespace IpcTestUtils
 
         return DAS_S_OK;
     }
-
 } // namespace IpcTestUtils

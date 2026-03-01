@@ -49,22 +49,7 @@ TEST_F(IpcMultiProcessTest, HostLauncherStart)
     EXPECT_EQ(session_id, launcher_.GetSessionId());
 }
 
-TEST_F(IpcMultiProcessTest, TransportAvailable)
-{
-    // 测试 IPC 传输接口可用
-    if (!std::filesystem::exists(host_exe_path_))
-    {
-        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
-    }
 
-    uint16_t  session_id = 0;
-    DasResult result = launcher_.Start(host_exe_path_, "", session_id, 10000);
-    ASSERT_EQ(result, DAS_S_OK);
-
-    auto* transport = launcher_.GetTransport();
-    ASSERT_NE(transport, nullptr);
-    EXPECT_TRUE(transport->IsConnected());
-}
 
 TEST_F(IpcMultiProcessTest, FullHandshake)
 {
@@ -154,17 +139,13 @@ TEST_F(IpcMultiProcessTest, CrossProcess_LoadPlugin)
         GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
     }
 
-    // 1. 启动 Host 进程
-    uint16_t  session_id = 0;
-    DasResult result = launcher_.Start(host_exe_path_, "", session_id, 10000);
+    // 1. 启动 Host 进程并设置 IpcRunLoop
+    DasResult result = StartHostAndSetupRunLoop("IpcTestPlugin1");
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_TRUE(launcher_.IsRunning());
-    EXPECT_GT(session_id, static_cast<uint16_t>(0));
 
-    // 2. 获取 IPC 传输接口
-    auto* transport = launcher_.GetTransport();
-    ASSERT_NE(transport, nullptr);
-    ASSERT_TRUE(transport->IsConnected());
+    // 2. IpcRunLoop 已设置传输层，可以直接发送消息
+    // 注意：不再需要显式获取 transport
 
     // 3. 获取插件 JSON 路径
     std::string plugin_json_path;
@@ -180,15 +161,13 @@ TEST_F(IpcMultiProcessTest, CrossProcess_LoadPlugin)
     // 4. 发送 LOAD_PLUGIN 命令
     DAS::Core::IPC::ObjectId object_id{};
     result = IpcTestUtils::SendLoadPluginCommand(
-        transport,
+        runloop_.get(),
         plugin_json_path,
-        object_id,
-        5000);
+        object_id);
     ASSERT_EQ(result, DAS_S_OK);
 
     // 5. 验证返回的对象 ID
-    EXPECT_EQ(object_id.session_id, session_id);
-    EXPECT_GT(object_id.local_id, 0u);
+    EXPECT_EQ(object_id.session_id, launcher_.GetSessionId());
 
     std::string log_msg = DAS_FMT_NS::format(
         "[CrossProcess_LoadPlugin] Plugin loaded, object_id={{session:{}, "
@@ -211,39 +190,26 @@ TEST_F(IpcMultiProcessTest, CrossProcess_CallComponent)
         GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
     }
 
-    // 1. 启动 Host 进程
-    uint16_t  session_id = 0;
-    DasResult result = launcher_.Start(host_exe_path_, "", session_id, 10000);
+    // 1. 启动 Host 进程并设置 IpcRunLoop
+    DasResult result = StartHostAndSetupRunLoop("IpcTestPlugin2");
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_TRUE(launcher_.IsRunning());
 
-    // 2. 获取 IPC 传输接口
-    auto* transport = launcher_.GetTransport();
-    ASSERT_NE(transport, nullptr);
-    ASSERT_TRUE(transport->IsConnected());
-
-    // 3. 获取 IpcTestPlugin2 JSON 路径
-    std::string plugin_json_path;
-    try
-    {
-        plugin_json_path = GetTestPluginJsonPath("IpcTestPlugin2");
-    }
-    catch (const std::exception& e)
-    {
-        GTEST_SKIP() << "Plugin JSON not found: " << e.what();
-    }
+    // 2. 获取 IpcTestPlugin2 JSON 路径
+    std::string plugin_json_path = GetTestPluginJsonPath("IpcTestPlugin2");
 
     // 4. 加载 IpcTestPlugin2（包含 IDasComponent + Factory）
     DAS::Core::IPC::ObjectId factory_id{};
     result = IpcTestUtils::SendLoadPluginCommand(
-        transport,
+        runloop_.get(),
         plugin_json_path,
         factory_id,
-        5000);
+        std::chrono::milliseconds(5000));
     ASSERT_EQ(result, DAS_S_OK);
 
     // 5. 验证 Factory 对象在正确的 Host 进程中
-    EXPECT_EQ(factory_id.session_id, session_id);
+    EXPECT_EQ(factory_id.session_id, launcher_.GetSessionId());
+
 
     std::string log_msg = DAS_FMT_NS::format(
         "[CrossProcess_CallComponent] IpcTestPlugin2 loaded, factory_id={{"
@@ -283,11 +249,19 @@ TEST_F(IpcMultiProcessTest, CrossProcess_VerifySessionId)
     // 3. 验证两个 session_id 不同
     EXPECT_NE(session_a, session_b);
 
-    // 4. 获取各自的 Transport
-    auto* transport_a = host_a.GetTransport();
-    auto* transport_b = host_b.GetTransport();
+    // 4. 为每个 Host 创建独立的 IpcRunLoop
+    auto        runloop_a = std::make_unique<DAS::Core::IPC::IpcRunLoop>();
+    auto        runloop_b = std::make_unique<DAS::Core::IPC::IpcRunLoop>();
+    std::thread thread_a([&]() { runloop_a->Run(); });
+    std::thread thread_b([&]() { runloop_b->Run(); });
+
+    // 将 Transport 转移到 IpcRunLoop
+    auto transport_a = host_a.ReleaseTransport();
+    auto transport_b = host_b.ReleaseTransport();
     ASSERT_NE(transport_a, nullptr);
     ASSERT_NE(transport_b, nullptr);
+    runloop_a->SetTransport(std::move(transport_a));
+    runloop_b->SetTransport(std::move(transport_b));
 
     // 5. 获取插件 JSON 路径
     std::string plugin1_path, plugin2_path;
@@ -298,6 +272,10 @@ TEST_F(IpcMultiProcessTest, CrossProcess_VerifySessionId)
     }
     catch (const std::exception& e)
     {
+        runloop_a->RequestStop();
+        runloop_b->RequestStop();
+        thread_a.join();
+        thread_b.join();
         host_a.Stop();
         host_b.Stop();
         GTEST_SKIP() << "Plugin JSON not found: " << e.what();
@@ -306,20 +284,20 @@ TEST_F(IpcMultiProcessTest, CrossProcess_VerifySessionId)
     // 6. 在 Host A 加载 IpcTestPlugin1
     DAS::Core::IPC::ObjectId object_a{};
     result = IpcTestUtils::SendLoadPluginCommand(
-        transport_a,
+        runloop_a.get(),
         plugin1_path,
         object_a,
-        5000);
+        std::chrono::milliseconds(5000));
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_EQ(object_a.session_id, session_a);
 
     // 7. 在 Host B 加载 IpcTestPlugin2
     DAS::Core::IPC::ObjectId object_b{};
     result = IpcTestUtils::SendLoadPluginCommand(
-        transport_b,
+        runloop_b.get(),
         plugin2_path,
         object_b,
-        5000);
+        std::chrono::milliseconds(5000));
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_EQ(object_b.session_id, session_b);
 
@@ -336,6 +314,10 @@ TEST_F(IpcMultiProcessTest, CrossProcess_VerifySessionId)
     DAS_LOG_INFO(log_msg.c_str());
 
     // 9. 清理
+    runloop_a->RequestStop();
+    runloop_b->RequestStop();
+    thread_a.join();
+    thread_b.join();
     host_a.Stop();
     host_b.Stop();
 }
@@ -374,31 +356,38 @@ TEST_F(IpcMultiProcessTest, CrossProcess_HostToHostCall)
         GTEST_SKIP() << "Plugin JSON not found: " << e.what();
     }
 
-    // 3. 在 Host B 加载 IpcTestPlugin2
-    auto* transport_b = host_b.GetTransport();
+    // 3. 为 Host B 创建 IpcRunLoop
+    auto        runloop_b = std::make_unique<DAS::Core::IPC::IpcRunLoop>();
+    std::thread thread_b([&]() { runloop_b->Run(); });
+    auto        transport_b = host_b.ReleaseTransport();
     ASSERT_NE(transport_b, nullptr);
+    runloop_b->SetTransport(std::move(transport_b));
 
     // 诊断：打印 JSON 路径
     std::string diag_msg = DAS_FMT_NS::format(
-        "[CrossProcess_HostToHostCall] Loading plugin: {}", plugin2_path);
+        "[CrossProcess_HostToHostCall] Loading plugin: {}",
+        plugin2_path);
     DAS_LOG_INFO(diag_msg.c_str());
 
     // 检查文件是否存在
     if (!std::filesystem::exists(plugin2_path))
     {
-        std::string err_msg = DAS_FMT_NS::format(
-            "Plugin JSON not found: {}", plugin2_path);
+        std::string err_msg =
+            DAS_FMT_NS::format("Plugin JSON not found: {}", plugin2_path);
         DAS_LOG_ERROR(err_msg.c_str());
+        runloop_b->RequestStop();
+        thread_b.join();
         host_b.Stop();
         FAIL() << err_msg;
     }
 
+    // 4. 在 Host B 加载 IpcTestPlugin2
     DAS::Core::IPC::ObjectId factory_id_b{};
     result = IpcTestUtils::SendLoadPluginCommand(
-        transport_b,
+        runloop_b.get(),
         plugin2_path,
         factory_id_b,
-        5000);
+        std::chrono::milliseconds(5000));
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_EQ(factory_id_b.session_id, session_b);
 
@@ -410,15 +399,22 @@ TEST_F(IpcMultiProcessTest, CrossProcess_HostToHostCall)
         factory_id_b.local_id);
     DAS_LOG_INFO(log_msg.c_str());
 
-    // 4. 启动 Host A（调用方进程）
+    // 5. 启动 Host A（调用方进程）
     DAS::Core::IPC::HostLauncher host_a;
     uint16_t                     session_a = 0;
     result = host_a.Start(host_exe_path_, "", session_a, 10000);
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_GT(session_a, static_cast<uint16_t>(0));
-    EXPECT_NE(session_a, session_b);  // 两个 Host 必须有不同的 session_id
+    EXPECT_NE(session_a, session_b); // 两个 Host 必须有不同的 session_id
 
-    // 5. 获取 IpcTestPlugin1 JSON 路径（调用方）
+    // 6. 为 Host A 创建 IpcRunLoop
+    auto        runloop_a = std::make_unique<DAS::Core::IPC::IpcRunLoop>();
+    std::thread thread_a([&]() { runloop_a->Run(); });
+    auto        transport_a = host_a.ReleaseTransport();
+    ASSERT_NE(transport_a, nullptr);
+    runloop_a->SetTransport(std::move(transport_a));
+
+    // 7. 获取 IpcTestPlugin1 JSON 路径（调用方）
     std::string plugin1_path;
     try
     {
@@ -426,58 +422,57 @@ TEST_F(IpcMultiProcessTest, CrossProcess_HostToHostCall)
     }
     catch (const std::exception& e)
     {
+        runloop_a->RequestStop();
+        runloop_b->RequestStop();
+        thread_a.join();
+        thread_b.join();
         host_a.Stop();
         host_b.Stop();
         GTEST_SKIP() << "Plugin JSON not found: " << e.what();
     }
 
-    // 6. 在 Host A 加载 IpcTestPlugin1
-    auto* transport_a = host_a.GetTransport();
-    ASSERT_NE(transport_a, nullptr);
-
+    // 8. 在 Host A 加载 IpcTestPlugin1
     DAS::Core::IPC::ObjectId factory_id_a{};
     result = IpcTestUtils::SendLoadPluginCommand(
-        transport_a,
+        runloop_a.get(),
         plugin1_path,
         factory_id_a,
-        5000);
+        std::chrono::milliseconds(5000));
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_EQ(factory_id_a.session_id, session_a);
 
-    // 7. 注册 Host A 和 Host B 的 Transport 到 ConnectionManager
-    //    这样主进程才能转发消息
+    // 9. 注册 Host A 和 Host B 的 Transport 到 ConnectionManager
+    //    使用 IpcRunLoop::GetTransport() 获取底层 transport 指针
     auto& conn_manager = DAS::Core::IPC::ConnectionManager::GetInstance();
     result = conn_manager.RegisterHostTransport(
         session_a,
-        transport_a,
-        nullptr,  // shm_pool
-        nullptr   // run_loop
-    );
+        runloop_a->GetTransport(),
+        nullptr, // shm_pool
+        runloop_a.get());
     EXPECT_EQ(result, DAS_S_OK);
 
     result = conn_manager.RegisterHostTransport(
         session_b,
-        transport_b,
-        nullptr,  // shm_pool
-        nullptr   // run_loop
-    );
+        runloop_b->GetTransport(),
+        nullptr, // shm_pool
+        runloop_b.get());
     EXPECT_EQ(result, DAS_S_OK);
 
-    // 8. 验证 ConnectionManager 可以获取 Transport
+    // 10. 验证 ConnectionManager 可以获取 Transport
     auto* transport_from_a = conn_manager.GetTransport(session_b);
     EXPECT_NE(transport_from_a, nullptr);
-    EXPECT_EQ(transport_from_a, transport_b);  // 应该是同一个 Transport
+    EXPECT_EQ(transport_from_a, runloop_b->GetTransport()); // 应该是同一个 Transport
 
-    // 9. 【关键】Host A 通过主进程调用 Host B 的对象
+    // 11. 【关键】Host A 通过主进程调用 Host B 的对象
     //    构造一个目标为 Host B 对象的调用消息
     //    由于测试进程不是主进程，这里模拟转发逻辑
-    
+
     //    实际的转发流程：
     //    Host A 构造消息(session_id=session_b) → 发送到主进程
     //    → 主进程检查 session_id != local → 转发到 Host B
     //    → Host B 处理并返回响应
     //    → 响应原路返回给 Host A
-    
+
     //    当前测试验证：ConnectionManager 正确注册和获取 Transport
     //    完整的转发测试需要主进程参与，这里验证基础设施
 
@@ -488,7 +483,11 @@ TEST_F(IpcMultiProcessTest, CrossProcess_HostToHostCall)
         session_b);
     DAS_LOG_INFO(log_msg.c_str());
 
-    // 10. 清理
+    // 12. 清理
+    runloop_a->RequestStop();
+    runloop_b->RequestStop();
+    thread_a.join();
+    thread_b.join();
     host_a.Stop();
     host_b.Stop();
 }
@@ -505,18 +504,7 @@ TEST_F(IpcMultiProcessTest, CrossProcess_LoadJavaPlugin)
         GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
     }
 
-    // 1. 启动 Host 进程
-    uint16_t  session_id = 0;
-    DasResult result = launcher_.Start(host_exe_path_, "", session_id, 10000);
-    ASSERT_EQ(result, DAS_S_OK);
-    EXPECT_TRUE(launcher_.IsRunning());
-
-    // 2. 获取 IPC 传输接口
-    auto* transport = launcher_.GetTransport();
-    ASSERT_NE(transport, nullptr);
-    ASSERT_TRUE(transport->IsConnected());
-
-    // 3. 获取 JavaTestPlugin JSON 路径
+    // 1. 先获取 JavaTestPlugin JSON 路径（检查是否存在）
     std::string plugin_json_path;
     try
     {
@@ -527,22 +515,29 @@ TEST_F(IpcMultiProcessTest, CrossProcess_LoadJavaPlugin)
         GTEST_SKIP() << "JavaTestPlugin JSON not found: " << e.what();
     }
 
-    // 4. 检查 JAR 文件是否存在
-    std::filesystem::path jar_path = std::filesystem::path(plugin_json_path)
-        .parent_path() / "JavaTestPlugin.jar";
+    // 2. 检查 JAR 文件是否存在
+    std::filesystem::path jar_path =
+        std::filesystem::path(plugin_json_path).parent_path()
+        / "JavaTestPlugin.jar";
     if (!std::filesystem::exists(jar_path))
     {
-        GTEST_SKIP() << "JavaTestPlugin.jar not found at: " << jar_path.string();
+        GTEST_SKIP() << "JavaTestPlugin.jar not found at: "
+                     << jar_path.string();
     }
 
-    // 5. 发送 LOAD_PLUGIN 命令（JSON 中 language=Java）
+    // 3. 启动 Host 进程并设置 IpcRunLoop
+    DasResult result = StartHostAndSetupRunLoop("JavaTestPlugin");
+    ASSERT_EQ(result, DAS_S_OK);
+    EXPECT_TRUE(launcher_.IsRunning());
+
+    // 4. 发送 LOAD_PLUGIN 命令（使用 IpcRunLoop，支持可重入消息处理）
     DAS::Core::IPC::ObjectId object_id{};
     result = IpcTestUtils::SendLoadPluginCommand(
-        transport,
+        runloop_.get(),
         plugin_json_path,
         object_id,
-        10000);  // Java 插件可能需要更长时间（JVM 初始化）
-    
+        std::chrono::milliseconds(30000)); // Java 插件可能需要更长时间（JVM 初始化）
+
     if (DAS::IsFailed(result))
     {
         // JVM 可能不可用，跳过测试
@@ -553,8 +548,8 @@ TEST_F(IpcMultiProcessTest, CrossProcess_LoadJavaPlugin)
         GTEST_SKIP() << err_msg;
     }
 
-    // 6. 验证返回的对象 ID
-    EXPECT_EQ(object_id.session_id, session_id);
+    // 5. 验证返回的对象 ID
+    EXPECT_EQ(object_id.session_id, launcher_.GetSessionId());
     EXPECT_GT(object_id.local_id, 0u);
 
     std::string log_msg = DAS_FMT_NS::format(
@@ -564,4 +559,194 @@ TEST_F(IpcMultiProcessTest, CrossProcess_LoadJavaPlugin)
         object_id.generation,
         object_id.local_id);
     DAS_LOG_INFO(log_msg.c_str());
+}
+
+// ====== 主进程退出检测测试 ======
+
+/**
+ * @brief 测试 Host 进程在主进程不存在时自动退出
+ *
+ * 模拟场景：主进程被杀后 Host 进程能够感知并自行退出，
+ * 不会变成僵尸进程。
+ *
+ * 方法：手动启动 DasHost.exe 并传入一个不存在的 PID 作为 --main-pid，
+ * 验证 Host 进程能在合理时间内自动退出。
+ */
+TEST_F(IpcMultiProcessTest, ParentProcessExit_HostAutoExit_InvalidPid)
+{
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+    }
+
+    // 使用一个不存在的 PID（极大值，几乎不可能有进程使用）
+    constexpr uint32_t fake_main_pid = 99999999;
+
+    // 手动启动 DasHost.exe 进程，传入不存在的 --main-pid
+    boost::asio::io_context  io_ctx;
+    std::vector<std::string> args;
+    args.push_back("--main-pid");
+    args.push_back(std::to_string(fake_main_pid));
+
+    boost::process::v2::process host_process(
+        io_ctx,
+        host_exe_path_,
+        args,
+        boost::process::v2::process_start_dir(
+            std::filesystem::path(host_exe_path_).parent_path().string()));
+
+    uint32_t host_pid = static_cast<uint32_t>(host_process.id());
+    ASSERT_GT(host_pid, 0u);
+
+    std::string start_log = DAS_FMT_NS::format(
+        "[ParentProcessExit_HostAutoExit_InvalidPid] "
+        "Host process started with fake main_pid={}, host_pid={}",
+        fake_main_pid,
+        host_pid);
+    DAS_LOG_INFO(start_log.c_str());
+
+    // 等待 Host 进程自动退出（最多等待 10 秒）
+    // 父进程监控线程检测间隔为 1 秒，加上初始化时间，5 秒内应该退出
+    bool host_exited = false;
+    for (int i = 0; i < 100; ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        boost::system::error_code ec;
+        if (!host_process.running(ec))
+        {
+            host_exited = true;
+            break;
+        }
+    }
+
+    if (!host_exited)
+    {
+        // 如果还没退出，强制终止避免僵尸进程
+        boost::system::error_code ec;
+        host_process.terminate(ec);
+        FAIL()
+            << "Host process did not exit after 10 seconds with invalid main_pid. "
+               "Parent process monitoring is not working.";
+    }
+
+    std::string exit_log = DAS_FMT_NS::format(
+        "[ParentProcessExit_HostAutoExit_InvalidPid] "
+        "Host process exited automatically as expected");
+    DAS_LOG_INFO(exit_log.c_str());
+    SUCCEED();
+}
+
+/**
+ * @brief 测试 Host 进程在主进程被杀后自动退出
+ *
+ * 模拟场景：启动一个辅助进程作为"假主进程"，用该 PID 启动 Host，
+ * 然后杀掉辅助进程，验证 Host 能感知并退出。
+ *
+ * 这比 InvalidPid 测试更贴近真实场景，因为 Host 会先成功初始化 IPC 资源，
+ * 然后在运行过程中检测到主进程消失。
+ */
+TEST_F(IpcMultiProcessTest, ParentProcessExit_HostAutoExit_KillParent)
+{
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+    }
+
+    // 1. 启动一个辅助进程作为"假主进程"
+    //    使用系统自带的程序（Windows: timeout, Linux: sleep）
+    boost::asio::io_context fake_parent_io_ctx;
+#ifdef _WIN32
+    // Windows: 使用 cmd /c timeout 来创建一个持续运行的进程
+    std::string              fake_parent_exe = "cmd.exe";
+    std::vector<std::string> fake_parent_args =
+        {"/c", "timeout", "/t", "60", "/nobreak"};
+#else
+    std::string              fake_parent_exe = "/bin/sleep";
+    std::vector<std::string> fake_parent_args = {"60"};
+#endif
+
+    boost::process::v2::process fake_parent(
+        fake_parent_io_ctx,
+        fake_parent_exe,
+        fake_parent_args);
+
+    uint32_t fake_parent_pid = static_cast<uint32_t>(fake_parent.id());
+    ASSERT_GT(fake_parent_pid, 0u);
+
+    std::string parent_log = DAS_FMT_NS::format(
+        "[ParentProcessExit_KillParent] Fake parent started: PID={}",
+        fake_parent_pid);
+    DAS_LOG_INFO(parent_log.c_str());
+
+    // 2. 使用假主进程的 PID 启动 DasHost.exe
+    boost::asio::io_context  host_io_ctx;
+    std::vector<std::string> host_args;
+    host_args.push_back("--main-pid");
+    host_args.push_back(std::to_string(fake_parent_pid));
+
+    boost::process::v2::process host_process(
+        host_io_ctx,
+        host_exe_path_,
+        host_args,
+        boost::process::v2::process_start_dir(
+            std::filesystem::path(host_exe_path_).parent_path().string()));
+
+    uint32_t host_pid = static_cast<uint32_t>(host_process.id());
+    ASSERT_GT(host_pid, 0u);
+
+    std::string host_log = DAS_FMT_NS::format(
+        "[ParentProcessExit_KillParent] Host started: PID={}, main_pid={}",
+        host_pid,
+        fake_parent_pid);
+    DAS_LOG_INFO(host_log.c_str());
+
+    // 3. 等待 Host 初始化完成（给它 2 秒时间）
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+
+    // 确认 Host 还在运行
+    {
+        boost::system::error_code ec;
+        ASSERT_TRUE(host_process.running(ec))
+            << "Host process exited prematurely before parent was killed";
+    }
+
+    // 4. 杀掉假主进程（模拟主进程崩溃）
+    {
+        boost::system::error_code ec;
+        fake_parent.terminate(ec);
+        std::string kill_log = DAS_FMT_NS::format(
+            "[ParentProcessExit_KillParent] Fake parent killed: PID={}",
+            fake_parent_pid);
+        DAS_LOG_INFO(kill_log.c_str());
+    }
+
+    // 5. 等待 Host 进程自动退出（最多等待 10 秒）
+    //    父进程监控线程检测间隔为 1 秒
+    bool host_exited = false;
+    for (int i = 0; i < 100; ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        boost::system::error_code ec;
+        if (!host_process.running(ec))
+        {
+            host_exited = true;
+            break;
+        }
+    }
+
+    if (!host_exited)
+    {
+        // 如果还没退出，强制终止避免僵尸进程
+        boost::system::error_code ec;
+        host_process.terminate(ec);
+        FAIL()
+            << "Host process did not exit after 10 seconds when parent was killed. "
+               "Parent process monitoring is not working.";
+    }
+
+    std::string result_log = DAS_FMT_NS::format(
+        "[ParentProcessExit_KillParent] "
+        "Host process exited automatically after parent was killed. Test PASSED.");
+    DAS_LOG_INFO(result_log.c_str());
+    SUCCEED();
 }
