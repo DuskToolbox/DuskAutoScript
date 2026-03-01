@@ -90,6 +90,12 @@ public:
      */
     IpcTransport* GetTransport();
 
+    /**
+     * @brief 释放 IPC 传输接口的所有权
+     * @return IPC 传输接口的所有权，调用者负责管理生命周期
+     */
+    std::unique_ptr<IpcTransport> ReleaseTransport();
+
 private:
     /**
      * @brief 启动进程

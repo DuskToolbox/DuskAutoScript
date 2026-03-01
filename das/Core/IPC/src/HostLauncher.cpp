@@ -10,8 +10,8 @@
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcTransport.h>
-#include <das/Utils/fmt.h>
 #include <das/Core/IPC/SessionCoordinator.h>
+#include <das/Utils/fmt.h>
 #include <thread>
 
 // 获取当前进程 PID 的跨平台方法
@@ -157,7 +157,7 @@ void HostLauncher::Stop()
         header.call_id = 0;
         header.flags = 0;
         header.error_code = 0;
-        header.session_id = 0;  // 控制平面消息: ObjectId = {0, 0, 0}
+        header.session_id = 0; // 控制平面消息: ObjectId = {0, 0, 0}
         header.generation = 0;
         header.local_id = 0;
 
@@ -166,11 +166,14 @@ void HostLauncher::Stop()
         header.body_size = sizeof(GoodbyeV1);
 
         std::string log_msg = DAS_FMT_NS::format(
-            "Sending GOODBYE to Host process: PID={}", impl_->pid);
+            "Sending GOODBYE to Host process: PID={}",
+            impl_->pid);
         DAS_LOG_INFO(log_msg.c_str());
 
         impl_->transport->Send(
-            header, reinterpret_cast<const uint8_t*>(&goodbye), sizeof(goodbye));
+            header,
+            reinterpret_cast<const uint8_t*>(&goodbye),
+            sizeof(goodbye));
 
         // 等待进程退出，最多等待 2 秒
         // 如果进程在 GOODBYE 后正常退出，则不需要 terminate
@@ -188,7 +191,8 @@ void HostLauncher::Stop()
         if (process_exited)
         {
             std::string exit_msg = DAS_FMT_NS::format(
-                "Host process exited gracefully: PID={}", impl_->pid);
+                "Host process exited gracefully: PID={}",
+                impl_->pid);
             DAS_LOG_INFO(exit_msg.c_str());
         }
     }
@@ -202,18 +206,19 @@ void HostLauncher::Stop()
     if (impl_->process)
     {
         boost::system::error_code ec;
-        
+
         // 检查进程是否仍在运行
         bool still_running = impl_->process->running(ec);
-        
+
         if (still_running)
         {
-            std::string msg =
-                DAS_FMT_NS::format("Terminating Host process: PID={}", impl_->pid);
+            std::string msg = DAS_FMT_NS::format(
+                "Terminating Host process: PID={}",
+                impl_->pid);
             DAS_LOG_INFO(msg.c_str());
             impl_->process->terminate(ec);
         }
-        
+
         // 释放进程句柄所有权，避免析构函数中任何潜在的阻塞
         // 注意：这会导致进程句柄泄漏，但避免了测试超时问题
         (void)impl_->process.release();
@@ -234,6 +239,11 @@ uint32_t HostLauncher::GetPid() const { return impl_->pid; }
 uint16_t HostLauncher::GetSessionId() const { return impl_->session_id; }
 
 IpcTransport* HostLauncher::GetTransport() { return impl_->transport.get(); }
+
+std::unique_ptr<IpcTransport> HostLauncher::ReleaseTransport()
+{
+    return std::move(impl_->transport);
+}
 
 DasResult HostLauncher::LaunchProcess(
     const std::string&              exe_path,
@@ -409,7 +419,7 @@ DasResult HostLauncher::SendHandshakeHello(const std::string& client_name)
 
     HelloRequestV1 hello;
     InitHelloRequest(hello, my_pid, client_name.c_str());
-    hello.assigned_session_id = assigned_session_id;  // 设置分配的 session_id
+    hello.assigned_session_id = assigned_session_id; // 设置分配的 session_id
 
     IPCMessageHeader header{};
     header.magic = IPCMessageHeader::MAGIC;

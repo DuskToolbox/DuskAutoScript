@@ -16,12 +16,6 @@
 DAS_CORE_IPC_NS_BEGIN
 class SharedMemoryPool;
 
-// Disable C4251 warning for std::unique_ptr in exported classes
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable : 4251)
-#endif
-
 class IpcTransport
 {
 public:
@@ -71,10 +65,6 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
-
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
 
 DAS_CORE_IPC_NS_END
 
