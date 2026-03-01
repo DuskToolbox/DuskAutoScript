@@ -10,13 +10,13 @@
 
 #include <boost/dll.hpp>
 
-namespace jvm_dll
-{
-    using JNI_CreateJavaVM_t = jint (*)(JavaVM**, void**, void*);
-}
-
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 DAS_NS_JAVAHOST_BEGIN
+
+namespace jvm_dll
+{
+    using JNI_CreateJavaVM_t = decltype(::JNI_CreateJavaVM);
+}
 
 // ============================================================================
 // JniEnvGuard 实现
@@ -28,13 +28,13 @@ JniEnvGuard::JniEnvGuard(JavaVM* vm) : vm_(vm), env_(nullptr), attached_(false)
         return;
 
     // 尝试获取当前线程的 JNIEnv
-    jint result = vm_->GetEnv(reinterpret_cast<void**>(&env_), JNI_VERSION_21);
+    jint result = vm_->GetEnv(reinterpret_cast<void**>(&env_), JNI_VERSION_1_2);
 
     if (result == JNI_EDETACHED)
     {
         // 当前线程未附加到 JVM，需要 Attach
         JavaVMAttachArgs args{};
-        args.version = JNI_VERSION_21;
+        args.version = JNI_VERSION_1_2;
         args.name = const_cast<char*>("DasHostThread");
 
         result =
@@ -99,8 +99,25 @@ JObjectGlobalRef::JObjectGlobalRef(JNIEnv* env, jobject obj)
 {
     if (env && obj)
     {
-        env->GetJavaVM(&vm_);
+        jint result = env->GetJavaVM(&vm_);
+        if (result != JNI_OK)
+        {
+            DAS_CORE_LOG_ERROR(
+                "Failed to get JavaVM from JNIEnv, error: {}",
+                result);
+            vm_ = nullptr;
+            return;
+        }
         ref_ = env->NewGlobalRef(obj);
+        if (!ref_)
+        {
+            DAS_CORE_LOG_ERROR("Failed to create global reference for jobject");
+            if (env->ExceptionCheck())
+            {
+                env->ExceptionDescribe();
+                env->ExceptionClear();
+            }
+        }
     }
 }
 
@@ -186,11 +203,15 @@ JavaVM* JvmManager::CreateJVM(
     // 1. 使用 boost::dll 加载 jvm.dll (RAII 自动管理生命周期)
     try
     {
-        jvm_dll_ = boost::dll::shared_library(boost::dll::fs::path(jvm_dll_path));
+        jvm_dll_ =
+            boost::dll::shared_library(boost::dll::fs::path(jvm_dll_path));
     }
     catch (const boost::system::system_error& e)
     {
-        DAS_CORE_LOG_ERROR("Failed to load JVM DLL: {} - {}", jvm_dll_path.string(), e.what());
+        DAS_CORE_LOG_ERROR(
+            "Failed to load JVM DLL: {} - {}",
+            jvm_dll_path.string(),
+            e.what());
         return nullptr;
     }
 
@@ -198,26 +219,54 @@ JavaVM* JvmManager::CreateJVM(
     if (!jvm_dll_.has("JNI_CreateJavaVM"))
     {
         DAS_CORE_LOG_ERROR("Failed to find JNI_CreateJavaVM function");
-        jvm_dll_ = {};  // 显式卸载
+        jvm_dll_ = {}; // 显式卸载
         return nullptr;
     }
-    auto p_JNI_CreateJavaVM = jvm_dll_.get<jvm_dll::JNI_CreateJavaVM_t>("JNI_CreateJavaVM");
+    auto p_JNI_CreateJavaVM =
+        jvm_dll_.get<jvm_dll::JNI_CreateJavaVM_t>("JNI_CreateJavaVM");
     if (!p_JNI_CreateJavaVM)
     {
         DAS_CORE_LOG_ERROR("Failed to find JNI_CreateJavaVM function");
-        jvm_dll_ = {};  // 显式卸载
+        jvm_dll_ = {}; // 显式卸载
         return nullptr;
     }
 
     // 3. 构建 JVM 选项
-    std::string               class_path_str = BuildClassPathString(class_path);
+    const auto                class_path_str = BuildClassPathString(class_path);
+    // 避免局部对象生命周期问题
+    std::string               java_class_path;
     std::vector<JavaVMOption> options;
 
     // 添加类路径选项
     if (!class_path_str.empty())
     {
-        std::string cp_opt = "-Djava.class.path=" + class_path_str;
-        options.push_back({const_cast<char*>(cp_opt.c_str()), nullptr});
+        java_class_path =
+            DAS_FMT_NS::format("-Djava.class.path={}", class_path_str);
+        options.push_back(
+            {const_cast<char*>(java_class_path.c_str()), nullptr});
+    }
+
+    // 避免局部对象生命周期问题
+    std::string java_library_path;
+    // 添加 java.library.path 选项，指向 DasCore 所在目录
+    // 这样可以找到 DasCoreJavaExport.dll
+    {
+        // 使用 boost::dll 获取当前模块（DasCore.dll）的路径
+        boost::dll::fs::path module_path = boost::dll::this_line_location();
+        if (!module_path.empty())
+        {
+            boost::dll::fs::path module_dir = module_path.parent_path();
+            // 使用 generic_string() 获取正斜杠路径，避免 JVM
+            // 把反斜杠解析为转义字符
+            java_library_path = DAS_FMT_NS::format(
+                "-Djava.library.path={}",
+                module_dir.generic_string());
+            options.push_back(
+                {const_cast<char*>(java_library_path.c_str()), nullptr});
+            DAS_CORE_LOG_INFO(
+                "Setting java.library.path to: {}",
+                module_dir.generic_string());
+        }
     }
 
     // 添加用户选项
@@ -228,7 +277,7 @@ JavaVM* JvmManager::CreateJVM(
 
     // 4. 初始化 JVM
     JavaVMInitArgs vm_args{};
-    vm_args.version = JNI_VERSION_21;
+    vm_args.version = JNI_VERSION_1_2;
     vm_args.nOptions = static_cast<jint>(options.size());
     vm_args.options = options.data();
     vm_args.ignoreUnrecognized = JNI_FALSE;
@@ -241,7 +290,7 @@ JavaVM* JvmManager::CreateJVM(
     if (result != JNI_OK)
     {
         DAS_CORE_LOG_ERROR("Failed to create JVM, error: {}", result);
-        jvm_dll_ = {};  // 显式卸载
+        jvm_dll_ = {}; // 显式卸载
         return nullptr;
     }
 
@@ -258,7 +307,7 @@ JavaVM* JvmManager::CreateJVM(
 std::filesystem::path JvmManager::FindJvmDllPath()
 {
     // 从环境变量 JAVA_HOME 查找
-    char* java_home = nullptr;
+    char*  java_home = nullptr;
     size_t len = 0;
     if (_dupenv_s(&java_home, &len, "JAVA_HOME") == 0 && java_home)
     {
@@ -284,7 +333,7 @@ std::string JvmManager::BuildClassPathString(
         {
             result += ";"; // Windows 路径分隔符
         }
-        result += path.string();
+        result += path.generic_string(); // 使用正斜杠路径，避免 JVM 解析错误
     }
     return result;
 }
@@ -293,10 +342,10 @@ std::string JvmManager::BuildClassPathString(
 // JavaRuntime 实现
 // ============================================================================
 
-JavaRuntime::JavaRuntime(const JavaRuntimeDesc& desc) : jvm_(nullptr)
+JavaRuntime::JavaRuntime(const IDasJavaRuntimeDesc& desc) : jvm_(nullptr)
 {
     // 获取 jvm.dll 路径
-    std::filesystem::path jvm_dll_path = desc.jvm_dll_path;
+    std::filesystem::path jvm_dll_path = desc.GetJvmDllPath();
     if (jvm_dll_path.empty())
     {
         jvm_dll_path = JvmManager::FindJvmDllPath();
@@ -311,8 +360,8 @@ JavaRuntime::JavaRuntime(const JavaRuntimeDesc& desc) : jvm_(nullptr)
     // 创建 JVM
     jvm_ = JvmManager::GetInstance().GetOrCreateVM(
         jvm_dll_path,
-        desc.jvm_options,
-        desc.class_path);
+        desc.GetJvmOptions(),
+        desc.GetClassPath());
 
     if (!jvm_)
     {
@@ -344,15 +393,16 @@ auto JavaRuntime::LoadPlugin(const std::filesystem::path& path)
     try
     {
         // 1. 读取插件 JSON 配置
-        std::string entry_point;
+        std::string                        entry_point;
         std::vector<std::filesystem::path> additional_jars;
-        auto        result = LoadPluginConfig(path, entry_point, additional_jars);
+        auto result = LoadPluginConfig(path, entry_point, additional_jars);
         if (DAS::IsFailed(result))
         {
             return tl::make_unexpected(result);
         }
 
-        // 2. 解析 entryPoint: "org.das.plugin.JavaTestPlugin.createInstance"
+        // 2. 解析 entryPoint:
+        // "org.das.plugin.JavaTestPlugin.createInstance"
         auto [class_path_str, method_name] = ParseEntryPoint(entry_point);
 
         // 3. 查找 Java 类
@@ -403,6 +453,14 @@ auto JavaRuntime::LoadPlugin(const std::filesystem::path& path)
 
         env->DeleteLocalRef(ret_base);
         env->DeleteLocalRef(plugin_class);
+
+        if (!plugin_ptr)
+        {
+            DAS_CORE_LOG_ERROR(
+                "Failed to extract IDasBase from DasRetBase for class: {}",
+                class_path_str);
+            return tl::make_unexpected(DAS_E_FAIL);
+        }
 
         return plugin_ptr;
     }
@@ -467,19 +525,43 @@ DasPtr<IDasBase> JavaRuntime::ExtractIDasBaseFromDasRetBase(
     jobject das_ret_base)
 {
     // 1. 获取 DasRetBase.getValue() 方法
-    jclass    ret_base_class = env->GetObjectClass(das_ret_base);
+    jclass ret_base_class = env->GetObjectClass(das_ret_base);
+    if (!ret_base_class)
+    {
+        DAS_CORE_LOG_ERROR("Failed to get class of DasRetBase object");
+        if (env->ExceptionCheck())
+        {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
+        return nullptr;
+    }
     jmethodID get_value_method =
         env->GetMethodID(ret_base_class, "getValue", "()Lorg/das/IDasBase;");
 
     if (!get_value_method)
     {
         DAS_CORE_LOG_ERROR("Failed to find getValue() method in DasRetBase");
+        if (env->ExceptionCheck())
+        {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
         env->DeleteLocalRef(ret_base_class);
         return nullptr;
     }
 
     // 2. 调用 getValue() 获取 IDasBase
     jobject idas_base = env->CallObjectMethod(das_ret_base, get_value_method);
+    if (env->ExceptionCheck())
+    {
+        DAS_CORE_LOG_ERROR(
+            "Exception occurred while calling DasRetBase.getValue()");
+        env->ExceptionDescribe();
+        env->ExceptionClear();
+        env->DeleteLocalRef(ret_base_class);
+        return nullptr;
+    }
     if (!idas_base)
     {
         DAS_CORE_LOG_ERROR("DasRetBase.getValue() returned null");
@@ -488,13 +570,30 @@ DasPtr<IDasBase> JavaRuntime::ExtractIDasBaseFromDasRetBase(
     }
 
     // 3. 获取 swigCPtr 字段
-    jclass   idas_base_class = env->GetObjectClass(idas_base);
+    jclass idas_base_class = env->GetObjectClass(idas_base);
+    if (!idas_base_class)
+    {
+        DAS_CORE_LOG_ERROR("Failed to get class of IDasBase object");
+        if (env->ExceptionCheck())
+        {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
+        env->DeleteLocalRef(idas_base);
+        env->DeleteLocalRef(ret_base_class);
+        return nullptr;
+    }
     jfieldID swig_cptr_field =
         env->GetFieldID(idas_base_class, "swigCPtr", "J");
 
     if (!swig_cptr_field)
     {
         DAS_CORE_LOG_ERROR("Failed to find swigCPtr field in IDasBase");
+        if (env->ExceptionCheck())
+        {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
         env->DeleteLocalRef(idas_base_class);
         env->DeleteLocalRef(idas_base);
         env->DeleteLocalRef(ret_base_class);
@@ -503,6 +602,16 @@ DasPtr<IDasBase> JavaRuntime::ExtractIDasBaseFromDasRetBase(
 
     // 4. 读取 C++ 指针
     jlong c_ptr = env->GetLongField(idas_base, swig_cptr_field);
+    if (env->ExceptionCheck())
+    {
+        DAS_CORE_LOG_ERROR("Exception occurred while reading swigCPtr field");
+        env->ExceptionDescribe();
+        env->ExceptionClear();
+        env->DeleteLocalRef(idas_base_class);
+        env->DeleteLocalRef(idas_base);
+        env->DeleteLocalRef(ret_base_class);
+        return nullptr;
+    }
 
     // 5. 创建 C++ IDasBase 指针
     // swigCMemOwn=false 表示不拥有内存，Java 端负责释放
@@ -542,7 +651,7 @@ DasResult JavaRuntime::LoadPluginConfig(
 
         if (config.contains("entryPoint"))
         {
-            out_entry_point = config["entryPoint"].get<std::string>();
+            config["entryPoint"].get_to(out_entry_point);
         }
         else
         {
@@ -564,18 +673,35 @@ DasResult JavaRuntime::LoadPluginConfig(
 // 工厂函数
 // ============================================================================
 
-auto CreateJavaRuntime(const JavaRuntimeDesc& desc)
+auto CreateJavaRuntime(const ForeignLanguageRuntimeFactoryDesc& desc)
     -> DAS::Utils::Expected<DasPtr<IForeignLanguageRuntime>>
 {
+    // 校验 language
+    if (desc.language != ForeignInterfaceLanguage::Java)
+    {
+        DAS_CORE_LOG_ERROR(
+            "CreateJavaRuntime: invalid language, expected Java");
+        return tl::make_unexpected(DAS_E_INVALID_ARGUMENT);
+    }
+
+    // 从 p_user_data 转换为 IDasJavaRuntimeDesc*
+    if (desc.p_user_data == nullptr)
+    {
+        DAS_CORE_LOG_ERROR("CreateJavaRuntime: p_user_data is null");
+        return tl::make_unexpected(DAS_E_INVALID_ARGUMENT);
+    }
+
+    const auto* java_desc =
+        static_cast<const IDasJavaRuntimeDesc*>(desc.p_user_data);
+
     try
     {
-        auto* runtime = new JavaRuntime(desc);
+        const auto runtime = DAS::MakeDasPtr<JavaRuntime>(*java_desc);
         if (!runtime->IsInitialized())
         {
-            delete runtime;
             return tl::make_unexpected(DAS_E_OBJECT_NOT_INIT);
         }
-        return DasPtr<IForeignLanguageRuntime>(runtime);
+        return runtime;
     }
     catch (const std::exception& e)
     {
@@ -585,6 +711,20 @@ auto CreateJavaRuntime(const JavaRuntimeDesc& desc)
 }
 
 DAS_NS_JAVAHOST_END
+
+// ============================================================================
+// IDasJavaRuntimeDesc 工厂函数实现
+// ============================================================================
+
+IDasJavaRuntimeDesc* CreateJavaRuntimeDesc()
+{
+    return new JavaHost::JavaRuntimeDesc();
+}
+
+void DestroyJavaRuntimeDesc(IDasJavaRuntimeDesc* desc)
+{
+    delete static_cast<JavaHost::JavaRuntimeDesc*>(desc);
+}
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
 

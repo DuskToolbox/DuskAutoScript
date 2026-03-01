@@ -1,16 +1,16 @@
 #ifndef DAS_CORE_FOREIGNINTERFACEHOST_JAVAHOST_H
 #define DAS_CORE_FOREIGNINTERFACEHOST_JAVAHOST_H
 
-#include <filesystem>
-#include <boost/dll.hpp>
 #ifdef DAS_EXPORT_JAVA
-
 #include <jni.h>
 
 #include <atomic>
+#include <boost/dll.hpp>
 #include <das/Core/ForeignInterfaceHost/Config.h>
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
 #include <das/Utils/Expected.h>
+#include <filesystem>
+
 #include <memory>
 #include <mutex>
 #include <string>
@@ -24,16 +24,6 @@
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
 DAS_NS_JAVAHOST_BEGIN
-
-/**
- * Java 运行时描述
- */
-struct JavaRuntimeDesc : public ForeignLanguageRuntimeFactoryDesc
-{
-    std::filesystem::path              jvm_dll_path; // jvm.dll 路径
-    std::vector<std::string>           jvm_options;  // JVM 选项
-    std::vector<std::filesystem::path> class_path;   // Java 类路径
-};
 
 /**
  * JNI 环境守卫 RAII
@@ -159,9 +149,9 @@ private:
         const std::vector<std::filesystem::path>& class_path);
 
 private:
-    JavaVM*                         jvm_ = nullptr;
-    boost::dll::shared_library         jvm_dll_;
-    std::mutex                        mutex_;
+    JavaVM*                    jvm_ = nullptr;
+    boost::dll::shared_library jvm_dll_;
+    std::mutex                 mutex_;
 };
 
 /**
@@ -170,7 +160,7 @@ private:
 class JavaRuntime final : public IForeignLanguageRuntime
 {
 public:
-    explicit JavaRuntime(const JavaRuntimeDesc& desc);
+    explicit JavaRuntime(const IDasJavaRuntimeDesc& desc);
     ~JavaRuntime();
 
     // IForeignLanguageRuntime 实现
@@ -218,11 +208,53 @@ private:
 };
 
 /**
+ * Java 运行时描述实现类
+ */
+class JavaRuntimeDesc final : public IDasJavaRuntimeDesc
+{
+public:
+    // IDasJavaRuntimeDesc 接口实现 - Getters
+    [[nodiscard]]
+    auto GetJvmDllPath() const -> std::filesystem::path override
+    {
+        return jvm_dll_path_;
+    }
+    [[nodiscard]]
+    auto GetClassPath() const -> std::vector<std::filesystem::path> override
+    {
+        return class_path_;
+    }
+    [[nodiscard]]
+    auto GetJvmOptions() const -> std::vector<std::string> override
+    {
+        return jvm_options_;
+    }
+
+    // IDasJavaRuntimeDesc 接口实现 - Setters
+    void SetJvmDllPath(const std::filesystem::path& path) override
+    {
+        jvm_dll_path_ = path;
+    }
+    void SetClassPath(const std::vector<std::filesystem::path>& paths) override
+    {
+        class_path_ = paths;
+    }
+    void SetJvmOptions(const std::vector<std::string>& options) override
+    {
+        jvm_options_ = options;
+    }
+
+private:
+    std::filesystem::path              jvm_dll_path_;
+    std::vector<std::filesystem::path> class_path_;
+    std::vector<std::string>           jvm_options_;
+};
+
+/**
  * 工厂函数：创建 Java 运行时
  */
-DAS_API auto CreateJavaRuntime(const JavaRuntimeDesc& desc)
+auto CreateJavaRuntime(const ForeignLanguageRuntimeFactoryDesc& desc)
     -> DAS::Utils::Expected<DasPtr<IForeignLanguageRuntime>>;
-
 DAS_NS_JAVAHOST_END
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
