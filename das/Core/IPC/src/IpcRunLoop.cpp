@@ -281,25 +281,16 @@ void IpcRunLoop::CompletePendingCall(
             return; // 已被清理（超时或 Stop）
         }
 
-        if (it->second.on_complete)
-        {
-            // 正常路径：on_complete 已注册，取出回调并移除 pending call
-            on_complete = std::move(it->second.on_complete);
-            pending_calls_.erase(it);
-        }
-        else
-        {
-            // 竞争路径：RESPONSE 在 RegisterPendingCompletion 之前到达
-            // 将响应存入 buffer，RegisterPendingCompletion 会检测到并立即回调
-            it->second.response_buffer = std::move(response);
-            // 用 deadline = time_point::min() 标记为"已完成，等待回调注册"
-            it->second.deadline = std::chrono::steady_clock::time_point::min();
-            return;
-        }
+        // 取出回调并移除 pending call
+        on_complete = std::move(it->second.on_complete);
+        pending_calls_.erase(it);
     }
 
     // 在 mutex 外执行回调，避免死锁
-    on_complete(result, std::move(response));
+    if (on_complete)
+    {
+        on_complete(result, std::move(response));
+    }
 }
 
 void IpcRunLoop::TickPendingSenders()
@@ -376,47 +367,22 @@ void IpcRunLoop::RegisterPendingCompletion(
     std::chrono::steady_clock::time_point deadline,
     PendingCallCompletion                 on_complete)
 {
-    std::vector<uint8_t> early_response;
-    bool                 already_completed = false;
-
     {
         std::unique_lock<std::mutex> lock(pending_mutex_);
         auto                         it = pending_calls_.find(call_id);
         if (it != pending_calls_.end())
         {
-            // 检查是否在注册之前就收到了响应
-            // （CompletePendingCall 中用 deadline=min 标记）
-            if (it->second.deadline
-                == std::chrono::steady_clock::time_point::min())
-            {
-                // 竞争路径：响应已到达，取出响应并移除 pending call
-                early_response = std::move(it->second.response_buffer);
-                already_completed = true;
-                pending_calls_.erase(it);
-            }
-            else
-            {
-                // 正常路径：设置回调和超时
-                it->second.deadline = deadline;
-                it->second.on_complete = std::move(on_complete);
-                return;
-            }
+            // 设置回调和超时
+            it->second.deadline = deadline;
+            it->second.on_complete = std::move(on_complete);
+            return;
         }
     }
 
-    // 在 mutex 外执行回调
+    // call_id 已被清理（Stop/RequestStop 清除），回调超时
     if (on_complete)
     {
-        if (already_completed)
-        {
-            on_complete(DAS_S_OK, std::move(early_response));
-        }
-        else
-        {
-            // call_id 已被清理（可能在 RegisterPendingCompletion 之前
-            // 就被 Stop/RequestStop 清除了），回调超时
-            on_complete(DAS_E_IPC_TIMEOUT, {});
-        }
+        on_complete(DAS_E_IPC_TIMEOUT, {});
     }
 }
 
