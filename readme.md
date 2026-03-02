@@ -31,6 +31,8 @@ git clone git@github.com:BombaxCeiba/AutoStarRail.git
 | DAS_USE_BUNDLED_EIGEN  | OFF                       | 是否下载Eigen用于编译OpenCV                                    |
 | DAS_USE_BUNDLED_OPENCV | OFF                       | 是否下载OpenCV源码编译                                         |
 | DAS_LLD_EXECUTABLE     | lld                       | lld文件路径，似乎一般也不需要设置                              |
+| DAS_USE_LTO            | OFF                       | 是否启用 LTO (Link Time Optimization)                          |
+| DAS_USE_ASAN           | OFF                       | 是否启用 AddressSanitizer（仅 Debug 构建生效）                |
 | GITHUB_MIRROR_URL      | https://github.com        |                                                                |
 
 ## 3.配置SWIG
