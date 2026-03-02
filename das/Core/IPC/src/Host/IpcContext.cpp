@@ -10,6 +10,7 @@
 #include <das/Core/IPC/MessageHandlerRef.h>
 #include <das/Core/IPC/SessionCoordinator.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
+#include <das/Core/Logger/Logger.h>
 #include <boost/process/v2/pid.hpp>
 #include <das/DasApi.h>
 #include <das/Utils/fmt.h>

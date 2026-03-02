@@ -16,8 +16,8 @@
 #include <das/Core/IPC/IpcTransport.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/SessionCoordinator.h>
+#include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
-#include <das/Utils/fmt.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -99,10 +99,11 @@ namespace Core
 
             DasResult MainProcessServer::Start()
             {
-                if (!is_initialized_.load())
-                {
-                    return DAS_E_IPC_INVALID_STATE;
-                }
+            if (!is_initialized_.load())
+            {
+                DAS_CORE_LOG_ERROR("Server not initialized");
+                return DAS_E_IPC_INVALID_STATE;
+            }
 
                 if (is_running_.load())
                 {
@@ -137,10 +138,17 @@ namespace Core
 
             DasResult MainProcessServer::OnHostConnected(uint16_t session_id)
             {
-                if (!is_initialized_.load())
-                {
-                    return DAS_E_IPC_INVALID_STATE;
-                }
+            if (!is_initialized_.load())
+            {
+                DAS_CORE_LOG_ERROR("Server not initialized");
+                return DAS_E_IPC_INVALID_STATE;
+            }
+
+            if (!ValidateSessionId(session_id))
+            {
+                DAS_CORE_LOG_ERROR("Invalid session_id = {}", session_id);
+                return DAS_E_INVALID_ARGUMENT;
+            }
 
                 if (!ValidateSessionId(session_id))
                 {
@@ -159,6 +167,9 @@ namespace Core
                     }
                     else
                     {
+                        DAS_CORE_LOG_ERROR(
+                            "Session already connected (session_id = {})",
+                            session_id);
                         return DAS_E_DUPLICATE_ELEMENT;
                     }
                 }
@@ -182,17 +193,19 @@ namespace Core
 
             DasResult MainProcessServer::OnHostDisconnected(uint16_t session_id)
             {
-                if (!is_initialized_.load())
-                {
-                    return DAS_E_IPC_INVALID_STATE;
-                }
+            if (!is_initialized_.load())
+            {
+                DAS_CORE_LOG_ERROR("Server not initialized");
+                return DAS_E_IPC_INVALID_STATE;
+            }
 
                 std::lock_guard<std::mutex> lock(sessions_mutex_);
 
                 auto it = sessions_.find(session_id);
-                if (it == sessions_.end())
-                {
-                    return DAS_E_IPC_OBJECT_NOT_FOUND;
+            if (it == sessions_.end())
+            {
+                DAS_CORE_LOG_ERROR("Session not found (session_id = {})", session_id);
+                return DAS_E_IPC_OBJECT_NOT_FOUND;
                 }
 
                 it->second.is_connected = false;
@@ -270,9 +283,10 @@ namespace Core
                 std::lock_guard<std::mutex> lock(sessions_mutex_);
 
                 auto it = sessions_.find(session_id);
-                if (it == sessions_.end())
-                {
-                    return DAS_E_IPC_OBJECT_NOT_FOUND;
+            if (it == sessions_.end())
+            {
+                DAS_CORE_LOG_ERROR("Session not found (session_id = {})", session_id);
+                return DAS_E_IPC_OBJECT_NOT_FOUND;
                 }
 
                 out_info = it->second;
@@ -288,7 +302,16 @@ namespace Core
             {
                 if (!is_initialized_.load())
                 {
+                    DAS_CORE_LOG_ERROR("Server not initialized");
                     return DAS_E_IPC_INVALID_STATE;
+                }
+
+                if (!IsSessionConnected(session_id))
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "Session not connected (session_id = {})",
+                        session_id);
+                    return DAS_E_IPC_CONNECTION_LOST;
                 }
 
                 if (!IsSessionConnected(session_id))
@@ -336,6 +359,7 @@ namespace Core
             {
                 if (!is_initialized_.load())
                 {
+                    DAS_CORE_LOG_ERROR("Server not initialized");
                     return DAS_E_IPC_INVALID_STATE;
                 }
 
@@ -412,6 +436,7 @@ namespace Core
             {
                 if (!is_initialized_.load() || !is_running_.load())
                 {
+                    DAS_CORE_LOG_ERROR("Server not initialized or not running");
                     return DAS_E_IPC_INVALID_STATE;
                 }
 
@@ -500,16 +525,21 @@ namespace Core
 
                 if (IsNullObjectId(obj_id))
                 {
+                    DAS_CORE_LOG_ERROR("Null object_id");
                     return DAS_E_IPC_INVALID_OBJECT_ID;
                 }
 
                 if (!RemoteObjectRegistry::GetInstance().ObjectExists(obj_id))
                 {
+                    DAS_CORE_LOG_ERROR("Object not found");
                     return DAS_E_IPC_OBJECT_NOT_FOUND;
                 }
 
                 if (!IsSessionConnected(obj_id.session_id))
                 {
+                    DAS_CORE_LOG_ERROR(
+                        "Session not connected (session_id = {})",
+                        obj_id.session_id);
                     return DAS_E_IPC_CONNECTION_LOST;
                 }
 
@@ -538,25 +568,24 @@ namespace Core
                         .GetTransport(header.session_id);
                 if (!transport)
                 {
-                    std::string msg = DAS_FMT_NS::format(
-                        "Failed to get transport for session_id: {}",
+                    DAS_CORE_LOG_ERROR(
+                        "Failed to get transport for session_id = {}",
                         header.session_id);
-                    DAS_LOG_ERROR(msg.c_str());
                     return DAS_E_IPC_NO_CONNECTIONS;
                 }
 
-                // 发送消息到目标 Host
+                // Send message to target Host
                 DasResult result = transport->Send(header, body, body_size);
                 if (DAS::IsFailed(result))
                 {
-                    std::string msg = DAS_FMT_NS::format(
-                        "Failed to forward message to session_id: {}, error: {}",
+                    DAS_CORE_LOG_ERROR(
+                        "Failed to forward message to session_id = {}, error = {}",
                         header.session_id,
                         static_cast<int32_t>(result));
-                    DAS_LOG_ERROR(msg.c_str());
                     return result;
                 }
 
+                // TODO: 等待响应 - 当前简化实现，只发送不接收响应
                 // TODO: 等待响应 - 当前简化实现，只发送不接收响应
                 // 完整实现需要：
                 // 1. 使用 IpcRunLoop 的 pending_calls_ 等待响应
@@ -578,10 +607,9 @@ namespace Core
                         .GetTransport(target_session_id);
                 if (!transport)
                 {
-                    std::string msg = DAS_FMT_NS::format(
-                        "SendLoadPlugin: No transport for session_id: {}",
+                    DAS_CORE_LOG_ERROR(
+                        "No transport for session_id = {}",
                         target_session_id);
-                    DAS_LOG_ERROR(msg.c_str());
                     return DAS_E_IPC_NO_CONNECTIONS;
                 }
 
@@ -617,21 +645,19 @@ namespace Core
 
                 if (DAS::IsFailed(result))
                 {
-                    std::string msg = DAS_FMT_NS::format(
-                        "SendLoadPlugin: SendRequest failed for session_id: {}, result: {:#x}",
+                    DAS_CORE_LOG_ERROR(
+                        "SendRequest failed for session_id = {}, result = {}",
                         target_session_id,
-                        static_cast<uint32_t>(result));
-                    DAS_LOG_ERROR(msg.c_str());
+                        result);
                     return result;
                 }
 
                 // 5. 解析响应 (ObjectId: 8 bytes)
                 if (response_body.size() < 8)
                 {
-                    std::string msg = DAS_FMT_NS::format(
-                        "SendLoadPlugin: Invalid response size: {}",
+                    DAS_CORE_LOG_ERROR(
+                        "Invalid response size = {}",
                         response_body.size());
-                    DAS_LOG_ERROR(msg.c_str());
                     return DAS_E_IPC_INVALID_MESSAGE;
                 }
 

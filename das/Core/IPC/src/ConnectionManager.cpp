@@ -5,6 +5,7 @@
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/IpcTransport.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
+#include <das/Core/Logger/Logger.h>
 #include <shared_mutex>
 #include <unordered_map>
 
@@ -82,6 +83,7 @@ DasResult ConnectionManager::UnregisterConnection(
     auto it = impl_->connections_.find(remote_id);
     if (it == impl_->connections_.end())
     {
+        DAS_CORE_LOG_ERROR("Connection not found for remote_id = {}", remote_id);
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 
@@ -97,6 +99,7 @@ DasResult ConnectionManager::SendHeartbeat(uint16_t remote_id)
     auto it = impl_->connections_.find(remote_id);
     if (it == impl_->connections_.end())
     {
+        DAS_CORE_LOG_ERROR("Connection not found for remote_id = {}", remote_id);
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 
@@ -114,6 +117,7 @@ bool ConnectionManager::IsConnectionAlive(uint16_t remote_id) const
     auto it = impl_->connections_.find(remote_id);
     if (it == impl_->connections_.end())
     {
+        DAS_CORE_LOG_WARN("Connection not found for remote_id = {}", remote_id);
         return false;
     }
     return true;
@@ -129,6 +133,7 @@ DasResult ConnectionManager::GetConnection(
     auto it = impl_->connections_.find(session_id);
     if (it == impl_->connections_.end())
     {
+        DAS_CORE_LOG_ERROR("Connection not found for session_id = {}", session_id);
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 
@@ -144,6 +149,7 @@ IpcTransport* ConnectionManager::GetTransport(uint16_t session_id) const
     auto it = impl_->connections_.find(session_id);
     if (it == impl_->connections_.end())
     {
+        DAS_CORE_LOG_WARN("Connection not found for session_id = {}", session_id);
         return nullptr;
     }
 
@@ -195,6 +201,7 @@ DasResult ConnectionManager::SetConnectionAlive(
     auto it = impl_->connections_.find(session_id);
     if (it == impl_->connections_.end())
     {
+        DAS_CORE_LOG_ERROR("Connection not found for session_id = {}", session_id);
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 
@@ -235,6 +242,7 @@ DasResult ConnectionManager::UnregisterTransport(uint16_t session_id)
     auto it = impl_->connections_.find(session_id);
     if (it == impl_->connections_.end())
     {
+        DAS_CORE_LOG_ERROR("Connection not found for session_id = {}", session_id);
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 
@@ -321,6 +329,7 @@ DasResult ConnectionManager::CleanupConnectionResources(
     auto it = impl_->connections_.find(remote_id);
     if (it == impl_->connections_.end())
     {
+        DAS_CORE_LOG_ERROR("Connection not found for remote_id = {}", remote_id);
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 

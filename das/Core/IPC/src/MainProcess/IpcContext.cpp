@@ -5,7 +5,7 @@
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/IPC/SessionCoordinator.h>
-
+#include <das/Core/Logger/Logger.h>
 DAS_NS_BEGIN
 namespace Core
 {
@@ -40,8 +40,10 @@ namespace Core
                         &RemoteObjectRegistry::GetInstance(),
                         nullptr); // run_loop 留空，由 MainProcessServer 设置
                     if (result != DAS_S_OK)
-
                     {
+                        DAS_CORE_LOG_ERROR(
+                            "ProxyFactory initialization failed, result = 0x{:08X}",
+                            result);
                         object_manager_.reset();
                         return result;
                     }
@@ -50,8 +52,10 @@ namespace Core
                     auto& server = MainProcessServer::GetInstance();
                     result = server.Initialize();
                     if (result != DAS_S_OK)
-
                     {
+                        DAS_CORE_LOG_ERROR(
+                            "MainProcessServer initialization failed, result = 0x{:08X}",
+                            result);
                         object_manager_.reset();
                         return result;
                     }

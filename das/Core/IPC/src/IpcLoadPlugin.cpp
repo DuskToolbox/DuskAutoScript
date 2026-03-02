@@ -2,9 +2,9 @@
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/MainProcess/MainProcessServer.h>
 #include <das/Core/IPC/ProxyFactory.h>
+#include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
 #include <das/IDasBase.h>
-
 DAS_CORE_IPC_NS_BEGIN
 DasResult IpcLoadPluginImpl(
     const std::string& plugin_path,
@@ -12,9 +12,9 @@ DasResult IpcLoadPluginImpl(
 {
     if (pp_out_plugin == nullptr)
     {
+        DAS_CORE_LOG_ERROR("pp_out_plugin is null");
         return DAS_E_INVALID_POINTER;
     }
-
     *pp_out_plugin = nullptr;
 
     auto& server = MainProcess::MainProcessServer::GetInstance();
@@ -26,9 +26,9 @@ DasResult IpcLoadPluginImpl(
     
     if (sessions.empty())
     {
+        DAS_CORE_LOG_ERROR("No available connections");
         return DAS_E_IPC_NO_CONNECTIONS;
     }
-    
     uint16_t session_id = sessions[0];
 
     ObjectId object_id{};
@@ -43,16 +43,16 @@ DasResult IpcLoadPluginImpl(
 
     if (!factory.IsInitialized())
     {
+        DAS_CORE_LOG_ERROR("ProxyFactory not initialized");
         return DAS_E_IPC_INVALID_STATE;
     }
-
     DasPtr<IDasBase> proxy = factory.CreateProxy<IDasBase>(object_id);
 
     if (!proxy)
     {
+        DAS_CORE_LOG_ERROR("Failed to create proxy");
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
-
     *pp_out_plugin = proxy.Get();
     proxy->AddRef();
 
@@ -65,9 +65,9 @@ IpcLoadPlugin(const char* p_plugin_path, IDasBase** pp_out_plugin)
 {
     if (p_plugin_path == nullptr || pp_out_plugin == nullptr)
     {
+        DAS_CORE_LOG_ERROR("Invalid pointer argument");
         return DAS_E_INVALID_POINTER;
     }
-
     return DAS::Core::IPC::IpcLoadPluginImpl(
         std::string(p_plugin_path),
         pp_out_plugin);

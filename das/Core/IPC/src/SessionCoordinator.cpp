@@ -3,12 +3,8 @@
 #include <cstdint>
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/SessionCoordinator.h>
+#include <das/Core/Logger/Logger.h>
 #include <mutex>
-
-#include <algorithm>
-#include <das/Core/IPC/SessionCoordinator.h>
-#include <mutex>
-
 DAS_CORE_IPC_NS_BEGIN
 // 保留的 session_id 定义
 const uint16_t SessionCoordinator::reserved_session_ids_[3] = {0, 1, 0xFFFF};
@@ -40,18 +36,19 @@ uint16_t SessionCoordinator::AllocateSessionId()
     uint16_t available_id = FindAvailableSessionId();
     if (available_id == 0)
     {
-        return 0; // 没有可用的 session_id
+        DAS_CORE_LOG_ERROR("No available session_id");
+        return 0; // No available session_id
     }
 
     MarkSessionIdAsAllocated(available_id);
     return available_id;
 }
 
+
 void SessionCoordinator::ReleaseSessionId(uint16_t session_id)
 {
     if (!IsValidSessionId(session_id))
     {
-        return;
     }
 
     std::lock_guard<std::mutex> lock(allocated_ids_mutex_);
@@ -67,7 +64,8 @@ DasResult SessionCoordinator::SetAsMainProcess()
 {
     if (local_session_id_.has_value())
     {
-        return DAS_E_FAIL;  // 已经被设置过了
+        DAS_CORE_LOG_ERROR("Local session_id already set");
+        return DAS_E_FAIL;  // Already set
     }
     local_session_id_ = 1;
     return DAS_S_OK;

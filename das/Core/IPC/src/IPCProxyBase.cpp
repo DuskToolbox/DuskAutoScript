@@ -1,7 +1,7 @@
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/IPCProxyBase.h>
 #include <das/Core/IPC/IpcRunLoop.h>
-
+#include <das/Core/Logger/Logger.h>
 DAS_CORE_IPC_NS_BEGIN
 DasResult IPCProxyBase::SendRequest(
     uint16_t              method_id,
@@ -11,6 +11,7 @@ DasResult IPCProxyBase::SendRequest(
 {
     if (!run_loop_)
     {
+        DAS_CORE_LOG_ERROR("run_loop_ is null");
         return DAS_E_FAIL;
     }
 
@@ -36,6 +37,7 @@ DasResult IPCProxyBase::SendRequestNoResponse(
 {
     if (!run_loop_)
     {
+        DAS_CORE_LOG_ERROR("run_loop_ is null");
         return DAS_E_FAIL;
     }
 

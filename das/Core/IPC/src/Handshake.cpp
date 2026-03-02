@@ -5,6 +5,9 @@
 #include <mutex>
 #include <unordered_map>
 
+#include <das/Core/Logger/Logger.h>
+#include <das/Utils/fmt.h>
+
 DAS_CORE_IPC_NS_BEGIN
 // ============================================================
 // Host 端握手管理器
@@ -32,10 +35,14 @@ public:
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
-        // 验证协议版本
+        // Validate protocol version
         if (request.protocol_version
             != HelloRequestV1::CURRENT_PROTOCOL_VERSION)
         {
+            DAS_CORE_LOG_ERROR(
+                "Protocol version mismatch (expected = {}, got = {})",
+                HelloRequestV1::CURRENT_PROTOCOL_VERSION,
+                request.protocol_version);
             InitWelcomeResponse(
                 response,
                 INVALID_SESSION_ID,
@@ -43,9 +50,10 @@ public:
             return DAS_E_IPC_INVALID_MESSAGE;
         }
 
-        // 验证插件名称
+        // Validate plugin name
         if (request.plugin_name[0] == '\0')
         {
+            DAS_CORE_LOG_ERROR("Empty plugin name");
             InitWelcomeResponse(
                 response,
                 INVALID_SESSION_ID,
@@ -53,10 +61,12 @@ public:
             return DAS_E_IPC_INVALID_MESSAGE;
         }
 
-        // 分配 session_id
+        // Allocate session_id
         uint16_t child_session_id = AllocateSessionId();
         if (child_session_id == INVALID_SESSION_ID)
         {
+            DAS_CORE_LOG_ERROR(
+                "No available session_id (connection limit reached)");
             InitWelcomeResponse(
                 response,
                 INVALID_SESSION_ID,
@@ -86,12 +96,19 @@ public:
         auto it = pending_connections_.find(request.session_id);
         if (it == pending_connections_.end())
         {
+            DAS_CORE_LOG_ERROR(
+                "Session not found (session_id = {})",
+                request.session_id);
             InitReadyAck(response, ReadyAckV1::STATUS_INVALID_SESSION);
             return DAS_E_IPC_OBJECT_NOT_FOUND;
         }
 
         if (it->second.state != HandshakeState::WelcomeRecv)
         {
+            DAS_CORE_LOG_ERROR(
+                "Invalid handshake state (session_id = {}, state = {})",
+                request.session_id,
+                static_cast<int>(it->second.state));
             InitReadyAck(response, ReadyAckV1::STATUS_SESSION_NOT_READY);
             return DAS_E_IPC_INVALID_STATE;
         }
@@ -180,18 +197,25 @@ public:
     {
         if (state_ != HandshakeState::HelloSent)
         {
+            DAS_CORE_LOG_ERROR(
+                "Invalid state (expected = HelloSent, got = {})",
+                static_cast<int>(state_));
             state_ = HandshakeState::Failed;
             return DAS_E_IPC_INVALID_STATE;
         }
 
         if (response.status != WelcomeResponseV1::STATUS_SUCCESS)
         {
+            DAS_CORE_LOG_ERROR(
+                "Welcome failed (status = {})",
+                response.status);
             state_ = HandshakeState::Failed;
             return DAS_E_IPC_HANDSHAKE_FAILED;
         }
 
         if (response.session_id == 0)
         {
+            DAS_CORE_LOG_ERROR("Invalid session_id (0)");
             state_ = HandshakeState::Failed;
             return DAS_E_IPC_HANDSHAKE_FAILED;
         }
@@ -213,12 +237,18 @@ public:
     {
         if (state_ != HandshakeState::ReadySent)
         {
+            DAS_CORE_LOG_ERROR(
+                "Invalid state (expected = ReadySent, got = {})",
+                static_cast<int>(state_));
             state_ = HandshakeState::Failed;
             return DAS_E_IPC_INVALID_STATE;
         }
 
         if (ack.status != ReadyAckV1::STATUS_SUCCESS)
         {
+            DAS_CORE_LOG_ERROR(
+                "ReadyAck failed (status = {})",
+                ack.status);
             state_ = HandshakeState::Failed;
             return DAS_E_IPC_HANDSHAKE_FAILED;
         }

@@ -1,6 +1,7 @@
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <cstring>
 #include <das/Core/IPC/Config.h>
+#include <das/Core/Logger/Logger.h>
 
 DAS_CORE_IPC_NS_BEGIN
 RemoteObjectRegistry& RemoteObjectRegistry::GetInstance()
@@ -34,23 +35,26 @@ DasResult RemoteObjectRegistry::RegisterObject(
     const std::string& name,
     uint16_t           version)
 {
-    // 检查参数有效性
+    // Check parameters
     if (IsNullObjectId(object_id))
     {
+        DAS_CORE_LOG_ERROR("Invalid object_id");
         return DAS_E_IPC_INVALID_OBJECT_ID;
     }
 
     if (name.empty())
     {
+        DAS_CORE_LOG_ERROR("Empty name");
         return DAS_E_INVALID_ARGUMENT;
     }
 
-    // 编码ObjectId用于查找
+    // Encode ObjectId for lookup
     uint64_t encoded_id = EncodeObjectIdForLookup(object_id);
 
-    // 检查对象是否已存在
+    // Check if object already exists
     if (objects_by_id_.find(encoded_id) != objects_by_id_.end())
     {
+        DAS_CORE_LOG_ERROR("Object already exists for name = {}", name);
         return DAS_E_DUPLICATE_ELEMENT;
     }
 
@@ -79,6 +83,7 @@ DasResult RemoteObjectRegistry::UnregisterObject(const ObjectId& object_id)
 {
     if (IsNullObjectId(object_id))
     {
+        DAS_CORE_LOG_ERROR("Invalid object_id");
         return DAS_E_IPC_INVALID_OBJECT_ID;
     }
 
@@ -87,6 +92,7 @@ DasResult RemoteObjectRegistry::UnregisterObject(const ObjectId& object_id)
 
     if (it == objects_by_id_.end())
     {
+        DAS_CORE_LOG_ERROR("Object not found");
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 
@@ -165,6 +171,7 @@ DasResult RemoteObjectRegistry::LookupByName(
     auto it = objects_by_name_.find(name);
     if (it == objects_by_name_.end())
     {
+        DAS_CORE_LOG_ERROR("Object not found for name = {}", name);
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 
@@ -172,6 +179,7 @@ DasResult RemoteObjectRegistry::LookupByName(
     auto     id_it = objects_by_id_.find(encoded_id);
     if (id_it == objects_by_id_.end())
     {
+        DAS_CORE_LOG_ERROR("Object not found for encoded_id = {}", encoded_id);
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 
@@ -186,6 +194,7 @@ DasResult RemoteObjectRegistry::LookupByInterface(
     auto it = objects_by_interface_.find(interface_id);
     if (it == objects_by_interface_.end())
     {
+        DAS_CORE_LOG_ERROR("Object not found for interface_id = {}", interface_id);
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 
@@ -193,6 +202,7 @@ DasResult RemoteObjectRegistry::LookupByInterface(
     auto     id_it = objects_by_id_.find(encoded_id);
     if (id_it == objects_by_id_.end())
     {
+        DAS_CORE_LOG_ERROR("Object not found for encoded_id = {}", encoded_id);
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 
@@ -206,6 +216,7 @@ DasResult RemoteObjectRegistry::GetObjectInfo(
 {
     if (IsNullObjectId(object_id))
     {
+        DAS_CORE_LOG_ERROR("Invalid object_id");
         return DAS_E_IPC_INVALID_OBJECT_ID;
     }
 
@@ -214,6 +225,7 @@ DasResult RemoteObjectRegistry::GetObjectInfo(
 
     if (it == objects_by_id_.end())
     {
+        DAS_CORE_LOG_ERROR("Object not found");
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 

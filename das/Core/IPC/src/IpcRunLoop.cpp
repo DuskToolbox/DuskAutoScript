@@ -15,6 +15,8 @@
 #include <unordered_map>
 #include <utility>
 
+#include <das/Core/Logger/Logger.h>
+#include <das/Utils/fmt.h>
 DAS_CORE_IPC_NS_BEGIN
 
 // 握手消息 interface_id 范围常量
@@ -164,7 +166,10 @@ DasResult IpcRunLoop::DispatchToHandler(
         return handler->HandleMessage(header, body, sender);
     }
 
-    // 没有找到对应的处理器
+    // No handler found
+    DAS_CORE_LOG_WARN(
+        "No handler found for interface_id = {}",
+        header.interface_id);
     return DAS_E_NOT_FOUND;
 }
 
@@ -198,6 +203,7 @@ bool IpcRunLoop::ReceiveAndDispatchFromTransport(
 {
     if (!transport)
     {
+        DAS_CORE_LOG_ERROR("Transport is null");
         return false;
     }
 
@@ -231,6 +237,7 @@ std::pair<DasResult, uint64_t> IpcRunLoop::PrepareSendRequest(
 {
     if (!transport)
     {
+        DAS_CORE_LOG_ERROR("Transport is null");
         return {DAS_E_IPC_INVALID_ARGUMENT, 0};
     }
 
@@ -254,6 +261,9 @@ std::pair<DasResult, uint64_t> IpcRunLoop::PrepareSendRequest(
     auto send_result = transport->Send(header, body, body_size);
     if (send_result != DAS_S_OK)
     {
+        DAS_CORE_LOG_ERROR(
+            "Failed to send request (error = 0x{:08X})",
+            send_result);
         std::unique_lock<std::mutex> lock(pending_mutex_);
         pending_calls_.erase(call_id);
         return {send_result, 0};
@@ -395,6 +405,7 @@ DasResult IpcRunLoop::SendRequest(
 {
     if (!transport_)
     {
+        DAS_CORE_LOG_ERROR("Transport not initialized");
         return DAS_E_IPC_INVALID_ARGUMENT;
     }
     return SendRequest(
@@ -421,6 +432,7 @@ DasResult IpcRunLoop::SendRequest(
     auto result_opt = stdexec::sync_wait(std::move(sender));
     if (!result_opt.has_value())
     {
+        DAS_CORE_LOG_WARN("Async operation timed out or cancelled");
         return DAS_E_IPC_TIMEOUT;
     }
 
@@ -550,6 +562,7 @@ DasResult IpcRunLoop::Run()
 {
     if (running_.load())
     {
+        DAS_CORE_LOG_ERROR("Deadlock detected - already running");
         return DAS_E_IPC_DEADLOCK_DETECTED;
     }
 

@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
+#include <das/Core/Logger/Logger.h>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -62,8 +63,9 @@ DasResult SharedMemoryPool::Initialize(
 
         return DAS_S_OK;
     }
-    catch (...)
+    catch (const std::exception& e)
     {
+        DAS_CORE_LOG_EXCEPTION(e);
         return DAS_E_IPC_SHM_FAILED;
     }
 }
@@ -101,6 +103,7 @@ DasResult SharedMemoryPool::Allocate(size_t size, SharedMemoryBlock& block)
 
     if (!impl_->segment_)
     {
+        DAS_CORE_LOG_ERROR("Shared memory not initialized");
         return DAS_E_IPC_SHM_FAILED;
     }
 
@@ -109,6 +112,9 @@ DasResult SharedMemoryPool::Allocate(size_t size, SharedMemoryBlock& block)
         void* ptr = impl_->segment_->allocate(size);
         if (!ptr)
         {
+            DAS_CORE_LOG_ERROR(
+                "Failed to allocate {} bytes (null pointer returned)",
+                size);
             return DAS_E_OUT_OF_MEMORY;
         }
 
@@ -123,8 +129,9 @@ DasResult SharedMemoryPool::Allocate(size_t size, SharedMemoryBlock& block)
         impl_->used_size_ += size;
         return DAS_S_OK;
     }
-    catch (...)
+    catch (const std::exception& e)
     {
+        DAS_CORE_LOG_EXCEPTION(e);
         return DAS_E_IPC_SHM_FAILED;
     }
 }
@@ -135,12 +142,14 @@ DasResult SharedMemoryPool::Deallocate(uint64_t handle)
 
     if (!impl_->segment_)
     {
+        DAS_CORE_LOG_ERROR("Shared memory not initialized");
         return DAS_E_IPC_SHM_FAILED;
     }
 
     auto it = impl_->block_metadata_.find(handle);
     if (it == impl_->block_metadata_.end())
     {
+        DAS_CORE_LOG_ERROR("Block not found for handle = {}", handle);
         return DAS_E_IPC_SHM_FAILED;
     }
 
@@ -158,8 +167,9 @@ DasResult SharedMemoryPool::Deallocate(uint64_t handle)
 
         return DAS_S_OK;
     }
-    catch (...)
+    catch (const std::exception& e)
     {
+        DAS_CORE_LOG_EXCEPTION(e);
         return DAS_E_IPC_SHM_FAILED;
     }
 }
@@ -172,12 +182,14 @@ DasResult SharedMemoryPool::GetBlockByHandle(
 
     if (!impl_->segment_)
     {
+        DAS_CORE_LOG_ERROR("Shared memory not initialized");
         return DAS_E_IPC_SHM_FAILED;
     }
 
     auto it = impl_->block_metadata_.find(handle);
     if (it == impl_->block_metadata_.end())
     {
+        DAS_CORE_LOG_ERROR("Block not found for handle = {}", handle);
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 
@@ -194,8 +206,9 @@ DasResult SharedMemoryPool::GetBlockByHandle(
 
         return DAS_S_OK;
     }
-    catch (...)
+    catch (const std::exception& e)
     {
+        DAS_CORE_LOG_EXCEPTION(e);
         return DAS_E_IPC_SHM_FAILED;
     }
 }
@@ -206,6 +219,7 @@ DasResult SharedMemoryPool::CleanupStaleBlocks()
 
     if (!impl_->segment_)
     {
+        DAS_CORE_LOG_ERROR("Shared memory not initialized");
         return DAS_E_IPC_SHM_FAILED;
     }
 
@@ -299,9 +313,10 @@ DasResult SharedMemoryManager::CreatePool(
 DasResult SharedMemoryManager::DestroyPool(const std::string& pool_id)
 {
     std::lock_guard<std::mutex> lock(impl_->mutex_);
-    auto                        it = impl_->pools_.find(pool_id);
+    auto it = impl_->pools_.find(pool_id);
     if (it == impl_->pools_.end())
     {
+        DAS_CORE_LOG_ERROR("Pool not found for pool_id = {}", pool_id);
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 
@@ -316,9 +331,10 @@ DasResult SharedMemoryManager::GetPool(
     SharedMemoryPool*& pool)
 {
     std::lock_guard<std::mutex> lock(impl_->mutex_);
-    auto                        it = impl_->pools_.find(pool_id);
+    auto it = impl_->pools_.find(pool_id);
     if (it == impl_->pools_.end())
     {
+        DAS_CORE_LOG_ERROR("Pool not found for pool_id = {}", pool_id);
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 

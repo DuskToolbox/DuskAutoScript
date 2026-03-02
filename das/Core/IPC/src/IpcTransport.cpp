@@ -4,10 +4,10 @@
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/IpcTransport.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
+#include <das/Core/Logger/Logger.h>
 #include <string>
 #include <das/Utils/fmt.h>
 #include <vector>
-
 DAS_CORE_IPC_NS_BEGIN
 constexpr uint16_t kFlagLargeMessage = 0x01;
 
@@ -60,8 +60,9 @@ DasResult IpcTransport::Initialize(
         impl_->initialized_ = true;
         return DAS_S_OK;
     }
-    catch (const boost::interprocess::interprocess_exception&)
+    catch (const std::exception& e)
     {
+        DAS_CORE_LOG_EXCEPTION(e);
         return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
 }
@@ -97,8 +98,9 @@ DasResult IpcTransport::Connect(
         impl_->initialized_ = true;
         return DAS_S_OK;
     }
-    catch (const boost::interprocess::interprocess_exception&)
+    catch (const std::exception& e)
     {
+        DAS_CORE_LOG_EXCEPTION(e);
         return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
 }
@@ -135,6 +137,7 @@ DasResult IpcTransport::Send(
 {
     if (!impl_->initialized_)
     {
+        DAS_CORE_LOG_ERROR("Transport not initialized");
         return DAS_E_IPC_CONNECTION_LOST;
     }
 
@@ -157,6 +160,7 @@ DasResult IpcTransport::Receive(
 {
     if (!impl_->initialized_)
     {
+        DAS_CORE_LOG_ERROR("Transport not initialized");
         return DAS_E_IPC_CONNECTION_LOST;
     }
 
@@ -189,21 +193,30 @@ DasResult IpcTransport::Receive(
                     + boost::posix_time::milliseconds(timeout_ms)));
             if (!received)
             {
+                DAS_CORE_LOG_WARN("Receive timeout after {} ms", timeout_ms);
                 return DAS_E_IPC_TIMEOUT;
             }
         }
 
         if (received_size < sizeof(IPCMessageHeader))
         {
+            DAS_CORE_LOG_ERROR(
+                "Message too small ({} bytes, expected at least {} bytes)",
+                received_size,
+                sizeof(IPCMessageHeader));
             return DAS_E_IPC_INVALID_MESSAGE_HEADER;
         }
 
         std::memcpy(&out_header, buffer.data(), sizeof(IPCMessageHeader));
 
-        // 验证 magic 和 version
+        // Validate magic and version
         if (out_header.magic != IPCMessageHeader::MAGIC
             || out_header.version != IPCMessageHeader::CURRENT_VERSION)
         {
+            DAS_CORE_LOG_ERROR(
+                "Invalid message header (magic = 0x{:08X}, version = {})",
+                out_header.magic,
+                out_header.version);
             return DAS_E_IPC_INVALID_MESSAGE_HEADER;
         }
 
@@ -211,11 +224,15 @@ DasResult IpcTransport::Receive(
         {
             if (impl_->shm_pool_ == nullptr)
             {
+                DAS_CORE_LOG_ERROR("Large message received but shared memory pool not set");
                 return DAS_E_IPC_SHM_FAILED;
             }
 
             if (received_size < sizeof(IPCMessageHeader) + sizeof(uint64_t))
             {
+                DAS_CORE_LOG_ERROR(
+                    "Large message handle missing (size = {})",
+                    received_size);
                 return DAS_E_IPC_INVALID_MESSAGE;
             }
 
@@ -229,6 +246,9 @@ DasResult IpcTransport::Receive(
             auto result = impl_->shm_pool_->GetBlockByHandle(handle, shm_block);
             if (result != DAS_S_OK)
             {
+                DAS_CORE_LOG_ERROR(
+                    "Failed to get shared memory block for handle = {}",
+                    handle);
                 return result;
             }
 
@@ -253,8 +273,9 @@ DasResult IpcTransport::Receive(
 
         return DAS_S_OK;
     }
-    catch (const boost::interprocess::interprocess_exception&)
+    catch (const std::exception& e)
     {
+        DAS_CORE_LOG_EXCEPTION(e);
         return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
 }
@@ -306,8 +327,9 @@ DasResult IpcTransport::SendSmallMessage(
         impl_->host_queue_->send(buffer.data(), buffer.size(), 0);
         return DAS_S_OK;
     }
-    catch (const boost::interprocess::interprocess_exception&)
+    catch (const std::exception& e)
     {
+        DAS_CORE_LOG_EXCEPTION(e);
         return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
 }
@@ -319,13 +341,17 @@ DasResult IpcTransport::SendLargeMessage(
 {
     if (impl_->shm_pool_ == nullptr)
     {
+        DAS_CORE_LOG_ERROR("Shared memory pool not set");
         return DAS_E_IPC_SHM_FAILED;
     }
 
     SharedMemoryBlock block;
-    auto              result = impl_->shm_pool_->Allocate(body_size, block);
+    auto result = impl_->shm_pool_->Allocate(body_size, block);
     if (result != DAS_S_OK)
     {
+        DAS_CORE_LOG_ERROR(
+            "Failed to allocate {} bytes in shared memory",
+            body_size);
         return result;
     }
 
