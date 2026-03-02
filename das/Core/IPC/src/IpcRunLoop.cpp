@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -12,12 +13,9 @@
 #include <stdexec/execution.hpp>
 #include <thread>
 #include <unordered_map>
+#include <utility>
 
 DAS_CORE_IPC_NS_BEGIN
-// 线程局部嵌套深度跟踪（用于 re-entrant 调用检测）
-thread_local uint32_t     t_nested_depth = 0;
-static constexpr uint32_t MAX_NESTED_DEPTH = 32;
-static constexpr uint32_t PUMP_POLL_TIMEOUT_MS = 10;
 
 // 握手消息 interface_id 范围常量
 // HandshakeInterfaceId 枚举范围: 1=HELLO, 2=WELCOME, 3=READY, 4=READY_ACK,
@@ -52,14 +50,29 @@ DasResult IpcRunLoop::Stop()
 
     running_.store(false);
 
+    // 通知所有 pending calls 超时完成
     {
-        std::unique_lock<std::mutex> lock(pending_mutex_);
-
-        for (auto& [call_id, ctx] : pending_calls_)
+        std::vector<PendingCallCompletion> completions;
         {
-            ctx.completed = true;
+            std::unique_lock<std::mutex> lock(pending_mutex_);
+            for (auto& [call_id, state] : pending_calls_)
+            {
+                if (state.on_complete)
+                {
+                    completions.push_back(std::move(state.on_complete));
+                }
+            }
+            pending_calls_.clear();
+        }
+        // 在 mutex 外执行回调，避免死锁
+        for (auto& cb : completions)
+        {
+            cb(DAS_E_IPC_TIMEOUT, {});
         }
     }
+
+    // 发送唤醒消息让 Receive 返回，使 RunInternal 退出循环
+    SendWakeupMessage();
 
     if (io_thread_.joinable())
     {
@@ -75,10 +88,22 @@ void IpcRunLoop::RequestStop()
 
     // 通知所有 pending calls 完成，避免阻塞
     {
-        std::unique_lock<std::mutex> lock(pending_mutex_);
-        for (auto& [call_id, ctx] : pending_calls_)
+        std::vector<PendingCallCompletion> completions;
         {
-            ctx.completed = true;
+            std::unique_lock<std::mutex> lock(pending_mutex_);
+            for (auto& [call_id, state] : pending_calls_)
+            {
+                if (state.on_complete)
+                {
+                    completions.push_back(std::move(state.on_complete));
+                }
+            }
+            pending_calls_.clear();
+        }
+        // 在 mutex 外执行回调
+        for (auto& cb : completions)
+        {
+            cb(DAS_E_IPC_TIMEOUT, {});
         }
     }
 }
@@ -153,16 +178,10 @@ bool IpcRunLoop::ReceiveAndDispatch(std::chrono::milliseconds timeout)
 
     if (result == DAS_S_OK)
     {
-        // 1. 优先检查是否是响应消息
+        // 1. 优先检查是否是响应消息 → 直接完成 pending call
         if (header.message_type == static_cast<uint8_t>(MessageType::RESPONSE))
         {
-            std::unique_lock<std::mutex> lock(pending_mutex_);
-            auto it = pending_calls_.find(header.call_id);
-            if (it != pending_calls_.end())
-            {
-                it->second.response_buffer = std::move(body);
-                it->second.completed = true;
-            }
+            CompletePendingCall(header.call_id, DAS_S_OK, std::move(body));
             return true;
         }
 
@@ -174,7 +193,7 @@ bool IpcRunLoop::ReceiveAndDispatch(std::chrono::milliseconds timeout)
 }
 
 bool IpcRunLoop::ReceiveAndDispatchFromTransport(
-    IpcTransport*           transport,
+    IpcTransport*             transport,
     std::chrono::milliseconds timeout)
 {
     if (!transport)
@@ -185,20 +204,15 @@ bool IpcRunLoop::ReceiveAndDispatchFromTransport(
     IPCMessageHeader     header;
     std::vector<uint8_t> body;
 
-    auto result = transport->Receive(header, body, static_cast<int>(timeout.count()));
+    auto result =
+        transport->Receive(header, body, static_cast<int>(timeout.count()));
 
     if (result == DAS_S_OK)
     {
-        // 1. 优先检查是否是响应消息
+        // 1. 优先检查是否是响应消息 → 直接完成 pending call
         if (header.message_type == static_cast<uint8_t>(MessageType::RESPONSE))
         {
-            std::unique_lock<std::mutex> lock(pending_mutex_);
-            auto it = pending_calls_.find(header.call_id);
-            if (it != pending_calls_.end())
-            {
-                it->second.response_buffer = std::move(body);
-                it->second.completed = true;
-            }
+            CompletePendingCall(header.call_id, DAS_S_OK, std::move(body));
             return true;
         }
 
@@ -209,6 +223,202 @@ bool IpcRunLoop::ReceiveAndDispatchFromTransport(
     return false;
 }
 
+std::pair<DasResult, uint64_t> IpcRunLoop::PrepareSendRequest(
+    IpcTransport*           transport,
+    const IPCMessageHeader& request_header,
+    const uint8_t*          body,
+    size_t                  body_size)
+{
+    if (!transport)
+    {
+        return {DAS_E_IPC_INVALID_ARGUMENT, 0};
+    }
+
+    uint64_t         call_id = next_call_id_.fetch_add(1);
+    IPCMessageHeader header = request_header;
+    header.call_id = call_id;
+    header.message_type = static_cast<uint8_t>(MessageType::REQUEST);
+
+    // 创建等待上下文（on_complete 和 deadline 稍后由
+    // AwaitResponseOperation::start() 通过 RegisterPendingCompletion 设置）
+    {
+        std::unique_lock<std::mutex> lock(pending_mutex_);
+        pending_calls_[call_id] = PendingCallState{
+            call_id,
+            {},
+            std::chrono::steady_clock::time_point::max(),
+            nullptr};
+    }
+
+    // 发送请求
+    auto send_result = transport->Send(header, body, body_size);
+    if (send_result != DAS_S_OK)
+    {
+        std::unique_lock<std::mutex> lock(pending_mutex_);
+        pending_calls_.erase(call_id);
+        return {send_result, 0};
+    }
+
+    return {DAS_S_OK, call_id};
+}
+
+//=========================================================================
+// IOCP 风格异步 pending call 管理
+//=========================================================================
+
+void IpcRunLoop::CompletePendingCall(
+    uint64_t             call_id,
+    DasResult            result,
+    std::vector<uint8_t> response)
+{
+    PendingCallCompletion on_complete;
+
+    {
+        std::unique_lock<std::mutex> lock(pending_mutex_);
+        auto                         it = pending_calls_.find(call_id);
+        if (it == pending_calls_.end())
+        {
+            return; // 已被清理（超时或 Stop）
+        }
+
+        if (it->second.on_complete)
+        {
+            // 正常路径：on_complete 已注册，取出回调并移除 pending call
+            on_complete = std::move(it->second.on_complete);
+            pending_calls_.erase(it);
+        }
+        else
+        {
+            // 竞争路径：RESPONSE 在 RegisterPendingCompletion 之前到达
+            // 将响应存入 buffer，RegisterPendingCompletion 会检测到并立即回调
+            it->second.response_buffer = std::move(response);
+            // 用 deadline = time_point::min() 标记为"已完成，等待回调注册"
+            it->second.deadline = std::chrono::steady_clock::time_point::min();
+            return;
+        }
+    }
+
+    // 在 mutex 外执行回调，避免死锁
+    on_complete(result, std::move(response));
+}
+
+void IpcRunLoop::TickPendingSenders()
+{
+    auto now = std::chrono::steady_clock::now();
+
+    // 收集所有超时的 pending call
+    std::vector<std::pair<uint64_t, PendingCallCompletion>> expired;
+
+    {
+        std::unique_lock<std::mutex> lock(pending_mutex_);
+        for (auto it = pending_calls_.begin(); it != pending_calls_.end();)
+        {
+            if (it->second.on_complete && now >= it->second.deadline)
+            {
+                expired.emplace_back(
+                    it->first,
+                    std::move(it->second.on_complete));
+                it = pending_calls_.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
+        }
+    }
+
+    // 在 mutex 外执行超时回调
+    for (auto& [call_id, cb] : expired)
+    {
+        cb(DAS_E_IPC_TIMEOUT, {});
+    }
+}
+
+uint32_t IpcRunLoop::GetNearestDeadlineMs() const
+{
+    std::unique_lock<std::mutex> lock(pending_mutex_);
+
+    if (pending_calls_.empty())
+    {
+        return 0; // 无 pending call，使用无限等待
+    }
+
+    auto now = std::chrono::steady_clock::now();
+    auto nearest = std::chrono::steady_clock::time_point::max();
+
+    for (const auto& [call_id, state] : pending_calls_)
+    {
+        if (state.on_complete && state.deadline < nearest)
+        {
+            nearest = state.deadline;
+        }
+    }
+
+    if (nearest == std::chrono::steady_clock::time_point::max())
+    {
+        return 0; // 没有设置 deadline 的 pending call
+    }
+
+    if (nearest <= now)
+    {
+        return 1; // 已超时，立即返回（最小 1ms，避免 0 表示无限等待）
+    }
+
+    auto ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(nearest - now);
+    return std::max(
+        static_cast<uint32_t>(1),
+        static_cast<uint32_t>(ms.count()));
+}
+
+void IpcRunLoop::RegisterPendingCompletion(
+    uint64_t                              call_id,
+    std::chrono::steady_clock::time_point deadline,
+    PendingCallCompletion                 on_complete)
+{
+    std::vector<uint8_t> early_response;
+    bool                 already_completed = false;
+
+    {
+        std::unique_lock<std::mutex> lock(pending_mutex_);
+        auto                         it = pending_calls_.find(call_id);
+        if (it != pending_calls_.end())
+        {
+            // 检查是否在注册之前就收到了响应
+            // （CompletePendingCall 中用 deadline=min 标记）
+            if (it->second.deadline
+                == std::chrono::steady_clock::time_point::min())
+            {
+                // 竞争路径：响应已到达，取出响应并移除 pending call
+                early_response = std::move(it->second.response_buffer);
+                already_completed = true;
+                pending_calls_.erase(it);
+            }
+            else
+            {
+                // 正常路径：设置回调和超时
+                it->second.deadline = deadline;
+                it->second.on_complete = std::move(on_complete);
+                return;
+            }
+        }
+    }
+
+    // 在 mutex 外执行回调
+    if (on_complete)
+    {
+        if (already_completed)
+        {
+            on_complete(DAS_S_OK, std::move(early_response));
+        }
+        else
+        {
+            // call_id 已被清理（可能在 RegisterPendingCompletion 之前
+            // 就被 Stop/RequestStop 清除了），回调超时
+            on_complete(DAS_E_IPC_TIMEOUT, {});
+        }
+    }
+}
 
 DasResult IpcRunLoop::SendRequest(
     const IPCMessageHeader&   request_header,
@@ -238,76 +448,19 @@ DasResult IpcRunLoop::SendRequest(
     std::vector<uint8_t>&     response_body,
     std::chrono::milliseconds timeout)
 {
-    if (!transport)
+    // 构建 stdexec 异步管道并同步等待结果
+    auto sender =
+        SendMessageAsync(transport, request_header, body, body_size, timeout);
+
+    auto result_opt = stdexec::sync_wait(std::move(sender));
+    if (!result_opt.has_value())
     {
-        return DAS_E_IPC_INVALID_ARGUMENT;
+        return DAS_E_IPC_TIMEOUT;
     }
 
-    if (t_nested_depth >= MAX_NESTED_DEPTH)
-    {
-        return DAS_E_IPC_DEADLOCK_DETECTED;
-    }
-
-    uint64_t         call_id = next_call_id_.fetch_add(1);
-    IPCMessageHeader header = request_header;
-    header.call_id = call_id;
-    header.message_type = static_cast<uint8_t>(MessageType::REQUEST);
-
-    // 创建等待上下文
-    {
-        std::unique_lock<std::mutex> lock(pending_mutex_);
-        pending_calls_[call_id] = NestedCallContext{call_id, {}, false};
-    }
-
-    // 发送请求
-    auto send_result = transport->Send(header, body, body_size);
-    if (send_result != DAS_S_OK)
-    {
-        std::unique_lock<std::mutex> lock(pending_mutex_);
-        pending_calls_.erase(call_id);
-        return send_result;
-    }
-
-    t_nested_depth++;
-    auto deadline = std::chrono::steady_clock::now() + timeout;
-
-    // 使用 ReceiveAndDispatchFromTransport 等待响应
-    while (std::chrono::steady_clock::now() < deadline)
-    {
-        // 检查是否已收到响应
-        {
-            std::unique_lock<std::mutex> lock(pending_mutex_);
-            auto                         it = pending_calls_.find(call_id);
-            if (it != pending_calls_.end() && it->second.completed)
-            {
-                response_body = std::move(it->second.response_buffer);
-                pending_calls_.erase(it);
-                t_nested_depth--;
-                return DAS_S_OK;
-            }
-        }
-
-        // 使用指定的 transport 接收消息
-        ReceiveAndDispatchFromTransport(
-            transport,
-            std::chrono::milliseconds(PUMP_POLL_TIMEOUT_MS));
-
-        if (!running_.load())
-        {
-            std::unique_lock<std::mutex> lock(pending_mutex_);
-            pending_calls_.erase(call_id);
-            t_nested_depth--;
-            return DAS_E_IPC_TIMEOUT;
-        }
-    }
-
-    // 超时
-    {
-        std::unique_lock<std::mutex> lock(pending_mutex_);
-        pending_calls_.erase(call_id);
-    }
-    t_nested_depth--;
-    return DAS_E_IPC_TIMEOUT;
+    auto& [result, response] = std::get<0>(result_opt.value());
+    response_body = std::move(response);
+    return result;
 }
 
 DasResult IpcRunLoop::SendResponse(
@@ -347,13 +500,20 @@ void IpcRunLoop::RunInternal()
 
     while (running_.load())
     {
+        // 1. 计算 timed_receive 的超时：
+        //    取最近的 pending call deadline，兼做定时器
+        //    返回 0 表示没有 pending call → 无限阻塞等待
+        uint32_t timeout_ms = GetNearestDeadlineMs();
+
         IPCMessageHeader     header;
         std::vector<uint8_t> body;
 
-        auto result = transport_->Receive(header, body, 100);
+        auto result = transport_->Receive(header, body, timeout_ms);
 
         if (result == DAS_E_IPC_TIMEOUT)
         {
+            // timed_receive 超时：扫描并完成超时的 pending call
+            TickPendingSenders();
             continue;
         }
 
@@ -363,7 +523,11 @@ void IpcRunLoop::RunInternal()
             break;
         }
 
+        // 2. 处理消息（RESPONSE 会直接触发 on_complete 回调）
         ProcessMessage(header, body.data(), body.size());
+
+        // 3. 顺带检查超时（消息处理可能耗时）
+        TickPendingSenders();
     }
 
     exit_code_.store(exit_code);
@@ -376,15 +540,9 @@ DasResult IpcRunLoop::ProcessMessage(
 {
     if (header.message_type == static_cast<uint8_t>(MessageType::RESPONSE))
     {
-        std::unique_lock<std::mutex> lock(pending_mutex_);
-        auto                         it = pending_calls_.find(header.call_id);
-
-        if (it != pending_calls_.end())
-        {
-            it->second.response_buffer.assign(body, body + body_size);
-            it->second.completed = true;
-        }
-
+        // IOCP 风格：直接完成 pending call，触发 on_complete 回调
+        std::vector<uint8_t> response_body(body, body + body_size);
+        CompletePendingCall(header.call_id, DAS_S_OK, std::move(response_body));
         return DAS_S_OK;
     }
 
