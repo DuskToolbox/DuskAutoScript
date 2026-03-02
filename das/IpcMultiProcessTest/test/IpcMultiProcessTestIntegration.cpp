@@ -24,7 +24,11 @@ TEST_F(IpcMultiProcessTest, ProcessLaunch)
     }
 
     uint16_t  session_id = 0;
-    DasResult result = launcher_.Start(host_exe_path_, "", session_id, 10000);
+    DasResult result = launcher_.Start(
+        host_exe_path_,
+        "",
+        session_id,
+        IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_TRUE(launcher_.IsRunning());
     EXPECT_GT(launcher_.GetPid(), 0u);
@@ -41,15 +45,17 @@ TEST_F(IpcMultiProcessTest, HostLauncherStart)
     }
 
     uint16_t  session_id = 0;
-    DasResult result = launcher_.Start(host_exe_path_, "", session_id, 10000);
+    DasResult result = launcher_.Start(
+        host_exe_path_,
+        "",
+        session_id,
+        IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_TRUE(launcher_.IsRunning());
     EXPECT_GT(launcher_.GetPid(), 0u);
     EXPECT_GT(session_id, static_cast<uint16_t>(0));
     EXPECT_EQ(session_id, launcher_.GetSessionId());
 }
-
-
 
 TEST_F(IpcMultiProcessTest, FullHandshake)
 {
@@ -60,7 +66,11 @@ TEST_F(IpcMultiProcessTest, FullHandshake)
     }
 
     uint16_t  session_id = 0;
-    DasResult result = launcher_.Start(host_exe_path_, "", session_id, 10000);
+    DasResult result = launcher_.Start(
+        host_exe_path_,
+        "",
+        session_id,
+        IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_GT(session_id, static_cast<uint16_t>(0));
     EXPECT_EQ(session_id, launcher_.GetSessionId());
@@ -77,8 +87,12 @@ TEST_F(IpcMultiProcessTest, MultipleStartStop)
     for (int i = 0; i < 3; ++i)
     {
         uint16_t  session_id = 0;
-        DasResult result =
-            launcher_.Start(host_exe_path_, "", session_id, 10000);
+        DasResult result = launcher_.Start(
+            host_exe_path_,
+            "",
+            session_id,
+            IpcTestConfig::GetHostStartTimeoutMs());
+        launcher_.Start(host_exe_path_, "", session_id, 10000);
         ASSERT_EQ(result, DAS_S_OK) << "Failed at iteration " << i;
         EXPECT_TRUE(launcher_.IsRunning());
         EXPECT_GT(session_id, static_cast<uint16_t>(0));
@@ -98,7 +112,11 @@ TEST_F(IpcMultiProcessTest, StopTerminatesProcess)
     }
 
     uint16_t  session_id = 0;
-    DasResult result = launcher_.Start(host_exe_path_, "", session_id, 10000);
+    DasResult result = launcher_.Start(
+        host_exe_path_,
+        "",
+        session_id,
+        IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_TRUE(launcher_.IsRunning());
 
@@ -148,7 +166,8 @@ TEST_F(IpcMultiProcessTest, CrossProcess_LoadPlugin)
     std::string plugin_json_path;
     try
     {
-        plugin_json_path = GetTestPluginJsonPath("IpcTestPlugin1");
+        plugin_json_path =
+            IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin1");
     }
     catch (const std::exception& e)
     {
@@ -156,8 +175,9 @@ TEST_F(IpcMultiProcessTest, CrossProcess_LoadPlugin)
     }
 
     // 3. 通过 MainProcessServer 发送 LOAD_PLUGIN 命令
-    auto&                         server = DAS::Core::IPC::MainProcess::MainProcessServer::GetInstance();
-    DAS::Core::IPC::ObjectId      object_id{};
+    auto& server =
+        DAS::Core::IPC::MainProcess::MainProcessServer::GetInstance();
+    DAS::Core::IPC::ObjectId object_id{};
     result = server.SendLoadPlugin(
         plugin_json_path,
         object_id,
@@ -194,10 +214,12 @@ TEST_F(IpcMultiProcessTest, CrossProcess_CallComponent)
     EXPECT_TRUE(launcher_.IsRunning());
 
     // 2. 获取 IpcTestPlugin2 JSON 路径
-    std::string plugin_json_path = GetTestPluginJsonPath("IpcTestPlugin2");
+    std::string plugin_json_path =
+        IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin2");
 
     // 3. 通过 MainProcessServer 加载插件
-    auto&                    server = DAS::Core::IPC::MainProcess::MainProcessServer::GetInstance();
+    auto& server =
+        DAS::Core::IPC::MainProcess::MainProcessServer::GetInstance();
     DAS::Core::IPC::ObjectId factory_id{};
     result = server.SendLoadPlugin(
         plugin_json_path,
@@ -232,14 +254,22 @@ TEST_F(IpcMultiProcessTest, CrossProcess_VerifySessionId)
     // 1. 启动第一个 Host 进程
     DAS::Core::IPC::HostLauncher host_a;
     uint16_t                     session_a = 0;
-    DasResult result = host_a.Start(host_exe_path_, "", session_a, 10000);
+    DasResult                    result = host_a.Start(
+        host_exe_path_,
+        "",
+        session_a,
+        IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_GT(session_a, static_cast<uint16_t>(0));
 
     // 2. 启动第二个 Host 进程
     DAS::Core::IPC::HostLauncher host_b;
     uint16_t                     session_b = 0;
-    result = host_b.Start(host_exe_path_, "", session_b, 10000);
+    result = host_b.Start(
+        host_exe_path_,
+        "",
+        session_b,
+        IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_GT(session_b, static_cast<uint16_t>(0));
 
@@ -254,17 +284,23 @@ TEST_F(IpcMultiProcessTest, CrossProcess_VerifySessionId)
 
     auto& conn_manager = DAS::Core::IPC::ConnectionManager::GetInstance();
     result = conn_manager.RegisterHostTransport(
-        session_a, std::move(transport_a), nullptr, nullptr);
+        session_a,
+        std::move(transport_a),
+        nullptr,
+        nullptr);
     ASSERT_EQ(result, DAS_S_OK);
     result = conn_manager.RegisterHostTransport(
-        session_b, std::move(transport_b), nullptr, nullptr);
+        session_b,
+        std::move(transport_b),
+        nullptr,
+        nullptr);
 
     // 5. 获取插件 JSON 路径
     std::string plugin1_path, plugin2_path;
     try
     {
-        plugin1_path = GetTestPluginJsonPath("IpcTestPlugin1");
-        plugin2_path = GetTestPluginJsonPath("IpcTestPlugin2");
+        plugin1_path = IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin1");
+        plugin2_path = IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin2");
     }
     catch (const std::exception& e)
     {
@@ -276,7 +312,8 @@ TEST_F(IpcMultiProcessTest, CrossProcess_VerifySessionId)
     }
 
     // 6. 通过 MainProcessServer 在 Host A 加载 IpcTestPlugin1
-    auto&                    server = DAS::Core::IPC::MainProcess::MainProcessServer::GetInstance();
+    auto& server =
+        DAS::Core::IPC::MainProcess::MainProcessServer::GetInstance();
     DAS::Core::IPC::ObjectId object_a{};
     result = server.SendLoadPlugin(plugin1_path, object_a, session_a);
     ASSERT_EQ(result, DAS_S_OK);
@@ -325,14 +362,22 @@ TEST_F(IpcMultiProcessTest, CrossProcess_HostToHostCall)
     // 1. 启动 Host B（目标进程）
     DAS::Core::IPC::HostLauncher host_b;
     uint16_t                     session_b = 0;
-    DasResult result = host_b.Start(host_exe_path_, "", session_b, 10000);
+    DasResult                    result = host_b.Start(
+        host_exe_path_,
+        "",
+        session_b,
+        IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_GT(session_b, static_cast<uint16_t>(0));
 
     // 2. 启动 Host A（调用方进程）
     DAS::Core::IPC::HostLauncher host_a;
     uint16_t                     session_a = 0;
-    result = host_a.Start(host_exe_path_, "", session_a, 10000);
+    result = host_a.Start(
+        host_exe_path_,
+        "",
+        session_a,
+        IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_GT(session_a, static_cast<uint16_t>(0));
     EXPECT_NE(session_a, session_b);
@@ -345,17 +390,23 @@ TEST_F(IpcMultiProcessTest, CrossProcess_HostToHostCall)
 
     auto& conn_manager = DAS::Core::IPC::ConnectionManager::GetInstance();
     result = conn_manager.RegisterHostTransport(
-        session_a, std::move(transport_a), nullptr, nullptr);
+        session_a,
+        std::move(transport_a),
+        nullptr,
+        nullptr);
     ASSERT_EQ(result, DAS_S_OK);
     result = conn_manager.RegisterHostTransport(
-        session_b, std::move(transport_b), nullptr, nullptr);
+        session_b,
+        std::move(transport_b),
+        nullptr,
+        nullptr);
 
     // 4. 获取插件 JSON 路径
     std::string plugin1_path, plugin2_path;
     try
     {
-        plugin1_path = GetTestPluginJsonPath("IpcTestPlugin1");
-        plugin2_path = GetTestPluginJsonPath("IpcTestPlugin2");
+        plugin1_path = IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin1");
+        plugin2_path = IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin2");
     }
     catch (const std::exception& e)
     {
@@ -367,7 +418,8 @@ TEST_F(IpcMultiProcessTest, CrossProcess_HostToHostCall)
     }
 
     // 5. 通过 MainProcessServer 加载插件
-    auto&                    server = DAS::Core::IPC::MainProcess::MainProcessServer::GetInstance();
+    auto& server =
+        DAS::Core::IPC::MainProcess::MainProcessServer::GetInstance();
     DAS::Core::IPC::ObjectId factory_id_a{}, factory_id_b{};
 
     result = server.SendLoadPlugin(plugin1_path, factory_id_a, session_a);
@@ -412,7 +464,8 @@ TEST_F(IpcMultiProcessTest, CrossProcess_LoadJavaPlugin)
     std::string plugin_json_path;
     try
     {
-        plugin_json_path = GetTestPluginJsonPath("JavaTestPlugin");
+        plugin_json_path =
+            IpcTestConfig::GetTestPluginJsonPath("JavaTestPlugin");
     }
     catch (const std::exception& e)
     {
@@ -435,13 +488,15 @@ TEST_F(IpcMultiProcessTest, CrossProcess_LoadJavaPlugin)
     EXPECT_TRUE(launcher_.IsRunning());
 
     // 4. 通过 MainProcessServer 发送 LOAD_PLUGIN 命令
-    auto&                    server = DAS::Core::IPC::MainProcess::MainProcessServer::GetInstance();
+    auto& server =
+        DAS::Core::IPC::MainProcess::MainProcessServer::GetInstance();
     DAS::Core::IPC::ObjectId object_id{};
     result = server.SendLoadPlugin(
         plugin_json_path,
         object_id,
         launcher_.GetSessionId(),
-        std::chrono::milliseconds(30000)); // Java 插件可能需要更长时间（JVM 初始化）
+        IpcTestConfig::
+            GetPluginLoadTimeout()); // Java 插件可能需要更长时间（JVM 初始化）
 
     if (DAS::IsFailed(result))
     {

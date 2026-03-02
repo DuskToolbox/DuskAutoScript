@@ -11,8 +11,8 @@ if (${DAS_BUILD_TEST})
     target_link_libraries(${IpcMultiProcessTest_NAME}
         PUBLIC
         Das3rdParty
-        GTest::gtest_main
         GTest::gtest
+        GTest::gtest_main
         DasCoreObjects
     )
 
