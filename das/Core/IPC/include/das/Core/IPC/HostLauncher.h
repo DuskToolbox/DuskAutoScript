@@ -45,14 +45,12 @@ public:
     /**
      * @brief 启动 Host 进程并执行握手
      * @param host_exe_path Host 可执行文件路径
-     * @param plugin_path 插件 manifest 路径（可选）
      * @param out_session_id 输出：分配的 session_id
      * @param timeout_ms 握手超时时间（毫秒），默认 5000ms
      * @return DasResult 成功返回 DAS_S_OK
      */
     DasResult Start(
         const std::string& host_exe_path,
-        const std::string& plugin_path,
         uint16_t&          out_session_id,
         uint32_t           timeout_ms = DEFAULT_HANDSHAKE_TIMEOUT_MS);
 

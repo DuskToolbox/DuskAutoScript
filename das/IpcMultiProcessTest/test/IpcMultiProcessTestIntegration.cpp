@@ -26,7 +26,6 @@ TEST_F(IpcMultiProcessTest, ProcessLaunch)
     uint16_t  session_id = 0;
     DasResult result = launcher_.Start(
         host_exe_path_,
-        "",
         session_id,
         IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(result, DAS_S_OK);
@@ -47,7 +46,6 @@ TEST_F(IpcMultiProcessTest, HostLauncherStart)
     uint16_t  session_id = 0;
     DasResult result = launcher_.Start(
         host_exe_path_,
-        "",
         session_id,
         IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(result, DAS_S_OK);
@@ -68,7 +66,6 @@ TEST_F(IpcMultiProcessTest, FullHandshake)
     uint16_t  session_id = 0;
     DasResult result = launcher_.Start(
         host_exe_path_,
-        "",
         session_id,
         IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(result, DAS_S_OK);
@@ -89,10 +86,8 @@ TEST_F(IpcMultiProcessTest, MultipleStartStop)
         uint16_t  session_id = 0;
         DasResult result = launcher_.Start(
             host_exe_path_,
-            "",
             session_id,
             IpcTestConfig::GetHostStartTimeoutMs());
-        launcher_.Start(host_exe_path_, "", session_id, 10000);
         ASSERT_EQ(result, DAS_S_OK) << "Failed at iteration " << i;
         EXPECT_TRUE(launcher_.IsRunning());
         EXPECT_GT(session_id, static_cast<uint16_t>(0));
@@ -114,7 +109,6 @@ TEST_F(IpcMultiProcessTest, StopTerminatesProcess)
     uint16_t  session_id = 0;
     DasResult result = launcher_.Start(
         host_exe_path_,
-        "",
         session_id,
         IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(result, DAS_S_OK);
@@ -256,7 +250,6 @@ TEST_F(IpcMultiProcessTest, CrossProcess_VerifySessionId)
     uint16_t                     session_a = 0;
     DasResult                    result = host_a.Start(
         host_exe_path_,
-        "",
         session_a,
         IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(result, DAS_S_OK);
@@ -267,7 +260,6 @@ TEST_F(IpcMultiProcessTest, CrossProcess_VerifySessionId)
     uint16_t                     session_b = 0;
     result = host_b.Start(
         host_exe_path_,
-        "",
         session_b,
         IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(result, DAS_S_OK);
@@ -364,7 +356,6 @@ TEST_F(IpcMultiProcessTest, CrossProcess_HostToHostCall)
     uint16_t                     session_b = 0;
     DasResult                    result = host_b.Start(
         host_exe_path_,
-        "",
         session_b,
         IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(result, DAS_S_OK);
@@ -375,7 +366,6 @@ TEST_F(IpcMultiProcessTest, CrossProcess_HostToHostCall)
     uint16_t                     session_a = 0;
     result = host_a.Start(
         host_exe_path_,
-        "",
         session_a,
         IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(result, DAS_S_OK);

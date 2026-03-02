@@ -215,7 +215,6 @@ protected:
         uint16_t  session_id = 0;
         DasResult result = launcher_.Start(
             host_exe_path_,
-            "",
             session_id,
             IpcTestConfig::GetHostStartTimeoutMs());
         if (DAS::IsFailed(result))

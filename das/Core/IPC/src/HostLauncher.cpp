@@ -74,7 +74,6 @@ HostLauncher::~HostLauncher() { Stop(); }
 
 DasResult HostLauncher::Start(
     const std::string& host_exe_path,
-    const std::string& plugin_path,
     uint16_t&          out_session_id,
     uint32_t           timeout_ms)
 {
@@ -94,11 +93,6 @@ DasResult HostLauncher::Start(
     std::vector<std::string> args;
     args.push_back("--main-pid");
     args.push_back(std::to_string(main_pid));
-    if (!plugin_path.empty())
-    {
-        args.push_back("--plugin");
-        args.push_back(plugin_path);
-    }
 
     // 启动进程
     DasResult result = LaunchProcess(host_exe_path, args);
@@ -311,7 +305,10 @@ DasResult HostLauncher::WaitForHostReady(uint32_t timeout_ms)
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - start);
 
-        if (elapsed.count() >= timeout_ms)
+        if (elapsed.count()
+            >= (timeout_ms == 0
+                    ? (std::numeric_limits<decltype(timeout_ms)>::max)()
+                    : timeout_ms))
         {
             DAS_LOG_ERROR("Timeout waiting for Host IPC resources");
             return DAS_E_IPC_TIMEOUT;
