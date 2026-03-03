@@ -1,4 +1,5 @@
 #include <das/Core/IPC/IpcMessageHeader.h>
+#include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/MainProcess/MainProcessServer.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <gtest/gtest.h>
@@ -7,9 +8,11 @@
 using DAS::Core::IPC::DecodeObjectId;
 using DAS::Core::IPC::EncodeObjectId;
 using DAS::Core::IPC::IPCMessageHeader;
+using DAS::Core::IPC::IPCMessageHeaderBuilder;
 using DAS::Core::IPC::MessageType;
 using DAS::Core::IPC::ObjectId;
 using DAS::Core::IPC::RemoteObjectInfo;
+using DAS::Core::IPC::ValidatedIPCMessageHeader;
 using DAS::Core::IPC::MainProcess::HostSessionInfo;
 using DAS::Core::IPC::MainProcess::MainProcessServer;
 
@@ -35,23 +38,23 @@ protected:
             .local_id = local_id};
     }
 
-    IPCMessageHeader CreateTestHeader(
+    ValidatedIPCMessageHeader CreateTestHeader(
         uint64_t    object_id,
         MessageType type = MessageType::REQUEST)
     {
-        IPCMessageHeader header{};
-        header.call_id = 1;
-        header.message_type = static_cast<uint8_t>(type);
-        header.error_code = DAS_S_OK;
-        header.interface_id = 1;
-        // Decode object_id into session_id, generation, local_id
-        header.session_id = static_cast<uint16_t>((object_id >> 48) & 0xFFFF);
-        header.generation = static_cast<uint16_t>((object_id >> 32) & 0xFFFF);
-        header.local_id = static_cast<uint32_t>(object_id & 0xFFFFFFFF);
-        header.version = 2;
-        header.flags = 0;
-        header.body_size = 0;
-        return header;
+        ObjectId obj_id{
+            .session_id = static_cast<uint16_t>((object_id >> 48) & 0xFFFF),
+            .generation = static_cast<uint16_t>((object_id >> 32) & 0xFFFF),
+            .local_id = static_cast<uint32_t>(object_id & 0xFFFFFFFF)};
+
+        return IPCMessageHeaderBuilder()
+            .SetMessageType(type)
+            .SetCallId(1)
+            .SetObject(obj_id.session_id, obj_id.generation, obj_id.local_id)
+            .SetBusinessInterface(1, 0)
+            .SetFlags(0)
+            .SetBodySize(0)
+            .Build();
     }
 
     DasGuid CreateTestGuid()
@@ -364,8 +367,9 @@ TEST_F(MainProcessServerTest, DispatchMessage_SessionNotConnected)
 
 TEST_F(MainProcessServerTest, DispatchMessage_CustomHandler)
 {
-    // 使用主进程本地对象（session_id=1），这样 DispatchMessage 会调用 dispatch_handler_
-    ObjectId    obj_id = CreateTestObjectId(1, 1, 1);  // session_id=1（主进程）
+    // 使用主进程本地对象（session_id=1），这样 DispatchMessage 会调用
+    // dispatch_handler_
+    ObjectId    obj_id = CreateTestObjectId(1, 1, 1); // session_id=1（主进程）
     DasGuid     iid = CreateTestGuid();
     std::string name = "TestObject";
 

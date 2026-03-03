@@ -2,6 +2,7 @@
 #include <chrono>
 #include <das/Core/IPC/IMessageHandler.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
+#include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcResponseSender.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/IpcTransport.h>
@@ -11,10 +12,12 @@
 #include <vector>
 using DAS::Core::IPC::IMessageHandler;
 using DAS::Core::IPC::IPCMessageHeader;
+using DAS::Core::IPC::IPCMessageHeaderBuilder;
 using DAS::Core::IPC::IpcResponseSender;
 using DAS::Core::IPC::IpcRunLoop;
 using DAS::Core::IPC::IpcTransport;
 using DAS::Core::IPC::MessageType;
+using DAS::Core::IPC::ValidatedIPCMessageHeader;
 
 // Test fixture for IpcRunLoop tests
 class IpcRunLoopTest : public ::testing::Test
@@ -68,22 +71,16 @@ protected:
         return true;
     }
 
-    IPCMessageHeader CreateTestHeader(MessageType type = MessageType::REQUEST)
+    ValidatedIPCMessageHeader CreateTestHeader(
+        MessageType type = MessageType::REQUEST)
     {
-        IPCMessageHeader header{};
-        header.magic = IPCMessageHeader::MAGIC;
-        header.version = IPCMessageHeader::CURRENT_VERSION;
-        header.call_id = 1;
-        header.message_type = static_cast<uint8_t>(type);
-        header.error_code = DAS_S_OK;
-        header.interface_id = 1;
-        header.method_id = 0;
-        header.session_id = 0;
-        header.generation = 0;
-        header.local_id = 0;
-        header.flags = 0;
-        header.body_size = 0;
-        return header;
+        return IPCMessageHeaderBuilder()
+            .SetMessageType(type)
+            .SetCallId(1)
+            .SetBusinessInterface(1, 0)
+            .SetFlags(0)
+            .SetBodySize(0)
+            .Build();
     }
 
     std::unique_ptr<IpcRunLoop> runloop_;

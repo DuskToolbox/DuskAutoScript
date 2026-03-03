@@ -22,6 +22,7 @@
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
+#include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/MainProcess/MainProcessServer.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/ProxyFactory.h>
@@ -37,6 +38,7 @@ using DAS::Core::IPC::DecodeObjectId;
 using DAS::Core::IPC::DistributedObjectManager;
 using DAS::Core::IPC::EncodeObjectId;
 using DAS::Core::IPC::IPCMessageHeader;
+using DAS::Core::IPC::IPCMessageHeaderBuilder;
 using DAS::Core::IPC::IPCProxyBase;
 using DAS::Core::IPC::IsNullObjectId;
 using DAS::Core::IPC::MessageType;
@@ -45,6 +47,7 @@ using DAS::Core::IPC::ProxyFactory;
 using DAS::Core::IPC::RemoteObjectInfo;
 using DAS::Core::IPC::RemoteObjectRegistry;
 using DAS::Core::IPC::SessionCoordinator;
+using DAS::Core::IPC::ValidatedIPCMessageHeader;
 using DAS::Core::IPC::MainProcess::HostSessionInfo;
 using DAS::Core::IPC::MainProcess::MainProcessServer;
 
@@ -120,13 +123,18 @@ public:
         // 模拟真实 IPC 流程：Host 进程通过 IPC 发送注册请求到主进程
         // 主进程收到请求后调用 OnRemoteObjectRegistered
         return MainProcessServer::GetInstance().OnRemoteObjectRegistered(
-            object_id, iid, session_id_, name, version);
+            object_id,
+            iid,
+            session_id_,
+            name,
+            version);
     }
 
     DasResult UnregisterObject(const ObjectId& object_id)
     {
         // 模拟真实 IPC 流程：Host 进程通过 IPC 发送注销请求到主进程
-        return MainProcessServer::GetInstance().OnRemoteObjectUnregistered(object_id);
+        return MainProcessServer::GetInstance().OnRemoteObjectUnregistered(
+            object_id);
     }
 
 private:
@@ -583,14 +591,15 @@ TEST_F(IPCIntegrationTest, MessageDispatch)
     ASSERT_EQ(host_process_.RegisterObject(obj_id, iid, obj_name, 1), DAS_S_OK);
 
     // 创建测试消息
-    IPCMessageHeader header{};
-    header.call_id = 1;
-    header.message_type = static_cast<uint8_t>(MessageType::REQUEST);
-    header.interface_id = iid.data1;
-    header.session_id = obj_id.session_id;
-    header.generation = obj_id.generation;
-    header.local_id = obj_id.local_id;
-    header.version = 1;
+    auto header =
+        IPCMessageHeaderBuilder()
+            .SetCallId(1)
+            .SetMessageType(MessageType::REQUEST)
+            .SetBusinessInterface(iid.data1, 0)
+            .SetObject(obj_id.session_id, obj_id.generation, obj_id.local_id)
+            .SetFlags(0)
+            .SetBodySize(0)
+            .Build();
 
     std::string          body = "test_request_body";
     std::vector<uint8_t> response_body;
