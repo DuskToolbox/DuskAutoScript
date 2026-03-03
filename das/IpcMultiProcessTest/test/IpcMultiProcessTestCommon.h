@@ -19,6 +19,7 @@
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
+#include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/IpcTransport.h>
 #include <das/Core/IPC/MainProcess/MainProcessServer.h>
@@ -282,22 +283,11 @@ namespace IpcTestUtils
         std::vector<uint8_t> payload;
         SerializeString(payload, plugin_json_path);
 
-        // 构建消息头
-        IPCMessageHeader header{};
-        header.magic = IPCMessageHeader::MAGIC;
-        header.version = IPCMessageHeader::CURRENT_VERSION;
-        header.message_type = static_cast<uint8_t>(MessageType::REQUEST);
-        header.header_flags = 0;
-        header.call_id = 1;
-        header.interface_id =
-            static_cast<uint32_t>(IpcCommandType::LOAD_PLUGIN);
-        header.method_id = 0;
-        header.flags = 0;
-        header.error_code = DAS_S_OK;
-        header.body_size = static_cast<uint32_t>(payload.size());
-        header.session_id = 1; // 主进程 session_id
-        header.generation = 0;
-        header.local_id = 0;
+        // 使用 Builder 构建类型安全的消息头
+        auto header = MakeControlPlaneRequest(
+            IpcCommandType::LOAD_PLUGIN,
+            static_cast<uint32_t>(payload.size()),
+            1 /* session_id: 主进程 */);
 
         // 使用 IpcRunLoop::SendRequest 发送请求并等待响应
         // 这支持可重入调用，可以处理 LoadPlugin 过程中的对象注册消息

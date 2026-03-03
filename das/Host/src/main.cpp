@@ -378,9 +378,8 @@ int main(int argc, char* argv[])
 
         if (DAS::IsFailed(result))
         {
-            std::string err_msg = DAS_FMT_NS::format(
-                "IPC context run failed: 0x{:08X}",
-                static_cast<uint32_t>(result));
+            std::string err_msg =
+                DAS_FMT_NS::format("IPC context run failed: {}", result);
             DAS_LOG_ERROR(err_msg.c_str());
             return EXIT_FAILURE;
         }
