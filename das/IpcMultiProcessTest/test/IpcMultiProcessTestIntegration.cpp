@@ -704,3 +704,91 @@ TEST_F(IpcMultiProcessTest, ParentProcessExit_HostAutoExit_KillParent)
 // Wave 3: SendLoadPluginCommandAsync 和 ParseLoadPluginResponse 工具函数
 // 已添加到 IpcMultiProcessTestCommon.h 中的 IpcTestUtils 命名空间，
 // 可在后续测试中使用。
+
+/**
+ * @brief 测试异步加载插件
+ *
+ * 验证 SendLoadPluginCommandAsync 异步接口。
+ */
+TEST_F(IpcMultiProcessTest, CrossProcess_AsyncLoadPlugins)
+{
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+    }
+
+    // 1. 启动 Host 进程并注册到 ConnectionManager
+    DasResult result = StartHostAndSetupRunLoop();
+    ASSERT_EQ(result, DAS_S_OK);
+    EXPECT_TRUE(launcher_.IsRunning());
+
+    // 2. 获取插件 JSON 路径
+    std::string plugin1_path, plugin2_path;
+    try
+    {
+        plugin1_path = IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin1");
+        plugin2_path = IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin2");
+    }
+    catch (const std::exception& e)
+    {
+        GTEST_SKIP() << "Plugin JSON not found: " << e.what();
+    }
+
+    // 3. 获取 IpcRunLoop
+    auto& server =
+        DAS::Core::IPC::MainProcess::MainProcessServer::GetInstance();
+    auto* runloop = server.GetRunLoop();
+    ASSERT_NE(runloop, nullptr);
+
+    // 4. 使用异步接口加载插件1（不用 then，直接解包 pair）
+    DAS::Core::IPC::ObjectId object1{};
+    {
+        auto sender = IpcTestUtils::SendLoadPluginCommandAsync(
+            runloop,
+            plugin1_path,
+            std::chrono::seconds(30));
+
+        auto opt = stdexec::sync_wait(std::move(sender));
+        ASSERT_TRUE(opt.has_value()) << "Load plugin 1: sync_wait failed";
+
+        // sync_wait 返回 optional<tuple<pair<...>>>，解包 pair
+        auto response_pair = std::get<0>(opt.value());
+        auto& [load_result, response_body] = response_pair;
+
+        ASSERT_EQ(load_result, DAS_S_OK) << "Load plugin 1 failed";
+        result = IpcTestUtils::ParseLoadPluginResponse(response_body, object1);
+        ASSERT_EQ(result, DAS_S_OK) << "Parse plugin 1 response failed";
+    }
+
+    // 5. 使用异步接口加载插件2
+    DAS::Core::IPC::ObjectId object2{};
+    {
+        auto sender = IpcTestUtils::SendLoadPluginCommandAsync(
+            runloop,
+            plugin2_path,
+            std::chrono::seconds(30));
+
+        auto opt = stdexec::sync_wait(std::move(sender));
+        ASSERT_TRUE(opt.has_value()) << "Load plugin 2: sync_wait failed";
+
+        auto response_pair = std::get<0>(opt.value());
+        auto& [load_result, response_body] = response_pair;
+
+        ASSERT_EQ(load_result, DAS_S_OK) << "Load plugin 2 failed";
+        result = IpcTestUtils::ParseLoadPluginResponse(response_body, object2);
+        ASSERT_EQ(result, DAS_S_OK) << "Parse plugin 2 response failed";
+    }
+
+    // 6. 验证对象在正确的 Host 进程中
+    EXPECT_EQ(object1.session_id, launcher_.GetSessionId());
+    EXPECT_EQ(object2.session_id, launcher_.GetSessionId());
+
+    std::string log_msg = DAS_FMT_NS::format(
+        "[CrossProcess_AsyncLoadPlugins] Both plugins loaded: "
+        "object1={{session:{}, local:{}}}, object2={{session:{}, local:{}}}",
+        object1.session_id,
+        object1.local_id,
+        object2.session_id,
+        object2.local_id);
+    DAS_LOG_INFO(log_msg.c_str());
+}

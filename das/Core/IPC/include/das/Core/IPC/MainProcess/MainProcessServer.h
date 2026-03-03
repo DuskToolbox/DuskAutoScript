@@ -328,10 +328,17 @@ namespace Core
                 void SetOnObjectUnregisteredCallback(
                     ObjectEventCallback callback);
 
-                // 禁止拷贝和赋值
-                MainProcessServer(const MainProcessServer&) = delete;
-                MainProcessServer& operator=(const MainProcessServer&) = delete;
+                /**
+                 * @brief 获取 IPC 运行循环（用于测试和高级场景）
+                 * @return IpcRunLoop 指针
+                 */
+                [[nodiscard]]
+                Das::Core::IPC::IpcRunLoop* GetRunLoop()
+                {
+                    return &runloop_;
+                }
 
+                // 禁止拷贝和赋值
             private:
                 // 私有构造函数（单例模式）
                 MainProcessServer();
@@ -387,11 +394,12 @@ namespace Core
                  * @param body_size 消息体大小
                  * @return AwaitResponseSender
                  */
-                [[nodiscard]]
                 AwaitResponseSender ForwardMessageToHostAsync(
                     const IPCMessageHeader& header,
                     const uint8_t*          body,
                     size_t                  body_size);
+
+            private:
                 // IPC 消息处理（用于 SendRequest）
                 Das::Core::IPC::IpcRunLoop runloop_;
 
