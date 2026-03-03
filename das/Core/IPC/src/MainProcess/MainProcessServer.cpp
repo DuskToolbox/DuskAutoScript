@@ -561,7 +561,7 @@ namespace Core
                 size_t                  body_size,
                 std::vector<uint8_t>&   response_body)
             {
-                // 通过 ConnectionManager 获取传输层
+                // 1. 获取目标 Host 的 Transport
                 IpcTransport* transport =
                     ::Das::Core::IPC::ConnectionManager::GetInstance()
                         .GetTransport(header.session_id);
@@ -573,7 +573,7 @@ namespace Core
                     return DAS_E_IPC_NO_CONNECTIONS;
                 }
 
-                // Send message to target Host
+                // 2. 构建 validated header（保留原始消息的所有字段）
                 auto validated_header =
                     IPCMessageHeaderBuilder()
                         .SetMessageType(
@@ -589,25 +589,62 @@ namespace Core
                             header.local_id)
                         .SetFlags(header.flags)
                         .Build();
-                DasResult result =
-                    transport->Send(validated_header, body, body_size);
-                if (DAS::IsFailed(result))
+
+                // 3. 使用 IpcRunLoop::SendRequest(transport, ...)
+                // 发送并等待响应
+                //    这是指定 transport 的重载版本，专为转发场景设计
+                return runloop_.SendRequest(
+                    transport,
+                    validated_header,
+                    body,
+                    body_size,
+                    response_body,
+                    std::chrono::seconds(30));
+            }
+
+            AwaitResponseSender MainProcessServer::ForwardMessageToHostAsync(
+                const IPCMessageHeader& header,
+                const uint8_t*          body,
+                size_t                  body_size)
+            {
+                IpcTransport* transport =
+                    ::Das::Core::IPC::ConnectionManager::GetInstance()
+                        .GetTransport(header.session_id);
+                if (!transport)
                 {
                     DAS_CORE_LOG_ERROR(
-                        "Failed to forward message to session_id = {}, error = {}",
-                        header.session_id,
-                        static_cast<int32_t>(result));
-                    return result;
+                        "Failed to get transport for session_id = {}",
+                        header.session_id);
+                    // 返回立即失败的 sender
+                    return AwaitResponseSender{
+                        nullptr,
+                        static_cast<uint64_t>(DAS_E_IPC_NO_CONNECTIONS),
+                        std::chrono::milliseconds{0}};
                 }
 
-                // TODO: 等待响应 - 当前简化实现，只发送不接收响应
-                // TODO: 等待响应 - 当前简化实现，只发送不接收响应
-                // 完整实现需要：
-                // 1. 使用 IpcRunLoop 的 pending_calls_ 等待响应
-                // 2. 设置超时机制
-                // 3. 解析响应并填充 response_body
-                response_body.clear();
-                return DAS_S_OK;
+                auto validated_header =
+                    IPCMessageHeaderBuilder()
+                        .SetMessageType(
+                            static_cast<MessageType>(header.message_type))
+                        .SetBusinessInterface(
+                            header.interface_id,
+                            header.method_id)
+                        .SetBodySize(header.body_size)
+                        .SetCallId(header.call_id)
+                        .SetObject(
+                            header.session_id,
+                            header.generation,
+                            header.local_id)
+                        .SetFlags(header.flags)
+                        .Build();
+
+                // 真正的异步转发：不阻塞调用线程
+                return runloop_.SendMessageAsync(
+                    transport,
+                    validated_header,
+                    body,
+                    body_size,
+                    std::chrono::seconds(30));
             }
 
             DasResult MainProcessServer::SendLoadPlugin(

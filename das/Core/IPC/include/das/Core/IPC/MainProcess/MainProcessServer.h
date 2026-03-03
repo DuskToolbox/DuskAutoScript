@@ -376,6 +376,22 @@ namespace Core
                     size_t                  body_size,
                     std::vector<uint8_t>&   response_body);
 
+                /**
+                 * @brief 异步转发消息到目标 Host 进程（返回 sender）
+                 *
+                 * 真正的异步转发：不阻塞调用线程。
+                 * sender 完成时携带 pair<DasResult, vector<uint8_t>>。
+                 *
+                 * @param header 原始消息头
+                 * @param body 原始消息体
+                 * @param body_size 消息体大小
+                 * @return AwaitResponseSender
+                 */
+                [[nodiscard]]
+                AwaitResponseSender ForwardMessageToHostAsync(
+                    const IPCMessageHeader& header,
+                    const uint8_t*          body,
+                    size_t                  body_size);
                 // IPC 消息处理（用于 SendRequest）
                 Das::Core::IPC::IpcRunLoop runloop_;
 

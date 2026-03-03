@@ -325,8 +325,73 @@ namespace IpcTestUtils
             | (static_cast<uint32_t>(response_body[offset + 1]) << 8)
             | (static_cast<uint32_t>(response_body[offset + 2]) << 16)
             | (static_cast<uint32_t>(response_body[offset + 3]) << 24);
-        offset += 4;
+        return DAS_S_OK;
+    }
+
+    /**
+     * @brief 解析 LoadPlugin 响应，提取 ObjectId
+     * @param response_body 响应体
+     * @param out_object_id 输出：加载的对象 ID
+     * @return DasResult 成功返回 DAS_S_OK
+     */
+    inline DasResult ParseLoadPluginResponse(
+        const std::vector<uint8_t>& response_body,
+        DAS::Core::IPC::ObjectId&   out_object_id)
+    {
+        // 解析响应: [object_id(8)][iid(16)][session_id(2)][version(2)]
+        if (response_body.size() < 28)
+        {
+            return DAS_E_IPC_INVALID_MESSAGE_BODY;
+        }
+
+        size_t offset = 0;
+        // 读取 object_id (8 bytes)
+        out_object_id.session_id =
+            static_cast<uint16_t>(response_body[offset])
+            | (static_cast<uint16_t>(response_body[offset + 1]) << 8);
+        offset += 2;
+        out_object_id.generation =
+            static_cast<uint16_t>(response_body[offset])
+            | (static_cast<uint16_t>(response_body[offset + 1]) << 8);
+        offset += 2;
+        out_object_id.local_id =
+            static_cast<uint32_t>(response_body[offset])
+            | (static_cast<uint32_t>(response_body[offset + 1]) << 8)
+            | (static_cast<uint32_t>(response_body[offset + 2]) << 16)
+            | (static_cast<uint32_t>(response_body[offset + 3]) << 24);
 
         return DAS_S_OK;
     }
+
+    /**
+     * @brief 异步发送 LOAD_PLUGIN 命令（返回 sender）
+     *
+     * 使用 IpcRunLoop::SendMessageAsync() 实现。
+     * sender 完成时携带 pair<DasResult, vector<uint8_t>>。
+     *
+     * @param runloop IPC RunLoop
+     * @param plugin_json_path 插件 JSON 清单路径
+     * @param timeout 超时时间（默认30秒）
+     * @return AwaitResponseSender
+     */
+    inline DAS::Core::IPC::AwaitResponseSender SendLoadPluginCommandAsync(
+        DAS::Core::IPC::IpcRunLoop* runloop,
+        const std::string&          plugin_json_path,
+        std::chrono::milliseconds   timeout = std::chrono::seconds(30))
+    {
+        using namespace DAS::Core::IPC;
+
+        // 构建请求 payload: [uint16_t path_len][char path...]
+        std::vector<uint8_t> payload;
+        SerializeString(payload, plugin_json_path);
+
+        auto header = MakeControlPlaneRequest(
+            IpcCommandType::LOAD_PLUGIN,
+            static_cast<uint32_t>(payload.size()),
+            1 /* session_id: 主进程 */);
+
+        return runloop
+            ->SendMessageAsync(header, payload.data(), payload.size(), timeout);
+    }
+
 } // namespace IpcTestUtils

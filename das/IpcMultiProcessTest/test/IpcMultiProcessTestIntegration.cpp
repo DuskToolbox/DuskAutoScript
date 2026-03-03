@@ -14,7 +14,7 @@
 #include "IpcMultiProcessTestCommon.h"
 
 #include <das/Core/IPC/ConnectionManager.h>
-
+#include <stdexec/execution.hpp>
 TEST_F(IpcMultiProcessTest, ProcessLaunch)
 {
     // 测试进程启动（禁用：需要 DasHost.exe 存在）
@@ -700,3 +700,7 @@ TEST_F(IpcMultiProcessTest, ParentProcessExit_HostAutoExit_KillParent)
     DAS_LOG_INFO(result_log.c_str());
     SUCCEED();
 }
+
+// Wave 3: SendLoadPluginCommandAsync 和 ParseLoadPluginResponse 工具函数
+// 已添加到 IpcMultiProcessTestCommon.h 中的 IpcTestUtils 命名空间，
+// 可在后续测试中使用。
