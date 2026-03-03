@@ -1,14 +1,15 @@
 #include <das/Core/IPC/HandshakeSerialization.h>
 
-#include <das/Core/IPC/IpcCommandHandler.h>
 #include <chrono>
 #include <cstring>
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Core/IPC/Config.h>
+#include <das/Core/IPC/DistributedObjectManager.h>
+#include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcErrors.h>
+#include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcResponseSender.h>
 #include <das/Core/IPC/ObjectId.h>
-#include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/DasApi.h>
@@ -37,15 +38,17 @@ DasResult IpcCommandHandler::HandleMessage(
 
     DasResult result = HandleCommand(header, payload, response);
 
-    // 构建响应 header
-    IPCMessageHeader response_header = header;
-    response_header.message_type = static_cast<uint8_t>(MessageType::RESPONSE);
-    response_header.error_code = static_cast<int32_t>(response.error_code);
-    response_header.body_size =
-        static_cast<uint32_t>(response.response_data.size());
-
-    sender.SendResponse(response_header, response.response_data);
-
+    // 构建响应 header（使用 Builder）
+    auto validated_response_header =
+        IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::RESPONSE)
+            .SetControlPlaneCommand(
+                static_cast<IpcCommandType>(header.interface_id))
+            .SetBodySize(static_cast<uint32_t>(response.response_data.size()))
+            .SetCallId(header.call_id)
+            .SetErrorCode(static_cast<int32_t>(response.error_code))
+            .Build();
+    sender.SendResponse(validated_response_header, response.response_data);
     return result;
 }
 

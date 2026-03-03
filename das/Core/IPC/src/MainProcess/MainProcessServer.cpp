@@ -13,12 +13,12 @@
 
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
+#include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcTransport.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/SessionCoordinator.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
-
 #ifdef _WIN32
 #include <windows.h>
 // 取消 Windows API 宏，避免与代码冲突
@@ -92,18 +92,17 @@ namespace Core
                 }
                 RemoteObjectRegistry::GetInstance().Clear();
 
-
                 is_initialized_.store(false);
                 return DAS_S_OK;
             }
 
             DasResult MainProcessServer::Start()
             {
-            if (!is_initialized_.load())
-            {
-                DAS_CORE_LOG_ERROR("Server not initialized");
-                return DAS_E_IPC_INVALID_STATE;
-            }
+                if (!is_initialized_.load())
+                {
+                    DAS_CORE_LOG_ERROR("Server not initialized");
+                    return DAS_E_IPC_INVALID_STATE;
+                }
 
                 if (is_running_.load())
                 {
@@ -130,25 +129,21 @@ namespace Core
                 return is_running_.load();
             }
 
-
-            uint32_t MainProcessServer::GetMainPid() const
-            {
-                return main_pid_;
-            }
+            uint32_t MainProcessServer::GetMainPid() const { return main_pid_; }
 
             DasResult MainProcessServer::OnHostConnected(uint16_t session_id)
             {
-            if (!is_initialized_.load())
-            {
-                DAS_CORE_LOG_ERROR("Server not initialized");
-                return DAS_E_IPC_INVALID_STATE;
-            }
+                if (!is_initialized_.load())
+                {
+                    DAS_CORE_LOG_ERROR("Server not initialized");
+                    return DAS_E_IPC_INVALID_STATE;
+                }
 
-            if (!ValidateSessionId(session_id))
-            {
-                DAS_CORE_LOG_ERROR("Invalid session_id = {}", session_id);
-                return DAS_E_INVALID_ARGUMENT;
-            }
+                if (!ValidateSessionId(session_id))
+                {
+                    DAS_CORE_LOG_ERROR("Invalid session_id = {}", session_id);
+                    return DAS_E_INVALID_ARGUMENT;
+                }
 
                 if (!ValidateSessionId(session_id))
                 {
@@ -193,19 +188,21 @@ namespace Core
 
             DasResult MainProcessServer::OnHostDisconnected(uint16_t session_id)
             {
-            if (!is_initialized_.load())
-            {
-                DAS_CORE_LOG_ERROR("Server not initialized");
-                return DAS_E_IPC_INVALID_STATE;
-            }
+                if (!is_initialized_.load())
+                {
+                    DAS_CORE_LOG_ERROR("Server not initialized");
+                    return DAS_E_IPC_INVALID_STATE;
+                }
 
                 std::lock_guard<std::mutex> lock(sessions_mutex_);
 
                 auto it = sessions_.find(session_id);
-            if (it == sessions_.end())
-            {
-                DAS_CORE_LOG_ERROR("Session not found (session_id = {})", session_id);
-                return DAS_E_IPC_OBJECT_NOT_FOUND;
+                if (it == sessions_.end())
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "Session not found (session_id = {})",
+                        session_id);
+                    return DAS_E_IPC_OBJECT_NOT_FOUND;
                 }
 
                 it->second.is_connected = false;
@@ -283,10 +280,12 @@ namespace Core
                 std::lock_guard<std::mutex> lock(sessions_mutex_);
 
                 auto it = sessions_.find(session_id);
-            if (it == sessions_.end())
-            {
-                DAS_CORE_LOG_ERROR("Session not found (session_id = {})", session_id);
-                return DAS_E_IPC_OBJECT_NOT_FOUND;
+                if (it == sessions_.end())
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "Session not found (session_id = {})",
+                        session_id);
+                    return DAS_E_IPC_OBJECT_NOT_FOUND;
                 }
 
                 out_info = it->second;
@@ -426,14 +425,14 @@ namespace Core
                     out_info);
             }
 
-
-
             DasResult MainProcessServer::DispatchMessage(
-                const IPCMessageHeader& header,
-                const uint8_t*          body,
-                size_t                  body_size,
-                std::vector<uint8_t>&   response_body)
+                const ValidatedIPCMessageHeader& validated_header,
+                const uint8_t*                   body,
+                size_t                           body_size,
+                std::vector<uint8_t>&            response_body)
             {
+                const IPCMessageHeader& header = validated_header.Raw();
+
                 if (!is_initialized_.load() || !is_running_.load())
                 {
                     DAS_CORE_LOG_ERROR("Server not initialized or not running");
@@ -575,7 +574,23 @@ namespace Core
                 }
 
                 // Send message to target Host
-                DasResult result = transport->Send(header, body, body_size);
+                auto validated_header =
+                    IPCMessageHeaderBuilder()
+                        .SetMessageType(
+                            static_cast<MessageType>(header.message_type))
+                        .SetBusinessInterface(
+                            header.interface_id,
+                            header.method_id)
+                        .SetBodySize(header.body_size)
+                        .SetCallId(header.call_id)
+                        .SetObject(
+                            header.session_id,
+                            header.generation,
+                            header.local_id)
+                        .SetFlags(header.flags)
+                        .Build();
+                DasResult result =
+                    transport->Send(validated_header, body, body_size);
                 if (DAS::IsFailed(result))
                 {
                     DAS_CORE_LOG_ERROR(
@@ -613,31 +628,29 @@ namespace Core
                     return DAS_E_IPC_NO_CONNECTIONS;
                 }
 
-                // 2. 构造消息头
-                IPCMessageHeader header{};
-                header.interface_id = static_cast<uint64_t>(
-                    IpcCommandType::LOAD_PLUGIN);
-                header.session_id =
-                    *SessionCoordinator::GetInstance().GetLocalSessionId();
-                header.message_type =
-                    static_cast<uint8_t>(MessageType::REQUEST);
+                // 2. 构造消息头（使用 Builder）
+                uint32_t body_size =
+                    static_cast<uint32_t>(2 + plugin_path.size());
+                auto validated_header =
+                    IPCMessageHeaderBuilder()
+                        .SetMessageType(MessageType::REQUEST)
+                        .SetControlPlaneCommand(IpcCommandType::LOAD_PLUGIN)
+                        .SetBodySize(body_size)
+                        .SetSessionId(*SessionCoordinator::GetInstance()
+                                           .GetLocalSessionId())
+                        .Build();
 
                 // 3. 构造 payload: [path_len(2)][path_bytes...]
-                std::vector<uint8_t> payload;
-                uint16_t              path_len =
-                    static_cast<uint16_t>(plugin_path.size());
-                payload.push_back(static_cast<uint8_t>(path_len & 0xFF));
-                payload.push_back(static_cast<uint8_t>((path_len >> 8) & 0xFF));
-                payload.insert(
-                    payload.end(),
-                    plugin_path.begin(),
-                    plugin_path.end());
+                std::vector<uint8_t> payload(body_size);
+                uint16_t path_len = static_cast<uint16_t>(plugin_path.size());
+                std::memcpy(payload.data(), &path_len, 2);
+                std::memcpy(payload.data() + 2, plugin_path.data(), path_len);
 
                 // 4. 发送请求并等待响应
                 std::vector<uint8_t> response_body;
                 DasResult            result = runloop_.SendRequest(
                     transport,
-                    header,
+                    validated_header,
                     payload.data(),
                     payload.size(),
                     response_body,
@@ -665,9 +678,6 @@ namespace Core
 
                 return DAS_S_OK;
             }
-
-
-
 
         } // namespace MainProcess
     }

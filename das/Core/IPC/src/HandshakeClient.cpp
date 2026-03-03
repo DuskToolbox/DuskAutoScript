@@ -3,6 +3,7 @@
 
 #include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
+#include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/DasApi.h>
 #include <das/Utils/fmt.h>
 
@@ -22,27 +23,19 @@ DasResult HandshakeClient::SendHelloAndWaitWelcome(
     uint32_t my_pid = static_cast<uint32_t>(boost::process::v2::current_pid());
     InitHelloRequest(hello, my_pid, client_name.c_str());
 
-    // 构建请求头
-    IPCMessageHeader header{};
-    header.magic = IPCMessageHeader::MAGIC;
-    header.version = IPCMessageHeader::CURRENT_VERSION;
-    header.message_type = static_cast<uint8_t>(MessageType::REQUEST);
-    header.header_flags = 0;
-    header.call_id = 0; // 由 SendRequest 内部分配
-    header.interface_id =
-        static_cast<uint32_t>(HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO);
-    header.method_id = 0;
-    header.flags = 0;
-    header.error_code = 0;
-    header.body_size = sizeof(hello);
-    header.session_id = 0;
-    header.generation = 0;
-    header.local_id = 0;
+    // 构建请求头（使用 Builder）
+    auto validated_header =
+        IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::REQUEST)
+            .SetControlPlaneCommand(HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO)
+            .SetBodySize(sizeof(hello))
+            .Build();
 
+    // 使用 SendRequest 发送并等待响应
     // 使用 SendRequest 发送并等待响应
     std::vector<uint8_t> response_body;
     DasResult            result = run_loop_.SendRequest(
-        header,
+        validated_header,
         reinterpret_cast<const uint8_t*>(&hello),
         sizeof(hello),
         response_body,
@@ -99,27 +92,17 @@ DasResult HandshakeClient::SendReadyAndWaitAck(
     ReadyRequestV1 ready{};
     InitReadyRequest(ready, session_id);
 
-    // 构建请求头
-    IPCMessageHeader header{};
-    header.magic = IPCMessageHeader::MAGIC;
-    header.version = IPCMessageHeader::CURRENT_VERSION;
-    header.message_type = static_cast<uint8_t>(MessageType::REQUEST);
-    header.header_flags = 0;
-    header.call_id = 0; // 由 SendMessage 内部分配
-    header.interface_id =
-        static_cast<uint32_t>(HandshakeInterfaceId::HANDSHAKE_IFACE_READY);
-    header.method_id = 0;
-    header.flags = 0;
-    header.error_code = 0;
-    header.body_size = sizeof(ready);
-    // 控制平面消息: ObjectId = {0, 0, 0}
-    header.session_id = 0;
-    header.generation = 0;
-    header.local_id = 0;
+    // 构建请求头（使用 Builder）
+    auto validated_header =
+        IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::REQUEST)
+            .SetControlPlaneCommand(HandshakeInterfaceId::HANDSHAKE_IFACE_READY)
+            .SetBodySize(sizeof(ready))
+            .Build();
     // 使用 SendRequest 发送并等待响应
     std::vector<uint8_t> response_body;
     DasResult            result = run_loop_.SendRequest(
-        header,
+        validated_header,
         reinterpret_cast<const uint8_t*>(&ready),
         sizeof(ready),
         response_body,

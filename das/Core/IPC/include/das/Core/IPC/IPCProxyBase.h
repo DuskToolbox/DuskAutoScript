@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <das/Core/IPC/IpcMessageHeader.h>
+#include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/MethodMetadata.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/IDasBase.h>
@@ -77,7 +78,27 @@ protected:
     {
         return run_loop_;
     }
+    [[nodiscard]]
+    ValidatedIPCMessageHeader BuildMessageHeader(
+        uint16_t    method_id,
+        uint64_t    call_id,
+        MessageType message_type = MessageType::REQUEST,
+        size_t      body_size = 0) const
+    {
+        return IPCMessageHeaderBuilder()
+            .SetMessageType(message_type)
+            .SetBusinessInterface(interface_id_, method_id)
+            .SetBodySize(static_cast<uint32_t>(body_size))
+            .SetCallId(call_id)
+            .SetObject(
+                object_id_.session_id,
+                object_id_.generation,
+                object_id_.local_id)
+            .Build();
+    }
 
+    // 保留旧方法以兼容现有代码，标记为 deprecated
+    [[deprecated("Use BuildMessageHeader instead")]]
     void FillMessageHeader(
         IPCMessageHeader& header,
         uint16_t          method_id,

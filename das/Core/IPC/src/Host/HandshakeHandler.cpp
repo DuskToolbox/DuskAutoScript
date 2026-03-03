@@ -2,6 +2,7 @@
 #include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/Host/HandshakeHandler.h>
 #include <das/Core/IPC/IpcErrors.h>
+#include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/SessionCoordinator.h>
 #include <das/DasApi.h>
@@ -37,8 +38,8 @@ namespace Core
 
                 // local_session_id = 0 表示等待握手时由主进程分配
                 // 非 0 值需要是有效的 session_id
-                if (local_session_id != 0 &&
-                    !SessionCoordinator::IsValidSessionId(local_session_id))
+                if (local_session_id != 0
+                    && !SessionCoordinator::IsValidSessionId(local_session_id))
                 {
                     std::string msg = DAS_FMT_NS::format(
                         "HandshakeHandler: Invalid local_session_id: {}",
@@ -49,8 +50,9 @@ namespace Core
 
                 // 0 表示未设置（等待握手分配），存储为 nullopt
                 local_session_id_ =
-                    (local_session_id == 0) ? std::nullopt
-                                            : std::optional<uint16_t>(local_session_id);
+                    (local_session_id == 0)
+                        ? std::nullopt
+                        : std::optional<uint16_t>(local_session_id);
                 initialized_ = true;
 
                 std::string msg = DAS_FMT_NS::format(
@@ -210,25 +212,36 @@ namespace Core
 
                 if (DAS::IsOk(result) && !response_body.empty())
                 {
-                    // 根据请求类型设置响应的 interface_id
-                    IPCMessageHeader response_header = header;
-                    switch (static_cast<HandshakeInterfaceId>(header.interface_id))
+                    // 根据请求类型构建响应头（使用 Builder）
+                    uint32_t response_interface_id = header.interface_id;
+                    switch (
+                        static_cast<HandshakeInterfaceId>(header.interface_id))
                     {
                     case HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO:
-                        response_header.interface_id =
-                            static_cast<uint32_t>(
-                                HandshakeInterfaceId::HANDSHAKE_IFACE_WELCOME);
+                        response_interface_id = static_cast<uint32_t>(
+                            HandshakeInterfaceId::HANDSHAKE_IFACE_WELCOME);
                         break;
                     case HandshakeInterfaceId::HANDSHAKE_IFACE_READY:
-                        response_header.interface_id =
-                            static_cast<uint32_t>(
-                                HandshakeInterfaceId::HANDSHAKE_IFACE_READY_ACK);
+                        response_interface_id = static_cast<uint32_t>(
+                            HandshakeInterfaceId::HANDSHAKE_IFACE_READY_ACK);
                         break;
                     default:
                         // 其他消息保持原 interface_id
                         break;
                     }
-                    sender.SendResponse(response_header, response_body);
+
+                    auto validated_response_header =
+                        IPCMessageHeaderBuilder()
+                            .SetMessageType(MessageType::RESPONSE)
+                            .SetBusinessInterface(response_interface_id, 0)
+                            .SetBodySize(
+                                static_cast<uint32_t>(response_body.size()))
+                            .SetCallId(header.call_id)
+                            .SetErrorCode(0)
+                            .Build();
+                    sender.SendResponse(
+                        validated_response_header,
+                        response_body);
                 }
 
                 return result;
@@ -361,13 +374,16 @@ namespace Core
                         WelcomeResponseV1::STATUS_INVALID_SESSION);
 
                     response_body.resize(sizeof(response));
-                    std::memcpy(response_body.data(), &response, sizeof(response));
+                    std::memcpy(
+                        response_body.data(),
+                        &response,
+                        sizeof(response));
                     return DAS_E_IPC_INVALID_MESSAGE;
                 }
 
                 // 设置 Host 进程的本地 session_id
                 SessionCoordinator::GetInstance().SetLocalSessionId(session_id);
-                local_session_id_ = session_id;  // 同步更新本地存储
+                local_session_id_ = session_id; // 同步更新本地存储
 
                 ConnectedClient client;
                 client.session_id = session_id;

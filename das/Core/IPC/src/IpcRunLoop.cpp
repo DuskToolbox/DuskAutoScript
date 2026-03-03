@@ -6,6 +6,7 @@
 #include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/IMessageHandler.h>
 #include <das/Core/IPC/IpcErrors.h>
+#include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcResponseSender.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/IpcTransport.h>
@@ -230,10 +231,10 @@ bool IpcRunLoop::ReceiveAndDispatchFromTransport(
 }
 
 std::pair<DasResult, uint64_t> IpcRunLoop::PrepareSendRequest(
-    IpcTransport*           transport,
-    const IPCMessageHeader& request_header,
-    const uint8_t*          body,
-    size_t                  body_size)
+    IpcTransport*                    transport,
+    const ValidatedIPCMessageHeader& request_header,
+    const uint8_t*                   body,
+    size_t                           body_size)
 {
     if (!transport)
     {
@@ -241,10 +242,18 @@ std::pair<DasResult, uint64_t> IpcRunLoop::PrepareSendRequest(
         return {DAS_E_IPC_INVALID_ARGUMENT, 0};
     }
 
-    uint64_t         call_id = next_call_id_.fetch_add(1);
-    IPCMessageHeader header = request_header;
-    header.call_id = call_id;
-    header.message_type = static_cast<uint8_t>(MessageType::REQUEST);
+    uint64_t call_id = next_call_id_.fetch_add(1);
+
+    // 使用 Builder 创建新的 header，设置 call_id
+    const IPCMessageHeader& raw = request_header.Raw();
+    auto                    validated_header =
+        IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::REQUEST)
+            .SetBusinessInterface(raw.interface_id, raw.method_id)
+            .SetBodySize(raw.body_size)
+            .SetCallId(call_id)
+            .SetObject(raw.session_id, raw.generation, raw.local_id)
+            .Build();
 
     // 创建等待上下文（on_complete 和 deadline 稍后由
     // AwaitResponseOperation::start() 通过 RegisterPendingCompletion 设置）
@@ -258,7 +267,7 @@ std::pair<DasResult, uint64_t> IpcRunLoop::PrepareSendRequest(
     }
 
     // 发送请求
-    auto send_result = transport->Send(header, body, body_size);
+    auto send_result = transport->Send(validated_header, body, body_size);
     if (send_result != DAS_S_OK)
     {
         DAS_CORE_LOG_ERROR(
@@ -397,11 +406,11 @@ void IpcRunLoop::RegisterPendingCompletion(
 }
 
 DasResult IpcRunLoop::SendRequest(
-    const IPCMessageHeader&   request_header,
-    const uint8_t*            body,
-    size_t                    body_size,
-    std::vector<uint8_t>&     response_body,
-    std::chrono::milliseconds timeout)
+    const ValidatedIPCMessageHeader& request_header,
+    const uint8_t*                   body,
+    size_t                           body_size,
+    std::vector<uint8_t>&            response_body,
+    std::chrono::milliseconds        timeout)
 {
     if (!transport_)
     {
@@ -418,12 +427,12 @@ DasResult IpcRunLoop::SendRequest(
 }
 
 DasResult IpcRunLoop::SendRequest(
-    IpcTransport*             transport,
-    const IPCMessageHeader&   request_header,
-    const uint8_t*            body,
-    size_t                    body_size,
-    std::vector<uint8_t>&     response_body,
-    std::chrono::milliseconds timeout)
+    IpcTransport*                    transport,
+    const ValidatedIPCMessageHeader& request_header,
+    const uint8_t*                   body,
+    size_t                           body_size,
+    std::vector<uint8_t>&            response_body,
+    std::chrono::milliseconds        timeout)
 {
     // 构建 stdexec 异步管道并同步等待结果
     auto sender =
@@ -442,25 +451,30 @@ DasResult IpcRunLoop::SendRequest(
 }
 
 DasResult IpcRunLoop::SendResponse(
-    const IPCMessageHeader& response_header,
-    const uint8_t*          body,
-    size_t                  body_size)
+    const ValidatedIPCMessageHeader& response_header,
+    const uint8_t*                   body,
+    size_t                           body_size)
 {
-    IPCMessageHeader header = response_header;
-    header.message_type = static_cast<uint8_t>(MessageType::RESPONSE);
-
-    return transport_->Send(header, body, body_size);
+    return transport_->Send(response_header, body, body_size);
 }
 
 DasResult IpcRunLoop::SendEvent(
-    const IPCMessageHeader& event_header,
-    const uint8_t*          body,
-    size_t                  body_size)
+    const ValidatedIPCMessageHeader& event_header,
+    const uint8_t*                   body,
+    size_t                           body_size)
 {
-    IPCMessageHeader header = event_header;
-    header.message_type = static_cast<uint8_t>(MessageType::EVENT);
+    // 使用 Builder 确保设置 EVENT 类型
+    const IPCMessageHeader& raw = event_header.Raw();
+    auto                    validated_header =
+        IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::EVENT)
+            .SetBusinessInterface(raw.interface_id, raw.method_id)
+            .SetBodySize(raw.body_size)
+            .SetCallId(raw.call_id)
+            .SetObject(raw.session_id, raw.generation, raw.local_id)
+            .Build();
 
-    return transport_->Send(header, body, body_size);
+    return transport_->Send(validated_header, body, body_size);
 }
 
 bool IpcRunLoop::IsRunning() const { return running_.load(); }
@@ -537,11 +551,20 @@ DasResult IpcRunLoop::ProcessMessage(
         }
 
         // 没有处理器，发送错误响应
-        IPCMessageHeader response = header;
-        response.message_type = static_cast<uint8_t>(MessageType::RESPONSE);
-        response.error_code = DAS_E_IPC_INVALID_INTERFACE_ID;
+        auto validated_response =
+            IPCMessageHeaderBuilder()
+                .SetMessageType(MessageType::RESPONSE)
+                .SetBusinessInterface(header.interface_id, header.method_id)
+                .SetBodySize(0)
+                .SetCallId(header.call_id)
+                .SetObject(
+                    header.session_id,
+                    header.generation,
+                    header.local_id)
+                .SetErrorCode(DAS_E_IPC_INVALID_INTERFACE_ID)
+                .Build();
 
-        transport_->Send(response, nullptr, 0);
+        transport_->Send(validated_response, nullptr, 0);
         return DAS_S_OK;
     }
 
@@ -609,18 +632,15 @@ void IpcRunLoop::SendWakeupMessage()
         return;
     }
 
-    // 构造唤醒消息（控制平面，interface_id=5）
-    IPCMessageHeader header{};
-    header.magic = IPCMessageHeader::MAGIC;
-    header.version = IPCMessageHeader::CURRENT_VERSION;
-    header.session_id = 0; // 控制平面
-    header.generation = 0;
-    header.local_id = 0;
-    header.interface_id =
-        static_cast<uint32_t>(HandshakeInterfaceId::HANDSHAKE_IFACE_WAKEUP);
-    header.body_size = 0;
-
-    transport_->Send(header, nullptr, 0);
+    // 构造唤醒消息（使用 Builder）
+    auto validated_header =
+        IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::REQUEST)
+            .SetControlPlaneCommand(
+                HandshakeInterfaceId::HANDSHAKE_IFACE_WAKEUP)
+            .SetBodySize(0)
+            .Build();
+    transport_->Send(validated_header, nullptr, 0);
 }
 
 void IpcRunLoop::ProcessPostedCallbacks()

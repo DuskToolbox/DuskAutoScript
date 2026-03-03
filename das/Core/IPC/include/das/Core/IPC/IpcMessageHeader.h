@@ -39,6 +39,13 @@ struct alignas(8) IPCMessageHeader
 
     static constexpr uint32_t MAGIC = 0x43495044; // 'DIPC'
     static constexpr uint16_t CURRENT_VERSION = 2;
+
+    /// @brief 验证消息头是否有效
+    [[nodiscard]]
+    bool IsValid() const noexcept
+    {
+        return magic == MAGIC && version == CURRENT_VERSION;
+    }
 };
 
 // V2 结构大小验证

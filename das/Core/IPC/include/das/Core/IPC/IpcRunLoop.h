@@ -8,6 +8,7 @@
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcResponseSender.h>
+#include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <das/IDasBase.h>
 #include <functional>
 #include <optional>
@@ -82,9 +83,8 @@ struct IpcScheduleOperation
         stdexec::start_t,
         IpcScheduleOperation& self) noexcept
     {
-        self.loop_->PostMessage(
-            [rcvr = std::move(self.rcvr_)]() mutable
-            { stdexec::set_value(std::move(rcvr)); });
+        self.loop_->PostMessage([rcvr = std::move(self.rcvr_)]() mutable
+                                { stdexec::set_value(std::move(rcvr)); });
     }
 };
 
@@ -175,8 +175,7 @@ struct AwaitResponseOperation
             return;
         }
 
-        auto deadline =
-            std::chrono::steady_clock::now() + self.timeout_;
+        auto deadline = std::chrono::steady_clock::now() + self.timeout_;
 
         // 注册完成回调到 PendingCallState
         // 回调会在 RunLoop 线程上被调用
@@ -280,11 +279,11 @@ public:
      * @return 调用结果
      */
     DasResult SendRequest(
-        const IPCMessageHeader&   request_header,
-        const uint8_t*            body,
-        size_t                    body_size,
-        std::vector<uint8_t>&     response_body,
-        std::chrono::milliseconds timeout = std::chrono::seconds(30));
+        const ValidatedIPCMessageHeader& request_header,
+        const uint8_t*                   body,
+        size_t                           body_size,
+        std::vector<uint8_t>&            response_body,
+        std::chrono::milliseconds        timeout = std::chrono::seconds(30));
 
     /**
      * @brief 同步阻塞 IPC 调用（指定 transport）
@@ -301,12 +300,12 @@ public:
      * @return 调用结果
      */
     DasResult SendRequest(
-        IpcTransport*             transport,
-        const IPCMessageHeader&   request_header,
-        const uint8_t*            body,
-        size_t                    body_size,
-        std::vector<uint8_t>&     response_body,
-        std::chrono::milliseconds timeout = std::chrono::seconds(30));
+        IpcTransport*                    transport,
+        const ValidatedIPCMessageHeader& request_header,
+        const uint8_t*                   body,
+        size_t                           body_size,
+        std::vector<uint8_t>&            response_body,
+        std::chrono::milliseconds        timeout = std::chrono::seconds(30));
 
     /**
      * @brief 异步 IPC 调用（返回 sender）
@@ -322,31 +321,31 @@ public:
      */
     [[nodiscard]]
     stdexec::sender auto SendMessageAsync(
-        const IPCMessageHeader&   request_header,
-        const uint8_t*            body,
-        size_t                    body_size,
-        std::chrono::milliseconds timeout = std::chrono::seconds(30));
+        const ValidatedIPCMessageHeader& request_header,
+        const uint8_t*                   body,
+        size_t                           body_size,
+        std::chrono::milliseconds        timeout = std::chrono::seconds(30));
 
     /**
      * @brief 异步 IPC 调用（指定 transport，返回 sender）
      */
     [[nodiscard]]
     stdexec::sender auto SendMessageAsync(
-        IpcTransport*             transport,
-        const IPCMessageHeader&   request_header,
-        const uint8_t*            body,
-        size_t                    body_size,
-        std::chrono::milliseconds timeout = std::chrono::seconds(30));
+        IpcTransport*                    transport,
+        const ValidatedIPCMessageHeader& request_header,
+        const uint8_t*                   body,
+        size_t                           body_size,
+        std::chrono::milliseconds        timeout = std::chrono::seconds(30));
 
     DasResult SendResponse(
-        const IPCMessageHeader& response_header,
-        const uint8_t*          body,
-        size_t                  body_size);
+        const ValidatedIPCMessageHeader& response_header,
+        const uint8_t*                   body,
+        size_t                           body_size);
 
     DasResult SendEvent(
-        const IPCMessageHeader& event_header,
-        const uint8_t*          body,
-        size_t                  body_size);
+        const ValidatedIPCMessageHeader& event_header,
+        const uint8_t*                   body,
+        size_t                           body_size);
 
     bool IsRunning() const;
 
@@ -447,10 +446,10 @@ public:
      * @return pair<DasResult, uint64_t>: 结果码和分配的 call_id
      */
     std::pair<DasResult, uint64_t> PrepareSendRequest(
-        IpcTransport*           transport,
-        const IPCMessageHeader& request_header,
-        const uint8_t*          body,
-        size_t                  body_size);
+        IpcTransport*                    transport,
+        const ValidatedIPCMessageHeader& request_header,
+        const uint8_t*                   body,
+        size_t                           body_size);
 
     /**
      * @brief 完成指定 call_id 的 pending call（IOCP 风格）
@@ -533,11 +532,11 @@ public:
 // 注意：带 transport 参数的实现版本必须在转发版本之前定义，
 //       否则 MSVC 报 C3779（auto 返回函数需先定义再调用）。
 inline stdexec::sender auto IpcRunLoop::SendMessageAsync(
-    IpcTransport*             transport,
-    const IPCMessageHeader&   request_header,
-    const uint8_t*            body,
-    size_t                    body_size,
-    std::chrono::milliseconds timeout)
+    IpcTransport*                    transport,
+    const ValidatedIPCMessageHeader& request_header,
+    const uint8_t*                   body,
+    size_t                           body_size,
+    std::chrono::milliseconds        timeout)
 {
     // 1. 准备发送（分配 call_id、注册 pending、发送数据）
     auto [send_result, call_id] =
@@ -559,10 +558,10 @@ inline stdexec::sender auto IpcRunLoop::SendMessageAsync(
 }
 
 inline stdexec::sender auto IpcRunLoop::SendMessageAsync(
-    const IPCMessageHeader&   request_header,
-    const uint8_t*            body,
-    size_t                    body_size,
-    std::chrono::milliseconds timeout)
+    const ValidatedIPCMessageHeader& request_header,
+    const uint8_t*                   body,
+    size_t                           body_size,
+    std::chrono::milliseconds        timeout)
 {
     return SendMessageAsync(
         transport_.get(),

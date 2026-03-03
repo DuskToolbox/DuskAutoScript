@@ -8,12 +8,12 @@
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
+#include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <das/IDasBase.h>
-#include <functional>
 #include <memory>
 #include <mutex>
-#include <thread>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -66,9 +66,8 @@ namespace Core
              *       │
              *       ├── OnHostConnected() ──→ 注册会话
              *       │
-             *       ├── OnRemoteObjectRegistered() ──→ 更新 RemoteObjectRegistry
-             *       │
-             *       └── DispatchMessage() ──→ 分发到目标对象
+             *       ├── OnRemoteObjectRegistered() ──→ 更新
+             * RemoteObjectRegistry │ └── DispatchMessage() ──→ 分发到目标对象
              */
             class MainProcessServer
             {
@@ -248,10 +247,11 @@ namespace Core
                  * @return DasResult 发送结果
                  */
                 DasResult SendLoadPlugin(
-                    const std::string&          plugin_path,
-                    ObjectId&                   out_object_id,
-                    uint16_t                    target_session_id,
-                    std::chrono::milliseconds   timeout = std::chrono::seconds(30));
+                    const std::string&        plugin_path,
+                    ObjectId&                 out_object_id,
+                    uint16_t                  target_session_id,
+                    std::chrono::milliseconds timeout =
+                        std::chrono::seconds(30));
 
                 // ====== 消息分发 ======
 
@@ -270,10 +270,10 @@ namespace Core
                  * 处理结果
      */
                 DasResult DispatchMessage(
-                    const IPCMessageHeader& header,
-                    const uint8_t*          body,
-                    size_t                  body_size,
-                    std::vector<uint8_t>&   response_body);
+                    const ValidatedIPCMessageHeader& header,
+                    const uint8_t*                   body,
+                    size_t                           body_size,
+                    std::vector<uint8_t>&            response_body);
 
                 /**
                  * @brief 设置消息分发处理器
@@ -376,8 +376,6 @@ namespace Core
                     size_t                  body_size,
                     std::vector<uint8_t>&   response_body);
 
-
-
                 // IPC 消息处理（用于 SendRequest）
                 Das::Core::IPC::IpcRunLoop runloop_;
 
@@ -394,7 +392,6 @@ namespace Core
                 std::atomic<bool> is_initialized_{false};
 
                 uint32_t main_pid_{0};
-
             };
         } // namespace MainProcess
     } // namespace IPC

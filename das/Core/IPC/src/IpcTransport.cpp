@@ -2,11 +2,12 @@
 #include <cstdint>
 #include <cstring>
 #include <das/Core/IPC/Config.h>
+#include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcTransport.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <das/Core/Logger/Logger.h>
-#include <string>
 #include <das/Utils/fmt.h>
+#include <string>
 #include <vector>
 DAS_CORE_IPC_NS_BEGIN
 constexpr uint16_t kFlagLargeMessage = 0x01;
@@ -131,9 +132,9 @@ DasResult IpcTransport::Shutdown()
 }
 
 DasResult IpcTransport::Send(
-    const IPCMessageHeader& header,
-    const uint8_t*          body,
-    size_t                  body_size)
+    const ValidatedIPCMessageHeader& header,
+    const uint8_t*                   body,
+    size_t                           body_size)
 {
     if (!impl_->initialized_)
     {
@@ -224,7 +225,8 @@ DasResult IpcTransport::Receive(
         {
             if (impl_->shm_pool_ == nullptr)
             {
-                DAS_CORE_LOG_ERROR("Large message received but shared memory pool not set");
+                DAS_CORE_LOG_ERROR(
+                    "Large message received but shared memory pool not set");
                 return DAS_E_IPC_SHM_FAILED;
             }
 
@@ -295,31 +297,25 @@ std::string IpcTransport::MakeQueueName(
 {
     if (is_main_to_host)
     {
-        return DAS_FMT_NS::format(
-            "das_ipc_{}_{}_m2h",
-            main_pid,
-            host_pid);
+        return DAS_FMT_NS::format("das_ipc_{}_{}_m2h", main_pid, host_pid);
     }
     else
     {
-        return DAS_FMT_NS::format(
-            "das_ipc_{}_{}_h2m",
-            main_pid,
-            host_pid);
+        return DAS_FMT_NS::format("das_ipc_{}_{}_h2m", main_pid, host_pid);
     }
 }
 
 DasResult IpcTransport::SendSmallMessage(
-    const IPCMessageHeader& header,
-    const uint8_t*          body,
-    size_t                  body_size)
+    const ValidatedIPCMessageHeader& header,
+    const uint8_t*                   body,
+    size_t                           body_size)
 {
     std::vector<uint8_t> buffer(sizeof(IPCMessageHeader) + body_size);
 
-    std::memcpy(buffer.data(), &header, sizeof(IPCMessageHeader));
+    std::memcpy(buffer.data(), header, header.Size());
     if (body != nullptr && body_size > 0)
     {
-        std::memcpy(buffer.data() + sizeof(IPCMessageHeader), body, body_size);
+        std::memcpy(buffer.data() + header.Size(), body, body_size);
     }
 
     try
@@ -335,9 +331,9 @@ DasResult IpcTransport::SendSmallMessage(
 }
 
 DasResult IpcTransport::SendLargeMessage(
-    const IPCMessageHeader& header,
-    const uint8_t*          body,
-    size_t                  body_size)
+    const ValidatedIPCMessageHeader& header,
+    const uint8_t*                   body,
+    size_t                           body_size)
 {
     if (impl_->shm_pool_ == nullptr)
     {
@@ -346,7 +342,7 @@ DasResult IpcTransport::SendLargeMessage(
     }
 
     SharedMemoryBlock block;
-    auto result = impl_->shm_pool_->Allocate(body_size, block);
+    auto              result = impl_->shm_pool_->Allocate(body_size, block);
     if (result != DAS_S_OK)
     {
         DAS_CORE_LOG_ERROR(
@@ -357,14 +353,31 @@ DasResult IpcTransport::SendLargeMessage(
 
     std::memcpy(block.data, body, body_size);
 
-    IPCMessageHeader shm_header = header;
+    // 创建带大消息标志的 header
+    IPCMessageHeader shm_header = header.Raw();
     shm_header.flags |= kFlagLargeMessage;
+
+    // 使用 Builder 创建新的 validated header
+    auto validated_shm_header =
+        IPCMessageHeaderBuilder()
+            .SetMessageType(static_cast<MessageType>(shm_header.message_type))
+            .SetBusinessInterface(shm_header.interface_id, shm_header.method_id)
+            .SetBodySize(sizeof(uint64_t))
+            .SetCallId(shm_header.call_id)
+            .SetObject(
+                shm_header.session_id,
+                shm_header.generation,
+                shm_header.local_id)
+            .SetFlags(shm_header.flags)
+            .Build();
 
     std::vector<uint8_t> handle_buffer(sizeof(uint64_t));
     std::memcpy(handle_buffer.data(), &block.handle, sizeof(uint64_t));
 
-    result =
-        SendSmallMessage(shm_header, handle_buffer.data(), sizeof(uint64_t));
+    result = SendSmallMessage(
+        validated_shm_header,
+        handle_buffer.data(),
+        sizeof(uint64_t));
     if (result != DAS_S_OK)
     {
         impl_->shm_pool_->Deallocate(block.handle);

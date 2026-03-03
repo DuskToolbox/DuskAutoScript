@@ -9,6 +9,7 @@
 #include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
+#include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcTransport.h>
 #include <das/Core/IPC/SessionCoordinator.h>
 #include <das/Utils/fmt.h>
@@ -157,18 +158,24 @@ void HostLauncher::Stop()
 
         GoodbyeV1 goodbye{};
         goodbye.reason = static_cast<uint32_t>(GoodbyeReason::NormalShutdown);
-        header.body_size = sizeof(GoodbyeV1);
 
         std::string log_msg = DAS_FMT_NS::format(
             "Sending GOODBYE to Host process: PID={}",
             impl_->pid);
         DAS_LOG_INFO(log_msg.c_str());
 
+        auto validated_header =
+            IPCMessageHeaderBuilder()
+                .SetMessageType(MessageType::REQUEST)
+                .SetControlPlaneCommand(
+                    HandshakeInterfaceId::HANDSHAKE_IFACE_GOODBYE)
+                .SetBodySize(sizeof(goodbye))
+                .Build();
+
         impl_->transport->Send(
-            header,
+            validated_header,
             reinterpret_cast<const uint8_t*>(&goodbye),
             sizeof(goodbye));
-
         // 等待进程退出，最多等待 2 秒
         // 如果进程在 GOODBYE 后正常退出，则不需要 terminate
         bool process_exited = false;
@@ -434,11 +441,18 @@ DasResult HostLauncher::SendHandshakeHello(const std::string& client_name)
     header.generation = 0;
     header.local_id = 0;
 
+    auto validated_header =
+        IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::REQUEST)
+            .SetControlPlaneCommand(HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO)
+            .SetBodySize(sizeof(hello))
+            .SetCallId(header.call_id)
+            .Build();
+
     DasResult result = impl_->transport->Send(
-        header,
+        validated_header,
         reinterpret_cast<const uint8_t*>(&hello),
         sizeof(hello));
-
     if (result != DAS_S_OK)
     {
         std::string msg =
@@ -540,11 +554,19 @@ DasResult HostLauncher::SendHandshakeReady(uint16_t session_id)
     header.session_id = 0;
     header.generation = 0;
     header.local_id = 0;
+
+    auto validated_header =
+        IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::REQUEST)
+            .SetControlPlaneCommand(HandshakeInterfaceId::HANDSHAKE_IFACE_READY)
+            .SetBodySize(sizeof(ready))
+            .SetCallId(header.call_id)
+            .Build();
+
     DasResult result = impl_->transport->Send(
-        header,
+        validated_header,
         reinterpret_cast<const uint8_t*>(&ready),
         sizeof(ready));
-
     if (result != DAS_S_OK)
     {
         std::string msg =

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
+#include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <das/DasExport.h>
 #include <das/IDasBase.h>
 #include <memory>
@@ -33,9 +34,9 @@ public:
     DasResult Shutdown();
 
     DasResult Send(
-        const IPCMessageHeader& header,
-        const uint8_t*          body,
-        size_t                  body_size);
+        const ValidatedIPCMessageHeader& header,
+        const uint8_t*                   body,
+        size_t                           body_size);
 
     DasResult Receive(
         IPCMessageHeader&     out_header,
@@ -53,14 +54,14 @@ public:
 
 private:
     DasResult SendSmallMessage(
-        const IPCMessageHeader& header,
-        const uint8_t*          body,
-        size_t                  body_size);
+        const ValidatedIPCMessageHeader& header,
+        const uint8_t*                   body,
+        size_t                           body_size);
 
     DasResult SendLargeMessage(
-        const IPCMessageHeader& header,
-        const uint8_t*          body,
-        size_t                  body_size);
+        const ValidatedIPCMessageHeader& header,
+        const uint8_t*                   body,
+        size_t                           body_size);
 
     struct Impl;
     std::unique_ptr<Impl> impl_;

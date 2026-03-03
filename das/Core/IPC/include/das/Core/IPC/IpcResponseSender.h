@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <das/Core/IPC/IpcMessageHeader.h>
+#include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <vector>
 
 #include <das/Core/IPC/Config.h>
@@ -32,8 +33,8 @@ public:
      * @return DasResult 成功返回 DAS_S_OK
      */
     DasResult SendResponse(
-        const IPCMessageHeader&     header,
-        const std::vector<uint8_t>& body);
+        const ValidatedIPCMessageHeader& header,
+        const std::vector<uint8_t>&      body);
 
 private:
     IpcRunLoop& run_loop_;

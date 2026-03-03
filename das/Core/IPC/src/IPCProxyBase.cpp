@@ -18,18 +18,15 @@ DasResult IPCProxyBase::SendRequest(
     // 分配调用 ID
     uint64_t call_id = AllocateCallId();
 
-    // 填充消息头
-    IPCMessageHeader header;
-    FillMessageHeader(
-        header,
-        method_id,
-        call_id,
-        MessageType::REQUEST,
-        body_size);
+    // 构建消息头（使用 Builder）
+    auto validated_header =
+        BuildMessageHeader(method_id, call_id, MessageType::REQUEST, body_size);
 
     // 调用 IpcRunLoop 发送请求
-    return run_loop_->SendRequest(header, body, body_size, response_body);
+    return run_loop_
+        ->SendRequest(validated_header, body, body_size, response_body);
 }
+
 DasResult IPCProxyBase::SendRequestNoResponse(
     uint16_t       method_id,
     const uint8_t* body,
@@ -44,16 +41,12 @@ DasResult IPCProxyBase::SendRequestNoResponse(
     // 分配调用 ID
     uint64_t call_id = AllocateCallId();
 
-    // 填充消息头（无响应）
-    IPCMessageHeader header;
-    FillMessageHeader(
-        header,
-        method_id,
-        call_id,
-        MessageType::EVENT,
-        body_size);
+    // 构建消息头（使用 Builder）
+    auto validated_header =
+        BuildMessageHeader(method_id, call_id, MessageType::EVENT, body_size);
 
-    // 调用 IpcRunLoop 发送请求
-    return run_loop_->SendEvent(header, body, body_size);
+    // 调用 IpcRunLoop 发送事件
+    return run_loop_->SendEvent(validated_header, body, body_size);
 }
+
 DAS_CORE_IPC_NS_END
