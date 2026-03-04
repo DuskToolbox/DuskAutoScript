@@ -20,7 +20,9 @@
 #include <das/DasException.hpp>
 
 #include <das/DasApi.h>
-
+#include <das/IDasAsyncOperation.h>
+#include <das/IDasAsyncLoadPluginOperation.h>
+#include <das/IDasAsyncHandshakeOperation.h>
 #ifdef SWIGPYTHON
 #include <das/Core/ForeignInterfaceHost/PythonHost.h>
 
@@ -660,7 +662,9 @@ static void DasLogPendingJniException(JNIEnv* jenv, const char* context_u8)
 %include <das/DasExport.h>
 %include <das/DasTypes.hpp>
 %include <das/IDasBase.h>
-
+%include <das/IDasAsyncOperation.h>
+%include <das/IDasAsyncLoadPluginOperation.h>
+%include <das/IDasAsyncHandshakeOperation.h>
 #ifdef SWIGJAVA
 // ============================================================================
 // DasReadOnlyString Java Support - 从 Java String 创建
