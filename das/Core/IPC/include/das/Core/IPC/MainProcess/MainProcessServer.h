@@ -9,6 +9,7 @@
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
+#include <das/IDasAsyncLoadPluginOperation.h>
 #include <das/IDasBase.h>
 #include <memory>
 #include <mutex>
@@ -253,6 +254,21 @@ namespace Core
                     std::chrono::milliseconds timeout =
                         std::chrono::seconds(30));
 
+                /**
+                 * @brief 异步发送 LOAD_PLUGIN 命令到指定 Host
+                 *
+                 * @param plugin_path 插件路径
+                 * @param target_session_id 目标 Host 的 session_id
+                 * @param pp_out_operation 输出异步操作对象
+                 * @param timeout 超时时间（默认30秒）
+                 * @return DasResult 发送结果
+                 */
+                DasResult SendLoadPluginAsync(
+                    const std::string&             plugin_path,
+                    uint16_t                       target_session_id,
+                    IDasAsyncLoadPluginOperation** pp_out_operation,
+                    std::chrono::milliseconds      timeout =
+                        std::chrono::seconds(30));
                 // ====== 消息分发 ======
 
                 /**

@@ -5,7 +5,7 @@
 #include <cstring>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/ObjectId.h>
-#include <das/DasPtr.h>
+#include <das/DasPtr.hpp>
 #include <das/IDasAsyncLoadPluginOperation.h>
 #include <das/IDasAsyncOperation.h>
 #include <optional>
@@ -96,7 +96,7 @@ namespace Core::IPC
             friend void tag_invoke(
                 stdexec::set_value_t,
                 CompletionReceiver&&                       r,
-                std::pair<DasResult, std::vector<uint8_t>> response)
+                std::pair<DasResult, std::vector<uint8_t>> response) noexcept
             {
                 auto& [code, data] = response;
                 TResult value{};
@@ -116,12 +116,12 @@ namespace Core::IPC
 
             friend void tag_invoke(
                 stdexec::set_stopped_t,
-                CompletionReceiver&& r)
+                CompletionReceiver&& r) noexcept
             {
                 r.self_->Complete(DAS_E_IPC_TIMEOUT, {});
             }
 
-            friend stdexec::empty_env tag_invoke(
+            friend stdexec::env<> tag_invoke(
                 stdexec::get_env_t,
                 const CompletionReceiver&) noexcept
             {

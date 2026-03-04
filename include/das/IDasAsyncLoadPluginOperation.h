@@ -1,9 +1,16 @@
 #ifndef DAS_ASYNC_LOAD_PLUGIN_OPERATION_H
 #define DAS_ASYNC_LOAD_PLUGIN_OPERATION_H
 
-#include <das/Core/IPC/ObjectId.h>
+#include <cstdint>
 #include <das/IDasAsyncOperation.h>
 
+// 前置声明 ObjectId（定义在 das/Core/IPC/ObjectId.h）
+namespace Das::Core::IPC
+{
+    struct ObjectId;
+} // namespace Das::Core::IPC
+
+using DasObjectId = ::Das::Core::IPC::ObjectId;
 DAS_DEFINE_GUID(
     DAS_IID_ASYNC_LOAD_PLUGIN_OPERATION,
     IDasAsyncLoadPluginOperation,
@@ -22,7 +29,7 @@ DAS_SWIG_EXPORT_ATTRIBUTE(IDasAsyncLoadPluginOperation)
 DAS_INTERFACE IDasAsyncLoadPluginOperation : public IDasAsyncOperation
 {
     // 获取加载结果（仅当 status == COMPLETED 时有效）
-    DAS_METHOD GetResults(ObjectId * p_out_object_id) = 0;
+    DAS_METHOD GetResults(DasObjectId * p_out_object_id) = 0;
 };
 
 #endif // DAS_ASYNC_LOAD_PLUGIN_OPERATION_H

@@ -1,5 +1,7 @@
 #include "das/Core/IPC/MainProcess/MainProcessServer.h"
 
+#include <das/Core/IPC/AsyncOperationImpl.h>
+
 #include <chrono>
 
 #ifdef _WIN32
@@ -713,6 +715,64 @@ namespace Core
 
                 std::memcpy(&out_object_id, response_body.data(), 8);
 
+                return DAS_S_OK;
+            }
+
+            DasResult MainProcessServer::SendLoadPluginAsync(
+                const std::string&             plugin_path,
+                uint16_t                       target_session_id,
+                IDasAsyncLoadPluginOperation** pp_out_operation,
+                std::chrono::milliseconds      timeout)
+            {
+                if (!pp_out_operation)
+                {
+                    return DAS_E_INVALID_ARGUMENT;
+                }
+
+                // 1. 获取目标 Transport
+                IpcTransport* transport =
+                    ::Das::Core::IPC::ConnectionManager::GetInstance()
+                        .GetTransport(target_session_id);
+                if (!transport)
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "No transport for session_id = {}",
+                        target_session_id);
+                    return DAS_E_IPC_NO_CONNECTIONS;
+                }
+
+                // 2. 构造消息头
+                uint32_t body_size =
+                    static_cast<uint32_t>(2 + plugin_path.size());
+                auto validated_header =
+                    IPCMessageHeaderBuilder()
+                        .SetMessageType(MessageType::REQUEST)
+                        .SetControlPlaneCommand(IpcCommandType::LOAD_PLUGIN)
+                        .SetBodySize(body_size)
+                        .SetSessionId(*SessionCoordinator::GetInstance()
+                                           .GetLocalSessionId())
+                        .Build();
+
+                // 3. 构造 payload
+                std::vector<uint8_t> payload(body_size);
+                uint16_t path_len = static_cast<uint16_t>(plugin_path.size());
+                std::memcpy(payload.data(), &path_len, 2);
+                std::memcpy(payload.data() + 2, plugin_path.data(), path_len);
+
+                // 4. 使用 SendMessageAsync 创建 sender
+                auto sender = runloop_.SendMessageAsync(
+                    transport,
+                    validated_header,
+                    payload.data(),
+                    payload.size(),
+                    timeout);
+
+                // 5. 创建异步操作对象
+                auto op =
+                    MakeAsyncOperation<IDasAsyncLoadPluginOperation, ObjectId>(
+                        std::move(sender));
+
+                *pp_out_operation = op.Reset();
                 return DAS_S_OK;
             }
 
