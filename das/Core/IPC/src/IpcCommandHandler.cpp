@@ -121,7 +121,10 @@ DasResult IpcCommandHandler::HandleCommand(
         return OnGetObjectCount(header, payload, response);
 
     case IpcCommandType::LOAD_PLUGIN:
-        return OnLoadPlugin(header, payload, response);
+        // LOAD_PLUGIN requires custom handler registration.
+        // Must call RegisterHandler() before using this command.
+        response.error_code = DAS_E_IPC_COMMAND_NOT_REGISTERED;
+        return DAS_E_IPC_COMMAND_NOT_REGISTERED;
 
     default:
         response.error_code = DAS_E_IPC_INVALID_MESSAGE_TYPE;
@@ -526,55 +529,11 @@ DasResult IpcCommandHandler::OnLoadPlugin(
 {
     (void)header;
     (void)payload;
-    (void)response;
 
-    // 1. 解析响应：encoded_object_id
-    if (payload.size() < 8)
-    {
-        response.error_code = DAS_E_IPC_INVALID_MESSAGE_BODY;
-        return DAS_E_IPC_INVALID_MESSAGE_BODY;
-    }
-
-    uint64_t encoded_id;
-    std::memcpy(&encoded_id, payload.data(), 8);
-    ObjectId object_id = DecodeObjectId(encoded_id);
-
-    // 2. 注册到 RemoteObjectRegistry
-    auto&     registry = RemoteObjectRegistry::GetInstance();
-    DasResult result = registry.RegisterObject(
-        object_id,
-        DAS_IID_BASE,      // iid = IDasBase
-        header.session_id, // 来自哪个 Host
-        "loaded_plugin",   // name
-        1                  // version
-    );
-
-    if (DAS::IsFailed(result))
-    {
-        response.error_code = result;
-        return result;
-    }
-
-    // TODO: DistributedObjectManager 没有 GetInstance()
-    // 单例方法，需要后续实现
-    // // 3. 注册到 DistributedObjectManager（标记为远程对象）
-    // result =
-    // DistributedObjectManager::GetInstance().RegisterRemoteObject(object_id);
-    // if (DAS::IsFailed(result))
-    // {
-    //     response.error_code = result;
-    //     return result;
-    // }
-
-    // 4. 创建 Proxy<IDasBase>
-    auto proxy = ProxyFactory::GetInstance().CreateProxy<IDasBase>(object_id);
-    if (!proxy)
-    {
-        response.error_code = DAS_E_FAIL;
-        return DAS_E_FAIL;
-    }
-
-    response.error_code = DAS_S_OK;
-    return DAS_S_OK;
+    // This method should never be called directly.
+    // LOAD_PLUGIN requires custom handler registration via RegisterHandler().
+    // See das/Host/src/main.cpp for reference implementation.
+    response.error_code = DAS_E_IPC_COMMAND_NOT_REGISTERED;
+    return DAS_E_IPC_COMMAND_NOT_REGISTERED;
 }
 DAS_CORE_IPC_NS_END
