@@ -27,7 +27,7 @@ DAS_DEFINE_GUID(
     0x3B,
     0x4C,
     0x5D)
-DAS_SWIG_DIRECTOR_ATTRIBUTE(IDasAsyncCompletedHandler)
+DAS_SWIG_EXPORT_ATTRIBUTE(IDasAsyncCompletedHandler)
 DAS_INTERFACE IDasAsyncCompletedHandler : public IDasBase
 {
     DAS_METHOD OnCompleted(IDasBase * p_sender, int32_t status) = 0;
