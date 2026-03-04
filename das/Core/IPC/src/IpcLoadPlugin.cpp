@@ -1,10 +1,13 @@
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/ConnectionManager.h>
+#include <das/Core/IPC/DasAsyncSender.h>
 #include <das/Core/IPC/MainProcess/MainProcessServer.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
+#include <das/DasPtr.hpp>
 #include <das/IDasBase.h>
+#include <stdexec/execution.hpp>
 DAS_CORE_IPC_NS_BEGIN
 DasResult IpcLoadPluginImpl(
     const std::string& plugin_path,
@@ -21,9 +24,9 @@ DasResult IpcLoadPluginImpl(
 
     // 获取第一个可用的 session_id
     // TODO: 需要调用者显式指定 session_id
-    auto&  conn_manager = ConnectionManager::GetInstance();
-    auto   sessions = conn_manager.GetConnectedSessions();
-    
+    auto& conn_manager = ConnectionManager::GetInstance();
+    auto  sessions = conn_manager.GetConnectedSessions();
+
     if (sessions.empty())
     {
         DAS_CORE_LOG_ERROR("No available connections");
@@ -31,13 +34,30 @@ DasResult IpcLoadPluginImpl(
     }
     uint16_t session_id = sessions[0];
 
-    ObjectId object_id{};
-    DasResult result = server.SendLoadPlugin(plugin_path, object_id, session_id);
+    ObjectId                             object_id{};
+    DasPtr<IDasAsyncLoadPluginOperation> op;
+    DasResult                            result =
+        server.SendLoadPluginAsync(plugin_path, session_id, op.Put());
 
     if (result != DAS_S_OK)
     {
         return result;
     }
+
+    // 等待异步操作完成
+    auto await_result = stdexec::sync_wait(AwaitAsync(std::move(op)));
+    if (!await_result)
+    {
+        DAS_CORE_LOG_ERROR("sync_wait failed");
+        return DAS_E_IPC_TIMEOUT;
+    }
+
+    auto [load_result, loaded_object_id] = *await_result;
+    if (load_result != DAS_S_OK)
+    {
+        return load_result;
+    }
+    object_id = loaded_object_id;
 
     auto& factory = ProxyFactory::GetInstance();
 

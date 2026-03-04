@@ -61,6 +61,10 @@ namespace Core::IPC
                 DasPtr<TAsyncOp>      op_;
                 Receiver              rcvr_;
 
+                Handler(DasPtr<TAsyncOp> op, Receiver rcvr)
+                    : op_(std::move(op)), rcvr_(std::move(rcvr))
+                {
+                }
                 uint32_t AddRef() override { return ++ref_; }
 
                 uint32_t Release() override
@@ -105,9 +109,8 @@ namespace Core::IPC
                 stdexec::start_t,
                 OperationState& self) noexcept
             {
-                auto* handler = new Handler{
-                    .op_ = std::move(self.op_),
-                    .rcvr_ = std::move(self.rcvr_)};
+                auto* handler =
+                    new Handler(std::move(self.op_), std::move(self.rcvr_));
                 self.op_->SetCompleted(handler);
                 handler->Release(); // op_ 持有引用
             }
