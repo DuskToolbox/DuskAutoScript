@@ -70,15 +70,6 @@ namespace IpcTestHostHelper
             session_id);
         DAS_LOG_INFO(msg.c_str());
 
-        // 设置 MainProcessServer::runloop_ 的 transport
-        // 注意：这是内部接口，仅用于测试环境设置
-        auto* transport_ptr = conn_manager.GetTransport(session_id);
-        if (transport_ptr)
-        {
-            auto& server = DAS::Core::IPC::MainProcess::MainProcessServer::GetInstance();
-            server.GetRunLoop()->SetTransportPtr(transport_ptr);
-        }
-
         return DAS_S_OK;
     }
 

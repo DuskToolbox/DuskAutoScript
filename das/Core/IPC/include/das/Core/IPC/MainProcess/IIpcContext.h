@@ -34,20 +34,6 @@ namespace Core
                 virtual DistributedObjectManager& GetObjectManager() = 0;
                 virtual RemoteObjectRegistry&     GetRegistry() = 0;
 
-                //=== stdexec Scheduler 原语 ===
-
-                /**
-                 * @brief 投递请求到消息循环线程
-                 */
-                virtual void PostRequest(
-                    void (*callback)(void* user_data),
-                    void* user_data) = 0;
-
-                /**
-                 * @brief 阻塞等待并处理一轮消息
-                 */
-                virtual void PumpMessage() = 0;
-
             protected:
                 virtual ~IIpcContext() = default;
 
@@ -113,34 +99,31 @@ namespace Core
                     return ctx_ == other.ctx_;
                 }
 
-                IIpcContext& context() const noexcept
-                {
-                    return *ctx_;
-                }
+                IIpcContext& context() const noexcept { return *ctx_; }
 
                 std::shared_ptr<IIpcContext> const& ptr() const noexcept
                 {
                     return ctx_;
                 }
 
-                void PostRequest(void (*callback)(void*), void* user_data)
+                void PostRequest(
+                    void (*callback)(void*),
+                    void* user_data) noexcept
                 {
-                    ctx_->PostRequest(callback, user_data);
                 }
-
-                void PumpMessage() { ctx_->PumpMessage(); }
 
             private:
                 std::shared_ptr<IIpcContext> ctx_;
             };
 
             // tag_invoke - 使 stdexec::schedule(scheduler) 工作
-            inline auto tag_invoke(stdexec::schedule_t, const Scheduler& sched) noexcept
+            inline auto tag_invoke(
+                stdexec::schedule_t,
+                const Scheduler& sched) noexcept
             {
                 return DAS::Core::IPC::ScheduleSender<Scheduler>{
                     const_cast<Scheduler*>(&sched)};
             }
-
 
         } // namespace MainProcess
     } // namespace IPC

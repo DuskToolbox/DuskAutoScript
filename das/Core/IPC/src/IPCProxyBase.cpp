@@ -2,7 +2,10 @@
 #include <das/Core/IPC/IPCProxyBase.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/Logger/Logger.h>
+#include <stdexec/execution.hpp>
+
 DAS_CORE_IPC_NS_BEGIN
+
 DasResult IPCProxyBase::SendRequest(
     uint16_t              method_id,
     const uint8_t*        body,
@@ -15,16 +18,35 @@ DasResult IPCProxyBase::SendRequest(
         return DAS_E_FAIL;
     }
 
-    // 分配调用 ID
     uint64_t call_id = AllocateCallId();
 
-    // 构建消息头（使用 Builder）
     auto validated_header =
         BuildMessageHeader(method_id, call_id, MessageType::REQUEST, body_size);
 
-    // 调用 IpcRunLoop 发送请求
-    return run_loop_
-        ->SendRequest(validated_header, body, body_size, response_body);
+    auto sender = run_loop_->SendMessageAsync(
+        validated_header,
+        body,
+        body_size,
+        std::chrono::milliseconds{5000});
+
+    auto result_opt = stdexec::sync_wait(std::move(sender));
+
+    if (!result_opt.has_value())
+    {
+        DAS_CORE_LOG_ERROR("SendRequest timeout or cancelled");
+        return DAS_E_IPC_TIMEOUT;
+    }
+
+    auto [result, response] = std::get<0>(*result_opt);
+
+    if (DAS::IsFailed(result))
+    {
+        DAS_CORE_LOG_ERROR("SendRequest failed with error = 0x{:08X}", result);
+        return result;
+    }
+
+    response_body = std::move(response);
+    return DAS_S_OK;
 }
 
 DasResult IPCProxyBase::SendRequestNoResponse(
@@ -38,14 +60,11 @@ DasResult IPCProxyBase::SendRequestNoResponse(
         return DAS_E_FAIL;
     }
 
-    // 分配调用 ID
     uint64_t call_id = AllocateCallId();
 
-    // 构建消息头（使用 Builder）
     auto validated_header =
         BuildMessageHeader(method_id, call_id, MessageType::EVENT, body_size);
 
-    // 调用 IpcRunLoop 发送事件
     return run_loop_->SendEvent(validated_header, body, body_size);
 }
 

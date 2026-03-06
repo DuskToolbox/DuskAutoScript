@@ -1,3 +1,11 @@
+// 在包含头文件之前取消 Windows 的 DispatchMessage 宏，// 因为 Windows API
+// 定义了 DispatchMessage 宏，与类方法名冲突
+#ifdef _WIN32
+#ifdef DispatchMessage
+#undef DispatchMessage
+#endif
+#endif
+
 #include "das/Core/IPC/MainProcess/MainProcessServer.h"
 
 #include <das/Core/IPC/AsyncOperationImpl.h>
@@ -17,7 +25,6 @@
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
-#include <das/Core/IPC/IpcTransport.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/SessionCoordinator.h>
 #include <das/Core/Logger/Logger.h>
@@ -564,45 +571,12 @@ namespace Core
                 size_t                  body_size,
                 std::vector<uint8_t>&   response_body)
             {
-                // 1. 获取目标 Host 的 Transport
-                IpcTransport* transport =
-                    ::Das::Core::IPC::ConnectionManager::GetInstance()
-                        .GetTransport(header.session_id);
-                if (!transport)
-                {
-                    DAS_CORE_LOG_ERROR(
-                        "Failed to get transport for session_id = {}",
-                        header.session_id);
-                    return DAS_E_IPC_NO_CONNECTIONS;
-                }
-
-                // 2. 构建 validated header（保留原始消息的所有字段）
-                auto validated_header =
-                    IPCMessageHeaderBuilder()
-                        .SetMessageType(
-                            static_cast<MessageType>(header.message_type))
-                        .SetBusinessInterface(
-                            header.interface_id,
-                            header.method_id)
-                        .SetBodySize(header.body_size)
-                        .SetCallId(header.call_id)
-                        .SetObject(
-                            header.session_id,
-                            header.generation,
-                            header.local_id)
-                        .SetFlags(header.flags)
-                        .Build();
-
-                // 3. 使用 IpcRunLoop::SendRequest(transport, ...)
-                // 发送并等待响应
-                //    这是指定 transport 的重载版本，专为转发场景设计
-                return runloop_.SendRequest(
-                    transport,
-                    validated_header,
-                    body,
-                    body_size,
-                    response_body,
-                    std::chrono::seconds(30));
+                (void)header;
+                (void)body;
+                (void)body_size;
+                (void)response_body;
+                DAS_CORE_LOG_ERROR("ForwardMessageToHost not implemented");
+                return DAS_E_NOT_IMPLEMENTED;
             }
 
             AwaitResponseSender MainProcessServer::ForwardMessageToHostAsync(
@@ -610,44 +584,14 @@ namespace Core
                 const uint8_t*          body,
                 size_t                  body_size)
             {
-                IpcTransport* transport =
-                    ::Das::Core::IPC::ConnectionManager::GetInstance()
-                        .GetTransport(header.session_id);
-                if (!transport)
-                {
-                    DAS_CORE_LOG_ERROR(
-                        "Failed to get transport for session_id = {}",
-                        header.session_id);
-                    // 返回立即失败的 sender
-                    return AwaitResponseSender{
-                        nullptr,
-                        static_cast<uint64_t>(DAS_E_IPC_NO_CONNECTIONS),
-                        std::chrono::milliseconds{0}};
-                }
-
-                auto validated_header =
-                    IPCMessageHeaderBuilder()
-                        .SetMessageType(
-                            static_cast<MessageType>(header.message_type))
-                        .SetBusinessInterface(
-                            header.interface_id,
-                            header.method_id)
-                        .SetBodySize(header.body_size)
-                        .SetCallId(header.call_id)
-                        .SetObject(
-                            header.session_id,
-                            header.generation,
-                            header.local_id)
-                        .SetFlags(header.flags)
-                        .Build();
-
-                // 真正的异步转发：不阻塞调用线程
-                return runloop_.SendMessageAsync(
-                    transport,
-                    validated_header,
-                    body,
-                    body_size,
-                    std::chrono::seconds(30));
+                (void)header;
+                (void)body;
+                (void)body_size;
+                DAS_CORE_LOG_ERROR("ForwardMessageToHostAsync not implemented");
+                return AwaitResponseSender{
+                    nullptr,
+                    static_cast<uint64_t>(DAS_E_NOT_IMPLEMENTED),
+                    std::chrono::milliseconds{0}};
             }
 
             DasResult MainProcessServer::SendLoadPlugin(
@@ -656,67 +600,12 @@ namespace Core
                 uint16_t                  target_session_id,
                 std::chrono::milliseconds timeout)
             {
-                // 1. 获取目标 Transport
-                IpcTransport* transport =
-                    ::Das::Core::IPC::ConnectionManager::GetInstance()
-                        .GetTransport(target_session_id);
-                if (!transport)
-                {
-                    DAS_CORE_LOG_ERROR(
-                        "No transport for session_id = {}",
-                        target_session_id);
-                    return DAS_E_IPC_NO_CONNECTIONS;
-                }
-
-                // 2. 构造消息头
-                uint32_t body_size =
-                    static_cast<uint32_t>(2 + plugin_path.size());
-                auto validated_header =
-                    IPCMessageHeaderBuilder()
-                        .SetMessageType(MessageType::REQUEST)
-                        .SetControlPlaneCommand(IpcCommandType::LOAD_PLUGIN)
-                        .SetBodySize(body_size)
-                        .SetSessionId(*SessionCoordinator::GetInstance()
-                                           .GetLocalSessionId())
-                        .Build();
-
-                // 3. 构造 payload
-                std::vector<uint8_t> payload(body_size);
-                uint16_t path_len = static_cast<uint16_t>(plugin_path.size());
-                std::memcpy(payload.data(), &path_len, 2);
-                std::memcpy(payload.data() + 2, plugin_path.data(), path_len);
-
-                // 4. 使用 SendRequest 同步发送并等待响应
-                std::vector<uint8_t> response_body;
-                DasResult            result = runloop_.SendRequest(
-                    transport,
-                    validated_header,
-                    payload.data(),
-                    payload.size(),
-                    response_body,
-                    timeout);
-
-                if (DAS::IsFailed(result))
-                {
-                    DAS_CORE_LOG_ERROR(
-                        "SendRequest failed for session_id = {}, result = {}",
-                        target_session_id,
-                        result);
-                    return result;
-                }
-
-                // 5. 解析响应
-                if (response_body.size() < sizeof(ObjectId))
-                {
-                    DAS_CORE_LOG_ERROR("Invalid response size for LOAD_PLUGIN");
-                    return DAS_E_IPC_INVALID_MESSAGE_BODY;
-                }
-
-                std::memcpy(
-                    &out_object_id,
-                    response_body.data(),
-                    sizeof(ObjectId));
-                return DAS_S_OK;
+                (void)plugin_path;
+                (void)out_object_id;
+                (void)target_session_id;
+                (void)timeout;
+                DAS_CORE_LOG_ERROR("SendLoadPlugin not implemented");
+                return DAS_E_NOT_IMPLEMENTED;
             }
 
             DasResult MainProcessServer::SendLoadPluginAsync(
@@ -725,56 +614,12 @@ namespace Core
                 IDasAsyncLoadPluginOperation** pp_out_operation,
                 std::chrono::milliseconds      timeout)
             {
-                if (!pp_out_operation)
-                {
-                    return DAS_E_INVALID_ARGUMENT;
-                }
-
-                // 1. 获取目标 Transport
-                IpcTransport* transport =
-                    ::Das::Core::IPC::ConnectionManager::GetInstance()
-                        .GetTransport(target_session_id);
-                if (!transport)
-                {
-                    DAS_CORE_LOG_ERROR(
-                        "No transport for session_id = {}",
-                        target_session_id);
-                    return DAS_E_IPC_NO_CONNECTIONS;
-                }
-
-                // 2. 构造消息头
-                uint32_t body_size =
-                    static_cast<uint32_t>(2 + plugin_path.size());
-                auto validated_header =
-                    IPCMessageHeaderBuilder()
-                        .SetMessageType(MessageType::REQUEST)
-                        .SetControlPlaneCommand(IpcCommandType::LOAD_PLUGIN)
-                        .SetBodySize(body_size)
-                        .SetSessionId(*SessionCoordinator::GetInstance()
-                                           .GetLocalSessionId())
-                        .Build();
-
-                // 3. 构造 payload
-                std::vector<uint8_t> payload(body_size);
-                uint16_t path_len = static_cast<uint16_t>(plugin_path.size());
-                std::memcpy(payload.data(), &path_len, 2);
-                std::memcpy(payload.data() + 2, plugin_path.data(), path_len);
-
-                // 4. 使用 SendMessageAsync 创建 sender
-                auto sender = runloop_.SendMessageAsync(
-                    transport,
-                    validated_header,
-                    payload.data(),
-                    payload.size(),
-                    timeout);
-
-                // 5. 创建异步操作对象
-                auto op =
-                    MakeAsyncOperation<IDasAsyncLoadPluginOperation, ObjectId>(
-                        std::move(sender));
-
-                *pp_out_operation = op.Reset();
-                return DAS_S_OK;
+                (void)plugin_path;
+                (void)target_session_id;
+                (void)pp_out_operation;
+                (void)timeout;
+                DAS_CORE_LOG_ERROR("SendLoadPluginAsync not implemented");
+                return DAS_E_NOT_IMPLEMENTED;
             }
 
         } // namespace MainProcess

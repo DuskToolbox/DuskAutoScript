@@ -13,7 +13,6 @@ DAS_CORE_IPC_NS_BEGIN
 class ValidatedIPCMessageHeader
 {
 public:
-    /// @brief 获取原始 header（只读）
     [[nodiscard]]
     const IPCMessageHeader& Raw() const noexcept
     {

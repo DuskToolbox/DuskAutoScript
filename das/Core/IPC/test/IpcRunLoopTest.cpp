@@ -50,25 +50,10 @@ protected:
         }
     }
 
-    // Helper to setup runloop with a valid transport
-    // Returns true on success, false on failure
     bool SetupRunLoopWithTransport()
     {
-        if (runloop_->Initialize() != DAS_S_OK)
-        {
-            return false;
-        }
-
-        auto transport = std::make_unique<IpcTransport>();
-        if (transport
-                ->Initialize(host_queue_name_, plugin_queue_name_, 4096, 10)
-            != DAS_S_OK)
-        {
-            return false;
-        }
-
-        runloop_->SetTransport(std::move(transport));
-        return true;
+        return runloop_->Initialize(host_queue_name_, plugin_queue_name_, true)
+               == DAS_S_OK;
     }
 
     ValidatedIPCMessageHeader CreateTestHeader(

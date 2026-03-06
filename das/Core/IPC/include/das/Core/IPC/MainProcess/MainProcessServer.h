@@ -19,6 +19,12 @@
 #include <unordered_set>
 #include <vector>
 
+#ifdef _WIN32
+#ifdef DispatchMessage
+#undef DispatchMessage
+#endif
+#endif
+
 DAS_NS_BEGIN
 namespace Core
 {

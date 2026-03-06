@@ -5,35 +5,39 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
-#include <das/Core/IPC/IpcResponseSender.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <das/IDasBase.h>
 #include <functional>
-#include <optional>
-#include <queue>
-
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <queue>
 #include <stdexec/execution.hpp>
 #include <thread>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
-#include <das/Core/IPC/Config.h>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/execution.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/steady_timer.hpp>
 
-// Forward declarations
+#include <das/Core/IPC/AsyncIpcTransport.h>
+#include <das/Core/IPC/IpcResponseSender.h>
+
 DAS_CORE_IPC_NS_BEGIN
-// Forward declarations
+
 class IMessageHandler;
-class IpcTransport;
 
 namespace Host
 {
     class HandshakeHandler;
 }
+
 DAS_CORE_IPC_NS_END
 
 DAS_CORE_IPC_NS_BEGIN
@@ -42,15 +46,7 @@ DAS_CORE_IPC_NS_BEGIN
 using PendingCallCompletion =
     std::function<void(DasResult, std::vector<uint8_t>)>;
 
-/**
- * @brief 异步 pending call 状态（IOCP 风格，替代原 NestedCallContext）
- *
- * 每个 pending call 记录：
- * - call_id: 调用 ID
- * - response_buffer: 响应体（由 ProcessMessage 填入）
- * - deadline: 超时截止时间
- * - on_complete: 完成/超时时的回调
- */
+/// 异步 pending call 状态（IOCP 风格）
 struct PendingCallState
 {
     uint64_t                              call_id;
@@ -70,9 +66,6 @@ class IpcRunLoop; // forward
 
 /**
  * @brief stdexec scheduler，将工作投递到 IpcRunLoop 线程
- *
- * 定义在最前面，以便 IpcScheduleEnv 可以直接使用完整类型。
- * schedule() 的 tag_invoke 延后到 IpcScheduleSender 定义之后。
  */
 struct IpcScheduler
 {
@@ -92,8 +85,6 @@ struct IpcScheduler
 
 /**
  * @brief sender 环境，携带 completion_scheduler 信息
- *
- * IpcScheduler 已是完整类型，可直接内联 tag_invoke。
  */
 struct IpcScheduleEnv
 {
@@ -107,11 +98,6 @@ struct IpcScheduleEnv
     }
 };
 
-// IpcScheduler 和 IpcScheduleEnv 保留供 AwaitResponseSender 内部使用
-
-//=============================================================================
-// AwaitResponseSender — 真正的异步 IPC 响应等待 sender
-//=============================================================================
 //=============================================================================
 // AwaitResponseSender — 真正的异步 IPC 响应等待 sender
 //=============================================================================
@@ -134,8 +120,7 @@ struct AwaitResponseOperation
         stdexec::start_t,
         AwaitResponseOperation& self) noexcept
     {
-        // 错误路径：loop_ 为 nullptr 表示 PrepareSendRequest 已失败，
-        // call_id_ 实际上存储的是错误码（通过 reinterpret）
+        // 错误路径：loop_ 为 nullptr 表示 PrepareSendRequest 已失败
         if (!self.loop_)
         {
             auto error_code = static_cast<DasResult>(self.call_id_);
@@ -148,8 +133,6 @@ struct AwaitResponseOperation
         auto deadline = std::chrono::steady_clock::now() + self.timeout_;
 
         // 注册完成回调到 PendingCallState
-        // 回调会在 RunLoop 线程上被调用
-        // （由 ProcessMessage 或 TickPendingSenders 触发）
         self.loop_->RegisterPendingCompletion(
             self.call_id_,
             deadline,
@@ -190,26 +173,35 @@ struct AwaitResponseSender
         return {self.loop_, self.call_id_, self.timeout_, std::move(rcvr)};
     }
 
-    IpcScheduleEnv get_env() const noexcept
-    {
-        return IpcScheduleEnv{loop_};
-    }
+    IpcScheduleEnv get_env() const noexcept { return IpcScheduleEnv{loop_}; }
 };
 
+//=============================================================================
+// IpcRunLoop — 异步 IPC 运行时
+//=============================================================================
 
-
-// 内部类型，不对外导出
 class IpcRunLoop
 {
 public:
     IpcRunLoop();
     ~IpcRunLoop();
 
+    /// 默认初始化（使用内部创建的 transport）
     DasResult Initialize();
+
+    /// 使用指定的队列名称初始化（用于 Host 进程）
+    /// @param read_queue_name 读取队列名称
+    /// @param write_queue_name 写入队列名称
+    /// @param is_server 是否作为服务端（创建队列）
+    DasResult Initialize(
+        const std::string& read_queue_name,
+        const std::string& write_queue_name,
+        bool               is_server);
+
     DasResult Shutdown();
+
     // 阻塞式消息循环
     DasResult Run();
-
     DasResult Stop();
 
     /**
@@ -220,17 +212,6 @@ public:
      * 线程的 join 由 Run() 或 Stop() 完成。
      */
     void RequestStop();
-
-    void SetTransport(std::unique_ptr<IpcTransport> transport);
-
-    /**
-     * @brief 设置非拥有的 transport 指针
-     *
-     * 用于测试场景，transport 的所有权由 ConnectionManager 管理。
-     * 仅用于 ReceiveAndDispatch() 接收消息。
-     */
-    void          SetTransportPtr(IpcTransport* transport);
-    IpcTransport* GetTransport() const;
 
     // 等待消息循环结束
     DasResult WaitForShutdown();
@@ -248,48 +229,6 @@ public:
      */
     [[nodiscard]]
     IMessageHandler* GetHandler(uint32_t interface_id) const;
-
-    /**
-     * @brief 同步阻塞 IPC 调用（使用内部 transport）
-     *
-     * 发送请求后进入消息循环等待，支持可重入调用。
-     * 内部使用 ReceiveAndDispatch() 处理消息。
-     *
-     * @param request_header 请求头
-     * @param body 请求体
-     * @param body_size 请求体大小
-     * @param response_body [out] 响应体
-     * @param timeout 超时时间（默认30秒）
-     * @return 调用结果
-     */
-    DasResult SendRequest(
-        const ValidatedIPCMessageHeader& request_header,
-        const uint8_t*                   body,
-        size_t                           body_size,
-        std::vector<uint8_t>&            response_body,
-        std::chrono::milliseconds        timeout = std::chrono::seconds(30));
-
-    /**
-     * @brief 同步阻塞 IPC 调用（指定 transport）
-     *
-     * 用于主进程转发场景：可以在处理 A 的消息时，
-     * 使用 Transport_B 发送请求到 Host B。
-     *
-     * @param transport 指定使用的传输层
-     * @param request_header 请求头
-     * @param body 请求体
-     * @param body_size 请求体大小
-     * @param response_body [out] 响应体
-     * @param timeout 超时时间（默认30秒）
-     * @return 调用结果
-     */
-    DasResult SendRequest(
-        IpcTransport*                    transport,
-        const ValidatedIPCMessageHeader& request_header,
-        const uint8_t*                   body,
-        size_t                           body_size,
-        std::vector<uint8_t>&            response_body,
-        std::chrono::milliseconds        timeout = std::chrono::seconds(30));
 
     /**
      * @brief 异步 IPC 调用（返回 sender）
@@ -311,11 +250,20 @@ public:
         std::chrono::milliseconds        timeout = std::chrono::seconds(30));
 
     /**
-     * @brief 异步 IPC 调用（指定 transport，返回 sender）
+     * @brief 使用指定 transport 的异步 IPC 调用
+     *
+     * 用于转发消息到其他进程时，使用外部 transport 发送。
+     *
+     * @param transport 目标传输层
+     * @param request_header 请求头
+     * @param body 请求体
+     * @param body_size 请求体大小
+     * @param timeout 超时时间（默认30秒）
+     * @return stdexec::sender 包含 pair<DasResult, vector<uint8_t>>
      */
     [[nodiscard]]
     stdexec::sender auto SendMessageAsync(
-        IpcTransport*                    transport,
+        DefaultAsyncIpcTransport*        transport,
         const ValidatedIPCMessageHeader& request_header,
         const uint8_t*                   body,
         size_t                           body_size,
@@ -360,6 +308,7 @@ public:
     // AwaitResponseOperation 需要访问内部方法
     template <class Receiver>
     friend struct AwaitResponseOperation;
+
     //=========================================================================
     // PostRequest 内部实现
     //=========================================================================
@@ -387,34 +336,54 @@ public:
      */
     bool ReceiveAndDispatch(std::chrono::milliseconds timeout);
 
-    /**
-     * @brief 使用指定 transport 的 receive 方法 - 用于转发场景
-     *
-     * 在主进程转发场景中，需要在处理 Transport_A 的消息时，
-     * 使用 Transport_B 发送请求。此方法允许指定 transport 接收消息。
-     *
-     * @param transport 指定的传输层
-     * @param timeout 超时时间
-     * @return 是否收到并处理了消息
-     */
-    bool ReceiveAndDispatchFromTransport(
-        IpcTransport*             transport,
-        std::chrono::milliseconds timeout);
-
     void RunInternal();
+
+    void StartReceiveLoop();
+
+    //=========================================================================
+    // 事件驱动方法（新增）
+    //=========================================================================
+
+    /**
+     * @brief 接收循环协程 - 事件驱动的消息接收
+     *
+     * 使用 co_await 异步等待消息，零轮询。
+     */
+    boost::asio::awaitable<void> ReceiveLoop();
+
+    /**
+     * @brief 执行一个 io_context 事件
+     *
+     * 用于 RunUntil 的事件驱动等待。
+     * 阻塞等待一个事件完成，非轮询。
+     */
+    void RunOne();
 
     /**
      * @brief 内部辅助：准备发送请求（分配 call_id、注册 pending
      * 上下文、发送数据）
      *
-     * @param transport 传输层
      * @param request_header 原始请求头
      * @param body 请求体
      * @param body_size 请求体大小
      * @return pair<DasResult, uint64_t>: 结果码和分配的 call_id
      */
     std::pair<DasResult, uint64_t> PrepareSendRequest(
-        IpcTransport*                    transport,
+        const ValidatedIPCMessageHeader& request_header,
+        const uint8_t*                   body,
+        size_t                           body_size);
+
+    /**
+     * @brief 使用指定 transport 准备发送请求
+     *
+     * @param transport 目标传输层
+     * @param request_header 原始请求头
+     * @param body 请求体
+     * @param body_size 请求体大小
+     * @return pair<DasResult, uint64_t>: 结果码和分配的 call_id
+     */
+    std::pair<DasResult, uint64_t> PrepareSendRequestWithTransport(
+        DefaultAsyncIpcTransport*        transport,
         const ValidatedIPCMessageHeader& request_header,
         const uint8_t*                   body,
         size_t                           body_size);
@@ -468,17 +437,40 @@ public:
         std::chrono::steady_clock::time_point deadline,
         PendingCallCompletion                 on_complete);
 
-    // 直接成员（移除 pimpl）
-    std::unordered_map<uint64_t, PendingCallState> pending_calls_;
-    std::unique_ptr<IpcTransport>                  transport_;
-    IpcTransport* transport_ptr_ = nullptr; // 非拥有指针，用于测试场景
+    //=========================================================================
+    // 成员变量
+    //=========================================================================
 
+    /// pending calls 映射
+    std::unordered_map<uint64_t, PendingCallState> pending_calls_;
+
+    /// 异步传输层（编译期平台选择：Win32AsyncIpcTransport 或
+    /// UnixAsyncIpcTransport）
+    std::unique_ptr<DefaultAsyncIpcTransport> async_transport_;
+
+    /// io_context 用于驱动异步 I/O
+    std::unique_ptr<boost::asio::io_context> io_context_;
+
+    /// 超时计时器（用于 pending call 超时管理）
+    std::unique_ptr<boost::asio::steady_timer> timeout_timer_;
+
+    /// 消息处理器映射
     std::unordered_map<uint32_t, std::unique_ptr<IMessageHandler>> handlers_;
-    std::atomic<uint64_t>  next_call_id_{1};
-    std::atomic<bool>      running_{false};
+
+    /// 下一个 call_id
+    std::atomic<uint64_t> next_call_id_{1};
+
+    /// 运行状态
+    std::atomic<bool> running_{false};
+
+    /// 退出码
     std::atomic<DasResult> exit_code_{DAS_S_OK};
-    std::thread            io_thread_;
-    mutable std::mutex     pending_mutex_;
+
+    /// IO 线程
+    std::thread io_thread_;
+
+    /// pending_calls_ 的互斥锁
+    mutable std::mutex pending_mutex_;
 
     //=========================================================================
     // PostRequest 成员
@@ -488,7 +480,7 @@ public:
     std::mutex                 post_queue_mutex_;
     std::queue<PostedCallback> post_queue_;
 
-    /// 管理的 Host 进程（预留，HostLauncher 在 Wave 5 实现）
+    /// 管理的 Host 进程（预留，HostLauncher 在后续实现）
     std::mutex hosts_mutex_;
     std::unordered_map<uint16_t, void*>
         hosts_; // 先用 void*，后续替换为 HostLauncher*
@@ -498,10 +490,7 @@ public:
 // SendMessageAsync 实现（必须在头文件中，因为返回 auto 类型）
 //=============================================================================
 
-// 注意：带 transport 参数的实现版本必须在转发版本之前定义，
-//       否则 MSVC 报 C3779（auto 返回函数需先定义再调用）。
 inline stdexec::sender auto IpcRunLoop::SendMessageAsync(
-    IpcTransport*                    transport,
     const ValidatedIPCMessageHeader& request_header,
     const uint8_t*                   body,
     size_t                           body_size,
@@ -509,7 +498,7 @@ inline stdexec::sender auto IpcRunLoop::SendMessageAsync(
 {
     // 1. 准备发送（分配 call_id、注册 pending、发送数据）
     auto [send_result, call_id] =
-        PrepareSendRequest(transport, request_header, body, body_size);
+        PrepareSendRequest(request_header, body, body_size);
 
     // 2. 返回 AwaitResponseSender
     //    - 成功：loop_=this, call_id=实际ID, timeout=超时
@@ -527,17 +516,35 @@ inline stdexec::sender auto IpcRunLoop::SendMessageAsync(
 }
 
 inline stdexec::sender auto IpcRunLoop::SendMessageAsync(
+    DefaultAsyncIpcTransport*        transport,
     const ValidatedIPCMessageHeader& request_header,
     const uint8_t*                   body,
     size_t                           body_size,
     std::chrono::milliseconds        timeout)
 {
-    return SendMessageAsync(
-        transport_.get(),
+    if (!transport)
+    {
+        return AwaitResponseSender{
+            nullptr,
+            static_cast<uint64_t>(DAS_E_INVALID_ARGUMENT),
+            std::chrono::milliseconds{0}};
+    }
+
+    auto [send_result, call_id] = PrepareSendRequestWithTransport(
+        transport,
         request_header,
         body,
-        body_size,
-        timeout);
+        body_size);
+
+    if (send_result != DAS_S_OK)
+    {
+        return AwaitResponseSender{
+            nullptr,
+            static_cast<uint64_t>(send_result),
+            std::chrono::milliseconds{0}};
+    }
+
+    return AwaitResponseSender{this, call_id, timeout};
 }
 
 DAS_CORE_IPC_NS_END

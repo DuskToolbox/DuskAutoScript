@@ -70,13 +70,7 @@ namespace Core::IPC
         {
             Context* ctx;
             Receiver rcvr;
-
-            static void OnScheduled(void* user_data) noexcept
-            {
-                auto* self = static_cast<OperationState*>(user_data);
-                stdexec::set_value(std::move(self->rcvr));
-                delete self;
-            }
+            bool     done{false};
 
             friend void tag_invoke(
                 stdexec::start_t,
@@ -84,7 +78,20 @@ namespace Core::IPC
             {
                 auto* heap_self =
                     new OperationState{self.ctx, std::move(self.rcvr)};
-                self.ctx->PostRequest(&OnScheduled, heap_self);
+                heap_self->ScheduleOnContext();
+            }
+
+            void ScheduleOnContext()
+            {
+                ctx->PostRequest(
+                    [](void* user_data)
+                    {
+                        auto* self = static_cast<OperationState*>(user_data);
+                        stdexec::set_value(std::move(self->rcvr));
+                        self->done = true;
+                        delete self;
+                    },
+                    this);
             }
         };
 
@@ -103,16 +110,11 @@ namespace Core::IPC
         }
     };
 
-    //=============================================================================
-    // schedule(Context&) — 任何有 PostRequest 的类型都可作为 scheduler
-    //=============================================================================
     template <typename Context>
         requires requires(Context& c) {
-            {
-                c.PostRequest(
-                    static_cast<void (*)(void*)>(nullptr),
-                    static_cast<void*>(nullptr))
-            };
+            c.PostRequest(
+                static_cast<void (*)(void*)>(nullptr),
+                static_cast<void*>(nullptr));
         }
     ScheduleSender<Context> tag_invoke(
         stdexec::schedule_t,
@@ -285,13 +287,13 @@ namespace Core::IPC
     //=============================================================================
     namespace internal
     {
-        template <typename Context, typename ValueTuple>
+        template <typename ValueTuple>
         struct SyncWaitReceiver
         {
             using receiver_concept = stdexec::receiver_t;
             std::optional<ValueTuple>* result;
             bool*                      done;
-            Context*                   ctx;
+            void*                      wakeup;
 
             template <typename... Ts>
             friend void tag_invoke(
@@ -301,8 +303,11 @@ namespace Core::IPC
             {
                 self.result->emplace(std::forward<Ts>(values)...);
                 *self.done = true;
-                // 唤醒 wait() 中的 PumpMessage
-                self.ctx->PostRequest([](void*) {}, nullptr);
+                if (self.wakeup)
+                {
+                    auto** wakeup_ptr = static_cast<void**>(self.wakeup);
+                    *wakeup_ptr = &self;
+                }
             }
 
             friend void tag_invoke(
@@ -310,7 +315,11 @@ namespace Core::IPC
                 SyncWaitReceiver&& self) noexcept
             {
                 *self.done = true;
-                self.ctx->PostRequest([](void*) {}, nullptr);
+                if (self.wakeup)
+                {
+                    auto** wakeup_ptr = static_cast<void**>(self.wakeup);
+                    *wakeup_ptr = &self;
+                }
             }
 
             friend stdexec::env<> tag_invoke(
@@ -322,44 +331,12 @@ namespace Core::IPC
         };
     } // namespace internal
 
-    //=============================================================================
-    // wait(ctx, sender) — 阻塞等待 sender 完成
-    //=============================================================================
-
-    /**
-     * @brief 阻塞等待 sender 完成，期间持续驱动 IPC 消息循环
-     *
-     * 这是 IPC 感知版本的 sync_wait。在等待期间持续调用
-     * PumpMessage()，确保依赖 IPC 事件的 sender 能正确完成。
-     *
-     * @tparam Context 上下文类型（需要有 PostRequest/PumpMessage 方法）
-     * @tparam Sender stdexec sender 类型
-     * @param ctx IPC 上下文
-     * @param sender 要等待的 sender
-     * @return sender 完成时携带的值，如果被取消则返回 nullopt
-     *
-     * @code
-     * auto ctx = MainProcess::CreateIpcContextEz();
-     * auto sender = async_op(*ctx, std::move(op));
-     * auto result = wait(*ctx, std::move(sender));
-     * // result = std::optional<std::tuple<DasResult, ObjectId>>
-     * @endcode
-     */
-    template <typename Context, typename Sender>
-        requires requires(Context& c) {
-            {
-                c.PostRequest(
-                    static_cast<void (*)(void*)>(nullptr),
-                    static_cast<void*>(nullptr))
-            };
-            { c.PumpMessage() };
-        }
-    auto wait(Context& ctx, Sender&& sender)
-        -> std::optional<stdexec::value_types_of_t<
-            std::decay_t<Sender>,
-            stdexec::env<>,
-            std::tuple,
-            std::type_identity_t>>
+    template <typename Sender>
+    auto wait(Sender&& sender) -> std::optional<stdexec::value_types_of_t<
+        std::decay_t<Sender>,
+        stdexec::env<>,
+        std::tuple,
+        std::type_identity_t>>
     {
         using value_tuple_t = stdexec::value_types_of_t<
             std::decay_t<Sender>,
@@ -369,22 +346,25 @@ namespace Core::IPC
 
         std::optional<value_tuple_t> result;
         bool                         done = false;
+        void*                        wakeup = nullptr;
 
         auto op = stdexec::connect(
             std::forward<Sender>(sender),
-            internal::SyncWaitReceiver<Context, value_tuple_t>{
-                &result,
-                &done,
-                &ctx});
+            internal::SyncWaitReceiver<value_tuple_t>{&result, &done, &wakeup});
         stdexec::start(op);
 
-        // 持续 pump 消息直到 sender 完成
-        while (!done)
-        {
-            ctx.PumpMessage();
-        }
-
         return result;
+    }
+
+    template <typename Context, typename Sender>
+    auto wait(Context& ctx, Sender&& sender)
+        -> std::optional<stdexec::value_types_of_t<
+            std::decay_t<Sender>,
+            stdexec::env<>,
+            std::tuple,
+            std::type_identity_t>>
+    {
+        return wait(std::forward<Sender>(sender));
     }
 
 } // namespace Core::IPC
