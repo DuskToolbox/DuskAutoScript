@@ -444,6 +444,33 @@ namespace Core
 
                 bool IsConnected() const { return is_connected_; }
 
+
+                void PostRequest(
+                    void (*callback)(void* user_data),
+                    void* user_data)
+                {
+                    if (run_loop_ && callback)
+                    {
+                        run_loop_->PostRequest([callback, user_data]() {
+                            callback(user_data);
+                        });
+                    }
+                }
+
+                void PumpMessage()
+                {
+                    if (run_loop_)
+                    {
+                        uint32_t timeout_ms = run_loop_->GetNearestDeadlineMs();
+                        if (timeout_ms == 0)
+                            timeout_ms = 100;
+
+                        run_loop_->ReceiveAndDispatch(std::chrono::milliseconds(timeout_ms));
+                        run_loop_->ProcessPostedCallbacks();
+                        run_loop_->TickPendingSenders();
+                    }
+                }
+
             private:
                 IpcContext*                               owner_ = nullptr;
                 IpcContextConfig                          config_;
@@ -590,7 +617,20 @@ namespace Core
                 return impl_->IsConnected();
             }
 
-            // ====== C API 实现 ======
+
+            void IpcContext::PostRequest(
+                void (*callback)(void* user_data),
+                void* user_data)
+            {
+                impl_->PostRequest(callback, user_data);
+            }
+
+            void IpcContext::PumpMessage()
+            {
+                impl_->PumpMessage();
+            }
+
+            // ====== C API 实现 =====
 
             DAS_API IIpcContext* CreateIpcContext(
                 const IpcContextConfig& config)

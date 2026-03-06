@@ -112,6 +112,36 @@ namespace Core
                     return RemoteObjectRegistry::GetInstance();
                 }
 
+
+                void PostRequest(
+                    void (*callback)(void* user_data),
+                    void* user_data)
+                {
+                    auto& server = MainProcessServer::GetInstance();
+                    auto* run_loop = server.GetRunLoop();
+                    if (run_loop && callback)
+                    {
+                        run_loop->PostRequest([callback, user_data]() {
+                            callback(user_data);
+                        });
+                    }
+                }
+
+                void PumpMessage()
+                {
+                    auto& server = MainProcessServer::GetInstance();
+                    auto* run_loop = server.GetRunLoop();
+                    if (run_loop)
+                    {
+                        uint32_t timeout_ms = run_loop->GetNearestDeadlineMs();
+                        if (timeout_ms == 0)
+                            timeout_ms = 100; // 无 pending call 时给合理默认值
+
+                        run_loop->ReceiveAndDispatch(std::chrono::milliseconds(timeout_ms));
+                        run_loop->ProcessPostedCallbacks();
+                        run_loop->TickPendingSenders();
+                    }
+                }
             private:
                 std::unique_ptr<DistributedObjectManager> object_manager_;
                 bool is_initialized_ = false;
@@ -154,7 +184,20 @@ namespace Core
                 return impl_->GetRegistry();
             }
 
-            // ====== C API 实现 ======
+
+            void IpcContext::PostRequest(
+                void (*callback)(void* user_data),
+                void* user_data)
+            {
+                impl_->PostRequest(callback, user_data);
+            }
+
+            void IpcContext::PumpMessage()
+            {
+                impl_->PumpMessage();
+            }
+
+            // ====== C API 实现 =====
 
             DAS_API IIpcContext* CreateIpcContext()
             {
@@ -182,6 +225,8 @@ namespace Core
             {
                 DestroyIpcContext(ctx);
             }
+
+
 
         } // namespace MainProcess
     } // namespace IPC

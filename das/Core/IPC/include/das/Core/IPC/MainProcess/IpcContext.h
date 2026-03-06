@@ -38,7 +38,7 @@ namespace Core
              * - RemoteObjectRegistry（单例）：远程对象注册表
              * - MainProcessServer（单例）：主进程 IPC 服务端
              */
-            class IpcContext : public IIpcContext
+            class IpcContext final : public IIpcContext
             {
             public:
                 IpcContext();
@@ -72,6 +72,13 @@ namespace Core
                  * @return RemoteObjectRegistry& 注册表实例
                  */
                 class RemoteObjectRegistry& GetRegistry();
+
+
+                void PostRequest(
+                    void (*callback)(void* user_data),
+                    void* user_data) override;
+
+                void PumpMessage() override;
 
             private:
                 std::unique_ptr<IpcContextImpl> impl_;

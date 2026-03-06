@@ -27,6 +27,36 @@ static constexpr uint32_t kHandshakeInterfaceIdStart = 1;
 static constexpr uint32_t kHandshakeInterfaceIdEnd =
     static_cast<uint32_t>(HandshakeInterfaceId::HANDSHAKE_IFACE_GOODBYE);
 
+//=========================================================================
+// 内部同步等待 receiver（用于 SendRequestAndWait）
+//=========================================================================
+DAS_NS_ANONYMOUS_DETAILS_BEGIN
+struct SyncWaitReceiver
+{
+    std::optional<std::pair<DasResult, std::vector<uint8_t>>>* result;
+    bool* done;
+
+    using receiver_concept = stdexec::receiver_t;
+
+    friend void tag_invoke(
+        stdexec::set_value_t,
+        SyncWaitReceiver&& self,
+        DasResult r,
+        std::vector<uint8_t> response)
+    {
+        self.result->emplace(r, std::move(response));
+        *self.done = true;
+    }
+
+    friend stdexec::env<> tag_invoke(
+        stdexec::get_env_t,
+        const SyncWaitReceiver&) noexcept
+    {
+        return {};
+    }
+};
+DAS_NS_ANONYMOUS_DETAILS_END
+
 IpcRunLoop::IpcRunLoop() = default;
 
 IpcRunLoop::~IpcRunLoop() { Stop(); }
@@ -484,7 +514,16 @@ void IpcRunLoop::SetTransport(std::unique_ptr<IpcTransport> transport)
     transport_ = std::move(transport);
 }
 
-IpcTransport* IpcRunLoop::GetTransport() const { return transport_.get(); }
+IpcTransport* IpcRunLoop::GetTransport() const
+{
+    // 优先返回非拥有指针（测试场景），否则返回拥有指针
+    return transport_ptr_ ? transport_ptr_ : transport_.get();
+}
+
+void IpcRunLoop::SetTransportPtr(IpcTransport* transport)
+{
+    transport_ptr_ = transport;
+}
 
 void IpcRunLoop::RunInternal()
 {
@@ -611,10 +650,10 @@ DasResult IpcRunLoop::WaitForShutdown()
 }
 
 //=========================================================================
-// PostMessage 实现
+// PostRequest 实现
 //=========================================================================
 
-void IpcRunLoop::PostMessage(PostedCallback callback)
+void IpcRunLoop::PostRequest(PostedCallback callback)
 {
     {
         std::lock_guard<std::mutex> lock(post_queue_mutex_);
@@ -667,7 +706,7 @@ void IpcRunLoop::PostStartHost(
 {
     // Wave 5 会实现真正的 HostLauncher
     // 这里先预留接口
-    PostMessage(
+    PostRequest(
         [this, plugin_path, on_complete]()
         {
             // TODO: 实现 HostLauncher
@@ -679,7 +718,7 @@ void IpcRunLoop::PostStartHost(
 }
 void IpcRunLoop::PostStopHost(uint16_t session_id)
 {
-    PostMessage(
+    PostRequest(
         [this, session_id]()
         {
             // TODO: 实现 HostLauncher

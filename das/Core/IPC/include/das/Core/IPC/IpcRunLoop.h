@@ -63,74 +63,22 @@ struct PendingCallState
 using PostedCallback = std::function<void()>;
 
 //=============================================================================
-// IpcScheduler — stdexec scheduler，基于 PostMessage 实现
+// IpcScheduler — stdexec scheduler，基于 PostRequest 实现
 //=============================================================================
 
 class IpcRunLoop; // forward
 
 /**
- * @brief ScheduleSender 的 OperationState
- *
- * start() 时通过 PostMessage 将 set_value 投递到 RunLoop 线程。
- */
-template <class Receiver>
-struct IpcScheduleOperation
-{
-    IpcRunLoop* loop_;
-    Receiver    rcvr_;
-
-    friend void tag_invoke(
-        stdexec::start_t,
-        IpcScheduleOperation& self) noexcept
-    {
-        self.loop_->PostMessage([rcvr = std::move(self.rcvr_)]() mutable
-                                { stdexec::set_value(std::move(rcvr)); });
-    }
-};
-
-/**
- * @brief IpcScheduler::schedule() 返回的 sender
- *
- * connect 后产生 IpcScheduleOperation，start 时投递到 RunLoop 线程。
- */
-struct IpcScheduleSender
-{
-    using sender_concept = stdexec::sender_t;
-    using completion_signatures =
-        stdexec::completion_signatures<stdexec::set_value_t()>;
-
-    IpcRunLoop* loop_;
-
-    template <class Receiver>
-    friend auto tag_invoke(
-        stdexec::connect_t,
-        IpcScheduleSender self,
-        Receiver          rcvr) noexcept -> IpcScheduleOperation<Receiver>
-    {
-        return {self.loop_, std::move(rcvr)};
-    }
-};
-
-/**
  * @brief stdexec scheduler，将工作投递到 IpcRunLoop 线程
  *
- * 用法：
- *   auto sched = run_loop.GetScheduler();
- *   auto work = stdexec::schedule(sched)
- *             | stdexec::then([] {  在 RunLoop 线程上执行 });
+ * 定义在最前面，以便 IpcScheduleEnv 可以直接使用完整类型。
+ * schedule() 的 tag_invoke 延后到 IpcScheduleSender 定义之后。
  */
 struct IpcScheduler
 {
     using scheduler_concept = stdexec::scheduler_t;
 
     IpcRunLoop* loop_;
-
-    friend IpcScheduleSender tag_invoke(
-        stdexec::schedule_t,
-        IpcScheduler self) noexcept
-    {
-        return IpcScheduleSender{self.loop_};
-    }
 
     friend bool operator==(IpcScheduler a, IpcScheduler b) noexcept
     {
@@ -142,6 +90,28 @@ struct IpcScheduler
     }
 };
 
+/**
+ * @brief sender 环境，携带 completion_scheduler 信息
+ *
+ * IpcScheduler 已是完整类型，可直接内联 tag_invoke。
+ */
+struct IpcScheduleEnv
+{
+    IpcRunLoop* loop_;
+
+    friend IpcScheduler tag_invoke(
+        stdexec::get_completion_scheduler_t<stdexec::set_value_t>,
+        const IpcScheduleEnv& self) noexcept
+    {
+        return IpcScheduler{self.loop_};
+    }
+};
+
+// IpcScheduler 和 IpcScheduleEnv 保留供 AwaitResponseSender 内部使用
+
+//=============================================================================
+// AwaitResponseSender — 真正的异步 IPC 响应等待 sender
+//=============================================================================
 //=============================================================================
 // AwaitResponseSender — 真正的异步 IPC 响应等待 sender
 //=============================================================================
@@ -219,7 +189,14 @@ struct AwaitResponseSender
     {
         return {self.loop_, self.call_id_, self.timeout_, std::move(rcvr)};
     }
+
+    IpcScheduleEnv get_env() const noexcept
+    {
+        return IpcScheduleEnv{loop_};
+    }
 };
+
+
 
 // 内部类型，不对外导出
 class IpcRunLoop
@@ -246,6 +223,13 @@ public:
 
     void SetTransport(std::unique_ptr<IpcTransport> transport);
 
+    /**
+     * @brief 设置非拥有的 transport 指针
+     *
+     * 用于测试场景，transport 的所有权由 ConnectionManager 管理。
+     * 仅用于 ReceiveAndDispatch() 接收消息。
+     */
+    void          SetTransportPtr(IpcTransport* transport);
     IpcTransport* GetTransport() const;
 
     // 等待消息循环结束
@@ -350,25 +334,13 @@ public:
     bool IsRunning() const;
 
     //=========================================================================
-    // Scheduler API
-    //=========================================================================
-
-    /**
-     * @brief 获取 stdexec scheduler
-     *
-     * 返回的 scheduler 可用于 stdexec::schedule()、stdexec::on() 等，
-     * 将工作投递到 IpcRunLoop 线程执行。
-     */
-    IpcScheduler GetScheduler() noexcept { return IpcScheduler{this}; }
-
-    //=========================================================================
-    // PostMessage API
+    // PostRequest API
     //=========================================================================
 
     /// 投递一个回调到 RunLoop 线程执行
     /// 线程安全，可从任意线程调用
     /// @param callback 要执行的回调
-    void PostMessage(PostedCallback callback);
+    void PostRequest(PostedCallback callback);
 
     /// 投递"启动 Host"任务
     /// RunLoop 会管理 HostLauncher 的生命周期
@@ -382,18 +354,14 @@ public:
     /// 投递"停止 Host"任务
     /// @param session_id 要停止的 Host 的 session_id
     void PostStopHost(uint16_t session_id);
+
     friend class ::Das::Core::IPC::Host::HandshakeHandler;
 
     // AwaitResponseOperation 需要访问内部方法
     template <class Receiver>
     friend struct AwaitResponseOperation;
-
-    // IpcScheduleOperation 需要访问 PostMessage
-    template <class Receiver>
-    friend struct IpcScheduleOperation;
-
     //=========================================================================
-    // PostMessage 内部实现
+    // PostRequest 内部实现
     //=========================================================================
 
     /// 发送唤醒消息（内部使用）
@@ -503,6 +471,7 @@ public:
     // 直接成员（移除 pimpl）
     std::unordered_map<uint64_t, PendingCallState> pending_calls_;
     std::unique_ptr<IpcTransport>                  transport_;
+    IpcTransport* transport_ptr_ = nullptr; // 非拥有指针，用于测试场景
 
     std::unordered_map<uint32_t, std::unique_ptr<IMessageHandler>> handlers_;
     std::atomic<uint64_t>  next_call_id_{1};
@@ -512,7 +481,7 @@ public:
     mutable std::mutex     pending_mutex_;
 
     //=========================================================================
-    // PostMessage 成员
+    // PostRequest 成员
     //=========================================================================
 
     /// 投递回调队列
@@ -569,6 +538,19 @@ inline stdexec::sender auto IpcRunLoop::SendMessageAsync(
         body,
         body_size,
         timeout);
+}
+
+DAS_CORE_IPC_NS_END
+
+//=============================================================================
+// ABI helper — reconstruct IpcScheduler from opaque handle
+//=============================================================================
+
+DAS_CORE_IPC_NS_BEGIN
+
+inline IpcScheduler MakeSchedulerFromHandle(void* handle) noexcept
+{
+    return IpcScheduler{static_cast<IpcRunLoop*>(handle)};
 }
 
 DAS_CORE_IPC_NS_END

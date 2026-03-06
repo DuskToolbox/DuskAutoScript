@@ -251,6 +251,17 @@ protected:
             "Transport registered to ConnectionManager, session_id={}",
             session_id);
         DAS_LOG_INFO(msg.c_str());
+
+        // 设置 MainProcessServer::runloop_ 的 transport
+        // 这样 RunUntilComplete 才能正确接收响应
+        auto* transport_ptr = conn_manager.GetTransport(session_id);
+        if (transport_ptr)
+        {
+            auto& server =
+                DAS::Core::IPC::MainProcess::MainProcessServer::GetInstance();
+            server.GetRunLoop()->SetTransportPtr(transport_ptr);
+        }
+
         return DAS_S_OK;
     }
 
@@ -263,135 +274,5 @@ protected:
 
 namespace IpcTestUtils
 {
-    /**
-     * @brief 发送 LOAD_PLUGIN 命令并等待响应
-     * @param runloop IPC RunLoop
-     * @param plugin_json_path 插件 JSON 清单路径
-     * @param out_object_id 输出：加载的对象 ID
-     * @param timeout 超时时间（默认30秒）
-     * @return DasResult 成功返回 DAS_S_OK
-     */
-    inline DasResult SendLoadPluginCommand(
-        DAS::Core::IPC::IpcRunLoop* runloop,
-        const std::string&          plugin_json_path,
-        DAS::Core::IPC::ObjectId&   out_object_id,
-        std::chrono::milliseconds   timeout = std::chrono::seconds(30))
-    {
-        using namespace DAS::Core::IPC;
-
-        // 构建请求 payload: [uint16_t path_len][char path...]
-        std::vector<uint8_t> payload;
-        SerializeString(payload, plugin_json_path);
-
-        // 使用 Builder 构建类型安全的消息头
-        auto header = MakeControlPlaneRequest(
-            IpcCommandType::LOAD_PLUGIN,
-            static_cast<uint32_t>(payload.size()),
-            1 /* session_id: 主进程 */);
-
-        // 使用 IpcRunLoop::SendRequest 发送请求并等待响应
-        // 这支持可重入调用，可以处理 LoadPlugin 过程中的对象注册消息
-        std::vector<uint8_t> response_body;
-        DasResult            result = runloop->SendRequest(
-            header,
-            payload.data(),
-            payload.size(),
-            response_body,
-            timeout);
-
-        if (DAS::IsFailed(result))
-        {
-            return result;
-        }
-
-        // 解析响应: [object_id(8)][iid(16)][session_id(2)][version(2)]
-        if (response_body.size() < 28)
-        {
-            return DAS_E_IPC_INVALID_MESSAGE_BODY;
-        }
-
-        size_t offset = 0;
-        // 读取 object_id (8 bytes)
-        out_object_id.session_id =
-            static_cast<uint16_t>(response_body[offset])
-            | (static_cast<uint16_t>(response_body[offset + 1]) << 8);
-        offset += 2;
-        out_object_id.generation =
-            static_cast<uint16_t>(response_body[offset])
-            | (static_cast<uint16_t>(response_body[offset + 1]) << 8);
-        offset += 2;
-        out_object_id.local_id =
-            static_cast<uint32_t>(response_body[offset])
-            | (static_cast<uint32_t>(response_body[offset + 1]) << 8)
-            | (static_cast<uint32_t>(response_body[offset + 2]) << 16)
-            | (static_cast<uint32_t>(response_body[offset + 3]) << 24);
-        return DAS_S_OK;
-    }
-
-    /**
-     * @brief 解析 LoadPlugin 响应，提取 ObjectId
-     * @param response_body 响应体
-     * @param out_object_id 输出：加载的对象 ID
-     * @return DasResult 成功返回 DAS_S_OK
-     */
-    inline DasResult ParseLoadPluginResponse(
-        const std::vector<uint8_t>& response_body,
-        DAS::Core::IPC::ObjectId&   out_object_id)
-    {
-        // 解析响应: [object_id(8)][iid(16)][session_id(2)][version(2)]
-        if (response_body.size() < 28)
-        {
-            return DAS_E_IPC_INVALID_MESSAGE_BODY;
-        }
-
-        size_t offset = 0;
-        // 读取 object_id (8 bytes)
-        out_object_id.session_id =
-            static_cast<uint16_t>(response_body[offset])
-            | (static_cast<uint16_t>(response_body[offset + 1]) << 8);
-        offset += 2;
-        out_object_id.generation =
-            static_cast<uint16_t>(response_body[offset])
-            | (static_cast<uint16_t>(response_body[offset + 1]) << 8);
-        offset += 2;
-        out_object_id.local_id =
-            static_cast<uint32_t>(response_body[offset])
-            | (static_cast<uint32_t>(response_body[offset + 1]) << 8)
-            | (static_cast<uint32_t>(response_body[offset + 2]) << 16)
-            | (static_cast<uint32_t>(response_body[offset + 3]) << 24);
-
-        return DAS_S_OK;
-    }
-
-    /**
-     * @brief 异步发送 LOAD_PLUGIN 命令（返回 sender）
-     *
-     * 使用 IpcRunLoop::SendMessageAsync() 实现。
-     * sender 完成时携带 pair<DasResult, vector<uint8_t>>。
-     *
-     * @param runloop IPC RunLoop
-     * @param plugin_json_path 插件 JSON 清单路径
-     * @param timeout 超时时间（默认30秒）
-     * @return AwaitResponseSender
-     */
-    inline DAS::Core::IPC::AwaitResponseSender SendLoadPluginCommandAsync(
-        DAS::Core::IPC::IpcRunLoop* runloop,
-        const std::string&          plugin_json_path,
-        std::chrono::milliseconds   timeout = std::chrono::seconds(30))
-    {
-        using namespace DAS::Core::IPC;
-
-        // 构建请求 payload: [uint16_t path_len][char path...]
-        std::vector<uint8_t> payload;
-        SerializeString(payload, plugin_json_path);
-
-        auto header = MakeControlPlaneRequest(
-            IpcCommandType::LOAD_PLUGIN,
-            static_cast<uint32_t>(payload.size()),
-            1 /* session_id: 主进程 */);
-
-        return runloop
-            ->SendMessageAsync(header, payload.data(), payload.size(), timeout);
-    }
 
 } // namespace IpcTestUtils

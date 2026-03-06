@@ -355,6 +355,7 @@ namespace Core
                 }
 
                 // 禁止拷贝和赋值
+
             private:
                 // 私有构造函数（单例模式）
                 MainProcessServer();

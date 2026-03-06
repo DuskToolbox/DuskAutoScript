@@ -11,11 +11,15 @@
  * 3. IPC 连接验证
  */
 
-#include "IpcMultiProcessTestCommon.h"
+#include "IpcMultiProcessTestIntegration.h"
 
+#include <das/Core/IPC/AsyncOperationImpl.h>
 #include <das/Core/IPC/ConnectionManager.h>
+#include <das/Core/IPC/DasAsyncSender.h>
+#include <das/IDasAsyncLoadPluginOperation.h>
 #include <stdexec/execution.hpp>
-TEST_F(IpcMultiProcessTest, ProcessLaunch)
+
+TEST_F(IpcMultiProcessTestIntegration, ProcessLaunch)
 {
     // 测试进程启动（禁用：需要 DasHost.exe 存在）
     if (!std::filesystem::exists(host_exe_path_))
@@ -34,7 +38,7 @@ TEST_F(IpcMultiProcessTest, ProcessLaunch)
     EXPECT_GT(session_id, static_cast<uint16_t>(0));
 }
 
-TEST_F(IpcMultiProcessTest, HostLauncherStart)
+TEST_F(IpcMultiProcessTestIntegration, HostLauncherStart)
 {
     // 测试 HostLauncher.Start() 完整流程
     // 注意：WaitForHostReady 测试已合并到此测试，因为 Start() 已内置等待功能
@@ -55,7 +59,7 @@ TEST_F(IpcMultiProcessTest, HostLauncherStart)
     EXPECT_EQ(session_id, launcher_.GetSessionId());
 }
 
-TEST_F(IpcMultiProcessTest, FullHandshake)
+TEST_F(IpcMultiProcessTestIntegration, FullHandshake)
 {
     // 测试完整握手流程（通过 Start() 一次性完成）
     if (!std::filesystem::exists(host_exe_path_))
@@ -73,7 +77,7 @@ TEST_F(IpcMultiProcessTest, FullHandshake)
     EXPECT_EQ(session_id, launcher_.GetSessionId());
 }
 
-TEST_F(IpcMultiProcessTest, MultipleStartStop)
+TEST_F(IpcMultiProcessTestIntegration, MultipleStartStop)
 {
     // 测试多次启动/停止
     if (!std::filesystem::exists(host_exe_path_))
@@ -98,7 +102,7 @@ TEST_F(IpcMultiProcessTest, MultipleStartStop)
     }
 }
 
-TEST_F(IpcMultiProcessTest, StopTerminatesProcess)
+TEST_F(IpcMultiProcessTestIntegration, StopTerminatesProcess)
 {
     // 测试 Stop() 正确终止进程
     if (!std::filesystem::exists(host_exe_path_))
@@ -119,19 +123,19 @@ TEST_F(IpcMultiProcessTest, StopTerminatesProcess)
     EXPECT_FALSE(launcher_.IsRunning());
 }
 
-TEST_F(IpcMultiProcessTest, GetSessionIdBeforeStart)
+TEST_F(IpcMultiProcessTestIntegration, GetSessionIdBeforeStart)
 {
     // 测试启动前 GetSessionId() 返回 0
     EXPECT_EQ(launcher_.GetSessionId(), 0u);
 }
 
-TEST_F(IpcMultiProcessTest, GetPidBeforeStart)
+TEST_F(IpcMultiProcessTestIntegration, GetPidBeforeStart)
 {
     // 测试启动前 GetPid() 返回 0
     EXPECT_EQ(launcher_.GetPid(), 0u);
 }
 
-TEST_F(IpcMultiProcessTest, IsRunningBeforeStart)
+TEST_F(IpcMultiProcessTestIntegration, IsRunningBeforeStart)
 {
     // 测试启动前 IsRunning() 返回 false
     EXPECT_FALSE(launcher_.IsRunning());
@@ -144,7 +148,7 @@ TEST_F(IpcMultiProcessTest, IsRunningBeforeStart)
  *
  * 验证主进程通过 IPC LOAD_PLUGIN 命令加载 Host 进程的插件。
  */
-TEST_F(IpcMultiProcessTest, CrossProcess_LoadPlugin)
+TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadPlugin)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
@@ -195,7 +199,7 @@ TEST_F(IpcMultiProcessTest, CrossProcess_LoadPlugin)
  *
  * 验证主进程通过 IPC 加载 IpcTestPlugin2 并验证组件创建。
  */
-TEST_F(IpcMultiProcessTest, CrossProcess_CallComponent)
+TEST_F(IpcMultiProcessTestIntegration, CrossProcess_CallComponent)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
@@ -238,7 +242,7 @@ TEST_F(IpcMultiProcessTest, CrossProcess_CallComponent)
  *
  * 验证从不同 Host 进程加载的插件返回正确的 session_id。
  */
-TEST_F(IpcMultiProcessTest, CrossProcess_VerifySessionId)
+TEST_F(IpcMultiProcessTestIntegration, CrossProcess_VerifySessionId)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
@@ -303,21 +307,34 @@ TEST_F(IpcMultiProcessTest, CrossProcess_VerifySessionId)
         GTEST_SKIP() << "Plugin JSON not found: " << e.what();
     }
 
-    // 6. 通过 MainProcessServer 在 Host A 加载 IpcTestPlugin1
+    // 6. 使用异步接口并发加载两个插件（when_all）
     auto& server =
         DAS::Core::IPC::MainProcess::MainProcessServer::GetInstance();
-    DAS::Core::IPC::ObjectId object_a{};
-    result = server.SendLoadPlugin(plugin1_path, object_a, session_a);
-    ASSERT_EQ(result, DAS_S_OK);
-    EXPECT_EQ(object_a.session_id, session_a);
 
-    // 7. 通过 MainProcessServer 在 Host B 加载 IpcTestPlugin2
-    DAS::Core::IPC::ObjectId object_b{};
-    result = server.SendLoadPlugin(plugin2_path, object_b, session_b);
+    DAS::DasPtr<IDasAsyncLoadPluginOperation> op_a;
+    DAS::DasPtr<IDasAsyncLoadPluginOperation> op_b;
+    result = server.SendLoadPluginAsync(plugin1_path, session_a, op_a.Put());
     ASSERT_EQ(result, DAS_S_OK);
+    result = server.SendLoadPluginAsync(plugin2_path, session_b, op_b.Put());
+    ASSERT_EQ(result, DAS_S_OK);
+
+    // when_all 并发等待两个异步操作
+    auto both = stdexec::when_all(
+        DAS::Core::IPC::async_op(GetScheduler(), std::move(op_a)),
+        DAS::Core::IPC::async_op(GetScheduler(), std::move(op_b)));
+    auto results = DAS::Core::IPC::wait(GetScheduler(), std::move(both));
+    ASSERT_TRUE(results.has_value()) << "when_all: wait failed";
+
+    // when_all 将两个 sender 的值展平为 tuple<DasResult, ObjectId, DasResult,
+    // ObjectId>
+    auto& [result_a, object_a, result_b, object_b] = *results;
+
+    ASSERT_EQ(result_a, DAS_S_OK) << "Load plugin on Host A failed";
+    ASSERT_EQ(result_b, DAS_S_OK) << "Load plugin on Host B failed";
+    EXPECT_EQ(object_a.session_id, session_a);
     EXPECT_EQ(object_b.session_id, session_b);
 
-    // 8. 验证不同 Host 的对象 session_id 不同
+    // 7. 验证不同 Host 的对象 session_id 不同
     EXPECT_NE(object_a.session_id, object_b.session_id);
 
     std::string log_msg = DAS_FMT_NS::format(
@@ -344,7 +361,7 @@ TEST_F(IpcMultiProcessTest, CrossProcess_VerifySessionId)
  *
  * 验证 MainProcessServer::ForwardMessageToHost() 功能。
  */
-TEST_F(IpcMultiProcessTest, CrossProcess_HostToHostCall)
+TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
@@ -407,17 +424,28 @@ TEST_F(IpcMultiProcessTest, CrossProcess_HostToHostCall)
         GTEST_SKIP() << "Plugin JSON not found: " << e.what();
     }
 
-    // 5. 通过 MainProcessServer 加载插件
+    // 5. 使用异步接口并发加载两个插件
     auto& server =
         DAS::Core::IPC::MainProcess::MainProcessServer::GetInstance();
-    DAS::Core::IPC::ObjectId factory_id_a{}, factory_id_b{};
 
-    result = server.SendLoadPlugin(plugin1_path, factory_id_a, session_a);
+    DAS::DasPtr<IDasAsyncLoadPluginOperation> op_a;
+    DAS::DasPtr<IDasAsyncLoadPluginOperation> op_b;
+    result = server.SendLoadPluginAsync(plugin1_path, session_a, op_a.Put());
     ASSERT_EQ(result, DAS_S_OK);
+    result = server.SendLoadPluginAsync(plugin2_path, session_b, op_b.Put());
+    ASSERT_EQ(result, DAS_S_OK);
+
+    auto both = stdexec::when_all(
+        DAS::Core::IPC::async_op(GetScheduler(), std::move(op_a)),
+        DAS::Core::IPC::async_op(GetScheduler(), std::move(op_b)));
+    auto results = DAS::Core::IPC::wait(GetScheduler(), std::move(both));
+    ASSERT_TRUE(results.has_value()) << "when_all: wait failed";
+
+    auto& [result_a, factory_id_a, result_b, factory_id_b] = *results;
+
+    ASSERT_EQ(result_a, DAS_S_OK);
     EXPECT_EQ(factory_id_a.session_id, session_a);
-
-    result = server.SendLoadPlugin(plugin2_path, factory_id_b, session_b);
-    ASSERT_EQ(result, DAS_S_OK);
+    ASSERT_EQ(result_b, DAS_S_OK);
     EXPECT_EQ(factory_id_b.session_id, session_b);
 
     // 6. 验证 ConnectionManager 可以获取 Transport
@@ -443,7 +471,7 @@ TEST_F(IpcMultiProcessTest, CrossProcess_HostToHostCall)
  * 验证主进程通过 IPC 加载 Java 插件（JavaTestPlugin）。
  * 需要 JVM 环境可用。
  */
-TEST_F(IpcMultiProcessTest, CrossProcess_LoadJavaPlugin)
+TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadJavaPlugin)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
@@ -522,7 +550,7 @@ TEST_F(IpcMultiProcessTest, CrossProcess_LoadJavaPlugin)
  * 方法：手动启动 DasHost.exe 并传入一个不存在的 PID 作为 --main-pid，
  * 验证 Host 进程能在合理时间内自动退出。
  */
-TEST_F(IpcMultiProcessTest, ParentProcessExit_HostAutoExit_InvalidPid)
+TEST_F(IpcMultiProcessTestIntegration, ParentProcessExit_HostAutoExit_InvalidPid)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
@@ -595,7 +623,7 @@ TEST_F(IpcMultiProcessTest, ParentProcessExit_HostAutoExit_InvalidPid)
  * 这比 InvalidPid 测试更贴近真实场景，因为 Host 会先成功初始化 IPC 资源，
  * 然后在运行过程中检测到主进程消失。
  */
-TEST_F(IpcMultiProcessTest, ParentProcessExit_HostAutoExit_KillParent)
+TEST_F(IpcMultiProcessTestIntegration, ParentProcessExit_HostAutoExit_KillParent)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
@@ -701,16 +729,13 @@ TEST_F(IpcMultiProcessTest, ParentProcessExit_HostAutoExit_KillParent)
     SUCCEED();
 }
 
-// Wave 3: SendLoadPluginCommandAsync 和 ParseLoadPluginResponse 工具函数
-// 已添加到 IpcMultiProcessTestCommon.h 中的 IpcTestUtils 命名空间，
-// 可在后续测试中使用。
-
 /**
  * @brief 测试异步加载插件
  *
- * 验证 SendLoadPluginCommandAsync 异步接口。
+ * 验证 SendLoadPluginAsync + AwaitAsync + wait 异步接口，
+ * 以及 when_all 并发加载两个插件。
  */
-TEST_F(IpcMultiProcessTest, CrossProcess_AsyncLoadPlugins)
+TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
@@ -734,49 +759,48 @@ TEST_F(IpcMultiProcessTest, CrossProcess_AsyncLoadPlugins)
         GTEST_SKIP() << "Plugin JSON not found: " << e.what();
     }
 
-    // 3. 获取 IpcRunLoop
+    // 3. 获取 server
     auto& server =
         DAS::Core::IPC::MainProcess::MainProcessServer::GetInstance();
-    auto* runloop = server.GetRunLoop();
-    ASSERT_NE(runloop, nullptr);
 
-    // 4. 使用异步接口加载插件1（不用 then，直接解包 pair）
+    // 4. 使用异步接口逐个加载插件1
     DAS::Core::IPC::ObjectId object1{};
     {
-        auto sender = IpcTestUtils::SendLoadPluginCommandAsync(
-            runloop,
+        DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
+        result = server.SendLoadPluginAsync(
             plugin1_path,
-            std::chrono::seconds(30));
+            launcher_.GetSessionId(),
+            op.Put());
+        ASSERT_EQ(result, DAS_S_OK);
+        auto opt = DAS::Core::IPC::wait(
+            GetScheduler(),
+            DAS::Core::IPC::async_op(GetScheduler(), std::move(op)));
+        ASSERT_TRUE(opt.has_value())
+            << "Load plugin 1: wait failed";
 
-        auto opt = stdexec::sync_wait(std::move(sender));
-        ASSERT_TRUE(opt.has_value()) << "Load plugin 1: sync_wait failed";
-
-        // sync_wait 返回 optional<tuple<pair<...>>>，解包 pair
-        auto response_pair = std::get<0>(opt.value());
-        auto& [load_result, response_body] = response_pair;
-
+        auto& [load_result, loaded_id] = *opt;
         ASSERT_EQ(load_result, DAS_S_OK) << "Load plugin 1 failed";
-        result = IpcTestUtils::ParseLoadPluginResponse(response_body, object1);
-        ASSERT_EQ(result, DAS_S_OK) << "Parse plugin 1 response failed";
+        object1 = loaded_id;
     }
 
-    // 5. 使用异步接口加载插件2
+    // 5. 使用异步接口逐个加载插件2
     DAS::Core::IPC::ObjectId object2{};
     {
-        auto sender = IpcTestUtils::SendLoadPluginCommandAsync(
-            runloop,
+        DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
+        result = server.SendLoadPluginAsync(
             plugin2_path,
-            std::chrono::seconds(30));
+            launcher_.GetSessionId(),
+            op.Put());
+        ASSERT_EQ(result, DAS_S_OK);
+        auto opt = DAS::Core::IPC::wait(
+            GetScheduler(),
+            DAS::Core::IPC::async_op(GetScheduler(), std::move(op)));
+        ASSERT_TRUE(opt.has_value())
+            << "Load plugin 2: wait failed";
 
-        auto opt = stdexec::sync_wait(std::move(sender));
-        ASSERT_TRUE(opt.has_value()) << "Load plugin 2: sync_wait failed";
-
-        auto response_pair = std::get<0>(opt.value());
-        auto& [load_result, response_body] = response_pair;
-
+        auto& [load_result, loaded_id] = *opt;
         ASSERT_EQ(load_result, DAS_S_OK) << "Load plugin 2 failed";
-        result = IpcTestUtils::ParseLoadPluginResponse(response_body, object2);
-        ASSERT_EQ(result, DAS_S_OK) << "Parse plugin 2 response failed";
+        object2 = loaded_id;
     }
 
     // 6. 验证对象在正确的 Host 进程中
@@ -792,3 +816,155 @@ TEST_F(IpcMultiProcessTest, CrossProcess_AsyncLoadPlugins)
         object2.local_id);
     DAS_LOG_INFO(log_msg.c_str());
 }
+
+/**
+ * @brief 测试 when_all 并发加载多个插件
+ *
+ * 使用 stdexec::when_all 在同一 Host 上并发加载两个插件，
+ * 展示 stdexec 组合操作的用法。
+ */
+TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins_WhenAll)
+{
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+    }
+
+    // 1. 启动 Host 进程并注册到 ConnectionManager
+    DasResult result = StartHostAndSetupRunLoop();
+    ASSERT_EQ(result, DAS_S_OK);
+    EXPECT_TRUE(launcher_.IsRunning());
+
+    // 2. 获取插件 JSON 路径
+    std::string plugin1_path, plugin2_path;
+    try
+    {
+        plugin1_path = IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin1");
+        plugin2_path = IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin2");
+    }
+    catch (const std::exception& e)
+    {
+        GTEST_SKIP() << "Plugin JSON not found: " << e.what();
+    }
+
+    // 3. 获取 server
+    auto& server =
+        DAS::Core::IPC::MainProcess::MainProcessServer::GetInstance();
+
+    // 4. 创建两个异步操作
+    DAS::DasPtr<IDasAsyncLoadPluginOperation> op1;
+    DAS::DasPtr<IDasAsyncLoadPluginOperation> op2;
+    result = server.SendLoadPluginAsync(
+        plugin1_path,
+        launcher_.GetSessionId(),
+        op1.Put());
+    ASSERT_EQ(result, DAS_S_OK);
+    result = server.SendLoadPluginAsync(
+        plugin2_path,
+        launcher_.GetSessionId(),
+        op2.Put());
+    ASSERT_EQ(result, DAS_S_OK);
+
+    // 5. when_all 并发等待
+    auto both = stdexec::when_all(
+        DAS::Core::IPC::async_op(GetScheduler(), std::move(op1)),
+        DAS::Core::IPC::async_op(GetScheduler(), std::move(op2)));
+    auto results = DAS::Core::IPC::wait(GetScheduler(), std::move(both));
+    ASSERT_TRUE(results.has_value()) << "when_all: wait failed";
+
+    auto& [result1, object1, result2, object2] = *results;
+
+    ASSERT_EQ(result1, DAS_S_OK) << "Load plugin 1 failed";
+    ASSERT_EQ(result2, DAS_S_OK) << "Load plugin 2 failed";
+
+    // 6. 验证对象在正确的 Host 进程中
+    EXPECT_EQ(object1.session_id, launcher_.GetSessionId());
+    EXPECT_EQ(object2.session_id, launcher_.GetSessionId());
+
+    std::string log_msg = DAS_FMT_NS::format(
+        "[CrossProcess_AsyncLoadPlugins_WhenAll] Both plugins loaded via "
+        "when_all: object1={{session:{}, local:{}}}, object2={{session:{}, "
+        "local:{}}}",
+        object1.session_id,
+        object1.local_id,
+        object2.session_id,
+        object2.local_id);
+    DAS_LOG_INFO(log_msg.c_str());
+}
+
+// ====== Scheduler 基础测试 ======
+
+/**
+ * @brief 测试 IpcScheduler 基础功能
+ *
+ * 验证：
+ * 1. schedule(server) 能通过 wait 执行
+ * 2. AwaitAsync(op, server) 产生的 sender 携带正确的 scheduler 环境
+ * 3. get_completion_scheduler<set_value_t>(get_env(sender)) 返回正确的
+ *    scheduler
+ */
+TEST_F(IpcMultiProcessTestIntegration, Scheduler_BasicUsage)
+{
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+    }
+
+    // 1. 启动 Host 进程并注册到 ConnectionManager
+    DasResult result = StartHostAndSetupRunLoop();
+    ASSERT_EQ(result, DAS_S_OK);
+    EXPECT_TRUE(launcher_.IsRunning());
+
+    auto& server =
+        DAS::Core::IPC::MainProcess::MainProcessServer::GetInstance();
+
+    // 2. 验证 schedule(server) 基础功能
+    //    注意：不使用 schedule | then 的组合 sender 传入 wait，
+    //    因为 then 产生的 __sexpr sender 的 value_types_of_t 会触发 MSVC ICE。
+    //    直接验证 IpcScheduleSender 能被 wait 驱动完成。
+    {
+        auto schedule_sender = stdexec::schedule(GetScheduler());
+        auto opt = DAS::Core::IPC::wait(GetScheduler(), std::move(schedule_sender));
+        ASSERT_TRUE(opt.has_value()) << "schedule: wait failed";
+    }
+
+    // 3. 验证 AwaitAsync(op, server) 产生的 sender 携带正确的 scheduler 环境
+    {
+        std::string plugin_path;
+        try
+        {
+            plugin_path =
+                IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin1");
+        }
+        catch (const std::exception& e)
+        {
+            GTEST_SKIP() << "Plugin JSON not found: " << e.what();
+        }
+
+        DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
+        result = server.SendLoadPluginAsync(
+            plugin_path,
+            launcher_.GetSessionId(),
+            op.Put());
+        ASSERT_EQ(result, DAS_S_OK);
+        auto sender = DAS::Core::IPC::async_op(GetScheduler(), std::move(op));
+
+        // 验证 sender 的 env 携带正确的 completion_scheduler
+        auto env = stdexec::get_env(sender);
+        auto& retrieved_sched =
+            stdexec::get_completion_scheduler<stdexec::set_value_t>(env);
+        // retrieved_sched 是 Scheduler&，验证它与 GetScheduler() 相同
+        EXPECT_EQ(&retrieved_sched, &GetScheduler());
+        // 执行并验证结果
+        auto opt = DAS::Core::IPC::wait(GetScheduler(), std::move(sender));
+        ASSERT_TRUE(opt.has_value())
+            << "AwaitAsync with scheduler: wait failed";
+
+        auto& [load_result, loaded_id] = *opt;
+        ASSERT_EQ(load_result, DAS_S_OK) << "Load plugin failed";
+        EXPECT_EQ(loaded_id.session_id, launcher_.GetSessionId());
+    }
+
+    DAS_LOG_INFO("[Scheduler_BasicUsage] All scheduler tests passed");
+}
+

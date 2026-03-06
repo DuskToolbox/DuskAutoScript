@@ -1,6 +1,7 @@
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/DasAsyncSender.h>
+#include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/IPC/MainProcess/MainProcessServer.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/Logger/Logger.h>
@@ -20,7 +21,15 @@ DasResult IpcLoadPluginImpl(
     }
     *pp_out_plugin = nullptr;
 
-    auto& server = MainProcess::MainProcessServer::GetInstance();
+    // 创建 IPC 上下文
+    auto ctx = MainProcess::CreateIpcContextEz();
+    if (!ctx)
+    {
+        DAS_CORE_LOG_ERROR("Failed to create IpcContext");
+        return DAS_E_FAIL;
+    }
+
+    auto& server = ctx->GetServer();
 
     // 获取第一个可用的 session_id
     // TODO: 需要调用者显式指定 session_id
@@ -44,11 +53,11 @@ DasResult IpcLoadPluginImpl(
         return result;
     }
 
-    // 等待异步操作完成
-    auto await_result = stdexec::sync_wait(AwaitAsync(std::move(op)));
+    // 使用 IPC 感知的 wait 驱动消息循环
+    auto await_result = wait(*ctx, async_op(*ctx, std::move(op)));
     if (!await_result)
     {
-        DAS_CORE_LOG_ERROR("sync_wait failed");
+        DAS_CORE_LOG_ERROR("wait failed");
         return DAS_E_IPC_TIMEOUT;
     }
 

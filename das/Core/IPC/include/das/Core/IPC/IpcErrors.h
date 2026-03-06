@@ -5,6 +5,7 @@
 
 // IPC 错误码基值: -1080000000
 // 直接使用具体数值，便于调试和阅读
+#define DAS_E_IPC_BASE -1080000000
 
 // === 基础错误码 (-1080000001 ~ -1080000027) ===
 #define DAS_E_IPC_INVALID_MESSAGE_HEADER (-1080000001)

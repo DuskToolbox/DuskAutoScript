@@ -113,6 +113,13 @@ namespace Core
 
                 bool IsConnected() const;
 
+
+                void PostRequest(
+                    void (*callback)(void* user_data),
+                    void* user_data) override;
+
+                void PumpMessage() override;
+
             private:
                 std::unique_ptr<IpcContextImpl> impl_;
             };

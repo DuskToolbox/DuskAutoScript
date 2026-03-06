@@ -1,6 +1,7 @@
 #include "das/Core/IPC/MainProcess/MainProcessServer.h"
 
 #include <das/Core/IPC/AsyncOperationImpl.h>
+#include <das/Core/IPC/DasAsyncSender.h>
 
 #include <chrono>
 
@@ -667,7 +668,7 @@ namespace Core
                     return DAS_E_IPC_NO_CONNECTIONS;
                 }
 
-                // 2. 构造消息头（使用 Builder）
+                // 2. 构造消息头
                 uint32_t body_size =
                     static_cast<uint32_t>(2 + plugin_path.size());
                 auto validated_header =
@@ -679,13 +680,13 @@ namespace Core
                                            .GetLocalSessionId())
                         .Build();
 
-                // 3. 构造 payload: [path_len(2)][path_bytes...]
+                // 3. 构造 payload
                 std::vector<uint8_t> payload(body_size);
                 uint16_t path_len = static_cast<uint16_t>(plugin_path.size());
                 std::memcpy(payload.data(), &path_len, 2);
                 std::memcpy(payload.data() + 2, plugin_path.data(), path_len);
 
-                // 4. 发送请求并等待响应
+                // 4. 使用 SendRequest 同步发送并等待响应
                 std::vector<uint8_t> response_body;
                 DasResult            result = runloop_.SendRequest(
                     transport,
@@ -704,17 +705,17 @@ namespace Core
                     return result;
                 }
 
-                // 5. 解析响应 (ObjectId: 8 bytes)
-                if (response_body.size() < 8)
+                // 5. 解析响应
+                if (response_body.size() < sizeof(ObjectId))
                 {
-                    DAS_CORE_LOG_ERROR(
-                        "Invalid response size = {}",
-                        response_body.size());
-                    return DAS_E_IPC_INVALID_MESSAGE;
+                    DAS_CORE_LOG_ERROR("Invalid response size for LOAD_PLUGIN");
+                    return DAS_E_IPC_INVALID_MESSAGE_BODY;
                 }
 
-                std::memcpy(&out_object_id, response_body.data(), 8);
-
+                std::memcpy(
+                    &out_object_id,
+                    response_body.data(),
+                    sizeof(ObjectId));
                 return DAS_S_OK;
             }
 
