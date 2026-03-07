@@ -82,6 +82,10 @@ protected:
         launcher_.reset();
         ctx_.reset();
 
+        // 重置 SessionCoordinator 的本地 session_id
+        // 这样多个测试之间不会互相影响
+        DAS::Core::IPC::SessionCoordinator::GetInstance().ResetLocalSessionId();
+
         DAS_LOG_INFO("IpcContext destroyed");
     }
 

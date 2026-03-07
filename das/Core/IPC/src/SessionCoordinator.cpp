@@ -107,6 +107,11 @@ bool SessionCoordinator::IsSessionIdAllocated(uint16_t session_id) const
     return allocated_ids_[session_id];
 }
 
+void SessionCoordinator::ResetLocalSessionId()
+{
+    local_session_id_.reset();
+}
+
 uint16_t SessionCoordinator::FindAvailableSessionId()
 {
     // 从 next_session_id_ 开始搜索

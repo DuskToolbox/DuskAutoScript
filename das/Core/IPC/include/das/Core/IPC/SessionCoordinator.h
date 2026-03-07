@@ -87,6 +87,13 @@ namespace Core
             bool IsSessionIdAllocated(uint16_t session_id) const;
 
             /**
+             * @brief 重置当前进程的本地 session_id
+             *
+             * 仅用于测试目的，允许在测试之间重置状态。
+             */
+            void ResetLocalSessionId();
+
+            /**
              * @brief 禁用拷贝构造
              */
             SessionCoordinator(const SessionCoordinator&) = delete;
