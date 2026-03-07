@@ -123,19 +123,6 @@ namespace Core
                     return RemoteObjectRegistry::GetInstance();
                 }
 
-                void PostRequest(
-                    void (*callback)(void* user_data),
-                    void* user_data)
-                {
-                    auto& server = MainProcessServer::GetInstance();
-                    auto* run_loop = server.GetRunLoop();
-                    if (run_loop && callback)
-                    {
-                        run_loop->PostRequest([callback, user_data]()
-                                              { callback(user_data); });
-                    }
-                }
-
                 void PostCallback(IDasAsyncCallback* callback)
                 {
                     if (!callback) return;
