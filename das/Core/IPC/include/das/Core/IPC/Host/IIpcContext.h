@@ -111,47 +111,6 @@ namespace Core
                     DestroyIpcContext);
             }
 
-            /**
-             * @brief Scheduler 类型擦除包装器
-             *
-             * 包装 shared_ptr<IIpcContext>，提供 scheduler concept 支持。
-             * 用于解决抽象类无法直接作为 stdexec scheduler 的问题。
-             */
-            class Scheduler
-            {
-            public:
-                explicit Scheduler(std::shared_ptr<IIpcContext> ctx) noexcept
-                    : ctx_(std::move(ctx))
-                {
-                }
-
-                Scheduler() noexcept = default;
-
-                bool operator==(const Scheduler& other) const noexcept
-                {
-                    return ctx_ == other.ctx_;
-                }
-
-                IIpcContext& context() const noexcept { return *ctx_; }
-
-                std::shared_ptr<IIpcContext> const& ptr() const noexcept
-                {
-                    return ctx_;
-                }
-
-            private:
-                std::shared_ptr<IIpcContext> ctx_;
-            };
-
-            // tag_invoke - 使 stdexec::schedule(scheduler) 工作
-            inline auto tag_invoke(
-                stdexec::schedule_t,
-                const Scheduler& sched) noexcept
-            {
-                return DAS::Core::IPC::ScheduleSender<Scheduler>{
-                    const_cast<Scheduler*>(&sched)};
-            }
-
         } // namespace Host
     } // namespace IPC
 } // namespace Core
