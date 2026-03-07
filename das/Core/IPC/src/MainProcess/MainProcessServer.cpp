@@ -594,34 +594,6 @@ namespace Core
                     std::chrono::milliseconds{0}};
             }
 
-            DasResult MainProcessServer::SendLoadPlugin(
-                const std::string&        plugin_path,
-                ObjectId&                 out_object_id,
-                uint16_t                  target_session_id,
-                std::chrono::milliseconds timeout)
-            {
-                (void)plugin_path;
-                (void)out_object_id;
-                (void)target_session_id;
-                (void)timeout;
-                DAS_CORE_LOG_ERROR("SendLoadPlugin not implemented");
-                return DAS_E_NOT_IMPLEMENTED;
-            }
-
-            DasResult MainProcessServer::SendLoadPluginAsync(
-                const std::string&             plugin_path,
-                uint16_t                       target_session_id,
-                IDasAsyncLoadPluginOperation** pp_out_operation,
-                std::chrono::milliseconds      timeout)
-            {
-                (void)plugin_path;
-                (void)target_session_id;
-                (void)pp_out_operation;
-                (void)timeout;
-                DAS_CORE_LOG_ERROR("SendLoadPluginAsync not implemented");
-                return DAS_E_NOT_IMPLEMENTED;
-            }
-
         } // namespace MainProcess
     }
 }
