@@ -74,10 +74,10 @@ public:
 
     DasResult QueryInterface(const DasGuid& iid, void** pp) override
     {
-        if (iid == DasIidOf<IHostLauncher>() || iid == DasIidOf<IDasBase>())
+        if (iid == DasIidOf<IDasBase>())
         {
             AddRef();
-            *pp = this;
+            *pp = static_cast<IDasBase*>(this);
             return DAS_S_OK;
         }
         return DAS_E_NO_INTERFACE;
