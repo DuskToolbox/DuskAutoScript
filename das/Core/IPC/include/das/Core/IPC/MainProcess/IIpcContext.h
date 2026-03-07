@@ -6,7 +6,6 @@
 #include <das/IDasAsyncCallback.h>
 #include <das/IDasAsyncLoadPluginOperation.h>
 #include <memory>
-#include <stdexec/execution.hpp>
 DAS_NS_BEGIN
 namespace Core
 {
@@ -59,14 +58,14 @@ namespace Core
                 /**
                  * @brief 异步加载插件到指定 Host 进程
                  *
-                 * @param session_id 目标 Host 进程的 session_id
+                 * @param host_launcher 目标 Host 进程启动器（从中获取 session_id）
                  * @param u8_plugin_path 插件 manifest 路径 (UTF-8)
                  * @param pp_out_operation 输出：异步操作对象
                  * @param timeout 超时时间（默认30秒）
                  * @return DasResult DAS_S_OK 成功创建操作
                  */
                 virtual DasResult LoadPluginAsync(
-                    uint16_t                       session_id,
+                    IHostLauncher*                 host_launcher,
                     const char*                    u8_plugin_path,
                     IDasAsyncLoadPluginOperation** pp_out_operation,
                     std::chrono::milliseconds      timeout = std::chrono::seconds(30)) = 0;

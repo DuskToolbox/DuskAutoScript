@@ -1,6 +1,7 @@
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/DasAsyncSender.h>
+#include <das/Core/IPC/MainProcess/IHostLauncher.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/IPC/MainProcess/MainProcessServer.h>
 #include <das/Core/IPC/ProxyFactory.h>
@@ -8,8 +9,85 @@
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/IDasBase.h>
+#include <atomic>
 #include <stdexec/execution.hpp>
+
+#ifndef DAS_E_NOT_IMPLEMENTED
+#define DAS_E_NOT_IMPLEMENTED DAS_E_NO_IMPLEMENTATION
+#endif
+
 DAS_CORE_IPC_NS_BEGIN
+
+/**
+ * @brief 简单的 IHostLauncher 包装器，仅包装 session_id
+ *
+ * 用于 IpcLoadPlugin C API，该 API 没有真正的 HostLauncher 实例。
+ * 这个包装器仅提供 GetSessionId() 实现。
+ */
+class SimpleHostLauncherWrapper : public IHostLauncher
+{
+public:
+    explicit SimpleHostLauncherWrapper(uint16_t session_id)
+        : session_id_(session_id), ref_(1)
+    {
+    }
+
+    // IHostLauncher 接口
+    DasResult StartAsync(
+        const std::string& /*host_exe_path*/,
+        IDasAsyncHandshakeOperation** /*pp_out_operation*/) override
+    {
+        DAS_CORE_LOG_ERROR("SimpleHostLauncherWrapper::StartAsync not supported");
+        return DAS_E_NOT_IMPLEMENTED;
+    }
+
+    DasResult Start(
+        const std::string& /*host_exe_path*/,
+        uint16_t& /*out_session_id*/,
+        uint32_t /*timeout_ms*/) override
+    {
+        DAS_CORE_LOG_ERROR("SimpleHostLauncherWrapper::Start not supported");
+        return DAS_E_NOT_IMPLEMENTED;
+    }
+
+    void Stop() override
+    {
+        // No-op
+    }
+
+    [[nodiscard]] bool IsRunning() const override { return session_id_ != 0; }
+
+    [[nodiscard]] uint32_t GetPid() const override { return 0; }
+
+    [[nodiscard]] uint16_t GetSessionId() const override { return session_id_; }
+
+    // IDasBase 接口
+    uint32_t AddRef() override { return ++ref_; }
+
+    uint32_t Release() override
+    {
+        auto r = --ref_;
+        if (r == 0)
+            delete this;
+        return r;
+    }
+
+    DasResult QueryInterface(const DasGuid& iid, void** pp) override
+    {
+        if (iid == DasIidOf<IHostLauncher>() || iid == DasIidOf<IDasBase>())
+        {
+            AddRef();
+            *pp = this;
+            return DAS_S_OK;
+        }
+        return DAS_E_NO_INTERFACE;
+    }
+
+private:
+    uint16_t               session_id_;
+    std::atomic<uint32_t>  ref_;
+};
+
 DasResult IpcLoadPluginImpl(
     const std::string& plugin_path,
     IDasBase**         pp_out_plugin)
@@ -29,10 +107,7 @@ DasResult IpcLoadPluginImpl(
         return DAS_E_FAIL;
     }
 
-    auto& server = ctx->GetServer();
-
     // 获取第一个可用的 session_id
-    // TODO: 需要调用者显式指定 session_id
     auto& conn_manager = ConnectionManager::GetInstance();
     auto  sessions = conn_manager.GetConnectedSessions();
 
@@ -43,10 +118,14 @@ DasResult IpcLoadPluginImpl(
     }
     uint16_t session_id = sessions[0];
 
+    // 创建简单的 IHostLauncher 包装器
+    auto* launcher = new SimpleHostLauncherWrapper(session_id);
+    DasPtr<IHostLauncher> launcher_ptr(launcher);
+
     ObjectId                             object_id{};
     DasPtr<IDasAsyncLoadPluginOperation> op;
-    DasResult                            result =
-        server.SendLoadPluginAsync(plugin_path, session_id, op.Put());
+    DasResult                            result = ctx->LoadPluginAsync(
+        launcher_ptr.Get(), plugin_path.c_str(), op.Put());
 
     if (result != DAS_S_OK)
     {

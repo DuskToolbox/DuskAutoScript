@@ -67,7 +67,7 @@ namespace Core
                     IHostLauncher** pp_out_launcher) override;
 
                 DasResult LoadPluginAsync(
-                    uint16_t                       session_id,
+                    IHostLauncher*                 host_launcher,
                     const char*                    u8_plugin_path,
                     IDasAsyncLoadPluginOperation** pp_out_operation,
                     std::chrono::milliseconds      timeout = std::chrono::seconds(30)) override;

@@ -169,16 +169,25 @@ namespace Core
                 }
 
                 DasResult LoadPluginAsync(
-                    uint16_t                       session_id,
+                    IHostLauncher*                 host_launcher,
                     const char*                    u8_plugin_path,
                     IDasAsyncLoadPluginOperation** pp_out_operation,
                     std::chrono::milliseconds      timeout)
                 {
-                    if (!u8_plugin_path || !pp_out_operation)
+                    if (!host_launcher || !u8_plugin_path || !pp_out_operation)
                     {
                         return DAS_E_INVALID_ARGUMENT;
                     }
                     *pp_out_operation = nullptr;
+
+                    // 从 IHostLauncher 获取 session_id
+                    uint16_t session_id = host_launcher->GetSessionId();
+                    if (session_id == 0)
+                    {
+                        DAS_CORE_LOG_ERROR(
+                            "LoadPluginAsync: Host not started (session_id = 0)");
+                        return DAS_E_IPC_NOT_INITIALIZED;
+                    }
 
                     // 1. 获取目标 session 的 IpcRunLoop
                     auto& conn_mgr = DAS::Core::IPC::ConnectionManager::GetInstance();
@@ -297,13 +306,13 @@ namespace Core
             }
 
             DasResult IpcContext::LoadPluginAsync(
-                uint16_t                       session_id,
+                IHostLauncher*                 host_launcher,
                 const char*                    u8_plugin_path,
                 IDasAsyncLoadPluginOperation** pp_out_operation,
                 std::chrono::milliseconds      timeout)
             {
                 return impl_->LoadPluginAsync(
-                    session_id,
+                    host_launcher,
                     u8_plugin_path,
                     pp_out_operation,
                     timeout);
