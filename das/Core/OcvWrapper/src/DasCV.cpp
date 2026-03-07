@@ -135,10 +135,18 @@ DasResult CreateMatchConfig(
         return DAS_E_INVALID_POINTER;
 
     if (params.ratio_threshold < 0.0f || params.ratio_threshold > 1.0f)
-        return DAS_E_INVALID_POINTER;
+    {
+        DAS_CORE_LOG_ERROR(
+            "ratio_threshold out of range: {}",
+            params.ratio_threshold);
+        return DAS_E_INVALID_ARGUMENT;
+    }
 
     if (params.max_keypoints == 0)
-        return DAS_E_INVALID_POINTER;
+    {
+        DAS_CORE_LOG_ERROR("max_keypoints is zero");
+        return DAS_E_INVALID_ARGUMENT;
+    }
 
     auto* p_config = DAS::Core::OcvWrapper::IMatchConfigImpl::MakeRaw(
         detector_type,
@@ -168,14 +176,26 @@ DasResult MatchFeatures(
     Das::ExportInterface::DasMatcherType  matcher_type{};
     Das::ExportInterface::DasMatchParams  params{};
 
-    if (auto result = p_config->GetDetectorType(&detector_type);
-        Das::IsFailed(result))
+    auto result = p_config->GetDetectorType(&detector_type);
+    if (Das::IsFailed(result))
+    {
+        DAS_CORE_LOG_ERROR("Failed to get detector type");
         return result;
-    if (auto result = p_config->GetMatcherType(&matcher_type);
-        Das::IsFailed(result))
+    }
+
+    result = p_config->GetMatcherType(&matcher_type);
+    if (Das::IsFailed(result))
+    {
+        DAS_CORE_LOG_ERROR("Failed to get matcher type");
         return result;
-    if (auto result = p_config->GetParams(&params); Das::IsFailed(result))
+    }
+
+    result = p_config->GetParams(&params);
+    if (Das::IsFailed(result))
+    {
+        DAS_CORE_LOG_ERROR("Failed to get match params");
         return result;
+    }
 
     const auto expected_query =
         DAS::Core::OcvWrapper::Details::GetDasImageImpl(p_query);
@@ -194,7 +214,12 @@ DasResult MatchFeatures(
         detector_type,
         params.max_keypoints);
     if (!detector)
+    {
+        DAS_CORE_LOG_ERROR(
+            "Failed to create detector, type = {}",
+            static_cast<int>(detector_type));
         return DAS_E_FAIL;
+    }
 
     std::vector<cv::KeyPoint> query_keypoints, train_keypoints;
     cv::Mat                   query_descriptors, train_descriptors;
@@ -221,7 +246,12 @@ DasResult MatchFeatures(
         matcher_type,
         detector_type);
     if (!matcher)
+    {
+        DAS_CORE_LOG_ERROR(
+            "Failed to create matcher, type = {}",
+            static_cast<int>(matcher_type));
         return DAS_E_FAIL;
+    }
 
     std::vector<cv::DMatch> matches;
     matcher->match(query_descriptors, train_descriptors, matches);
@@ -233,7 +263,9 @@ DasResult MatchFeatures(
         for (const auto& match : matches)
         {
             if (match.distance < params.ratio_threshold)
+            {
                 good_matches.push_back(match);
+            }
         }
         matches = std::move(good_matches);
     }
