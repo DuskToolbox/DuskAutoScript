@@ -338,31 +338,34 @@ public:
     }
 };
 
-DAS_NS_ANONYMOUS_DETAILS_BEGIN
+// ============================================================================
+// PythonManager 实现
+// ============================================================================
 
-class PythonRuntimeSingleton
+PythonManager& PythonManager::GetInstance()
 {
-    PythonRuntimeSingleton() = delete;
-    ~PythonRuntimeSingleton() = delete;
+    static PythonManager instance;
+    return instance;
+}
 
-public:
-    static bool Initialize()
+bool PythonManager::Initialize()
+{
+    if (!::Py_IsInitialized())
     {
-        if (!::Py_IsInitialized())
-        {
-            ::Py_Initialize();
-        }
-        return ::Py_IsInitialized();
+        // 使用 Py_InitializeEx(0) 而非 Py_Initialize()
+        // 参数 0 表示不注册信号处理程序，避免在子进程中产生问题
+        ::Py_InitializeEx(0);
     }
-};
+    return ::Py_IsInitialized();
+}
 
-DAS_NS_ANONYMOUS_DETAILS_END
+bool PythonManager::IsInitialized() const { return ::Py_IsInitialized(); }
 
 void RaisePythonInterpreterException() { PythonResult::RaiseIfError(); }
 
 PythonRuntime::PythonRuntime()
 {
-    Details::PythonRuntimeSingleton::Initialize();
+    PythonManager::GetInstance().Initialize();
 }
 
 PythonRuntime::~PythonRuntime() = default;
