@@ -157,6 +157,35 @@ private:
 
 DAS_API void RaisePythonInterpreterException();
 
+/**
+ * @brief 包装类，同时持有 PyObject* 和 IDasBase*
+ *
+ * 用于协调 Python GC 和 DasPtr 两套独立的引用计数系统。
+ * 构造时同时 Py_INCREF 和 AddRef，析构时同时 Py_DECREF 和 Release。
+ * 析构函数必须获取 GIL，否则 Py_DECREF 会崩溃。
+ */
+class PythonPluginHolder : public IDasBase
+{
+private:
+    std::atomic<uint32_t> ref_count_{1};
+    PyObject*             py_obj_;  // Py_INCREF 持有
+    IDasBase*             cpp_ptr_; // 已 AddRef 持有
+
+public:
+    PythonPluginHolder(PyObject* py_obj, IDasBase* cpp_ptr);
+    ~PythonPluginHolder();
+
+    // 禁止拷贝和移动
+    PythonPluginHolder(const PythonPluginHolder&) = delete;
+    PythonPluginHolder& operator=(const PythonPluginHolder&) = delete;
+    PythonPluginHolder(PythonPluginHolder&&) = delete;
+    PythonPluginHolder& operator=(PythonPluginHolder&&) = delete;
+
+    uint32_t  AddRef() override;
+    uint32_t  Release() override;
+    DasResult QueryInterface(const DasGuid& iid, void** pp_object) override;
+};
+
 DAS_NS_PYTHONHOST_END
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END

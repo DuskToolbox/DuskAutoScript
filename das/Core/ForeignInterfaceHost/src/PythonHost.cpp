@@ -425,6 +425,114 @@ bool PythonManager::IsInitialized() const { return ::Py_IsInitialized(); }
 
 void RaisePythonInterpreterException() { PythonResult::RaiseIfError(); }
 
+// ============================================================================
+// PythonPluginHolder 实现
+// ============================================================================
+
+PythonPluginHolder::PythonPluginHolder(PyObject* py_obj, IDasBase* cpp_ptr)
+    : py_obj_(py_obj), cpp_ptr_(cpp_ptr)
+{
+    Py_INCREF(py_obj_);
+    cpp_ptr_->AddRef();
+}
+
+PythonPluginHolder::~PythonPluginHolder()
+{
+    PyGILGuard gil;
+    Py_DECREF(py_obj_);
+    cpp_ptr_->Release();
+}
+
+uint32_t PythonPluginHolder::AddRef() { return ++ref_count_; }
+
+uint32_t PythonPluginHolder::Release()
+{
+    const auto count = --ref_count_;
+    if (count == 0)
+    {
+        delete this;
+        return 0;
+    }
+    return count;
+}
+
+DasResult PythonPluginHolder::QueryInterface(const DasGuid& iid, void** pp_object)
+{
+    if (!pp_object)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+    return cpp_ptr_->QueryInterface(iid, pp_object);
+}
+
+// ============================================================================
+// ExtractIDasBaseFromDasRetBase 实现
+// ============================================================================
+
+/**
+ * @brief 从 SWIG 包装的 DasRetBase 对象中提取 IDasBase 指针
+ *
+ * 使用 Python 数字协议 hack (int() 转换) 从 SwigPyObject 获取指针。
+ * 不直接访问 SwigPyObject 结构体成员，因为 ptr 是 C 成员而非 Python 属性。
+ *
+ * @param das_ret_base Python DasRetBase 对象
+ * @return DasPtr<IDasBase> 包装后的指针，失败返回空指针
+ */
+auto ExtractIDasBaseFromDasRetBase(PyObject* das_ret_base) -> DasPtr<IDasBase>
+{
+    if (!das_ret_base)
+    {
+        DAS_CORE_LOG_ERROR("das_ret_base is null");
+        return {};
+    }
+
+    // 1. 获取 value 属性
+    PyObjectPtr value = PyObjectPtr::Attach(
+        PyObject_GetAttrString(das_ret_base, "value"));
+    if (!value)
+    {
+        DAS_CORE_LOG_ERROR("Failed to get 'value' attribute from DasRetBase");
+        return {};
+    }
+
+    // 2. 获取 this 属性（SwigPyObject）
+    PyObjectPtr this_attr = PyObjectPtr::Attach(
+        PyObject_GetAttrString(value.Get(), "this"));
+    if (!this_attr)
+    {
+        DAS_CORE_LOG_ERROR("Failed to get 'this' attribute from IDasBase");
+        return {};
+    }
+
+    // 3. int(this) 获取指针值（触发 SwigPyObject_long()）
+    PyObjectPtr ptr_long = PyObjectPtr::Attach(
+        PyNumber_Long(this_attr.Get()));
+    if (!ptr_long)
+    {
+        DAS_CORE_LOG_ERROR("Failed to convert SwigPyObject to long (int() conversion failed)");
+        return {};
+    }
+
+    // 4. 转换为 C++ 指针
+    void* raw_ptr = PyLong_AsVoidPtr(ptr_long.Get());
+    if (!raw_ptr)
+    {
+        DAS_CORE_LOG_ERROR("Pointer value is null or conversion failed");
+        return {};
+    }
+
+    IDasBase* cpp_ptr = static_cast<IDasBase*>(raw_ptr);
+
+    // 5. 创建 PythonPluginHolder 包装
+    // 使用 Attach 因为 PythonPluginHolder 构造时已持有初始引用计数 1
+    return DasPtr<IDasBase>::Attach(
+        new PythonPluginHolder(value.Get(), cpp_ptr));
+}
+
+// ============================================================================
+// PythonRuntime 实现
+// ============================================================================
+
 PythonRuntime::PythonRuntime()
 {
     PythonManager::GetInstance().Initialize();
@@ -583,14 +691,16 @@ auto PythonRuntime::LoadPlugin(const std::filesystem::path& path)
 
         DAS_CORE_LOG_INFO("Successfully called entry function: {}", function_name);
 
-        // 11. Phase 4 将实现从 DasRetBase 提取 IDasBase
-        // 当前阶段：返回成功，但 IDasBase 为 nullptr
-        // 实际实现将在 Phase 4 中完成
-        DAS_CORE_LOG_WARN(
-            "LoadPlugin succeeded but pointer extraction is not implemented (Phase 4)");
+        // 11. 从返回值提取 IDasBase 指针
+        auto plugin_ptr = ExtractIDasBaseFromDasRetBase(result_obj.Get());
+        if (!plugin_ptr)
+        {
+            DAS_CORE_LOG_ERROR("Failed to extract IDasBase from DasRetBase");
+            return tl::make_unexpected(DAS_E_SWIG_INTERNAL_ERROR);
+        }
 
-        // 暂时返回 NOT_IMPLEMENTED，等待 Phase 4 实现指针提取
-        return tl::make_unexpected(DAS_E_NO_IMPLEMENTATION);
+        DAS_CORE_LOG_INFO("Successfully extracted plugin pointer from Python");
+        return plugin_ptr;
     }
     catch (const PythonException& e)
     {
