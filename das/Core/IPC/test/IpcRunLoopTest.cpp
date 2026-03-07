@@ -490,6 +490,7 @@ TEST_F(IpcRunLoopTest, PostCallback_ExecutesCallback)
 
     // Post a callback through io_context
     auto* callback = new CountingCallback();
+    callback->AddRef();  // 保持引用，防止 callback 在执行后立即被删除
     boost::asio::post(runloop_->GetIoContext(), [callback]() {
         callback->AddRef();
         callback->Do();
@@ -504,6 +505,8 @@ TEST_F(IpcRunLoopTest, PostCallback_ExecutesCallback)
 
     EXPECT_EQ(callback->call_count, 1);
     EXPECT_TRUE(callback->done);
+
+    callback->Release();  // 释放主线程的引用
 
     runloop_->RequestStop();
     if (run_thread.joinable())
