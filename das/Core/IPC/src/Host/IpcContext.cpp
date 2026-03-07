@@ -434,17 +434,6 @@ namespace Core
 
                 bool IsConnected() const { return is_connected_; }
 
-                void PostRequest(
-                    void (*callback)(void* user_data),
-                    void* user_data)
-                {
-                    if (run_loop_ && callback)
-                    {
-                        run_loop_->PostRequest([callback, user_data]()
-                                               { callback(user_data); });
-                    }
-                }
-
                 void PostCallback(IDasAsyncCallback* callback)
                 {
                     if (!callback || !run_loop_) return;
@@ -622,13 +611,6 @@ namespace Core
             bool IpcContext::IsConnected() const
             {
                 return impl_->IsConnected();
-            }
-
-            void IpcContext::PostRequest(
-                void (*callback)(void* user_data),
-                void* user_data)
-            {
-                impl_->PostRequest(callback, user_data);
             }
 
             void IpcContext::PostCallback(IDasAsyncCallback* callback)

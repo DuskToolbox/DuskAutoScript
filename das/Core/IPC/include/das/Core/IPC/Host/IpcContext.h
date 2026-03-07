@@ -113,11 +113,6 @@ namespace Core
 
                 bool IsConnected() const;
 
-
-                void PostRequest(
-                    void (*callback)(void* user_data),
-                    void* user_data);
-
                 void PumpMessage();
 
                 void PostCallback(IDasAsyncCallback* callback);
