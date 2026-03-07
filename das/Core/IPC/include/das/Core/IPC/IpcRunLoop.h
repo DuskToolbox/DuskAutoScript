@@ -55,8 +55,6 @@ struct PendingCallState
     PendingCallCompletion                 on_complete;
 };
 
-/// 投递的回调类型
-using PostedCallback = std::function<void()>;
 
 //=============================================================================
 // IpcScheduler — stdexec scheduler，基于 PostRequest 实现
@@ -106,7 +104,7 @@ struct IpcScheduleEnv
  * @brief AwaitResponseSender 的 OperationState
  *
  * start() 时注册 on_complete 到 PendingCallState，
- * 由 RunInternal 的消息循环驱动完成（零轮询）。
+ * 由事件循环驱动完成（零轮询）。
  */
 template <class Receiver>
 struct AwaitResponseOperation
@@ -288,43 +286,11 @@ public:
         return *io_context_;
     }
 
-    //=========================================================================
-    // PostRequest API
-    //=========================================================================
-
-    /// 投递一个回调到 RunLoop 线程执行
-    /// 线程安全，可从任意线程调用
-    /// @param callback 要执行的回调
-    void PostRequest(PostedCallback callback);
-
-    /// 投递"启动 Host"任务
-    /// RunLoop 会管理 HostLauncher 的生命周期
-    /// @param plugin_path 插件 manifest 路径
-    /// @param on_complete 完成回调（可选）
-    void PostStartHost(
-        const std::string&                                         plugin_path,
-        std::function<void(DasResult result, uint16_t session_id)> on_complete =
-            nullptr);
-
-    /// 投递"停止 Host"任务
-    /// @param session_id 要停止的 Host 的 session_id
-    void PostStopHost(uint16_t session_id);
-
     friend class ::Das::Core::IPC::Host::HandshakeHandler;
 
     // AwaitResponseOperation 需要访问内部方法
     template <class Receiver>
     friend struct AwaitResponseOperation;
-
-    //=========================================================================
-    // PostRequest 内部实现
-    //=========================================================================
-
-    /// 发送唤醒消息（内部使用）
-    void SendWakeupMessage();
-
-    /// 处理投递的回调（由 HandshakeHandler 调用）
-    void ProcessPostedCallbacks();
 
     DasResult ProcessMessage(
         const IPCMessageHeader& header,
@@ -343,28 +309,23 @@ public:
      */
     bool ReceiveAndDispatch(std::chrono::milliseconds timeout);
 
-    void RunInternal();
-
-    void StartReceiveLoop();
-
     //=========================================================================
-    // 事件驱动方法（新增）
+    // 事件驱动方法（内部使用）
     //=========================================================================
 
     /**
-     * @brief 接收循环协程 - 事件驱动的消息接收
+     * @brief 启动异步接收链
      *
-     * 使用 co_await 异步等待消息，零轮询。
+     * 使用 transport 的异步接收能力，注册持续的消息接收回调。
      */
-    boost::asio::awaitable<void> ReceiveLoop();
+    void StartAsyncReceive();
 
     /**
-     * @brief 执行一个 io_context 事件
+     * @brief 调度超时检查定时器
      *
-     * 用于 RunUntil 的事件驱动等待。
-     * 阻塞等待一个事件完成，非轮询。
+     * 寏隔一段时间检查 pending senders 是否超时。
      */
-    void RunOne();
+    void ScheduleTimeoutCheck();
 
     /**
      * @brief 内部辅助：准备发送请求（分配 call_id、注册 pending
@@ -413,7 +374,7 @@ public:
     /**
      * @brief 扫描并完成所有超时的 pending call
      *
-     * 由 RunInternal 在每轮消息循环中调用。
+     * 由 ScheduleTimeoutCheck 定时调用。
      * 检查所有 pending call 的 deadline，超时的调用
      * on_complete(DAS_E_IPC_TIMEOUT, {})。
      */
@@ -422,7 +383,7 @@ public:
     /**
      * @brief 获取最近的 pending call 超时时间（毫秒）
      *
-     * 用于 RunInternal 计算 timed_receive 的超时参数。
+     * 用于 ScheduleTimeoutCheck 计算 timed_receive 的超时参数。
      * 如果没有 pending call，返回 0（无限等待）。
      *
      * @return 距离最近 deadline 的毫秒数，最小为 1
@@ -478,19 +439,6 @@ public:
 
     /// pending_calls_ 的互斥锁
     mutable std::mutex pending_mutex_;
-
-    //=========================================================================
-    // PostRequest 成员
-    //=========================================================================
-
-    /// 投递回调队列
-    std::mutex                 post_queue_mutex_;
-    std::queue<PostedCallback> post_queue_;
-
-    /// 管理的 Host 进程（预留，HostLauncher 在后续实现）
-    std::mutex hosts_mutex_;
-    std::unordered_map<uint16_t, void*>
-        hosts_; // 先用 void*，后续替换为 HostLauncher*
 };
 
 //=============================================================================

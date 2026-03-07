@@ -222,116 +222,6 @@ bool IpcRunLoop::ReceiveAndDispatch(std::chrono::milliseconds timeout)
     return true;
 }
 
-void IpcRunLoop::RunInternal()
-{
-    if (!io_context_)
-    {
-        return;
-    }
-
-    // Use io_context for PostRequest callbacks, but keep polling for message
-    // reception
-    while (running_.load())
-    {
-        uint32_t timeout_ms = GetNearestDeadlineMs();
-
-        bool received =
-            ReceiveAndDispatch(std::chrono::milliseconds(timeout_ms));
-
-        if (!received)
-        {
-            TickPendingSenders();
-            ProcessPostedCallbacks();
-            continue;
-        }
-
-        TickPendingSenders();
-    }
-
-    exit_code_.store(DAS_S_OK);
-}
-
-void IpcRunLoop::StartReceiveLoop()
-{
-    if (!io_context_ || !async_transport_)
-    {
-        return;
-    }
-
-    std::function<void()> receive_next;
-    receive_next = [this, &receive_next]()
-    {
-        if (!running_.load())
-        {
-            return;
-        }
-
-        auto result_sender = async_transport_->Receive();
-        auto result_opt = stdexec::sync_wait(std::move(result_sender));
-
-        if (!result_opt.has_value())
-        {
-            boost::asio::post(*io_context_, receive_next);
-            return;
-        }
-
-        auto&& [ec, result_variant] = std::move(*result_opt);
-
-        if (ec)
-        {
-            try
-            {
-                std::rethrow_exception(ec);
-            }
-            catch (const std::exception& e)
-            {
-                DAS_CORE_LOG_ERROR("Receive failed: {}", e.what());
-            }
-            boost::asio::post(*io_context_, receive_next);
-            return;
-        }
-
-        if (result_variant.index() == 0)
-        {
-            DasResult error_code = std::get<0>(result_variant);
-            DAS_CORE_LOG_ERROR("Receive failed with error: {}", error_code);
-            boost::asio::post(*io_context_, receive_next);
-            return;
-        }
-
-        auto&& [header, body] = std::get<1>(result_variant);
-
-        if (header.Raw().message_type
-            == static_cast<uint8_t>(MessageType::RESPONSE))
-        {
-            CompletePendingCall(
-                header.Raw().call_id,
-                DAS_S_OK,
-                std::move(body));
-            boost::asio::post(*io_context_, receive_next);
-            return;
-        }
-
-        if (header.Raw().message_type
-            == static_cast<uint8_t>(MessageType::REQUEST))
-        {
-            if (header.Raw().interface_id
-                == static_cast<uint32_t>(
-                    HandshakeInterfaceId::HANDSHAKE_IFACE_WAKEUP))
-            {
-                ProcessPostedCallbacks();
-                boost::asio::post(*io_context_, receive_next);
-                return;
-            }
-        }
-
-        DispatchToHandler(header.Raw(), body);
-        boost::asio::post(*io_context_, receive_next);
-    };
-
-    boost::asio::post(*io_context_, receive_next);
-}
-
 std::pair<DasResult, uint64_t> IpcRunLoop::PrepareSendRequest(
     const ValidatedIPCMessageHeader& request_header,
     const uint8_t*                   body,
@@ -663,40 +553,25 @@ DasResult IpcRunLoop::WaitForShutdown()
     return exit_code_.load();
 }
 
-void IpcRunLoop::PostRequest(PostedCallback callback)
+void IpcRunLoop::StartAsyncReceive()
 {
-    {
-        std::lock_guard<std::mutex> lock(post_queue_mutex_);
-        post_queue_.push(std::move(callback));
-    }
-
-    SendWakeupMessage();
-}
-
-void IpcRunLoop::SendWakeupMessage()
-{
-    if (!async_transport_ || !async_transport_->IsConnected())
+    if (!io_context_ || !async_transport_)
     {
         return;
     }
 
-    auto validated_header =
-        IPCMessageHeaderBuilder()
-            .SetMessageType(MessageType::REQUEST)
-            .SetControlPlaneCommand(
-                HandshakeInterfaceId::HANDSHAKE_IFACE_WAKEUP)
-            .SetBodySize(0)
-            .Build();
-
-    auto sender = async_transport_->Send(validated_header, nullptr, 0);
-    auto result_opt = stdexec::sync_wait(std::move(sender));
+    // 使用 transport 的异步接收能力
+    auto result_sender = async_transport_->Receive();
+    auto result_opt = stdexec::sync_wait(std::move(result_sender));
 
     if (!result_opt.has_value())
     {
+        // 如果没有数据，继续接收
+        boost::asio::post(*io_context_, [this]() { StartAsyncReceive(); });
         return;
     }
 
-    auto&& [ec, send_result] = std::move(*result_opt);
+    auto&& [ec, result_variant] = std::move(*result_opt);
 
     if (ec)
     {
@@ -706,48 +581,66 @@ void IpcRunLoop::SendWakeupMessage()
         }
         catch (const std::exception& e)
         {
-            DAS_CORE_LOG_ERROR("Wakeup send failed: {}", e.what());
+            DAS_CORE_LOG_ERROR("Receive failed: {}", e.what());
         }
+        // 继续接收
+        boost::asio::post(*io_context_, [this]() { StartAsyncReceive(); });
+        return;
     }
+
+    if (result_variant.index() == 0)
+    {
+        DasResult error_code = std::get<0>(result_variant);
+        DAS_CORE_LOG_ERROR("Receive failed with error: {}", error_code);
+        // 继续接收
+        boost::asio::post(*io_context_, [this]() { StartAsyncReceive(); });
+        return;
+    }
+
+    auto&& [header, body] = std::get<1>(result_variant);
+
+    if (header.Raw().message_type
+        == static_cast<uint8_t>(MessageType::RESPONSE))
+    {
+        CompletePendingCall(header.Raw().call_id, DAS_S_OK, std::move(body));
+    }
+    else
+    {
+        DispatchToHandler(header.Raw(), body);
+    }
+
+    // 继续接收
+    boost::asio::post(*io_context_, [this]() { StartAsyncReceive(); });
 }
 
-void IpcRunLoop::ProcessPostedCallbacks()
+void IpcRunLoop::ScheduleTimeoutCheck()
 {
-    std::queue<PostedCallback> local_queue;
-
+    if (!io_context_ || !timeout_timer_)
     {
-        std::lock_guard<std::mutex> lock(post_queue_mutex_);
-        local_queue = std::move(post_queue_);
-        post_queue_ = std::queue<PostedCallback>();
+        return;
     }
 
-    while (!local_queue.empty())
+    uint32_t timeout_ms = GetNearestDeadlineMs();
+    if (timeout_ms == 0)
     {
-        auto callback = std::move(local_queue.front());
-        local_queue.pop();
-        callback();
+        // 没有超时任务，间隔 1 秒后重新检查
+        timeout_ms = 1000;
     }
-}
 
-void IpcRunLoop::PostStartHost(
-    const std::string&                       plugin_path,
-    std::function<void(DasResult, uint16_t)> on_complete)
-{
-    (void)plugin_path;
-    PostRequest(
-        [on_complete]()
+    timeout_timer_->expires_after(std::chrono::milliseconds(timeout_ms));
+    timeout_timer_->async_wait(
+        [this](const boost::system::error_code& ec)
         {
-            if (on_complete)
+            if (!running_.load() || ec)
             {
-                on_complete(DAS_E_IPC_PLUGIN_NOT_FOUND, 0);
+                return;
             }
-        });
-}
 
-void IpcRunLoop::PostStopHost(uint16_t session_id)
-{
-    (void)session_id;
-    PostRequest([]() {});
+            TickPendingSenders();
+
+            // 重新调度下一次检查
+            ScheduleTimeoutCheck();
+        });
 }
 
 DasResult IpcRunLoop::Run()
@@ -760,21 +653,17 @@ DasResult IpcRunLoop::Run()
 
     running_.store(true);
     exit_code_.store(DAS_S_OK);
-    io_thread_ = std::thread([this]() { this->RunInternal(); });
 
-    if (io_thread_.joinable())
-    {
-        io_thread_.join();
-    }
+    // 启动异步接收链
+    StartAsyncReceive();
+
+    // 启动超时检查定时器
+    ScheduleTimeoutCheck();
+
+    // 阻塞运行事件循环
+    io_context_->run();
+
     return exit_code_.load();
-}
-
-void IpcRunLoop::RunOne()
-{
-    if (io_context_ && !io_context_->stopped())
-    {
-        io_context_->run_one();
-    }
 }
 
 DasResult IpcRunLoop::ProcessMessage(
