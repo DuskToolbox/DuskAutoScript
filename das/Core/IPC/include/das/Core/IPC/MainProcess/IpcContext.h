@@ -53,32 +53,16 @@ namespace Core
                  * @brief 获取 MainProcessServer 实例
                  * @return MainProcessServer& 服务端实例
                  */
-                class MainProcessServer& GetServer();
+                class MainProcessServer& GetServer() override;
 
-                /**
-                 * @brief 获取 DistributedObjectManager 实例
-                 * @return DistributedObjectManager& 对象管理器实例
-                 */
-                class DistributedObjectManager& GetObjectManager();
+                class DistributedObjectManager& GetObjectManager() override;
 
-                /**
-                 * @brief 获取 ProxyFactory 实例
-                 * @return ProxyFactory& Proxy 工厂实例
-                 */
                 class ProxyFactory& GetProxyFactory();
 
-                /**
-                 * @brief 获取 RemoteObjectRegistry 实例
-                 * @return RemoteObjectRegistry& 注册表实例
-                 */
-                class RemoteObjectRegistry& GetRegistry();
+                class RemoteObjectRegistry& GetRegistry() override;
 
-
-                void PostRequest(
-                    void (*callback)(void* user_data),
-                    void* user_data) override;
-
-                void PumpMessage() override;
+                DasResult CreateHostLauncher(
+                    IHostLauncher** pp_out_launcher) override;
 
             private:
                 std::unique_ptr<IpcContextImpl> impl_;

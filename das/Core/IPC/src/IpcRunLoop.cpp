@@ -55,28 +55,31 @@ DasResult IpcRunLoop::Initialize(
 
     if (is_server)
     {
-        result = async_transport_->Initialize(read_queue_name, true);
+        result = async_transport_->Initialize(
+            read_queue_name,
+            write_queue_name,
+            true);
         if (DAS::IsFailed(result))
         {
             DAS_CORE_LOG_ERROR(
-                "Failed to initialize read queue: {}",
-                read_queue_name);
+                "Failed to initialize transport: read={}, write={}",
+                read_queue_name,
+                write_queue_name);
             return result;
         }
     }
     else
     {
-        result = async_transport_->Connect(read_queue_name);
+        result = async_transport_->Connect(read_queue_name, write_queue_name);
         if (DAS::IsFailed(result))
         {
             DAS_CORE_LOG_ERROR(
-                "Failed to connect to read queue: {}",
-                read_queue_name);
+                "Failed to connect transport: read={}, write={}",
+                read_queue_name,
+                write_queue_name);
             return result;
         }
     }
-
-    (void)write_queue_name;
     return DAS_S_OK;
 }
 
@@ -226,9 +229,24 @@ void IpcRunLoop::RunInternal()
         return;
     }
 
-    StartReceiveLoop();
+    // Use io_context for PostRequest callbacks, but keep polling for message
+    // reception
+    while (running_.load())
+    {
+        uint32_t timeout_ms = GetNearestDeadlineMs();
 
-    io_context_->run();
+        bool received =
+            ReceiveAndDispatch(std::chrono::milliseconds(timeout_ms));
+
+        if (!received)
+        {
+            TickPendingSenders();
+            ProcessPostedCallbacks();
+            continue;
+        }
+
+        TickPendingSenders();
+    }
 
     exit_code_.store(DAS_S_OK);
 }

@@ -11,7 +11,9 @@
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcTransport.h>
+#include <das/Core/IPC/MainProcess/IHostLauncher.h>
 #include <das/Core/IPC/SessionCoordinator.h>
+#include <das/DasPtr.hpp>
 #include <das/Utils/fmt.h>
 #include <thread>
 
@@ -246,6 +248,39 @@ std::unique_ptr<IpcTransport> HostLauncher::ReleaseTransport()
     return std::move(impl_->transport);
 }
 
+DasResult HostLauncher::StartAsync(
+    const std::string&            host_exe_path,
+    IDasAsyncHandshakeOperation** pp_out_operation)
+{
+    if (!pp_out_operation)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    // TODO: 实现异步版本 - 使用 io_context 异步执行
+    // 暂时返回同步实现
+    constexpr uint32_t DEFAULT_TIMEOUT_MS = 5000;
+    uint16_t           session_id = 0;
+    DasResult result = Start(host_exe_path, session_id, DEFAULT_TIMEOUT_MS);
+    *pp_out_operation = nullptr;
+    return result;
+}
+
+uint32_t HostLauncher::AddRef() { return 1; }
+
+uint32_t HostLauncher::Release() { return 1; }
+
+DasResult HostLauncher::QueryInterface(const DasGuid& iid, void** pp)
+{
+    if (iid == DasIidOf<IDasBase>())
+    {
+        AddRef();
+        *pp = static_cast<IDasBase*>(this);
+        return DAS_S_OK;
+    }
+    return DAS_E_NO_INTERFACE;
+}
+
 DasResult HostLauncher::LaunchProcess(
     const std::string&              exe_path,
     const std::vector<std::string>& args)
@@ -292,21 +327,32 @@ DasResult HostLauncher::WaitForHostReady(uint32_t timeout_ms)
             return DAS_E_IPC_CONNECTION_LOST;
         }
 
-        std::string host_to_plugin_queue =
-            Host::MakeMessageQueueName(main_pid, host_pid, false);
+        std::string host_to_plugin_pipe = DAS_FMT_NS::format(
+            "\\\\.\\pipe\\das_ipc_{}_{}_m2h",
+            main_pid,
+            host_pid);
 
-        try
+        HANDLE h_pipe = CreateFileA(
+            host_to_plugin_pipe.c_str(),
+            GENERIC_READ,
+            0,
+            nullptr,
+            OPEN_EXISTING,
+            FILE_FLAG_OVERLAPPED,
+            nullptr);
+
+        if (h_pipe != INVALID_HANDLE_VALUE)
         {
-            boost::interprocess::message_queue mq(
-                boost::interprocess::open_only,
-                host_to_plugin_queue.c_str());
-
+            CloseHandle(h_pipe);
             DAS_LOG_INFO("Host IPC resources detected");
             return DAS_S_OK;
         }
-        catch (const boost::interprocess::interprocess_exception&)
+
+        auto last_error = GetLastError();
+        if (last_error != ERROR_FILE_NOT_FOUND)
         {
-            // 继续等待
+            DAS_LOG_INFO("Host IPC resources detected");
+            return DAS_S_OK;
         }
 
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(

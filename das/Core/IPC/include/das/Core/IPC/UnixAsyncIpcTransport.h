@@ -104,18 +104,14 @@ public:
      * @return DAS_E_IPC_MESSAGE_QUEUE_FAILED 创建失败
      */
     DasResult Initialize(
-        const std::string& endpoint_name,
+        const std::string& read_endpoint,
+        const std::string& write_endpoint,
         bool               is_server,
         size_t             max_message_size = 65536);
 
-    /**
-     * @brief 连接到服务端（客户端）
-     * @param endpoint_name 端点名称（Unix Domain Socket 文件路径）
-     * @return DAS_S_OK 成功
-     * @return DAS_E_IPC_MESSAGE_QUEUE_FAILED 连接失败
-     * @return DAS_E_IPC_HANDSHAKE_FAILED 握手失败
-     */
-    DasResult Connect(const std::string& endpoint_name);
+    DasResult Connect(
+        const std::string& read_endpoint,
+        const std::string& write_endpoint);
 
     /**
      * @brief 关闭传输层

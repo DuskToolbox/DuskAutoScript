@@ -1,5 +1,6 @@
 #pragma once
 #include <das/Core/IPC/DasAsyncSender.h>
+#include <das/Core/IPC/MainProcess/IHostLauncher.h>
 #include <das/DasApi.h>
 #include <memory>
 #include <stdexec/execution.hpp>
@@ -24,15 +25,33 @@ namespace Core
 
             /**
              * @brief 主进程 IPC 上下文接口
-             *
-             * 纯虚函数接口，protected 析构函数防止用户直接 delete。
-             * 使用 CreateIpcContext() 创建实例。
+ *
+
+             * * 纯虚函数接口，protected 析构函数防止用户直接
+             * delete。
+
+             * * 使用 CreateIpcContext() 创建实例。
              */
             struct IIpcContext
             {
                 virtual MainProcessServer&        GetServer() = 0;
                 virtual DistributedObjectManager& GetObjectManager() = 0;
                 virtual RemoteObjectRegistry&     GetRegistry() = 0;
+
+                /**
+                 * @brief 创建 HostLauncher 实例
+ *
+
+                 * * HostLauncher 使用 IIpcContext 的 io_context
+                 * 进行异步操作。
+ *
+                 * @param
+                 * pp_out_launcher 输出：HostLauncher 接口指针
+ * @return
+                 * DAS_S_OK 成功
+                 */
+                virtual DasResult CreateHostLauncher(
+                    IHostLauncher** pp_out_launcher) = 0;
 
             protected:
                 virtual ~IIpcContext() = default;
@@ -110,6 +129,8 @@ namespace Core
                     void (*callback)(void*),
                     void* user_data) noexcept
                 {
+                    (void)callback;
+                    (void)user_data;
                 }
 
             private:

@@ -21,7 +21,8 @@
 
 DAS_CORE_IPC_NS_BEGIN
 
-inline constexpr uint16_t kFlagLargeMessage = 0x01;
+inline constexpr uint16_t         FLAG_LARGE_MESSAGE = 0x01;
+inline constexpr std::string_view PIPE_PREFIX = R"(\\.\pipe\)";
 
 Win32AsyncIpcTransport::Win32AsyncIpcTransport(
     boost::asio::io_context& io_context)
@@ -33,59 +34,48 @@ Win32AsyncIpcTransport::Win32AsyncIpcTransport(
 Win32AsyncIpcTransport::~Win32AsyncIpcTransport() { Close(); }
 
 DasResult Win32AsyncIpcTransport::Initialize(
-    const std::string& endpoint_name,
+    const std::string& read_endpoint,
+    const std::string& write_endpoint,
     bool               is_server,
     size_t             max_message_size)
 {
-    if (is_connected_)
-    {
-        return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
-    }
-
-    endpoint_name_ = endpoint_name;
-    is_server_ = is_server;
     max_message_size_ = max_message_size;
     body_buffer_.reserve(max_message_size);
 
     if (is_server)
     {
-        const auto read_pipe_name =
-            DAS_FMT_NS::format("{}_read", endpoint_name);
-        auto result = CreateNamedPipe(read_pipe_name, true);
+        is_server_ = true;
+
+        auto result = CreateNamedPipe(read_endpoint, true);
         if (DAS::IsFailed(result))
         {
             return result;
         }
 
-        const auto write_pipe_name =
-            DAS_FMT_NS::format("{}_write", endpoint_name);
-        return CreateNamedPipe(write_pipe_name, false);
+        return CreateNamedPipe(write_endpoint, false);
     }
 
-    return DAS_S_OK;
+    return Connect(read_endpoint, write_endpoint);
 }
 
-DasResult Win32AsyncIpcTransport::Connect(const std::string& endpoint_name)
+DasResult Win32AsyncIpcTransport::Connect(
+    const std::string& read_endpoint,
+    const std::string& write_endpoint)
 {
     if (is_connected_)
     {
         return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
 
-    endpoint_name_ = endpoint_name;
-
-    const auto read_pipe_name = DAS_FMT_NS::format("{}_write", endpoint_name);
-    auto       result = ConnectToNamedPipe(read_pipe_name, true);
+    auto result = ConnectToNamedPipe(read_endpoint, true);
     if (DAS::IsFailed(result))
     {
         return result;
     }
 
-    const auto write_pipe_name = DAS_FMT_NS::format("{}_read", endpoint_name);
-    result = ConnectToNamedPipe(write_pipe_name, false);
+    result = ConnectToNamedPipe(write_endpoint, false);
     if (DAS::IsFailed(result))
     {
-        Close();
         return result;
     }
 
@@ -127,8 +117,10 @@ DasResult Win32AsyncIpcTransport::CreateNamedPipe(
     const std::string& pipe_name,
     bool               is_read_pipe)
 {
+    const std::string full_pipe_name =
+        DAS_FMT_NS::format("{}{}", PIPE_PREFIX, pipe_name);
     const HANDLE h_pipe = ::CreateNamedPipeA(
-        pipe_name.c_str(),
+        full_pipe_name.c_str(),
         is_read_pipe ? PIPE_ACCESS_INBOUND | FILE_FLAG_OVERLAPPED
                      : PIPE_ACCESS_OUTBOUND | FILE_FLAG_OVERLAPPED,
         PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
@@ -146,21 +138,6 @@ DasResult Win32AsyncIpcTransport::CreateNamedPipe(
             GetLastError());
         DAS_LOG_ERROR(msg.c_str());
         return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
-    }
-
-    if (ConnectNamedPipe(h_pipe, nullptr) == FALSE)
-    {
-        const auto last_error = GetLastError();
-        if (last_error != ERROR_PIPE_CONNECTED)
-        {
-            CloseHandle(h_pipe);
-            const auto msg = DAS_FMT_NS::format(
-                "ConnectNamedPipe failed: pipe_name = {}, error = {}",
-                pipe_name,
-                last_error);
-            DAS_LOG_ERROR(msg.c_str());
-            return DAS_E_IPC_HANDSHAKE_FAILED;
-        }
     }
 
     boost::system::error_code ec;
@@ -192,7 +169,10 @@ DasResult Win32AsyncIpcTransport::ConnectToNamedPipe(
     const std::string& pipe_name,
     bool               is_read_pipe)
 {
-    if (WaitNamedPipeA(pipe_name.c_str(), NMPWAIT_WAIT_FOREVER) == FALSE)
+    const std::string full_pipe_name =
+        DAS_FMT_NS::format("{}{}", PIPE_PREFIX, pipe_name);
+
+    if (WaitNamedPipeA(full_pipe_name.c_str(), NMPWAIT_WAIT_FOREVER) == FALSE)
     {
         const auto msg = DAS_FMT_NS::format(
             "WaitNamedPipe failed: pipe_name = {}, error = {}",
@@ -203,7 +183,7 @@ DasResult Win32AsyncIpcTransport::ConnectToNamedPipe(
     }
 
     const HANDLE h_pipe = CreateFileA(
-        pipe_name.c_str(),
+        full_pipe_name.c_str(),
         is_read_pipe ? GENERIC_READ : GENERIC_WRITE,
         0,
         nullptr,
@@ -293,7 +273,7 @@ Win32AsyncIpcTransport::ReceiveCoroutine()
             boost::asio::use_awaitable);
     }
 
-    if (header.Raw().flags & kFlagLargeMessage)
+    if (header.Raw().flags & FLAG_LARGE_MESSAGE)
     {
         if (shared_memory_pool_ == nullptr)
         {

@@ -59,11 +59,14 @@ public:
     }
 
     DasResult Initialize(
-        const std::string& endpoint_name,
+        const std::string& read_endpoint,
+        const std::string& write_endpoint,
         bool               is_server,
         size_t             max_message_size = 65536);
 
-    DasResult Connect(const std::string& endpoint_name);
+    DasResult Connect(
+        const std::string& read_endpoint,
+        const std::string& write_endpoint);
 
     void Close();
 

@@ -57,37 +57,44 @@ UnixAsyncIpcTransport::UnixAsyncIpcTransport(
 UnixAsyncIpcTransport::~UnixAsyncIpcTransport() { Close(); }
 
 DasResult UnixAsyncIpcTransport::Initialize(
-    const std::string& endpoint_name,
+    const std::string& read_endpoint,
+    const std::string& write_endpoint,
     bool               is_server,
     size_t             max_message_size)
 {
+    (void)write_endpoint;
+
     if (impl_->is_connected)
     {
         return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
 
-    impl_->endpoint_name = endpoint_name;
+    impl_->endpoint_name = read_endpoint;
     impl_->is_server = is_server;
     impl_->max_message_size = max_message_size;
     impl_->body_buffer.reserve(max_message_size);
 
     if (is_server)
     {
-        return CreateUnixSocket(endpoint_name);
+        return CreateUnixSocket(read_endpoint);
     }
 
     return DAS_S_OK;
 }
 
-DasResult UnixAsyncIpcTransport::Connect(const std::string& endpoint_name)
+DasResult UnixAsyncIpcTransport::Connect(
+    const std::string& read_endpoint,
+    const std::string& write_endpoint)
 {
+    (void)write_endpoint;
+
     if (impl_->is_connected)
     {
         return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
 
-    impl_->endpoint_name = endpoint_name;
-    return ConnectToUnixSocket(endpoint_name);
+    impl_->endpoint_name = read_endpoint;
+    return ConnectToUnixSocket(read_endpoint);
 }
 
 void UnixAsyncIpcTransport::Close()

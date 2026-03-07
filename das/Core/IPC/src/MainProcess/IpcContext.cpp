@@ -1,7 +1,8 @@
+#include <das/Core/IPC/DistributedObjectManager.h>
+#include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/IPC/MainProcess/IpcContext.h>
 #include <das/Core/IPC/MainProcess/MainProcessServer.h>
-#include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/IPC/SessionCoordinator.h>
@@ -31,7 +32,8 @@ namespace Core
                     coordinator.SetLocalSessionId(1);
 
                     // 2. 创建 DistributedObjectManager
-                    object_manager_ = std::make_unique<DistributedObjectManager>();
+                    object_manager_ =
+                        std::make_unique<DistributedObjectManager>();
 
                     // 3. 初始化 ProxyFactory
                     auto& proxy_factory = ProxyFactory::GetInstance();
@@ -112,7 +114,6 @@ namespace Core
                     return RemoteObjectRegistry::GetInstance();
                 }
 
-
                 void PostRequest(
                     void (*callback)(void* user_data),
                     void* user_data)
@@ -121,9 +122,8 @@ namespace Core
                     auto* run_loop = server.GetRunLoop();
                     if (run_loop && callback)
                     {
-                        run_loop->PostRequest([callback, user_data]() {
-                            callback(user_data);
-                        });
+                        run_loop->PostRequest([callback, user_data]()
+                                              { callback(user_data); });
                     }
                 }
 
@@ -137,11 +137,13 @@ namespace Core
                         if (timeout_ms == 0)
                             timeout_ms = 100; // 无 pending call 时给合理默认值
 
-                        run_loop->ReceiveAndDispatch(std::chrono::milliseconds(timeout_ms));
+                        run_loop->ReceiveAndDispatch(
+                            std::chrono::milliseconds(timeout_ms));
                         run_loop->ProcessPostedCallbacks();
                         run_loop->TickPendingSenders();
                     }
                 }
+
             private:
                 std::unique_ptr<DistributedObjectManager> object_manager_;
                 bool is_initialized_ = false;
@@ -184,20 +186,18 @@ namespace Core
                 return impl_->GetRegistry();
             }
 
-
-            void IpcContext::PostRequest(
-                void (*callback)(void* user_data),
-                void* user_data)
+            DasResult IpcContext::CreateHostLauncher(
+                IHostLauncher** pp_out_launcher)
             {
-                impl_->PostRequest(callback, user_data);
+                if (!pp_out_launcher)
+                {
+                    return DAS_E_INVALID_ARGUMENT;
+                }
+                *pp_out_launcher = new HostLauncher();
+                return DAS_S_OK;
             }
 
-            void IpcContext::PumpMessage()
-            {
-                impl_->PumpMessage();
-            }
-
-            // ====== C API 实现 =====
+            // ====== C API 实现 ======
 
             DAS_API IIpcContext* CreateIpcContext()
             {
@@ -225,8 +225,6 @@ namespace Core
             {
                 DestroyIpcContext(ctx);
             }
-
-
 
         } // namespace MainProcess
     } // namespace IPC
