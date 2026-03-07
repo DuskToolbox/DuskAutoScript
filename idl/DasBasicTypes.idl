@@ -17,4 +17,19 @@ struct DasDate {
     uint8_t  second;
 };
 
+// 2D点坐标
+struct DasPoint2f {
+    float x;
+    float y;
+};
+
+// 特征匹配点对（扁平化结构，避免IDL嵌套限制）
+struct DasMatchedPoint {
+    float query_x;      // 查询图像中的点 X 坐标
+    float query_y;      // 查询图像中的点 Y 坐标
+    float train_x;      // 训练图像中的点 X 坐标
+    float train_y;      // 训练图像中的点 Y 坐标
+    float distance;     // 匹配距离
+};
+
 }

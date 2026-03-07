@@ -3,6 +3,8 @@ import "IDasImage.idl";
 
 namespace Das::ExportInterface {
 
+// ============= Template Match =============
+
 [uuid("DD8AE823-3493-4106-86DD-2B9C14C5655F")]
 interface IDasTemplateMatchResult : IDasBase {
     [get, set] double score;
@@ -26,9 +28,77 @@ enum DasTemplateMatchType {
     DAS_TEMPLATE_MATCH_TYPE_FORCE_DWORD = 0x7FFFFFFF
 };
 
+// ============= Feature Match =============
+
+/**
+ * @brief 特征检测器类型
+ */
+enum DasDetectorType {
+    DAS_DETECTOR_ORB = 0,
+    DAS_DETECTOR_SIFT = 1,
+    DAS_DETECTOR_AKAZE = 2,
+    DAS_DETECTOR_BRISK = 3,
+    DAS_DETECTOR_FORCE_DWORD = 0x7FFFFFFF
+};
+
+/**
+ * @brief 描述子匹配器类型
+ */
+enum DasMatcherType {
+    DAS_MATCHER_BF = 0,
+    DAS_MATCHER_FLANN = 1,
+    DAS_MATCHER_FORCE_DWORD = 0x7FFFFFFF
+};
+
+/**
+ * @brief 特征匹配参数
+ */
+struct DasMatchParams {
+    float    ratio_threshold;       // Lowe's ratio test 阈值，默认 0.75
+    bool     enable_cross_check;   // 是否启用交叉验证，默认 false
+    uint32_t max_keypoints;       // 最大特征点数量，默认 500
+};
+
+/**
+ * @brief 特征匹配配置接口
+ */
+[uuid("A1B2C3D4-E5F6-4A7B-8C9D-0E1F2A3B4C5D")]
+interface IDasCvMatchConfig : IDasBase {
+    DasResult GetDetectorType([out] DasDetectorType* p_out_type);
+    DasResult GetMatcherType([out] DasMatcherType* p_out_type);
+    DasResult GetParams([out] DasMatchParams* p_out_params);
+}
+
+/**
+ * @brief 特征匹配结果接口
+ */
+[uuid("B2C3D4E5-F6A7-4B8C-9D0E-1F2A3B4C5D6E")]
+interface IDasCvMatchResult : IDasBase {
+    DasResult GetMatchCount([out] uint32_t* p_out_count);
+    DasResult GetMatchPair(uint32_t index, [out] DasMatchedPoint* p_out_pair);
+}
+
+// ============= CV Interface =============
+
 [uuid("5D8E5986-E0C2-4AB8-9802-475E60EE55C0")]
 interface IDasCv : IDasBase {
+    // 模板匹配
     DasResult TemplateMatchBest(IDasImage* p_image, IDasImage* p_template, DasTemplateMatchType type, [out] IDasTemplateMatchResult** pp_out_result);
+
+    // 特征匹配
+    DasResult CreateMatchConfig(
+        DasDetectorType detector_type,
+        DasMatcherType matcher_type,
+        DasMatchParams params,
+        [out] IDasCvMatchConfig** pp_out_config
+    );
+
+    DasResult MatchFeatures(
+        IDasImage* p_query,
+        IDasImage* p_train,
+        IDasCvMatchConfig* p_config,
+        [out] IDasCvMatchResult** pp_out_result
+    );
 }
 
 }

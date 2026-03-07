@@ -1,6 +1,10 @@
 #include "Config.h"
+#include "DescriptorMatcherFactory.h"
+#include "FeatureDetectorFactory.h"
 #include "IDasImageImpl.h"
+#include "IDasMatchResultImpl.h"
 #include "IDasTemplateMatchResultImpl.h"
+#include "IMatchConfigImpl.h"
 #include <das/Core/Logger/Logger.h>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/Expected.h>
@@ -11,6 +15,7 @@ DAS_DISABLE_WARNING_BEGIN
 
 DAS_IGNORE_OPENCV_WARNING
 #include <opencv2/core/mat.hpp>
+#include <opencv2/features2d.hpp>
 #include <opencv2/imgproc.hpp>
 
 DAS_DISABLE_WARNING_END
@@ -117,5 +122,140 @@ DasResult TemplateMatchBest(
                 matched_location.y,
                 template_mat.cols,
                 template_mat.rows});
+    return DAS_S_OK;
+}
+
+DasResult CreateMatchConfig(
+    Das::ExportInterface::DasDetectorType     detector_type,
+    Das::ExportInterface::DasMatcherType      matcher_type,
+    Das::ExportInterface::DasMatchParams      params,
+    Das::ExportInterface::IDasCvMatchConfig** pp_out_config)
+{
+    if (!pp_out_config)
+        return DAS_E_INVALID_POINTER;
+
+    if (params.ratio_threshold < 0.0f || params.ratio_threshold > 1.0f)
+        return DAS_E_INVALID_POINTER;
+
+    if (params.max_keypoints == 0)
+        return DAS_E_INVALID_POINTER;
+
+    auto* p_config = DAS::Core::OcvWrapper::IMatchConfigImpl::MakeRaw(
+        detector_type,
+        matcher_type,
+        params);
+
+    *pp_out_config = p_config;
+    return DAS_S_OK;
+}
+
+DasResult MatchFeatures(
+    Das::ExportInterface::IDasImage*          p_query,
+    Das::ExportInterface::IDasImage*          p_train,
+    Das::ExportInterface::IDasCvMatchConfig*  p_config,
+    Das::ExportInterface::IDasCvMatchResult** pp_out_result)
+{
+    if (!p_query || !p_train || !pp_out_result)
+        return DAS_E_INVALID_POINTER;
+
+    if (!p_config)
+        return DAS_E_INVALID_POINTER;
+
+    Das::Utils::Timer timer{};
+    timer.Begin();
+
+    Das::ExportInterface::DasDetectorType detector_type{};
+    Das::ExportInterface::DasMatcherType  matcher_type{};
+    Das::ExportInterface::DasMatchParams  params{};
+
+    if (auto result = p_config->GetDetectorType(&detector_type);
+        Das::IsFailed(result))
+        return result;
+    if (auto result = p_config->GetMatcherType(&matcher_type);
+        Das::IsFailed(result))
+        return result;
+    if (auto result = p_config->GetParams(&params); Das::IsFailed(result))
+        return result;
+
+    const auto expected_query =
+        DAS::Core::OcvWrapper::Details::GetDasImageImpl(p_query);
+    if (!expected_query)
+        return expected_query.error();
+
+    const auto expected_train =
+        DAS::Core::OcvWrapper::Details::GetDasImageImpl(p_train);
+    if (!expected_train)
+        return expected_train.error();
+
+    const auto& query_mat = expected_query.value()->GetImpl();
+    const auto& train_mat = expected_train.value()->GetImpl();
+
+    auto detector = DAS::Core::OcvWrapper::Details::CreateDetector(
+        detector_type,
+        params.max_keypoints);
+    if (!detector)
+        return DAS_E_FAIL;
+
+    std::vector<cv::KeyPoint> query_keypoints, train_keypoints;
+    cv::Mat                   query_descriptors, train_descriptors;
+
+    detector->detectAndCompute(
+        query_mat,
+        cv::noArray(),
+        query_keypoints,
+        query_descriptors);
+    detector->detectAndCompute(
+        train_mat,
+        cv::noArray(),
+        train_keypoints,
+        train_descriptors);
+
+    if (query_descriptors.empty() || train_descriptors.empty())
+    {
+        auto* p_result = DAS::Core::OcvWrapper::IDasMatchResultImpl::MakeRaw();
+        *pp_out_result = p_result;
+        return DAS_S_OK;
+    }
+
+    auto matcher = DAS::Core::OcvWrapper::Details::CreateMatcher(
+        matcher_type,
+        detector_type);
+    if (!matcher)
+        return DAS_E_FAIL;
+
+    std::vector<cv::DMatch> matches;
+    matcher->match(query_descriptors, train_descriptors, matches);
+
+    if (params.ratio_threshold > 0.0f && params.ratio_threshold < 1.0f)
+    {
+        std::vector<cv::DMatch> good_matches;
+        good_matches.reserve(matches.size());
+        for (const auto& match : matches)
+        {
+            if (match.distance < params.ratio_threshold)
+                good_matches.push_back(match);
+        }
+        matches = std::move(good_matches);
+    }
+
+    auto* p_result = DAS::Core::OcvWrapper::IDasMatchResultImpl::MakeRaw();
+    p_result->Reserve(matches.size());
+
+    for (const auto& match : matches)
+    {
+        auto das_match = DAS::Core::OcvWrapper::Details::ToDasMatchedPoint(
+            query_keypoints[match.queryIdx],
+            train_keypoints[match.trainIdx],
+            match.distance);
+        p_result->AddMatch(das_match);
+    }
+
+    const auto elapsed = timer.End();
+    DAS_CORE_LOG_INFO(
+        "Feature matching completed in {} ms, {} matches",
+        elapsed,
+        matches.size());
+
+    *pp_out_result = p_result;
     return DAS_S_OK;
 }
