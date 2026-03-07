@@ -264,37 +264,26 @@ function(_download_and_config_opencv)
 endfunction()
 
 if (DAS_USE_BUNDLED_OPENCV)
-    if (DAS_USE_BUNDLED_OPENCV)
-        if (${DAS_USE_BUNDLED_EIGEN})
-            message(STATUS "Downloading Eigen3.4...")
-            set(BUILD_TESTING OFF)
-            set(EIGEN_BUILD_DOC OFF)
-            FetchContent_Declare(DasEigen3
-                    URL https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.zip)
-            FetchContent_MakeAvailable(DasEigen3)
+    if (${DAS_USE_BUNDLED_EIGEN})
+        message(STATUS "Downloading Eigen3.4...")
+        set(BUILD_TESTING OFF)
+        set(EIGEN_BUILD_DOC OFF)
+        FetchContent_Declare(DasEigen3
+                URL https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.zip)
+        FetchContent_MakeAvailable(DasEigen3)
+        set(WITH_EIGEN ON)
+    else ()
+        find_package(Eigen3 3.4 NO_MODULE)
+
+        if (NOT Eigen3_FOUND)
             set(WITH_EIGEN ON)
         else ()
-            find_package(Eigen3 3.4 NO_MODULE)
-
-            if (NOT Eigen3_FOUND)
-                set(WITH_EIGEN ON)
-            else ()
-                set(WITH_EIGEN OFF)
-            endif ()
-        endif ()
-
-        _download_and_config_opencv()
-    else ()
-        find_package(OpenCV 4.8)
-
-        if (NOT OpenCV_FOUND)
-            target_link_libraries(Das3rdParty INTERFACE ${OpenCV_LIBS})
-        else ()
-            message(FATAL_ERROR "OpenCV not found. Please install it manually or set DAS_USE_BUNDLED_OPENCV=ON.")
+            set(WITH_EIGEN OFF)
         endif ()
     endif ()
 
     _download_and_config_opencv()
+
 else ()
     find_package(OpenCV 4.8)
 
@@ -304,33 +293,6 @@ else ()
         message(FATAL_ERROR "OpenCV not found. Please install it manually or set DAS_USE_BUNDLED_OPENCV=ON.")
     endif ()
 endif ()
-
-function(_download_and_config_nv_stdexec)
-    set(CMAKE_FOLDER "Das3rd/stdexec")
-
-    # config stdexec
-    set(DAS_STDEXEC_VERSION "nvhpc-25.09")
-    message(STATUS "Downloading and configuring stdexec (VERSION = ${DAS_STDEXEC_VERSION}).")
-    FetchContent_Declare(
-        stdexec
-        URL "${GITHUB_MIRROR_URL}/NVIDIA/stdexec/archive/refs/tags/${DAS_STDEXEC_VERSION}.tar.gz"
-        URL_HASH SHA256=46651430312B1F66A9120DDE3DAA578E9C9EBA709E135D5E508AD5F8F4F18DAB)
-
-    set(STDEXEC_BUILD_EXAMPLES OFF)
-    set(STDEXEC_ENABLE_IO_URING_TESTS OFF)
-    set(STDEXEC_BUILD_DOCS OFF)
-    set(BUILD_TESTING OFF)
-    set(STDEXEC_BUILD_TESTS OFF)
-
-    if (POLICY CMP0169)
-        cmake_policy(SET CMP0169 OLD)
-    endif()
-
-    FetchContent_MakeAvailable(stdexec)
-    target_link_libraries(Das3rdParty INTERFACE STDEXEC::stdexec)
-endfunction()
-
-_download_and_config_nv_stdexec()
 
 function(_on_download_icu)
     message(STATUS "Downloading prebuilt icu binary...")
@@ -490,6 +452,34 @@ else ()
 endif ()
 
 add_compile_definitions(DasUtils PUBLIC BOOST_FILESYSTEM_NO_DEPRECATED)
+
+function(_download_and_config_nv_stdexec)
+    set(CMAKE_FOLDER "Das3rd/stdexec")
+
+    # config stdexec
+    set(DAS_STDEXEC_VERSION "nvhpc-25.09")
+    message(STATUS "Downloading and configuring stdexec (VERSION = ${DAS_STDEXEC_VERSION}).")
+    FetchContent_Declare(
+        stdexec
+        URL "${GITHUB_MIRROR_URL}/NVIDIA/stdexec/archive/refs/tags/${DAS_STDEXEC_VERSION}.tar.gz"
+        URL_HASH SHA256=46651430312B1F66A9120DDE3DAA578E9C9EBA709E135D5E508AD5F8F4F18DAB)
+
+    set(STDEXEC_BUILD_EXAMPLES OFF)
+    set(STDEXEC_ENABLE_IO_URING_TESTS OFF)
+    set(STDEXEC_BUILD_DOCS OFF)
+    set(BUILD_TESTING OFF)
+    set(STDEXEC_BUILD_TESTS OFF)
+    set(STDEXEC_ENABLE_ASIO ON)
+
+    if (POLICY CMP0169)
+        cmake_policy(SET CMP0169 OLD)
+    endif()
+
+    FetchContent_MakeAvailable(stdexec)
+    target_link_libraries(Das3rdParty INTERFACE STDEXEC::stdexec STDEXEC::asio_pool)
+endfunction()
+
+_download_and_config_nv_stdexec()
 
 # config Nlohmann Json
 # Notice: This library assume string is encoded in UTF-8.
@@ -659,8 +649,9 @@ das_add_auto_copy_dll_path($<TARGET_FILE:DasGateway>)
 das_add_auto_copy_dll_path($<TARGET_FILE:DasCore>)
 
 # 拷贝外部 OpenCV DLL（如果使用外部 OpenCV）
-# 注意：OpenCV 找到后会设置 OpenCV_DIR 变量，指向构建目录
-if(DEFINED OpenCV_DIR AND NOT BUILD_opencv_world)
+# 注意：只有在 NOT using bundled OpenCV 时才执行此逻辑
+# 使用 OpenCV_DIR 判断更可靠 - find_package 成功时会设置此变量
+if(DEFINED OpenCV_DIR AND NOT DAS_USE_BUNDLED_OPENCV)
     # 外部 OpenCV 通常提供 opencv_world DLL，动态匹配版本号
     file(GLOB_RECURSE OPENCV_WORLD_DLL "${OpenCV_DIR}/bin/opencv_world*d.dll")
     if(OPENCV_WORLD_DLL)
