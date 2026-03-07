@@ -281,6 +281,13 @@ public:
 
     bool IsRunning() const;
 
+    /// 获取 io_context 引用（用于 HostLauncher 等需要共享 io_context 的场景）
+    /// 注意：仅在 Initialize() 成功后可用
+    boost::asio::io_context& GetIoContext()
+    {
+        return *io_context_;
+    }
+
     //=========================================================================
     // PostRequest API
     //=========================================================================

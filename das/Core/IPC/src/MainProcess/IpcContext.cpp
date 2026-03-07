@@ -1,5 +1,6 @@
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/HostLauncher.h>
+#include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/IPC/MainProcess/IpcContext.h>
 #include <das/Core/IPC/MainProcess/MainProcessServer.h>
@@ -193,7 +194,16 @@ namespace Core
                 {
                     return DAS_E_INVALID_ARGUMENT;
                 }
-                *pp_out_launcher = new HostLauncher();
+
+                auto& server = MainProcessServer::GetInstance();
+                auto* run_loop = server.GetRunLoop();
+                if (!run_loop)
+                {
+                    DAS_CORE_LOG_ERROR("CreateHostLauncher: IpcRunLoop not initialized");
+                    return DAS_E_IPC_NOT_INITIALIZED;
+                }
+
+                *pp_out_launcher = new HostLauncher(run_loop->GetIoContext());
                 return DAS_S_OK;
             }
 

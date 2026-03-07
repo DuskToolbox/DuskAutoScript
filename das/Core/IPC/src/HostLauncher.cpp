@@ -62,7 +62,9 @@ DAS_CORE_IPC_NS_BEGIN
  */
 struct HostLauncher::Impl
 {
-    boost::asio::io_context                      io_ctx;
+    explicit Impl(boost::asio::io_context& ctx) : io_ctx(ctx) {}
+
+    boost::asio::io_context&                     io_ctx;  // 引用，由外部管理生命周期
     std::unique_ptr<boost::process::v2::process> process;
     std::unique_ptr<IpcTransport>                transport;
     uint32_t                                     pid = 0;
@@ -71,7 +73,8 @@ struct HostLauncher::Impl
     bool                                         is_running = false;
 };
 
-HostLauncher::HostLauncher() : impl_(std::make_unique<Impl>()) {}
+HostLauncher::HostLauncher(boost::asio::io_context& io_ctx)
+    : impl_(std::make_unique<Impl>(io_ctx)) {}
 
 HostLauncher::~HostLauncher() { Stop(); }
 

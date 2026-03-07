@@ -17,6 +17,12 @@
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
 
+// Forward declaration for io_context
+namespace boost::asio
+{
+    class io_context;
+}
+
 DAS_CORE_IPC_NS_BEGIN
 
 class IpcTransport;
@@ -24,7 +30,7 @@ class IpcTransport;
 class HostLauncher final : public IHostLauncher
 {
 public:
-    HostLauncher();
+    explicit HostLauncher(boost::asio::io_context& io_ctx);
     ~HostLauncher() override;
 
     HostLauncher(const HostLauncher&) = delete;
