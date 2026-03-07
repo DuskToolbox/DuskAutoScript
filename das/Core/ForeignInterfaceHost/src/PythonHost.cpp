@@ -462,11 +462,146 @@ DasResult PythonRuntime::QueryInterface(const DasGuid& iid, void** pp_object)
     return DAS_E_NO_INTERFACE;
 }
 
-auto PythonRuntime::LoadPlugin(
-    [[maybe_unused]] const std::filesystem::path& path)
+auto PythonRuntime::LoadPlugin(const std::filesystem::path& path)
     -> DAS::Utils::Expected<DasPtr<IDasBase>>
 {
-    return tl::make_unexpected(DAS_E_NO_IMPLEMENTATION);
+    // 1. 获取 GIL
+    PyGILGuard gil_guard;
+
+    // 2. 确保解释器已初始化
+    if (!PythonManager::GetInstance().IsInitialized())
+    {
+        DAS_CORE_LOG_ERROR("Python interpreter not initialized");
+        return tl::make_unexpected(DAS_E_OBJECT_NOT_INIT);
+    }
+
+    try
+    {
+        // 3. 验证文件存在
+        if (!std::filesystem::exists(path))
+        {
+            DAS_CORE_LOG_ERROR("Plugin manifest not found: {}", path.string());
+            return tl::make_unexpected(DAS_E_FILE_NOT_FOUND);
+        }
+
+        // 4. 读取配置
+        std::string entry_point;
+        const auto config_result = LoadPluginConfig(path, entry_point);
+        if (DAS::IsFailed(config_result))
+        {
+            return tl::make_unexpected(config_result);
+        }
+
+        // 5. 解析入口点
+        const auto [module_path, function_name] = ParseEntryPoint(entry_point);
+
+        DAS_CORE_LOG_INFO(
+            "Parsed entry point: module={}, function={}",
+            module_path,
+            function_name);
+
+        // 6. 获取 manifest 目录并添加到 sys.path
+        const auto manifest_dir = path.parent_path();
+
+        // 添加 sys.path（不移除，与"解释器永不销毁"设计一致）
+        {
+            PythonResult{PyObjectPtr::Attach(PyImport_ImportModule("sys"))}
+                .then([&manifest_dir](auto sys_module) {
+                    PyObjectPtr path_list = PyObjectPtr::Attach(
+                        PyObject_GetAttrString(sys_module, "path"));
+                    PyObjectPtr dir_str   = PyObjectPtr::Attach(
+                        PyUnicode_FromString(manifest_dir.generic_string().c_str()));
+
+                    // 检查是否已存在
+                    if (!PySequence_Contains(path_list.Get(), dir_str.Get()))
+                    {
+                        PyList_Append(path_list.Get(), dir_str.Get());
+                    }
+                    return PyObjectPtr{}; // 继续链式调用
+                })
+                .Check();
+        }
+
+        // 7. 导入模块
+        PyObjectPtr module;
+        {
+            PythonResult result{PyObjectPtr::Attach(
+                PyUnicode_FromString(module_path.c_str()))};
+
+            result.then([&module](auto module_name) {
+                module = PyObjectPtr::Attach(PyImport_Import(module_name.Get()));
+                return PyObjectPtr{};
+            });
+
+            if (!module)
+            {
+                result.Check(); // 会抛出 PythonException
+            }
+        }
+
+        // 8. 存储模块引用
+        p_plugin_module = module;
+
+        DAS_CORE_LOG_INFO("Successfully imported module: {}", module_path);
+
+        // 9. 获取入口函数
+        PyObjectPtr entry_func;
+        {
+            PythonResult result{PyObjectPtr::Attach(
+                PyObject_GetAttrString(p_plugin_module.Get(), function_name.c_str()))};
+
+            result.then([&entry_func, &function_name](auto func) {
+                // 检查是否可调用
+                if (!PyCallable_Check(func.Get()))
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "Entry point '{}' is not callable",
+                        function_name);
+                    throw PythonException("Entry point is not callable: " + function_name);
+                }
+                entry_func = func;
+                return PyObjectPtr{};
+            }).Check();
+        }
+
+        // 10. 调用入口函数（无参数）
+        PyObjectPtr result_obj;
+        {
+            PythonResult result{PyObjectPtr::Attach(
+                PyObject_CallObject(entry_func.Get(), nullptr))};
+
+            result.then([&result_obj, &function_name](auto obj) {
+                if (!obj.Get() || obj.Get() == Py_None)
+                {
+                    DAS_CORE_LOG_ERROR("Entry function '{}' returned None or null", function_name);
+                    throw PythonException("Entry function returned None or null");
+                }
+                result_obj = obj;
+                return PyObjectPtr{};
+            }).Check();
+        }
+
+        DAS_CORE_LOG_INFO("Successfully called entry function: {}", function_name);
+
+        // 11. Phase 4 将实现从 DasRetBase 提取 IDasBase
+        // 当前阶段：返回成功，但 IDasBase 为 nullptr
+        // 实际实现将在 Phase 4 中完成
+        DAS_CORE_LOG_WARN(
+            "LoadPlugin succeeded but pointer extraction is not implemented (Phase 4)");
+
+        // 暂时返回 NOT_IMPLEMENTED，等待 Phase 4 实现指针提取
+        return tl::make_unexpected(DAS_E_NO_IMPLEMENTATION);
+    }
+    catch (const PythonException& e)
+    {
+        DAS_CORE_LOG_ERROR("Python error in LoadPlugin: {}", e.what());
+        return tl::make_unexpected(DAS_E_PYTHON_ERROR);
+    }
+    catch (const std::exception& e)
+    {
+        DAS_CORE_LOG_ERROR("Exception in LoadPlugin: {}", e.what());
+        return tl::make_unexpected(DAS_E_INTERNAL_FATAL_ERROR);
+    }
 }
 
 // TODO: 未来将重写 PythonHost
