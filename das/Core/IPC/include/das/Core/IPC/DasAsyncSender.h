@@ -55,76 +55,6 @@ namespace Core::IPC
     };
 
     //=============================================================================
-    // ScheduleSender — 基础 schedule sender（模板化）
-    //=============================================================================
-    template <typename Context>
-    struct ScheduleSender
-    {
-        using sender_concept = stdexec::sender_t;
-        using completion_signatures =
-            stdexec::completion_signatures<stdexec::set_value_t()>;
-
-        Context* ctx;
-
-        template <class Receiver>
-        struct OperationState
-        {
-            Context* ctx;
-            Receiver rcvr;
-            bool     done{false};
-
-            friend void tag_invoke(
-                stdexec::start_t,
-                OperationState& self) noexcept
-            {
-                auto* heap_self =
-                    new OperationState{self.ctx, std::move(self.rcvr)};
-                heap_self->ScheduleOnContext();
-            }
-
-            void ScheduleOnContext()
-            {
-                ctx->PostRequest(
-                    [](void* user_data)
-                    {
-                        auto* self = static_cast<OperationState*>(user_data);
-                        stdexec::set_value(std::move(self->rcvr));
-                        self->done = true;
-                        delete self;
-                    },
-                    this);
-            }
-        };
-
-        template <class Receiver>
-        friend auto tag_invoke(
-            stdexec::connect_t,
-            ScheduleSender self,
-            Receiver       rcvr) noexcept -> OperationState<Receiver>
-        {
-            return {self.ctx, std::move(rcvr)};
-        }
-
-        ScheduleEnv<Context> get_env() const noexcept
-        {
-            return ScheduleEnv<Context>{ctx};
-        }
-    };
-
-    template <typename Context>
-        requires requires(Context& c) {
-            c.PostRequest(
-                static_cast<void (*)(void*)>(nullptr),
-                static_cast<void*>(nullptr));
-        }
-    ScheduleSender<Context> tag_invoke(
-        stdexec::schedule_t,
-        Context& ctx) noexcept
-    {
-        return ScheduleSender<Context>{&ctx};
-    }
-
-    //=============================================================================
     // IpcContextScheduleSender — 为任何有 PostCallback 方法的 Context 提供的 schedule sender
     //=============================================================================
 
@@ -152,14 +82,16 @@ namespace Core::IPC
             Receiver rcvr_;
 
             //=====================================================================
-            // CallbackAdapter — 将 IDasAsyncCallback 桥接到 stdexec set_value
+            // DasAsyncCallback — 将 IDasAsyncCallback 桥接到 stdexec set_value
             //=====================================================================
-            struct CallbackAdapter : IDasAsyncCallback
+            template <typename R>
+            class DasAsyncCallback final : public IDasAsyncCallback
             {
-                std::atomic<uint32_t> ref_{1};
-                Receiver              rcvr_;
+            public:
+                std::atomic<uint32_t> ref_{0};
+                R                     rcvr_;
 
-                explicit CallbackAdapter(Receiver rcvr) : rcvr_(std::move(rcvr)) {}
+                explicit DasAsyncCallback(R rcvr) : rcvr_(std::move(rcvr)) {}
 
                 uint32_t AddRef() override { return ++ref_; }
 
@@ -191,9 +123,9 @@ namespace Core::IPC
 
             friend void tag_invoke(stdexec::start_t, OperationState& self) noexcept
             {
-                auto* adapter = new CallbackAdapter(std::move(self.rcvr_));
-                self.ctx_->PostCallback(adapter);
-                adapter->Release(); // PostCallback 会 AddRef
+                auto* callback = new DasAsyncCallback<Receiver>(std::move(self.rcvr_));
+                self.ctx_->PostCallback(callback);
+                callback->Release(); // PostCallback 会 AddRef
             }
         };
 
