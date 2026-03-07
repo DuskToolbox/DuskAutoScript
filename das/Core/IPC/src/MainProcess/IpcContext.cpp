@@ -138,22 +138,6 @@ namespace Core
                     });
                 }
 
-                void PumpMessage()
-                {
-                    auto& server = MainProcessServer::GetInstance();
-                    auto* run_loop = server.GetRunLoop();
-                    if (run_loop)
-                    {
-                        uint32_t timeout_ms = run_loop->GetNearestDeadlineMs();
-                        if (timeout_ms == 0)
-                            timeout_ms = 100; // 无 pending call 时给合理默认值
-
-                        run_loop->ReceiveAndDispatch(
-                            std::chrono::milliseconds(timeout_ms));
-                        run_loop->ProcessPostedCallbacks();
-                        run_loop->TickPendingSenders();
-                    }
-                }
 
                 DasResult LoadPluginAsync(
                     IHostLauncher*                 host_launcher,

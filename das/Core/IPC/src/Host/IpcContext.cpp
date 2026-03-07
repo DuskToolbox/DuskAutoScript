@@ -453,20 +453,6 @@ namespace Core
                     return object_manager_->RegisterLocalObject(object_ptr, out_object_id);
                 }
 
-                void PumpMessage()
-                {
-                    if (run_loop_)
-                    {
-                        uint32_t timeout_ms = run_loop_->GetNearestDeadlineMs();
-                        if (timeout_ms == 0)
-                            timeout_ms = 100;
-
-                        run_loop_->ReceiveAndDispatch(
-                            std::chrono::milliseconds(timeout_ms));
-                        run_loop_->ProcessPostedCallbacks();
-                        run_loop_->TickPendingSenders();
-                    }
-                }
 
             private:
                 IpcContext*                               owner_ = nullptr;
@@ -625,7 +611,6 @@ namespace Core
                 return impl_->RegisterLocalObject(object_ptr, out_object_id);
             }
 
-            void IpcContext::PumpMessage() { impl_->PumpMessage(); }
 
             // ====== C API 实现 =====
 

@@ -179,16 +179,6 @@ namespace Core
                     return HandleGoodbye(*goodbye);
                 }
 
-                case HandshakeInterfaceId::HANDSHAKE_IFACE_WAKEUP:
-                {
-                    // 唤醒消息：触发 RunLoop 处理投递的回调
-                    // 不需要发送响应
-                    if (run_loop_)
-                    {
-                        run_loop_->ProcessPostedCallbacks();
-                    }
-                    return DAS_S_OK;
-                }
                 default:
                     std::string msg = DAS_FMT_NS::format(
                         "HandshakeHandler: Unknown interface_id: {}",
@@ -263,11 +253,6 @@ namespace Core
                 ShutdownRequestedCallback callback)
             {
                 on_shutdown_requested_ = std::move(callback);
-            }
-
-            void HandshakeHandler::SetRunLoop(IpcRunLoop* run_loop)
-            {
-                run_loop_ = run_loop;
             }
 
             bool HandshakeHandler::HasClient(uint16_t session_id) const

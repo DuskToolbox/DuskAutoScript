@@ -227,15 +227,6 @@ namespace Core
                  */
                 bool IsInitialized() const;
 
-                /**
-                 * @brief 设置 IpcRunLoop 指针
-                 *
-                 * 用于 WAKEUP 消息处理时触发 RunLoop 处理投递的回调。
-                 *
-                 * @param run_loop RunLoop 指针
-                 */
-                void SetRunLoop(IpcRunLoop* run_loop);
-
             private:
                 /**
                  * @brief 处理 HelloRequestV1
@@ -312,9 +303,6 @@ namespace Core
 
                 ShutdownRequestedCallback
                     on_shutdown_requested_; ///< 关闭请求回调（收到 GOODBYE 时触发）
-
-                IpcRunLoop* run_loop_ =
-                    nullptr; ///< RunLoop 指针（用于 WAKEUP 消息）
             };
 
         } // namespace Host

@@ -21,7 +21,6 @@ enum class HandshakeInterfaceId : uint32_t
     HANDSHAKE_IFACE_WELCOME = 2,   // 服务端响应握手
     HANDSHAKE_IFACE_READY = 3,     // 客户端就绪
     HANDSHAKE_IFACE_READY_ACK = 4, // 服务端确认就绪
-    HANDSHAKE_IFACE_WAKEUP = 5,    // 唤醒消息（新增）
     HANDSHAKE_IFACE_HEARTBEAT = 6, // 心跳
     HANDSHAKE_IFACE_GOODBYE = 7    // 断开连接
 };

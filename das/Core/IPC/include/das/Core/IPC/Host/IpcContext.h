@@ -113,8 +113,6 @@ namespace Core
 
                 bool IsConnected() const;
 
-                void PumpMessage();
-
                 void PostCallback(IDasAsyncCallback* callback);
 
                 DasResult RegisterLocalObject(
