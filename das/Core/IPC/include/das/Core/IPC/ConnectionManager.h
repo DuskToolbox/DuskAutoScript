@@ -83,6 +83,14 @@ public:
     IpcTransport* GetTransport(uint16_t session_id) const;
 
     /**
+     * @brief 获取连接的运行循环（用于异步消息发送）
+     *
+     * @param session_id 目标会话ID
+     * @return IpcRunLoop* 运行循环指针（不持有所有权），不存在返回 nullptr
+     */
+    IpcRunLoop* GetRunLoop(uint16_t session_id) const;
+
+    /**
      * @brief 注册 Host 进程的传输层
      *
      * 用于主进程转发消息到目标 Host。ConnectionManager 持有 Transport 的所有权。

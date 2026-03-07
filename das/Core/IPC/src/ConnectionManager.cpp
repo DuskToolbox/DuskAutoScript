@@ -1,5 +1,6 @@
 #include <atomic>
 #include <chrono>
+
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/IpcRunLoop.h>
@@ -154,6 +155,20 @@ IpcTransport* ConnectionManager::GetTransport(uint16_t session_id) const
     }
 
     return it->second.transport.get();
+}
+
+IpcRunLoop* ConnectionManager::GetRunLoop(uint16_t session_id) const
+{
+    std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+
+    auto it = impl_->connections_.find(session_id);
+    if (it == impl_->connections_.end())
+    {
+        DAS_CORE_LOG_WARN("Connection not found for session_id = {}", session_id);
+        return nullptr;
+    }
+
+    return it->second.run_loop;
 }
 
 DasResult ConnectionManager::RegisterHostTransport(

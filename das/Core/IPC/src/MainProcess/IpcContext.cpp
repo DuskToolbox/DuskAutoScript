@@ -1,5 +1,9 @@
+#include <das/Core/IPC/AsyncOperationImpl.h>
+#include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/HostLauncher.h>
+#include <das/Core/IPC/IpcCommandHandler.h>
+#include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/IPC/MainProcess/IpcContext.h>
@@ -11,6 +15,7 @@
 #include <das/DasPtr.hpp>
 #include <das/IDasAsyncCallback.h>
 #include <boost/asio/post.hpp>
+#include <cstring>
 DAS_NS_BEGIN
 namespace Core
 {
@@ -169,14 +174,59 @@ namespace Core
                     IDasAsyncLoadPluginOperation** pp_out_operation,
                     std::chrono::milliseconds      timeout)
                 {
-                    (void)session_id;
-                    (void)u8_plugin_path;
-                    (void)pp_out_operation;
-                    (void)timeout;
-                    // TODO: 实现 LoadPluginAsync
-                    // 需要 IpcTransport 支持多态才能使用 dynamic_cast
-                    DAS_CORE_LOG_ERROR("LoadPluginAsync: Not implemented");
-                    return DAS_E_NO_IMPLEMENTATION;
+                    if (!u8_plugin_path || !pp_out_operation)
+                    {
+                        return DAS_E_INVALID_ARGUMENT;
+                    }
+                    *pp_out_operation = nullptr;
+
+                    // 1. 获取目标 session 的 IpcRunLoop
+                    auto& conn_mgr = DAS::Core::IPC::ConnectionManager::GetInstance();
+                    auto* run_loop = conn_mgr.GetRunLoop(session_id);
+                    if (!run_loop)
+                    {
+                        DAS_CORE_LOG_ERROR(
+                            "LoadPluginAsync: No RunLoop found for session_id = {}",
+                            session_id);
+                        return DAS_E_IPC_OBJECT_NOT_FOUND;
+                    }
+
+                    // 2. 构建 LOAD_PLUGIN 请求
+                    std::string plugin_path(u8_plugin_path);
+                    uint16_t    path_len = static_cast<uint16_t>(plugin_path.size());
+
+                    // 载荷格式: uint16_t path_len + char[] path (不含 null terminator)
+                    std::vector<uint8_t> payload(sizeof(uint16_t) + path_len);
+                    std::memcpy(payload.data(), &path_len, sizeof(uint16_t));
+                    std::memcpy(
+                        payload.data() + sizeof(uint16_t),
+                        plugin_path.data(),
+                        path_len);
+
+                    // 3. 构建消息头
+                    auto header = MakeControlPlaneRequest(
+                        IpcCommandType::LOAD_PLUGIN,
+                        static_cast<uint32_t>(payload.size()),
+                        session_id);
+
+                    // 4. 发送异步请求
+                    auto sender = run_loop->SendMessageAsync(
+                        header,
+                        payload.data(),
+                        payload.size(),
+                        timeout);
+
+                    // 5. 包装为 IDasAsyncLoadPluginOperation
+                    auto op = MakeAsyncOperation<
+                        IDasAsyncLoadPluginOperation,
+                        ObjectId>(std::move(sender));
+
+                    *pp_out_operation = op.Get();
+                    if (*pp_out_operation)
+                    {
+                        (*pp_out_operation)->AddRef();
+                    }
+                    return DAS_S_OK;
                 }
 
             private:
