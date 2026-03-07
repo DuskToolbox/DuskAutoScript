@@ -25,6 +25,7 @@
 #include <boost/asio/execution.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/steady_timer.hpp>
+#include <boost/asio/executor_work_guard.hpp>
 
 #include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/IpcResponseSender.h>
@@ -421,6 +422,11 @@ public:
 
     /// 超时计时器（用于 pending call 超时管理）
     std::unique_ptr<boost::asio::steady_timer> timeout_timer_;
+
+    /// work guard 保持 io_context 运行（确保 Run() 阻塞直到 RequestStop()）
+    using WorkGuard = boost::asio::executor_work_guard<
+        boost::asio::io_context::executor_type>;
+    std::unique_ptr<WorkGuard> work_guard_;
 
     /// 消息处理器映射
     std::unordered_map<uint32_t, std::unique_ptr<IMessageHandler>> handlers_;

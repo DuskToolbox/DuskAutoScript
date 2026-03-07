@@ -86,6 +86,8 @@ DasResult IpcRunLoop::Initialize(
 DasResult IpcRunLoop::Shutdown()
 {
     Stop();
+    work_guard_.reset();
+    timeout_timer_.reset();
     async_transport_.reset();
     io_context_.reset();
     return DAS_S_OK;
@@ -99,6 +101,9 @@ DasResult IpcRunLoop::Stop()
     }
 
     running_.store(false);
+
+    // 重置 work guard，允许 io_context_->run() 返回
+    work_guard_.reset();
 
     {
         std::vector<PendingCallCompletion> completions;
@@ -124,6 +129,12 @@ DasResult IpcRunLoop::Stop()
         async_transport_->Close();
     }
 
+    // 停止 io_context
+    if (io_context_)
+    {
+        io_context_->stop();
+    }
+
     if (io_thread_.joinable())
     {
         io_thread_.join();
@@ -135,6 +146,10 @@ DasResult IpcRunLoop::Stop()
 void IpcRunLoop::RequestStop()
 {
     running_.store(false);
+
+    // 重置 work guard，允许 io_context_->run() 返回
+    work_guard_.reset();
+
     if (async_transport_)
     {
         async_transport_->Close();
@@ -571,6 +586,14 @@ void IpcRunLoop::StartAsyncReceive()
         return;
     }
 
+    // 只有在 transport 已连接时才启动接收循环
+    // 这避免了在未初始化的管道上接收导致的错误
+    if (!async_transport_->IsConnected())
+    {
+        DAS_CORE_LOG_DEBUG("Transport not connected, skipping receive loop");
+        return;
+    }
+
     // 使用 boost::asio::co_spawn 在 io_context 上异步运行接收协程
     // 这样不会阻塞 io_context 线程，实现真正的事件驱动
     boost::asio::co_spawn(
@@ -656,8 +679,9 @@ void IpcRunLoop::ScheduleTimeoutCheck()
     uint32_t timeout_ms = GetNearestDeadlineMs();
     if (timeout_ms == 0)
     {
-        // 没有超时任务，间隔 1 秒后重新检查
-        timeout_ms = 1000;
+        // 没有超时任务，不需要调度定时器
+        // 当有新的 pending call 时会重新调度
+        return;
     }
 
     timeout_timer_->expires_after(std::chrono::milliseconds(timeout_ms));
@@ -686,6 +710,10 @@ DasResult IpcRunLoop::Run()
 
     running_.store(true);
     exit_code_.store(DAS_S_OK);
+
+    // 创建 work guard 保持 io_context 运行
+    // 确保 Run() 阻塞直到 RequestStop() 被调用
+    work_guard_ = std::make_unique<WorkGuard>(io_context_->get_executor());
 
     // 启动异步接收链
     StartAsyncReceive();
