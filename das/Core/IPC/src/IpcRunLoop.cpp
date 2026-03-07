@@ -132,7 +132,18 @@ DasResult IpcRunLoop::Stop()
     return DAS_S_OK;
 }
 
-void IpcRunLoop::RequestStop() { running_.store(false); }
+void IpcRunLoop::RequestStop()
+{
+    running_.store(false);
+    if (async_transport_)
+    {
+        async_transport_->Close();
+    }
+    if (io_context_)
+    {
+        io_context_->stop();
+    }
+}
 
 void IpcRunLoop::RegisterHandler(std::unique_ptr<IMessageHandler> handler)
 {
@@ -555,62 +566,65 @@ DasResult IpcRunLoop::WaitForShutdown()
 
 void IpcRunLoop::StartAsyncReceive()
 {
-    if (!io_context_ || !async_transport_)
+    if (!io_context_ || !async_transport_ || !running_.load())
     {
         return;
     }
 
-    // 使用 transport 的异步接收能力
-    auto result_sender = async_transport_->Receive();
-    auto result_opt = stdexec::sync_wait(std::move(result_sender));
-
-    if (!result_opt.has_value())
+    // 使用 boost::asio::post 将接收操作调度到 io_context
+    // 这样 io_context_->run() 会立即开始运行，而不是被 sync_wait 阻塞
+    boost::asio::post(*io_context_, [this]()
     {
-        // 如果没有数据，继续接收
-        boost::asio::post(*io_context_, [this]() { StartAsyncReceive(); });
-        return;
-    }
+        if (!running_.load()) return;
 
-    auto&& [ec, result_variant] = std::move(*result_opt);
+        auto result_sender = async_transport_->Receive();
+        auto result_opt = stdexec::sync_wait(std::move(result_sender));
 
-    if (ec)
-    {
-        try
+        if (!result_opt.has_value())
         {
-            std::rethrow_exception(ec);
+            // 继续接收
+            StartAsyncReceive();
+            return;
         }
-        catch (const std::exception& e)
+
+        auto&& [ec, result_variant] = std::move(*result_opt);
+
+        if (ec)
         {
-            DAS_CORE_LOG_ERROR("Receive failed: {}", e.what());
+            try
+            {
+                std::rethrow_exception(ec);
+            }
+            catch (const std::exception& e)
+            {
+                DAS_CORE_LOG_ERROR("Receive failed: {}", e.what());
+            }
+            StartAsyncReceive();
+            return;
         }
+
+        if (result_variant.index() == 0)
+        {
+            DasResult error_code = std::get<0>(result_variant);
+            DAS_CORE_LOG_ERROR("Receive failed with error: {}", error_code);
+            StartAsyncReceive();
+            return;
+        }
+
+        auto&& [header, body] = std::get<1>(result_variant);
+
+        if (header.Raw().message_type == static_cast<uint8_t>(MessageType::RESPONSE))
+        {
+            CompletePendingCall(header.Raw().call_id, DAS_S_OK, std::move(body));
+        }
+        else
+        {
+            DispatchToHandler(header.Raw(), body);
+        }
+
         // 继续接收
-        boost::asio::post(*io_context_, [this]() { StartAsyncReceive(); });
-        return;
-    }
-
-    if (result_variant.index() == 0)
-    {
-        DasResult error_code = std::get<0>(result_variant);
-        DAS_CORE_LOG_ERROR("Receive failed with error: {}", error_code);
-        // 继续接收
-        boost::asio::post(*io_context_, [this]() { StartAsyncReceive(); });
-        return;
-    }
-
-    auto&& [header, body] = std::get<1>(result_variant);
-
-    if (header.Raw().message_type
-        == static_cast<uint8_t>(MessageType::RESPONSE))
-    {
-        CompletePendingCall(header.Raw().call_id, DAS_S_OK, std::move(body));
-    }
-    else
-    {
-        DispatchToHandler(header.Raw(), body);
-    }
-
-    // 继续接收
-    boost::asio::post(*io_context_, [this]() { StartAsyncReceive(); });
+        StartAsyncReceive();
+    });
 }
 
 void IpcRunLoop::ScheduleTimeoutCheck()

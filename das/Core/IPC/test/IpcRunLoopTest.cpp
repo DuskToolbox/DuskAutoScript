@@ -53,7 +53,7 @@ protected:
 
     bool SetupRunLoopWithTransport()
     {
-        return runloop_->Initialize(host_queue_name_, plugin_queue_name_, true)
+        return runloop_->Initialize()
                == DAS_S_OK;
     }
 
