@@ -117,6 +117,44 @@ public:
     */
 };
 
+/**
+ * @brief 管理 Python 解释器生命周期的单例类
+ *
+ * 提供全局唯一的 Python 解释器管理入口点，支持懒初始化和幂等的 Initialize() 调用。
+ * 使用 Meyer's Singleton 模式实现线程安全的单例。
+ */
+class PythonManager
+{
+public:
+    /**
+     * @brief 获取 PythonManager 单例实例
+     * @return PythonManager 的唯一实例引用
+     */
+    static PythonManager& GetInstance();
+
+    /**
+     * @brief 初始化 Python 解释器（幂等操作）
+     * @return 初始化是否成功
+     *
+     * 如果解释器已经初始化，此函数不会重复初始化，直接返回 true。
+     * 使用 Py_InitializeEx(0) 而非 Py_Initialize() 以避免注册信号处理程序。
+     */
+    bool Initialize();
+
+    /**
+     * @brief 检查 Python 解释器是否已初始化
+     * @return 是否已初始化
+     */
+    bool IsInitialized() const;
+
+private:
+    PythonManager() = default;
+    ~PythonManager() = default; // 不调用 Py_Finalize，与 JvmManager 模式一致
+
+    PythonManager(const PythonManager&) = delete;
+    PythonManager& operator=(const PythonManager&) = delete;
+};
+
 DAS_API void RaisePythonInterpreterException();
 
 DAS_NS_PYTHONHOST_END
