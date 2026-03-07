@@ -456,6 +456,14 @@ namespace Core
                     });
                 }
 
+                DasResult RegisterLocalObject(
+                    void*     object_ptr,
+                    ObjectId& out_object_id)
+                {
+                    if (!object_manager_) return DAS_E_FAIL;
+                    return object_manager_->RegisterLocalObject(object_ptr, out_object_id);
+                }
+
                 void PumpMessage()
                 {
                     if (run_loop_)
@@ -626,6 +634,13 @@ namespace Core
             void IpcContext::PostCallback(IDasAsyncCallback* callback)
             {
                 impl_->PostCallback(callback);
+            }
+
+            DasResult IpcContext::RegisterLocalObject(
+                void*     object_ptr,
+                ObjectId& out_object_id)
+            {
+                return impl_->RegisterLocalObject(object_ptr, out_object_id);
             }
 
             void IpcContext::PumpMessage() { impl_->PumpMessage(); }

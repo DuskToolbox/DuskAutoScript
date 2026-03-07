@@ -76,6 +76,17 @@ namespace Core
                  */
                 virtual void PostCallback(IDasAsyncCallback* callback) = 0;
 
+                /**
+                 * @brief 注册本地对象到分布式对象管理器
+                 *
+                 * @param object_ptr 对象指针
+                 * @param out_object_id 输出分配的对象ID
+                 * @return DasResult
+                 */
+                virtual DasResult RegisterLocalObject(
+                    void*     object_ptr,
+                    ObjectId& out_object_id) = 0;
+
             protected:
                 virtual ~IIpcContext() = default;
 

@@ -122,6 +122,10 @@ namespace Core
 
                 void PostCallback(IDasAsyncCallback* callback);
 
+                DasResult RegisterLocalObject(
+                    void*     object_ptr,
+                    ObjectId& out_object_id);
+
             private:
                 std::unique_ptr<IpcContextImpl> impl_;
             };

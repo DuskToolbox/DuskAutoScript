@@ -209,7 +209,7 @@ void RegisterLoadPluginHandler(DAS::Core::IPC::Host::IIpcContext* ctx)
 
             auto                     plugin_ptr = result.value();
             DAS::Core::IPC::ObjectId object_id;
-            DasResult reg_result = ctx->GetObjectManager().RegisterLocalObject(
+            DasResult reg_result = ctx->RegisterLocalObject(
                 plugin_ptr.Get(),
                 object_id);
 
