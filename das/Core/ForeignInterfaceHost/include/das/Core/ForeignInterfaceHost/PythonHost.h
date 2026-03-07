@@ -3,6 +3,8 @@
 
 #ifdef DAS_EXPORT_PYTHON
 
+#include <atomic>
+
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
 
 /**
@@ -87,18 +89,16 @@ public:
 class PythonRuntime final : public IForeignLanguageRuntime
 {
 private:
-    PyObjectPtr p_plugin_module;
+    std::atomic<uint32_t> ref_count_{1};
+    PyObjectPtr            p_plugin_module;
 
 public:
     PythonRuntime();
     ~PythonRuntime();
 
-    uint32_t  AddRef() override { return 1; };
-    uint32_t  Release() override { return 1; };
-    DasResult QueryInterface(const DasGuid&, void**) override
-    {
-        return DAS_E_NO_IMPLEMENTATION;
-    }
+    uint32_t  AddRef() override;
+    uint32_t  Release() override;
+    DasResult QueryInterface(const DasGuid& iid, void** pp_object) override;
 
     auto LoadPlugin(const std::filesystem::path& path)
         -> DAS::Utils::Expected<DasPtr<IDasBase>> override;
