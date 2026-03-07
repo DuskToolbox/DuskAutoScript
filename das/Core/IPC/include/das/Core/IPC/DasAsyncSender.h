@@ -25,6 +25,7 @@
 
 #include <das/Core/IPC/ObjectId.h>
 #include <das/DasPtr.hpp>
+#include <das/IDasAsyncCallback.h>
 #include <das/IDasAsyncHandshakeOperation.h>
 #include <das/IDasAsyncLoadPluginOperation.h>
 #include <optional>
@@ -121,6 +122,107 @@ namespace Core::IPC
         Context& ctx) noexcept
     {
         return ScheduleSender<Context>{&ctx};
+    }
+
+    //=============================================================================
+    // IpcContextScheduleSender — 为任何有 PostCallback 方法的 Context 提供的 schedule sender
+    //=============================================================================
+
+    /**
+     * @brief 为有 PostCallback 方法的 Context 实现的 schedule sender
+     *
+     * 替代旧的 ScheduleSender<Context> 模板，直接使用 PostCallback。
+     * 支持任何实现了 PostCallback(IDasAsyncCallback*) 方法的类型。
+     */
+    template <typename Context>
+    class IpcContextScheduleSender
+    {
+    public:
+        using sender_concept = stdexec::sender_t;
+        using completion_signatures =
+            stdexec::completion_signatures<stdexec::set_value_t()>;
+
+    private:
+        Context* ctx_;
+
+        template <class Receiver>
+        struct OperationState
+        {
+            Context* ctx_;
+            Receiver rcvr_;
+
+            //=====================================================================
+            // CallbackAdapter — 将 IDasAsyncCallback 桥接到 stdexec set_value
+            //=====================================================================
+            struct CallbackAdapter : IDasAsyncCallback
+            {
+                std::atomic<uint32_t> ref_{1};
+                Receiver              rcvr_;
+
+                explicit CallbackAdapter(Receiver rcvr) : rcvr_(std::move(rcvr)) {}
+
+                uint32_t AddRef() override { return ++ref_; }
+
+                uint32_t Release() override
+                {
+                    auto r = --ref_;
+                    if (r == 0)
+                        delete this;
+                    return r;
+                }
+
+                DasResult QueryInterface(const DasGuid& iid, void** pp) override
+                {
+                    if (iid == DasIidOf<IDasAsyncCallback>())
+                    {
+                        AddRef();
+                        *pp = this;
+                        return DAS_S_OK;
+                    }
+                    return DAS_E_NO_INTERFACE;
+                }
+
+                DasResult Do() noexcept override
+                {
+                    stdexec::set_value(std::move(rcvr_));
+                    return DAS_S_OK;
+                }
+            };
+
+            friend void tag_invoke(stdexec::start_t, OperationState& self) noexcept
+            {
+                auto* adapter = new CallbackAdapter(std::move(self.rcvr_));
+                self.ctx_->PostCallback(adapter);
+                adapter->Release(); // PostCallback 会 AddRef
+            }
+        };
+
+        template <class Receiver>
+        friend auto tag_invoke(
+            stdexec::connect_t,
+            IpcContextScheduleSender self,
+            Receiver                 rcvr) noexcept
+        {
+            return OperationState<Receiver>{self.ctx_, std::move(rcvr)};
+        }
+
+    public:
+        explicit IpcContextScheduleSender(Context* ctx) noexcept : ctx_(ctx) {}
+
+        ScheduleEnv<Context> get_env() const noexcept
+        {
+            return ScheduleEnv<Context>{ctx_};
+        }
+    };
+
+    // 模板化的 tag_invoke，支持任何有 PostCallback 方法的 Context
+    template <typename Context>
+        requires requires(Context& c, IDasAsyncCallback* cb) { c.PostCallback(cb); }
+    IpcContextScheduleSender<Context> tag_invoke(
+        stdexec::schedule_t,
+        Context& ctx) noexcept
+    {
+        return IpcContextScheduleSender<Context>{&ctx};
     }
 
     //=============================================================================
@@ -357,7 +459,7 @@ namespace Core::IPC
     }
 
     template <typename Context, typename Sender>
-    auto wait(Context& ctx, Sender&& sender)
+    auto wait(Context& /*ctx*/, Sender&& sender)
         -> std::optional<stdexec::value_types_of_t<
             std::decay_t<Sender>,
             stdexec::env<>,
