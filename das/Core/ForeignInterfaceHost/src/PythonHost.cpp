@@ -34,6 +34,18 @@ DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
 DAS_NS_PYTHONHOST_BEGIN
 
+// ============================================================================
+// PyGILGuard 实现
+// ============================================================================
+
+PyGILGuard::PyGILGuard() : state_(::PyGILState_Ensure()) {}
+
+PyGILGuard::~PyGILGuard() { ::PyGILState_Release(state_); }
+
+// ============================================================================
+// 工厂函数
+// ============================================================================
+
 auto CreateForeignLanguageRuntime(
     [[maybe_unused]] const ForeignLanguageRuntimeFactoryDesc& desc)
     -> DAS::Utils::Expected<DasPtr<IForeignLanguageRuntime>>
