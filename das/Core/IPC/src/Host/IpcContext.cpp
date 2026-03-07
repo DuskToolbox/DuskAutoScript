@@ -13,7 +13,10 @@
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
+#include <das/DasPtr.hpp>
+#include <das/IDasAsyncCallback.h>
 #include <das/Utils/fmt.h>
+#include <boost/asio/post.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -442,6 +445,17 @@ namespace Core
                     }
                 }
 
+                void PostCallback(IDasAsyncCallback* callback)
+                {
+                    if (!callback || !run_loop_) return;
+
+                    // DasPtr 在 post 之前获取所有权（AddRef），保证生命周期安全
+                    DasPtr<IDasAsyncCallback> ptr(callback);
+                    boost::asio::post(run_loop_->GetIoContext(), [ptr = std::move(ptr)]() {
+                        ptr->Do();
+                    });
+                }
+
                 void PumpMessage()
                 {
                     if (run_loop_)
@@ -607,6 +621,11 @@ namespace Core
                 void* user_data)
             {
                 impl_->PostRequest(callback, user_data);
+            }
+
+            void IpcContext::PostCallback(IDasAsyncCallback* callback)
+            {
+                impl_->PostCallback(callback);
             }
 
             void IpcContext::PumpMessage() { impl_->PumpMessage(); }

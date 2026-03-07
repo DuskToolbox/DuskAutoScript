@@ -116,9 +116,11 @@ namespace Core
 
                 void PostRequest(
                     void (*callback)(void* user_data),
-                    void* user_data) override;
+                    void* user_data);
 
-                void PumpMessage() override;
+                void PumpMessage();
+
+                void PostCallback(IDasAsyncCallback* callback);
 
             private:
                 std::unique_ptr<IpcContextImpl> impl_;

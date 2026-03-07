@@ -3,6 +3,7 @@
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/DasApi.h>
+#include <das/IDasAsyncCallback.h>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -64,6 +65,16 @@ namespace Core
                 virtual void RegisterCommandHandler(
                     uint32_t       cmd_type,
                     CommandHandler handler) = 0;
+
+                /**
+                 * @brief 将回调投递到 io_context 线程执行
+                 *
+                 * 使用 DasPtr 管理 callback 生命周期，保证在 post
+                 * 之前获取所有权，确保回调在执行时有效。
+                 *
+                 * @param callback 回调接口指针（调用者传递所有权）
+                 */
+                virtual void PostCallback(IDasAsyncCallback* callback) = 0;
 
             protected:
                 virtual ~IIpcContext() = default;
