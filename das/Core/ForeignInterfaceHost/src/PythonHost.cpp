@@ -20,6 +20,8 @@ DAS_IGNORE_UNUSED_PARAMETER
 
 DAS_DISABLE_WARNING_END
 
+#include <fstream>
+#include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <tuple>
 #include <utility>
@@ -162,6 +164,66 @@ auto GetPreferredSeparator() -> const std::u8string&
 }
 
 DAS_NS_ANONYMOUS_DETAILS_END
+
+// ============================================================================
+// LoadPluginConfig - 解析插件配置文件
+// ============================================================================
+
+DasResult LoadPluginConfig(
+    const std::filesystem::path& json_path,
+    std::string&                 out_entry_point)
+{
+    std::ifstream file(json_path);
+    if (!file.is_open())
+    {
+        DAS_CORE_LOG_ERROR("Failed to open plugin config: {}", json_path.string());
+        return DAS_E_FILE_NOT_FOUND;
+    }
+
+    try
+    {
+        nlohmann::json config = nlohmann::json::parse(file);
+
+        if (config.contains("entryPoint"))
+        {
+            config["entryPoint"].get_to(out_entry_point);
+        }
+        else
+        {
+            DAS_CORE_LOG_ERROR(
+                "Plugin config missing 'entryPoint' field: {}",
+                json_path.string());
+            return DAS_E_FAIL;
+        }
+
+        return DAS_S_OK;
+    }
+    catch (const nlohmann::json::exception& e)
+    {
+        DAS_CORE_LOG_ERROR("Failed to parse plugin config: {}", e.what());
+        return DAS_E_FAIL;
+    }
+}
+
+// ============================================================================
+// ParseEntryPoint - 解析入口点字符串
+// ============================================================================
+
+std::pair<std::string, std::string> ParseEntryPoint(const std::string& entry_point)
+{
+    // "my_package.main.create_plugin" -> ("my_package.main", "create_plugin")
+    auto last_dot = entry_point.rfind('.');
+    if (last_dot == std::string::npos)
+    {
+        DAS_CORE_LOG_ERROR("Invalid entry point format: {}", entry_point);
+        throw PythonException("Invalid entry point format: " + entry_point);
+    }
+
+    return {
+        entry_point.substr(0, last_dot),     // module_path
+        entry_point.substr(last_dot + 1)     // function_name
+    };
+}
 
 class PythonResult : public DAS::Utils::NonCopyableAndNonMovable
 {
@@ -369,6 +431,36 @@ PythonRuntime::PythonRuntime()
 }
 
 PythonRuntime::~PythonRuntime() = default;
+
+uint32_t PythonRuntime::AddRef() { return ++ref_count_; }
+
+uint32_t PythonRuntime::Release()
+{
+    const auto count = --ref_count_;
+    if (count == 0)
+    {
+        delete this;
+    }
+    return count;
+}
+
+DasResult PythonRuntime::QueryInterface(const DasGuid& iid, void** pp_object)
+{
+    if (!pp_object)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    // 只检查 DAS_IID_BASE，与 JavaHost 保持一致
+    if (iid == DAS_IID_BASE)
+    {
+        *pp_object = static_cast<IForeignLanguageRuntime*>(this);
+        AddRef();
+        return DAS_S_OK;
+    }
+
+    return DAS_E_NO_INTERFACE;
+}
 
 auto PythonRuntime::LoadPlugin(
     [[maybe_unused]] const std::filesystem::path& path)
