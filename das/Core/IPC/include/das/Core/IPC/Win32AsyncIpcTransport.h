@@ -78,18 +78,22 @@ public:
 
     void SetSharedMemoryPool(SharedMemoryPool* pool);
 
+    /// 直接返回协程接口（用于 IpcRunLoop 的事件驱动模式）
+    [[nodiscard]]
+    boost::asio::awaitable<std::variant<DasResult, AsyncIpcMessage>>
+    ReceiveCoroutine();
+
+    [[nodiscard]]
+    boost::asio::awaitable<DasResult> SendCoroutine(
+        const ValidatedIPCMessageHeader& header,
+        const uint8_t*                   body,
+        size_t                           body_size);
+
 private:
     DasResult CreateNamedPipe(const std::string& pipe_name, bool is_read_pipe);
     DasResult ConnectToNamedPipe(
         const std::string& pipe_name,
         bool               is_read_pipe);
-
-    boost::asio::awaitable<std::variant<DasResult, AsyncIpcMessage>>
-                                      ReceiveCoroutine();
-    boost::asio::awaitable<DasResult> SendCoroutine(
-        const ValidatedIPCMessageHeader& header,
-        const uint8_t*                   body,
-        size_t                           body_size);
 
     boost::asio::io_context&            io_context_;
     boost::asio::windows::stream_handle read_pipe_;

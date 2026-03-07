@@ -571,60 +571,79 @@ void IpcRunLoop::StartAsyncReceive()
         return;
     }
 
-    // 使用 boost::asio::post 将接收操作调度到 io_context
-    // 这样 io_context_->run() 会立即开始运行，而不是被 sync_wait 阻塞
-    boost::asio::post(*io_context_, [this]()
-    {
-        if (!running_.load()) return;
-
-        auto result_sender = async_transport_->Receive();
-        auto result_opt = stdexec::sync_wait(std::move(result_sender));
-
-        if (!result_opt.has_value())
+    // 使用 boost::asio::co_spawn 在 io_context 上异步运行接收协程
+    // 这样不会阻塞 io_context 线程，实现真正的事件驱动
+    boost::asio::co_spawn(
+        *io_context_,
+        [this]() -> boost::asio::awaitable<void>
         {
-            // 继续接收
-            StartAsyncReceive();
-            return;
-        }
-
-        auto&& [ec, result_variant] = std::move(*result_opt);
-
-        if (ec)
-        {
-            try
+            while (running_.load())
             {
-                std::rethrow_exception(ec);
+                try
+                {
+                    // 直接使用 transport 的协程接口
+                    auto result = co_await async_transport_->ReceiveCoroutine();
+
+                    if (!running_.load())
+                    {
+                        co_return;
+                    }
+
+                    if (result.index() == 0)
+                    {
+                        // 错误情况
+                        DasResult error_code = std::get<0>(result);
+                        if (error_code != DAS_S_OK)
+                        {
+                            DAS_CORE_LOG_ERROR("Receive failed with error: {}", error_code);
+                        }
+                        co_return;
+                    }
+
+                    // 成功接收消息
+                    auto&& [header, body] = std::get<1>(result);
+
+                    if (header.Raw().message_type == static_cast<uint8_t>(MessageType::RESPONSE))
+                    {
+                        CompletePendingCall(header.Raw().call_id, DAS_S_OK, std::move(body));
+                    }
+                    else
+                    {
+                        DispatchToHandler(header.Raw(), body);
+                    }
+                }
+                catch (const boost::system::system_error& e)
+                {
+                    // 当 Close() 被调用时，async_read 会抛出 operation_aborted 异常
+                    if (e.code() == boost::asio::error::operation_aborted)
+                    {
+                        DAS_CORE_LOG_DEBUG("Receive loop stopped - operation aborted");
+                        // 正常退出，不设置 running_ = false，由 RequestStop() 负责
+                        co_return;
+                    }
+                    else if (e.code() == boost::asio::error::eof)
+                    {
+                        // 管道关闭或无数据可读，这是正常情况（如对方进程退出）
+                        DAS_CORE_LOG_DEBUG("Receive loop stopped - EOF reached");
+                        co_return;
+                    }
+                    else
+                    {
+                        DAS_CORE_LOG_ERROR("Receive failed with system error: {}", e.what());
+                        // 非正常错误，直接退出循环，但不改变 running_ 状态
+                        // 让 io_context_->run() 因为没有更多工作而返回
+                        co_return;
+                    }
+                }
+                catch (const std::exception& e)
+                {
+                    DAS_CORE_LOG_ERROR("Receive failed with exception: {}", e.what());
+                    // 异常退出，不改变 running_ 状态
+                    co_return;
+                }
             }
-            catch (const std::exception& e)
-            {
-                DAS_CORE_LOG_ERROR("Receive failed: {}", e.what());
-            }
-            StartAsyncReceive();
-            return;
-        }
-
-        if (result_variant.index() == 0)
-        {
-            DasResult error_code = std::get<0>(result_variant);
-            DAS_CORE_LOG_ERROR("Receive failed with error: {}", error_code);
-            StartAsyncReceive();
-            return;
-        }
-
-        auto&& [header, body] = std::get<1>(result_variant);
-
-        if (header.Raw().message_type == static_cast<uint8_t>(MessageType::RESPONSE))
-        {
-            CompletePendingCall(header.Raw().call_id, DAS_S_OK, std::move(body));
-        }
-        else
-        {
-            DispatchToHandler(header.Raw(), body);
-        }
-
-        // 继续接收
-        StartAsyncReceive();
-    });
+        },
+        boost::asio::detached);
 }
 
 void IpcRunLoop::ScheduleTimeoutCheck()
