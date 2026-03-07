@@ -1,7 +1,10 @@
 #pragma once
+#include <chrono>
 #include <das/Core/IPC/DasAsyncSender.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
 #include <das/DasApi.h>
+#include <das/IDasAsyncCallback.h>
+#include <das/IDasAsyncLoadPluginOperation.h>
 #include <memory>
 #include <stdexec/execution.hpp>
 DAS_NS_BEGIN
@@ -52,6 +55,31 @@ namespace Core
                  */
                 virtual DasResult CreateHostLauncher(
                     IHostLauncher** pp_out_launcher) = 0;
+
+                /**
+                 * @brief 异步加载插件到指定 Host 进程
+                 *
+                 * @param session_id 目标 Host 进程的 session_id
+                 * @param u8_plugin_path 插件 manifest 路径 (UTF-8)
+                 * @param pp_out_operation 输出：异步操作对象
+                 * @param timeout 超时时间（默认30秒）
+                 * @return DasResult DAS_S_OK 成功创建操作
+                 */
+                virtual DasResult LoadPluginAsync(
+                    uint16_t                       session_id,
+                    const char*                    u8_plugin_path,
+                    IDasAsyncLoadPluginOperation** pp_out_operation,
+                    std::chrono::milliseconds      timeout = std::chrono::seconds(30)) = 0;
+
+                /**
+                 * @brief 将回调投递到 io_context 线程执行
+                 *
+                 * 使用 DasPtr 管理 callback 生命周期，保证在 post
+                 * 之前获取所有权，确保回调在执行时有效。
+                 *
+                 * @param callback 回调接口指针（调用者传递所有权）
+                 */
+                virtual void PostCallback(IDasAsyncCallback* callback) = 0;
 
             protected:
                 virtual ~IIpcContext() = default;

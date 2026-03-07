@@ -8,6 +8,9 @@
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/IPC/SessionCoordinator.h>
 #include <das/Core/Logger/Logger.h>
+#include <das/DasPtr.hpp>
+#include <das/IDasAsyncCallback.h>
+#include <boost/asio/post.hpp>
 DAS_NS_BEGIN
 namespace Core
 {
@@ -128,6 +131,21 @@ namespace Core
                     }
                 }
 
+                void PostCallback(IDasAsyncCallback* callback)
+                {
+                    if (!callback) return;
+
+                    auto& server = MainProcessServer::GetInstance();
+                    auto* run_loop = server.GetRunLoop();
+                    if (!run_loop) return;
+
+                    // DasPtr 在 post 之前获取所有权（AddRef），保证生命周期安全
+                    DasPtr<IDasAsyncCallback> ptr(callback);
+                    boost::asio::post(run_loop->GetIoContext(), [ptr = std::move(ptr)]() {
+                        ptr->Do();
+                    });
+                }
+
                 void PumpMessage()
                 {
                     auto& server = MainProcessServer::GetInstance();
@@ -143,6 +161,22 @@ namespace Core
                         run_loop->ProcessPostedCallbacks();
                         run_loop->TickPendingSenders();
                     }
+                }
+
+                DasResult LoadPluginAsync(
+                    uint16_t                       session_id,
+                    const char*                    u8_plugin_path,
+                    IDasAsyncLoadPluginOperation** pp_out_operation,
+                    std::chrono::milliseconds      timeout)
+                {
+                    (void)session_id;
+                    (void)u8_plugin_path;
+                    (void)pp_out_operation;
+                    (void)timeout;
+                    // TODO: 实现 LoadPluginAsync
+                    // 需要 IpcTransport 支持多态才能使用 dynamic_cast
+                    DAS_CORE_LOG_ERROR("LoadPluginAsync: Not implemented");
+                    return DAS_E_NO_IMPLEMENTATION;
                 }
 
             private:
@@ -205,6 +239,24 @@ namespace Core
 
                 *pp_out_launcher = new HostLauncher(run_loop->GetIoContext());
                 return DAS_S_OK;
+            }
+
+            void IpcContext::PostCallback(IDasAsyncCallback* callback)
+            {
+                impl_->PostCallback(callback);
+            }
+
+            DasResult IpcContext::LoadPluginAsync(
+                uint16_t                       session_id,
+                const char*                    u8_plugin_path,
+                IDasAsyncLoadPluginOperation** pp_out_operation,
+                std::chrono::milliseconds      timeout)
+            {
+                return impl_->LoadPluginAsync(
+                    session_id,
+                    u8_plugin_path,
+                    pp_out_operation,
+                    timeout);
             }
 
             // ====== C API 实现 ======

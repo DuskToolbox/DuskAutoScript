@@ -1,8 +1,10 @@
 #ifndef DAS_CORE_IPC_MAIN_PROCESS_IPC_CONTEXT_H
 #define DAS_CORE_IPC_MAIN_PROCESS_IPC_CONTEXT_H
 
+#include <chrono>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/DasApi.h>
+#include <das/IDasAsyncLoadPluginOperation.h>
 #include <memory>
 
 DAS_NS_BEGIN
@@ -63,6 +65,14 @@ namespace Core
 
                 DasResult CreateHostLauncher(
                     IHostLauncher** pp_out_launcher) override;
+
+                DasResult LoadPluginAsync(
+                    uint16_t                       session_id,
+                    const char*                    u8_plugin_path,
+                    IDasAsyncLoadPluginOperation** pp_out_operation,
+                    std::chrono::milliseconds      timeout = std::chrono::seconds(30)) override;
+
+                void PostCallback(IDasAsyncCallback* callback) override;
 
             private:
                 std::unique_ptr<IpcContextImpl> impl_;
