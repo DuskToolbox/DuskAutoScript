@@ -11,6 +11,12 @@
  */
 struct _object;
 
+/**
+ * @brief PyGILState_STATE 的前向声明
+ * Python.h 中定义为枚举类型，用于保存 GIL 状态
+ */
+enum PyGILState_STATE;
+
 #define DAS_NS_PYTHONHOST_BEGIN                                                \
     namespace PythonHost                                                       \
     {
@@ -24,6 +30,30 @@ DAS_NS_PYTHONHOST_BEGIN
 DAS_API auto CreateForeignLanguageRuntime(
     const ForeignLanguageRuntimeFactoryDesc& desc)
     -> DAS::Utils::Expected<DasPtr<IForeignLanguageRuntime>>;
+
+/**
+ * @brief RAII 包装类，用于自动获取和释放 Python GIL
+ *
+ * 构造函数调用 PyGILState_Ensure() 获取 GIL
+ * 析构函数调用 PyGILState_Release() 释放 GIL
+ *
+ * 参考 JavaHost.cpp 中的 JniEnvGuard 实现模式
+ */
+class PyGILGuard
+{
+public:
+    PyGILGuard();
+    ~PyGILGuard();
+
+    // 禁止拷贝和移动
+    PyGILGuard(const PyGILGuard&) = delete;
+    PyGILGuard& operator=(const PyGILGuard&) = delete;
+    PyGILGuard(PyGILGuard&&) = delete;
+    PyGILGuard& operator=(PyGILGuard&&) = delete;
+
+private:
+    PyGILState_STATE state_;
+};
 
 class PyObjectPtr
 {
