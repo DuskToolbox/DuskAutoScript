@@ -56,47 +56,6 @@ struct PendingCallState
     PendingCallCompletion                 on_complete;
 };
 
-
-//=============================================================================
-// IpcScheduler — stdexec scheduler，基于 PostRequest 实现
-//=============================================================================
-
-class IpcRunLoop; // forward
-
-/**
- * @brief stdexec scheduler，将工作投递到 IpcRunLoop 线程
- */
-struct IpcScheduler
-{
-    using scheduler_concept = stdexec::scheduler_t;
-
-    IpcRunLoop* loop_;
-
-    friend bool operator==(IpcScheduler a, IpcScheduler b) noexcept
-    {
-        return a.loop_ == b.loop_;
-    }
-    friend bool operator!=(IpcScheduler a, IpcScheduler b) noexcept
-    {
-        return a.loop_ != b.loop_;
-    }
-};
-
-/**
- * @brief sender 环境，携带 completion_scheduler 信息
- */
-struct IpcScheduleEnv
-{
-    IpcRunLoop* loop_;
-
-    friend IpcScheduler tag_invoke(
-        stdexec::get_completion_scheduler_t<stdexec::set_value_t>,
-        const IpcScheduleEnv& self) noexcept
-    {
-        return IpcScheduler{self.loop_};
-    }
-};
-
 //=============================================================================
 // AwaitResponseSender — 真正的异步 IPC 响应等待 sender
 //=============================================================================
@@ -171,8 +130,6 @@ struct AwaitResponseSender
     {
         return {self.loop_, self.call_id_, self.timeout_, std::move(rcvr)};
     }
-
-    IpcScheduleEnv get_env() const noexcept { return IpcScheduleEnv{loop_}; }
 };
 
 //=============================================================================
@@ -506,19 +463,6 @@ inline stdexec::sender auto IpcRunLoop::SendMessageAsync(
     }
 
     return AwaitResponseSender{this, call_id, timeout};
-}
-
-DAS_CORE_IPC_NS_END
-
-//=============================================================================
-// ABI helper — reconstruct IpcScheduler from opaque handle
-//=============================================================================
-
-DAS_CORE_IPC_NS_BEGIN
-
-inline IpcScheduler MakeSchedulerFromHandle(void* handle) noexcept
-{
-    return IpcScheduler{static_cast<IpcRunLoop*>(handle)};
 }
 
 DAS_CORE_IPC_NS_END
