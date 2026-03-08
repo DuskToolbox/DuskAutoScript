@@ -691,46 +691,40 @@ auto PythonRuntime::LoadPlugin(const std::filesystem::path& path)
         }
 
         // 7. 导入模块
-        PyObjectPtr module;
-        PythonResult{PyObjectPtr::Attach(
+        p_plugin_module = PythonResult{PyObjectPtr::Attach(
             PyUnicode_FromString(module_path.c_str()))}
-            .then([&module](PyObject* module_name) {
-                module = PyObjectPtr::Attach(PyImport_Import(module_name));
-                return module;
-            });
-
-        // 8. 存储模块引用
-        p_plugin_module = module;
+            .then([](PyObject* module_name) {
+                return PyObjectPtr::Attach(PyImport_Import(module_name));
+            })
+            .CheckAndGet();
 
         DAS_CORE_LOG_INFO("Successfully imported module: {}", module_path);
 
         // 9. 获取入口函数
-        PyObjectPtr entry_func;
-        PythonResult{PyObjectPtr::Attach(
+        auto entry_func = PythonResult{PyObjectPtr::Attach(
             PyObject_GetAttrString(p_plugin_module.Get(), function_name.c_str()))}
-            .then([&entry_func, &function_name](PyObject* func) {
+            .then([&function_name](PyObject* func) {
                 if (!PyCallable_Check(func))
                 {
                     DAS_CORE_LOG_ERROR("Entry point '{}' is not callable", function_name);
                     throw PythonException("Entry point is not callable: " + function_name);
                 }
-                entry_func = PyObjectPtr::Attach(func);
-                return entry_func;
-            });
+                return PyObjectPtr::Attach(func);
+            })
+            .CheckAndGet();
 
         // 10. 调用入口函数（无参数）
-        PyObjectPtr result_obj;
-        PythonResult{PyObjectPtr::Attach(
+        auto result_obj = PythonResult{PyObjectPtr::Attach(
             PyObject_CallObject(entry_func.Get(), nullptr))}
-            .then([&result_obj, &function_name](PyObject* obj) {
-                if (!obj || obj == Py_None)
+            .then([&function_name](PyObject* obj) {
+                if (obj == Py_None)
                 {
-                    DAS_CORE_LOG_ERROR("Entry function '{}' returned None or null", function_name);
-                    throw PythonException("Entry function returned None or null");
+                    DAS_CORE_LOG_ERROR("Entry function '{}' returned None", function_name);
+                    throw PythonException("Entry function returned None");
                 }
-                result_obj = PyObjectPtr::Attach(obj);
-                return result_obj;
-            });
+                return PyObjectPtr::Attach(obj);
+            })
+            .CheckAndGet();
 
         DAS_CORE_LOG_INFO("Successfully called entry function: {}", function_name);
 
@@ -756,277 +750,6 @@ auto PythonRuntime::LoadPlugin(const std::filesystem::path& path)
         return tl::make_unexpected(DAS_E_INTERNAL_FATAL_ERROR);
     }
 }
-
-// TODO: 未来将重写 PythonHost
-/*
-auto PythonRuntime::LoadPlugin(const std::filesystem::path& path)
-    ->
- * DAS::Utils::Expected<DasPtr<IDasPluginPackage>>
-{
-    DAS::Utils::OnExit
- * on_exit{
-        [] { ::PyEval_ReleaseThread(::PyThreadState_Get()); }};
-
- * DasPtr<IDasPluginPackage> result{};
-    const auto expected_py_module =
- * ImportPluginModule(path);
-    if (!expected_py_module)
-    {
-        return
- * tl::make_unexpected(expected_py_module.error());
-    }
-    const auto&
- * py_module = expected_py_module.value();
-    p_plugin_module = py_module;
-
-
- * try
-    {
-        const auto py_plugin_initializer =
-
- * GetPluginInitializer(*py_module.Get());
-
- * PythonResult{PyObjectPtr::Attach(PyTuple_New(0))}
-            .then(
-
- * [&result, &py_plugin_initializer](auto py_null_tuple)
-                {
- auto
- * owner = g_plugin_object.GetOwnership();
-                    auto
- * lambda_result = PyObjectPtr::Attach(PyObject_Call(
-
- * py_plugin_initializer.Get(),
-                        py_null_tuple,
-
- * nullptr));
-                    if (lambda_result)
-                    {
-
- * result = owner.GetObject();
-                    }
-                    return
- * lambda_result;
-                })
-            .Check();
-
-        //
- * Initialize successfully. Store the module to member variable.
-
- * p_plugin_module = py_module;
-        return result;
-    }
-    catch (const
- * PythonException& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        return
- * tl::make_unexpected(DAS_E_PYTHON_ERROR);
-    }
-}
-const auto& py_module = expected_py_module.value();
-p_plugin_module =
-py_module;
-
-try
-{
-    const auto py_plugin_initializer =
-GetPluginInitializer(*py_module.Get());
-
-PythonResult{PyObjectPtr::Attach(PyTuple_New(0))}
-        .then(
- [&result,
-&py_plugin_initializer](auto py_null_tuple)
-            {
-                auto
-owner = g_plugin_object.GetOwnership();
-                auto lambda_result =
-PyObjectPtr::Attach(PyObject_Call(
- py_plugin_initializer.Get(),
-
-py_null_tuple,
-                    nullptr));
-                if
-(lambda_result)
-                {
-                    result =
-owner.GetObject();
-                }
-                return lambda_result;
- })
-
-.Check();
-
-    // Initialize successfully. Store the module to member variable.
-
-p_plugin_module = py_module;
-    return result;
-}
-catch (const PythonException&
-ex)
-{
-    DAS_CORE_LOG_EXCEPTION(ex);
-    return
-tl::make_unexpected(DAS_E_PYTHON_ERROR);
-}
- */
-
-// TODO: 未来将重写 PythonHost
-/*
-auto PythonRuntime::ResolveClassName(const std::filesystem::path&
- * relative_path)
-    -> DAS::Utils::Expected<std::u8string>
-{
-    std::u8string
- * result{};
-
-    if (relative_path.begin() == relative_path.end())
-    {
-
- * return tl::make_unexpected(DAS_E_INVALID_PATH);
-    }
-
-    const auto it_end
- * = std::end(relative_path);
-    auto       it = relative_path.begin();
-
-
- * std::u8string part_string{};
-
-    for (auto it_next =
- * std::next(relative_path.begin()); it_next != it_end;
-         ++it,
- * ++it_next)
-    {
-        part_string = it->u8string();
-        if
- * (std::u8string_view{part_string}
-            ==
- * std::u8string_view{Details::GetPreferredSeparator()})
-        {
- return
- * tl::make_unexpected(DAS_E_INVALID_PATH);
-        }
-        result +=
- * part_string;
-        result += u8'.';
-    }
-    result +=
- * it->stem().u8string();
-    return result;
-}
-*/
-
-// TODO: 未来将重写 PythonHost
-/*
-auto PythonRuntime::ImportPluginModule(
-    const std::filesystem::path&
- * py_plugin_initializer)
-    -> DAS::Utils::Expected<PyObjectPtr>
-{
-    const
- * auto current_path = std::filesystem::current_path();
-    if
- * (!Details::IsSubDirectory(
-            py_plugin_initializer,
-
- * std::filesystem::current_path()))
-    {
-        DAS_CORE_LOG_ERROR(
- "The
- * given path is not  is not a subdirectory of the current working
- * directory.");
-
-        const auto& w_path_string =
- * py_plugin_initializer.wstring();
-        const auto& w_current_path_string =
- * current_path.wstring();
-        // Use IDasReadOnlySting to convert wchar
- * string to utf8 string.
-        DasPtr<IDasReadOnlyString> p_path_string{};
-
- * DasPtr<IDasReadOnlyString> p_current_path_string{};
-
- * CreateIDasReadOnlyStringFromWChar(
-            w_path_string.c_str(),
-
- * w_path_string.size(),
-            p_path_string.Put());
-
- * CreateIDasReadOnlyStringFromWChar(
- w_current_path_string.c_str(),
-
- * w_current_path_string.size(),
-            p_current_path_string.Put());
-
- * DAS_CORE_LOG_ERROR(
-            "NOTE: The given path is \"{}\".\nThe current
- * path is \"{}\".",
-            p_path_string,
- p_current_path_string);
- return
- * tl::make_unexpected(DAS_E_INVALID_PATH);
-    }
-
-    const auto relative_path
- * = std::filesystem::relative(py_plugin_initializer);
-    const auto
- * package_path = ResolveClassName(relative_path);
-    if (!package_path)
-    {
-
- * return tl::make_unexpected(package_path.error());
-    }
-
-    try
-    {
-
- * return PythonResult{
-
- * Details::PyUnicodeFromU8String(package_path.value().c_str())}
- .then(
-
- * [](auto py_package_path)
-                {
-                    return
- * PyObjectPtr::Attach(
- PyImport_Import(py_package_path));
-                })
-
- * .CheckAndGet();
-    }
-    catch (const PythonException& ex)
-    {
-
- * DAS_CORE_LOG_ERROR("Import python plugin module failed.");
-
-
- * DAS_CORE_LOG_EXCEPTION(ex);
-
-        DAS_CORE_LOG_ERROR(
-            "NOTE:
- * The python plugin module name is \"{}\".",
-            reinterpret_cast<const
- * char*>(package_path.value().c_str()));
-        return
- * tl::make_unexpected(DAS_E_PYTHON_ERROR);
-    }
-}
-*/
-
-// TODO: 未来将重写 PythonHost
-/*
-auto PythonRuntime::GetPluginInitializer(PyObject& py_module) ->
- * PyObjectPtr
-{
-    return PythonResult{
-        PyObjectPtr::Attach(
-
- * PyObject_GetAttrString(&py_module, DASCOCREATEPLUGIN_NAME))}
-
-    * .CheckAndGet();
-}
-*/
 
 DAS_NS_PYTHONHOST_END
 
