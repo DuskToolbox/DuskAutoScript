@@ -26,7 +26,6 @@ namespace Core
         namespace MainProcess
         {
             // 前置声明
-            class MainProcessServer;
             struct IIpcContext;
 
         } // namespace MainProcess

@@ -5,6 +5,7 @@
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/Handshake.h>
+#include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/IMessageHandler.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
@@ -797,6 +798,161 @@ DasResult IpcRunLoop::ProcessMessage(
     }
 
     return DAS_E_IPC_INVALID_MESSAGE_TYPE;
+}
+
+DasResult IpcRunLoop::RegisterHostLauncher(std::shared_ptr<HostLauncher> launcher)
+{
+    if (!launcher)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    uint16_t session_id = launcher->GetSessionId();
+    auto* transport = launcher->GetTransport();
+
+    if (!transport)
+    {
+        DAS_CORE_LOG_ERROR("HostLauncher has no Transport: session_id={}", session_id);
+        return DAS_E_IPC_NO_CONNECTIONS;
+    }
+
+    // Register with ConnectionManager
+    auto* conn_mgr = GetConnectionManager();
+    if (!conn_mgr)
+    {
+        DAS_CORE_LOG_ERROR("ConnectionManager not initialized");
+        return DAS_E_IPC_NOT_INITIALIZED;
+    }
+
+    DasPtr<IHostLauncher> launcher_ptr(launcher.get());
+    DasResult result = conn_mgr->RegisterHostLauncher(session_id, launcher_ptr);
+    if (result != DAS_S_OK)
+    {
+        return result;
+    }
+
+    // Start async receive for this Transport
+    StartAsyncReceiveForTransport(session_id, transport);
+
+    DAS_CORE_LOG_INFO("HostLauncher registered: session_id={}", session_id);
+    return DAS_S_OK;
+}
+
+void IpcRunLoop::StartAsyncReceiveForTransport(
+    uint16_t                   session_id,
+    DefaultAsyncIpcTransport* transport)
+{
+    if (!transport || !transport->IsConnected())
+    {
+        DAS_CORE_LOG_WARN(
+            "Transport not connected, skipping receive loop: session_id={}",
+            session_id);
+        return;
+    }
+
+    // Spawn receive coroutine
+    boost::asio::co_spawn(
+        *io_context_,
+        [this, session_id, transport]() -> boost::asio::awaitable<void>
+        {
+            std::optional<int> retry_error_code;
+            while (running_.load())
+            {
+                retry_error_code.reset();
+
+                try
+                {
+                    // Use the transport's coroutine interface
+                    auto result = co_await transport->ReceiveCoroutine();
+
+                    if (!running_.load())
+                    {
+                        co_return;
+                    }
+
+                    if (result.index() == 0)
+                    {
+                        // Error case
+                        DasResult error_code = std::get<0>(result);
+                        if (error_code != DAS_S_OK)
+                        {
+                            DAS_CORE_LOG_ERROR(
+                                "Receive failed with error: session_id={}, error=0x{:08X}",
+                                session_id,
+                                error_code);
+                        }
+                        co_return;
+                    }
+
+                    // Successfully received message
+                    auto&& [header, body] = std::get<1>(result);
+
+                    if (header.Raw().message_type
+                        == static_cast<uint8_t>(MessageType::RESPONSE))
+                    {
+                        CompletePendingCall(header.Raw().call_id, DAS_S_OK, std::move(body));
+                    }
+                    else
+                    {
+                        DispatchToHandler(header.Raw(), body);
+                    }
+                }
+                catch (const boost::system::system_error& e)
+                {
+                    // operation_aborted: normal stop
+                    if (e.code() == boost::asio::error::operation_aborted)
+                    {
+                        DAS_CORE_LOG_DEBUG(
+                            "Receive loop stopped - operation aborted: session_id={}",
+                            session_id);
+                        co_return;
+                    }
+                    // EOF: pipe closed
+                    else if (e.code() == boost::asio::error::eof)
+                    {
+                        DAS_CORE_LOG_DEBUG(
+                            "Receive loop stopped - EOF reached: session_id={}",
+                            session_id);
+                        co_return;
+                    }
+                    // ERROR_NO_DATA (536): waiting for pipe connection
+                    else if (e.code().value() == 536)
+                    {
+                        // Store error code for retry outside catch block
+                        retry_error_code = e.code().value();
+                    }
+                    else
+                    {
+                        DAS_CORE_LOG_ERROR(
+                            "Receive failed with system error: session_id={}, error={}",
+                            session_id,
+                            e.what());
+                        co_return;
+                    }
+                }
+                catch (const std::exception& e)
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "Receive failed with exception: session_id={}, error={}",
+                        session_id,
+                        e.what());
+                    co_return;
+                }
+
+                // Handle retry outside catch block (co_await not allowed in catch)
+                if (retry_error_code.has_value())
+                {
+                    DAS_CORE_LOG_DEBUG(
+                        "Waiting for client to connect: session_id={}",
+                        session_id);
+                    auto timer = boost::asio::steady_timer(*io_context_);
+                    timer.expires_after(std::chrono::milliseconds(100));
+                    co_await timer.async_wait(boost::asio::use_awaitable);
+                    // continue loop to retry receive
+                }
+            }
+        },
+        boost::asio::detached);
 }
 
 DAS_CORE_IPC_NS_END

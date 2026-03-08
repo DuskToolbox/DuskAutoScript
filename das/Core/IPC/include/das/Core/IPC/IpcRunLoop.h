@@ -30,10 +30,13 @@
 #include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/IpcResponseSender.h>
 
+#include <memory>
+
 DAS_CORE_IPC_NS_BEGIN
 
 class IMessageHandler;
 class ConnectionManager;
+class HostLauncher;
 
 namespace Host
 {
@@ -251,6 +254,17 @@ public:
      */
     ConnectionManager* GetConnectionManager() { return connection_manager_.get(); }
 
+    /**
+     * @brief 注册 HostLauncher 并启动接收循环
+     *
+     * 在 HostLauncher::Start() 成功后调用。
+     * Transport 将在注册后立即开始接收消息。
+     *
+     * @param launcher HostLauncher 实例（共享所有权）
+     * @return DasResult DAS_S_OK 成功
+     */
+    DasResult RegisterHostLauncher(std::shared_ptr<HostLauncher> launcher);
+
     friend class ::Das::Core::IPC::Host::HandshakeHandler;
 
     // AwaitResponseOperation 需要访问内部方法
@@ -284,6 +298,18 @@ public:
      * 使用 transport 的异步接收能力，注册持续的消息接收回调。
      */
     void StartAsyncReceive();
+
+    /**
+     * @brief 为指定 Transport 启动异步接收循环
+     *
+     * 在 RegisterHostLauncher 后调用，为该 Transport 启动接收协程。
+     *
+     * @param session_id 会话 ID
+     * @param transport 传输层指针
+     */
+    void StartAsyncReceiveForTransport(
+        uint16_t                   session_id,
+        DefaultAsyncIpcTransport*  transport);
 
     /**
      * @brief 调度超时检查定时器
