@@ -3,6 +3,11 @@
  * @brief IPC 多进程测试共享组件
  *
  * 包含用于 IPC 多进程测试的测试夹具。
+ *
+ * 更新日志（08-04）：
+ * - 移除对 MainProcessServer 单例的依赖
+ * - 使用 IIpcContext 作为主进程 IPC 上下文
+ * - HostLauncher 注册模式改为 RegisterHostLauncher()
  */
 
 #pragma once
@@ -21,7 +26,7 @@
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcRunLoop.h>
-#include <das/Core/IPC/MainProcess/MainProcessServer.h>
+#include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/IPC/SessionCoordinator.h>
@@ -54,166 +59,92 @@
 //   set DAS_DEBUG=1 && set DAS_HOST_EXE_PATH=C:\path\DasHost.exe && set
 //   DAS_PLUGIN_DIR=C:\path\plugins && IpcMultiProcessTest.exe
 //
-// 示例（Linux/macOS）：
-//   DAS_DEBUG=1 DAS_HOST_EXE_PATH=/path/DasHost DAS_PLUGIN_DIR=/path/plugins
-//   ./IpcMultiProcessTest
-//
 
-namespace IpcTestConfig
-{
-    namespace detail
-    {
-        inline bool IsDebugMode()
-        {
-            const char* debug = std::getenv("DAS_DEBUG");
-            return debug != nullptr
-                   && (std::string(debug) == "1"
-                       || std::string(debug) == "true");
-        }
-    } // namespace detail
-
-    /**
-     * @brief 获取启动 Host 进程的超时时间（毫秒）
-     *
-     * 当设置 DAS_DEBUG=1 环境变量时，返回 0（无限等待）。
-     * 否则返回默认的 10000 毫秒（10秒）。
-     */
-    inline uint32_t GetHostStartTimeoutMs()
-    {
-        return detail::IsDebugMode() ? 0 : 10000;
-    }
-
-    /**
-     * @brief 获取加载插件的超时时间
-     *
-     * 当设置 DAS_DEBUG=1 环境变量时，返回 0（无限等待）。
-     * 否则返回默认的 30000 毫秒（30秒）。
-     */
-    inline std::chrono::milliseconds GetPluginLoadTimeout()
-    {
-        return std::chrono::milliseconds(detail::IsDebugMode() ? 0 : 30000);
-    }
-
-    /**
-     * @brief 检查是否为调试模式
-     */
-    inline bool IsDebugMode() { return detail::IsDebugMode(); }
-
-    /**
-     * @brief 获取 DasHost 可执行文件路径
-     *
-     * 从环境变量 DAS_HOST_EXE_PATH 读取。
-     * @return DasHost.exe 的完整路径
-     * @throws std::runtime_error 如果环境变量未设置或文件不存在
-     */
-    inline std::string GetDasHostPath()
-    {
-        const char* path = std::getenv("DAS_HOST_EXE_PATH");
-        if (path == nullptr || strlen(path) == 0)
-        {
-            throw std::runtime_error(
-                "DAS_HOST_EXE_PATH environment variable is not set");
-        }
-        if (!std::filesystem::exists(path))
-        {
-            throw std::runtime_error(
-                std::string("DasHost.exe not found at: ") + path);
-        }
-        return path;
-    }
-
-    /**
-     * @brief 获取插件目录路径
-     *
-     * 从环境变量 DAS_PLUGIN_DIR 读取。
-     * @return 插件目录路径
-     * @throws std::runtime_error 如果环境变量未设置
-     */
-    inline std::string GetPluginDir()
-    {
-        const char* plugin_dir = std::getenv("DAS_PLUGIN_DIR");
-        if (plugin_dir == nullptr || strlen(plugin_dir) == 0)
-        {
-            throw std::runtime_error(
-                "DAS_PLUGIN_DIR environment variable is not set");
-        }
-        return plugin_dir;
-    }
-
-    /**
-     * @brief 获取测试插件 JSON 清单路径
-     * @param plugin_name 插件名称（如 "IpcTestPlugin1"）
-     * @return JSON 文件路径
-     * @throws std::runtime_error 如果环境变量未设置或文件不存在
-     */
-    inline std::string GetTestPluginJsonPath(const std::string& plugin_name)
-    {
-        std::filesystem::path json_path =
-            std::filesystem::path{GetPluginDir()}
-            / DAS_FMT_NS::format("{}.json", plugin_name);
-
-        if (!std::filesystem::exists(json_path))
-        {
-            throw std::runtime_error(
-                "Plugin JSON not found at: " + json_path.string());
-        }
-        return json_path.string();
-    }
-
-} // namespace IpcTestConfig
+#include "IpcTestConfig.h"
 
 // ============================================================
 // 测试夹具 - 用于真正启动进程的集成测试
 // ============================================================
 
-class IpcMultiProcessTest : public ::testing::Test
+class FpcMultiProcessTest : public ::testing::Test
 {
 protected:
     void SetUp() override
     {
-        host_exe_path_ = IpcTestConfig::GetDasHostPath();
+        host_exe_path_ = IpcTestConfig::GetDasHostExePath();
 
         std::string msg =
             DAS_FMT_NS::format("DasHost path: {}", host_exe_path_);
         DAS_LOG_INFO(msg.c_str());
-        // 初始化 MainProcessServer
-        auto& server =
-            DAS::Core::IPC::MainProcess::MainProcessServer::GetInstance();
-        DasResult result = server.Initialize();
-        if (DAS::IsFailed(result))
+
+        // 创建 IPC 上下文（替代 MainProcessServer 单例）
+        ctx_ = DAS::Core::IPC::MainProcess::CreateIpcContextEz();
+        if (!ctx_)
+        {
+            throw std::runtime_error("Failed to create IpcContext");
+        }
+
+        // 创建 HostLauncher
+        DAS::Core::IPC::IHostLauncher* raw_launcher = nullptr;
+        DasResult result = ctx_->CreateHostLauncher(&raw_launcher);
+        if (DAS::IsFailed(result) || !raw_launcher)
         {
             throw std::runtime_error(
                 DAS_FMT_NS::format(
-                    "Failed to initialize MainProcessServer: {}",
-                    static_cast<int32_t>(result)));
+                    "Failed to create HostLauncher: {:#x}",
+                    static_cast<uint32_t>(result)));
         }
 
-        DAS_LOG_INFO("MainProcessServer initialized");
+        // 包装为 shared_ptr（使用正确的删除器）
+        launcher_ = std::shared_ptr<DAS::Core::IPC::HostLauncher>(
+            static_cast<DAS::Core::IPC::HostLauncher*>(raw_launcher),
+            [](DAS::Core::IPC::HostLauncher* p) {
+                if (p)
+                {
+                    p->Stop();
+                    p->Release();
+                }
+            });
+
+        DAS_LOG_INFO("IpcContext and HostLauncher created");
     }
 
     void TearDown() override
     {
-        // 关闭 MainProcessServer
-        auto& server =
-            DAS::Core::IPC::MainProcess::MainProcessServer::GetInstance();
-        server.Shutdown();
+        if (launcher_)
+        {
+            launcher_->Stop();
+            launcher_.reset();
+        }
 
-        DAS_LOG_INFO("MainProcessServer shutdown");
-
-        launcher_.Stop();
+        ctx_.reset();
 
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
     /**
-     * @brief 启动 Host 进程并注册到 ConnectionManager
+     * @brief 获取 IIpcContext 引用
+     *
+     * 用于 async_op() 和 wait() 调用。
+     */
+    DAS::Core::IPC::MainProcess::IIpcContext& GetContext()
+    {
+        return *ctx_;
+    }
+
+    /**
+     * @brief 启动 Host 进程并注册 HostLauncher
+     *
+     * 新模式：使用 IIpcContext::RegisterHostLauncher() 注册。
+     * Transport 保留在 HostLauncher 内部，永不转移。
+     *
      * @return DasResult 成功返回 DAS_S_OK
      */
     DasResult StartHostAndSetupRunLoop()
     {
-        // 启动 Host 进程
+        // 1. 启动 Host 进程
         uint16_t  session_id = 0;
-        DasResult result = launcher_.Start(
+        DasResult result = launcher_->Start(
             host_exe_path_,
             session_id,
             IpcTestConfig::GetHostStartTimeoutMs());
@@ -223,40 +154,29 @@ protected:
             return result;
         }
 
-        // 将 Transport 注册到 ConnectionManager
-        auto transport = launcher_.ReleaseTransport();
-        if (!transport)
-        {
-            DAS_LOG_ERROR("Failed to get transport from HostLauncher");
-            return DAS_E_FAIL;
-        }
-
-        // 注册到 ConnectionManager（MainProcessServer.SendLoadPlugin 需要）
-        // ConnectionManager 持有 Transport 的所有权
-        auto& conn_manager = DAS::Core::IPC::ConnectionManager::GetInstance();
-        result = conn_manager.RegisterHostTransport(
-            session_id,
-            std::move(transport),
-            nullptr, // shm_pool
-            nullptr  // run_loop (主进程不需要)
-        );
+        // 2. 注册 HostLauncher 到 IPC 上下文
+        // Transport 保留在 HostLauncher 内部，由 RegisterHostLauncher 启动接收
+        result = ctx_->RegisterHostLauncher(launcher_);
         if (DAS::IsFailed(result))
         {
-            DAS_LOG_ERROR("Failed to register transport to ConnectionManager");
+            DAS_LOG_ERROR("Failed to register HostLauncher to IPC context");
+            launcher_->Stop();
             return result;
         }
 
         std::string msg = DAS_FMT_NS::format(
-            "Transport registered to ConnectionManager, session_id={}",
+            "HostLauncher registered, session_id={}",
             session_id);
         DAS_LOG_INFO(msg.c_str());
 
         return DAS_S_OK;
     }
 
-    std::string                  host_exe_path_;
-    DAS::Core::IPC::HostLauncher launcher_;
+    std::string                                            host_exe_path_;
+    DAS::Core::IPC::MainProcess::IpcContextPtr             ctx_;
+    std::shared_ptr<DAS::Core::IPC::HostLauncher>          launcher_;
 };
+
 // ============================================================
 // 辅助函数 - 发送 IPC 命令
 // ============================================================

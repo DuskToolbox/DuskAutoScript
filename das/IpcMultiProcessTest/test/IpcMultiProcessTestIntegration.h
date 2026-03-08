@@ -5,20 +5,15 @@
  * 用于模拟真实的主进程启动和 IPC 过程。
  *
  * 规则：
- * - 禁止直接使用 MainProcessServer（常规操作）
+ * - 禁止直接使用 MainProcessServer（已删除）
  * - 必须通过 IIpcContext 进行操作
  * - 必须使用 async_op() 和 wait() 进行异步操作
+ * - HostLauncher 使用 RegisterHostLauncher() 注册（新模式）
  *
- * ============================================================================
- * 例外情况（仅限以下操作）：
- * ============================================================================
- * 为了设置测试环境（Transport 注册等），以下内部接口允许使用：
- * - MainProcessServer::GetInstance() - 仅用于初始化和清理
- * - ConnectionManager - 仅用于注册 Transport
- *
- * 这些例外操作封装在 IpcTestHostHelper::StartHostAndRegisterTransport() 中。
- * 其他测试代码不得直接访问 MainProcessServer。
- * ============================================================================
+ * 更新日志（08-04）：
+ * - 移除对 MainProcessServer 的依赖
+ * - 使用 IIpcContext::RegisterHostLauncher() 替代旧的 Transport 注册模式
+ * - Transport 永不转移，保留在 HostLauncher 内部
  */
 
 #pragma once
@@ -33,13 +28,14 @@
 #include <boost/process/v2/start_dir.hpp>
 #include <boost/system/error_code.hpp>
 
-#include <das/Core/IPC/ConnectionManager.h>
+#include <atomic>
+#include <chrono>
 #include <das/Core/IPC/DasAsyncSender.h>
 #include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
-#include <das/Core/IPC/MainProcess/MainProcessServer.h>
-#include <das/Core/IPC/SessionCoordinator.h>
 #include <das/DasApi.h>
+#include <das/Utils/fmt.h>
+#include <filesystem>
 #include <gtest/gtest.h>
 #include <memory>
 #include <string>
@@ -63,40 +59,45 @@ protected:
             throw std::runtime_error("Failed to create IpcContext");
         }
 
-        // 启动事件循环（必须在 CreateHostLauncher 之前）
-        // ctx_->Run() 内部调用 IpcRunLoop::Run() -> io_context_.run()
-        // 这是阻塞调用，需要在独立线程中运行
+        // 创建 HostLauncher
+        DAS::Core::IPC::IHostLauncher* raw_launcher = nullptr;
+        DasResult result = ctx_->CreateHostLauncher(&raw_launcher);
+        if (DAS::IsFailed(result) || !raw_launcher)
+        {
+            throw std::runtime_error(
+                DAS_FMT_NS::format(
+                    "Failed to create HostLauncher: {:#x}",
+                    static_cast<uint32_t>(result)));
+        }
+
+        // 包装为 shared_ptr
+        launcher_ = std::shared_ptr<DAS::Core::IPC::HostLauncher>(
+            static_cast<DAS::Core::IPC::HostLauncher*>(raw_launcher),
+            [](DAS::Core::IPC::HostLauncher* p) {
+                if (p)
+                {
+                    p->Stop();
+                    delete p;
+                }
+            });
+
+        // 启动事件循环线程
         run_thread_ = std::thread([this]() {
-            run_result_ = ctx_->Run();
+            ctx_->Run();
         });
 
-        // 等待 IpcRunLoop 启动（Run() 会设置 running_ 标志）
-        for (int i = 0; i < 100 && !ctx_->GetServer().GetRunLoop()->IsRunning(); ++i)
+        // 等待事件循环启动
+        for (int i = 0; i < 100 && !ctx_->GetIoContext().stopped(); ++i)
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
-
-        // 创建 HostLauncher（需要 io_context）
-        DAS::DasPtr<DAS::Core::IPC::IHostLauncher> launcher;
-        DasResult result = ctx_->CreateHostLauncher(launcher.Put());
-        if (DAS::IsFailed(result) || !launcher)
-        {
-            throw std::runtime_error("Failed to create HostLauncher");
-        }
-        // 将 IHostLauncher* 转换为 HostLauncher*（两者是同一个对象）
-        auto* raw_launcher_ptr = static_cast<DAS::Core::IPC::HostLauncher*>(launcher.Get());
-        launcher.Reset(); // DasPtr 放弃所有权
-        launcher_.reset(raw_launcher_ptr);
-
-        DAS_LOG_INFO("IpcContext and HostLauncher created");
     }
 
     void TearDown() override
     {
-        // 请求停止事件循环
+        // 停止事件循环
         ctx_->RequestStop();
 
-        // 等待事件循环线程结束
         if (run_thread_.joinable())
         {
             run_thread_.join();
@@ -105,11 +106,7 @@ protected:
         launcher_.reset();
         ctx_.reset();
 
-        // 重置 SessionCoordinator 的本地 session_id
-        // 这样多个测试之间不会互相影响
-        DAS::Core::IPC::SessionCoordinator::GetInstance().ResetLocalSessionId();
-
-        DAS_LOG_INFO("IpcContext destroyed");
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
     /**
@@ -126,27 +123,46 @@ protected:
     }
 
     /**
-     * @brief 启动 Host 进程并设置 RunLoop 的 Transport
+     * @brief 启动 Host 进程并注册 HostLauncher
      *
-     * 封装 IpcTestHostHelper::StartHostAndRegisterTransport
+     * 使用新的 RegisterHostLauncher() 模式：
+     * - Transport 保留在 HostLauncher 内部
+     * - RegisterHostLauncher 自动启动接收循环
      */
     DasResult StartHostAndSetupRunLoop()
     {
-        return IpcTestHostHelper::StartHostAndRegisterTransport(
+        // 启动 Host 进程
+        uint16_t  session_id = 0;
+        DasResult result = launcher_->Start(
             host_exe_path_,
-            *launcher_);
+            session_id,
+            IpcTestConfig::GetHostStartTimeoutMs());
+        if (DAS::IsFailed(result))
+        {
+            DAS_LOG_ERROR("Failed to start host process");
+            return result;
+        }
+
+        // 注册 HostLauncher 到 IPC 上下文
+        // Transport 保留在 HostLauncher 内部，由 RegisterHostLauncher 启动接收
+        result = ctx_->RegisterHostLauncher(launcher_);
+        if (DAS::IsFailed(result))
+        {
+            DAS_LOG_ERROR("Failed to register HostLauncher to IPC context");
+            launcher_->Stop();
+            return result;
+        }
+
+        std::string msg = DAS_FMT_NS::format(
+            "HostLauncher registered, session_id={}",
+            session_id);
+        DAS_LOG_INFO(msg.c_str());
+
+        return DAS_S_OK;
     }
 
-protected:
-    std::string host_exe_path_;
-
-    // 使用 shared_ptr 存储
+    std::string                                            host_exe_path_;
     std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ctx_;
-
-    // HostLauncher 使用 unique_ptr（需要 io_context 构造）
-    std::unique_ptr<DAS::Core::IPC::HostLauncher> launcher_;
-
-    // 事件循环线程
-    std::thread run_thread_;
-    DasResult   run_result_ = DAS_S_OK;
+    std::shared_ptr<DAS::Core::IPC::HostLauncher>            launcher_;
+    std::thread                                              run_thread_;
 };
