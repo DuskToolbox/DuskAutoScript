@@ -6,7 +6,7 @@
  * @brief IPC 异步操作 stdexec sender 适配器
  *
  * 提供基于 stdexec 的异步操作接口，允许外部代码通过任何提供
- * PostRequest/PumpMessage 接口的类型进行异步操作。
+ * PostCallback 方法的类型进行异步操作。
  *
  * 用法：
  * @code
@@ -166,7 +166,7 @@ namespace Core::IPC
      *
      * @tparam TAsyncOp 异步操作接口类型（如 IDasAsyncLoadPluginOperation）
      * @tparam TResult 结果类型（如 ObjectId）
-     * @tparam Context 上下文类型（需要有 PostRequest 方法）
+     * @tparam Context 上下文类型（需要有 PostCallback 方法）
      *
      * 将基于回调的 IDasAsyncOperation 包装为 stdexec sender，
      * 支持 C++20 协程和 stdexec 组合操作（when_all, let_value 等）。
@@ -286,7 +286,7 @@ namespace Core::IPC
     /**
      * @brief 将 IDasAsyncLoadPluginOperation 包装为 sender
      *
-     * @tparam Context 上下文类型（需要有 PostRequest 方法）
+     * @tparam Context 上下文类型（需要有 PostCallback 方法）
      * @param ctx 上下文引用
      * @param op 异步操作指针
      * @return DasAsyncSender 可用于 wait() 或 stdexec 组合操作
