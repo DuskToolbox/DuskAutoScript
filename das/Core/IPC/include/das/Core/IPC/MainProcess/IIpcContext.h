@@ -6,6 +6,13 @@
 #include <das/IDasAsyncCallback.h>
 #include <das/IDasAsyncLoadPluginOperation.h>
 #include <memory>
+
+// Forward declaration for boost::asio::io_context
+namespace boost::asio
+{
+    class io_context;
+}
+
 DAS_NS_BEGIN
 namespace Core
 {
@@ -22,6 +29,14 @@ namespace Core
             class MainProcessServer;
             struct IIpcContext;
 
+        } // namespace MainProcess
+
+        // HostLauncher 前置声明
+        class HostLauncher;
+
+        namespace MainProcess
+        {
+
             // 前置声明 DestroyIpcContext，用于友元
             DAS_API void DestroyIpcContext(IIpcContext* ctx);
 
@@ -36,14 +51,12 @@ namespace Core
              */
             struct IIpcContext
             {
-                virtual MainProcessServer&        GetServer() = 0;
                 virtual DistributedObjectManager& GetObjectManager() = 0;
                 virtual RemoteObjectRegistry&     GetRegistry() = 0;
 
                 /**
                  * @brief 创建 HostLauncher 实例
  *
-
                  * * HostLauncher 使用 IIpcContext 的 io_context
                  * 进行异步操作。
  *
@@ -97,6 +110,27 @@ namespace Core
                  * 事件循环会在当前操作完成后退出。
                  */
                 virtual void RequestStop() = 0;
+
+                /**
+                 * @brief 获取底层 io_context 引用
+                 *
+                 * 用于需要共享 io_context 的场景，如 HostLauncher。
+                 *
+                 * @return boost::asio::io_context& io_context 引用
+                 */
+                virtual boost::asio::io_context& GetIoContext() = 0;
+
+                /**
+                 * @brief 注册 HostLauncher 到 IPC 上下文
+                 *
+                 * 在 HostLauncher::Start() 成功后调用。
+                 * Transport 将在注册后立即开始接收消息。
+                 *
+                 * @param launcher HostLauncher 实例（共享所有权）
+                 * @return DasResult DAS_S_OK 成功
+                 */
+                virtual DasResult RegisterHostLauncher(
+                    std::shared_ptr<HostLauncher> launcher) = 0;
 
             protected:
                 virtual ~IIpcContext() = default;
