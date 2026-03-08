@@ -4,7 +4,9 @@
 #include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/ConnectionManager.h>
+#include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/HostLauncher.h>
+#include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
@@ -322,10 +324,19 @@ void ConnectionManager::StartHeartbeatThread()
                 std::this_thread::sleep_for(
                     std::chrono::milliseconds(interval_ms));
 
+                if (!impl_->running_.load())
+                {
+                    break;
+                }
+
+                // 1. 发送心跳消息
+                SendHeartbeatToAll();
+
+                // 2. 检查超时并清理
                 uint64_t current_time_ms =
-                    std::chrono::duration_cast<std::chrono::milliseconds>(
-                        std::chrono::steady_clock::now().time_since_epoch())
-                        .count();
+                    static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                              std::chrono::steady_clock::now().time_since_epoch())
+                                              .count());
 
                 std::unique_lock<std::shared_mutex> lock(
                     impl_->connections_mutex_);
@@ -349,7 +360,9 @@ void ConnectionManager::StartHeartbeatThread()
                         CleanupConnectionResources(it->first, impl_->local_id_);
                         it = impl_->connections_.erase(it);
 
-                        DAS_CORE_LOG_INFO("Connection timed out, cleaned up: session_id={}", session_id);
+                        DAS_CORE_LOG_WARN(
+                            "Connection timed out, cleaning up: session_id={}",
+                            session_id);
                     }
                     else
                     {
@@ -371,6 +384,64 @@ void ConnectionManager::StopHeartbeatThread()
     if (impl_->heartbeat_thread_.joinable())
     {
         impl_->heartbeat_thread_.join();
+    }
+}
+
+DasResult ConnectionManager::SendHeartbeatToAll()
+{
+    auto sessions = GetConnectedSessions();
+
+    for (uint16_t session_id : sessions)
+    {
+        auto* transport = GetTransport(session_id);
+        if (!transport || !transport->IsConnected())
+        {
+            // 跳过无效连接
+            continue;
+        }
+
+        // 构建心跳消息
+        HeartbeatV1 heartbeat;
+        InitHeartbeat(
+            heartbeat,
+            static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch())
+                    .count()));
+
+        auto validated_header =
+            IPCMessageHeaderBuilder()
+                .SetMessageType(MessageType::REQUEST)
+                .SetControlPlaneCommand(
+                    HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT)
+                .SetBodySize(sizeof(heartbeat))
+                .SetObject(session_id, 0, 0)
+                .Build();
+
+        // 异步发送（不等待回复）
+        // 使用 transport->Send() 返回 sender，但我们不 sync_wait
+        // 让发送在 io_context 中异步进行
+        // 心跳是周期性发送，单次失败不影响整体逻辑
+        (void)transport->Send(
+            validated_header,
+            reinterpret_cast<const uint8_t*>(&heartbeat),
+            sizeof(heartbeat));
+    }
+
+    return DAS_S_OK;
+}
+
+void ConnectionManager::UpdateHeartbeatTimestamp(uint16_t session_id)
+{
+    std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+
+    auto it = impl_->connections_.find(session_id);
+    if (it != impl_->connections_.end())
+    {
+        it->second.last_heartbeat_ms =
+            static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                      std::chrono::steady_clock::now().time_since_epoch())
+                                      .count());
     }
 }
 
