@@ -14,6 +14,9 @@ DAS_CORE_EXCEPTIONS_NS_BEGIN
 
 PythonException::PythonException(const std::string& message)
     : DasException{DAS_E_PYTHON_ERROR, message}
+    , stack_trace_{message}
+    , exception_type_{"Error"}
+    , exception_value_{message}
 {
 }
 

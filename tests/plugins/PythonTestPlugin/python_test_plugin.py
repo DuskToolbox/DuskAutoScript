@@ -8,7 +8,6 @@ from DuskAutoScript import (
     ISwigDasPluginPackage,
     IDasComponentFactory,
     IDasComponent,
-    DasPluginFeature,
     DasRetBase,
     DasRetDasPluginFeature,
     DasRetDasBase,
@@ -17,6 +16,7 @@ from DuskAutoScript import (
     DAS_S_OK,
     DAS_E_OUT_OF_RANGE,
     DAS_E_OUT_OF_MEMORY,
+    DAS_PLUGIN_FEATURE_COMPONENT_FACTORY,
 )
 
 
@@ -52,20 +52,8 @@ class TestComponentFactory(IDasComponentFactory):
 class PythonTestPlugin(ISwigDasPluginPackage):
     """Python 测试插件 - 参考 IpcTestPlugin2 实现"""
 
-    FEATURES = [DasPluginFeature.DAS_PLUGIN_FEATURE_COMPONENT_FACTORY]
+    FEATURES = [DAS_PLUGIN_FEATURE_COMPONENT_FACTORY]
     _factory: TestComponentFactory = None
-
-    @staticmethod
-    def create_plugin() -> DasRetBase:
-        """入口函数"""
-        result = DasRetBase()
-        try:
-            plugin = PythonTestPlugin()
-            result.error_code = DAS_S_OK
-            result.value = plugin
-        except Exception:
-            result.error_code = DAS_E_OUT_OF_MEMORY
-        return result
 
     def EnumFeature(self, index: int) -> DasRetDasPluginFeature:
         """枚举插件特性"""
@@ -98,3 +86,16 @@ class PythonTestPlugin(ISwigDasPluginPackage):
         # 如果工厂存在，表示有活跃引用，不能卸载
         result.value = (self._factory is None)
         return result
+
+
+# 模块级入口函数
+def create_plugin() -> DasRetBase:
+    """入口函数 - 由 PythonHost 调用"""
+    result = DasRetBase()
+    try:
+        plugin = PythonTestPlugin()
+        result.error_code = DAS_S_OK
+        result.value = plugin
+    except Exception:
+        result.error_code = DAS_E_OUT_OF_MEMORY
+    return result
