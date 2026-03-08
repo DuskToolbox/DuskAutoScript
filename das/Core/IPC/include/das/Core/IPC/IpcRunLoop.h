@@ -29,6 +29,7 @@
 
 #include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/IpcResponseSender.h>
+#include <das/Core/IPC/MainProcess/IHostLauncher.h>
 
 #include <memory>
 
