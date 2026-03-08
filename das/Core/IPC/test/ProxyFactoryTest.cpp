@@ -416,6 +416,6 @@ TEST(ProxyFactoryTest, IntegrationWithIpcRunLoop)
     // 清理
     factory.ClearAllProxies();
     registry.UnregisterObject(test_obj);
-    runloop->Stop();
+    runloop->RequestStop();
     runloop->Shutdown();
 }

@@ -329,11 +329,7 @@ namespace Core
                     // 停止事件循环
                     if (run_loop_)
                     {
-                        DasResult stop_result = run_loop_->Stop();
-                        if (stop_result != DAS_S_OK)
-                        {
-                            result = stop_result;
-                        }
+                        run_loop_->RequestStop();
                     }
 
                     // 关闭 HandshakeHandler

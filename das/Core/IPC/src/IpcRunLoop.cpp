@@ -32,7 +32,7 @@ DAS_CORE_IPC_NS_BEGIN
 
 IpcRunLoop::IpcRunLoop() = default;
 
-IpcRunLoop::~IpcRunLoop() { Stop(); }
+IpcRunLoop::~IpcRunLoop() { RequestStop(); }
 
 DasResult IpcRunLoop::Initialize()
 {
@@ -85,7 +85,7 @@ DasResult IpcRunLoop::Initialize(
 
 DasResult IpcRunLoop::Shutdown()
 {
-    Stop();
+    RequestStop();
 
     // 确保所有异步操作都已完成
     // 如果 io_context 仍在运行（理论上不应该），强制停止
@@ -101,23 +101,22 @@ DasResult IpcRunLoop::Shutdown()
     return DAS_S_OK;
 }
 
-DasResult IpcRunLoop::Stop()
+void IpcRunLoop::RequestStop()
 {
     if (!running_.load())
     {
-        return DAS_S_OK;
+        return;
     }
 
     running_.store(false);
 
-    // 1. 先关闭 transport，让协程的 ReceiveCoroutine 抛出异常并自然退出
-    //    这是关键步骤，必须在 work_guard_.reset() 之前
+    // 1. 先关闭 transport，让协程自然退出
     if (async_transport_)
     {
         async_transport_->Close();
     }
 
-    // 2. 重置 work guard，允许 io_context_->run() 在没有更多工作时返回
+    // 2. 重置 work guard，允许 io_context_->run() 返回
     work_guard_.reset();
 
     // 3. 取消所有 pending calls
@@ -139,30 +138,6 @@ DasResult IpcRunLoop::Stop()
             cb(DAS_E_IPC_CONNECTION_LOST, {});
         }
     }
-
-    // 4. 等待 io_context 自然结束（协程退出后，没有更多工作，run() 会返回）
-    //    不强制调用 io_context_->stop()，避免中断正在执行的协程
-
-    if (io_thread_.joinable())
-    {
-        io_thread_.join();
-    }
-
-    return DAS_S_OK;
-}
-
-void IpcRunLoop::RequestStop()
-{
-    running_.store(false);
-
-    // 1. 先关闭 transport，让协程自然退出
-    if (async_transport_)
-    {
-        async_transport_->Close();
-    }
-
-    // 2. 重置 work guard，允许 io_context_->run() 返回
-    work_guard_.reset();
 
     // 注意：RequestStop() 是非阻塞的，不调用 io_context_->stop()
     // 让协程自然退出后，io_context_->run() 会因为没有更多工作而返回
@@ -589,15 +564,6 @@ DasResult IpcRunLoop::SendEvent(
 }
 
 bool IpcRunLoop::IsRunning() const { return running_.load(); }
-
-DasResult IpcRunLoop::WaitForShutdown()
-{
-    if (io_thread_.joinable())
-    {
-        io_thread_.join();
-    }
-    return exit_code_.load();
-}
 
 void IpcRunLoop::StartAsyncReceive()
 {

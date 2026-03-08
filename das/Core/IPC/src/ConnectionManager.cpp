@@ -361,7 +361,7 @@ DasResult ConnectionManager::CleanupConnectionResources(
 
     if (info.run_loop != nullptr && info.run_loop->IsRunning())
     {
-        info.run_loop->Stop();
+        info.run_loop->RequestStop();
     }
 
     info.shm_pool = nullptr;

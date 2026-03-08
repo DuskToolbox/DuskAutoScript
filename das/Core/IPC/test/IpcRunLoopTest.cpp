@@ -46,7 +46,7 @@ protected:
     {
         if (runloop_)
         {
-            runloop_->Stop();
+            runloop_->RequestStop();
             runloop_->Shutdown();
         }
     }
@@ -187,19 +187,19 @@ TEST_F(IpcRunLoopTest, Run_ReentrantFails)
     }
 }
 
-// =====> Stop Idempotent Tests ======
+// =====> RequestStop Idempotent Tests ======
 
-TEST_F(IpcRunLoopTest, Stop_Idempotent)
+TEST_F(IpcRunLoopTest, RequestStop_Idempotent)
 {
     ASSERT_EQ(runloop_->Initialize(), DAS_S_OK);
 
-    // Stop without run should be safe
-    auto result = runloop_->Stop();
-    EXPECT_EQ(result, DAS_S_OK);
+    // RequestStop without run should be safe
+    runloop_->RequestStop();
+    EXPECT_FALSE(runloop_->IsRunning());
 
-    // Multiple stops should be safe
-    result = runloop_->Stop();
-    EXPECT_EQ(result, DAS_S_OK);
+    // Multiple RequestStop should be safe
+    runloop_->RequestStop();
+    EXPECT_FALSE(runloop_->IsRunning());
 }
 
 // ====== Message Handler Tests ======
