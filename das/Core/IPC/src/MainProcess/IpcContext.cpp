@@ -289,6 +289,28 @@ namespace Core
                     timeout);
             }
 
+            DasResult IpcContext::Run()
+            {
+                auto& server = MainProcessServer::GetInstance();
+                auto* run_loop = server.GetRunLoop();
+                if (!run_loop)
+                {
+                    DAS_CORE_LOG_ERROR("Run: IpcRunLoop not initialized");
+                    return DAS_E_IPC_NOT_INITIALIZED;
+                }
+                return run_loop->Run();
+            }
+
+            void IpcContext::RequestStop()
+            {
+                auto& server = MainProcessServer::GetInstance();
+                auto* run_loop = server.GetRunLoop();
+                if (run_loop)
+                {
+                    run_loop->RequestStop();
+                }
+            }
+
             // ====== C API 实现 ======
 
             DAS_API IIpcContext* CreateIpcContext()
