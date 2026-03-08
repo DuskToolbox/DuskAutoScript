@@ -74,6 +74,9 @@ namespace Core
 
                 void PostCallback(IDasAsyncCallback* callback) override;
 
+                DasResult Run() override;
+                void      RequestStop() override;
+
             private:
                 std::unique_ptr<IpcContextImpl> impl_;
             };
