@@ -181,6 +181,22 @@ DasResult IpcRunLoop::DispatchToHandler(
     const IPCMessageHeader&     header,
     const std::vector<uint8_t>& body)
 {
+    // 处理 HEARTBEAT RESPONSE：收到心跳回复时更新时间戳
+    if (header.interface_id
+        == static_cast<uint32_t>(HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT))
+    {
+        if (header.message_type == static_cast<uint8_t>(MessageType::RESPONSE))
+        {
+            // 收到心跳回复，更新时间戳
+            if (connection_manager_)
+            {
+                connection_manager_->UpdateHeartbeatTimestamp(header.session_id);
+            }
+            return DAS_S_OK;
+        }
+        // REQUEST 继续交给 handler 处理
+    }
+
     auto* handler = GetHandler(header.interface_id);
     if (handler)
     {
@@ -736,6 +752,12 @@ DasResult IpcRunLoop::Run()
     // 创建 work guard 保持 io_context 运行
     // 确保 Run() 阻塞直到 RequestStop() 被调用
     work_guard_ = std::make_unique<WorkGuard>(io_context_->get_executor());
+
+    // 启动心跳检测线程（MainProcess 模式）
+    if (connection_manager_)
+    {
+        connection_manager_->StartHeartbeatThread();
+    }
 
     // 启动异步接收链
     StartAsyncReceive();
