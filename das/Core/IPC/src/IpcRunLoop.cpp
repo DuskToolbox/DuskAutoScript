@@ -618,6 +618,9 @@ void IpcRunLoop::StartAsyncReceive()
         {
             while (running_.load())
             {
+                // 用于标记是否需要等待客户端连接
+                bool need_wait_for_client = false;
+
                 try
                 {
                     // 直接使用 transport 的协程接口
@@ -666,6 +669,12 @@ void IpcRunLoop::StartAsyncReceive()
                         DAS_CORE_LOG_DEBUG("Receive loop stopped - EOF reached");
                         co_return;
                     }
+                    else if (e.code().value() == 536)
+                    {
+                        // ERROR_NO_DATA (536): 等待打开管道另一端的进程
+                        // 这是服务端命名管道的正常情况 - 客户端尚未连接
+                        need_wait_for_client = true;
+                    }
                     else
                     {
                         DAS_CORE_LOG_ERROR("Receive failed with system error: {}", e.what());
@@ -679,6 +688,16 @@ void IpcRunLoop::StartAsyncReceive()
                     DAS_CORE_LOG_ERROR("Receive failed with exception: {}", e.what());
                     // 异常退出，不改变 running_ 状态
                     co_return;
+                }
+
+                // 在 catch 块外处理等待客户端连接的情况
+                if (need_wait_for_client)
+                {
+                    DAS_CORE_LOG_DEBUG("Waiting for client to connect to pipe...");
+                    auto timer = boost::asio::steady_timer(*io_context_);
+                    timer.expires_after(std::chrono::milliseconds(100));
+                    co_await timer.async_wait(boost::asio::use_awaitable);
+                    // continue 循环重试接收
                 }
             }
         },

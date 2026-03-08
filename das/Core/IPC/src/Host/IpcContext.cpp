@@ -227,10 +227,11 @@ namespace Core
                     }
 
                     // 4. 创建 IpcRunLoop 并使用新的 Initialize 重载
+                    // Host 从 m2h (Main->Host) 读取，向 h2m (Host->Main) 写入
                     run_loop_ = std::make_unique<IpcRunLoop>();
                     result = run_loop_->Initialize(
-                        host_h2m, // read queue (H2M)
-                        host_m2h, // write queue (M2H)
+                        host_m2h, // read queue (M2H - Main writes, Host reads)
+                        host_h2m, // write queue (H2M - Host writes, Main reads)
                         true);    // is_server (Host creates queues)
 
                     if (result != DAS_S_OK)
