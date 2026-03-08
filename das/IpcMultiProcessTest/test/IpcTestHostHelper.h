@@ -28,7 +28,7 @@ namespace IpcTestHostHelper
 {
 
     /**
-     * @brief 启动 Host 进程并注册 Transport
+     * @brief 启动 Host 进程并注册到 ConnectionManager
      *
      * @param host_exe_path Host 可执行文件路径
      * @param launcher HostLauncher 实例
@@ -51,27 +51,34 @@ namespace IpcTestHostHelper
             return result;
         }
 
-        auto transport = launcher.ReleaseTransport();
-        if (!transport)
+        // 注册 HostLauncher 到 ConnectionManager
+        // ConnectionManager 由 IpcRunLoop 持有，IpcRunLoop 由 MainProcessServer 持有
+        auto& server = DAS::Core::IPC::MainProcess::MainProcessServer::GetInstance();
+        auto* run_loop = server.GetRunLoop();
+        if (!run_loop)
         {
-            DAS_LOG_ERROR("Failed to get transport from HostLauncher");
+            DAS_LOG_ERROR("Failed to get RunLoop from MainProcessServer");
             return DAS_E_FAIL;
         }
 
-        auto& conn_manager = DAS::Core::IPC::ConnectionManager::GetInstance();
-        result = conn_manager.RegisterHostTransport(
+        auto* conn_manager = run_loop->GetConnectionManager();
+        if (!conn_manager)
+        {
+            DAS_LOG_ERROR("Failed to get ConnectionManager from RunLoop");
+            return DAS_E_FAIL;
+        }
+
+        result = conn_manager->RegisterHostLauncher(
             session_id,
-            std::move(transport),
-            nullptr,
-            nullptr);
+            DAS::DasPtr<DAS::Core::IPC::IHostLauncher>(&launcher));
         if (DAS::IsFailed(result))
         {
-            DAS_LOG_ERROR("Failed to register transport to ConnectionManager");
+            DAS_LOG_ERROR("Failed to register HostLauncher to ConnectionManager");
             return result;
         }
 
         std::string msg = DAS_FMT_NS::format(
-            "Transport registered, session_id={}",
+            "HostLauncher registered, session_id={}",
             session_id);
         DAS_LOG_INFO(msg.c_str());
 

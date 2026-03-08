@@ -14,8 +14,10 @@
 #include <das/Core/IPC/Config.h>
 
 DAS_CORE_IPC_NS_BEGIN
+
 class SharedMemoryPool;
 class IpcRunLoop;
+struct IHostLauncher;
 
 /**
  * @brief 连接资源信息
@@ -26,27 +28,49 @@ class IpcRunLoop;
  * - CleanupConnectionResources 清理时：
  *   - Host: 关闭并可能删除资源
  *   - Child: 仅释放引用，不删除资源
+ *
+ * ConnectionManager 持有 IHostLauncher 引用（DasPtr），
+ * Transport 由 HostLauncher 永久持有。
  */
 struct ConnectionInfo
 {
-    uint16_t                               host_id;
-    uint16_t                               plugin_id;
-    bool                                   is_alive;
-    uint64_t                               last_heartbeat_ms;
-    std::unique_ptr<DefaultAsyncIpcTransport> transport; ///< 异步消息队列传输（拥有所有权）
-    SharedMemoryPool*                      shm_pool;    ///< 共享内存池（非拥有指针）
-    IpcRunLoop*                            run_loop;    ///< 运行循环（非拥有指针，含 pending_calls）
+    uint16_t                   host_id;
+    uint16_t                   plugin_id;
+    bool                       is_alive;
+    uint64_t                   last_heartbeat_ms;
+    DasPtr<IHostLauncher>      launcher;  ///< HostLauncher 实例（DasPtr 持有引用）
+    SharedMemoryPool*          shm_pool = nullptr;  ///< 共享内存池（非拥有指针）
 };
 
+/**
+ * @brief 连接管理器（非单例模式）
+ *
+ * 由 IpcRunLoop 持有，负责管理 HostLauncher 实例。
+ * ConnectionManager 持有 DasPtr<IHostLauncher>，Transport 由 HostLauncher 拥有。
+ *
+ * 心跳超时清理：释放 DasPtr -> 引用计数归零 -> HostLauncher 析构 -> 自动清理 Host 进程
+ */
 class ConnectionManager
 {
 public:
     ConnectionManager();
     ~ConnectionManager();
 
-    static ConnectionManager& GetInstance();
+    // 禁止拷贝
+    ConnectionManager(const ConnectionManager&) = delete;
+    ConnectionManager& operator=(const ConnectionManager&) = delete;
 
+    /**
+     * @brief 初始化连接管理器
+     * @param local_id 本地 ID
+     * @return DasResult DAS_S_OK 成功
+     */
     DasResult Initialize(uint16_t local_id);
+
+    /**
+     * @brief 关闭连接管理器
+     * @return DasResult DAS_S_OK 成功
+     */
     DasResult Shutdown();
 
     DasResult RegisterConnection(uint16_t remote_id, uint16_t local_id);
@@ -65,7 +89,6 @@ public:
 
     /**
      * @brief 获取到指定 session 的连接信息
-     * @brief 获取到指定 session 的连接信息
      *
      * @param session_id 目标会话ID
      * @param out_info 输出连接信息
@@ -75,45 +98,41 @@ public:
         const;
 
     /**
-     * @brief 获取连接的传输层（用于发送消息）
+     * @brief 注册 HostLauncher
+     *
+     * ConnectionManager 持有 DasPtr 拷贝（AddRef），Transport 由 HostLauncher 拥有。
+     *
+     * @param session_id 会话 ID
+     * @param launcher HostLauncher 实例（DasPtr 拷贝）
+     * @return DasResult DAS_S_OK 成功
+     */
+    DasResult RegisterHostLauncher(
+        uint16_t                      session_id,
+        const DasPtr<IHostLauncher>&  launcher);
+
+    /**
+     * @brief 取消注册 HostLauncher
+     *
+     * @param session_id 目标会话ID
+     * @return DasResult DAS_S_OK 成功，DAS_E_IPC_OBJECT_NOT_FOUND 未找到
+     */
+    DasResult UnregisterHostLauncher(uint16_t session_id);
+
+    /**
+     * @brief 获取 IHostLauncher
+     *
+     * @param session_id 目标会话ID
+     * @return DasPtr<IHostLauncher> HostLauncher 指针，不存在返回 nullptr
+     */
+    DasPtr<IHostLauncher> GetLauncher(uint16_t session_id) const;
+
+    /**
+     * @brief 获取连接的传输层（委托给 HostLauncher::GetTransport()）
      *
      * @param session_id 目标会话ID
      * @return DefaultAsyncIpcTransport* 传输层指针（不持有所有权），不存在返回 nullptr
      */
     DefaultAsyncIpcTransport* GetTransport(uint16_t session_id) const;
-
-    /**
-     * @brief 获取连接的运行循环（用于异步消息发送）
-     *
-     * @param session_id 目标会话ID
-     * @return IpcRunLoop* 运行循环指针（不持有所有权），不存在返回 nullptr
-     */
-    IpcRunLoop* GetRunLoop(uint16_t session_id) const;
-
-    /**
-     * @brief 注册 Host 进程的传输层
-     *
-     * 用于主进程转发消息到目标 Host。ConnectionManager 持有 Transport 的所有权。
-     *
-     * @param session_id 目标会话ID
-     * @param transport 传输层（转移所有权）
-     * @param shm_pool 共享内存池指针（可选，不持有所有权）
-     * @param run_loop 运行循环指针（可选，不持有所有权）
-     * @return DasResult DAS_S_OK 成功
-     */
-    DasResult RegisterHostTransport(
-        uint16_t                                   session_id,
-        std::unique_ptr<DefaultAsyncIpcTransport>  transport,
-        SharedMemoryPool*                          shm_pool = nullptr,
-        IpcRunLoop*                                run_loop = nullptr);
-
-    /**
-     * @brief 取消注册 Host 进程的传输层
-     *
-     * @param session_id 目标会话ID
-     * @return DasResult DAS_S_OK 成功，DAS_E_IPC_OBJECT_NOT_FOUND 未找到
-     */
-    DasResult UnregisterTransport(uint16_t session_id);
 
     /**
      * @brief 更新连接的活跃状态
@@ -136,6 +155,7 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
+
 DAS_CORE_IPC_NS_END
 
 #endif // DAS_CORE_IPC_CONNECTION_MANAGER_H

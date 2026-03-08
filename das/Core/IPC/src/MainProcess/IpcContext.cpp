@@ -160,13 +160,29 @@ namespace Core
                         return DAS_E_IPC_NOT_INITIALIZED;
                     }
 
-                    // 1. 获取目标 session 的 IpcRunLoop
-                    auto& conn_mgr = DAS::Core::IPC::ConnectionManager::GetInstance();
-                    auto* run_loop = conn_mgr.GetRunLoop(session_id);
+                    // 1. 获取目标 session 的 Transport
+                    auto& server = MainProcessServer::GetInstance();
+                    auto* run_loop = server.GetRunLoop();
                     if (!run_loop)
                     {
                         DAS_CORE_LOG_ERROR(
-                            "LoadPluginAsync: No RunLoop found for session_id = {}",
+                            "LoadPluginAsync: No RunLoop available");
+                        return DAS_E_IPC_NOT_INITIALIZED;
+                    }
+
+                    auto* conn_mgr = run_loop->GetConnectionManager();
+                    if (!conn_mgr)
+                    {
+                        DAS_CORE_LOG_ERROR(
+                            "LoadPluginAsync: No ConnectionManager available");
+                        return DAS_E_IPC_NOT_INITIALIZED;
+                    }
+
+                    auto* transport = conn_mgr->GetTransport(session_id);
+                    if (!transport)
+                    {
+                        DAS_CORE_LOG_ERROR(
+                            "LoadPluginAsync: No Transport found for session_id = {}",
                             session_id);
                         return DAS_E_IPC_OBJECT_NOT_FOUND;
                     }
@@ -189,8 +205,9 @@ namespace Core
                         static_cast<uint32_t>(payload.size()),
                         session_id);
 
-                    // 4. 发送异步请求
+                    // 4. 发送异步请求（使用指定 transport）
                     auto sender = run_loop->SendMessageAsync(
+                        transport,
                         header,
                         payload.data(),
                         payload.size(),

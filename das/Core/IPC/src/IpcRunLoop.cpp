@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstdint>
 #include <das/Core/IPC/Config.h>
+#include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/IMessageHandler.h>
 #include <das/Core/IPC/IpcErrors.h>
@@ -39,6 +40,11 @@ DasResult IpcRunLoop::Initialize()
     io_context_ = std::make_unique<boost::asio::io_context>();
     async_transport_ = std::make_unique<DefaultAsyncIpcTransport>(*io_context_);
     timeout_timer_ = std::make_unique<boost::asio::steady_timer>(*io_context_);
+
+    // Create ConnectionManager for MainProcess mode
+    // In Host mode, connection_manager_ remains nullptr (no heartbeat needed)
+    connection_manager_ = std::make_unique<ConnectionManager>();
+
     return DAS_S_OK;
 }
 
@@ -87,8 +93,16 @@ DasResult IpcRunLoop::Shutdown()
 {
     RequestStop();
 
+    // 清理 ConnectionManager
+    if (connection_manager_)
+    {
+        connection_manager_->StopHeartbeatThread();
+        connection_manager_->Shutdown();
+        connection_manager_.reset();
+    }
+
     // 确保所有异步操作都已完成
-    // 如果 io_context 仍在运行（理论上不应该），强制停止
+    // 如果 io_context 仍在运行（理论上不应该）。强制停止
     if (io_context_ && !io_context_->stopped())
     {
         io_context_->stop();

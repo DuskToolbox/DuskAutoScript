@@ -108,8 +108,23 @@ DasResult IpcLoadPluginImpl(
     }
 
     // 获取第一个可用的 session_id
-    auto& conn_manager = ConnectionManager::GetInstance();
-    auto  sessions = conn_manager.GetConnectedSessions();
+    // 从 MainProcessServer 获取 ConnectionManager
+    auto& server = MainProcess::MainProcessServer::GetInstance();
+    auto* run_loop = server.GetRunLoop();
+    if (!run_loop)
+    {
+        DAS_CORE_LOG_ERROR("No RunLoop available");
+        return DAS_E_IPC_NOT_INITIALIZED;
+    }
+
+    auto* conn_manager = run_loop->GetConnectionManager();
+    if (!conn_manager)
+    {
+        DAS_CORE_LOG_ERROR("No ConnectionManager available");
+        return DAS_E_IPC_NOT_INITIALIZED;
+    }
+
+    auto  sessions = conn_manager->GetConnectedSessions();
 
     if (sessions.empty())
     {

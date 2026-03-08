@@ -33,6 +33,7 @@
 DAS_CORE_IPC_NS_BEGIN
 
 class IMessageHandler;
+class ConnectionManager;
 
 namespace Host
 {
@@ -240,6 +241,16 @@ public:
         return *io_context_;
     }
 
+    /**
+     * @brief 获取 ConnectionManager（MainProcess 模式）
+     *
+     * ConnectionManager 用于管理 HostLauncher 实例。
+     * 在 Host 模式下返回 nullptr。
+     *
+     * @return ConnectionManager* 指针，未初始化返回 nullptr
+     */
+    ConnectionManager* GetConnectionManager() { return connection_manager_.get(); }
+
     friend class ::Das::Core::IPC::Host::HandshakeHandler;
 
     // AwaitResponseOperation 需要访问内部方法
@@ -395,6 +406,9 @@ public:
 
     /// pending_calls_ 的互斥锁
     mutable std::mutex pending_mutex_;
+
+    /// ConnectionManager for MainProcess mode (nullptr in Host mode)
+    std::unique_ptr<ConnectionManager> connection_manager_;
 };
 
 //=============================================================================
