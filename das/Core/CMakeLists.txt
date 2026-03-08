@@ -260,6 +260,10 @@ target_compile_definitions(DasCoreObjects PRIVATE DAS_CORE_NAME="$<TARGET_FILE_N
 target_link_libraries(DasCore PUBLIC DasCoreObjects)
 
  if (${DAS_BUILD_TEST})
+     # 复制 Python 测试插件到 build 目录（测试工作目录是 build/Test）
+     file(COPY ${CMAKE_SOURCE_DIR}/tests/plugins/PythonTestPlugin
+          DESTINATION ${CMAKE_BINARY_DIR}/Test/tests/plugins)
+
      das_add_core_test(ForeignInterfaceHost)
      das_add_core_test(i18n)
      das_add_core_test(Utils)

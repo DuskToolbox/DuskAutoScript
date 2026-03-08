@@ -4,7 +4,7 @@ Python 测试插件 - 用于端到端集成测试
 参考 IpcTestPlugin2 实现
 """
 
-from dusk_auto_script import (
+from DuskAutoScript import (
     ISwigDasPluginPackage,
     IDasComponentFactory,
     IDasComponent,
