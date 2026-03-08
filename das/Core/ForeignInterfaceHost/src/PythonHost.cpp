@@ -49,12 +49,30 @@ PyGILGuard::~PyGILGuard() { ::PyGILState_Release(state_); }
 // ============================================================================
 
 auto CreateForeignLanguageRuntime(
-    [[maybe_unused]] const ForeignLanguageRuntimeFactoryDesc& desc)
+    const ForeignLanguageRuntimeFactoryDesc& desc)
     -> DAS::Utils::Expected<DasPtr<IForeignLanguageRuntime>>
 {
-    const auto                      p_runtime = new PythonRuntime{};
-    DasPtr<IForeignLanguageRuntime> result{p_runtime};
-    return result;
+    // 校验 language
+    if (desc.language != ForeignInterfaceLanguage::Python)
+    {
+        DAS_CORE_LOG_ERROR(
+            "CreateForeignLanguageRuntime: invalid language, expected Python");
+        return tl::make_unexpected(DAS_E_INVALID_ARGUMENT);
+    }
+
+    // Python 不需要 p_user_data（与 CppRuntime 一致）
+
+    try
+    {
+        const auto                      p_runtime = new PythonRuntime{};
+        DasPtr<IForeignLanguageRuntime> result{p_runtime};
+        return result;
+    }
+    catch (const std::exception& e)
+    {
+        DAS_CORE_LOG_ERROR("Exception in CreateForeignLanguageRuntime: {}", e.what());
+        return tl::make_unexpected(DAS_E_FAIL);
+    }
 }
 
 PyObjectPtr::PyObjectPtr(
