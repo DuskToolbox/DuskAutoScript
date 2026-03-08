@@ -22,6 +22,7 @@ namespace Core
         class DistributedObjectManager;
         class ProxyFactory;
         class RemoteObjectRegistry;
+        class HostLauncher;
 
         namespace MainProcess
         {
@@ -51,12 +52,6 @@ namespace Core
                 IpcContext(IpcContext&&) = delete;
                 IpcContext& operator=(IpcContext&&) = delete;
 
-                /**
-                 * @brief 获取 MainProcessServer 实例
-                 * @return MainProcessServer& 服务端实例
-                 */
-                class MainProcessServer& GetServer() override;
-
                 class DistributedObjectManager& GetObjectManager() override;
 
                 class ProxyFactory& GetProxyFactory();
@@ -76,6 +71,11 @@ namespace Core
 
                 DasResult Run() override;
                 void      RequestStop() override;
+
+                boost::asio::io_context& GetIoContext() override;
+
+                DasResult RegisterHostLauncher(
+                    std::shared_ptr<HostLauncher> launcher) override;
 
             private:
                 std::unique_ptr<IpcContextImpl> impl_;

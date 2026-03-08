@@ -16,6 +16,12 @@
 #include <das/IDasAsyncCallback.h>
 #include <boost/asio/post.hpp>
 #include <cstring>
+
+// Define alias for IpcRunLoop in the parent namespace
+namespace Das::Core::IPC::MainProcess {
+    using IpcRunLoopType = Das::Core::IPC::IpcRunLoop;
+}
+
 DAS_NS_BEGIN
 namespace Core
 {
@@ -36,38 +42,37 @@ namespace Core
                 {
                     DasResult result = DAS_S_OK;
 
-                    // 1. 初始化 SessionCoordinator（主进程 session_id = 1）
+                    // 1. Create IpcRunLoop FIRST (provides io_context)
+                    runloop_ = std::make_unique<IpcRunLoopType>();
+                    result = runloop_->Initialize();
+                    if (result != DAS_S_OK)
+                    {
+                        DAS_CORE_LOG_ERROR("IpcRunLoop init failed: 0x{:08X}", result);
+                        runloop_.reset();
+                        return result;
+                    }
+
+                    // 2. Initialize SessionCoordinator（主进程 session_id = 1）
                     auto& coordinator = SessionCoordinator::GetInstance();
                     coordinator.SetLocalSessionId(1);
 
-                    // 2. 创建 DistributedObjectManager
+                    // 3. Create DistributedObjectManager
                     object_manager_ =
                         std::make_unique<DistributedObjectManager>();
 
-                    // 3. 初始化 ProxyFactory
+                    // 4. Initialize ProxyFactory with runloop_
                     auto& proxy_factory = ProxyFactory::GetInstance();
                     result = proxy_factory.Initialize(
                         object_manager_.get(),
                         &RemoteObjectRegistry::GetInstance(),
-                        nullptr); // run_loop 留空，由 MainProcessServer 设置
+                        runloop_.get());
                     if (result != DAS_S_OK)
                     {
                         DAS_CORE_LOG_ERROR(
                             "ProxyFactory initialization failed, result = 0x{:08X}",
                             result);
                         object_manager_.reset();
-                        return result;
-                    }
-
-                    // 4. 初始化 MainProcessServer
-                    auto& server = MainProcessServer::GetInstance();
-                    result = server.Initialize();
-                    if (result != DAS_S_OK)
-                    {
-                        DAS_CORE_LOG_ERROR(
-                            "MainProcessServer initialization failed, result = 0x{:08X}",
-                            result);
-                        object_manager_.reset();
+                        runloop_.reset();
                         return result;
                     }
 
@@ -84,28 +89,22 @@ namespace Core
 
                     DasResult result = DAS_S_OK;
 
-                    // 停止 MainProcessServer
-                    auto&     server = MainProcessServer::GetInstance();
-                    DasResult shutdown_result = server.Shutdown();
-                    if (shutdown_result != DAS_S_OK)
-                    {
-                        result = shutdown_result;
-                    }
-
-                    // 清理 ProxyFactory
+                    // Clear ProxyFactory
                     auto& proxy_factory = ProxyFactory::GetInstance();
                     proxy_factory.ClearAllProxies();
 
-                    // 销毁 DistributedObjectManager
+                    // Destroy in reverse order
                     object_manager_.reset();
+
+                    if (runloop_)
+                    {
+                        runloop_->RequestStop();
+                        runloop_->Shutdown();
+                        runloop_.reset();
+                    }
 
                     is_initialized_ = false;
                     return result;
-                }
-
-                MainProcessServer& GetServer()
-                {
-                    return MainProcessServer::GetInstance();
                 }
 
                 DistributedObjectManager& GetObjectManager()
@@ -123,21 +122,63 @@ namespace Core
                     return RemoteObjectRegistry::GetInstance();
                 }
 
+                boost::asio::io_context& GetIoContext()
+                {
+                    if (!runloop_)
+                    {
+                        throw std::runtime_error("IpcContext not initialized");
+                    }
+                    return runloop_->GetIoContext();
+                }
+
+                DasResult RegisterHostLauncher(std::shared_ptr<HostLauncher> launcher)
+                {
+                    if (!runloop_)
+                    {
+                        DAS_CORE_LOG_ERROR("RegisterHostLauncher: IpcRunLoop not initialized");
+                        return DAS_E_IPC_NOT_INITIALIZED;
+                    }
+
+                    auto* conn_mgr = runloop_->GetConnectionManager();
+                    if (!conn_mgr)
+                    {
+                        DAS_CORE_LOG_ERROR("RegisterHostLauncher: ConnectionManager not initialized");
+                        return DAS_E_IPC_NOT_INITIALIZED;
+                    }
+
+                    uint16_t session_id = launcher->GetSessionId();
+                    DasPtr<IHostLauncher> launcher_ptr(launcher.get());
+                    return conn_mgr->RegisterHostLauncher(session_id, launcher_ptr);
+                }
+
+                DasResult Run()
+                {
+                    if (!runloop_)
+                    {
+                        DAS_CORE_LOG_ERROR("Run: IpcRunLoop not initialized");
+                        return DAS_E_IPC_NOT_INITIALIZED;
+                    }
+                    return runloop_->Run();
+                }
+
+                void RequestStop()
+                {
+                    if (runloop_)
+                    {
+                        runloop_->RequestStop();
+                    }
+                }
+
                 void PostCallback(IDasAsyncCallback* callback)
                 {
-                    if (!callback) return;
-
-                    auto& server = MainProcessServer::GetInstance();
-                    auto* run_loop = server.GetRunLoop();
-                    if (!run_loop) return;
+                    if (!callback || !runloop_) return;
 
                     // DasPtr 在 post 之前获取所有权（AddRef），保证生命周期安全
                     DasPtr<IDasAsyncCallback> ptr(callback);
-                    boost::asio::post(run_loop->GetIoContext(), [ptr = std::move(ptr)]() {
+                    boost::asio::post(runloop_->GetIoContext(), [ptr = std::move(ptr)]() {
                         ptr->Do();
                     });
                 }
-
 
                 DasResult LoadPluginAsync(
                     IHostLauncher*                 host_launcher,
@@ -160,17 +201,14 @@ namespace Core
                         return DAS_E_IPC_NOT_INITIALIZED;
                     }
 
-                    // 1. 获取目标 session 的 Transport
-                    auto& server = MainProcessServer::GetInstance();
-                    auto* run_loop = server.GetRunLoop();
-                    if (!run_loop)
+                    if (!runloop_)
                     {
-                        DAS_CORE_LOG_ERROR(
-                            "LoadPluginAsync: No RunLoop available");
+                        DAS_CORE_LOG_ERROR("LoadPluginAsync: IpcRunLoop not initialized");
                         return DAS_E_IPC_NOT_INITIALIZED;
                     }
 
-                    auto* conn_mgr = run_loop->GetConnectionManager();
+                    // Get Transport via ConnectionManager
+                    auto* conn_mgr = runloop_->GetConnectionManager();
                     if (!conn_mgr)
                     {
                         DAS_CORE_LOG_ERROR(
@@ -206,7 +244,7 @@ namespace Core
                         session_id);
 
                     // 4. 发送异步请求（使用指定 transport）
-                    auto sender = run_loop->SendMessageAsync(
+                    auto sender = runloop_->SendMessageAsync(
                         transport,
                         header,
                         payload.data(),
@@ -228,6 +266,7 @@ namespace Core
 
             private:
                 std::unique_ptr<DistributedObjectManager> object_manager_;
+                std::unique_ptr<IpcRunLoopType>           runloop_;
                 bool is_initialized_ = false;
             };
 
@@ -246,11 +285,6 @@ namespace Core
                 {
                     impl_->Shutdown();
                 }
-            }
-
-            MainProcessServer& IpcContext::GetServer()
-            {
-                return impl_->GetServer();
             }
 
             DistributedObjectManager& IpcContext::GetObjectManager()
@@ -276,16 +310,16 @@ namespace Core
                     return DAS_E_INVALID_ARGUMENT;
                 }
 
-                auto& server = MainProcessServer::GetInstance();
-                auto* run_loop = server.GetRunLoop();
-                if (!run_loop)
+                try
                 {
-                    DAS_CORE_LOG_ERROR("CreateHostLauncher: IpcRunLoop not initialized");
+                    *pp_out_launcher = new HostLauncher(impl_->GetIoContext());
+                    return DAS_S_OK;
+                }
+                catch (const std::exception& e)
+                {
+                    DAS_CORE_LOG_ERROR("CreateHostLauncher: {}", e.what());
                     return DAS_E_IPC_NOT_INITIALIZED;
                 }
-
-                *pp_out_launcher = new HostLauncher(run_loop->GetIoContext());
-                return DAS_S_OK;
             }
 
             void IpcContext::PostCallback(IDasAsyncCallback* callback)
@@ -308,24 +342,23 @@ namespace Core
 
             DasResult IpcContext::Run()
             {
-                auto& server = MainProcessServer::GetInstance();
-                auto* run_loop = server.GetRunLoop();
-                if (!run_loop)
-                {
-                    DAS_CORE_LOG_ERROR("Run: IpcRunLoop not initialized");
-                    return DAS_E_IPC_NOT_INITIALIZED;
-                }
-                return run_loop->Run();
+                return impl_->Run();
             }
 
             void IpcContext::RequestStop()
             {
-                auto& server = MainProcessServer::GetInstance();
-                auto* run_loop = server.GetRunLoop();
-                if (run_loop)
-                {
-                    run_loop->RequestStop();
-                }
+                impl_->RequestStop();
+            }
+
+            boost::asio::io_context& IpcContext::GetIoContext()
+            {
+                return impl_->GetIoContext();
+            }
+
+            DasResult IpcContext::RegisterHostLauncher(
+                std::shared_ptr<HostLauncher> launcher)
+            {
+                return impl_->RegisterHostLauncher(std::move(launcher));
             }
 
             // ====== C API 实现 ======
