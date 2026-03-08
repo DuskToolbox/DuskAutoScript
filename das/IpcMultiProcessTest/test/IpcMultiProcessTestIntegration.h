@@ -64,13 +64,14 @@ protected:
         }
 
         // 启动事件循环（必须在 CreateHostLauncher 之前）
-        // 这样 sync_wait 调用才能完成（需要 io_context 运行）
+        // ctx_->Run() 内部调用 IpcRunLoop::Run() -> io_context_.run()
+        // 这是阻塞调用，需要在独立线程中运行
         run_thread_ = std::thread([this]() {
-            run_result_ = ctx_->GetServer().Start();
+            run_result_ = ctx_->Run();
         });
 
-        // 等待服务器启动
-        for (int i = 0; i < 100 && !ctx_->GetServer().IsRunning(); ++i)
+        // 等待 IpcRunLoop 启动（Run() 会设置 running_ 标志）
+        for (int i = 0; i < 100 && !ctx_->GetServer().GetRunLoop()->IsRunning(); ++i)
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
@@ -92,8 +93,8 @@ protected:
 
     void TearDown() override
     {
-        // 先停止事件循环
-        ctx_->GetServer().Stop();
+        // 请求停止事件循环
+        ctx_->RequestStop();
 
         // 等待事件循环线程结束
         if (run_thread_.joinable())
