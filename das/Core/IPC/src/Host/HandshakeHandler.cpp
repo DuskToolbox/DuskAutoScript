@@ -159,7 +159,7 @@ namespace Core
 
                     const HeartbeatV1* heartbeat =
                         reinterpret_cast<const HeartbeatV1*>(body);
-                    return HandleHeartbeat(*heartbeat);
+                    return HandleHeartbeat(header.session_id, *heartbeat);
                 }
 
                 case HandshakeInterfaceId::HANDSHAKE_IFACE_GOODBYE:
@@ -460,25 +460,20 @@ namespace Core
             }
 
             DasResult HandshakeHandler::HandleHeartbeat(
+                uint16_t           sender_session_id,
                 const HeartbeatV1& heartbeat)
             {
                 std::lock_guard<std::mutex> lock(clients_mutex_);
 
-                bool found = false;
-                for (auto& pair : clients_)
+                // 只更新发送者客户端的心跳时间戳
+                auto it = clients_.find(sender_session_id);
+                if (it != clients_.end())
                 {
-                    if (pair.second.is_ready)
-                    {
-                        pair.second.last_heartbeat =
-                            std::chrono::steady_clock::now();
-                        found = true;
-                    }
+                    it->second.last_heartbeat = std::chrono::steady_clock::now();
                 }
 
-                if (!found)
-                {
-                    (void)heartbeat;
-                }
+                // heartbeat timestamp 暂时不使用
+                (void)heartbeat;
 
                 return DAS_S_OK;
             }

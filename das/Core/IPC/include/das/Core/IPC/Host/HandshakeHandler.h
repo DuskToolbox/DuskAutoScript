@@ -261,12 +261,15 @@ namespace Core
                 /**
                  * @brief 处理 HeartbeatV1
                  *
-                 * - 更新客户端心跳时间戳
+                 * - 更新发送者客户端的心跳时间戳
                  *
+                 * @param sender_session_id 发送心跳的客户端 session_id
                  * @param heartbeat 心跳消息
                  * @return DasResult
                  */
-                DasResult HandleHeartbeat(const HeartbeatV1& heartbeat);
+                DasResult HandleHeartbeat(
+                    uint16_t            sender_session_id,
+                    const HeartbeatV1&  heartbeat);
 
                 /**
                  * @brief 处理 GoodbyeV1
