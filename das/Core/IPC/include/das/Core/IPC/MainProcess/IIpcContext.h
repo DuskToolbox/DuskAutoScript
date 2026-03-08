@@ -131,6 +131,13 @@ namespace Core
                 virtual DasResult RegisterHostLauncher(
                     std::shared_ptr<HostLauncher> launcher) = 0;
 
+                /**
+                 * @brief 获取已连接的 session ID 列表
+                 *
+                 * @return std::vector<uint16_t> 已连接的 session ID 列表
+                 */
+                virtual std::vector<uint16_t> GetConnectedSessions() = 0;
+
             protected:
                 virtual ~IIpcContext() = default;
 

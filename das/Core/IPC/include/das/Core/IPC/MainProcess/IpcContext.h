@@ -14,8 +14,6 @@ namespace Core
     {
         namespace MainProcess
         {
-            class MainProcessServer;
-
         } // namespace MainProcess
 
         // 前置声明（在 IPC 命名空间内）
@@ -39,7 +37,7 @@ namespace Core
              * - DistributedObjectManager：分布式对象生命周期管理
              * - ProxyFactory：Proxy 工厂，负责创建远程对象代理
              * - RemoteObjectRegistry（单例）：远程对象注册表
-             * - MainProcessServer（单例）：主进程 IPC 服务端
+             * - IpcRunLoop：IPC 运行循环（持有 ConnectionManager）
              */
             class IpcContext final : public IIpcContext
             {
@@ -76,6 +74,8 @@ namespace Core
 
                 DasResult RegisterHostLauncher(
                     std::shared_ptr<HostLauncher> launcher) override;
+
+                std::vector<uint16_t> GetConnectedSessions() override;
 
             private:
                 std::unique_ptr<IpcContextImpl> impl_;

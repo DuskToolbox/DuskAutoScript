@@ -14,7 +14,6 @@
 #include "IpcMultiProcessTestIntegration.h"
 
 #include <das/Core/IPC/AsyncOperationImpl.h>
-#include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/DasAsyncSender.h>
 #include <das/IDasAsyncLoadPluginOperation.h>
 #include <stdexec/execution.hpp>
@@ -253,6 +252,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_CallComponent)
  * @brief 测试验证对象返回正确的 session_id
  *
  * 验证从不同 Host 进程加载的插件返回正确的 session_id。
+ * 使用 RegisterHostLauncher 模式，Transport 保留在 HostLauncher 内部。
  */
 TEST_F(IpcMultiProcessTestIntegration, CrossProcess_VerifySessionId)
 {
@@ -262,24 +262,22 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_VerifySessionId)
     }
 
     // 1. 创建并启动第一个 Host 进程
-    DAS::DasPtr<DAS::Core::IPC::IHostLauncher> host_a_ptr;
-    DasResult result = ctx_->CreateHostLauncher(host_a_ptr.Put());
-    ASSERT_EQ(result, DAS_S_OK);
-    auto* host_a = static_cast<DAS::Core::IPC::HostLauncher*>(host_a_ptr.Get());
+    auto host_a = std::make_shared<DAS::Core::IPC::HostLauncher>(ctx_->GetIoContext());
 
     uint16_t session_a = 0;
-    result = host_a->Start(
+    DasResult result = host_a->Start(
         host_exe_path_,
         session_a,
         IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_GT(session_a, static_cast<uint16_t>(0));
 
-    // 2. 创建并启动第二个 Host 进程
-    DAS::DasPtr<DAS::Core::IPC::IHostLauncher> host_b_ptr;
-    result = ctx_->CreateHostLauncher(host_b_ptr.Put());
+    // 注册 Host A 到 IPC 上下文
+    result = ctx_->RegisterHostLauncher(host_a);
     ASSERT_EQ(result, DAS_S_OK);
-    auto* host_b = static_cast<DAS::Core::IPC::HostLauncher*>(host_b_ptr.Get());
+
+    // 2. 创建并启动第二个 Host 进程
+    auto host_b = std::make_shared<DAS::Core::IPC::HostLauncher>(ctx_->GetIoContext());
 
     uint16_t session_b = 0;
     result = host_b->Start(
@@ -289,29 +287,14 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_VerifySessionId)
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_GT(session_b, static_cast<uint16_t>(0));
 
+    // 注册 Host B 到 IPC 上下文
+    result = ctx_->RegisterHostLauncher(host_b);
+    ASSERT_EQ(result, DAS_S_OK);
+
     // 3. 验证两个 session_id 不同
     EXPECT_NE(session_a, session_b);
 
-    // 4. 注册 Transport 到 ConnectionManager
-    auto transport_a = host_a->ReleaseTransport();
-    auto transport_b = host_b->ReleaseTransport();
-    ASSERT_NE(transport_a, nullptr);
-    ASSERT_NE(transport_b, nullptr);
-
-    auto& conn_manager = DAS::Core::IPC::ConnectionManager::GetInstance();
-    result = conn_manager.RegisterHostTransport(
-        session_a,
-        std::move(transport_a),
-        nullptr,
-        nullptr);
-    ASSERT_EQ(result, DAS_S_OK);
-    result = conn_manager.RegisterHostTransport(
-        session_b,
-        std::move(transport_b),
-        nullptr,
-        nullptr);
-
-    // 5. 获取插件 JSON 路径
+    // 4. 获取插件 JSON 路径
     std::string plugin1_path, plugin2_path;
     try
     {
@@ -320,19 +303,17 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_VerifySessionId)
     }
     catch (const std::exception& e)
     {
-        conn_manager.UnregisterTransport(session_a);
-        conn_manager.UnregisterTransport(session_b);
         host_a->Stop();
         host_b->Stop();
         GTEST_SKIP() << "Plugin JSON not found: " << e.what();
     }
 
-    // 6. 使用异步接口并发加载两个插件（when_all）
+    // 5. 使用异步接口并发加载两个插件（when_all）
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op_a;
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op_b;
-    result = ctx_->LoadPluginAsync(host_a, plugin1_path.c_str(), op_a.Put());
+    result = ctx_->LoadPluginAsync(host_a.get(), plugin1_path.c_str(), op_a.Put());
     ASSERT_EQ(result, DAS_S_OK);
-    result = ctx_->LoadPluginAsync(host_b, plugin2_path.c_str(), op_b.Put());
+    result = ctx_->LoadPluginAsync(host_b.get(), plugin2_path.c_str(), op_b.Put());
     ASSERT_EQ(result, DAS_S_OK);
 
     // when_all 并发等待两个异步操作
@@ -351,7 +332,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_VerifySessionId)
     EXPECT_EQ(object_a.session_id, session_a);
     EXPECT_EQ(object_b.session_id, session_b);
 
-    // 7. 验证不同 Host 的对象 session_id 不同
+    // 6. 验证不同 Host 的对象 session_id 不同
     EXPECT_NE(object_a.session_id, object_b.session_id);
 
     std::string log_msg = DAS_FMT_NS::format(
@@ -363,9 +344,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_VerifySessionId)
         object_b.local_id);
     DAS_LOG_INFO(log_msg.c_str());
 
-    // 8. 清理
-    conn_manager.UnregisterTransport(session_a);
-    conn_manager.UnregisterTransport(session_b);
+    // 7. 清理
     host_a->Stop();
     host_b->Stop();
 }
@@ -376,7 +355,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_VerifySessionId)
  * 完整的跨进程调用链：
  *   Host A → 主进程（转发）→ Host B
  *
- * 验证 MainProcessServer::ForwardMessageToHost() 功能。
+ * 使用 RegisterHostLauncher 模式，Transport 保留在 HostLauncher 内部。
  */
 TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
 {
@@ -386,24 +365,22 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
     }
 
     // 1. 创建并启动 Host B（目标进程）
-    DAS::DasPtr<DAS::Core::IPC::IHostLauncher> host_b_ptr;
-    DasResult result = ctx_->CreateHostLauncher(host_b_ptr.Put());
-    ASSERT_EQ(result, DAS_S_OK);
-    auto* host_b = static_cast<DAS::Core::IPC::HostLauncher*>(host_b_ptr.Get());
+    auto host_b = std::make_shared<DAS::Core::IPC::HostLauncher>(ctx_->GetIoContext());
 
     uint16_t session_b = 0;
-    result = host_b->Start(
+    DasResult result = host_b->Start(
         host_exe_path_,
         session_b,
         IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_GT(session_b, static_cast<uint16_t>(0));
 
-    // 2. 创建并启动 Host A（调用方进程）
-    DAS::DasPtr<DAS::Core::IPC::IHostLauncher> host_a_ptr;
-    result = ctx_->CreateHostLauncher(host_a_ptr.Put());
+    // 注册 Host B 到 IPC 上下文
+    result = ctx_->RegisterHostLauncher(host_b);
     ASSERT_EQ(result, DAS_S_OK);
-    auto* host_a = static_cast<DAS::Core::IPC::HostLauncher*>(host_a_ptr.Get());
+
+    // 2. 创建并启动 Host A（调用方进程）
+    auto host_a = std::make_shared<DAS::Core::IPC::HostLauncher>(ctx_->GetIoContext());
 
     uint16_t session_a = 0;
     result = host_a->Start(
@@ -414,26 +391,11 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
     EXPECT_GT(session_a, static_cast<uint16_t>(0));
     EXPECT_NE(session_a, session_b);
 
-    // 3. 注册 Transport 到 ConnectionManager
-    auto transport_a = host_a->ReleaseTransport();
-    auto transport_b = host_b->ReleaseTransport();
-    ASSERT_NE(transport_a, nullptr);
-    ASSERT_NE(transport_b, nullptr);
-
-    auto& conn_manager = DAS::Core::IPC::ConnectionManager::GetInstance();
-    result = conn_manager.RegisterHostTransport(
-        session_a,
-        std::move(transport_a),
-        nullptr,
-        nullptr);
+    // 注册 Host A 到 IPC 上下文
+    result = ctx_->RegisterHostLauncher(host_a);
     ASSERT_EQ(result, DAS_S_OK);
-    result = conn_manager.RegisterHostTransport(
-        session_b,
-        std::move(transport_b),
-        nullptr,
-        nullptr);
 
-    // 4. 获取插件 JSON 路径
+    // 3. 获取插件 JSON 路径
     std::string plugin1_path, plugin2_path;
     try
     {
@@ -442,19 +404,17 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
     }
     catch (const std::exception& e)
     {
-        conn_manager.UnregisterTransport(session_a);
-        conn_manager.UnregisterTransport(session_b);
         host_a->Stop();
         host_b->Stop();
         GTEST_SKIP() << "Plugin JSON not found: " << e.what();
     }
 
-    // 5. 使用异步接口并发加载两个插件
+    // 4. 使用异步接口并发加载两个插件
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op_a;
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op_b;
-    result = ctx_->LoadPluginAsync(host_a, plugin1_path.c_str(), op_a.Put());
+    result = ctx_->LoadPluginAsync(host_a.get(), plugin1_path.c_str(), op_a.Put());
     ASSERT_EQ(result, DAS_S_OK);
-    result = ctx_->LoadPluginAsync(host_b, plugin2_path.c_str(), op_b.Put());
+    result = ctx_->LoadPluginAsync(host_b.get(), plugin2_path.c_str(), op_b.Put());
     ASSERT_EQ(result, DAS_S_OK);
 
     auto both = stdexec::when_all(
@@ -470,20 +430,18 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
     ASSERT_EQ(result_b, DAS_S_OK);
     EXPECT_EQ(factory_id_b.session_id, session_b);
 
-    // 6. 验证 ConnectionManager 可以获取 Transport
-    auto* transport_from_a = conn_manager.GetTransport(session_b);
-    EXPECT_NE(transport_from_a, nullptr);
+    // 5. 验证 IPC 上下文可以获取已连接的 session
+    auto connected_sessions = ctx_->GetConnectedSessions();
+    EXPECT_EQ(connected_sessions.size(), 2);
 
     std::string log_msg = DAS_FMT_NS::format(
         "[CrossProcess_HostToHostCall] Cross-process infrastructure verified: "
-        "HostA(session={}) can reach HostB(session={}) via ConnectionManager",
+        "HostA(session={}) can reach HostB(session={}) via IpcContext",
         session_a,
         session_b);
     DAS_LOG_INFO(log_msg.c_str());
 
-    // 7. 清理
-    conn_manager.UnregisterTransport(session_a);
-    conn_manager.UnregisterTransport(session_b);
+    // 6. 清理
     host_a->Stop();
     host_b->Stop();
 }

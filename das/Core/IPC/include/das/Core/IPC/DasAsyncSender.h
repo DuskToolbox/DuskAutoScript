@@ -12,7 +12,10 @@
  * @code
  * auto ctx = MainProcess::CreateIpcContextEz();
  * DasPtr<IDasAsyncLoadPluginOperation> op;
- * ctx->GetServer().SendLoadPluginAsync("plugin.json", session_id, op.Put());
+ *
+ * // 通过 IHostLauncher 获取 session_id
+ * uint16_t session_id = host_launcher->GetSessionId();
+ * ctx->LoadPluginAsync(host_launcher, "plugin.json", op.Put());
  *
  * // 创建 sender
  * auto sender = DAS::Core::IPC::async_op(*ctx, std::move(op));

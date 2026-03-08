@@ -588,7 +588,7 @@ void IpcRunLoop::StartAsyncReceive()
     }
 
     // 检查 transport 是否已连接
-    // MainProcessServer 的 transport 从未连接，不应该启动接收循环
+    // 注意：未注册的 transport 从未连接，不应该启动接收循环
     // 对于 Host 端（服务端），创建命名管道后 IsConnected() 返回 true
     if (!async_transport_->IsConnected())
     {

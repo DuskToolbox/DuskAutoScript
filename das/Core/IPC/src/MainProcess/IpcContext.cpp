@@ -7,7 +7,6 @@
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/IPC/MainProcess/IpcContext.h>
-#include <das/Core/IPC/MainProcess/MainProcessServer.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/IPC/SessionCoordinator.h>
@@ -167,6 +166,20 @@ namespace Core
                     {
                         runloop_->RequestStop();
                     }
+                }
+
+                std::vector<uint16_t> GetConnectedSessions()
+                {
+                    if (!runloop_)
+                    {
+                        return {};
+                    }
+                    auto* conn_mgr = runloop_->GetConnectionManager();
+                    if (!conn_mgr)
+                    {
+                        return {};
+                    }
+                    return conn_mgr->GetConnectedSessions();
                 }
 
                 void PostCallback(IDasAsyncCallback* callback)
@@ -359,6 +372,15 @@ namespace Core
                 std::shared_ptr<HostLauncher> launcher)
             {
                 return impl_->RegisterHostLauncher(std::move(launcher));
+            }
+
+            std::vector<uint16_t> IpcContext::GetConnectedSessions()
+            {
+                if (!impl_)
+                {
+                    return {};
+                }
+                return impl_->GetConnectedSessions();
             }
 
             // ====== C API 实现 ======

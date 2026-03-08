@@ -3,7 +3,6 @@
 #include <das/Core/IPC/DasAsyncSender.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
-#include <das/Core/IPC/MainProcess/MainProcessServer.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
@@ -108,23 +107,7 @@ DasResult IpcLoadPluginImpl(
     }
 
     // 获取第一个可用的 session_id
-    // 从 MainProcessServer 获取 ConnectionManager
-    auto& server = MainProcess::MainProcessServer::GetInstance();
-    auto* run_loop = server.GetRunLoop();
-    if (!run_loop)
-    {
-        DAS_CORE_LOG_ERROR("No RunLoop available");
-        return DAS_E_IPC_NOT_INITIALIZED;
-    }
-
-    auto* conn_manager = run_loop->GetConnectionManager();
-    if (!conn_manager)
-    {
-        DAS_CORE_LOG_ERROR("No ConnectionManager available");
-        return DAS_E_IPC_NOT_INITIALIZED;
-    }
-
-    auto  sessions = conn_manager->GetConnectedSessions();
+    auto sessions = ctx->GetConnectedSessions();
 
     if (sessions.empty())
     {
