@@ -80,6 +80,24 @@ namespace Core
                  */
                 virtual void PostCallback(IDasAsyncCallback* callback) = 0;
 
+                /**
+                 * @brief 阻塞运行事件循环
+                 *
+                 * 调用内部 IpcRunLoop::Run() 阻塞运行 io_context 事件循环。
+                 * 通常在独立线程中调用。
+                 *
+                 * @return DasResult 运行结果
+                 */
+                virtual DasResult Run() = 0;
+
+                /**
+                 * @brief 请求停止事件循环
+                 *
+                 * 非阻塞调用，设置停止标志后立即返回。
+                 * 事件循环会在当前操作完成后退出。
+                 */
+                virtual void RequestStop() = 0;
+
             protected:
                 virtual ~IIpcContext() = default;
 
