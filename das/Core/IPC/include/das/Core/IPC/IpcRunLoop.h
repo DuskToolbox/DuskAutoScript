@@ -260,10 +260,10 @@ public:
      * 在 HostLauncher::Start() 成功后调用。
      * Transport 将在注册后立即开始接收消息。
      *
-     * @param launcher HostLauncher 实例（共享所有权）
+     * @param launcher HostLauncher 实例（DasPtr 所有权转移）
      * @return DasResult DAS_S_OK 成功
      */
-    DasResult RegisterHostLauncher(std::shared_ptr<HostLauncher> launcher);
+    DasResult RegisterHostLauncher(DasPtr<IHostLauncher> launcher);
 
     friend class ::Das::Core::IPC::Host::HandshakeHandler;
 
@@ -303,13 +303,14 @@ public:
      * @brief 为指定 Transport 启动异步接收循环
      *
      * 在 RegisterHostLauncher 后调用，为该 Transport 启动接收协程。
+     * 协程会捕获 launcher 的 DasPtr 以保持 transport 存活。
      *
      * @param session_id 会话 ID
-     * @param transport 传输层指针
+     * @param launcher HostLauncher 的 DasPtr
      */
     void StartAsyncReceiveForTransport(
-        uint16_t                   session_id,
-        DefaultAsyncIpcTransport*  transport);
+        uint16_t                     session_id,
+        DasPtr<IHostLauncher> launcher);
 
     /**
      * @brief 调度超时检查定时器

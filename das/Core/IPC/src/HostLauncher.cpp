@@ -78,6 +78,7 @@ struct HostLauncher::Impl
     uint16_t                                     session_id = 0;
     uint64_t                                     next_call_id = 1;
     bool                                         is_running = false;
+    std::atomic<uint32_t>                        ref_count{1}; // 引用计数，初始为 1（创建时持有）
 };
 
 HostLauncher::HostLauncher(boost::asio::io_context& io_ctx)
@@ -306,9 +307,20 @@ DasResult HostLauncher::StartAsync(
     return result;
 }
 
-uint32_t HostLauncher::AddRef() { return 1; }
+uint32_t HostLauncher::AddRef()
+{
+    return ++impl_->ref_count;
+}
 
-uint32_t HostLauncher::Release() { return 1; }
+uint32_t HostLauncher::Release()
+{
+    auto r = --impl_->ref_count;
+    if (r == 0)
+    {
+        delete this;
+    }
+    return r;
+}
 
 DasResult HostLauncher::QueryInterface(const DasGuid& iid, void** pp)
 {

@@ -98,17 +98,17 @@ public:
         const;
 
     /**
-     * @brief 注册 HostLauncher
+     * @brief 注册 HostLauncher（转移所有权）
      *
-     * ConnectionManager 持有 DasPtr 拷贝（AddRef），Transport 由 HostLauncher 拥有。
+     * ConnectionManager 获取 DasPtr 所有权， Transport 由 HostLauncher 拥有。
      *
      * @param session_id 会话 ID
-     * @param launcher HostLauncher 实例（DasPtr 拷贝）
+     * @param launcher HostLauncher 实例（DasPtr 移动）
      * @return DasResult DAS_S_OK 成功
      */
     DasResult RegisterHostLauncher(
-        uint16_t                      session_id,
-        const DasPtr<IHostLauncher>&  launcher);
+        uint16_t                 session_id,
+        DasPtr<IHostLauncher>   launcher);
 
     /**
      * @brief 取消注册 HostLauncher

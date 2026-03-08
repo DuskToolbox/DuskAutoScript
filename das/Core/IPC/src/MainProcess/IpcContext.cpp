@@ -130,7 +130,7 @@ namespace Core
                     return runloop_->GetIoContext();
                 }
 
-                DasResult RegisterHostLauncher(std::shared_ptr<HostLauncher> launcher)
+                DasResult RegisterHostLauncher(DasPtr<IHostLauncher> launcher)
                 {
                     if (!runloop_)
                     {
@@ -145,9 +145,16 @@ namespace Core
                         return DAS_E_IPC_NOT_INITIALIZED;
                     }
 
+                    if (!launcher)
+                    {
+                        DAS_CORE_LOG_ERROR("RegisterHostLauncher: launcher is null");
+                        return DAS_E_INVALID_ARGUMENT;
+                    }
+
                     uint16_t session_id = launcher->GetSessionId();
-                    DasPtr<IHostLauncher> launcher_ptr(launcher.get());
-                    return conn_mgr->RegisterHostLauncher(session_id, launcher_ptr);
+
+                    // 转移 DasPtr 所有权到 ConnectionManager
+                    return conn_mgr->RegisterHostLauncher(session_id, std::move(launcher));
                 }
 
                 DasResult Run()
@@ -369,7 +376,7 @@ namespace Core
             }
 
             DasResult IpcContext::RegisterHostLauncher(
-                std::shared_ptr<HostLauncher> launcher)
+                DasPtr<IHostLauncher> launcher)
             {
                 return impl_->RegisterHostLauncher(std::move(launcher));
             }

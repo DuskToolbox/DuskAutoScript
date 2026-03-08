@@ -73,7 +73,7 @@ namespace Core
                 boost::asio::io_context& GetIoContext() override;
 
                 DasResult RegisterHostLauncher(
-                    std::shared_ptr<HostLauncher> launcher) override;
+                    DAS::DasPtr<IHostLauncher> launcher) override;
 
                 std::vector<uint16_t> GetConnectedSessions() override;
 

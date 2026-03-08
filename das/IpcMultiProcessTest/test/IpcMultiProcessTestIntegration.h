@@ -10,16 +10,19 @@
  * - 必须使用 async_op() 和 wait() 进行异步操作
  * - HostLauncher 使用 RegisterHostLauncher() 注册（新模式）
  *
- * 更新日志（08-04）：
+ * 更新日志（08-04)：
  * - 移除对 MainProcessServer 的依赖
  * - 使用 IIpcContext::RegisterHostLauncher() 替代旧的 Transport 注册模式
  * - Transport 永不转移，保留在 HostLauncher 内部
+ *
+ * 更新日志(Phase 8):
+ * - 修复 HostLauncher 引用计数问题
+ * - 修改测试代码使用 DasPtr 管理 HostLauncher 生命周期
  */
 
 #pragma once
 
 #include "IpcTestConfig.h"
-#include "IpcTestHostHelper.h"
 
 // Boost 头文件（用于进程启动测试）
 #include <boost/asio/io_context.hpp>
@@ -34,6 +37,7 @@
 #include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/DasApi.h>
+#include <das/DasPtr.hpp>
 #include <das/Utils/fmt.h>
 #include <filesystem>
 #include <gtest/gtest.h>
@@ -70,16 +74,12 @@ protected:
                     static_cast<uint32_t>(result)));
         }
 
-        // 包装为 shared_ptr
-        launcher_ = std::shared_ptr<DAS::Core::IPC::HostLauncher>(
-            static_cast<DAS::Core::IPC::HostLauncher*>(raw_launcher),
-            [](DAS::Core::IPC::HostLauncher* p) {
-                if (p)
-                {
-                    p->Stop();
-                    delete p;
-                }
-            });
+        // 关键修复：使用 DasPtr 管理 HostLauncher 的生命周期
+        // shared_ptr 和 DasPtr 是两个独立的引用计数系统
+        // 使用 DasPtr 可以统一生命周期管理
+        launcher_ = DAS::DasPtr<DAS::Core::IPC::HostLauncher>(
+            static_cast<DAS::Core::IPC::HostLauncher*>(raw_launcher));
+        // 注意：DasPtr 构造时已调用 AddRef()，引用计数为 1
 
         // 启动事件循环线程
         run_thread_ = std::thread([this]() {
@@ -103,7 +103,12 @@ protected:
             run_thread_.join();
         }
 
-        launcher_.reset();
+        // 重置 launcher_（DasPtr 释放引用）
+        launcher_.Reset();
+
+        // 重置 ctx_（ConnectionManager 会被销毁）
+        // 如果 launcher_ 的引用计数 > 1， DasPtr 仍持有引用
+        // ConnectionManager 销毁时也会释放其 DasPtr
         ctx_.reset();
 
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -145,11 +150,15 @@ protected:
 
         // 注册 HostLauncher 到 IPC 上下文
         // Transport 保留在 HostLauncher 内部，由 RegisterHostLauncher 启动接收
-        result = ctx_->RegisterHostLauncher(launcher_);
+        // 使用 std::move 转移所有权，让 shared_ptr 和 DasPtr 共享同一引用计数
+        result = ctx_->RegisterHostLauncher(std::move(launcher_));
         if (DAS::IsFailed(result))
         {
             DAS_LOG_ERROR("Failed to register HostLauncher to IPC context");
-            launcher_->Stop();
+            if (launcher_)
+            {
+                launcher_->Stop();
+            }
             return result;
         }
 
@@ -163,6 +172,6 @@ protected:
 
     std::string                                            host_exe_path_;
     std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ctx_;
-    std::shared_ptr<DAS::Core::IPC::HostLauncher>            launcher_;
+    DAS::DasPtr<DAS::Core::IPC::HostLauncher>            launcher_;  // 改用 DasPtr
     std::thread                                              run_thread_;
 };

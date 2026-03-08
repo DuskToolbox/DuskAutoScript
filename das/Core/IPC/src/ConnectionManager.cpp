@@ -149,8 +149,8 @@ DasResult ConnectionManager::GetConnection(
 }
 
 DasResult ConnectionManager::RegisterHostLauncher(
-    uint16_t                      session_id,
-    const DasPtr<IHostLauncher>&  launcher)
+    uint16_t                 session_id,
+    DasPtr<IHostLauncher>   launcher)
 {
     if (!launcher)
     {

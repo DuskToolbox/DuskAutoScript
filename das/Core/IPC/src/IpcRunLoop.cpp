@@ -800,7 +800,7 @@ DasResult IpcRunLoop::ProcessMessage(
     return DAS_E_IPC_INVALID_MESSAGE_TYPE;
 }
 
-DasResult IpcRunLoop::RegisterHostLauncher(std::shared_ptr<HostLauncher> launcher)
+DasResult IpcRunLoop::RegisterHostLauncher(DasPtr<IHostLauncher> launcher)
 {
     if (!launcher)
     {
@@ -808,8 +808,16 @@ DasResult IpcRunLoop::RegisterHostLauncher(std::shared_ptr<HostLauncher> launche
     }
 
     uint16_t session_id = launcher->GetSessionId();
-    auto* transport = launcher->GetTransport();
 
+    // 获取具体 HostLauncher 类型以访问 GetTransport
+    auto* concrete = dynamic_cast<HostLauncher*>(launcher.Get());
+    if (!concrete)
+    {
+        DAS_CORE_LOG_ERROR("Failed to cast IHostLauncher to HostLauncher: session_id={}", session_id);
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    auto* transport = concrete->GetTransport();
     if (!transport)
     {
         DAS_CORE_LOG_ERROR("HostLauncher has no Transport: session_id={}", session_id);
@@ -824,24 +832,43 @@ DasResult IpcRunLoop::RegisterHostLauncher(std::shared_ptr<HostLauncher> launche
         return DAS_E_IPC_NOT_INITIALIZED;
     }
 
-    DasPtr<IHostLauncher> launcher_ptr(launcher.get());
-    DasResult result = conn_mgr->RegisterHostLauncher(session_id, launcher_ptr);
+    DasResult result = conn_mgr->RegisterHostLauncher(session_id, std::move(launcher));
     if (result != DAS_S_OK)
     {
         return result;
     }
 
     // Start async receive for this Transport
-    StartAsyncReceiveForTransport(session_id, transport);
+    // 注意：从 ConnectionManager 获取 DasPtr 副本，协程会捕获它来保持 transport 存活
+    StartAsyncReceiveForTransport(session_id, conn_mgr->GetLauncher(session_id));
 
     DAS_CORE_LOG_INFO("HostLauncher registered: session_id={}", session_id);
     return DAS_S_OK;
 }
 
 void IpcRunLoop::StartAsyncReceiveForTransport(
-    uint16_t                   session_id,
-    DefaultAsyncIpcTransport* transport)
+    uint16_t                     session_id,
+    DasPtr<IHostLauncher> launcher)
 {
+    if (!launcher)
+    {
+        DAS_CORE_LOG_WARN(
+            "Launcher is null, skipping receive loop: session_id={}",
+            session_id);
+        return;
+    }
+
+    // 获取具体 HostLauncher 类型以访问 GetTransport
+    auto* concrete = dynamic_cast<HostLauncher*>(launcher.Get());
+    if (!concrete)
+    {
+        DAS_CORE_LOG_WARN(
+            "Failed to cast IHostLauncher to HostLauncher: session_id={}",
+            session_id);
+        return;
+    }
+
+    auto* transport = concrete->GetTransport();
     if (!transport || !transport->IsConnected())
     {
         DAS_CORE_LOG_WARN(
@@ -851,9 +878,11 @@ void IpcRunLoop::StartAsyncReceiveForTransport(
     }
 
     // Spawn receive coroutine
+    // 注意：捕获 launcher 的 DasPtr 来保持 transport 存活
+    // 当协程运行时，launcher 及其 transport 不会被销毁
     boost::asio::co_spawn(
         *io_context_,
-        [this, session_id, transport]() -> boost::asio::awaitable<void>
+        [this, session_id, launcher]() -> boost::asio::awaitable<void>
         {
             std::optional<int> retry_error_code;
             while (running_.load())
@@ -862,6 +891,21 @@ void IpcRunLoop::StartAsyncReceiveForTransport(
 
                 try
                 {
+                    // 从 launcher 获取 transport（安全，因为 launcher 被 DasPtr 持有）
+                    auto* concrete = dynamic_cast<HostLauncher*>(launcher.Get());
+                    if (!concrete)
+                    {
+                        DAS_CORE_LOG_DEBUG("Failed to cast launcher, exiting: session_id={}", session_id);
+                        co_return;
+                    }
+
+                    auto* transport = concrete->GetTransport();
+                    if (!transport)
+                    {
+                        DAS_CORE_LOG_DEBUG("Transport became null, exiting: session_id={}", session_id);
+                        co_return;
+                    }
+
                     // Use the transport's coroutine interface
                     auto result = co_await transport->ReceiveCoroutine();
 

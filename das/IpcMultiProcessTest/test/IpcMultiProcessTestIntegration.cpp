@@ -174,7 +174,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadPlugin)
     // 3. 通过 IIpcContext::LoadPluginAsync 加载插件
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
     result = ctx_->LoadPluginAsync(
-        launcher_.get(),
+        launcher_.Get(),
         plugin_json_path.c_str(),
         op.Put());
     ASSERT_EQ(result, DAS_S_OK);
@@ -223,7 +223,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_CallComponent)
     // 3. 通过 IIpcContext::LoadPluginAsync 加载插件
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
     result = ctx_->LoadPluginAsync(
-        launcher_.get(),
+        launcher_.Get(),
         plugin_json_path.c_str(),
         op.Put());
     ASSERT_EQ(result, DAS_S_OK);
@@ -262,7 +262,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_VerifySessionId)
     }
 
     // 1. 创建并启动第一个 Host 进程
-    auto host_a = std::make_shared<DAS::Core::IPC::HostLauncher>(ctx_->GetIoContext());
+    DAS::DasPtr<DAS::Core::IPC::HostLauncher> host_a(new DAS::Core::IPC::HostLauncher(ctx_->GetIoContext()));
 
     uint16_t session_a = 0;
     DasResult result = host_a->Start(
@@ -277,7 +277,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_VerifySessionId)
     ASSERT_EQ(result, DAS_S_OK);
 
     // 2. 创建并启动第二个 Host 进程
-    auto host_b = std::make_shared<DAS::Core::IPC::HostLauncher>(ctx_->GetIoContext());
+    DAS::DasPtr<DAS::Core::IPC::HostLauncher> host_b(new DAS::Core::IPC::HostLauncher(ctx_->GetIoContext()));
 
     uint16_t session_b = 0;
     result = host_b->Start(
@@ -311,9 +311,9 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_VerifySessionId)
     // 5. 使用异步接口并发加载两个插件（when_all）
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op_a;
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op_b;
-    result = ctx_->LoadPluginAsync(host_a.get(), plugin1_path.c_str(), op_a.Put());
+    result = ctx_->LoadPluginAsync(host_a.Get(), plugin1_path.c_str(), op_a.Put());
     ASSERT_EQ(result, DAS_S_OK);
-    result = ctx_->LoadPluginAsync(host_b.get(), plugin2_path.c_str(), op_b.Put());
+    result = ctx_->LoadPluginAsync(host_b.Get(), plugin2_path.c_str(), op_b.Put());
     ASSERT_EQ(result, DAS_S_OK);
 
     // when_all 并发等待两个异步操作
@@ -365,7 +365,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
     }
 
     // 1. 创建并启动 Host B（目标进程）
-    auto host_b = std::make_shared<DAS::Core::IPC::HostLauncher>(ctx_->GetIoContext());
+    DAS::DasPtr<DAS::Core::IPC::HostLauncher> host_b(new DAS::Core::IPC::HostLauncher(ctx_->GetIoContext()));
 
     uint16_t session_b = 0;
     DasResult result = host_b->Start(
@@ -380,7 +380,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
     ASSERT_EQ(result, DAS_S_OK);
 
     // 2. 创建并启动 Host A（调用方进程）
-    auto host_a = std::make_shared<DAS::Core::IPC::HostLauncher>(ctx_->GetIoContext());
+    DAS::DasPtr<DAS::Core::IPC::HostLauncher> host_a(new DAS::Core::IPC::HostLauncher(ctx_->GetIoContext()));
 
     uint16_t session_a = 0;
     result = host_a->Start(
@@ -412,9 +412,9 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
     // 4. 使用异步接口并发加载两个插件
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op_a;
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op_b;
-    result = ctx_->LoadPluginAsync(host_a.get(), plugin1_path.c_str(), op_a.Put());
+    result = ctx_->LoadPluginAsync(host_a.Get(), plugin1_path.c_str(), op_a.Put());
     ASSERT_EQ(result, DAS_S_OK);
-    result = ctx_->LoadPluginAsync(host_b.get(), plugin2_path.c_str(), op_b.Put());
+    result = ctx_->LoadPluginAsync(host_b.Get(), plugin2_path.c_str(), op_b.Put());
     ASSERT_EQ(result, DAS_S_OK);
 
     auto both = stdexec::when_all(
@@ -488,7 +488,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadJavaPlugin)
     // 4. 通过 IIpcContext::LoadPluginAsync 加载 Java 插件
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
     result = ctx_->LoadPluginAsync(
-        launcher_.get(),
+        launcher_.Get(),
         plugin_json_path.c_str(),
         op.Put(),
         IpcTestConfig::GetPluginLoadTimeout()); // Java 插件可能需要更长时间（JVM 初始化）
@@ -760,7 +760,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins)
     {
         DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
         result = ctx_->LoadPluginAsync(
-            launcher_.get(),
+            launcher_.Get(),
             plugin1_path.c_str(),
             op.Put());
         ASSERT_EQ(result, DAS_S_OK);
@@ -780,7 +780,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins)
     {
         DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
         result = ctx_->LoadPluginAsync(
-            launcher_.get(),
+            launcher_.Get(),
             plugin2_path.c_str(),
             op.Put());
         ASSERT_EQ(result, DAS_S_OK);
@@ -843,12 +843,12 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins_WhenAll)
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op1;
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op2;
     result = ctx_->LoadPluginAsync(
-        launcher_.get(),
+        launcher_.Get(),
         plugin1_path.c_str(),
         op1.Put());
     ASSERT_EQ(result, DAS_S_OK);
     result = ctx_->LoadPluginAsync(
-        launcher_.get(),
+        launcher_.Get(),
         plugin2_path.c_str(),
         op2.Put());
     ASSERT_EQ(result, DAS_S_OK);
@@ -915,7 +915,7 @@ TEST_F(IpcMultiProcessTestIntegration, Context_BasicUsage)
 
         DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
         result = ctx_->LoadPluginAsync(
-            launcher_.get(),
+            launcher_.Get(),
             plugin_path.c_str(),
             op.Put());
         ASSERT_EQ(result, DAS_S_OK);

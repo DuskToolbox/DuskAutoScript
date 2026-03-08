@@ -124,12 +124,13 @@ namespace Core
                  *
                  * 在 HostLauncher::Start() 成功后调用。
                  * Transport 将在注册后立即开始接收消息。
+                 * session_id 从 launcher->GetSessionId() 获取。
                  *
-                 * @param launcher HostLauncher 实例（共享所有权）
+                 * @param launcher HostLauncher 实例（DasPtr 所有权转移）
                  * @return DasResult DAS_S_OK 成功
                  */
                 virtual DasResult RegisterHostLauncher(
-                    std::shared_ptr<HostLauncher> launcher) = 0;
+                    DAS::DasPtr<IHostLauncher> launcher) = 0;
 
                 /**
                  * @brief 获取已连接的 session ID 列表
