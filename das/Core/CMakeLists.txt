@@ -160,6 +160,11 @@ if(DAS_EXPORT_MACRO_LIST)
     target_compile_definitions(DasCoreObjects PUBLIC ${DAS_EXPORT_MACRO_LIST})
 endif()
 
+# Python Stable ABI 配置
+if(EXPORT_PYTHON)
+    target_compile_definitions(DasCoreObjects PRIVATE Py_LIMITED_API=0x030A0000)
+endif()
+
 target_include_directories(DasCoreObjects PUBLIC ${CMAKE_BINARY_DIR}/das/include/)
 target_include_directories(DasCoreObjects PUBLIC ${DasCore_ABI_OUTPUT_DIR})
 target_include_directories(DasCoreObjects PUBLIC ${DasCore_WRAPPER_OUTPUT_DIR})
