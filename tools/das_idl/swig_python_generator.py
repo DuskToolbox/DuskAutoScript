@@ -121,7 +121,11 @@ class PythonSwigGenerator(SwigLangGenerator):
         return ""
 
     def generate_binary_buffer_helpers(self, interface: InterfaceDef, method_name: str, size_method_name: str) -> str:
-        """生成 Python 的二进制缓冲区辅助方法"""
+        """生成 Python 的二进制缓冲区辅助方法
+
+        注意：PyMemoryView_FromMemory 从 Python 3.7 开始是 Stable ABI 的一部分。
+        但 PyBUF_READ 宏不在 Stable ABI 中，我们使用硬编码值 0x100。
+        """
         qualified_name = f"{interface.namespace}::{interface.name}" if interface.namespace else interface.name
 
         code = f"""
@@ -143,7 +147,8 @@ class PythonSwigGenerator(SwigLangGenerator):
             return nullptr;
         }}
 
-        return PyMemoryView_FromMemory(reinterpret_cast<char*>(data), static_cast<Py_ssize_t>(size), PyBUF_READ);
+        // PyBUF_READ = 0x100 (不在 Stable ABI 中，使用硬编码值)
+        return PyMemoryView_FromMemory(reinterpret_cast<char*>(data), static_cast<Py_ssize_t>(size), 0x100);
     }}
 
     PyObject* GetDataAsBytes() {{

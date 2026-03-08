@@ -154,6 +154,17 @@ function(das_add_swig_export_library LANGUAGE RAW_NAME FILES)
     add_library(${PROJECT_NAME}::${LANGUAGE}Export ALIAS ${RAW_NAME})
     target_compile_definitions(${RAW_NAME} PRIVATE -DSWIG_TYPE_TABLE=${RAW_NAME})
 
+    # Python Stable ABI 配置：与 DasCoreObjects 保持一致
+    if(LANGUAGE STREQUAL "Python")
+        target_compile_definitions(${RAW_NAME} PRIVATE Py_LIMITED_API=0x030A0000)
+
+        # Python 调试版需要 _d 后缀
+        # 参考: https://gitlab.kitware.com/cmake/cmake/-/issues/27185
+        if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_CONFIGURATION_TYPES)
+            set_property(TARGET ${RAW_NAME} PROPERTY SUFFIX "_d.pyd")
+        endif()
+    endif()
+
     # 添加SWIG清理命令（POST_BUILD），清理未使用的SWIGTYPE_p类型文件（仅Java和C#）
     # 使用 POST_BUILD 确保每次 SWIG 编译后都执行清理
     if(LANGUAGE STREQUAL "Java" OR LANGUAGE STREQUAL "CSharp")
