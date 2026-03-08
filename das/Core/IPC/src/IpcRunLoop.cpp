@@ -572,9 +572,15 @@ void IpcRunLoop::StartAsyncReceive()
         return;
     }
 
-    // 注意：不再检查 IsConnected()，让接收协程直接启动
-    // 对于 Host 端（服务端），创建命名管道后还没有客户端连接
-    // 接收协程会等待客户端连接，直到连接建立或出错
+    // 检查 transport 是否已连接
+    // MainProcessServer 的 transport 从未连接，不应该启动接收循环
+    // 对于 Host 端（服务端），创建命名管道后 IsConnected() 返回 true
+    if (!async_transport_->IsConnected())
+    {
+        DAS_CORE_LOG_DEBUG(
+            "StartAsyncReceive: transport not connected, skipping receive loop");
+        return;
+    }
 
     // 使用 boost::asio::co_spawn 在 io_context 上异步运行接收协程
     // 这样不会阻塞 io_context 线程，实现真正的事件驱动
