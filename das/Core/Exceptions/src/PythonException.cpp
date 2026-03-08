@@ -48,7 +48,8 @@ void PythonException::ParseCurrentException()
         PyObject* type_name = ::PyObject_GetAttrString(p_type, "__name__");
         if (type_name != nullptr)
         {
-            const char* name = ::PyUnicode_AsUTF8(type_name);
+            // PyUnicode_AsUTF8AndSize 是 Stable ABI 兼容的 (Python 3.10+)
+            const char* name = ::PyUnicode_AsUTF8AndSize(type_name, nullptr);
             if (name != nullptr)
             {
                 exception_type_ = name;
@@ -63,7 +64,8 @@ void PythonException::ParseCurrentException()
         PyObject* str_value = ::PyObject_Str(p_value);
         if (str_value != nullptr)
         {
-            const char* msg = ::PyUnicode_AsUTF8(str_value);
+            // PyUnicode_AsUTF8AndSize 是 Stable ABI 兼容的 (Python 3.10+)
+            const char* msg = ::PyUnicode_AsUTF8AndSize(str_value, nullptr);
             if (msg != nullptr)
             {
                 exception_value_ = msg;
@@ -109,7 +111,8 @@ void PythonException::ParseCurrentException()
                         PyObject* formatted_string = ::PyList_GetItem(formatted_list, i);
                         if (::PyUnicode_Check(formatted_string))
                         {
-                            const char* str = ::PyUnicode_AsUTF8(formatted_string);
+                            // PyUnicode_AsUTF8AndSize 是 Stable ABI 兼容的 (Python 3.10+)
+                            const char* str = ::PyUnicode_AsUTF8AndSize(formatted_string, nullptr);
                             if (str != nullptr)
                             {
                                 oss << str;

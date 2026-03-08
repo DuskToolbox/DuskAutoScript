@@ -13,12 +13,6 @@
  */
 struct _object;
 
-/**
- * @brief PyGILState_STATE 的前向声明
- * Python.h 中定义为枚举类型，用于保存 GIL 状态
- */
-enum PyGILState_STATE;
-
 #define DAS_NS_PYTHONHOST_BEGIN                                                \
     namespace PythonHost                                                       \
     {
@@ -54,7 +48,9 @@ public:
     PyGILGuard& operator=(PyGILGuard&&) = delete;
 
 private:
-    PyGILState_STATE state_;
+    // 使用 int 存储 PyGILState_STATE，避免 Stable ABI 模式下的前向声明问题
+    // PyGILState_STATE 是枚举类型，可以安全转换为 int
+    int state_;
 };
 
 class PyObjectPtr
@@ -168,11 +164,11 @@ class PythonPluginHolder : public IDasBase
 {
 private:
     std::atomic<uint32_t> ref_count_{1};
-    PyObject*             py_obj_;  // Py_INCREF 持有
+    _object*              py_obj_;  // Py_INCREF 持有 (PyObject* = _object*)
     IDasBase*             cpp_ptr_; // 已 AddRef 持有
 
 public:
-    PythonPluginHolder(PyObject* py_obj, IDasBase* cpp_ptr);
+    PythonPluginHolder(_object* py_obj, IDasBase* cpp_ptr);
     ~PythonPluginHolder();
 
     // 禁止拷贝和移动

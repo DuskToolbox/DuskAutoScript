@@ -248,6 +248,12 @@ add_compile_definitions(DAS_BUILD_SHARED)
 # list(APPEND DAS_EXPORT_MACRO_LIST DAS_EXPORT_LUA)
 target_link_libraries(DasCoreObjects
         PUBLIC DasUtils ${DAS_FOREIGN_LANGUAGE_LIB_LIST})
+
+# Windows 平台需要链接 ntdll（Boost.Process 使用了 NT 内部 API）
+if(WIN32)
+    target_link_libraries(DasCoreObjects PRIVATE ntdll)
+endif()
+
 target_compile_definitions(DasCoreObjects PUBLIC ${DAS_EXPORT_MACRO_LIST})
 target_compile_definitions(DasCoreObjects PRIVATE DAS_CORE_NAME="$<TARGET_FILE_NAME:DasCore>")
 
