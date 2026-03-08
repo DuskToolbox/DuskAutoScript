@@ -11,3 +11,4 @@ cmake-build-debug-visual-studio/
 .sisyphus/
 .codebuddy/
 __pycache__/
+.planning/

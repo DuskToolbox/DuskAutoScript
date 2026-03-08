@@ -40,9 +40,9 @@ DAS_NS_PYTHONHOST_BEGIN
 // PyGILGuard 实现
 // ============================================================================
 
-PyGILGuard::PyGILGuard() : state_(::PyGILState_Ensure()) {}
+PyGILGuard::PyGILGuard() : state_(static_cast<int>(::PyGILState_Ensure())) {}
 
-PyGILGuard::~PyGILGuard() { ::PyGILState_Release(state_); }
+PyGILGuard::~PyGILGuard() { ::PyGILState_Release(static_cast<PyGILState_STATE>(state_)); }
 
 // ============================================================================
 // 工厂函数
@@ -654,8 +654,8 @@ auto PythonRuntime::LoadPlugin(const std::filesystem::path& path)
             PythonResult result{PyObjectPtr::Attach(
                 PyUnicode_FromString(module_path.c_str()))};
 
-            result.then([&module](auto module_name) {
-                module = PyObjectPtr::Attach(PyImport_Import(module_name.Get()));
+            result.then([&module](PyObject* module_name) {
+                module = PyObjectPtr::Attach(PyImport_Import(module_name));
                 return PyObjectPtr{};
             });
 
@@ -676,16 +676,16 @@ auto PythonRuntime::LoadPlugin(const std::filesystem::path& path)
             PythonResult result{PyObjectPtr::Attach(
                 PyObject_GetAttrString(p_plugin_module.Get(), function_name.c_str()))};
 
-            result.then([&entry_func, &function_name](auto func) {
+            result.then([&entry_func, &function_name](PyObject* func) {
                 // 检查是否可调用
-                if (!PyCallable_Check(func.Get()))
+                if (!PyCallable_Check(func))
                 {
                     DAS_CORE_LOG_ERROR(
                         "Entry point '{}' is not callable",
                         function_name);
                     throw PythonException("Entry point is not callable: " + function_name);
                 }
-                entry_func = func;
+                entry_func = PyObjectPtr::Attach(func);
                 return PyObjectPtr{};
             }).Check();
         }
@@ -696,13 +696,13 @@ auto PythonRuntime::LoadPlugin(const std::filesystem::path& path)
             PythonResult result{PyObjectPtr::Attach(
                 PyObject_CallObject(entry_func.Get(), nullptr))};
 
-            result.then([&result_obj, &function_name](auto obj) {
-                if (!obj.Get() || obj.Get() == Py_None)
+            result.then([&result_obj, &function_name](PyObject* obj) {
+                if (!obj || obj == Py_None)
                 {
                     DAS_CORE_LOG_ERROR("Entry function '{}' returned None or null", function_name);
                     throw PythonException("Entry function returned None or null");
                 }
-                result_obj = obj;
+                result_obj = PyObjectPtr::Attach(obj);
                 return PyObjectPtr{};
             }).Check();
         }
