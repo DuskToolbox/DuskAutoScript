@@ -262,8 +262,9 @@ void HostLauncher::Stop()
         if (still_running)
         {
             std::string msg = DAS_FMT_NS::format(
-                "Terminating Host process: PID={}",
-                impl_->pid);
+                "HostLauncher::Stop - terminating Host process: pid={}, session_id={}",
+                impl_->pid,
+                impl_->session_id);
             DAS_LOG_INFO(msg.c_str());
             impl_->process->terminate(ec);
         }
