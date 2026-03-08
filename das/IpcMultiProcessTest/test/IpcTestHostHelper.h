@@ -11,13 +11,18 @@
 
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/HostLauncher.h>
-#include <das/Core/IPC/IpcTransport.h>
 #include <das/Core/IPC/MainProcess/MainProcessServer.h>
 #include <das/DasApi.h>
 #include <das/Utils/fmt.h>
 #include <gtest/gtest.h>
 #include <memory>
 #include <string>
+
+#ifdef _WIN32
+#include <das/Core/IPC/Win32AsyncIpcTransport.h>
+#else
+#include <das/Core/IPC/UnixAsyncIpcTransport.h>
+#endif
 
 namespace IpcTestHostHelper
 {

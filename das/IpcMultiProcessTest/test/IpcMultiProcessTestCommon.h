@@ -21,7 +21,6 @@
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcRunLoop.h>
-#include <das/Core/IPC/IpcTransport.h>
 #include <das/Core/IPC/MainProcess/MainProcessServer.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
@@ -251,16 +250,6 @@ protected:
             "Transport registered to ConnectionManager, session_id={}",
             session_id);
         DAS_LOG_INFO(msg.c_str());
-
-        // 设置 MainProcessServer::runloop_ 的 transport
-        // 这样 RunUntilComplete 才能正确接收响应
-        auto* transport_ptr = conn_manager.GetTransport(session_id);
-        if (transport_ptr)
-        {
-            auto& server =
-                DAS::Core::IPC::MainProcess::MainProcessServer::GetInstance();
-            server.GetRunLoop()->SetTransportPtr(transport_ptr);
-        }
 
         return DAS_S_OK;
     }

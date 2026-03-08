@@ -14,6 +14,7 @@
 #include <memory>
 #include <string>
 
+#include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
 
@@ -24,8 +25,6 @@ namespace boost::asio
 }
 
 DAS_CORE_IPC_NS_BEGIN
-
-class IpcTransport;
 
 class HostLauncher final : public IHostLauncher
 {
@@ -56,8 +55,8 @@ public:
     [[nodiscard]]
     uint16_t GetSessionId() const override;
 
-    IpcTransport*                 GetTransport();
-    std::unique_ptr<IpcTransport> ReleaseTransport();
+    DefaultAsyncIpcTransport*                 GetTransport();
+    std::unique_ptr<DefaultAsyncIpcTransport> ReleaseTransport();
 
     uint32_t  AddRef() override;
     uint32_t  Release() override;

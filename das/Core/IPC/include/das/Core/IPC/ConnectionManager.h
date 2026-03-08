@@ -4,6 +4,7 @@
 #include <atomic>
 #include <boost/interprocess/ipc/message_queue.hpp>
 #include <cstdint>
+#include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/IDasBase.h>
 #include <memory>
@@ -13,7 +14,6 @@
 #include <das/Core/IPC/Config.h>
 
 DAS_CORE_IPC_NS_BEGIN
-class IpcTransport;
 class SharedMemoryPool;
 class IpcRunLoop;
 
@@ -29,13 +29,13 @@ class IpcRunLoop;
  */
 struct ConnectionInfo
 {
-    uint16_t                      host_id;
-    uint16_t                      plugin_id;
-    bool                          is_alive;
-    uint64_t                      last_heartbeat_ms;
-    std::unique_ptr<IpcTransport> transport; ///< 消息队列传输（拥有所有权）
-    SharedMemoryPool*             shm_pool;  ///< 共享内存池（非拥有指针）
-    IpcRunLoop*                   run_loop;  ///< 运行循环（非拥有指针，含 pending_calls）
+    uint16_t                               host_id;
+    uint16_t                               plugin_id;
+    bool                                   is_alive;
+    uint64_t                               last_heartbeat_ms;
+    std::unique_ptr<DefaultAsyncIpcTransport> transport; ///< 异步消息队列传输（拥有所有权）
+    SharedMemoryPool*                      shm_pool;    ///< 共享内存池（非拥有指针）
+    IpcRunLoop*                            run_loop;    ///< 运行循环（非拥有指针，含 pending_calls）
 };
 
 class ConnectionManager
@@ -78,9 +78,9 @@ public:
      * @brief 获取连接的传输层（用于发送消息）
      *
      * @param session_id 目标会话ID
-     * @return IpcTransport* 传输层指针（不持有所有权），不存在返回 nullptr
+     * @return DefaultAsyncIpcTransport* 传输层指针（不持有所有权），不存在返回 nullptr
      */
-    IpcTransport* GetTransport(uint16_t session_id) const;
+    DefaultAsyncIpcTransport* GetTransport(uint16_t session_id) const;
 
     /**
      * @brief 获取连接的运行循环（用于异步消息发送）
@@ -102,10 +102,10 @@ public:
      * @return DasResult DAS_S_OK 成功
      */
     DasResult RegisterHostTransport(
-        uint16_t                      session_id,
-        std::unique_ptr<IpcTransport> transport,
-        SharedMemoryPool*             shm_pool = nullptr,
-        IpcRunLoop*                   run_loop = nullptr);
+        uint16_t                                   session_id,
+        std::unique_ptr<DefaultAsyncIpcTransport>  transport,
+        SharedMemoryPool*                          shm_pool = nullptr,
+        IpcRunLoop*                                run_loop = nullptr);
 
     /**
      * @brief 取消注册 Host 进程的传输层

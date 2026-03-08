@@ -14,7 +14,6 @@
  * ============================================================================
  * 为了设置测试环境（Transport 注册等），以下内部接口允许使用：
  * - MainProcessServer::GetInstance() - 仅用于初始化和清理
- * - MainProcessServer::GetRunLoop()->SetTransportPtr() - 仅用于设置 Transport
  * - ConnectionManager - 仅用于注册 Transport
  *
  * 这些例外操作封装在 IpcTestHostHelper::StartHostAndRegisterTransport() 中。
@@ -39,6 +38,7 @@
 #include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/IPC/MainProcess/MainProcessServer.h>
+#include <das/Core/IPC/SessionCoordinator.h>
 #include <das/DasApi.h>
 #include <gtest/gtest.h>
 #include <memory>

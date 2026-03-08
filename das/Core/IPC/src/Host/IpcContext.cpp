@@ -1,3 +1,4 @@
+#include <boost/asio/post.hpp>
 #include <boost/process/v2/pid.hpp>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/Host/HandshakeHandler.h>
@@ -16,7 +17,6 @@
 #include <das/DasPtr.hpp>
 #include <das/IDasAsyncCallback.h>
 #include <das/Utils/fmt.h>
-#include <boost/asio/post.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -43,24 +43,49 @@ namespace
             return false;
         }
 #ifdef _WIN32
+        // 首先尝试用 SYNCHRONIZE 权限打开进程，这样可以等待进程
         HANDLE process = OpenProcess(
-            PROCESS_QUERY_LIMITED_INFORMATION,
+            SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
             FALSE,
             static_cast<DWORD>(pid));
         if (process == nullptr)
         {
             // 无法打开进程句柄，说明进程不存在或无权限
+            DWORD err = GetLastError();
+            DAS_CORE_LOG_WARN(
+                "IsProcessAlive: OpenProcess failed for pid={}, error={}",
+                pid,
+                err);
             return false;
         }
-        DWORD exit_code = 0;
-        BOOL  result = GetExitCodeProcess(process, &exit_code);
+
+        // 使用 WaitForSingleObject 检测进程是否仍在运行
+        // 0 超时意味着立即返回，不等待
+        DWORD wait_result = WaitForSingleObject(process, 0);
         CloseHandle(process);
-        if (!result)
+
+        if (wait_result == WAIT_TIMEOUT)
         {
+            // 进程仍在运行（等待超时意味着进程没有结束）
+            return true;
+        }
+        else if (wait_result == WAIT_OBJECT_0)
+        {
+            // 进程已经退出
+            DAS_CORE_LOG_WARN(
+                "IsProcessAlive: Process pid={} has exited (WAIT_OBJECT_0)",
+                pid);
             return false;
         }
-        // STILL_ACTIVE 表示进程仍在运行
-        return exit_code == STILL_ACTIVE;
+        else
+        {
+            // 其他错误
+            DAS_CORE_LOG_WARN(
+                "IsProcessAlive: WaitForSingleObject failed for pid={}, result={}",
+                pid,
+                wait_result);
+            return false;
+        }
 #else
         // Linux/macOS: kill(pid, 0) 检查进程是否存在
         return kill(static_cast<pid_t>(pid), 0) == 0;
@@ -436,23 +461,26 @@ namespace Core
 
                 void PostCallback(IDasAsyncCallback* callback)
                 {
-                    if (!callback || !run_loop_) return;
+                    if (!callback || !run_loop_)
+                        return;
 
                     // DasPtr 在 post 之前获取所有权（AddRef），保证生命周期安全
                     DasPtr<IDasAsyncCallback> ptr(callback);
-                    boost::asio::post(run_loop_->GetIoContext(), [ptr = std::move(ptr)]() {
-                        ptr->Do();
-                    });
+                    boost::asio::post(
+                        run_loop_->GetIoContext(),
+                        [ptr = std::move(ptr)]() { ptr->Do(); });
                 }
 
                 DasResult RegisterLocalObject(
                     void*     object_ptr,
                     ObjectId& out_object_id)
                 {
-                    if (!object_manager_) return DAS_E_FAIL;
-                    return object_manager_->RegisterLocalObject(object_ptr, out_object_id);
+                    if (!object_manager_)
+                        return DAS_E_FAIL;
+                    return object_manager_->RegisterLocalObject(
+                        object_ptr,
+                        out_object_id);
                 }
-
 
             private:
                 IpcContext*                               owner_ = nullptr;
@@ -610,7 +638,6 @@ namespace Core
             {
                 return impl_->RegisterLocalObject(object_ptr, out_object_id);
             }
-
 
             // ====== C API 实现 =====
 

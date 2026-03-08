@@ -1,14 +1,20 @@
 #include <atomic>
 #include <chrono>
 
+#include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/IpcRunLoop.h>
-#include <das/Core/IPC/IpcTransport.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <das/Core/Logger/Logger.h>
 #include <shared_mutex>
 #include <unordered_map>
+
+#ifdef _WIN32
+#include <das/Core/IPC/Win32AsyncIpcTransport.h>
+#else
+#include <das/Core/IPC/UnixAsyncIpcTransport.h>
+#endif
 
 DAS_CORE_IPC_NS_BEGIN
 struct ConnectionManager::Impl
@@ -58,17 +64,17 @@ DasResult ConnectionManager::RegisterConnection(
     uint16_t remote_id,
     uint16_t local_id)
 {
-    ConnectionInfo info{
-        .host_id = remote_id,
-        .plugin_id = local_id,
-        .is_alive = true,
-        .last_heartbeat_ms = static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now().time_since_epoch())
-                .count()),
-        .transport = nullptr,
-        .shm_pool = nullptr,
-        .run_loop = nullptr};
+    ConnectionInfo info{};
+    info.host_id = remote_id;
+    info.plugin_id = local_id;
+    info.is_alive = true;
+    info.last_heartbeat_ms = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+            .count());
+    info.transport = nullptr;
+    info.shm_pool = nullptr;
+    info.run_loop = nullptr;
 
     std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
     impl_->connections_[remote_id] = std::move(info);
@@ -143,7 +149,7 @@ DasResult ConnectionManager::GetConnection(
     return DAS_E_FAIL;
 }
 
-IpcTransport* ConnectionManager::GetTransport(uint16_t session_id) const
+DefaultAsyncIpcTransport* ConnectionManager::GetTransport(uint16_t session_id) const
 {
     std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
 
@@ -172,10 +178,10 @@ IpcRunLoop* ConnectionManager::GetRunLoop(uint16_t session_id) const
 }
 
 DasResult ConnectionManager::RegisterHostTransport(
-    uint16_t                      session_id,
-    std::unique_ptr<IpcTransport> transport,
-    SharedMemoryPool*             shm_pool,
-    IpcRunLoop*                   run_loop)
+    uint16_t                                   session_id,
+    std::unique_ptr<DefaultAsyncIpcTransport>  transport,
+    SharedMemoryPool*                          shm_pool,
+    IpcRunLoop*                                run_loop)
 {
     std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
 
@@ -191,17 +197,17 @@ DasResult ConnectionManager::RegisterHostTransport(
     }
 
     // 创建新连接条目
-    ConnectionInfo info{
-        .host_id = session_id,
-        .plugin_id = 0,
-        .is_alive = true,
-        .last_heartbeat_ms = static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now().time_since_epoch())
-                .count()),
-        .transport = std::move(transport),
-        .shm_pool = shm_pool,
-        .run_loop = run_loop};
+    ConnectionInfo info{};
+    info.host_id = session_id;
+    info.plugin_id = 0;
+    info.is_alive = true;
+    info.last_heartbeat_ms = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+            .count());
+    info.transport = std::move(transport);
+    info.shm_pool = shm_pool;
+    info.run_loop = run_loop;
 
     impl_->connections_[session_id] = std::move(info);
     return DAS_S_OK;

@@ -83,6 +83,16 @@ namespace Core
                 // 主进程 session_id = 1（使用专用方法）
                 SessionCoordinator::GetInstance().SetAsMainProcess();
 
+                // 初始化 IpcRunLoop（必须在使用 GetIoContext() 之前）
+                DasResult result = runloop_.Initialize();
+                if (result != DAS_S_OK)
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "Failed to initialize IpcRunLoop: result = 0x{:08X}",
+                        result);
+                    return result;
+                }
+
                 is_initialized_.store(true);
                 return DAS_S_OK;
             }
@@ -95,6 +105,9 @@ namespace Core
                 }
 
                 Stop();
+
+                // 关闭 IpcRunLoop
+                runloop_.Shutdown();
 
                 {
                     std::lock_guard<std::mutex> lock(sessions_mutex_);
