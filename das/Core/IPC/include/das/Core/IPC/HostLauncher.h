@@ -55,8 +55,7 @@ public:
     [[nodiscard]]
     uint16_t GetSessionId() const override;
 
-    DefaultAsyncIpcTransport*                 GetTransport();
-    std::unique_ptr<DefaultAsyncIpcTransport> ReleaseTransport();
+    DefaultAsyncIpcTransport* GetTransport();
 
     uint32_t  AddRef() override;
     uint32_t  Release() override;

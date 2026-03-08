@@ -288,11 +288,6 @@ uint16_t HostLauncher::GetSessionId() const { return impl_->session_id; }
 
 DefaultAsyncIpcTransport* HostLauncher::GetTransport() { return impl_->async_transport.get(); }
 
-std::unique_ptr<DefaultAsyncIpcTransport> HostLauncher::ReleaseTransport()
-{
-    return std::move(impl_->async_transport);
-}
-
 DasResult HostLauncher::StartAsync(
     const std::string&            host_exe_path,
     IDasAsyncHandshakeOperation** pp_out_operation)
