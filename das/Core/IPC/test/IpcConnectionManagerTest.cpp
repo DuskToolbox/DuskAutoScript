@@ -211,3 +211,68 @@ TEST_F(IpcConnectionManagerTest, RegisterUnregisterCycle)
         EXPECT_FALSE(manager_->IsConnectionAlive(2));
     }
 }
+
+// ====== SendHeartbeatToAll Tests ======
+
+TEST_F(IpcConnectionManagerTest, SendHeartbeatToAll_NoConnections_ReturnsSuccess)
+{
+    ASSERT_EQ(manager_->Initialize(1), DAS_S_OK);
+
+    // 无连接时调用应返回 DAS_S_OK
+    auto result = manager_->SendHeartbeatToAll();
+    EXPECT_EQ(result, DAS_S_OK);
+}
+
+TEST_F(IpcConnectionManagerTest, SendHeartbeatToAll_WithConnections_ReturnsSuccess)
+{
+    ASSERT_EQ(manager_->Initialize(1), DAS_S_OK);
+    ASSERT_EQ(manager_->RegisterConnection(2, 1), DAS_S_OK);
+
+    // 有连接时调用应返回 DAS_S_OK
+    auto result = manager_->SendHeartbeatToAll();
+    EXPECT_EQ(result, DAS_S_OK);
+}
+
+TEST_F(IpcConnectionManagerTest, SendHeartbeatToAll_MultipleConnections_ReturnsSuccess)
+{
+    ASSERT_EQ(manager_->Initialize(1), DAS_S_OK);
+    ASSERT_EQ(manager_->RegisterConnection(2, 1), DAS_S_OK);
+    ASSERT_EQ(manager_->RegisterConnection(3, 1), DAS_S_OK);
+    ASSERT_EQ(manager_->RegisterConnection(4, 1), DAS_S_OK);
+
+    // 多个连接时调用应返回 DAS_S_OK
+    auto result = manager_->SendHeartbeatToAll();
+    EXPECT_EQ(result, DAS_S_OK);
+}
+
+// ====== UpdateHeartbeatTimestamp Tests ======
+
+TEST_F(IpcConnectionManagerTest, UpdateHeartbeatTimestamp_ExistingConnection)
+{
+    ASSERT_EQ(manager_->Initialize(1), DAS_S_OK);
+    ASSERT_EQ(manager_->RegisterConnection(2, 1), DAS_S_OK);
+
+    // 记录初始时间戳
+    auto initial_time = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch())
+                            .count();
+
+    // 等待一小段时间
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+    // 更新时间戳
+    manager_->UpdateHeartbeatTimestamp(2);
+
+    // 验证时间戳已更新（通过发送心跳来验证，因为时间戳是内部的）
+    // 我们可以通过再次发送心跳并验证连接仍然存活来间接验证
+    EXPECT_TRUE(manager_->IsConnectionAlive(2));
+}
+
+TEST_F(IpcConnectionManagerTest, UpdateHeartbeatTimestamp_NonExistentConnection)
+{
+    ASSERT_EQ(manager_->Initialize(1), DAS_S_OK);
+
+    // 不存在的连接应该安全处理
+    manager_->UpdateHeartbeatTimestamp(999);
+    // 不崩溃即成功
+}

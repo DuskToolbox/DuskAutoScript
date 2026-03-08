@@ -146,6 +146,24 @@ public:
     void StartHeartbeatThread();
     void StopHeartbeatThread();
 
+    /**
+     * @brief 向所有已连接的 Host 发送 HEARTBEAT 消息
+     *
+     * 异步发送，不等待回复。回复会在消息循环中处理。
+     *
+     * @return DasResult DAS_S_OK 成功
+     */
+    DasResult SendHeartbeatToAll();
+
+    /**
+     * @brief 更新指定连接的心跳时间戳
+     *
+     * 当收到 HEARTBEAT RESPONSE 时调用。
+     *
+     * @param session_id 会话 ID
+     */
+    void UpdateHeartbeatTimestamp(uint16_t session_id);
+
     static constexpr uint32_t HEARTBEAT_INTERVAL_MS = 1000;
     static constexpr uint32_t HEARTBEAT_TIMEOUT_MS = 5000;
 
