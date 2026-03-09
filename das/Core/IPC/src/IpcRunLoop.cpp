@@ -631,46 +631,43 @@ DasResult IpcRunLoop::SendEvent(
         return DAS_E_IPC_NOT_INITIALIZED;
     }
 
-    // 检查 transport 是否已连接，避免 sync_wait 永久阻塞
+    // 检查 transport 是否已连接
     if (!async_transport_->IsConnected())
     {
         return DAS_E_IPC_NO_CONNECTIONS;
     }
 
-    const IPCMessageHeader& raw = event_header.Raw();
-    auto                    validated_header =
-        IPCMessageHeaderBuilder()
-            .SetMessageType(MessageType::EVENT)
-            .SetBusinessInterface(raw.interface_id, raw.method_id)
-            .SetBodySize(raw.body_size)
-            .SetCallId(raw.call_id)
-            .SetObject(raw.session_id, raw.generation, raw.local_id)
-            .Build();
+    // fire-and-forget: 派生协程发送，不等待完成
+    // 复制数据以确保协程执行时数据仍然有效
+    auto validated_header_copy = event_header;
+    std::vector<uint8_t> body_copy(body, body + body_size);
 
-    auto sender = async_transport_->Send(validated_header, body, body_size);
-    auto result_opt = stdexec::sync_wait(std::move(sender));
-
-    if (!result_opt.has_value())
-    {
-        return DAS_E_IPC_CONNECTION_LOST;
-    }
-
-    auto&& [ec, send_result] = std::move(*result_opt);
-
-    if (ec)
-    {
-        try
+    boost::asio::co_spawn(
+        *io_context_,
+        [this, validated_header_copy, body_copy = std::move(body_copy)]()
+            -> boost::asio::awaitable<void>
         {
-            std::rethrow_exception(ec);
-        }
-        catch (const std::exception& e)
-        {
-            DAS_CORE_LOG_ERROR("Send failed: {}", e.what());
-        }
-        return DAS_E_IPC_CONNECTION_LOST;
-    }
+            try
+            {
+                auto result = co_await SendEventCoroutine(
+                    validated_header_copy,
+                    body_copy.data(),
+                    body_copy.size());
+                if (DAS::IsFailed(result))
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "SendEvent fire-and-forget failed: 0x{:08X}",
+                        result);
+                }
+            }
+            catch (const std::exception& e)
+            {
+                DAS_CORE_LOG_ERROR("SendEvent fire-and-forget exception: {}", e.what());
+            }
+        },
+        boost::asio::detached);
 
-    return send_result;
+    return DAS_S_OK;
 }
 
 boost::asio::awaitable<DasResult> IpcRunLoop::SendEventCoroutine(
