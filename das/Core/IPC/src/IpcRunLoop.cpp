@@ -58,35 +58,23 @@ DasResult IpcRunLoop::Initialize(
     async_transport_ = std::make_unique<DefaultAsyncIpcTransport>(*io_context_);
     timeout_timer_ = std::make_unique<boost::asio::steady_timer>(*io_context_);
 
-    DasResult result = DAS_S_OK;
+    // 统一使用 Initialize 方法（内部使用异步 InitializeAsync）
+    // 无论是服务端还是客户端，都通过 InitializeAsync 实现非阻塞连接
+    DasResult result = async_transport_->Initialize(
+        read_queue_name,
+        write_queue_name,
+        is_server);
 
-    if (is_server)
+    if (DAS::IsFailed(result))
     {
-        result = async_transport_->Initialize(
+        DAS_CORE_LOG_ERROR(
+            "Failed to initialize transport: read={}, write={}, is_server={}",
             read_queue_name,
             write_queue_name,
-            true);
-        if (DAS::IsFailed(result))
-        {
-            DAS_CORE_LOG_ERROR(
-                "Failed to initialize transport: read={}, write={}",
-                read_queue_name,
-                write_queue_name);
-            return result;
-        }
+            is_server);
+        return result;
     }
-    else
-    {
-        result = async_transport_->Connect(read_queue_name, write_queue_name);
-        if (DAS::IsFailed(result))
-        {
-            DAS_CORE_LOG_ERROR(
-                "Failed to connect transport: read={}, write={}",
-                read_queue_name,
-                write_queue_name);
-            return result;
-        }
-    }
+
     return DAS_S_OK;
 }
 
