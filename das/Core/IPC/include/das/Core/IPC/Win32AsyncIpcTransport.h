@@ -107,7 +107,6 @@ private:
     SharedMemoryPool* shared_memory_pool_ = nullptr;
 
     std::vector<uint8_t> header_buffer_;
-    std::vector<uint8_t> body_buffer_;
 };
 
 DAS_CORE_IPC_NS_END

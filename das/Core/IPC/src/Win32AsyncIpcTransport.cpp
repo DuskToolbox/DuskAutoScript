@@ -40,7 +40,6 @@ DasResult Win32AsyncIpcTransport::Initialize(
     size_t             max_message_size)
 {
     max_message_size_ = max_message_size;
-    body_buffer_.reserve(max_message_size);
 
     if (is_server)
     {
@@ -263,13 +262,14 @@ Win32AsyncIpcTransport::ReceiveCoroutine()
         co_return DAS_E_IPC_INVALID_MESSAGE;
     }
 
-    body_buffer_.resize(body_size);
+    // 使用局部变量而非成员变量，避免并发协程访问导致数据竞争
+    std::vector<uint8_t> body_buffer(body_size);
 
     if (body_size > 0)
     {
         co_await boost::asio::async_read(
             read_pipe_,
-            boost::asio::buffer(body_buffer_),
+            boost::asio::buffer(body_buffer),
             boost::asio::use_awaitable);
     }
 
@@ -282,14 +282,14 @@ Win32AsyncIpcTransport::ReceiveCoroutine()
             co_return DAS_E_IPC_INVALID_MESSAGE;
         }
 
-        if (body_buffer_.size() < sizeof(uint64_t))
+        if (body_buffer.size() < sizeof(uint64_t))
         {
             DAS_LOG_ERROR("Large message handle missing");
             co_return DAS_E_IPC_INVALID_MESSAGE;
         }
 
         uint64_t handle;
-        std::memcpy(&handle, body_buffer_.data(), sizeof(uint64_t));
+        std::memcpy(&handle, body_buffer.data(), sizeof(uint64_t));
 
         SharedMemoryBlock shm_block;
         const auto        result =
@@ -312,7 +312,7 @@ Win32AsyncIpcTransport::ReceiveCoroutine()
         co_return AsyncIpcMessage{header, std::move(large_body)};
     }
 
-    co_return AsyncIpcMessage{header, body_buffer_};
+    co_return AsyncIpcMessage{header, std::move(body_buffer)};
 }
 
 boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::SendCoroutine(
