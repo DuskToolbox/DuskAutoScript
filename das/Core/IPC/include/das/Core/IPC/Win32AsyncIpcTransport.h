@@ -105,8 +105,6 @@ private:
     size_t      max_message_size_ = 65536;
 
     SharedMemoryPool* shared_memory_pool_ = nullptr;
-
-    std::vector<uint8_t> header_buffer_;
 };
 
 DAS_CORE_IPC_NS_END

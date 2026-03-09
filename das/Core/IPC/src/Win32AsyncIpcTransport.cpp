@@ -26,8 +26,7 @@ inline constexpr std::string_view PIPE_PREFIX = R"(\\.\pipe\)";
 
 Win32AsyncIpcTransport::Win32AsyncIpcTransport(
     boost::asio::io_context& io_context)
-    : io_context_(io_context), read_pipe_(io_context), write_pipe_(io_context),
-      header_buffer_(sizeof(IPCMessageHeader))
+    : io_context_(io_context), read_pipe_(io_context), write_pipe_(io_context)
 {
 }
 
@@ -227,15 +226,19 @@ DasResult Win32AsyncIpcTransport::ConnectToNamedPipe(
 boost::asio::awaitable<std::variant<DasResult, AsyncIpcMessage>>
 Win32AsyncIpcTransport::ReceiveCoroutine()
 {
+    // 使用局部变量而非成员变量，避免并发协程访问导致数据竞争
+    // Header 大小固定，使用 std::array 避免堆分配
+    std::array<uint8_t, sizeof(IPCMessageHeader)> header_buffer{};
+
     co_await boost::asio::async_read(
         read_pipe_,
-        boost::asio::buffer(header_buffer_),
+        boost::asio::buffer(header_buffer),
         boost::asio::use_awaitable);
 
     HeaderValidationResult validation_error;
     auto validated_header = ValidatedIPCMessageHeader::Deserialize(
-        header_buffer_.data(),
-        header_buffer_.size(),
+        header_buffer.data(),
+        header_buffer.size(),
         &validation_error);
 
     if (!validated_header.has_value())
