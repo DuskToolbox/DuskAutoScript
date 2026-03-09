@@ -7,6 +7,7 @@
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/windows/object_handle.hpp>
 #include <boost/asio/windows/stream_handle.hpp>
 #include <cstdint>
 #include <das/Core/IPC/AsyncIpcTransport.h>
@@ -64,6 +65,13 @@ public:
         bool               is_server,
         size_t             max_message_size = 65536);
 
+    /// 异步初始化（协程版本）
+    boost::asio::awaitable<DasResult> InitializeAsync(
+        const std::string& read_endpoint,
+        const std::string& write_endpoint,
+        bool               is_server,
+        size_t             max_message_size = 65536);
+
     DasResult Connect(
         const std::string& read_endpoint,
         const std::string& write_endpoint);
@@ -92,6 +100,17 @@ public:
 private:
     DasResult CreateNamedPipe(const std::string& pipe_name, bool is_read_pipe);
     DasResult ConnectToNamedPipe(
+        const std::string& pipe_name,
+        bool               is_read_pipe);
+
+    // 异步方法
+    boost::asio::awaitable<std::variant<DasResult, HANDLE>> OpenPipeAsync(
+        const std::string& full_name,
+        bool               is_read_pipe);
+
+    boost::asio::awaitable<DasResult> WaitForClientConnectionAsync(HANDLE h_pipe);
+
+    boost::asio::awaitable<std::variant<DasResult, HANDLE>> CreateNamedPipeAsync(
         const std::string& pipe_name,
         bool               is_read_pipe);
 

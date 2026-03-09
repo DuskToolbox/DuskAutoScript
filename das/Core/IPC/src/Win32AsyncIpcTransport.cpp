@@ -5,12 +5,15 @@
 #include <asioexec/use_sender.hpp>
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/read.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <boost/asio/use_future.hpp>
 #include <boost/asio/write.hpp>
 #include <cstring>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <das/DasApi.h>
 #include <das/Utils/fmt.h>
+#include <chrono>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -23,6 +26,57 @@ DAS_CORE_IPC_NS_BEGIN
 
 inline constexpr uint16_t         FLAG_LARGE_MESSAGE = 0x01;
 inline constexpr std::string_view PIPE_PREFIX = R"(\\.\pipe\)";
+
+namespace {
+// RAII 包装器 - 确保 HANDLE 清理
+class ScopedHandle
+{
+    HANDLE handle_ = INVALID_HANDLE_VALUE;
+
+public:
+    explicit ScopedHandle(HANDLE h = INVALID_HANDLE_VALUE) : handle_(h) {}
+    ~ScopedHandle()
+    {
+        if (Valid())
+            CloseHandle(handle_);
+    }
+
+    ScopedHandle(const ScopedHandle&) = delete;
+    ScopedHandle& operator=(const ScopedHandle&) = delete;
+
+    ScopedHandle(ScopedHandle&& o) noexcept : handle_(o.handle_)
+    {
+        o.handle_ = INVALID_HANDLE_VALUE;
+    }
+
+    ScopedHandle& operator=(ScopedHandle&& o) noexcept
+    {
+        if (this != &o)
+        {
+            Reset();
+            handle_   = o.handle_;
+            o.handle_ = INVALID_HANDLE_VALUE;
+        }
+        return *this;
+    }
+
+    bool   Valid() const { return handle_ != INVALID_HANDLE_VALUE && handle_ != nullptr; }
+    HANDLE Get() const { return handle_; }
+    HANDLE* Ptr() { return &handle_; }
+    void   Reset(HANDLE h = INVALID_HANDLE_VALUE)
+    {
+        if (Valid())
+            CloseHandle(handle_);
+        handle_ = h;
+    }
+    HANDLE Release()
+    {
+        auto h   = handle_;
+        handle_  = INVALID_HANDLE_VALUE;
+        return h;
+    }
+};
+} // namespace
 
 Win32AsyncIpcTransport::Win32AsyncIpcTransport(
     boost::asio::io_context& io_context)
@@ -38,22 +92,17 @@ DasResult Win32AsyncIpcTransport::Initialize(
     bool               is_server,
     size_t             max_message_size)
 {
-    max_message_size_ = max_message_size;
-
-    if (is_server)
+    try
     {
-        is_server_ = true;
-
-        auto result = CreateNamedPipe(read_endpoint, true);
-        if (DAS::IsFailed(result))
-        {
-            return result;
-        }
-
-        return CreateNamedPipe(write_endpoint, false);
+        return boost::asio::co_spawn(
+            io_context_,
+            InitializeAsync(read_endpoint, write_endpoint, is_server, max_message_size),
+            boost::asio::use_future).get();
     }
-
-    return Connect(read_endpoint, write_endpoint);
+    catch (...)
+    {
+        return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
+    }
 }
 
 DasResult Win32AsyncIpcTransport::Connect(
@@ -221,6 +270,223 @@ DasResult Win32AsyncIpcTransport::ConnectToNamedPipe(
     }
 
     return DAS_S_OK;
+}
+
+boost::asio::awaitable<std::variant<DasResult, HANDLE>>
+Win32AsyncIpcTransport::OpenPipeAsync(
+    const std::string& full_name,
+    bool               is_read_pipe)
+{
+    auto   ex = co_await boost::asio::this_coro::executor;
+    boost::asio::steady_timer timer(ex);
+
+    constexpr int    max_retries     = 100; // 100 * 10ms = 1 second timeout
+    constexpr auto   retry_interval  = std::chrono::milliseconds(10);
+
+    for (int retry = 0; retry < max_retries; ++retry)
+    {
+        // 尝试打开管道（OVERLAPPED 模式）
+        ScopedHandle h_pipe(CreateFileA(
+            full_name.c_str(),
+            is_read_pipe ? GENERIC_READ : GENERIC_WRITE,
+            0,
+            nullptr,
+            OPEN_EXISTING,
+            FILE_FLAG_OVERLAPPED,
+            nullptr));
+
+        if (h_pipe.Valid())
+        {
+            co_return h_pipe.Release(); // 成功
+        }
+
+        const DWORD err = GetLastError();
+
+        if (err == ERROR_PIPE_BUSY || err == ERROR_FILE_NOT_FOUND)
+        {
+            // 管道忙或不存在，等待后重试
+            timer.expires_after(retry_interval);
+            co_await timer.async_wait(boost::asio::use_awaitable);
+            continue;
+        }
+
+        // 其他错误，直接失败
+        const auto msg = DAS_FMT_NS::format(
+            "OpenPipe failed: pipe = {}, error = {}", full_name, err);
+        DAS_LOG_ERROR(msg.c_str());
+        co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
+    }
+
+    DAS_LOG_ERROR(DAS_FMT_NS::format(
+        "OpenPipe timeout: pipe = {}", full_name).c_str());
+    co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
+}
+
+boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::WaitForClientConnectionAsync(
+    HANDLE h_pipe)
+{
+    // 创建事件用于 OVERLAPPED I/O（RAII 管理）
+    ScopedHandle event(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+    if (!event.Valid())
+    {
+        DAS_LOG_ERROR("CreateEvent failed for ConnectNamedPipe");
+        co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
+    }
+
+    OVERLAPPED overlapped = {};
+    overlapped.hEvent     = event.Get();
+
+    // 发起异步连接
+    if (ConnectNamedPipe(h_pipe, &overlapped))
+    {
+        co_return DAS_S_OK; // 立即完成
+    }
+
+    const DWORD err = GetLastError();
+    if (err == ERROR_PIPE_CONNECTED)
+    {
+        co_return DAS_S_OK; // 客户端已连接
+    }
+
+    if (err == ERROR_IO_PENDING)
+    {
+        // 等待异步完成
+        auto ex = co_await boost::asio::this_coro::executor;
+        boost::asio::windows::object_handle wait_handle(ex, event.Get());
+        co_await wait_handle.async_wait(boost::asio::use_awaitable);
+        co_return DAS_S_OK;
+    }
+
+    DAS_LOG_ERROR(DAS_FMT_NS::format(
+        "ConnectNamedPipe failed: error = {}", err).c_str());
+    co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
+}
+
+boost::asio::awaitable<std::variant<DasResult, HANDLE>>
+Win32AsyncIpcTransport::CreateNamedPipeAsync(
+    const std::string& pipe_name,
+    bool               is_read_pipe)
+{
+    const std::string full_pipe_name =
+        DAS_FMT_NS::format("{}{}", PIPE_PREFIX, pipe_name);
+
+    // 1. 创建管道（OVERLAPPED 模式）
+    ScopedHandle h_pipe(::CreateNamedPipeA(
+        full_pipe_name.c_str(),
+        is_read_pipe ? PIPE_ACCESS_INBOUND | FILE_FLAG_OVERLAPPED
+                     : PIPE_ACCESS_OUTBOUND | FILE_FLAG_OVERLAPPED,
+        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+        1,
+        static_cast<DWORD>(max_message_size_),
+        static_cast<DWORD>(max_message_size_),
+        0,
+        nullptr));
+
+    if (!h_pipe.Valid())
+    {
+        DAS_LOG_ERROR(DAS_FMT_NS::format(
+            "CreateNamedPipe failed: pipe_name = {}, error = {}",
+            pipe_name, GetLastError()).c_str());
+        co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
+    }
+
+    // 2. 异步等待客户端连接
+    auto result = co_await WaitForClientConnectionAsync(h_pipe.Get());
+    if (DAS::IsFailed(result))
+    {
+        co_return result; // h_pipe 自动清理
+    }
+
+    // 3. 成功，释放所有权
+    co_return h_pipe.Release();
+}
+
+boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::InitializeAsync(
+    const std::string& read_endpoint,
+    const std::string& write_endpoint,
+    bool               is_server,
+    size_t             max_message_size)
+{
+    max_message_size_ = max_message_size;
+
+    if (is_server)
+    {
+        // === 服务端 (MainProcess): 创建管道 + 等待连接 ===
+        is_server_ = true;
+
+        auto read_result = co_await CreateNamedPipeAsync(read_endpoint, true);
+        if (auto* err = std::get_if<DasResult>(&read_result))
+            co_return *err;
+        HANDLE h_read = std::get<HANDLE>(read_result);
+
+        auto write_result = co_await CreateNamedPipeAsync(write_endpoint, false);
+        if (auto* err = std::get_if<DasResult>(&write_result))
+        {
+            CloseHandle(h_read);
+            co_return *err;
+        }
+        HANDLE h_write = std::get<HANDLE>(write_result);
+
+        // 分配到 stream_handle
+        boost::system::error_code ec;
+        read_pipe_.assign(h_read, ec);
+        if (ec)
+        {
+            CloseHandle(h_read);
+            CloseHandle(h_write);
+            co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
+        }
+
+        write_pipe_.assign(h_write, ec);
+        if (ec)
+        {
+            read_pipe_.close();
+            CloseHandle(h_write);
+            co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
+        }
+
+        is_connected_ = true;
+        co_return DAS_S_OK;
+    }
+
+    // === 客户端 (Host): 连接管道 ===
+    is_server_ = false;
+
+    const std::string read_full_name = DAS_FMT_NS::format("{}{}", PIPE_PREFIX, read_endpoint);
+    auto              read_result    = co_await OpenPipeAsync(read_full_name, true);
+    if (auto* err = std::get_if<DasResult>(&read_result))
+        co_return *err;
+    HANDLE h_read = std::get<HANDLE>(read_result);
+
+    const std::string write_full_name = DAS_FMT_NS::format("{}{}", PIPE_PREFIX, write_endpoint);
+    auto              write_result    = co_await OpenPipeAsync(write_full_name, false);
+    if (auto* err = std::get_if<DasResult>(&write_result))
+    {
+        CloseHandle(h_read);
+        co_return *err;
+    }
+    HANDLE h_write = std::get<HANDLE>(write_result);
+
+    // 分配到 stream_handle
+    boost::system::error_code ec;
+    read_pipe_.assign(h_read, ec);
+    if (ec)
+    {
+        CloseHandle(h_read);
+        CloseHandle(h_write);
+        co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
+    }
+
+    write_pipe_.assign(h_write, ec);
+    if (ec)
+    {
+        read_pipe_.close();
+        CloseHandle(h_write);
+        co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
+    }
+
+    is_connected_ = true;
+    co_return DAS_S_OK;
 }
 
 boost::asio::awaitable<std::variant<DasResult, AsyncIpcMessage>>
