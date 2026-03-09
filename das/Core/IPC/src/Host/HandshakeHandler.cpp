@@ -188,7 +188,7 @@ namespace Core
                 }
             }
 
-            DasResult HandshakeHandler::HandleMessage(
+            boost::asio::awaitable<DasResult> HandshakeHandler::HandleMessage(
                 const IPCMessageHeader&     header,
                 const std::vector<uint8_t>& body,
                 IpcResponseSender&          sender)
@@ -229,12 +229,12 @@ namespace Core
                             .SetCallId(header.call_id)
                             .SetErrorCode(0)
                             .Build();
-                    sender.SendResponse(
+                    co_await sender.SendResponse(
                         validated_response_header,
                         response_body);
                 }
 
-                return result;
+                co_return result;
             }
 
             void HandshakeHandler::SetOnClientConnected(

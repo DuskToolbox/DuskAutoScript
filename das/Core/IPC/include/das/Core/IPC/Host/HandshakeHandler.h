@@ -1,6 +1,7 @@
 #ifndef DAS_CORE_IPC_HOST_HANDSHAKE_HANDLER_H
 #define DAS_CORE_IPC_HOST_HANDSHAKE_HANDLER_H
 
+#include <boost/asio/awaitable.hpp>
 #include <chrono>
 #include <cstdint>
 #include <das/Core/IPC/Handshake.h>
@@ -155,9 +156,9 @@ namespace Core
                  * @param header 消息头
                  * @param body 消息体
                  * @param sender 响应发送器
-                 * @return DasResult 成功返回 DAS_S_OK
+                 * @return boost::asio::awaitable<DasResult> 协程结果
                  */
-                DasResult HandleMessage(
+                boost::asio::awaitable<DasResult> HandleMessage(
                     const IPCMessageHeader&     header,
                     const std::vector<uint8_t>& body,
                     IpcResponseSender&          sender) override;

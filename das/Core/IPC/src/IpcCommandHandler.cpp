@@ -28,7 +28,7 @@ void IpcCommandHandler::SetSessionId(uint16_t session_id)
 }
 
 uint16_t  IpcCommandHandler::GetSessionId() const { return session_id_; }
-DasResult IpcCommandHandler::HandleMessage(
+boost::asio::awaitable<DasResult> IpcCommandHandler::HandleMessage(
     const IPCMessageHeader&     header,
     const std::vector<uint8_t>& body,
     IpcResponseSender&          sender)
@@ -48,8 +48,8 @@ DasResult IpcCommandHandler::HandleMessage(
             .SetCallId(header.call_id)
             .SetErrorCode(static_cast<int32_t>(response.error_code))
             .Build();
-    sender.SendResponse(validated_response_header, response.response_data);
-    return result;
+    co_await sender.SendResponse(validated_response_header, response.response_data);
+    co_return result;
 }
 
 IpcCommandType IpcCommandHandler::ExtractCommandType(

@@ -1,6 +1,7 @@
 #ifndef DAS_CORE_IPC_IPC_COMMAND_HANDLER_H
 #define DAS_CORE_IPC_IPC_COMMAND_HANDLER_H
 
+#include <boost/asio/awaitable.hpp>
 #include <cstdint>
 #include <das/Core/IPC/IMessageHandler.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
@@ -121,7 +122,7 @@ public:
         return 0;
     }
 
-    DasResult HandleMessage(
+    boost::asio::awaitable<DasResult> HandleMessage(
         const IPCMessageHeader&     header,
         const std::vector<uint8_t>& body,
         IpcResponseSender&          sender) override;

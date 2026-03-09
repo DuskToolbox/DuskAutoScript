@@ -1,6 +1,7 @@
 #ifndef DAS_CORE_IPC_IPC_RESPONSE_SENDER_H
 #define DAS_CORE_IPC_IPC_RESPONSE_SENDER_H
 
+#include <boost/asio/awaitable.hpp>
 #include <cstdint>
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
@@ -27,12 +28,12 @@ public:
     explicit IpcResponseSender(IpcRunLoop& run_loop);
 
     /**
-     * @brief 发送响应
+     * @brief 发送响应（协程版本）
      * @param header 响应消息头
      * @param body 响应消息体
-     * @return DasResult 成功返回 DAS_S_OK
+     * @return boost::asio::awaitable<DasResult> 协程结果
      */
-    DasResult SendResponse(
+    boost::asio::awaitable<DasResult> SendResponse(
         const ValidatedIPCMessageHeader& header,
         const std::vector<uint8_t>&      body);
 

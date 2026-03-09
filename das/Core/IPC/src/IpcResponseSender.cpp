@@ -9,11 +9,13 @@ IpcResponseSender::IpcResponseSender(IpcRunLoop& run_loop) : run_loop_(run_loop)
 {
 }
 
-DasResult IpcResponseSender::SendResponse(
+boost::asio::awaitable<DasResult> IpcResponseSender::SendResponse(
     const ValidatedIPCMessageHeader& validated_header,
     const std::vector<uint8_t>&      body)
 {
-    // 直接转发已验证的 header
-    return run_loop_.SendResponse(validated_header, body.data(), body.size());
+    // 使用协程版本发送响应，避免死锁
+    co_return co_await run_loop_.SendResponseCoroutine(
+        validated_header, body.data(), body.size());
 }
+
 DAS_CORE_IPC_NS_END

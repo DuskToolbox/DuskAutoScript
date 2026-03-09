@@ -1,4 +1,5 @@
 #include <atomic>
+#include <boost/asio/awaitable.hpp>
 #include <chrono>
 #include <das/Core/IPC/IMessageHandler.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
@@ -214,13 +215,16 @@ public:
         return 1;
     }
 
-    DasResult HandleMessage(
+    boost::asio::awaitable<DasResult> HandleMessage(
         const IPCMessageHeader&     header,
         const std::vector<uint8_t>& body,
         IpcResponseSender&          sender) override
     {
         // 简单返回成功
-        return DAS_S_OK;
+        (void)header;
+        (void)body;
+        (void)sender;
+        co_return DAS_S_OK;
     }
 };
 
