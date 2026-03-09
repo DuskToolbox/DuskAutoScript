@@ -309,9 +309,23 @@ public:
         size_t                  body_size);
 
     /**
-     * @brief 分发消息到注册的处理器
+     * @brief 分发消息到注册的处理器（同步版本）
      */
     DasResult DispatchToHandler(
+        const IPCMessageHeader&     header,
+        const std::vector<uint8_t>& body);
+
+    /**
+     * @brief 分发消息到注册的处理器（协程版本）
+     *
+     * 使用 co_await 调用 handler->HandleMessage()，
+     * 避免 sync_wait 死锁。
+     *
+     * @param header 消息头
+     * @param body 消息体
+     * @return boost::asio::awaitable<void>
+     */
+    boost::asio::awaitable<void> DispatchToHandlerCoroutine(
         const IPCMessageHeader&     header,
         const std::vector<uint8_t>& body);
 

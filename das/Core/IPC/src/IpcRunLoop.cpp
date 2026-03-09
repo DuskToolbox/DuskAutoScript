@@ -201,13 +201,65 @@ DasResult IpcRunLoop::DispatchToHandler(
     if (handler)
     {
         IpcResponseSender sender(*this);
-        return handler->HandleMessage(header, body, sender);
+        // 同步版本使用 co_spawn + use_future 调用协程（用于非协程上下文）
+        // 注意：在 io_context 线程中调用会导致死锁，仅用于非 io_context 线程
+        try
+        {
+            auto future = boost::asio::co_spawn(
+                GetIoContext(),
+                handler->HandleMessage(header, body, sender),
+                boost::asio::use_future);
+            return future.get();
+        }
+        catch (const std::exception& e)
+        {
+            DAS_CORE_LOG_ERROR("DispatchToHandler failed: {}", e.what());
+            return DAS_E_FAIL;
+        }
     }
 
     DAS_CORE_LOG_WARN(
         "No handler found for interface_id = {}",
         header.interface_id);
     return DAS_E_NOT_FOUND;
+}
+
+boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
+    const IPCMessageHeader&     header,
+    const std::vector<uint8_t>& body)
+{
+    // 处理 HEARTBEAT RESPONSE：收到心跳回复时更新时间戳
+    if (header.interface_id
+        == static_cast<uint32_t>(HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT))
+    {
+        if (header.message_type == static_cast<uint8_t>(MessageType::RESPONSE))
+        {
+            // 收到心跳回复，更新时间戳
+            if (connection_manager_)
+            {
+                connection_manager_->UpdateHeartbeatTimestamp(header.session_id);
+            }
+            co_return;
+        }
+        // REQUEST 继续交给 handler 处理
+    }
+
+    auto* handler = GetHandler(header.interface_id);
+    if (handler)
+    {
+        IpcResponseSender sender(*this);
+        auto result = co_await handler->HandleMessage(header, body, sender);
+        if (DAS::IsFailed(result))
+        {
+            DAS_CORE_LOG_WARN("Handler returned error: 0x{:08X}", result);
+        }
+    }
+    else
+    {
+        DAS_CORE_LOG_WARN(
+            "No handler found for interface_id = {}",
+            header.interface_id);
+    }
 }
 
 bool IpcRunLoop::ReceiveAndDispatch(std::chrono::milliseconds timeout)
@@ -718,7 +770,7 @@ void IpcRunLoop::StartAsyncReceive()
                     }
                     else
                     {
-                        DispatchToHandler(header.Raw(), body);
+                        co_await DispatchToHandlerCoroutine(header.Raw(), body);
                     }
                 }
                 catch (const boost::system::system_error& e)
@@ -1024,7 +1076,7 @@ void IpcRunLoop::StartAsyncReceiveForTransport(
                     }
                     else
                     {
-                        DispatchToHandler(header.Raw(), body);
+                        co_await DispatchToHandlerCoroutine(header.Raw(), body);
                     }
                 }
                 catch (const boost::system::system_error& e)
