@@ -21,6 +21,7 @@
 #include <utility>
 #include <vector>
 
+#include <boost/asio/awaitable.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/execution.hpp>
 #include <boost/asio/io_context.hpp>
@@ -231,7 +232,37 @@ public:
         const uint8_t*                   body,
         size_t                           body_size);
 
+    /**
+     * @brief 异步发送响应（协程版本，用于 io_context 线程）
+     *
+     * 使用 co_await 异步发送，不使用 sync_wait，避免死锁。
+     *
+     * @param response_header 响应消息头
+     * @param body 响应消息体
+     * @param body_size 响应消息体大小
+     * @return boost::asio::awaitable<DasResult> 协程结果
+     */
+    boost::asio::awaitable<DasResult> SendResponseCoroutine(
+        const ValidatedIPCMessageHeader& response_header,
+        const uint8_t*                   body,
+        size_t                           body_size);
+
     DasResult SendEvent(
+        const ValidatedIPCMessageHeader& event_header,
+        const uint8_t*                   body,
+        size_t                           body_size);
+
+    /**
+     * @brief 异步发送事件（协程版本，用于 io_context 线程）
+     *
+     * 使用 co_await 异步发送，不使用 sync_wait，避免死锁。
+     *
+     * @param event_header 事件消息头
+     * @param body 事件消息体
+     * @param body_size 事件消息体大小
+     * @return boost::asio::awaitable<DasResult> 协程结果
+     */
+    boost::asio::awaitable<DasResult> SendEventCoroutine(
         const ValidatedIPCMessageHeader& event_header,
         const uint8_t*                   body,
         size_t                           body_size);

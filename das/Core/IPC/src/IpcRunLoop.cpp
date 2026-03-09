@@ -542,6 +542,33 @@ DasResult IpcRunLoop::SendResponse(
     return send_result;
 }
 
+boost::asio::awaitable<DasResult> IpcRunLoop::SendResponseCoroutine(
+    const ValidatedIPCMessageHeader& response_header,
+    const uint8_t*                   body,
+    size_t                           body_size)
+{
+    if (!async_transport_)
+    {
+        co_return DAS_E_IPC_NOT_INITIALIZED;
+    }
+
+    if (!async_transport_->IsConnected())
+    {
+        co_return DAS_E_IPC_NO_CONNECTIONS;
+    }
+
+    try
+    {
+        auto result = co_await async_transport_->SendCoroutine(response_header, body, body_size);
+        co_return result;
+    }
+    catch (const std::exception& e)
+    {
+        DAS_CORE_LOG_ERROR("SendResponseCoroutine failed: {}", e.what());
+        co_return DAS_E_IPC_CONNECTION_LOST;
+    }
+}
+
 DasResult IpcRunLoop::SendEvent(
     const ValidatedIPCMessageHeader& event_header,
     const uint8_t*                   body,
@@ -592,6 +619,43 @@ DasResult IpcRunLoop::SendEvent(
     }
 
     return send_result;
+}
+
+boost::asio::awaitable<DasResult> IpcRunLoop::SendEventCoroutine(
+    const ValidatedIPCMessageHeader& event_header,
+    const uint8_t*                   body,
+    size_t                           body_size)
+{
+    if (!async_transport_)
+    {
+        co_return DAS_E_IPC_NOT_INITIALIZED;
+    }
+
+    if (!async_transport_->IsConnected())
+    {
+        co_return DAS_E_IPC_NO_CONNECTIONS;
+    }
+
+    const IPCMessageHeader& raw = event_header.Raw();
+    auto                    validated_header =
+        IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::EVENT)
+            .SetBusinessInterface(raw.interface_id, raw.method_id)
+            .SetBodySize(raw.body_size)
+            .SetCallId(raw.call_id)
+            .SetObject(raw.session_id, raw.generation, raw.local_id)
+            .Build();
+
+    try
+    {
+        auto result = co_await async_transport_->SendCoroutine(validated_header, body, body_size);
+        co_return result;
+    }
+    catch (const std::exception& e)
+    {
+        DAS_CORE_LOG_ERROR("SendEventCoroutine failed: {}", e.what());
+        co_return DAS_E_IPC_CONNECTION_LOST;
+    }
 }
 
 bool IpcRunLoop::IsRunning() const { return running_.load(); }
