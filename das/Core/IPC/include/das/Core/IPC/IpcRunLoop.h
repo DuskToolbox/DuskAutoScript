@@ -319,11 +319,12 @@ public:
         const std::vector<uint8_t>& body);
 
     /**
-     * @brief 分发消息到注册的处理器（协程版本）
+     * @brief 分发消息到注册的处理器（协程版本，旧版）
      *
      * 使用 co_await 调用 handler->HandleMessage()，
      * 避免 sync_wait 死锁。
      *
+     * @deprecated 使用带 transport 参数的版本代替
      * @param header 消息头
      * @param body 消息体
      * @return boost::asio::awaitable<void>
@@ -331,6 +332,29 @@ public:
     boost::asio::awaitable<void> DispatchToHandlerCoroutine(
         const IPCMessageHeader&     header,
         const std::vector<uint8_t>& body);
+
+    /**
+     * @brief 分发消息到注册的处理器（协程版本，推荐）
+     *
+     * 使用 co_await 调用 handler->HandleMessage()，
+     * 通过 transport 发送响应。
+     *
+     * @param header 消息头
+     * @param body 消息体
+     * @param transport 用于发送响应的 transport
+     * @return boost::asio::awaitable<void>
+     */
+#ifdef _WIN32
+    boost::asio::awaitable<void> DispatchToHandlerCoroutine(
+        const IPCMessageHeader&     header,
+        const std::vector<uint8_t>& body,
+        Win32AsyncIpcTransport&     transport);
+#else
+    boost::asio::awaitable<void> DispatchToHandlerCoroutine(
+        const IPCMessageHeader&     header,
+        const std::vector<uint8_t>& body,
+        UnixAsyncIpcTransport&      transport);
+#endif
 
     /**
      * @brief 内部 receive 方法 - 核心可重入逻辑

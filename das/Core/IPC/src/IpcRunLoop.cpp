@@ -13,12 +13,12 @@
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <mutex>
 #include <queue>
-#include <stdexec/execution.hpp>
 #include <thread>
 #include <unordered_map>
 #include <utility>
 
 #include <boost/asio.hpp>
+#include <boost/asio/use_future.hpp>
 
 #ifdef _WIN32
 #include <das/Core/IPC/Win32AsyncIpcTransport.h>
@@ -249,6 +249,61 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
     }
 }
 
+boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
+    const IPCMessageHeader&     header,
+    const std::vector<uint8_t>& body,
+#ifdef _WIN32
+    Win32AsyncIpcTransport&     transport)
+#else
+    UnixAsyncIpcTransport&      transport)
+#endif
+{
+    DAS_CORE_LOG_INFO(
+        "DispatchToHandlerCoroutine: interface_id={}, method_id={}, call_id={}, body_size={}",
+        header.interface_id,
+        header.method_id,
+        header.call_id,
+        body.size());
+
+    // 处理 HEARTBEAT RESPONSE：收到心跳回复时更新时间戳
+    if (header.interface_id
+        == static_cast<uint32_t>(HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT))
+    {
+        if (header.message_type == static_cast<uint8_t>(MessageType::RESPONSE))
+        {
+            // 收到心跳回复，更新时间戳
+            if (connection_manager_)
+            {
+                connection_manager_->UpdateHeartbeatTimestamp(header.session_id);
+            }
+            co_return;
+        }
+        // REQUEST 继续交给 handler 处理
+    }
+
+    auto* handler = GetHandler(header.interface_id);
+    if (handler)
+    {
+        DAS_CORE_LOG_INFO("DispatchToHandlerCoroutine: found handler for interface_id={}", header.interface_id);
+        IpcResponseSender sender(transport);
+        auto result = co_await handler->HandleMessage(header, body, sender);
+        if (DAS::IsFailed(result))
+        {
+            DAS_CORE_LOG_WARN("Handler returned error: 0x{:08X}", result);
+        }
+        else
+        {
+            DAS_CORE_LOG_INFO("DispatchToHandlerCoroutine: handler completed successfully");
+        }
+    }
+    else
+    {
+        DAS_CORE_LOG_WARN(
+            "No handler found for interface_id = {}",
+            header.interface_id);
+    }
+}
+
 bool IpcRunLoop::ReceiveAndDispatch(std::chrono::milliseconds timeout)
 {
     (void)timeout;
@@ -306,34 +361,32 @@ std::pair<DasResult, uint64_t> IpcRunLoop::PrepareSendRequestWithTransport(
             nullptr};
     }
 
-    auto send_sender = transport->Send(validated_header, body, body_size);
-    auto result_opt = stdexec::sync_wait(std::move(send_sender));
-
-    if (!result_opt.has_value())
+    // 使用 co_spawn + use_future 调用协程发送
+    try
     {
+        auto future = boost::asio::co_spawn(
+            *io_context_,
+            transport->SendCoroutine(validated_header, body, body_size),
+            boost::asio::use_future);
+
+        DasResult send_result = future.get();
+
+        if (send_result != DAS_S_OK)
+        {
+            std::unique_lock<std::mutex> lock(pending_mutex_);
+            pending_calls_.erase(call_id);
+            return {send_result, 0};
+        }
+
+        return {send_result, call_id};
+    }
+    catch (const std::exception& e)
+    {
+        DAS_CORE_LOG_ERROR("Send failed: {}", e.what());
         std::unique_lock<std::mutex> lock(pending_mutex_);
         pending_calls_.erase(call_id);
         return {DAS_E_IPC_CONNECTION_LOST, 0};
     }
-
-    auto&& [ec, send_result] = std::move(*result_opt);
-
-    if (ec)
-    {
-        try
-        {
-            std::rethrow_exception(ec);
-        }
-        catch (const std::exception& e)
-        {
-            DAS_CORE_LOG_ERROR("Send failed: {}", e.what());
-        }
-        std::unique_lock<std::mutex> lock(pending_mutex_);
-        pending_calls_.erase(call_id);
-        return {DAS_E_IPC_CONNECTION_LOST, 0};
-    }
-
-    return {send_result, call_id};
 }
 
 void IpcRunLoop::CompletePendingCall(
