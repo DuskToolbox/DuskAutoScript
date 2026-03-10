@@ -32,11 +32,41 @@
 
 DAS_CORE_IPC_NS_BEGIN
 
-IpcRunLoop::IpcRunLoop() = default;
+// 工厂函数实现
+DAS::Utils::Expected<std::unique_ptr<IpcRunLoop>> IpcRunLoop::Create()
+{
+    auto instance = std::unique_ptr<IpcRunLoop>(new IpcRunLoop());
+    auto result = instance->DoInitialize();
+    if (result != DAS_S_OK)
+    {
+        return DAS::Utils::MakeUnexpected(result);
+    }
+    return instance;
+}
 
-IpcRunLoop::~IpcRunLoop() { RequestStop(); }
+DAS::Utils::Expected<std::unique_ptr<IpcRunLoop>> IpcRunLoop::CreateForHost(
+    const std::string& read_queue_name,
+    const std::string& write_queue_name,
+    bool               is_server)
+{
+    // 已废弃：Host 模式应由 IpcContext 持有 transport
+    DAS_CORE_LOG_WARN(
+        "CreateForHost is deprecated. Use Create() and manage transport externally.");
+    (void)read_queue_name;
+    (void)write_queue_name;
+    (void)is_server;
 
-DasResult IpcRunLoop::Initialize()
+    // 返回错误，提示调用者使用新的模式
+    return DAS::Utils::MakeUnexpected(DAS_E_NOT_FOUND);
+}
+
+IpcRunLoop::~IpcRunLoop()
+{
+    // 正确调用 Shutdown() 而非 RequestStop()
+    Shutdown();
+}
+
+DasResult IpcRunLoop::DoInitialize()
 {
     io_context_ = std::make_unique<boost::asio::io_context>();
     // 不再创建 async_transport_，IpcRunLoop 只提供 io_context 基础设施
@@ -50,6 +80,12 @@ DasResult IpcRunLoop::Initialize()
     connection_manager_ = std::make_unique<ConnectionManager>();
 
     return DAS_S_OK;
+}
+
+DasResult IpcRunLoop::Initialize()
+{
+    // 废弃：使用 Create() 代替
+    return DoInitialize();
 }
 
 DasResult IpcRunLoop::Initialize(

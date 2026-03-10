@@ -107,17 +107,18 @@
 // 生命周期注解宏 - 用于标记参数/返回值的生命周期绑定
 // 用法: void Foo(DAS_LIFETIMEBOUND Bar& bar);
 // 编译器会在生命周期违规时发出警告
-#if !defined(__has_cpp_attribute) || defined(_SILENCE_LIFETIMEBOUND_WARNING)
-    // 不支持或显式禁用警告时，宏为空
+#if defined(_SILENCE_LIFETIMEBOUND_WARNING)
+    // 显式禁用警告时，宏为空
     #define DAS_LIFETIMEBOUND
-#elif _HAS_MSVC_ATTRIBUTE(lifetimebound)
-    // MSVC: 使用 msvc::lifetimebound 属性
+#elif defined(_MSC_VER) && _MSC_VER >= 1930 && __cplusplus >= 202002L
+    // MSVC 19.30+ (VS 2022 17.0+) 支持 msvc::lifetimebound
+    // 注意：需要 /std:c++20 或更高版本
     #define DAS_LIFETIMEBOUND [[msvc::lifetimebound]]
-#elif __has_cpp_attribute(_Clang::__lifetimebound__)
+#elif defined(__clang__)
     // Clang: 使用 _Clang::__lifetimebound__ 属性
-    #define DAS_LIFETIMEBOUND [[_Clang::__lifetimebound__]]
+    #define DAS_LIFETIMEBOUND [[__lifetimebound__]]
 #else
-    // 其他编译器不支持
+    // 其他编译器不支持或版本不够，宏为空
     #define DAS_LIFETIMEBOUND
 #endif
 

@@ -1,6 +1,9 @@
 #include <atomic>
 #include <chrono>
 
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
 #include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/ConnectionManager.h>
@@ -31,6 +34,9 @@ struct ConnectionManager::Impl
     std::atomic<bool>                                    running_{false};
     std::thread                                          heartbeat_thread_;
     uint16_t                                             local_id_{0};
+
+    // 用于心跳发送的 io_context
+    std::unique_ptr<boost::asio::io_context> heartbeat_io_context_;
 };
 
 ConnectionManager::ConnectionManager() : impl_(std::make_unique<Impl>()) {}
@@ -391,6 +397,12 @@ DasResult ConnectionManager::SendHeartbeatToAll()
 {
     auto sessions = GetConnectedSessions();
 
+    // 确保 io_context 存在
+    if (!impl_->heartbeat_io_context_)
+    {
+        impl_->heartbeat_io_context_ = std::make_unique<boost::asio::io_context>();
+    }
+
     for (uint16_t session_id : sessions)
     {
         auto* transport = GetTransport(session_id);
@@ -418,14 +430,27 @@ DasResult ConnectionManager::SendHeartbeatToAll()
                 .SetObject(session_id, 0, 0)
                 .Build();
 
-        // 异步发送（不等待回复）
-        // 使用 transport->Send() 返回 sender，但我们不 sync_wait
-        // 让发送在 io_context 中异步进行
+        // 异步发送（使用协程，不等待回复）
+        // 使用 co_spawn + SendCoroutine() 异步发送
         // 心跳是周期性发送，单次失败不影响整体逻辑
-        (void)transport->Send(
-            validated_header,
-            reinterpret_cast<const uint8_t*>(&heartbeat),
-            sizeof(heartbeat));
+        auto io_context = impl_->heartbeat_io_context_.get();
+        boost::asio::co_spawn(
+            *io_context,
+            [transport, header = validated_header, heartbeat_copy = heartbeat]() mutable -> boost::asio::awaitable<void>
+            {
+                auto result = co_await transport->SendCoroutine(
+                    header,
+                    reinterpret_cast<const uint8_t*>(&heartbeat_copy),
+                    sizeof(heartbeat_copy));
+                if (result != DAS_S_OK)
+                {
+                    DAS_CORE_LOG_WARN("Heartbeat send failed for session, error=0x{:08X}", result);
+                }
+            },
+            boost::asio::detached);
+
+        // 处理 io_context 中的待处理操作
+        io_context->poll_one();
     }
 
     return DAS_S_OK;

@@ -526,7 +526,7 @@ Win32AsyncIpcTransport::ReceiveCoroutine()
             read_pipe_,
             boost::asio::buffer(header_buffer),
             boost::asio::use_awaitable);
-    } catch (const std::exception& e) {
+    } catch (const std::exception&) {
         throw;
     }
 

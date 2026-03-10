@@ -10,6 +10,7 @@
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <das/IDasBase.h>
+#include <das/Utils/Expected.h>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -145,11 +146,27 @@ struct AwaitResponseSender
 class IpcRunLoop
 {
 public:
-    IpcRunLoop();
+    /// 工厂函数：创建 IpcRunLoop 实例
+    /// @return Expected 包含 unique_ptr 成功，错误码失败
+    static DAS::Utils::Expected<std::unique_ptr<IpcRunLoop>> Create();
+
+    /// 工厂函数：创建 IpcRunLoop 实例（用于 Host 进程）
+    /// @param read_queue_name 读取队列名称
+    /// @param write_queue_name 写入队列名称
+    /// @param is_server 是否作为服务端（创建队列）
+    /// @return Expected 包含 unique_ptr 成功，错误码失败
+    /// @deprecated Host 模式应由 IpcContext 持有 transport
+    [[deprecated("Use Create() and manage transport externally")]]
+    static DAS::Utils::Expected<std::unique_ptr<IpcRunLoop>> CreateForHost(
+        const std::string& read_queue_name,
+        const std::string& write_queue_name,
+        bool               is_server);
+
     ~IpcRunLoop();
 
     /// 默认初始化（只创建 io_context 基础设施，不持有 transport）
     /// MainProcess 模式使用此版本
+    /// @deprecated 使用 Create() 代替
     DasResult Initialize();
 
     /// 使用指定的队列名称初始化（用于 Host 进程）
@@ -157,13 +174,11 @@ public:
     /// @param read_queue_name 读取队列名称
     /// @param write_queue_name 写入队列名称
     /// @param is_server 是否作为服务端（创建队列）
-    [[deprecated("Use Initialize() and manage transport externally")]]
+    [[deprecated("Use Create() and manage transport externally")]]
     DasResult Initialize(
         const std::string& read_queue_name,
         const std::string& write_queue_name,
         bool               is_server);
-
-    DasResult Shutdown();
 
     // 阻塞式消息循环
     DasResult Run();
@@ -215,7 +230,7 @@ public:
      *
      * 用于转发消息到其他进程时，使用外部 transport 发送。
      *
-     * @param transport 目标传输层
+     * @param transport 目标传输层（生命周期绑定到返回值）
      * @param request_header 请求头
      * @param body 请求体
      * @param body_size 请求体大小
@@ -224,7 +239,7 @@ public:
      */
     [[nodiscard]]
     stdexec::sender auto SendMessageAsync(
-        DefaultAsyncIpcTransport*        transport,
+        DefaultAsyncIpcTransport* DAS_LIFETIMEBOUND transport,
         const ValidatedIPCMessageHeader& request_header,
         const uint8_t*                   body,
         size_t                           body_size,
@@ -274,7 +289,8 @@ public:
 
     /// 获取 io_context 引用（用于 HostLauncher 等需要共享 io_context 的场景）
     /// 注意：仅在 Initialize() 成功后可用
-    boost::asio::io_context& GetIoContext()
+    /// @return io_context 引用，生命周期绑定到 this
+    boost::asio::io_context& GetIoContext() DAS_LIFETIMEBOUND
     {
         return *io_context_;
     }
@@ -285,9 +301,9 @@ public:
      * ConnectionManager 用于管理 HostLauncher 实例。
      * 在 Host 模式下返回 nullptr。
      *
-     * @return ConnectionManager* 指针，未初始化返回 nullptr
+     * @return ConnectionManager* 指针，生命周期绑定到 this，未初始化返回 nullptr
      */
-    ConnectionManager* GetConnectionManager() { return connection_manager_.get(); }
+    ConnectionManager* GetConnectionManager() DAS_LIFETIMEBOUND { return connection_manager_.get(); }
 
     /**
      * @brief 注册 HostLauncher 并启动接收循环
@@ -510,6 +526,19 @@ public:
 
     /// ConnectionManager for MainProcess mode (nullptr in Host mode)
     std::unique_ptr<ConnectionManager> connection_manager_;
+
+private:
+    /// 默认构造函数（禁止直接调用，使用 Create() 代替）
+    IpcRunLoop() = default;
+
+    /// 内部初始化（由 Create() 调用）
+    DasResult DoInitialize();
+
+    /// 关闭（析构函数调用）
+    DasResult Shutdown();
+
+    /// 标记是否已关闭
+    bool is_shutdown_ = false;
 };
 
 //=============================================================================
