@@ -15,7 +15,6 @@
 #include <das/Core/IPC/SessionCoordinator.h>
 #include <das/DasPtr.hpp>
 #include <das/Utils/fmt.h>
-#include <stdexec/execution.hpp>
 #include <thread>
 
 #ifdef _WIN32
@@ -46,6 +45,8 @@
 #endif
 
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/use_future.hpp>
 #include <boost/interprocess/exceptions.hpp>
 #include <boost/interprocess/ipc/message_queue.hpp>
 #include <boost/process/v2/pid.hpp>
@@ -122,16 +123,16 @@ DasResult HostLauncher::Start(
         return result;
     }
 
-    // 等待 Host IPC 资源就绪
-    result = WaitForHostReady(timeout_ms);
+    // 先创建管道并等待 Host 连接（MainProcess 是服务端）
+    result = ConnectToHost();
     if (result != DAS_S_OK)
     {
         Stop();
         return result;
     }
 
-    // 连接到 Host IPC
-    result = ConnectToHost();
+    // 然后等待 Host IPC 资源就绪（管道已创建，Host 已连接）
+    result = WaitForHostReady(timeout_ms);
     if (result != DAS_S_OK)
     {
         Stop();
@@ -162,20 +163,6 @@ void HostLauncher::Stop()
     // 先发送 GOODBYE 消息让 Host 进程优雅退出
     if (impl_->async_transport && impl_->is_running)
     {
-        IPCMessageHeader header{};
-        header.magic = IPCMessageHeader::MAGIC;
-        header.version = IPCMessageHeader::CURRENT_VERSION;
-        header.message_type = static_cast<uint8_t>(MessageType::REQUEST);
-        header.interface_id = static_cast<uint32_t>(
-            HandshakeInterfaceId::HANDSHAKE_IFACE_GOODBYE);
-        header.method_id = 0;
-        header.call_id = 0;
-        header.flags = 0;
-        header.error_code = 0;
-        header.session_id = 0; // 控制平面消息: ObjectId = {0, 0, 0}
-        header.generation = 0;
-        header.local_id = 0;
-
         GoodbyeV1 goodbye{};
         goodbye.reason = static_cast<uint32_t>(GoodbyeReason::NormalShutdown);
 
@@ -192,34 +179,30 @@ void HostLauncher::Stop()
                 .SetBodySize(sizeof(goodbye))
                 .Build();
 
+        // 使用 co_spawn + use_future 发送 GOODBYE
         try
         {
-            auto send_result = stdexec::sync_wait(
-                impl_->async_transport->Send(
+            auto future = boost::asio::co_spawn(
+                impl_->io_ctx,
+                impl_->async_transport->SendCoroutine(
                     validated_header,
                     reinterpret_cast<const uint8_t*>(&goodbye),
-                    sizeof(goodbye)));
+                    sizeof(goodbye)),
+                boost::asio::use_future);
 
-            if (send_result.has_value())
+            DasResult result = future.get();
+            if (result != DAS_S_OK)
             {
-                auto&& [ec, result] = std::move(*send_result);
-                if (ec)
-                {
-                    DAS_LOG_ERROR("Failed to send GOODBYE: exception occurred");
-                }
-                else if (result != DAS_S_OK)
-                {
-                    std::string err_msg = DAS_FMT_NS::format(
-                        "Failed to send GOODBYE: error={}",
-                        result);
-                    DAS_LOG_ERROR(err_msg.c_str());
-                }
+                std::string err_msg = DAS_FMT_NS::format(
+                    "Failed to send GOODBYE: error={}",
+                    result);
+                DAS_LOG_ERROR(err_msg.c_str());
             }
         }
         catch (const std::exception& e)
         {
             std::string err_msg = DAS_FMT_NS::format(
-                "sync_wait failed for GOODBYE: {}",
+                "Send GOODBYE failed: {}",
                 e.what());
             DAS_LOG_ERROR(err_msg.c_str());
         }
@@ -507,12 +490,17 @@ DasResult HostLauncher::PerformFullHandshake(
     return DAS_S_OK;
 }
 
-DasResult HostLauncher::SendHandshakeHello(const std::string& client_name)
+//=============================================================================
+// 协程版本的握手方法
+//=============================================================================
+
+boost::asio::awaitable<DasResult> HostLauncher::SendHandshakeHelloAsync(
+    const std::string& client_name)
 {
     if (!impl_->async_transport)
     {
         DAS_LOG_ERROR("Transport not initialized");
-        return DAS_E_IPC_NOT_INITIALIZED;
+        co_return DAS_E_IPC_NOT_INITIALIZED;
     }
 
     uint32_t my_pid = static_cast<uint32_t>(GET_CURRENT_PID());
@@ -523,384 +511,337 @@ DasResult HostLauncher::SendHandshakeHello(const std::string& client_name)
     if (assigned_session_id == 0)
     {
         DAS_LOG_ERROR("Failed to allocate session_id for Host");
-        return DAS_E_IPC_SESSION_ALLOC_FAILED;
+        co_return DAS_E_IPC_SESSION_ALLOC_FAILED;
     }
 
     HelloRequestV1 hello;
     InitHelloRequest(hello, my_pid, client_name.c_str());
-    hello.assigned_session_id = assigned_session_id; // 设置分配的 session_id
+    hello.assigned_session_id = assigned_session_id;
 
-    IPCMessageHeader header{};
-    header.magic = IPCMessageHeader::MAGIC;
-    header.version = IPCMessageHeader::CURRENT_VERSION;
-    header.message_type = static_cast<uint8_t>(MessageType::REQUEST);
-    header.header_flags = 0;
-    header.call_id = impl_->next_call_id++;
-    header.interface_id =
-        static_cast<uint32_t>(HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO);
-    header.method_id = 0;
-    header.flags = 0;
-    header.error_code = 0;
-    header.body_size = sizeof(hello);
-    header.session_id = 0;
-    header.generation = 0;
-    header.local_id = 0;
-
+    uint64_t call_id = impl_->next_call_id++;
     auto validated_header =
         IPCMessageHeaderBuilder()
             .SetMessageType(MessageType::REQUEST)
             .SetControlPlaneCommand(HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO)
             .SetBodySize(sizeof(hello))
-            .SetCallId(header.call_id)
+            .SetCallId(call_id)
             .Build();
 
-    try
-    {
-        auto send_result_opt = stdexec::sync_wait(
-            impl_->async_transport->Send(
-                validated_header,
-                reinterpret_cast<const uint8_t*>(&hello),
-                sizeof(hello)));
+    // 直接使用协程方法，不再用 sync_wait
+    DasResult result = co_await impl_->async_transport->SendCoroutine(
+        validated_header,
+        reinterpret_cast<const uint8_t*>(&hello),
+        sizeof(hello));
 
-        if (!send_result_opt.has_value())
-        {
-            DAS_LOG_ERROR("Failed to send Hello: sync_wait returned empty");
-            return DAS_E_IPC_SEND_FAILED;
-        }
-
-        auto&& [ec, result] = std::move(*send_result_opt);
-        if (ec)
-        {
-            try
-            {
-                std::rethrow_exception(ec);
-            }
-            catch (const std::exception& e)
-            {
-                std::string msg = DAS_FMT_NS::format(
-                    "Failed to send Hello: {}",
-                    e.what());
-                DAS_LOG_ERROR(msg.c_str());
-            }
-            return DAS_E_IPC_SEND_FAILED;
-        }
-
-        if (result != DAS_S_OK)
-        {
-            std::string msg = DAS_FMT_NS::format(
-                "Failed to send Hello: error={}",
-                result);
-            DAS_LOG_ERROR(msg.c_str());
-            return result;
-        }
-    }
-    catch (const std::exception& e)
+    if (result != DAS_S_OK)
     {
         std::string msg = DAS_FMT_NS::format(
-            "sync_wait failed for Hello: {}",
-            e.what());
+            "Failed to send Hello: error={}",
+            result);
         DAS_LOG_ERROR(msg.c_str());
-        return DAS_E_IPC_SEND_FAILED;
+        co_return result;
     }
 
     std::string info_msg =
         DAS_FMT_NS::format("Sent Hello: pid={}, name={}", my_pid, client_name);
     DAS_LOG_INFO(info_msg.c_str());
-    return DAS_S_OK;
+    co_return DAS_S_OK;
+}
+
+boost::asio::awaitable<DasResult> HostLauncher::ReceiveHandshakeWelcomeAsync(
+    uint16_t& out_session_id,
+    uint32_t  timeout_ms)
+{
+    (void)timeout_ms; // 暂时忽略超时
+
+    if (!impl_->async_transport)
+    {
+        DAS_LOG_ERROR("Transport not initialized");
+        co_return DAS_E_IPC_NOT_INITIALIZED;
+    }
+
+    // 直接使用协程方法
+    auto result_variant = co_await impl_->async_transport->ReceiveCoroutine();
+
+    if (result_variant.index() == 0)
+    {
+        DasResult error_code = std::get<0>(result_variant);
+        std::string msg = DAS_FMT_NS::format(
+            "Failed to receive Welcome: error={}",
+            error_code);
+        DAS_LOG_ERROR(msg.c_str());
+        co_return error_code;
+    }
+
+    auto&& [header, body] = std::get<1>(result_variant);
+
+    const IPCMessageHeader& raw_header = header.Raw();
+
+    if (raw_header.interface_id
+        != static_cast<uint32_t>(HandshakeInterfaceId::HANDSHAKE_IFACE_WELCOME))
+    {
+        std::string msg = DAS_FMT_NS::format(
+            "Unexpected interface_id: {}",
+            raw_header.interface_id);
+        DAS_LOG_ERROR(msg.c_str());
+        co_return DAS_E_IPC_UNEXPECTED_MESSAGE;
+    }
+
+    if (body.size() < sizeof(WelcomeResponseV1))
+    {
+        DAS_LOG_ERROR("Welcome response body too small");
+        co_return DAS_E_IPC_INVALID_MESSAGE_BODY;
+    }
+
+    WelcomeResponseV1 welcome =
+        *reinterpret_cast<const WelcomeResponseV1*>(body.data());
+
+    if (welcome.status != WelcomeResponseV1::STATUS_SUCCESS)
+    {
+        std::string msg = DAS_FMT_NS::format(
+            "Welcome status error: {}",
+            welcome.status);
+        DAS_LOG_ERROR(msg.c_str());
+        co_return DAS_E_IPC_HANDSHAKE_FAILED;
+    }
+
+    out_session_id = welcome.session_id;
+
+    std::string info_msg = DAS_FMT_NS::format(
+        "Received Welcome: session_id={}, status={}",
+        welcome.session_id,
+        welcome.status);
+    DAS_LOG_INFO(info_msg.c_str());
+
+    co_return DAS_S_OK;
+}
+
+boost::asio::awaitable<DasResult> HostLauncher::SendHandshakeReadyAsync(uint16_t session_id)
+{
+    if (!impl_->async_transport)
+    {
+        DAS_LOG_ERROR("Transport not initialized");
+        co_return DAS_E_IPC_NOT_INITIALIZED;
+    }
+
+    ReadyRequestV1 ready;
+    InitReadyRequest(ready, session_id);
+
+    uint64_t call_id = impl_->next_call_id++;
+    auto validated_header =
+        IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::REQUEST)
+            .SetControlPlaneCommand(HandshakeInterfaceId::HANDSHAKE_IFACE_READY)
+            .SetBodySize(sizeof(ready))
+            .SetCallId(call_id)
+            .Build();
+
+    DasResult result = co_await impl_->async_transport->SendCoroutine(
+        validated_header,
+        reinterpret_cast<const uint8_t*>(&ready),
+        sizeof(ready));
+
+    if (result != DAS_S_OK)
+    {
+        std::string msg = DAS_FMT_NS::format(
+            "Failed to send Ready: error={}",
+            result);
+        DAS_LOG_ERROR(msg.c_str());
+        co_return result;
+    }
+
+    std::string info_msg =
+        DAS_FMT_NS::format("Sent Ready: session_id={}", session_id);
+    DAS_LOG_INFO(info_msg.c_str());
+    co_return DAS_S_OK;
+}
+
+boost::asio::awaitable<DasResult> HostLauncher::ReceiveHandshakeReadyAckAsync(uint32_t timeout_ms)
+{
+    (void)timeout_ms; // 暂时忽略超时
+
+    if (!impl_->async_transport)
+    {
+        DAS_LOG_ERROR("Transport not initialized");
+        co_return DAS_E_IPC_NOT_INITIALIZED;
+    }
+
+    auto result_variant = co_await impl_->async_transport->ReceiveCoroutine();
+
+    if (result_variant.index() == 0)
+    {
+        DasResult error_code = std::get<0>(result_variant);
+        std::string msg = DAS_FMT_NS::format(
+            "Failed to receive ReadyAck: error={}",
+            error_code);
+        DAS_LOG_ERROR(msg.c_str());
+        co_return error_code;
+    }
+
+    auto&& [header, body] = std::get<1>(result_variant);
+
+    const IPCMessageHeader& raw_header = header.Raw();
+
+    if (raw_header.interface_id
+        != static_cast<uint32_t>(
+            HandshakeInterfaceId::HANDSHAKE_IFACE_READY_ACK))
+    {
+        std::string msg = DAS_FMT_NS::format(
+            "Unexpected interface_id: {}",
+            raw_header.interface_id);
+        DAS_LOG_ERROR(msg.c_str());
+        co_return DAS_E_IPC_UNEXPECTED_MESSAGE;
+    }
+
+    if (body.size() < sizeof(ReadyAckV1))
+    {
+        DAS_LOG_ERROR("ReadyAck response body too small");
+        co_return DAS_E_IPC_INVALID_MESSAGE_BODY;
+    }
+
+    ReadyAckV1 ack = *reinterpret_cast<const ReadyAckV1*>(body.data());
+
+    if (ack.status != ReadyAckV1::STATUS_SUCCESS)
+    {
+        std::string msg = DAS_FMT_NS::format(
+            "ReadyAck status error: {}",
+            ack.status);
+        DAS_LOG_ERROR(msg.c_str());
+        co_return DAS_E_IPC_HANDSHAKE_FAILED;
+    }
+
+    std::string info_msg =
+        DAS_FMT_NS::format("Received ReadyAck: status={}", ack.status);
+    DAS_LOG_INFO(info_msg.c_str());
+
+    co_return DAS_S_OK;
+}
+
+boost::asio::awaitable<DasResult> HostLauncher::PerformFullHandshakeAsync(
+    uint16_t& out_session_id,
+    uint32_t  timeout_ms)
+{
+    DasResult result = co_await SendHandshakeHelloAsync("HostLauncher");
+    if (result != DAS_S_OK)
+    {
+        co_return result;
+    }
+
+    result = co_await ReceiveHandshakeWelcomeAsync(out_session_id, timeout_ms);
+    if (result != DAS_S_OK)
+    {
+        co_return result;
+    }
+
+    if (out_session_id == 0)
+    {
+        DAS_LOG_ERROR("Received invalid session_id (0)");
+        co_return DAS_E_IPC_HANDSHAKE_FAILED;
+    }
+
+    result = co_await SendHandshakeReadyAsync(out_session_id);
+    if (result != DAS_S_OK)
+    {
+        co_return result;
+    }
+
+    result = co_await ReceiveHandshakeReadyAckAsync(timeout_ms);
+    if (result != DAS_S_OK)
+    {
+        co_return result;
+    }
+
+    std::string msg = DAS_FMT_NS::format(
+        "Full handshake completed: session_id={}",
+        out_session_id);
+    DAS_LOG_INFO(msg.c_str());
+
+    co_return DAS_S_OK;
+}
+
+//=============================================================================
+// 同步版本的握手方法（使用 co_spawn + use_future）
+//=============================================================================
+
+DasResult HostLauncher::SendHandshakeHello(const std::string& client_name)
+{
+    try
+    {
+        auto future = boost::asio::co_spawn(
+            impl_->io_ctx,
+            SendHandshakeHelloAsync(client_name),
+            boost::asio::use_future);
+        return future.get();
+    }
+    catch (const std::exception& e)
+    {
+        std::string msg = DAS_FMT_NS::format(
+            "SendHandshakeHello failed: {}",
+            e.what());
+        DAS_LOG_ERROR(msg.c_str());
+        return DAS_E_IPC_SEND_FAILED;
+    }
 }
 
 DasResult HostLauncher::ReceiveHandshakeWelcome(
     uint16_t& out_session_id,
     uint32_t  timeout_ms)
 {
-    if (!impl_->async_transport)
-    {
-        DAS_LOG_ERROR("Transport not initialized");
-        return DAS_E_IPC_NOT_INITIALIZED;
-    }
-
-    // 注意：当前实现没有真正的超时机制，timeout_ms 暂时忽略
-    // TODO: 后续使用 stdexec::timeout 算法添加超时支持
-    (void)timeout_ms;
-
     try
     {
-        auto receive_result_opt = stdexec::sync_wait(
-            impl_->async_transport->Receive());
-
-        if (!receive_result_opt.has_value())
-        {
-            DAS_LOG_ERROR("Failed to receive Welcome: sync_wait returned empty");
-            return DAS_E_IPC_RECEIVE_FAILED;
-        }
-
-        auto&& [ec, result_variant] = std::move(*receive_result_opt);
-
-        if (ec)
-        {
-            try
-            {
-                std::rethrow_exception(ec);
-            }
-            catch (const std::exception& e)
-            {
-                std::string msg = DAS_FMT_NS::format(
-                    "Failed to receive Welcome: {}",
-                    e.what());
-                DAS_LOG_ERROR(msg.c_str());
-            }
-            return DAS_E_IPC_RECEIVE_FAILED;
-        }
-
-        if (result_variant.index() == 0)
-        {
-            DasResult error_code = std::get<0>(result_variant);
-            std::string msg = DAS_FMT_NS::format(
-                "Failed to receive Welcome: error={}",
-                error_code);
-            DAS_LOG_ERROR(msg.c_str());
-            return error_code;
-        }
-
-        auto&& [header, body] = std::get<1>(result_variant);
-
-        const IPCMessageHeader& raw_header = header.Raw();
-
-        if (raw_header.interface_id
-            != static_cast<uint32_t>(HandshakeInterfaceId::HANDSHAKE_IFACE_WELCOME))
-        {
-            std::string msg = DAS_FMT_NS::format(
-                "Unexpected interface_id: {}",
-                raw_header.interface_id);
-            DAS_LOG_ERROR(msg.c_str());
-            return DAS_E_IPC_UNEXPECTED_MESSAGE;
-        }
-
-        if (body.size() < sizeof(WelcomeResponseV1))
-        {
-            DAS_LOG_ERROR("Welcome response body too small");
-            return DAS_E_IPC_INVALID_MESSAGE_BODY;
-        }
-
-        WelcomeResponseV1 welcome =
-            *reinterpret_cast<WelcomeResponseV1*>(body.data());
-
-        if (welcome.status != WelcomeResponseV1::STATUS_SUCCESS)
-        {
-            std::string msg = DAS_FMT_NS::format(
-                "Welcome status error: {}",
-                welcome.status);
-            DAS_LOG_ERROR(msg.c_str());
-            return DAS_E_IPC_HANDSHAKE_FAILED;
-        }
-
-        out_session_id = welcome.session_id;
-
-        std::string info_msg = DAS_FMT_NS::format(
-            "Received Welcome: session_id={}, status={}",
-            welcome.session_id,
-            welcome.status);
-        DAS_LOG_INFO(info_msg.c_str());
-
-        return DAS_S_OK;
+        auto future = boost::asio::co_spawn(
+            impl_->io_ctx,
+            ReceiveHandshakeWelcomeAsync(out_session_id, timeout_ms),
+            boost::asio::use_future);
+        return future.get();
     }
     catch (const std::exception& e)
     {
         std::string msg = DAS_FMT_NS::format(
-            "sync_wait failed for Welcome: {}",
+            "ReceiveHandshakeWelcome failed: {}",
             e.what());
         DAS_LOG_ERROR(msg.c_str());
-        return DAS_E_IPC_TIMEOUT;
+        return DAS_E_IPC_RECEIVE_FAILED;
     }
 }
 
 DasResult HostLauncher::SendHandshakeReady(uint16_t session_id)
 {
-    if (!impl_->async_transport)
-    {
-        DAS_LOG_ERROR("Transport not initialized");
-        return DAS_E_IPC_NOT_INITIALIZED;
-    }
-
-    ReadyRequestV1 ready;
-    InitReadyRequest(ready, session_id);
-
-    IPCMessageHeader header{};
-    header.magic = IPCMessageHeader::MAGIC;
-    header.version = IPCMessageHeader::CURRENT_VERSION;
-    header.message_type = static_cast<uint8_t>(MessageType::REQUEST);
-    header.header_flags = 0;
-    header.call_id = impl_->next_call_id++;
-    header.interface_id =
-        static_cast<uint32_t>(HandshakeInterfaceId::HANDSHAKE_IFACE_READY);
-    header.method_id = 0;
-    header.flags = 0;
-    header.error_code = 0;
-    header.body_size = sizeof(ready);
-    // 控制平面消息: ObjectId = {0, 0, 0}
-    header.session_id = 0;
-    header.generation = 0;
-    header.local_id = 0;
-
-    auto validated_header =
-        IPCMessageHeaderBuilder()
-            .SetMessageType(MessageType::REQUEST)
-            .SetControlPlaneCommand(HandshakeInterfaceId::HANDSHAKE_IFACE_READY)
-            .SetBodySize(sizeof(ready))
-            .SetCallId(header.call_id)
-            .Build();
-
     try
     {
-        auto send_result_opt = stdexec::sync_wait(
-            impl_->async_transport->Send(
-                validated_header,
-                reinterpret_cast<const uint8_t*>(&ready),
-                sizeof(ready)));
-
-        if (!send_result_opt.has_value())
-        {
-            DAS_LOG_ERROR("Failed to send Ready: sync_wait returned empty");
-            return DAS_E_IPC_SEND_FAILED;
-        }
-
-        auto&& [ec, result] = std::move(*send_result_opt);
-        if (ec)
-        {
-            try
-            {
-                std::rethrow_exception(ec);
-            }
-            catch (const std::exception& e)
-            {
-                std::string msg = DAS_FMT_NS::format(
-                    "Failed to send Ready: {}",
-                    e.what());
-                DAS_LOG_ERROR(msg.c_str());
-            }
-            return DAS_E_IPC_SEND_FAILED;
-        }
-
-        if (result != DAS_S_OK)
-        {
-            std::string msg = DAS_FMT_NS::format(
-                "Failed to send Ready: error={}",
-                result);
-            DAS_LOG_ERROR(msg.c_str());
-            return result;
-        }
+        auto future = boost::asio::co_spawn(
+            impl_->io_ctx,
+            SendHandshakeReadyAsync(session_id),
+            boost::asio::use_future);
+        return future.get();
     }
     catch (const std::exception& e)
     {
         std::string msg = DAS_FMT_NS::format(
-            "sync_wait failed for Ready: {}",
+            "SendHandshakeReady failed: {}",
             e.what());
         DAS_LOG_ERROR(msg.c_str());
         return DAS_E_IPC_SEND_FAILED;
     }
-
-    std::string info_msg =
-        DAS_FMT_NS::format("Sent Ready: session_id={}", session_id);
-    DAS_LOG_INFO(info_msg.c_str());
-    return DAS_S_OK;
 }
 
 DasResult HostLauncher::ReceiveHandshakeReadyAck(uint32_t timeout_ms)
 {
-    if (!impl_->async_transport)
-    {
-        DAS_LOG_ERROR("Transport not initialized");
-        return DAS_E_IPC_NOT_INITIALIZED;
-    }
-
-    // 注意：当前实现没有真正的超时机制，timeout_ms 暂时忽略
-    // TODO: 后续使用 stdexec::timeout 算法添加超时支持
-    (void)timeout_ms;
-
     try
     {
-        auto receive_result_opt = stdexec::sync_wait(
-            impl_->async_transport->Receive());
-
-        if (!receive_result_opt.has_value())
-        {
-            DAS_LOG_ERROR("Failed to receive ReadyAck: sync_wait returned empty");
-            return DAS_E_IPC_RECEIVE_FAILED;
-        }
-
-        auto&& [ec, result_variant] = std::move(*receive_result_opt);
-
-        if (ec)
-        {
-            try
-            {
-                std::rethrow_exception(ec);
-            }
-            catch (const std::exception& e)
-            {
-                std::string msg = DAS_FMT_NS::format(
-                    "Failed to receive ReadyAck: {}",
-                    e.what());
-                DAS_LOG_ERROR(msg.c_str());
-            }
-            return DAS_E_IPC_RECEIVE_FAILED;
-        }
-
-        if (result_variant.index() == 0)
-        {
-            DasResult error_code = std::get<0>(result_variant);
-            std::string msg = DAS_FMT_NS::format(
-                "Failed to receive ReadyAck: error={}",
-                error_code);
-            DAS_LOG_ERROR(msg.c_str());
-            return error_code;
-        }
-
-        auto&& [header, body] = std::get<1>(result_variant);
-
-        const IPCMessageHeader& raw_header = header.Raw();
-
-        if (raw_header.interface_id
-            != static_cast<uint32_t>(
-                HandshakeInterfaceId::HANDSHAKE_IFACE_READY_ACK))
-        {
-            std::string msg = DAS_FMT_NS::format(
-                "Unexpected interface_id: {}",
-                raw_header.interface_id);
-            DAS_LOG_ERROR(msg.c_str());
-            return DAS_E_IPC_UNEXPECTED_MESSAGE;
-        }
-
-        if (body.size() < sizeof(ReadyAckV1))
-        {
-            DAS_LOG_ERROR("ReadyAck response body too small");
-            return DAS_E_IPC_INVALID_MESSAGE_BODY;
-        }
-
-        ReadyAckV1 ack = *reinterpret_cast<ReadyAckV1*>(body.data());
-
-        if (ack.status != ReadyAckV1::STATUS_SUCCESS)
-        {
-            std::string msg = DAS_FMT_NS::format(
-                "ReadyAck status error: {}",
-                ack.status);
-            DAS_LOG_ERROR(msg.c_str());
-            return DAS_E_IPC_HANDSHAKE_FAILED;
-        }
-
-        std::string info_msg =
-            DAS_FMT_NS::format("Received ReadyAck: status={}", ack.status);
-        DAS_LOG_INFO(info_msg.c_str());
-
-        return DAS_S_OK;
+        auto future = boost::asio::co_spawn(
+            impl_->io_ctx,
+            ReceiveHandshakeReadyAckAsync(timeout_ms),
+            boost::asio::use_future);
+        return future.get();
     }
     catch (const std::exception& e)
     {
         std::string msg = DAS_FMT_NS::format(
-            "sync_wait failed for ReadyAck: {}",
+            "ReceiveHandshakeReadyAck failed: {}",
             e.what());
         DAS_LOG_ERROR(msg.c_str());
-        return DAS_E_IPC_TIMEOUT;
+        return DAS_E_IPC_RECEIVE_FAILED;
     }
 }
 DAS_CORE_IPC_NS_END

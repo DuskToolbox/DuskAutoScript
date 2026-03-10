@@ -14,6 +14,7 @@
 #include <memory>
 #include <string>
 
+#include <boost/asio/awaitable.hpp>
 #include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
@@ -78,6 +79,38 @@ private:
         uint32_t  timeout_ms);
     DasResult SendHandshakeReady(uint16_t session_id);
     DasResult ReceiveHandshakeReadyAck(uint32_t timeout_ms);
+
+    // === 协程版本的握手方法 ===
+
+    /**
+     * @brief 完整握手流程（协程版本）
+     */
+    boost::asio::awaitable<DasResult> PerformFullHandshakeAsync(
+        uint16_t& out_session_id,
+        uint32_t  timeout_ms);
+
+    /**
+     * @brief 发送 Hello 消息（协程版本）
+     */
+    boost::asio::awaitable<DasResult> SendHandshakeHelloAsync(
+        const std::string& client_name);
+
+    /**
+     * @brief 接收 Welcome 消息（协程版本）
+     */
+    boost::asio::awaitable<DasResult> ReceiveHandshakeWelcomeAsync(
+        uint16_t& out_session_id,
+        uint32_t  timeout_ms);
+
+    /**
+     * @brief 发送 Ready 消息（协程版本）
+     */
+    boost::asio::awaitable<DasResult> SendHandshakeReadyAsync(uint16_t session_id);
+
+    /**
+     * @brief 接收 ReadyAck 消息（协程版本）
+     */
+    boost::asio::awaitable<DasResult> ReceiveHandshakeReadyAckAsync(uint32_t timeout_ms);
 
     struct Impl;
     std::unique_ptr<Impl> impl_;
