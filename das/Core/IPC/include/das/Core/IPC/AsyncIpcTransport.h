@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <memory>
-#include <stdexec/execution.hpp>
 #include <string>
 #include <utility>
 #include <vector>

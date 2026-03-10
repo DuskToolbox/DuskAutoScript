@@ -3,7 +3,6 @@
 
 #ifdef _WIN32
 
-#include <asioexec/use_sender.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/use_awaitable.hpp>
@@ -37,27 +36,6 @@ public:
     Win32AsyncIpcTransport(Win32AsyncIpcTransport&&) noexcept = default;
     Win32AsyncIpcTransport& operator=(Win32AsyncIpcTransport&&) noexcept =
         default;
-
-    [[nodiscard]]
-    auto Receive()
-    {
-        return boost::asio::co_spawn(
-            io_context_,
-            ReceiveCoroutine(),
-            asioexec::use_sender);
-    }
-
-    [[nodiscard]]
-    auto Send(
-        const ValidatedIPCMessageHeader& header,
-        const uint8_t*                   body,
-        size_t                           body_size)
-    {
-        return boost::asio::co_spawn(
-            io_context_,
-            SendCoroutine(header, body, body_size),
-            asioexec::use_sender);
-    }
 
     DasResult Initialize(
         const std::string& read_endpoint,
@@ -99,9 +77,6 @@ public:
 
 private:
     DasResult CreateNamedPipe(const std::string& pipe_name, bool is_read_pipe);
-    DasResult ConnectToNamedPipe(
-        const std::string& pipe_name,
-        bool               is_read_pipe);
 
     // 异步方法
     boost::asio::awaitable<std::variant<DasResult, HANDLE>> OpenPipeAsync(

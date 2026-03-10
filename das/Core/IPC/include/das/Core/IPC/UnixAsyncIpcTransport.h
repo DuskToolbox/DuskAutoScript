@@ -24,7 +24,7 @@ DAS_CORE_IPC_NS_BEGIN
  * @brief Unix/Linux/macOS 平台异步 IPC 传输层实现
  * @details
  * 使用 Unix Domain Socket 实现的异步 IPC 传输层。
- * 完全基于 stdexec 异步设计，通过 asioexec::use_sender 桥接。
+ * 基于 boost::asio 协程设计。
  *
  * 架构：
  * - 服务端创建 Unix Domain Socket 文件
@@ -42,9 +42,8 @@ DAS_CORE_IPC_NS_BEGIN
  * // 客户端
  * transport.Connect("/tmp/my_ipc");
  *
- * // 异步接收
- * auto sender = transport.Receive();
- * auto result = stdexec::sync_wait(std::move(sender));
+ * // 异步接收（协程）
+ * auto result = co_await transport.ReceiveCoroutine();
  * @endcode
  */
 class UnixAsyncIpcTransport
@@ -70,28 +69,6 @@ public:
     UnixAsyncIpcTransport(UnixAsyncIpcTransport&&) noexcept = default;
     UnixAsyncIpcTransport& operator=(UnixAsyncIpcTransport&&) noexcept =
         default;
-
-    // === 异步接口 ===
-
-    /**
-     * @brief 异步接收消息
-     * @return stdexec sender，成功时返回 AsyncIpcMessage
-     */
-    [[nodiscard]]
-    auto Receive();
-
-    /**
-     * @brief 异步发送消息
-     * @param header 已验证的消息头
-     * @param body 消息体数据指针
-     * @param body_size 消息体大小
-     * @return stdexec sender
-     */
-    [[nodiscard]]
-    auto Send(
-        const ValidatedIPCMessageHeader& header,
-        const uint8_t*                   body,
-        size_t                           body_size);
 
     // === 生命周期管理（同步） ===
 
@@ -140,22 +117,7 @@ public:
      */
     void SetSharedMemoryPool(SharedMemoryPool* pool);
 
-private:
-    /**
-     * @brief 创建 Unix Domain Socket（服务端）
-     * @param socket_path Socket 文件路径
-     * @return DAS_S_OK 成功
-     * @return DAS_E_IPC_MESSAGE_QUEUE_FAILED 创建失败
-     */
-    DasResult CreateUnixSocket(const std::string& socket_path);
-
-    /**
-     * @brief 连接到 Unix Domain Socket（客户端）
-     * @param socket_path Socket 文件路径
-     * @return DAS_S_OK 成功
-     * @return DAS_E_IPC_MESSAGE_QUEUE_FAILED 连接失败
-     */
-    DasResult ConnectToUnixSocket(const std::string& socket_path);
+    // === 协程接口（用于事件驱动模式） ===
 
     /**
      * @brief 异步接收协程
@@ -172,6 +134,23 @@ private:
         const ValidatedIPCMessageHeader& header,
         const uint8_t*                   body,
         size_t                           body_size);
+
+private:
+    /**
+     * @brief 创建 Unix Domain Socket（服务端）
+     * @param socket_path Socket 文件路径
+     * @return DAS_S_OK 成功
+     * @return DAS_E_IPC_MESSAGE_QUEUE_FAILED 创建失败
+     */
+    DasResult CreateUnixSocket(const std::string& socket_path);
+
+    /**
+     * @brief 连接到 Unix Domain Socket（客户端）
+     * @param socket_path Socket 文件路径
+     * @return DAS_S_OK 成功
+     * @return DAS_E_IPC_MESSAGE_QUEUE_FAILED 连接失败
+     */
+    DasResult ConnectToUnixSocket(const std::string& socket_path);
 
 private:
     struct Impl;
