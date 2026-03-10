@@ -50,11 +50,18 @@ struct SharedMemoryBlock
  * - Shutdown() 是幂等的：多次调用安全，仅首次生效
  *
  * 线程安全：所有公共方法都是线程安全的
+ *
+ * RAII 模式：使用 Create() 工厂函数创建，析构自动清理
  */
 class SharedMemoryPool
 {
 public:
-    SharedMemoryPool();
+    /**
+     * @brief 工厂函数：创建 SharedMemoryPool 实例
+     * @return std::unique_ptr<SharedMemoryPool> SharedMemoryPool 智能指针
+     */
+    static std::unique_ptr<SharedMemoryPool> Create();
+
     ~SharedMemoryPool();
 
     DasResult Initialize(const std::string& pool_name, size_t initial_size);
@@ -70,6 +77,10 @@ public:
     size_t GetUsedSize() const;
 
 private:
+    // 私有构造函数 - 只能通过 Create() 工厂函数调用
+    SharedMemoryPool();
+    friend class std::unique_ptr<SharedMemoryPool>;
+
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

@@ -38,6 +38,11 @@ struct SharedMemoryPool::Impl
     static constexpr std::chrono::seconds kStaleThreshold{60};
 };
 
+std::unique_ptr<SharedMemoryPool> SharedMemoryPool::Create()
+{
+    return std::unique_ptr<SharedMemoryPool>(new SharedMemoryPool());
+}
+
 SharedMemoryPool::SharedMemoryPool() : impl_(std::make_unique<Impl>()) {}
 
 SharedMemoryPool::~SharedMemoryPool() { Shutdown(); }
@@ -298,7 +303,7 @@ DasResult SharedMemoryManager::CreatePool(
     std::string pool_name =
         MakePoolName(1, static_cast<uint16_t>(std::stoul(pool_id)));
 
-    auto pool = std::make_unique<SharedMemoryPool>();
+    auto pool = SharedMemoryPool::Create();
     auto result = pool->Initialize(pool_name, size);
     if (result != DAS_S_OK)
     {
