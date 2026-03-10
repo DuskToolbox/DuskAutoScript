@@ -49,11 +49,19 @@ struct ConnectionInfo
  * ConnectionManager 持有 DasPtr<IHostLauncher>，Transport 由 HostLauncher 拥有。
  *
  * 心跳超时清理：释放 DasPtr -> 引用计数归零 -> HostLauncher 析构 -> 自动清理 Host 进程
+ *
+ * RAII 模式：使用 Create() 工厂函数创建，析构自动清理
  */
 class ConnectionManager
 {
 public:
-    ConnectionManager();
+    /**
+     * @brief 工厂函数：创建 ConnectionManager 实例
+     * @param local_id 本地 ID
+     * @return std::unique_ptr<ConnectionManager> ConnectionManager 智能指针
+     */
+    static std::unique_ptr<ConnectionManager> Create(uint16_t local_id);
+
     ~ConnectionManager();
 
     // 禁止拷贝
@@ -129,6 +137,8 @@ public:
     /**
      * @brief 获取连接的传输层（委托给 HostLauncher::GetTransport()）
      *
+     * 生命周期标记：返回的指针在 ConnectionManager 析构后失效
+     *
      * @param session_id 目标会话ID
      * @return DefaultAsyncIpcTransport* 传输层指针（不持有所有权），不存在返回 nullptr
      */
@@ -168,6 +178,10 @@ public:
     static constexpr uint32_t HEARTBEAT_TIMEOUT_MS = 5000;
 
 private:
+    // 私有构造函数 - 只能通过 Create() 工厂函数调用
+    ConnectionManager();
+    friend class std::unique_ptr<ConnectionManager>;
+
     DasResult CleanupConnectionResources(uint16_t remote_id, uint16_t local_id);
 
     struct Impl;

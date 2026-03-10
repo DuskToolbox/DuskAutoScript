@@ -39,6 +39,13 @@ struct ConnectionManager::Impl
     std::unique_ptr<boost::asio::io_context> heartbeat_io_context_;
 };
 
+std::unique_ptr<ConnectionManager> ConnectionManager::Create(uint16_t local_id)
+{
+    auto manager = std::unique_ptr<ConnectionManager>(new ConnectionManager());
+    manager->Initialize(local_id);
+    return manager;
+}
+
 ConnectionManager::ConnectionManager() : impl_(std::make_unique<Impl>()) {}
 
 ConnectionManager::~ConnectionManager()

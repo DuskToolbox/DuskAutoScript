@@ -77,7 +77,7 @@ DasResult IpcRunLoop::DoInitialize()
 
     // Create ConnectionManager for MainProcess mode
     // In Host mode, connection_manager_ remains nullptr (no heartbeat needed)
-    connection_manager_ = std::make_unique<ConnectionManager>();
+    connection_manager_ = ConnectionManager::Create(1);  // local_id = 1 for MainProcess
 
     return DAS_S_OK;
 }
@@ -104,7 +104,7 @@ DasResult IpcRunLoop::Initialize(
     timeout_timer_ = std::make_unique<boost::asio::steady_timer>(*io_context_);
 
     // Create ConnectionManager for MainProcess mode
-    connection_manager_ = std::make_unique<ConnectionManager>();
+    connection_manager_ = ConnectionManager::Create(1);  // local_id = 1 for MainProcess
 
     // 返回错误，提示调用者使用新的模式
     DAS_CORE_LOG_ERROR(
