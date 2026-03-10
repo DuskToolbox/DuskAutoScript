@@ -111,9 +111,8 @@ void RegisterLoadPluginHandler(DAS::Core::IPC::Host::IIpcContext* ctx)
             }
             catch (const nlohmann::json::exception& e)
             {
-                std::string msg = DAS_FMT_NS::format(
-                    "提取插件信息失败: {}",
-                    e.what());
+                std::string msg =
+                    DAS_FMT_NS::format("提取插件信息失败: {}", e.what());
                 DAS_LOG_ERROR(msg.c_str());
                 response.error_code = DAS_E_IPC_PLUGIN_LOAD_FAILED;
                 response.response_data.clear();
@@ -190,9 +189,8 @@ void RegisterLoadPluginHandler(DAS::Core::IPC::Host::IIpcContext* ctx)
                     manifest_dir / (plugin_name + "." + plugin_extension);
             }
 
-            std::string msg = DAS_FMT_NS::format(
-                "加载插件: {}",
-                plugin_path.string());
+            std::string msg =
+                DAS_FMT_NS::format("加载插件: {}", plugin_path.string());
             DAS_LOG_INFO(msg.c_str());
 
             auto result = g_runtime->LoadPlugin(plugin_path.string());
@@ -209,9 +207,8 @@ void RegisterLoadPluginHandler(DAS::Core::IPC::Host::IIpcContext* ctx)
 
             auto                     plugin_ptr = result.value();
             DAS::Core::IPC::ObjectId object_id;
-            DasResult reg_result = ctx->RegisterLocalObject(
-                plugin_ptr.Get(),
-                object_id);
+            DasResult                reg_result =
+                ctx->RegisterLocalObject(plugin_ptr.Get(), object_id);
 
             if (DAS::IsFailed(reg_result))
             {
@@ -234,10 +231,8 @@ void RegisterLoadPluginHandler(DAS::Core::IPC::Host::IIpcContext* ctx)
                 (object_id.generation >> 8) & 0xFF);
             response.response_data.push_back(object_id.local_id & 0xFF);
             response.response_data.push_back((object_id.local_id >> 8) & 0xFF);
-            response.response_data.push_back(
-                (object_id.local_id >> 16) & 0xFF);
-            response.response_data.push_back(
-                (object_id.local_id >> 24) & 0xFF);
+            response.response_data.push_back((object_id.local_id >> 16) & 0xFF);
+            response.response_data.push_back((object_id.local_id >> 24) & 0xFF);
 
             const auto& iid = DAS_IID_BASE;
             response.response_data.insert(
@@ -311,6 +306,10 @@ int main(int argc, char* argv[])
                 "Host process running in CONNECT mode, main PID: {}",
                 config.main_pid);
             DAS_LOG_INFO(_log_msg.c_str());
+        }
+        else
+        {
+            return EXIT_FAILURE;
         }
 
         DAS::Core::IPC::Host::IpcContextPtr ctx{
