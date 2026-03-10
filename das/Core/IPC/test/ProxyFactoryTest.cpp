@@ -373,7 +373,9 @@ TEST(ProxyFactoryTest, IntegrationWithIpcRunLoop)
     auto&         registry = RemoteObjectRegistry::GetInstance();
 
     // 创建并初始化 IpcRunLoop
-    auto runloop = std::make_unique<IpcRunLoop>();
+    auto result = IpcRunLoop::Create();
+    ASSERT_TRUE(result.has_value()) << "Failed to create IpcRunLoop";
+    auto runloop = std::move(*result);
     EXPECT_EQ(runloop->Initialize(), DAS_S_OK);
 
     ObjectId test_obj{.session_id = 1, .generation = 1, .local_id = 400};
@@ -413,9 +415,9 @@ TEST(ProxyFactoryTest, IntegrationWithIpcRunLoop)
         // 如果需要测试这些功能，应该使用具体的接口类型
     }
 
-    // 清理
+    // 清理（RAII: unique_ptr 析构自动调用 Shutdown()）
     factory.ClearAllProxies();
     registry.UnregisterObject(test_obj);
     runloop->RequestStop();
-    runloop->Shutdown();
+    runloop.reset();  // 析构函数会自动调用 Shutdown()
 }

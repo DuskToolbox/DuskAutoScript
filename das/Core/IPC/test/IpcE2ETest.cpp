@@ -163,19 +163,21 @@ protected:
     {
         // 主进程 session_id 初始化
         SessionCoordinator::GetInstance().SetAsMainProcess();
-        
+
         host_object_manager_ = std::make_unique<DistributedObjectManager>();
         plugin_object_manager_ = std::make_unique<DistributedObjectManager>();
-        connection_manager_ = std::make_unique<ConnectionManager>();
+        connection_manager_ = ConnectionManager::Create(1);  // local_id = 1
 
         // DistributedObjectManager 不再需要 Initialize
         // session_id 从 SessionCoordinator 获取
-        ASSERT_EQ(connection_manager_->Initialize(1), DAS_S_OK);
+        // ConnectionManager::Create() 已调用 Initialize(1)
+        ASSERT_NE(connection_manager_, nullptr);
     }
 
     void TearDown() override
     {
-        connection_manager_->Shutdown();
+        // RAII: unique_ptr 析构自动调用 Shutdown()
+        connection_manager_.reset();
         // DistributedObjectManager 不再需要 Shutdown（析构函数自动清理）
         host_object_manager_.reset();
         plugin_object_manager_.reset();
@@ -343,14 +345,15 @@ TEST_F(IpcE2ETest, ErrorHandling_NullObject)
 
 TEST_F(IpcE2ETest, SharedMemory_LargeDataTransfer)
 {
-    SharedMemoryPool pool;
-    std::string      pool_name = "e2e_test_shm_pool";
+    auto pool = SharedMemoryPool::Create();
+    std::string pool_name = "e2e_test_shm_pool";
 
-    ASSERT_EQ(pool.Initialize(pool_name, 1024 * 1024), DAS_S_OK); // 1MB
+    ASSERT_NE(pool, nullptr);
+    ASSERT_EQ(pool->Initialize(pool_name, 1024 * 1024), DAS_S_OK); // 1MB
 
     // Allocate a large block
     SharedMemoryBlock block;
-    ASSERT_EQ(pool.Allocate(65536, block), DAS_S_OK); // 64KB
+    ASSERT_EQ(pool->Allocate(65536, block), DAS_S_OK); // 64KB
 
     // Write data
     std::vector<uint8_t> test_data(65536, 0xAB);
@@ -363,8 +366,8 @@ TEST_F(IpcE2ETest, SharedMemory_LargeDataTransfer)
     EXPECT_EQ(test_data, read_data);
 
     // Cleanup
-    ASSERT_EQ(pool.Deallocate(block.handle), DAS_S_OK);
-    pool.Shutdown();
+    ASSERT_EQ(pool->Deallocate(block.handle), DAS_S_OK);
+    // RAII: unique_ptr 析构自动调用 Shutdown()
 }
 
 // ====== Concurrent E2E Tests ======

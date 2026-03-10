@@ -42,7 +42,13 @@ namespace Core
                     DasResult result = DAS_S_OK;
 
                     // 1. Create IpcRunLoop FIRST (provides io_context)
-                    runloop_ = std::make_unique<IpcRunLoopType>();
+                    auto runloop_result = IpcRunLoopType::Create();
+                    if (!runloop_result.has_value())
+                    {
+                        DAS_CORE_LOG_ERROR("IpcRunLoop::Create() failed");
+                        return DAS_E_IPC_NOT_INITIALIZED;
+                    }
+                    runloop_ = std::move(runloop_result.value());
                     result = runloop_->Initialize();
                     if (result != DAS_S_OK)
                     {
@@ -95,11 +101,11 @@ namespace Core
                     // Destroy in reverse order
                     object_manager_.reset();
 
+                    // RAII：unique_ptr 析构自动调用 Shutdown
                     if (runloop_)
                     {
                         runloop_->RequestStop();
-                        runloop_->Shutdown();
-                        runloop_.reset();
+                        runloop_.reset();  // 析构函数会自动调用 Shutdown()
                     }
 
                     is_initialized_ = false;

@@ -14,7 +14,7 @@ class IpcSharedMemoryPoolTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        pool_ = std::make_unique<SharedMemoryPool>();
+        pool_ = SharedMemoryPool::Create();
 
         // Generate unique name using high-resolution timer + PID + test name
         auto now_ns = std::chrono::high_resolution_clock::now()

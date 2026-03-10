@@ -27,7 +27,13 @@ class IpcRunLoopTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        runloop_ = std::make_unique<IpcRunLoop>();
+        auto result = IpcRunLoop::Create();
+        if (!result)
+        {
+            FAIL() << "Failed to create IpcRunLoop";
+            return;
+        }
+        runloop_ = std::move(*result);
 
         // Generate unique queue names for this test using high-resolution timer
         auto now_ns = std::chrono::high_resolution_clock::now()
@@ -45,10 +51,11 @@ protected:
 
     void TearDown() override
     {
+        // RAII: unique_ptr 析构自动调用 Shutdown()
         if (runloop_)
         {
             runloop_->RequestStop();
-            runloop_->Shutdown();
+            runloop_.reset();  // 析构函数会自动调用 Shutdown()
         }
     }
 
@@ -83,12 +90,8 @@ TEST_F(IpcRunLoopTest, Initialize_Succeeds)
     EXPECT_EQ(result, DAS_S_OK);
 }
 
-TEST_F(IpcRunLoopTest, Shutdown_Succeeds)
-{
-    ASSERT_EQ(runloop_->Initialize(), DAS_S_OK);
-    auto result = runloop_->Shutdown();
-    EXPECT_EQ(result, DAS_S_OK);
-}
+// NOTE: Shutdown is now private and called by destructor (RAII pattern)
+// The Shutdown_Succeeds test is removed since Shutdown is internal
 
 // ====== Run/Stop Tests ======
 
@@ -290,7 +293,8 @@ TEST_F(IpcRunLoopTest, Run_AfterStopAndReinitialize)
     {
         run_thread1.join();
     }
-    runloop_->Shutdown();
+    // RAII: unique_ptr 析构自动调用 Shutdown()
+    runloop_.reset();
 
     // Reinitialize and run again
     ASSERT_TRUE(SetupRunLoopWithTransport());

@@ -9,14 +9,12 @@ using DAS::Core::IPC::ConnectionManager;
 class IpcConnectionManagerTest : public ::testing::Test
 {
 protected:
-    void SetUp() override { manager_ = std::make_unique<ConnectionManager>(); }
+    void SetUp() override { manager_ = ConnectionManager::Create(1); }  // local_id = 1
 
     void TearDown() override
     {
-        if (manager_)
-        {
-            manager_->Shutdown();
-        }
+        // RAII: unique_ptr 析构自动调用 Shutdown()
+        manager_.reset();
     }
 
     std::unique_ptr<ConnectionManager> manager_;

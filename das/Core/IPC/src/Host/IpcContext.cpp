@@ -216,7 +216,7 @@ namespace Core
                     DAS_LOG_INFO(msg.c_str());
 
                     // 3. 初始化 SharedMemoryPool
-                    shared_memory_ = std::make_unique<SharedMemoryPool>();
+                    shared_memory_ = SharedMemoryPool::Create();
                     result = shared_memory_->Initialize(
                         shm_name,
                         DEFAULT_SHARED_MEMORY_SIZE);
@@ -231,7 +231,14 @@ namespace Core
                     }
 
                     // 4. 创建 IpcRunLoop（无参 Initialize，只创建 io_context 基础设施）
-                    run_loop_ = std::make_unique<IpcRunLoop>();
+                    auto runloop_result = IpcRunLoop::Create();
+                    if (!runloop_result.has_value())
+                    {
+                        DAS_CORE_LOG_ERROR("IpcRunLoop::Create() failed");
+                        object_manager_.reset();
+                        return DAS_E_IPC_NOT_INITIALIZED;
+                    }
+                    run_loop_ = std::move(runloop_result.value());
                     result = run_loop_->Initialize();
                     if (result != DAS_S_OK)
                     {
@@ -363,14 +370,11 @@ namespace Core
                         shared_memory_.reset();
                     }
 
-                    // 6. 关闭 IpcRunLoop
+                    // 6. 关闭 IpcRunLoop（RAII：unique_ptr 析构自动调用 Shutdown）
                     if (run_loop_)
                     {
-                        DasResult loop_result = run_loop_->Shutdown();
-                        if (loop_result != DAS_S_OK)
-                        {
-                            result = loop_result;
-                        }
+                        run_loop_->RequestStop();
+                        // unique_ptr::reset() 会调用析构函数，析构函数会自动调用 Shutdown()
                         run_loop_.reset();
                     }
 
