@@ -24,37 +24,26 @@ class UnixAsyncIpcTransport;
 
 DAS_CORE_IPC_NS_BEGIN
 
-class IpcRunLoop;
-
 /**
  * @brief IPC 响应发送器
  *
  * 提供响应发送功能的轻量级包装器。
  * IMessageHandler 通过此接口发送响应。
  *
- * 支持两种模式：
- * 1. 使用 IpcRunLoop（旧模式，已废弃）
- * 2. 直接使用 transport（新模式，推荐）
+ * 使用 transport 直接发送响应。
  */
 class IpcResponseSender
 {
 public:
-    /**
-     * @brief 构造函数（旧模式，已废弃）
-     * @param run_loop IPC 运行循环（必须有效）
-     * @deprecated 使用带 transport 参数的构造函数代替
-     */
-    explicit IpcResponseSender(IpcRunLoop& run_loop);
-
 #ifdef _WIN32
     /**
-     * @brief 构造函数（新模式，推荐）
+     * @brief 构造函数
      * @param transport Win32 异步 IPC 传输层（必须有效）
      */
     explicit IpcResponseSender(Win32AsyncIpcTransport& transport);
 #else
     /**
-     * @brief 构造函数（新模式，推荐）
+     * @brief 构造函数
      * @param transport Unix 异步 IPC 传输层（必须有效）
      */
     explicit IpcResponseSender(UnixAsyncIpcTransport& transport);
@@ -71,7 +60,6 @@ public:
         const std::vector<uint8_t>&      body);
 
 private:
-    IpcRunLoop* run_loop_ = nullptr;
 #ifdef _WIN32
     Win32AsyncIpcTransport* transport_ = nullptr;
 #else

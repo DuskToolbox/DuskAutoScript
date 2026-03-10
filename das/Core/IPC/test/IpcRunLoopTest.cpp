@@ -313,35 +313,6 @@ TEST_F(IpcRunLoopTest, Run_AfterStopAndReinitialize)
     }
 }
 
-// ====== Event Message Tests ======
-
-TEST_F(IpcRunLoopTest, SendEvent_WithoutTransport)
-{
-    ASSERT_EQ(runloop_->Initialize(), DAS_S_OK);
-
-    auto                 header = CreateTestHeader(MessageType::EVENT);
-    std::vector<uint8_t> body;
-
-    // Without initialized transport, should fail
-    auto result = runloop_->SendEvent(header, body.data(), body.size());
-    // Implementation behavior depends on transport state
-    // This test documents expected behavior
-}
-
-// ====== Response Message Tests ======
-
-TEST_F(IpcRunLoopTest, SendResponse_WithoutTransport)
-{
-    ASSERT_EQ(runloop_->Initialize(), DAS_S_OK);
-
-    auto                 header = CreateTestHeader(MessageType::RESPONSE);
-    std::vector<uint8_t> body;
-
-    // Without initialized transport, should fail
-    auto result = runloop_->SendResponse(header, body.data(), body.size());
-    // Implementation behavior depends on transport state
-}
-
 // ====== Cleanup on Stop Tests ======
 
 TEST_F(IpcRunLoopTest, Stop_CancelsPendingCalls)

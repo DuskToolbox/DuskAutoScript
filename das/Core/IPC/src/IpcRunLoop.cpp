@@ -84,36 +84,7 @@ DasResult IpcRunLoop::DoInitialize()
 
 DasResult IpcRunLoop::Initialize()
 {
-    // 废弃：使用 Create() 代替
     return DoInitialize();
-}
-
-DasResult IpcRunLoop::Initialize(
-    const std::string& read_queue_name,
-    const std::string& write_queue_name,
-    bool               is_server)
-{
-    // 废弃警告：此方法已废弃，Host 模式应由 IpcContext 持有 transport
-    DAS_CORE_LOG_WARN(
-        "Initialize(read_queue, write_queue, is_server) is deprecated. "
-        "Use Initialize() and manage transport externally.");
-
-    io_context_ = std::make_unique<boost::asio::io_context>();
-    // 不再在 IpcRunLoop 内部创建 async_transport_
-    // 如果需要 transport，应该由调用者创建并传入
-    timeout_timer_ = std::make_unique<boost::asio::steady_timer>(*io_context_);
-
-    // Create ConnectionManager for MainProcess mode
-    connection_manager_ = ConnectionManager::Create(1);  // local_id = 1 for MainProcess
-
-    // 返回错误，提示调用者使用新的模式
-    DAS_CORE_LOG_ERROR(
-        "Deprecated Initialize() called. Transport should be managed externally.");
-    (void)read_queue_name;
-    (void)write_queue_name;
-    (void)is_server;
-
-    return DAS_E_FAIL;
 }
 
 DasResult IpcRunLoop::Shutdown()
@@ -200,91 +171,6 @@ IMessageHandler* IpcRunLoop::GetHandler(uint32_t interface_id) const
     return nullptr;
 }
 
-DasResult IpcRunLoop::DispatchToHandler(
-    const IPCMessageHeader&     header,
-    const std::vector<uint8_t>& body)
-{
-    // 处理 HEARTBEAT RESPONSE：收到心跳回复时更新时间戳
-    if (header.interface_id
-        == static_cast<uint32_t>(HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT))
-    {
-        if (header.message_type == static_cast<uint8_t>(MessageType::RESPONSE))
-        {
-            // 收到心跳回复，更新时间戳
-            if (connection_manager_)
-            {
-                connection_manager_->UpdateHeartbeatTimestamp(header.session_id);
-            }
-            return DAS_S_OK;
-        }
-        // REQUEST 继续交给 handler 处理
-    }
-
-    auto* handler = GetHandler(header.interface_id);
-    if (handler)
-    {
-        IpcResponseSender sender(*this);
-        // 同步版本使用 co_spawn + use_future 调用协程（用于非协程上下文）
-        // 注意：在 io_context 线程中调用会导致死锁，仅用于非 io_context 线程
-        try
-        {
-            auto future = boost::asio::co_spawn(
-                GetIoContext(),
-                handler->HandleMessage(header, body, sender),
-                boost::asio::use_future);
-            return future.get();
-        }
-        catch (const std::exception& e)
-        {
-            DAS_CORE_LOG_ERROR("DispatchToHandler failed: {}", e.what());
-            return DAS_E_FAIL;
-        }
-    }
-
-    DAS_CORE_LOG_WARN(
-        "No handler found for interface_id = {}",
-        header.interface_id);
-    return DAS_E_NOT_FOUND;
-}
-
-boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
-    const IPCMessageHeader&     header,
-    const std::vector<uint8_t>& body)
-{
-    // 处理 HEARTBEAT RESPONSE：收到心跳回复时更新时间戳
-    if (header.interface_id
-        == static_cast<uint32_t>(HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT))
-    {
-        if (header.message_type == static_cast<uint8_t>(MessageType::RESPONSE))
-        {
-            // 收到心跳回复，更新时间戳
-            if (connection_manager_)
-            {
-                connection_manager_->UpdateHeartbeatTimestamp(header.session_id);
-            }
-            co_return;
-        }
-        // REQUEST 继续交给 handler 处理
-    }
-
-    auto* handler = GetHandler(header.interface_id);
-    if (handler)
-    {
-        IpcResponseSender sender(*this);
-        auto result = co_await handler->HandleMessage(header, body, sender);
-        if (DAS::IsFailed(result))
-        {
-            DAS_CORE_LOG_WARN("Handler returned error: 0x{:08X}", result);
-        }
-    }
-    else
-    {
-        DAS_CORE_LOG_WARN(
-            "No handler found for interface_id = {}",
-            header.interface_id);
-    }
-}
-
 boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
     const IPCMessageHeader&     header,
     const std::vector<uint8_t>& body,
@@ -338,31 +224,6 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
             "No handler found for interface_id = {}",
             header.interface_id);
     }
-}
-
-bool IpcRunLoop::ReceiveAndDispatch(std::chrono::milliseconds timeout)
-{
-    (void)timeout;
-
-    // IpcRunLoop 不再持有 transport，此方法已废弃
-    // 使用 StartAsyncReceiveForTransport() 代替
-    DAS_CORE_LOG_DEBUG("ReceiveAndDispatch: deprecated, IpcRunLoop no longer holds transport");
-    return false;
-}
-
-std::pair<DasResult, uint64_t> IpcRunLoop::PrepareSendRequest(
-    const ValidatedIPCMessageHeader& request_header,
-    const uint8_t*                   body,
-    size_t                           body_size)
-{
-    // IpcRunLoop 不再持有 transport
-    // 此方法需要外部传入 transport，使用 SendMessageAsync(transport, ...) 代替
-    DAS_CORE_LOG_ERROR("PrepareSendRequest: IpcRunLoop no longer holds internal transport. "
-                       "Use SendMessageAsync(transport, ...) instead.");
-    (void)request_header;
-    (void)body;
-    (void)body_size;
-    return {DAS_E_IPC_NOT_INITIALIZED, 0};
 }
 
 std::pair<DasResult, uint64_t> IpcRunLoop::PrepareSendRequestWithTransport(
@@ -539,78 +400,7 @@ void IpcRunLoop::RegisterPendingCompletion(
     }
 }
 
-DasResult IpcRunLoop::SendResponse(
-    const ValidatedIPCMessageHeader& response_header,
-    const uint8_t*                   body,
-    size_t                           body_size)
-{
-    // IpcRunLoop 不再持有 transport
-    // 此方法需要外部传入 transport
-    DAS_CORE_LOG_ERROR("SendResponse: IpcRunLoop no longer holds internal transport. "
-                       "Use SendResponseCoroutine with external transport.");
-    (void)response_header;
-    (void)body;
-    (void)body_size;
-    return DAS_E_IPC_NOT_INITIALIZED;
-}
-
-boost::asio::awaitable<DasResult> IpcRunLoop::SendResponseCoroutine(
-    const ValidatedIPCMessageHeader& response_header,
-    const uint8_t*                   body,
-    size_t                           body_size)
-{
-    // IpcRunLoop 不再持有 transport
-    // 此方法需要外部传入 transport
-    DAS_CORE_LOG_ERROR("SendResponseCoroutine: IpcRunLoop no longer holds internal transport. "
-                       "Use transport->SendCoroutine() directly.");
-    (void)response_header;
-    (void)body;
-    (void)body_size;
-    co_return DAS_E_IPC_NOT_INITIALIZED;
-}
-
-DasResult IpcRunLoop::SendEvent(
-    const ValidatedIPCMessageHeader& event_header,
-    const uint8_t*                   body,
-    size_t                           body_size)
-{
-    // IpcRunLoop 不再持有 transport
-    // 此方法需要外部传入 transport
-    DAS_CORE_LOG_ERROR("SendEvent: IpcRunLoop no longer holds internal transport. "
-                       "Use SendEventCoroutine with external transport.");
-    (void)event_header;
-    (void)body;
-    (void)body_size;
-    return DAS_E_IPC_NOT_INITIALIZED;
-}
-
-boost::asio::awaitable<DasResult> IpcRunLoop::SendEventCoroutine(
-    const ValidatedIPCMessageHeader& event_header,
-    const uint8_t*                   body,
-    size_t                           body_size)
-{
-    // IpcRunLoop 不再持有 transport
-    // 此方法需要外部传入 transport
-    DAS_CORE_LOG_ERROR("SendEventCoroutine: IpcRunLoop no longer holds internal transport. "
-                       "Use transport->SendCoroutine() directly.");
-    (void)event_header;
-    (void)body;
-    (void)body_size;
-    co_return DAS_E_IPC_NOT_INITIALIZED;
-}
-
 bool IpcRunLoop::IsRunning() const { return running_.load(); }
-
-void IpcRunLoop::StartAsyncReceive()
-{
-    // IpcRunLoop 不再持有 transport
-    // 此方法不再启动接收循环
-    // MainProcess 模式使用 StartAsyncReceiveForTransport()
-    // Host 模式由 IpcContext 管理 transport
-    DAS_CORE_LOG_DEBUG(
-        "StartAsyncReceive: IpcRunLoop no longer holds internal transport. "
-        "Use StartAsyncReceiveForTransport() for external transport.");
-}
 
 void IpcRunLoop::ScheduleTimeoutCheck()
 {
@@ -664,9 +454,6 @@ DasResult IpcRunLoop::Run()
         connection_manager_->StartHeartbeatThread();
     }
 
-    // 启动异步接收链
-    StartAsyncReceive();
-
     // 启动超时检查定时器
     ScheduleTimeoutCheck();
 
@@ -674,57 +461,6 @@ DasResult IpcRunLoop::Run()
     io_context_->run();
 
     return exit_code_.load();
-}
-
-DasResult IpcRunLoop::ProcessMessage(
-    const IPCMessageHeader& header,
-    const uint8_t*          body,
-    size_t                  body_size)
-{
-    if (header.message_type == static_cast<uint8_t>(MessageType::RESPONSE))
-    {
-        std::vector<uint8_t> response_body(body, body + body_size);
-        CompletePendingCall(header.call_id, DAS_S_OK, std::move(response_body));
-        return DAS_S_OK;
-    }
-
-    if (header.message_type == static_cast<uint8_t>(MessageType::REQUEST))
-    {
-        std::vector<uint8_t> body_vec(body, body + body_size);
-        auto dispatch_result = DispatchToHandler(header, body_vec);
-
-        if (dispatch_result != DAS_E_NOT_FOUND)
-        {
-            return dispatch_result;
-        }
-
-        auto validated_response =
-            IPCMessageHeaderBuilder()
-                .SetMessageType(MessageType::RESPONSE)
-                .SetBusinessInterface(header.interface_id, header.method_id)
-                .SetBodySize(0)
-                .SetCallId(header.call_id)
-                .SetObject(
-                    header.session_id,
-                    header.generation,
-                    header.local_id)
-                .SetErrorCode(DAS_E_IPC_INVALID_INTERFACE_ID)
-                .Build();
-
-        return SendResponse(validated_response, nullptr, 0);
-    }
-
-    if (header.message_type == static_cast<uint8_t>(MessageType::EVENT))
-    {
-        return DAS_S_OK;
-    }
-
-    if (header.message_type == static_cast<uint8_t>(MessageType::HEARTBEAT))
-    {
-        return DAS_S_OK;
-    }
-
-    return DAS_E_IPC_INVALID_MESSAGE_TYPE;
 }
 
 DasResult IpcRunLoop::RegisterHostLauncher(DasPtr<IHostLauncher> launcher)
@@ -865,7 +601,7 @@ void IpcRunLoop::StartAsyncReceiveForTransport(
                     }
                     else
                     {
-                        co_await DispatchToHandlerCoroutine(header.Raw(), body);
+                        co_await DispatchToHandlerCoroutine(header.Raw(), body, *transport);
                     }
                 }
                 catch (const boost::system::system_error& e)

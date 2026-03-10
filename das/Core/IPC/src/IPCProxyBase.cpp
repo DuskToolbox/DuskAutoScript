@@ -12,9 +12,9 @@ DasResult IPCProxyBase::SendRequest(
     size_t                body_size,
     std::vector<uint8_t>& response_body)
 {
-    if (!run_loop_)
+    if (!run_loop_ || !transport_)
     {
-        DAS_CORE_LOG_ERROR("run_loop_ is null");
+        DAS_CORE_LOG_ERROR("run_loop_ or transport_ is null");
         return DAS_E_FAIL;
     }
 
@@ -23,7 +23,9 @@ DasResult IPCProxyBase::SendRequest(
     auto validated_header =
         BuildMessageHeader(method_id, call_id, MessageType::REQUEST, body_size);
 
+    // 使用 IpcRunLoop 的 SendMessageAsync 带 transport 版本
     auto sender = run_loop_->SendMessageAsync(
+        transport_,
         validated_header,
         body,
         body_size,
@@ -54,9 +56,9 @@ DasResult IPCProxyBase::SendRequestNoResponse(
     const uint8_t* body,
     size_t         body_size)
 {
-    if (!run_loop_)
+    if (!run_loop_ || !transport_)
     {
-        DAS_CORE_LOG_ERROR("run_loop_ is null");
+        DAS_CORE_LOG_ERROR("run_loop_ or transport_ is null");
         return DAS_E_FAIL;
     }
 
@@ -65,7 +67,35 @@ DasResult IPCProxyBase::SendRequestNoResponse(
     auto validated_header =
         BuildMessageHeader(method_id, call_id, MessageType::EVENT, body_size);
 
-    return run_loop_->SendEvent(validated_header, body, body_size);
+    // 使用 IpcRunLoop 的 SendMessageAsync 带 transport 版本发送事件
+    // 注意：EVENT 类型的消息不需要等待响应
+    // 这里使用同步发送，因为 IPCProxy 是同步 API
+    auto sender = run_loop_->SendMessageAsync(
+        transport_,
+        validated_header,
+        body,
+        body_size,
+        std::chrono::milliseconds{5000});
+
+    // 对于 EVENT，我们等待发送完成但不关心响应
+    auto result_opt = stdexec::sync_wait(std::move(sender));
+
+    if (!result_opt.has_value())
+    {
+        // 超时或取消，但事件发送可能是 fire-and-forget
+        DAS_CORE_LOG_WARN("SendRequestNoResponse timeout or cancelled");
+        return DAS_S_OK;
+    }
+
+    auto [result, response] = std::get<0>(*result_opt);
+    (void)response;
+
+    if (DAS::IsFailed(result))
+    {
+        DAS_CORE_LOG_WARN("SendRequestNoResponse failed with error = 0x{:08X}", result);
+    }
+
+    return DAS_S_OK;
 }
 
 DAS_CORE_IPC_NS_END

@@ -40,6 +40,7 @@ DAS_CORE_IPC_NS_BEGIN
 class IMessageHandler;
 class ConnectionManager;
 class HostLauncher;
+class IpcRunLoop;  // Forward declaration for templates
 
 namespace Host
 {
@@ -166,19 +167,7 @@ public:
 
     /// 默认初始化（只创建 io_context 基础设施，不持有 transport）
     /// MainProcess 模式使用此版本
-    /// @deprecated 使用 Create() 代替
     DasResult Initialize();
-
-    /// 使用指定的队列名称初始化（用于 Host 进程）
-    /// @deprecated 此方法已废弃，Host 模式应由 IpcContext 持有 transport
-    /// @param read_queue_name 读取队列名称
-    /// @param write_queue_name 写入队列名称
-    /// @param is_server 是否作为服务端（创建队列）
-    [[deprecated("Use Create() and manage transport externally")]]
-    DasResult Initialize(
-        const std::string& read_queue_name,
-        const std::string& write_queue_name,
-        bool               is_server);
 
     // 阻塞式消息循环
     DasResult Run();
@@ -245,46 +234,6 @@ public:
         size_t                           body_size,
         std::chrono::milliseconds        timeout = std::chrono::seconds(30));
 
-    DasResult SendResponse(
-        const ValidatedIPCMessageHeader& response_header,
-        const uint8_t*                   body,
-        size_t                           body_size);
-
-    /**
-     * @brief 异步发送响应（协程版本，用于 io_context 线程）
-     *
-     * 使用 co_await 异步发送，不使用 sync_wait，避免死锁。
-     *
-     * @param response_header 响应消息头
-     * @param body 响应消息体
-     * @param body_size 响应消息体大小
-     * @return boost::asio::awaitable<DasResult> 协程结果
-     */
-    boost::asio::awaitable<DasResult> SendResponseCoroutine(
-        const ValidatedIPCMessageHeader& response_header,
-        const uint8_t*                   body,
-        size_t                           body_size);
-
-    DasResult SendEvent(
-        const ValidatedIPCMessageHeader& event_header,
-        const uint8_t*                   body,
-        size_t                           body_size);
-
-    /**
-     * @brief 异步发送事件（协程版本，用于 io_context 线程）
-     *
-     * 使用 co_await 异步发送，不使用 sync_wait，避免死锁。
-     *
-     * @param event_header 事件消息头
-     * @param body 事件消息体
-     * @param body_size 事件消息体大小
-     * @return boost::asio::awaitable<DasResult> 协程结果
-     */
-    boost::asio::awaitable<DasResult> SendEventCoroutine(
-        const ValidatedIPCMessageHeader& event_header,
-        const uint8_t*                   body,
-        size_t                           body_size);
-
     bool IsRunning() const;
 
     /// 获取 io_context 引用（用于 HostLauncher 等需要共享 io_context 的场景）
@@ -322,35 +271,8 @@ public:
     template <class Receiver>
     friend struct AwaitResponseOperation;
 
-    DasResult ProcessMessage(
-        const IPCMessageHeader& header,
-        const uint8_t*          body,
-        size_t                  body_size);
-
     /**
-     * @brief 分发消息到注册的处理器（同步版本）
-     */
-    DasResult DispatchToHandler(
-        const IPCMessageHeader&     header,
-        const std::vector<uint8_t>& body);
-
-    /**
-     * @brief 分发消息到注册的处理器（协程版本，旧版）
-     *
-     * 使用 co_await 调用 handler->HandleMessage()，
-     * 避免 sync_wait 死锁。
-     *
-     * @deprecated 使用带 transport 参数的版本代替
-     * @param header 消息头
-     * @param body 消息体
-     * @return boost::asio::awaitable<void>
-     */
-    boost::asio::awaitable<void> DispatchToHandlerCoroutine(
-        const IPCMessageHeader&     header,
-        const std::vector<uint8_t>& body);
-
-    /**
-     * @brief 分发消息到注册的处理器（协程版本，推荐）
+     * @brief 分发消息到注册的处理器（协程版本）
      *
      * 使用 co_await 调用 handler->HandleMessage()，
      * 通过 transport 发送响应。
@@ -372,21 +294,9 @@ public:
         UnixAsyncIpcTransport&      transport);
 #endif
 
-    /**
-     * @brief 内部 receive 方法 - 核心可重入逻辑
-     */
-    bool ReceiveAndDispatch(std::chrono::milliseconds timeout);
-
     //=========================================================================
     // 事件驱动方法（内部使用）
     //=========================================================================
-
-    /**
-     * @brief 启动异步接收链
-     *
-     * 使用 transport 的异步接收能力，注册持续的消息接收回调。
-     */
-    void StartAsyncReceive();
 
     /**
      * @brief 为指定 Transport 启动异步接收循环
@@ -407,20 +317,6 @@ public:
      * 寏隔一段时间检查 pending senders 是否超时。
      */
     void ScheduleTimeoutCheck();
-
-    /**
-     * @brief 内部辅助：准备发送请求（分配 call_id、注册 pending
-     * 上下文、发送数据）
-     *
-     * @param request_header 原始请求头
-     * @param body 请求体
-     * @param body_size 请求体大小
-     * @return pair<DasResult, uint64_t>: 结果码和分配的 call_id
-     */
-    std::pair<DasResult, uint64_t> PrepareSendRequest(
-        const ValidatedIPCMessageHeader& request_header,
-        const uint8_t*                   body,
-        size_t                           body_size);
 
     /**
      * @brief 使用指定 transport 准备发送请求
@@ -551,23 +447,18 @@ inline stdexec::sender auto IpcRunLoop::SendMessageAsync(
     size_t                           body_size,
     std::chrono::milliseconds        timeout)
 {
-    // 1. 准备发送（分配 call_id、注册 pending、发送数据）
-    auto [send_result, call_id] =
-        PrepareSendRequest(request_header, body, body_size);
+    // IpcRunLoop 不再持有内部 transport
+    // 调用者必须使用带 transport 参数的版本: SendMessageAsync(transport, ...)
+    (void)request_header;
+    (void)body;
+    (void)body_size;
+    (void)timeout;
 
-    // 2. 返回 AwaitResponseSender
-    //    - 成功：loop_=this, call_id=实际ID, timeout=超时
-    //    - 失败：loop_=nullptr, call_id=错误码(复用), timeout=0
-    //    AwaitResponseOperation::start() 中根据 loop_ 是否为 nullptr 区分
-    if (send_result != DAS_S_OK)
-    {
-        return AwaitResponseSender{
-            nullptr,
-            static_cast<uint64_t>(send_result),
-            std::chrono::milliseconds{0}};
-    }
-
-    return AwaitResponseSender{this, call_id, timeout};
+    // 返回一个立即失败的 sender
+    return AwaitResponseSender{
+        nullptr,
+        static_cast<uint64_t>(DAS_E_IPC_NOT_INITIALIZED),
+        std::chrono::milliseconds{0}};
 }
 
 inline stdexec::sender auto IpcRunLoop::SendMessageAsync(

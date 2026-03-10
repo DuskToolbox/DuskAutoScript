@@ -10,6 +10,7 @@
 #include <vector>
 
 #include <das/Core/IPC/Config.h>
+#include <das/Core/IPC/AsyncIpcTransport.h>
 
 DAS_CORE_IPC_NS_BEGIN
 class IpcRunLoop;
@@ -46,13 +47,19 @@ public:
         return object_id_.session_id;
     }
 
+    /// 设置 transport（可选，用于事件发送）
+    void SetTransport(DefaultAsyncIpcTransport* transport)
+    {
+        transport_ = transport;
+    }
+
 protected:
     IPCProxyBase(
         uint32_t        interface_id,
         const ObjectId& object_id,
-        IpcRunLoop*     run_loop)
+        IpcRunLoop*    run_loop)
         : interface_id_(interface_id), object_id_(object_id),
-          run_loop_(run_loop), next_call_id_(1)
+          run_loop_(run_loop), transport_(nullptr), next_call_id_(1)
     {
     }
 
@@ -78,6 +85,13 @@ protected:
     {
         return run_loop_;
     }
+
+    [[nodiscard]]
+    DefaultAsyncIpcTransport* GetTransport() const noexcept
+    {
+        return transport_;
+    }
+
     [[nodiscard]]
     ValidatedIPCMessageHeader BuildMessageHeader(
         uint16_t    method_id,
@@ -97,35 +111,12 @@ protected:
             .Build();
     }
 
-    // 保留旧方法以兼容现有代码，标记为 deprecated
-    [[deprecated("Use BuildMessageHeader instead")]]
-    void FillMessageHeader(
-        IPCMessageHeader& header,
-        uint16_t          method_id,
-        uint64_t          call_id,
-        MessageType       message_type = MessageType::REQUEST,
-        size_t            body_size = 0) const
-    {
-        header.magic = IPCMessageHeader::MAGIC;
-        header.version = IPCMessageHeader::CURRENT_VERSION;
-        header.message_type = static_cast<uint8_t>(message_type);
-        header.header_flags = 0;
-        header.call_id = call_id;
-        header.interface_id = interface_id_;
-        header.method_id = method_id;
-        header.flags = 0;
-        header.error_code = DAS_S_OK;
-        header.body_size = static_cast<uint32_t>(body_size);
-        header.session_id = object_id_.session_id;
-        header.generation = object_id_.generation;
-        header.local_id = object_id_.local_id;
-    }
-
 private:
-    uint32_t    interface_id_;
-    ObjectId    object_id_;
-    IpcRunLoop* run_loop_;
-    uint64_t    next_call_id_;
+    uint32_t                   interface_id_;
+    ObjectId                   object_id_;
+    IpcRunLoop*                run_loop_;
+    DefaultAsyncIpcTransport*  transport_;
+    uint64_t                   next_call_id_;
 };
 DAS_CORE_IPC_NS_END
 
