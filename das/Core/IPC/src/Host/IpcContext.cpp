@@ -182,11 +182,13 @@ namespace Core
 
                 /**
                  * @brief 创建 Host 资源
-                 * - 创建 Host 专用队列 das_ipc_{main_pid}_{host_pid}_m2h/h2m
-                 * - 初始化 DistributedObjectManager
+                 *
+                 * 新设计（解决 Initialize() 死锁问题）：
+                 * - 创建 IpcRunLoop（无参 Initialize，只创建 io_context 基础设施）
+                 * - 创建 transport（使用 IpcRunLoop 的 io_context）
+                 * - 保存管道名（延迟连接，在 Run() 时异步执行）
                  * - 初始化 SharedMemoryPool
-                 * - 创建 RunLoop, CommandHandler, HandshakeHandler
-                 * - 等待主进程连接并完成握手
+                 * - 创建 CommandHandler, HandshakeHandler
                  */
                 DasResult CreateHostResources()
                 {
@@ -197,17 +199,18 @@ namespace Core
                         std::make_unique<DistributedObjectManager>();
 
                     // 2. 创建 Host 专用队列名称（新格式）
-                    std::string host_m2h =
+                    host_read_queue_ =
                         MakeMessageQueueName(main_pid_, host_pid_, true);
-                    std::string host_h2m =
+                    host_write_queue_ =
                         MakeMessageQueueName(main_pid_, host_pid_, false);
+                    host_is_server_ = false; // Host 进程是客户端，连接 MainProcess 创建的管道
                     std::string shm_name =
                         MakeSharedMemoryName(main_pid_, host_pid_);
 
                     std::string msg = DAS_FMT_NS::format(
-                        "IpcContext: Creating Host resources, M2H={}, H2M={}, SHM={}",
-                        host_m2h,
-                        host_h2m,
+                        "IpcContext: Creating Host resources (async mode), M2H={}, H2M={}, SHM={}",
+                        host_read_queue_,
+                        host_write_queue_,
                         shm_name);
                     DAS_LOG_INFO(msg.c_str());
 
@@ -226,15 +229,9 @@ namespace Core
                         return result;
                     }
 
-                    // 4. 创建 IpcRunLoop 并使用新的 Initialize 重载
-                    // Host 从 m2h (Main->Host) 读取，向 h2m (Host->Main) 写入
-                    // 注意: Host 进程是客户端角色，连接到 MainProcess 创建的管道
+                    // 4. 创建 IpcRunLoop（无参 Initialize，只创建 io_context 基础设施）
                     run_loop_ = std::make_unique<IpcRunLoop>();
-                    result = run_loop_->Initialize(
-                        host_m2h, // read queue (M2H - Main writes, Host reads)
-                        host_h2m, // write queue (H2M - Host writes, Main reads)
-                        false);   // is_server = false (Host connects to MainProcess)
-
+                    result = run_loop_->Initialize();
                     if (result != DAS_S_OK)
                     {
                         std::string err_msg = DAS_FMT_NS::format(
@@ -246,11 +243,17 @@ namespace Core
                         return result;
                     }
 
-                    // 5. 创建并初始化 IpcCommandHandler
+                    // 5. 创建 transport（使用 IpcRunLoop 的 io_context）
+                    //    注意：不在这里连接，延迟到 Run() 时异步连接
+                    async_transport_ = std::make_unique<Win32AsyncIpcTransport>(
+                        run_loop_->GetIoContext());
+                    async_transport_->SetSharedMemoryPool(shared_memory_.get());
+
+                    // 6. 创建并初始化 IpcCommandHandler
                     command_handler_ = std::make_unique<IpcCommandHandler>();
                     command_handler_->SetSessionId(session_id_);
 
-                    // 6. 创建并初始化 HandshakeHandler
+                    // 7. 创建并初始化 HandshakeHandler
                     handshake_handler_ = std::make_unique<HandshakeHandler>();
                     result = handshake_handler_->Initialize(session_id_);
                     if (result != DAS_S_OK)
@@ -259,12 +262,13 @@ namespace Core
                             "IpcContext: HandshakeHandler init failed, result=0x{:08X}",
                             result);
                         DAS_LOG_ERROR(err_msg.c_str());
+                        async_transport_.reset();
                         run_loop_.reset();
                         object_manager_.reset();
                         return result;
                     }
 
-                    // 7. 设置 HandshakeHandler 的客户端连接回调
+                    // 8. 设置 HandshakeHandler 的客户端连接回调
                     handshake_handler_->SetOnClientConnected(
                         [this](const ConnectedClient& /*client*/)
                         {
@@ -284,9 +288,6 @@ namespace Core
                         { is_connected_ = false; });
 
                     // 收到 GOODBYE 时请求进程退出
-                    // 直接设置 running_ 标志为 false，io_thread_
-                    // 会在下次循环检查时退出 不能在 io_thread_ 上调用
-                    // Stop()（会 join 自己导致死锁）
                     handshake_handler_->SetOnShutdownRequested(
                         [this]()
                         {
@@ -294,7 +295,6 @@ namespace Core
                                 "IpcContext: 收到 GOODBYE，请求退出");
                             DAS_LOG_INFO(msg.c_str());
 
-                            // 仅设置标志，不 join 线程
                             if (run_loop_)
                             {
                                 run_loop_->RequestStop();
@@ -327,13 +327,20 @@ namespace Core
                     // 停止父进程监控线程
                     StopParentProcessMonitor();
 
-                    // 停止事件循环
+                    // 1. 先关闭 transport（自己持有的）
+                    //    这会导致 ReceiveCoroutine() 抛出 operation_aborted
+                    if (async_transport_)
+                    {
+                        async_transport_->Close();
+                    }
+
+                    // 2. 停止事件循环
                     if (run_loop_)
                     {
                         run_loop_->RequestStop();
                     }
 
-                    // 关闭 HandshakeHandler
+                    // 3. 关闭 HandshakeHandler
                     if (handshake_handler_)
                     {
                         DasResult handshake_result =
@@ -345,14 +352,17 @@ namespace Core
                         handshake_handler_.reset();
                     }
 
-                    // 关闭 SharedMemoryPool
+                    // 4. 释放 transport
+                    async_transport_.reset();
+
+                    // 5. 关闭 SharedMemoryPool
                     if (shared_memory_)
                     {
                         shared_memory_->Shutdown();
                         shared_memory_.reset();
                     }
 
-                    // 关闭 IpcRunLoop
+                    // 6. 关闭 IpcRunLoop
                     if (run_loop_)
                     {
                         DasResult loop_result = run_loop_->Shutdown();
@@ -363,10 +373,10 @@ namespace Core
                         run_loop_.reset();
                     }
 
-                    // 关闭 DistributedObjectManager（析构函数自动清理）
+                    // 7. 关闭 DistributedObjectManager
                     object_manager_.reset();
 
-                    // 释放 session_id
+                    // 8. 释放 session_id
                     if (session_id_ != 0)
                     {
                         auto& coordinator = SessionCoordinator::GetInstance();
@@ -421,21 +431,108 @@ namespace Core
                     }
 
                     is_running_ = true;
-
-                    // 启动父进程存活检测线程
                     StartParentProcessMonitor();
 
+                    auto& io = run_loop_->GetIoContext();
+
+                    // post 异步连接任务到 io_context
+                    // 这样连接操作会在 io_context 开始运行后执行
+                    boost::asio::post(io, [this, &io]() {
+                        boost::asio::co_spawn(io,
+                            [this]() -> boost::asio::awaitable<void> {
+                                try {
+                                    DAS_CORE_LOG_INFO("Host: async connecting...");
+                                    DAS_CORE_LOG_INFO("  read: {}", host_read_queue_);
+                                    DAS_CORE_LOG_INFO("  write: {}", host_write_queue_);
+
+                                    // 1. 异步连接（使用 InitializeAsync）
+                                    auto result = co_await async_transport_->InitializeAsync(
+                                        host_read_queue_, host_write_queue_, host_is_server_);
+
+                                    if (DAS::IsFailed(result)) {
+                                        DAS_CORE_LOG_ERROR("Host: connect failed: 0x{:08X}", result);
+                                        run_loop_->RequestStop();
+                                        co_return;
+                                    }
+
+                                    DAS_CORE_LOG_INFO("Host: connected, starting receive loop");
+
+                                    // 2. 连接成功，启动接收循环协程
+                                    co_await ReceiveLoopCoroutine();
+                                }
+                                catch (const std::exception& e) {
+                                    DAS_CORE_LOG_ERROR("Host: exception: {}", e.what());
+                                    run_loop_->RequestStop();
+                                }
+                            }(),
+                            boost::asio::detached);
+                    });
+
+                    // 运行 io_context（连接任务已 post）
                     DasResult result = run_loop_->Run();
+
                     is_running_ = false;
-
-                    // 停止父进程监控线程
                     StopParentProcessMonitor();
-
                     return result;
+                }
+
+                /**
+                 * @brief Host 模式的接收循环协程
+                 *
+                 * 使用 transport 的协程接口接收消息（IOCP 异步，协程挂起不占用 CPU）。
+                 * 收到消息后分发到处理器。
+                 */
+                boost::asio::awaitable<void> ReceiveLoopCoroutine()
+                {
+                    while (run_loop_->IsRunning())
+                    {
+                        try {
+                            // 使用 transport 的协程接口接收（IOCP 异步，协程挂起）
+                            auto result = co_await async_transport_->ReceiveCoroutine();
+
+                            if (!run_loop_->IsRunning()) co_return;
+
+                            if (result.index() == 0) {
+                                DasResult error = std::get<0>(result);
+                                if (error != DAS_S_OK) {
+                                    DAS_CORE_LOG_ERROR("Receive failed: 0x{:08X}", error);
+                                }
+                                co_return;
+                            }
+
+                            // 成功接收消息
+                            auto&& [header, body] = std::get<1>(result);
+
+                            if (header.Raw().message_type == static_cast<uint8_t>(MessageType::RESPONSE)) {
+                                // RESPONSE：完成 pending call
+                                run_loop_->CompletePendingCall(header.Raw().call_id, DAS_S_OK, std::move(body));
+                            } else {
+                                // REQUEST：分发到处理器
+                                co_await run_loop_->DispatchToHandlerCoroutine(header.Raw(), body);
+                            }
+                        }
+                        catch (const boost::system::system_error& e) {
+                            if (e.code() == boost::asio::error::operation_aborted ||
+                                e.code() == boost::asio::error::eof) {
+                                DAS_CORE_LOG_DEBUG("Receive loop stopped: {}", e.what());
+                            } else {
+                                DAS_CORE_LOG_ERROR("Receive error: {}", e.what());
+                            }
+                            co_return;
+                        }
+                    }
                 }
 
                 void RequestStop()
                 {
+                    // 1. 先关闭 transport（自己持有的）
+                    //    这会导致 ReceiveCoroutine() 抛出 operation_aborted，接收协程退出
+                    if (async_transport_)
+                    {
+                        async_transport_->Close();
+                    }
+
+                    // 2. 然后请求 runloop 停止
                     if (run_loop_)
                     {
                         run_loop_->RequestStop();
@@ -500,6 +597,12 @@ namespace Core
                 // Host 模式专用成员变量
                 uint32_t host_pid_ = 0;
                 uint32_t main_pid_ = 0;
+
+                // Host 模式持有 transport（解决 Initialize() 中死锁问题）
+                std::unique_ptr<Win32AsyncIpcTransport> async_transport_;
+                std::string                             host_read_queue_;
+                std::string                             host_write_queue_;
+                bool                                    host_is_server_ = false;
 
                 // 父进程存活检测线程
                 std::thread       parent_monitor_thread_;

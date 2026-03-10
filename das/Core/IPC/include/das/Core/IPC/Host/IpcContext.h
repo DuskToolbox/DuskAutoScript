@@ -3,6 +3,7 @@
 
 #include <das/Core/IPC/Host/IIpcContext.h>
 #include <das/Core/IPC/ObjectId.h>
+#include <das/Core/IPC/Win32AsyncIpcTransport.h>
 #include <das/DasApi.h>
 #include <filesystem>
 #include <memory>
