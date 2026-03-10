@@ -148,13 +148,16 @@ public:
     IpcRunLoop();
     ~IpcRunLoop();
 
-    /// 默认初始化（使用内部创建的 transport）
+    /// 默认初始化（只创建 io_context 基础设施，不持有 transport）
+    /// MainProcess 模式使用此版本
     DasResult Initialize();
 
     /// 使用指定的队列名称初始化（用于 Host 进程）
+    /// @deprecated 此方法已废弃，Host 模式应由 IpcContext 持有 transport
     /// @param read_queue_name 读取队列名称
     /// @param write_queue_name 写入队列名称
     /// @param is_server 是否作为服务端（创建队列）
+    [[deprecated("Use Initialize() and manage transport externally")]]
     DasResult Initialize(
         const std::string& read_queue_name,
         const std::string& write_queue_name,
@@ -450,9 +453,10 @@ public:
     /// pending calls 映射
     std::unordered_map<uint64_t, PendingCallState> pending_calls_;
 
-    /// 异步传输层（编译期平台选择：Win32AsyncIpcTransport 或
-    /// UnixAsyncIpcTransport）
-    std::unique_ptr<DefaultAsyncIpcTransport> async_transport_;
+    // async_transport_ 已移除
+    // IpcRunLoop 不再持有任何 transport，所有 transport 由外部管理
+    // - MainProcess 模式：HostLauncher 持有 transport
+    // - Host 模式：IpcContext 持有 transport
 
     /// io_context 用于驱动异步 I/O
     std::unique_ptr<boost::asio::io_context> io_context_;

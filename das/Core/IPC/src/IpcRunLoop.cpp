@@ -39,7 +39,10 @@ IpcRunLoop::~IpcRunLoop() { RequestStop(); }
 DasResult IpcRunLoop::Initialize()
 {
     io_context_ = std::make_unique<boost::asio::io_context>();
-    async_transport_ = std::make_unique<DefaultAsyncIpcTransport>(*io_context_);
+    // 不再创建 async_transport_，IpcRunLoop 只提供 io_context 基础设施
+    // 所有 transport 由外部管理：
+    // - MainProcess 模式：HostLauncher 持有 transport
+    // - Host 模式：IpcContext 持有 transport
     timeout_timer_ = std::make_unique<boost::asio::steady_timer>(*io_context_);
 
     // Create ConnectionManager for MainProcess mode
@@ -54,28 +57,27 @@ DasResult IpcRunLoop::Initialize(
     const std::string& write_queue_name,
     bool               is_server)
 {
+    // 废弃警告：此方法已废弃，Host 模式应由 IpcContext 持有 transport
+    DAS_CORE_LOG_WARN(
+        "Initialize(read_queue, write_queue, is_server) is deprecated. "
+        "Use Initialize() and manage transport externally.");
+
     io_context_ = std::make_unique<boost::asio::io_context>();
-    async_transport_ = std::make_unique<DefaultAsyncIpcTransport>(*io_context_);
+    // 不再在 IpcRunLoop 内部创建 async_transport_
+    // 如果需要 transport，应该由调用者创建并传入
     timeout_timer_ = std::make_unique<boost::asio::steady_timer>(*io_context_);
 
-    // 统一使用 Initialize 方法（内部使用异步 InitializeAsync）
-    // 无论是服务端还是客户端，都通过 InitializeAsync 实现非阻塞连接
-    DasResult result = async_transport_->Initialize(
-        read_queue_name,
-        write_queue_name,
-        is_server);
+    // Create ConnectionManager for MainProcess mode
+    connection_manager_ = std::make_unique<ConnectionManager>();
 
-    if (DAS::IsFailed(result))
-    {
-        DAS_CORE_LOG_ERROR(
-            "Failed to initialize transport: read={}, write={}, is_server={}",
-            read_queue_name,
-            write_queue_name,
-            is_server);
-        return result;
-    }
+    // 返回错误，提示调用者使用新的模式
+    DAS_CORE_LOG_ERROR(
+        "Deprecated Initialize() called. Transport should be managed externally.");
+    (void)read_queue_name;
+    (void)write_queue_name;
+    (void)is_server;
 
-    return DAS_S_OK;
+    return DAS_E_FAIL;
 }
 
 DasResult IpcRunLoop::Shutdown()
@@ -99,7 +101,7 @@ DasResult IpcRunLoop::Shutdown()
 
     work_guard_.reset();
     timeout_timer_.reset();
-    async_transport_.reset();
+    // async_transport_ 已移除，不再重置
     io_context_.reset();
     return DAS_S_OK;
 }
@@ -113,16 +115,13 @@ void IpcRunLoop::RequestStop()
 
     running_.store(false);
 
-    // 1. 先关闭 transport，让协程自然退出
-    if (async_transport_)
-    {
-        async_transport_->Close();
-    }
+    // 注意：IpcRunLoop 不再持有 async_transport_
+    // Transport 的关闭由外部管理（HostLauncher 或 IpcContext）
 
-    // 2. 重置 work guard，允许 io_context_->run() 返回
+    // 1. 重置 work guard，允许 io_context_->run() 返回
     work_guard_.reset();
 
-    // 3. 取消所有 pending calls
+    // 2. 取消所有 pending calls
     {
         std::vector<PendingCallCompletion> completions;
         {
@@ -254,52 +253,10 @@ bool IpcRunLoop::ReceiveAndDispatch(std::chrono::milliseconds timeout)
 {
     (void)timeout;
 
-    if (!async_transport_)
-    {
-        return false;
-    }
-
-    auto result_sender = async_transport_->Receive();
-    auto result_opt = stdexec::sync_wait(std::move(result_sender));
-
-    if (!result_opt.has_value())
-    {
-        return false;
-    }
-
-    auto&& [ec, result_variant] = std::move(*result_opt);
-
-    if (ec)
-    {
-        try
-        {
-            std::rethrow_exception(ec);
-        }
-        catch (const std::exception& e)
-        {
-            DAS_CORE_LOG_ERROR("Receive failed: {}", e.what());
-        }
-        return false;
-    }
-
-    if (result_variant.index() == 0)
-    {
-        DasResult error_code = std::get<0>(result_variant);
-        DAS_CORE_LOG_ERROR("Receive failed with error: {}", error_code);
-        return false;
-    }
-
-    auto&& [header, body] = std::get<1>(result_variant);
-
-    if (header.Raw().message_type
-        == static_cast<uint8_t>(MessageType::RESPONSE))
-    {
-        CompletePendingCall(header.Raw().call_id, DAS_S_OK, std::move(body));
-        return true;
-    }
-
-    DispatchToHandler(header.Raw(), body);
-    return true;
+    // IpcRunLoop 不再持有 transport，此方法已废弃
+    // 使用 StartAsyncReceiveForTransport() 代替
+    DAS_CORE_LOG_DEBUG("ReceiveAndDispatch: deprecated, IpcRunLoop no longer holds transport");
+    return false;
 }
 
 std::pair<DasResult, uint64_t> IpcRunLoop::PrepareSendRequest(
@@ -307,61 +264,14 @@ std::pair<DasResult, uint64_t> IpcRunLoop::PrepareSendRequest(
     const uint8_t*                   body,
     size_t                           body_size)
 {
-    if (!async_transport_)
-    {
-        return {DAS_E_IPC_NOT_INITIALIZED, 0};
-    }
-
-    uint64_t call_id = next_call_id_.fetch_add(1);
-
-    const IPCMessageHeader& raw = request_header.Raw();
-    auto                    validated_header =
-        IPCMessageHeaderBuilder()
-            .SetMessageType(MessageType::REQUEST)
-            .SetBusinessInterface(raw.interface_id, raw.method_id)
-            .SetBodySize(raw.body_size)
-            .SetCallId(call_id)
-            .SetObject(raw.session_id, raw.generation, raw.local_id)
-            .Build();
-
-    {
-        std::unique_lock<std::mutex> lock(pending_mutex_);
-        pending_calls_[call_id] = PendingCallState{
-            call_id,
-            {},
-            std::chrono::steady_clock::time_point::max(),
-            nullptr};
-    }
-
-    auto send_sender =
-        async_transport_->Send(validated_header, body, body_size);
-    auto result_opt = stdexec::sync_wait(std::move(send_sender));
-
-    if (!result_opt.has_value())
-    {
-        std::unique_lock<std::mutex> lock(pending_mutex_);
-        pending_calls_.erase(call_id);
-        return {DAS_E_IPC_CONNECTION_LOST, 0};
-    }
-
-    auto&& [ec, send_result] = std::move(*result_opt);
-
-    if (ec)
-    {
-        try
-        {
-            std::rethrow_exception(ec);
-        }
-        catch (const std::exception& e)
-        {
-            DAS_CORE_LOG_ERROR("Send failed: {}", e.what());
-        }
-        std::unique_lock<std::mutex> lock(pending_mutex_);
-        pending_calls_.erase(call_id);
-        return {DAS_E_IPC_CONNECTION_LOST, 0};
-    }
-
-    return {send_result, call_id};
+    // IpcRunLoop 不再持有 transport
+    // 此方法需要外部传入 transport，使用 SendMessageAsync(transport, ...) 代替
+    DAS_CORE_LOG_ERROR("PrepareSendRequest: IpcRunLoop no longer holds internal transport. "
+                       "Use SendMessageAsync(transport, ...) instead.");
+    (void)request_header;
+    (void)body;
+    (void)body_size;
+    return {DAS_E_IPC_NOT_INITIALIZED, 0};
 }
 
 std::pair<DasResult, uint64_t> IpcRunLoop::PrepareSendRequestWithTransport(
@@ -545,41 +455,14 @@ DasResult IpcRunLoop::SendResponse(
     const uint8_t*                   body,
     size_t                           body_size)
 {
-    if (!async_transport_)
-    {
-        return DAS_E_IPC_NOT_INITIALIZED;
-    }
-
-    // 检查 transport 是否已连接，避免 sync_wait 永久阻塞
-    if (!async_transport_->IsConnected())
-    {
-        return DAS_E_IPC_NO_CONNECTIONS;
-    }
-
-    auto sender = async_transport_->Send(response_header, body, body_size);
-    auto result_opt = stdexec::sync_wait(std::move(sender));
-
-    if (!result_opt.has_value())
-    {
-        return DAS_E_IPC_CONNECTION_LOST;
-    }
-
-    auto&& [ec, send_result] = std::move(*result_opt);
-
-    if (ec)
-    {
-        try
-        {
-            std::rethrow_exception(ec);
-        }
-        catch (const std::exception& e)
-        {
-            DAS_CORE_LOG_ERROR("Send failed: {}", e.what());
-        }
-        return DAS_E_IPC_CONNECTION_LOST;
-    }
-
-    return send_result;
+    // IpcRunLoop 不再持有 transport
+    // 此方法需要外部传入 transport
+    DAS_CORE_LOG_ERROR("SendResponse: IpcRunLoop no longer holds internal transport. "
+                       "Use SendResponseCoroutine with external transport.");
+    (void)response_header;
+    (void)body;
+    (void)body_size;
+    return DAS_E_IPC_NOT_INITIALIZED;
 }
 
 boost::asio::awaitable<DasResult> IpcRunLoop::SendResponseCoroutine(
@@ -587,26 +470,14 @@ boost::asio::awaitable<DasResult> IpcRunLoop::SendResponseCoroutine(
     const uint8_t*                   body,
     size_t                           body_size)
 {
-    if (!async_transport_)
-    {
-        co_return DAS_E_IPC_NOT_INITIALIZED;
-    }
-
-    if (!async_transport_->IsConnected())
-    {
-        co_return DAS_E_IPC_NO_CONNECTIONS;
-    }
-
-    try
-    {
-        auto result = co_await async_transport_->SendCoroutine(response_header, body, body_size);
-        co_return result;
-    }
-    catch (const std::exception& e)
-    {
-        DAS_CORE_LOG_ERROR("SendResponseCoroutine failed: {}", e.what());
-        co_return DAS_E_IPC_CONNECTION_LOST;
-    }
+    // IpcRunLoop 不再持有 transport
+    // 此方法需要外部传入 transport
+    DAS_CORE_LOG_ERROR("SendResponseCoroutine: IpcRunLoop no longer holds internal transport. "
+                       "Use transport->SendCoroutine() directly.");
+    (void)response_header;
+    (void)body;
+    (void)body_size;
+    co_return DAS_E_IPC_NOT_INITIALIZED;
 }
 
 DasResult IpcRunLoop::SendEvent(
@@ -614,48 +485,14 @@ DasResult IpcRunLoop::SendEvent(
     const uint8_t*                   body,
     size_t                           body_size)
 {
-    if (!async_transport_)
-    {
-        return DAS_E_IPC_NOT_INITIALIZED;
-    }
-
-    // 检查 transport 是否已连接
-    if (!async_transport_->IsConnected())
-    {
-        return DAS_E_IPC_NO_CONNECTIONS;
-    }
-
-    // fire-and-forget: 派生协程发送，不等待完成
-    // 复制数据以确保协程执行时数据仍然有效
-    auto validated_header_copy = event_header;
-    std::vector<uint8_t> body_copy(body, body + body_size);
-
-    boost::asio::co_spawn(
-        *io_context_,
-        [this, validated_header_copy, body_copy = std::move(body_copy)]()
-            -> boost::asio::awaitable<void>
-        {
-            try
-            {
-                auto result = co_await SendEventCoroutine(
-                    validated_header_copy,
-                    body_copy.data(),
-                    body_copy.size());
-                if (DAS::IsFailed(result))
-                {
-                    DAS_CORE_LOG_ERROR(
-                        "SendEvent fire-and-forget failed: 0x{:08X}",
-                        result);
-                }
-            }
-            catch (const std::exception& e)
-            {
-                DAS_CORE_LOG_ERROR("SendEvent fire-and-forget exception: {}", e.what());
-            }
-        },
-        boost::asio::detached);
-
-    return DAS_S_OK;
+    // IpcRunLoop 不再持有 transport
+    // 此方法需要外部传入 transport
+    DAS_CORE_LOG_ERROR("SendEvent: IpcRunLoop no longer holds internal transport. "
+                       "Use SendEventCoroutine with external transport.");
+    (void)event_header;
+    (void)body;
+    (void)body_size;
+    return DAS_E_IPC_NOT_INITIALIZED;
 }
 
 boost::asio::awaitable<DasResult> IpcRunLoop::SendEventCoroutine(
@@ -663,149 +500,27 @@ boost::asio::awaitable<DasResult> IpcRunLoop::SendEventCoroutine(
     const uint8_t*                   body,
     size_t                           body_size)
 {
-    if (!async_transport_)
-    {
-        co_return DAS_E_IPC_NOT_INITIALIZED;
-    }
-
-    if (!async_transport_->IsConnected())
-    {
-        co_return DAS_E_IPC_NO_CONNECTIONS;
-    }
-
-    const IPCMessageHeader& raw = event_header.Raw();
-    auto                    validated_header =
-        IPCMessageHeaderBuilder()
-            .SetMessageType(MessageType::EVENT)
-            .SetBusinessInterface(raw.interface_id, raw.method_id)
-            .SetBodySize(raw.body_size)
-            .SetCallId(raw.call_id)
-            .SetObject(raw.session_id, raw.generation, raw.local_id)
-            .Build();
-
-    try
-    {
-        auto result = co_await async_transport_->SendCoroutine(validated_header, body, body_size);
-        co_return result;
-    }
-    catch (const std::exception& e)
-    {
-        DAS_CORE_LOG_ERROR("SendEventCoroutine failed: {}", e.what());
-        co_return DAS_E_IPC_CONNECTION_LOST;
-    }
+    // IpcRunLoop 不再持有 transport
+    // 此方法需要外部传入 transport
+    DAS_CORE_LOG_ERROR("SendEventCoroutine: IpcRunLoop no longer holds internal transport. "
+                       "Use transport->SendCoroutine() directly.");
+    (void)event_header;
+    (void)body;
+    (void)body_size;
+    co_return DAS_E_IPC_NOT_INITIALIZED;
 }
 
 bool IpcRunLoop::IsRunning() const { return running_.load(); }
 
 void IpcRunLoop::StartAsyncReceive()
 {
-    if (!io_context_ || !async_transport_ || !running_.load())
-    {
-        return;
-    }
-
-    // 检查 transport 是否已连接
-    // 注意：未注册的 transport 从未连接，不应该启动接收循环
-    // 对于 Host 端（服务端），创建命名管道后 IsConnected() 返回 true
-    if (!async_transport_->IsConnected())
-    {
-        DAS_CORE_LOG_DEBUG(
-            "StartAsyncReceive: transport not connected, skipping receive loop");
-        return;
-    }
-
-    // 使用 boost::asio::co_spawn 在 io_context 上异步运行接收协程
-    // 这样不会阻塞 io_context 线程，实现真正的事件驱动
-    boost::asio::co_spawn(
-        *io_context_,
-        [this]() -> boost::asio::awaitable<void>
-        {
-            while (running_.load())
-            {
-                // 用于标记是否需要等待客户端连接
-                bool need_wait_for_client = false;
-
-                try
-                {
-                    // 直接使用 transport 的协程接口
-                    auto result = co_await async_transport_->ReceiveCoroutine();
-
-                    if (!running_.load())
-                    {
-                        co_return;
-                    }
-
-                    if (result.index() == 0)
-                    {
-                        // 错误情况
-                        DasResult error_code = std::get<0>(result);
-                        if (error_code != DAS_S_OK)
-                        {
-                            DAS_CORE_LOG_ERROR("Receive failed with error: {}", error_code);
-                        }
-                        co_return;
-                    }
-
-                    // 成功接收消息
-                    auto&& [header, body] = std::get<1>(result);
-
-                    if (header.Raw().message_type == static_cast<uint8_t>(MessageType::RESPONSE))
-                    {
-                        CompletePendingCall(header.Raw().call_id, DAS_S_OK, std::move(body));
-                    }
-                    else
-                    {
-                        co_await DispatchToHandlerCoroutine(header.Raw(), body);
-                    }
-                }
-                catch (const boost::system::system_error& e)
-                {
-                    // 当 Close() 被调用时，async_read 会抛出 operation_aborted 异常
-                    if (e.code() == boost::asio::error::operation_aborted)
-                    {
-                        DAS_CORE_LOG_DEBUG("Receive loop stopped - operation aborted");
-                        // 正常退出，不设置 running_ = false，由 RequestStop() 负责
-                        co_return;
-                    }
-                    else if (e.code() == boost::asio::error::eof)
-                    {
-                        // 管道关闭或无数据可读，这是正常情况（如对方进程退出）
-                        DAS_CORE_LOG_DEBUG("Receive loop stopped - EOF reached");
-                        co_return;
-                    }
-                    else if (e.code().value() == 536)
-                    {
-                        // ERROR_NO_DATA (536): 等待打开管道另一端的进程
-                        // 这是服务端命名管道的正常情况 - 客户端尚未连接
-                        need_wait_for_client = true;
-                    }
-                    else
-                    {
-                        DAS_CORE_LOG_ERROR("Receive failed with system error: {}", e.what());
-                        // 非正常错误，直接退出循环，但不改变 running_ 状态
-                        // 让 io_context_->run() 因为没有更多工作而返回
-                        co_return;
-                    }
-                }
-                catch (const std::exception& e)
-                {
-                    DAS_CORE_LOG_ERROR("Receive failed with exception: {}", e.what());
-                    // 异常退出，不改变 running_ 状态
-                    co_return;
-                }
-
-                // 在 catch 块外处理等待客户端连接的情况
-                if (need_wait_for_client)
-                {
-                    DAS_CORE_LOG_DEBUG("Waiting for client to connect to pipe...");
-                    auto timer = boost::asio::steady_timer(*io_context_);
-                    timer.expires_after(std::chrono::milliseconds(100));
-                    co_await timer.async_wait(boost::asio::use_awaitable);
-                    // continue 循环重试接收
-                }
-            }
-        },
-        boost::asio::detached);
+    // IpcRunLoop 不再持有 transport
+    // 此方法不再启动接收循环
+    // MainProcess 模式使用 StartAsyncReceiveForTransport()
+    // Host 模式由 IpcContext 管理 transport
+    DAS_CORE_LOG_DEBUG(
+        "StartAsyncReceive: IpcRunLoop no longer holds internal transport. "
+        "Use StartAsyncReceiveForTransport() for external transport.");
 }
 
 void IpcRunLoop::ScheduleTimeoutCheck()
