@@ -104,4 +104,21 @@
 
 #define DAS_DEFINE_VARIABLE(...) decltype(__VA_ARGS__) __VA_ARGS__
 
+// 生命周期注解宏 - 用于标记参数/返回值的生命周期绑定
+// 用法: void Foo(DAS_LIFETIMEBOUND Bar& bar);
+// 编译器会在生命周期违规时发出警告
+#if !defined(__has_cpp_attribute) || defined(_SILENCE_LIFETIMEBOUND_WARNING)
+    // 不支持或显式禁用警告时，宏为空
+    #define DAS_LIFETIMEBOUND
+#elif _HAS_MSVC_ATTRIBUTE(lifetimebound)
+    // MSVC: 使用 msvc::lifetimebound 属性
+    #define DAS_LIFETIMEBOUND [[msvc::lifetimebound]]
+#elif __has_cpp_attribute(_Clang::__lifetimebound__)
+    // Clang: 使用 _Clang::__lifetimebound__ 属性
+    #define DAS_LIFETIMEBOUND [[_Clang::__lifetimebound__]]
+#else
+    // 其他编译器不支持
+    #define DAS_LIFETIMEBOUND
+#endif
+
 #endif // DAS_DASCONFIG_H
