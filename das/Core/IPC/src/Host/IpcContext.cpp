@@ -1,3 +1,4 @@
+#include <boost/asio/detached.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/process/v2/pid.hpp>
 #include <das/Core/IPC/DistributedObjectManager.h>
@@ -484,11 +485,14 @@ namespace Core
                  */
                 boost::asio::awaitable<void> ReceiveLoopCoroutine()
                 {
+                    DAS_CORE_LOG_INFO("ReceiveLoopCoroutine: starting, run_loop_->IsRunning()={}", run_loop_->IsRunning());
                     while (run_loop_->IsRunning())
                     {
                         try {
+                            DAS_CORE_LOG_INFO("ReceiveLoopCoroutine: waiting for message...");
                             // 使用 transport 的协程接口接收（IOCP 异步，协程挂起）
                             auto result = co_await async_transport_->ReceiveCoroutine();
+                            DAS_CORE_LOG_INFO("ReceiveLoopCoroutine: received result, index={}", result.index());
 
                             if (!run_loop_->IsRunning()) co_return;
 
@@ -507,8 +511,8 @@ namespace Core
                                 // RESPONSE：完成 pending call
                                 run_loop_->CompletePendingCall(header.Raw().call_id, DAS_S_OK, std::move(body));
                             } else {
-                                // REQUEST：分发到处理器
-                                co_await run_loop_->DispatchToHandlerCoroutine(header.Raw(), body);
+                                // REQUEST：分发到处理器（使用 transport 发送响应）
+                                co_await run_loop_->DispatchToHandlerCoroutine(header.Raw(), body, *async_transport_);
                             }
                         }
                         catch (const boost::system::system_error& e) {

@@ -2,7 +2,6 @@
 
 #include <das/Core/IPC/Win32AsyncIpcTransport.h>
 
-#include <asioexec/use_sender.hpp>
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/read.hpp>
 #include <boost/asio/steady_timer.hpp>
@@ -325,16 +324,18 @@ Win32AsyncIpcTransport::OpenPipeAsync(
 boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::WaitForClientConnectionAsync(
     HANDLE h_pipe)
 {
-    // 创建事件用于 OVERLAPPED I/O（RAII 管理）
-    ScopedHandle event(CreateEventW(nullptr, TRUE, FALSE, nullptr));
-    if (!event.Valid())
+    // 创建事件用于 OVERLAPPED I/O
+    // 使用 shared_ptr 管理 ScopedHandle，然后用 Release 转移所有权给 object_handle
+    // 避免双重关闭：event 析构不关闭，object_handle 析构时关闭
+    auto event = std::make_shared<ScopedHandle>(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+    if (!event->Valid())
     {
         DAS_LOG_ERROR("CreateEvent failed for ConnectNamedPipe");
         co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
 
     OVERLAPPED overlapped = {};
-    overlapped.hEvent     = event.Get();
+    overlapped.hEvent = event->Get();
 
     // 发起异步连接
     if (ConnectNamedPipe(h_pipe, &overlapped))
@@ -351,8 +352,9 @@ boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::WaitForClientConnectio
     if (err == ERROR_IO_PENDING)
     {
         // 等待异步完成
+        // 使用 Release() 转移 HANDLE 所有权给 object_handle，避免双重关闭
         auto ex = co_await boost::asio::this_coro::executor;
-        boost::asio::windows::object_handle wait_handle(ex, event.Get());
+        boost::asio::windows::object_handle wait_handle(ex, event->Release());
         co_await wait_handle.async_wait(boost::asio::use_awaitable);
         co_return DAS_S_OK;
     }
@@ -365,7 +367,8 @@ boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::WaitForClientConnectio
 boost::asio::awaitable<std::variant<DasResult, HANDLE>>
 Win32AsyncIpcTransport::CreateNamedPipeAsync(
     const std::string& pipe_name,
-    bool               is_read_pipe)
+    bool               is_read_pipe,
+    bool               wait_for_connection)
 {
     const std::string full_pipe_name =
         DAS_FMT_NS::format("{}{}", PIPE_PREFIX, pipe_name);
@@ -390,6 +393,12 @@ Win32AsyncIpcTransport::CreateNamedPipeAsync(
         co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
 
+    // 如果不需要等待连接，直接返回
+    if (!wait_for_connection)
+    {
+        co_return h_pipe.Release();
+    }
+
     // 2. 异步等待客户端连接
     auto result = co_await WaitForClientConnectionAsync(h_pipe.Get());
     if (DAS::IsFailed(result))
@@ -412,20 +421,36 @@ boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::InitializeAsync(
     if (is_server)
     {
         // === 服务端 (MainProcess): 创建管道 + 等待连接 ===
+        // 重要：必须先创建两个管道，再等待连接。
         is_server_ = true;
 
-        auto read_result = co_await CreateNamedPipeAsync(read_endpoint, true);
-        if (auto* err = std::get_if<DasResult>(&read_result))
-            co_return *err;
-        HANDLE h_read = std::get<HANDLE>(read_result);
-
-        auto write_result = co_await CreateNamedPipeAsync(write_endpoint, false);
+        // 第一步：创建两个管道（等待连接由 ConnectNamedPipe 处理）
+        // CreateNamedPipeAsync 会自动等待连接，这里不需要 wait_for_connection
+        // 但需要先创建两个管道，让两端都能看到
+        auto write_result =
+            co_await CreateNamedPipeAsync(write_endpoint, false, true);
         if (auto* err = std::get_if<DasResult>(&write_result))
+            co_return *err;
+        auto* h_write_ptr = std::get_if<HANDLE>(&write_result);
+        if (!h_write_ptr)
         {
-            CloseHandle(h_read);
+            co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
+        }
+        HANDLE h_write = *h_write_ptr;
+
+        auto read_result = co_await CreateNamedPipeAsync(read_endpoint, true, true);
+        if (auto* err = std::get_if<DasResult>(&read_result))
+        {
+            CloseHandle(h_write);
             co_return *err;
         }
-        HANDLE h_write = std::get<HANDLE>(write_result);
+        auto* h_read_ptr = std::get_if<HANDLE>(&read_result);
+        if (!h_read_ptr)
+        {
+            CloseHandle(h_write);
+            co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
+        }
+        HANDLE h_read = *h_read_ptr;
 
         // 分配到 stream_handle
         boost::system::error_code ec;
@@ -496,10 +521,14 @@ Win32AsyncIpcTransport::ReceiveCoroutine()
     // Header 大小固定，使用 std::array 避免堆分配
     std::array<uint8_t, sizeof(IPCMessageHeader)> header_buffer{};
 
-    co_await boost::asio::async_read(
-        read_pipe_,
-        boost::asio::buffer(header_buffer),
-        boost::asio::use_awaitable);
+    try {
+        co_await boost::asio::async_read(
+            read_pipe_,
+            boost::asio::buffer(header_buffer),
+            boost::asio::use_awaitable);
+    } catch (const std::exception& e) {
+        throw;
+    }
 
     HeaderValidationResult validation_error;
     auto validated_header = ValidatedIPCMessageHeader::Deserialize(

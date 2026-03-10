@@ -77,6 +77,7 @@ public:
 
 private:
     DasResult CreateNamedPipe(const std::string& pipe_name, bool is_read_pipe);
+    DasResult ConnectToNamedPipe(const std::string& pipe_name, bool is_read_pipe);
 
     // 异步方法
     boost::asio::awaitable<std::variant<DasResult, HANDLE>> OpenPipeAsync(
@@ -87,7 +88,8 @@ private:
 
     boost::asio::awaitable<std::variant<DasResult, HANDLE>> CreateNamedPipeAsync(
         const std::string& pipe_name,
-        bool               is_read_pipe);
+        bool               is_read_pipe,
+        bool               wait_for_connection);
 
     boost::asio::io_context&            io_context_;
     boost::asio::windows::stream_handle read_pipe_;
