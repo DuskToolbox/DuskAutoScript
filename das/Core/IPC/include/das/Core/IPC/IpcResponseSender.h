@@ -8,20 +8,8 @@
 #include <vector>
 
 #include <das/Core/IPC/Config.h>
+#include <das/Core/IPC/DefaultAsyncIpcTransport.h>
 #include <das/DasConfig.h>
-
-// Forward declarations for platform-specific transport
-#ifdef _WIN32
-namespace Das::Core::IPC
-{
-class Win32AsyncIpcTransport;
-}
-#else
-namespace Das::Core::IPC
-{
-class UnixAsyncIpcTransport;
-}
-#endif
 
 DAS_CORE_IPC_NS_BEGIN
 
@@ -36,19 +24,12 @@ DAS_CORE_IPC_NS_BEGIN
 class IpcResponseSender
 {
 public:
-#ifdef _WIN32
     /**
      * @brief 构造函数
-     * @param transport Win32 异步 IPC 传输层（必须有效）
+     * @param transport 异步 IPC 传输层（必须有效）
      */
-    explicit IpcResponseSender(Win32AsyncIpcTransport& DAS_LIFETIMEBOUND transport);
-#else
-    /**
-     * @brief 构造函数
-     * @param transport Unix 异步 IPC 传输层（必须有效）
-     */
-    explicit IpcResponseSender(UnixAsyncIpcTransport& DAS_LIFETIMEBOUND transport);
-#endif
+    explicit IpcResponseSender(
+        DefaultAsyncIpcTransport& DAS_LIFETIMEBOUND transport);
 
     /**
      * @brief 发送响应（协程版本）
@@ -61,11 +42,7 @@ public:
         const std::vector<uint8_t>&      body);
 
 private:
-#ifdef _WIN32
-    Win32AsyncIpcTransport* transport_ = nullptr;
-#else
-    UnixAsyncIpcTransport* transport_ = nullptr;
-#endif
+    DefaultAsyncIpcTransport* transport_ = nullptr;
 };
 
 DAS_CORE_IPC_NS_END

@@ -1,6 +1,7 @@
 #include <boost/asio/detached.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/process/v2/pid.hpp>
+#include <das/Core/IPC/DefaultAsyncIpcTransport.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/Host/HandshakeHandler.h>
 #include <das/Core/IPC/Host/HostConfig.h>
@@ -256,7 +257,7 @@ namespace Core
                     //    使用 CreateUninitialized 创建未初始化的对象，延迟到
                     //    Run() 时异步连接
                     async_transport_ =
-                        Win32AsyncIpcTransport::CreateUninitialized(
+                        DefaultAsyncIpcTransport::CreateUninitialized(
                             run_loop_->GetIoContext());
                     async_transport_->SetSharedMemoryPool(shared_memory_.get());
 
@@ -650,10 +651,10 @@ namespace Core
                 uint32_t main_pid_ = 0;
 
                 // Host 模式持有 transport（解决 Initialize() 中死锁问题）
-                std::unique_ptr<Win32AsyncIpcTransport> async_transport_;
-                std::string                             host_read_queue_;
-                std::string                             host_write_queue_;
-                bool                                    host_is_server_ = false;
+                std::unique_ptr<DefaultAsyncIpcTransport> async_transport_;
+                std::string                               host_read_queue_;
+                std::string                               host_write_queue_;
+                bool host_is_server_ = false;
 
                 // 父进程存活检测线程
                 std::thread       parent_monitor_thread_;

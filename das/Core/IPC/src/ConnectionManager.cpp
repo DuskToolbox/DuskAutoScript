@@ -17,11 +17,7 @@
 #include <shared_mutex>
 #include <unordered_map>
 
-#ifdef _WIN32
-#include <das/Core/IPC/Win32AsyncIpcTransport.h>
-#else
-#include <das/Core/IPC/UnixAsyncIpcTransport.h>
-#endif
+#include <das/Core/IPC/DefaultAsyncIpcTransport.h>
 
 DAS_CORE_IPC_NS_BEGIN
 
@@ -30,10 +26,10 @@ struct ConnectionManager::Impl
     std::unordered_map<uint16_t, ConnectionInfo> connections_;
     // 存储 HostLauncher 的引用
     std::unordered_map<uint16_t, DasPtr<IHostLauncher>> host_launchers_;
-    mutable std::shared_mutex                            connections_mutex_;
-    std::atomic<bool>                                    running_{false};
-    std::thread                                          heartbeat_thread_;
-    uint16_t                                             local_id_{0};
+    mutable std::shared_mutex                           connections_mutex_;
+    std::atomic<bool>                                   running_{false};
+    std::thread                                         heartbeat_thread_;
+    uint16_t                                            local_id_{0};
 
     // 用于心跳发送的 io_context
     std::unique_ptr<boost::asio::io_context> heartbeat_io_context_;
@@ -102,7 +98,9 @@ DasResult ConnectionManager::UnregisterConnection(
     auto it = impl_->connections_.find(remote_id);
     if (it == impl_->connections_.end())
     {
-        DAS_CORE_LOG_ERROR("Connection not found for remote_id = {}", remote_id);
+        DAS_CORE_LOG_ERROR(
+            "Connection not found for remote_id = {}",
+            remote_id);
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 
@@ -118,7 +116,9 @@ DasResult ConnectionManager::SendHeartbeat(uint16_t remote_id)
     auto it = impl_->connections_.find(remote_id);
     if (it == impl_->connections_.end())
     {
-        DAS_CORE_LOG_ERROR("Connection not found for remote_id = {}", remote_id);
+        DAS_CORE_LOG_ERROR(
+            "Connection not found for remote_id = {}",
+            remote_id);
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 
@@ -152,7 +152,9 @@ DasResult ConnectionManager::GetConnection(
     auto it = impl_->connections_.find(session_id);
     if (it == impl_->connections_.end())
     {
-        DAS_CORE_LOG_ERROR("Connection not found for session_id = {}", session_id);
+        DAS_CORE_LOG_ERROR(
+            "Connection not found for session_id = {}",
+            session_id);
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 
@@ -162,8 +164,8 @@ DasResult ConnectionManager::GetConnection(
 }
 
 DasResult ConnectionManager::RegisterHostLauncher(
-    uint16_t                 session_id,
-    DasPtr<IHostLauncher>   launcher)
+    uint16_t              session_id,
+    DasPtr<IHostLauncher> launcher)
 {
     if (!launcher)
     {
@@ -211,7 +213,9 @@ DasResult ConnectionManager::UnregisterHostLauncher(uint16_t session_id)
     auto it = impl_->host_launchers_.find(session_id);
     if (it == impl_->host_launchers_.end())
     {
-        DAS_CORE_LOG_ERROR("HostLauncher not found for session_id = {}", session_id);
+        DAS_CORE_LOG_ERROR(
+            "HostLauncher not found for session_id = {}",
+            session_id);
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 
@@ -234,7 +238,8 @@ DasPtr<IHostLauncher> ConnectionManager::GetLauncher(uint16_t session_id) const
     return it->second;
 }
 
-DefaultAsyncIpcTransport* ConnectionManager::GetTransport(uint16_t session_id) const
+DefaultAsyncIpcTransport* ConnectionManager::GetTransport(
+    uint16_t session_id) const
 {
     std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
 
@@ -246,14 +251,17 @@ DefaultAsyncIpcTransport* ConnectionManager::GetTransport(uint16_t session_id) c
         auto conn_it = impl_->connections_.find(session_id);
         if (conn_it == impl_->connections_.end())
         {
-            DAS_CORE_LOG_WARN("Connection not found for session_id = {}", session_id);
+            DAS_CORE_LOG_WARN(
+                "Connection not found for session_id = {}",
+                session_id);
             return nullptr;
         }
 
         // 如果有 launcher，从 launcher 获取 transport
         if (conn_it->second.launcher)
         {
-            auto* concrete = dynamic_cast<HostLauncher*>(conn_it->second.launcher.Get());
+            auto* concrete =
+                dynamic_cast<HostLauncher*>(conn_it->second.launcher.Get());
             if (concrete)
             {
                 return concrete->GetTransport();
@@ -266,7 +274,9 @@ DefaultAsyncIpcTransport* ConnectionManager::GetTransport(uint16_t session_id) c
     auto* concrete = dynamic_cast<HostLauncher*>(launcher_it->second.Get());
     if (!concrete)
     {
-        DAS_CORE_LOG_WARN("Failed to cast IHostLauncher to HostLauncher for session_id = {}", session_id);
+        DAS_CORE_LOG_WARN(
+            "Failed to cast IHostLauncher to HostLauncher for session_id = {}",
+            session_id);
         return nullptr;
     }
 
@@ -282,7 +292,9 @@ DasResult ConnectionManager::SetConnectionAlive(
     auto it = impl_->connections_.find(session_id);
     if (it == impl_->connections_.end())
     {
-        DAS_CORE_LOG_ERROR("Connection not found for session_id = {}", session_id);
+        DAS_CORE_LOG_ERROR(
+            "Connection not found for session_id = {}",
+            session_id);
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 
@@ -344,10 +356,10 @@ void ConnectionManager::StartHeartbeatThread()
                 SendHeartbeatToAll();
 
                 // 2. 检查超时并清理
-                uint64_t current_time_ms =
-                    static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                              std::chrono::steady_clock::now().time_since_epoch())
-                                              .count());
+                uint64_t current_time_ms = static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch())
+                        .count());
 
                 std::unique_lock<std::shared_mutex> lock(
                     impl_->connections_mutex_);
@@ -365,7 +377,8 @@ void ConnectionManager::StartHeartbeatThread()
                         // 获取 session_id 用于清理 host_launchers_
                         uint16_t session_id = it->first;
 
-                        // 从 host_launchers_ 中移除（触发 DasPtr 释放 -> 引用计数归零 -> HostLauncher 析构）
+                        // 从 host_launchers_ 中移除（触发 DasPtr 释放 ->
+                        // 引用计数归零 -> HostLauncher 析构）
                         impl_->host_launchers_.erase(session_id);
 
                         CleanupConnectionResources(it->first, impl_->local_id_);
@@ -405,7 +418,8 @@ DasResult ConnectionManager::SendHeartbeatToAll()
     // 确保 io_context 存在
     if (!impl_->heartbeat_io_context_)
     {
-        impl_->heartbeat_io_context_ = std::make_unique<boost::asio::io_context>();
+        impl_->heartbeat_io_context_ =
+            std::make_unique<boost::asio::io_context>();
     }
 
     for (uint16_t session_id : sessions)
@@ -441,7 +455,10 @@ DasResult ConnectionManager::SendHeartbeatToAll()
         auto io_context = impl_->heartbeat_io_context_.get();
         boost::asio::co_spawn(
             *io_context,
-            [transport, header = validated_header, heartbeat_copy = heartbeat]() mutable -> boost::asio::awaitable<void>
+            [transport,
+             header = validated_header,
+             heartbeat_copy =
+                 heartbeat]() mutable -> boost::asio::awaitable<void>
             {
                 auto result = co_await transport->SendCoroutine(
                     header,
@@ -449,7 +466,9 @@ DasResult ConnectionManager::SendHeartbeatToAll()
                     sizeof(heartbeat_copy));
                 if (result != DAS_S_OK)
                 {
-                    DAS_CORE_LOG_WARN("Heartbeat send failed for session, error=0x{:08X}", result);
+                    DAS_CORE_LOG_WARN(
+                        "Heartbeat send failed for session, error=0x{:08X}",
+                        result);
                 }
             },
             boost::asio::detached);
@@ -468,10 +487,10 @@ void ConnectionManager::UpdateHeartbeatTimestamp(uint16_t session_id)
     auto it = impl_->connections_.find(session_id);
     if (it != impl_->connections_.end())
     {
-        it->second.last_heartbeat_ms =
-            static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                      std::chrono::steady_clock::now().time_since_epoch())
-                                      .count());
+        it->second.last_heartbeat_ms = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
     }
 }
 
@@ -484,7 +503,9 @@ DasResult ConnectionManager::CleanupConnectionResources(
     auto it = impl_->connections_.find(remote_id);
     if (it == impl_->connections_.end())
     {
-        DAS_CORE_LOG_ERROR("Connection not found for remote_id = {}", remote_id);
+        DAS_CORE_LOG_ERROR(
+            "Connection not found for remote_id = {}",
+            remote_id);
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 

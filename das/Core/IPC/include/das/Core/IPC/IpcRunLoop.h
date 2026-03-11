@@ -25,11 +25,12 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/execution.hpp>
+#include <boost/asio/executor_work_guard.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/steady_timer.hpp>
-#include <boost/asio/executor_work_guard.hpp>
 
 #include <das/Core/IPC/AsyncIpcTransport.h>
+#include <das/Core/IPC/DefaultAsyncIpcTransport.h>
 #include <das/Core/IPC/IpcResponseSender.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
 
@@ -40,7 +41,7 @@ DAS_CORE_IPC_NS_BEGIN
 class IMessageHandler;
 class ConnectionManager;
 class HostLauncher;
-class IpcRunLoop;  // Forward declaration for templates
+class IpcRunLoop; // Forward declaration for templates
 
 namespace Host
 {
@@ -184,6 +185,16 @@ public:
     void RegisterHandler(std::unique_ptr<IMessageHandler> handler);
 
     /**
+     * @brief 注册控制平面消息处理器
+     *
+     * 控制平面消息使用单独的处理器处理。
+     * 所有控制平面消息都会被路由到这个处理器。
+     *
+     * @param handler 控制平面处理器实例（所有权转移）
+     */
+    void RegisterControlPlaneHandler(std::unique_ptr<IMessageHandler> handler);
+
+    /**
      * @brief 按接口 ID 查找处理器
      * @param interface_id 接口 ID
      * @return 处理器指针，未找到返回 nullptr
@@ -225,10 +236,10 @@ public:
     [[nodiscard]]
     stdexec::sender auto SendMessageAsync(
         DefaultAsyncIpcTransport* DAS_LIFETIMEBOUND transport,
-        const ValidatedIPCMessageHeader& request_header,
-        const uint8_t*                   body,
-        size_t                           body_size,
-        std::chrono::milliseconds        timeout = std::chrono::seconds(30));
+        const ValidatedIPCMessageHeader&            request_header,
+        const uint8_t*                              body,
+        size_t                                      body_size,
+        std::chrono::milliseconds timeout = std::chrono::seconds(30));
 
     bool IsRunning() const;
 
@@ -246,9 +257,13 @@ public:
      * ConnectionManager 用于管理 HostLauncher 实例。
      * 在 Host 模式下返回 nullptr。
      *
-     * @return ConnectionManager* 指针，生命周期绑定到 this，未初始化返回 nullptr
+     * @return ConnectionManager* 指针，生命周期绑定到 this，未初始化返回
+     * nullptr
      */
-    ConnectionManager* GetConnectionManager() DAS_LIFETIMEBOUND { return connection_manager_.get(); }
+    ConnectionManager* GetConnectionManager() DAS_LIFETIMEBOUND
+    {
+        return connection_manager_.get();
+    }
 
     /**
      * @brief 注册 HostLauncher 并启动接收循环
@@ -278,17 +293,10 @@ public:
      * @param transport 用于发送响应的 transport
      * @return boost::asio::awaitable<void>
      */
-#ifdef _WIN32
     boost::asio::awaitable<void> DispatchToHandlerCoroutine(
         const IPCMessageHeader&     header,
         const std::vector<uint8_t>& body,
-        Win32AsyncIpcTransport&     transport);
-#else
-    boost::asio::awaitable<void> DispatchToHandlerCoroutine(
-        const IPCMessageHeader&     header,
-        const std::vector<uint8_t>& body,
-        UnixAsyncIpcTransport&      transport);
-#endif
+        DefaultAsyncIpcTransport&   transport);
 
     //=========================================================================
     // 事件驱动方法（内部使用）
@@ -304,7 +312,7 @@ public:
      * @param launcher HostLauncher 的 DasPtr
      */
     void StartAsyncReceiveForTransport(
-        uint16_t                     session_id,
+        uint16_t              session_id,
         DasPtr<IHostLauncher> launcher);
 
     /**
@@ -403,6 +411,9 @@ public:
 
     /// 消息处理器映射
     std::unordered_map<uint32_t, std::unique_ptr<IMessageHandler>> handlers_;
+
+    /// 控制平面消息处理器
+    std::unique_ptr<IMessageHandler> control_plane_handler_;
 
     /// 下一个 call_id
     std::atomic<uint64_t> next_call_id_{1};

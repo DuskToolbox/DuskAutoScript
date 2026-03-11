@@ -20,11 +20,7 @@
 #include <boost/asio.hpp>
 #include <boost/asio/use_future.hpp>
 
-#ifdef _WIN32
-#include <das/Core/IPC/Win32AsyncIpcTransport.h>
-#else
-#include <das/Core/IPC/UnixAsyncIpcTransport.h>
-#endif
+#include <das/Core/IPC/DefaultAsyncIpcTransport.h>
 
 #include <das/Core/Logger/Logger.h>
 #include <das/Utils/fmt.h>
@@ -77,7 +73,8 @@ DasResult IpcRunLoop::DoInitialize()
 
     // Create ConnectionManager for MainProcess mode
     // In Host mode, connection_manager_ remains nullptr (no heartbeat needed)
-    connection_manager_ = ConnectionManager::Create(1);  // local_id = 1 for MainProcess
+    connection_manager_ =
+        ConnectionManager::Create(1); // local_id = 1 for MainProcess
 
     return DAS_S_OK;
 }
@@ -155,7 +152,8 @@ void IpcRunLoop::RegisterHandler(std::unique_ptr<IMessageHandler> handler)
     handlers_[handler->GetInterfaceId()] = std::move(handler);
 }
 
-void IpcRunLoop::RegisterControlPlaneHandler(std::unique_ptr<IMessageHandler> handler)
+void IpcRunLoop::RegisterControlPlaneHandler(
+    std::unique_ptr<IMessageHandler> handler)
 {
     if (!handler)
     {
@@ -177,11 +175,7 @@ IMessageHandler* IpcRunLoop::GetHandler(uint32_t interface_id) const
 boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
     const IPCMessageHeader&     header,
     const std::vector<uint8_t>& body,
-#ifdef _WIN32
-    Win32AsyncIpcTransport&     transport)
-#else
-    UnixAsyncIpcTransport&      transport)
-#endif
+    DefaultAsyncIpcTransport&   transport)
 {
     DAS_CORE_LOG_INFO(
         "DispatchToHandlerCoroutine: interface_id={}, method_id={}, call_id={}, body_size={}",
@@ -192,14 +186,16 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
 
     // 处理 HEARTBEAT RESPONSE：收到心跳回复时更新时间戳
     if (header.interface_id
-        == static_cast<uint32_t>(HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT))
+        == static_cast<uint32_t>(
+            HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT))
     {
         if (header.message_type == static_cast<uint8_t>(MessageType::RESPONSE))
         {
             // 收到心跳回复，更新时间戳
             if (connection_manager_)
             {
-                connection_manager_->UpdateHeartbeatTimestamp(header.session_id);
+                connection_manager_->UpdateHeartbeatTimestamp(
+                    header.session_id);
             }
             co_return;
         }
@@ -229,7 +225,9 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
 
     if (handler)
     {
-        DAS_CORE_LOG_INFO("DispatchToHandlerCoroutine: found handler for interface_id={}", header.interface_id);
+        DAS_CORE_LOG_INFO(
+            "DispatchToHandlerCoroutine: found handler for interface_id={}",
+            header.interface_id);
         IpcResponseSender sender(transport);
         auto result = co_await handler->HandleMessage(header, body, sender);
         if (DAS::IsFailed(result))
@@ -238,7 +236,8 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
         }
         else
         {
-            DAS_CORE_LOG_INFO("DispatchToHandlerCoroutine: handler completed successfully");
+            DAS_CORE_LOG_INFO(
+                "DispatchToHandlerCoroutine: handler completed successfully");
         }
     }
     else
@@ -499,14 +498,18 @@ DasResult IpcRunLoop::RegisterHostLauncher(DasPtr<IHostLauncher> launcher)
     auto* concrete = dynamic_cast<HostLauncher*>(launcher.Get());
     if (!concrete)
     {
-        DAS_CORE_LOG_ERROR("Failed to cast IHostLauncher to HostLauncher: session_id={}", session_id);
+        DAS_CORE_LOG_ERROR(
+            "Failed to cast IHostLauncher to HostLauncher: session_id={}",
+            session_id);
         return DAS_E_INVALID_ARGUMENT;
     }
 
     auto* transport = concrete->GetTransport();
     if (!transport)
     {
-        DAS_CORE_LOG_ERROR("HostLauncher has no Transport: session_id={}", session_id);
+        DAS_CORE_LOG_ERROR(
+            "HostLauncher has no Transport: session_id={}",
+            session_id);
         return DAS_E_IPC_NO_CONNECTIONS;
     }
 
@@ -518,22 +521,26 @@ DasResult IpcRunLoop::RegisterHostLauncher(DasPtr<IHostLauncher> launcher)
         return DAS_E_IPC_NOT_INITIALIZED;
     }
 
-    DasResult result = conn_mgr->RegisterHostLauncher(session_id, std::move(launcher));
+    DasResult result =
+        conn_mgr->RegisterHostLauncher(session_id, std::move(launcher));
     if (result != DAS_S_OK)
     {
         return result;
     }
 
     // Start async receive for this Transport
-    // 注意：从 ConnectionManager 获取 DasPtr 副本，协程会捕获它来保持 transport 存活
-    StartAsyncReceiveForTransport(session_id, conn_mgr->GetLauncher(session_id));
+    // 注意：从 ConnectionManager 获取 DasPtr 副本，协程会捕获它来保持 transport
+    // 存活
+    StartAsyncReceiveForTransport(
+        session_id,
+        conn_mgr->GetLauncher(session_id));
 
     DAS_CORE_LOG_INFO("HostLauncher registered: session_id={}", session_id);
     return DAS_S_OK;
 }
 
 void IpcRunLoop::StartAsyncReceiveForTransport(
-    uint16_t                     session_id,
+    uint16_t              session_id,
     DasPtr<IHostLauncher> launcher)
 {
     if (!launcher)
@@ -577,18 +584,24 @@ void IpcRunLoop::StartAsyncReceiveForTransport(
 
                 try
                 {
-                    // 从 launcher 获取 transport（安全，因为 launcher 被 DasPtr 持有）
-                    auto* concrete = dynamic_cast<HostLauncher*>(launcher.Get());
+                    // 从 launcher 获取 transport（安全，因为 launcher 被 DasPtr
+                    // 持有）
+                    auto* concrete =
+                        dynamic_cast<HostLauncher*>(launcher.Get());
                     if (!concrete)
                     {
-                        DAS_CORE_LOG_DEBUG("Failed to cast launcher, exiting: session_id={}", session_id);
+                        DAS_CORE_LOG_DEBUG(
+                            "Failed to cast launcher, exiting: session_id={}",
+                            session_id);
                         co_return;
                     }
 
                     auto* transport = concrete->GetTransport();
                     if (!transport)
                     {
-                        DAS_CORE_LOG_DEBUG("Transport became null, exiting: session_id={}", session_id);
+                        DAS_CORE_LOG_DEBUG(
+                            "Transport became null, exiting: session_id={}",
+                            session_id);
                         co_return;
                     }
 
@@ -620,11 +633,17 @@ void IpcRunLoop::StartAsyncReceiveForTransport(
                     if (header.Raw().message_type
                         == static_cast<uint8_t>(MessageType::RESPONSE))
                     {
-                        CompletePendingCall(header.Raw().call_id, DAS_S_OK, std::move(body));
+                        CompletePendingCall(
+                            header.Raw().call_id,
+                            DAS_S_OK,
+                            std::move(body));
                     }
                     else
                     {
-                        co_await DispatchToHandlerCoroutine(header.Raw(), body, *transport);
+                        co_await DispatchToHandlerCoroutine(
+                            header.Raw(),
+                            body,
+                            *transport);
                     }
                 }
                 catch (const boost::system::system_error& e)
@@ -669,7 +688,8 @@ void IpcRunLoop::StartAsyncReceiveForTransport(
                     co_return;
                 }
 
-                // Handle retry outside catch block (co_await not allowed in catch)
+                // Handle retry outside catch block (co_await not allowed in
+                // catch)
                 if (retry_error_code.has_value())
                 {
                     DAS_CORE_LOG_DEBUG(

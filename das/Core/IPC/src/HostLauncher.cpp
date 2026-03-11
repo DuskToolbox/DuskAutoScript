@@ -17,11 +17,7 @@
 #include <das/Utils/fmt.h>
 #include <thread>
 
-#ifdef _WIN32
-#include <das/Core/IPC/Win32AsyncIpcTransport.h>
-#else
-#include <das/Core/IPC/UnixAsyncIpcTransport.h>
-#endif
+#include <das/Core/IPC/DefaultAsyncIpcTransport.h>
 
 // 获取当前进程 PID 的跨平台方法
 #ifdef _WIN32
@@ -79,7 +75,7 @@ struct HostLauncher::Impl
     uint16_t                                     session_id = 0;
     uint64_t                                     next_call_id = 1;
     bool                                         is_running = false;
-    std::atomic<uint32_t>                        ref_count{1}; // 引用计数，初始为 1（创建时持有）
+    std::atomic<uint32_t> ref_count{1}; // 引用计数，初始为 1（创建时持有）
 };
 
 HostLauncher::HostLauncher(boost::asio::io_context& io_ctx)
@@ -201,9 +197,8 @@ void HostLauncher::Stop()
         }
         catch (const std::exception& e)
         {
-            std::string err_msg = DAS_FMT_NS::format(
-                "Send GOODBYE failed: {}",
-                e.what());
+            std::string err_msg =
+                DAS_FMT_NS::format("Send GOODBYE failed: {}", e.what());
             DAS_LOG_ERROR(err_msg.c_str());
         }
 
@@ -270,7 +265,10 @@ uint32_t HostLauncher::GetPid() const { return impl_->pid; }
 
 uint16_t HostLauncher::GetSessionId() const { return impl_->session_id; }
 
-DefaultAsyncIpcTransport* HostLauncher::GetTransport() { return impl_->async_transport.get(); }
+DefaultAsyncIpcTransport* HostLauncher::GetTransport()
+{
+    return impl_->async_transport.get();
+}
 
 DasResult HostLauncher::StartAsync(
     const std::string&            host_exe_path,
@@ -290,10 +288,7 @@ DasResult HostLauncher::StartAsync(
     return result;
 }
 
-uint32_t HostLauncher::AddRef()
-{
-    return ++impl_->ref_count;
-}
+uint32_t HostLauncher::AddRef() { return ++impl_->ref_count; }
 
 uint32_t HostLauncher::Release()
 {
@@ -432,7 +427,8 @@ DasResult HostLauncher::ConnectToHost()
                 impl_->io_ctx,
                 host_to_plugin_pipe,
                 plugin_to_host_pipe,
-                true,    // is_server = true (MainProcess creates pipes and waits for Host)
+                true, // is_server = true (MainProcess creates pipes and waits
+                      // for Host)
                 65536),
             boost::asio::use_future);
 
@@ -532,7 +528,7 @@ boost::asio::awaitable<DasResult> HostLauncher::SendHandshakeHelloAsync(
     hello.assigned_session_id = assigned_session_id;
 
     uint64_t call_id = impl_->next_call_id++;
-    auto validated_header =
+    auto     validated_header =
         IPCMessageHeaderBuilder()
             .SetMessageType(MessageType::REQUEST)
             .SetControlPlaneCommand(HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO)
@@ -548,9 +544,8 @@ boost::asio::awaitable<DasResult> HostLauncher::SendHandshakeHelloAsync(
 
     if (result != DAS_S_OK)
     {
-        std::string msg = DAS_FMT_NS::format(
-            "Failed to send Hello: error={}",
-            result);
+        std::string msg =
+            DAS_FMT_NS::format("Failed to send Hello: error={}", result);
         DAS_LOG_ERROR(msg.c_str());
         co_return result;
     }
@@ -578,7 +573,7 @@ boost::asio::awaitable<DasResult> HostLauncher::ReceiveHandshakeWelcomeAsync(
 
     if (result_variant.index() == 0)
     {
-        DasResult error_code = std::get<0>(result_variant);
+        DasResult   error_code = std::get<0>(result_variant);
         std::string msg = DAS_FMT_NS::format(
             "Failed to receive Welcome: error={}",
             error_code);
@@ -611,9 +606,8 @@ boost::asio::awaitable<DasResult> HostLauncher::ReceiveHandshakeWelcomeAsync(
 
     if (welcome.status != WelcomeResponseV1::STATUS_SUCCESS)
     {
-        std::string msg = DAS_FMT_NS::format(
-            "Welcome status error: {}",
-            welcome.status);
+        std::string msg =
+            DAS_FMT_NS::format("Welcome status error: {}", welcome.status);
         DAS_LOG_ERROR(msg.c_str());
         co_return DAS_E_IPC_HANDSHAKE_FAILED;
     }
@@ -629,7 +623,8 @@ boost::asio::awaitable<DasResult> HostLauncher::ReceiveHandshakeWelcomeAsync(
     co_return DAS_S_OK;
 }
 
-boost::asio::awaitable<DasResult> HostLauncher::SendHandshakeReadyAsync(uint16_t session_id)
+boost::asio::awaitable<DasResult> HostLauncher::SendHandshakeReadyAsync(
+    uint16_t session_id)
 {
     if (!impl_->async_transport)
     {
@@ -641,7 +636,7 @@ boost::asio::awaitable<DasResult> HostLauncher::SendHandshakeReadyAsync(uint16_t
     InitReadyRequest(ready, session_id);
 
     uint64_t call_id = impl_->next_call_id++;
-    auto validated_header =
+    auto     validated_header =
         IPCMessageHeaderBuilder()
             .SetMessageType(MessageType::REQUEST)
             .SetControlPlaneCommand(HandshakeInterfaceId::HANDSHAKE_IFACE_READY)
@@ -656,9 +651,8 @@ boost::asio::awaitable<DasResult> HostLauncher::SendHandshakeReadyAsync(uint16_t
 
     if (result != DAS_S_OK)
     {
-        std::string msg = DAS_FMT_NS::format(
-            "Failed to send Ready: error={}",
-            result);
+        std::string msg =
+            DAS_FMT_NS::format("Failed to send Ready: error={}", result);
         DAS_LOG_ERROR(msg.c_str());
         co_return result;
     }
@@ -669,7 +663,8 @@ boost::asio::awaitable<DasResult> HostLauncher::SendHandshakeReadyAsync(uint16_t
     co_return DAS_S_OK;
 }
 
-boost::asio::awaitable<DasResult> HostLauncher::ReceiveHandshakeReadyAckAsync(uint32_t timeout_ms)
+boost::asio::awaitable<DasResult> HostLauncher::ReceiveHandshakeReadyAckAsync(
+    uint32_t timeout_ms)
 {
     (void)timeout_ms; // 暂时忽略超时
 
@@ -683,7 +678,7 @@ boost::asio::awaitable<DasResult> HostLauncher::ReceiveHandshakeReadyAckAsync(ui
 
     if (result_variant.index() == 0)
     {
-        DasResult error_code = std::get<0>(result_variant);
+        DasResult   error_code = std::get<0>(result_variant);
         std::string msg = DAS_FMT_NS::format(
             "Failed to receive ReadyAck: error={}",
             error_code);
@@ -716,9 +711,8 @@ boost::asio::awaitable<DasResult> HostLauncher::ReceiveHandshakeReadyAckAsync(ui
 
     if (ack.status != ReadyAckV1::STATUS_SUCCESS)
     {
-        std::string msg = DAS_FMT_NS::format(
-            "ReadyAck status error: {}",
-            ack.status);
+        std::string msg =
+            DAS_FMT_NS::format("ReadyAck status error: {}", ack.status);
         DAS_LOG_ERROR(msg.c_str());
         co_return DAS_E_IPC_HANDSHAKE_FAILED;
     }
@@ -788,9 +782,8 @@ DasResult HostLauncher::SendHandshakeHello(const std::string& client_name)
     }
     catch (const std::exception& e)
     {
-        std::string msg = DAS_FMT_NS::format(
-            "SendHandshakeHello failed: {}",
-            e.what());
+        std::string msg =
+            DAS_FMT_NS::format("SendHandshakeHello failed: {}", e.what());
         DAS_LOG_ERROR(msg.c_str());
         return DAS_E_IPC_SEND_FAILED;
     }
@@ -810,9 +803,8 @@ DasResult HostLauncher::ReceiveHandshakeWelcome(
     }
     catch (const std::exception& e)
     {
-        std::string msg = DAS_FMT_NS::format(
-            "ReceiveHandshakeWelcome failed: {}",
-            e.what());
+        std::string msg =
+            DAS_FMT_NS::format("ReceiveHandshakeWelcome failed: {}", e.what());
         DAS_LOG_ERROR(msg.c_str());
         return DAS_E_IPC_RECEIVE_FAILED;
     }
@@ -830,9 +822,8 @@ DasResult HostLauncher::SendHandshakeReady(uint16_t session_id)
     }
     catch (const std::exception& e)
     {
-        std::string msg = DAS_FMT_NS::format(
-            "SendHandshakeReady failed: {}",
-            e.what());
+        std::string msg =
+            DAS_FMT_NS::format("SendHandshakeReady failed: {}", e.what());
         DAS_LOG_ERROR(msg.c_str());
         return DAS_E_IPC_SEND_FAILED;
     }
@@ -850,9 +841,8 @@ DasResult HostLauncher::ReceiveHandshakeReadyAck(uint32_t timeout_ms)
     }
     catch (const std::exception& e)
     {
-        std::string msg = DAS_FMT_NS::format(
-            "ReceiveHandshakeReadyAck failed: {}",
-            e.what());
+        std::string msg =
+            DAS_FMT_NS::format("ReceiveHandshakeReadyAck failed: {}", e.what());
         DAS_LOG_ERROR(msg.c_str());
         return DAS_E_IPC_RECEIVE_FAILED;
     }
