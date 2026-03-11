@@ -78,7 +78,7 @@ DAS::Utils::Expected<std::unique_ptr<UnixAsyncIpcTransport>> UnixAsyncIpcTranspo
     return instance;
 }
 
-UnixAsyncIpcTransport::~UnixAsyncIpcTransport() { Close(); }
+UnixAsyncIpcTransport::~UnixAsyncIpcTransport() { Uninitialize(); }
 
 DasResult UnixAsyncIpcTransport::Initialize(
     const std::string& read_endpoint,
@@ -121,7 +121,7 @@ DasResult UnixAsyncIpcTransport::Connect(
     return ConnectToUnixSocket(read_endpoint);
 }
 
-void UnixAsyncIpcTransport::Close()
+void UnixAsyncIpcTransport::Uninitialize()
 {
     boost::system::error_code ec;
 

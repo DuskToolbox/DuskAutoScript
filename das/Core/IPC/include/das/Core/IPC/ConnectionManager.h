@@ -65,22 +65,11 @@ public:
 
     ~ConnectionManager();
 
+    DasResult Shutdown();
+
     // 禁止拷贝
     ConnectionManager(const ConnectionManager&) = delete;
     ConnectionManager& operator=(const ConnectionManager&) = delete;
-
-    /**
-     * @brief 初始化连接管理器
-     * @param local_id 本地 ID
-     * @return DasResult DAS_S_OK 成功
-     */
-    DasResult Initialize(uint16_t local_id);
-
-    /**
-     * @brief 关闭连接管理器
-     * @return DasResult DAS_S_OK 成功
-     */
-    DasResult Shutdown();
 
     DasResult RegisterConnection(uint16_t remote_id, uint16_t local_id);
     DasResult UnregisterConnection(uint16_t remote_id, uint16_t local_id);
@@ -182,6 +171,12 @@ private:
     // 私有构造函数 - 只能通过 Create() 工厂函数调用
     ConnectionManager();
     friend class std::unique_ptr<ConnectionManager>;
+
+    // 私有初始化函数 - 只能由 Create() 工厂函数调用
+    DasResult Initialize(uint16_t local_id);
+
+    // 私有清理函数 - 只能由析构函数调用
+    void Uninitialize();
 
     DasResult CleanupConnectionResources(uint16_t remote_id, uint16_t local_id);
 

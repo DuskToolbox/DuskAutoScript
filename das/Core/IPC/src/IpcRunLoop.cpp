@@ -62,8 +62,8 @@ DAS::Utils::Expected<std::unique_ptr<IpcRunLoop>> IpcRunLoop::CreateForHost(
 
 IpcRunLoop::~IpcRunLoop()
 {
-    // 正确调用 Shutdown() 而非 RequestStop()
-    Shutdown();
+    // 正确调用 Uninitialize() 而非 RequestStop()
+    Uninitialize();
 }
 
 DasResult IpcRunLoop::DoInitialize()
@@ -82,20 +82,15 @@ DasResult IpcRunLoop::DoInitialize()
     return DAS_S_OK;
 }
 
-DasResult IpcRunLoop::Initialize()
-{
-    return DoInitialize();
-}
-
-DasResult IpcRunLoop::Shutdown()
+void IpcRunLoop::Uninitialize()
 {
     RequestStop();
 
     // 清理 ConnectionManager
+    // unique_ptr will automatically call destructor which calls Uninitialize()
     if (connection_manager_)
     {
         connection_manager_->StopHeartbeatThread();
-        connection_manager_->Shutdown();
         connection_manager_.reset();
     }
 
@@ -110,7 +105,6 @@ DasResult IpcRunLoop::Shutdown()
     timeout_timer_.reset();
     // async_transport_ 已移除，不再重置
     io_context_.reset();
-    return DAS_S_OK;
 }
 
 void IpcRunLoop::RequestStop()

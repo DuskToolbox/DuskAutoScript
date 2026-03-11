@@ -427,7 +427,7 @@ private:
     DasResult DoInitialize();
 
     /// 关闭（析构函数调用）
-    DasResult Shutdown();
+    void Uninitialize();
 
     /// 标记是否已关闭
     bool is_shutdown_ = false;

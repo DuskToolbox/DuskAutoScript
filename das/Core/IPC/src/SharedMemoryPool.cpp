@@ -38,14 +38,22 @@ struct SharedMemoryPool::Impl
     static constexpr std::chrono::seconds kStaleThreshold{60};
 };
 
-std::unique_ptr<SharedMemoryPool> SharedMemoryPool::Create()
+std::unique_ptr<SharedMemoryPool> SharedMemoryPool::Create(
+    const std::string& pool_name,
+    size_t             initial_size)
 {
-    return std::unique_ptr<SharedMemoryPool>(new SharedMemoryPool());
+    auto pool = std::unique_ptr<SharedMemoryPool>(new SharedMemoryPool());
+    auto result = pool->Initialize(pool_name, initial_size);
+    if (result != DAS_S_OK)
+    {
+        return nullptr;
+    }
+    return pool;
 }
 
 SharedMemoryPool::SharedMemoryPool() : impl_(std::make_unique<Impl>()) {}
 
-SharedMemoryPool::~SharedMemoryPool() { Shutdown(); }
+SharedMemoryPool::~SharedMemoryPool() { Uninitialize(); }
 
 DasResult SharedMemoryPool::Initialize(
     const std::string& pool_name,
@@ -75,16 +83,16 @@ DasResult SharedMemoryPool::Initialize(
     }
 }
 
-DasResult SharedMemoryPool::Shutdown()
+void SharedMemoryPool::Uninitialize()
 {
     std::lock_guard<std::mutex> lock(impl_->mutex_);
 
-    // 幂等性检查：如果已经关闭，直接返回成功
-    // 这防止了 DestroyPool 中显式调用 Shutdown() 后，
-    // 析构函数再次调用 Shutdown() 导致的重复操作
+    // 幂等性检查：如果已经关闭，直接返回
+    // 这防止了 DestroyPool 中显式调用 Uninitialize() 后，
+    // 析构函数再次调用 Uninitialize() 导致的重复操作
     if (!impl_->segment_)
     {
-        return DAS_S_OK;
+        return;
     }
 
     impl_->segment_.reset();
@@ -99,7 +107,6 @@ DasResult SharedMemoryPool::Shutdown()
 
     impl_->used_size_ = 0;
     impl_->block_metadata_.clear();
-    return DAS_S_OK;
 }
 
 DasResult SharedMemoryPool::Allocate(size_t size, SharedMemoryBlock& block)
@@ -283,17 +290,23 @@ struct SharedMemoryManager::Impl
     mutable std::mutex                                                 mutex_;
 };
 
+std::unique_ptr<SharedMemoryManager> SharedMemoryManager::Create()
+{
+    auto manager = std::unique_ptr<SharedMemoryManager>(new SharedMemoryManager());
+    manager->Initialize();
+    return manager;
+}
+
 SharedMemoryManager::SharedMemoryManager() : impl_(std::make_unique<Impl>()) {}
 
-SharedMemoryManager::~SharedMemoryManager() { Shutdown(); }
+SharedMemoryManager::~SharedMemoryManager() { Uninitialize(); }
 
 DasResult SharedMemoryManager::Initialize() { return DAS_S_OK; }
 
-DasResult SharedMemoryManager::Shutdown()
+void SharedMemoryManager::Uninitialize()
 {
     std::lock_guard<std::mutex> lock(impl_->mutex_);
     impl_->pools_.clear();
-    return DAS_S_OK;
 }
 
 DasResult SharedMemoryManager::CreatePool(
@@ -303,11 +316,10 @@ DasResult SharedMemoryManager::CreatePool(
     std::string pool_name =
         MakePoolName(1, static_cast<uint16_t>(std::stoul(pool_id)));
 
-    auto pool = SharedMemoryPool::Create();
-    auto result = pool->Initialize(pool_name, size);
-    if (result != DAS_S_OK)
+    auto pool = SharedMemoryPool::Create(pool_name, size);
+    if (!pool)
     {
-        return result;
+        return DAS_E_IPC_SHM_FAILED;
     }
 
     std::lock_guard<std::mutex> lock(impl_->mutex_);

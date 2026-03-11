@@ -51,7 +51,7 @@ ConnectionManager::ConnectionManager() : impl_(std::make_unique<Impl>()) {}
 ConnectionManager::~ConnectionManager()
 {
     StopHeartbeatThread();
-    Shutdown();
+    Uninitialize();
 }
 
 DasResult ConnectionManager::Initialize(uint16_t local_id)
@@ -60,7 +60,7 @@ DasResult ConnectionManager::Initialize(uint16_t local_id)
     return DAS_S_OK;
 }
 
-DasResult ConnectionManager::Shutdown()
+void ConnectionManager::Uninitialize()
 {
     StopHeartbeatThread();
 
@@ -71,8 +71,6 @@ DasResult ConnectionManager::Shutdown()
     }
     impl_->connections_.clear();
     impl_->host_launchers_.clear();
-
-    return DAS_S_OK;
 }
 
 DasResult ConnectionManager::RegisterConnection(

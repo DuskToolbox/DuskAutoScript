@@ -79,14 +79,12 @@ namespace Core
                     return DAS_S_OK;
                 }
 
-                DasResult Shutdown()
+                void Uninitialize()
                 {
                     if (!is_initialized_)
                     {
-                        return DAS_S_OK;
+                        return;
                     }
-
-                    DasResult result = DAS_S_OK;
 
                     // Clear ProxyFactory
                     auto& proxy_factory = ProxyFactory::GetInstance();
@@ -95,15 +93,14 @@ namespace Core
                     // Destroy in reverse order
                     object_manager_.reset();
 
-                    // RAII：unique_ptr 析构自动调用 Shutdown
+                    // RAII：unique_ptr 析构自动调用 Uninitialize
                     if (runloop_)
                     {
                         runloop_->RequestStop();
-                        runloop_.reset();  // 析构函数会自动调用 Shutdown()
+                        runloop_.reset();  // 析构函数会自动调用 Uninitialize()
                     }
 
                     is_initialized_ = false;
-                    return result;
                 }
 
                 DistributedObjectManager& GetObjectManager()
@@ -303,7 +300,7 @@ namespace Core
                 // 析构即清理
                 if (impl_)
                 {
-                    impl_->Shutdown();
+                    impl_->Uninitialize();
                 }
             }
 

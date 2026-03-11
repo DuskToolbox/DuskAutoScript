@@ -216,18 +216,14 @@ namespace Core
                     DAS_LOG_INFO(msg.c_str());
 
                     // 3. 初始化 SharedMemoryPool
-                    shared_memory_ = SharedMemoryPool::Create();
-                    result = shared_memory_->Initialize(
+                    shared_memory_ = SharedMemoryPool::Create(
                         shm_name,
                         DEFAULT_SHARED_MEMORY_SIZE);
-                    if (result != DAS_S_OK)
+                    if (!shared_memory_)
                     {
-                        std::string err_msg = DAS_FMT_NS::format(
-                            "IpcContext: SharedMemoryPool init failed, result=0x{:08X}",
-                            result);
-                        DAS_LOG_ERROR(err_msg.c_str());
+                        DAS_LOG_ERROR("IpcContext: SharedMemoryPool Create failed");
                         object_manager_.reset();
-                        return result;
+                        return DAS_E_IPC_SHM_FAILED;
                     }
 
                     // 4. 创建 IpcRunLoop（无参 Initialize，只创建 io_context 基础设施）
@@ -322,24 +318,20 @@ namespace Core
                     return DAS_S_OK;
                 }
 
-                DasResult Shutdown()
+                void Uninitialize()
                 {
                     if (!is_initialized_)
                     {
-                        return DAS_S_OK;
+                        return;
                     }
-
-                    DasResult result = DAS_S_OK;
 
                     // 停止父进程监控线程
                     StopParentProcessMonitor();
 
                     // 1. 先关闭 transport（自己持有的）
                     //    这会导致 ReceiveCoroutine() 抛出 operation_aborted
-                    if (async_transport_)
-                    {
-                        async_transport_->Close();
-                    }
+                    // unique_ptr 析构会自动调用 Uninitialize()
+                    async_transport_.reset();
 
                     // 2. 停止事件循环
                     if (run_loop_)
@@ -351,28 +343,22 @@ namespace Core
                     // HandshakeHandler 现在是 RAII 模式，reset() 会触发析构函数自动调用 Uninitialize()
                     handshake_handler_.reset();
 
-                    // 4. 释放 transport
-                    async_transport_.reset();
+                    // 4. 关闭 SharedMemoryPool
+                    // unique_ptr 析构会自动调用 Uninitialize()
+                    shared_memory_.reset();
 
-                    // 5. 关闭 SharedMemoryPool
-                    if (shared_memory_)
-                    {
-                        shared_memory_->Shutdown();
-                        shared_memory_.reset();
-                    }
-
-                    // 6. 关闭 IpcRunLoop（RAII：unique_ptr 析构自动调用 Shutdown）
+                    // 5. 关闭 IpcRunLoop（RAII：unique_ptr 析构自动调用 Uninitialize）
                     if (run_loop_)
                     {
                         run_loop_->RequestStop();
-                        // unique_ptr::reset() 会调用析构函数，析构函数会自动调用 Shutdown()
+                        // unique_ptr::reset() 会调用析构函数，析构函数会自动调用 Uninitialize()
                         run_loop_.reset();
                     }
 
-                    // 7. 关闭 DistributedObjectManager
+                    // 6. 关闭 DistributedObjectManager
                     object_manager_.reset();
 
-                    // 8. 释放 session_id
+                    // 7. 释放 session_id
                     if (session_id_ != 0)
                     {
                         auto& coordinator = SessionCoordinator::GetInstance();
@@ -382,7 +368,6 @@ namespace Core
 
                     is_initialized_ = false;
                     is_connected_ = false;
-                    return result;
                 }
 
                 IpcRunLoop& GetRunLoop() { return *run_loop_; }
@@ -684,7 +669,7 @@ namespace Core
                 impl_->Initialize();
             }
 
-            IpcContext::~IpcContext() { impl_->Shutdown(); }
+            IpcContext::~IpcContext() { impl_->Uninitialize(); }
 
             IpcRunLoop& IpcContext::GetRunLoop() { return impl_->GetRunLoop(); }
 

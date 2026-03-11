@@ -345,11 +345,10 @@ TEST_F(IpcE2ETest, ErrorHandling_NullObject)
 
 TEST_F(IpcE2ETest, SharedMemory_LargeDataTransfer)
 {
-    auto pool = SharedMemoryPool::Create();
     std::string pool_name = "e2e_test_shm_pool";
+    auto pool = SharedMemoryPool::Create(pool_name, 1024 * 1024); // 1MB
 
     ASSERT_NE(pool, nullptr);
-    ASSERT_EQ(pool->Initialize(pool_name, 1024 * 1024), DAS_S_OK); // 1MB
 
     // Allocate a large block
     SharedMemoryBlock block;

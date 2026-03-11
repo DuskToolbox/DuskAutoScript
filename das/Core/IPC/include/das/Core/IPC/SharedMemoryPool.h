@@ -58,14 +58,17 @@ class SharedMemoryPool
 {
 public:
     /**
-     * @brief 工厂函数：创建 SharedMemoryPool 实例
+     * @brief 工厂函数：创建并初始化 SharedMemoryPool 实例
+     * @param pool_name 共享内存池名称
+     * @param initial_size 初始大小
      * @return std::unique_ptr<SharedMemoryPool> SharedMemoryPool 智能指针
      */
-    static std::unique_ptr<SharedMemoryPool> Create();
+    static std::unique_ptr<SharedMemoryPool> Create(
+        const std::string& pool_name,
+        size_t             initial_size);
 
     ~SharedMemoryPool();
 
-    DasResult Initialize(const std::string& pool_name, size_t initial_size);
     DasResult Shutdown();
 
     DasResult Allocate(size_t size, SharedMemoryBlock& block);
@@ -82,6 +85,12 @@ private:
     SharedMemoryPool();
     friend class std::unique_ptr<SharedMemoryPool>;
 
+    // 私有初始化函数 - 只能由 Create() 工厂函数调用
+    DasResult Initialize(const std::string& pool_name, size_t initial_size);
+
+    // 私有清理函数 - 只能由析构函数调用
+    void Uninitialize();
+
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
@@ -89,11 +98,17 @@ private:
 class SharedMemoryManager
 {
 public:
-    SharedMemoryManager();
+    /**
+     * @brief 工厂函数：创建 SharedMemoryManager 实例
+     * @return std::unique_ptr<SharedMemoryManager> SharedMemoryManager 智能指针
+     */
+    static std::unique_ptr<SharedMemoryManager> Create();
+
     ~SharedMemoryManager();
 
-    DasResult Initialize();
     DasResult Shutdown();
+
+    // DasResult Initialize();
 
     DasResult CreatePool(const std::string& pool_id, size_t size);
     DasResult DestroyPool(const std::string& pool_id);
@@ -103,6 +118,16 @@ public:
     static std::string MakePoolName(uint16_t host_id, uint16_t pool_id);
 
 private:
+    // 私有构造函数 - 只能通过 Create() 工厂函数调用
+    SharedMemoryManager();
+    friend class std::unique_ptr<SharedMemoryManager>;
+
+    // 私有初始化函数 - 只能由 Create() 工厂函数调用
+    DasResult Initialize();
+
+    // 私有清理函数 - 只能由析构函数调用
+    void Uninitialize();
+
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

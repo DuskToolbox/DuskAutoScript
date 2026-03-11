@@ -91,22 +91,10 @@ public:
      * @return DAS_S_OK 成功
      * @return DAS_E_IPC_MESSAGE_QUEUE_FAILED 创建失败
      */
-    [[deprecated("Use Create() instead")]]
-    DasResult Initialize(
-        const std::string& read_endpoint,
-        const std::string& write_endpoint,
-        bool               is_server,
-        size_t             max_message_size = 65536);
 
     DasResult Connect(
         const std::string& read_endpoint,
         const std::string& write_endpoint);
-
-    /**
-     * @brief 关闭传输层
-     * @note 幂等操作，可以多次调用
-     */
-    void Close();
 
     // === 查询接口 ===
 
@@ -154,6 +142,17 @@ public:
 private:
     // 私有构造函数（由 Create() 工厂函数调用）
     explicit UnixAsyncIpcTransport(boost::asio::io_context& DAS_LIFETIMEBOUND io_context);
+
+    // 私有清理函数 - 只能由析构函数调用
+    void Uninitialize();
+
+    // 私有初始化函数 - 只能由 Create() 工厂函数调用
+    [[deprecated("Use Create() instead")]]
+    DasResult Initialize(
+        const std::string& read_endpoint,
+        const std::string& write_endpoint,
+        bool               is_server,
+        size_t             max_message_size = 65536);
 
     /**
      * @brief 创建 Unix Domain Socket（服务端）
