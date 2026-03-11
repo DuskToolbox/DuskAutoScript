@@ -127,7 +127,7 @@ public:
      * @param pool 共享内存池指针（调用者负责生命周期管理）
      * @note 必须在 Initialize() 或 Connect() 之前调用
      */
-    void SetSharedMemoryPool(SharedMemoryPool* DAS_LIFETIMEBOUND pool);
+    void SetSharedMemoryPool(SharedMemoryPool* pool);
 
     /// 获取 io_context 引用
     /// @return io_context 引用，生命周期绑定到 this
