@@ -12,6 +12,7 @@
 #include <das/IDasBase.h>
 #include <das/Utils/fmt.h>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <unordered_map>
 #include <vector>
@@ -86,6 +87,15 @@ namespace Core
             public:
                 static constexpr uint32_t INTERFACE_ID = 0x00000001; // 握手协议
 
+                /**
+                 * @brief 工厂函数：创建 HandshakeHandler 实例
+                 *
+                 * @param local_session_id 本 Host 进程的 session_id（0 表示等待握手分配）
+                 * @return std::unique_ptr<HandshakeHandler> HandshakeHandler 智能指针
+                 */
+                static std::unique_ptr<HandshakeHandler> Create(
+                    uint16_t local_session_id = 0);
+
                 [[nodiscard]]
                 uint32_t GetInterfaceId() const override
                 {
@@ -100,11 +110,6 @@ namespace Core
                     std::function<void()>;
 
                 /**
-                 * @brief 构造函数
-                 */
-                HandshakeHandler();
-
-                /**
                  * @brief 析构函数
                  */
                 ~HandshakeHandler();
@@ -112,23 +117,6 @@ namespace Core
                 // 禁用拷贝
                 HandshakeHandler(const HandshakeHandler&) = delete;
                 HandshakeHandler& operator=(const HandshakeHandler&) = delete;
-
-                /**
-                 * @brief 初始化处理器
-                 *
-                 * @param local_session_id 本 Host 进程的 session_id
-                 * @return DasResult 成功返回 DAS_S_OK
-                 */
-                DasResult Initialize(uint16_t local_session_id);
-
-                /**
-                 * @brief 关闭处理器
-                 *
-                 * 释放所有客户端连接，释放分配的 session_id。
-                 *
-                 * @return DasResult 成功返回 DAS_S_OK
-                 */
-                DasResult Shutdown();
 
                 /**
                  * @brief 处理握手消息（旧接口）
@@ -292,6 +280,14 @@ namespace Core
                  */
                 std::unordered_map<uint16_t, ConnectedClient>::iterator
                 FindClientBySessionId(uint16_t session_id);
+
+            private:
+                // 私有构造函数 - 只能通过 Create() 工厂函数调用
+                explicit HandshakeHandler(uint16_t local_session_id);
+                friend class std::unique_ptr<HandshakeHandler>;
+
+                // 私有清理方法 - 析构函数自动调用
+                void Uninitialize();
 
                 // 成员变量
                 std::optional<uint16_t> local_session_id_; ///< 本 Host 进程的 session_id（未设置时为 nullopt）

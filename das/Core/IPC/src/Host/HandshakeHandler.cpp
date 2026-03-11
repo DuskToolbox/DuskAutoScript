@@ -16,26 +16,16 @@ namespace Core
         namespace Host
         {
 
-            HandshakeHandler::HandshakeHandler()
-                : local_session_id_(std::nullopt), initialized_(false)
+            std::unique_ptr<HandshakeHandler> HandshakeHandler::Create(
+                uint16_t local_session_id)
             {
+                return std::unique_ptr<HandshakeHandler>(
+                    new HandshakeHandler(local_session_id));
             }
 
-            HandshakeHandler::~HandshakeHandler()
+            HandshakeHandler::HandshakeHandler(uint16_t local_session_id)
+                : initialized_(false)
             {
-                if (initialized_)
-                {
-                    Shutdown();
-                }
-            }
-
-            DasResult HandshakeHandler::Initialize(uint16_t local_session_id)
-            {
-                if (initialized_)
-                {
-                    return DAS_S_OK;
-                }
-
                 // local_session_id = 0 表示等待握手时由主进程分配
                 // 非 0 值需要是有效的 session_id
                 if (local_session_id != 0
@@ -45,7 +35,7 @@ namespace Core
                         "HandshakeHandler: Invalid local_session_id: {}",
                         local_session_id);
                     DAS_LOG_ERROR(msg.c_str());
-                    return DAS_E_IPC_INVALID_ARGUMENT;
+                    return;
                 }
 
                 // 0 表示未设置（等待握手分配），存储为 nullopt
@@ -59,14 +49,15 @@ namespace Core
                     "HandshakeHandler initialized with session_id: {}",
                     local_session_id);
                 DAS_LOG_INFO(msg.c_str());
-                return DAS_S_OK;
             }
 
-            DasResult HandshakeHandler::Shutdown()
+            HandshakeHandler::~HandshakeHandler() { Uninitialize(); }
+
+            void HandshakeHandler::Uninitialize()
             {
                 if (!initialized_)
                 {
-                    return DAS_S_OK;
+                    return;
                 }
 
                 std::lock_guard<std::mutex> lock(clients_mutex_);
@@ -89,7 +80,6 @@ namespace Core
                 std::string msg =
                     DAS_FMT_NS::format("HandshakeHandler shutdown complete");
                 DAS_LOG_INFO(msg.c_str());
-                return DAS_S_OK;
             }
 
             DasResult HandshakeHandler::HandleMessage(

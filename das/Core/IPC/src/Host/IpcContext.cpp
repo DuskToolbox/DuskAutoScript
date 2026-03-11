@@ -277,19 +277,17 @@ namespace Core
                     command_handler_ = std::make_unique<IpcCommandHandler>();
                     command_handler_->SetSessionId(session_id_);
 
-                    // 7. 创建并初始化 HandshakeHandler
-                    handshake_handler_ = std::make_unique<HandshakeHandler>();
-                    result = handshake_handler_->Initialize(session_id_);
-                    if (result != DAS_S_OK)
+                    // 7. 创建 HandshakeHandler（RAII 模式）
+                    handshake_handler_ = HandshakeHandler::Create(session_id_);
+                    if (!handshake_handler_)
                     {
                         std::string err_msg = DAS_FMT_NS::format(
-                            "IpcContext: HandshakeHandler init failed, result=0x{:08X}",
-                            result);
+                            "IpcContext: HandshakeHandler::Create failed");
                         DAS_LOG_ERROR(err_msg.c_str());
                         async_transport_.reset();
                         run_loop_.reset();
                         object_manager_.reset();
-                        return result;
+                        return DAS_E_FAIL;
                     }
 
                     // 8. 设置 HandshakeHandler 的客户端连接回调
@@ -364,17 +362,9 @@ namespace Core
                         run_loop_->RequestStop();
                     }
 
-                    // 3. 关闭 HandshakeHandler
-                    if (handshake_handler_)
-                    {
-                        DasResult handshake_result =
-                            handshake_handler_->Shutdown();
-                        if (handshake_result != DAS_S_OK)
-                        {
-                            result = handshake_result;
-                        }
-                        handshake_handler_.reset();
-                    }
+                    // 3. 关闭 HandshakeHandler（RAII 模式，析构自动调用）
+                    // HandshakeHandler 现在是 RAII 模式，reset() 会触发析构函数自动调用 Uninitialize()
+                    handshake_handler_.reset();
 
                     // 4. 释放 transport
                     async_transport_.reset();

@@ -14,18 +14,15 @@ class HandshakeHandlerTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        handler_ = std::make_unique<HandshakeHandler>();
-        // Initialize with session_id = 0 (等待握手分配)
-        // session_id = 0 表示等待握手时由主进程分配
-        ASSERT_EQ(handler_->Initialize(0), DAS_S_OK);
+        // 使用 RAII 工厂函数创建（session_id = 0 表示等待握手分配）
+        handler_ = HandshakeHandler::Create(0);
+        ASSERT_NE(handler_, nullptr);
     }
 
     void TearDown() override
     {
-        if (handler_)
-        {
-            handler_->Shutdown();
-        }
+        // 析构函数自动调用 Uninitialize()
+        handler_.reset();
     }
 
     // Helper to create a HelloRequest and simulate client registration
