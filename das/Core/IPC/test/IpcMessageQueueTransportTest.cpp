@@ -16,19 +16,21 @@ class IpcMessageQueueTransportTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        transport_ = std::make_unique<IpcTransport>();
         // Generate unique queue names to avoid conflicts
         auto id = std::hash<std::thread::id>{}(std::this_thread::get_id());
         host_queue_name_ = "test_host_" + std::to_string(id);
         plugin_queue_name_ = "test_plugin_" + std::to_string(id);
+
+        // Create transport in server mode
+        auto result = IpcTransport::Create(host_queue_name_, plugin_queue_name_, 4096, 10);
+        EXPECT_TRUE(result.has_value());
+        transport_ = std::move(result.value());
     }
 
     void TearDown() override
     {
-        if (transport_)
-        {
-            transport_->Shutdown();
-        }
+        // Destructor will call Uninitialize() automatically
+        transport_.reset();
     }
 
     ValidatedIPCMessageHeader CreateTestHeader(
@@ -52,47 +54,23 @@ protected:
 
 // ====== Initialize/Shutdown Tests ======
 
-TEST_F(IpcMessageQueueTransportTest, Initialize_Succeeds)
+TEST_F(IpcMessageQueueTransportTest, Create_Succeeds)
 {
-    auto result =
-        transport_->Initialize(host_queue_name_, plugin_queue_name_, 4096, 10);
-    EXPECT_EQ(result, DAS_S_OK);
-}
-
-TEST_F(IpcMessageQueueTransportTest, Shutdown_Succeeds)
-{
-    ASSERT_EQ(
-        transport_->Initialize(host_queue_name_, plugin_queue_name_, 4096, 10),
-        DAS_S_OK);
-    auto result = transport_->Shutdown();
-    EXPECT_EQ(result, DAS_S_OK);
-}
-
-TEST_F(IpcMessageQueueTransportTest, IsConnected_AfterInitialize)
-{
-    ASSERT_EQ(
-        transport_->Initialize(host_queue_name_, plugin_queue_name_, 4096, 10),
-        DAS_S_OK);
+    // Transport already created in SetUp
     EXPECT_TRUE(transport_->IsConnected());
 }
 
-TEST_F(IpcMessageQueueTransportTest, IsConnected_AfterShutdown)
+TEST_F(IpcMessageQueueTransportTest, IsConnected_AfterCreate)
 {
-    ASSERT_EQ(
-        transport_->Initialize(host_queue_name_, plugin_queue_name_, 4096, 10),
-        DAS_S_OK);
-    ASSERT_EQ(transport_->Shutdown(), DAS_S_OK);
-    EXPECT_FALSE(transport_->IsConnected());
+    // Transport already created in SetUp
+    EXPECT_TRUE(transport_->IsConnected());
 }
 
 // ====== Small Message Tests (< 4KB) ======
 
 TEST_F(IpcMessageQueueTransportTest, Send_SmallMessageSucceeds)
 {
-    ASSERT_EQ(
-        transport_->Initialize(host_queue_name_, plugin_queue_name_, 4096, 10),
-        DAS_S_OK);
-
+    // Transport already created in SetUp
     uint8_t      body[] = {1, 2, 3, 4, 5};
     const size_t body_size = sizeof(body);
 
@@ -106,10 +84,7 @@ TEST_F(IpcMessageQueueTransportTest, Send_SmallMessageSucceeds)
 
 TEST_F(IpcMessageQueueTransportTest, Send_SmallMessageWithNullBody)
 {
-    ASSERT_EQ(
-        transport_->Initialize(host_queue_name_, plugin_queue_name_, 4096, 10),
-        DAS_S_OK);
-
+    // Transport already created in SetUp
     auto header = CreateTestHeader(MessageType::REQUEST, 1, 0);
     auto result = transport_->Send(header, nullptr, 0);
     EXPECT_EQ(result, DAS_S_OK);
@@ -117,14 +92,12 @@ TEST_F(IpcMessageQueueTransportTest, Send_SmallMessageWithNullBody)
 
 TEST_F(IpcMessageQueueTransportTest, Receive_SmallMessage)
 {
-    // Server creates queues
-    ASSERT_EQ(
-        transport_->Initialize(host_queue_name_, plugin_queue_name_, 4096, 10),
-        DAS_S_OK);
+    // Server transport already created in SetUp
 
     // Client connects to server's queues (swap direction)
-    auto client = std::make_unique<IpcTransport>();
-    ASSERT_EQ(client->Connect(host_queue_name_, plugin_queue_name_), DAS_S_OK);
+    auto client_result = IpcTransport::Connect(host_queue_name_, plugin_queue_name_);
+    ASSERT_TRUE(client_result.has_value());
+    auto client = std::move(client_result.value());
 
     uint8_t      body[] = {1, 2, 3, 4, 5};
     const size_t body_size = sizeof(body);
@@ -145,7 +118,7 @@ TEST_F(IpcMessageQueueTransportTest, Receive_SmallMessage)
     EXPECT_EQ(recv_header.call_id, header.Raw().call_id);
     EXPECT_EQ(recv_body.size(), body_size);
 
-    client->Shutdown();
+    // Client destructor will call Uninitialize() automatically
 }
 
 // ====== Large Message Tests (> 4KB) ======
@@ -153,10 +126,7 @@ TEST_F(IpcMessageQueueTransportTest, Receive_SmallMessage)
 TEST_F(IpcMessageQueueTransportTest, Send_LargeMessageRequiresSharedMemory)
 {
     // Large message requires shared memory pool
-    ASSERT_EQ(
-        transport_->Initialize(host_queue_name_, plugin_queue_name_, 4096, 10),
-        DAS_S_OK);
-
+    // Transport already created in SetUp
     std::vector<uint8_t> large_body(8192, 0xAB); // 8KB
     auto                 header = CreateTestHeader(
         MessageType::REQUEST,
@@ -205,10 +175,7 @@ TEST_F(IpcMessageQueueTransportTest, Receive_WithoutInitialize)
 
 TEST_F(IpcMessageQueueTransportTest, Receive_Timeout)
 {
-    ASSERT_EQ(
-        transport_->Initialize(host_queue_name_, plugin_queue_name_, 4096, 10),
-        DAS_S_OK);
-
+    // Transport already created in SetUp
     IPCMessageHeader     header;
     std::vector<uint8_t> body;
 
@@ -247,10 +214,7 @@ TEST_F(IpcMessageQueueTransportTest, HeaderV2_FieldsCorrect)
 
 TEST_F(IpcMessageQueueTransportTest, Send_MultipleMessagesSequential)
 {
-    ASSERT_EQ(
-        transport_->Initialize(host_queue_name_, plugin_queue_name_, 4096, 100),
-        DAS_S_OK);
-
+    // Transport already created in SetUp
     for (int i = 0; i < 10; ++i)
     {
         uint8_t body[] = {static_cast<uint8_t>(i)};

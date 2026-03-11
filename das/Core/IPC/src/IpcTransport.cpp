@@ -22,113 +22,144 @@ struct IpcTransport::Impl
     std::string                                         host_queue_name_;
     std::string                                         plugin_queue_name_;
     bool                                                initialized_{false};
+    bool                                                is_server_{false};
 };
 
 IpcTransport::IpcTransport() : impl_(std::make_unique<Impl>()) {}
 
-IpcTransport::~IpcTransport() { Shutdown(); }
-
-DasResult IpcTransport::Initialize(
+IpcTransport::IpcTransport(
     const std::string& host_queue_name,
     const std::string& plugin_queue_name,
     uint32_t           max_message_size,
-    uint32_t           max_messages)
+    uint32_t           max_messages,
+    bool               is_server)
+: impl_(std::make_unique<Impl>())
 {
     impl_->host_queue_name_ = host_queue_name;
     impl_->plugin_queue_name_ = plugin_queue_name;
     impl_->max_message_size_ = max_message_size;
     impl_->max_messages_ = max_messages;
+    impl_->is_server_ = is_server;
 
     try
     {
-        boost::interprocess::message_queue::remove(host_queue_name.c_str());
-        boost::interprocess::message_queue::remove(plugin_queue_name.c_str());
+        if (is_server)
+        {
+            boost::interprocess::message_queue::remove(host_queue_name.c_str());
+            boost::interprocess::message_queue::remove(plugin_queue_name.c_str());
 
-        impl_->host_queue_ =
-            std::make_unique<boost::interprocess::message_queue>(
-                boost::interprocess::create_only,
-                host_queue_name.c_str(),
-                max_messages,
-                max_message_size);
+            impl_->host_queue_ =
+                std::make_unique<boost::interprocess::message_queue>(
+                    boost::interprocess::create_only,
+                    host_queue_name.c_str(),
+                    max_messages,
+                    max_message_size);
 
-        impl_->plugin_queue_ =
-            std::make_unique<boost::interprocess::message_queue>(
-                boost::interprocess::create_only,
-                plugin_queue_name.c_str(),
-                max_messages,
-                max_message_size);
+            impl_->plugin_queue_ =
+                std::make_unique<boost::interprocess::message_queue>(
+                    boost::interprocess::create_only,
+                    plugin_queue_name.c_str(),
+                    max_messages,
+                    max_message_size);
+        }
+        else
+        {
+            // 客户端角色：交换队列方向
+            // host_queue_ 用于 Send，应指向 M2H（Main -> Host）
+            // plugin_queue_ 用于 Receive，应指向 H2M（Host -> Main）
+            impl_->host_queue_ =
+                std::make_unique<boost::interprocess::message_queue>(
+                    boost::interprocess::open_only,
+                    plugin_queue_name.c_str()); // M2H - 客户端发送用
+
+            impl_->plugin_queue_ =
+                std::make_unique<boost::interprocess::message_queue>(
+                    boost::interprocess::open_only,
+                    host_queue_name.c_str()); // H2M - 客户端接收用
+
+            // 从已存在的队列获取配置
+            impl_->max_message_size_ =
+                static_cast<uint32_t>(impl_->host_queue_->get_max_msg_size());
+            impl_->max_messages_ =
+                static_cast<uint32_t>(impl_->host_queue_->get_max_msg());
+        }
 
         impl_->initialized_ = true;
-        return DAS_S_OK;
     }
     catch (const std::exception& e)
     {
         DAS_CORE_LOG_EXCEPTION(e);
-        return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
+        // 初始化失败，impl_ 仍然有效但未初始化
     }
 }
 
-DasResult IpcTransport::Connect(
+IpcTransport::~IpcTransport() { Uninitialize(); }
+
+DAS::Utils::Expected<std::unique_ptr<IpcTransport>> IpcTransport::Create(
+    const std::string& host_queue_name,
+    const std::string& plugin_queue_name,
+    uint32_t           max_message_size,
+    uint32_t           max_messages)
+{
+    auto transport = std::unique_ptr<IpcTransport>(new IpcTransport(
+        host_queue_name,
+        plugin_queue_name,
+        max_message_size,
+        max_messages,
+        true));
+
+    if (!transport->impl_->initialized_)
+    {
+        return DAS::Utils::MakeUnexpected(DAS_E_IPC_MESSAGE_QUEUE_FAILED);
+    }
+
+    return transport;
+}
+
+DAS::Utils::Expected<std::unique_ptr<IpcTransport>> IpcTransport::Connect(
     const std::string& host_queue_name,
     const std::string& plugin_queue_name)
 {
-    impl_->host_queue_name_ = host_queue_name;
-    impl_->plugin_queue_name_ = plugin_queue_name;
+    auto transport = std::unique_ptr<IpcTransport>(new IpcTransport(
+        host_queue_name,
+        plugin_queue_name,
+        0, // 客户端从队列获取配置
+        0,
+        false));
 
-    try
+    if (!transport->impl_->initialized_)
     {
-        // 客户端角色：交换队列方向
-        // host_queue_ 用于 Send，应指向 M2H（Main -> Host）
-        // plugin_queue_ 用于 Receive，应指向 H2M（Host -> Main）
-        impl_->host_queue_ =
-            std::make_unique<boost::interprocess::message_queue>(
-                boost::interprocess::open_only,
-                plugin_queue_name.c_str()); // M2H - 客户端发送用
-
-        impl_->plugin_queue_ =
-            std::make_unique<boost::interprocess::message_queue>(
-                boost::interprocess::open_only,
-                host_queue_name.c_str()); // H2M - 客户端接收用
-
-        // 从已存在的队列获取配置
-        impl_->max_message_size_ =
-            static_cast<uint32_t>(impl_->host_queue_->get_max_msg_size());
-        impl_->max_messages_ =
-            static_cast<uint32_t>(impl_->host_queue_->get_max_msg());
-
-        impl_->initialized_ = true;
-        return DAS_S_OK;
+        return DAS::Utils::MakeUnexpected(DAS_E_IPC_MESSAGE_QUEUE_FAILED);
     }
-    catch (const std::exception& e)
-    {
-        DAS_CORE_LOG_EXCEPTION(e);
-        return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
-    }
+
+    return transport;
 }
 
-DasResult IpcTransport::Shutdown()
+void IpcTransport::Uninitialize()
 {
     if (!impl_->initialized_)
     {
-        return DAS_S_OK;
+        return;
     }
 
     impl_->host_queue_.reset();
     impl_->plugin_queue_.reset();
 
-    try
+    if (impl_->is_server_)
     {
-        boost::interprocess::message_queue::remove(
-            impl_->host_queue_name_.c_str());
-        boost::interprocess::message_queue::remove(
-            impl_->plugin_queue_name_.c_str());
-    }
-    catch (...)
-    {
+        try
+        {
+            boost::interprocess::message_queue::remove(
+                impl_->host_queue_name_.c_str());
+            boost::interprocess::message_queue::remove(
+                impl_->plugin_queue_name_.c_str());
+        }
+        catch (...)
+        {
+        }
     }
 
     impl_->initialized_ = false;
-    return DAS_S_OK;
 }
 
 DasResult IpcTransport::Send(
