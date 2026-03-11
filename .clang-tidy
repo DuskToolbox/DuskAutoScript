@@ -1,0 +1,13 @@
+---
+Checks: >
+  readability-braces-around-statements,
+  misc-const-correctness,
+  performance-move-const-arg,
+  readability-const-return-value,
+  clang-analyzer-*,
+  modernize-*,
+  -modernize-use-trailing-return-type,
+  -modernize-avoid-c-arrays,
+  -modernize-use-transparent-functors
+WarningsAsErrors: ''
+HeaderFilterRegex: '.*'
