@@ -84,8 +84,9 @@ Win32AsyncIpcTransport::Win32AsyncIpcTransport(
 {
 }
 
-// 工厂函数实现
-DAS::Utils::Expected<std::unique_ptr<Win32AsyncIpcTransport>> Win32AsyncIpcTransport::Create(
+// 工厂函数实现（异步版本）
+boost::asio::awaitable<DAS::Utils::Expected<std::unique_ptr<Win32AsyncIpcTransport>>>
+Win32AsyncIpcTransport::CreateAsync(
     boost::asio::io_context& io_context,
     const std::string&       read_endpoint,
     const std::string&       write_endpoint,
@@ -95,30 +96,30 @@ DAS::Utils::Expected<std::unique_ptr<Win32AsyncIpcTransport>> Win32AsyncIpcTrans
     auto instance = std::unique_ptr<Win32AsyncIpcTransport>(
         new Win32AsyncIpcTransport(io_context));
 
-    // 在 io_context 上运行 InitializeAsync 协程
     try
     {
-        auto future = boost::asio::co_spawn(
-            io_context,
-            [&instance, &read_endpoint, &write_endpoint, is_server, max_message_size]() -> boost::asio::awaitable<DasResult>
-            {
-                co_return co_await instance->InitializeAsync(
-                    read_endpoint, write_endpoint, is_server, max_message_size);
-            },
-            boost::asio::use_future);
+        auto result = co_await instance->InitializeAsync(
+            read_endpoint, write_endpoint, is_server, max_message_size);
 
-        auto result = future.get();
         if (result != DAS_S_OK)
         {
-            return DAS::Utils::MakeUnexpected(result);
+            co_return DAS::Utils::MakeUnexpected(result);
         }
     }
     catch (...)
     {
-        return DAS::Utils::MakeUnexpected(DAS_E_IPC_MESSAGE_QUEUE_FAILED);
+        co_return DAS::Utils::MakeUnexpected(DAS_E_IPC_MESSAGE_QUEUE_FAILED);
     }
 
-    return instance;
+    co_return instance;
+}
+
+// 工厂函数实现（未初始化版本）
+std::unique_ptr<Win32AsyncIpcTransport> Win32AsyncIpcTransport::CreateUninitialized(
+    boost::asio::io_context& io_context)
+{
+    return std::unique_ptr<Win32AsyncIpcTransport>(
+        new Win32AsyncIpcTransport(io_context));
 }
 
 Win32AsyncIpcTransport::~Win32AsyncIpcTransport() { Close(); }

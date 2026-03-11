@@ -29,19 +29,27 @@ DAS_CORE_IPC_NS_BEGIN
 class Win32AsyncIpcTransport
 {
 public:
-    /// 工厂函数：创建并初始化 Win32AsyncIpcTransport 实例
+    /// 工厂函数：异步创建并初始化 Win32AsyncIpcTransport 实例
     /// @param io_context boost::asio io_context 引用（生命周期绑定到返回值）
     /// @param read_endpoint 读取端点名称
     /// @param write_endpoint 写入端点名称
     /// @param is_server 是否作为服务端
     /// @param max_message_size 最大消息大小（默认64KB）
-    /// @return Expected 包含 unique_ptr 成功，错误码失败
-    static DAS::Utils::Expected<std::unique_ptr<Win32AsyncIpcTransport>> Create(
+    /// @return awaitable 包含 Expected<unique_ptr> 成功，Expected<error> 失败
+    static boost::asio::awaitable<DAS::Utils::Expected<std::unique_ptr<Win32AsyncIpcTransport>>>
+    CreateAsync(
         boost::asio::io_context& DAS_LIFETIMEBOUND io_context,
         const std::string&       read_endpoint,
         const std::string&       write_endpoint,
         bool                     is_server,
         size_t                   max_message_size = 65536);
+
+    /// 工厂函数：创建未初始化的 Win32AsyncIpcTransport 实例
+    /// @param io_context boost::asio io_context 引用（生命周期绑定到返回值）
+    /// @return unique_ptr 需要后续调用 InitializeAsync() 完成初始化
+    /// @note 用于需要延迟初始化的场景（如 Host 进程在 Run() 时异步连接）
+    static std::unique_ptr<Win32AsyncIpcTransport> CreateUninitialized(
+        boost::asio::io_context& DAS_LIFETIMEBOUND io_context);
 
     ~Win32AsyncIpcTransport();
 

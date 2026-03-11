@@ -253,24 +253,9 @@ namespace Core
                     }
 
                     // 5. 创建 transport（使用 IpcRunLoop 的 io_context）
-                    //    使用工厂函数创建，不在这里连接，延迟到 Run() 时异步连接
-                    auto transport = Win32AsyncIpcTransport::Create(
-                        run_loop_->GetIoContext(),
-                        host_read_queue_,
-                        host_write_queue_,
-                        host_is_server_);
-                    if (!transport.has_value())
-                    {
-                        std::string err_msg = DAS_FMT_NS::format(
-                            "IpcContext: Win32AsyncIpcTransport::Create failed, result=0x{:08X}",
-                            transport.error());
-                        DAS_LOG_ERROR(err_msg.c_str());
-                        shared_memory_.reset();
-                        object_manager_.reset();
-                        run_loop_.reset();
-                        return transport.error();
-                    }
-                    async_transport_ = std::move(*transport);
+                    //    使用 CreateUninitialized 创建未初始化的对象，延迟到 Run() 时异步连接
+                    async_transport_ = Win32AsyncIpcTransport::CreateUninitialized(
+                        run_loop_->GetIoContext());
                     async_transport_->SetSharedMemoryPool(shared_memory_.get());
 
                     // 6. 创建并初始化 IpcCommandHandler

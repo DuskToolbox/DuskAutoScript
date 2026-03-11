@@ -423,36 +423,39 @@ DasResult HostLauncher::ConnectToHost()
         plugin_to_host_pipe);
     DAS_LOG_INFO(msg.c_str());
 
-    // MainProcess 是服务端：创建管道并等待 Host 进程连接
-    // is_server = true 表示服务端角色
-    auto transport = DefaultAsyncIpcTransport::Create(
-        impl_->io_ctx,
-        host_to_plugin_pipe,
-        plugin_to_host_pipe,
-        true,    // is_server = true (MainProcess creates pipes and waits for Host)
-        65536);
-
-    if (!transport.has_value())
+    // MainProcess 是服务端：使用 CreateAsync 异步创建管道
+    // 通过 co_spawn + use_future 在 io_context 上运行协程
+    try
     {
-        std::string err_msg = DAS_FMT_NS::format(
-            "Failed to create Host IPC transport: error={}",
-            transport.error());
-        DAS_LOG_ERROR(err_msg.c_str());
-        return transport.error();
+        auto future = boost::asio::co_spawn(
+            impl_->io_ctx,
+            DefaultAsyncIpcTransport::CreateAsync(
+                impl_->io_ctx,
+                host_to_plugin_pipe,
+                plugin_to_host_pipe,
+                true,    // is_server = true (MainProcess creates pipes and waits for Host)
+                65536),
+            boost::asio::use_future);
+
+        auto transport = future.get();
+        if (!transport.has_value())
+        {
+            std::string err_msg = DAS_FMT_NS::format(
+                "Failed to create Host IPC transport: error={}",
+                transport.error());
+            DAS_LOG_ERROR(err_msg.c_str());
+            return transport.error();
+        }
+
+        impl_->async_transport = std::move(*transport);
     }
-
-    impl_->async_transport = std::move(*transport);
-
-    DasResult result = DAS_S_OK;
-
-    if (result != DAS_S_OK)
+    catch (const std::exception& e)
     {
         std::string err_msg = DAS_FMT_NS::format(
-            "Failed to create/wait for Host IPC: error={}",
-            result);
+            "Failed to create Host IPC transport: exception={}",
+            e.what());
         DAS_LOG_ERROR(err_msg.c_str());
-        impl_->async_transport.reset();
-        return result;
+        return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
 
     DAS_LOG_INFO("Host IPC pipes created and Host connected successfully");
