@@ -2,6 +2,7 @@
 
 #include <boost/dll.hpp>
 #include <das/Gateway/Logger.h>
+#include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
 
 DAS_GATEWAY_NS_BEGIN
@@ -37,9 +38,9 @@ GetCreateIDasReadOnlyStringFromUtf8Function()
                     "Can not load library " DAS_CORE_DLL
                     " .Error code = {}. Message = {}",
                     code.value(),
-                    code.message());
+                    ToString(code.message()));
                 SPDLOG_LOGGER_ERROR(GetLogger(), message.c_str());
-                SPDLOG_LOGGER_ERROR(GetLogger(), ex.what());
+                SPDLOG_LOGGER_ERROR(GetLogger(), ToString(ex.what()).c_str());
             }
             return nullptr;
         }()};
@@ -66,9 +67,9 @@ decltype(&::ParseDasJsonFromString) GetParseDasJsonFromStringFunction()
                     "Can not load library " DAS_CORE_DLL
                     " .Error code = {}. Message = {}",
                     code.value(),
-                    code.message());
+                    ToString(code.message()));
                 SPDLOG_LOGGER_ERROR(GetLogger(), message.c_str());
-                SPDLOG_LOGGER_ERROR(GetLogger(), ex.what());
+                SPDLOG_LOGGER_ERROR(GetLogger(), ToString(ex.what()).c_str());
             }
             return nullptr;
         }()};

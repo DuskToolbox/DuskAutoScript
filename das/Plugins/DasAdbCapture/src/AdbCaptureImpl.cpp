@@ -204,7 +204,7 @@ public:
                         const auto error_message = DAS::fmt::format(
                             "Error happened when executing command {}. Message = {}.",
                             command_,
-                            ec.message());
+                            ToString(ec.message()));
                         DAS_LOG_ERROR(error_message.c_str());
                         if (result_ != DAS_E_TIMEOUT)
                         {

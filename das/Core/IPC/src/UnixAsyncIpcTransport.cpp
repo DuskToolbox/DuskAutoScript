@@ -11,6 +11,7 @@
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <das/DasApi.h>
+#include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
 #include <memory>
 #include <stdexcept>
@@ -56,7 +57,8 @@ UnixAsyncIpcTransport::UnixAsyncIpcTransport(
 }
 
 // 工厂函数实现
-DAS::Utils::Expected<std::unique_ptr<UnixAsyncIpcTransport>> UnixAsyncIpcTransport::Create(
+DAS::Utils::Expected<std::unique_ptr<UnixAsyncIpcTransport>>
+UnixAsyncIpcTransport::Create(
     boost::asio::io_context& io_context,
     const std::string&       read_endpoint,
     const std::string&       write_endpoint,
@@ -68,7 +70,10 @@ DAS::Utils::Expected<std::unique_ptr<UnixAsyncIpcTransport>> UnixAsyncIpcTranspo
 
     // 初始化
     auto result = instance->Initialize(
-        read_endpoint, write_endpoint, is_server, max_message_size);
+        read_endpoint,
+        write_endpoint,
+        is_server,
+        max_message_size);
 
     if (result != DAS_S_OK)
     {
@@ -157,7 +162,7 @@ DasResult UnixAsyncIpcTransport::CreateUnixSocket(
         const auto msg = DAS_FMT_NS::format(
             "socket open failed: path = {}, error = {}",
             socket_path,
-            ec.message());
+            ToString(ec.message()));
         DAS_LOG_ERROR(msg.c_str());
         return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
@@ -181,7 +186,7 @@ DasResult UnixAsyncIpcTransport::CreateUnixSocket(
         const auto msg = DAS_FMT_NS::format(
             "bind failed: path = {}, error = {}",
             socket_path,
-            bind_ec.message());
+            ToString(bind_ec.message()));
         DAS_LOG_ERROR(msg.c_str());
         impl_->socket.close();
         return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
@@ -194,7 +199,7 @@ DasResult UnixAsyncIpcTransport::CreateUnixSocket(
         const auto msg = DAS_FMT_NS::format(
             "listen failed: path = {}, error = {}",
             socket_path,
-            listen_ec.message());
+            ToString(listen_ec.message()));
         DAS_LOG_ERROR(msg.c_str());
         impl_->socket.close();
         unlink(socket_path.c_str());
@@ -210,7 +215,7 @@ DasResult UnixAsyncIpcTransport::CreateUnixSocket(
         const auto msg = DAS_FMT_NS::format(
             "accept failed: path = {}, error = {}",
             socket_path,
-            accept_ec.message());
+            ToString(accept_ec.message()));
         DAS_LOG_ERROR(msg.c_str());
         impl_->socket.close();
         unlink(socket_path.c_str());
@@ -233,7 +238,7 @@ DasResult UnixAsyncIpcTransport::ConnectToUnixSocket(
         const auto msg = DAS_FMT_NS::format(
             "socket open failed: path = {}, error = {}",
             socket_path,
-            ec.message());
+            ToString(ec.message()));
         DAS_LOG_ERROR(msg.c_str());
         return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
@@ -255,7 +260,7 @@ DasResult UnixAsyncIpcTransport::ConnectToUnixSocket(
         const auto msg = DAS_FMT_NS::format(
             "connect failed: path = {}, error = {}",
             socket_path,
-            connect_ec.message());
+            ToString(connect_ec.message()));
         DAS_LOG_ERROR(msg.c_str());
         impl_->socket.close();
         return DAS_E_IPC_MESSAGE_QUEUE_FAILED;

@@ -7,12 +7,13 @@
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/use_future.hpp>
 #include <boost/asio/write.hpp>
+#include <chrono>
 #include <cstring>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <das/DasApi.h>
+#include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
-#include <chrono>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -26,55 +27,59 @@ DAS_CORE_IPC_NS_BEGIN
 inline constexpr uint16_t         FLAG_LARGE_MESSAGE = 0x01;
 inline constexpr std::string_view PIPE_PREFIX = R"(\\.\pipe\)";
 
-namespace {
-// RAII 包装器 - 确保 HANDLE 清理
-class ScopedHandle
+namespace
 {
-    HANDLE handle_ = INVALID_HANDLE_VALUE;
-
-public:
-    explicit ScopedHandle(HANDLE h = INVALID_HANDLE_VALUE) : handle_(h) {}
-    ~ScopedHandle()
+    // RAII 包装器 - 确保 HANDLE 清理
+    class ScopedHandle
     {
-        if (Valid())
-            CloseHandle(handle_);
-    }
+        HANDLE handle_ = INVALID_HANDLE_VALUE;
 
-    ScopedHandle(const ScopedHandle&) = delete;
-    ScopedHandle& operator=(const ScopedHandle&) = delete;
-
-    ScopedHandle(ScopedHandle&& o) noexcept : handle_(o.handle_)
-    {
-        o.handle_ = INVALID_HANDLE_VALUE;
-    }
-
-    ScopedHandle& operator=(ScopedHandle&& o) noexcept
-    {
-        if (this != &o)
+    public:
+        explicit ScopedHandle(HANDLE h = INVALID_HANDLE_VALUE) : handle_(h) {}
+        ~ScopedHandle()
         {
-            Reset();
-            handle_   = o.handle_;
+            if (Valid())
+                CloseHandle(handle_);
+        }
+
+        ScopedHandle(const ScopedHandle&) = delete;
+        ScopedHandle& operator=(const ScopedHandle&) = delete;
+
+        ScopedHandle(ScopedHandle&& o) noexcept : handle_(o.handle_)
+        {
             o.handle_ = INVALID_HANDLE_VALUE;
         }
-        return *this;
-    }
 
-    bool   Valid() const { return handle_ != INVALID_HANDLE_VALUE && handle_ != nullptr; }
-    HANDLE Get() const { return handle_; }
-    HANDLE* Ptr() { return &handle_; }
-    void   Reset(HANDLE h = INVALID_HANDLE_VALUE)
-    {
-        if (Valid())
-            CloseHandle(handle_);
-        handle_ = h;
-    }
-    HANDLE Release()
-    {
-        auto h   = handle_;
-        handle_  = INVALID_HANDLE_VALUE;
-        return h;
-    }
-};
+        ScopedHandle& operator=(ScopedHandle&& o) noexcept
+        {
+            if (this != &o)
+            {
+                Reset();
+                handle_ = o.handle_;
+                o.handle_ = INVALID_HANDLE_VALUE;
+            }
+            return *this;
+        }
+
+        bool Valid() const
+        {
+            return handle_ != INVALID_HANDLE_VALUE && handle_ != nullptr;
+        }
+        HANDLE  Get() const { return handle_; }
+        HANDLE* Ptr() { return &handle_; }
+        void    Reset(HANDLE h = INVALID_HANDLE_VALUE)
+        {
+            if (Valid())
+                CloseHandle(handle_);
+            handle_ = h;
+        }
+        HANDLE Release()
+        {
+            auto h = handle_;
+            handle_ = INVALID_HANDLE_VALUE;
+            return h;
+        }
+    };
 } // namespace
 
 // 私有构造函数（由 Create() 工厂函数调用）
@@ -85,7 +90,8 @@ Win32AsyncIpcTransport::Win32AsyncIpcTransport(
 }
 
 // 工厂函数实现（异步版本）
-boost::asio::awaitable<DAS::Utils::Expected<std::unique_ptr<Win32AsyncIpcTransport>>>
+boost::asio::awaitable<
+    DAS::Utils::Expected<std::unique_ptr<Win32AsyncIpcTransport>>>
 Win32AsyncIpcTransport::CreateAsync(
     boost::asio::io_context& io_context,
     const std::string&       read_endpoint,
@@ -99,7 +105,10 @@ Win32AsyncIpcTransport::CreateAsync(
     try
     {
         auto result = co_await instance->InitializeAsync(
-            read_endpoint, write_endpoint, is_server, max_message_size);
+            read_endpoint,
+            write_endpoint,
+            is_server,
+            max_message_size);
 
         if (result != DAS_S_OK)
         {
@@ -115,8 +124,8 @@ Win32AsyncIpcTransport::CreateAsync(
 }
 
 // 工厂函数实现（未初始化版本）
-std::unique_ptr<Win32AsyncIpcTransport> Win32AsyncIpcTransport::CreateUninitialized(
-    boost::asio::io_context& io_context)
+std::unique_ptr<Win32AsyncIpcTransport>
+Win32AsyncIpcTransport::CreateUninitialized(boost::asio::io_context& io_context)
 {
     return std::unique_ptr<Win32AsyncIpcTransport>(
         new Win32AsyncIpcTransport(io_context));
@@ -133,9 +142,14 @@ DasResult Win32AsyncIpcTransport::Initialize(
     try
     {
         return boost::asio::co_spawn(
-            io_context_,
-            InitializeAsync(read_endpoint, write_endpoint, is_server, max_message_size),
-            boost::asio::use_future).get();
+                   io_context_,
+                   InitializeAsync(
+                       read_endpoint,
+                       write_endpoint,
+                       is_server,
+                       max_message_size),
+                   boost::asio::use_future)
+            .get();
     }
     catch (...)
     {
@@ -241,7 +255,7 @@ DasResult Win32AsyncIpcTransport::CreateNamedPipe(
         const auto msg = DAS_FMT_NS::format(
             "assign pipe handle failed: pipe_name = {}, error = {}",
             pipe_name,
-            ec.message());
+            ToString(ec.message()));
         DAS_LOG_ERROR(msg.c_str());
         return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
@@ -302,7 +316,7 @@ DasResult Win32AsyncIpcTransport::ConnectToNamedPipe(
         const auto msg = DAS_FMT_NS::format(
             "assign pipe handle failed: pipe_name = {}, error = {}",
             pipe_name,
-            ec.message());
+            ToString(ec.message()));
         DAS_LOG_ERROR(msg.c_str());
         return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
@@ -315,11 +329,11 @@ Win32AsyncIpcTransport::OpenPipeAsync(
     const std::string& full_name,
     bool               is_read_pipe)
 {
-    auto   ex = co_await boost::asio::this_coro::executor;
+    auto                      ex = co_await boost::asio::this_coro::executor;
     boost::asio::steady_timer timer(ex);
 
-    constexpr int    max_retries     = 100; // 100 * 10ms = 1 second timeout
-    constexpr auto   retry_interval  = std::chrono::milliseconds(10);
+    constexpr int  max_retries = 100; // 100 * 10ms = 1 second timeout
+    constexpr auto retry_interval = std::chrono::milliseconds(10);
 
     for (int retry = 0; retry < max_retries; ++retry)
     {
@@ -350,23 +364,26 @@ Win32AsyncIpcTransport::OpenPipeAsync(
 
         // 其他错误，直接失败
         const auto msg = DAS_FMT_NS::format(
-            "OpenPipe failed: pipe = {}, error = {}", full_name, err);
+            "OpenPipe failed: pipe = {}, error = {}",
+            full_name,
+            err);
         DAS_LOG_ERROR(msg.c_str());
         co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
 
-    DAS_LOG_ERROR(DAS_FMT_NS::format(
-        "OpenPipe timeout: pipe = {}", full_name).c_str());
+    DAS_LOG_ERROR(
+        DAS_FMT_NS::format("OpenPipe timeout: pipe = {}", full_name).c_str());
     co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
 }
 
-boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::WaitForClientConnectionAsync(
-    HANDLE h_pipe)
+boost::asio::awaitable<DasResult>
+Win32AsyncIpcTransport::WaitForClientConnectionAsync(HANDLE h_pipe)
 {
     // 创建事件用于 OVERLAPPED I/O
-    // 使用 shared_ptr 管理 ScopedHandle，然后用 Release 转移所有权给 object_handle
-    // 避免双重关闭：event 析构不关闭，object_handle 析构时关闭
-    auto event = std::make_shared<ScopedHandle>(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+    // 使用 shared_ptr 管理 ScopedHandle，然后用 Release 转移所有权给
+    // object_handle 避免双重关闭：event 析构不关闭，object_handle 析构时关闭
+    auto event = std::make_shared<ScopedHandle>(
+        CreateEventW(nullptr, TRUE, FALSE, nullptr));
     if (!event->Valid())
     {
         DAS_LOG_ERROR("CreateEvent failed for ConnectNamedPipe");
@@ -398,8 +415,8 @@ boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::WaitForClientConnectio
         co_return DAS_S_OK;
     }
 
-    DAS_LOG_ERROR(DAS_FMT_NS::format(
-        "ConnectNamedPipe failed: error = {}", err).c_str());
+    DAS_LOG_ERROR(
+        DAS_FMT_NS::format("ConnectNamedPipe failed: error = {}", err).c_str());
     co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
 }
 
@@ -413,22 +430,26 @@ Win32AsyncIpcTransport::CreateNamedPipeAsync(
         DAS_FMT_NS::format("{}{}", PIPE_PREFIX, pipe_name);
 
     // 1. 创建管道（OVERLAPPED 模式）
-    ScopedHandle h_pipe(::CreateNamedPipeA(
-        full_pipe_name.c_str(),
-        is_read_pipe ? PIPE_ACCESS_INBOUND | FILE_FLAG_OVERLAPPED
-                     : PIPE_ACCESS_OUTBOUND | FILE_FLAG_OVERLAPPED,
-        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-        1,
-        static_cast<DWORD>(max_message_size_),
-        static_cast<DWORD>(max_message_size_),
-        0,
-        nullptr));
+    ScopedHandle h_pipe(
+        ::CreateNamedPipeA(
+            full_pipe_name.c_str(),
+            is_read_pipe ? PIPE_ACCESS_INBOUND | FILE_FLAG_OVERLAPPED
+                         : PIPE_ACCESS_OUTBOUND | FILE_FLAG_OVERLAPPED,
+            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+            1,
+            static_cast<DWORD>(max_message_size_),
+            static_cast<DWORD>(max_message_size_),
+            0,
+            nullptr));
 
     if (!h_pipe.Valid())
     {
-        DAS_LOG_ERROR(DAS_FMT_NS::format(
-            "CreateNamedPipe failed: pipe_name = {}, error = {}",
-            pipe_name, GetLastError()).c_str());
+        DAS_LOG_ERROR(
+            DAS_FMT_NS::format(
+                "CreateNamedPipe failed: pipe_name = {}, error = {}",
+                pipe_name,
+                GetLastError())
+                .c_str());
         co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
 
@@ -477,7 +498,8 @@ boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::InitializeAsync(
         }
         HANDLE h_write = *h_write_ptr;
 
-        auto read_result = co_await CreateNamedPipeAsync(read_endpoint, true, true);
+        auto read_result =
+            co_await CreateNamedPipeAsync(read_endpoint, true, true);
         if (auto* err = std::get_if<DasResult>(&read_result))
         {
             CloseHandle(h_write);
@@ -516,14 +538,16 @@ boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::InitializeAsync(
     // === 客户端 (Host): 连接管道 ===
     is_server_ = false;
 
-    const std::string read_full_name = DAS_FMT_NS::format("{}{}", PIPE_PREFIX, read_endpoint);
-    auto              read_result    = co_await OpenPipeAsync(read_full_name, true);
+    const std::string read_full_name =
+        DAS_FMT_NS::format("{}{}", PIPE_PREFIX, read_endpoint);
+    auto read_result = co_await OpenPipeAsync(read_full_name, true);
     if (auto* err = std::get_if<DasResult>(&read_result))
         co_return *err;
     HANDLE h_read = std::get<HANDLE>(read_result);
 
-    const std::string write_full_name = DAS_FMT_NS::format("{}{}", PIPE_PREFIX, write_endpoint);
-    auto              write_result    = co_await OpenPipeAsync(write_full_name, false);
+    const std::string write_full_name =
+        DAS_FMT_NS::format("{}{}", PIPE_PREFIX, write_endpoint);
+    auto write_result = co_await OpenPipeAsync(write_full_name, false);
     if (auto* err = std::get_if<DasResult>(&write_result))
     {
         CloseHandle(h_read);
@@ -560,12 +584,15 @@ Win32AsyncIpcTransport::ReceiveCoroutine()
     // Header 大小固定，使用 std::array 避免堆分配
     std::array<uint8_t, sizeof(IPCMessageHeader)> header_buffer{};
 
-    try {
+    try
+    {
         co_await boost::asio::async_read(
             read_pipe_,
             boost::asio::buffer(header_buffer),
             boost::asio::use_awaitable);
-    } catch (const std::exception&) {
+    }
+    catch (const std::exception&)
+    {
         throw;
     }
 
