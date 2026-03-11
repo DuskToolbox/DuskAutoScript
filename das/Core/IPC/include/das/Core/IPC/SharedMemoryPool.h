@@ -98,7 +98,7 @@ public:
     DasResult CreatePool(const std::string& pool_id, size_t size);
     DasResult DestroyPool(const std::string& pool_id);
 
-    DasResult GetPool(const std::string& pool_id, SharedMemoryPool* DAS_LIFETIMEBOUND& pool);
+    DasResult GetPool(const std::string& pool_id, SharedMemoryPool*& pool);
 
     static std::string MakePoolName(uint16_t host_id, uint16_t pool_id);
 

@@ -44,7 +44,7 @@ public:
         std::vector<uint8_t>& out_body,
         uint32_t              timeout_ms);
 
-    DasResult SetSharedMemoryPool(SharedMemoryPool* DAS_LIFETIMEBOUND pool);
+    DasResult SetSharedMemoryPool(SharedMemoryPool* pool);
 
     bool IsConnected() const;
 

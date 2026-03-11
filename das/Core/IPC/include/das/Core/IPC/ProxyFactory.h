@@ -65,7 +65,7 @@ public:
      * @param run_loop 运行循环指针
      * @return DasResult 操作结果
      */
-    DasResult SetRunLoop(IpcRunLoop* DAS_LIFETIMEBOUND run_loop);
+    DasResult SetRunLoop(IpcRunLoop* run_loop);
 
     /**
      * @brief 创建指定类型的 Proxy 实例
