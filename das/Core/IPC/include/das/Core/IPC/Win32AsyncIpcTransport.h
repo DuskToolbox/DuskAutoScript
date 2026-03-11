@@ -80,8 +80,6 @@ public:
         const std::string& read_endpoint,
         const std::string& write_endpoint);
 
-    void Close();
-
     [[nodiscard]]
     bool IsConnected() const;
 
@@ -108,6 +106,9 @@ public:
 private:
     // 私有构造函数（由 Create() 工厂函数调用）
     explicit Win32AsyncIpcTransport(boost::asio::io_context& DAS_LIFETIMEBOUND io_context);
+
+    // 私有清理函数 - 只能由析构函数调用
+    void Uninitialize();
 
     DasResult CreateNamedPipe(const std::string& pipe_name, bool is_read_pipe);
     DasResult ConnectToNamedPipe(const std::string& pipe_name, bool is_read_pipe);

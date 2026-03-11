@@ -122,7 +122,7 @@ std::unique_ptr<Win32AsyncIpcTransport> Win32AsyncIpcTransport::CreateUninitiali
         new Win32AsyncIpcTransport(io_context));
 }
 
-Win32AsyncIpcTransport::~Win32AsyncIpcTransport() { Close(); }
+Win32AsyncIpcTransport::~Win32AsyncIpcTransport() { Uninitialize(); }
 
 DasResult Win32AsyncIpcTransport::Initialize(
     const std::string& read_endpoint,
@@ -168,7 +168,7 @@ DasResult Win32AsyncIpcTransport::Connect(
     return DAS_S_OK;
 }
 
-void Win32AsyncIpcTransport::Close()
+void Win32AsyncIpcTransport::Uninitialize()
 {
     boost::system::error_code ec;
 
