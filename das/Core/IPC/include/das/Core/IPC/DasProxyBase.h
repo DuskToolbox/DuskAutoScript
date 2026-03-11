@@ -4,6 +4,7 @@
 #include <das/Core/IPC/IPCProxyBase.h>
 #include <das/Core/IPC/ObjectManager.h>
 #include <das/IDasBase.h>
+#include <das/DasConfig.h>
 
 #include <das/Core/IPC/Config.h>
 
@@ -28,7 +29,7 @@ public:
     }
 
     [[nodiscard]]
-    DistributedObjectManager* GetObjectManager() const noexcept
+    DistributedObjectManager* GetObjectManager() const noexcept DAS_LIFETIMEBOUND
     {
         return object_manager_;
     }

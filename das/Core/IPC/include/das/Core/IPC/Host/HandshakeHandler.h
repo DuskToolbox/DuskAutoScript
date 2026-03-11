@@ -9,6 +9,7 @@
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcResponseSender.h>
 #include <das/DasApi.h>
+#include <das/DasConfig.h>
 #include <das/IDasBase.h>
 #include <das/Utils/fmt.h>
 #include <functional>
@@ -193,7 +194,7 @@ namespace Core
                  * @param session_id 客户端 session_id
                  * @return 客户端信息指针，如果不存在返回 nullptr
                  */
-                const ConnectedClient* GetClient(uint16_t session_id) const;
+                const ConnectedClient* GetClient(uint16_t session_id) const DAS_LIFETIMEBOUND;
 
                 /**
                  * @brief 获取所有已连接的客户端
