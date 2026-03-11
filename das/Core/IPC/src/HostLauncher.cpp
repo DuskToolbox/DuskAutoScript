@@ -423,16 +423,27 @@ DasResult HostLauncher::ConnectToHost()
         plugin_to_host_pipe);
     DAS_LOG_INFO(msg.c_str());
 
-    impl_->async_transport = std::make_unique<DefaultAsyncIpcTransport>(impl_->io_ctx);
-
     // MainProcess 是服务端：创建管道并等待 Host 进程连接
     // is_server = true 表示服务端角色
-    DasResult result =
-        impl_->async_transport->Initialize(
-            host_to_plugin_pipe,
-            plugin_to_host_pipe,
-            true,    // is_server = true (MainProcess creates pipes and waits for Host)
-            65536);
+    auto transport = DefaultAsyncIpcTransport::Create(
+        impl_->io_ctx,
+        host_to_plugin_pipe,
+        plugin_to_host_pipe,
+        true,    // is_server = true (MainProcess creates pipes and waits for Host)
+        65536);
+
+    if (!transport.has_value())
+    {
+        std::string err_msg = DAS_FMT_NS::format(
+            "Failed to create Host IPC transport: error={}",
+            transport.error());
+        DAS_LOG_ERROR(err_msg.c_str());
+        return transport.error();
+    }
+
+    impl_->async_transport = std::move(*transport);
+
+    DasResult result = DAS_S_OK;
 
     if (result != DAS_S_OK)
     {

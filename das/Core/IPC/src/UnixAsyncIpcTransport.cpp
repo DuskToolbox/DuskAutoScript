@@ -48,10 +48,34 @@ struct UnixAsyncIpcTransport::Impl
     }
 };
 
+// 私有构造函数（由 Create() 工厂函数调用）
 UnixAsyncIpcTransport::UnixAsyncIpcTransport(
     boost::asio::io_context& io_context)
     : impl_(std::make_unique<Impl>(io_context))
 {
+}
+
+// 工厂函数实现
+DAS::Utils::Expected<std::unique_ptr<UnixAsyncIpcTransport>> UnixAsyncIpcTransport::Create(
+    boost::asio::io_context& io_context,
+    const std::string&       read_endpoint,
+    const std::string&       write_endpoint,
+    bool                     is_server,
+    size_t                   max_message_size)
+{
+    auto instance = std::unique_ptr<UnixAsyncIpcTransport>(
+        new UnixAsyncIpcTransport(io_context));
+
+    // 初始化
+    auto result = instance->Initialize(
+        read_endpoint, write_endpoint, is_server, max_message_size);
+
+    if (result != DAS_S_OK)
+    {
+        return DAS::Utils::MakeUnexpected(result);
+    }
+
+    return instance;
 }
 
 UnixAsyncIpcTransport::~UnixAsyncIpcTransport() { Close(); }

@@ -167,6 +167,8 @@ public:
 
     /// 默认初始化（只创建 io_context 基础设施，不持有 transport）
     /// MainProcess 模式使用此版本
+    /// @deprecated 内部使用，由 Create() 工厂函数自动调用
+    [[deprecated("Use Create() instead")]]
     DasResult Initialize();
 
     // 阻塞式消息循环

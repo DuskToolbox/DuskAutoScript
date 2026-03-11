@@ -77,10 +77,48 @@ public:
 };
 } // namespace
 
+// 私有构造函数（由 Create() 工厂函数调用）
 Win32AsyncIpcTransport::Win32AsyncIpcTransport(
     boost::asio::io_context& io_context)
     : io_context_(io_context), read_pipe_(io_context), write_pipe_(io_context)
 {
+}
+
+// 工厂函数实现
+DAS::Utils::Expected<std::unique_ptr<Win32AsyncIpcTransport>> Win32AsyncIpcTransport::Create(
+    boost::asio::io_context& io_context,
+    const std::string&       read_endpoint,
+    const std::string&       write_endpoint,
+    bool                     is_server,
+    size_t                   max_message_size)
+{
+    auto instance = std::unique_ptr<Win32AsyncIpcTransport>(
+        new Win32AsyncIpcTransport(io_context));
+
+    // 在 io_context 上运行 InitializeAsync 协程
+    try
+    {
+        auto future = boost::asio::co_spawn(
+            io_context,
+            [&instance, &read_endpoint, &write_endpoint, is_server, max_message_size]() -> boost::asio::awaitable<DasResult>
+            {
+                co_return co_await instance->InitializeAsync(
+                    read_endpoint, write_endpoint, is_server, max_message_size);
+            },
+            boost::asio::use_future);
+
+        auto result = future.get();
+        if (result != DAS_S_OK)
+        {
+            return DAS::Utils::MakeUnexpected(result);
+        }
+    }
+    catch (...)
+    {
+        return DAS::Utils::MakeUnexpected(DAS_E_IPC_MESSAGE_QUEUE_FAILED);
+    }
+
+    return instance;
 }
 
 Win32AsyncIpcTransport::~Win32AsyncIpcTransport() { Close(); }

@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
+#include <das/Utils/Expected.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <das/DasExport.h>
 #include <memory>
@@ -50,11 +51,19 @@ DAS_CORE_IPC_NS_BEGIN
 class UnixAsyncIpcTransport
 {
 public:
-    /**
-     * @brief 构造函数
-     * @param io_context boost::asio io_context 引用
-     */
-    explicit UnixAsyncIpcTransport(boost::asio::io_context& DAS_LIFETIMEBOUND io_context);
+    /// 工厂函数：创建并初始化 UnixAsyncIpcTransport 实例
+    /// @param io_context boost::asio io_context 引用（生命周期绑定到返回值）
+    /// @param read_endpoint 读取端点名称
+    /// @param write_endpoint 写入端点名称
+    /// @param is_server 是否作为服务端
+    /// @param max_message_size 最大消息大小（默认64KB）
+    /// @return Expected 包含 unique_ptr 成功，错误码失败
+    static DAS::Utils::Expected<std::unique_ptr<UnixAsyncIpcTransport>> Create(
+        boost::asio::io_context& DAS_LIFETIMEBOUND io_context,
+        const std::string&       read_endpoint,
+        const std::string&       write_endpoint,
+        bool                     is_server,
+        size_t                   max_message_size = 65536);
 
     /**
      * @brief 析构函数
@@ -75,12 +84,14 @@ public:
 
     /**
      * @brief 初始化传输层（服务端）
+     * @deprecated 使用 Create() 工厂函数代替
      * @param endpoint_name 端点名称（Unix Domain Socket 文件路径）
      * @param is_server 是否为服务端模式
      * @param max_message_size 最大消息大小（默认 64KB）
      * @return DAS_S_OK 成功
      * @return DAS_E_IPC_MESSAGE_QUEUE_FAILED 创建失败
      */
+    [[deprecated("Use Create() instead")]]
     DasResult Initialize(
         const std::string& read_endpoint,
         const std::string& write_endpoint,
@@ -118,6 +129,10 @@ public:
      */
     void SetSharedMemoryPool(SharedMemoryPool* DAS_LIFETIMEBOUND pool);
 
+    /// 获取 io_context 引用
+    /// @return io_context 引用，生命周期绑定到 this
+    boost::asio::io_context& GetIoContext() DAS_LIFETIMEBOUND { return impl_->io_context; }
+
     // === 协程接口（用于事件驱动模式） ===
 
     /**
@@ -137,6 +152,9 @@ public:
         size_t                           body_size);
 
 private:
+    // 私有构造函数（由 Create() 工厂函数调用）
+    explicit UnixAsyncIpcTransport(boost::asio::io_context& DAS_LIFETIMEBOUND io_context);
+
     /**
      * @brief 创建 Unix Domain Socket（服务端）
      * @param socket_path Socket 文件路径

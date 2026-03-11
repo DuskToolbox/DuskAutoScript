@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
+#include <das/Utils/Expected.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <das/DasExport.h>
 #include <memory>
@@ -28,7 +29,20 @@ DAS_CORE_IPC_NS_BEGIN
 class Win32AsyncIpcTransport
 {
 public:
-    explicit Win32AsyncIpcTransport(boost::asio::io_context& DAS_LIFETIMEBOUND io_context);
+    /// 工厂函数：创建并初始化 Win32AsyncIpcTransport 实例
+    /// @param io_context boost::asio io_context 引用（生命周期绑定到返回值）
+    /// @param read_endpoint 读取端点名称
+    /// @param write_endpoint 写入端点名称
+    /// @param is_server 是否作为服务端
+    /// @param max_message_size 最大消息大小（默认64KB）
+    /// @return Expected 包含 unique_ptr 成功，错误码失败
+    static DAS::Utils::Expected<std::unique_ptr<Win32AsyncIpcTransport>> Create(
+        boost::asio::io_context& DAS_LIFETIMEBOUND io_context,
+        const std::string&       read_endpoint,
+        const std::string&       write_endpoint,
+        bool                     is_server,
+        size_t                   max_message_size = 65536);
+
     ~Win32AsyncIpcTransport();
 
     Win32AsyncIpcTransport(const Win32AsyncIpcTransport&) = delete;
@@ -38,6 +52,9 @@ public:
     Win32AsyncIpcTransport& operator=(Win32AsyncIpcTransport&&) noexcept =
         default;
 
+    /// 初始化（服务端）
+    /// @deprecated 使用 Create() 工厂函数代替
+    [[deprecated("Use Create() instead")]]
     DasResult Initialize(
         const std::string& read_endpoint,
         const std::string& write_endpoint,
@@ -65,6 +82,10 @@ public:
 
     void SetSharedMemoryPool(SharedMemoryPool* DAS_LIFETIMEBOUND pool);
 
+    /// 获取 io_context 引用
+    /// @return io_context 引用，生命周期绑定到 this
+    boost::asio::io_context& GetIoContext() DAS_LIFETIMEBOUND { return io_context_; }
+
     /// 直接返回协程接口（用于 IpcRunLoop 的事件驱动模式）
     [[nodiscard]]
     boost::asio::awaitable<std::variant<DasResult, AsyncIpcMessage>>
@@ -77,6 +98,9 @@ public:
         size_t                           body_size);
 
 private:
+    // 私有构造函数（由 Create() 工厂函数调用）
+    explicit Win32AsyncIpcTransport(boost::asio::io_context& DAS_LIFETIMEBOUND io_context);
+
     DasResult CreateNamedPipe(const std::string& pipe_name, bool is_read_pipe);
     DasResult ConnectToNamedPipe(const std::string& pipe_name, bool is_read_pipe);
 
