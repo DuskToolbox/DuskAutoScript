@@ -15,6 +15,7 @@
 #include <unordered_map>
 
 #include <das/Core/IPC/Config.h>
+#include <das/DasConfig.h>
 
 DAS_CORE_IPC_NS_BEGIN
 // 前置声明
@@ -45,7 +46,7 @@ public:
     DasResult Initialize(
         DistributedObjectManager* object_manager,
         RemoteObjectRegistry*     object_registry,
-        IpcRunLoop*               run_loop = nullptr);
+        IpcRunLoop* DAS_LIFETIMEBOUND run_loop = nullptr);
 
     /**
      * @brief 检查是否已初始化
@@ -57,14 +58,14 @@ public:
      * @brief 获取当前的 IPC 运行循环
      * @return IpcRunLoop* 运行循环指针，如果未初始化则返回 nullptr
      */
-    IpcRunLoop* GetRunLoop() const { return run_loop_; }
+    IpcRunLoop* DAS_LIFETIMEBOUND GetRunLoop() const { return run_loop_; }
 
     /**
      * @brief 设置 IPC 运行循环
      * @param run_loop 运行循环指针
      * @return DasResult 操作结果
      */
-    DasResult SetRunLoop(IpcRunLoop* run_loop);
+    DasResult SetRunLoop(IpcRunLoop* DAS_LIFETIMEBOUND run_loop);
 
     /**
      * @brief 创建指定类型的 Proxy 实例

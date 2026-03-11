@@ -18,6 +18,7 @@
 #include <vector>
 
 #include <das/Core/IPC/Config.h>
+#include <das/DasConfig.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <optional>
 #include <variant>
@@ -27,7 +28,7 @@ DAS_CORE_IPC_NS_BEGIN
 class Win32AsyncIpcTransport
 {
 public:
-    explicit Win32AsyncIpcTransport(boost::asio::io_context& io_context);
+    explicit Win32AsyncIpcTransport(boost::asio::io_context& DAS_LIFETIMEBOUND io_context);
     ~Win32AsyncIpcTransport();
 
     Win32AsyncIpcTransport(const Win32AsyncIpcTransport&) = delete;
@@ -62,7 +63,7 @@ public:
     [[nodiscard]]
     std::string GetEndpointName() const;
 
-    void SetSharedMemoryPool(SharedMemoryPool* pool);
+    void SetSharedMemoryPool(SharedMemoryPool* DAS_LIFETIMEBOUND pool);
 
     /// 直接返回协程接口（用于 IpcRunLoop 的事件驱动模式）
     [[nodiscard]]

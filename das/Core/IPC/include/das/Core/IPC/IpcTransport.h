@@ -13,6 +13,7 @@
 #include <vector>
 
 #include <das/Core/IPC/Config.h>
+#include <das/DasConfig.h>
 
 DAS_CORE_IPC_NS_BEGIN
 class SharedMemoryPool;
@@ -43,7 +44,7 @@ public:
         std::vector<uint8_t>& out_body,
         uint32_t              timeout_ms);
 
-    DasResult SetSharedMemoryPool(SharedMemoryPool* pool);
+    DasResult SetSharedMemoryPool(SharedMemoryPool* DAS_LIFETIMEBOUND pool);
 
     bool IsConnected() const;
 

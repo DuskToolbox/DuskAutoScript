@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <das/Core/IPC/Config.h>
+#include <das/DasConfig.h>
 
 // Forward declarations for platform-specific transport
 #ifdef _WIN32
@@ -40,13 +41,13 @@ public:
      * @brief 构造函数
      * @param transport Win32 异步 IPC 传输层（必须有效）
      */
-    explicit IpcResponseSender(Win32AsyncIpcTransport& transport);
+    explicit IpcResponseSender(Win32AsyncIpcTransport& DAS_LIFETIMEBOUND transport);
 #else
     /**
      * @brief 构造函数
      * @param transport Unix 异步 IPC 传输层（必须有效）
      */
-    explicit IpcResponseSender(UnixAsyncIpcTransport& transport);
+    explicit IpcResponseSender(UnixAsyncIpcTransport& DAS_LIFETIMEBOUND transport);
 #endif
 
     /**

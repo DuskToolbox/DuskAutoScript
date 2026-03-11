@@ -12,6 +12,7 @@
 #include <thread>
 
 #include <das/Core/IPC/Config.h>
+#include <das/DasConfig.h>
 
 DAS_CORE_IPC_NS_BEGIN
 
@@ -39,7 +40,7 @@ struct ConnectionInfo
     bool                       is_alive;
     uint64_t                   last_heartbeat_ms;
     DasPtr<IHostLauncher>      launcher;  ///< HostLauncher 实例（DasPtr 持有引用）
-    SharedMemoryPool*          shm_pool = nullptr;  ///< 共享内存池（非拥有指针）
+    SharedMemoryPool* DAS_LIFETIMEBOUND shm_pool = nullptr;  ///< 共享内存池（非拥有指针）
 };
 
 /**
@@ -142,7 +143,7 @@ public:
      * @param session_id 目标会话ID
      * @return DefaultAsyncIpcTransport* 传输层指针（不持有所有权），不存在返回 nullptr
      */
-    DefaultAsyncIpcTransport* GetTransport(uint16_t session_id) const;
+    DefaultAsyncIpcTransport* DAS_LIFETIMEBOUND GetTransport(uint16_t session_id) const;
 
     /**
      * @brief 更新连接的活跃状态
