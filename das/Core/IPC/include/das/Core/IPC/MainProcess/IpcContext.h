@@ -2,7 +2,11 @@
 #define DAS_CORE_IPC_MAIN_PROCESS_IPC_CONTEXT_H
 
 #include <chrono>
+#include <das/Core/IPC/DistributedObjectManager.h>
+#include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
+#include <das/Core/IPC/ProxyFactory.h>
+#include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/DasApi.h>
 #include <das/IDasAsyncLoadPluginOperation.h>
 #include <memory>
@@ -17,15 +21,10 @@ namespace Core
         } // namespace MainProcess
 
         // 前置声明（在 IPC 命名空间内）
-        class DistributedObjectManager;
-        class ProxyFactory;
-        class RemoteObjectRegistry;
         class HostLauncher;
 
         namespace MainProcess
         {
-            class IpcContextImpl;
-
             /**
              * @brief 主进程 IPC 上下文实现
              *
@@ -63,7 +62,8 @@ namespace Core
                     IHostLauncher*                 host_launcher,
                     const char*                    u8_plugin_path,
                     IDasAsyncLoadPluginOperation** pp_out_operation,
-                    std::chrono::milliseconds      timeout = std::chrono::seconds(30)) override;
+                    std::chrono::milliseconds      timeout =
+                        std::chrono::seconds(30)) override;
 
                 void PostCallback(IDasAsyncCallback* callback) override;
 
@@ -78,7 +78,11 @@ namespace Core
                 std::vector<uint16_t> GetConnectedSessions() override;
 
             private:
-                std::unique_ptr<IpcContextImpl> impl_;
+                void Uninitialize();
+
+                std::unique_ptr<DistributedObjectManager> object_manager_;
+                std::unique_ptr<IpcRunLoop>               runloop_;
+                bool is_initialized_ = false;
             };
 
         } // namespace MainProcess

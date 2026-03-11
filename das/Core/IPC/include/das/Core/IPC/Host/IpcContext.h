@@ -1,12 +1,20 @@
 #ifndef DAS_CORE_IPC_HOST_IPC_CONTEXT_H
 #define DAS_CORE_IPC_HOST_IPC_CONTEXT_H
 
+#include <atomic>
 #include <das/Core/IPC/DefaultAsyncIpcTransport.h>
+#include <das/Core/IPC/DistributedObjectManager.h>
+#include <das/Core/IPC/Host/HandshakeHandler.h>
 #include <das/Core/IPC/Host/IIpcContext.h>
+#include <das/Core/IPC/IpcCommandHandler.h>
+#include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/ObjectId.h>
+#include <das/Core/IPC/SharedMemoryPool.h>
 #include <das/DasApi.h>
+#include <das/DasPtr.hpp>
 #include <filesystem>
 #include <memory>
+#include <thread>
 
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -18,14 +26,8 @@ namespace Core
 {
     namespace IPC
     {
-        // 前置声明（在 IPC 命名空间内）
-        class IpcRunLoop;
-        class IpcCommandHandler;
-
         namespace Host
         {
-            class IpcContextImpl;
-
             /**
              * @brief Host 进程 IPC 上下文实现
              *
@@ -121,7 +123,42 @@ namespace Core
                     ObjectId& out_object_id);
 
             private:
-                std::unique_ptr<IpcContextImpl> impl_;
+                void Uninitialize();
+
+                DasResult Initialize();
+                DasResult InitializeAsHost();
+                DasResult CreateHostResources();
+
+                boost::asio::awaitable<void> ReceiveLoopCoroutine();
+
+                void StartParentProcessMonitor();
+                void StopParentProcessMonitor();
+
+                IpcContextConfig                          config_;
+                uint16_t                                  session_id_ = 0;
+                std::unique_ptr<DistributedObjectManager> object_manager_;
+                std::unique_ptr<IpcRunLoop>               run_loop_;
+                std::unique_ptr<IpcCommandHandler>        command_handler_;
+                std::unique_ptr<HandshakeHandler>         handshake_handler_;
+                std::unique_ptr<SharedMemoryPool>         shared_memory_;
+                std::unique_ptr<DefaultAsyncIpcTransport> async_transport_;
+
+                bool is_initialized_ = false;
+                bool is_connected_ = false;
+                bool is_running_ = false;
+
+                OnHandshakeComplete handshake_complete_handler_;
+                void*               handshake_user_data_ = nullptr;
+
+                uint32_t host_pid_ = 0;
+                uint32_t main_pid_ = 0;
+
+                std::string host_read_queue_;
+                std::string host_write_queue_;
+                bool        host_is_server_ = false;
+
+                std::thread       parent_monitor_thread_;
+                std::atomic<bool> parent_monitor_running_{false};
             };
 
         } // namespace Host
