@@ -30,3 +30,30 @@ void SetRunLoop(IpcRunLoop& DAS_LIFETIMEBOUND run_loop);
 2. 必须放在**变量名之后**
 3. 构造函数参数可以使用
 4. 返回指针/引用的 getter 函数参数可以使用
+
+## 代码格式化规则
+
+每次编辑 C++ 文件（`.cpp`、`.h`、`.hpp`）后，**必须**调用 clang-format 格式化文件：
+
+```bash
+clang-format -i <文件路径>
+```
+
+### 禁止单行 if 语句
+
+**严禁**使用单行 if 语句，必须使用花括号：
+
+```cpp
+// ✗ 禁止
+if (x) return;
+if (x) doSomething();
+
+// ✓ 正确
+if (x) {
+    return;
+}
+
+if (x) {
+    doSomething();
+}
+```

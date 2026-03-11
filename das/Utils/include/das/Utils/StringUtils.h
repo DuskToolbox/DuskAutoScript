@@ -3,6 +3,7 @@
 
 #include <das/Utils/Config.h>
 #include <das/Utils/Expected.h>
+#include <filesystem>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -102,6 +103,151 @@ constexpr auto& operator""_das_as_char()
 {
     return DAS::Utils::make_as_char_buffer<L>(
         std::make_index_sequence<decltype(L)::size>());
+}
+
+namespace Details
+{
+    // U8String: A wrapper class for UTF-8 encoded strings
+    // Provides safe handling and conversion of UTF-8 string data
+    // with proper move semantics and explicit conversions
+    class U8String
+    {
+    public:
+        // Default constructor
+        U8String() = default;
+
+        // Constructor from std::u8string (copy)
+        explicit U8String(const std::u8string& str) noexcept : value(str) {}
+
+        // Constructor from std::u8string (move)
+        explicit U8String(std::u8string&& str) noexcept : value(std::move(str))
+        {
+        }
+
+        // Constructor from std::string (assumes UTF-8 encoding)
+        // Note: Caller must ensure input is valid UTF-8
+        explicit U8String(const std::string& str) noexcept
+            : value(reinterpret_cast<const char8_t*>(str.data()), str.size())
+        {
+        }
+
+        // Copy constructor (defaulted)
+        U8String(const U8String&) noexcept = default;
+
+        // Move constructor (defaulted)
+        U8String(U8String&&) noexcept = default;
+
+        // Copy assignment operator (defaulted)
+        U8String& operator=(const U8String&) noexcept = default;
+
+        // Move assignment operator (defaulted)
+        U8String& operator=(U8String&&) noexcept = default;
+
+        // Destructor (defaulted)
+        ~U8String() = default;
+
+        // Get the underlying std::u8string (const reference)
+        [[nodiscard]]
+        const std::u8string& Get() const noexcept
+        {
+            return value;
+        }
+
+        // Get C-style string pointer (null-terminated)
+        [[nodiscard]]
+        const char* CStr() const noexcept
+        {
+            return reinterpret_cast<const char*>(value.c_str());
+        }
+
+        // Get string view for efficient read-only access
+        [[nodiscard]]
+        std::string_view StringView() const noexcept
+        {
+            return {reinterpret_cast<const char*>(value.data()), value.size()};
+        }
+
+        // Convert to std::string (reinterprets bytes)
+        [[nodiscard]]
+        std::string ToString() const noexcept
+        {
+            return std::string(
+                reinterpret_cast<const char*>(value.data()),
+                value.size());
+        }
+
+        // Check if string is empty
+        [[nodiscard]]
+        bool Empty() const noexcept
+        {
+            return value.empty();
+        }
+
+        // Get string size
+        [[nodiscard]]
+        std::size_t Size() const noexcept
+        {
+            return value.size();
+        }
+
+        // Clear the string
+        void Clear() noexcept { value.clear(); }
+
+        // Swap with another U8String
+        void Swap(U8String& other) noexcept { value.swap(other.value); }
+
+        // Equality comparison
+        [[nodiscard]]
+        bool operator==(const U8String& other) const noexcept
+        {
+            return value == other.value;
+        }
+
+        [[nodiscard]]
+        bool operator!=(const U8String& other) const noexcept
+        {
+            return value != other.value;
+        }
+
+        // Comparison with std::u8string
+        [[nodiscard]]
+        bool operator==(const std::u8string& other) const noexcept
+        {
+            return value == other;
+        }
+
+        [[nodiscard]]
+        bool operator!=(const std::u8string& other) const noexcept
+        {
+            return value != other;
+        }
+
+        // Comparison with char8_t pointer
+        [[nodiscard]]
+        bool operator==(const char8_t* other) const noexcept
+        {
+            return value == (other ? other : u8"");
+        }
+
+        [[nodiscard]]
+        bool operator!=(const char8_t* other) const noexcept
+        {
+            return value != (other ? other : u8"");
+        }
+
+    private:
+        std::u8string value;
+    };
+
+    // Non-member swap function for ADL support
+    inline void swap(U8String& lhs, U8String& rhs) noexcept { lhs.Swap(rhs); }
+}
+
+// Convert string to UTF-8 encoded U8String
+// Handles local encoding (e.g., Windows GBK) to UTF-8 conversion
+inline Details::U8String ToString(std::string_view str)
+{
+    return Details::U8String{std::filesystem::path{str}.u8string()};
 }
 
 #endif // DAS_UTILS_STRINGUTILS_HPP
