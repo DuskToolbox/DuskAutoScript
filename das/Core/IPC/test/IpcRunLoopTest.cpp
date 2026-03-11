@@ -61,8 +61,8 @@ protected:
 
     bool SetupRunLoopWithTransport()
     {
-        return runloop_->Initialize()
-               == DAS_S_OK;
+        // Create() 已自动完成初始化
+        return runloop_ != nullptr;
     }
 
     ValidatedIPCMessageHeader CreateTestHeader(
@@ -83,15 +83,8 @@ protected:
 };
 
 // ====== Initialize/Shutdown Tests ======
-
-TEST_F(IpcRunLoopTest, Initialize_Succeeds)
-{
-    auto result = runloop_->Initialize();
-    EXPECT_EQ(result, DAS_S_OK);
-}
-
+// NOTE: Initialize() is now internal (called by Create() factory)
 // NOTE: Shutdown is now private and called by destructor (RAII pattern)
-// The Shutdown_Succeeds test is removed since Shutdown is internal
 
 // ====== Run/Stop Tests ======
 
@@ -195,7 +188,7 @@ TEST_F(IpcRunLoopTest, Run_ReentrantFails)
 
 TEST_F(IpcRunLoopTest, RequestStop_Idempotent)
 {
-    ASSERT_EQ(runloop_->Initialize(), DAS_S_OK);
+    // Create() 已自动完成初始化
 
     // RequestStop without run should be safe
     runloop_->RequestStop();
@@ -233,7 +226,7 @@ public:
 
 TEST_F(IpcRunLoopTest, RegisterHandler_Succeeds)
 {
-    ASSERT_EQ(runloop_->Initialize(), DAS_S_OK);
+    // Create() 已自动完成初始化
 
     // 注册处理器
     auto handler = std::make_unique<TestMessageHandler>();

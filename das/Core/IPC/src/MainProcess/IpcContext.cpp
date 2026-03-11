@@ -49,13 +49,7 @@ namespace Core
                         return DAS_E_IPC_NOT_INITIALIZED;
                     }
                     runloop_ = std::move(runloop_result.value());
-                    result = runloop_->Initialize();
-                    if (result != DAS_S_OK)
-                    {
-                        DAS_CORE_LOG_ERROR("IpcRunLoop init failed: 0x{:08X}", result);
-                        runloop_.reset();
-                        return result;
-                    }
+                    // Create() 已自动完成初始化，无需再调用 Initialize()
 
                     // 2. Initialize SessionCoordinator（主进程 session_id = 1）
                     auto& coordinator = SessionCoordinator::GetInstance();

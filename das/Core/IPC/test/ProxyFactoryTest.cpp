@@ -372,11 +372,10 @@ TEST(ProxyFactoryTest, IntegrationWithIpcRunLoop)
     ProxyFactory& factory = ProxyFactory::GetInstance();
     auto&         registry = RemoteObjectRegistry::GetInstance();
 
-    // 创建并初始化 IpcRunLoop
+    // 创建并初始化 IpcRunLoop（Create() 已自动初始化）
     auto result = IpcRunLoop::Create();
     ASSERT_TRUE(result.has_value()) << "Failed to create IpcRunLoop";
     auto runloop = std::move(*result);
-    EXPECT_EQ(runloop->Initialize(), DAS_S_OK);
 
     ObjectId test_obj{.session_id = 1, .generation = 1, .local_id = 400};
     DasGuid  test_iid{
