@@ -116,7 +116,7 @@
     #define DAS_LIFETIMEBOUND [[msvc::lifetimebound]]
 #elif defined(__clang__)
     // Clang: 使用 _Clang::__lifetimebound__ 属性
-    #define DAS_LIFETIMEBOUND [[__lifetimebound__]]
+#define DAS_LIFETIMEBOUND [[_Clang::__lifetimebound__]]
 #else
     // 其他编译器不支持或版本不够，宏为空
     #define DAS_LIFETIMEBOUND
