@@ -390,10 +390,10 @@ public:
     [[nodiscard]]
     static bool IsControlPlane(const IPCMessageHeader& header) noexcept
     {
-        return header.interface_id >= static_cast<uint32_t>(
-                   HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO)
-               && header.interface_id <= static_cast<uint32_t>(
-                      HandshakeInterfaceId::HANDSHAKE_IFACE_GOODBYE);
+        // 控制平面特征: ObjectId = {0, 0, 0}
+        return header.session_id == 0
+            && header.generation == 0
+            && header.local_id == 0;
     }
 
     [[nodiscard]]

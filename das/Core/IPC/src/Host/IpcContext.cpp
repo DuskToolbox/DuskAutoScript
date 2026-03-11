@@ -185,7 +185,8 @@ namespace Core
                  * @brief 创建 Host 资源
                  *
                  * 新设计（解决 Initialize() 死锁问题）：
-                 * - 创建 IpcRunLoop（无参 Initialize，只创建 io_context 基础设施）
+                 * - 创建 IpcRunLoop（无参 Initialize，只创建 io_context
+                 * 基础设施）
                  * - 创建 transport（使用 IpcRunLoop 的 io_context）
                  * - 保存管道名（延迟连接，在 Run() 时异步执行）
                  * - 初始化 SharedMemoryPool
@@ -204,7 +205,8 @@ namespace Core
                         MakeMessageQueueName(main_pid_, host_pid_, true);
                     host_write_queue_ =
                         MakeMessageQueueName(main_pid_, host_pid_, false);
-                    host_is_server_ = false; // Host 进程是客户端，连接 MainProcess 创建的管道
+                    host_is_server_ =
+                        false; // Host 进程是客户端，连接 MainProcess 创建的管道
                     std::string shm_name =
                         MakeSharedMemoryName(main_pid_, host_pid_);
 
@@ -221,12 +223,14 @@ namespace Core
                         DEFAULT_SHARED_MEMORY_SIZE);
                     if (!shared_memory_)
                     {
-                        DAS_LOG_ERROR("IpcContext: SharedMemoryPool Create failed");
+                        DAS_LOG_ERROR(
+                            "IpcContext: SharedMemoryPool Create failed");
                         object_manager_.reset();
                         return DAS_E_IPC_SHM_FAILED;
                     }
 
-                    // 4. 创建 IpcRunLoop（无参 Initialize，只创建 io_context 基础设施）
+                    // 4. 创建 IpcRunLoop（无参 Initialize，只创建 io_context
+                    // 基础设施）
                     auto runloop_result = IpcRunLoop::Create();
                     if (!runloop_result.has_value())
                     {
@@ -249,9 +253,11 @@ namespace Core
                     }
 
                     // 5. 创建 transport（使用 IpcRunLoop 的 io_context）
-                    //    使用 CreateUninitialized 创建未初始化的对象，延迟到 Run() 时异步连接
-                    async_transport_ = Win32AsyncIpcTransport::CreateUninitialized(
-                        run_loop_->GetIoContext());
+                    //    使用 CreateUninitialized 创建未初始化的对象，延迟到
+                    //    Run() 时异步连接
+                    async_transport_ =
+                        Win32AsyncIpcTransport::CreateUninitialized(
+                            run_loop_->GetIoContext());
                     async_transport_->SetSharedMemoryPool(shared_memory_.get());
 
                     // 6. 创建并初始化 IpcCommandHandler
@@ -305,10 +311,12 @@ namespace Core
                         });
 
                     // 9. 注册消息处理器
-                    run_loop_->RegisterHandler(
+                    // HandshakeHandler 处理所有控制平面消息（interface_id 1-7）
+                    run_loop_->RegisterControlPlaneHandler(
                         std::make_unique<MessageHandlerRef>(
                             handshake_handler_.get()));
 
+                    // CommandHandler 处理业务消息
                     run_loop_->RegisterHandler(
                         std::make_unique<MessageHandlerRef>(
                             command_handler_.get()));
@@ -340,18 +348,21 @@ namespace Core
                     }
 
                     // 3. 关闭 HandshakeHandler（RAII 模式，析构自动调用）
-                    // HandshakeHandler 现在是 RAII 模式，reset() 会触发析构函数自动调用 Uninitialize()
+                    // HandshakeHandler 现在是 RAII 模式，reset()
+                    // 会触发析构函数自动调用 Uninitialize()
                     handshake_handler_.reset();
 
                     // 4. 关闭 SharedMemoryPool
                     // unique_ptr 析构会自动调用 Uninitialize()
                     shared_memory_.reset();
 
-                    // 5. 关闭 IpcRunLoop（RAII：unique_ptr 析构自动调用 Uninitialize）
+                    // 5. 关闭 IpcRunLoop（RAII：unique_ptr 析构自动调用
+                    // Uninitialize）
                     if (run_loop_)
                     {
                         run_loop_->RequestStop();
-                        // unique_ptr::reset() 会调用析构函数，析构函数会自动调用 Uninitialize()
+                        // unique_ptr::reset()
+                        // 会调用析构函数，析构函数会自动调用 Uninitialize()
                         run_loop_.reset();
                     }
 
@@ -418,36 +429,57 @@ namespace Core
 
                     // post 异步连接任务到 io_context
                     // 这样连接操作会在 io_context 开始运行后执行
-                    boost::asio::post(io, [this, &io]() {
-                        boost::asio::co_spawn(io,
-                            [this]() -> boost::asio::awaitable<void> {
-                                try {
-                                    DAS_CORE_LOG_INFO("Host: async connecting...");
-                                    DAS_CORE_LOG_INFO("  read: {}", host_read_queue_);
-                                    DAS_CORE_LOG_INFO("  write: {}", host_write_queue_);
+                    boost::asio::post(
+                        io,
+                        [this, &io]()
+                        {
+                            boost::asio::co_spawn(
+                                io,
+                                [this]() -> boost::asio::awaitable<void>
+                                {
+                                    try
+                                    {
+                                        DAS_CORE_LOG_INFO(
+                                            "Host: async connecting...");
+                                        DAS_CORE_LOG_INFO(
+                                            "  read: {}",
+                                            host_read_queue_);
+                                        DAS_CORE_LOG_INFO(
+                                            "  write: {}",
+                                            host_write_queue_);
 
-                                    // 1. 异步连接（使用 InitializeAsync）
-                                    auto result = co_await async_transport_->InitializeAsync(
-                                        host_read_queue_, host_write_queue_, host_is_server_);
+                                        // 1. 异步连接（使用 InitializeAsync）
+                                        auto result = co_await async_transport_
+                                                          ->InitializeAsync(
+                                                              host_read_queue_,
+                                                              host_write_queue_,
+                                                              host_is_server_);
 
-                                    if (DAS::IsFailed(result)) {
-                                        DAS_CORE_LOG_ERROR("Host: connect failed: 0x{:08X}", result);
-                                        run_loop_->RequestStop();
-                                        co_return;
+                                        if (DAS::IsFailed(result))
+                                        {
+                                            DAS_CORE_LOG_ERROR(
+                                                "Host: connect failed: 0x{:08X}",
+                                                result);
+                                            run_loop_->RequestStop();
+                                            co_return;
+                                        }
+
+                                        DAS_CORE_LOG_INFO(
+                                            "Host: connected, starting receive loop");
+
+                                        // 2. 连接成功，启动接收循环协程
+                                        co_await ReceiveLoopCoroutine();
                                     }
-
-                                    DAS_CORE_LOG_INFO("Host: connected, starting receive loop");
-
-                                    // 2. 连接成功，启动接收循环协程
-                                    co_await ReceiveLoopCoroutine();
-                                }
-                                catch (const std::exception& e) {
-                                    DAS_CORE_LOG_ERROR("Host: exception: {}", e.what());
-                                    run_loop_->RequestStop();
-                                }
-                            }(),
-                            boost::asio::detached);
-                    });
+                                    catch (const std::exception& e)
+                                    {
+                                        DAS_CORE_LOG_ERROR(
+                                            "Host: exception: {}",
+                                            e.what());
+                                        run_loop_->RequestStop();
+                                    }
+                                },
+                                boost::asio::detached);
+                        });
 
                     // 运行 io_context（连接任务已 post）
                     DasResult result = run_loop_->Run();
@@ -460,26 +492,39 @@ namespace Core
                 /**
                  * @brief Host 模式的接收循环协程
                  *
-                 * 使用 transport 的协程接口接收消息（IOCP 异步，协程挂起不占用 CPU）。
-                 * 收到消息后分发到处理器。
+                 * 使用 transport 的协程接口接收消息（IOCP 异步，协程挂起不占用
+                 * CPU）。 收到消息后分发到处理器。
                  */
                 boost::asio::awaitable<void> ReceiveLoopCoroutine()
                 {
-                    DAS_CORE_LOG_INFO("ReceiveLoopCoroutine: starting, run_loop_->IsRunning()={}", run_loop_->IsRunning());
+                    DAS_CORE_LOG_INFO(
+                        "ReceiveLoopCoroutine: starting, run_loop_->IsRunning()={}",
+                        run_loop_->IsRunning());
                     while (run_loop_->IsRunning())
                     {
-                        try {
-                            DAS_CORE_LOG_INFO("ReceiveLoopCoroutine: waiting for message...");
-                            // 使用 transport 的协程接口接收（IOCP 异步，协程挂起）
-                            auto result = co_await async_transport_->ReceiveCoroutine();
-                            DAS_CORE_LOG_INFO("ReceiveLoopCoroutine: received result, index={}", result.index());
+                        try
+                        {
+                            DAS_CORE_LOG_INFO(
+                                "ReceiveLoopCoroutine: waiting for message...");
+                            // 使用 transport 的协程接口接收（IOCP
+                            // 异步，协程挂起）
+                            auto result =
+                                co_await async_transport_->ReceiveCoroutine();
+                            DAS_CORE_LOG_INFO(
+                                "ReceiveLoopCoroutine: received result, index={}",
+                                result.index());
 
-                            if (!run_loop_->IsRunning()) co_return;
+                            if (!run_loop_->IsRunning())
+                                co_return;
 
-                            if (result.index() == 0) {
+                            if (result.index() == 0)
+                            {
                                 DasResult error = std::get<0>(result);
-                                if (error != DAS_S_OK) {
-                                    DAS_CORE_LOG_ERROR("Receive failed: 0x{:08X}", error);
+                                if (error != DAS_S_OK)
+                                {
+                                    DAS_CORE_LOG_ERROR(
+                                        "Receive failed: 0x{:08X}",
+                                        error);
                                 }
                                 co_return;
                             }
@@ -487,20 +532,41 @@ namespace Core
                             // 成功接收消息
                             auto&& [header, body] = std::get<1>(result);
 
-                            if (header.Raw().message_type == static_cast<uint8_t>(MessageType::RESPONSE)) {
+                            if (header.Raw().message_type
+                                == static_cast<uint8_t>(MessageType::RESPONSE))
+                            {
                                 // RESPONSE：完成 pending call
-                                run_loop_->CompletePendingCall(header.Raw().call_id, DAS_S_OK, std::move(body));
-                            } else {
-                                // REQUEST：分发到处理器（使用 transport 发送响应）
-                                co_await run_loop_->DispatchToHandlerCoroutine(header.Raw(), body, *async_transport_);
+                                run_loop_->CompletePendingCall(
+                                    header.Raw().call_id,
+                                    DAS_S_OK,
+                                    std::move(body));
+                            }
+                            else
+                            {
+                                // REQUEST：分发到处理器（使用 transport
+                                // 发送响应）
+                                co_await run_loop_->DispatchToHandlerCoroutine(
+                                    header.Raw(),
+                                    body,
+                                    *async_transport_);
                             }
                         }
-                        catch (const boost::system::system_error& e) {
-                            if (e.code() == boost::asio::error::operation_aborted ||
-                                e.code() == boost::asio::error::eof) {
-                                DAS_CORE_LOG_DEBUG("Receive loop stopped: {}", e.what());
-                            } else {
-                                DAS_CORE_LOG_ERROR("Receive error: {}", e.what());
+                        catch (const boost::system::system_error& e)
+                        {
+                            if (e.code()
+                                    == boost::asio::error::operation_aborted
+                                || e.code() == boost::asio::error::eof)
+                            {
+                                std::filesystem::path what{e.what()};
+                                DAS_CORE_LOG_DEBUG(
+                                    "Receive loop stopped: {}",
+                                    what.u8string().c_str());
+                            }
+                            else
+                            {
+                                DAS_CORE_LOG_ERROR(
+                                    "Receive error: {}",
+                                    e.what());
                             }
                             co_return;
                         }
@@ -510,7 +576,8 @@ namespace Core
                 void RequestStop()
                 {
                     // 1. 先关闭 transport（自己持有的）
-                    //    这会导致 ReceiveCoroutine() 抛出 operation_aborted，接收协程退出
+                    //    这会导致 ReceiveCoroutine() 抛出
+                    //    operation_aborted，接收协程退出
                     if (async_transport_)
                     {
                         async_transport_.reset();

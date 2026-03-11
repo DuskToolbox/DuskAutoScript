@@ -155,6 +155,15 @@ void IpcRunLoop::RegisterHandler(std::unique_ptr<IMessageHandler> handler)
     handlers_[handler->GetInterfaceId()] = std::move(handler);
 }
 
+void IpcRunLoop::RegisterControlPlaneHandler(std::unique_ptr<IMessageHandler> handler)
+{
+    if (!handler)
+    {
+        return;
+    }
+    control_plane_handler_ = std::move(handler);
+}
+
 IMessageHandler* IpcRunLoop::GetHandler(uint32_t interface_id) const
 {
     auto it = handlers_.find(interface_id);
@@ -197,7 +206,27 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
         // REQUEST 继续交给 handler 处理
     }
 
-    auto* handler = GetHandler(header.interface_id);
+    IMessageHandler* handler = nullptr;
+
+    // 首先检查是否是控制平面消息（interface_id 1-7）
+    if (IpcHeaderValidator::IsControlPlane(header))
+    {
+        // 控制平面消息使用专门的控制平面 handler
+        handler = control_plane_handler_.get();
+        if (handler)
+        {
+            DAS_CORE_LOG_INFO(
+                "DispatchToHandlerCoroutine: using control plane handler for interface_id={}",
+                header.interface_id);
+        }
+    }
+
+    // 如果不是控制平面消息，或者没有控制平面 handler，则使用普通 handler
+    if (!handler)
+    {
+        handler = GetHandler(header.interface_id);
+    }
+
     if (handler)
     {
         DAS_CORE_LOG_INFO("DispatchToHandlerCoroutine: found handler for interface_id={}", header.interface_id);
