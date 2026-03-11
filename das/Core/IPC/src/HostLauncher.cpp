@@ -231,7 +231,6 @@ void HostLauncher::Stop()
 
     if (impl_->async_transport)
     {
-        impl_->async_transport->Close();
         impl_->async_transport.reset();
     }
 

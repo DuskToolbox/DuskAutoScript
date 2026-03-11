@@ -513,7 +513,7 @@ namespace Core
                     //    这会导致 ReceiveCoroutine() 抛出 operation_aborted，接收协程退出
                     if (async_transport_)
                     {
-                        async_transport_->Close();
+                        async_transport_.reset();
                     }
 
                     // 2. 然后请求 runloop 停止
