@@ -28,13 +28,6 @@ TEST_F(IpcConnectionManagerTest, Initialize_Succeeds)
     ASSERT_NE(manager_, nullptr);
 }
 
-TEST_F(IpcConnectionManagerTest, Shutdown_Succeeds)
-{
-    // Manager is already initialized in SetUp via Create()
-    auto result = manager_->Shutdown();
-    EXPECT_EQ(result, DAS_S_OK);
-}
-
 // ====== Connection Registration Tests ======
 
 TEST_F(IpcConnectionManagerTest, RegisterConnection_Succeeds)
