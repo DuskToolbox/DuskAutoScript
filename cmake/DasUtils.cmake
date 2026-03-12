@@ -1,6 +1,6 @@
 function(das_add_library TYPE SUB_DIRECTORY_NAME PRIVATE_EX_LIBS)
-    # file(GLOB_RECURSE HEADERS
-    # ${CMAKE_CURRENT_SOURCE_DIR}/${SUB_DIRECTORY_NAME}/include/*)
+#file(GLOB_RECURSE HEADERS
+#${CMAKE_CURRENT_SOURCE_DIR } / ${SUB_DIRECTORY_NAME } / include /*)
     file(GLOB SOURCES ${SUB_DIRECTORY_NAME}/src/*)
     add_library(${SUB_DIRECTORY_NAME} ${TYPE} ${SOURCES})
     target_include_directories(${SUB_DIRECTORY_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/${SUB_DIRECTORY_NAME}/include)
@@ -97,6 +97,8 @@ function(das_add_core_test TEST_FOLDER)
     set_target_properties(${TEST_NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_BINARY_DIR}/Test)
     set_target_properties(${TEST_NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL ${CMAKE_BINARY_DIR}/Test)
 
+    add_dependencies(${TEST_NAME} DasAutoCopyDll)
+
     gtest_discover_tests(
         ${TEST_NAME}
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/Test)
@@ -124,6 +126,8 @@ function(das_add_custom_test TEST_NAME)
     set_target_properties(${TEST_NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/Test)
     set_target_properties(${TEST_NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_BINARY_DIR}/Test)
     set_target_properties(${TEST_NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL ${CMAKE_BINARY_DIR}/Test)
+
+    add_dependencies(${TEST_NAME} DasAutoCopyDll)
 
     gtest_discover_tests(
         ${TEST_NAME}

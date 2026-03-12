@@ -648,11 +648,6 @@ message("================================================================")
 das_add_auto_copy_dll_path($<TARGET_FILE:DasGateway>)
 das_add_auto_copy_dll_path($<TARGET_FILE:DasCore>)
 
-# Python 绑定文件：DuskAutoScript.py 和 _DasCorePythonExport.pyd 必须与 DasCore.dll 在同一目录
-if(EXPORT_PYTHON)
-    das_add_auto_copy_dll_path("${CMAKE_BINARY_DIR}/include/das/Python/DuskAutoScript.py")
-    das_add_auto_copy_dll_path($<TARGET_FILE:DasCorePythonExport>)
-endif()
 
 # 拷贝外部 OpenCV DLL（如果使用外部 OpenCV）
 # 注意：只有在 NOT using bundled OpenCV 时才执行此逻辑
