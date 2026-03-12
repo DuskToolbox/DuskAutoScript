@@ -5,6 +5,7 @@
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/SessionCoordinator.h>
+#include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
 #include <das/Utils/fmt.h>
 
@@ -219,6 +220,7 @@ namespace Core
                             .SetCallId(header.call_id)
                             .SetErrorCode(0)
                             .Build();
+
                     co_await sender.SendResponse(
                         validated_response_header,
                         response_body);
@@ -390,7 +392,22 @@ namespace Core
 
                 if (on_client_connected_)
                 {
-                    on_client_connected_(client);
+                    try
+                    {
+                        on_client_connected_(client);
+                    }
+                    catch (const std::exception& e)
+                    {
+                        std::string err_msg = DAS_FMT_NS::format(
+                            "HandshakeHandler: exception in on_client_connected callback: {}",
+                            e.what());
+                        DAS_LOG_ERROR(err_msg.c_str());
+                    }
+                    catch (...)
+                    {
+                        DAS_LOG_ERROR(
+                            "HandshakeHandler: unknown exception in on_client_connected callback");
+                    }
                 }
 
                 return DAS_S_OK;
@@ -459,7 +476,8 @@ namespace Core
                 auto it = clients_.find(sender_session_id);
                 if (it != clients_.end())
                 {
-                    it->second.last_heartbeat = std::chrono::steady_clock::now();
+                    it->second.last_heartbeat =
+                        std::chrono::steady_clock::now();
                 }
 
                 // heartbeat timestamp 暂时不使用
