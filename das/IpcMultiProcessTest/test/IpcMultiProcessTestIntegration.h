@@ -150,8 +150,9 @@ protected:
 
         // 注册 HostLauncher 到 IPC 上下文
         // Transport 保留在 HostLauncher 内部，由 RegisterHostLauncher 启动接收
-        // 使用 std::move 转移所有权，让 shared_ptr 和 DasPtr 共享同一引用计数
-        result = ctx_->RegisterHostLauncher(std::move(launcher_));
+        // 注意：RegisterHostLauncher 接收 DasPtr 值参数，会复制一份存储
+        // 不使用 std::move，保持 launcher_ 有效供后续使用
+        result = ctx_->RegisterHostLauncher(launcher_);
         if (DAS::IsFailed(result))
         {
             DAS_LOG_ERROR("Failed to register HostLauncher to IPC context");
