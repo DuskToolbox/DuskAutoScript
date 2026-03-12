@@ -3,6 +3,7 @@
 
 #include <das/Utils/Config.h>
 #include <das/Utils/Expected.h>
+#include <das/Utils/fmt.h>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -160,6 +161,13 @@ namespace Details
             return reinterpret_cast<const char*>(value.c_str());
         }
 
+        // Alias for CStr() - compatibility with standard library conventions
+        [[nodiscard]]
+        const char* c_str() const noexcept
+        {
+            return CStr();
+        }
+
         // Get string view for efficient read-only access
         [[nodiscard]]
         std::string_view StringView() const noexcept
@@ -249,5 +257,16 @@ inline Details::U8String ToString(std::string_view str)
 {
     return Details::U8String{std::filesystem::path{str}.u8string()};
 }
+
+template <>
+struct DAS_FMT_NS::formatter<Details::U8String, char>
+    : public formatter<std::string_view, char>
+{
+    auto format(const Details::U8String& str, format_context& ctx) const ->
+        typename std::remove_reference_t<decltype(ctx)>::iterator
+    {
+        return formatter<std::string_view, char>::format(str.StringView(), ctx);
+    }
+};
 
 #endif // DAS_UTILS_STRINGUTILS_HPP
