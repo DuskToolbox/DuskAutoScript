@@ -578,10 +578,9 @@ namespace Core
                         if (e.code() == boost::asio::error::operation_aborted
                             || e.code() == boost::asio::error::eof)
                         {
-                            std::filesystem::path what{e.what()};
                             DAS_CORE_LOG_DEBUG(
                                 "Receive loop stopped: {}",
-                                what.u8string().c_str());
+                                ToString(e.what()));
                         }
                         else
                         {
