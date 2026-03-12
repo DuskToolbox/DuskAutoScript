@@ -13,7 +13,9 @@
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
 #include <das/Core/IPC/SessionCoordinator.h>
+#include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
+#include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
 #include <thread>
 
@@ -95,7 +97,7 @@ DasResult HostLauncher::Start(
     {
         std::string msg =
             DAS_FMT_NS::format("Host executable not found: {}", host_exe_path);
-        DAS_LOG_ERROR(msg.c_str());
+        DAS_CORE_LOG_ERROR(msg.c_str());
         return DAS_E_INVALID_ARGUMENT;
     }
 
@@ -192,14 +194,22 @@ void HostLauncher::Stop()
                 std::string err_msg = DAS_FMT_NS::format(
                     "Failed to send GOODBYE: error={}",
                     result);
-                DAS_LOG_ERROR(err_msg.c_str());
+                DAS_CORE_LOG_ERROR(err_msg.c_str());
             }
+        }
+        catch (const boost::system::system_error& e)
+        {
+            std::string err_msg = DAS_FMT_NS::format(
+                "Send GOODBYE failed with system_error: {}",
+                ToString(e.what()));
+            DAS_CORE_LOG_ERROR(err_msg.c_str());
         }
         catch (const std::exception& e)
         {
-            std::string err_msg =
-                DAS_FMT_NS::format("Send GOODBYE failed: {}", e.what());
-            DAS_LOG_ERROR(err_msg.c_str());
+            std::string err_msg = DAS_FMT_NS::format(
+                "Send GOODBYE failed: {}",
+                ToString(e.what()));
+            DAS_CORE_LOG_ERROR(err_msg.c_str());
         }
 
         // 等待进程退出，最多等待 2 秒
@@ -333,12 +343,20 @@ DasResult HostLauncher::LaunchProcess(
 
         return DAS_S_OK;
     }
+    catch (const boost::system::system_error& e)
+    {
+        std::string msg = DAS_FMT_NS::format(
+            "Exception launching Host process (system_error): {}",
+            ToString(e.what()));
+        DAS_CORE_LOG_ERROR(msg.c_str());
+        return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
+    }
     catch (const std::exception& e)
     {
         std::string msg = DAS_FMT_NS::format(
             "Exception launching Host process: {}",
-            e.what());
-        DAS_LOG_ERROR(msg.c_str());
+            ToString(e.what()));
+        DAS_CORE_LOG_ERROR(msg.c_str());
         return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
 }
@@ -353,7 +371,7 @@ DasResult HostLauncher::WaitForHostReady(uint32_t timeout_ms)
     {
         if (!IsRunning())
         {
-            DAS_LOG_ERROR("Host process terminated unexpectedly");
+            DAS_CORE_LOG_ERROR("Host process terminated unexpectedly");
             return DAS_E_IPC_CONNECTION_LOST;
         }
 
@@ -393,7 +411,7 @@ DasResult HostLauncher::WaitForHostReady(uint32_t timeout_ms)
                     ? (std::numeric_limits<decltype(timeout_ms)>::max)()
                     : timeout_ms))
         {
-            DAS_LOG_ERROR("Timeout waiting for Host IPC resources");
+            DAS_CORE_LOG_ERROR("Timeout waiting for Host IPC resources");
             return DAS_E_IPC_TIMEOUT;
         }
 
@@ -438,18 +456,26 @@ DasResult HostLauncher::ConnectToHost()
             std::string err_msg = DAS_FMT_NS::format(
                 "Failed to create Host IPC transport: error={}",
                 transport.error());
-            DAS_LOG_ERROR(err_msg.c_str());
+            DAS_CORE_LOG_ERROR(err_msg.c_str());
             return transport.error();
         }
 
         impl_->async_transport = std::move(*transport);
     }
+    catch (const boost::system::system_error& e)
+    {
+        std::string err_msg = DAS_FMT_NS::format(
+            "Failed to create Host IPC transport (system_error): {}",
+            ToString(e.what()));
+        DAS_CORE_LOG_ERROR(err_msg.c_str());
+        return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
+    }
     catch (const std::exception& e)
     {
         std::string err_msg = DAS_FMT_NS::format(
             "Failed to create Host IPC transport: exception={}",
-            e.what());
-        DAS_LOG_ERROR(err_msg.c_str());
+            ToString(e.what()));
+        DAS_CORE_LOG_ERROR(err_msg.c_str());
         return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
 
@@ -475,7 +501,7 @@ DasResult HostLauncher::PerformFullHandshake(
 
     if (out_session_id == 0)
     {
-        DAS_LOG_ERROR("Received invalid session_id (0)");
+        DAS_CORE_LOG_ERROR("Received invalid session_id (0)");
         return DAS_E_IPC_HANDSHAKE_FAILED;
     }
 
@@ -508,7 +534,7 @@ boost::asio::awaitable<DasResult> HostLauncher::SendHandshakeHelloAsync(
 {
     if (!impl_->async_transport)
     {
-        DAS_LOG_ERROR("Transport not initialized");
+        DAS_CORE_LOG_ERROR("Transport not initialized");
         co_return DAS_E_IPC_NOT_INITIALIZED;
     }
 
@@ -519,7 +545,7 @@ boost::asio::awaitable<DasResult> HostLauncher::SendHandshakeHelloAsync(
         SessionCoordinator::GetInstance().AllocateSessionId();
     if (assigned_session_id == 0)
     {
-        DAS_LOG_ERROR("Failed to allocate session_id for Host");
+        DAS_CORE_LOG_ERROR("Failed to allocate session_id for Host");
         co_return DAS_E_IPC_SESSION_ALLOC_FAILED;
     }
 
@@ -546,7 +572,7 @@ boost::asio::awaitable<DasResult> HostLauncher::SendHandshakeHelloAsync(
     {
         std::string msg =
             DAS_FMT_NS::format("Failed to send Hello: error={}", result);
-        DAS_LOG_ERROR(msg.c_str());
+        DAS_CORE_LOG_ERROR(msg.c_str());
         co_return result;
     }
 
@@ -564,7 +590,7 @@ boost::asio::awaitable<DasResult> HostLauncher::ReceiveHandshakeWelcomeAsync(
 
     if (!impl_->async_transport)
     {
-        DAS_LOG_ERROR("Transport not initialized");
+        DAS_CORE_LOG_ERROR("Transport not initialized");
         co_return DAS_E_IPC_NOT_INITIALIZED;
     }
 
@@ -577,7 +603,7 @@ boost::asio::awaitable<DasResult> HostLauncher::ReceiveHandshakeWelcomeAsync(
         std::string msg = DAS_FMT_NS::format(
             "Failed to receive Welcome: error={}",
             error_code);
-        DAS_LOG_ERROR(msg.c_str());
+        DAS_CORE_LOG_ERROR(msg.c_str());
         co_return error_code;
     }
 
@@ -591,13 +617,13 @@ boost::asio::awaitable<DasResult> HostLauncher::ReceiveHandshakeWelcomeAsync(
         std::string msg = DAS_FMT_NS::format(
             "Unexpected interface_id: {}",
             raw_header.interface_id);
-        DAS_LOG_ERROR(msg.c_str());
+        DAS_CORE_LOG_ERROR(msg.c_str());
         co_return DAS_E_IPC_UNEXPECTED_MESSAGE;
     }
 
     if (body.size() < sizeof(WelcomeResponseV1))
     {
-        DAS_LOG_ERROR("Welcome response body too small");
+        DAS_CORE_LOG_ERROR("Welcome response body too small");
         co_return DAS_E_IPC_INVALID_MESSAGE_BODY;
     }
 
@@ -608,7 +634,7 @@ boost::asio::awaitable<DasResult> HostLauncher::ReceiveHandshakeWelcomeAsync(
     {
         std::string msg =
             DAS_FMT_NS::format("Welcome status error: {}", welcome.status);
-        DAS_LOG_ERROR(msg.c_str());
+        DAS_CORE_LOG_ERROR(msg.c_str());
         co_return DAS_E_IPC_HANDSHAKE_FAILED;
     }
 
@@ -628,7 +654,7 @@ boost::asio::awaitable<DasResult> HostLauncher::SendHandshakeReadyAsync(
 {
     if (!impl_->async_transport)
     {
-        DAS_LOG_ERROR("Transport not initialized");
+        DAS_CORE_LOG_ERROR("Transport not initialized");
         co_return DAS_E_IPC_NOT_INITIALIZED;
     }
 
@@ -653,7 +679,7 @@ boost::asio::awaitable<DasResult> HostLauncher::SendHandshakeReadyAsync(
     {
         std::string msg =
             DAS_FMT_NS::format("Failed to send Ready: error={}", result);
-        DAS_LOG_ERROR(msg.c_str());
+        DAS_CORE_LOG_ERROR(msg.c_str());
         co_return result;
     }
 
@@ -670,7 +696,7 @@ boost::asio::awaitable<DasResult> HostLauncher::ReceiveHandshakeReadyAckAsync(
 
     if (!impl_->async_transport)
     {
-        DAS_LOG_ERROR("Transport not initialized");
+        DAS_CORE_LOG_ERROR("Transport not initialized");
         co_return DAS_E_IPC_NOT_INITIALIZED;
     }
 
@@ -682,7 +708,7 @@ boost::asio::awaitable<DasResult> HostLauncher::ReceiveHandshakeReadyAckAsync(
         std::string msg = DAS_FMT_NS::format(
             "Failed to receive ReadyAck: error={}",
             error_code);
-        DAS_LOG_ERROR(msg.c_str());
+        DAS_CORE_LOG_ERROR(msg.c_str());
         co_return error_code;
     }
 
@@ -697,13 +723,13 @@ boost::asio::awaitable<DasResult> HostLauncher::ReceiveHandshakeReadyAckAsync(
         std::string msg = DAS_FMT_NS::format(
             "Unexpected interface_id: {}",
             raw_header.interface_id);
-        DAS_LOG_ERROR(msg.c_str());
+        DAS_CORE_LOG_ERROR(msg.c_str());
         co_return DAS_E_IPC_UNEXPECTED_MESSAGE;
     }
 
     if (body.size() < sizeof(ReadyAckV1))
     {
-        DAS_LOG_ERROR("ReadyAck response body too small");
+        DAS_CORE_LOG_ERROR("ReadyAck response body too small");
         co_return DAS_E_IPC_INVALID_MESSAGE_BODY;
     }
 
@@ -713,7 +739,7 @@ boost::asio::awaitable<DasResult> HostLauncher::ReceiveHandshakeReadyAckAsync(
     {
         std::string msg =
             DAS_FMT_NS::format("ReadyAck status error: {}", ack.status);
-        DAS_LOG_ERROR(msg.c_str());
+        DAS_CORE_LOG_ERROR(msg.c_str());
         co_return DAS_E_IPC_HANDSHAKE_FAILED;
     }
 
@@ -742,7 +768,7 @@ boost::asio::awaitable<DasResult> HostLauncher::PerformFullHandshakeAsync(
 
     if (out_session_id == 0)
     {
-        DAS_LOG_ERROR("Received invalid session_id (0)");
+        DAS_CORE_LOG_ERROR("Received invalid session_id (0)");
         co_return DAS_E_IPC_HANDSHAKE_FAILED;
     }
 
@@ -780,11 +806,20 @@ DasResult HostLauncher::SendHandshakeHello(const std::string& client_name)
             boost::asio::use_future);
         return future.get();
     }
+    catch (const boost::system::system_error& e)
+    {
+        std::string msg = DAS_FMT_NS::format(
+            "SendHandshakeHello failed (system_error): {}",
+            ToString(e.what()));
+        DAS_CORE_LOG_ERROR(msg.c_str());
+        return DAS_E_IPC_SEND_FAILED;
+    }
     catch (const std::exception& e)
     {
-        std::string msg =
-            DAS_FMT_NS::format("SendHandshakeHello failed: {}", e.what());
-        DAS_LOG_ERROR(msg.c_str());
+        std::string msg = DAS_FMT_NS::format(
+            "SendHandshakeHello failed: {}",
+            ToString(e.what()));
+        DAS_CORE_LOG_ERROR(msg.c_str());
         return DAS_E_IPC_SEND_FAILED;
     }
 }
@@ -801,11 +836,20 @@ DasResult HostLauncher::ReceiveHandshakeWelcome(
             boost::asio::use_future);
         return future.get();
     }
+    catch (const boost::system::system_error& e)
+    {
+        std::string msg = DAS_FMT_NS::format(
+            "ReceiveHandshakeWelcome failed (system_error): {}",
+            ToString(e.what()));
+        DAS_CORE_LOG_ERROR(msg.c_str());
+        return DAS_E_IPC_RECEIVE_FAILED;
+    }
     catch (const std::exception& e)
     {
-        std::string msg =
-            DAS_FMT_NS::format("ReceiveHandshakeWelcome failed: {}", e.what());
-        DAS_LOG_ERROR(msg.c_str());
+        std::string msg = DAS_FMT_NS::format(
+            "ReceiveHandshakeWelcome failed: {}",
+            ToString(e.what()));
+        DAS_CORE_LOG_ERROR(msg.c_str());
         return DAS_E_IPC_RECEIVE_FAILED;
     }
 }
@@ -820,11 +864,20 @@ DasResult HostLauncher::SendHandshakeReady(uint16_t session_id)
             boost::asio::use_future);
         return future.get();
     }
+    catch (const boost::system::system_error& e)
+    {
+        std::string msg = DAS_FMT_NS::format(
+            "SendHandshakeReady failed (system_error): {}",
+            ToString(e.what()));
+        DAS_CORE_LOG_ERROR(msg.c_str());
+        return DAS_E_IPC_SEND_FAILED;
+    }
     catch (const std::exception& e)
     {
-        std::string msg =
-            DAS_FMT_NS::format("SendHandshakeReady failed: {}", e.what());
-        DAS_LOG_ERROR(msg.c_str());
+        std::string msg = DAS_FMT_NS::format(
+            "SendHandshakeReady failed: {}",
+            ToString(e.what()));
+        DAS_CORE_LOG_ERROR(msg.c_str());
         return DAS_E_IPC_SEND_FAILED;
     }
 }
@@ -839,11 +892,20 @@ DasResult HostLauncher::ReceiveHandshakeReadyAck(uint32_t timeout_ms)
             boost::asio::use_future);
         return future.get();
     }
+    catch (const boost::system::system_error& e)
+    {
+        std::string msg = DAS_FMT_NS::format(
+            "ReceiveHandshakeReadyAck failed (system_error): {}",
+            ToString(e.what()));
+        DAS_CORE_LOG_ERROR(msg.c_str());
+        return DAS_E_IPC_RECEIVE_FAILED;
+    }
     catch (const std::exception& e)
     {
-        std::string msg =
-            DAS_FMT_NS::format("ReceiveHandshakeReadyAck failed: {}", e.what());
-        DAS_LOG_ERROR(msg.c_str());
+        std::string msg = DAS_FMT_NS::format(
+            "ReceiveHandshakeReadyAck failed: {}",
+            ToString(e.what()));
+        DAS_CORE_LOG_ERROR(msg.c_str());
         return DAS_E_IPC_RECEIVE_FAILED;
     }
 }

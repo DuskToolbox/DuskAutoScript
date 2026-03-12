@@ -115,8 +115,20 @@ Win32AsyncIpcTransport::CreateAsync(
             co_return DAS::Utils::MakeUnexpected(result);
         }
     }
-    catch (...)
+    catch (const boost::system::system_error& e)
     {
+        DAS_LOG_ERROR(
+            DAS_FMT_NS::format(
+                "CreateAsync failed (system_error): {}",
+                ToString(e.what()))
+                .c_str());
+        co_return DAS::Utils::MakeUnexpected(DAS_E_IPC_MESSAGE_QUEUE_FAILED);
+    }
+    catch (const std::exception& e)
+    {
+        DAS_LOG_ERROR(
+            DAS_FMT_NS::format("CreateAsync failed: {}", ToString(e.what()))
+                .c_str());
         co_return DAS::Utils::MakeUnexpected(DAS_E_IPC_MESSAGE_QUEUE_FAILED);
     }
 
@@ -151,8 +163,20 @@ DasResult Win32AsyncIpcTransport::Initialize(
                    boost::asio::use_future)
             .get();
     }
-    catch (...)
+    catch (const boost::system::system_error& e)
     {
+        DAS_LOG_ERROR(
+            DAS_FMT_NS::format(
+                "Initialize failed (system_error): {}",
+                ToString(e.what()))
+                .c_str());
+        return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
+    }
+    catch (const std::exception& e)
+    {
+        DAS_LOG_ERROR(
+            DAS_FMT_NS::format("Initialize failed: {}", ToString(e.what()))
+                .c_str());
         return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
 }

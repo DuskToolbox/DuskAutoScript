@@ -2,15 +2,16 @@
 #define DAS_CORE_IPC_PROXY_FACTORY_H
 
 #include <atomic>
+#include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IPCProxyBase.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/ObjectId.h>
-#include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
 #include <das/IDasBase.h>
+#include <das/Utils/StringUtils.h>
 #include <mutex>
 #include <unordered_map>
 
@@ -44,8 +45,8 @@ public:
      * @return DasResult 初始化结果
      */
     DasResult Initialize(
-        DistributedObjectManager* object_manager,
-        RemoteObjectRegistry*     object_registry,
+        DistributedObjectManager*     object_manager,
+        RemoteObjectRegistry*         object_registry,
         IpcRunLoop* DAS_LIFETIMEBOUND run_loop = nullptr);
 
     /**
@@ -129,8 +130,9 @@ public:
 
             return DasPtr<T>(proxy);
         }
-        catch (const std::exception&)
+        catch (const std::exception& e)
         {
+            DAS_CORE_LOG_ERROR("CreateProxy failed: {}", ToString(e.what()));
             return nullptr;
         }
     }

@@ -1,11 +1,12 @@
 #include <das/Core/IPC/Config.h>
+#include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcRunLoop.h>
-#include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/IDasBase.h>
+#include <das/Utils/StringUtils.h>
 
 DAS_CORE_IPC_NS_BEGIN
 ProxyFactory& ProxyFactory::GetInstance()
@@ -163,8 +164,9 @@ IPCProxyBase* ProxyFactory::CreateIPCProxy(const ObjectId& object_id)
 
         return proxy;
     }
-    catch (const std::exception&)
+    catch (const std::exception& e)
     {
+        DAS_CORE_LOG_ERROR("CreateProxy failed: {}", ToString(e.what()));
         return nullptr;
     }
 }

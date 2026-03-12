@@ -15,6 +15,7 @@
 #include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
 #include <das/IDasAsyncCallback.h>
+#include <das/Utils/StringUtils.h>
 
 // Define alias for IpcRunLoop in the parent namespace
 namespace Das::Core::IPC::MainProcess
@@ -145,7 +146,9 @@ namespace Core
                 }
                 catch (const std::exception& e)
                 {
-                    DAS_CORE_LOG_ERROR("CreateHostLauncher: {}", e.what());
+                    DAS_CORE_LOG_ERROR(
+                        "CreateHostLauncher: {}",
+                        ToString(e.what()));
                     return DAS_E_IPC_NOT_INITIALIZED;
                 }
             }
@@ -325,8 +328,17 @@ namespace Core
                     auto* context{new IpcContext()};
                     return context;
                 }
+                catch (const std::exception& e)
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "CreateIpcContext failed: {}",
+                        ToString(e.what()));
+                    return nullptr;
+                }
                 catch (...)
                 {
+                    DAS_CORE_LOG_ERROR(
+                        "CreateIpcContext failed: unknown exception");
                     return nullptr;
                 }
             }
