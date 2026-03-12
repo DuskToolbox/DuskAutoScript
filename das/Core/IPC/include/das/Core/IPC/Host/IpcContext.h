@@ -69,16 +69,6 @@ namespace Core
                 struct IDistributedObjectManager& GetObjectManager();
 
                 /**
-                 * @brief 设置握手完成回调
-                 *
-                 * @param handler 回调函数
-                 * @param user_data 用户数据
-                 */
-                void SetOnHandshakeComplete(
-                    OnHandshakeComplete handler,
-                    void*               user_data);
-
-                /**
                  * @brief 启动事件循环
                  * @return DasResult 启动结果
                  */
@@ -146,9 +136,6 @@ namespace Core
                 bool is_initialized_ = false;
                 bool is_connected_ = false;
                 bool is_running_ = false;
-
-                OnHandshakeComplete handshake_complete_handler_;
-                void*               handshake_user_data_ = nullptr;
 
                 uint32_t host_pid_ = 0;
                 uint32_t main_pid_ = 0;

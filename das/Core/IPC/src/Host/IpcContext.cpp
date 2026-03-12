@@ -18,6 +18,7 @@
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/IDasAsyncCallback.h>
+#include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
 
 #include <atomic>
@@ -255,17 +256,7 @@ namespace Core
                 // 8. 设置 HandshakeHandler 的客户端连接回调
                 handshake_handler_->SetOnClientConnected(
                     [this](const ConnectedClient& /*client*/)
-                    {
-                        is_connected_ = true;
-
-                        if (handshake_complete_handler_ != nullptr)
-                        {
-                            handshake_complete_handler_(
-                                static_cast<IIpcContext*>(this),
-                                DAS_S_OK,
-                                handshake_user_data_);
-                        }
-                    });
+                    { is_connected_ = true; });
 
                 handshake_handler_->SetOnClientDisconnected(
                     [this](uint16_t /*session_id*/) { is_connected_ = false; });
@@ -430,14 +421,6 @@ namespace Core
                     handler);
             }
 
-            void IpcContext::SetOnHandshakeComplete(
-                OnHandshakeComplete handler,
-                void*               user_data)
-            {
-                handshake_complete_handler_ = handler;
-                handshake_user_data_ = user_data;
-            }
-
             DasResult IpcContext::Run()
             {
                 if (!is_initialized_)
@@ -498,11 +481,18 @@ namespace Core
                                     // 2. 连接成功，启动接收循环协程
                                     co_await ReceiveLoopCoroutine();
                                 }
+                                catch (const boost::system::system_error& e)
+                                {
+                                    DAS_CORE_LOG_ERROR(
+                                        "Host: system_error: {}",
+                                        ToString(e.what()));
+                                    run_loop_->RequestStop();
+                                }
                                 catch (const std::exception& e)
                                 {
                                     DAS_CORE_LOG_ERROR(
                                         "Host: exception: {}",
-                                        e.what());
+                                        ToString(e.what()));
                                     run_loop_->RequestStop();
                                 }
                             },
@@ -584,7 +574,9 @@ namespace Core
                         }
                         else
                         {
-                            DAS_CORE_LOG_ERROR("Receive error: {}", e.what());
+                            DAS_CORE_LOG_ERROR(
+                                "Receive error: {}",
+                                ToString(e.what()));
                         }
                         co_return;
                     }
@@ -660,8 +652,17 @@ namespace Core
                     auto* context{new IpcContext(config)};
                     return context;
                 }
+                catch (const std::exception& e)
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "CreateIpcContext failed: {}",
+                        ToString(e.what()));
+                    return nullptr;
+                }
                 catch (...)
                 {
+                    DAS_CORE_LOG_ERROR(
+                        "CreateIpcContext failed: unknown exception");
                     return nullptr;
                 }
             }

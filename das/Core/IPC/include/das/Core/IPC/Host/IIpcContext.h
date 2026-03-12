@@ -37,11 +37,6 @@ namespace Core
             // 前置声明 DestroyIpcContext，用于友元
             DAS_API void DestroyIpcContext(IIpcContext* ctx);
 
-            using OnHandshakeComplete = void (*)(
-                struct IIpcContext* ctx,
-                DasResult           result,
-                void*               user_data);
-
             // 命令处理器类型
             using CommandHandler = std::function<DasResult(
                 const IPCMessageHeader&  header,
@@ -53,10 +48,6 @@ namespace Core
              */
             struct IIpcContext
             {
-                virtual void SetOnHandshakeComplete(
-                    OnHandshakeComplete handler,
-                    void*               user_data) = 0;
-
                 virtual DasResult Run() = 0;
                 virtual void      RequestStop() = 0;
 
