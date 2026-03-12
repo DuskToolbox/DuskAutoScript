@@ -57,3 +57,20 @@ if (x) {
     doSomething();
 }
 ```
+
+## 日志记录规则
+
+### 禁止使用十六进制格式记录错误码
+
+**严禁**在日志中使用 `0x{:08X}` 等十六进制格式记录 DasResult 错误码：
+
+```cpp
+// ✗ 禁止
+DAS_CORE_LOG_ERROR("Operation failed: result=0x{:08X}", result);
+
+// ✓ 正确 - 直接记录数值
+DAS_CORE_LOG_ERROR("Operation failed: result={}", result);
+```
+
+原因：DasResult 错误码使用十进制数值定义，使用十六进制格式会导致日志难以阅读和调试。
+```
