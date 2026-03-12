@@ -261,8 +261,8 @@ target_link_libraries(DasCore PUBLIC DasCoreObjects)
 
  if (${DAS_BUILD_TEST})
      # 复制 Python 测试插件到 build 目录（测试工作目录是 build/Test）
-     file(COPY ${CMAKE_SOURCE_DIR}/tests/plugins/PythonTestPlugin
-          DESTINATION ${CMAKE_BINARY_DIR}/Test/tests/plugins)
+     file(COPY ${CMAKE_SOURCE_DIR}/das/Plugins/PythonTestPlugin
+          DESTINATION ${CMAKE_BINARY_DIR}/Test/plugins)
 
      das_add_core_test(ForeignInterfaceHost)
      das_add_core_test(i18n)
@@ -270,3 +270,30 @@ target_link_libraries(DasCore PUBLIC DasCoreObjects)
      das_add_core_test(Exceptions)
      das_add_core_test(IPC)
  endif ()
+
+# Python 绑定文件拷贝：DuskAutoScript.py 和 _DasCorePythonExport.pyd 必须与 DasCore.dll 在同一目录
+# 使用 DasCorePythonExport 自身的 POST_BUILD 事件，避免阻塞 DasAutoCopyDll 中的其他 DLL 拷贝
+if(EXPORT_PYTHON)
+    add_custom_command(
+        TARGET DasCorePythonExport
+        POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_BINARY_DIR}/include/das/Python/DuskAutoScript.py" $<TARGET_FILE_DIR:DasCore>)
+    add_custom_command(
+        TARGET DasCorePythonExport
+        POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:DasCorePythonExport> $<TARGET_FILE_DIR:DasCore>)
+    if(DAS_BUILD_TEST)
+        # 确保 Test 目录存在
+        if(NOT EXISTS ${CMAKE_BINARY_DIR}/Test)
+            file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/Test)
+        endif()
+        add_custom_command(
+            TARGET DasCorePythonExport
+            POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_BINARY_DIR}/include/das/Python/DuskAutoScript.py" ${CMAKE_BINARY_DIR}/Test)
+        add_custom_command(
+            TARGET DasCorePythonExport
+            POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:DasCorePythonExport> ${CMAKE_BINARY_DIR}/Test)
+    endif()
+endif()

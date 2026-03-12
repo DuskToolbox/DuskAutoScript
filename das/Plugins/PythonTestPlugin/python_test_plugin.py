@@ -1,4 +1,4 @@
-# tests/plugins/PythonTestPlugin/python_test_plugin.py
+# das/Plugins/PythonTestPlugin/python_test_plugin.py
 """
 Python 测试插件 - 用于端到端集成测试
 参考 IpcTestPlugin2 实现

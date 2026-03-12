@@ -35,8 +35,10 @@ TEST(PythonHostIntegration, CreatePythonRuntime_Success)
     desc.p_user_data = nullptr;
 
     auto result = CreateForeignLanguageRuntime(desc);
-    ASSERT_TRUE(result.has_value()) << "CreateForeignLanguageRuntime should succeed for Python";
-    EXPECT_NE(result.value().Get(), nullptr) << "Runtime pointer should not be null";
+    ASSERT_TRUE(result.has_value())
+        << "CreateForeignLanguageRuntime should succeed for Python";
+    EXPECT_NE(result.value().Get(), nullptr)
+        << "Runtime pointer should not be null";
 }
 
 // 测试工厂函数语言验证 - 错误的语言
@@ -49,7 +51,8 @@ TEST(PythonHostIntegration, CreatePythonRuntime_InvalidLanguage)
     desc.p_user_data = nullptr;
 
     auto result = CreateForeignLanguageRuntime(desc);
-    EXPECT_FALSE(result.has_value()) << "CreateForeignLanguageRuntime should fail for Java in PythonHost test";
+    EXPECT_FALSE(result.has_value())
+        << "CreateForeignLanguageRuntime should fail for Java in PythonHost test";
     // 注意：错误码可能是 DAS_E_NO_IMPLEMENTATION 或其他
 }
 
@@ -64,13 +67,14 @@ TEST(PythonHostIntegration, LoadPlugin_EndToEnd)
     desc.p_user_data = nullptr;
 
     auto runtime_result = CreateForeignLanguageRuntime(desc);
-    ASSERT_TRUE(runtime_result.has_value()) << "Failed to create Python runtime";
+    ASSERT_TRUE(runtime_result.has_value())
+        << "Failed to create Python runtime";
     auto runtime = runtime_result.value();
     ASSERT_NE(runtime.Get(), nullptr);
 
     // 2. 构建插件 manifest 路径
-    auto manifest_path = std::filesystem::current_path() /
-        "tests/plugins/PythonTestPlugin/manifest.json";
+    auto manifest_path = std::filesystem::current_path()
+                         / "plugins/PythonTestPlugin/manifest.json";
 
     if (!std::filesystem::exists(manifest_path))
     {
@@ -84,8 +88,8 @@ TEST(PythonHostIntegration, LoadPlugin_EndToEnd)
     ASSERT_NE(plugin.Get(), nullptr) << "Plugin pointer should not be null";
 
     // 4. 验证插件对象有效
-    // 注意：详细的接口测试（EnumFeature, CreateFeatureInterface）需要通过 QueryInterface 获取
-    // IDasPluginPackage 接口，这里只验证基础加载成功
+    // 注意：详细的接口测试（EnumFeature, CreateFeatureInterface）需要通过
+    // QueryInterface 获取 IDasPluginPackage 接口，这里只验证基础加载成功
 }
 
 // ============================================================================
