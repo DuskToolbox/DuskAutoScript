@@ -23,6 +23,7 @@
 #include <das/Core/IPC/DefaultAsyncIpcTransport.h>
 
 #include <das/Core/Logger/Logger.h>
+#include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
 #include <variant>
 
@@ -143,33 +144,38 @@ void IpcRunLoop::RequestStop()
     // 让协程自然退出后，io_context_->run() 会因为没有更多工作而返回
 }
 
-void IpcRunLoop::RegisterHandler(std::unique_ptr<IMessageHandler> handler)
-{
-    if (!handler)
-    {
-        return;
-    }
-    handlers_[handler->GetInterfaceId()] = std::move(handler);
-}
-
-void IpcRunLoop::RegisterControlPlaneHandler(
+void IpcRunLoop::RegisterHandler(
+    uint8_t                          header_flags,
+    uint32_t                         interface_id,
     std::unique_ptr<IMessageHandler> handler)
 {
     if (!handler)
     {
         return;
     }
-    control_plane_handler_ = std::move(handler);
+    handlers_by_flags_[header_flags][interface_id] =
+        DasPtr<IMessageHandler>(handler.release());
+}
+
+IMessageHandler* IpcRunLoop::GetHandler(
+    uint8_t  header_flags,
+    uint32_t interface_id) const
+{
+    auto it = handlers_by_flags_.find(header_flags);
+    if (it != handlers_by_flags_.end())
+    {
+        auto jt = it->second.find(interface_id);
+        if (jt != it->second.end())
+        {
+            return jt->second.Get();
+        }
+    }
+    return nullptr;
 }
 
 IMessageHandler* IpcRunLoop::GetHandler(uint32_t interface_id) const
 {
-    auto it = handlers_.find(interface_id);
-    if (it != handlers_.end())
-    {
-        return it->second.get();
-    }
-    return nullptr;
+    return GetHandler(HeaderFlags::NONE, interface_id);
 }
 
 boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
@@ -178,10 +184,11 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
     DefaultAsyncIpcTransport&   transport)
 {
     DAS_CORE_LOG_INFO(
-        "DispatchToHandlerCoroutine: interface_id={}, method_id={}, call_id={}, body_size={}",
+        "DispatchToHandlerCoroutine: interface_id={}, method_id={}, call_id={}, header_flags={}, body_size={}",
         header.interface_id,
         header.method_id,
         header.call_id,
+        header.header_flags,
         body.size());
 
     // 处理 HEARTBEAT RESPONSE：收到心跳回复时更新时间戳
@@ -202,42 +209,34 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
         // REQUEST 继续交给 handler 处理
     }
 
-    IMessageHandler* handler = nullptr;
-
-    // 首先检查是否是控制平面消息（interface_id 1-7）
-    if (IpcHeaderValidator::IsControlPlane(header))
-    {
-        // 控制平面消息使用专门的控制平面 handler
-        handler = control_plane_handler_.get();
-        if (handler)
-        {
-            DAS_CORE_LOG_INFO(
-                "DispatchToHandlerCoroutine: using control plane handler for interface_id={}",
-                header.interface_id);
-        }
-    }
-
-    // 如果不是控制平面消息，或者没有控制平面 handler，则使用普通 handler
-    if (!handler)
-    {
-        handler = GetHandler(header.interface_id);
-    }
+    // 使用 header_flags + interface_id 路由
+    IMessageHandler* handler =
+        GetHandler(header.header_flags, header.interface_id);
 
     if (handler)
     {
         DAS_CORE_LOG_INFO(
             "DispatchToHandlerCoroutine: found handler for interface_id={}",
             header.interface_id);
-        IpcResponseSender sender(transport);
-        auto result = co_await handler->HandleMessage(header, body, sender);
-        if (DAS::IsFailed(result))
+        try
         {
-            DAS_CORE_LOG_WARN("Handler returned error: 0x{:08X}", result);
+            IpcResponseSender sender(transport);
+            auto result = co_await handler->HandleMessage(header, body, sender);
+            if (DAS::IsFailed(result))
+            {
+                DAS_CORE_LOG_WARN("Handler returned error: 0x{:08X}", result);
+            }
+            else
+            {
+                DAS_CORE_LOG_INFO(
+                    "DispatchToHandlerCoroutine: handler completed successfully");
+            }
         }
-        else
+        catch (const std::exception& e)
         {
-            DAS_CORE_LOG_INFO(
-                "DispatchToHandlerCoroutine: handler completed successfully");
+            DAS_CORE_LOG_ERROR(
+                "DispatchToHandlerCoroutine: exception in HandleMessage: {}",
+                e.what());
         }
     }
     else
@@ -299,9 +298,18 @@ std::pair<DasResult, uint64_t> IpcRunLoop::PrepareSendRequestWithTransport(
 
         return {send_result, call_id};
     }
+    catch (const boost::system::system_error& e)
+    {
+        DAS_CORE_LOG_ERROR(
+            "Send failed (system_error): {}",
+            ToString(e.what()));
+        std::unique_lock<std::mutex> lock(pending_mutex_);
+        pending_calls_.erase(call_id);
+        return {DAS_E_IPC_CONNECTION_LOST, 0};
+    }
     catch (const std::exception& e)
     {
-        DAS_CORE_LOG_ERROR("Send failed: {}", e.what());
+        DAS_CORE_LOG_ERROR("Send failed: {}", ToString(e.what()));
         std::unique_lock<std::mutex> lock(pending_mutex_);
         pending_calls_.erase(call_id);
         return {DAS_E_IPC_CONNECTION_LOST, 0};
@@ -675,7 +683,7 @@ void IpcRunLoop::StartAsyncReceiveForTransport(
                         DAS_CORE_LOG_ERROR(
                             "Receive failed with system error: session_id={}, error={}",
                             session_id,
-                            e.what());
+                            ToString(e.what()));
                         co_return;
                     }
                 }
@@ -684,7 +692,7 @@ void IpcRunLoop::StartAsyncReceiveForTransport(
                     DAS_CORE_LOG_ERROR(
                         "Receive failed with exception: session_id={}, error={}",
                         session_id,
-                        e.what());
+                        ToString(e.what()));
                     co_return;
                 }
 

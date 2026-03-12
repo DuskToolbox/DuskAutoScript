@@ -276,13 +276,41 @@ namespace Core
                     });
 
                 // 9. 注册消息处理器
-                // HandshakeHandler 处理所有控制平面消息（interface_id 1-7）
-                run_loop_->RegisterControlPlaneHandler(
+                // HandshakeHandler 处理所有控制平面消息
+                // 注册为 CONTROL_PLANE 标志，按 interface_id 路由
+                // HELLO (interface_id=1)
+                run_loop_->RegisterHandler(
+                    HeaderFlags::CONTROL_PLANE,
+                    static_cast<uint32_t>(
+                        HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO),
+                    std::make_unique<MessageHandlerRef>(
+                        handshake_handler_.get()));
+                // READY (interface_id=3)
+                run_loop_->RegisterHandler(
+                    HeaderFlags::CONTROL_PLANE,
+                    static_cast<uint32_t>(
+                        HandshakeInterfaceId::HANDSHAKE_IFACE_READY),
+                    std::make_unique<MessageHandlerRef>(
+                        handshake_handler_.get()));
+                // HEARTBEAT (interface_id=6)
+                run_loop_->RegisterHandler(
+                    HeaderFlags::CONTROL_PLANE,
+                    static_cast<uint32_t>(
+                        HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT),
+                    std::make_unique<MessageHandlerRef>(
+                        handshake_handler_.get()));
+                // GOODBYE (interface_id=7)
+                run_loop_->RegisterHandler(
+                    HeaderFlags::CONTROL_PLANE,
+                    static_cast<uint32_t>(
+                        HandshakeInterfaceId::HANDSHAKE_IFACE_GOODBYE),
                     std::make_unique<MessageHandlerRef>(
                         handshake_handler_.get()));
 
-                // CommandHandler 处理业务消息
+                // CommandHandler 处理业务消息（注册为 NONE 标志）
                 run_loop_->RegisterHandler(
+                    HeaderFlags::NONE,
+                    0, // CommandHandler 使用 interface_id 0
                     std::make_unique<MessageHandlerRef>(
                         command_handler_.get()));
 

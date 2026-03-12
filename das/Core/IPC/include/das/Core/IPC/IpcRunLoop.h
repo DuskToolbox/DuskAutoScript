@@ -38,6 +38,15 @@
 
 DAS_CORE_IPC_NS_BEGIN
 
+/// 消息头标志命名空间
+namespace HeaderFlags
+{
+    /// 无标志
+    constexpr uint8_t NONE = 0x00;
+    /// 控制平面消息标志
+    constexpr uint8_t CONTROL_PLANE = 0x01;
+} // namespace HeaderFlags
+
 class IMessageHandler;
 class ConnectionManager;
 class HostLauncher;
@@ -180,22 +189,28 @@ public:
 
     /**
      * @brief 注册消息处理器
+     * @param header_flags 消息头标志（HeaderFlags::NONE 或
+     * HeaderFlags::CONTROL_PLANE）
+     * @param interface_id 接口 ID
      * @param handler 处理器实例（所有权转移）
      */
-    void RegisterHandler(std::unique_ptr<IMessageHandler> handler);
+    void RegisterHandler(
+        uint8_t                          header_flags,
+        uint32_t                         interface_id,
+        std::unique_ptr<IMessageHandler> handler);
 
     /**
-     * @brief 注册控制平面消息处理器
-     *
-     * 控制平面消息使用单独的处理器处理。
-     * 所有控制平面消息都会被路由到这个处理器。
-     *
-     * @param handler 控制平面处理器实例（所有权转移）
+     * @brief 按 header_flags + interface_id 查找处理器
+     * @param header_flags 消息头标志
+     * @param interface_id 接口 ID
+     * @return 处理器指针，未找到返回 nullptr
      */
-    void RegisterControlPlaneHandler(std::unique_ptr<IMessageHandler> handler);
+    [[nodiscard]]
+    IMessageHandler* GetHandler(uint8_t header_flags, uint32_t interface_id)
+        const;
 
     /**
-     * @brief 按接口 ID 查找处理器
+     * @brief 按接口 ID 查找处理器（兼容接口，查找 NONE 标志的处理器）
      * @param interface_id 接口 ID
      * @return 处理器指针，未找到返回 nullptr
      */
@@ -409,11 +424,11 @@ public:
         boost::asio::io_context::executor_type>;
     std::unique_ptr<WorkGuard> work_guard_;
 
-    /// 消息处理器映射
-    std::unordered_map<uint32_t, std::unique_ptr<IMessageHandler>> handlers_;
-
-    /// 控制平面消息处理器
-    std::unique_ptr<IMessageHandler> control_plane_handler_;
+    /// 消息处理器映射（按 header_flags + interface_id 索引）
+    std::unordered_map<
+        uint8_t,
+        std::unordered_map<uint32_t, DasPtr<IMessageHandler>>>
+        handlers_by_flags_;
 
     /// 下一个 call_id
     std::atomic<uint64_t> next_call_id_{1};

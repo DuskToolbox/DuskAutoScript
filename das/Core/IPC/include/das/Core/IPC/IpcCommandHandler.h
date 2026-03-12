@@ -73,6 +73,25 @@ public:
     IpcCommandHandler();
     ~IpcCommandHandler() = default;
 
+    /// 增加引用计数
+    [[nodiscard]]
+    uint32_t AddRef() override
+    {
+        return ++ref_count_;
+    }
+
+    /// 减少引用计数
+    [[nodiscard]]
+    uint32_t Release() override
+    {
+        if (--ref_count_ == 0)
+        {
+            delete this;
+            return 0;
+        }
+        return ref_count_;
+    }
+
     // 禁止拷贝
     IpcCommandHandler(const IpcCommandHandler&) = delete;
     IpcCommandHandler& operator=(const IpcCommandHandler&) = delete;
@@ -188,6 +207,9 @@ private:
     static IpcCommandType ExtractCommandType(const IPCMessageHeader& header);
 
     uint16_t session_id_;
+
+    /// 引用计数
+    uint32_t ref_count_ = 0;
 
 #pragma warning(push)
 #pragma warning(disable : 4251) // DLL 导出类中使用 STL 容器

@@ -33,6 +33,20 @@ public:
     MessageHandlerRef(const MessageHandlerRef&) = delete;
     MessageHandlerRef& operator=(const MessageHandlerRef&) = delete;
 
+    /// 增加引用计数（委托给被包装的处理器）
+    [[nodiscard]]
+    uint32_t AddRef() override
+    {
+        return handler_ ? handler_->AddRef() : 0;
+    }
+
+    /// 减少引用计数（委托给被包装的处理器）
+    [[nodiscard]]
+    uint32_t Release() override
+    {
+        return handler_ ? handler_->Release() : 0;
+    }
+
     [[nodiscard]]
     uint32_t GetInterfaceId() const override
     {

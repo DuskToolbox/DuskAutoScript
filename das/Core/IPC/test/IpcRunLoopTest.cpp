@@ -55,7 +55,7 @@ protected:
         if (runloop_)
         {
             runloop_->RequestStop();
-            runloop_.reset();  // 析构函数会自动调用 Shutdown()
+            runloop_.reset(); // 析构函数会自动调用 Shutdown()
         }
     }
 
@@ -206,6 +206,23 @@ class TestMessageHandler : public IMessageHandler
 {
 public:
     [[nodiscard]]
+    uint32_t AddRef() override
+    {
+        return ++ref_count_;
+    }
+
+    [[nodiscard]]
+    uint32_t Release() override
+    {
+        if (--ref_count_ == 0)
+        {
+            delete this;
+            return 0;
+        }
+        return ref_count_;
+    }
+
+    [[nodiscard]]
     uint32_t GetInterfaceId() const override
     {
         return 1;
@@ -222,18 +239,21 @@ public:
         (void)sender;
         co_return DAS_S_OK;
     }
+
+private:
+    uint32_t ref_count_ = 0;
 };
 
 TEST_F(IpcRunLoopTest, RegisterHandler_Succeeds)
 {
     // Create() 已自动完成初始化
 
-    // 注册处理器
+    // 注册处理器（使用 header_flags=NONE, interface_id=1）
     auto handler = std::make_unique<TestMessageHandler>();
-    runloop_->RegisterHandler(std::move(handler));
+    runloop_->RegisterHandler(HeaderFlags::NONE, 1, std::move(handler));
 
     // 验证可以通过 GetHandler 获取
-    IMessageHandler* retrieved = runloop_->GetHandler(1);
+    IMessageHandler* retrieved = runloop_->GetHandler(HeaderFlags::NONE, 1);
     EXPECT_NE(retrieved, nullptr);
 }
 
@@ -396,7 +416,7 @@ public:
     {
         call_count++;
         executed_thread_id = std::this_thread::get_id();
-        done               = true;
+        done = true;
         return DAS_S_OK;
     }
 };
@@ -405,10 +425,10 @@ public:
 class SequenceCallback : public IDasAsyncCallback
 {
 public:
-    std::atomic<uint32_t>      ref_{0};
-    int                        sequence_number;
-    std::vector<int>*          execution_order;
-    std::atomic<bool>*         all_done;
+    std::atomic<uint32_t> ref_{0};
+    int                   sequence_number;
+    std::vector<int>*     execution_order;
+    std::atomic<bool>*    all_done;
 
     SequenceCallback(int seq, std::vector<int>* order, std::atomic<bool>* done)
         : sequence_number(seq), execution_order(order), all_done(done)
@@ -462,12 +482,15 @@ TEST_F(IpcRunLoopTest, PostCallback_ExecutesCallback)
 
     // Post a callback through io_context
     auto* callback = new CountingCallback();
-    callback->AddRef();  // 保持引用，防止 callback 在执行后立即被删除
-    boost::asio::post(runloop_->GetIoContext(), [callback]() {
-        callback->AddRef();
-        callback->Do();
-        callback->Release();
-    });
+    callback->AddRef(); // 保持引用，防止 callback 在执行后立即被删除
+    boost::asio::post(
+        runloop_->GetIoContext(),
+        [callback]()
+        {
+            callback->AddRef();
+            callback->Do();
+            callback->Release();
+        });
 
     // Wait for callback execution
     for (int i = 0; i < 100 && !callback->done; ++i)
@@ -478,7 +501,7 @@ TEST_F(IpcRunLoopTest, PostCallback_ExecutesCallback)
     EXPECT_EQ(callback->call_count, 1);
     EXPECT_TRUE(callback->done);
 
-    callback->Release();  // 释放主线程的引用
+    callback->Release(); // 释放主线程的引用
 
     runloop_->RequestStop();
     if (run_thread.joinable())
@@ -500,18 +523,21 @@ TEST_F(IpcRunLoopTest, PostCallback_OrderPreserved)
     }
     ASSERT_TRUE(runloop_->IsRunning());
 
-    std::vector<int>    execution_order;
-    std::atomic<bool>   all_done{false};
+    std::vector<int>  execution_order;
+    std::atomic<bool> all_done{false};
 
     // Post multiple callbacks in order
     for (int i = 1; i <= 3; ++i)
     {
         auto* cb = new SequenceCallback(i, &execution_order, &all_done);
-        boost::asio::post(runloop_->GetIoContext(), [cb]() {
-            cb->AddRef();
-            cb->Do();
-            cb->Release();
-        });
+        boost::asio::post(
+            runloop_->GetIoContext(),
+            [cb]()
+            {
+                cb->AddRef();
+                cb->Do();
+                cb->Release();
+            });
     }
 
     // Wait for all callbacks to complete
@@ -546,26 +572,31 @@ TEST_F(IpcRunLoopTest, PostCallback_FromOtherThread)
     }
     ASSERT_TRUE(runloop_->IsRunning());
 
-    std::thread::id io_thread_id;
+    std::thread::id   io_thread_id;
     std::atomic<bool> callback_done{false};
 
     // Capture the io_context thread id
-    boost::asio::post(runloop_->GetIoContext(), [&io_thread_id]() {
-        io_thread_id = std::this_thread::get_id();
-    });
+    boost::asio::post(
+        runloop_->GetIoContext(),
+        [&io_thread_id]() { io_thread_id = std::this_thread::get_id(); });
 
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
     // Post from another thread
-    std::thread poster([this, &callback_done]() {
-        auto* callback = new CountingCallback();
-        boost::asio::post(runloop_->GetIoContext(), [callback, &callback_done]() {
-            callback->AddRef();
-            callback->Do();
-            callback->Release();
-            callback_done = true;
+    std::thread poster(
+        [this, &callback_done]()
+        {
+            auto* callback = new CountingCallback();
+            boost::asio::post(
+                runloop_->GetIoContext(),
+                [callback, &callback_done]()
+                {
+                    callback->AddRef();
+                    callback->Do();
+                    callback->Release();
+                    callback_done = true;
+                });
         });
-    });
     poster.join();
 
     // Wait for callback execution

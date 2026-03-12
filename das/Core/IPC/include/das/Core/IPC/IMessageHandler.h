@@ -25,6 +25,20 @@ public:
     virtual ~IMessageHandler() = default;
 
     /**
+     * @brief 增加引用计数
+     * @return 新的引用计数
+     */
+    [[nodiscard]]
+    virtual uint32_t AddRef() = 0;
+
+    /**
+     * @brief 减少引用计数
+     * @return 新的引用计数
+     */
+    [[nodiscard]]
+    virtual uint32_t Release() = 0;
+
+    /**
      * @brief 获取处理器负责的接口 ID
      * @return 接口 ID（用于消息分发）
      */

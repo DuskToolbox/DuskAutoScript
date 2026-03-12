@@ -91,8 +91,10 @@ namespace Core
                 /**
                  * @brief 工厂函数：创建 HandshakeHandler 实例
                  *
-                 * @param local_session_id 本 Host 进程的 session_id（0 表示等待握手分配）
-                 * @return std::unique_ptr<HandshakeHandler> HandshakeHandler 智能指针
+                 * @param local_session_id 本 Host 进程的 session_id（0
+                 * 表示等待握手分配）
+                 * @return std::unique_ptr<HandshakeHandler> HandshakeHandler
+                 * 智能指针
                  */
                 static std::unique_ptr<HandshakeHandler> Create(
                     uint16_t local_session_id = 0);
@@ -103,12 +105,30 @@ namespace Core
                     return INTERFACE_ID;
                 }
 
+                /// 增加引用计数
+                [[nodiscard]]
+                uint32_t AddRef() override
+                {
+                    return ++ref_count_;
+                }
+
+                /// 减少引用计数
+                [[nodiscard]]
+                uint32_t Release() override
+                {
+                    if (--ref_count_ == 0)
+                    {
+                        delete this;
+                        return 0;
+                    }
+                    return ref_count_;
+                }
+
                 using ClientConnectedCallback =
                     std::function<void(const ConnectedClient&)>;
                 using ClientDisconnectedCallback =
                     std::function<void(uint16_t session_id)>;
-                using ShutdownRequestedCallback =
-                    std::function<void()>;
+                using ShutdownRequestedCallback = std::function<void()>;
 
                 /**
                  * @brief 析构函数
@@ -194,7 +214,8 @@ namespace Core
                  * @param session_id 客户端 session_id
                  * @return 客户端信息指针，如果不存在返回 nullptr
                  */
-                const ConnectedClient* GetClient(uint16_t session_id) const DAS_LIFETIMEBOUND;
+                const ConnectedClient* GetClient(uint16_t session_id) const
+                    DAS_LIFETIMEBOUND;
 
                 /**
                  * @brief 获取所有已连接的客户端
@@ -258,8 +279,8 @@ namespace Core
                  * @return DasResult
                  */
                 DasResult HandleHeartbeat(
-                    uint16_t            sender_session_id,
-                    const HeartbeatV1&  heartbeat);
+                    uint16_t           sender_session_id,
+                    const HeartbeatV1& heartbeat);
 
                 /**
                  * @brief 处理 GoodbyeV1
@@ -291,8 +312,11 @@ namespace Core
                 void Uninitialize();
 
                 // 成员变量
-                std::optional<uint16_t> local_session_id_; ///< 本 Host 进程的 session_id（未设置时为 nullopt）
-                bool                    initialized_;      ///< 是否已初始化
+                std::optional<uint16_t>
+                    local_session_id_; ///< 本 Host 进程的
+                                       ///< session_id（未设置时为 nullopt）
+                bool               initialized_;   ///< 是否已初始化
+                uint32_t           ref_count_ = 0; ///< 引用计数
                 mutable std::mutex clients_mutex_; ///< 客户端列表锁
                 std::unordered_map<uint16_t, ConnectedClient>
                     clients_; ///< 已连接客户端
@@ -303,7 +327,8 @@ namespace Core
                     on_client_disconnected_; ///< 客户端断开回调
 
                 ShutdownRequestedCallback
-                    on_shutdown_requested_; ///< 关闭请求回调（收到 GOODBYE 时触发）
+                    on_shutdown_requested_; ///< 关闭请求回调（收到 GOODBYE
+                                            ///< 时触发）
             };
 
         } // namespace Host
