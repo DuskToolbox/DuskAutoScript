@@ -41,22 +41,6 @@ DAS::Utils::Expected<std::unique_ptr<IpcRunLoop>> IpcRunLoop::Create()
     return instance;
 }
 
-DAS::Utils::Expected<std::unique_ptr<IpcRunLoop>> IpcRunLoop::CreateForHost(
-    const std::string& read_queue_name,
-    const std::string& write_queue_name,
-    bool               is_server)
-{
-    // 已废弃：Host 模式应由 IpcContext 持有 transport
-    DAS_CORE_LOG_WARN(
-        "CreateForHost is deprecated. Use Create() and manage transport externally.");
-    (void)read_queue_name;
-    (void)write_queue_name;
-    (void)is_server;
-
-    // 返回错误，提示调用者使用新的模式
-    return DAS::Utils::MakeUnexpected(DAS_E_NOT_FOUND);
-}
-
 IpcRunLoop::~IpcRunLoop()
 {
     // 正确调用 Uninitialize() 而非 RequestStop()
@@ -367,7 +351,9 @@ void IpcRunLoop::CompletePendingCall(
 
     if (on_complete)
     {
-        DAS_CORE_LOG_INFO("CompletePendingCall: invoking callback for call_id={}", call_id);
+        DAS_CORE_LOG_INFO(
+            "CompletePendingCall: invoking callback for call_id={}",
+            call_id);
         on_complete(result, std::move(response));
     }
 }
@@ -679,7 +665,9 @@ void IpcRunLoop::StartAsyncReceiveForTransport(
                     if (header.Raw().message_type
                         == static_cast<uint8_t>(MessageType::RESPONSE))
                     {
-                        DAS_CORE_LOG_INFO("Client: RESPONSE received for call_id={}", header.Raw().call_id);
+                        DAS_CORE_LOG_INFO(
+                            "Client: RESPONSE received for call_id={}",
+                            header.Raw().call_id);
                         CompletePendingCall(
                             header.Raw().call_id,
                             DAS_S_OK,

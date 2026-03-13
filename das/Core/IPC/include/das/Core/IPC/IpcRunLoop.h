@@ -161,18 +161,6 @@ public:
     /// @return Expected 包含 unique_ptr 成功，错误码失败
     static DAS::Utils::Expected<std::unique_ptr<IpcRunLoop>> Create();
 
-    /// 工厂函数：创建 IpcRunLoop 实例（用于 Host 进程）
-    /// @param read_queue_name 读取队列名称
-    /// @param write_queue_name 写入队列名称
-    /// @param is_server 是否作为服务端（创建队列）
-    /// @return Expected 包含 unique_ptr 成功，错误码失败
-    /// @deprecated Host 模式应由 IpcContext 持有 transport
-    [[deprecated("Use Create() and manage transport externally")]]
-    static DAS::Utils::Expected<std::unique_ptr<IpcRunLoop>> CreateForHost(
-        const std::string& read_queue_name,
-        const std::string& write_queue_name,
-        bool               is_server);
-
     ~IpcRunLoop();
 
     // 阻塞式消息循环
