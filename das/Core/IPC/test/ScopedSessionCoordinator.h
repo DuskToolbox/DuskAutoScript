@@ -57,12 +57,21 @@ namespace Core
 
                 /**
                  * @brief 构造函数，设置本地 session_id
-                 * @param session_id 要设置的本地 session_id
+                 * @param session_id 要设置的本地 session_id（1
+                 * 表示主进程，其他使用 SetLocalSessionId）
                  */
                 explicit ScopedSessionCoordinator(uint16_t session_id)
                 {
-                    SessionCoordinator::GetInstance().SetLocalSessionId(
-                        session_id);
+                    if (session_id == 1)
+                    {
+                        // 主进程使用 SetAsMainProcess() 设置 session_id=1
+                        SessionCoordinator::GetInstance().SetAsMainProcess();
+                    }
+                    else
+                    {
+                        SessionCoordinator::GetInstance().SetLocalSessionId(
+                            session_id);
+                    }
                 }
 
                 /**

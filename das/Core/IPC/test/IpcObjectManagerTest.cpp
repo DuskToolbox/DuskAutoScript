@@ -1,3 +1,4 @@
+#include "ScopedSessionCoordinator.h"
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/SessionCoordinator.h>
@@ -8,6 +9,7 @@ using DAS::Core::IPC::DistributedObjectManager;
 using DAS::Core::IPC::EncodeObjectId;
 using DAS::Core::IPC::ObjectId;
 using DAS::Core::IPC::SessionCoordinator;
+using DAS::Core::IPC::Test::ScopedSessionCoordinator;
 
 // Test fixture for ObjectManager tests
 class IpcObjectManagerTest : public ::testing::Test
@@ -15,15 +17,17 @@ class IpcObjectManagerTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        SessionCoordinator::GetInstance().SetAsMainProcess();
+        scoped_session_ = std::make_unique<ScopedSessionCoordinator>(1);
         manager_ = std::make_unique<DistributedObjectManager>();
     }
 
     void TearDown() override
     {
         manager_.reset();
+        scoped_session_.reset();
     }
 
+    std::unique_ptr<ScopedSessionCoordinator> scoped_session_;
     std::unique_ptr<DistributedObjectManager> manager_;
 };
 
