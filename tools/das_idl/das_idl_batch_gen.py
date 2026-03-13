@@ -721,7 +721,26 @@ JSON 配置格式:
                         print(f"\n[Messages聚合失败] {result.stderr}", file=sys.stderr)
                 except Exception as e:
                     print(f"\n[Messages聚合错误] {e}", file=sys.stderr)
-    
+
+        # ====== 执行 IPC Proxy/Stub 聚合 ======
+        if ipc_output_dir and batch_result == 0:
+            ipc_aggregate_script = Path(__file__).parent / "aggregate_ipc.py"
+            if ipc_aggregate_script.exists():
+                cmd = [
+                    sys.executable,
+                    str(ipc_aggregate_script),
+                    "--ipc-output-dir", str(ipc_output_dir),
+                ]
+
+                try:
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                    if result.returncode == 0:
+                        print(f"\n[IPC聚合] {result.stdout.strip()}")
+                    else:
+                        print(f"\n[IPC聚合失败] {result.stderr}", file=sys.stderr)
+                except Exception as e:
+                    print(f"\n[IPC聚合错误] {e}", file=sys.stderr)
+
     return batch_result
 
 
