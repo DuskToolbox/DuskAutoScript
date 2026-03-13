@@ -8,6 +8,7 @@
  * 3. 本地对象 Fallback 机制
  */
 
+#include "ScopedSessionCoordinator.h"
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/ProxyFactory.h>
@@ -26,6 +27,7 @@ using DAS::Core::IPC::ProxyFactory;
 using DAS::Core::IPC::RemoteObjectInfo;
 using DAS::Core::IPC::RemoteObjectRegistry;
 using DAS::Core::IPC::SessionCoordinator;
+using DAS::Core::IPC::Test::ScopedSessionCoordinator;
 
 /**
  * @brief IPC ObjectId 集成测试夹具
@@ -37,11 +39,11 @@ class IpcObjectIdIntegrationTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        // 初始化 SessionCoordinator
-        session_coordinator_ = &SessionCoordinator::GetInstance();
+        // 使用 RAII 方式管理 SessionCoordinator 生命周期
+        scoped_session_ = std::make_unique<ScopedSessionCoordinator>(1);
 
-        // 设置本地 session_id (主进程)
-        session_coordinator_->SetLocalSessionId(1);
+        // 保持对 SessionCoordinator 的引用（部分测试需要直接访问）
+        session_coordinator_ = &SessionCoordinator::GetInstance();
 
         // 获取 RemoteObjectRegistry 实例
         registry_ = &RemoteObjectRegistry::GetInstance();
@@ -58,6 +60,9 @@ protected:
 
         // 清理 ProxyFactory
         ProxyFactory::GetInstance().ClearAllProxies();
+
+        // RAII 清理 SessionCoordinator 状态
+        scoped_session_.reset();
     }
 
     DasGuid CreateTestGuid(uint32_t seed)
@@ -73,9 +78,10 @@ protected:
         return guid;
     }
 
-    SessionCoordinator*          session_coordinator_;
-    RemoteObjectRegistry*        registry_;
+    SessionCoordinator*                       session_coordinator_;
+    RemoteObjectRegistry*                     registry_;
     std::unique_ptr<DistributedObjectManager> object_manager_;
+    std::unique_ptr<ScopedSessionCoordinator> scoped_session_;
 };
 
 // ====== ObjectId 基本功能测试 ======
@@ -83,11 +89,7 @@ protected:
 TEST_F(IpcObjectIdIntegrationTest, ObjectId_EncodeDecode)
 {
     // 测试 ObjectId 编码/解码
-    ObjectId original{
-        .session_id = 1,
-        .generation = 5,
-        .local_id = 100
-    };
+    ObjectId original{.session_id = 1, .generation = 5, .local_id = 100};
 
     // 编码为 uint64_t
     uint64_t encoded = EncodeObjectId(original);
@@ -115,12 +117,13 @@ TEST_F(IpcObjectIdIntegrationTest, ObjectId_IsNull)
 TEST_F(IpcObjectIdIntegrationTest, DistributedObjectManager_RegisterLocalObject)
 {
     // 测试注册本地对象
-    void*              test_object = reinterpret_cast<void*>(0x12345678);
-    ObjectId           out_object_id{};
-    DasResult result = object_manager_->RegisterLocalObject(test_object, out_object_id);
+    void*     test_object = reinterpret_cast<void*>(0x12345678);
+    ObjectId  out_object_id{};
+    DasResult result =
+        object_manager_->RegisterLocalObject(test_object, out_object_id);
 
     ASSERT_EQ(result, DAS_S_OK);
-    EXPECT_EQ(out_object_id.session_id, 1u);  // 主进程 session_id
+    EXPECT_EQ(out_object_id.session_id, 1u); // 主进程 session_id
     EXPECT_EQ(out_object_id.generation, 1u);
     EXPECT_EQ(out_object_id.local_id, 1u);
 
@@ -128,10 +131,12 @@ TEST_F(IpcObjectIdIntegrationTest, DistributedObjectManager_RegisterLocalObject)
     EXPECT_TRUE(object_manager_->IsLocalObject(out_object_id));
 }
 
-TEST_F(IpcObjectIdIntegrationTest, DistributedObjectManager_RegisterRemoteObject)
+TEST_F(
+    IpcObjectIdIntegrationTest,
+    DistributedObjectManager_RegisterRemoteObject)
 {
     // 测试注册远程对象
-    ObjectId remote_id{2, 1, 100};  // session_id=2 表示远程 Host
+    ObjectId  remote_id{2, 1, 100}; // session_id=2 表示远程 Host
     DasResult result = object_manager_->RegisterRemoteObject(remote_id);
 
     ASSERT_EQ(result, DAS_S_OK);
@@ -145,11 +150,12 @@ TEST_F(IpcObjectIdIntegrationTest, DistributedObjectManager_LookupObject)
     // 注册本地对象
     void*    test_object = reinterpret_cast<void*>(0x12345678);
     ObjectId object_id{};
-    ASSERT_EQ(object_manager_->RegisterLocalObject(test_object, object_id),
-              DAS_S_OK);
+    ASSERT_EQ(
+        object_manager_->RegisterLocalObject(test_object, object_id),
+        DAS_S_OK);
 
     // 查找对象
-    void* found_object = nullptr;
+    void*     found_object = nullptr;
     DasResult result = object_manager_->LookupObject(object_id, &found_object);
 
     ASSERT_EQ(result, DAS_S_OK);
@@ -161,8 +167,9 @@ TEST_F(IpcObjectIdIntegrationTest, DistributedObjectManager_IsValidObject)
     // 注册本地对象
     void*    test_object = reinterpret_cast<void*>(0x12345678);
     ObjectId object_id{};
-    ASSERT_EQ(object_manager_->RegisterLocalObject(test_object, object_id),
-              DAS_S_OK);
+    ASSERT_EQ(
+        object_manager_->RegisterLocalObject(test_object, object_id),
+        DAS_S_OK);
 
     // 验证有效性
     EXPECT_TRUE(object_manager_->IsValidObject(object_id));
@@ -177,8 +184,9 @@ TEST_F(IpcObjectIdIntegrationTest, DistributedObjectManager_RefCount)
     // 注册本地对象
     void*    test_object = reinterpret_cast<void*>(0x12345678);
     ObjectId object_id{};
-    ASSERT_EQ(object_manager_->RegisterLocalObject(test_object, object_id),
-              DAS_S_OK);
+    ASSERT_EQ(
+        object_manager_->RegisterLocalObject(test_object, object_id),
+        DAS_S_OK);
 
     // AddRef
     ASSERT_EQ(object_manager_->AddRef(object_id), DAS_S_OK);
@@ -198,12 +206,11 @@ TEST_F(IpcObjectIdIntegrationTest, DistributedObjectManager_RefCount)
 TEST_F(IpcObjectIdIntegrationTest, RemoteObjectRegistry_RegisterObject)
 {
     // 在 RemoteObjectRegistry 中注册远程对象
-    ObjectId    obj_id{2, 1, 100};  // Host session_id = 2
+    ObjectId    obj_id{2, 1, 100}; // Host session_id = 2
     DasGuid     iid = CreateTestGuid(1);
     std::string name = "TestRemoteObject";
 
-    DasResult result =
-        registry_->RegisterObject(obj_id, iid, 2, name, 1);
+    DasResult result = registry_->RegisterObject(obj_id, iid, 2, name, 1);
     ASSERT_EQ(result, DAS_S_OK);
 
     // 验证能查询到
@@ -233,11 +240,12 @@ TEST_F(IpcObjectIdIntegrationTest, RemoteObjectRegistry_LookupByName)
 TEST_F(IpcObjectIdIntegrationTest, RemoteObjectRegistry_UnregisterObject)
 {
     // 注册对象
-    ObjectId    obj_id{2, 1, 100};
-    DasGuid     iid = CreateTestGuid(1);
+    ObjectId obj_id{2, 1, 100};
+    DasGuid  iid = CreateTestGuid(1);
 
-    ASSERT_EQ(registry_->RegisterObject(obj_id, iid, 2, "TestObject", 1),
-              DAS_S_OK);
+    ASSERT_EQ(
+        registry_->RegisterObject(obj_id, iid, 2, "TestObject", 1),
+        DAS_S_OK);
 
     // 注销对象
     DasResult result = registry_->UnregisterObject(obj_id);
@@ -255,8 +263,11 @@ TEST_F(IpcObjectIdIntegrationTest, ObjectIdBidirectionalSync_HostToMain)
 {
     // 模拟 Host 进程创建对象并同步到主进程
     // 1. Host 进程注册本地对象
-    ObjectId host_obj_id{2, 1, 1};  // session_id=2 (Host), generation=1, local_id=1
-    DasGuid  iid = CreateTestGuid(100);
+    ObjectId host_obj_id{
+        2,
+        1,
+        1}; // session_id=2 (Host), generation=1, local_id=1
+    DasGuid iid = CreateTestGuid(100);
 
     // 2. 主进程收到 REGISTER_OBJECT 消息后，在 RemoteObjectRegistry 中注册
     DasResult result =
@@ -278,8 +289,9 @@ TEST_F(IpcObjectIdIntegrationTest, ObjectIdBidirectionalSync_Unregister)
     ObjectId obj_id{2, 1, 100};
     DasGuid  iid = CreateTestGuid(1);
 
-    ASSERT_EQ(registry_->RegisterObject(obj_id, iid, 2, "TestObject", 1),
-              DAS_S_OK);
+    ASSERT_EQ(
+        registry_->RegisterObject(obj_id, iid, 2, "TestObject", 1),
+        DAS_S_OK);
 
     // 2. Host 进程发送 UNREGISTER_OBJECT 消息
     DasResult result = registry_->UnregisterObject(obj_id);
@@ -299,8 +311,9 @@ TEST_F(IpcObjectIdIntegrationTest, LocalObjectFallback_IsLocal)
     // 1. 注册本地对象
     void*    local_object = reinterpret_cast<void*>(0x1000);
     ObjectId local_id{};
-    ASSERT_EQ(object_manager_->RegisterLocalObject(local_object, local_id),
-              DAS_S_OK);
+    ASSERT_EQ(
+        object_manager_->RegisterLocalObject(local_object, local_id),
+        DAS_S_OK);
 
     // 2. 验证 IsLocalObject 返回 true
     EXPECT_TRUE(object_manager_->IsLocalObject(local_id));
@@ -319,11 +332,12 @@ TEST_F(IpcObjectIdIntegrationTest, LocalObjectFallback_LookupLocal)
     // 1. 注册本地对象
     void*    test_object = reinterpret_cast<void*>(0x2000);
     ObjectId object_id{};
-    ASSERT_EQ(object_manager_->RegisterLocalObject(test_object, object_id),
-              DAS_S_OK);
+    ASSERT_EQ(
+        object_manager_->RegisterLocalObject(test_object, object_id),
+        DAS_S_OK);
 
     // 2. 查找本地对象
-    void* found = nullptr;
+    void*     found = nullptr;
     DasResult result = object_manager_->LookupObject(object_id, &found);
 
     ASSERT_EQ(result, DAS_S_OK);
@@ -341,7 +355,7 @@ TEST_F(IpcObjectIdIntegrationTest, LocalObjectFallback_RemoteLookup)
     ASSERT_EQ(object_manager_->RegisterRemoteObject(remote_id), DAS_S_OK);
 
     // 2. 尝试查找远程对象（因为没有指针，应该返回错误或 nullptr）
-    void* found = nullptr;
+    void*     found = nullptr;
     DasResult result = object_manager_->LookupObject(remote_id, &found);
 
     // 远程对象在本地没有指针，返回错误是预期行为
@@ -382,8 +396,9 @@ TEST_F(IpcObjectIdIntegrationTest, InterfacePointer_EncodeDecode)
     // 1. 创建本地对象并获取 ObjectId
     void*    interface_ptr = reinterpret_cast<void*>(0x3000);
     ObjectId object_id{};
-    ASSERT_EQ(object_manager_->RegisterLocalObject(interface_ptr, object_id),
-              DAS_S_OK);
+    ASSERT_EQ(
+        object_manager_->RegisterLocalObject(interface_ptr, object_id),
+        DAS_S_OK);
 
     // 2. 编码 ObjectId（模拟序列化）
     uint64_t encoded = EncodeObjectId(object_id);
@@ -393,7 +408,7 @@ TEST_F(IpcObjectIdIntegrationTest, InterfacePointer_EncodeDecode)
     ObjectId decoded = DecodeObjectId(encoded);
 
     // 4. 查找对象
-    void* found_ptr = nullptr;
+    void*     found_ptr = nullptr;
     DasResult result = object_manager_->LookupObject(decoded, &found_ptr);
 
     ASSERT_EQ(result, DAS_S_OK);
