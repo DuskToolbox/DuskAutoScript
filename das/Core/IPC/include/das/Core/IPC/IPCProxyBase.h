@@ -20,6 +20,25 @@ class IPCProxyBase
 public:
     virtual ~IPCProxyBase() = default;
 
+    /// @brief 增加引用计数
+    /// @return 新的引用计数
+    virtual uint32_t AddRef()
+    {
+        return ++refcount_;
+    }
+
+    /// @brief 减少引用计数
+    /// @return 新的引用计数
+    virtual uint32_t Release()
+    {
+        uint32_t count = --refcount_;
+        if (count == 0)
+        {
+            delete this;
+        }
+        return count;
+    }
+
     [[nodiscard]]
     uint32_t GetInterfaceId() const noexcept
     {
@@ -114,6 +133,7 @@ private:
     IpcRunLoop*               run_loop_;
     DefaultAsyncIpcTransport* transport_;
     uint64_t                  next_call_id_;
+    uint32_t                  refcount_{1};  // 初始引用计数为1（创建时）
 };
 DAS_CORE_IPC_NS_END
 

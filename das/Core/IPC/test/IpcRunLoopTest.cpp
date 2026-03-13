@@ -250,10 +250,10 @@ TEST_F(IpcRunLoopTest, RegisterHandler_Succeeds)
 
     // 注册处理器（使用 header_flags=NONE, interface_id=1）
     auto handler = std::make_unique<TestMessageHandler>();
-    runloop_->RegisterHandler(HeaderFlags::NONE, 1, std::move(handler));
+    runloop_->RegisterHandler(DAS::Core::IPC::HeaderFlags::NONE, 1, std::move(handler));
 
     // 验证可以通过 GetHandler 获取
-    IMessageHandler* retrieved = runloop_->GetHandler(HeaderFlags::NONE, 1);
+    IMessageHandler* retrieved = runloop_->GetHandler(DAS::Core::IPC::HeaderFlags::NONE, 1);
     EXPECT_NE(retrieved, nullptr);
 }
 

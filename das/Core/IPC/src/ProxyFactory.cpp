@@ -153,6 +153,7 @@ void ProxyFactory::ClearAllProxies()
 IPCProxyBase* ProxyFactory::CreateIPCProxy(const ObjectId& object_id)
 {
     // Generic Proxy 不再支持，需要使用 IDL 生成的具体 Proxy 类
+    (void)object_id;  // 未使用的参数
     DAS_CORE_LOG_ERROR(
         "CreateIPCProxy: Generic proxy not supported. Use IDL-generated proxy instead.");
     return nullptr;

@@ -26,13 +26,16 @@
  * @endcode
  */
 
+#include <chrono>
 #include <das/Core/IPC/ObjectId.h>
+#include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
 #include <das/IDasAsyncCallback.h>
 #include <das/IDasAsyncHandshakeOperation.h>
 #include <das/IDasAsyncLoadPluginOperation.h>
 #include <optional>
 #include <stdexec/execution.hpp>
+#include <thread>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -58,7 +61,8 @@ namespace Core::IPC
     };
 
     //=============================================================================
-    // IpcContextScheduleSender — 为任何有 PostCallback 方法的 Context 提供的 schedule sender
+    // IpcContextScheduleSender — 为任何有 PostCallback 方法的 Context 提供的
+    // schedule sender
     //=============================================================================
 
     /**
@@ -124,9 +128,12 @@ namespace Core::IPC
                 }
             };
 
-            friend void tag_invoke(stdexec::start_t, OperationState& self) noexcept
+            friend void tag_invoke(
+                stdexec::start_t,
+                OperationState& self) noexcept
             {
-                auto* callback = new DasAsyncCallback<Receiver>(std::move(self.rcvr_));
+                auto* callback =
+                    new DasAsyncCallback<Receiver>(std::move(self.rcvr_));
                 self.ctx_->PostCallback(callback);
                 callback->Release(); // PostCallback 会 AddRef
             }
@@ -152,7 +159,9 @@ namespace Core::IPC
 
     // 模板化的 tag_invoke，支持任何有 PostCallback 方法的 Context
     template <typename Context>
-        requires requires(Context& c, IDasAsyncCallback* cb) { c.PostCallback(cb); }
+        requires requires(Context& c, IDasAsyncCallback* cb) {
+            c.PostCallback(cb);
+        }
     IpcContextScheduleSender<Context> tag_invoke(
         stdexec::schedule_t,
         Context& ctx) noexcept
@@ -393,15 +402,106 @@ namespace Core::IPC
         return result;
     }
 
+    //=============================================================================
+    // CvWaitReceiver — 使用条件变量等待的 receiver
+    //=============================================================================
+    namespace internal
+    {
+        template <typename ValueTuple>
+        struct CvWaitReceiver
+        {
+            using receiver_concept = stdexec::receiver_t;
+            std::optional<ValueTuple>* result;
+            bool*                      done;
+            std::condition_variable*   cv;
+            std::mutex*                mutex;
+
+            template <typename... Ts>
+            friend void tag_invoke(
+                stdexec::set_value_t,
+                CvWaitReceiver&& self,
+                Ts&&... values) noexcept
+            {
+                // 调试日志
+                DAS_CORE_LOG_INFO(
+                    "[CvWaitReceiver] set_value called, values count={}",
+                    sizeof...(Ts));
+
+                self.result->emplace(std::forward<Ts>(values)...);
+                {
+                    std::lock_guard<std::mutex> lock(*self.mutex);
+                    *self.done = true;
+                    DAS_CORE_LOG_INFO("[CvWaitReceiver] done set to true, notifying");
+                }
+                self.cv->notify_one();
+            }
+
+            friend void tag_invoke(
+                stdexec::set_stopped_t,
+                CvWaitReceiver&& self) noexcept
+            {
+                DAS_CORE_LOG_INFO("[CvWaitReceiver] set_stopped called");
+                {
+                    std::lock_guard<std::mutex> lock(*self.mutex);
+                    *self.done = true;
+                }
+                self.cv->notify_one();
+            }
+
+            friend stdexec::env<> tag_invoke(
+                stdexec::get_env_t,
+                const CvWaitReceiver&) noexcept
+            {
+                return {};
+            }
+        };
+    } // namespace internal
+
     template <typename Context, typename Sender>
-    auto wait(Context& /*ctx*/, Sender&& sender)
+    auto wait(Context& ctx, Sender&& sender)
         -> std::optional<stdexec::value_types_of_t<
             std::decay_t<Sender>,
             stdexec::env<>,
             std::tuple,
             std::type_identity_t>>
     {
-        return wait(std::forward<Sender>(sender));
+        using value_tuple_t = stdexec::value_types_of_t<
+            std::decay_t<Sender>,
+            stdexec::env<>,
+            std::tuple,
+            std::type_identity_t>;
+
+        // 标记 ctx 未使用（保留参数以保持 API 兼容）
+        (void)ctx;
+
+        std::optional<value_tuple_t> result;
+        bool                         done = false;
+
+        // 使用条件变量进行同步等待
+        std::mutex              mutex;
+        std::condition_variable cv;
+
+        auto op = stdexec::connect(
+            std::forward<Sender>(sender),
+            internal::CvWaitReceiver<value_tuple_t>{
+                &result,
+                &done,
+                &cv,
+                &mutex});
+        stdexec::start(op);
+
+        // 等待条件变量被通知或超时
+        constexpr auto kMaxWaitMs = 30000; // 30秒超时
+
+        {
+            std::unique_lock<std::mutex> lock(mutex);
+            cv.wait_for(
+                lock,
+                std::chrono::milliseconds(kMaxWaitMs),
+                [&done] { return done; });
+        }
+
+        return result;
     }
 
 } // namespace Core::IPC

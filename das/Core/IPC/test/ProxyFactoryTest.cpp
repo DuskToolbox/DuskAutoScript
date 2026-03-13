@@ -254,12 +254,8 @@ TEST(ProxyFactoryTest, IntegrationWithRemoteObjectRegistry)
     result = factory.Initialize(&obj_manager, &registry);
     EXPECT_TRUE(factory.IsInitialized());
 
-    // 使用 IDasBase 作为模板参数创建代理
-    // 因为 Proxy<T> 要求 T 必须继承自 IDasBase
-    auto proxy2 = factory.CreateProxy<IDasBase>(test_obj_id);
-    // 可能返回空代理，因为缺少 IpcRunLoop 等依赖
-    // 但至少不会崩溃
-    EXPECT_NO_THROW(proxy2);
+    // 注意: CreateProxy 方法已被移除，代理现在通过 IDL 生成
+    // 此测试仅验证初始化功能
 
     // 清理
     factory.ClearAllProxies();

@@ -29,7 +29,8 @@ protected:
     {
         if (ptr_)
         {
-            ptr_->AddRef();
+            // 显式丢弃返回值以避免 [[nodiscard]] 警告
+            static_cast<void>(ptr_->AddRef());
         }
     }
 
@@ -37,7 +38,8 @@ protected:
     {
         if (ptr_)
         {
-            ptr_->Release();
+            // 显式丢弃返回值以避免 [[nodiscard]] 警告
+            static_cast<void>(ptr_->Release());
         }
     }
 
