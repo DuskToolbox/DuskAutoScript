@@ -41,6 +41,10 @@ enum class IpcCommandType : uint8_t
     // 查询命令
     GET_OBJECT_COUNT = 20, // 获取对象数量
 
+    // 接口查询 (120-129)
+    QUERY_INTERFACE = 120,     // 远程 QueryInterface 请求
+    QUERY_INTERFACE_ACK = 121, // 远程 QueryInterface 响应
+
     // 保留
     UNKNOWN = 255
 };
