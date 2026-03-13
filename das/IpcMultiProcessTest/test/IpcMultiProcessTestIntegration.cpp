@@ -504,15 +504,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadJavaPlugin)
         IpcTestConfig::
             GetPluginLoadTimeout()); // Java 插件可能需要更长时间（JVM 初始化）
 
-    if (DAS::IsFailed(result))
-    {
-        // JVM 可能不可用，跳过测试
-        std::string err_msg = DAS_FMT_NS::format(
-            "Failed to create load plugin operation (result={:#x}). "
-            "Ensure JVM is properly installed and JAVA_HOME is set.",
-            result);
-        GTEST_SKIP() << err_msg;
-    }
+    ASSERT_EQ(result, DAS_S_OK);
 
     auto opt = DAS::Core::IPC::wait(
         GetContext(),

@@ -232,7 +232,7 @@ JavaVM* JvmManager::CreateJVM(
     }
 
     // 3. 构建 JVM 选项
-    const auto                class_path_str = BuildClassPathString(class_path);
+    const auto class_path_str = BuildClassPathString(class_path);
     // 避免局部对象生命周期问题
     std::string               java_class_path;
     std::vector<JavaVMOption> options;
@@ -298,7 +298,35 @@ JavaVM* JvmManager::CreateJVM(
         "JVM created successfully with class path: {}",
         class_path_str);
 
-    // jvm_dll_ 作为成员变量，由 RAII 自动管理生命周期
+    // 5. 加载 DasCoreJavaExport.dll（供 Java JNI native 方法使用）
+    // 必须在 Java 代码调用 native 方法之前加载
+    {
+        boost::dll::fs::path module_path = boost::dll::this_line_location();
+        if (!module_path.empty())
+        {
+            boost::dll::fs::path module_dir = module_path.parent_path();
+            boost::dll::fs::path export_dll_path =
+                module_dir / "DasCoreJavaExport.dll";
+
+            try
+            {
+                java_export_dll_ = boost::dll::shared_library(export_dll_path);
+                DAS_CORE_LOG_INFO(
+                    "Loaded DasCoreJavaExport.dll: {}",
+                    export_dll_path.generic_string());
+            }
+            catch (const boost::system::system_error& e)
+            {
+                // 非致命错误：某些场景可能不需要 Java 导出库
+                DAS_CORE_LOG_WARN(
+                    "Failed to load DasCoreJavaExport.dll: {} - {}",
+                    export_dll_path.generic_string(),
+                    e.what());
+            }
+        }
+    }
+
+    // jvm_dll_ 和 java_export_dll_ 作为成员变量，由 RAII 自动管理生命周期
     // 在进程结束前保持加载状态
 
     return jvm;

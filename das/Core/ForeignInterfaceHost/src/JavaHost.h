@@ -149,8 +149,9 @@ private:
         const std::vector<std::filesystem::path>& class_path);
 
 private:
-    JavaVM*                    jvm_ = nullptr;
+    JavaVM*                    jvm_             = nullptr;
     boost::dll::shared_library jvm_dll_;
+    boost::dll::shared_library java_export_dll_; // DasCoreJavaExport.dll，供 Java JNI 使用
     std::mutex                 mutex_;
 };
 
