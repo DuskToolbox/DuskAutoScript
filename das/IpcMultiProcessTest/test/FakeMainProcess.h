@@ -102,6 +102,16 @@ namespace FakeMainProcess
         void SetHandshakeDone();
 
         /**
+         * @brief 等待共享内存被创建（由测试框架调用）
+         * @param shm_name 共享内存名称
+         * @param timeout_ms 超时时间
+         * @return true 共享内存已创建
+         */
+        static bool WaitForSharedMemoryReady(
+            const std::string& shm_name,
+            std::chrono::milliseconds timeout_ms);
+
+        /**
          * @brief 写入 host_pid（由测试框架调用）
          * @param shm_name 共享内存名称
          * @param host_pid DasHost 的 PID

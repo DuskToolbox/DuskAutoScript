@@ -306,6 +306,36 @@ namespace FakeMainProcess
         return false;
     }
 
+    bool KillParentSharedMemory::WaitForSharedMemoryReady(
+        const std::string&        shm_name,
+        std::chrono::milliseconds timeout_ms)
+    {
+        auto deadline = std::chrono::steady_clock::now() + timeout_ms;
+
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            try
+            {
+                boost::interprocess::managed_shared_memory shm(
+                    boost::interprocess::open_only,
+                    shm_name.c_str());
+
+                auto* data =
+                    shm.find<KillParentSharedData>("KillParentData").first;
+                if (data != nullptr)
+                {
+                    return true;
+                }
+            }
+            catch (...)
+            {
+                // 共享内存还不存在，继续等待
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        return false;
+    }
+
     void KillParentSharedMemory::Cleanup(const std::string& shm_name)
     {
         try
@@ -406,12 +436,16 @@ namespace FakeMainProcess
 
         try
         {
+            // 注意：CreateAsync 参数顺序是 (read_endpoint, write_endpoint)
+            // read_endpoint = h2m_pipe (Main 读取 Host 发送的数据)
+            // write_endpoint = m2h_pipe (Main 写入数据发送给 Host)
+            // 这与 HostLauncher::ConnectToHost() 的参数顺序一致
             auto future = boost::asio::co_spawn(
                 io_ctx,
                 DAS::Core::IPC::DefaultAsyncIpcTransport::CreateAsync(
                     io_ctx,
-                    m2h_pipe,
                     h2m_pipe,
+                    m2h_pipe,
                     true, // is_server = true
                     65536),
                 boost::asio::use_future);
@@ -454,90 +488,58 @@ namespace FakeMainProcess
                 "[FakeMain] Ready signal sent, DasHost can connect now");
         }
 
-        // 8. 等待 DasHost 连接并完成握手
-        // DasHost 会发送 HELLO，我们需要响应 WELCOME，然后等待 READY，响应
-        // READY_ACK
+        // 8. 完成握手流程（MainProcess 主动发起）
+        // 正确流程：MainProcess 发送 HELLO → Host 响应 WELCOME
+        //          → Host 发送 READY → MainProcess 响应 READY_ACK
         bool handshake_complete = false;
 
         try
         {
-            // 重新启动 io_context 用于接收消息
+            // 重新启动 io_context 用于收发消息
             io_ctx.restart();
+            // 使用 work_guard 防止 io_ctx 在没有工作时退出
+            auto        work_guard = boost::asio::make_work_guard(io_ctx);
             std::thread io_thread([&io_ctx]() { io_ctx.run(); });
 
-            // 接收 HELLO
+            // 8.1 先启动接收操作（避免丢失响应）
             auto recv_future = boost::asio::co_spawn(
                 io_ctx,
                 transport->ReceiveCoroutine(),
                 boost::asio::use_future);
 
-            auto recv_result = recv_future.get();
-            if (recv_result.index() == 0)
-            {
-                DAS_LOG_ERROR("[FakeMain] Failed to receive HELLO");
-                io_thread.join();
-                return 1;
-            }
+            // 8.2 发送 HELLO（分配 session_id = 1）
+            DAS::Core::IPC::HelloRequestV1 hello;
+            DAS::Core::IPC::InitHelloRequest(
+                hello,
+                host_pid,
+                "FakeMainProcess");
 
-            auto&& [header, body] = std::get<1>(recv_result);
-            DAS_LOG_INFO(
-                DAS_FMT_NS::format(
-                    "[FakeMain] Received message: interface_id={}",
-                    header.Raw().interface_id)
-                    .c_str());
+            // 设置分配的 session_id（模拟 MainProcess 分配）
+            hello.assigned_session_id = 1;
 
-            // 验证是 HELLO 消息
-            if (header.Raw().interface_id
-                != static_cast<uint32_t>(DAS::Core::IPC::HandshakeInterfaceId::
-                                             HANDSHAKE_IFACE_HELLO))
-            {
-                DAS_LOG_ERROR("[FakeMain] Expected HELLO message");
-                io_thread.join();
-                return 1;
-            }
-
-            // 解析 HELLO 请求
-            if (body.size() < sizeof(DAS::Core::IPC::HelloRequestV1))
-            {
-                DAS_LOG_ERROR("[FakeMain] HELLO body too small");
-                io_thread.join();
-                return 1;
-            }
-
-            auto* hello =
-                reinterpret_cast<const DAS::Core::IPC::HelloRequestV1*>(
-                    body.data());
-
-            DAS_LOG_INFO(
-                DAS_FMT_NS::format(
-                    "[FakeMain] Received HELLO: pid={}, assigned_session={}",
-                    hello->pid,
-                    hello->assigned_session_id)
-                    .c_str());
-
-            // 发送 WELCOME 响应
-            DAS::Core::IPC::WelcomeResponseV1 welcome;
-            DAS::Core::IPC::InitWelcomeResponse(
-                welcome,
-                hello->assigned_session_id,
-                DAS::Core::IPC::WelcomeResponseV1::STATUS_SUCCESS);
-
-            auto welcome_header =
+            auto hello_header =
                 DAS::Core::IPC::IPCMessageHeaderBuilder()
-                    .SetMessageType(DAS::Core::IPC::MessageType::RESPONSE)
+                    .SetMessageType(DAS::Core::IPC::MessageType::REQUEST)
                     .SetControlPlaneCommand(
                         DAS::Core::IPC::HandshakeInterfaceId::
-                            HANDSHAKE_IFACE_WELCOME)
-                    .SetBodySize(sizeof(welcome))
-                    .SetCallId(header.Raw().call_id)
+                            HANDSHAKE_IFACE_HELLO)
+                    .SetBodySize(sizeof(hello))
+                    .SetCallId(1)
                     .Build();
+
+            DAS_LOG_INFO(
+                DAS_FMT_NS::format(
+                    "[FakeMain] Sending HELLO: pid={}, session_id={}",
+                    hello.pid,
+                    hello.assigned_session_id)
+                    .c_str());
 
             auto send_future = boost::asio::co_spawn(
                 io_ctx,
                 transport->SendCoroutine(
-                    welcome_header,
-                    reinterpret_cast<const uint8_t*>(&welcome),
-                    sizeof(welcome)),
+                    hello_header,
+                    reinterpret_cast<const uint8_t*>(&hello),
+                    sizeof(hello)),
                 boost::asio::use_future);
 
             auto send_result = send_future.get();
@@ -545,16 +547,111 @@ namespace FakeMainProcess
             {
                 DAS_LOG_ERROR(
                     DAS_FMT_NS::format(
-                        "[FakeMain] Failed to send WELCOME: {}",
+                        "[FakeMain] Failed to send HELLO: {}",
                         send_result)
                         .c_str());
                 io_thread.join();
                 return 1;
             }
 
-            DAS_LOG_INFO("[FakeMain] Sent WELCOME");
+            DAS_LOG_INFO("[FakeMain] Sent HELLO, waiting for WELCOME...");
 
-            // 接收 READY
+            // 8.3 等待接收 WELCOME（接收操作已在前面启动）
+            auto recv_result = recv_future.get();
+            if (recv_result.index() == 0)
+            {
+                DAS_LOG_ERROR("[FakeMain] Failed to receive WELCOME");
+                io_thread.join();
+                return 1;
+            }
+
+            auto&& [welcome_header, welcome_body] = std::get<1>(recv_result);
+            DAS_LOG_INFO(
+                DAS_FMT_NS::format(
+                    "[FakeMain] Received message: interface_id={}",
+                    welcome_header.Raw().interface_id)
+                    .c_str());
+
+            // 验证是 WELCOME 消息
+            if (welcome_header.Raw().interface_id
+                != static_cast<uint32_t>(DAS::Core::IPC::HandshakeInterfaceId::
+                                             HANDSHAKE_IFACE_WELCOME))
+            {
+                DAS_LOG_ERROR("[FakeMain] Expected WELCOME message");
+                io_thread.join();
+                return 1;
+            }
+
+            // 解析 WELCOME 响应
+            if (welcome_body.size() < sizeof(DAS::Core::IPC::WelcomeResponseV1))
+            {
+                DAS_LOG_ERROR("[FakeMain] WELCOME body too small");
+                io_thread.join();
+                return 1;
+            }
+
+            auto* welcome =
+                reinterpret_cast<const DAS::Core::IPC::WelcomeResponseV1*>(
+                    welcome_body.data());
+
+            DAS_LOG_INFO(
+                DAS_FMT_NS::format(
+                    "[FakeMain] Received WELCOME: session_id={}, status={}",
+                    welcome->session_id,
+                    welcome->status)
+                    .c_str());
+
+            if (welcome->status
+                != DAS::Core::IPC::WelcomeResponseV1::STATUS_SUCCESS)
+            {
+                DAS_LOG_ERROR("[FakeMain] WELCOME status indicates failure");
+                io_thread.join();
+                return 1;
+            }
+
+            // 8.3 发送 READY（MainProcess 主动发送）
+            DAS::Core::IPC::ReadyRequestV1 ready;
+            DAS::Core::IPC::InitReadyRequest(ready, welcome->session_id);
+
+            auto ready_header =
+                DAS::Core::IPC::IPCMessageHeaderBuilder()
+                    .SetMessageType(DAS::Core::IPC::MessageType::REQUEST)
+                    .SetControlPlaneCommand(
+                        DAS::Core::IPC::HandshakeInterfaceId::
+                            HANDSHAKE_IFACE_READY)
+                    .SetBodySize(sizeof(ready))
+                    .SetCallId(2)
+                    .Build();
+
+            DAS_LOG_INFO(
+                DAS_FMT_NS::format(
+                    "[FakeMain] Sending READY: session_id={}",
+                    ready.session_id)
+                    .c_str());
+
+            send_future = boost::asio::co_spawn(
+                io_ctx,
+                transport->SendCoroutine(
+                    ready_header,
+                    reinterpret_cast<const uint8_t*>(&ready),
+                    sizeof(ready)),
+                boost::asio::use_future);
+
+            send_result = send_future.get();
+            if (send_result != DAS_S_OK)
+            {
+                DAS_LOG_ERROR(
+                    DAS_FMT_NS::format(
+                        "[FakeMain] Failed to send READY: {}",
+                        send_result)
+                        .c_str());
+                io_thread.join();
+                return 1;
+            }
+
+            DAS_LOG_INFO("[FakeMain] Sent READY, waiting for READY_ACK...");
+
+            // 8.4 接收 READY_ACK
             recv_future = boost::asio::co_spawn(
                 io_ctx,
                 transport->ReceiveCoroutine(),
@@ -563,62 +660,55 @@ namespace FakeMainProcess
             recv_result = recv_future.get();
             if (recv_result.index() == 0)
             {
-                DAS_LOG_ERROR("[FakeMain] Failed to receive READY");
+                DAS_LOG_ERROR("[FakeMain] Failed to receive READY_ACK");
                 io_thread.join();
                 return 1;
             }
 
-            auto&& [ready_header, ready_body] = std::get<1>(recv_result);
+            auto&& [ack_header, ack_body] = std::get<1>(recv_result);
 
-            if (ready_header.Raw().interface_id
+            if (ack_header.Raw().interface_id
                 != static_cast<uint32_t>(DAS::Core::IPC::HandshakeInterfaceId::
-                                             HANDSHAKE_IFACE_READY))
+                                             HANDSHAKE_IFACE_READY_ACK))
             {
-                DAS_LOG_ERROR("[FakeMain] Expected READY message");
+                DAS_LOG_ERROR("[FakeMain] Expected READY_ACK message");
                 io_thread.join();
                 return 1;
             }
 
-            DAS_LOG_INFO("[FakeMain] Received READY");
-
-            // 发送 READY_ACK
-            DAS::Core::IPC::ReadyAckV1 ready_ack;
-            ready_ack.status = DAS::Core::IPC::ReadyAckV1::STATUS_SUCCESS;
-
-            auto ack_header =
-                DAS::Core::IPC::IPCMessageHeaderBuilder()
-                    .SetMessageType(DAS::Core::IPC::MessageType::RESPONSE)
-                    .SetControlPlaneCommand(
-                        DAS::Core::IPC::HandshakeInterfaceId::
-                            HANDSHAKE_IFACE_READY_ACK)
-                    .SetBodySize(sizeof(ready_ack))
-                    .SetCallId(ready_header.Raw().call_id)
-                    .Build();
-
-            send_future = boost::asio::co_spawn(
-                io_ctx,
-                transport->SendCoroutine(
-                    ack_header,
-                    reinterpret_cast<const uint8_t*>(&ready_ack),
-                    sizeof(ready_ack)),
-                boost::asio::use_future);
-
-            send_result = send_future.get();
-            if (send_result != DAS_S_OK)
+            if (ack_body.size() < sizeof(DAS::Core::IPC::ReadyAckV1))
             {
-                DAS_LOG_ERROR("[FakeMain] Failed to send READY_ACK");
+                DAS_LOG_ERROR("[FakeMain] READY_ACK body too small");
                 io_thread.join();
                 return 1;
             }
 
-            DAS_LOG_INFO("[FakeMain] Sent READY_ACK - Handshake complete!");
+            auto* ready_ack =
+                reinterpret_cast<const DAS::Core::IPC::ReadyAckV1*>(
+                    ack_body.data());
+
+            DAS_LOG_INFO(
+                DAS_FMT_NS::format(
+                    "[FakeMain] Received READY_ACK: status={}",
+                    ready_ack->status)
+                    .c_str());
+
+            if (ready_ack->status != DAS::Core::IPC::ReadyAckV1::STATUS_SUCCESS)
+            {
+                DAS_LOG_ERROR("[FakeMain] READY_ACK status indicates failure");
+                io_thread.join();
+                return 1;
+            }
+
+            DAS_LOG_INFO("[FakeMain] Handshake complete!");
 
             handshake_complete = true;
 
             // 9. 通知测试框架握手完成
             shm->SetHandshakeDone();
 
-            // 停止 io_context
+            // 停止 io_context（先重置 work_guard）
+            work_guard.reset();
             io_ctx.stop();
             io_thread.join();
         }

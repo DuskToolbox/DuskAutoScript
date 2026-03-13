@@ -707,7 +707,15 @@ TEST_F(
             fake_main_pid)
             .c_str());
 
-    // 6. 将 host_pid 写入共享内存，让 FakeMain 可以创建正确命名的管道
+    // 6. 等待 FakeMain 创建共享内存（避免竞态条件）
+    bool shm_ready =
+        FakeMainProcess::KillParentSharedMemory::WaitForSharedMemoryReady(
+            FakeMainProcess::KILL_PARENT_SHM_NAME,
+            std::chrono::seconds(10));
+    ASSERT_TRUE(shm_ready) << "FakeMain did not create shared memory in time";
+    DAS_LOG_INFO("[KillParent] Shared memory is ready");
+
+    // 7. 将 host_pid 写入共享内存，让 FakeMain 可以创建正确命名的管道
     FakeMainProcess::KillParentSharedMemory::WriteHostPid(
         FakeMainProcess::KILL_PARENT_SHM_NAME,
         host_pid);
@@ -717,19 +725,19 @@ TEST_F(
             host_pid)
             .c_str());
 
-    // 7. 等待假主进程就绪（管道已创建）
+    // 8. 等待假主进程就绪（管道已创建）
     //    DasHost 有 1 秒的连接重试超时，应该足够让 FakeMain 创建管道
     bool ready = signal_holder.ReleaseAndWait(std::chrono::seconds(10));
     ASSERT_TRUE(ready) << "Fake main process did not become ready in time";
 
-    // 8. 确认假主进程还在运行
+    // 9. 确认假主进程还在运行
     {
         boost::system::error_code ec;
         ASSERT_TRUE(fake_main.running(ec))
             << "Fake main process exited prematurely";
     }
 
-    // 9. 等待握手完成
+    // 10. 等待握手完成
     bool handshake_done =
         FakeMainProcess::KillParentSharedMemory::WaitForHandshakeDone(
             FakeMainProcess::KILL_PARENT_SHM_NAME,
@@ -737,14 +745,14 @@ TEST_F(
     ASSERT_TRUE(handshake_done) << "Handshake did not complete in time";
     DAS_LOG_INFO("[KillParent] Handshake completed");
 
-    // 10. 确认 Host 还在运行
+    // 11. 确认 Host 还在运行
     {
         boost::system::error_code ec;
         ASSERT_TRUE(host_process.running(ec))
             << "Host process exited after handshake (should still be running)";
     }
 
-    // 11. 杀掉假主进程（模拟主进程崩溃）
+    // 12. 杀掉假主进程（模拟主进程崩溃）
     {
         boost::system::error_code ec;
         fake_main.terminate(ec);
@@ -755,7 +763,7 @@ TEST_F(
                 .c_str());
     }
 
-    // 12. 等待 Host 自动退出（父进程监控应检测到并退出）
+    // 13. 等待 Host 自动退出（父进程监控应检测到并退出）
     bool host_exited = false;
     for (int i = 0; i < 100; ++i)
     {
