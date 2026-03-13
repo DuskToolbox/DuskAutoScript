@@ -9,8 +9,8 @@
 #include <das/IDasBase.h>
 #include <vector>
 
-#include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/AsyncIpcTransport.h>
+#include <das/Core/IPC/Config.h>
 
 DAS_CORE_IPC_NS_BEGIN
 class IpcRunLoop;
@@ -19,9 +19,6 @@ class IPCProxyBase
 {
 public:
     virtual ~IPCProxyBase() = default;
-
-    virtual uint32_t AddRef() = 0;
-    virtual uint32_t Release() = 0;
 
     [[nodiscard]]
     uint32_t GetInterfaceId() const noexcept
@@ -57,7 +54,7 @@ protected:
     IPCProxyBase(
         uint32_t        interface_id,
         const ObjectId& object_id,
-        IpcRunLoop*    run_loop)
+        IpcRunLoop*     run_loop)
         : interface_id_(interface_id), object_id_(object_id),
           run_loop_(run_loop), transport_(nullptr), next_call_id_(1)
     {
@@ -112,11 +109,11 @@ protected:
     }
 
 private:
-    uint32_t                   interface_id_;
-    ObjectId                   object_id_;
-    IpcRunLoop*                run_loop_;
-    DefaultAsyncIpcTransport*  transport_;
-    uint64_t                   next_call_id_;
+    uint32_t                  interface_id_;
+    ObjectId                  object_id_;
+    IpcRunLoop*               run_loop_;
+    DefaultAsyncIpcTransport* transport_;
+    uint64_t                  next_call_id_;
 };
 DAS_CORE_IPC_NS_END
 

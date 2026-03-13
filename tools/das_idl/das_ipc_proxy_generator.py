@@ -399,7 +399,7 @@ class IpcProxyGenerator:
         
         # Step 4: 处理响应
         lines.append(f"{inner_indent}// Check result")
-        lines.append(f"{inner_indent}if (DAS_FAILED(result))")
+        lines.append(f"{inner_indent}if (DAS::IsFailed(result))")
         lines.append(f"{inner_indent}{{")
         lines.append(f"{inner_indent}    return result;")
         lines.append(f"{inner_indent}}}")
@@ -534,7 +534,7 @@ class IpcProxyGenerator:
         else:
             lines.append(f"{indent}DasResult result = SendRequest({method_index},")
             lines.append(f"{indent}    request_body, request_body_size, response_body);")
-        lines.append(f"{indent}if (DAS_FAILED(result))")
+        lines.append(f"{indent}if (DAS::IsFailed(result))")
         lines.append(f"{indent}{{")
         if has_return:
             lines.append(f"{indent}    return result;")
@@ -548,14 +548,14 @@ class IpcProxyGenerator:
             lines.append("")
             lines.append(f"{indent}DasResult remote_result;")
             lines.append(f"{indent}result = reader.ReadInt32(&remote_result);")
-            lines.append(f"{indent}if (DAS_FAILED(result))")
+            lines.append(f"{indent}if (DAS::IsFailed(result))")
             lines.append(f"{indent}{{")
             if has_return:
                 lines.append(f"{indent}    return result;")
             else:
                 lines.append(f"{indent}    return;")
             lines.append(f"{indent}}}")
-            lines.append(f"{indent}if (DAS_FAILED(remote_result))")
+            lines.append(f"{indent}if (DAS::IsFailed(remote_result))")
             lines.append(f"{indent}{{")
             if has_return:
                 lines.append(f"{indent}    return remote_result;")
@@ -604,7 +604,7 @@ class IpcProxyGenerator:
             else:
                 lines.append(f"{indent}result = writer.{write_method}({param.name});")
         
-        lines.append(f"{indent}if (DAS_FAILED(result))")
+        lines.append(f"{indent}if (DAS::IsFailed(result))")
         lines.append(f"{indent}{{")
         lines.append(f"{indent}    return result;")
         lines.append(f"{indent}}}")
@@ -631,7 +631,7 @@ class IpcProxyGenerator:
             else:
                 lines.append(f"{indent}result = reader.{read_method}(&{param.name});")
         
-        lines.append(f"{indent}if (DAS_FAILED(result))")
+        lines.append(f"{indent}if (DAS::IsFailed(result))")
         lines.append(f"{indent}{{")
         if has_return:
             lines.append(f"{indent}    return result;")
@@ -656,7 +656,7 @@ class IpcProxyGenerator:
         if is_struct:
             lines.append(f"{indent}{return_type.base_type} ret_value;")
             lines.append(f"{indent}result = Deserialize_{return_type.base_type}(reader, &ret_value);")
-            lines.append(f"{indent}if (DAS_FAILED(result))")
+            lines.append(f"{indent}if (DAS::IsFailed(result))")
             lines.append(f"{indent}{{")
             lines.append(f"{indent}    return result;")
             lines.append(f"{indent}}}")
@@ -664,7 +664,7 @@ class IpcProxyGenerator:
         else:
             lines.append(f"{indent}{cpp_type} ret_value;")
             lines.append(f"{indent}result = reader.{read_method}(&ret_value);")
-            lines.append(f"{indent}if (DAS_FAILED(result))")
+            lines.append(f"{indent}if (DAS::IsFailed(result))")
             lines.append(f"{indent}{{")
             lines.append(f"{indent}    return result;")
             lines.append(f"{indent}}}")

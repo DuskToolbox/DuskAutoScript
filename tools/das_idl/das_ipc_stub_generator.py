@@ -402,7 +402,7 @@ class IpcStubGenerator:
         lines.append("")
         
         lines.append(f"{inner_indent}serial_result = writer.WriteInt32(DAS_S_OK);")
-        lines.append(f"{inner_indent}if (DAS_FAILED(serial_result))")
+        lines.append(f"{inner_indent}if (DAS::IsFailed(serial_result))")
         lines.append(f"{inner_indent}{{")
         lines.append(f"{inner_indent}    return serial_result;")
         lines.append(f"{inner_indent}}}")
@@ -446,7 +446,7 @@ class IpcStubGenerator:
             lines.append(f"{indent}{cpp_type} {param.name};")
             lines.append(f"{indent}serial_result = reader.{read_method}(&{param.name});")
         
-        lines.append(f"{indent}if (DAS_FAILED(serial_result))")
+        lines.append(f"{indent}if (DAS::IsFailed(serial_result))")
         lines.append(f"{indent}{{")
         lines.append(f"{indent}    return serial_result;")
         lines.append(f"{indent}}}")
@@ -472,7 +472,7 @@ class IpcStubGenerator:
             else:
                 lines.append(f"{indent}serial_result = writer.{write_method}({param.name});")
         
-        lines.append(f"{indent}if (DAS_FAILED(serial_result))")
+        lines.append(f"{indent}if (DAS::IsFailed(serial_result))")
         lines.append(f"{indent}{{")
         lines.append(f"{indent}    return serial_result;")
         lines.append(f"{indent}}}")
@@ -495,7 +495,7 @@ class IpcStubGenerator:
         else:
             lines.append(f"{indent}serial_result = writer.{write_method}(call_result);")
         
-        lines.append(f"{indent}if (DAS_FAILED(serial_result))")
+        lines.append(f"{indent}if (DAS::IsFailed(serial_result))")
         lines.append(f"{indent}{{")
         lines.append(f"{indent}    return serial_result;")
         lines.append(f"{indent}}}")

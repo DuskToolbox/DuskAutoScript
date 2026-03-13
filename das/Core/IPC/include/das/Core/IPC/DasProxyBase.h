@@ -3,14 +3,10 @@
 
 #include <das/Core/IPC/IPCProxyBase.h>
 #include <das/Core/IPC/ObjectManager.h>
-#include <das/IDasBase.h>
 #include <das/DasConfig.h>
+#include <das/IDasBase.h>
 
 #include <das/Core/IPC/Config.h>
-
-#ifndef DAS_FAILED
-#define DAS_FAILED(result) ((result) != DAS_S_OK)
-#endif
 
 DAS_CORE_IPC_NS_BEGIN
 template <typename TInterface>
@@ -29,7 +25,8 @@ public:
     }
 
     [[nodiscard]]
-    DistributedObjectManager* GetObjectManager() const noexcept DAS_LIFETIMEBOUND
+    DistributedObjectManager* GetObjectManager() const noexcept
+        DAS_LIFETIMEBOUND
     {
         return object_manager_;
     }
@@ -59,7 +56,7 @@ protected:
         void*     obj_ptr = nullptr;
         DasResult result =
             object_manager->LookupObject(encoded_object_id, &obj_ptr);
-        if (DAS_FAILED(result))
+        if (DAS::IsFailed(result))
             return result;
 
         ObjectId obj_id = DecodeObjectId(encoded_object_id);
