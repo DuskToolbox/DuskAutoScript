@@ -263,6 +263,7 @@ class IpcProxyGenerator:
 //
 
 #include <das/Core/IPC/DasProxyBase.h>
+#include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/MemorySerializer.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/Serializer.h>
@@ -532,27 +533,54 @@ class IpcProxyGenerator:
     
     def _generate_method_body_v2(self, interface: InterfaceDef, method: MethodDef, method_index: int, namespace_depth: int = 0) -> str:
         """生成方法体，使用基类的 SendRequest 方法
-        
+
         Generated Code Pattern:
-        1. 序列化输入参数
-        2. 调用 SendRequest
-        3. 反序列化远程返回码
-        4. 如果远程返回码失败则返回
-        5. 反序列化输出参数
+        1. 检查目标是否是本地对象
+        2. 如果是本地对象，直接调用本地实现
+        3. 如果是远程对象，序列化输入参数
+        4. 调用 SendRequest
+        5. 反序列化远程返回码
+        6. 如果远程返回码失败则返回
+        7. 反序列化输出参数
         """
         indent = "    " * (namespace_depth + 2)
         inner_indent = "    " * (namespace_depth + 3)
         lines = []
-        
+
         return_type = method.return_type.base_type
         has_return = return_type != 'void'
-        
+
+        # 构建参数列表
+        param_names = [param.name for param in method.parameters]
+        params_call = ", ".join(param_names) if param_names else ""
+
+        # ======== 本地对象短路检查 ========
+        lines.append(f"{indent}// Check if target is local object")
+        lines.append(f"{indent}auto& obj_mgr = DistributedObjectManager::GetInstance();")
+        lines.append(f"{indent}if (obj_mgr.IsLocalObject(object_id_)) {{")
+        lines.append(f"{indent}    void* obj_ptr = nullptr;")
+        lines.append(f"{indent}    obj_mgr.LookupObject(object_id_, &obj_ptr);")
+        lines.append(f"{indent}    auto* local_impl = static_cast<{interface.name}*>(obj_ptr);")
+
+        # 本地调用
+        if has_return:
+            lines.append(f"{indent}    return local_impl->{method.name}({params_call});")
+        else:
+            lines.append(f"{indent}    local_impl->{method.name}({params_call});")
+            lines.append(f"{indent}    return DAS_S_OK;")
+
+        lines.append(f"{indent}}}")
+        lines.append(f"{indent}")
+        lines.append(f"{indent}// Remote object: proceed with IPC")
+        lines.append(f"{indent}")
+
+        # ======== IPC 远程调用 ========
         in_params = [p for p in method.parameters if p.direction != ParamDirection.OUT]
         out_params = [p for p in method.parameters if p.direction in (ParamDirection.OUT, ParamDirection.INOUT)]
-        
+
         need_request_body = bool(in_params)
         need_response_body = bool(out_params) or has_return
-        
+
         if need_request_body:
             lines.append(f"{indent}MemorySerializerWriter writer;")
             lines.append(f"{indent}DasResult result = DAS_S_OK;")
