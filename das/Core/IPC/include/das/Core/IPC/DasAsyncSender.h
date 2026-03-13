@@ -399,6 +399,24 @@ namespace Core::IPC
             internal::SyncWaitReceiver<value_tuple_t>{&result, &done, &wakeup});
         stdexec::start(op);
 
+        // 等待异步操作完成（最多等待 30 秒）
+        // 注意：io_context 在另一个线程中运行，这里只需要等待回调完成
+        constexpr auto kMaxWaitTime = std::chrono::seconds(30);
+        auto           start_time = std::chrono::steady_clock::now();
+
+        while (!done)
+        {
+            auto elapsed = std::chrono::steady_clock::now() - start_time;
+            if (elapsed >= kMaxWaitTime)
+            {
+                // 超时，返回空结果
+                break;
+            }
+
+            // 使用短睡眠避免 CPU 占用过高
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+
         return result;
     }
 
