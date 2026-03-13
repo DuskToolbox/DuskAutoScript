@@ -13,6 +13,8 @@
 
 #include "IpcMultiProcessTestIntegration.h"
 
+#include "FakeMainProcess.h"
+
 #include <das/Core/IPC/AsyncOperationImpl.h>
 #include <das/Core/IPC/DasAsyncSender.h>
 #include <das/IDasAsyncLoadPluginOperation.h>
@@ -618,53 +620,69 @@ TEST_F(IpcMultiProcessTestIntegration, ParentProcessExit_HostAutoExit_InvalidPid
  *
  * 这比 InvalidPid 测试更贴近真实场景，因为 Host 会先成功初始化 IPC 资源，
  * 然后在运行过程中检测到主进程消失。
+ *
+ * 实现方式：复用测试可执行程序本身作为假主进程（通过 --fake-main 参数），
+ * 使用 boost::interprocess::named_mutex 实现跨进程同步。
  */
 TEST_F(IpcMultiProcessTestIntegration, ParentProcessExit_HostAutoExit_KillParent)
 {
-    // 跳过：当前架构下无法用一个普通进程模拟 IPC 主进程
-    // Host 启动后会尝试连接 IPC 管道，如果没有找到会立即退出
-    // 要正确测试这个场景，需要一个真正的 IPC 上下文作为假主进程
-    GTEST_SKIP() << "Test requires real IPC context as fake parent, not implemented yet";
-
     if (!std::filesystem::exists(host_exe_path_))
     {
         GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
     }
 
-    // 1. 启动一个辅助进程作为"假主进程"
-    //    使用系统自带的程序（Windows: timeout, Linux: sleep）
-    boost::asio::io_context fake_parent_io_ctx;
-#ifdef _WIN32
-    // Windows: 使用 cmd /c timeout 来创建一个持续运行的进程
-    // boost::process::v2 需要完整路径
-    char   system_dir[MAX_PATH];
-    UINT   len = GetSystemDirectoryA(system_dir, MAX_PATH);
-    std::string fake_parent_exe = std::string(system_dir, len) + "\\cmd.exe";
-    std::vector<std::string> fake_parent_args =
-        {"/c", "timeout", "/t", "60", "/nobreak"};
-#else
-    std::string              fake_parent_exe = "/bin/sleep";
-    std::vector<std::string> fake_parent_args = {"60"};
-#endif
+    // 1. 获取当前可执行程序路径
+    std::string test_exe_path;
+    {
+        char   buffer[MAX_PATH];
+        DWORD  len = GetModuleFileNameA(nullptr, buffer, MAX_PATH);
+        if (len == 0 || len >= MAX_PATH)
+        {
+            GTEST_SKIP() << "Failed to get current executable path";
+        }
+        test_exe_path = std::string(buffer, len);
+    }
 
-    boost::process::v2::process fake_parent(
-        fake_parent_io_ctx,
-        fake_parent_exe,
-        fake_parent_args);
+    // 2. 生成唯一信号名称
+    std::string signal_name = FakeMainProcess::GenerateUniqueSignalName();
 
-    uint32_t fake_parent_pid = static_cast<uint32_t>(fake_parent.id());
-    ASSERT_GT(fake_parent_pid, 0u);
+    // 3. 创建就绪信号等待器
+    FakeMainProcess::FakeMainReadySignal ready_signal(signal_name);
 
-    std::string parent_log = DAS_FMT_NS::format(
-        "[ParentProcessExit_KillParent] Fake parent started: PID={}",
-        fake_parent_pid);
-    DAS_LOG_INFO(parent_log.c_str());
+    // 4. 启动假主进程（当前可执行程序以 --fake-main 模式运行）
+    boost::asio::io_context fake_main_io_ctx;
+    std::vector<std::string> fake_main_args = {
+        "--fake-main", "--signal-name", signal_name
+    };
 
-    // 2. 使用假主进程的 PID 启动 DasHost.exe
+    boost::process::v2::process fake_main(
+        fake_main_io_ctx,
+        test_exe_path,
+        fake_main_args);
+
+    auto fake_main_pid = static_cast<uint32_t>(fake_main.id());
+
+    DAS_LOG_INFO(DAS_FMT_NS::format(
+        "[KillParent] Fake main started: PID={}",
+        fake_main_pid).c_str());
+
+    // 5. 等待假主进程就绪（等待 IPC 上下文初始化完成）
+    bool ready = ready_signal.WaitForReady(std::chrono::seconds(10));
+    ASSERT_TRUE(ready) << "Fake main process did not become ready in time";
+
+    // 6. 确认假主进程还在运行
+    {
+        boost::system::error_code ec;
+        ASSERT_TRUE(fake_main.running(ec))
+            << "Fake main process exited prematurely";
+    }
+
+    // 7. 启动 DasHost（连接到假主进程）
     boost::asio::io_context  host_io_ctx;
-    std::vector<std::string> host_args;
-    host_args.push_back("--main-pid");
-    host_args.push_back(std::to_string(fake_parent_pid));
+    std::vector<std::string> host_args = {
+        "--main-pid",
+        std::to_string(fake_main_pid)
+    };
 
     boost::process::v2::process host_process(
         host_io_ctx,
@@ -673,37 +691,29 @@ TEST_F(IpcMultiProcessTestIntegration, ParentProcessExit_HostAutoExit_KillParent
         boost::process::v2::process_start_dir(
             std::filesystem::path(host_exe_path_).parent_path().string()));
 
-    uint32_t host_pid = static_cast<uint32_t>(host_process.id());
-    ASSERT_GT(host_pid, 0u);
+    auto host_pid = static_cast<uint32_t>(host_process.id());
+    DAS_LOG_INFO(DAS_FMT_NS::format(
+        "[KillParent] Host started: PID={}, main_pid={}",
+        host_pid, fake_main_pid).c_str());
 
-    std::string host_log = DAS_FMT_NS::format(
-        "[ParentProcessExit_KillParent] Host started: PID={}, main_pid={}",
-        host_pid,
-        fake_parent_pid);
-    DAS_LOG_INFO(host_log.c_str());
-
-    // 3. 等待 Host 初始化完成（给它 2 秒时间）
+    // 8. 等待 Host 初始化并连接到假主进程
     std::this_thread::sleep_for(std::chrono::seconds(2));
 
-    // 确认 Host 还在运行
     {
         boost::system::error_code ec;
         ASSERT_TRUE(host_process.running(ec))
-            << "Host process exited prematurely before parent was killed";
+            << "Host process exited before parent was killed";
     }
 
-    // 4. 杀掉假主进程（模拟主进程崩溃）
+    // 9. 杀掉假主进程（模拟主进程崩溃）
     {
         boost::system::error_code ec;
-        fake_parent.terminate(ec);
-        std::string kill_log = DAS_FMT_NS::format(
-            "[ParentProcessExit_KillParent] Fake parent killed: PID={}",
-            fake_parent_pid);
-        DAS_LOG_INFO(kill_log.c_str());
+        fake_main.terminate(ec);
+        DAS_LOG_INFO(DAS_FMT_NS::format(
+            "[KillParent] Fake main killed: PID={}", fake_main_pid).c_str());
     }
 
-    // 5. 等待 Host 进程自动退出（最多等待 10 秒）
-    //    父进程监控线程检测间隔为 1 秒
+    // 10. 等待 Host 自动退出（父进程监控应检测到并退出）
     bool host_exited = false;
     for (int i = 0; i < 100; ++i)
     {
@@ -718,19 +728,14 @@ TEST_F(IpcMultiProcessTestIntegration, ParentProcessExit_HostAutoExit_KillParent
 
     if (!host_exited)
     {
-        // 如果还没退出，强制终止避免僵尸进程
         boost::system::error_code ec;
         host_process.terminate(ec);
-        FAIL()
-            << "Host process did not exit after 10 seconds when parent was killed. "
-               "Parent process monitoring is not working.";
+        FAIL() << "Host did not exit after parent was killed. "
+                  "Parent process monitoring is not working.";
     }
 
-    std::string result_log = DAS_FMT_NS::format(
-        "[ParentProcessExit_KillParent] "
-        "Host process exited automatically after parent was killed. Test PASSED.");
-    DAS_LOG_INFO(result_log.c_str());
-    SUCCEED();
+    DAS_LOG_INFO("[KillParent] Test PASSED - Host exited automatically");
+    FakeMainProcess::FakeMainReadySignal::Cleanup(signal_name);
 }
 
 /**
