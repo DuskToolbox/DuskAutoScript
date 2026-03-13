@@ -144,6 +144,46 @@ class ProxyTypeMapper:
         """检查是否是 struct 类型"""
         return idl_type in self.struct_types
 
+    def is_interface_type(self, idl_type: str) -> bool:
+        """检查是否是接口指针类型（如 IDasXxx*, IDasXxxPtr）
+
+        接口类型特征：
+        - 以 "I" 开头
+        - 以 "*" 结尾（指针）
+        - 或者以 "Ptr" 结尾（智能指针）
+        - 通常以 "Das" 结尾（如 IDasLogReader）
+        """
+        # 去除命名空间前缀
+        type_name = idl_type.split("::")[-1]
+
+        # 检查是否是指针类型
+        is_pointer = type_name.endswith("*")
+        is_smart_ptr = type_name.endswith("Ptr")
+
+        if not (is_pointer or is_smart_ptr):
+            return False
+
+        # 提取接口名（去除指针标记）
+        interface_name = type_name[:-1]  # 去除 *
+        if is_smart_ptr:
+            interface_name = type_name[:-3]  # 去除 Ptr
+
+        # 接口名必须以 I 开头且包含 Das
+        return interface_name.startswith("I") and "Das" in interface_name
+
+    def get_interface_name(self, idl_type: str) -> str:
+        """从接口指针类型提取接口名"""
+        type_name = idl_type.split("::")[-1]
+
+        is_pointer = type_name.endswith("*")
+        is_smart_ptr = type_name.endswith("Ptr")
+
+        if is_pointer:
+            return type_name[:-1]  # 去除 *
+        elif is_smart_ptr:
+            return type_name[:-3]  # 去除 Ptr
+        return type_name
+
 
 def fnv1a_hash(data: str) -> int:
     """计算字符串的 FNV-1a 32-bit hash
@@ -583,15 +623,31 @@ class IpcProxyGenerator:
     def _generate_serialize_param(self, param: ParameterDef, indent: str) -> List[str]:
         """生成参数序列化代码"""
         lines = []
+
+        # 检查是否是接口指针类型
+        if self.type_mapper.is_interface_type(param.type_info.base_type):
+            interface_name = self.type_mapper.get_interface_name(param.type_info.base_type)
+            param_name = param.name
+
+            # 获取 ObjectId 并序列化
+            lines.append(f"{indent}// 序列化接口指针: {interface_name}*")
+            lines.append(f"{indent}ObjectId {param_name}_id = GetObjectIdFromInterface({param_name});")
+            lines.append(f"{indent}result = writer.WriteUInt64(EncodeObjectId({param_name}_id));")
+            lines.append(f"{indent}if (DAS::IsFailed(result))")
+            lines.append(f"{indent}{{")
+            lines.append(f"{indent}    return result;")
+            lines.append(f"{indent}}}")
+            return lines
+
         type_info = self.type_mapper.get_type_info(param.type_info.base_type)
-        
+
         if type_info is None:
             lines.append(f"{indent}// TODO: Unknown type {param.type_info.base_type}")
             lines.append(f"{indent}// result = writer.WriteCustom<{param.type_info.base_type}>({param.name});")
             return lines
-        
+
         cpp_type, write_method, _, is_struct = type_info
-        
+
         if is_struct:
             lines.append(f"{indent}result = Serialize_{param.type_info.base_type}(writer, {param.name});")
         else:
@@ -603,12 +659,12 @@ class IpcProxyGenerator:
                     lines.append(f"{indent}result = writer.{write_method}({param.name});")
             else:
                 lines.append(f"{indent}result = writer.{write_method}({param.name});")
-        
+
         lines.append(f"{indent}if (DAS::IsFailed(result))")
         lines.append(f"{indent}{{")
         lines.append(f"{indent}    return result;")
         lines.append(f"{indent}}}")
-        
+
         return lines
     
     def _generate_deserialize_param(self, param: ParameterDef, indent: str, has_return: bool = True) -> List[str]:
