@@ -402,106 +402,15 @@ namespace Core::IPC
         return result;
     }
 
-    //=============================================================================
-    // CvWaitReceiver — 使用条件变量等待的 receiver
-    //=============================================================================
-    namespace internal
-    {
-        template <typename ValueTuple>
-        struct CvWaitReceiver
-        {
-            using receiver_concept = stdexec::receiver_t;
-            std::optional<ValueTuple>* result;
-            bool*                      done;
-            std::condition_variable*   cv;
-            std::mutex*                mutex;
-
-            template <typename... Ts>
-            friend void tag_invoke(
-                stdexec::set_value_t,
-                CvWaitReceiver&& self,
-                Ts&&... values) noexcept
-            {
-                // 调试日志
-                DAS_CORE_LOG_INFO(
-                    "[CvWaitReceiver] set_value called, values count={}",
-                    sizeof...(Ts));
-
-                self.result->emplace(std::forward<Ts>(values)...);
-                {
-                    std::lock_guard<std::mutex> lock(*self.mutex);
-                    *self.done = true;
-                    DAS_CORE_LOG_INFO("[CvWaitReceiver] done set to true, notifying");
-                }
-                self.cv->notify_one();
-            }
-
-            friend void tag_invoke(
-                stdexec::set_stopped_t,
-                CvWaitReceiver&& self) noexcept
-            {
-                DAS_CORE_LOG_INFO("[CvWaitReceiver] set_stopped called");
-                {
-                    std::lock_guard<std::mutex> lock(*self.mutex);
-                    *self.done = true;
-                }
-                self.cv->notify_one();
-            }
-
-            friend stdexec::env<> tag_invoke(
-                stdexec::get_env_t,
-                const CvWaitReceiver&) noexcept
-            {
-                return {};
-            }
-        };
-    } // namespace internal
-
     template <typename Context, typename Sender>
-    auto wait(Context& ctx, Sender&& sender)
+    auto wait(Context& /* ctx */, Sender&& sender)
         -> std::optional<stdexec::value_types_of_t<
             std::decay_t<Sender>,
             stdexec::env<>,
             std::tuple,
             std::type_identity_t>>
     {
-        using value_tuple_t = stdexec::value_types_of_t<
-            std::decay_t<Sender>,
-            stdexec::env<>,
-            std::tuple,
-            std::type_identity_t>;
-
-        // 标记 ctx 未使用（保留参数以保持 API 兼容）
-        (void)ctx;
-
-        std::optional<value_tuple_t> result;
-        bool                         done = false;
-
-        // 使用条件变量进行同步等待
-        std::mutex              mutex;
-        std::condition_variable cv;
-
-        auto op = stdexec::connect(
-            std::forward<Sender>(sender),
-            internal::CvWaitReceiver<value_tuple_t>{
-                &result,
-                &done,
-                &cv,
-                &mutex});
-        stdexec::start(op);
-
-        // 等待条件变量被通知或超时
-        constexpr auto kMaxWaitMs = 30000; // 30秒超时
-
-        {
-            std::unique_lock<std::mutex> lock(mutex);
-            cv.wait_for(
-                lock,
-                std::chrono::milliseconds(kMaxWaitMs),
-                [&done] { return done; });
-        }
-
-        return result;
+        return wait(std::forward<Sender>(sender));
     }
 
 } // namespace Core::IPC
