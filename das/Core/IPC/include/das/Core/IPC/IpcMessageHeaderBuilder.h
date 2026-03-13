@@ -2,6 +2,7 @@
 #define DAS_CORE_IPC_IPC_MESSAGE_HEADER_BUILDER_H
 
 #include <das/Core/IPC/IpcCommandHandler.h>
+#include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <type_traits>
 
@@ -51,9 +52,11 @@ public:
 
     /// @brief 设置控制平面命令（类型安全）
     /// @note 只接受 IpcCommandType 或 HandshakeInterfaceId
+    /// @note 同时设置 header_flags = CONTROL_PLANE
     template <ControlPlaneEnum EnumT>
     IPCMessageHeaderBuilder& SetControlPlaneCommand(EnumT command) noexcept
     {
+        header_.header_flags = HeaderFlags::CONTROL_PLANE;
         header_.interface_id = static_cast<uint32_t>(command);
         header_.method_id = 0;
         return *this;

@@ -140,8 +140,13 @@ void IpcRunLoop::RequestStop()
         }
     }
 
-    // 注意：RequestStop() 是非阻塞的，不调用 io_context_->stop()
-    // 让协程自然退出后，io_context_->run() 会因为没有更多工作而返回
+    // 3. 停止 io_context，强制所有异步操作取消
+    // 这是必要的，因为接收协程可能阻塞在 co_await transport->ReceiveCoroutine()
+    // 仅仅重置 work_guard 不足以让它退出
+    if (io_context_)
+    {
+        io_context_->stop();
+    }
 }
 
 void IpcRunLoop::RegisterHandler(
@@ -170,6 +175,22 @@ IMessageHandler* IpcRunLoop::GetHandler(
             return jt->second.Get();
         }
     }
+
+    // Fallback: 当精确匹配失败且 header_flags=NONE 时，回退到 interface_id=0
+    // IpcCommandHandler 注册在 interface_id=0，用于处理所有命令类型
+    if (header_flags == HeaderFlags::NONE && interface_id != 0)
+    {
+        it = handlers_by_flags_.find(HeaderFlags::NONE);
+        if (it != handlers_by_flags_.end())
+        {
+            auto jt = it->second.find(0);
+            if (jt != it->second.end())
+            {
+                return jt->second.Get();
+            }
+        }
+    }
+
     return nullptr;
 }
 
@@ -321,6 +342,12 @@ void IpcRunLoop::CompletePendingCall(
     DasResult            result,
     std::vector<uint8_t> response)
 {
+    DAS_CORE_LOG_INFO(
+        "CompletePendingCall: call_id={}, result={}, response_size={}",
+        call_id,
+        result,
+        response.size());
+
     PendingCallCompletion on_complete;
 
     {
@@ -328,6 +355,9 @@ void IpcRunLoop::CompletePendingCall(
         auto                         it = pending_calls_.find(call_id);
         if (it == pending_calls_.end())
         {
+            DAS_CORE_LOG_WARN(
+                "CompletePendingCall: call_id={} not found in pending_calls",
+                call_id);
             return;
         }
 
@@ -337,6 +367,7 @@ void IpcRunLoop::CompletePendingCall(
 
     if (on_complete)
     {
+        DAS_CORE_LOG_INFO("CompletePendingCall: invoking callback for call_id={}", call_id);
         on_complete(result, std::move(response));
     }
 }
@@ -638,9 +669,17 @@ void IpcRunLoop::StartAsyncReceiveForTransport(
                     // Successfully received message
                     auto&& [header, body] = std::get<1>(result);
 
+                    DAS_CORE_LOG_INFO(
+                        "Client ReceiveLoop: session_id={}, msg_type={}, interface_id={}, call_id={}",
+                        session_id,
+                        static_cast<int>(header.Raw().message_type),
+                        header.Raw().interface_id,
+                        header.Raw().call_id);
+
                     if (header.Raw().message_type
                         == static_cast<uint8_t>(MessageType::RESPONSE))
                     {
+                        DAS_CORE_LOG_INFO("Client: RESPONSE received for call_id={}", header.Raw().call_id);
                         CompletePendingCall(
                             header.Raw().call_id,
                             DAS_S_OK,

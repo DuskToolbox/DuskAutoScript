@@ -296,12 +296,8 @@ namespace Core
                     return DAS_E_INVALID_ARGUMENT;
                 }
 
-                uint16_t session_id = launcher->GetSessionId();
-
-                // 转移 DasPtr 所有权到 ConnectionManager
-                return conn_mgr->RegisterHostLauncher(
-                    session_id,
-                    std::move(launcher));
+                // 委托给 IpcRunLoop::RegisterHostLauncher，它会启动接收循环
+                return runloop_->RegisterHostLauncher(std::move(launcher));
             }
 
             std::vector<uint16_t> IpcContext::GetConnectedSessions()
