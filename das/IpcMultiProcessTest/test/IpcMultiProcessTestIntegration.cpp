@@ -264,9 +264,10 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_VerifySessionId)
     }
 
     // 1. 创建并启动第一个 Host 进程
-    DAS::DasPtr<DAS::Core::IPC::HostLauncher> host_a(new DAS::Core::IPC::HostLauncher(ctx_->GetIoContext()));
+    DAS::DasPtr<DAS::Core::IPC::HostLauncher> host_a(
+        new DAS::Core::IPC::HostLauncher(ctx_->GetIoContext()));
 
-    uint16_t session_a = 0;
+    uint16_t  session_a = 0;
     DasResult result = host_a->Start(
         host_exe_path_,
         session_a,
@@ -279,7 +280,8 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_VerifySessionId)
     ASSERT_EQ(result, DAS_S_OK);
 
     // 2. 创建并启动第二个 Host 进程
-    DAS::DasPtr<DAS::Core::IPC::HostLauncher> host_b(new DAS::Core::IPC::HostLauncher(ctx_->GetIoContext()));
+    DAS::DasPtr<DAS::Core::IPC::HostLauncher> host_b(
+        new DAS::Core::IPC::HostLauncher(ctx_->GetIoContext()));
 
     uint16_t session_b = 0;
     result = host_b->Start(
@@ -313,9 +315,11 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_VerifySessionId)
     // 5. 使用异步接口并发加载两个插件（when_all）
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op_a;
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op_b;
-    result = ctx_->LoadPluginAsync(host_a.Get(), plugin1_path.c_str(), op_a.Put());
+    result =
+        ctx_->LoadPluginAsync(host_a.Get(), plugin1_path.c_str(), op_a.Put());
     ASSERT_EQ(result, DAS_S_OK);
-    result = ctx_->LoadPluginAsync(host_b.Get(), plugin2_path.c_str(), op_b.Put());
+    result =
+        ctx_->LoadPluginAsync(host_b.Get(), plugin2_path.c_str(), op_b.Put());
     ASSERT_EQ(result, DAS_S_OK);
 
     // when_all 并发等待两个异步操作
@@ -367,9 +371,10 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
     }
 
     // 1. 创建并启动 Host B（目标进程）
-    DAS::DasPtr<DAS::Core::IPC::HostLauncher> host_b(new DAS::Core::IPC::HostLauncher(ctx_->GetIoContext()));
+    DAS::DasPtr<DAS::Core::IPC::HostLauncher> host_b(
+        new DAS::Core::IPC::HostLauncher(ctx_->GetIoContext()));
 
-    uint16_t session_b = 0;
+    uint16_t  session_b = 0;
     DasResult result = host_b->Start(
         host_exe_path_,
         session_b,
@@ -382,7 +387,8 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
     ASSERT_EQ(result, DAS_S_OK);
 
     // 2. 创建并启动 Host A（调用方进程）
-    DAS::DasPtr<DAS::Core::IPC::HostLauncher> host_a(new DAS::Core::IPC::HostLauncher(ctx_->GetIoContext()));
+    DAS::DasPtr<DAS::Core::IPC::HostLauncher> host_a(
+        new DAS::Core::IPC::HostLauncher(ctx_->GetIoContext()));
 
     uint16_t session_a = 0;
     result = host_a->Start(
@@ -414,9 +420,11 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
     // 4. 使用异步接口并发加载两个插件
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op_a;
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op_b;
-    result = ctx_->LoadPluginAsync(host_a.Get(), plugin1_path.c_str(), op_a.Put());
+    result =
+        ctx_->LoadPluginAsync(host_a.Get(), plugin1_path.c_str(), op_a.Put());
     ASSERT_EQ(result, DAS_S_OK);
-    result = ctx_->LoadPluginAsync(host_b.Get(), plugin2_path.c_str(), op_b.Put());
+    result =
+        ctx_->LoadPluginAsync(host_b.Get(), plugin2_path.c_str(), op_b.Put());
     ASSERT_EQ(result, DAS_S_OK);
 
     auto both = stdexec::when_all(
@@ -493,7 +501,8 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadJavaPlugin)
         launcher_.Get(),
         plugin_json_path.c_str(),
         op.Put(),
-        IpcTestConfig::GetPluginLoadTimeout()); // Java 插件可能需要更长时间（JVM 初始化）
+        IpcTestConfig::
+            GetPluginLoadTimeout()); // Java 插件可能需要更长时间（JVM 初始化）
 
     if (DAS::IsFailed(result))
     {
@@ -548,7 +557,9 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadJavaPlugin)
  * 方法：手动启动 DasHost.exe 并传入一个不存在的 PID 作为 --main-pid，
  * 验证 Host 进程能在合理时间内自动退出。
  */
-TEST_F(IpcMultiProcessTestIntegration, ParentProcessExit_HostAutoExit_InvalidPid)
+TEST_F(
+    IpcMultiProcessTestIntegration,
+    ParentProcessExit_HostAutoExit_InvalidPid)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
@@ -613,18 +624,22 @@ TEST_F(IpcMultiProcessTestIntegration, ParentProcessExit_HostAutoExit_InvalidPid
 }
 
 /**
- * @brief 测试 Host 进程在主进程被杀后自动退出
+ * @brief 测试 Host 进程在主进程被杀后自动退出（完整握手版本）
  *
- * 模拟场景：启动一个辅助进程作为"假主进程"，用该 PID 启动 Host，
- * 然后杀掉辅助进程，验证 Host 能感知并退出。
+ * 模拟场景：启动一个辅助进程作为"假主进程"，完成真实握手后杀掉它，
+ * 验证 Host 能感知并退出。
  *
- * 这比 InvalidPid 测试更贴近真实场景，因为 Host 会先成功初始化 IPC 资源，
- * 然后在运行过程中检测到主进程消失。
- *
- * 实现方式：复用测试可执行程序本身作为假主进程（通过 --fake-main 参数），
- * 使用 boost::interprocess::named_mutex 实现跨进程同步。
+ * 实现方式：
+ * 1. 启动 FakeMain（等待 host_pid）
+ * 2. 启动 DasHost，获得 host_pid
+ * 3. 通过 shared_memory 将 host_pid 传给 FakeMain
+ * 4. FakeMain 创建正确命名的管道，完成握手
+ * 5. 测试框架杀掉 FakeMain
+ * 6. 验证 DasHost 父进程监控检测到并退出
  */
-TEST_F(IpcMultiProcessTestIntegration, ParentProcessExit_HostAutoExit_KillParent)
+TEST_F(
+    IpcMultiProcessTestIntegration,
+    ParentProcessExit_HostAutoExit_KillParent)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
@@ -634,8 +649,8 @@ TEST_F(IpcMultiProcessTestIntegration, ParentProcessExit_HostAutoExit_KillParent
     // 1. 获取当前可执行程序路径
     std::string test_exe_path;
     {
-        char   buffer[MAX_PATH];
-        DWORD  len = GetModuleFileNameA(nullptr, buffer, MAX_PATH);
+        char  buffer[MAX_PATH];
+        DWORD len = GetModuleFileNameA(nullptr, buffer, MAX_PATH);
         if (len == 0 || len >= MAX_PATH)
         {
             GTEST_SKIP() << "Failed to get current executable path";
@@ -646,14 +661,16 @@ TEST_F(IpcMultiProcessTestIntegration, ParentProcessExit_HostAutoExit_KillParent
     // 2. 生成唯一信号名称
     std::string signal_name = FakeMainProcess::GenerateUniqueSignalName();
 
-    // 3. 创建就绪信号等待器
-    FakeMainProcess::FakeMainReadySignal ready_signal(signal_name);
+    // 3. 创建信号持有者（持有锁，FakeMain 会等待）
+    FakeMainProcess::SignalHolder signal_holder(signal_name);
 
-    // 4. 启动假主进程（当前可执行程序以 --fake-main 模式运行）
-    boost::asio::io_context fake_main_io_ctx;
+    // 4. 启动假主进程（等待 host_pid）
+    //    FakeMain 会先创建共享内存，然后等待我们写入 host_pid
+    boost::asio::io_context  fake_main_io_ctx;
     std::vector<std::string> fake_main_args = {
-        "--fake-main", "--signal-name", signal_name
-    };
+        "--fake-main",
+        "--signal-name",
+        signal_name};
 
     boost::process::v2::process fake_main(
         fake_main_io_ctx,
@@ -662,27 +679,18 @@ TEST_F(IpcMultiProcessTestIntegration, ParentProcessExit_HostAutoExit_KillParent
 
     auto fake_main_pid = static_cast<uint32_t>(fake_main.id());
 
-    DAS_LOG_INFO(DAS_FMT_NS::format(
-        "[KillParent] Fake main started: PID={}",
-        fake_main_pid).c_str());
+    DAS_LOG_INFO(
+        DAS_FMT_NS::format(
+            "[KillParent] Fake main started: PID={}",
+            fake_main_pid)
+            .c_str());
 
-    // 5. 等待假主进程就绪（等待 IPC 上下文初始化完成）
-    bool ready = ready_signal.WaitForReady(std::chrono::seconds(10));
-    ASSERT_TRUE(ready) << "Fake main process did not become ready in time";
-
-    // 6. 确认假主进程还在运行
-    {
-        boost::system::error_code ec;
-        ASSERT_TRUE(fake_main.running(ec))
-            << "Fake main process exited prematurely";
-    }
-
-    // 7. 启动 DasHost（连接到假主进程）
+    // 5. 启动 DasHost（连接到假主进程）
+    //    先启动 DasHost 获取 host_pid，然后写入共享内存让 FakeMain 创建管道
     boost::asio::io_context  host_io_ctx;
     std::vector<std::string> host_args = {
         "--main-pid",
-        std::to_string(fake_main_pid)
-    };
+        std::to_string(fake_main_pid)};
 
     boost::process::v2::process host_process(
         host_io_ctx,
@@ -692,28 +700,62 @@ TEST_F(IpcMultiProcessTestIntegration, ParentProcessExit_HostAutoExit_KillParent
             std::filesystem::path(host_exe_path_).parent_path().string()));
 
     auto host_pid = static_cast<uint32_t>(host_process.id());
-    DAS_LOG_INFO(DAS_FMT_NS::format(
-        "[KillParent] Host started: PID={}, main_pid={}",
-        host_pid, fake_main_pid).c_str());
+    DAS_LOG_INFO(
+        DAS_FMT_NS::format(
+            "[KillParent] Host started: PID={}, main_pid={}",
+            host_pid,
+            fake_main_pid)
+            .c_str());
 
-    // 8. 等待 Host 初始化并连接到假主进程
-    std::this_thread::sleep_for(std::chrono::seconds(2));
+    // 6. 将 host_pid 写入共享内存，让 FakeMain 可以创建正确命名的管道
+    FakeMainProcess::KillParentSharedMemory::WriteHostPid(
+        FakeMainProcess::KILL_PARENT_SHM_NAME,
+        host_pid);
+    DAS_LOG_INFO(
+        DAS_FMT_NS::format(
+            "[KillParent] Wrote host_pid={} to shared memory",
+            host_pid)
+            .c_str());
 
+    // 7. 等待假主进程就绪（管道已创建）
+    //    DasHost 有 1 秒的连接重试超时，应该足够让 FakeMain 创建管道
+    bool ready = signal_holder.ReleaseAndWait(std::chrono::seconds(10));
+    ASSERT_TRUE(ready) << "Fake main process did not become ready in time";
+
+    // 8. 确认假主进程还在运行
+    {
+        boost::system::error_code ec;
+        ASSERT_TRUE(fake_main.running(ec))
+            << "Fake main process exited prematurely";
+    }
+
+    // 9. 等待握手完成
+    bool handshake_done =
+        FakeMainProcess::KillParentSharedMemory::WaitForHandshakeDone(
+            FakeMainProcess::KILL_PARENT_SHM_NAME,
+            std::chrono::seconds(10));
+    ASSERT_TRUE(handshake_done) << "Handshake did not complete in time";
+    DAS_LOG_INFO("[KillParent] Handshake completed");
+
+    // 10. 确认 Host 还在运行
     {
         boost::system::error_code ec;
         ASSERT_TRUE(host_process.running(ec))
-            << "Host process exited before parent was killed";
+            << "Host process exited after handshake (should still be running)";
     }
 
-    // 9. 杀掉假主进程（模拟主进程崩溃）
+    // 11. 杀掉假主进程（模拟主进程崩溃）
     {
         boost::system::error_code ec;
         fake_main.terminate(ec);
-        DAS_LOG_INFO(DAS_FMT_NS::format(
-            "[KillParent] Fake main killed: PID={}", fake_main_pid).c_str());
+        DAS_LOG_INFO(
+            DAS_FMT_NS::format(
+                "[KillParent] Fake main killed: PID={}",
+                fake_main_pid)
+                .c_str());
     }
 
-    // 10. 等待 Host 自动退出（父进程监控应检测到并退出）
+    // 12. 等待 Host 自动退出（父进程监控应检测到并退出）
     bool host_exited = false;
     for (int i = 0; i < 100; ++i)
     {
@@ -726,6 +768,11 @@ TEST_F(IpcMultiProcessTestIntegration, ParentProcessExit_HostAutoExit_KillParent
         }
     }
 
+    // 清理共享内存
+    FakeMainProcess::KillParentSharedMemory::Cleanup(
+        FakeMainProcess::KILL_PARENT_SHM_NAME);
+    FakeMainProcess::FakeMainReadySignal::Cleanup(signal_name);
+
     if (!host_exited)
     {
         boost::system::error_code ec;
@@ -734,8 +781,8 @@ TEST_F(IpcMultiProcessTestIntegration, ParentProcessExit_HostAutoExit_KillParent
                   "Parent process monitoring is not working.";
     }
 
-    DAS_LOG_INFO("[KillParent] Test PASSED - Host exited automatically");
-    FakeMainProcess::FakeMainReadySignal::Cleanup(signal_name);
+    DAS_LOG_INFO(
+        "[KillParent] Test PASSED - Host exited automatically after real handshake");
 }
 
 /**
@@ -780,8 +827,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins)
         auto opt = DAS::Core::IPC::wait(
             GetContext(),
             DAS::Core::IPC::async_op(GetContext(), std::move(op)));
-        ASSERT_TRUE(opt.has_value())
-            << "Load plugin 1: wait failed";
+        ASSERT_TRUE(opt.has_value()) << "Load plugin 1: wait failed";
 
         auto& [load_result, loaded_id] = *opt;
         ASSERT_EQ(load_result, DAS_S_OK) << "Load plugin 1 failed";
@@ -800,8 +846,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins)
         auto opt = DAS::Core::IPC::wait(
             GetContext(),
             DAS::Core::IPC::async_op(GetContext(), std::move(op)));
-        ASSERT_TRUE(opt.has_value())
-            << "Load plugin 2: wait failed";
+        ASSERT_TRUE(opt.has_value()) << "Load plugin 2: wait failed";
 
         auto& [load_result, loaded_id] = *opt;
         ASSERT_EQ(load_result, DAS_S_OK) << "Load plugin 2 failed";
@@ -855,15 +900,11 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins_WhenAll)
     // 3. 创建两个异步操作
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op1;
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op2;
-    result = ctx_->LoadPluginAsync(
-        launcher_.Get(),
-        plugin1_path.c_str(),
-        op1.Put());
+    result =
+        ctx_->LoadPluginAsync(launcher_.Get(), plugin1_path.c_str(), op1.Put());
     ASSERT_EQ(result, DAS_S_OK);
-    result = ctx_->LoadPluginAsync(
-        launcher_.Get(),
-        plugin2_path.c_str(),
-        op2.Put());
+    result =
+        ctx_->LoadPluginAsync(launcher_.Get(), plugin2_path.c_str(), op2.Put());
     ASSERT_EQ(result, DAS_S_OK);
 
     // 5. when_all 并发等待
@@ -936,8 +977,7 @@ TEST_F(IpcMultiProcessTestIntegration, Context_BasicUsage)
 
         // 执行并验证结果
         auto opt = DAS::Core::IPC::wait(GetContext(), std::move(sender));
-        ASSERT_TRUE(opt.has_value())
-            << "async_op with context: wait failed";
+        ASSERT_TRUE(opt.has_value()) << "async_op with context: wait failed";
 
         auto& [load_result, loaded_id] = *opt;
         ASSERT_EQ(load_result, DAS_S_OK) << "Load plugin failed";
@@ -946,4 +986,3 @@ TEST_F(IpcMultiProcessTestIntegration, Context_BasicUsage)
 
     DAS_LOG_INFO("[Context_BasicUsage] All context tests passed");
 }
-
