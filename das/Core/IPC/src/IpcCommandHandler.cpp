@@ -27,7 +27,7 @@ void IpcCommandHandler::SetSessionId(uint16_t session_id)
     session_id_ = session_id;
 }
 
-uint16_t  IpcCommandHandler::GetSessionId() const { return session_id_; }
+uint16_t IpcCommandHandler::GetSessionId() const { return session_id_; }
 boost::asio::awaitable<DasResult> IpcCommandHandler::HandleMessage(
     const IPCMessageHeader&     header,
     const std::vector<uint8_t>& body,
@@ -48,7 +48,9 @@ boost::asio::awaitable<DasResult> IpcCommandHandler::HandleMessage(
             .SetCallId(header.call_id)
             .SetErrorCode(static_cast<int32_t>(response.error_code))
             .Build();
-    co_await sender.SendResponse(validated_response_header, response.response_data);
+    co_await sender.SendResponse(
+        validated_response_header,
+        response.response_data);
     co_return result;
 }
 
@@ -119,6 +121,12 @@ DasResult IpcCommandHandler::HandleCommand(
 
     case IpcCommandType::GET_OBJECT_COUNT:
         return OnGetObjectCount(header, payload, response);
+
+    case IpcCommandType::REMOTE_ADD_REF:
+        return OnRemoteAddRef(header, payload, response);
+
+    case IpcCommandType::REMOTE_RELEASE:
+        return OnRemoteRelease(header, payload, response);
 
     case IpcCommandType::LOAD_PLUGIN:
         // LOAD_PLUGIN requires custom handler registration.
@@ -533,6 +541,66 @@ DasResult IpcCommandHandler::OnLoadPlugin(
     // This method should never be called directly.
     // LOAD_PLUGIN requires custom handler registration via RegisterHandler().
     // See das/Host/src/main.cpp for reference implementation.
+    response.error_code = DAS_E_IPC_COMMAND_NOT_REGISTERED;
+    return DAS_E_IPC_COMMAND_NOT_REGISTERED;
+}
+
+DasResult IpcCommandHandler::OnRemoteAddRef(
+    const IPCMessageHeader&  header,
+    std::span<const uint8_t> payload,
+    IpcCommandResponse&      response)
+{
+    (void)header;
+
+    if (payload.size() < sizeof(RemoteAddRefPayload))
+    {
+        response.error_code = DAS_E_IPC_INVALID_MESSAGE_BODY;
+        return DAS_E_IPC_INVALID_MESSAGE_BODY;
+    }
+
+    size_t offset = 0;
+
+    ObjectId object_id;
+    if (!DeserializeValue(payload, offset, object_id))
+    {
+        response.error_code = DAS_E_IPC_DESERIALIZATION_FAILED;
+        return DAS_E_IPC_DESERIALIZATION_FAILED;
+    }
+
+    // 获取 DistributedObjectManager 单例并调用 HandleRemoteAddRef
+    // 注意：这里需要通过某种方式获取 DistributedObjectManager
+    // 在 Host 进程中，DistributedObjectManager 是单例
+    // 由于 IpcCommandHandler 不知道当前进程是主进程还是 Host 进程，
+    // 这里需要通过全局访问或者在初始化时设置回调
+
+    // 暂时返回 NOT_IMPLEMENTED，实际实现需要在 Host 进程初始化时注册处理器
+    response.error_code = DAS_E_IPC_COMMAND_NOT_REGISTERED;
+    return DAS_E_IPC_COMMAND_NOT_REGISTERED;
+}
+
+DasResult IpcCommandHandler::OnRemoteRelease(
+    const IPCMessageHeader&  header,
+    std::span<const uint8_t> payload,
+    IpcCommandResponse&      response)
+{
+    (void)header;
+
+    if (payload.size() < sizeof(RemoteReleasePayload))
+    {
+        response.error_code = DAS_E_IPC_INVALID_MESSAGE_BODY;
+        return DAS_E_IPC_INVALID_MESSAGE_BODY;
+    }
+
+    size_t offset = 0;
+
+    ObjectId object_id;
+    if (!DeserializeValue(payload, offset, object_id))
+    {
+        response.error_code = DAS_E_IPC_DESERIALIZATION_FAILED;
+        return DAS_E_IPC_DESERIALIZATION_FAILED;
+    }
+
+    // 与 OnRemoteAddRef 相同，需要通过全局访问获取 DistributedObjectManager
     response.error_code = DAS_E_IPC_COMMAND_NOT_REGISTERED;
     return DAS_E_IPC_COMMAND_NOT_REGISTERED;
 }

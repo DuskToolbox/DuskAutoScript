@@ -16,7 +16,8 @@ DAS_CORE_IPC_NS_BEGIN
 struct RemoteObjectHandle
 {
     ObjectId object_id;
-    uint32_t refcount;
+    uint32_t local_refcount;  // 本地引用计数
+    uint32_t remote_refcount; // 远程引用计数
     void*    object_ptr;
     bool     is_local;
 };
@@ -34,6 +35,10 @@ public:
 
     DasResult AddRef(const ObjectId& object_id) override;
     DasResult Release(const ObjectId& object_id) override;
+
+    // 远程引用计数处理
+    DasResult HandleRemoteAddRef(const ObjectId& object_id);
+    DasResult HandleRemoteRelease(const ObjectId& object_id);
 
     DasResult LookupObject(const ObjectId& object_id, void** object_ptr)
         override;

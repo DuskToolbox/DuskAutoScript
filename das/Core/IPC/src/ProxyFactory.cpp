@@ -58,6 +58,9 @@ IPCProxyBase* ProxyFactory::GetProxy(const ObjectId& object_id)
     auto it = proxy_cache_.find(EncodeObjectId(object_id));
     if (it != proxy_cache_.end())
     {
+        // 缓存命中：只增加本地计数，不发送 IPC
+        it->second.local_refcount++;
+        it->second.proxy->AddRef();
         return it->second.proxy;
     }
     return nullptr;
@@ -69,9 +72,18 @@ DasResult ProxyFactory::ReleaseProxy(const ObjectId& object_id)
     auto it = proxy_cache_.find(EncodeObjectId(object_id));
     if (it != proxy_cache_.end())
     {
-        IPCProxyBase* proxy = it->second.proxy;
-        proxy_cache_.erase(it);
-        proxy->Release();
+        it->second.local_refcount--;
+        if (it->second.local_refcount == 0)
+        {
+            // 本地引用归零：发送 REMOTE_RELEASE
+            if (object_manager_)
+            {
+                object_manager_->HandleRemoteRelease(object_id);
+            }
+            IPCProxyBase* proxy = it->second.proxy;
+            proxy_cache_.erase(it);
+            proxy->Release();
+        }
         return DAS_S_OK;
     }
 
@@ -84,11 +96,19 @@ DasResult ProxyFactory::RemoveFromCache(const ObjectId& object_id)
     auto it = proxy_cache_.find(EncodeObjectId(object_id));
     if (it != proxy_cache_.end())
     {
-        proxy_cache_.erase(it);
-
-        if (object_manager_)
+        it->second.local_refcount--;
+        if (it->second.local_refcount == 0)
         {
-            object_manager_->Release(object_id);
+            // 本地引用归零：发送 REMOTE_RELEASE，销毁 Proxy
+            if (object_manager_)
+            {
+                object_manager_->HandleRemoteRelease(object_id);
+            }
+            if (it->second.proxy)
+            {
+                it->second.proxy->Release();
+            }
+            proxy_cache_.erase(it);
         }
 
         return DAS_S_OK;
@@ -116,9 +136,10 @@ void ProxyFactory::ClearAllProxies()
 
     for (const auto& entry : proxy_cache_)
     {
-        if (object_manager_)
+        if (object_manager_ && entry.second.local_refcount > 0)
         {
-            object_manager_->Release(DecodeObjectId(entry.first));
+            // 发送 REMOTE_RELEASE 通知 Host 释放远程引用
+            object_manager_->HandleRemoteRelease(DecodeObjectId(entry.first));
         }
         if (entry.second.proxy)
         {

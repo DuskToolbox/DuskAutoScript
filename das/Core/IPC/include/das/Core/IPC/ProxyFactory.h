@@ -147,6 +147,7 @@ private:
         uint64_t      object_id_encoded;
         uint32_t      interface_id;
         uint16_t      session_id;
+        uint32_t      local_refcount; // 本地 DasPtr 数量
     };
 
     // 缓存已创建的 Proxy

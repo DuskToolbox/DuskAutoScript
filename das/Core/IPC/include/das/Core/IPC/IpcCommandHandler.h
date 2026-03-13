@@ -45,6 +45,12 @@ enum class IpcCommandType : uint8_t
     QUERY_INTERFACE = 120,     // 远程 QueryInterface 请求
     QUERY_INTERFACE_ACK = 121, // 远程 QueryInterface 响应
 
+    // 远程引用计数 (130-139)
+    REMOTE_ADD_REF = 130,     // 远程端增加引用
+    REMOTE_ADD_REF_ACK = 131, // 增加引用确认
+    REMOTE_RELEASE = 132,     // 远程端释放引用
+    REMOTE_RELEASE_ACK = 133, // 释放引用确认
+
     // 保留
     UNKNOWN = 255
 };
@@ -207,6 +213,16 @@ private:
         std::span<const uint8_t> payload,
         IpcCommandResponse&      response);
 
+    DasResult OnRemoteAddRef(
+        const IPCMessageHeader&  header,
+        std::span<const uint8_t> payload,
+        IpcCommandResponse&      response);
+
+    DasResult OnRemoteRelease(
+        const IPCMessageHeader&  header,
+        std::span<const uint8_t> payload,
+        IpcCommandResponse&      response);
+
     // 从 interface_id 字段提取命令类型
     static IpcCommandType ExtractCommandType(const IPCMessageHeader& header);
 
@@ -333,6 +349,23 @@ struct LoadPluginResponsePayload
     uint16_t session_id; // 会话ID
     uint16_t version;    // 版本
 };
+
+/**
+ * @brief 远程增加引用请求 payload
+ */
+struct RemoteAddRefPayload
+{
+    ObjectId object_id; // 对象ID
+};
+
+/**
+ * @brief 远程释放引用请求 payload
+ */
+struct RemoteReleasePayload
+{
+    ObjectId object_id; // 对象ID
+};
+
 DAS_CORE_IPC_NS_END
 
 #endif // DAS_CORE_IPC_IPC_COMMAND_HANDLER_H
