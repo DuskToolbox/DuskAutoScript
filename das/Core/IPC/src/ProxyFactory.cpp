@@ -131,44 +131,10 @@ void ProxyFactory::ClearAllProxies()
 
 IPCProxyBase* ProxyFactory::CreateIPCProxy(const ObjectId& object_id)
 {
-    uint64_t encoded_id = EncodeObjectId(object_id);
-
-    RemoteObjectInfo info;
-    DasResult        result = ValidateObject(object_id, info);
-    if (result != DAS_S_OK)
-    {
-        return nullptr;
-    }
-
-    auto it = proxy_cache_.find(encoded_id);
-    if (it != proxy_cache_.end())
-    {
-        if (object_manager_)
-        {
-            object_manager_->AddRef(DecodeObjectId(encoded_id));
-        }
-        return it->second.proxy;
-    }
-
-    try
-    {
-        auto* proxy = new GenericProxy(info.interface_id, object_id, run_loop_);
-
-        ProxyEntry entry;
-        entry.proxy = proxy;
-        entry.object_id_encoded = encoded_id;
-        entry.interface_id = info.interface_id;
-        entry.session_id = object_id.session_id;
-
-        proxy_cache_[encoded_id] = entry;
-
-        return proxy;
-    }
-    catch (const std::exception& e)
-    {
-        DAS_CORE_LOG_ERROR("CreateProxy failed: {}", ToString(e.what()));
-        return nullptr;
-    }
+    // Generic Proxy 不再支持，需要使用 IDL 生成的具体 Proxy 类
+    DAS_CORE_LOG_ERROR(
+        "CreateIPCProxy: Generic proxy not supported. Use IDL-generated proxy instead.");
+    return nullptr;
 }
 
 DasResult ProxyFactory::ValidateObject(

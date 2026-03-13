@@ -1,3 +1,4 @@
+#include <atomic>
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/DasAsyncSender.h>
@@ -8,7 +9,6 @@
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/IDasBase.h>
-#include <atomic>
 #include <stdexec/execution.hpp>
 
 #ifndef DAS_E_NOT_IMPLEMENTED
@@ -36,7 +36,8 @@ public:
         const std::string& /*host_exe_path*/,
         IDasAsyncHandshakeOperation** /*pp_out_operation*/) override
     {
-        DAS_CORE_LOG_ERROR("SimpleHostLauncherWrapper::StartAsync not supported");
+        DAS_CORE_LOG_ERROR(
+            "SimpleHostLauncherWrapper::StartAsync not supported");
         return DAS_E_NOT_IMPLEMENTED;
     }
 
@@ -54,11 +55,23 @@ public:
         // No-op
     }
 
-    [[nodiscard]] bool IsRunning() const override { return session_id_ != 0; }
+    [[nodiscard]]
+    bool IsRunning() const override
+    {
+        return session_id_ != 0;
+    }
 
-    [[nodiscard]] uint32_t GetPid() const override { return 0; }
+    [[nodiscard]]
+    uint32_t GetPid() const override
+    {
+        return 0;
+    }
 
-    [[nodiscard]] uint16_t GetSessionId() const override { return session_id_; }
+    [[nodiscard]]
+    uint16_t GetSessionId() const override
+    {
+        return session_id_;
+    }
 
     // IDasBase 接口
     uint32_t AddRef() override { return ++ref_; }
@@ -83,8 +96,8 @@ public:
     }
 
 private:
-    uint16_t               session_id_;
-    std::atomic<uint32_t>  ref_;
+    uint16_t              session_id_;
+    std::atomic<uint32_t> ref_;
 };
 
 DasResult IpcLoadPluginImpl(
@@ -117,13 +130,13 @@ DasResult IpcLoadPluginImpl(
     uint16_t session_id = sessions[0];
 
     // 创建简单的 IHostLauncher 包装器
-    auto* launcher = new SimpleHostLauncherWrapper(session_id);
+    auto*                 launcher = new SimpleHostLauncherWrapper(session_id);
     DasPtr<IHostLauncher> launcher_ptr(launcher);
 
     ObjectId                             object_id{};
     DasPtr<IDasAsyncLoadPluginOperation> op;
-    DasResult                            result = ctx->LoadPluginAsync(
-        launcher_ptr.Get(), plugin_path.c_str(), op.Put());
+    DasResult                            result =
+        ctx->LoadPluginAsync(launcher_ptr.Get(), plugin_path.c_str(), op.Put());
 
     if (result != DAS_S_OK)
     {
@@ -152,17 +165,11 @@ DasResult IpcLoadPluginImpl(
         DAS_CORE_LOG_ERROR("ProxyFactory not initialized");
         return DAS_E_IPC_INVALID_STATE;
     }
-    DasPtr<IDasBase> proxy = factory.CreateProxy<IDasBase>(object_id);
 
-    if (!proxy)
-    {
-        DAS_CORE_LOG_ERROR("Failed to create proxy");
-        return DAS_E_IPC_OBJECT_NOT_FOUND;
-    }
-    *pp_out_plugin = proxy.Get();
-    proxy->AddRef();
-
-    return DAS_S_OK;
+    // CreateProxy<IDasBase> 不再支持，需要使用具体的接口类型
+    DAS_CORE_LOG_ERROR(
+        "IpcLoadPlugin: Use IpcLoadPluginEx with specific interface type");
+    return DAS_E_NOT_IMPLEMENTED;
 }
 DAS_CORE_IPC_NS_END
 
