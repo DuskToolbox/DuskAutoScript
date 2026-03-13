@@ -34,6 +34,43 @@
 namespace FakeMainProcess
 {
 
+    /**
+     * @brief RAII 包装类，管理 io_context 和工作线程的生命周期
+     *
+     * 构造时创建 io_context、work_guard 和工作线程
+     * 析构时自动清理 work_guard、停止 io_context 并等待线程结束
+     */
+    class IoThreadGuard
+    {
+    public:
+        IoThreadGuard() : work_guard_(boost::asio::make_work_guard(io_ctx_))
+        {
+            io_thread_ = std::thread([this]() { io_ctx_.run(); });
+        }
+
+        ~IoThreadGuard()
+        {
+            if (io_thread_.joinable())
+            {
+                work_guard_.reset();
+                io_ctx_.stop();
+                io_thread_.join();
+            }
+        }
+
+        // 禁止拷贝
+        IoThreadGuard(const IoThreadGuard&) = delete;
+        IoThreadGuard& operator=(const IoThreadGuard&) = delete;
+
+        boost::asio::io_context& context() { return io_ctx_; }
+
+    private:
+        boost::asio::io_context                        io_ctx_;
+        decltype(boost::asio::make_work_guard(
+            std::declval<boost::asio::io_context&>())) work_guard_;
+        std::thread                                    io_thread_;
+    };
+
     std::string GenerateUniqueSignalName()
     {
         auto now = std::chrono::steady_clock::now();
@@ -430,8 +467,8 @@ namespace FakeMainProcess
                 h2m_pipe)
                 .c_str());
 
-        // 5. 使用协程创建管道并等待 DasHost 连接
-        boost::asio::io_context                                   io_ctx;
+        // 5. 创建 io_context 和工作线程（RAII 管理）
+        IoThreadGuard                                             io_guard;
         std::unique_ptr<DAS::Core::IPC::DefaultAsyncIpcTransport> transport;
 
         try
@@ -441,20 +478,16 @@ namespace FakeMainProcess
             // write_endpoint = m2h_pipe (Main 写入数据发送给 Host)
             // 这与 HostLauncher::ConnectToHost() 的参数顺序一致
             auto future = boost::asio::co_spawn(
-                io_ctx,
+                io_guard.context(),
                 DAS::Core::IPC::DefaultAsyncIpcTransport::CreateAsync(
-                    io_ctx,
+                    io_guard.context(),
                     h2m_pipe,
                     m2h_pipe,
                     true, // is_server = true
                     65536),
                 boost::asio::use_future);
 
-            // 在另一个线程运行 io_context
-            std::thread io_thread([&io_ctx]() { io_ctx.run(); });
-
             auto result = future.get();
-            io_thread.join();
 
             if (!result.has_value())
             {
@@ -495,15 +528,9 @@ namespace FakeMainProcess
 
         try
         {
-            // 重新启动 io_context 用于收发消息
-            io_ctx.restart();
-            // 使用 work_guard 防止 io_ctx 在没有工作时退出
-            auto        work_guard = boost::asio::make_work_guard(io_ctx);
-            std::thread io_thread([&io_ctx]() { io_ctx.run(); });
-
             // 8.1 先启动接收操作（避免丢失响应）
             auto recv_future = boost::asio::co_spawn(
-                io_ctx,
+                io_guard.context(),
                 transport->ReceiveCoroutine(),
                 boost::asio::use_future);
 
@@ -535,7 +562,7 @@ namespace FakeMainProcess
                     .c_str());
 
             auto send_future = boost::asio::co_spawn(
-                io_ctx,
+                io_guard.context(),
                 transport->SendCoroutine(
                     hello_header,
                     reinterpret_cast<const uint8_t*>(&hello),
@@ -550,7 +577,6 @@ namespace FakeMainProcess
                         "[FakeMain] Failed to send HELLO: {}",
                         send_result)
                         .c_str());
-                io_thread.join();
                 return 1;
             }
 
@@ -561,7 +587,6 @@ namespace FakeMainProcess
             if (recv_result.index() == 0)
             {
                 DAS_LOG_ERROR("[FakeMain] Failed to receive WELCOME");
-                io_thread.join();
                 return 1;
             }
 
@@ -578,7 +603,6 @@ namespace FakeMainProcess
                                              HANDSHAKE_IFACE_WELCOME))
             {
                 DAS_LOG_ERROR("[FakeMain] Expected WELCOME message");
-                io_thread.join();
                 return 1;
             }
 
@@ -586,7 +610,6 @@ namespace FakeMainProcess
             if (welcome_body.size() < sizeof(DAS::Core::IPC::WelcomeResponseV1))
             {
                 DAS_LOG_ERROR("[FakeMain] WELCOME body too small");
-                io_thread.join();
                 return 1;
             }
 
@@ -605,7 +628,6 @@ namespace FakeMainProcess
                 != DAS::Core::IPC::WelcomeResponseV1::STATUS_SUCCESS)
             {
                 DAS_LOG_ERROR("[FakeMain] WELCOME status indicates failure");
-                io_thread.join();
                 return 1;
             }
 
@@ -630,7 +652,7 @@ namespace FakeMainProcess
                     .c_str());
 
             send_future = boost::asio::co_spawn(
-                io_ctx,
+                io_guard.context(),
                 transport->SendCoroutine(
                     ready_header,
                     reinterpret_cast<const uint8_t*>(&ready),
@@ -645,7 +667,6 @@ namespace FakeMainProcess
                         "[FakeMain] Failed to send READY: {}",
                         send_result)
                         .c_str());
-                io_thread.join();
                 return 1;
             }
 
@@ -653,7 +674,7 @@ namespace FakeMainProcess
 
             // 8.4 接收 READY_ACK
             recv_future = boost::asio::co_spawn(
-                io_ctx,
+                io_guard.context(),
                 transport->ReceiveCoroutine(),
                 boost::asio::use_future);
 
@@ -661,7 +682,6 @@ namespace FakeMainProcess
             if (recv_result.index() == 0)
             {
                 DAS_LOG_ERROR("[FakeMain] Failed to receive READY_ACK");
-                io_thread.join();
                 return 1;
             }
 
@@ -672,14 +692,12 @@ namespace FakeMainProcess
                                              HANDSHAKE_IFACE_READY_ACK))
             {
                 DAS_LOG_ERROR("[FakeMain] Expected READY_ACK message");
-                io_thread.join();
                 return 1;
             }
 
             if (ack_body.size() < sizeof(DAS::Core::IPC::ReadyAckV1))
             {
                 DAS_LOG_ERROR("[FakeMain] READY_ACK body too small");
-                io_thread.join();
                 return 1;
             }
 
@@ -696,7 +714,6 @@ namespace FakeMainProcess
             if (ready_ack->status != DAS::Core::IPC::ReadyAckV1::STATUS_SUCCESS)
             {
                 DAS_LOG_ERROR("[FakeMain] READY_ACK status indicates failure");
-                io_thread.join();
                 return 1;
             }
 
@@ -706,11 +723,6 @@ namespace FakeMainProcess
 
             // 9. 通知测试框架握手完成
             shm->SetHandshakeDone();
-
-            // 停止 io_context（先重置 work_guard）
-            work_guard.reset();
-            io_ctx.stop();
-            io_thread.join();
         }
         catch (const std::exception& e)
         {
