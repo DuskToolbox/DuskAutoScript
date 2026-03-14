@@ -85,7 +85,7 @@ namespace Core
             }
 
             DasResult HandshakeHandler::HandleMessage(
-                const IPCMessageHeader& header,
+                const ValidatedIPCMessageHeader& header,
                 const uint8_t*          body,
                 size_t                  body_size,
                 std::vector<uint8_t>&   response_body)
@@ -99,7 +99,7 @@ namespace Core
                 }
 
                 HandshakeInterfaceId interface_id =
-                    static_cast<HandshakeInterfaceId>(header.interface_id);
+                    static_cast<HandshakeInterfaceId>(header.GetInterfaceId());
 
                 switch (interface_id)
                 {
@@ -153,7 +153,7 @@ namespace Core
                         reinterpret_cast<const HeartbeatV1*>(body);
                     // V3: 使用 source_session_id
                     return HandleHeartbeat(
-                        header.source_session_id,
+                        header.GetSourceSessionId(),
                         *heartbeat);
                 }
 
@@ -177,14 +177,14 @@ namespace Core
                 default:
                     std::string msg = DAS_FMT_NS::format(
                         "HandshakeHandler: Unknown interface_id: {}",
-                        header.interface_id);
+                        header.GetInterfaceId());
                     DAS_LOG_ERROR(msg.c_str());
                     return DAS_E_IPC_INVALID_INTERFACE_ID;
                 }
             }
 
             boost::asio::awaitable<DasResult> HandshakeHandler::HandleMessage(
-                const IPCMessageHeader&     header,
+                const ValidatedIPCMessageHeader&     header,
                 const std::vector<uint8_t>& body,
                 IpcResponseSender&          sender)
             {
@@ -198,9 +198,9 @@ namespace Core
                 if (DAS::IsOk(result) && !response_body.empty())
                 {
                     // 根据请求类型构建响应头（使用 Builder）
-                    uint32_t response_interface_id = header.interface_id;
+                    uint32_t response_interface_id = header.GetInterfaceId();
                     switch (
-                        static_cast<HandshakeInterfaceId>(header.interface_id))
+                        static_cast<HandshakeInterfaceId>(header.GetInterfaceId()))
                     {
                     case HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO:
                         response_interface_id = static_cast<uint32_t>(
@@ -223,9 +223,9 @@ namespace Core
                                     response_interface_id))
                             .SetBodySize(
                                 static_cast<uint32_t>(response_body.size()))
-                            .SetCallId(header.call_id)
+                            .SetCallId(header.GetCallId())
                             .SetSourceSessionId(local_session_id_.value())
-                            .SetTargetSessionId(header.source_session_id)
+                            .SetTargetSessionId(header.GetSourceSessionId())
                             .SetErrorCode(0)
                             .Build();
 

@@ -29,7 +29,7 @@ void IpcCommandHandler::SetSessionId(uint16_t session_id)
 
 uint16_t IpcCommandHandler::GetSessionId() const { return session_id_; }
 boost::asio::awaitable<DasResult> IpcCommandHandler::HandleMessage(
-    const IPCMessageHeader&     header,
+    const ValidatedIPCMessageHeader&     header,
     const std::vector<uint8_t>& body,
     IpcResponseSender&          sender)
 {
@@ -43,11 +43,11 @@ boost::asio::awaitable<DasResult> IpcCommandHandler::HandleMessage(
         IPCMessageHeaderBuilder()
             .SetMessageType(MessageType::RESPONSE)
             .SetControlPlaneCommand(
-                static_cast<IpcCommandType>(header.interface_id))
+                static_cast<IpcCommandType>(header.GetInterfaceId()))
             .SetBodySize(static_cast<uint32_t>(response.response_data.size()))
-            .SetCallId(header.call_id)
+            .SetCallId(header.GetCallId())
             .SetSourceSessionId(session_id_)
-            .SetTargetSessionId(header.source_session_id)
+            .SetTargetSessionId(header.GetSourceSessionId())
             .SetErrorCode(static_cast<int32_t>(response.error_code))
             .Build();
     co_await sender.SendResponse(
@@ -57,13 +57,13 @@ boost::asio::awaitable<DasResult> IpcCommandHandler::HandleMessage(
 }
 
 IpcCommandType IpcCommandHandler::ExtractCommandType(
-    const IPCMessageHeader& header)
+    const ValidatedIPCMessageHeader& header)
 {
-    return static_cast<IpcCommandType>(header.interface_id);
+    return static_cast<IpcCommandType>(header.GetInterfaceId());
 }
 
 DasResult IpcCommandHandler::HandleCommand(
-    const IPCMessageHeader&  header,
+    const ValidatedIPCMessageHeader&  header,
     std::span<const uint8_t> payload,
     IpcCommandResponse&      response)
 {
@@ -154,7 +154,7 @@ void IpcCommandHandler::RegisterHandler(
 }
 
 DasResult IpcCommandHandler::OnRegisterObject(
-    const IPCMessageHeader&  header,
+    const ValidatedIPCMessageHeader&  header,
     std::span<const uint8_t> payload,
     IpcCommandResponse&      response)
 {
@@ -214,7 +214,7 @@ DasResult IpcCommandHandler::OnRegisterObject(
 }
 
 DasResult IpcCommandHandler::OnUnregisterObject(
-    const IPCMessageHeader&  header,
+    const ValidatedIPCMessageHeader&  header,
     std::span<const uint8_t> payload,
     IpcCommandResponse&      response)
 {
@@ -245,7 +245,7 @@ DasResult IpcCommandHandler::OnUnregisterObject(
 }
 
 DasResult IpcCommandHandler::OnLookupObject(
-    const IPCMessageHeader&  header,
+    const ValidatedIPCMessageHeader&  header,
     std::span<const uint8_t> payload,
     IpcCommandResponse&      response)
 {
@@ -290,7 +290,7 @@ DasResult IpcCommandHandler::OnLookupObject(
 }
 
 DasResult IpcCommandHandler::OnLookupByName(
-    const IPCMessageHeader&  header,
+    const ValidatedIPCMessageHeader&  header,
     std::span<const uint8_t> payload,
     IpcCommandResponse&      response)
 {
@@ -329,7 +329,7 @@ DasResult IpcCommandHandler::OnLookupByName(
 }
 
 DasResult IpcCommandHandler::OnLookupByInterface(
-    const IPCMessageHeader&  header,
+    const ValidatedIPCMessageHeader&  header,
     std::span<const uint8_t> payload,
     IpcCommandResponse&      response)
 {
@@ -375,7 +375,7 @@ DasResult IpcCommandHandler::OnLookupByInterface(
 }
 
 DasResult IpcCommandHandler::OnListObjects(
-    const IPCMessageHeader&  header,
+    const ValidatedIPCMessageHeader&  header,
     std::span<const uint8_t> payload,
     IpcCommandResponse&      response)
 {
@@ -413,7 +413,7 @@ DasResult IpcCommandHandler::OnListObjects(
 }
 
 DasResult IpcCommandHandler::OnListSessionObjects(
-    const IPCMessageHeader&  header,
+    const ValidatedIPCMessageHeader&  header,
     std::span<const uint8_t> payload,
     IpcCommandResponse&      response)
 {
@@ -465,7 +465,7 @@ DasResult IpcCommandHandler::OnListSessionObjects(
 }
 
 DasResult IpcCommandHandler::OnClearSession(
-    const IPCMessageHeader&  header,
+    const ValidatedIPCMessageHeader&  header,
     std::span<const uint8_t> payload,
     IpcCommandResponse&      response)
 {
@@ -497,7 +497,7 @@ DasResult IpcCommandHandler::OnClearSession(
 }
 
 DasResult IpcCommandHandler::OnPing(
-    const IPCMessageHeader&  header,
+    const ValidatedIPCMessageHeader&  header,
     std::span<const uint8_t> payload,
     IpcCommandResponse&      response)
 {
@@ -515,7 +515,7 @@ DasResult IpcCommandHandler::OnPing(
 }
 
 DasResult IpcCommandHandler::OnGetObjectCount(
-    const IPCMessageHeader&  header,
+    const ValidatedIPCMessageHeader&  header,
     std::span<const uint8_t> payload,
     IpcCommandResponse&      response)
 {
@@ -533,7 +533,7 @@ DasResult IpcCommandHandler::OnGetObjectCount(
 }
 
 DasResult IpcCommandHandler::OnLoadPlugin(
-    const IPCMessageHeader&  header,
+    const ValidatedIPCMessageHeader&  header,
     std::span<const uint8_t> payload,
     IpcCommandResponse&      response)
 {
@@ -548,7 +548,7 @@ DasResult IpcCommandHandler::OnLoadPlugin(
 }
 
 DasResult IpcCommandHandler::OnRemoteAddRef(
-    const IPCMessageHeader&  header,
+    const ValidatedIPCMessageHeader&  header,
     std::span<const uint8_t> payload,
     IpcCommandResponse&      response)
 {
@@ -581,7 +581,7 @@ DasResult IpcCommandHandler::OnRemoteAddRef(
 }
 
 DasResult IpcCommandHandler::OnRemoteRelease(
-    const IPCMessageHeader&  header,
+    const ValidatedIPCMessageHeader&  header,
     std::span<const uint8_t> payload,
     IpcCommandResponse&      response)
 {

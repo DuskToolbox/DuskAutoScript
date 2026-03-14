@@ -2,7 +2,6 @@
 #define DAS_CORE_IPC_IPC_HEADER_VALIDATOR_H
 
 #include <das/Core/IPC/Handshake.h>
-#include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <source_location>
 #include <string_view>

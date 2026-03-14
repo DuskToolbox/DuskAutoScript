@@ -497,7 +497,7 @@ void ConnectionManager::UpdateHeartbeatTimestamp(uint16_t session_id)
 
 boost::asio::awaitable<DasResult> ConnectionManager::ForwardMessage(
     uint16_t              target_session_id,
-    const IPCMessageHeader& header,
+    const ValidatedIPCMessageHeader& header,
     const uint8_t*        body,
     size_t                body_size)
 {
@@ -519,10 +519,10 @@ boost::asio::awaitable<DasResult> ConnectionManager::ForwardMessage(
     // 3. 使用 IPCMessageHeaderBuilder 重建 header，修改 source_session_id
     auto                    forward_header =
         IPCMessageHeaderBuilder()
-            .SetMessageType(static_cast<MessageType>(header.message_type))
-            .SetInterfaceId(header.interface_id)
-            .SetCallId(header.call_id)
-            .SetFlags(header.flags)
+            .SetMessageType(header.GetMessageType())
+            .SetInterfaceId(header.GetInterfaceId())
+            .SetCallId(header.GetCallId())
+            .SetFlags(header.GetFlags())
             .SetBodySize(static_cast<uint32_t>(body_size))
             .SetSourceSessionId(local_session_id)
             .SetTargetSessionId(target_session_id)
@@ -544,7 +544,7 @@ boost::asio::awaitable<DasResult> ConnectionManager::ForwardMessage(
         DAS_CORE_LOG_DEBUG(
             "Forwarded message to target_session_id={}, message_type={}",
             target_session_id,
-            static_cast<int>(header.message_type));
+            static_cast<int>(header.GetMessageType()));
     }
 
     co_return result;

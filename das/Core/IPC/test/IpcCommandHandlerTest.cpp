@@ -1,8 +1,10 @@
 #include <cstdint>
 #include <cstring>
 #include <das/Core/IPC/IpcCommandHandler.h>
+#include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
+#include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <gtest/gtest.h>
 #include <vector>
 
@@ -11,6 +13,8 @@ using DAS::Core::IPC::IpcCommandHandler;
 using DAS::Core::IPC::IpcCommandResponse;
 using DAS::Core::IPC::IpcCommandType;
 using DAS::Core::IPC::IPCMessageHeader;
+using DAS::Core::IPC::IPCMessageHeaderBuilder;
+using DAS::Core::IPC::ValidatedIPCMessageHeader;
 using DAS::Core::IPC::ListSessionObjectsPayload;
 using DAS::Core::IPC::LookupByInterfacePayload;
 using DAS::Core::IPC::LookupByNamePayload;
@@ -86,7 +90,7 @@ std::string ReadStringFromBuffer(
     return str;
 }
 
-IPCMessageHeader MakeHeader(IpcCommandType cmd_type)
+ValidatedIPCMessageHeader MakeHeader(IpcCommandType cmd_type)
 {
     IPCMessageHeader header{};
     header.call_id = 1;
@@ -96,10 +100,16 @@ IPCMessageHeader MakeHeader(IpcCommandType cmd_type)
     // V3: session_id/generation/local_id moved to body
     header.source_session_id = 0;
     header.target_session_id = 0;
-    header.version = IPCMessageHeader::CURRENT_VERSION;
+    header.version = IPCMessageHeader::CURRENT_VERSION; // NOLINT:ipc-validator
     header.flags = 0;
     header.body_size = 0;
-    return header;
+    return IPCMessageHeaderBuilder()
+        .SetMessageType(MessageType::REQUEST)
+        .SetControlPlaneCommand(cmd_type)
+        .SetCallId(1)
+        .SetSourceSessionId(0)
+        .SetTargetSessionId(0)
+        .Build();
 }
 
 class IpcCommandHandlerTest : public ::testing::Test

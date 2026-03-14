@@ -324,7 +324,7 @@ public:
      * @return boost::asio::awaitable<void>
      */
     boost::asio::awaitable<void> DispatchToHandlerCoroutine(
-        const IPCMessageHeader&     header,
+        const ValidatedIPCMessageHeader& header,
         const std::vector<uint8_t>& body,
         DefaultAsyncIpcTransport&   transport);
 

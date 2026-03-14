@@ -53,9 +53,9 @@ void RegisterLoadPluginHandler(DAS::Core::IPC::Host::IIpcContext* ctx)
     ctx->RegisterCommandHandler(
         static_cast<uint32_t>(DAS::Core::IPC::IpcCommandType::LOAD_PLUGIN),
         [ctx](
-            const DAS::Core::IPC::IPCMessageHeader& header,
-            std::span<const uint8_t>                payload,
-            DAS::Core::IPC::IpcCommandResponse&     response) -> DasResult
+            const DAS::Core::IPC::ValidatedIPCMessageHeader& header,
+            std::span<const uint8_t>                       payload,
+            DAS::Core::IPC::IpcCommandResponse&          response) -> DasResult
         {
             (void)header;
 

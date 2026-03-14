@@ -184,29 +184,29 @@ IMessageHandler* IpcRunLoop::GetHandler(uint32_t interface_id) const
 }
 
 boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
-    const IPCMessageHeader&     header,
-    const std::vector<uint8_t>& body,
-    DefaultAsyncIpcTransport&   transport)
+    const ValidatedIPCMessageHeader& header,
+    const std::vector<uint8_t>&     body,
+    DefaultAsyncIpcTransport&        transport)
 {
     DAS_CORE_LOG_INFO(
         "DispatchToHandlerCoroutine: interface_id={}, call_id={}, header_flags={}, body_size={}",
-        header.interface_id,
-        header.call_id,
-        header.header_flags,
+        header.GetInterfaceId(),
+        header.GetCallId(),
+        header.GetHeaderFlags(),
         body.size());
 
     // 转发检查：如果 target_session_id 不是本地 session，转发到目标
-    if (connection_manager_ && header.target_session_id != 0
-        && header.target_session_id != local_session_id_)
+    if (connection_manager_ && header.GetTargetSessionId() != 0
+        && header.GetTargetSessionId() != local_session_id_)
     {
         DAS_CORE_LOG_DEBUG(
             "Forwarding message: target={}, source={}, type={}",
-            header.target_session_id,
-            header.source_session_id,
-            static_cast<int>(header.message_type));
+            header.GetTargetSessionId(),
+            header.GetSourceSessionId(),
+            static_cast<int>(header.GetMessageType()));
 
         auto result = co_await connection_manager_->ForwardMessage(
-            header.target_session_id,
+            header.GetTargetSessionId(),
             header,
             body.data(),
             body.size());
@@ -215,25 +215,25 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
         {
             DAS_CORE_LOG_ERROR(
                 "Forward failed: target={}, result={}",
-                header.target_session_id,
+                header.GetTargetSessionId(),
                 result);
         }
         co_return;
     }
 
     // 处理 HEARTBEAT RESPONSE：收到心跳回复时更新时间戳
-    if (header.interface_id
+    if (header.GetInterfaceId()
         == static_cast<uint32_t>(
             HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT))
     {
-        if (header.message_type == static_cast<uint8_t>(MessageType::RESPONSE))
+        if (header.GetMessageType() == MessageType::RESPONSE)
         {
             // 收到心跳回复，更新时间戳
             if (connection_manager_)
             {
                 // V3: 使用 source_session_id
                 connection_manager_->UpdateHeartbeatTimestamp(
-                    header.source_session_id);
+                    header.GetSourceSessionId());
             }
             co_return;
         }
@@ -242,13 +242,13 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
 
     // 使用 header_flags + interface_id 路由
     IMessageHandler* handler =
-        GetHandler(header.header_flags, header.interface_id);
+        GetHandler(header.GetHeaderFlags(), header.GetInterfaceId());
 
     if (handler)
     {
         DAS_CORE_LOG_INFO(
             "DispatchToHandlerCoroutine: found handler for interface_id={}",
-            header.interface_id);
+            header.GetInterfaceId());
         try
         {
             IpcResponseSender sender(transport);
@@ -274,7 +274,7 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
     {
         DAS_CORE_LOG_WARN(
             "No handler found for interface_id = {}",
-            header.interface_id);
+            header.GetInterfaceId());
     }
 }
 
@@ -719,7 +719,7 @@ void IpcRunLoop::StartAsyncReceiveForTransport(
                     else
                     {
                         co_await DispatchToHandlerCoroutine(
-                            header.Raw(),
+                            header,
                             body,
                             *transport);
                     }

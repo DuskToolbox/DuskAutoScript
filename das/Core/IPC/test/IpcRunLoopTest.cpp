@@ -229,9 +229,9 @@ public:
     }
 
     boost::asio::awaitable<DasResult> HandleMessage(
-        const IPCMessageHeader&     header,
-        const std::vector<uint8_t>& body,
-        IpcResponseSender&          sender) override
+        const ValidatedIPCMessageHeader& header,
+        const std::vector<uint8_t>&     body,
+        IpcResponseSender&               sender) override
     {
         // 简单返回成功
         (void)header;

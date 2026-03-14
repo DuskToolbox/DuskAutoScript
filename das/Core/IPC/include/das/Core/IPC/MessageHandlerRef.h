@@ -4,6 +4,7 @@
 #include <boost/asio/awaitable.hpp>
 #include <das/Core/IPC/IMessageHandler.h>
 #include <das/Core/IPC/IpcErrors.h>
+#include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <das/DasApi.h>
 
 #include <das/Core/IPC/Config.h>
@@ -54,7 +55,7 @@ public:
     }
 
     boost::asio::awaitable<DasResult> HandleMessage(
-        const IPCMessageHeader&     header,
+        const ValidatedIPCMessageHeader& header,
         const std::vector<uint8_t>& body,
         IpcResponseSender&          sender) override
     {

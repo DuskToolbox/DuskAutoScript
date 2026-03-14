@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/IpcErrors.h>
+#include <das/Core/IPC/MainProcess/IHostLauncher.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <das/IDasBase.h>
 #include <memory>
@@ -20,7 +21,6 @@ DAS_CORE_IPC_NS_BEGIN
 
 class SharedMemoryPool;
 class IpcRunLoop;
-struct IHostLauncher;
 
 /**
  * @brief 连接资源信息
@@ -185,7 +185,7 @@ public:
      */
     boost::asio::awaitable<DasResult> ForwardMessage(
         uint16_t              target_session_id,
-        const IPCMessageHeader& header,
+        const ValidatedIPCMessageHeader& header,
         const uint8_t*        body,
         size_t                body_size);
 

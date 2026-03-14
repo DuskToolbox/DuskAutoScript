@@ -2,7 +2,6 @@
 
 #include <boost/asio/awaitable.hpp>
 #include <cstdint>
-#include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/DasApi.h>
 #include <vector>
 
@@ -12,6 +11,7 @@ DAS_CORE_IPC_NS_BEGIN
 
 // 前向声明
 class IpcResponseSender;
+class ValidatedIPCMessageHeader;
 
 /**
  * @brief 消息处理器接口
@@ -47,15 +47,15 @@ public:
 
     /**
      * @brief 处理 IPC 消息（协程版本）
-     * @param header 消息头
+     * @param header 已验证的消息头
      * @param body 消息体
      * @param sender 响应发送器（用于发送响应）
      * @return boost::asio::awaitable<DasResult> 协程结果
      */
     virtual boost::asio::awaitable<DasResult> HandleMessage(
-        const IPCMessageHeader&     header,
-        const std::vector<uint8_t>& body,
-        IpcResponseSender&          sender) = 0;
+        const ValidatedIPCMessageHeader& header,
+        const std::vector<uint8_t>&     body,
+        IpcResponseSender&               sender) = 0;
 };
 
 DAS_CORE_IPC_NS_END

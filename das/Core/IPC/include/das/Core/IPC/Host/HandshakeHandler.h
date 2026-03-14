@@ -6,8 +6,8 @@
 #include <cstdint>
 #include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/IMessageHandler.h>
-#include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcResponseSender.h>
+#include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <das/DasApi.h>
 #include <das/DasConfig.h>
 #include <das/IDasBase.h>
@@ -151,7 +151,7 @@ namespace Core
                  * @return DasResult 成功返回 DAS_S_OK
                  */
                 DasResult HandleMessage(
-                    const IPCMessageHeader& header,
+                    const ValidatedIPCMessageHeader& header,
                     const uint8_t*          body,
                     size_t                  body_size,
                     std::vector<uint8_t>&   response_body);
@@ -168,7 +168,7 @@ namespace Core
                  * @return boost::asio::awaitable<DasResult> 协程结果
                  */
                 boost::asio::awaitable<DasResult> HandleMessage(
-                    const IPCMessageHeader&     header,
+                    const ValidatedIPCMessageHeader&     header,
                     const std::vector<uint8_t>& body,
                     IpcResponseSender&          sender) override;
 

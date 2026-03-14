@@ -49,7 +49,7 @@ protected:
 
         std::vector<uint8_t> response_body;
         handler_->HandleMessage(
-            validated_header.Raw(),
+            validated_header,
             reinterpret_cast<const uint8_t*>(&request),
             sizeof(request),
             response_body);
@@ -76,7 +76,7 @@ protected:
 
         std::vector<uint8_t> response_body;
         return handler_->HandleMessage(
-            validated_header.Raw(),
+            validated_header,
             reinterpret_cast<const uint8_t*>(&heartbeat),
             sizeof(heartbeat),
             response_body);
