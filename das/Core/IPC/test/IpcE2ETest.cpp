@@ -247,10 +247,9 @@ TEST_F(IpcE2ETest, ProxyStub_MessageRoundTrip)
     request.call_id = 1;
     request.message_type = static_cast<uint8_t>(MessageType::REQUEST);
     request.interface_id = 12345;
-    request.method_id = 42;
-    request.session_id = 0;
-    request.generation = 0;
-    request.local_id = 0;
+    request.source_session_id = 0;
+    request.target_session_id = 0;
+    // V3: method_id and ObjectId now in body
 
     std::string method_args = "test_argument_data";
 
@@ -416,35 +415,46 @@ TEST_F(IpcE2ETest, FullPipeline_RequestResponse)
         plugin_object_manager_->RegisterRemoteObject(service_id),
         DAS_S_OK);
 
-    // 3. Plugin creates request with V2 header format
+    // 3. Plugin creates request with V3 header format
     IPCMessageHeader request{};
     request.magic = IPCMessageHeader::MAGIC;
     request.version = IPCMessageHeader::CURRENT_VERSION;
     request.call_id = 1;
     request.message_type = static_cast<uint8_t>(MessageType::REQUEST);
     request.interface_id = 1;
-    request.method_id = 1;
-    request.session_id = service_id.session_id;
-    request.generation = service_id.generation;
-    request.local_id = service_id.local_id;
+    // V3: ObjectId (session_id, generation, local_id) now in body
+    request.source_session_id = 2; // plugin session
+    request.target_session_id = 1; // host session
 
     MemorySerializerWriter request_writer;
-    request_writer.WriteInt32(1);
-    request_writer.WriteInt32(0);
+    // V3 body: interface_id + method_id + reserved + ObjectId + args
+    request_writer.WriteUInt32(1);  // interface_id
+    request_writer.WriteUInt16(1);  // method_id
+    request_writer.WriteUInt16(0);  // reserved
+    request_writer.WriteUInt16(service_id.session_id);
+    request_writer.WriteUInt16(service_id.generation);
+    request_writer.WriteUInt32(service_id.local_id);
+    request_writer.WriteInt32(0); // args
 
-    // 4. V2 header is already in wire format, no conversion needed
+    // 4. V3 header is already in wire format, no conversion needed
     IPCMessageHeader received_request = request;
 
     MemorySerializerReader request_reader(request_writer.GetBuffer());
-    int32_t                method_id;
-    ASSERT_EQ(request_reader.ReadInt32(&method_id), DAS_S_OK);
-    EXPECT_EQ(method_id, 1);
+    // V3 body: interface_id + method_id + reserved + ObjectId
+    uint32_t body_interface_id = 0;
+    uint16_t body_method_id = 0;
+    uint16_t reserved = 0;
+    ASSERT_EQ(request_reader.ReadUInt32(&body_interface_id), DAS_S_OK);
+    ASSERT_EQ(request_reader.ReadUInt16(&body_method_id), DAS_S_OK);
+    ASSERT_EQ(request_reader.ReadUInt16(&reserved), DAS_S_OK);
+    EXPECT_EQ(body_interface_id, 1U);
+    EXPECT_EQ(body_method_id, 1);
 
-    // 5. Host processes request - reconstruct ObjectId from header fields
-    ObjectId received_object_id{
-        received_request.session_id,
-        received_request.generation,
-        received_request.local_id};
+    // 5. Host processes request - read ObjectId from body
+    ObjectId received_object_id{};
+    ASSERT_EQ(request_reader.ReadUInt16(&received_object_id.session_id), DAS_S_OK);
+    ASSERT_EQ(request_reader.ReadUInt16(&received_object_id.generation), DAS_S_OK);
+    ASSERT_EQ(request_reader.ReadUInt32(&received_object_id.local_id), DAS_S_OK);
     void* obj_ptr = nullptr;
     ASSERT_EQ(
         host_object_manager_->LookupObject(received_object_id, &obj_ptr),

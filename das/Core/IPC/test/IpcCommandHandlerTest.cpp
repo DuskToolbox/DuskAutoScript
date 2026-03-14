@@ -93,10 +93,10 @@ IPCMessageHeader MakeHeader(IpcCommandType cmd_type)
     header.message_type = static_cast<uint8_t>(MessageType::REQUEST);
     header.error_code = 0;
     header.interface_id = static_cast<uint32_t>(cmd_type);
-    header.session_id = 0;
-    header.generation = 0;
-    header.local_id = 0;
-    header.version = 1;
+    // V3: session_id/generation/local_id moved to body
+    header.source_session_id = 0;
+    header.target_session_id = 0;
+    header.version = IPCMessageHeader::CURRENT_VERSION;
     header.flags = 0;
     header.body_size = 0;
     return header;

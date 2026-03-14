@@ -41,10 +41,8 @@ protected:
         auto validated_header =
             IPCMessageHeaderBuilder()
                 .SetMessageType(MessageType::REQUEST)
-                .SetBusinessInterface(
-                    static_cast<uint32_t>(
-                        HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO),
-                    0)
+                .SetControlPlaneCommand(
+                    HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO)
                 .SetBodySize(sizeof(request))
                 .SetCallId(next_call_id_++)
                 .Build();
@@ -69,13 +67,11 @@ protected:
         auto validated_header =
             IPCMessageHeaderBuilder()
                 .SetMessageType(MessageType::REQUEST)
-                .SetBusinessInterface(
-                    static_cast<uint32_t>(
-                        HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT),
-                    0)
+                .SetControlPlaneCommand(
+                    HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT)
                 .SetBodySize(sizeof(heartbeat))
                 .SetCallId(next_call_id_++)
-                .SetSessionId(sender_session_id)
+                .SetSourceSessionId(sender_session_id)
                 .Build();
 
         std::vector<uint8_t> response_body;

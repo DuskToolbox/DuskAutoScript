@@ -13,24 +13,26 @@ class ForwardingRouterTest : public ::testing::Test
 protected:
     void SetUp() override
     {
+        // V3: RouteTarget uses session_id for target_session_id
         target1_ = RouteTarget(1, 100, 200, DasGuid{});
         target2_ = RouteTarget(2, 200, 300, DasGuid{});
         target3_ = RouteTarget(3, 300, 400, DasGuid{});
 
-        key1_ = RouteKey(100, 200, 300, 400);
-        key2_ = RouteKey(200, 300, 400, 500);
-        key3_ = RouteKey(300, 400, 500, 600);
-        key4_ = RouteKey(400, 500, 600, 700);
+        // V3: RouteKey uses (target_session_id, interface_id)
+        key1_ = RouteKey(100, 400);
+        key2_ = RouteKey(200, 500);
+        key3_ = RouteKey(300, 600);
+        key4_ = RouteKey(400, 700);
 
+        // V3: Header uses source_session_id/target_session_id
         header1_ = IPCMessageHeader{};
         header1_.call_id = 1;
         header1_.message_type = static_cast<uint8_t>(MessageType::REQUEST);
         header1_.error_code = 0;
         header1_.interface_id = 400;
-        header1_.session_id = 100;
-        header1_.generation = 200;
-        header1_.local_id = 300;
-        header1_.version = 2;
+        header1_.source_session_id = 1;  // source
+        header1_.target_session_id = 100; // target
+        header1_.version = IPCMessageHeader::CURRENT_VERSION;
         header1_.flags = 0;
         header1_.body_size = 0;
 
@@ -39,10 +41,9 @@ protected:
         header2_.message_type = static_cast<uint8_t>(MessageType::RESPONSE);
         header2_.error_code = 0;
         header2_.interface_id = 500;
-        header2_.session_id = 200;
-        header2_.generation = 300;
-        header2_.local_id = 400;
-        header2_.version = 2;
+        header2_.source_session_id = 2;  // source
+        header2_.target_session_id = 200; // target
+        header2_.version = IPCMessageHeader::CURRENT_VERSION;
         header2_.flags = 0;
         header2_.body_size = 0;
 
@@ -290,9 +291,10 @@ TEST_F(ForwardingRouterTest, RouteStats)
 // 测试路由键比较和哈希
 TEST_F(ForwardingRouterTest, RouteKeyComparisonAndHash)
 {
-    RouteKey key1a(100, 200, 300, 400);
-    RouteKey key1b(100, 200, 300, 400);
-    RouteKey key2(200, 300, 400, 500);
+    // V3: RouteKey(target_session_id, interface_id)
+    RouteKey key1a(100, 400);
+    RouteKey key1b(100, 400);
+    RouteKey key2(200, 500);
 
     // 相同的键应该相等
     EXPECT_TRUE(key1a == key1b);

@@ -40,8 +40,8 @@ protected:
     {
         return IPCMessageHeaderBuilder()
             .SetMessageType(type)
-            .SetCallId(call_id)
-            .SetBusinessInterface(1, 0)
+            .SetCallId(static_cast<uint16_t>(call_id))
+            .SetInterfaceId(1)
             .SetFlags(0)
             .SetBodySize(body_size)
             .Build();
@@ -184,15 +184,16 @@ TEST_F(IpcMessageQueueTransportTest, Receive_Timeout)
     EXPECT_EQ(result, DAS_E_IPC_TIMEOUT);
 }
 
-// ====== Message Header V2 Tests ======
+// ====== Message Header V3 Tests ======
 
-TEST_F(IpcMessageQueueTransportTest, HeaderV2_FieldsCorrect)
+TEST_F(IpcMessageQueueTransportTest, HeaderV3_FieldsCorrect)
 {
     auto header = IPCMessageHeaderBuilder()
                       .SetMessageType(MessageType::REQUEST)
                       .SetCallId(12345)
-                      .SetBusinessInterface(999, 42)
-                      .SetObject(1, 2, 0xDEAD)
+                      .SetInterfaceId(999)
+                      .SetSourceSessionId(1)
+                      .SetTargetSessionId(2)
                       .SetFlags(0xFF)
                       .SetBodySize(1024)
                       .Build();
@@ -200,12 +201,10 @@ TEST_F(IpcMessageQueueTransportTest, HeaderV2_FieldsCorrect)
     const auto& raw = header.Raw();
     EXPECT_EQ(raw.magic, IPCMessageHeader::MAGIC);
     EXPECT_EQ(raw.version, IPCMessageHeader::CURRENT_VERSION);
-    EXPECT_EQ(raw.call_id, 12345ULL);
+    EXPECT_EQ(raw.call_id, 12345U);
     EXPECT_EQ(raw.interface_id, 999U);
-    EXPECT_EQ(raw.method_id, 42U);
-    EXPECT_EQ(raw.session_id, 1U);
-    EXPECT_EQ(raw.generation, 2U);
-    EXPECT_EQ(raw.local_id, 0xDEADU);
+    EXPECT_EQ(raw.source_session_id, 1U);
+    EXPECT_EQ(raw.target_session_id, 2U);
     EXPECT_EQ(raw.flags, 0xFFU);
     EXPECT_EQ(raw.body_size, 1024U);
 }
