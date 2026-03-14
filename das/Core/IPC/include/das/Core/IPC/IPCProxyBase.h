@@ -11,10 +11,10 @@
 
 #include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/Config.h>
+#include <das/Core/IPC/SessionCoordinator.h>
 
 DAS_CORE_IPC_NS_BEGIN
 class IpcRunLoop;
-class SessionCoordinator;
 
 class IPCProxyBase
 {
