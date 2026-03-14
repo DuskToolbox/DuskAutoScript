@@ -107,6 +107,9 @@ def should_skip_file(filepath):
         r'IpcMessageHeaderBuilder\.h$',
         r'ValidatedIPCMessageHeader\.h$',
         r'IStubBase\.h$',
+        # Test files are allowed to use raw IPCMessageHeader for testing header serialization
+        r'test[/\\]Ipc.*Test\.cpp$',
+        r'test[/\\].*Test\.cpp$',
     ]
 
     filepath_normalized = filepath.replace('\\', '/')
