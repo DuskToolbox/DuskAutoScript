@@ -38,14 +38,7 @@
 
 DAS_CORE_IPC_NS_BEGIN
 
-/// 消息头标志命名空间
-namespace HeaderFlags
-{
-    /// 无标志
-    constexpr uint8_t NONE = 0x00;
-    /// 控制平面消息标志
-    constexpr uint8_t CONTROL_PLANE = 0x01;
-} // namespace HeaderFlags
+// HeaderFlags 已移至 IpcMessageHeader.h
 
 class IMessageHandler;
 class ConnectionManager;

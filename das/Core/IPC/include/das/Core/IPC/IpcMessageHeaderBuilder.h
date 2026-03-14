@@ -31,14 +31,13 @@ public:
         header_.message_type = static_cast<uint8_t>(MessageType::REQUEST);
         header_.header_flags = 0;
         header_.call_id = 0;
+        header_.source_session_id = 0;
+        header_.target_session_id = 0;
         header_.interface_id = 0;
-        header_.method_id = 0;
         header_.flags = 0;
         header_.error_code = 0;
         header_.body_size = 0;
-        header_.session_id = 0;
-        header_.generation = 0;
-        header_.local_id = 0;
+        header_.reserved = 0;
         return *this;
     }
 
@@ -58,16 +57,15 @@ public:
     {
         header_.header_flags = HeaderFlags::CONTROL_PLANE;
         header_.interface_id = static_cast<uint32_t>(command);
-        header_.method_id = 0;
         return *this;
     }
 
-    IPCMessageHeaderBuilder& SetBusinessInterface(
-        uint32_t interface_id,
-        uint16_t method_id) noexcept
+    /// @brief 设置接口ID
+    /// @note 控制平面消息直接使用此方法设置命令类型
+    ///       业务消息的 interface_id 可设为 0 或实际值，method_id 在 body 中
+    IPCMessageHeaderBuilder& SetInterfaceId(uint32_t interface_id) noexcept
     {
         header_.interface_id = interface_id;
-        header_.method_id = method_id;
         return *this;
     }
 
@@ -79,26 +77,26 @@ public:
 
     // ==================== 可选字段 ====================
 
-    IPCMessageHeaderBuilder& SetSessionId(uint16_t session_id) noexcept
+    /// @brief 设置消息来源 session ID
+    IPCMessageHeaderBuilder& SetSourceSessionId(uint16_t session_id) noexcept
     {
-        header_.session_id = session_id;
+        header_.source_session_id = session_id;
         return *this;
     }
 
-    IPCMessageHeaderBuilder& SetCallId(uint64_t call_id) noexcept
+    /// @brief 设置消息目标 session ID
+    IPCMessageHeaderBuilder& SetTargetSessionId(uint16_t session_id) noexcept
+    {
+        header_.target_session_id = session_id;
+        return *this;
+    }
+
+    /// @brief 设置 call_id (16-bit)
+    /// @note V3 Header 使用 16-bit call_id，配合 source_session_id
+    /// 匹配请求/响应
+    IPCMessageHeaderBuilder& SetCallId(uint16_t call_id) noexcept
     {
         header_.call_id = call_id;
-        return *this;
-    }
-
-    IPCMessageHeaderBuilder& SetObject(
-        uint16_t session_id,
-        uint16_t generation,
-        uint32_t local_id) noexcept
-    {
-        header_.session_id = session_id;
-        header_.generation = generation;
-        header_.local_id = local_id;
         return *this;
     }
 
@@ -133,13 +131,13 @@ private:
 inline ValidatedIPCMessageHeader MakeControlPlaneRequest(
     IpcCommandType command,
     uint32_t       body_size,
-    uint16_t       session_id = 0)
+    uint16_t       target_session_id = 0)
 {
     return IPCMessageHeaderBuilder()
         .SetMessageType(MessageType::REQUEST)
         .SetControlPlaneCommand(command)
         .SetBodySize(body_size)
-        .SetSessionId(session_id)
+        .SetTargetSessionId(target_session_id)
         .Build();
 }
 
@@ -147,7 +145,7 @@ inline ValidatedIPCMessageHeader MakeControlPlaneRequest(
 inline ValidatedIPCMessageHeader MakeControlPlaneResponse(
     IpcCommandType command,
     uint32_t       body_size,
-    uint64_t       call_id,
+    uint16_t       call_id,
     int32_t        error_code = 0)
 {
     return IPCMessageHeaderBuilder()
@@ -156,23 +154,6 @@ inline ValidatedIPCMessageHeader MakeControlPlaneResponse(
         .SetBodySize(body_size)
         .SetCallId(call_id)
         .SetErrorCode(error_code)
-        .Build();
-}
-
-[[nodiscard]]
-inline ValidatedIPCMessageHeader MakeBusinessRequest(
-    uint32_t interface_id,
-    uint16_t method_id,
-    uint32_t body_size,
-    uint16_t session_id,
-    uint16_t generation,
-    uint32_t local_id)
-{
-    return IPCMessageHeaderBuilder()
-        .SetMessageType(MessageType::REQUEST)
-        .SetBusinessInterface(interface_id, method_id)
-        .SetBodySize(body_size)
-        .SetObject(session_id, generation, local_id)
         .Build();
 }
 

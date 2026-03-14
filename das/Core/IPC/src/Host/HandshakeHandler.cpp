@@ -151,7 +151,8 @@ namespace Core
 
                     const HeartbeatV1* heartbeat =
                         reinterpret_cast<const HeartbeatV1*>(body);
-                    return HandleHeartbeat(header.session_id, *heartbeat);
+                    // V3: 使用 source_session_id
+                    return HandleHeartbeat(header.source_session_id, *heartbeat);
                 }
 
                 case HandshakeInterfaceId::HANDSHAKE_IFACE_GOODBYE:
@@ -215,7 +216,8 @@ namespace Core
                     auto validated_response_header =
                         IPCMessageHeaderBuilder()
                             .SetMessageType(MessageType::RESPONSE)
-                            .SetBusinessInterface(response_interface_id, 0)
+                            .SetControlPlaneCommand(
+                                static_cast<HandshakeInterfaceId>(response_interface_id))
                             .SetBodySize(
                                 static_cast<uint32_t>(response_body.size()))
                             .SetCallId(header.call_id)

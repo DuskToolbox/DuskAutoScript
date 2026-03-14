@@ -388,17 +388,15 @@ DasResult IpcTransport::SendLargeMessage(
     IPCMessageHeader shm_header = header.Raw();
     shm_header.flags |= kFlagLargeMessage;
 
-    // 使用 Builder 创建新的 validated header
+    // V3: 使用新的 Builder API
     auto validated_shm_header =
         IPCMessageHeaderBuilder()
             .SetMessageType(static_cast<MessageType>(shm_header.message_type))
-            .SetBusinessInterface(shm_header.interface_id, shm_header.method_id)
+            .SetInterfaceId(shm_header.interface_id)
             .SetBodySize(sizeof(uint64_t))
             .SetCallId(shm_header.call_id)
-            .SetObject(
-                shm_header.session_id,
-                shm_header.generation,
-                shm_header.local_id)
+            .SetSourceSessionId(shm_header.source_session_id)
+            .SetTargetSessionId(shm_header.target_session_id)
             .SetFlags(shm_header.flags)
             .Build();
 

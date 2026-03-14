@@ -12,7 +12,9 @@
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
+#include <das/Core/IPC/SessionCoordinator.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
+#include <das/Core/IPC/SessionCoordinator.h>
 #include <das/Core/Logger/Logger.h>
 #include <shared_mutex>
 #include <unordered_map>
@@ -412,6 +414,10 @@ DasResult ConnectionManager::SendHeartbeatToAll()
 {
     auto sessions = GetConnectedSessions();
 
+    // V3: 获取本地 session_id
+    auto local_session_opt = SessionCoordinator::GetInstance().GetLocalSessionId();
+    uint16_t local_session_id = local_session_opt.value_or(0);
+
     for (uint16_t session_id : sessions)
     {
         auto* transport = GetTransport(session_id);
@@ -436,7 +442,8 @@ DasResult ConnectionManager::SendHeartbeatToAll()
                 .SetControlPlaneCommand(
                     HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT)
                 .SetBodySize(sizeof(heartbeat))
-                .SetObject(session_id, 0, 0)
+                .SetSourceSessionId(local_session_id)
+                .SetTargetSessionId(session_id)
                 .Build();
 
         // 将心跳发送操作 post 到 transport 所属的 io_context

@@ -24,10 +24,9 @@ enum class HeaderValidationError : uint8_t
 
     // 控制平面校验
     INVALID_CONTROL_PLANE_COMMAND,
-    CONTROL_PLANE_METHOD_ID_NOT_ZERO,
 
     // 业务平面校验
-    BUSINESS_PLANE_INVALID_OBJECT_ID,
+    BUSINESS_PLANE_INVALID_SESSION,
 
     // Body 校验
     BODY_SIZE_TOO_SMALL,
@@ -35,7 +34,8 @@ enum class HeaderValidationError : uint8_t
     BODY_SIZE_MISMATCH,
 
     // Session 校验
-    INVALID_SESSION_ID,
+    INVALID_SOURCE_SESSION_ID,
+    INVALID_TARGET_SESSION_ID,
     SESSION_NOT_REGISTERED,
 
     // 调用校验
@@ -93,10 +93,10 @@ struct HeaderValidationContext
     MessageType expected_type = static_cast<MessageType>(0xFF);
 
     /// @brief 检查 call_id 是否在 pending 列表中（函数指针）
-    /// @param call_id 要检查的调用 ID
+    /// @param call_id 要检查的调用 ID (V3: uint16_t)
     /// @param user_data 用户数据（通常是指向 IpcRunLoop 的指针）
     /// @return true 如果 call_id 正在等待响应
-    bool (*is_call_pending)(uint64_t call_id, void* user_data) = nullptr;
+    bool (*is_call_pending)(uint16_t call_id, void* user_data) = nullptr;
     void* is_call_pending_user_data = nullptr; // 传递给回调的用户数据
 };
 
@@ -241,17 +241,6 @@ public:
 
         if (is_control_plane)
         {
-            if (header.method_id != 0)
-            {
-                return {
-                    HeaderValidationError::CONTROL_PLANE_METHOD_ID_NOT_ZERO,
-                    "Control plane message must have method_id = 0",
-                    ValidationCallSite{
-                        loc.file_name(),
-                        loc.function_name(),
-                        static_cast<int>(loc.line())}};
-            }
-
             if (!IsValidControlPlaneCommand(header.interface_id))
             {
                 return {
@@ -316,20 +305,24 @@ public:
         const IPCMessageHeader&               header,
         [[maybe_unused]] std::source_location loc) noexcept
     {
-        if (header.session_id == 0)
+        // V3: 使用 source_session_id / target_session_id
+        // 控制平面消息允许 session_id 为 0
+        if (IsControlPlane(header))
         {
             return {};
         }
 
-        // TODO: 实现实际的 session 验证
-        // if (!SessionCoordinator::IsValidSessionId(header.session_id))
-        // {
-        //     return {
-        //         HeaderValidationError::INVALID_SESSION_ID,
-        //         "Invalid session ID",
-        //         ValidationCallSite{loc.file_name(), loc.function_name(),
-        //                            static_cast<int>(loc.line())}};
-        // }
+        // 业务消息需要有效的 target_session_id
+        if (header.target_session_id == 0)
+        {
+            return {
+                HeaderValidationError::INVALID_TARGET_SESSION_ID,
+                "Invalid target session ID",
+                ValidationCallSite{
+                    loc.file_name(),
+                    loc.function_name(),
+                    static_cast<int>(loc.line())}};
+        }
 
         return {};
     }
@@ -370,7 +363,7 @@ public:
     // ==================== Call ID 校验使用示例 ====================
     //
     // // 定义静态回调函数（IPC 是顺序无锁的，不需要加锁）
-    // static bool IsCallPendingCallback(uint64_t call_id, void* user_data)
+    // static bool IsCallPendingCallback(uint16_t call_id, void* user_data)
     // {
     //     auto* run_loop = static_cast<IpcRunLoop*>(user_data);
     //     return run_loop->pending_calls_.find(call_id) !=
@@ -387,13 +380,13 @@ public:
 
     // ==================== 辅助方法 ====================
 
+    /// @brief 判断是否为控制平面消息
+    /// @note V3: 使用 header_flags 判断，不再依赖 ObjectId
     [[nodiscard]]
     static bool IsControlPlane(const IPCMessageHeader& header) noexcept
     {
-        // 控制平面特征: ObjectId = {0, 0, 0}
-        return header.session_id == 0
-            && header.generation == 0
-            && header.local_id == 0;
+        // V3: 控制平面消息由 header_flags 标识
+        return (header.header_flags & HeaderFlags::CONTROL_PLANE) != 0;
     }
 
     [[nodiscard]]
@@ -431,18 +424,18 @@ inline const char* HeaderValidationResult::GetErrorName() const noexcept
         return "UNEXPECTED_MESSAGE_TYPE";
     case HeaderValidationError::INVALID_CONTROL_PLANE_COMMAND:
         return "INVALID_CONTROL_PLANE_COMMAND";
-    case HeaderValidationError::CONTROL_PLANE_METHOD_ID_NOT_ZERO:
-        return "CONTROL_PLANE_METHOD_ID_NOT_ZERO";
-    case HeaderValidationError::BUSINESS_PLANE_INVALID_OBJECT_ID:
-        return "BUSINESS_PLANE_INVALID_OBJECT_ID";
+    case HeaderValidationError::BUSINESS_PLANE_INVALID_SESSION:
+        return "BUSINESS_PLANE_INVALID_SESSION";
     case HeaderValidationError::BODY_SIZE_TOO_SMALL:
         return "BODY_SIZE_TOO_SMALL";
     case HeaderValidationError::BODY_SIZE_EXCEEDS_LIMIT:
         return "BODY_SIZE_EXCEEDS_LIMIT";
     case HeaderValidationError::BODY_SIZE_MISMATCH:
         return "BODY_SIZE_MISMATCH";
-    case HeaderValidationError::INVALID_SESSION_ID:
-        return "INVALID_SESSION_ID";
+    case HeaderValidationError::INVALID_SOURCE_SESSION_ID:
+        return "INVALID_SOURCE_SESSION_ID";
+    case HeaderValidationError::INVALID_TARGET_SESSION_ID:
+        return "INVALID_TARGET_SESSION_ID";
     case HeaderValidationError::SESSION_NOT_REGISTERED:
         return "SESSION_NOT_REGISTERED";
     case HeaderValidationError::UNKNOWN_CALL_ID:

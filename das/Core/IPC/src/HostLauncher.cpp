@@ -75,7 +75,7 @@ struct HostLauncher::Impl
     std::unique_ptr<DefaultAsyncIpcTransport>    async_transport;
     uint32_t                                     pid = 0;
     uint16_t                                     session_id = 0;
-    uint64_t                                     next_call_id = 1;
+    uint16_t                                     next_call_id = 1; // V3: 16-bit call_id
     bool                                         is_running = false;
     std::atomic<uint32_t> ref_count{1}; // 引用计数，初始为 1（创建时持有）
 };
@@ -553,7 +553,12 @@ boost::asio::awaitable<DasResult> HostLauncher::SendHandshakeHelloAsync(
     InitHelloRequest(hello, my_pid, client_name.c_str());
     hello.assigned_session_id = assigned_session_id;
 
-    uint64_t call_id = impl_->next_call_id++;
+    // V3: 16-bit call_id
+    uint16_t call_id = impl_->next_call_id++;
+    if (impl_->next_call_id == 0)
+    {
+        impl_->next_call_id = 1; // 溢出后从 1 开始
+    }
     auto     validated_header =
         IPCMessageHeaderBuilder()
             .SetMessageType(MessageType::REQUEST)
@@ -661,7 +666,12 @@ boost::asio::awaitable<DasResult> HostLauncher::SendHandshakeReadyAsync(
     ReadyRequestV1 ready;
     InitReadyRequest(ready, session_id);
 
-    uint64_t call_id = impl_->next_call_id++;
+    // V3: 16-bit call_id
+    uint16_t call_id = impl_->next_call_id++;
+    if (impl_->next_call_id == 0)
+    {
+        impl_->next_call_id = 1; // 溢出后从 1 开始
+    }
     auto     validated_header =
         IPCMessageHeaderBuilder()
             .SetMessageType(MessageType::REQUEST)
