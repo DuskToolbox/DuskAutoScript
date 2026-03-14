@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstring>
 #include <das/Core/IPC/Config.h>
+#include <das/Core/IPC/IpcHeaderValidator.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcTransport.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
@@ -33,7 +34,7 @@ IpcTransport::IpcTransport(
     uint32_t           max_message_size,
     uint32_t           max_messages,
     bool               is_server)
-: impl_(std::make_unique<Impl>())
+    : impl_(std::make_unique<Impl>())
 {
     impl_->host_queue_name_ = host_queue_name;
     impl_->plugin_queue_name_ = plugin_queue_name;
@@ -46,7 +47,8 @@ IpcTransport::IpcTransport(
         if (is_server)
         {
             boost::interprocess::message_queue::remove(host_queue_name.c_str());
-            boost::interprocess::message_queue::remove(plugin_queue_name.c_str());
+            boost::interprocess::message_queue::remove(
+                plugin_queue_name.c_str());
 
             impl_->host_queue_ =
                 std::make_unique<boost::interprocess::message_queue>(
@@ -241,14 +243,13 @@ DasResult IpcTransport::Receive(
 
         std::memcpy(&out_header, buffer.data(), sizeof(IPCMessageHeader));
 
-        // Validate magic and version
-        if (out_header.magic != IPCMessageHeader::MAGIC
-            || out_header.version != IPCMessageHeader::CURRENT_VERSION)
+        // 使用 IpcHeaderValidator 验证 magic 和 version
+        auto validation_result = IpcHeaderValidator::QuickValidate(out_header);
+        if (!validation_result.IsOk())
         {
             DAS_CORE_LOG_ERROR(
-                "Invalid message header (magic = 0x{:08X}, version = {})",
-                out_header.magic,
-                out_header.version);
+                "Header validation failed: {}",
+                validation_result.message);
             return DAS_E_IPC_INVALID_MESSAGE_HEADER;
         }
 
