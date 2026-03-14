@@ -128,8 +128,8 @@ namespace Core
                 uint16_t                                  session_id_ = 0;
                 std::unique_ptr<DistributedObjectManager> object_manager_;
                 std::unique_ptr<IpcRunLoop>               run_loop_;
-                std::unique_ptr<IpcCommandHandler>        command_handler_;
-                std::unique_ptr<HandshakeHandler>         handshake_handler_;
+                DasPtr<IpcCommandHandler>                 command_handler_;
+                DasPtr<HandshakeHandler>                  handshake_handler_;
                 std::unique_ptr<SharedMemoryPool>         shared_memory_;
                 std::unique_ptr<DefaultAsyncIpcTransport> async_transport_;
 

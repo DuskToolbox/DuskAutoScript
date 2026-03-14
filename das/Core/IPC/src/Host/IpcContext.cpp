@@ -237,10 +237,10 @@ namespace Core
                 async_transport_->SetSharedMemoryPool(shared_memory_.get());
 
                 // 6. 创建并初始化 IpcCommandHandler
-                command_handler_ = std::make_unique<IpcCommandHandler>();
+                command_handler_ = IpcCommandHandler::Create();
                 command_handler_->SetSessionId(session_id_);
 
-                // 7. 创建 HandshakeHandler（RAII 模式）
+                // 7. 创建 HandshakeHandler（使用 DasPtr 管理生命周期）
                 handshake_handler_ = HandshakeHandler::Create(session_id_);
                 if (!handshake_handler_)
                 {
@@ -284,35 +284,35 @@ namespace Core
                     static_cast<uint32_t>(
                         HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO),
                     std::make_unique<MessageHandlerRef>(
-                        handshake_handler_.get()));
+                        handshake_handler_.Get()));
                 // READY (interface_id=3)
                 run_loop_->RegisterHandler(
                     HeaderFlags::CONTROL_PLANE,
                     static_cast<uint32_t>(
                         HandshakeInterfaceId::HANDSHAKE_IFACE_READY),
                     std::make_unique<MessageHandlerRef>(
-                        handshake_handler_.get()));
+                        handshake_handler_.Get()));
                 // HEARTBEAT (interface_id=6)
                 run_loop_->RegisterHandler(
                     HeaderFlags::CONTROL_PLANE,
                     static_cast<uint32_t>(
                         HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT),
                     std::make_unique<MessageHandlerRef>(
-                        handshake_handler_.get()));
+                        handshake_handler_.Get()));
                 // GOODBYE (interface_id=7)
                 run_loop_->RegisterHandler(
                     HeaderFlags::CONTROL_PLANE,
                     static_cast<uint32_t>(
                         HandshakeInterfaceId::HANDSHAKE_IFACE_GOODBYE),
                     std::make_unique<MessageHandlerRef>(
-                        handshake_handler_.get()));
+                        handshake_handler_.Get()));
 
                 // CommandHandler 处理业务消息（注册为 NONE 标志）
                 run_loop_->RegisterHandler(
                     HeaderFlags::NONE,
                     0, // CommandHandler 使用 interface_id 0
                     std::make_unique<MessageHandlerRef>(
-                        command_handler_.get()));
+                        command_handler_.Get()));
 
                 DAS_LOG_INFO(msg.c_str());
 
@@ -340,19 +340,24 @@ namespace Core
                     run_loop_->RequestStop();
                 }
 
-                // 3. 关闭 HandshakeHandler（RAII 模式，析构自动调用）
-                handshake_handler_.reset();
-
-                // 4. 关闭 SharedMemoryPool
-                shared_memory_.reset();
-
-                // 5. 关闭 IpcRunLoop（RAII：unique_ptr 析构自动调用
+                // 3. 关闭 IpcRunLoop（RAII：unique_ptr 析构自动调用
                 // Uninitialize）
+                //    必须在关闭 HandshakeHandler 之前，因为 handlers_by_flags_
+                //    中 存储的 DasPtr 会调用 MessageHandlerRef::Release()，
+                //    进而调用 HandshakeHandler::Release()
                 if (run_loop_)
                 {
                     run_loop_->RequestStop();
                     run_loop_.reset();
                 }
+
+                // 4. HandshakeHandler 和 CommandHandler 使用 DasPtr 管理
+                //    析构时自动减少引用计数，无需手动 reset
+                //    注意：必须确保 run_loop_ 先析构，这样 handlers_ 中的
+                //    DasPtr 会先释放
+
+                // 5. 关闭 SharedMemoryPool
+                shared_memory_.reset();
 
                 // 6. 关闭 DistributedObjectManager
                 object_manager_.reset();

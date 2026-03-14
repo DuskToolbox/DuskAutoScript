@@ -83,6 +83,16 @@ public:
     IpcCommandHandler();
     ~IpcCommandHandler() = default;
 
+    /**
+     * @brief 工厂函数：创建 IpcCommandHandler 实例
+     *
+     * @return DasPtr<IpcCommandHandler> 新创建的实例
+     */
+    static DasPtr<IpcCommandHandler> Create()
+    {
+        return DasPtr<IpcCommandHandler>(new IpcCommandHandler());
+    }
+
     /// 增加引用计数
     [[nodiscard]]
     uint32_t AddRef() override

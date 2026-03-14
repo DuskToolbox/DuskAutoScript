@@ -2,9 +2,11 @@
 #include <cstring>
 #include <das/Core/IPC/Host/HandshakeHandler.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
+#include <das/DasPtr.hpp>
 #include <gtest/gtest.h>
 #include <thread>
 
+using namespace DAS;
 using namespace DAS::Core::IPC;
 using namespace DAS::Core::IPC::Host;
 
@@ -19,29 +21,33 @@ protected:
         ASSERT_NE(handler_, nullptr);
     }
 
-    void TearDown() override
-    {
-        // 析构函数自动调用 Uninitialize()
-        handler_.reset();
-    }
+    void TearDown() override {}
 
     // Helper to create a HelloRequest and simulate client registration
-    void RegisterMockClient(uint16_t session_id, uint32_t pid, const char* plugin_name)
+    void RegisterMockClient(
+        uint16_t    session_id,
+        uint32_t    pid,
+        const char* plugin_name)
     {
         HelloRequestV1 request = {};
         request.protocol_version = HelloRequestV1::CURRENT_PROTOCOL_VERSION;
         request.pid = pid;
         request.assigned_session_id = session_id;
-        std::strncpy(request.plugin_name, plugin_name, sizeof(request.plugin_name) - 1);
+        std::strncpy(
+            request.plugin_name,
+            plugin_name,
+            sizeof(request.plugin_name) - 1);
 
-        auto validated_header = IPCMessageHeaderBuilder()
-                          .SetMessageType(MessageType::REQUEST)
-                          .SetBusinessInterface(
-                              static_cast<uint32_t>(HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO),
-                              0)
-                          .SetBodySize(sizeof(request))
-                          .SetCallId(next_call_id_++)
-                          .Build();
+        auto validated_header =
+            IPCMessageHeaderBuilder()
+                .SetMessageType(MessageType::REQUEST)
+                .SetBusinessInterface(
+                    static_cast<uint32_t>(
+                        HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO),
+                    0)
+                .SetBodySize(sizeof(request))
+                .SetCallId(next_call_id_++)
+                .Build();
 
         std::vector<uint8_t> response_body;
         handler_->HandleMessage(
@@ -55,19 +61,22 @@ protected:
     DasResult SendHeartbeat(uint16_t sender_session_id)
     {
         HeartbeatV1 heartbeat = {};
-        heartbeat.timestamp_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::system_clock::now().time_since_epoch())
-            .count();
+        heartbeat.timestamp_ms =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch())
+                .count();
 
-        auto validated_header = IPCMessageHeaderBuilder()
-                          .SetMessageType(MessageType::REQUEST)
-                          .SetBusinessInterface(
-                              static_cast<uint32_t>(HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT),
-                              0)
-                          .SetBodySize(sizeof(heartbeat))
-                          .SetCallId(next_call_id_++)
-                          .SetSessionId(sender_session_id)
-                          .Build();
+        auto validated_header =
+            IPCMessageHeaderBuilder()
+                .SetMessageType(MessageType::REQUEST)
+                .SetBusinessInterface(
+                    static_cast<uint32_t>(
+                        HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT),
+                    0)
+                .SetBodySize(sizeof(heartbeat))
+                .SetCallId(next_call_id_++)
+                .SetSessionId(sender_session_id)
+                .Build();
 
         std::vector<uint8_t> response_body;
         return handler_->HandleMessage(
@@ -77,8 +86,8 @@ protected:
             response_body);
     }
 
-    std::unique_ptr<HandshakeHandler> handler_;
-    uint32_t                            next_call_id_ = 1;
+    DasPtr<HandshakeHandler> handler_;
+    uint32_t                 next_call_id_ = 1;
 };
 
 // ====== HandleHeartbeat Tests ======

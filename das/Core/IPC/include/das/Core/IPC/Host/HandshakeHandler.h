@@ -96,7 +96,7 @@ namespace Core
                  * @return std::unique_ptr<HandshakeHandler> HandshakeHandler
                  * 智能指针
                  */
-                static std::unique_ptr<HandshakeHandler> Create(
+                static DasPtr<HandshakeHandler> Create(
                     uint16_t local_session_id = 0);
 
                 [[nodiscard]]

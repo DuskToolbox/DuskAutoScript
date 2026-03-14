@@ -7,6 +7,7 @@
 #include <das/Core/IPC/SessionCoordinator.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
+#include <das/DasPtr.hpp>
 #include <das/Utils/fmt.h>
 
 DAS_NS_BEGIN
@@ -17,10 +18,10 @@ namespace Core
         namespace Host
         {
 
-            std::unique_ptr<HandshakeHandler> HandshakeHandler::Create(
+            DasPtr<HandshakeHandler> HandshakeHandler::Create(
                 uint16_t local_session_id)
             {
-                return std::unique_ptr<HandshakeHandler>(
+                return DasPtr<HandshakeHandler>(
                     new HandshakeHandler(local_session_id));
             }
 
