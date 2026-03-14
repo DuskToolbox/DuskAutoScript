@@ -109,7 +109,7 @@ void IpcRunLoop::RequestStop()
         std::vector<PendingCallCompletion> completions;
         {
             std::unique_lock<std::mutex> lock(pending_mutex_);
-            for (auto& [call_id, state] : pending_calls_)
+            for (auto& [call_key, state] : pending_calls_)
             {
                 if (state.on_complete)
                 {
@@ -189,9 +189,8 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
     DefaultAsyncIpcTransport&   transport)
 {
     DAS_CORE_LOG_INFO(
-        "DispatchToHandlerCoroutine: interface_id={}, method_id={}, call_id={}, header_flags={}, body_size={}",
+        "DispatchToHandlerCoroutine: interface_id={}, call_id={}, header_flags={}, body_size={}",
         header.interface_id,
-        header.method_id,
         header.call_id,
         header.header_flags,
         body.size());
@@ -206,8 +205,9 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
             // 收到心跳回复，更新时间戳
             if (connection_manager_)
             {
+                // V3: 使用 source_session_id
                 connection_manager_->UpdateHeartbeatTimestamp(
-                    header.session_id);
+                    header.source_session_id);
             }
             co_return;
         }
@@ -252,7 +252,7 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
     }
 }
 
-std::pair<DasResult, uint64_t> IpcRunLoop::PrepareSendRequestWithTransport(
+std::pair<DasResult, CallKey> IpcRunLoop::PrepareSendRequestWithTransport(
     DefaultAsyncIpcTransport*        transport,
     const ValidatedIPCMessageHeader& request_header,
     const uint8_t*                   body,
@@ -260,25 +260,28 @@ std::pair<DasResult, uint64_t> IpcRunLoop::PrepareSendRequestWithTransport(
 {
     if (!transport)
     {
-        return {DAS_E_INVALID_ARGUMENT, 0};
+        return {DAS_E_INVALID_ARGUMENT, CallKey{0, 0}};
     }
 
-    uint64_t call_id = next_call_id_.fetch_add(1);
+    uint16_t call_id = next_call_id_.fetch_add(1);
+    CallKey  call_key{local_session_id_, call_id};
 
     const IPCMessageHeader& raw = request_header.Raw();
-    auto                    validated_header =
-        IPCMessageHeaderBuilder()
-            .SetMessageType(MessageType::REQUEST)
-            .SetBusinessInterface(raw.interface_id, raw.method_id)
-            .SetBodySize(raw.body_size)
-            .SetCallId(call_id)
-            .SetObject(raw.session_id, raw.generation, raw.local_id)
-            .Build();
+    // V3: method_id 和 ObjectId 在 body 中携带，header 只保留 interface_id 和
+    // session 路由信息
+    auto validated_header = IPCMessageHeaderBuilder()
+                                .SetMessageType(MessageType::REQUEST)
+                                .SetInterfaceId(raw.interface_id)
+                                .SetBodySize(raw.body_size)
+                                .SetCallId(call_id)
+                                .SetSourceSessionId(local_session_id_)
+                                .SetTargetSessionId(raw.target_session_id)
+                                .Build();
 
     {
         std::unique_lock<std::mutex> lock(pending_mutex_);
-        pending_calls_[call_id] = PendingCallState{
-            call_id,
+        pending_calls_[call_key] = PendingCallState{
+            call_key,
             {},
             std::chrono::steady_clock::time_point::max(),
             nullptr};
@@ -297,11 +300,11 @@ std::pair<DasResult, uint64_t> IpcRunLoop::PrepareSendRequestWithTransport(
         if (send_result != DAS_S_OK)
         {
             std::unique_lock<std::mutex> lock(pending_mutex_);
-            pending_calls_.erase(call_id);
-            return {send_result, 0};
+            pending_calls_.erase(call_key);
+            return {send_result, CallKey{0, 0}};
         }
 
-        return {send_result, call_id};
+        return {send_result, call_key};
     }
     catch (const boost::system::system_error& e)
     {
@@ -309,26 +312,27 @@ std::pair<DasResult, uint64_t> IpcRunLoop::PrepareSendRequestWithTransport(
             "Send failed (system_error): {}",
             ToString(e.what()));
         std::unique_lock<std::mutex> lock(pending_mutex_);
-        pending_calls_.erase(call_id);
-        return {DAS_E_IPC_CONNECTION_LOST, 0};
+        pending_calls_.erase(call_key);
+        return {DAS_E_IPC_CONNECTION_LOST, CallKey{0, 0}};
     }
     catch (const std::exception& e)
     {
         DAS_CORE_LOG_ERROR("Send failed: {}", ToString(e.what()));
         std::unique_lock<std::mutex> lock(pending_mutex_);
-        pending_calls_.erase(call_id);
-        return {DAS_E_IPC_CONNECTION_LOST, 0};
+        pending_calls_.erase(call_key);
+        return {DAS_E_IPC_CONNECTION_LOST, CallKey{0, 0}};
     }
 }
 
 void IpcRunLoop::CompletePendingCall(
-    uint64_t             call_id,
+    CallKey              call_key,
     DasResult            result,
     std::vector<uint8_t> response)
 {
     DAS_CORE_LOG_INFO(
-        "CompletePendingCall: call_id={}, result={}, response_size={}",
-        call_id,
+        "CompletePendingCall: source_session_id={}, call_id={}, result={}, response_size={}",
+        call_key.source_session_id,
+        call_key.call_id,
         result,
         response.size());
 
@@ -336,12 +340,11 @@ void IpcRunLoop::CompletePendingCall(
 
     {
         std::unique_lock<std::mutex> lock(pending_mutex_);
-        auto                         it = pending_calls_.find(call_id);
+        auto                         it = pending_calls_.find(call_key);
         if (it == pending_calls_.end())
         {
             DAS_CORE_LOG_WARN(
-                "CompletePendingCall: call_id={} not found in pending_calls",
-                call_id);
+                "CompletePendingCall: call_key not found in pending_calls");
             return;
         }
 
@@ -353,7 +356,7 @@ void IpcRunLoop::CompletePendingCall(
     {
         DAS_CORE_LOG_INFO(
             "CompletePendingCall: invoking callback for call_id={}",
-            call_id);
+            call_key.call_id);
         on_complete(result, std::move(response));
     }
 }
@@ -362,7 +365,7 @@ void IpcRunLoop::TickPendingSenders()
 {
     auto now = std::chrono::steady_clock::now();
 
-    std::vector<std::pair<uint64_t, PendingCallCompletion>> expired;
+    std::vector<std::pair<CallKey, PendingCallCompletion>> expired;
 
     {
         std::unique_lock<std::mutex> lock(pending_mutex_);
@@ -382,7 +385,7 @@ void IpcRunLoop::TickPendingSenders()
         }
     }
 
-    for (auto& [call_id, cb] : expired)
+    for (auto& [call_key, cb] : expired)
     {
         cb(DAS_E_IPC_TIMEOUT, {});
     }
@@ -400,8 +403,9 @@ uint32_t IpcRunLoop::GetNearestDeadlineMs() const
     auto now = std::chrono::steady_clock::now();
     auto nearest = std::chrono::steady_clock::time_point::max();
 
-    for (const auto& [call_id, state] : pending_calls_)
+    for (const auto& [call_key, state] : pending_calls_)
     {
+        (void)call_key;
         if (state.on_complete && state.deadline < nearest)
         {
             nearest = state.deadline;
@@ -426,13 +430,13 @@ uint32_t IpcRunLoop::GetNearestDeadlineMs() const
 }
 
 void IpcRunLoop::RegisterPendingCompletion(
-    uint64_t                              call_id,
+    CallKey                               call_key,
     std::chrono::steady_clock::time_point deadline,
     PendingCallCompletion                 on_complete)
 {
     {
         std::unique_lock<std::mutex> lock(pending_mutex_);
-        auto                         it = pending_calls_.find(call_id);
+        auto                         it = pending_calls_.find(call_key);
         if (it != pending_calls_.end())
         {
             it->second.deadline = deadline;
@@ -665,11 +669,16 @@ void IpcRunLoop::StartAsyncReceiveForTransport(
                     if (header.Raw().message_type
                         == static_cast<uint8_t>(MessageType::RESPONSE))
                     {
+                        // V3: 使用 (source_session_id, call_id) 匹配响应
+                        CallKey call_key{
+                            header.Raw().source_session_id,
+                            header.Raw().call_id};
                         DAS_CORE_LOG_INFO(
-                            "Client: RESPONSE received for call_id={}",
-                            header.Raw().call_id);
+                            "Client: RESPONSE received for source_session_id={}, call_id={}",
+                            call_key.source_session_id,
+                            call_key.call_id);
                         CompletePendingCall(
-                            header.Raw().call_id,
+                            call_key,
                             DAS_S_OK,
                             std::move(body));
                     }

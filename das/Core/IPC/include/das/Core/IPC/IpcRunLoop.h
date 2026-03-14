@@ -58,10 +58,34 @@ DAS_CORE_IPC_NS_BEGIN
 using PendingCallCompletion =
     std::function<void(DasResult, std::vector<uint8_t>)>;
 
+/// V3: 用于匹配请求和响应的二元组 key
+struct CallKey
+{
+    uint16_t source_session_id; // 消息来源 session
+    uint16_t call_id;           // 请求/响应配对 ID
+
+    bool operator==(const CallKey& other) const noexcept
+    {
+        return source_session_id == other.source_session_id
+               && call_id == other.call_id;
+    }
+};
+
+/// CallKey 哈希函数
+struct CallKeyHash
+{
+    size_t operator()(const CallKey& k) const noexcept
+    {
+        // 组合成 32-bit 值作为 hash
+        return (static_cast<size_t>(k.source_session_id) << 16)
+               | static_cast<size_t>(k.call_id);
+    }
+};
+
 /// 异步 pending call 状态（IOCP 风格）
 struct PendingCallState
 {
-    uint64_t                              call_id;
+    CallKey                               call_key;
     std::vector<uint8_t>                  response_buffer;
     std::chrono::steady_clock::time_point deadline;
     PendingCallCompletion                 on_complete;
@@ -81,7 +105,7 @@ template <class Receiver>
 struct AwaitResponseOperation
 {
     IpcRunLoop*               loop_;
-    uint64_t                  call_id_;
+    CallKey                   call_key_;
     std::chrono::milliseconds timeout_;
     Receiver                  rcvr_;
 
@@ -92,7 +116,7 @@ struct AwaitResponseOperation
         // 错误路径：loop_ 为 nullptr 表示 PrepareSendRequest 已失败
         if (!self.loop_)
         {
-            auto error_code = static_cast<DasResult>(self.call_id_);
+            auto error_code = static_cast<DasResult>(self.call_key_.call_id);
             stdexec::set_value(
                 std::move(self.rcvr_),
                 std::make_pair(error_code, std::vector<uint8_t>{}));
@@ -103,7 +127,7 @@ struct AwaitResponseOperation
 
         // 注册完成回调到 PendingCallState
         self.loop_->RegisterPendingCompletion(
-            self.call_id_,
+            self.call_key_,
             deadline,
             [rcvr = std::move(self.rcvr_)](
                 DasResult            result,
@@ -130,7 +154,7 @@ struct AwaitResponseSender
             std::pair<DasResult, std::vector<uint8_t>>)>;
 
     IpcRunLoop*               loop_;
-    uint64_t                  call_id_;
+    CallKey                   call_key_;
     std::chrono::milliseconds timeout_;
 
     template <class Receiver>
@@ -139,7 +163,7 @@ struct AwaitResponseSender
         AwaitResponseSender self,
         Receiver            rcvr) noexcept -> AwaitResponseOperation<Receiver>
     {
-        return {self.loop_, self.call_id_, self.timeout_, std::move(rcvr)};
+        return {self.loop_, self.call_key_, self.timeout_, std::move(rcvr)};
     }
 };
 
@@ -325,26 +349,26 @@ public:
      * @param request_header 原始请求头
      * @param body 请求体
      * @param body_size 请求体大小
-     * @return pair<DasResult, uint64_t>: 结果码和分配的 call_id
+     * @return pair<DasResult, CallKey>: 结果码和分配的 CallKey
      */
-    std::pair<DasResult, uint64_t> PrepareSendRequestWithTransport(
+    std::pair<DasResult, CallKey> PrepareSendRequestWithTransport(
         DefaultAsyncIpcTransport*        transport,
         const ValidatedIPCMessageHeader& request_header,
         const uint8_t*                   body,
         size_t                           body_size);
 
     /**
-     * @brief 完成指定 call_id 的 pending call（IOCP 风格）
+     * @brief 完成指定 CallKey 的 pending call（IOCP 风格）
      *
      * 从 pending_calls_ 中取出 on_complete 回调并调用，
      * 在 mutex 外执行回调以避免死锁。
      *
-     * @param call_id 调用 ID
+     * @param call_key CallKey (source_session_id, call_id)
      * @param result 结果码
      * @param response 响应体
      */
     void CompletePendingCall(
-        uint64_t             call_id,
+        CallKey              call_key,
         DasResult            result,
         std::vector<uint8_t> response);
 
@@ -373,12 +397,12 @@ public:
      * 由 AwaitResponseOperation::start() 调用，将 on_complete
      * 回调和 deadline 设置到 PendingCallState 中。
      *
-     * @param call_id 调用 ID
+     * @param call_key CallKey (source_session_id, call_id)
      * @param deadline 超时截止时间
      * @param on_complete 完成回调
      */
     void RegisterPendingCompletion(
-        uint64_t                              call_id,
+        CallKey                               call_key,
         std::chrono::steady_clock::time_point deadline,
         PendingCallCompletion                 on_complete);
 
@@ -386,8 +410,11 @@ public:
     // 成员变量
     //=========================================================================
 
-    /// pending calls 映射
-    std::unordered_map<uint64_t, PendingCallState> pending_calls_;
+    /// pending calls 映射 (V3: 使用 CallKey 作为 key)
+    std::unordered_map<CallKey, PendingCallState, CallKeyHash> pending_calls_;
+
+    /// 本地 session_id (V3: MainProcess=1, Host 从 Handshake 获取)
+    uint16_t local_session_id_ = 1;
 
     // async_transport_ 已移除
     // IpcRunLoop 不再持有任何 transport，所有 transport 由外部管理
@@ -411,8 +438,8 @@ public:
         std::unordered_map<uint32_t, DasPtr<IMessageHandler>>>
         handlers_by_flags_;
 
-    /// 下一个 call_id
-    std::atomic<uint64_t> next_call_id_{1};
+    /// 下一个 call_id (V3: uint16_t)
+    std::atomic<uint16_t> next_call_id_{1};
 
     /// 运行状态
     std::atomic<bool> running_{false};
@@ -460,7 +487,7 @@ inline stdexec::sender auto IpcRunLoop::SendMessageAsync(
     // 返回一个立即失败的 sender
     return AwaitResponseSender{
         nullptr,
-        static_cast<uint64_t>(DAS_E_IPC_NOT_INITIALIZED),
+        CallKey{0, static_cast<uint16_t>(DAS_E_IPC_NOT_INITIALIZED)},
         std::chrono::milliseconds{0}};
 }
 
@@ -475,11 +502,11 @@ inline stdexec::sender auto IpcRunLoop::SendMessageAsync(
     {
         return AwaitResponseSender{
             nullptr,
-            static_cast<uint64_t>(DAS_E_INVALID_ARGUMENT),
+            CallKey{0, static_cast<uint16_t>(DAS_E_INVALID_ARGUMENT)},
             std::chrono::milliseconds{0}};
     }
 
-    auto [send_result, call_id] = PrepareSendRequestWithTransport(
+    auto [send_result, call_key] = PrepareSendRequestWithTransport(
         transport,
         request_header,
         body,
@@ -489,11 +516,11 @@ inline stdexec::sender auto IpcRunLoop::SendMessageAsync(
     {
         return AwaitResponseSender{
             nullptr,
-            static_cast<uint64_t>(send_result),
+            CallKey{0, static_cast<uint16_t>(send_result)},
             std::chrono::milliseconds{0}};
     }
 
-    return AwaitResponseSender{this, call_id, timeout};
+    return AwaitResponseSender{this, call_key, timeout};
 }
 
 DAS_CORE_IPC_NS_END

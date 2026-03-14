@@ -581,9 +581,13 @@ namespace Core
                         if (header.Raw().message_type
                             == static_cast<uint8_t>(MessageType::RESPONSE))
                         {
-                            // RESPONSE：完成 pending call
+                            // V3: RESPONSE 使用 (source_session_id, call_id)
+                            // 匹配
+                            CallKey call_key{
+                                header.Raw().source_session_id,
+                                header.Raw().call_id};
                             run_loop_->CompletePendingCall(
-                                header.Raw().call_id,
+                                call_key,
                                 DAS_S_OK,
                                 std::move(body));
                         }
