@@ -56,17 +56,140 @@ private:
 };
 
 /**
+ * jobject 的 RAII 智能指针（LocalRef/GlobalRef）
+ *
+ * 自动管理 JNI 局部引用和全局引用的生命周期
+ * 析构时自动调用 DeleteLocalRef/DeleteGlobalRef
+ *
+ * 注意：必须在拥有有效 JNIEnv 的线程中使用
+ */
+template <typename JType = jobject>
+class JObjectPtr
+{
+public:
+    enum class RefType
+    {
+        Local, ///< 局部引用，函数结束时自动释放
+        Global ///< 全局引用，跨线程/长期存储使用
+    };
+
+public:
+    JObjectPtr() = default;
+
+    JObjectPtr(JNIEnv* env, JType obj, RefType type = RefType::Local)
+        : ptr_(obj), env_(env), type_(type)
+    {
+    }
+
+    ~JObjectPtr() { reset(); }
+
+    // 禁止拷贝
+    JObjectPtr(const JObjectPtr&) = delete;
+    JObjectPtr& operator=(const JObjectPtr&) = delete;
+
+    // 允许移动
+    JObjectPtr(JObjectPtr&& other) noexcept
+        : ptr_(other.ptr_), env_(other.env_), type_(other.type_)
+    {
+        other.ptr_ = nullptr;
+        other.env_ = nullptr;
+    }
+
+    JObjectPtr& operator=(JObjectPtr&& other) noexcept
+    {
+        if (this != &other)
+        {
+            reset();
+            ptr_ = other.ptr_;
+            env_ = other.env_;
+            type_ = other.type_;
+            other.ptr_ = nullptr;
+            other.env_ = nullptr;
+        }
+        return *this;
+    }
+
+    /// 释放当前资源
+    void reset() noexcept
+    {
+        if (ptr_ && env_)
+        {
+            if (type_ == RefType::Local)
+            {
+                env_->DeleteLocalRef(ptr_);
+            }
+            else
+            {
+                env_->DeleteGlobalRef(ptr_);
+            }
+        }
+        ptr_ = nullptr;
+        env_ = nullptr;
+    }
+
+    /// 转换为全局引用（用于跨线程/长期存储）
+    [[nodiscard]]
+    JObjectPtr<JType> to_global() const
+    {
+        if (!ptr_ || !env_)
+            return JObjectPtr<JType>();
+        jobject global_ref = env_->NewGlobalRef(ptr_);
+        return JObjectPtr<JType>(
+            env_,
+            static_cast<JType>(global_ref),
+            RefType::Global);
+    }
+
+    /// 释放所有权，返回原始指针（调用者负责管理）
+    JType release() noexcept
+    {
+        JType tmp = ptr_;
+        ptr_ = nullptr;
+        env_ = nullptr;
+        return tmp;
+    }
+
+    JType    get() const { return ptr_; }
+    explicit operator bool() const { return ptr_ != nullptr; }
+    JNIEnv*  env() const { return env_; }
+    RefType  ref_type() const { return type_; }
+
+private:
+    JType   ptr_ = nullptr;
+    JNIEnv* env_ = nullptr;
+    RefType type_ = RefType::Local;
+};
+
+/// jclass 的智能指针
+using JClassPtr = JObjectPtr<jclass>;
+
+/// jstring 的智能指针
+using JStringPtr = JObjectPtr<jstring>;
+
+/// jbyteArray 的智能指针
+using JByteArrayPtr = JObjectPtr<jbyteArray>;
+
+/// jmethodID 的智能指针（实际上不需要释放，但保持接口一致性）
+/// 注意：jmethodID 属于 jclass，不需要显式释放
+using JMethodIDPtr = jmethodID;
+
+/**
  * Java 全局引用 RAII
  *
  * 管理 jobject 的全局引用生命周期
  * 防止 GC 回收 Java 对象
+ *
+ * 设计原则：
+ * 1. 构造函数私有，必须通过 JvmManager::CreateGlobalRef() 创建
+ * 2. 析构时直接调用 DeleteGlobalRef
+ *
+ * ⚠️ 警告：禁止用 static/全局变量持有 JObjectGlobalRef
+ *    静态析构顺序未定义，可能导致 JVM 先于 GlobalRef 销毁而崩溃
+ *    如需长期存储，请使用 JvmManager 管理生命周期
  */
 class JObjectGlobalRef
 {
 public:
-    JObjectGlobalRef(JNIEnv* env, jobject obj);
-    ~JObjectGlobalRef();
-
     // 禁止拷贝
     JObjectGlobalRef(const JObjectGlobalRef&) = delete;
     JObjectGlobalRef& operator=(const JObjectGlobalRef&) = delete;
@@ -74,13 +197,40 @@ public:
     // 允许移动
     JObjectGlobalRef(JObjectGlobalRef&& other) noexcept;
     JObjectGlobalRef& operator=(JObjectGlobalRef&& other) noexcept;
+    ~JObjectGlobalRef();
 
     jobject  get() const { return ref_; }
     explicit operator bool() const { return ref_ != nullptr; }
 
 private:
-    JavaVM* vm_;
-    jobject ref_;
+    friend class JvmManager;
+
+    JObjectGlobalRef(JavaVM* vm, jobject ref) : vm_(vm), ref_(ref) {}
+
+private:
+    JavaVM* vm_ = nullptr;
+    jobject ref_ = nullptr;
+};
+
+class JavaPluginHolder final : public IDasBase
+{
+public:
+    JavaPluginHolder(JObjectGlobalRef&& global_ref, DasPtr<IDasBase> cpp_ptr);
+    ~JavaPluginHolder();
+
+    JavaPluginHolder(const JavaPluginHolder&) = delete;
+    JavaPluginHolder& operator=(const JavaPluginHolder&) = delete;
+    JavaPluginHolder(JavaPluginHolder&&) = delete;
+    JavaPluginHolder& operator=(JavaPluginHolder&&) = delete;
+
+    uint32_t  AddRef() override;
+    uint32_t  Release() override;
+    DasResult QueryInterface(const DasGuid& iid, void** pp_object) override;
+
+private:
+    std::atomic<uint32_t> ref_count_{1};
+    JObjectGlobalRef      java_obj_;
+    DasPtr<IDasBase>      cpp_ptr_;
 };
 
 /**
@@ -126,6 +276,16 @@ public:
      * 查找 jvm.dll 路径
      */
     static std::filesystem::path FindJvmDllPath();
+
+    /**
+     * 创建全局引用
+     * 这是创建 JObjectGlobalRef 的唯一入口
+     *
+     * @param env JNIEnv（当前线程）
+     * @param obj Java 对象
+     * @return JObjectGlobalRef 或空（失败时）
+     */
+    JObjectGlobalRef CreateGlobalRef(JNIEnv* env, jobject obj);
 
 private:
     JvmManager() = default;

@@ -94,41 +94,16 @@ JniEnvGuard& JniEnvGuard::operator=(JniEnvGuard&& other) noexcept
 // JObjectGlobalRef 实现
 // ============================================================================
 
-JObjectGlobalRef::JObjectGlobalRef(JNIEnv* env, jobject obj)
-    : vm_(nullptr), ref_(nullptr)
-{
-    if (env && obj)
-    {
-        jint result = env->GetJavaVM(&vm_);
-        if (result != JNI_OK)
-        {
-            DAS_CORE_LOG_ERROR(
-                "Failed to get JavaVM from JNIEnv, error: {}",
-                result);
-            vm_ = nullptr;
-            return;
-        }
-        ref_ = env->NewGlobalRef(obj);
-        if (!ref_)
-        {
-            DAS_CORE_LOG_ERROR("Failed to create global reference for jobject");
-            if (env->ExceptionCheck())
-            {
-                env->ExceptionDescribe();
-                env->ExceptionClear();
-            }
-        }
-    }
-}
-
 JObjectGlobalRef::~JObjectGlobalRef()
 {
     if (ref_ && vm_)
     {
-        auto guard = std::make_unique<JniEnvGuard>(vm_);
-        if (guard->is_valid())
+        JNIEnv* env = nullptr;
+        if (vm_->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_2)
+                == JNI_OK
+            && env)
         {
-            guard->get()->DeleteGlobalRef(ref_);
+            env->DeleteGlobalRef(ref_);
         }
     }
 }
@@ -146,10 +121,12 @@ JObjectGlobalRef& JObjectGlobalRef::operator=(JObjectGlobalRef&& other) noexcept
     {
         if (ref_ && vm_)
         {
-            auto guard = std::make_unique<JniEnvGuard>(vm_);
-            if (guard->is_valid())
+            JNIEnv* env = nullptr;
+            if (vm_->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_2)
+                    == JNI_OK
+                && env)
             {
-                guard->get()->DeleteGlobalRef(ref_);
+                env->DeleteGlobalRef(ref_);
             }
         }
         vm_ = other.vm_;
@@ -158,6 +135,41 @@ JObjectGlobalRef& JObjectGlobalRef::operator=(JObjectGlobalRef&& other) noexcept
         other.ref_ = nullptr;
     }
     return *this;
+}
+
+// ============================================================================
+// JavaPluginHolder 实现
+// ============================================================================
+
+JavaPluginHolder::JavaPluginHolder(
+    JObjectGlobalRef&& global_ref,
+    DasPtr<IDasBase>   cpp_ptr)
+    : java_obj_(std::move(global_ref)), cpp_ptr_(std::move(cpp_ptr))
+{
+}
+
+JavaPluginHolder::~JavaPluginHolder() {}
+
+uint32_t JavaPluginHolder::AddRef() { return ++ref_count_; }
+
+uint32_t JavaPluginHolder::Release()
+{
+    auto new_count = --ref_count_;
+    if (new_count == 0)
+    {
+        delete this;
+    }
+    return new_count;
+}
+
+DasResult JavaPluginHolder::QueryInterface(const DasGuid& iid, void** pp_object)
+{
+    if (!pp_object)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    return cpp_ptr_->QueryInterface(iid, pp_object);
 }
 
 // ============================================================================
@@ -193,6 +205,38 @@ std::unique_ptr<JniEnvGuard> JvmManager::GetEnv()
         return nullptr;
     }
     return std::make_unique<JniEnvGuard>(jvm_);
+}
+
+JObjectGlobalRef JvmManager::CreateGlobalRef(JNIEnv* env, jobject obj)
+{
+    if (!env || !obj)
+    {
+        return JObjectGlobalRef(nullptr, nullptr);
+    }
+
+    JavaVM* vm = nullptr;
+    jint    result = env->GetJavaVM(&vm);
+    if (result != JNI_OK)
+    {
+        DAS_CORE_LOG_ERROR(
+            "Failed to get JavaVM from JNIEnv, error = {}",
+            result);
+        return JObjectGlobalRef(nullptr, nullptr);
+    }
+
+    jobject global_ref = env->NewGlobalRef(obj);
+    if (!global_ref)
+    {
+        DAS_CORE_LOG_ERROR("Failed to create global reference for jobject");
+        if (env->ExceptionCheck())
+        {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
+        return JObjectGlobalRef(nullptr, nullptr);
+    }
+
+    return JObjectGlobalRef(vm, global_ref);
 }
 
 JavaVM* JvmManager::CreateJVM(
@@ -406,7 +450,7 @@ auto JavaRuntime::LoadPlugin(const std::filesystem::path& path)
         auto [class_path_str, method_name] = ParseEntryPoint(entry_point);
 
         // 3. 查找 Java 类
-        jclass plugin_class = env->FindClass(class_path_str.c_str());
+        JClassPtr plugin_class(env, env->FindClass(class_path_str.c_str()));
         if (!plugin_class)
         {
             DAS_CORE_LOG_ERROR("Failed to find Java class: {}", class_path_str);
@@ -419,7 +463,7 @@ auto JavaRuntime::LoadPlugin(const std::filesystem::path& path)
         }
         // 签名: ()Lorg/das/DasRetBase; - 无参，返回 DasRetBase
         jmethodID method = env->GetStaticMethodID(
-            plugin_class,
+            plugin_class.get(),
             method_name.c_str(),
             "()Lorg/das/DasRetBase;");
 
@@ -437,7 +481,9 @@ auto JavaRuntime::LoadPlugin(const std::filesystem::path& path)
             return tl::make_unexpected(DAS_E_SYMBOL_NOT_FOUND);
         }
         // 5. 调用静态方法
-        jobject ret_base = env->CallStaticObjectMethod(plugin_class, method);
+        JObjectPtr<> ret_base(
+            env,
+            env->CallStaticObjectMethod(plugin_class.get(), method));
         if (!ret_base)
         {
             DAS_CORE_LOG_ERROR("Static method {} returned null", method_name);
@@ -449,10 +495,7 @@ auto JavaRuntime::LoadPlugin(const std::filesystem::path& path)
             return tl::make_unexpected(DAS_E_FAIL);
         }
         // 6. 从 DasRetBase 提取 IDasBase
-        auto plugin_ptr = ExtractIDasBaseFromDasRetBase(env, ret_base);
-
-        env->DeleteLocalRef(ret_base);
-        env->DeleteLocalRef(plugin_class);
+        auto plugin_ptr = ExtractIDasBaseFromDasRetBase(env, ret_base.get());
 
         if (!plugin_ptr)
         {
@@ -524,8 +567,7 @@ DasPtr<IDasBase> JavaRuntime::ExtractIDasBaseFromDasRetBase(
     JNIEnv* env,
     jobject das_ret_base)
 {
-    // 1. 获取 DasRetBase.getValue() 方法
-    jclass ret_base_class = env->GetObjectClass(das_ret_base);
+    JClassPtr ret_base_class(env, env->GetObjectClass(das_ret_base));
     if (!ret_base_class)
     {
         DAS_CORE_LOG_ERROR("Failed to get class of DasRetBase object");
@@ -536,9 +578,11 @@ DasPtr<IDasBase> JavaRuntime::ExtractIDasBaseFromDasRetBase(
         }
         return nullptr;
     }
-    jmethodID get_value_method =
-        env->GetMethodID(ret_base_class, "getValue", "()Lorg/das/IDasBase;");
 
+    jmethodID get_value_method = env->GetMethodID(
+        ret_base_class.get(),
+        "getValue",
+        "()Lorg/das/IDasBase;");
     if (!get_value_method)
     {
         DAS_CORE_LOG_ERROR("Failed to find getValue() method in DasRetBase");
@@ -547,30 +591,27 @@ DasPtr<IDasBase> JavaRuntime::ExtractIDasBaseFromDasRetBase(
             env->ExceptionDescribe();
             env->ExceptionClear();
         }
-        env->DeleteLocalRef(ret_base_class);
         return nullptr;
     }
 
-    // 2. 调用 getValue() 获取 IDasBase
-    jobject idas_base = env->CallObjectMethod(das_ret_base, get_value_method);
+    JObjectPtr<> idas_base(
+        env,
+        env->CallObjectMethod(das_ret_base, get_value_method));
     if (env->ExceptionCheck())
     {
         DAS_CORE_LOG_ERROR(
             "Exception occurred while calling DasRetBase.getValue()");
         env->ExceptionDescribe();
         env->ExceptionClear();
-        env->DeleteLocalRef(ret_base_class);
         return nullptr;
     }
     if (!idas_base)
     {
         DAS_CORE_LOG_ERROR("DasRetBase.getValue() returned null");
-        env->DeleteLocalRef(ret_base_class);
         return nullptr;
     }
 
-    // 3. 获取 swigCPtr 字段
-    jclass idas_base_class = env->GetObjectClass(idas_base);
+    JClassPtr idas_base_class(env, env->GetObjectClass(idas_base.get()));
     if (!idas_base_class)
     {
         DAS_CORE_LOG_ERROR("Failed to get class of IDasBase object");
@@ -579,13 +620,11 @@ DasPtr<IDasBase> JavaRuntime::ExtractIDasBaseFromDasRetBase(
             env->ExceptionDescribe();
             env->ExceptionClear();
         }
-        env->DeleteLocalRef(idas_base);
-        env->DeleteLocalRef(ret_base_class);
         return nullptr;
     }
-    jfieldID swig_cptr_field =
-        env->GetFieldID(idas_base_class, "swigCPtr", "J");
 
+    jfieldID swig_cptr_field =
+        env->GetFieldID(idas_base_class.get(), "swigCPtr", "J");
     if (!swig_cptr_field)
     {
         DAS_CORE_LOG_ERROR("Failed to find swigCPtr field in IDasBase");
@@ -594,41 +633,42 @@ DasPtr<IDasBase> JavaRuntime::ExtractIDasBaseFromDasRetBase(
             env->ExceptionDescribe();
             env->ExceptionClear();
         }
-        env->DeleteLocalRef(idas_base_class);
-        env->DeleteLocalRef(idas_base);
-        env->DeleteLocalRef(ret_base_class);
         return nullptr;
     }
 
-    // 4. 读取 C++ 指针
-    jlong c_ptr = env->GetLongField(idas_base, swig_cptr_field);
+    jlong c_ptr = env->GetLongField(idas_base.get(), swig_cptr_field);
     if (env->ExceptionCheck())
     {
         DAS_CORE_LOG_ERROR("Exception occurred while reading swigCPtr field");
         env->ExceptionDescribe();
         env->ExceptionClear();
-        env->DeleteLocalRef(idas_base_class);
-        env->DeleteLocalRef(idas_base);
-        env->DeleteLocalRef(ret_base_class);
         return nullptr;
     }
 
-    // 5. 创建 C++ IDasBase 指针
-    // swigCMemOwn=false 表示不拥有内存，Java 端负责释放
     auto* cpp_ptr = std::launder<IDasBase>(std::bit_cast<IDasBase*>(c_ptr));
-
-    DasPtr<IDasBase> result;
-    if (cpp_ptr)
+    if (!cpp_ptr)
     {
-        result = decltype(result)::Attach(cpp_ptr);
-        // 注意：Attach 不会增加引用计数
+        return nullptr;
     }
 
-    env->DeleteLocalRef(idas_base_class);
-    env->DeleteLocalRef(idas_base);
-    env->DeleteLocalRef(ret_base_class);
+    JavaVM* vm = nullptr;
+    if (env->GetJavaVM(&vm) != JNI_OK || !vm)
+    {
+        DAS_CORE_LOG_ERROR("Failed to get JavaVM from JNIEnv");
+        return nullptr;
+    }
 
-    return result;
+    auto& jvm_manager = JvmManager::GetInstance();
+    auto  global_ref = jvm_manager.CreateGlobalRef(env, idas_base.get());
+    if (!global_ref)
+    {
+        DAS_CORE_LOG_ERROR(
+            "Failed to create global reference for Java IDasBase");
+        return nullptr;
+    }
+
+    return DasPtr<IDasBase>::Attach(
+        new JavaPluginHolder(std::move(global_ref), DasPtr<IDasBase>(cpp_ptr)));
 }
 
 DasResult JavaRuntime::LoadPluginConfig(
