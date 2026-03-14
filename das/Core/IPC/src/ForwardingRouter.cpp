@@ -113,16 +113,13 @@ ForwardingRouter::RouteStats ForwardingRouter::GetStats() const
 
 bool ForwardingRouter::ValidateTarget(const RouteTarget& target) const
 {
-    return target.is_valid && target.session_id != 0 && target.object_id != 0
+    return target.is_valid && target.session_id != 0
            && target.interface_id != 0;
 }
 
 RouteKey ForwardingRouter::CreateRouteKey(const IPCMessageHeader& header) const
 {
-    return RouteKey(
-        header.session_id,
-        header.generation,
-        header.local_id,
-        header.interface_id);
+    // V3: 使用 target_session_id + interface_id 作为路由键
+    return RouteKey(header.target_session_id, header.interface_id);
 }
 DAS_CORE_IPC_NS_END

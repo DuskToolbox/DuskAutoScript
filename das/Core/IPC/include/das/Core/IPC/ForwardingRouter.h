@@ -14,8 +14,8 @@ struct IPCMessageHeader;
 
 struct RouteTarget
 {
-    uint64_t session_id;   // 会话ID
-    uint64_t object_id;    // 对象ID
+    uint16_t session_id;   // 目标 session ID (V3: target_session_id)
+    uint64_t object_id;    // 对象ID (在 body 中携带)
     uint32_t interface_id; // 接口ID
     DasGuid  type_id;      // 类型ID
     bool     is_valid;     // 路由是否有效
@@ -25,40 +25,36 @@ struct RouteTarget
     {
     }
 
-    RouteTarget(uint64_t sid, uint64_t oid, uint32_t iid, const DasGuid& tid)
+    RouteTarget(uint16_t sid, uint64_t oid, uint32_t iid, const DasGuid& tid)
         : session_id(sid), object_id(oid), interface_id(iid), type_id(tid),
           is_valid(true)
     {
     }
 };
 
+/// @brief V3 路由键 - 使用 target_session_id + interface_id 进行路由
 struct RouteKey
 {
-    uint16_t session_id;   // 会话ID
-    uint16_t generation;   // 对象版本
-    uint32_t local_id;     // 本地对象ID
-    uint32_t interface_id; // 接口ID
+    uint16_t target_session_id; // 目标 session ID (V3 Header 字段)
+    uint32_t interface_id;      // 接口ID
 
-    RouteKey() : session_id(0), generation(0), local_id(0), interface_id(0) {}
+    RouteKey() : target_session_id(0), interface_id(0) {}
 
-    RouteKey(uint16_t sid, uint16_t gen, uint32_t lid, uint32_t iid)
-        : session_id(sid), generation(gen), local_id(lid), interface_id(iid)
+    RouteKey(uint16_t tsid, uint32_t iid)
+        : target_session_id(tsid), interface_id(iid)
     {
     }
 
     bool operator==(const RouteKey& other) const
     {
-        return session_id == other.session_id && generation == other.generation
-               && local_id == other.local_id
+        return target_session_id == other.target_session_id
                && interface_id == other.interface_id;
     }
 
     size_t hash() const
     {
-        return static_cast<size_t>(session_id)
-               | (static_cast<size_t>(generation) << 16)
-               | (static_cast<size_t>(local_id) << 32)
-               | (static_cast<size_t>(interface_id) << 48);
+        return static_cast<size_t>(target_session_id)
+               | (static_cast<size_t>(interface_id) << 16);
     }
 };
 

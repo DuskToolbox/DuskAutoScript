@@ -71,7 +71,7 @@ protected:
         return IPCMessageHeaderBuilder()
             .SetMessageType(type)
             .SetCallId(1)
-            .SetBusinessInterface(1, 0)
+            .SetInterfaceId(1)
             .SetFlags(0)
             .SetBodySize(0)
             .Build();
