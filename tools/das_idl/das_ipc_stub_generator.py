@@ -394,14 +394,50 @@ class IpcStubGenerator:
         out_params = [p for p in method.parameters if p.direction in (ParamDirection.OUT, ParamDirection.INOUT)]
         
         has_request_body = bool(in_params)
-        
+
         lines.append(f"{inner_indent}DasResult serial_result = DAS_S_OK;")
         lines.append(f"{inner_indent}(void)serial_result;")
-        
+
         if has_request_body:
             lines.append(f"{inner_indent}MemorySerializerReader reader(static_cast<const uint8_t*>(request), 4096);")
             lines.append("")
-            
+
+            # V3: 读取 interface_id (4 bytes)
+            lines.append(f"{inner_indent}// V3 Body Header: interface_id")
+            lines.append(f"{inner_indent}uint32_t body_interface_id;")
+            lines.append(f"{inner_indent}serial_result = reader.ReadUInt32(&body_interface_id);")
+            lines.append(f"{inner_indent}if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
+            lines.append(f"{inner_indent}if (body_interface_id != InterfaceId) {{ return DAS_E_IPC_INTERFACE_MISMATCH; }}")
+            lines.append("")
+
+            # V3: 读取 method_id (2 bytes)
+            lines.append(f"{inner_indent}// V3 Body Header: method_id")
+            lines.append(f"{inner_indent}uint16_t body_method_id;")
+            lines.append(f"{inner_indent}serial_result = reader.ReadUInt16(&body_method_id);")
+            lines.append(f"{inner_indent}if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
+            lines.append(f"{inner_indent}if (body_method_id != {method_index}) {{ return DAS_E_IPC_METHOD_MISMATCH; }}")
+            lines.append("")
+
+            # V3: 读取 reserved (2 bytes)
+            lines.append(f"{inner_indent}// V3 Body Header: reserved")
+            lines.append(f"{inner_indent}uint16_t reserved;")
+            lines.append(f"{inner_indent}serial_result = reader.ReadUInt16(&reserved);")
+            lines.append(f"{inner_indent}if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
+            lines.append("")
+
+            # V3: 读取 ObjectId (8 bytes)
+            lines.append(f"{inner_indent}// V3 Body Header: target_object ObjectId")
+            lines.append(f"{inner_indent}ObjectId target_object;")
+            lines.append(f"{inner_indent}serial_result = reader.ReadUInt16(&target_object.session_id);")
+            lines.append(f"{inner_indent}if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
+            lines.append(f"{inner_indent}serial_result = reader.ReadUInt16(&target_object.generation);")
+            lines.append(f"{inner_indent}if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
+            lines.append(f"{inner_indent}serial_result = reader.ReadUInt32(&target_object.local_id);")
+            lines.append(f"{inner_indent}if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
+            lines.append("")
+
+            # 反序列化参数
+            lines.append(f"{inner_indent}// V3 Body: parameters")
             for param in in_params:
                 deserialize_code = self._generate_deserialize_param_for_stub(param, inner_indent)
                 for line in deserialize_code:
