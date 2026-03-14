@@ -9,7 +9,6 @@
 #include <das/DasExport.h>
 #include <das/IDasBase.h>
 #include <memory>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -23,8 +22,10 @@ class SharedMemoryPool;
 /// @brief 接收结果 - 包含验证后的 Header 和 Body
 struct ReceiveResult
 {
+    ReceiveResult() = default;
+
     std::optional<ValidatedIPCMessageHeader> header;
-    std::vector<uint8_t>                      body;
+    std::vector<uint8_t>                     body;
 };
 
 class IpcTransport
@@ -72,6 +73,7 @@ public:
 
     DasResult SetSharedMemoryPool(SharedMemoryPool* pool);
 
+    [[nodiscard]]
     bool IsConnected() const;
 
     static std::string MakeQueueName(

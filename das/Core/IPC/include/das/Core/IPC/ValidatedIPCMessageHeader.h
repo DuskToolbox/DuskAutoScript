@@ -46,7 +46,8 @@ public:
             {
                 *out_error = {
                     HeaderValidationError::BODY_SIZE_TOO_SMALL,
-                    "Data too small"};
+                    "Data too small",
+                    ValidationCallSite{}};
             }
             return std::nullopt;
         }

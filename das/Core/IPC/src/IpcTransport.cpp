@@ -244,12 +244,13 @@ std::optional<ReceiveResult> IpcTransport::Receive(uint32_t timeout_ms)
             received_size);
         if (!validated_header)
         {
-            DAS_CORE_LOG_ERROR("Header validation failed during deserialization");
+            DAS_CORE_LOG_ERROR(
+                "Header validation failed during deserialization");
             return std::nullopt;
         }
 
         ReceiveResult result;
-        result.header = std::move(validated_header);
+        result.header = std::move(validated_header).value();
 
         // 检查是否为大消息
         if (result.header->GetFlags() & kFlagLargeMessage)
@@ -276,7 +277,7 @@ std::optional<ReceiveResult> IpcTransport::Receive(uint32_t timeout_ms)
                 sizeof(uint64_t));
 
             SharedMemoryBlock shm_block;
-            auto shm_result =
+            auto              shm_result =
                 impl_->shm_pool_->GetBlockByHandle(handle, shm_block);
             if (shm_result != DAS_S_OK)
             {
