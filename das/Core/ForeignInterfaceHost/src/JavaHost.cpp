@@ -615,13 +615,13 @@ DasPtr<IDasBase> JavaRuntime::ExtractIDasBaseFromDasRetBase(
 
     // 5. 创建 C++ IDasBase 指针
     // swigCMemOwn=false 表示不拥有内存，Java 端负责释放
-    auto* cpp_ptr = reinterpret_cast<IDasBase*>(c_ptr);
+    auto* cpp_ptr = std::launder<IDasBase>(std::bit_cast<IDasBase*>(c_ptr));
 
     DasPtr<IDasBase> result;
     if (cpp_ptr)
     {
-        result.Attach(cpp_ptr);
-        // 注意：Attach 会增加引用计数
+        result = decltype(result)::Attach(cpp_ptr);
+        // 注意：Attach 不会增加引用计数
     }
 
     env->DeleteLocalRef(idas_base_class);
