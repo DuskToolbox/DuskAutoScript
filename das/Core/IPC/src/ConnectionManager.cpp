@@ -14,12 +14,12 @@
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
 #include <das/Core/IPC/SessionCoordinator.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
-#include <das/Core/IPC/SessionCoordinator.h>
 #include <das/Core/Logger/Logger.h>
 #include <shared_mutex>
 #include <unordered_map>
 
 #include <das/Core/IPC/DefaultAsyncIpcTransport.h>
+#include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 
 DAS_CORE_IPC_NS_BEGIN
 
@@ -415,7 +415,8 @@ DasResult ConnectionManager::SendHeartbeatToAll()
     auto sessions = GetConnectedSessions();
 
     // V3: 获取本地 session_id
-    auto local_session_opt = SessionCoordinator::GetInstance().GetLocalSessionId();
+    auto local_session_opt =
+        SessionCoordinator::GetInstance().GetLocalSessionId();
     uint16_t local_session_id = local_session_opt.value_or(0);
 
     for (uint16_t session_id : sessions)
@@ -492,6 +493,62 @@ void ConnectionManager::UpdateHeartbeatTimestamp(uint16_t session_id)
                 std::chrono::steady_clock::now().time_since_epoch())
                 .count());
     }
+}
+
+boost::asio::awaitable<DasResult> ConnectionManager::ForwardMessage(
+    uint16_t                         target_session_id,
+    const ValidatedIPCMessageHeader& header,
+    const uint8_t*                   body,
+    size_t                           body_size)
+{
+    // 1. 查找目标 Transport
+    auto* transport = GetTransport(target_session_id);
+    if (!transport)
+    {
+        DAS_CORE_LOG_ERROR(
+            "Forward failed: target_session_id={} not found",
+            target_session_id);
+        co_return DAS_E_IPC_OBJECT_NOT_FOUND;
+    }
+
+    // 2. 获取本地 session_id
+    auto local_session_opt =
+        SessionCoordinator::GetInstance().GetLocalSessionId();
+    uint16_t local_session_id = local_session_opt.value_or(impl_->local_id_);
+
+    // 3. 使用 IPCMessageHeaderBuilder 重建 header，修改 source_session_id
+    const IPCMessageHeader& raw_header = header.Raw();
+    auto                    forward_header =
+        IPCMessageHeaderBuilder()
+            .SetMessageType(static_cast<MessageType>(raw_header.message_type))
+            .SetInterfaceId(raw_header.interface_id)
+            .SetCallId(raw_header.call_id)
+            .SetFlags(raw_header.flags)
+            .SetBodySize(static_cast<uint32_t>(body_size))
+            .SetSourceSessionId(local_session_id)
+            .SetTargetSessionId(target_session_id)
+            .Build();
+
+    // 4. 发送消息
+    auto result =
+        co_await transport->SendCoroutine(forward_header, body, body_size);
+
+    if (result != DAS_S_OK)
+    {
+        DAS_CORE_LOG_ERROR(
+            "Forward failed: target_session_id={}, error={}",
+            target_session_id,
+            result);
+    }
+    else
+    {
+        DAS_CORE_LOG_DEBUG(
+            "Forwarded message to target_session_id={}, message_type={}",
+            target_session_id,
+            static_cast<int>(raw_header.message_type));
+    }
+
+    co_return result;
 }
 
 DasResult ConnectionManager::CleanupConnectionResources(
