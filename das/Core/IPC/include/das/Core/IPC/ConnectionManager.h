@@ -184,10 +184,10 @@ public:
      * @return DasResult DAS_S_OK 成功, DAS_E_IPC_OBJECT_NOT_FOUND 目标不存在
      */
     boost::asio::awaitable<DasResult> ForwardMessage(
-        uint16_t                         target_session_id,
-        const ValidatedIPCMessageHeader& header,
-        const uint8_t*                   body,
-        size_t                           body_size);
+        uint16_t              target_session_id,
+        const IPCMessageHeader& header,
+        const uint8_t*        body,
+        size_t                body_size);
 
     static constexpr uint32_t HEARTBEAT_INTERVAL_MS = 1000;
     static constexpr uint32_t HEARTBEAT_TIMEOUT_MS = 5000;

@@ -195,6 +195,32 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
         header.header_flags,
         body.size());
 
+    // 转发检查：如果 target_session_id 不是本地 session，转发到目标
+    if (connection_manager_ && header.target_session_id != 0
+        && header.target_session_id != local_session_id_)
+    {
+        DAS_CORE_LOG_DEBUG(
+            "Forwarding message: target={}, source={}, type={}",
+            header.target_session_id,
+            header.source_session_id,
+            static_cast<int>(header.message_type));
+
+        auto result = co_await connection_manager_->ForwardMessage(
+            header.target_session_id,
+            header,
+            body.data(),
+            body.size());
+
+        if (result != DAS_S_OK)
+        {
+            DAS_CORE_LOG_ERROR(
+                "Forward failed: target={}, result={}",
+                header.target_session_id,
+                result);
+        }
+        co_return;
+    }
+
     // 处理 HEARTBEAT RESPONSE：收到心跳回复时更新时间戳
     if (header.interface_id
         == static_cast<uint32_t>(
