@@ -584,6 +584,34 @@ class IpcProxyGenerator:
         if need_request_body:
             lines.append(f"{indent}MemorySerializerWriter writer;")
             lines.append(f"{indent}DasResult result = DAS_S_OK;")
+            lines.append(f"{indent}(void)result;")
+
+            # V3: 写入 interface_id (4 bytes)
+            lines.append(f"{indent}// V3 Body Header: interface_id")
+            lines.append(f"{indent}result = writer.WriteUInt32(InterfaceId);")
+            lines.append(f"{indent}if (DAS::IsFailed(result)) {{ return result; }}")
+
+            # V3: 写入 method_id (2 bytes)
+            lines.append(f"{indent}// V3 Body Header: method_id")
+            lines.append(f"{indent}result = writer.WriteUInt16({method_index});")
+            lines.append(f"{indent}if (DAS::IsFailed(result)) {{ return result; }}")
+
+            # V3: 写入 reserved (2 bytes)
+            lines.append(f"{indent}// V3 Body Header: reserved (alignment)")
+            lines.append(f"{indent}result = writer.WriteUInt16(0);")
+            lines.append(f"{indent}if (DAS::IsFailed(result)) {{ return result; }}")
+
+            # V3: 写入 ObjectId (8 bytes)
+            lines.append(f"{indent}// V3 Body Header: target_object ObjectId")
+            lines.append(f"{indent}result = writer.WriteUInt16(object_id_.session_id);")
+            lines.append(f"{indent}if (DAS::IsFailed(result)) {{ return result; }}")
+            lines.append(f"{indent}result = writer.WriteUInt16(object_id_.generation);")
+            lines.append(f"{indent}if (DAS::IsFailed(result)) {{ return result; }}")
+            lines.append(f"{indent}result = writer.WriteUInt32(object_id_.local_id);")
+            lines.append(f"{indent}if (DAS::IsFailed(result)) {{ return result; }}")
+
+            # 序列化参数
+            lines.append(f"{indent}// V3 Body: parameters")
             for param in in_params:
                 serialize_code = self._generate_serialize_param(param, indent)
                 for line in serialize_code:
