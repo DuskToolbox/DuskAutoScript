@@ -74,6 +74,129 @@ public:
     ValidatedIPCMessageHeader(ValidatedIPCMessageHeader&&) = default;
     ValidatedIPCMessageHeader& operator=(ValidatedIPCMessageHeader&&) = default;
 
+    // ==================== 业务字段 Getter ====================
+
+    /// @brief 获取消息类型
+    [[nodiscard]]
+    MessageType GetMessageType() const noexcept
+    {
+        return static_cast<MessageType>(header_.message_type);
+    }
+
+    /// @brief 获取 Header 标志
+    [[nodiscard]]
+    uint8_t GetHeaderFlags() const noexcept
+    {
+        return header_.header_flags;
+    }
+
+    /// @brief 获取调用 ID (用于请求/响应配对)
+    [[nodiscard]]
+    uint16_t GetCallId() const noexcept
+    {
+        return header_.call_id;
+    }
+
+    /// @brief 获取源 Session ID
+    [[nodiscard]]
+    uint16_t GetSourceSessionId() const noexcept
+    {
+        return header_.source_session_id;
+    }
+
+    /// @brief 获取目标 Session ID
+    [[nodiscard]]
+    uint16_t GetTargetSessionId() const noexcept
+    {
+        return header_.target_session_id;
+    }
+
+    /// @brief 获取接口 ID
+    [[nodiscard]]
+    uint32_t GetInterfaceId() const noexcept
+    {
+        return header_.interface_id;
+    }
+
+    /// @brief 获取错误码
+    [[nodiscard]]
+    int32_t GetErrorCode() const noexcept
+    {
+        return header_.error_code;
+    }
+
+    /// @brief 获取 Body 大小
+    [[nodiscard]]
+    uint32_t GetBodySize() const noexcept
+    {
+        return header_.body_size;
+    }
+
+    /// @brief 获取扩展标志
+    [[nodiscard]]
+    uint16_t GetFlags() const noexcept
+    {
+        return header_.flags;
+    }
+
+    // ==================== 类型判断便捷方法 ====================
+
+    /// @brief 是否为请求消息
+    [[nodiscard]]
+    bool IsRequest() const noexcept
+    {
+        return GetMessageType() == MessageType::REQUEST;
+    }
+
+    /// @brief 是否为响应消息
+    [[nodiscard]]
+    bool IsResponse() const noexcept
+    {
+        return GetMessageType() == MessageType::RESPONSE;
+    }
+
+    /// @brief 是否为事件消息
+    [[nodiscard]]
+    bool IsEvent() const noexcept
+    {
+        return GetMessageType() == MessageType::EVENT;
+    }
+
+    /// @brief 是否为心跳消息
+    [[nodiscard]]
+    bool IsHeartbeat() const noexcept
+    {
+        return GetMessageType() == MessageType::HEARTBEAT;
+    }
+
+    /// @brief 是否为控制平面消息
+    [[nodiscard]]
+    bool IsControlPlane() const noexcept
+    {
+        return (GetHeaderFlags() & HeaderFlags::CONTROL_PLANE) != 0;
+    }
+
+    /// @brief 是否为业务平面消息
+    [[nodiscard]]
+    bool IsBusinessPlane() const noexcept
+    {
+        return !IsControlPlane();
+    }
+
+    /// @brief 是否有错误
+    [[nodiscard]]
+    bool HasError() const noexcept
+    {
+        return GetErrorCode() != 0;
+    }
+
+    /// @brief 是否成功 (仅对响应消息有意义)
+    [[nodiscard]]
+    bool IsSuccess() const noexcept
+    {
+        return GetErrorCode() == 0;
+    }
+
 private:
     IPCMessageHeader header_;
 
