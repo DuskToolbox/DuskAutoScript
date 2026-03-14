@@ -65,6 +65,12 @@
 %}
 
 #ifdef SWIGJAVA
+%pragma(java) jniclasscode=%{
+    static {
+        System.loadLibrary("DasCoreJavaExport");
+    }
+%}
+
 // 为 DasRetBase 添加 Java 便捷方法
 %typemap(javacode) DasRetBase %{
     /**

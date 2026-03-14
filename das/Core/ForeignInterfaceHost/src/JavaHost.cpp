@@ -298,66 +298,6 @@ JavaVM* JvmManager::CreateJVM(
         "JVM created successfully with class path: {}",
         class_path_str);
 
-    // 5. 通过 JNI 调用 System.load() 加载 DasCoreJavaExport.dll
-    // 必须使用 System.load() 而非 boost::dll，因为 JVM 需要将 DLL
-    // 注册到其内部映射表 否则 JNI native 方法查找会失败 (UnsatisfiedLinkError)
-    {
-        boost::dll::fs::path module_path = boost::dll::this_line_location();
-        if (!module_path.empty() && env)
-        {
-            boost::dll::fs::path module_dir = module_path.parent_path();
-            boost::dll::fs::path export_dll_path =
-                module_dir / "DasCoreJavaExport.dll";
-
-            // 调用 System.load(String path)
-            jclass system_class = env->FindClass("java/lang/System");
-            if (system_class)
-            {
-                jmethodID load_method = env->GetStaticMethodID(
-                    system_class,
-                    "load",
-                    "(Ljava/lang/String;)V");
-                if (load_method)
-                {
-                    // 使用 native 路径格式（Windows 反斜杠）
-                    jstring dll_path_str =
-                        env->NewStringUTF(export_dll_path.string().c_str());
-                    if (dll_path_str)
-                    {
-                        env->CallStaticVoidMethod(
-                            system_class,
-                            load_method,
-                            dll_path_str);
-
-                        // 检查是否有异常
-                        if (env->ExceptionCheck())
-                        {
-                            env->ExceptionDescribe();
-                            env->ExceptionClear();
-                            DAS_CORE_LOG_ERROR(
-                                "Failed to load DasCoreJavaExport.dll via System.load(): {}",
-                                export_dll_path.string());
-                        }
-                        else
-                        {
-                            DAS_CORE_LOG_INFO(
-                                "Loaded DasCoreJavaExport.dll via System.load(): {}",
-                                export_dll_path.string());
-                        }
-                    }
-                }
-                else
-                {
-                    DAS_CORE_LOG_ERROR("Failed to find System.load() method");
-                }
-            }
-            else
-            {
-                DAS_CORE_LOG_ERROR("Failed to find java.lang.System class");
-            }
-        }
-    }
-
     // jvm_dll_ 作为成员变量，由 RAII 自动管理生命周期
     // 在进程结束前保持加载状态
 
