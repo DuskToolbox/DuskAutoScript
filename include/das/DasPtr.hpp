@@ -100,14 +100,19 @@ public:
         return *this;
     }
     ~DasPtr() noexcept { InternalRelease(); }
+    [[nodiscard]]
     T*   operator->() const noexcept { return ptr_; }
+    [[nodiscard]]
     T&   operator*() const noexcept { return *ptr_; }
+    [[nodiscard]]
     bool operator==(const DasPtr<T>& other) const noexcept
     {
         return ptr_ == other.ptr_;
     }
+    [[nodiscard]]
     explicit operator bool() const noexcept { return Get() != nullptr; }
     template <class Other>
+    [[nodiscard]]
     Other* As(const DasGuid& id) const
     {
         void* result = nullptr;
@@ -119,6 +124,7 @@ public:
         return static_cast<Other*>(result);
     }
     template <class Other>
+    [[nodiscard]]
     DasResult As(DasPtr<Other>& other) const
     {
         void* result = nullptr;
@@ -136,6 +142,7 @@ public:
         return DAS_E_INVALID_POINTER;
     }
     template <class Other>
+    [[nodiscard]]
     DasResult As(Other** pp_out_other) const
     {
         if (ptr_)
@@ -153,7 +160,11 @@ public:
         InternalRelease();
         return std::exchange(ptr_, nullptr);
     }
-    T*  Get() const noexcept { return ptr_; }
+    [[nodiscard]]
+    T* Get() const noexcept
+    {
+        return ptr_;
+    }
     T** Put()
     {
         InternalRelease();
@@ -165,10 +176,12 @@ public:
     {
         std::swap(lhs.ptr_, rhs.ptr_);
     }
+    [[nodiscard]]
     auto operator<=>(const DasPtr& other) const noexcept
     {
         return other.ptr_ <=> ptr_;
     };
+    [[nodiscard]]
     static DasPtr Attach(T* p)
     {
         DasPtr result{nullptr};
