@@ -9,6 +9,7 @@
 #include <das/DasExport.h>
 #include <das/IDasBase.h>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -18,6 +19,13 @@
 
 DAS_CORE_IPC_NS_BEGIN
 class SharedMemoryPool;
+
+/// @brief 接收结果 - 包含验证后的 Header 和 Body
+struct ReceiveResult
+{
+    std::optional<ValidatedIPCMessageHeader> header;
+    std::vector<uint8_t>                      body;
+};
 
 class IpcTransport
 {
@@ -56,10 +64,11 @@ public:
         const uint8_t*                   body,
         size_t                           body_size);
 
-    DasResult Receive(
-        IPCMessageHeader&     out_header,
-        std::vector<uint8_t>& out_body,
-        uint32_t              timeout_ms);
+    /// @brief 接收消息并返回验证后的 Header
+    /// @param timeout_ms 超时时间（毫秒），0 表示无限等待
+    /// @return 接收成功返回 ReceiveResult，失败或超时返回 std::nullopt
+    [[nodiscard]]
+    std::optional<ReceiveResult> Receive(uint32_t timeout_ms);
 
     DasResult SetSharedMemoryPool(SharedMemoryPool* pool);
 

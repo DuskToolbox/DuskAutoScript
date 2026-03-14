@@ -187,15 +187,12 @@ DasResult IpcTransport::Send(
     }
 }
 
-DasResult IpcTransport::Receive(
-    IPCMessageHeader&     out_header,
-    std::vector<uint8_t>& out_body,
-    uint32_t              timeout_ms)
+std::optional<ReceiveResult> IpcTransport::Receive(uint32_t timeout_ms)
 {
     if (!impl_->initialized_)
     {
         DAS_CORE_LOG_ERROR("Transport not initialized");
-        return DAS_E_IPC_CONNECTION_LOST;
+        return std::nullopt;
     }
 
     std::vector<uint8_t> buffer(impl_->max_message_size_);
@@ -228,7 +225,7 @@ DasResult IpcTransport::Receive(
             if (!received)
             {
                 DAS_CORE_LOG_WARN("Receive timeout after {} ms", timeout_ms);
-                return DAS_E_IPC_TIMEOUT;
+                return std::nullopt;
             }
         }
 
@@ -238,28 +235,30 @@ DasResult IpcTransport::Receive(
                 "Message too small ({} bytes, expected at least {} bytes)",
                 received_size,
                 sizeof(IPCMessageHeader));
-            return DAS_E_IPC_INVALID_MESSAGE_HEADER;
+            return std::nullopt;
         }
 
-        std::memcpy(&out_header, buffer.data(), sizeof(IPCMessageHeader));
-
-        // 使用 IpcHeaderValidator 验证 magic 和 version
-        auto validation_result = IpcHeaderValidator::QuickValidate(out_header);
-        if (!validation_result.IsOk())
+        // 使用 ValidatedIPCMessageHeader::Deserialize 进行验证和反序列化
+        auto validated_header = ValidatedIPCMessageHeader::Deserialize(
+            buffer.data(),
+            received_size);
+        if (!validated_header)
         {
-            DAS_CORE_LOG_ERROR(
-                "Header validation failed: {}",
-                validation_result.message);
-            return DAS_E_IPC_INVALID_MESSAGE_HEADER;
+            DAS_CORE_LOG_ERROR("Header validation failed during deserialization");
+            return std::nullopt;
         }
 
-        if (out_header.flags & kFlagLargeMessage)
+        ReceiveResult result;
+        result.header = std::move(validated_header);
+
+        // 检查是否为大消息
+        if (result.header->GetFlags() & kFlagLargeMessage)
         {
             if (impl_->shm_pool_ == nullptr)
             {
                 DAS_CORE_LOG_ERROR(
                     "Large message received but shared memory pool not set");
-                return DAS_E_IPC_SHM_FAILED;
+                return std::nullopt;
             }
 
             if (received_size < sizeof(IPCMessageHeader) + sizeof(uint64_t))
@@ -267,7 +266,7 @@ DasResult IpcTransport::Receive(
                 DAS_CORE_LOG_ERROR(
                     "Large message handle missing (size = {})",
                     received_size);
-                return DAS_E_IPC_INVALID_MESSAGE;
+                return std::nullopt;
             }
 
             uint64_t handle;
@@ -277,40 +276,42 @@ DasResult IpcTransport::Receive(
                 sizeof(uint64_t));
 
             SharedMemoryBlock shm_block;
-            auto result = impl_->shm_pool_->GetBlockByHandle(handle, shm_block);
-            if (result != DAS_S_OK)
+            auto shm_result =
+                impl_->shm_pool_->GetBlockByHandle(handle, shm_block);
+            if (shm_result != DAS_S_OK)
             {
                 DAS_CORE_LOG_ERROR(
                     "Failed to get shared memory block for handle = {}",
                     handle);
-                return result;
+                return std::nullopt;
             }
 
-            out_body.resize(shm_block.size);
-            std::memcpy(out_body.data(), shm_block.data, shm_block.size);
+            result.body.resize(shm_block.size);
+            std::memcpy(result.body.data(), shm_block.data, shm_block.size);
 
             impl_->shm_pool_->Deallocate(handle);
 
-            return DAS_S_OK;
+            return result;
         }
 
+        // 普通消息 - 提取 body
         if (received_size > sizeof(IPCMessageHeader))
         {
-            out_body.assign(
+            result.body.assign(
                 buffer.data() + sizeof(IPCMessageHeader),
                 buffer.data() + received_size);
         }
         else
         {
-            out_body.clear();
+            result.body.clear();
         }
 
-        return DAS_S_OK;
+        return result;
     }
     catch (const std::exception& e)
     {
         DAS_CORE_LOG_EXCEPTION(e);
-        return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
+        return std::nullopt;
     }
 }
 

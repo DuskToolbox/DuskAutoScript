@@ -22,7 +22,11 @@ protected:
         plugin_queue_name_ = "test_plugin_" + std::to_string(id);
 
         // Create transport in server mode
-        auto result = IpcTransport::Create(host_queue_name_, plugin_queue_name_, 4096, 10);
+        auto result = IpcTransport::Create(
+            host_queue_name_,
+            plugin_queue_name_,
+            4096,
+            10);
         EXPECT_TRUE(result.has_value());
         transport_ = std::move(result.value());
     }
@@ -95,7 +99,8 @@ TEST_F(IpcMessageQueueTransportTest, Receive_SmallMessage)
     // Server transport already created in SetUp
 
     // Client connects to server's queues (swap direction)
-    auto client_result = IpcTransport::Connect(host_queue_name_, plugin_queue_name_);
+    auto client_result =
+        IpcTransport::Connect(host_queue_name_, plugin_queue_name_);
     ASSERT_TRUE(client_result.has_value());
     auto client = std::move(client_result.value());
 
@@ -110,13 +115,11 @@ TEST_F(IpcMessageQueueTransportTest, Receive_SmallMessage)
     // Server sends, client receives
     ASSERT_EQ(transport_->Send(header, body, body_size), DAS_S_OK);
 
-    IPCMessageHeader     recv_header;
-    std::vector<uint8_t> recv_body;
-    auto                 result = client->Receive(recv_header, recv_body, 1000);
+    auto result = client->Receive(1000);
 
-    EXPECT_EQ(result, DAS_S_OK);
-    EXPECT_EQ(recv_header.call_id, header.Raw().call_id);
-    EXPECT_EQ(recv_body.size(), body_size);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->header->GetCallId(), header.Raw().call_id);
+    EXPECT_EQ(result->body.size(), body_size);
 
     // Client destructor will call Uninitialize() automatically
 }
@@ -166,22 +169,16 @@ TEST_F(IpcMessageQueueTransportTest, Send_WithoutInitialize)
 
 TEST_F(IpcMessageQueueTransportTest, Receive_WithoutInitialize)
 {
-    IPCMessageHeader     header;
-    std::vector<uint8_t> body;
-
-    auto result = transport_->Receive(header, body, 1000);
-    EXPECT_NE(result, DAS_S_OK);
+    auto result = transport_->Receive(1000);
+    EXPECT_EQ(result, std::nullopt);
 }
 
 TEST_F(IpcMessageQueueTransportTest, Receive_Timeout)
 {
     // Transport already created in SetUp
-    IPCMessageHeader     header;
-    std::vector<uint8_t> body;
-
     // Receive with short timeout - should timeout since no message was sent
-    auto result = transport_->Receive(header, body, 10);
-    EXPECT_EQ(result, DAS_E_IPC_TIMEOUT);
+    auto result = transport_->Receive(10);
+    EXPECT_EQ(result, std::nullopt);
 }
 
 // ====== Message Header V3 Tests ======
