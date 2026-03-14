@@ -46,6 +46,8 @@ boost::asio::awaitable<DasResult> IpcCommandHandler::HandleMessage(
                 static_cast<IpcCommandType>(header.interface_id))
             .SetBodySize(static_cast<uint32_t>(response.response_data.size()))
             .SetCallId(header.call_id)
+            .SetSourceSessionId(session_id_)
+            .SetTargetSessionId(header.source_session_id)
             .SetErrorCode(static_cast<int32_t>(response.error_code))
             .Build();
     co_await sender.SendResponse(

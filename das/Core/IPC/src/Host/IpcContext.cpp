@@ -215,6 +215,8 @@ namespace Core
                     return DAS_E_IPC_NOT_INITIALIZED;
                 }
                 run_loop_ = std::move(runloop_result.value());
+                // Host 模式初始 session_id 为 0，握手完成后会更新
+                run_loop_->SetSessionId(session_id_);
                 // Create() 已包含初始化，不需要再次调用 Initialize()
                 result = DAS_S_OK;
                 if (result != DAS_S_OK)
@@ -254,9 +256,21 @@ namespace Core
                 }
 
                 // 8. 设置 HandshakeHandler 的客户端连接回调
+                //    握手完成后，同步 session_id 到 IpcCommandHandler 和 IpcRunLoop
                 handshake_handler_->SetOnClientConnected(
-                    [this](const ConnectedClient& /*client*/)
-                    { is_connected_ = true; });
+                    [this](const ConnectedClient& client)
+                    {
+                        session_id_ = client.session_id;
+                        if (command_handler_)
+                        {
+                            command_handler_->SetSessionId(client.session_id);
+                        }
+                        if (run_loop_)
+                        {
+                            run_loop_->SetSessionId(client.session_id);
+                        }
+                        is_connected_ = true;
+                    });
 
                 handshake_handler_->SetOnClientDisconnected(
                     [this](uint16_t /*session_id*/) { is_connected_ = false; });

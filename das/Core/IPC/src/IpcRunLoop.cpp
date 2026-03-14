@@ -264,9 +264,12 @@ std::pair<DasResult, CallKey> IpcRunLoop::PrepareSendRequestWithTransport(
     }
 
     uint16_t call_id = next_call_id_.fetch_add(1);
-    CallKey  call_key{local_session_id_, call_id};
 
     const IPCMessageHeader& raw = request_header.Raw();
+    // V3: pending_call key 使用 target_session_id（对方进程的 session_id），
+    // 这样响应返回时可以正确匹配
+    CallKey call_key{raw.target_session_id, call_id};
+
     // V3: method_id 和 ObjectId 在 body 中携带，header 只保留 interface_id 和
     // session 路由信息
     auto validated_header = IPCMessageHeaderBuilder()
@@ -452,6 +455,11 @@ void IpcRunLoop::RegisterPendingCompletion(
 }
 
 bool IpcRunLoop::IsRunning() const { return running_.load(); }
+
+void IpcRunLoop::SetSessionId(uint16_t session_id)
+{
+    local_session_id_ = session_id;
+}
 
 void IpcRunLoop::ScheduleTimeoutCheck()
 {

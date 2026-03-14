@@ -263,6 +263,16 @@ public:
 
     bool IsRunning() const;
 
+    /**
+     * @brief 设置本地 session_id
+     *
+     * 在 Host 模式下，握手完成后需要更新本地 session_id，
+     * 以确保发送请求时使用正确的 source_session_id。
+     *
+     * @param session_id 新的本地 session_id
+     */
+    void SetSessionId(uint16_t session_id);
+
     /// 获取 io_context 引用（用于 HostLauncher 等需要共享 io_context 的场景）
     /// 注意：仅在 Initialize() 成功后可用
     /// @return io_context 引用，生命周期绑定到 this
