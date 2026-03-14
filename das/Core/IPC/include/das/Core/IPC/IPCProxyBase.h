@@ -14,6 +14,7 @@
 
 DAS_CORE_IPC_NS_BEGIN
 class IpcRunLoop;
+class SessionCoordinator;
 
 class IPCProxyBase
 {
@@ -95,13 +96,72 @@ protected:
         return static_cast<uint16_t>(next_call_id_);
     }
 
+    /// @brief 获取本地 session ID (V3)
+    /// @return 本地 session ID
+    /// @note 用于设置 Header 的 source_session_id
+    [[nodiscard]]
+    uint16_t GetSourceSessionId() const noexcept
+    {
+        auto session_id = SessionCoordinator::GetInstance().GetLocalSessionId();
+        return session_id.value_or(1);
+    }
+
+    /// @brief 构建业务消息 Body (V3 版本)
+    /// @param method_id 方法 ID
+    /// @param params 参数字节数据
+    /// @param params_size 参数大小
+    /// @return 包含 V3 Body Header + 参数的字节向量
+    /// @note V3: Body 结构为 interface_id(4B) + method_id(2B) + reserved(2B) +
+    /// ObjectId(8B) + 参数
+    [[nodiscard]]
+    std::vector<uint8_t> BuildBusinessBody(
+        uint16_t       method_id,
+        const uint8_t* params = nullptr,
+        size_t         params_size = 0) const
+    {
+        std::vector<uint8_t> body;
+
+        // 写入 interface_id (4 bytes)
+        body.insert(
+            body.end(),
+            reinterpret_cast<const uint8_t*>(&interface_id_),
+            reinterpret_cast<const uint8_t*>(&interface_id_)
+                + sizeof(interface_id_));
+
+        // 写入 method_id (2 bytes)
+        body.insert(
+            body.end(),
+            reinterpret_cast<const uint8_t*>(&method_id),
+            reinterpret_cast<const uint8_t*>(&method_id) + sizeof(method_id));
+
+        // 写入 reserved (2 bytes, 值为 0)
+        uint16_t reserved = 0;
+        body.insert(
+            body.end(),
+            reinterpret_cast<const uint8_t*>(&reserved),
+            reinterpret_cast<const uint8_t*>(&reserved) + sizeof(reserved));
+
+        // 写入 ObjectId (8 bytes)
+        body.insert(
+            body.end(),
+            reinterpret_cast<const uint8_t*>(&object_id_),
+            reinterpret_cast<const uint8_t*>(&object_id_) + sizeof(object_id_));
+
+        // 追加参数数据
+        if (params != nullptr && params_size > 0)
+        {
+            body.insert(body.end(), params, params + params_size);
+        }
+
+        return body;
+    }
+
     /// @brief 构建请求 header (V3 版本)
-    /// @param method_id 方法 ID (将在 body 中序列化)
     /// @param call_id 调用 ID (16-bit)
     /// @param message_type 消息类型
     /// @param body_size body 大小
     /// @return 构建好的 header
-    /// @note V3: interface_id 在 header 中，method_id 和 ObjectId 在 body 中
+    /// @note V3: Header 只负责路由，interface_id/method_id/ObjectId 在 body 中
     [[nodiscard]]
     ValidatedIPCMessageHeader BuildRequestHeader(
         uint16_t    call_id,
@@ -110,9 +170,9 @@ protected:
     {
         return IPCMessageHeaderBuilder()
             .SetMessageType(message_type)
-            .SetInterfaceId(interface_id_)
             .SetBodySize(static_cast<uint32_t>(body_size))
             .SetCallId(call_id)
+            .SetSourceSessionId(GetSourceSessionId())
             .SetTargetSessionId(object_id_.session_id)
             .Build();
     }
