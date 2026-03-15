@@ -1,0 +1,129 @@
+#ifndef DAS_CORE_IPC_IPC_MESSAGE_QUEUE_H
+#define DAS_CORE_IPC_IPC_MESSAGE_QUEUE_H
+
+#include <das/Core/IPC/IpcErrors.h>
+#include <das/Core/IPC/ValidatedIPCMessageHeader.h>
+
+#include <boost/circular_buffer.hpp>
+
+#include <condition_variable>
+#include <mutex>
+#include <optional>
+#include <vector>
+
+DAS_CORE_IPC_NS_BEGIN
+
+/// @brief 入站消息结构体 - 用于 IO 线程到业务线程的消息传递
+/// @note 不包含 transport 指针——业务线程不应接触 transport
+///       业务线程发送通过 IpcRunLoop::PostSend(header, body) 投递到 IO 线程
+struct InboundMessage
+{
+    ValidatedIPCMessageHeader header;
+    std::vector<uint8_t>      body;
+};
+
+/// @brief 线程安全的固定容量环形缓冲区队列
+/// @tparam T 队列中存储的元素类型
+template <typename T>
+class IpcMessageQueue
+{
+public:
+    /// @brief 构造函数
+    /// @param max_elements 队列最大容量
+    explicit IpcMessageQueue(size_t max_elements) : ring_(max_elements) {}
+
+    // 禁用拷贝
+    IpcMessageQueue(const IpcMessageQueue&) = delete;
+    IpcMessageQueue& operator=(const IpcMessageQueue&) = delete;
+
+    // 允许移动
+    IpcMessageQueue(IpcMessageQueue&&) = default;
+    IpcMessageQueue& operator=(IpcMessageQueue&&) = default;
+
+    /// @brief 入队（非阻塞）
+    /// @param msg 要入队的元素（按值传递，内部使用 std::move）
+    /// @return 成功返回 DAS_S_OK，队列满返回 DAS_E_IPC_QUEUE_FULL，已关闭返回
+    /// DAS_E_IPC_CANCELED
+    DasResult Push(T msg)
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        if (shutdown_)
+        {
+            return DAS_E_IPC_CANCELED;
+        }
+
+        if (ring_.full())
+        {
+            return DAS_E_IPC_QUEUE_FULL;
+        }
+
+        ring_.push_back(std::move(msg));
+        cv_.notify_one();
+
+        return DAS_S_OK;
+    }
+
+    /// @brief 出队（阻塞）
+    /// @return 有元素返回元素，否则返回 nullopt（队列已关闭时）
+    std::optional<T> Pop()
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+
+        cv_.wait(lock, [this]() { return !ring_.empty() || shutdown_; });
+
+        if (shutdown_ && ring_.empty())
+        {
+            return std::nullopt;
+        }
+
+        T item = std::move(ring_.front());
+        ring_.pop_front();
+
+        return item;
+    }
+
+    /// @brief 尝试出队（非阻塞）
+    /// @return 有元素返回元素，否则返回 nullopt
+    std::optional<T> TryPop()
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        if (ring_.empty())
+        {
+            return std::nullopt;
+        }
+
+        T item = std::move(ring_.front());
+        ring_.pop_front();
+
+        return item;
+    }
+
+    /// @brief 关闭队列
+    /// @note 关闭后，Push 返回 DAS_E_IPC_CANCELED，Pop 返回 nullopt
+    void Shutdown()
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        shutdown_ = true;
+        cv_.notify_all();
+    }
+
+    /// @brief 检查队列是否已关闭
+    /// @return 已关闭返回 true
+    bool IsShutdown() const
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return shutdown_;
+    }
+
+private:
+    boost::circular_buffer<T> ring_;
+    mutable std::mutex        mutex_;
+    std::condition_variable   cv_;
+    bool                      shutdown_ = false;
+};
+
+DAS_CORE_IPC_NS_END
+
+#endif // DAS_CORE_IPC_IPC_MESSAGE_QUEUE_H
