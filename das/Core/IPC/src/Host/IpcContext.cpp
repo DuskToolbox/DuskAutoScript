@@ -592,14 +592,13 @@ namespace Core
                         // 成功接收消息
                         auto&& [header, body] = std::get<1>(result);
 
-                        if (header.Raw().message_type
-                            == static_cast<uint8_t>(MessageType::RESPONSE))
+                        if (header.GetMessageType() == MessageType::RESPONSE)
                         {
                             // V3: RESPONSE 使用 (source_session_id, call_id)
                             // 匹配
                             CallKey call_key{
-                                header.Raw().source_session_id,
-                                header.Raw().call_id};
+                                header.GetSourceSessionId(),
+                                header.GetCallId()};
                             run_loop_->CompletePendingCall(
                                 call_key,
                                 DAS_S_OK,
@@ -609,7 +608,7 @@ namespace Core
                         {
                             // REQUEST：分发到处理器（使用 transport 发送响应）
                             co_await run_loop_->DispatchToHandlerCoroutine(
-                                header.Raw(),
+                                header,
                                 body,
                                 *async_transport_);
                         }
