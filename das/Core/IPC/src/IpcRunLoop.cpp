@@ -185,7 +185,7 @@ IMessageHandler* IpcRunLoop::GetHandler(uint32_t interface_id) const
 
 boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
     const ValidatedIPCMessageHeader& header,
-    const std::vector<uint8_t>&     body,
+    const std::vector<uint8_t>&      body,
     DefaultAsyncIpcTransport&        transport)
 {
     DAS_CORE_LOG_INFO(
@@ -252,10 +252,10 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
         try
         {
             IpcResponseSender sender(transport);
-            auto result = co_await handler->HandleMessage(header, body, sender);
+            auto result = handler->HandleMessage(header, body, sender);
             if (DAS::IsFailed(result))
             {
-                DAS_CORE_LOG_WARN("Handler returned error: 0x{:08X}", result);
+                DAS_CORE_LOG_WARN("Handler returned error: {}", result);
             }
             else
             {
@@ -485,6 +485,27 @@ bool IpcRunLoop::IsRunning() const { return running_.load(); }
 void IpcRunLoop::SetSessionId(uint16_t session_id)
 {
     local_session_id_ = session_id;
+}
+
+DasResult IpcRunLoop::PostSend(
+    const ValidatedIPCMessageHeader& header,
+    std::vector<uint8_t>&&           body)
+{
+    if (!io_context_)
+    {
+        DAS_CORE_LOG_ERROR("IpcRunLoop::PostSend: io_context_ is null");
+        return DAS_E_IPC_NOT_INITIALIZED;
+    }
+
+    // 投递到 io_context 执行发送
+    // 注意：这里需要通过某种方式获取 transport 来发送
+    // 由于 IpcRunLoop 不持有 transport，这里需要访问 ConnectionManager 来获取
+    // transport 暂时返回 NOT_IMPLEMENTED，后续完善
+    (void)header;
+    (void)body;
+
+    DAS_CORE_LOG_DEBUG("IpcRunLoop::PostSend: not fully implemented yet");
+    return DAS_E_NO_IMPLEMENTATION;
 }
 
 void IpcRunLoop::ScheduleTimeoutCheck()

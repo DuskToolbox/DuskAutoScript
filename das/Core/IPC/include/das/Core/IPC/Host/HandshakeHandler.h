@@ -152,9 +152,9 @@ namespace Core
                  */
                 DasResult HandleMessage(
                     const ValidatedIPCMessageHeader& header,
-                    const uint8_t*          body,
-                    size_t                  body_size,
-                    std::vector<uint8_t>&   response_body);
+                    const uint8_t*                   body,
+                    size_t                           body_size,
+                    std::vector<uint8_t>&            response_body);
 
                 /**
                  * @brief 处理握手消息（新接口）
@@ -167,10 +167,10 @@ namespace Core
                  * @param sender 响应发送器
                  * @return boost::asio::awaitable<DasResult> 协程结果
                  */
-                boost::asio::awaitable<DasResult> HandleMessage(
-                    const ValidatedIPCMessageHeader&     header,
-                    const std::vector<uint8_t>& body,
-                    IpcResponseSender&          sender) override;
+                DasResult HandleMessage(
+                    const ValidatedIPCMessageHeader& header,
+                    const std::vector<uint8_t>&      body,
+                    IpcResponseSender&               sender) override;
 
                 /**
                  * @brief 设置客户端连接回调

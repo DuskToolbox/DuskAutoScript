@@ -86,9 +86,9 @@ namespace Core
 
             DasResult HandshakeHandler::HandleMessage(
                 const ValidatedIPCMessageHeader& header,
-                const uint8_t*          body,
-                size_t                  body_size,
-                std::vector<uint8_t>&   response_body)
+                const uint8_t*                   body,
+                size_t                           body_size,
+                std::vector<uint8_t>&            response_body)
             {
                 if (!initialized_)
                 {
@@ -183,10 +183,10 @@ namespace Core
                 }
             }
 
-            boost::asio::awaitable<DasResult> HandshakeHandler::HandleMessage(
-                const ValidatedIPCMessageHeader&     header,
-                const std::vector<uint8_t>& body,
-                IpcResponseSender&          sender)
+            DasResult HandshakeHandler::HandleMessage(
+                const ValidatedIPCMessageHeader& header,
+                const std::vector<uint8_t>&      body,
+                IpcResponseSender&               sender)
             {
                 std::vector<uint8_t> response_body;
                 DasResult            result = HandleMessage(
@@ -199,8 +199,8 @@ namespace Core
                 {
                     // 根据请求类型构建响应头（使用 Builder）
                     uint32_t response_interface_id = header.GetInterfaceId();
-                    switch (
-                        static_cast<HandshakeInterfaceId>(header.GetInterfaceId()))
+                    switch (static_cast<HandshakeInterfaceId>(
+                        header.GetInterfaceId()))
                     {
                     case HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO:
                         response_interface_id = static_cast<uint32_t>(
@@ -229,12 +229,12 @@ namespace Core
                             .SetErrorCode(0)
                             .Build();
 
-                    co_await sender.SendResponse(
+                    sender.SendResponse(
                         validated_response_header,
                         response_body);
                 }
 
-                co_return result;
+                return result;
             }
 
             void HandshakeHandler::SetOnClientConnected(

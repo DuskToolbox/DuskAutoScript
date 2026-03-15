@@ -76,8 +76,8 @@ public:
     // 命令处理函数类型
     using CommandHandler = std::function<DasResult(
         const ValidatedIPCMessageHeader& header,
-        std::span<const uint8_t>       payload,
-        IpcCommandResponse&             response)>;
+        std::span<const uint8_t>         payload,
+        IpcCommandResponse&              response)>;
 
     IpcCommandHandler();
     ~IpcCommandHandler() = default;
@@ -125,8 +125,8 @@ public:
      */
     DasResult HandleCommand(
         const ValidatedIPCMessageHeader& header,
-        std::span<const uint8_t>       payload,
-        IpcCommandResponse&             response);
+        std::span<const uint8_t>         payload,
+        IpcCommandResponse&              response);
 
     /**
      * @brief 注册自定义命令处理器
@@ -160,80 +160,81 @@ public:
         return 0;
     }
 
-    boost::asio::awaitable<DasResult> HandleMessage(
+    DasResult HandleMessage(
         const ValidatedIPCMessageHeader& header,
-        const std::vector<uint8_t>&     body,
+        const std::vector<uint8_t>&      body,
         IpcResponseSender&               sender) override;
 
 private:
     // 内置命令处理器
     DasResult OnRegisterObject(
-        const ValidatedIPCMessageHeader&  header,
-        std::span<const uint8_t> payload,
-        IpcCommandResponse&      response);
+        const ValidatedIPCMessageHeader& header,
+        std::span<const uint8_t>         payload,
+        IpcCommandResponse&              response);
 
     DasResult OnUnregisterObject(
-        const ValidatedIPCMessageHeader&  header,
-        std::span<const uint8_t> payload,
-        IpcCommandResponse&      response);
+        const ValidatedIPCMessageHeader& header,
+        std::span<const uint8_t>         payload,
+        IpcCommandResponse&              response);
 
     DasResult OnLookupObject(
-        const ValidatedIPCMessageHeader&  header,
-        std::span<const uint8_t> payload,
-        IpcCommandResponse&      response);
+        const ValidatedIPCMessageHeader& header,
+        std::span<const uint8_t>         payload,
+        IpcCommandResponse&              response);
 
     DasResult OnLookupByName(
-        const ValidatedIPCMessageHeader&  header,
-        std::span<const uint8_t> payload,
-        IpcCommandResponse&      response);
+        const ValidatedIPCMessageHeader& header,
+        std::span<const uint8_t>         payload,
+        IpcCommandResponse&              response);
 
     DasResult OnLookupByInterface(
-        const ValidatedIPCMessageHeader&  header,
-        std::span<const uint8_t> payload,
-        IpcCommandResponse&      response);
+        const ValidatedIPCMessageHeader& header,
+        std::span<const uint8_t>         payload,
+        IpcCommandResponse&              response);
 
     DasResult OnListObjects(
-        const ValidatedIPCMessageHeader&  header,
-        std::span<const uint8_t> payload,
-        IpcCommandResponse&      response);
+        const ValidatedIPCMessageHeader& header,
+        std::span<const uint8_t>         payload,
+        IpcCommandResponse&              response);
 
     DasResult OnListSessionObjects(
-        const ValidatedIPCMessageHeader&  header,
-        std::span<const uint8_t> payload,
-        IpcCommandResponse&      response);
+        const ValidatedIPCMessageHeader& header,
+        std::span<const uint8_t>         payload,
+        IpcCommandResponse&              response);
 
     DasResult OnClearSession(
-        const ValidatedIPCMessageHeader&  header,
-        std::span<const uint8_t> payload,
-        IpcCommandResponse&      response);
+        const ValidatedIPCMessageHeader& header,
+        std::span<const uint8_t>         payload,
+        IpcCommandResponse&              response);
 
     DasResult OnPing(
-        const ValidatedIPCMessageHeader&  header,
-        std::span<const uint8_t> payload,
-        IpcCommandResponse&      response);
+        const ValidatedIPCMessageHeader& header,
+        std::span<const uint8_t>         payload,
+        IpcCommandResponse&              response);
 
     DasResult OnGetObjectCount(
-        const ValidatedIPCMessageHeader&  header,
-        std::span<const uint8_t> payload,
-        IpcCommandResponse&      response);
+        const ValidatedIPCMessageHeader& header,
+        std::span<const uint8_t>         payload,
+        IpcCommandResponse&              response);
 
     DasResult OnLoadPlugin(
-        const ValidatedIPCMessageHeader&  header,
-        std::span<const uint8_t> payload,
-        IpcCommandResponse&      response);
+        const ValidatedIPCMessageHeader& header,
+        std::span<const uint8_t>         payload,
+        IpcCommandResponse&              response);
 
     DasResult OnRemoteAddRef(
-        const ValidatedIPCMessageHeader&  header,
-        std::span<const uint8_t> payload,
-        IpcCommandResponse&      response);
+        const ValidatedIPCMessageHeader& header,
+        std::span<const uint8_t>         payload,
+        IpcCommandResponse&              response);
 
     DasResult OnRemoteRelease(
-        const ValidatedIPCMessageHeader&  header,
-        std::span<const uint8_t> payload,
-        IpcCommandResponse&      response);
+        const ValidatedIPCMessageHeader& header,
+        std::span<const uint8_t>         payload,
+        IpcCommandResponse&              response);
 
     // 从 interface_id 字段提取命令类型
-    static IpcCommandType ExtractCommandType(const ValidatedIPCMessageHeader& header);
+    static IpcCommandType ExtractCommandType(
+        const ValidatedIPCMessageHeader& header);
 
     uint16_t session_id_;
 

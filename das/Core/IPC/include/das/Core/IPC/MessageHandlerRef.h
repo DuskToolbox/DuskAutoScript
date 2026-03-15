@@ -1,7 +1,6 @@
 #ifndef DAS_CORE_IPC_MESSAGE_HANDLER_REF_H
 #define DAS_CORE_IPC_MESSAGE_HANDLER_REF_H
 
-#include <boost/asio/awaitable.hpp>
 #include <das/Core/IPC/IMessageHandler.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
@@ -54,16 +53,16 @@ public:
         return handler_ ? handler_->GetInterfaceId() : 0;
     }
 
-    boost::asio::awaitable<DasResult> HandleMessage(
+    DasResult HandleMessage(
         const ValidatedIPCMessageHeader& header,
-        const std::vector<uint8_t>& body,
-        IpcResponseSender&          sender) override
+        const std::vector<uint8_t>&      body,
+        IpcResponseSender&               sender) override
     {
         if (!handler_)
         {
-            co_return DAS_E_IPC_INVALID_ARGUMENT;
+            return DAS_E_IPC_INVALID_ARGUMENT;
         }
-        co_return co_await handler_->HandleMessage(header, body, sender);
+        return handler_->HandleMessage(header, body, sender);
     }
 
 private:

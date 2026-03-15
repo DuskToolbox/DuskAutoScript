@@ -296,12 +296,26 @@ public:
     }
 
     /**
+     * @brief 投递发送任务到 IO 线程（业务线程调用）
+     *
+     * 线程安全，任何线程可调用。
+     * 将发送任务投递到 IO 线程执行。
+     *
+     * @param header 消息头
+     * @param body 消息体（会被 move）
+     * @return DasResult 投递结果
+     */
+    DasResult PostSend(
+        const ValidatedIPCMessageHeader& header,
+        std::vector<uint8_t>&&           body);
+
+    /**
      * @brief 注册 HostLauncher 并启动接收循环
      *
      * 在 HostLauncher::Start() 成功后调用。
      * Transport 将在注册后立即开始接收消息。
      *
-     * @param launcher HostLauncher 实例（DasPtr 所有权转移）
+     * @param launcher HostLauncher 实例（DasPtr 内部用 DasPtr 管理生命周期）
      * @return DasResult DAS_S_OK 成功
      */
     DasResult RegisterHostLauncher(DasPtr<IHostLauncher> launcher);
@@ -325,8 +339,8 @@ public:
      */
     boost::asio::awaitable<void> DispatchToHandlerCoroutine(
         const ValidatedIPCMessageHeader& header,
-        const std::vector<uint8_t>& body,
-        DefaultAsyncIpcTransport&   transport);
+        const std::vector<uint8_t>&      body,
+        DefaultAsyncIpcTransport&        transport);
 
     //=========================================================================
     // 事件驱动方法（内部使用）

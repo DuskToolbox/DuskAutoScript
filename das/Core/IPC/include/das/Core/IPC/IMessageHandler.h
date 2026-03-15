@@ -1,6 +1,5 @@
 #pragma once
 
-#include <boost/asio/awaitable.hpp>
 #include <cstdint>
 #include <das/DasApi.h>
 #include <vector>
@@ -46,15 +45,15 @@ public:
     virtual uint32_t GetInterfaceId() const = 0;
 
     /**
-     * @brief 处理 IPC 消息（协程版本）
+     * @brief 处理 IPC 消息（同步版本）
      * @param header 已验证的消息头
      * @param body 消息体
      * @param sender 响应发送器（用于发送响应）
-     * @return boost::asio::awaitable<DasResult> 协程结果
+     * @return DasResult 处理结果
      */
-    virtual boost::asio::awaitable<DasResult> HandleMessage(
+    virtual DasResult HandleMessage(
         const ValidatedIPCMessageHeader& header,
-        const std::vector<uint8_t>&     body,
+        const std::vector<uint8_t>&      body,
         IpcResponseSender&               sender) = 0;
 };
 
