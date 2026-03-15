@@ -469,14 +469,13 @@ function(_download_and_config_nv_stdexec)
     set(STDEXEC_BUILD_DOCS OFF)
     set(BUILD_TESTING OFF)
     set(STDEXEC_BUILD_TESTS OFF)
-    set(STDEXEC_ENABLE_ASIO ON)
 
     if (POLICY CMP0169)
         cmake_policy(SET CMP0169 OLD)
     endif()
 
     FetchContent_MakeAvailable(stdexec)
-    target_link_libraries(Das3rdParty INTERFACE STDEXEC::stdexec STDEXEC::asio_pool)
+    target_link_libraries(Das3rdParty INTERFACE STDEXEC::stdexec)
 endfunction()
 
 _download_and_config_nv_stdexec()
