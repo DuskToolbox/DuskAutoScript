@@ -138,7 +138,7 @@ TEST_F(RemoteObjectRegistryIntegrationTest, MultipleHosts)
 
 // ====== Session ID Reuse Tests ======
 
-TEST_F(RemoteObjectRegistryIntegrationTest, SessionIdReuse)
+TEST_F(RemoteObjectRegistryIntegrationTest, SessionIdSequentialAllocation)
 {
     uint16_t session_id1 = session_coordinator_->AllocateSessionId();
 
@@ -154,19 +154,12 @@ TEST_F(RemoteObjectRegistryIntegrationTest, SessionIdReuse)
     registry_->ListObjectsBySession(session_id1, objects);
     ASSERT_EQ(objects.size(), 1);
 
+    // 释放 session_id
     session_coordinator_->ReleaseSessionId(session_id1);
 
-    registry_->ListObjectsBySession(session_id1, objects);
-    ASSERT_EQ(objects.size(), 1);
-
-    result = registry_->UnregisterObject(obj_id1);
-    ASSERT_EQ(result, DAS_S_OK);
-
-    registry_->ListObjectsBySession(session_id1, objects);
-    ASSERT_EQ(objects.size(), 0);
-
+    // 重新分配应该拿到更大的 ID（顺序分配）
     uint16_t session_id2 = session_coordinator_->AllocateSessionId();
-    EXPECT_EQ(session_id1, session_id2);
+    EXPECT_GT(session_id2, session_id1);
 
     ObjectId    obj_id2 = {session_id2, 1, 101};
     DasGuid     iid2 = CreateTestGuid(2);

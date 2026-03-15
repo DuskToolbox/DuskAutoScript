@@ -3,21 +3,23 @@
 
 #ifndef _WIN32
 
+#include <boost/asio/co_spawn.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/local/stream_protocol.hpp>
+#include <boost/asio/use_awaitable.hpp>
 #include <cstdint>
 #include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
-#include <das/Utils/Expected.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <das/DasExport.h>
+#include <das/Utils/Expected.h>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include <das/Core/IPC/Config.h>
-#include <das/DasConfig.h>
 #include <das/Core/IPC/IpcErrors.h>
+#include <das/DasConfig.h>
 #include <variant>
 
 DAS_CORE_IPC_NS_BEGIN
@@ -29,150 +31,138 @@ DAS_CORE_IPC_NS_BEGIN
  * 基于 boost::asio 协程设计。
  *
  * 架构：
- * - 服务端创建 Unix Domain Socket 文件
- * - 客户端连接到该文件
+ * - 服务端创建 Unix Domain Socket 文件并等待客户端连接
+ * - 客户端连接到该 socket 文件
+ * - 单 socket 双向通信
  * - 所有 I/O 通过 io_context 异步执行
  *
  * 使用示例：
  * @code
  * boost::asio::io_context io;
- * UnixAsyncIpcTransport transport(io);
  *
- * // 服务端
- * transport.Initialize("/tmp/my_ipc", true);
+ * // 异步创建
+ * auto transport = co_await UnixAsyncIpcTransport::CreateAsync(io,
+ * "/tmp/my_ipc", "", true);
  *
- * // 客户端
- * transport.Connect("/tmp/my_ipc");
+ * // 或延迟初始化
+ * auto transport = UnixAsyncIpcTransport::CreateUninitialized(io);
+ * co_await transport->InitializeAsync("/tmp/my_ipc", "", true);
  *
  * // 异步接收（协程）
- * auto result = co_await transport.ReceiveCoroutine();
+ * auto result = co_await transport->ReceiveCoroutine();
  * @endcode
  */
 class UnixAsyncIpcTransport
 {
 public:
-    /// 工厂函数：创建并初始化 UnixAsyncIpcTransport 实例
+    /// 工厂函数：异步创建并初始化 UnixAsyncIpcTransport 实例
     /// @param io_context boost::asio io_context 引用（生命周期绑定到返回值）
-    /// @param read_endpoint 读取端点名称
-    /// @param write_endpoint 写入端点名称
+    /// @param read_endpoint 读取端点名称（Unix Domain Socket 文件路径）
+    /// @param write_endpoint 写入端点名称（Unix 下忽略，使用单 socket）
     /// @param is_server 是否作为服务端
     /// @param max_message_size 最大消息大小（默认64KB）
-    /// @return Expected 包含 unique_ptr 成功，错误码失败
-    static DAS::Utils::Expected<std::unique_ptr<UnixAsyncIpcTransport>> Create(
+    /// @return awaitable 包含 Expected<unique_ptr> 成功，Expected<error> 失败
+    static boost::asio::awaitable<
+        DAS::Utils::Expected<std::unique_ptr<UnixAsyncIpcTransport>>>
+    CreateAsync(
         boost::asio::io_context& DAS_LIFETIMEBOUND io_context,
-        const std::string&       read_endpoint,
-        const std::string&       write_endpoint,
-        bool                     is_server,
-        size_t                   max_message_size = 65536);
+        const std::string&                         read_endpoint,
+        const std::string&                         write_endpoint,
+        bool                                       is_server,
+        size_t                                     max_message_size = 65536);
 
-    /**
-     * @brief 析构函数
-     * @note 自动调用 Close()
-     */
+    /// 工厂函数：创建未初始化的 UnixAsyncIpcTransport 实例
+    /// @param io_context boost::asio io_context 引用（生命周期绑定到返回值）
+    /// @return unique_ptr 需要后续调用 InitializeAsync() 完成初始化
+    /// @note 用于需要延迟初始化的场景（如 Host 进程在 Run() 时异步连接）
+    static std::unique_ptr<UnixAsyncIpcTransport> CreateUninitialized(
+        boost::asio::io_context& DAS_LIFETIMEBOUND io_context);
+
     ~UnixAsyncIpcTransport();
 
-    // === 禁止拷贝 ===
     UnixAsyncIpcTransport(const UnixAsyncIpcTransport&) = delete;
     UnixAsyncIpcTransport& operator=(const UnixAsyncIpcTransport&) = delete;
 
-    // === 允许移动 ===
     UnixAsyncIpcTransport(UnixAsyncIpcTransport&&) noexcept = default;
     UnixAsyncIpcTransport& operator=(UnixAsyncIpcTransport&&) noexcept =
         default;
 
-    // === 生命周期管理（同步） ===
-
-    /**
-     * @brief 初始化传输层（服务端）
-     * @deprecated 使用 Create() 工厂函数代替
-     * @param endpoint_name 端点名称（Unix Domain Socket 文件路径）
-     * @param is_server 是否为服务端模式
-     * @param max_message_size 最大消息大小（默认 64KB）
-     * @return DAS_S_OK 成功
-     * @return DAS_E_IPC_MESSAGE_QUEUE_FAILED 创建失败
-     */
-
-    DasResult Connect(
-        const std::string& read_endpoint,
-        const std::string& write_endpoint);
-
-    // === 查询接口 ===
-
-    /**
-     * @brief 检查是否已连接
-     */
-    [[nodiscard]]
-    bool IsConnected() const;
-
-    /**
-     * @brief 获取端点名称
-     */
-    [[nodiscard]]
-    std::string GetEndpointName() const;
-
-    /**
-     * @brief 设置共享内存池（用于大消息传输）
-     * @param pool 共享内存池指针（调用者负责生命周期管理）
-     * @note 必须在 Initialize() 或 Connect() 之前调用
-     */
-    void SetSharedMemoryPool(SharedMemoryPool* pool);
-
-    /// 获取 io_context 引用
-    /// @return io_context 引用，生命周期绑定到 this
-    boost::asio::io_context& GetIoContext() DAS_LIFETIMEBOUND { return impl_->io_context; }
-
-    // === 协程接口（用于事件驱动模式） ===
-
-    /**
-     * @brief 异步接收协程
-     * @return boost::asio::awaitable<std::variant<DasResult, AsyncIpcMessage>>
-     */
-    boost::asio::awaitable<std::variant<DasResult, AsyncIpcMessage>>
-    ReceiveCoroutine();
-
-    /**
-     * @brief 异步发送协程
-     * @return boost::asio::awaitable<DasResult>
-     */
-    boost::asio::awaitable<DasResult> SendCoroutine(
-        const ValidatedIPCMessageHeader& header,
-        const uint8_t*                   body,
-        size_t                           body_size);
-
-private:
-    // 私有构造函数（由 Create() 工厂函数调用）
-    explicit UnixAsyncIpcTransport(boost::asio::io_context& DAS_LIFETIMEBOUND io_context);
-
-    // 私有清理函数 - 只能由析构函数调用
-    void Uninitialize();
-
-    // 私有初始化函数 - 只能由 Create() 工厂函数调用
-    [[deprecated("Use Create() instead")]]
+    /// 初始化（同步版本）
+    /// @deprecated 使用 CreateAsync() 或 InitializeAsync() 代替
+    [[deprecated("Use CreateAsync() instead")]]
     DasResult Initialize(
         const std::string& read_endpoint,
         const std::string& write_endpoint,
         bool               is_server,
         size_t             max_message_size = 65536);
 
-    /**
-     * @brief 创建 Unix Domain Socket（服务端）
-     * @param socket_path Socket 文件路径
-     * @return DAS_S_OK 成功
-     * @return DAS_E_IPC_MESSAGE_QUEUE_FAILED 创建失败
-     */
-    DasResult CreateUnixSocket(const std::string& socket_path);
+    /// 异步初始化（协程版本）
+    boost::asio::awaitable<DasResult> InitializeAsync(
+        const std::string& read_endpoint,
+        const std::string& write_endpoint,
+        bool               is_server,
+        size_t             max_message_size = 65536);
 
-    /**
-     * @brief 连接到 Unix Domain Socket（客户端）
-     * @param socket_path Socket 文件路径
-     * @return DAS_S_OK 成功
-     * @return DAS_E_IPC_MESSAGE_QUEUE_FAILED 连接失败
-     */
-    DasResult ConnectToUnixSocket(const std::string& socket_path);
+    DasResult Connect(
+        const std::string& read_endpoint,
+        const std::string& write_endpoint);
+
+    [[nodiscard]]
+    bool IsConnected() const;
+
+    [[nodiscard]]
+    std::string GetEndpointName() const;
+
+    void SetSharedMemoryPool(SharedMemoryPool* pool);
+
+    /// 获取 io_context 引用
+    /// @return io_context 引用，生命周期绑定到 this
+    boost::asio::io_context& GetIoContext() DAS_LIFETIMEBOUND
+    {
+        return io_context_;
+    }
+
+    /// 异步接收协程
+    [[nodiscard]]
+    boost::asio::awaitable<std::variant<DasResult, AsyncIpcMessage>>
+    ReceiveCoroutine();
+
+    /// 异步发送协程
+    [[nodiscard]]
+    boost::asio::awaitable<DasResult> SendCoroutine(
+        const ValidatedIPCMessageHeader& header,
+        const uint8_t*                   body,
+        size_t                           body_size);
 
 private:
-    struct Impl;
-    std::unique_ptr<Impl> impl_;
+    // 私有构造函数（由工厂函数调用）
+    explicit UnixAsyncIpcTransport(
+        boost::asio::io_context& DAS_LIFETIMEBOUND io_context);
+
+    // 私有清理函数 - 只能由析构函数调用
+    void Uninitialize();
+
+    // 异步方法
+    boost::asio::awaitable<DasResult> CreateUnixSocketAsync(
+        const std::string& socket_path);
+    boost::asio::awaitable<DasResult> ConnectToUnixSocketAsync(
+        const std::string& socket_path);
+
+    // 服务端 acceptor（仅服务端使用）
+    std::unique_ptr<boost::asio::local::stream_protocol::acceptor> acceptor_;
+
+    boost::asio::io_context&                    io_context_;
+    boost::asio::local::stream_protocol::socket socket_;
+
+    std::string endpoint_name_;
+    bool        is_server_ = false;
+    bool        is_connected_ = false;
+    size_t      max_message_size_ = 65536;
+
+    SharedMemoryPool* shared_memory_pool_ = nullptr;
+
+    std::vector<uint8_t> header_buffer_;
+    std::vector<uint8_t> body_buffer_;
 };
 
 DAS_CORE_IPC_NS_END

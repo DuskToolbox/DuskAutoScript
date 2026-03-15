@@ -48,6 +48,14 @@ DasResult RemoteObjectRegistry::RegisterObject(
         return DAS_E_INVALID_ARGUMENT;
     }
 
+    // Check if name already exists
+    auto name_it = objects_by_name_.find(name);
+    if (name_it != objects_by_name_.end())
+    {
+        DAS_CORE_LOG_ERROR("Object name already exists: {}", name);
+        return DAS_E_DUPLICATE_ELEMENT;
+    }
+
     // Encode ObjectId for lookup
     uint64_t encoded_id = EncodeObjectIdForLookup(object_id);
 
