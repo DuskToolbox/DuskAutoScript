@@ -18,6 +18,19 @@ DAS_CORE_IPC_NS_BEGIN
 ///       业务线程发送通过 IpcRunLoop::PostSend(header, body) 投递到 IO 线程
 struct InboundMessage
 {
+    /// 默认构造函数
+    InboundMessage() = default;
+
+    /// 移动构造函数
+    InboundMessage(InboundMessage&&) = default;
+
+    /// 移动赋值运算符
+    InboundMessage& operator=(InboundMessage&&) = default;
+
+    /// 删除拷贝构造和赋值
+    InboundMessage(const InboundMessage&) = delete;
+    InboundMessage& operator=(const InboundMessage&) = delete;
+
     ValidatedIPCMessageHeader header;
     std::vector<uint8_t>      body;
 };
