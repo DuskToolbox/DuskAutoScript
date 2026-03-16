@@ -8,11 +8,11 @@
  * - 禁止直接使用 MainProcessServer（已删除）
  * - 必须通过 IIpcContext 进行操作
  * - 必须使用 async_op() 和 wait() 进行异步操作
- * - HostLauncher 使用 RegisterHostLauncher() 注册（新模式）
+ * - HostLauncher::Start() 自动注册到 ConnectionManager（新模式）
  *
  * 更新日志（08-04)：
  * - 移除对 MainProcessServer 的依赖
- * - 使用 IIpcContext::RegisterHostLauncher() 替代旧的 Transport 注册模式
+ * - HostLauncher::Start() 成功后自动注册，无需手动调用
  * - Transport 永不转移，保留在 HostLauncher 内部
  *
  * 更新日志(Phase 8):
@@ -119,11 +119,11 @@ protected:
     DAS::Core::IPC::MainProcess::IIpcContext& GetContext() { return *ctx_; }
 
     /**
-     * @brief 启动 Host 进程并注册 HostLauncher
+     * @brief 启动 Host 进程（自动注册到 ConnectionManager）
      *
-     * 使用新的 RegisterHostLauncher() 模式：
+     * Start() 成功后自动通过 ipc_context_ 注册到 ConnectionManager：
      * - Transport 保留在 HostLauncher 内部
-     * - RegisterHostLauncher 自动启动接收循环
+     * - 无需手动调用 RegisterHostLauncher
      */
     DasResult StartHostAndSetupRunLoop()
     {
@@ -139,25 +139,12 @@ protected:
             return result;
         }
 
-        // 注册 HostLauncher 到 IPC 上下文
-        // Transport 保留在 HostLauncher 内部，由 RegisterHostLauncher 启动接收
-        // 注意：RegisterHostLauncher 接收 DasPtr 值参数，会复制一份存储
-        // 不使用 std::move，保持 launcher_ 有效供后续使用
-        result = ctx_->RegisterHostLauncher(launcher_);
-        if (DAS::IsFailed(result))
-        {
-            DAS_LOG_ERROR("Failed to register HostLauncher to IPC context");
-            if (launcher_)
-            {
-                launcher_->Stop();
-            }
-            return result;
-        }
-
-        std::string msg = DAS_FMT_NS::format(
-            "HostLauncher registered, session_id={}",
-            session_id);
-        DAS_LOG_INFO(msg.c_str());
+        // Auto-registration happens inside Start() via ipc_context_ callback
+        DAS_LOG_INFO(
+            DAS_FMT_NS::format(
+                "HostLauncher started and auto-registered, session_id={}",
+                session_id)
+                .c_str());
 
         return DAS_S_OK;
     }

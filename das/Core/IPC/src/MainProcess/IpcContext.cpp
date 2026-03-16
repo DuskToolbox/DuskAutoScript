@@ -165,6 +165,10 @@ namespace Core
                 {
                     auto* launcher = new HostLauncher(GetIoContext());
                     launcher->SetIpcContext(this);
+
+                    // Store DasPtr internally for auto-registration after Start
+                    launcher_ = DAS::DasPtr<IHostLauncher>(launcher);
+
                     *pp_out_launcher = launcher;
                     return DAS_S_OK;
                 }
@@ -302,13 +306,12 @@ namespace Core
                 }
             }
 
-            DasResult IpcContext::RegisterHostLauncher(
-                DasPtr<IHostLauncher> launcher)
+            DasResult IpcContext::InternalRegisterHostLauncher()
             {
                 if (!runloop_)
                 {
                     DAS_CORE_LOG_ERROR(
-                        "RegisterHostLauncher: IpcRunLoop not initialized");
+                        "InternalRegisterHostLauncher: IpcRunLoop not initialized");
                     return DAS_E_IPC_NOT_INITIALIZED;
                 }
 
@@ -316,19 +319,19 @@ namespace Core
                 if (!conn_mgr)
                 {
                     DAS_CORE_LOG_ERROR(
-                        "RegisterHostLauncher: ConnectionManager not initialized");
+                        "InternalRegisterHostLauncher: ConnectionManager not initialized");
                     return DAS_E_IPC_NOT_INITIALIZED;
                 }
 
-                if (!launcher)
+                if (!launcher_)
                 {
                     DAS_CORE_LOG_ERROR(
-                        "RegisterHostLauncher: launcher is null");
+                        "InternalRegisterHostLauncher: no launcher stored");
                     return DAS_E_INVALID_ARGUMENT;
                 }
 
-                // 委托给 IpcRunLoop::RegisterHostLauncher，它会启动接收循环
-                return runloop_->RegisterHostLauncher(std::move(launcher));
+                // Use internally stored DasPtr for registration
+                return runloop_->RegisterHostLauncher(launcher_);
             }
 
             std::vector<uint16_t> IpcContext::GetConnectedSessions()

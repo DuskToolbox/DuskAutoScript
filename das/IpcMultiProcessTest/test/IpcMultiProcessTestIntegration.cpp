@@ -254,7 +254,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_CallComponent)
  * @brief 测试验证对象返回正确的 session_id
  *
  * 验证从不同 Host 进程加载的插件返回正确的 session_id。
- * 使用 RegisterHostLauncher 模式，Transport 保留在 HostLauncher 内部。
+ * HostLauncher::Start() 自动注册到 ConnectionManager。
  */
 TEST_F(IpcMultiProcessTestIntegration, CrossProcess_VerifySessionId)
 {
@@ -277,10 +277,6 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_VerifySessionId)
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_GT(session_a, static_cast<uint16_t>(0));
 
-    // 注册 Host A 到 IPC 上下文
-    result = ctx_->RegisterHostLauncher(host_a);
-    ASSERT_EQ(result, DAS_S_OK);
-
     // 2. 创建并启动第二个 Host 进程
     DAS::Core::IPC::IHostLauncher* raw_host_b = nullptr;
     result = ctx_->CreateHostLauncher(&raw_host_b);
@@ -294,10 +290,6 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_VerifySessionId)
         IpcTestConfig::GetHostStartTimeoutMs());
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_GT(session_b, static_cast<uint16_t>(0));
-
-    // 注册 Host B 到 IPC 上下文
-    result = ctx_->RegisterHostLauncher(host_b);
-    ASSERT_EQ(result, DAS_S_OK);
 
     // 3. 验证两个 session_id 不同
     EXPECT_NE(session_a, session_b);
@@ -365,7 +357,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_VerifySessionId)
  * 完整的跨进程调用链：
  *   Host A → 主进程（转发）→ Host B
  *
- * 使用 RegisterHostLauncher 模式，Transport 保留在 HostLauncher 内部。
+ * HostLauncher::Start() 自动注册到 ConnectionManager。
  */
 TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
 {
@@ -388,10 +380,6 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_GT(session_b, static_cast<uint16_t>(0));
 
-    // 注册 Host B 到 IPC 上下文
-    result = ctx_->RegisterHostLauncher(host_b);
-    ASSERT_EQ(result, DAS_S_OK);
-
     // 2. 创建并启动 Host A（调用方进程）
     DAS::Core::IPC::IHostLauncher* raw_host_a = nullptr;
     result = ctx_->CreateHostLauncher(&raw_host_a);
@@ -406,10 +394,6 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_GT(session_a, static_cast<uint16_t>(0));
     EXPECT_NE(session_a, session_b);
-
-    // 注册 Host A 到 IPC 上下文
-    result = ctx_->RegisterHostLauncher(host_a);
-    ASSERT_EQ(result, DAS_S_OK);
 
     // 3. 获取插件 JSON 路径
     std::string plugin1_path, plugin2_path;

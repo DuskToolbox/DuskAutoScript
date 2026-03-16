@@ -12,6 +12,7 @@
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
+#include <das/Core/IPC/MainProcess/IpcContext.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
 #include <das/Utils/StringUtils.h>
@@ -145,6 +146,25 @@ DasResult HostLauncher::Start(
     }
 
     impl_->session_id = out_session_id;
+
+    // Auto-register to ConnectionManager via ipc_context_ callback
+    if (ipc_context_)
+    {
+        auto* ctx = dynamic_cast<MainProcess::IpcContext*>(ipc_context_);
+        if (ctx)
+        {
+            DasResult reg_result = ctx->InternalRegisterHostLauncher();
+            if (reg_result != DAS_S_OK)
+            {
+                std::string err_msg = DAS_FMT_NS::format(
+                    "Auto-registration failed after Start: error={}",
+                    reg_result);
+                DAS_CORE_LOG_ERROR(err_msg.c_str());
+                Stop();
+                return reg_result;
+            }
+        }
+    }
 
     std::string msg = DAS_FMT_NS::format(
         "Host process started successfully: PID={}, session_id={}",

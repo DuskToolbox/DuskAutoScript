@@ -11,6 +11,7 @@
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/DasApi.h>
+#include <das/DasPtr.hpp>
 #include <das/IDasAsyncLoadPluginOperation.h>
 #include <memory>
 
@@ -74,13 +75,14 @@ namespace Core
 
                 boost::asio::io_context& GetIoContext() override;
 
-                DasResult RegisterHostLauncher(
-                    DAS::DasPtr<IHostLauncher> launcher) override;
-
                 std::vector<uint16_t> GetConnectedSessions() override;
 
                 uint16_t AllocateSessionId() override;
                 void     ReleaseSessionId(uint16_t session_id) override;
+
+                /// Internal registration method (called by HostLauncher after
+                /// Start succeeds)
+                DasResult InternalRegisterHostLauncher();
 
             private:
                 void Uninitialize();
@@ -98,6 +100,10 @@ namespace Core
                 std::shared_ptr<BusinessThread> business_thread_;
 
                 bool is_initialized_ = false;
+
+                /// Internal holder for created launcher (DasPtr for refcount
+                /// management)
+                DAS::DasPtr<IHostLauncher> launcher_;
 
                 std::atomic<uint16_t> next_session_id_{2};
                 mutable std::mutex    allocated_ids_mutex_;

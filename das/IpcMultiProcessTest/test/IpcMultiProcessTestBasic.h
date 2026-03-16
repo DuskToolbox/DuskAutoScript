@@ -6,7 +6,7 @@
  *
  * 规则：
  * - 使用 IIpcContext 进行操作
- * - 使用 RegisterHostLauncher 注册 HostLauncher
+ * - HostLauncher::Start() 自动注册到 ConnectionManager
  * - Transport 保留在 HostLauncher 内部
  *
  * 更新日志（08-04）：
@@ -99,9 +99,6 @@ protected:
             return result;
         }
 
-        // 注册 HostLauncher 到 IPC 上下文
-        result = ctx_->RegisterHostLauncher(
-            DAS::DasPtr<DAS::Core::IPC::IHostLauncher>(launcher_.get()));
         return result;
     }
 
