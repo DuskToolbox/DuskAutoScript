@@ -20,7 +20,31 @@ public:
     {
         if (object_id_.session_id != 0 || object_id_.local_id != 0)
         {
-            GetObjectManager().Release(EncodeObjectId(object_id_));
+            // 本地释放（引用计数）
+            GetObjectManager().Release(object_id_);
+
+            // 发送 RELEASE_OBJECT fire-and-forget 消息到远程
+            // 构建控制平面 EVENT 消息
+            std::vector<uint8_t> release_body;
+            // 序列化 ObjectId 到 body
+            release_body.insert(
+                release_body.end(),
+                reinterpret_cast<const uint8_t*>(&object_id_),
+                reinterpret_cast<const uint8_t*>(&object_id_)
+                    + sizeof(object_id_));
+
+            auto release_header =
+                IPCMessageHeaderBuilder()
+                    .SetMessageType(MessageType::EVENT)
+                    .SetHeaderFlags(HeaderFlags::CONTROL_PLANE)
+                    .SetInterfaceId(
+                        static_cast<uint32_t>(IpcCommandType::REMOTE_RELEASE))
+                    .SetSourceSessionId(GetSourceSessionId())
+                    .SetTargetSessionId(object_id_.session_id)
+                    .Build();
+
+            // PostSend 是 fire-and-forget，不检查结果
+            GetRunLoop()->PostSend(release_header, std::move(release_body));
         }
     }
 

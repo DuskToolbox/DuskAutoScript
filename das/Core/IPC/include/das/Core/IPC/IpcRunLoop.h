@@ -177,6 +177,21 @@ public:
         std::unique_ptr<IMessageHandler> handler);
 
     /**
+     * @brief 非持有注册消息处理器（Stub 全局单例用）
+     *
+     * 调用方保证 handler 生命周期大于 IpcRunLoop。
+     * IpcRunLoop 不持有 handler，不管理其生命周期。
+     *
+     * @param header_flags 消息头标志
+     * @param interface_id 接口 ID
+     * @param handler 处理器指针（非持有）
+     */
+    void RegisterHandler(
+        uint8_t          header_flags,
+        uint32_t         interface_id,
+        IMessageHandler* handler);
+
+    /**
      * @brief 按 header_flags + interface_id 查找处理器
      * @param header_flags 消息头标志
      * @param interface_id 接口 ID
@@ -314,6 +329,9 @@ public:
     DasResult RegisterHostLauncher(DasPtr<IHostLauncher> launcher);
 
     friend class ::Das::Core::IPC::Host::HandshakeHandler;
+
+    // StubFactory 用于非持有注册 stub 处理器
+    friend class StubFactory;
 
     // AwaitResponseOperation 需要访问内部方法
     template <class Receiver>

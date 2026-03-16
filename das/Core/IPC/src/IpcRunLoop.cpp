@@ -145,6 +145,21 @@ void IpcRunLoop::RegisterHandler(
         DasPtr<IMessageHandler>(handler.release());
 }
 
+void IpcRunLoop::RegisterHandler(
+    uint8_t          header_flags,
+    uint32_t         interface_id,
+    IMessageHandler* handler)
+{
+    if (!handler)
+    {
+        return;
+    }
+    // 非持有注册：直接存储原始指针，不转移所有权
+    // 使用 new DasPtr 包装，但 handler 生命周期由调用方管理
+    handlers_by_flags_[header_flags][interface_id] =
+        DasPtr<IMessageHandler>(handler);
+}
+
 IMessageHandler* IpcRunLoop::GetHandler(
     uint8_t  header_flags,
     uint32_t interface_id) const

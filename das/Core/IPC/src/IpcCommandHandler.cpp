@@ -38,6 +38,32 @@ DasResult IpcCommandHandler::HandleMessage(
     IpcCommandResponse       response;
     std::span<const uint8_t> payload(body);
 
+    // 处理 REMOTE_RELEASE EVENT（fire-and-forget）
+    // EVENT 类型不需要响应，直接在 HandleMessage 中处理
+    IpcCommandType cmd_type = ExtractCommandType(header);
+    if (cmd_type == IpcCommandType::REMOTE_RELEASE
+        && header.GetMessageType() == MessageType::EVENT)
+    {
+        // 解析 ObjectId 并调用 object_manager->Release
+        if (payload.size() >= sizeof(ObjectId))
+        {
+            size_t   offset = 0;
+            ObjectId object_id;
+            if (DeserializeValue(payload, offset, object_id))
+            {
+                object_manager.Release(object_id);
+                std::string log_msg = DAS_FMT_NS::format(
+                    "[IpcCommandHandler] REMOTE_RELEASE: released object_id "
+                    "session={}, local={}",
+                    object_id.session_id,
+                    object_id.local_id);
+                DAS_LOG_INFO(log_msg.c_str());
+            }
+        }
+        // EVENT 不需要响应，直接返回
+        return DAS_S_OK;
+    }
+
     DasResult result = HandleCommand(header, payload, response);
 
     // 构建响应 header（使用 Builder）
@@ -602,8 +628,10 @@ DasResult IpcCommandHandler::OnRemoteRelease(
         return DAS_E_IPC_DESERIALIZATION_FAILED;
     }
 
-    // 与 OnRemoteAddRef 相同，需要通过全局访问获取 DistributedObjectManager
-    response.error_code = DAS_E_IPC_COMMAND_NOT_REGISTERED;
-    return DAS_E_IPC_COMMAND_NOT_REGISTERED;
+    // REMOTE_RELEASE 是 fire-and-forget 的 EVENT，
+    // 不需要发送响应（HandleMessage 中不会为 EVENT 调用 SendResponse）
+    // 但为了完整性，我们还是返回成功
+    response.error_code = DAS_S_OK;
+    return DAS_S_OK;
 }
 DAS_CORE_IPC_NS_END
