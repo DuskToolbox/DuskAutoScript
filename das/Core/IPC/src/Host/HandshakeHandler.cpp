@@ -224,20 +224,9 @@ namespace Core
                             .Build();
 
                     // 使用协程直接发送响应
-                    DefaultAsyncIpcTransport* transport = sender.GetTransport();
-                    if (transport)
-                    {
-                        result = co_await transport->SendCoroutine(
-                            validated_response_header,
-                            response_body.data(),
-                            response_body.size());
-                    }
-                    else
-                    {
-                        DAS_LOG_ERROR(
-                            "HandshakeHandler: transport is null, cannot send response");
-                        result = DAS_E_IPC_NOT_INITIALIZED;
-                    }
+                    result = co_await sender.SendResponseAsync(
+                        validated_response_header,
+                        response_body);
                 }
 
                 co_return result;
