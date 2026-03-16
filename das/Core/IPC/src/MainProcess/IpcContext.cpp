@@ -55,11 +55,11 @@ namespace Core
                 coordinator.SetLocalSessionId(1);
 
                 // 4. Create BusinessThread
-                business_thread_ = std::make_shared<BusinessThread>(
-                    inbound_queue_,
-                    *runloop_);
+                business_thread_ =
+                    std::make_shared<BusinessThread>(inbound_queue_, *runloop_);
 
-                // 5. DistributedObjectManager is now a value member, no need to create
+                // 5. DistributedObjectManager is now a value member, no need to
+                // create
 
                 // 6. Initialize ProxyFactory with runloop_
                 auto& proxy_factory = ProxyFactory::GetInstance();

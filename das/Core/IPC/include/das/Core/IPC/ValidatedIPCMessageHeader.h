@@ -45,9 +45,9 @@ public:
             if (out_error)
             {
                 *out_error = {
-                    HeaderValidationError::BODY_SIZE_TOO_SMALL,
-                    "Data too small",
-                    ValidationCallSite{}};
+                    .error = HeaderValidationError::BODY_SIZE_TOO_SMALL,
+                    .message = "Data too small",
+                    .call_site = ValidationCallSite{}};
             }
             return std::nullopt;
         }
@@ -198,8 +198,8 @@ public:
         return GetErrorCode() == 0;
     }
 
-    // 默认构造函数 - 用于 IpcMessageQueue::Push 需要默认构造 InboundMessage 的场景
-    // 此时 header 内容未定义，由调用者确保在设置有效 header 前不使用
+    // 默认构造函数 - 用于 IpcMessageQueue::Push 需要默认构造 InboundMessage
+    // 的场景 此时 header 内容未定义，由调用者确保在设置有效 header 前不使用
     ValidatedIPCMessageHeader() noexcept = default;
 
 private:

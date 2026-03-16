@@ -44,7 +44,7 @@ namespace Core
             {
             public:
                 IpcContext();
-                ~IpcContext(); // 自动清理
+                ~IpcContext() override; // 自动清理
 
                 IpcContext(const IpcContext&) = delete;
                 IpcContext& operator=(const IpcContext&) = delete;

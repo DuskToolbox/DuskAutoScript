@@ -8,13 +8,11 @@
 #include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/IMessageHandler.h>
 #include <das/Core/IPC/IpcErrors.h>
-#include <das/Core/IPC/IpcMessageQueue.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
+#include <das/Core/IPC/IpcMessageQueue.h>
 #include <das/Core/IPC/IpcResponseSender.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <mutex>
-#include <queue>
-#include <thread>
 #include <unordered_map>
 #include <utility>
 
@@ -287,7 +285,9 @@ std::pair<DasResult, CallKey> IpcRunLoop::PrepareSendRequestWithTransport(
 {
     if (!transport)
     {
-        return {DAS_E_INVALID_ARGUMENT, CallKey{0, 0}};
+        return {
+            DAS_E_INVALID_ARGUMENT,
+            CallKey{.source_session_id = 0, .call_id = 0}};
     }
 
     uint16_t call_id = next_call_id_.fetch_add(1);
@@ -295,7 +295,9 @@ std::pair<DasResult, CallKey> IpcRunLoop::PrepareSendRequestWithTransport(
     const IPCMessageHeader& raw = request_header.Raw();
     // V3: pending_call key 使用 target_session_id（对方进程的 session_id），
     // 这样响应返回时可以正确匹配
-    CallKey call_key{raw.target_session_id, call_id};
+    CallKey call_key{
+        .source_session_id = raw.target_session_id,
+        .call_id = call_id};
 
     // V3: method_id 和 ObjectId 在 body 中携带，header 只保留 interface_id 和
     // session 路由信息
@@ -311,10 +313,10 @@ std::pair<DasResult, CallKey> IpcRunLoop::PrepareSendRequestWithTransport(
     {
         std::unique_lock<std::mutex> lock(pending_mutex_);
         pending_calls_[call_key] = PendingCallState{
-            call_key,
-            {},
-            std::chrono::steady_clock::time_point::max(),
-            nullptr};
+            .call_key = call_key,
+            .response_buffer = {},
+            .deadline = std::chrono::steady_clock::time_point::max(),
+            .on_complete = nullptr};
     }
 
     // 使用 co_spawn + use_future 调用协程发送
@@ -331,7 +333,7 @@ std::pair<DasResult, CallKey> IpcRunLoop::PrepareSendRequestWithTransport(
         {
             std::unique_lock<std::mutex> lock(pending_mutex_);
             pending_calls_.erase(call_key);
-            return {send_result, CallKey{0, 0}};
+            return {send_result, CallKey{.source_session_id = 0, .call_id = 0}};
         }
 
         return {send_result, call_key};
@@ -343,14 +345,18 @@ std::pair<DasResult, CallKey> IpcRunLoop::PrepareSendRequestWithTransport(
             ToString(e.what()));
         std::unique_lock<std::mutex> lock(pending_mutex_);
         pending_calls_.erase(call_key);
-        return {DAS_E_IPC_CONNECTION_LOST, CallKey{0, 0}};
+        return {
+            DAS_E_IPC_CONNECTION_LOST,
+            CallKey{.source_session_id = 0, .call_id = 0}};
     }
     catch (const std::exception& e)
     {
         DAS_CORE_LOG_ERROR("Send failed: {}", ToString(e.what()));
         std::unique_lock<std::mutex> lock(pending_mutex_);
         pending_calls_.erase(call_key);
-        return {DAS_E_IPC_CONNECTION_LOST, CallKey{0, 0}};
+        return {
+            DAS_E_IPC_CONNECTION_LOST,
+            CallKey{.source_session_id = 0, .call_id = 0}};
     }
 }
 
@@ -520,8 +526,9 @@ DasResult IpcRunLoop::PostSend(
 
             boost::asio::co_spawn(
                 *io_context_,
-                [transport, header, body = std::move(body)]()
-                    -> boost::asio::awaitable<void>
+                [transport,
+                 header,
+                 body = std::move(body)]() -> boost::asio::awaitable<void>
                 {
                     co_await transport->SendCoroutine(
                         header,
@@ -749,7 +756,8 @@ void IpcRunLoop::StartAsyncReceiveForTransport(
                         static_cast<int>(header.Raw().header_flags));
 
                     // IO 线程消息分流：按 header_flags 决定处理方式
-                    if ((header.GetHeaderFlags() & HeaderFlags::CONTROL_PLANE) != 0)
+                    if ((header.GetHeaderFlags() & HeaderFlags::CONTROL_PLANE)
+                        != 0)
                     {
                         // 控制平面消息：在 IO 线程直接处理
                         if (header.GetMessageType() == MessageType::RESPONSE)
@@ -791,7 +799,8 @@ void IpcRunLoop::StartAsyncReceiveForTransport(
                             InboundMessage msg;
                             msg.header = header;
                             msg.body = std::move(body);
-                            auto push_result = inbound_queue_->Push(std::move(msg));
+                            auto push_result =
+                                inbound_queue_->Push(std::move(msg));
                             if (push_result != DAS_S_OK)
                             {
                                 DAS_CORE_LOG_ERROR(

@@ -230,7 +230,7 @@ public:
 
     DasResult HandleMessage(
         const ValidatedIPCMessageHeader& header,
-        const std::vector<uint8_t>&     body,
+        const std::vector<uint8_t>&      body,
         IpcResponseSender&               sender) override
     {
         // 简单返回成功
@@ -250,10 +250,14 @@ TEST_F(IpcRunLoopTest, RegisterHandler_Succeeds)
 
     // 注册处理器（使用 header_flags=NONE, interface_id=1）
     auto handler = std::make_unique<TestMessageHandler>();
-    runloop_->RegisterHandler(DAS::Core::IPC::HeaderFlags::NONE, 1, std::move(handler));
+    runloop_->RegisterHandler(
+        DAS::Core::IPC::HeaderFlags::NONE,
+        1,
+        std::move(handler));
 
     // 验证可以通过 GetHandler 获取
-    IMessageHandler* retrieved = runloop_->GetHandler(DAS::Core::IPC::HeaderFlags::NONE, 1);
+    IMessageHandler* retrieved =
+        runloop_->GetHandler(DAS::Core::IPC::HeaderFlags::NONE, 1);
     EXPECT_NE(retrieved, nullptr);
 }
 
@@ -397,7 +401,9 @@ public:
     {
         auto r = --ref_;
         if (r == 0)
+        {
             delete this;
+        }
         return r;
     }
 
@@ -441,7 +447,9 @@ public:
     {
         auto r = --ref_;
         if (r == 0)
+        {
             delete this;
+        }
         return r;
     }
 
