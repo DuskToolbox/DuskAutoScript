@@ -11,7 +11,6 @@
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/IpcTransport.h>
-#include <das/Core/IPC/MessageHandlerRef.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
@@ -326,13 +325,6 @@ namespace Core
                         HandshakeInterfaceId::HANDSHAKE_IFACE_GOODBYE),
                     handshake_handler_.Get());
 
-                // CommandHandler 处理业务消息（注册为 NONE 标志）
-                run_loop_->RegisterHandler(
-                    HeaderFlags::NONE,
-                    0, // CommandHandler 使用 interface_id 0
-                    std::make_unique<MessageHandlerRef>(
-                        command_handler_.Get()));
-
                 DAS_LOG_INFO(msg.c_str());
 
                 return DAS_S_OK;
@@ -372,8 +364,7 @@ namespace Core
                 // 5. 关闭 IpcRunLoop（RAII：unique_ptr 析构自动调用
                 // Uninitialize）
                 //    必须在关闭 HandshakeHandler 之前，因为 handlers_by_flags_
-                //    中 存储的 DasPtr 会调用 MessageHandlerRef::Release()，
-                //    进而调用 HandshakeHandler::Release()
+                //    中存储的 DasPtr 会调用 handler->Release()
                 if (run_loop_)
                 {
                     run_loop_->RequestStop();
@@ -472,6 +463,11 @@ namespace Core
                 command_handler_->RegisterHandler(
                     static_cast<IpcCommandType>(cmd_type),
                     handler);
+                // IpcContext 同时拥有 run_loop_ 和 command_handler_，由它注册
+                run_loop_->RegisterHandler(
+                    HeaderFlags::BUSINESS_CONTROL,
+                    cmd_type,
+                    command_handler_.Get());
             }
 
             DasResult IpcContext::Run()
