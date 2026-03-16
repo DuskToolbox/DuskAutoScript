@@ -233,9 +233,10 @@ class IpcStubGenerator:
 // IPC Stub for {interface_name}
 //
 
-#include <das/Core/IPC/IPCMessageHeader.h>
 #include <das/Core/IPC/IStubBase.h>
 #include <das/Core/IPC/MemorySerializer.h>
+#include <das/Core/IPC/ObjectManager.h>
+#include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/Serializer.h>
 #include <algorithm>
 #include <cstdint>
@@ -341,116 +342,87 @@ class IpcStubGenerator:
         return "\n".join(lines)
     
     def _generate_dispatch_method(self, interface: InterfaceDef, namespace_depth: int = 0) -> str:
-        """生成 Dispatch 静态方法（使用 switch case 跳转）"""
+        """生成 DispatchMethod 实例方法（使用 switch case 跳转）"""
         lines = []
         indent = "    " * (namespace_depth + 1)
         inner_indent = "    " * (namespace_depth + 2)
-        
-        lines.append(f"{indent}static DasResult Dispatch(")
+
+        lines.append(f"{indent}DasResult DispatchMethod(")
         lines.append(f"{indent}    uint16_t method_id,")
-        lines.append(f"{indent}    const void* request,")
-        lines.append(f"{indent}    void* response)")
+        lines.append(f"{indent}    void* impl,")
+        lines.append(f"{indent}    const uint8_t* params,")
+        lines.append(f"{indent}    size_t params_size,")
+        lines.append(f"{indent}    std::vector<uint8_t>& out_response,")
+        lines.append(f"{indent}    DistributedObjectManager& object_manager) override")
         lines.append(f"{indent}{{")
+        lines.append(f"{inner_indent}auto* target = static_cast<{interface.name}*>(impl);")
+        lines.append(f"{inner_indent}if (!target) {{ return DAS_E_POINTER; }}")
         lines.append(f"{inner_indent}switch (method_id)")
         lines.append(f"{inner_indent}{{")
-        
+
         for method in interface.methods:
             lines.append(f"{inner_indent}case METHOD_{method.name.upper()}:")
-            lines.append(f"{inner_indent}    return Handle{method.name}(request, response);")
-        
+            lines.append(f"{inner_indent}    return Handle{method.name}(target, params, params_size, out_response, object_manager);")
+
         lines.append(f"{inner_indent}default:")
         lines.append(f"{inner_indent}    return DAS_E_IPC_UNKNOWN_METHOD;")
         lines.append(f"{inner_indent}}}")
         lines.append(f"{indent}}}")
-        
+
         return "\n".join(lines)
     
     def _generate_handle_method_declaration(self, interface: InterfaceDef, method: MethodDef, namespace_depth: int = 0) -> str:
-        """生成 Handle 方法声明"""
+        """生成 Handle 方法声明（实例方法）"""
         indent = "    " * (namespace_depth + 1)
-        return f"{indent}static DasResult Handle{method.name}(const void* request, void* response);"
+        return f"{indent}DasResult Handle{method.name}({interface.name}* impl, const uint8_t* params, size_t params_size, std::vector<uint8_t>& out_response, DistributedObjectManager& object_manager);"
     
     def _generate_handle_method_definition(self, interface: InterfaceDef, method: MethodDef, method_index: int) -> str:
-        """生成单个方法的 Handle 处理函数定义"""
+        """生成单个方法的 Handle 处理函数定义（实例方法，impl 通过参数传入）"""
         lines = []
         interface_short_name = self._get_interface_short_name(interface.name)
         class_name = f"{interface_short_name}Stub"
-        
+
         ns_parts = []
         if interface.namespace:
             ns_parts = interface.namespace.split("::")
         full_ns = ns_parts + ["IPC", "Stub"]
-        
+
         inner_indent = "    "
-        
+
         full_class_name = "::".join(full_ns + [class_name])
-        lines.append(f"DasResult {full_class_name}::Handle{method.name}(const void* request, void* response)")
+        lines.append(f"DasResult {full_class_name}::Handle{method.name}({interface.name}* impl, const uint8_t* params, size_t params_size, std::vector<uint8_t>& out_response, DistributedObjectManager& object_manager)")
         lines.append(f"{{")
-        
+
         return_type = method.return_type.base_type
         has_return = return_type != 'void'
-        
+
         in_params = [p for p in method.parameters if p.direction != ParamDirection.OUT]
         out_params = [p for p in method.parameters if p.direction in (ParamDirection.OUT, ParamDirection.INOUT)]
-        
+
         has_request_body = bool(in_params)
 
         lines.append(f"{inner_indent}DasResult serial_result = DAS_S_OK;")
         lines.append(f"{inner_indent}(void)serial_result;")
 
         if has_request_body:
-            lines.append(f"{inner_indent}MemorySerializerReader reader(static_cast<const uint8_t*>(request), 4096);")
+            lines.append(f"{inner_indent}MemorySerializerReader reader(params, params_size);")
             lines.append("")
 
-            # V3: 读取 interface_id (4 bytes)
-            lines.append(f"{inner_indent}// V3 Body Header: interface_id")
-            lines.append(f"{inner_indent}uint32_t body_interface_id;")
-            lines.append(f"{inner_indent}serial_result = reader.ReadUInt32(&body_interface_id);")
-            lines.append(f"{inner_indent}if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
-            lines.append(f"{inner_indent}if (body_interface_id != InterfaceId) {{ return DAS_E_IPC_INTERFACE_MISMATCH; }}")
-            lines.append("")
-
-            # V3: 读取 method_id (2 bytes)
-            lines.append(f"{inner_indent}// V3 Body Header: method_id")
-            lines.append(f"{inner_indent}uint16_t body_method_id;")
-            lines.append(f"{inner_indent}serial_result = reader.ReadUInt16(&body_method_id);")
-            lines.append(f"{inner_indent}if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
-            lines.append(f"{inner_indent}if (body_method_id != {method_index}) {{ return DAS_E_IPC_METHOD_MISMATCH; }}")
-            lines.append("")
-
-            # V3: 读取 reserved (2 bytes)
-            lines.append(f"{inner_indent}// V3 Body Header: reserved")
-            lines.append(f"{inner_indent}uint16_t reserved;")
-            lines.append(f"{inner_indent}serial_result = reader.ReadUInt16(&reserved);")
-            lines.append(f"{inner_indent}if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
-            lines.append("")
-
-            # V3: 读取 ObjectId (8 bytes)
-            lines.append(f"{inner_indent}// V3 Body Header: target_object ObjectId")
-            lines.append(f"{inner_indent}ObjectId target_object;")
-            lines.append(f"{inner_indent}serial_result = reader.ReadUInt16(&target_object.session_id);")
-            lines.append(f"{inner_indent}if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
-            lines.append(f"{inner_indent}serial_result = reader.ReadUInt16(&target_object.generation);")
-            lines.append(f"{inner_indent}if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
-            lines.append(f"{inner_indent}serial_result = reader.ReadUInt32(&target_object.local_id);")
-            lines.append(f"{inner_indent}if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
-            lines.append("")
-
-            # 反序列化参数
-            lines.append(f"{inner_indent}// V3 Body: parameters")
+            # 反序列化参数（V3 Body Header 已在 IStubBase::HandleMessage 中解析）
+            lines.append(f"{inner_indent}// Parameters (V3 Body after 16-byte header)")
             for param in in_params:
                 deserialize_code = self._generate_deserialize_param_for_stub(param, inner_indent)
                 for line in deserialize_code:
                     lines.append(f"{line}")
             lines.append("")
-        
+
         for param in out_params:
             cpp_type = self._get_cpp_type(param.type_info)
             lines.append(f"{inner_indent}{cpp_type} {param.name} = {{}};")
-        
+
         lines.append(f"{inner_indent}MemorySerializerWriter writer;")
         lines.append("")
-        
+
         call_params = []
         for param in method.parameters:
             if param.direction in (ParamDirection.OUT, ParamDirection.INOUT):
@@ -460,46 +432,39 @@ class IpcStubGenerator:
                     call_params.append(f"&{param.name}")
             else:
                 call_params.append(f"{param.name}")
-        
+
         params_str = ", ".join(call_params) if call_params else ""
-        
-        lines.append(f"{inner_indent}auto* impl = GetImpl();")
-        lines.append(f"{inner_indent}if (!impl)")
-        lines.append(f"{inner_indent}{{")
-        lines.append(f"{inner_indent}    return DAS_E_POINTER;")
-        lines.append(f"{inner_indent}}}")
-        lines.append("")
-        
+
+        # impl is already validated in DispatchMethod
         if has_return:
             cpp_return_type = self._get_cpp_type(method.return_type)
             lines.append(f"{inner_indent}{cpp_return_type} call_result = impl->{method.name}({params_str});")
         else:
             lines.append(f"{inner_indent}impl->{method.name}({params_str});")
         lines.append("")
-        
+
         lines.append(f"{inner_indent}serial_result = writer.WriteInt32(DAS_S_OK);")
         lines.append(f"{inner_indent}if (DAS::IsFailed(serial_result))")
         lines.append(f"{inner_indent}{{")
         lines.append(f"{inner_indent}    return serial_result;")
         lines.append(f"{inner_indent}}}")
         lines.append("")
-        
+
         if has_return:
             serialize_return_code = self._generate_serialize_return_for_stub(method.return_type, inner_indent)
             for line in serialize_return_code:
                 lines.append(f"{line}")
-        
+
         for param in out_params:
             serialize_code = self._generate_serialize_param_for_stub(param, inner_indent)
             for line in serialize_code:
                 lines.append(f"{line}")
-        
-        lines.append(f"{inner_indent}const std::vector<uint8_t>& buffer = writer.GetBuffer();")
-        lines.append(f"{inner_indent}std::memcpy(response, buffer.data(), buffer.size());")
+
+        lines.append(f"{inner_indent}out_response = writer.GetBuffer();")
         lines.append("")
         lines.append(f"{inner_indent}return DAS_S_OK;")
         lines.append(f"}}")
-        
+
         return "\n".join(lines)
     
     def _generate_deserialize_param_for_stub(self, param: ParameterDef, indent: str) -> List[str]:
@@ -516,11 +481,11 @@ class IpcStubGenerator:
             lines.append(f"{indent}// 反序列化接口指针: {interface_name}*")
             lines.append(f"{indent}uint64_t {param_name}_encoded = reader.ReadUInt64();")
             lines.append(f"{indent}ObjectId {param_name}_id = DecodeObjectId({param_name}_encoded);")
-            lines.append(f"{indent}if (object_manager_->IsLocalObject({param_name}_id))")
+            lines.append(f"{indent}if (object_manager.IsLocalObject({param_name}_id))")
             lines.append(f"{indent}{{")
             lines.append(f"{indent}    // 本地对象：直接查找")
             lines.append(f"{indent}    void* {param_name}_ptr = nullptr;")
-            lines.append(f"{indent}    serial_result = object_manager_->LookupObject({param_name}_encoded, &{param_name}_ptr);")
+            lines.append(f"{indent}    serial_result = object_manager.LookupObject({param_name}_encoded, &{param_name}_ptr);")
             lines.append(f"{indent}    if (DAS::IsFailed(serial_result))")
             lines.append(f"{indent}    {{")
             lines.append(f"{indent}        return serial_result;")
@@ -530,7 +495,8 @@ class IpcStubGenerator:
             lines.append(f"{indent}else")
             lines.append(f"{indent}{{")
             lines.append(f"{indent}    // 远程对象：创建 Proxy")
-            lines.append(f"{indent}    {param_name} = {proxy_name}::Create({param_name}_id, run_loop_, object_manager_.Get());")
+            lines.append(f"{indent}    // 注意：需要通过 IpcRunLoop 获取 business_thread")
+            lines.append(f"{indent}    {param_name} = nullptr;  // TODO: 使用 CreateProxyByInterfaceId 创建远程代理")
             lines.append(f"{indent}}}")
             return lines
 
@@ -608,64 +574,53 @@ class IpcStubGenerator:
         return lines
     
     def _generate_stub_class(self, interface: InterfaceDef, namespace_depth: int = 0) -> str:
-        """为接口生成 Stub 类（静态 Dispatch 方法）"""
+        """为接口生成 Stub 类（继承 IStubBase）"""
         lines = []
         indent = "    " * namespace_depth
         class_indent = "    " * (namespace_depth + 1)
         method_indent = "    " * (namespace_depth + 2)
-        
+
         interface_short_name = self._get_interface_short_name(interface.name)
         class_name = f"{interface_short_name}Stub"
         interface_id = fnv1a_hash_guid(interface.uuid)
-        
+
         lines.append(f"{indent}// ============================================================================")
         lines.append(f"{indent}// {class_name}")
         lines.append(f"{indent}// IPC Stub for {interface.name}")
         lines.append(f"{indent}// Interface UUID: {interface.uuid}")
         lines.append(f"{indent}// ============================================================================")
         lines.append("")
-        
-        lines.append(f"{indent}class {class_name}")
+
+        lines.append(f"{indent}class {class_name} : public IStubBase")
         lines.append(f"{indent}{{")
         lines.append(f"{indent}public:")
-        
+
         lines.append(f"{class_indent}static constexpr uint32_t InterfaceId = 0x{interface_id:08X}u;")
         lines.append("")
-        
+
         lines.append(self._generate_method_constants(interface, namespace_depth))
         lines.append("")
-        
-        num_methods = len(interface.methods)
-        lines.append(f"{class_indent}static constexpr MethodMetadata MethodTable[] = {{")
-        for i, method in enumerate(interface.methods):
-            method_hash = fnv1a_hash(f"{interface.name}::{method.name}")
-            lines.append(f"{method_indent}{{ /* method_id */ {i}, /* name */ \"{method.name}\", /* hash */ 0x{method_hash:08X}u }},")
-        lines.append(f"{class_indent}}};")
-        lines.append("")
-        
-        lines.append(f"{class_indent}[[nodiscard]] static constexpr size_t GetMethodCount() noexcept")
-        lines.append(f"{class_indent}{{")
-        lines.append(f"{class_indent}    return {num_methods};")
-        lines.append(f"{class_indent}}}")
-        lines.append("")
-        
-        lines.append(f"{class_indent}[[nodiscard]] static constexpr uint32_t GetInterfaceId() noexcept")
+
+        # GetInterfaceId override
+        lines.append(f"{class_indent}[[nodiscard]] uint32_t GetInterfaceId() const noexcept override")
         lines.append(f"{class_indent}{{")
         lines.append(f"{class_indent}    return InterfaceId;")
         lines.append(f"{class_indent}}}")
         lines.append("")
-        
+
+        # DispatchMethod override
         lines.append(self._generate_dispatch_method(interface, namespace_depth))
         lines.append("")
-        
+
         lines.append(f"{indent}private:")
-        
+
+        # Generate Handle method declarations (instance methods, not static)
         for method in interface.methods:
             lines.append(self._generate_handle_method_declaration(interface, method, namespace_depth))
-        
+
         lines.append(f"{indent}}};")
         lines.append("")
-        
+
         return "\n".join(lines)
     
     def _generate_handle_method_definitions(self, interface: InterfaceDef, namespace_depth: int = 0) -> str:
@@ -770,8 +725,72 @@ class IpcStubGenerator:
                 with open(json_filepath, 'w', encoding='utf-8') as f:
                     json.dump(json_data, f, indent=2)
                 print(f"Generated: {json_filepath}")
-        
+
+        # 生成 StubFactory
+        self.generate_stub_factory(output_dir)
+
         return generated_files
+
+    def _generate_stub_factory(self) -> str:
+        """生成 StubFactory 结构"""
+        lines = []
+        lines.append("")
+        lines.append("// StubFactory 结构（由 IDL 生成器生成）")
+        lines.append("namespace DasIpcStub {")
+        lines.append("")
+
+        # 生成 StubFactory 结构体
+        lines.append("struct StubFactory {")
+        lines.append("    void RegisterAll(IpcRunLoop& run_loop) {")
+
+        for interface in self.document.interfaces:
+            interface_short_name = self._get_interface_short_name(interface.name)
+            stub_name = f"{interface_short_name}Stub"
+            lines.append(f"        run_loop.RegisterHandler(HeaderFlags::NONE, {interface.name}::InterfaceId, &{stub_name}_);")
+
+        lines.append("    }")
+        lines.append("")
+        lines.append("    // Stub 实例")
+        for interface in self.document.interfaces:
+            interface_short_name = self._get_interface_short_name(interface.name)
+            stub_name = f"{interface_short_name}Stub"
+            lines.append(f"    [[no_unique_address]] {stub_name} {stub_name}_;")
+
+        lines.append("};")
+        lines.append("")
+        lines.append("inline StubFactory g_stub_factory;")
+        lines.append("")
+        lines.append("} // namespace DasIpcStub")
+
+        return "\n".join(lines)
+
+    def generate_stub_factory(self, output_dir: str) -> str:
+        """生成 StubFactory 到单独文件"""
+        from datetime import datetime, timezone
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+        factory_content = f"""// This file is automatically generated by DAS IDL Generator
+// Generated at: {timestamp}
+// !!! DO NOT EDIT !!!
+
+#ifndef DAS_IPC_STUB_FACTORY_H
+#define DAS_IPC_STUB_FACTORY_H
+
+#include <das/Core/IPC/IStubBase.h>
+#include <das/Core/IPC/IpcRunLoop.h>
+
+"""
+
+        factory_content += self._generate_stub_factory()
+        factory_content += """
+
+#endif // DAS_IPC_STUB_FACTORY_H
+"""
+        filepath = os.path.join(output_dir, "IpcStubFactory.h")
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write(factory_content)
+        print(f"Generated: {filepath}")
+        return filepath
 
 
 def generate_ipc_stub_files(

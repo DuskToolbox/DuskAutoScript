@@ -262,6 +262,7 @@ class IpcProxyGenerator:
 // IPC Proxy for {interface_name}
 //
 
+#include <das/Core/IPC/BusinessThread.h>
 #include <das/Core/IPC/DasProxyBase.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/MemorySerializer.h>
@@ -483,9 +484,10 @@ class IpcProxyGenerator:
         lines.append("")
         lines.append(f"{class_indent}{class_name}(")
         lines.append(f"{class_indent}    const ObjectId& object_id,")
-        lines.append(f"{class_indent}    IpcRunLoop* run_loop,")
-        lines.append(f"{class_indent}    DistributedObjectManager* object_manager)")
-        lines.append(f"{class_indent}    : DasProxyBase<{interface.name}>(InterfaceId, object_id, run_loop, object_manager)")
+        lines.append(f"{class_indent}    IpcRunLoop& run_loop,")
+        lines.append(f"{class_indent}    std::weak_ptr<BusinessThread> business_thread,")
+        lines.append(f"{class_indent}    DistributedObjectManager& object_manager)")
+        lines.append(f"{class_indent}    : DasProxyBase<{interface.name}>(InterfaceId, object_id, run_loop, std::move(business_thread), object_manager)")
         lines.append(f"{class_indent}{{")
         lines.append(f"{class_indent}}}")
         lines.append("")
@@ -985,17 +987,19 @@ class IpcProxyGenerator:
         lines.append("template <typename TProxy>")
         lines.append("IPCProxyBase* CreateTypedProxy(")
         lines.append("    const ObjectId& object_id,")
-        lines.append("    IpcRunLoop* run_loop,")
-        lines.append("    DistributedObjectManager* object_manager)")
+        lines.append("    IpcRunLoop& run_loop,")
+        lines.append("    std::weak_ptr<BusinessThread> business_thread,")
+        lines.append("    DistributedObjectManager& object_manager)")
         lines.append("{")
-        lines.append("    return new TProxy(object_id, run_loop, object_manager);")
+        lines.append("    return new TProxy(object_id, run_loop, std::move(business_thread), object_manager);")
         lines.append("}")
         lines.append("")
         lines.append("inline IPCProxyBase* CreateProxyByInterfaceId(")
         lines.append("    uint32_t interface_id,")
         lines.append("    const ObjectId& object_id,")
-        lines.append("    IpcRunLoop* run_loop,")
-        lines.append("    DistributedObjectManager* object_manager)")
+        lines.append("    IpcRunLoop& run_loop,")
+        lines.append("    std::weak_ptr<BusinessThread> business_thread,")
+        lines.append("    DistributedObjectManager& object_manager)")
         lines.append("{")
         lines.append("    switch (interface_id)")
         lines.append("    {")
@@ -1005,7 +1009,7 @@ class IpcProxyGenerator:
             proxy_name = f"{interface.name}Proxy"
             lines.append(f"        case 0x{interface_id:08X}: // {interface.name}::InterfaceId")
             lines.append("        {")
-            lines.append(f"            return CreateTypedProxy<{proxy_name}>(object_id, run_loop, object_manager);")
+            lines.append(f"            return CreateTypedProxy<{proxy_name}>(object_id, run_loop, business_thread, object_manager);")
             lines.append("        }")
 
         lines.append("        default:")
@@ -1027,6 +1031,7 @@ class IpcProxyGenerator:
 #ifndef DAS_IPC_PROXY_FACTORY_H
 #define DAS_IPC_PROXY_FACTORY_H
 
+#include <das/Core/IPC/BusinessThread.h>
 #include <das/Core/IPC/IPCProxyBase.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/IpcRunLoop.h>
