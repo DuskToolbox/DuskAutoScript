@@ -264,11 +264,13 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_VerifySessionId)
     }
 
     // 1. 创建并启动第一个 Host 进程
-    DAS::DasPtr<DAS::Core::IPC::HostLauncher> host_a(
-        new DAS::Core::IPC::HostLauncher(ctx_->GetIoContext()));
+    DAS::Core::IPC::IHostLauncher* raw_host_a = nullptr;
+    DasResult result = ctx_->CreateHostLauncher(&raw_host_a);
+    ASSERT_EQ(result, DAS_S_OK);
+    DAS::DasPtr<DAS::Core::IPC::IHostLauncher> host_a(raw_host_a);
 
-    uint16_t  session_a = 0;
-    DasResult result = host_a->Start(
+    uint16_t session_a = 0;
+    result = host_a->Start(
         host_exe_path_,
         session_a,
         IpcTestConfig::GetHostStartTimeoutMs());
@@ -280,8 +282,10 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_VerifySessionId)
     ASSERT_EQ(result, DAS_S_OK);
 
     // 2. 创建并启动第二个 Host 进程
-    DAS::DasPtr<DAS::Core::IPC::HostLauncher> host_b(
-        new DAS::Core::IPC::HostLauncher(ctx_->GetIoContext()));
+    DAS::Core::IPC::IHostLauncher* raw_host_b = nullptr;
+    result = ctx_->CreateHostLauncher(&raw_host_b);
+    ASSERT_EQ(result, DAS_S_OK);
+    DAS::DasPtr<DAS::Core::IPC::IHostLauncher> host_b(raw_host_b);
 
     uint16_t session_b = 0;
     result = host_b->Start(
@@ -371,11 +375,13 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
     }
 
     // 1. 创建并启动 Host B（目标进程）
-    DAS::DasPtr<DAS::Core::IPC::HostLauncher> host_b(
-        new DAS::Core::IPC::HostLauncher(ctx_->GetIoContext()));
+    DAS::Core::IPC::IHostLauncher* raw_host_b = nullptr;
+    DasResult result = ctx_->CreateHostLauncher(&raw_host_b);
+    ASSERT_EQ(result, DAS_S_OK);
+    DAS::DasPtr<DAS::Core::IPC::IHostLauncher> host_b(raw_host_b);
 
-    uint16_t  session_b = 0;
-    DasResult result = host_b->Start(
+    uint16_t session_b = 0;
+    result = host_b->Start(
         host_exe_path_,
         session_b,
         IpcTestConfig::GetHostStartTimeoutMs());
@@ -387,8 +393,10 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
     ASSERT_EQ(result, DAS_S_OK);
 
     // 2. 创建并启动 Host A（调用方进程）
-    DAS::DasPtr<DAS::Core::IPC::HostLauncher> host_a(
-        new DAS::Core::IPC::HostLauncher(ctx_->GetIoContext()));
+    DAS::Core::IPC::IHostLauncher* raw_host_a = nullptr;
+    result = ctx_->CreateHostLauncher(&raw_host_a);
+    ASSERT_EQ(result, DAS_S_OK);
+    DAS::DasPtr<DAS::Core::IPC::IHostLauncher> host_a(raw_host_a);
 
     uint16_t session_a = 0;
     result = host_a->Start(

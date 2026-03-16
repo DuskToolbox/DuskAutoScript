@@ -35,7 +35,6 @@ namespace Core
              * 封装主进程端所有 IPC 组件的初始化和管理
              *
              * 管理的组件：
-             * - SessionCoordinator（单例）：session_id 管理
              * - DistributedObjectManager：分布式对象生命周期管理
              * - ProxyFactory：Proxy 工厂，负责创建远程对象代理
              * - RemoteObjectRegistry（单例）：远程对象注册表

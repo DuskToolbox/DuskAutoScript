@@ -5,7 +5,6 @@
  * 这些测试不需要启动 DasHost.exe，直接测试 IPC 组件的功能。
  *
  * 测试覆盖：
- * - SessionCoordinator: Session ID 分配与释放
  * - ObjectId: 编解码与空值检查
  * - RemoteObjectRegistry: 远程对象注册与查找
  * - Handshake: 握手协议结构初始化

@@ -17,8 +17,6 @@
 #pragma once
 
 #include "IpcTestConfig.h"
-#include "IpcTestHostHelper.h"
-
 #include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/DasApi.h>
@@ -46,9 +44,7 @@ protected:
         }
 
         // 启动事件循环线程
-        run_thread_ = std::thread([this]() {
-            ctx_->Run();
-        });
+        run_thread_ = std::thread([this]() { ctx_->Run(); });
 
         DAS_LOG_INFO("IpcContext initialized");
     }
@@ -75,11 +71,26 @@ protected:
 
     DasResult StartHostAndSetupRunLoop()
     {
-        // 创建 HostLauncher
-        launcher_ = std::make_shared<DAS::Core::IPC::HostLauncher>(ctx_->GetIoContext());
+        // 创建 HostLauncher（通过工厂方法，确保 ipc_context_ 正确设置）
+        DAS::Core::IPC::IHostLauncher* raw_launcher = nullptr;
+        DasResult result = ctx_->CreateHostLauncher(&raw_launcher);
+        if (DAS::IsFailed(result) || !raw_launcher)
+        {
+            return result;
+        }
+        launcher_ = std::shared_ptr<DAS::Core::IPC::HostLauncher>(
+            static_cast<DAS::Core::IPC::HostLauncher*>(raw_launcher),
+            [](DAS::Core::IPC::HostLauncher* p)
+            {
+                if (p)
+                {
+                    p->Stop();
+                    p->Release();
+                }
+            });
 
         uint16_t session_id = 0;
-        DasResult result = launcher_->Start(
+        result = launcher_->Start(
             host_exe_path_,
             session_id,
             IpcTestConfig::GetHostStartTimeoutMs());
@@ -89,13 +100,14 @@ protected:
         }
 
         // 注册 HostLauncher 到 IPC 上下文
-        result = ctx_->RegisterHostLauncher(launcher_);
+        result = ctx_->RegisterHostLauncher(
+            DAS::DasPtr<DAS::Core::IPC::IHostLauncher>(launcher_.get()));
         return result;
     }
 
 protected:
-    std::string                                            host_exe_path_;
+    std::string                                               host_exe_path_;
     std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ctx_;
-    std::shared_ptr<DAS::Core::IPC::HostLauncher>            launcher_;
-    std::thread                                              run_thread_;
+    std::shared_ptr<DAS::Core::IPC::HostLauncher>             launcher_;
+    std::thread                                               run_thread_;
 };

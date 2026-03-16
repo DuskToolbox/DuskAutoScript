@@ -60,6 +60,17 @@ public:
         return *this;
     }
 
+    /// @brief 设置业务控制命令（类型安全）
+    /// @note 只接受 IpcCommandType 或 HandshakeInterfaceId
+    /// @note 同时设置 header_flags = BUSINESS_CONTROL
+    template <ControlPlaneEnum EnumT>
+    IPCMessageHeaderBuilder& SetBusinessControlCommand(EnumT command) noexcept
+    {
+        header_.header_flags = HeaderFlags::BUSINESS_CONTROL;
+        header_.interface_id = static_cast<uint32_t>(command);
+        return *this;
+    }
+
     IPCMessageHeaderBuilder& SetHeaderFlags(uint8_t flags) noexcept
     {
         header_.header_flags = flags;
@@ -171,8 +182,7 @@ inline ValidatedIPCMessageHeader MakeBusinessControlRequest(
 {
     return IPCMessageHeaderBuilder()
         .SetMessageType(MessageType::REQUEST)
-        .SetHeaderFlags(HeaderFlags::BUSINESS_CONTROL)
-        .SetControlPlaneCommand(command)
+        .SetBusinessControlCommand(command)
         .SetBodySize(body_size)
         .SetTargetSessionId(target_session_id)
         .Build();

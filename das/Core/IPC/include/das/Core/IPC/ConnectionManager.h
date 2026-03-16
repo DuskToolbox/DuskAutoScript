@@ -144,8 +144,9 @@ public:
     /**
      * @brief 注册传输层（轻量级注册，无需 HostLauncher）
      *
-     * 用于 Host 进程注册到 MainProcess 的连接。
-     * Host 进程没有 HostLauncher，只有 transport。
+     * [Host 专用] MainProcess 不应调用此方法，应使用 RegisterHostLauncher。
+     * Host 进程没有 HostLauncher，只有 transport，因此使用此方法注册到
+     * MainProcess 的连接。
      *
      * @param session_id MainProcess 的 session_id（通常为 1）
      * @param transport 传输层指针（非拥有，调用方保证生命周期）

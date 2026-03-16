@@ -74,17 +74,11 @@ protected:
                     static_cast<uint32_t>(result)));
         }
 
-        // 关键修复：使用 DasPtr 管理 HostLauncher 的生命周期
-        // shared_ptr 和 DasPtr 是两个独立的引用计数系统
-        // 使用 DasPtr 可以统一生命周期管理
-        launcher_ = DAS::DasPtr<DAS::Core::IPC::HostLauncher>(
-            static_cast<DAS::Core::IPC::HostLauncher*>(raw_launcher));
-        // 注意：DasPtr 构造时已调用 AddRef()，引用计数为 1
+        // 使用 DasPtr 管理 HostLauncher 的生命周期
+        launcher_ = DAS::DasPtr<DAS::Core::IPC::IHostLauncher>(raw_launcher);
 
         // 启动事件循环线程
-        run_thread_ = std::thread([this]() {
-            ctx_->Run();
-        });
+        run_thread_ = std::thread([this]() { ctx_->Run(); });
 
         // 等待事件循环启动
         for (int i = 0; i < 100 && !ctx_->GetIoContext().stopped(); ++i)
@@ -122,10 +116,7 @@ protected:
      * - wait(GetContext(), sender) - 等待异步操作完成
      * - stdexec::schedule(GetContext()) - 获取 schedule sender
      */
-    DAS::Core::IPC::MainProcess::IIpcContext& GetContext()
-    {
-        return *ctx_;
-    }
+    DAS::Core::IPC::MainProcess::IIpcContext& GetContext() { return *ctx_; }
 
     /**
      * @brief 启动 Host 进程并注册 HostLauncher
@@ -171,8 +162,8 @@ protected:
         return DAS_S_OK;
     }
 
-    std::string                                            host_exe_path_;
+    std::string                                               host_exe_path_;
     std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ctx_;
-    DAS::DasPtr<DAS::Core::IPC::HostLauncher>            launcher_;  // 改用 DasPtr
-    std::thread                                              run_thread_;
+    DAS::DasPtr<DAS::Core::IPC::IHostLauncher>                launcher_;
+    std::thread                                               run_thread_;
 };

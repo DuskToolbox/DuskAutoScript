@@ -36,7 +36,6 @@ namespace Core
              * 封装 Host 进程的 IPC 组件，提供统一的初始化和访问接口。
              *
              * 管理的组件：
-             * - SessionCoordinator：session_id 管理（动态分配）
              * - DistributedObjectManager：分布式对象生命周期管理
              * - IpcRunLoop：IPC 事件循环
              * - IpcCommandHandler：IPC 命令处理器
@@ -126,8 +125,8 @@ namespace Core
                 void StartParentProcessMonitor();
                 void StopParentProcessMonitor();
 
-                IpcContextConfig                          config_;
-                uint16_t                                  session_id_ = 0;
+                IpcContextConfig config_;
+                uint16_t         session_id_ = 0;
 
                 /// 分布式对象管理器（值成员）
                 DistributedObjectManager object_manager_;
