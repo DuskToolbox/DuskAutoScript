@@ -12,7 +12,6 @@
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
-#include <das/Core/IPC/SessionCoordinator.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <das/Core/Logger/Logger.h>
 #include <shared_mutex>
@@ -415,9 +414,7 @@ DasResult ConnectionManager::SendHeartbeatToAll()
     auto sessions = GetConnectedSessions();
 
     // V3: 获取本地 session_id
-    auto local_session_opt =
-        SessionCoordinator::GetInstance().GetLocalSessionId();
-    uint16_t local_session_id = local_session_opt.value_or(0);
+    uint16_t local_session_id = impl_->local_id_;
 
     for (uint16_t session_id : sessions)
     {
@@ -496,10 +493,10 @@ void ConnectionManager::UpdateHeartbeatTimestamp(uint16_t session_id)
 }
 
 boost::asio::awaitable<DasResult> ConnectionManager::ForwardMessage(
-    uint16_t              target_session_id,
+    uint16_t                         target_session_id,
     const ValidatedIPCMessageHeader& header,
-    const uint8_t*        body,
-    size_t                body_size)
+    const uint8_t*                   body,
+    size_t                           body_size)
 {
     // 1. 查找目标 Transport
     auto* transport = GetTransport(target_session_id);
@@ -512,21 +509,18 @@ boost::asio::awaitable<DasResult> ConnectionManager::ForwardMessage(
     }
 
     // 2. 获取本地 session_id
-    auto local_session_opt =
-        SessionCoordinator::GetInstance().GetLocalSessionId();
-    uint16_t local_session_id = local_session_opt.value_or(impl_->local_id_);
+    uint16_t local_session_id = impl_->local_id_;
 
     // 3. 使用 IPCMessageHeaderBuilder 重建 header，修改 source_session_id
-    auto                    forward_header =
-        IPCMessageHeaderBuilder()
-            .SetMessageType(header.GetMessageType())
-            .SetInterfaceId(header.GetInterfaceId())
-            .SetCallId(header.GetCallId())
-            .SetFlags(header.GetFlags())
-            .SetBodySize(static_cast<uint32_t>(body_size))
-            .SetSourceSessionId(local_session_id)
-            .SetTargetSessionId(target_session_id)
-            .Build();
+    auto forward_header = IPCMessageHeaderBuilder()
+                              .SetMessageType(header.GetMessageType())
+                              .SetInterfaceId(header.GetInterfaceId())
+                              .SetCallId(header.GetCallId())
+                              .SetFlags(header.GetFlags())
+                              .SetBodySize(static_cast<uint32_t>(body_size))
+                              .SetSourceSessionId(local_session_id)
+                              .SetTargetSessionId(target_session_id)
+                              .Build();
 
     // 4. 发送消息
     auto result =

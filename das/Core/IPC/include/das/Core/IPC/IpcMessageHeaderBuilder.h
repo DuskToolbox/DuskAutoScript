@@ -60,6 +60,12 @@ public:
         return *this;
     }
 
+    IPCMessageHeaderBuilder& SetHeaderFlags(uint8_t flags) noexcept
+    {
+        header_.header_flags = flags;
+        return *this;
+    }
+
     /// @brief 设置接口ID
     /// @note 控制平面消息直接使用此方法设置命令类型
     ///       业务消息的 interface_id 可设为 0 或实际值，method_id 在 body 中
@@ -154,6 +160,21 @@ inline ValidatedIPCMessageHeader MakeControlPlaneResponse(
         .SetBodySize(body_size)
         .SetCallId(call_id)
         .SetErrorCode(error_code)
+        .Build();
+}
+
+[[nodiscard]]
+inline ValidatedIPCMessageHeader MakeBusinessControlRequest(
+    IpcCommandType command,
+    uint32_t       body_size,
+    uint16_t       target_session_id = 0)
+{
+    return IPCMessageHeaderBuilder()
+        .SetMessageType(MessageType::REQUEST)
+        .SetHeaderFlags(HeaderFlags::BUSINESS_CONTROL)
+        .SetControlPlaneCommand(command)
+        .SetBodySize(body_size)
+        .SetTargetSessionId(target_session_id)
         .Build();
 }
 

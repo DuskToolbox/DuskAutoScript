@@ -55,13 +55,13 @@ namespace Core
 
                 /**
                  * @brief 创建 HostLauncher 实例
- *
+                 *
                  * * HostLauncher 使用 IIpcContext 的 io_context
                  * 进行异步操作。
- *
+                 *
                  * @param
                  * pp_out_launcher 输出：HostLauncher 接口指针
- * @return
+                 * @return
                  * DAS_S_OK 成功
                  */
                 virtual DasResult CreateHostLauncher(
@@ -70,7 +70,8 @@ namespace Core
                 /**
                  * @brief 异步加载插件到指定 Host 进程
                  *
-                 * @param host_launcher 目标 Host 进程启动器（从中获取 session_id）
+                 * @param host_launcher 目标 Host 进程启动器（从中获取
+                 * session_id）
                  * @param u8_plugin_path 插件 manifest 路径 (UTF-8)
                  * @param pp_out_operation 输出：异步操作对象
                  * @param timeout 超时时间（默认30秒）
@@ -80,7 +81,8 @@ namespace Core
                     IHostLauncher*                 host_launcher,
                     const char*                    u8_plugin_path,
                     IDasAsyncLoadPluginOperation** pp_out_operation,
-                    std::chrono::milliseconds      timeout = std::chrono::seconds(30)) = 0;
+                    std::chrono::milliseconds      timeout =
+                        std::chrono::seconds(30)) = 0;
 
                 /**
                  * @brief 将回调投递到 io_context 线程执行
@@ -138,6 +140,18 @@ namespace Core
                  * @return std::vector<uint16_t> 已连接的 session ID 列表
                  */
                 virtual std::vector<uint16_t> GetConnectedSessions() = 0;
+
+                /**
+                 * @brief 分配新的 session_id（主进程侧）
+                 * @return 分配的 session_id，如果失败返回 0
+                 */
+                virtual uint16_t AllocateSessionId() = 0;
+
+                /**
+                 * @brief 释放 session_id（主进程侧）
+                 * @param session_id 要释放的 session_id
+                 */
+                virtual void ReleaseSessionId(uint16_t session_id) = 0;
 
             protected:
                 virtual ~IIpcContext() = default;

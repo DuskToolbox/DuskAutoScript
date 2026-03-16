@@ -21,7 +21,6 @@
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
-#include <das/Core/IPC/SessionCoordinator.h>
 #include <das/Utils/fmt.h>
 #include <filesystem>
 #include <gtest/gtest.h>
@@ -42,53 +41,6 @@ TEST(IpcMultiProcessTestBasic, DirectoryStructureTest)
     // 验证目录结构能够被正确包含
     // 测试编译时期能够找到相关的头文件
     EXPECT_TRUE(true);
-}
-
-// ====== SessionCoordinator 测试 ======
-
-TEST(IpcMultiProcessTestBasic, SessionCoordinator_AllocateAndRelease)
-{
-    DAS::Core::IPC::SessionCoordinator& coordinator =
-        DAS::Core::IPC::SessionCoordinator::GetInstance();
-
-    uint16_t session_id = coordinator.AllocateSessionId();
-    EXPECT_NE(session_id, static_cast<uint16_t>(0));
-    EXPECT_TRUE(
-        DAS::Core::IPC::SessionCoordinator::IsValidSessionId(session_id));
-
-    coordinator.ReleaseSessionId(session_id);
-}
-
-TEST(IpcMultiProcessTestBasic, SessionCoordinator_MultipleAllocation)
-{
-    DAS::Core::IPC::SessionCoordinator& coordinator =
-        DAS::Core::IPC::SessionCoordinator::GetInstance();
-
-    std::vector<uint16_t> session_ids;
-    for (int i = 0; i < 10; ++i)
-    {
-        uint16_t id = coordinator.AllocateSessionId();
-        EXPECT_NE(id, static_cast<uint16_t>(0));
-        session_ids.push_back(id);
-    }
-
-    // 验证所有 ID 唯一
-    std::unordered_set<uint16_t> unique_ids(
-        session_ids.begin(),
-        session_ids.end());
-    EXPECT_EQ(unique_ids.size(), session_ids.size());
-
-    // 释放所有 ID
-    for (uint16_t id : session_ids)
-    {
-        coordinator.ReleaseSessionId(id);
-    }
-}
-
-TEST(IpcMultiProcessTestBasic, SessionCoordinator_InvalidId)
-{
-    EXPECT_FALSE(DAS::Core::IPC::SessionCoordinator::IsValidSessionId(0));
-    EXPECT_FALSE(DAS::Core::IPC::SessionCoordinator::IsValidSessionId(0xFFFF));
 }
 
 // ====== ObjectId 编解码测试 ======
@@ -251,63 +203,6 @@ TEST(IpcMultiProcessTestBasic, RemoteObjectRegistry_LookupNonExistent)
     EXPECT_EQ(result, DAS_E_IPC_OBJECT_NOT_FOUND);
 }
 
-// ====== 并发测试 ======
-
-TEST(IpcMultiProcessTestBasic, ConcurrentSessionAllocation)
-{
-    const int                num_threads = 10;
-    std::vector<std::thread> threads;
-    std::vector<uint16_t>    session_ids(num_threads);
-    std::atomic<int>         success_count{0};
-    std::mutex               mutex;
-
-    for (int i = 0; i < num_threads; ++i)
-    {
-        threads.emplace_back(
-            [&mutex, &session_ids, &success_count, i]()
-            {
-                DAS::Core::IPC::SessionCoordinator& coordinator =
-                    DAS::Core::IPC::SessionCoordinator::GetInstance();
-                uint16_t session_id = coordinator.AllocateSessionId();
-                if (session_id != 0
-                    && DAS::Core::IPC::SessionCoordinator::IsValidSessionId(
-                        session_id))
-                {
-                    std::lock_guard<std::mutex> lock(mutex);
-                    session_ids[i] = session_id;
-                    success_count++;
-                }
-            });
-    }
-
-    for (auto& thread : threads)
-    {
-        thread.join();
-    }
-
-    // 验证所有线程都成功分配了 session ID
-    EXPECT_EQ(success_count.load(), num_threads);
-
-    // 验证所有 session ID 都不同
-    std::unordered_set<uint16_t> unique_ids;
-    for (uint16_t id : session_ids)
-    {
-        unique_ids.insert(id);
-    }
-    EXPECT_EQ(unique_ids.size(), static_cast<size_t>(num_threads));
-
-    // 释放所有 session ID
-    DAS::Core::IPC::SessionCoordinator& coordinator =
-        DAS::Core::IPC::SessionCoordinator::GetInstance();
-    for (uint16_t id : session_ids)
-    {
-        if (id != 0)
-        {
-            coordinator.ReleaseSessionId(id);
-        }
-    }
-}
-
 // ====== 握手协议结构测试 ======
 
 TEST(IpcMultiProcessTestBasic, Handshake_HelloRequestInit)
@@ -372,7 +267,8 @@ TEST(IpcMultiProcessTestBasic, MessageQueueNameGeneration)
 TEST(IpcMultiProcessTestBasic, SharedMemoryNameGeneration)
 {
     // 新格式: das_ipc_<main_pid>_<host_pid>_shm
-    std::string shm_name = DAS::Core::IPC::Host::MakeSharedMemoryName(100, 12345);
+    std::string shm_name =
+        DAS::Core::IPC::Host::MakeSharedMemoryName(100, 12345);
 
     EXPECT_TRUE(shm_name.find("das_ipc_100_12345_shm") != std::string::npos);
 }

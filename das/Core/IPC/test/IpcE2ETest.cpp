@@ -17,11 +17,9 @@
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/IpcTransport.h>
 #include <das/Core/IPC/Serializer.h>
-#include <das/Core/IPC/SessionCoordinator.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <gtest/gtest.h>
 #include <thread>
-
 
 using DAS::Core::IPC::ConnectionManager;
 using DAS::Core::IPC::DecodeObjectId;
@@ -34,7 +32,6 @@ using DAS::Core::IPC::MessageType;
 using DAS::Core::IPC::ObjectId;
 using DAS::Core::IPC::SerializerReader;
 using DAS::Core::IPC::SerializerWriter;
-using DAS::Core::IPC::SessionCoordinator;
 using DAS::Core::IPC::SharedMemoryBlock;
 using DAS::Core::IPC::SharedMemoryManager;
 using DAS::Core::IPC::SharedMemoryPool;
@@ -161,16 +158,10 @@ class IpcE2ETest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        // 主进程 session_id 初始化
-        SessionCoordinator::GetInstance().SetAsMainProcess();
-
         host_object_manager_ = std::make_unique<DistributedObjectManager>();
         plugin_object_manager_ = std::make_unique<DistributedObjectManager>();
-        connection_manager_ = ConnectionManager::Create(1);  // local_id = 1
+        connection_manager_ = ConnectionManager::Create(1); // local_id = 1
 
-        // DistributedObjectManager 不再需要 Initialize
-        // session_id 从 SessionCoordinator 获取
-        // ConnectionManager::Create() 已调用 Initialize(1)
         ASSERT_NE(connection_manager_, nullptr);
     }
 
@@ -345,7 +336,7 @@ TEST_F(IpcE2ETest, ErrorHandling_NullObject)
 TEST_F(IpcE2ETest, SharedMemory_LargeDataTransfer)
 {
     std::string pool_name = "e2e_test_shm_pool";
-    auto pool = SharedMemoryPool::Create(pool_name, 1024 * 1024); // 1MB
+    auto        pool = SharedMemoryPool::Create(pool_name, 1024 * 1024); // 1MB
 
     ASSERT_NE(pool, nullptr);
 
@@ -428,9 +419,9 @@ TEST_F(IpcE2ETest, FullPipeline_RequestResponse)
 
     MemorySerializerWriter request_writer;
     // V3 body: interface_id + method_id + reserved + ObjectId + args
-    request_writer.WriteUInt32(1);  // interface_id
-    request_writer.WriteUInt16(1);  // method_id
-    request_writer.WriteUInt16(0);  // reserved
+    request_writer.WriteUInt32(1); // interface_id
+    request_writer.WriteUInt16(1); // method_id
+    request_writer.WriteUInt16(0); // reserved
     request_writer.WriteUInt16(service_id.session_id);
     request_writer.WriteUInt16(service_id.generation);
     request_writer.WriteUInt32(service_id.local_id);
@@ -452,9 +443,15 @@ TEST_F(IpcE2ETest, FullPipeline_RequestResponse)
 
     // 5. Host processes request - read ObjectId from body
     ObjectId received_object_id{};
-    ASSERT_EQ(request_reader.ReadUInt16(&received_object_id.session_id), DAS_S_OK);
-    ASSERT_EQ(request_reader.ReadUInt16(&received_object_id.generation), DAS_S_OK);
-    ASSERT_EQ(request_reader.ReadUInt32(&received_object_id.local_id), DAS_S_OK);
+    ASSERT_EQ(
+        request_reader.ReadUInt16(&received_object_id.session_id),
+        DAS_S_OK);
+    ASSERT_EQ(
+        request_reader.ReadUInt16(&received_object_id.generation),
+        DAS_S_OK);
+    ASSERT_EQ(
+        request_reader.ReadUInt32(&received_object_id.local_id),
+        DAS_S_OK);
     void* obj_ptr = nullptr;
     ASSERT_EQ(
         host_object_manager_->LookupObject(received_object_id, &obj_ptr),

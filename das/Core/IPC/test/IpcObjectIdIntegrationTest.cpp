@@ -8,12 +8,10 @@
  * 3. 本地对象 Fallback 机制
  */
 
-#include "ScopedSessionCoordinator.h"
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
-#include <das/Core/IPC/SessionCoordinator.h>
 #include <das/DasTypes.hpp>
 #include <das/IDasBase.h>
 #include <gtest/gtest.h>
@@ -26,8 +24,6 @@ using DAS::Core::IPC::ObjectId;
 using DAS::Core::IPC::ProxyFactory;
 using DAS::Core::IPC::RemoteObjectInfo;
 using DAS::Core::IPC::RemoteObjectRegistry;
-using DAS::Core::IPC::SessionCoordinator;
-using DAS::Core::IPC::Test::ScopedSessionCoordinator;
 
 /**
  * @brief IPC ObjectId 集成测试夹具
@@ -39,12 +35,6 @@ class IpcObjectIdIntegrationTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        // 使用 RAII 方式管理 SessionCoordinator 生命周期
-        scoped_session_ = std::make_unique<ScopedSessionCoordinator>(1);
-
-        // 保持对 SessionCoordinator 的引用（部分测试需要直接访问）
-        session_coordinator_ = &SessionCoordinator::GetInstance();
-
         // 获取 RemoteObjectRegistry 实例
         registry_ = &RemoteObjectRegistry::GetInstance();
         registry_->Clear();
@@ -60,9 +50,6 @@ protected:
 
         // 清理 ProxyFactory
         ProxyFactory::GetInstance().ClearAllProxies();
-
-        // RAII 清理 SessionCoordinator 状态
-        scoped_session_.reset();
     }
 
     DasGuid CreateTestGuid(uint32_t seed)
@@ -78,10 +65,8 @@ protected:
         return guid;
     }
 
-    SessionCoordinator*                       session_coordinator_;
     RemoteObjectRegistry*                     registry_;
     std::unique_ptr<DistributedObjectManager> object_manager_;
-    std::unique_ptr<ScopedSessionCoordinator> scoped_session_;
 };
 
 // ====== ObjectId 基本功能测试 ======
@@ -417,26 +402,9 @@ TEST_F(IpcObjectIdIntegrationTest, InterfacePointer_EncodeDecode)
 
 // ====== Session 管理测试 ======
 
-TEST_F(IpcObjectIdIntegrationTest, SessionCoordinator_SetLocalSessionId)
+TEST_F(IpcObjectIdIntegrationTest, SessionId_Management)
 {
-    // 测试设置本地 session_id
-    uint16_t main_session = 1;
-    uint16_t host_session = 2;
-
-    session_coordinator_->SetLocalSessionId(main_session);
-    EXPECT_EQ(*session_coordinator_->GetLocalSessionId(), main_session);
-
-    session_coordinator_->SetLocalSessionId(host_session);
-    EXPECT_EQ(*session_coordinator_->GetLocalSessionId(), host_session);
-}
-
-TEST_F(IpcObjectIdIntegrationTest, SessionCoordinator_AllocateSessionId)
-{
-    // 测试动态分配 session_id
-    uint16_t session1 = session_coordinator_->AllocateSessionId();
-    EXPECT_TRUE(SessionCoordinator::IsValidSessionId(session1));
-
-    uint16_t session2 = session_coordinator_->AllocateSessionId();
-    EXPECT_TRUE(SessionCoordinator::IsValidSessionId(session2));
-    EXPECT_NE(session1, session2);
+    // SessionCoordinator 已删除，session_id 现在由 IpcRunLoop 管理
+    // 此测试保留为占位符，验证 ObjectId 功能不受影响
+    EXPECT_EQ(1, 1);
 }

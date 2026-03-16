@@ -273,8 +273,7 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
     if (awaitable_it != awaitable_handlers_.end())
     {
         auto& awaitable_map = awaitable_it->second;
-        auto  awaitable_handler_it =
-            awaitable_map.find(header.GetInterfaceId());
+        auto awaitable_handler_it = awaitable_map.find(header.GetInterfaceId());
         if (awaitable_handler_it != awaitable_map.end())
         {
             IAwaitableMessageHandler* awaitable_handler =
@@ -284,15 +283,20 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
                 header.GetInterfaceId());
             try
             {
-                IpcResponseSender sender(transport);
+                IpcResponseSender               sender(transport);
                 static DistributedObjectManager null_manager;
                 DistributedObjectManager&       obj_mgr =
                     object_manager_ ? *object_manager_ : null_manager;
                 auto result = co_await awaitable_handler->HandleMessage(
-                    header, body, sender, obj_mgr);
+                    header,
+                    body,
+                    sender,
+                    obj_mgr);
                 if (DAS::IsFailed(result))
                 {
-                    DAS_CORE_LOG_WARN("Awaitable handler returned error: {}", result);
+                    DAS_CORE_LOG_WARN(
+                        "Awaitable handler returned error: {}",
+                        result);
                 }
                 else
                 {
@@ -380,6 +384,7 @@ std::pair<DasResult, CallKey> IpcRunLoop::PrepareSendRequestWithTransport(
     auto validated_header = IPCMessageHeaderBuilder()
                                 .SetMessageType(MessageType::REQUEST)
                                 .SetInterfaceId(raw.interface_id)
+                                .SetHeaderFlags(raw.header_flags)
                                 .SetBodySize(raw.body_size)
                                 .SetCallId(call_id)
                                 .SetSourceSessionId(local_session_id_)

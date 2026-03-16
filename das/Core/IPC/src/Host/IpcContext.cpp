@@ -12,7 +12,6 @@
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/IpcTransport.h>
 #include <das/Core/IPC/MessageHandlerRef.h>
-#include <das/Core/IPC/SessionCoordinator.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
@@ -218,6 +217,9 @@ namespace Core
                 // 5. 设置 inbound_queue 到 IpcRunLoop
                 run_loop_->SetInboundQueue(&inbound_queue_);
 
+                // 5.5 DistributedObjectManager 绑定 IpcRunLoop
+                object_manager_.SetRunLoop(run_loop_.get());
+
                 // 6. 创建 BusinessThread
                 business_thread_ = std::make_shared<BusinessThread>(
                     inbound_queue_,
@@ -259,9 +261,11 @@ namespace Core
                     run_loop_.reset();
                     return DAS_E_FAIL;
                 }
+                handshake_handler_->SetRunLoop(run_loop_.get());
 
                 // 10. 设置 HandshakeHandler 的客户端连接回调
-                //    握手完成后，同步 session_id 到 IpcCommandHandler 和 IpcRunLoop
+                //    握手完成后，同步 session_id 到 IpcCommandHandler 和
+                //    IpcRunLoop
                 handshake_handler_->SetOnClientConnected(
                     [this](const ConnectedClient& client)
                     {
@@ -385,14 +389,6 @@ namespace Core
                 shared_memory_.reset();
 
                 // 8. object_manager_ 是值成员，自动析构
-
-                // 7. 释放 session_id
-                if (session_id_ != 0)
-                {
-                    auto& coordinator = SessionCoordinator::GetInstance();
-                    coordinator.ReleaseSessionId(session_id_);
-                    session_id_ = 0;
-                }
 
                 is_initialized_ = false;
                 is_connected_ = false;
@@ -609,12 +605,16 @@ namespace Core
                         auto&& [header, body] = std::get<1>(result);
 
                         // IO 线程消息分流：按 header_flags 决定处理方式
-                        if ((header.GetHeaderFlags() & HeaderFlags::CONTROL_PLANE) != 0)
+                        if ((header.GetHeaderFlags()
+                             & HeaderFlags::CONTROL_PLANE)
+                            != 0)
                         {
                             // 控制平面消息：在 IO 线程直接处理
-                            if (header.GetMessageType() == MessageType::RESPONSE)
+                            if (header.GetMessageType()
+                                == MessageType::RESPONSE)
                             {
-                                // V3: RESPONSE 使用 (source_session_id, call_id) 匹配
+                                // V3: RESPONSE 使用 (source_session_id,
+                                // call_id) 匹配
                                 CallKey call_key{
                                     header.GetSourceSessionId(),
                                     header.GetCallId()};
@@ -625,7 +625,8 @@ namespace Core
                             }
                             else
                             {
-                                // REQUEST/EVENT: 在 IO 线程处理（控制平面 handler）
+                                // REQUEST/EVENT: 在 IO 线程处理（控制平面
+                                // handler）
                                 co_await run_loop_->DispatchToHandlerCoroutine(
                                     header,
                                     body,
@@ -638,7 +639,8 @@ namespace Core
                             InboundMessage msg;
                             msg.header = header;
                             msg.body = std::move(body);
-                            auto push_result = inbound_queue_.Push(std::move(msg));
+                            auto push_result =
+                                inbound_queue_.Push(std::move(msg));
                             if (push_result != DAS_S_OK)
                             {
                                 DAS_CORE_LOG_ERROR(

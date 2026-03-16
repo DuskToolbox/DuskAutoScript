@@ -16,6 +16,8 @@ namespace HeaderFlags
     constexpr uint8_t NONE = 0x00;
     /// 控制平面消息标志
     constexpr uint8_t CONTROL_PLANE = 0x01;
+    /// 业务控制消息标志（投递到 BusinessThread 处理）
+    constexpr uint8_t BUSINESS_CONTROL = 0x02;
 } // namespace HeaderFlags
 
 /// @brief IPC 消息类型

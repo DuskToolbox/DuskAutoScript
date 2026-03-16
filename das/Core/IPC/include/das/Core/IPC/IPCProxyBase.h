@@ -12,7 +12,6 @@
 
 #include <das/Core/IPC/BusinessThread.h>
 #include <das/Core/IPC/Config.h>
-#include <das/Core/IPC/SessionCoordinator.h>
 
 DAS_CORE_IPC_NS_BEGIN
 class DistributedObjectManager;
@@ -126,8 +125,7 @@ protected:
     [[nodiscard]]
     uint16_t GetSourceSessionId() const noexcept
     {
-        auto session_id = SessionCoordinator::GetInstance().GetLocalSessionId();
-        return session_id.value_or(1);
+        return run_loop_.GetSessionId();
     }
 
     /// @brief 构建业务消息 Body (V3 版本)

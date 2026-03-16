@@ -1,6 +1,7 @@
 #include <cstdint>
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
+#include <das/Core/IPC/IpcRunLoop.h>
 #include <memory>
 #include <unordered_map>
 
@@ -9,6 +10,15 @@ DAS_CORE_IPC_NS_BEGIN
 DistributedObjectManager::DistributedObjectManager() = default;
 
 DistributedObjectManager::~DistributedObjectManager() { objects_.clear(); }
+
+uint16_t DistributedObjectManager::GetLocalSessionId() const
+{
+    if (run_loop_)
+    {
+        return run_loop_->GetSessionId();
+    }
+    return 0;
+}
 
 DasResult DistributedObjectManager::RegisterLocalObject(
     void*     object_ptr,
@@ -33,8 +43,7 @@ DasResult DistributedObjectManager::RegisterLocalObject(
     }
 
     ObjectId obj_id{
-        .session_id = *SessionCoordinator::GetInstance()
-                           .GetLocalSessionId(), // 直接解引用，未初始化会崩溃
+        .session_id = GetLocalSessionId(),
         .generation = generation,
         .local_id = local_id};
 
@@ -107,8 +116,7 @@ DasResult DistributedObjectManager::AddRef(const ObjectId& object_id)
     auto it = objects_.find(object_id);
     if (it == objects_.end())
     {
-        if (object_id.session_id
-            == *SessionCoordinator::GetInstance().GetLocalSessionId())
+        if (object_id.session_id == GetLocalSessionId())
         {
             auto gen_it = local_id_generations_.find(object_id.local_id);
             if (gen_it != local_id_generations_.end()
@@ -135,8 +143,7 @@ DasResult DistributedObjectManager::Release(const ObjectId& object_id)
     auto it = objects_.find(object_id);
     if (it == objects_.end())
     {
-        if (object_id.session_id
-            == *SessionCoordinator::GetInstance().GetLocalSessionId())
+        if (object_id.session_id == GetLocalSessionId())
         {
             auto gen_it = local_id_generations_.find(object_id.local_id);
             if (gen_it != local_id_generations_.end()
@@ -181,8 +188,7 @@ DasResult DistributedObjectManager::LookupObject(
     auto it = objects_.find(object_id);
     if (it == objects_.end())
     {
-        if (object_id.session_id
-            == *SessionCoordinator::GetInstance().GetLocalSessionId())
+        if (object_id.session_id == GetLocalSessionId())
         {
             auto gen_it = local_id_generations_.find(object_id.local_id);
             if (gen_it != local_id_generations_.end()
@@ -216,8 +222,7 @@ bool DistributedObjectManager::IsValidObject(const ObjectId& object_id) const
         return true;
     }
 
-    if (object_id.session_id
-        == *SessionCoordinator::GetInstance().GetLocalSessionId())
+    if (object_id.session_id == GetLocalSessionId())
     {
         auto gen_it = local_id_generations_.find(object_id.local_id);
         if (gen_it != local_id_generations_.end()
@@ -238,8 +243,7 @@ bool DistributedObjectManager::IsLocalObject(const ObjectId& object_id) const
         return false;
     }
 
-    if (object_id.session_id
-        != *SessionCoordinator::GetInstance().GetLocalSessionId())
+    if (object_id.session_id != GetLocalSessionId())
     {
         return false;
     }
@@ -280,8 +284,7 @@ DasResult DistributedObjectManager::HandleRemoteAddRef(
     auto it = objects_.find(object_id);
     if (it == objects_.end())
     {
-        if (object_id.session_id
-            == *SessionCoordinator::GetInstance().GetLocalSessionId())
+        if (object_id.session_id == GetLocalSessionId())
         {
             auto gen_it = local_id_generations_.find(object_id.local_id);
             if (gen_it != local_id_generations_.end()
@@ -309,8 +312,7 @@ DasResult DistributedObjectManager::HandleRemoteRelease(
     auto it = objects_.find(object_id);
     if (it == objects_.end())
     {
-        if (object_id.session_id
-            == *SessionCoordinator::GetInstance().GetLocalSessionId())
+        if (object_id.session_id == GetLocalSessionId())
         {
             auto gen_it = local_id_generations_.find(object_id.local_id);
             if (gen_it != local_id_generations_.end()

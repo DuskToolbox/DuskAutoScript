@@ -29,7 +29,6 @@
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
-#include <das/Core/IPC/SessionCoordinator.h>
 #include <das/DasApi.h>
 #include <das/Utils/fmt.h>
 #include <filesystem>
@@ -98,7 +97,8 @@ protected:
         // 包装为 shared_ptr（使用正确的删除器）
         launcher_ = std::shared_ptr<DAS::Core::IPC::HostLauncher>(
             static_cast<DAS::Core::IPC::HostLauncher*>(raw_launcher),
-            [](DAS::Core::IPC::HostLauncher* p) {
+            [](DAS::Core::IPC::HostLauncher* p)
+            {
                 if (p)
                 {
                     p->Stop();
@@ -127,10 +127,7 @@ protected:
      *
      * 用于 async_op() 和 wait() 调用。
      */
-    DAS::Core::IPC::MainProcess::IIpcContext& GetContext()
-    {
-        return *ctx_;
-    }
+    DAS::Core::IPC::MainProcess::IIpcContext& GetContext() { return *ctx_; }
 
     /**
      * @brief 启动 Host 进程并注册 HostLauncher
@@ -172,9 +169,9 @@ protected:
         return DAS_S_OK;
     }
 
-    std::string                                            host_exe_path_;
-    DAS::Core::IPC::MainProcess::IpcContextPtr             ctx_;
-    std::shared_ptr<DAS::Core::IPC::HostLauncher>          launcher_;
+    std::string                                   host_exe_path_;
+    DAS::Core::IPC::MainProcess::IpcContextPtr    ctx_;
+    std::shared_ptr<DAS::Core::IPC::HostLauncher> launcher_;
 };
 
 // ============================================================

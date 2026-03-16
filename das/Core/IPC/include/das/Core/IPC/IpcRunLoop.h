@@ -276,6 +276,14 @@ public:
      */
     void SetSessionId(uint16_t session_id);
 
+    /// @brief 获取本地 session_id
+    /// @return 本地 session_id
+    [[nodiscard]]
+    uint16_t GetSessionId() const noexcept
+    {
+        return local_session_id_;
+    }
+
     /// 获取 io_context 引用（用于 HostLauncher 等需要共享 io_context 的场景）
     /// 注意：仅在 Initialize() 成功后可用
     /// @return io_context 引用，生命周期绑定到 this
@@ -465,7 +473,7 @@ public:
     std::unordered_map<CallKey, PendingCallState, CallKeyHash> pending_calls_;
 
     /// 本地 session_id (V3: MainProcess=1, Host 从 Handshake 获取)
-    uint16_t local_session_id_ = 1;
+    uint16_t local_session_id_ = 0;
 
     // async_transport_ 已移除
     // IpcRunLoop 不再持有任何 transport，所有 transport 由外部管理

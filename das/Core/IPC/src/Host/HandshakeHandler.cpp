@@ -4,7 +4,6 @@
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcRunLoop.h>
-#include <das/Core/IPC/SessionCoordinator.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
@@ -31,7 +30,7 @@ namespace Core
                 // local_session_id = 0 表示等待握手时由主进程分配
                 // 非 0 值需要是有效的 session_id
                 if (local_session_id != 0
-                    && !SessionCoordinator::IsValidSessionId(local_session_id))
+                    && (local_session_id == 0 || local_session_id == 0xFFFF))
                 {
                     std::string msg = DAS_FMT_NS::format(
                         "HandshakeHandler: Invalid local_session_id: {}",
@@ -64,11 +63,12 @@ namespace Core
 
                 std::lock_guard<std::mutex> lock(clients_mutex_);
 
-                auto& coordinator = SessionCoordinator::GetInstance();
-
                 for (auto& pair : clients_)
                 {
-                    coordinator.ReleaseSessionId(pair.first);
+                    if (release_session_callback_)
+                    {
+                        release_session_callback_(pair.first);
+                    }
 
                     if (on_client_disconnected_)
                     {
@@ -373,8 +373,11 @@ namespace Core
                 }
 
                 // 设置 Host 进程的本地 session_id
-                SessionCoordinator::GetInstance().SetLocalSessionId(session_id);
-                local_session_id_ = session_id; // 同步更新本地存储
+                if (run_loop_)
+                {
+                    run_loop_->SetSessionId(session_id);
+                }
+                local_session_id_ = session_id;
 
                 ConnectedClient client;
                 client.session_id = session_id;
@@ -517,8 +520,10 @@ namespace Core
 
                 if (session_id != 0)
                 {
-                    auto& coordinator = SessionCoordinator::GetInstance();
-                    coordinator.ReleaseSessionId(session_id);
+                    if (release_session_callback_)
+                    {
+                        release_session_callback_(session_id);
+                    }
 
                     std::string msg = DAS_FMT_NS::format(
                         "HandshakeHandler: Client disconnected: session_id={}, reason={}",

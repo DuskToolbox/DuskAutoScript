@@ -5,7 +5,6 @@
 #include <das/Core/IPC/IDistributedObjectManager.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/ObjectId.h>
-#include <das/Core/IPC/SessionCoordinator.h>
 #include <das/IDasBase.h>
 #include <memory>
 #include <unordered_map>
@@ -13,6 +12,8 @@
 #include <das/Core/IPC/Config.h>
 
 DAS_CORE_IPC_NS_BEGIN
+
+class IpcRunLoop;
 struct RemoteObjectHandle
 {
     ObjectId object_id;
@@ -27,6 +28,8 @@ class DistributedObjectManager : public IDistributedObjectManager
 public:
     DistributedObjectManager();
     ~DistributedObjectManager();
+
+    void SetRunLoop(IpcRunLoop* run_loop) { run_loop_ = run_loop; }
 
     DasResult RegisterLocalObject(void* object_ptr, ObjectId& out_object_id)
         override;
@@ -48,6 +51,10 @@ public:
 
 private:
     static DasResult ValidateObjectId(const ObjectId& object_id);
+
+    uint16_t GetLocalSessionId() const;
+
+    IpcRunLoop* run_loop_ = nullptr;
 
     std::unordered_map<ObjectId, RemoteObjectHandle> objects_;
     uint32_t                                         next_local_id_{1};

@@ -1,6 +1,7 @@
 #ifndef DAS_CORE_IPC_MAIN_PROCESS_IPC_CONTEXT_H
 #define DAS_CORE_IPC_MAIN_PROCESS_IPC_CONTEXT_H
 
+#include <atomic>
 #include <chrono>
 #include <das/Core/IPC/BusinessThread.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
@@ -79,6 +80,9 @@ namespace Core
 
                 std::vector<uint16_t> GetConnectedSessions() override;
 
+                uint16_t AllocateSessionId() override;
+                void     ReleaseSessionId(uint16_t session_id) override;
+
             private:
                 void Uninitialize();
 
@@ -95,6 +99,15 @@ namespace Core
                 std::shared_ptr<BusinessThread> business_thread_;
 
                 bool is_initialized_ = false;
+
+                std::atomic<uint16_t> next_session_id_{2};
+                mutable std::mutex    allocated_ids_mutex_;
+                bool                  allocated_ids_[65536]{};
+                static const uint16_t reserved_session_ids_[3];
+
+                uint16_t FindAvailableSessionId();
+                void     MarkSessionIdAsAllocated(uint16_t session_id);
+                void     MarkSessionIdAsFree(uint16_t session_id);
             };
 
         } // namespace MainProcess

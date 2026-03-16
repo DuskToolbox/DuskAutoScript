@@ -11,7 +11,6 @@
 #include <das/Core/IPC/MainProcess/IpcContext.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
-#include <das/Core/IPC/SessionCoordinator.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
 #include <das/IDasAsyncCallback.h>
@@ -50,18 +49,26 @@ namespace Core
                 // 2. Set inbound_queue to IpcRunLoop
                 runloop_->SetInboundQueue(&inbound_queue_);
 
-                // 3. Initialize SessionCoordinator（主进程 session_id = 1）
-                auto& coordinator = SessionCoordinator::GetInstance();
-                coordinator.SetLocalSessionId(1);
+                // 3. 主进程 session_id = 1
+                runloop_->SetSessionId(1);
 
-                // 4. Create BusinessThread
+                // 4. Initialize reserved session IDs
+                for (uint16_t reserved_id : reserved_session_ids_)
+                {
+                    if (reserved_id < 65536)
+                    {
+                        allocated_ids_[reserved_id] = true;
+                    }
+                }
+
+                // 5. DistributedObjectManager 绑定 IpcRunLoop
+                object_manager_.SetRunLoop(runloop_.get());
+
+                // 6. Create BusinessThread
                 business_thread_ =
                     std::make_shared<BusinessThread>(inbound_queue_, *runloop_);
 
-                // 5. DistributedObjectManager is now a value member, no need to
-                // create
-
-                // 6. Initialize ProxyFactory with runloop_
+                // 7. Initialize ProxyFactory with runloop_
                 auto& proxy_factory = ProxyFactory::GetInstance();
                 result = proxy_factory.Initialize(
                     &object_manager_,
@@ -156,7 +163,9 @@ namespace Core
 
                 try
                 {
-                    *pp_out_launcher = new HostLauncher(GetIoContext());
+                    auto* launcher = new HostLauncher(GetIoContext());
+                    launcher->SetIpcContext(this);
+                    *pp_out_launcher = launcher;
                     return DAS_S_OK;
                 }
                 catch (const std::exception& e)
@@ -242,7 +251,7 @@ namespace Core
                     path_len);
 
                 // 3. 构建消息头
-                auto header = MakeControlPlaneRequest(
+                auto header = MakeBusinessControlRequest(
                     IpcCommandType::LOAD_PLUGIN,
                     static_cast<uint32_t>(payload.size()),
                     session_id);
@@ -372,6 +381,94 @@ namespace Core
             void IpcContextDeleter::operator()(IIpcContext* ctx) const
             {
                 DestroyIpcContext(ctx);
+            }
+
+            const uint16_t IpcContext::reserved_session_ids_[3] = {
+                0,
+                1,
+                0xFFFF};
+
+            uint16_t IpcContext::FindAvailableSessionId()
+            {
+                uint16_t start_id = next_session_id_.load();
+                uint16_t current_id = start_id;
+
+                do
+                {
+                    if (current_id < 65536 && !allocated_ids_[current_id])
+                    {
+                        bool is_reserved = false;
+                        for (uint16_t reserved_id : reserved_session_ids_)
+                        {
+                            if (current_id == reserved_id)
+                            {
+                                is_reserved = true;
+                                break;
+                            }
+                        }
+
+                        if (!is_reserved)
+                        {
+                            next_session_id_.store(
+                                (current_id + 1) % (65536 - 1));
+                            if (next_session_id_.load() <= 1)
+                            {
+                                next_session_id_.store(2);
+                            }
+                            return current_id;
+                        }
+                    }
+
+                    current_id++;
+                    if (current_id >= 65536)
+                    {
+                        current_id = 2;
+                    }
+
+                    if (current_id == start_id)
+                    {
+                        break;
+                    }
+                } while (true);
+
+                return 0;
+            }
+
+            void IpcContext::MarkSessionIdAsAllocated(uint16_t session_id)
+            {
+                if (session_id < 65536)
+                {
+                    allocated_ids_[session_id] = true;
+                }
+            }
+
+            void IpcContext::MarkSessionIdAsFree(uint16_t session_id)
+            {
+                if (session_id < 65536)
+                {
+                    allocated_ids_[session_id] = false;
+                }
+            }
+
+            uint16_t IpcContext::AllocateSessionId()
+            {
+                std::lock_guard<std::mutex> lock(allocated_ids_mutex_);
+
+                uint16_t available_id = FindAvailableSessionId();
+                if (available_id == 0)
+                {
+                    DAS_CORE_LOG_ERROR("No available session_id");
+                    return 0;
+                }
+
+                MarkSessionIdAsAllocated(available_id);
+                return available_id;
+            }
+
+            void IpcContext::ReleaseSessionId(uint16_t session_id)
+            {
+                std::lock_guard<std::mutex> lock(allocated_ids_mutex_);
+                MarkSessionIdAsFree(session_id);
             }
 
         } // namespace MainProcess

@@ -8,6 +8,7 @@
 #include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/IMessageHandler.h>
 #include <das/Core/IPC/IpcResponseSender.h>
+#include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <das/DasApi.h>
 #include <das/DasConfig.h>
@@ -81,7 +82,8 @@ namespace Core
              *     DAS_LOG_INFO(msg.c_str()); });
              *
              * // 注册到 IpcRunLoop（协程版本）
-             * run_loop.RegisterHandler(HeaderFlags::CONTROL_PLANE, INTERFACE_ID, handler.get());
+             * run_loop.RegisterHandler(HeaderFlags::CONTROL_PLANE,
+             * INTERFACE_ID, handler.get());
              * @endcode
              */
             class HandshakeHandler : public IAwaitableMessageHandler
@@ -130,6 +132,7 @@ namespace Core
                 using ClientDisconnectedCallback =
                     std::function<void(uint16_t session_id)>;
                 using ShutdownRequestedCallback = std::function<void()>;
+                using ReleaseSessionCallback = std::function<void(uint16_t)>;
 
                 /**
                  * @brief 析构函数
@@ -185,6 +188,13 @@ namespace Core
                  * @param callback 回调函数
                  */
                 void SetOnShutdownRequested(ShutdownRequestedCallback callback);
+
+                void SetRunLoop(IpcRunLoop* run_loop) { run_loop_ = run_loop; }
+
+                void SetReleaseSessionCallback(ReleaseSessionCallback cb)
+                {
+                    release_session_callback_ = std::move(cb);
+                }
 
                 /**
                  * @brief 检查是否存在指定客户端
@@ -315,6 +325,9 @@ namespace Core
                 ShutdownRequestedCallback
                     on_shutdown_requested_; ///< 关闭请求回调（收到 GOODBYE
                                             ///< 时触发）
+
+                IpcRunLoop*            run_loop_ = nullptr;
+                ReleaseSessionCallback release_session_callback_;
             };
 
         } // namespace Host

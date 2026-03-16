@@ -18,6 +18,7 @@
 #include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
+#include <das/Core/IPC/MainProcess/IIpcContext.h>
 
 // Forward declaration for io_context
 namespace boost::asio
@@ -32,6 +33,8 @@ class HostLauncher final : public IHostLauncher
 public:
     explicit HostLauncher(boost::asio::io_context& io_ctx);
     ~HostLauncher() override;
+
+    void SetIpcContext(MainProcess::IIpcContext* ctx) { ipc_context_ = ctx; }
 
     HostLauncher(const HostLauncher&) = delete;
     HostLauncher& operator=(const HostLauncher&) = delete;
@@ -105,15 +108,19 @@ private:
     /**
      * @brief 发送 Ready 消息（协程版本）
      */
-    boost::asio::awaitable<DasResult> SendHandshakeReadyAsync(uint16_t session_id);
+    boost::asio::awaitable<DasResult> SendHandshakeReadyAsync(
+        uint16_t session_id);
 
     /**
      * @brief 接收 ReadyAck 消息（协程版本）
      */
-    boost::asio::awaitable<DasResult> ReceiveHandshakeReadyAckAsync(uint32_t timeout_ms);
+    boost::asio::awaitable<DasResult> ReceiveHandshakeReadyAckAsync(
+        uint32_t timeout_ms);
 
     struct Impl;
     std::unique_ptr<Impl> impl_;
+
+    MainProcess::IIpcContext* ipc_context_ = nullptr;
 };
 DAS_CORE_IPC_NS_END
 

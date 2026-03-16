@@ -12,7 +12,6 @@
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
-#include <das/Core/IPC/SessionCoordinator.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
 #include <das/Utils/StringUtils.h>
@@ -75,8 +74,8 @@ struct HostLauncher::Impl
     std::unique_ptr<DefaultAsyncIpcTransport>    async_transport;
     uint32_t                                     pid = 0;
     uint16_t                                     session_id = 0;
-    uint16_t                                     next_call_id = 1; // V3: 16-bit call_id
-    bool                                         is_running = false;
+    uint16_t              next_call_id = 1; // V3: 16-bit call_id
+    bool                  is_running = false;
     std::atomic<uint32_t> ref_count{1}; // 引用计数，初始为 1（创建时持有）
 };
 
@@ -541,8 +540,11 @@ boost::asio::awaitable<DasResult> HostLauncher::SendHandshakeHelloAsync(
     uint32_t my_pid = static_cast<uint32_t>(GET_CURRENT_PID());
 
     // 为主进程分配 session_id 给 Host
-    uint16_t assigned_session_id =
-        SessionCoordinator::GetInstance().AllocateSessionId();
+    uint16_t assigned_session_id = 0;
+    if (ipc_context_)
+    {
+        assigned_session_id = ipc_context_->AllocateSessionId();
+    }
     if (assigned_session_id == 0)
     {
         DAS_CORE_LOG_ERROR("Failed to allocate session_id for Host");
@@ -559,7 +561,7 @@ boost::asio::awaitable<DasResult> HostLauncher::SendHandshakeHelloAsync(
     {
         impl_->next_call_id = 1; // 溢出后从 1 开始
     }
-    auto     validated_header =
+    auto validated_header =
         IPCMessageHeaderBuilder()
             .SetMessageType(MessageType::REQUEST)
             .SetControlPlaneCommand(HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO)
@@ -672,7 +674,7 @@ boost::asio::awaitable<DasResult> HostLauncher::SendHandshakeReadyAsync(
     {
         impl_->next_call_id = 1; // 溢出后从 1 开始
     }
-    auto     validated_header =
+    auto validated_header =
         IPCMessageHeaderBuilder()
             .SetMessageType(MessageType::REQUEST)
             .SetControlPlaneCommand(HandshakeInterfaceId::HANDSHAKE_IFACE_READY)

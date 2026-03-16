@@ -15,7 +15,6 @@
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
-#include <das/Core/IPC/SessionCoordinator.h>
 #include <das/IDasBase.h>
 #include <gtest/gtest.h>
 
@@ -25,14 +24,19 @@ using DAS::Core::IPC::IsNullObjectId;
 using DAS::Core::IPC::ObjectId;
 using DAS::Core::IPC::RemoteObjectInfo;
 using DAS::Core::IPC::RemoteObjectRegistry;
-using DAS::Core::IPC::SessionCoordinator;
+
+namespace
+{
+    uint16_t g_next_test_session_id = 2;
+
+    uint16_t AllocateTestSessionId() { return g_next_test_session_id++; }
+} // namespace
 
 class RemoteObjectRegistryIntegrationTest : public ::testing::Test
 {
 protected:
     void SetUp() override
     {
-        session_coordinator_ = &SessionCoordinator::GetInstance();
         registry_ = &RemoteObjectRegistry::GetInstance();
         registry_->Clear();
     }
@@ -52,7 +56,6 @@ protected:
         return guid;
     }
 
-    SessionCoordinator*   session_coordinator_;
     RemoteObjectRegistry* registry_;
 };
 
@@ -60,9 +63,8 @@ protected:
 
 TEST_F(RemoteObjectRegistryIntegrationTest, SessionIdAllocationAndUsage)
 {
-    uint16_t host_session_id = session_coordinator_->AllocateSessionId();
+    uint16_t host_session_id = AllocateTestSessionId();
     ASSERT_NE(host_session_id, 0);
-    ASSERT_TRUE(SessionCoordinator::IsValidSessionId(host_session_id));
 
     ObjectId    obj_id = {host_session_id, 1, 100};
     DasGuid     iid = CreateTestGuid(1);
@@ -83,8 +85,6 @@ TEST_F(RemoteObjectRegistryIntegrationTest, SessionIdAllocationAndUsage)
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_EQ(found_info.session_id, host_session_id);
     EXPECT_EQ(found_info.object_id.local_id, 100);
-
-    session_coordinator_->ReleaseSessionId(host_session_id);
 }
 
 // ====== Multiple Hosts Tests ======
@@ -95,9 +95,8 @@ TEST_F(RemoteObjectRegistryIntegrationTest, MultipleHosts)
 
     for (int i = 0; i < 3; ++i)
     {
-        uint16_t session_id = session_coordinator_->AllocateSessionId();
+        uint16_t session_id = AllocateTestSessionId();
         host_session_ids.push_back(session_id);
-        ASSERT_TRUE(SessionCoordinator::IsValidSessionId(session_id));
     }
 
     for (size_t i = 0; i < host_session_ids.size(); ++i)
@@ -129,18 +128,13 @@ TEST_F(RemoteObjectRegistryIntegrationTest, MultipleHosts)
         ASSERT_EQ(result, DAS_S_OK);
         EXPECT_EQ(found_info.session_id, host_session_ids[i]);
     }
-
-    for (uint16_t id : host_session_ids)
-    {
-        session_coordinator_->ReleaseSessionId(id);
-    }
 }
 
 // ====== Session ID Reuse Tests ======
 
 TEST_F(RemoteObjectRegistryIntegrationTest, SessionIdSequentialAllocation)
 {
-    uint16_t session_id1 = session_coordinator_->AllocateSessionId();
+    uint16_t session_id1 = AllocateTestSessionId();
 
     ObjectId    obj_id1 = {session_id1, 1, 100};
     DasGuid     iid1 = CreateTestGuid(1);
@@ -154,11 +148,7 @@ TEST_F(RemoteObjectRegistryIntegrationTest, SessionIdSequentialAllocation)
     registry_->ListObjectsBySession(session_id1, objects);
     ASSERT_EQ(objects.size(), 1);
 
-    // 释放 session_id
-    session_coordinator_->ReleaseSessionId(session_id1);
-
-    // 重新分配应该拿到更大的 ID（顺序分配）
-    uint16_t session_id2 = session_coordinator_->AllocateSessionId();
+    uint16_t session_id2 = AllocateTestSessionId();
     EXPECT_GT(session_id2, session_id1);
 
     ObjectId    obj_id2 = {session_id2, 1, 101};
@@ -171,15 +161,13 @@ TEST_F(RemoteObjectRegistryIntegrationTest, SessionIdSequentialAllocation)
     registry_->ListObjectsBySession(session_id2, objects);
     ASSERT_EQ(objects.size(), 1);
     EXPECT_EQ(objects[0].name, "Object2");
-
-    session_coordinator_->ReleaseSessionId(session_id2);
 }
 
 // ====== Edge Cases Tests ======
 
 TEST_F(RemoteObjectRegistryIntegrationTest, EdgeCases)
 {
-    uint16_t    session_id = session_coordinator_->AllocateSessionId();
+    uint16_t    session_id = AllocateTestSessionId();
     ObjectId    obj_id = {session_id, 1, 100};
     DasGuid     iid = CreateTestGuid(1);
     std::string name = "TestObject";
@@ -198,16 +186,14 @@ TEST_F(RemoteObjectRegistryIntegrationTest, EdgeCases)
     RemoteObjectInfo info;
     result = registry_->GetObjectInfo(non_existent_id, info);
     EXPECT_EQ(result, DAS_E_IPC_OBJECT_NOT_FOUND);
-
-    session_coordinator_->ReleaseSessionId(session_id);
 }
 
 // ====== Duplicate Names Tests ======
 
 TEST_F(RemoteObjectRegistryIntegrationTest, DuplicateNames)
 {
-    uint16_t session_id1 = session_coordinator_->AllocateSessionId();
-    uint16_t session_id2 = session_coordinator_->AllocateSessionId();
+    uint16_t session_id1 = AllocateTestSessionId();
+    uint16_t session_id2 = AllocateTestSessionId();
 
     ObjectId  obj_id1 = {session_id1, 1, 100};
     DasGuid   iid1 = CreateTestGuid(1);
@@ -234,7 +220,4 @@ TEST_F(RemoteObjectRegistryIntegrationTest, DuplicateNames)
         info1);
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_EQ(info1.session_id, session_id1);
-
-    session_coordinator_->ReleaseSessionId(session_id1);
-    session_coordinator_->ReleaseSessionId(session_id2);
 }
