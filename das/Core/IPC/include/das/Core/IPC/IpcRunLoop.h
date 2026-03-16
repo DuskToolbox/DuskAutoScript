@@ -166,26 +166,14 @@ public:
     void RequestStop();
 
     /**
-     * @brief 注册消息处理器
-     * @param header_flags 消息头标志（HeaderFlags::NONE 或
-     * HeaderFlags::CONTROL_PLANE）
-     * @param interface_id 接口 ID
-     * @param handler 处理器实例（所有权转移）
-     */
-    void RegisterHandler(
-        uint8_t                          header_flags,
-        uint32_t                         interface_id,
-        std::unique_ptr<IMessageHandler> handler);
-
-    /**
-     * @brief 非持有注册消息处理器（Stub 全局单例用）
+     * @brief 注册消息处理器（通过 AddRef 管理生命周期）
      *
-     * 调用方保证 handler 生命周期大于 IpcRunLoop。
-     * IpcRunLoop 不持有 handler，不管理其生命周期。
+     * IpcRunLoop 通过 DasPtr 持有 handler 引用（内部调用 AddRef）。
+     * 调用方仍持有原始所有权。
      *
      * @param header_flags 消息头标志
      * @param interface_id 接口 ID
-     * @param handler 处理器指针（非持有）
+     * @param handler 处理器指针（IpcRunLoop 通过 AddRef 延长生命周期）
      */
     void RegisterHandler(
         uint8_t          header_flags,

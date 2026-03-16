@@ -133,19 +133,6 @@ void IpcRunLoop::RequestStop()
 }
 
 void IpcRunLoop::RegisterHandler(
-    uint8_t                          header_flags,
-    uint32_t                         interface_id,
-    std::unique_ptr<IMessageHandler> handler)
-{
-    if (!handler)
-    {
-        return;
-    }
-    handlers_by_flags_[header_flags][interface_id] =
-        DasPtr<IMessageHandler>(handler.release());
-}
-
-void IpcRunLoop::RegisterHandler(
     uint8_t          header_flags,
     uint32_t         interface_id,
     IMessageHandler* handler)
@@ -154,8 +141,7 @@ void IpcRunLoop::RegisterHandler(
     {
         return;
     }
-    // 非持有注册：直接存储原始指针，不转移所有权
-    // 使用 new DasPtr 包装，但 handler 生命周期由调用方管理
+    // 通过 DasPtr 构造（内部调用 AddRef）管理引用计数
     handlers_by_flags_[header_flags][interface_id] =
         DasPtr<IMessageHandler>(handler);
 }
@@ -178,28 +164,15 @@ IMessageHandler* IpcRunLoop::GetHandler(
     uint32_t interface_id) const
 {
     auto it = handlers_by_flags_.find(header_flags);
-    if (it != handlers_by_flags_.end())
+    if (it == handlers_by_flags_.end())
     {
-        auto jt = it->second.find(interface_id);
-        if (jt != it->second.end())
-        {
-            return jt->second.Get();
-        }
+        return nullptr;
     }
 
-    // Fallback: 当精确匹配失败且 header_flags=NONE 时，回退到 interface_id=0
-    // IpcCommandHandler 注册在 interface_id=0，用于处理所有命令类型
-    if (header_flags == HeaderFlags::NONE && interface_id != 0)
+    auto jt = it->second.find(interface_id);
+    if (jt != it->second.end())
     {
-        it = handlers_by_flags_.find(HeaderFlags::NONE);
-        if (it != handlers_by_flags_.end())
-        {
-            auto jt = it->second.find(0);
-            if (jt != it->second.end())
-            {
-                return jt->second.Get();
-            }
-        }
+        return jt->second.Get();
     }
 
     return nullptr;

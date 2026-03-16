@@ -230,9 +230,9 @@ public:
     }
 
     DasResult HandleMessage(
-        const ValidatedIPCMessageHeader& header,
-        const std::vector<uint8_t>&      body,
-        IpcResponseSender&               sender,
+        const ValidatedIPCMessageHeader&          header,
+        const std::vector<uint8_t>&               body,
+        IpcResponseSender&                        sender,
         DAS::Core::IPC::DistributedObjectManager& object_manager) override
     {
         // 简单返回成功
@@ -256,7 +256,7 @@ TEST_F(IpcRunLoopTest, RegisterHandler_Succeeds)
     runloop_->RegisterHandler(
         DAS::Core::IPC::HeaderFlags::NONE,
         1,
-        std::move(handler));
+        handler.get());
 
     // 验证可以通过 GetHandler 获取
     IMessageHandler* retrieved =
