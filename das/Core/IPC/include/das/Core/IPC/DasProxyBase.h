@@ -8,6 +8,7 @@
 #include <das/IDasBase.h>
 
 #include <das/Core/IPC/Config.h>
+#include <das/_autogen/idl/ipc/IpcProxyFactory.h>
 
 DAS_CORE_IPC_NS_BEGIN
 template <typename TInterface>
@@ -96,26 +97,23 @@ public:
         }
 
         // 根据 interface_id 创建对应的 Proxy
-        // 注意：这里需要调用 IDL 生成的 CreateProxyByInterfaceId 函数
-        // 由于是模板函数，需要在生成的代码中调用
         ObjectId new_obj_id = DecodeObjectId(new_object_id);
-        (void)interface_id;
-        (void)new_obj_id;
 
-        // TODO: 使用生成的 CreateProxyByInterfaceId 创建 Proxy
-        // IPCProxyBase* proxy = CreateProxyByInterfaceId(
-        //     interface_id,
-        //     new_obj_id,
-        //     GetRunLoop(),
-        //     GetObjectManager());
+        // 使用生成的 CreateProxyByInterfaceId 创建 Proxy
+        IPCProxyBase* proxy = DasIpcProxy::CreateProxyByInterfaceId(
+            interface_id,
+            new_obj_id,
+            *GetRunLoop(),
+            GetBusinessThread(),
+            GetObjectManager());
 
-        // if (proxy == nullptr)
-        // {
-        //     return DAS_E_NO_INTERFACE;
-        // }
+        if (proxy == nullptr)
+        {
+            return DAS_E_NO_INTERFACE;
+        }
 
-        // *pp_object = proxy;
-        return DAS_E_NOT_IMPLEMENTED;
+        *pp_object = proxy;
+        return DAS_S_OK;
     }
 
 protected:
