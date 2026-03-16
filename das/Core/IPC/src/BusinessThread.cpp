@@ -109,14 +109,17 @@ void BusinessThread::DispatchMessage(InboundMessage& msg)
             header.GetHeaderFlags(),
             header.GetInterfaceId());
 
-        if (handler)
+        if (handler && object_manager_)
         {
             // 创建 IpcResponseSender（业务线程模式）
             IpcResponseSender sender(run_loop_);
 
-            // 注意： HandleMessage 当前只接收 3 个参数
-            // DistributedObjectManager 的访问需要在 Handler 内部解决
-            auto result = handler->HandleMessage(header, msg.body, sender);
+            // 传递 object_manager 给 handler
+            auto result = handler->HandleMessage(
+                header,
+                msg.body,
+                sender,
+                *object_manager_);
 
             if (DAS::IsFailed(result))
             {

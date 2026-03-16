@@ -18,4 +18,5 @@ endif()
 # ====== BusinessThread 源文件 ======
 target_sources(DasCoreObjects PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/BusinessThread.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/IStubBase.cpp
 )

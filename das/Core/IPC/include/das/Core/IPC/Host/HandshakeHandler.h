@@ -4,6 +4,7 @@
 #include <boost/asio/awaitable.hpp>
 #include <chrono>
 #include <cstdint>
+#include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/IMessageHandler.h>
 #include <das/Core/IPC/IpcResponseSender.h>
@@ -170,7 +171,8 @@ namespace Core
                 DasResult HandleMessage(
                     const ValidatedIPCMessageHeader& header,
                     const std::vector<uint8_t>&      body,
-                    IpcResponseSender&               sender) override;
+                    IpcResponseSender&               sender,
+                    DistributedObjectManager&        object_manager) override;
 
                 /**
                  * @brief 设置客户端连接回调

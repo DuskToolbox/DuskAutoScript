@@ -1,6 +1,7 @@
 #include <atomic>
 #include <boost/asio/awaitable.hpp>
 #include <chrono>
+#include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IMessageHandler.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
@@ -231,12 +232,14 @@ public:
     DasResult HandleMessage(
         const ValidatedIPCMessageHeader& header,
         const std::vector<uint8_t>&      body,
-        IpcResponseSender&               sender) override
+        IpcResponseSender&               sender,
+        DAS::Core::IPC::DistributedObjectManager& object_manager) override
     {
         // 简单返回成功
         (void)header;
         (void)body;
         (void)sender;
+        (void)object_manager;
         return DAS_S_OK;
     }
 

@@ -186,8 +186,10 @@ namespace Core
             DasResult HandshakeHandler::HandleMessage(
                 const ValidatedIPCMessageHeader& header,
                 const std::vector<uint8_t>&      body,
-                IpcResponseSender&               sender)
+                IpcResponseSender&               sender,
+                DistributedObjectManager&        object_manager)
             {
+                (void)object_manager; // 握手处理器不使用 object_manager
                 std::vector<uint8_t> response_body;
                 DasResult            result = HandleMessage(
                     header,

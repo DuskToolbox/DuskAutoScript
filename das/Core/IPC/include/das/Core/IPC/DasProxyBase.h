@@ -18,10 +18,9 @@ public:
 
     ~DasProxyBase() override
     {
-        if (object_manager_
-            && (object_id_.session_id != 0 || object_id_.local_id != 0))
+        if (object_id_.session_id != 0 || object_id_.local_id != 0)
         {
-            object_manager_->Release(EncodeObjectId(object_id_));
+            GetObjectManager().Release(EncodeObjectId(object_id_));
         }
     }
 
@@ -29,7 +28,7 @@ public:
     DistributedObjectManager* GetObjectManager() const noexcept
         DAS_LIFETIMEBOUND
     {
-        return object_manager_;
+        return &IPCProxyBase::GetObjectManager();
     }
 
     /// @brief IPC 远程 QueryInterface
@@ -97,39 +96,50 @@ public:
 
 protected:
     DasProxyBase(
-        uint32_t                  interface_id,
-        const ObjectId&           object_id,
-        IpcRunLoop*               run_loop,
-        DistributedObjectManager* object_manager)
-        : IPCProxyBase(interface_id, object_id, run_loop),
-          object_manager_(object_manager)
+        uint32_t                      interface_id,
+        const ObjectId&               object_id,
+        IpcRunLoop&                   run_loop,
+        std::weak_ptr<BusinessThread> business_thread,
+        DistributedObjectManager&     object_manager)
+        : IPCProxyBase(
+              interface_id,
+              object_id,
+              run_loop,
+              std::move(business_thread),
+              object_manager)
     {
     }
 
     template <typename TProxy, typename... Args>
     static DasResult CreateProxy(
-        uint64_t                  encoded_object_id,
-        IpcRunLoop*               run_loop,
-        DistributedObjectManager* object_manager,
-        TProxy**                  out_proxy,
+        uint64_t                      encoded_object_id,
+        IpcRunLoop*                   run_loop,
+        DistributedObjectManager*     object_manager,
+        std::weak_ptr<BusinessThread> business_thread,
+        TProxy**                      out_proxy,
         Args&&... args)
     {
         if (!out_proxy || !run_loop || !object_manager)
+        {
             return DAS_E_INVALIDARG;
+        }
 
         void*     obj_ptr = nullptr;
         DasResult result =
             object_manager->LookupObject(encoded_object_id, &obj_ptr);
         if (DAS::IsFailed(result))
+        {
             return result;
+        }
 
         ObjectId obj_id = DecodeObjectId(encoded_object_id);
 
         auto proxy = new TProxy(
             TProxy::InterfaceId,
             obj_id,
-            run_loop,
-            object_manager,
+            *run_loop,
+            business_thread,
+            *object_manager,
             std::forward<Args>(args)...);
 
         *out_proxy = proxy;
@@ -137,9 +147,6 @@ protected:
     }
 
     using IPCProxyBase::object_id_;
-
-private:
-    DistributedObjectManager* object_manager_;
 };
 DAS_CORE_IPC_NS_END
 

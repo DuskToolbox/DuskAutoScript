@@ -11,6 +11,7 @@ DAS_CORE_IPC_NS_BEGIN
 // 前向声明
 class IpcResponseSender;
 class ValidatedIPCMessageHeader;
+class DistributedObjectManager;
 
 /**
  * @brief 消息处理器接口
@@ -49,12 +50,14 @@ public:
      * @param header 已验证的消息头
      * @param body 消息体
      * @param sender 响应发送器（用于发送响应）
+     * @param object_manager 分布式对象管理器（用于查找 impl 指针）
      * @return DasResult 处理结果
      */
     virtual DasResult HandleMessage(
         const ValidatedIPCMessageHeader& header,
         const std::vector<uint8_t>&      body,
-        IpcResponseSender&               sender) = 0;
+        IpcResponseSender&               sender,
+        DistributedObjectManager&        object_manager) = 0;
 };
 
 DAS_CORE_IPC_NS_END

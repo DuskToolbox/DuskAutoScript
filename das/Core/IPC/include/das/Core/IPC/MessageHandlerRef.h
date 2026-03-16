@@ -1,6 +1,7 @@
 #ifndef DAS_CORE_IPC_MESSAGE_HANDLER_REF_H
 #define DAS_CORE_IPC_MESSAGE_HANDLER_REF_H
 
+#include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IMessageHandler.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
@@ -56,13 +57,14 @@ public:
     DasResult HandleMessage(
         const ValidatedIPCMessageHeader& header,
         const std::vector<uint8_t>&      body,
-        IpcResponseSender&               sender) override
+        IpcResponseSender&               sender,
+        DistributedObjectManager&        object_manager) override
     {
         if (!handler_)
         {
             return DAS_E_IPC_INVALID_ARGUMENT;
         }
-        return handler_->HandleMessage(header, body, sender);
+        return handler_->HandleMessage(header, body, sender, object_manager);
     }
 
 private:

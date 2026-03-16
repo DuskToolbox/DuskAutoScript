@@ -3,6 +3,7 @@
 
 #include <boost/asio/awaitable.hpp>
 #include <cstdint>
+#include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IMessageHandler.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
@@ -163,7 +164,8 @@ public:
     DasResult HandleMessage(
         const ValidatedIPCMessageHeader& header,
         const std::vector<uint8_t>&      body,
-        IpcResponseSender&               sender) override;
+        IpcResponseSender&               sender,
+        DistributedObjectManager&        object_manager) override;
 
 private:
     // 内置命令处理器

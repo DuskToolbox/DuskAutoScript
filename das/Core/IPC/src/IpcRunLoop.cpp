@@ -251,7 +251,12 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
         try
         {
             IpcResponseSender sender(transport);
-            auto result = handler->HandleMessage(header, body, sender);
+            // 控制平面 handler 不使用 object_manager，但接口需要此参数
+            // 如果 object_manager_ 为 nullptr，使用一个静态的空对象
+            static DistributedObjectManager null_manager;
+            DistributedObjectManager&       obj_mgr =
+                object_manager_ ? *object_manager_ : null_manager;
+            auto result = handler->HandleMessage(header, body, sender, obj_mgr);
             if (DAS::IsFailed(result))
             {
                 DAS_CORE_LOG_WARN("Handler returned error: {}", result);
@@ -497,6 +502,11 @@ void IpcRunLoop::SetSessionId(uint16_t session_id)
 void IpcRunLoop::SetInboundQueue(IpcMessageQueue<InboundMessage>* queue)
 {
     inbound_queue_ = queue;
+}
+
+void IpcRunLoop::SetObjectManager(DistributedObjectManager* object_manager)
+{
+    object_manager_ = object_manager;
 }
 
 DasResult IpcRunLoop::PostSend(

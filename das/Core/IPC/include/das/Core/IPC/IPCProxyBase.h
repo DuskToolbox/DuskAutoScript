@@ -7,14 +7,15 @@
 #include <das/Core/IPC/MethodMetadata.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/IDasBase.h>
+#include <memory>
 #include <vector>
 
-#include <das/Core/IPC/AsyncIpcTransport.h>
+#include <das/Core/IPC/BusinessThread.h>
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/SessionCoordinator.h>
 
 DAS_CORE_IPC_NS_BEGIN
-class IpcRunLoop;
+class DistributedObjectManager;
 
 class IPCProxyBase
 {
@@ -52,33 +53,49 @@ public:
         return interface_id_;
     }
 
+    /// @brief 获取分布式对象管理器
+    [[nodiscard]]
+    DistributedObjectManager& GetObjectManager() const noexcept
+    {
+        return object_manager_;
+    }
+
     /// @brief 获取 run loop
     [[nodiscard]]
     IpcRunLoop* GetRunLoop() const noexcept
     {
-        return run_loop_;
+        return &run_loop_;
     }
 
-    /// @brief 获取 transport
-    [[nodiscard]]
-    DefaultAsyncIpcTransport* GetTransport() const noexcept
-    {
-        return transport_;
-    }
+    /// @brief 发送同步请求（PostSend + PumpUntilResponse）
+    /// @param method_id 方法 ID（用于日志记录）
+    /// @param body 请求体（包含完整的 V3 Body Header）
+    /// @param body_size 请求体大小
+    /// @param out_response [out] 响应体
+    /// @return DasResult 处理结果
+    /// @note body 参数是完整的 V3 消息体（已包含 Body Header）
+    DasResult SendRequest(
+        uint16_t              method_id,
+        const uint8_t*        body,
+        size_t                body_size,
+        std::vector<uint8_t>& out_response);
 
 protected:
     /// @brief 构造函数
     /// @param interface_id 接口 ID
     /// @param object_id 对象 ID（用于 body 序列化）
-    /// @param run_loop IPC 运行循环
-    /// @param transport IPC 传输层
+    /// @param run_loop IPC 运行循环（引用）
+    /// @param business_thread 业务线程（weak_ptr，用于 PumpUntilResponse）
+    /// @param object_manager 分布式对象管理器（引用）
     IPCProxyBase(
-        uint32_t                  interface_id,
-        const ObjectId&           object_id,
-        IpcRunLoop*               run_loop,
-        DefaultAsyncIpcTransport* transport)
+        uint32_t                      interface_id,
+        const ObjectId&               object_id,
+        IpcRunLoop&                   run_loop,
+        std::weak_ptr<BusinessThread> business_thread,
+        DistributedObjectManager&     object_manager)
         : interface_id_(interface_id), object_id_(object_id),
-          run_loop_(run_loop), transport_(transport), next_call_id_(0)
+          run_loop_(run_loop), business_thread_(std::move(business_thread)),
+          object_manager_(object_manager), next_call_id_(0)
     {
     }
 
@@ -178,12 +195,13 @@ protected:
     }
 
 private:
-    uint32_t                  interface_id_;
-    ObjectId                  object_id_;
-    IpcRunLoop*               run_loop_;
-    DefaultAsyncIpcTransport* transport_;
-    uint16_t                  next_call_id_{0}; // V3: 16-bit call_id
-    uint32_t                  refcount_{1};     // 初始引用计数为1（创建时）
+    uint32_t                      interface_id_;
+    ObjectId                      object_id_;
+    IpcRunLoop&                   run_loop_;        // 引用，生命周期由外部管理
+    std::weak_ptr<BusinessThread> business_thread_; // 用于 PumpUntilResponse
+    DistributedObjectManager&     object_manager_;  // 引用，生命周期由外部管理
+    uint16_t                      next_call_id_{0}; // V3: 16-bit call_id
+    uint32_t                      refcount_{1};     // 初始引用计数为1（创建时）
 };
 DAS_CORE_IPC_NS_END
 

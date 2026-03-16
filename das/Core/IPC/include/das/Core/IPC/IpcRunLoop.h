@@ -29,6 +29,7 @@
 
 #include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/DefaultAsyncIpcTransport.h>
+#include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IpcResponseSender.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
 
@@ -106,37 +107,10 @@ struct AwaitResponseOperation
     CallKey                   call_key_;
     std::chrono::milliseconds timeout_;
     Receiver                  rcvr_;
-
-    friend void tag_invoke(
-        stdexec::start_t,
-        AwaitResponseOperation& self) noexcept
-    {
-        // 错误路径：loop_ 为 nullptr 表示 PrepareSendRequest 已失败
-        if (!self.loop_)
-        {
-            auto error_code = static_cast<DasResult>(self.call_key_.call_id);
-            stdexec::set_value(
-                std::move(self.rcvr_),
-                std::make_pair(error_code, std::vector<uint8_t>{}));
-            return;
-        }
-
-        auto deadline = std::chrono::steady_clock::now() + self.timeout_;
-
-        // 注册完成回调到 PendingCallState
-        self.loop_->RegisterPendingCompletion(
-            self.call_key_,
-            deadline,
-            [rcvr = std::move(self.rcvr_)](
-                DasResult            result,
-                std::vector<uint8_t> response) mutable
-            {
-                stdexec::set_value(
-                    std::move(rcvr),
-                    std::make_pair(result, std::move(response)));
-            });
-    }
 };
+
+// tag_invoke 实现在 IpcRunLoop 完整定义之后（见文件末尾），避免 clang
+// 对不完整类型的检查
 
 /**
  * @brief 异步等待 IPC 响应的 sender
@@ -318,6 +292,17 @@ public:
     void SetInboundQueue(IpcMessageQueue<InboundMessage>* queue);
 
     /**
+     * @brief 设置分布式对象管理器（用于控制平面 handler）
+     *
+     * 由 IpcContext 在初始化时调用，将 object_manager 指针传递给 IpcRunLoop。
+     * IpcRunLoop 不持有此管理器，仅保存指针用于传递给控制平面 handler。
+     * 控制平面 handler 不使用此参数，但接口需要此参数。
+     *
+     * @param object_manager 分布式对象管理器指针（IpcContext 持有）
+     */
+    void SetObjectManager(DistributedObjectManager* object_manager);
+
+    /**
      * @brief 注册 HostLauncher 并启动接收循环
      *
      * 在 HostLauncher::Start() 成功后调用。
@@ -489,6 +474,10 @@ public:
     /// 用于 IO 线程将业务消息分流到 inbound queue
     IpcMessageQueue<InboundMessage>* inbound_queue_ = nullptr;
 
+    /// 分布式对象管理器指针（非持有，由 IpcContext 管理）
+    /// 用于传递给控制平面 handler（控制平面 handler 不使用此参数）
+    DistributedObjectManager* object_manager_ = nullptr;
+
 private:
     /// 默认构造函数（禁止直接调用，使用 Create() 代替）
     IpcRunLoop() = default;
@@ -502,6 +491,41 @@ private:
     /// 标记是否已关闭
     bool is_shutdown_ = false;
 };
+
+//=============================================================================
+// AwaitResponseOperation::tag_invoke 实现（需要 IpcRunLoop 完整定义）
+//=============================================================================
+
+template <class Receiver>
+void tag_invoke(
+    stdexec::start_t,
+    AwaitResponseOperation<Receiver>& self) noexcept
+{
+    // 错误路径：loop_ 为 nullptr 表示 PrepareSendRequest 已失败
+    if (!self.loop_)
+    {
+        auto error_code = static_cast<DasResult>(self.call_key_.call_id);
+        stdexec::set_value(
+            std::move(self.rcvr_),
+            std::make_pair(error_code, std::vector<uint8_t>{}));
+        return;
+    }
+
+    auto deadline = std::chrono::steady_clock::now() + self.timeout_;
+
+    // 注册完成回调到 PendingCallState
+    self.loop_->RegisterPendingCompletion(
+        self.call_key_,
+        deadline,
+        [rcvr = std::move(self.rcvr_)](
+            DasResult            result,
+            std::vector<uint8_t> response) mutable
+        {
+            stdexec::set_value(
+                std::move(rcvr),
+                std::make_pair(result, std::move(response)));
+        });
+}
 
 //=============================================================================
 // SendMessageAsync 实现（必须在头文件中，因为返回 auto 类型）

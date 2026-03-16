@@ -31,8 +31,10 @@ uint16_t  IpcCommandHandler::GetSessionId() const { return session_id_; }
 DasResult IpcCommandHandler::HandleMessage(
     const ValidatedIPCMessageHeader& header,
     const std::vector<uint8_t>&      body,
-    IpcResponseSender&               sender)
+    IpcResponseSender&               sender,
+    DistributedObjectManager&        object_manager)
 {
+    (void)object_manager; // 控制平面处理器不使用 object_manager
     IpcCommandResponse       response;
     std::span<const uint8_t> payload(body);
 
