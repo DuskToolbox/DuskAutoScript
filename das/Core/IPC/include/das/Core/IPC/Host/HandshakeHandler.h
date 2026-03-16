@@ -80,11 +80,11 @@ namespace Core
              *         client.session_id, client.plugin_name.c_str());
              *     DAS_LOG_INFO(msg.c_str()); });
              *
-             * // 注册到 IpcRunLoop
-             * run_loop.RegisterHandler(std::move(handler));
+             * // 注册到 IpcRunLoop（协程版本）
+             * run_loop.RegisterHandler(HeaderFlags::CONTROL_PLANE, INTERFACE_ID, handler.get());
              * @endcode
              */
-            class HandshakeHandler : public IMessageHandler
+            class HandshakeHandler : public IAwaitableMessageHandler
             {
             public:
                 static constexpr uint32_t INTERFACE_ID = 0x00000001; // 握手协议
@@ -141,34 +141,18 @@ namespace Core
                 HandshakeHandler& operator=(const HandshakeHandler&) = delete;
 
                 /**
-                 * @brief 处理握手消息（旧接口）
+                 * @brief 处理握手消息（协程版本）
                  *
-                 * 内部使用的旧接口，用于向后兼容。
-                 *
-                 * @param header 消息头
-                 * @param body 消息体
-                 * @param body_size 消息体大小
-                 * @param response_body 输出响应体
-                 * @return DasResult 成功返回 DAS_S_OK
-                 */
-                DasResult HandleMessage(
-                    const ValidatedIPCMessageHeader& header,
-                    const uint8_t*                   body,
-                    size_t                           body_size,
-                    std::vector<uint8_t>&            response_body);
-
-                /**
-                 * @brief 处理握手消息（新接口）
-                 *
-                 * 实现 IMessageHandler 接口。
-                 * 内部调用现有实现逻辑。
+                 * 实现 IAwaitableMessageHandler 接口。
+                 * 内部调用现有实现逻辑，然后使用协程发送响应。
                  *
                  * @param header 消息头
                  * @param body 消息体
-                 * @param sender 响应发送器
+                 * @param sender 响应发送器（包含 transport）
+                 * @param object_manager 分布式对象管理器
                  * @return boost::asio::awaitable<DasResult> 协程结果
                  */
-                DasResult HandleMessage(
+                boost::asio::awaitable<DasResult> HandleMessage(
                     const ValidatedIPCMessageHeader& header,
                     const std::vector<uint8_t>&      body,
                     IpcResponseSender&               sender,

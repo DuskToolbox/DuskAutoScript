@@ -84,119 +84,111 @@ namespace Core
                 DAS_LOG_INFO(msg.c_str());
             }
 
-            DasResult HandshakeHandler::HandleMessage(
-                const ValidatedIPCMessageHeader& header,
-                const uint8_t*                   body,
-                size_t                           body_size,
-                std::vector<uint8_t>&            response_body)
-            {
-                if (!initialized_)
-                {
-                    std::string msg =
-                        DAS_FMT_NS::format("HandshakeHandler not initialized");
-                    DAS_LOG_ERROR(msg.c_str());
-                    return DAS_E_IPC_NOT_INITIALIZED;
-                }
-
-                HandshakeInterfaceId interface_id =
-                    static_cast<HandshakeInterfaceId>(header.GetInterfaceId());
-
-                switch (interface_id)
-                {
-                case HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO:
-                {
-                    if (body_size < sizeof(HelloRequestV1))
-                    {
-                        std::string msg = DAS_FMT_NS::format(
-                            "HandshakeHandler: HelloRequest body too small: {} < {}",
-                            body_size,
-                            sizeof(HelloRequestV1));
-                        DAS_LOG_ERROR(msg.c_str());
-                        return DAS_E_IPC_INVALID_MESSAGE_BODY;
-                    }
-
-                    const HelloRequestV1* request =
-                        reinterpret_cast<const HelloRequestV1*>(body);
-                    return HandleHelloRequest(*request, response_body);
-                }
-
-                case HandshakeInterfaceId::HANDSHAKE_IFACE_READY:
-                {
-                    if (body_size < sizeof(ReadyRequestV1))
-                    {
-                        std::string msg = DAS_FMT_NS::format(
-                            "HandshakeHandler: ReadyRequest body too small: {} < {}",
-                            body_size,
-                            sizeof(ReadyRequestV1));
-                        DAS_LOG_ERROR(msg.c_str());
-                        return DAS_E_IPC_INVALID_MESSAGE_BODY;
-                    }
-
-                    const ReadyRequestV1* request =
-                        reinterpret_cast<const ReadyRequestV1*>(body);
-                    return HandleReadyRequest(*request, response_body);
-                }
-
-                case HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT:
-                {
-                    if (body_size < sizeof(HeartbeatV1))
-                    {
-                        std::string msg = DAS_FMT_NS::format(
-                            "HandshakeHandler: Heartbeat body too small: {} < {}",
-                            body_size,
-                            sizeof(HeartbeatV1));
-                        DAS_LOG_ERROR(msg.c_str());
-                        return DAS_E_IPC_INVALID_MESSAGE_BODY;
-                    }
-
-                    const HeartbeatV1* heartbeat =
-                        reinterpret_cast<const HeartbeatV1*>(body);
-                    // V3: 使用 source_session_id
-                    return HandleHeartbeat(
-                        header.GetSourceSessionId(),
-                        *heartbeat);
-                }
-
-                case HandshakeInterfaceId::HANDSHAKE_IFACE_GOODBYE:
-                {
-                    if (body_size < sizeof(GoodbyeV1))
-                    {
-                        std::string msg = DAS_FMT_NS::format(
-                            "HandshakeHandler: Goodbye body too small: {} < {}",
-                            body_size,
-                            sizeof(GoodbyeV1));
-                        DAS_LOG_ERROR(msg.c_str());
-                        return DAS_E_IPC_INVALID_MESSAGE_BODY;
-                    }
-
-                    const GoodbyeV1* goodbye =
-                        reinterpret_cast<const GoodbyeV1*>(body);
-                    return HandleGoodbye(*goodbye);
-                }
-
-                default:
-                    std::string msg = DAS_FMT_NS::format(
-                        "HandshakeHandler: Unknown interface_id: {}",
-                        header.GetInterfaceId());
-                    DAS_LOG_ERROR(msg.c_str());
-                    return DAS_E_IPC_INVALID_INTERFACE_ID;
-                }
-            }
-
-            DasResult HandshakeHandler::HandleMessage(
+            boost::asio::awaitable<DasResult> HandshakeHandler::HandleMessage(
                 const ValidatedIPCMessageHeader& header,
                 const std::vector<uint8_t>&      body,
                 IpcResponseSender&               sender,
                 DistributedObjectManager&        object_manager)
             {
                 (void)object_manager; // 握手处理器不使用 object_manager
-                std::vector<uint8_t> response_body;
-                DasResult            result = HandleMessage(
-                    header,
-                    body.data(),
-                    body.size(),
-                    response_body);
 
+                if (!initialized_)
+                {
+                    DAS_LOG_ERROR("HandshakeHandler not initialized");
+                    co_return DAS_E_IPC_NOT_INITIALIZED;
+                }
+
+                HandshakeInterfaceId interface_id =
+                    static_cast<HandshakeInterfaceId>(header.GetInterfaceId());
+
+                std::vector<uint8_t> response_body;
+                DasResult            result = DAS_S_OK;
+
+                // 根据接口 ID 调用对应的处理函数
+                switch (interface_id)
+                {
+                case HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO:
+                {
+                    if (body.size() < sizeof(HelloRequestV1))
+                    {
+                        std::string msg = DAS_FMT_NS::format(
+                            "HandshakeHandler: HelloRequest body too small: {} < {}",
+                            body.size(),
+                            sizeof(HelloRequestV1));
+                        DAS_LOG_ERROR(msg.c_str());
+                        co_return DAS_E_IPC_INVALID_MESSAGE_BODY;
+                    }
+                    const HelloRequestV1* request =
+                        reinterpret_cast<const HelloRequestV1*>(body.data());
+                    result = HandleHelloRequest(*request, response_body);
+                    break;
+                }
+
+                case HandshakeInterfaceId::HANDSHAKE_IFACE_READY:
+                {
+                    if (body.size() < sizeof(ReadyRequestV1))
+                    {
+                        std::string msg = DAS_FMT_NS::format(
+                            "HandshakeHandler: ReadyRequest body too small: {} < {}",
+                            body.size(),
+                            sizeof(ReadyRequestV1));
+                        DAS_LOG_ERROR(msg.c_str());
+                        co_return DAS_E_IPC_INVALID_MESSAGE_BODY;
+                    }
+                    const ReadyRequestV1* request =
+                        reinterpret_cast<const ReadyRequestV1*>(body.data());
+                    result = HandleReadyRequest(*request, response_body);
+                    break;
+                }
+
+                case HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT:
+                {
+                    if (body.size() < sizeof(HeartbeatV1))
+                    {
+                        std::string msg = DAS_FMT_NS::format(
+                            "HandshakeHandler: Heartbeat body too small: {} < {}",
+                            body.size(),
+                            sizeof(HeartbeatV1));
+                        DAS_LOG_ERROR(msg.c_str());
+                        co_return DAS_E_IPC_INVALID_MESSAGE_BODY;
+                    }
+                    const HeartbeatV1* heartbeat =
+                        reinterpret_cast<const HeartbeatV1*>(body.data());
+                    // V3: 使用 source_session_id
+                    result = HandleHeartbeat(
+                        header.GetSourceSessionId(),
+                        *heartbeat);
+                    co_return result;
+                }
+
+                case HandshakeInterfaceId::HANDSHAKE_IFACE_GOODBYE:
+                {
+                    if (body.size() < sizeof(GoodbyeV1))
+                    {
+                        std::string msg = DAS_FMT_NS::format(
+                            "HandshakeHandler: Goodbye body too small: {} < {}",
+                            body.size(),
+                            sizeof(GoodbyeV1));
+                        DAS_LOG_ERROR(msg.c_str());
+                        co_return DAS_E_IPC_INVALID_MESSAGE_BODY;
+                    }
+                    const GoodbyeV1* goodbye =
+                        reinterpret_cast<const GoodbyeV1*>(body.data());
+                    result = HandleGoodbye(*goodbye);
+                    co_return result;
+                }
+
+                default:
+                {
+                    std::string msg = DAS_FMT_NS::format(
+                        "HandshakeHandler: Unknown interface_id: {}",
+                        header.GetInterfaceId());
+                    DAS_LOG_ERROR(msg.c_str());
+                    co_return DAS_E_IPC_INVALID_INTERFACE_ID;
+                }
+                }
+
+                // 需要发送响应
                 if (DAS::IsOk(result) && !response_body.empty())
                 {
                     // 根据请求类型构建响应头（使用 Builder）
@@ -231,12 +223,24 @@ namespace Core
                             .SetErrorCode(0)
                             .Build();
 
-                    sender.SendResponse(
-                        validated_response_header,
-                        response_body);
+                    // 使用协程直接发送响应
+                    DefaultAsyncIpcTransport* transport = sender.GetTransport();
+                    if (transport)
+                    {
+                        result = co_await transport->SendCoroutine(
+                            validated_response_header,
+                            response_body.data(),
+                            response_body.size());
+                    }
+                    else
+                    {
+                        DAS_LOG_ERROR(
+                            "HandshakeHandler: transport is null, cannot send response");
+                        result = DAS_E_IPC_NOT_INITIALIZED;
+                    }
                 }
 
-                return result;
+                co_return result;
             }
 
             void HandshakeHandler::SetOnClientConnected(

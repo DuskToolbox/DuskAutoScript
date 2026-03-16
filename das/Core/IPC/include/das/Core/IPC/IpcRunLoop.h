@@ -40,6 +40,7 @@ DAS_CORE_IPC_NS_BEGIN
 // HeaderFlags 已移至 IpcMessageHeader.h
 
 class IMessageHandler;
+class IAwaitableMessageHandler;
 class ConnectionManager;
 class HostLauncher;
 class IpcRunLoop; // Forward declaration for templates
@@ -190,6 +191,21 @@ public:
         uint8_t          header_flags,
         uint32_t         interface_id,
         IMessageHandler* handler);
+
+    /**
+     * @brief 注册可等待消息处理器（协程版本，控制平面 handler 用）
+     *
+     * 控制平面 handler（如 HandshakeHandler）使用此接口注册，
+     * 支持通过协程异步发送响应。
+     *
+     * @param header_flags 消息头标志
+     * @param interface_id 接口 ID
+     * @param handler 处理器指针（非持有，调用方保证生命周期）
+     */
+    void RegisterHandler(
+        uint8_t                   header_flags,
+        uint32_t                  interface_id,
+        IAwaitableMessageHandler* handler);
 
     /**
      * @brief 按 header_flags + interface_id 查找处理器
@@ -472,6 +488,13 @@ public:
         uint8_t,
         std::unordered_map<uint32_t, DasPtr<IMessageHandler>>>
         handlers_by_flags_;
+
+    /// 可等待消息处理器映射（协程版本，控制平面 handler 用）
+    /// 控制平面 handler 使用协程直接发送响应，不走 IpcResponseSender
+    std::unordered_map<
+        uint8_t,
+        std::unordered_map<uint32_t, IAwaitableMessageHandler*>>
+        awaitable_handlers_;
 
     /// 下一个 call_id (V3: uint16_t)
     std::atomic<uint16_t> next_call_id_{1};

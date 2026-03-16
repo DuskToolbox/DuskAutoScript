@@ -55,6 +55,20 @@ public:
         const ValidatedIPCMessageHeader& header,
         const std::vector<uint8_t>&      body);
 
+    /**
+     * @brief 获取 transport 指针（协程发送用）
+     *
+     * IAwaitableMessageHandler 使用此方法获取 transport，
+     * 然后通过 co_await transport->SendCoroutine() 发送响应。
+     *
+     * @return transport 指针，如果为 IO 线程模式返回 nullptr
+     */
+    [[nodiscard]]
+    DefaultAsyncIpcTransport* GetTransport() const
+    {
+        return transport_;
+    }
+
 private:
     DefaultAsyncIpcTransport* transport_ = nullptr; // IO 线程模式
     IpcRunLoop*               run_loop_ = nullptr;  // 业务线程模式

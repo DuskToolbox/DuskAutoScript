@@ -160,6 +160,19 @@ void IpcRunLoop::RegisterHandler(
         DasPtr<IMessageHandler>(handler);
 }
 
+void IpcRunLoop::RegisterHandler(
+    uint8_t                   header_flags,
+    uint32_t                  interface_id,
+    IAwaitableMessageHandler* handler)
+{
+    if (!handler)
+    {
+        return;
+    }
+    // 可等待 handler 直接存储原始指针，生命周期由调用方管理
+    awaitable_handlers_[header_flags][interface_id] = handler;
+}
+
 IMessageHandler* IpcRunLoop::GetHandler(
     uint8_t  header_flags,
     uint32_t interface_id) const
@@ -255,6 +268,49 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
     }
 
     // 使用 header_flags + interface_id 路由
+    // 优先检查可等待 handler（协程版本，控制平面用）
+    auto awaitable_it = awaitable_handlers_.find(header.GetHeaderFlags());
+    if (awaitable_it != awaitable_handlers_.end())
+    {
+        auto& awaitable_map = awaitable_it->second;
+        auto  awaitable_handler_it =
+            awaitable_map.find(header.GetInterfaceId());
+        if (awaitable_handler_it != awaitable_map.end())
+        {
+            IAwaitableMessageHandler* awaitable_handler =
+                awaitable_handler_it->second;
+            DAS_CORE_LOG_INFO(
+                "DispatchToHandlerCoroutine: found awaitable handler for interface_id={}",
+                header.GetInterfaceId());
+            try
+            {
+                IpcResponseSender sender(transport);
+                static DistributedObjectManager null_manager;
+                DistributedObjectManager&       obj_mgr =
+                    object_manager_ ? *object_manager_ : null_manager;
+                auto result = co_await awaitable_handler->HandleMessage(
+                    header, body, sender, obj_mgr);
+                if (DAS::IsFailed(result))
+                {
+                    DAS_CORE_LOG_WARN("Awaitable handler returned error: {}", result);
+                }
+                else
+                {
+                    DAS_CORE_LOG_INFO(
+                        "DispatchToHandlerCoroutine: awaitable handler completed successfully");
+                }
+            }
+            catch (const std::exception& e)
+            {
+                DAS_CORE_LOG_ERROR(
+                    "DispatchToHandlerCoroutine: exception in awaitable HandleMessage: {}",
+                    e.what());
+            }
+            co_return;
+        }
+    }
+
+    // 同步 handler（业务 handler 用）
     IMessageHandler* handler =
         GetHandler(header.GetHeaderFlags(), header.GetInterfaceId());
 

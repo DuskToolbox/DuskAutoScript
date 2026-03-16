@@ -1,5 +1,6 @@
 #pragma once
 
+#include <boost/asio/awaitable.hpp>
 #include <cstdint>
 #include <das/DasApi.h>
 #include <vector>
@@ -54,6 +55,57 @@ public:
      * @return DasResult 处理结果
      */
     virtual DasResult HandleMessage(
+        const ValidatedIPCMessageHeader& header,
+        const std::vector<uint8_t>&      body,
+        IpcResponseSender&               sender,
+        DistributedObjectManager&        object_manager) = 0;
+};
+
+/**
+ * @brief 可等待消息处理器接口（协程版本）
+ *
+ * 控制平面 handler（如 HandshakeHandler）使用此接口，
+ * 通过协程异步发送响应。
+ *
+ * 注意：不继承 IMessageHandler，因为 HandleMessage 返回类型不同。
+ * 实现类需要同时实现两个接口的引用计数方法。
+ */
+class IAwaitableMessageHandler
+{
+public:
+    virtual ~IAwaitableMessageHandler() = default;
+
+    /**
+     * @brief 增加引用计数
+     * @return 新的引用计数
+     */
+    [[nodiscard]]
+    virtual uint32_t AddRef() = 0;
+
+    /**
+     * @brief 减少引用计数
+     * @return 新的引用计数
+     */
+    [[nodiscard]]
+    virtual uint32_t Release() = 0;
+
+    /**
+     * @brief 获取处理器负责的接口 ID
+     * @return 接口 ID（用于消息分发）
+     */
+    [[nodiscard]]
+    virtual uint32_t GetInterfaceId() const = 0;
+
+    /**
+     * @brief 处理 IPC 消息（协程版本）
+     *
+     * @param header 已验证的消息头
+     * @param body 消息体
+     * @param sender 响应发送器（包含 transport）
+     * @param object_manager 分布式对象管理器
+     * @return boost::asio::awaitable<DasResult> 协程结果
+     */
+    virtual boost::asio::awaitable<DasResult> HandleMessage(
         const ValidatedIPCMessageHeader& header,
         const std::vector<uint8_t>&      body,
         IpcResponseSender&               sender,
