@@ -198,6 +198,10 @@ public:
         return GetErrorCode() == 0;
     }
 
+    // 默认构造函数 - 用于 IpcMessageQueue::Push 需要默认构造 InboundMessage 的场景
+    // 此时 header 内容未定义，由调用者确保在设置有效 header 前不使用
+    ValidatedIPCMessageHeader() noexcept = default;
+
 private:
     IPCMessageHeader header_;
 

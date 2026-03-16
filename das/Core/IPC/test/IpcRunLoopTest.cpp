@@ -228,7 +228,7 @@ public:
         return 1;
     }
 
-    boost::asio::awaitable<DasResult> HandleMessage(
+    DasResult HandleMessage(
         const ValidatedIPCMessageHeader& header,
         const std::vector<uint8_t>&     body,
         IpcResponseSender&               sender) override
@@ -237,7 +237,7 @@ public:
         (void)header;
         (void)body;
         (void)sender;
-        co_return DAS_S_OK;
+        return DAS_S_OK;
     }
 
 private:
