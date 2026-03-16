@@ -26,6 +26,12 @@ namespace boost::asio
     class io_context;
 }
 
+// Forward declaration for MainProcess::IpcContext (for auto-registration)
+namespace MainProcess
+{
+    class IpcContext;
+}
+
 DAS_CORE_IPC_NS_BEGIN
 
 class HostLauncher final : public IHostLauncher

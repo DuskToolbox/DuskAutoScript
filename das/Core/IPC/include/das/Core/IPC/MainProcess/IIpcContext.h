@@ -122,19 +122,6 @@ namespace Core
                 virtual boost::asio::io_context& GetIoContext() = 0;
 
                 /**
-                 * @brief 注册 HostLauncher 到 IPC 上下文
-                 *
-                 * 在 HostLauncher::Start() 成功后调用。
-                 * Transport 将在注册后立即开始接收消息。
-                 * session_id 从 launcher->GetSessionId() 获取。
-                 *
-                 * @param launcher HostLauncher 实例（DasPtr 所有权转移）
-                 * @return DasResult DAS_S_OK 成功
-                 */
-                virtual DasResult RegisterHostLauncher(
-                    DAS::DasPtr<IHostLauncher> launcher) = 0;
-
-                /**
                  * @brief 获取已连接的 session ID 列表
                  *
                  * @return std::vector<uint16_t> 已连接的 session ID 列表
