@@ -142,6 +142,20 @@ public:
     GetTransport(uint16_t session_id) const;
 
     /**
+     * @brief 注册传输层（轻量级注册，无需 HostLauncher）
+     *
+     * 用于 Host 进程注册到 MainProcess 的连接。
+     * Host 进程没有 HostLauncher，只有 transport。
+     *
+     * @param session_id MainProcess 的 session_id（通常为 1）
+     * @param transport 传输层指针（非拥有，调用方保证生命周期）
+     * @return DasResult DAS_S_OK 成功
+     */
+    DasResult RegisterTransport(
+        uint16_t                                    session_id,
+        DefaultAsyncIpcTransport* DAS_LIFETIMEBOUND transport);
+
+    /**
      * @brief 更新连接的活跃状态
      *
      * @param session_id 目标会话ID
@@ -184,10 +198,10 @@ public:
      * @return DasResult DAS_S_OK 成功, DAS_E_IPC_OBJECT_NOT_FOUND 目标不存在
      */
     boost::asio::awaitable<DasResult> ForwardMessage(
-        uint16_t              target_session_id,
+        uint16_t                         target_session_id,
         const ValidatedIPCMessageHeader& header,
-        const uint8_t*        body,
-        size_t                body_size);
+        const uint8_t*                   body,
+        size_t                           body_size);
 
     static constexpr uint32_t HEARTBEAT_INTERVAL_MS = 1000;
     static constexpr uint32_t HEARTBEAT_TIMEOUT_MS = 5000;

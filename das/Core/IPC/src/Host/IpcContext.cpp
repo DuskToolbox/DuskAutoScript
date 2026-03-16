@@ -1,6 +1,7 @@
 #include <boost/asio/detached.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/process/v2/pid.hpp>
+#include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/DefaultAsyncIpcTransport.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/Host/HandshakeHandler.h>
@@ -264,7 +265,7 @@ namespace Core
 
                 // 10. 设置 HandshakeHandler 的客户端连接回调
                 //    握手完成后，同步 session_id 到 IpcCommandHandler 和
-                //    IpcRunLoop
+                //    IpcRunLoop，并注册 transport 到 ConnectionManager
                 handshake_handler_->SetOnClientConnected(
                     [this](const ConnectedClient& client)
                     {
@@ -277,6 +278,39 @@ namespace Core
                         {
                             run_loop_->SetSessionId(client.session_id);
                         }
+
+                        // 注册 Host 的 transport 到 ConnectionManager，以便
+                        // PostSend 可以将响应路由到 MainProcess（session_id =
+                        // 1）
+                        if (run_loop_ && async_transport_)
+                        {
+                            auto* conn_mgr = run_loop_->GetConnectionManager();
+                            if (conn_mgr)
+                            {
+                                // MainProcess 的 session_id 始终为
+                                // 1（我们发送的目标）
+                                uint16_t main_process_session_id = 1;
+                                auto     result = conn_mgr->RegisterTransport(
+                                    main_process_session_id,
+                                    async_transport_.get());
+                                if (result != DAS_S_OK)
+                                {
+                                    DAS_CORE_LOG_ERROR(
+                                        "Failed to register transport to "
+                                        "ConnectionManager: result={}",
+                                        result);
+                                }
+                                else
+                                {
+                                    DAS_CORE_LOG_INFO(
+                                        "Host transport registered to "
+                                        "ConnectionManager for MainProcess "
+                                        "session_id={}",
+                                        main_process_session_id);
+                                }
+                            }
+                        }
+
                         is_connected_ = true;
                     });
 

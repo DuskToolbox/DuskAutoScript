@@ -55,8 +55,9 @@ DasResult IpcRunLoop::DoInitialize()
     // - Host 模式：IpcContext 持有 transport
     timeout_timer_ = std::make_unique<boost::asio::steady_timer>(*io_context_);
 
-    // Create ConnectionManager for MainProcess mode
-    // In Host mode, connection_manager_ remains nullptr (no heartbeat needed)
+    // Create ConnectionManager for transport routing
+    // Used in both MainProcess mode (HostLauncher registration) and Host mode
+    // (direct transport registration after handshake)
     connection_manager_ =
         ConnectionManager::Create(1); // local_id = 1 for MainProcess
 

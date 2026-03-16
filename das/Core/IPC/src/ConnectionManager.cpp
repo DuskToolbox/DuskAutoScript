@@ -27,10 +27,12 @@ struct ConnectionManager::Impl
     std::unordered_map<uint16_t, ConnectionInfo> connections_;
     // 存储 HostLauncher 的引用
     std::unordered_map<uint16_t, DasPtr<IHostLauncher>> host_launchers_;
-    mutable std::shared_mutex                           connections_mutex_;
-    std::atomic<bool>                                   running_{false};
-    std::thread                                         heartbeat_thread_;
-    uint16_t                                            local_id_{0};
+    // 直接传输层注册（用于 Host 模式，无需 HostLauncher）
+    std::unordered_map<uint16_t, DefaultAsyncIpcTransport*> direct_transports_;
+    mutable std::shared_mutex                               connections_mutex_;
+    std::atomic<bool>                                       running_{false};
+    std::thread                                             heartbeat_thread_;
+    uint16_t                                                local_id_{0};
 };
 
 std::unique_ptr<ConnectionManager> ConnectionManager::Create(uint16_t local_id)
@@ -65,6 +67,7 @@ void ConnectionManager::Uninitialize()
     }
     impl_->connections_.clear();
     impl_->host_launchers_.clear();
+    impl_->direct_transports_.clear();
 }
 
 DasResult ConnectionManager::RegisterConnection(
@@ -224,6 +227,49 @@ DasResult ConnectionManager::UnregisterHostLauncher(uint16_t session_id)
     return DAS_S_OK;
 }
 
+DasResult ConnectionManager::RegisterTransport(
+    uint16_t                  session_id,
+    DefaultAsyncIpcTransport* transport)
+{
+    if (!transport)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+
+    // 直接存储到 direct_transports_ map
+    impl_->direct_transports_[session_id] = transport;
+
+    // 同时创建/更新 ConnectionInfo 保持一致性
+    ConnectionInfo info{};
+    info.host_id = session_id;
+    info.plugin_id = 0;
+    info.is_alive = true;
+    info.last_heartbeat_ms = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+            .count());
+    info.launcher = nullptr;
+    info.shm_pool = nullptr;
+
+    auto it = impl_->connections_.find(session_id);
+    if (it != impl_->connections_.end())
+    {
+        it->second.is_alive = true;
+        it->second.last_heartbeat_ms = info.last_heartbeat_ms;
+    }
+    else
+    {
+        impl_->connections_[session_id] = std::move(info);
+    }
+
+    DAS_CORE_LOG_INFO(
+        "Transport registered directly: session_id={}",
+        session_id);
+    return DAS_S_OK;
+}
+
 DasPtr<IHostLauncher> ConnectionManager::GetLauncher(uint16_t session_id) const
 {
     std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
@@ -240,6 +286,13 @@ DefaultAsyncIpcTransport* ConnectionManager::GetTransport(
     uint16_t session_id) const
 {
     std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+
+    // 首先检查直接传输层注册（Host 模式）
+    auto direct_it = impl_->direct_transports_.find(session_id);
+    if (direct_it != impl_->direct_transports_.end())
+    {
+        return direct_it->second;
+    }
 
     // 从 host_launchers_ 获取 launcher
     auto launcher_it = impl_->host_launchers_.find(session_id);
@@ -549,6 +602,9 @@ DasResult ConnectionManager::CleanupConnectionResources(
     uint16_t local_id)
 {
     (void)local_id;
+
+    // 清理直接传输层
+    impl_->direct_transports_.erase(remote_id);
 
     auto it = impl_->connections_.find(remote_id);
     if (it == impl_->connections_.end())
