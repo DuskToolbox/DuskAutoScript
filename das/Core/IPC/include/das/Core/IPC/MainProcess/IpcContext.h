@@ -2,7 +2,9 @@
 #define DAS_CORE_IPC_MAIN_PROCESS_IPC_CONTEXT_H
 
 #include <chrono>
+#include <das/Core/IPC/BusinessThread.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
+#include <das/Core/IPC/IpcMessageQueue.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/IPC/ProxyFactory.h>
@@ -80,8 +82,18 @@ namespace Core
             private:
                 void Uninitialize();
 
-                std::unique_ptr<DistributedObjectManager> object_manager_;
-                std::unique_ptr<IpcRunLoop>               runloop_;
+                /// 分布式对象管理器（值成员）
+                DistributedObjectManager object_manager_;
+
+                /// IPC 运行循环
+                std::unique_ptr<IpcRunLoop> runloop_;
+
+                /// 入站消息队列（值成员）
+                IpcMessageQueue<InboundMessage> inbound_queue_{1024};
+
+                /// 业务线程
+                std::shared_ptr<BusinessThread> business_thread_;
+
                 bool is_initialized_ = false;
             };
 

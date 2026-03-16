@@ -47,25 +47,31 @@ namespace Core
                 runloop_ = std::move(runloop_result.value());
                 // Create() 已自动完成初始化，无需再调用 Initialize()
 
-                // 2. Initialize SessionCoordinator（主进程 session_id = 1）
+                // 2. Set inbound_queue to IpcRunLoop
+                runloop_->SetInboundQueue(&inbound_queue_);
+
+                // 3. Initialize SessionCoordinator（主进程 session_id = 1）
                 auto& coordinator = SessionCoordinator::GetInstance();
                 coordinator.SetLocalSessionId(1);
 
-                // 3. Create DistributedObjectManager
-                object_manager_ = std::make_unique<DistributedObjectManager>();
+                // 4. Create BusinessThread
+                business_thread_ = std::make_shared<BusinessThread>(
+                    inbound_queue_,
+                    *runloop_);
 
-                // 4. Initialize ProxyFactory with runloop_
+                // 5. DistributedObjectManager is now a value member, no need to create
+
+                // 6. Initialize ProxyFactory with runloop_
                 auto& proxy_factory = ProxyFactory::GetInstance();
                 result = proxy_factory.Initialize(
-                    object_manager_.get(),
+                    &object_manager_,
                     &RemoteObjectRegistry::GetInstance(),
                     runloop_.get());
                 if (result != DAS_S_OK)
                 {
                     DAS_CORE_LOG_ERROR(
-                        "ProxyFactory initialization failed, result = 0x{:08X}",
+                        "ProxyFactory initialization failed, result = {}",
                         result);
-                    object_manager_.reset();
                     runloop_.reset();
                     throw std::runtime_error(
                         "ProxyFactory initialization failed");
@@ -94,22 +100,31 @@ namespace Core
                 auto& proxy_factory = ProxyFactory::GetInstance();
                 proxy_factory.ClearAllProxies();
 
-                // Destroy in reverse order
-                object_manager_.reset();
+                // 关闭顺序：inbound_queue -> business_thread -> io_context
+                // 1. 关闭入站队列，让业务线程的 Pop() 返回 nullopt
+                inbound_queue_.Shutdown();
 
-                // RAII：unique_ptr 析构自动调用 Uninitialize
+                // 2. 停止业务线程（会 join）
+                if (business_thread_)
+                {
+                    business_thread_->Stop();
+                    business_thread_.reset();
+                }
+
+                // 3. 停止 IO 线程
                 if (runloop_)
                 {
                     runloop_->RequestStop();
-                    runloop_.reset(); // 析构函数会自动调用 Uninitialize()
+                    runloop_.reset();
                 }
 
+                // object_manager_ is value member, automatically destructed
                 is_initialized_ = false;
             }
 
             DistributedObjectManager& IpcContext::GetObjectManager()
             {
-                return *object_manager_;
+                return object_manager_;
             }
 
             ProxyFactory& IpcContext::GetProxyFactory()
@@ -260,6 +275,13 @@ namespace Core
                     DAS_CORE_LOG_ERROR("Run: IpcRunLoop not initialized");
                     return DAS_E_IPC_NOT_INITIALIZED;
                 }
+
+                // 启动业务线程
+                if (business_thread_)
+                {
+                    business_thread_->Start(object_manager_);
+                }
+
                 return runloop_->Run();
             }
 

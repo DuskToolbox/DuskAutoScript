@@ -174,8 +174,7 @@ namespace Core
             {
                 DasResult result = DAS_S_OK;
 
-                // 1. 创建 DistributedObjectManager（不再需要 Initialize）
-                object_manager_ = std::make_unique<DistributedObjectManager>();
+                // 1. DistributedObjectManager 现在是值成员，无需创建
 
                 // 2. 创建 Host 专用队列名称（新格式）
                 host_read_queue_ =
@@ -201,7 +200,6 @@ namespace Core
                 if (!shared_memory_)
                 {
                     DAS_LOG_ERROR("IpcContext: SharedMemoryPool Create failed");
-                    object_manager_.reset();
                     return DAS_E_IPC_SHM_FAILED;
                 }
 
@@ -211,26 +209,34 @@ namespace Core
                 if (!runloop_result.has_value())
                 {
                     DAS_CORE_LOG_ERROR("IpcRunLoop::Create() failed");
-                    object_manager_.reset();
                     return DAS_E_IPC_NOT_INITIALIZED;
                 }
                 run_loop_ = std::move(runloop_result.value());
                 // Host 模式初始 session_id 为 0，握手完成后会更新
                 run_loop_->SetSessionId(session_id_);
+
+                // 5. 设置 inbound_queue 到 IpcRunLoop
+                run_loop_->SetInboundQueue(&inbound_queue_);
+
+                // 6. 创建 BusinessThread
+                business_thread_ = std::make_shared<BusinessThread>(
+                    inbound_queue_,
+                    *run_loop_);
+
                 // Create() 已包含初始化，不需要再次调用 Initialize()
                 result = DAS_S_OK;
                 if (result != DAS_S_OK)
                 {
                     std::string err_msg = DAS_FMT_NS::format(
-                        "IpcContext: IpcRunLoop init failed, result=0x{:08X}",
+                        "IpcContext: IpcRunLoop init failed, result={}",
                         result);
                     DAS_LOG_ERROR(err_msg.c_str());
                     shared_memory_.reset();
-                    object_manager_.reset();
+                    run_loop_.reset();
                     return result;
                 }
 
-                // 5. 创建 transport（使用 IpcRunLoop 的 io_context）
+                // 7. 创建 transport（使用 IpcRunLoop 的 io_context）
                 //    使用 CreateUninitialized 创建未初始化的对象，延迟到 Run()
                 //    时异步连接
                 async_transport_ =
@@ -238,11 +244,11 @@ namespace Core
                         run_loop_->GetIoContext());
                 async_transport_->SetSharedMemoryPool(shared_memory_.get());
 
-                // 6. 创建并初始化 IpcCommandHandler
+                // 8. 创建并初始化 IpcCommandHandler
                 command_handler_ = IpcCommandHandler::Create();
                 command_handler_->SetSessionId(session_id_);
 
-                // 7. 创建 HandshakeHandler（使用 DasPtr 管理生命周期）
+                // 9. 创建 HandshakeHandler（使用 DasPtr 管理生命周期）
                 handshake_handler_ = HandshakeHandler::Create(session_id_);
                 if (!handshake_handler_)
                 {
@@ -251,11 +257,10 @@ namespace Core
                     DAS_LOG_ERROR(err_msg.c_str());
                     async_transport_.reset();
                     run_loop_.reset();
-                    object_manager_.reset();
                     return DAS_E_FAIL;
                 }
 
-                // 8. 设置 HandshakeHandler 的客户端连接回调
+                // 10. 设置 HandshakeHandler 的客户端连接回调
                 //    握手完成后，同步 session_id 到 IpcCommandHandler 和 IpcRunLoop
                 handshake_handler_->SetOnClientConnected(
                     [this](const ConnectedClient& client)
@@ -348,13 +353,23 @@ namespace Core
                 // unique_ptr 析构会自动调用 Uninitialize()
                 async_transport_.reset();
 
-                // 2. 停止事件循环
+                // 2. 关闭入站队列，让业务线程的 Pop() 返回 nullopt
+                inbound_queue_.Shutdown();
+
+                // 3. 停止业务线程（会 join）
+                if (business_thread_)
+                {
+                    business_thread_->Stop();
+                    business_thread_.reset();
+                }
+
+                // 4. 停止事件循环
                 if (run_loop_)
                 {
                     run_loop_->RequestStop();
                 }
 
-                // 3. 关闭 IpcRunLoop（RAII：unique_ptr 析构自动调用
+                // 5. 关闭 IpcRunLoop（RAII：unique_ptr 析构自动调用
                 // Uninitialize）
                 //    必须在关闭 HandshakeHandler 之前，因为 handlers_by_flags_
                 //    中 存储的 DasPtr 会调用 MessageHandlerRef::Release()，
@@ -365,16 +380,15 @@ namespace Core
                     run_loop_.reset();
                 }
 
-                // 4. HandshakeHandler 和 CommandHandler 使用 DasPtr 管理
+                // 6. HandshakeHandler 和 CommandHandler 使用 DasPtr 管理
                 //    析构时自动减少引用计数，无需手动 reset
                 //    注意：必须确保 run_loop_ 先析构，这样 handlers_ 中的
                 //    DasPtr 会先释放
 
-                // 5. 关闭 SharedMemoryPool
+                // 7. 关闭 SharedMemoryPool
                 shared_memory_.reset();
 
-                // 6. 关闭 DistributedObjectManager
-                object_manager_.reset();
+                // 8. object_manager_ 是值成员，自动析构
 
                 // 7. 释放 session_id
                 if (session_id_ != 0)
@@ -456,7 +470,7 @@ namespace Core
 
             IDistributedObjectManager& IpcContext::GetObjectManager()
             {
-                return *object_manager_;
+                return object_manager_;
             }
 
             void IpcContext::RegisterCommandHandler(
@@ -482,6 +496,12 @@ namespace Core
 
                 is_running_ = true;
                 StartParentProcessMonitor();
+
+                // 启动业务线程
+                if (business_thread_)
+                {
+                    business_thread_->Start(object_manager_);
+                }
 
                 auto& io = run_loop_->GetIoContext();
 
@@ -592,25 +612,43 @@ namespace Core
                         // 成功接收消息
                         auto&& [header, body] = std::get<1>(result);
 
-                        if (header.GetMessageType() == MessageType::RESPONSE)
+                        // IO 线程消息分流：按 header_flags 决定处理方式
+                        if ((header.GetHeaderFlags() & HeaderFlags::CONTROL_PLANE) != 0)
                         {
-                            // V3: RESPONSE 使用 (source_session_id, call_id)
-                            // 匹配
-                            CallKey call_key{
-                                header.GetSourceSessionId(),
-                                header.GetCallId()};
-                            run_loop_->CompletePendingCall(
-                                call_key,
-                                DAS_S_OK,
-                                std::move(body));
+                            // 控制平面消息：在 IO 线程直接处理
+                            if (header.GetMessageType() == MessageType::RESPONSE)
+                            {
+                                // V3: RESPONSE 使用 (source_session_id, call_id) 匹配
+                                CallKey call_key{
+                                    header.GetSourceSessionId(),
+                                    header.GetCallId()};
+                                run_loop_->CompletePendingCall(
+                                    call_key,
+                                    DAS_S_OK,
+                                    std::move(body));
+                            }
+                            else
+                            {
+                                // REQUEST/EVENT: 在 IO 线程处理（控制平面 handler）
+                                co_await run_loop_->DispatchToHandlerCoroutine(
+                                    header,
+                                    body,
+                                    *async_transport_);
+                            }
                         }
                         else
                         {
-                            // REQUEST：分发到处理器（使用 transport 发送响应）
-                            co_await run_loop_->DispatchToHandlerCoroutine(
-                                header,
-                                body,
-                                *async_transport_);
+                            // 业务消息：投递到 inbound_queue
+                            InboundMessage msg;
+                            msg.header = header;
+                            msg.body = std::move(body);
+                            auto push_result = inbound_queue_.Push(std::move(msg));
+                            if (push_result != DAS_S_OK)
+                            {
+                                DAS_CORE_LOG_ERROR(
+                                    "ReceiveLoopCoroutine: failed to push to inbound_queue, result={}",
+                                    push_result);
+                            }
                         }
                     }
                     catch (const boost::system::system_error& e)
@@ -683,11 +721,7 @@ namespace Core
                 void*     object_ptr,
                 ObjectId& out_object_id)
             {
-                if (!object_manager_)
-                {
-                    return DAS_E_FAIL;
-                }
-                return object_manager_->RegisterLocalObject(
+                return object_manager_.RegisterLocalObject(
                     object_ptr,
                     out_object_id);
             }

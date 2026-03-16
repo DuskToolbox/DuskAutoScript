@@ -2,11 +2,13 @@
 #define DAS_CORE_IPC_HOST_IPC_CONTEXT_H
 
 #include <atomic>
+#include <das/Core/IPC/BusinessThread.h>
 #include <das/Core/IPC/DefaultAsyncIpcTransport.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/Host/HandshakeHandler.h>
 #include <das/Core/IPC/Host/IIpcContext.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
+#include <das/Core/IPC/IpcMessageQueue.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
@@ -126,8 +128,19 @@ namespace Core
 
                 IpcContextConfig                          config_;
                 uint16_t                                  session_id_ = 0;
-                std::unique_ptr<DistributedObjectManager> object_manager_;
-                std::unique_ptr<IpcRunLoop>               run_loop_;
+
+                /// 分布式对象管理器（值成员）
+                DistributedObjectManager object_manager_;
+
+                /// IPC 运行循环
+                std::unique_ptr<IpcRunLoop> run_loop_;
+
+                /// 入站消息队列（值成员）
+                IpcMessageQueue<InboundMessage> inbound_queue_{1024};
+
+                /// 业务线程
+                std::shared_ptr<BusinessThread> business_thread_;
+
                 DasPtr<IpcCommandHandler>                 command_handler_;
                 DasPtr<HandshakeHandler>                  handshake_handler_;
                 std::unique_ptr<SharedMemoryPool>         shared_memory_;

@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/IpcErrors.h>
+#include <das/Core/IPC/IpcMessageQueue.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <das/IDasBase.h>
@@ -310,6 +311,16 @@ public:
         std::vector<uint8_t>&&           body);
 
     /**
+     * @brief 设置入站消息队列（业务线程入口）
+     *
+     * 由 IpcContext 在初始化时调用，将 inbound_queue 指针传递给 IpcRunLoop。
+     * IpcRunLoop 不持有此队列，仅保存指针用于消息分流。
+     *
+     * @param queue 入站消息队列指针（IpcContext 持有）
+     */
+    void SetInboundQueue(IpcMessageQueue<InboundMessage>* queue);
+
+    /**
      * @brief 注册 HostLauncher 并启动接收循环
      *
      * 在 HostLauncher::Start() 成功后调用。
@@ -476,6 +487,10 @@ public:
 
     /// ConnectionManager for MainProcess mode (nullptr in Host mode)
     std::unique_ptr<ConnectionManager> connection_manager_;
+
+    /// 入站消息队列指针（非持有，由 IpcContext 管理）
+    /// 用于 IO 线程将业务消息分流到 inbound queue
+    IpcMessageQueue<InboundMessage>* inbound_queue_ = nullptr;
 
 private:
     /// 默认构造函数（禁止直接调用，使用 Create() 代替）

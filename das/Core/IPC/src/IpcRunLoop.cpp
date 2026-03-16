@@ -8,6 +8,7 @@
 #include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/IMessageHandler.h>
 #include <das/Core/IPC/IpcErrors.h>
+#include <das/Core/IPC/IpcMessageQueue.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcResponseSender.h>
 #include <das/Core/IPC/IpcRunLoop.h>
@@ -487,6 +488,11 @@ void IpcRunLoop::SetSessionId(uint16_t session_id)
     local_session_id_ = session_id;
 }
 
+void IpcRunLoop::SetInboundQueue(IpcMessageQueue<InboundMessage>* queue)
+{
+    inbound_queue_ = queue;
+}
+
 DasResult IpcRunLoop::PostSend(
     const ValidatedIPCMessageHeader& header,
     std::vector<uint8_t>&&           body)
@@ -498,14 +504,34 @@ DasResult IpcRunLoop::PostSend(
     }
 
     // 投递到 io_context 执行发送
-    // 注意：这里需要通过某种方式获取 transport 来发送
-    // 由于 IpcRunLoop 不持有 transport，这里需要访问 ConnectionManager 来获取
-    // transport 暂时返回 NOT_IMPLEMENTED，后续完善
-    (void)header;
-    (void)body;
+    boost::asio::post(
+        *io_context_,
+        [this, header, body = std::move(body)]() mutable
+        {
+            auto* transport =
+                connection_manager_->GetTransport(header.GetTargetSessionId());
+            if (!transport)
+            {
+                DAS_CORE_LOG_ERROR(
+                    "PostSend: no transport for session {}",
+                    header.GetTargetSessionId());
+                return;
+            }
 
-    DAS_CORE_LOG_DEBUG("IpcRunLoop::PostSend: not fully implemented yet");
-    return DAS_E_NO_IMPLEMENTATION;
+            boost::asio::co_spawn(
+                *io_context_,
+                [transport, header, body = std::move(body)]()
+                    -> boost::asio::awaitable<void>
+                {
+                    co_await transport->SendCoroutine(
+                        header,
+                        body.data(),
+                        body.size());
+                },
+                boost::asio::detached);
+        });
+
+    return DAS_S_OK;
 }
 
 void IpcRunLoop::ScheduleTimeoutCheck()
@@ -715,34 +741,66 @@ void IpcRunLoop::StartAsyncReceiveForTransport(
                     auto&& [header, body] = std::get<1>(result);
 
                     DAS_CORE_LOG_INFO(
-                        "Client ReceiveLoop: session_id={}, msg_type={}, interface_id={}, call_id={}",
+                        "Client ReceiveLoop: session_id={}, msg_type={}, interface_id={}, call_id={}, header_flags={}",
                         session_id,
                         static_cast<int>(header.Raw().message_type),
                         header.Raw().interface_id,
-                        header.Raw().call_id);
+                        header.Raw().call_id,
+                        static_cast<int>(header.Raw().header_flags));
 
-                    if (header.Raw().message_type
-                        == static_cast<uint8_t>(MessageType::RESPONSE))
+                    // IO 线程消息分流：按 header_flags 决定处理方式
+                    if ((header.GetHeaderFlags() & HeaderFlags::CONTROL_PLANE) != 0)
                     {
-                        // V3: 使用 (source_session_id, call_id) 匹配响应
-                        CallKey call_key{
-                            header.Raw().source_session_id,
-                            header.Raw().call_id};
-                        DAS_CORE_LOG_INFO(
-                            "Client: RESPONSE received for source_session_id={}, call_id={}",
-                            call_key.source_session_id,
-                            call_key.call_id);
-                        CompletePendingCall(
-                            call_key,
-                            DAS_S_OK,
-                            std::move(body));
+                        // 控制平面消息：在 IO 线程直接处理
+                        if (header.GetMessageType() == MessageType::RESPONSE)
+                        {
+                            // V3: 使用 (source_session_id, call_id) 匹配响应
+                            CallKey call_key{
+                                header.GetSourceSessionId(),
+                                header.GetCallId()};
+                            DAS_CORE_LOG_INFO(
+                                "Client: RESPONSE (control plane) received for source_session_id={}, call_id={}",
+                                call_key.source_session_id,
+                                call_key.call_id);
+                            CompletePendingCall(
+                                call_key,
+                                DAS_S_OK,
+                                std::move(body));
+                        }
+                        else
+                        {
+                            // REQUEST/EVENT: 在 IO 线程处理（控制平面 handler）
+                            co_await DispatchToHandlerCoroutine(
+                                header,
+                                body,
+                                *transport);
+                        }
                     }
                     else
                     {
-                        co_await DispatchToHandlerCoroutine(
-                            header,
-                            body,
-                            *transport);
+                        // 业务消息：投递到 inbound_queue
+                        if (!inbound_queue_)
+                        {
+                            DAS_CORE_LOG_WARN(
+                                "Client ReceiveLoop: inbound_queue_ is null, dropping message: session_id={}, interface_id={}",
+                                session_id,
+                                header.GetInterfaceId());
+                        }
+                        else
+                        {
+                            InboundMessage msg;
+                            msg.header = header;
+                            msg.body = std::move(body);
+                            auto push_result = inbound_queue_->Push(std::move(msg));
+                            if (push_result != DAS_S_OK)
+                            {
+                                DAS_CORE_LOG_ERROR(
+                                    "Client ReceiveLoop: failed to push to inbound_queue: session_id={}, interface_id={}, result={}",
+                                    session_id,
+                                    header.GetInterfaceId(),
+                                    push_result);
+                            }
+                        }
                     }
                 }
                 catch (const boost::system::system_error& e)

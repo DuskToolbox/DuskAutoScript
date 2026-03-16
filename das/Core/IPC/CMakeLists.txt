@@ -14,3 +14,8 @@ if(EXISTS "${DASCORE_IPC_GENERATED_CPP}")
     # 添加依赖确保 IDL 先生成
     add_dependencies(DasCoreObjects DasCoreIdlGenerated)
 endif()
+
+# ====== BusinessThread 源文件 ======
+target_sources(DasCoreObjects PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/BusinessThread.cpp
+)
