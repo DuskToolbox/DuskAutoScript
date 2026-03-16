@@ -120,12 +120,6 @@ DasResult IpcCommandHandler::HandleCommand(
 
     switch (cmd_type)
     {
-    case IpcCommandType::REGISTER_OBJECT:
-        return OnRegisterObject(header, payload, response);
-
-    case IpcCommandType::UNREGISTER_OBJECT:
-        return OnUnregisterObject(header, payload, response);
-
     case IpcCommandType::LOOKUP_OBJECT:
         return OnLookupObject(header, payload, response);
 
@@ -177,97 +171,6 @@ void IpcCommandHandler::RegisterHandler(
         static_cast<int>(command_type));
     DAS_LOG_INFO(_log_msg.c_str());
     custom_handlers_[command_type] = std::move(handler);
-}
-
-DasResult IpcCommandHandler::OnRegisterObject(
-    const ValidatedIPCMessageHeader& header,
-    std::span<const uint8_t>         payload,
-    IpcCommandResponse&              response)
-{
-    (void)header;
-
-    if (payload.size() < sizeof(RegisterObjectPayload) - sizeof(uint16_t))
-    {
-        response.error_code = DAS_E_IPC_INVALID_MESSAGE_BODY;
-        return DAS_E_IPC_INVALID_MESSAGE_BODY;
-    }
-
-    size_t offset = 0;
-
-    ObjectId object_id;
-    if (!DeserializeValue(payload, offset, object_id))
-    {
-        response.error_code = DAS_E_IPC_DESERIALIZATION_FAILED;
-        return DAS_E_IPC_DESERIALIZATION_FAILED;
-    }
-
-    DasGuid iid;
-    if (!DeserializeValue(payload, offset, iid))
-    {
-        response.error_code = DAS_E_IPC_DESERIALIZATION_FAILED;
-        return DAS_E_IPC_DESERIALIZATION_FAILED;
-    }
-
-    uint16_t session_id = 0;
-    if (!DeserializeValue(payload, offset, session_id))
-    {
-        response.error_code = DAS_E_IPC_DESERIALIZATION_FAILED;
-        return DAS_E_IPC_DESERIALIZATION_FAILED;
-    }
-
-    uint16_t version = 0;
-    if (!DeserializeValue(payload, offset, version))
-    {
-        response.error_code = DAS_E_IPC_DESERIALIZATION_FAILED;
-        return DAS_E_IPC_DESERIALIZATION_FAILED;
-    }
-
-    std::string name;
-    if (!DeserializeString(payload, offset, name))
-    {
-        response.error_code = DAS_E_IPC_DESERIALIZATION_FAILED;
-        return DAS_E_IPC_DESERIALIZATION_FAILED;
-    }
-
-    RemoteObjectRegistry& registry = RemoteObjectRegistry::GetInstance();
-    DasResult             result =
-        registry.RegisterObject(object_id, iid, session_id, name, version);
-
-    response.error_code = result;
-    response.response_data.clear();
-
-    return result;
-}
-
-DasResult IpcCommandHandler::OnUnregisterObject(
-    const ValidatedIPCMessageHeader& header,
-    std::span<const uint8_t>         payload,
-    IpcCommandResponse&              response)
-{
-    (void)header;
-
-    if (payload.size() < sizeof(UnregisterObjectPayload))
-    {
-        response.error_code = DAS_E_IPC_INVALID_MESSAGE_BODY;
-        return DAS_E_IPC_INVALID_MESSAGE_BODY;
-    }
-
-    size_t offset = 0;
-
-    ObjectId object_id;
-    if (!DeserializeValue(payload, offset, object_id))
-    {
-        response.error_code = DAS_E_IPC_DESERIALIZATION_FAILED;
-        return DAS_E_IPC_DESERIALIZATION_FAILED;
-    }
-
-    RemoteObjectRegistry& registry = RemoteObjectRegistry::GetInstance();
-    DasResult             result = registry.UnregisterObject(object_id);
-
-    response.error_code = result;
-    response.response_data.clear();
-
-    return result;
 }
 
 DasResult IpcCommandHandler::OnLookupObject(

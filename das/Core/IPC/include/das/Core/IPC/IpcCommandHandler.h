@@ -25,8 +25,6 @@ DAS_CORE_IPC_NS_BEGIN
 enum class IpcCommandType : uint8_t
 {
     // 对象管理命令
-    REGISTER_OBJECT = 1,      // 注册远程对象
-    UNREGISTER_OBJECT = 2,    // 注销远程对象
     LOOKUP_OBJECT = 3,        // 通过 ObjectId 查找对象
     LOOKUP_BY_NAME = 4,       // 通过名称查找对象
     LOOKUP_BY_INTERFACE = 5,  // 通过接口类型查找对象
@@ -169,16 +167,6 @@ public:
 
 private:
     // 内置命令处理器
-    DasResult OnRegisterObject(
-        const ValidatedIPCMessageHeader& header,
-        std::span<const uint8_t>         payload,
-        IpcCommandResponse&              response);
-
-    DasResult OnUnregisterObject(
-        const ValidatedIPCMessageHeader& header,
-        std::span<const uint8_t>         payload,
-        IpcCommandResponse&              response);
-
     DasResult OnLookupObject(
         const ValidatedIPCMessageHeader& header,
         std::span<const uint8_t>         payload,
@@ -250,27 +238,6 @@ private:
 };
 
 // 命令 payload 序列化辅助结构
-
-/**
- * @brief 注册对象请求 payload
- */
-struct RegisterObjectPayload
-{
-    ObjectId object_id;  // 对象ID
-    DasGuid  iid;        // 接口ID
-    uint16_t session_id; // 会话ID
-    uint16_t version;    // 版本
-    uint16_t name_len;   // 名称长度
-    // char name[name_len]  // 对象名称（UTF-8）
-};
-
-/**
- * @brief 注销对象请求 payload
- */
-struct UnregisterObjectPayload
-{
-    ObjectId object_id; // 要注销的对象ID
-};
 
 /**
  * @brief 查找对象请求 payload

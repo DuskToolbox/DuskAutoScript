@@ -254,7 +254,7 @@ TEST_F(IpcObjectIdIntegrationTest, ObjectIdBidirectionalSync_HostToMain)
         1}; // session_id=2 (Host), generation=1, local_id=1
     DasGuid iid = CreateTestGuid(100);
 
-    // 2. 主进程收到 REGISTER_OBJECT 消息后，在 RemoteObjectRegistry 中注册
+    // 2. 数据平面响应携带 ObjectId，主进程在 RemoteObjectRegistry 中注册
     DasResult result =
         registry_->RegisterObject(host_obj_id, iid, 2, "HostObject", 1);
     ASSERT_EQ(result, DAS_S_OK);
@@ -278,7 +278,7 @@ TEST_F(IpcObjectIdIntegrationTest, ObjectIdBidirectionalSync_Unregister)
         registry_->RegisterObject(obj_id, iid, 2, "TestObject", 1),
         DAS_S_OK);
 
-    // 2. Host 进程发送 UNREGISTER_OBJECT 消息
+    // 2. Host 进程销毁对象，RELEASE_OBJECT fire-and-forget 通知主进程
     DasResult result = registry_->UnregisterObject(obj_id);
     ASSERT_EQ(result, DAS_S_OK);
 
@@ -404,7 +404,6 @@ TEST_F(IpcObjectIdIntegrationTest, InterfacePointer_EncodeDecode)
 
 TEST_F(IpcObjectIdIntegrationTest, SessionId_Management)
 {
-    // SessionCoordinator 已删除，session_id 现在由 IpcRunLoop 管理
     // 此测试保留为占位符，验证 ObjectId 功能不受影响
     EXPECT_EQ(1, 1);
 }

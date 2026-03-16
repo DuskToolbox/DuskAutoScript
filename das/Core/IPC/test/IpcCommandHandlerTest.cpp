@@ -14,7 +14,6 @@ using DAS::Core::IPC::IpcCommandResponse;
 using DAS::Core::IPC::IpcCommandType;
 using DAS::Core::IPC::IPCMessageHeader;
 using DAS::Core::IPC::IPCMessageHeaderBuilder;
-using DAS::Core::IPC::ValidatedIPCMessageHeader;
 using DAS::Core::IPC::ListSessionObjectsPayload;
 using DAS::Core::IPC::LookupByInterfacePayload;
 using DAS::Core::IPC::LookupByNamePayload;
@@ -22,8 +21,7 @@ using DAS::Core::IPC::LookupObjectPayload;
 using DAS::Core::IPC::MessageType;
 using DAS::Core::IPC::ObjectId;
 using DAS::Core::IPC::RemoteObjectRegistry;
-using DAS::Core::IPC::UnregisterObjectPayload;
-
+using DAS::Core::IPC::ValidatedIPCMessageHeader;
 namespace
 {
     DasGuid CreateTestGuid(
@@ -125,156 +123,6 @@ protected:
 
     IpcCommandHandler handler_;
 };
-
-TEST_F(IpcCommandHandlerTest, RegisterObject_Success)
-{
-    std::vector<uint8_t> payload;
-    ObjectId obj_id{.session_id = 1, .generation = 1, .local_id = 100};
-    DasGuid  iid = CreateTestGuid(
-        0x12345678,
-        0x1234,
-        0x5678,
-        0x12,
-        0x34,
-        0x56,
-        0x78,
-        0x9A,
-        0xBC,
-        0xDE,
-        0xF0);
-
-    AppendToBuffer(payload, obj_id);
-    AppendToBuffer(payload, iid);
-    AppendToBuffer(payload, static_cast<uint16_t>(1));
-    AppendToBuffer(payload, static_cast<uint16_t>(1));
-    AppendString(payload, "test_object");
-
-    auto               header = MakeHeader(IpcCommandType::REGISTER_OBJECT);
-    IpcCommandResponse response;
-
-    DasResult result = handler_.HandleCommand(header, payload, response);
-
-    EXPECT_EQ(result, DAS_S_OK);
-    EXPECT_EQ(response.error_code, DAS_S_OK);
-    EXPECT_TRUE(RemoteObjectRegistry::GetInstance().ObjectExists(obj_id));
-}
-
-TEST_F(IpcCommandHandlerTest, RegisterObject_InvalidObjectId)
-{
-    std::vector<uint8_t> payload;
-    ObjectId obj_id{.session_id = 0, .generation = 0, .local_id = 0};
-    DasGuid  iid = CreateTestGuid(
-        0x12345678,
-        0x1234,
-        0x5678,
-        0x12,
-        0x34,
-        0x56,
-        0x78,
-        0x9A,
-        0xBC,
-        0xDE,
-        0xF0);
-
-    AppendToBuffer(payload, obj_id);
-    AppendToBuffer(payload, iid);
-    AppendToBuffer(payload, static_cast<uint16_t>(1));
-    AppendToBuffer(payload, static_cast<uint16_t>(1));
-    AppendString(payload, "test_object");
-
-    auto               header = MakeHeader(IpcCommandType::REGISTER_OBJECT);
-    IpcCommandResponse response;
-
-    DasResult result = handler_.HandleCommand(header, payload, response);
-
-    EXPECT_EQ(result, DAS_E_IPC_INVALID_OBJECT_ID);
-}
-
-TEST_F(IpcCommandHandlerTest, RegisterObject_Duplicate)
-{
-    std::vector<uint8_t> payload;
-    ObjectId obj_id{.session_id = 1, .generation = 1, .local_id = 100};
-    DasGuid  iid = CreateTestGuid(
-        0x12345678,
-        0x1234,
-        0x5678,
-        0x12,
-        0x34,
-        0x56,
-        0x78,
-        0x9A,
-        0xBC,
-        0xDE,
-        0xF0);
-
-    AppendToBuffer(payload, obj_id);
-    AppendToBuffer(payload, iid);
-    AppendToBuffer(payload, static_cast<uint16_t>(1));
-    AppendToBuffer(payload, static_cast<uint16_t>(1));
-    AppendString(payload, "test_object");
-
-    auto               header = MakeHeader(IpcCommandType::REGISTER_OBJECT);
-    IpcCommandResponse response;
-
-    handler_.HandleCommand(header, payload, response);
-
-    payload.clear();
-    AppendToBuffer(payload, obj_id);
-    AppendToBuffer(payload, iid);
-    AppendToBuffer(payload, static_cast<uint16_t>(1));
-    AppendToBuffer(payload, static_cast<uint16_t>(1));
-    AppendString(payload, "test_object");
-
-    DasResult result = handler_.HandleCommand(header, payload, response);
-
-    EXPECT_EQ(result, DAS_E_DUPLICATE_ELEMENT);
-}
-
-TEST_F(IpcCommandHandlerTest, UnregisterObject_Success)
-{
-    ObjectId obj_id{.session_id = 1, .generation = 1, .local_id = 100};
-    DasGuid  iid = CreateTestGuid(
-        0x12345678,
-        0x1234,
-        0x5678,
-        0x12,
-        0x34,
-        0x56,
-        0x78,
-        0x9A,
-        0xBC,
-        0xDE,
-        0xF0);
-
-    RemoteObjectRegistry::GetInstance()
-        .RegisterObject(obj_id, iid, 1, "test_object", 1);
-
-    std::vector<uint8_t> payload;
-    AppendToBuffer(payload, obj_id);
-
-    auto               header = MakeHeader(IpcCommandType::UNREGISTER_OBJECT);
-    IpcCommandResponse response;
-
-    DasResult result = handler_.HandleCommand(header, payload, response);
-
-    EXPECT_EQ(result, DAS_S_OK);
-    EXPECT_FALSE(RemoteObjectRegistry::GetInstance().ObjectExists(obj_id));
-}
-
-TEST_F(IpcCommandHandlerTest, UnregisterObject_NotFound)
-{
-    ObjectId obj_id{.session_id = 1, .generation = 1, .local_id = 999};
-
-    std::vector<uint8_t> payload;
-    AppendToBuffer(payload, obj_id);
-
-    auto               header = MakeHeader(IpcCommandType::UNREGISTER_OBJECT);
-    IpcCommandResponse response;
-
-    DasResult result = handler_.HandleCommand(header, payload, response);
-
-    EXPECT_EQ(result, DAS_E_IPC_OBJECT_NOT_FOUND);
-}
 
 TEST_F(IpcCommandHandlerTest, LookupObject_Success)
 {
@@ -641,35 +489,4 @@ TEST_F(IpcCommandHandlerTest, SetAndGetSessionId)
 
     handler_.SetSessionId(100);
     EXPECT_EQ(handler_.GetSessionId(), 100);
-}
-
-TEST_F(IpcCommandHandlerTest, RegisterObject_EmptyName)
-{
-    std::vector<uint8_t> payload;
-    ObjectId obj_id{.session_id = 1, .generation = 1, .local_id = 100};
-    DasGuid  iid = CreateTestGuid(
-        0x12345678,
-        0x1234,
-        0x5678,
-        0x12,
-        0x34,
-        0x56,
-        0x78,
-        0x9A,
-        0xBC,
-        0xDE,
-        0xF0);
-
-    AppendToBuffer(payload, obj_id);
-    AppendToBuffer(payload, iid);
-    AppendToBuffer(payload, static_cast<uint16_t>(1));
-    AppendToBuffer(payload, static_cast<uint16_t>(1));
-    AppendString(payload, "");
-
-    auto               header = MakeHeader(IpcCommandType::REGISTER_OBJECT);
-    IpcCommandResponse response;
-
-    DasResult result = handler_.HandleCommand(header, payload, response);
-
-    EXPECT_EQ(result, DAS_E_INVALID_ARGUMENT);
 }
