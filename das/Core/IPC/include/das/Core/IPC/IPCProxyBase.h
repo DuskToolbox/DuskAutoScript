@@ -67,6 +67,13 @@ public:
         return &run_loop_;
     }
 
+    /// @brief 获取业务线程
+    [[nodiscard]]
+    std::weak_ptr<BusinessThread> GetBusinessThread() const noexcept
+    {
+        return business_thread_;
+    }
+
     /// @brief 发送同步请求（PostSend + PumpUntilResponse）
     /// @param method_id 方法 ID（用于日志记录）
     /// @param body 请求体（包含完整的 V3 Body Header）
