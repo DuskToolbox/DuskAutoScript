@@ -982,7 +982,7 @@ class IpcProxyGenerator:
         lines.append("namespace DasIpcProxy {")
         lines.append("")
         lines.append("template <typename TProxy>")
-        lines.append("IPCProxyBase* CreateTypedProxy(")
+        lines.append("IDasBase* CreateTypedProxy(")
         lines.append("    const ObjectId& object_id,")
         lines.append("    IpcRunLoop& run_loop,")
         lines.append("    std::weak_ptr<BusinessThread> business_thread,")
@@ -991,7 +991,7 @@ class IpcProxyGenerator:
         lines.append("    return new TProxy(object_id, run_loop, std::move(business_thread), object_manager);")
         lines.append("}")
         lines.append("")
-        lines.append("inline IPCProxyBase* CreateProxyByInterfaceId(")
+        lines.append("inline IDasBase* CreateProxyByInterfaceId(")
         lines.append("    uint32_t interface_id,")
         lines.append("    const ObjectId& object_id,")
         lines.append("    IpcRunLoop& run_loop,")
@@ -1034,6 +1034,7 @@ class IpcProxyGenerator:
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/Logger/Logger.h>
+#include <das/IDasBase.h>
 
 """
         factory_content += self._generate_proxy_factory()

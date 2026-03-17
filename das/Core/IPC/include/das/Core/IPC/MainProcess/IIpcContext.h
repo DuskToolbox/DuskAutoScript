@@ -2,7 +2,9 @@
 #include <chrono>
 #include <das/Core/IPC/DasAsyncSender.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
+#include <das/Core/IPC/ObjectId.h>
 #include <das/DasApi.h>
+#include <das/DasTypes.hpp>
 #include <das/IDasAsyncCallback.h>
 #include <das/IDasAsyncLoadPluginOperation.h>
 #include <memory>
@@ -139,6 +141,26 @@ namespace Core
                  * @param session_id 要释放的 session_id
                  */
                 virtual void ReleaseSessionId(uint16_t session_id) = 0;
+
+                /**
+                 * @brief Create a remote proxy from an ObjectId
+                 *
+                 * Uses RemoteObjectRegistry::ComputeInterfaceId to convert
+                 * DasGuid to uint32_t hash, then calls
+                 * DasIpcProxy::CreateProxyByInterfaceId to create a typed
+                 * proxy.
+                 *
+                 * @param object_id The ObjectId of the remote object
+                 * @param iid The requested interface GUID (DasGuid) - will be
+                 * hashed to uint32_t
+                 * @param pp_out Output: proxy as IDasBase* (caller must
+                 * Release)
+                 * @return DasResult DAS_S_OK on success
+                 */
+                virtual DasResult CreateRemoteProxy(
+                    ObjectId       object_id,
+                    const DasGuid& iid,
+                    IDasBase**     pp_out) = 0;
 
             protected:
                 virtual ~IIpcContext() = default;

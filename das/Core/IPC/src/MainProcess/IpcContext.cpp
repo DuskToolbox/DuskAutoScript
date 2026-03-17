@@ -6,6 +6,7 @@
 #include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
+#include <das/Core/IPC/IPCProxyBase.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/IPC/MainProcess/IpcContext.h>
@@ -15,6 +16,7 @@
 #include <das/DasPtr.hpp>
 #include <das/IDasAsyncCallback.h>
 #include <das/Utils/StringUtils.h>
+#include <das/_autogen/idl/ipc/IpcProxyFactory.h>
 
 // Define alias for IpcRunLoop in the parent namespace
 namespace Das::Core::IPC::MainProcess
@@ -472,6 +474,74 @@ namespace Core
             {
                 std::lock_guard<std::mutex> lock(allocated_ids_mutex_);
                 MarkSessionIdAsFree(session_id);
+            }
+
+            DasResult IpcContext::CreateRemoteProxy(
+                ObjectId       object_id,
+                const DasGuid& iid,
+                IDasBase**     pp_out)
+            {
+                if (!pp_out)
+                {
+                    return DAS_E_INVALID_ARGUMENT;
+                }
+                *pp_out = nullptr;
+
+                if (!runloop_ || !business_thread_)
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "CreateRemoteProxy: IpcRunLoop or BusinessThread not initialized");
+                    return DAS_E_IPC_NOT_INITIALIZED;
+                }
+
+                // Convert DasGuid (UUID) to uint32_t FNV-1a hash using the same
+                // algorithm as RemoteObjectRegistry::ComputeInterfaceId
+                uint32_t interface_hash =
+                    RemoteObjectRegistry::ComputeInterfaceId(iid);
+
+                // Create proxy directly based on interface hash
+                // TODO: Once proxy headers are properly included, create proxies here directly
+                // For now, only IDasVariantVector is supported (0xF5FBD328)
+                IPCProxyBase* proxy_base = nullptr;
+
+                if (interface_hash == 0xF5FBD328u) // IDasVariantVector::InterfaceId
+                {
+                    // Use the factory for IDasVariantVector
+                    proxy_base = DasIpcProxy::CreateProxyByInterfaceId(
+                        interface_hash,
+                        object_id,
+                        *runloop_,
+                        business_thread_,
+                        object_manager_);
+                }
+                else
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "CreateRemoteProxy: Unknown interface_id=0x{:08X} "
+                        "for object_id={{session:{}, gen:{}, local:{}}}",
+                        interface_hash,
+                        object_id.session_id,
+                        object_id.generation,
+                        object_id.local_id);
+                    return DAS_E_NO_INTERFACE;
+                }
+
+                if (!proxy_base)
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "CreateRemoteProxy: failed to create proxy "
+                        "for object_id={{session:{}, gen:{}, local:{}}}, interface_hash={}",
+                        object_id.session_id,
+                        object_id.generation,
+                        object_id.local_id,
+                        interface_hash);
+                    return DAS_E_NO_INTERFACE;
+                }
+
+                // Cast to IDasBase
+                IDasBase* proxy = reinterpret_cast<IDasBase*>(proxy_base);
+                *pp_out = proxy;
+                return DAS_S_OK;
             }
 
         } // namespace MainProcess

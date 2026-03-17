@@ -80,6 +80,11 @@ namespace Core
                 uint16_t AllocateSessionId() override;
                 void     ReleaseSessionId(uint16_t session_id) override;
 
+                DasResult CreateRemoteProxy(
+                    ObjectId       object_id,
+                    const DasGuid& iid,
+                    IDasBase**     pp_out) override;
+
                 /// Internal registration method (called by HostLauncher after
                 /// Start succeeds)
                 DasResult InternalRegisterHostLauncher();

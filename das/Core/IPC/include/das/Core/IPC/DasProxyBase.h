@@ -3,7 +3,7 @@
 
 #include <das/Core/IPC/IPCProxyBase.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
-#include <das/Core/IPC/ObjectManager.h>
+#include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/DasConfig.h>
 #include <das/IDasBase.h>
 
