@@ -538,7 +538,13 @@ class IpcProxyGenerator:
 
         params = []
         for param in method.parameters:
-            param_type = self._get_cpp_type(param.type_info, current_namespace)
+            if param.direction == ParamDirection.OUT and param.type_info.base_type in self.type_mapper.interface_namespaces:
+                # Match ABI's get_out_param_type: interface [out] params are always ITypeName**
+                cpp_type = self._get_cpp_type(param.type_info, current_namespace)
+                base_type = cpp_type.rstrip('*').rstrip()
+                param_type = f"{base_type}**"
+            else:
+                param_type = self._get_cpp_type(param.type_info, current_namespace)
             params.append(f"{param_type} {param.name}")
 
         params_str = ", ".join(params) if params else ""
@@ -605,16 +611,16 @@ class IpcProxyGenerator:
         # Step 3: 发送消息
         lines.append(f"{inner_indent}// Send request and wait for response")
         lines.append(f"{inner_indent}{response_type} response;")
-        lines.append(f"{inner_indent}DasResult result = transport_.SendAndWait(")
+        lines.append(f"{inner_indent}DasResult ipc_result = transport_.SendAndWait(")
         lines.append(f"{inner_indent}    &request, sizeof(request),")
         lines.append(f"{inner_indent}    &response, sizeof(response));")
         lines.append("")
         
         # Step 4: 处理响应
         lines.append(f"{inner_indent}// Check result")
-        lines.append(f"{inner_indent}if (DAS::IsFailed(result))")
+        lines.append(f"{inner_indent}if (DAS::IsFailed(ipc_result))")
         lines.append(f"{inner_indent}{{")
-        lines.append(f"{inner_indent}    return result;")
+        lines.append(f"{inner_indent}    return ipc_result;")
         lines.append(f"{inner_indent}}}")
         lines.append("")
         
@@ -759,32 +765,32 @@ class IpcProxyGenerator:
 
         if need_request_body:
             lines.append(f"{indent}MemorySerializerWriter writer;")
-            lines.append(f"{indent}DasResult result = DAS_S_OK;")
-            lines.append(f"{indent}(void)result;")
+            lines.append(f"{indent}DasResult ipc_result = DAS_S_OK;")
+            lines.append(f"{indent}(void)ipc_result;")
 
             # V3: 写入 interface_id (4 bytes)
             lines.append(f"{indent}// V3 Body Header: interface_id")
-            lines.append(f"{indent}result = writer.WriteUInt32(InterfaceId);")
-            lines.append(f"{indent}if (DAS::IsFailed(result)) {{ return result; }}")
+            lines.append(f"{indent}ipc_result = writer.WriteUInt32(InterfaceId);")
+            lines.append(f"{indent}if (DAS::IsFailed(ipc_result)) {{ return ipc_result; }}")
 
             # V3: 写入 method_id (2 bytes)
             lines.append(f"{indent}// V3 Body Header: method_id")
-            lines.append(f"{indent}result = writer.WriteUInt16({method_index});")
-            lines.append(f"{indent}if (DAS::IsFailed(result)) {{ return result; }}")
+            lines.append(f"{indent}ipc_result = writer.WriteUInt16({method_index});")
+            lines.append(f"{indent}if (DAS::IsFailed(ipc_result)) {{ return ipc_result; }}")
 
             # V3: 写入 reserved (2 bytes)
             lines.append(f"{indent}// V3 Body Header: reserved (alignment)")
-            lines.append(f"{indent}result = writer.WriteUInt16(0);")
-            lines.append(f"{indent}if (DAS::IsFailed(result)) {{ return result; }}")
+            lines.append(f"{indent}ipc_result = writer.WriteUInt16(0);")
+            lines.append(f"{indent}if (DAS::IsFailed(ipc_result)) {{ return ipc_result; }}")
 
             # V3: 写入 ObjectId (8 bytes)
             lines.append(f"{indent}// V3 Body Header: target_object ObjectId")
-            lines.append(f"{indent}result = writer.WriteUInt16(GetObjectId().session_id);")
-            lines.append(f"{indent}if (DAS::IsFailed(result)) {{ return result; }}")
-            lines.append(f"{indent}result = writer.WriteUInt16(GetObjectId().generation);")
-            lines.append(f"{indent}if (DAS::IsFailed(result)) {{ return result; }}")
-            lines.append(f"{indent}result = writer.WriteUInt32(GetObjectId().local_id);")
-            lines.append(f"{indent}if (DAS::IsFailed(result)) {{ return result; }}")
+            lines.append(f"{indent}ipc_result = writer.WriteUInt16(GetObjectId().session_id);")
+            lines.append(f"{indent}if (DAS::IsFailed(ipc_result)) {{ return ipc_result; }}")
+            lines.append(f"{indent}ipc_result = writer.WriteUInt16(GetObjectId().generation);")
+            lines.append(f"{indent}if (DAS::IsFailed(ipc_result)) {{ return ipc_result; }}")
+            lines.append(f"{indent}ipc_result = writer.WriteUInt32(GetObjectId().local_id);")
+            lines.append(f"{indent}if (DAS::IsFailed(ipc_result)) {{ return ipc_result; }}")
 
             # 序列化参数
             lines.append(f"{indent}// V3 Body: parameters")
@@ -801,15 +807,15 @@ class IpcProxyGenerator:
         lines.append("")
         lines.append(f"{indent}std::vector<uint8_t> response_body;")
         if need_request_body:
-            lines.append(f"{indent}result = SendRequest({method_index},")
+            lines.append(f"{indent}ipc_result = SendRequest({method_index},")
             lines.append(f"{indent}    request_body.data(), request_body.size(), response_body);")
         else:
-            lines.append(f"{indent}DasResult result = SendRequest({method_index},")
+            lines.append(f"{indent}DasResult ipc_result = SendRequest({method_index},")
             lines.append(f"{indent}    request_body, request_body_size, response_body);")
-        lines.append(f"{indent}if (DAS::IsFailed(result))")
+        lines.append(f"{indent}if (DAS::IsFailed(ipc_result))")
         lines.append(f"{indent}{{")
         if has_return:
-            lines.append(f"{indent}    return result;")
+            lines.append(f"{indent}    return ipc_result;")
         else:
             lines.append(f"{indent}    return;")
         lines.append(f"{indent}}}")
@@ -819,11 +825,11 @@ class IpcProxyGenerator:
             lines.append(f"{indent}MemorySerializerReader reader(response_body);")
             lines.append("")
             lines.append(f"{indent}DasResult remote_result;")
-            lines.append(f"{indent}result = reader.ReadInt32(&remote_result);")
-            lines.append(f"{indent}if (DAS::IsFailed(result))")
+            lines.append(f"{indent}ipc_result = reader.ReadInt32(&remote_result);")
+            lines.append(f"{indent}if (DAS::IsFailed(ipc_result))")
             lines.append(f"{indent}{{")
             if has_return:
-                lines.append(f"{indent}    return result;")
+                lines.append(f"{indent}    return ipc_result;")
             else:
                 lines.append(f"{indent}    return;")
             lines.append(f"{indent}}}")
@@ -864,10 +870,10 @@ class IpcProxyGenerator:
             # 获取 ObjectId 并序列化
             lines.append(f"{indent}// 序列化接口指针: {interface_name}*")
             lines.append(f"{indent}ObjectId {param_name}_id = GetObjectIdFromInterface({param_name});")
-            lines.append(f"{indent}result = writer.WriteUInt64(EncodeObjectId({param_name}_id));")
-            lines.append(f"{indent}if (DAS::IsFailed(result))")
+            lines.append(f"{indent}ipc_result = writer.WriteUInt64(EncodeObjectId({param_name}_id));")
+            lines.append(f"{indent}if (DAS::IsFailed(ipc_result))")
             lines.append(f"{indent}{{")
-            lines.append(f"{indent}    return result;")
+            lines.append(f"{indent}    return ipc_result;")
             lines.append(f"{indent}}}")
             return lines
 
@@ -875,7 +881,7 @@ class IpcProxyGenerator:
 
         if type_info is None:
             lines.append(f"{indent}// TODO: Unknown type {param.type_info.base_type}")
-            lines.append(f"{indent}// result = writer.WriteCustom<{param.type_info.base_type}>({param.name});")
+            lines.append(f"{indent}// ipc_result = writer.WriteCustom<{param.type_info.base_type}>({param.name});")
             return lines
 
         cpp_type, write_method, _, is_struct = type_info
@@ -893,15 +899,15 @@ class IpcProxyGenerator:
             # 处理指针和引用
             if param.type_info.is_pointer or param.type_info.is_reference:
                 if param.type_info.pointer_level == 1:
-                    lines.append(f"{indent}result = writer.{write_method}(*{param.name});")
+                    lines.append(f"{indent}ipc_result = writer.{write_method}(*{param.name});")
                 else:
-                    lines.append(f"{indent}result = writer.{write_method}({param.name});")
+                    lines.append(f"{indent}ipc_result = writer.{write_method}({param.name});")
             else:
-                lines.append(f"{indent}result = writer.{write_method}({param.name});")
+                lines.append(f"{indent}ipc_result = writer.{write_method}({param.name});")
 
-        lines.append(f"{indent}if (DAS::IsFailed(result))")
+        lines.append(f"{indent}if (DAS::IsFailed(ipc_result))")
         lines.append(f"{indent}{{")
-        lines.append(f"{indent}    return result;")
+        lines.append(f"{indent}    return ipc_result;")
         lines.append(f"{indent}}}")
 
         return lines
@@ -913,7 +919,7 @@ class IpcProxyGenerator:
         
         if type_info is None:
             lines.append(f"{indent}// TODO: Unknown type {param.type_info.base_type}")
-            lines.append(f"{indent}// result = reader.ReadCustom<{param.type_info.base_type}>({param.name});")
+            lines.append(f"{indent}// ipc_result = reader.ReadCustom<{param.type_info.base_type}>({param.name});")
             return lines
         
         cpp_type, _, read_method, is_struct = type_info
@@ -929,14 +935,14 @@ class IpcProxyGenerator:
                 lines.append(line)
         else:
             if param.type_info.is_pointer and param.type_info.pointer_level >= 1:
-                lines.append(f"{indent}result = reader.{read_method}({param.name});")
+                lines.append(f"{indent}ipc_result = reader.{read_method}({param.name});")
             else:
-                lines.append(f"{indent}result = reader.{read_method}(&{param.name});")
+                lines.append(f"{indent}ipc_result = reader.{read_method}(&{param.name});")
         
-        lines.append(f"{indent}if (DAS::IsFailed(result))")
+        lines.append(f"{indent}if (DAS::IsFailed(ipc_result))")
         lines.append(f"{indent}{{")
         if has_return:
-            lines.append(f"{indent}    return result;")
+            lines.append(f"{indent}    return ipc_result;")
         else:
             lines.append(f"{indent}    return;")
         lines.append(f"{indent}}}")
@@ -963,10 +969,10 @@ class IpcProxyGenerator:
             lines.append(f"{indent}return ret_value;")
         else:
             lines.append(f"{indent}{cpp_type} ret_value;")
-            lines.append(f"{indent}result = reader.{read_method}(&ret_value);")
-            lines.append(f"{indent}if (DAS::IsFailed(result))")
+            lines.append(f"{indent}ipc_result = reader.{read_method}(&ret_value);")
+            lines.append(f"{indent}if (DAS::IsFailed(ipc_result))")
             lines.append(f"{indent}{{")
-            lines.append(f"{indent}    return result;")
+            lines.append(f"{indent}    return ipc_result;")
             lines.append(f"{indent}}}")
             lines.append(f"{indent}return ret_value;")
         
@@ -991,10 +997,10 @@ class IpcProxyGenerator:
                 continue
 
             _, write_method, _, _ = type_info
-            lines.append(f"{indent}result = writer.{write_method}({param_access}{field.name});")
-            lines.append(f"{indent}if (DAS::IsFailed(result))")
+            lines.append(f"{indent}ipc_result = writer.{write_method}({param_access}{field.name});")
+            lines.append(f"{indent}if (DAS::IsFailed(ipc_result))")
             lines.append(f"{indent}{{")
-            lines.append(f"{indent}    return result;")
+            lines.append(f"{indent}    return ipc_result;")
             lines.append(f"{indent}}}")
 
         return lines
@@ -1018,11 +1024,11 @@ class IpcProxyGenerator:
                 continue
 
             _, _, read_method, _ = type_info
-            lines.append(f"{indent}result = reader.{read_method}(&{param_access}{field.name});")
-            lines.append(f"{indent}if (DAS::IsFailed(result))")
+            lines.append(f"{indent}ipc_result = reader.{read_method}(&{param_access}{field.name});")
+            lines.append(f"{indent}if (DAS::IsFailed(ipc_result))")
             lines.append(f"{indent}{{")
             if has_return:
-                lines.append(f"{indent}    return result;")
+                lines.append(f"{indent}    return ipc_result;")
             else:
                 lines.append(f"{indent}    return;")
             lines.append(f"{indent}}}")
