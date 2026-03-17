@@ -80,7 +80,8 @@ def generate_ipc_files(
             document=document,
             output_dir=output_dir,
             base_name=base_name,
-            idl_file_path=idl_file_path
+            idl_file_path=idl_file_path,
+            cache_dir=cache_dir
         )
         generated_files.extend(proxy_files)
 
@@ -91,7 +92,8 @@ def generate_ipc_files(
             document=document,
             output_dir=output_dir,
             base_name=base_name,
-            idl_file_path=idl_file_path
+            idl_file_path=idl_file_path,
+            cache_dir=cache_dir
         )
         generated_files.extend(stub_files)
 

@@ -189,7 +189,7 @@ IDL 语法示例:
 
     ipc_group.add_argument(
         '--ipc-cache-dir',
-        help='IPC 中间缓存目录（默认：<ipc-output-dir>/.cache）'
+        help='IPC 中间缓存目录（由 CMake 提供）'
     )
 
     # === 调试选项 ===
@@ -241,7 +241,7 @@ IDL 语法示例:
 
     # 确定 IPC 输出目录
     ipc_output_dir = args.ipc_output_dir or default_output
-    ipc_cache_dir = args.ipc_cache_dir or (str(Path(ipc_output_dir) / '.cache') if ipc_output_dir else None)
+    ipc_cache_dir = args.ipc_cache_dir
 
     # 处理多个输入文件
     input_files = [f.strip() for f in args.input.split(',')]

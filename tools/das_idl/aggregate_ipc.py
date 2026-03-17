@@ -100,6 +100,12 @@ def aggregate_ipc(ipc_output_dir: Path, ipc_cache_dir: Path = None) -> int:
         cpp_lines.append('#include "IpcAllProxies.h"')
     if stub_files:
         cpp_lines.append('#include "IpcAllStubs.h"')
+
+    # Factory 文件由 aggregate_factory_files() 生成，如果存在则 include
+    if (ipc_output_dir / "IpcProxyFactory.h").exists():
+        cpp_lines.append('#include "IpcProxyFactory.h"')
+    if (ipc_output_dir / "IpcStubFactory.h").exists():
+        cpp_lines.append('#include "IpcStubFactory.h"')
     cpp_lines.append("")
 
     (ipc_output_dir / "IpcGenerated.cpp").write_text("\n".join(cpp_lines), encoding="utf-8")
@@ -349,16 +355,17 @@ def main():
 
     ipc_cache_dir = Path(args.ipc_cache_dir) if args.ipc_cache_dir else None
 
-    # 聚合基础文件（IpcAllProxies.h, IpcAllStubs.h, IpcGenerated.cpp）
-    result = aggregate_ipc(ipc_output_dir)
-    if result != 0:
-        return result
-
-    # 聚合工厂文件（IpcProxyFactory.h, IpcStubFactory.h）
+    # 聚合工厂文件（IpcProxyFactory.h, IpcStubFactory.h）— 先执行
     if ipc_cache_dir:
         result = aggregate_factory_files(ipc_output_dir, ipc_cache_dir)
         if result != 0:
             return result
+
+    # 聚合基础文件（IpcAllProxies.h, IpcAllStubs.h, IpcGenerated.cpp）— 后执行
+    # IpcGenerated.cpp 会检测 factory 文件是否存在并 include
+    result = aggregate_ipc(ipc_output_dir)
+    if result != 0:
+        return result
 
     return 0
 

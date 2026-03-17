@@ -216,6 +216,11 @@ das_add_core_component(i18n)
 das_add_core_component(TaskScheduler)
 das_add_core_component(IPC)
 
+# 将IpcGenerated.cpp添加到DasCoreObjects（与OfficialIids相同的模式）
+target_sources(DasCoreObjects PRIVATE ${DasCore_IPC_GENERATED_CPP})
+set_source_files_properties(${DasCore_IPC_GENERATED_CPP} PROPERTIES GENERATED TRUE)
+target_include_directories(DasCoreObjects PUBLIC "${CMAKE_BINARY_DIR}/das/include/das/_autogen/idl/ipc")
+
 add_library(DasCore SHARED)
 add_dependencies(DasCore DasCoreObjects)
 

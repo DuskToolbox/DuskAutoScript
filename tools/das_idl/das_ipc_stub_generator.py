@@ -235,7 +235,7 @@ class IpcStubGenerator:
 
 #include <das/Core/IPC/IStubBase.h>
 #include <das/Core/IPC/MemorySerializer.h>
-#include <das/Core/IPC/ObjectManager.h>
+#include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/Serializer.h>
 #include <algorithm>

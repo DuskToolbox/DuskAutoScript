@@ -2,6 +2,7 @@
 #include <cstring>
 #include <das/Core/IPC/AsyncOperationImpl.h>
 #include <das/Core/IPC/ConnectionManager.h>
+#include <das/Core/IPC/DasProxyBase.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
@@ -15,7 +16,6 @@
 #include <das/DasPtr.hpp>
 #include <das/IDasAsyncCallback.h>
 #include <das/Utils/StringUtils.h>
-#include <das/_autogen/idl/ipc/IpcProxyFactory.h>
 
 // Define alias for IpcRunLoop in the parent namespace
 namespace Das::Core::IPC::MainProcess

@@ -121,7 +121,7 @@ function(das_add_idl_export)
     cmake_parse_arguments(
         DAS_IDL_EXPORT                          # 前缀
         ""                                      # 选项 (无值参数)
-        "NAME;IDL_DIR;OUTPUT_DIR;NAMESPACE;GENERATE_IPC_PROXY;GENERATE_IPC_STUB;GENERATE_IPC_MESSAGE"  # 单值参数
+        "NAME;IDL_DIR;OUTPUT_DIR;NAMESPACE;GENERATE_IPC_PROXY;GENERATE_IPC_STUB;GENERATE_IPC_MESSAGE;IPC_CACHE_DIR"  # 单值参数
         "IDL_FILES;LANGUAGES;USER_SWIG_FILES;GENERATED_FILES;GENERATED_ABI_FILES;GENERATED_WRAPPER_FILES;GENERATED_SWIG_FILES;GENERATED_IPC_FILES;SWIG_OPTIONS_Python;SWIG_OPTIONS_Java;SWIG_OPTIONS_CSharp;SWIG_INCLUDE_DIRS;DEPENDS_ON"  # 多值参数
         ${ARGN}
     )
@@ -161,7 +161,12 @@ function(das_add_idl_export)
     set(_WRAPPER_OUTPUT_DIR "${DAS_IDL_EXPORT_OUTPUT_DIR}/_autogen/idl/wrapper")
     set(_SWIG_OUTPUT_DIR "${DAS_IDL_EXPORT_OUTPUT_DIR}/_autogen/idl/swig")
     set(_IPC_OUTPUT_DIR "${DAS_IDL_EXPORT_OUTPUT_DIR}/_autogen/idl/ipc")
+    if(NOT DAS_IDL_EXPORT_IPC_CACHE_DIR)
+        set(DAS_IDL_EXPORT_IPC_CACHE_DIR "${_IPC_OUTPUT_DIR}/cache")
+    endif()
+    set(_IPC_CACHE_DIR "${DAS_IDL_EXPORT_IPC_CACHE_DIR}")
     set(_IIDS_OUTPUT_DIR "${DAS_IDL_EXPORT_OUTPUT_DIR}/_autogen/idl/iids")
+    set(_IPC_GENERATED_CPP "${_IPC_OUTPUT_DIR}/IpcGenerated.cpp")
 
     message(STATUS "[das_add_idl_export] Configuring IDL export for ${DAS_IDL_EXPORT_NAME}")
     message(STATUS "[das_add_idl_export]   IDL_DIR: ${DAS_IDL_EXPORT_IDL_DIR}")
@@ -244,6 +249,7 @@ function(das_add_idl_export)
         # 添加 IPC 选项
         if(DAS_IDL_EXPORT_GENERATE_IPC_PROXY OR DAS_IDL_EXPORT_GENERATE_IPC_STUB OR DAS_IDL_EXPORT_GENERATE_IPC_MESSAGE)
             string(APPEND _BATCH_JSON_CONFIG "        \"--ipc-output-dir\": \"${_IPC_OUTPUT_DIR}\",\n")
+            string(APPEND _BATCH_JSON_CONFIG "        \"--ipc-cache-dir\": \"${_IPC_CACHE_DIR}\",\n")
 
             if(DAS_IDL_EXPORT_GENERATE_IPC_PROXY)
                 string(APPEND _BATCH_JSON_CONFIG "        \"--ipc-proxy\": true,\n")
@@ -296,10 +302,11 @@ function(das_add_idl_export)
 
     # ====== 3. 创建批量生成命令和目标 ======
     add_custom_command(
-        OUTPUT ${_GENERATED_STAMP}
+        OUTPUT ${_GENERATED_STAMP} ${_IPC_GENERATED_CPP}
         COMMAND "${DAS_IDL_VENV_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/das_idl/das_idl_batch_gen.py"
             --config "${_BATCH_CONFIG_FILE}"
             --update-list "${_UPDATE_LIST_FILE}"
+            --ipc-cache-dir "${_IPC_CACHE_DIR}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${_DAS_IDL_STAMP_DIR}"
         COMMAND "${CMAKE_COMMAND}" -E touch "${_GENERATED_STAMP}"
         DEPENDS ${_UPDATE_LIST_FILE}
