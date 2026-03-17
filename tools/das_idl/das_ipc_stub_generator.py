@@ -803,6 +803,8 @@ class IpcStubGenerator:
             # 使用内联字段展开进行序列化
             struct_def = self.type_mapper.struct_defs.get(param.type_info.base_type)
             if struct_def and struct_def.fields:
+                # 判断参数是否为指针类型，决定使用 -> 还是 .
+                accessor = "->" if param.type_info.is_pointer else "."
                 for field in struct_def.fields:
                     field_cpp_type, field_write_method, _, field_is_struct = self.type_mapper.get_type_info(field.type_name) or (None, None, None, False)
                     if field_is_struct:
@@ -813,10 +815,10 @@ class IpcStubGenerator:
                                 nested_field_type_info = self.type_mapper.get_type_info(nested_field.type_name)
                                 if nested_field_type_info:
                                     _, nf_write_method, _, _ = nested_field_type_info
-                                    lines.append(f"{indent}serial_result = writer.{nf_write_method}({var_name}.{field.name}.{nested_field.name});")
+                                    lines.append(f"{indent}serial_result = writer.{nf_write_method}({var_name}{accessor}{field.name}.{nested_field.name});")
                                     lines.append(f"{indent}if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
                     elif field_cpp_type and field_write_method:
-                        lines.append(f"{indent}serial_result = writer.{field_write_method}({var_name}.{field.name});")
+                        lines.append(f"{indent}serial_result = writer.{field_write_method}({var_name}{accessor}{field.name});")
                         lines.append(f"{indent}if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
             else:
                 lines.append(f"{indent}// TODO: Serialize struct {param.type_info.base_type}")

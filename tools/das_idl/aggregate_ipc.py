@@ -298,6 +298,11 @@ def _generate_stub_factory(ipc_output_dir: Path, interfaces: List[Dict[str, Any]
     for ns, short_names in sorted(namespaces.items()):
         lines.append(f"using namespace {ns}::IPC::Stub;")
 
+    # 无命名空间的接口被放到 DasIpc::Stub，需要额外 using
+    has_no_namespace = any(not iface.get('namespace', '') for iface in interfaces)
+    if has_no_namespace:
+        lines.append("using namespace DasIpc::Stub;")
+
     if namespaces:
         lines.append("")
 
@@ -313,7 +318,7 @@ def _generate_stub_factory(ipc_output_dir: Path, interfaces: List[Dict[str, Any]
         short_name = _get_interface_short_name(interface_name)
         stub_name = f"{short_name}Stub"
 
-        lines.append(f"        run_loop.RegisterHandler(HeaderFlags::NONE, {interface_name}::InterfaceId, &{stub_name}_);")
+        lines.append(f"        run_loop.RegisterHandler(HeaderFlags::NONE, {interface_id}, &{stub_name}_);")
 
     lines.extend([
         "    }",
