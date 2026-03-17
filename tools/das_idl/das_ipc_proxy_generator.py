@@ -25,6 +25,7 @@ Proxy 代码规范 (B6):
 
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Any
@@ -112,6 +113,12 @@ class ProxyTypeMapper:
                 full_name = f"{struct.namespace}::{struct.name}"
                 self.struct_types.add(full_name)
                 self.struct_defs[full_name] = struct
+
+        # 收集接口名 -> 命名空间映射（用于跨命名空间类型引用）
+        self.interface_namespaces = {}  # interface_name -> namespace
+        self.interface_header_files = {}  # interface_name -> header_filename
+        for iface in document.interfaces:
+            self.interface_namespaces[iface.name] = iface.namespace
     
     def get_type_info(self, idl_type: str):
         """获取类型信息
@@ -187,6 +194,66 @@ class ProxyTypeMapper:
             return type_name[:-3]  # 去除 Ptr
         return type_name
 
+    def load_namespaces_from_abi_dir(self, abi_dir: str) -> None:
+        """从 ABI 头文件目录扫描所有接口的命名空间
+
+        扫描 abi_dir 下的所有 .h 文件，提取 namespace 和接口前向声明，
+        构建 interface_namespaces 映射。
+
+        Args:
+            abi_dir: ABI 头文件目录路径
+        """
+        abi_path = Path(abi_dir)
+        if not abi_path.is_dir():
+            return
+
+        # 正则表达式匹配 namespace 块中的 DAS_INTERFACE 前向声明
+        # 先匹配 namespace 块，再提取其中的 DAS_INTERFACE 声明
+        ns_block_pattern = re.compile(
+            r'namespace\s+([\w:]+)\s*\{',
+            re.DOTALL
+        )
+        iface_decl_pattern = re.compile(r'DAS_INTERFACE\s+(\w+)\s*;')
+
+        for header_file in abi_path.glob("*.h"):
+            try:
+                content = header_file.read_text(encoding='utf-8')
+                # 查找所有 namespace 块及其中的 DAS_INTERFACE 声明
+                pos = 0
+                open_braces = 0
+                current_ns = ""
+                while pos < len(content):
+                    # 查找 namespace 声明
+                    ns_match = ns_block_pattern.search(content, pos)
+                    if ns_match is None:
+                        break
+                    current_ns = ns_match.group(1)
+                    brace_start = ns_match.end()
+
+                    # 追踪大括号以找到 namespace 块的结束
+                    open_braces = 1
+                    scan_pos = brace_start
+                    while open_braces > 0 and scan_pos < len(content):
+                        if content[scan_pos] == '{':
+                            open_braces += 1
+                        elif content[scan_pos] == '}':
+                            open_braces -= 1
+                        scan_pos += 1
+
+                    # 在 namespace 块中查找 DAS_INTERFACE 声明
+                    ns_content = content[brace_start:scan_pos]
+                    for iface_match in iface_decl_pattern.finditer(ns_content):
+                        iface_name = iface_match.group(1)
+                        if iface_name not in self.interface_namespaces:
+                            self.interface_namespaces[iface_name] = current_ns
+                        # 记录接口到头文件的映射
+                        if iface_name not in self.interface_header_files:
+                            self.interface_header_files[iface_name] = header_file.name
+
+                    pos = scan_pos
+            except Exception:
+                pass
+
 
 def fnv1a_hash(data: str) -> int:
     """计算字符串的 FNV-1a 32-bit hash
@@ -239,13 +306,17 @@ def fnv1a_hash_guid(guid_str: str) -> int:
 
 class IpcProxyGenerator:
     """IPC Proxy 代码生成器"""
-    
-    def __init__(self, document: IdlDocument, idl_file_path: Optional[str] = None):
+
+    def __init__(self, document: IdlDocument, idl_file_path: Optional[str] = None,
+                 extra_interface_namespaces: Optional[Dict[str, str]] = None):
         self.document = document
         self.idl_file_path = idl_file_path
         self.idl_file_name = os.path.basename(idl_file_path) if idl_file_path else None
         self.indent = "    "  # 4 空格缩进
         self.type_mapper = ProxyTypeMapper(document)
+        # 额外的接口命名空间映射（来自其他 IDL 文件的接口）
+        if extra_interface_namespaces:
+            self.type_mapper.interface_namespaces.update(extra_interface_namespaces)
     
     def _file_header(self, guard_name: str, interface_name: str, interface: InterfaceDef = None) -> str:
         """生成文件头"""
@@ -324,8 +395,13 @@ class IpcProxyGenerator:
             return "\n".join(result) + "\n"
         return ""
     
-    def _get_cpp_type(self, type_info: TypeInfo) -> str:
-        """将 IDL 类型转换为 C++ 类型"""
+    def _get_cpp_type(self, type_info: TypeInfo, current_namespace: str = "") -> str:
+        """将 IDL 类型转换为 C++ 类型
+
+        Args:
+            type_info: 类型信息
+            current_namespace: 当前接口的命名空间（用于跨命名空间类型限定）
+        """
         TYPE_MAP = {
             'bool': 'bool',
             'int8': 'int8_t',
@@ -351,21 +427,28 @@ class IpcProxyGenerator:
             'char': 'char',
             'string': 'std::string',
         }
-        
+
         base = TYPE_MAP.get(type_info.base_type, type_info.base_type)
-        
+
+        # 检查是否是跨命名空间的接口类型，需要添加完全限定名
+        if base not in TYPE_MAP and current_namespace:
+            # 检查是否是接口名（在 interface_namespaces 映射中）
+            iface_ns = self.type_mapper.interface_namespaces.get(base)
+            if iface_ns and iface_ns != current_namespace:
+                base = f"{iface_ns}::{base}"
+
         result = ""
         if type_info.is_const:
             result += "const "
-        
+
         result += base
-        
+
         if type_info.is_pointer:
             result += "*" * type_info.pointer_level
-        
+
         if type_info.is_reference:
             result += "&"
-        
+
         return result
     
     def _get_interface_short_name(self, interface_name: str) -> str:
@@ -391,41 +474,50 @@ class IpcProxyGenerator:
 
         核心类型（如 IDasReadOnlyString、IDasStopToken）不需要额外 include，
         因为它们已经通过 ABI 头文件中的 include 链可见。
+
+        同一 IDL 文件中定义的接口类型不需要额外 include，
+        因为它们已通过主 ABI 头文件（{idl_file_name}.h）的前向声明可见。
         """
-        # 核心类型：这些类型在 DasString.hpp 等核心头文件中定义，
-        # 通过 ABI 头文件的 include 链已经可见，不需要额外 include。
+        # 核心类型
         CORE_TYPES = {
             "IDasReadOnlyString",
             "IDasReadOnlyGuidVector",
             "IDasStopToken",
             "IDasBinaryBuffer",
             "IDasString",
+            "IDasBase",
+            "IDasTypeInfo",
         }
+
+        # 收集当前 IDL 文档中定义的所有接口名
+        local_iface_names = set()
+        for iface in self.document.interfaces:
+            local_iface_names.add(iface.name)
 
         includes = set()
 
         def _is_iface_ptr(type_info: TypeInfo) -> bool:
-            """检查 TypeInfo 是否为接口指针类型"""
             if not type_info.is_pointer:
                 return False
             name = type_info.base_type.split("::")[-1]
             return name.startswith("I") and "Das" in name
 
         def _iface_name_from_type(type_info: TypeInfo) -> str:
-            """从 TypeInfo 提取接口名"""
             return type_info.base_type.split("::")[-1]
 
         for method in interface.methods:
             if _is_iface_ptr(method.return_type):
                 iface_name = _iface_name_from_type(method.return_type)
-                if iface_name not in CORE_TYPES:
-                    includes.add(f"{iface_name}.h")
+                if iface_name not in CORE_TYPES and iface_name not in local_iface_names:
+                    header = self.type_mapper.interface_header_files.get(iface_name, f"{iface_name}.h")
+                    includes.add(header)
 
             for param in method.parameters:
                 if _is_iface_ptr(param.type_info):
                     iface_name = _iface_name_from_type(param.type_info)
-                    if iface_name not in CORE_TYPES:
-                        includes.add(f"{iface_name}.h")
+                    if iface_name not in CORE_TYPES and iface_name not in local_iface_names:
+                        header = self.type_mapper.interface_header_files.get(iface_name, f"{iface_name}.h")
+                        includes.add(header)
 
         # 排除主接口自身的头文件（已通过 abi_header 包含）
         short_name = self._get_interface_short_name(interface.name)
@@ -434,15 +526,21 @@ class IpcProxyGenerator:
 
         return sorted(includes)
 
-    def _generate_method_signature(self, interface: InterfaceDef, method: MethodDef) -> str:
-        """生成方法签名"""
-        return_type = self._get_cpp_type(method.return_type)
-        
+    def _generate_method_signature(self, interface: InterfaceDef, method: MethodDef, current_namespace: str = "") -> str:
+        """生成方法签名
+
+        Args:
+            interface: 当前接口定义
+            method: 方法定义
+            current_namespace: 当前接口的命名空间（用于跨命名空间类型限定）
+        """
+        return_type = self._get_cpp_type(method.return_type, current_namespace)
+
         params = []
         for param in method.parameters:
-            param_type = self._get_cpp_type(param.type_info)
+            param_type = self._get_cpp_type(param.type_info, current_namespace)
             params.append(f"{param_type} {param.name}")
-        
+
         params_str = ", ".join(params) if params else ""
         return f"{return_type} {method.name}({params_str})"
     
@@ -549,11 +647,14 @@ class IpcProxyGenerator:
         lines.append(f"{indent}public:")
         lines.append(f"{class_indent}static constexpr uint32_t InterfaceId = 0x{interface_id:08X}u;")
         lines.append("")
-        lines.append(f"{class_indent}static constexpr MethodMetadata MethodTable[] = {{")
-        for i, method in enumerate(interface.methods):
-            method_hash = fnv1a_hash(f"{interface.name}::{method.name}")
-            lines.append(f"{method_indent}{{ {i}, \"{method.name}\", 0x{method_hash:08X}u }},")
-        lines.append(f"{class_indent}}};")
+        if interface.methods:
+            lines.append(f"{class_indent}static constexpr MethodMetadata MethodTable[] = {{")
+            for i, method in enumerate(interface.methods):
+                method_hash = fnv1a_hash(f"{interface.name}::{method.name}")
+                lines.append(f"{method_indent}{{ {i}, \"{method.name}\", 0x{method_hash:08X}u }},")
+            lines.append(f"{class_indent}}};")
+        else:
+            lines.append(f"{class_indent}static constexpr MethodMetadata MethodTable[] = {{{{}}}};")
         lines.append("")
         lines.append(f"{class_indent}{class_name}(")
         lines.append(f"{class_indent}    const ObjectId& object_id,")
@@ -589,7 +690,7 @@ class IpcProxyGenerator:
         lines.append("")
         
         for i, method in enumerate(interface.methods):
-            method_sig = self._generate_method_signature(interface, method)
+            method_sig = self._generate_method_signature(interface, method, interface.namespace)
             lines.append(f"{class_indent}{method_sig}")
             lines.append(f"{class_indent}{{")
             method_body = self._generate_method_body_v2(interface, method, i, namespace_depth)
@@ -780,7 +881,12 @@ class IpcProxyGenerator:
         cpp_type, write_method, _, is_struct = type_info
 
         if is_struct:
-            struct_serialize = self._generate_struct_serialize(param.type_info.base_type, param.name, indent)
+            # 如果参数是指针，使用 -> 运算符访问字段
+            if param.type_info.is_pointer and param.type_info.pointer_level >= 1:
+                access_name = f"{param.name}->"
+            else:
+                access_name = f"{param.name}."
+            struct_serialize = self._generate_struct_serialize(param.type_info.base_type, access_name, indent)
             for line in struct_serialize:
                 lines.append(line)
         else:
@@ -813,7 +919,12 @@ class IpcProxyGenerator:
         cpp_type, _, read_method, is_struct = type_info
         
         if is_struct:
-            struct_deserialize = self._generate_struct_deserialize(param.type_info.base_type, param.name, indent, has_return)
+            # 如果参数是指针，使用 -> 运算符访问字段
+            if param.type_info.is_pointer and param.type_info.pointer_level >= 1:
+                access_name = f"{param.name}->"
+            else:
+                access_name = f"{param.name}."
+            struct_deserialize = self._generate_struct_deserialize(param.type_info.base_type, access_name, indent, has_return)
             for line in struct_deserialize:
                 lines.append(line)
         else:
@@ -861,8 +972,12 @@ class IpcProxyGenerator:
         
         return lines
 
-    def _generate_struct_serialize(self, struct_name: str, param_name: str, indent: str) -> List[str]:
-        """生成 struct 的内联序列化代码（展开每个字段）"""
+    def _generate_struct_serialize(self, struct_name: str, param_access: str, indent: str) -> List[str]:
+        """生成 struct 的内联序列化代码（展开每个字段）
+
+        Args:
+            param_access: 参数访问表达式（如 "params." 或 "params->"）
+        """
         lines = []
         struct_def = self.type_mapper.struct_defs.get(struct_name)
         if struct_def is None:
@@ -876,7 +991,7 @@ class IpcProxyGenerator:
                 continue
 
             _, write_method, _, _ = type_info
-            lines.append(f"{indent}result = writer.{write_method}({param_name}.{field.name});")
+            lines.append(f"{indent}result = writer.{write_method}({param_access}{field.name});")
             lines.append(f"{indent}if (DAS::IsFailed(result))")
             lines.append(f"{indent}{{")
             lines.append(f"{indent}    return result;")
@@ -884,8 +999,12 @@ class IpcProxyGenerator:
 
         return lines
 
-    def _generate_struct_deserialize(self, struct_name: str, param_name: str, indent: str, has_return: bool = True) -> List[str]:
-        """生成 struct 的内联反序列化代码（展开每个字段）"""
+    def _generate_struct_deserialize(self, struct_name: str, param_access: str, indent: str, has_return: bool = True) -> List[str]:
+        """生成 struct 的内联反序列化代码（展开每个字段）
+
+        Args:
+            param_access: 参数访问表达式（如 "ret_value." 或 "p_out_params->"）
+        """
         lines = []
         struct_def = self.type_mapper.struct_defs.get(struct_name)
         if struct_def is None:
@@ -899,7 +1018,7 @@ class IpcProxyGenerator:
                 continue
 
             _, _, read_method, _ = type_info
-            lines.append(f"{indent}result = reader.{read_method}(&{param_name}.{field.name});")
+            lines.append(f"{indent}result = reader.{read_method}(&{param_access}{field.name});")
             lines.append(f"{indent}if (DAS::IsFailed(result))")
             lines.append(f"{indent}{{")
             if has_return:
@@ -945,11 +1064,14 @@ class IpcProxyGenerator:
         lines.append("")
         
         # MethodTable 常量
-        lines.append(f"{class_indent}static constexpr MethodMetadata MethodTable[] = {{")
-        for i, method in enumerate(interface.methods):
-            method_hash = fnv1a_hash(f"{interface.name}::{method.name}")
-            lines.append(f"{method_indent}{{ /* method_id */ {i}, /* name */ \"{method.name}\", /* hash */ 0x{method_hash:08X}u }},")
-        lines.append(f"{class_indent}}};")
+        if interface.methods:
+            lines.append(f"{class_indent}static constexpr MethodMetadata MethodTable[] = {{")
+            for i, method in enumerate(interface.methods):
+                method_hash = fnv1a_hash(f"{interface.name}::{method.name}")
+                lines.append(f"{method_indent}{{ /* method_id */ {i}, /* name */ \"{method.name}\", /* hash */ 0x{method_hash:08X}u }},")
+            lines.append(f"{class_indent}}};")
+        else:
+            lines.append(f"{class_indent}static constexpr MethodMetadata MethodTable[] = {{{{}}}};")
         lines.append("")
         
         # 构造函数 - IPC 模式
@@ -976,7 +1098,7 @@ class IpcProxyGenerator:
         
         # 方法声明和实现
         for i, method in enumerate(interface.methods):
-            method_sig = self._generate_method_signature(interface, method)
+            method_sig = self._generate_method_signature(interface, method, interface.namespace)
             lines.append(f"{class_indent}{method_sig}")
             lines.append(f"{class_indent}{{")
             
@@ -1037,12 +1159,16 @@ class IpcProxyGenerator:
             生成的文件路径列表
         """
         generated_files = []
-        
+
         proxy_dir = os.path.join(output_dir, "proxy")
         os.makedirs(proxy_dir, exist_ok=True)
-        
+
         if cache_dir:
             os.makedirs(cache_dir, exist_ok=True)
+
+        # 尝试从 ABI 目录加载外部接口的命名空间映射
+        abi_dir = os.path.join(os.path.dirname(output_dir), "abi")
+        self.type_mapper.load_namespaces_from_abi_dir(abi_dir)
         
         for interface in self.document.interfaces:
             interface_short_name = self._get_interface_short_name(interface.name)
