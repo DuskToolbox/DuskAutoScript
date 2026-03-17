@@ -247,11 +247,13 @@ class IpcProxyGenerator:
     def _file_header(self, guard_name: str, interface_name: str) -> str:
         """生成文件头"""
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-        
+
         idl_file_comment = ""
+        abi_header_name = ""
         if self.idl_file_name:
             idl_file_comment = f"// Source IDL file: {self.idl_file_name}\n"
-        
+            abi_header_name = os.path.splitext(self.idl_file_name)[0] + ".h"
+
         return f"""#if !defined({guard_name})
 #define {guard_name}
 
@@ -273,6 +275,8 @@ class IpcProxyGenerator:
 #include <cstdint>
 #include <string>
 #include <vector>
+
+#include "{abi_header_name}"
 
 """
     
@@ -503,11 +507,11 @@ class IpcProxyGenerator:
         lines.append(f"{method_indent}uint32_t count = --ref_count_;")
         lines.append(f"{method_indent}if (count == 0)")
         lines.append(f"{method_indent}{{")
-        lines.append(f"{inner_indent}DAS_LOG_TRACE(\"Proxy {class_name} ref_count reached 0, cleaning up\");")
-        lines.append(f"{inner_indent}ProxyFactory::GetInstance().RemoveFromCache(object_id_);")
+        lines.append(f"{inner_indent}DAS_CORE_LOG_TRACE(\"Proxy {class_name} ref_count reached 0, cleaning up\");")
+        lines.append(f"{inner_indent}ProxyFactory::GetInstance().RemoveFromCache(GetObjectId());")
         lines.append(f"{inner_indent}if (GetObjectManager())")
         lines.append(f"{inner_indent}{{")
-        lines.append(f"{inner_indent}    GetObjectManager()->Release(object_id_);")
+        lines.append(f"{inner_indent}    GetObjectManager()->Release(GetObjectId());")
         lines.append(f"{inner_indent}}}")
         lines.append(f"{inner_indent}delete this;")
         lines.append(f"{method_indent}}}")
@@ -558,10 +562,10 @@ class IpcProxyGenerator:
 
         # ======== 本地对象短路检查 ========
         lines.append(f"{indent}// Check if target is local object")
-        lines.append(f"{indent}auto& obj_mgr = DistributedObjectManager::GetInstance();")
-        lines.append(f"{indent}if (obj_mgr.IsLocalObject(object_id_)) {{")
+        lines.append(f"{indent}auto& obj_mgr = GetObjectManager();")
+        lines.append(f"{indent}if (obj_mgr.IsLocalObject(GetObjectId())) {{")
         lines.append(f"{indent}    void* obj_ptr = nullptr;")
-        lines.append(f"{indent}    obj_mgr.LookupObject(object_id_, &obj_ptr);")
+        lines.append(f"{indent}    obj_mgr.LookupObject(GetObjectId(), &obj_ptr);")
         lines.append(f"{indent}    auto* local_impl = static_cast<{interface.name}*>(obj_ptr);")
 
         # 本地调用
@@ -605,11 +609,11 @@ class IpcProxyGenerator:
 
             # V3: 写入 ObjectId (8 bytes)
             lines.append(f"{indent}// V3 Body Header: target_object ObjectId")
-            lines.append(f"{indent}result = writer.WriteUInt16(object_id_.session_id);")
+            lines.append(f"{indent}result = writer.WriteUInt16(GetObjectId().session_id);")
             lines.append(f"{indent}if (DAS::IsFailed(result)) {{ return result; }}")
-            lines.append(f"{indent}result = writer.WriteUInt16(object_id_.generation);")
+            lines.append(f"{indent}result = writer.WriteUInt16(GetObjectId().generation);")
             lines.append(f"{indent}if (DAS::IsFailed(result)) {{ return result; }}")
-            lines.append(f"{indent}result = writer.WriteUInt32(object_id_.local_id);")
+            lines.append(f"{indent}result = writer.WriteUInt32(GetObjectId().local_id);")
             lines.append(f"{indent}if (DAS::IsFailed(result)) {{ return result; }}")
 
             # 序列化参数
@@ -936,14 +940,17 @@ class IpcProxyGenerator:
             if interface.namespace:
                 content += self._generate_namespace_open(interface.namespace)
                 ns_depth = len(interface.namespace.split("::"))
-                
+
                 ns_indent = "    " * ns_depth
                 ns_indent_inner = "    " * (ns_depth + 1)
                 content += f"{ns_indent}namespace IPC\n"
                 content += f"{ns_indent}{{\n"
                 content += f"{ns_indent_inner}namespace Proxy\n"
                 content += f"{ns_indent_inner}{{\n"
+                content += f"{ns_indent_inner}using namespace Das::Core::IPC;\n"
                 ns_depth += 2
+            else:
+                content += "using namespace Das::Core::IPC;\n"
             
             content += self._generate_proxy_class(interface, ns_depth)
             
