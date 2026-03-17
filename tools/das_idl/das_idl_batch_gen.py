@@ -696,32 +696,6 @@ JSON 配置格式:
                 except Exception as e:
                     print(f"\n[IPC Registry 错误] {e}", file=sys.stderr)
         
-        # ====== 执行 IPC Messages 聚合 ======
-        if ipc_output_dir and batch_result == 0:
-            messages_aggregate_script = Path(__file__).parent / "aggregate_messages.py"
-            if messages_aggregate_script.exists():
-                cmd = [
-                    sys.executable,
-                    str(messages_aggregate_script),
-                    "--ipc-output-dir", str(ipc_output_dir),
-                    "--output-file", "AllMessages.h"
-                ]
-                
-                try:
-                    result = subprocess.run(
-                        cmd,
-                        capture_output=True,
-                        text=True,
-                        timeout=30
-                    )
-                    
-                    if result.returncode == 0:
-                        print(f"\n[Messages聚合] {result.stdout.strip()}")
-                    else:
-                        print(f"\n[Messages聚合失败] {result.stderr}", file=sys.stderr)
-                except Exception as e:
-                    print(f"\n[Messages聚合错误] {e}", file=sys.stderr)
-
         # ====== 执行 IPC Proxy/Stub 聚合 ======
         if ipc_output_dir and batch_result == 0:
             ipc_aggregate_script = Path(__file__).parent / "aggregate_ipc.py"

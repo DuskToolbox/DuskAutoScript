@@ -161,7 +161,7 @@ IDL 语法示例:
     ipc_group.add_argument(
         '--ipc',
         action='store_true',
-        help='启用 IPC 代码生成（等同于 --ipc-proxy --ipc-stub --ipc-message）'
+        help='启用 IPC 代码生成（等同于 --ipc-proxy --ipc-stub）'
     )
 
     ipc_group.add_argument(
@@ -174,12 +174,6 @@ IDL 语法示例:
         '--ipc-stub',
         action='store_true',
         help='生成 IPC Stub 代码（服务端存根）'
-    )
-
-    ipc_group.add_argument(
-        '--ipc-message',
-        action='store_true',
-        help='生成 IPC 消息结构定义'
     )
 
     ipc_group.add_argument(
@@ -229,7 +223,6 @@ IDL 语法示例:
     if args.ipc:
         args.ipc_proxy = True
         args.ipc_stub = True
-        args.ipc_message = True
 
     # 确定各类型文件的输出目录
     default_output = args.output_dir or args.raw_output_dir
@@ -410,15 +403,13 @@ IDL 语法示例:
                 return 6
 
         # === 生成 IPC 代码（如果启用）===
-        if args.ipc_proxy or args.ipc_stub or args.ipc_message:
+        if args.ipc_proxy or args.ipc_stub:
             if args.verbose:
                 ipc_features = []
                 if args.ipc_proxy:
                     ipc_features.append("Proxy")
                 if args.ipc_stub:
                     ipc_features.append("Stub")
-                if args.ipc_message:
-                    ipc_features.append("Message")
                 print(f"IPC 生成已启用 ({', '.join(ipc_features)})")
                 print(f"  IPC 输出目录: {ipc_output_dir}")
                 print(f"  IPC 缓存目录: {ipc_cache_dir}")
@@ -436,8 +427,7 @@ IDL 语法示例:
                     base_name=base_name,
                     idl_file_path=str(input_path),
                     generate_proxy=args.ipc_proxy,
-                    generate_stub=args.ipc_stub,
-                    generate_message=args.ipc_message
+                    generate_stub=args.ipc_stub
                 )
                 all_generated_files.extend(ipc_files)
 

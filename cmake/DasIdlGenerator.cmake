@@ -82,7 +82,6 @@ endfunction()
 #   AGGREGATION_OUTPUT_DIR - 汇总文件输出目录（可选，默认使用SWIG_OUTPUT_DIR）
 #   IPC_PROXY - 是否生成IPC Proxy代码（可选，默认false）
 #   IPC_STUB - 是否生成IPC Stub代码（可选，默认false）
-#   IPC_MESSAGE - 是否生成IPC消息结构（可选，默认false）
 #   IPC_OUTPUT_DIR - IPC生成文件输出目录（可选，默认${CMAKE_BINARY_DIR}/ipc）
 #   GENERATED_FILES - 输出变量，包含生成的文件列表（兼容旧参数）
 #   GENERATED_ABI_FILES - 输出变量，包含ABI文件列表
@@ -92,7 +91,7 @@ endfunction()
 function(das_idl_generate)
     cmake_parse_arguments(
         DAS_IDL                         # 前缀
-        "SWIG;CPP_WRAPPER;TYPEMAPS;IPC_PROXY;IPC_STUB;IPC_MESSAGE"     # 选项 (无值参数)
+        "SWIG;CPP_WRAPPER;TYPEMAPS;IPC_PROXY;IPC_STUB"     # 选项 (无值参数)
         "IDL_FILE;OUTPUT_DIR;NAMESPACE;RAW_OUTPUT_DIR;WRAPPER_OUTPUT_DIR;SWIG_OUTPUT_DIR;AGGREGATION_OUTPUT_DIR;IPC_OUTPUT_DIR" # 单值参数
         "GENERATED_FILES;GENERATED_ABI_FILES;GENERATED_WRAPPER_FILES;GENERATED_SWIG_FILES;GENERATED_IPC_FILES" # 多值参数
         ${ARGN}
@@ -129,7 +128,7 @@ function(das_idl_generate)
     endif()
 
     # IPC输出目录默认值
-    if(NOT DAS_IDL_IPC_OUTPUT_DIR AND (DAS_IDL_IPC_PROXY OR DAS_IDL_IPC_STUB OR DAS_IDL_IPC_MESSAGE))
+    if(NOT DAS_IDL_IPC_OUTPUT_DIR AND (DAS_IDL_IPC_PROXY OR DAS_IDL_IPC_STUB))
         set(DAS_IDL_IPC_OUTPUT_DIR "${CMAKE_BINARY_DIR}/ipc")
     endif()
 
@@ -169,11 +168,6 @@ function(das_idl_generate)
     # 定义生成的文件列表 - IPC文件
     set(_GENERATED_IPC_FILES "")
     if(DAS_IDL_IPC_OUTPUT_DIR)
-        if(DAS_IDL_IPC_MESSAGE)
-            list(APPEND _GENERATED_IPC_FILES
-                "${DAS_IDL_IPC_OUTPUT_DIR}/messages/${IDL_NAME}Messages.h"
-            )
-        endif()
         if(DAS_IDL_IPC_PROXY)
             list(APPEND _GENERATED_IPC_FILES
                 "${DAS_IDL_IPC_OUTPUT_DIR}/proxy/${IDL_NAME}Proxy.h"
@@ -240,9 +234,6 @@ if(DAS_IDL_SWIG AND DAS_IDL_SWIG_OUTPUT_DIR)
     if(DAS_IDL_IPC_OUTPUT_DIR)
         list(APPEND _IDL_CMD_ARGS "--ipc-output-dir" "${DAS_IDL_IPC_OUTPUT_DIR}")
     endif()
-    if(DAS_IDL_IPC_MESSAGE)
-        list(APPEND _IDL_CMD_ARGS "--ipc-message")
-    endif()
     if(DAS_IDL_IPC_PROXY)
         list(APPEND _IDL_CMD_ARGS "--ipc-proxy")
     endif()
@@ -263,7 +254,6 @@ if(DAS_IDL_SWIG AND DAS_IDL_SWIG_OUTPUT_DIR)
                 "${DAS_IDL_TOOLS_DIR}/swig_java_generator.py"
                 "${DAS_IDL_TOOLS_DIR}/swig_lang_generator_base.py"
                 "${DAS_IDL_TOOLS_DIR}/das_ipc_generator.py"
-                "${DAS_IDL_TOOLS_DIR}/das_ipc_message_generator.py"
                 "${DAS_IDL_TOOLS_DIR}/das_ipc_proxy_generator.py"
                 "${DAS_IDL_TOOLS_DIR}/das_ipc_stub_generator.py"
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"

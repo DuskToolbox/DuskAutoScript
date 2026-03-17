@@ -41,7 +41,6 @@
 #       IDL_FILES "ISimple.idl"
 #       GENERATE_IPC_PROXY OFF
 #       GENERATE_IPC_STUB OFF
-#       GENERATE_IPC_MESSAGE OFF
 #   )
 #
 # 生成的目标:
@@ -97,7 +96,6 @@ endif()
 #                         - 用户文件中应通过 %include 包含自动生成的 swig_all.i
 #   GENERATE_IPC_PROXY    - 是否生成 IPC Proxy 代码，默认 ON
 #   GENERATE_IPC_STUB     - 是否生成 IPC Stub 代码，默认 ON
-#   GENERATE_IPC_MESSAGE  - 是否生成 IPC Message 代码，默认 ON
 #   NAMESPACE             - 可选的命名空间
 #   SWIG_OPTIONS_Python   - Python 的 SWIG 编译选项（可选）
 #   SWIG_OPTIONS_Java     - Java 的 SWIG 编译选项（可选）
@@ -121,7 +119,7 @@ function(das_add_idl_export)
     cmake_parse_arguments(
         DAS_IDL_EXPORT                          # 前缀
         ""                                      # 选项 (无值参数)
-        "NAME;IDL_DIR;OUTPUT_DIR;NAMESPACE;GENERATE_IPC_PROXY;GENERATE_IPC_STUB;GENERATE_IPC_MESSAGE;IPC_CACHE_DIR"  # 单值参数
+        "NAME;IDL_DIR;OUTPUT_DIR;NAMESPACE;GENERATE_IPC_PROXY;GENERATE_IPC_STUB;IPC_CACHE_DIR"  # 单值参数
         "IDL_FILES;LANGUAGES;USER_SWIG_FILES;GENERATED_FILES;GENERATED_ABI_FILES;GENERATED_WRAPPER_FILES;GENERATED_SWIG_FILES;GENERATED_IPC_FILES;SWIG_OPTIONS_Python;SWIG_OPTIONS_Java;SWIG_OPTIONS_CSharp;SWIG_INCLUDE_DIRS;DEPENDS_ON"  # 多值参数
         ${ARGN}
     )
@@ -151,9 +149,6 @@ function(das_add_idl_export)
     if(NOT DEFINED DAS_IDL_EXPORT_GENERATE_IPC_STUB)
         set(DAS_IDL_EXPORT_GENERATE_IPC_STUB ON)
     endif()
-    if(NOT DEFINED DAS_IDL_EXPORT_GENERATE_IPC_MESSAGE)
-        set(DAS_IDL_EXPORT_GENERATE_IPC_MESSAGE ON)
-    endif()
 
     # ====== 设置输出目录结构 ======
     # 兼容现有体系: ${OUTPUT_DIR}/_autogen/idl/{abi,wrapper,swig,ipc,iids}
@@ -182,7 +177,6 @@ function(das_add_idl_export)
     endif()
     message(STATUS "[das_add_idl_export]   IPC_PROXY: ${DAS_IDL_EXPORT_GENERATE_IPC_PROXY}")
     message(STATUS "[das_add_idl_export]   IPC_STUB: ${DAS_IDL_EXPORT_GENERATE_IPC_STUB}")
-    message(STATUS "[das_add_idl_export]   IPC_MESSAGE: ${DAS_IDL_EXPORT_GENERATE_IPC_MESSAGE}")
 
     # ====== 判断是否需要 SWIG ======
     set(_NEED_SWIG FALSE)
@@ -247,7 +241,7 @@ function(das_add_idl_export)
         string(APPEND _BATCH_JSON_CONFIG "        \"--cpp-implements\": true,\n")
 
         # 添加 IPC 选项
-        if(DAS_IDL_EXPORT_GENERATE_IPC_PROXY OR DAS_IDL_EXPORT_GENERATE_IPC_STUB OR DAS_IDL_EXPORT_GENERATE_IPC_MESSAGE)
+        if(DAS_IDL_EXPORT_GENERATE_IPC_PROXY OR DAS_IDL_EXPORT_GENERATE_IPC_STUB)
             string(APPEND _BATCH_JSON_CONFIG "        \"--ipc-output-dir\": \"${_IPC_OUTPUT_DIR}\",\n")
             string(APPEND _BATCH_JSON_CONFIG "        \"--ipc-cache-dir\": \"${_IPC_CACHE_DIR}\",\n")
 
@@ -257,10 +251,6 @@ function(das_add_idl_export)
 
             if(DAS_IDL_EXPORT_GENERATE_IPC_STUB)
                 string(APPEND _BATCH_JSON_CONFIG "        \"--ipc-stub\": true,\n")
-            endif()
-
-            if(DAS_IDL_EXPORT_GENERATE_IPC_MESSAGE)
-                string(APPEND _BATCH_JSON_CONFIG "        \"--ipc-message\": true,\n")
             endif()
         endif()
 
@@ -430,11 +420,6 @@ function(das_add_idl_export)
         endif()
 
         # IPC 文件 (如果需要)
-        if(DAS_IDL_EXPORT_GENERATE_IPC_MESSAGE)
-            list(APPEND _ALL_IPC_FILES
-                "${_IPC_OUTPUT_DIR}/messages/${_IDL_NAME}Messages.h"
-            )
-        endif()
         if(DAS_IDL_EXPORT_GENERATE_IPC_PROXY)
             list(APPEND _ALL_IPC_FILES
                 "${_IPC_OUTPUT_DIR}/proxy/${_IDL_NAME}Proxy.h"
