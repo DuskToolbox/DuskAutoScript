@@ -72,6 +72,7 @@ typedef struct _das_GUID
 #define DAS_E_INVALID_ARGUMENT -1073750038
 #define DAS_E_CAPTURE_FAILED -1073750039
 #define DAS_E_NOT_FOUND -1073750040
+#define DAS_E_IPC_UNKNOWN_METHOD -1073750041
 
 // ============================================================================
 // 接口前置声明（用于打破循环依赖）
