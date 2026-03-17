@@ -51,10 +51,10 @@ StructDef = _das_idl_parser.StructDef
 
 class ProxyTypeMapper:
     """Proxy 类型映射器
-    
+
     将 IDL 类型映射到序列化方法：
     1. 基本类型 → SerializerWriter/SerializerReader 方法
-    2. Struct 类型 → Serialize_/Deserialize_ 函数调用
+    2. Struct 类型 → 内联展开每个字段的 Write*/Read* 调用
     """
     
     # IDL 基本类型 → (C++类型, Write方法名, Read方法名)
@@ -103,12 +103,15 @@ class ProxyTypeMapper:
         self.document = document
         # 收集所有 struct 类型
         self.struct_types = set()
+        self.struct_defs = {}  # name -> StructDef，用于内联序列化展开
         for struct in document.structs:
             self.struct_types.add(struct.name)
+            self.struct_defs[struct.name] = struct
             # 也支持带命名空间的 struct
             if struct.namespace:
                 full_name = f"{struct.namespace}::{struct.name}"
                 self.struct_types.add(full_name)
+                self.struct_defs[full_name] = struct
     
     def get_type_info(self, idl_type: str):
         """获取类型信息
@@ -131,7 +134,7 @@ class ProxyTypeMapper:
         
         # 检查 struct 类型
         if idl_type in self.struct_types:
-            # struct 类型使用 Serialize_/Deserialize_ 函数
+            # struct 类型使用内联字段逐一序列化
             return (idl_type, None, None, True)
         
         return None
@@ -777,7 +780,9 @@ class IpcProxyGenerator:
         cpp_type, write_method, _, is_struct = type_info
 
         if is_struct:
-            lines.append(f"{indent}result = Serialize_{param.type_info.base_type}(writer, {param.name});")
+            struct_serialize = self._generate_struct_serialize(param.type_info.base_type, param.name, indent)
+            for line in struct_serialize:
+                lines.append(line)
         else:
             # 处理指针和引用
             if param.type_info.is_pointer or param.type_info.is_reference:
@@ -808,7 +813,9 @@ class IpcProxyGenerator:
         cpp_type, _, read_method, is_struct = type_info
         
         if is_struct:
-            lines.append(f"{indent}result = Deserialize_{param.type_info.base_type}(reader, {param.name});")
+            struct_deserialize = self._generate_struct_deserialize(param.type_info.base_type, param.name, indent, has_return)
+            for line in struct_deserialize:
+                lines.append(line)
         else:
             if param.type_info.is_pointer and param.type_info.pointer_level >= 1:
                 lines.append(f"{indent}result = reader.{read_method}({param.name});")
@@ -839,11 +846,9 @@ class IpcProxyGenerator:
         
         if is_struct:
             lines.append(f"{indent}{return_type.base_type} ret_value;")
-            lines.append(f"{indent}result = Deserialize_{return_type.base_type}(reader, &ret_value);")
-            lines.append(f"{indent}if (DAS::IsFailed(result))")
-            lines.append(f"{indent}{{")
-            lines.append(f"{indent}    return result;")
-            lines.append(f"{indent}}}")
+            struct_deserialize = self._generate_struct_deserialize(return_type.base_type, "ret_value", indent, True)
+            for line in struct_deserialize:
+                lines.append(line)
             lines.append(f"{indent}return ret_value;")
         else:
             lines.append(f"{indent}{cpp_type} ret_value;")
@@ -855,7 +860,56 @@ class IpcProxyGenerator:
             lines.append(f"{indent}return ret_value;")
         
         return lines
-    
+
+    def _generate_struct_serialize(self, struct_name: str, param_name: str, indent: str) -> List[str]:
+        """生成 struct 的内联序列化代码（展开每个字段）"""
+        lines = []
+        struct_def = self.type_mapper.struct_defs.get(struct_name)
+        if struct_def is None:
+            lines.append(f"{indent}// TODO: Unknown struct {struct_name}")
+            return lines
+
+        for field in struct_def.fields:
+            type_info = self.type_mapper.get_type_info(field.type_name)
+            if type_info is None or type_info[3]:
+                lines.append(f"{indent}// TODO: Unsupported field type {field.type_name}")
+                continue
+
+            _, write_method, _, _ = type_info
+            lines.append(f"{indent}result = writer.{write_method}({param_name}.{field.name});")
+            lines.append(f"{indent}if (DAS::IsFailed(result))")
+            lines.append(f"{indent}{{")
+            lines.append(f"{indent}    return result;")
+            lines.append(f"{indent}}}")
+
+        return lines
+
+    def _generate_struct_deserialize(self, struct_name: str, param_name: str, indent: str, has_return: bool = True) -> List[str]:
+        """生成 struct 的内联反序列化代码（展开每个字段）"""
+        lines = []
+        struct_def = self.type_mapper.struct_defs.get(struct_name)
+        if struct_def is None:
+            lines.append(f"{indent}// TODO: Unknown struct {struct_name}")
+            return lines
+
+        for field in struct_def.fields:
+            type_info = self.type_mapper.get_type_info(field.type_name)
+            if type_info is None or type_info[3]:
+                lines.append(f"{indent}// TODO: Unsupported field type {field.type_name}")
+                continue
+
+            _, _, read_method, _ = type_info
+            lines.append(f"{indent}result = reader.{read_method}(&{param_name}.{field.name});")
+            lines.append(f"{indent}if (DAS::IsFailed(result))")
+            lines.append(f"{indent}{{")
+            if has_return:
+                lines.append(f"{indent}    return result;")
+            else:
+                lines.append(f"{indent}    return;")
+            lines.append(f"{indent}}}")
+
+        return lines
+
     def _generate_proxy_class_old(self, interface: InterfaceDef, namespace_depth: int = 0) -> str:
         """为接口生成混合模式 Proxy 类 (B7)
         
