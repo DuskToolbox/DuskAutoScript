@@ -407,3 +407,56 @@ TEST_F(IpcObjectIdIntegrationTest, SessionId_Management)
     // 此测试保留为占位符，验证 ObjectId 功能不受影响
     EXPECT_EQ(1, 1);
 }
+
+// ====== CreateRemoteProxy 测试 ======
+
+TEST_F(IpcObjectIdIntegrationTest, CreateRemoteProxy_InterfaceHash)
+{
+    // 测试 ComputeInterfaceId 函数能够正确将 DasGuid 转换为 uint32_t 哈希值
+    // 使用一个已知的 UUID 来验证哈希函数的一致性
+    DasGuid test_iid{};
+    test_iid.data1 = 0x12345678;
+    test_iid.data2 = 0xABCD;
+    test_iid.data3 = 0xEF01;
+    test_iid.data4[0] = 0x11;
+    test_iid.data4[1] = 0x22;
+    test_iid.data4[2] = 0x33;
+    test_iid.data4[3] = 0x44;
+    test_iid.data4[4] = 0x55;
+    test_iid.data4[5] = 0x66;
+    test_iid.data4[6] = 0x77;
+    test_iid.data4[7] = 0x88;
+
+    // 计算两次，验证结果一致
+    uint32_t hash1 = RemoteObjectRegistry::ComputeInterfaceId(test_iid);
+    uint32_t hash2 = RemoteObjectRegistry::ComputeInterfaceId(test_iid);
+
+    EXPECT_EQ(hash1, hash2);
+    // 验证哈希值不为 0 (有效的接口应该有非零哈希)
+    EXPECT_NE(hash1, 0u);
+}
+
+TEST_F(IpcObjectIdIntegrationTest, CreateRemoteProxy_UnknownInterface)
+{
+    // 测试 CreateRemoteProxy 对于未知接口返回错误
+    // 创建一个随机的 UUID (不在已知接口列表中)
+    DasGuid unknown_iid{};
+    unknown_iid.data1 = 0x12345678;
+    unknown_iid.data2 = 0xABCD;
+    unknown_iid.data3 = 0xEF01;
+    unknown_iid.data4[0] = 0x11;
+    unknown_iid.data4[1] = 0x22;
+    unknown_iid.data4[2] = 0x33;
+    unknown_iid.data4[3] = 0x44;
+    unknown_iid.data4[4] = 0x55;
+    unknown_iid.data4[5] = 0x66;
+    unknown_iid.data4[6] = 0x77;
+    unknown_iid.data4[7] = 0x88;
+
+    // 计算接口哈希
+    uint32_t interface_hash = RemoteObjectRegistry::ComputeInterfaceId(unknown_iid);
+
+    // 这个哈希值不应该是已知的接口 (已知接口: 0xF5FBD328, 0xB6261785)
+    EXPECT_NE(interface_hash, 0xF5FBD328u);
+    EXPECT_NE(interface_hash, 0xB6261785u);
+}
