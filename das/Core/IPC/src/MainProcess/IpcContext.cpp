@@ -6,7 +6,6 @@
 #include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
-#include <das/Core/IPC/IPCProxyBase.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/IPC/MainProcess/IpcContext.h>
@@ -500,14 +499,16 @@ namespace Core
                     RemoteObjectRegistry::ComputeInterfaceId(iid);
 
                 // Create proxy directly based on interface hash
-                // TODO: Once proxy headers are properly included, create proxies here directly
-                // For now, only IDasVariantVector is supported (0xF5FBD328)
-                IPCProxyBase* proxy_base = nullptr;
+                // TODO: Once proxy headers are properly included, create
+                // proxies here directly For now, only IDasVariantVector is
+                // supported (0xF5FBD328)
+                IDasBase* proxy = nullptr;
 
-                if (interface_hash == 0xF5FBD328u) // IDasVariantVector::InterfaceId
+                if (interface_hash
+                    == 0xF5FBD328u) // IDasVariantVector::InterfaceId
                 {
                     // Use the factory for IDasVariantVector
-                    proxy_base = DasIpcProxy::CreateProxyByInterfaceId(
+                    proxy = DasIpcProxy::CreateProxyByInterfaceId(
                         interface_hash,
                         object_id,
                         *runloop_,
@@ -526,7 +527,7 @@ namespace Core
                     return DAS_E_NO_INTERFACE;
                 }
 
-                if (!proxy_base)
+                if (!proxy)
                 {
                     DAS_CORE_LOG_ERROR(
                         "CreateRemoteProxy: failed to create proxy "
@@ -538,8 +539,6 @@ namespace Core
                     return DAS_E_NO_INTERFACE;
                 }
 
-                // Cast to IDasBase
-                IDasBase* proxy = reinterpret_cast<IDasBase*>(proxy_base);
                 *pp_out = proxy;
                 return DAS_S_OK;
             }

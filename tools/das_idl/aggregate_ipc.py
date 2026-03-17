@@ -198,6 +198,7 @@ def _generate_proxy_factory(ipc_output_dir: Path, interfaces: List[Dict[str, Any
 
     lines.extend([
         "",
+        "DAS_CORE_IPC_NS_BEGIN",
         "namespace DasIpcProxy {",
         "",
     ])
@@ -247,6 +248,7 @@ def _generate_proxy_factory(ipc_output_dir: Path, interfaces: List[Dict[str, Any
         "}",
         "",
         "} // namespace DasIpcProxy",
+        "DAS_CORE_IPC_NS_END",
         "",
         "#endif // DAS_IPC_PROXY_FACTORY_H",
         "",
