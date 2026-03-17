@@ -381,18 +381,48 @@ class IpcProxyGenerator:
 
         遍历所有方法，检查返回类型和参数类型是否为接口类型，
         如果是则收集对应的头文件路径（约定为 {InterfaceName}.h）。
+
+        注意：base_type 是纯类型名（不含 *），所以不能直接使用
+        is_interface_type（它期望输入以 * 或 Ptr 结尾）。
+        这里通过 type_info.is_pointer + base_type 命名模式来判断。
+
+        核心类型（如 IDasReadOnlyString、IDasStopToken）不需要额外 include，
+        因为它们已经通过 ABI 头文件中的 include 链可见。
         """
+        # 核心类型：这些类型在 DasString.hpp 等核心头文件中定义，
+        # 通过 ABI 头文件的 include 链已经可见，不需要额外 include。
+        CORE_TYPES = {
+            "IDasReadOnlyString",
+            "IDasReadOnlyGuidVector",
+            "IDasStopToken",
+            "IDasBinaryBuffer",
+            "IDasString",
+        }
+
         includes = set()
 
+        def _is_iface_ptr(type_info: TypeInfo) -> bool:
+            """检查 TypeInfo 是否为接口指针类型"""
+            if not type_info.is_pointer:
+                return False
+            name = type_info.base_type.split("::")[-1]
+            return name.startswith("I") and "Das" in name
+
+        def _iface_name_from_type(type_info: TypeInfo) -> str:
+            """从 TypeInfo 提取接口名"""
+            return type_info.base_type.split("::")[-1]
+
         for method in interface.methods:
-            if self.type_mapper.is_interface_type(method.return_type.base_type):
-                iface_name = self.type_mapper.get_interface_name(method.return_type.base_type)
-                includes.add(f"{iface_name}.h")
+            if _is_iface_ptr(method.return_type):
+                iface_name = _iface_name_from_type(method.return_type)
+                if iface_name not in CORE_TYPES:
+                    includes.add(f"{iface_name}.h")
 
             for param in method.parameters:
-                if self.type_mapper.is_interface_type(param.type_info.base_type):
-                    iface_name = self.type_mapper.get_interface_name(param.type_info.base_type)
-                    includes.add(f"{iface_name}.h")
+                if _is_iface_ptr(param.type_info):
+                    iface_name = _iface_name_from_type(param.type_info)
+                    if iface_name not in CORE_TYPES:
+                        includes.add(f"{iface_name}.h")
 
         # 排除主接口自身的头文件（已通过 abi_header 包含）
         short_name = self._get_interface_short_name(interface.name)
@@ -598,10 +628,10 @@ class IpcProxyGenerator:
 
         # ======== 本地对象短路检查 ========
         lines.append(f"{indent}// Check if target is local object")
-        lines.append(f"{indent}auto& obj_mgr = GetObjectManager();")
-        lines.append(f"{indent}if (obj_mgr.IsLocalObject(GetObjectId())) {{")
+        lines.append(f"{indent}auto* obj_mgr = GetObjectManager();")
+        lines.append(f"{indent}if (obj_mgr->IsLocalObject(GetObjectId())) {{")
         lines.append(f"{indent}    void* obj_ptr = nullptr;")
-        lines.append(f"{indent}    obj_mgr.LookupObject(GetObjectId(), &obj_ptr);")
+        lines.append(f"{indent}    obj_mgr->LookupObject(GetObjectId(), &obj_ptr);")
         lines.append(f"{indent}    auto* local_impl = static_cast<{interface.name}*>(obj_ptr);")
 
         # 本地调用
