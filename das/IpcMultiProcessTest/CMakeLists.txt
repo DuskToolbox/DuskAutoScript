@@ -13,7 +13,6 @@ if (${DAS_BUILD_TEST})
         Das3rdParty
         GTest::gtest
         DasCoreObjects
-        Boost::program_options
     )
 
     # Windows 平台定义 WIN32_LEAN_AND_MEAN 避免头文件冲突
