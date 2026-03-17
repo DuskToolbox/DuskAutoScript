@@ -726,9 +726,6 @@ class IpcStubGenerator:
                     json.dump(json_data, f, indent=2)
                 print(f"Generated: {json_filepath}")
 
-        # 生成 StubFactory
-        self.generate_stub_factory(output_dir)
-
         return generated_files
 
     def _generate_stub_factory(self) -> str:
