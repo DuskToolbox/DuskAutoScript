@@ -110,8 +110,8 @@ DasResult IStubBase::HandleMessage(
         impl_ptr,
         params,
         params_size,
-        response_body,
-        object_manager);
+        object_manager,
+        response_body);
 
     // 4. 构建响应并发送
     auto response_header =

@@ -550,8 +550,8 @@ class IpcStubGenerator:
         lines.append(f"{indent}    void* impl,")
         lines.append(f"{indent}    const uint8_t* params,")
         lines.append(f"{indent}    size_t params_size,")
-        lines.append(f"{indent}    std::vector<uint8_t>& out_response,")
-        lines.append(f"{indent}    DistributedObjectManager& object_manager) override")
+        lines.append(f"{indent}    DistributedObjectManager& object_manager,")
+        lines.append(f"{indent}    std::vector<uint8_t>& out_response) override")
         lines.append(f"{indent}{{")
         lines.append(f"{inner_indent}auto* target = static_cast<{interface.name}*>(impl);")
         lines.append(f"{inner_indent}if (!target) {{ return DAS_E_INVALID_POINTER; }}")
@@ -560,7 +560,7 @@ class IpcStubGenerator:
 
         for method in interface.methods:
             lines.append(f"{inner_indent}case METHOD_{method.name.upper()}:")
-            lines.append(f"{inner_indent}    return Handle{method.name}(target, params, params_size, out_response, object_manager);")
+            lines.append(f"{inner_indent}    return Handle{method.name}(target, params, params_size, object_manager, out_response);")
 
         lines.append(f"{inner_indent}default:")
         lines.append(f"{inner_indent}    return DAS_E_IPC_UNKNOWN_METHOD;")
@@ -572,7 +572,7 @@ class IpcStubGenerator:
     def _generate_handle_method_declaration(self, interface: InterfaceDef, method: MethodDef, namespace_depth: int = 0) -> str:
         """生成 Handle 方法声明（实例方法）"""
         indent = "    " * (namespace_depth + 1)
-        return f"{indent}DasResult Handle{method.name}({interface.name}* impl, const uint8_t* params, size_t params_size, std::vector<uint8_t>& out_response, DistributedObjectManager& object_manager);"
+        return f"{indent}DasResult Handle{method.name}({interface.name}* impl, const uint8_t* params, size_t params_size, DistributedObjectManager& object_manager, std::vector<uint8_t>& out_response);"
     
     def _generate_handle_method_definition(self, interface: InterfaceDef, method: MethodDef, method_index: int) -> str:
         """生成单个方法的 Handle 处理函数定义（实例方法，impl 通过参数传入）"""
@@ -591,8 +591,13 @@ class IpcStubGenerator:
         inner_indent = "    "
 
         full_class_name = "::".join(full_ns + [class_name])
-        lines.append(f"DasResult {full_class_name}::Handle{method.name}({interface.name}* impl, const uint8_t* params, size_t params_size, std::vector<uint8_t>& out_response, DistributedObjectManager& object_manager)")
+        lines.append(f"DasResult {full_class_name}::Handle{method.name}({interface.name}* impl, const uint8_t* params, size_t params_size, DistributedObjectManager& object_manager, std::vector<uint8_t>& out_response)")
         lines.append(f"{{")
+        lines.append(f"{inner_indent}(void)impl;")
+        lines.append(f"{inner_indent}(void)params;")
+        lines.append(f"{inner_indent}(void)params_size;")
+        lines.append(f"{inner_indent}(void)object_manager;")
+        lines.append(f"{inner_indent}(void)out_response;")
 
         return_type = method.return_type.base_type
         has_return = return_type != 'void'

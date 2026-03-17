@@ -190,7 +190,7 @@ def _generate_proxy_factory(ipc_output_dir: Path, interfaces: List[Dict[str, Any
         "#include <das/Core/IPC/IPCProxyBase.h>",
         "#include <das/Core/IPC/DasProxyBase.h>",
         "#include <das/IDasBase.h>",
-        "#include <das/ObjectId.h>",
+        "#include <das/Core/IPC/ObjectId.h>",
         "#include <das/Core/IPC/IpcRunLoop.h>",
         "#include <das/Core/IPC/DistributedObjectManager.h>",
         "#include <memory>",
@@ -278,9 +278,9 @@ def _generate_stub_factory(ipc_output_dir: Path, interfaces: List[Dict[str, Any]
         f"// Auto-generated at: {timestamp}",
         "// !!! DO NOT EDIT !!!",
         "",
-        "#include <das/Core/IPC/MainProcess/IStubBase.h>",
-        "#include <das/Core/IPC/MainProcess/IpcRunLoop.h>",
-        "#include <das/Core/IPC/HeaderFlags.h>",
+        "#include <das/Core/IPC/IStubBase.h>",
+        "#include <das/Core/IPC/IpcRunLoop.h>",
+        "#include <das/Core/IPC/IpcMessageHeader.h>",
         "",
     ]
 

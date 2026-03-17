@@ -60,9 +60,9 @@ public:
      * @param impl 实现指针（由 HandleMessage 通过 ObjectManager 查找）
      * @param params 参数数据（V3 Body Header 之后的数据）
      * @param params_size 参数数据大小
-     * @param out_response [out] 响应体
      * @param object_manager
      * DistributedObjectManager（用于解析入参中的接口指针）
+     * @param out_response [out] 响应体
      * @return DasResult 处理结果
      */
     virtual DasResult DispatchMethod(
@@ -70,8 +70,8 @@ public:
         void*                     impl,
         const uint8_t*            params,
         size_t                    params_size,
-        std::vector<uint8_t>&     out_response,
-        DistributedObjectManager& object_manager) = 0;
+        DistributedObjectManager& object_manager,
+        std::vector<uint8_t>&     out_response) = 0;
 
 private:
     /// 解析 V3 Body Header
