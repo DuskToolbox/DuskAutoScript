@@ -731,6 +731,8 @@ JSON 配置格式:
                     str(ipc_aggregate_script),
                     "--ipc-output-dir", str(ipc_output_dir),
                 ]
+                if args.ipc_cache_dir:
+                    cmd.extend(["--ipc-cache-dir", str(args.ipc_cache_dir)])
 
                 try:
                     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)

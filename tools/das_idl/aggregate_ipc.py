@@ -6,22 +6,38 @@ IPC Proxy/Stub 聚合脚本
 - IpcAllProxies.h  (include 所有 proxy/*Proxy.h)
 - IpcAllStubs.h    (include 所有 stub/*Stub.h)
 - IpcGenerated.cpp (include 上面两个头文件)
+- IpcProxyFactory.h (包含所有 proxy 的 CreateProxyByInterfaceId switch-case)
+- IpcStubFactory.h (包含所有 stub 的 RegisterHandler 调用)
 
 用法:
-    python aggregate_ipc.py --ipc-output-dir <dir>
+    python aggregate_ipc.py --ipc-output-dir <dir> [--ipc-cache-dir <dir>]
 """
 
 import argparse
+import json
 import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List
+from typing import Dict, List, Any
 
 
-def aggregate_ipc(ipc_output_dir: Path) -> int:
+def _get_interface_short_name(interface_name: str) -> str:
+    """Strip I prefix from interface name: IDasPluginPackage -> DasPluginPackage"""
+    if interface_name.startswith('IDas'):
+        return interface_name[1:]
+    if interface_name.startswith('I') and len(interface_name) > 1:
+        return interface_name[1:]
+    return interface_name
+
+
+def aggregate_ipc(ipc_output_dir: Path, ipc_cache_dir: Path = None) -> int:
     """
     生成 IPC 汇总文件
+
+    Args:
+        ipc_output_dir: IPC 输出目录
+        ipc_cache_dir: IPC 缓存目录（包含 per-interface JSON 文件）
     """
     proxy_dir = ipc_output_dir / "proxy"
     stub_dir = ipc_output_dir / "stub"
@@ -92,9 +108,236 @@ def aggregate_ipc(ipc_output_dir: Path) -> int:
     return 0
 
 
+def aggregate_factory_files(ipc_output_dir: Path, ipc_cache_dir: Path) -> int:
+    """
+    从 per-interface JSON 文件聚合生成 IpcProxyFactory.h 和 IpcStubFactory.h
+
+    Args:
+        ipc_output_dir: IPC 输出目录
+        ipc_cache_dir: 缓存目录（包含 per-interface *.json 文件）
+
+    Returns:
+        0 表示成功
+    """
+    if not ipc_cache_dir.exists():
+        print(f"Warning: IPC cache directory does not exist: {ipc_cache_dir}")
+        return 0
+
+    # 查找所有 interface JSON 文件
+    json_files = sorted(ipc_cache_dir.glob("*.json"))
+    if not json_files:
+        print("No interface JSON files found in cache directory")
+        return 0
+
+    # 读取所有接口元数据
+    interfaces: List[Dict[str, Any]] = []
+    for json_file in json_files:
+        try:
+            with open(json_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                interfaces.append(data)
+        except Exception as e:
+            print(f"Warning: Failed to read {json_file}: {e}")
+
+    if not interfaces:
+        print("No valid interface JSON files found")
+        return 0
+
+    # 按 interface_name 排序以保持一致性
+    interfaces.sort(key=lambda x: x.get('interface_name', ''))
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    # 收集唯一的 namespace 用于生成 using namespace 声明
+    namespaces: Dict[str, List[str]] = {}  # namespace -> [short_names]
+    for iface in interfaces:
+        ns = iface.get('namespace', '')
+        short_name = _get_interface_short_name(iface.get('interface_name', ''))
+        if ns:
+            if ns not in namespaces:
+                namespaces[ns] = []
+            namespaces[ns].append(short_name)
+
+    # 生成 IpcProxyFactory.h
+    _generate_proxy_factory(ipc_output_dir, interfaces, namespaces, timestamp)
+
+    # 生成 IpcStubFactory.h
+    _generate_stub_factory(ipc_output_dir, interfaces, namespaces, timestamp)
+
+    return 0
+
+
+def _generate_proxy_factory(ipc_output_dir: Path, interfaces: List[Dict[str, Any]],
+                            namespaces: Dict[str, List[str]], timestamp: str) -> None:
+    """生成 IpcProxyFactory.h"""
+
+    # 收集所有 proxy 头文件
+    proxy_files = sorted((ipc_output_dir / "proxy").glob("*Proxy.h")) if (ipc_output_dir / "proxy").exists() else []
+
+    lines = [
+        "#if !defined(DAS_IPC_PROXY_FACTORY_H)",
+        "#define DAS_IPC_PROXY_FACTORY_H",
+        "",
+        f"// Auto-generated at: {timestamp}",
+        "// !!! DO NOT EDIT !!!",
+        "",
+        "#include <das/Core/IPC/IPCProxyBase.h>",
+        "#include <das/Core/IPC/DasProxyBase.h>",
+        "#include <das/IDasBase.h>",
+        "#include <das/ObjectId.h>",
+        "#include <das/Core/IPC/IpcRunLoop.h>",
+        "#include <das/Core/IPC/DistributedObjectManager.h>",
+        "#include <memory>",
+        "#include <functional>",
+        "",
+    ]
+
+    # Include all proxy headers
+    for f in proxy_files:
+        lines.append(f'#include "proxy/{f.name}"')
+
+    lines.extend([
+        "",
+        "namespace DasIpcProxy {",
+        "",
+    ])
+
+    # 添加 namespace using 声明
+    for ns, short_names in sorted(namespaces.items()):
+        lines.append(f"using namespace {ns}::IPC::Proxy;")
+
+    if namespaces:
+        lines.append("")
+
+    lines.extend([
+        "template <typename TProxy>",
+        "IDasBase* CreateTypedProxy(",
+        "    const ObjectId& object_id,",
+        "    IpcRunLoop& run_loop,",
+        "    std::weak_ptr<BusinessThread> business_thread,",
+        "    DistributedObjectManager& object_manager)",
+        "{",
+        "    return new TProxy(object_id, run_loop, std::move(business_thread), object_manager);",
+        "}",
+        "",
+        "inline IDasBase* CreateProxyByInterfaceId(",
+        "    uint32_t interface_id,",
+        "    const ObjectId& object_id,",
+        "    IpcRunLoop& run_loop,",
+        "    std::weak_ptr<BusinessThread> business_thread,",
+        "    DistributedObjectManager& object_manager)",
+        "{",
+        "    switch (interface_id) {",
+    ])
+
+    # 生成所有 case 分支
+    for iface in interfaces:
+        interface_name = iface.get('interface_name', '')
+        interface_id = iface.get('interface_id', '0x00000000')
+        short_name = _get_interface_short_name(interface_name)
+        proxy_name = f"{short_name}Proxy"
+
+        lines.append(f"        case {interface_id}: // {interface_name}::InterfaceId")
+        lines.append(f"            return CreateTypedProxy<{proxy_name}>(object_id, run_loop, business_thread, object_manager);")
+
+    lines.extend([
+        "        default:",
+        "            return nullptr;",
+        "    }",
+        "}",
+        "",
+        "} // namespace DasIpcProxy",
+        "",
+        "#endif // DAS_IPC_PROXY_FACTORY_H",
+        "",
+    ])
+
+    (ipc_output_dir / "IpcProxyFactory.h").write_text("\n".join(lines), encoding="utf-8")
+    print(f"Generated IpcProxyFactory.h ({len(interfaces)} proxies)")
+
+
+def _generate_stub_factory(ipc_output_dir: Path, interfaces: List[Dict[str, Any]],
+                           namespaces: Dict[str, List[str]], timestamp: str) -> None:
+    """生成 IpcStubFactory.h"""
+
+    # 收集所有 stub 头文件
+    stub_files = sorted((ipc_output_dir / "stub").glob("*Stub.h")) if (ipc_output_dir / "stub").exists() else []
+
+    lines = [
+        "#if !defined(DAS_IPC_STUB_FACTORY_H)",
+        "#define DAS_IPC_STUB_FACTORY_H",
+        "",
+        f"// Auto-generated at: {timestamp}",
+        "// !!! DO NOT EDIT !!!",
+        "",
+        "#include <das/Core/IPC/MainProcess/IStubBase.h>",
+        "#include <das/Core/IPC/MainProcess/IpcRunLoop.h>",
+        "#include <das/Core/IPC/HeaderFlags.h>",
+        "",
+    ]
+
+    # Include all stub headers
+    for f in stub_files:
+        lines.append(f'#include "stub/{f.name}"')
+
+    lines.extend([
+        "",
+        "namespace DasIpcStub {",
+        "",
+    ])
+
+    # 添加 namespace using 声明
+    for ns, short_names in sorted(namespaces.items()):
+        lines.append(f"using namespace {ns}::IPC::Stub;")
+
+    if namespaces:
+        lines.append("")
+
+    lines.extend([
+        "struct StubFactory {",
+        "    void RegisterAll(IpcRunLoop& run_loop) {",
+    ])
+
+    # 生成所有 RegisterHandler 调用
+    for iface in interfaces:
+        interface_name = iface.get('interface_name', '')
+        interface_id = iface.get('interface_id', '0x00000000')
+        short_name = _get_interface_short_name(interface_name)
+        stub_name = f"{short_name}Stub"
+
+        lines.append(f"        run_loop.RegisterHandler(HeaderFlags::NONE, {interface_name}::InterfaceId, &{stub_name}_);")
+
+    lines.extend([
+        "    }",
+        "",
+    ])
+
+    # 生成 stub 成员变量
+    for iface in interfaces:
+        interface_name = iface.get('interface_name', '')
+        short_name = _get_interface_short_name(interface_name)
+        stub_name = f"{short_name}Stub"
+        lines.append(f"    [[no_unique_address]] {stub_name} {stub_name}_;")
+
+    lines.extend([
+        "};",
+        "",
+        "inline StubFactory g_stub_factory;",
+        "",
+        "} // namespace DasIpcStub",
+        "",
+        "#endif // DAS_IPC_STUB_FACTORY_H",
+        "",
+    ])
+
+    (ipc_output_dir / "IpcStubFactory.h").write_text("\n".join(lines), encoding="utf-8")
+    print(f"Generated IpcStubFactory.h ({len(interfaces)} stubs)")
+
+
 def main():
     parser = argparse.ArgumentParser(description='Aggregate IPC Proxy/Stub files')
     parser.add_argument('--ipc-output-dir', required=True, help='IPC output directory')
+    parser.add_argument('--ipc-cache-dir', help='IPC cache directory (contains per-interface JSON files)')
     args = parser.parse_args()
 
     ipc_output_dir = Path(args.ipc_output_dir)
@@ -102,7 +345,20 @@ def main():
         print(f"Error: Directory does not exist: {ipc_output_dir}", file=sys.stderr)
         return 1
 
-    return aggregate_ipc(ipc_output_dir)
+    ipc_cache_dir = Path(args.ipc_cache_dir) if args.ipc_cache_dir else None
+
+    # 聚合基础文件（IpcAllProxies.h, IpcAllStubs.h, IpcGenerated.cpp）
+    result = aggregate_ipc(ipc_output_dir)
+    if result != 0:
+        return result
+
+    # 聚合工厂文件（IpcProxyFactory.h, IpcStubFactory.h）
+    if ipc_cache_dir:
+        result = aggregate_factory_files(ipc_output_dir, ipc_cache_dir)
+        if result != 0:
+            return result
+
+    return 0
 
 
 if __name__ == '__main__':
