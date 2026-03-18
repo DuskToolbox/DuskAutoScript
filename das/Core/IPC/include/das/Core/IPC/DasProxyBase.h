@@ -69,10 +69,10 @@ public:
     }
 
     [[nodiscard]]
-    DistributedObjectManager* GetObjectManager() const noexcept
+    DistributedObjectManager& GetObjectManager() const noexcept
         DAS_LIFETIMEBOUND
     {
-        return &IPCProxyBase::GetObjectManager();
+        return IPCProxyBase::GetObjectManager();
     }
 
     /// @brief IPC 远程 QueryInterface

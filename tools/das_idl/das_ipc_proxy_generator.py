@@ -764,10 +764,7 @@ class IpcProxyGenerator:
         lines.append(f"{method_indent}{{")
         lines.append(f"{inner_indent}DAS_CORE_LOG_TRACE(\"Proxy {class_name} ref_count reached 0, cleaning up\");")
         lines.append(f"{inner_indent}ProxyFactory::GetInstance().RemoveFromCache(GetObjectId());")
-        lines.append(f"{inner_indent}if (GetObjectManager())")
-        lines.append(f"{inner_indent}{{")
-        lines.append(f"{inner_indent}    GetObjectManager()->Release(GetObjectId());")
-        lines.append(f"{inner_indent}}}")
+        lines.append(f"{inner_indent}GetObjectManager().Release(GetObjectId());")
         lines.append(f"{inner_indent}delete this;")
         lines.append(f"{method_indent}}}")
         lines.append(f"{method_indent}return count;")
@@ -823,10 +820,10 @@ class IpcProxyGenerator:
 
         # ======== 本地对象短路检查 ========
         lines.append(f"{indent}// Check if target is local object")
-        lines.append(f"{indent}auto* obj_mgr = GetObjectManager();")
-        lines.append(f"{indent}if (obj_mgr->IsLocalObject(GetObjectId())) {{")
+        lines.append(f"{indent}auto& obj_mgr = GetObjectManager();")
+        lines.append(f"{indent}if (obj_mgr.IsLocalObject(GetObjectId())) {{")
         lines.append(f"{indent}    void* obj_ptr = nullptr;")
-        lines.append(f"{indent}    obj_mgr->LookupObject(GetObjectId(), &obj_ptr);")
+        lines.append(f"{indent}    obj_mgr.LookupObject(GetObjectId(), &obj_ptr);")
         lines.append(f"{indent}    auto* local_impl = static_cast<{interface.name}*>(obj_ptr);")
 
         # 本地调用
