@@ -11,6 +11,8 @@
  * 3. IPC 连接验证
  */
 
+#include <das/_autogen/idl/abi/IDasComponent.h>
+
 #include "IpcMultiProcessTestIntegration.h"
 
 #include "FakeMainProcess.h"
@@ -19,6 +21,8 @@
 #include <das/Core/IPC/DasAsyncSender.h>
 #include <das/IDasAsyncLoadPluginOperation.h>
 #include <stdexec/execution.hpp>
+
+using namespace Das::PluginInterface;
 
 TEST_F(IpcMultiProcessTestIntegration, ProcessLaunch)
 {
@@ -977,4 +981,69 @@ TEST_F(IpcMultiProcessTestIntegration, Context_BasicUsage)
     }
 
     DAS_LOG_INFO("[Context_BasicUsage] All context tests passed");
+}
+
+// ====== Remote Proxy 测试 ======
+
+/**
+ * @brief 测试通过 CreateRemoteProxy 创建远程 proxy 并调用方法
+ *
+ * 验证：
+ * 1. CreateRemoteProxy 支持 IDasComponentFactory 接口
+ * 2. 通过 proxy 调用 IsSupported 方法返回正确结果
+ */
+TEST_F(IpcMultiProcessTestIntegration, RemoteProxy_ComponentFactory_IsSupported)
+{
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHost.exe not found";
+    }
+
+    DasResult result = StartHostAndSetupRunLoop();
+    ASSERT_EQ(result, DAS_S_OK);
+
+    std::string plugin_path =
+        IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin2");
+
+    // 1. Load plugin
+    DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
+    result =
+        ctx_->LoadPluginAsync(launcher_.Get(), plugin_path.c_str(), op.Put());
+    ASSERT_EQ(result, DAS_S_OK);
+
+    auto opt = DAS::Core::IPC::wait(
+        GetContext(),
+        DAS::Core::IPC::async_op(GetContext(), std::move(op)));
+    ASSERT_TRUE(opt.has_value());
+
+    auto& [load_result, factory_id] = *opt;
+    ASSERT_EQ(load_result, DAS_S_OK);
+    EXPECT_EQ(factory_id.session_id, launcher_->GetSessionId());
+
+    // 2. Create remote proxy
+    IDasBase* raw_proxy = nullptr;
+    result = ctx_->CreateRemoteProxy(
+        factory_id,
+        DAS_IID_COMPONENT_FACTORY,
+        &raw_proxy);
+    ASSERT_EQ(result, DAS_S_OK);
+    ASSERT_NE(raw_proxy, nullptr);
+
+    auto* factory =
+        static_cast<Das::PluginInterface::IDasComponentFactory*>(raw_proxy);
+
+    // 3. Call IsSupported - should return DAS_S_OK for IDasComponent
+    DasResult supported =
+        factory->IsSupported(DAS_IID_COMPONENT);
+    EXPECT_EQ(supported, DAS_S_OK);
+
+    // 4. Call IsSupported with wrong IID - should return
+    // DAS_E_NO_IMPLEMENTATION
+    DasResult not_supported = factory->IsSupported(DasGuid{});
+    EXPECT_EQ(not_supported, DAS_E_NO_IMPLEMENTATION);
+
+    // 5. Release
+    factory->Release();
+
+    DAS_LOG_INFO("[RemoteProxy_ComponentFactory_IsSupported] Test passed");
 }
