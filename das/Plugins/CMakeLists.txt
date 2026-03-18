@@ -21,8 +21,6 @@ das_add_plugin_library(DasAdbTouch DAS_EX_PRIVATE_LIBS)
 das_add_plugin_library(DasWindowsCapture DAS_EX_PRIVATE_LIBS)
 
 if(DAS_BUILD_TEST)
-    das_add_plugin_library(IpcTestPlugin DAS_EX_PRIVATE_LIBS)
-    
     # Java 测试插件（仅在启用 Java 导出时构建）
     if(EXPORT_JAVA)
         add_subdirectory(JavaTestPlugin)

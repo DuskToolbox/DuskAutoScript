@@ -6,12 +6,12 @@ import java.math.BigInteger;
 /**
  * Java IPC 测试插件
  * 
- * 对照 C++ IpcTestPlugin 实现，用于 IPC 集成测试。
+ * 对照 C++ IpcTestPlugin1 实现，用于 IPC 集成测试。
  * 继承 ISwigDasPluginPackage 以支持 SWIG Director 模式。
  */
 public class JavaTestPlugin extends ISwigDasPluginPackage {
     
-    // 支持的特性列表（对照 C++ IpcTestPlugin）
+    // 支持的特性列表（对照 C++ IpcTestPlugin1）
     private static final DasPluginFeature[] FEATURES = {
         DasPluginFeature.DAS_PLUGIN_FEATURE_COMPONENT_FACTORY
     };
@@ -38,7 +38,7 @@ public class JavaTestPlugin extends ISwigDasPluginPackage {
     /**
      * 枚举插件特性
      * 
-     * 对照 C++ IpcTestPlugin::EnumFeature 实现
+     * 对照 C++ IpcTestPlugin1::EnumFeature 实现
      * 
      * @param index 特性索引
      * @return 包含错误码和特性值的返回对象
@@ -61,7 +61,7 @@ public class JavaTestPlugin extends ISwigDasPluginPackage {
     /**
      * 创建特性接口
      * 
-     * 对照 C++ IpcTestPlugin::CreateFeatureInterface 实现
+     * 对照 C++ IpcTestPlugin1::CreateFeatureInterface 实现
      * 当前返回 DAS_E_NO_IMPLEMENTATION（与 C++ 实现一致）
      * 
      * @param index 特性索引
@@ -71,7 +71,7 @@ public class JavaTestPlugin extends ISwigDasPluginPackage {
     public DasRetDasBase CreateFeatureInterface(BigInteger index) {
         DasRetDasBase result = new DasRetDasBase();
         
-        // 对照 C++ IpcTestPlugin 返回 DAS_E_NO_IMPLEMENTATION
+        // 对照 C++ IpcTestPlugin1 返回 DAS_E_NO_IMPLEMENTATION
         result.setErrorCode(DuskAutoScriptConstants.DAS_E_NO_IMPLEMENTATION);
         result.setValue(null);
         
@@ -81,7 +81,7 @@ public class JavaTestPlugin extends ISwigDasPluginPackage {
     /**
      * 检查插件是否可以卸载
      * 
-     * 对照 C++ IpcTestPlugin::CanUnloadNow 实现
+     * 对照 C++ IpcTestPlugin1::CanUnloadNow 实现
      * 
      * @return 包含错误码和布尔值的返回对象
      */

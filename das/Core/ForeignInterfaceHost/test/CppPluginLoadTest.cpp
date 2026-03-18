@@ -1,8 +1,9 @@
+#include <IpcTestConfig.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
 #include <gtest/gtest.h>
 
-TEST(CppPluginLoadTest, LoadIpcTestPlugin)
+TEST(CppPluginLoadTest, LoadIpcTestPlugin1)
 {
     using namespace DAS::Core::ForeignInterfaceHost;
 
@@ -14,9 +15,11 @@ TEST(CppPluginLoadTest, LoadIpcTestPlugin)
 
     auto& runtime = runtime_result.value();
 
-    const auto plugin_path = "C:/vmbuild/bin/Debug/plugins/IpcTestPlugin.dll";
-    auto       plugin_result = runtime->LoadPlugin(plugin_path);
+    std::filesystem::path plugin_path =
+        std::filesystem::path{IpcTestConfig::GetPluginDir()}
+        / "IpcTestPlugin1.dll";
+    auto plugin_result = runtime->LoadPlugin(plugin_path.string());
 
     ASSERT_TRUE(plugin_result.has_value())
-        << "Failed to load IpcTestPlugin.dll from " << plugin_path;
+        << "Failed to load IpcTestPlugin1.dll from " << plugin_path;
 }
