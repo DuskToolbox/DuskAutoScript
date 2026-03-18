@@ -36,6 +36,8 @@ MethodDef = _das_idl_parser.MethodDef
 ParameterDef = _das_idl_parser.ParameterDef
 TypeInfo = _das_idl_parser.TypeInfo
 ParamDirection = _das_idl_parser.ParamDirection
+PropertyDef = _das_idl_parser.PropertyDef
+parse_idl_file = _das_idl_parser.parse_idl_file
 
 
 class StubTypeMapper:
@@ -293,6 +295,70 @@ class IpcStubGenerator:
         self.idl_file_name = os.path.basename(idl_file_path) if idl_file_path else None
         self.indent = "    "  # 4 空格缩进
         self.type_mapper = StubTypeMapper(document)
+
+    @staticmethod
+    def _properties_to_methods(properties: list) -> list:
+        """将 PropertyDef 列表转换为 MethodDef 列表（getter/setter）"""
+        methods = []
+        for prop in properties:
+            is_interface = prop.type_info.base_type.startswith('I') and prop.type_info.pointer_level == 0
+            is_string = prop.type_info.base_type in ('string', 'IDasReadOnlyString')
+
+            if prop.has_getter:
+                if is_interface or is_string:
+                    out_type = TypeInfo(base_type=prop.type_info.base_type, pointer_level=2, is_pointer=True)
+                    params = [ParameterDef(name="pp_out", type_info=out_type, direction=ParamDirection.OUT)]
+                else:
+                    out_type = TypeInfo(base_type=prop.type_info.base_type, pointer_level=1, is_pointer=True)
+                    params = [ParameterDef(name="p_out", type_info=out_type, direction=ParamDirection.OUT)]
+                methods.append(MethodDef(name=f"Get{prop.name}", return_type=TypeInfo(base_type="DasResult", pointer_level=0), parameters=params))
+
+            if prop.has_setter:
+                if is_interface:
+                    in_type = TypeInfo(base_type=prop.type_info.base_type, pointer_level=1, is_pointer=True)
+                elif is_string:
+                    in_type = TypeInfo(base_type="IDasReadOnlyString", pointer_level=1, is_pointer=True)
+                else:
+                    in_type = TypeInfo(base_type=prop.type_info.base_type, pointer_level=0)
+                params = [ParameterDef(name="p_value", type_info=in_type, direction=ParamDirection.IN)]
+                methods.append(MethodDef(name=f"Set{prop.name}", return_type=TypeInfo(base_type="DasResult", pointer_level=0), parameters=params))
+
+        return methods
+
+    def _collect_all_methods(self, interface: InterfaceDef) -> list:
+        """收集接口及其所有父接口的方法（深度优先，从根到叶）"""
+        iface_map = {iface.name: iface for iface in self.document.interfaces}
+
+        if self.idl_file_path:
+            idl_dir = os.path.dirname(self.idl_file_path)
+            if os.path.isdir(idl_dir):
+                for f in os.listdir(idl_dir):
+                    if f.endswith('.idl'):
+                        fpath = os.path.join(idl_dir, f)
+                        try:
+                            doc = parse_idl_file(fpath)
+                            for iface in doc.interfaces:
+                                if iface.name not in iface_map:
+                                    iface_map[iface.name] = iface
+                        except Exception:
+                            pass
+
+        chain = []
+        current = interface
+        visited = set()
+        while current and current.name != "IDasBase" and current.name not in visited:
+            chain.append(current)
+            visited.add(current.name)
+            current = iface_map.get(current.base_interface)
+        chain.reverse()
+
+        all_methods = []
+        for iface in chain:
+            for method in iface.methods:
+                all_methods.append((method, iface))
+            for method in self._properties_to_methods(iface.properties):
+                all_methods.append((method, iface))
+        return all_methods
     
     def _file_header(self, guard_name: str, interface_name: str, abi_header: str = "", interface_includes: List[str] = None) -> str:
         """生成文件头"""
@@ -529,17 +595,17 @@ class IpcStubGenerator:
             return interface_name[1:]
         return interface_name
     
-    def _generate_method_constants(self, interface: InterfaceDef, namespace_depth: int = 0) -> str:
+    def _generate_method_constants(self, all_methods: list, namespace_depth: int = 0) -> str:
         """生成 Method ID 常量定义"""
         lines = []
         indent = "    " * (namespace_depth + 1)
-        
-        for i, method in enumerate(interface.methods):
+
+        for i, (method, _) in enumerate(all_methods):
             lines.append(f"{indent}static constexpr uint16_t METHOD_{method.name.upper()} = {i};")
-        
+
         return "\n".join(lines)
     
-    def _generate_dispatch_method(self, interface: InterfaceDef, namespace_depth: int = 0) -> str:
+    def _generate_dispatch_method(self, interface: InterfaceDef, all_methods: list, namespace_depth: int = 0) -> str:
         """生成 DispatchMethod 实例方法（使用 switch case 跳转）"""
         lines = []
         indent = "    " * (namespace_depth + 1)
@@ -558,7 +624,7 @@ class IpcStubGenerator:
         lines.append(f"{inner_indent}switch (method_id)")
         lines.append(f"{inner_indent}{{")
 
-        for method in interface.methods:
+        for method, _ in all_methods:
             lines.append(f"{inner_indent}case METHOD_{method.name.upper()}:")
             lines.append(f"{inner_indent}    return Handle{method.name}(target, params, params_size, object_manager, out_response);")
 
@@ -888,6 +954,9 @@ class IpcStubGenerator:
         class_name = f"{interface_short_name}Stub"
         interface_id = fnv1a_hash_guid(interface.uuid)
 
+        # 收集继承链全部方法
+        all_methods = self._collect_all_methods(interface)
+
         lines.append(f"{indent}// ============================================================================")
         lines.append(f"{indent}// {class_name}")
         lines.append(f"{indent}// IPC Stub for {interface.name}")
@@ -902,7 +971,7 @@ class IpcStubGenerator:
         lines.append(f"{class_indent}static constexpr uint32_t InterfaceId = 0x{interface_id:08X}u;")
         lines.append("")
 
-        lines.append(self._generate_method_constants(interface, namespace_depth))
+        lines.append(self._generate_method_constants(all_methods, namespace_depth))
         lines.append("")
 
         # GetInterfaceId override
@@ -913,13 +982,13 @@ class IpcStubGenerator:
         lines.append("")
 
         # DispatchMethod override
-        lines.append(self._generate_dispatch_method(interface, namespace_depth))
+        lines.append(self._generate_dispatch_method(interface, all_methods, namespace_depth))
         lines.append("")
 
         lines.append(f"{indent}private:")
 
         # Generate Handle method declarations (instance methods, not static)
-        for method in interface.methods:
+        for method, _ in all_methods:
             lines.append(self._generate_handle_method_declaration(interface, method, namespace_depth))
 
         lines.append(f"{indent}}};")
@@ -927,11 +996,11 @@ class IpcStubGenerator:
 
         return "\n".join(lines)
     
-    def _generate_handle_method_definitions(self, interface: InterfaceDef, namespace_depth: int = 0) -> str:
+    def _generate_handle_method_definitions(self, interface: InterfaceDef, all_methods: list, namespace_depth: int = 0) -> str:
         """生成所有 Handle 方法的定义"""
         lines = []
         indent = "    " * namespace_depth
-        for i, method in enumerate(interface.methods):
+        for i, (method, _) in enumerate(all_methods):
             definition = self._generate_handle_method_definition(interface, method, i)
             for line in definition.split('\n'):
                 lines.append(f"{indent}{line}")
@@ -941,8 +1010,9 @@ class IpcStubGenerator:
     def _generate_interface_json(self, interface: InterfaceDef) -> Dict[str, Any]:
         """生成接口元数据 JSON"""
         interface_id = fnv1a_hash_guid(interface.uuid)
+        all_methods = self._collect_all_methods(interface)
         methods = []
-        for i, method in enumerate(interface.methods):
+        for i, (method, _) in enumerate(all_methods):
             method_hash = fnv1a_hash(f"{interface.name}::{method.name}")
             methods.append({
                 "method_id": i,
@@ -1027,7 +1097,8 @@ class IpcStubGenerator:
             ns_depth += 2
 
             content += self._generate_stub_class(interface, ns_depth)
-            content += self._generate_handle_method_definitions(interface, ns_depth)
+            all_methods = self._collect_all_methods(interface)
+            content += self._generate_handle_method_definitions(interface, all_methods, ns_depth)
 
             # 关闭命名空间
             stub_ns_indent = "    " * (ns_depth - 1)

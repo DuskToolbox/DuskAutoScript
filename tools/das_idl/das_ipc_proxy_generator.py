@@ -48,6 +48,7 @@ ParameterDef = _das_idl_parser.ParameterDef
 TypeInfo = _das_idl_parser.TypeInfo
 ParamDirection = _das_idl_parser.ParamDirection
 StructDef = _das_idl_parser.StructDef
+parse_idl_file = _das_idl_parser.parse_idl_file
 
 
 class ProxyTypeMapper:
@@ -317,6 +318,80 @@ class IpcProxyGenerator:
         # 额外的接口命名空间映射（来自其他 IDL 文件的接口）
         if extra_interface_namespaces:
             self.type_mapper.interface_namespaces.update(extra_interface_namespaces)
+
+    @staticmethod
+    def _properties_to_methods(properties: list) -> list:
+        """将 PropertyDef 列表转换为 MethodDef 列表（getter/setter）"""
+        methods = []
+        for prop in properties:
+            is_interface = prop.type_info.base_type.startswith('I') and prop.type_info.pointer_level == 0
+            is_string = prop.type_info.base_type in ('string', 'IDasReadOnlyString')
+
+            if prop.has_getter:
+                if is_interface or is_string:
+                    out_type = TypeInfo(base_type=prop.type_info.base_type, pointer_level=2, is_pointer=True)
+                    params = [ParameterDef(name="pp_out", type_info=out_type, direction=ParamDirection.OUT)]
+                else:
+                    out_type = TypeInfo(base_type=prop.type_info.base_type, pointer_level=1, is_pointer=True)
+                    params = [ParameterDef(name="p_out", type_info=out_type, direction=ParamDirection.OUT)]
+                methods.append(MethodDef(name=f"Get{prop.name}", return_type=TypeInfo(base_type="DasResult", pointer_level=0), parameters=params))
+
+            if prop.has_setter:
+                if is_interface:
+                    in_type = TypeInfo(base_type=prop.type_info.base_type, pointer_level=1, is_pointer=True)
+                elif is_string:
+                    in_type = TypeInfo(base_type="IDasReadOnlyString", pointer_level=1, is_pointer=True)
+                else:
+                    in_type = TypeInfo(base_type=prop.type_info.base_type, pointer_level=0)
+                params = [ParameterDef(name="p_value", type_info=in_type, direction=ParamDirection.IN)]
+                methods.append(MethodDef(name=f"Set{prop.name}", return_type=TypeInfo(base_type="DasResult", pointer_level=0), parameters=params))
+
+        return methods
+
+    def _collect_all_methods(self, interface: InterfaceDef) -> list:
+        """收集接口及其所有父接口的方法（深度优先，从根到叶）
+
+        返回 [(method, defining_interface_name), ...] 列表，
+        其中 defining_interface_name 是定义该方法的接口名。
+        """
+        # 构建接口查找表
+        iface_map = {iface.name: iface for iface in self.document.interfaces}
+
+        # 补充查找：从 IDL 目录中的其他文件解析缺失的父接口
+        if self.idl_file_path:
+            idl_dir = os.path.dirname(self.idl_file_path)
+            if os.path.isdir(idl_dir):
+                for f in os.listdir(idl_dir):
+                    if f.endswith('.idl'):
+                        fpath = os.path.join(idl_dir, f)
+                        try:
+                            doc = parse_idl_file(fpath)
+                            for iface in doc.interfaces:
+                                if iface.name not in iface_map:
+                                    iface_map[iface.name] = iface
+                        except Exception:
+                            pass
+
+        # 收集继承链（从根到叶）
+        chain = []
+        current = interface
+        visited = set()
+        while current and current.name != "IDasBase" and current.name not in visited:
+            chain.append(current)
+            visited.add(current.name)
+            current = iface_map.get(current.base_interface)
+        chain.reverse()  # 从根到叶
+
+        # 收集所有方法，每个方法属于定义它的接口
+        all_methods = []
+        for iface in chain:
+            for method in iface.methods:
+                all_methods.append((method, iface))
+            # 属性生成的 getter/setter 也作为方法
+            for method in self._properties_to_methods(iface.properties):
+                all_methods.append((method, iface))
+
+        return all_methods
     
     def _file_header(self, guard_name: str, interface_name: str, interface: InterfaceDef = None) -> str:
         """生成文件头"""
@@ -653,9 +728,13 @@ class IpcProxyGenerator:
         lines.append(f"{indent}public:")
         lines.append(f"{class_indent}static constexpr uint32_t InterfaceId = 0x{interface_id:08X}u;")
         lines.append("")
-        if interface.methods:
+
+        # 收集继承链全部方法
+        all_methods = self._collect_all_methods(interface)
+
+        if all_methods:
             lines.append(f"{class_indent}static constexpr MethodMetadata MethodTable[] = {{")
-            for i, method in enumerate(interface.methods):
+            for i, (method, defining_iface) in enumerate(all_methods):
                 method_hash = fnv1a_hash(f"{interface.name}::{method.name}")
                 lines.append(f"{method_indent}{{ {i}, \"{method.name}\", 0x{method_hash:08X}u }},")
             lines.append(f"{class_indent}}};")
@@ -694,8 +773,14 @@ class IpcProxyGenerator:
         lines.append(f"{method_indent}return count;")
         lines.append(f"{class_indent}}}")
         lines.append("")
+        # QueryInterface override — 委托给 DasProxyBase::QueryInterfaceRemote
+        lines.append(f"{class_indent}DasResult QueryInterface(const DasGuid& iid, void** pp_object) override")
+        lines.append(f"{class_indent}{{")
+        lines.append(f"{method_indent}return QueryInterfaceRemote(iid, pp_object);")
+        lines.append(f"{class_indent}}}")
+        lines.append("")
         
-        for i, method in enumerate(interface.methods):
+        for i, (method, defining_iface) in enumerate(all_methods):
             method_sig = self._generate_method_signature(interface, method, interface.namespace)
             lines.append(f"{class_indent}{method_sig}")
             lines.append(f"{class_indent}{{")
