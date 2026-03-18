@@ -42,14 +42,16 @@ DAS_NS_PYTHONHOST_BEGIN
 
 PyGILGuard::PyGILGuard() : state_(static_cast<int>(::PyGILState_Ensure())) {}
 
-PyGILGuard::~PyGILGuard() { ::PyGILState_Release(static_cast<PyGILState_STATE>(state_)); }
+PyGILGuard::~PyGILGuard()
+{
+    ::PyGILState_Release(static_cast<PyGILState_STATE>(state_));
+}
 
 // ============================================================================
 // 工厂函数
 // ============================================================================
 
-auto CreateForeignLanguageRuntime(
-    const ForeignLanguageRuntimeFactoryDesc& desc)
+auto CreateForeignLanguageRuntime(const ForeignLanguageRuntimeFactoryDesc& desc)
     -> DAS::Utils::Expected<DasPtr<IForeignLanguageRuntime>>
 {
     // 校验 language
@@ -70,7 +72,9 @@ auto CreateForeignLanguageRuntime(
     }
     catch (const std::exception& e)
     {
-        DAS_CORE_LOG_ERROR("Exception in CreateForeignLanguageRuntime: {}", e.what());
+        DAS_CORE_LOG_ERROR(
+            "Exception in CreateForeignLanguageRuntime: {}",
+            e.what());
         return tl::make_unexpected(DAS_E_FAIL);
     }
 }
@@ -147,12 +151,6 @@ PyObject* PyObjectPtr::Detach() noexcept
 
 DAS_NS_ANONYMOUS_DETAILS_BEGIN
 
-PyObjectPtr PyUnicodeFromU8String(const char8_t* u8_string)
-{
-    return PyObjectPtr::Attach(
-        PyUnicode_FromString(reinterpret_cast<const char*>(u8_string)));
-}
-
 template <class T>
 bool IsSubDirectory(T path, T root)
 {
@@ -194,7 +192,9 @@ DasResult LoadPluginConfig(
     std::ifstream file(json_path);
     if (!file.is_open())
     {
-        DAS_CORE_LOG_ERROR("Failed to open plugin config: {}", json_path.string());
+        DAS_CORE_LOG_ERROR(
+            "Failed to open plugin config: {}",
+            json_path.string());
         return DAS_E_FILE_NOT_FOUND;
     }
 
@@ -227,7 +227,8 @@ DasResult LoadPluginConfig(
 // ParseEntryPoint - 解析入口点字符串
 // ============================================================================
 
-std::pair<std::string, std::string> ParseEntryPoint(const std::string& entry_point)
+std::pair<std::string, std::string> ParseEntryPoint(
+    const std::string& entry_point)
 {
     // "my_package.main.create_plugin" -> ("my_package.main", "create_plugin")
     auto last_dot = entry_point.rfind('.');
@@ -238,8 +239,8 @@ std::pair<std::string, std::string> ParseEntryPoint(const std::string& entry_poi
     }
 
     return {
-        entry_point.substr(0, last_dot),     // module_path
-        entry_point.substr(last_dot + 1)     // function_name
+        entry_point.substr(0, last_dot), // module_path
+        entry_point.substr(last_dot + 1) // function_name
     };
 }
 
@@ -436,12 +437,14 @@ bool PythonManager::Initialize()
         // 参数 0 表示不注册信号处理程序，避免在子进程中产生问题
         ::Py_InitializeEx(0);
 
-        // 添加当前工作目录到 sys.path（DuskAutoScript.py 与 DasCore.dll 同目录）
+        // 添加当前工作目录到 sys.path（DuskAutoScript.py 与 DasCore.dll
+        // 同目录）
         if (::Py_IsInitialized())
         {
             PyGILGuard gil;
 
-            PyObjectPtr sys_module = PyObjectPtr::Attach(PyImport_ImportModule("sys"));
+            PyObjectPtr sys_module =
+                PyObjectPtr::Attach(PyImport_ImportModule("sys"));
             if (sys_module)
             {
                 PyObjectPtr path_list = PyObjectPtr::Attach(
@@ -449,15 +452,21 @@ bool PythonManager::Initialize()
                 if (path_list)
                 {
                     // 获取当前工作目录
-                    auto cwd = std::filesystem::current_path();
-                    PyObjectPtr cwd_str = PyObjectPtr::Attach(
-                        PyUnicode_FromString(cwd.generic_string().c_str()));
+                    auto        cwd = std::filesystem::current_path();
+                    PyObjectPtr cwd_str =
+                        PyObjectPtr::Attach(PyUnicode_FromString(
+                            reinterpret_cast<const char*>(
+                                cwd.u8string().c_str())));
                     if (cwd_str)
                     {
-                        if (!PySequence_Contains(path_list.Get(), cwd_str.Get()))
+                        if (!PySequence_Contains(
+                                path_list.Get(),
+                                cwd_str.Get()))
                         {
                             PyList_Insert(path_list.Get(), 0, cwd_str.Get());
-                            DAS_CORE_LOG_INFO("Added current directory to sys.path: {}", cwd.string());
+                            DAS_CORE_LOG_INFO(
+                                "Added current directory to sys.path: {}",
+                                cwd.string());
                         }
                     }
                 }
@@ -502,7 +511,9 @@ uint32_t PythonPluginHolder::Release()
     return count;
 }
 
-DasResult PythonPluginHolder::QueryInterface(const DasGuid& iid, void** pp_object)
+DasResult PythonPluginHolder::QueryInterface(
+    const DasGuid& iid,
+    void**         pp_object)
 {
     if (!pp_object)
     {
@@ -533,8 +544,8 @@ auto ExtractIDasBaseFromDasRetBase(PyObject* das_ret_base) -> DasPtr<IDasBase>
     }
 
     // 1. 获取 value 属性
-    PyObjectPtr value = PyObjectPtr::Attach(
-        PyObject_GetAttrString(das_ret_base, "value"));
+    PyObjectPtr value =
+        PyObjectPtr::Attach(PyObject_GetAttrString(das_ret_base, "value"));
     if (!value)
     {
         DAS_CORE_LOG_ERROR("Failed to get 'value' attribute from DasRetBase");
@@ -542,8 +553,8 @@ auto ExtractIDasBaseFromDasRetBase(PyObject* das_ret_base) -> DasPtr<IDasBase>
     }
 
     // 2. 获取 this 属性（SwigPyObject）
-    PyObjectPtr this_attr = PyObjectPtr::Attach(
-        PyObject_GetAttrString(value.Get(), "this"));
+    PyObjectPtr this_attr =
+        PyObjectPtr::Attach(PyObject_GetAttrString(value.Get(), "this"));
     if (!this_attr)
     {
         DAS_CORE_LOG_ERROR("Failed to get 'this' attribute from IDasBase");
@@ -551,11 +562,11 @@ auto ExtractIDasBaseFromDasRetBase(PyObject* das_ret_base) -> DasPtr<IDasBase>
     }
 
     // 3. int(this) 获取指针值（触发 SwigPyObject_long()）
-    PyObjectPtr ptr_long = PyObjectPtr::Attach(
-        PyNumber_Long(this_attr.Get()));
+    PyObjectPtr ptr_long = PyObjectPtr::Attach(PyNumber_Long(this_attr.Get()));
     if (!ptr_long)
     {
-        DAS_CORE_LOG_ERROR("Failed to convert SwigPyObject to long (int() conversion failed)");
+        DAS_CORE_LOG_ERROR(
+            "Failed to convert SwigPyObject to long (int() conversion failed)");
         return {};
     }
 
@@ -579,10 +590,7 @@ auto ExtractIDasBaseFromDasRetBase(PyObject* das_ret_base) -> DasPtr<IDasBase>
 // PythonRuntime 实现
 // ============================================================================
 
-PythonRuntime::PythonRuntime()
-{
-    PythonManager::GetInstance().Initialize();
-}
+PythonRuntime::PythonRuntime() { PythonManager::GetInstance().Initialize(); }
 
 PythonRuntime::~PythonRuntime() = default;
 
@@ -640,7 +648,7 @@ auto PythonRuntime::LoadPlugin(const std::filesystem::path& path)
 
         // 4. 读取配置
         std::string entry_point;
-        const auto config_result = LoadPluginConfig(path, entry_point);
+        const auto  config_result = LoadPluginConfig(path, entry_point);
         if (DAS::IsFailed(config_result))
         {
             return tl::make_unexpected(config_result);
@@ -660,7 +668,8 @@ auto PythonRuntime::LoadPlugin(const std::filesystem::path& path)
         // 添加 sys.path（不移除，与"解释器永不销毁"设计一致）
         {
             // 导入 sys 模块
-            PyObjectPtr sys_module = PyObjectPtr::Attach(PyImport_ImportModule("sys"));
+            PyObjectPtr sys_module =
+                PyObjectPtr::Attach(PyImport_ImportModule("sys"));
             if (!sys_module)
             {
                 throw PythonException("Failed to import sys module");
@@ -675,8 +684,9 @@ auto PythonRuntime::LoadPlugin(const std::filesystem::path& path)
             }
 
             // 创建目录字符串
-            PyObjectPtr dir_str = PyObjectPtr::Attach(
-                PyUnicode_FromString(manifest_dir.generic_string().c_str()));
+            PyObjectPtr dir_str = PyObjectPtr::Attach(PyUnicode_FromString(
+                reinterpret_cast<const char*>(
+                    manifest_dir.u8string().c_str())));
             if (!dir_str)
             {
                 throw PythonException("Failed to create directory string");
@@ -686,47 +696,69 @@ auto PythonRuntime::LoadPlugin(const std::filesystem::path& path)
             if (!PySequence_Contains(path_list.Get(), dir_str.Get()))
             {
                 PyList_Append(path_list.Get(), dir_str.Get());
-                DAS_CORE_LOG_INFO("Added manifest dir to sys.path: {}", manifest_dir.generic_string());
+                DAS_CORE_LOG_INFO(
+                    "Added manifest dir to sys.path: {}",
+                    manifest_dir.generic_string());
             }
         }
 
         // 7. 导入模块
-        p_plugin_module = PythonResult{PyObjectPtr::Attach(
-            PyUnicode_FromString(module_path.c_str()))}
-            .then([](PyObject* module_name) {
-                return PyObjectPtr::Attach(PyImport_Import(module_name));
-            })
-            .CheckAndGet();
+        p_plugin_module =
+            PythonResult{
+                PyObjectPtr::Attach(PyUnicode_FromString(module_path.c_str()))}
+                .then(
+                    [](PyObject* module_name)
+                    {
+                        return PyObjectPtr::Attach(
+                            PyImport_Import(module_name));
+                    })
+                .CheckAndGet();
 
         DAS_CORE_LOG_INFO("Successfully imported module: {}", module_path);
 
         // 9. 获取入口函数
-        auto entry_func = PythonResult{PyObjectPtr::Attach(
-            PyObject_GetAttrString(p_plugin_module.Get(), function_name.c_str()))}
-            .then([&function_name](PyObject* func) {
-                if (!PyCallable_Check(func))
-                {
-                    DAS_CORE_LOG_ERROR("Entry point '{}' is not callable", function_name);
-                    throw PythonException("Entry point is not callable: " + function_name);
-                }
-                return PyObjectPtr::Attach(func);
-            })
-            .CheckAndGet();
+        auto entry_func =
+            PythonResult{PyObjectPtr::Attach(PyObject_GetAttrString(
+                             p_plugin_module.Get(),
+                             function_name.c_str()))}
+                .then(
+                    [&function_name](PyObject* func)
+                    {
+                        if (!PyCallable_Check(func))
+                        {
+                            DAS_CORE_LOG_ERROR(
+                                "Entry point '{}' is not callable",
+                                function_name);
+                            throw PythonException(
+                                "Entry point is not callable: "
+                                + function_name);
+                        }
+                        return PyObjectPtr::Attach(func);
+                    })
+                .CheckAndGet();
 
         // 10. 调用入口函数（无参数）
-        auto result_obj = PythonResult{PyObjectPtr::Attach(
-            PyObject_CallObject(entry_func.Get(), nullptr))}
-            .then([&function_name](PyObject* obj) {
-                if (obj == Py_None)
-                {
-                    DAS_CORE_LOG_ERROR("Entry function '{}' returned None", function_name);
-                    throw PythonException("Entry function returned None");
-                }
-                return PyObjectPtr::Attach(obj);
-            })
-            .CheckAndGet();
+        auto result_obj =
+            PythonResult{PyObjectPtr::Attach(
+                             PyObject_CallObject(entry_func.Get(), nullptr))}
+                .then(
+                    [&function_name](PyObject* obj)
+                    {
+                        if (obj == Py_None)
+                        {
+                            DAS_CORE_LOG_ERROR(
+                                "Entry function '{}' returned None",
+                                function_name);
+                            throw PythonException(
+                                "Entry function returned None");
+                        }
+                        return PyObjectPtr::Attach(obj);
+                    })
+                .CheckAndGet();
 
-        DAS_CORE_LOG_INFO("Successfully called entry function: {}", function_name);
+        DAS_CORE_LOG_INFO(
+            "Successfully called entry function: {}",
+            function_name);
 
         // 11. 从返回值提取 IDasBase 指针
         auto plugin_ptr = ExtractIDasBaseFromDasRetBase(result_obj.Get());
