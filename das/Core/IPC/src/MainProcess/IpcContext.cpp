@@ -57,10 +57,7 @@ namespace Core
                 // 4. Initialize reserved session IDs
                 for (uint16_t reserved_id : reserved_session_ids_)
                 {
-                    if (reserved_id < 65536)
-                    {
-                        allocated_ids_[reserved_id] = true;
-                    }
+                    allocated_ids_[reserved_id] = true;
                 }
 
                 // 5. DistributedObjectManager 绑定 IpcRunLoop
@@ -400,7 +397,7 @@ namespace Core
 
                 do
                 {
-                    if (current_id < 65536 && !allocated_ids_[current_id])
+                    if (!allocated_ids_[current_id])
                     {
                         bool is_reserved = false;
                         for (uint16_t reserved_id : reserved_session_ids_)
@@ -425,7 +422,9 @@ namespace Core
                     }
 
                     current_id++;
-                    if (current_id >= 65536)
+                    // uint16_t 溢出后变成 0，重置到 2（避免使用保留的
+                    // session_id 0 和 1）
+                    if (current_id == 0)
                     {
                         current_id = 2;
                     }
@@ -441,18 +440,12 @@ namespace Core
 
             void IpcContext::MarkSessionIdAsAllocated(uint16_t session_id)
             {
-                if (session_id < 65536)
-                {
-                    allocated_ids_[session_id] = true;
-                }
+                allocated_ids_[session_id] = true;
             }
 
             void IpcContext::MarkSessionIdAsFree(uint16_t session_id)
             {
-                if (session_id < 65536)
-                {
-                    allocated_ids_[session_id] = false;
-                }
+                allocated_ids_[session_id] = false;
             }
 
             uint16_t IpcContext::AllocateSessionId()

@@ -34,7 +34,12 @@
 #include <das/IDasAsyncHandshakeOperation.h>
 #include <das/IDasAsyncLoadPluginOperation.h>
 #include <optional>
+DAS_DISABLE_WARNING_BEGIN
+DAS_IGNORE_STDEXEC_PARAMETERS
+
 #include <stdexec/execution.hpp>
+
+DAS_DISABLE_WARNING_END
 #include <thread>
 #include <tuple>
 #include <type_traits>

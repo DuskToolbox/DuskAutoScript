@@ -88,7 +88,9 @@
 #define DAS_IGNORE_OPENCV_WARNING                                              \
     DAS_PRAGMA(GCC diagnostic ignored "-Wdeprecated-enum-enum-conversion")
 
-#define DAS_IGNORE_STDEXEC_PARAMETERS DAS_IGNORE_UNUSED_PARAMETER
+#define DAS_IGNORE_STDEXEC_PARAMETERS                                          \
+    DAS_IGNORE_UNUSED_PARAMETER DAS_PRAGMA(                                    \
+        GCC diagnostic ignored "-Wempty-body")
 #endif
 
 #ifdef _MSC_VER

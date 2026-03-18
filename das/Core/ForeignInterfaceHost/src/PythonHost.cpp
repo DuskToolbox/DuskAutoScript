@@ -165,20 +165,6 @@ bool IsSubDirectory(T path, T root)
     return false;
 }
 
-auto GetPreferredSeparator() -> const std::u8string&
-{
-    static std::u8string result{
-        []() -> decltype(result)
-        {
-            std::string                               tmp_result;
-            const U_NAMESPACE_QUALIFIER UnicodeString icu_string{
-                std::filesystem::path::preferred_separator};
-            icu_string.toUTF8String(tmp_result);
-            return {DAS_FULL_RANGE_OF(tmp_result)};
-        }()};
-    return result;
-}
-
 DAS_NS_ANONYMOUS_DETAILS_END
 
 // ============================================================================

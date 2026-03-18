@@ -73,7 +73,7 @@ namespace Core::IPC
      * 将 stdexec sender 包装为 IDasAsyncOperation 接口。
      */
     template <typename TInterface, typename TResult, typename Sender>
-    class AsyncOperationImpl : public TInterface
+    class AsyncOperationImpl final : public TInterface
     {
         static_assert(
             std::derived_from<TInterface, IDasAsyncOperation>,

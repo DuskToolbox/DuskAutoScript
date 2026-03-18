@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <das/IDasBase.h>
+#include <functional>
 
 #include <das/Core/IPC/Config.h>
 

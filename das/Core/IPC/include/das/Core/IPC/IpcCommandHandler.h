@@ -232,10 +232,7 @@ private:
     /// 引用计数
     uint32_t ref_count_ = 0;
 
-#pragma warning(push)
-#pragma warning(disable : 4251) // DLL 导出类中使用 STL 容器
     std::unordered_map<IpcCommandType, CommandHandler> custom_handlers_;
-#pragma warning(pop)
 };
 
 // 命令 payload 序列化辅助结构

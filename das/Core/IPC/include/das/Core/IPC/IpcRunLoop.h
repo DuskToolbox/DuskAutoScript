@@ -10,12 +10,12 @@
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcMessageQueue.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
+#include <das/Core/Utils/StdExecution.h>
 #include <das/IDasBase.h>
 #include <das/Utils/Expected.h>
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <stdexec/execution.hpp>
 #include <unordered_map>
 #include <utility>
 #include <vector>

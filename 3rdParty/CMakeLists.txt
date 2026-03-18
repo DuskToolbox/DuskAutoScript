@@ -442,7 +442,7 @@ if (${DAS_USE_BUNDLED_BOOST})
             Boost::program_options)
 else ()
     # 这里先不改，只是自用boost版本拉上去先
-    find_package(Boost 1.82 COMPONENTS filesystem url)
+    find_package(Boost 1.82 COMPONENTS filesystem url process program_options)
 
     if (NOT Boost_FOUND)
         message(FATAL_ERROR "Boost not found. Please install it manually or set DAS_USE_BUNDLED_BOOST=ON.")
@@ -479,6 +479,17 @@ function(_download_and_config_nv_stdexec)
 endfunction()
 
 _download_and_config_nv_stdexec()
+
+# GCC/Clang 的 libstdc++ PSTL 通过 __has_include(<tbb/tbb.h>) 自动检测 TBB
+# 并将其作为并行后端，但不会自动链接 TBB 库，导致链接阶段出现未定义符号。
+# 因此需要显式 find_package(TBB) 并链接。
+if (NOT MSVC)
+    find_package(TBB QUIET)
+    if (TBB_FOUND)
+        message(STATUS "Found TBB ${TBB_VERSION} (required by libstdc++ PSTL), linking.")
+        target_link_libraries(Das3rdParty INTERFACE TBB::tbb)
+    endif ()
+endif ()
 
 # config Nlohmann Json
 # Notice: This library assume string is encoded in UTF-8.

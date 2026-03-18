@@ -20,7 +20,7 @@
 #include <das/Core/IPC/AsyncOperationImpl.h>
 #include <das/Core/IPC/DasAsyncSender.h>
 #include <das/IDasAsyncLoadPluginOperation.h>
-#include <stdexec/execution.hpp>
+#include <das/Core/Utils/StdExecution.h>
 
 using namespace Das::PluginInterface;
 

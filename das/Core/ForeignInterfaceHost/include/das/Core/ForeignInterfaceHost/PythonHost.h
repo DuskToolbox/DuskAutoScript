@@ -86,7 +86,7 @@ class PythonRuntime final : public IForeignLanguageRuntime
 {
 private:
     std::atomic<uint32_t> ref_count_{1};
-    PyObjectPtr            p_plugin_module;
+    PyObjectPtr           p_plugin_module;
 
 public:
     PythonRuntime();
@@ -116,8 +116,8 @@ public:
 /**
  * @brief 管理 Python 解释器生命周期的单例类
  *
- * 提供全局唯一的 Python 解释器管理入口点，支持懒初始化和幂等的 Initialize() 调用。
- * 使用 Meyer's Singleton 模式实现线程安全的单例。
+ * 提供全局唯一的 Python 解释器管理入口点，支持懒初始化和幂等的 Initialize()
+ * 调用。 使用 Meyer's Singleton 模式实现线程安全的单例。
  */
 class PythonManager
 {
@@ -160,7 +160,7 @@ DAS_API void RaisePythonInterpreterException();
  * 构造时同时 Py_INCREF 和 AddRef，析构时同时 Py_DECREF 和 Release。
  * 析构函数必须获取 GIL，否则 Py_DECREF 会崩溃。
  */
-class PythonPluginHolder : public IDasBase
+class PythonPluginHolder final : public IDasBase
 {
 private:
     std::atomic<uint32_t> ref_count_{1};

@@ -2,13 +2,14 @@
 #include <das/Core/IPC/DasAsyncSender.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
+#include <das/Core/Utils/StdExecution.h>
 #include <das/DasApi.h>
 #include <das/IDasAsyncCallback.h>
 #include <filesystem>
 #include <functional>
 #include <memory>
 #include <span>
-#include <stdexec/execution.hpp>
+
 DAS_NS_BEGIN
 namespace Core
 {
@@ -40,8 +41,8 @@ namespace Core
             // 命令处理器类型
             using CommandHandler = std::function<DasResult(
                 const ValidatedIPCMessageHeader& header,
-                std::span<const uint8_t>       payload,
-                IpcCommandResponse&             response)>;
+                std::span<const uint8_t>         payload,
+                IpcCommandResponse&              response)>;
 
             /**
              * @brief Host 进程 IPC 上下文接口
