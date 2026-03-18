@@ -24,17 +24,10 @@ namespace DasIpcProxy
 }
 
 template <typename TInterface>
-class DasProxyBase : public IPCProxyBase, public IDasBase
+class DasProxyBase : public IPCProxyBase
 {
 public:
     using InterfaceType = TInterface;
-
-    /// @brief 实现 IDasBase::QueryInterface
-    /// @note 委托给 IPC 远程 QueryInterface
-    DasResult QueryInterface(const DasGuid& iid, void** pp_object) override
-    {
-        return QueryInterfaceRemote(iid, pp_object);
-    }
 
     ~DasProxyBase() override
     {
