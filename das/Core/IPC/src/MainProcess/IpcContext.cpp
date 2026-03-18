@@ -1,3 +1,4 @@
+#include <IpcProxyFactory.h>
 #include <boost/asio/post.hpp>
 #include <cstring>
 #include <das/Core/IPC/AsyncOperationImpl.h>
@@ -11,7 +12,6 @@
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/IPC/MainProcess/IpcContext.h>
 #include <das/Core/IPC/ProxyFactory.h>
-#include <IpcProxyFactory.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
@@ -499,34 +499,13 @@ namespace Core
                 uint32_t interface_hash =
                     RemoteObjectRegistry::ComputeInterfaceId(iid);
 
-                // Create proxy directly based on interface hash
-                // TODO: Once proxy headers are properly included, create
-                // proxies here directly For now, only IDasVariantVector is
-                // supported (0xF5FBD328)
-                IDasBase* proxy = nullptr;
-
-                if (interface_hash
-                    == 0xF5FBD328u) // IDasVariantVector::InterfaceId
-                {
-                    // Use the factory for IDasVariantVector
-                    proxy = DasIpcProxy::CreateProxyByInterfaceId(
-                        interface_hash,
-                        object_id,
-                        *runloop_,
-                        business_thread_,
-                        object_manager_);
-                }
-                else
-                {
-                    DAS_CORE_LOG_ERROR(
-                        "CreateRemoteProxy: Unknown interface_id=0x{:08X} "
-                        "for object_id={{session:{}, gen:{}, local:{}}}",
-                        interface_hash,
-                        object_id.session_id,
-                        object_id.generation,
-                        object_id.local_id);
-                    return DAS_E_NO_INTERFACE;
-                }
+                // Create proxy directly based on interface hash using factory
+                IDasBase* proxy = DasIpcProxy::CreateProxyByInterfaceId(
+                    interface_hash,
+                    object_id,
+                    *runloop_,
+                    business_thread_,
+                    object_manager_);
 
                 if (!proxy)
                 {
