@@ -153,6 +153,16 @@ public:
 
     ~IpcRunLoop();
 
+    /**
+     * @brief 初始化 IpcRunLoop（注册 stub handlers）
+     *
+     * 由 Create() 工厂函数内部调用。
+     * 创建 io_context、ConnectionManager，并注册所有 IPC stub handlers。
+     *
+     * @return DasResult DAS_S_OK 成功
+     */
+    DasResult Initialize();
+
     // 阻塞式消息循环
     DasResult Run();
 
@@ -355,9 +365,6 @@ public:
 
     friend class ::Das::Core::IPC::Host::HandshakeHandler;
 
-    // StubFactory 用于非持有注册 stub 处理器
-    friend class StubFactory;
-
     // AwaitResponseOperation 需要访问内部方法
     template <class Receiver>
     friend struct AwaitResponseOperation;
@@ -531,9 +538,6 @@ public:
 private:
     /// 默认构造函数（禁止直接调用，使用 Create() 代替）
     IpcRunLoop() = default;
-
-    /// 内部初始化（由 Create() 调用）
-    DasResult DoInitialize();
 
     /// 关闭（析构函数调用）
     void Uninitialize();

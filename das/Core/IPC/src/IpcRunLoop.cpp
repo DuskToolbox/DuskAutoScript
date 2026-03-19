@@ -12,6 +12,7 @@
 #include <das/Core/IPC/IpcMessageQueue.h>
 #include <das/Core/IPC/IpcResponseSender.h>
 #include <das/Core/IPC/IpcRunLoop.h>
+#include <das/_autogen/idl/ipc/IpcStubFactory.h>
 #include <mutex>
 #include <unordered_map>
 #include <utility>
@@ -32,7 +33,7 @@ DAS_CORE_IPC_NS_BEGIN
 DAS::Utils::Expected<std::unique_ptr<IpcRunLoop>> IpcRunLoop::Create()
 {
     auto instance = std::unique_ptr<IpcRunLoop>(new IpcRunLoop());
-    auto result = instance->DoInitialize();
+    auto result = instance->Initialize();
     if (result != DAS_S_OK)
     {
         return DAS::Utils::MakeUnexpected(result);
@@ -46,7 +47,7 @@ IpcRunLoop::~IpcRunLoop()
     Uninitialize();
 }
 
-DasResult IpcRunLoop::DoInitialize()
+DasResult IpcRunLoop::Initialize()
 {
     io_context_ = std::make_unique<boost::asio::io_context>();
     // 不再创建 async_transport_，IpcRunLoop 只提供 io_context 基础设施
@@ -60,6 +61,10 @@ DasResult IpcRunLoop::DoInitialize()
     // (direct transport registration after handshake)
     connection_manager_ =
         ConnectionManager::Create(1); // local_id = 1 for MainProcess
+
+    // 注册所有 IPC stub handlers（代码生成器生成的 g_stub_factory）
+    DasIpcStub::g_stub_factory.RegisterAll(*this);
+    DAS_CORE_LOG_INFO("Registered all IPC stub handlers");
 
     return DAS_S_OK;
 }
