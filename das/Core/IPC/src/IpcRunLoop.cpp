@@ -542,6 +542,16 @@ void IpcRunLoop::RegisterPendingCompletion(
     }
 }
 
+void IpcRunLoop::RegisterPendingCall(CallKey call_key)
+{
+    std::unique_lock<std::mutex> lock(pending_mutex_);
+    pending_calls_[call_key] = PendingCallState{
+        .call_key = call_key,
+        .response_buffer = {},
+        .deadline = std::chrono::steady_clock::time_point::max(),
+        .on_complete = nullptr};
+}
+
 bool IpcRunLoop::IsRunning() const { return running_.load(); }
 
 void IpcRunLoop::SetSessionId(uint16_t session_id)

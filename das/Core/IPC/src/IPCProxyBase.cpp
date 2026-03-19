@@ -15,9 +15,9 @@ DasResult IPCProxyBase::SendRequest(
     size_t                body_size,
     std::vector<uint8_t>& out_response)
 {
-    (void)method_id; // method_id 用于日志记录，当前未使用
+    (void)method_id;
 
-    // 1. Lock weak_ptr 检查 BusinessThread 是否可用
+    // 1. Lock weak_ptr to check BusinessThread availability
     auto bt = business_thread_.lock();
     if (!bt)
     {
@@ -26,14 +26,13 @@ DasResult IPCProxyBase::SendRequest(
         return DAS_E_IPC_DISCONNECTED;
     }
 
-    // 2. 生成 call_id
+    // 2. Generate call_id and build request header
     uint16_t call_id = NextCallId();
 
-    // 3. 构建请求 header
     ValidatedIPCMessageHeader header =
         BuildRequestHeader(call_id, MessageType::REQUEST, body_size);
 
-    // 4. 通过 PostSend 发送请求
+    // 3. Send request via PostSend
     std::vector<uint8_t> body_vec(body, body + body_size);
     DasResult send_result = run_loop_.PostSend(header, std::move(body_vec));
     if (send_result != DAS_S_OK)
@@ -44,9 +43,41 @@ DasResult IPCProxyBase::SendRequest(
         return send_result;
     }
 
-    // 5. 等待响应
-    CallKey call_key{GetSourceSessionId(), call_id};
-    return bt->PumpUntilResponse(call_key, out_response);
+    // 4. Wait for response using thread-appropriate strategy
+    CallKey call_key{object_id_.session_id, call_id};
+
+    if (bt->IsCurrentThread())
+    {
+        // Nested pump: called from within BusinessThread
+        // Run() is paused, we pump inbound_queue_ directly
+        return bt->PumpUntilResponse(call_key, out_response);
+    }
+    else
+    {
+        // External thread: register pending_call (on_complete=nullptr),
+        // create AwaitResponseSender, sync_wait blocks until
+        // CompletePendingCall fires the callback
+        constexpr auto kTimeout = std::chrono::milliseconds{30000};
+        run_loop_.RegisterPendingCall(call_key);
+
+        AwaitResponseSender sender{&run_loop_, call_key, kTimeout};
+        auto                result = stdexec::sync_wait(std::move(sender));
+        if (!result)
+        {
+            DAS_CORE_LOG_ERROR(
+                "IPCProxyBase::SendRequest: sync_wait failed for "
+                "call_id={}",
+                call_id);
+            return DAS_E_IPC_REMOTE_ERROR;
+        }
+
+        // sync_wait returns optional<tuple<pair<DasResult, vector>>>
+        auto&                inner = std::get<0>(*result);
+        DasResult            ipc_result = inner.first;
+        std::vector<uint8_t> response_body = std::move(inner.second);
+        out_response = std::move(response_body);
+        return ipc_result;
+    }
 }
 
 DAS_CORE_IPC_NS_END

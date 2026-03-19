@@ -71,6 +71,13 @@ public:
      */
     bool IsRunning() const;
 
+    /**
+     * @brief Check if the calling thread is the BusinessThread
+     * @return true if called from the BusinessThread's thread of execution
+     */
+    [[nodiscard]]
+    bool IsCurrentThread() const;
+
 private:
     /**
      * @brief 线程主循环

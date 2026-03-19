@@ -62,6 +62,11 @@ void BusinessThread::Stop()
 
 bool BusinessThread::IsRunning() const { return running_.load(); }
 
+bool BusinessThread::IsCurrentThread() const
+{
+    return thread_.get_id() == std::this_thread::get_id();
+}
+
 void BusinessThread::Run()
 {
     DAS_CORE_LOG_INFO("BusinessThread::Run() started");

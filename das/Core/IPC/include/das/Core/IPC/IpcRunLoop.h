@@ -330,6 +330,19 @@ public:
     void SetObjectManager(DistributedObjectManager* object_manager);
 
     /**
+     * @brief Register a pending call entry (on_complete filled later by
+     * AwaitResponseSender)
+     *
+     * Creates a new entry in pending_calls_ with on_complete=nullptr.
+     * Used by external-thread SendRequest: RegisterPendingCall -> create
+     * AwaitResponseSender -> sync_wait. The sender's start_t calls
+     * RegisterPendingCompletion to fill in the on_complete callback.
+     *
+     * @param call_key CallKey (source_session_id, call_id)
+     */
+    void RegisterPendingCall(CallKey call_key);
+
+    /**
      * @brief 注册 HostLauncher 并启动接收循环
      *
      * 在 HostLauncher::Start() 成功后调用。

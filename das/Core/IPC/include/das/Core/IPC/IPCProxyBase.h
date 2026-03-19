@@ -183,7 +183,8 @@ protected:
     /// @param message_type 消息类型
     /// @param body_size body 大小
     /// @return 构建好的 header
-    /// @note V3: Header 只负责路由，interface_id/method_id/ObjectId 在 body 中
+    /// @note V3: Header 负责路由，interface_id 必须设置以便 Host
+    ///       DispatchToHandlerCoroutine 找到对应的 stub handler
     [[nodiscard]]
     ValidatedIPCMessageHeader BuildRequestHeader(
         uint16_t    call_id,
@@ -194,6 +195,7 @@ protected:
             .SetMessageType(message_type)
             .SetBodySize(static_cast<uint32_t>(body_size))
             .SetCallId(call_id)
+            .SetInterfaceId(interface_id_)
             .SetSourceSessionId(GetSourceSessionId())
             .SetTargetSessionId(object_id_.session_id)
             .Build();
