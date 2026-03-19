@@ -292,7 +292,8 @@ struct SharedMemoryManager::Impl
 
 std::unique_ptr<SharedMemoryManager> SharedMemoryManager::Create()
 {
-    auto manager = std::unique_ptr<SharedMemoryManager>(new SharedMemoryManager());
+    auto manager =
+        std::unique_ptr<SharedMemoryManager>(new SharedMemoryManager());
     manager->Initialize();
     return manager;
 }
@@ -330,15 +331,15 @@ DasResult SharedMemoryManager::CreatePool(
 DasResult SharedMemoryManager::DestroyPool(const std::string& pool_id)
 {
     std::lock_guard<std::mutex> lock(impl_->mutex_);
-    auto it = impl_->pools_.find(pool_id);
+    auto                        it = impl_->pools_.find(pool_id);
     if (it == impl_->pools_.end())
     {
         DAS_CORE_LOG_ERROR("Pool not found for pool_id = {}", pool_id);
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 
-    // 直接 erase 即可，SharedMemoryPool 析构函数会自动调用 Shutdown()
-    // 无需显式调用 Shutdown()，避免重复调用
+    // 直接 erase 即可，SharedMemoryPool 析构函数会自动调用 Uninitialize()
+    // 无需显式调用 Uninitialize()，避免重复调用
     impl_->pools_.erase(it);
     return DAS_S_OK;
 }
@@ -348,7 +349,7 @@ DasResult SharedMemoryManager::GetPool(
     SharedMemoryPool*& pool)
 {
     std::lock_guard<std::mutex> lock(impl_->mutex_);
-    auto it = impl_->pools_.find(pool_id);
+    auto                        it = impl_->pools_.find(pool_id);
     if (it == impl_->pools_.end())
     {
         DAS_CORE_LOG_ERROR("Pool not found for pool_id = {}", pool_id);

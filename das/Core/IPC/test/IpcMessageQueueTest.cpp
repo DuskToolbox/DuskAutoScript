@@ -84,33 +84,33 @@ TEST_F(IpcMessageQueueTest, TryPop_NonEmptyQueue_ReturnsItem)
     EXPECT_EQ(item.value(), 42);
 }
 
-// ====== Shutdown Tests ======
+// ====== Uninitialize Tests ======
 
-TEST_F(IpcMessageQueueTest, Shutdown_PopReturnsNullopt)
+TEST_F(IpcMessageQueueTest, Uninitialize_PopReturnsNullopt)
 {
     IpcMessageQueue<int> queue(10);
-    queue.Shutdown();
+    queue.Uninitialize();
 
     auto item = queue.Pop();
     EXPECT_EQ(item, std::nullopt);
 }
 
-TEST_F(IpcMessageQueueTest, Shutdown_PushReturnsCanceled)
+TEST_F(IpcMessageQueueTest, Uninitialize_PushReturnsCanceled)
 {
     IpcMessageQueue<int> queue(10);
-    queue.Shutdown();
+    queue.Uninitialize();
 
     auto result = queue.Push(42);
     EXPECT_EQ(result, DAS_E_IPC_CANCELED);
 }
 
-TEST_F(IpcMessageQueueTest, Shutdown_IsShutdownReturnsTrue)
+TEST_F(IpcMessageQueueTest, Uninitialize_IsUninitializedReturnsTrue)
 {
     IpcMessageQueue<int> queue(10);
-    EXPECT_FALSE(queue.IsShutdown());
+    EXPECT_FALSE(queue.IsUninitialized());
 
-    queue.Shutdown();
-    EXPECT_TRUE(queue.IsShutdown());
+    queue.Uninitialize();
+    EXPECT_TRUE(queue.IsUninitialized());
 }
 
 // ====== Concurrent Tests ======
@@ -158,7 +158,7 @@ TEST_F(IpcMessageQueueTest, MultipleProducersConsumers)
 
     producer1.join();
     producer2.join();
-    queue.Shutdown();
+    queue.Uninitialize();
     consumer.join();
 
     // All items should be consumed

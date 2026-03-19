@@ -61,7 +61,7 @@ public:
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
-        if (shutdown_)
+        if (uninitialized_)
         {
             return DAS_E_IPC_CANCELED;
         }
@@ -83,9 +83,9 @@ public:
     {
         std::unique_lock<std::mutex> lock(mutex_);
 
-        cv_.wait(lock, [this]() { return !ring_.empty() || shutdown_; });
+        cv_.wait(lock, [this]() { return !ring_.empty() || uninitialized_; });
 
-        if (shutdown_ && ring_.empty())
+        if (uninitialized_ && ring_.empty())
         {
             return std::nullopt;
         }
@@ -113,28 +113,28 @@ public:
         return item;
     }
 
-    /// @brief 关闭队列
-    /// @note 关闭后，Push 返回 DAS_E_IPC_CANCELED，Pop 返回 nullopt
-    void Shutdown()
+    /// @brief 反初始化队列
+    /// @note 反初始化后，Push 返回 DAS_E_IPC_CANCELED，Pop 返回 nullopt
+    void Uninitialize()
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        shutdown_ = true;
+        uninitialized_ = true;
         cv_.notify_all();
     }
 
-    /// @brief 检查队列是否已关闭
-    /// @return 已关闭返回 true
-    bool IsShutdown() const
+    /// @brief 检查队列是否已反初始化
+    /// @return 已反初始化返回 true
+    bool IsUninitialized() const
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        return shutdown_;
+        return uninitialized_;
     }
 
 private:
     boost::circular_buffer<T> ring_;
     mutable std::mutex        mutex_;
     std::condition_variable   cv_;
-    bool                      shutdown_ = false;
+    bool                      uninitialized_ = false;
 };
 
 DAS_CORE_IPC_NS_END

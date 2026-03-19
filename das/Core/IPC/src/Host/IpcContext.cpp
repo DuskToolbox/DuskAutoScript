@@ -380,7 +380,7 @@ namespace Core
                 async_transport_.reset();
 
                 // 2. 关闭入站队列，让业务线程的 Pop() 返回 nullopt
-                inbound_queue_.Shutdown();
+                inbound_queue_.Uninitialize();
 
                 // 3. 停止业务线程（会 join）
                 if (business_thread_)

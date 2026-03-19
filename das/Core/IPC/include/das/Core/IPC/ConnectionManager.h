@@ -70,8 +70,6 @@ public:
 
     ~ConnectionManager();
 
-    DasResult Shutdown();
-
     // 禁止拷贝
     ConnectionManager(const ConnectionManager&) = delete;
     ConnectionManager& operator=(const ConnectionManager&) = delete;

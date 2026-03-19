@@ -108,7 +108,7 @@ namespace Core
 
                 // 关闭顺序：inbound_queue -> business_thread -> io_context
                 // 1. 关闭入站队列，让业务线程的 Pop() 返回 nullopt
-                inbound_queue_.Shutdown();
+                inbound_queue_.Uninitialize();
 
                 // 2. 停止业务线程（会 join）
                 if (business_thread_)

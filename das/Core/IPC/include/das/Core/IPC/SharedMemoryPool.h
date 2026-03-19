@@ -21,7 +21,7 @@ DAS_CORE_IPC_NS_BEGIN
  * 所有权语义：
  * - Allocate() 返回的 SharedMemoryBlock 的所有权属于调用者
  * - 调用者负责在不再使用时调用 Deallocate() 释放内存
- * - 如果 SharedMemoryPool 被 Shutdown/销毁，所有块将自动失效
+ * - 如果 SharedMemoryPool 被 Uninitialize/销毁，所有块将自动失效
  * - block.handle 是跨进程稳定的偏移量，用于定位块
  *
  * 跨进程访问（B3 规范）：
@@ -46,9 +46,9 @@ struct SharedMemoryBlock
  * @brief 共享内存池管理器
  *
  * 生命周期与所有权：
- * - Initialize() 创建共享内存段；Shutdown() 销毁它
- * - 析构函数自动调用 Shutdown()（RAII）
- * - Shutdown() 是幂等的：多次调用安全，仅首次生效
+ * - Initialize() 创建共享内存段；Uninitialize() 销毁它
+ * - 析构函数自动调用 Uninitialize()（RAII）
+ * - Uninitialize() 是幂等的：多次调用安全，仅首次生效
  *
  * 线程安全：所有公共方法都是线程安全的
  *
@@ -68,8 +68,6 @@ public:
         size_t             initial_size);
 
     ~SharedMemoryPool();
-
-    DasResult Shutdown();
 
     DasResult Allocate(size_t size, SharedMemoryBlock& block);
     DasResult Deallocate(uint64_t handle);
@@ -105,8 +103,6 @@ public:
     static std::unique_ptr<SharedMemoryManager> Create();
 
     ~SharedMemoryManager();
-
-    DasResult Shutdown();
 
     // DasResult Initialize();
 

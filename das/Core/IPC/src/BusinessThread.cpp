@@ -50,7 +50,7 @@ void BusinessThread::Stop()
     running_.store(false);
 
     // 关闭队列，让 Pop() 返回 nullopt
-    inbound_.Shutdown();
+    inbound_.Uninitialize();
 
     if (thread_.joinable())
     {
