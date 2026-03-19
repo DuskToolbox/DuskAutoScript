@@ -308,7 +308,7 @@ def _generate_stub_factory(ipc_output_dir: Path, interfaces: List[Dict[str, Any]
 
     lines.extend([
         "struct StubFactory {",
-        "    void RegisterAll(IpcRunLoop& run_loop) {",
+        "    void RegisterAll(Das::Core::IPC::IpcRunLoop& run_loop) {",
     ])
 
     # 生成所有 RegisterHandler 调用
@@ -318,7 +318,7 @@ def _generate_stub_factory(ipc_output_dir: Path, interfaces: List[Dict[str, Any]
         short_name = _get_interface_short_name(interface_name)
         stub_name = f"{short_name}Stub"
 
-        lines.append(f"        run_loop.RegisterHandler(HeaderFlags::NONE, {interface_id}, &{stub_name}_);")
+        lines.append(f"        run_loop.RegisterHandler(Das::Core::IPC::HeaderFlags::NONE, {interface_id}, &{stub_name}_);")
 
     lines.extend([
         "    }",

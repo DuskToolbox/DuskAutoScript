@@ -277,31 +277,38 @@ def fnv1a_hash(data: str) -> int:
 
 
 def fnv1a_hash_guid(guid_str: str) -> int:
-    """计算 GUID 字符串的 FNV-1a 32-bit hash（用于生成 interface_id）
-    
-    处理两种格式:
+    """计算 GUID 二进制数据的 FNV-1a 32-bit hash（用于生成 interface_id）
+
+    与 C++ RemoteObjectRegistry::ComputeInterfaceId 保持一致，
+    对 GUID 结构体内存布局做 FNV-1a hash（而非字符串表示）。
+
+    处理两种格式，大小写不敏感:
     - {xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}
     - xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-    
-    大小写不敏感
-    
-    Args:
-        guid_str: GUID 字符串
-        
-    Returns:
-        32-bit FNV-1a hash 值
     """
+    import struct
+
     FNV_PRIME = 0x01000193
     FNV_OFFSET_BASIS = 0x811c9dc5
-    
+
+    cleaned = guid_str.strip().strip('{}')
+    parts = cleaned.split('-')
+    if len(parts) != 5:
+        raise ValueError(f"Invalid GUID format: {guid_str}")
+
+    data1 = int(parts[0], 16)
+    data2 = int(parts[1], 16)
+    data3 = int(parts[2], 16)
+    data4 = bytes.fromhex(parts[3] + parts[4])
+
+    # 小端字节序，匹配 Windows GUID 结构体内存布局
+    binary = struct.pack('<I', data1) + struct.pack('<H', data2) + struct.pack('<H', data3) + data4
+
     hash_value = FNV_OFFSET_BASIS
-    for char in guid_str:
-        if char == '{' or char == '}':
-            continue
-        upper_char = char.upper() if 'a' <= char <= 'z' else char
-        hash_value ^= ord(upper_char)
+    for byte in binary:
+        hash_value ^= byte
         hash_value = (hash_value * FNV_PRIME) & 0xFFFFFFFF
-    
+
     return hash_value
 
 

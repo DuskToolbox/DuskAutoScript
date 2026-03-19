@@ -83,6 +83,7 @@ class StubTypeMapper:
         'DasGuid': ('DasGuid', 'WriteGuid', 'ReadGuid'),
         'DasResult': ('DasResult', 'WriteInt32', 'ReadInt32'),
         'DasBool': ('DasBool', 'WriteBool', 'ReadBool'),
+        'IDasReadOnlyString': ('IDasReadOnlyString', 'WriteString', 'ReadString'),
     }
     
     def __init__(self, document: IdlDocument):
@@ -268,21 +269,38 @@ def fnv1a_hash(data: str) -> int:
 
 
 def fnv1a_hash_guid(guid_str: str) -> int:
-    """计算 GUID 字符串的 FNV-1a 32-bit hash（用于生成 interface_id）
-    
-    处理两种格式，大小写不敏感
+    """计算 GUID 二进制数据的 FNV-1a 32-bit hash（用于生成 interface_id）
+
+    与 C++ RemoteObjectRegistry::ComputeInterfaceId 保持一致，
+    对 GUID 结构体内存布局做 FNV-1a hash（而非字符串表示）。
+
+    处理两种格式，大小写不敏感:
+    - {xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}
+    - xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
     """
+    import struct
+
     FNV_PRIME = 0x01000193
     FNV_OFFSET_BASIS = 0x811c9dc5
-    
+
+    cleaned = guid_str.strip().strip('{}')
+    parts = cleaned.split('-')
+    if len(parts) != 5:
+        raise ValueError(f"Invalid GUID format: {guid_str}")
+
+    data1 = int(parts[0], 16)
+    data2 = int(parts[1], 16)
+    data3 = int(parts[2], 16)
+    data4 = bytes.fromhex(parts[3] + parts[4])
+
+    # 小端字节序，匹配 Windows GUID 结构体内存布局
+    binary = struct.pack('<I', data1) + struct.pack('<H', data2) + struct.pack('<H', data3) + data4
+
     hash_value = FNV_OFFSET_BASIS
-    for char in guid_str:
-        if char == '{' or char == '}':
-            continue
-        upper_char = char.upper() if 'a' <= char <= 'z' else char
-        hash_value ^= ord(upper_char)
+    for byte in binary:
+        hash_value ^= byte
         hash_value = (hash_value * FNV_PRIME) & 0xFFFFFFFF
-    
+
     return hash_value
 
 
@@ -375,6 +393,7 @@ class IpcStubGenerator:
         includes.append("#include <das/Core/IPC/DistributedObjectManager.h>")
         includes.append("#include <das/Core/IPC/ProxyFactory.h>")
         includes.append("#include <das/Core/IPC/Serializer.h>")
+        includes.append("#include <das/DasString.hpp>")
         includes.append("#include <algorithm>")
         includes.append("#include <cstdint>")
         includes.append("#include <cstring>")
@@ -413,7 +432,7 @@ class IpcStubGenerator:
         # 核心类型（不需要额外 include）
         CORE_TYPES = {
             "IDasReadOnlyString",
-            "IDasReadOnlyGuidVector",
+            # "IDasReadOnlyGuidVector",  # 需要 include IDasGuidVector.h
             "IDasStopToken",
             "IDasBinaryBuffer",
             "IDasString",
@@ -577,7 +596,12 @@ class IpcStubGenerator:
         if type_info.is_pointer:
             full_type = type_info.base_type + "*"
             if self.type_mapper.is_interface_type(full_type):
+                # Interface: IDL level is 1 star (pointer_level is ignored for interfaces)
                 result += "*"
+            elif type_info.pointer_level > 1:
+                # Non-interface pointer: IDL level is (pointer_level - 1) stars
+                # e.g., unsigned char** (pointer_level=2) -> unsigned char*
+                result += "*" * (type_info.pointer_level - 1)
 
         if type_info.is_reference:
             result += "&"
@@ -618,7 +642,7 @@ class IpcStubGenerator:
             lines.append(f"{indent}    void* impl,")
             lines.append(f"{indent}    const uint8_t* params,")
             lines.append(f"{indent}    size_t params_size,")
-            lines.append(f"{indent}    DistributedObjectManager& object_manager,")
+            lines.append(f"{indent}    Das::Core::IPC::DistributedObjectManager& object_manager,")
             lines.append(f"{indent}    std::vector<uint8_t>& out_response) override")
             lines.append(f"{indent}{{")
             lines.append(f"{inner_indent}(void)method_id;")
@@ -636,7 +660,7 @@ class IpcStubGenerator:
         lines.append(f"{indent}    void* impl,")
         lines.append(f"{indent}    const uint8_t* params,")
         lines.append(f"{indent}    size_t params_size,")
-        lines.append(f"{indent}    DistributedObjectManager& object_manager,")
+        lines.append(f"{indent}    Das::Core::IPC::DistributedObjectManager& object_manager,")
         lines.append(f"{indent}    std::vector<uint8_t>& out_response) override")
         lines.append(f"{indent}{{")
         lines.append(f"{inner_indent}auto* target = static_cast<{interface.name}*>(impl);")
@@ -658,7 +682,7 @@ class IpcStubGenerator:
     def _generate_handle_method_declaration(self, interface: InterfaceDef, method: MethodDef, namespace_depth: int = 0) -> str:
         """生成 Handle 方法声明（实例方法）"""
         indent = "    " * (namespace_depth + 1)
-        return f"{indent}DasResult Handle{method.name}({interface.name}* impl, const uint8_t* params, size_t params_size, DistributedObjectManager& object_manager, std::vector<uint8_t>& out_response);"
+        return f"{indent}DasResult Handle{method.name}({interface.name}* impl, const uint8_t* params, size_t params_size, Das::Core::IPC::DistributedObjectManager& object_manager, std::vector<uint8_t>& out_response);"
     
     def _generate_handle_method_definition(self, interface: InterfaceDef, method: MethodDef, method_index: int) -> str:
         """生成单个方法的 Handle 处理函数定义（实例方法，impl 通过参数传入）"""
@@ -677,7 +701,7 @@ class IpcStubGenerator:
         inner_indent = "    "
 
         full_class_name = "::".join(full_ns + [class_name])
-        lines.append(f"DasResult {full_class_name}::Handle{method.name}({interface.name}* impl, const uint8_t* params, size_t params_size, DistributedObjectManager& object_manager, std::vector<uint8_t>& out_response)")
+        lines.append(f"inline DasResult {full_class_name}::Handle{method.name}({interface.name}* impl, const uint8_t* params, size_t params_size, Das::Core::IPC::DistributedObjectManager& object_manager, std::vector<uint8_t>& out_response)")
         lines.append(f"{{")
         lines.append(f"{inner_indent}(void)impl;")
         lines.append(f"{inner_indent}(void)params;")
@@ -696,18 +720,6 @@ class IpcStubGenerator:
         lines.append(f"{inner_indent}DasResult serial_result = DAS_S_OK;")
         lines.append(f"{inner_indent}(void)serial_result;")
 
-        if has_request_body:
-            lines.append(f"{inner_indent}MemorySerializerReader reader(params, params_size);")
-            lines.append("")
-
-            # 反序列化参数（V3 Body Header 已在 IStubBase::HandleMessage 中解析）
-            lines.append(f"{inner_indent}// Parameters (V3 Body after 16-byte header)")
-            for param in in_params:
-                deserialize_code = self._generate_deserialize_param_for_stub(param, inner_indent)
-                for line in deserialize_code:
-                    lines.append(f"{line}")
-            lines.append("")
-
         # Handle 方法参数名列表（用于检测变量名冲突）
         handle_param_names = {'impl', 'params', 'params_size', 'out_response', 'object_manager'}
 
@@ -718,6 +730,38 @@ class IpcStubGenerator:
                 base += "*" * type_info.pointer_level
             return base
 
+        # ===== 声明阶段：所有变量声明必须在反序列化代码之前 =====
+
+        # 为 [in] 接口指针参数生成声明
+        # [in] 接口指针需要声明，因为反序列化代码会赋值给它
+        # 注意：跳过 IDasReadOnlyString，因为它在 _generate_deserialize_param_for_stub 中单独处理
+        for param in in_params:
+            if not param.type_info.is_pointer:
+                continue
+            # 跳过 IDasReadOnlyString - 在 deserialization 中单独处理
+            if param.type_info.base_type == "IDasReadOnlyString":
+                continue
+            # 构建完整类型名用于接口检测
+            full_type_name = _get_full_type_name(param.type_info)
+            # Check if it's an interface type - use is_interface_type first, then fallback to name pattern
+            base_name = param.type_info.base_type.split("::")[-1]  # Strip namespace
+            is_interface = self.type_mapper.is_interface_type(full_type_name)
+            # Fallback: if is_interface_type returns False, check if name looks like interface
+            if not is_interface:
+                is_interface = (base_name.startswith("I") and "Das" in base_name)
+            if not is_interface:
+                continue
+            # 接口指针参数：声明为 IDL 层类型（单指针）
+            local_name = f"arg_{param.name}" if param.name in handle_param_names else param.name
+            base_cpp = self._get_cpp_type_base(param.type_info)  # e.g., IDasImage*
+            # Add namespace prefix for interface types
+            interface_ns = self.type_mapper.interface_namespaces.get(param.type_info.base_type, "")
+            if interface_ns:
+                full_cpp_type = f"{interface_ns}::{base_cpp}"
+            else:
+                full_cpp_type = base_cpp
+            lines.append(f"{inner_indent}{full_cpp_type} {local_name} = {{}};")
+
         for param in out_params:
             # 处理变量名冲突：INOUT 参数可能与 Handle 方法参数名冲突
             local_name = f"arg_{param.name}" if param.name in handle_param_names else param.name
@@ -725,15 +769,44 @@ class IpcStubGenerator:
             # For [out] interface params: IDL gives IDasBinaryBuffer*, ABI expects IDasBinaryBuffer**
             # Declare with IDL-level pointer count (one less than ABI), pass &var to impl
             full_type_name = _get_full_type_name(param.type_info)
-            if param.direction in (ParamDirection.OUT, ParamDirection.INOUT) and self.type_mapper.is_interface_type(full_type_name):
+            # Check if it's an interface type - use is_interface_type first, then fallback to name pattern
+            base_name = param.type_info.base_type.split("::")[-1]  # Strip namespace
+            is_interface = self.type_mapper.is_interface_type(full_type_name)
+            # Fallback: if is_interface_type returns False, check if name looks like interface
+            if not is_interface:
+                is_interface = (base_name.startswith("I") and "Das" in base_name)
+            if param.direction in (ParamDirection.OUT, ParamDirection.INOUT) and is_interface:
                 # Declare with one less pointer level (IDL level)
                 base_cpp = self._get_cpp_type_base(param.type_info)  # IDasBinaryBuffer*
+                # Add namespace prefix for interface types
+                interface_ns = self.type_mapper.interface_namespaces.get(param.type_info.base_type, "")
+                if interface_ns:
+                    full_cpp_type = f"{interface_ns}::{base_cpp}"
+                else:
+                    full_cpp_type = base_cpp
+                lines.append(f"{inner_indent}{full_cpp_type} {local_name} = {{}};")
+            elif param.direction in (ParamDirection.OUT, ParamDirection.INOUT) and param.type_info.is_pointer and param.type_info.pointer_level >= 1:
+                # Non-interface [out] pointer: strip pointer for declaration, pass with &
+                base_cpp = self._get_cpp_type_base(param.type_info)
                 lines.append(f"{inner_indent}{base_cpp} {local_name} = {{}};")
             else:
                 cpp_type = self._get_cpp_type(param.type_info)
                 lines.append(f"{inner_indent}{cpp_type} {local_name} = {{}};")
 
-        lines.append(f"{inner_indent}MemorySerializerWriter writer;")
+        # ===== 反序列化阶段 =====
+        if has_request_body:
+            lines.append(f"{inner_indent}Das::Core::IPC::MemorySerializerReader reader(params, params_size);")
+            lines.append("")
+
+            # 反序列化参数（V3 Body Header 已在 IStubBase::HandleMessage 中解析）
+            lines.append(f"{inner_indent}// Parameters (V3 Body after 16-byte header)")
+            for param in in_params:
+                deserialize_code = self._generate_deserialize_param_for_stub(param, inner_indent)
+                for line in deserialize_code:
+                    lines.append(f"{line}")
+            lines.append("")
+
+        lines.append(f"{inner_indent}Das::Core::IPC::MemorySerializerWriter writer;")
         lines.append("")
 
         call_params = []
@@ -747,7 +820,8 @@ class IpcStubGenerator:
                 if self.type_mapper.is_interface_type(full_type_name):
                     call_params.append(f"&{local_name}")
                 elif param.type_info.is_pointer and param.type_info.pointer_level >= 1:
-                    call_params.append(f"{local_name}")
+                    # Non-interface [out] pointer: pass with &
+                    call_params.append(f"&{local_name}")
                 else:
                     call_params.append(f"&{local_name}")
             else:
@@ -763,27 +837,48 @@ class IpcStubGenerator:
             lines.append(f"{inner_indent}impl->{method.name}({params_str});")
         lines.append("")
 
-        lines.append(f"{inner_indent}serial_result = writer.WriteInt32(DAS_S_OK);")
-        lines.append(f"{inner_indent}if (DAS::IsFailed(serial_result))")
-        lines.append(f"{inner_indent}{{")
-        lines.append(f"{inner_indent}    return serial_result;")
-        lines.append(f"{inner_indent}}}")
-        lines.append("")
-
+        # Write response body (wire format: remote_result -> out_params -> return_value)
         if has_return:
+            # Non-void: write call_result as remote_result
+            lines.append(f"{inner_indent}serial_result = writer.WriteInt32(call_result);")
+            lines.append(f"{inner_indent}if (DAS::IsFailed(serial_result))")
+            lines.append(f"{inner_indent}{{")
+            lines.append(f"{inner_indent}    return serial_result;")
+            lines.append(f"{inner_indent}}}")
+            lines.append("")
+
+            # Write out_params second (proxy reads these after remote_result)
+            for param in out_params:
+                local_name = f"arg_{param.name}" if param.name in handle_param_names else param.name
+                serialize_code = self._generate_serialize_param_for_stub(param, inner_indent, local_name)
+                for line in serialize_code:
+                    lines.append(f"{line}")
+
+            # Write call_result again as return_value last (proxy reads this after out_params)
             serialize_return_code = self._generate_serialize_return_for_stub(method.return_type, inner_indent)
             for line in serialize_return_code:
                 lines.append(f"{line}")
+        elif out_params:
+            # Void method with out_params: write DAS_S_OK as remote_result
+            lines.append(f"{inner_indent}serial_result = writer.WriteInt32(DAS_S_OK);")
+            lines.append(f"{inner_indent}if (DAS::IsFailed(serial_result))")
+            lines.append(f"{inner_indent}{{")
+            lines.append(f"{inner_indent}    return serial_result;")
+            lines.append(f"{inner_indent}}}")
+            lines.append("")
 
-        for param in out_params:
-            # 处理变量名冲突
-            local_name = f"arg_{param.name}" if param.name in handle_param_names else param.name
-            serialize_code = self._generate_serialize_param_for_stub(param, inner_indent, local_name)
-            for line in serialize_code:
-                lines.append(f"{line}")
+            # Write out_params (proxy reads these after remote_result)
+            for param in out_params:
+                local_name = f"arg_{param.name}" if param.name in handle_param_names else param.name
+                serialize_code = self._generate_serialize_param_for_stub(param, inner_indent, local_name)
+                for line in serialize_code:
+                    lines.append(f"{line}")
+        # else: void method without out_params - no response body needed
 
-        lines.append(f"{inner_indent}out_response = writer.GetBuffer();")
-        lines.append("")
+        if has_return or out_params:
+            lines.append(f"{inner_indent}out_response = writer.GetBuffer();")
+            lines.append("")
+
         lines.append(f"{inner_indent}return DAS_S_OK;")
         lines.append(f"}}")
 
@@ -797,26 +892,71 @@ class IpcStubGenerator:
         handle_param_names = {'impl', 'params', 'params_size', 'out_response', 'object_manager'}
         local_name = f"arg_{param.name}" if param.name in handle_param_names else param.name
 
-        # 检查是否是接口指针类型
-        if self.type_mapper.is_interface_type(param.type_info.base_type):
+        # 构建完整类型名（带指针）用于接口检测
+        full_type_name = param.type_info.base_type
+        if param.type_info.is_pointer:
+            full_type_name += "*" * param.type_info.pointer_level
+
+        # IDasReadOnlyString special handling (Fix 4) - BEFORE interface check
+        # IDasReadOnlyString is a concrete type (not interface), needs explicit declaration
+        if param.type_info.base_type == "IDasReadOnlyString":
+            lines.append(f"{indent}// 反序列化 IDasReadOnlyString")
+            # Declare the pointer variable (IDasReadOnlyString* for [in] params)
+            lines.append(f"{indent}IDasReadOnlyString* {local_name} = {{}};")
+            lines.append(f"{indent}std::string {local_name}_str;")
+            lines.append(f"{indent}serial_result = reader.ReadString({local_name}_str);")
+            lines.append(f"{indent}if (DAS::IsFailed(serial_result))")
+            lines.append(f"{indent}{{")
+            lines.append(f"{indent}    return serial_result;")
+            lines.append(f"{indent}}}")
+            lines.append(f"{indent}serial_result = ::CreateIDasReadOnlyStringFromUtf8({local_name}_str.c_str(), &{local_name});")
+            lines.append(f"{indent}if (DAS::IsFailed(serial_result))")
+            lines.append(f"{indent}{{")
+            lines.append(f"{indent}    return serial_result;")
+            lines.append(f"{indent}}}")
+            lines.append(f"{indent}if (!{local_name})")
+            lines.append(f"{indent}{{")
+            lines.append(f"{indent}    return DAS_E_OUT_OF_MEMORY;")
+            lines.append(f"{indent}}}")
+            return lines
+
+        # 检查是否是接口指针类型（Fix 5: 使用完整类型检测）
+        # Fallback: if is_interface_type returns False, check if name looks like interface
+        base_name_for_interface = param.type_info.base_type.split("::")[-1]
+        is_interface_for_deser = self.type_mapper.is_interface_type(full_type_name)
+        if not is_interface_for_deser:
+            is_interface_for_deser = (base_name_for_interface.startswith("I") and "Das" in base_name_for_interface)
+        if is_interface_for_deser:
             interface_name = self.type_mapper.get_interface_name(param.type_info.base_type)
             proxy_name = f"{interface_name}Proxy"
             param_name = local_name
 
+            # 获取接口的命名空间前缀
+            interface_ns = self.type_mapper.interface_namespaces.get(param.type_info.base_type, "")
+            if interface_ns:
+                full_interface_name = f"{interface_ns}::{interface_name}"
+            else:
+                full_interface_name = interface_name
+
             # 反序列化接口指针：先读 ObjectId，再判断本地/远程
             lines.append(f"{indent}// 反序列化接口指针: {interface_name}*")
-            lines.append(f"{indent}uint64_t {param_name}_encoded = reader.ReadUInt64();")
-            lines.append(f"{indent}ObjectId {param_name}_id = DecodeObjectId({param_name}_encoded);")
+            lines.append(f"{indent}uint64_t {param_name}_encoded_value;")
+            lines.append(f"{indent}serial_result = reader.ReadUInt64(&{param_name}_encoded_value);")
+            lines.append(f"{indent}if (DAS::IsFailed(serial_result))")
+            lines.append(f"{indent}{{")
+            lines.append(f"{indent}    return serial_result;")
+            lines.append(f"{indent}}}")
+            lines.append(f"{indent}Das::Core::IPC::ObjectId {param_name}_id = Das::Core::IPC::DecodeObjectId({param_name}_encoded_value);")
             lines.append(f"{indent}if (object_manager.IsLocalObject({param_name}_id))")
             lines.append(f"{indent}{{")
             lines.append(f"{indent}    // 本地对象：直接查找")
             lines.append(f"{indent}    void* {param_name}_ptr = nullptr;")
-            lines.append(f"{indent}    serial_result = object_manager.LookupObject({param_name}_encoded, &{param_name}_ptr);")
+            lines.append(f"{indent}    serial_result = object_manager.LookupObject({param_name}_id, &{param_name}_ptr);")
             lines.append(f"{indent}    if (DAS::IsFailed(serial_result))")
             lines.append(f"{indent}    {{")
             lines.append(f"{indent}        return serial_result;")
             lines.append(f"{indent}    }}")
-            lines.append(f"{indent}    {param_name} = static_cast<{interface_name}*>({param_name}_ptr);")
+            lines.append(f"{indent}    {param_name} = static_cast<{full_interface_name}*>({param_name}_ptr);")
             lines.append(f"{indent}}}")
             lines.append(f"{indent}else")
             lines.append(f"{indent}{{")
@@ -874,10 +1014,27 @@ class IpcStubGenerator:
     def _generate_serialize_param_for_stub(self, param: ParameterDef, indent: str, local_name: str = None) -> List[str]:
         """生成参数序列化代码（用于 Stub 向响应体写入输出参数）"""
         lines = []
-        type_info = self.type_mapper.get_type_info(param.type_info.base_type)
 
         # 使用 local_name 如果提供，否则使用 param.name
         var_name = local_name if local_name else param.name
+
+        # IDasReadOnlyString special handling (Fix 4): use GetUtf8(const char**) for serialization
+        # IDasReadOnlyString::GetUtf8(const char** out_string) allocates string via output parameter
+        if param.type_info.base_type == "IDasReadOnlyString" and param.type_info.is_pointer and param.type_info.pointer_level >= 1:
+            lines.append(f"{indent}const char* {var_name}_utf8_tmp;")
+            lines.append(f"{indent}serial_result = {var_name}->GetUtf8(&{var_name}_utf8_tmp);")
+            lines.append(f"{indent}if (DAS::IsFailed(serial_result))")
+            lines.append(f"{indent}{{")
+            lines.append(f"{indent}    return serial_result;")
+            lines.append(f"{indent}}}")
+            lines.append(f"{indent}serial_result = writer.WriteString({var_name}_utf8_tmp);")
+            lines.append(f"{indent}if (DAS::IsFailed(serial_result))")
+            lines.append(f"{indent}{{")
+            lines.append(f"{indent}    return serial_result;")
+            lines.append(f"{indent}}}")
+            return lines
+
+        type_info = self.type_mapper.get_type_info(param.type_info.base_type)
 
         if type_info is None:
             lines.append(f"{indent}// TODO: Serialize type {param.type_info.base_type}")
@@ -889,8 +1046,13 @@ class IpcStubGenerator:
             # 使用内联字段展开进行序列化
             struct_def = self.type_mapper.struct_defs.get(param.type_info.base_type)
             if struct_def and struct_def.fields:
-                # 判断参数是否为指针类型，决定使用 -> 还是 .
-                accessor = "->" if param.type_info.is_pointer else "."
+                # For interface pointers: use -> because variable is a real pointer
+                # For struct pointers: use . because variable is a value type (pointer was stripped for declaration)
+                full_type_name = param.type_info.base_type
+                if param.type_info.is_pointer:
+                    full_type_name += "*" * param.type_info.pointer_level
+                is_interface = self.type_mapper.is_interface_type(full_type_name)
+                accessor = "->" if (param.type_info.is_pointer and is_interface) else "."
                 for field in struct_def.fields:
                     field_cpp_type, field_write_method, _, field_is_struct = self.type_mapper.get_type_info(field.type_name) or (None, None, None, False)
                     if field_is_struct:
@@ -907,9 +1069,25 @@ class IpcStubGenerator:
                         lines.append(f"{indent}serial_result = writer.{field_write_method}({var_name}{accessor}{field.name});")
                         lines.append(f"{indent}if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
             else:
-                lines.append(f"{indent}// TODO: Serialize struct {param.type_info.base_type}")
+                # Struct has no fields or struct_def is None: use direct write method
+                # For non-interface types passed by pointer: variable is value type, don't dereference
+                full_type_name = param.type_info.base_type
+                if param.type_info.is_pointer:
+                    full_type_name += "*" * param.type_info.pointer_level
+                is_interface = self.type_mapper.is_interface_type(full_type_name)
+                if param.type_info.is_pointer and param.type_info.pointer_level >= 1 and is_interface:
+                    lines.append(f"{indent}serial_result = writer.{write_method}(*{var_name});")
+                else:
+                    lines.append(f"{indent}serial_result = writer.{write_method}({var_name});")
         else:
-            if param.type_info.is_pointer and param.type_info.pointer_level >= 1:
+            # Non-struct types (basic types, special types like DasGuid)
+            # For interface pointers: dereference because variable is a real pointer
+            # For non-interface pointers (e.g., DasGuid*): variable is value type, don't dereference
+            full_type_name = param.type_info.base_type
+            if param.type_info.is_pointer:
+                full_type_name += "*" * param.type_info.pointer_level
+            is_interface = self.type_mapper.is_interface_type(full_type_name)
+            if param.type_info.is_pointer and param.type_info.pointer_level >= 1 and is_interface:
                 lines.append(f"{indent}serial_result = writer.{write_method}(*{var_name});")
             else:
                 lines.append(f"{indent}serial_result = writer.{write_method}({var_name});")
@@ -984,7 +1162,7 @@ class IpcStubGenerator:
         lines.append(f"{indent}// ============================================================================")
         lines.append("")
 
-        lines.append(f"{indent}class {class_name} : public IStubBase")
+        lines.append(f"{indent}class {class_name} : public Das::Core::IPC::IStubBase")
         lines.append(f"{indent}{{")
         lines.append(f"{indent}public:")
 
@@ -1109,10 +1287,6 @@ class IpcStubGenerator:
             content += f"{ipc_ns_indent}{{\n"
             content += f"{stub_ns_indent}namespace Stub\n"
             content += f"{stub_ns_indent}{{\n"
-
-            # 添加 using 声明以解析其他命名空间中的接口类型
-            content += f"{stub_ns_indent}using namespace Das::ExportInterface;\n"
-            content += f"{stub_ns_indent}using namespace Das::PluginInterface;\n"
 
             ns_depth += 2
 
