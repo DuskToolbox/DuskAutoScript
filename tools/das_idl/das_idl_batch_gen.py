@@ -693,8 +693,10 @@ JSON 配置格式:
                         print(f"\n[IPC Registry] {result.stdout.strip()}")
                     else:
                         print(f"\n[IPC Registry 失败] {result.stderr}", file=sys.stderr)
+                        batch_result = 1
                 except Exception as e:
                     print(f"\n[IPC Registry 错误] {e}", file=sys.stderr)
+                    batch_result = 1
         
         # ====== 执行 IPC Proxy/Stub 聚合 ======
         if ipc_output_dir and batch_result == 0:
@@ -714,8 +716,10 @@ JSON 配置格式:
                         print(f"\n[IPC聚合] {result.stdout.strip()}")
                     else:
                         print(f"\n[IPC聚合失败] {result.stderr}", file=sys.stderr)
+                        batch_result = 1
                 except Exception as e:
                     print(f"\n[IPC聚合错误] {e}", file=sys.stderr)
+                    batch_result = 1
 
     return batch_result
 

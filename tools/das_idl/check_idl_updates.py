@@ -101,7 +101,17 @@ def get_generated_files_for_idl(idl_file: Path, config: dict) -> List[Path]:
             f for f in swig_output_dir.glob("*.i")
             if idl_name in f.name
         )
-    
+
+    # IPC Proxy/Stub 输出文件
+    ipc_output_dir = Path(config.get("--ipc-output-dir", ""))
+    if ipc_output_dir != Path(""):
+        if config.get("--ipc-proxy"):
+            proxy_file = ipc_output_dir / "proxy" / f"{idl_name}Proxy.h"
+            generated_files.append(proxy_file)
+        if config.get("--ipc-stub"):
+            stub_file = ipc_output_dir / "stub" / f"{idl_name}Stub.h"
+            generated_files.append(stub_file)
+
     return generated_files
 
 
@@ -256,10 +266,31 @@ def main():
     
     tool_modified = len(modified_tools) > 0
     
-    # 如果工具被修改或指定了强制模式，所有IDL都需要重新生成
-    if tool_modified or args.force:
+    # 检查全局聚合文件是否存在
+    # 如果聚合文件缺失，所有 IDL 都需要重新生成（例如 ninja clean 后）
+    aggregation_files_missing = False
+    ipc_output_dirs = set()
+    for config in configs:
+        ipc_dir = config.get("--ipc-output-dir", "")
+        if ipc_dir and (config.get("--ipc-proxy") or config.get("--ipc-stub")):
+            ipc_output_dirs.add(Path(ipc_dir))
+
+    for ipc_dir in ipc_output_dirs:
+        for aggregation_file in ["IpcGenerated.cpp", "IpcAllProxies.h", "IpcAllStubs.h"]:
+            if not (ipc_dir / aggregation_file).exists():
+                aggregation_files_missing = True
+                if args.verbose:
+                    safe_print(f"  聚合文件缺失: {ipc_dir / aggregation_file}")
+                break
+        if aggregation_files_missing:
+            break
+
+    # 如果工具被修改、指定了强制模式或聚合文件缺失，所有IDL都需要重新生成
+    if tool_modified or args.force or aggregation_files_missing:
         if args.force:
             print("强制模式：需要重新生成所有IDL")
+        elif aggregation_files_missing:
+            print("聚合文件缺失，需要重新生成所有IDL")
         else:
             print(f"\n检测到 {len(modified_tools)} 个工具文件已修改，需要重新生成所有IDL:")
             print("-" * 80)

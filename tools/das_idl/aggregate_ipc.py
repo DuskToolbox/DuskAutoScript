@@ -193,8 +193,10 @@ def _generate_proxy_factory(ipc_output_dir: Path, interfaces: List[Dict[str, Any
         "#include <das/Core/IPC/ObjectId.h>",
         "#include <das/Core/IPC/IpcRunLoop.h>",
         "#include <das/Core/IPC/DistributedObjectManager.h>",
+        "#include <atomic>",
         "#include <memory>",
         "#include <functional>",
+        "#include <das/Core/IPC/RemoteObjectRegistry.h>",
         "",
     ]
 
@@ -215,6 +217,47 @@ def _generate_proxy_factory(ipc_output_dir: Path, interfaces: List[Dict[str, Any
 
     if namespaces:
         lines.append("")
+
+    # DasBaseProxy: minimal proxy for IDasBase, must be defined before CreateTypedProxy
+    lines.extend([
+        "// Minimal proxy for IDasBase - only supports AddRef/Release/QueryInterface",
+        "// QueryInterface delegates to QueryInterfaceRemote (remote QI over IPC)",
+        "class DasBaseProxy : public DasProxyBase<IDasBase>, public IDasBase",
+        "{",
+        "public:",
+        "    DasBaseProxy(",
+        "        const ObjectId& object_id,",
+        "        IpcRunLoop& run_loop,",
+        "        std::weak_ptr<BusinessThread> business_thread,",
+        "        DistributedObjectManager& object_manager)",
+        "        : DasProxyBase<IDasBase>(",
+        "              RemoteObjectRegistry::ComputeInterfaceId(DAS_IID_BASE),",
+        "              object_id, run_loop, std::move(business_thread), object_manager)",
+        "    {",
+        "    }",
+        "",
+        "    uint32_t AddRef() final",
+        "    {",
+        "        return ++ref_count_;",
+        "    }",
+        "",
+        "    uint32_t Release() final",
+        "    {",
+        "        uint32_t count = --ref_count_;",
+        "        if (count == 0) { delete this; }",
+        "        return count;",
+        "    }",
+        "",
+        "    DasResult QueryInterface(const DasGuid& iid, void** pp_object) override",
+        "    {",
+        "        return QueryInterfaceRemote(iid, pp_object);",
+        "    }",
+        "",
+        "private:",
+        "    std::atomic<uint32_t> ref_count_{1};",
+        "};",
+        "",
+    ])
 
     lines.extend([
         "template <typename TProxy>",
@@ -248,6 +291,12 @@ def _generate_proxy_factory(ipc_output_dir: Path, interfaces: List[Dict[str, Any
         lines.append(f"            return CreateTypedProxy<{proxy_name}>(object_id, run_loop, business_thread, object_manager);")
 
     lines.extend([
+        "        // IDasBase: minimal proxy that only supports remote QueryInterface",
+        "        // IDasBase has no methods to proxy; AddRef/Release are handled locally",
+        "        // interface_id = FNV-1a(DAS_IID_BASE) = 0x7BC07313",
+        "        case 0x7BC07313u:",
+        "            return CreateTypedProxy<DasBaseProxy>(object_id, run_loop, business_thread, object_manager);",
+        "",
         "        default:",
         "            return nullptr;",
         "    }",
@@ -354,9 +403,7 @@ def main():
     args = parser.parse_args()
 
     ipc_output_dir = Path(args.ipc_output_dir)
-    if not ipc_output_dir.exists():
-        print(f"Error: Directory does not exist: {ipc_output_dir}", file=sys.stderr)
-        return 1
+    ipc_output_dir.mkdir(parents=True, exist_ok=True)
 
     ipc_cache_dir = Path(args.ipc_cache_dir) if args.ipc_cache_dir else None
 
