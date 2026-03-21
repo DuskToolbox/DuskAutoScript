@@ -10,6 +10,10 @@ target_link_libraries(DasHttp PRIVATE
         DAS_EX_PRIVATE_LIBS
         ${DAS_BUNDLED_BOOST_LIBS})
 
+if(WIN32)
+    target_link_libraries(DasHttp PRIVATE ws2_32)
+endif()
+
 target_compile_definitions(DasHttp PRIVATE _WIN32_WINNT=0x0601)
 
 set_target_properties(DasHttp PROPERTIES
