@@ -75,14 +75,7 @@ DasResult ProxyFactory::ReleaseProxy(const ObjectId& object_id)
         it->second.local_refcount--;
         if (it->second.local_refcount == 0)
         {
-            // 本地引用归零：发送 REMOTE_RELEASE
-            if (object_manager_)
-            {
-                object_manager_->HandleRemoteRelease(object_id);
-            }
-            IPCProxyBase* proxy = it->second.proxy;
             proxy_cache_.erase(it);
-            proxy->Release();
         }
         return DAS_S_OK;
     }
@@ -99,15 +92,6 @@ DasResult ProxyFactory::RemoveFromCache(const ObjectId& object_id)
         it->second.local_refcount--;
         if (it->second.local_refcount == 0)
         {
-            // 本地引用归零：发送 REMOTE_RELEASE，销毁 Proxy
-            if (object_manager_)
-            {
-                object_manager_->HandleRemoteRelease(object_id);
-            }
-            if (it->second.proxy)
-            {
-                it->second.proxy->Release();
-            }
             proxy_cache_.erase(it);
         }
 
@@ -133,27 +117,13 @@ size_t ProxyFactory::GetProxyCount() const
 void ProxyFactory::ClearAllProxies()
 {
     std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
-
-    for (const auto& entry : proxy_cache_)
-    {
-        if (object_manager_ && entry.second.local_refcount > 0)
-        {
-            // 发送 REMOTE_RELEASE 通知 Host 释放远程引用
-            object_manager_->HandleRemoteRelease(DecodeObjectId(entry.first));
-        }
-        if (entry.second.proxy)
-        {
-            entry.second.proxy->Release();
-        }
-    }
-
     proxy_cache_.clear();
 }
 
 IPCProxyBase* ProxyFactory::CreateIPCProxy(const ObjectId& object_id)
 {
     // Generic Proxy 不再支持，需要使用 IDL 生成的具体 Proxy 类
-    (void)object_id;  // 未使用的参数
+    (void)object_id; // 未使用的参数
     DAS_CORE_LOG_ERROR(
         "CreateIPCProxy: Generic proxy not supported. Use IDL-generated proxy instead.");
     return nullptr;

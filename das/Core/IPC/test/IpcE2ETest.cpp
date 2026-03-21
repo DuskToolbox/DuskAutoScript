@@ -289,31 +289,6 @@ TEST_F(IpcE2ETest, Connection_HostPluginHandshake)
 
 // ====== Object Lifecycle E2E Tests ======
 
-TEST_F(IpcE2ETest, ObjectLifecycle_ReleaseAndGC)
-{
-    // Register object
-    int      dummy = 42;
-    ObjectId object_id{};
-    ASSERT_EQ(
-        host_object_manager_->RegisterLocalObject(&dummy, object_id),
-        DAS_S_OK);
-
-    // Add multiple references
-    ASSERT_EQ(host_object_manager_->AddRef(object_id), DAS_S_OK);
-    ASSERT_EQ(host_object_manager_->AddRef(object_id), DAS_S_OK);
-
-    // Release references one by one
-    ASSERT_EQ(host_object_manager_->Release(object_id), DAS_S_OK);
-    EXPECT_TRUE(host_object_manager_->IsValidObject(object_id));
-
-    ASSERT_EQ(host_object_manager_->Release(object_id), DAS_S_OK);
-    EXPECT_TRUE(host_object_manager_->IsValidObject(object_id));
-
-    // Final release - object should be removed
-    ASSERT_EQ(host_object_manager_->Release(object_id), DAS_S_OK);
-    EXPECT_FALSE(host_object_manager_->IsValidObject(object_id));
-}
-
 // ====== Error Handling E2E Tests ======
 
 TEST_F(IpcE2ETest, ErrorHandling_InvalidObjectId)

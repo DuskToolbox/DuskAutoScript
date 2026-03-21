@@ -14,13 +14,11 @@
 DAS_CORE_IPC_NS_BEGIN
 
 class IpcRunLoop;
-struct RemoteObjectHandle
+struct ObjectEntry
 {
     ObjectId object_id;
-    uint32_t local_refcount;  // 本地引用计数
-    uint32_t remote_refcount; // 远程引用计数
-    void*    object_ptr;
-    bool     is_local;
+    void*    object_ptr; // 本地对象非空，远程对象为 nullptr
+    bool     is_local;   // 决定 UnregisterObject 时是否调用 ptr->Release()
 };
 
 class DistributedObjectManager : public IDistributedObjectManager
@@ -36,13 +34,6 @@ public:
     DasResult RegisterRemoteObject(const ObjectId& object_id) override;
     DasResult UnregisterObject(const ObjectId& object_id) override;
 
-    DasResult AddRef(const ObjectId& object_id) override;
-    DasResult Release(const ObjectId& object_id) override;
-
-    // 远程引用计数处理
-    DasResult HandleRemoteAddRef(const ObjectId& object_id);
-    DasResult HandleRemoteRelease(const ObjectId& object_id);
-
     DasResult LookupObject(const ObjectId& object_id, void** object_ptr)
         override;
 
@@ -56,9 +47,9 @@ private:
 
     IpcRunLoop* run_loop_ = nullptr;
 
-    std::unordered_map<ObjectId, RemoteObjectHandle> objects_;
-    uint32_t                                         next_local_id_{1};
-    std::unordered_map<uint32_t, uint16_t>           local_id_generations_;
+    std::unordered_map<ObjectId, ObjectEntry> objects_;
+    uint32_t                                  next_local_id_{1};
+    std::unordered_map<uint32_t, uint16_t>    local_id_generations_;
 };
 DAS_CORE_IPC_NS_END
 

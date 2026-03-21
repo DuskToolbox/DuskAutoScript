@@ -51,7 +51,7 @@ DasResult IpcCommandHandler::HandleMessage(
             ObjectId object_id;
             if (DeserializeValue(payload, offset, object_id))
             {
-                object_manager.Release(object_id);
+                object_manager.UnregisterObject(object_id);
                 std::string log_msg = DAS_FMT_NS::format(
                     "[IpcCommandHandler] REMOTE_RELEASE: released object_id "
                     "session={}, local={}",
@@ -498,7 +498,7 @@ DasResult IpcCommandHandler::OnRemoteAddRef(
         return DAS_E_IPC_DESERIALIZATION_FAILED;
     }
 
-    // 获取 DistributedObjectManager 单例并调用 HandleRemoteAddRef
+    // 获取 DistributedObjectManager 单例
     // 注意：这里需要通过某种方式获取 DistributedObjectManager
     // 在 Host 进程中，DistributedObjectManager 是单例
     // 由于 IpcCommandHandler 不知道当前进程是主进程还是 Host 进程，

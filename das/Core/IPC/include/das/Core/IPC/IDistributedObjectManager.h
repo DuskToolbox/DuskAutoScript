@@ -25,20 +25,10 @@ struct IDistributedObjectManager
     /// @return DasResult
     virtual DasResult RegisterRemoteObject(const ObjectId& object_id) = 0;
 
-    /// 注销对象
+    /// 注销对象（对于本地对象，同时释放 COM 引用以平衡 Stub 端的 AddRef）
     /// @param object_id 对象ID
     /// @return DasResult
     virtual DasResult UnregisterObject(const ObjectId& object_id) = 0;
-
-    /// 增加引用计数
-    /// @param object_id 对象ID
-    /// @return DasResult
-    virtual DasResult AddRef(const ObjectId& object_id) = 0;
-
-    /// 减少引用计数
-    /// @param object_id 对象ID
-    /// @return DasResult
-    virtual DasResult Release(const ObjectId& object_id) = 0;
 
     /// 查找对象
     /// @param object_id 对象ID
@@ -57,7 +47,6 @@ struct IDistributedObjectManager
     /// @param object_id 对象ID
     /// @return 是否为本地对象
     virtual bool IsLocalObject(const ObjectId& object_id) const = 0;
-
 
 protected:
     IDistributedObjectManager() = default;

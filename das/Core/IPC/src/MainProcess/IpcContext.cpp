@@ -512,6 +512,10 @@ namespace Core
                     return DAS_E_NO_INTERFACE;
                 }
 
+                // Register remote object so DistributedObjectManager can track
+                // it
+                object_manager_.RegisterRemoteObject(object_id);
+
                 *pp_out = proxy;
                 return DAS_S_OK;
             }

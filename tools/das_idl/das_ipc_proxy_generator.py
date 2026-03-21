@@ -771,7 +771,6 @@ class IpcProxyGenerator:
         lines.append(f"{method_indent}{{")
         lines.append(f"{inner_indent}DAS_CORE_LOG_TRACE(\"Proxy {class_name} ref_count reached 0, cleaning up\");")
         lines.append(f"{inner_indent}ProxyFactory::GetInstance().RemoveFromCache(GetObjectId());")
-        lines.append(f"{inner_indent}GetObjectManager().Release(GetObjectId());")
         lines.append(f"{inner_indent}delete this;")
         lines.append(f"{method_indent}}}")
         lines.append(f"{method_indent}return count;")

@@ -47,14 +47,12 @@ DasResult DistributedObjectManager::RegisterLocalObject(
         .generation = generation,
         .local_id = local_id};
 
-    RemoteObjectHandle handle{
+    ObjectEntry entry{
         .object_id = obj_id,
-        .local_refcount = 1,
-        .remote_refcount = 0,
         .object_ptr = object_ptr,
         .is_local = true};
 
-    objects_[obj_id] = handle;
+    objects_[obj_id] = entry;
 
     out_object_id = obj_id;
     return DAS_S_OK;
@@ -69,14 +67,12 @@ DasResult DistributedObjectManager::RegisterRemoteObject(
         return result;
     }
 
-    RemoteObjectHandle handle{
+    ObjectEntry entry{
         .object_id = object_id,
-        .local_refcount = 0,
-        .remote_refcount = 1,
         .object_ptr = nullptr,
         .is_local = false};
 
-    objects_[object_id] = handle;
+    objects_[object_id] = entry;
 
     return DAS_S_OK;
 }
@@ -95,76 +91,22 @@ DasResult DistributedObjectManager::UnregisterObject(const ObjectId& object_id)
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 
-    if (it->second.is_local)
+    // Save before erase
+    void* object_ptr = it->second.object_ptr;
+    bool  is_local = it->second.is_local;
+
+    if (is_local)
     {
         local_id_generations_[object_id.local_id] =
             IncrementGeneration(object_id.generation);
     }
 
     objects_.erase(it);
-    return DAS_S_OK;
-}
 
-DasResult DistributedObjectManager::AddRef(const ObjectId& object_id)
-{
-    auto result = ValidateObjectId(object_id);
-    if (result != DAS_S_OK)
+    // Release COM object for local objects (balances Stub's AddRef)
+    if (is_local && object_ptr != nullptr)
     {
-        return result;
-    }
-
-    auto it = objects_.find(object_id);
-    if (it == objects_.end())
-    {
-        if (object_id.session_id == GetLocalSessionId())
-        {
-            auto gen_it = local_id_generations_.find(object_id.local_id);
-            if (gen_it != local_id_generations_.end()
-                && gen_it->second != object_id.generation)
-            {
-                return DAS_E_IPC_STALE_OBJECT_HANDLE;
-            }
-        }
-        return DAS_E_IPC_OBJECT_NOT_FOUND;
-    }
-
-    it->second.local_refcount++;
-    return DAS_S_OK;
-}
-
-DasResult DistributedObjectManager::Release(const ObjectId& object_id)
-{
-    auto result = ValidateObjectId(object_id);
-    if (result != DAS_S_OK)
-    {
-        return result;
-    }
-
-    auto it = objects_.find(object_id);
-    if (it == objects_.end())
-    {
-        if (object_id.session_id == GetLocalSessionId())
-        {
-            auto gen_it = local_id_generations_.find(object_id.local_id);
-            if (gen_it != local_id_generations_.end()
-                && gen_it->second != object_id.generation)
-            {
-                return DAS_E_IPC_STALE_OBJECT_HANDLE;
-            }
-        }
-        return DAS_E_IPC_OBJECT_NOT_FOUND;
-    }
-
-    it->second.local_refcount--;
-    // 只有当 local + remote 都为 0 时才销毁
-    if (it->second.local_refcount == 0 && it->second.remote_refcount == 0)
-    {
-        if (it->second.is_local)
-        {
-            local_id_generations_[object_id.local_id] =
-                IncrementGeneration(object_id.generation);
-        }
-        objects_.erase(it);
+        static_cast<IDasBase*>(object_ptr)->Release();
     }
 
     return DAS_S_OK;
@@ -269,79 +211,6 @@ DasResult DistributedObjectManager::ValidateObjectId(const ObjectId& object_id)
     {
         return DAS_E_IPC_INVALID_OBJECT_ID;
     }
-    return DAS_S_OK;
-}
-
-DasResult DistributedObjectManager::HandleRemoteAddRef(
-    const ObjectId& object_id)
-{
-    auto result = ValidateObjectId(object_id);
-    if (result != DAS_S_OK)
-    {
-        return result;
-    }
-
-    auto it = objects_.find(object_id);
-    if (it == objects_.end())
-    {
-        if (object_id.session_id == GetLocalSessionId())
-        {
-            auto gen_it = local_id_generations_.find(object_id.local_id);
-            if (gen_it != local_id_generations_.end()
-                && gen_it->second != object_id.generation)
-            {
-                return DAS_E_IPC_STALE_OBJECT_HANDLE;
-            }
-        }
-        return DAS_E_IPC_OBJECT_NOT_FOUND;
-    }
-
-    it->second.remote_refcount++;
-    return DAS_S_OK;
-}
-
-DasResult DistributedObjectManager::HandleRemoteRelease(
-    const ObjectId& object_id)
-{
-    auto result = ValidateObjectId(object_id);
-    if (result != DAS_S_OK)
-    {
-        return result;
-    }
-
-    auto it = objects_.find(object_id);
-    if (it == objects_.end())
-    {
-        if (object_id.session_id == GetLocalSessionId())
-        {
-            auto gen_it = local_id_generations_.find(object_id.local_id);
-            if (gen_it != local_id_generations_.end()
-                && gen_it->second != object_id.generation)
-            {
-                return DAS_E_IPC_STALE_OBJECT_HANDLE;
-            }
-        }
-        return DAS_E_IPC_OBJECT_NOT_FOUND;
-    }
-
-    if (it->second.remote_refcount == 0)
-    {
-        return DAS_E_FAIL;
-    }
-
-    it->second.remote_refcount--;
-
-    // 只有当 local + remote 都为 0 时才销毁
-    if (it->second.local_refcount == 0 && it->second.remote_refcount == 0)
-    {
-        if (it->second.is_local)
-        {
-            local_id_generations_[object_id.local_id] =
-                IncrementGeneration(object_id.generation);
-        }
-        objects_.erase(it);
-    }
-
     return DAS_S_OK;
 }
 

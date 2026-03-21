@@ -164,28 +164,6 @@ TEST_F(IpcObjectIdIntegrationTest, DistributedObjectManager_IsValidObject)
     EXPECT_FALSE(object_manager_->IsValidObject(invalid_id));
 }
 
-TEST_F(IpcObjectIdIntegrationTest, DistributedObjectManager_RefCount)
-{
-    // 注册本地对象
-    void*    test_object = reinterpret_cast<void*>(0x12345678);
-    ObjectId object_id{};
-    ASSERT_EQ(
-        object_manager_->RegisterLocalObject(test_object, object_id),
-        DAS_S_OK);
-
-    // AddRef
-    ASSERT_EQ(object_manager_->AddRef(object_id), DAS_S_OK);
-    ASSERT_EQ(object_manager_->AddRef(object_id), DAS_S_OK);
-
-    // Release 两次
-    ASSERT_EQ(object_manager_->Release(object_id), DAS_S_OK);
-    ASSERT_EQ(object_manager_->Release(object_id), DAS_S_OK);
-
-    // 对象应该仍然有效（因为 RegisterLocalObject 增加了初始引用）
-    // 再次 Release 应该能注销
-    ASSERT_EQ(object_manager_->Release(object_id), DAS_S_OK);
-}
-
 // ====== RemoteObjectRegistry 测试 ======
 
 TEST_F(IpcObjectIdIntegrationTest, RemoteObjectRegistry_RegisterObject)
@@ -347,30 +325,6 @@ TEST_F(IpcObjectIdIntegrationTest, LocalObjectFallback_RemoteLookup)
     EXPECT_NE(result, DAS_S_OK);
 }
 
-// ====== 引用计数分布式测试 ======
-
-TEST_F(IpcObjectIdIntegrationTest, DistributedRefCount_LocalAndRemote)
-{
-    // 测试本地和远程引用计数分离
-    // 1. Host 进程注册对象
-    ObjectId obj_id{2, 1, 1};
-    ASSERT_EQ(object_manager_->RegisterRemoteObject(obj_id), DAS_S_OK);
-
-    // 2. 本地 AddRef
-    ASSERT_EQ(object_manager_->AddRef(obj_id), DAS_S_OK);
-
-    // 3. 模拟远程 AddRef
-    ASSERT_EQ(object_manager_->HandleRemoteAddRef(obj_id), DAS_S_OK);
-
-    // 4. 本地 Release（不应销毁，因为远程还有引用）
-    ASSERT_EQ(object_manager_->Release(obj_id), DAS_S_OK);
-    EXPECT_TRUE(object_manager_->IsValidObject(obj_id));
-
-    // 5. 远程 Release（应销毁）
-    ASSERT_EQ(object_manager_->HandleRemoteRelease(obj_id), DAS_S_OK);
-    EXPECT_FALSE(object_manager_->IsValidObject(obj_id));
-}
-
 // ====== 接口指针参数测试 (单元测试级别) ======
 
 TEST_F(IpcObjectIdIntegrationTest, InterfacePointer_EncodeDecode)
@@ -454,7 +408,8 @@ TEST_F(IpcObjectIdIntegrationTest, CreateRemoteProxy_UnknownInterface)
     unknown_iid.data4[7] = 0x88;
 
     // 计算接口哈希
-    uint32_t interface_hash = RemoteObjectRegistry::ComputeInterfaceId(unknown_iid);
+    uint32_t interface_hash =
+        RemoteObjectRegistry::ComputeInterfaceId(unknown_iid);
 
     // 这个哈希值不应该是已知的接口 (已知接口: 0xF5FBD328, 0xB6261785)
     EXPECT_NE(interface_hash, 0xF5FBD328u);

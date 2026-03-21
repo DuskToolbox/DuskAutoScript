@@ -34,8 +34,8 @@ public:
         const ObjectId& oid = GetObjectId();
         if (oid.session_id != 0 || oid.local_id != 0)
         {
-            // 本地释放（引用计数）
-            GetObjectManager().Release(oid);
+            // 注销远程对象
+            GetObjectManager().UnregisterObject(oid);
 
             // 发送 RELEASE_OBJECT fire-and-forget 消息到远程
             // 构建控制平面 EVENT 消息
@@ -128,6 +128,9 @@ public:
         {
             return DAS_E_NO_INTERFACE;
         }
+
+        // Register remote object so DistributedObjectManager can track it
+        GetObjectManager().RegisterRemoteObject(new_obj_id);
 
         *pp_object = proxy;
         return DAS_S_OK;

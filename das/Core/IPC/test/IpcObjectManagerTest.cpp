@@ -121,46 +121,6 @@ TEST_F(IpcObjectManagerTest, StaleHandle_AfterUnregister)
     EXPECT_FALSE(manager_->IsValidObject(object_id));
 }
 
-TEST_F(IpcObjectManagerTest, StaleHandle_AfterRelease)
-{
-    int      dummy = 42;
-    ObjectId object_id{0, 0, 0};
-
-    ASSERT_EQ(manager_->RegisterLocalObject(&dummy, object_id), DAS_S_OK);
-
-    // Release the object (refcount goes to 0)
-    ASSERT_EQ(manager_->Release(object_id), DAS_S_OK);
-
-    // Now the handle should be stale (invalid)
-    EXPECT_FALSE(manager_->IsValidObject(object_id));
-}
-
-// ====== Reference Counting Tests ======
-
-TEST_F(IpcObjectManagerTest, AddRef_IncrementsRefcount)
-{
-    int      dummy = 42;
-    ObjectId object_id{0, 0, 0};
-
-    ASSERT_EQ(manager_->RegisterLocalObject(&dummy, object_id), DAS_S_OK);
-
-    // AddRef twice
-    ASSERT_EQ(manager_->AddRef(object_id), DAS_S_OK);
-    ASSERT_EQ(manager_->AddRef(object_id), DAS_S_OK);
-
-    // Release once - should still be valid
-    ASSERT_EQ(manager_->Release(object_id), DAS_S_OK);
-    EXPECT_TRUE(manager_->IsValidObject(object_id));
-
-    // Release again - should still be valid
-    ASSERT_EQ(manager_->Release(object_id), DAS_S_OK);
-    EXPECT_TRUE(manager_->IsValidObject(object_id));
-
-    // Final release - should be removed
-    ASSERT_EQ(manager_->Release(object_id), DAS_S_OK);
-    EXPECT_FALSE(manager_->IsValidObject(object_id));
-}
-
 // ====== Lookup Tests ======
 
 TEST_F(IpcObjectManagerTest, LookupObject_LocalObject)
@@ -218,20 +178,6 @@ TEST_F(IpcObjectManagerTest, UnregisterObject_InvalidId)
 {
     ObjectId invalid_id{0, 0, 0};
     auto     result = manager_->UnregisterObject(invalid_id);
-    EXPECT_NE(result, DAS_S_OK);
-}
-
-TEST_F(IpcObjectManagerTest, AddRef_InvalidId)
-{
-    ObjectId invalid_id{0, 0, 0};
-    auto     result = manager_->AddRef(invalid_id);
-    EXPECT_NE(result, DAS_S_OK);
-}
-
-TEST_F(IpcObjectManagerTest, Release_InvalidId)
-{
-    ObjectId invalid_id{0, 0, 0};
-    auto     result = manager_->Release(invalid_id);
     EXPECT_NE(result, DAS_S_OK);
 }
 
