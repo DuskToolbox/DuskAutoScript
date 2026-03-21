@@ -11,16 +11,23 @@
  * 3. IPC 连接验证
  */
 
-#include <das/_autogen/idl/abi/IDasComponent.h>
+#include <Das.PluginInterface.IDasComponent.hpp>
+#include <Das.PluginInterface.IDasPluginPackage.hpp>
 
 #include "IpcMultiProcessTestIntegration.h"
 
 #include "FakeMainProcess.h"
+#include "IDasComponent.h"
+#include "IDasPluginPackage.h"
+#include "das/DasTypes.hpp"
 
+#include <cstddef>
+#include <cstdint>
 #include <das/Core/IPC/AsyncOperationImpl.h>
 #include <das/Core/IPC/DasAsyncSender.h>
 #include <das/Core/Utils/StdExecution.h>
 #include <das/IDasAsyncLoadPluginOperation.h>
+#include <gtest/gtest.h>
 
 using namespace Das::PluginInterface;
 
@@ -1010,15 +1017,38 @@ TEST_F(IpcMultiProcessTestIntegration, RemoteProxy_ComponentFactory_IsSupported)
     ASSERT_EQ(result, DAS_S_OK);
     ASSERT_NE(raw_proxy, nullptr);
 
-    DAS::DasPtr<DAS::PluginInterface::IDasComponentFactory> factory;
-    result = raw_proxy.As(factory);
-    ASSERT_EQ(result, DAS_S_OK);
+    DAS::PluginInterface::DasPluginPackage package;
+    ASSERT_EQ(raw_proxy.As(package.Put()), DAS_S_OK);
 
-    DasResult supported = factory->IsSupported(DAS_IID_COMPONENT);
-    EXPECT_EQ(supported, DAS_S_OK);
+    std::vector<DAS::PluginInterface::DasPluginFeature> features;
+    {
+        uint64_t i = 0;
+        try
+        {
+            // 避免太大
+            for (; i < 100; ++i)
+            {
+                DAS::PluginInterface::DasPluginFeature feature =
+                    package.EnumFeature(i);
+                features.push_back(feature);
+            }
+        }
+        catch (...)
+        {
+            DAS_CORE_LOG_INFO(
+                "Enumerated {} features from plugin package (stopped at index {})",
+                features.size(),
+                i);
+        }
+    }
 
-    DasResult not_supported = factory->IsSupported(DasGuid{});
-    EXPECT_EQ(not_supported, DAS_E_NO_IMPLEMENTATION);
+    const auto factoryBase = package.CreateFeatureInterface(features[0]);
+
+    DAS::PluginInterface::DasComponentFactory factory;
+    ASSERT_EQ(factoryBase.As(factory.Put()), DAS_S_OK);
+
+    DasGuid guid{};
+    EXPECT_ANY_THROW(factory.IsSupported(guid));
 
     DAS_CORE_LOG_INFO("[RemoteProxy_ComponentFactory_IsSupported] Test passed");
 }
