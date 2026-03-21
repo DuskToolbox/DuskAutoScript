@@ -477,6 +477,25 @@ class IpcProxyGenerator:
 
 """
 
+        # 检查是否需要 <cstring> (std::strlen for IDasReadOnlyString [in] params)
+        needs_cstring = False
+        if interface:
+            for method in interface.methods:
+                for param in method.parameters:
+                    if param.direction == ParamDirection.IN and param.type_info.base_type == "IDasReadOnlyString":
+                        needs_cstring = True
+                        break
+                if needs_cstring:
+                    break
+            # Also check property-generated methods
+            for prop in getattr(interface, 'properties', []):
+                for param in getattr(prop, 'parameters', []):
+                    if getattr(param, 'direction', None) == ParamDirection.IN and param.type_info.base_type == "IDasReadOnlyString":
+                        needs_cstring = True
+                        break
+                if needs_cstring:
+                    break
+
         # 添加方法参数中使用的接口类型的头文件
         if interface:
             interface_includes = self._collect_interface_includes(interface)
@@ -485,6 +504,10 @@ class IpcProxyGenerator:
                     f'#include "{inc}"' for inc in interface_includes
                 )
                 result += f"{includes_str}\n"
+
+        # 条件添加 <cstring> (for std::strlen with IDasReadOnlyString [in] params)
+        if needs_cstring:
+            result += "#include <cstring>\n"
 
         return result
     
