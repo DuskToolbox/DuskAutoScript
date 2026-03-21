@@ -468,7 +468,6 @@ class IpcProxyGenerator:
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/Serializer.h>
 #include <das/Core/Logger/Logger.h>
-#include <das/Utils/DasPtr.hpp>
 #include <atomic>
 #include <cstdint>
 #include <string>
@@ -1164,7 +1163,20 @@ class IpcProxyGenerator:
                 lines.append(line)
         else:
             if param.type_info.is_pointer and param.type_info.pointer_level >= 1:
-                lines.append(f"{indent}ipc_result = reader.{read_method}({param.name});")
+                # Enum types: read into temp int32_t then cast to enum pointer
+                if param.type_info.base_type in self.type_mapper.enum_types:
+                    lines.append(f"{indent}int32_t {param.name}_temp;")
+                    lines.append(f"{indent}ipc_result = reader.{read_method}(&{param.name}_temp);")
+                    lines.append(f"{indent}if (DAS::IsFailed(ipc_result))")
+                    lines.append(f"{indent}{{")
+                    if has_return:
+                        lines.append(f"{indent}    return ipc_result;")
+                    else:
+                        lines.append(f"{indent}    return;")
+                    lines.append(f"{indent}}}")
+                    lines.append(f"{indent}*{param.name} = static_cast<{param.type_info.base_type}>({param.name}_temp);")
+                else:
+                    lines.append(f"{indent}ipc_result = reader.{read_method}({param.name});")
             else:
                 lines.append(f"{indent}ipc_result = reader.{read_method}(&{param.name});")
         

@@ -681,7 +681,7 @@ class IpcStubGenerator:
             # Empty interface -- skip switch to avoid MSVC C4065 (no case labels)
             lines.append(f"{indent}DasResult DispatchMethod(")
             lines.append(f"{indent}    uint16_t method_id,")
-            lines.append(f"{indent}    IDasBase* impl,")
+            lines.append(f"{indent}    void* impl,")
             lines.append(f"{indent}    const uint8_t* params,")
             lines.append(f"{indent}    size_t params_size,")
             lines.append(f"{indent}    Das::Core::IPC::DistributedObjectManager& object_manager,")
@@ -699,7 +699,7 @@ class IpcStubGenerator:
 
         lines.append(f"{indent}DasResult DispatchMethod(")
         lines.append(f"{indent}    uint16_t method_id,")
-        lines.append(f"{indent}    IDasBase* impl,")
+        lines.append(f"{indent}    void* impl,")
         lines.append(f"{indent}    const uint8_t* params,")
         lines.append(f"{indent}    size_t params_size,")
         lines.append(f"{indent}    Das::Core::IPC::DistributedObjectManager& object_manager,")
@@ -867,7 +867,17 @@ class IpcStubGenerator:
                 else:
                     call_params.append(f"&{local_name}")
             else:
-                call_params.append(f"{local_name}")
+                # [in] parameters: struct pointers (non-interface) need & prefix
+                # e.g., const DasRect* - deserialize into local struct, pass &local_name
+                full_type_name = _get_full_type_name(param.type_info)
+                is_interface = self.type_mapper.is_interface_type(full_type_name)
+                if not is_interface:
+                    base_name = param.type_info.base_type.split("::")[-1]
+                    is_interface = (base_name.startswith("I") and "Das" in base_name)
+                if param.type_info.is_pointer and param.type_info.pointer_level >= 1 and not is_interface:
+                    call_params.append(f"&{local_name}")
+                else:
+                    call_params.append(f"{local_name}")
 
         params_str = ", ".join(call_params) if call_params else ""
 
@@ -1043,8 +1053,19 @@ class IpcStubGenerator:
                 lines.append(f"{indent}{param.type_info.base_type} {local_name};")
                 lines.append(f"{indent}// TODO: Deserialize struct {param.type_info.base_type}")
         else:
-            lines.append(f"{indent}{cpp_type} {local_name};")
-            lines.append(f"{indent}serial_result = reader.{read_method}(&{local_name});")
+            # Enum types: declare with enum type, read into temp int32_t, then cast
+            if param.type_info.base_type in self.type_mapper.enum_types:
+                lines.append(f"{indent}{param.type_info.base_type} {local_name};")
+                lines.append(f"{indent}int32_t {local_name}_temp;")
+                lines.append(f"{indent}serial_result = reader.{read_method}(&{local_name}_temp);")
+                lines.append(f"{indent}if (DAS::IsFailed(serial_result))")
+                lines.append(f"{indent}{{")
+                lines.append(f"{indent}    return serial_result;")
+                lines.append(f"{indent}}}")
+                lines.append(f"{indent}{local_name} = static_cast<{param.type_info.base_type}>({local_name}_temp);")
+            else:
+                lines.append(f"{indent}{cpp_type} {local_name};")
+                lines.append(f"{indent}serial_result = reader.{read_method}(&{local_name});")
 
         lines.append(f"{indent}if (DAS::IsFailed(serial_result))")
         lines.append(f"{indent}{{")
