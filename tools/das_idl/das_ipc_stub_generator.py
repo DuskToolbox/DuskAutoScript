@@ -105,6 +105,13 @@ class StubTypeMapper:
                 self.struct_types.add(full_name)
                 self.struct_defs[full_name] = struct
 
+        # 收集所有 enum 类型（来自当前文档）
+        self.enum_types = set()
+        for enum in document.enums:
+            self.enum_types.add(enum.name)
+            if enum.namespace:
+                self.enum_types.add(f"{enum.namespace}::{enum.name}")
+
         # 收集接口名 -> 命名空间映射（用于跨命名空间类型引用）
         self.interface_namespaces = {}  # interface_name -> namespace
         self.interface_header_files = {}  # interface_name -> header_filename
@@ -134,7 +141,11 @@ class StubTypeMapper:
         if idl_type in self.struct_types:
             # struct 类型使用 Serialize_/Deserialize_ 函数
             return (idl_type, None, None, True)
-        
+
+        # 检查 enum 类型 -> 映射为 int32_t
+        if idl_type in self.enum_types:
+            return ('int32_t', 'WriteInt32', 'ReadInt32', False)
+
         return None
     
     def is_basic_type(self, idl_type: str) -> bool:
@@ -254,6 +265,32 @@ class StubTypeMapper:
             if iface_name not in self.interface_header_files:
                 self.interface_header_files[iface_name] = header_name
 
+    def load_external_definitions(self, idl_dirs: List[str]) -> None:
+        """Load enum and struct definitions from all IDL files in given directories.
+
+        This enables cross-IDL type references (e.g., DasRect from DasBasicTypes.idl
+        used in methods defined in other IDL files).
+        """
+        import glob
+        for idl_dir in idl_dirs:
+            for idl_path in glob.glob(os.path.join(idl_dir, "*.idl")):
+                try:
+                    ext_doc = parse_idl_file(idl_path)
+                    for enum in ext_doc.enums:
+                        self.enum_types.add(enum.name)
+                        if enum.namespace:
+                            self.enum_types.add(f"{enum.namespace}::{enum.name}")
+                    for struct in ext_doc.structs:
+                        if struct.name not in self.struct_defs:
+                            self.struct_types.add(struct.name)
+                            self.struct_defs[struct.name] = struct
+                            if struct.namespace:
+                                full_name = f"{struct.namespace}::{struct.name}"
+                                self.struct_types.add(full_name)
+                                self.struct_defs[full_name] = struct
+                except Exception:
+                    pass  # Skip unparseable files
+
 
 def fnv1a_hash(data: str) -> int:
     """计算字符串的 FNV-1a 32-bit hash"""
@@ -313,6 +350,10 @@ class IpcStubGenerator:
         self.idl_file_name = os.path.basename(idl_file_path) if idl_file_path else None
         self.indent = "    "  # 4 空格缩进
         self.type_mapper = StubTypeMapper(document)
+        # Load external enum/struct definitions from all IDL directories
+        if idl_file_path:
+            idl_base_dir = str(Path(idl_file_path).resolve().parent)
+            self.type_mapper.load_external_definitions([idl_base_dir])
 
     @staticmethod
     def _properties_to_methods(properties: list) -> list:
@@ -388,6 +429,7 @@ class IpcStubGenerator:
 
         includes = []
         includes.append("#include <das/DasTypes.hpp>")
+        includes.append("#include <das/IDasBase.h>")
         includes.append("#include <das/Core/IPC/IStubBase.h>")
         includes.append("#include <das/Core/IPC/MemorySerializer.h>")
         includes.append("#include <das/Core/IPC/DistributedObjectManager.h>")
@@ -639,7 +681,7 @@ class IpcStubGenerator:
             # Empty interface -- skip switch to avoid MSVC C4065 (no case labels)
             lines.append(f"{indent}DasResult DispatchMethod(")
             lines.append(f"{indent}    uint16_t method_id,")
-            lines.append(f"{indent}    void* impl,")
+            lines.append(f"{indent}    IDasBase* impl,")
             lines.append(f"{indent}    const uint8_t* params,")
             lines.append(f"{indent}    size_t params_size,")
             lines.append(f"{indent}    Das::Core::IPC::DistributedObjectManager& object_manager,")
@@ -657,7 +699,7 @@ class IpcStubGenerator:
 
         lines.append(f"{indent}DasResult DispatchMethod(")
         lines.append(f"{indent}    uint16_t method_id,")
-        lines.append(f"{indent}    void* impl,")
+        lines.append(f"{indent}    IDasBase* impl,")
         lines.append(f"{indent}    const uint8_t* params,")
         lines.append(f"{indent}    size_t params_size,")
         lines.append(f"{indent}    Das::Core::IPC::DistributedObjectManager& object_manager,")

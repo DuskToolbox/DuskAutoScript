@@ -98,7 +98,7 @@ class ProxyTypeMapper:
     
     def __init__(self, document: IdlDocument):
         """初始化类型映射器
-        
+
         Args:
             document: IDL 文档，用于获取 struct 定义
         """
@@ -114,6 +114,13 @@ class ProxyTypeMapper:
                 full_name = f"{struct.namespace}::{struct.name}"
                 self.struct_types.add(full_name)
                 self.struct_defs[full_name] = struct
+
+        # 收集所有 enum 类型（来自当前文档）
+        self.enum_types = set()
+        for enum in document.enums:
+            self.enum_types.add(enum.name)
+            if enum.namespace:
+                self.enum_types.add(f"{enum.namespace}::{enum.name}")
 
         # 收集接口名 -> 命名空间映射（用于跨命名空间类型引用）
         self.interface_namespaces = {}  # interface_name -> namespace
@@ -144,7 +151,11 @@ class ProxyTypeMapper:
         if idl_type in self.struct_types:
             # struct 类型使用内联字段逐一序列化
             return (idl_type, None, None, True)
-        
+
+        # 检查 enum 类型 -> 映射为 int32_t
+        if idl_type in self.enum_types:
+            return ('int32_t', 'WriteInt32', 'ReadInt32', False)
+
         return None
     
     def is_basic_type(self, idl_type: str) -> bool:
@@ -255,6 +266,32 @@ class ProxyTypeMapper:
             except Exception:
                 pass
 
+    def load_external_definitions(self, idl_dirs: List[str]) -> None:
+        """Load enum and struct definitions from all IDL files in given directories.
+
+        This enables cross-IDL type references (e.g., DasRect from DasBasicTypes.idl
+        used in methods defined in other IDL files).
+        """
+        import glob
+        for idl_dir in idl_dirs:
+            for idl_path in glob.glob(os.path.join(idl_dir, "*.idl")):
+                try:
+                    ext_doc = parse_idl_file(idl_path)
+                    for enum in ext_doc.enums:
+                        self.enum_types.add(enum.name)
+                        if enum.namespace:
+                            self.enum_types.add(f"{enum.namespace}::{enum.name}")
+                    for struct in ext_doc.structs:
+                        if struct.name not in self.struct_defs:
+                            self.struct_types.add(struct.name)
+                            self.struct_defs[struct.name] = struct
+                            if struct.namespace:
+                                full_name = f"{struct.namespace}::{struct.name}"
+                                self.struct_types.add(full_name)
+                                self.struct_defs[full_name] = struct
+                except Exception:
+                    pass  # Skip unparseable files
+
 
 def fnv1a_hash(data: str) -> int:
     """计算字符串的 FNV-1a 32-bit hash
@@ -322,6 +359,10 @@ class IpcProxyGenerator:
         self.idl_file_name = os.path.basename(idl_file_path) if idl_file_path else None
         self.indent = "    "  # 4 空格缩进
         self.type_mapper = ProxyTypeMapper(document)
+        # Load external enum/struct definitions from all IDL directories
+        if idl_file_path:
+            idl_base_dir = str(Path(idl_file_path).resolve().parent)
+            self.type_mapper.load_external_definitions([idl_base_dir])
         # 额外的接口命名空间映射（来自其他 IDL 文件的接口）
         if extra_interface_namespaces:
             self.type_mapper.interface_namespaces.update(extra_interface_namespaces)
@@ -427,6 +468,7 @@ class IpcProxyGenerator:
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/Serializer.h>
 #include <das/Core/Logger/Logger.h>
+#include <das/Utils/DasPtr.hpp>
 #include <atomic>
 #include <cstdint>
 #include <string>
@@ -950,9 +992,35 @@ class IpcProxyGenerator:
         """生成参数序列化代码"""
         lines = []
 
-        # 检查是否是接口指针类型
-        if self.type_mapper.is_interface_type(param.type_info.base_type):
-            interface_name = self.type_mapper.get_interface_name(param.type_info.base_type)
+        # IDasReadOnlyString [in] 参数特殊处理: GetUtf8 + WriteString
+        if param.type_info.base_type == "IDasReadOnlyString":
+            pn = param.name
+            lines.append(f"{indent}// 序列化 IDasReadOnlyString [in] 参数")
+            lines.append(f"{indent}const char* {pn}_u8 = nullptr;")
+            lines.append(f"{indent}ipc_result = {pn}->GetUtf8(&{pn}_u8);")
+            lines.append(f"{indent}if (DAS::IsFailed(ipc_result))")
+            lines.append(f"{indent}{{")
+            lines.append(f"{indent}    return ipc_result;")
+            lines.append(f"{indent}}}")
+            lines.append(f"{indent}ipc_result = writer.WriteString({pn}_u8, std::strlen({pn}_u8));")
+            lines.append(f"{indent}if (DAS::IsFailed(ipc_result))")
+            lines.append(f"{indent}{{")
+            lines.append(f"{indent}    return ipc_result;")
+            lines.append(f"{indent}}}")
+            return lines
+
+        # 构建完整类型名（带指针）用于接口检测
+        full_type_for_check = param.type_info.base_type
+        if param.type_info.is_pointer:
+            full_type_for_check += "*" * param.type_info.pointer_level
+        is_iface = self.type_mapper.is_interface_type(full_type_for_check)
+        if not is_iface:
+            # Fallback: check if base_type looks like interface name (I + Das)
+            base_check = param.type_info.base_type.split("::")[-1]
+            is_iface = (base_check.startswith("I") and "Das" in base_check
+                        and param.type_info.is_pointer and param.type_info.pointer_level >= 1)
+        if is_iface:
+            interface_name = param.type_info.base_type.split("::")[-1]
             param_name = param.name
 
             # 获取 ObjectId 并序列化
