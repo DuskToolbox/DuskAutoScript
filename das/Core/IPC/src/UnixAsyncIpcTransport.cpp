@@ -499,20 +499,22 @@ boost::asio::awaitable<DasResult> UnixAsyncIpcTransport::SendCoroutine(
     const uint8_t*                   body,
     size_t                           body_size)
 {
-    co_await boost::asio::async_write(
-        socket_,
-        boost::asio::buffer(
-            static_cast<const IPCMessageHeader*>(header),
-            sizeof(IPCMessageHeader)),
-        boost::asio::use_awaitable);
-
+    // 合并 header + body 到单一连续缓冲区，确保单次 write 系统调用
+    // 防止协程切换时其他 SendCoroutine 的数据交错到 socket 中
+    std::vector<uint8_t> send_buffer;
+    send_buffer.reserve(sizeof(IPCMessageHeader) + body_size);
+    const auto* header_bytes = reinterpret_cast<const uint8_t*>(
+        static_cast<const IPCMessageHeader*>(header));
+    send_buffer.assign(header_bytes, header_bytes + sizeof(IPCMessageHeader));
     if (body_size > 0)
     {
-        co_await boost::asio::async_write(
-            socket_,
-            boost::asio::buffer(body, body_size),
-            boost::asio::use_awaitable);
+        send_buffer.insert(send_buffer.end(), body, body + body_size);
     }
+
+    co_await boost::asio::async_write(
+        socket_,
+        boost::asio::buffer(send_buffer),
+        boost::asio::use_awaitable);
 
     co_return DAS_S_OK;
 }

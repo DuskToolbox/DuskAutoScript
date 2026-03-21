@@ -93,7 +93,7 @@ void BusinessThread::DispatchMessage(InboundMessage& msg)
 {
     const auto& header = msg.header;
 
-    DAS_CORE_LOG_DEBUG(
+    DAS_CORE_LOG_INFO(
         "BusinessThread::DispatchMessage: msg_type={}, interface_id={}, call_id={}",
         static_cast<int>(header.GetMessageType()),
         header.GetInterfaceId(),
@@ -120,17 +120,31 @@ void BusinessThread::DispatchMessage(InboundMessage& msg)
             IpcResponseSender sender(run_loop_);
 
             // 传递 object_manager 给 handler
-            auto result = handler->HandleMessage(
-                header,
-                msg.body,
-                sender,
-                *object_manager_);
-
-            if (DAS::IsFailed(result))
+            try
             {
-                DAS_CORE_LOG_WARN(
-                    "BusinessThread: handler returned error: {}",
-                    result);
+                auto result = handler->HandleMessage(
+                    header,
+                    msg.body,
+                    sender,
+                    *object_manager_);
+
+                if (DAS::IsFailed(result))
+                {
+                    DAS_CORE_LOG_WARN(
+                        "BusinessThread: handler returned error: {}",
+                        result);
+                }
+            }
+            catch (const std::exception& e)
+            {
+                DAS_CORE_LOG_ERROR(
+                    "BusinessThread: handler threw exception: {}",
+                    e.what());
+            }
+            catch (...)
+            {
+                DAS_CORE_LOG_ERROR(
+                    "BusinessThread: handler threw unknown exception");
             }
         }
         else

@@ -605,10 +605,25 @@ DasResult IpcRunLoop::PostSend(
                  header,
                  body = std::move(body)]() -> boost::asio::awaitable<void>
                 {
-                    co_await transport->SendCoroutine(
-                        header,
-                        body.data(),
-                        body.size());
+                    try
+                    {
+                        auto result = co_await transport->SendCoroutine(
+                            header,
+                            body.data(),
+                            body.size());
+                        if (result != DAS_S_OK)
+                        {
+                            DAS_CORE_LOG_ERROR(
+                                "PostSend: SendCoroutine failed, result={}",
+                                result);
+                        }
+                    }
+                    catch (const std::exception& e)
+                    {
+                        DAS_CORE_LOG_ERROR(
+                            "PostSend: SendCoroutine exception: {}",
+                            ToString(e.what()));
+                    }
                 },
                 boost::asio::detached);
         });

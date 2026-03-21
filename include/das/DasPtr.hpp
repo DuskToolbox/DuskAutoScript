@@ -5,6 +5,7 @@
 #include <das/DasConfig.h>
 #include <das/DasGuidHolder.h>
 #include <das/DasTypes.hpp>
+#include <das/IDasBase.h>
 #include <functional>
 #include <utility>
 
@@ -101,16 +102,25 @@ public:
     }
     ~DasPtr() noexcept { InternalRelease(); }
     [[nodiscard]]
-    T*   operator->() const noexcept { return ptr_; }
+    T* operator->() const noexcept
+    {
+        return ptr_;
+    }
     [[nodiscard]]
-    T&   operator*() const noexcept { return *ptr_; }
+    T& operator*() const noexcept
+    {
+        return *ptr_;
+    }
     [[nodiscard]]
     bool operator==(const DasPtr<T>& other) const noexcept
     {
         return ptr_ == other.ptr_;
     }
     [[nodiscard]]
-    explicit operator bool() const noexcept { return Get() != nullptr; }
+    explicit operator bool() const noexcept
+    {
+        return Get() != nullptr;
+    }
     template <class Other>
     [[nodiscard]]
     Other* As(const DasGuid& id) const
@@ -132,7 +142,7 @@ public:
         {
             const auto query_interface_result =
                 ptr_->QueryInterface(DasIidOf<Other>(), &result);
-            if (IsFailed(query_interface_result))
+            if (DAS::IsFailed(query_interface_result))
             {
                 return query_interface_result;
             }

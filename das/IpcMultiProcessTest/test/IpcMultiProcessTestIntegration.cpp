@@ -1005,7 +1005,6 @@ TEST_F(IpcMultiProcessTestIntegration, RemoteProxy_ComponentFactory_IsSupported)
     std::string plugin_path =
         IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin2");
 
-    // 1. Load plugin
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
     result =
         ctx_->LoadPluginAsync(launcher_.Get(), plugin_path.c_str(), op.Put());
@@ -1020,29 +1019,23 @@ TEST_F(IpcMultiProcessTestIntegration, RemoteProxy_ComponentFactory_IsSupported)
     ASSERT_EQ(load_result, DAS_S_OK);
     EXPECT_EQ(factory_id.session_id, launcher_->GetSessionId());
 
-    // 2. Create remote proxy
-    IDasBase* raw_proxy = nullptr;
+    DAS::DasPtr<IDasBase> raw_proxy;
     result = ctx_->CreateRemoteProxy(
         factory_id,
-        DAS_IID_COMPONENT_FACTORY,
-        &raw_proxy);
+        DasIidOf<IDasBase>(),
+        raw_proxy.Put());
     ASSERT_EQ(result, DAS_S_OK);
     ASSERT_NE(raw_proxy, nullptr);
 
-    auto* factory =
-        static_cast<Das::PluginInterface::IDasComponentFactory*>(raw_proxy);
+    DAS::DasPtr<DAS::PluginInterface::IDasComponentFactory> factory;
+    result = raw_proxy.As(factory);
+    ASSERT_EQ(result, DAS_S_OK);
 
-    // 3. Call IsSupported - should return DAS_S_OK for IDasComponent
     DasResult supported = factory->IsSupported(DAS_IID_COMPONENT);
     EXPECT_EQ(supported, DAS_S_OK);
 
-    // 4. Call IsSupported with wrong IID - should return
-    // DAS_E_NO_IMPLEMENTATION
     DasResult not_supported = factory->IsSupported(DasGuid{});
     EXPECT_EQ(not_supported, DAS_E_NO_IMPLEMENTATION);
-
-    // 5. Release
-    factory->Release();
 
     DAS_LOG_INFO("[RemoteProxy_ComponentFactory_IsSupported] Test passed");
 }
@@ -1066,14 +1059,12 @@ TEST_F(
         GTEST_SKIP() << "DasHost.exe not found";
     }
 
-    // 1. 启动 Host 并加载 IpcTestPlugin2
     DasResult result = StartHostAndSetupRunLoop();
     ASSERT_EQ(result, DAS_S_OK);
 
     std::string plugin_path =
         IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin2");
 
-    // 2. Load plugin → get factory ObjectId
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
     result =
         ctx_->LoadPluginAsync(launcher_.Get(), plugin_path.c_str(), op.Put());
@@ -1088,7 +1079,6 @@ TEST_F(
     ASSERT_EQ(load_result, DAS_S_OK);
     EXPECT_EQ(factory_id.session_id, launcher_->GetSessionId());
 
-    // 3. CreateRemoteProxy → IDasComponentFactory*
     IDasBase* factory_base = nullptr;
     result = ctx_->CreateRemoteProxy(
         factory_id,
@@ -1100,19 +1090,15 @@ TEST_F(
     auto* factory =
         static_cast<Das::PluginInterface::IDasComponentFactory*>(factory_base);
 
-    // 4. Call CreateInstance — this is the [out] interface pointer test
     Das::PluginInterface::IDasComponent* component = nullptr;
     result = factory->CreateInstance(DAS_IID_COMPONENT, &component);
     ASSERT_EQ(result, DAS_S_OK);
     ASSERT_NE(component, nullptr);
 
-    // 5. Verify the remote proxy is functional by calling a method (GetGuid
-    // from IDasTypeInfo)
     DasGuid guid{};
     result = component->GetGuid(&guid);
     EXPECT_EQ(result, DAS_S_OK);
 
-    // 6. Release in correct order
     component->Release();
     factory->Release();
 

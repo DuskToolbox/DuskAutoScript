@@ -79,7 +79,7 @@ namespace Core
             std::end(sinks));
         spdlog::register_logger(result);
         spdlog::set_pattern(
-            "[%Y-%m-%d %H:%M:%S.%e][%t][%l][%!()][%s:%#][%i] %v");
+            "[%Y-%m-%d %H:%M:%S.%e][%t][%^%l%$][%!()][%s:%#][%i] %v");
 
         spdlog::set_level(spdlog::level::trace);
 

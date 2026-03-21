@@ -708,20 +708,23 @@ boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::SendCoroutine(
     const uint8_t*                   body,
     size_t                           body_size)
 {
-    co_await boost::asio::async_write(
-        write_pipe_,
-        boost::asio::buffer(
-            static_cast<const IPCMessageHeader*>(header),
-            sizeof(IPCMessageHeader)),
-        boost::asio::use_awaitable);
-
+    // 合并 header + body 到单一连续缓冲区，确保单次 WriteFile 调用
+    // Windows named pipe 的 WriteFile 对单次调用保证原子性（<64KB）
+    // scatter-gather async_write 内部仍然是多次 WriteFile，无法防止协程间交错
+    std::vector<uint8_t> send_buffer;
+    send_buffer.reserve(sizeof(IPCMessageHeader) + body_size);
+    const auto* header_bytes = reinterpret_cast<const uint8_t*>(
+        static_cast<const IPCMessageHeader*>(header));
+    send_buffer.assign(header_bytes, header_bytes + sizeof(IPCMessageHeader));
     if (body_size > 0)
     {
-        co_await boost::asio::async_write(
-            write_pipe_,
-            boost::asio::buffer(body, body_size),
-            boost::asio::use_awaitable);
+        send_buffer.insert(send_buffer.end(), body, body + body_size);
     }
+
+    co_await boost::asio::async_write(
+        write_pipe_,
+        boost::asio::buffer(send_buffer),
+        boost::asio::use_awaitable);
 
     co_return DAS_S_OK;
 }

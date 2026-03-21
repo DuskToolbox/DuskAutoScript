@@ -206,6 +206,9 @@ void RegisterLoadPluginHandler(DAS::Core::IPC::Host::IIpcContext* ctx)
             }
 
             auto                     plugin_ptr = result.value();
+
+            // 直接注册 IDasBase*（实际为 IDasPluginPackage），
+            // 主进程通过 QueryInterface → EnumFeature → CreateFeatureInterface 远程获取
             DAS::Core::IPC::ObjectId object_id;
             DasResult                reg_result =
                 ctx->RegisterLocalObject(plugin_ptr.Get(), object_id);
@@ -213,7 +216,7 @@ void RegisterLoadPluginHandler(DAS::Core::IPC::Host::IIpcContext* ctx)
             if (DAS::IsFailed(reg_result))
             {
                 std::string msg = DAS_FMT_NS::format(
-                    "[LOAD_PLUGIN] 对象注册失败: {:#x}",
+                    "[LOAD_PLUGIN] 对象注册失败: {}",
                     static_cast<uint32_t>(reg_result));
                 DAS_LOG_ERROR(msg.c_str());
                 response.error_code = reg_result;
