@@ -2,6 +2,7 @@
 #include <das/Core/IPC/IStubBase.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/Logger/Logger.h>
+#include <das/DasPtr.hpp>
 
 DAS_CORE_IPC_NS_BEGIN
 
@@ -71,10 +72,10 @@ DasResult IStubBase::HandleMessage(
         return DAS_E_IPC_INVALID_MESSAGE_BODY;
     }
 
-    // 2. 通过 ObjectManager 查找 impl 指针
-    void*     impl_ptr = nullptr;
-    DasResult lookup_result =
-        object_manager.LookupObject(target_object, &impl_ptr);
+    // 2. 通过 ObjectManager 查找 impl 指针（LookupObject 内部 AddRef）
+    DAS::DasPtr<IDasBase> impl_holder;
+    DasResult             lookup_result =
+        object_manager.LookupObject(target_object, impl_holder.Put());
 
     if (DAS::IsFailed(lookup_result))
     {
@@ -107,7 +108,7 @@ DasResult IStubBase::HandleMessage(
     std::vector<uint8_t> response_body;
     DasResult            dispatch_result = DispatchMethod(
         method_id,
-        impl_ptr,
+        static_cast<void*>(impl_holder.Get()),
         params,
         params_size,
         object_manager,

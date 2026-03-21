@@ -2,14 +2,18 @@
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IpcRunLoop.h>
-#include <memory>
+#include <das/IDasBase.h>
 #include <unordered_map>
 
 DAS_CORE_IPC_NS_BEGIN
 
 DistributedObjectManager::DistributedObjectManager() = default;
 
-DistributedObjectManager::~DistributedObjectManager() { objects_.clear(); }
+DistributedObjectManager::~DistributedObjectManager()
+{
+    // DasPtr 析构自动 Release 所有本地对象
+    objects_.clear();
+}
 
 uint16_t DistributedObjectManager::GetLocalSessionId() const
 {
@@ -21,7 +25,7 @@ uint16_t DistributedObjectManager::GetLocalSessionId() const
 }
 
 DasResult DistributedObjectManager::RegisterLocalObject(
-    void*     object_ptr,
+    IDasBase* object_ptr,
     ObjectId& out_object_id)
 {
     if (object_ptr == nullptr)
@@ -47,9 +51,10 @@ DasResult DistributedObjectManager::RegisterLocalObject(
         .generation = generation,
         .local_id = local_id};
 
+    // DasPtr 构造函数自动 AddRef
     ObjectEntry entry{
         .object_id = obj_id,
-        .object_ptr = object_ptr,
+        .object_ptr = DAS::DasPtr<IDasBase>(object_ptr),
         .is_local = true};
 
     objects_[obj_id] = entry;
@@ -91,9 +96,7 @@ DasResult DistributedObjectManager::UnregisterObject(const ObjectId& object_id)
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 
-    // Save before erase
-    void* object_ptr = it->second.object_ptr;
-    bool  is_local = it->second.is_local;
+    bool is_local = it->second.is_local;
 
     if (is_local)
     {
@@ -101,20 +104,15 @@ DasResult DistributedObjectManager::UnregisterObject(const ObjectId& object_id)
             IncrementGeneration(object_id.generation);
     }
 
+    // DasPtr 析构自动 Release
     objects_.erase(it);
-
-    // Release COM object for local objects (balances Stub's AddRef)
-    if (is_local && object_ptr != nullptr)
-    {
-        static_cast<IDasBase*>(object_ptr)->Release();
-    }
 
     return DAS_S_OK;
 }
 
 DasResult DistributedObjectManager::LookupObject(
     const ObjectId& object_id,
-    void**          object_ptr)
+    IDasBase**      object_ptr)
 {
     if (object_ptr == nullptr)
     {
@@ -147,7 +145,9 @@ DasResult DistributedObjectManager::LookupObject(
         return DAS_E_IPC_INVALID_OBJECT_ID;
     }
 
-    *object_ptr = it->second.object_ptr;
+    // COM 规范：通过输出参数返回引用计数对象必须 AddRef
+    *object_ptr = it->second.object_ptr.Get();
+    (*object_ptr)->AddRef();
     return DAS_S_OK;
 }
 

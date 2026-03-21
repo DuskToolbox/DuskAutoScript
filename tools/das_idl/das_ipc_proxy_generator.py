@@ -828,9 +828,9 @@ class IpcProxyGenerator:
         lines.append(f"{indent}// Check if target is local object")
         lines.append(f"{indent}auto& obj_mgr = GetObjectManager();")
         lines.append(f"{indent}if (obj_mgr.IsLocalObject(GetObjectId())) {{")
-        lines.append(f"{indent}    void* obj_ptr = nullptr;")
-        lines.append(f"{indent}    obj_mgr.LookupObject(GetObjectId(), &obj_ptr);")
-        lines.append(f"{indent}    auto* local_impl = static_cast<{interface.name}*>(obj_ptr);")
+        lines.append(f"{indent}    DAS::DasPtr<IDasBase> obj_holder;")
+        lines.append(f"{indent}    obj_mgr.LookupObject(GetObjectId(), obj_holder.Put());")
+        lines.append(f"{indent}    auto* local_impl = static_cast<{interface.name}*>(obj_holder.Get());")
 
         # 本地调用
         if has_return:

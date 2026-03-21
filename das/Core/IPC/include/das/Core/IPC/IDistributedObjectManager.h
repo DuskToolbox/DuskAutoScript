@@ -13,11 +13,11 @@ struct IDistributedObjectManager
 {
 
     /// 注册本地对象
-    /// @param object_ptr 对象指针
+    /// @param object_ptr 对象指针（会被 AddRef）
     /// @param out_object_id 输出分配的对象ID
     /// @return DasResult
     virtual DasResult RegisterLocalObject(
-        void*     object_ptr,
+        IDasBase* object_ptr,
         ObjectId& out_object_id) = 0;
 
     /// 注册远程对象
@@ -30,13 +30,13 @@ struct IDistributedObjectManager
     /// @return DasResult
     virtual DasResult UnregisterObject(const ObjectId& object_id) = 0;
 
-    /// 查找对象
+    /// 查找对象（返回 AddRef'd 指针，调用者负责 Release）
     /// @param object_id 对象ID
-    /// @param object_ptr 输出对象指针
+    /// @param object_ptr 输出 AddRef'd 的对象指针
     /// @return DasResult
     virtual DasResult LookupObject(
         const ObjectId& object_id,
-        void**          object_ptr) = 0;
+        IDasBase**      object_ptr) = 0;
 
     /// 检查对象是否有效
     /// @param object_id 对象ID

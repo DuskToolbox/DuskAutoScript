@@ -12,9 +12,12 @@
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
+#include <das/DasPtr.hpp>
 #include <das/DasTypes.hpp>
 #include <das/IDasBase.h>
 #include <gtest/gtest.h>
+
+#include "MockDasObject.h"
 
 using DAS::Core::IPC::DecodeObjectId;
 using DAS::Core::IPC::DistributedObjectManager;
@@ -102,8 +105,8 @@ TEST_F(IpcObjectIdIntegrationTest, ObjectId_IsNull)
 TEST_F(IpcObjectIdIntegrationTest, DistributedObjectManager_RegisterLocalObject)
 {
     // 测试注册本地对象
-    void*     test_object = reinterpret_cast<void*>(0x12345678);
-    ObjectId  out_object_id{};
+    auto     test_object = new MockDasObject();
+    ObjectId out_object_id{};
     DasResult result =
         object_manager_->RegisterLocalObject(test_object, out_object_id);
 
@@ -133,24 +136,25 @@ TEST_F(
 TEST_F(IpcObjectIdIntegrationTest, DistributedObjectManager_LookupObject)
 {
     // 注册本地对象
-    void*    test_object = reinterpret_cast<void*>(0x12345678);
+    auto     test_object = new MockDasObject();
     ObjectId object_id{};
     ASSERT_EQ(
         object_manager_->RegisterLocalObject(test_object, object_id),
         DAS_S_OK);
 
-    // 查找对象
-    void*     found_object = nullptr;
-    DasResult result = object_manager_->LookupObject(object_id, &found_object);
+    // 查找对象（LookupObject 内部 AddRef）
+    DAS::DasPtr<IDasBase> found_holder;
+    DasResult             result =
+        object_manager_->LookupObject(object_id, found_holder.Put());
 
     ASSERT_EQ(result, DAS_S_OK);
-    EXPECT_EQ(found_object, test_object);
+    EXPECT_EQ(found_holder.Get(), test_object);
 }
 
 TEST_F(IpcObjectIdIntegrationTest, DistributedObjectManager_IsValidObject)
 {
     // 注册本地对象
-    void*    test_object = reinterpret_cast<void*>(0x12345678);
+    auto     test_object = new MockDasObject();
     ObjectId object_id{};
     ASSERT_EQ(
         object_manager_->RegisterLocalObject(test_object, object_id),
@@ -272,7 +276,7 @@ TEST_F(IpcObjectIdIntegrationTest, LocalObjectFallback_IsLocal)
 {
     // 测试 IsLocalObject 判断
     // 1. 注册本地对象
-    void*    local_object = reinterpret_cast<void*>(0x1000);
+    auto     local_object = new MockDasObject();
     ObjectId local_id{};
     ASSERT_EQ(
         object_manager_->RegisterLocalObject(local_object, local_id),
@@ -293,18 +297,19 @@ TEST_F(IpcObjectIdIntegrationTest, LocalObjectFallback_LookupLocal)
 {
     // 测试本地对象查找
     // 1. 注册本地对象
-    void*    test_object = reinterpret_cast<void*>(0x2000);
+    auto     test_object = new MockDasObject();
     ObjectId object_id{};
     ASSERT_EQ(
         object_manager_->RegisterLocalObject(test_object, object_id),
         DAS_S_OK);
 
-    // 2. 查找本地对象
-    void*     found = nullptr;
-    DasResult result = object_manager_->LookupObject(object_id, &found);
+    // 2. 查找本地对象（LookupObject 内部 AddRef）
+    DAS::DasPtr<IDasBase> found_holder;
+    DasResult             result =
+        object_manager_->LookupObject(object_id, found_holder.Put());
 
     ASSERT_EQ(result, DAS_S_OK);
-    EXPECT_EQ(found, test_object);
+    EXPECT_EQ(found_holder.Get(), test_object);
 
     // 3. 验证是本地对象
     EXPECT_TRUE(object_manager_->IsLocalObject(object_id));
@@ -318,8 +323,9 @@ TEST_F(IpcObjectIdIntegrationTest, LocalObjectFallback_RemoteLookup)
     ASSERT_EQ(object_manager_->RegisterRemoteObject(remote_id), DAS_S_OK);
 
     // 2. 尝试查找远程对象（因为没有指针，应该返回错误或 nullptr）
-    void*     found = nullptr;
-    DasResult result = object_manager_->LookupObject(remote_id, &found);
+    DAS::DasPtr<IDasBase> found_holder;
+    DasResult             result =
+        object_manager_->LookupObject(remote_id, found_holder.Put());
 
     // 远程对象在本地没有指针，返回错误是预期行为
     EXPECT_NE(result, DAS_S_OK);
@@ -333,7 +339,7 @@ TEST_F(IpcObjectIdIntegrationTest, InterfacePointer_EncodeDecode)
     // 这模拟了接口指针参数序列化场景
 
     // 1. 创建本地对象并获取 ObjectId
-    void*    interface_ptr = reinterpret_cast<void*>(0x3000);
+    auto     interface_ptr = new MockDasObject();
     ObjectId object_id{};
     ASSERT_EQ(
         object_manager_->RegisterLocalObject(interface_ptr, object_id),
@@ -346,12 +352,13 @@ TEST_F(IpcObjectIdIntegrationTest, InterfacePointer_EncodeDecode)
     // 3. 解码 ObjectId（模拟反序列化）
     ObjectId decoded = DecodeObjectId(encoded);
 
-    // 4. 查找对象
-    void*     found_ptr = nullptr;
-    DasResult result = object_manager_->LookupObject(decoded, &found_ptr);
+    // 4. 查找对象（LookupObject 内部 AddRef）
+    DAS::DasPtr<IDasBase> found_holder;
+    DasResult             result =
+        object_manager_->LookupObject(decoded, found_holder.Put());
 
     ASSERT_EQ(result, DAS_S_OK);
-    EXPECT_EQ(found_ptr, interface_ptr);
+    EXPECT_EQ(found_holder.Get(), interface_ptr);
 }
 
 // ====== Session 管理测试 ======

@@ -66,12 +66,12 @@ DasResult IpcCommandHandler::HandleMessage(
 
     DasResult result = HandleCommand(header, payload, response);
 
-    // 构建响应 header（使用 Builder）
+    // 构建响应 header（保留请求的 header_flags，确保响应路由正确）
     auto validated_response_header =
         IPCMessageHeaderBuilder()
             .SetMessageType(MessageType::RESPONSE)
-            .SetControlPlaneCommand(
-                static_cast<IpcCommandType>(header.GetInterfaceId()))
+            .SetHeaderFlags(header.GetHeaderFlags())
+            .SetInterfaceId(header.GetInterfaceId())
             .SetBodySize(static_cast<uint32_t>(response.response_data.size()))
             .SetCallId(header.GetCallId())
             .SetSourceSessionId(session_id_)

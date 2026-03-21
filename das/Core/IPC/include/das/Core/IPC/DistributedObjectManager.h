@@ -6,6 +6,7 @@
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/IDasBase.h>
+#include <das/DasPtr.hpp>
 #include <memory>
 #include <unordered_map>
 
@@ -16,9 +17,9 @@ DAS_CORE_IPC_NS_BEGIN
 class IpcRunLoop;
 struct ObjectEntry
 {
-    ObjectId object_id;
-    void*    object_ptr; // 本地对象非空，远程对象为 nullptr
-    bool     is_local;   // 决定 UnregisterObject 时是否调用 ptr->Release()
+    ObjectId                 object_id;
+    DAS::DasPtr<IDasBase>    object_ptr;  // 本地对象非空，远程对象为 nullptr
+    bool                     is_local;    // 决定 UnregisterObject 时是否 Release
 };
 
 class DistributedObjectManager : public IDistributedObjectManager
@@ -29,12 +30,12 @@ public:
 
     void SetRunLoop(IpcRunLoop* run_loop) { run_loop_ = run_loop; }
 
-    DasResult RegisterLocalObject(void* object_ptr, ObjectId& out_object_id)
+    DasResult RegisterLocalObject(IDasBase* object_ptr, ObjectId& out_object_id)
         override;
     DasResult RegisterRemoteObject(const ObjectId& object_id) override;
     DasResult UnregisterObject(const ObjectId& object_id) override;
 
-    DasResult LookupObject(const ObjectId& object_id, void** object_ptr)
+    DasResult LookupObject(const ObjectId& object_id, IDasBase** object_ptr)
         override;
 
     bool IsValidObject(const ObjectId& object_id) const override;

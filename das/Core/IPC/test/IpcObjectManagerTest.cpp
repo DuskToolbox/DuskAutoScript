@@ -1,6 +1,9 @@
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/ObjectId.h>
+#include <das/DasPtr.hpp>
 #include <gtest/gtest.h>
+
+#include "MockDasObject.h"
 
 using DAS::Core::IPC::DecodeObjectId;
 using DAS::Core::IPC::DistributedObjectManager;
@@ -25,25 +28,30 @@ protected:
 
 TEST_F(IpcObjectManagerTest, RegisterLocalObject_GenerationStartsAtOne)
 {
-    int      dummy_object = 42;
+    auto     mock = new MockDasObject();
     ObjectId object_id{1, 0, 0};
 
-    auto result = manager_->RegisterLocalObject(&dummy_object, object_id);
+    auto result = manager_->RegisterLocalObject(mock, object_id);
     EXPECT_EQ(result, DAS_S_OK);
 
     EXPECT_EQ(object_id.generation, 1);
+    // RegisterLocalObject 内部 AddRef，mock 应该有 2 个引用
+    // （new 创建时 ref=0，RegisterLocalObject AddRef → ref=1）
+    // 但析构由 DasPtr 管理，不需要手动 delete
 }
 
 TEST_F(
     IpcObjectManagerTest,
     RegisterLocalObject_MultipleObjectsHaveDifferentLocalIds)
 {
-    int      obj1 = 1, obj2 = 2, obj3 = 3;
+    auto     obj1 = new MockDasObject();
+    auto     obj2 = new MockDasObject();
+    auto     obj3 = new MockDasObject();
     ObjectId id1{}, id2{}, id3{};
 
-    ASSERT_EQ(manager_->RegisterLocalObject(&obj1, id1), DAS_S_OK);
-    ASSERT_EQ(manager_->RegisterLocalObject(&obj2, id2), DAS_S_OK);
-    ASSERT_EQ(manager_->RegisterLocalObject(&obj3, id3), DAS_S_OK);
+    ASSERT_EQ(manager_->RegisterLocalObject(obj1, id1), DAS_S_OK);
+    ASSERT_EQ(manager_->RegisterLocalObject(obj2, id2), DAS_S_OK);
+    ASSERT_EQ(manager_->RegisterLocalObject(obj3, id3), DAS_S_OK);
 
     EXPECT_NE(id1.local_id, id2.local_id);
     EXPECT_NE(id2.local_id, id3.local_id);
@@ -54,10 +62,10 @@ TEST_F(
 
 TEST_F(IpcObjectManagerTest, IsValidObject_ValidHandle)
 {
-    int      dummy = 42;
+    auto     mock = new MockDasObject();
     ObjectId object_id{.session_id = 0, .generation = 0, .local_id = 0};
 
-    ASSERT_EQ(manager_->RegisterLocalObject(&dummy, object_id), DAS_S_OK);
+    ASSERT_EQ(manager_->RegisterLocalObject(mock, object_id), DAS_S_OK);
     EXPECT_TRUE(manager_->IsValidObject(object_id));
 }
 
@@ -78,10 +86,10 @@ TEST_F(IpcObjectManagerTest, IsValidObject_UnregisteredHandle)
 
 TEST_F(IpcObjectManagerTest, IsLocalObject_LocalObject)
 {
-    int      dummy = 42;
+    auto     mock = new MockDasObject();
     ObjectId object_id{0, 0, 0};
 
-    ASSERT_EQ(manager_->RegisterLocalObject(&dummy, object_id), DAS_S_OK);
+    ASSERT_EQ(manager_->RegisterLocalObject(mock, object_id), DAS_S_OK);
     EXPECT_TRUE(manager_->IsLocalObject(object_id));
 }
 
@@ -108,10 +116,10 @@ TEST_F(IpcObjectManagerTest, IsLocalObject_NonExistentObject)
 
 TEST_F(IpcObjectManagerTest, StaleHandle_AfterUnregister)
 {
-    int      dummy = 42;
+    auto     mock = new MockDasObject();
     ObjectId object_id{0, 0, 0};
 
-    ASSERT_EQ(manager_->RegisterLocalObject(&dummy, object_id), DAS_S_OK);
+    ASSERT_EQ(manager_->RegisterLocalObject(mock, object_id), DAS_S_OK);
     EXPECT_TRUE(manager_->IsValidObject(object_id));
 
     // Unregister the object
@@ -125,35 +133,36 @@ TEST_F(IpcObjectManagerTest, StaleHandle_AfterUnregister)
 
 TEST_F(IpcObjectManagerTest, LookupObject_LocalObject)
 {
-    int      dummy = 42;
+    auto     mock = new MockDasObject();
     ObjectId object_id{0, 0, 0};
 
-    ASSERT_EQ(manager_->RegisterLocalObject(&dummy, object_id), DAS_S_OK);
+    ASSERT_EQ(manager_->RegisterLocalObject(mock, object_id), DAS_S_OK);
 
-    void* ptr = nullptr;
-    auto  result = manager_->LookupObject(object_id, &ptr);
+    IDasBase* ptr = nullptr;
+    auto      result = manager_->LookupObject(object_id, &ptr);
     EXPECT_EQ(result, DAS_S_OK);
-    EXPECT_EQ(ptr, &dummy);
+    EXPECT_EQ(ptr, mock);
+    // LookupObject 内部 AddRef，需要 Release
+    ptr->Release();
 }
 
 TEST_F(IpcObjectManagerTest, LookupObject_RemoteObjectFails)
 {
     ObjectId remote_id{.session_id = 2, .generation = 1, .local_id = 100};
-    uint64_t remote_encoded = EncodeObjectId(remote_id);
 
     ASSERT_EQ(manager_->RegisterRemoteObject(remote_id), DAS_S_OK);
 
-    void* ptr = nullptr;
-    auto  result = manager_->LookupObject(remote_id, &ptr);
+    IDasBase* ptr = nullptr;
+    auto      result = manager_->LookupObject(remote_id, &ptr);
     EXPECT_NE(result, DAS_S_OK); // Should fail for remote objects
 }
 
 TEST_F(IpcObjectManagerTest, LookupObject_NullPointer)
 {
-    int      dummy = 42;
+    auto     mock = new MockDasObject();
     ObjectId object_id{0, 0, 0};
 
-    ASSERT_EQ(manager_->RegisterLocalObject(&dummy, object_id), DAS_S_OK);
+    ASSERT_EQ(manager_->RegisterLocalObject(mock, object_id), DAS_S_OK);
 
     auto result = manager_->LookupObject(object_id, nullptr);
     EXPECT_NE(result, DAS_S_OK); // Should fail with null output pointer
@@ -185,14 +194,15 @@ TEST_F(IpcObjectManagerTest, UnregisterObject_InvalidId)
 
 TEST_F(IpcObjectManagerTest, Shutdown_ClearsAllObjects)
 {
-    int      obj1 = 1, obj2 = 2;
+    auto     obj1 = new MockDasObject();
+    auto     obj2 = new MockDasObject();
     uint32_t id1_val = 0, id2_val = 0;
     ObjectId oid1{1, 1, id1_val}, oid2{1, 1, id2_val};
 
-    ASSERT_EQ(manager_->RegisterLocalObject(&obj1, oid1), DAS_S_OK);
-    ASSERT_EQ(manager_->RegisterLocalObject(&obj2, oid2), DAS_S_OK);
+    ASSERT_EQ(manager_->RegisterLocalObject(obj1, oid1), DAS_S_OK);
+    ASSERT_EQ(manager_->RegisterLocalObject(obj2, oid2), DAS_S_OK);
 
-    // Re-create manager to clear all objects
+    // Re-create manager to clear all objects (DasPtr 自动 Release)
     manager_.reset();
     manager_ = std::make_unique<DistributedObjectManager>();
 

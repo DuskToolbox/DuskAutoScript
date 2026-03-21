@@ -18,8 +18,11 @@
 #include <das/Core/IPC/IpcTransport.h>
 #include <das/Core/IPC/Serializer.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
+#include <das/DasPtr.hpp>
 #include <gtest/gtest.h>
 #include <thread>
+
+#include "MockDasObject.h"
 
 using DAS::Core::IPC::ConnectionManager;
 using DAS::Core::IPC::DecodeObjectId;
@@ -169,7 +172,7 @@ protected:
     {
         // RAII: unique_ptr 析构自动调用 Shutdown()
         connection_manager_.reset();
-        // DistributedObjectManager 不再需要 Shutdown（析构函数自动清理）
+        // DistributedObjectManager 析构自动清理（DasPtr 自动 Release）
         host_object_manager_.reset();
         plugin_object_manager_.reset();
     }
@@ -184,10 +187,10 @@ protected:
 TEST_F(IpcE2ETest, ProxyStub_ObjectRegistration)
 {
     // Host registers a local object
-    int      dummy_service = 42;
+    auto     dummy_service = new MockDasObject();
     ObjectId host_object_id{};
     auto     result = host_object_manager_->RegisterLocalObject(
-        &dummy_service,
+        dummy_service,
         host_object_id);
     ASSERT_EQ(result, DAS_S_OK);
 
@@ -203,17 +206,19 @@ TEST_F(IpcE2ETest, ProxyStub_ObjectRegistration)
 TEST_F(IpcE2ETest, ProxyStub_MultipleObjects)
 {
     // Register multiple objects
-    int      service1 = 1, service2 = 2, service3 = 3;
+    auto     service1 = new MockDasObject();
+    auto     service2 = new MockDasObject();
+    auto     service3 = new MockDasObject();
     ObjectId id1{}, id2{}, id3{};
 
     ASSERT_EQ(
-        host_object_manager_->RegisterLocalObject(&service1, id1),
+        host_object_manager_->RegisterLocalObject(service1, id1),
         DAS_S_OK);
     ASSERT_EQ(
-        host_object_manager_->RegisterLocalObject(&service2, id2),
+        host_object_manager_->RegisterLocalObject(service2, id2),
         DAS_S_OK);
     ASSERT_EQ(
-        host_object_manager_->RegisterLocalObject(&service3, id3),
+        host_object_manager_->RegisterLocalObject(service3, id3),
         DAS_S_OK);
 
     // Plugin registers all remote objects
@@ -293,9 +298,9 @@ TEST_F(IpcE2ETest, Connection_HostPluginHandshake)
 
 TEST_F(IpcE2ETest, ErrorHandling_InvalidObjectId)
 {
-    void*    ptr = nullptr;
-    ObjectId invalid_id{0xFFFF, 0xFFFF, 0xFFFFFFFF};
-    auto     result = host_object_manager_->LookupObject(invalid_id, &ptr);
+    IDasBase* ptr = nullptr;
+    ObjectId  invalid_id{0xFFFF, 0xFFFF, 0xFFFFFFFF};
+    auto      result = host_object_manager_->LookupObject(invalid_id, &ptr);
     EXPECT_NE(result, DAS_S_OK);
 }
 
@@ -347,9 +352,9 @@ TEST_F(IpcE2ETest, Concurrent_MultipleRegistrations)
         threads.emplace_back(
             [&, t]()
             {
-                int      dummy = t;
+                auto     dummy = new MockDasObject();
                 ObjectId id{};
-                if (host_object_manager_->RegisterLocalObject(&dummy, id)
+                if (host_object_manager_->RegisterLocalObject(dummy, id)
                     == DAS_S_OK)
                 {
                     success_count++;
@@ -370,10 +375,10 @@ TEST_F(IpcE2ETest, Concurrent_MultipleRegistrations)
 TEST_F(IpcE2ETest, FullPipeline_RequestResponse)
 {
     // 1. Setup: Host registers service
-    int      service_impl = 100;
+    auto     service_impl = new MockDasObject();
     ObjectId service_id{};
     ASSERT_EQ(
-        host_object_manager_->RegisterLocalObject(&service_impl, service_id),
+        host_object_manager_->RegisterLocalObject(service_impl, service_id),
         DAS_S_OK);
 
     // 2. Plugin gets reference to service
@@ -427,11 +432,13 @@ TEST_F(IpcE2ETest, FullPipeline_RequestResponse)
     ASSERT_EQ(
         request_reader.ReadUInt32(&received_object_id.local_id),
         DAS_S_OK);
-    void* obj_ptr = nullptr;
+    DAS::DasPtr<IDasBase> obj_holder;
     ASSERT_EQ(
-        host_object_manager_->LookupObject(received_object_id, &obj_ptr),
+        host_object_manager_->LookupObject(
+            received_object_id,
+            obj_holder.Put()),
         DAS_S_OK);
-    EXPECT_NE(obj_ptr, nullptr);
+    EXPECT_NE(obj_holder.Get(), nullptr);
 
     // 6. Host sends response
     IPCMessageHeader response{};

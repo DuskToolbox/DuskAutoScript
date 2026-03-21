@@ -76,7 +76,7 @@ namespace Core
                  * @return DasResult
                  */
                 virtual DasResult RegisterLocalObject(
-                    void*     object_ptr,
+                    IDasBase* object_ptr,
                     ObjectId& out_object_id) = 0;
 
                 virtual IDistributedObjectManager& GetObjectManager() = 0;

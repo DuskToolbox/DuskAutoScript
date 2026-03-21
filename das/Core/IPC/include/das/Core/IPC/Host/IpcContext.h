@@ -110,7 +110,7 @@ namespace Core
                 void PostCallback(IDasAsyncCallback* callback);
 
                 DasResult RegisterLocalObject(
-                    void*     object_ptr,
+                    IDasBase* object_ptr,
                     ObjectId& out_object_id);
 
             private:

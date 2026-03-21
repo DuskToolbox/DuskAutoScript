@@ -746,7 +746,7 @@ namespace Core
             }
 
             DasResult IpcContext::RegisterLocalObject(
-                void*     object_ptr,
+                IDasBase* object_ptr,
                 ObjectId& out_object_id)
             {
                 return object_manager_.RegisterLocalObject(

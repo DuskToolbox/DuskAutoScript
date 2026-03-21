@@ -300,10 +300,12 @@ void RegisterQueryInterfaceHandler(DAS::Core::IPC::Host::IIpcContext* ctx)
             std::memcpy(&iid, payload.data() + offset, sizeof(iid));
             offset += sizeof(iid);
 
-            // 3. 查找真实对象
-            void*     raw_ptr = nullptr;
+            // 3. 查找真实对象（LookupObject 内部 AddRef）
+            DAS::DasPtr<IDasBase> raw_obj;
             DasResult lookup_result =
-                ctx->GetObjectManager().LookupObject(object_id, &raw_ptr);
+                ctx->GetObjectManager().LookupObject(
+                    object_id,
+                    raw_obj.Put());
             if (DAS::IsFailed(lookup_result))
             {
                 std::string qi_log_msg = DAS_FMT_NS::format(
@@ -317,11 +319,10 @@ void RegisterQueryInterfaceHandler(DAS::Core::IPC::Host::IIpcContext* ctx)
                 return lookup_result;
             }
 
-            auto* com_obj = static_cast<IDasBase*>(raw_ptr);
-
             // 4. 调用真实对象的 QueryInterface
-            void*     new_ptr = nullptr;
-            DasResult qi_result = com_obj->QueryInterface(iid, &new_ptr);
+            DAS::DasPtr<IDasBase> new_obj;
+            DasResult             qi_result =
+                raw_obj->QueryInterface(iid, new_obj.PutVoid());
             if (DAS::IsFailed(qi_result))
             {
                 std::string qi_log_msg = DAS_FMT_NS::format(
@@ -354,10 +355,9 @@ void RegisterQueryInterfaceHandler(DAS::Core::IPC::Host::IIpcContext* ctx)
             // 5. 注册新接口指针为本地对象
             DAS::Core::IPC::ObjectId new_obj_id;
             DasResult                reg_result =
-                ctx->RegisterLocalObject(new_ptr, new_obj_id);
+                ctx->RegisterLocalObject(new_obj.Get(), new_obj_id);
             if (DAS::IsFailed(reg_result))
             {
-                static_cast<IDasBase*>(new_ptr)->Release();
                 response.error_code = reg_result;
                 response.response_data.clear();
                 return reg_result;
