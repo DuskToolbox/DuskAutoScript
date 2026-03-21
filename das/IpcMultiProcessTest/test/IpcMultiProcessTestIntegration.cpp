@@ -19,8 +19,8 @@
 
 #include <das/Core/IPC/AsyncOperationImpl.h>
 #include <das/Core/IPC/DasAsyncSender.h>
-#include <das/IDasAsyncLoadPluginOperation.h>
 #include <das/Core/Utils/StdExecution.h>
+#include <das/IDasAsyncLoadPluginOperation.h>
 
 using namespace Das::PluginInterface;
 
@@ -1033,8 +1033,7 @@ TEST_F(IpcMultiProcessTestIntegration, RemoteProxy_ComponentFactory_IsSupported)
         static_cast<Das::PluginInterface::IDasComponentFactory*>(raw_proxy);
 
     // 3. Call IsSupported - should return DAS_S_OK for IDasComponent
-    DasResult supported =
-        factory->IsSupported(DAS_IID_COMPONENT);
+    DasResult supported = factory->IsSupported(DAS_IID_COMPONENT);
     EXPECT_EQ(supported, DAS_S_OK);
 
     // 4. Call IsSupported with wrong IID - should return
@@ -1046,4 +1045,76 @@ TEST_F(IpcMultiProcessTestIntegration, RemoteProxy_ComponentFactory_IsSupported)
     factory->Release();
 
     DAS_LOG_INFO("[RemoteProxy_ComponentFactory_IsSupported] Test passed");
+}
+
+/**
+ * @brief 测试 [out] 接口指针：CreateInstance 返回远程 IDasComponent*
+ *
+ * 验证完整 [out] 接口指针流程：
+ * 1. CreateRemoteProxy 获得 IDasComponentFactory* 代理
+ * 2. 调用 factory->CreateInstance(DAS_IID_COMPONENT, &component)
+ * 3. Stub 端 AddRef + RegisterLocalObject，返回 ObjectId
+ * 4. Proxy 端反序列化 ObjectId，创建远程 IDasComponent* 代理
+ * 5. 验证返回的 component 代理可用（调用 GetGuid）
+ */
+TEST_F(
+    IpcMultiProcessTestIntegration,
+    RemoteProxy_ComponentFactory_CreateInstance)
+{
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHost.exe not found";
+    }
+
+    // 1. 启动 Host 并加载 IpcTestPlugin2
+    DasResult result = StartHostAndSetupRunLoop();
+    ASSERT_EQ(result, DAS_S_OK);
+
+    std::string plugin_path =
+        IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin2");
+
+    // 2. Load plugin → get factory ObjectId
+    DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
+    result =
+        ctx_->LoadPluginAsync(launcher_.Get(), plugin_path.c_str(), op.Put());
+    ASSERT_EQ(result, DAS_S_OK);
+
+    auto opt = DAS::Core::IPC::wait(
+        GetContext(),
+        DAS::Core::IPC::async_op(GetContext(), std::move(op)));
+    ASSERT_TRUE(opt.has_value());
+
+    auto& [load_result, factory_id] = *opt;
+    ASSERT_EQ(load_result, DAS_S_OK);
+    EXPECT_EQ(factory_id.session_id, launcher_->GetSessionId());
+
+    // 3. CreateRemoteProxy → IDasComponentFactory*
+    IDasBase* factory_base = nullptr;
+    result = ctx_->CreateRemoteProxy(
+        factory_id,
+        DAS_IID_COMPONENT_FACTORY,
+        &factory_base);
+    ASSERT_EQ(result, DAS_S_OK);
+    ASSERT_NE(factory_base, nullptr);
+
+    auto* factory =
+        static_cast<Das::PluginInterface::IDasComponentFactory*>(factory_base);
+
+    // 4. Call CreateInstance — this is the [out] interface pointer test
+    Das::PluginInterface::IDasComponent* component = nullptr;
+    result = factory->CreateInstance(DAS_IID_COMPONENT, &component);
+    ASSERT_EQ(result, DAS_S_OK);
+    ASSERT_NE(component, nullptr);
+
+    // 5. Verify the remote proxy is functional by calling a method (GetGuid
+    // from IDasTypeInfo)
+    DasGuid guid{};
+    result = component->GetGuid(&guid);
+    EXPECT_EQ(result, DAS_S_OK);
+
+    // 6. Release in correct order
+    component->Release();
+    factory->Release();
+
+    DAS_LOG_INFO("[RemoteProxy_ComponentFactory_CreateInstance] Test passed");
 }
