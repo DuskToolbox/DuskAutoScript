@@ -18,7 +18,7 @@
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
-#include <das/Utils/fmt.h>
+#include <das/Core/Logger/Logger.h>
 
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
@@ -403,12 +403,10 @@ namespace FakeMainProcess
         uint32_t main_pid = getpid();
 #endif
 
-        DAS_LOG_INFO(
-            DAS_FMT_NS::format(
-                "[FakeMain] Starting with signal: {}, main_pid: {}",
-                signal_name,
-                main_pid)
-                .c_str());
+        DAS_CORE_LOG_INFO(
+            "[FakeMain] Starting with signal: {}, main_pid: {}",
+            signal_name,
+            main_pid);
 
         // 1. 创建共享内存（用于接收 host_pid）
         std::unique_ptr<KillParentSharedMemory> shm;
@@ -419,11 +417,9 @@ namespace FakeMainProcess
         }
         catch (const std::exception& e)
         {
-            DAS_LOG_ERROR(
-                DAS_FMT_NS::format(
-                    "[FakeMain] Failed to create shared memory: {}",
-                    e.what())
-                    .c_str());
+            DAS_CORE_LOG_ERROR(
+                "[FakeMain] Failed to create shared memory: {}",
+                e.what());
             return 1;
         }
 
@@ -431,24 +427,22 @@ namespace FakeMainProcess
         auto ctx = DAS::Core::IPC::MainProcess::CreateIpcContextShared();
         if (!ctx)
         {
-            DAS_LOG_ERROR("[FakeMain] Failed to create IPC context");
+            DAS_CORE_LOG_ERROR("[FakeMain] Failed to create IPC context");
             return 1;
         }
 
-        DAS_LOG_INFO("[FakeMain] IPC context created");
+        DAS_CORE_LOG_INFO("[FakeMain] IPC context created");
 
         // 3. 先等待测试框架写入 host_pid（需要 host_pid 来构造管道名）
         // 注意：此时还没有发送 ready 信号，Test 框架会等待
         uint32_t host_pid = shm->WaitForHostPid(std::chrono::seconds(30));
         if (host_pid == 0)
         {
-            DAS_LOG_ERROR("[FakeMain] Timeout waiting for host_pid");
+            DAS_CORE_LOG_ERROR("[FakeMain] Timeout waiting for host_pid");
             return 1;
         }
 
-        DAS_LOG_INFO(
-            DAS_FMT_NS::format("[FakeMain] Received host_pid: {}", host_pid)
-                .c_str());
+        DAS_CORE_LOG_INFO("[FakeMain] Received host_pid: {}", host_pid);
 
         // 4. 创建管道（MainProcess 是服务端）
         std::string m2h_pipe = DAS::Core::IPC::Host::MakeMessageQueueName(
@@ -460,12 +454,10 @@ namespace FakeMainProcess
             host_pid,
             false); // host_to_main
 
-        DAS_LOG_INFO(
-            DAS_FMT_NS::format(
-                "[FakeMain] Creating pipes: m2h={}, h2m={}",
-                m2h_pipe,
-                h2m_pipe)
-                .c_str());
+        DAS_CORE_LOG_INFO(
+            "[FakeMain] Creating pipes: m2h={}, h2m={}",
+            m2h_pipe,
+            h2m_pipe);
 
         // 5. 创建 io_context 和工作线程（RAII 管理）
         IoThreadGuard                                             io_guard;
@@ -491,33 +483,29 @@ namespace FakeMainProcess
 
             if (!result.has_value())
             {
-                DAS_LOG_ERROR(
-                    DAS_FMT_NS::format(
-                        "[FakeMain] Failed to create transport: error={}",
-                        result.error())
-                        .c_str());
+                DAS_CORE_LOG_ERROR(
+                    "[FakeMain] Failed to create transport: error={}",
+                    result.error());
                 return 1;
             }
 
             transport = std::move(*result);
-            DAS_LOG_INFO("[FakeMain] Pipes created successfully");
+            DAS_CORE_LOG_INFO("[FakeMain] Pipes created successfully");
         }
         catch (const std::exception& e)
         {
-            DAS_LOG_ERROR(
-                DAS_FMT_NS::format(
-                    "[FakeMain] Exception creating transport: {}",
-                    e.what())
-                    .c_str());
+            DAS_CORE_LOG_ERROR(
+                "[FakeMain] Exception creating transport: {}",
+                e.what());
             return 1;
         }
 
         // 6. 管道已创建，发送 ready 信号通知测试框架可以启动 DasHost
         {
             FakeMainReadySignal ready_signal(signal_name);
-            DAS_LOG_INFO("[FakeMain] Waiting for test to release lock...");
+            DAS_CORE_LOG_INFO("[FakeMain] Waiting for test to release lock...");
             ready_signal.AcquireAndRelease();
-            DAS_LOG_INFO(
+            DAS_CORE_LOG_INFO(
                 "[FakeMain] Ready signal sent, DasHost can connect now");
         }
 
@@ -554,12 +542,10 @@ namespace FakeMainProcess
                     .SetCallId(1)
                     .Build();
 
-            DAS_LOG_INFO(
-                DAS_FMT_NS::format(
-                    "[FakeMain] Sending HELLO: pid={}, session_id={}",
-                    hello.pid,
-                    hello.assigned_session_id)
-                    .c_str());
+            DAS_CORE_LOG_INFO(
+                "[FakeMain] Sending HELLO: pid={}, session_id={}",
+                hello.pid,
+                hello.assigned_session_id);
 
             auto send_future = boost::asio::co_spawn(
                 io_guard.context(),
@@ -572,44 +558,40 @@ namespace FakeMainProcess
             auto send_result = send_future.get();
             if (send_result != DAS_S_OK)
             {
-                DAS_LOG_ERROR(
-                    DAS_FMT_NS::format(
-                        "[FakeMain] Failed to send HELLO: {}",
-                        send_result)
-                        .c_str());
+                DAS_CORE_LOG_ERROR(
+                    "[FakeMain] Failed to send HELLO: {}",
+                    send_result);
                 return 1;
             }
 
-            DAS_LOG_INFO("[FakeMain] Sent HELLO, waiting for WELCOME...");
+            DAS_CORE_LOG_INFO("[FakeMain] Sent HELLO, waiting for WELCOME...");
 
             // 8.3 等待接收 WELCOME（接收操作已在前面启动）
             auto recv_result = recv_future.get();
             if (recv_result.index() == 0)
             {
-                DAS_LOG_ERROR("[FakeMain] Failed to receive WELCOME");
+                DAS_CORE_LOG_ERROR("[FakeMain] Failed to receive WELCOME");
                 return 1;
             }
 
             auto&& [welcome_header, welcome_body] = std::get<1>(recv_result);
-            DAS_LOG_INFO(
-                DAS_FMT_NS::format(
-                    "[FakeMain] Received message: interface_id={}",
-                    welcome_header.Raw().interface_id)
-                    .c_str());
+            DAS_CORE_LOG_INFO(
+                "[FakeMain] Received message: interface_id={}",
+                welcome_header.Raw().interface_id);
 
             // 验证是 WELCOME 消息
             if (welcome_header.Raw().interface_id
                 != static_cast<uint32_t>(DAS::Core::IPC::HandshakeInterfaceId::
                                              HANDSHAKE_IFACE_WELCOME))
             {
-                DAS_LOG_ERROR("[FakeMain] Expected WELCOME message");
+                DAS_CORE_LOG_ERROR("[FakeMain] Expected WELCOME message");
                 return 1;
             }
 
             // 解析 WELCOME 响应
             if (welcome_body.size() < sizeof(DAS::Core::IPC::WelcomeResponseV1))
             {
-                DAS_LOG_ERROR("[FakeMain] WELCOME body too small");
+                DAS_CORE_LOG_ERROR("[FakeMain] WELCOME body too small");
                 return 1;
             }
 
@@ -617,17 +599,16 @@ namespace FakeMainProcess
                 reinterpret_cast<const DAS::Core::IPC::WelcomeResponseV1*>(
                     welcome_body.data());
 
-            DAS_LOG_INFO(
-                DAS_FMT_NS::format(
-                    "[FakeMain] Received WELCOME: session_id={}, status={}",
-                    welcome->session_id,
-                    welcome->status)
-                    .c_str());
+            DAS_CORE_LOG_INFO(
+                "[FakeMain] Received WELCOME: session_id={}, status={}",
+                welcome->session_id,
+                welcome->status);
 
             if (welcome->status
                 != DAS::Core::IPC::WelcomeResponseV1::STATUS_SUCCESS)
             {
-                DAS_LOG_ERROR("[FakeMain] WELCOME status indicates failure");
+                DAS_CORE_LOG_ERROR(
+                    "[FakeMain] WELCOME status indicates failure");
                 return 1;
             }
 
@@ -645,11 +626,9 @@ namespace FakeMainProcess
                     .SetCallId(2)
                     .Build();
 
-            DAS_LOG_INFO(
-                DAS_FMT_NS::format(
-                    "[FakeMain] Sending READY: session_id={}",
-                    ready.session_id)
-                    .c_str());
+            DAS_CORE_LOG_INFO(
+                "[FakeMain] Sending READY: session_id={}",
+                ready.session_id);
 
             send_future = boost::asio::co_spawn(
                 io_guard.context(),
@@ -662,15 +641,14 @@ namespace FakeMainProcess
             send_result = send_future.get();
             if (send_result != DAS_S_OK)
             {
-                DAS_LOG_ERROR(
-                    DAS_FMT_NS::format(
-                        "[FakeMain] Failed to send READY: {}",
-                        send_result)
-                        .c_str());
+                DAS_CORE_LOG_ERROR(
+                    "[FakeMain] Failed to send READY: {}",
+                    send_result);
                 return 1;
             }
 
-            DAS_LOG_INFO("[FakeMain] Sent READY, waiting for READY_ACK...");
+            DAS_CORE_LOG_INFO(
+                "[FakeMain] Sent READY, waiting for READY_ACK...");
 
             // 8.4 接收 READY_ACK
             recv_future = boost::asio::co_spawn(
@@ -681,7 +659,7 @@ namespace FakeMainProcess
             recv_result = recv_future.get();
             if (recv_result.index() == 0)
             {
-                DAS_LOG_ERROR("[FakeMain] Failed to receive READY_ACK");
+                DAS_CORE_LOG_ERROR("[FakeMain] Failed to receive READY_ACK");
                 return 1;
             }
 
@@ -691,13 +669,13 @@ namespace FakeMainProcess
                 != static_cast<uint32_t>(DAS::Core::IPC::HandshakeInterfaceId::
                                              HANDSHAKE_IFACE_READY_ACK))
             {
-                DAS_LOG_ERROR("[FakeMain] Expected READY_ACK message");
+                DAS_CORE_LOG_ERROR("[FakeMain] Expected READY_ACK message");
                 return 1;
             }
 
             if (ack_body.size() < sizeof(DAS::Core::IPC::ReadyAckV1))
             {
-                DAS_LOG_ERROR("[FakeMain] READY_ACK body too small");
+                DAS_CORE_LOG_ERROR("[FakeMain] READY_ACK body too small");
                 return 1;
             }
 
@@ -705,19 +683,18 @@ namespace FakeMainProcess
                 reinterpret_cast<const DAS::Core::IPC::ReadyAckV1*>(
                     ack_body.data());
 
-            DAS_LOG_INFO(
-                DAS_FMT_NS::format(
-                    "[FakeMain] Received READY_ACK: status={}",
-                    ready_ack->status)
-                    .c_str());
+            DAS_CORE_LOG_INFO(
+                "[FakeMain] Received READY_ACK: status={}",
+                ready_ack->status);
 
             if (ready_ack->status != DAS::Core::IPC::ReadyAckV1::STATUS_SUCCESS)
             {
-                DAS_LOG_ERROR("[FakeMain] READY_ACK status indicates failure");
+                DAS_CORE_LOG_ERROR(
+                    "[FakeMain] READY_ACK status indicates failure");
                 return 1;
             }
 
-            DAS_LOG_INFO("[FakeMain] Handshake complete!");
+            DAS_CORE_LOG_INFO("[FakeMain] Handshake complete!");
 
             handshake_complete = true;
 
@@ -726,22 +703,21 @@ namespace FakeMainProcess
         }
         catch (const std::exception& e)
         {
-            DAS_LOG_ERROR(
-                DAS_FMT_NS::format(
-                    "[FakeMain] Exception during handshake: {}",
-                    e.what())
-                    .c_str());
+            DAS_CORE_LOG_ERROR(
+                "[FakeMain] Exception during handshake: {}",
+                e.what());
             return 1;
         }
 
         if (!handshake_complete)
         {
-            DAS_LOG_ERROR("[FakeMain] Handshake failed");
+            DAS_CORE_LOG_ERROR("[FakeMain] Handshake failed");
             return 1;
         }
 
         // 10. 继续运行，等待测试框架杀掉我们
-        DAS_LOG_INFO("[FakeMain] Running, waiting to be killed by test...");
+        DAS_CORE_LOG_INFO(
+            "[FakeMain] Running, waiting to be killed by test...");
 
         // 简单地休眠等待被杀
         for (int i = 0; i < 300; ++i) // 最多等待 30 秒
@@ -749,7 +725,7 @@ namespace FakeMainProcess
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
 
-        DAS_LOG_INFO("[FakeMain] Exiting (timeout or not killed)");
+        DAS_CORE_LOG_INFO("[FakeMain] Exiting (timeout or not killed)");
         return 0;
     }
 

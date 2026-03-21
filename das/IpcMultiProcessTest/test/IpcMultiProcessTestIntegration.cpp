@@ -196,13 +196,12 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadPlugin)
     // 4. 验证返回的对象 ID
     EXPECT_EQ(object_id.session_id, launcher_->GetSessionId());
 
-    std::string log_msg = DAS_FMT_NS::format(
+    DAS_CORE_LOG_INFO(
         "[CrossProcess_LoadPlugin] Plugin loaded, object_id={{session:{}, "
         "gen:{}, local:{}}}",
         object_id.session_id,
         object_id.generation,
         object_id.local_id);
-    DAS_LOG_INFO(log_msg.c_str());
 }
 
 /**
@@ -245,13 +244,12 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_CallComponent)
     // 4. 验证 Factory 对象在正确的 Host 进程中
     EXPECT_EQ(factory_id.session_id, launcher_->GetSessionId());
 
-    std::string log_msg = DAS_FMT_NS::format(
+    DAS_CORE_LOG_INFO(
         "[CrossProcess_CallComponent] IpcTestPlugin2 loaded, factory_id={{"
         "session:{}, gen:{}, local:{}}}",
         factory_id.session_id,
         factory_id.generation,
         factory_id.local_id);
-    DAS_LOG_INFO(log_msg.c_str());
 }
 
 /**
@@ -341,14 +339,13 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_VerifySessionId)
     // 6. 验证不同 Host 的对象 session_id 不同
     EXPECT_NE(object_a.session_id, object_b.session_id);
 
-    std::string log_msg = DAS_FMT_NS::format(
+    DAS_CORE_LOG_INFO(
         "[CrossProcess_VerifySessionId] HostA object_id={{session:{}, "
         "local:{}}}, HostB object_id={{session:{}, local:{}}}",
         object_a.session_id,
         object_a.local_id,
         object_b.session_id,
         object_b.local_id);
-    DAS_LOG_INFO(log_msg.c_str());
 
     // 7. 清理
     host_a->Stop();
@@ -440,12 +437,11 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
     auto connected_sessions = ctx_->GetConnectedSessions();
     EXPECT_EQ(connected_sessions.size(), 2);
 
-    std::string log_msg = DAS_FMT_NS::format(
+    DAS_CORE_LOG_INFO(
         "[CrossProcess_HostToHostCall] Cross-process infrastructure verified: "
         "HostA(session={}) can reach HostB(session={}) via IpcContext",
         session_a,
         session_b);
-    DAS_LOG_INFO(log_msg.c_str());
 
     // 6. 清理
     host_a->Stop();
@@ -525,13 +521,12 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadJavaPlugin)
     EXPECT_EQ(object_id.session_id, launcher_->GetSessionId());
     EXPECT_GT(object_id.local_id, 0u);
 
-    std::string log_msg = DAS_FMT_NS::format(
+    DAS_CORE_LOG_INFO(
         "[CrossProcess_LoadJavaPlugin] Java plugin loaded, object_id={{"
         "session:{}, gen:{}, local:{}}}",
         object_id.session_id,
         object_id.generation,
         object_id.local_id);
-    DAS_LOG_INFO(log_msg.c_str());
 }
 
 // ====== 主进程退出检测测试 ======
@@ -573,12 +568,11 @@ TEST_F(
     uint32_t host_pid = static_cast<uint32_t>(host_process.id());
     ASSERT_GT(host_pid, 0u);
 
-    std::string start_log = DAS_FMT_NS::format(
+    DAS_CORE_LOG_INFO(
         "[ParentProcessExit_HostAutoExit_InvalidPid] "
         "Host process started with fake main_pid={}, host_pid={}",
         fake_main_pid,
         host_pid);
-    DAS_LOG_INFO(start_log.c_str());
 
     // 等待 Host 进程自动退出（最多等待 10 秒）
     // 父进程监控线程检测间隔为 1 秒，加上初始化时间，5 秒内应该退出
@@ -604,10 +598,9 @@ TEST_F(
                "Parent process monitoring is not working.";
     }
 
-    std::string exit_log = DAS_FMT_NS::format(
+    DAS_CORE_LOG_INFO(
         "[ParentProcessExit_HostAutoExit_InvalidPid] "
         "Host process exited automatically as expected");
-    DAS_LOG_INFO(exit_log.c_str());
     SUCCEED();
 }
 
@@ -667,11 +660,7 @@ TEST_F(
 
     auto fake_main_pid = static_cast<uint32_t>(fake_main.id());
 
-    DAS_LOG_INFO(
-        DAS_FMT_NS::format(
-            "[KillParent] Fake main started: PID={}",
-            fake_main_pid)
-            .c_str());
+    DAS_CORE_LOG_INFO("[KillParent] Fake main started: PID={}", fake_main_pid);
 
     // 5. 启动 DasHost（连接到假主进程）
     //    先启动 DasHost 获取 host_pid，然后写入共享内存让 FakeMain 创建管道
@@ -688,12 +677,10 @@ TEST_F(
             std::filesystem::path(host_exe_path_).parent_path().string()));
 
     auto host_pid = static_cast<uint32_t>(host_process.id());
-    DAS_LOG_INFO(
-        DAS_FMT_NS::format(
-            "[KillParent] Host started: PID={}, main_pid={}",
-            host_pid,
-            fake_main_pid)
-            .c_str());
+    DAS_CORE_LOG_INFO(
+        "[KillParent] Host started: PID={}, main_pid={}",
+        host_pid,
+        fake_main_pid);
 
     // 6. 等待 FakeMain 创建共享内存（避免竞态条件）
     bool shm_ready =
@@ -701,17 +688,15 @@ TEST_F(
             FakeMainProcess::KILL_PARENT_SHM_NAME,
             std::chrono::seconds(10));
     ASSERT_TRUE(shm_ready) << "FakeMain did not create shared memory in time";
-    DAS_LOG_INFO("[KillParent] Shared memory is ready");
+    DAS_CORE_LOG_INFO("[KillParent] Shared memory is ready");
 
     // 7. 将 host_pid 写入共享内存，让 FakeMain 可以创建正确命名的管道
     FakeMainProcess::KillParentSharedMemory::WriteHostPid(
         FakeMainProcess::KILL_PARENT_SHM_NAME,
         host_pid);
-    DAS_LOG_INFO(
-        DAS_FMT_NS::format(
-            "[KillParent] Wrote host_pid={} to shared memory",
-            host_pid)
-            .c_str());
+    DAS_CORE_LOG_INFO(
+        "[KillParent] Wrote host_pid={} to shared memory",
+        host_pid);
 
     // 8. 等待假主进程就绪（管道已创建）
     //    DasHost 有 1 秒的连接重试超时，应该足够让 FakeMain 创建管道
@@ -731,7 +716,7 @@ TEST_F(
             FakeMainProcess::KILL_PARENT_SHM_NAME,
             std::chrono::seconds(10));
     ASSERT_TRUE(handshake_done) << "Handshake did not complete in time";
-    DAS_LOG_INFO("[KillParent] Handshake completed");
+    DAS_CORE_LOG_INFO("[KillParent] Handshake completed");
 
     // 11. 确认 Host 还在运行
     {
@@ -744,11 +729,9 @@ TEST_F(
     {
         boost::system::error_code ec;
         fake_main.terminate(ec);
-        DAS_LOG_INFO(
-            DAS_FMT_NS::format(
-                "[KillParent] Fake main killed: PID={}",
-                fake_main_pid)
-                .c_str());
+        DAS_CORE_LOG_INFO(
+            "[KillParent] Fake main killed: PID={}",
+            fake_main_pid);
     }
 
     // 13. 等待 Host 自动退出（父进程监控应检测到并退出）
@@ -777,7 +760,7 @@ TEST_F(
                   "Parent process monitoring is not working.";
     }
 
-    DAS_LOG_INFO(
+    DAS_CORE_LOG_INFO(
         "[KillParent] Test PASSED - Host exited automatically after real handshake");
 }
 
@@ -860,7 +843,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins)
         object1.local_id,
         object2.session_id,
         object2.local_id);
-    DAS_LOG_INFO(log_msg.c_str());
+    DAS_CORE_LOG_INFO(log_msg.c_str());
 }
 
 /**
@@ -927,7 +910,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins_WhenAll)
         object1.local_id,
         object2.session_id,
         object2.local_id);
-    DAS_LOG_INFO(log_msg.c_str());
+    DAS_CORE_LOG_INFO(log_msg.c_str());
 }
 
 // ====== Context 基础测试 ======
@@ -980,7 +963,7 @@ TEST_F(IpcMultiProcessTestIntegration, Context_BasicUsage)
         EXPECT_EQ(loaded_id.session_id, launcher_->GetSessionId());
     }
 
-    DAS_LOG_INFO("[Context_BasicUsage] All context tests passed");
+    DAS_CORE_LOG_INFO("[Context_BasicUsage] All context tests passed");
 }
 
 // ====== Remote Proxy 测试 ======
@@ -1037,7 +1020,7 @@ TEST_F(IpcMultiProcessTestIntegration, RemoteProxy_ComponentFactory_IsSupported)
     DasResult not_supported = factory->IsSupported(DasGuid{});
     EXPECT_EQ(not_supported, DAS_E_NO_IMPLEMENTATION);
 
-    DAS_LOG_INFO("[RemoteProxy_ComponentFactory_IsSupported] Test passed");
+    DAS_CORE_LOG_INFO("[RemoteProxy_ComponentFactory_IsSupported] Test passed");
 }
 
 /**
@@ -1102,5 +1085,6 @@ TEST_F(
     component->Release();
     factory->Release();
 
-    DAS_LOG_INFO("[RemoteProxy_ComponentFactory_CreateInstance] Test passed");
+    DAS_CORE_LOG_INFO(
+        "[RemoteProxy_ComponentFactory_CreateInstance] Test passed");
 }

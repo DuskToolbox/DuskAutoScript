@@ -36,6 +36,7 @@
 #include <das/Core/IPC/DasAsyncSender.h>
 #include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
+#include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/Utils/fmt.h>
@@ -52,9 +53,7 @@ protected:
     {
         host_exe_path_ = IpcTestConfig::GetDasHostPath();
 
-        std::string msg =
-            DAS_FMT_NS::format("DasHost path: {}", host_exe_path_);
-        DAS_LOG_INFO(msg.c_str());
+        DAS_CORE_LOG_INFO("DasHost path: {}", host_exe_path_);
 
         // 创建 IPC 上下文
         ctx_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared();
@@ -135,16 +134,14 @@ protected:
             IpcTestConfig::GetHostStartTimeoutMs());
         if (DAS::IsFailed(result))
         {
-            DAS_LOG_ERROR("Failed to start host process");
+            DAS_CORE_LOG_ERROR("Failed to start host process");
             return result;
         }
 
         // Auto-registration happens inside Start() via ipc_context_ callback
-        DAS_LOG_INFO(
-            DAS_FMT_NS::format(
-                "HostLauncher started and auto-registered, session_id={}",
-                session_id)
-                .c_str());
+        DAS_CORE_LOG_INFO(
+            "HostLauncher started and auto-registered, session_id={}",
+            session_id);
 
         return DAS_S_OK;
     }
