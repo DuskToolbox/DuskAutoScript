@@ -152,3 +152,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
     add_compile_options(-Wno-unused-function -Wno-unused-variable)
 endif()
 add_subdirectory(das)
+
+# Configuration completed - output timestamp
+string(TIMESTAMP DAS_CONFIG_TIME "%Y-%m-%d %H:%M:%S")
+message(STATUS "CMake configuration completed at ${DAS_CONFIG_TIME}")

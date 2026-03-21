@@ -73,4 +73,17 @@ DAS_CORE_LOG_ERROR("Operation failed: result={}", result);
 ```
 
 原因：DasResult 错误码使用十进制数值定义，使用十六进制格式会导致日志难以阅读和调试。
+
+### interface_hash 使用十六进制格式
+
+**必须**在日志中使用 `0x{:08X}` 格式记录 interface_hash（FNV-1a hash of GUID）：
+
+```cpp
+// ✓ 正确
+DAS_CORE_LOG_ERROR("interface_hash=0x{:08X}", interface_hash);
+
+// ✗ 禁止
+DAS_CORE_LOG_ERROR("interface_hash={}", interface_hash);
 ```
+
+原因：interface_hash 在代码中（IpcProxyFactory.h 等）以十六进制 case 值定义（如 `0x84E3ADFC`），使用十六进制格式才能快速定位对应的接口类型。
