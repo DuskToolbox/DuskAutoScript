@@ -278,9 +278,10 @@ void RegisterQueryInterfaceHandler(DAS::Core::IPC::Host::IIpcContext* ctx)
             if (payload.size()
                 < sizeof(DAS::Core::IPC::ObjectId) + sizeof(DasGuid))
             {
-                DAS_CORE_LOG_ERROR(
+                std::string qi_log_msg = DAS_FMT_NS::format(
                     "[QUERY_INTERFACE] payload too small: {}",
                     payload.size());
+                DAS_LOG_ERROR(qi_log_msg.c_str());
                 response.error_code = DAS_E_IPC_INVALID_MESSAGE_BODY;
                 response.response_data.clear();
                 return DAS_E_IPC_INVALID_MESSAGE_BODY;
@@ -304,11 +305,12 @@ void RegisterQueryInterfaceHandler(DAS::Core::IPC::Host::IIpcContext* ctx)
                 ctx->GetObjectManager().LookupObject(object_id, &raw_ptr);
             if (DAS::IsFailed(lookup_result))
             {
-                DAS_CORE_LOG_ERROR(
+                std::string qi_log_msg = DAS_FMT_NS::format(
                     "[QUERY_INTERFACE] LookupObject failed: session={}, local={}, result={}",
                     object_id.session_id,
                     object_id.local_id,
                     lookup_result);
+                DAS_LOG_ERROR(qi_log_msg.c_str());
                 response.error_code = lookup_result;
                 response.response_data.clear();
                 return lookup_result;
@@ -321,9 +323,10 @@ void RegisterQueryInterfaceHandler(DAS::Core::IPC::Host::IIpcContext* ctx)
             DasResult qi_result = com_obj->QueryInterface(iid, &new_ptr);
             if (DAS::IsFailed(qi_result))
             {
-                DAS_CORE_LOG_INFO(
+                std::string qi_log_msg = DAS_FMT_NS::format(
                     "[QUERY_INTERFACE] QueryInterface returned: {}",
                     qi_result);
+                DAS_LOG_INFO(qi_log_msg.c_str());
                 response.error_code = qi_result;
 
                 // 返回失败结果：int32(result) + uint32(0) + uint64(0)
@@ -386,12 +389,13 @@ void RegisterQueryInterfaceHandler(DAS::Core::IPC::Host::IIpcContext* ctx)
                 reinterpret_cast<const uint8_t*>(&encoded_id)
                     + sizeof(encoded_id));
 
-            DAS_CORE_LOG_INFO(
+            std::string qi_log_msg = DAS_FMT_NS::format(
                 "[QUERY_INTERFACE] success: iid_hash=0x{:08X}, new_obj_id={{session:{}, gen:{}, local:{}}}",
                 interface_id,
                 new_obj_id.session_id,
                 new_obj_id.generation,
                 new_obj_id.local_id);
+            DAS_LOG_INFO(qi_log_msg.c_str());
 
             return DAS_S_OK;
         });
