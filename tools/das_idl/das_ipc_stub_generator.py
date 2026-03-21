@@ -350,6 +350,18 @@ class IpcStubGenerator:
         self.idl_file_name = os.path.basename(idl_file_path) if idl_file_path else None
         self.indent = "    "  # 4 空格缩进
         self.type_mapper = StubTypeMapper(document)
+        # Fixed sizes for [out] parameter serialization
+        # Interface pointers [out] = 12 bytes (session_id 2B + generation 2B + local_id 4B + interface_id 4B)
+        self.FIXED_SIZES = {
+            'int8_t': 1, 'uint8_t': 1, 'int16_t': 2, 'uint16_t': 2,
+            'int32_t': 4, 'uint32_t': 4, 'int64_t': 8, 'uint64_t': 8,
+            'float': 4, 'double': 8,
+            'bool': 1, 'char': 1,
+            'size_t': 8,
+            'DasGuid': 16,
+            'DasResult': 4,
+            'DasBool': 1,
+        }
         # Load external enum/struct definitions from all IDL directories
         if idl_file_path:
             idl_base_dir = str(Path(idl_file_path).resolve().parent)
@@ -498,6 +510,9 @@ class IpcStubGenerator:
         def _iface_name_from_type(type_info: TypeInfo) -> str:
             return type_info.base_type.split("::")[-1]
 
+        # Check if any method has [in] interface pointer params (for DasProxyBase.h)
+        has_in_interface_ptr = False
+
         for method in interface.methods:
             if _is_iface_ptr(method.return_type):
                 iface_name = _iface_name_from_type(method.return_type)
@@ -511,6 +526,14 @@ class IpcStubGenerator:
                     if iface_name not in CORE_TYPES and iface_name not in local_iface_names:
                         header = self.type_mapper.interface_header_files.get(iface_name, f"{iface_name}.h")
                         includes.add(header)
+                    # Check if this is an [in] interface pointer (for DasProxyBase.h include)
+                    if param.direction != ParamDirection.OUT:
+                        has_in_interface_ptr = True
+
+        # Add DasProxyBase.h if interface has [in] interface pointer params
+        # (needed for CreateProxyByInterfaceId in remote branch)
+        if has_in_interface_ptr:
+            includes.add("das/Core/IPC/DasProxyBase.h")
 
         # 排除主接口自身的头文件（已通过 abi_header 包含）
         short_name = self._get_interface_short_name(interface.name)
@@ -684,14 +707,14 @@ class IpcStubGenerator:
             lines.append(f"{indent}    void* impl,")
             lines.append(f"{indent}    const uint8_t* params,")
             lines.append(f"{indent}    size_t params_size,")
-            lines.append(f"{indent}    Das::Core::IPC::DistributedObjectManager& object_manager,")
+            lines.append(f"{indent}    Das::Core::IPC::StubContext& ctx,")
             lines.append(f"{indent}    std::vector<uint8_t>& out_response) override")
             lines.append(f"{indent}{{")
             lines.append(f"{inner_indent}(void)method_id;")
             lines.append(f"{inner_indent}(void)impl;")
             lines.append(f"{inner_indent}(void)params;")
             lines.append(f"{inner_indent}(void)params_size;")
-            lines.append(f"{inner_indent}(void)object_manager;")
+            lines.append(f"{inner_indent}(void)ctx;")
             lines.append(f"{inner_indent}(void)out_response;")
             lines.append(f"{inner_indent}return DAS_E_IPC_UNKNOWN_METHOD;")
             lines.append(f"{indent}}}")
@@ -702,7 +725,7 @@ class IpcStubGenerator:
         lines.append(f"{indent}    void* impl,")
         lines.append(f"{indent}    const uint8_t* params,")
         lines.append(f"{indent}    size_t params_size,")
-        lines.append(f"{indent}    Das::Core::IPC::DistributedObjectManager& object_manager,")
+        lines.append(f"{indent}    Das::Core::IPC::StubContext& ctx,")
         lines.append(f"{indent}    std::vector<uint8_t>& out_response) override")
         lines.append(f"{indent}{{")
         lines.append(f"{inner_indent}auto* target = static_cast<{interface.name}*>(impl);")
@@ -712,7 +735,7 @@ class IpcStubGenerator:
 
         for method, _ in all_methods:
             lines.append(f"{inner_indent}case METHOD_{method.name.upper()}:")
-            lines.append(f"{inner_indent}    return Handle{method.name}(target, params, params_size, object_manager, out_response);")
+            lines.append(f"{inner_indent}    return Handle{method.name}(target, params, params_size, ctx, out_response);")
 
         lines.append(f"{inner_indent}default:")
         lines.append(f"{inner_indent}    return DAS_E_IPC_UNKNOWN_METHOD;")
@@ -724,7 +747,7 @@ class IpcStubGenerator:
     def _generate_handle_method_declaration(self, interface: InterfaceDef, method: MethodDef, namespace_depth: int = 0) -> str:
         """生成 Handle 方法声明（实例方法）"""
         indent = "    " * (namespace_depth + 1)
-        return f"{indent}DasResult Handle{method.name}({interface.name}* impl, const uint8_t* params, size_t params_size, Das::Core::IPC::DistributedObjectManager& object_manager, std::vector<uint8_t>& out_response);"
+        return f"{indent}DasResult Handle{method.name}({interface.name}* impl, const uint8_t* params, size_t params_size, Das::Core::IPC::StubContext& ctx, std::vector<uint8_t>& out_response);"
     
     def _generate_handle_method_definition(self, interface: InterfaceDef, method: MethodDef, method_index: int) -> str:
         """生成单个方法的 Handle 处理函数定义（实例方法，impl 通过参数传入）"""
@@ -743,13 +766,15 @@ class IpcStubGenerator:
         inner_indent = "    "
 
         full_class_name = "::".join(full_ns + [class_name])
-        lines.append(f"inline DasResult {full_class_name}::Handle{method.name}({interface.name}* impl, const uint8_t* params, size_t params_size, Das::Core::IPC::DistributedObjectManager& object_manager, std::vector<uint8_t>& out_response)")
+        lines.append(f"inline DasResult {full_class_name}::Handle{method.name}({interface.name}* impl, const uint8_t* params, size_t params_size, Das::Core::IPC::StubContext& ctx, std::vector<uint8_t>& out_response)")
         lines.append(f"{{")
         lines.append(f"{inner_indent}(void)impl;")
         lines.append(f"{inner_indent}(void)params;")
         lines.append(f"{inner_indent}(void)params_size;")
-        lines.append(f"{inner_indent}(void)object_manager;")
+        lines.append(f"{inner_indent}(void)ctx;")
         lines.append(f"{inner_indent}(void)out_response;")
+        lines.append(f"{inner_indent}auto& object_manager = ctx.object_manager;")
+        lines.append(f"{inner_indent}(void)object_manager;")
 
         return_type = method.return_type.base_type
         has_return = return_type != 'void'
@@ -763,7 +788,7 @@ class IpcStubGenerator:
         lines.append(f"{inner_indent}(void)serial_result;")
 
         # Handle 方法参数名列表（用于检测变量名冲突）
-        handle_param_names = {'impl', 'params', 'params_size', 'out_response', 'object_manager'}
+        handle_param_names = {'impl', 'params', 'params_size', 'out_response', 'ctx'}
 
         # 构建完整类型名（带指针）用于接口检测
         def _get_full_type_name(type_info):
@@ -848,9 +873,6 @@ class IpcStubGenerator:
                     lines.append(f"{line}")
             lines.append("")
 
-        lines.append(f"{inner_indent}Das::Core::IPC::MemorySerializerWriter writer;")
-        lines.append("")
-
         call_params = []
         for param in method.parameters:
             # 处理变量名冲突
@@ -889,59 +911,332 @@ class IpcStubGenerator:
             lines.append(f"{inner_indent}impl->{method.name}({params_str});")
         lines.append("")
 
-        # Write response body (wire format: remote_result -> out_params -> return_value)
-        if has_return:
-            # Non-void: write call_result as remote_result
-            lines.append(f"{inner_indent}serial_result = writer.WriteInt32(call_result);")
-            lines.append(f"{inner_indent}if (DAS::IsFailed(serial_result))")
-            lines.append(f"{inner_indent}{{")
-            lines.append(f"{inner_indent}    return serial_result;")
-            lines.append(f"{inner_indent}}}")
-            lines.append("")
-
-            # Write out_params second (proxy reads these after remote_result)
-            for param in out_params:
-                local_name = f"arg_{param.name}" if param.name in handle_param_names else param.name
-                serialize_code = self._generate_serialize_param_for_stub(param, inner_indent, local_name)
-                for line in serialize_code:
-                    lines.append(f"{line}")
-
-            # Write call_result again as return_value last (proxy reads this after out_params)
-            serialize_return_code = self._generate_serialize_return_for_stub(method.return_type, inner_indent)
-            for line in serialize_return_code:
-                lines.append(f"{line}")
-        elif out_params:
-            # Void method with out_params: write DAS_S_OK as remote_result
-            lines.append(f"{inner_indent}serial_result = writer.WriteInt32(DAS_S_OK);")
-            lines.append(f"{inner_indent}if (DAS::IsFailed(serial_result))")
-            lines.append(f"{inner_indent}{{")
-            lines.append(f"{inner_indent}    return serial_result;")
-            lines.append(f"{inner_indent}}}")
-            lines.append("")
-
-            # Write out_params (proxy reads these after remote_result)
-            for param in out_params:
-                local_name = f"arg_{param.name}" if param.name in handle_param_names else param.name
-                serialize_code = self._generate_serialize_param_for_stub(param, inner_indent, local_name)
-                for line in serialize_code:
-                    lines.append(f"{line}")
-        # else: void method without out_params - no response body needed
-
+        # ===== Response serialization =====
         if has_return or out_params:
-            lines.append(f"{inner_indent}out_response = writer.GetBuffer();")
-            lines.append("")
+            if self._is_fixed_size_response(method):
+                # Zero-heap-allocation: #pragma pack struct
+                resp_lines = self._generate_fixed_size_response_body(
+                    interface, method, out_params, has_return, inner_indent)
+                lines.extend(resp_lines)
+            else:
+                # Variable-size: writer.Reserve() single allocation
+                resp_lines = self._generate_variable_size_response_body(
+                    interface, method, out_params, has_return, inner_indent)
+                lines.extend(resp_lines)
+                lines.append(f"{inner_indent}out_response = writer.GetBuffer();")
+        # else: void method without out_params - no response body
 
         lines.append(f"{inner_indent}return DAS_S_OK;")
         lines.append(f"}}")
 
         return "\n".join(lines)
-    
+
+    def _is_fixed_size_response(self, method: MethodDef) -> bool:
+        """Check if all [out] params + return value are fixed-size (no strings)
+
+        NOTE: [out] interface pointers ARE fixed-size (12 bytes each).
+        """
+        FIXED_SIZE_SPECIAL = {'DasGuid', 'DasResult', 'DasBool'}
+        for param in method.parameters:
+            if param.direction not in (ParamDirection.OUT, ParamDirection.INOUT):
+                continue
+            bt = param.type_info.base_type
+            # IDasReadOnlyString [out] is variable-length
+            if bt == 'IDasReadOnlyString' or bt == 'string':
+                return False
+            # Basic types
+            if bt in self.type_mapper.TYPE_MAP:
+                continue
+            if bt in FIXED_SIZE_SPECIAL:
+                continue
+            # Enum
+            if bt in self.type_mapper.enum_types:
+                continue
+            # Struct (all fields fixed)
+            if bt in self.type_mapper.struct_types:
+                continue
+            # Interface pointer [out]: 12 bytes (session_id 2B + generation 2B + local_id 4B + interface_id 4B)
+            base_check = bt.split("::")[-1]
+            if base_check.startswith("I") and "Das" in base_check and param.type_info.is_pointer:
+                continue
+            # Unknown type — not fixed-size
+            return False
+        return True
+
+    def _get_out_param_fixed_size(self, param: ParameterDef) -> int:
+        """Get byte size for a fixed-size [out] parameter.
+
+        Interface pointers [out] = 12 bytes (session_id 2B + generation 2B + local_id 4B + interface_id 4B).
+        """
+        bt = param.type_info.base_type
+        if bt in self.FIXED_SIZES:
+            return self.FIXED_SIZES[bt]
+        if bt in self.type_mapper.enum_types:
+            return 4
+        if bt in self.type_mapper.struct_defs:
+            struct_def = self.type_mapper.struct_defs[bt]
+            total = 0
+            for field in struct_def.fields:
+                total += self.FIXED_SIZES.get(field.type_name, 0)
+            return total
+        # Interface pointer [out]: 12 bytes
+        base_check = bt.split("::")[-1]
+        if base_check.startswith("I") and "Das" in base_check and param.type_info.is_pointer:
+            return 12
+        return 0
+
+    def _generate_response_struct_fields(self, param: ParameterDef, indent: str, local_name: str) -> List[str]:
+        """Generate packed struct field declarations for an [out] parameter."""
+        lines = []
+        bt = param.type_info.base_type
+
+        # Check if it's an interface pointer [out]
+        base_check = bt.split("::")[-1]
+        full_type_name = bt
+        if param.type_info.is_pointer:
+            full_type_name += "*" * param.type_info.pointer_level
+        is_interface = self.type_mapper.is_interface_type(full_type_name)
+        if not is_interface:
+            is_interface = (base_check.startswith("I") and "Das" in base_check)
+
+        if is_interface and param.type_info.is_pointer:
+            # Interface pointer [out]: 4 fields for ObjectId + interface_id
+            lines.append(f"{indent}uint16_t {local_name}_session_id;")
+            lines.append(f"{indent}uint16_t {local_name}_generation;")
+            lines.append(f"{indent}uint32_t {local_name}_local_id;")
+            lines.append(f"{indent}uint32_t {local_name}_interface_id;")
+            return lines
+
+        # Enum: int32_t field
+        if bt in self.type_mapper.enum_types:
+            lines.append(f"{indent}int32_t {local_name};")
+            return lines
+
+        # Struct: inline fields per member
+        if bt in self.type_mapper.struct_defs:
+            struct_def = self.type_mapper.struct_defs[bt]
+            if struct_def and struct_def.fields:
+                for field in struct_def.fields:
+                    field_type_info = self.type_mapper.get_type_info(field.type_name)
+                    if field_type_info:
+                        field_cpp_type, _, _, _ = field_type_info
+                        lines.append(f"{indent}{field_cpp_type} {local_name}_{field.name};")
+            else:
+                # Empty struct - use int32_t as placeholder
+                lines.append(f"{indent}int32_t {local_name}_dummy;")
+            return lines
+
+        # Basic types
+        type_info = self.type_mapper.get_type_info(bt)
+        if type_info:
+            cpp_type, _, _, _ = type_info
+            lines.append(f"{indent}{cpp_type} {local_name};")
+        else:
+            lines.append(f"{indent}int32_t {local_name};")
+        return lines
+
+    def _generate_response_struct_fill(self, param: ParameterDef, prefix: str, indent: str, local_name: str) -> List[str]:
+        """Generate code to fill a packed struct field for an [out] parameter."""
+        lines = []
+        bt = param.type_info.base_type
+
+        # Check if it's an interface pointer [out]
+        base_check = bt.split("::")[-1]
+        full_type_name = bt
+        if param.type_info.is_pointer:
+            full_type_name += "*" * param.type_info.pointer_level
+        is_interface = self.type_mapper.is_interface_type(full_type_name)
+        if not is_interface:
+            is_interface = (base_check.startswith("I") and "Das" in base_check)
+
+        if is_interface and param.type_info.is_pointer:
+            # Interface pointer [out]: find interface UUID and compute FNV-1a hash
+            interface_name = self.type_mapper.get_interface_name(bt)
+            interface_uuid = None
+            if hasattr(self, 'document') and self.document:
+                for iface in self.document.interfaces:
+                    iface_short = iface.name.split("::")[-1]
+                    if iface_short == interface_name or iface.name == bt:
+                        interface_uuid = iface.uuid
+                        break
+            if interface_uuid is None and hasattr(self, 'all_interfaces'):
+                for iface in self.all_interfaces:
+                    iface_short = iface.name.split("::")[-1]
+                    if iface_short == interface_name or iface.name == bt:
+                        interface_uuid = iface.uuid
+                        break
+
+            if interface_uuid:
+                iface_id_hash = fnv1a_hash_guid(interface_uuid)
+            else:
+                iface_id_hash = 0
+
+            # Inline null check + RegisterLocalObject + 4-field assignment
+            lines.append(f"{indent}if ({local_name} != nullptr)")
+            lines.append(f"{indent}{{")
+            lines.append(f"{indent}    Das::Core::IPC::ObjectId {local_name}_oid;")
+            lines.append(f"{indent}    serial_result = object_manager.RegisterLocalObject({local_name}, {local_name}_oid);")
+            lines.append(f"{indent}    if (DAS::IsFailed(serial_result))")
+            lines.append(f"{indent}    {{")
+            lines.append(f"{indent}        return serial_result;")
+            lines.append(f"{indent}    }}")
+            lines.append(f"{indent}    {prefix}{local_name}_session_id = {local_name}_oid.session_id;")
+            lines.append(f"{indent}    {prefix}{local_name}_generation = {local_name}_oid.generation;")
+            lines.append(f"{indent}    {prefix}{local_name}_local_id = {local_name}_oid.local_id;")
+            lines.append(f"{indent}    {prefix}{local_name}_interface_id = 0x{iface_id_hash:08X}u;")
+            lines.append(f"{indent}}}")
+            lines.append(f"{indent}// else: struct is zero-initialized, all fields already 0")
+            return lines
+
+        # Enum: static_cast<int32_t>
+        if bt in self.type_mapper.enum_types:
+            lines.append(f"{indent}{prefix}{local_name} = static_cast<int32_t>({local_name});")
+            return lines
+
+        # Struct: field-by-field assignment
+        if bt in self.type_mapper.struct_defs:
+            struct_def = self.type_mapper.struct_defs[bt]
+            if struct_def and struct_def.fields:
+                for field in struct_def.fields:
+                    lines.append(f"{indent}{prefix}{local_name}_{field.name} = {local_name}.{field.name};")
+            return lines
+
+        # Basic types: direct assignment
+        lines.append(f"{indent}{prefix}{local_name} = {local_name};")
+        return lines
+
+    def _generate_fixed_size_response_body(self, interface: InterfaceDef, method: MethodDef, out_params, has_return: bool, indent: str) -> List[str]:
+        """Generate zero-alloc #pragma pack response struct for fixed-size responses."""
+        lines = []
+        struct_name = f"{method.name}_ResponseBody"
+        handle_param_names = {'impl', 'params', 'params_size', 'out_response', 'ctx'}
+
+        # Generate struct definition
+        lines.append(f"{indent}#pragma pack(push, 1)")
+        lines.append(f"{indent}struct {struct_name} {{")
+        lines.append(f"{indent}    int32_t remote_result;")
+
+        for param in out_params:
+            local_name = f"arg_{param.name}" if param.name in handle_param_names else param.name
+            fields = self._generate_response_struct_fields(param, indent + "    ", local_name)
+            lines.extend(fields)
+
+        if has_return:
+            lines.append(f"{indent}    int32_t return_value;")
+
+        lines.append(f"{indent}}};")
+        lines.append(f"{indent}#pragma pack(pop)")
+        lines.append("")
+
+        # Create instance and fill
+        lines.append(f"{indent}{struct_name} resp{{}};")
+
+        if has_return:
+            lines.append(f"{indent}resp.remote_result = static_cast<int32_t>(call_result);")
+        else:
+            lines.append(f"{indent}resp.remote_result = static_cast<int32_t>(DAS_S_OK);")
+
+        # Fill out params
+        for param in out_params:
+            local_name = f"arg_{param.name}" if param.name in handle_param_names else param.name
+            fill_lines = self._generate_response_struct_fill(param, "resp.", indent, local_name)
+            lines.extend(fill_lines)
+
+        if has_return:
+            lines.append(f"{indent}resp.return_value = static_cast<int32_t>(call_result);")
+
+        lines.append("")
+        lines.append(f"{indent}out_response.assign(")
+        lines.append(f"{indent}    reinterpret_cast<const uint8_t*>(&resp),")
+        lines.append(f"{indent}    reinterpret_cast<const uint8_t*>(&resp) + sizeof(resp));")
+
+        return lines
+
+    def _generate_variable_size_response_body(self, interface: InterfaceDef, method: MethodDef, out_params, has_return: bool, indent: str) -> List[str]:
+        """Generate response body with writer.Reserve() for single allocation."""
+        lines = []
+        handle_param_names = {'impl', 'params', 'params_size', 'out_response', 'ctx'}
+
+        # Phase 1: Pre-calculate total response size
+        lines.append(f"{indent}// Pre-calculate total response size for single allocation")
+        lines.append(f"{indent}size_t total_response_size = 4;  // remote_result (int32)")
+
+        string_params = []  # Track IDasReadOnlyString [out] params for GetUtf8
+        for param in out_params:
+            local_name = f"arg_{param.name}" if param.name in handle_param_names else param.name
+            bt = param.type_info.base_type
+            if bt == 'IDasReadOnlyString' and param.type_info.is_pointer:
+                # Variable-length: GetUtf8 + strlen
+                lines.append(f"{indent}const char* {local_name}_utf8_tmp;")
+                lines.append(f"{indent}serial_result = {local_name}->GetUtf8(&{local_name}_utf8_tmp);")
+                lines.append(f"{indent}if (DAS::IsFailed(serial_result))")
+                lines.append(f"{indent}{{")
+                lines.append(f"{indent}    return serial_result;")
+                lines.append(f"{indent}}}")
+                lines.append(f"{indent}const size_t {local_name}_len = std::strlen({local_name}_utf8_tmp);")
+                lines.append(f"{indent}total_response_size += 8 + {local_name}_len;  // uint64 length prefix + string data")
+                string_params.append(local_name)
+            else:
+                size = self._get_out_param_fixed_size(param)
+                lines.append(f"{indent}total_response_size += {size};  // {param.name}")
+
+        if has_return:
+            lines.append(f"{indent}total_response_size += 4;  // return_value (int32)")
+
+        lines.append("")
+
+        # Phase 2: Create writer with pre-allocation
+        lines.append(f"{indent}Das::Core::IPC::MemorySerializerWriter writer;")
+        lines.append(f"{indent}writer.Reserve(total_response_size);")
+        lines.append("")
+
+        # Phase 3: Write response body
+        # Write remote_result
+        if has_return:
+            lines.append(f"{indent}serial_result = writer.WriteInt32(call_result);")
+        else:
+            lines.append(f"{indent}serial_result = writer.WriteInt32(DAS_S_OK);")
+        lines.append(f"{indent}if (DAS::IsFailed(serial_result))")
+        lines.append(f"{indent}{{")
+        lines.append(f"{indent}    return serial_result;")
+        lines.append(f"{indent}}}")
+        lines.append("")
+
+        # Write out_params
+        for param in out_params:
+            local_name = f"arg_{param.name}" if param.name in handle_param_names else param.name
+            bt = param.type_info.base_type
+            if bt == 'IDasReadOnlyString' and param.type_info.is_pointer:
+                # String: write length prefix + data
+                lines.append(f"{indent}serial_result = writer.WriteUInt64({local_name}_len);")
+                lines.append(f"{indent}if (DAS::IsFailed(serial_result))")
+                lines.append(f"{indent}{{")
+                lines.append(f"{indent}    return serial_result;")
+                lines.append(f"{indent}}}")
+                lines.append(f"{indent}serial_result = writer.WriteBytes({local_name}_utf8_tmp, {local_name}_len);")
+                lines.append(f"{indent}if (DAS::IsFailed(serial_result))")
+                lines.append(f"{indent}{{")
+                lines.append(f"{indent}    return serial_result;")
+                lines.append(f"{indent}}}")
+            else:
+                serialize_code = self._generate_serialize_param_for_stub(param, indent, local_name)
+                for line in serialize_code:
+                    lines.append(f"{line}")
+
+        # Write return_value
+        if has_return:
+            serialize_return_code = self._generate_serialize_return_for_stub(method.return_type, indent)
+            for line in serialize_return_code:
+                lines.append(f"{line}")
+
+        return lines
+
     def _generate_deserialize_param_for_stub(self, param: ParameterDef, indent: str) -> List[str]:
         """生成参数反序列化代码（用于 Stub 从请求体读取参数）"""
         lines = []
 
         # Handle 方法参数名列表（用于检测变量名冲突）
-        handle_param_names = {'impl', 'params', 'params_size', 'out_response', 'object_manager'}
+        handle_param_names = {'impl', 'params', 'params_size', 'out_response', 'ctx'}
         local_name = f"arg_{param.name}" if param.name in handle_param_names else param.name
 
         # 构建完整类型名（带指针）用于接口检测
@@ -1014,9 +1309,40 @@ class IpcStubGenerator:
             lines.append(f"{indent}}}")
             lines.append(f"{indent}else")
             lines.append(f"{indent}{{")
-            lines.append(f"{indent}    // 远程对象：创建 Proxy")
-            lines.append(f"{indent}    // 注意：需要通过 IpcRunLoop 获取 business_thread")
-            lines.append(f"{indent}    {param_name} = nullptr;  // TODO: 使用 CreateProxyByInterfaceId 创建远程代理")
+            lines.append(f"{indent}    // 远程对象：通过 CreateProxyByInterfaceId 创建 Proxy")
+            lines.append(f"{indent}    // Compute interface_id hash at generation time")
+            # Find interface UUID to compute FNV-1a hash
+            interface_uuid = None
+            if hasattr(self, 'document') and self.document:
+                for iface in self.document.interfaces:
+                    iface_short = iface.name.split("::")[-1]
+                    if iface_short == interface_name or iface.name == param.type_info.base_type:
+                        interface_uuid = iface.uuid
+                        break
+            if interface_uuid is None and hasattr(self, 'all_interfaces'):
+                for iface in self.all_interfaces:
+                    iface_short = iface.name.split("::")[-1]
+                    if iface_short == interface_name or iface.name == param.type_info.base_type:
+                        interface_uuid = iface.uuid
+                        break
+
+            if interface_uuid:
+                iface_id_hash = fnv1a_hash_guid(interface_uuid)
+            else:
+                iface_id_hash = 0
+
+            lines.append(f"{indent}    IDasBase* {param_name}_base = Das::Core::IPC::DasIpcProxy::CreateProxyByInterfaceId(")
+            lines.append(f"{indent}        0x{iface_id_hash:08X}u,")
+            lines.append(f"{indent}        {param_name}_id,")
+            lines.append(f"{indent}        ctx.run_loop,")
+            lines.append(f"{indent}        ctx.business_thread,")
+            lines.append(f"{indent}        object_manager);")
+            lines.append(f"{indent}    if ({param_name}_base == nullptr)")
+            lines.append(f"{indent}    {{")
+            lines.append(f"{indent}        return DAS_E_IPC_DESERIALIZATION_FAILED;")
+            lines.append(f"{indent}    }}")
+            lines.append(f"{indent}    object_manager.RegisterRemoteObject({param_name}_id);")
+            lines.append(f"{indent}    {param_name} = static_cast<{full_interface_name}*>({param_name}_base);")
             lines.append(f"{indent}}}")
             return lines
 
