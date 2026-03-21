@@ -250,7 +250,9 @@ def main():
             output_dirs.add(Path(config["--wrapper-output-dir"]))
         if "--swig-output-dir" in config:
             output_dirs.add(Path(config["--swig-output-dir"]))
-    
+        if "--ipc-output-dir" in config:
+            output_dirs.add(Path(config["--ipc-output-dir"]))
+
     # 检查工具文件修改情况
     modified_tools = []
     if output_dirs:
