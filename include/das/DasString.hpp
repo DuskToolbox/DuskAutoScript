@@ -104,6 +104,16 @@ DAS_C_API DasResult CreateIDasReadOnlyStringFromUtf8(
     IDasReadOnlyString** pp_out_readonly_string);
 
 /**
+ * @brief Create IDasReadOnlyString from UTF-8 string with explicit length.
+ * Does not require null-termination. Uses ICU StringPiece for zero-copy
+ * parsing.
+ */
+DAS_C_API DasResult CreateIDasReadOnlyStringFromUtf8WithLength(
+    const char*          p_utf8_string,
+    size_t               length,
+    IDasReadOnlyString** pp_out_readonly_string);
+
+/**
  * @brief same as DAS_METHOD IDasString::SetW(const wchar_t* p_string,
  * size_t length) = 0
  *

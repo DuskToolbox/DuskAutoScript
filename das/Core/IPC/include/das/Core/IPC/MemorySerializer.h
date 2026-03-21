@@ -68,6 +68,18 @@ public:
         position_ = position;
         return DAS_S_OK;
     }
+
+    DasResult ReadRawPointer(const uint8_t** out_ptr, size_t size) override
+    {
+        if (position_ + size > size_)
+        {
+            return DAS_E_IPC_DESERIALIZATION_FAILED;
+        }
+
+        *out_ptr = buffer_ + position_;
+        position_ += size;
+        return DAS_S_OK;
+    }
 };
 
 /**

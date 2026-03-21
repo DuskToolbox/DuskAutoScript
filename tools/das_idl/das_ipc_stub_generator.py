@@ -949,19 +949,21 @@ class IpcStubGenerator:
         if param.type_info.is_pointer:
             full_type_name += "*" * param.type_info.pointer_level
 
-        # IDasReadOnlyString special handling (Fix 4) - BEFORE interface check
+        # IDasReadOnlyString special handling (zero-copy) - BEFORE interface check
         # IDasReadOnlyString is a concrete type (not interface), needs explicit declaration
+        # Uses ReadStringView + CreateIDasReadOnlyStringFromUtf8WithLength for zero heap allocation
         if param.type_info.base_type == "IDasReadOnlyString":
-            lines.append(f"{indent}// 反序列化 IDasReadOnlyString")
+            lines.append(f"{indent}// 反序列化 IDasReadOnlyString (zero-copy)")
             # Declare the pointer variable (IDasReadOnlyString* for [in] params)
             lines.append(f"{indent}IDasReadOnlyString* {local_name} = {{}};")
-            lines.append(f"{indent}std::string {local_name}_str;")
-            lines.append(f"{indent}serial_result = reader.ReadString({local_name}_str);")
+            lines.append(f"{indent}const char* {local_name}_ptr = nullptr;")
+            lines.append(f"{indent}size_t {local_name}_len = 0;")
+            lines.append(f"{indent}serial_result = reader.ReadStringView(&{local_name}_ptr, &{local_name}_len);")
             lines.append(f"{indent}if (DAS::IsFailed(serial_result))")
             lines.append(f"{indent}{{")
             lines.append(f"{indent}    return serial_result;")
             lines.append(f"{indent}}}")
-            lines.append(f"{indent}serial_result = ::CreateIDasReadOnlyStringFromUtf8({local_name}_str.c_str(), &{local_name});")
+            lines.append(f"{indent}serial_result = ::CreateIDasReadOnlyStringFromUtf8WithLength({local_name}_ptr, {local_name}_len, &{local_name});")
             lines.append(f"{indent}if (DAS::IsFailed(serial_result))")
             lines.append(f"{indent}{{")
             lines.append(f"{indent}    return serial_result;")

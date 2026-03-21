@@ -181,6 +181,49 @@ public:
         return result;
     }
 
+    /**
+     * Get a raw pointer to the current position in the buffer and advance.
+     * Default implementation returns error (not all readers support this).
+     */
+    virtual DasResult ReadRawPointer(const uint8_t** out_ptr, size_t size)
+    {
+        (void)out_ptr;
+        (void)size;
+        return DAS_E_IPC_DESERIALIZATION_FAILED;
+    }
+
+    /**
+     * Zero-copy string read: returns pointer into internal buffer.
+     * The returned pointer is valid only while the underlying buffer is alive.
+     * @param out_ptr Output: pointer to string data in buffer
+     * @param out_len Output: string length in bytes
+     */
+    DasResult ReadStringView(const char** out_ptr, size_t* out_len)
+    {
+        uint64_t size;
+        auto     result = ReadUInt64(&size);
+        if (result != DAS_S_OK)
+        {
+            return result;
+        }
+
+        if (size > GetRemaining())
+        {
+            return DAS_E_IPC_DESERIALIZATION_FAILED;
+        }
+
+        // ReadRawPointer: get pointer to current position without copying
+        result = ReadRawPointer(
+            reinterpret_cast<const uint8_t**>(out_ptr),
+            static_cast<size_t>(size));
+        if (result != DAS_S_OK)
+        {
+            return result;
+        }
+        *out_len = static_cast<size_t>(size);
+        return DAS_S_OK;
+    }
+
     DasResult ReadGuid(DasGuid* value) { return Read(value, sizeof(DasGuid)); }
 
     DasResult ReadArray(void* data, size_t size)

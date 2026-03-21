@@ -256,6 +256,23 @@ DasResult DasStringCppImpl::SetUtf8(const char* p_string)
     return DAS_S_OK;
 }
 
+DasResult DasStringCppImpl::SetUtf8WithLength(
+    const char* p_utf8_string,
+    size_t      length)
+{
+    InvalidateCache();
+    // ICU StringPiece constructor accepts (ptr, len) without null-termination
+    impl_.setTo(
+        U_NAMESPACE_QUALIFIER UnicodeString::fromUTF8(
+            U_NAMESPACE_QUALIFIER StringPiece{
+                p_utf8_string,
+                static_cast<int32_t>(length)}));
+    // Note: cached_utf8_string_ is not updated here to avoid another allocation
+    // The cache will be regenerated on demand via GetUtf8()
+    is_cache_expired_[static_cast<std::size_t>(Encode::U8)] = true;
+    return DAS_S_OK;
+}
+
 DasResult DasStringCppImpl::GetUtf8(const char** out_string)
 {
     if (IsCacheExpired<Encode::U8>())
@@ -815,6 +832,36 @@ DasResult CreateIDasReadOnlyStringFromUtf8(
     auto        result = CreateIDasStringFromUtf8(p_utf8_string, &p_string);
     *pp_out_readonly_string = p_string;
     return result;
+}
+
+DasResult CreateIDasReadOnlyStringFromUtf8WithLength(
+    const char*          p_utf8_string,
+    size_t               length,
+    IDasReadOnlyString** pp_out_readonly_string)
+{
+    if (p_utf8_string == nullptr || pp_out_readonly_string == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    try
+    {
+        auto p_string = std::make_unique<DasStringCppImpl>();
+        // Use SetUtf8WithLength which accepts non-null-terminated strings via
+        // ICU StringPiece
+        auto result = p_string->SetUtf8WithLength(p_utf8_string, length);
+        if (result != DAS_S_OK)
+        {
+            return result;
+        }
+        p_string->AddRef();
+        *pp_out_readonly_string = p_string.release();
+        return DAS_S_OK;
+    }
+    catch (const std::bad_alloc&)
+    {
+        return DAS_E_OUT_OF_MEMORY;
+    }
 }
 
 DasResult CreateIDasStringFromWChar(

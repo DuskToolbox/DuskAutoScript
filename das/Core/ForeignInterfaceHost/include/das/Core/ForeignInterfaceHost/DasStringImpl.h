@@ -150,7 +150,7 @@ public:
     void GetTo(IDasReadOnlyString**& pp_string) const;
     void GetTo(IDasReadOnlyString*& p_string) const;
 
-    operator DasReadOnlyString() const;
+                         operator DasReadOnlyString() const;
     void                 GetImpl(IDasReadOnlyString** pp_impl) const;
     IDasReadOnlyString*  Get() const noexcept;
     IDasReadOnlyString** Put();
@@ -238,6 +238,7 @@ public:
     const UChar32* CEnd() override;
     // * IDasString
     DasResult SetUtf8(const char* p_string) override;
+    DasResult SetUtf8WithLength(const char* p_utf8_string, size_t length);
     DasResult GetUtf8(const char** out_string) override;
     DasResult SetUtf16(const char16_t* p_string, size_t length) override;
     DasResult GetUtf16(
