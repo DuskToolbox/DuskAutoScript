@@ -842,6 +842,249 @@ class IpcProxyGenerator:
         
         return "\n".join(lines)
     
+    # 固定大小类型映射表（用于零堆分配栈上结构体）
+    FIXED_SIZES = {
+        'int8': 1, 'uint8': 1,
+        'int16': 2, 'uint16': 2,
+        'int32': 4, 'uint32': 4, 'int32_t': 4, 'uint32_t': 4,
+        'int64': 8, 'uint64': 8, 'int64_t': 8, 'uint64_t': 8,
+        'int': 4, 'uint': 4,
+        'float': 4, 'double': 8,
+        'bool': 1, 'char': 1,
+        'size_t': 8,
+        'DasGuid': 16,
+        'DasResult': 4,
+        'DasBool': 1,
+    }
+
+    def _is_fixed_size_method(self, method: MethodDef) -> bool:
+        """检查方法所有 [in] 参数是否都是固定大小（无字符串、无变长数据）"""
+        FIXED_SIZE_SPECIAL = {'DasGuid', 'DasResult', 'DasBool'}
+        for param in method.parameters:
+            if param.direction == ParamDirection.OUT:
+                continue
+            bt = param.type_info.base_type
+            # 字符串类型是变长的
+            if bt == 'IDasReadOnlyString' or bt == 'string':
+                return False
+            # 基本类型映射中的类型是固定的
+            if bt in self.type_mapper.TYPE_MAP:
+                continue
+            # 固定特殊类型
+            if bt in FIXED_SIZE_SPECIAL:
+                continue
+            # 枚举类型是固定的（int32_t）
+            if bt in self.type_mapper.enum_types:
+                continue
+            # Struct 类型：检查所有字段是否固定（递归）
+            if bt in self.type_mapper.struct_types:
+                continue  # 基本字段的 struct 是固定的
+            # 接口指针：ObjectId 编码为 uint64（8字节）
+            base_check = bt.split("::")[-1]
+            if base_check.startswith("I") and "Das" in base_check and param.type_info.is_pointer:
+                continue
+            # 未知类型 — 不是固定大小
+            return False
+        return True
+
+    def _get_param_fixed_size(self, param: ParameterDef) -> int:
+        """获取参数占用的字节大小（固定大小参数）"""
+        bt = param.type_info.base_type
+        if bt in self.FIXED_SIZES:
+            return self.FIXED_SIZES[bt]
+        # 枚举类型：int32_t
+        if bt in self.type_mapper.enum_types:
+            return 4
+        # Struct 类型：累加所有字段大小
+        if bt in self.type_mapper.struct_defs:
+            struct_def = self.type_mapper.struct_defs[bt]
+            total = 0
+            for field in struct_def.fields:
+                field_bt = field.type_name
+                total += self.FIXED_SIZES.get(field_bt, 0)
+            return total
+        # 接口指针：ObjectId 编码为 uint64
+        base_check = bt.split("::")[-1]
+        if base_check.startswith("I") and "Das" in base_check and param.type_info.is_pointer:
+            return 8
+        return 0
+
+    def _generate_struct_fields(self, param: ParameterDef, indent: str) -> List[str]:
+        """生成 packed struct 字段声明（用于栈上零堆分配）"""
+        lines = []
+        bt = param.type_info.base_type
+
+        if bt in self.FIXED_SIZES:
+            cpp_type = self.type_mapper.TYPE_MAP.get(bt, (bt, '', ''))[0] if bt in self.type_mapper.TYPE_MAP else bt
+            lines.append(f"{indent}{cpp_type} {param.name};")
+        elif bt in self.type_mapper.enum_types:
+            lines.append(f"{indent}int32_t {param.name};")
+        elif bt in self.type_mapper.struct_defs:
+            struct_def = self.type_mapper.struct_defs[bt]
+            for field in struct_def.fields:
+                field_cpp_type = self.type_mapper.TYPE_MAP.get(field.type_name, (field.type_name, '', ''))[0] if field.type_name in self.type_mapper.TYPE_MAP else field.type_name
+                lines.append(f"{indent}{field_cpp_type} {param.name}_{field.name};")
+        else:
+            # 接口指针：编码为 uint64
+            lines.append(f"{indent}uint64_t {param.name}_encoded_id;")
+        return lines
+
+    def _generate_struct_fill(self, param: ParameterDef, prefix: str, indent: str) -> List[str]:
+        """生成 packed struct 字段赋值代码"""
+        lines = []
+        bt = param.type_info.base_type
+
+        if bt in self.FIXED_SIZES:
+            # 基本类型：直接赋值（指针需要解引用）
+            if param.type_info.is_pointer and param.type_info.pointer_level >= 1:
+                lines.append(f"{indent}{prefix}{param.name} = *{param.name};")
+            else:
+                lines.append(f"{indent}{prefix}{param.name} = {param.name};")
+        elif bt in self.type_mapper.enum_types:
+            # 枚举类型：static_cast<int32_t>
+            lines.append(f"{indent}{prefix}{param.name} = static_cast<int32_t>({param.name});")
+        elif bt in self.type_mapper.struct_defs:
+            # Struct 类型：逐一字段赋值
+            struct_def = self.type_mapper.struct_defs[bt]
+            for field in struct_def.fields:
+                if param.type_info.is_pointer and param.type_info.pointer_level >= 1:
+                    lines.append(f"{indent}{prefix}{param.name}_{field.name} = {param.name}->{field.name};")
+                else:
+                    lines.append(f"{indent}{prefix}{param.name}_{field.name} = {param.name}.{field.name};")
+        else:
+            # 接口指针：EncodeObjectId
+            lines.append(f"{indent}{prefix}{param.name}_encoded_id = Das::Core::IPC::EncodeObjectId(GetObjectIdFromInterface({param.name}));")
+        return lines
+
+    def _generate_fixed_size_request_body(self, interface: InterfaceDef, method: MethodDef, method_index: int, in_params: List[ParameterDef], indent: str) -> List[str]:
+        """生成零堆分配的栈上 packed struct 请求体"""
+        lines = []
+        struct_name = f"{interface.name}_{method.name}_RequestBody"
+
+        # 生成 struct 定义
+        lines.append(f"{indent}#pragma pack(push, 1)")
+        lines.append(f"{indent}struct {struct_name} {{")
+        lines.append(f"{indent}    // V3 Body Header (16 bytes)")
+        lines.append(f"{indent}    uint32_t interface_id;")
+        lines.append(f"{indent}    uint16_t method_id;")
+        lines.append(f"{indent}    uint16_t reserved;")
+        lines.append(f"{indent}    uint16_t session_id;")
+        lines.append(f"{indent}    uint16_t generation;")
+        lines.append(f"{indent}    uint32_t local_id;")
+
+        # 生成参数字段
+        for param in in_params:
+            field_lines = self._generate_struct_fields(param, indent + "    ")
+            lines.extend(field_lines)
+
+        lines.append(f"{indent}}};")
+        lines.append(f"{indent}#pragma pack(pop)")
+        lines.append("")
+        lines.append(f"{indent}DasResult ipc_result = DAS_S_OK;")
+        lines.append("")
+
+        # 填充 struct
+        lines.append(f"{indent}{struct_name} req{{}};")
+        lines.append(f"{indent}req.interface_id = InterfaceId;")
+        lines.append(f"{indent}req.method_id = {method_index};")
+        lines.append(f"{indent}req.reserved = 0;")
+        lines.append(f"{indent}req.session_id = GetObjectId().session_id;")
+        lines.append(f"{indent}req.generation = GetObjectId().generation;")
+        lines.append(f"{indent}req.local_id = GetObjectId().local_id;")
+
+        # 填充参数字段
+        for param in in_params:
+            fill_lines = self._generate_struct_fill(param, "req.", indent)
+            lines.extend(fill_lines)
+
+        return lines
+
+    def _generate_variable_size_request_body(self, interface: InterfaceDef, method: MethodDef, method_index: int, in_params: List[ParameterDef], indent: str) -> List[str]:
+        """生成使用 writer.Reserve(total_size) 的变长请求体（单次分配）"""
+        lines = []
+        lines.append(f"{indent}DasResult ipc_result = DAS_S_OK;")
+        lines.append(f"{indent}(void)ipc_result;")
+        lines.append("")
+
+        # Phase 1: 预计算总大小
+        lines.append(f"{indent}// Pre-calculate total body size for single allocation")
+        lines.append(f"{indent}size_t total_body_size = 16;  // V3 Body Header")
+
+        # 收集字符串参数用于长度计算
+        string_params = []
+        for param in in_params:
+            if param.type_info.base_type == "IDasReadOnlyString":
+                pn = param.name
+                lines.append(f"{indent}const char* {pn}_u8 = nullptr;")
+                lines.append(f"{indent}ipc_result = {pn}->GetUtf8(&{pn}_u8);")
+                lines.append(f"{indent}if (DAS::IsFailed(ipc_result))")
+                lines.append(f"{indent}{{")
+                lines.append(f"{indent}    return ipc_result;")
+                lines.append(f"{indent}}}")
+                lines.append(f"{indent}const size_t {pn}_len = std::strlen({pn}_u8);")
+                lines.append(f"{indent}total_body_size += 8 + {pn}_len;  // uint64 length prefix + string data")
+                string_params.append(pn)
+            else:
+                size = self._get_param_fixed_size(param)
+                lines.append(f"{indent}total_body_size += {size};  // {param.name}")
+
+        lines.append("")
+
+        # Phase 2: 创建 writer 并预分配
+        lines.append(f"{indent}MemorySerializerWriter writer;")
+        lines.append(f"{indent}writer.Reserve(total_body_size);")
+        lines.append("")
+
+        # Phase 3: 写入 V3 Header
+        lines.append(f"{indent}// V3 Body Header")
+        lines.append(f"{indent}ipc_result = writer.WriteUInt32(InterfaceId);")
+        lines.append(f"{indent}if (DAS::IsFailed(ipc_result))")
+        lines.append(f"{indent}{{")
+        lines.append(f"{indent}    return ipc_result;")
+        lines.append(f"{indent}}}")
+        lines.append(f"{indent}ipc_result = writer.WriteUInt16({method_index});")
+        lines.append(f"{indent}if (DAS::IsFailed(ipc_result))")
+        lines.append(f"{indent}{{")
+        lines.append(f"{indent}    return ipc_result;")
+        lines.append(f"{indent}}}")
+        lines.append(f"{indent}ipc_result = writer.WriteUInt16(0);")
+        lines.append(f"{indent}if (DAS::IsFailed(ipc_result))")
+        lines.append(f"{indent}{{")
+        lines.append(f"{indent}    return ipc_result;")
+        lines.append(f"{indent}}}")
+        lines.append(f"{indent}ipc_result = writer.WriteUInt16(GetObjectId().session_id);")
+        lines.append(f"{indent}if (DAS::IsFailed(ipc_result))")
+        lines.append(f"{indent}{{")
+        lines.append(f"{indent}    return ipc_result;")
+        lines.append(f"{indent}}}")
+        lines.append(f"{indent}ipc_result = writer.WriteUInt16(GetObjectId().generation);")
+        lines.append(f"{indent}if (DAS::IsFailed(ipc_result))")
+        lines.append(f"{indent}{{")
+        lines.append(f"{indent}    return ipc_result;")
+        lines.append(f"{indent}}}")
+        lines.append(f"{indent}ipc_result = writer.WriteUInt32(GetObjectId().local_id);")
+        lines.append(f"{indent}if (DAS::IsFailed(ipc_result))")
+        lines.append(f"{indent}{{")
+        lines.append(f"{indent}    return ipc_result;")
+        lines.append(f"{indent}}}")
+
+        # Phase 4: 写入参数（使用预取的字符串指针）
+        lines.append(f"{indent}// V3 Body: parameters")
+        for param in in_params:
+            if param.type_info.base_type == "IDasReadOnlyString":
+                pn = param.name
+                lines.append(f"{indent}ipc_result = writer.WriteString({pn}_u8, {pn}_len);")
+                lines.append(f"{indent}if (DAS::IsFailed(ipc_result))")
+                lines.append(f"{indent}{{")
+                lines.append(f"{indent}    return ipc_result;")
+                lines.append(f"{indent}}}")
+            else:
+                # 使用现有的序列化方法
+                serialize_code = self._generate_serialize_param(param, indent)
+                lines.extend(serialize_code)
+
+        return lines
+
     def _generate_method_body_v2(self, interface: InterfaceDef, method: MethodDef, method_index: int, namespace_depth: int = 0) -> str:
         """生成方法体，使用基类的 SendRequest 方法
 
@@ -893,51 +1136,30 @@ class IpcProxyGenerator:
         need_response_body = bool(out_params) or has_return
 
         if need_request_body:
-            lines.append(f"{indent}MemorySerializerWriter writer;")
-            lines.append(f"{indent}DasResult ipc_result = DAS_S_OK;")
-            lines.append(f"{indent}(void)ipc_result;")
-
-            # V3: 写入 interface_id (4 bytes)
-            lines.append(f"{indent}// V3 Body Header: interface_id")
-            lines.append(f"{indent}ipc_result = writer.WriteUInt32(InterfaceId);")
-            lines.append(f"{indent}if (DAS::IsFailed(ipc_result)) {{ return ipc_result; }}")
-
-            # V3: 写入 method_id (2 bytes)
-            lines.append(f"{indent}// V3 Body Header: method_id")
-            lines.append(f"{indent}ipc_result = writer.WriteUInt16({method_index});")
-            lines.append(f"{indent}if (DAS::IsFailed(ipc_result)) {{ return ipc_result; }}")
-
-            # V3: 写入 reserved (2 bytes)
-            lines.append(f"{indent}// V3 Body Header: reserved (alignment)")
-            lines.append(f"{indent}ipc_result = writer.WriteUInt16(0);")
-            lines.append(f"{indent}if (DAS::IsFailed(ipc_result)) {{ return ipc_result; }}")
-
-            # V3: 写入 ObjectId (8 bytes)
-            lines.append(f"{indent}// V3 Body Header: target_object ObjectId")
-            lines.append(f"{indent}ipc_result = writer.WriteUInt16(GetObjectId().session_id);")
-            lines.append(f"{indent}if (DAS::IsFailed(ipc_result)) {{ return ipc_result; }}")
-            lines.append(f"{indent}ipc_result = writer.WriteUInt16(GetObjectId().generation);")
-            lines.append(f"{indent}if (DAS::IsFailed(ipc_result)) {{ return ipc_result; }}")
-            lines.append(f"{indent}ipc_result = writer.WriteUInt32(GetObjectId().local_id);")
-            lines.append(f"{indent}if (DAS::IsFailed(ipc_result)) {{ return ipc_result; }}")
-
-            # 序列化参数
-            lines.append(f"{indent}// V3 Body: parameters")
-            for param in in_params:
-                serialize_code = self._generate_serialize_param(param, indent)
-                for line in serialize_code:
-                    lines.append(f"{line}")
-            lines.append("")
-            lines.append(f"{indent}const std::vector<uint8_t>& request_body = writer.GetBuffer();")
+            if self._is_fixed_size_method(method):
+                # 零堆分配路径: 栈上 packed struct
+                struct_lines = self._generate_fixed_size_request_body(
+                    interface, method, method_index, in_params, indent)
+                lines.extend(struct_lines)
+            else:
+                # 变长路径: MemorySerializerWriter with Reserve
+                var_lines = self._generate_variable_size_request_body(
+                    interface, method, method_index, in_params, indent)
+                lines.extend(var_lines)
         else:
             lines.append(f"{indent}const uint8_t* request_body = nullptr;")
             lines.append(f"{indent}size_t request_body_size = 0;")
-        
+
         lines.append("")
         lines.append(f"{indent}std::vector<uint8_t> response_body;")
         if need_request_body:
-            lines.append(f"{indent}ipc_result = SendRequest({method_index},")
-            lines.append(f"{indent}    request_body.data(), request_body.size(), response_body);")
+            if self._is_fixed_size_method(method):
+                lines.append(f"{indent}ipc_result = SendRequest({method_index},")
+                lines.append(f"{indent}    reinterpret_cast<const uint8_t*>(&req), sizeof(req), response_body);")
+            else:
+                lines.append(f"{indent}const std::vector<uint8_t>& request_body = writer.GetBuffer();")
+                lines.append(f"{indent}ipc_result = SendRequest({method_index},")
+                lines.append(f"{indent}    request_body.data(), request_body.size(), response_body);")
         else:
             lines.append(f"{indent}DasResult ipc_result = SendRequest({method_index},")
             lines.append(f"{indent}    request_body, request_body_size, response_body);")
