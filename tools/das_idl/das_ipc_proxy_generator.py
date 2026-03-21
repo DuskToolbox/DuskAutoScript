@@ -1003,8 +1003,81 @@ class IpcProxyGenerator:
     def _generate_deserialize_param(self, param: ParameterDef, indent: str, has_return: bool = True) -> List[str]:
         """生成参数反序列化代码（用于 [out] 和 [inout] 参数）"""
         lines = []
+
+        # IDasReadOnlyString special handling: ReadString + CreateIDasReadOnlyStringFromUtf8
+        if param.type_info.base_type == "IDasReadOnlyString" and param.type_info.is_pointer:
+            pn = param.name
+            lines.append(f"{indent}// 反序列化 IDasReadOnlyString")
+            lines.append(f"{indent}std::string {pn}_str;")
+            lines.append(f"{indent}ipc_result = reader.ReadString({pn}_str);")
+            lines.append(f"{indent}if (DAS::IsFailed(ipc_result))")
+            lines.append(f"{indent}{{")
+            if has_return:
+                lines.append(f"{indent}    return ipc_result;")
+            else:
+                lines.append(f"{indent}    return;")
+            lines.append(f"{indent}}}")
+            lines.append(f"{indent}ipc_result = ::CreateIDasReadOnlyStringFromUtf8({pn}_str.c_str(), {pn});")
+            lines.append(f"{indent}if (DAS::IsFailed(ipc_result))")
+            lines.append(f"{indent}{{")
+            if has_return:
+                lines.append(f"{indent}    return ipc_result;")
+            else:
+                lines.append(f"{indent}    return;")
+            lines.append(f"{indent}}}")
+            return lines
+
         type_info = self.type_mapper.get_type_info(param.type_info.base_type)
-        
+
+        # Check if this is an interface pointer type
+        base_name = param.type_info.base_type.split("::")[-1]
+        full_type_name = param.type_info.base_type
+        if param.type_info.is_pointer:
+            full_type_name += "*" * param.type_info.pointer_level
+        is_interface = self.type_mapper.is_interface_type(full_type_name)
+        if not is_interface:
+            is_interface = (base_name.startswith("I") and "Das" in base_name)
+
+        if is_interface and param.type_info.is_pointer:
+            # Get the interface namespace for fully qualified name
+            interface_name = self.type_mapper.get_interface_name(param.type_info.base_type)
+            interface_ns = self.type_mapper.interface_namespaces.get(param.type_info.base_type, "")
+            if interface_ns:
+                full_interface_name = f"{interface_ns}::{interface_name}"
+            else:
+                full_interface_name = interface_name
+
+            pn = param.name
+            lines.append(f"{indent}// 反序列化 [out] 接口指针: {interface_name}*")
+            lines.append(f"{indent}uint16_t {pn}_session_id = 0;")
+            lines.append(f"{indent}uint16_t {pn}_generation = 0;")
+            lines.append(f"{indent}uint32_t {pn}_local_id = 0;")
+            lines.append(f"{indent}uint32_t {pn}_interface_id = 0;")
+            lines.append(f"{indent}ipc_result = reader.ReadUInt16(&{pn}_session_id);")
+            lines.append(f"{indent}if (DAS::IsFailed(ipc_result)) {{ return ipc_result; }}")
+            lines.append(f"{indent}ipc_result = reader.ReadUInt16(&{pn}_generation);")
+            lines.append(f"{indent}if (DAS::IsFailed(ipc_result)) {{ return ipc_result; }}")
+            lines.append(f"{indent}ipc_result = reader.ReadUInt32(&{pn}_local_id);")
+            lines.append(f"{indent}if (DAS::IsFailed(ipc_result)) {{ return ipc_result; }}")
+            lines.append(f"{indent}ipc_result = reader.ReadUInt32(&{pn}_interface_id);")
+            lines.append(f"{indent}if (DAS::IsFailed(ipc_result)) {{ return ipc_result; }}")
+            lines.append(f"{indent}if ({pn}_session_id != 0 || {pn}_local_id != 0)")
+            lines.append(f"{indent}{{")
+            lines.append(f"{indent}    Das::Core::IPC::ObjectId {pn}_oid{{")
+            lines.append(f"{indent}        .session_id = {pn}_session_id,")
+            lines.append(f"{indent}        .generation = {pn}_generation,")
+            lines.append(f"{indent}        .local_id   = {pn}_local_id}};")
+            lines.append(f"{indent}    GetObjectManager().RegisterRemoteObject({pn}_oid);")
+            lines.append(f"{indent}    IDasBase* {pn}_base = Das::Core::IPC::DasIpcProxy::CreateProxyByInterfaceId(")
+            lines.append(f"{indent}        {pn}_interface_id, {pn}_oid, *GetRunLoop(), GetBusinessThread(), GetObjectManager());")
+            lines.append(f"{indent}    *{pn} = static_cast<{full_interface_name}*>({pn}_base);")
+            lines.append(f"{indent}}}")
+            lines.append(f"{indent}else")
+            lines.append(f"{indent}{{")
+            lines.append(f"{indent}    *{pn} = nullptr;")
+            lines.append(f"{indent}}}")
+            return lines
+
         if type_info is None:
             lines.append(f"{indent}// TODO: Unknown type {param.type_info.base_type}")
             lines.append(f"{indent}// ipc_result = reader.ReadCustom<{param.type_info.base_type}>({param.name});")

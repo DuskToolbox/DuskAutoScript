@@ -1034,6 +1034,75 @@ class IpcStubGenerator:
             lines.append(f"{indent}}}")
             return lines
 
+        # [out] interface pointer serialization: register object + write ObjectId + interface_id
+        base_name = param.type_info.base_type.split("::")[-1]
+        full_type_name = param.type_info.base_type
+        if param.type_info.is_pointer:
+            full_type_name += "*" * param.type_info.pointer_level
+        is_interface = self.type_mapper.is_interface_type(full_type_name)
+        if not is_interface:
+            is_interface = (base_name.startswith("I") and "Das" in base_name)
+
+        if is_interface and param.type_info.is_pointer:
+            # Get the interface name for looking up its UUID
+            interface_name = self.type_mapper.get_interface_name(param.type_info.base_type)
+
+            # Find the interface UUID to compute the FNV-1a hash at generation time
+            interface_uuid = None
+            if hasattr(self, 'document') and self.document:
+                for iface in self.document.interfaces:
+                    iface_short = iface.name.split("::")[-1]
+                    if iface_short == interface_name or iface.name == param.type_info.base_type:
+                        interface_uuid = iface.uuid
+                        break
+            # Also check all_interfaces if available
+            if interface_uuid is None and hasattr(self, 'all_interfaces'):
+                for iface in self.all_interfaces:
+                    iface_short = iface.name.split("::")[-1]
+                    if iface_short == interface_name or iface.name == param.type_info.base_type:
+                        interface_uuid = iface.uuid
+                        break
+
+            if interface_uuid:
+                iface_id_hash = fnv1a_hash_guid(interface_uuid)
+            else:
+                iface_id_hash = 0  # Fallback; will be detected as error at runtime
+
+            lines.append(f"{indent}// 序列化 [out] 接口指针: {interface_name}*")
+            lines.append(f"{indent}if ({var_name} != nullptr)")
+            lines.append(f"{indent}{{")
+            lines.append(f"{indent}    Das::Core::IPC::ObjectId {var_name}_oid;")
+            lines.append(f"{indent}    // AddRef before registering — remote side holds a reference")
+            lines.append(f"{indent}    {var_name}->AddRef();")
+            lines.append(f"{indent}    serial_result = object_manager.RegisterLocalObject(static_cast<void*>({var_name}), {var_name}_oid);")
+            lines.append(f"{indent}    if (DAS::IsFailed(serial_result))")
+            lines.append(f"{indent}    {{")
+            lines.append(f"{indent}        {var_name}->Release();")
+            lines.append(f"{indent}        return serial_result;")
+            lines.append(f"{indent}    }}")
+            lines.append(f"{indent}    serial_result = writer.WriteUInt16({var_name}_oid.session_id);")
+            lines.append(f"{indent}    if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
+            lines.append(f"{indent}    serial_result = writer.WriteUInt16({var_name}_oid.generation);")
+            lines.append(f"{indent}    if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
+            lines.append(f"{indent}    serial_result = writer.WriteUInt32({var_name}_oid.local_id);")
+            lines.append(f"{indent}    if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
+            lines.append(f"{indent}    serial_result = writer.WriteUInt32(0x{iface_id_hash:08X}u);")
+            lines.append(f"{indent}    if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
+            lines.append(f"{indent}}}")
+            lines.append(f"{indent}else")
+            lines.append(f"{indent}{{")
+            lines.append(f"{indent}    // Null pointer: write zero ObjectId + zero interface_id")
+            lines.append(f"{indent}    serial_result = writer.WriteUInt16(0);")
+            lines.append(f"{indent}    if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
+            lines.append(f"{indent}    serial_result = writer.WriteUInt16(0);")
+            lines.append(f"{indent}    if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
+            lines.append(f"{indent}    serial_result = writer.WriteUInt32(0);")
+            lines.append(f"{indent}    if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
+            lines.append(f"{indent}    serial_result = writer.WriteUInt32(0);")
+            lines.append(f"{indent}    if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
+            lines.append(f"{indent}}}")
+            return lines
+
         type_info = self.type_mapper.get_type_info(param.type_info.base_type)
 
         if type_info is None:
