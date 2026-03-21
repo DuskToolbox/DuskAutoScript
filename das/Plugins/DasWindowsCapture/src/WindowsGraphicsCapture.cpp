@@ -3,15 +3,15 @@
 #include <das/IDasBase.h>
 
 #include <Windows.Graphics.Capture.Interop.h>
-#include <Windows.Graphics.DirectX.Direct3D11.Interop.h>
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Graphics.Capture.h>
-#include <winrt/Windows.Graphics.DirectX.Direct3D11.h>
 #include <wrl/client.h>
 
-#include <algorithm>
-#include <memory>
-#include <stdexcept>
+// 为了不 include Windows.Graphics.DirectX.Direct3D11.Interop.h
+// 我们手动声明一下要用的函数
+STDAPI CreateDirect3D11DeviceFromDXGIDevice(
+    _In_ IDXGIDevice*           dxgiDevice,
+    _COM_Outptr_ IInspectable** graphicsDevice);
 
 WindowsGraphicsCapture::~WindowsGraphicsCapture() { Cleanup(); }
 
