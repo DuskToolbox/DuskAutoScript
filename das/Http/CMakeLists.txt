@@ -11,7 +11,7 @@ target_link_libraries(DasHttp PRIVATE
         ${DAS_BUNDLED_BOOST_LIBS})
 
 if(WIN32)
-    target_link_libraries(DasHttp PRIVATE ws2_32)
+    target_link_libraries(DasHttp PRIVATE mswsock)
 endif()
 
 target_compile_definitions(DasHttp PRIVATE _WIN32_WINNT=0x0601)
