@@ -48,7 +48,7 @@ DasResult IStubBase::HandleMessage(
     const ValidatedIPCMessageHeader& header,
     const std::vector<uint8_t>&      body,
     IpcResponseSender&               sender,
-    DistributedObjectManager&        object_manager)
+    StubContext&                     ctx)
 {
     // 1. 解析 V3 Body Header
     uint32_t interface_id = 0;
@@ -75,7 +75,7 @@ DasResult IStubBase::HandleMessage(
     // 2. 通过 ObjectManager 查找 impl 指针（LookupObject 内部 AddRef）
     DAS::DasPtr<IDasBase> impl_holder;
     DasResult             lookup_result =
-        object_manager.LookupObject(target_object, impl_holder.Put());
+        ctx.object_manager.LookupObject(target_object, impl_holder.Put());
 
     if (DAS::IsFailed(lookup_result))
     {
@@ -111,7 +111,7 @@ DasResult IStubBase::HandleMessage(
         static_cast<void*>(impl_holder.Get()),
         params,
         params_size,
-        object_manager,
+        ctx,
         response_body);
 
     // 4. 构建响应并发送

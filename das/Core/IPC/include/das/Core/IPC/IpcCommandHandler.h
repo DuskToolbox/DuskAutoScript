@@ -164,7 +164,7 @@ public:
         const ValidatedIPCMessageHeader& header,
         const std::vector<uint8_t>&      body,
         IpcResponseSender&               sender,
-        DistributedObjectManager&        object_manager) override;
+        StubContext&                     ctx) override;
 
 private:
     // 内置命令处理器

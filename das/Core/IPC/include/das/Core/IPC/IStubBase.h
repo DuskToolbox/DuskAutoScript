@@ -2,7 +2,6 @@
 #define DAS_CORE_IPC_ISTUB_BASE_H
 
 #include <cstdint>
-#include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IMessageHandler.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcResponseSender.h>
@@ -52,7 +51,7 @@ public:
         const ValidatedIPCMessageHeader& header,
         const std::vector<uint8_t>&      body,
         IpcResponseSender&               sender,
-        DistributedObjectManager&        object_manager) override;
+        StubContext&                     ctx) override;
 
     /**
      * @brief 分发方法调用（纯虚函数，每个生成的 stub 实现）
@@ -60,18 +59,17 @@ public:
      * @param impl 实现指针（由 HandleMessage 通过 ObjectManager 查找）
      * @param params 参数数据（V3 Body Header 之后的数据）
      * @param params_size 参数数据大小
-     * @param object_manager
-     * DistributedObjectManager（用于解析入参中的接口指针）
+     * @param ctx Stub 上下文（包含 object_manager、run_loop、business_thread）
      * @param out_response [out] 响应体
      * @return DasResult 处理结果
      */
     virtual DasResult DispatchMethod(
-        uint16_t                  method_id,
-        void*                     impl,
-        const uint8_t*            params,
-        size_t                    params_size,
-        DistributedObjectManager& object_manager,
-        std::vector<uint8_t>&     out_response) = 0;
+        uint16_t              method_id,
+        void*                 impl,
+        const uint8_t*        params,
+        size_t                params_size,
+        StubContext&          ctx,
+        std::vector<uint8_t>& out_response) = 0;
 
 private:
     /// 解析 V3 Body Header

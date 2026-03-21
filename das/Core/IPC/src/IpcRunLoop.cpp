@@ -266,11 +266,9 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
                 static DistributedObjectManager null_manager;
                 DistributedObjectManager&       obj_mgr =
                     object_manager_ ? *object_manager_ : null_manager;
-                auto result = co_await awaitable_handler->HandleMessage(
-                    header,
-                    body,
-                    sender,
-                    obj_mgr);
+                StubContext ctx{obj_mgr, *this, {}};
+                auto        result = co_await awaitable_handler
+                                  ->HandleMessage(header, body, sender, ctx);
                 if (DAS::IsFailed(result))
                 {
                     DAS_CORE_LOG_WARN(
@@ -310,7 +308,8 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
             static DistributedObjectManager null_manager;
             DistributedObjectManager&       obj_mgr =
                 object_manager_ ? *object_manager_ : null_manager;
-            auto result = handler->HandleMessage(header, body, sender, obj_mgr);
+            StubContext ctx{obj_mgr, *this, {}};
+            auto result = handler->HandleMessage(header, body, sender, ctx);
             if (DAS::IsFailed(result))
             {
                 DAS_CORE_LOG_WARN("Handler returned error: {}", result);

@@ -32,8 +32,9 @@ DasResult IpcCommandHandler::HandleMessage(
     const ValidatedIPCMessageHeader& header,
     const std::vector<uint8_t>&      body,
     IpcResponseSender&               sender,
-    DistributedObjectManager&        object_manager)
+    StubContext&                     ctx)
 {
+    auto& object_manager = ctx.object_manager;
     (void)object_manager; // 控制平面处理器不使用 object_manager
     IpcCommandResponse       response;
     std::span<const uint8_t> payload(body);

@@ -119,14 +119,12 @@ void BusinessThread::DispatchMessage(InboundMessage& msg)
             // 创建 IpcResponseSender（业务线程模式）
             IpcResponseSender sender(run_loop_);
 
-            // 传递 object_manager 给 handler
+            // 构造 StubContext 并传递给 handler
             try
             {
-                auto result = handler->HandleMessage(
-                    header,
-                    msg.body,
-                    sender,
-                    *object_manager_);
+                StubContext ctx{*object_manager_, run_loop_, weak_from_this()};
+                auto        result =
+                    handler->HandleMessage(header, msg.body, sender, ctx);
 
                 if (DAS::IsFailed(result))
                 {

@@ -3,6 +3,7 @@
 #include <boost/asio/awaitable.hpp>
 #include <cstdint>
 #include <das/DasApi.h>
+#include <memory>
 #include <vector>
 
 #include <das/Core/IPC/Config.h>
@@ -13,6 +14,21 @@ DAS_CORE_IPC_NS_BEGIN
 class IpcResponseSender;
 class ValidatedIPCMessageHeader;
 class DistributedObjectManager;
+class IpcRunLoop;
+class BusinessThread;
+
+/**
+ * @brief Stub 上下文结构体
+ *
+ * 打包业务 handler 所需的运行时引用，避免虚函数签名参数膨胀。
+ * 新增字段只需修改此结构体，无需修改虚函数签名。
+ */
+struct StubContext
+{
+    DistributedObjectManager&     object_manager;
+    IpcRunLoop&                   run_loop;
+    std::weak_ptr<BusinessThread> business_thread;
+};
 
 /**
  * @brief 消息处理器接口
@@ -51,14 +67,14 @@ public:
      * @param header 已验证的消息头
      * @param body 消息体
      * @param sender 响应发送器（用于发送响应）
-     * @param object_manager 分布式对象管理器（用于查找 impl 指针）
+     * @param ctx Stub 上下文（包含 object_manager、run_loop、business_thread）
      * @return DasResult 处理结果
      */
     virtual DasResult HandleMessage(
         const ValidatedIPCMessageHeader& header,
         const std::vector<uint8_t>&      body,
         IpcResponseSender&               sender,
-        DistributedObjectManager&        object_manager) = 0;
+        StubContext&                     ctx) = 0;
 };
 
 /**
@@ -102,14 +118,14 @@ public:
      * @param header 已验证的消息头
      * @param body 消息体
      * @param sender 响应发送器（包含 transport）
-     * @param object_manager 分布式对象管理器
+     * @param ctx Stub 上下文（包含 object_manager、run_loop、business_thread）
      * @return boost::asio::awaitable<DasResult> 协程结果
      */
     virtual boost::asio::awaitable<DasResult> HandleMessage(
         const ValidatedIPCMessageHeader& header,
         const std::vector<uint8_t>&      body,
         IpcResponseSender&               sender,
-        DistributedObjectManager&        object_manager) = 0;
+        StubContext&                     ctx) = 0;
 };
 
 DAS_CORE_IPC_NS_END

@@ -4,6 +4,7 @@
 #include <atomic>
 #include <das/Core/IPC/IpcMessageQueue.h>
 #include <das/Core/IPC/IpcRunLoop.h>
+#include <memory>
 #include <thread>
 
 DAS_CORE_IPC_NS_BEGIN
@@ -16,7 +17,7 @@ class DistributedObjectManager;
  * 从 inbound queue 取消息并 dispatch 到 handler。
  * 支持 PumpUntilResponse 用于嵌套 pump（Phase 24 Proxy 调用）。
  */
-class BusinessThread
+class BusinessThread : public std::enable_shared_from_this<BusinessThread>
 {
 public:
     /**

@@ -159,7 +159,7 @@ namespace Core
                     const ValidatedIPCMessageHeader& header,
                     const std::vector<uint8_t>&      body,
                     IpcResponseSender&               sender,
-                    DistributedObjectManager&        object_manager) override;
+                    StubContext&                     ctx) override;
 
                 /**
                  * @brief 设置客户端连接回调

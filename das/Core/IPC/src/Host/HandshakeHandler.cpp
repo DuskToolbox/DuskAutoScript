@@ -88,9 +88,9 @@ namespace Core
                 const ValidatedIPCMessageHeader& header,
                 const std::vector<uint8_t>&      body,
                 IpcResponseSender&               sender,
-                DistributedObjectManager&        object_manager)
+                StubContext&                     ctx)
             {
-                (void)object_manager; // 握手处理器不使用 object_manager
+                (void)ctx; // 握手处理器不使用 ctx
 
                 if (!initialized_)
                 {
