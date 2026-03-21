@@ -44,6 +44,17 @@ if(WIN32)
     target_link_libraries(DasAdbCapture PRIVATE Ws2_32)
     target_link_libraries(DasAdbTouch PRIVATE Ws2_32)
     target_link_libraries(DasWindowsCapture PRIVATE Ws2_32)
+    
+    # WinRT / C++/WinRT headers for DasWindowsCapture (MinGW only, MSVC has built-in SDK support)
+    if(MINGW)
+        list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+        find_package(WinRT REQUIRED)
+        target_include_directories(DasWindowsCapture PRIVATE ${WinRT_INCLUDE_DIR})
+        # WinRT headers use __int128 which is a GCC extension, not standard C++
+        target_compile_options(DasWindowsCapture PRIVATE
+            $<$<CXX_COMPILER_ID:GNU>:-Wno-pedantic>)
+    endif()
+    
     # DirectX 11 and Windows Runtime libraries for WindowsGraphicsCapture
     target_link_libraries(DasWindowsCapture PRIVATE
         d3d11.lib
