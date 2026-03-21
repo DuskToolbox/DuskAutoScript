@@ -16,21 +16,6 @@ struct MethodMetadata
     uint32_t    method_hash;
 };
 
-inline constexpr uint32_t Fnv1aHash32(std::string_view data) noexcept
-{
-    constexpr uint32_t FNV_PRIME = 0x01000193;
-    constexpr uint32_t FNV_OFFSET_BASIS = 0x811c9dc5;
-
-    uint32_t hash_value = FNV_OFFSET_BASIS;
-    for (char c : data)
-    {
-        hash_value ^= static_cast<uint8_t>(c);
-        hash_value = (hash_value * FNV_PRIME) & 0xFFFFFFFF;
-    }
-
-    return hash_value;
-}
-
 // Compute interface_id from DasGuid binary data (FNV-1a hash)
 // This is the header-only version of the algorithm, usable by any module
 // without linking to DasCore.dll internals.

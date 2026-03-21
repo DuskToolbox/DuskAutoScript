@@ -1,6 +1,7 @@
-#include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <cstring>
 #include <das/Core/IPC/Config.h>
+#include <das/Core/IPC/MethodMetadata.h>
+#include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/Logger/Logger.h>
 
 DAS_CORE_IPC_NS_BEGIN
@@ -202,7 +203,9 @@ DasResult RemoteObjectRegistry::LookupByInterface(
     auto it = objects_by_interface_.find(interface_id);
     if (it == objects_by_interface_.end())
     {
-        DAS_CORE_LOG_ERROR("Object not found for interface_id = {}", interface_id);
+        DAS_CORE_LOG_ERROR(
+            "Object not found for interface_id = {}",
+            interface_id);
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 
@@ -299,50 +302,6 @@ uint64_t RemoteObjectRegistry::EncodeObjectIdForLookup(
 
 uint32_t RemoteObjectRegistry::ComputeInterfaceId(const DasGuid& guid)
 {
-    // FNV-1a hash of GUID binary data
-    // This ensures consistent interface_id across all languages
-    // GUID layout (16 bytes, little-endian):
-    //   bytes 0-3:  data1 (uint32_t)
-    //   bytes 4-5:  data2 (uint16_t)
-    //   bytes 6-7:  data3 (uint16_t)
-    //   bytes 8-15: data4 (uint8_t[8])
-    constexpr uint32_t FNV_PRIME = 0x01000193;
-    constexpr uint32_t FNV_OFFSET_BASIS = 0x811c9dc5;
-
-    uint32_t hash_value = FNV_OFFSET_BASIS;
-
-    // Hash data1 (4 bytes)
-    uint8_t bytes[4];
-    std::memcpy(bytes, &guid.data1, 4);
-    for (int i = 0; i < 4; ++i)
-    {
-        hash_value ^= bytes[i];
-        hash_value *= FNV_PRIME;
-    }
-
-    // Hash data2 (2 bytes)
-    std::memcpy(bytes, &guid.data2, 2);
-    for (int i = 0; i < 2; ++i)
-    {
-        hash_value ^= bytes[i];
-        hash_value *= FNV_PRIME;
-    }
-
-    // Hash data3 (2 bytes)
-    std::memcpy(bytes, &guid.data3, 2);
-    for (int i = 0; i < 2; ++i)
-    {
-        hash_value ^= bytes[i];
-        hash_value *= FNV_PRIME;
-    }
-
-    // Hash data4 (8 bytes)
-    for (int i = 0; i < 8; ++i)
-    {
-        hash_value ^= guid.data4[i];
-        hash_value *= FNV_PRIME;
-    }
-
-    return hash_value;
+    return DAS::Core::IPC::ComputeInterfaceId(guid);
 }
 DAS_CORE_IPC_NS_END

@@ -13,6 +13,7 @@
 #include <das/Core/IPC/IDistributedObjectManager.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcErrors.h>
+#include <das/Core/IPC/MethodMetadata.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/IDasBase.h>
@@ -365,8 +366,7 @@ void RegisterQueryInterfaceHandler(DAS::Core::IPC::Host::IIpcContext* ctx)
             // 6. 构造响应：int32(result) + uint32(interface_id) +
             // uint64(encoded
             //    object_id)
-            uint32_t interface_id =
-                DAS::Core::IPC::RemoteObjectRegistry::ComputeInterfaceId(iid);
+            uint32_t interface_id = DAS::Core::IPC::ComputeInterfaceId(iid);
             uint64_t encoded_id = DAS::Core::IPC::EncodeObjectId(new_obj_id);
 
             response.error_code = DAS_S_OK;
