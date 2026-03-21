@@ -14,6 +14,7 @@
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/ObjectId.h>
+#include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/IDasBase.h>
 #include <das/Utils/fmt.h>
 #include <filesystem>
@@ -54,8 +55,8 @@ void RegisterLoadPluginHandler(DAS::Core::IPC::Host::IIpcContext* ctx)
         static_cast<uint32_t>(DAS::Core::IPC::IpcCommandType::LOAD_PLUGIN),
         [ctx](
             const DAS::Core::IPC::ValidatedIPCMessageHeader& header,
-            std::span<const uint8_t>                       payload,
-            DAS::Core::IPC::IpcCommandResponse&          response) -> DasResult
+            std::span<const uint8_t>                         payload,
+            DAS::Core::IPC::IpcCommandResponse& response) -> DasResult
         {
             (void)header;
 
@@ -205,10 +206,11 @@ void RegisterLoadPluginHandler(DAS::Core::IPC::Host::IIpcContext* ctx)
                 return DAS_E_IPC_PLUGIN_LOAD_FAILED;
             }
 
-            auto                     plugin_ptr = result.value();
+            auto plugin_ptr = result.value();
 
             // 直接注册 IDasBase*（实际为 IDasPluginPackage），
-            // 主进程通过 QueryInterface → EnumFeature → CreateFeatureInterface 远程获取
+            // 主进程通过 QueryInterface → EnumFeature → CreateFeatureInterface
+            // 远程获取
             DAS::Core::IPC::ObjectId object_id;
             DasResult                reg_result =
                 ctx->RegisterLocalObject(plugin_ptr.Get(), object_id);
@@ -257,6 +259,140 @@ void RegisterLoadPluginHandler(DAS::Core::IPC::Host::IIpcContext* ctx)
                 object_id.generation,
                 object_id.local_id);
             DAS_LOG_INFO(log_msg.c_str());
+            return DAS_S_OK;
+        });
+}
+
+// 注册 QUERY_INTERFACE 处理器
+void RegisterQueryInterfaceHandler(DAS::Core::IPC::Host::IIpcContext* ctx)
+{
+    ctx->RegisterCommandHandler(
+        static_cast<uint32_t>(DAS::Core::IPC::IpcCommandType::QUERY_INTERFACE),
+        [ctx](
+            const DAS::Core::IPC::ValidatedIPCMessageHeader& header,
+            std::span<const uint8_t>                         payload,
+            DAS::Core::IPC::IpcCommandResponse& response) -> DasResult
+        {
+            (void)header;
+
+            if (payload.size()
+                < sizeof(DAS::Core::IPC::ObjectId) + sizeof(DasGuid))
+            {
+                DAS_CORE_LOG_ERROR(
+                    "[QUERY_INTERFACE] payload too small: {}",
+                    payload.size());
+                response.error_code = DAS_E_IPC_INVALID_MESSAGE_BODY;
+                response.response_data.clear();
+                return DAS_E_IPC_INVALID_MESSAGE_BODY;
+            }
+
+            size_t offset = 0;
+
+            // 1. 反序列化 ObjectId
+            DAS::Core::IPC::ObjectId object_id;
+            std::memcpy(&object_id, payload.data() + offset, sizeof(object_id));
+            offset += sizeof(object_id);
+
+            // 2. 反序列化 DasGuid
+            DasGuid iid;
+            std::memcpy(&iid, payload.data() + offset, sizeof(iid));
+            offset += sizeof(iid);
+
+            // 3. 查找真实对象
+            void*     raw_ptr = nullptr;
+            DasResult lookup_result =
+                ctx->GetObjectManager().LookupObject(object_id, &raw_ptr);
+            if (DAS::IsFailed(lookup_result))
+            {
+                DAS_CORE_LOG_ERROR(
+                    "[QUERY_INTERFACE] LookupObject failed: session={}, local={}, result={}",
+                    object_id.session_id,
+                    object_id.local_id,
+                    lookup_result);
+                response.error_code = lookup_result;
+                response.response_data.clear();
+                return lookup_result;
+            }
+
+            auto* com_obj = static_cast<IDasBase*>(raw_ptr);
+
+            // 4. 调用真实对象的 QueryInterface
+            void*     new_ptr = nullptr;
+            DasResult qi_result = com_obj->QueryInterface(iid, &new_ptr);
+            if (DAS::IsFailed(qi_result))
+            {
+                DAS_CORE_LOG_INFO(
+                    "[QUERY_INTERFACE] QueryInterface returned: {}",
+                    qi_result);
+                response.error_code = qi_result;
+
+                // 返回失败结果：int32(result) + uint32(0) + uint64(0)
+                int32_t fail_result = static_cast<int32_t>(qi_result);
+                response.response_data.clear();
+                response.response_data.insert(
+                    response.response_data.end(),
+                    reinterpret_cast<const uint8_t*>(&fail_result),
+                    reinterpret_cast<const uint8_t*>(&fail_result)
+                        + sizeof(fail_result));
+                uint32_t zero32 = 0;
+                response.response_data.insert(
+                    response.response_data.end(),
+                    reinterpret_cast<const uint8_t*>(&zero32),
+                    reinterpret_cast<const uint8_t*>(&zero32) + sizeof(zero32));
+                uint64_t zero64 = 0;
+                response.response_data.insert(
+                    response.response_data.end(),
+                    reinterpret_cast<const uint8_t*>(&zero64),
+                    reinterpret_cast<const uint8_t*>(&zero64) + sizeof(zero64));
+                return qi_result;
+            }
+
+            // 5. 注册新接口指针为本地对象
+            DAS::Core::IPC::ObjectId new_obj_id;
+            DasResult                reg_result =
+                ctx->RegisterLocalObject(new_ptr, new_obj_id);
+            if (DAS::IsFailed(reg_result))
+            {
+                static_cast<IDasBase*>(new_ptr)->Release();
+                response.error_code = reg_result;
+                response.response_data.clear();
+                return reg_result;
+            }
+
+            // 6. 构造响应：int32(result) + uint32(interface_id) +
+            // uint64(encoded
+            //    object_id)
+            uint32_t interface_id =
+                DAS::Core::IPC::RemoteObjectRegistry::ComputeInterfaceId(iid);
+            uint64_t encoded_id = DAS::Core::IPC::EncodeObjectId(new_obj_id);
+
+            response.error_code = DAS_S_OK;
+            response.response_data.clear();
+
+            int32_t ok_result = static_cast<int32_t>(DAS_S_OK);
+            response.response_data.insert(
+                response.response_data.end(),
+                reinterpret_cast<const uint8_t*>(&ok_result),
+                reinterpret_cast<const uint8_t*>(&ok_result)
+                    + sizeof(ok_result));
+            response.response_data.insert(
+                response.response_data.end(),
+                reinterpret_cast<const uint8_t*>(&interface_id),
+                reinterpret_cast<const uint8_t*>(&interface_id)
+                    + sizeof(interface_id));
+            response.response_data.insert(
+                response.response_data.end(),
+                reinterpret_cast<const uint8_t*>(&encoded_id),
+                reinterpret_cast<const uint8_t*>(&encoded_id)
+                    + sizeof(encoded_id));
+
+            DAS_CORE_LOG_INFO(
+                "[QUERY_INTERFACE] success: iid_hash=0x{:08X}, new_obj_id={{session:{}, gen:{}, local:{}}}",
+                interface_id,
+                new_obj_id.session_id,
+                new_obj_id.generation,
+                new_obj_id.local_id);
+
             return DAS_S_OK;
         });
 }
@@ -326,6 +462,7 @@ int main(int argc, char* argv[])
         g_ipc_context = ctx.get();
 
         RegisterLoadPluginHandler(ctx.get());
+        RegisterQueryInterfaceHandler(ctx.get());
 
         // 运行 IPC 事件循环
         DasResult result = ctx->Run();

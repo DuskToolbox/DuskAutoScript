@@ -79,6 +79,8 @@ namespace Core
                     void*     object_ptr,
                     ObjectId& out_object_id) = 0;
 
+                virtual IDistributedObjectManager& GetObjectManager() = 0;
+
             protected:
                 virtual ~IIpcContext() = default;
 

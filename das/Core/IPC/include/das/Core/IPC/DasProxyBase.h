@@ -81,16 +81,24 @@ public:
 
         *pp_object = nullptr;
 
-        // 构造请求 Body：只有 iid（ObjectId 在 Header 中）
-        MemorySerializerWriter writer;
-        writer.Write(&iid, sizeof(DasGuid));
+        // 构造请求 Body：ObjectId + DasGuid
+        // Host 端通过 ObjectId 查找真实对象，通过 iid 调用 QueryInterface
+        const ObjectId&      obj_id = GetObjectId();
+        std::vector<uint8_t> body;
+        body.insert(
+            body.end(),
+            reinterpret_cast<const uint8_t*>(&obj_id),
+            reinterpret_cast<const uint8_t*>(&obj_id) + sizeof(obj_id));
+        body.insert(
+            body.end(),
+            reinterpret_cast<const uint8_t*>(&iid),
+            reinterpret_cast<const uint8_t*>(&iid) + sizeof(DasGuid));
 
-        const auto&          writer_buf = writer.GetBuffer();
         std::vector<uint8_t> response;
-        DasResult            result = SendRequest(
-            static_cast<uint16_t>(IpcCommandType::QUERY_INTERFACE),
-            writer_buf.data(),
-            writer_buf.size(),
+        DasResult            result = SendBusinessControlRequest(
+            IpcCommandType::QUERY_INTERFACE,
+            body.data(),
+            body.size(),
             response);
 
         if (DAS::IsFailed(result))

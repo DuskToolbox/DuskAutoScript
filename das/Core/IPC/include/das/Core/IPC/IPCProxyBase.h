@@ -2,6 +2,7 @@
 #define DAS_CORE_IPC_IPC_PROXY_BASE_H
 
 #include <cstdint>
+#include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/MethodMetadata.h>
@@ -82,6 +83,19 @@ public:
     /// @note body 参数是完整的 V3 消息体（已包含 Body Header）
     DasResult SendRequest(
         uint16_t              method_id,
+        const uint8_t*        body,
+        size_t                body_size,
+        std::vector<uint8_t>& out_response);
+
+    /// @brief 发送业务控制命令请求（PostSend + PumpUntilResponse）
+    /// @param command 命令类型（如 QUERY_INTERFACE）
+    /// @param body 请求体
+    /// @param body_size 请求体大小
+    /// @param out_response [out] 响应体
+    /// @return DasResult 处理结果
+    /// @note 使用 BUSINESS_CONTROL 路由，Host 侧通过 IpcCommandHandler 分发
+    DasResult SendBusinessControlRequest(
+        IpcCommandType        command,
         const uint8_t*        body,
         size_t                body_size,
         std::vector<uint8_t>& out_response);
