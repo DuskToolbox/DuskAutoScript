@@ -86,12 +86,26 @@ DasResult IpcCommandHandler::HandleMessage(
                         conn_info))
                     && conn_info.shm_pool != nullptr)
                 {
-                    conn_info.shm_pool->Deallocate(shm_payload.shm_handle);
-                    DAS_CORE_LOG_INFO(
-                        "[IpcCommandHandler] RELEASE_SHM_BLOCK: handle={}, "
-                        "session={}",
-                        shm_payload.shm_handle,
-                        shm_payload.source_session_id);
+                    DasResult dealloc_result =
+                        conn_info.shm_pool->Deallocate(shm_payload.shm_handle);
+                    if (DAS::IsFailed(dealloc_result))
+                    {
+                        DAS_CORE_LOG_WARN(
+                            "[IpcCommandHandler] RELEASE_SHM_BLOCK: "
+                            "Deallocate failed for handle={}, session={}, "
+                            "result={}",
+                            shm_payload.shm_handle,
+                            shm_payload.source_session_id,
+                            dealloc_result);
+                    }
+                    else
+                    {
+                        DAS_CORE_LOG_INFO(
+                            "[IpcCommandHandler] RELEASE_SHM_BLOCK: handle={}, "
+                            "session={}",
+                            shm_payload.shm_handle,
+                            shm_payload.source_session_id);
+                    }
                 }
             }
         }

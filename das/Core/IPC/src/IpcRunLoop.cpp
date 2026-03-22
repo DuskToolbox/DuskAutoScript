@@ -266,7 +266,7 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
                 static DistributedObjectManager null_manager;
                 DistributedObjectManager&       obj_mgr =
                     object_manager_ ? *object_manager_ : null_manager;
-                StubContext ctx{obj_mgr, *this, {}};
+                StubContext ctx{obj_mgr, *this, {}, header};
                 auto        result = co_await awaitable_handler
                                   ->HandleMessage(header, body, sender, ctx);
                 if (DAS::IsFailed(result))
@@ -308,7 +308,7 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
             static DistributedObjectManager null_manager;
             DistributedObjectManager&       obj_mgr =
                 object_manager_ ? *object_manager_ : null_manager;
-            StubContext ctx{obj_mgr, *this, {}};
+            StubContext ctx{obj_mgr, *this, {}, header};
             auto result = handler->HandleMessage(header, body, sender, ctx);
             if (DAS::IsFailed(result))
             {
@@ -486,6 +486,19 @@ void IpcRunLoop::TickPendingSenders()
     for (auto& [call_key, cb] : expired)
     {
         cb(DAS_E_IPC_TIMEOUT, {}, uint16_t{0});
+    }
+
+    // SHM stale block cleanup (every 60s when idle)
+    if (pending_calls_.empty())
+    {
+        if (now - last_shm_cleanup_time_ > std::chrono::seconds(60))
+        {
+            last_shm_cleanup_time_ = now;
+            if (connection_manager_)
+            {
+                connection_manager_->CleanupAllStaleBlocks();
+            }
+        }
     }
 }
 

@@ -706,4 +706,18 @@ DasResult ConnectionManager::CleanupConnectionResources(
     return DAS_S_OK;
 }
 
+void ConnectionManager::CleanupAllStaleBlocks()
+{
+    std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+
+    for (const auto& [session_id, conn_info] : impl_->connections_)
+    {
+        (void)session_id;
+        if (conn_info.shm_pool)
+        {
+            conn_info.shm_pool->CleanupStaleBlocks();
+        }
+    }
+}
+
 DAS_CORE_IPC_NS_END

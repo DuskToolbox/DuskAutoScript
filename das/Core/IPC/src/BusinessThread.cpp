@@ -126,8 +126,12 @@ void BusinessThread::DispatchMessage(InboundMessage& msg)
             // 构造 StubContext 并传递给 handler
             try
             {
-                StubContext ctx{*object_manager_, run_loop_, weak_from_this()};
-                auto        result =
+                StubContext ctx{
+                    *object_manager_,
+                    run_loop_,
+                    weak_from_this(),
+                    header};
+                auto result =
                     handler->HandleMessage(header, msg.body, sender, ctx);
 
                 if (DAS::IsFailed(result))

@@ -25,10 +25,21 @@ class BusinessThread;
  */
 struct StubContext
 {
-    DistributedObjectManager&     object_manager;
-    IpcRunLoop&                   run_loop;
-    std::weak_ptr<BusinessThread> business_thread;
-    uint16_t                      response_flags =
+    StubContext(
+        DistributedObjectManager&        obj_mgr,
+        IpcRunLoop&                      rl,
+        std::weak_ptr<BusinessThread>    bt,
+        const ValidatedIPCMessageHeader& hdr)
+        : object_manager(obj_mgr), run_loop(rl), business_thread(bt),
+          header(hdr)
+    {
+    }
+
+    DistributedObjectManager&        object_manager;
+    IpcRunLoop&                      run_loop;
+    std::weak_ptr<BusinessThread>    business_thread;
+    const ValidatedIPCMessageHeader& header;
+    uint16_t                         response_flags =
         0; ///< 由 Handle* 方法设置，传递给响应头 flags 字段
 };
 

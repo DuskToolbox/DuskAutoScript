@@ -13,15 +13,12 @@ DAS_CORE_IPC_NS_BEGIN
 /**
  * @brief 共享内存块元数据
  *
- *
- * 用于跟踪块的引用计数和分配时间，支持 CleanupStaleBlocks
- * 功能
-
+ * 用于跟踪块的分配时间，支持 CleanupStaleBlocks 功能。
+ * 超过 kStaleThreshold 的块会被自动清理，防止泄漏。
  */
 struct BlockMetadata
 {
-    size_t   size;      ///< 块大小（字节）
-    uint32_t ref_count; ///< 引用计数（0 表示无活跃引用）
+    size_t size; ///< 块大小（字节）
     std::chrono::steady_clock::time_point
         allocation_time; ///< 分配时间（用于超时清理判断）
 };
@@ -139,7 +136,7 @@ DasResult SharedMemoryPool::Allocate(size_t size, SharedMemoryBlock& block)
         block.handle = static_cast<uint64_t>(handle);
 
         impl_->block_metadata_[block.handle] =
-            BlockMetadata{size, 1, std::chrono::steady_clock::now()};
+            BlockMetadata{size, std::chrono::steady_clock::now()};
         impl_->used_size_ += size;
         return DAS_S_OK;
     }
@@ -242,14 +239,11 @@ DasResult SharedMemoryPool::CleanupStaleBlocks()
 
     for (const auto& [handle, metadata] : impl_->block_metadata_)
     {
-        if (metadata.ref_count == 0)
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+            now - metadata.allocation_time);
+        if (elapsed >= Impl::kStaleThreshold)
         {
-            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
-                now - metadata.allocation_time);
-            if (elapsed >= Impl::kStaleThreshold)
-            {
-                blocks_to_remove.push_back(handle);
-            }
+            blocks_to_remove.push_back(handle);
         }
     }
 

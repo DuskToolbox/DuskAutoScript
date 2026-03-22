@@ -532,6 +532,10 @@ public:
     /// ConnectionManager for MainProcess mode (nullptr in Host mode)
     std::unique_ptr<ConnectionManager> connection_manager_;
 
+    /// Last time SHM stale block cleanup was triggered
+    std::chrono::steady_clock::time_point last_shm_cleanup_time_ =
+        std::chrono::steady_clock::now();
+
     /// 入站消息队列指针（非持有，由 IpcContext 管理）
     /// 用于 IO 线程将业务消息分流到 inbound queue
     IpcMessageQueue<InboundMessage>* inbound_queue_ = nullptr;

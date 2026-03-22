@@ -163,6 +163,14 @@ public:
      */
     DasResult SetConnectionAlive(uint16_t session_id, bool is_alive);
 
+    /**
+     * @brief 清理所有连接中共享内存池的过期块
+     *
+     * 遍历所有连接，调用每个 shm_pool 的 CleanupStaleBlocks()。
+     * 用于超时场景下回收可能泄漏的 SHM block。
+     */
+    void CleanupAllStaleBlocks();
+
     void StartHeartbeatThread();
     void StopHeartbeatThread();
 

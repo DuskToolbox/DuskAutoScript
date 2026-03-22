@@ -1264,7 +1264,12 @@ class IpcStubGenerator:
         # Step 1: Get buffer size by calling impl->GetSize
         lines.append(f"{indent}// Binary buffer: get size first")
         lines.append(f"{indent}uint64_t binary_data_size = 0;")
-        lines.append(f"{indent}impl->GetSize(&binary_data_size);")
+        lines.append(f"{indent}DasResult size_result = impl->GetSize(&binary_data_size);")
+        lines.append(f"{indent}if (DAS::IsFailed(size_result))")
+        lines.append(f"{indent}{{")
+        lines.append(f'{indent}    DAS_CORE_LOG_WARN("Stub: GetSize failed, result={{}}", size_result);')
+        lines.append(f"{indent}    binary_data_size = 0;")
+        lines.append(f"{indent}}}")
         lines.append("")
 
         # Step 2: Find the unsigned char** out param (the data pointer)
@@ -1285,15 +1290,15 @@ class IpcStubGenerator:
 
         data_local_name = f"arg_{data_param.name}" if data_param.name in handle_param_names else data_param.name
 
-        # Step 3: SHM path for large buffers
+        # Step 3: SHM path for large buffers (only when call_result is OK)
         lines.append(f"{indent}// SHM path: allocate shared memory block for large buffers")
-        lines.append(f"{indent}if (binary_data_size >= Das::Core::IPC::LARGE_MESSAGE_THRESHOLD)")
+        lines.append(f"{indent}if (DAS::IsOk(call_result) && binary_data_size >= Das::Core::IPC::LARGE_MESSAGE_THRESHOLD)")
         lines.append(f"{indent}{{")
         lines.append(f"{indent}    auto* conn_mgr = ctx.run_loop.GetConnectionManager();")
         lines.append(f"{indent}    if (conn_mgr)")
         lines.append(f"{indent}    {{")
         lines.append(f"{indent}        Das::Core::IPC::ConnectionInfo conn_info;")
-        lines.append(f"{indent}        if (DAS::IsOk(conn_mgr->GetConnection(ctx.run_loop.GetSessionId(), conn_info))")
+        lines.append(f"{indent}        if (DAS::IsOk(conn_mgr->GetConnection(ctx.header.GetSourceSessionId(), conn_info))")
         lines.append(f"{indent}            && conn_info.shm_pool != nullptr)")
         lines.append(f"{indent}        {{")
         lines.append(f"{indent}            Das::Core::IPC::SharedMemoryBlock shm_block;")
@@ -1313,7 +1318,12 @@ class IpcStubGenerator:
         lines.append(f"{indent}                ctx.response_flags = Das::Core::IPC::MessageFlags::SHM_RESPONSE;")
         lines.append(f"{indent}                return DAS_S_OK;")
         lines.append(f"{indent}            }}")
+        lines.append(f'{indent}            DAS_CORE_LOG_WARN("Stub: SHM Allocate failed, falling back to pipe (size={{}})", binary_data_size);')
         lines.append(f"{indent}        }}")
+        lines.append(f'{indent}        else')
+        lines.append(f'{indent}        {{')
+        lines.append(f'{indent}            DAS_CORE_LOG_WARN("Stub: SHM connection not found for source_session={{}}, falling back to pipe", ctx.header.GetSourceSessionId());')
+        lines.append(f'{indent}        }}')
         lines.append(f"{indent}    }}")
         lines.append(f"{indent}}}")
         lines.append("")

@@ -50,7 +50,7 @@ DasResult IStubBase::HandleMessage(
     IpcResponseSender&               sender,
     StubContext&                     ctx)
 {
-    // 1. 解析 V3 Body Header
+    // 解析 V3 Body Header
     uint32_t interface_id = 0;
     uint16_t method_id = 0;
     ObjectId target_object;
@@ -72,7 +72,7 @@ DasResult IStubBase::HandleMessage(
         return DAS_E_IPC_INVALID_MESSAGE_BODY;
     }
 
-    // 2. 通过 ObjectManager 查找 impl 指针（LookupObject 内部 AddRef）
+    // 通过 ObjectManager 查找 impl 指针（LookupObject 内部 AddRef）
     DAS::DasPtr<IDasBase> impl_holder;
     DasResult             lookup_result =
         ctx.object_manager.LookupObject(target_object, impl_holder.Put());
@@ -101,7 +101,7 @@ DasResult IStubBase::HandleMessage(
         return lookup_result;
     }
 
-    // 3. 调用 DispatchMethod
+    // 调用 DispatchMethod
     const uint8_t* params = body.data() + V3_BODY_HEADER_SIZE;
     size_t         params_size = body.size() - V3_BODY_HEADER_SIZE;
 
@@ -114,7 +114,7 @@ DasResult IStubBase::HandleMessage(
         ctx,
         response_body);
 
-    // 4. 构建响应并发送
+    // 构建响应并发送
     auto response_header =
         IPCMessageHeaderBuilder()
             .SetMessageType(MessageType::RESPONSE)
