@@ -1,3 +1,4 @@
+#include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/HandshakeSerialization.h>
 
 #include <chrono>
@@ -62,6 +63,38 @@ DasResult IpcCommandHandler::HandleMessage(
             }
         }
         // EVENT 不需要响应，直接返回
+        return DAS_S_OK;
+    }
+
+    // 处理 RELEASE_SHM_BLOCK EVENT（fire-and-forget）
+    if (cmd_type == IpcCommandType::RELEASE_SHM_BLOCK
+        && header.GetMessageType() == MessageType::EVENT)
+    {
+        if (payload.size() >= sizeof(ReleaseShmBlockPayload))
+        {
+            ReleaseShmBlockPayload shm_payload;
+            std::memcpy(&shm_payload, payload.data(), sizeof(shm_payload));
+
+            // Access shm_pool through run_loop -> connection_manager
+            auto& run_loop = ctx.run_loop;
+            auto* conn_mgr = run_loop.GetConnectionManager();
+            if (conn_mgr)
+            {
+                ConnectionInfo conn_info;
+                if (DAS::IsOk(conn_mgr->GetConnection(
+                        shm_payload.source_session_id,
+                        conn_info))
+                    && conn_info.shm_pool != nullptr)
+                {
+                    conn_info.shm_pool->Deallocate(shm_payload.shm_handle);
+                    DAS_CORE_LOG_INFO(
+                        "[IpcCommandHandler] RELEASE_SHM_BLOCK: handle={}, "
+                        "session={}",
+                        shm_payload.shm_handle,
+                        shm_payload.source_session_id);
+                }
+            }
+        }
         return DAS_S_OK;
     }
 

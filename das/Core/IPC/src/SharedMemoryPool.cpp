@@ -38,34 +38,18 @@ struct SharedMemoryPool::Impl
     static constexpr std::chrono::seconds kStaleThreshold{60};
 };
 
-std::unique_ptr<SharedMemoryPool> SharedMemoryPool::Create(
+SharedMemoryPool::SharedMemoryPool(
     const std::string& pool_name,
-    size_t             initial_size)
+    size_t             initial_size,
+    PoolMode           mode)
+    : impl_(std::make_unique<Impl>())
 {
-    auto pool = std::unique_ptr<SharedMemoryPool>(new SharedMemoryPool());
-    auto result = pool->Initialize(pool_name, initial_size);
-    if (result != DAS_S_OK)
-    {
-        return nullptr;
-    }
-    return pool;
-}
-
-SharedMemoryPool::SharedMemoryPool() : impl_(std::make_unique<Impl>()) {}
-
-SharedMemoryPool::~SharedMemoryPool() { Uninitialize(); }
-
-DasResult SharedMemoryPool::Initialize(
-    const std::string& pool_name,
-    size_t             initial_size)
-{
-    std::lock_guard<std::mutex> lock(impl_->mutex_);
-
     impl_->name_ = pool_name;
-    impl_->total_size_ = initial_size;
 
-    try
+    if (mode == PoolMode::Create)
     {
+        impl_->total_size_ = initial_size;
+
         boost::interprocess::shared_memory_object::remove(pool_name.c_str());
 
         impl_->segment_ =
@@ -73,15 +57,33 @@ DasResult SharedMemoryPool::Initialize(
                 boost::interprocess::create_only,
                 pool_name.c_str(),
                 initial_size);
+    }
+    else
+    {
+        impl_->segment_ =
+            std::make_unique<boost::interprocess::managed_shared_memory>(
+                boost::interprocess::open_only,
+                pool_name.c_str());
+        impl_->total_size_ = impl_->segment_->get_size();
+    }
+}
 
-        return DAS_S_OK;
+std::unique_ptr<SharedMemoryPool> SharedMemoryPool::Open(
+    const std::string& pool_name)
+{
+    try
+    {
+        return std::make_unique<SharedMemoryPool>(pool_name, 0, PoolMode::Open);
     }
     catch (const std::exception& e)
     {
         DAS_CORE_LOG_EXCEPTION(e);
-        return DAS_E_IPC_SHM_FAILED;
+        throw std::runtime_error(
+            std::string("Failed to open shared memory pool: ") + e.what());
     }
 }
+
+SharedMemoryPool::~SharedMemoryPool() { Uninitialize(); }
 
 void SharedMemoryPool::Uninitialize()
 {
@@ -290,19 +292,9 @@ struct SharedMemoryManager::Impl
     mutable std::mutex                                                 mutex_;
 };
 
-std::unique_ptr<SharedMemoryManager> SharedMemoryManager::Create()
-{
-    auto manager =
-        std::unique_ptr<SharedMemoryManager>(new SharedMemoryManager());
-    manager->Initialize();
-    return manager;
-}
-
 SharedMemoryManager::SharedMemoryManager() : impl_(std::make_unique<Impl>()) {}
 
 SharedMemoryManager::~SharedMemoryManager() { Uninitialize(); }
-
-DasResult SharedMemoryManager::Initialize() { return DAS_S_OK; }
 
 void SharedMemoryManager::Uninitialize()
 {
@@ -317,11 +309,7 @@ DasResult SharedMemoryManager::CreatePool(
     std::string pool_name =
         MakePoolName(1, static_cast<uint16_t>(std::stoul(pool_id)));
 
-    auto pool = SharedMemoryPool::Create(pool_name, size);
-    if (!pool)
-    {
-        return DAS_E_IPC_SHM_FAILED;
-    }
+    auto pool = std::make_unique<SharedMemoryPool>(pool_name, size);
 
     std::lock_guard<std::mutex> lock(impl_->mutex_);
     impl_->pools_[pool_id] = std::move(pool);
