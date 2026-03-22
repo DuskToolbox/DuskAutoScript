@@ -545,7 +545,7 @@ void IpcRunLoop::RegisterPendingCompletion(
 
     if (on_complete)
     {
-        on_complete(DAS_E_IPC_TIMEOUT, {});
+        on_complete(DAS_E_IPC_TIMEOUT, {}, 0);
     }
 }
 
