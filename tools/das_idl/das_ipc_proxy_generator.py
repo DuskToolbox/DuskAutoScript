@@ -267,10 +267,11 @@ class ProxyTypeMapper:
                 pass
 
     def load_external_definitions(self, idl_dirs: List[str]) -> None:
-        """Load enum and struct definitions from all IDL files in given directories.
+        """Load enum, struct, and interface definitions from all IDL files in given directories.
 
         This enables cross-IDL type references (e.g., DasRect from DasBasicTypes.idl
-        used in methods defined in other IDL files).
+        used in methods defined in other IDL files, or IDasImage from ExportInterface
+        used in methods defined in PluginInterface).
         """
         import glob
         for idl_dir in idl_dirs:
@@ -289,6 +290,11 @@ class ProxyTypeMapper:
                                 full_name = f"{struct.namespace}::{struct.name}"
                                 self.struct_types.add(full_name)
                                 self.struct_defs[full_name] = struct
+                    # Load interface namespaces from external IDL files
+                    # This is critical for cross-namespace interface references
+                    for iface in ext_doc.interfaces:
+                        if iface.name not in self.interface_namespaces:
+                            self.interface_namespaces[iface.name] = iface.namespace
                 except Exception:
                     pass  # Skip unparseable files
 
