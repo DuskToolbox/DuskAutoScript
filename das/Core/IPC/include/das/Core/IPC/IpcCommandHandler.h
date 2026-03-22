@@ -51,6 +51,9 @@ enum class IpcCommandType : uint8_t
     REMOTE_RELEASE = 132,     // 远程端释放引用
     REMOTE_RELEASE_ACK = 133, // 释放引用确认
 
+    // 共享内存管理 (140-149)
+    RELEASE_SHM_BLOCK = 140, // 释放共享内存块（fire-and-forget EVENT）
+
     // 保留
     UNKNOWN = 255
 };
@@ -341,6 +344,15 @@ struct RemoteAddRefPayload
 struct RemoteReleasePayload
 {
     ObjectId object_id; // 对象ID
+};
+
+/**
+ * @brief 释放共享内存块请求 payload
+ */
+struct ReleaseShmBlockPayload
+{
+    uint64_t shm_handle;        // 共享内存块句柄
+    uint16_t source_session_id; // 源 session（用于查找对应的 shm_pool）
 };
 
 DAS_CORE_IPC_NS_END

@@ -125,7 +125,7 @@ void IpcRunLoop::RequestStop()
         }
         for (auto& cb : completions)
         {
-            cb(DAS_E_IPC_CONNECTION_LOST, {});
+            cb(DAS_E_IPC_CONNECTION_LOST, {}, uint16_t{0});
         }
     }
 
@@ -422,14 +422,16 @@ std::pair<DasResult, CallKey> IpcRunLoop::PrepareSendRequestWithTransport(
 void IpcRunLoop::CompletePendingCall(
     CallKey              call_key,
     DasResult            result,
-    std::vector<uint8_t> response)
+    std::vector<uint8_t> response,
+    uint16_t             response_flags)
 {
     DAS_CORE_LOG_INFO(
-        "CompletePendingCall: source_session_id={}, call_id={}, result={}, response_size={}",
+        "CompletePendingCall: source_session_id={}, call_id={}, result={}, response_size={}, flags=0x{:04X}",
         call_key.source_session_id,
         call_key.call_id,
         result,
-        response.size());
+        response.size(),
+        response_flags);
 
     PendingCallCompletion on_complete;
 
@@ -443,6 +445,7 @@ void IpcRunLoop::CompletePendingCall(
             return;
         }
 
+        it->second.response_flags = response_flags;
         on_complete = std::move(it->second.on_complete);
         pending_calls_.erase(it);
     }
@@ -452,7 +455,7 @@ void IpcRunLoop::CompletePendingCall(
         DAS_CORE_LOG_INFO(
             "CompletePendingCall: invoking callback for call_id={}",
             call_key.call_id);
-        on_complete(result, std::move(response));
+        on_complete(result, std::move(response), response_flags);
     }
 }
 
@@ -482,7 +485,7 @@ void IpcRunLoop::TickPendingSenders()
 
     for (auto& [call_key, cb] : expired)
     {
-        cb(DAS_E_IPC_TIMEOUT, {});
+        cb(DAS_E_IPC_TIMEOUT, {}, uint16_t{0});
     }
 }
 
@@ -862,7 +865,8 @@ void IpcRunLoop::StartAsyncReceiveForTransport(
                             CompletePendingCall(
                                 call_key,
                                 DAS_S_OK,
-                                std::move(body));
+                                std::move(body),
+                                header.GetFlags());
                         }
                         else
                         {

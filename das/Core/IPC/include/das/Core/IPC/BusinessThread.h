@@ -60,11 +60,13 @@ public:
      *
      * @param my_call_key 等待的 CallKey
      * @param out_response [out] 响应体
+     * @param out_flags [out] 可选：响应头 flags 字段
      * @return DasResult DAS_S_OK 成功，DAS_E_IPC_CANCELED 队列已关闭
      */
     DasResult PumpUntilResponse(
         CallKey               my_call_key,
-        std::vector<uint8_t>& out_response);
+        std::vector<uint8_t>& out_response,
+        uint16_t*             out_flags = nullptr);
 
     /**
      * @brief 检查业务线程是否正在运行

@@ -28,6 +28,8 @@ struct StubContext
     DistributedObjectManager&     object_manager;
     IpcRunLoop&                   run_loop;
     std::weak_ptr<BusinessThread> business_thread;
+    uint16_t                      response_flags =
+        0; ///< 由 Handle* 方法设置，传递给响应头 flags 字段
 };
 
 /**

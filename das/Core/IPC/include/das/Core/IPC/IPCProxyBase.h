@@ -79,13 +79,16 @@ public:
     /// @param body 请求体（包含完整的 V3 Body Header）
     /// @param body_size 请求体大小
     /// @param out_response [out] 响应体
+    /// @param out_flags [out] 可选：响应头 flags 字段（用于检测 SHM_RESPONSE
+    /// 等）
     /// @return DasResult 处理结果
     /// @note body 参数是完整的 V3 消息体（已包含 Body Header）
     DasResult SendRequest(
-        uint16_t              method_id,
-        const uint8_t*        body,
-        size_t                body_size,
-        std::vector<uint8_t>& out_response);
+        uint16_t                    method_id,
+        const uint8_t*              body,
+        size_t                      body_size,
+        std::vector<uint8_t>&       out_response,
+        uint16_t* DAS_LIFETIMEBOUND out_flags = nullptr);
 
     /// @brief 发送业务控制命令请求（PostSend + PumpUntilResponse）
     /// @param command 命令类型（如 QUERY_INTERFACE）

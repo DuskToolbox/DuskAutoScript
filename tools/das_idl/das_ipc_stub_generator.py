@@ -1303,7 +1303,10 @@ class IpcStubGenerator:
         lines.append(f"{indent}                std::memcpy(shm_block.data, {data_local_name}, static_cast<size_t>(binary_data_size));")
         lines.append(f"{indent}                Das::Core::IPC::MemorySerializerWriter shm_writer;")
         lines.append(f"{indent}                shm_writer.Reserve(4 + 8 + 8);")
-        lines.append(f"{indent}                if (has_return) {{ shm_writer.WriteInt32(static_cast<int32_t>(call_result)); }} else {{ shm_writer.WriteInt32(static_cast<int32_t>(DAS_S_OK)); }}")
+        if has_return:
+            lines.append(f"{indent}                shm_writer.WriteInt32(static_cast<int32_t>(call_result));")
+        else:
+            lines.append(f"{indent}                shm_writer.WriteInt32(static_cast<int32_t>(DAS_S_OK));")
         lines.append(f"{indent}                shm_writer.WriteUInt64(shm_block.handle);")
         lines.append(f"{indent}                shm_writer.WriteUInt64(binary_data_size);")
         lines.append(f"{indent}                out_response = shm_writer.GetBuffer();")
@@ -1849,6 +1852,7 @@ class IpcStubGenerator:
             has_binary_buffer = any(m.attributes.get('binary_buffer', False) for m in interface.methods)
             if has_binary_buffer:
                 content += "#include <das/Core/IPC/AsyncIpcTransport.h>\n"
+                content += "#include <das/Core/IPC/ConnectionManager.h>\n"
                 content += "#include <das/Core/IPC/SharedMemoryPool.h>\n"
 
             ns_depth = 0

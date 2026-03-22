@@ -20,6 +20,16 @@ namespace HeaderFlags
     constexpr uint8_t BUSINESS_CONTROL = 0x02;
 } // namespace HeaderFlags
 
+/// @brief 消息标志 (IPCMessageHeader.flags 字段)
+namespace MessageFlags
+{
+    /// 无标志
+    constexpr uint16_t NONE = 0x0000;
+    /// bit0: 响应体数据在共享内存中（body 包含 SHM handle + size 而非 raw
+    /// data）
+    constexpr uint16_t SHM_RESPONSE = 0x0001;
+} // namespace MessageFlags
+
 /// @brief IPC 消息类型
 enum class MessageType : uint8_t
 {

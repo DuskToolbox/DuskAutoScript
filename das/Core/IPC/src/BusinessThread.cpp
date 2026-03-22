@@ -105,7 +105,11 @@ void BusinessThread::DispatchMessage(InboundMessage& msg)
         CallKey call_key{
             .source_session_id = header.GetSourceSessionId(),
             .call_id = header.GetCallId()};
-        run_loop_.CompletePendingCall(call_key, DAS_S_OK, std::move(msg.body));
+        run_loop_.CompletePendingCall(
+            call_key,
+            DAS_S_OK,
+            std::move(msg.body),
+            header.GetFlags());
     }
     else
     {
@@ -156,7 +160,8 @@ void BusinessThread::DispatchMessage(InboundMessage& msg)
 
 DasResult BusinessThread::PumpUntilResponse(
     CallKey               my_call_key,
-    std::vector<uint8_t>& out_response)
+    std::vector<uint8_t>& out_response,
+    uint16_t*             out_flags)
 {
     DAS_CORE_LOG_DEBUG(
         "PumpUntilResponse: waiting for call_key=({}, {})",
@@ -168,6 +173,10 @@ DasResult BusinessThread::PumpUntilResponse(
     if (it != t_pending_responses.end())
     {
         out_response = std::move(it->second.body);
+        if (out_flags)
+        {
+            *out_flags = it->second.header.GetFlags();
+        }
         t_pending_responses.erase(it);
         DAS_CORE_LOG_DEBUG(
             "PumpUntilResponse: found in cache, call_id={}",
@@ -200,6 +209,10 @@ DasResult BusinessThread::PumpUntilResponse(
             {
                 // 匹配我的响应
                 out_response = std::move(msg.body);
+                if (out_flags)
+                {
+                    *out_flags = msg.header.GetFlags();
+                }
                 DAS_CORE_LOG_DEBUG(
                     "PumpUntilResponse: matched, call_id={}",
                     my_call_key.call_id);

@@ -526,6 +526,8 @@ class IpcProxyGenerator:
         # 条件添加 <vector> (for [binary_buffer] methods)
         if has_binary_buffer:
             result += "#include <vector>\n"
+            result += "#include <das/Core/IPC/SharedMemoryPool.h>\n"
+            result += "#include <das/Core/IPC/IpcCommandHandler.h>\n"
 
         return result
     
@@ -1206,17 +1208,32 @@ class IpcProxyGenerator:
 
         lines.append("")
         lines.append(f"{indent}std::vector<uint8_t> response_body;")
+        is_binary_buffer = method.attributes.get('binary_buffer', False)
+        if is_binary_buffer:
+            lines.append(f"{indent}uint16_t response_flags = 0;")
         if need_request_body:
             if self._is_fixed_size_method(method):
-                lines.append(f"{indent}ipc_result = SendRequest({method_index},")
-                lines.append(f"{indent}    reinterpret_cast<const uint8_t*>(&req), sizeof(req), response_body);")
+                if is_binary_buffer:
+                    lines.append(f"{indent}ipc_result = SendRequest({method_index},")
+                    lines.append(f"{indent}    reinterpret_cast<const uint8_t*>(&req), sizeof(req), response_body, &response_flags);")
+                else:
+                    lines.append(f"{indent}ipc_result = SendRequest({method_index},")
+                    lines.append(f"{indent}    reinterpret_cast<const uint8_t*>(&req), sizeof(req), response_body);")
             else:
                 lines.append(f"{indent}const std::vector<uint8_t>& request_body = writer.GetBuffer();")
-                lines.append(f"{indent}ipc_result = SendRequest({method_index},")
-                lines.append(f"{indent}    request_body.data(), request_body.size(), response_body);")
+                if is_binary_buffer:
+                    lines.append(f"{indent}ipc_result = SendRequest({method_index},")
+                    lines.append(f"{indent}    request_body.data(), request_body.size(), response_body, &response_flags);")
+                else:
+                    lines.append(f"{indent}ipc_result = SendRequest({method_index},")
+                    lines.append(f"{indent}    request_body.data(), request_body.size(), response_body);")
         else:
-            lines.append(f"{indent}DasResult ipc_result = SendRequest({method_index},")
-            lines.append(f"{indent}    request_body, request_body_size, response_body);")
+            if is_binary_buffer:
+                lines.append(f"{indent}DasResult ipc_result = SendRequest({method_index},")
+                lines.append(f"{indent}    request_body, request_body_size, response_body, &response_flags);")
+            else:
+                lines.append(f"{indent}DasResult ipc_result = SendRequest({method_index},")
+                lines.append(f"{indent}    request_body, request_body_size, response_body);")
         lines.append(f"{indent}if (DAS::IsFailed(ipc_result))")
         lines.append(f"{indent}{{")
         if has_return:
@@ -1430,16 +1447,73 @@ class IpcProxyGenerator:
             bt = param.type_info.base_type
             if bt in ('unsigned char', 'uint8_t') and param.type_info.is_pointer:
                 pn = param.name
-                lines.append(f"{indent}// Read binary buffer data")
-                lines.append(f"{indent}ipc_result = reader.ReadBytes(data_cache_);")
-                lines.append(f"{indent}if (DAS::IsFailed(ipc_result))")
+                lines.append(f"{indent}// Check if response uses SHM path")
+                lines.append(f"{indent}if (response_flags & Das::Core::IPC::MessageFlags::SHM_RESPONSE)")
                 lines.append(f"{indent}{{")
+                lines.append(f"{indent}    // SHM path: read handle + size, copy from shared memory")
+                lines.append(f"{indent}    uint64_t shm_handle = 0;")
+                lines.append(f"{indent}    uint64_t shm_data_size = 0;")
+                lines.append(f"{indent}    ipc_result = reader.ReadUInt64(&shm_handle);")
+                lines.append(f"{indent}    if (DAS::IsFailed(ipc_result))")
+                lines.append(f"{indent}    {{")
                 if has_return:
-                    lines.append(f"{indent}    return ipc_result;")
+                    lines.append(f"{indent}        return ipc_result;")
                 else:
-                    lines.append(f"{indent}    return;")
+                    lines.append(f"{indent}        return;")
+                lines.append(f"{indent}    }}")
+                lines.append(f"{indent}    ipc_result = reader.ReadUInt64(&shm_data_size);")
+                lines.append(f"{indent}    if (DAS::IsFailed(ipc_result))")
+                lines.append(f"{indent}    {{")
+                if has_return:
+                    lines.append(f"{indent}        return ipc_result;")
+                else:
+                    lines.append(f"{indent}        return;")
+                lines.append(f"{indent}    }}")
+                lines.append(f"{indent}    auto* conn_mgr = GetRunLoop()->GetConnectionManager();")
+                lines.append(f"{indent}    if (conn_mgr)")
+                lines.append(f"{indent}    {{")
+                lines.append(f"{indent}        Das::Core::IPC::ConnectionInfo conn_info;")
+                lines.append(f"{indent}        if (DAS::IsOk(conn_mgr->GetConnection(GetSourceSessionId(), conn_info))")
+                lines.append(f"{indent}            && conn_info.shm_pool != nullptr)")
+                lines.append(f"{indent}        {{")
+                lines.append(f"{indent}            Das::Core::IPC::SharedMemoryBlock shm_block;")
+                lines.append(f"{indent}            if (DAS::IsOk(conn_info.shm_pool->GetBlockByHandle(shm_handle, shm_block)))")
+                lines.append(f"{indent}            {{")
+                lines.append(f"{indent}                data_cache_.resize(static_cast<size_t>(shm_data_size));")
+                lines.append(f"{indent}                std::memcpy(data_cache_.data(), shm_block.data, static_cast<size_t>(shm_data_size));")
+                lines.append(f"{indent}            }}")
+                lines.append(f"{indent}            Das::Core::IPC::ReleaseShmBlockPayload release_payload;")
+                lines.append(f"{indent}            release_payload.shm_handle = shm_handle;")
+                lines.append(f"{indent}            release_payload.source_session_id = GetSourceSessionId();")
+                lines.append(f"{indent}            std::vector<uint8_t> release_body(")
+                lines.append(f"{indent}                reinterpret_cast<const uint8_t*>(&release_payload),")
+                lines.append(f"{indent}                reinterpret_cast<const uint8_t*>(&release_payload) + sizeof(release_payload));")
+                lines.append(f"{indent}            auto release_header =")
+                lines.append(f"{indent}                Das::Core::IPC::IPCMessageHeaderBuilder()")
+                lines.append(f"{indent}                    .SetMessageType(Das::Core::IPC::MessageType::EVENT)")
+                lines.append(f"{indent}                    .SetHeaderFlags(Das::Core::IPC::HeaderFlags::CONTROL_PLANE)")
+                lines.append(f"{indent}                    .SetInterfaceId(static_cast<uint32_t>(Das::Core::IPC::IpcCommandType::RELEASE_SHM_BLOCK))")
+                lines.append(f"{indent}                    .SetSourceSessionId(GetSourceSessionId())")
+                lines.append(f"{indent}                    .SetTargetSessionId(GetObjectId().session_id)")
+                lines.append(f"{indent}                    .Build();")
+                lines.append(f"{indent}            GetRunLoop()->PostSend(release_header, std::move(release_body));")
+                lines.append(f"{indent}        }}")
+                lines.append(f"{indent}    }}")
+                lines.append(f"{indent}    *{pn} = data_cache_.data();")
                 lines.append(f"{indent}}}")
-                lines.append(f"{indent}*{pn} = data_cache_.data();")
+                lines.append(f"{indent}else")
+                lines.append(f"{indent}{{")
+                lines.append(f"{indent}    // Pipe path: read binary data directly")
+                lines.append(f"{indent}    ipc_result = reader.ReadBytes(data_cache_);")
+                lines.append(f"{indent}    if (DAS::IsFailed(ipc_result))")
+                lines.append(f"{indent}    {{")
+                if has_return:
+                    lines.append(f"{indent}        return ipc_result;")
+                else:
+                    lines.append(f"{indent}        return;")
+                lines.append(f"{indent}    }}")
+                lines.append(f"{indent}    *{pn} = data_cache_.data();")
+                lines.append(f"{indent}}}")
                 return lines
 
         if type_info is None:

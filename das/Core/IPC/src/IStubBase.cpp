@@ -118,6 +118,7 @@ DasResult IStubBase::HandleMessage(
     auto response_header =
         IPCMessageHeaderBuilder()
             .SetMessageType(MessageType::RESPONSE)
+            .SetFlags(ctx.response_flags)
             .SetBodySize(static_cast<uint32_t>(response_body.size()))
             .SetCallId(header.GetCallId())
             .SetSourceSessionId(header.GetTargetSessionId())

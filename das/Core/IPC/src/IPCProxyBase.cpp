@@ -3,6 +3,7 @@
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/Logger/Logger.h>
 #include <stdexec/execution.hpp>
+#include <tuple>
 
 DAS_CORE_IPC_NS_BEGIN
 
@@ -10,10 +11,11 @@ DAS_CORE_IPC_NS_BEGIN
 // 通过 PostSend 发送请求，然后 PumpUntilResponse 等待响应
 
 DasResult IPCProxyBase::SendRequest(
-    uint16_t              method_id,
-    const uint8_t*        body,
-    size_t                body_size,
-    std::vector<uint8_t>& out_response)
+    uint16_t                    method_id,
+    const uint8_t*              body,
+    size_t                      body_size,
+    std::vector<uint8_t>&       out_response,
+    uint16_t* DAS_LIFETIMEBOUND out_flags)
 {
     (void)method_id;
 
@@ -50,7 +52,7 @@ DasResult IPCProxyBase::SendRequest(
     {
         // Nested pump: called from within BusinessThread
         // Run() is paused, we pump inbound_queue_ directly
-        return bt->PumpUntilResponse(call_key, out_response);
+        return bt->PumpUntilResponse(call_key, out_response, out_flags);
     }
     else
     {
@@ -71,11 +73,16 @@ DasResult IPCProxyBase::SendRequest(
             return DAS_E_IPC_REMOTE_ERROR;
         }
 
-        // sync_wait returns optional<tuple<pair<DasResult, vector>>>
+        // sync_wait returns optional<tuple<DasResult, vector, uint16_t flags>>
         auto&                inner = std::get<0>(*result);
-        DasResult            ipc_result = inner.first;
-        std::vector<uint8_t> response_body = std::move(inner.second);
+        DasResult            ipc_result = std::get<0>(inner);
+        std::vector<uint8_t> response_body = std::move(std::get<1>(inner));
+        uint16_t             response_flags = std::get<2>(inner);
         out_response = std::move(response_body);
+        if (out_flags)
+        {
+            *out_flags = response_flags;
+        }
         return ipc_result;
     }
 }

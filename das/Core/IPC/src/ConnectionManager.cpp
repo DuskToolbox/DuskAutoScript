@@ -29,10 +29,12 @@ struct ConnectionManager::Impl
     std::unordered_map<uint16_t, DasPtr<IHostLauncher>> host_launchers_;
     // 直接传输层注册（用于 Host 模式，无需 HostLauncher）
     std::unordered_map<uint16_t, DefaultAsyncIpcTransport*> direct_transports_;
-    mutable std::shared_mutex                               connections_mutex_;
-    std::atomic<bool>                                       running_{false};
-    std::thread                                             heartbeat_thread_;
-    uint16_t                                                local_id_{0};
+    // 共享内存池（每个连接一个，按 remote_id 索引）
+    std::unordered_map<uint16_t, std::unique_ptr<SharedMemoryPool>> shm_pools_;
+    mutable std::shared_mutex connections_mutex_;
+    std::atomic<bool>         running_{false};
+    std::thread               heartbeat_thread_;
+    uint16_t                  local_id_{0};
 };
 
 std::unique_ptr<ConnectionManager> ConnectionManager::Create(uint16_t local_id)
@@ -84,6 +86,27 @@ DasResult ConnectionManager::RegisterConnection(
             .count());
     info.launcher = nullptr;
     info.shm_pool = nullptr;
+
+    // 创建 per-connection SharedMemoryPool（deterministic name from session
+    // IDs） MainProcess side: local_id_ = main, remote_id = host
+    std::string shm_name = "das_shm_" + std::to_string(impl_->local_id_) + "_"
+                           + std::to_string(remote_id);
+    constexpr size_t SHM_POOL_INITIAL_SIZE = 4 * 1024 * 1024; // 4MB
+    try
+    {
+        auto pool =
+            std::make_unique<SharedMemoryPool>(shm_name, SHM_POOL_INITIAL_SIZE);
+        info.shm_pool = pool.get();
+        impl_->shm_pools_[remote_id] = std::move(pool);
+    }
+    catch (const std::exception& e)
+    {
+        DAS_CORE_LOG_WARN(
+            "Failed to create SHM pool for session {}: {}",
+            remote_id,
+            e.what());
+        info.shm_pool = nullptr; // Fallback: SHM unavailable, pipe-only
+    }
 
     std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
     impl_->connections_[remote_id] = std::move(info);
@@ -147,7 +170,6 @@ DasResult ConnectionManager::GetConnection(
     uint16_t        session_id,
     ConnectionInfo& out_info) const
 {
-    static_cast<void>(out_info); // 暂时不使用
     std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
 
     auto it = impl_->connections_.find(session_id);
@@ -159,9 +181,15 @@ DasResult ConnectionManager::GetConnection(
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 
-    // 注意：由于 ConnectionInfo 包含 DasPtr，无法拷贝
-    // 调用者应使用 GetLauncher() 或 GetTransport() 获取指针
-    return DAS_E_FAIL;
+    // Shallow copy: 只复制非 DasPtr 字段
+    out_info.host_id = it->second.host_id;
+    out_info.plugin_id = it->second.plugin_id;
+    out_info.is_alive = it->second.is_alive;
+    out_info.last_heartbeat_ms = it->second.last_heartbeat_ms;
+    out_info.launcher =
+        nullptr; // DasPtr 字段不复制，调用者应使用 GetLauncher()
+    out_info.shm_pool = it->second.shm_pool;
+    return DAS_S_OK;
 }
 
 DasResult ConnectionManager::RegisterHostLauncher(
@@ -178,28 +206,53 @@ DasResult ConnectionManager::RegisterHostLauncher(
     // 存储到 host_launchers_ map
     impl_->host_launchers_[session_id] = launcher;
 
-    // 创建/更新 ConnectionInfo
-    ConnectionInfo info{};
-    info.host_id = session_id;
-    info.plugin_id = 0;
-    info.is_alive = true;
-    info.last_heartbeat_ms = static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now().time_since_epoch())
-            .count());
-    info.launcher = launcher;
-    info.shm_pool = nullptr;
-
-    // 如果连接已存在，更新信息
+    // 如果连接已存在，更新信息（shm_pool 已由 RegisterConnection 设置）
     auto it = impl_->connections_.find(session_id);
     if (it != impl_->connections_.end())
     {
         it->second.launcher = launcher;
         it->second.is_alive = true;
-        it->second.last_heartbeat_ms = info.last_heartbeat_ms;
+        it->second.last_heartbeat_ms = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
     }
     else
     {
+        // 创建 ConnectionInfo（MainProcess side: 创建 SHM pool）
+        ConnectionInfo info{};
+        info.host_id = session_id;
+        info.plugin_id = 0;
+        info.is_alive = true;
+        info.last_heartbeat_ms = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+        info.launcher = launcher;
+        info.shm_pool = nullptr;
+
+        // 创建 per-connection SharedMemoryPool（deterministic name from session
+        // IDs）
+        std::string shm_name = "das_shm_" + std::to_string(impl_->local_id_)
+                               + "_" + std::to_string(session_id);
+        constexpr size_t SHM_POOL_INITIAL_SIZE = 4 * 1024 * 1024; // 4MB
+        try
+        {
+            auto pool = std::make_unique<SharedMemoryPool>(
+                shm_name,
+                SHM_POOL_INITIAL_SIZE);
+            info.shm_pool = pool.get();
+            impl_->shm_pools_[session_id] = std::move(pool);
+        }
+        catch (const std::exception& e)
+        {
+            DAS_CORE_LOG_WARN(
+                "Failed to create SHM pool for session {}: {}",
+                session_id,
+                e.what());
+            info.shm_pool = nullptr;
+        }
+
         impl_->connections_[session_id] = std::move(info);
     }
 
@@ -241,26 +294,49 @@ DasResult ConnectionManager::RegisterTransport(
     // 直接存储到 direct_transports_ map
     impl_->direct_transports_[session_id] = transport;
 
-    // 同时创建/更新 ConnectionInfo 保持一致性
-    ConnectionInfo info{};
-    info.host_id = session_id;
-    info.plugin_id = 0;
-    info.is_alive = true;
-    info.last_heartbeat_ms = static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now().time_since_epoch())
-            .count());
-    info.launcher = nullptr;
-    info.shm_pool = nullptr;
+    // Host side: 打开已存在的 SHM pool（deterministic name）
+    // On Host side: main_session_id = remote_id, host_session_id = local_id_
+    std::string shm_name = "das_shm_" + std::to_string(session_id) + "_"
+                           + std::to_string(impl_->local_id_);
+    SharedMemoryPool* pool_ptr = nullptr;
+    try
+    {
+        auto pool = SharedMemoryPool::Open(shm_name);
+        pool_ptr = pool.get();
+        impl_->shm_pools_[session_id] = std::move(pool);
+    }
+    catch (const std::exception& e)
+    {
+        DAS_CORE_LOG_WARN(
+            "Failed to open SHM pool for session {}: {}",
+            session_id,
+            e.what());
+        pool_ptr = nullptr;
+    }
 
+    // 同时创建/更新 ConnectionInfo 保持一致性
     auto it = impl_->connections_.find(session_id);
     if (it != impl_->connections_.end())
     {
         it->second.is_alive = true;
-        it->second.last_heartbeat_ms = info.last_heartbeat_ms;
+        it->second.last_heartbeat_ms = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+        it->second.shm_pool = pool_ptr;
     }
     else
     {
+        ConnectionInfo info{};
+        info.host_id = session_id;
+        info.plugin_id = 0;
+        info.is_alive = true;
+        info.last_heartbeat_ms = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+        info.launcher = nullptr;
+        info.shm_pool = pool_ptr;
         impl_->connections_[session_id] = std::move(info);
     }
 
@@ -605,6 +681,9 @@ DasResult ConnectionManager::CleanupConnectionResources(
 
     // 清理直接传输层
     impl_->direct_transports_.erase(remote_id);
+
+    // 清理 SHM pool（unique_ptr 自动析构）
+    impl_->shm_pools_.erase(remote_id);
 
     auto it = impl_->connections_.find(remote_id);
     if (it == impl_->connections_.end())

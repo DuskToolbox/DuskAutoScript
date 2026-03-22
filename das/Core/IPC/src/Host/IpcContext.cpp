@@ -651,7 +651,8 @@ namespace Core
                                 run_loop_->CompletePendingCall(
                                     call_key,
                                     DAS_S_OK,
-                                    std::move(body));
+                                    std::move(body),
+                                    header.GetFlags());
                             }
                             else
                             {

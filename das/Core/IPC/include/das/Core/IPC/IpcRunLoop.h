@@ -55,8 +55,11 @@ DAS_CORE_IPC_NS_END
 DAS_CORE_IPC_NS_BEGIN
 
 /// 异步 pending call 的完成回调类型
-using PendingCallCompletion =
-    std::function<void(DasResult, std::vector<uint8_t>)>;
+/// @param result IPC 结果
+/// @param response 响应体
+/// @param response_flags 响应头 flags（MessageFlags）
+using PendingCallCompletion = std::function<
+    void(DasResult, std::vector<uint8_t>, uint16_t response_flags)>;
 
 /// V3: 用于匹配请求和响应的二元组 key
 struct CallKey
@@ -89,6 +92,7 @@ struct PendingCallState
     std::vector<uint8_t>                  response_buffer;
     std::chrono::steady_clock::time_point deadline;
     PendingCallCompletion                 on_complete;
+    uint16_t                              response_flags = 0; ///< 响应头 flags
 };
 
 //=============================================================================
@@ -116,7 +120,7 @@ struct AwaitResponseOperation
 /**
  * @brief 异步等待 IPC 响应的 sender
  *
- * 完成时携带 pair<DasResult, vector<uint8_t>>。
+ * 完成时携带 tuple<DasResult, vector<uint8_t>, uint16_t flags>。
  * 不阻塞调用线程，由消息循环事件驱动完成。
  */
 struct AwaitResponseSender
@@ -124,7 +128,7 @@ struct AwaitResponseSender
     using sender_concept = stdexec::sender_t;
     using completion_signatures =
         stdexec::completion_signatures<stdexec::set_value_t(
-            std::pair<DasResult, std::vector<uint8_t>>)>;
+            std::tuple<DasResult, std::vector<uint8_t>, uint16_t>)>;
 
     IpcRunLoop*               loop_;
     CallKey                   call_key_;
@@ -437,7 +441,8 @@ public:
     void CompletePendingCall(
         CallKey              call_key,
         DasResult            result,
-        std::vector<uint8_t> response);
+        std::vector<uint8_t> response,
+        uint16_t             response_flags);
 
     /**
      * @brief 扫描并完成所有超时的 pending call
@@ -561,7 +566,7 @@ void tag_invoke(
         auto error_code = static_cast<DasResult>(self.call_key_.call_id);
         stdexec::set_value(
             std::move(self.rcvr_),
-            std::make_pair(error_code, std::vector<uint8_t>{}));
+            std::make_tuple(error_code, std::vector<uint8_t>{}, uint16_t{0}));
         return;
     }
 
@@ -573,11 +578,12 @@ void tag_invoke(
         deadline,
         [rcvr = std::move(self.rcvr_)](
             DasResult            result,
-            std::vector<uint8_t> response) mutable
+            std::vector<uint8_t> response,
+            uint16_t             response_flags) mutable
         {
             stdexec::set_value(
                 std::move(rcvr),
-                std::make_pair(result, std::move(response)));
+                std::make_tuple(result, std::move(response), response_flags));
         });
 }
 
