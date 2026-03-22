@@ -33,6 +33,7 @@ using DAS::Core::IPC::IpcRunLoop;
 using DAS::Core::IPC::IpcTransport;
 using DAS::Core::IPC::MessageType;
 using DAS::Core::IPC::ObjectId;
+using DAS::Core::IPC::PoolMode;
 using DAS::Core::IPC::SerializerReader;
 using DAS::Core::IPC::SerializerWriter;
 using DAS::Core::IPC::SharedMemoryBlock;
@@ -316,7 +317,10 @@ TEST_F(IpcE2ETest, ErrorHandling_NullObject)
 TEST_F(IpcE2ETest, SharedMemory_LargeDataTransfer)
 {
     std::string pool_name = "e2e_test_shm_pool";
-    auto        pool = SharedMemoryPool::Create(pool_name, 1024 * 1024); // 1MB
+    auto        pool = std::make_unique<SharedMemoryPool>(
+        pool_name,
+        1024 * 1024,
+        PoolMode::Create);
 
     ASSERT_NE(pool, nullptr);
 

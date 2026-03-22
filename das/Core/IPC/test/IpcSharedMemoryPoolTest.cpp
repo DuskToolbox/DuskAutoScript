@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 #include <thread>
 #include <vector>
+using DAS::Core::IPC::PoolMode;
 using DAS::Core::IPC::SharedMemoryBlock;
 using DAS::Core::IPC::SharedMemoryManager;
 using DAS::Core::IPC::SharedMemoryPool;
@@ -28,12 +29,16 @@ protected:
             test_name);
 
         // Create and initialize the pool using factory function
-        pool_ = SharedMemoryPool::Create(pool_name_, 65536);
+        pool_ = std::make_unique<SharedMemoryPool>(
+            pool_name_,
+            65536,
+            PoolMode::Create);
     }
 
     void TearDown() override
     {
-        // unique_ptr will automatically call destructor which calls Uninitialize()
+        // unique_ptr will automatically call destructor which calls
+        // Uninitialize()
         pool_.reset();
         // Force remove shared memory on Windows to ensure cleanup
         boost::interprocess::shared_memory_object::remove(pool_name_.c_str());
@@ -64,7 +69,8 @@ TEST_F(IpcSharedMemoryPoolTest, ReinitializeAfterUninitialize)
     // Note: Re-initialization after uninitialize is no longer supported
     // since Initialize() is now private and only called from Create()
     // Create a new pool to test re-initialization
-    auto new_pool = SharedMemoryPool::Create(pool_name_, 65536);
+    auto new_pool =
+        std::make_unique<SharedMemoryPool>(pool_name_, 65536, PoolMode::Create);
     ASSERT_NE(new_pool, nullptr);
 }
 
@@ -181,7 +187,7 @@ protected:
     void SetUp() override
     {
         // Create and initialize the manager using factory function
-        manager_ = SharedMemoryManager::Create();
+        manager_ = std::make_unique<SharedMemoryManager>();
 
         // Generate unique pool ID: nanoseconds % 65535 (must fit in uint16_t)
         // NOTE: pool_id is converted to uint16_t internally
@@ -193,7 +199,8 @@ protected:
 
     void TearDown() override
     {
-        // unique_ptr will automatically call destructor which calls Uninitialize()
+        // unique_ptr will automatically call destructor which calls
+        // Uninitialize()
         manager_.reset();
     }
 
