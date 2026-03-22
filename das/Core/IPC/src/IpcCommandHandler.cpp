@@ -59,7 +59,7 @@ DasResult IpcCommandHandler::HandleMessage(
                     "session={}, local={}",
                     object_id.session_id,
                     object_id.local_id);
-                DAS_LOG_INFO(log_msg.c_str());
+                DAS_CORE_LOG_INFO(log_msg.c_str());
             }
         }
         // EVENT 不需要响应，直接返回
@@ -133,7 +133,7 @@ DasResult IpcCommandHandler::HandleCommand(
         "[IpcCommandHandler] HandleCommand: cmd_type={}, custom_handlers_.size()={}",
         static_cast<int>(cmd_type),
         custom_handlers_.size());
-    DAS_LOG_INFO(_find_log.c_str());
+    DAS_CORE_LOG_INFO(_find_log.c_str());
     // 检查是否有自定义处理器
     auto it = custom_handlers_.find(cmd_type);
     if (it != custom_handlers_.end())
@@ -141,7 +141,7 @@ DasResult IpcCommandHandler::HandleCommand(
         std::string _found_log = DAS_FMT_NS::format(
             "[IpcCommandHandler] Found custom handler for cmd_type={}",
             static_cast<int>(cmd_type));
-        DAS_LOG_INFO(_found_log.c_str());
+        DAS_CORE_LOG_INFO(_found_log.c_str());
         return it->second(header, payload, response);
     }
     else
@@ -149,7 +149,7 @@ DasResult IpcCommandHandler::HandleCommand(
         std::string _not_found_log = DAS_FMT_NS::format(
             "[IpcCommandHandler] No custom handler for cmd_type={}",
             static_cast<int>(cmd_type));
-        DAS_LOG_INFO(_not_found_log.c_str());
+        DAS_CORE_LOG_INFO(_not_found_log.c_str());
     }
 
     switch (cmd_type)
@@ -203,7 +203,7 @@ void IpcCommandHandler::RegisterHandler(
     std::string _log_msg = DAS_FMT_NS::format(
         "[IpcCommandHandler] RegisterHandler: command_type={}",
         static_cast<int>(command_type));
-    DAS_LOG_INFO(_log_msg.c_str());
+    DAS_CORE_LOG_INFO(_log_msg.c_str());
     custom_handlers_[command_type] = std::move(handler);
 }
 
