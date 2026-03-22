@@ -95,10 +95,12 @@ namespace Core::IPC
 
             friend void tag_invoke(
                 stdexec::set_value_t,
-                CompletionReceiver&&                       r,
-                std::pair<DasResult, std::vector<uint8_t>> response) noexcept
+                CompletionReceiver&& r,
+                std::tuple<DasResult, std::vector<uint8_t>, uint16_t>
+                    response) noexcept
             {
-                auto& [code, data] = response;
+                auto& [code, data, flags] = response;
+                (void)flags;
                 TResult value{};
 
                 if (DAS::IsOk(code))

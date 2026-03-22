@@ -148,8 +148,8 @@ DasResult IPCProxyBase::SendBusinessControlRequest(
         }
 
         auto&                inner = std::get<0>(*result);
-        DasResult            ipc_result = inner.first;
-        std::vector<uint8_t> response_body = std::move(inner.second);
+        DasResult            ipc_result = std::get<0>(inner);
+        std::vector<uint8_t> response_body = std::move(std::get<1>(inner));
         out_response = std::move(response_body);
         return ipc_result;
     }

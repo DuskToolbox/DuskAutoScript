@@ -193,14 +193,9 @@ namespace Core
                 DAS_LOG_INFO(msg.c_str());
 
                 // 3. 初始化 SharedMemoryPool
-                shared_memory_ = SharedMemoryPool::Create(
+                shared_memory_ = std::make_unique<SharedMemoryPool>(
                     shm_name,
                     DEFAULT_SHARED_MEMORY_SIZE);
-                if (!shared_memory_)
-                {
-                    DAS_LOG_ERROR("IpcContext: SharedMemoryPool Create failed");
-                    return DAS_E_IPC_SHM_FAILED;
-                }
 
                 // 4. 创建 IpcRunLoop（无参 Initialize，只创建 io_context
                 // 基础设施）
