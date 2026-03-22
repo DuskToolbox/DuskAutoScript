@@ -52,7 +52,9 @@ class StubTypeMapper:
     TYPE_MAP = {
         # 有符号整数
         'int8': ('int8_t', 'WriteInt8', 'ReadInt8'),
+        'int8_t': ('int8_t', 'WriteInt8', 'ReadInt8'),
         'int16': ('int16_t', 'WriteInt16', 'ReadInt16'),
+        'int16_t': ('int16_t', 'WriteInt16', 'ReadInt16'),
         'int32': ('int32_t', 'WriteInt32', 'ReadInt32'),
         'int32_t': ('int32_t', 'WriteInt32', 'ReadInt32'),
         'int64': ('int64_t', 'WriteInt64', 'ReadInt64'),
@@ -60,7 +62,9 @@ class StubTypeMapper:
         'int': ('int32_t', 'WriteInt32', 'ReadInt32'),
         # 无符号整数
         'uint8': ('uint8_t', 'WriteUInt8', 'ReadUInt8'),
+        'uint8_t': ('uint8_t', 'WriteUInt8', 'ReadUInt8'),
         'uint16': ('uint16_t', 'WriteUInt16', 'ReadUInt16'),
+        'uint16_t': ('uint16_t', 'WriteUInt16', 'ReadUInt16'),
         'uint32': ('uint32_t', 'WriteUInt32', 'ReadUInt32'),
         'uint32_t': ('uint32_t', 'WriteUInt32', 'ReadUInt32'),
         'uint64': ('uint64_t', 'WriteUInt64', 'ReadUInt64'),
@@ -1021,6 +1025,9 @@ class IpcStubGenerator:
                     if field_type_info:
                         field_cpp_type, _, _, _ = field_type_info
                         lines.append(f"{indent}{field_cpp_type} {local_name}_{field.name};")
+                    else:
+                        # Fallback: use field type name directly (already a valid C++ type)
+                        lines.append(f"{indent}{field.type_name} {local_name}_{field.name};")
             else:
                 # Empty struct - use int32_t as placeholder
                 lines.append(f"{indent}int32_t {local_name}_dummy;")
@@ -1213,7 +1220,7 @@ class IpcStubGenerator:
                 lines.append(f"{indent}{{")
                 lines.append(f"{indent}    return serial_result;")
                 lines.append(f"{indent}}}")
-                lines.append(f"{indent}serial_result = writer.WriteBytes({local_name}_utf8_tmp, {local_name}_len);")
+                lines.append(f"{indent}serial_result = writer.WriteBytes(reinterpret_cast<const uint8_t*>({local_name}_utf8_tmp), {local_name}_len);")
                 lines.append(f"{indent}if (DAS::IsFailed(serial_result))")
                 lines.append(f"{indent}{{")
                 lines.append(f"{indent}    return serial_result;")
