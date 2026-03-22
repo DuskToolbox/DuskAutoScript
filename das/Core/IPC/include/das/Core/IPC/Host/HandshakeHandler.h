@@ -152,7 +152,7 @@ namespace Core
                  * @param header 消息头
                  * @param body 消息体
                  * @param sender 响应发送器（包含 transport）
-                 * @param object_manager 分布式对象管理器
+                 * @param ctx Stub 上下文（包含 object_manager）
                  * @return boost::asio::awaitable<DasResult> 协程结果
                  */
                 boost::asio::awaitable<DasResult> HandleMessage(

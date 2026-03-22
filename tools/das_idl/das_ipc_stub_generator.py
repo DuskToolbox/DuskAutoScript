@@ -77,6 +77,7 @@ class StubTypeMapper:
         'bool': ('bool', 'WriteBool', 'ReadBool'),
         # 字符
         'char': ('char', 'WriteInt8', 'ReadInt8'),
+        'unsigned char': ('uint8_t', 'WriteUInt8', 'ReadUInt8'),
         # 大小类型
         'size_t': ('size_t', 'WriteUInt64', 'ReadUInt64'),
     }
