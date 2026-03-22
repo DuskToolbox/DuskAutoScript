@@ -230,16 +230,16 @@ public:
     }
 
     DasResult HandleMessage(
-        const ValidatedIPCMessageHeader&          header,
-        const std::vector<uint8_t>&               body,
-        IpcResponseSender&                        sender,
-        DAS::Core::IPC::DistributedObjectManager& object_manager) override
+        const ValidatedIPCMessageHeader& header,
+        const std::vector<uint8_t>&      body,
+        IpcResponseSender&               sender,
+        DAS::Core::IPC::StubContext&     ctx) override
     {
         // 简单返回成功
         (void)header;
         (void)body;
         (void)sender;
-        (void)object_manager;
+        (void)ctx;
         return DAS_S_OK;
     }
 

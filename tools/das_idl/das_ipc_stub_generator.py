@@ -918,7 +918,23 @@ class IpcStubGenerator:
 
         # ===== Response serialization =====
         if has_return or out_params:
-            if self._is_fixed_size_response(method):
+            # Check for unsupported out param types (e.g., unsigned char* buffer)
+            has_unsupported = False
+            for param in out_params:
+                bt = param.type_info.base_type
+                if bt in ('unsigned char', 'uint8_t') and param.type_info.is_pointer:
+                    lines.append(
+                        f"{inner_indent}// TODO: DasBinaryBuffer "
+                        f"unsigned char* [out] serialization not yet implemented"
+                    )
+                    lines.append(
+                        f"{inner_indent}return DAS_E_NOT_IMPLEMENTED;"
+                    )
+                    has_unsupported = True
+                    break
+            if has_unsupported:
+                pass  # Response body not generated
+            elif self._is_fixed_size_response(method):
                 # Zero-heap-allocation: #pragma pack struct
                 resp_lines = self._generate_fixed_size_response_body(
                     interface, method, out_params, has_return, inner_indent)
