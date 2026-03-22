@@ -477,7 +477,6 @@ class IpcProxyGenerator:
 #include <atomic>
 #include <cstdint>
 #include <string>
-#include <vector>
 
 #include "{abi_header_name}"
 
@@ -502,6 +501,15 @@ class IpcProxyGenerator:
                 if needs_cstring:
                     break
 
+        # 检查是否需要 <vector> (for [binary_buffer] methods)
+        has_binary_buffer = False
+        if interface:
+            all_method_defs = self._collect_all_methods(interface)
+            has_binary_buffer = any(
+                m.attributes.get('binary_buffer', False)
+                for m, _ in all_method_defs
+            )
+
         # 添加方法参数中使用的接口类型的头文件
         if interface:
             interface_includes = self._collect_interface_includes(interface)
@@ -514,6 +522,10 @@ class IpcProxyGenerator:
         # 条件添加 <cstring> (for std::strlen with IDasReadOnlyString [in] params)
         if needs_cstring:
             result += "#include <cstring>\n"
+
+        # 条件添加 <vector> (for [binary_buffer] methods)
+        if has_binary_buffer:
+            result += "#include <vector>\n"
 
         return result
     
@@ -827,7 +839,20 @@ class IpcProxyGenerator:
         lines.append(f"{class_indent}{{")
         lines.append(f"{class_indent}}}")
         lines.append("")
-        
+
+        # Check if interface has [binary_buffer] methods — need data_cache_ member
+        all_method_defs = self._collect_all_methods(interface)
+        has_binary_buffer = any(
+            m.attributes.get('binary_buffer', False)
+            for m, _ in all_method_defs
+        )
+
+        if has_binary_buffer:
+            lines.append(f"{indent}private:")
+            lines.append(f"{class_indent}std::vector<uint8_t> data_cache_;")
+            lines.append("")
+            lines.append(f"{indent}public:")
+
         # AddRef/Release final 实现
         lines.append(f"{class_indent}uint32_t AddRef() final")
         lines.append(f"{class_indent}{{")
@@ -1223,11 +1248,15 @@ class IpcProxyGenerator:
             lines.append("")
             
             for param in out_params:
-                deserialize_code = self._generate_deserialize_param(param, indent, has_return)
+                deserialize_code = self._generate_deserialize_param(param, indent, has_return, method)
                 for line in deserialize_code:
                     lines.append(f"{line}")
             
-            if has_return:
+            is_das_result_return = return_type in ('DasResult', 'int32_t')
+            if has_return and is_das_result_return:
+                # DasResult return: remote_result already contains the return value (no redundant field)
+                lines.append(f"{indent}return remote_result;")
+            elif has_return:
                 return_code = self._generate_return_deserialize(method.return_type, indent)
                 for line in return_code:
                     lines.append(f"{line}")
@@ -1318,7 +1347,7 @@ class IpcProxyGenerator:
 
         return lines
     
-    def _generate_deserialize_param(self, param: ParameterDef, indent: str, has_return: bool = True) -> List[str]:
+    def _generate_deserialize_param(self, param: ParameterDef, indent: str, has_return: bool = True, method: MethodDef = None) -> List[str]:
         """生成参数反序列化代码（用于 [out] 和 [inout] 参数）"""
         lines = []
 
@@ -1395,6 +1424,23 @@ class IpcProxyGenerator:
             lines.append(f"{indent}    *{pn} = nullptr;")
             lines.append(f"{indent}}}")
             return lines
+
+        # Binary buffer [out] deserialization
+        if method and method.attributes.get('binary_buffer', False):
+            bt = param.type_info.base_type
+            if bt in ('unsigned char', 'uint8_t') and param.type_info.is_pointer:
+                pn = param.name
+                lines.append(f"{indent}// Read binary buffer data")
+                lines.append(f"{indent}ipc_result = reader.ReadBytes(data_cache_);")
+                lines.append(f"{indent}if (DAS::IsFailed(ipc_result))")
+                lines.append(f"{indent}{{")
+                if has_return:
+                    lines.append(f"{indent}    return ipc_result;")
+                else:
+                    lines.append(f"{indent}    return;")
+                lines.append(f"{indent}}}")
+                lines.append(f"{indent}*{pn} = data_cache_.data();")
+                return lines
 
         if type_info is None:
             lines.append(f"{indent}// TODO: Unknown type {param.type_info.base_type}")
