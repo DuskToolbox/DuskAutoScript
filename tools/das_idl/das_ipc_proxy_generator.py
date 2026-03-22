@@ -526,8 +526,10 @@ class IpcProxyGenerator:
         # 条件添加 <vector> (for [binary_buffer] methods)
         if has_binary_buffer:
             result += "#include <vector>\n"
-            result += "#include <das/Core/IPC/SharedMemoryPool.h>\n"
+            result += "#include <das/Core/IPC/AsyncIpcTransport.h>\n"
+            result += "#include <das/Core/IPC/ConnectionManager.h>\n"
             result += "#include <das/Core/IPC/IpcCommandHandler.h>\n"
+            result += "#include <das/Core/IPC/SharedMemoryPool.h>\n"
 
         return result
     
