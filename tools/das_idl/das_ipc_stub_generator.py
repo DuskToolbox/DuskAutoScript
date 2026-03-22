@@ -918,22 +918,14 @@ class IpcStubGenerator:
 
         # ===== Response serialization =====
         if has_return or out_params:
-            # Check for unsupported out param types (e.g., unsigned char* buffer)
-            has_unsupported = False
-            for param in out_params:
-                bt = param.type_info.base_type
-                if bt in ('unsigned char', 'uint8_t') and param.type_info.is_pointer:
-                    lines.append(
-                        f"{inner_indent}// TODO: DasBinaryBuffer "
-                        f"unsigned char* [out] serialization not yet implemented"
-                    )
-                    lines.append(
-                        f"{inner_indent}return DAS_E_NOT_IMPLEMENTED;"
-                    )
-                    has_unsupported = True
-                    break
-            if has_unsupported:
-                pass  # Response body not generated
+            is_binary_buffer = method.attributes.get('binary_buffer', False)
+
+            if is_binary_buffer:
+                # Binary buffer serialization path
+                resp_lines = self._generate_binary_buffer_response(
+                    interface, method, out_params, has_return, inner_indent)
+                lines.extend(resp_lines)
+                lines.append(f"{inner_indent}out_response = writer.GetBuffer();")
             elif self._is_fixed_size_response(method):
                 # Zero-heap-allocation: #pragma pack struct
                 resp_lines = self._generate_fixed_size_response_body(
@@ -956,7 +948,10 @@ class IpcStubGenerator:
         """Check if all [out] params + return value are fixed-size (no strings)
 
         NOTE: [out] interface pointers ARE fixed-size (12 bytes each).
+        NOTE: [binary_buffer] methods are NOT fixed-size (use binary buffer path).
         """
+        if method.attributes.get('binary_buffer', False):
+            return False
         FIXED_SIZE_SPECIAL = {'DasGuid', 'DasResult', 'DasBool'}
         for param in method.parameters:
             if param.direction not in (ParamDirection.OUT, ParamDirection.INOUT):
@@ -1145,7 +1140,8 @@ class IpcStubGenerator:
             fields = self._generate_response_struct_fields(param, indent + "    ", local_name)
             lines.extend(fields)
 
-        if has_return:
+        is_das_result_return = method.return_type.base_type in ('DasResult', 'int32_t')
+        if has_return and not is_das_result_return:
             lines.append(f"{indent}    int32_t return_value;")
 
         lines.append(f"{indent}}};")
@@ -1166,7 +1162,7 @@ class IpcStubGenerator:
             fill_lines = self._generate_response_struct_fill(param, "resp.", indent, local_name)
             lines.extend(fill_lines)
 
-        if has_return:
+        if has_return and not is_das_result_return:
             lines.append(f"{indent}resp.return_value = static_cast<int32_t>(call_result);")
 
         lines.append("")
@@ -1184,6 +1180,10 @@ class IpcStubGenerator:
         # Phase 1: Pre-calculate total response size
         lines.append(f"{indent}// Pre-calculate total response size for single allocation")
         lines.append(f"{indent}size_t total_response_size = 4;  // remote_result (int32)")
+
+        is_das_result_return = method.return_type.base_type in ('DasResult', 'int32_t')
+        if has_return and not is_das_result_return:
+            lines.append(f"{indent}total_response_size += 4;  // return_value (int32)")
 
         string_params = []  # Track IDasReadOnlyString [out] params for GetUtf8
         for param in out_params:
@@ -1203,9 +1203,6 @@ class IpcStubGenerator:
             else:
                 size = self._get_out_param_fixed_size(param)
                 lines.append(f"{indent}total_response_size += {size};  // {param.name}")
-
-        if has_return:
-            lines.append(f"{indent}total_response_size += 4;  // return_value (int32)")
 
         lines.append("")
 
@@ -1247,11 +1244,80 @@ class IpcStubGenerator:
                 for line in serialize_code:
                     lines.append(f"{line}")
 
-        # Write return_value
-        if has_return:
+        # Write return_value (only for non-DasResult return types)
+        if has_return and not is_das_result_return:
             serialize_return_code = self._generate_serialize_return_for_stub(method.return_type, indent)
             for line in serialize_return_code:
                 lines.append(f"{line}")
+
+        return lines
+
+    def _generate_binary_buffer_response(self, interface: InterfaceDef, method: MethodDef, out_params, has_return: bool, indent: str) -> List[str]:
+        """Generate response body for [binary_buffer] methods.
+
+        Wire format: int32_t remote_result | uint64_t data_size (via WriteBytes) | uint8_t data[data_size]
+        WriteBytes internally writes uint64_t size prefix + raw bytes (8 bytes overhead).
+        """
+        lines = []
+
+        # Step 1: Get buffer size by calling impl->GetSize
+        # NOTE: typed_impl is already in scope from _generate_handle_method
+        lines.append(f"{indent}// Binary buffer: get size first")
+        lines.append(f"{indent}uint64_t binary_data_size = 0;")
+        lines.append(f"{indent}typed_impl->GetSize(&binary_data_size);")
+        lines.append("")
+
+        # Step 2: Find the unsigned char** out param (the data pointer)
+        # The impl->GetData(&data_ptr) call was already generated by the caller.
+        # We need to identify the local variable name for the data pointer.
+        data_param = None
+        handle_param_names = {'impl', 'params', 'params_size', 'out_response', 'ctx'}
+        for param in out_params:
+            bt = param.type_info.base_type
+            if bt in ('unsigned char', 'uint8_t') and param.type_info.is_pointer:
+                data_param = param
+                break
+
+        if data_param is None:
+            lines.append(f"{indent}// ERROR: [binary_buffer] method has no unsigned char* [out] param")
+            lines.append(f"{indent}return DAS_E_NOT_IMPLEMENTED;")
+            return lines
+
+        data_local_name = f"arg_{data_param.name}" if data_param.name in handle_param_names else data_param.name
+
+        # Step 3: Pre-calculate size and create writer
+        # The `8` accounts for WriteBytes's internal uint64_t size prefix
+        lines.append(f"{indent}// Pre-calculate response size: int32 (remote_result) + uint64 (WriteBytes size prefix) + data bytes")
+        lines.append(f"{indent}const size_t total_response_size = 4 + 8 + static_cast<size_t>(binary_data_size);")
+        lines.append(f"{indent}Das::Core::IPC::MemorySerializerWriter writer;")
+        lines.append(f"{indent}writer.Reserve(total_response_size);")
+        lines.append("")
+
+        # Step 4: Write remote_result
+        lines.append(f"{indent}DasResult serial_result = DAS_S_OK;")
+        if has_return:
+            lines.append(f"{indent}serial_result = writer.WriteInt32(static_cast<int32_t>(call_result));")
+        else:
+            lines.append(f"{indent}serial_result = writer.WriteInt32(static_cast<int32_t>(DAS_S_OK));")
+        lines.append(f"{indent}if (DAS::IsFailed(serial_result))")
+        lines.append(f"{indent}{{")
+        lines.append(f"{indent}    return serial_result;")
+        lines.append(f"{indent}}}")
+        lines.append("")
+
+        # Step 5: Write binary data (WriteBytes includes uint64 size prefix)
+        lines.append(f"{indent}if (DAS::IsOk(call_result) && {data_local_name} != nullptr)")
+        lines.append(f"{indent}{{")
+        lines.append(f"{indent}    serial_result = writer.WriteBytes(reinterpret_cast<const uint8_t*>({data_local_name}), static_cast<size_t>(binary_data_size));")
+        lines.append(f"{indent}}}")
+        lines.append(f"{indent}else")
+        lines.append(f"{indent}{{")
+        lines.append(f"{indent}    serial_result = writer.WriteBytes(nullptr, 0);")
+        lines.append(f"{indent}}}")
+        lines.append(f"{indent}if (DAS::IsFailed(serial_result))")
+        lines.append(f"{indent}{{")
+        lines.append(f"{indent}    return serial_result;")
+        lines.append(f"{indent}}}")
 
         return lines
 
