@@ -412,6 +412,46 @@ class TestCSharpSwigGenerator(unittest.TestCase):
         post_include_output = generator.emit_post_include(model, interface)
         self.assertEqual("", post_include_output)
 
+    def test_csharp_ez_throws_das_exception(self):
+        """验证C# Ez方法生成DasException而非System.Exception"""
+        from swig_csharp_generator import CSharpSwigGenerator
+        from swig_api_model import build_swig_interface_model, build_interface_map
+
+        # 创建带[out]参数的测试接口
+        interface = InterfaceDef(
+            uuid="12345678-1234-1234-1234-123456789002",
+            name="ITestEzInterface",
+            namespace="Test",
+            base_interface="IDasBase",
+            methods=[
+                MethodDef(
+                    name="DoSomething",
+                    return_type=TypeInfo(base_type="DasResult"),
+                    parameters=[
+                        ParameterDef(
+                            name="pp_out",
+                            type_info=TypeInfo(base_type="IDasBase", pointer_level=2),
+                            direction=ParamDirection.OUT,
+                        )
+                    ],
+                )
+            ],
+            properties=[],
+        )
+        interface_map = build_interface_map([interface])
+        model = build_swig_interface_model(interface, interface_map)
+
+        generator = CSharpSwigGenerator()
+        generator.on_interface_model(model, interface)
+
+        output = generator.generate_pre_include_directives(interface)
+
+        # 验证抛出DasException而非System.Exception
+        self.assertIn("DasExceptionSourceInfoSwig", output)
+        self.assertIn("throw new DasException", output)
+        self.assertNotIn("throw new System.Exception", output)
+        self.assertIn("CreateDasExceptionStringSwig", output)
+
 
 if __name__ == "__main__":
     unittest.main()
