@@ -1109,6 +1109,13 @@ SWIGEXPORT jstring JNICALL Java_org_das_DuskAutoScriptJNI_DasReadOnlyString_1toJ
 %}
 #endif // SWIGJAVA
 
+#ifdef SWIGCSHARP
+// ============================================================================
+// DasException C# 异常继承
+// ============================================================================
+%typemap(csbase) DasException "System.Exception"
+#endif // SWIGCSHARP
+
 // ============================================================================
 // 隐藏 DasReadOnlyString 中暴露 SWIGTYPE 的方法
 // char16_t 构造函数和 GetUtf16 已由 fromString/toJavaString 替代
