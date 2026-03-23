@@ -285,7 +285,12 @@ class CSharpSwigGenerator(SwigLangGenerator):
         code = f'''    {signature} {{
         var ret = {method_name}({in_args_str});
         if (!ret.IsOk()) {{
-            throw new System.Exception($"[{{ret.GetErrorCode()}}] {interface_name}.cs:0 {ez_method_name}");
+            DasExceptionSourceInfoSwig sourceInfo = new DasExceptionSourceInfoSwig();
+            sourceInfo.File = "{interface_name}.cs";
+            sourceInfo.Line = 0;
+            sourceInfo.Function = "{ez_method_name}";
+            IDasExceptionString exStr = DuskAutoScript.CreateDasExceptionStringSwig(ret.GetErrorCode(), sourceInfo);
+            throw new DasException(ret.GetErrorCode(), exStr);
         }}
         return {getter_call};
     }}'''
@@ -329,7 +334,12 @@ class CSharpSwigGenerator(SwigLangGenerator):
         code = f'''    {signature} {{
         var ret = {method_name}({in_args_str});
         if (!ret.IsOk()) {{
-            throw new System.Exception($"[{{ret.GetErrorCode()}}] {interface_name}.cs:0 {ez_method_name}");
+            DasExceptionSourceInfoSwig sourceInfo = new DasExceptionSourceInfoSwig();
+            sourceInfo.File = "{interface_name}.cs";
+            sourceInfo.Line = 0;
+            sourceInfo.Function = "{ez_method_name}";
+            IDasExceptionString exStr = DuskAutoScript.CreateDasExceptionStringSwig(ret.GetErrorCode(), sourceInfo);
+            throw new DasException(ret.GetErrorCode(), exStr);
         }}
         return ({getter_calls});
     }}'''
