@@ -170,12 +170,9 @@ class CSharpSwigGenerator(SwigLangGenerator):
 
         all_out_methods = self._pending_out_methods + self._pending_multi_out_methods
 
-        if not all_out_methods and not self._pending_string_methods:
-            return ""
-
         all_methods = []
 
-        # 1. CastFrom/CreateFromPtr helper methods
+        # 1. CastFrom/CreateFromPtr helper methods（为所有接口生成）
         helper_methods = self._generate_interface_helper_methods(interface)
         if helper_methods:
             all_methods.append(helper_methods)
@@ -194,6 +191,10 @@ class CSharpSwigGenerator(SwigLangGenerator):
             helper_code = self._generate_single_string_param_helper(method, qualified_name)
             if helper_code:
                 all_methods.append(helper_code)
+
+        # 如果没有任何方法，返回空字符串
+        if not all_methods:
+            return ""
 
         methods_code = "\n\n".join(all_methods)
 
