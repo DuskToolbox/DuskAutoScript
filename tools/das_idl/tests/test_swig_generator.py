@@ -365,5 +365,53 @@ struct DasRetVariant {
             self.assertIn("DasRetVariant", typemap_info["ret_classes"])
 
 
+class TestCSharpSwigGenerator(unittest.TestCase):
+    """测试C# SWIG生成器的generate_pre_include_directives方法"""
+
+    def test_csharp_pre_include_cscode(self):
+        """验证C#生成器在generate_pre_include_directives中生成正确的typemap"""
+        from swig_csharp_generator import CSharpSwigGenerator
+        from swig_api_model import build_swig_interface_model, build_interface_map
+
+        # 创建测试接口（带out参数方法，触发typemap生成）
+        interface = InterfaceDef(
+            uuid="12345678-1234-1234-1234-123456789001",
+            name="ITestInterface",
+            namespace="Test",
+            base_interface="IDasBase",
+            methods=[
+                MethodDef(
+                    name="GetValue",
+                    return_type=TypeInfo(base_type="DasResult"),
+                    parameters=[
+                        ParameterDef(
+                            name="pp_out",
+                            type_info=TypeInfo(base_type="IDasBase", pointer_level=2),
+                            direction=ParamDirection.OUT,
+                        )
+                    ],
+                )
+            ],
+            properties=[],
+        )
+        interface_map = build_interface_map([interface])
+        model = build_swig_interface_model(interface, interface_map)
+
+        generator = CSharpSwigGenerator()
+        generator.on_interface_model(model, interface)
+
+        # 验证pre-include输出包含typemap
+        pre_include_output = generator.generate_pre_include_directives(interface)
+        self.assertIn("%typemap(cscode)", pre_include_output)
+        self.assertIn("CastFrom", pre_include_output)
+        self.assertIn("CreateFromPtr", pre_include_output)
+        self.assertIn(".Handle", pre_include_output)
+        self.assertIn("#ifdef SWIGCSHARP", pre_include_output)
+
+        # 验证post-include输出为空
+        post_include_output = generator.emit_post_include(model, interface)
+        self.assertEqual("", post_include_output)
+
+
 if __name__ == "__main__":
     unittest.main()
