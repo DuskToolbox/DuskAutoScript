@@ -149,6 +149,103 @@ class CSharpSwigGenerator(SwigLangGenerator):
         self._pending_multi_out_methods = list(model.multi_out_methods)
         self._pending_string_methods = self._get_methods_with_string_params_only(interface_def)
 
+    def generate_pre_include_directives(self, interface: InterfaceDef) -> str:
+        """生成必须在 %include 之前的 SWIG 指令
+        
+        将所有 %typemap(cscode) 生成逻辑移到此处，确保 typemap 在 SWIG 解析类之前声明。
+        """
+        # 跳过 binary_buffer 接口（由 generate_binary_buffer_helpers 处理）
+        # binary_buffer 是方法级别的属性，检查接口中是否有任何方法带有此属性
+        has_binary_buffer = any(
+            m.attributes.get('binary_buffer', False) for m in interface.methods
+        )
+        if has_binary_buffer:
+            return ""
+
+        # 如果 on_interface_model 还没被调用，返回空
+        if self._pending_interface is None:
+            return ""
+
+        qualified_name = f"{interface.namespace}::{interface.name}" if interface.namespace else interface.name
+
+        all_out_methods = self._pending_out_methods + self._pending_multi_out_methods
+
+        if not all_out_methods and not self._pending_string_methods:
+            return ""
+
+        all_methods = []
+
+        # 1. CastFrom/CreateFromPtr helper methods
+        helper_methods = self._generate_interface_helper_methods(interface)
+        if helper_methods:
+            all_methods.append(helper_methods)
+
+        # 2. Ez methods
+        for method_info in self._pending_out_methods:
+            ez_code = self._generate_single_out_ez_method(method_info)
+            all_methods.append(ez_code)
+
+        for method_info in self._pending_multi_out_methods:
+            ez_code = self._generate_multi_out_ez_method(method_info)
+            all_methods.append(ez_code)
+
+        # 3. String param helpers
+        for method in self._pending_string_methods:
+            helper_code = self._generate_single_string_param_helper(method, qualified_name)
+            if helper_code:
+                all_methods.append(helper_code)
+
+        methods_code = "\n\n".join(all_methods)
+
+        return f'''
+#ifdef SWIGCSHARP
+%typemap(csclassmodifiers) {qualified_name} "public partial class"
+
+%typemap(cscode) {qualified_name} %{{
+{methods_code}
+%}}
+#endif
+'''
+
+    def _generate_interface_helper_methods(self, interface: InterfaceDef) -> str:
+        interface_name = interface.name
+
+        code = f'''    // =========================================================================
+    // 接口辅助方法
+    // CastFrom: 从 IDasBase 零开销转换到目标类型
+    // CreateFromPtr: 内部工厂方法，供 as() 使用
+    // =========================================================================
+    
+    /// <summary>
+    /// 从 IDasBase 转换到 {interface_name}
+    /// </summary>
+    /// <param name="baseObj">源 IDasBase 对象</param>
+    /// <returns>转换后的 {interface_name} 实例</returns>
+    /// <exception cref="System.InvalidOperationException">当源对象为空或不拥有内存时抛出</exception>
+    public static {interface_name} CastFrom(IDasBase baseObj) {{
+        if (baseObj == null) {{
+            throw new System.InvalidOperationException("Cannot cast from null IDasBase");
+        }}
+        if (!baseObj.IsOwnershipOwner()) {{
+            throw new System.InvalidOperationException("Cannot cast: source does not own memory.");
+        }}
+        System.IntPtr ptr = IDasBase.getCPtr(baseObj).Handle;
+        baseObj.ReleaseOwnership();
+        return new {interface_name}(ptr, true);
+    }}
+
+    /// <summary>
+    /// 从 IntPtr 创建 {interface_name} 实例（内部使用）
+    /// </summary>
+    /// <param name="cPtr">C++ 对象指针</param>
+    /// <param name="cMemoryOwn">是否拥有内存所有权</param>
+    /// <returns>新的 {interface_name} 实例</returns>
+    public static {interface_name} CreateFromPtr(System.IntPtr cPtr, bool cMemoryOwn) {{
+        return new {interface_name}(cPtr, cMemoryOwn);
+    }}'''
+
+        return code
+
     def _generate_single_out_ez_method(self, method_info: "OutParamInfo") -> str:
         """生成单 out 参数的 Ez 方法
         
@@ -240,50 +337,7 @@ class CSharpSwigGenerator(SwigLangGenerator):
         return code
 
     def emit_post_include(self, model: "SwigInterfaceModel", interface_def: InterfaceDef) -> str:
-        """生成后置包含指令（Ez方法）
-        
-        使用 %typemap(cscode) 注入 C# 代码到 proxy 类
-        
-        Args:
-            model: 接口分析模型
-            interface_def: 原始接口定义
-            
-        Returns:
-            SWIG .i 文件代码片段
-        """
-        qualified_name = model.qualified_name
-        
-        all_out_methods = self._pending_out_methods + self._pending_multi_out_methods
-        
-        if not all_out_methods and not self._pending_string_methods:
-            return ""
-        
-        all_methods = []
-        
-        for method_info in self._pending_out_methods:
-            ez_code = self._generate_single_out_ez_method(method_info)
-            all_methods.append(ez_code)
-        
-        for method_info in self._pending_multi_out_methods:
-            ez_code = self._generate_multi_out_ez_method(method_info)
-            all_methods.append(ez_code)
-        
-        for method in self._pending_string_methods:
-            helper_code = self._generate_single_string_param_helper(method, qualified_name)
-            if helper_code:
-                all_methods.append(helper_code)
-        
-        methods_code = "\n\n".join(all_methods)
-        
-        return f'''
-#ifdef SWIGCSHARP
-%typemap(csclassmodifiers) {qualified_name} "public partial class"
-
-%typemap(cscode) {qualified_name} %{{
-{methods_code}
-%}}
-#endif
-'''
+        return ""
 
     def _get_methods_with_string_params_only(self, interface: InterfaceDef) -> List[MethodDef]:
         """获取接口中所有不带 [out] 参数但有 IDasReadOnlyString* 输入参数的方法"""
