@@ -784,7 +784,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins)
         GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
     }
 
-    // 1. 启动 Host 进程并注册到 ConnectionManager
+    // 1. 启动第一个 Host 进程
     DasResult result = StartHostAndSetupRunLoop();
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_TRUE(launcher_->IsRunning());
@@ -801,7 +801,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins)
         GTEST_SKIP() << "Plugin JSON not found: " << e.what();
     }
 
-    // 3. 使用异步接口逐个加载插件1
+    // 3. 在第一个 Host 上使用异步接口加载插件1
     DAS::Core::IPC::ObjectId object1{};
     {
         DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
@@ -820,12 +820,29 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins)
         object1 = loaded_id;
     }
 
-    // 4. 使用异步接口逐个加载插件2
+    // 4. 启动第二个 Host 进程
+    DAS::DasPtr<DAS::Core::IPC::IHostLauncher> launcher2;
+    {
+        DAS::Core::IPC::IHostLauncher* raw_launcher = nullptr;
+        result = ctx_->CreateHostLauncher(&raw_launcher);
+        ASSERT_EQ(result, DAS_S_OK);
+        ASSERT_NE(raw_launcher, nullptr);
+        launcher2 = DAS::DasPtr<DAS::Core::IPC::IHostLauncher>(raw_launcher);
+
+        uint16_t session_id2 = 0;
+        result = launcher2->Start(
+            host_exe_path_,
+            session_id2,
+            IpcTestConfig::GetHostStartTimeoutMs());
+        ASSERT_EQ(result, DAS_S_OK);
+    }
+
+    // 5. 在第二个 Host 上使用异步接口加载插件2
     DAS::Core::IPC::ObjectId object2{};
     {
         DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
         result = ctx_->LoadPluginAsync(
-            launcher_.Get(),
+            launcher2.Get(),
             plugin2_path.c_str(),
             op.Put());
         ASSERT_EQ(result, DAS_S_OK);
@@ -839,24 +856,28 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins)
         object2 = loaded_id;
     }
 
-    // 5. 验证对象在正确的 Host 进程中
+    // 6. 验证对象在不同的 Host 进程中
     EXPECT_EQ(object1.session_id, launcher_->GetSessionId());
-    EXPECT_EQ(object2.session_id, launcher_->GetSessionId());
+    EXPECT_EQ(object2.session_id, launcher2->GetSessionId());
+    EXPECT_NE(object1.session_id, object2.session_id);
 
     std::string log_msg = DAS_FMT_NS::format(
         "[CrossProcess_AsyncLoadPlugins] Both plugins loaded: "
-        "object1={{session:{}, local:{}}}, object2={{session:{}, local:{}}}",
+        "object1={{session:{}, local:{}}}, object2={{session:{}, "
+        "local:{}}}",
         object1.session_id,
         object1.local_id,
         object2.session_id,
         object2.local_id);
     DAS_CORE_LOG_INFO(log_msg.c_str());
+
+    launcher2.Reset();
 }
 
 /**
  * @brief 测试 when_all 并发加载多个插件
  *
- * 使用 stdexec::when_all 在同一 Host 上并发加载两个插件，
+ * 使用 stdexec::when_all 在不同 Host 上并发加载两个插件，
  * 展示 stdexec 组合操作的用法。
  */
 TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins_WhenAll)
@@ -866,12 +887,29 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins_WhenAll)
         GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
     }
 
-    // 1. 启动 Host 进程并注册到 ConnectionManager
+    // 1. 启动第一个 Host 进程
     DasResult result = StartHostAndSetupRunLoop();
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_TRUE(launcher_->IsRunning());
 
-    // 2. 获取插件 JSON 路径
+    // 2. 启动第二个 Host 进程
+    DAS::DasPtr<DAS::Core::IPC::IHostLauncher> launcher2;
+    {
+        DAS::Core::IPC::IHostLauncher* raw_launcher = nullptr;
+        result = ctx_->CreateHostLauncher(&raw_launcher);
+        ASSERT_EQ(result, DAS_S_OK);
+        ASSERT_NE(raw_launcher, nullptr);
+        launcher2 = DAS::DasPtr<DAS::Core::IPC::IHostLauncher>(raw_launcher);
+
+        uint16_t session_id2 = 0;
+        result = launcher2->Start(
+            host_exe_path_,
+            session_id2,
+            IpcTestConfig::GetHostStartTimeoutMs());
+        ASSERT_EQ(result, DAS_S_OK);
+    }
+
+    // 3. 获取插件 JSON 路径
     std::string plugin1_path, plugin2_path;
     try
     {
@@ -883,14 +921,14 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins_WhenAll)
         GTEST_SKIP() << "Plugin JSON not found: " << e.what();
     }
 
-    // 3. 创建两个异步操作
+    // 4. 创建两个异步操作，分别发到不同 Host
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op1;
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op2;
     result =
         ctx_->LoadPluginAsync(launcher_.Get(), plugin1_path.c_str(), op1.Put());
     ASSERT_EQ(result, DAS_S_OK);
     result =
-        ctx_->LoadPluginAsync(launcher_.Get(), plugin2_path.c_str(), op2.Put());
+        ctx_->LoadPluginAsync(launcher2.Get(), plugin2_path.c_str(), op2.Put());
     ASSERT_EQ(result, DAS_S_OK);
 
     // 5. when_all 并发等待
@@ -905,9 +943,10 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins_WhenAll)
     ASSERT_EQ(result1, DAS_S_OK) << "Load plugin 1 failed";
     ASSERT_EQ(result2, DAS_S_OK) << "Load plugin 2 failed";
 
-    // 6. 验证对象在正确的 Host 进程中
+    // 6. 验证对象在不同的 Host 进程中
     EXPECT_EQ(object1.session_id, launcher_->GetSessionId());
-    EXPECT_EQ(object2.session_id, launcher_->GetSessionId());
+    EXPECT_EQ(object2.session_id, launcher2->GetSessionId());
+    EXPECT_NE(object1.session_id, object2.session_id);
 
     std::string log_msg = DAS_FMT_NS::format(
         "[CrossProcess_AsyncLoadPlugins_WhenAll] Both plugins loaded via "
@@ -918,6 +957,8 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins_WhenAll)
         object2.session_id,
         object2.local_id);
     DAS_CORE_LOG_INFO(log_msg.c_str());
+
+    launcher2.Reset();
 }
 
 // ====== Context 基础测试 ======
