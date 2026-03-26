@@ -21,6 +21,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Any
 
+from ipc_common import BUILTIN_INTERFACE_HASHES
+
 
 def _get_interface_short_name(interface_name: str) -> str:
     """Strip I prefix from interface name: IDasPluginPackage -> DasPluginPackage"""
@@ -290,11 +292,12 @@ def _generate_proxy_factory(ipc_output_dir: Path, interfaces: List[Dict[str, Any
         lines.append(f"        case {interface_id}: // {interface_name}::InterfaceId")
         lines.append(f"            return CreateTypedProxy<{proxy_name}>(object_id, run_loop, business_thread, object_manager);")
 
+    das_base_hash = BUILTIN_INTERFACE_HASHES.get("IDasBase", 0)
     lines.extend([
         "        // IDasBase: minimal proxy that only supports remote QueryInterface",
         "        // IDasBase has no methods to proxy; AddRef/Release are handled locally",
-        "        // interface_id = FNV-1a(DAS_IID_BASE) = 0x7BC07313",
-        "        case 0x7BC07313u:",
+        f"        // interface_id = BUILTIN_INTERFACE_HASHES[\"IDasBase\"] = 0x{das_base_hash:08X}",
+        f"        case 0x{das_base_hash:08X}u:",
         "            return CreateTypedProxy<DasBaseProxy>(object_id, run_loop, business_thread, object_manager);",
         "",
         "        default:",

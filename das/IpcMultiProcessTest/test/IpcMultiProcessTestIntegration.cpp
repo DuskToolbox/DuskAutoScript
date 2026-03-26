@@ -1061,35 +1061,46 @@ TEST_F(IpcMultiProcessTestIntegration, RemoteProxy_ComponentFactory_IsSupported)
     DAS::PluginInterface::DasPluginPackage package;
     ASSERT_EQ(raw_proxy.As(package.Put()), DAS_S_OK);
 
-    std::vector<DAS::PluginInterface::DasPluginFeature> features;
+    // 枚举所有 feature 并验证值
+    std::vector<std::pair<uint64_t, DAS::PluginInterface::DasPluginFeature>>
+        features;
     {
-        uint64_t i = 0;
-        try
+        for (uint64_t i = 0; i < 100; ++i)
         {
-            // 避免太大
-            for (; i < 100; ++i)
+            DAS::PluginInterface::DasPluginFeature feature;
+            const DasResult r = package->EnumFeature(i, &feature);
+            if (DAS::IsFailed(r))
             {
-                DAS::PluginInterface::DasPluginFeature feature =
-                    package.EnumFeature(i);
-                features.push_back(feature);
+                DAS_CORE_LOG_INFO(
+                    "Enumerated {} features from plugin package (stopped at "
+                    "index {})",
+                    features.size(),
+                    i);
+                break;
             }
-        }
-        catch (...)
-        {
-            DAS_CORE_LOG_INFO(
-                "Enumerated {} features from plugin package (stopped at index {})",
-                features.size(),
-                i);
+            features.emplace_back(i, feature);
         }
     }
 
-    const auto factoryBase = package.CreateFeatureInterface(features[0]);
+    ASSERT_FALSE(features.empty());
+    EXPECT_EQ(
+        features[0].second,
+        DAS::PluginInterface::DAS_PLUGIN_FEATURE_COMPONENT_FACTORY);
 
-    DAS::PluginInterface::DasComponentFactory factory;
+    // 用索引 0 创建第一个 feature 的接口
+    const auto factoryBase = package.CreateFeatureInterface(features[0].first);
+
+    DAS::DasPtr<DAS::PluginInterface::IDasComponentFactory> factory;
     ASSERT_EQ(factoryBase.As(factory.Put()), DAS_S_OK);
 
+    // 空 GUID 不被支持，应返回 DAS_E_NO_IMPLEMENTATION
     DasGuid guid{};
-    EXPECT_ANY_THROW(factory.IsSupported(guid));
+    EXPECT_EQ(factory->IsSupported(guid), DAS_E_NO_IMPLEMENTATION);
+
+    // 正确的 IID 应被支持
+    EXPECT_EQ(
+        factory->IsSupported(DasIidOf<DAS::PluginInterface::IDasComponent>()),
+        DAS_S_OK);
 
     DAS_CORE_LOG_INFO("[RemoteProxy_ComponentFactory_IsSupported] Test passed");
 }

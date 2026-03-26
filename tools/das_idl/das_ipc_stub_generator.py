@@ -22,6 +22,8 @@ from typing import Any, Dict, List, Optional
 import importlib
 import sys
 
+from ipc_common import fnv1a_hash_guid, BUILTIN_INTERFACE_HASHES
+
 try:
     from . import das_idl_parser as _das_idl_parser
 except ImportError:
@@ -310,40 +312,6 @@ def fnv1a_hash(data: str) -> int:
     return hash_value
 
 
-def fnv1a_hash_guid(guid_str: str) -> int:
-    """计算 GUID 二进制数据的 FNV-1a 32-bit hash（用于生成 interface_id）
-
-    与 C++ RemoteObjectRegistry::ComputeInterfaceId 保持一致，
-    对 GUID 结构体内存布局做 FNV-1a hash（而非字符串表示）。
-
-    处理两种格式，大小写不敏感:
-    - {xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}
-    - xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-    """
-    import struct
-
-    FNV_PRIME = 0x01000193
-    FNV_OFFSET_BASIS = 0x811c9dc5
-
-    cleaned = guid_str.strip().strip('{}')
-    parts = cleaned.split('-')
-    if len(parts) != 5:
-        raise ValueError(f"Invalid GUID format: {guid_str}")
-
-    data1 = int(parts[0], 16)
-    data2 = int(parts[1], 16)
-    data3 = int(parts[2], 16)
-    data4 = bytes.fromhex(parts[3] + parts[4])
-
-    # 小端字节序，匹配 Windows GUID 结构体内存布局
-    binary = struct.pack('<I', data1) + struct.pack('<H', data2) + struct.pack('<H', data3) + data4
-
-    hash_value = FNV_OFFSET_BASIS
-    for byte in binary:
-        hash_value ^= byte
-        hash_value = (hash_value * FNV_PRIME) & 0xFFFFFFFF
-
-    return hash_value
 
 
 class IpcStubGenerator:
@@ -1088,7 +1056,8 @@ class IpcStubGenerator:
             if interface_uuid:
                 iface_id_hash = fnv1a_hash_guid(interface_uuid)
             else:
-                iface_id_hash = 0
+                # Built-in types not in document (e.g. IDasBase): use BUILTIN_INTERFACE_HASHES
+                iface_id_hash = BUILTIN_INTERFACE_HASHES.get(interface_name, 0)
 
             # Inline null check + RegisterLocalObject + 4-field assignment
             lines.append(f"{indent}if ({local_name} != nullptr)")
@@ -1459,7 +1428,8 @@ class IpcStubGenerator:
             if interface_uuid:
                 iface_id_hash = fnv1a_hash_guid(interface_uuid)
             else:
-                iface_id_hash = 0
+                # Built-in types not in document (e.g. IDasBase): use BUILTIN_INTERFACE_HASHES
+                iface_id_hash = BUILTIN_INTERFACE_HASHES.get(interface_name, 0)
 
             lines.append(f"{indent}    IDasBase* {param_name}_base = Das::Core::IPC::DasIpcProxy::CreateProxyByInterfaceId(")
             lines.append(f"{indent}        0x{iface_id_hash:08X}u,")
@@ -1585,28 +1555,45 @@ class IpcStubGenerator:
                         break
 
             if interface_uuid:
-                iface_id_hash = fnv1a_hash_guid(interface_uuid)
+                lines.append(f"{indent}// 序列化 [out] 接口指针: {interface_name}*")
+                lines.append(f"{indent}if ({var_name} != nullptr)")
+                lines.append(f"{indent}{{")
+                lines.append(f"{indent}    Das::Core::IPC::ObjectId {var_name}_oid;")
+                lines.append(f"{indent}    // RegisterLocalObject 内部 DasPtr 构造函数自动 AddRef")
+                lines.append(f"{indent}    serial_result = object_manager.RegisterLocalObject({var_name}, {var_name}_oid);")
+                lines.append(f"{indent}    if (DAS::IsFailed(serial_result))")
+                lines.append(f"{indent}    {{")
+                lines.append(f"{indent}        return serial_result;")
+                lines.append(f"{indent}    }}")
+                lines.append(f"{indent}    serial_result = writer.WriteUInt16({var_name}_oid.session_id);")
+                lines.append(f"{indent}    if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
+                lines.append(f"{indent}    serial_result = writer.WriteUInt16({var_name}_oid.generation);")
+                lines.append(f"{indent}    if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
+                lines.append(f"{indent}    serial_result = writer.WriteUInt32({var_name}_oid.local_id);")
+                lines.append(f"{indent}    if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
+                lines.append(f"{indent}    serial_result = writer.WriteUInt32(0x{fnv1a_hash_guid(interface_uuid):08X}u);")
+                lines.append(f"{indent}    if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
             else:
-                iface_id_hash = 0  # Fallback; will be detected as error at runtime
+                # Built-in types not in document (e.g. IDasBase): use BUILTIN_INTERFACE_HASHES
+                iface_id_hash = BUILTIN_INTERFACE_HASHES.get(interface_name, 0)
 
-            lines.append(f"{indent}// 序列化 [out] 接口指针: {interface_name}*")
-            lines.append(f"{indent}if ({var_name} != nullptr)")
-            lines.append(f"{indent}{{")
-            lines.append(f"{indent}    Das::Core::IPC::ObjectId {var_name}_oid;")
-            lines.append(f"{indent}    // RegisterLocalObject 内部 DasPtr 构造函数自动 AddRef")
-            lines.append(f"{indent}    serial_result = object_manager.RegisterLocalObject({var_name}, {var_name}_oid);")
-            lines.append(f"{indent}    if (DAS::IsFailed(serial_result))")
-            lines.append(f"{indent}    {{")
-            lines.append(f"{indent}        return serial_result;")
-            lines.append(f"{indent}    }}")
-            lines.append(f"{indent}    serial_result = writer.WriteUInt16({var_name}_oid.session_id);")
-            lines.append(f"{indent}    if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
-            lines.append(f"{indent}    serial_result = writer.WriteUInt16({var_name}_oid.generation);")
-            lines.append(f"{indent}    if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
-            lines.append(f"{indent}    serial_result = writer.WriteUInt32({var_name}_oid.local_id);")
-            lines.append(f"{indent}    if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
-            lines.append(f"{indent}    serial_result = writer.WriteUInt32(0x{iface_id_hash:08X}u);")
-            lines.append(f"{indent}    if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
+                lines.append(f"{indent}// 序列化 [out] 接口指针: {interface_name}*")
+                lines.append(f"{indent}if ({var_name} != nullptr)")
+                lines.append(f"{indent}{{")
+                lines.append(f"{indent}    Das::Core::IPC::ObjectId {var_name}_oid;")
+                lines.append(f"{indent}    serial_result = object_manager.RegisterLocalObject({var_name}, {var_name}_oid);")
+                lines.append(f"{indent}    if (DAS::IsFailed(serial_result))")
+                lines.append(f"{indent}    {{")
+                lines.append(f"{indent}        return serial_result;")
+                lines.append(f"{indent}    }}")
+                lines.append(f"{indent}    serial_result = writer.WriteUInt16({var_name}_oid.session_id);")
+                lines.append(f"{indent}    if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
+                lines.append(f"{indent}    serial_result = writer.WriteUInt16({var_name}_oid.generation);")
+                lines.append(f"{indent}    if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
+                lines.append(f"{indent}    serial_result = writer.WriteUInt32({var_name}_oid.local_id);")
+                lines.append(f"{indent}    if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
+                lines.append(f"{indent}    serial_result = writer.WriteUInt32(0x{iface_id_hash:08X}u);")
+                lines.append(f"{indent}    if (DAS::IsFailed(serial_result)) {{ return serial_result; }}")
             lines.append(f"{indent}}}")
             lines.append(f"{indent}else")
             lines.append(f"{indent}{{")
