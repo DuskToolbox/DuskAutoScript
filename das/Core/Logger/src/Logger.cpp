@@ -1,6 +1,10 @@
 #include "IDasLogRequesterImpl.h"
 #include <array>
+#include <boost/interprocess/sync/named_mutex.hpp>
+#include <boost/interprocess/sync/scoped_lock.hpp>
 #include <das/Core/Logger/Logger.h>
+#include <spdlog/details/null_mutex.h>
+#include <spdlog/sinks/base_sink.h>
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 
@@ -52,6 +56,40 @@ DAS_NS_ANONYMOUS_DETAILS_END
 #define DAS_CONFIG_WIN32_CONSOLE
 #endif // DAS_WINDOWS
 
+DAS_NS_ANONYMOUS_DETAILS_BEGIN
+class ProcessSafeStdoutSink final
+    : public spdlog::sinks::base_sink<spdlog::details::null_mutex>
+{
+    spdlog::sinks::stdout_color_sink_mt inner_sink_;
+    boost::interprocess::named_mutex    cross_process_mutex_;
+
+protected:
+    void sink_it_(const spdlog::details::log_msg& msg) override
+    {
+        boost::interprocess::scoped_lock<boost::interprocess::named_mutex> lock(
+            cross_process_mutex_);
+        inner_sink_.log(msg);
+    }
+
+    void flush_() override
+    {
+        boost::interprocess::scoped_lock<boost::interprocess::named_mutex> lock(
+            cross_process_mutex_);
+        inner_sink_.flush();
+    }
+
+public:
+    ProcessSafeStdoutSink()
+        : cross_process_mutex_(
+              boost::interprocess::open_or_create,
+              "DAS_StdoutMutex")
+    {
+    }
+
+    ~ProcessSafeStdoutSink() override = default;
+};
+DAS_NS_ANONYMOUS_DETAILS_END
+
 DAS_NS_BEGIN
 
 namespace Core
@@ -59,7 +97,7 @@ namespace Core
     const std::shared_ptr<spdlog::logger> g_logger = []()
     {
         const auto std_sink =
-            std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+            std::make_shared<::Details::ProcessSafeStdoutSink>();
         const auto file_sink =
             std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
                 "logs/" DAS_CORE_NAME ".log",
@@ -79,7 +117,7 @@ namespace Core
             std::end(sinks));
         spdlog::register_logger(result);
         spdlog::set_pattern(
-            "[%Y-%m-%d %H:%M:%S.%e][%t][%^%l%$][%!()][%s:%#][%i] %v");
+            "[%Y-%m-%d %H:%M:%S.%e][%P][%^%l%$][%!()][%s:%#][%i] %v");
 
         spdlog::set_level(spdlog::level::trace);
 
