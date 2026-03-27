@@ -520,6 +520,26 @@ public:
     /// 下一个 call_id (V3: uint16_t)
     std::atomic<uint16_t> next_call_id_{1};
 
+public:
+    /// @brief 分配全局唯一的 call_id
+    /// @return 16-bit call_id，0 表示无效（不会返回 0）
+    /// @note 线程安全，使用 atomic 递增。溢出后从 1 重新开始。
+    [[nodiscard]]
+    uint16_t AllocateCallId() noexcept
+    {
+        uint16_t id = next_call_id_.fetch_add(1);
+        // 溢出后从 1 重新开始（0 表示无效）
+        if (id == 0)
+        {
+            id = next_call_id_.fetch_add(1);
+            if (id == 0)
+            {
+                id = 1;
+            }
+        }
+        return id;
+    }
+
     /// 运行状态
     std::atomic<bool> running_{false};
 

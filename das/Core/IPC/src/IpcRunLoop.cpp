@@ -348,7 +348,7 @@ std::pair<DasResult, CallKey> IpcRunLoop::PrepareSendRequestWithTransport(
             CallKey{.source_session_id = 0, .call_id = 0}};
     }
 
-    uint16_t call_id = next_call_id_.fetch_add(1);
+    uint16_t call_id = AllocateCallId();
 
     const IPCMessageHeader& raw = request_header.Raw();
     // V3: pending_call key 使用 target_session_id（对方进程的 session_id），

@@ -118,22 +118,14 @@ protected:
         DistributedObjectManager&     object_manager)
         : interface_id_(interface_id), object_id_(object_id),
           run_loop_(run_loop), business_thread_(std::move(business_thread)),
-          object_manager_(object_manager), next_call_id_(0)
+          object_manager_(object_manager)
     {
     }
 
-    /// @brief 生成下一个 call_id (V3: 16-bit)
-    /// @note V3 Header 使用 16-bit call_id，配合 source_session_id
-    /// 匹配请求/响应
     [[nodiscard]]
     uint16_t NextCallId() noexcept
     {
-        // 简单递增，溢出后从 1 开始（0 表示无效）
-        if (++next_call_id_ == 0)
-        {
-            next_call_id_ = 1;
-        }
-        return static_cast<uint16_t>(next_call_id_);
+        return run_loop_.AllocateCallId();
     }
 
     /// @brief 获取本地 session ID (V3)
@@ -224,7 +216,6 @@ private:
     IpcRunLoop&                   run_loop_;        // 引用，生命周期由外部管理
     std::weak_ptr<BusinessThread> business_thread_; // 用于 PumpUntilResponse
     DistributedObjectManager&     object_manager_;  // 引用，生命周期由外部管理
-    uint16_t                      next_call_id_{0}; // V3: 16-bit call_id
     uint32_t                      refcount_{1};     // 初始引用计数为1（创建时）
 };
 DAS_CORE_IPC_NS_END
