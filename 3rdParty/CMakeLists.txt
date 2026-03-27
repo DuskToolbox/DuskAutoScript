@@ -441,6 +441,10 @@ if (${DAS_USE_BUNDLED_BOOST})
             Boost::interprocess
             Boost::program_options)
 else ()
+    # ASAN 模式下强制使用 shared Boost（静态库不提供 ASAN 版本）
+    if (DAS_USE_ASAN)
+        set(Boost_USE_STATIC_LIBS OFF)
+    endif ()
     # 这里先不改，只是自用boost版本拉上去先
     find_package(Boost 1.82 COMPONENTS filesystem url process program_options)
 
@@ -679,8 +683,4 @@ endif()
 
 if (NOT ${DAS_USE_BUNDLED_BOOST})
     link_directories(${Boost_LIBRARY_DIRS})
-    if (${DAS_USE_ASAN})
-        # Boost 不提供ASAN的静态库
-        target_link_libraries(Das3rdParty INTERFACE Boost::dynamic_linking)
-    endif()
 endif()
