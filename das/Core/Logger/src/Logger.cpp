@@ -71,6 +71,15 @@ protected:
         inner_sink_.log(msg);
     }
 
+    void set_formatter_(
+        std::unique_ptr<spdlog::formatter> sink_formatter) override
+    {
+        base_sink<spdlog::details::null_mutex>::set_formatter_(
+            std::move(sink_formatter));
+        inner_sink_.set_formatter(
+            base_sink<spdlog::details::null_mutex>::formatter_->clone());
+    }
+
     void flush_() override
     {
         boost::interprocess::scoped_lock<boost::interprocess::named_mutex> lock(
@@ -117,7 +126,7 @@ namespace Core
             std::end(sinks));
         spdlog::register_logger(result);
         spdlog::set_pattern(
-            "[%Y-%m-%d %H:%M:%S.%e][%P][%^%l%$][%!()][%s:%#][%i] %v");
+            "[%Y-%m-%d %H:%M:%S.%e][%P][%t][%^%l%$][%!()][%s:%#][%i] %v");
 
         spdlog::set_level(spdlog::level::trace);
 
