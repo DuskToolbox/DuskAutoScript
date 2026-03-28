@@ -6,16 +6,7 @@
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <das/Core/Logger/Logger.h>
 
-#include <unordered_map>
-
 DAS_CORE_IPC_NS_BEGIN
-
-// thread_local 缓存用于 PumpUntilResponse
-namespace
-{
-    thread_local std::unordered_map<CallKey, InboundMessage, CallKeyHash>
-        t_pending_responses;
-} // namespace
 
 BusinessThread::BusinessThread(
     IpcMessageQueue<InboundMessage>& inbound,
@@ -175,22 +166,6 @@ DasResult BusinessThread::PumpUntilResponse(
         my_call_key.source_session_id,
         my_call_key.call_id);
 
-    // 首先检查 thread_local 缓存
-    auto it = t_pending_responses.find(my_call_key);
-    if (it != t_pending_responses.end())
-    {
-        out_response = std::move(it->second.body);
-        if (out_flags)
-        {
-            *out_flags = it->second.header.GetFlags();
-        }
-        t_pending_responses.erase(it);
-        DAS_CORE_LOG_DEBUG(
-            "PumpUntilResponse: found in cache, call_id={}",
-            my_call_key.call_id);
-        return DAS_S_OK;
-    }
-
     // 泵入循环
     while (running_.load())
     {
@@ -238,11 +213,8 @@ DasResult BusinessThread::PumpUntilResponse(
             }
             else
             {
-                // 不是我的响应，缓存起来
-                t_pending_responses[call_key] = std::move(msg);
-                DAS_CORE_LOG_DEBUG(
-                    "PumpUntilResponse: cached response for call_id={}",
-                    call_key.call_id);
+                // 不是我的响应，走通用分发处理（可能是嵌套调用的响应）
+                ProcessInboundMessage(msg);
             }
         }
         else
