@@ -182,27 +182,33 @@ namespace Core
 
             /**
              * @brief 创建主进程 IPC 上下文（返回裸指针）
+             * @param enable_heartbeat
+             * 是否启用心跳线程（调试时可禁用，避免超时杀进程）
              * @return IIpcContext* 上下文指针，失败返回 nullptr
              */
-            DAS_API IIpcContext* CreateIpcContext();
+            DAS_API IIpcContext* CreateIpcContext(bool enable_heartbeat = true);
 
             /**
              * @brief 便捷创建函数（返回 unique_ptr）
+             * @param enable_heartbeat 是否启用心跳线程
              * @return IpcContextPtr 自动管理生命周期的智能指针
              */
-            inline IpcContextPtr CreateIpcContextEz()
+            inline IpcContextPtr CreateIpcContextEz(
+                bool enable_heartbeat = true)
             {
-                return IpcContextPtr{CreateIpcContext()};
+                return IpcContextPtr{CreateIpcContext(enable_heartbeat)};
             }
 
             /**
              * @brief 便捷创建函数（返回 shared_ptr）
+             * @param enable_heartbeat 是否启用心跳线程
              * @return std::shared_ptr<IIpcContext> 可共享的智能指针
              */
-            inline std::shared_ptr<IIpcContext> CreateIpcContextShared()
+            inline std::shared_ptr<IIpcContext> CreateIpcContextShared(
+                bool enable_heartbeat = true)
             {
                 return std::shared_ptr<IIpcContext>(
-                    CreateIpcContext(),
+                    CreateIpcContext(enable_heartbeat),
                     DestroyIpcContext);
             }
 

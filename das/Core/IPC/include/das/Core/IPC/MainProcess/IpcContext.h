@@ -44,7 +44,7 @@ namespace Core
             class IpcContext final : public IIpcContext
             {
             public:
-                IpcContext();
+                explicit IpcContext(bool enable_heartbeat);
                 ~IpcContext() override; // 自动清理
 
                 IpcContext(const IpcContext&) = delete;

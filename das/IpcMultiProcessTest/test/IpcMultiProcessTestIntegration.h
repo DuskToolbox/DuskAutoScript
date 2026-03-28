@@ -56,7 +56,8 @@ protected:
         DAS_CORE_LOG_INFO("DasHost path: {}", host_exe_path_);
 
         // 创建 IPC 上下文
-        ctx_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared();
+        ctx_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(
+            /*enable_heartbeat=*/!IpcTestConfig::ShouldDisableHeartbeat());
         if (!ctx_)
         {
             throw std::runtime_error("Failed to create IpcContext");

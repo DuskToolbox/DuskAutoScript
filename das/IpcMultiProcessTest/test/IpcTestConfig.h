@@ -76,6 +76,11 @@ namespace IpcTestConfig
     inline bool IsDebugMode() { return detail::IsDebugMode(); }
 
     /**
+     * @brief 检查是否应禁用心跳（调试模式下禁用，避免超时杀进程）
+     */
+    inline bool ShouldDisableHeartbeat() { return detail::IsDebugMode(); }
+
+    /**
      * @brief 获取 DasHost 可执行文件路径
      *
      * 从环境变量 DAS_HOST_EXE_PATH 读取。

@@ -197,9 +197,9 @@ namespace Core
                     shm_name,
                     DEFAULT_SHARED_MEMORY_SIZE);
 
-                // 4. 创建 IpcRunLoop（无参 Initialize，只创建 io_context
-                // 基础设施）
-                auto runloop_result = IpcRunLoop::Create();
+                // 4. 创建 IpcRunLoop（Host 模式不需要心跳）
+                auto runloop_result =
+                    IpcRunLoop::Create(/*enable_heartbeat=*/false);
                 if (!runloop_result.has_value())
                 {
                     DAS_CORE_LOG_ERROR("IpcRunLoop::Create() failed");

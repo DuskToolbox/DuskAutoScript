@@ -30,10 +30,11 @@
 DAS_CORE_IPC_NS_BEGIN
 
 // 工厂函数实现
-DAS::Utils::Expected<std::unique_ptr<IpcRunLoop>> IpcRunLoop::Create()
+DAS::Utils::Expected<std::unique_ptr<IpcRunLoop>> IpcRunLoop::Create(
+    bool enable_heartbeat)
 {
     auto instance = std::unique_ptr<IpcRunLoop>(new IpcRunLoop());
-    auto result = instance->Initialize();
+    auto result = instance->Initialize(enable_heartbeat);
     if (result != DAS_S_OK)
     {
         return DAS::Utils::MakeUnexpected(result);
@@ -47,8 +48,9 @@ IpcRunLoop::~IpcRunLoop()
     Uninitialize();
 }
 
-DasResult IpcRunLoop::Initialize()
+DasResult IpcRunLoop::Initialize(bool enable_heartbeat)
 {
+    enable_heartbeat_ = enable_heartbeat;
     io_context_ = std::make_unique<boost::asio::io_context>();
     // 不再创建 async_transport_，IpcRunLoop 只提供 io_context 基础设施
     // 所有 transport 由外部管理：
@@ -267,7 +269,7 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
                 DistributedObjectManager&       obj_mgr =
                     object_manager_ ? *object_manager_ : null_manager;
                 StubContext ctx{obj_mgr, *this, {}, header};
-                auto        result = co_await awaitable_handler
+                auto result = co_await awaitable_handler
                                   ->HandleMessage(header, body, sender, ctx);
                 if (DAS::IsFailed(result))
                 {
@@ -692,8 +694,8 @@ DasResult IpcRunLoop::Run()
     // 确保 Run() 阻塞直到 RequestStop() 被调用
     work_guard_ = std::make_unique<WorkGuard>(io_context_->get_executor());
 
-    // 启动心跳检测线程（MainProcess 模式）
-    if (connection_manager_)
+    // 启动心跳检测线程（MainProcess 模式，且启用心跳时）
+    if (connection_manager_ && enable_heartbeat_)
     {
         connection_manager_->StartHeartbeatThread();
     }

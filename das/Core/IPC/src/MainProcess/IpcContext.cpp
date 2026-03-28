@@ -33,13 +33,13 @@ namespace Core
         {
             // ====== IpcContext 实现（RAII 风格，无 pimpl）======
 
-            IpcContext::IpcContext()
+            IpcContext::IpcContext(bool enable_heartbeat)
             {
                 // 构造即初始化
                 DasResult result = DAS_S_OK;
 
                 // 1. Create IpcRunLoop FIRST (provides io_context)
-                auto runloop_result = IpcRunLoopType::Create();
+                auto runloop_result = IpcRunLoopType::Create(enable_heartbeat);
                 if (!runloop_result.has_value())
                 {
                     DAS_CORE_LOG_ERROR("IpcRunLoop::Create() failed");
@@ -349,12 +349,12 @@ namespace Core
 
             // ====== C API 实现 ======
 
-            DAS_API IIpcContext* CreateIpcContext()
+            DAS_API IIpcContext* CreateIpcContext(bool enable_heartbeat)
             {
                 try
                 {
                     // 构造即初始化（RAII）
-                    auto* context{new IpcContext()};
+                    auto* context{new IpcContext(enable_heartbeat)};
                     return context;
                 }
                 catch (const std::exception& e)

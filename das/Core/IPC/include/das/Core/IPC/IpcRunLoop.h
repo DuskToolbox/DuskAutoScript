@@ -152,8 +152,10 @@ class IpcRunLoop
 {
 public:
     /// 工厂函数：创建 IpcRunLoop 实例
+    /// @param enable_heartbeat 是否启用心跳线程（调试时可禁用，避免超时杀进程）
     /// @return Expected 包含 unique_ptr 成功，错误码失败
-    static DAS::Utils::Expected<std::unique_ptr<IpcRunLoop>> Create();
+    static DAS::Utils::Expected<std::unique_ptr<IpcRunLoop>> Create(
+        bool enable_heartbeat);
 
     ~IpcRunLoop();
 
@@ -163,9 +165,10 @@ public:
      * 由 Create() 工厂函数内部调用。
      * 创建 io_context、ConnectionManager，并注册所有 IPC stub handlers。
      *
+     * @param enable_heartbeat 是否启用心跳线程
      * @return DasResult DAS_S_OK 成功
      */
-    DasResult Initialize();
+    DasResult Initialize(bool enable_heartbeat);
 
     // 阻塞式消息循环
     DasResult Run();
@@ -542,6 +545,9 @@ public:
 
     /// 运行状态
     std::atomic<bool> running_{false};
+
+    /// 是否启用心跳线程
+    bool enable_heartbeat_ = true;
 
     /// 退出码
     std::atomic<DasResult> exit_code_{DAS_S_OK};

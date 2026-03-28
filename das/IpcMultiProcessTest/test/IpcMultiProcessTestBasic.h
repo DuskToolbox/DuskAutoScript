@@ -37,7 +37,8 @@ protected:
         DAS_LOG_INFO(msg.c_str());
 
         // 创建 IPC 上下文（替代 MainProcessServer 单例）
-        ctx_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared();
+        ctx_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(
+            /*enable_heartbeat=*/!IpcTestConfig::ShouldDisableHeartbeat());
         if (!ctx_)
         {
             throw std::runtime_error("Failed to create IpcContext");
