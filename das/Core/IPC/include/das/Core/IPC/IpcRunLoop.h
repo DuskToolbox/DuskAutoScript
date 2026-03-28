@@ -260,11 +260,11 @@ public:
      */
     [[nodiscard]]
     stdexec::sender auto SendMessageAsync(
-        DefaultAsyncIpcTransport* DAS_LIFETIMEBOUND transport,
-        const ValidatedIPCMessageHeader&            request_header,
-        const uint8_t*                              body,
-        size_t                                      body_size,
-        std::chrono::milliseconds timeout = std::chrono::seconds(30));
+        DefaultAsyncIpcTransport* transport DAS_LIFETIMEBOUND,
+        const ValidatedIPCMessageHeader&    request_header,
+        const uint8_t*                      body,
+        size_t                              body_size,
+        std::chrono::milliseconds           timeout = std::chrono::seconds(30));
 
     bool IsRunning() const;
 

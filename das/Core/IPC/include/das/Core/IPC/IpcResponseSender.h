@@ -34,13 +34,13 @@ public:
      * @param transport 异步 IPC 传输层（必须有效）
      */
     explicit IpcResponseSender(
-        DefaultAsyncIpcTransport& DAS_LIFETIMEBOUND transport);
+        DefaultAsyncIpcTransport& transport DAS_LIFETIMEBOUND);
 
     /**
      * @brief 构造函数（业务线程模式）
      * @param run_loop IpcRunLoop 引用（用于 PostSend 投递）
      */
-    explicit IpcResponseSender(IpcRunLoop& DAS_LIFETIMEBOUND run_loop);
+    explicit IpcResponseSender(IpcRunLoop& run_loop DAS_LIFETIMEBOUND);
 
     /**
      * @brief 同步发送响应（业务线程版本）

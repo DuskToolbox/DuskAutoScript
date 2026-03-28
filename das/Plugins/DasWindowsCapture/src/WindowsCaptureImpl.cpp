@@ -1,6 +1,7 @@
 
 #include "GDICapture.h"
 #include "WindowsGraphicsCapture.h"
+#include <Windows.h>
 #include <das/Core/DasWindowsCapture/WindowsCaptureImpl.h>
 #include <das/DasApi.h>
 #include <das/DasString.hpp>
@@ -12,7 +13,6 @@
 #include <nlohmann/json.hpp>
 #include <psapi.h>
 #include <tlhelp32.h>
-#include <windows.h>
 
 namespace
 {

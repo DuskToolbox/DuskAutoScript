@@ -4,6 +4,7 @@
 #include <das/DasExport.h>
 #include <das/IDasBase.h>
 #include <stdexcept>
+#include <string>
 
 // Forward declaration
 struct IDasTypeInfo;
@@ -167,7 +168,7 @@ public:
         return error_code_;
     }
 
-    #ifndef SWIG
+#ifndef SWIG
     const char* what() const noexcept(noexcept(Base::what())) override
 #else
     const char* what() const noexcept override

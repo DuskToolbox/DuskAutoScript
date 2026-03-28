@@ -78,6 +78,7 @@ Error code: {}.)",
     return result;
 }
 
+[[maybe_unused]]
 void OnCreateCaptureInstanceFailed(
     DAS::Core::ForeignInterfaceHost::CaptureManagerImpl::ErrorInfo&
                                            in_error_info,

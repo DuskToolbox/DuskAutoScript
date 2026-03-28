@@ -48,7 +48,7 @@ TEST(StdexecTest, StaticThreadPoolTest)
         get_scheduler(),
         [](auto sched)
         {
-            return start_on(
+            return starts_on(
                 sched,
                 then(
                     just(),

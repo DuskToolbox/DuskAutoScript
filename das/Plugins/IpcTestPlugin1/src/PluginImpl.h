@@ -49,6 +49,7 @@ public:
         int32_t                   duration_ms) override;
 
 private:
+    [[maybe_unused]]
     uint16_t session_id_ = 0;
 };
 

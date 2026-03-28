@@ -42,8 +42,7 @@ struct ConnectionInfo
     bool                  is_alive;
     uint64_t              last_heartbeat_ms;
     DasPtr<IHostLauncher> launcher; ///< HostLauncher 实例（DasPtr 持有引用）
-    SharedMemoryPool* DAS_LIFETIMEBOUND shm_pool =
-        nullptr; ///< 共享内存池（非拥有指针）
+    SharedMemoryPool*     shm_pool = nullptr; ///< 共享内存池（非拥有指针）
 };
 
 /**
@@ -151,8 +150,8 @@ public:
      * @return DasResult DAS_S_OK 成功
      */
     DasResult RegisterTransport(
-        uint16_t                                    session_id,
-        DefaultAsyncIpcTransport* DAS_LIFETIMEBOUND transport);
+        uint16_t                            session_id,
+        DefaultAsyncIpcTransport* transport DAS_LIFETIMEBOUND);
 
     /**
      * @brief 更新连接的活跃状态

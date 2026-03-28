@@ -41,9 +41,9 @@ public:
      * @return DasResult 初始化结果
      */
     DasResult Initialize(
-        DistributedObjectManager*     object_manager,
-        RemoteObjectRegistry*         object_registry,
-        IpcRunLoop* DAS_LIFETIMEBOUND run_loop = nullptr);
+        DistributedObjectManager* object_manager,
+        RemoteObjectRegistry*     object_registry,
+        IpcRunLoop* run_loop      DAS_LIFETIMEBOUND = nullptr);
 
     /**
      * @brief 检查是否已初始化

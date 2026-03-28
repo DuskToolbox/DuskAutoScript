@@ -45,6 +45,7 @@ private:
     };
 
     DasResult (AdbCapture::*current_capture_method)() = {nullptr};
+    [[maybe_unused]]
     Type type_{Type::RawWithGZip};
 
 public:

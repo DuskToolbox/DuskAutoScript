@@ -52,7 +52,8 @@ if(WIN32)
         target_include_directories(DasWindowsCapture PRIVATE ${WinRT_INCLUDE_DIR})
         # WinRT headers use __int128 which is a GCC extension, not standard C++
         target_compile_options(DasWindowsCapture PRIVATE
-            $<$<CXX_COMPILER_ID:GNU>:-Wno-pedantic>)
+            $<$<CXX_COMPILER_ID:GNU>:-Wno-pedantic>
+            $<$<CXX_COMPILER_ID:Clang>:-Wno-nonportable-include-path>)
     endif()
     
     # DirectX 11 and Windows Runtime libraries for WindowsGraphicsCapture

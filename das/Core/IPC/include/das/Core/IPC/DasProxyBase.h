@@ -176,8 +176,8 @@ protected:
 
         ObjectId obj_id = DecodeObjectId(encoded_object_id);
 
-        void*     obj_ptr = nullptr;
-        DasResult result = object_manager->LookupObject(obj_id, &obj_ptr);
+        DAS::DasPtr<IDasBase> obj_ptr;
+        DasResult result = object_manager->LookupObject(obj_id, obj_ptr.Put());
         if (DAS::IsFailed(result))
         {
             return result;

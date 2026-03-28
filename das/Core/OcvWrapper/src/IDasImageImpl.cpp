@@ -308,6 +308,7 @@ DasResult CreateIDasImageFromRgb888(
 
 DAS_NS_ANONYMOUS_DETAILS_BEGIN
 
+[[maybe_unused]]
 auto ReadFromFile(const std::filesystem::path& full_path) -> cv::Mat
 {
     std::vector<char> binary;

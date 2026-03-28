@@ -1,7 +1,7 @@
 #include "GDICapture.h"
+#include <Windows.h>
 #include <das/DasApi.h>
 #include <das/IDasBase.h>
-#include <windows.h>
 #include <wingdi.h>
 
 #include <cstring>

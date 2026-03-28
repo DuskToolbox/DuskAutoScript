@@ -84,11 +84,11 @@ public:
     /// @return DasResult 处理结果
     /// @note body 参数是完整的 V3 消息体（已包含 Body Header）
     DasResult SendRequest(
-        uint16_t                    method_id,
-        const uint8_t*              body,
-        size_t                      body_size,
-        std::vector<uint8_t>&       out_response,
-        uint16_t* DAS_LIFETIMEBOUND out_flags = nullptr);
+        uint16_t              method_id,
+        const uint8_t*        body,
+        size_t                body_size,
+        std::vector<uint8_t>& out_response,
+        uint16_t* out_flags   DAS_LIFETIMEBOUND = nullptr);
 
     /// @brief 发送业务控制命令请求（PostSend + PumpUntilResponse）
     /// @param command 命令类型（如 QUERY_INTERFACE）

@@ -219,12 +219,6 @@ DasPtr(T*) -> DasPtr<T>;
 
 DAS_NS_END
 
-namespace std
-{
-    template <class T>
-    struct hash;
-}
-
 template <class T>
 struct std::hash<DAS::DasPtr<T>>
 {

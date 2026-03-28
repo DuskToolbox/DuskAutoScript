@@ -11,16 +11,16 @@
 #include <cstdint>
 #include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
-#include <das/Utils/Expected.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <das/DasExport.h>
+#include <das/Utils/Expected.h>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include <das/Core/IPC/Config.h>
-#include <das/DasConfig.h>
 #include <das/Core/IPC/IpcErrors.h>
+#include <das/DasConfig.h>
 #include <optional>
 #include <variant>
 
@@ -36,20 +36,21 @@ public:
     /// @param is_server 是否作为服务端
     /// @param max_message_size 最大消息大小（默认64KB）
     /// @return awaitable 包含 Expected<unique_ptr> 成功，Expected<error> 失败
-    static boost::asio::awaitable<DAS::Utils::Expected<std::unique_ptr<Win32AsyncIpcTransport>>>
+    static boost::asio::awaitable<
+        DAS::Utils::Expected<std::unique_ptr<Win32AsyncIpcTransport>>>
     CreateAsync(
-        boost::asio::io_context& DAS_LIFETIMEBOUND io_context,
-        const std::string&       read_endpoint,
-        const std::string&       write_endpoint,
-        bool                     is_server,
-        size_t                   max_message_size = 65536);
+        boost::asio::io_context& io_context DAS_LIFETIMEBOUND,
+        const std::string&                  read_endpoint,
+        const std::string&                  write_endpoint,
+        bool                                is_server,
+        size_t                              max_message_size = 65536);
 
     /// 工厂函数：创建未初始化的 Win32AsyncIpcTransport 实例
     /// @param io_context boost::asio io_context 引用（生命周期绑定到返回值）
     /// @return unique_ptr 需要后续调用 InitializeAsync() 完成初始化
     /// @note 用于需要延迟初始化的场景（如 Host 进程在 Run() 时异步连接）
     static std::unique_ptr<Win32AsyncIpcTransport> CreateUninitialized(
-        boost::asio::io_context& DAS_LIFETIMEBOUND io_context);
+        boost::asio::io_context& io_context DAS_LIFETIMEBOUND);
 
     ~Win32AsyncIpcTransport();
 
@@ -58,7 +59,7 @@ public:
 
     Win32AsyncIpcTransport(Win32AsyncIpcTransport&&) noexcept = default;
     Win32AsyncIpcTransport& operator=(Win32AsyncIpcTransport&&) noexcept =
-        default;
+        delete;
 
     /// 初始化（服务端）
     /// @deprecated 使用 Create() 工厂函数代替
@@ -90,7 +91,10 @@ public:
 
     /// 获取 io_context 引用
     /// @return io_context 引用，生命周期绑定到 this
-    boost::asio::io_context& GetIoContext() DAS_LIFETIMEBOUND { return io_context_; }
+    boost::asio::io_context& GetIoContext() DAS_LIFETIMEBOUND
+    {
+        return io_context_;
+    }
 
     /// 直接返回协程接口（用于 IpcRunLoop 的事件驱动模式）
     [[nodiscard]]
@@ -105,22 +109,27 @@ public:
 
 private:
     // 私有构造函数（由 Create() 工厂函数调用）
-    explicit Win32AsyncIpcTransport(boost::asio::io_context& DAS_LIFETIMEBOUND io_context);
+    explicit Win32AsyncIpcTransport(
+        boost::asio::io_context& io_context DAS_LIFETIMEBOUND);
 
     // 私有清理函数 - 只能由析构函数调用
     void Uninitialize();
 
     DasResult CreateNamedPipe(const std::string& pipe_name, bool is_read_pipe);
-    DasResult ConnectToNamedPipe(const std::string& pipe_name, bool is_read_pipe);
+    DasResult ConnectToNamedPipe(
+        const std::string& pipe_name,
+        bool               is_read_pipe);
 
     // 异步方法
     boost::asio::awaitable<std::variant<DasResult, HANDLE>> OpenPipeAsync(
         const std::string& full_name,
         bool               is_read_pipe);
 
-    boost::asio::awaitable<DasResult> WaitForClientConnectionAsync(HANDLE h_pipe);
+    boost::asio::awaitable<DasResult> WaitForClientConnectionAsync(
+        HANDLE h_pipe);
 
-    boost::asio::awaitable<std::variant<DasResult, HANDLE>> CreateNamedPipeAsync(
+    boost::asio::awaitable<std::variant<DasResult, HANDLE>>
+    CreateNamedPipeAsync(
         const std::string& pipe_name,
         bool               is_read_pipe,
         bool               wait_for_connection);

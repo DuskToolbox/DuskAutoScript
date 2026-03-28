@@ -852,7 +852,7 @@ class IpcProxyGenerator:
         
         for i, (method, defining_iface) in enumerate(all_methods):
             method_sig = self._generate_method_signature(interface, method, interface.namespace)
-            lines.append(f"{class_indent}{method_sig}")
+            lines.append(f"{class_indent}{method_sig} override")
             lines.append(f"{class_indent}{{")
             method_body = self._generate_method_body_v2(interface, method, i, namespace_depth)
             for line in method_body.splitlines():
@@ -862,7 +862,7 @@ class IpcProxyGenerator:
         
         lines.append(f"{indent}private:")
         lines.append(f"{class_indent}std::atomic<uint32_t> ref_count_{{1}};")
-        lines.append(f"{class_indent}{interface.name}* local_impl_ = nullptr;")
+        lines.append(f"{class_indent}[[maybe_unused]] {interface.name}* local_impl_ = nullptr;")
         lines.append(f"{indent}}};")
         lines.append("")
         
@@ -1694,7 +1694,7 @@ class IpcProxyGenerator:
         # 方法声明和实现
         for i, method in enumerate(interface.methods):
             method_sig = self._generate_method_signature(interface, method, interface.namespace)
-            lines.append(f"{class_indent}{method_sig}")
+            lines.append(f"{class_indent}{method_sig} override")
             lines.append(f"{class_indent}{{")
             
             # 方法体
@@ -1710,7 +1710,7 @@ class IpcProxyGenerator:
         lines.append(f"{class_indent}IpcTransport& transport_;")
         lines.append(f"{class_indent}ObjectId target_;")
         lines.append(f"{class_indent}uint32_t next_call_id_;")
-        lines.append(f"{class_indent}{interface.name}* local_impl_;")
+        lines.append(f"{class_indent}[[maybe_unused]] {interface.name}* local_impl_;")
         lines.append(f"{indent}}};")
         lines.append("")
         

@@ -1,9 +1,9 @@
 #ifndef DAS_PLUGINS_DASWINDOWSCAPTURE_GDICAPTURE_H
 #define DAS_PLUGINS_DASWINDOWSCAPTURE_GDICAPTURE_H
 
+#include <Windows.h>
 #include <cstdint>
 #include <das/IDasBase.h>
-#include <windows.h>
 #include <wingdi.h>
 
 class GDICapture

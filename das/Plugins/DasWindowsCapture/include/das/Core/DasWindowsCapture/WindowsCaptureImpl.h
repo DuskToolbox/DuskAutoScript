@@ -53,8 +53,9 @@ private:
     std::string window_title_;
     HWND        target_window_handle_;
     std::string process_name_;
-    uint32_t    target_process_id_;
-    uint32_t    target_monitor_index_;
+    uint32_t    target_process_id_ [[maybe_unused]]
+    ;
+    uint32_t target_monitor_index_;
 
     // Windows.Graphics.Capture 成员
     winrt::Windows::Graphics::Capture::GraphicsCaptureItem        capture_item_;
@@ -63,12 +64,16 @@ private:
     winrt::com_ptr<ID3D11Device>                                  d3d11_device_;
 
     // BitBlt 成员
-    HDC     hdc_screen_;
-    HDC     hdc_memory_;
-    HBITMAP h_bitmap_;
+    HDC hdc_screen_ [[maybe_unused]]
+    ;
+    HDC hdc_memory_ [[maybe_unused]]
+    ;
+    HBITMAP h_bitmap_ [[maybe_unused]]
+    ;
 
     // 目标窗口矩形（GDI 方案）
-    RECT target_rect_;
+    RECT target_rect_ [[maybe_unused]]
+    ;
 
     // 指向所选捕获方法
     DasResult (WindowsCapture::*pInitializeGDICapture)();

@@ -11,11 +11,11 @@ DAS_CORE_IPC_NS_BEGIN
 // 通过 PostSend 发送请求，然后 PumpUntilResponse 等待响应
 
 DasResult IPCProxyBase::SendRequest(
-    uint16_t                    method_id,
-    const uint8_t*              body,
-    size_t                      body_size,
-    std::vector<uint8_t>&       out_response,
-    uint16_t* DAS_LIFETIMEBOUND out_flags)
+    uint16_t              method_id,
+    const uint8_t*        body,
+    size_t                body_size,
+    std::vector<uint8_t>& out_response,
+    uint16_t* out_flags   DAS_LIFETIMEBOUND)
 {
     (void)method_id;
 
