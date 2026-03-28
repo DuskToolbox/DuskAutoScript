@@ -2,6 +2,7 @@
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IpcRunLoop.h>
+#include <das/Core/Logger/Logger.h>
 #include <das/IDasBase.h>
 #include <unordered_map>
 
@@ -33,6 +34,30 @@ DasResult DistributedObjectManager::RegisterLocalObject(
         return DAS_E_INVALID_POINTER;
     }
 
+    // 去重检查：同一指针是否已注册
+    auto ptr_it = ptr_to_id_.find(object_ptr);
+    if (ptr_it != ptr_to_id_.end())
+    {
+        const ObjectId& existing_id = ptr_it->second;
+        auto            obj_it = objects_.find(existing_id);
+        if (obj_it != objects_.end())
+        {
+            obj_it->second.ref_count_++;
+            out_object_id = existing_id;
+            return DAS_S_OK;
+        }
+        // Invariant violation: ptr_to_id_ and objects_ are out of sync
+        DAS_CORE_LOG_ERROR(
+            "ptr_to_id_ contains entry for pointer but objects_ does not, "
+            "object_id = (session={}, gen={}, local={})",
+            existing_id.session_id,
+            existing_id.generation,
+            existing_id.local_id);
+        ptr_to_id_.erase(ptr_it);
+        return DAS_E_IPC_INVALID_STATE;
+    }
+
+    // 首次注册：分配新 ObjectId
     uint32_t local_id = next_local_id_++;
 
     uint16_t generation = 1;
@@ -53,11 +78,13 @@ DasResult DistributedObjectManager::RegisterLocalObject(
 
     // DasPtr 构造函数自动 AddRef
     ObjectEntry entry{
+        .ref_count_ = 1,
         .object_id = obj_id,
         .object_ptr = DAS::DasPtr<IDasBase>(object_ptr),
         .is_local = true};
 
     objects_[obj_id] = entry;
+    ptr_to_id_[object_ptr] = obj_id;
 
     out_object_id = obj_id;
     return DAS_S_OK;
@@ -73,6 +100,7 @@ DasResult DistributedObjectManager::RegisterRemoteObject(
     }
 
     ObjectEntry entry{
+        .ref_count_ = 1,
         .object_id = object_id,
         .object_ptr = nullptr,
         .is_local = false};
@@ -96,7 +124,8 @@ DasResult DistributedObjectManager::UnregisterObject(const ObjectId& object_id)
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 
-    bool is_local = it->second.is_local;
+    ObjectEntry& entry = it->second;
+    bool         is_local = entry.is_local;
 
     if (is_local)
     {
@@ -104,8 +133,19 @@ DasResult DistributedObjectManager::UnregisterObject(const ObjectId& object_id)
             IncrementGeneration(object_id.generation);
     }
 
-    // DasPtr 析构自动 Release
-    objects_.erase(it);
+    entry.ref_count_--;
+
+    if (entry.ref_count_ == 0)
+    {
+        // 引用计数归零：擦除 ObjectEntry，DasPtr 析构自动 Release
+        // 同时清理反向索引
+        if (is_local && entry.object_ptr)
+        {
+            ptr_to_id_.erase(entry.object_ptr.Get());
+        }
+        // DasPtr 析构自动 Release
+        objects_.erase(it);
+    }
 
     return DAS_S_OK;
 }

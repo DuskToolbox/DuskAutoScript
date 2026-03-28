@@ -210,3 +210,106 @@ TEST_F(IpcObjectManagerTest, Shutdown_ClearsAllObjects)
     EXPECT_FALSE(manager_->IsValidObject(oid1));
     EXPECT_FALSE(manager_->IsValidObject(oid2));
 }
+
+// ====== Dedup Tests ======
+
+TEST_F(IpcObjectManagerTest, RegisterLocalObject_SamePointerReturnsSameObjectId)
+{
+    auto     mock = new MockDasObject();
+    ObjectId id1{}, id2{};
+
+    ASSERT_EQ(manager_->RegisterLocalObject(mock, id1), DAS_S_OK);
+    ASSERT_EQ(manager_->RegisterLocalObject(mock, id2), DAS_S_OK);
+
+    // 同一指针应返回相同 ObjectId
+    EXPECT_EQ(id1, id2);
+    // 对象仍然有效
+    EXPECT_TRUE(manager_->IsValidObject(id1));
+
+    // 通过 Lookup 验证指针正确
+    IDasBase* ptr = nullptr;
+    ASSERT_EQ(manager_->LookupObject(id1, &ptr), DAS_S_OK);
+    EXPECT_EQ(ptr, mock);
+    ptr->Release();
+}
+
+TEST_F(IpcObjectManagerTest, RegisterLocalObject_RegisterTwiceUnregisterOnce)
+{
+    auto     mock = new MockDasObject();
+    ObjectId id1{}, id2{};
+
+    ASSERT_EQ(manager_->RegisterLocalObject(mock, id1), DAS_S_OK);
+    ASSERT_EQ(manager_->RegisterLocalObject(mock, id2), DAS_S_OK);
+    EXPECT_EQ(id1, id2);
+
+    // 注销一次
+    ASSERT_EQ(manager_->UnregisterObject(id1), DAS_S_OK);
+
+    // 对象仍可通过公共 API 访问
+    IDasBase* ptr = nullptr;
+    EXPECT_EQ(manager_->LookupObject(id1, &ptr), DAS_S_OK);
+    ptr->Release(); // 释放 Lookup 的引用
+
+    EXPECT_TRUE(manager_->IsValidObject(id1));
+}
+
+TEST_F(IpcObjectManagerTest, RegisterLocalObject_RegisterTwiceUnregisterTwice)
+{
+    auto     mock = new MockDasObject();
+    ObjectId id1{}, id2{};
+
+    ASSERT_EQ(manager_->RegisterLocalObject(mock, id1), DAS_S_OK);
+    ASSERT_EQ(manager_->RegisterLocalObject(mock, id2), DAS_S_OK);
+    EXPECT_EQ(id1, id2);
+
+    // 注销第一次
+    ASSERT_EQ(manager_->UnregisterObject(id1), DAS_S_OK);
+
+    // 注销第二次，对象完全释放
+    ASSERT_EQ(manager_->UnregisterObject(id1), DAS_S_OK);
+
+    // 对象已不存在
+    EXPECT_FALSE(manager_->IsValidObject(id1));
+    IDasBase* ptr = nullptr;
+    EXPECT_NE(manager_->LookupObject(id1, &ptr), DAS_S_OK);
+}
+
+TEST_F(
+    IpcObjectManagerTest,
+    RegisterLocalObject_DifferentPointersReturnDifferentIds)
+{
+    auto     mock1 = new MockDasObject();
+    auto     mock2 = new MockDasObject();
+    auto     mock3 = new MockDasObject();
+    ObjectId id1{}, id2{}, id3{};
+
+    ASSERT_EQ(manager_->RegisterLocalObject(mock1, id1), DAS_S_OK);
+    ASSERT_EQ(manager_->RegisterLocalObject(mock2, id2), DAS_S_OK);
+    ASSERT_EQ(manager_->RegisterLocalObject(mock3, id3), DAS_S_OK);
+
+    // 不同指针应返回不同 ObjectId
+    EXPECT_NE(id1, id2);
+    EXPECT_NE(id2, id3);
+    EXPECT_NE(id1, id3);
+
+    // 所有对象都有效
+    EXPECT_TRUE(manager_->IsValidObject(id1));
+    EXPECT_TRUE(manager_->IsValidObject(id2));
+    EXPECT_TRUE(manager_->IsValidObject(id3));
+}
+
+TEST_F(IpcObjectManagerTest, RegisterRemoteObject_NotAffectedByDedup)
+{
+    ObjectId remote_id{.session_id = 2, .generation = 1, .local_id = 100};
+
+    ASSERT_EQ(manager_->RegisterRemoteObject(remote_id), DAS_S_OK);
+    ASSERT_EQ(manager_->RegisterRemoteObject(remote_id), DAS_S_OK);
+
+    // 远程对象有效且不是本地对象
+    EXPECT_TRUE(manager_->IsValidObject(remote_id));
+    EXPECT_FALSE(manager_->IsLocalObject(remote_id));
+
+    // 远程对象无法通过 Lookup 获取指针
+    IDasBase* ptr = nullptr;
+    EXPECT_NE(manager_->LookupObject(remote_id, &ptr), DAS_S_OK);
+}

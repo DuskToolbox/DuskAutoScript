@@ -5,8 +5,8 @@
 #include <das/Core/IPC/IDistributedObjectManager.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/ObjectId.h>
-#include <das/IDasBase.h>
 #include <das/DasPtr.hpp>
+#include <das/IDasBase.h>
 #include <memory>
 #include <unordered_map>
 
@@ -17,12 +17,13 @@ DAS_CORE_IPC_NS_BEGIN
 class IpcRunLoop;
 struct ObjectEntry
 {
-    ObjectId                 object_id;
-    DAS::DasPtr<IDasBase>    object_ptr;  // 本地对象非空，远程对象为 nullptr
-    bool                     is_local;    // 决定 UnregisterObject 时是否 Release
+    uint32_t              ref_count_{1}; // 引用计数（注册次数）
+    ObjectId              object_id;
+    DAS::DasPtr<IDasBase> object_ptr; // 本地对象非空，远程对象为 nullptr
+    bool                  is_local;   // 决定 UnregisterObject 时是否 Release
 };
 
-class DistributedObjectManager : public IDistributedObjectManager
+class DistributedObjectManager final : public IDistributedObjectManager
 {
 public:
     DistributedObjectManager();
@@ -51,6 +52,8 @@ private:
     std::unordered_map<ObjectId, ObjectEntry> objects_;
     uint32_t                                  next_local_id_{1};
     std::unordered_map<uint32_t, uint16_t>    local_id_generations_;
+    std::unordered_map<IDasBase*, ObjectId>
+        ptr_to_id_; // 指针 -> ObjectId 反向索引
 };
 DAS_CORE_IPC_NS_END
 
