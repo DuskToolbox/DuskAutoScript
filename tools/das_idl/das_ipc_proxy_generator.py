@@ -862,7 +862,6 @@ class IpcProxyGenerator:
         
         lines.append(f"{indent}private:")
         lines.append(f"{class_indent}std::atomic<uint32_t> ref_count_{{1}};")
-        lines.append(f"{class_indent}[[maybe_unused]] {interface.name}* local_impl_ = nullptr;")
         lines.append(f"{indent}}};")
         lines.append("")
         
