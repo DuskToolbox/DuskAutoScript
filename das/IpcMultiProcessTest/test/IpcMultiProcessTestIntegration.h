@@ -88,8 +88,11 @@ protected:
 
     void TearDown() override
     {
-        // 停止事件循环
-        ctx_->RequestStop();
+        if (ctx_)
+        {
+            // 停止事件循环
+            ctx_->RequestStop();
+        }
 
         if (run_thread_.joinable())
         {
