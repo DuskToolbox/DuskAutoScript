@@ -16,12 +16,30 @@ IPC Proxy/Stub 聚合脚本
 import argparse
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Any
 
 from ipc_common import BUILTIN_INTERFACE_HASHES
+
+# 匹配时间戳注释行，比较内容时忽略这些行
+_TIMESTAMP_PATTERN = re.compile(r'^//\s*(?:Auto-)?[Gg]enerated (?:at|by DAS IDL Aggregator).*$', re.MULTILINE)
+
+
+def _write_if_changed(file_path: Path, content: str) -> bool:
+    """仅当内容（忽略时间戳行）发生变化时才写入文件。返回 True 表示文件已更新。"""
+    if file_path.exists():
+        try:
+            existing = file_path.read_text(encoding='utf-8')
+            # 比较时忽略时间戳行
+            if _TIMESTAMP_PATTERN.sub('', existing) == _TIMESTAMP_PATTERN.sub('', content):
+                return False
+        except Exception:
+            pass
+    file_path.write_text(content, encoding='utf-8')
+    return True
 
 
 def _get_interface_short_name(interface_name: str) -> str:
@@ -68,8 +86,9 @@ def aggregate_ipc(ipc_output_dir: Path, ipc_cache_dir: Path = None) -> int:
             lines.append(f'#include "proxy/{f.name}"')
         lines.extend(["", "#endif // DAS_IPC_ALL_PROXIES_H", ""])
 
-        (ipc_output_dir / "IpcAllProxies.h").write_text("\n".join(lines), encoding="utf-8")
-        print(f"Generated IpcAllProxies.h ({len(proxy_files)} proxies)")
+        content = "\n".join(lines)
+        if _write_if_changed(ipc_output_dir / "IpcAllProxies.h", content):
+            print(f"Generated IpcAllProxies.h ({len(proxy_files)} proxies)")
 
     # 生成 IpcAllStubs.h
     if stub_files:
@@ -85,8 +104,9 @@ def aggregate_ipc(ipc_output_dir: Path, ipc_cache_dir: Path = None) -> int:
             lines.append(f'#include "stub/{f.name}"')
         lines.extend(["", "#endif // DAS_IPC_ALL_STUBS_H", ""])
 
-        (ipc_output_dir / "IpcAllStubs.h").write_text("\n".join(lines), encoding="utf-8")
-        print(f"Generated IpcAllStubs.h ({len(stub_files)} stubs)")
+        content = "\n".join(lines)
+        if _write_if_changed(ipc_output_dir / "IpcAllStubs.h", content):
+            print(f"Generated IpcAllStubs.h ({len(stub_files)} stubs)")
 
     # 生成 IpcGenerated.cpp
     cpp_lines = [
@@ -110,8 +130,9 @@ def aggregate_ipc(ipc_output_dir: Path, ipc_cache_dir: Path = None) -> int:
         cpp_lines.append('#include "IpcStubFactory.h"')
     cpp_lines.append("")
 
-    (ipc_output_dir / "IpcGenerated.cpp").write_text("\n".join(cpp_lines), encoding="utf-8")
-    print(f"Generated IpcGenerated.cpp")
+    content = "\n".join(cpp_lines)
+    if _write_if_changed(ipc_output_dir / "IpcGenerated.cpp", content):
+        print("Generated IpcGenerated.cpp")
 
     return 0
 
@@ -154,8 +175,6 @@ def aggregate_factory_files(ipc_output_dir: Path, ipc_cache_dir: Path) -> int:
     # 按 interface_name 排序以保持一致性
     interfaces.sort(key=lambda x: x.get('interface_name', ''))
 
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-
     # 收集唯一的 namespace 用于生成 using namespace 声明
     namespaces: Dict[str, List[str]] = {}  # namespace -> [short_names]
     for iface in interfaces:
@@ -167,20 +186,22 @@ def aggregate_factory_files(ipc_output_dir: Path, ipc_cache_dir: Path) -> int:
             namespaces[ns].append(short_name)
 
     # 生成 IpcProxyFactory.h
-    _generate_proxy_factory(ipc_output_dir, interfaces, namespaces, timestamp)
+    _generate_proxy_factory(ipc_output_dir, interfaces, namespaces)
 
     # 生成 IpcStubFactory.h
-    _generate_stub_factory(ipc_output_dir, interfaces, namespaces, timestamp)
+    _generate_stub_factory(ipc_output_dir, interfaces, namespaces)
 
     return 0
 
 
 def _generate_proxy_factory(ipc_output_dir: Path, interfaces: List[Dict[str, Any]],
-                            namespaces: Dict[str, List[str]], timestamp: str) -> None:
+                            namespaces: Dict[str, List[str]]) -> None:
     """生成 IpcProxyFactory.h"""
 
     # 收集所有 proxy 头文件
     proxy_files = sorted((ipc_output_dir / "proxy").glob("*Proxy.h")) if (ipc_output_dir / "proxy").exists() else []
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
     lines = [
         "#if !defined(DAS_IPC_PROXY_FACTORY_H)",
@@ -312,16 +333,19 @@ def _generate_proxy_factory(ipc_output_dir: Path, interfaces: List[Dict[str, Any
         "",
     ])
 
-    (ipc_output_dir / "IpcProxyFactory.h").write_text("\n".join(lines), encoding="utf-8")
-    print(f"Generated IpcProxyFactory.h ({len(interfaces)} proxies)")
+    content = "\n".join(lines)
+    if _write_if_changed(ipc_output_dir / "IpcProxyFactory.h", content):
+        print(f"Generated IpcProxyFactory.h ({len(interfaces)} proxies)")
 
 
 def _generate_stub_factory(ipc_output_dir: Path, interfaces: List[Dict[str, Any]],
-                           namespaces: Dict[str, List[str]], timestamp: str) -> None:
+                           namespaces: Dict[str, List[str]]) -> None:
     """生成 IpcStubFactory.h"""
 
     # 收集所有 stub 头文件
     stub_files = sorted((ipc_output_dir / "stub").glob("*Stub.h")) if (ipc_output_dir / "stub").exists() else []
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
     lines = [
         "#if !defined(DAS_IPC_STUB_FACTORY_H)",
@@ -395,8 +419,9 @@ def _generate_stub_factory(ipc_output_dir: Path, interfaces: List[Dict[str, Any]
         "",
     ])
 
-    (ipc_output_dir / "IpcStubFactory.h").write_text("\n".join(lines), encoding="utf-8")
-    print(f"Generated IpcStubFactory.h ({len(interfaces)} stubs)")
+    content = "\n".join(lines)
+    if _write_if_changed(ipc_output_dir / "IpcStubFactory.h", content):
+        print(f"Generated IpcStubFactory.h ({len(interfaces)} stubs)")
 
 
 def main():

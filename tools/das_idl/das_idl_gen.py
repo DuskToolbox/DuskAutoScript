@@ -25,6 +25,19 @@ from pathlib import Path
 from typing import List, Optional
 
 
+def _write_if_changed(file_path: Path, content: str) -> bool:
+    """仅当内容发生变化时才写入文件。返回 True 表示文件已更新。"""
+    if file_path.exists():
+        try:
+            existing = file_path.read_text(encoding='utf-8')
+            if existing == content:
+                return False
+        except Exception:
+            pass
+    file_path.write_text(content, encoding='utf-8')
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='DAS IDL Code Generator - 从 IDL 文件生成 C++ 接口代码和 SWIG 配置',
@@ -562,9 +575,9 @@ def generate_type_maps_from_jsons(json_files: List[str], output_path: str, build
         
         ignore_file = output_dir / "DasTypeMapsIgnore.i"
         ignore_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(ignore_file, 'w', encoding='utf-8') as f:
-            f.write("\n".join(ignore_lines))
-        print(f"Generated DasTypeMapsIgnore.i: {ignore_file}")
+        ignore_content = "\n".join(ignore_lines)
+        if _write_if_changed(ignore_file, ignore_content):
+            print(f"Generated DasTypeMapsIgnore.i: {ignore_file}")
         
         # Generate DasTypeMapsExtend.i (to be included AFTER class definitions)
         extend_lines = []
@@ -605,9 +618,9 @@ def generate_type_maps_from_jsons(json_files: List[str], output_path: str, build
         
         extend_file = output_dir / "DasTypeMapsExtend.i"
         extend_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(extend_file, 'w', encoding='utf-8') as f:
-            f.write("\n".join(extend_lines))
-        print(f"Generated DasTypeMapsExtend.i: {extend_file}")
+        extend_content = "\n".join(extend_lines)
+        if _write_if_changed(extend_file, extend_content):
+            print(f"Generated DasTypeMapsExtend.i: {extend_file}")
         
         # Also generate the original DasTypeMaps.i for backward compatibility
         # (it just includes both files in the correct order)
@@ -627,10 +640,9 @@ def generate_type_maps_from_jsons(json_files: List[str], output_path: str, build
     output_file = output_dir / output_path
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(output_file, 'w', encoding='utf-8') as f:
-        f.write("\n".join(lines))
-
-    print(f"Generated DasTypeMaps.i: {output_file}")
+    maps_content = "\n".join(lines)
+    if _write_if_changed(output_file, maps_content):
+        print(f"Generated DasTypeMaps.i: {output_file}")
 
 
 if __name__ == '__main__':
