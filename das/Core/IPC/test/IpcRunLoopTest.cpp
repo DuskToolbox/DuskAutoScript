@@ -28,7 +28,7 @@ class IpcRunLoopTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        auto result = IpcRunLoop::Create();
+        auto result = IpcRunLoop::Create(true);
         if (!result)
         {
             FAIL() << "Failed to create IpcRunLoop";

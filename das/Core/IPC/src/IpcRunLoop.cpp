@@ -613,14 +613,14 @@ DasResult IpcRunLoop::PostSend(
                 DAS_CORE_LOG_ERROR(
                     "PostSend: no transport for session {}",
                     header.GetTargetSessionId());
+                NotifySendFailure(header, DAS_E_IPC_NO_CONNECTIONS);
                 return;
             }
 
             boost::asio::co_spawn(
                 *io_context_,
-                [transport,
-                 header,
-                 body = std::move(body)]() -> boost::asio::awaitable<void>
+                [this, transport, header, body = std::move(body)]() mutable
+                    -> boost::asio::awaitable<void>
                 {
                     try
                     {
@@ -633,6 +633,7 @@ DasResult IpcRunLoop::PostSend(
                             DAS_CORE_LOG_ERROR(
                                 "PostSend: SendCoroutine failed, result={}",
                                 result);
+                            NotifySendFailure(header, DAS_E_IPC_SEND_FAILED);
                         }
                     }
                     catch (const std::exception& e)
@@ -640,12 +641,60 @@ DasResult IpcRunLoop::PostSend(
                         DAS_CORE_LOG_ERROR(
                             "PostSend: SendCoroutine exception: {}",
                             ToString(e.what()));
+                        NotifySendFailure(header, DAS_E_IPC_REMOTE_ERROR);
                     }
                 },
                 boost::asio::detached);
         });
 
     return DAS_S_OK;
+}
+
+void IpcRunLoop::NotifySendFailure(
+    const ValidatedIPCMessageHeader& header,
+    DasResult                        error_code)
+{
+    // 构造失败 RESPONSE，推入 inbound_queue_
+    // BusinessThread::Run() → RedispatchMessage 会发现它是 RESPONSE
+    // → 调用 CompletePendingCall，同时覆盖两条等待路径：
+    //   - BusinessThread 路径：PumpUntilResponse 从队列中泵出
+    //   - 外部线程路径：CompletePendingCall 触发 on_complete 回调
+    //
+    // 必须使用 IPCMessageHeaderBuilder 构造 ValidatedIPCMessageHeader，
+    // 因为 ValidatedIPCMessageHeader(IPCMessageHeader&) 是 private 构造函数，
+    // IpcRunLoop 不是友元类。IPCMessageHeaderBuilder 是友元，可正常调用
+    // Build()。 IpcMessageHeaderBuilder.h 已在文件头部 include（第 11 行）。
+    if (inbound_queue_)
+    {
+        // RESPONSE 的 source/target 必须与 REQUEST 互换（与 IStubBase 一致），
+        // 否则 CallKey 匹配不到 pending_calls_ 中的条目
+        auto fail_header = IPCMessageHeaderBuilder()
+                               .SetCallId(header.GetCallId())
+                               .SetSourceSessionId(header.GetTargetSessionId())
+                               .SetTargetSessionId(header.GetSourceSessionId())
+                               .SetErrorCode(static_cast<int32_t>(error_code))
+                               .Build();
+
+        InboundMessage msg;
+        msg.header = std::move(fail_header);
+        // body 为空 — 错误码已在 header.error_code 中
+        auto push_result = inbound_queue_->Push(std::move(msg));
+        if (push_result != DAS_S_OK)
+        {
+            DAS_CORE_LOG_ERROR(
+                "NotifySendFailure: failed to push to inbound_queue_, "
+                "result = {}",
+                push_result);
+        }
+    }
+    else
+    {
+        DAS_CORE_LOG_ERROR(
+            "NotifySendFailure: inbound_queue_ is null, cannot notify "
+            "failure for call_id = {}, error_code = 0x{:08X}",
+            header.GetCallId(),
+            error_code);
+    }
 }
 
 void IpcRunLoop::ScheduleTimeoutCheck()

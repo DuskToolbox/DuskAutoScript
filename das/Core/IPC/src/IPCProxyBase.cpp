@@ -34,33 +34,43 @@ DasResult IPCProxyBase::SendRequest(
     ValidatedIPCMessageHeader header =
         BuildRequestHeader(call_id, MessageType::REQUEST, body_size);
 
-    // 3. Send request via PostSend
-    std::vector<uint8_t> body_vec(body, body + body_size);
-    DasResult send_result = run_loop_.PostSend(header, std::move(body_vec));
-    if (send_result != DAS_S_OK)
-    {
-        DAS_CORE_LOG_ERROR(
-            "IPCProxyBase::SendRequest: PostSend failed, result={}",
-            send_result);
-        return send_result;
-    }
-
-    // 4. Wait for response using thread-appropriate strategy
+    // 3. Construct call_key and wait for response using
+    //    thread-appropriate strategy
     CallKey call_key{object_id_.session_id, call_id};
 
     if (bt->IsCurrentThread())
     {
         // Nested pump: called from within BusinessThread
         // Run() is paused, we pump inbound_queue_ directly
+        std::vector<uint8_t> body_vec(body, body + body_size);
+        DasResult send_result = run_loop_.PostSend(header, std::move(body_vec));
+        if (send_result != DAS_S_OK)
+        {
+            DAS_CORE_LOG_ERROR(
+                "IPCProxyBase::SendRequest: PostSend failed, result = {}",
+                send_result);
+            return send_result;
+        }
+
         return bt->PumpUntilResponse(call_key, out_response, out_flags);
     }
     else
     {
-        // External thread: register pending_call (on_complete=nullptr),
-        // create AwaitResponseSender, sync_wait blocks until
-        // CompletePendingCall fires the callback
+        // External thread: register pending_call BEFORE PostSend
+        // so the entry exists when the async lambda might fail
+        // and push a failure RESPONSE to inbound_queue_
         constexpr auto kTimeout = std::chrono::milliseconds{30000};
         run_loop_.RegisterPendingCall(call_key);
+
+        std::vector<uint8_t> body_vec(body, body + body_size);
+        DasResult send_result = run_loop_.PostSend(header, std::move(body_vec));
+        if (send_result != DAS_S_OK)
+        {
+            DAS_CORE_LOG_ERROR(
+                "IPCProxyBase::SendRequest: PostSend failed, result = {}",
+                send_result);
+            return send_result;
+        }
 
         AwaitResponseSender sender{&run_loop_, call_key, kTimeout};
         auto                result = stdexec::sync_wait(std::move(sender));
@@ -68,7 +78,7 @@ DasResult IPCProxyBase::SendRequest(
         {
             DAS_CORE_LOG_ERROR(
                 "IPCProxyBase::SendRequest: sync_wait failed for "
-                "call_id={}",
+                "call_id = {}",
                 call_id);
             return DAS_E_IPC_REMOTE_ERROR;
         }
@@ -114,27 +124,40 @@ DasResult IPCProxyBase::SendBusinessControlRequest(
             .SetTargetSessionId(object_id_.session_id)
             .Build();
 
-    std::vector<uint8_t> body_vec(body, body + body_size);
-    DasResult send_result = run_loop_.PostSend(header, std::move(body_vec));
-    if (send_result != DAS_S_OK)
-    {
-        DAS_CORE_LOG_ERROR(
-            "IPCProxyBase::SendBusinessControlRequest: PostSend failed, "
-            "result={}",
-            send_result);
-        return send_result;
-    }
-
     CallKey call_key{object_id_.session_id, call_id};
 
     if (bt->IsCurrentThread())
     {
+        std::vector<uint8_t> body_vec(body, body + body_size);
+        DasResult send_result = run_loop_.PostSend(header, std::move(body_vec));
+        if (send_result != DAS_S_OK)
+        {
+            DAS_CORE_LOG_ERROR(
+                "IPCProxyBase::SendBusinessControlRequest: PostSend "
+                "failed, result = {}",
+                send_result);
+            return send_result;
+        }
+
         return bt->PumpUntilResponse(call_key, out_response);
     }
     else
     {
+        // External thread: register pending_call BEFORE PostSend
+        // so the entry exists when the async lambda might fail
         constexpr auto kTimeout = std::chrono::milliseconds{30000};
         run_loop_.RegisterPendingCall(call_key);
+
+        std::vector<uint8_t> body_vec(body, body + body_size);
+        DasResult send_result = run_loop_.PostSend(header, std::move(body_vec));
+        if (send_result != DAS_S_OK)
+        {
+            DAS_CORE_LOG_ERROR(
+                "IPCProxyBase::SendBusinessControlRequest: PostSend "
+                "failed, result = {}",
+                send_result);
+            return send_result;
+        }
 
         AwaitResponseSender sender{&run_loop_, call_key, kTimeout};
         auto                result = stdexec::sync_wait(std::move(sender));
@@ -142,7 +165,7 @@ DasResult IPCProxyBase::SendBusinessControlRequest(
         {
             DAS_CORE_LOG_ERROR(
                 "IPCProxyBase::SendBusinessControlRequest: sync_wait failed "
-                "for call_id={}",
+                "for call_id = {}",
                 call_id);
             return DAS_E_IPC_REMOTE_ERROR;
         }

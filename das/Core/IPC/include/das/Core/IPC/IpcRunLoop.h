@@ -571,6 +571,13 @@ public:
     DistributedObjectManager* object_manager_ = nullptr;
 
 private:
+    /// @brief 发送失败时构造失败 RESPONSE 并推入 inbound_queue_
+    /// @param header 原始请求的 header（用于获取 call_id, session_id）
+    /// @param error_code 失败原因的错误码
+    void NotifySendFailure(
+        const ValidatedIPCMessageHeader& header,
+        DasResult                        error_code);
+
     /// 默认构造函数（禁止直接调用，使用 Create() 代替）
     IpcRunLoop() = default;
 

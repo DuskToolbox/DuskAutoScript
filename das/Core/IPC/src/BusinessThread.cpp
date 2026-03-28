@@ -105,9 +105,12 @@ void BusinessThread::DispatchMessage(InboundMessage& msg)
         CallKey call_key{
             .source_session_id = header.GetSourceSessionId(),
             .call_id = header.GetCallId()};
+        DasResult result = header.HasError()
+                               ? static_cast<DasResult>(header.GetErrorCode())
+                               : DAS_S_OK;
         run_loop_.CompletePendingCall(
             call_key,
-            DAS_S_OK,
+            result,
             std::move(msg.body),
             header.GetFlags());
     }
@@ -217,8 +220,19 @@ DasResult BusinessThread::PumpUntilResponse(
                 {
                     *out_flags = msg.header.GetFlags();
                 }
+                // 检查 RESPONSE header 中的 error_code
+                if (msg.header.HasError())
+                {
+                    DAS_CORE_LOG_DEBUG(
+                        "PumpUntilResponse: error response for call_id = {}, "
+                        "error_code = {}",
+                        my_call_key.call_id,
+                        msg.header.GetErrorCode());
+                    return static_cast<DasResult>(msg.header.GetErrorCode());
+                }
+
                 DAS_CORE_LOG_DEBUG(
-                    "PumpUntilResponse: matched, call_id={}",
+                    "PumpUntilResponse: matched, call_id = {}",
                     my_call_key.call_id);
                 return DAS_S_OK;
             }
