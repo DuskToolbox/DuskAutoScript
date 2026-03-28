@@ -91,7 +91,7 @@ private:
      * @brief 分发消息到 handler
      * @param msg 入站消息
      */
-    void DispatchMessage(InboundMessage& msg);
+    void ProcessInboundMessage(InboundMessage& msg);
 
     /// 入站消息队列（非持有，IpcContext 的值成员引用）
     IpcMessageQueue<InboundMessage>& inbound_;

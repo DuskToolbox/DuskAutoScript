@@ -83,18 +83,18 @@ void BusinessThread::Run()
         }
 
         InboundMessage msg = std::move(msg_opt.value());
-        DispatchMessage(msg);
+        ProcessInboundMessage(msg);
     }
 
     DAS_CORE_LOG_INFO("BusinessThread::Run() exited");
 }
 
-void BusinessThread::DispatchMessage(InboundMessage& msg)
+void BusinessThread::ProcessInboundMessage(InboundMessage& msg)
 {
     const auto& header = msg.header;
 
     DAS_CORE_LOG_INFO(
-        "BusinessThread::DispatchMessage: msg_type={}, interface_id={}, call_id={}",
+        "BusinessThread::ProcessInboundMessage: msg_type={}, interface_id={}, call_id={}",
         static_cast<int>(header.GetMessageType()),
         header.GetInterfaceId(),
         header.GetCallId());
@@ -248,7 +248,7 @@ DasResult BusinessThread::PumpUntilResponse(
         else
         {
             // REQUEST/EVENT: 分发处理（可能触发嵌套 pump）
-            DispatchMessage(msg);
+            ProcessInboundMessage(msg);
         }
     }
 
