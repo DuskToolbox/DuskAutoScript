@@ -943,7 +943,50 @@ void IpcRunLoop::StartAsyncReceiveForTransport(
                     }
                     else
                     {
-                        // 业务消息：投递到 inbound_queue
+                        // 业务消息转发：跨 Host 消息需要转发到目标
+                        if (connection_manager_
+                            && header.GetTargetSessionId() != local_session_id_)
+                        {
+                            auto* fwd_transport =
+                                connection_manager_->GetTransport(
+                                    header.GetTargetSessionId());
+                            if (fwd_transport)
+                            {
+                                DAS_CORE_LOG_INFO(
+                                    "Forwarding business message: "
+                                    "target={}, source={}, type={}, "
+                                    "interface_id={}",
+                                    header.GetTargetSessionId(),
+                                    header.GetSourceSessionId(),
+                                    static_cast<int>(header.GetMessageType()),
+                                    header.GetInterfaceId());
+
+                                auto fwd_result =
+                                    co_await fwd_transport->SendCoroutine(
+                                        header,
+                                        body.data(),
+                                        body.size());
+
+                                if (fwd_result != DAS_S_OK)
+                                {
+                                    DAS_CORE_LOG_ERROR(
+                                        "Business message forward failed: "
+                                        "target={}, result={}",
+                                        header.GetTargetSessionId(),
+                                        fwd_result);
+                                }
+                            }
+                            else
+                            {
+                                DAS_CORE_LOG_ERROR(
+                                    "Business message forward failed: "
+                                    "no transport for target={}",
+                                    header.GetTargetSessionId());
+                            }
+                            co_return;
+                        }
+
+                        // 本地处理：投递到 inbound_queue
                         if (!inbound_queue_)
                         {
                             DAS_CORE_LOG_WARN(
