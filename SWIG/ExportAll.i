@@ -20,6 +20,7 @@
 #include <das/DasException.hpp>
 
 #include <das/DasApi.h>
+#include <das/DasSwigApi.h>
 #include <das/IDasAsyncOperation.h>
 #include <das/IDasAsyncLoadPluginOperation.h>
 #include <das/IDasAsyncHandshakeOperation.h>
@@ -1248,3 +1249,12 @@ SWIGEXPORT jstring JNICALL Java_org_das_DuskAutoScriptJNI_DasReadOnlyString_1toJ
 #include <das/DasInternalRetPluginPackage.h>
 %}
 %include <das/DasInternalRetPluginPackage.h>
+
+%include <das/DasSwigApi.h>;
+// 源自 DasApi.h
+
+DAS_C_API void DasLogInfoU8(const char* p_string);
+
+DAS_C_API void DasLogWarningU8(const char* p_string);
+
+DAS_C_API void DasLogErrorU8(const char* p_string);

@@ -28,7 +28,10 @@ namespace Das::ExportInterface
     struct IDasInitializeIDasPluginManagerCallback;
     struct IDasInitializeIDasPluginManagerWaiter;
     struct IDasJsonSetting;
-}
+    struct IDasVariantVector;
+} // namespace Das::ExportInterface
+
+#ifndef SWIG
 
 namespace Das::PluginInterface
 {
@@ -64,11 +67,8 @@ DAS_C_API DasResult ParseDasJsonFromString(
 DAS_C_API DasResult
 CreateEmptyDasJson(Das::ExportInterface::IDasJson** pp_out_json);
 
-DAS_API void DasLogError(DasReadOnlyString das_string);
-
-DAS_API void DasLogWarning(DasReadOnlyString das_string);
-
-DAS_API void DasLogInfo(DasReadOnlyString das_string);
+DAS_C_API DasResult CreateIDasVariantVector(
+    Das::ExportInterface::IDasVariantVector** pp_out_vector);
 
 DAS_C_API void DasLogInfoU8(const char* p_string);
 
@@ -327,5 +327,7 @@ struct DasSourceLocationOnStack final : DAS::ExportInterface::IDasSourceLocation
 typedef DasResult(DAS_STD_CALL DasCoCreatePluginFunction)(IDasBase**);
 
 constexpr const char* DAS_COCREATE_PLUGIN_NAME = "DasCoCreatePlugin";
+
+#endif // SWIG
 
 #endif // DAS_API_H
