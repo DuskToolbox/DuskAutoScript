@@ -1,7 +1,9 @@
 #include <das/Core/IPC/BusinessThread.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IMessageHandler.h>
+#include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
+#include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcResponseSender.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <das/Core/Logger/Logger.h>
@@ -149,9 +151,45 @@ void BusinessThread::ProcessInboundMessage(InboundMessage& msg)
         }
         else
         {
-            DAS_CORE_LOG_WARN(
-                "BusinessThread: no handler for interface_id={}",
-                header.GetInterfaceId());
+            if (header.GetMessageType() == MessageType::REQUEST)
+            {
+                DAS_CORE_LOG_ERROR(
+                    "BusinessThread: no handler for REQUEST "
+                    "interface_id={}, call_id={}, source={}",
+                    header.GetInterfaceId(),
+                    header.GetCallId(),
+                    header.GetSourceSessionId());
+
+                // 构造 NACK RESPONSE 通知调用方
+                auto nack_header =
+                    IPCMessageHeaderBuilder()
+                        .SetCallId(header.GetCallId())
+                        .SetSourceSessionId(header.GetTargetSessionId())
+                        .SetTargetSessionId(header.GetSourceSessionId())
+                        .SetInterfaceId(header.GetInterfaceId())
+                        .SetErrorCode(
+                            static_cast<int32_t>(
+                                DAS_E_IPC_COMMAND_NOT_REGISTERED))
+                        .Build();
+
+                IpcResponseSender    sender(run_loop_);
+                std::vector<uint8_t> empty_body;
+                auto send_result = sender.SendResponse(nack_header, empty_body);
+                if (DAS::IsFailed(send_result))
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "BusinessThread: failed to send NACK, "
+                        "result={}",
+                        send_result);
+                }
+            }
+            else
+            {
+                DAS_CORE_LOG_WARN(
+                    "BusinessThread: no handler for EVENT "
+                    "interface_id={}",
+                    header.GetInterfaceId());
+            }
         }
     }
 }
