@@ -11,6 +11,7 @@
  * 3. IPC 连接验证
  */
 
+#include <Das.ExportInterface.IDasVariantVector.hpp>
 #include <Das.PluginInterface.IDasComponent.hpp>
 #include <Das.PluginInterface.IDasPluginPackage.hpp>
 
@@ -269,7 +270,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadJavaPlugin)
         GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
     }
 
-    // 1. 先获取 JavaTestPlugin JSON 路径（检查是否存在）
+    // 获取 JavaTestPlugin JSON 路径（检查是否存在）
     std::string plugin_json_path;
     try
     {
@@ -281,7 +282,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadJavaPlugin)
         GTEST_SKIP() << "JavaTestPlugin JSON not found: " << e.what();
     }
 
-    // 2. 检查 JAR 文件是否存在
+    // 检查 JAR 文件是否存在
     std::filesystem::path jar_path =
         std::filesystem::path(plugin_json_path).parent_path()
         / "JavaTestPlugin.jar";
@@ -291,12 +292,12 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadJavaPlugin)
                      << jar_path.string();
     }
 
-    // 3. 启动 Host 进程并注册到 ConnectionManager
+    // 启动 Host 进程并注册到 ConnectionManager
     DasResult result = StartHostAndSetupRunLoop();
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_TRUE(launcher_->IsRunning());
 
-    // 4. 通过 IIpcContext::LoadPluginAsync 加载 Java 插件
+    // 通过 IIpcContext::LoadPluginAsync 加载 Java 插件
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
     result = ctx_->LoadPluginAsync(
         launcher_.Get(),
@@ -326,16 +327,94 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadJavaPlugin)
         GTEST_SKIP() << err_msg;
     }
 
-    // 5. 验证返回的对象 ID
+    // 验证返回的对象 ID
     EXPECT_EQ(object_id.session_id, launcher_->GetSessionId());
     EXPECT_GT(object_id.local_id, 0u);
 
+    // 创建远程 proxy 并获取 plugin package
+    DAS::DasPtr<IDasBase> raw_proxy;
+    ASSERT_EQ(
+        ctx_->CreateRemoteProxy(
+            object_id,
+            DasIidOf<IDasBase>(),
+            raw_proxy.Put()),
+        DAS_S_OK);
+    DAS::PluginInterface::DasPluginPackage plugin_package;
+    ASSERT_EQ(raw_proxy.As(plugin_package.Put()), DAS_S_OK);
+
+    // 枚举 feature，验证 COMPONENT_FACTORY
+    DAS::PluginInterface::DasPluginFeature feature;
+    ASSERT_EQ(plugin_package->EnumFeature(0, &feature), DAS_S_OK);
+    EXPECT_EQ(
+        feature,
+        DAS::PluginInterface::DAS_PLUGIN_FEATURE_COMPONENT_FACTORY);
+
+    // 通过 feature 创建 IDasComponentFactory
+    IDasBase* factory_base_raw = nullptr;
+    ASSERT_EQ(
+        plugin_package->CreateFeatureInterface(0, &factory_base_raw),
+        DAS_S_OK);
+    ASSERT_NE(factory_base_raw, nullptr);
+    DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+
+    DAS::DasPtr<DAS::PluginInterface::IDasComponentFactory> factory;
+    ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
+
+    // 验证 IsSupported
+    DasGuid empty_guid{};
+    EXPECT_EQ(factory->IsSupported(empty_guid), DAS_E_NO_IMPLEMENTATION);
+    EXPECT_EQ(
+        factory->IsSupported(DasIidOf<DAS::PluginInterface::IDasComponent>()),
+        DAS_S_OK);
+
+    // CreateInstance 获取 IDasComponent
+    DAS::PluginInterface::IDasComponent* component_raw = nullptr;
+    ASSERT_EQ(
+        factory->CreateInstance(
+            DasIidOf<DAS::PluginInterface::IDasComponent>(),
+            &component_raw),
+        DAS_S_OK);
+    ASSERT_NE(component_raw, nullptr);
+    DAS::DasPtr<DAS::PluginInterface::IDasComponent> component(component_raw);
+
+    // 调用 Dispatch("echo", ...) 跨进程验证
+    {
+        DasReadOnlyString                      method_name{"echo"};
+        DAS::ExportInterface::DasVariantVector result;
+        DAS::ExportInterface::DasVariantVector params;
+        ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
+        DasResult dispatch_result =
+            component->Dispatch(method_name.Get(), params.Get(), result.Put());
+        ASSERT_EQ(dispatch_result, DAS_S_OK) << "Dispatch(echo) failed";
+    }
+
+    // 调用 Dispatch("compute", ...)
+    {
+        DasReadOnlyString                      method_name{"compute"};
+        DAS::ExportInterface::DasVariantVector result;
+        DAS::ExportInterface::DasVariantVector params;
+        ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
+        DasResult dispatch_result =
+            component->Dispatch(method_name.Get(), params.Get(), result.Put());
+        ASSERT_EQ(dispatch_result, DAS_S_OK) << "Dispatch(compute) failed";
+    }
+
+    // 调用 Dispatch("getSessionInfo", ...)
+    {
+        DasReadOnlyString                      method_name{"getSessionInfo"};
+        DAS::ExportInterface::DasVariantVector result;
+        DAS::ExportInterface::DasVariantVector params;
+        ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
+        DasResult dispatch_result =
+            component->Dispatch(method_name.Get(), params.Get(), result.Put());
+        ASSERT_EQ(dispatch_result, DAS_S_OK)
+            << "Dispatch(getSessionInfo) failed";
+    }
+
     DAS_CORE_LOG_INFO(
-        "[CrossProcess_LoadJavaPlugin] Java plugin loaded, object_id={{"
-        "session:{}, gen:{}, local:{}}}",
-        object_id.session_id,
-        object_id.generation,
-        object_id.local_id);
+        "[CrossProcess_LoadJavaPlugin] Java plugin fully verified: "
+        "LoadPlugin → EnumFeature → CreateFeatureInterface → IsSupported "
+        "→ CreateInstance → Dispatch(echo/compute/getSessionInfo)");
 }
 
 // ====== 主进程退出检测测试 ======
