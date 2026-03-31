@@ -81,6 +81,14 @@ public:
 
         *pp_object = nullptr;
 
+        // 本地拦截：识别 Proxy 身份（替代 dynamic_cast）
+        if (iid == DasIidOf<IPCProxyBase>())
+        {
+            *pp_object = static_cast<IPCProxyBase*>(this);
+            IPCProxyBase::AddRef();
+            return DAS_S_OK;
+        }
+
         // 构造请求 Body：ObjectId + DasGuid
         // Host 端通过 ObjectId 查找真实对象，通过 iid 调用 QueryInterface
         const ObjectId&      obj_id = GetObjectId();

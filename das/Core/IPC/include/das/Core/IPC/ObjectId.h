@@ -65,18 +65,6 @@ constexpr bool operator!=(const ObjectId& lhs, const ObjectId& rhs) noexcept
     return !(lhs == rhs);
 }
 
-/// @brief 从接口指针获取 ObjectId
-/// @param interface_ptr 接口指针（可以是 Proxy 或本地对象）
-/// @return ObjectId，如果是 nullptr 返回空 ObjectId
-/// @note 此函数的完整实现需要 IPCProxyBase 的完整定义，
-///       因此在生成的 Proxy 代码中使用内联方式调用
-inline ObjectId GetObjectIdFromInterface(IDasBase* interface_ptr) noexcept
-{
-    // 默认实现：返回空 ObjectId
-    // 实际的 Proxy 代码会内联展开具体的转换逻辑
-    (void)interface_ptr;
-    return ObjectId{0, 0, 0};
-}
 DAS_CORE_IPC_NS_END
 
 /// @brief std::hash 特化，用于 unordered_map/unordered_set

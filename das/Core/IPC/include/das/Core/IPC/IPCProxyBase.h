@@ -7,12 +7,29 @@
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/MethodMetadata.h>
 #include <das/Core/IPC/ObjectId.h>
+#include <das/DasGuidHolder.h>
 #include <das/IDasBase.h>
 #include <memory>
 #include <vector>
 
 #include <das/Core/IPC/BusinessThread.h>
 #include <das/Core/IPC/Config.h>
+
+// {200A224F-5F47-4823-9E51-CC97168B1D1C}
+DAS_DEFINE_CLASS_IN_NAMESPACE(
+    Das::Core::IPC,
+    IPCProxyBase,
+    0x200A224F,
+    0x5F47,
+    0x4823,
+    0x9E,
+    0x51,
+    0xCC,
+    0x97,
+    0x16,
+    0x8B,
+    0x1D,
+    0x1C);
 
 DAS_CORE_IPC_NS_BEGIN
 class DistributedObjectManager;

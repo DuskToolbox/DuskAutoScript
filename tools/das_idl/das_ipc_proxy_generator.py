@@ -438,6 +438,7 @@ class IpcProxyGenerator:
 #include <das/Core/IPC/BusinessThread.h>
 #include <das/Core/IPC/DasProxyBase.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
+#include <das/Core/IPC/InterfaceParamSerialization.h>
 #include <das/Core/IPC/MemorySerializer.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/Serializer.h>
@@ -954,6 +955,31 @@ class IpcProxyGenerator:
             lines.append(f"{indent}uint64_t {param.name}_encoded_id;")
         return lines
 
+    def _has_in_interface_params(self, method: MethodDef) -> bool:
+        """检查方法的 [in] 参数中是否包含接口指针类型"""
+        for param in method.parameters:
+            if param.direction == ParamDirection.OUT:
+                continue
+            if self._is_param_interface(param):
+                return True
+        return False
+
+    def _is_param_interface(self, param: ParameterDef) -> bool:
+        """检查参数是否是接口指针类型（排除 IDasReadOnlyString 等特殊类型）"""
+        # IDasReadOnlyString starts with 'I' and contains 'Das' but is NOT
+        # an interface pointer — it's handled separately in _generate_serialize_param
+        if param.type_info.base_type == "IDasReadOnlyString":
+            return False
+        full_type_for_check = param.type_info.base_type
+        if param.type_info.is_pointer:
+            full_type_for_check += "*" * param.type_info.pointer_level
+        is_iface = self.type_mapper.is_interface_type(full_type_for_check)
+        if not is_iface:
+            base_check = param.type_info.base_type.split("::")[-1]
+            is_iface = (base_check.startswith("I") and "Das" in base_check
+                        and param.type_info.is_pointer and param.type_info.pointer_level >= 1)
+        return is_iface
+
     def _generate_struct_fill(self, param: ParameterDef, prefix: str, indent: str) -> List[str]:
         """生成 packed struct 字段赋值代码"""
         lines = []
@@ -977,8 +1003,18 @@ class IpcProxyGenerator:
                 else:
                     lines.append(f"{indent}{prefix}{param.name}_{field.name} = {param.name}.{field.name};")
         else:
-            # 接口指针：EncodeObjectId
-            lines.append(f"{indent}{prefix}{param.name}_encoded_id = Das::Core::IPC::EncodeObjectId(GetObjectIdFromInterface({param.name}));")
+            # 接口指针：SerializeInInterfaceParam (3-arg) + guard Track + EncodeObjectId
+            lines.append(f"{indent}{{")
+            lines.append(f"{indent}    Das::Core::IPC::ObjectId {param.name}_id{{}};")
+            lines.append(f"{indent}    bool {param.name}_newly_registered = false;")
+            lines.append(f"{indent}    ipc_result = Das::Core::IPC::SerializeInInterfaceParam({param.name}, GetObjectManager(), {param.name}_id, &{param.name}_newly_registered);")
+            lines.append(f"{indent}    if (DAS::IsFailed(ipc_result))")
+            lines.append(f"{indent}    {{")
+            lines.append(f"{indent}        return ipc_result;")
+            lines.append(f"{indent}    }}")
+            lines.append(f"{indent}    pending_in_param_exports.Track({param.name}_id, {param.name}_newly_registered);")
+            lines.append(f"{indent}    {prefix}{param.name}_encoded_id = Das::Core::IPC::EncodeObjectId({param.name}_id);")
+            lines.append(f"{indent}}}")
         return lines
 
     def _generate_fixed_size_request_body(self, interface: InterfaceDef, method: MethodDef, method_index: int, in_params: List[ParameterDef], indent: str) -> List[str]:
@@ -1160,6 +1196,12 @@ class IpcProxyGenerator:
         need_request_body = bool(in_params)
         need_response_body = bool(out_params) or has_return
 
+        # 判断是否有 [in] 接口指针参数，用于 PendingInParamExportGuard
+        has_in_iface = self._has_in_interface_params(method)
+        if has_in_iface:
+            lines.append(f"{indent}Das::Core::IPC::PendingInParamExportGuard pending_in_param_exports{{GetObjectManager()}};")
+            lines.append("")
+
         if need_request_body:
             if self._is_fixed_size_method(method):
                 # 零堆分配路径: 栈上 packed struct
@@ -1203,6 +1245,14 @@ class IpcProxyGenerator:
             else:
                 lines.append(f"{indent}DasResult ipc_result = SendRequest({method_index},")
                 lines.append(f"{indent}    request_body, request_body_size, response_body);")
+
+        # Commit guard: if method has [in] interface params, commit on non-transport errors
+        if has_in_iface:
+            lines.append(f"{indent}if (!Das::Core::IPC::IsTransportLevelError(ipc_result))")
+            lines.append(f"{indent}{{")
+            lines.append(f"{indent}    pending_in_param_exports.Commit();")
+            lines.append(f"{indent}}}")
+
         lines.append(f"{indent}if (DAS::IsFailed(ipc_result))")
         lines.append(f"{indent}{{")
         if has_return:
@@ -1288,10 +1338,19 @@ class IpcProxyGenerator:
             interface_name = param.type_info.base_type.split("::")[-1]
             param_name = param.name
 
-            # 获取 ObjectId 并序列化
+            # 获取 ObjectId 并序列化（使用 3-arg API + guard Track）
             lines.append(f"{indent}// 序列化接口指针: {interface_name}*")
-            lines.append(f"{indent}ObjectId {param_name}_id = GetObjectIdFromInterface({param_name});")
-            lines.append(f"{indent}ipc_result = writer.WriteUInt64(EncodeObjectId({param_name}_id));")
+            lines.append(f"{indent}{{")
+            lines.append(f"{indent}    Das::Core::IPC::ObjectId {param_name}_id{{}};")
+            lines.append(f"{indent}    bool {param_name}_newly_registered = false;")
+            lines.append(f"{indent}    ipc_result = Das::Core::IPC::SerializeInInterfaceParam({param_name}, GetObjectManager(), {param_name}_id, &{param_name}_newly_registered);")
+            lines.append(f"{indent}    if (DAS::IsFailed(ipc_result))")
+            lines.append(f"{indent}    {{")
+            lines.append(f"{indent}        return ipc_result;")
+            lines.append(f"{indent}    }}")
+            lines.append(f"{indent}    pending_in_param_exports.Track({param_name}_id, {param_name}_newly_registered);")
+            lines.append(f"{indent}    ipc_result = writer.WriteUInt64(Das::Core::IPC::EncodeObjectId({param_name}_id));")
+            lines.append(f"{indent}}}")
             lines.append(f"{indent}if (DAS::IsFailed(ipc_result))")
             lines.append(f"{indent}{{")
             lines.append(f"{indent}    return ipc_result;")

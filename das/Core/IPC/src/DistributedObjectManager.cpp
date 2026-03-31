@@ -254,4 +254,23 @@ DasResult DistributedObjectManager::ValidateObjectId(const ObjectId& object_id)
     return DAS_S_OK;
 }
 
+DasResult DistributedObjectManager::LookupObjectIdFromPtr(
+    IDasBase* ptr,
+    ObjectId& out_id) const noexcept
+{
+    if (ptr == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    auto it = ptr_to_id_.find(ptr);
+    if (it == ptr_to_id_.end())
+    {
+        return DAS_E_NOT_FOUND;
+    }
+
+    out_id = it->second;
+    return DAS_S_OK;
+}
+
 DAS_CORE_IPC_NS_END

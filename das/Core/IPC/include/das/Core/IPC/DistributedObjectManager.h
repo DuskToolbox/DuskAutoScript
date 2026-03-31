@@ -42,6 +42,15 @@ public:
     bool IsValidObject(const ObjectId& object_id) const override;
     bool IsLocalObject(const ObjectId& object_id) const override;
 
+    /// @brief 从指针查找 ObjectId（反向索引查询）
+    /// @param ptr 已注册的本地对象指针
+    /// @param out_id [out] 找到的 ObjectId
+    /// @return DAS_S_OK 成功，DAS_E_INVALID_POINTER 指针为空，DAS_E_NOT_FOUND
+    /// 指针未注册
+    [[nodiscard]]
+    DasResult LookupObjectIdFromPtr(IDasBase* ptr, ObjectId& out_id)
+        const noexcept;
+
 private:
     static DasResult ValidateObjectId(const ObjectId& object_id);
 

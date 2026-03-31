@@ -418,6 +418,7 @@ class IpcStubGenerator:
         includes.append("#include <das/Core/IPC/IStubBase.h>")
         includes.append("#include <das/Core/IPC/MemorySerializer.h>")
         includes.append("#include <das/Core/IPC/DistributedObjectManager.h>")
+        includes.append("#include <das/Core/IPC/InterfaceParamSerialization.h>")
         includes.append("#include <das/Core/IPC/ProxyFactory.h>")
         includes.append("#include <das/Core/IPC/Serializer.h>")
         includes.append("#include <das/DasString.hpp>")
@@ -1394,23 +1395,8 @@ class IpcStubGenerator:
             lines.append(f"{indent}{{")
             lines.append(f"{indent}    return serial_result;")
             lines.append(f"{indent}}}")
-            lines.append(f"{indent}Das::Core::IPC::ObjectId {param_name}_id = Das::Core::IPC::DecodeObjectId({param_name}_encoded_value);")
-            lines.append(f"{indent}if (object_manager.IsLocalObject({param_name}_id))")
-            lines.append(f"{indent}{{")
-            lines.append(f"{indent}    // 本地对象：直接查找（LookupObject 内部 AddRef）")
-            lines.append(f"{indent}    DAS::DasPtr<IDasBase> {param_name}_holder;")
-            lines.append(f"{indent}    serial_result = object_manager.LookupObject({param_name}_id, {param_name}_holder.Put());")
-            lines.append(f"{indent}    if (DAS::IsFailed(serial_result))")
-            lines.append(f"{indent}    {{")
-            lines.append(f"{indent}        return serial_result;")
-            lines.append(f"{indent}    }}")
-            lines.append(f"{indent}    {param_name} = static_cast<{full_interface_name}*>({param_name}_holder.Get());")
-            lines.append(f"{indent}}}")
-            lines.append(f"{indent}else")
-            lines.append(f"{indent}{{")
-            lines.append(f"{indent}    // 远程对象：通过 CreateProxyByInterfaceId 创建 Proxy")
-            lines.append(f"{indent}    // Compute interface_id hash at generation time")
-            # Find interface UUID to compute FNV-1a hash
+
+            # Compute interface_id hash at generation time
             interface_uuid = None
             if hasattr(self, 'document') and self.document:
                 for iface in self.document.interfaces:
@@ -1431,17 +1417,19 @@ class IpcStubGenerator:
                 # Built-in types not in document (e.g. IDasBase): use BUILTIN_INTERFACE_HASHES
                 iface_id_hash = BUILTIN_INTERFACE_HASHES.get(interface_name, 0)
 
-            lines.append(f"{indent}    IDasBase* {param_name}_base = Das::Core::IPC::DasIpcProxy::CreateProxyByInterfaceId(")
+            lines.append(f"{indent}{{")
+            lines.append(f"{indent}    IDasBase* {param_name}_base = nullptr;")
+            lines.append(f"{indent}    serial_result = Das::Core::IPC::DeserializeInInterfaceParam(")
+            lines.append(f"{indent}        {param_name}_encoded_value,")
             lines.append(f"{indent}        0x{iface_id_hash:08X}u,")
-            lines.append(f"{indent}        {param_name}_id,")
+            lines.append(f"{indent}        object_manager,")
             lines.append(f"{indent}        ctx.run_loop,")
             lines.append(f"{indent}        ctx.business_thread,")
-            lines.append(f"{indent}        object_manager);")
-            lines.append(f"{indent}    if ({param_name}_base == nullptr)")
+            lines.append(f"{indent}        &{param_name}_base);")
+            lines.append(f"{indent}    if (DAS::IsFailed(serial_result))")
             lines.append(f"{indent}    {{")
-            lines.append(f"{indent}        return DAS_E_IPC_DESERIALIZATION_FAILED;")
+            lines.append(f"{indent}        return serial_result;")
             lines.append(f"{indent}    }}")
-            lines.append(f"{indent}    object_manager.RegisterRemoteObject({param_name}_id);")
             lines.append(f"{indent}    {param_name} = static_cast<{full_interface_name}*>({param_name}_base);")
             lines.append(f"{indent}}}")
             return lines
