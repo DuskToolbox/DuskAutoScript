@@ -9,6 +9,7 @@
 #ifndef DAS_CORE_IPC_HOST_LAUNCHER_H
 #define DAS_CORE_IPC_HOST_LAUNCHER_H
 
+#include <atomic>
 #include <das/DasApi.h>
 #include <das/IDasBase.h>
 #include <memory>
@@ -122,6 +123,31 @@ private:
      */
     boost::asio::awaitable<DasResult> ReceiveHandshakeReadyAckAsync(
         uint32_t timeout_ms);
+
+    // === 异步启动相关方法 ===
+
+    /**
+     * @brief 异步等待 Host IPC 资源就绪（使用 steady_timer 替代 Sleep）
+     */
+    boost::asio::awaitable<DasResult> WaitForHostReadyAsync(
+        uint32_t timeout_ms);
+
+    /**
+     * @brief 异步连接到 Host 进程
+     */
+    boost::asio::awaitable<DasResult> ConnectToHostAsync();
+
+    /**
+     * @brief 异步启动完整流程协程（5 阶段）
+     *
+     * op 参数实际类型为 HandshakeAsyncOperationImpl*（在 .cpp 中定义），
+     * 通过 IDasAsyncHandshakeOperation* 传递以避免头文件暴露实现类。
+     */
+    boost::asio::awaitable<void> RunAsync(
+        IDasAsyncHandshakeOperation*       op,
+        std::shared_ptr<std::atomic<bool>> alive,
+        std::string                        exe_path,
+        uint32_t                           timeout_ms);
 
     struct Impl;
     std::unique_ptr<Impl> impl_;
