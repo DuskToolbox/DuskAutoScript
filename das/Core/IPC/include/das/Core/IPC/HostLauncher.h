@@ -77,7 +77,7 @@ private:
         const std::vector<std::string>& args);
 
     DasResult WaitForHostReady(uint32_t timeout_ms);
-    DasResult ConnectToHost();
+    DasResult ConnectToHost(uint32_t timeout_ms);
     DasResult PerformFullHandshake(
         uint16_t& out_session_id,
         uint32_t  timeout_ms);

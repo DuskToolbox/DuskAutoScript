@@ -58,6 +58,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <limits>
 #include <thread>
 DAS_CORE_IPC_NS_BEGIN
 
@@ -122,7 +123,7 @@ DasResult HostLauncher::Start(
     }
 
     // 先创建管道并等待 Host 连接（MainProcess 是服务端）
-    result = ConnectToHost();
+    result = ConnectToHost(timeout_ms);
     if (result != DAS_S_OK)
     {
         Stop();
@@ -438,7 +439,7 @@ DasResult HostLauncher::WaitForHostReady(uint32_t timeout_ms)
     }
 }
 
-DasResult HostLauncher::ConnectToHost()
+DasResult HostLauncher::ConnectToHost(uint32_t timeout_ms)
 {
     uint32_t main_pid = static_cast<uint32_t>(GET_CURRENT_PID());
     uint32_t host_pid = impl_->pid;
@@ -458,6 +459,11 @@ DasResult HostLauncher::ConnectToHost()
     // 通过 co_spawn + use_future 在 io_context 上运行协程
     try
     {
+        auto duration = (timeout_ms == 0)
+                            ? std::chrono::milliseconds(
+                                  (std::numeric_limits<uint32_t>::max)())
+                            : std::chrono::milliseconds(timeout_ms);
+
         auto future = boost::asio::co_spawn(
             impl_->io_ctx,
             DefaultAsyncIpcTransport::CreateAsync(
@@ -468,6 +474,13 @@ DasResult HostLauncher::ConnectToHost()
                       // for Host)
                 65536),
             boost::asio::use_future);
+
+        auto status = future.wait_for(duration);
+        if (status == std::future_status::timeout)
+        {
+            DAS_CORE_LOG_ERROR("Timeout creating Host IPC transport");
+            return DAS_E_IPC_TIMEOUT;
+        }
 
         auto transport = future.get();
         if (!transport.has_value())
@@ -866,6 +879,16 @@ DasResult HostLauncher::ReceiveHandshakeWelcome(
             impl_->io_ctx,
             ReceiveHandshakeWelcomeAsync(out_session_id, timeout_ms),
             boost::asio::use_future);
+        auto duration = (timeout_ms == 0)
+                            ? std::chrono::milliseconds(
+                                  (std::numeric_limits<uint32_t>::max)())
+                            : std::chrono::milliseconds(timeout_ms);
+        auto status = future.wait_for(duration);
+        if (status == std::future_status::timeout)
+        {
+            DAS_CORE_LOG_ERROR("Timeout receiving Welcome message");
+            return DAS_E_IPC_TIMEOUT;
+        }
         return future.get();
     }
     catch (const boost::system::system_error& e)
@@ -922,6 +945,16 @@ DasResult HostLauncher::ReceiveHandshakeReadyAck(uint32_t timeout_ms)
             impl_->io_ctx,
             ReceiveHandshakeReadyAckAsync(timeout_ms),
             boost::asio::use_future);
+        auto duration = (timeout_ms == 0)
+                            ? std::chrono::milliseconds(
+                                  (std::numeric_limits<uint32_t>::max)())
+                            : std::chrono::milliseconds(timeout_ms);
+        auto status = future.wait_for(duration);
+        if (status == std::future_status::timeout)
+        {
+            DAS_CORE_LOG_ERROR("Timeout receiving ReadyAck message");
+            return DAS_E_IPC_TIMEOUT;
+        }
         return future.get();
     }
     catch (const boost::system::system_error& e)
