@@ -2,10 +2,12 @@
 
 #include "PluginImpl.h"
 #include <das/DasApi.h>
-#include <das/IDasBase.h>
 #include <das/DasString.hpp>
+#include <das/IDasBase.h>
+#include <das/Utils/fmt.h>
 
 #include <array>
+#include <string>
 
 DAS_NS_BEGIN
 
@@ -61,6 +63,167 @@ DasResult DasTouchMockImpl::Swipe(
     return DAS_S_OK;
 }
 
+// === DasQueryComponentImpl ===
+
+DasQueryComponentImpl::DasQueryComponentImpl(uint16_t session_id)
+    : session_id_(session_id)
+{
+}
+
+DasResult DasQueryComponentImpl::GetGuid(DasGuid* p_out_guid)
+{
+    if (!p_out_guid)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+    *p_out_guid = DasIidOf<PluginInterface::IDasComponent>();
+    return DAS_S_OK;
+}
+
+DasResult DasQueryComponentImpl::GetRuntimeClassName(
+    IDasReadOnlyString** pp_out_name)
+{
+    if (!pp_out_name)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+    static const char* class_name = "Das.QueryComponentImpl";
+    return CreateIDasReadOnlyStringFromUtf8(class_name, pp_out_name);
+}
+
+DasResult DasQueryComponentImpl::Dispatch(
+    IDasReadOnlyString*                  p_function_name,
+    ExportInterface::IDasVariantVector*  p_arguments,
+    ExportInterface::IDasVariantVector** pp_out_result)
+{
+    std::ignore = p_arguments;
+    if (!p_function_name || !pp_out_result)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    const char* method_ptr = nullptr;
+    if (DAS::IsFailed(p_function_name->GetUtf8(&method_ptr)))
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+    if (!method_ptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    std::string method = method_ptr;
+
+    if (method == "queryMainProcessString")
+    {
+        return HandleQueryMainProcessString(pp_out_result);
+    }
+
+    return DAS_E_INVALID_ARGUMENT;
+}
+
+DasResult DasQueryComponentImpl::HandleQueryMainProcessString(
+    ExportInterface::IDasVariantVector** pp_out_result)
+{
+    if (!pp_out_result)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    // 调用 C API 获取主进程中注册的 IDasReadOnlyString
+    IDasBase* raw_obj = nullptr;
+    DasResult hr =
+        DasQueryMainProcessInterface(DasIidOf<IDasReadOnlyString>(), &raw_obj);
+    if (DAS::IsFailed(hr) || !raw_obj)
+    {
+        std::string err_msg = DAS_FMT_NS::format(
+            "DasQueryMainProcessInterface failed, hr = {:#x}",
+            static_cast<uint32_t>(hr));
+        DAS_LOG_ERROR(err_msg.c_str());
+        return hr;
+    }
+
+    // 获取字符串内容
+    const char* str = nullptr;
+    hr = static_cast<IDasReadOnlyString*>(raw_obj)->GetUtf8(&str);
+    if (DAS::IsFailed(hr))
+    {
+        DAS_LOG_ERROR("GetUtf8 failed on main process string");
+        raw_obj->Release();
+        return hr;
+    }
+
+    // 打印获取到的字符串（用于验证）
+    std::string log_msg = DAS_FMT_NS::format(
+        "queryMainProcessString got: {}",
+        str ? str : "(null)");
+    DAS_LOG_INFO(log_msg.c_str());
+
+    raw_obj->Release();
+
+    // 创建空的 IDasVariantVector 作为返回值
+    hr = CreateIDasVariantVector(pp_out_result);
+    return hr;
+}
+
+// === DasQueryComponentFactoryImpl ===
+
+DasQueryComponentFactoryImpl::DasQueryComponentFactoryImpl(uint16_t session_id)
+    : session_id_(session_id)
+{
+}
+
+DasResult DasQueryComponentFactoryImpl::GetGuid(DasGuid* p_out_guid)
+{
+    if (!p_out_guid)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+    *p_out_guid = DasIidOf<PluginInterface::IDasComponentFactory>();
+    return DAS_S_OK;
+}
+
+DasResult DasQueryComponentFactoryImpl::GetRuntimeClassName(
+    IDasReadOnlyString** pp_out_name)
+{
+    if (!pp_out_name)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+    static const char* class_name = "Das.QueryComponentFactoryImpl";
+    return CreateIDasReadOnlyStringFromUtf8(class_name, pp_out_name);
+}
+
+DasResult DasQueryComponentFactoryImpl::IsSupported(
+    const DasGuid& component_iid)
+{
+    if (component_iid == DasIidOf<PluginInterface::IDasComponent>())
+    {
+        return DAS_S_OK;
+    }
+    return DAS_E_NO_IMPLEMENTATION;
+}
+
+DasResult DasQueryComponentFactoryImpl::CreateInstance(
+    const DasGuid&                   component_iid,
+    PluginInterface::IDasComponent** pp_out_component)
+{
+    if (!pp_out_component)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    if (component_iid != DasIidOf<PluginInterface::IDasComponent>())
+    {
+        return DAS_E_NO_IMPLEMENTATION;
+    }
+
+    auto* instance = new DasQueryComponentImpl(session_id_);
+    instance->AddRef();
+    *pp_out_component = instance;
+    return DAS_S_OK;
+}
+
 // === IpcTestPlugin1 ===
 
 void IpcTestPlugin1::SetSessionId(uint16_t session_id)
@@ -73,7 +236,8 @@ DasResult IpcTestPlugin1::EnumFeature(
     PluginInterface::DasPluginFeature* p_out_feature)
 {
     static std::array features{
-        PluginInterface::DAS_PLUGIN_FEATURE_INPUT_FACTORY};
+        PluginInterface::DAS_PLUGIN_FEATURE_INPUT_FACTORY,
+        PluginInterface::DAS_PLUGIN_FEATURE_COMPONENT_FACTORY};
     try
     {
         const auto result = features.at(index);
@@ -88,22 +252,34 @@ DasResult IpcTestPlugin1::EnumFeature(
 }
 
 DasResult IpcTestPlugin1::CreateFeatureInterface(
-    size_t index,
+    size_t     index,
     IDasBase** pp_out_interface)
 {
     if (!pp_out_interface)
     {
         return DAS_E_INVALID_ARGUMENT;
     }
-    if (index > 0)
+    if (index > 1)
     {
         return DAS_E_OUT_OF_RANGE;
     }
 
-    // 创建 DasTouchMockImpl 实例
-    auto* touch_impl = new DasTouchMockImpl(session_id_);
-    touch_impl->AddRef();
-    *pp_out_interface = static_cast<PluginInterface::IDasTouch*>(touch_impl);
+    if (index == 0)
+    {
+        // 创建 DasTouchMockImpl 实例
+        auto* touch_impl = new DasTouchMockImpl(session_id_);
+        touch_impl->AddRef();
+        *pp_out_interface =
+            static_cast<PluginInterface::IDasTouch*>(touch_impl);
+    }
+    else
+    {
+        // index == 1: 创建 DasQueryComponentFactoryImpl
+        auto* factory = new DasQueryComponentFactoryImpl(session_id_);
+        factory->AddRef();
+        *pp_out_interface =
+            static_cast<PluginInterface::IDasComponentFactory*>(factory);
+    }
 
     return DAS_S_OK;
 }
