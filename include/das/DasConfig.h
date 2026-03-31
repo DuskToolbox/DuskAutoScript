@@ -23,6 +23,14 @@
     }                                                                          \
     }
 
+#define DAS_SWIG_NS_BEGIN                                                      \
+    DAS_NS_BEGIN namespace Swig                                                \
+    {
+
+#define DAS_SWIG_NS_END                                                        \
+    DAS_NS_END                                                                 \
+    }
+
 #define DAS_FULL_RANGE_OF(x) std::begin(x), std::end(x)
 
 #define DAS_DV_V(x) decltype(x), x
@@ -110,18 +118,18 @@
 // 用法: void Foo(DAS_LIFETIMEBOUND Bar& bar);
 // 编译器会在生命周期违规时发出警告
 #if defined(_SILENCE_LIFETIMEBOUND_WARNING)
-    // 显式禁用警告时，宏为空
-    #define DAS_LIFETIMEBOUND
+// 显式禁用警告时，宏为空
+#define DAS_LIFETIMEBOUND
 #elif defined(_MSC_VER) && _MSC_VER >= 1930 && __cplusplus >= 202002L
-    // MSVC 19.30+ (VS 2022 17.0+) 支持 msvc::lifetimebound
-    // 注意：需要 /std:c++20 或更高版本
-    #define DAS_LIFETIMEBOUND [[msvc::lifetimebound]]
+// MSVC 19.30+ (VS 2022 17.0+) 支持 msvc::lifetimebound
+// 注意：需要 /std:c++20 或更高版本
+#define DAS_LIFETIMEBOUND [[msvc::lifetimebound]]
 #elif defined(__clang__)
-    // Clang: 使用 _Clang::__lifetimebound__ 属性
+// Clang: 使用 _Clang::__lifetimebound__ 属性
 #define DAS_LIFETIMEBOUND [[_Clang::__lifetimebound__]]
 #else
-    // 其他编译器不支持或版本不够，宏为空
-    #define DAS_LIFETIMEBOUND
+// 其他编译器不支持或版本不够，宏为空
+#define DAS_LIFETIMEBOUND
 #endif
 
 #endif // DAS_DASCONFIG_H
