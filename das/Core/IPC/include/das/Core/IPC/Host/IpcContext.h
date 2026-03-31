@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <das/Core/IPC/BusinessThread.h>
+#include <das/Core/IPC/CurrentIpcContextScope.h>
 #include <das/Core/IPC/DefaultAsyncIpcTransport.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/Host/HandshakeHandler.h>
@@ -40,7 +41,7 @@ namespace Core
              * - IpcRunLoop：IPC 事件循环
              * - IpcCommandHandler：IPC 命令处理器
              */
-            class IpcContext : public IIpcContext
+            class IpcContext : public IIpcContext, public IResolveContext
             {
             public:
                 explicit IpcContext(const IpcContextConfig& config);
@@ -67,18 +68,18 @@ namespace Core
                  * @brief 获取 IDistributedObjectManager 实例
                  * @return IDistributedObjectManager& 对象管理器实例
                  */
-                struct IDistributedObjectManager& GetObjectManager();
+                struct IDistributedObjectManager& GetObjectManager() override;
 
                 /**
                  * @brief 启动事件循环
                  * @return DasResult 启动结果
                  */
-                DasResult Run();
+                DasResult Run() override;
 
                 /**
                  * @brief 请求停止事件循环
                  */
-                void RequestStop();
+                void RequestStop() override;
 
                 /**
                  * @brief 加载插件
@@ -103,15 +104,19 @@ namespace Core
                  */
                 void RegisterCommandHandler(
                     uint32_t       cmd_type,
-                    CommandHandler handler);
+                    CommandHandler handler) override;
 
-                bool IsConnected() const;
+                bool IsConnected() const override;
 
-                void PostCallback(IDasAsyncCallback* callback);
+                void PostCallback(IDasAsyncCallback* callback) override;
 
                 DasResult RegisterLocalObject(
                     IDasBase* object_ptr,
-                    ObjectId& out_object_id);
+                    ObjectId& out_object_id) override;
+
+                DasResult ResolveMainProcessInterface(
+                    const DasGuid& iid,
+                    IDasBase**     pp_out_object) override;
 
             private:
                 void Uninitialize();

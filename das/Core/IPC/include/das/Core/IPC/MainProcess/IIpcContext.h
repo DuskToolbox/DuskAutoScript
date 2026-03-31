@@ -162,6 +162,23 @@ namespace Core
                     const DasGuid& iid,
                     IDasBase**     pp_out) = 0;
 
+                /**
+                 * @brief Resolve a main process global service interface by IID
+                 *
+                 * - Host path: sends LOOKUP_BY_INTERFACE to main process,
+                 * creates remote proxy
+                 * - Main path: directly looks up local object from
+                 * DistributedObjectManager
+                 *
+                 * @param iid Interface GUID of the desired service
+                 * @param pp_out_object [out] Receives the interface pointer
+                 * (caller must Release)
+                 * @return DasResult DAS_S_OK on success
+                 */
+                virtual DasResult ResolveMainProcessInterface(
+                    const DasGuid& iid,
+                    IDasBase**     pp_out_object) = 0;
+
             protected:
                 virtual ~IIpcContext() = default;
 

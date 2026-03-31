@@ -12,8 +12,9 @@ DAS_CORE_IPC_NS_BEGIN
 
 BusinessThread::BusinessThread(
     IpcMessageQueue<InboundMessage>& inbound,
-    IpcRunLoop&                      run_loop)
-    : inbound_(inbound), run_loop_(run_loop)
+    IpcRunLoop&                      run_loop,
+    IResolveContext&                 resolve_context)
+    : inbound_(inbound), run_loop_(run_loop), resolve_context_(resolve_context)
 {
 }
 
@@ -63,6 +64,8 @@ bool BusinessThread::IsCurrentThread() const
 void BusinessThread::Run()
 {
     DAS_CORE_LOG_INFO("BusinessThread::Run() started");
+
+    ScopedCurrentIpcContext scope(&resolve_context_);
 
     while (running_.load())
     {

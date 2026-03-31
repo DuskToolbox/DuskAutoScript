@@ -3,6 +3,7 @@
 #include <cstring>
 #include <das/Core/IPC/AsyncOperationImpl.h>
 #include <das/Core/IPC/ConnectionManager.h>
+#include <das/Core/IPC/CurrentIpcContextScope.h>
 #include <das/Core/IPC/DasProxyBase.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/HostLauncher.h>
@@ -64,8 +65,10 @@ namespace Core
                 object_manager_.SetRunLoop(runloop_.get());
 
                 // 6. Create BusinessThread
-                business_thread_ =
-                    std::make_shared<BusinessThread>(inbound_queue_, *runloop_);
+                business_thread_ = std::make_shared<BusinessThread>(
+                    inbound_queue_,
+                    *runloop_,
+                    *this);
 
                 // 7. Initialize ProxyFactory with runloop_
                 auto& proxy_factory = ProxyFactory::GetInstance();
@@ -82,6 +85,16 @@ namespace Core
                     throw std::runtime_error(
                         "ProxyFactory initialization failed");
                 }
+
+                // 8. 创建并初始化 IpcCommandHandler
+                command_handler_ = IpcCommandHandler::Create();
+                command_handler_->SetSessionId(1);
+
+                // 9. 注册 LOOKUP_BY_INTERFACE 到 IpcRunLoop
+                runloop_->RegisterHandler(
+                    HeaderFlags::BUSINESS_CONTROL,
+                    static_cast<uint32_t>(IpcCommandType::LOOKUP_BY_INTERFACE),
+                    command_handler_.Get());
 
                 is_initialized_ = true;
             }
@@ -282,6 +295,8 @@ namespace Core
 
             DasResult IpcContext::Run()
             {
+                ScopedCurrentIpcContext scope(this);
+
                 if (!runloop_)
                 {
                     DAS_CORE_LOG_ERROR("Run: IpcRunLoop not initialized");
@@ -517,6 +532,40 @@ namespace Core
                 object_manager_.RegisterRemoteObject(object_id);
 
                 *pp_out = proxy;
+                return DAS_S_OK;
+            }
+
+            DasResult IpcContext::ResolveMainProcessInterface(
+                const DasGuid& iid,
+                IDasBase**     pp_out_object)
+            {
+                if (!pp_out_object)
+                {
+                    return DAS_E_INVALID_ARGUMENT;
+                }
+                *pp_out_object = nullptr;
+
+                uint32_t interface_id =
+                    RemoteObjectRegistry::ComputeInterfaceId(iid);
+                RemoteObjectInfo info;
+                bool             found =
+                    RemoteObjectRegistry::GetInstance().LookupByInterface(
+                        interface_id,
+                        info);
+                if (!found)
+                {
+                    return DAS_E_IPC_OBJECT_NOT_FOUND;
+                }
+
+                IDasBase* local_obj = nullptr;
+                DasResult result =
+                    object_manager_.LookupObject(info.object_id, &local_obj);
+                if (DAS::IsFailed(result) || !local_obj)
+                {
+                    return DAS_E_IPC_OBJECT_NOT_FOUND;
+                }
+
+                *pp_out_object = local_obj;
                 return DAS_S_OK;
             }
 

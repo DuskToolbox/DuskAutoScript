@@ -4,7 +4,9 @@
 #include <atomic>
 #include <chrono>
 #include <das/Core/IPC/BusinessThread.h>
+#include <das/Core/IPC/CurrentIpcContextScope.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
+#include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcMessageQueue.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
@@ -41,7 +43,7 @@ namespace Core
              * - RemoteObjectRegistry（单例）：远程对象注册表
              * - IpcRunLoop：IPC 运行循环（持有 ConnectionManager）
              */
-            class IpcContext final : public IIpcContext
+            class IpcContext final : public IIpcContext, public IResolveContext
             {
             public:
                 explicit IpcContext(bool enable_heartbeat);
@@ -85,6 +87,10 @@ namespace Core
                     const DasGuid& iid,
                     IDasBase**     pp_out) override;
 
+                DasResult ResolveMainProcessInterface(
+                    const DasGuid& iid,
+                    IDasBase**     pp_out_object) override;
+
                 /// Internal registration method (called by HostLauncher after
                 /// Start succeeds)
                 DasResult InternalRegisterHostLauncher();
@@ -94,6 +100,9 @@ namespace Core
 
                 /// 分布式对象管理器（值成员）
                 DistributedObjectManager object_manager_;
+
+                /// IPC 命令处理器
+                DasPtr<IpcCommandHandler> command_handler_;
 
                 /// IPC 运行循环
                 std::unique_ptr<IpcRunLoop> runloop_;

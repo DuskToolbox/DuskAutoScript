@@ -2,6 +2,7 @@
 #define DAS_CORE_IPC_BUSINESS_THREAD_H
 
 #include <atomic>
+#include <das/Core/IPC/CurrentIpcContextScope.h>
 #include <das/Core/IPC/IpcMessageQueue.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <memory>
@@ -27,7 +28,8 @@ public:
      */
     BusinessThread(
         IpcMessageQueue<InboundMessage>& inbound,
-        IpcRunLoop&                      run_loop);
+        IpcRunLoop&                      run_loop,
+        IResolveContext&                 resolve_context);
 
     ~BusinessThread();
 
@@ -98,6 +100,9 @@ private:
 
     /// IpcRunLoop 引用（用于 PostSend 和 CompletePendingCall）
     IpcRunLoop& run_loop_;
+
+    /// IResolveContext 引用（用于绑定 g_current_context）
+    IResolveContext& resolve_context_;
 
     /// DistributedObjectManager 指针（由 Start() 设置）
     DistributedObjectManager* object_manager_ = nullptr;

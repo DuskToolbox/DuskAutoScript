@@ -1,7 +1,11 @@
+#include <IpcProxyFactory.h>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/process/v2/pid.hpp>
+#include <das/Core/IPC/BusinessControlRequestRaw.h>
 #include <das/Core/IPC/ConnectionManager.h>
+#include <das/Core/IPC/CurrentIpcContextScope.h>
+#include <das/Core/IPC/DasProxyBase.h>
 #include <das/Core/IPC/DefaultAsyncIpcTransport.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/Host/HandshakeHandler.h>
@@ -12,6 +16,7 @@
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/IpcTransport.h>
+#include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
@@ -218,7 +223,8 @@ namespace Core
                 // 6. 创建 BusinessThread
                 business_thread_ = std::make_shared<BusinessThread>(
                     inbound_queue_,
-                    *run_loop_);
+                    *run_loop_,
+                    *this);
 
                 // Create() 已包含初始化，不需要再次调用 Initialize()
                 result = DAS_S_OK;
@@ -501,6 +507,8 @@ namespace Core
 
             DasResult IpcContext::Run()
             {
+                ScopedCurrentIpcContext scope(this);
+
                 if (!is_initialized_)
                 {
                     return DAS_E_FAIL;
@@ -739,6 +747,94 @@ namespace Core
                 boost::asio::post(
                     run_loop_->GetIoContext(),
                     [ptr = std::move(ptr)]() { ptr->Do(); });
+            }
+
+            DasResult IpcContext::ResolveMainProcessInterface(
+                const DasGuid& iid,
+                IDasBase**     pp_out_object)
+            {
+                if (!pp_out_object)
+                {
+                    return DAS_E_INVALID_ARGUMENT;
+                }
+                *pp_out_object = nullptr;
+
+                if (!run_loop_ || !business_thread_)
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "IpcRunLoop or BusinessThread not initialized");
+                    return DAS_E_IPC_NOT_INITIALIZED;
+                }
+
+                DAS_CORE_LOG_TRACE("Resolving main process interface");
+
+                // Build LOOKUP_BY_INTERFACE request body
+                LookupByInterfacePayload lookup_payload{.iid = iid};
+                std::vector<uint8_t>     response;
+
+                DasResult result = SendBusinessControlRequestRaw(
+                    *run_loop_,
+                    business_thread_,
+                    session_id_,
+                    1, // target_session_id = main process
+                    IpcCommandType::LOOKUP_BY_INTERFACE,
+                    reinterpret_cast<const uint8_t*>(&lookup_payload),
+                    sizeof(lookup_payload),
+                    response);
+
+                if (DAS::IsFailed(result))
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "Failed to resolve main process interface, "
+                        "error = {}",
+                        static_cast<int>(result));
+                    return result;
+                }
+
+                // Parse response as ObjectInfoResponsePayload
+                // Layout: ObjectId(8) + DasGuid(16) + session_id(2) +
+                // version(2)
+                // + name_len(2) + name[name_len]
+                if (response.size() < sizeof(ObjectId) + sizeof(DasGuid))
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "Response too small to parse ObjectInfoResponsePayload, "
+                        "size = {}",
+                        response.size());
+                    return DAS_E_IPC_INVALID_MESSAGE_BODY;
+                }
+
+                ObjectId object_id;
+                std::memcpy(&object_id, response.data(), sizeof(ObjectId));
+
+                // Compute interface hash from the IID
+                uint32_t interface_hash =
+                    RemoteObjectRegistry::ComputeInterfaceId(iid);
+
+                // Create proxy using DasIpcProxy::CreateProxyByInterfaceId
+                IDasBase* proxy = DasIpcProxy::CreateProxyByInterfaceId(
+                    interface_hash,
+                    object_id,
+                    *run_loop_,
+                    business_thread_,
+                    object_manager_);
+
+                if (!proxy)
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "Failed to create proxy for interface_id = {}",
+                        interface_hash);
+                    return DAS_E_NO_INTERFACE;
+                }
+
+                // Register remote object via object_manager_
+                object_manager_.RegisterRemoteObject(object_id);
+
+                *pp_out_object = proxy;
+
+                DAS_CORE_LOG_TRACE(
+                    "Successfully resolved main process interface");
+                return DAS_S_OK;
             }
 
             DasResult IpcContext::RegisterLocalObject(
