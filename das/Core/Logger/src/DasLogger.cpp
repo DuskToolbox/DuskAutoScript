@@ -1,11 +1,12 @@
-#include "das/DasPtr.hpp"
-#include "das/DasString.hpp"
-#include "spdlog/common.h"
 #include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
+#include <das/DasPtr.hpp>
+#include <das/DasString.hpp>
+#include <das/DasSwigApi.h>
 #include <das/_autogen/idl/abi/DasLogger.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.DasLogger.hpp>
 #include <optional>
+#include <spdlog/common.h>
 
 namespace DC = DAS::Core;
 
@@ -33,6 +34,49 @@ void DasLogError(IDasReadOnlyString* p_string)
     DasLogErrorU8(p_u8_string);
 }
 
+void DasLogWarning(IDasReadOnlyString* p_string)
+{
+    DAS::DasPtr<IDasReadOnlyString> p_string_holder{p_string};
+    const char*                     p_u8_string{};
+
+    p_string_holder->GetUtf8(&p_u8_string);
+    DasLogWarningU8(p_u8_string);
+}
+
+void DasLogInfo(IDasReadOnlyString* p_string)
+{
+    Das::DasPtr<IDasReadOnlyString> p_string_holder{p_string};
+    const char*                     p_u8_string{};
+
+    p_string_holder->GetUtf8(&p_u8_string);
+    DasLogInfoU8(p_u8_string);
+}
+
+DAS_SWIG_NS_BEGIN
+
+void DasLogError(DasReadOnlyString das_string)
+{
+    DAS::DasPtr<IDasReadOnlyString> p_string{};
+    das_string.GetImpl(p_string.Put());
+    DasLogError(p_string.Get());
+}
+
+void DasLogWarning(DasReadOnlyString das_string)
+{
+    DAS::DasPtr<IDasReadOnlyString> p_string{};
+    das_string.GetImpl(p_string.Put());
+    DasLogWarning(p_string.Get());
+}
+
+void DasLogInfo(DasReadOnlyString das_string)
+{
+    DAS::DasPtr<IDasReadOnlyString> p_string{};
+    das_string.GetImpl(p_string.Put());
+    DasLogInfo(p_string.Get());
+}
+
+DAS_SWIG_NS_END
+
 void DasLogErrorU8(const char* p_string) { DC::g_logger->info(p_string); }
 
 void DasLogErrorU8WithSourceLocation(
@@ -50,15 +94,6 @@ void DasLogErrorU8WithSourceLocation(
 }
 
 // ----------------------------------------------------------------
-
-void DasLogWarning(IDasReadOnlyString* p_string)
-{
-    DAS::DasPtr<IDasReadOnlyString> p_string_holder{p_string};
-    const char*                     p_u8_string{};
-
-    p_string_holder->GetUtf8(&p_u8_string);
-    DasLogWarningU8(p_u8_string);
-}
 
 void DasLogWarningU8(const char* p_string) { DC::g_logger->warn(p_string); }
 
@@ -84,15 +119,6 @@ void DasLogWarningU8WithSourceLocation(
 
 // ----------------------------------------------------------------
 
-void DasLogInfo(IDasReadOnlyString* p_string)
-{
-    Das::DasPtr<IDasReadOnlyString> p_string_holder{p_string};
-    const char*                     p_u8_string{};
-
-    p_string_holder->GetUtf8(&p_u8_string);
-    DasLogInfoU8(p_u8_string);
-}
-
 void DasLogInfoU8(const char* p_string) { DC::g_logger->info(p_string); }
 
 void DasLogInfoU8WithSourceLocation(
@@ -110,24 +136,3 @@ void DasLogInfoU8WithSourceLocation(
 }
 
 // ----------------------------------------------------------------
-
-void DasLogError(DasReadOnlyString das_string)
-{
-    Das::DasPtr<IDasReadOnlyString> p_string{};
-    das_string.GetImpl(p_string.Put());
-    DasLogError(p_string.Get());
-}
-
-void DasLogWarning(DasReadOnlyString das_string)
-{
-    Das::DasPtr<IDasReadOnlyString> p_string{};
-    das_string.GetImpl(p_string.Put());
-    DasLogWarning(p_string.Get());
-}
-
-void DasLogInfo(DasReadOnlyString das_string)
-{
-    Das::DasPtr<IDasReadOnlyString> p_string{};
-    das_string.GetImpl(p_string.Put());
-    DasLogInfo(p_string.Get());
-}
