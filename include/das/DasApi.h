@@ -179,6 +179,19 @@ DAS_C_API DasResult DasSetIpcTimeout(uint32_t timeout_ms);
  */
 DAS_C_API DasResult DasGetIpcTimeout(uint32_t* p_out_timeout_ms);
 
+/**
+ * @brief 查询主进程全局服务接口
+ *
+ * 通过 IID 获取主进程中注册的全局服务对象。
+ * 插件可使用此接口从 Host 进程访问主进程提供的服务。
+ *
+ * @param iid 目标接口的 GUID
+ * @param pp_out_object [out] 接收接口指针（调用者必须 Release）
+ * @return DasResult DAS_S_OK 成功，DAS_E_OBJECT_NOT_INIT 未绑定 IPC 上下文
+ */
+DAS_C_API DasResult
+DasQueryMainProcessInterface(const DasGuid& iid, IDasBase** pp_out_object);
+
 #define DAS_LOG_ERROR(...) DAS_LOG_WITH_SOURCE_LOCATION(Error, __VA_ARGS__)
 #define DAS_LOG_WARNING(...) DAS_LOG_WITH_SOURCE_LOCATION(Warning, __VA_ARGS__)
 #define DAS_LOG_INFO(...) DAS_LOG_WITH_SOURCE_LOCATION(Info, __VA_ARGS__)
