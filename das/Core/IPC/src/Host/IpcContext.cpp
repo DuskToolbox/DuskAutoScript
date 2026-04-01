@@ -16,6 +16,7 @@
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/IpcTransport.h>
+#include <das/Core/IPC/ManualProxyRegistry.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <das/Core/Logger/Logger.h>
@@ -359,6 +360,18 @@ namespace Core
                     static_cast<uint32_t>(
                         HandshakeInterfaceId::HANDSHAKE_IFACE_GOODBYE),
                     handshake_handler_.Get());
+
+                // REMOTE_RELEASE (fire-and-forget EVENT)
+                run_loop_->RegisterHandler(
+                    HeaderFlags::BUSINESS_CONTROL,
+                    static_cast<uint32_t>(IpcCommandType::REMOTE_RELEASE),
+                    command_handler_.Get());
+
+                // RELEASE_SHM_BLOCK (fire-and-forget EVENT)
+                run_loop_->RegisterHandler(
+                    HeaderFlags::BUSINESS_CONTROL,
+                    static_cast<uint32_t>(IpcCommandType::RELEASE_SHM_BLOCK),
+                    command_handler_.Get());
 
                 DAS_LOG_INFO(msg.c_str());
 
@@ -811,8 +824,8 @@ namespace Core
                 uint32_t interface_hash =
                     RemoteObjectRegistry::ComputeInterfaceId(iid);
 
-                // Create proxy using DasIpcProxy::CreateProxyByInterfaceId
-                IDasBase* proxy = DasIpcProxy::CreateProxyByInterfaceId(
+                // Create proxy using fallback factory
+                IDasBase* proxy = CreateProxyByInterfaceIdWithFallback(
                     interface_hash,
                     object_id,
                     *run_loop_,

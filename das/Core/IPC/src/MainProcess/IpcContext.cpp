@@ -96,6 +96,18 @@ namespace Core
                     static_cast<uint32_t>(IpcCommandType::LOOKUP_BY_INTERFACE),
                     command_handler_.Get());
 
+                // REMOTE_RELEASE (fire-and-forget EVENT)
+                runloop_->RegisterHandler(
+                    HeaderFlags::BUSINESS_CONTROL,
+                    static_cast<uint32_t>(IpcCommandType::REMOTE_RELEASE),
+                    command_handler_.Get());
+
+                // RELEASE_SHM_BLOCK (fire-and-forget EVENT)
+                runloop_->RegisterHandler(
+                    HeaderFlags::BUSINESS_CONTROL,
+                    static_cast<uint32_t>(IpcCommandType::RELEASE_SHM_BLOCK),
+                    command_handler_.Get());
+
                 is_initialized_ = true;
             }
 

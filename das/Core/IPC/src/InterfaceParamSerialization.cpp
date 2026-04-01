@@ -4,6 +4,7 @@
 #include <das/Core/IPC/DasProxyBase.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IpcRunLoop.h>
+#include <das/Core/IPC/ManualProxyRegistry.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
@@ -101,8 +102,8 @@ DasResult DeserializeInInterfaceParam(
         return result;
     }
 
-    // Remote object: create proxy
-    IDasBase* proxy = DasIpcProxy::CreateProxyByInterfaceId(
+    // Remote object: create proxy (autogen first, then manual fallback)
+    IDasBase* proxy = CreateProxyByInterfaceIdWithFallback(
         interface_id,
         id,
         run_loop,
