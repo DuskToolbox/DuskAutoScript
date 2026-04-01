@@ -628,10 +628,17 @@ Win32AsyncIpcTransport::ReceiveCoroutine()
 
     if (!validated_header.has_value())
     {
+        // Log raw bytes for debugging
+        std::string hex_bytes;
+        for (size_t i = 0; i < header_buffer.size(); ++i)
+        {
+            hex_bytes += DAS_FMT_NS::format("{:02X} ", header_buffer[i]);
+        }
         DAS_LOG_ERROR(
             DAS_FMT_NS::format(
-                "Header validation failed: {}",
-                validation_error.message)
+                "Header validation failed: {}, raw bytes: [{}]",
+                validation_error.message,
+                hex_bytes)
                 .c_str());
         co_return DAS_E_IPC_INVALID_MESSAGE;
     }
@@ -639,6 +646,17 @@ Win32AsyncIpcTransport::ReceiveCoroutine()
     auto header = *validated_header;
 
     const auto body_size = header.Raw().body_size;
+    DAS_LOG_INFO(
+        DAS_FMT_NS::format(
+            "ReceiveCoroutine: received header: msg_type={}, interface_id={}, "
+            "call_id={}, body_size={}, header_flags={}",
+            static_cast<int>(header.Raw().message_type),
+            header.Raw().interface_id,
+            header.Raw().call_id,
+            body_size,
+            static_cast<int>(header.Raw().header_flags))
+            .c_str());
+
     if (body_size > max_message_size_)
     {
         DAS_LOG_ERROR(
