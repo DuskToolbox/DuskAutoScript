@@ -164,10 +164,24 @@ DasResult DasQueryComponentImpl::HandleQueryMainProcessString(
         str ? str : "(null)");
     DAS_LOG_INFO(log_msg.c_str());
 
+    // 创建结果 VariantVector 并回传读取到的字符串
+    DAS::DasPtr<IDasReadOnlyString> return_string;
+    hr = CreateIDasReadOnlyStringFromUtf8(str, return_string.Put());
+    if (DAS::IsFailed(hr))
+    {
+        DAS_LOG_ERROR("CreateIDasReadOnlyStringFromUtf8 failed");
+        raw_obj->Release();
+        return hr;
+    }
+
     raw_obj->Release();
 
-    // 创建空的 IDasVariantVector 作为返回值
     hr = CreateIDasVariantVector(pp_out_result);
+    if (DAS::IsFailed(hr))
+    {
+        return hr;
+    }
+    hr = (*pp_out_result)->PushBackString(return_string.Get());
     return hr;
 }
 

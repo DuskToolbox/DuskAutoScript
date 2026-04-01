@@ -21,6 +21,7 @@
 #include "IDasComponent.h"
 #include "IDasPluginPackage.h"
 #include "das/DasTypes.hpp"
+#include <das/DasString.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -1156,4 +1157,160 @@ TEST_F(IpcMultiProcessTestIntegration, QueryMainProcessInterface_E2E)
         "[QueryMainProcessInterface_E2E] Test passed — "
         "Host plugin successfully queried main process "
         "IDasReadOnlyString via DasQueryMainProcessInterface");
+}
+
+// ====== CrossProcess QueryMainProcessString E2E 测试 ======
+
+/**
+ * @brief 测试跨进程查询主进程字符串并验证返回值
+ *
+ * 完整 E2E 流程：
+ * 1. 主进程注册一个 IDasReadOnlyString 到 DistributedObjectManager +
+ *    RemoteObjectRegistry
+ * 2. 启动 Host 进程，加载 IpcTestPlugin1
+ * 3. 通过 IDasComponentFactory 创建 IDasComponent
+ * 4. 调用 Dispatch("queryMainProcessString")
+ * 5. 验证返回的 VariantVector 包含正确的字符串值
+ */
+TEST_F(IpcMultiProcessTestIntegration, CrossProcess_QueryMainProcessString)
+{
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHost.exe not found";
+    }
+
+    // 1. 获取插件 JSON 路径
+    std::string plugin_path;
+    try
+    {
+        plugin_path = IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin1");
+    }
+    catch (const std::exception& e)
+    {
+        GTEST_SKIP() << "Plugin JSON not found: " << e.what();
+    }
+
+    // 2. 在主进程中注册一个 IDasReadOnlyString 服务
+    DAS::DasPtr<IDasReadOnlyString> service_string;
+    DasResult create_result = CreateIDasReadOnlyStringFromUtf8(
+        "Hello from CrossProcess E2E",
+        service_string.Put());
+    ASSERT_EQ(create_result, DAS_S_OK) << "Failed to create test string";
+
+    // 注册到 DistributedObjectManager
+    DAS::Core::IPC::ObjectId service_obj_id{};
+    DasResult result = ctx_->GetObjectManager().RegisterLocalObject(
+        service_string.Get(),
+        service_obj_id);
+    ASSERT_EQ(result, DAS_S_OK) << "RegisterLocalObject failed";
+
+    // 注册到 RemoteObjectRegistry（通过 IID 可查找）
+    result = ctx_->GetRegistry().RegisterObject(
+        service_obj_id,
+        DasIidOf<IDasReadOnlyString>(),
+        1, // session_id (main process)
+        "CrossProcess.TestReadOnlyString",
+        1);
+    ASSERT_EQ(result, DAS_S_OK)
+        << "RegisterObject to RemoteObjectRegistry failed";
+
+    DAS_CORE_LOG_INFO(
+        "[CrossProcess_QueryMainProcessString] Registered "
+        "IDasReadOnlyString service in main process, "
+        "obj_id={{session:{}, gen:{}, local:{}}}",
+        service_obj_id.session_id,
+        service_obj_id.generation,
+        service_obj_id.local_id);
+
+    // 3. 启动 Host 进程
+    result = StartHostAndSetupRunLoop();
+    ASSERT_EQ(result, DAS_S_OK);
+
+    // 4. 加载 IpcTestPlugin1
+    DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
+    result =
+        ctx_->LoadPluginAsync(launcher_.Get(), plugin_path.c_str(), op.Put());
+    ASSERT_EQ(result, DAS_S_OK);
+
+    auto opt = DAS::Core::IPC::wait(
+        GetContext(),
+        DAS::Core::IPC::async_op(GetContext(), std::move(op)));
+    ASSERT_TRUE(opt.has_value()) << "Load plugin: wait failed";
+
+    auto& [load_result, object_id] = *opt;
+    ASSERT_EQ(load_result, DAS_S_OK) << "Load plugin failed";
+
+    // 5. CreateRemoteProxy 获取 IDasPluginPackage
+    DAS::DasPtr<IDasBase> raw_proxy;
+    result = ctx_->CreateRemoteProxy(
+        object_id,
+        DasIidOf<IDasBase>(),
+        raw_proxy.Put());
+    ASSERT_EQ(result, DAS_S_OK);
+
+    DAS::PluginInterface::DasPluginPackage plugin_package;
+    ASSERT_EQ(raw_proxy.As(plugin_package.Put()), DAS_S_OK);
+
+    // 6. CreateFeatureInterface(1) → IDasComponentFactory
+    IDasBase* factory_base_raw = nullptr;
+    result = plugin_package->CreateFeatureInterface(1, &factory_base_raw);
+    ASSERT_EQ(result, DAS_S_OK);
+    ASSERT_NE(factory_base_raw, nullptr);
+    DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+
+    DAS::DasPtr<DAS::PluginInterface::IDasComponentFactory> factory;
+    ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
+
+    // 7. CreateInstance → IDasComponent
+    ASSERT_EQ(
+        factory->IsSupported(DasIidOf<DAS::PluginInterface::IDasComponent>()),
+        DAS_S_OK);
+
+    DAS::PluginInterface::IDasComponent* component_raw = nullptr;
+    result = factory->CreateInstance(
+        DasIidOf<DAS::PluginInterface::IDasComponent>(),
+        &component_raw);
+    ASSERT_EQ(result, DAS_S_OK);
+    ASSERT_NE(component_raw, nullptr);
+    DAS::DasPtr<DAS::PluginInterface::IDasComponent> component(component_raw);
+
+    // 8. Dispatch("queryMainProcessString") — 核心验证
+    {
+        DasReadOnlyString method_name{"queryMainProcessString"};
+        DAS::ExportInterface::DasVariantVector dispatch_result;
+        DAS::ExportInterface::DasVariantVector params;
+        ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
+
+        DasResult dispatch_hr = component->Dispatch(
+            method_name.Get(),
+            params.Get(),
+            dispatch_result.Put());
+        ASSERT_EQ(dispatch_hr, DAS_S_OK)
+            << "Dispatch(queryMainProcessString) failed";
+
+        // 验证返回的 VariantVector 包含 1 个元素
+        ASSERT_NE(dispatch_result.Get(), nullptr);
+        uint64_t size = dispatch_result->GetSize();
+        ASSERT_EQ(size, 1u) << "Expected 1 element in result, got " << size;
+
+        // 验证返回的字符串与注册的一致
+        IDasReadOnlyString* out_string = nullptr;
+        DasResult           get_hr = dispatch_result->GetString(0, &out_string);
+        ASSERT_EQ(get_hr, DAS_S_OK) << "GetString(0) failed";
+        ASSERT_NE(out_string, nullptr);
+
+        const char* out_str = nullptr;
+        DasResult   utf8_hr = out_string->GetUtf8(&out_str);
+        ASSERT_EQ(utf8_hr, DAS_S_OK) << "GetUtf8 failed";
+        ASSERT_NE(out_str, nullptr);
+        EXPECT_STREQ(out_str, "Hello from CrossProcess E2E")
+            << "Returned string does not match the registered value";
+
+        out_string->Release();
+    }
+
+    DAS_CORE_LOG_INFO(
+        "[CrossProcess_QueryMainProcessString] Test passed — "
+        "Host plugin queried main process IDasReadOnlyString "
+        "and returned correct value via IPC");
 }
