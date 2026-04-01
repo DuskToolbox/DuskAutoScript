@@ -4,6 +4,7 @@
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IPCProxyBase.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
+#include <das/Core/IPC/ManualProxyRegistry.h>
 #include <das/Core/IPC/MemorySerializer.h>
 #include <das/DasConfig.h>
 #include <das/DasTypes.hpp>
@@ -49,11 +50,12 @@ public:
             auto release_header =
                 IPCMessageHeaderBuilder()
                     .SetMessageType(MessageType::EVENT)
-                    .SetHeaderFlags(HeaderFlags::CONTROL_PLANE)
+                    .SetHeaderFlags(HeaderFlags::BUSINESS_CONTROL)
                     .SetInterfaceId(
                         static_cast<uint32_t>(IpcCommandType::REMOTE_RELEASE))
                     .SetSourceSessionId(GetSourceSessionId())
                     .SetTargetSessionId(oid.session_id)
+                    .SetBodySize(static_cast<uint32_t>(release_body.size()))
                     .Build();
 
             // PostSend 是 fire-and-forget，不检查结果
@@ -132,8 +134,8 @@ public:
         // 根据 interface_id 创建对应的 Proxy
         ObjectId new_obj_id = DecodeObjectId(new_object_id);
 
-        // 使用生成的 CreateProxyByInterfaceId 创建 Proxy
-        IDasBase* proxy = DasIpcProxy::CreateProxyByInterfaceId(
+        // 使用 fallback 机制创建 Proxy：先 autogen，再手动注册
+        IDasBase* proxy = CreateProxyByInterfaceIdWithFallback(
             interface_id,
             new_obj_id,
             *GetRunLoop(),
