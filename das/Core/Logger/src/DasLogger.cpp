@@ -1,4 +1,4 @@
-#include <das/Core/Logger/Logger.h>
+﻿#include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
@@ -77,7 +77,7 @@ void DasLogInfo(DasReadOnlyString das_string)
 
 DAS_SWIG_NS_END
 
-void DasLogErrorU8(const char* p_string) { DC::g_logger->info(p_string); }
+void DasLogErrorU8(const char* p_string) { DC::g_logger->error(p_string); }
 
 void DasLogErrorU8WithSourceLocation(
     const char*                               p_string,
@@ -136,3 +136,25 @@ void DasLogInfoU8WithSourceLocation(
 }
 
 // ----------------------------------------------------------------
+
+void DasLogDebugU8(const char* p_string) { DC::g_logger->debug(p_string); }
+
+void DasLogDebugU8WithSourceLocation(
+    const char*                               p_string,
+    DAS::ExportInterface::IDasSourceLocation* p_location)
+{
+    if (const auto opt_location = Details::ToSpdlogSourceLocation(p_location))
+    {
+        if (opt_location)
+        {
+            DC::g_logger->log(
+                opt_location.value(),
+                spdlog::level::debug,
+                p_string);
+        }
+        else
+        {
+            DasLogDebugU8(p_string);
+        }
+    }
+}

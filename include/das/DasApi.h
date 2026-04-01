@@ -76,6 +76,12 @@ DAS_C_API void DasLogWarningU8(const char* p_string);
 
 DAS_C_API void DasLogErrorU8(const char* p_string);
 
+DAS_C_API void DasLogDebugU8(const char* p_string);
+
+DAS_C_API void DasLogDebugU8WithSourceLocation(
+    const char* p_string,
+    DAS::ExportInterface::IDasSourceLocation*);
+
 DAS_C_API void DasLogInfoU8WithSourceLocation(
     const char* p_string,
     DAS::ExportInterface::IDasSourceLocation*);
@@ -195,6 +201,7 @@ DasQueryMainProcessInterface(const DasGuid& iid, IDasBase** pp_out_object);
 #define DAS_LOG_ERROR(...) DAS_LOG_WITH_SOURCE_LOCATION(Error, __VA_ARGS__)
 #define DAS_LOG_WARNING(...) DAS_LOG_WITH_SOURCE_LOCATION(Warning, __VA_ARGS__)
 #define DAS_LOG_INFO(...) DAS_LOG_WITH_SOURCE_LOCATION(Info, __VA_ARGS__)
+#define DAS_LOG_DEBUG(...) DAS_LOG_WITH_SOURCE_LOCATION(Debug, __VA_ARGS__)
 
 struct DasU8StringOnStack final : IDasReadOnlyString
 {
