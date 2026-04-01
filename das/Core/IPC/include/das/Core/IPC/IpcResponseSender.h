@@ -30,17 +30,38 @@ class IpcResponseSender
 {
 public:
     /**
-     * @brief 构造函数（IO 线程模式）
+     * @brief 构造函数（IO 线程模式，仅 transport）
      * @param transport 异步 IPC 传输层（必须有效）
+     *
+     * 此模式下 SendResponse 会失败（无 run_loop），
+     * SendResponseAsync 直接通过 transport 发送（绕过队列）。
+     * 仅用于无法获取 IpcRunLoop 的场景。
      */
     explicit IpcResponseSender(
         DefaultAsyncIpcTransport& transport DAS_LIFETIMEBOUND);
 
     /**
-     * @brief 构造函数（业务线程模式）
+     * @brief 构造函数（业务线程模式，仅 run_loop）
      * @param run_loop IpcRunLoop 引用（用于 PostSend 投递）
+     *
+     * 此模式下 SendResponse 通过 PostSend 投递到 IO 线程队列。
+     * SendResponseAsync 通过 PostSendWithTransport 投递（需要 transport
+     * 也被设置）。
      */
     explicit IpcResponseSender(IpcRunLoop& run_loop DAS_LIFETIMEBOUND);
+
+    /**
+     * @brief 构造函数（双模式，IO 线程协程中使用）
+     * @param transport 异步 IPC 传输层（必须有效）
+     * @param run_loop IpcRunLoop 引用（用于发送队列序列化）
+     *
+     * 推荐在 IO 线程协程中使用此构造函数。
+     * SendResponse 和 SendResponseAsync 都通过发送队列序列化，
+     * 防止多个 async_write 并发写入同一管道。
+     */
+    IpcResponseSender(
+        DefaultAsyncIpcTransport& transport DAS_LIFETIMEBOUND,
+        IpcRunLoop& run_loop                DAS_LIFETIMEBOUND);
 
     /**
      * @brief 同步发送响应（业务线程版本）
