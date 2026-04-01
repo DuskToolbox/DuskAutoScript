@@ -388,36 +388,34 @@ namespace Core
                 // 停止父进程监控线程
                 StopParentProcessMonitor();
 
-                // 1. 先关闭 transport（自己持有的）
-                //    这会导致 ReceiveCoroutine() 抛出 operation_aborted
-                // unique_ptr 析构会自动调用 Uninitialize()
-                async_transport_.reset();
-
-                // 2. 关闭入站队列，让业务线程的 Pop() 返回 nullopt
+                // 1. 关闭入站队列，让业务线程的 Pop() 返回 nullopt
                 inbound_queue_.Uninitialize();
 
-                // 3. 停止业务线程（会 join）
+                // 2. 停止业务线程（会 join）
                 if (business_thread_)
                 {
                     business_thread_->Stop();
                     business_thread_.reset();
                 }
 
-                // 4. 停止事件循环
+                // 3. 停止事件循环（必须在 transport 析构之前）
+                //    确保 io_context 已停止，这样 AsyncMutex 析构时走安全路径
                 if (run_loop_)
                 {
                     run_loop_->RequestStop();
                 }
 
+                // 4. 关闭 transport（会导致 ReceiveCoroutine() 抛出
+                // operation_aborted）
+                //    unique_ptr 析构会自动调用 Uninitialize()
+                //    此时 io_context 已停止，AsyncMutex 析构是安全的
+                async_transport_.reset();
+
                 // 5. 关闭 IpcRunLoop（RAII：unique_ptr 析构自动调用
                 // Uninitialize）
                 //    必须在关闭 HandshakeHandler 之前，因为 handlers_by_flags_
                 //    中存储的 DasPtr 会调用 handler->Release()
-                if (run_loop_)
-                {
-                    run_loop_->RequestStop();
-                    run_loop_.reset();
-                }
+                run_loop_.reset();
 
                 // 6. HandshakeHandler 和 CommandHandler 使用 DasPtr 管理
                 //    析构时自动减少引用计数，无需手动 reset

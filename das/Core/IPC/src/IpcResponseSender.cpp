@@ -34,8 +34,8 @@ DasResult IpcResponseSender::SendResponse(
     if (transport_ && run_loop_)
     {
         DAS_CORE_LOG_DEBUG(
-                    "SendResponse: routing through send queue, body_size = {}",
-                    body.size());
+            "SendResponse: routing through send queue, body_size = {}",
+            body.size());
         std::vector<uint8_t> body_copy(body);
         return run_loop_->PostSendWithTransport(
             transport_,
@@ -47,8 +47,8 @@ DasResult IpcResponseSender::SendResponse(
     if (run_loop_)
     {
         DAS_CORE_LOG_DEBUG(
-                    "SendResponse: routing through PostSend, body_size = {}",
-                    body.size());
+            "SendResponse: routing through PostSend, body_size = {}",
+            body.size());
         std::vector<uint8_t> body_copy(body);
         return run_loop_->PostSend(validated_header, std::move(body_copy));
     }
@@ -65,30 +65,27 @@ boost::asio::awaitable<DasResult> IpcResponseSender::SendResponseAsync(
     if (transport_ && run_loop_)
     {
         DAS_CORE_LOG_DEBUG(
-                    "SendResponseAsync: routing through send queue, body_size = {}",
-                    body.size());
+            "SendResponseAsync: routing through send queue, body_size = {}",
+            body.size());
         std::vector<uint8_t> body_copy(body);
-        DasResult result = run_loop_->PostSendWithTransport(
+        DasResult            result = run_loop_->PostSendWithTransport(
             transport_,
             validated_header,
             std::move(body_copy));
         co_return result;
     }
 
-    // IO thread mode: directly co_await transport send (legacy fallback)
+    // IO thread mode: transport-only is deprecated (requires run_loop for
+    // per-transport mutex serialization)
     if (transport_)
     {
-        DAS_CORE_LOG_DEBUG(
-                    "SendResponseAsync: direct transport send, body_size = {}",
-                    body.size());
-        co_return co_await transport_->SendCoroutine(
-            validated_header,
-            body.data(),
-            body.size());
+        DAS_CORE_LOG_ERROR(
+            "SendResponseAsync: transport-only mode is deprecated, "
+            "requires run_loop for queue serialization");
+        co_return DAS_E_IPC_NOT_INITIALIZED;
     }
 
-    DAS_CORE_LOG_ERROR(
-        "SendResponseAsync: no valid transport");
+    DAS_CORE_LOG_ERROR("SendResponseAsync: no valid transport");
     co_return DAS_E_IPC_NOT_INITIALIZED;
 }
 

@@ -16,26 +16,21 @@
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <queue>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/co_spawn.hpp>
-#include <boost/asio/execution.hpp>
 #include <boost/asio/executor_work_guard.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/steady_timer.hpp>
-#include <boost/asio/strand.hpp>
 
 #include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/DefaultAsyncIpcTransport.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IpcResponseSender.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
-
-#include <memory>
 
 DAS_CORE_IPC_NS_BEGIN
 
@@ -500,15 +495,6 @@ public:
         std::chrono::steady_clock::time_point deadline,
         PendingCallCompletion                 on_complete);
 
-    /**
-     * @brief Process the next pending send from the queue.
-     *
-     * Called after each SendCoroutine completes to drain the send queue.
-     * Guarantees that at most one SendCoroutine is in-flight at any time,
-     * preventing concurrent async_write on the same pipe.
-     */
-    void ProcessNextSend();
-
     //=========================================================================
     // 成员变量
     //=========================================================================
@@ -526,25 +512,6 @@ public:
 
     /// io_context 用于驱动异步 I/O
     std::unique_ptr<boost::asio::io_context> io_context_;
-
-    /// Strand to serialize SendCoroutine invocations, preventing concurrent
-    /// async_write on the same pipe which would corrupt the data stream.
-    std::unique_ptr<boost::asio::strand<boost::asio::io_context::executor_type>>
-        send_strand_;
-
-    /// Pending send task for the send queue.
-    struct PendingSendTask
-    {
-        DefaultAsyncIpcTransport* transport;
-        ValidatedIPCMessageHeader header;
-        std::vector<uint8_t>      body;
-    };
-
-    /// Queue of pending sends that ensures only one SendCoroutine is active.
-    std::queue<PendingSendTask> pending_sends_;
-
-    /// True while a SendCoroutine is in-flight.
-    bool send_in_progress_ = false;
 
     /// 超时计时器（用于 pending call 超时管理）
     std::unique_ptr<boost::asio::steady_timer> timeout_timer_;

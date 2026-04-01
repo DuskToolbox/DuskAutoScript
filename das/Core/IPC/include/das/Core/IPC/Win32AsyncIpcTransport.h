@@ -3,6 +3,7 @@
 
 #ifdef _WIN32
 
+#include <array>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/use_awaitable.hpp>
@@ -10,6 +11,7 @@
 #include <boost/asio/windows/stream_handle.hpp>
 #include <cstdint>
 #include <das/Core/IPC/AsyncIpcTransport.h>
+#include <das/Core/IPC/AsyncMutex.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <das/DasExport.h>
@@ -57,7 +59,7 @@ public:
     Win32AsyncIpcTransport(const Win32AsyncIpcTransport&) = delete;
     Win32AsyncIpcTransport& operator=(const Win32AsyncIpcTransport&) = delete;
 
-    Win32AsyncIpcTransport(Win32AsyncIpcTransport&&) noexcept = default;
+    Win32AsyncIpcTransport(Win32AsyncIpcTransport&&) noexcept = delete;
     Win32AsyncIpcTransport& operator=(Win32AsyncIpcTransport&&) noexcept =
         delete;
 
@@ -135,6 +137,7 @@ private:
         bool               wait_for_connection);
 
     boost::asio::io_context&            io_context_;
+    AsyncMutex                          send_mutex_;
     boost::asio::windows::stream_handle read_pipe_;
     boost::asio::windows::stream_handle write_pipe_;
 

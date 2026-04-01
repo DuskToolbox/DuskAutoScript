@@ -3,12 +3,14 @@
 
 #ifndef _WIN32
 
+#include <array>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/local/stream_protocol.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <cstdint>
 #include <das/Core/IPC/AsyncIpcTransport.h>
+#include <das/Core/IPC/AsyncMutex.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <das/DasExport.h>
@@ -83,9 +85,8 @@ public:
     UnixAsyncIpcTransport(const UnixAsyncIpcTransport&) = delete;
     UnixAsyncIpcTransport& operator=(const UnixAsyncIpcTransport&) = delete;
 
-    UnixAsyncIpcTransport(UnixAsyncIpcTransport&&) noexcept = default;
-    UnixAsyncIpcTransport& operator=(UnixAsyncIpcTransport&&) noexcept =
-        default;
+    UnixAsyncIpcTransport(UnixAsyncIpcTransport&&) noexcept = delete;
+    UnixAsyncIpcTransport& operator=(UnixAsyncIpcTransport&&) noexcept = delete;
 
     /// 初始化（同步版本）
     /// @deprecated 使用 CreateAsync() 或 InitializeAsync() 代替
@@ -152,6 +153,7 @@ private:
     std::unique_ptr<boost::asio::local::stream_protocol::acceptor> acceptor_;
 
     boost::asio::io_context&                    io_context_;
+    AsyncMutex                                  send_mutex_;
     boost::asio::local::stream_protocol::socket socket_;
 
     std::string endpoint_name_;

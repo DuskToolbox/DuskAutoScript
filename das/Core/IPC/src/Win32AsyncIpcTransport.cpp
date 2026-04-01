@@ -11,6 +11,7 @@
 #include <cstring>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
+#include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
@@ -85,7 +86,8 @@ namespace
 // 私有构造函数（由 Create() 工厂函数调用）
 Win32AsyncIpcTransport::Win32AsyncIpcTransport(
     boost::asio::io_context& io_context)
-    : io_context_(io_context), read_pipe_(io_context), write_pipe_(io_context)
+    : io_context_(io_context), send_mutex_(io_context), read_pipe_(io_context),
+      write_pipe_(io_context)
 {
 }
 
@@ -726,25 +728,37 @@ boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::SendCoroutine(
     const uint8_t*                   body,
     size_t                           body_size)
 {
-    // 合并 header + body 到单一连续缓冲区，确保单次 WriteFile 调用
-    // Windows named pipe 的 WriteFile 对单次调用保证原子性（<64KB）
-    // scatter-gather async_write 内部仍然是多次 WriteFile，无法防止协程间交错
-    std::vector<uint8_t> send_buffer;
-    send_buffer.reserve(sizeof(IPCMessageHeader) + body_size);
-    const auto* header_bytes = reinterpret_cast<const uint8_t*>(
-        static_cast<const IPCMessageHeader*>(header));
-    send_buffer.assign(header_bytes, header_bytes + sizeof(IPCMessageHeader));
-    if (body_size > 0)
+    // Lock() 返回 bool：true=cancelled，false=正常获取锁
+    bool cancelled = co_await send_mutex_.Lock();
+    if (cancelled)
     {
-        send_buffer.insert(send_buffer.end(), body, body + body_size);
+        co_return DAS_E_IPC_CONNECTION_LOST; // 不访问任何 transport 成员
     }
 
-    co_await boost::asio::async_write(
-        write_pipe_,
-        boost::asio::buffer(send_buffer),
-        boost::asio::use_awaitable);
+    // scatter-gather: 零拷贝，header 和 body 分开传递
+    const auto* raw_header = static_cast<const IPCMessageHeader*>(header);
+    std::array<boost::asio::const_buffer, 2> buffers = {
+        boost::asio::const_buffer{raw_header, sizeof(IPCMessageHeader)},
+        boost::asio::const_buffer{body, body_size}};
 
-    co_return DAS_S_OK;
+    DasResult result = DAS_S_OK;
+    try
+    {
+        co_await boost::asio::async_write(
+            write_pipe_,
+            buffers,
+            boost::asio::use_awaitable);
+    }
+    catch (const std::exception& e)
+    {
+        DAS_CORE_LOG_ERROR(
+            "SendCoroutine: async_write failed: {}",
+            ToString(e.what()));
+        result = DAS_E_IPC_SEND_FAILED;
+    }
+
+    send_mutex_.Unlock();
+    co_return result;
 }
 
 DAS_CORE_IPC_NS_END
