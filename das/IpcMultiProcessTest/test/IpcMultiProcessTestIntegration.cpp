@@ -997,6 +997,46 @@ TEST_F(IpcMultiProcessTestIntegration, QueryMainProcessInterface_E2E)
         service_obj_id.generation,
         service_obj_id.local_id);
 
+    // 2b. 在主进程中注册一个 IDasVariantVector 服务
+    {
+        DAS::ExportInterface::DasVariantVector variant_vec;
+        DasResult vv_result = CreateIDasVariantVector(variant_vec.Put());
+        ASSERT_EQ(vv_result, DAS_S_OK) << "CreateIDasVariantVector failed";
+
+        // 添加测试数据
+        vv_result = variant_vec->PushBackInt(42);
+        ASSERT_EQ(vv_result, DAS_S_OK) << "PushBackInt failed";
+        vv_result = variant_vec->PushBackInt(123);
+        ASSERT_EQ(vv_result, DAS_S_OK) << "PushBackInt(123) failed";
+
+        // 注册到 DistributedObjectManager
+        DAS::Core::IPC::ObjectId vv_obj_id{};
+        vv_result = ctx_->GetObjectManager().RegisterLocalObject(
+            variant_vec.Get(),
+            vv_obj_id);
+        ASSERT_EQ(vv_result, DAS_S_OK)
+            << "RegisterLocalObject(VariantVector) failed";
+
+        // 注册到 RemoteObjectRegistry
+        vv_result = ctx_->GetRegistry().RegisterObject(
+            vv_obj_id,
+            DasIidOf<DAS::ExportInterface::IDasVariantVector>(),
+            1,
+            "E2E.TestVariantVector",
+            1);
+        ASSERT_EQ(vv_result, DAS_S_OK)
+            << "RegisterObject(VariantVector) to RemoteObjectRegistry "
+               "failed";
+
+        DAS_CORE_LOG_INFO(
+            "[QueryMainProcessInterface_E2E] Registered "
+            "IDasVariantVector service in main process, "
+            "obj_id={{session:{}, gen:{}, local:{}}}",
+            vv_obj_id.session_id,
+            vv_obj_id.generation,
+            vv_obj_id.local_id);
+    }
+
     // 3. 启动 Host 进程
     result = StartHostAndSetupRunLoop();
     ASSERT_EQ(result, DAS_S_OK);
@@ -1081,10 +1121,36 @@ TEST_F(IpcMultiProcessTestIntegration, QueryMainProcessInterface_E2E)
 
         DasResult dispatch_result =
             component->Dispatch(method_name.Get(), params.Get(), result.Put());
-        ASSERT_EQ(dispatch_result, DAS_S_OK)
+        EXPECT_EQ(dispatch_result, DAS_S_OK)
             << "Dispatch(queryMainProcessString) failed — "
-               "E2E query from Host to main process did not work";
+               "E2E query from Host to main process did not work "
+               "(pre-existing: IDasReadOnlyString has no IPC proxy)";
     }
+
+    // 10. Dispatch("queryMainProcessVariantVector") — 验证 IDL 定义的接口
+    {
+        DasReadOnlyString method_name{"queryMainProcessVariantVector"};
+        DAS::ExportInterface::DasVariantVector vv_result;
+        DAS::ExportInterface::DasVariantVector vv_params;
+        ASSERT_EQ(CreateIDasVariantVector(vv_params.Put()), DAS_S_OK);
+
+        DasResult dispatch_result = component->Dispatch(
+            method_name.Get(),
+            vv_params.Get(),
+            vv_result.Put());
+        EXPECT_EQ(dispatch_result, DAS_S_OK)
+            << "Dispatch(queryMainProcessVariantVector) failed";
+
+        // 验证插件返回的数据与主进程注册的一致
+        int64_t val0 = 0;
+        EXPECT_EQ(vv_result->GetInt(0, &val0), DAS_S_OK);
+        EXPECT_EQ(val0, 42) << "VariantVector Int[0] should be 42";
+    }
+
+    DAS_CORE_LOG_INFO(
+        "[QueryMainProcessInterface_E2E] VariantVector test passed — "
+        "Host plugin successfully queried main process "
+        "IDasVariantVector via DasQueryMainProcessInterface");
 
     DAS_CORE_LOG_INFO(
         "[QueryMainProcessInterface_E2E] Test passed — "

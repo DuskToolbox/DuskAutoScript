@@ -119,6 +119,11 @@ DasResult DasQueryComponentImpl::Dispatch(
         return HandleQueryMainProcessString(pp_out_result);
     }
 
+    if (method == "queryMainProcessVariantVector")
+    {
+        return HandleQueryMainProcessVariantVector(pp_out_result);
+    }
+
     return DAS_E_INVALID_ARGUMENT;
 }
 
@@ -163,6 +168,59 @@ DasResult DasQueryComponentImpl::HandleQueryMainProcessString(
 
     // 创建空的 IDasVariantVector 作为返回值
     hr = CreateIDasVariantVector(pp_out_result);
+    return hr;
+}
+
+DasResult DasQueryComponentImpl::HandleQueryMainProcessVariantVector(
+    ExportInterface::IDasVariantVector** pp_out_result)
+{
+    if (!pp_out_result)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    // 调用 C API 获取主进程中注册的 IDasVariantVector
+    IDasBase* raw_obj = nullptr;
+    DasResult hr = DasQueryMainProcessInterface(
+        DasIidOf<ExportInterface::IDasVariantVector>(),
+        &raw_obj);
+    if (DAS::IsFailed(hr) || !raw_obj)
+    {
+        std::string err_msg = DAS_FMT_NS::format(
+            "DasQueryMainProcessInterface(IDasVariantVector) failed, "
+            "hr = {:#x}",
+            static_cast<uint32_t>(hr));
+        DAS_LOG_ERROR(err_msg.c_str());
+        return hr;
+    }
+
+    // 转换为 IDasVariantVector 并读取数据
+    auto* variant_vec =
+        static_cast<ExportInterface::IDasVariantVector*>(raw_obj);
+
+    int64_t int_val = 0;
+    hr = variant_vec->GetInt(0, &int_val);
+    if (DAS::IsFailed(hr))
+    {
+        DAS_LOG_ERROR("GetInt(0) failed on main process VariantVector");
+        raw_obj->Release();
+        return hr;
+    }
+
+    std::string log_msg = DAS_FMT_NS::format(
+        "queryMainProcessVariantVector got Int[0] = {}",
+        int_val);
+    DAS_LOG_INFO(log_msg.c_str());
+
+    raw_obj->Release();
+
+    // 创建结果 VariantVector 并回传读取到的值
+    hr = CreateIDasVariantVector(pp_out_result);
+    if (DAS::IsFailed(hr))
+    {
+        return hr;
+    }
+    hr = (*pp_out_result)->PushBackInt(int_val);
     return hr;
 }
 

@@ -335,10 +335,36 @@ class IpcStubGenerator:
             'DasResult': 4,
             'DasBool': 1,
         }
-        # Load external enum/struct definitions from all IDL directories
+        # Load external enum/struct definitions from imported IDL files
+        self.all_interfaces = list(self.document.interfaces)
         if idl_file_path:
             idl_base_dir = str(Path(idl_file_path).resolve().parent)
             self.type_mapper.load_external_definitions([idl_base_dir])
+            # Load interfaces from imported IDL files for cross-IDL UUID resolution
+            if self.document.imports:
+                parsed_files = set()
+                def _parse_imports_recursive(import_list, base_dir):
+                    for import_def in import_list:
+                        import_path = Path(base_dir) / import_def.idl_path.strip('"')
+                        try:
+                            import_path = import_path.resolve()
+                        except Exception:
+                            continue
+                        import_key = str(import_path)
+                        if import_key in parsed_files:
+                            continue
+                        parsed_files.add(import_key)
+                        try:
+                            if import_path.exists():
+                                imported_doc = parse_idl_file(str(import_path))
+                                for iface in imported_doc.interfaces:
+                                    if not any(existing.name == iface.name for existing in self.all_interfaces):
+                                        self.all_interfaces.append(iface)
+                                if imported_doc.imports:
+                                    _parse_imports_recursive(imported_doc.imports, import_path.parent)
+                        except Exception:
+                            pass
+                _parse_imports_recursive(self.document.imports, Path(idl_file_path).resolve().parent)
 
     @staticmethod
     def _properties_to_methods(properties: list) -> list:
@@ -371,21 +397,7 @@ class IpcStubGenerator:
 
     def _collect_all_methods(self, interface: InterfaceDef) -> list:
         """收集接口及其所有父接口的方法（深度优先，从根到叶）"""
-        iface_map = {iface.name: iface for iface in self.document.interfaces}
-
-        if self.idl_file_path:
-            idl_dir = os.path.dirname(self.idl_file_path)
-            if os.path.isdir(idl_dir):
-                for f in os.listdir(idl_dir):
-                    if f.endswith('.idl'):
-                        fpath = os.path.join(idl_dir, f)
-                        try:
-                            doc = parse_idl_file(fpath)
-                            for iface in doc.interfaces:
-                                if iface.name not in iface_map:
-                                    iface_map[iface.name] = iface
-                        except Exception:
-                            pass
+        iface_map = {iface.name: iface for iface in self.all_interfaces}
 
         chain = []
         current = interface

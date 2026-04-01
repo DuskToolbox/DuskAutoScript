@@ -91,8 +91,9 @@ private:
 /**
  * @brief IDasComponent 实现 — 查询主进程接口
  *
- * 提供 Dispatch("queryMainProcessString") 方法，
- * 通过 DasQueryMainProcessInterface 获取主进程中注册的 IDasReadOnlyString。
+ * 提供 Dispatch("queryMainProcessString") 和
+ * Dispatch("queryMainProcessVariantVector") 方法，
+ * 通过 DasQueryMainProcessInterface 获取主进程中注册的接口。
  */
 class DasQueryComponentImpl final
     : public PluginInterface::DasComponentImplBase<DasQueryComponentImpl>
@@ -113,6 +114,9 @@ private:
     uint16_t session_id_ = 0;
 
     DasResult HandleQueryMainProcessString(
+        ExportInterface::IDasVariantVector** pp_out_result);
+
+    DasResult HandleQueryMainProcessVariantVector(
         ExportInterface::IDasVariantVector** pp_out_result);
 };
 
