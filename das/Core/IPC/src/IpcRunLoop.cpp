@@ -20,6 +20,7 @@
 #include <boost/asio.hpp>
 #include <boost/asio/use_future.hpp>
 
+#include <das/Core/IPC/DasReadOnlyStringStub.h>
 #include <das/Core/IPC/DefaultAsyncIpcTransport.h>
 
 #include <das/Core/Logger/Logger.h>
@@ -68,6 +69,15 @@ DasResult IpcRunLoop::Initialize(bool enable_heartbeat)
     DasIpcStub::g_stub_factory.RegisterAll(*this);
     DAS_CORE_LOG_INFO("Registered all IPC stub handlers");
 
+    // Register manual (non-IDL) stub handlers
+    {
+        static DasReadOnlyStringStub s_readonly_string_stub;
+        RegisterHandler(
+            HeaderFlags::NONE,
+            DasReadOnlyStringStub::InterfaceId,
+            &s_readonly_string_stub);
+    }
+
     return DAS_S_OK;
 }
 
@@ -91,7 +101,14 @@ void IpcRunLoop::Uninitialize()
     }
 
     work_guard_.reset();
+    send_strand_.reset();
     timeout_timer_.reset();
+    // Clear send queue
+    while (!pending_sends_.empty())
+    {
+        pending_sends_.pop();
+    }
+    send_in_progress_ = false;
     // async_transport_ 已移除，不再重置
     io_context_.reset();
 }
@@ -213,19 +230,32 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
             header.GetSourceSessionId(),
             static_cast<int>(header.GetMessageType()));
 
-        auto result = co_await connection_manager_->ForwardMessage(
-            header.GetTargetSessionId(),
-            header,
-            body.data(),
-            body.size());
-
-        if (result != DAS_S_OK)
+        // Route through send queue instead of direct ForwardMessage
+        // to prevent concurrent async_write on the same pipe
+        auto* fwd_transport =
+            connection_manager_->GetTransport(header.GetTargetSessionId());
+        if (fwd_transport)
+        {
+            std::vector<uint8_t> fwd_body(body.begin(), body.end());
+            auto                 fwd_result = PostSendWithTransport(
+                fwd_transport,
+                header,
+                std::move(fwd_body));
+            if (fwd_result != DAS_S_OK)
+            {
+                DAS_CORE_LOG_ERROR(
+                    "Forward failed: target={}, result={}",
+                    header.GetTargetSessionId(),
+                    fwd_result);
+            }
+        }
+        else
         {
             DAS_CORE_LOG_ERROR(
-                "Forward failed: target={}, result={}",
-                header.GetTargetSessionId(),
-                result);
+                "Forward failed: no transport for target={}",
+                header.GetTargetSessionId());
         }
+
         co_return;
     }
 
@@ -264,7 +294,7 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
                 header.GetInterfaceId());
             try
             {
-                IpcResponseSender               sender(transport);
+                IpcResponseSender               sender(transport, *this);
                 static DistributedObjectManager null_manager;
                 DistributedObjectManager&       obj_mgr =
                     object_manager_ ? *object_manager_ : null_manager;
@@ -304,7 +334,7 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
             header.GetInterfaceId());
         try
         {
-            IpcResponseSender sender(transport);
+            IpcResponseSender sender(transport, *this);
             // 控制平面 handler 不使用 object_manager，但接口需要此参数
             // 如果 object_manager_ 为 nullptr，使用一个静态的空对象
             static DistributedObjectManager null_manager;
@@ -602,6 +632,8 @@ DasResult IpcRunLoop::PostSend(
     }
 
     // 投递到 io_context 执行发送
+    // 使用发送队列确保同一时刻只有一个 SendCoroutine 在执行，
+    // 防止多个 async_write 并发写入同一管道导致数据交错。
     boost::asio::post(
         *io_context_,
         [this, header, body = std::move(body)]() mutable
@@ -617,37 +649,110 @@ DasResult IpcRunLoop::PostSend(
                 return;
             }
 
-            boost::asio::co_spawn(
-                *io_context_,
-                [this, transport, header, body = std::move(body)]() mutable
-                    -> boost::asio::awaitable<void>
-                {
-                    try
-                    {
-                        auto result = co_await transport->SendCoroutine(
-                            header,
-                            body.data(),
-                            body.size());
-                        if (result != DAS_S_OK)
-                        {
-                            DAS_CORE_LOG_ERROR(
-                                "PostSend: SendCoroutine failed, result={}",
-                                result);
-                            NotifySendFailure(header, DAS_E_IPC_SEND_FAILED);
-                        }
-                    }
-                    catch (const std::exception& e)
-                    {
-                        DAS_CORE_LOG_ERROR(
-                            "PostSend: SendCoroutine exception: {}",
-                            ToString(e.what()));
-                        NotifySendFailure(header, DAS_E_IPC_REMOTE_ERROR);
-                    }
-                },
-                boost::asio::detached);
+            pending_sends_.push({transport, header, std::move(body)});
+
+            // If no send is in progress, start processing the queue
+            if (!send_in_progress_)
+            {
+                send_in_progress_ = true;
+                ProcessNextSend();
+            }
         });
 
     return DAS_S_OK;
+}
+
+DasResult IpcRunLoop::PostSendWithTransport(
+    DefaultAsyncIpcTransport*        transport,
+    const ValidatedIPCMessageHeader& header,
+    std::vector<uint8_t>&&           body)
+{
+    if (!io_context_)
+    {
+        DAS_CORE_LOG_ERROR("io_context_ is null");
+        return DAS_E_IPC_NOT_INITIALIZED;
+    }
+
+    if (!transport)
+    {
+        DAS_CORE_LOG_ERROR("transport is null");
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    // Enqueue into the send queue to ensure serialized async_write.
+    // This is safe to call from the IO thread because boost::asio::post
+    // can be called from within io_context::run() without deadlock.
+    boost::asio::post(
+        *io_context_,
+        [this, transport, header, body = std::move(body)]() mutable
+        {
+            pending_sends_.push({transport, header, std::move(body)});
+
+            if (!send_in_progress_)
+            {
+                send_in_progress_ = true;
+                ProcessNextSend();
+            }
+        });
+
+    return DAS_S_OK;
+}
+
+void IpcRunLoop::ProcessNextSend()
+{
+    if (pending_sends_.empty())
+    {
+        send_in_progress_ = false;
+        return;
+    }
+
+    auto task = std::move(pending_sends_.front());
+    pending_sends_.pop();
+
+    DAS_CORE_LOG_INFO(
+        "ProcessNextSend: sending msg_type={}, interface_id={}, "
+        "call_id={}, body_size={}, queue_remaining={}, target_session={}",
+        static_cast<int>(task.header.GetMessageType()),
+        task.header.GetInterfaceId(),
+        task.header.GetCallId(),
+        task.body.size(),
+        pending_sends_.size(),
+        task.header.GetTargetSessionId());
+
+    boost::asio::co_spawn(
+        *send_strand_,
+        [this,
+         transport = task.transport,
+         header = task.header,
+         body = std::move(task.body)]() mutable -> boost::asio::awaitable<void>
+        {
+            try
+            {
+                auto result = co_await transport->SendCoroutine(
+                    header,
+                    body.data(),
+                    body.size());
+                if (result != DAS_S_OK)
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "PostSend: SendCoroutine failed, result = {}",
+                        result);
+                    NotifySendFailure(header, DAS_E_IPC_SEND_FAILED);
+                }
+            }
+            catch (const std::exception& e)
+            {
+                DAS_CORE_LOG_ERROR(
+                    "PostSend: SendCoroutine exception: {}",
+                    ToString(e.what()));
+                NotifySendFailure(header, DAS_E_IPC_REMOTE_ERROR);
+            }
+        },
+        [this](std::exception_ptr)
+        {
+            // Previous send completed; process next in queue
+            ProcessNextSend();
+        });
 }
 
 void IpcRunLoop::NotifySendFailure(
@@ -742,6 +847,12 @@ DasResult IpcRunLoop::Run()
     // 创建 work guard 保持 io_context 运行
     // 确保 Run() 阻塞直到 RequestStop() 被调用
     work_guard_ = std::make_unique<WorkGuard>(io_context_->get_executor());
+
+    // Create strand to serialize SendCoroutine, preventing concurrent
+    // async_write on the same pipe which would corrupt the data stream.
+    send_strand_ = std::make_unique<
+        boost::asio::strand<boost::asio::io_context::executor_type>>(
+        io_context_->get_executor());
 
     // 启动心跳检测线程（MainProcess 模式，且启用心跳时）
     if (connection_manager_ && enable_heartbeat_)
@@ -893,7 +1004,7 @@ void IpcRunLoop::StartAsyncReceiveForTransport(
                         if (error_code != DAS_S_OK)
                         {
                             DAS_CORE_LOG_ERROR(
-                                "Receive failed with error: session_id={}, error=0x{:08X}",
+                                "Receive failed with error: session_id = {}, error = {}",
                                 session_id,
                                 error_code);
                         }
@@ -961,11 +1072,15 @@ void IpcRunLoop::StartAsyncReceiveForTransport(
                                     static_cast<int>(header.GetMessageType()),
                                     header.GetInterfaceId());
 
-                                auto fwd_result =
-                                    co_await fwd_transport->SendCoroutine(
-                                        header,
-                                        body.data(),
-                                        body.size());
+                                // Route through send queue to prevent
+                                // concurrent async_write
+                                std::vector<uint8_t> fwd_body(
+                                    body.begin(),
+                                    body.end());
+                                auto fwd_result = PostSendWithTransport(
+                                    fwd_transport,
+                                    header,
+                                    std::move(fwd_body));
 
                                 if (fwd_result != DAS_S_OK)
                                 {
