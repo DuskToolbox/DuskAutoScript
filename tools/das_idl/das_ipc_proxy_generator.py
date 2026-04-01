@@ -1202,49 +1202,39 @@ class IpcProxyGenerator:
             lines.append(f"{indent}Das::Core::IPC::PendingInParamExportGuard pending_in_param_exports{{GetObjectManager()}};")
             lines.append("")
 
-        if need_request_body:
-            if self._is_fixed_size_method(method):
-                # 零堆分配路径: 栈上 packed struct
-                struct_lines = self._generate_fixed_size_request_body(
-                    interface, method, method_index, in_params, indent)
-                lines.extend(struct_lines)
-            else:
-                # 变长路径: MemorySerializerWriter with Reserve
-                var_lines = self._generate_variable_size_request_body(
-                    interface, method, method_index, in_params, indent)
-                lines.extend(var_lines)
+        # Always generate a V3 Body Header (16 bytes) — even for no-param methods.
+        # This ensures ParseV3BodyHeader always gets a valid body on the stub side.
+        if self._is_fixed_size_method(method):
+            # 零堆分配路径: 栈上 packed struct (works for empty in_params too — just the 16-byte V3 header)
+            struct_lines = self._generate_fixed_size_request_body(
+                interface, method, method_index, in_params, indent)
+            lines.extend(struct_lines)
         else:
-            lines.append(f"{indent}const uint8_t* request_body = nullptr;")
-            lines.append(f"{indent}size_t request_body_size = 0;")
+            # 变长路径: MemorySerializerWriter with Reserve
+            var_lines = self._generate_variable_size_request_body(
+                interface, method, method_index, in_params, indent)
+            lines.extend(var_lines)
 
         lines.append("")
         lines.append(f"{indent}std::vector<uint8_t> response_body;")
         is_binary_buffer = method.attributes.get('binary_buffer', False)
         if is_binary_buffer:
             lines.append(f"{indent}uint16_t response_flags = 0;")
-        if need_request_body:
-            if self._is_fixed_size_method(method):
-                if is_binary_buffer:
-                    lines.append(f"{indent}ipc_result = SendRequest({method_index},")
-                    lines.append(f"{indent}    reinterpret_cast<const uint8_t*>(&req), sizeof(req), response_body, &response_flags);")
-                else:
-                    lines.append(f"{indent}ipc_result = SendRequest({method_index},")
-                    lines.append(f"{indent}    reinterpret_cast<const uint8_t*>(&req), sizeof(req), response_body);")
-            else:
-                lines.append(f"{indent}const std::vector<uint8_t>& request_body = writer.GetBuffer();")
-                if is_binary_buffer:
-                    lines.append(f"{indent}ipc_result = SendRequest({method_index},")
-                    lines.append(f"{indent}    request_body.data(), request_body.size(), response_body, &response_flags);")
-                else:
-                    lines.append(f"{indent}ipc_result = SendRequest({method_index},")
-                    lines.append(f"{indent}    request_body.data(), request_body.size(), response_body);")
-        else:
+        if self._is_fixed_size_method(method):
             if is_binary_buffer:
-                lines.append(f"{indent}DasResult ipc_result = SendRequest({method_index},")
-                lines.append(f"{indent}    request_body, request_body_size, response_body, &response_flags);")
+                lines.append(f"{indent}ipc_result = SendRequest({method_index},")
+                lines.append(f"{indent}    reinterpret_cast<const uint8_t*>(&req), sizeof(req), response_body, &response_flags);")
             else:
-                lines.append(f"{indent}DasResult ipc_result = SendRequest({method_index},")
-                lines.append(f"{indent}    request_body, request_body_size, response_body);")
+                lines.append(f"{indent}ipc_result = SendRequest({method_index},")
+                lines.append(f"{indent}    reinterpret_cast<const uint8_t*>(&req), sizeof(req), response_body);")
+        else:
+            lines.append(f"{indent}const std::vector<uint8_t>& request_body = writer.GetBuffer();")
+            if is_binary_buffer:
+                lines.append(f"{indent}ipc_result = SendRequest({method_index},")
+                lines.append(f"{indent}    request_body.data(), request_body.size(), response_body, &response_flags);")
+            else:
+                lines.append(f"{indent}ipc_result = SendRequest({method_index},")
+                lines.append(f"{indent}    request_body.data(), request_body.size(), response_body);")
 
         # Commit guard: if method has [in] interface params, commit on non-transport errors
         if has_in_iface:

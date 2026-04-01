@@ -1211,11 +1211,6 @@ class IpcStubGenerator:
             bt = param.type_info.base_type
             if bt == 'IDasReadOnlyString' and param.type_info.is_pointer:
                 # String: write length prefix + data
-                lines.append(f"{indent}serial_result = writer.WriteUInt64({local_name}_len);")
-                lines.append(f"{indent}if (DAS::IsFailed(serial_result))")
-                lines.append(f"{indent}{{")
-                lines.append(f"{indent}    return serial_result;")
-                lines.append(f"{indent}}}")
                 lines.append(f"{indent}serial_result = writer.WriteBytes(reinterpret_cast<const uint8_t*>({local_name}_utf8_tmp), {local_name}_len);")
                 lines.append(f"{indent}if (DAS::IsFailed(serial_result))")
                 lines.append(f"{indent}{{")
