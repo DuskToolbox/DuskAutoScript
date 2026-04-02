@@ -970,13 +970,13 @@ TEST_F(IpcMultiProcessTestIntegration, QueryMainProcessInterface_E2E)
     }
 
     // 2. 在主进程中注册一个 IDasReadOnlyString 服务
-    const char*        test_string = "Hello from main process E2E";
-    DasU8StringOnStack service_string(test_string);
+    const char*       test_string = "Hello from main process E2E";
+    DasReadOnlyString service_string{test_string};
 
     // 注册到 DistributedObjectManager
     DAS::Core::IPC::ObjectId service_obj_id{};
     DasResult result = ctx_->GetObjectManager().RegisterLocalObject(
-        &service_string,
+        service_string.Get(),
         service_obj_id);
     ASSERT_EQ(result, DAS_S_OK) << "RegisterLocalObject failed";
 
