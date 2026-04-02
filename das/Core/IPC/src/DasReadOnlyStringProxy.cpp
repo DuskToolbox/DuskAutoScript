@@ -117,7 +117,7 @@ DasResult DasReadOnlyStringProxy::EnsureWDerived()
         return DAS_S_OK;
     }
 
-#ifdef _WIN32
+#ifdef DAS_WINDOWS
     // Windows: wchar_t is 2 bytes, same as char16_t — direct copy
     w_buffer_.assign(utf16_buffer_.begin(), utf16_buffer_.end());
     w_ready_ = true;

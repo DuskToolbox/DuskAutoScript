@@ -194,6 +194,22 @@ elseif (UNIX)
 else ()
     message(FATAL_ERROR "Unsupported platform.")
 endif ()
+# ============================================================================
+# Windows AF_UNIX 支持
+# ============================================================================
+# 允许在 Windows 下使用 AF_UNIX (Unix Domain Socket) 替代 Named Pipe
+# 要求: Windows 10 1803+, Boost 1.27+
+option(DAS_WINDOWS_USE_AF_UNIX "Use AF_UNIX instead of Named Pipe for IPC on Windows" OFF)
+
+if(WIN32 AND DAS_WINDOWS_USE_AF_UNIX)
+    target_compile_definitions(DasCoreObjects PRIVATE DAS_WINDOWS_USE_AF_UNIX)
+    message(STATUS "Windows AF_UNIX transport enabled")
+endif()
+
+# UnixAsyncIpcTransport now compiles on Windows and uses Boost.Asio IOCP
+if(WIN32)
+    target_link_libraries(DasCoreObjects PRIVATE ws2_32 Mswsock)
+endif()
 
 das_add_core_component(Utils)
 das_add_core_component(OcvWrapper)

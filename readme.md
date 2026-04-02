@@ -33,6 +33,7 @@ git clone git@github.com:BombaxCeiba/AutoStarRail.git
 | DAS_LLD_EXECUTABLE     | lld                       | lld文件路径，似乎一般也不需要设置                              |
 | DAS_USE_LTO            | OFF                       | 是否启用 LTO (Link Time Optimization)                          |
 | DAS_USE_ASAN           | OFF                       | 是否启用 AddressSanitizer（仅 Debug 构建生效）                |
+| DAS_WINDOWS_USE_AF_UNIX | OFF | [仅测试] 在 Windows 下使用 AF_UNIX 替代 Named Pipe 进行 IPC，用于模拟测试 Unix Socket 实现 (需 Windows 10 1803+)。**生产环境不建议启用。** |
 | GITHUB_MIRROR_URL      | https://github.com        |                                                                |
 
 ## 3.配置SWIG

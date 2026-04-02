@@ -1,5 +1,3 @@
-#ifndef _WIN32
-
 #include <das/Core/IPC/UnixAsyncIpcTransport.h>
 
 #include <boost/asio/buffer.hpp>
@@ -15,11 +13,41 @@
 #include <das/Utils/fmt.h>
 #include <memory>
 #include <stdexcept>
+#include <utility>
+#include <vector>
+
+#ifdef DAS_WINDOWS
+// MinGW 的 <afunix.h> 有 bug (缺少 windows.h 导致 ADDRESS_FAMILY 未定义)
+// 用 _AFUNIX_ 阻止包含损坏头文件，手动提供所需定义
+#ifndef _MSC_VER
+#define _AFUNIX_
+#endif
+#include <windows.h> // DeleteFileA
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#ifdef _MSC_VER
+#include <afunix.h>
+#else
+// MinGW workaround: 手动定义 sockaddr_un
+#include <string.h>
+#define UNIX_PATH_MAX 108
+struct sockaddr_un
+{
+    unsigned short sun_family;
+    char           sun_path[UNIX_PATH_MAX];
+};
+#endif
+#else
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
-#include <utility>
-#include <vector>
+#endif
+
+#ifdef DAS_WINDOWS
+#define DAS_UNLINK(path) DeleteFileA(path)
+#else
+#define DAS_UNLINK(path) unlink(path)
+#endif
 
 #include <das/Core/IPC/Config.h>
 #include <variant>
@@ -27,6 +55,22 @@
 DAS_CORE_IPC_NS_BEGIN
 
 inline constexpr uint16_t kFlagLargeMessage = 0x01;
+
+// 归一化端点名称：剥离 _m2h/_h2m 方向后缀，得到基础 socket 路径
+static std::string NormalizeUnixEndpoint(const std::string& endpoint)
+{
+    auto m2h_pos = endpoint.rfind("_m2h");
+    if (m2h_pos != std::string::npos)
+    {
+        return endpoint.substr(0, m2h_pos);
+    }
+    auto h2m_pos = endpoint.rfind("_h2m");
+    if (h2m_pos != std::string::npos)
+    {
+        return endpoint.substr(0, h2m_pos);
+    }
+    return endpoint;
+}
 
 UnixAsyncIpcTransport::UnixAsyncIpcTransport(
     boost::asio::io_context& io_context)
@@ -54,7 +98,7 @@ void UnixAsyncIpcTransport::Uninitialize()
 
     if (is_server_ && !endpoint_name_.empty())
     {
-        unlink(endpoint_name_.c_str());
+        DAS_UNLINK(endpoint_name_.c_str());
     }
 
     is_connected_ = false;
@@ -107,7 +151,7 @@ DasResult UnixAsyncIpcTransport::Initialize(
         return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
 
-    endpoint_name_ = read_endpoint;
+    endpoint_name_ = NormalizeUnixEndpoint(read_endpoint);
     is_server_ = is_server;
     max_message_size_ = max_message_size;
     body_buffer_.reserve(max_message_size);
@@ -120,7 +164,7 @@ DasResult UnixAsyncIpcTransport::Initialize(
             std::make_unique<boost::asio::local::stream_protocol::acceptor>(
                 io_context_);
 
-        socket_.open(ec);
+        socket_.open(boost::asio::local::stream_protocol(), ec);
         if (ec)
         {
             const auto msg = DAS_FMT_NS::format(
@@ -131,21 +175,12 @@ DasResult UnixAsyncIpcTransport::Initialize(
             return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
         }
 
-        unlink(read_endpoint.c_str());
-
-        struct sockaddr_un addr;
-        std::memset(&addr, 0, sizeof(addr));
-        addr.sun_family = AF_UNIX;
-        std::strncpy(
-            addr.sun_path,
-            read_endpoint.c_str(),
-            sizeof(addr.sun_path) - 1);
+        auto normalized_path = NormalizeUnixEndpoint(read_endpoint);
+        DAS_UNLINK(normalized_path.c_str());
 
         boost::system::error_code bind_ec;
         acceptor_->bind(
-            boost::asio::local::stream_protocol::endpoint(
-                reinterpret_cast<struct sockaddr*>(&addr),
-                sizeof(addr)),
+            boost::asio::local::stream_protocol::endpoint(normalized_path),
             bind_ec);
 
         if (bind_ec)
@@ -169,7 +204,7 @@ DasResult UnixAsyncIpcTransport::Initialize(
                 ToString(listen_ec.message()));
             DAS_LOG_ERROR(msg.c_str());
             socket_.close();
-            unlink(read_endpoint.c_str());
+            DAS_UNLINK(NormalizeUnixEndpoint(read_endpoint).c_str());
             return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
         }
 
@@ -185,7 +220,7 @@ DasResult UnixAsyncIpcTransport::Initialize(
             DAS_LOG_ERROR(msg.c_str());
             socket_.close();
             acceptor_->close();
-            unlink(read_endpoint.c_str());
+            DAS_UNLINK(NormalizeUnixEndpoint(read_endpoint).c_str());
             return DAS_E_IPC_HANDSHAKE_FAILED;
         }
 
@@ -211,18 +246,23 @@ boost::asio::awaitable<DasResult> UnixAsyncIpcTransport::InitializeAsync(
         co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
 
-    endpoint_name_ = read_endpoint;
+    endpoint_name_ = NormalizeUnixEndpoint(read_endpoint);
     is_server_ = is_server;
     max_message_size_ = max_message_size;
     body_buffer_.reserve(max_message_size);
 
     if (is_server)
     {
-        auto result = co_await CreateUnixSocketAsync(read_endpoint);
+        auto result = co_await CreateUnixSocketAsync(
+            NormalizeUnixEndpoint(read_endpoint));
         co_return result;
     }
-
-    co_return DAS_S_OK;
+    else
+    {
+        auto result = co_await ConnectToUnixSocketAsync(
+            NormalizeUnixEndpoint(read_endpoint));
+        co_return result;
+    }
 }
 
 boost::asio::awaitable<DasResult> UnixAsyncIpcTransport::CreateUnixSocketAsync(
@@ -233,7 +273,7 @@ boost::asio::awaitable<DasResult> UnixAsyncIpcTransport::CreateUnixSocketAsync(
     acceptor_ = std::make_unique<boost::asio::local::stream_protocol::acceptor>(
         io_context_);
 
-    socket_.open(ec);
+    socket_.open(boost::asio::local::stream_protocol(), ec);
     if (ec)
     {
         const auto msg = DAS_FMT_NS::format(
@@ -244,18 +284,11 @@ boost::asio::awaitable<DasResult> UnixAsyncIpcTransport::CreateUnixSocketAsync(
         co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
 
-    unlink(socket_path.c_str());
-
-    struct sockaddr_un addr;
-    std::memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
-    std::strncpy(addr.sun_path, socket_path.c_str(), sizeof(addr.sun_path) - 1);
+    DAS_UNLINK(socket_path.c_str());
 
     boost::system::error_code bind_ec;
     acceptor_->bind(
-        boost::asio::local::stream_protocol::endpoint(
-            reinterpret_cast<struct sockaddr*>(&addr),
-            sizeof(addr)),
+        boost::asio::local::stream_protocol::endpoint(socket_path),
         bind_ec);
 
     if (bind_ec)
@@ -279,7 +312,7 @@ boost::asio::awaitable<DasResult> UnixAsyncIpcTransport::CreateUnixSocketAsync(
             ToString(listen_ec.message()));
         DAS_LOG_ERROR(msg.c_str());
         socket_.close();
-        unlink(socket_path.c_str());
+        DAS_UNLINK(socket_path.c_str());
         co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
 
@@ -296,7 +329,7 @@ boost::asio::awaitable<DasResult> UnixAsyncIpcTransport::CreateUnixSocketAsync(
         DAS_LOG_ERROR(msg.c_str());
         socket_.close();
         acceptor_->close();
-        unlink(socket_path.c_str());
+        DAS_UNLINK(socket_path.c_str());
         co_return DAS_E_IPC_HANDSHAKE_FAILED;
     }
 
@@ -311,7 +344,7 @@ UnixAsyncIpcTransport::ConnectToUnixSocketAsync(const std::string& socket_path)
 {
     boost::system::error_code ec;
 
-    socket_.open(ec);
+    socket_.open(boost::asio::local::stream_protocol(), ec);
     if (ec)
     {
         const auto msg = DAS_FMT_NS::format(
@@ -322,15 +355,8 @@ UnixAsyncIpcTransport::ConnectToUnixSocketAsync(const std::string& socket_path)
         co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
 
-    struct sockaddr_un addr;
-    std::memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
-    std::strncpy(addr.sun_path, socket_path.c_str(), sizeof(addr.sun_path) - 1);
-
     co_await socket_.async_connect(
-        boost::asio::local::stream_protocol::endpoint(
-            reinterpret_cast<struct sockaddr*>(&addr),
-            sizeof(addr)),
+        boost::asio::local::stream_protocol::endpoint(socket_path),
         boost::asio::use_awaitable);
 
     is_connected_ = true;
@@ -348,11 +374,11 @@ DasResult UnixAsyncIpcTransport::Connect(
         return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
 
-    endpoint_name_ = read_endpoint;
+    endpoint_name_ = NormalizeUnixEndpoint(read_endpoint);
 
     boost::system::error_code ec;
 
-    socket_.open(ec);
+    socket_.open(boost::asio::local::stream_protocol(), ec);
     if (ec)
     {
         const auto msg = DAS_FMT_NS::format(
@@ -363,19 +389,9 @@ DasResult UnixAsyncIpcTransport::Connect(
         return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
 
-    struct sockaddr_un addr;
-    std::memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
-    std::strncpy(
-        addr.sun_path,
-        read_endpoint.c_str(),
-        sizeof(addr.sun_path) - 1);
-
     boost::system::error_code connect_ec;
     socket_.connect(
-        boost::asio::local::stream_protocol::endpoint(
-            reinterpret_cast<struct sockaddr*>(&addr),
-            sizeof(addr)),
+        boost::asio::local::stream_protocol::endpoint(endpoint_name_),
         connect_ec);
 
     if (connect_ec)
@@ -386,7 +402,7 @@ DasResult UnixAsyncIpcTransport::Connect(
             ToString(connect_ec.message()));
         DAS_LOG_ERROR(msg.c_str());
         socket_.close();
-        return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
+        return DAS_E_IPC_CONNECTION_LOST;
     }
 
     is_connected_ = true;
@@ -534,5 +550,3 @@ boost::asio::awaitable<DasResult> UnixAsyncIpcTransport::SendCoroutine(
 }
 
 DAS_CORE_IPC_NS_END
-
-#endif // !_WIN32

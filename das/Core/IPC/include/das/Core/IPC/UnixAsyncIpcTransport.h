@@ -1,8 +1,6 @@
 #ifndef DAS_CORE_IPC_UNIX_ASYNC_IPC_TRANSPORT_H
 #define DAS_CORE_IPC_UNIX_ASYNC_IPC_TRANSPORT_H
 
-#ifndef _WIN32
-
 #include <array>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/io_context.hpp>
@@ -67,18 +65,18 @@ public:
     static boost::asio::awaitable<
         DAS::Utils::Expected<std::unique_ptr<UnixAsyncIpcTransport>>>
     CreateAsync(
-        boost::asio::io_context& DAS_LIFETIMEBOUND io_context,
-        const std::string&                         read_endpoint,
-        const std::string&                         write_endpoint,
-        bool                                       is_server,
-        size_t                                     max_message_size = 65536);
+        boost::asio::io_context& io_context,
+        const std::string&       read_endpoint,
+        const std::string&       write_endpoint,
+        bool                     is_server,
+        size_t                   max_message_size = 65536);
 
     /// 工厂函数：创建未初始化的 UnixAsyncIpcTransport 实例
     /// @param io_context boost::asio io_context 引用（生命周期绑定到返回值）
     /// @return unique_ptr 需要后续调用 InitializeAsync() 完成初始化
     /// @note 用于需要延迟初始化的场景（如 Host 进程在 Run() 时异步连接）
     static std::unique_ptr<UnixAsyncIpcTransport> CreateUninitialized(
-        boost::asio::io_context& DAS_LIFETIMEBOUND io_context);
+        boost::asio::io_context& io_context);
 
     ~UnixAsyncIpcTransport();
 
@@ -137,8 +135,7 @@ public:
 
 private:
     // 私有构造函数（由工厂函数调用）
-    explicit UnixAsyncIpcTransport(
-        boost::asio::io_context& DAS_LIFETIMEBOUND io_context);
+    explicit UnixAsyncIpcTransport(boost::asio::io_context& io_context);
 
     // 私有清理函数 - 只能由析构函数调用
     void Uninitialize();
@@ -168,7 +165,5 @@ private:
 };
 
 DAS_CORE_IPC_NS_END
-
-#endif // !_WIN32
 
 #endif // DAS_CORE_IPC_UNIX_ASYNC_IPC_TRANSPORT_H

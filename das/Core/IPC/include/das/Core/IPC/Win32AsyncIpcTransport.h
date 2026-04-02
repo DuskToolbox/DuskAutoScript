@@ -1,7 +1,7 @@
 #ifndef DAS_CORE_IPC_WIN32_ASYNC_IPC_TRANSPORT_H
 #define DAS_CORE_IPC_WIN32_ASYNC_IPC_TRANSPORT_H
 
-#ifdef _WIN32
+#ifdef DAS_WINDOWS
 
 #include <array>
 #include <boost/asio/co_spawn.hpp>
@@ -151,6 +151,6 @@ private:
 
 DAS_CORE_IPC_NS_END
 
-#endif // _WIN32
+#endif // DAS_WINDOWS
 
 #endif // DAS_CORE_IPC_WIN32_ASYNC_IPC_TRANSPORT_H
