@@ -538,9 +538,7 @@ DasResult HostLauncher::LaunchProcess(
 
 DasResult HostLauncher::WaitForHostReady(uint32_t timeout_ms)
 {
-    auto     start = std::chrono::steady_clock::now();
-    uint32_t main_pid = static_cast<uint32_t>(GET_CURRENT_PID());
-    uint32_t host_pid = impl_->pid;
+    auto start = std::chrono::steady_clock::now();
 
     while (true)
     {
@@ -550,31 +548,11 @@ DasResult HostLauncher::WaitForHostReady(uint32_t timeout_ms)
             return DAS_E_IPC_CONNECTION_LOST;
         }
 
-        std::string host_to_plugin_pipe = DAS_FMT_NS::format(
-            "\\\\.\\pipe\\das_ipc_{}_{}_m2h",
-            main_pid,
-            host_pid);
-
-        HANDLE h_pipe = CreateFileA(
-            host_to_plugin_pipe.c_str(),
-            GENERIC_READ,
-            0,
-            nullptr,
-            OPEN_EXISTING,
-            FILE_FLAG_OVERLAPPED,
-            nullptr);
-
-        if (h_pipe != INVALID_HANDLE_VALUE)
+        // Transport-agnostic check: if ConnectToHost succeeded,
+        // the transport is established and Host is connected.
+        if (impl_->async_transport)
         {
-            CloseHandle(h_pipe);
-            DAS_LOG_INFO("Host IPC resources detected");
-            return DAS_S_OK;
-        }
-
-        auto last_error = GetLastError();
-        if (last_error != ERROR_FILE_NOT_FOUND)
-        {
-            DAS_LOG_INFO("Host IPC resources detected");
+            DAS_CORE_LOG_INFO("Host IPC transport connected");
             return DAS_S_OK;
         }
 
@@ -586,7 +564,7 @@ DasResult HostLauncher::WaitForHostReady(uint32_t timeout_ms)
                     ? (std::numeric_limits<decltype(timeout_ms)>::max)()
                     : timeout_ms))
         {
-            DAS_CORE_LOG_ERROR("Timeout waiting for Host IPC resources");
+            DAS_CORE_LOG_ERROR("Timeout waiting for Host IPC transport");
             return DAS_E_IPC_TIMEOUT;
         }
 
@@ -1137,9 +1115,7 @@ DasResult HostLauncher::ReceiveHandshakeReadyAck(uint32_t timeout_ms)
 boost::asio::awaitable<DasResult> HostLauncher::WaitForHostReadyAsync(
     uint32_t timeout_ms)
 {
-    auto     start = std::chrono::steady_clock::now();
-    uint32_t main_pid = static_cast<uint32_t>(GET_CURRENT_PID());
-    uint32_t host_pid = impl_->pid;
+    auto start = std::chrono::steady_clock::now();
 
     while (true)
     {
@@ -1149,31 +1125,11 @@ boost::asio::awaitable<DasResult> HostLauncher::WaitForHostReadyAsync(
             co_return DAS_E_IPC_CONNECTION_LOST;
         }
 
-        std::string host_to_plugin_pipe = DAS_FMT_NS::format(
-            "\\\\.\\pipe\\das_ipc_{}_{}_m2h",
-            main_pid,
-            host_pid);
-
-        HANDLE h_pipe = CreateFileA(
-            host_to_plugin_pipe.c_str(),
-            GENERIC_READ,
-            0,
-            nullptr,
-            OPEN_EXISTING,
-            FILE_FLAG_OVERLAPPED,
-            nullptr);
-
-        if (h_pipe != INVALID_HANDLE_VALUE)
+        // Transport-agnostic check: if ConnectToHost succeeded,
+        // the transport is established and Host is connected.
+        if (impl_->async_transport)
         {
-            CloseHandle(h_pipe);
-            DAS_LOG_INFO("Host IPC resources detected");
-            co_return DAS_S_OK;
-        }
-
-        auto last_error = GetLastError();
-        if (last_error != ERROR_FILE_NOT_FOUND)
-        {
-            DAS_LOG_INFO("Host IPC resources detected");
+            DAS_CORE_LOG_INFO("Host IPC transport connected");
             co_return DAS_S_OK;
         }
 
@@ -1182,7 +1138,7 @@ boost::asio::awaitable<DasResult> HostLauncher::WaitForHostReadyAsync(
         if (timeout_ms != 0
             && elapsed.count() >= static_cast<int64_t>(timeout_ms))
         {
-            DAS_CORE_LOG_ERROR("Timeout waiting for Host IPC resources");
+            DAS_CORE_LOG_ERROR("Timeout waiting for Host IPC transport");
             co_return DAS_E_IPC_TIMEOUT;
         }
 

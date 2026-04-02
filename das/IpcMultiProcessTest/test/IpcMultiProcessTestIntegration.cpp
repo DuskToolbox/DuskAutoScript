@@ -517,6 +517,9 @@ TEST_F(
         GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
     }
 
+    FakeMainProcess::KillParentSharedMemory::Cleanup(
+        FakeMainProcess::KILL_PARENT_SHM_NAME);
+
     // 1. 获取当前可执行程序路径
     std::string test_exe_path;
     {
