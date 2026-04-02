@@ -41,21 +41,6 @@ if(${DAS_BUILD_TEST})
     target_link_libraries(AdditionalTest PUBLIC DasUtils Boost::url)
 endif()
 
-# Build lock mechanism to prevent concurrent builds
-set(DAS_BUILD_LOCK_FILE "${CMAKE_BINARY_DIR}/das_cmake_build_lock")
-
-# Create lock file target - this will be executed first when any build starts
-add_custom_target(DasBuildLockCreate
-    COMMAND ${CMAKE_COMMAND} -E touch ${DAS_BUILD_LOCK_FILE}
-    COMMENT "Creating build lock file: ${DAS_BUILD_LOCK_FILE}")
-set_target_properties(DasBuildLockCreate PROPERTIES EXCLUDE_FROM_ALL TRUE)
-
-# Remove lock file target - this will be executed after all build targets complete
-add_custom_target(DasBuildLockRemove
-    COMMAND ${CMAKE_COMMAND} -E remove -f ${DAS_BUILD_LOCK_FILE}
-    COMMENT "Removing build lock file: ${DAS_BUILD_LOCK_FILE}")
-set_target_properties(DasBuildLockRemove PROPERTIES EXCLUDE_FROM_ALL TRUE)
-
 # 未来Gateway将以独立进程的形式来转发请求到具体的DasCore实例上，但是目前，Gateway即为Core
 add_subdirectory(Gateway)
 
@@ -85,6 +70,3 @@ function(add_build_lock_dependencies)
 endfunction()
 
 add_subdirectory(IpcMultiProcessTest)
-
-# Apply lock dependencies after all targets are defined
-add_build_lock_dependencies()
