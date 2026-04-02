@@ -71,7 +71,7 @@ class ProcessSafeStdoutSink final
 
     static bool IsMainProcess()
     {
-        if (std::getenv(DAS_MAIN_PROCESS_LAUNCHED_FLAG) != nullptr)
+        if (std::getenv(DAS_MAIN_PROCESS_LAUNCHED_FLAG) == nullptr)
         {
             return true;
         }
