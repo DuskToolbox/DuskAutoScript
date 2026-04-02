@@ -1,27 +1,27 @@
 #include <das/Core/Exceptions/PythonException.h>
 
+#ifdef DAS_EXPORT_PYTHON
 // Python.h 需要在禁用警告后包含
 DAS_DISABLE_WARNING_BEGIN
 DAS_IGNORE_UNUSED_PARAMETER
 #include <Python.h>
 DAS_DISABLE_WARNING_END
+#endif // DAS_EXPORT_PYTHON
 
 #include <algorithm>
 #include <sstream>
 #include <vector>
 
+#ifdef DAS_EXPORT_PYTHON
 DAS_CORE_EXCEPTIONS_NS_BEGIN
 
 PythonException::PythonException(const std::string& message)
-    : DasException{DAS_E_PYTHON_ERROR, message}
-    , stack_trace_{message}
-    , exception_type_{"Error"}
-    , exception_value_{message}
+    : DasException{DAS_E_PYTHON_ERROR, message}, stack_trace_{message},
+      exception_type_{"Error"}, exception_value_{message}
 {
 }
 
-PythonException::PythonException()
-    : DasException{DAS_E_PYTHON_ERROR, ""}
+PythonException::PythonException() : DasException{DAS_E_PYTHON_ERROR, ""}
 {
     ParseCurrentException();
 }
@@ -86,7 +86,8 @@ void PythonException::ParseCurrentException()
         {
             PyObject* format_exception =
                 ::PyObject_GetAttrString(traceback_module, "format_exception");
-            if (format_exception != nullptr && ::PyCallable_Check(format_exception))
+            if (format_exception != nullptr
+                && ::PyCallable_Check(format_exception))
             {
                 // 设置 traceback 到 value
                 ::PyException_SetTraceback(p_value, p_trace_back);
@@ -100,7 +101,8 @@ void PythonException::ParseCurrentException()
                 ::PyTuple_SetItem(args, 2, p_trace_back);
                 ::Py_INCREF(p_trace_back);
 
-                PyObject* formatted_list = ::PyObject_Call(format_exception, args, nullptr);
+                PyObject* formatted_list =
+                    ::PyObject_Call(format_exception, args, nullptr);
                 ::Py_DECREF(args);
                 ::Py_DECREF(format_exception);
 
@@ -111,11 +113,15 @@ void PythonException::ParseCurrentException()
 
                     for (Py_ssize_t i = 0; i < list_size; ++i)
                     {
-                        PyObject* formatted_string = ::PyList_GetItem(formatted_list, i);
+                        PyObject* formatted_string =
+                            ::PyList_GetItem(formatted_list, i);
                         if (::PyUnicode_Check(formatted_string))
                         {
-                            // PyUnicode_AsUTF8AndSize 是 Stable ABI 兼容的 (Python 3.10+)
-                            const char* str = ::PyUnicode_AsUTF8AndSize(formatted_string, nullptr);
+                            // PyUnicode_AsUTF8AndSize 是 Stable ABI 兼容的
+                            // (Python 3.10+)
+                            const char* str = ::PyUnicode_AsUTF8AndSize(
+                                formatted_string,
+                                nullptr);
                             if (str != nullptr)
                             {
                                 oss << str;
@@ -154,3 +160,4 @@ const char* PythonException::what() const noexcept
 }
 
 DAS_CORE_EXCEPTIONS_NS_END
+#endif // DAS_EXPORT_PYTHON

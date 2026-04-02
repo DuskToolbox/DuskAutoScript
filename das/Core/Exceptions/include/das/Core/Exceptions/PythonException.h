@@ -7,6 +7,7 @@
 
 #include <string>
 
+#ifdef DAS_EXPORT_PYTHON
 DAS_CORE_EXCEPTIONS_NS_BEGIN
 
 class PythonException : public DasException
@@ -27,14 +28,15 @@ public:
     const char* what() const noexcept override;
 
 private:
-    std::string stack_trace_;      // 完整堆栈跟踪
-    std::string exception_type_;   // 如 "ValueError", "TypeError"
-    std::string exception_value_;  // 异常消息
+    std::string stack_trace_;     // 完整堆栈跟踪
+    std::string exception_type_;  // 如 "ValueError", "TypeError"
+    std::string exception_value_; // 异常消息
 
     // 从 PyErr_Fetch 解析信息
     void ParseCurrentException();
 };
 
 DAS_CORE_EXCEPTIONS_NS_END
+#endif // DAS_EXPORT_PYTHON
 
 #endif // DAS_CORE_EXCEPTIONS_PYTHONEXCEPTION_H
