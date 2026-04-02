@@ -27,8 +27,7 @@
 #include <cstdint>
 #include <das/Core/IPC/AsyncOperationImpl.h>
 #include <das/Core/IPC/DasAsyncSender.h>
-#include <das/Core/IPC/DistributedObjectManager.h>
-#include <das/Core/IPC/RemoteObjectRegistry.h>
+#include <das/Core/IPC/ObjectId.h>
 #include <das/Core/Utils/StdExecution.h>
 #include <das/IDasAsyncLoadPluginOperation.h>
 #include <gtest/gtest.h>
@@ -973,30 +972,15 @@ TEST_F(IpcMultiProcessTestIntegration, QueryMainProcessInterface_E2E)
     const char*       test_string = "Hello from main process E2E";
     DasReadOnlyString service_string{test_string};
 
-    // 注册到 DistributedObjectManager
-    DAS::Core::IPC::ObjectId service_obj_id{};
-    DasResult result = ctx_->GetObjectManager().RegisterLocalObject(
+    // 注册服务到主进程全局服务表
+    DasResult result = ctx_->RegisterService(
         service_string.Get(),
-        service_obj_id);
-    ASSERT_EQ(result, DAS_S_OK) << "RegisterLocalObject failed";
-
-    // 注册到 RemoteObjectRegistry（通过 IID 可查找）
-    result = ctx_->GetRegistry().RegisterObject(
-        service_obj_id,
-        DasIidOf<IDasReadOnlyString>(),
-        1, // session_id (main process)
-        "E2E.TestReadOnlyString",
-        1);
-    ASSERT_EQ(result, DAS_S_OK)
-        << "RegisterObject to RemoteObjectRegistry failed";
+        DasIidOf<IDasReadOnlyString>());
+    ASSERT_EQ(result, DAS_S_OK) << "RegisterService failed";
 
     DAS_CORE_LOG_INFO(
         "[QueryMainProcessInterface_E2E] Registered "
-        "IDasReadOnlyString service in main process, "
-        "obj_id={{session:{}, gen:{}, local:{}}}",
-        service_obj_id.session_id,
-        service_obj_id.generation,
-        service_obj_id.local_id);
+        "IDasReadOnlyString service in main process");
 
     // 2b. 在主进程中注册一个 IDasVariantVector 服务
     {
@@ -1010,32 +994,16 @@ TEST_F(IpcMultiProcessTestIntegration, QueryMainProcessInterface_E2E)
         vv_result = variant_vec->PushBackInt(123);
         ASSERT_EQ(vv_result, DAS_S_OK) << "PushBackInt(123) failed";
 
-        // 注册到 DistributedObjectManager
-        DAS::Core::IPC::ObjectId vv_obj_id{};
-        vv_result = ctx_->GetObjectManager().RegisterLocalObject(
+        // 注册服务到主进程全局服务表
+        vv_result = ctx_->RegisterService(
             variant_vec.Get(),
-            vv_obj_id);
+            DasIidOf<DAS::ExportInterface::IDasVariantVector>());
         ASSERT_EQ(vv_result, DAS_S_OK)
-            << "RegisterLocalObject(VariantVector) failed";
-
-        // 注册到 RemoteObjectRegistry
-        vv_result = ctx_->GetRegistry().RegisterObject(
-            vv_obj_id,
-            DasIidOf<DAS::ExportInterface::IDasVariantVector>(),
-            1,
-            "E2E.TestVariantVector",
-            1);
-        ASSERT_EQ(vv_result, DAS_S_OK)
-            << "RegisterObject(VariantVector) to RemoteObjectRegistry "
-               "failed";
+            << "RegisterService(VariantVector) failed";
 
         DAS_CORE_LOG_INFO(
             "[QueryMainProcessInterface_E2E] Registered "
-            "IDasVariantVector service in main process, "
-            "obj_id={{session:{}, gen:{}, local:{}}}",
-            vv_obj_id.session_id,
-            vv_obj_id.generation,
-            vv_obj_id.local_id);
+            "IDasVariantVector service in main process");
     }
 
     // 3. 启动 Host 进程
@@ -1197,30 +1165,15 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_QueryMainProcessString)
         service_string.Put());
     ASSERT_EQ(create_result, DAS_S_OK) << "Failed to create test string";
 
-    // 注册到 DistributedObjectManager
-    DAS::Core::IPC::ObjectId service_obj_id{};
-    DasResult result = ctx_->GetObjectManager().RegisterLocalObject(
+    // 注册服务到主进程全局服务表
+    DasResult result = ctx_->RegisterService(
         service_string.Get(),
-        service_obj_id);
-    ASSERT_EQ(result, DAS_S_OK) << "RegisterLocalObject failed";
-
-    // 注册到 RemoteObjectRegistry（通过 IID 可查找）
-    result = ctx_->GetRegistry().RegisterObject(
-        service_obj_id,
-        DasIidOf<IDasReadOnlyString>(),
-        1, // session_id (main process)
-        "CrossProcess.TestReadOnlyString",
-        1);
-    ASSERT_EQ(result, DAS_S_OK)
-        << "RegisterObject to RemoteObjectRegistry failed";
+        DasIidOf<IDasReadOnlyString>());
+    ASSERT_EQ(result, DAS_S_OK) << "RegisterService failed";
 
     DAS_CORE_LOG_INFO(
         "[CrossProcess_QueryMainProcessString] Registered "
-        "IDasReadOnlyString service in main process, "
-        "obj_id={{session:{}, gen:{}, local:{}}}",
-        service_obj_id.session_id,
-        service_obj_id.generation,
-        service_obj_id.local_id);
+        "IDasReadOnlyString service in main process");
 
     // 3. 启动 Host 进程
     result = StartHostAndSetupRunLoop();
