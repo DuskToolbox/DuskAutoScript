@@ -267,17 +267,17 @@ class SwigCodeGenerator:
             simple_name = type_name
 
             # 先在当前文档中查找
-            # 1. 查找接口
+            # 查找接口
             for interface in self.document.interfaces:
                 if interface.name == simple_name:
                     return interface.namespace
 
-            # 2. 查找结构体
+            # 查找结构体
             for struct in self.document.structs:
                 if struct.name == simple_name:
                     return struct.namespace
 
-            # 3. 查找枚举
+            # 查找枚举
             for enum in self.document.enums:
                 if enum.name == simple_name:
                     return enum.namespace

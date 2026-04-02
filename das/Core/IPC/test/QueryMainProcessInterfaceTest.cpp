@@ -116,11 +116,11 @@ class QueryMainProcessInterfaceE2ETest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        // 1. Create real IpcContext (disable heartbeat)
+        // Create real IpcContext with heartbeat disabled
         ctx_ = MainProcess::CreateIpcContextEz(false);
         ASSERT_NE(ctx_.get(), nullptr);
 
-        // 2. Clear global registry to avoid interference from other tests
+        // Clear global registry to avoid interference from other tests
         RemoteObjectRegistry::GetInstance().Clear();
     }
 

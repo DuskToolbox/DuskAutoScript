@@ -251,7 +251,7 @@ class TestSwigGeneratorIntegration(unittest.TestCase):
         2. 生成 ABI 头文件和 SWIG .i 文件
         3. 验证生成的 %ignore 指令格式正确
         """
-        # 步骤 1: 创建测试 IDL
+        # 创建测试 IDL
         idl_content = '''
 [uuid("12345678-1234-1234-1234-123456789014")]
 interface IGlobalTestInterface : IDasBase {
@@ -269,7 +269,7 @@ namespace Das::ExportInterface {
         with open(idl_path, 'w', encoding='utf-8') as f:
             f.write(idl_content)
         
-        # 步骤 2: 解析 IDL
+        # 解析 IDL
         document = parse_idl_file(idl_path)
         self.assertEqual(len(document.interfaces), 2)
         

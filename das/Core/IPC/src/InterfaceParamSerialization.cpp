@@ -23,14 +23,14 @@ DasResult SerializeInInterfaceParam(
         *out_newly_registered = false;
     }
 
-    // 1. nullptr -> empty ObjectId
+    // Handle null pointer: return empty ObjectId
     if (interface_ptr == nullptr)
     {
         out_id = ObjectId{0, 0, 0};
         return DAS_S_OK;
     }
 
-    // 2. Lookup registered local object
+    // Try to look up the object in local registry
     //    DAS_E_NOT_FOUND is NOT an error here, try Proxy branch next
     ObjectId  local_id;
     DasResult lookup_result =
@@ -41,7 +41,7 @@ DasResult SerializeInInterfaceParam(
         return DAS_S_OK;
     }
 
-    // 3. Detect IPC Proxy via QI (replaces dynamic_cast)
+    // Check if the pointer is an IPC Proxy via QueryInterface
     DAS::DasPtr<IPCProxyBase> proxy;
     DasResult                 qi_result = interface_ptr->QueryInterface(
         DasIidOf<IPCProxyBase>(),
@@ -53,7 +53,8 @@ DasResult SerializeInInterfaceParam(
     }
     // DAS_E_NO_INTERFACE is NOT an error, try auto-register next
 
-    // 4. New local object (not registered, not Proxy) -> auto-register
+    // Auto-register as a new local object (not found in registry and not a
+    // Proxy)
     DAS_CORE_LOG_TRACE(
         "SerializeInInterfaceParam: auto-registering new local object");
     DasResult register_result =
