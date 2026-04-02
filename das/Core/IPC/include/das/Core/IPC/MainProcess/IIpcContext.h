@@ -179,6 +179,24 @@ namespace Core
                     const DasGuid& iid,
                     IDasBase**     pp_out_object) = 0;
 
+                /**
+                 * @brief 注册一个服务对象到主进程全局服务表
+                 * @param p_object 服务对象指针
+                 * @param iid 对象实现的接口 IID（作为唯一键）
+                 * @return DasResult DAS_S_OK 成功
+                 */
+                virtual DasResult RegisterService(
+                    IDasBase*        p_object,
+                    const DasGuid&   iid) = 0;
+
+                /**
+                 * @brief 从主进程全局服务表注销一个服务对象
+                 * @param iid 要注销的服务 IID
+                 * @return DasResult DAS_S_OK 成功
+                 */
+                virtual DasResult UnregisterService(
+                    const DasGuid&   iid) = 0;
+
             protected:
                 virtual ~IIpcContext() = default;
 

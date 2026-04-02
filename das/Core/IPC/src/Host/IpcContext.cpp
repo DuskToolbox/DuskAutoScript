@@ -848,6 +848,21 @@ namespace Core
                 return DAS_S_OK;
             }
 
+            DasResult IpcContext::RegisterService(
+                IDasBase*      p_object,
+                const DasGuid& iid)
+            {
+                (void)p_object;
+                (void)iid;
+                return DAS_E_NO_IMPLEMENTATION;
+            }
+
+            DasResult IpcContext::UnregisterService(const DasGuid& iid)
+            {
+                (void)iid;
+                return DAS_E_NO_IMPLEMENTATION;
+            }
+
             DasResult IpcContext::RegisterLocalObject(
                 IDasBase* object_ptr,
                 ObjectId& out_object_id)

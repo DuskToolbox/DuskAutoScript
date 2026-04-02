@@ -118,6 +118,12 @@ namespace Core
                     const DasGuid& iid,
                     IDasBase**     pp_out_object) override;
 
+                DasResult RegisterService(
+                    IDasBase*      p_object,
+                    const DasGuid& iid) override;
+
+                DasResult UnregisterService(const DasGuid& iid) override;
+
             private:
                 void Uninitialize();
 

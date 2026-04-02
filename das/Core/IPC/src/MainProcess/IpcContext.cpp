@@ -1,6 +1,7 @@
 #include <IpcProxyFactory.h>
 #include <boost/asio/post.hpp>
 #include <cstring>
+#include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/IPC/AsyncOperationImpl.h>
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/CurrentIpcContextScope.h>
@@ -18,6 +19,7 @@
 #include <das/DasPtr.hpp>
 #include <das/IDasAsyncCallback.h>
 #include <das/Utils/StringUtils.h>
+#include <das/Utils/fmt.h>
 
 // Define alias for IpcRunLoop in the parent namespace
 namespace Das::Core::IPC::MainProcess
@@ -560,11 +562,11 @@ namespace Core
                 uint32_t interface_id =
                     RemoteObjectRegistry::ComputeInterfaceId(iid);
                 RemoteObjectInfo info;
-                bool             found =
+                DasResult        lookup_result =
                     RemoteObjectRegistry::GetInstance().LookupByInterface(
                         interface_id,
                         info);
-                if (!found)
+                if (DAS::IsFailed(lookup_result))
                 {
                     return DAS_E_IPC_OBJECT_NOT_FOUND;
                 }
@@ -578,6 +580,72 @@ namespace Core
                 }
 
                 *pp_out_object = local_obj;
+                return DAS_S_OK;
+            }
+
+            DasResult IpcContext::RegisterService(
+                IDasBase*      p_object,
+                const DasGuid& iid)
+            {
+                // 1. Parameter validation
+                if (!p_object)
+                {
+                    return DAS_E_INVALID_POINTER;
+                }
+
+                // 2. Register to DistributedObjectManager (AddRef)
+                ObjectId obj_id;
+                auto     result =
+                    object_manager_.RegisterLocalObject(p_object, obj_id);
+                if (DAS::IsFailed(result))
+                {
+                    return result;
+                }
+
+                // 3. Auto-generate name and register to RemoteObjectRegistry
+                //    RemoteObjectRegistry::RegisterObject requires non-empty
+                //    name
+                auto name = DAS::fmt::format("{}", iid);
+                auto session_id = runloop_->GetSessionId();
+                result = RemoteObjectRegistry::GetInstance()
+                             .RegisterObject(obj_id, iid, session_id, name);
+
+                // 4. Partial failure rollback
+                if (DAS::IsFailed(result))
+                {
+                    object_manager_.UnregisterObject(obj_id);
+                    return result;
+                }
+
+                return DAS_S_OK;
+            }
+
+            DasResult IpcContext::UnregisterService(const DasGuid& iid)
+            {
+                // 1. Lookup by IID
+                auto interface_id =
+                    RemoteObjectRegistry::ComputeInterfaceId(iid);
+
+                RemoteObjectInfo info;
+                auto             result =
+                    RemoteObjectRegistry::GetInstance().LookupByInterface(
+                        interface_id,
+                        info);
+                if (DAS::IsFailed(result))
+                {
+                    return DAS_E_IPC_OBJECT_NOT_FOUND;
+                }
+
+                // 2. Remove from Registry first
+                result = RemoteObjectRegistry::GetInstance().UnregisterObject(
+                    info.object_id);
+                if (DAS::IsFailed(result))
+                {
+                    return result;
+                }
+
+                // 3. Release from DistributedObjectManager
+                object_manager_.UnregisterObject(info.object_id);
                 return DAS_S_OK;
             }
 

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <das/IDasBase.h>
 
@@ -20,12 +20,14 @@ namespace Core
             virtual DasResult ResolveMainProcessInterface(
                 const DasGuid& iid,
                 IDasBase**     pp_out) = 0;
+            virtual DasResult RegisterService(IDasBase* p_object, const DasGuid& iid) = 0;
+            virtual DasResult UnregisterService(const DasGuid& iid) = 0;
 
         protected:
             ~IResolveContext() = default;
         };
 
-        // Single TLS pointer — zero allocation, no vector, no <vector> needed
+        // Single TLS pointer 鈥?zero allocation, no vector, no <vector> needed
         inline thread_local IResolveContext* g_current_context = nullptr;
 
         class ScopedCurrentIpcContext

@@ -198,6 +198,31 @@ DAS_C_API DasResult DasGetIpcTimeout(uint32_t* p_out_timeout_ms);
 DAS_C_API DasResult
 DasQueryMainProcessInterface(const DasGuid& iid, IDasBase** pp_out_object);
 
+/**
+ * @brief 注册一个服务对象到主进程全局服务表
+ * @param p_object 服务对象指针（调用后由框架 AddRef，调用者仍持有引用）
+ * @param iid 对象实现的接口 IID（作为唯一键，一个 GUID 只能注册一个实例）
+ * @return DAS_S_OK 成功
+ *         DAS_E_INVALID_POINTER p_object 为 nullptr
+ *         DAS_E_OBJECT_NOT_INIT 当前线程无有效 IpcContext（与
+ *             DasQueryMainProcessInterface 对齐）
+ *         DAS_E_NO_IMPLEMENTATION Host 进程不支持注册
+ *         DAS_E_DUPLICATE_ELEMENT 相同 IID 的服务已存在
+ */
+DAS_C_API DasResult
+DasRegisterMainProcessService(IDasBase* p_object, const DasGuid& iid);
+
+/**
+ * @brief 从主进程全局服务表注销一个服务对象
+ * @param iid 要注销的服务 IID（注册时使用的 IID）
+ * @return DAS_S_OK 成功
+ *         DAS_E_OBJECT_NOT_INIT 当前线程无有效 IpcContext（与
+ *             DasQueryMainProcessInterface 对齐）
+ *         DAS_E_NO_IMPLEMENTATION Host 进程不支持注销
+ *         DAS_E_IPC_OBJECT_NOT_FOUND 指定 IID 的服务不存在
+ */
+DAS_C_API DasResult DasUnregisterMainProcessService(const DasGuid& iid);
+
 #define DAS_LOG_ERROR(...) DAS_LOG_WITH_SOURCE_LOCATION(Error, __VA_ARGS__)
 #define DAS_LOG_WARNING(...) DAS_LOG_WITH_SOURCE_LOCATION(Warning, __VA_ARGS__)
 #define DAS_LOG_INFO(...) DAS_LOG_WITH_SOURCE_LOCATION(Info, __VA_ARGS__)
