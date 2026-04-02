@@ -32,15 +32,6 @@ function(das_add_plugin_library SUB_DIRECTORY_NAME PRIVATE_EX_LIBS)
         ${CMAKE_CURRENT_SOURCE_DIR}/${SUB_DIRECTORY_NAME}/${SUB_DIRECTORY_NAME}.json
         ${CMAKE_BINARY_DIR}/das/tmp/${SUB_DIRECTORY_NAME}.json
         @ONLY)
-    
-    # 获取插件输出目录路径
-    get_target_property(PLUGIN_OUTPUT_DIR ${SUB_DIRECTORY_NAME} OUTPUT_DIRECTORY)
-    
-    # 确保输出目录存在（仅在目录不存在时创建）
-    if(NOT EXISTS ${PLUGIN_OUTPUT_DIR})
-        file(MAKE_DIRECTORY ${PLUGIN_OUTPUT_DIR})
-    endif()
-    
     add_custom_command(
         TARGET DasAutoCopyPluginMetadataFile
         POST_BUILD
