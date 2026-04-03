@@ -139,6 +139,31 @@ configure_file(${CMAKE_SOURCE_DIR}/cmake/CTestCustom.cmake ${CMAKE_BINARY_DIR} @
 add_custom_target(RemoveSwigOutput
         COMMAND ${CMAKE_COMMAND} -P ${CMAKE_SOURCE_DIR}/cmake/DasRemoveSwigOutput.cmake)
 
+# Auto-register git hooks when this is the top-level project
+# (skip when fetched via FetchContent as a dependency)
+if(PROJECT_IS_TOP_LEVEL)
+    find_program(GIT_EXECUTABLE git)
+    if(GIT_EXECUTABLE)
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} rev-parse --git-dir
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            OUTPUT_VARIABLE DAS_GIT_DIR
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+            RESULT_VARIABLE DAS_GIT_CHECK_RESULT
+        )
+        if(DAS_GIT_CHECK_RESULT EQUAL 0)
+            execute_process(
+                COMMAND ${GIT_EXECUTABLE} config core.hooksPath .githooks
+                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+                OUTPUT_QUIET
+                ERROR_QUIET
+            )
+            message(STATUS "Git hooks registered: .githooks")
+        endif()
+    endif()
+endif()
+
 if (${DAS_BUILD_TEST})
     enable_testing()
 endif ()
