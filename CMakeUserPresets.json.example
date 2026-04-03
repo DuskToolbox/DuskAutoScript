@@ -1,0 +1,26 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "ember",
+      "displayName": "Ember",
+      "description": "Local debug preset - customize inherits and cacheVariables for your environment",
+      "inherits": "msvc-prebuilt-debug",
+      "cacheVariables": {
+        "DAS_USE_ASAN": "ON",
+        "DAS_USE_LTO": "OFF",
+        "EXPORT_PYTHON": "OFF",
+        "EXPORT_JAVA": "OFF",
+        "EXPORT_CSHARP": "OFF",
+        "DAS_BUILD_TEST": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "ember",
+      "configurePreset": "ember",
+      "configuration": "Debug"
+    }
+  ]
+}

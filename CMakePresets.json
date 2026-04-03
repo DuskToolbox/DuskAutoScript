@@ -1,0 +1,192 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 24,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "common-base",
+      "hidden": true,
+      "cacheVariables": {
+        "DAS_BUILD_QT5_GUI": "ON",
+        "DAS_BUILD_TEST": "OFF",
+        "DAS_USE_CCACHE": "OFF",
+        "DAS_USE_ASAN": "ON",
+        "DAS_USE_LTO": "OFF"
+      }
+    },
+    {
+      "name": "msvc-base",
+      "hidden": true,
+      "inherits": "common-base",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "msvc-prebuilt-base",
+      "hidden": true,
+      "inherits": "msvc-base",
+      "cacheVariables": {
+        "DAS_USE_BUNDLED_EIGEN": "OFF",
+        "DAS_USE_BUNDLED_BOOST": "OFF",
+        "DAS_USE_BUNDLED_OPENCV": "OFF"
+      }
+    },
+    {
+      "name": "msvc-bundled-base",
+      "hidden": true,
+      "inherits": "msvc-base",
+      "cacheVariables": {
+        "DAS_USE_BUNDLED_EIGEN": "ON",
+        "DAS_USE_BUNDLED_BOOST": "ON",
+        "DAS_USE_BUNDLED_OPENCV": "ON"
+      }
+    },
+    {
+      "name": "mingw-base",
+      "hidden": true,
+      "inherits": "common-base",
+      "generator": "Ninja",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "cacheVariables": {
+        "DAS_USE_BUNDLED_EIGEN": "OFF",
+        "DAS_USE_BUNDLED_BOOST": "OFF",
+        "DAS_USE_BUNDLED_OPENCV": "OFF"
+      }
+    },
+    {
+      "name": "linux-base",
+      "hidden": true,
+      "inherits": "common-base",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "DAS_USE_BUNDLED_EIGEN": "OFF",
+        "DAS_USE_BUNDLED_BOOST": "OFF",
+        "DAS_USE_BUNDLED_OPENCV": "OFF"
+      }
+    },
+    {
+      "name": "msvc-prebuilt-debug",
+      "displayName": "MSVC Prebuilt (Debug)",
+      "description": "MSVC with prebuilt boost/opencv, Debug build",
+      "inherits": "msvc-prebuilt-base",
+      "binaryDir": "${sourceDir}/build/msvc-prebuilt-debug"
+    },
+    {
+      "name": "msvc-prebuilt-release",
+      "displayName": "MSVC Prebuilt (Release)",
+      "description": "MSVC with prebuilt boost/opencv, Release build",
+      "inherits": "msvc-prebuilt-base",
+      "binaryDir": "${sourceDir}/build/msvc-prebuilt-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "msvc-bundled-debug",
+      "displayName": "MSVC Bundled (Debug)",
+      "description": "MSVC with bundled boost/opencv, Debug build",
+      "inherits": "msvc-bundled-base",
+      "binaryDir": "${sourceDir}/build/msvc-bundled-debug"
+    },
+    {
+      "name": "msvc-bundled-release",
+      "displayName": "MSVC Bundled (Release)",
+      "description": "MSVC with bundled boost/opencv, Release build",
+      "inherits": "msvc-bundled-base",
+      "binaryDir": "${sourceDir}/build/msvc-bundled-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "mingw-debug",
+      "displayName": "MinGW (Debug)",
+      "description": "MinGW with system boost/opencv, Debug build",
+      "inherits": "mingw-base",
+      "binaryDir": "${sourceDir}/build/mingw-debug"
+    },
+    {
+      "name": "mingw-release",
+      "displayName": "MinGW (Release)",
+      "description": "MinGW with system boost/opencv, Release build",
+      "inherits": "mingw-base",
+      "binaryDir": "${sourceDir}/build/mingw-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "linux-debug",
+      "displayName": "Linux (Debug)",
+      "description": "Linux with system boost/opencv, Debug build",
+      "inherits": "linux-base",
+      "binaryDir": "${sourceDir}/build/linux-debug"
+    },
+    {
+      "name": "linux-release",
+      "displayName": "Linux (Release)",
+      "description": "Linux with system boost/opencv, Release build",
+      "inherits": "linux-base",
+      "binaryDir": "${sourceDir}/build/linux-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "msvc-prebuilt-debug",
+      "configurePreset": "msvc-prebuilt-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "msvc-prebuilt-release",
+      "configurePreset": "msvc-prebuilt-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "msvc-bundled-debug",
+      "configurePreset": "msvc-bundled-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "msvc-bundled-release",
+      "configurePreset": "msvc-bundled-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "mingw-debug",
+      "configurePreset": "mingw-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "mingw-release",
+      "configurePreset": "mingw-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "linux-debug",
+      "configurePreset": "linux-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "linux-release",
+      "configurePreset": "linux-release",
+      "configuration": "Release"
+    }
+  ]
+}

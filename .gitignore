@@ -12,3 +12,4 @@ cmake-build-debug-visual-studio/
 .codebuddy/
 __pycache__/
 .planning/
+CMakeUserPresets.json
