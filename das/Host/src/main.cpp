@@ -101,14 +101,9 @@ void RegisterLoadPluginHandler(DAS::Core::IPC::Host::IIpcContext* ctx)
                 return DAS_E_IPC_PLUGIN_LOAD_FAILED;
             }
 
-            std::string plugin_name;
-            std::string plugin_extension;
             std::string plugin_language;
             try
             {
-                manifest_json["name"].get_to(plugin_name);
-                manifest_json["pluginFilenameExtension"].get_to(
-                    plugin_extension);
                 manifest_json["language"].get_to(plugin_language);
             }
             catch (const nlohmann::json::exception& e)
@@ -121,9 +116,6 @@ void RegisterLoadPluginHandler(DAS::Core::IPC::Host::IIpcContext* ctx)
                 return DAS_E_IPC_PLUGIN_LOAD_FAILED;
             }
 
-            std::filesystem::path manifest_dir =
-                std::filesystem::path(manifest_path).parent_path();
-
             std::string lang_lower;
             std::transform(
                 plugin_language.begin(),
@@ -133,29 +125,23 @@ void RegisterLoadPluginHandler(DAS::Core::IPC::Host::IIpcContext* ctx)
 
             if (!g_runtime)
             {
-                std::filesystem::path runtime_path =
-                    manifest_dir / (plugin_name + "." + plugin_extension);
-
                 DAS::Core::ForeignInterfaceHost::
                     ForeignLanguageRuntimeFactoryDesc desc;
 
-                DAS::Core::ForeignInterfaceHost::JavaRuntimeDescPtr java_desc;
-
-                if (lang_lower == "java")
+                if (lang_lower == "python")
+                {
+                    desc.language = DAS::Core::ForeignInterfaceHost::
+                        ForeignInterfaceLanguage::Python;
+                }
+                else if (lang_lower == "java")
                 {
                     desc.language = DAS::Core::ForeignInterfaceHost::
                         ForeignInterfaceLanguage::Java;
-                    java_desc.reset(
-                        DAS::Core::ForeignInterfaceHost::
-                            CreateJavaRuntimeDesc());
-                    java_desc->SetClassPath({runtime_path});
-                    desc.p_user_data = java_desc.get();
                 }
                 else
                 {
                     desc.language = DAS::Core::ForeignInterfaceHost::
                         ForeignInterfaceLanguage::Cpp;
-                    desc.p_user_data = nullptr;
                 }
 
                 auto result = DAS::Core::ForeignInterfaceHost::
@@ -164,14 +150,14 @@ void RegisterLoadPluginHandler(DAS::Core::IPC::Host::IIpcContext* ctx)
                 {
                     g_runtime = std::move(result.value());
                     std::string msg = DAS_FMT_NS::format(
-                        "运行时初始化完成: {}",
+                        "Runtime initialized: {}",
                         plugin_language);
                     DAS_LOG_INFO(msg.c_str());
                 }
                 else
                 {
                     std::string msg = DAS_FMT_NS::format(
-                        "创建运行时失败: {}",
+                        "Failed to create runtime: {}",
                         plugin_language);
                     DAS_LOG_ERROR(msg.c_str());
                     response.error_code = DAS_E_IPC_PLUGIN_LOAD_FAILED;
@@ -180,28 +166,16 @@ void RegisterLoadPluginHandler(DAS::Core::IPC::Host::IIpcContext* ctx)
                 }
             }
 
-            std::filesystem::path plugin_path;
-            if (lang_lower == "java")
-            {
-                plugin_path = manifest_path;
-            }
-            else
-            {
-                plugin_path =
-                    manifest_dir / (plugin_name + "." + plugin_extension);
-            }
-
             std::string msg =
-                DAS_FMT_NS::format("加载插件: {}", plugin_path.string());
+                DAS_FMT_NS::format("Loading plugin: {}", manifest_path);
             DAS_LOG_INFO(msg.c_str());
 
-            auto result = g_runtime->LoadPlugin(plugin_path.string());
+            auto result = g_runtime->LoadPlugin(manifest_path);
             if (!result.has_value())
             {
-                msg = DAS_FMT_NS::format(
-                    "插件加载失败: {}",
-                    plugin_path.string());
-                DAS_LOG_ERROR(msg.c_str());
+                std::string err_msg =
+                    DAS_FMT_NS::format("Plugin load failed: {}", manifest_path);
+                DAS_LOG_ERROR(err_msg.c_str());
                 response.error_code = DAS_E_IPC_PLUGIN_LOAD_FAILED;
                 response.response_data.clear();
                 return DAS_E_IPC_PLUGIN_LOAD_FAILED;
@@ -302,10 +276,8 @@ void RegisterQueryInterfaceHandler(DAS::Core::IPC::Host::IIpcContext* ctx)
 
             // 3. 查找真实对象（LookupObject 内部 AddRef）
             DAS::DasPtr<IDasBase> raw_obj;
-            DasResult lookup_result =
-                ctx->GetObjectManager().LookupObject(
-                    object_id,
-                    raw_obj.Put());
+            DasResult             lookup_result =
+                ctx->GetObjectManager().LookupObject(object_id, raw_obj.Put());
             if (DAS::IsFailed(lookup_result))
             {
                 std::string qi_log_msg = DAS_FMT_NS::format(

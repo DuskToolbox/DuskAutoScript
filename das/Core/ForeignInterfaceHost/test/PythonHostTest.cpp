@@ -32,8 +32,6 @@ TEST(PythonHostIntegration, CreatePythonRuntime_Success)
 
     ForeignLanguageRuntimeFactoryDesc desc{};
     desc.language = ForeignInterfaceLanguage::Python;
-    desc.p_user_data = nullptr;
-
     auto result = CreateForeignLanguageRuntime(desc);
     ASSERT_TRUE(result.has_value())
         << "CreateForeignLanguageRuntime should succeed for Python";
@@ -48,8 +46,6 @@ TEST(PythonHostIntegration, CreatePythonRuntime_InvalidLanguage)
 
     ForeignLanguageRuntimeFactoryDesc desc{};
     desc.language = ForeignInterfaceLanguage::Java; // 错误的语言
-    desc.p_user_data = nullptr;
-
     auto result = CreateForeignLanguageRuntime(desc);
     EXPECT_FALSE(result.has_value())
         << "CreateForeignLanguageRuntime should fail for Java in PythonHost test";
@@ -64,7 +60,6 @@ TEST(PythonHostIntegration, LoadPlugin_EndToEnd)
     // 1. 创建运行时
     ForeignLanguageRuntimeFactoryDesc desc{};
     desc.language = ForeignInterfaceLanguage::Python;
-    desc.p_user_data = nullptr;
 
     auto runtime_result = CreateForeignLanguageRuntime(desc);
     ASSERT_TRUE(runtime_result.has_value())

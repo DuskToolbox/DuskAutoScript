@@ -386,27 +386,19 @@ std::string JvmManager::BuildClassPathString(
 // JavaRuntime 实现
 // ============================================================================
 
-JavaRuntime::JavaRuntime(const IDasJavaRuntimeDesc& desc) : jvm_(nullptr)
+JavaRuntime::JavaRuntime() : jvm_(nullptr)
 {
-    // 获取 jvm.dll 路径
-    std::filesystem::path jvm_dll_path = desc.GetJvmDllPath();
-    if (jvm_dll_path.empty())
-    {
-        jvm_dll_path = JvmManager::FindJvmDllPath();
-    }
-
+    std::filesystem::path jvm_dll_path = JvmManager::FindJvmDllPath();
     if (jvm_dll_path.empty())
     {
         DAS_CORE_LOG_ERROR("Failed to find jvm.dll");
         return;
     }
 
-    // 创建 JVM
     jvm_ = JvmManager::GetInstance().GetOrCreateVM(
         jvm_dll_path,
-        desc.GetJvmOptions(),
-        desc.GetClassPath());
-
+        {},  // no jvm options
+        {}); // no class path
     if (!jvm_)
     {
         DAS_CORE_LOG_ERROR("Failed to create JavaRuntime: JVM creation failed");
@@ -716,7 +708,6 @@ DasResult JavaRuntime::LoadPluginConfig(
 auto CreateJavaRuntime(const ForeignLanguageRuntimeFactoryDesc& desc)
     -> DAS::Utils::Expected<DasPtr<IForeignLanguageRuntime>>
 {
-    // 校验 language
     if (desc.language != ForeignInterfaceLanguage::Java)
     {
         DAS_CORE_LOG_ERROR(
@@ -724,19 +715,9 @@ auto CreateJavaRuntime(const ForeignLanguageRuntimeFactoryDesc& desc)
         return tl::make_unexpected(DAS_E_INVALID_ARGUMENT);
     }
 
-    // 从 p_user_data 转换为 IDasJavaRuntimeDesc*
-    if (desc.p_user_data == nullptr)
-    {
-        DAS_CORE_LOG_ERROR("CreateJavaRuntime: p_user_data is null");
-        return tl::make_unexpected(DAS_E_INVALID_ARGUMENT);
-    }
-
-    const auto* java_desc =
-        static_cast<const IDasJavaRuntimeDesc*>(desc.p_user_data);
-
     try
     {
-        const auto runtime = DAS::MakeDasPtr<JavaRuntime>(*java_desc);
+        const auto runtime = DAS::MakeDasPtr<JavaRuntime>();
         if (!runtime->IsInitialized())
         {
             return tl::make_unexpected(DAS_E_OBJECT_NOT_INIT);
@@ -751,20 +732,6 @@ auto CreateJavaRuntime(const ForeignLanguageRuntimeFactoryDesc& desc)
 }
 
 DAS_NS_JAVAHOST_END
-
-// ============================================================================
-// IDasJavaRuntimeDesc 工厂函数实现
-// ============================================================================
-
-IDasJavaRuntimeDesc* CreateJavaRuntimeDesc()
-{
-    return new JavaHost::JavaRuntimeDesc();
-}
-
-void DestroyJavaRuntimeDesc(IDasJavaRuntimeDesc* desc)
-{
-    delete static_cast<JavaHost::JavaRuntimeDesc*>(desc);
-}
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
 

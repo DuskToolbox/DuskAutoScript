@@ -7,6 +7,9 @@
 #include <das/IDasBase.h>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/Expected.h>
+#include <filesystem>
+#include <fstream>
+#include <nlohmann/json.hpp>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
@@ -39,36 +42,70 @@ public:
         -> DAS::Utils::Expected<DasPtr<IDasBase>> override
     {
         DAS_CORE_LOG_INFO(
-            "[CppRuntime::LoadPlugin] Starting load for path: {}",
+            "[CppRuntime::LoadPlugin] Starting load for manifest: {}",
             path.string());
 
+        // 1. Parse manifest.json
+        std::ifstream file(path);
+        if (!file.is_open())
+        {
+            DAS_CORE_LOG_ERROR(
+                "Failed to open plugin manifest: {}",
+                path.string());
+            return tl::make_unexpected(DAS_E_FILE_NOT_FOUND);
+        }
+
+        std::string plugin_name;
+        std::string plugin_extension;
+        try
+        {
+            nlohmann::json manifest = nlohmann::json::parse(file);
+
+            if (!manifest.contains("name"))
+            {
+                DAS_CORE_LOG_ERROR(
+                    "Plugin manifest missing 'name' field: {}",
+                    path.string());
+                return tl::make_unexpected(DAS_E_FAIL);
+            }
+            if (!manifest.contains("pluginFilenameExtension"))
+            {
+                DAS_CORE_LOG_ERROR(
+                    "Plugin manifest missing 'pluginFilenameExtension' field: {}",
+                    path.string());
+                return tl::make_unexpected(DAS_E_FAIL);
+            }
+
+            manifest["name"].get_to(plugin_name);
+            manifest["pluginFilenameExtension"].get_to(plugin_extension);
+        }
+        catch (const nlohmann::json::exception& e)
+        {
+            DAS_CORE_LOG_ERROR("Failed to parse plugin manifest: {}", e.what());
+            return tl::make_unexpected(DAS_E_FAIL);
+        }
+
+        // 2. Construct dll path
+        auto dll_path =
+            path.parent_path() / (plugin_name + "." + plugin_extension);
+        DAS_CORE_LOG_INFO(
+            "[CppRuntime::LoadPlugin] Constructed dll path: {}",
+            dll_path.string());
+
+        // 3. Load dll (existing logic)
         try
         {
             boost::system::error_code ec;
-            DAS_CORE_LOG_INFO(
-                "[CppRuntime::LoadPlugin] Path as string: {}",
-                path.string());
-
-            DAS_CORE_LOG_INFO(
-                "[CppRuntime::LoadPlugin] Calling plugin_lib_.load()...");
-
-            plugin_lib_.load(path.wstring(), ec);
-
-            DAS_CORE_LOG_INFO(
-                "[CppRuntime::LoadPlugin] plugin_lib_.load() returned.");
+            plugin_lib_.load(dll_path.wstring(), ec);
             if (ec)
             {
                 DAS_CORE_LOG_ERROR(
                     "Failed to load plugin library: {}, error: {}",
-                    path.string(),
+                    dll_path.string(),
                     ec.message());
                 return tl::make_unexpected(DAS_E_INVALID_FILE);
             }
 
-            DAS_CORE_LOG_INFO(
-                "[CppRuntime::LoadPlugin] Getting export function...");
-
-            // Try to get the function and log the result
             DAS_CORE_LOG_INFO(
                 "[CppRuntime::LoadPlugin] Has DasCoCreatePlugin: {}",
                 plugin_lib_.has(DAS_COCREATE_PLUGIN_NAME));
@@ -83,7 +120,7 @@ public:
                 DAS_CORE_LOG_ERROR(
                     "Failed to get export function '{}' from plugin: {}",
                     DAS_COCREATE_PLUGIN_NAME,
-                    path.string());
+                    dll_path.string());
                 return tl::make_unexpected(DAS_E_SYMBOL_NOT_FOUND);
             }
 
