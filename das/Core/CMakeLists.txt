@@ -185,15 +185,6 @@ else ()
     target_link_libraries(DasCoreObjects PRIVATE ${Boost_LIBRARIES})
 endif ()
 
-if (WIN32)
-    target_compile_definitions(DasCoreObjects PRIVATE DAS_PLATFORM="WINDOWS" DAS_WINDOWS)
-elseif (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
-    target_compile_definitions(DasCoreObjects PRIVATE DAS_PLATFORM="MACOS")
-elseif (UNIX)
-    target_compile_definitions(DasCoreObjects PRIVATE DAS_PLATFORM="LINUX")
-else ()
-    message(FATAL_ERROR "Unsupported platform.")
-endif ()
 # ============================================================================
 # Windows AF_UNIX 支持
 # ============================================================================
@@ -268,7 +259,7 @@ add_compile_definitions(DAS_BUILD_SHARED)
 
 # list(APPEND DAS_EXPORT_MACRO_LIST DAS_EXPORT_LUA)
 target_link_libraries(DasCoreObjects
-        PUBLIC DasUtils ${DAS_FOREIGN_LANGUAGE_LIB_LIST})
+        PUBLIC DasUtils DasPlatformDefs ${DAS_FOREIGN_LANGUAGE_LIB_LIST})
 
 # Windows 平台需要链接 ntdll（Boost.Process 使用了 NT 内部 API）
 if(WIN32)

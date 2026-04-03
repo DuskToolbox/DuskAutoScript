@@ -2,16 +2,23 @@ set(CMAKE_FOLDER "DAS")
 
 add_compile_definitions($<$<CONFIG:Debug>:DEBUG>)
 
+add_library(DasPlatformDefs INTERFACE)
+if(WIN32)
+    target_compile_definitions(DasPlatformDefs INTERFACE DAS_WINDOWS DAS_PLATFORM="WINDOWS")
+elseif(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+    target_compile_definitions(DasPlatformDefs INTERFACE DAS_PLATFORM="MACOS")
+elseif(UNIX)
+    target_compile_definitions(DasPlatformDefs INTERFACE DAS_PLATFORM="LINUX")
+else()
+    message(FATAL_ERROR "Unsupported platform.")
+endif()
+
 aux_source_directory(Utils/src DAS_UTILS_SOURCES)
 file(GLOB_RECURSE Utils/include/* DAS_UTILS_HEADERS)
 add_library(DasUtils STATIC ${DAS_UTILS_SOURCES} ${DAS_UTILS_HEADERS})
 set_property(TARGET DasUtils PROPERTY POSITION_INDEPENDENT_CODE ON)
 target_include_directories(DasUtils PUBLIC Utils/include)
-target_link_libraries(DasUtils PUBLIC Das3rdParty)
-
-if(WIN32)
-    target_compile_definitions(DasUtils PRIVATE DAS_WINDOWS)
-endif()
+target_link_libraries(DasUtils PUBLIC Das3rdParty DasPlatformDefs)
 
 if(DAS_USE_BUNDLED_BOOST)
     target_link_libraries(DasUtils PUBLIC Boost::dll)
