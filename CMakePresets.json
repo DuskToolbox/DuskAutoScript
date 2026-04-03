@@ -83,7 +83,10 @@
       "displayName": "MSVC Prebuilt (Debug)",
       "description": "MSVC with prebuilt boost/opencv, Debug build",
       "inherits": "msvc-prebuilt-base",
-      "binaryDir": "${sourceDir}/build/msvc-prebuilt-debug"
+      "binaryDir": "${sourceDir}/build/msvc-prebuilt-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
     },
     {
       "name": "msvc-prebuilt-release",
@@ -96,11 +99,24 @@
       }
     },
     {
+      "name": "msvc-prebuilt-relwithdebinfo",
+      "displayName": "MSVC Prebuilt (RelWithDebInfo)",
+      "description": "MSVC with prebuilt boost/opencv, RelWithDebInfo build",
+      "inherits": "msvc-prebuilt-base",
+      "binaryDir": "${sourceDir}/build/msvc-prebuilt-relwithdebinfo",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
       "name": "msvc-bundled-debug",
       "displayName": "MSVC Bundled (Debug)",
       "description": "MSVC with bundled boost/opencv, Debug build",
       "inherits": "msvc-bundled-base",
-      "binaryDir": "${sourceDir}/build/msvc-bundled-debug"
+      "binaryDir": "${sourceDir}/build/msvc-bundled-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
     },
     {
       "name": "msvc-bundled-release",
@@ -113,11 +129,24 @@
       }
     },
     {
+      "name": "msvc-bundled-relwithdebinfo",
+      "displayName": "MSVC Bundled (RelWithDebInfo)",
+      "description": "MSVC with bundled boost/opencv, RelWithDebInfo build",
+      "inherits": "msvc-bundled-base",
+      "binaryDir": "${sourceDir}/build/msvc-bundled-relwithdebinfo",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
       "name": "mingw-debug",
       "displayName": "MinGW (Debug)",
       "description": "MinGW with system boost/opencv, Debug build",
       "inherits": "mingw-base",
-      "binaryDir": "${sourceDir}/build/mingw-debug"
+      "binaryDir": "${sourceDir}/build/mingw-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
     },
     {
       "name": "mingw-release",
@@ -130,11 +159,24 @@
       }
     },
     {
+      "name": "mingw-relwithdebinfo",
+      "displayName": "MinGW (RelWithDebInfo)",
+      "description": "MinGW with system boost/opencv, RelWithDebInfo build",
+      "inherits": "mingw-base",
+      "binaryDir": "${sourceDir}/build/mingw-relwithdebinfo",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
       "name": "linux-debug",
       "displayName": "Linux (Debug)",
       "description": "Linux with system boost/opencv, Debug build",
       "inherits": "linux-base",
-      "binaryDir": "${sourceDir}/build/linux-debug"
+      "binaryDir": "${sourceDir}/build/linux-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
     },
     {
       "name": "linux-release",
@@ -144,6 +186,16 @@
       "binaryDir": "${sourceDir}/build/linux-release",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "linux-relwithdebinfo",
+      "displayName": "Linux (RelWithDebInfo)",
+      "description": "Linux with system boost/opencv, RelWithDebInfo build",
+      "inherits": "linux-base",
+      "binaryDir": "${sourceDir}/build/linux-relwithdebinfo",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
       }
     }
   ],
@@ -159,6 +211,11 @@
       "configuration": "Release"
     },
     {
+      "name": "msvc-prebuilt-relwithdebinfo",
+      "configurePreset": "msvc-prebuilt-relwithdebinfo",
+      "configuration": "RelWithDebInfo"
+    },
+    {
       "name": "msvc-bundled-debug",
       "configurePreset": "msvc-bundled-debug",
       "configuration": "Debug"
@@ -167,6 +224,11 @@
       "name": "msvc-bundled-release",
       "configurePreset": "msvc-bundled-release",
       "configuration": "Release"
+    },
+    {
+      "name": "msvc-bundled-relwithdebinfo",
+      "configurePreset": "msvc-bundled-relwithdebinfo",
+      "configuration": "RelWithDebInfo"
     },
     {
       "name": "mingw-debug",
@@ -179,6 +241,11 @@
       "configuration": "Release"
     },
     {
+      "name": "mingw-relwithdebinfo",
+      "configurePreset": "mingw-relwithdebinfo",
+      "configuration": "RelWithDebInfo"
+    },
+    {
       "name": "linux-debug",
       "configurePreset": "linux-debug",
       "configuration": "Debug"
@@ -187,6 +254,11 @@
       "name": "linux-release",
       "configurePreset": "linux-release",
       "configuration": "Release"
+    },
+    {
+      "name": "linux-relwithdebinfo",
+      "configurePreset": "linux-relwithdebinfo",
+      "configuration": "RelWithDebInfo"
     }
   ]
 }
