@@ -1,4 +1,4 @@
-﻿#include <das/Core/IPC/InterfaceParamSerialization.h>
+#include <das/Core/IPC/InterfaceParamSerialization.h>
 
 #include <das/Core/IPC/BusinessThread.h>
 #include <das/Core/IPC/DasProxyBase.h>

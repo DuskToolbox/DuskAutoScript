@@ -1,4 +1,4 @@
-﻿#include <das/Core/IPC/UnixAsyncIpcTransport.h>
+#include <das/Core/IPC/UnixAsyncIpcTransport.h>
 
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/co_spawn.hpp>

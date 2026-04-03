@@ -1,4 +1,4 @@
-﻿#include <das/Core/Logger/Logger.h>
+#include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
