@@ -13,6 +13,9 @@ import java.math.BigInteger;
  * - JavaTestPlugin: 插件包入口，提供 DasComponentFactory 特性
  * - DasComponentFactoryImpl: 组件工厂，创建 DasComponentImpl 实例
  * - DasComponentImpl: 组件实现，支持 echo/compute/getSessionInfo 方法
+ *   - echo: 接收字符串，返回带前缀的字符串
+ *   - compute: 接收 [op, a, b]，返回计算结果 (add/sub/mul/div)
+ *   - getSessionInfo: 返回 [sessionId, language, componentName]
  */
 public class JavaTestPlugin extends ISwigDasPluginPackage {
 
@@ -103,7 +106,7 @@ public class JavaTestPlugin extends ISwigDasPluginPackage {
 
     /**
      * 对照 C++ DasComponentImpl，实现 IDasComponent。
-     * 支持 echo/compute/getSessionInfo 三个方法（当前均为 TODO stub）。
+     * 支持 echo/compute/getSessionInfo 三个方法。
      */
     public static class DasComponentImpl extends ISwigDasComponent {
 
@@ -173,41 +176,144 @@ public class JavaTestPlugin extends ISwigDasPluginPackage {
 
         private DasRetDasVariantVector HandleEcho(IDasVariantVector args) {
             DasRetDasVariantVector result = new DasRetDasVariantVector();
-            result.setErrorCode(DuskAutoScriptConstants.DAS_S_OK);
 
             if (args == null || args.GetSize() < 1) {
-                DuskAutoScript.DasLogInfoU8(
+                result.setErrorCode(DuskAutoScriptConstants.DAS_E_INVALID_ARGUMENT);
+                DuskAutoScript.DasLogErrorU8(
                         "[JavaTestPlugin] echo: no arguments provided");
                 return result;
             }
 
             try {
-                DasReadOnlyString input =
-                        args.GetStringEz(BigInteger.ZERO);
-                String inputStr = input.toJavaString();
+                String inputStr = args.GetStringEz(BigInteger.ZERO).toString();
+                String echoResult = "[Java] echo: " + inputStr;
                 DuskAutoScript.DasLogInfoU8(
                         "[JavaTestPlugin] echo: input=\"" + inputStr + "\"");
+
+                DasRetIDasVariantVector vecResult =
+                        DuskAutoScript.CreateDasRetIDasVariantVector();
+                if (DuskAutoScript.IsFailed(vecResult.getErrorCode())) {
+                    result.setErrorCode(vecResult.getErrorCode());
+                    return result;
+                }
+                IDasVariantVector outVec = vecResult.getValue();
+                outVec.PushBackString(
+                        DasReadOnlyString.fromString(echoResult));
+                result.setValue(outVec);
+                result.setErrorCode(DuskAutoScriptConstants.DAS_S_OK);
             } catch (Exception e) {
                 DuskAutoScript.DasLogErrorU8(
-                        "[JavaTestPlugin] echo: failed to read argument 0: "
-                                + e.getMessage());
+                        "[JavaTestPlugin] echo: failed: " + e.getMessage());
+                result.setErrorCode(DuskAutoScriptConstants.DAS_E_FAIL);
             }
 
             return result;
         }
 
-        // TODO: Implement compute - perform calculation and return result
+        /**
+         * compute: 执行简单计算并返回结果
+         * 参数: [操作符, 左操作数, 右操作数]
+         *   操作符: "add" | "sub" | "mul" | "div"
+         *   操作数: int64
+         * 返回: [结果int64]
+         */
         private DasRetDasVariantVector HandleCompute(IDasVariantVector args) {
             DasRetDasVariantVector result = new DasRetDasVariantVector();
-            result.setErrorCode(DuskAutoScriptConstants.DAS_S_OK);
+
+            if (args == null || args.GetSize() < 3) {
+                result.setErrorCode(DuskAutoScriptConstants.DAS_E_INVALID_ARGUMENT);
+                DuskAutoScript.DasLogErrorU8(
+                        "[JavaTestPlugin] compute: need 3 args [op, a, b]");
+                return result;
+            }
+
+            try {
+                String op = args.GetStringEz(BigInteger.ZERO).toString();
+                long a = args.GetIntEz(BigInteger.ONE);
+                long b = args.GetIntEz(BigInteger.valueOf(2));
+                long computed = 0;
+
+                if (op.equals("add")) {
+                    computed = a + b;
+                } else if (op.equals("sub")) {
+                    computed = a - b;
+                } else if (op.equals("mul")) {
+                    computed = a * b;
+                } else if (op.equals("div")) {
+                    if (b == 0) {
+                        result.setErrorCode(
+                                DuskAutoScriptConstants.DAS_E_INVALID_ARGUMENT);
+                        DuskAutoScript.DasLogErrorU8(
+                                "[JavaTestPlugin] compute: division by zero");
+                        return result;
+                    }
+                    computed = a / b;
+                } else {
+                    result.setErrorCode(
+                            DuskAutoScriptConstants.DAS_E_INVALID_ARGUMENT);
+                    DuskAutoScript.DasLogErrorU8(
+                            "[JavaTestPlugin] compute: unknown op \"" + op
+                                    + "\"");
+                    return result;
+                }
+
+                DuskAutoScript.DasLogInfoU8(
+                        "[JavaTestPlugin] compute: " + a + " " + op + " " + b
+                                + " = " + computed);
+
+                DasRetIDasVariantVector vecResult =
+                        DuskAutoScript.CreateDasRetIDasVariantVector();
+                if (DuskAutoScript.IsFailed(vecResult.getErrorCode())) {
+                    result.setErrorCode(vecResult.getErrorCode());
+                    return result;
+                }
+                IDasVariantVector outVec = vecResult.getValue();
+                outVec.PushBackInt(computed);
+                result.setValue(outVec);
+                result.setErrorCode(DuskAutoScriptConstants.DAS_S_OK);
+            } catch (Exception e) {
+                DuskAutoScript.DasLogErrorU8(
+                        "[JavaTestPlugin] compute: failed: " + e.getMessage());
+                result.setErrorCode(DuskAutoScriptConstants.DAS_E_FAIL);
+            }
+
             return result;
         }
 
-        // TODO: Return session_id as part of result
+        /**
+         * getSessionInfo: 返回当前 session 信息
+         * 返回: [sessionId(int64), language(string), componentName(string)]
+         */
         private DasRetDasVariantVector HandleGetSessionInfo(
                 IDasVariantVector args) {
             DasRetDasVariantVector result = new DasRetDasVariantVector();
-            result.setErrorCode(DuskAutoScriptConstants.DAS_S_OK);
+
+            try {
+                DuskAutoScript.DasLogInfoU8(
+                        "[JavaTestPlugin] getSessionInfo: session_id="
+                                + sessionId_);
+
+                DasRetIDasVariantVector vecResult =
+                        DuskAutoScript.CreateDasRetIDasVariantVector();
+                if (DuskAutoScript.IsFailed(vecResult.getErrorCode())) {
+                    result.setErrorCode(vecResult.getErrorCode());
+                    return result;
+                }
+                IDasVariantVector outVec = vecResult.getValue();
+                outVec.PushBackInt(sessionId_);
+                outVec.PushBackString(
+                        DasReadOnlyString.fromString("Java"));
+                outVec.PushBackString(
+                        DasReadOnlyString.fromString("Das.ComponentImpl"));
+                result.setValue(outVec);
+                result.setErrorCode(DuskAutoScriptConstants.DAS_S_OK);
+            } catch (Exception e) {
+                DuskAutoScript.DasLogErrorU8(
+                        "[JavaTestPlugin] getSessionInfo: failed: "
+                                + e.getMessage());
+                result.setErrorCode(DuskAutoScriptConstants.DAS_E_FAIL);
+            }
+
             return result;
         }
     }

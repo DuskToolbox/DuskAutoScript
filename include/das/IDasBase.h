@@ -113,6 +113,7 @@ void _das_internal_DelayRelease(T* pointer) noexcept
  *
  */
 #define DAS_DEFINE_RET_POINTER(type_name, pointer_type)                        \
+    DAS_SWIG_JAVA_RET_TYPE_RENAME(type_name)                                   \
     struct type_name                                                           \
     {                                                                          \
         SWIG_PRIVATE                                                           \

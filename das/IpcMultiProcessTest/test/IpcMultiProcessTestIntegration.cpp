@@ -267,10 +267,11 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
  */
 TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadJavaPlugin)
 {
-    if (!std::filesystem::exists(host_exe_path_))
-    {
-        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
-    }
+#ifndef DAS_EXPORT_JAVA
+    GTEST_SKIP() << "DAS_EXPORT_JAVA is not enabled";
+#endif
+    ASSERT_TRUE(std::filesystem::exists(host_exe_path_))
+        << "DasHost.exe not found at: " << host_exe_path_;
 
     // 获取 JavaTestPlugin JSON 路径（检查是否存在）
     std::string plugin_json_path;
@@ -281,18 +282,15 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadJavaPlugin)
     }
     catch (const std::exception& e)
     {
-        GTEST_SKIP() << "JavaTestPlugin JSON not found: " << e.what();
+        GTEST_FAIL() << "JavaTestPlugin JSON not found: " << e.what();
     }
 
     // 检查 JAR 文件是否存在
     std::filesystem::path jar_path =
         std::filesystem::path(plugin_json_path).parent_path()
         / "JavaTestPlugin.jar";
-    if (!std::filesystem::exists(jar_path))
-    {
-        GTEST_SKIP() << "JavaTestPlugin.jar not found at: "
-                     << jar_path.string();
-    }
+    ASSERT_TRUE(std::filesystem::exists(jar_path))
+        << "JavaTestPlugin.jar not found at: " << jar_path.string();
 
     // 启动 Host 进程并注册到 ConnectionManager
     DasResult result = StartHostAndSetupRunLoop();
@@ -313,21 +311,13 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadJavaPlugin)
     auto opt = DAS::Core::IPC::wait(
         GetContext(),
         DAS::Core::IPC::async_op(GetContext(), std::move(op)));
-    if (!opt.has_value())
-    {
-        GTEST_SKIP() << "Java plugin load timed out or failed";
-    }
+    ASSERT_TRUE(opt.has_value()) << "Java plugin load timed out or failed";
 
     auto& [load_result, object_id] = *opt;
-    if (DAS::IsFailed(load_result))
-    {
-        // JVM 可能不可用，跳过测试
-        std::string err_msg = DAS_FMT_NS::format(
-            "Failed to load Java plugin (result={:#x}). "
-            "Ensure JVM is properly installed and JAVA_HOME is set.",
-            load_result);
-        GTEST_SKIP() << err_msg;
-    }
+    ASSERT_TRUE(DAS::IsOk(load_result)) << DAS_FMT_NS::format(
+        "Failed to load Java plugin (result={:#x}). "
+        "Ensure JVM is properly installed and JAVA_HOME is set.",
+        load_result);
 
     // 验证返回的对象 ID
     EXPECT_EQ(object_id.session_id, launcher_->GetSessionId());
@@ -1087,7 +1077,8 @@ TEST_F(IpcMultiProcessTestIntegration, QueryMainProcessInterface_E2E)
                 return DAS_S_OK;
             }));
 
-    ASSERT_TRUE(reg_opt.has_value()) << "PostCallback registration: wait failed";
+    ASSERT_TRUE(reg_opt.has_value())
+        << "PostCallback registration: wait failed";
     DasResult result = std::get<0>(*reg_opt);
     ASSERT_EQ(result, DAS_S_OK)
         << "DasRegisterMainProcessService / DasQueryMainProcessInterface "
