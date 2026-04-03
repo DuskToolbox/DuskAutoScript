@@ -971,43 +971,127 @@ TEST_F(IpcMultiProcessTestIntegration, QueryMainProcessInterface_E2E)
         GTEST_SKIP() << "Plugin JSON not found: " << e.what();
     }
 
-    // 2. 在主进程中注册一个 IDasReadOnlyString 服务
+    // 2. 通过 PostCallback（stdexec::schedule + then）在 io_context 线程中
+    //    依次调用 DasRegisterMainProcessService 和
+    //    DasQueryMainProcessInterface，验证主进程路径下 C API 的完整调用链。
+    //
+    //    IpcContext::Run() 已在 run_thread_ 中以 ScopedCurrentIpcContext
+    //    设置了 TLS，PostCallback 的 lambda 在同一线程执行时 TLS 已就绪，
+    //    无需在 lambda 内重复设置。
+
     const char*       test_string = "Hello from main process E2E";
     DasReadOnlyString service_string{test_string};
 
-    // 注册服务到主进程全局服务表
-    DasResult result = ctx_->RegisterService(
-        service_string.Get(),
-        DasIidOf<IDasReadOnlyString>());
-    ASSERT_EQ(result, DAS_S_OK) << "RegisterService failed";
-
-    DAS_CORE_LOG_INFO(
-        "[QueryMainProcessInterface_E2E] Registered "
-        "IDasReadOnlyString service in main process");
-
-    // 2b. 在主进程中注册一个 IDasVariantVector 服务
+    // 创建 IDasVariantVector（在主线程提前构造，通过引用捕获入 lambda）
+    DAS::ExportInterface::DasVariantVector variant_vec;
     {
-        DAS::ExportInterface::DasVariantVector variant_vec;
         DasResult vv_result = CreateIDasVariantVector(variant_vec.Put());
         ASSERT_EQ(vv_result, DAS_S_OK) << "CreateIDasVariantVector failed";
-
-        // 添加测试数据
         vv_result = variant_vec->PushBackInt(42);
-        ASSERT_EQ(vv_result, DAS_S_OK) << "PushBackInt failed";
+        ASSERT_EQ(vv_result, DAS_S_OK) << "PushBackInt(42) failed";
         vv_result = variant_vec->PushBackInt(123);
         ASSERT_EQ(vv_result, DAS_S_OK) << "PushBackInt(123) failed";
-
-        // 注册服务到主进程全局服务表
-        vv_result = ctx_->RegisterService(
-            variant_vec.Get(),
-            DasIidOf<DAS::ExportInterface::IDasVariantVector>());
-        ASSERT_EQ(vv_result, DAS_S_OK)
-            << "RegisterService(VariantVector) failed";
-
-        DAS_CORE_LOG_INFO(
-            "[QueryMainProcessInterface_E2E] Registered "
-            "IDasVariantVector service in main process");
     }
+
+    // wait() 阻塞直到两步全部完成，返回最终 DasResult
+    auto reg_opt = DAS::Core::IPC::wait(
+        stdexec::then(
+            stdexec::then(
+                stdexec::schedule(GetContext()),
+                [&]() noexcept -> DasResult
+                {
+                    // 注册 IDasReadOnlyString
+                    DasResult reg_result = DasRegisterMainProcessService(
+                        service_string.Get(),
+                        DasIidOf<IDasReadOnlyString>());
+                    if (DAS::IsFailed(reg_result))
+                    {
+                        DAS_CORE_LOG_ERROR(
+                            "[QueryMainProcessInterface_E2E] "
+                            "DasRegisterMainProcessService(IDasReadOnlyString) "
+                            "failed: result={}",
+                            reg_result);
+                        return reg_result;
+                    }
+
+                    // 回查验证：DasQueryMainProcessInterface 能取回刚注册的对象
+                    IDasBase* queried = nullptr;
+                    DasResult query_result = DasQueryMainProcessInterface(
+                        DasIidOf<IDasReadOnlyString>(),
+                        &queried);
+                    if (DAS::IsFailed(query_result))
+                    {
+                        DAS_CORE_LOG_ERROR(
+                            "[QueryMainProcessInterface_E2E] "
+                            "DasQueryMainProcessInterface(IDasReadOnlyString) "
+                            "failed: result={}",
+                            query_result);
+                        return query_result;
+                    }
+                    if (queried)
+                    {
+                        queried->Release();
+                    }
+
+                    DAS_CORE_LOG_INFO(
+                        "[QueryMainProcessInterface_E2E] "
+                        "DasRegisterMainProcessService + "
+                        "DasQueryMainProcessInterface(IDasReadOnlyString) "
+                        "OK");
+                    return DAS_S_OK;
+                }),
+            [&](DasResult prev_result) noexcept -> DasResult
+            {
+                if (DAS::IsFailed(prev_result))
+                {
+                    return prev_result;
+                }
+
+                // 注册 IDasVariantVector
+                DasResult reg_result = DasRegisterMainProcessService(
+                    variant_vec.Get(),
+                    DasIidOf<DAS::ExportInterface::IDasVariantVector>());
+                if (DAS::IsFailed(reg_result))
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "[QueryMainProcessInterface_E2E] "
+                        "DasRegisterMainProcessService(IDasVariantVector) "
+                        "failed: result={}",
+                        reg_result);
+                    return reg_result;
+                }
+
+                // 回查验证：DasQueryMainProcessInterface 能取回刚注册的对象
+                IDasBase* queried = nullptr;
+                DasResult query_result = DasQueryMainProcessInterface(
+                    DasIidOf<DAS::ExportInterface::IDasVariantVector>(),
+                    &queried);
+                if (DAS::IsFailed(query_result))
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "[QueryMainProcessInterface_E2E] "
+                        "DasQueryMainProcessInterface(IDasVariantVector) "
+                        "failed: result={}",
+                        query_result);
+                    return query_result;
+                }
+                if (queried)
+                {
+                    queried->Release();
+                }
+
+                DAS_CORE_LOG_INFO(
+                    "[QueryMainProcessInterface_E2E] "
+                    "DasRegisterMainProcessService + "
+                    "DasQueryMainProcessInterface(IDasVariantVector) OK");
+                return DAS_S_OK;
+            }));
+
+    ASSERT_TRUE(reg_opt.has_value()) << "PostCallback registration: wait failed";
+    DasResult result = std::get<0>(*reg_opt);
+    ASSERT_EQ(result, DAS_S_OK)
+        << "DasRegisterMainProcessService / DasQueryMainProcessInterface "
+           "failed in io_context thread";
 
     // 3. 启动 Host 进程
     result = StartHostAndSetupRunLoop();

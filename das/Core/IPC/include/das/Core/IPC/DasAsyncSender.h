@@ -100,7 +100,7 @@ namespace Core::IPC
             class DasAsyncCallback final : public IDasAsyncCallback
             {
             public:
-                std::atomic<uint32_t> ref_{0};
+                std::atomic<uint32_t> ref_{1};
                 R                     rcvr_;
 
                 explicit DasAsyncCallback(R rcvr) : rcvr_(std::move(rcvr)) {}
@@ -140,7 +140,7 @@ namespace Core::IPC
                 auto* callback =
                     new DasAsyncCallback<Receiver>(std::move(self.rcvr_));
                 self.ctx_->PostCallback(callback);
-                callback->Release(); // PostCallback 会 AddRef
+                callback->Release();
             }
         };
 
@@ -437,6 +437,13 @@ namespace Core::IPC
     }
 
 } // namespace Core::IPC
+
+// Inject tag_invoke into MainProcess namespace so that ADL can find
+// the schedule_t overload when called with IIpcContext& arguments.
+namespace Core::IPC::MainProcess
+{
+    using Core::IPC::tag_invoke;
+} // namespace Core::IPC::MainProcess
 
 DAS_NS_END
 
