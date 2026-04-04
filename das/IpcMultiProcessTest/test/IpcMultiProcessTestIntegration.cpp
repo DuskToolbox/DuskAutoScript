@@ -150,18 +150,15 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadPlugin)
         DAS::Core::IPC::async_op(GetContext(), std::move(op)));
     ASSERT_TRUE(opt.has_value()) << "Load plugin: wait failed";
 
-    auto& [load_result, object_id] = *opt;
+    auto& [load_result, proxy] = *opt;
     ASSERT_EQ(load_result, DAS_S_OK) << "Load plugin failed";
 
-    // 4. 验证返回的对象 ID
-    EXPECT_EQ(object_id.session_id, launcher_->GetSessionId());
+    // 4. 验证返回的代理对象
+    ASSERT_NE(proxy, nullptr);
 
     DAS_CORE_LOG_INFO(
-        "[CrossProcess_LoadPlugin] Plugin loaded, object_id={{session:{}, "
-        "gen:{}, local:{}}}",
-        object_id.session_id,
-        object_id.generation,
-        object_id.local_id);
+        "[CrossProcess_LoadPlugin] Plugin loaded, proxy = {}",
+        (void*)proxy);
 }
 
 /**
@@ -238,12 +235,14 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
     auto results = DAS::Core::IPC::wait(GetContext(), std::move(both));
     ASSERT_TRUE(results.has_value()) << "when_all: wait failed";
 
-    auto& [result_a, factory_id_a, result_b, factory_id_b] = *results;
+    auto& [result_a, p_a, result_b, p_b] = *results;
 
     ASSERT_EQ(result_a, DAS_S_OK);
-    EXPECT_EQ(factory_id_a.session_id, session_a);
     ASSERT_EQ(result_b, DAS_S_OK);
-    EXPECT_EQ(factory_id_b.session_id, session_b);
+
+    auto proxy_a = DAS::DasPtr<IDasBase>::Attach(p_a);
+    auto proxy_b = DAS::DasPtr<IDasBase>::Attach(p_b);
+    ASSERT_NE(proxy_a.Get(), proxy_b.Get());
 
     // 5. 验证 IPC 上下文可以获取已连接的 session
     auto connected_sessions = ctx_->GetConnectedSessions();
@@ -313,24 +312,18 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadJavaPlugin)
         DAS::Core::IPC::async_op(GetContext(), std::move(op)));
     ASSERT_TRUE(opt.has_value()) << "Java plugin load timed out or failed";
 
-    auto& [load_result, object_id] = *opt;
+    auto& [load_result, proxy] = *opt;
     ASSERT_TRUE(DAS::IsOk(load_result)) << DAS_FMT_NS::format(
         "Failed to load Java plugin (result={:#x}). "
         "Ensure JVM is properly installed and JAVA_HOME is set.",
         load_result);
 
-    // 验证返回的对象 ID
-    EXPECT_EQ(object_id.session_id, launcher_->GetSessionId());
-    EXPECT_GT(object_id.local_id, 0u);
+    // 验证返回的代理对象
+    ASSERT_NE(proxy, nullptr);
 
-    // 创建远程 proxy 并获取 plugin package
+    // 通过代理获取 plugin package
     DAS::DasPtr<IDasBase> raw_proxy;
-    ASSERT_EQ(
-        ctx_->CreateRemoteProxy(
-            object_id,
-            DasIidOf<IDasBase>(),
-            raw_proxy.Put()),
-        DAS_S_OK);
+    raw_proxy = DAS::DasPtr<IDasBase>::Attach(proxy);
     DAS::PluginInterface::DasPluginPackage plugin_package;
     ASSERT_EQ(raw_proxy.As(plugin_package.Put()), DAS_S_OK);
 
@@ -678,7 +671,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins)
     }
 
     // 3. 在第一个 Host 上使用异步接口加载插件1
-    DAS::Core::IPC::ObjectId object1{};
+    DAS::DasPtr<IDasBase> proxy1;
     {
         DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
         result = ctx_->LoadPluginAsync(
@@ -691,9 +684,9 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins)
             DAS::Core::IPC::async_op(GetContext(), std::move(op)));
         ASSERT_TRUE(opt.has_value()) << "Load plugin 1: wait failed";
 
-        auto& [load_result, loaded_id] = *opt;
+        auto& [load_result, loaded_proxy] = *opt;
         ASSERT_EQ(load_result, DAS_S_OK) << "Load plugin 1 failed";
-        object1 = loaded_id;
+        proxy1 = DAS::DasPtr<IDasBase>::Attach(loaded_proxy);
     }
 
     // 4. 启动第二个 Host 进程
@@ -714,7 +707,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins)
     }
 
     // 5. 在第二个 Host 上使用异步接口加载插件2
-    DAS::Core::IPC::ObjectId object2{};
+    DAS::DasPtr<IDasBase> proxy2;
     {
         DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
         result = ctx_->LoadPluginAsync(
@@ -727,25 +720,19 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins)
             DAS::Core::IPC::async_op(GetContext(), std::move(op)));
         ASSERT_TRUE(opt.has_value()) << "Load plugin 2: wait failed";
 
-        auto& [load_result, loaded_id] = *opt;
+        auto& [load_result, loaded_proxy] = *opt;
         ASSERT_EQ(load_result, DAS_S_OK) << "Load plugin 2 failed";
-        object2 = loaded_id;
+        proxy2 = DAS::DasPtr<IDasBase>::Attach(loaded_proxy);
     }
 
-    // 6. 验证对象在不同的 Host 进程中
-    EXPECT_EQ(object1.session_id, launcher_->GetSessionId());
-    EXPECT_EQ(object2.session_id, launcher2->GetSessionId());
-    EXPECT_NE(object1.session_id, object2.session_id);
+    // 6. 验证两个代理对象均非空且不同
+    ASSERT_NE(proxy1.Get(), proxy2.Get());
 
-    std::string log_msg = DAS_FMT_NS::format(
+    DAS_CORE_LOG_INFO(
         "[CrossProcess_AsyncLoadPlugins] Both plugins loaded: "
-        "object1={{session:{}, local:{}}}, object2={{session:{}, "
-        "local:{}}}",
-        object1.session_id,
-        object1.local_id,
-        object2.session_id,
-        object2.local_id);
-    DAS_CORE_LOG_INFO(log_msg.c_str());
+        "object1 = {}, object2 = {}",
+        (void*)proxy1.Get(),
+        (void*)proxy2.Get());
 
     launcher2.Reset();
 }
@@ -814,25 +801,21 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins_WhenAll)
     auto results = DAS::Core::IPC::wait(GetContext(), std::move(both));
     ASSERT_TRUE(results.has_value()) << "when_all: wait failed";
 
-    auto& [result1, object1, result2, object2] = *results;
+    auto& [result1, p1, result2, p2] = *results;
 
     ASSERT_EQ(result1, DAS_S_OK) << "Load plugin 1 failed";
     ASSERT_EQ(result2, DAS_S_OK) << "Load plugin 2 failed";
 
-    // 6. 验证对象在不同的 Host 进程中
-    EXPECT_EQ(object1.session_id, launcher_->GetSessionId());
-    EXPECT_EQ(object2.session_id, launcher2->GetSessionId());
-    EXPECT_NE(object1.session_id, object2.session_id);
+    // 6. 验证两个代理对象均非空且不同
+    auto proxy1 = DAS::DasPtr<IDasBase>::Attach(p1);
+    auto proxy2 = DAS::DasPtr<IDasBase>::Attach(p2);
+    ASSERT_NE(proxy1.Get(), proxy2.Get());
 
-    std::string log_msg = DAS_FMT_NS::format(
+    DAS_CORE_LOG_INFO(
         "[CrossProcess_AsyncLoadPlugins_WhenAll] Both plugins loaded via "
-        "when_all: object1={{session:{}, local:{}}}, object2={{session:{}, "
-        "local:{}}}",
-        object1.session_id,
-        object1.local_id,
-        object2.session_id,
-        object2.local_id);
-    DAS_CORE_LOG_INFO(log_msg.c_str());
+        "when_all: object1 = {}, object2 = {}",
+        (void*)proxy1.Get(),
+        (void*)proxy2.Get());
 
     launcher2.Reset();
 }
@@ -870,16 +853,12 @@ TEST_F(IpcMultiProcessTestIntegration, RemoteProxy_ComponentFactory_IsSupported)
         DAS::Core::IPC::async_op(GetContext(), std::move(op)));
     ASSERT_TRUE(opt.has_value());
 
-    auto& [load_result, factory_id] = *opt;
+    auto& [load_result, factory_proxy] = *opt;
     ASSERT_EQ(load_result, DAS_S_OK);
-    EXPECT_EQ(factory_id.session_id, launcher_->GetSessionId());
+    ASSERT_NE(factory_proxy, nullptr);
 
     DAS::DasPtr<IDasBase> raw_proxy;
-    result = ctx_->CreateRemoteProxy(
-        factory_id,
-        DasIidOf<IDasBase>(),
-        raw_proxy.Put());
-    ASSERT_EQ(result, DAS_S_OK);
+    raw_proxy = DAS::DasPtr<IDasBase>::Attach(factory_proxy);
     ASSERT_NE(raw_proxy, nullptr);
 
     DAS::PluginInterface::DasPluginPackage package;
@@ -1099,23 +1078,18 @@ TEST_F(IpcMultiProcessTestIntegration, QueryMainProcessInterface_E2E)
         DAS::Core::IPC::async_op(GetContext(), std::move(op)));
     ASSERT_TRUE(opt.has_value()) << "Load plugin: wait failed";
 
-    auto& [load_result, object_id] = *opt;
+    auto& [load_result, proxy] = *opt;
     ASSERT_EQ(load_result, DAS_S_OK) << "Load plugin failed";
+    ASSERT_NE(proxy, nullptr);
 
     DAS_CORE_LOG_INFO(
-        "[QueryMainProcessInterface_E2E] Plugin loaded, "
-        "object_id={{session:{}, gen:{}, local:{}}}",
-        object_id.session_id,
-        object_id.generation,
-        object_id.local_id);
+        "[QueryMainProcessInterface_E2E] Plugin loaded, proxy = {}",
+        (void*)proxy);
 
-    // 5. CreateRemoteProxy 获取 IDasPluginPackage
+    // 5. Use the proxy directly to get IDasPluginPackage
     DAS::DasPtr<IDasBase> raw_proxy;
-    result = ctx_->CreateRemoteProxy(
-        object_id,
-        DasIidOf<IDasBase>(),
-        raw_proxy.Put());
-    ASSERT_EQ(result, DAS_S_OK);
+    raw_proxy = DAS::DasPtr<IDasBase>::Attach(proxy);
+    ASSERT_NE(raw_proxy, nullptr);
 
     DAS::PluginInterface::DasPluginPackage plugin_package;
     ASSERT_EQ(raw_proxy.As(plugin_package.Put()), DAS_S_OK);
@@ -1268,16 +1242,18 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_QueryMainProcessString)
         DAS::Core::IPC::async_op(GetContext(), std::move(op)));
     ASSERT_TRUE(opt.has_value()) << "Load plugin: wait failed";
 
-    auto& [load_result, object_id] = *opt;
+    auto& [load_result, proxy] = *opt;
     ASSERT_EQ(load_result, DAS_S_OK) << "Load plugin failed";
+    ASSERT_NE(proxy, nullptr);
 
-    // 5. CreateRemoteProxy 获取 IDasPluginPackage
+    DAS_CORE_LOG_INFO(
+        "[QueryMainProcessInterface_E2E] Plugin loaded, proxy = {}",
+        (void*)proxy);
+
+    // 5. Use the proxy directly to get IDasPluginPackage
     DAS::DasPtr<IDasBase> raw_proxy;
-    result = ctx_->CreateRemoteProxy(
-        object_id,
-        DasIidOf<IDasBase>(),
-        raw_proxy.Put());
-    ASSERT_EQ(result, DAS_S_OK);
+    raw_proxy = DAS::DasPtr<IDasBase>::Attach(proxy);
+    ASSERT_NE(raw_proxy, nullptr);
 
     DAS::PluginInterface::DasPluginPackage plugin_package;
     ASSERT_EQ(raw_proxy.As(plugin_package.Put()), DAS_S_OK);

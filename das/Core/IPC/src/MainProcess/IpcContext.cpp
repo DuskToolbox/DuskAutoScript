@@ -11,6 +11,7 @@
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcRunLoop.h>
+#include <das/Core/IPC/LoadPluginAsyncOperationImpl.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/IPC/MainProcess/IpcContext.h>
 #include <das/Core/IPC/ProxyFactory.h>
@@ -295,9 +296,7 @@ namespace Core
                     timeout);
 
                 // 5. 包装为 IDasAsyncLoadPluginOperation
-                auto op =
-                    MakeAsyncOperation<IDasAsyncLoadPluginOperation, ObjectId>(
-                        std::move(sender));
+                auto op = MakeLoadPluginAsyncOperation(std::move(sender), this);
 
                 *pp_out_operation = op.Get();
                 if (*pp_out_operation)

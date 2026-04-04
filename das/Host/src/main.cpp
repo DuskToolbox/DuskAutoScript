@@ -18,6 +18,7 @@
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/IDasBase.h>
 #include <das/Utils/fmt.h>
+#include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -214,7 +215,7 @@ void RegisterLoadPluginHandler(DAS::Core::IPC::Host::IIpcContext* ctx)
             response.response_data.push_back((object_id.local_id >> 16) & 0xFF);
             response.response_data.push_back((object_id.local_id >> 24) & 0xFF);
 
-            const auto& iid = DAS_IID_BASE;
+            const DasGuid iid = DAS_IID_PLUGIN_PACKAGE;
             response.response_data.insert(
                 response.response_data.end(),
                 reinterpret_cast<const uint8_t*>(&iid),

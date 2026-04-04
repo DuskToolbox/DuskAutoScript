@@ -22,12 +22,11 @@
  *
  * // 等待完成
  * auto result = DAS::Core::IPC::wait(*ctx, std::move(sender));
- * // result = std::optional<std::tuple<DasResult, ObjectId>>
+ * // result = std::optional<std::tuple<DasResult, IDasBase*>>
  * @endcode
  */
 
 #include <chrono>
-#include <das/Core/IPC/ObjectId.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
 #include <das/IDasAsyncCallback.h>
@@ -182,7 +181,7 @@ namespace Core::IPC
      * @brief 异步操作到 stdexec sender 的适配器
      *
      * @tparam TAsyncOp 异步操作接口类型（如 IDasAsyncLoadPluginOperation）
-     * @tparam TResult 结果类型（如 ObjectId）
+     * @tparam TResult 结果类型（如 IDasBase*）
      * @tparam Context 上下文类型（需要有 PostCallback 方法）
      *
      * 将基于回调的 IDasAsyncOperation 包装为 stdexec sender，
@@ -317,7 +316,7 @@ namespace Core::IPC
     template <typename Context>
     auto async_op(Context& ctx, DasPtr<IDasAsyncLoadPluginOperation> op)
     {
-        return DasAsyncSender<IDasAsyncLoadPluginOperation, ObjectId, Context>{
+        return DasAsyncSender<IDasAsyncLoadPluginOperation, IDasBase*, Context>{
             std::move(op),
             ctx};
     }

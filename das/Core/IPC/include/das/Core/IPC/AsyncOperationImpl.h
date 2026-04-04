@@ -4,7 +4,6 @@
 #include <atomic>
 #include <cstring>
 #include <das/Core/IPC/IpcErrors.h>
-#include <das/Core/IPC/ObjectId.h>
 #include <das/DasPtr.hpp>
 #include <das/IDasAsyncLoadPluginOperation.h>
 #include <das/IDasAsyncOperation.h>
@@ -30,20 +29,6 @@ namespace Core::IPC
      */
     template <typename TResult>
     struct ResultParser;
-
-    template <>
-    struct ResultParser<ObjectId>
-    {
-        static std::optional<ObjectId> TryParse(
-            const std::vector<uint8_t>& data)
-        {
-            if (data.size() < sizeof(ObjectId))
-                return std::nullopt;
-            ObjectId result;
-            std::memcpy(&result, data.data(), sizeof(ObjectId));
-            return result;
-        }
-    };
 
     template <>
     struct ResultParser<uint16_t>
