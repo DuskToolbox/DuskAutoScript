@@ -28,16 +28,12 @@
 %}
 /* director 输入（仅当该参数用于 director 虚函数签名时需要；加上通常无害） */
 %typemap(directorin) IDasReadOnlyString * %{
-    if ($input == Py_None) {
-        $result = nullptr;
+    if (!$1) {
+        $input = Py_None;
+        Py_INCREF($input);
     } else {
-        DasReadOnlyString *tmp = nullptr;
-        int res = SWIG_ConvertPtr($input, (void **)&tmp, SWIGTYPE_p_DasReadOnlyString, 0);
-        if (!SWIG_IsOK(res) || !tmp) {
-            SWIG_exception_fail(SWIG_TypeError,
-                "Expected DasReadOnlyString (or None) for IDasReadOnlyString* (director)");
-        }
-        $result = tmp->Get();
+        DasReadOnlyString *tmp = new DasReadOnlyString($1);
+        $input = SWIG_NewPointerObj((void *)tmp, SWIGTYPE_p_DasReadOnlyString, SWIG_POINTER_OWN);
     }
 %}
 /* ---------- 输出：C++ -> Python ---------- */
@@ -53,12 +49,16 @@
 %}
 /* director 输出（仅当返回值/出参用于 director 虚函数签名时需要） */
 %typemap(directorout) IDasReadOnlyString * %{
-    if (!$input) {
-        $result = Py_None;
-        Py_INCREF($result);
+    if ($input == Py_None) {
+        $result = nullptr;
     } else {
-        DasReadOnlyString *tmp = new DasReadOnlyString($input);
-        $result = SWIG_NewPointerObj((void *)tmp, SWIGTYPE_p_DasReadOnlyString, SWIG_POINTER_OWN);
+        DasReadOnlyString *tmp = nullptr;
+        int res = SWIG_ConvertPtr($input, (void **)&tmp, SWIGTYPE_p_DasReadOnlyString, 0);
+        if (!SWIG_IsOK(res) || !tmp) {
+            SWIG_exception_fail(SWIG_TypeError,
+                "Expected DasReadOnlyString (or None) for IDasReadOnlyString* (director)");
+        }
+        $result = tmp->Get();
     }
 %}
 #endif // SWIGPYTHON

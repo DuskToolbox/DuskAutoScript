@@ -4,8 +4,8 @@ C# SWIG 生成器
 生成 C# 特定的 SWIG .i 文件代码
 """
 
-from typing import List, Optional, Tuple, TYPE_CHECKING
-from das_idl_parser import InterfaceDef, MethodDef, ParameterDef, ParamDirection
+from typing import List, Optional, TYPE_CHECKING
+from das_idl_parser import InterfaceDef, MethodDef, ParameterDef, ParamDirection, TypeInfo
 from swig_lang_generator_base import SwigLangGenerator
 
 if TYPE_CHECKING:
@@ -28,6 +28,15 @@ class CSharpSwigGenerator(SwigLangGenerator):
 
     def get_swig_define(self) -> str:
         return 'SWIGCSHARP'
+
+    @staticmethod
+    def _is_interface_type(type_name: str) -> bool:
+        simple_name = type_name.split('::')[-1]
+        return simple_name.startswith('I') and len(simple_name) > 1 and simple_name[1:2].isupper()
+
+    @staticmethod
+    def _is_binary_buffer_method(method: MethodDef) -> bool:
+        return method.attributes.get('binary_buffer', False) if method.attributes else False
 
     def generate_out_param_wrapper(self, interface: InterfaceDef, method, param) -> str:
         """C# 不需要特殊的 [out] 参数包装代码，返回空字符串"""
@@ -154,16 +163,35 @@ class CSharpSwigGenerator(SwigLangGenerator):
         
         将所有 %typemap(cscode) 生成逻辑移到此处，确保 typemap 在 SWIG 解析类之前声明。
         """
-        # 跳过 binary_buffer 接口（由 generate_binary_buffer_helpers 处理）
-        # binary_buffer 是方法级别的属性，检查接口中是否有任何方法带有此属性
-        has_binary_buffer = any(
-            m.attributes.get('binary_buffer', False) for m in interface.methods
-        )
-        if has_binary_buffer:
-            return ""
-
         # 如果 on_interface_model 还没被调用，返回空
         if self._pending_interface is None:
+            return ""
+
+        has_binary_buffer = any(self._is_binary_buffer_method(m) for m in interface.methods)
+
+        for method in interface.methods:
+            if self._is_binary_buffer_method(method):
+                self._store_ignore_directive(
+                    interface,
+                    f"{method.name}_binary_buffer",
+                    self._generate_ignore_directive_for_binary_buffer(interface, method),
+                )
+
+        for method, out_param in self._get_out_param_methods(interface):
+            self._store_ignore_directive(
+                interface,
+                method.name,
+                self._generate_ignore_directive(interface, method, out_param),
+            )
+
+        for method in self._get_methods_with_string_params_only(interface):
+            self._store_ignore_directive(
+                interface,
+                f"{method.name}_string",
+                self._generate_ignore_directive_for_string_method(interface, method),
+            )
+
+        if has_binary_buffer:
             return ""
 
         qualified_name = f"{interface.namespace}::{interface.name}" if interface.namespace else interface.name
@@ -350,10 +378,68 @@ class CSharpSwigGenerator(SwigLangGenerator):
     def emit_post_include(self, model: "SwigInterfaceModel", interface_def: InterfaceDef) -> str:
         return ""
 
+    def _store_ignore_directive(self, interface: InterfaceDef, key_suffix: str, ignore_code: str) -> None:
+        if not self._context:
+            return
+
+        typemap_key = f"{interface.namespace}::{interface.name}::{key_suffix}"
+        if typemap_key not in self._context._global_typemaps_ignore:
+            self._context._global_typemaps_ignore[typemap_key] = ignore_code
+
+    def _get_out_param_methods(self, interface: InterfaceDef) -> List[tuple[MethodDef, ParameterDef]]:
+        result: List[tuple[MethodDef, ParameterDef]] = []
+
+        for method in interface.methods:
+            if self._is_binary_buffer_method(method):
+                continue
+
+            out_params = [p for p in method.parameters if p.direction == ParamDirection.OUT]
+            if len(out_params) == 1:
+                result.append((method, out_params[0]))
+
+        for prop in interface.properties:
+            if not prop.has_getter:
+                continue
+
+            method_name = f"Get{prop.name}"
+            if any(m.name == method_name for m in interface.methods):
+                continue
+
+            base_type = prop.type_info.base_type
+            is_interface = self._is_interface_type(base_type)
+            is_string = base_type == 'IDasReadOnlyString'
+            out_type = base_type if (is_interface or is_string) else base_type
+            pointer_level = 2 if (is_interface or is_string) else 1
+
+            out_param = ParameterDef(
+                name='p_out',
+                type_info=TypeInfo(
+                    base_type=out_type,
+                    is_pointer=True,
+                    pointer_level=pointer_level,
+                    is_const=False,
+                    is_reference=False,
+                ),
+                direction=ParamDirection.OUT,
+            )
+
+            virtual_method = MethodDef(
+                name=method_name,
+                return_type=TypeInfo(base_type='DasResult'),
+                parameters=[out_param],
+                attributes={'_is_property': True, '_prop_name': prop.name},
+            )
+            result.append((virtual_method, out_param))
+
+        return result
+
     def _get_methods_with_string_params_only(self, interface: InterfaceDef) -> List[MethodDef]:
         """获取接口中所有不带 [out] 参数但有 IDasReadOnlyString* 输入参数的方法"""
         result: List[MethodDef] = []
         for method in interface.methods:
+            if self._is_binary_buffer_method(method):
+                continue
+
             out_params = [p for p in method.parameters if p.direction == ParamDirection.OUT]
             if out_params:
                 continue
@@ -363,6 +449,202 @@ class CSharpSwigGenerator(SwigLangGenerator):
             )
             if has_string_param:
                 result.append(method)
+
+        for prop in interface.properties:
+            if not prop.has_setter or prop.type_info.base_type != 'IDasReadOnlyString':
+                continue
+
+            method_name = f"Set{prop.name}"
+            if any(m.name == method_name for m in interface.methods):
+                continue
+
+            setter_param = ParameterDef(
+                name='p_value',
+                type_info=TypeInfo(
+                    base_type='IDasReadOnlyString',
+                    is_pointer=True,
+                    pointer_level=1,
+                    is_const=False,
+                    is_reference=False,
+                ),
+                direction=ParamDirection.IN,
+            )
+
+            virtual_method = MethodDef(
+                name=method_name,
+                return_type=TypeInfo(base_type='DasResult'),
+                parameters=[setter_param],
+                attributes={'_is_property': True, '_prop_name': prop.name},
+            )
+            result.append(virtual_method)
+
+        return result
+
+    def _generate_ignore_directive_for_binary_buffer(self, interface: InterfaceDef, method: MethodDef) -> str:
+        qualified_interface = f"{interface.namespace}::{interface.name}" if interface.namespace else interface.name
+
+        param_signatures_with_prefix = []
+        param_signatures_without_prefix = []
+        current_namespace = interface.namespace
+
+        for param in method.parameters:
+            param_type = param.type_info.base_type
+            param_type_with_prefix = param_type
+            namespace = self.get_type_namespace(param_type)
+            if not namespace and self._is_interface_type(param_type):
+                param_type_with_prefix = f'::{param_type}'
+            elif namespace and namespace != current_namespace:
+                param_type_with_prefix = f'::{namespace}::{param_type}'
+
+            if param.type_info.is_pointer:
+                stars = '*' * param.type_info.pointer_level
+                param_signatures_with_prefix.append(f"{param_type_with_prefix}{stars}")
+                param_signatures_without_prefix.append(f"{param_type}{stars}")
+            else:
+                param_signatures_with_prefix.append(param_type_with_prefix)
+                param_signatures_without_prefix.append(param_type)
+
+        param_list_with_prefix = ", ".join(param_signatures_with_prefix)
+        param_list_without_prefix = ", ".join(param_signatures_without_prefix)
+
+        result = f"""
+#ifdef SWIGCSHARP
+// 隐藏原始的 {method.name} 方法（[binary_buffer] 标记，C# 使用辅助方法，带 :: 前缀）
+%ignore {qualified_interface}::{method.name}({param_list_with_prefix});
+"""
+        if param_list_with_prefix != param_list_without_prefix:
+            result += f"""
+// 隐藏原始的 {method.name} 方法（[binary_buffer] 标记，C# 使用辅助方法，不带 :: 前缀）
+%ignore {qualified_interface}::{method.name}({param_list_without_prefix});
+"""
+        result += "\n#endif\n"
+        return result
+
+    def _generate_ignore_directive_for_string_method(self, interface: InterfaceDef, method: MethodDef) -> str:
+        qualified_interface = f"{interface.namespace}::{interface.name}" if interface.namespace else interface.name
+
+        param_signatures_with_prefix = []
+        param_signatures_without_prefix = []
+        current_namespace = interface.namespace
+        for param in method.parameters:
+            param_type = param.type_info.base_type
+            param_type_with_prefix = param_type
+            namespace = self.get_type_namespace(param_type)
+            if not namespace and self._is_interface_type(param_type):
+                param_type_with_prefix = f'::{param_type}'
+            elif namespace and namespace != current_namespace:
+                param_type_with_prefix = f'::{namespace}::{param_type}'
+
+            if param.type_info.is_pointer:
+                stars = '*' * param.type_info.pointer_level
+                const_prefix = "const " if param.type_info.is_const else ""
+                param_signatures_with_prefix.append(f"{const_prefix}{param_type_with_prefix}{stars}")
+                param_signatures_without_prefix.append(f"{const_prefix}{param_type}{stars}")
+            elif param.type_info.is_reference:
+                if param.type_info.is_const:
+                    param_signatures_with_prefix.append(f"const {param_type_with_prefix}&")
+                    param_signatures_without_prefix.append(f"const {param_type}&")
+                else:
+                    param_signatures_with_prefix.append(f"{param_type_with_prefix}&")
+                    param_signatures_without_prefix.append(f"{param_type}&")
+            else:
+                param_signatures_with_prefix.append(param_type_with_prefix)
+                param_signatures_without_prefix.append(param_type)
+
+        param_list_with_prefix = ", ".join(param_signatures_with_prefix)
+        param_list_without_prefix = ", ".join(param_signatures_without_prefix)
+
+        result = f"""
+// 隐藏原始的 {method.name} 方法（IDasReadOnlyString* 参数版本，带 :: 前缀）
+%ignore {qualified_interface}::{method.name}({param_list_with_prefix});
+"""
+        if param_list_with_prefix != param_list_without_prefix:
+            result += f"""
+// 隐藏原始的 {method.name} 方法（IDasReadOnlyString* 参数版本，不带 :: 前缀）
+%ignore {qualified_interface}::{method.name}({param_list_without_prefix});
+"""
+        return result
+
+    def _generate_ignore_directive(self, interface: InterfaceDef, method: MethodDef, out_param: ParameterDef) -> str:
+        qualified_interface = f"{interface.namespace}::{interface.name}" if interface.namespace else interface.name
+
+        param_signatures_with_prefix = []
+        param_signatures_without_prefix = []
+        current_namespace = interface.namespace
+        for param in method.parameters:
+            param_type = param.type_info.base_type
+            param_type_with_prefix = param_type
+            namespace = self.get_type_namespace(param_type)
+            if not namespace and self._is_interface_type(param_type):
+                param_type_with_prefix = f'::{param_type}'
+            elif namespace and namespace != current_namespace:
+                param_type_with_prefix = f'::{namespace}::{param_type}'
+
+            is_out_param = param.direction == ParamDirection.OUT or param is out_param
+            if param.type_info.is_pointer or (is_out_param and self._is_interface_type(param_type)):
+                if is_out_param:
+                    if self._is_interface_type(param_type):
+                        pointer_level = 2
+                    else:
+                        pointer_level = param.type_info.pointer_level if param.type_info.is_pointer else 1
+                else:
+                    pointer_level = param.type_info.pointer_level
+
+                stars = '*' * pointer_level
+                const_prefix = "const " if param.type_info.is_const else ""
+                param_signatures_with_prefix.append(f"{const_prefix}{param_type_with_prefix}{stars}")
+                param_signatures_without_prefix.append(f"{const_prefix}{param_type}{stars}")
+            elif param.type_info.is_reference:
+                if param.type_info.is_const:
+                    param_signatures_with_prefix.append(f"const {param_type_with_prefix}&")
+                    param_signatures_without_prefix.append(f"const {param_type}&")
+                else:
+                    param_signatures_with_prefix.append(f"{param_type_with_prefix}&")
+                    param_signatures_without_prefix.append(f"{param_type}&")
+            else:
+                param_signatures_with_prefix.append(param_type_with_prefix)
+                param_signatures_without_prefix.append(param_type)
+
+        param_list_with_prefix = ", ".join(param_signatures_with_prefix)
+        param_list_without_prefix = ", ".join(param_signatures_without_prefix)
+
+        result = f"""
+// 隐藏原始的 {method.name} 方法（带完整参数签名，带命名空间前缀）
+%ignore {qualified_interface}::{method.name}({param_list_with_prefix});
+"""
+        if param_list_with_prefix != param_list_without_prefix:
+            result += f"""
+// 隐藏原始的 {method.name} 方法（不带命名空间前缀）
+%ignore {qualified_interface}::{method.name}({param_list_without_prefix});
+"""
+
+        if any(
+            p.direction == ParamDirection.IN and p.type_info.base_type == 'IDasReadOnlyString'
+            for p in method.parameters
+        ):
+            extend_param_signatures = []
+            for param in method.parameters:
+                if param.direction == ParamDirection.OUT:
+                    continue
+
+                param_type = param.type_info.base_type
+                if self._is_interface_type(param_type) and param_type != 'IDasReadOnlyString':
+                    namespace = self.get_type_namespace(param_type)
+                    if namespace:
+                        param_type = f'{namespace}::{param_type}'
+
+                if param.type_info.is_pointer:
+                    stars = '*' * param.type_info.pointer_level
+                    extend_param_signatures.append(f"{param_type}{stars}")
+                else:
+                    extend_param_signatures.append(param_type)
+
+            extend_param_list = ", ".join(extend_param_signatures)
+            result += f"""
+// 隐藏 string helper 覆盖前的原始 {method.name} 方法（保留 string 版本）
+%ignore {qualified_interface}::{method.name}({extend_param_list});
+"""
+
         return result
 
     def _generate_string_param_helpers(self, interface: InterfaceDef) -> str:

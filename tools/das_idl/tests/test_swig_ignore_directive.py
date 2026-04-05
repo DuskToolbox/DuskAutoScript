@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from das_idl_parser import parse_idl_file, InterfaceDef, ParamDirection
 from swig_java_generator import JavaSwigGenerator
+from swig_csharp_generator import CSharpSwigGenerator
 
 
 class TestSwigIgnoreDirective(unittest.TestCase):
@@ -290,6 +291,73 @@ namespace Das::ExportInterface {
         
         # 验证带命名空间
         self.assertEqual(namespaced_iface.namespace, "Das::ExportInterface")
+
+
+class TestCSharpSwigIgnoreDirective(unittest.TestCase):
+    """测试 SWIG C# 生成器的 %ignore 指令生成"""
+
+    def setUp(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.generator = CSharpSwigGenerator()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.test_dir, ignore_errors=True)
+
+    def create_test_idl(self, content: str) -> str:
+        idl_path = os.path.join(self.test_dir, "test_csharp.idl")
+        with open(idl_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+        return idl_path
+
+    def test_csharp_string_method_ignore_generation(self):
+        idl_content = '''
+namespace Das::ExportInterface {
+    [uuid("12345678-1234-1234-1234-123456789111")]
+    interface IDasStringConsumer : IDasBase {
+        DasResult SetName(IDasReadOnlyString* p_name);
+    }
+}
+'''
+        idl_path = self.create_test_idl(idl_content)
+        document = parse_idl_file(idl_path)
+        iface = document.interfaces[0]
+        method = iface.methods[0]
+
+        ignore_code = self.generator._generate_ignore_directive_for_string_method(iface, method)
+
+        self.assertIn(
+            "%ignore Das::ExportInterface::IDasStringConsumer::SetName(::IDasReadOnlyString*);",
+            ignore_code,
+        )
+        self.assertIn(
+            "%ignore Das::ExportInterface::IDasStringConsumer::SetName(IDasReadOnlyString*);",
+            ignore_code,
+        )
+
+    def test_csharp_binary_buffer_ignore_generation(self):
+        idl_content = '''
+namespace Das::ExportInterface {
+    [uuid("12345678-1234-1234-1234-123456789112")]
+    interface IDasBinaryReader : IDasBase {
+        [binary_buffer]
+        DasResult GetData([out] uint8_t** pp_out_data);
+    }
+}
+'''
+        idl_path = self.create_test_idl(idl_content)
+        document = parse_idl_file(idl_path)
+        iface = document.interfaces[0]
+        method = iface.methods[0]
+
+        ignore_code = self.generator._generate_ignore_directive_for_binary_buffer(iface, method)
+
+        self.assertIn(
+            "%ignore Das::ExportInterface::IDasBinaryReader::GetData(uint8_t**);",
+            ignore_code,
+        )
+        self.assertIn("#ifdef SWIGCSHARP", ignore_code)
+        self.assertIn("#endif", ignore_code)
 
 
 if __name__ == '__main__':
