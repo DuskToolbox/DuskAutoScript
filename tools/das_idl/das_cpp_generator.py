@@ -176,6 +176,11 @@ class CppCodeGenerator:
         if not CppTypeMapper.is_interface_type(type_name):
             return type_name
 
+        # 字符串接口类型不添加 :: 前缀，避免 SWIG director 生成重复声明
+        # （SWIG 的 typemap 使用 IDasReadOnlyString 而非 ::IDasReadOnlyString）
+        if CppTypeMapper.is_string_type(type_name):
+            return type_name
+
         # 先在本地类型中查找
         type_namespace = self.local_type_to_namespace.get(type_name)
         if type_namespace is None:
@@ -195,6 +200,75 @@ class CppCodeGenerator:
             return f"::{type_name}"
 
         return type_name
+
+    def _has_cross_namespace_types(self, method: MethodDef, current_namespace: str) -> bool:
+        """检查方法参数是否包含跨命名空间的接口类型
+
+        注意：全局命名空间的类型（如 IDasBase）不算跨命名空间，
+        因为 SWIG 对全局命名空间类型的 %ignore 匹配没有问题。
+        只检查在其他命名空间中定义的类型。
+        """
+        for param in method.parameters:
+            base_type = param.type_info.base_type
+            if not CppTypeMapper.is_interface_type(base_type):
+                continue
+            if CppTypeMapper.is_string_type(base_type):
+                continue
+            type_namespace = self.local_type_to_namespace.get(base_type)
+            if type_namespace is None:
+                type_namespace = self.imported_type_to_namespace.get(base_type, "")
+            # 只有在其他**有名**命名空间中定义的类型才算跨命名空间
+            if type_namespace and type_namespace != current_namespace:
+                return True
+        return False
+
+    def _collect_cross_namespace_usings(self, method: MethodDef, current_namespace: str) -> list[str]:
+        """收集方法参数中跨命名空间类型的 using 声明
+
+        只收集在其他有名命名空间中定义的类型。
+        全局命名空间的类型不需要 using。
+        """
+        usings = []
+        seen = set()
+        for param in method.parameters:
+            base_type = param.type_info.base_type
+            if not CppTypeMapper.is_interface_type(base_type):
+                continue
+            if CppTypeMapper.is_string_type(base_type):
+                continue
+            if base_type in seen:
+                continue
+            type_namespace = self.local_type_to_namespace.get(base_type)
+            if type_namespace is None:
+                type_namespace = self.imported_type_to_namespace.get(base_type, "")
+            if type_namespace and type_namespace != current_namespace:
+                usings.append(f"using {type_namespace}::{base_type};")
+                seen.add(base_type)
+        return usings
+
+    def _generate_method_signature_for_swig(self, method: MethodDef) -> str:
+        """生成 SWIG 专用的方法签名（不带命名空间限定，所有类型使用不带限定的名字）"""
+        is_binary_buffer = method.attributes.get('binary_buffer', False)
+
+        params = []
+        for param in method.parameters:
+            if param.direction == ParamDirection.OUT:
+                if is_binary_buffer:
+                    param_type = CppTypeMapper.map_type(param.type_info)
+                else:
+                    param_type = CppTypeMapper.get_out_param_type(param.type_info)
+            else:
+                param_type = CppTypeMapper.map_type(param.type_info)
+            # 不做命名空间限定 — 用原始类型名
+            params.append(f"{param_type} {param.name}")
+
+        param_str = ", ".join(params) if params else ""
+        return_type = CppTypeMapper.map_type(method.return_type)
+
+        if return_type == "DasResult" or method.return_type.base_type == "bool":
+            return f"DAS_METHOD {method.name}({param_str})"
+        else:
+            return f"DAS_METHOD_({return_type}) {method.name}({param_str})"
 
     def _file_header(self, guard_name: str, import_includes: list = None, type_includes: set = None, forward_declarations: list = None) -> str:
         """生成文件头"""
@@ -503,26 +577,94 @@ DAS_DEFINE_GUID(
         return "\n".join(lines) + "\n"
 
     def _generate_interface_body(self, interface: InterfaceDef, namespace: str = "") -> str:
-        """生成接口体定义（不包含 UUID，用于命名空间内）"""
+        """生成接口体定义（不包含 UUID，用于命名空间内）
+
+        对于包含跨命名空间类型参数的方法，生成 #ifdef SWIG / #else 条件编译块：
+        - SWIG 分支：using 声明 + 不带命名空间限定的方法签名
+          （使 %ignore 能匹配，避免生成 SWIGTYPE 文件）
+        - C++ 分支：完全限定名的方法签名（原始行为）
+
+        同时在 %{ %} 块中注入 using 声明到 wrapper 代码，
+        让 C++ 编译器能解析 SWIG 生成的 NamespaceA::TypeFromNamespaceB。
+
+        注意：只对跨有名命名空间的类型生成 using，
+        全局命名空间类型（如 IDasBase）不需要。
+        """
         lines = []
+
+        # 收集所有跨命名空间的 using 声明
+        all_usings: list[str] = []
+        seen_usings: set[str] = set()
+        has_cross_ns = False
+        for method in interface.methods:
+            if self._has_cross_namespace_types(method, namespace):
+                has_cross_ns = True
+                for u in self._collect_cross_namespace_usings(method, namespace):
+                    if u not in seen_usings:
+                        all_usings.append(u)
+                        seen_usings.add(u)
+        for prop in interface.properties:
+            getter_method = MethodDef(
+                name=f"Get{prop.name}",
+                return_type=TypeInfo(base_type="DasResult"),
+                parameters=[ParameterDef(
+                    name=f"p_out_{prop.name.lower()}",
+                    type_info=prop.type_info,
+                    direction=ParamDirection.OUT
+                )]
+            )
+            if self._has_cross_namespace_types(getter_method, namespace):
+                has_cross_ns = True
+                for u in self._collect_cross_namespace_usings(getter_method, namespace):
+                    if u not in seen_usings:
+                        all_usings.append(u)
+                        seen_usings.add(u)
+
+        if has_cross_ns and namespace:
+            # using 声明放在 class 前面（namespace 内），仅 SWIG 可见
+            lines.append(f"#ifdef SWIG")
+            for u in all_usings:
+                lines.append(u)
+            lines.append(f"#endif")
+            lines.append("")
 
         # 接口声明
         lines.append(f"DAS_SWIG_EXPORT_ATTRIBUTE({interface.name})")
         lines.append(f"DAS_INTERFACE {interface.name} : public {interface.base_interface}")
         lines.append("{")
 
-        # 方法
-        for method in interface.methods:
-            sig = self._generate_method_signature(method, namespace)
-            lines.append(f"{self.indent}{sig} = 0;")
+        if has_cross_ns:
+            # SWIG 分支：不带命名空间限定
+            lines.append(f"#ifdef SWIG")
+            for method in interface.methods:
+                sig = self._generate_method_signature_for_swig(method)
+                lines.append(f"{self.indent}{sig} = 0;")
+            for prop in interface.properties:
+                prop_methods = self._generate_property_methods(prop)
+                for m in prop_methods:
+                    lines.append(f"{self.indent}{m} = 0;")
 
-        # 属性生成的方法
-        for prop in interface.properties:
-            prop_methods = self._generate_property_methods(prop, namespace)
-            for m in prop_methods:
-                lines.append(f"{self.indent}{m} = 0;")
+            # C++ 分支：完全限定名
+            lines.append(f"#else")
+            for method in interface.methods:
+                sig = self._generate_method_signature(method, namespace)
+                lines.append(f"{self.indent}{sig} = 0;")
+            for prop in interface.properties:
+                prop_methods = self._generate_property_methods(prop, namespace)
+                for m in prop_methods:
+                    lines.append(f"{self.indent}{m} = 0;")
+            lines.append(f"#endif")
+        else:
+            for method in interface.methods:
+                sig = self._generate_method_signature(method, namespace)
+                lines.append(f"{self.indent}{sig} = 0;")
+            for prop in interface.properties:
+                prop_methods = self._generate_property_methods(prop, namespace)
+                for m in prop_methods:
+                    lines.append(f"{self.indent}{m} = 0;")
 
         lines.append("};")
+
         return "\n".join(lines) + "\n"
 
     def _get_import_includes(self) -> list:

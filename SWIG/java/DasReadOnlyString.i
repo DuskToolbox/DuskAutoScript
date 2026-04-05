@@ -202,36 +202,38 @@ SWIGEXPORT jstring JNICALL Java_org_das_DuskAutoScriptJNI_DasReadOnlyString_1toJ
 // ============================================================================
 
 // 1) jni: JNI C/C++ 包装层使用的 JNI 类型（这里用 jlong 传递指针）
-%typemap(jni) IDasReadOnlyString * "jlong"
+%typemap(jni) IDasReadOnlyString *, ::IDasReadOnlyString * "jlong"
 
 // 2) jtype: 生成的 *JNI.java 中对应的 Java 类型（与 jni 对应，这里是 long）
-%typemap(jtype) IDasReadOnlyString * "long"
+%typemap(jtype) IDasReadOnlyString *, ::IDasReadOnlyString * "long"
 
 // 3) jstype: 对最终用户暴露的 Java 类型（这里希望看到 DasReadOnlyString）
-%typemap(jstype) IDasReadOnlyString * "DasReadOnlyString"
+%typemap(jstype) IDasReadOnlyString *, ::IDasReadOnlyString * "DasReadOnlyString"
 
 // 4) javain: Java -> JNI 的参数转换
 //    用户传入 DasReadOnlyString，JNI 侧拿到的是它内部持有的 C++ 指针（DasReadOnlyString*）
-%typemap(javain) IDasReadOnlyString * "$javainput == null ? 0 : DasReadOnlyString.getCPtr($javainput)"
+%typemap(javain) IDasReadOnlyString *, ::IDasReadOnlyString * "$javainput == null ? 0 : DasReadOnlyString.getCPtr($javainput)"
 
 // 5) javaout: JNI -> Java 的返回值转换
 //    约定：%typemap(out) 会返回一个"新分配的 DasReadOnlyString*"，因此这里用 (cPtr,true) 让 Java 拥有并 delete()
-%typemap(javaout) IDasReadOnlyString * {
+%typemap(javaout) IDasReadOnlyString *, ::IDasReadOnlyString * {
     long cPtr = $jnicall;
     return (cPtr == 0) ? null : new DasReadOnlyString(cPtr, true);
 }
 
 // 6) (配套) in: JNI 输入到 C++ 真实类型的转换
 //    $input 是 jlong（实际是 DasReadOnlyString*），这里取出其底层接口指针 IDasReadOnlyString*
-%typemap(in) IDasReadOnlyString * %{
-    DasReadOnlyString* tmp = reinterpret_cast<DasReadOnlyString*>($input);
-    $1 = tmp ? tmp->Get() : nullptr;
+%typemap(in) IDasReadOnlyString *, ::IDasReadOnlyString * %{
+    {
+        DasReadOnlyString* p_tmp = reinterpret_cast<DasReadOnlyString*>($input);
+        $1 = p_tmp ? p_tmp->Get() : nullptr;
+    }
 %}
 
 // 7) (配套) out: C++ 返回到 JNI 的转换
 //    C++ 层返回的是 IDasReadOnlyString*；为了让 Java 侧始终拿到 DasReadOnlyString 代理对象，
 //    这里创建一个新的 DasReadOnlyString 包装它，然后把 DasReadOnlyString* 作为 jlong 返回。
-%typemap(out) IDasReadOnlyString * %{
+%typemap(out) IDasReadOnlyString *, ::IDasReadOnlyString * %{
     if ($1) {
         DasReadOnlyString* tmp = new DasReadOnlyString($1);
         $result = (jlong)tmp;
@@ -239,5 +241,58 @@ SWIGEXPORT jstring JNICALL Java_org_das_DuskAutoScriptJNI_DasReadOnlyString_1toJ
         $result = 0;
     }
 %}
+
+// ============================================================================
+// Director support: C++ -> Java callbacks with IDasReadOnlyString* params
+//
+// When a C++ base class calls a virtual method with IDasReadOnlyString* param,
+// the director needs to convert it to a Java DasReadOnlyString object.
+// Without these typemaps, SWIG generates duplicate director method declarations
+// (one with ::IDasReadOnlyString* from headers, one with IDasReadOnlyString*
+// from typemap resolution), causing C++ "class member cannot be redeclared" errors.
+//
+// 注意：同时为 IDasReadOnlyString* 和 IDasReadOnlyString** 定义 director typemaps，
+// 因为 ABI 头文件中使用 ::IDasReadOnlyString* 和 ::IDasReadOnlyString** 两种形式。
+// ============================================================================
+
+// directorin: C++ calls Java virtual method — wrap IDasReadOnlyString* as DasReadOnlyString*
+%typemap(directorin, descriptor="J") IDasReadOnlyString *, ::IDasReadOnlyString * %{
+    if ($1) {
+        DasReadOnlyString *wrapper = new DasReadOnlyString($1);
+        $input = (jlong)wrapper;
+    } else {
+        $input = 0;
+    }
+%}
+
+// javadirectorin: JNI long -> Java DasReadOnlyString in director callback
+%typemap(javadirectorin) IDasReadOnlyString *, ::IDasReadOnlyString * "($jniinput == 0) ? null : new DasReadOnlyString($jniinput, true)"
+
+// directorout: Java returns/produces DasReadOnlyString -> extract IDasReadOnlyString* for C++
+%typemap(directorout) IDasReadOnlyString *, ::IDasReadOnlyString * %{
+    if ($input) {
+        DasReadOnlyString *wrapper = reinterpret_cast<DasReadOnlyString*>($input);
+        $result = wrapper ? wrapper->Get() : nullptr;
+    } else {
+        $result = nullptr;
+    }
+%}
+
+// javadirectorout: Java DasReadOnlyString -> JNI long for director return
+%typemap(javadirectorout) IDasReadOnlyString *, ::IDasReadOnlyString * "DasReadOnlyString.getCPtr($javacall)"
+
+// IDasReadOnlyString** director typemaps (for [out] parameters)
+// [out] IDasReadOnlyString** params: pass as 0 to Java, handled via DasRetXxx return pattern
+%typemap(directorin, descriptor="") IDasReadOnlyString **, ::IDasReadOnlyString ** ""
+%typemap(javadirectorin) IDasReadOnlyString **, ::IDasReadOnlyString ** "0"
+%typemap(directorout) IDasReadOnlyString **, ::IDasReadOnlyString ** ""
+%typemap(javadirectorout) IDasReadOnlyString **, ::IDasReadOnlyString ** ""
+
+// IDasReadOnlyString** jni/jtype typemaps — also needed for :: qualified form
+// Without these, SWIG generates separate director entries for ::IDasReadOnlyString**
+%typemap(jni) IDasReadOnlyString **, ::IDasReadOnlyString ** "jlong"
+%typemap(jtype) IDasReadOnlyString **, ::IDasReadOnlyString ** "long"
+%typemap(jstype) IDasReadOnlyString **, ::IDasReadOnlyString ** "long"
+%typemap(javain) IDasReadOnlyString **, ::IDasReadOnlyString ** "$javainput"
 
 #endif // SWIGJAVA

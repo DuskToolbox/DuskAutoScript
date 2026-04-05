@@ -22,8 +22,10 @@
 // 5) (配套) C++ in：$input 实际上传的是 DasReadOnlyString*（被当成 IDasReadOnlyString* 透传）
 //    取出其底层接口指针 IDasReadOnlyString*
 %typemap(in) IDasReadOnlyString * %{
-    DasReadOnlyString* tmp = reinterpret_cast<DasReadOnlyString*>($input);
-    $1 = tmp ? tmp->Get() : nullptr;
+    {
+        DasReadOnlyString* p_tmp = reinterpret_cast<DasReadOnlyString*>($input);
+        $1 = p_tmp ? p_tmp->Get() : nullptr;
+    }
 %}
 // 6) (配套) C++ out：把 IDasReadOnlyString* 包装成一个新的 DasReadOnlyString*
 //    再把这个"包装对象指针"透传回 C#（C# 侧用 (cPtr,true) 释放它）

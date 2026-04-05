@@ -560,6 +560,62 @@ class SwigCodeGenerator:
 }}
 """
 
+    def _generate_cross_namespace_wrapper_usings(self, interface: InterfaceDef) -> str:
+        """为跨命名空间类型生成 wrapper 代码中的 using 声明
+
+        当 ABI header 使用 #ifdef SWIG 让 SWIG 看到不带限定的类型名时，
+        SWIG 会把这些类型解析到当前命名空间（如 Das::ExportInterface::IDasCapture），
+        导致生成的 wrapper 代码中出现错误的命名空间限定。
+
+        通过在 wrapper 代码中注入 using 声明：
+          namespace Das::ExportInterface { using Das::PluginInterface::IDasCapture; }
+        让 C++ 编译器能正确解析这些类型。
+        """
+        if not interface.namespace:
+            return ''
+
+        usings: list[str] = []
+        seen: set[str] = set()
+
+        for method in interface.methods:
+            for param in method.parameters:
+                base_type = param.type_info.base_type
+                if not SwigTypeMapper.is_interface_type(base_type):
+                    continue
+                if SwigTypeMapper.is_string_type(base_type):
+                    continue
+                if base_type in seen:
+                    continue
+
+                # 查找类型的命名空间
+                type_ns = ''
+                for iface in self._all_documents_interfaces():
+                    if iface.name == base_type:
+                        type_ns = iface.namespace
+                        break
+
+                # 只处理跨有名命名空间的类型
+                if type_ns and type_ns != interface.namespace:
+                    usings.append(f"using {type_ns}::{base_type};")
+                    seen.add(base_type)
+
+        if not usings:
+            return ''
+
+        lines = [
+            '',
+            '// Inject using declarations into wrapper code for cross-namespace types.',
+            '// SWIG resolves unqualified types to the current namespace,',
+            '// so C++ needs using to find the actual type.',
+            '%{',
+            f'namespace {interface.namespace} {{',
+        ]
+        lines.extend(usings)
+        lines.append(f'}} // namespace {interface.namespace}')
+        lines.append('%}')
+
+        return '\n'.join(lines)
+
     def _generate_binary_buffer_typemaps(self, interface: InterfaceDef) -> str:
         """为二进制缓冲区接口生成特殊的 typemap
 
@@ -712,6 +768,292 @@ class SwigCodeGenerator:
 
 
 
+    def _get_ret_class_name(self, out_type: str) -> str:
+        """根据 [out] 参数类型生成返回包装类名（DasRetXxx）
+
+        复用 JavaSwigGenerator 中的逻辑。
+        """
+        # 委托给 JavaSwigGenerator 的静态方法
+        return JavaSwigGenerator._get_ret_class_name(out_type)
+
+    def _generate_director_bridge_methods(self, interface: InterfaceDef) -> str:
+        """为 ISwig 类生成 director 桥接方法
+
+        对于每个带 [out] 参数的方法，生成两个方法：
+        1. virtual DasRetXxx MethodName(non-out-params) — 可通过 director 被 Java 覆盖
+        2. DasResult MethodName(all-params) override final — 转发到 DasRetXxx 版本
+
+        这样 Java 子类可以覆盖返回 DasRetXxx 的方法，
+        而 C++ 调用原始虚方法时会自动通过 director 桥接到 Java。
+        """
+        lines = []
+
+        for method in interface.methods:
+            out_params = [p for p in method.parameters if p.direction == ParamDirection.OUT]
+            if len(out_params) != 1:
+                continue
+
+            # 跳过 [binary_buffer] 方法 — 这些方法由 generate_binary_buffer_helpers 处理
+            if method.attributes and method.attributes.get('binary_buffer', False):
+                continue
+
+            out_param = out_params[0]
+            out_type = out_param.type_info.base_type
+
+            # 跳过字符串类型的 out 参数 — 已通过 DasReadOnlyString.i 的 director typemap 处理
+            if SwigTypeMapper.is_string_type(out_type):
+                continue
+
+            if not self._should_generate_bridge(method):
+                continue
+
+            ret_class_name = self._get_ret_class_name(out_type)
+
+            # 收集非 [out] 参数
+            in_params = [p for p in method.parameters if p.direction != ParamDirection.OUT]
+
+            # 构建参数列表
+            cpp_in_params = []  # DasRetXxx 方法的参数列表
+            cpp_all_params = []  # 原始方法的完整参数列表
+            call_args = []  # 调用基类方法时的参数
+            in_call_args = []  # 调用 DasRetXxx 方法时的参数
+
+            for param in method.parameters:
+                cpp_type = self._get_cpp_type(param.type_info.base_type)
+
+                if param.direction == ParamDirection.OUT:
+                    # [out] 参数：接口类型固定 **, 其他类型 *
+                    if SwigTypeMapper.is_interface_type(param.type_info.base_type):
+                        ptr_type = f'{cpp_type}**'
+                        # 对于全局命名空间的接口类型，添加 :: 前缀
+                        if not interface.namespace or param.type_info.base_type.startswith('IDas'):
+                            ns = ''
+                            # 检查是否在同一命名空间
+                            for iface in self._all_documents_interfaces():
+                                if iface.name == param.type_info.base_type:
+                                    ns = iface.namespace
+                                    break
+                            if not ns:
+                                ptr_type = f'::{cpp_type}**'
+                            elif ns != interface.namespace:
+                                ptr_type = f'::{ns}::{cpp_type}**'
+                    else:
+                        ptr_type = f'{cpp_type}{"*" * param.type_info.pointer_level}'
+                    cpp_all_params.append(f'{ptr_type} {param.name}')
+                    call_args.append(f'&result.value')
+                else:
+                    # [in] 参数
+                    # 对接口类型添加命名空间限定，避免 SWIG 生成的代码中类型不可见
+                    qualified_cpp_type = self._qualify_param_type(cpp_type, param.type_info.base_type, interface)
+                    if param.type_info.is_const and param.type_info.is_reference:
+                        param_decl = f'const {qualified_cpp_type}& {param.name}'
+                    elif param.type_info.is_pointer:
+                        stars = '*' * param.type_info.pointer_level
+                        const_prefix = 'const ' if param.type_info.is_const else ''
+                        param_decl = f'{const_prefix}{qualified_cpp_type}{stars} {param.name}'
+                    elif param.type_info.is_reference:
+                        param_decl = f'{qualified_cpp_type}& {param.name}'
+                    else:
+                        param_decl = f'{qualified_cpp_type} {param.name}'
+
+                    cpp_in_params.append(param_decl)
+                    cpp_all_params.append(param_decl)
+                    call_args.append(param.name)
+                    in_call_args.append(param.name)
+
+            in_params_str = ', '.join(cpp_in_params)
+            all_params_str = ', '.join(cpp_all_params)
+            call_args_str = ', '.join(call_args)
+            in_call_args_str = ', '.join(in_call_args)
+
+            # 初始化 out param 的默认值
+            out_cpp_type = self._get_cpp_type(out_type)
+            if SwigTypeMapper.is_interface_type(out_type):
+                default_init = 'nullptr'
+            elif out_type == 'bool':
+                default_init = 'false'
+            elif self._is_struct_type(out_type):
+                # Struct types (DasGuid, DasSize, etc.) — aggregate init
+                default_init = '{{}}'
+            else:
+                # Scalar types: enums, numeric integers, float/double
+                # Use static_cast to avoid implicit conversion warnings with -Wall
+                default_init = f'static_cast<{out_cpp_type}>(0)'
+
+            lines.append(f'')
+            lines.append(f'    // Director bridge: {method.name} — DasRetXxx virtual method')
+            lines.append(f'    virtual {ret_class_name} {method.name}({in_params_str}) {{')
+            lines.append(f'        {ret_class_name} result;')
+            lines.append(f'        result.value = {default_init};')
+            lines.append(f'        result.error_code = DAS_E_NO_IMPLEMENTATION;')
+            lines.append(f'        return result;')
+            lines.append(f'    }}')
+            lines.append(f'')
+            lines.append(f'    // Raw override: delegates to DasRetXxx virtual method above')
+            lines.append(f'    DasResult {method.name}({all_params_str}) override {{')
+            lines.append(f'        auto result = this->{method.name}({in_call_args_str});')
+            lines.append(f'        if ({out_param.name}) *{out_param.name} = result.value;')
+            lines.append(f'        return result.error_code;')
+            lines.append(f'    }}')
+
+        return '\n'.join(lines)
+
+    def _should_generate_bridge(self, method: MethodDef) -> bool:
+        """判断方法是否需要生成 director 桥接
+
+        过滤条件（在调用前已检查 out_params == 1、非 binary_buffer、非 string）：
+        - 这里可以添加额外的过滤逻辑
+        """
+        return True
+
+    def _qualify_param_type(self, cpp_type: str, base_type: str, interface: InterfaceDef) -> str:
+        """为接口/枚举类型添加命名空间限定
+
+        在 ISwig 类的 %inline 块中，类定义在特定命名空间内（如 Das::PluginInterface），
+        但参数类型可能在另一个命名空间（如 Das::ExportInterface）。
+        需要添加 :: 前缀或完全限定名，避免 C++ 编译器找不到类型。
+        """
+        if not SwigTypeMapper.is_interface_type(base_type):
+            return cpp_type
+
+        # 查找类型所在的命名空间
+        type_ns = ''
+        for iface in self._all_documents_interfaces():
+            if iface.name == base_type:
+                type_ns = iface.namespace
+                break
+
+        if not type_ns:
+            # 全局命名空间，添加 :: 前缀
+            return f'::{cpp_type}'
+        elif type_ns != interface.namespace:
+            # 不同命名空间，使用完全限定名
+            return f'::{type_ns}::{cpp_type}'
+        else:
+            # 同一命名空间，无需限定
+            return cpp_type
+
+    def _get_bridged_method_names(self, interface: InterfaceDef) -> list[str]:
+        """获取需要生成 director 桥接的方法名列表"""
+        names = []
+        for method in interface.methods:
+            out_params = [p for p in method.parameters if p.direction == ParamDirection.OUT]
+            if len(out_params) != 1:
+                continue
+            if method.attributes and method.attributes.get('binary_buffer', False):
+                continue
+            out_type = out_params[0].type_info.base_type
+            if SwigTypeMapper.is_string_type(out_type):
+                continue
+            if not self._should_generate_bridge(method):
+                continue
+            names.append(method.name)
+        return names
+
+    def _generate_nodirector_for_raw_methods(self, interface: InterfaceDef, swig_name: str) -> str:
+        """为桥接方法的原始版本生成 %feature("nodirector") 指令
+
+        由于 SWIG 4.4.1 的命名空间匹配 bug，签名精确匹配的 nodirector
+        对包含命名空间类型参数的方法不可靠。暂时不生成。
+        DasRetXxx virtual 方法直接获得 director 支持，不依赖 override final。
+        """
+        return ''
+
+    def _generate_ignore_for_raw_overrides(self, interface: InterfaceDef, swig_name: str) -> str:
+        """为 ISwig 类的 raw override 方法生成 %ignore 指令
+
+        raw override 方法对 SWIG 可见（不用 #ifndef SWIG），但 SWIG 会为其参数类型
+        生成 SWIGTYPE_p_xxx 文件。虽然 base class 上的 %ignore 已处理了 base 的方法，
+        但 ISwig 类的 override 仍然会被 SWIG 解析。
+
+        通过在 ISwig 类定义之前（%inline 之前）生成 %ignore 指令，
+        让 SWIG 也忽略 ISwig 类上的 raw override 方法，
+        从而避免生成被引用的 SWIGTYPE_p_xxx 文件。
+
+        注意：%ignore 使用不带命名空间限定的类型名（SWIG 4.4.1 bug workaround）。
+        """
+        lines = []
+        qualified_swig = f"{interface.namespace}::{swig_name}" if interface.namespace else swig_name
+
+        for method in interface.methods:
+            out_params = [p for p in method.parameters if p.direction == ParamDirection.OUT]
+            if len(out_params) != 1:
+                continue
+            if method.attributes and method.attributes.get('binary_buffer', False):
+                continue
+            out_param = out_params[0]
+            out_type = out_param.type_info.base_type
+            if SwigTypeMapper.is_string_type(out_type):
+                continue
+            if not self._should_generate_bridge(method):
+                continue
+
+            # 构建参数签名（使用不带命名空间限定的类型名）
+            param_sigs = []
+            for param in method.parameters:
+                cpp_type = self._get_cpp_type(param.type_info.base_type)
+
+                if param.direction == ParamDirection.OUT:
+                    # [out] 参数：接口类型固定 **, 其他类型按 pointer_level
+                    if SwigTypeMapper.is_interface_type(param.type_info.base_type):
+                        param_sigs.append(f'{cpp_type}**')
+                    else:
+                        stars = '*' * param.type_info.pointer_level if param.type_info.is_pointer else '*'
+                        param_sigs.append(f'{cpp_type}{stars}')
+                else:
+                    # [in] 参数：不带命名空间限定（SWIG bug workaround）
+                    if param.type_info.is_const and param.type_info.is_reference:
+                        param_sigs.append(f'const {cpp_type}&')
+                    elif param.type_info.is_pointer:
+                        stars = '*' * param.type_info.pointer_level
+                        const_prefix = 'const ' if param.type_info.is_const else ''
+                        param_sigs.append(f'{const_prefix}{cpp_type}{stars}')
+                    elif param.type_info.is_reference:
+                        param_sigs.append(f'{cpp_type}&')
+                    else:
+                        param_sigs.append(cpp_type)
+
+            sig = ', '.join(param_sigs)
+            lines.append(f'%ignore {qualified_swig}::{method.name}({sig});')
+
+        if lines:
+            header = f'// Hide raw override methods on {swig_name} to prevent SWIGTYPE generation'
+            return header + '\n' + '\n'.join(lines) + '\n'
+        return ''
+
+    def _generate_directorout_typemaps(self, interface: InterfaceDef) -> str:
+        """为 DasRetXxx 接口类型生成 %typemap(directorout)
+
+        DasRetXxx 接口类型现在有正确的拷贝构造函数（带 AddRef/Release），
+        不再需要特殊的 directorout typemap。
+        """
+        return ''
+
+    def _all_documents_interfaces(self):
+        """获取所有文档中的接口（当前文档 + 导入的文档）"""
+        interfaces = list(self.document.interfaces)
+        for doc in self._imported_documents.values():
+            interfaces.extend(doc.interfaces)
+        return interfaces
+
+    def _all_documents_enums(self):
+        """获取所有文档中的枚举（当前文档 + 导入的文档）"""
+        enums = list(self.document.enums)
+        for doc in self._imported_documents.values():
+            enums.extend(doc.enums)
+        return enums
+
+    def _is_enum_type(self, type_name: str) -> bool:
+        """判断类型是否是枚举类型"""
+        return any(e.name == type_name for e in self._all_documents_enums())
+
+    def _is_struct_type(self, type_name: str) -> bool:
+        """判断类型是否是结构体类型"""
+        all_structs = list(self.document.structs)
+        for doc in self._imported_documents.values():
+            all_structs.extend(doc.structs)
+        return any(s.name == type_name for s in all_structs)
+
     def _generate_ref_impl_class(self, interface: InterfaceDef) -> str:
         """生成引用计数实现基类（供目标语言继承）"""
         swig_name = self._get_swig_interface_name(interface.name)
@@ -731,10 +1073,22 @@ class SwigCodeGenerator:
             if interface.name == 'IDasBase':
                 # 特例处理 IDasBase 接口
                 interface.name = '::IDasBase'
+
+            # 生成 director 桥接方法（用于 Java 等语言通过 DasRetXxx 覆盖 out 参数方法）
+            bridge_methods = self._generate_director_bridge_methods(interface)
+            nodirector_directives = self._generate_nodirector_for_raw_methods(interface, swig_name)
+            directorout_typemaps = self._generate_directorout_typemaps(interface)
+            ignore_raw_overrides = self._generate_ignore_for_raw_overrides(interface, swig_name)
+
             return f"""
 // Reference counting implementation base class for {interface.name}
 // Target language should inherit from this class
 // Exported as {swig_name} to SWIG
+
+{directorout_typemaps}
+
+{ignore_raw_overrides}
+
 %inline %{{
 
 namespace {interface.namespace} {{
@@ -777,6 +1131,7 @@ public:
         *pp_out_object = nullptr;
         return DAS_E_NO_INTERFACE;
     }}
+{bridge_methods}
 }};
 
 }} // namespace {interface.namespace}
@@ -790,13 +1145,25 @@ public:
 %ignore {interface.namespace}::{swig_name}::AddRef;
 %ignore {interface.namespace}::{swig_name}::Release;
 %ignore {interface.namespace}::{swig_name}::QueryInterface;
+
+{nodirector_directives}
 """
         else:
             # 无命名空间的版本
+            bridge_methods = self._generate_director_bridge_methods(interface)
+            nodirector_directives = self._generate_nodirector_for_raw_methods(interface, swig_name)
+            directorout_typemaps = self._generate_directorout_typemaps(interface)
+            ignore_raw_overrides = self._generate_ignore_for_raw_overrides(interface, swig_name)
+
             return f"""
 // Reference counting implementation base class for {interface.name}
 // Target language should inherit from this class
 // Exported as {swig_name} to SWIG
+
+{directorout_typemaps}
+
+{ignore_raw_overrides}
+
 %inline %{{
 
 class {swig_name} : public {base_class_name} {{
@@ -836,6 +1203,7 @@ public:
         *pp_out_object = nullptr;
         return DAS_E_NO_INTERFACE;
     }}
+{bridge_methods}
 }};
 
 %}}
@@ -847,6 +1215,8 @@ public:
 %ignore {swig_name}::AddRef;
 %ignore {swig_name}::Release;
 %ignore {swig_name}::QueryInterface;
+
+{nodirector_directives}
 """
     def _get_abi_header_file(self, interface_name: str) -> str:
         """获取接口对应的 ABI 头文件路径"""
@@ -957,6 +1327,14 @@ public:
 
         if same_name_include:
             lines.append(f"%include <{same_name_include}>")
+
+        # 为跨命名空间类型注入 wrapper 代码中的 using 声明
+        # SWIG 在 #ifdef SWIG 分支中将不带限定的类型解析到当前命名空间，
+        # 导致生成的 wrapper 代码中出现 NamespaceA::TypeFromNamespaceB 形式。
+        # 通过在 wrapper 代码中注入 using 声明，让 C++ 编译器能正确解析。
+        wrapper_usings = self._generate_cross_namespace_wrapper_usings(interface)
+        if wrapper_usings:
+            lines.append(wrapper_usings)
 
         # 生成语言特定的 [out] 参数包装代码（包含 DasRetXxx 类型定义）
         # 放在 %include 之后，确保 SWIG 已经看到所有类型定义

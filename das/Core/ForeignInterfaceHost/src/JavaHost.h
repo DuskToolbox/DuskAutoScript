@@ -365,6 +365,7 @@ private:
 private:
     JavaVM*               jvm_; // 不拥有，由 JvmManager 单例管理
     std::atomic<uint32_t> ref_count_{1};
+    std::filesystem::path plugin_file_path_; // 由 LoadPluginConfig 设置
 };
 
 /**

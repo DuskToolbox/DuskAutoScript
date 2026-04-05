@@ -1035,9 +1035,27 @@ struct {ret_class_name} {{
     // 默认构造函数
     {ret_class_name}() : error_code(DAS_E_UNDEFINED_RETURN_VALUE), value({cpp_default_value}) {{}}
 
-    // 删除复制构造函数和复制赋值运算符
-    {ret_class_name}(const {ret_class_name}&) = delete;
-    {ret_class_name}& operator=(const {ret_class_name}&) = delete;
+    // 复制构造函数（用于 SWIG director 桥接，正确管理引用计数）
+    {ret_class_name}(const {ret_class_name}& other)
+        : error_code(other.error_code), value(other.value) {{
+        if (value) {{
+            value->AddRef();
+        }}
+    }}
+    // 复制赋值运算符
+    {ret_class_name}& operator=(const {ret_class_name}& other) {{
+        if (this != &other) {{
+            if (value) {{
+                value->Release();
+            }}
+            error_code = other.error_code;
+            value = other.value;
+            if (value) {{
+                value->AddRef();
+            }}
+        }}
+        return *this;
+    }}
 
     // 移动构造函数
     {ret_class_name}({ret_class_name}&& other) noexcept
@@ -1119,6 +1137,8 @@ struct {ret_class_name} {{
 #endif // SWIGJAVA
 
 // 让 SWIG 解析 struct 并生成 Java 包装类
+// novaluewrapper: 避免 SwigValueWrapper 使用已删除的拷贝构造函数
+%feature("novaluewrapper") {ret_class_name};
 %inline %{{
 {struct_definition}
 %}}
@@ -1236,6 +1256,8 @@ struct {ret_class_name} {{
 #endif // SWIGJAVA
 
 // 让 SWIG 解析 struct 并生成 Java 包装类
+// novaluewrapper: 避免 SwigValueWrapper 使用已删除的拷贝构造函数
+%feature("novaluewrapper") {ret_class_name};
 %inline %{{
 {struct_definition}
 %}}

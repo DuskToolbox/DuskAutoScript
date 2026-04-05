@@ -441,11 +441,202 @@ auto JavaRuntime::LoadPlugin(const std::filesystem::path& path)
         // "org.das.plugin.JavaTestPlugin.createInstance"
         auto [class_path_str, method_name] = ParseEntryPoint(entry_point);
 
-        // 3. 查找 Java 类
-        JClassPtr plugin_class(env, env->FindClass(class_path_str.c_str()));
+        // 3. 构建 JAR URL 列表用于 URLClassLoader
+        std::vector<std::filesystem::path> jar_paths;
+
+        // 插件 JAR: 与 JSON 同目录, name + "." + pluginFilenameExtension
+        if (!plugin_file_path_.empty()
+            && std::filesystem::exists(plugin_file_path_))
+        {
+            jar_paths.push_back(plugin_file_path_);
+        }
+        else
+        {
+            DAS_CORE_LOG_ERROR(
+                "Plugin file not found: {}",
+                plugin_file_path_.string());
+            return tl::make_unexpected(DAS_E_FILE_NOT_FOUND);
+        }
+
+        // 核心 JAR (DasCoreJavaExport.jar): 与插件 JAR 同目录
+        {
+            auto core_jar_path =
+                plugin_file_path_.parent_path() / "DasCoreJavaExport.jar";
+            if (std::filesystem::exists(core_jar_path))
+            {
+                jar_paths.push_back(core_jar_path);
+            }
+        }
+
+        // 附加 JAR（来自插件配置）
+        for (const auto& jar : additional_jars)
+        {
+            if (std::filesystem::exists(jar))
+            {
+                jar_paths.push_back(jar);
+            }
+        }
+
+        // 4. 创建 URLClassLoader
+        //    URL[] urls = new URL[] { new URL("file:///path/to/plugin.jar"),
+        //    ... }; URLClassLoader loader = new URLClassLoader(urls);
+        JClassPtr url_class(env, env->FindClass("java/net/URL"));
+        if (!url_class)
+        {
+            DAS_CORE_LOG_ERROR("Failed to find java.net.URL class");
+            if (env->ExceptionCheck())
+            {
+                env->ExceptionDescribe();
+                env->ExceptionClear();
+            }
+            return tl::make_unexpected(DAS_E_FAIL);
+        }
+
+        jmethodID url_ctor = env->GetMethodID(
+            url_class.get(),
+            "<init>",
+            "(Ljava/lang/String;)V");
+        if (!url_ctor)
+        {
+            DAS_CORE_LOG_ERROR("Failed to find URL constructor");
+            if (env->ExceptionCheck())
+            {
+                env->ExceptionDescribe();
+                env->ExceptionClear();
+            }
+            return tl::make_unexpected(DAS_E_FAIL);
+        }
+
+        // 创建 URL[] 数组
+        jobjectArray url_array = env->NewObjectArray(
+            static_cast<jsize>(jar_paths.size()),
+            url_class.get(),
+            nullptr);
+        if (!url_array)
+        {
+            DAS_CORE_LOG_ERROR("Failed to create URL array");
+            return tl::make_unexpected(DAS_E_OUT_OF_MEMORY);
+        }
+        JObjectPtr<jobjectArray> url_array_ptr(env, url_array);
+
+        for (size_t i = 0; i < jar_paths.size(); ++i)
+        {
+            // 转换为 file:/// URL
+            auto jar_absolute =
+                std::filesystem::absolute(jar_paths[i]).generic_string();
+            auto url_string = DAS_FMT_NS::format("file:///{}", jar_absolute);
+
+            JStringPtr j_url_str(env, env->NewStringUTF(url_string.c_str()));
+            if (!j_url_str)
+            {
+                DAS_CORE_LOG_ERROR(
+                    "Failed to create URL string for: {}",
+                    jar_paths[i].string());
+                return tl::make_unexpected(DAS_E_OUT_OF_MEMORY);
+            }
+
+            JObjectPtr<> url_obj(
+                env,
+                env->NewObject(url_class.get(), url_ctor, j_url_str.get()));
+            if (!url_obj)
+            {
+                DAS_CORE_LOG_ERROR("Failed to create URL for: {}", url_string);
+                if (env->ExceptionCheck())
+                {
+                    env->ExceptionDescribe();
+                    env->ExceptionClear();
+                }
+                return tl::make_unexpected(DAS_E_FAIL);
+            }
+
+            env->SetObjectArrayElement(
+                url_array_ptr.get(),
+                static_cast<jsize>(i),
+                url_obj.get());
+        }
+
+        // 创建 URLClassLoader
+        JClassPtr url_cl_class(env, env->FindClass("java/net/URLClassLoader"));
+        if (!url_cl_class)
+        {
+            DAS_CORE_LOG_ERROR("Failed to find URLClassLoader class");
+            if (env->ExceptionCheck())
+            {
+                env->ExceptionDescribe();
+                env->ExceptionClear();
+            }
+            return tl::make_unexpected(DAS_E_FAIL);
+        }
+
+        jmethodID url_cl_ctor = env->GetMethodID(
+            url_cl_class.get(),
+            "<init>",
+            "([Ljava/net/URL;)V");
+        if (!url_cl_ctor)
+        {
+            DAS_CORE_LOG_ERROR("Failed to find URLClassLoader constructor");
+            if (env->ExceptionCheck())
+            {
+                env->ExceptionDescribe();
+                env->ExceptionClear();
+            }
+            return tl::make_unexpected(DAS_E_FAIL);
+        }
+
+        JObjectPtr<> class_loader(
+            env,
+            env->NewObject(
+                url_cl_class.get(),
+                url_cl_ctor,
+                url_array_ptr.get()));
+        if (!class_loader)
+        {
+            DAS_CORE_LOG_ERROR("Failed to create URLClassLoader");
+            if (env->ExceptionCheck())
+            {
+                env->ExceptionDescribe();
+                env->ExceptionClear();
+            }
+            return tl::make_unexpected(DAS_E_FAIL);
+        }
+
+        DAS_CORE_LOG_INFO(
+            "Created URLClassLoader with {} JAR(s)",
+            jar_paths.size());
+
+        // 5. 通过 URLClassLoader.loadClass() 加载插件类
+        //    class_path_str 格式: "org/das/plugin/JavaTestPlugin"
+        //    loadClass 需要点分格式: "org.das.plugin.JavaTestPlugin"
+        std::string dot_class_name = class_path_str;
+        std::replace(dot_class_name.begin(), dot_class_name.end(), '/', '.');
+
+        jmethodID load_class_method = env->GetMethodID(
+            url_cl_class.get(),
+            "loadClass",
+            "(Ljava/lang/String;)Ljava/lang/Class;");
+        if (!load_class_method)
+        {
+            DAS_CORE_LOG_ERROR("Failed to find loadClass method");
+            if (env->ExceptionCheck())
+            {
+                env->ExceptionDescribe();
+                env->ExceptionClear();
+            }
+            return tl::make_unexpected(DAS_E_FAIL);
+        }
+
+        JStringPtr j_class_name(env, env->NewStringUTF(dot_class_name.c_str()));
+        JClassPtr  plugin_class(
+            env,
+            static_cast<jclass>(env->CallObjectMethod(
+                class_loader.get(),
+                load_class_method,
+                j_class_name.get())));
         if (!plugin_class)
         {
-            DAS_CORE_LOG_ERROR("Failed to find Java class: {}", class_path_str);
+            DAS_CORE_LOG_ERROR(
+                "Failed to load Java class via URLClassLoader: {}",
+                dot_class_name);
             if (env->ExceptionCheck())
             {
                 env->ExceptionDescribe();
@@ -453,6 +644,11 @@ auto JavaRuntime::LoadPlugin(const std::filesystem::path& path)
             }
             return tl::make_unexpected(DAS_E_INVALID_FILE);
         }
+
+        DAS_CORE_LOG_INFO(
+            "Successfully loaded class: {} via URLClassLoader",
+            dot_class_name);
+
         // 签名: ()Lorg/das/DasRetBase; - 无参，返回 DasRetBase
         jmethodID method = env->GetStaticMethodID(
             plugin_class.get(),
@@ -472,7 +668,7 @@ auto JavaRuntime::LoadPlugin(const std::filesystem::path& path)
             }
             return tl::make_unexpected(DAS_E_SYMBOL_NOT_FOUND);
         }
-        // 5. 调用静态方法
+        // 6. 调用静态方法
         JObjectPtr<> ret_base(
             env,
             env->CallStaticObjectMethod(plugin_class.get(), method));
@@ -486,7 +682,7 @@ auto JavaRuntime::LoadPlugin(const std::filesystem::path& path)
             }
             return tl::make_unexpected(DAS_E_FAIL);
         }
-        // 6. 从 DasRetBase 提取 IDasBase
+        // 7. 从 DasRetBase 提取 IDasBase
         auto plugin_ptr = ExtractIDasBaseFromDasRetBase(env, ret_base.get());
 
         if (!plugin_ptr)
@@ -691,6 +887,17 @@ DasResult JavaRuntime::LoadPluginConfig(
                 "Plugin config missing 'entryPoint' field: {}",
                 json_path.string());
             return DAS_E_FAIL;
+        }
+
+        // 从 name + pluginFilenameExtension 计算插件文件路径
+        if (config.contains("name")
+            && config.contains("pluginFilenameExtension"))
+        {
+            std::string name;
+            std::string ext;
+            config["name"].get_to(name);
+            config["pluginFilenameExtension"].get_to(ext);
+            plugin_file_path_ = json_path.parent_path() / (name + "." + ext);
         }
 
         return DAS_S_OK;
