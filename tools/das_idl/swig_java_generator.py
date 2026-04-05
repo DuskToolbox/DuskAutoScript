@@ -1025,6 +1025,14 @@ class JavaSwigGenerator(SwigLangGenerator):
             
             # 使用 %begin 将 struct 定义插入到生成的 C++ 代码最开头
             # 同时使用 %inline 让 SWIG 生成 Java 包装类
+            move_constructor = f"""
+    // 移动构造函数
+    {ret_class_name}({ret_class_name}&& other) noexcept
+        : error_code(DAS_E_UNDEFINED_RETURN_VALUE), value({cpp_default_value}) {{
+        std::swap(error_code, other.error_code);
+        std::swap(value, other.value);
+    }}"""
+
             struct_definition = f"""
 #ifndef {include_guard}
 #define {include_guard}
@@ -1035,7 +1043,7 @@ struct {ret_class_name} {{
     // 默认构造函数
     {ret_class_name}() : error_code(DAS_E_UNDEFINED_RETURN_VALUE), value({cpp_default_value}) {{}}
 
-    // 复制构造函数（用于 SWIG director 桥接，正确管理引用计数）
+    // 复制构造函数
     {ret_class_name}(const {ret_class_name}& other)
         : error_code(other.error_code), value(other.value) {{
         if (value) {{
@@ -1057,15 +1065,7 @@ struct {ret_class_name} {{
         return *this;
     }}
 
-    // 移动构造函数
-    {ret_class_name}({ret_class_name}&& other) noexcept
-        : error_code(DAS_E_UNDEFINED_RETURN_VALUE), value({cpp_default_value}) {{
-        std::swap(error_code, other.error_code);
-        std::swap(value, other.value);
-    }}
-
-    // 移动赋值运算符（仅C++使用，SWIG忽略）
-#ifndef SWIG
+    // 移动赋值运算符
     {ret_class_name}& operator=({ret_class_name}&& other) noexcept {{
         if (this != &other) {{
             // 释放当前资源
@@ -1079,7 +1079,8 @@ struct {ret_class_name} {{
         }}
         return *this;
     }}
-#endif // SWIG
+
+{move_constructor}
 
     // 析构函数
     ~{ret_class_name}() {{
@@ -1134,7 +1135,20 @@ struct {ret_class_name} {{
 // 隐藏 public 字段的自动 getter/setter，避免重复方法
 %ignore {ret_class_name}::error_code;
 %ignore {ret_class_name}::value;
+%ignore {ret_class_name}::operator==;
 #endif // SWIGJAVA
+
+#ifdef SWIGCSHARP
+%ignore {ret_class_name}::operator==;
+#endif // SWIGCSHARP
+
+#ifdef SWIGPYTHON
+%ignore {ret_class_name}::operator==;
+#endif // SWIGPYTHON
+
+// 仅向 SWIG 暴露 move ctor，隐藏 copy ctor 和赋值运算符
+%ignore {ret_class_name}::{ret_class_name}(const {ret_class_name}&);
+%ignore {ret_class_name}::operator=;
 
 // 让 SWIG 解析 struct 并生成 Java 包装类
 // novaluewrapper: 避免 SwigValueWrapper 使用已删除的拷贝构造函数
@@ -1185,7 +1199,7 @@ struct {ret_class_name} {{
                 cpp_default_value = ""
             include_guard = self._to_include_guard(ret_class_name)
             
-            header_includes = []
+            header_includes = ['#include <utility>']
             if "DasGuid" in out_type:
                 header_includes.append('#include <DasBasicTypes.h>')
             else:
@@ -1211,6 +1225,14 @@ struct {ret_class_name} {{
             
             # 使用 %begin 将 struct 定义插入到生成的 C++ 代码最开头
             # 同时使用 %inline 让 SWIG 生成 Java 包装类
+            move_constructor = f"""
+    // 移动构造函数
+    {ret_class_name}({ret_class_name}&& other) noexcept
+        : error_code(DAS_E_UNDEFINED_RETURN_VALUE){f", value({cpp_default_value})" if cpp_default_value else ""} {{
+        std::swap(error_code, other.error_code);
+        std::swap(value, other.value);
+    }}"""
+
             struct_definition = f"""
 #ifndef {include_guard}
 #define {include_guard}
@@ -1219,6 +1241,13 @@ struct {ret_class_name} {{
     {cpp_value_type} value;
 
     {ret_class_name}() : error_code(DAS_E_UNDEFINED_RETURN_VALUE){f", value({cpp_default_value})" if cpp_default_value else ""} {{}}
+
+    {ret_class_name}(const {ret_class_name}& other) = default;
+    {ret_class_name}& operator=(const {ret_class_name}& other) = default;
+
+{move_constructor}
+
+    {ret_class_name}& operator=({ret_class_name}&& other) noexcept = default;
 
     DasResult GetErrorCode() const {{ return error_code; }}
     void SetErrorCode(DasResult code) {{ error_code = code; }}
@@ -1253,7 +1282,20 @@ struct {ret_class_name} {{
 // 隐藏 public 字段的自动 getter/setter，避免重复方法
 %ignore {ret_class_name}::error_code;
 %ignore {ret_class_name}::value;
+%ignore {ret_class_name}::operator==;
 #endif // SWIGJAVA
+
+#ifdef SWIGCSHARP
+%ignore {ret_class_name}::operator==;
+#endif // SWIGCSHARP
+
+#ifdef SWIGPYTHON
+%ignore {ret_class_name}::operator==;
+#endif // SWIGPYTHON
+
+// 仅向 SWIG 暴露 move ctor，隐藏 copy ctor 和赋值运算符
+%ignore {ret_class_name}::{ret_class_name}(const {ret_class_name}&);
+%ignore {ret_class_name}::operator=;
 
 // 让 SWIG 解析 struct 并生成 Java 包装类
 // novaluewrapper: 避免 SwigValueWrapper 使用已删除的拷贝构造函数
@@ -1432,6 +1474,48 @@ struct {ret_class_name} {{
 {destructor_body}
     }}"""
         
+        # 构建复制构造函数和复制赋值运算符
+        copy_initializer_list = ", ".join(
+            [f"value{i+1}(other.value{i+1})" for i in range(len(out_params))]
+        )
+        copy_constructor_lines = []
+        copy_assignment_lines = []
+        for i in range(len(out_params)):
+            if i in interface_indices:
+                copy_constructor_lines.append(
+                    f"        if (value{i+1}) {{ value{i+1}->AddRef(); }}"
+                )
+                copy_assignment_lines.append(
+                    f"            if (value{i+1}) {{ value{i+1}->Release(); }}"
+                )
+                copy_assignment_lines.append(
+                    f"            value{i+1} = other.value{i+1};"
+                )
+                copy_assignment_lines.append(
+                    f"            if (value{i+1}) {{ value{i+1}->AddRef(); }}"
+                )
+            else:
+                copy_assignment_lines.append(
+                    f"            value{i+1} = other.value{i+1};"
+                )
+
+        copy_constructor = f"""
+    // 复制构造函数
+    {class_name}(const {class_name}& other)
+        : error_code(other.error_code), {copy_initializer_list} {{
+{chr(10).join(copy_constructor_lines) if copy_constructor_lines else '        // 无接口指针需要 AddRef'}
+    }}"""
+
+        copy_assignment = f"""
+    // 复制赋值运算符
+    {class_name}& operator=(const {class_name}& other) {{
+        if (this != &other) {{
+            error_code = other.error_code;
+{chr(10).join(copy_assignment_lines) if copy_assignment_lines else '            // 无接口指针需要特殊处理'}
+        }}
+        return *this;
+    }}"""
+
         # 构建移动构造函数和移动赋值运算符
         move_constructor = f"""
     // 移动构造函数
@@ -1442,8 +1526,7 @@ struct {ret_class_name} {{
     }}"""
         
         move_assignment = f"""
-#ifndef SWIG
-    // 移动赋值运算符（仅C++使用，SWIG忽略）
+    // 移动赋值运算符
     {class_name}& operator=({class_name}&& other) noexcept {{
         if (this != &other) {{
             // 释放当前资源
@@ -1454,8 +1537,7 @@ struct {ret_class_name} {{
 {chr(10).join(swap_code_lines)}
         }}
         return *this;
-    }}
-#endif // SWIG"""
+    }}"""
         
         struct_definition = f"""
 #ifndef {include_guard}
@@ -1466,15 +1548,15 @@ struct {class_name} {{
 
     // 默认构造函数
     {class_name}() : error_code(DAS_E_UNDEFINED_RETURN_VALUE), {initializer_list} {{}}
-    
-    // 删除复制构造函数和复制赋值运算符
-    {class_name}(const {class_name}&) = delete;
-    {class_name}& operator=(const {class_name}&) = delete;
-    
-    // 移动构造函数和移动赋值运算符
-{move_constructor}
+
+{copy_constructor}
+{copy_assignment}
+
+    // 移动赋值运算符
 {move_assignment}
-    
+
+{move_constructor}
+     
     // 析构函数
 {destructor}
 
@@ -1541,13 +1623,23 @@ struct {class_name} {{
 // 隐藏 public 字段的自动 getter/setter，避免重复方法
 %ignore {class_name}::error_code;
 {ignore_value_fields}
+%ignore {class_name}::operator==;
 #endif // SWIGJAVA
 
 #ifdef SWIGCSHARP
 // C# 命名规范：隐藏 public 字段的自动 getter/setter，避免重复方法
 %ignore {class_name}::error_code;
 {ignore_value_fields_csharp}
+%ignore {class_name}::operator==;
 #endif // SWIGCSHARP
+
+#ifdef SWIGPYTHON
+%ignore {class_name}::operator==;
+#endif // SWIGPYTHON
+
+// 仅向 SWIG 暴露 move ctor，隐藏 copy ctor 和赋值运算符
+%ignore {class_name}::{class_name}(const {class_name}&);
+%ignore {class_name}::operator=;
 
 %inline %{{
 {struct_definition}
