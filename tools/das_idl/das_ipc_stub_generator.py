@@ -1138,11 +1138,25 @@ class IpcStubGenerator:
         else:
             lines.append(f"{indent}resp.remote_result = static_cast<int32_t>(DAS_S_OK);")
 
-        # Fill out params
-        for param in out_params:
-            local_name = f"arg_{param.name}" if param.name in handle_param_names else param.name
-            fill_lines = self._generate_response_struct_fill(param, "resp.", indent, local_name)
-            lines.extend(fill_lines)
+        # Fill out params only if impl call succeeded (output params may be NULL/invalid on failure)
+        if has_return and is_das_result_return:
+            lines.append(f"{indent}if (DAS::IsOk(call_result))")
+            lines.append(f"{indent}{{")
+
+            fill_indent = indent + "    "
+            for param in out_params:
+                local_name = f"arg_{param.name}" if param.name in handle_param_names else param.name
+                fill_lines = self._generate_response_struct_fill(param, "resp.", fill_indent, local_name)
+                lines.extend(fill_lines)
+
+            lines.append(f"{indent}}}")
+            # else: struct is zero-initialized, all fields already 0
+        else:
+            # No DasResult return — always fill out params
+            for param in out_params:
+                local_name = f"arg_{param.name}" if param.name in handle_param_names else param.name
+                fill_lines = self._generate_response_struct_fill(param, "resp.", indent, local_name)
+                lines.extend(fill_lines)
 
         if has_return and not is_das_result_return:
             lines.append(f"{indent}resp.return_value = static_cast<int32_t>(call_result);")
@@ -1159,11 +1173,30 @@ class IpcStubGenerator:
         lines = []
         handle_param_names = {'impl', 'params', 'params_size', 'out_response', 'ctx'}
 
+        is_das_result_return = method.return_type.base_type in ('DasResult', 'int32_t')
+
+        # If method returns DasResult, check call_result before accessing output params
+        # If the call failed, output params may be NULL/invalid — skip serialization and
+        # only write the error code in the response.
+        if has_return and is_das_result_return:
+            lines.append(f"{indent}// If impl call failed, skip output param serialization (params may be NULL)")
+            lines.append(f"{indent}if (DAS::IsFailed(call_result))")
+            lines.append(f"{indent}{{")
+            lines.append(f"{indent}    Das::Core::IPC::MemorySerializerWriter writer;")
+            lines.append(f"{indent}    serial_result = writer.WriteInt32(call_result);")
+            lines.append(f"{indent}    if (DAS::IsFailed(serial_result))")
+            lines.append(f"{indent}    {{")
+            lines.append(f"{indent}        return serial_result;")
+            lines.append(f"{indent}    }}")
+            lines.append(f"{indent}    out_response = writer.GetBuffer();")
+            lines.append(f"{indent}    return DAS_S_OK;")
+            lines.append(f"{indent}}}")
+            lines.append("")
+
         # Phase 1: Pre-calculate total response size
         lines.append(f"{indent}// Pre-calculate total response size for single allocation")
         lines.append(f"{indent}size_t total_response_size = 4;  // remote_result (int32)")
 
-        is_das_result_return = method.return_type.base_type in ('DasResult', 'int32_t')
         if has_return and not is_das_result_return:
             lines.append(f"{indent}total_response_size += 4;  // return_value (int32)")
 
