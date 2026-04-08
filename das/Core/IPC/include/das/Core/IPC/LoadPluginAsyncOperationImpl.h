@@ -46,6 +46,11 @@ namespace Core
             //=================================================================
             // CompletionReceiver
             //=================================================================
+            struct CompletionReceiver;
+            friend void tag_invoke(
+                stdexec::set_value_t,
+                CompletionReceiver&&,
+                std::tuple<DasResult, std::vector<uint8_t>, uint16_t>) noexcept;
             struct CompletionReceiver
             {
                 using receiver_concept = stdexec::receiver_t;

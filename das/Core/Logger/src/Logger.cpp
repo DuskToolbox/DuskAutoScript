@@ -1,3 +1,7 @@
+// 因为我们对getenv的使用非常克制，所以这里可以使用宏屏蔽警告
+// warning C4996: 'getenv': This function or variable may be unsafe. Consider
+// using _dupenv_s instead.
+#define _CRT_SECURE_NO_WARNINGS .
 #include "IDasLogRequesterImpl.h"
 #include <array>
 #include <boost/interprocess/creation_tags.hpp>
