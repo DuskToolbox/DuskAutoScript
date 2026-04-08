@@ -36,14 +36,6 @@
     /// <returns>转换后的接口实例</returns>
     /// <exception cref="DasException">当转换失败时抛出</exception>
     public T As<T>() where T : IDasBase {
-        if (!swigCMemOwn) {
-            DasExceptionSourceInfoSwig sourceInfo = new DasExceptionSourceInfoSwig();
-            sourceInfo.File = "IDasBase.cs";
-            sourceInfo.Line = 0;
-            sourceInfo.Function = "As";
-            IDasExceptionString exStr = DuskAutoScript.CreateDasExceptionStringSwig((int)DasResult.DAS_E_INVALID_OPERATION, sourceInfo);
-            throw new DasException((int)DasResult.DAS_E_INVALID_OPERATION, exStr);
-        }
         System.Type targetType = typeof(T);
         System.Reflection.MethodInfo iidMethod = _iidCache.GetOrAdd(targetType, t =>
             t.GetMethod("IID", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static));
@@ -75,7 +67,6 @@
     /// <typeparam name="T">目标接口类型</typeparam>
     /// <returns>true 如果可以转换，false 如果不兼容</returns>
     public bool CanCastTo<T>() where T : IDasBase {
-        if (!swigCMemOwn) { return false; }
         System.Type targetType = typeof(T);
         System.Reflection.MethodInfo iidMethod = _iidCache.GetOrAdd(targetType, t =>
             t.GetMethod("IID", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static));

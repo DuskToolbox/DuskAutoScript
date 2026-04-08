@@ -427,16 +427,10 @@ static void DasLogPendingJniException(JNIEnv* jenv, const char* context_u8)
      * @param targetClass 目标接口的 Class 对象
      * @return 转换后的接口对象
      * @throws DasException 如果转换失败（类型不兼容）
-     * @throws IllegalStateException 如果当前对象不拥有内存所有权
      * @throws IllegalArgumentException 如果目标类不是有效的接口类型
      */
     @SuppressWarnings("unchecked")
     public final <T extends IDasBase> T as(Class<T> targetClass) throws DasException {
-        if (!swigCMemOwn) {
-            throw new IllegalStateException(
-                "Cannot convert: this object does not own memory.");
-        }
-
         try {
             // 获取目标类型的 IID（使用缓存）
             java.lang.reflect.Method iidMethod = iidCache.computeIfAbsent(targetClass, cls -> {
