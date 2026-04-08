@@ -15,6 +15,27 @@ if TYPE_CHECKING:
 class CSharpSwigGenerator(SwigLangGenerator):
     """C# 特定的 SWIG 代码生成器"""
 
+    # C# bridge lifecycle method template — injected into every ISwig director class
+    _BRIDGE_LIFECYCLE_CODE: str = """    // =========================================================================
+    // Bridge lifecycle — prevent/release GC pinning for director objects
+    // =========================================================================
+    private System.Runtime.InteropServices.GCHandle? __dasBridgeHandle;
+
+    private int __das_bridge_prevent() {
+        if (!__dasBridgeHandle.HasValue) {
+            __dasBridgeHandle = System.Runtime.InteropServices.GCHandle.Alloc(this);
+        }
+        return 0;
+    }
+
+    private int __das_bridge_release() {
+        if (__dasBridgeHandle.HasValue) {
+            __dasBridgeHandle.Value.Free();
+            __dasBridgeHandle = null;
+        }
+        return 0;
+    }"""
+
     def __init__(self) -> None:
         super().__init__()
         self._pending_out_methods: List["OutParamInfo"] = []
@@ -191,21 +212,33 @@ class CSharpSwigGenerator(SwigLangGenerator):
                 self._generate_ignore_directive_for_string_method(interface, method),
             )
 
-        if has_binary_buffer:
-            return ""
-
         qualified_name = f"{interface.namespace}::{interface.name}" if interface.namespace else interface.name
-
-        all_out_methods = self._pending_out_methods + self._pending_multi_out_methods
 
         all_methods = []
 
-        # 1. CastFrom/CreateFromPtr helper methods（为所有接口生成）
+        # 1. Bridge lifecycle methods（为所有接口生成）
+        all_methods.append(self._BRIDGE_LIFECYCLE_CODE)
+
+        if has_binary_buffer:
+            # Binary buffer 接口只需 lifecycle 方法，其他 helper 由
+            # generate_binary_buffer_helpers() 单独生成
+            methods_code = "\n\n".join(all_methods)
+            return f'''
+#ifdef SWIGCSHARP
+%typemap(csclassmodifiers) {qualified_name} "public partial class"
+
+%typemap(cscode) {qualified_name} %{{
+{methods_code}
+%}}
+#endif
+'''
+
+        # 2. CastFrom/CreateFromPtr helper methods（为所有接口生成）
         helper_methods = self._generate_interface_helper_methods(interface)
         if helper_methods:
             all_methods.append(helper_methods)
 
-        # 2. Ez methods
+        # 3. Ez methods
         for method_info in self._pending_out_methods:
             ez_code = self._generate_single_out_ez_method(method_info)
             all_methods.append(ez_code)
@@ -214,15 +247,11 @@ class CSharpSwigGenerator(SwigLangGenerator):
             ez_code = self._generate_multi_out_ez_method(method_info)
             all_methods.append(ez_code)
 
-        # 3. String param helpers
+        # 4. String param helpers
         for method in self._pending_string_methods:
             helper_code = self._generate_single_string_param_helper(method, qualified_name)
             if helper_code:
                 all_methods.append(helper_code)
-
-        # 如果没有任何方法，返回空字符串
-        if not all_methods:
-            return ""
 
         methods_code = "\n\n".join(all_methods)
 

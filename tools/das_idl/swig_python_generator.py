@@ -39,9 +39,6 @@ class PythonSwigGenerator(SwigLangGenerator):
         multi_out_methods = getattr(self, '_pending_multi_out_methods', [])
         interface_name = getattr(self, '_pending_interface_name', model.name)
 
-        if not out_methods and not multi_out_methods:
-            return ""
-
         ez_methods = []
 
         for method_info in out_methods:
@@ -54,10 +51,28 @@ class PythonSwigGenerator(SwigLangGenerator):
             if ez_code:
                 ez_methods.append(ez_code)
 
-        if not ez_methods:
-            return ""
+        # Build the pythoncode block content
+        parts = []
 
-        methods_code = "\n\n".join(ez_methods)
+        # Module-level keepalive dict (top-level in %pythoncode = module scope)
+        parts.append("_das_bridge_keepalive = {}")
+
+        # Lifecycle methods injected as class methods
+        parts.append("")
+        parts.append("def __das_bridge_prevent(self):")
+        parts.append("    _das_bridge_keepalive[id(self)] = self")
+        parts.append("    return 0")
+        parts.append("")
+        parts.append("def __das_bridge_release(self):")
+        parts.append("    _das_bridge_keepalive.pop(id(self), None)")
+        parts.append("    return 0")
+
+        # Ez methods (if any)
+        if ez_methods:
+            parts.append("")
+            parts.append("\n\n".join(ez_methods))
+
+        methods_code = "\n".join(parts)
         return f'''#ifdef SWIGPYTHON
 %pythoncode %{{
 {methods_code}
