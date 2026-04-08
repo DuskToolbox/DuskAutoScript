@@ -82,6 +82,7 @@ das_add_idl_export(
     IDL_FILES ${_IDL_FILE_NAMES}
     LANGUAGES ${_LANGUAGES}
     USER_SWIG_FILES ${_USER_SWIG_FILES}
+    SWIG_MODULE_NAME DuskAutoScript
     SWIG_OPTIONS_Python -threads
     SWIG_OPTIONS_Java -package org.das
     SWIG_INCLUDE_DIRS

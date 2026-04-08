@@ -119,7 +119,7 @@ function(das_add_idl_export)
     cmake_parse_arguments(
         DAS_IDL_EXPORT                          # 前缀
         ""                                      # 选项 (无值参数)
-        "NAME;IDL_DIR;OUTPUT_DIR;NAMESPACE;GENERATE_IPC_PROXY;GENERATE_IPC_STUB;IPC_CACHE_DIR"  # 单值参数
+        "NAME;IDL_DIR;OUTPUT_DIR;NAMESPACE;GENERATE_IPC_PROXY;GENERATE_IPC_STUB;IPC_CACHE_DIR;SWIG_MODULE_NAME"  # 单值参数
         "IDL_FILES;LANGUAGES;USER_SWIG_FILES;GENERATED_FILES;GENERATED_ABI_FILES;GENERATED_WRAPPER_FILES;GENERATED_SWIG_FILES;GENERATED_IPC_FILES;SWIG_OPTIONS_Python;SWIG_OPTIONS_Java;SWIG_OPTIONS_CSharp;SWIG_INCLUDE_DIRS;DEPENDS_ON"  # 多值参数
         ${ARGN}
     )
@@ -499,6 +499,13 @@ function(das_add_idl_export)
             set_property(SOURCE ${_ALL_SWIG_FILES} PROPERTY USE_SWIG_DEPENDENCIES TRUE)
             if(_USER_SWIG_FILES)
                 set_property(SOURCE ${_USER_SWIG_FILES} PROPERTY USE_SWIG_DEPENDENCIES TRUE)
+            endif()
+
+            # 设置 SWIG 模块名（当用户 SWIG 文件名与 %module 名不一致时必须指定）
+            # 确保 CMake 正确推断输出文件名（如 DuskAutoScript.py 而非 exportall.py）
+            if(DAS_IDL_EXPORT_SWIG_MODULE_NAME AND _USER_SWIG_FILES)
+                set_property(SOURCE ${_USER_SWIG_FILES}
+                    PROPERTY SWIG_MODULE_NAME ${DAS_IDL_EXPORT_SWIG_MODULE_NAME})
             endif()
 
             das_add_swig_export_library(
