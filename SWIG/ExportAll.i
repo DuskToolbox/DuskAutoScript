@@ -19,14 +19,26 @@
 // --- python: IDasBase director:except ---
 %include "python/IDasBase.i"
 
+// --- common: Bridge lifecycle types (DasSwigRuntimeContext etc.) ---
+%include "common/DasSwigRuntimeTypes.i"
+
+// --- python: Director lifecycle helpers (prevent/release via keepalive dict) ---
+%include "python/DirectorLifecycle.i"
+
 // --- common: IDasBase extend + ignore ---
 %include "common/IDasBaseShared.i"
 
 // --- java: JNI RAII + 日志辅助 + IDasBase javacode ---
 %include "java/JniHelpers.i"
 
+// --- java: Director lifecycle helpers (prevent/release via JNI) ---
+%include "java/DirectorLifecycle.i"
+
 // --- csharp: IDasBase cscode ---
 %include "csharp/IDasBase.i"
+
+// --- csharp: Director lifecycle helpers (prevent/release via GCHandle) ---
+%include "csharp/DirectorLifecycle.i"
 
 // --- common: DasTypeMapsIgnore + headers + ignore ---
 %include "common/DasTypeMapsIgnore.i"
