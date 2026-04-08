@@ -823,38 +823,28 @@ class SwigCodeGenerator:
 
                 if param.direction == ParamDirection.OUT:
                     # [out] 参数：接口类型固定 **, 其他类型 *
+                    # 使用无限定类型（SWIG 通过 using 声明解析为当前命名空间类型）
+                    # 这样 SWIG 能识别 3-param override 覆写了基类纯虚方法
                     if SwigTypeMapper.is_interface_type(param.type_info.base_type):
                         ptr_type = f'{cpp_type}**'
-                        # 对于全局命名空间的接口类型，添加 :: 前缀
-                        if not interface.namespace or param.type_info.base_type.startswith('IDas'):
-                            ns = ''
-                            # 检查是否在同一命名空间
-                            for iface in self._all_documents_interfaces():
-                                if iface.name == param.type_info.base_type:
-                                    ns = iface.namespace
-                                    break
-                            if not ns:
-                                ptr_type = f'::{cpp_type}**'
-                            elif ns != interface.namespace:
-                                ptr_type = f'::{ns}::{cpp_type}**'
                     else:
                         ptr_type = f'{cpp_type}{"*" * param.type_info.pointer_level}'
                     cpp_all_params.append(f'{ptr_type} {param.name}')
                     call_args.append(f'&result.value')
                 else:
-                    # [in] 参数
-                    # 对接口类型添加命名空间限定，避免 SWIG 生成的代码中类型不可见
-                    qualified_cpp_type = self._qualify_param_type(cpp_type, param.type_info.base_type, interface)
+                    # [in] 参数 — 使用无限定类型
+                    # SWIG 通过 using 声明（在基类头文件中）解析为当前命名空间限定名
+                    # 这使 SWIG 能识别 %inline 块中的方法签名与基类方法一致
                     if param.type_info.is_const and param.type_info.is_reference:
-                        param_decl = f'const {qualified_cpp_type}& {param.name}'
+                        param_decl = f'const {cpp_type}& {param.name}'
                     elif param.type_info.is_pointer:
                         stars = '*' * param.type_info.pointer_level
                         const_prefix = 'const ' if param.type_info.is_const else ''
-                        param_decl = f'{const_prefix}{qualified_cpp_type}{stars} {param.name}'
+                        param_decl = f'{const_prefix}{cpp_type}{stars} {param.name}'
                     elif param.type_info.is_reference:
-                        param_decl = f'{qualified_cpp_type}& {param.name}'
+                        param_decl = f'{cpp_type}& {param.name}'
                     else:
-                        param_decl = f'{qualified_cpp_type} {param.name}'
+                        param_decl = f'{cpp_type} {param.name}'
 
                     cpp_in_params.append(param_decl)
                     cpp_all_params.append(param_decl)
@@ -951,29 +941,31 @@ class SwigCodeGenerator:
         return names
 
     def _generate_nodirector_for_raw_methods(self, interface: InterfaceDef, swig_name: str) -> str:
-        """为桥接方法的原始版本生成 %feature("nodirector") 指令
+        """为桥接方法的原始 override 版本生成 %feature("nodirector") 指令
 
-        由于 SWIG 4.4.1 的命名空间匹配 bug，签名精确匹配的 nodirector
-        对包含命名空间类型参数的方法不可靠。暂时不生成。
-        DasRetXxx virtual 方法直接获得 director 支持，不依赖 override final。
+        已禁用。现在 %inline 块中的 3-param override 使用无限定类型，
+        SWIG 能识别它覆写了基类纯虚方法，因此不会为该方法生成 Director。
+        基类的 %feature("nodirector") 已足够阻止 Director 生成。
         """
         return ''
 
-    def _generate_ignore_for_raw_overrides(self, interface: InterfaceDef, swig_name: str) -> str:
-        """为 ISwig 类的 raw override 方法生成 %ignore 指令
+    def _generate_nodirector_for_base_class(self, interface: InterfaceDef, clear: bool = False) -> str:
+        """为基类中需要桥接的方法生成 %feature("nodirector") 指令
 
-        raw override 方法对 SWIG 可见（不用 #ifndef SWIG），但 SWIG 会为其参数类型
-        生成 SWIGTYPE_p_xxx 文件。虽然 base class 上的 %ignore 已处理了 base 的方法，
-        但 ISwig 类的 override 仍然会被 SWIG 解析。
+        这些指令必须在 %include 基类头文件之前生成，这样 SWIG 解析基类时
+        就能标记 feature，后续构建 Director vtable 时不会为基类纯虚方法
+        生成 throw-pure-virtual 空壳。
 
-        通过在 ISwig 类定义之前（%inline 之前）生成 %ignore 指令，
-        让 SWIG 也忽略 ISwig 类上的 raw override 方法，
-        从而避免生成被引用的 SWIGTYPE_p_xxx 文件。
+        签名必须匹配 SWIG 解析基类头文件后看到的类型：
+        - 全局命名空间类型（如 IDasBase）→ 使用 ::IDasBase（全局限定前缀）
+        - 其他命名空间类型（通过 using 引入）→ 使用基类命名空间限定名
+        - 同命名空间类型 → 保持无限定
 
-        注意：%ignore 使用不带命名空间限定的类型名（SWIG 4.4.1 bug workaround）。
+        当 clear=True 时，生成 %feature("nodirector", "0") 来清除之前设置的
+        nodirector feature。必须在 %inline 块之后调用，防止全局 feature 污染
+        其他 .i 文件中继承同一基类的接口。
         """
         lines = []
-        qualified_swig = f"{interface.namespace}::{swig_name}" if interface.namespace else swig_name
 
         for method in interface.methods:
             out_params = [p for p in method.parameters if p.direction == ParamDirection.OUT]
@@ -981,44 +973,98 @@ class SwigCodeGenerator:
                 continue
             if method.attributes and method.attributes.get('binary_buffer', False):
                 continue
-            out_param = out_params[0]
-            out_type = out_param.type_info.base_type
+            out_type = out_params[0].type_info.base_type
             if SwigTypeMapper.is_string_type(out_type):
                 continue
             if not self._should_generate_bridge(method):
                 continue
 
-            # 构建参数签名（使用不带命名空间限定的类型名）
-            param_sigs = []
+            # 构建参数签名 — 使用 SWIG 内部类型解析后的命名空间限定名
+            # SWIG 通过 using 声明将类型解析为当前命名空间成员：
+            #   using ExportNS::DataObj; → SWIG 视为 PluginNS::DataObj
+            # 但全局命名空间的类型保持无限定：
+            #   IDasReadOnlyString（全局） → 保持 IDasReadOnlyString
+            # 因此 %feature("nodirector") 签名需要根据类型原始命名空间决定是否加前缀
+            param_decls = []
+            base_ns = interface.namespace  # 基类所在命名空间
+
             for param in method.parameters:
                 cpp_type = self._get_cpp_type(param.type_info.base_type)
 
-                if param.direction == ParamDirection.OUT:
-                    # [out] 参数：接口类型固定 **, 其他类型按 pointer_level
-                    if SwigTypeMapper.is_interface_type(param.type_info.base_type):
-                        param_sigs.append(f'{cpp_type}**')
+                # 判断类型是否需要加命名空间前缀
+                # 规则：
+                #   - 接口类型定义在其他命名空间（通过 using 引入）→ base_ns::Type
+                #   - 接口类型定义在全局命名空间 → ::Type
+                #     （基类头文件使用 ::IDasBase** 形式，SWIG 内部类型为 ::IDasBase，
+                #      %feature("nodirector") 签名必须匹配，否则 feature 不生效）
+                #   - 接口类型与基类同命名空间 → 保持无限定
+                #   - 非接口类型 → 保持无限定
+                if SwigTypeMapper.is_interface_type(param.type_info.base_type):
+                    type_ns = self._get_type_namespace(param.type_info.base_type)
+                    if type_ns and type_ns != base_ns:
+                        # 类型定义在其他命名空间，通过 using 引入 → SWIG 解析为 base_ns::Type
+                        qualified_type = f'{base_ns}::{cpp_type}' if base_ns else cpp_type
+                    elif not type_ns:
+                        # 类型定义在全局命名空间 → 需要 :: 前缀匹配 SWIG 解析结果
+                        qualified_type = f'::{cpp_type}'
                     else:
-                        stars = '*' * param.type_info.pointer_level if param.type_info.is_pointer else '*'
-                        param_sigs.append(f'{cpp_type}{stars}')
+                        # 类型与基类同命名空间 → 保持无限定
+                        qualified_type = cpp_type
                 else:
-                    # [in] 参数：不带命名空间限定（SWIG bug workaround）
-                    if param.type_info.is_const and param.type_info.is_reference:
-                        param_sigs.append(f'const {cpp_type}&')
+                    qualified_type = cpp_type
+
+                if param.direction == ParamDirection.OUT:
+                    if SwigTypeMapper.is_interface_type(param.type_info.base_type):
+                        param_decls.append(f'{qualified_type}** {param.name}')
+                    else:
+                        ptr_type = f'{qualified_type}{"*" * param.type_info.pointer_level}'
+                        param_decls.append(f'{ptr_type} {param.name}')
+                else:
+                    if SwigTypeMapper.is_interface_type(param.type_info.base_type):
+                        param_decls.append(f'{qualified_type}* {param.name}')
+                    elif param.type_info.is_const and param.type_info.is_reference:
+                        param_decls.append(f'const {qualified_type}& {param.name}')
                     elif param.type_info.is_pointer:
                         stars = '*' * param.type_info.pointer_level
                         const_prefix = 'const ' if param.type_info.is_const else ''
-                        param_sigs.append(f'{const_prefix}{cpp_type}{stars}')
+                        param_decls.append(f'{const_prefix}{qualified_type}{stars} {param.name}')
                     elif param.type_info.is_reference:
-                        param_sigs.append(f'{cpp_type}&')
+                        param_decls.append(f'{qualified_type}& {param.name}')
                     else:
-                        param_sigs.append(cpp_type)
+                        param_decls.append(f'{qualified_type} {param.name}')
 
-            sig = ', '.join(param_sigs)
-            lines.append(f'%ignore {qualified_swig}::{method.name}({sig});')
+            params_str = ', '.join(param_decls)
+
+            # 使用基类命名空间限定的方法名
+            if interface.namespace:
+                fqn = f'{interface.namespace}::{interface.name}'
+            else:
+                fqn = interface.name
+
+            if clear:
+                lines.append(f'%feature("nodirector", "0") {fqn}::{method.name}({params_str});')
+            else:
+                lines.append(f'%feature("nodirector") {fqn}::{method.name}({params_str});')
 
         if lines:
-            header = f'// Hide raw override methods on {swig_name} to prevent SWIGTYPE generation'
-            return header + '\n' + '\n'.join(lines) + '\n'
+            if clear:
+                header = '// Clear base class nodirector features to prevent global side effects'
+                return header + '\n' + '\n'.join(lines)
+            return '\n'.join(lines)
+        return ''
+
+    def _generate_ignore_for_raw_overrides(self, interface: InterfaceDef, swig_name: str) -> str:
+        """为 ISwig 类的 raw override 方法生成控制指令
+
+        raw override 方法（3-param 版本）在 ISwig 类中覆写基类纯虚方法，
+        内部委托给 2-param 的 DasRetXxx 版本。
+
+        不再使用 %feature("nodirector")，因为 SWIG 4.4.1 的 nodirector
+        对非纯虚方法也会生成 throw-pure-virtual 空壳。
+
+        改为让 SWIG 为这些方法生成完整的 Director JNI 回调，
+        配合 directorout typemap 正确传递 [out] 参数。
+        """
         return ''
 
     def _generate_directorout_typemaps(self, interface: InterfaceDef) -> str:
@@ -1035,6 +1081,110 @@ class SwigCodeGenerator:
         for doc in self._imported_documents.values():
             interfaces.extend(doc.interfaces)
         return interfaces
+
+    # IDasBase 的方法名 — 这些在所有 ISwig 类的 %inline 块中都有实现
+    _IDASBASE_IMPLEMENTED_METHODS = {'AddRef', 'Release', 'QueryInterface'}
+
+    def _is_fully_non_abstract(self, interface: InterfaceDef) -> bool:
+        """检查接口及其整个继承链中的所有纯虚方法是否都被覆盖
+
+        当所有基类虚方法都被 nodirector 时，SWIG 会认为类是抽象的（Warning 517），
+        不生成默认构造函数。只有当 %inline 块中的代码真正覆盖了继承链中所有纯虚方法时，
+        才应该使用 %feature("notabstract")。
+
+        方法被"覆盖"的条件：
+        1. 有 bridge 桥接（带 [out] 参数且满足桥接条件） — 2-param override 实现了基类纯虚方法
+        2. 在 %inline 类中被显式实现（AddRef/Release/QueryInterface — 所有 ISwig 类都有）
+
+        Args:
+            interface: 要检查的接口
+
+        Returns:
+            True 表示该接口的 ISwig 类真正非抽象，可以安全使用 %feature("notabstract")
+        """
+        # 构建接口名称到 InterfaceDef 的映射
+        interface_map = {}
+        for iface in self._all_documents_interfaces():
+            interface_map[iface.name] = iface
+
+        # 收集整个继承链中的所有方法（包括属性生成的 getter/setter）
+        all_methods = []
+        visited = set()
+        current = interface.name
+        max_depth = 20  # 防止循环继承
+
+        while current and current not in visited and max_depth > 0:
+            visited.add(current)
+            max_depth -= 1
+
+            iface_def = interface_map.get(current)
+            if not iface_def:
+                break
+
+            all_methods.extend(iface_def.methods)
+            # 属性会生成 getter（和可能的 setter），这些也是纯虚方法
+            for prop in iface_def.properties:
+                if prop.has_getter:
+                    all_methods.append(MethodDef(
+                        name=f'Get{prop.name}',
+                        return_type=prop.type_info,
+                        parameters=[],
+                        is_pure_virtual=True,
+                        namespace=iface_def.namespace,
+                    ))
+                if prop.has_setter:
+                    all_methods.append(MethodDef(
+                        name=f'Set{prop.name}',
+                        return_type=TypeInfo(base_type='void'),
+                        parameters=[ParameterDef(
+                            name='value',
+                            type_info=prop.type_info,
+                            direction=ParamDirection.IN,
+                        )],
+                        is_pure_virtual=True,
+                        namespace=iface_def.namespace,
+                    ))
+
+            current = iface_def.base_interface
+            if current == iface_def.name:
+                break
+
+        # 检查每个方法是否被覆盖
+        for method in all_methods:
+            if self._is_method_covered(method):
+                continue
+            # 该方法没有被覆盖 → 类仍然是抽象的
+            return False
+
+        return True
+
+    def _is_method_covered(self, method: MethodDef) -> bool:
+        """检查单个方法是否在 ISwig 类的 %inline 块中被覆盖
+
+        覆盖方式：
+        1. AddRef/Release/QueryInterface — 所有 ISwig 类都在 %inline 中实现了（final/override）
+        2. 有 [out] 参数的桥接方法 — bridge override 实现了基类纯虚方法
+        """
+        # IDasBase 的方法总是在 %inline 中实现
+        if method.name in self._IDASBASE_IMPLEMENTED_METHODS:
+            return True
+
+        # 检查是否满足 bridge 条件（与 _generate_director_bridge_methods 相同的逻辑）
+        out_params = [p for p in method.parameters if p.direction == ParamDirection.OUT]
+        if len(out_params) != 1:
+            return False
+
+        if method.attributes and method.attributes.get('binary_buffer', False):
+            return False
+
+        out_type = out_params[0].type_info.base_type
+        if SwigTypeMapper.is_string_type(out_type):
+            return False
+
+        if not self._should_generate_bridge(method):
+            return False
+
+        return True
 
     def _all_documents_enums(self):
         """获取所有文档中的枚举（当前文档 + 导入的文档）"""
@@ -1080,6 +1230,36 @@ class SwigCodeGenerator:
             directorout_typemaps = self._generate_directorout_typemaps(interface)
             ignore_raw_overrides = self._generate_ignore_for_raw_overrides(interface, swig_name)
 
+            # 生成基类 nodirector（必须在 %inline 前，紧邻当前 ISwig 类的 Director 构建）
+            base_nodirector = self._generate_nodirector_for_base_class(interface)
+            # 生成清除指令（必须在 %inline 后立即调用，防止全局污染其他 .i 文件）
+            clear_nodirector = self._generate_nodirector_for_base_class(interface, clear=True)
+
+            # 构建 director/nodirector 指令（必须在 %inline 之前）
+            director_directive = f'%feature("director") {interface.namespace}::{swig_name};'
+
+            # 当 %inline 块中的代码真正覆盖了继承链中所有纯虚方法时，
+            # SWIG 仍可能因 nodirector 导致抽象检查失败（Warning 517），
+            # 不生成默认构造函数。此时需要 %feature("notabstract") 强制 SWIG 视为非抽象。
+            # 注意：仅对真正非抽象的类使用，否则 C++ 编译会因实例化抽象类而报错。
+            notabstract_directive = ''
+            if base_nodirector and self._is_fully_non_abstract(interface):
+                notabstract_directive = f'\n%feature("notabstract") {interface.namespace}::{swig_name};'
+
+            nodirector_block = ''
+            if nodirector_directives:
+                nodirector_block = f'\n// Disable director for raw override methods (delegates to 2-param version)\n{nodirector_directives}'
+
+            # 基类 nodirector 块（紧邻 director 指令，限制作用范围）
+            base_nodirector_block = ''
+            if base_nodirector:
+                base_nodirector_block = f'\n// Disable director for base class methods with [out] parameters\n{base_nodirector}'
+
+            # 清除块（紧跟 %inline 之后）
+            clear_nodirector_block = ''
+            if clear_nodirector:
+                clear_nodirector_block = f'\n{clear_nodirector}\n'
+
             return f"""
 // Reference counting implementation base class for {interface.name}
 // Target language should inherit from this class
@@ -1087,7 +1267,10 @@ class SwigCodeGenerator:
 
 {directorout_typemaps}
 
-{ignore_raw_overrides}
+// Enable director for SWIG wrapper class — must come before %inline
+{director_directive}{notabstract_directive}
+{base_nodirector_block}
+{nodirector_block}
 
 %inline %{{
 
@@ -1137,16 +1320,13 @@ public:
 }} // namespace {interface.namespace}
 
 %}}
-
-// Enable director for SWIG wrapper class
-%feature("director") {interface.namespace}::{swig_name};
-
+{clear_nodirector_block}
 // Hide reference counting methods from {swig_name}
 %ignore {interface.namespace}::{swig_name}::AddRef;
 %ignore {interface.namespace}::{swig_name}::Release;
 %ignore {interface.namespace}::{swig_name}::QueryInterface;
 
-{nodirector_directives}
+{ignore_raw_overrides}
 """
         else:
             # 无命名空间的版本
@@ -1155,6 +1335,27 @@ public:
             directorout_typemaps = self._generate_directorout_typemaps(interface)
             ignore_raw_overrides = self._generate_ignore_for_raw_overrides(interface, swig_name)
 
+            # 生成基类 nodirector（必须在 %inline 前，紧邻当前 ISwig 类的 Director 构建）
+            base_nodirector = self._generate_nodirector_for_base_class(interface)
+            # 生成清除指令（必须在 %inline 后立即调用，防止全局污染其他 .i 文件）
+            clear_nodirector = self._generate_nodirector_for_base_class(interface, clear=True)
+
+            # 无命名空间版本：构建 director/nodirector 指令（必须在 %inline 之前）
+            director_directive = f'%feature("director") {swig_name};'
+            nodirector_block = ''
+            if nodirector_directives:
+                nodirector_block = f'\n// Disable director for raw override methods (delegates to 2-param version)\n{nodirector_directives}'
+
+            # 基类 nodirector 块（紧邻 director 指令，限制作用范围）
+            base_nodirector_block = ''
+            if base_nodirector:
+                base_nodirector_block = f'\n// Disable director for base class methods with [out] parameters\n{base_nodirector}'
+
+            # 清除块（紧跟 %inline 之后）
+            clear_nodirector_block = ''
+            if clear_nodirector:
+                clear_nodirector_block = f'\n{clear_nodirector}\n'
+
             return f"""
 // Reference counting implementation base class for {interface.name}
 // Target language should inherit from this class
@@ -1162,7 +1363,10 @@ public:
 
 {directorout_typemaps}
 
-{ignore_raw_overrides}
+// Enable director for the SWIG wrapper class — must come before %inline
+{director_directive}
+{base_nodirector_block}
+{nodirector_block}
 
 %inline %{{
 
@@ -1207,16 +1411,13 @@ public:
 }};
 
 %}}
-
-// Enable director for the SWIG wrapper class
-%feature("director") {swig_name};
-
+{clear_nodirector_block}
 // Hide reference counting methods from {swig_name}
 %ignore {swig_name}::AddRef;
 %ignore {swig_name}::Release;
 %ignore {swig_name}::QueryInterface;
 
-{nodirector_directives}
+{ignore_raw_overrides}
 """
     def _get_abi_header_file(self, interface_name: str) -> str:
         """获取接口对应的 ABI 头文件路径"""
