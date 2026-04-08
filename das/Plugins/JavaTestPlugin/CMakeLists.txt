@@ -69,7 +69,7 @@ add_custom_command(
         -DCLASSPATH="${DAS_CORE_JAVA_JAR}"
         -DDEPENDS_JAR="${DAS_CORE_JAVA_JAR}"
         -P "${CMAKE_CURRENT_LIST_DIR}/../../../cmake/DasCompileJavaJar.cmake"
-    DEPENDS ${_JAVA_SOURCES}
+    DEPENDS ${_JAVA_SOURCES} "${DAS_CORE_JAVA_JAR}"
     COMMENT "[JavaTestPlugin] Building ${PLUGIN_NAME}.jar"
     WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
 )

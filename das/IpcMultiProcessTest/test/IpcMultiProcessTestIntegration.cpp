@@ -21,18 +21,22 @@
 #include "IDasComponent.h"
 #include "IDasPluginPackage.h"
 #include "das/DasTypes.hpp"
+#include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 
 #include <cstddef>
 #include <cstdint>
 #include <das/Core/IPC/AsyncOperationImpl.h>
 #include <das/Core/IPC/DasAsyncSender.h>
+#include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/ObjectId.h>
+#include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/Utils/StdExecution.h>
 #include <das/IDasAsyncLoadPluginOperation.h>
 #include <gtest/gtest.h>
 
 using namespace Das::PluginInterface;
+using namespace Das::ExportInterface;
 
 TEST_F(IpcMultiProcessTestIntegration, HostLauncherStart)
 {
@@ -1320,4 +1324,373 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_QueryMainProcessString)
         "[CrossProcess_QueryMainProcessString] Test passed — "
         "Host plugin queried main process IDasReadOnlyString "
         "and returned correct value via IPC");
+}
+
+// ==========================================================================
+// CrossProcess_JavaDirectorLifecycleTest
+// ==========================================================================
+
+// {10de2795-5cb4-43d7-885a-a6e35a04bbe2}
+DAS_DEFINE_CLASS_GUID(
+    LifecycleCallbackComponent,
+    0x10de2795,
+    0x5cb4,
+    0x43d7,
+    0x88,
+    0x5a,
+    0xa6,
+    0xe3,
+    0x5a,
+    0x04,
+    0xbe,
+    0xe2);
+
+// PostCallback 完成信号 — 通过 IDasAsyncCallback + PostCallback
+// 实现事件驱动通知 Dispatch() 收到 IPC 回调后调用 ctx_->PostCallback()，触发
+// Do() → done = true 测试线程以 1ms 粒度轮询 done（与 DAS::Core::IPC::wait()
+// 的内部模式一致）
+class CompletionSignal : public IDasAsyncCallback
+{
+    DAS_UTILS_IDASBASE_AUTO_IMPL(CompletionSignal);
+
+public:
+    std::atomic<bool>& done_;
+
+    explicit CompletionSignal(std::atomic<bool>& done) : done_(done) {}
+
+    DasResult Do() noexcept override
+    {
+        done_ = true;
+        return DAS_S_OK;
+    }
+
+    DasResult GetGuid(DasGuid*) { return DAS_E_NO_IMPLEMENTATION; }
+    DasResult GetRuntimeClassName(IDasReadOnlyString**)
+    {
+        return DAS_E_NO_IMPLEMENTATION;
+    }
+    DasResult QueryInterface(const DasGuid& iid, void** pp) override
+    {
+        if (!pp)
+            return DAS_E_INVALID_POINTER;
+        if (iid == DasIidOf<IDasAsyncCallback>())
+        {
+            AddRef();
+            *pp = static_cast<IDasAsyncCallback*>(this);
+            return DAS_S_OK;
+        }
+        if (iid == DasIidOf<IDasBase>())
+        {
+            AddRef();
+            *pp = static_cast<IDasBase*>(this);
+            return DAS_S_OK;
+        }
+        return DAS_E_NO_INTERFACE;
+    }
+};
+
+class LifecycleCallbackComponent : public DAS::PluginInterface::IDasComponent
+{
+    DAS_UTILS_IDASBASE_AUTO_IMPL(LifecycleCallbackComponent);
+
+public:
+    std::atomic<bool>                         callback_received_{false};
+    std::string                               received_status_;
+    DAS::Core::IPC::MainProcess::IIpcContext* ctx_ = nullptr;
+    IDasAsyncCallback*                        completion_signal_ = nullptr;
+
+    void Configure(DAS::Core::IPC::MainProcess::IIpcContext& ctx)
+    {
+        ctx_ = &ctx;
+    }
+
+    DasResult Dispatch(
+        IDasReadOnlyString* p_function_name,
+        IDasVariantVector*  p_arguments,
+        IDasVariantVector** pp_out_result) override
+    {
+        using namespace DAS;
+
+        const char* func_ptr = nullptr;
+        DasResult   hr = p_function_name->GetUtf8(&func_ptr);
+        if (IsFailed(hr) || !func_ptr)
+            return hr;
+
+        std::string func = func_ptr;
+
+        if (func == "lifecycle_callback")
+        {
+            IDasReadOnlyString* status_ro = nullptr;
+            hr = p_arguments->GetString(0, &status_ro);
+            if (IsOk(hr) && status_ro)
+            {
+                const char* status_ptr = nullptr;
+                status_ro->GetUtf8(&status_ptr);
+                if (status_ptr)
+                {
+                    received_status_ = status_ptr;
+                }
+                status_ro->Release();
+            }
+
+            callback_received_ = true;
+
+            DAS_CORE_LOG_INFO(
+                "[LifecycleCallback] received finalize callback, status = {}",
+                received_status_);
+
+            // 事件驱动通知：通过 PostCallback 触发 CompletionSignal
+            // 测试线程以 1ms 粒度轮询 done（与 DAS::Core::IPC::wait() 一致）
+            if (ctx_ && completion_signal_)
+            {
+                completion_signal_->AddRef();
+                ctx_->PostCallback(completion_signal_);
+            }
+
+            if (ctx_)
+            {
+                ctx_->RequestStop();
+            }
+        }
+
+        if (pp_out_result)
+        {
+            DAS::ExportInterface::DasVariantVector empty_result;
+            DasResult hr = CreateIDasVariantVector(empty_result.Put());
+            if (DAS::IsOk(hr) && empty_result.Get())
+            {
+                empty_result.Get()->AddRef();
+                *pp_out_result = empty_result.Get();
+            }
+        }
+        return DAS_S_OK;
+    }
+
+    DasResult GetGuid(DasGuid* p_out) override
+    {
+        if (p_out)
+        {
+            *p_out = DasIidOf<LifecycleCallbackComponent>();
+        }
+        return DAS_S_OK;
+    }
+
+    DasResult GetRuntimeClassName(IDasReadOnlyString** pp_out) override
+    {
+        return DAS_E_NO_IMPLEMENTATION;
+    }
+
+    DasResult QueryInterface(const DasGuid& iid, void** pp) override
+    {
+        if (!pp)
+            return DAS_E_INVALID_POINTER;
+        if (iid == DasIidOf<LifecycleCallbackComponent>())
+        {
+            AddRef();
+            *pp = static_cast<DAS::PluginInterface::IDasComponent*>(this);
+            return DAS_S_OK;
+        }
+        if (iid == DasIidOf<DAS::PluginInterface::IDasComponent>())
+        {
+            AddRef();
+            *pp = static_cast<DAS::PluginInterface::IDasComponent*>(this);
+            return DAS_S_OK;
+        }
+        if (iid == DasIidOf<IDasBase>())
+        {
+            AddRef();
+            *pp = static_cast<IDasBase*>(this);
+            return DAS_S_OK;
+        }
+        return DAS_E_NO_INTERFACE;
+    }
+
+private:
+};
+
+TEST_F(IpcMultiProcessTestIntegration, CrossProcess_JavaDirectorLifecycleTest)
+{
+#ifndef DAS_EXPORT_JAVA
+    GTEST_SKIP() << "DAS_EXPORT_JAVA is not enabled";
+#endif
+    ASSERT_TRUE(std::filesystem::exists(host_exe_path_))
+        << "DasHost.exe not found at: " << host_exe_path_;
+
+    std::string plugin_json_path;
+    try
+    {
+        plugin_json_path =
+            IpcTestConfig::GetTestPluginJsonPath("JavaTestPlugin");
+    }
+    catch (const std::exception& e)
+    {
+        GTEST_FAIL() << "JavaTestPlugin JSON not found: " << e.what();
+    }
+
+    // 1. 创建 callback 组件并注册
+    auto callback = DAS::MakeDasPtr<LifecycleCallbackComponent>();
+    callback->Configure(GetContext());
+
+    DAS::Core::IPC::ObjectId obj_id{};
+    DasResult reg_result = GetContext().GetObjectManager().RegisterLocalObject(
+        callback.Get(),
+        obj_id);
+    ASSERT_EQ(reg_result, DAS_S_OK);
+
+    reg_result = GetContext().GetRegistry().RegisterObject(
+        obj_id,
+        DasIidOf<DAS::PluginInterface::IDasComponent>(),
+        1,
+        "LifecycleCallbackComponent",
+        1);
+    ASSERT_EQ(reg_result, DAS_S_OK);
+
+    // 2. 启动 Host 进程
+    DasResult result = StartHostAndSetupRunLoop();
+    ASSERT_EQ(result, DAS_S_OK);
+
+    // 3. 加载 Java 插件
+    DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
+    result = ctx_->LoadPluginAsync(
+        launcher_.Get(),
+        plugin_json_path.c_str(),
+        op.Put(),
+        IpcTestConfig::GetPluginLoadTimeout());
+    ASSERT_EQ(result, DAS_S_OK);
+
+    auto opt = DAS::Core::IPC::wait(
+        GetContext(),
+        DAS::Core::IPC::async_op(GetContext(), std::move(op)));
+    ASSERT_TRUE(opt.has_value());
+
+    auto& [load_result, proxy] = *opt;
+    ASSERT_TRUE(DAS::IsOk(load_result));
+
+    // 4. 获取 IDasComponent
+    DAS::DasPtr<IDasBase> raw_proxy;
+    raw_proxy = DAS::DasPtr<IDasBase>::Attach(proxy);
+    DAS::PluginInterface::DasPluginPackage plugin_package;
+    ASSERT_EQ(raw_proxy.As(plugin_package.Put()), DAS_S_OK);
+
+    DAS::PluginInterface::DasPluginFeature feature;
+    ASSERT_EQ(plugin_package->EnumFeature(0, &feature), DAS_S_OK);
+
+    IDasBase* factory_base_raw = nullptr;
+    ASSERT_EQ(
+        plugin_package->CreateFeatureInterface(0, &factory_base_raw),
+        DAS_S_OK);
+    DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+
+    DAS::DasPtr<DAS::PluginInterface::IDasComponentFactory> factory;
+    ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
+
+    DAS::PluginInterface::IDasComponent* component_raw = nullptr;
+    ASSERT_EQ(
+        factory->CreateInstance(
+            DasIidOf<DAS::PluginInterface::IDasComponent>(),
+            &component_raw),
+        DAS_S_OK);
+    DAS::DasPtr<DAS::PluginInterface::IDasComponent> component(component_raw);
+
+    // 5. Dispatch bridgeLifecycleTest
+    // PushBackBase 传 IDasBase* → 验证 Java 侧 as() 向下转换
+    {
+        DasReadOnlyString method_name{"bridgeLifecycleTest"};
+        DAS::ExportInterface::DasVariantVector result;
+        DAS::ExportInterface::DasVariantVector params;
+        ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
+
+        // 故意用 PushBackBase 而非 PushBackComponent：
+        // 验证 IPC 传递 IDasBase* 后 Java 侧可通过 as() 向下转换为
+        // IDasComponent。这不是为了方便，而是为了验证 IPC QI 恢复机制。
+        params.PushBackBase(callback.Get());
+        params.PushBackString(DasReadOnlyString{"bridge_test_marker"});
+
+        DasResult dispatch_result =
+            component->Dispatch(method_name.Get(), params.Get(), result.Put());
+        ASSERT_EQ(dispatch_result, DAS_S_OK)
+            << "Dispatch(bridgeLifecycleTest) failed";
+
+        // 调试：检查返回值内容
+        if (result.Get())
+        {
+            uint64_t size = result->GetSize();
+            DAS_CORE_LOG_INFO(
+                "[CrossProcess_JavaDirectorLifecycleTest] Dispatch returned "
+                "success, result size = {}",
+                size);
+            if (size > 0)
+            {
+                IDasReadOnlyString* elem0 = nullptr;
+                DasResult           hr = result->GetString(0, &elem0);
+                if (DAS::IsOk(hr) && elem0)
+                {
+                    const char* str = nullptr;
+                    elem0->GetUtf8(&str);
+                    DAS_CORE_LOG_INFO(
+                        "[CrossProcess_JavaDirectorLifecycleTest] result[0] = {}",
+                        str ? str : "(null)");
+                    elem0->Release();
+                }
+            }
+        }
+        else
+        {
+            DAS_CORE_LOG_ERROR(
+                "[CrossProcess_JavaDirectorLifecycleTest] Dispatch returned null "
+                "result");
+        }
+
+        // 关键：不提取返回值中的 Director 对象。
+        // result 包含 BridgeLifecycleDirector，但我们故意不处理它。
+        // result 出作用域后 → VariantVector 释放 → Director proxy Release
+        // → IPC Release → Host bridge Release → __das_bridge_release
+        // → swigTakeOwnership → WeakGlobalRef → Java 对象变为 GC 可达
+    }
+    // ← result 析构，Director proxy 被释放
+
+    // 6. 释放 Java 组件 proxy（不再需要）
+    component.Reset();
+    factory.Reset();
+    factory_base.Reset();
+    raw_proxy.Reset();
+
+    // 7. 等待 Java GC 触发 Cleaner/finalize 回调
+    //    事件驱动通知链路：
+    //    Java GC → finalize → IPC Dispatch("lifecycle_callback")
+    //    → LifecycleCallbackComponent.Dispatch()
+    //    → ctx_->PostCallback(completion_signal_)
+    //    → CompletionSignal.Do() → done = true
+    //    测试线程以 1ms 粒度轮询 done（与 DAS::Core::IPC::wait() 一致）
+    std::atomic<bool> done{false};
+    auto              signal = DAS::MakeDasPtr<CompletionSignal>(done);
+    callback->completion_signal_ = signal.Get();
+
+    DAS_CORE_LOG_INFO(
+        "[CrossProcess_JavaDirectorLifecycleTest] Waiting for bridge release "
+        "callback from Java side...");
+
+    constexpr auto kTimeout = std::chrono::seconds(15);
+    auto           start_time = std::chrono::steady_clock::now();
+
+    while (!done.load())
+    {
+        auto elapsed = std::chrono::steady_clock::now() - start_time;
+        if (elapsed >= kTimeout)
+        {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    // 8. 验证结果
+    EXPECT_TRUE(callback->callback_received_)
+        << "Bridge release callback was not received — Director bridge may not "
+           "have been properly released, or GC did not collect the object";
+    EXPECT_TRUE(
+        callback->received_status_.find("bridge_released") != std::string::npos)
+        << "Unexpected status: " << callback->received_status_;
+
+    DAS_CORE_LOG_INFO(
+        "[CrossProcess_JavaDirectorLifecycleTest] All verifications passed");
 }

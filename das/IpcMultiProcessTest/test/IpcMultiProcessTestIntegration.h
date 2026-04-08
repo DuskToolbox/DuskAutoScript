@@ -39,6 +39,7 @@
 #include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
+#include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/fmt.h>
 #include <filesystem>
 #include <gtest/gtest.h>
