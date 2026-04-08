@@ -71,6 +71,29 @@ class JavaSwigGenerator(SwigLangGenerator):
     def set_all_enums(self, all_enums: list) -> None:
         self._all_enums = all_enums
 
+    def _has_director_bridge(self, interface: InterfaceDef, method: MethodDef) -> bool:
+        """判断方法是否有 Director 桥接（即 2-param DasRetXxx 版本）
+
+        有 Director 桥接的方法不应在 base class 上生成 %ignore，
+        因为 base class %ignore 会阻止 SWIG 为 derived class 的 override
+        生成 Director fallback 代码。
+
+        判断条件：接口上有同名方法，且参数列表不含 [out] 参数。
+        """
+        for other_method in interface.methods:
+            if other_method.name != method.name:
+                continue
+            if other_method is method:
+                continue
+            # 检查是否无 [out] 参数（即 2-param 版本）
+            has_out = any(
+                p.direction == ParamDirection.OUT
+                for p in other_method.parameters
+            )
+            if not has_out:
+                return True
+        return False
+
     def _get_enum_default_value(self, type_name: str) -> str | None:
         """获取枚举类型的 FORCE_DWORD 默认值
 
@@ -1833,8 +1856,32 @@ struct {class_name} {{
         simple_name = out_type.split('::')[-1]
         return simple_name == 'IDasReadOnlyString'
 
+    @staticmethod
+    def _has_director_bridge(method: MethodDef) -> bool:
+        """判断方法是否有 Director bridge（与 das_swig_generator._get_bridged_method_names 一致）
+
+        条件：恰好 1 个 [out] 参数、非 binary_buffer、out 参数类型非字符串。
+        有 Director bridge 的方法会在 ISwig 中生成 DasRetXxx virtual method，
+        其签名（2-param）与 base class %ignore 冲突，会阻止 SWIG 为 derived Director
+        生成 fallback 代码。因此不应为这些方法生成 base class %ignore。
+
+        根因：das_cpp_generator.py 为跨命名空间类型生成 #ifdef SWIG / #else 双版本声明，
+        导致 SWIG 为 base class 的两个 Dispatch 签名分别生成 Director 方法，
+        其中 #ifdef SWIG 分支（无 :: 前缀）的版本变成纯虚存根。
+        """
+        out_params = [p for p in method.parameters if p.direction == ParamDirection.OUT]
+        if len(out_params) != 1:
+            return False
+        if method.attributes and method.attributes.get('binary_buffer', False):
+            return False
+        STRING_TYPES = ('DasString', 'DasReadOnlyString', 'IDasReadOnlyString')
+        return out_params[0].type_info.base_type not in STRING_TYPES
+
     def _generate_ignore_directive(self, interface: InterfaceDef, method: MethodDef, out_param: ParameterDef) -> str:
         """生成带参数签名的 %ignore 指令代码
+
+        如果方法有 Director bridge，不生成任何 %ignore（返回空字符串），
+        因为 base class %ignore 会阻止 SWIG 为 derived Director 生成 fallback 代码。
 
         Args:
             interface: 接口定义
@@ -1919,6 +1966,7 @@ struct {class_name} {{
         
         # 如果方法有 IDasReadOnlyString* 输入参数，还需要隐藏 %extend 生成的 IDasReadOnlyString* 参数版本
         # （只保留 DasReadOnlyString 参数版本）
+        # 注意：如果有 Director bridge 的方法已在上面 early return，走到这里的都没有 bridge
         if JavaSwigGenerator._has_idas_readonly_string_param(method):
             # 构建 %extend 生成的方法签名（不包括 [out] 参数）
             # %extend 中接口类型使用命名空间前缀但不带全局 :: （如 Das::ExportInterface::IDasVariantVector）
@@ -2158,31 +2206,42 @@ struct {class_name} {{
     def _generate_director_out_param_typemap(self, interface: InterfaceDef, 
                                              method: MethodDef, 
                                              out_param: ParameterDef) -> str:
-        """为 Director 生成 out 参数的 typemap
-        
-        Director 类需要实现原始方法签名，但 Java 端需要将 out 参数转换为返回值。
-        通过 javadirectorout typemap 实现：将 C++ 的 out 参数转换为 Java 返回值。
-        
+        """为 Director 生成 out 参数的完整 typemap 链（9 个）
+
+        使 SWIG 能正确处理接口指针类型的 [out] 参数，避免生成 SWIGTYPE_p_p_xxx：
+        1. jni/jtype/jstype — JNI/Java 类型映射（jlong/long）
+        2. in/javain — 普通 wrapper 的 JNI ↔ C++ 转换
+        3. directorin — Director upcall C++ → JNI（descriptor="J" 防止 Warning 824）
+        4. directorout — Director return JNI → C++ out 参数写入
+        5. javadirectorout — Director Java 返回值构建
+        6. javadirectorin — Director Java 参数接收
+
         注意：[binary_buffer] 方法跳过此 typemap，因为：
         1. getDataAsDirectBuffer() 已提供替代方案
         2. unsigned char** 类型没有对应的 DasRetXxx 类
         3. Director 不需要支持二进制缓冲区方法
-        
+
         Args:
             interface: 接口定义
             method: 方法定义
             out_param: [out] 参数定义
-            
+
         Returns:
-            javadirectorout typemap 代码，或空字符串（如果跳过）
+            完整 typemap 链代码，或空字符串（如果跳过）
         """
-        # 跳过 [binary_buffer] 方法，因为 getDataAsDirectBuffer() 已提供替代方案
+        # 跳过 [binary_buffer] 方法
         if self._is_binary_buffer_method(method):
             return ""
-        
+
         out_type = out_param.type_info.base_type
+
+        # 跳过非接口指针类型（如 DasGuid*、uint64_t* 等值类型）
+        # 这些类型的 out 参数不需要完整的 director typemap 链，
+        # 因为 jstype="long" 会污染全局类型映射，影响 IID 常量 getter 等其他用途
+        if not self._is_interface_type(out_type):
+            return ""
         ret_class_name = self._get_ret_class_name(out_type)
-        
+
         # 构建完整的参数类型（包含 const、指针等修饰符）
         type_parts = []
         if out_param.type_info.is_const:
@@ -2193,19 +2252,59 @@ struct {class_name} {{
         elif out_param.type_info.is_reference:
             type_parts.append('&')
         full_type = ' '.join(type_parts)
-        
-        # javadirectorout typemap：将 C++ out 参数转换为 Java 返回值
-        typemap = f"""// Director out 参数 typemap: 将 C++ out 参数转换为 Java 返回值
-// 方法: {interface.name}::{method.name}
-// 原始签名: DasResult {method.name}(...)
-%typemap(javadirectorout) ({full_type} {out_param.name}) %{{    {ret_class_name} result = new {ret_class_name}();
-    result.error_code = $javainput;
-    if (*$2 != null) {{
-        result.value = *$2;
-    }}
-    return result;
-%}}"""
-        return typemap
+
+        lines = []
+        lines.append(f"// Director out 参数 typemap 链: {full_type}")
+        lines.append(f"// 方法: {interface.name}::{method.name}")
+        lines.append(f"// 使 SWIG 正确处理接口指针 [out] 参数，避免生成 SWIGTYPE")
+        lines.append(f"// 注意：jni/jtype/jstype/in/javain/directorin/directorout 使用 jlong，")
+        lines.append(f"// 必须包裹在 #ifdef SWIGJAVA 中，否则 C#/Python 编译会报错")
+        lines.append("")
+        lines.append("#ifdef SWIGJAVA")
+
+        # 1. jni typemap: C JNI 层类型 → jlong
+        lines.append(f'%typemap(jni) {full_type} "jlong"')
+
+        # 2. jtype typemap: Java 中间类型 → long
+        lines.append(f'%typemap(jtype) {full_type} "long"')
+
+        # 3. jstype typemap: Java 最终类型 → long
+        lines.append(f'%typemap(jstype) {full_type} "long"')
+
+        # 4. in typemap: JNI → C++ 转换（jlong → 接口指针**）
+        lines.append(f"%typemap(in) {full_type} (jlong jarg) %{{ $1 = *({out_type}**)&jarg; %}}")
+
+        # 5. javain typemap: Java → jni 参数传递
+        lines.append(f'%typemap(javain) {full_type} "$javainput"')
+
+        # 6. directorin typemap: C++ → JNI（Director upcall 参数）
+        #    descriptor="J" 关键！缺了会产生 SWIG Warning 824
+        lines.append(f'%typemap(directorin, descriptor="J") {full_type} $input (jlong j$input) %{{ j$input = (jlong)$1; %}}')
+
+        # 7. directorout typemap: JNI → C++（Director out 参数写入）
+        lines.append(f"%typemap(directorout) {full_type} $input ({ret_class_name} temp) %{{")
+        lines.append(f"    temp = *({ret_class_name}*)$1;")
+        lines.append(f"    if ($input) *$input = temp.value;")
+        lines.append(f"    $result = temp.error_code;")
+        lines.append(f"%}}")
+
+        lines.append("#endif // SWIGJAVA")
+
+        # 8. javadirectorout typemap: Java 返回值构建
+        #    名字中含 "java"，SWIG 自动忽略非 Java 编译
+        lines.append(f"%typemap(javadirectorout) ({full_type} {out_param.name}) %{{    {ret_class_name} result = new {ret_class_name}();")
+        lines.append(f"    result.error_code = $javainput;")
+        lines.append(f"    if (*$2 != null) {{")
+        lines.append(f"        result.value = *$2;")
+        lines.append(f"    }}")
+        lines.append(f"    return result;")
+        lines.append(f"%}}")
+
+        # 9. javadirectorin typemap: Java → C++（Director 参数接收）
+        #    名字中含 "java"，SWIG 自动忽略非 Java 编译
+        lines.append(f'%typemap(javadirectorin) {full_type} "$javainput"')
+
+        return "\n".join(lines)
     def _generate_interface_helper_methods(self, interface: InterfaceDef) -> str:
         """为接口生成 Java 辅助方法（castFrom 和 createFromPtr）
 
