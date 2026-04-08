@@ -36,6 +36,7 @@
 // JNI 辅助方法 - 从 Java String 创建 DasReadOnlyString
 %native(new_DasReadOnlyString__SWIG_2_helper) jlong new_DasReadOnlyString__SWIG_2_helper(jstring str);
 %{
+extern "C" {
 SWIGEXPORT jlong JNICALL Java_org_das_DuskAutoScriptJNI_new_1DasReadOnlyString_1_1SWIG_12_1helper(
     JNIEnv *jenv, jclass jcls, jstring jstr) {
     if (!jstr) {
@@ -114,11 +115,13 @@ SWIGEXPORT jlong JNICALL Java_org_das_DuskAutoScriptJNI_new_1DasReadOnlyString_1
         return 0;
     }
 }
+}
 %}
 
 // JNI 辅助方法 - 将 DasReadOnlyString 转换为 Java String
 %native(DasReadOnlyString_toJavaString_helper) jstring DasReadOnlyString_toJavaString_helper(jlong ptr, jobject obj);
 %{
+extern "C" {
 SWIGEXPORT jstring JNICALL Java_org_das_DuskAutoScriptJNI_DasReadOnlyString_1toJavaString_1helper(
     JNIEnv *jenv, jclass jcls, jlong jptr, jobject jobj) {
     DasReadOnlyString *self = reinterpret_cast<DasReadOnlyString*>(jptr);
@@ -190,6 +193,7 @@ SWIGEXPORT jstring JNICALL Java_org_das_DuskAutoScriptJNI_DasReadOnlyString_1toJ
         return jenv->NewStringUTF("");
     }
 }
+}
 %}
 
 // ============================================================================
@@ -256,7 +260,7 @@ SWIGEXPORT jstring JNICALL Java_org_das_DuskAutoScriptJNI_DasReadOnlyString_1toJ
 // ============================================================================
 
 // directorin: C++ calls Java virtual method — wrap IDasReadOnlyString* as DasReadOnlyString*
-%typemap(directorin, descriptor="J") IDasReadOnlyString *, ::IDasReadOnlyString * %{
+%typemap(directorin, descriptor="Lorg/das/DasReadOnlyString;") IDasReadOnlyString *, ::IDasReadOnlyString * %{
     if ($1) {
         DasReadOnlyString *wrapper = new DasReadOnlyString($1);
         $input = (jlong)wrapper;
