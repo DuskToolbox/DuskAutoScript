@@ -22,6 +22,7 @@
 
 #include <das/Core/IPC/DasReadOnlyStringStub.h>
 #include <das/Core/IPC/DefaultAsyncIpcTransport.h>
+#include <das/Core/IPC/QueryInterfaceStub.h>
 
 #include <das/Core/Logger/Logger.h>
 #include <das/Utils/StringUtils.h>
@@ -76,6 +77,15 @@ DasResult IpcRunLoop::Initialize(bool enable_heartbeat)
             HeaderFlags::NONE,
             DasReadOnlyStringStub::InterfaceId,
             &s_readonly_string_stub);
+    }
+
+    // Register QUERY_INTERFACE handler for remote QueryInterface calls
+    {
+        static QueryInterfaceStub s_query_interface_stub;
+        RegisterHandler(
+            HeaderFlags::BUSINESS_CONTROL,
+            static_cast<uint32_t>(IpcCommandType::QUERY_INTERFACE),
+            &s_query_interface_stub);
     }
 
     return DAS_S_OK;
