@@ -77,13 +77,13 @@ class ProcessSafeStdoutSink final
     {
         if (std::getenv(DAS_MAIN_PROCESS_LAUNCHED_FLAG) == nullptr)
         {
+#ifdef DAS_WINDOWS
+            _putenv_s(DAS_MAIN_PROCESS_LAUNCHED_FLAG, "1");
+#else
+            std::setenv(DAS_MAIN_PROCESS_LAUNCHED_FLAG, "1");
+#endif // DAS_WINDOWS
             return true;
         }
-#ifdef DAS_WINDOWS
-        _putenv_s(DAS_MAIN_PROCESS_LAUNCHED_FLAG, "1");
-#else
-        std::setenv(DAS_MAIN_PROCESS_LAUNCHED_FLAG, "1");
-#endif // DAS_WINDOWS
         return false;
     }
 
