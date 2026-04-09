@@ -16,6 +16,7 @@
 #include <das/Core/IPC/MethodMetadata.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
+#include <das/DasApi.h>
 #include <das/IDasBase.h>
 #include <das/Utils/fmt.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
@@ -383,6 +384,9 @@ int main(int argc, char* argv[])
         desc.add_options()("verbose,v", "Enable verbose logging")(
             "help,h",
             "Show this help message")(
+            "log-level",
+            boost::program_options::value<std::string>()->default_value(""),
+            "Set log level: trace, debug, info, warn, error, critical, off")(
             "main-pid",
             boost::program_options::value<uint32_t>(),
             "Main process PID (enables connect mode)");
@@ -403,6 +407,68 @@ int main(int argc, char* argv[])
         }
 
         bool verbose = vm.count("verbose") > 0;
+
+        // Parse --log-level argument
+        if (vm.count("log-level"))
+        {
+            std::string log_level_str = vm["log-level"].as<std::string>();
+            int         level = -1;
+            if (log_level_str == "trace")
+                level = DAS_LOG_LEVEL_TRACE;
+            else if (log_level_str == "debug")
+                level = DAS_LOG_LEVEL_DEBUG;
+            else if (log_level_str == "info")
+                level = DAS_LOG_LEVEL_INFO;
+            else if (log_level_str == "warn")
+                level = DAS_LOG_LEVEL_WARN;
+            else if (log_level_str == "error")
+                level = DAS_LOG_LEVEL_ERROR;
+            else if (log_level_str == "critical")
+                level = DAS_LOG_LEVEL_CRITICAL;
+            else if (log_level_str == "off")
+                level = DAS_LOG_LEVEL_OFF;
+
+            if (level >= 0)
+            {
+                DasSetLogLevel(level);
+            }
+        }
+
+        // Handle --verbose as alias for --log-level=debug
+        if (verbose)
+        {
+            DasSetLogLevel(DAS_LOG_LEVEL_DEBUG);
+        }
+
+        // Fallback: read DAS_LOG_LEVEL environment variable
+        // (CLI --log-level takes precedence over env var)
+        const char* env_log_level = std::getenv("DAS_LOG_LEVEL");
+        if (env_log_level != nullptr
+            && vm["log-level"].as<std::string>().empty() && !verbose)
+        {
+            int         level = -1;
+            std::string env_str(env_log_level);
+            if (env_str == "trace")
+                level = DAS_LOG_LEVEL_TRACE;
+            else if (env_str == "debug")
+                level = DAS_LOG_LEVEL_DEBUG;
+            else if (env_str == "info")
+                level = DAS_LOG_LEVEL_INFO;
+            else if (env_str == "warn")
+                level = DAS_LOG_LEVEL_WARN;
+            else if (env_str == "error")
+                level = DAS_LOG_LEVEL_ERROR;
+            else if (env_str == "critical")
+                level = DAS_LOG_LEVEL_CRITICAL;
+            else if (env_str == "off")
+                level = DAS_LOG_LEVEL_OFF;
+
+            if (level >= 0)
+            {
+                DasSetLogLevel(level);
+            }
+        }
+
         std::signal(SIGINT, SignalHandler);
         std::signal(SIGTERM, SignalHandler);
 #ifdef SIGBREAK

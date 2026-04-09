@@ -223,6 +223,21 @@ DasRegisterMainProcessService(IDasBase* p_object, const DasGuid& iid);
  */
 DAS_C_API DasResult DasUnregisterMainProcessService(const DasGuid& iid);
 
+// Log level constants (match spdlog::level::level_enum values)
+#define DAS_LOG_LEVEL_TRACE 0
+#define DAS_LOG_LEVEL_DEBUG 1
+#define DAS_LOG_LEVEL_INFO 2
+#define DAS_LOG_LEVEL_WARN 3
+#define DAS_LOG_LEVEL_ERROR 4
+#define DAS_LOG_LEVEL_CRITICAL 5
+#define DAS_LOG_LEVEL_OFF 6
+
+/**
+ * @brief Set the global log level for the DAS logging system.
+ * @param level One of DAS_LOG_LEVEL_TRACE/DEBUG/INFO/WARN/ERROR/CRITICAL/OFF
+ */
+DAS_C_API void DasSetLogLevel(int level);
+
 #define DAS_LOG_ERROR(...) DAS_LOG_WITH_SOURCE_LOCATION(Error, __VA_ARGS__)
 #define DAS_LOG_WARNING(...) DAS_LOG_WITH_SOURCE_LOCATION(Warning, __VA_ARGS__)
 #define DAS_LOG_INFO(...) DAS_LOG_WITH_SOURCE_LOCATION(Info, __VA_ARGS__)

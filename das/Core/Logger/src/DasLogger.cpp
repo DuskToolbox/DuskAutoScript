@@ -158,3 +158,12 @@ void DasLogDebugU8WithSourceLocation(
         }
     }
 }
+
+void DasSetLogLevel(int level)
+{
+    if (level < spdlog::level::trace || level > spdlog::level::off)
+    {
+        return;
+    }
+    spdlog::set_level(static_cast<spdlog::level::level_enum>(level));
+}
