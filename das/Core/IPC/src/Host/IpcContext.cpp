@@ -204,8 +204,9 @@ namespace Core
                     DEFAULT_SHARED_MEMORY_SIZE);
 
                 // 4. 创建 IpcRunLoop（Host 模式不需要心跳）
-                auto runloop_result =
-                    IpcRunLoop::Create(/*enable_heartbeat=*/false);
+                auto runloop_result = IpcRunLoop::Create(
+                    /*enable_heartbeat=*/false,
+                    inbound_queue_);
                 if (!runloop_result.has_value())
                 {
                     DAS_CORE_LOG_ERROR("IpcRunLoop::Create() failed");
@@ -215,10 +216,7 @@ namespace Core
                 // Host 模式初始 session_id 为 0，握手完成后会更新
                 run_loop_->SetSessionId(session_id_);
 
-                // 5. 设置 inbound_queue 到 IpcRunLoop
-                run_loop_->SetInboundQueue(&inbound_queue_);
-
-                // 5.5 DistributedObjectManager 设置 session_id
+                // 5. DistributedObjectManager 设置 session_id
                 object_manager_.SetSessionId(session_id_);
 
                 // 6. 创建 BusinessThread

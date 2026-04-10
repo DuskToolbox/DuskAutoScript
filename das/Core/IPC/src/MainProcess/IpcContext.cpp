@@ -43,7 +43,8 @@ namespace Core
                 DasResult result = DAS_S_OK;
 
                 // 1. Create IpcRunLoop FIRST (provides io_context)
-                auto runloop_result = IpcRunLoopType::Create(enable_heartbeat);
+                auto runloop_result =
+                    IpcRunLoopType::Create(enable_heartbeat, inbound_queue_);
                 if (!runloop_result.has_value())
                 {
                     DAS_CORE_LOG_ERROR("IpcRunLoop::Create() failed");
@@ -52,10 +53,7 @@ namespace Core
                 runloop_ = std::move(runloop_result.value());
                 // Create() 已自动完成初始化，无需再调用 Initialize()
 
-                // 2. Set inbound_queue to IpcRunLoop
-                runloop_->SetInboundQueue(&inbound_queue_);
-
-                // 3. 主进程 session_id = 1
+                // 2. 主进程 session_id = 1
                 runloop_->SetSessionId(1);
 
                 // 4. Initialize reserved session IDs

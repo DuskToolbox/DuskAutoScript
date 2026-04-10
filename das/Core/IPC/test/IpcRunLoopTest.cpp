@@ -5,6 +5,7 @@
 #include <das/Core/IPC/IMessageHandler.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
+#include <das/Core/IPC/IpcMessageQueue.h>
 #include <das/Core/IPC/IpcResponseSender.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/IpcTransport.h>
@@ -14,8 +15,10 @@
 #include <thread>
 #include <vector>
 using DAS::Core::IPC::IMessageHandler;
+using DAS::Core::IPC::InboundMessage;
 using DAS::Core::IPC::IPCMessageHeader;
 using DAS::Core::IPC::IPCMessageHeaderBuilder;
+using DAS::Core::IPC::IpcMessageQueue;
 using DAS::Core::IPC::IpcResponseSender;
 using DAS::Core::IPC::IpcRunLoop;
 using DAS::Core::IPC::IpcTransport;
@@ -28,7 +31,9 @@ class IpcRunLoopTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        auto result = IpcRunLoop::Create(true);
+        test_inbound_queue_ =
+            std::make_unique<IpcMessageQueue<InboundMessage>>(64);
+        auto result = IpcRunLoop::Create(true, *test_inbound_queue_);
         if (!result)
         {
             FAIL() << "Failed to create IpcRunLoop";
@@ -62,8 +67,19 @@ protected:
 
     bool SetupRunLoopWithTransport()
     {
-        // Create() 已自动完成初始化
-        return runloop_ != nullptr;
+        if (runloop_)
+        {
+            return true;
+        }
+        test_inbound_queue_ =
+            std::make_unique<IpcMessageQueue<InboundMessage>>(64);
+        auto result = IpcRunLoop::Create(true, *test_inbound_queue_);
+        if (!result)
+        {
+            return false;
+        }
+        runloop_ = std::move(*result);
+        return true;
     }
 
     ValidatedIPCMessageHeader CreateTestHeader(
@@ -78,9 +94,10 @@ protected:
             .Build();
     }
 
-    std::unique_ptr<IpcRunLoop> runloop_;
-    std::string                 host_queue_name_;
-    std::string                 plugin_queue_name_;
+    std::unique_ptr<IpcRunLoop>                      runloop_;
+    std::unique_ptr<IpcMessageQueue<InboundMessage>> test_inbound_queue_;
+    std::string                                      host_queue_name_;
+    std::string                                      plugin_queue_name_;
 };
 
 // ====== Initialize/Shutdown Tests ======

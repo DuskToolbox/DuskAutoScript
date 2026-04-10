@@ -32,12 +32,20 @@
 
 DAS_CORE_IPC_NS_BEGIN
 
+// 构造函数实现
+IpcRunLoop::IpcRunLoop(IpcMessageQueue<InboundMessage>& inbound_queue)
+    : inbound_queue_(&inbound_queue)
+{
+}
+
 // 工厂函数实现
 DAS::Utils::Expected<std::unique_ptr<IpcRunLoop>> IpcRunLoop::Create(
-    bool enable_heartbeat)
+    bool                             enable_heartbeat,
+    IpcMessageQueue<InboundMessage>& inbound_queue)
 {
-    auto instance = std::unique_ptr<IpcRunLoop>(new IpcRunLoop());
-    auto result = instance->Initialize(enable_heartbeat);
+    auto instance = std::unique_ptr<IpcRunLoop>(new IpcRunLoop(inbound_queue));
+    instance->enable_heartbeat_ = enable_heartbeat;
+    auto result = instance->Initialize();
     if (result != DAS_S_OK)
     {
         return DAS::Utils::MakeUnexpected(result);
@@ -51,9 +59,8 @@ IpcRunLoop::~IpcRunLoop()
     Uninitialize();
 }
 
-DasResult IpcRunLoop::Initialize(bool enable_heartbeat)
+DasResult IpcRunLoop::Initialize()
 {
-    enable_heartbeat_ = enable_heartbeat;
     io_context_ = std::make_unique<boost::asio::io_context>();
     // 不再创建 async_transport_，IpcRunLoop 只提供 io_context 基础设施
     // 所有 transport 由外部管理：
@@ -614,11 +621,6 @@ bool IpcRunLoop::IsRunning() const { return running_.load(); }
 void IpcRunLoop::SetSessionId(uint16_t session_id)
 {
     local_session_id_ = session_id;
-}
-
-void IpcRunLoop::SetInboundQueue(IpcMessageQueue<InboundMessage>* queue)
-{
-    inbound_queue_ = queue;
 }
 
 DasResult IpcRunLoop::PostSend(

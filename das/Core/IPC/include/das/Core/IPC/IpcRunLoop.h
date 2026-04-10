@@ -149,9 +149,12 @@ class IpcRunLoop
 public:
     /// 工厂函数：创建 IpcRunLoop 实例
     /// @param enable_heartbeat 是否启用心跳线程（调试时可禁用，避免超时杀进程）
+    /// @param inbound_queue 入站消息队列引用（由 IpcContext 管理，IpcRunLoop
+    /// 不持有所有权）
     /// @return Expected 包含 unique_ptr 成功，错误码失败
     static DAS::Utils::Expected<std::unique_ptr<IpcRunLoop>> Create(
-        bool enable_heartbeat);
+        bool                             enable_heartbeat,
+        IpcMessageQueue<InboundMessage>& inbound_queue);
 
     ~IpcRunLoop();
 
@@ -161,10 +164,9 @@ public:
      * 由 Create() 工厂函数内部调用。
      * 创建 io_context、ConnectionManager，并注册所有 IPC stub handlers。
      *
-     * @param enable_heartbeat 是否启用心跳线程
      * @return DasResult DAS_S_OK 成功
      */
-    DasResult Initialize(bool enable_heartbeat);
+    DasResult Initialize();
 
     // 阻塞式消息循环
     DasResult Run();
@@ -337,16 +339,6 @@ public:
         DefaultAsyncIpcTransport*        transport,
         const ValidatedIPCMessageHeader& header,
         std::vector<uint8_t>&&           body);
-
-    /**
-     * @brief 设置入站消息队列（业务线程入口）
-     *
-     * 由 IpcContext 在初始化时调用，将 inbound_queue 指针传递给 IpcRunLoop。
-     * IpcRunLoop 不持有此队列，仅保存指针用于消息分流。
-     *
-     * @param queue 入站消息队列指针（IpcContext 持有）
-     */
-    void SetInboundQueue(IpcMessageQueue<InboundMessage>* queue);
 
     /**
      * @brief Register a pending call entry (on_complete filled later by
@@ -564,9 +556,9 @@ public:
     std::chrono::steady_clock::time_point last_shm_cleanup_time_ =
         std::chrono::steady_clock::now();
 
-    /// 入站消息队列指针（非持有，由 IpcContext 管理）
+    /// 入站消息队列指针（非持有，由 IpcContext 管理，构造函数注入）
     /// 用于 IO 线程将业务消息分流到 inbound queue
-    IpcMessageQueue<InboundMessage>* inbound_queue_ = nullptr;
+    IpcMessageQueue<InboundMessage>* inbound_queue_;
 
 private:
     /// @brief 发送失败时构造失败 RESPONSE 并推入 inbound_queue_
@@ -576,8 +568,8 @@ private:
         const ValidatedIPCMessageHeader& header,
         DasResult                        error_code);
 
-    /// 默认构造函数（禁止直接调用，使用 Create() 代替）
-    IpcRunLoop() = default;
+    /// 构造函数（禁止直接调用，使用 Create() 代替）
+    explicit IpcRunLoop(IpcMessageQueue<InboundMessage>& inbound_queue);
 
     /// 关闭（析构函数调用）
     void Uninitialize();
