@@ -81,6 +81,13 @@ class IpcPerformanceTest : public ::testing::Test
 protected:
     void SetUp() override
     {
+        // 0. 设置 Host 进程日志等级为 warn，抑制 info 级别日志
+#ifdef DAS_WINDOWS
+        _putenv_s("DAS_LOG_LEVEL", "warn");
+#else
+        setenv("DAS_LOG_LEVEL", "warn", 1);
+#endif
+
         // 1. 读取 DasHost 路径
         host_exe_path_ = IpcTestConfig::GetDasHostPath();
 
@@ -502,12 +509,12 @@ static void PrintBenchmarkResult(
                  "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500"
                  "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n";
     std::cout << "  Mean Latency:   " << std::fixed << std::setprecision(2)
-              << mean << " \xB5s\n";
-    std::cout << "  Median (p50):   " << p50 << " \xB5s\n";
-    std::cout << "  p95:            " << p95 << " \xB5s\n";
-    std::cout << "  p99:            " << p99 << " \xB5s\n";
-    std::cout << "  Min:            " << min_val << " \xB5s\n";
-    std::cout << "  Max:            " << max_val << " \xB5s\n";
+              << mean << " us\n";
+    std::cout << "  Median (p50):   " << p50 << " us\n";
+    std::cout << "  p95:            " << p95 << " us\n";
+    std::cout << "  p99:            " << p99 << " us\n";
+    std::cout << "  Min:            " << min_val << " us\n";
+    std::cout << "  Max:            " << max_val << " us\n";
     std::cout << "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500"
                  "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500"
                  "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500"
@@ -844,6 +851,13 @@ TEST_F(IpcPerformanceTest, RoundTripLatency_Echo_LargePayload_32KB)
 
 TEST(IpcPerfColdStart, ColdStart_FirstCall)
 {
+    // 设置 Host 进程日志等级为 warn，抑制 info 级别日志
+#ifdef DAS_WINDOWS
+    _putenv_s("DAS_LOG_LEVEL", "warn");
+#else
+    setenv("DAS_LOG_LEVEL", "warn", 1);
+#endif
+
     const std::string host_exe_path = IpcTestConfig::GetDasHostPath();
 
     if (!std::filesystem::exists(host_exe_path))
@@ -1068,12 +1082,12 @@ TEST(IpcPerfColdStart, ColdStart_FirstCall)
                  "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500"
                  "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n";
     std::cout << "  Mean Latency:   " << std::fixed << std::setprecision(2)
-              << mean << " \xB5s\n";
-    std::cout << "  Median (p50):   " << p50 << " \xB5s\n";
-    std::cout << "  p95:            " << p95 << " \xB5s\n";
-    std::cout << "  p99:            " << p99 << " \xB5s\n";
-    std::cout << "  Min:            " << min_val << " \xB5s\n";
-    std::cout << "  Max:            " << max_val << " \xB5s\n";
+              << mean << " us\n";
+    std::cout << "  Median (p50):   " << p50 << " us\n";
+    std::cout << "  p95:            " << p95 << " us\n";
+    std::cout << "  p99:            " << p99 << " us\n";
+    std::cout << "  Min:            " << min_val << " us\n";
+    std::cout << "  Max:            " << max_val << " us\n";
     std::cout << "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500"
                  "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500"
                  "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500"
@@ -1214,12 +1228,12 @@ done:
     std::cout << "  Avg Throughput: " << std::fixed << std::setprecision(1)
               << throughput << " ops/sec\n";
     std::cout << "  Mean Latency:   " << std::fixed << std::setprecision(2)
-              << mean << " \xB5s (sampled)\n";
-    std::cout << "  Median (p50):   " << p50 << " \xB5s\n";
-    std::cout << "  p95:            " << p95 << " \xB5s\n";
-    std::cout << "  p99:            " << p99 << " \xB5s\n";
-    std::cout << "  Min:            " << min_val << " \xB5s\n";
-    std::cout << "  Max (spike):    " << max_val << " \xB5s\n";
+              << mean << " us (sampled)\n";
+    std::cout << "  Median (p50):   " << p50 << " us\n";
+    std::cout << "  p95:            " << p95 << " us\n";
+    std::cout << "  p99:            " << p99 << " us\n";
+    std::cout << "  Min:            " << min_val << " us\n";
+    std::cout << "  Max (spike):    " << max_val << " us\n";
     std::cout << "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550"
                  "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550"
                  "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550"
@@ -1791,21 +1805,21 @@ TEST_F(IpcPerformanceTest, DualHost_AlternatingCalls)
                  "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500"
                  "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n";
     std::cout << "  Host A Mean:    " << std::fixed << std::setprecision(2)
-              << mean_a << " \xB5s\n";
+              << mean_a << " us\n";
     std::cout << "  Host B Mean:    " << std::fixed << std::setprecision(2)
-              << mean_b << " \xB5s\n";
+              << mean_b << " us\n";
     std::cout << "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500"
                  "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500"
                  "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500"
                  "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500"
                  "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n";
     std::cout << "  Global Mean:    " << std::fixed << std::setprecision(2)
-              << global_mean << " \xB5s\n";
-    std::cout << "  Global p50:     " << global_p50 << " \xB5s\n";
-    std::cout << "  Global p95:     " << global_p95 << " \xB5s\n";
-    std::cout << "  Global p99:     " << global_p99 << " \xB5s\n";
-    std::cout << "  Min:            " << min_val << " \xB5s\n";
-    std::cout << "  Max:            " << max_val << " \xB5s\n";
+              << global_mean << " us\n";
+    std::cout << "  Global p50:     " << global_p50 << " us\n";
+    std::cout << "  Global p95:     " << global_p95 << " us\n";
+    std::cout << "  Global p99:     " << global_p99 << " us\n";
+    std::cout << "  Min:            " << min_val << " us\n";
+    std::cout << "  Max:            " << max_val << " us\n";
     std::cout << "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500"
                  "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500"
                  "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500"
