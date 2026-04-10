@@ -4,6 +4,7 @@
 #include <das/Core/IPC/DasProxyBase.h>
 #include <das/Core/IPC/MethodMetadata.h>
 #include <das/DasGuidHolder.h>
+#include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/DasTypes.hpp>
 #include <string>
@@ -27,7 +28,9 @@ struct CachedVariant
     float       float_value = 0.0f;
     std::string string_value;
     bool        bool_value = false;
-    ObjectId    object_id{}; // for BASE and COMPONENT (encoded reference)
+    ObjectId    object_id{};    // for BASE and COMPONENT (encoded reference)
+    uint32_t    interface_id{}; // interface_id from wire for BASE/COMPONENT
+    DAS::DasPtr<IDasBase> base_ptr; // resolved proxy for BASE/COMPONENT
 };
 
 /// @brief Handwritten by-value proxy for IDasVariantVector.

@@ -119,7 +119,8 @@ namespace
         MemorySerializerWriter&                  writer,
         Das::ExportInterface::DasVariantType     type,
         Das::ExportInterface::IDasVariantVector* impl,
-        uint64_t                                 index)
+        uint64_t                                 index,
+        StubContext&                             ctx)
     {
         using Das::ExportInterface::DasVariantType;
 
@@ -195,13 +196,27 @@ namespace
             }
             // BASE wire format (12B):
             // [session_id:2B][generation:2B][local_id:4B][interface_id:4B]
-            // For remote objects, we'd need to serialize ObjectId +
-            // interface_id. For now, write placeholder zeros for BASE type.
-            // TODO: Implement proper BASE serialization when proxy supports it
-            writer.WriteUInt16(0); // session_id
-            writer.WriteUInt16(0); // generation
-            writer.WriteUInt32(0); // local_id
-            writer.WriteUInt32(0); // interface_id
+            if (base_obj.Get() != nullptr)
+            {
+                ObjectId  oid;
+                DasResult register_result =
+                    ctx.object_manager.RegisterLocalObject(base_obj.Get(), oid);
+                if (DAS::IsFailed(register_result))
+                {
+                    return register_result;
+                }
+                writer.WriteUInt16(oid.session_id);
+                writer.WriteUInt16(oid.generation);
+                writer.WriteUInt32(oid.local_id);
+                writer.WriteUInt32(ComputeInterfaceId(DasIidOf<IDasBase>()));
+            }
+            else
+            {
+                writer.WriteUInt16(0); // session_id
+                writer.WriteUInt16(0); // generation
+                writer.WriteUInt32(0); // local_id
+                writer.WriteUInt32(0); // interface_id
+            }
             return DAS_S_OK;
         }
         case DasVariantType::DAS_VARIANT_TYPE_COMPONENT:
@@ -213,10 +228,28 @@ namespace
                 return result;
             }
             // COMPONENT wire format (12B): same as BASE
-            writer.WriteUInt16(0); // session_id
-            writer.WriteUInt16(0); // generation
-            writer.WriteUInt32(0); // local_id
-            writer.WriteUInt32(0); // interface_id
+            if (comp_obj.Get() != nullptr)
+            {
+                ObjectId  oid;
+                DasResult register_result =
+                    ctx.object_manager.RegisterLocalObject(comp_obj.Get(), oid);
+                if (DAS::IsFailed(register_result))
+                {
+                    return register_result;
+                }
+                writer.WriteUInt16(oid.session_id);
+                writer.WriteUInt16(oid.generation);
+                writer.WriteUInt32(oid.local_id);
+                writer.WriteUInt32(ComputeInterfaceId(
+                    DasIidOf<Das::PluginInterface::IDasComponent>()));
+            }
+            else
+            {
+                writer.WriteUInt16(0); // session_id
+                writer.WriteUInt16(0); // generation
+                writer.WriteUInt32(0); // local_id
+                writer.WriteUInt32(0); // interface_id
+            }
             return DAS_S_OK;
         }
         default:
@@ -237,12 +270,10 @@ DasResult DasVariantVectorByValueStub::DispatchMethod(
     StubContext&          ctx,
     std::vector<uint8_t>& out_response)
 {
-    (void)ctx;
-
     if (method_id <= 5 || (method_id >= 18 && method_id <= 20))
     {
         // Get methods (0-5, 18-20): return full VariantVector snapshot
-        return HandleGetSnapshot(impl, out_response);
+        return HandleGetSnapshot(impl, ctx, out_response);
     }
 
     if (method_id >= 6 && method_id <= 11)
@@ -263,6 +294,7 @@ DasResult DasVariantVectorByValueStub::DispatchMethod(
 
 DasResult DasVariantVectorByValueStub::HandleGetSnapshot(
     void*                 impl,
+    StubContext&          ctx,
     std::vector<uint8_t>& out_response)
 {
     auto* variant_vector =
@@ -295,7 +327,7 @@ DasResult DasVariantVectorByValueStub::HandleGetSnapshot(
         }
 
         DasResult write_result =
-            WriteVariantValue(writer, type, variant_vector, i);
+            WriteVariantValue(writer, type, variant_vector, i, ctx);
         if (DAS::IsFailed(write_result))
         {
             return write_result;

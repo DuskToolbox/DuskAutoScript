@@ -5,6 +5,7 @@
 #include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
+#include <das/_autogen/idl/ipc/IpcProxyFactory.h>
 #include <stdexec/execution.hpp>
 #include <tuple>
 
@@ -269,8 +270,7 @@ DasResult DasVariantVectorByValueProxy::EnsureDataLoaded(uint16_t method_id)
                 return result;
             }
             entry.object_id = ObjectId{session_id, generation, local_id};
-            // iface_id is informational — stored for potential future use
-            (void)iface_id;
+            entry.interface_id = iface_id;
             break;
         }
         default:
@@ -285,11 +285,35 @@ DasResult DasVariantVectorByValueProxy::EnsureDataLoaded(uint16_t method_id)
         cache_.push_back(std::move(entry));
     }
 
+    // Second pass: create proxies for BASE/COMPONENT entries
+    for (size_t idx = 0; idx < cache_.size(); ++idx)
+    {
+        auto& entry = cache_[idx];
+        if ((entry.type == DasVariantType::DAS_VARIANT_TYPE_BASE
+             || entry.type == DasVariantType::DAS_VARIANT_TYPE_COMPONENT)
+            && (entry.object_id.session_id != 0
+                || entry.object_id.local_id != 0))
+        {
+            [[maybe_unused]]
+            DasResult reg_result =
+                GetObjectManager().RegisterRemoteObject(entry.object_id);
+            IDasBase* proxy = DasIpcProxy::CreateProxyByInterfaceId(
+                entry.interface_id,
+                entry.object_id,
+                *GetRunLoop(),
+                GetBusinessThread(),
+                GetObjectManager());
+            if (proxy != nullptr)
+            {
+                // Attach returns a new DasPtr (static method), must assign back
+                entry.base_ptr = DasPtr<IDasBase>::Attach(proxy);
+            }
+        }
+    }
+
     data_loaded_ = true;
     return DAS_S_OK;
 }
-
-// ── SendWriteBack ─────────────────────────────────────────────────────────
 
 DasResult DasVariantVectorByValueProxy::SendWriteBack(
     uint16_t       method_id,
@@ -448,11 +472,13 @@ DasResult DasVariantVectorByValueProxy::GetComponent(
         return DAS_E_INVALID_ARGUMENT;
     }
 
-    // Resolve ObjectId to a proxy via QueryInterfaceRemote or
-    // ObjectManager. For now, return not supported if local resolution
-    // fails.
-    DAS_CORE_LOG_ERROR("GetComponent proxy resolution not yet implemented");
-    return DAS_E_NO_IMPLEMENTATION;
+    if (cache_[index].base_ptr.Get() != nullptr)
+    {
+        cache_[index].base_ptr.Get()->AddRef();
+        *pp_out_component = static_cast<Das::PluginInterface::IDasComponent*>(
+            cache_[index].base_ptr.Get());
+    }
+    return DAS_S_OK;
 }
 
 DasResult DasVariantVectorByValueProxy::GetBase(
@@ -479,9 +505,12 @@ DasResult DasVariantVectorByValueProxy::GetBase(
         return DAS_E_INVALID_ARGUMENT;
     }
 
-    // Resolve ObjectId to a proxy. For now, return not supported.
-    DAS_CORE_LOG_ERROR("GetBase proxy resolution not yet implemented");
-    return DAS_E_NO_IMPLEMENTATION;
+    if (cache_[index].base_ptr.Get() != nullptr)
+    {
+        cache_[index].base_ptr.Get()->AddRef();
+        *pp_out_base = cache_[index].base_ptr.Get();
+    }
+    return DAS_S_OK;
 }
 
 DasResult DasVariantVectorByValueProxy::GetType(

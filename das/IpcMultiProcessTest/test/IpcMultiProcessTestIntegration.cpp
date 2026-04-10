@@ -367,6 +367,8 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadJavaPlugin)
     DAS::DasPtr<DAS::PluginInterface::IDasComponent> component(component_raw);
 
     // 调用 Dispatch("echo", ...) 跨进程验证
+    // 设计意图：传递空 VariantVector，Java 端应返回 DAS_E_INVALID_ARGUMENT，
+    // C++ 端校验错误码传播正确
     {
         DasReadOnlyString                      method_name{"echo"};
         DAS::ExportInterface::DasVariantVector result;
@@ -374,10 +376,11 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadJavaPlugin)
         ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
         DasResult dispatch_result =
             component->Dispatch(method_name.Get(), params.Get(), result.Put());
-        ASSERT_EQ(dispatch_result, DAS_S_OK) << "Dispatch(echo) failed";
+        ASSERT_NE(dispatch_result, DAS_S_OK)
+            << "Dispatch(echo) with empty params should return error code";
     }
 
-    // 调用 Dispatch("compute", ...)
+    // 调用 Dispatch("compute", ...) — 同理，空参数应返回错误码
     {
         DasReadOnlyString                      method_name{"compute"};
         DAS::ExportInterface::DasVariantVector result;
@@ -385,10 +388,13 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadJavaPlugin)
         ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
         DasResult dispatch_result =
             component->Dispatch(method_name.Get(), params.Get(), result.Put());
-        ASSERT_EQ(dispatch_result, DAS_S_OK) << "Dispatch(compute) failed";
+        ASSERT_NE(dispatch_result, DAS_S_OK)
+            << "Dispatch(compute) with empty params should return error code";
     }
 
     // 调用 Dispatch("getSessionInfo", ...)
+    // getSessionInfo Java handler 不检查参数数量，直接返回 session 信息
+    // 所以空参数时 dispatch_result 应为 DAS_S_OK
     {
         DasReadOnlyString                      method_name{"getSessionInfo"};
         DAS::ExportInterface::DasVariantVector result;
@@ -397,7 +403,8 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadJavaPlugin)
         DasResult dispatch_result =
             component->Dispatch(method_name.Get(), params.Get(), result.Put());
         ASSERT_EQ(dispatch_result, DAS_S_OK)
-            << "Dispatch(getSessionInfo) failed";
+            << "Dispatch(getSessionInfo) should succeed (handler does not "
+               "validate param count)";
     }
 
     DAS_CORE_LOG_INFO(

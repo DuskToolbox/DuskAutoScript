@@ -56,7 +56,10 @@ public:
 
 private:
     /// Get 方法统一处理：返回全量 VariantVector 快照
-    DasResult HandleGetSnapshot(void* impl, std::vector<uint8_t>& out_response);
+    DasResult HandleGetSnapshot(
+        void*                 impl,
+        StubContext&          ctx,
+        std::vector<uint8_t>& out_response);
 
     /// Set 方法：从 params 读取 index + value，调用 impl 的 Set 方法
     DasResult HandleSet(
