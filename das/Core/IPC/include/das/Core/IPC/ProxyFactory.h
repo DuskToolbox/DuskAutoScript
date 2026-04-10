@@ -12,8 +12,6 @@
 #include <das/DasPtr.hpp>
 #include <das/IDasBase.h>
 #include <das/Utils/StringUtils.h>
-#include <mutex>
-#include <unordered_map>
 
 #include <das/Core/IPC/Config.h>
 #include <das/DasConfig.h>
@@ -64,54 +62,6 @@ public:
      */
     DasResult SetRunLoop(IpcRunLoop* run_loop);
 
-    /**
-     * @brief 获取现有的 Proxy 实例
-     *
-     * @param object_id 对象 ID
-     * @return 对应的 Proxy
-     * 实例，如果不存在则返回 nullptr
-     */
-    IPCProxyBase* GetProxy(const ObjectId& object_id);
-
-    /**
-     * @brief 释放 Proxy 实例
-     * @param
-     * object_id 对象 ID
-     * @return DasResult
-     * 操作结果
-
-     */
-    DasResult ReleaseProxy(const ObjectId& object_id);
-
-    /**
-     * @brief 从缓存中移除
-     * Proxy（内部方法，供
-     * Proxy::Release 调用）
-     * @param object_id 对象
-     * ID
-
-     * * @return DasResult 操作结果
-     */
-    DasResult RemoveFromCache(const ObjectId& object_id);
-
-    /**
-     * @brief 检查 Proxy 实例是否存在
-     * @param object_id 对象 ID
-     * @return 如果存在返回 true，否则返回 false
-     */
-    bool HasProxy(const ObjectId& object_id) const;
-
-    /**
-     * @brief 获取所有已创建的 Proxy 对象数量
-     * @return Proxy 对象数量
-     */
-    size_t GetProxyCount() const;
-
-    /**
-     * @brief 清空所有 Proxy 实例
-     */
-    void ClearAllProxies();
-
     // 禁止拷贝和赋值
     ProxyFactory(const ProxyFactory&) = delete;
     ProxyFactory& operator=(const ProxyFactory&) = delete;
@@ -139,22 +89,6 @@ private:
      * @throws DasException 当无法获取接口 ID 时抛出异常
      */
     uint32_t GetObjectInterfaceId(const ObjectId& object_id);
-
-    // 内部数据结构：Proxy 缓存
-    struct ProxyEntry
-    {
-        IPCProxyBase* proxy; // 使用原始指针，生命周期由引用计数管理
-        uint64_t      object_id_encoded;
-        uint32_t      interface_id;
-        uint16_t      session_id;
-        uint32_t      local_refcount; // 本地 DasPtr 数量
-    };
-
-    // 缓存已创建的 Proxy
-    std::unordered_map<uint64_t, ProxyEntry> proxy_cache_;
-
-    // 互斥锁保护代理缓存
-    mutable std::mutex proxy_cache_mutex_;
 
     // 分布式对象管理器
     DistributedObjectManager* object_manager_ = nullptr;

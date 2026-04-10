@@ -143,7 +143,6 @@ class IpcProxyGenerator:
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/InterfaceParamSerialization.h>
 #include <das/Core/IPC/MemorySerializer.h>
-#include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/Serializer.h>
 #include <das/Core/Logger/Logger.h>
 #include <atomic>
@@ -541,7 +540,6 @@ class IpcProxyGenerator:
         lines.append(f"{method_indent}if (count == 0)")
         lines.append(f"{method_indent}{{")
         lines.append(f"{inner_indent}DAS_CORE_LOG_TRACE(\"Proxy {class_name} ref_count reached 0, cleaning up\");")
-        lines.append(f"{inner_indent}ProxyFactory::GetInstance().RemoveFromCache(GetObjectId());")
         lines.append(f"{inner_indent}delete this;")
         lines.append(f"{method_indent}}}")
         lines.append(f"{method_indent}return count;")

@@ -25,8 +25,6 @@ DasResult ProxyFactory::Initialize(
         return DAS_E_FAIL;
     }
 
-    std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
-
     object_manager_ = object_manager;
     object_registry_ = object_registry;
     run_loop_ = run_loop;
@@ -41,83 +39,8 @@ bool ProxyFactory::IsInitialized() const
 
 DasResult ProxyFactory::SetRunLoop(IpcRunLoop* run_loop)
 {
-    std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
-
-    if (run_loop_ && run_loop_ != run_loop)
-    {
-        ClearAllProxies();
-    }
-
     run_loop_ = run_loop;
     return DAS_S_OK;
-}
-
-IPCProxyBase* ProxyFactory::GetProxy(const ObjectId& object_id)
-{
-    std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
-    auto it = proxy_cache_.find(EncodeObjectId(object_id));
-    if (it != proxy_cache_.end())
-    {
-        // 缓存命中：只增加本地计数，不发送 IPC
-        it->second.local_refcount++;
-        it->second.proxy->AddRef();
-        return it->second.proxy;
-    }
-    return nullptr;
-}
-
-DasResult ProxyFactory::ReleaseProxy(const ObjectId& object_id)
-{
-    std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
-    auto it = proxy_cache_.find(EncodeObjectId(object_id));
-    if (it != proxy_cache_.end())
-    {
-        it->second.local_refcount--;
-        if (it->second.local_refcount == 0)
-        {
-            proxy_cache_.erase(it);
-        }
-        return DAS_S_OK;
-    }
-
-    return DAS_E_IPC_OBJECT_NOT_FOUND;
-}
-
-DasResult ProxyFactory::RemoveFromCache(const ObjectId& object_id)
-{
-    std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
-    auto it = proxy_cache_.find(EncodeObjectId(object_id));
-    if (it != proxy_cache_.end())
-    {
-        it->second.local_refcount--;
-        if (it->second.local_refcount == 0)
-        {
-            proxy_cache_.erase(it);
-        }
-
-        return DAS_S_OK;
-    }
-
-    return DAS_E_IPC_OBJECT_NOT_FOUND;
-}
-
-bool ProxyFactory::HasProxy(const ObjectId& object_id) const
-{
-    std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
-    auto it = proxy_cache_.find(EncodeObjectId(object_id));
-    return (it != proxy_cache_.end());
-}
-
-size_t ProxyFactory::GetProxyCount() const
-{
-    std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
-    return proxy_cache_.size();
-}
-
-void ProxyFactory::ClearAllProxies()
-{
-    std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
-    proxy_cache_.clear();
 }
 
 IPCProxyBase* ProxyFactory::CreateIPCProxy(const ObjectId& object_id)
