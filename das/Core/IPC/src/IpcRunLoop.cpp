@@ -21,6 +21,7 @@
 #include <boost/asio/use_future.hpp>
 
 #include <das/Core/IPC/DasReadOnlyStringStub.h>
+#include <das/Core/IPC/DasVariantVectorByValueStub.h>
 #include <das/Core/IPC/DefaultAsyncIpcTransport.h>
 #include <das/Core/IPC/QueryInterfaceStub.h>
 
@@ -77,6 +78,13 @@ DasResult IpcRunLoop::Initialize(bool enable_heartbeat)
             HeaderFlags::NONE,
             DasReadOnlyStringStub::InterfaceId,
             &s_readonly_string_stub);
+    }
+    {
+        static DasVariantVectorByValueStub s_variant_vector_stub;
+        RegisterHandler(
+            HeaderFlags::BUSINESS_EVENT,
+            DasVariantVectorByValueStub::InterfaceId,
+            &s_variant_vector_stub);
     }
 
     // Register QUERY_INTERFACE handler for remote QueryInterface calls

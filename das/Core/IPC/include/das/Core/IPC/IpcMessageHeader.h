@@ -18,6 +18,8 @@ namespace HeaderFlags
     constexpr uint8_t CONTROL_PLANE = 0x01;
     /// 业务控制消息标志（投递到 BusinessThread 处理）
     constexpr uint8_t BUSINESS_CONTROL = 0x02;
+    /// 业务事件消息标志（手写 proxy/stub 的按值序列化路径）
+    constexpr uint8_t BUSINESS_EVENT = 0x03;
 } // namespace HeaderFlags
 
 /// @brief 消息标志 (IPCMessageHeader.flags 字段)

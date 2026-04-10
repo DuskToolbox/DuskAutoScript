@@ -12,7 +12,7 @@ class DasReadOnlyStringProxy final : public DasProxyBase<IDasReadOnlyString>,
                                      public IDasReadOnlyString
 {
 public:
-    static constexpr uint32_t InterfaceId = 0xFD698AF1u;
+    static uint32_t InterfaceId;
 
     DasReadOnlyStringProxy(
         uint32_t                      interface_id,

@@ -2,6 +2,7 @@
 
 #include <das/Core/IPC/DasProxyBase.h>
 #include <das/Core/IPC/DasReadOnlyStringProxy.h>
+#include <das/Core/IPC/DasVariantVectorByValueProxy.h>
 #include <das/_autogen/idl/ipc/IpcProxyFactory.h>
 
 DAS_CORE_IPC_NS_BEGIN
@@ -73,6 +74,22 @@ namespace
                    DistributedObjectManager&     object_manager) -> IDasBase*
                 {
                     return new DasReadOnlyStringProxy(
+                        interface_id,
+                        object_id,
+                        run_loop,
+                        std::move(business_thread),
+                        object_manager);
+                });
+
+            RegisterManualProxyFactory(
+                DasVariantVectorByValueProxy::InterfaceId,
+                [](uint32_t                      interface_id,
+                   const ObjectId&               object_id,
+                   IpcRunLoop&                   run_loop,
+                   std::weak_ptr<BusinessThread> business_thread,
+                   DistributedObjectManager&     object_manager) -> IDasBase*
+                {
+                    return new DasVariantVectorByValueProxy(
                         interface_id,
                         object_id,
                         run_loop,

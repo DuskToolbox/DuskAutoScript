@@ -15,7 +15,7 @@ DAS_CORE_IPC_NS_BEGIN
 class DasReadOnlyStringStub final : public IStubBase
 {
 public:
-    static constexpr uint32_t InterfaceId = 0xFD698AF1u;
+    static uint32_t InterfaceId;
 
     [[nodiscard]]
     uint32_t GetInterfaceId() const noexcept override

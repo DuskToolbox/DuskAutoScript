@@ -1,6 +1,8 @@
 #include <das/Core/IPC/DasReadOnlyStringProxy.h>
 
+#include <das/Core/IPC/MethodMetadata.h>
 #include <das/Core/Logger/Logger.h>
+#include <das/DasGuidHolder.h>
 #include <unicode/unistr.h>
 #include <unicode/ustring.h>
 #include <unicode/utypes.h>
@@ -8,6 +10,10 @@
 #include <cstring>
 
 DAS_CORE_IPC_NS_BEGIN
+
+// Static InterfaceId definition (ComputeInterfaceId is non-constexpr)
+uint32_t DasReadOnlyStringProxy::InterfaceId =
+    ComputeInterfaceId(DasIidOf<IDasReadOnlyString>());
 
 DasReadOnlyStringProxy::DasReadOnlyStringProxy(
     uint32_t                      interface_id,

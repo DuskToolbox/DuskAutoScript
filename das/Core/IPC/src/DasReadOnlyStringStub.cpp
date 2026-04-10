@@ -1,10 +1,16 @@
 #include <das/Core/IPC/DasReadOnlyStringStub.h>
 
 #include <das/Core/IPC/MemorySerializer.h>
+#include <das/Core/IPC/MethodMetadata.h>
+#include <das/DasGuidHolder.h>
 #include <das/DasString.hpp>
 #include <das/DasTypes.hpp>
 
 DAS_CORE_IPC_NS_BEGIN
+
+// Static InterfaceId definition (ComputeInterfaceId is non-constexpr)
+uint32_t DasReadOnlyStringStub::InterfaceId =
+    ComputeInterfaceId(DasIidOf<IDasReadOnlyString>());
 
 DasResult DasReadOnlyStringStub::DispatchMethod(
     uint16_t              method_id,
