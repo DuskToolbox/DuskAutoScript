@@ -3,6 +3,7 @@
 
 #include <das/Core/IPC/DasProxyBase.h>
 #include <das/Core/IPC/MethodMetadata.h>
+#include <das/DasGuidHolder.h>
 #include <das/DasString.hpp>
 #include <das/DasTypes.hpp>
 #include <string>
@@ -40,7 +41,8 @@ class DasVariantVectorByValueProxy final
       public ::Das::ExportInterface::IDasVariantVector
 {
 public:
-    static uint32_t InterfaceId;
+    static constexpr uint32_t InterfaceId =
+        ComputeInterfaceId(DasIidOf<Das::ExportInterface::IDasVariantVector>());
 
     DasVariantVectorByValueProxy(
         uint32_t                      interface_id,

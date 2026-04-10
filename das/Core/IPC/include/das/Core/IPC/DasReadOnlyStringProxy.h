@@ -2,6 +2,8 @@
 #define DAS_CORE_IPC_DAS_READ_ONLY_STRING_PROXY_H
 
 #include <das/Core/IPC/DasProxyBase.h>
+#include <das/Core/IPC/MethodMetadata.h>
+#include <das/DasGuidHolder.h>
 #include <das/DasString.hpp>
 #include <string>
 #include <vector>
@@ -12,7 +14,8 @@ class DasReadOnlyStringProxy final : public DasProxyBase<IDasReadOnlyString>,
                                      public IDasReadOnlyString
 {
 public:
-    static uint32_t InterfaceId;
+    static constexpr uint32_t InterfaceId =
+        ComputeInterfaceId(DasIidOf<IDasReadOnlyString>());
 
     DasReadOnlyStringProxy(
         uint32_t                      interface_id,

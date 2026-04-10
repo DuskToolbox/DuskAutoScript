@@ -10,10 +10,6 @@
 
 DAS_CORE_IPC_NS_BEGIN
 
-// Static InterfaceId definition (ComputeInterfaceId is non-constexpr)
-uint32_t DasVariantVectorByValueProxy::InterfaceId =
-    ComputeInterfaceId(DasIidOf<Das::ExportInterface::IDasVariantVector>());
-
 // ============================================================
 // Method ID mapping (0-20):
 //   0: GetInt,        1: GetFloat,       2: GetString

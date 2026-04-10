@@ -11,10 +11,6 @@
 
 DAS_CORE_IPC_NS_BEGIN
 
-// Static InterfaceId definition (ComputeInterfaceId is non-constexpr)
-uint32_t DasReadOnlyStringProxy::InterfaceId =
-    ComputeInterfaceId(DasIidOf<IDasReadOnlyString>());
-
 DasReadOnlyStringProxy::DasReadOnlyStringProxy(
     uint32_t                      interface_id,
     const ObjectId&               object_id,

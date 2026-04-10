@@ -37,7 +37,8 @@ DAS_CORE_IPC_NS_BEGIN
 class DasVariantVectorByValueStub final : public IStubBase
 {
 public:
-    static uint32_t InterfaceId;
+    static constexpr uint32_t InterfaceId =
+        ComputeInterfaceId(DasIidOf<Das::ExportInterface::IDasVariantVector>());
 
     [[nodiscard]]
     uint32_t GetInterfaceId() const noexcept override

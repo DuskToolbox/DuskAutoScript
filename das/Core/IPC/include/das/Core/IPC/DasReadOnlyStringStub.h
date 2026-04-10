@@ -2,6 +2,9 @@
 #define DAS_CORE_IPC_DAS_READ_ONLY_STRING_STUB_H
 
 #include <das/Core/IPC/IStubBase.h>
+#include <das/Core/IPC/MethodMetadata.h>
+#include <das/DasGuidHolder.h>
+#include <das/DasString.hpp>
 
 DAS_CORE_IPC_NS_BEGIN
 
@@ -15,7 +18,8 @@ DAS_CORE_IPC_NS_BEGIN
 class DasReadOnlyStringStub final : public IStubBase
 {
 public:
-    static uint32_t InterfaceId;
+    static constexpr uint32_t InterfaceId =
+        ComputeInterfaceId(DasIidOf<IDasReadOnlyString>());
 
     [[nodiscard]]
     uint32_t GetInterfaceId() const noexcept override
