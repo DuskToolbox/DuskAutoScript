@@ -189,17 +189,16 @@ void IpcRunLoop::RegisterHandler(
         DasPtr<IMessageHandler>(handler);
 }
 
-void IpcRunLoop::RegisterHandler(
-    uint8_t                   header_flags,
-    uint32_t                  interface_id,
-    IAwaitableMessageHandler* handler)
+void IpcRunLoop::RegisterControlHandler(
+    uint8_t          header_flags,
+    uint32_t         interface_id,
+    IControlHandler* handler)
 {
     if (!handler)
     {
         return;
     }
-    // 可等待 handler 直接存储原始指针，生命周期由调用方管理
-    awaitable_handlers_[header_flags][interface_id] = handler;
+    control_handlers_[header_flags][interface_id] = handler;
 }
 
 IMessageHandler* IpcRunLoop::GetHandler(
@@ -277,62 +276,44 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
         co_return;
     }
 
-    // 处理 HEARTBEAT RESPONSE：收到心跳回复时更新时间戳
-    if (header.GetInterfaceId()
-        == static_cast<uint32_t>(
-            HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT))
+    // 控制平面 handler 路由（使用 ControlHandlerContext，不依赖
+    // DistributedObjectManager）
+    auto control_it = control_handlers_.find(header.GetHeaderFlags());
+    if (control_it != control_handlers_.end())
     {
-        if (header.GetMessageType() == MessageType::RESPONSE)
+        auto& control_map = control_it->second;
+        auto  control_handler_it = control_map.find(header.GetInterfaceId());
+        if (control_handler_it != control_map.end())
         {
-            // 收到心跳回复，更新时间戳
-            if (connection_manager_)
-            {
-                // V3: 使用 source_session_id
-                connection_manager_->UpdateHeartbeatTimestamp(
-                    header.GetSourceSessionId());
-            }
-            co_return;
-        }
-        // REQUEST 继续交给 handler 处理
-    }
-
-    // 使用 header_flags + interface_id 路由
-    // 优先检查可等待 handler（协程版本，控制平面用）
-    auto awaitable_it = awaitable_handlers_.find(header.GetHeaderFlags());
-    if (awaitable_it != awaitable_handlers_.end())
-    {
-        auto& awaitable_map = awaitable_it->second;
-        auto awaitable_handler_it = awaitable_map.find(header.GetInterfaceId());
-        if (awaitable_handler_it != awaitable_map.end())
-        {
-            IAwaitableMessageHandler* awaitable_handler =
-                awaitable_handler_it->second;
+            IControlHandler* control_handler = control_handler_it->second;
             DAS_CORE_LOG_INFO(
-                "DispatchToHandlerCoroutine: found awaitable handler for interface_id={}",
+                "DispatchToHandlerCoroutine: found control handler for interface_id={}",
                 header.GetInterfaceId());
             try
             {
-                IpcResponseSender               sender(transport, *this);
-                static DistributedObjectManager null_manager;
-                StubContext ctx{null_manager, *this, {}, header};
-                auto result = co_await awaitable_handler
-                                  ->HandleMessage(header, body, sender, ctx);
+                IpcResponseSender     sender(transport, *this);
+                ControlHandlerContext ctrl_ctx{*this, header};
+                auto result = co_await control_handler->HandleMessage(
+                    header,
+                    body,
+                    sender,
+                    ctrl_ctx);
                 if (DAS::IsFailed(result))
                 {
                     DAS_CORE_LOG_WARN(
-                        "Awaitable handler returned error: {}",
+                        "Control handler returned error: {}",
                         result);
                 }
                 else
                 {
                     DAS_CORE_LOG_INFO(
-                        "DispatchToHandlerCoroutine: awaitable handler completed successfully");
+                        "DispatchToHandlerCoroutine: control handler completed successfully");
                 }
             }
             catch (const std::exception& e)
             {
                 DAS_CORE_LOG_ERROR(
-                    "DispatchToHandlerCoroutine: exception in awaitable HandleMessage: {}",
+                    "DispatchToHandlerCoroutine: exception in control HandleMessage: {}",
                     e.what());
             }
             co_return;

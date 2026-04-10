@@ -333,28 +333,28 @@ namespace Core
                     });
 
                 // 9. 注册消息处理器
-                // HandshakeHandler 处理所有控制平面消息（协程版本）
+                // HandshakeHandler 处理所有控制平面消息
                 // 注册为 CONTROL_PLANE 标志，按 interface_id 路由
                 // HELLO (interface_id=1)
-                run_loop_->RegisterHandler(
+                run_loop_->RegisterControlHandler(
                     HeaderFlags::CONTROL_PLANE,
                     static_cast<uint32_t>(
                         HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO),
                     handshake_handler_.Get());
                 // READY (interface_id=3)
-                run_loop_->RegisterHandler(
+                run_loop_->RegisterControlHandler(
                     HeaderFlags::CONTROL_PLANE,
                     static_cast<uint32_t>(
                         HandshakeInterfaceId::HANDSHAKE_IFACE_READY),
                     handshake_handler_.Get());
                 // HEARTBEAT (interface_id=6)
-                run_loop_->RegisterHandler(
+                run_loop_->RegisterControlHandler(
                     HeaderFlags::CONTROL_PLANE,
                     static_cast<uint32_t>(
                         HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT),
                     handshake_handler_.Get());
                 // GOODBYE (interface_id=7)
-                run_loop_->RegisterHandler(
+                run_loop_->RegisterControlHandler(
                     HeaderFlags::CONTROL_PLANE,
                     static_cast<uint32_t>(
                         HandshakeInterfaceId::HANDSHAKE_IFACE_GOODBYE),
