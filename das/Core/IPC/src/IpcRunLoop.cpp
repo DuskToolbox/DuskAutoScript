@@ -647,11 +647,7 @@ DasResult IpcRunLoop::PostSend(
             DefaultAsyncIpcTransport* transport = nullptr;
             if (launcher)
             {
-                auto* concrete = dynamic_cast<HostLauncher*>(launcher.Get());
-                if (concrete)
-                {
-                    transport = concrete->GetTransport();
-                }
+                transport = launcher->GetTransport();
             }
 
             // Fallback: direct transport (Host mode, lifetime managed by
@@ -873,7 +869,7 @@ DasResult IpcRunLoop::Run()
     return exit_code_.load();
 }
 
-DasResult IpcRunLoop::RegisterHostLauncher(DasPtr<IHostLauncher> launcher)
+DasResult IpcRunLoop::RegisterHostLauncher(DasPtr<HostLauncher> launcher)
 {
     if (!launcher)
     {
@@ -882,17 +878,7 @@ DasResult IpcRunLoop::RegisterHostLauncher(DasPtr<IHostLauncher> launcher)
 
     uint16_t session_id = launcher->GetSessionId();
 
-    // 获取具体 HostLauncher 类型以访问 GetTransport
-    auto* concrete = dynamic_cast<HostLauncher*>(launcher.Get());
-    if (!concrete)
-    {
-        DAS_CORE_LOG_ERROR(
-            "Failed to cast IHostLauncher to HostLauncher: session_id={}",
-            session_id);
-        return DAS_E_INVALID_ARGUMENT;
-    }
-
-    auto* transport = concrete->GetTransport();
+    auto* transport = launcher->GetTransport();
     if (!transport)
     {
         DAS_CORE_LOG_ERROR(
@@ -928,8 +914,8 @@ DasResult IpcRunLoop::RegisterHostLauncher(DasPtr<IHostLauncher> launcher)
 }
 
 void IpcRunLoop::StartAsyncReceiveForTransport(
-    uint16_t              session_id,
-    DasPtr<IHostLauncher> launcher)
+    uint16_t             session_id,
+    DasPtr<HostLauncher> launcher)
 {
     if (!launcher)
     {
@@ -939,17 +925,7 @@ void IpcRunLoop::StartAsyncReceiveForTransport(
         return;
     }
 
-    // 获取具体 HostLauncher 类型以访问 GetTransport
-    auto* concrete = dynamic_cast<HostLauncher*>(launcher.Get());
-    if (!concrete)
-    {
-        DAS_CORE_LOG_WARN(
-            "Failed to cast IHostLauncher to HostLauncher: session_id={}",
-            session_id);
-        return;
-    }
-
-    auto* transport = concrete->GetTransport();
+    auto* transport = launcher->GetTransport();
     if (!transport || !transport->IsConnected())
     {
         DAS_CORE_LOG_WARN(
@@ -974,17 +950,7 @@ void IpcRunLoop::StartAsyncReceiveForTransport(
                 {
                     // 从 launcher 获取 transport（安全，因为 launcher 被 DasPtr
                     // 持有）
-                    auto* concrete =
-                        dynamic_cast<HostLauncher*>(launcher.Get());
-                    if (!concrete)
-                    {
-                        DAS_CORE_LOG_DEBUG(
-                            "Failed to cast launcher, exiting: session_id={}",
-                            session_id);
-                        co_return;
-                    }
-
-                    auto* transport = concrete->GetTransport();
+                    auto* transport = launcher->GetTransport();
                     if (!transport)
                     {
                         DAS_CORE_LOG_DEBUG(
@@ -1105,28 +1071,76 @@ void IpcRunLoop::StartAsyncReceiveForTransport(
                             co_return;
                         }
 
-                        // 本地处理：投递到 inbound_queue
-                        if (!inbound_queue_)
+                        // 业务 RESPONSE 快速路径：直接在 IO 线程完成 pending
+                        // call，避免经过 BusinessThread 的额外调度开销
+                        if (header.GetMessageType() == MessageType::RESPONSE)
                         {
-                            DAS_CORE_LOG_WARN(
-                                "Client ReceiveLoop: inbound_queue_ is null, dropping message: session_id={}, interface_id={}",
-                                session_id,
-                                header.GetInterfaceId());
+                            CallKey call_key{
+                                header.GetSourceSessionId(),
+                                header.GetCallId()};
+                            std::unique_lock<std::mutex> lock(pending_mutex_);
+                            auto it = pending_calls_.find(call_key);
+                            if (it != pending_calls_.end()
+                                && it->second.on_complete)
+                            {
+                                lock.unlock();
+                                DAS_CORE_LOG_INFO(
+                                    "Business RESPONSE fast path: "
+                                    "source_session_id={}, call_id={}",
+                                    call_key.source_session_id,
+                                    call_key.call_id);
+                                CompletePendingCall(
+                                    call_key,
+                                    DAS_S_OK,
+                                    std::move(body),
+                                    header.GetFlags());
+                                // 已在 IO 线程完成，跳过 inbound_queue_
+                            }
+                            else
+                            {
+                                lock.unlock();
+                                // 无匹配的 pending call，仍投递到
+                                // inbound_queue_ 供 PumpUntilResponse 消费
+                                InboundMessage msg;
+                                msg.header = header;
+                                msg.body = std::move(body);
+                                auto push_result =
+                                    inbound_queue_->Push(std::move(msg));
+                                if (push_result != DAS_S_OK)
+                                {
+                                    DAS_CORE_LOG_ERROR(
+                                        "Client ReceiveLoop: failed to push to inbound_queue: session_id={}, interface_id={}, result={}",
+                                        session_id,
+                                        header.GetInterfaceId(),
+                                        push_result);
+                                }
+                            }
                         }
                         else
                         {
-                            InboundMessage msg;
-                            msg.header = header;
-                            msg.body = std::move(body);
-                            auto push_result =
-                                inbound_queue_->Push(std::move(msg));
-                            if (push_result != DAS_S_OK)
+                            // REQUEST/EVENT: 投递到 inbound_queue
+                            if (!inbound_queue_)
                             {
-                                DAS_CORE_LOG_ERROR(
-                                    "Client ReceiveLoop: failed to push to inbound_queue: session_id={}, interface_id={}, result={}",
+                                DAS_CORE_LOG_WARN(
+                                    "Client ReceiveLoop: inbound_queue_ is null, dropping message: session_id={}, interface_id={}",
                                     session_id,
-                                    header.GetInterfaceId(),
-                                    push_result);
+                                    header.GetInterfaceId());
+                            }
+                            else
+                            {
+                                InboundMessage msg;
+                                msg.header = header;
+                                msg.body = std::move(body);
+                                auto push_result =
+                                    inbound_queue_->Push(std::move(msg));
+                                if (push_result != DAS_S_OK)
+                                {
+                                    DAS_CORE_LOG_ERROR(
+                                        "Client ReceiveLoop: failed to push to inbound_queue: session_id={}, interface_id={}, result={}",
+                                        session_id,
+                                        header.GetInterfaceId(),
+                                        push_result);
+                                }
                             }
                         }
                     }

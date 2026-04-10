@@ -26,7 +26,7 @@ struct ConnectionManager::Impl
 {
     std::unordered_map<uint16_t, ConnectionInfo> connections_;
     // 存储 HostLauncher 的引用
-    std::unordered_map<uint16_t, DasPtr<IHostLauncher>> host_launchers_;
+    std::unordered_map<uint16_t, DasPtr<HostLauncher>> host_launchers_;
     // 直接传输层注册（用于 Host 模式，无需 HostLauncher）
     std::unordered_map<uint16_t, DefaultAsyncIpcTransport*> direct_transports_;
     // 共享内存池（每个连接一个，按 remote_id 索引）
@@ -193,8 +193,8 @@ DasResult ConnectionManager::GetConnection(
 }
 
 DasResult ConnectionManager::RegisterHostLauncher(
-    uint16_t              session_id,
-    DasPtr<IHostLauncher> launcher)
+    uint16_t             session_id,
+    DasPtr<HostLauncher> launcher)
 {
     if (!launcher)
     {
@@ -296,8 +296,8 @@ DasResult ConnectionManager::RegisterTransport(
 
     // Host side: 打开已存在的 SHM pool（deterministic name）
     // On Host side: main_session_id = remote_id, host_session_id = local_id_
-    std::string shm_name = "das_shm_" + std::to_string(session_id) + "_"
-                           + std::to_string(impl_->local_id_);
+    std::string       shm_name = "das_shm_" + std::to_string(session_id) + "_"
+                                 + std::to_string(impl_->local_id_);
     SharedMemoryPool* pool_ptr = nullptr;
     try
     {
@@ -346,7 +346,7 @@ DasResult ConnectionManager::RegisterTransport(
     return DAS_S_OK;
 }
 
-DasPtr<IHostLauncher> ConnectionManager::GetLauncher(uint16_t session_id) const
+DasPtr<HostLauncher> ConnectionManager::GetLauncher(uint16_t session_id) const
 {
     std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
 
@@ -387,27 +387,13 @@ DefaultAsyncIpcTransport* ConnectionManager::GetTransport(
         // 如果有 launcher，从 launcher 获取 transport
         if (conn_it->second.launcher)
         {
-            auto* concrete =
-                dynamic_cast<HostLauncher*>(conn_it->second.launcher.Get());
-            if (concrete)
-            {
-                return concrete->GetTransport();
-            }
+            return conn_it->second.launcher->GetTransport();
         }
         return nullptr;
     }
 
     // 从 HostLauncher 获取 Transport
-    auto* concrete = dynamic_cast<HostLauncher*>(launcher_it->second.Get());
-    if (!concrete)
-    {
-        DAS_CORE_LOG_WARN(
-            "Failed to cast IHostLauncher to HostLauncher for session_id = {}",
-            session_id);
-        return nullptr;
-    }
-
-    return concrete->GetTransport();
+    return launcher_it->second->GetTransport();
 }
 
 DasResult ConnectionManager::SetConnectionAlive(

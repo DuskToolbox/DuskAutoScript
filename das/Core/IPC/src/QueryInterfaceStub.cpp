@@ -107,7 +107,7 @@ DasResult QueryInterfaceStub::HandleMessage(
                 .SetTargetSessionId(header.GetSourceSessionId())
                 .SetErrorCode(static_cast<int32_t>(qi_result))
                 .Build();
-        sender.SendResponse(response_header, response_body);
+        sender.SendResponse(response_header, std::move(response_body));
         return qi_result;
     }
 
@@ -159,7 +159,7 @@ DasResult QueryInterfaceStub::HandleMessage(
             .SetTargetSessionId(header.GetSourceSessionId())
             .SetErrorCode(0)
             .Build();
-    sender.SendResponse(response_header, response_body);
+    sender.SendResponse(response_header, std::move(response_body));
 
     DAS_CORE_LOG_INFO(
         "[QUERY_INTERFACE] success: iid_hash = 0x{:08X}, "

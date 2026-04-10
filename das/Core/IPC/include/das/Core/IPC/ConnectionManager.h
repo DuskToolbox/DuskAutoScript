@@ -6,8 +6,8 @@
 #include <boost/interprocess/ipc/message_queue.hpp>
 #include <cstdint>
 #include <das/Core/IPC/AsyncIpcTransport.h>
+#include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/IpcErrors.h>
-#include <das/Core/IPC/MainProcess/IHostLauncher.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <das/IDasBase.h>
 #include <memory>
@@ -37,12 +37,12 @@ class IpcRunLoop;
  */
 struct ConnectionInfo
 {
-    uint16_t              host_id;
-    uint16_t              plugin_id;
-    bool                  is_alive;
-    uint64_t              last_heartbeat_ms;
-    DasPtr<IHostLauncher> launcher; ///< HostLauncher 实例（DasPtr 持有引用）
-    SharedMemoryPool*     shm_pool = nullptr; ///< 共享内存池（非拥有指针）
+    uint16_t             host_id;
+    uint16_t             plugin_id;
+    bool                 is_alive;
+    uint64_t             last_heartbeat_ms;
+    DasPtr<HostLauncher> launcher; ///< HostLauncher 实例（DasPtr 持有引用）
+    SharedMemoryPool*    shm_pool = nullptr; ///< 共享内存池（非拥有指针）
 };
 
 /**
@@ -107,8 +107,8 @@ public:
      * @return DasResult DAS_S_OK 成功
      */
     DasResult RegisterHostLauncher(
-        uint16_t              session_id,
-        DasPtr<IHostLauncher> launcher);
+        uint16_t             session_id,
+        DasPtr<HostLauncher> launcher);
 
     /**
      * @brief 取消注册 HostLauncher
@@ -119,12 +119,12 @@ public:
     DasResult UnregisterHostLauncher(uint16_t session_id);
 
     /**
-     * @brief 获取 IHostLauncher
+     * @brief 获取 HostLauncher
      *
      * @param session_id 目标会话ID
-     * @return DasPtr<IHostLauncher> HostLauncher 指针，不存在返回 nullptr
+     * @return DasPtr<HostLauncher> HostLauncher 指针，不存在返回 nullptr
      */
-    DasPtr<IHostLauncher> GetLauncher(uint16_t session_id) const;
+    DasPtr<HostLauncher> GetLauncher(uint16_t session_id) const;
 
     /**
      * @brief 获取连接的传输层（委托给 HostLauncher::GetTransport()）

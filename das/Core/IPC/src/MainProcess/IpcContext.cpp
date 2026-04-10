@@ -194,7 +194,7 @@ namespace Core
                     launcher->SetIpcContext(this);
 
                     // Store DasPtr internally for auto-registration after Start
-                    launcher_ = DAS::DasPtr<IHostLauncher>(launcher);
+                    launcher_ = DAS::DasPtr<HostLauncher>(launcher);
 
                     *pp_out_launcher = launcher;
                     return DAS_S_OK;

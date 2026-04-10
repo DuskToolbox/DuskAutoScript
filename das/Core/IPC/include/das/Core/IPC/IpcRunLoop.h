@@ -29,8 +29,8 @@
 #include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/DefaultAsyncIpcTransport.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
+#include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/IpcResponseSender.h>
-#include <das/Core/IPC/MainProcess/IHostLauncher.h>
 
 DAS_CORE_IPC_NS_BEGIN
 
@@ -39,7 +39,6 @@ DAS_CORE_IPC_NS_BEGIN
 class IMessageHandler;
 class IAwaitableMessageHandler;
 class ConnectionManager;
-class HostLauncher;
 class IpcRunLoop; // Forward declaration for templates
 
 namespace Host
@@ -382,7 +381,7 @@ public:
      * @param launcher HostLauncher 实例（DasPtr 内部用 DasPtr 管理生命周期）
      * @return DasResult DAS_S_OK 成功
      */
-    DasResult RegisterHostLauncher(DasPtr<IHostLauncher> launcher);
+    DasResult RegisterHostLauncher(DasPtr<HostLauncher> launcher);
 
     friend class ::Das::Core::IPC::Host::HandshakeHandler;
 
@@ -420,8 +419,8 @@ public:
      * @param launcher HostLauncher 的 DasPtr
      */
     void StartAsyncReceiveForTransport(
-        uint16_t              session_id,
-        DasPtr<IHostLauncher> launcher);
+        uint16_t             session_id,
+        DasPtr<HostLauncher> launcher);
 
     /**
      * @brief 调度超时检查定时器

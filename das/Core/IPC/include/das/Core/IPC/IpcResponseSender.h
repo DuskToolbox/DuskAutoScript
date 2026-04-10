@@ -77,6 +77,19 @@ public:
         const std::vector<uint8_t>&      body);
 
     /**
+     * @brief 同步发送响应（move 语义版本）
+     *
+     * 直接接管 body 的所有权，避免不必要的拷贝。
+     *
+     * @param header 响应消息头
+     * @param body 响应消息体（右值引用，会被 move）
+     * @return DasResult 发送结果
+     */
+    DasResult SendResponse(
+        const ValidatedIPCMessageHeader& header,
+        std::vector<uint8_t>&&           body);
+
+    /**
      * @brief 异步发送响应（协程版本，用于 IO 线程上下文）
      *
      * IO 线程中的协程 handler 使用此方法发送响应，
@@ -89,6 +102,19 @@ public:
     boost::asio::awaitable<DasResult> SendResponseAsync(
         const ValidatedIPCMessageHeader& header,
         const std::vector<uint8_t>&      body);
+
+    /**
+     * @brief 异步发送响应（move 语义版本）
+     *
+     * 直接接管 body 的所有权，避免不必要的拷贝。
+     *
+     * @param header 响应消息头
+     * @param body 响应消息体（右值引用，会被 move）
+     * @return boost::asio::awaitable<DasResult> 发送结果
+     */
+    boost::asio::awaitable<DasResult> SendResponseAsync(
+        const ValidatedIPCMessageHeader& header,
+        std::vector<uint8_t>&&           body);
 
 private:
     DefaultAsyncIpcTransport* transport_ = nullptr; // IO 线程模式

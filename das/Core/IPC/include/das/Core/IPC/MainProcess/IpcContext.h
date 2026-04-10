@@ -123,7 +123,7 @@ namespace Core
 
                 /// Internal holder for created launcher (DasPtr for refcount
                 /// management)
-                DAS::DasPtr<IHostLauncher> launcher_;
+                DAS::DasPtr<HostLauncher> launcher_;
 
                 std::atomic<uint16_t> next_session_id_{2};
                 mutable std::mutex    allocated_ids_mutex_;
