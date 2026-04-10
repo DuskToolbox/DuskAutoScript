@@ -1,7 +1,9 @@
 #include <das/Core/IPC/DasVariantVectorByValueProxy.h>
 
 #include <cstring>
+#include <das/Core/IPC/InterfaceParamSerialization.h>
 #include <das/Core/IPC/IpcRunLoop.h>
+#include <das/Core/IPC/ObjectId.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
@@ -672,21 +674,101 @@ DasResult DasVariantVectorByValueProxy::SetComponent(
     uint64_t                               index,
     ::Das::PluginInterface::IDasComponent* in_component)
 {
-    (void)index;
-    (void)in_component;
-    // Component/BASE write-back not yet supported — same limitation as stub
-    DAS_CORE_LOG_ERROR("SetComponent by-value not yet supported in proxy");
-    return DAS_E_NO_IMPLEMENTATION;
+    DasResult result = EnsureDataLoaded(10);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+    if (index >= cache_.size())
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    // Serialize interface pointer to ObjectId
+    ObjectId oid{};
+    bool     newly_registered = false;
+    result = SerializeInInterfaceParam(
+        in_component,
+        GetObjectManager(),
+        oid,
+        &newly_registered);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+
+    // Update local cache
+    cache_[index].type = ::Das::ExportInterface::DAS_VARIANT_TYPE_COMPONENT;
+    cache_[index].object_id = oid;
+    cache_[index].interface_id =
+        ComputeInterfaceId(DasIidOf<Das::PluginInterface::IDasComponent>());
+    cache_[index].base_ptr = DasPtr<IDasBase>::Attach(in_component);
+    if (in_component != nullptr)
+    {
+        in_component->AddRef();
+    }
+
+    // Fire-and-forget:
+    // [index:8B][session_id:2B][generation:2B][local_id:4B][interface_id:4B]
+    MemorySerializerWriter writer;
+    writer.WriteUInt64(index);
+    writer.WriteUInt16(oid.session_id);
+    writer.WriteUInt16(oid.generation);
+    writer.WriteUInt32(oid.local_id);
+    writer.WriteUInt32(cache_[index].interface_id);
+    return SendWriteBack(
+        10,
+        writer.GetBuffer().data(),
+        writer.GetBuffer().size());
 }
 
 DasResult DasVariantVectorByValueProxy::SetBase(
     uint64_t    index,
     ::IDasBase* in_base)
 {
-    (void)index;
-    (void)in_base;
-    DAS_CORE_LOG_ERROR("SetBase by-value not yet supported in proxy");
-    return DAS_E_NO_IMPLEMENTATION;
+    DasResult result = EnsureDataLoaded(11);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+    if (index >= cache_.size())
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    ObjectId oid{};
+    bool     newly_registered = false;
+    result = SerializeInInterfaceParam(
+        in_base,
+        GetObjectManager(),
+        oid,
+        &newly_registered);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+
+    cache_[index].type = ::Das::ExportInterface::DAS_VARIANT_TYPE_BASE;
+    cache_[index].object_id = oid;
+    cache_[index].interface_id = ComputeInterfaceId(DasIidOf<IDasBase>());
+    cache_[index].base_ptr = DasPtr<IDasBase>::Attach(in_base);
+    if (in_base != nullptr)
+    {
+        in_base->AddRef();
+    }
+
+    // Fire-and-forget:
+    // [index:8B][session_id:2B][generation:2B][local_id:4B][interface_id:4B]
+    MemorySerializerWriter writer;
+    writer.WriteUInt64(index);
+    writer.WriteUInt16(oid.session_id);
+    writer.WriteUInt16(oid.generation);
+    writer.WriteUInt32(oid.local_id);
+    writer.WriteUInt32(cache_[index].interface_id);
+    return SendWriteBack(
+        11,
+        writer.GetBuffer().data(),
+        writer.GetBuffer().size());
 }
 
 DasResult DasVariantVectorByValueProxy::PushBackInt(int64_t in_int)
@@ -798,16 +880,92 @@ DasResult DasVariantVectorByValueProxy::PushBackBool(bool in_bool)
 DasResult DasVariantVectorByValueProxy::PushBackComponent(
     ::Das::PluginInterface::IDasComponent* in_component)
 {
-    (void)in_component;
-    DAS_CORE_LOG_ERROR("PushBackComponent by-value not yet supported in proxy");
-    return DAS_E_NO_IMPLEMENTATION;
+    DasResult result = EnsureDataLoaded(16);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+
+    ObjectId oid{};
+    bool     newly_registered = false;
+    result = SerializeInInterfaceParam(
+        in_component,
+        GetObjectManager(),
+        oid,
+        &newly_registered);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+
+    CachedVariant entry;
+    entry.type = ::Das::ExportInterface::DAS_VARIANT_TYPE_COMPONENT;
+    entry.object_id = oid;
+    entry.interface_id =
+        ComputeInterfaceId(DasIidOf<Das::PluginInterface::IDasComponent>());
+    entry.base_ptr = DasPtr<IDasBase>::Attach(in_component);
+    if (in_component != nullptr)
+    {
+        in_component->AddRef();
+    }
+    cache_.push_back(std::move(entry));
+
+    // Fire-and-forget:
+    // [session_id:2B][generation:2B][local_id:4B][interface_id:4B]
+    MemorySerializerWriter writer;
+    writer.WriteUInt16(oid.session_id);
+    writer.WriteUInt16(oid.generation);
+    writer.WriteUInt32(oid.local_id);
+    writer.WriteUInt32(
+        ComputeInterfaceId(DasIidOf<Das::PluginInterface::IDasComponent>()));
+    return SendWriteBack(
+        16,
+        writer.GetBuffer().data(),
+        writer.GetBuffer().size());
 }
 
 DasResult DasVariantVectorByValueProxy::PushBackBase(::IDasBase* in_base)
 {
-    (void)in_base;
-    DAS_CORE_LOG_ERROR("PushBackBase by-value not yet supported in proxy");
-    return DAS_E_NO_IMPLEMENTATION;
+    DasResult result = EnsureDataLoaded(17);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+
+    ObjectId oid{};
+    bool     newly_registered = false;
+    result = SerializeInInterfaceParam(
+        in_base,
+        GetObjectManager(),
+        oid,
+        &newly_registered);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+
+    CachedVariant entry;
+    entry.type = ::Das::ExportInterface::DAS_VARIANT_TYPE_BASE;
+    entry.object_id = oid;
+    entry.interface_id = ComputeInterfaceId(DasIidOf<IDasBase>());
+    entry.base_ptr = DasPtr<IDasBase>::Attach(in_base);
+    if (in_base != nullptr)
+    {
+        in_base->AddRef();
+    }
+    cache_.push_back(std::move(entry));
+
+    // Fire-and-forget:
+    // [session_id:2B][generation:2B][local_id:4B][interface_id:4B]
+    MemorySerializerWriter writer;
+    writer.WriteUInt16(oid.session_id);
+    writer.WriteUInt16(oid.generation);
+    writer.WriteUInt32(oid.local_id);
+    writer.WriteUInt32(ComputeInterfaceId(DasIidOf<IDasBase>()));
+    return SendWriteBack(
+        17,
+        writer.GetBuffer().data(),
+        writer.GetBuffer().size());
 }
 
 DasResult DasVariantVectorByValueProxy::RemoveAt(uint64_t index)

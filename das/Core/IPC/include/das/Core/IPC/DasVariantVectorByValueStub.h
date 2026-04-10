@@ -66,14 +66,16 @@ private:
         uint16_t       method_id,
         void*          impl,
         const uint8_t* params,
-        size_t         params_size);
+        size_t         params_size,
+        StubContext&   ctx);
 
     /// PushBack 方法：从 params 读取 value，调用 impl 的 PushBack 方法
     DasResult HandlePushBack(
         uint16_t       method_id,
         void*          impl,
         const uint8_t* params,
-        size_t         params_size);
+        size_t         params_size,
+        StubContext&   ctx);
 };
 
 DAS_CORE_IPC_NS_END

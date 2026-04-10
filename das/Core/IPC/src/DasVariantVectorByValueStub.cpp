@@ -1,10 +1,16 @@
 #include <das/Core/IPC/DasVariantVectorByValueStub.h>
 
+#include <das/Core/IPC/BusinessThread.h>
+#include <das/Core/IPC/InterfaceParamSerialization.h>
+#include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/MemorySerializer.h>
+#include <das/Core/IPC/ObjectId.h>
 #include <das/Core/Logger/Logger.h>
+#include <das/DasGuidHolder.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/DasTypes.hpp>
+#include <das/_autogen/idl/ipc/IpcProxyFactory.h>
 
 #include <cstring>
 
@@ -52,6 +58,38 @@ namespace
         }
         std::memcpy(&out, params + offset, sizeof(uint64_t));
         offset += sizeof(uint64_t);
+        return true;
+    }
+
+    /// Read uint32_t from params at given offset
+    bool ReadUInt32(
+        const uint8_t* params,
+        size_t         params_size,
+        size_t&        offset,
+        uint32_t&      out)
+    {
+        if (offset + sizeof(uint32_t) > params_size)
+        {
+            return false;
+        }
+        std::memcpy(&out, params + offset, sizeof(uint32_t));
+        offset += sizeof(uint32_t);
+        return true;
+    }
+
+    /// Read uint16_t from params at given offset
+    bool ReadUInt16(
+        const uint8_t* params,
+        size_t         params_size,
+        size_t&        offset,
+        uint16_t&      out)
+    {
+        if (offset + sizeof(uint16_t) > params_size)
+        {
+            return false;
+        }
+        std::memcpy(&out, params + offset, sizeof(uint16_t));
+        offset += sizeof(uint16_t);
         return true;
     }
 
@@ -279,13 +317,13 @@ DasResult DasVariantVectorByValueStub::DispatchMethod(
     if (method_id >= 6 && method_id <= 11)
     {
         // Set methods (6-11): read index + value, call impl's Set method
-        return HandleSet(method_id, impl, params, params_size);
+        return HandleSet(method_id, impl, params, params_size, ctx);
     }
 
     if (method_id >= 12 && method_id <= 17)
     {
         // PushBack methods (12-17): read value, call impl's PushBack method
-        return HandlePushBack(method_id, impl, params, params_size);
+        return HandlePushBack(method_id, impl, params, params_size, ctx);
     }
 
     DAS_CORE_LOG_ERROR("Unknown method_id = {}", method_id);
@@ -342,7 +380,8 @@ DasResult DasVariantVectorByValueStub::HandleSet(
     uint16_t       method_id,
     void*          impl,
     const uint8_t* params,
-    size_t         params_size)
+    size_t         params_size,
+    StubContext&   ctx)
 {
     auto* variant_vector =
         static_cast<Das::ExportInterface::IDasVariantVector*>(impl);
@@ -409,25 +448,69 @@ DasResult DasVariantVectorByValueStub::HandleSet(
     }
     case 10: // SetComponent — COMPONENT wire format (12B)
     {
-        // Read ObjectId (8B) + interface_id (4B)
-        if (offset + 12 > params_size)
+        uint16_t session_id = 0;
+        uint16_t generation = 0;
+        uint32_t local_id = 0;
+        uint32_t iface_id = 0;
+        if (!ReadUInt16(params, params_size, offset, session_id)
+            || !ReadUInt16(params, params_size, offset, generation)
+            || !ReadUInt32(params, params_size, offset, local_id)
+            || !ReadUInt32(params, params_size, offset, iface_id))
         {
             return DAS_E_IPC_DESERIALIZATION_FAILED;
         }
-        // For SetComponent, we need an IDasComponent*.
-        // Since we can't resolve ObjectId to a pointer in the stub directly,
-        // log and return not supported for now.
-        DAS_CORE_LOG_ERROR("SetComponent by-value not yet supported in stub");
-        return DAS_E_NO_IMPLEMENTATION;
+        ObjectId oid{session_id, generation, local_id};
+        if (IsNullObjectId(oid))
+        {
+            return variant_vector->SetComponent(index, nullptr);
+        }
+        IDasBase* base_ptr = nullptr;
+        DasResult result = DeserializeInInterfaceParam(
+            EncodeObjectId(oid),
+            iface_id,
+            ctx.object_manager,
+            ctx.run_loop,
+            ctx.business_thread,
+            &base_ptr);
+        if (DAS::IsFailed(result))
+        {
+            return result;
+        }
+        auto* component =
+            static_cast<Das::PluginInterface::IDasComponent*>(base_ptr);
+        return variant_vector->SetComponent(index, component);
     }
-    case 11: // SetBase — BASE wire format (12B), same layout as COMPONENT
+    case 11: // SetBase — BASE wire format (12B)
     {
-        if (offset + 12 > params_size)
+        uint16_t session_id = 0;
+        uint16_t generation = 0;
+        uint32_t local_id = 0;
+        uint32_t iface_id = 0;
+        if (!ReadUInt16(params, params_size, offset, session_id)
+            || !ReadUInt16(params, params_size, offset, generation)
+            || !ReadUInt32(params, params_size, offset, local_id)
+            || !ReadUInt32(params, params_size, offset, iface_id))
         {
             return DAS_E_IPC_DESERIALIZATION_FAILED;
         }
-        DAS_CORE_LOG_ERROR("SetBase by-value not yet supported in stub");
-        return DAS_E_NO_IMPLEMENTATION;
+        ObjectId oid{session_id, generation, local_id};
+        if (IsNullObjectId(oid))
+        {
+            return variant_vector->SetBase(index, nullptr);
+        }
+        IDasBase* base_ptr = nullptr;
+        DasResult result = DeserializeInInterfaceParam(
+            EncodeObjectId(oid),
+            iface_id,
+            ctx.object_manager,
+            ctx.run_loop,
+            ctx.business_thread,
+            &base_ptr);
+        if (DAS::IsFailed(result))
+        {
+            return result;
+        }
+        return variant_vector->SetBase(index, base_ptr);
     }
     default:
         DAS_CORE_LOG_ERROR("HandleSet: unexpected method_id = {}", method_id);
@@ -439,7 +522,8 @@ DasResult DasVariantVectorByValueStub::HandlePushBack(
     uint16_t       method_id,
     void*          impl,
     const uint8_t* params,
-    size_t         params_size)
+    size_t         params_size,
+    StubContext&   ctx)
 {
     auto* variant_vector =
         static_cast<Das::ExportInterface::IDasVariantVector*>(impl);
@@ -496,24 +580,69 @@ DasResult DasVariantVectorByValueStub::HandlePushBack(
     }
     case 16: // PushBackComponent
     {
-        // COMPONENT wire format (12B)
-        if (offset + 12 > params_size)
+        uint16_t session_id = 0;
+        uint16_t generation = 0;
+        uint32_t local_id = 0;
+        uint32_t iface_id = 0;
+        if (!ReadUInt16(params, params_size, offset, session_id)
+            || !ReadUInt16(params, params_size, offset, generation)
+            || !ReadUInt32(params, params_size, offset, local_id)
+            || !ReadUInt32(params, params_size, offset, iface_id))
         {
             return DAS_E_IPC_DESERIALIZATION_FAILED;
         }
-        DAS_CORE_LOG_ERROR(
-            "PushBackComponent by-value not yet supported in stub");
-        return DAS_E_NO_IMPLEMENTATION;
+        ObjectId oid{session_id, generation, local_id};
+        if (IsNullObjectId(oid))
+        {
+            return variant_vector->PushBackComponent(nullptr);
+        }
+        IDasBase* base_ptr = nullptr;
+        DasResult result = DeserializeInInterfaceParam(
+            EncodeObjectId(oid),
+            iface_id,
+            ctx.object_manager,
+            ctx.run_loop,
+            ctx.business_thread,
+            &base_ptr);
+        if (DAS::IsFailed(result))
+        {
+            return result;
+        }
+        auto* component =
+            static_cast<Das::PluginInterface::IDasComponent*>(base_ptr);
+        return variant_vector->PushBackComponent(component);
     }
     case 17: // PushBackBase
     {
-        // BASE wire format (12B)
-        if (offset + 12 > params_size)
+        uint16_t session_id = 0;
+        uint16_t generation = 0;
+        uint32_t local_id = 0;
+        uint32_t iface_id = 0;
+        if (!ReadUInt16(params, params_size, offset, session_id)
+            || !ReadUInt16(params, params_size, offset, generation)
+            || !ReadUInt32(params, params_size, offset, local_id)
+            || !ReadUInt32(params, params_size, offset, iface_id))
         {
             return DAS_E_IPC_DESERIALIZATION_FAILED;
         }
-        DAS_CORE_LOG_ERROR("PushBackBase by-value not yet supported in stub");
-        return DAS_E_NO_IMPLEMENTATION;
+        ObjectId oid{session_id, generation, local_id};
+        if (IsNullObjectId(oid))
+        {
+            return variant_vector->PushBackBase(nullptr);
+        }
+        IDasBase* base_ptr = nullptr;
+        DasResult result = DeserializeInInterfaceParam(
+            EncodeObjectId(oid),
+            iface_id,
+            ctx.object_manager,
+            ctx.run_loop,
+            ctx.business_thread,
+            &base_ptr);
+        if (DAS::IsFailed(result))
+        {
+            return result;
+        }
+        return variant_vector->PushBackBase(base_ptr);
     }
     default:
         DAS_CORE_LOG_ERROR(
