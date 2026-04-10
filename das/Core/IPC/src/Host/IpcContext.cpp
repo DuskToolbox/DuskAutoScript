@@ -218,8 +218,8 @@ namespace Core
                 // 5. 设置 inbound_queue 到 IpcRunLoop
                 run_loop_->SetInboundQueue(&inbound_queue_);
 
-                // 5.5 DistributedObjectManager 绑定 IpcRunLoop
-                object_manager_.SetRunLoop(run_loop_.get());
+                // 5.5 DistributedObjectManager 设置 session_id
+                object_manager_.SetSessionId(session_id_);
 
                 // 6. 创建 BusinessThread
                 business_thread_ = std::make_shared<BusinessThread>(
@@ -272,6 +272,7 @@ namespace Core
                     [this](const ConnectedClient& client)
                     {
                         session_id_ = client.session_id;
+                        object_manager_.SetSessionId(client.session_id);
                         if (command_handler_)
                         {
                             command_handler_->SetSessionId(client.session_id);

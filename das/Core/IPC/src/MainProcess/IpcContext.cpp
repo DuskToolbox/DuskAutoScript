@@ -64,8 +64,8 @@ namespace Core
                     allocated_ids_[reserved_id] = true;
                 }
 
-                // 5. DistributedObjectManager 绑定 IpcRunLoop
-                object_manager_.SetRunLoop(runloop_.get());
+                // 5. DistributedObjectManager 设置 session_id
+                object_manager_.SetSessionId(1);
 
                 // 6. Create BusinessThread
                 business_thread_ = std::make_shared<BusinessThread>(
