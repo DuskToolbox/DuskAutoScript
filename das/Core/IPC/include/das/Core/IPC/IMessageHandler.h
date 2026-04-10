@@ -18,6 +18,23 @@ class IpcRunLoop;
 class BusinessThread;
 
 /**
+ * @brief 控制平面 handler 上下文
+ *
+ * 轻量级上下文，仅包含控制平面 handler 所需的运行时引用。
+ * 不包含 DistributedObjectManager，因为控制平面 handler 不使用对象管理。
+ */
+struct ControlHandlerContext
+{
+    ControlHandlerContext(IpcRunLoop& rl, const ValidatedIPCMessageHeader& hdr)
+        : run_loop(rl), header(hdr)
+    {
+    }
+
+    IpcRunLoop&                      run_loop;
+    const ValidatedIPCMessageHeader& header;
+};
+
+/**
  * @brief Stub 上下文结构体
  *
  * 打包业务 handler 所需的运行时引用，避免虚函数签名参数膨胀。
@@ -41,6 +58,31 @@ struct StubContext
     const ValidatedIPCMessageHeader& header;
     uint16_t                         response_flags =
         0; ///< 由 Handle* 方法设置，传递给响应头 flags 字段
+};
+
+/**
+ * @brief 控制平面消息处理器接口
+ *
+ * 用于控制平面 handler（如 HandshakeHandler），不需要
+ * DistributedObjectManager。 使用 ControlHandlerContext 替代
+ * StubContext，消除对 DistributedObjectManager 的依赖。
+ */
+struct IControlHandler
+{
+    virtual ~IControlHandler() = default;
+
+    [[nodiscard]]
+    virtual uint32_t AddRef() = 0;
+    [[nodiscard]]
+    virtual uint32_t Release() = 0;
+    [[nodiscard]]
+    virtual uint32_t GetInterfaceId() const = 0;
+
+    virtual boost::asio::awaitable<DasResult> HandleMessage(
+        const ValidatedIPCMessageHeader& header,
+        const std::vector<uint8_t>&      body,
+        IpcResponseSender&               sender,
+        ControlHandlerContext&           ctx) = 0;
 };
 
 /**
