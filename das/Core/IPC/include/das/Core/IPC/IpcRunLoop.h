@@ -349,17 +349,6 @@ public:
     void SetInboundQueue(IpcMessageQueue<InboundMessage>* queue);
 
     /**
-     * @brief 设置分布式对象管理器（用于控制平面 handler）
-     *
-     * 由 IpcContext 在初始化时调用，将 object_manager 指针传递给 IpcRunLoop。
-     * IpcRunLoop 不持有此管理器，仅保存指针用于传递给控制平面 handler。
-     * 控制平面 handler 不使用此参数，但接口需要此参数。
-     *
-     * @param object_manager 分布式对象管理器指针（IpcContext 持有）
-     */
-    void SetObjectManager(DistributedObjectManager* object_manager);
-
-    /**
      * @brief Register a pending call entry (on_complete filled later by
      * AwaitResponseSender)
      *
@@ -578,10 +567,6 @@ public:
     /// 入站消息队列指针（非持有，由 IpcContext 管理）
     /// 用于 IO 线程将业务消息分流到 inbound queue
     IpcMessageQueue<InboundMessage>* inbound_queue_ = nullptr;
-
-    /// 分布式对象管理器指针（非持有，由 IpcContext 管理）
-    /// 用于传递给控制平面 handler（控制平面 handler 不使用此参数）
-    DistributedObjectManager* object_manager_ = nullptr;
 
 private:
     /// @brief 发送失败时构造失败 RESPONSE 并推入 inbound_queue_

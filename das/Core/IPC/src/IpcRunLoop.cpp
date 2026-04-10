@@ -307,9 +307,7 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
             {
                 IpcResponseSender               sender(transport, *this);
                 static DistributedObjectManager null_manager;
-                DistributedObjectManager&       obj_mgr =
-                    object_manager_ ? *object_manager_ : null_manager;
-                StubContext ctx{obj_mgr, *this, {}, header};
+                StubContext ctx{null_manager, *this, {}, header};
                 auto result = co_await awaitable_handler
                                   ->HandleMessage(header, body, sender, ctx);
                 if (DAS::IsFailed(result))
@@ -345,13 +343,9 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
             header.GetInterfaceId());
         try
         {
-            IpcResponseSender sender(transport, *this);
-            // 控制平面 handler 不使用 object_manager，但接口需要此参数
-            // 如果 object_manager_ 为 nullptr，使用一个静态的空对象
+            IpcResponseSender               sender(transport, *this);
             static DistributedObjectManager null_manager;
-            DistributedObjectManager&       obj_mgr =
-                object_manager_ ? *object_manager_ : null_manager;
-            StubContext ctx{obj_mgr, *this, {}, header};
+            StubContext ctx{null_manager, *this, {}, header};
             auto result = handler->HandleMessage(header, body, sender, ctx);
             if (DAS::IsFailed(result))
             {
@@ -625,11 +619,6 @@ void IpcRunLoop::SetSessionId(uint16_t session_id)
 void IpcRunLoop::SetInboundQueue(IpcMessageQueue<InboundMessage>* queue)
 {
     inbound_queue_ = queue;
-}
-
-void IpcRunLoop::SetObjectManager(DistributedObjectManager* object_manager)
-{
-    object_manager_ = object_manager;
 }
 
 DasResult IpcRunLoop::PostSend(
