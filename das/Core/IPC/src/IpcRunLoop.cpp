@@ -33,38 +33,14 @@
 
 DAS_CORE_IPC_NS_BEGIN
 
-// 工厂函数实现
-DAS::Utils::Expected<std::unique_ptr<IpcRunLoop>> IpcRunLoop::Create(
-    bool enable_heartbeat)
+IpcRunLoop::IpcRunLoop(
+    bool                             enable_heartbeat,
+    IpcMessageQueue<InboundMessage>* inbound_queue)
+    : enable_heartbeat_(enable_heartbeat), inbound_queue_(inbound_queue)
 {
-    auto instance = std::unique_ptr<IpcRunLoop>(new IpcRunLoop());
-    auto result = instance->Initialize(enable_heartbeat);
-    if (result != DAS_S_OK)
-    {
-        return DAS::Utils::MakeUnexpected(result);
-    }
-    return instance;
-}
-
-IpcRunLoop::~IpcRunLoop()
-{
-    // 正确调用 Uninitialize() 而非 RequestStop()
-    Uninitialize();
-}
-
-DasResult IpcRunLoop::Initialize(bool enable_heartbeat)
-{
-    enable_heartbeat_ = enable_heartbeat;
     io_context_ = std::make_unique<boost::asio::io_context>();
-    // 不再创建 async_transport_，IpcRunLoop 只提供 io_context 基础设施
-    // 所有 transport 由外部管理：
-    // - MainProcess 模式：HostLauncher 持有 transport
-    // - Host 模式：IpcContext 持有 transport
     timeout_timer_ = std::make_unique<boost::asio::steady_timer>(*io_context_);
 
-    // Create ConnectionManager for transport routing
-    // Used in both MainProcess mode (HostLauncher registration) and Host mode
-    // (direct transport registration after handshake)
     connection_manager_ =
         std::make_unique<ConnectionManager>(1); // local_id = 1 for MainProcess
 
@@ -88,7 +64,6 @@ DasResult IpcRunLoop::Initialize(bool enable_heartbeat)
             &s_variant_vector_stub);
     }
 
-    // Register QUERY_INTERFACE handler for remote QueryInterface calls
     {
         static QueryInterfaceStub s_query_interface_stub;
         RegisterHandler(
@@ -96,24 +71,18 @@ DasResult IpcRunLoop::Initialize(bool enable_heartbeat)
             static_cast<uint32_t>(IpcCommandType::QUERY_INTERFACE),
             &s_query_interface_stub);
     }
-
-    return DAS_S_OK;
 }
 
-void IpcRunLoop::Uninitialize()
+IpcRunLoop::~IpcRunLoop()
 {
     RequestStop();
 
-    // 清理 ConnectionManager
-    // unique_ptr will automatically call destructor which calls Uninitialize()
     if (connection_manager_)
     {
         connection_manager_->StopHeartbeatThread();
         connection_manager_.reset();
     }
 
-    // 确保所有异步操作都已完成
-    // 如果 io_context 仍在运行（理论上不应该）。强制停止
     if (io_context_ && !io_context_->stopped())
     {
         io_context_->stop();
@@ -121,7 +90,6 @@ void IpcRunLoop::Uninitialize()
 
     work_guard_.reset();
     timeout_timer_.reset();
-    // async_transport_ 已移除，不再重置
     io_context_.reset();
 }
 
@@ -192,8 +160,9 @@ void IpcRunLoop::RegisterHandler(
     {
         return;
     }
-    // 可等待 handler 直接存储原始指针，生命周期由调用方管理
-    awaitable_handlers_[header_flags][interface_id] = handler;
+    // 通过 DasPtr 构造（内部调用 AddRef）管理引用计数
+    awaitable_handlers_[header_flags][interface_id] =
+        DasPtr<IAwaitableMessageHandler>(handler);
 }
 
 IMessageHandler* IpcRunLoop::GetHandler(
@@ -300,7 +269,7 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
         if (awaitable_handler_it != awaitable_map.end())
         {
             IAwaitableMessageHandler* awaitable_handler =
-                awaitable_handler_it->second;
+                awaitable_handler_it->second.Get();
             DAS_CORE_LOG_INFO(
                 "DispatchToHandlerCoroutine: found awaitable handler for interface_id={}",
                 header.GetInterfaceId());
@@ -310,7 +279,8 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
                 static DistributedObjectManager null_manager;
                 static RemoteObjectRegistry     null_registry;
                 DistributedObjectManager&       obj_mgr =
-                    object_manager_ ? *object_manager_ : null_manager;
+                    proxy_factory_ ? proxy_factory_->GetObjectManager()
+                                   : null_manager;
                 static ProxyFactory null_proxy_factory{
                     null_registry,
                     *this,
@@ -353,13 +323,12 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
             header.GetInterfaceId());
         try
         {
-            IpcResponseSender sender(transport, *this);
-            // 控制平面 handler 不使用 object_manager，但接口需要此参数
-            // 如果 object_manager_ 为 nullptr，使用一个静态的空对象
+            IpcResponseSender               sender(transport, *this);
             static DistributedObjectManager null_manager;
             static RemoteObjectRegistry     null_registry;
             DistributedObjectManager&       obj_mgr =
-                object_manager_ ? *object_manager_ : null_manager;
+                proxy_factory_ ? proxy_factory_->GetObjectManager()
+                               : null_manager;
             static ProxyFactory null_proxy_factory{
                 null_registry,
                 *this,
@@ -635,16 +604,6 @@ bool IpcRunLoop::IsRunning() const { return running_.load(); }
 void IpcRunLoop::SetSessionId(uint16_t session_id)
 {
     local_session_id_ = session_id;
-}
-
-void IpcRunLoop::SetInboundQueue(IpcMessageQueue<InboundMessage>* queue)
-{
-    inbound_queue_ = queue;
-}
-
-void IpcRunLoop::SetObjectManager(DistributedObjectManager* object_manager)
-{
-    object_manager_ = object_manager;
 }
 
 void IpcRunLoop::SetProxyFactory(ProxyFactory* proxy_factory)

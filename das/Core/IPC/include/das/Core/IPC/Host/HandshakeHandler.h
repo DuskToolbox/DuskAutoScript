@@ -8,7 +8,6 @@
 #include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/IMessageHandler.h>
 #include <das/Core/IPC/IpcResponseSender.h>
-#include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <das/DasApi.h>
 #include <das/DasConfig.h>
@@ -189,8 +188,6 @@ namespace Core
                  */
                 void SetOnShutdownRequested(ShutdownRequestedCallback callback);
 
-                void SetRunLoop(IpcRunLoop* run_loop) { run_loop_ = run_loop; }
-
                 void SetReleaseSessionCallback(ReleaseSessionCallback cb)
                 {
                     release_session_callback_ = std::move(cb);
@@ -326,7 +323,6 @@ namespace Core
                     on_shutdown_requested_; ///< 关闭请求回调（收到 GOODBYE
                                             ///< 时触发）
 
-                IpcRunLoop*            run_loop_ = nullptr;
                 ReleaseSessionCallback release_session_callback_;
             };
 

@@ -12,7 +12,6 @@
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <das/Core/Utils/StdExecution.h>
 #include <das/IDasBase.h>
-#include <das/Utils/Expected.h>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -27,6 +26,7 @@
 #include <boost/asio/steady_timer.hpp>
 
 #include <das/Core/IPC/AsyncIpcTransport.h>
+#include <das/Core/IPC/DasPtr.hpp>
 #include <das/Core/IPC/DefaultAsyncIpcTransport.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/HostLauncher.h>
@@ -148,24 +148,21 @@ struct AwaitResponseSender
 class IpcRunLoop
 {
 public:
-    /// 工厂函数：创建 IpcRunLoop 实例
-    /// @param enable_heartbeat 是否启用心跳线程（调试时可禁用，避免超时杀进程）
-    /// @return Expected 包含 unique_ptr 成功，错误码失败
-    static DAS::Utils::Expected<std::unique_ptr<IpcRunLoop>> Create(
-        bool enable_heartbeat);
+    /**
+     * @brief RAII 构造函数
+     *
+     * 构造即完成初始化：创建 io_context、ConnectionManager，注册所有 IPC stub
+     * handlers。
+     *
+     * @param enable_heartbeat 是否启用心跳线程（调试时可禁用，避免超时杀进程）
+     * @param inbound_queue 入站消息队列指针（非持有，由 IpcContext 管理），默认
+     * nullptr
+     */
+    explicit IpcRunLoop(
+        bool                             enable_heartbeat,
+        IpcMessageQueue<InboundMessage>* inbound_queue = nullptr);
 
     ~IpcRunLoop();
-
-    /**
-     * @brief 初始化 IpcRunLoop（注册 stub handlers）
-     *
-     * 由 Create() 工厂函数内部调用。
-     * 创建 io_context、ConnectionManager，并注册所有 IPC stub handlers。
-     *
-     * @param enable_heartbeat 是否启用心跳线程
-     * @return DasResult DAS_S_OK 成功
-     */
-    DasResult Initialize(bool enable_heartbeat);
 
     // 阻塞式消息循环
     DasResult Run();
@@ -199,10 +196,11 @@ public:
      *
      * 控制平面 handler（如 HandshakeHandler）使用此接口注册，
      * 支持通过协程异步发送响应。
+     * IpcRunLoop 通过 DasPtr 持有 handler 引用（内部调用 AddRef）。
      *
      * @param header_flags 消息头标志
      * @param interface_id 接口 ID
-     * @param handler 处理器指针（非持有，调用方保证生命周期）
+     * @param handler 处理器指针（IpcRunLoop 通过 AddRef 延长生命周期）
      */
     void RegisterHandler(
         uint8_t                   header_flags,
@@ -338,27 +336,6 @@ public:
         DefaultAsyncIpcTransport*        transport,
         const ValidatedIPCMessageHeader& header,
         std::vector<uint8_t>&&           body);
-
-    /**
-     * @brief 设置入站消息队列（业务线程入口）
-     *
-     * 由 IpcContext 在初始化时调用，将 inbound_queue 指针传递给 IpcRunLoop。
-     * IpcRunLoop 不持有此队列，仅保存指针用于消息分流。
-     *
-     * @param queue 入站消息队列指针（IpcContext 持有）
-     */
-    void SetInboundQueue(IpcMessageQueue<InboundMessage>* queue);
-
-    /**
-     * @brief 设置分布式对象管理器（用于控制平面 handler）
-     *
-     * 由 IpcContext 在初始化时调用，将 object_manager 指针传递给 IpcRunLoop。
-     * IpcRunLoop 不持有此管理器，仅保存指针用于传递给控制平面 handler。
-     * 控制平面 handler 不使用此参数，但接口需要此参数。
-     *
-     * @param object_manager 分布式对象管理器指针（IpcContext 持有）
-     */
-    void SetObjectManager(DistributedObjectManager* object_manager);
 
     /**
      * @brief Register a pending call entry (on_complete filled later by
@@ -528,10 +505,10 @@ public:
         handlers_by_flags_;
 
     /// 可等待消息处理器映射（协程版本，控制平面 handler 用）
-    /// 控制平面 handler 使用协程直接发送响应，不走 IpcResponseSender
+    /// 使用 DasPtr 管理引用计数，控制平面 handler 使用协程直接发送响应
     std::unordered_map<
         uint8_t,
-        std::unordered_map<uint32_t, IAwaitableMessageHandler*>>
+        std::unordered_map<uint32_t, DasPtr<IAwaitableMessageHandler>>>
         awaitable_handlers_;
 
     /// 下一个 call_id (V3: uint16_t)
@@ -577,12 +554,8 @@ public:
         std::chrono::steady_clock::now();
 
     /// 入站消息队列指针（非持有，由 IpcContext 管理）
-    /// 用于 IO 线程将业务消息分流到 inbound queue
+    /// 通过构造函数注入，不可变
     IpcMessageQueue<InboundMessage>* inbound_queue_ = nullptr;
-
-    /// 分布式对象管理器指针（非持有，由 IpcContext 管理）
-    /// 用于传递给控制平面 handler（控制平面 handler 不使用此参数）
-    DistributedObjectManager* object_manager_ = nullptr;
 
     /// ProxyFactory 指针（非持有，由 IpcContext 管理）
     /// 用于传递给控制平面 handler 的 StubContext
@@ -605,15 +578,6 @@ private:
     void NotifySendFailure(
         const ValidatedIPCMessageHeader& header,
         DasResult                        error_code);
-
-    /// 默认构造函数（禁止直接调用，使用 Create() 代替）
-    IpcRunLoop() = default;
-
-    /// 关闭（析构函数调用）
-    void Uninitialize();
-
-    /// 标记是否已关闭
-    bool is_shutdown_ = false;
 };
 
 //=============================================================================

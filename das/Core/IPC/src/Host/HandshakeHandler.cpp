@@ -3,7 +3,6 @@
 #include <das/Core/IPC/Host/HandshakeHandler.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
-#include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
@@ -362,10 +361,6 @@ namespace Core
                 }
 
                 // 设置 Host 进程的本地 session_id
-                if (run_loop_)
-                {
-                    run_loop_->SetSessionId(session_id);
-                }
                 local_session_id_ = session_id;
 
                 ConnectedClient client;
