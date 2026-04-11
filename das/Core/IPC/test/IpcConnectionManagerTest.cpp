@@ -24,7 +24,7 @@ protected:
 
 TEST_F(IpcConnectionManagerTest, Initialize_Succeeds)
 {
-    // Manager is already initialized in SetUp via Create()
+    // Manager is already initialized in SetUp via RAII constructor
     ASSERT_NE(manager_, nullptr);
 }
 
@@ -32,7 +32,7 @@ TEST_F(IpcConnectionManagerTest, Initialize_Succeeds)
 
 TEST_F(IpcConnectionManagerTest, RegisterConnection_Succeeds)
 {
-    // Manager is already initialized in SetUp via Create()
+    // Manager is already initialized in SetUp via RAII constructor
 
     auto result = manager_->RegisterConnection(2, 1);
     EXPECT_EQ(result, DAS_S_OK);
@@ -40,7 +40,7 @@ TEST_F(IpcConnectionManagerTest, RegisterConnection_Succeeds)
 
 TEST_F(IpcConnectionManagerTest, RegisterConnection_MultipleConnections)
 {
-    // Manager is already initialized in SetUp via Create()
+    // Manager is already initialized in SetUp via RAII constructor
 
     ASSERT_EQ(manager_->RegisterConnection(2, 1), DAS_S_OK);
     ASSERT_EQ(manager_->RegisterConnection(3, 1), DAS_S_OK);
@@ -53,7 +53,7 @@ TEST_F(IpcConnectionManagerTest, RegisterConnection_MultipleConnections)
 
 TEST_F(IpcConnectionManagerTest, UnregisterConnection_Succeeds)
 {
-    // Manager is already initialized in SetUp via Create()
+    // Manager is already initialized in SetUp via RAII constructor
     ASSERT_EQ(manager_->RegisterConnection(2, 1), DAS_S_OK);
 
     auto result = manager_->UnregisterConnection(2, 1);
@@ -62,7 +62,7 @@ TEST_F(IpcConnectionManagerTest, UnregisterConnection_Succeeds)
 
 TEST_F(IpcConnectionManagerTest, UnregisterConnection_NonExistent)
 {
-    // Manager is already initialized in SetUp via Create()
+    // Manager is already initialized in SetUp via RAII constructor
 
     auto result = manager_->UnregisterConnection(999, 1);
     EXPECT_NE(result, DAS_S_OK);
@@ -72,7 +72,7 @@ TEST_F(IpcConnectionManagerTest, UnregisterConnection_NonExistent)
 
 TEST_F(IpcConnectionManagerTest, IsConnectionAlive_AfterRegistration)
 {
-    // Manager is already initialized in SetUp via Create()
+    // Manager is already initialized in SetUp via RAII constructor
     ASSERT_EQ(manager_->RegisterConnection(2, 1), DAS_S_OK);
 
     EXPECT_TRUE(manager_->IsConnectionAlive(2));
@@ -80,14 +80,14 @@ TEST_F(IpcConnectionManagerTest, IsConnectionAlive_AfterRegistration)
 
 TEST_F(IpcConnectionManagerTest, IsConnectionAlive_NonExistent)
 {
-    // Manager is already initialized in SetUp via Create()
+    // Manager is already initialized in SetUp via RAII constructor
 
     EXPECT_FALSE(manager_->IsConnectionAlive(999));
 }
 
 TEST_F(IpcConnectionManagerTest, SendHeartbeat_Succeeds)
 {
-    // Manager is already initialized in SetUp via Create()
+    // Manager is already initialized in SetUp via RAII constructor
     ASSERT_EQ(manager_->RegisterConnection(2, 1), DAS_S_OK);
 
     auto result = manager_->SendHeartbeat(2);
@@ -96,7 +96,7 @@ TEST_F(IpcConnectionManagerTest, SendHeartbeat_Succeeds)
 
 TEST_F(IpcConnectionManagerTest, SendHeartbeat_NonExistent)
 {
-    // Manager is already initialized in SetUp via Create()
+    // Manager is already initialized in SetUp via RAII constructor
 
     auto result = manager_->SendHeartbeat(999);
     EXPECT_NE(result, DAS_S_OK);
@@ -106,7 +106,7 @@ TEST_F(IpcConnectionManagerTest, SendHeartbeat_NonExistent)
 
 TEST_F(IpcConnectionManagerTest, StartHeartbeatThread_Succeeds)
 {
-    // Manager is already initialized in SetUp via Create()
+    // Manager is already initialized in SetUp via RAII constructor
 
     manager_->StartHeartbeatThread();
 
@@ -119,7 +119,7 @@ TEST_F(IpcConnectionManagerTest, StartHeartbeatThread_Succeeds)
 
 TEST_F(IpcConnectionManagerTest, StopHeartbeatThread_Idempotent)
 {
-    // Manager is already initialized in SetUp via Create()
+    // Manager is already initialized in SetUp via RAII constructor
 
     // Stop without start should be safe
     manager_->StopHeartbeatThread();
@@ -131,7 +131,7 @@ TEST_F(IpcConnectionManagerTest, StopHeartbeatThread_Idempotent)
 
 TEST_F(IpcConnectionManagerTest, HeartbeatTimeout_ConnectionMarkedDead)
 {
-    // Manager is already initialized in SetUp via Create()
+    // Manager is already initialized in SetUp via RAII constructor
     ASSERT_EQ(manager_->RegisterConnection(2, 1), DAS_S_OK);
 
     // Start heartbeat thread
@@ -153,7 +153,7 @@ TEST_F(IpcConnectionManagerTest, HeartbeatTimeout_ConnectionMarkedDead)
 
 TEST_F(IpcConnectionManagerTest, CleanupResources_OnUnregister)
 {
-    // Manager is already initialized in SetUp via Create()
+    // Manager is already initialized in SetUp via RAII constructor
     ASSERT_EQ(manager_->RegisterConnection(2, 1), DAS_S_OK);
 
     // Unregister should cleanup resources
@@ -179,7 +179,7 @@ TEST_F(IpcConnectionManagerTest, HeartbeatTimeout_Value)
 
 TEST_F(IpcConnectionManagerTest, MultipleHeartbeats)
 {
-    // Manager is already initialized in SetUp via Create()
+    // Manager is already initialized in SetUp via RAII constructor
     ASSERT_EQ(manager_->RegisterConnection(2, 1), DAS_S_OK);
 
     // Send multiple heartbeats
@@ -192,7 +192,7 @@ TEST_F(IpcConnectionManagerTest, MultipleHeartbeats)
 
 TEST_F(IpcConnectionManagerTest, RegisterUnregisterCycle)
 {
-    // Manager is already initialized in SetUp via Create()
+    // Manager is already initialized in SetUp via RAII constructor
 
     for (int cycle = 0; cycle < 5; ++cycle)
     {
@@ -209,7 +209,7 @@ TEST_F(
     IpcConnectionManagerTest,
     SendHeartbeatToAll_NoConnections_ReturnsSuccess)
 {
-    // Manager is already initialized in SetUp via Create()
+    // Manager is already initialized in SetUp via RAII constructor
 
     // 无连接时调用应返回 DAS_S_OK
     auto result = manager_->SendHeartbeatToAll();
@@ -220,7 +220,7 @@ TEST_F(
     IpcConnectionManagerTest,
     SendHeartbeatToAll_WithConnections_ReturnsSuccess)
 {
-    // Manager is already initialized in SetUp via Create()
+    // Manager is already initialized in SetUp via RAII constructor
     ASSERT_EQ(manager_->RegisterConnection(2, 1), DAS_S_OK);
 
     // 有连接时调用应返回 DAS_S_OK
@@ -232,7 +232,7 @@ TEST_F(
     IpcConnectionManagerTest,
     SendHeartbeatToAll_MultipleConnections_ReturnsSuccess)
 {
-    // Manager is already initialized in SetUp via Create()
+    // Manager is already initialized in SetUp via RAII constructor
     ASSERT_EQ(manager_->RegisterConnection(2, 1), DAS_S_OK);
     ASSERT_EQ(manager_->RegisterConnection(3, 1), DAS_S_OK);
     ASSERT_EQ(manager_->RegisterConnection(4, 1), DAS_S_OK);
@@ -246,7 +246,7 @@ TEST_F(
 
 TEST_F(IpcConnectionManagerTest, UpdateHeartbeatTimestamp_ExistingConnection)
 {
-    // Manager is already initialized in SetUp via Create()
+    // Manager is already initialized in SetUp via RAII constructor
     ASSERT_EQ(manager_->RegisterConnection(2, 1), DAS_S_OK);
 
     // 记录初始时间戳
@@ -267,7 +267,7 @@ TEST_F(IpcConnectionManagerTest, UpdateHeartbeatTimestamp_ExistingConnection)
 
 TEST_F(IpcConnectionManagerTest, UpdateHeartbeatTimestamp_NonExistentConnection)
 {
-    // Manager is already initialized in SetUp via Create()
+    // Manager is already initialized in SetUp via RAII constructor
 
     // 不存在的连接应该安全处理
     manager_->UpdateHeartbeatTimestamp(999);

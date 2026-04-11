@@ -28,13 +28,15 @@ class IpcRunLoopTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        auto result = IpcRunLoop::Create(true);
-        if (!result)
+        try
         {
-            FAIL() << "Failed to create IpcRunLoop";
+            runloop_ = std::make_unique<IpcRunLoop>(true);
+        }
+        catch (const std::exception& e)
+        {
+            FAIL() << "Failed to create IpcRunLoop: " << e.what();
             return;
         }
-        runloop_ = std::move(*result);
 
         // Generate unique queue names for this test using high-resolution timer
         auto now_ns = std::chrono::high_resolution_clock::now()
@@ -62,7 +64,7 @@ protected:
 
     bool SetupRunLoopWithTransport()
     {
-        // Create() 已自动完成初始化
+        // RAII constructor completes initialization
         return runloop_ != nullptr;
     }
 
@@ -84,7 +86,7 @@ protected:
 };
 
 // ====== Initialize/Shutdown Tests ======
-// NOTE: Initialize() is now internal (called by Create() factory)
+// NOTE: Initialize() is now done in constructor (RAII pattern)
 // NOTE: Shutdown is now private and called by destructor (RAII pattern)
 
 // ====== Run/Stop Tests ======
@@ -189,7 +191,7 @@ TEST_F(IpcRunLoopTest, Run_ReentrantFails)
 
 TEST_F(IpcRunLoopTest, RequestStop_Idempotent)
 {
-    // Create() 已自动完成初始化
+    // RAII constructor completes initialization
 
     // RequestStop without run should be safe
     runloop_->RequestStop();
@@ -249,7 +251,7 @@ private:
 
 TEST_F(IpcRunLoopTest, RegisterHandler_Succeeds)
 {
-    // Create() 已自动完成初始化
+    // RAII constructor completes initialization
 
     // 注册处理器（使用 header_flags=NONE, interface_id=1）
     auto handler = std::make_unique<TestMessageHandler>();
@@ -317,6 +319,15 @@ TEST_F(IpcRunLoopTest, Run_AfterStopAndReinitialize)
     runloop_.reset();
 
     // Reinitialize and run again
+    try
+    {
+        runloop_ = std::make_unique<IpcRunLoop>(true);
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Failed to recreate IpcRunLoop: " << e.what();
+        return;
+    }
     ASSERT_TRUE(SetupRunLoopWithTransport());
     std::thread run_thread2([this]() { runloop_->Run(); });
     for (int i = 0; i < 100 && !runloop_->IsRunning(); ++i)
