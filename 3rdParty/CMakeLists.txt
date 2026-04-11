@@ -664,20 +664,22 @@ das_add_auto_copy_dll_path($<TARGET_FILE:DasCore>)
 
 
 # 拷贝外部 OpenCV DLL（如果使用外部 OpenCV）
-# 注意：只有在 NOT using bundled OpenCV 时才执行此逻辑
-# 使用 OpenCV_DIR 判断更可靠 - find_package 成功时会设置此变量
+# 通过 opencv_world imported target 的 IMPORTED_LOCATION 属性获取精确 DLL 路径，
+# $<TARGET_FILE:...> 生成器表达式会根据当前构建配置自动选择 Debug/Release 版本
 if(DEFINED OpenCV_DIR AND NOT DAS_USE_BUNDLED_OPENCV)
-    # 外部 OpenCV 通常提供 opencv_world DLL，动态匹配版本号
-    file(GLOB_RECURSE OPENCV_WORLD_DLL "${OpenCV_DIR}/bin/opencv_world*d.dll")
-    if(OPENCV_WORLD_DLL)
-        das_add_auto_copy_dll_path("${OPENCV_WORLD_DLL}")
-        message(STATUS "Configuring to copy opencv_world DLL from ${OpenCV_DIR}//bin/")
+    if(TARGET opencv_world)
+        das_add_auto_copy_dll_path("$<TARGET_FILE:opencv_world>")
+        message(STATUS "Configuring to copy opencv_world DLL via imported target")
     else()
-        file(GLOB_RECURSE OPENCV_WORLD_DLL "${OpenCV_DIR}/x64/vc16/bin/opencv_world*d.dll")
-        if(OPENCV_WORLD_DLL)
-            das_add_auto_copy_dll_path("${OPENCV_WORLD_DLL}")
-            message(STATUS "Configuring to copy opencv_world DLL from ${OpenCV_DIR}/x64/vc16/bin/")
+        # 非 world 构建（各模块独立 DLL），从 OpenCV_INSTALL_PATH 推断 bin 目录
+        get_filename_component(OpenCV_BIN_DIR "${OpenCV_DIR}/../bin" ABSOLUTE)
+        if(NOT EXISTS "${OpenCV_BIN_DIR}")
+            get_filename_component(OpenCV_BIN_DIR "${OpenCV_DIR}/../../bin" ABSOLUTE)
         endif()
+        file(GLOB OPENCV_DLLS "${OpenCV_BIN_DIR}/opencv_*.dll")
+        foreach(DLL ${OPENCV_DLLS})
+            das_add_auto_copy_dll_path("${DLL}")
+        endforeach()
     endif()
 endif()
 
