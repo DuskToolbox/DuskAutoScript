@@ -140,7 +140,6 @@ class IpcProxyGenerator:
 
 #include <das/Core/IPC/BusinessThread.h>
 #include <das/Core/IPC/DasProxyBase.h>
-#include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/InterfaceParamSerialization.h>
 #include <das/Core/IPC/MemorySerializer.h>
 #include <das/Core/IPC/ProxyFactory.h>
@@ -510,8 +509,8 @@ class IpcProxyGenerator:
         lines.append(f"{class_indent}    const ObjectId& object_id,")
         lines.append(f"{class_indent}    IpcRunLoop& run_loop,")
         lines.append(f"{class_indent}    std::weak_ptr<BusinessThread> business_thread,")
-        lines.append(f"{class_indent}    DistributedObjectManager& object_manager)")
-        lines.append(f"{class_indent}    : DasProxyBase<{interface.name}>(InterfaceId, object_id, run_loop, std::move(business_thread), object_manager)")
+        lines.append(f"{class_indent}    ProxyFactory& proxy_factory)")
+        lines.append(f"{class_indent}    : DasProxyBase<{interface.name}>(InterfaceId, object_id, run_loop, std::move(business_thread), proxy_factory)")
         lines.append(f"{class_indent}{{")
         lines.append(f"{class_indent}}}")
         lines.append("")
@@ -529,24 +528,7 @@ class IpcProxyGenerator:
             lines.append("")
             lines.append(f"{indent}public:")
 
-        # AddRef/Release final 实现
-        lines.append(f"{class_indent}uint32_t AddRef() final")
-        lines.append(f"{class_indent}{{")
-        lines.append(f"{method_indent}return ++ref_count_;")
-        lines.append(f"{class_indent}}}")
-        lines.append("")
-        lines.append(f"{class_indent}uint32_t Release() final")
-        lines.append(f"{class_indent}{{")
-        lines.append(f"{method_indent}uint32_t count = --ref_count_;")
-        lines.append(f"{method_indent}if (count == 0)")
-        lines.append(f"{method_indent}{{")
-        lines.append(f"{inner_indent}DAS_CORE_LOG_TRACE(\"Proxy {class_name} ref_count reached 0, cleaning up\");")
-        lines.append(f"{inner_indent}ProxyFactory::GetInstance().RemoveFromCache(GetObjectId());")
-        lines.append(f"{inner_indent}delete this;")
-        lines.append(f"{method_indent}}}")
-        lines.append(f"{method_indent}return count;")
-        lines.append(f"{class_indent}}}")
-        lines.append("")
+        # AddRef/Release 由 DasProxyBase<T> 统一提供（D-24），不再生成
         # QueryInterface override — 委托给 DasProxyBase::QueryInterfaceRemote
         lines.append(f"{class_indent}DasResult QueryInterface(const DasGuid& iid, void** pp_object) override")
         lines.append(f"{class_indent}{{")
@@ -564,8 +546,6 @@ class IpcProxyGenerator:
             lines.append(f"{class_indent}}}")
             lines.append("")
         
-        lines.append(f"{indent}private:")
-        lines.append(f"{class_indent}std::atomic<uint32_t> ref_count_{{1}};")
         lines.append(f"{indent}}};")
         lines.append("")
         
@@ -1565,9 +1545,9 @@ class IpcProxyGenerator:
         lines.append("    const ObjectId& object_id,")
         lines.append("    IpcRunLoop& run_loop,")
         lines.append("    std::weak_ptr<BusinessThread> business_thread,")
-        lines.append("    DistributedObjectManager& object_manager)")
+        lines.append("    ProxyFactory& proxy_factory)")
         lines.append("{")
-        lines.append("    return new TProxy(object_id, run_loop, std::move(business_thread), object_manager);")
+        lines.append("    return new TProxy(object_id, run_loop, std::move(business_thread), proxy_factory);")
         lines.append("}")
         lines.append("")
         lines.append("inline IDasBase* CreateProxyByInterfaceId(")
@@ -1575,7 +1555,7 @@ class IpcProxyGenerator:
         lines.append("    const ObjectId& object_id,")
         lines.append("    IpcRunLoop& run_loop,")
         lines.append("    std::weak_ptr<BusinessThread> business_thread,")
-        lines.append("    DistributedObjectManager& object_manager)")
+        lines.append("    ProxyFactory& proxy_factory)")
         lines.append("{")
         lines.append("    switch (interface_id)")
         lines.append("    {")
@@ -1585,7 +1565,7 @@ class IpcProxyGenerator:
             proxy_name = f"{interface.name}Proxy"
             lines.append(f"        case 0x{interface_id:08X}: // {interface.name}::InterfaceId")
             lines.append("        {")
-            lines.append(f"            return CreateTypedProxy<{proxy_name}>(object_id, run_loop, business_thread, object_manager);")
+            lines.append(f"            return CreateTypedProxy<{proxy_name}>(object_id, run_loop, business_thread, proxy_factory);")
             lines.append("        }")
 
         lines.append("        default:")
@@ -1611,7 +1591,7 @@ class IpcProxyGenerator:
 #include <das/Core/IPC/IPCProxyBase.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/IpcRunLoop.h>
-#include <das/Core/IPC/DistributedObjectManager.h>
+#include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/IDasBase.h>
 
