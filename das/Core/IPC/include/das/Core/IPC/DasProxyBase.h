@@ -6,7 +6,6 @@
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IPCProxyBase.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
-#include <das/Core/IPC/ManualProxyRegistry.h>
 #include <das/Core/IPC/MemorySerializer.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/DasConfig.h>
@@ -151,24 +150,16 @@ public:
             return query_result;
         }
 
-        // 根据 interface_id 创建对应的 Proxy
+        // 根据 interface_id 创建对应的 Proxy（走 ProxyFactory 缓存）
         ObjectId new_obj_id = DecodeObjectId(new_object_id);
 
-        // 使用 fallback 机制创建 Proxy：先 autogen，再手动注册
-        IDasBase* proxy = CreateProxyByInterfaceIdWithFallback(
-            interface_id,
-            new_obj_id,
-            *GetRunLoop(),
-            GetBusinessThread(),
-            proxy_factory_);
+        IDasBase* proxy =
+            proxy_factory_.GetOrCreateProxy(new_obj_id, interface_id);
 
         if (proxy == nullptr)
         {
             return DAS_E_NO_INTERFACE;
         }
-
-        // Register remote object so DistributedObjectManager can track it
-        GetObjectManager().RegisterRemoteObject(new_obj_id);
 
         *pp_object = proxy;
         return DAS_S_OK;
