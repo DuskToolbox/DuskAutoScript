@@ -296,15 +296,9 @@ DasResult DasVariantVectorByValueProxy::EnsureDataLoaded(uint16_t method_id)
             && (entry.object_id.session_id != 0
                 || entry.object_id.local_id != 0))
         {
-            [[maybe_unused]]
-            DasResult reg_result =
-                GetObjectManager().RegisterRemoteObject(entry.object_id);
-            IDasBase* proxy = DasIpcProxy::CreateProxyByInterfaceId(
-                entry.interface_id,
+            IDasBase* proxy = GetProxyFactory().GetOrCreateProxy(
                 entry.object_id,
-                *GetRunLoop(),
-                GetBusinessThread(),
-                GetProxyFactory());
+                entry.interface_id);
             if (proxy != nullptr)
             {
                 // Attach returns a new DasPtr (static method), must assign back
