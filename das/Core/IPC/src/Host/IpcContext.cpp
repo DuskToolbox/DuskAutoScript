@@ -218,16 +218,17 @@ namespace Core
                 // 5. 设置 inbound_queue 到 IpcRunLoop
                 run_loop_->SetInboundQueue(&inbound_queue_);
 
-                // 5.5 DistributedObjectManager 绑定 IpcRunLoop
-                proxy_factory_.emplace(registry_, *run_loop_, business_thread_);
-                proxy_factory_->GetObjectManager().SetRunLoop(run_loop_.get());
-                run_loop_->SetProxyFactory(&*proxy_factory_);
-
-                // 6. 创建 BusinessThread
+                // 5.5 创建 BusinessThread（必须在 ProxyFactory 之前，
+                //      因为 ProxyFactory 会捕获它的 weak_ptr）
                 business_thread_ = std::make_shared<BusinessThread>(
                     inbound_queue_,
                     *run_loop_,
                     *this);
+
+                // 6. DistributedObjectManager 绑定 IpcRunLoop
+                proxy_factory_.emplace(registry_, *run_loop_, business_thread_);
+                proxy_factory_->GetObjectManager().SetRunLoop(run_loop_.get());
+                run_loop_->SetProxyFactory(&*proxy_factory_);
 
                 // Create() 已包含初始化，不需要再次调用 Initialize()
                 result = DAS_S_OK;

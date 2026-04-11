@@ -63,18 +63,17 @@ namespace Core
                     allocated_ids_[reserved_id] = true;
                 }
 
-                // 5. DistributedObjectManager 绑定 IpcRunLoop
-                proxy_factory_.emplace(registry_, *runloop_, business_thread_);
-                proxy_factory_->GetObjectManager().SetRunLoop(runloop_.get());
-                runloop_->SetProxyFactory(&*proxy_factory_);
-
-                // 6. Create BusinessThread
+                // 5. Create BusinessThread (must be before ProxyFactory,
+                //    because ProxyFactory captures a weak_ptr to it)
                 business_thread_ = std::make_shared<BusinessThread>(
                     inbound_queue_,
                     *runloop_,
                     *this);
 
-                // 7. ProxyFactory already initialized above
+                // 6. DistributedObjectManager 绑定 IpcRunLoop
+                proxy_factory_.emplace(registry_, *runloop_, business_thread_);
+                proxy_factory_->GetObjectManager().SetRunLoop(runloop_.get());
+                runloop_->SetProxyFactory(&*proxy_factory_);
 
                 // 8. 创建并初始化 IpcCommandHandler
                 command_handler_ = IpcCommandHandler::Create(registry_);
