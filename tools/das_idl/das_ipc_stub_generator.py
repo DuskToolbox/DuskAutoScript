@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional
 import importlib
 import sys
 
-from ipc_common import fnv1a_hash_guid, fnv1a_hash, BUILTIN_INTERFACE_HASHES, properties_to_methods
+from ipc_common import fnv1a_hash_guid, fnv1a_hash, BUILTIN_INTERFACE_HASHES, properties_to_methods, resolve_import_chain
 from ipc_type_mapper import StubTypeMapper
 
 try:
@@ -65,36 +65,16 @@ class IpcStubGenerator:
             'DasResult': 4,
             'DasBool': 1,
         }
-        # Load external enum/struct definitions from imported IDL files
+        # Load external enum/struct definitions from imported IDL files only
         self.all_interfaces = list(self.document.interfaces)
         if idl_file_path:
-            idl_base_dir = str(Path(idl_file_path).resolve().parent)
-            self.type_mapper.load_external_definitions([idl_base_dir])
+            imported_docs = resolve_import_chain(document, idl_file_path)
+            self.type_mapper.load_external_definitions(list(imported_docs.values()))
             # Load interfaces from imported IDL files for cross-IDL UUID resolution
-            if self.document.imports:
-                parsed_files = set()
-                def _parse_imports_recursive(import_list, base_dir):
-                    for import_def in import_list:
-                        import_path = Path(base_dir) / import_def.idl_path.strip('"')
-                        try:
-                            import_path = import_path.resolve()
-                        except Exception:
-                            continue
-                        import_key = str(import_path)
-                        if import_key in parsed_files:
-                            continue
-                        parsed_files.add(import_key)
-                        try:
-                            if import_path.exists():
-                                imported_doc = parse_idl_file(str(import_path))
-                                for iface in imported_doc.interfaces:
-                                    if not any(existing.name == iface.name for existing in self.all_interfaces):
-                                        self.all_interfaces.append(iface)
-                                if imported_doc.imports:
-                                    _parse_imports_recursive(imported_doc.imports, import_path.parent)
-                        except Exception:
-                            pass
-                _parse_imports_recursive(self.document.imports, Path(idl_file_path).resolve().parent)
+            for imp_doc in imported_docs.values():
+                for iface in imp_doc.interfaces:
+                    if not any(existing.name == iface.name for existing in self.all_interfaces):
+                        self.all_interfaces.append(iface)
 
     def _collect_all_methods(self, interface: InterfaceDef) -> list:
         """收集接口及其所有父接口的方法（深度优先，从根到叶）"""

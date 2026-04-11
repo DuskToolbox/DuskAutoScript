@@ -133,3 +133,54 @@ def properties_to_methods(properties: list) -> list:
             methods.append(MethodDef(name=f"Set{prop.name}", return_type=TypeInfo(base_type="DasResult", pointer_level=0), parameters=params))
 
     return methods
+
+
+# ---------------------------------------------------------------------------
+# Import chain resolver — follow import statements instead of scanning dirs
+# ---------------------------------------------------------------------------
+
+def resolve_import_chain(document: "IdlDocument", idl_file_path: str) -> dict:
+    """Recursively resolve ``import`` statements and parse referenced IDL files.
+
+    Returns a dict mapping absolute file path → parsed ``IdlDocument`` for every
+    transitively imported file.  The starting *document* itself is **not** included.
+    Circular imports are safely handled — each file is parsed at most once.
+
+    If *document* already carries ``_imported_docs`` (set by a prior call),
+    the cached result is returned immediately without re-parsing.
+
+    Args:
+        document: The parsed ``IdlDocument`` whose ``.imports`` list is followed.
+        idl_file_path: Absolute or relative path of the IDL file that produced
+            *document*; used to resolve relative import paths.
+    """
+    # Fast path: already resolved for this document
+    if hasattr(document, '_imported_docs') and document._imported_docs is not None:
+        return document._imported_docs
+
+    if not idl_file_path or not document.imports:
+        document._imported_docs = {}
+        return {}
+
+    base_dir = Path(idl_file_path).resolve().parent
+    self_key = str(Path(idl_file_path).resolve())
+    parsed: dict[str, "IdlDocument"] = {}
+
+    def _walk(import_list):
+        for imp in import_list:
+            imp_path = (base_dir / imp.idl_path.strip('"')).resolve()
+            key = str(imp_path)
+            # Skip self (circular import) and already-parsed files
+            if key == self_key or key in parsed or not imp_path.exists():
+                continue
+            try:
+                imp_doc = _das_idl_parser.parse_idl_file(key)
+                parsed[key] = imp_doc
+                if imp_doc.imports:
+                    _walk(imp_doc.imports)
+            except Exception:
+                pass  # skip unparseable imports
+
+    _walk(document.imports)
+    document._imported_docs = parsed
+    return parsed

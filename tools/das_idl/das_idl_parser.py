@@ -427,7 +427,17 @@ class Parser:
         return True
     
     def parse(self) -> IdlDocument:
-        """解析整个文档"""
+        """解析整个文档（含类型解析）"""
+        self._parse_structure()
+        self.resolve_types()
+        return self.document
+
+    def _parse_structure(self) -> IdlDocument:
+        """解析文档结构（不调用 resolve_types）。
+
+        将结构与类型解析分离，使 parse_idl_file 可以在两阶段之间
+        插入缓存，从而打破循环 import 导致的无限递归。
+        """
         while not self.match(TokenType.EOF):
             # 解析属性 (如 [uuid("...")])
             attributes = {}
@@ -455,9 +465,6 @@ class Parser:
         
         # 校验：一个 IDL 文件中应该只有一个命名空间
         self._validate_single_namespace()
-        
-        # 后置解析：标注所有 TypeInfo 的类型分类
-        self.resolve_types()
         
         return self.document
     
@@ -935,7 +942,7 @@ class Parser:
         if self.source_path:
             source_dir = Path(self.source_path).parent
             for import_def in self.document.imports:
-                import_path = source_dir / import_def.idl_path
+                import_path = source_dir / import_def.idl_path.strip('"')
                 if not import_path.exists():
                     continue
                 try:
@@ -944,8 +951,12 @@ class Parser:
                         known_interfaces.add(iface.name)
                     for enum in imported_doc.enums:
                         known_enums.add(enum.name)
+                        if enum.namespace:
+                            known_enums.add(f"{enum.namespace}::{enum.name}")
                     for struct in imported_doc.structs:
                         known_structs.add(struct.name)
+                        if struct.namespace:
+                            known_structs.add(f"{struct.namespace}::{struct.name}")
                 except Exception:
                     # import 文件解析失败时静默跳过，不影响当前文件
                     pass
@@ -1007,11 +1018,39 @@ def parse_idl(source: str, source_path: str = "") -> IdlDocument:
     return parser.parse()
 
 
+# Per-process parse cache: each file is parsed at most once.
+# This eliminates the O(n²) overhead from resolve_types and
+# resolve_import_chain recursively re-parsing the same files.
+_parse_cache: dict[str, IdlDocument] = {}
+
+
 def parse_idl_file(file_path: str) -> IdlDocument:
-    """解析 IDL 文件"""
-    with open(file_path, 'r', encoding='utf-8') as f:
+    """解析 IDL 文件（带缓存和循环 import 保护）。
+
+    采用两阶段策略：
+    1. tokenize + 结构解析 → 立即写入缓存
+    2. resolve_types → 递归调用 parse_idl_file 时会命中阶段1的缓存
+
+    这打破了循环 import（如 IDasComponent ↔ IDasVariantVector）导致的
+    无限递归，因为 resolve_types 只需要 import 文件的类型名
+    （interface/enum/struct name），这些在阶段1已经填充完毕。
+    """
+    abs_path = str(Path(file_path).resolve())
+    cached = _parse_cache.get(abs_path)
+    if cached is not None:
+        return cached
+    with open(abs_path, 'r', encoding='utf-8') as f:
         source = f.read()
-    return parse_idl(source, source_path=str(Path(file_path).resolve()))
+    # Phase 1: tokenize + parse structure, cache immediately
+    lexer = Lexer(source)
+    tokens = lexer.tokenize()
+    parser = Parser(tokens, source_path=abs_path)
+    parser._parse_structure()
+    doc = parser.document
+    _parse_cache[abs_path] = doc
+    # Phase 2: resolve types — recursive calls will hit the cache above
+    parser.resolve_types()
+    return doc
 
 
 # 测试代码

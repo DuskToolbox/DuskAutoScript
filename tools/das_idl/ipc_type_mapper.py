@@ -5,7 +5,6 @@ das_ipc_proxy_generator (ProxyTypeMapper) and
 das_ipc_stub_generator (StubTypeMapper).
 """
 
-import glob
 import os
 import re
 from pathlib import Path
@@ -255,30 +254,25 @@ class IpcBaseTypeMapper:
             except Exception:
                 pass
 
-    def load_external_definitions(self, idl_dirs: List[str]) -> None:
-        """Load enum and struct definitions from all IDL files in given directories.
+    def load_external_definitions(self, documents: list) -> None:
+        """Load enum and struct definitions from pre-parsed IdlDocument objects.
 
-        This enables cross-IDL type references (e.g., DasRect from DasBasicTypes.idl
-        used in methods defined in other IDL files).
+        Accepts already-parsed documents (e.g. from resolve_import_chain)
+        to avoid redundant parsing overhead.
         """
-        for idl_dir in idl_dirs:
-            for idl_path in glob.glob(os.path.join(idl_dir, "*.idl")):
-                try:
-                    ext_doc = parse_idl_file(idl_path)
-                    for enum in ext_doc.enums:
-                        self.enum_types.add(enum.name)
-                        if enum.namespace:
-                            self.enum_types.add(f"{enum.namespace}::{enum.name}")
-                    for struct in ext_doc.structs:
-                        if struct.name not in self.struct_defs:
-                            self.struct_types.add(struct.name)
-                            self.struct_defs[struct.name] = struct
-                            if struct.namespace:
-                                full_name = f"{struct.namespace}::{struct.name}"
-                                self.struct_types.add(full_name)
-                                self.struct_defs[full_name] = struct
-                except Exception:
-                    pass  # Skip unparseable files
+        for ext_doc in documents:
+            for enum in ext_doc.enums:
+                self.enum_types.add(enum.name)
+                if enum.namespace:
+                    self.enum_types.add(f"{enum.namespace}::{enum.name}")
+            for struct in ext_doc.structs:
+                if struct.name not in self.struct_defs:
+                    self.struct_types.add(struct.name)
+                    self.struct_defs[struct.name] = struct
+                    if struct.namespace:
+                        full_name = f"{struct.namespace}::{struct.name}"
+                        self.struct_types.add(full_name)
+                        self.struct_defs[full_name] = struct
 
 
 # ---------------------------------------------------------------------------
@@ -288,36 +282,30 @@ class IpcBaseTypeMapper:
 class ProxyTypeMapper(IpcBaseTypeMapper):
     """Proxy TypeMapper — additionally loads interface namespaces from external IDL files."""
 
-    def load_external_definitions(self, idl_dirs: List[str]) -> None:
-        """Load enum, struct, and interface definitions from all IDL files in given directories.
+    def load_external_definitions(self, documents: list) -> None:
+        """Load enum, struct, and interface definitions from pre-parsed IdlDocument objects.
 
-        This enables cross-IDL type references (e.g., DasRect from DasBasicTypes.idl
-        used in methods defined in other IDL files, or IDasImage from ExportInterface
-        used in methods defined in PluginInterface).
+        Accepts already-parsed documents (e.g. from resolve_import_chain)
+        to avoid redundant parsing overhead.
         """
-        for idl_dir in idl_dirs:
-            for idl_path in glob.glob(os.path.join(idl_dir, "*.idl")):
-                try:
-                    ext_doc = parse_idl_file(idl_path)
-                    for enum in ext_doc.enums:
-                        self.enum_types.add(enum.name)
-                        if enum.namespace:
-                            self.enum_types.add(f"{enum.namespace}::{enum.name}")
-                    for struct in ext_doc.structs:
-                        if struct.name not in self.struct_defs:
-                            self.struct_types.add(struct.name)
-                            self.struct_defs[struct.name] = struct
-                            if struct.namespace:
-                                full_name = f"{struct.namespace}::{struct.name}"
-                                self.struct_types.add(full_name)
-                                self.struct_defs[full_name] = struct
-                    # Load interface namespaces from external IDL files
-                    # This is critical for cross-namespace interface references
-                    for iface in ext_doc.interfaces:
-                        if iface.name not in self.interface_namespaces:
-                            self.interface_namespaces[iface.name] = iface.namespace
-                except Exception:
-                    pass  # Skip unparseable files
+        for ext_doc in documents:
+            for enum in ext_doc.enums:
+                self.enum_types.add(enum.name)
+                if enum.namespace:
+                    self.enum_types.add(f"{enum.namespace}::{enum.name}")
+            for struct in ext_doc.structs:
+                if struct.name not in self.struct_defs:
+                    self.struct_types.add(struct.name)
+                    self.struct_defs[struct.name] = struct
+                    if struct.namespace:
+                        full_name = f"{struct.namespace}::{struct.name}"
+                        self.struct_types.add(full_name)
+                        self.struct_defs[full_name] = struct
+            # Load interface namespaces from external IDL files
+            # This is critical for cross-namespace interface references
+            for iface in ext_doc.interfaces:
+                if iface.name not in self.interface_namespaces:
+                    self.interface_namespaces[iface.name] = iface.namespace
 
 
 # ---------------------------------------------------------------------------

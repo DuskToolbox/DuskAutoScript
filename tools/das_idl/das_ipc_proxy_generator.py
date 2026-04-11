@@ -32,7 +32,7 @@ from typing import Dict, List, Optional, Any
 import importlib
 import sys
 
-from ipc_common import fnv1a_hash_guid, fnv1a_hash, properties_to_methods
+from ipc_common import fnv1a_hash_guid, fnv1a_hash, properties_to_methods, resolve_import_chain
 from ipc_type_mapper import ProxyTypeMapper
 
 # 既支持作为包内模块导入（tools.das_idl.*），也支持直接脚本运行。
@@ -65,10 +65,11 @@ class IpcProxyGenerator:
         self.idl_file_name = os.path.basename(idl_file_path) if idl_file_path else None
         self.indent = "    "  # 4 空格缩进
         self.type_mapper = ProxyTypeMapper(document)
-        # Load external enum/struct definitions from all IDL directories
+        # Resolve import chain and load external definitions from imported files only
+        self._imported_docs = {}
         if idl_file_path:
-            idl_base_dir = str(Path(idl_file_path).resolve().parent)
-            self.type_mapper.load_external_definitions([idl_base_dir])
+            self._imported_docs = resolve_import_chain(document, idl_file_path)
+            self.type_mapper.load_external_definitions(list(self._imported_docs.values()))
         # 额外的接口命名空间映射（来自其他 IDL 文件的接口）
         if extra_interface_namespaces:
             self.type_mapper.interface_namespaces.update(extra_interface_namespaces)
@@ -82,20 +83,11 @@ class IpcProxyGenerator:
         # 构建接口查找表
         iface_map = {iface.name: iface for iface in self.document.interfaces}
 
-        # 补充查找：从 IDL 目录中的其他文件解析缺失的父接口
-        if self.idl_file_path:
-            idl_dir = os.path.dirname(self.idl_file_path)
-            if os.path.isdir(idl_dir):
-                for f in os.listdir(idl_dir):
-                    if f.endswith('.idl'):
-                        fpath = os.path.join(idl_dir, f)
-                        try:
-                            doc = parse_idl_file(fpath)
-                            for iface in doc.interfaces:
-                                if iface.name not in iface_map:
-                                    iface_map[iface.name] = iface
-                        except Exception:
-                            pass
+        # 补充查找：从 import 的文件中获取缺失的父接口
+        for imp_doc in self._imported_docs.values():
+            for iface in imp_doc.interfaces:
+                if iface.name not in iface_map:
+                    iface_map[iface.name] = iface
 
         chain = []
         current = interface
