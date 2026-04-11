@@ -12,6 +12,7 @@
 #include <atomic>
 #include <das/DasApi.h>
 #include <das/IDasBase.h>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -19,7 +20,6 @@
 #include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
-#include <das/Core/IPC/MainProcess/IIpcContext.h>
 
 // Forward declaration for io_context
 namespace boost::asio
@@ -29,19 +29,18 @@ namespace boost::asio
 
 DAS_CORE_IPC_NS_BEGIN
 
-// Forward declaration for MainProcess::IpcContext (for auto-registration)
-namespace MainProcess
-{
-    class IpcContext;
-}
-
 class HostLauncher final : public IHostLauncher
 {
 public:
-    explicit HostLauncher(boost::asio::io_context& io_ctx);
+    using OnRegisterCallback = std::function<DasResult()>;
+
+    explicit HostLauncher(
+        boost::asio::io_context& io_ctx,
+        uint16_t                 session_id,
+        OnRegisterCallback       on_register = nullptr);
     ~HostLauncher() override;
 
-    void SetIpcContext(MainProcess::IIpcContext* ctx) { ipc_context_ = ctx; }
+    void ClearCallbacks() { on_register_ = nullptr; }
 
     HostLauncher(const HostLauncher&) = delete;
     HostLauncher& operator=(const HostLauncher&) = delete;
@@ -152,7 +151,8 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 
-    MainProcess::IIpcContext* ipc_context_ = nullptr;
+    uint16_t           session_id_ = 0;
+    OnRegisterCallback on_register_;
 };
 DAS_CORE_IPC_NS_END
 

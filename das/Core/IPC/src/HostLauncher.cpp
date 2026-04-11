@@ -12,7 +12,6 @@
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
-#include <das/Core/IPC/MainProcess/IpcContext.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
 #include <das/IDasAsyncHandshakeOperation.h>
@@ -218,8 +217,12 @@ namespace
 
 } // anonymous namespace
 
-HostLauncher::HostLauncher(boost::asio::io_context& io_ctx)
-    : impl_(std::make_unique<Impl>(io_ctx))
+HostLauncher::HostLauncher(
+    boost::asio::io_context& io_ctx,
+    uint16_t                 session_id,
+    OnRegisterCallback       on_register)
+    : impl_(std::make_unique<Impl>(io_ctx)), session_id_(session_id),
+      on_register_(std::move(on_register))
 {
 }
 
@@ -285,22 +288,17 @@ DasResult HostLauncher::Start(
 
     impl_->session_id = out_session_id;
 
-    // Auto-register to ConnectionManager via ipc_context_ callback
-    if (ipc_context_)
+    // IpcContext 通过 on_register 回调自行注册
+    if (on_register_)
     {
-        auto* ctx = dynamic_cast<MainProcess::IpcContext*>(ipc_context_);
-        if (ctx)
+        DasResult reg_result = on_register_();
+        if (reg_result != DAS_S_OK)
         {
-            DasResult reg_result = ctx->InternalRegisterHostLauncher();
-            if (reg_result != DAS_S_OK)
-            {
-                std::string err_msg = DAS_FMT_NS::format(
-                    "Auto-registration failed after Start: error={}",
-                    reg_result);
-                DAS_CORE_LOG_ERROR(err_msg.c_str());
-                Stop();
-                return reg_result;
-            }
+            DAS_CORE_LOG_ERROR(
+                "Registration callback failed after Start: error={}",
+                reg_result);
+            Stop();
+            return reg_result;
         }
     }
 
@@ -705,15 +703,11 @@ boost::asio::awaitable<DasResult> HostLauncher::SendHandshakeHelloAsync(
 
     uint32_t my_pid = static_cast<uint32_t>(GET_CURRENT_PID());
 
-    // 为主进程分配 session_id 给 Host
-    uint16_t assigned_session_id = 0;
-    if (ipc_context_)
-    {
-        assigned_session_id = ipc_context_->AllocateSessionId();
-    }
+    // session_id 已在构造时预分配
+    uint16_t assigned_session_id = session_id_;
     if (assigned_session_id == 0)
     {
-        DAS_CORE_LOG_ERROR("Failed to allocate session_id for Host");
+        DAS_CORE_LOG_ERROR("Invalid pre-allocated session_id (0)");
         co_return DAS_E_IPC_SESSION_ALLOC_FAILED;
     }
 
@@ -1309,22 +1303,17 @@ boost::asio::awaitable<void> HostLauncher::RunAsync(
             co_return;
         }
 
-        if (ipc_context_)
+        if (on_register_)
         {
-            auto* ctx = dynamic_cast<MainProcess::IpcContext*>(ipc_context_);
-            if (ctx)
+            result = on_register_();
+            if (DAS::IsFailed(result))
             {
-                result = ctx->InternalRegisterHostLauncher();
-                if (DAS::IsFailed(result))
-                {
-                    std::string err_msg = DAS_FMT_NS::format(
-                        "Auto-registration failed: error = {}",
-                        result);
-                    DAS_CORE_LOG_ERROR(err_msg.c_str());
-                    Stop();
-                    op->Complete(result, 0);
-                    co_return;
-                }
+                DAS_CORE_LOG_ERROR(
+                    "Registration callback failed: error={}",
+                    result);
+                Stop();
+                op->Complete(result, 0);
+                co_return;
             }
         }
 
