@@ -474,7 +474,7 @@ function(das_add_idl_export)
             if(_LANG_NAME STREQUAL "Java")
                 find_package(JNI REQUIRED)
             elseif(_LANG_NAME STREQUAL "Python")
-                find_package(Python3 COMPONENTS Development REQUIRED)
+                find_package(Python3 COMPONENTS Development Development.SABIModule REQUIRED)
             endif()
 
             # 调用 das_add_swig_export_library 创建导出库
@@ -562,7 +562,7 @@ function(das_add_idl_export)
 
             # 链接对应语言的虚拟机库
             if(_LANG_NAME STREQUAL "Python")
-                target_link_libraries(${_EXPORT_LIB_NAME} PRIVATE Python3::Python)
+                target_link_libraries(${_EXPORT_LIB_NAME} PRIVATE Python3::SABIModule)
             elseif(_LANG_NAME STREQUAL "Java")
                 target_link_libraries(${_EXPORT_LIB_NAME} PRIVATE JNI::JNI)
                 
