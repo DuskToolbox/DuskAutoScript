@@ -73,11 +73,11 @@ class IpcProxyGenerator:
         if extra_interface_namespaces:
             self.type_mapper.interface_namespaces.update(extra_interface_namespaces)
 
-    def _collect_all_methods(self, interface: InterfaceDef) -> list:
-        """收集接口及其所有父接口的方法（深度优先，从根到叶）
+    def _get_inheritance_chain(self, interface: InterfaceDef) -> list:
+        """获取接口的完整继承链（从根到叶，不含 IDasBase）
 
-        返回 [(method, defining_interface_name), ...] 列表，
-        其中 defining_interface_name 是定义该方法的接口名。
+        返回 [InterfaceDef, ...] 列表，从最顶层的父接口到当前接口。
+        例如: IDasComponent -> [IDasTypeInfo, IDasComponent]
         """
         # 构建接口查找表
         iface_map = {iface.name: iface for iface in self.document.interfaces}
@@ -97,7 +97,6 @@ class IpcProxyGenerator:
                         except Exception:
                             pass
 
-        # 收集继承链（从根到叶）
         chain = []
         current = interface
         visited = set()
@@ -106,6 +105,15 @@ class IpcProxyGenerator:
             visited.add(current.name)
             current = iface_map.get(current.base_interface)
         chain.reverse()  # 从根到叶
+        return chain
+
+    def _collect_all_methods(self, interface: InterfaceDef) -> list:
+        """收集接口及其所有父接口的方法（深度优先，从根到叶）
+
+        返回 [(method, defining_interface_name), ...] 列表，
+        其中 defining_interface_name 是定义该方法的接口名。
+        """
+        chain = self._get_inheritance_chain(interface)
 
         # 收集所有方法，每个方法属于定义它的接口
         all_methods = []
@@ -532,9 +540,34 @@ class IpcProxyGenerator:
         lines.append(f"{class_indent}uint32_t AddRef() final {{ return DasProxyBase<{interface.name}>::AddRef(); }}")
         lines.append(f"{class_indent}uint32_t Release() final {{ return DasProxyBase<{interface.name}>::Release(); }}")
         lines.append("")
-        # QueryInterface override — 委托给 DasProxyBase::QueryInterfaceRemote
+
+        # QueryInterface: 先基于已知继承链做本地转换，再 fallback 到远程
+        inheritance_chain = self._get_inheritance_chain(interface)
         lines.append(f"{class_indent}DasResult QueryInterface(const DasGuid& iid, void** pp_object) override")
         lines.append(f"{class_indent}{{")
+        lines.append(f"{method_indent}if (pp_object == nullptr)")
+        lines.append(f"{method_indent}{{")
+        lines.append(f"{method_indent}    return DAS_E_INVALID_POINTER;")
+        lines.append(f"{method_indent}}}")
+        lines.append(f"{method_indent}*pp_object = nullptr;")
+        lines.append("")
+        # IDasBase 是所有接口的根，始终在继承链中
+        lines.append(f"{method_indent}if (iid == DasIidOf<IDasBase>())")
+        lines.append(f"{method_indent}{{")
+        lines.append(f"{method_indent}    *pp_object = static_cast<IDasBase*>(this);")
+        lines.append(f"{method_indent}    AddRef();")
+        lines.append(f"{method_indent}    return DAS_S_OK;")
+        lines.append(f"{method_indent}}}")
+        # 继承链中其余接口
+        for iface in inheritance_chain:
+            lines.append(f"{method_indent}else if (iid == DasIidOf<{iface.name}>())")
+            lines.append(f"{method_indent}{{")
+            lines.append(f"{method_indent}    *pp_object = static_cast<{iface.name}*>(this);")
+            lines.append(f"{method_indent}    AddRef();")
+            lines.append(f"{method_indent}    return DAS_S_OK;")
+            lines.append(f"{method_indent}}}")
+        lines.append("")
+        lines.append(f"{method_indent}// 未知接口：走远程查询")
         lines.append(f"{method_indent}return QueryInterfaceRemote(iid, pp_object);")
         lines.append(f"{class_indent}}}")
         lines.append("")
