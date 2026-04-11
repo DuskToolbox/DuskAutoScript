@@ -77,7 +77,7 @@ namespace Core
                 proxy_factory_.emplace(object_manager_, registry_, *runloop_);
 
                 // 8. 创建并初始化 IpcCommandHandler
-                command_handler_ = IpcCommandHandler::Create();
+                command_handler_ = IpcCommandHandler::Create(registry_);
                 command_handler_->SetSessionId(1);
 
                 // 9. 注册 LOOKUP_BY_INTERFACE 到 IpcRunLoop

@@ -21,7 +21,10 @@
 
 DAS_CORE_IPC_NS_BEGIN
 
-IpcCommandHandler::IpcCommandHandler() : session_id_(0) {}
+IpcCommandHandler::IpcCommandHandler(RemoteObjectRegistry& registry)
+    : session_id_(0), registry_(registry)
+{
+}
 
 void IpcCommandHandler::SetSessionId(uint16_t session_id)
 {
@@ -30,10 +33,6 @@ void IpcCommandHandler::SetSessionId(uint16_t session_id)
 
 uint16_t IpcCommandHandler::GetSessionId() const { return session_id_; }
 
-void IpcCommandHandler::SetRegistry(RemoteObjectRegistry* registry)
-{
-    registry_ = registry;
-}
 DasResult IpcCommandHandler::HandleMessage(
     const ValidatedIPCMessageHeader& header,
     const std::vector<uint8_t>&      body,
@@ -117,7 +116,6 @@ DasResult IpcCommandHandler::HandleMessage(
         return DAS_S_OK;
     }
 
-    registry_ = &ctx.registry;
     DasResult result = HandleCommand(header, payload, response);
 
     // 构建响应 header（保留请求的 header_flags，确保响应路由正确）
@@ -249,7 +247,7 @@ DasResult IpcCommandHandler::OnLookupObject(
         return DAS_E_IPC_DESERIALIZATION_FAILED;
     }
 
-    RemoteObjectRegistry& registry = *registry_;
+    RemoteObjectRegistry& registry = registry_;
     RemoteObjectInfo      info;
     DasResult             result = registry.GetObjectInfo(object_id, info);
 
@@ -288,7 +286,7 @@ DasResult IpcCommandHandler::OnLookupByName(
         return DAS_E_IPC_DESERIALIZATION_FAILED;
     }
 
-    RemoteObjectRegistry& registry = *registry_;
+    RemoteObjectRegistry& registry = registry_;
     RemoteObjectInfo      info;
     DasResult             result = registry.LookupByName(name, info);
 
@@ -333,7 +331,7 @@ DasResult IpcCommandHandler::OnLookupByInterface(
         return DAS_E_IPC_DESERIALIZATION_FAILED;
     }
 
-    RemoteObjectRegistry& registry = *registry_;
+    RemoteObjectRegistry& registry = registry_;
     uint32_t interface_id = RemoteObjectRegistry::ComputeInterfaceId(iid);
     RemoteObjectInfo info;
     DasResult        result = registry.LookupByInterface(interface_id, info);
@@ -365,9 +363,8 @@ DasResult IpcCommandHandler::OnListObjects(
     (void)header;
     (void)payload;
 
-    RemoteObjectRegistry&         registry = ctx.registry_;
     std::vector<RemoteObjectInfo> objects;
-    registry.ListAllObjects(objects);
+    registry_.ListAllObjects(objects);
     DasResult result = DAS_S_OK;
 
     response.error_code = result;
@@ -417,9 +414,8 @@ DasResult IpcCommandHandler::OnListSessionObjects(
         return DAS_E_IPC_DESERIALIZATION_FAILED;
     }
 
-    RemoteObjectRegistry&         registry = ctx.registry_;
     std::vector<RemoteObjectInfo> objects;
-    registry.ListObjectsBySession(session_id, objects);
+    registry_.ListObjectsBySession(session_id, objects);
     DasResult result = DAS_S_OK;
 
     response.error_code = result;
@@ -469,7 +465,7 @@ DasResult IpcCommandHandler::OnClearSession(
         return DAS_E_IPC_DESERIALIZATION_FAILED;
     }
 
-    RemoteObjectRegistry& registry = *registry_;
+    RemoteObjectRegistry& registry = registry_;
     registry.UnregisterAllFromSession(session_id);
     DasResult result = DAS_S_OK;
 
@@ -505,7 +501,7 @@ DasResult IpcCommandHandler::OnGetObjectCount(
     (void)header;
     (void)payload;
 
-    RemoteObjectRegistry& registry = *registry_;
+    RemoteObjectRegistry& registry = registry_;
     uint64_t count = static_cast<uint64_t>(registry.GetObjectCount());
 
     response.error_code = DAS_S_OK;

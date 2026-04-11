@@ -116,14 +116,13 @@ protected:
     void SetUp() override
     {
         registry_.Clear();
-        handler_.SetRegistry(&registry_);
         handler_.SetSessionId(1);
     }
 
     void TearDown() override { registry_.Clear(); }
 
     RemoteObjectRegistry registry_;
-    IpcCommandHandler    handler_;
+    IpcCommandHandler    handler_{registry_};
 };
 
 TEST_F(IpcCommandHandlerTest, LookupObject_Success)

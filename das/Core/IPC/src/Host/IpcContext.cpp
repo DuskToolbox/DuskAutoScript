@@ -249,7 +249,7 @@ namespace Core
                 async_transport_->SetSharedMemoryPool(shared_memory_.get());
 
                 // 8. 创建并初始化 IpcCommandHandler
-                command_handler_ = IpcCommandHandler::Create();
+                command_handler_ = IpcCommandHandler::Create(registry_);
                 command_handler_->SetSessionId(session_id_);
 
                 // 9. 创建 HandshakeHandler（使用 DasPtr 管理生命周期）

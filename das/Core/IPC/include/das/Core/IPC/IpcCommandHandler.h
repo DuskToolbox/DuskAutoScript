@@ -82,17 +82,18 @@ public:
         std::span<const uint8_t>         payload,
         IpcCommandResponse&              response)>;
 
-    IpcCommandHandler();
+    explicit IpcCommandHandler(RemoteObjectRegistry& registry);
     ~IpcCommandHandler() = default;
 
     /**
      * @brief 工厂函数：创建 IpcCommandHandler 实例
      *
+     * @param registry 远程对象注册表引用（per-IpcContext 依赖）
      * @return DasPtr<IpcCommandHandler> 新创建的实例
      */
-    static DasPtr<IpcCommandHandler> Create()
+    static DasPtr<IpcCommandHandler> Create(RemoteObjectRegistry& registry)
     {
-        return DasPtr<IpcCommandHandler>(new IpcCommandHandler());
+        return DasPtr<IpcCommandHandler>(new IpcCommandHandler(registry));
     }
 
     /// 增加引用计数
@@ -147,13 +148,6 @@ public:
      * @param session_id 会话ID
      */
     void SetSessionId(uint16_t session_id);
-
-    /**
-     * @brief 设置 RemoteObjectRegistry 引用（供 HandleCommand 路径使用）
-     *
-     * @param registry 远程对象注册表指针
-     */
-    void SetRegistry(RemoteObjectRegistry* registry);
 
     /**
      * @brief 获取当前会话ID
@@ -239,8 +233,8 @@ private:
 
     uint16_t session_id_;
 
-    /// 远程对象注册表指针（HandleCommand 路径使用）
-    RemoteObjectRegistry* registry_ = nullptr;
+    /// 远程对象注册表引用（构造时注入，per-IpcContext 依赖）
+    RemoteObjectRegistry& registry_;
 
     /// 引用计数
     uint32_t ref_count_ = 0;
