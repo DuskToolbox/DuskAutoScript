@@ -1,7 +1,6 @@
 #include <cstdint>
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
-#include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/IDasBase.h>
 #include <unordered_map>
@@ -18,11 +17,7 @@ DistributedObjectManager::~DistributedObjectManager()
 
 uint16_t DistributedObjectManager::GetLocalSessionId() const
 {
-    if (run_loop_)
-    {
-        return run_loop_->GetSessionId();
-    }
-    return 0;
+    return session_id_;
 }
 
 DasResult DistributedObjectManager::RegisterLocalObject(

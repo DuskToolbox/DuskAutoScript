@@ -37,28 +37,13 @@ struct ConnectionManager::Impl
     uint16_t                  local_id_{0};
 };
 
-std::unique_ptr<ConnectionManager> ConnectionManager::Create(uint16_t local_id)
-{
-    auto manager = std::unique_ptr<ConnectionManager>(new ConnectionManager());
-    manager->Initialize(local_id);
-    return manager;
-}
-
-ConnectionManager::ConnectionManager() : impl_(std::make_unique<Impl>()) {}
-
-ConnectionManager::~ConnectionManager()
-{
-    StopHeartbeatThread();
-    Uninitialize();
-}
-
-DasResult ConnectionManager::Initialize(uint16_t local_id)
+ConnectionManager::ConnectionManager(uint16_t local_id)
+    : impl_(std::make_unique<Impl>())
 {
     impl_->local_id_ = local_id;
-    return DAS_S_OK;
 }
 
-void ConnectionManager::Uninitialize()
+ConnectionManager::~ConnectionManager()
 {
     StopHeartbeatThread();
 

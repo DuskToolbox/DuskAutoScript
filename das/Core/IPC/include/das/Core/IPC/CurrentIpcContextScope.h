@@ -20,14 +20,32 @@ namespace Core
             virtual DasResult ResolveMainProcessInterface(
                 const DasGuid& iid,
                 IDasBase**     pp_out) = 0;
-            virtual DasResult RegisterService(IDasBase* p_object, const DasGuid& iid) = 0;
+            virtual DasResult RegisterService(
+                IDasBase*      p_object,
+                const DasGuid& iid) = 0;
             virtual DasResult UnregisterService(const DasGuid& iid) = 0;
 
         protected:
             ~IResolveContext() = default;
         };
 
-        // Single TLS pointer 鈥?zero allocation, no vector, no <vector> needed
+        /**
+         * Thread-local IPC context pointer.
+         *
+         * SAFETY PRECONDITION: Each IpcContext instance must exclusively own
+         * its thread. Two IpcContext instances must never share the same
+         * thread, otherwise the TLS pointer would be overwritten, causing
+         * use-after-free.
+         *
+         * Current architecture satisfies this:
+         * - MainProcess::IpcContext::Run() sets this on the IpcRunLoop's IO
+         * thread
+         * - Host::IpcContext::Run() sets this on its own thread
+         * - BusinessThread::Run() sets this on its dedicated worker thread
+         *
+         * Phase 35 will validate multi-Context correctness and may introduce
+         * stronger mechanisms if needed.
+         */
         inline thread_local IResolveContext* g_current_context = nullptr;
 
         class ScopedCurrentIpcContext
