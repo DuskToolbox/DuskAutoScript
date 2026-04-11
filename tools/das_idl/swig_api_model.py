@@ -19,6 +19,7 @@ from das_idl_parser import (
     ParameterDef,
     ParamDirection,
     TypeInfo,
+    TypeKind,
 )
 
 
@@ -208,20 +209,6 @@ def is_binary_buffer_method(method: MethodDef) -> bool:
     return method.attributes.get('binary_buffer', False) if method.attributes else False
 
 
-def is_interface_type(type_name: str) -> bool:
-    """
-    判断是否是接口类型（以 I 开头，后跟大写字母）
-    
-    Args:
-        type_name: 类型名称
-        
-    Returns:
-        如果是接口类型返回 True
-    """
-    simple_name = type_name.split('::')[-1]
-    return simple_name.startswith('I') and len(simple_name) > 1 and simple_name[1:2].isupper()
-
-
 def has_idas_readonly_string_param(method: MethodDef) -> bool:
     """
     检查方法是否有 IDasReadOnlyString* 类型的输入参数
@@ -339,7 +326,7 @@ def classify_out_methods(
             
             # 确定属性 getter 的参数类型
             base_type = prop.type_info.base_type
-            is_interface = is_interface_type(base_type)
+            is_interface = prop.type_info.type_kind == TypeKind.INTERFACE
             is_string = base_type == 'IDasReadOnlyString'
             
             if is_interface or is_string:

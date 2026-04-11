@@ -5,7 +5,7 @@ C# SWIG 生成器
 """
 
 from typing import List, Optional, TYPE_CHECKING
-from das_idl_parser import InterfaceDef, MethodDef, ParameterDef, ParamDirection, TypeInfo
+from das_idl_parser import InterfaceDef, MethodDef, ParameterDef, ParamDirection, TypeInfo, TypeKind
 from swig_lang_generator_base import SwigLangGenerator
 
 if TYPE_CHECKING:
@@ -49,11 +49,6 @@ class CSharpSwigGenerator(SwigLangGenerator):
 
     def get_swig_define(self) -> str:
         return 'SWIGCSHARP'
-
-    @staticmethod
-    def _is_interface_type(type_name: str) -> bool:
-        simple_name = type_name.split('::')[-1]
-        return simple_name.startswith('I') and len(simple_name) > 1 and simple_name[1:2].isupper()
 
     @staticmethod
     def _is_binary_buffer_method(method: MethodDef) -> bool:
@@ -435,7 +430,7 @@ class CSharpSwigGenerator(SwigLangGenerator):
                 continue
 
             base_type = prop.type_info.base_type
-            is_interface = self._is_interface_type(base_type)
+            is_interface = prop.type_info.type_kind == TypeKind.INTERFACE
             is_string = base_type == 'IDasReadOnlyString'
             out_type = base_type if (is_interface or is_string) else base_type
             pointer_level = 2 if (is_interface or is_string) else 1
@@ -520,7 +515,7 @@ class CSharpSwigGenerator(SwigLangGenerator):
             param_type = param.type_info.base_type
             param_type_with_prefix = param_type
             namespace = self.get_type_namespace(param_type)
-            if not namespace and self._is_interface_type(param_type):
+            if not namespace and param.type_info.type_kind == TypeKind.INTERFACE:
                 param_type_with_prefix = f'::{param_type}'
             elif namespace and namespace != current_namespace:
                 param_type_with_prefix = f'::{namespace}::{param_type}'
@@ -559,7 +554,7 @@ class CSharpSwigGenerator(SwigLangGenerator):
             param_type = param.type_info.base_type
             param_type_with_prefix = param_type
             namespace = self.get_type_namespace(param_type)
-            if not namespace and self._is_interface_type(param_type):
+            if not namespace and param.type_info.type_kind == TypeKind.INTERFACE:
                 param_type_with_prefix = f'::{param_type}'
             elif namespace and namespace != current_namespace:
                 param_type_with_prefix = f'::{namespace}::{param_type}'
@@ -604,15 +599,15 @@ class CSharpSwigGenerator(SwigLangGenerator):
             param_type = param.type_info.base_type
             param_type_with_prefix = param_type
             namespace = self.get_type_namespace(param_type)
-            if not namespace and self._is_interface_type(param_type):
+            if not namespace and param.type_info.type_kind == TypeKind.INTERFACE:
                 param_type_with_prefix = f'::{param_type}'
             elif namespace and namespace != current_namespace:
                 param_type_with_prefix = f'::{namespace}::{param_type}'
 
             is_out_param = param.direction == ParamDirection.OUT or param is out_param
-            if param.type_info.is_pointer or (is_out_param and self._is_interface_type(param_type)):
+            if param.type_info.is_pointer or (is_out_param and param.type_info.type_kind == TypeKind.INTERFACE):
                 if is_out_param:
-                    if self._is_interface_type(param_type):
+                    if param.type_info.type_kind == TypeKind.INTERFACE:
                         pointer_level = 2
                     else:
                         pointer_level = param.type_info.pointer_level if param.type_info.is_pointer else 1
@@ -657,7 +652,7 @@ class CSharpSwigGenerator(SwigLangGenerator):
                     continue
 
                 param_type = param.type_info.base_type
-                if self._is_interface_type(param_type) and param_type != 'IDasReadOnlyString':
+                if param.type_info.type_kind == TypeKind.INTERFACE and param_type != 'IDasReadOnlyString':
                     namespace = self.get_type_namespace(param_type)
                     if namespace:
                         param_type = f'{namespace}::{param_type}'

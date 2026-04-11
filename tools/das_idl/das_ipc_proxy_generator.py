@@ -48,6 +48,7 @@ InterfaceDef = _das_idl_parser.InterfaceDef
 MethodDef = _das_idl_parser.MethodDef
 ParameterDef = _das_idl_parser.ParameterDef
 TypeInfo = _das_idl_parser.TypeInfo
+TypeKind = _das_idl_parser.TypeKind
 ParamDirection = _das_idl_parser.ParamDirection
 StructDef = _das_idl_parser.StructDef
 parse_idl_file = _das_idl_parser.parse_idl_file
@@ -194,6 +195,11 @@ class ProxyTypeMapper:
 
         # 接口名必须以 I 开头且包含 Das
         return interface_name.startswith("I") and "Das" in interface_name
+
+    @staticmethod
+    def is_interface_type_from_kind(type_info: TypeInfo) -> bool:
+        """根据 TypeInfo.type_kind 判断是否是接口类型（推荐使用）"""
+        return type_info.type_kind == TypeKind.INTERFACE
 
     def get_interface_name(self, idl_type: str) -> str:
         """从接口指针类型提取接口名"""
@@ -346,25 +352,31 @@ class IpcProxyGenerator:
         """将 PropertyDef 列表转换为 MethodDef 列表（getter/setter）"""
         methods = []
         for prop in properties:
-            is_interface = prop.type_info.base_type.startswith('I') and prop.type_info.pointer_level == 0
+            is_interface = (prop.type_info.type_kind == TypeKind.INTERFACE
+                            and prop.type_info.pointer_level == 0)
             is_string = prop.type_info.base_type in ('string', 'IDasReadOnlyString')
 
             if prop.has_getter:
                 if is_interface or is_string:
-                    out_type = TypeInfo(base_type=prop.type_info.base_type, pointer_level=2, is_pointer=True)
+                    out_type = TypeInfo(base_type=prop.type_info.base_type, pointer_level=2, is_pointer=True,
+                                        type_kind=prop.type_info.type_kind)
                     params = [ParameterDef(name="pp_out", type_info=out_type, direction=ParamDirection.OUT)]
                 else:
-                    out_type = TypeInfo(base_type=prop.type_info.base_type, pointer_level=1, is_pointer=True)
+                    out_type = TypeInfo(base_type=prop.type_info.base_type, pointer_level=1, is_pointer=True,
+                                        type_kind=prop.type_info.type_kind)
                     params = [ParameterDef(name="p_out", type_info=out_type, direction=ParamDirection.OUT)]
                 methods.append(MethodDef(name=f"Get{prop.name}", return_type=TypeInfo(base_type="DasResult", pointer_level=0), parameters=params))
 
             if prop.has_setter:
                 if is_interface:
-                    in_type = TypeInfo(base_type=prop.type_info.base_type, pointer_level=1, is_pointer=True)
+                    in_type = TypeInfo(base_type=prop.type_info.base_type, pointer_level=1, is_pointer=True,
+                                       type_kind=prop.type_info.type_kind)
                 elif is_string:
-                    in_type = TypeInfo(base_type="IDasReadOnlyString", pointer_level=1, is_pointer=True)
+                    in_type = TypeInfo(base_type="IDasReadOnlyString", pointer_level=1, is_pointer=True,
+                                       type_kind=prop.type_info.type_kind)
                 else:
-                    in_type = TypeInfo(base_type=prop.type_info.base_type, pointer_level=0)
+                    in_type = TypeInfo(base_type=prop.type_info.base_type, pointer_level=0,
+                                       type_kind=prop.type_info.type_kind)
                 params = [ParameterDef(name="p_value", type_info=in_type, direction=ParamDirection.IN)]
                 methods.append(MethodDef(name=f"Set{prop.name}", return_type=TypeInfo(base_type="DasResult", pointer_level=0), parameters=params))
 
@@ -906,8 +918,7 @@ class IpcProxyGenerator:
             if bt in self.type_mapper.struct_types:
                 continue  # 基本字段的 struct 是固定的
             # 接口指针：ObjectId 编码为 uint64（8字节）
-            base_check = bt.split("::")[-1]
-            if base_check.startswith("I") and "Das" in base_check and param.type_info.is_pointer:
+            if param.type_info.type_kind == TypeKind.INTERFACE and param.type_info.is_pointer:
                 continue
             # 未知类型 — 不是固定大小
             return False
@@ -930,8 +941,7 @@ class IpcProxyGenerator:
                 total += self.FIXED_SIZES.get(field_bt, 0)
             return total
         # 接口指针：ObjectId 编码为 uint64
-        base_check = bt.split("::")[-1]
-        if base_check.startswith("I") and "Das" in base_check and param.type_info.is_pointer:
+        if param.type_info.type_kind == TypeKind.INTERFACE and param.type_info.is_pointer:
             return 8
         return 0
 
@@ -970,15 +980,9 @@ class IpcProxyGenerator:
         # an interface pointer — it's handled separately in _generate_serialize_param
         if param.type_info.base_type == "IDasReadOnlyString":
             return False
-        full_type_for_check = param.type_info.base_type
-        if param.type_info.is_pointer:
-            full_type_for_check += "*" * param.type_info.pointer_level
-        is_iface = self.type_mapper.is_interface_type(full_type_for_check)
-        if not is_iface:
-            base_check = param.type_info.base_type.split("::")[-1]
-            is_iface = (base_check.startswith("I") and "Das" in base_check
-                        and param.type_info.is_pointer and param.type_info.pointer_level >= 1)
-        return is_iface
+        # 使用 type_kind 进行类型判断
+        return (param.type_info.type_kind == TypeKind.INTERFACE
+                and param.type_info.is_pointer)
 
     def _generate_struct_fill(self, param: ParameterDef, prefix: str, indent: str) -> List[str]:
         """生成 packed struct 字段赋值代码"""
@@ -1314,16 +1318,9 @@ class IpcProxyGenerator:
             lines.append(f"{indent}}}")
             return lines
 
-        # 构建完整类型名（带指针）用于接口检测
-        full_type_for_check = param.type_info.base_type
-        if param.type_info.is_pointer:
-            full_type_for_check += "*" * param.type_info.pointer_level
-        is_iface = self.type_mapper.is_interface_type(full_type_for_check)
-        if not is_iface:
-            # Fallback: check if base_type looks like interface name (I + Das)
-            base_check = param.type_info.base_type.split("::")[-1]
-            is_iface = (base_check.startswith("I") and "Das" in base_check
-                        and param.type_info.is_pointer and param.type_info.pointer_level >= 1)
+        # 使用 type_kind 检测接口类型
+        is_iface = (param.type_info.type_kind == TypeKind.INTERFACE
+                    and param.type_info.is_pointer)
         if is_iface:
             interface_name = param.type_info.base_type.split("::")[-1]
             param_name = param.name
@@ -1411,14 +1408,9 @@ class IpcProxyGenerator:
 
         type_info = self.type_mapper.get_type_info(param.type_info.base_type)
 
-        # Check if this is an interface pointer type
-        base_name = param.type_info.base_type.split("::")[-1]
-        full_type_name = param.type_info.base_type
-        if param.type_info.is_pointer:
-            full_type_name += "*" * param.type_info.pointer_level
-        is_interface = self.type_mapper.is_interface_type(full_type_name)
-        if not is_interface:
-            is_interface = (base_name.startswith("I") and "Das" in base_name)
+        # Check if this is an interface pointer type using type_kind
+        is_interface = (param.type_info.type_kind == TypeKind.INTERFACE
+                        and param.type_info.is_pointer)
 
         if is_interface and param.type_info.is_pointer:
             # Get the interface namespace for fully qualified name

@@ -15,6 +15,7 @@ from .das_idl_parser import (
     ParameterDef,
     TypeInfo,
     ParamDirection,
+    TypeKind,
 )
 
 from .das_cpp_generator import (
@@ -36,6 +37,7 @@ __all__ = [
     "ParameterDef",
     "TypeInfo",
     "ParamDirection",
+    "TypeKind",
     # Generator
     "CppCodeGenerator",
     "CppTypeMapper",

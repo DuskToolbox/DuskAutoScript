@@ -45,6 +45,7 @@ MethodDef = _das_idl_parser.MethodDef
 PropertyDef = _das_idl_parser.PropertyDef
 ParameterDef = _das_idl_parser.ParameterDef
 TypeInfo = _das_idl_parser.TypeInfo
+TypeKind = _das_idl_parser.TypeKind
 ParamDirection = _das_idl_parser.ParamDirection
 
 
@@ -78,8 +79,18 @@ class CppWrapperTypeMapper:
 
     @staticmethod
     def is_interface_type(type_name: str) -> bool:
-        """判断是否是接口类型 (以 I 开头的类型)"""
+        """判断是否是接口类型 (以 I 开头的类型)
+
+        .. deprecated::
+            请优先使用 :meth:`is_interface_type_from_kind` 或直接比较
+            ``type_info.type_kind == TypeKind.INTERFACE``。
+        """
         return type_name.startswith('I') and len(type_name) > 1 and type_name[1:2].isupper()
+
+    @staticmethod
+    def is_interface_type_from_kind(type_info: TypeInfo) -> bool:
+        """根据 TypeInfo.type_kind 判断是否是接口类型"""
+        return type_info.type_kind == TypeKind.INTERFACE
 
     @staticmethod
     def is_string_type(type_name: str) -> bool:
@@ -152,7 +163,7 @@ class CppWrapperTypeMapper:
             return 'DasBase'
 
         # 接口类型返回智能指针包装
-        if cls.is_interface_type(base):
+        if type_info.type_kind == TypeKind.INTERFACE:
             # 对于带命名空间的接口类型，get_wrapper_class_name 已经返回完整的命名空间限定符
             # 例如: ::Das::PluginInterface::IDasComponent -> ::Das::PluginInterface::DasComponent
             wrapper_name = cls.get_wrapper_class_name(base)
@@ -603,15 +614,15 @@ class CppWrapperGenerator:
     def _collect_dependent_interfaces(self, interface: InterfaceDef):
         """收集接口依赖的其他接口类型"""
         for method in interface.methods:
-            if CppWrapperTypeMapper.is_interface_type(method.return_type.base_type):
+            if method.return_type.type_kind == TypeKind.INTERFACE:
                 self._dependent_interfaces.add(method.return_type.base_type)
 
             for param in method.parameters:
-                if CppWrapperTypeMapper.is_interface_type(param.type_info.base_type):
+                if param.type_info.type_kind == TypeKind.INTERFACE:
                     self._dependent_interfaces.add(param.type_info.base_type)
 
         for prop in interface.properties:
-            if CppWrapperTypeMapper.is_interface_type(prop.type_info.base_type):
+            if prop.type_info.type_kind == TypeKind.INTERFACE:
                 self._dependent_interfaces.add(prop.type_info.base_type)
 
         for method in interface.methods:
@@ -1076,7 +1087,7 @@ class CppWrapperGenerator:
         param_decls = []
         for param in in_params:
             param_type = CppWrapperTypeMapper.get_cpp_type(param.type_info)
-            if CppWrapperTypeMapper.is_interface_type(param.type_info.base_type):
+            if param.type_info.type_kind == TypeKind.INTERFACE:
                 wrapper_type = CppWrapperTypeMapper.get_wrapper_class_name(param.type_info.base_type)
                 wrapper_type = self._get_qualified_type_name(wrapper_type, current_namespace)
                 param_decls.append(f"const {wrapper_type}& {param.name}")
@@ -1107,7 +1118,7 @@ class CppWrapperGenerator:
 
             for param in out_params:
                 base_type = param.type_info.base_type
-                if CppWrapperTypeMapper.is_interface_type(base_type):
+                if param.type_info.type_kind == TypeKind.INTERFACE:
                     qualified_base_type = self._get_qualified_type_name(base_type, current_namespace)
                     lines.append(f"{body_indent}{qualified_base_type}* {param.name}_raw = nullptr;")
                 else:
@@ -1122,12 +1133,12 @@ class CppWrapperGenerator:
             for param in method.parameters:
                 if param.direction == ParamDirection.OUT:
                     base_type = param.type_info.base_type
-                    if CppWrapperTypeMapper.is_interface_type(base_type):
+                    if param.type_info.type_kind == TypeKind.INTERFACE:
                         call_args.append(f"&{param.name}_raw")
                     else:
                         call_args.append(f"&{param.name}_value")
                 else:
-                    if CppWrapperTypeMapper.is_interface_type(param.type_info.base_type):
+                    if param.type_info.type_kind == TypeKind.INTERFACE:
                         call_args.append(f"{param.name}.Get()")
                     elif CppWrapperTypeMapper.is_string_type(param.type_info.base_type):
                         call_args.append(f"{param.name}.Get()")
@@ -1147,7 +1158,7 @@ class CppWrapperGenerator:
                 if len(out_params) == 1:
                     param = out_params[0]
                     base_type = param.type_info.base_type
-                    if CppWrapperTypeMapper.is_interface_type(base_type):
+                    if param.type_info.type_kind == TypeKind.INTERFACE:
                         wrapper_type = CppWrapperTypeMapper.get_wrapper_class_name(base_type)
                         wrapper_type = self._get_qualified_type_name(wrapper_type, current_namespace)
                         lines.append(f"{body_indent}return {wrapper_type}::Attach({param.name}_raw);")
@@ -1157,7 +1168,7 @@ class CppWrapperGenerator:
                     ret_values = []
                     for param in out_params:
                         base_type = param.type_info.base_type
-                        if CppWrapperTypeMapper.is_interface_type(base_type):
+                        if param.type_info.type_kind == TypeKind.INTERFACE:
                             wrapper_type = CppWrapperTypeMapper.get_wrapper_class_name(base_type)
                             wrapper_type = self._get_qualified_type_name(wrapper_type, current_namespace)
                             ret_values.append(f"{wrapper_type}::Attach({param.name}_raw)")
@@ -1183,7 +1194,7 @@ class CppWrapperGenerator:
 
             for param in out_params:
                 base_type = param.type_info.base_type
-                if CppWrapperTypeMapper.is_interface_type(base_type):
+                if param.type_info.type_kind == TypeKind.INTERFACE:
                     qualified_base_type = self._get_qualified_type_name(base_type, current_namespace)
                     lines.append(f"{body_indent}{qualified_base_type}* {param.name}_raw = nullptr;")
                 else:
@@ -1198,12 +1209,12 @@ class CppWrapperGenerator:
             for param in method.parameters:
                 if param.direction == ParamDirection.OUT:
                     base_type = param.type_info.base_type
-                    if CppWrapperTypeMapper.is_interface_type(base_type):
+                    if param.type_info.type_kind == TypeKind.INTERFACE:
                         call_args.append(f"&{param.name}_raw")
                     else:
                         call_args.append(f"&{param.name}_value")
                 else:
-                    if CppWrapperTypeMapper.is_interface_type(param.type_info.base_type):
+                    if param.type_info.type_kind == TypeKind.INTERFACE:
                         call_args.append(f"{param.name}.Get()")
                     elif CppWrapperTypeMapper.is_string_type(param.type_info.base_type):
                         call_args.append(f"{param.name}.Get()")
@@ -1222,7 +1233,7 @@ class CppWrapperGenerator:
                 if len(out_params) == 1:
                     param = out_params[0]
                     base_type = param.type_info.base_type
-                    if CppWrapperTypeMapper.is_interface_type(base_type):
+                    if param.type_info.type_kind == TypeKind.INTERFACE:
                         wrapper_type = CppWrapperTypeMapper.get_wrapper_class_name(base_type)
                         wrapper_type = self._get_qualified_type_name(wrapper_type, current_namespace)
                         lines.append(f"{body_indent}return {wrapper_type}::Attach({param.name}_raw);")
@@ -1232,7 +1243,7 @@ class CppWrapperGenerator:
                     ret_values = []
                     for param in out_params:
                         base_type = param.type_info.base_type
-                        if CppWrapperTypeMapper.is_interface_type(base_type):
+                        if param.type_info.type_kind == TypeKind.INTERFACE:
                             wrapper_type = CppWrapperTypeMapper.get_wrapper_class_name(base_type)
                             wrapper_type = self._get_qualified_type_name(wrapper_type, current_namespace)
                             ret_values.append(f"{wrapper_type}::Attach({param.name}_raw)")
@@ -1262,7 +1273,7 @@ class CppWrapperGenerator:
         current_namespace = interface.namespace
 
         base_type = prop.type_info.base_type
-        is_interface = CppWrapperTypeMapper.is_interface_type(base_type)
+        is_interface = prop.type_info.type_kind == TypeKind.INTERFACE
         is_string = CppWrapperTypeMapper.is_string_type(base_type)
         cpp_type = CppWrapperTypeMapper.TYPE_MAP.get(base_type, base_type)
 

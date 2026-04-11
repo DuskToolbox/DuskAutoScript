@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from typing import List, Set, Dict, Optional
 from das_idl_parser import (
     IdlDocument, InterfaceDef, EnumDef, MethodDef, PropertyDef,
-    ParameterDef, TypeInfo, ParamDirection
+    ParameterDef, TypeInfo, ParamDirection, TypeKind
 )
 
 
@@ -50,8 +50,17 @@ class CppImplementsTypeMapper:
 
     @staticmethod
     def is_interface_type(type_name: str) -> bool:
-        """判断是否是接口类型 (以 I 开头的类型)"""
+        """判断是否是接口类型 (以 I 开头的类型)
+
+        .. deprecated::
+            当 TypeInfo 可用时，请使用 is_interface_type_from_kind() 代替。
+        """
         return type_name.startswith('I') and len(type_name) > 1 and type_name[1:2].isupper()
+
+    @staticmethod
+    def is_interface_type_from_kind(type_info: TypeInfo) -> bool:
+        """根据 TypeInfo.type_kind 判断是否是接口类型"""
+        return type_info.type_kind == TypeKind.INTERFACE
 
     @classmethod
     def get_cpp_type(cls, type_info: TypeInfo) -> str:

@@ -23,6 +23,7 @@ DAS IDL 解析器
 import re
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from pathlib import Path
 from typing import Optional
 
 
@@ -70,6 +71,15 @@ class ParamDirection(Enum):
     INOUT = "inout"
 
 
+class TypeKind(Enum):
+    """类型分类（由 resolve_types 后置标注）"""
+    BASIC = auto()       # 内置基本类型 (int32_t, float, etc.)
+    INTERFACE = auto()   # IDL 中定义的接口 (IDasImage, etc.)
+    ENUM = auto()        # IDL 中定义的枚举 (ImageFormat, etc.)
+    STRUCT = auto()      # IDL 中定义的结构体 (DasRect, etc.)
+    UNKNOWN = auto()     # 未能解析的类型（可能来自未导入的 IDL）
+
+
 @dataclass
 class TypeInfo:
     """类型信息"""
@@ -78,6 +88,7 @@ class TypeInfo:
     pointer_level: int = 0    # 指针层级
     is_const: bool = False    # 是否是 const
     is_reference: bool = False  # 是否是引用
+    type_kind: TypeKind = TypeKind.UNKNOWN  # 类型分类（由 resolve_types 标注）
 
 
 @dataclass
@@ -350,10 +361,14 @@ class Parser:
         'void', 'bool', 'int', 'int8', 'int16', 'int32', 'int64',
         'uint8', 'uint16', 'uint32', 'uint64', 'float', 'double',
         'size_t', 'DasResult', 'DasBool', 'DasGuid', 'DasString',
-        'DasReadOnlyString', 'IDasReadOnlyString', 'char',
+        'DasReadOnlyString', 'char',
         'unsigned char', 'unsigned int', 'unsigned short', 'unsigned long',
         'signed char', 'signed int', 'signed short', 'signed long'
     }
+    
+    # 这些类型名虽然在 BUILTIN_TYPES 中不是基本类型，但 IDL 中没有定义，
+    # 需要在类型分类时正确识别为接口（抽象接口，不能直接实例化）
+    _INTERFACE_NAMES_WITHOUT_IDL_DEF = frozenset({'IDasReadOnlyString', 'IDasBase'})
     
     # 复合类型关键字（如 unsigned char）
     COMPOUND_TYPE_PREFIXES = {'unsigned', 'signed'}
@@ -371,12 +386,13 @@ class Parser:
         'signed char', 'signed int', 'signed short', 'signed long'
     }
     
-    def __init__(self, tokens: list):
+    def __init__(self, tokens: list, source_path: str = ""):
         self.tokens = tokens
         self.pos = 0
         self.document = IdlDocument()
         self._current_namespace = ""  # 添加当前命名空间跟踪
         self._namespaces = set()  # 收集所有遇到的命名空间，用于校验
+        self.source_path = source_path  # 源文件路径，用于解析 import 的相对路径
         
     def current(self) -> Token:
         if self.pos >= len(self.tokens):
@@ -439,6 +455,9 @@ class Parser:
         
         # 校验：一个 IDL 文件中应该只有一个命名空间
         self._validate_single_namespace()
+        
+        # 后置解析：标注所有 TypeInfo 的类型分类
+        self.resolve_types()
         
         return self.document
     
@@ -886,6 +905,86 @@ class Parser:
         
         return struct
     
+    def resolve_types(self):
+        """后置解析：根据 IdlDocument 中已定义的接口/枚举/结构体，
+        标注所有 TypeInfo.type_kind 字段。
+
+        此方法在 parse() 完成后自动调用。
+        生成器可通过 type_kind 字段精确判断类型分类，
+        而不再依赖 "类型名以 I 开头" 的启发式猜测。
+
+        类型来源优先级：
+        1. 当前 IDL 文件中定义的类型
+        2. import 的 IDL 文件中定义的类型
+        3. 内置基本类型
+        """
+        # 构建已知类型注册表
+        known_interfaces: set[str] = set()
+        known_enums: set[str] = set()
+        known_structs: set[str] = set()
+
+        # 1. 收集当前文件定义的类型
+        for iface in self.document.interfaces:
+            known_interfaces.add(iface.name)
+        for enum in self.document.enums:
+            known_enums.add(enum.name)
+        for struct in self.document.structs:
+            known_structs.add(struct.name)
+
+        # 2. 扫描 import 的 IDL 文件，收集其中的类型
+        if self.source_path:
+            source_dir = Path(self.source_path).parent
+            for import_def in self.document.imports:
+                import_path = source_dir / import_def.idl_path
+                if not import_path.exists():
+                    continue
+                try:
+                    imported_doc = parse_idl_file(str(import_path))
+                    for iface in imported_doc.interfaces:
+                        known_interfaces.add(iface.name)
+                    for enum in imported_doc.enums:
+                        known_enums.add(enum.name)
+                    for struct in imported_doc.structs:
+                        known_structs.add(struct.name)
+                except Exception:
+                    # import 文件解析失败时静默跳过，不影响当前文件
+                    pass
+
+        # 内置基本类型集合（来自 BUILTIN_TYPES）
+        builtin_types: set[str] = set(self.BUILTIN_TYPES)
+
+        def classify(type_info: TypeInfo) -> TypeKind:
+            """根据 base_type 判断类型分类"""
+            name = type_info.base_type
+            # 去除命名空间前缀
+            simple = name.split("::")[-1] if "::" in name else name
+
+            if simple in known_interfaces or simple in self._INTERFACE_NAMES_WITHOUT_IDL_DEF:
+                return TypeKind.INTERFACE
+            if simple in known_enums:
+                return TypeKind.ENUM
+            if simple in known_structs:
+                return TypeKind.STRUCT
+            if simple in builtin_types:
+                return TypeKind.BASIC
+            return TypeKind.UNKNOWN
+
+        def annotate_recursive(obj):
+            """递归标注对象中所有 TypeInfo 字段"""
+            if obj is None:
+                return
+            if isinstance(obj, TypeInfo):
+                obj.type_kind = classify(obj)
+            elif isinstance(obj, list):
+                for item in obj:
+                    annotate_recursive(item)
+            elif hasattr(obj, "__dataclass_fields__"):
+                for field_name in obj.__dataclass_fields__:
+                    annotate_recursive(getattr(obj, field_name))
+
+        # 遍历 document 中所有结构，递归标注
+        annotate_recursive(self.document)
+
     def _validate_single_namespace(self):
         """校验：一个 IDL 文件中应该只有一个命名空间"""
         if len(self._namespaces) > 1:
@@ -900,11 +999,11 @@ class Parser:
             pass
 
 
-def parse_idl(source: str) -> IdlDocument:
+def parse_idl(source: str, source_path: str = "") -> IdlDocument:
     """解析 IDL 源代码"""
     lexer = Lexer(source)
     tokens = lexer.tokenize()
-    parser = Parser(tokens)
+    parser = Parser(tokens, source_path=source_path)
     return parser.parse()
 
 
@@ -912,7 +1011,7 @@ def parse_idl_file(file_path: str) -> IdlDocument:
     """解析 IDL 文件"""
     with open(file_path, 'r', encoding='utf-8') as f:
         source = f.read()
-    return parse_idl(source)
+    return parse_idl(source, source_path=str(Path(file_path).resolve()))
 
 
 # 测试代码

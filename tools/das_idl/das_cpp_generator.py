@@ -13,7 +13,7 @@ from typing import Optional, List
 from das_idl_parser import (
     IdlDocument, InterfaceDef, EnumDef, MethodDef, PropertyDef,
     ParameterDef, TypeInfo, ParamDirection, ImportDef,
-    StructDef, StructFieldDef
+    StructDef, StructFieldDef, TypeKind,
 )
 
 
@@ -46,8 +46,16 @@ class CppTypeMapper:
 
     @staticmethod
     def is_interface_type(type_name: str) -> bool:
-        """判断是否是接口类型 (以 I 开头的类型)"""
+        """判断是否是接口类型
+        
+        优先使用 TypeInfo.type_kind，仅作为兼容性后备方案。
+        """
         return type_name.startswith('I') and len(type_name) > 1 and type_name[1:2].isupper()
+
+    @staticmethod
+    def is_interface_type_from_kind(type_info: TypeInfo) -> bool:
+        """根据 TypeInfo.type_kind 判断是否是接口类型"""
+        return type_info.type_kind == TypeKind.INTERFACE
 
     @staticmethod
     def is_string_type(type_name: str) -> bool:
@@ -94,7 +102,7 @@ class CppTypeMapper:
         base = cls.TYPE_MAP.get(type_info.base_type, type_info.base_type)
 
         # 对于接口类型，输出参数是 IXxx**
-        if cls.is_interface_type(type_info.base_type):
+        if type_info.type_kind == TypeKind.INTERFACE:
             return f"{base}**"
         # 对于字符串类型，输出参数是 IDasReadOnlyString**
         elif cls.is_string_type(type_info.base_type):
@@ -172,8 +180,12 @@ class CppCodeGenerator:
             如果类型在相同命名空间，返回 TypeName（不添加任何前缀）
             如果类型没有命名空间，返回 ::TypeName
         """
-        # 如果类型不是接口类型（不需要限定的基本类型），直接返回
-        if not CppTypeMapper.is_interface_type(type_name):
+        # 如果类型不在类型注册表中（基本类型或未导入类型），直接返回
+        is_known_type = (
+            type_name in self.local_type_to_namespace
+            or type_name in self.imported_type_to_namespace
+        )
+        if not is_known_type:
             return type_name
 
         # 字符串接口类型不添加 :: 前缀，避免 SWIG director 生成重复声明
@@ -210,7 +222,7 @@ class CppCodeGenerator:
         """
         for param in method.parameters:
             base_type = param.type_info.base_type
-            if not CppTypeMapper.is_interface_type(base_type):
+            if param.type_info.type_kind != TypeKind.INTERFACE:
                 continue
             if CppTypeMapper.is_string_type(base_type):
                 continue
@@ -232,7 +244,7 @@ class CppCodeGenerator:
         seen = set()
         for param in method.parameters:
             base_type = param.type_info.base_type
-            if not CppTypeMapper.is_interface_type(base_type):
+            if param.type_info.type_kind != TypeKind.INTERFACE:
                 continue
             if CppTypeMapper.is_string_type(base_type):
                 continue
@@ -501,7 +513,7 @@ DAS_DEFINE_GUID(
 
             # 对接口类型应用命名空间限定
             base_type = param.type_info.base_type
-            if CppTypeMapper.is_interface_type(base_type):
+            if param.type_info.type_kind == TypeKind.INTERFACE:
                 qualified_type = self._qualify_type_if_needed(base_type, current_namespace)
                 # 替换类型名中的基本类型为完全限定类型
                 param_type = param_type.replace(base_type, qualified_type)
@@ -532,10 +544,10 @@ DAS_DEFINE_GUID(
         cpp_type = CppTypeMapper.TYPE_MAP.get(base_type, base_type)
 
         # 对接口类型应用命名空间限定
-        if CppTypeMapper.is_interface_type(base_type):
+        if prop.type_info.type_kind == TypeKind.INTERFACE:
             cpp_type = self._qualify_type_if_needed(base_type, current_namespace)
 
-        is_interface = CppTypeMapper.is_interface_type(base_type)
+        is_interface = prop.type_info.type_kind == TypeKind.INTERFACE
         is_string = CppTypeMapper.is_string_type(base_type)
 
         if prop.has_getter:

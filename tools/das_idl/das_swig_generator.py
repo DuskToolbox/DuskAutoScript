@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import List, Optional, Set, Dict
 from das_idl_parser import (
     IdlDocument, InterfaceDef, EnumDef, MethodDef, PropertyDef,
-    ParameterDef, TypeInfo, ParamDirection
+    ParameterDef, TypeInfo, ParamDirection, TypeKind,
 )
 from das_idl_parser import parse_idl_file as _das_idl_parser_parse_idl_file
 from swig_java_generator import JavaSwigGenerator
@@ -56,13 +56,6 @@ class SwigTypeMapper:
     }
 
     @staticmethod
-    def is_interface_type(type_name: str) -> bool:
-        """判断是否是接口类型（支持带命名空间的类型名）"""
-        # 提取简单名称（去除命名空间限定符）
-        simple_name = type_name.split('::')[-1]
-        return simple_name.startswith('I') and len(simple_name) > 1 and simple_name[1:2].isupper()
-
-    @staticmethod
     def is_string_type(type_name: str) -> bool:
         """判断是否是字符串类型"""
         return type_name in ('DasString', 'DasReadOnlyString', 'IDasReadOnlyString')
@@ -76,7 +69,7 @@ class SwigTypeMapper:
             return cls.SWIG_RET_TYPE_MAP[base]
 
         # 接口类型返回 DasRetXxx
-        if cls.is_interface_type(base):
+        if type_info.type_kind == TypeKind.INTERFACE:
             if base.startswith('IDas'):
                 return f"DasRet{base[4:]}"
             else:
@@ -434,11 +427,11 @@ class SwigCodeGenerator:
             # 检查参数中的接口类型
             for param in method.parameters:
                 if param.direction == ParamDirection.OUT:
-                    if SwigTypeMapper.is_interface_type(param.type_info.base_type):
+                    if param.type_info.type_kind == TypeKind.INTERFACE:
                         self._collected_interface_types.add(param.type_info.base_type)
 
         for prop in interface.properties:
-            if SwigTypeMapper.is_interface_type(prop.type_info.base_type):
+            if prop.type_info.type_kind == TypeKind.INTERFACE:
                 self._collected_interface_types.add(prop.type_info.base_type)
 
     def _generate_ignore_directives(self, interface: InterfaceDef) -> str:
@@ -580,7 +573,7 @@ class SwigCodeGenerator:
         for method in interface.methods:
             for param in method.parameters:
                 base_type = param.type_info.base_type
-                if not SwigTypeMapper.is_interface_type(base_type):
+                if param.type_info.type_kind != TypeKind.INTERFACE:
                     continue
                 if SwigTypeMapper.is_string_type(base_type):
                     continue
@@ -825,7 +818,7 @@ class SwigCodeGenerator:
                     # [out] 参数：接口类型固定 **, 其他类型 *
                     # 使用无限定类型（SWIG 通过 using 声明解析为当前命名空间类型）
                     # 这样 SWIG 能识别 3-param override 覆写了基类纯虚方法
-                    if SwigTypeMapper.is_interface_type(param.type_info.base_type):
+                    if param.type_info.type_kind == TypeKind.INTERFACE:
                         ptr_type = f'{cpp_type}**'
                     else:
                         ptr_type = f'{cpp_type}{"*" * param.type_info.pointer_level}'
@@ -858,7 +851,7 @@ class SwigCodeGenerator:
 
             # 初始化 out param 的默认值
             out_cpp_type = self._get_cpp_type(out_type)
-            if SwigTypeMapper.is_interface_type(out_type):
+            if out_param.type_info.type_kind == TypeKind.INTERFACE:
                 default_init = 'nullptr'
             elif out_type == 'bool':
                 default_init = 'false'
@@ -896,14 +889,14 @@ class SwigCodeGenerator:
         """
         return True
 
-    def _qualify_param_type(self, cpp_type: str, base_type: str, interface: InterfaceDef) -> str:
+    def _qualify_param_type(self, cpp_type: str, base_type: str, type_kind: TypeKind, interface: InterfaceDef) -> str:
         """为接口/枚举类型添加命名空间限定
 
         在 ISwig 类的 %inline 块中，类定义在特定命名空间内（如 Das::PluginInterface），
         但参数类型可能在另一个命名空间（如 Das::ExportInterface）。
         需要添加 :: 前缀或完全限定名，避免 C++ 编译器找不到类型。
         """
-        if not SwigTypeMapper.is_interface_type(base_type):
+        if type_kind != TypeKind.INTERFACE:
             return cpp_type
 
         # 查找类型所在的命名空间
@@ -999,7 +992,7 @@ class SwigCodeGenerator:
                 #      %feature("nodirector") 签名必须匹配，否则 feature 不生效）
                 #   - 接口类型与基类同命名空间 → 保持无限定
                 #   - 非接口类型 → 保持无限定
-                if SwigTypeMapper.is_interface_type(param.type_info.base_type):
+                if param.type_info.type_kind == TypeKind.INTERFACE:
                     type_ns = self._get_type_namespace(param.type_info.base_type)
                     if type_ns and type_ns != base_ns:
                         # 类型定义在其他命名空间，通过 using 引入 → SWIG 解析为 base_ns::Type
@@ -1014,13 +1007,13 @@ class SwigCodeGenerator:
                     qualified_type = cpp_type
 
                 if param.direction == ParamDirection.OUT:
-                    if SwigTypeMapper.is_interface_type(param.type_info.base_type):
+                    if param.type_info.type_kind == TypeKind.INTERFACE:
                         param_decls.append(f'{qualified_type}** {param.name}')
                     else:
                         ptr_type = f'{qualified_type}{"*" * param.type_info.pointer_level}'
                         param_decls.append(f'{ptr_type} {param.name}')
                 else:
-                    if SwigTypeMapper.is_interface_type(param.type_info.base_type):
+                    if param.type_info.type_kind == TypeKind.INTERFACE:
                         param_decls.append(f'{qualified_type}* {param.name}')
                     elif param.type_info.is_const and param.type_info.is_reference:
                         param_decls.append(f'const {qualified_type}& {param.name}')
