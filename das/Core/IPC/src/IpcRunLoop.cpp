@@ -66,7 +66,7 @@ DasResult IpcRunLoop::Initialize(bool enable_heartbeat)
     // Used in both MainProcess mode (HostLauncher registration) and Host mode
     // (direct transport registration after handshake)
     connection_manager_ =
-        ConnectionManager::Create(1); // local_id = 1 for MainProcess
+        std::make_unique<ConnectionManager>(1); // local_id = 1 for MainProcess
 
     // 注册所有 IPC stub handlers（代码生成器生成的 g_stub_factory）
     DasIpcStub::g_stub_factory.RegisterAll(*this);

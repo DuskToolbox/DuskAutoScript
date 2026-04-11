@@ -227,7 +227,7 @@ namespace Core
 
                 // 6. DistributedObjectManager 绑定 IpcRunLoop
                 proxy_factory_.emplace(registry_, *run_loop_, business_thread_);
-                proxy_factory_->GetObjectManager().SetRunLoop(run_loop_.get());
+                proxy_factory_->GetObjectManager().SetSessionId(session_id_);
                 run_loop_->SetProxyFactory(&*proxy_factory_);
 
                 // Create() 已包含初始化，不需要再次调用 Initialize()
@@ -282,6 +282,11 @@ namespace Core
                         if (run_loop_)
                         {
                             run_loop_->SetSessionId(client.session_id);
+                        }
+                        if (proxy_factory_)
+                        {
+                            proxy_factory_->GetObjectManager().SetSessionId(
+                                client.session_id);
                         }
 
                         // 注册 Host 的 transport 到 ConnectionManager，以便
