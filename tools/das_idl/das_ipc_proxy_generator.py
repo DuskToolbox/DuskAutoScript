@@ -307,9 +307,8 @@ class IpcProxyGenerator:
         遍历所有方法，检查返回类型和参数类型是否为接口类型，
         如果是则收集对应的头文件路径（约定为 {InterfaceName}.h）。
 
-        注意：base_type 是纯类型名（不含 *），所以不能直接使用
-        is_interface_type（它期望输入以 * 或 Ptr 结尾）。
-        这里通过 type_info.is_pointer + base_type 命名模式来判断。
+        注意：通过 type_info.type_kind == TypeKind.INTERFACE 判断是否为接口类型，
+        同时检查 type_info.is_pointer 确保是指针类型。
 
         核心类型（如 IDasReadOnlyString、IDasStopToken）不需要额外 include，
         因为它们已经通过 ABI 头文件中的 include 链可见。
@@ -336,10 +335,7 @@ class IpcProxyGenerator:
         includes = set()
 
         def _is_iface_ptr(type_info: TypeInfo) -> bool:
-            if not type_info.is_pointer:
-                return False
-            name = type_info.base_type.split("::")[-1]
-            return name.startswith("I") and "Das" in name
+            return type_info.is_pointer and type_info.type_kind == TypeKind.INTERFACE
 
         def _iface_name_from_type(type_info: TypeInfo) -> str:
             return type_info.base_type.split("::")[-1]

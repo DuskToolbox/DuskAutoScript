@@ -46,19 +46,6 @@ class CppTypeMapper:
     }
 
     @staticmethod
-    def is_interface_type(type_name: str) -> bool:
-        """判断是否是接口类型
-        
-        优先使用 TypeInfo.type_kind，仅作为兼容性后备方案。
-        """
-        return type_name.startswith('I') and len(type_name) > 1 and type_name[1:2].isupper()
-
-    @staticmethod
-    def is_interface_type_from_kind(type_info: TypeInfo) -> bool:
-        """根据 TypeInfo.type_kind 判断是否是接口类型"""
-        return type_info.type_kind == TypeKind.INTERFACE
-
-    @staticmethod
     def is_string_type(type_name: str) -> bool:
         """判断是否是字符串类型"""
         return type_name in ('DasString', 'DasReadOnlyString', 'IDasReadOnlyString', 'IDasString')

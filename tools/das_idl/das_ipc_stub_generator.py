@@ -169,10 +169,7 @@ class IpcStubGenerator:
         includes = set()
 
         def _is_iface_ptr(type_info: TypeInfo) -> bool:
-            if not type_info.is_pointer:
-                return False
-            name = type_info.base_type.split("::")[-1]
-            return name.startswith("I") and "Das" in name
+            return type_info.is_pointer and type_info.type_kind == TypeKind.INTERFACE
 
         def _iface_name_from_type(type_info: TypeInfo) -> str:
             return type_info.base_type.split("::")[-1]

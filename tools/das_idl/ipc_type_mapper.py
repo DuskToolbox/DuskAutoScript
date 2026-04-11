@@ -27,7 +27,6 @@ except ImportError:
 
 IdlDocument = _das_idl_parser.IdlDocument
 TypeInfo = _das_idl_parser.TypeInfo
-TypeKind = _das_idl_parser.TypeKind
 parse_idl_file = _das_idl_parser.parse_idl_file
 
 
@@ -149,38 +148,6 @@ class IpcBaseTypeMapper:
     def is_struct_type(self, idl_type: str) -> bool:
         """检查是否是 struct 类型"""
         return idl_type in self.struct_types
-
-    def is_interface_type(self, idl_type: str) -> bool:
-        """检查是否是接口指针类型（如 IDasXxx*, IDasXxxPtr）
-
-        接口类型特征：
-        - 以 "I" 开头
-        - 以 "*" 结尾（指针）
-        - 或者以 "Ptr" 结尾（智能指针）
-        - 通常以 "Das" 结尾（如 IDasLogReader）
-        """
-        # 去除命名空间前缀
-        type_name = idl_type.split("::")[-1]
-
-        # 检查是否是指针类型
-        is_pointer = type_name.endswith("*")
-        is_smart_ptr = type_name.endswith("Ptr")
-
-        if not (is_pointer or is_smart_ptr):
-            return False
-
-        # 提取接口名（去除指针标记）
-        interface_name = type_name[:-1]  # 去除 *
-        if is_smart_ptr:
-            interface_name = type_name[:-3]  # 去除 Ptr
-
-        # 接口名必须以 I 开头且包含 Das
-        return interface_name.startswith("I") and "Das" in interface_name
-
-    @staticmethod
-    def is_interface_type_from_kind(type_info: TypeInfo) -> bool:
-        """根据 TypeInfo.type_kind 判断是否是接口类型（推荐使用）"""
-        return type_info.type_kind == TypeKind.INTERFACE
 
     def get_interface_name(self, idl_type: str) -> str:
         """从接口指针类型提取接口名"""

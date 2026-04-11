@@ -80,21 +80,6 @@ class CppWrapperTypeMapper:
     }
 
     @staticmethod
-    def is_interface_type(type_name: str) -> bool:
-        """判断是否是接口类型 (以 I 开头的类型)
-
-        .. deprecated::
-            请优先使用 :meth:`is_interface_type_from_kind` 或直接比较
-            ``type_info.type_kind == TypeKind.INTERFACE``。
-        """
-        return type_name.startswith('I') and len(type_name) > 1 and type_name[1:2].isupper()
-
-    @staticmethod
-    def is_interface_type_from_kind(type_info: TypeInfo) -> bool:
-        """根据 TypeInfo.type_kind 判断是否是接口类型"""
-        return type_info.type_kind == TypeKind.INTERFACE
-
-    @staticmethod
     def is_string_type(type_name: str) -> bool:
         """判断是否是字符串类型"""
         return type_name in ('DasString', 'DasReadOnlyString', 'IDasReadOnlyString')
@@ -620,7 +605,7 @@ class CppWrapperGenerator:
 
         for method in interface.methods:
             for param in method.parameters:
-                if param.direction == ParamDirection.OUT:
+                if param.direction == ParamDirection.OUT and param.type_info.type_kind == TypeKind.INTERFACE:
                     wrapper_type = CppWrapperTypeMapper.get_return_type_for_out_param(param.type_info)
                     if wrapper_type and wrapper_type != "void":
                         # 对于[out]参数，参数的base_type就是接口类型
@@ -672,10 +657,7 @@ class CppWrapperGenerator:
             if simple_name in builtin_interfaces:
                 continue
 
-            # 跳过非接口类型（不是以'I'开头的类型，如int64_t、uint64_t）
-            if not simple_name.startswith('I'):
-                continue
-
+            # _dependent_interfaces 已由 _collect_dependent_interfaces 保证只包含接口类型
             found = False
 
             for interface in self.document.interfaces:
@@ -1465,11 +1447,6 @@ class CppWrapperGenerator:
                 if not type_ns:
                     continue
 
-                # 跳过非接口类型（如enum）
-                simple_name = type_name.split('::')[-1]
-                if not simple_name.startswith('I'):
-                    continue
-
                 # 获取依赖接口所在的IDL文件名
                 idl_file_name = type_to_idl_map.get(type_name, type_name)
 
@@ -1591,11 +1568,11 @@ class CppWrapperGenerator:
                     wrapper_name = CppWrapperTypeMapper.get_wrapper_class_name(interface.name)
                     content += f"{ns_indent}class {wrapper_name};\n"
 
-                # 前向声明依赖接口的包装类（只处理接口类型，以'I'开头）
+                # 前向声明依赖接口的包装类
                 type_namespace_map = self._collect_type_namespace_mapping()
                 for dep_interface_name in sorted(self._dependent_interfaces):
                     dep_ns = type_namespace_map.get(dep_interface_name)
-                    if dep_ns == namespace_name and dep_interface_name.startswith('I'):
+                    if dep_ns == namespace_name:
                         dep_wrapper_name = CppWrapperTypeMapper.get_wrapper_class_name(dep_interface_name)
                         content += f"{ns_indent}class {dep_wrapper_name};\n"
                 content += "\n"
