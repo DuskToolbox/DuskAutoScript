@@ -99,6 +99,14 @@ namespace Core
                     return;
                 }
 
+                // 生命周期安全：重置 HostLauncher 的回调，防止
+                // ConnectionManager 持有的 DasPtr<HostLauncher>
+                // 在 IpcContext 析构后仍触发悬空回调
+                if (launcher_)
+                {
+                    launcher_->ClearCallbacks();
+                }
+
                 // Clear ProxyFactory
                 if (proxy_factory_.has_value())
                 {
@@ -150,14 +158,25 @@ namespace Core
                     return DAS_E_INVALID_ARGUMENT;
                 }
 
+                // 预分配 session_id，作为值传入 HostLauncher 构造函数
+                uint16_t session_id = AllocateSessionId();
+                if (session_id == 0)
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "Failed to allocate session_id for HostLauncher");
+                    return DAS_E_IPC_SESSION_ALLOC_FAILED;
+                }
+
                 try
                 {
-                    auto* launcher = new HostLauncher(GetIoContext());
-                    launcher->SetIpcContext(this);
+                    // 注入 on_register 回调，IpcContext 自行调用
+                    // InternalRegisterHostLauncher
+                    auto* launcher = new HostLauncher(
+                        GetIoContext(),
+                        session_id,
+                        [this]() { return InternalRegisterHostLauncher(); });
 
-                    // Store DasPtr internally for auto-registration after Start
                     launcher_ = DAS::DasPtr<HostLauncher>(launcher);
-
                     *pp_out_launcher = launcher;
                     return DAS_S_OK;
                 }
