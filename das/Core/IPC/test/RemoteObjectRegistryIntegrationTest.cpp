@@ -35,13 +35,9 @@ namespace
 class RemoteObjectRegistryIntegrationTest : public ::testing::Test
 {
 protected:
-    void SetUp() override
-    {
-        registry_ = &RemoteObjectRegistry::GetInstance();
-        registry_->Clear();
-    }
+    void SetUp() override { registry_.Clear(); }
 
-    void TearDown() override { registry_->Clear(); }
+    void TearDown() override { registry_.Clear(); }
 
     DasGuid CreateTestGuid(uint32_t seed)
     {
@@ -56,7 +52,7 @@ protected:
         return guid;
     }
 
-    RemoteObjectRegistry* registry_;
+    RemoteObjectRegistry registry_;
 };
 
 // ====== Session ID Allocation and Usage Tests ======

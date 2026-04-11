@@ -11,7 +11,6 @@
 #include <das/Core/IPC/CurrentIpcContextScope.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/MainProcess/IpcContext.h>
-#include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/DasString.hpp>
 #include <das/DasSwigApi.h>
 #include <das/DasTypes.hpp>
@@ -80,7 +79,6 @@ namespace
     };
 
 } // namespace
-
 // ====== Tests without IPC context ======
 
 TEST(QueryMainProcessInterfaceTest, NoContext_ReturnsObjectNotInit)
@@ -117,21 +115,21 @@ protected:
     void SetUp() override
     {
         // Create real IpcContext with heartbeat disabled
-        ctx_ = MainProcess::CreateIpcContextEz(false);
-        ASSERT_NE(ctx_.get(), nullptr);
+        concrete_ctx_ = MainProcess::CreateIpcContextEz(false);
+        ASSERT_NE(concrete_ctx_.get(), nullptr);
 
-        // Clear global registry to avoid interference from other tests
-        RemoteObjectRegistry::GetInstance().Clear();
+        // Clear per-context registry to avoid interference from other tests
+        concrete_ctx_->registry_.Clear();
     }
 
     void TearDown() override
     {
-        // Clean up the global registry
-        RemoteObjectRegistry::GetInstance().Clear();
-        // ctx_ destructor cleans up everything internally
+        // Clean up the per-context registry
+        concrete_ctx_->registry_.Clear();
+        // concrete_ctx_ destructor cleans up everything internally
     }
 
-    MainProcess::IpcContextPtr ctx_;
+    MainProcess::IpcContextPtr concrete_ctx_;
 };
 
 TEST_F(
@@ -144,11 +142,11 @@ TEST_F(
     // Register to DistributedObjectManager (takes ownership via AddRef)
     ObjectId  obj_id;
     DasResult reg_result =
-        ctx_->GetObjectManager().RegisterLocalObject(test_string, obj_id);
+        concrete_ctx_->object_manager_.RegisterLocalObject(test_string, obj_id);
     ASSERT_EQ(reg_result, DAS_S_OK);
 
     // Register to RemoteObjectRegistry for interface-based lookup
-    DasResult registry_result = ctx_->GetRegistry().RegisterObject(
+    DasResult registry_result = concrete_ctx_->registry_.RegisterObject(
         obj_id,
         DAS_IID_READ_ONLY_STRING,
         1,
@@ -158,7 +156,7 @@ TEST_F(
 
     // Bind IPC context
     ScopedCurrentIpcContext scope(
-        static_cast<MainProcess::IpcContext*>(ctx_.get()));
+        static_cast<MainProcess::IpcContext*>(concrete_ctx_.get()));
 
     // Query via public API
     auto result = QueryMainProcessInterface(DAS_IID_READ_ONLY_STRING);
@@ -186,13 +184,13 @@ TEST_F(
     // Register an object under DAS_IID_READ_ONLY_STRING
     auto*    test_string = new TestReadOnlyString("test");
     ObjectId obj_id;
-    ctx_->GetObjectManager().RegisterLocalObject(test_string, obj_id);
+    concrete_ctx_->object_manager_.RegisterLocalObject(test_string, obj_id);
 
-    ctx_->GetRegistry()
+    concrete_ctx_->registry_
         .RegisterObject(obj_id, DAS_IID_READ_ONLY_STRING, 1, "test_string", 1);
 
     ScopedCurrentIpcContext scope(
-        static_cast<MainProcess::IpcContext*>(ctx_.get()));
+        static_cast<MainProcess::IpcContext*>(concrete_ctx_.get()));
 
     // Query with a different IID — should fail
     DasGuid unknown_iid = {
@@ -217,17 +215,17 @@ TEST_F(
     auto* str2 = new TestReadOnlyString("Second string");
 
     ObjectId id1, id2;
-    ctx_->GetObjectManager().RegisterLocalObject(str1, id1);
-    ctx_->GetObjectManager().RegisterLocalObject(str2, id2);
+    concrete_ctx_->object_manager_.RegisterLocalObject(str1, id1);
+    concrete_ctx_->object_manager_.RegisterLocalObject(str2, id2);
 
     // Both registered under same IID — LookupByInterface returns the first
-    ctx_->GetRegistry()
+    concrete_ctx_->registry_
         .RegisterObject(id1, DAS_IID_READ_ONLY_STRING, 1, "str1", 1);
-    ctx_->GetRegistry()
+    concrete_ctx_->registry_
         .RegisterObject(id2, DAS_IID_READ_ONLY_STRING, 1, "str2", 1);
 
     ScopedCurrentIpcContext scope(
-        static_cast<MainProcess::IpcContext*>(ctx_.get()));
+        static_cast<MainProcess::IpcContext*>(concrete_ctx_.get()));
 
     auto result = QueryMainProcessInterface(DAS_IID_READ_ONLY_STRING);
     ASSERT_EQ(result.GetErrorCode(), DAS_S_OK);

@@ -149,6 +149,13 @@ public:
     void SetSessionId(uint16_t session_id);
 
     /**
+     * @brief 设置 RemoteObjectRegistry 引用（供 HandleCommand 路径使用）
+     *
+     * @param registry 远程对象注册表指针
+     */
+    void SetRegistry(RemoteObjectRegistry* registry);
+
+    /**
      * @brief 获取当前会话ID
      *
      * @return uint16_t 会话ID
@@ -231,6 +238,9 @@ private:
         const ValidatedIPCMessageHeader& header);
 
     uint16_t session_id_;
+
+    /// 远程对象注册表指针（HandleCommand 路径使用）
+    RemoteObjectRegistry* registry_ = nullptr;
 
     /// 引用计数
     uint32_t ref_count_ = 0;

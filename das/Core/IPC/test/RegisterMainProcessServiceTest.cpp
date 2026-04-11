@@ -16,7 +16,6 @@
 
 #include <das/Core/IPC/CurrentIpcContextScope.h>
 #include <das/Core/IPC/MainProcess/IpcContext.h>
-#include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/DasApi.h>
 #include <das/DasString.hpp>
 #include <das/DasSwigApi.h>
@@ -118,10 +117,13 @@ protected:
         ctx_ = MainProcess::CreateIpcContextEz(false);
         ASSERT_NE(ctx_.get(), nullptr);
 
-        RemoteObjectRegistry::GetInstance().Clear();
+        static_cast<MainProcess::IpcContext*>(ctx_.get())->registry_.Clear();
     }
 
-    void TearDown() override { RemoteObjectRegistry::GetInstance().Clear(); }
+    void TearDown() override
+    {
+        static_cast<MainProcess::IpcContext*>(ctx_.get())->registry_.Clear();
+    }
 
     MainProcess::IpcContextPtr ctx_;
 };

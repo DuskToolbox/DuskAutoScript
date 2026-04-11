@@ -56,7 +56,7 @@ DasGuid CreateTestGuid(
 // Test 注册基本功能
 TEST(RemoteObjectRegistryTest, RegisterObject_Basic)
 {
-    RemoteObjectRegistry& registry = RemoteObjectRegistry::GetInstance();
+    RemoteObjectRegistry registry;
     registry.Clear();
 
     ObjectId obj_id{.session_id = 1, .generation = 1, .local_id = 100};
@@ -84,7 +84,7 @@ TEST(RemoteObjectRegistryTest, RegisterObject_Basic)
 // Test 重复注册同一个对象
 TEST(RemoteObjectRegistryTest, RegisterObject_Duplicate)
 {
-    RemoteObjectRegistry& registry = RemoteObjectRegistry::GetInstance();
+    RemoteObjectRegistry registry;
     registry.Clear();
 
     ObjectId obj_id{.session_id = 1, .generation = 1, .local_id = 100};
@@ -115,7 +115,7 @@ TEST(RemoteObjectRegistryTest, RegisterObject_Duplicate)
 // Test 注册空名称
 TEST(RemoteObjectRegistryTest, RegisterObject_EmptyName)
 {
-    RemoteObjectRegistry& registry = RemoteObjectRegistry::GetInstance();
+    RemoteObjectRegistry registry;
     registry.Clear();
 
     ObjectId obj_id{.session_id = 1, .generation = 1, .local_id = 100};
@@ -141,7 +141,7 @@ TEST(RemoteObjectRegistryTest, RegisterObject_EmptyName)
 // Test 注册无效ObjectId
 TEST(RemoteObjectRegistryTest, RegisterObject_InvalidObjectId)
 {
-    RemoteObjectRegistry& registry = RemoteObjectRegistry::GetInstance();
+    RemoteObjectRegistry registry;
     registry.Clear();
 
     ObjectId obj_id{
@@ -171,7 +171,7 @@ TEST(RemoteObjectRegistryTest, RegisterObject_InvalidObjectId)
 // Test 注销对象
 TEST(RemoteObjectRegistryTest, UnregisterObject)
 {
-    RemoteObjectRegistry& registry = RemoteObjectRegistry::GetInstance();
+    RemoteObjectRegistry registry;
     registry.Clear();
 
     ObjectId obj_id{.session_id = 1, .generation = 1, .local_id = 100};
@@ -202,7 +202,7 @@ TEST(RemoteObjectRegistryTest, UnregisterObject)
 // Test 注销不存在的对象
 TEST(RemoteObjectRegistryTest, UnregisterObject_NotFound)
 {
-    RemoteObjectRegistry& registry = RemoteObjectRegistry::GetInstance();
+    RemoteObjectRegistry registry;
     registry.Clear();
 
     ObjectId obj_id{.session_id = 1, .generation = 1, .local_id = 100};
@@ -232,7 +232,7 @@ TEST(RemoteObjectRegistryTest, UnregisterObject_NotFound)
 // Test 注销指定会话的所有对象
 TEST(RemoteObjectRegistryTest, UnregisterAllFromSession)
 {
-    RemoteObjectRegistry& registry = RemoteObjectRegistry::GetInstance();
+    RemoteObjectRegistry registry;
     registry.Clear();
 
     // 注册来自会话1的对象
@@ -273,7 +273,7 @@ TEST(RemoteObjectRegistryTest, UnregisterAllFromSession)
 // Test 通过名称查找对象
 TEST(RemoteObjectRegistryTest, LookupByName)
 {
-    RemoteObjectRegistry& registry = RemoteObjectRegistry::GetInstance();
+    RemoteObjectRegistry registry;
     registry.Clear();
 
     ObjectId obj_id{.session_id = 1, .generation = 1, .local_id = 100};
@@ -305,7 +305,7 @@ TEST(RemoteObjectRegistryTest, LookupByName)
 // Test 通过名称查找不存在的对象
 TEST(RemoteObjectRegistryTest, LookupByName_NotFound)
 {
-    RemoteObjectRegistry& registry = RemoteObjectRegistry::GetInstance();
+    RemoteObjectRegistry registry;
     registry.Clear();
 
     ObjectId obj_id{.session_id = 1, .generation = 1, .local_id = 100};
@@ -333,7 +333,7 @@ TEST(RemoteObjectRegistryTest, LookupByName_NotFound)
 // Test 通过接口类型查找对象
 TEST(RemoteObjectRegistryTest, LookupByInterface)
 {
-    RemoteObjectRegistry& registry = RemoteObjectRegistry::GetInstance();
+    RemoteObjectRegistry registry;
     registry.Clear();
 
     ObjectId obj_id{.session_id = 1, .generation = 1, .local_id = 100};
@@ -367,7 +367,7 @@ TEST(RemoteObjectRegistryTest, LookupByInterface)
 // Test 通过接口类型查找不存在的对象
 TEST(RemoteObjectRegistryTest, LookupByInterface_NotFound)
 {
-    RemoteObjectRegistry& registry = RemoteObjectRegistry::GetInstance();
+    RemoteObjectRegistry registry;
     registry.Clear();
 
     ObjectId obj_id{.session_id = 1, .generation = 1, .local_id = 100};
@@ -410,7 +410,7 @@ TEST(RemoteObjectRegistryTest, LookupByInterface_NotFound)
 // Test 获取对象信息
 TEST(RemoteObjectRegistryTest, GetObjectInfo)
 {
-    RemoteObjectRegistry& registry = RemoteObjectRegistry::GetInstance();
+    RemoteObjectRegistry registry;
     registry.Clear();
 
     ObjectId obj_id{.session_id = 1, .generation = 1, .local_id = 100};
@@ -444,7 +444,7 @@ TEST(RemoteObjectRegistryTest, GetObjectInfo)
 // Test 列出所有对象
 TEST(RemoteObjectRegistryTest, ListAllObjects)
 {
-    RemoteObjectRegistry& registry = RemoteObjectRegistry::GetInstance();
+    RemoteObjectRegistry registry;
     registry.Clear();
 
     DasGuid iid = CreateTestGuid(
@@ -479,11 +479,17 @@ TEST(RemoteObjectRegistryTest, ListAllObjects)
     for (const auto& obj : objects)
     {
         if (obj.object_id.local_id == 100)
+        {
             found1 = true;
+        }
         if (obj.object_id.local_id == 200)
+        {
             found2 = true;
+        }
         if (obj.object_id.local_id == 300)
+        {
             found3 = true;
+        }
     }
 
     EXPECT_TRUE(found1);
@@ -494,7 +500,7 @@ TEST(RemoteObjectRegistryTest, ListAllObjects)
 // Test 按会话列出对象
 TEST(RemoteObjectRegistryTest, ListObjectsBySession)
 {
-    RemoteObjectRegistry& registry = RemoteObjectRegistry::GetInstance();
+    RemoteObjectRegistry registry;
     registry.Clear();
 
     DasGuid iid = CreateTestGuid(
@@ -531,9 +537,13 @@ TEST(RemoteObjectRegistryTest, ListObjectsBySession)
     {
         EXPECT_EQ(obj.session_id, 1);
         if (obj.object_id.local_id == 100)
+        {
             found1 = true;
+        }
         if (obj.object_id.local_id == 300)
+        {
             found3 = true;
+        }
     }
 
     EXPECT_TRUE(found1);
@@ -543,7 +553,7 @@ TEST(RemoteObjectRegistryTest, ListObjectsBySession)
 // Test 清空注册表
 TEST(RemoteObjectRegistryTest, Clear)
 {
-    RemoteObjectRegistry& registry = RemoteObjectRegistry::GetInstance();
+    RemoteObjectRegistry registry;
     registry.Clear();
 
     DasGuid iid = CreateTestGuid(
@@ -573,34 +583,4 @@ TEST(RemoteObjectRegistryTest, Clear)
     EXPECT_EQ(registry.GetObjectCount(), 0);
     EXPECT_FALSE(registry.ObjectExists(obj1));
     EXPECT_FALSE(registry.ObjectExists(obj2));
-}
-
-// Test 单例模式
-TEST(RemoteObjectRegistryTest, Singleton)
-{
-    RemoteObjectRegistry& registry1 = RemoteObjectRegistry::GetInstance();
-    RemoteObjectRegistry& registry2 = RemoteObjectRegistry::GetInstance();
-
-    // 应该是同一个实例
-    EXPECT_EQ(&registry1, &registry2);
-
-    // 测试在一个实例上的修改在另一个实例上可见
-    registry1.Clear();
-    DasGuid iid = CreateTestGuid(
-        0x12345678,
-        0x1234,
-        0x5678,
-        0x12,
-        0x34,
-        0x56,
-        0x78,
-        0x9A,
-        0xBC,
-        0xDE,
-        0xF0);
-    ObjectId obj_id{.session_id = 1, .generation = 1, .local_id = 100};
-    registry1.RegisterObject(obj_id, iid, 1, "test_object", 1);
-
-    EXPECT_EQ(registry2.GetObjectCount(), 1);
-    EXPECT_TRUE(registry2.ObjectExists(obj_id));
 }

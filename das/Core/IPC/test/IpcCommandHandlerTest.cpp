@@ -115,13 +115,15 @@ class IpcCommandHandlerTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        RemoteObjectRegistry::GetInstance().Clear();
+        registry_.Clear();
+        handler_.SetRegistry(&registry_);
         handler_.SetSessionId(1);
     }
 
-    void TearDown() override { RemoteObjectRegistry::GetInstance().Clear(); }
+    void TearDown() override { registry_.Clear(); }
 
-    IpcCommandHandler handler_;
+    RemoteObjectRegistry registry_;
+    IpcCommandHandler    handler_;
 };
 
 TEST_F(IpcCommandHandlerTest, LookupObject_Success)
@@ -140,8 +142,7 @@ TEST_F(IpcCommandHandlerTest, LookupObject_Success)
         0xDE,
         0xF0);
 
-    RemoteObjectRegistry::GetInstance()
-        .RegisterObject(obj_id, iid, 1, "test_object", 2);
+    registry_.RegisterObject(obj_id, iid, 1, "test_object", 2);
 
     std::vector<uint8_t> payload;
     AppendToBuffer(payload, obj_id);
@@ -206,8 +207,7 @@ TEST_F(IpcCommandHandlerTest, LookupByName_Success)
         0xDE,
         0xF0);
 
-    RemoteObjectRegistry::GetInstance()
-        .RegisterObject(obj_id, iid, 1, "test_object", 1);
+    registry_.RegisterObject(obj_id, iid, 1, "test_object", 1);
 
     std::vector<uint8_t> payload;
     AppendString(payload, "test_object");
@@ -254,8 +254,7 @@ TEST_F(IpcCommandHandlerTest, LookupByInterface_Success)
         0xDE,
         0xF0);
 
-    RemoteObjectRegistry::GetInstance()
-        .RegisterObject(obj_id, iid, 1, "test_object", 1);
+    registry_.RegisterObject(obj_id, iid, 1, "test_object", 1);
 
     std::vector<uint8_t> payload;
     AppendToBuffer(payload, iid);
@@ -332,8 +331,8 @@ TEST_F(IpcCommandHandlerTest, ListObjects_WithObjects)
         0xDE,
         0xF0);
 
-    RemoteObjectRegistry::GetInstance().RegisterObject(obj1, iid, 1, "obj1", 1);
-    RemoteObjectRegistry::GetInstance().RegisterObject(obj2, iid, 2, "obj2", 1);
+    registry_.RegisterObject(obj1, iid, 1, "obj1", 1);
+    registry_.RegisterObject(obj2, iid, 2, "obj2", 1);
 
     std::vector<uint8_t> payload;
 
@@ -367,9 +366,9 @@ TEST_F(IpcCommandHandlerTest, ListSessionObjects_Success)
         0xDE,
         0xF0);
 
-    RemoteObjectRegistry::GetInstance().RegisterObject(obj1, iid, 1, "obj1", 1);
-    RemoteObjectRegistry::GetInstance().RegisterObject(obj2, iid, 2, "obj2", 1);
-    RemoteObjectRegistry::GetInstance().RegisterObject(obj3, iid, 1, "obj3", 1);
+    registry_.RegisterObject(obj1, iid, 1, "obj1", 1);
+    registry_.RegisterObject(obj2, iid, 2, "obj2", 1);
+    registry_.RegisterObject(obj3, iid, 1, "obj3", 1);
 
     std::vector<uint8_t> payload;
     AppendToBuffer(payload, static_cast<uint16_t>(1));
@@ -403,8 +402,8 @@ TEST_F(IpcCommandHandlerTest, ClearSession_Success)
         0xDE,
         0xF0);
 
-    RemoteObjectRegistry::GetInstance().RegisterObject(obj1, iid, 1, "obj1", 1);
-    RemoteObjectRegistry::GetInstance().RegisterObject(obj2, iid, 2, "obj2", 1);
+    registry_.RegisterObject(obj1, iid, 1, "obj1", 1);
+    registry_.RegisterObject(obj2, iid, 2, "obj2", 1);
 
     std::vector<uint8_t> payload;
     AppendToBuffer(payload, static_cast<uint16_t>(1));
@@ -415,8 +414,8 @@ TEST_F(IpcCommandHandlerTest, ClearSession_Success)
     DasResult result = handler_.HandleCommand(header, payload, response);
 
     EXPECT_EQ(result, DAS_S_OK);
-    EXPECT_FALSE(RemoteObjectRegistry::GetInstance().ObjectExists(obj1));
-    EXPECT_TRUE(RemoteObjectRegistry::GetInstance().ObjectExists(obj2));
+    EXPECT_FALSE(registry_.ObjectExists(obj1));
+    EXPECT_TRUE(registry_.ObjectExists(obj2));
 }
 
 TEST_F(IpcCommandHandlerTest, Ping_Success)
@@ -453,8 +452,8 @@ TEST_F(IpcCommandHandlerTest, GetObjectCount_Success)
         0xDE,
         0xF0);
 
-    RemoteObjectRegistry::GetInstance().RegisterObject(obj1, iid, 1, "obj1", 1);
-    RemoteObjectRegistry::GetInstance().RegisterObject(obj2, iid, 2, "obj2", 1);
+    registry_.RegisterObject(obj1, iid, 1, "obj1", 1);
+    registry_.RegisterObject(obj2, iid, 2, "obj2", 1);
 
     std::vector<uint8_t> payload;
 
