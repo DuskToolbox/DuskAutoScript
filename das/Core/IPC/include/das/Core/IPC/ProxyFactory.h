@@ -12,6 +12,8 @@
 #include <das/DasPtr.hpp>
 #include <das/IDasBase.h>
 #include <das/Utils/StringUtils.h>
+#include <mutex>
+#include <unordered_map>
 
 #include <das/Core/IPC/Config.h>
 #include <das/DasConfig.h>
@@ -21,55 +23,78 @@ DAS_CORE_IPC_NS_BEGIN
  * @brief Proxy 工厂类，统一获取 Proxy 实例的入口
  *
  * 提供统一的 Proxy 实例创建、获取和释放接口
- * 使用单例模式，确保全局只有一个 Proxy 工厂实例
+ * 通过构造函数注入依赖，作为 IpcContext 的值成员存在
  * 复用 RemoteObjectRegistry 获取对象信息，复用 DistributedObjectManager
  * 管理对象生命周期
  */
 class ProxyFactory
 {
 public:
-    // 获取单例实例
-    static ProxyFactory& GetInstance();
-
-    /**
-     * @brief 初始化 ProxyFactory
-     * @param object_manager 分布式对象管理器
-     * @param object_registry 远程对象注册表
-     * @param run_loop IPC运行循环
-     * @return DasResult 初始化结果
-     */
-    DasResult Initialize(
-        DistributedObjectManager* object_manager,
-        RemoteObjectRegistry*     object_registry,
-        IpcRunLoop* run_loop      DAS_LIFETIMEBOUND = nullptr);
-
-    /**
-     * @brief 检查是否已初始化
-     * @return 如果已初始化返回 true，否则返回 false
-     */
-    bool IsInitialized() const;
+    explicit ProxyFactory(
+        DistributedObjectManager& object_manager,
+        RemoteObjectRegistry&     object_registry,
+        IpcRunLoop&               run_loop);
+    ~ProxyFactory();
 
     /**
      * @brief 获取当前的 IPC 运行循环
-     * @return IpcRunLoop* 运行循环指针，如果未初始化则返回 nullptr
+     * @return IpcRunLoop& 运行循环引用
      */
-    IpcRunLoop* DAS_LIFETIMEBOUND GetRunLoop() const { return run_loop_; }
+    IpcRunLoop& DAS_LIFETIMEBOUND GetRunLoop() const { return run_loop_; }
 
     /**
-     * @brief 设置 IPC 运行循环
-     * @param run_loop 运行循环指针
-     * @return DasResult 操作结果
+     * @brief 获取现有的 Proxy 实例
+     *
+     * @param object_id 对象 ID
+     * @return 对应的 Proxy
+     * 实例，如果不存在则返回 nullptr
      */
-    DasResult SetRunLoop(IpcRunLoop* run_loop);
+    IPCProxyBase* GetProxy(const ObjectId& object_id);
+
+    /**
+     * @brief 释放 Proxy 实例
+     * @param
+     * object_id 对象 ID
+     * @return DasResult
+     * 操作结果
+
+     */
+    DasResult ReleaseProxy(const ObjectId& object_id);
+
+    /**
+     * @brief 从缓存中移除
+     Proxy（内部方法，供
+     Proxy::Release 调用）
+     * @param object_id 对象
+     ID
+
+     * * @return DasResult 操作结果
+     */
+    DasResult RemoveFromCache(const ObjectId& object_id);
+
+    /**
+     * @brief 检查 Proxy 实例是否存在
+     * @param object_id 对象 ID
+     * @return 如果存在返回 true，否则返回 false
+     */
+    bool HasProxy(const ObjectId& object_id) const;
+
+    /**
+     * @brief 获取所有已创建的 Proxy 对象数量
+     * @return Proxy 对象数量
+     */
+    size_t GetProxyCount() const;
+
+    /**
+     * @brief 清空所有 Proxy 实例
+     */
+    void ClearAllProxies();
 
     // 禁止拷贝和赋值
     ProxyFactory(const ProxyFactory&) = delete;
     ProxyFactory& operator=(const ProxyFactory&) = delete;
 
 private:
-    ProxyFactory() = default;
-    ~ProxyFactory() = default;
-
     IPCProxyBase* CreateIPCProxy(const ObjectId& object_id);
 
     /**
@@ -90,14 +115,30 @@ private:
      */
     uint32_t GetObjectInterfaceId(const ObjectId& object_id);
 
+    // 内部数据结构：Proxy 缓存
+    struct ProxyEntry
+    {
+        IPCProxyBase* proxy; // 使用原始指针，生命周期由引用计数管理
+        uint64_t      object_id_encoded;
+        uint32_t      interface_id;
+        uint16_t      session_id;
+        uint32_t      local_refcount; // 本地 DasPtr 数量
+    };
+
+    // 缓存已创建的 Proxy
+    std::unordered_map<uint64_t, ProxyEntry> proxy_cache_;
+
+    // 互斥锁保护代理缓存
+    mutable std::mutex proxy_cache_mutex_;
+
     // 分布式对象管理器
-    DistributedObjectManager* object_manager_ = nullptr;
+    DistributedObjectManager& object_manager_;
 
     // 远程对象注册表
-    RemoteObjectRegistry* object_registry_ = nullptr;
+    RemoteObjectRegistry& object_registry_;
 
     // IPC运行循环
-    IpcRunLoop* run_loop_ = nullptr;
+    IpcRunLoop& run_loop_;
 };
 
 DAS_CORE_IPC_NS_END

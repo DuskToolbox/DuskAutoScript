@@ -9,38 +9,84 @@
 #include <das/Utils/StringUtils.h>
 
 DAS_CORE_IPC_NS_BEGIN
-ProxyFactory& ProxyFactory::GetInstance()
+
+ProxyFactory::ProxyFactory(
+    DistributedObjectManager& object_manager,
+    RemoteObjectRegistry&     object_registry,
+    IpcRunLoop&               run_loop)
+    : object_manager_(object_manager), object_registry_(object_registry),
+      run_loop_(run_loop)
 {
-    static ProxyFactory instance;
-    return instance;
 }
 
-DasResult ProxyFactory::Initialize(
-    DistributedObjectManager* object_manager,
-    RemoteObjectRegistry*     object_registry,
-    IpcRunLoop*               run_loop)
+ProxyFactory::~ProxyFactory() = default;
+
+IPCProxyBase* ProxyFactory::GetProxy(const ObjectId& object_id)
 {
-    if (!object_manager || !object_registry)
+    std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
+    auto it = proxy_cache_.find(EncodeObjectId(object_id));
+    if (it != proxy_cache_.end())
     {
-        return DAS_E_FAIL;
+        // 缓存命中：只增加本地计数，不发送 IPC
+        it->second.local_refcount++;
+        it->second.proxy->AddRef();
+        return it->second.proxy;
+    }
+    return nullptr;
+}
+
+DasResult ProxyFactory::ReleaseProxy(const ObjectId& object_id)
+{
+    std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
+    auto it = proxy_cache_.find(EncodeObjectId(object_id));
+    if (it != proxy_cache_.end())
+    {
+        it->second.local_refcount--;
+        if (it->second.local_refcount == 0)
+        {
+            proxy_cache_.erase(it);
+        }
+        return DAS_S_OK;
     }
 
-    object_manager_ = object_manager;
-    object_registry_ = object_registry;
-    run_loop_ = run_loop;
-
-    return DAS_S_OK;
+    return DAS_E_IPC_OBJECT_NOT_FOUND;
 }
 
-bool ProxyFactory::IsInitialized() const
+DasResult ProxyFactory::RemoveFromCache(const ObjectId& object_id)
 {
-    return (object_manager_ != nullptr) && (object_registry_ != nullptr);
+    std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
+    auto it = proxy_cache_.find(EncodeObjectId(object_id));
+    if (it != proxy_cache_.end())
+    {
+        it->second.local_refcount--;
+        if (it->second.local_refcount == 0)
+        {
+            proxy_cache_.erase(it);
+        }
+
+        return DAS_S_OK;
+    }
+
+    return DAS_E_IPC_OBJECT_NOT_FOUND;
 }
 
-DasResult ProxyFactory::SetRunLoop(IpcRunLoop* run_loop)
+bool ProxyFactory::HasProxy(const ObjectId& object_id) const
 {
-    run_loop_ = run_loop;
-    return DAS_S_OK;
+    std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
+    auto it = proxy_cache_.find(EncodeObjectId(object_id));
+    return (it != proxy_cache_.end());
+}
+
+size_t ProxyFactory::GetProxyCount() const
+{
+    std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
+    return proxy_cache_.size();
+}
+
+void ProxyFactory::ClearAllProxies()
+{
+    std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
+    proxy_cache_.clear();
 }
 
 IPCProxyBase* ProxyFactory::CreateIPCProxy(const ObjectId& object_id)
@@ -56,18 +102,13 @@ DasResult ProxyFactory::ValidateObject(
     const ObjectId&   object_id,
     RemoteObjectInfo& out_info)
 {
-    if (!object_registry_)
-    {
-        return DAS_E_IPC_INVALID_STATE;
-    }
-
-    DasResult result = object_registry_->GetObjectInfo(object_id, out_info);
+    DasResult result = object_registry_.GetObjectInfo(object_id, out_info);
     if (result != DAS_S_OK)
     {
         return result;
     }
 
-    if (!object_registry_->ObjectExists(object_id))
+    if (!object_registry_.ObjectExists(object_id))
     {
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }

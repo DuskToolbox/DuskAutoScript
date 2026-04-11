@@ -32,20 +32,12 @@
 
 DAS_CORE_IPC_NS_BEGIN
 
-// 构造函数实现
-IpcRunLoop::IpcRunLoop(IpcMessageQueue<InboundMessage>& inbound_queue)
-    : inbound_queue_(&inbound_queue)
-{
-}
-
 // 工厂函数实现
 DAS::Utils::Expected<std::unique_ptr<IpcRunLoop>> IpcRunLoop::Create(
-    bool                             enable_heartbeat,
-    IpcMessageQueue<InboundMessage>& inbound_queue)
+    bool enable_heartbeat)
 {
-    auto instance = std::unique_ptr<IpcRunLoop>(new IpcRunLoop(inbound_queue));
-    instance->enable_heartbeat_ = enable_heartbeat;
-    auto result = instance->Initialize();
+    auto instance = std::unique_ptr<IpcRunLoop>(new IpcRunLoop());
+    auto result = instance->Initialize(enable_heartbeat);
     if (result != DAS_S_OK)
     {
         return DAS::Utils::MakeUnexpected(result);
@@ -59,8 +51,9 @@ IpcRunLoop::~IpcRunLoop()
     Uninitialize();
 }
 
-DasResult IpcRunLoop::Initialize()
+DasResult IpcRunLoop::Initialize(bool enable_heartbeat)
 {
+    enable_heartbeat_ = enable_heartbeat;
     io_context_ = std::make_unique<boost::asio::io_context>();
     // 不再创建 async_transport_，IpcRunLoop 只提供 io_context 基础设施
     // 所有 transport 由外部管理：
@@ -189,16 +182,17 @@ void IpcRunLoop::RegisterHandler(
         DasPtr<IMessageHandler>(handler);
 }
 
-void IpcRunLoop::RegisterControlHandler(
-    uint8_t          header_flags,
-    uint32_t         interface_id,
-    IControlHandler* handler)
+void IpcRunLoop::RegisterHandler(
+    uint8_t                   header_flags,
+    uint32_t                  interface_id,
+    IAwaitableMessageHandler* handler)
 {
     if (!handler)
     {
         return;
     }
-    control_handlers_[header_flags][interface_id] = handler;
+    // 可等待 handler 直接存储原始指针，生命周期由调用方管理
+    awaitable_handlers_[header_flags][interface_id] = handler;
 }
 
 IMessageHandler* IpcRunLoop::GetHandler(
@@ -276,44 +270,64 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
         co_return;
     }
 
-    // 控制平面 handler 路由（使用 ControlHandlerContext，不依赖
-    // DistributedObjectManager）
-    auto control_it = control_handlers_.find(header.GetHeaderFlags());
-    if (control_it != control_handlers_.end())
+    // 处理 HEARTBEAT RESPONSE：收到心跳回复时更新时间戳
+    if (header.GetInterfaceId()
+        == static_cast<uint32_t>(
+            HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT))
     {
-        auto& control_map = control_it->second;
-        auto  control_handler_it = control_map.find(header.GetInterfaceId());
-        if (control_handler_it != control_map.end())
+        if (header.GetMessageType() == MessageType::RESPONSE)
         {
-            IControlHandler* control_handler = control_handler_it->second;
+            // 收到心跳回复，更新时间戳
+            if (connection_manager_)
+            {
+                // V3: 使用 source_session_id
+                connection_manager_->UpdateHeartbeatTimestamp(
+                    header.GetSourceSessionId());
+            }
+            co_return;
+        }
+        // REQUEST 继续交给 handler 处理
+    }
+
+    // 使用 header_flags + interface_id 路由
+    // 优先检查可等待 handler（协程版本，控制平面用）
+    auto awaitable_it = awaitable_handlers_.find(header.GetHeaderFlags());
+    if (awaitable_it != awaitable_handlers_.end())
+    {
+        auto& awaitable_map = awaitable_it->second;
+        auto awaitable_handler_it = awaitable_map.find(header.GetInterfaceId());
+        if (awaitable_handler_it != awaitable_map.end())
+        {
+            IAwaitableMessageHandler* awaitable_handler =
+                awaitable_handler_it->second;
             DAS_CORE_LOG_INFO(
-                "DispatchToHandlerCoroutine: found control handler for interface_id={}",
+                "DispatchToHandlerCoroutine: found awaitable handler for interface_id={}",
                 header.GetInterfaceId());
             try
             {
-                IpcResponseSender     sender(transport, *this);
-                ControlHandlerContext ctrl_ctx{*this, header};
-                auto result = co_await control_handler->HandleMessage(
-                    header,
-                    body,
-                    sender,
-                    ctrl_ctx);
+                IpcResponseSender               sender(transport, *this);
+                static DistributedObjectManager null_manager;
+                DistributedObjectManager&       obj_mgr =
+                    object_manager_ ? *object_manager_ : null_manager;
+                StubContext ctx{obj_mgr, *this, {}, header};
+                auto result = co_await awaitable_handler
+                                  ->HandleMessage(header, body, sender, ctx);
                 if (DAS::IsFailed(result))
                 {
                     DAS_CORE_LOG_WARN(
-                        "Control handler returned error: {}",
+                        "Awaitable handler returned error: {}",
                         result);
                 }
                 else
                 {
                     DAS_CORE_LOG_INFO(
-                        "DispatchToHandlerCoroutine: control handler completed successfully");
+                        "DispatchToHandlerCoroutine: awaitable handler completed successfully");
                 }
             }
             catch (const std::exception& e)
             {
                 DAS_CORE_LOG_ERROR(
-                    "DispatchToHandlerCoroutine: exception in control HandleMessage: {}",
+                    "DispatchToHandlerCoroutine: exception in awaitable HandleMessage: {}",
                     e.what());
             }
             co_return;
@@ -331,9 +345,13 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
             header.GetInterfaceId());
         try
         {
-            IpcResponseSender               sender(transport, *this);
+            IpcResponseSender sender(transport, *this);
+            // 控制平面 handler 不使用 object_manager，但接口需要此参数
+            // 如果 object_manager_ 为 nullptr，使用一个静态的空对象
             static DistributedObjectManager null_manager;
-            StubContext ctx{null_manager, *this, {}, header};
+            DistributedObjectManager&       obj_mgr =
+                object_manager_ ? *object_manager_ : null_manager;
+            StubContext ctx{obj_mgr, *this, {}, header};
             auto result = handler->HandleMessage(header, body, sender, ctx);
             if (DAS::IsFailed(result))
             {
@@ -602,6 +620,16 @@ bool IpcRunLoop::IsRunning() const { return running_.load(); }
 void IpcRunLoop::SetSessionId(uint16_t session_id)
 {
     local_session_id_ = session_id;
+}
+
+void IpcRunLoop::SetInboundQueue(IpcMessageQueue<InboundMessage>* queue)
+{
+    inbound_queue_ = queue;
+}
+
+void IpcRunLoop::SetObjectManager(DistributedObjectManager* object_manager)
+{
+    object_manager_ = object_manager;
 }
 
 DasResult IpcRunLoop::PostSend(

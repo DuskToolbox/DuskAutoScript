@@ -5,11 +5,6 @@
 #include <das/Core/Logger/Logger.h>
 
 DAS_CORE_IPC_NS_BEGIN
-RemoteObjectRegistry& RemoteObjectRegistry::GetInstance()
-{
-    static RemoteObjectRegistry instance;
-    return instance;
-}
 
 DasResult RemoteObjectRegistry::RegisterObject(
     const ObjectId&    object_id,

@@ -4,7 +4,7 @@
 #include <boost/asio/awaitable.hpp>
 #include <chrono>
 #include <cstdint>
-#include <das/Core/IPC/ConnectionManager.h>
+#include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/IMessageHandler.h>
 #include <das/Core/IPC/IpcResponseSender.h>
@@ -86,7 +86,7 @@ namespace Core
              * INTERFACE_ID, handler.get());
              * @endcode
              */
-            class HandshakeHandler : public IControlHandler
+            class HandshakeHandler : public IAwaitableMessageHandler
             {
             public:
                 static constexpr uint32_t INTERFACE_ID = 0x00000001; // 握手协议
@@ -146,20 +146,20 @@ namespace Core
                 /**
                  * @brief 处理握手消息（协程版本）
                  *
-                 * 实现 IControlHandler 接口。
+                 * 实现 IAwaitableMessageHandler 接口。
                  * 内部调用现有实现逻辑，然后使用协程发送响应。
                  *
                  * @param header 消息头
                  * @param body 消息体
                  * @param sender 响应发送器（包含 transport）
-                 * @param ctx 控制平面上下文（包含 run_loop）
+                 * @param ctx Stub 上下文（包含 object_manager）
                  * @return boost::asio::awaitable<DasResult> 协程结果
                  */
                 boost::asio::awaitable<DasResult> HandleMessage(
                     const ValidatedIPCMessageHeader& header,
                     const std::vector<uint8_t>&      body,
                     IpcResponseSender&               sender,
-                    ControlHandlerContext&           ctx) override;
+                    StubContext&                     ctx) override;
 
                 /**
                  * @brief 设置客户端连接回调

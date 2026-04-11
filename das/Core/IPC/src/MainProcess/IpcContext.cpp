@@ -43,8 +43,7 @@ namespace Core
                 DasResult result = DAS_S_OK;
 
                 // 1. Create IpcRunLoop FIRST (provides io_context)
-                auto runloop_result =
-                    IpcRunLoopType::Create(enable_heartbeat, inbound_queue_);
+                auto runloop_result = IpcRunLoopType::Create(enable_heartbeat);
                 if (!runloop_result.has_value())
                 {
                     DAS_CORE_LOG_ERROR("IpcRunLoop::Create() failed");
@@ -53,7 +52,10 @@ namespace Core
                 runloop_ = std::move(runloop_result.value());
                 // Create() 已自动完成初始化，无需再调用 Initialize()
 
-                // 2. 主进程 session_id = 1
+                // 2. Set inbound_queue to IpcRunLoop
+                runloop_->SetInboundQueue(&inbound_queue_);
+
+                // 3. 主进程 session_id = 1
                 runloop_->SetSessionId(1);
 
                 // 4. Initialize reserved session IDs
@@ -62,8 +64,8 @@ namespace Core
                     allocated_ids_[reserved_id] = true;
                 }
 
-                // 5. DistributedObjectManager 设置 session_id
-                object_manager_.SetSessionId(1);
+                // 5. DistributedObjectManager 绑定 IpcRunLoop
+                object_manager_.SetRunLoop(runloop_.get());
 
                 // 6. Create BusinessThread
                 business_thread_ = std::make_shared<BusinessThread>(
@@ -127,6 +129,10 @@ namespace Core
                 {
                     return;
                 }
+
+                // Clear ProxyFactory
+                auto& proxy_factory = ProxyFactory::GetInstance();
+                proxy_factory.ClearAllProxies();
 
                 // 关闭顺序：inbound_queue -> business_thread -> io_context
                 // 1. 关闭入站队列，让业务线程的 Pop() 返回 nullopt

@@ -204,9 +204,8 @@ namespace Core
                     DEFAULT_SHARED_MEMORY_SIZE);
 
                 // 4. 创建 IpcRunLoop（Host 模式不需要心跳）
-                auto runloop_result = IpcRunLoop::Create(
-                    /*enable_heartbeat=*/false,
-                    inbound_queue_);
+                auto runloop_result =
+                    IpcRunLoop::Create(/*enable_heartbeat=*/false);
                 if (!runloop_result.has_value())
                 {
                     DAS_CORE_LOG_ERROR("IpcRunLoop::Create() failed");
@@ -216,8 +215,11 @@ namespace Core
                 // Host 模式初始 session_id 为 0，握手完成后会更新
                 run_loop_->SetSessionId(session_id_);
 
-                // 5. DistributedObjectManager 设置 session_id
-                object_manager_.SetSessionId(session_id_);
+                // 5. 设置 inbound_queue 到 IpcRunLoop
+                run_loop_->SetInboundQueue(&inbound_queue_);
+
+                // 5.5 DistributedObjectManager 绑定 IpcRunLoop
+                object_manager_.SetRunLoop(run_loop_.get());
 
                 // 6. 创建 BusinessThread
                 business_thread_ = std::make_shared<BusinessThread>(
@@ -270,7 +272,6 @@ namespace Core
                     [this](const ConnectedClient& client)
                     {
                         session_id_ = client.session_id;
-                        object_manager_.SetSessionId(client.session_id);
                         if (command_handler_)
                         {
                             command_handler_->SetSessionId(client.session_id);
@@ -333,28 +334,28 @@ namespace Core
                     });
 
                 // 9. 注册消息处理器
-                // HandshakeHandler 处理所有控制平面消息
+                // HandshakeHandler 处理所有控制平面消息（协程版本）
                 // 注册为 CONTROL_PLANE 标志，按 interface_id 路由
                 // HELLO (interface_id=1)
-                run_loop_->RegisterControlHandler(
+                run_loop_->RegisterHandler(
                     HeaderFlags::CONTROL_PLANE,
                     static_cast<uint32_t>(
                         HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO),
                     handshake_handler_.Get());
                 // READY (interface_id=3)
-                run_loop_->RegisterControlHandler(
+                run_loop_->RegisterHandler(
                     HeaderFlags::CONTROL_PLANE,
                     static_cast<uint32_t>(
                         HandshakeInterfaceId::HANDSHAKE_IFACE_READY),
                     handshake_handler_.Get());
                 // HEARTBEAT (interface_id=6)
-                run_loop_->RegisterControlHandler(
+                run_loop_->RegisterHandler(
                     HeaderFlags::CONTROL_PLANE,
                     static_cast<uint32_t>(
                         HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT),
                     handshake_handler_.Get());
                 // GOODBYE (interface_id=7)
-                run_loop_->RegisterControlHandler(
+                run_loop_->RegisterHandler(
                     HeaderFlags::CONTROL_PLANE,
                     static_cast<uint32_t>(
                         HandshakeInterfaceId::HANDSHAKE_IFACE_GOODBYE),

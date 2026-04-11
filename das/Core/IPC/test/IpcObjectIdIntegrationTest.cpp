@@ -10,6 +10,7 @@
 
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/ObjectId.h>
+#include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/DasPtr.hpp>
 #include <das/DasTypes.hpp>
@@ -23,6 +24,7 @@ using DAS::Core::IPC::DistributedObjectManager;
 using DAS::Core::IPC::EncodeObjectId;
 using DAS::Core::IPC::IsNullObjectId;
 using DAS::Core::IPC::ObjectId;
+using DAS::Core::IPC::ProxyFactory;
 using DAS::Core::IPC::RemoteObjectInfo;
 using DAS::Core::IPC::RemoteObjectRegistry;
 
@@ -48,6 +50,9 @@ protected:
     {
         registry_->Clear();
         object_manager_.reset();
+
+        // 清理 ProxyFactory
+        ProxyFactory::GetInstance().ClearAllProxies();
     }
 
     DasGuid CreateTestGuid(uint32_t seed)
@@ -100,8 +105,8 @@ TEST_F(IpcObjectIdIntegrationTest, ObjectId_IsNull)
 TEST_F(IpcObjectIdIntegrationTest, DistributedObjectManager_RegisterLocalObject)
 {
     // 测试注册本地对象
-    auto      test_object = new MockDasObject();
-    ObjectId  out_object_id{};
+    auto     test_object = new MockDasObject();
+    ObjectId out_object_id{};
     DasResult result =
         object_manager_->RegisterLocalObject(test_object, out_object_id);
 

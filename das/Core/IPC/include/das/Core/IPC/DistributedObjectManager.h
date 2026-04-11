@@ -14,6 +14,7 @@
 
 DAS_CORE_IPC_NS_BEGIN
 
+class IpcRunLoop;
 struct ObjectEntry
 {
     uint32_t              ref_count_{1}; // 引用计数（注册次数）
@@ -28,7 +29,7 @@ public:
     DistributedObjectManager();
     ~DistributedObjectManager();
 
-    void SetSessionId(uint16_t session_id) { session_id_ = session_id; }
+    void SetRunLoop(IpcRunLoop* run_loop) { run_loop_ = run_loop; }
 
     DasResult RegisterLocalObject(IDasBase* object_ptr, ObjectId& out_object_id)
         override;
@@ -55,7 +56,7 @@ private:
 
     uint16_t GetLocalSessionId() const;
 
-    uint16_t session_id_ = 0;
+    IpcRunLoop* run_loop_ = nullptr;
 
     std::unordered_map<ObjectId, ObjectEntry> objects_;
     uint32_t                                  next_local_id_{1};

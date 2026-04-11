@@ -1,8 +1,16 @@
+#include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/ProxyFactory.h>
+#include <das/DasTypes.hpp>
 #include <das/IDasBase.h>
 #include <gtest/gtest.h>
 #include <memory>
+using DAS::Core::IPC::DecodeObjectId;
+using DAS::Core::IPC::DistributedObjectManager;
+using DAS::Core::IPC::EncodeObjectId;
+using DAS::Core::IPC::IPCProxyBase;
+using DAS::Core::IPC::ObjectId;
 using DAS::Core::IPC::ProxyFactory;
+using DAS::Core::IPC::RemoteObjectRegistry;
 
 // 测试 ProxyFactory 单例模式
 TEST(ProxyFactoryTest, GetInstance_ReturnsSameInstance)
@@ -12,6 +20,189 @@ TEST(ProxyFactoryTest, GetInstance_ReturnsSameInstance)
 
     // 验证返回的是同一个实例
     EXPECT_EQ(&instance1, &instance2);
+}
+
+// 测试 HasProxy 和 GetProxy 方法
+TEST(ProxyFactoryTest, HasProxy_GetProxy_BasicFunctionality)
+{
+    ProxyFactory& factory = ProxyFactory::GetInstance();
+
+    // 测试不存在的情况
+    ObjectId obj_id{.session_id = 1, .generation = 1, .local_id = 100};
+    EXPECT_FALSE(factory.HasProxy(obj_id));
+    EXPECT_EQ(factory.GetProxy(obj_id), nullptr);
+}
+
+// 测试 GetProxyCount 方法
+TEST(ProxyFactoryTest, GetProxyCount_InitialZero)
+{
+    ProxyFactory& factory = ProxyFactory::GetInstance();
+
+    // 初始状态下应该没有 proxy
+    EXPECT_EQ(factory.GetProxyCount(), 0);
+}
+
+// 测试 ClearAllProxies 方法
+TEST(ProxyFactoryTest, ClearAllProxies_EmptyCache)
+{
+    ProxyFactory& factory = ProxyFactory::GetInstance();
+
+    // 在空缓存情况下调用 ClearAllProxies 不应该出错
+    EXPECT_NO_THROW(factory.ClearAllProxies());
+
+    // 验证计数仍为0
+    EXPECT_EQ(factory.GetProxyCount(), 0);
+}
+
+// 测试 ReleaseProxy 方法对不存在对象的处理
+TEST(ProxyFactoryTest, ReleaseProxy_NonExistingObject)
+{
+    ProxyFactory& factory = ProxyFactory::GetInstance();
+
+    ObjectId obj_id{.session_id = 1, .generation = 1, .local_id = 100};
+
+    // 释放不存在的对象应该返回 DAS_E_NOT_FOUND
+    // 这里我们暂时返回 false，因为 DasResult 的具体值需要根据实际实现确定
+    EXPECT_NO_THROW(factory.ReleaseProxy(obj_id));
+}
+
+// 测试同一个对象的多次查询
+TEST(ProxyFactoryTest, MultipleQueriesForSameObject)
+{
+    ProxyFactory& factory = ProxyFactory::GetInstance();
+
+    ObjectId obj_id{.session_id = 1, .generation = 1, .local_id = 100};
+
+    // 多次检查是否存在应该返回相同结果
+    EXPECT_FALSE(factory.HasProxy(obj_id));
+    EXPECT_FALSE(factory.HasProxy(obj_id));
+    EXPECT_EQ(factory.GetProxy(obj_id), nullptr);
+    EXPECT_EQ(factory.GetProxy(obj_id), nullptr);
+}
+
+// 测试多个不同对象的状态检查
+TEST(ProxyFactoryTest, MultipleObjectsStateCheck)
+{
+    ProxyFactory& factory = ProxyFactory::GetInstance();
+
+    ObjectId obj1{.session_id = 1, .generation = 1, .local_id = 100};
+    ObjectId obj2{.session_id = 2, .generation = 1, .local_id = 200};
+    ObjectId obj3{.session_id = 3, .generation = 1, .local_id = 300};
+
+    // 验证所有对象都不存在
+    EXPECT_FALSE(factory.HasProxy(obj1));
+    EXPECT_FALSE(factory.HasProxy(obj2));
+    EXPECT_FALSE(factory.HasProxy(obj3));
+
+    // 验证所有对象的 GetProxy 都返回 nullptr
+    EXPECT_EQ(factory.GetProxy(obj1), nullptr);
+    EXPECT_EQ(factory.GetProxy(obj2), nullptr);
+    EXPECT_EQ(factory.GetProxy(obj3), nullptr);
+
+    // 验证总计数
+    EXPECT_EQ(factory.GetProxyCount(), 0);
+}
+
+// 测试 ObjectId 编码解码后的状态一致性
+TEST(ProxyFactoryTest, ObjectIdEncodingConsistency)
+{
+    ObjectId original{.session_id = 123, .generation = 456, .local_id = 789012};
+
+    // 编码
+    uint64_t encoded = EncodeObjectId(original);
+
+    // 解码
+    ObjectId decoded = DecodeObjectId(encoded);
+
+    // 验证解码后的值与原始值一致
+    EXPECT_EQ(decoded.session_id, original.session_id);
+    EXPECT_EQ(decoded.generation, original.generation);
+    EXPECT_EQ(decoded.local_id, original.local_id);
+
+    // 使用编码后的 ID 进行工厂操作
+    ProxyFactory& factory = ProxyFactory::GetInstance();
+    EXPECT_FALSE(factory.HasProxy(decoded));
+    EXPECT_EQ(factory.GetProxy(decoded), nullptr);
+}
+
+// 测试边界值的 ObjectId
+TEST(ProxyFactoryTest, ObjectIdWithBoundaryValues)
+{
+    ObjectId max_values{
+        .session_id = 0xFFFF,
+        .generation = 0xFFFF,
+        .local_id = 0xFFFFFFFF};
+
+    // 编码解码
+    uint64_t encoded = EncodeObjectId(max_values);
+    ObjectId decoded = DecodeObjectId(encoded);
+
+    EXPECT_EQ(decoded.session_id, max_values.session_id);
+    EXPECT_EQ(decoded.generation, max_values.generation);
+    EXPECT_EQ(decoded.local_id, max_values.local_id);
+
+    // 使用最大值对象进行工厂操作
+    ProxyFactory& factory = ProxyFactory::GetInstance();
+    EXPECT_FALSE(factory.HasProxy(decoded));
+    EXPECT_EQ(factory.GetProxy(decoded), nullptr);
+}
+
+// 测试零值的 ObjectId
+TEST(ProxyFactoryTest, ObjectIdWithZeroValues)
+{
+    ObjectId zero{.session_id = 0, .generation = 0, .local_id = 0};
+
+    // 零值对象的编码应该为0
+    uint64_t encoded = EncodeObjectId(zero);
+    EXPECT_EQ(encoded, 0);
+
+    // 解码后仍为零值
+    ObjectId decoded = DecodeObjectId(encoded);
+    EXPECT_EQ(decoded.session_id, 0);
+    EXPECT_EQ(decoded.generation, 0);
+    EXPECT_EQ(decoded.local_id, 0);
+
+    // 使用零值对象进行工厂操作
+    ProxyFactory& factory = ProxyFactory::GetInstance();
+    EXPECT_FALSE(factory.HasProxy(decoded));
+    EXPECT_EQ(factory.GetProxy(decoded), nullptr);
+}
+
+// 测试工厂状态的一致性
+TEST(ProxyFactoryTest, FactoryStateConsistency)
+{
+    ProxyFactory& factory = ProxyFactory::GetInstance();
+
+    // 重置工厂状态
+    factory.ClearAllProxies();
+
+    // 验证状态一致性
+    EXPECT_EQ(factory.GetProxyCount(), 0);
+
+    // 创建多个对象 ID
+    std::vector<ObjectId> obj_ids = {
+        {.session_id = 1, .generation = 1, .local_id = 100},
+        {.session_id = 2, .generation = 2, .local_id = 200},
+        {.session_id = 3, .generation = 3, .local_id = 300}};
+
+    // 验证所有对象都不存在
+    for (const auto& obj_id : obj_ids)
+    {
+        EXPECT_FALSE(factory.HasProxy(obj_id));
+        EXPECT_EQ(factory.GetProxy(obj_id), nullptr);
+    }
+
+    // 验证计数
+    EXPECT_EQ(factory.GetProxyCount(), 0);
+
+    // 尝试释放所有对象
+    for (const auto& obj_id : obj_ids)
+    {
+        EXPECT_NO_THROW(factory.ReleaseProxy(obj_id));
+    }
+
+    // 最终状态仍应一致
+    EXPECT_EQ(factory.GetProxyCount(), 0);
 }
 
 // 测试 ProxyFactory 初始化
@@ -28,4 +219,45 @@ TEST(ProxyFactoryTest, Initialization)
 
     // 初始化后应该仍未初始化（因为传入了 nullptr）
     EXPECT_FALSE(factory.IsInitialized());
+}
+
+// 测试 ProxyFactory 与 RemoteObjectRegistry 和 DistributedObjectManager 的集成
+TEST(ProxyFactoryTest, IntegrationWithRemoteObjectRegistry)
+{
+    ProxyFactory& factory = ProxyFactory::GetInstance();
+    auto&         registry = RemoteObjectRegistry::GetInstance();
+
+    // 注册一个测试对象
+    ObjectId test_obj_id{.session_id = 1, .generation = 1, .local_id = 100};
+    DasGuid  test_iid{
+         .data1 = 0x12345678,
+         .data2 = 0x1234,
+         .data3 = 0x5678,
+         .data4 = {0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xEF}};
+
+    DasResult result =
+        registry.RegisterObject(test_obj_id, test_iid, 1, "TestObject");
+
+    EXPECT_EQ(result, DAS_S_OK);
+
+    // 测试对象注册成功
+    EXPECT_TRUE(registry.ObjectExists(test_obj_id));
+
+    // 测试未初始化状态下创建代理
+    // 注意：Proxy<T> 要求 T 必须继承自 IDasBase
+    // 使用 GetProxy 获取通用代理（如果存在）
+    EXPECT_EQ(factory.GetProxy(test_obj_id), nullptr);
+
+    // 测试初始化后创建代理
+    DistributedObjectManager obj_manager;
+
+    result = factory.Initialize(&obj_manager, &registry);
+    EXPECT_TRUE(factory.IsInitialized());
+
+    // 注意: CreateProxy 方法已被移除，代理现在通过 IDL 生成
+    // 此测试仅验证初始化功能
+
+    // 清理
+    factory.ClearAllProxies();
+    registry.UnregisterObject(test_obj_id);
 }

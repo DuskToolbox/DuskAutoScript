@@ -88,8 +88,10 @@ namespace Core
                 const ValidatedIPCMessageHeader& header,
                 const std::vector<uint8_t>&      body,
                 IpcResponseSender&               sender,
-                ControlHandlerContext&           ctx)
+                StubContext&                     ctx)
             {
+                (void)ctx; // 握手处理器不使用 ctx
+
                 if (!initialized_)
                 {
                     DAS_LOG_ERROR("HandshakeHandler not initialized");
@@ -150,20 +152,9 @@ namespace Core
                         DAS_LOG_ERROR(msg.c_str());
                         co_return DAS_E_IPC_INVALID_MESSAGE_BODY;
                     }
-
-                    if (header.GetMessageType() == MessageType::RESPONSE)
-                    {
-                        auto* conn_mgr = ctx.run_loop.GetConnectionManager();
-                        if (conn_mgr)
-                        {
-                            conn_mgr->UpdateHeartbeatTimestamp(
-                                header.GetSourceSessionId());
-                        }
-                        co_return DAS_S_OK;
-                    }
-
                     const HeartbeatV1* heartbeat =
                         reinterpret_cast<const HeartbeatV1*>(body.data());
+                    // V3: 使用 source_session_id
                     result = HandleHeartbeat(
                         header.GetSourceSessionId(),
                         *heartbeat);

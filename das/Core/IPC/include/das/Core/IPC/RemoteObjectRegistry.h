@@ -10,7 +10,6 @@
 #include <vector>
 
 #include <das/Core/IPC/Config.h>
-#include <vector>
 
 DAS_CORE_IPC_NS_BEGIN
 struct RemoteObjectInfo
@@ -26,8 +25,8 @@ struct RemoteObjectInfo
 class RemoteObjectRegistry
 {
 public:
-    // 获取单例实例
-    static RemoteObjectRegistry& GetInstance();
+    RemoteObjectRegistry() = default;
+    ~RemoteObjectRegistry() = default;
 
     // 注册远程对象 - 6参数版本：显式指定 interface_id
     DasResult RegisterObject(
@@ -74,15 +73,11 @@ public:
     // 计算 interface_id (FNV-1a hash of GUID)
     static uint32_t ComputeInterfaceId(const DasGuid& guid);
 
-private:
-    // 私有构造函数（单例模式）
-    RemoteObjectRegistry() = default;
-    ~RemoteObjectRegistry() = default;
-
     // 禁止拷贝和赋值
     RemoteObjectRegistry(const RemoteObjectRegistry&) = delete;
     RemoteObjectRegistry& operator=(const RemoteObjectRegistry&) = delete;
 
+private:
     // 内部数据结构
     struct ObjectEntry
     {
