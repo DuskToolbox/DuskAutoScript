@@ -36,16 +36,13 @@ class IpcObjectIdIntegrationTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        // 创建 DistributedObjectManager 实例
         object_manager_ = std::make_unique<DistributedObjectManager>();
-
-        // 使用本地 RemoteObjectRegistry 实例
-        registry_->Clear();
+        registry_.Clear();
     }
 
     void TearDown() override
     {
-        registry_->Clear();
+        registry_.Clear();
         object_manager_.reset();
     }
 
@@ -171,12 +168,12 @@ TEST_F(IpcObjectIdIntegrationTest, RemoteObjectRegistry_RegisterObject)
     DasGuid     iid = CreateTestGuid(1);
     std::string name = "TestRemoteObject";
 
-    DasResult result = registry_->RegisterObject(obj_id, iid, 2, name, 1);
+    DasResult result = registry_.RegisterObject(obj_id, iid, 2, name, 1);
     ASSERT_EQ(result, DAS_S_OK);
 
     // 验证能查询到
     RemoteObjectInfo info;
-    result = registry_->GetObjectInfo(obj_id, info);
+    result = registry_.GetObjectInfo(obj_id, info);
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_EQ(info.name, name);
     EXPECT_EQ(info.session_id, 2u);
@@ -189,11 +186,11 @@ TEST_F(IpcObjectIdIntegrationTest, RemoteObjectRegistry_LookupByName)
     DasGuid     iid = CreateTestGuid(1);
     std::string name = "TestObject";
 
-    ASSERT_EQ(registry_->RegisterObject(obj_id, iid, 2, name, 1), DAS_S_OK);
+    ASSERT_EQ(registry_.RegisterObject(obj_id, iid, 2, name, 1), DAS_S_OK);
 
     // 按名称查找
     RemoteObjectInfo info;
-    DasResult        result = registry_->LookupByName(name, info);
+    DasResult        result = registry_.LookupByName(name, info);
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_EQ(info.object_id.local_id, 100u);
 }
@@ -205,16 +202,16 @@ TEST_F(IpcObjectIdIntegrationTest, RemoteObjectRegistry_UnregisterObject)
     DasGuid  iid = CreateTestGuid(1);
 
     ASSERT_EQ(
-        registry_->RegisterObject(obj_id, iid, 2, "TestObject", 1),
+        registry_.RegisterObject(obj_id, iid, 2, "TestObject", 1),
         DAS_S_OK);
 
     // 注销对象
-    DasResult result = registry_->UnregisterObject(obj_id);
+    DasResult result = registry_.UnregisterObject(obj_id);
     ASSERT_EQ(result, DAS_S_OK);
 
     // 验证查询不到
     RemoteObjectInfo info;
-    result = registry_->GetObjectInfo(obj_id, info);
+    result = registry_.GetObjectInfo(obj_id, info);
     EXPECT_EQ(result, DAS_E_IPC_OBJECT_NOT_FOUND);
 }
 
@@ -232,12 +229,12 @@ TEST_F(IpcObjectIdIntegrationTest, ObjectIdBidirectionalSync_HostToMain)
 
     // 2. 数据平面响应携带 ObjectId，主进程在 RemoteObjectRegistry 中注册
     DasResult result =
-        registry_->RegisterObject(host_obj_id, iid, 2, "HostObject", 1);
+        registry_.RegisterObject(host_obj_id, iid, 2, "HostObject", 1);
     ASSERT_EQ(result, DAS_S_OK);
 
     // 3. 验证主进程能查询到
     RemoteObjectInfo info;
-    result = registry_->GetObjectInfo(host_obj_id, info);
+    result = registry_.GetObjectInfo(host_obj_id, info);
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_EQ(info.session_id, 2u);
     EXPECT_EQ(info.name, "HostObject");
@@ -251,16 +248,16 @@ TEST_F(IpcObjectIdIntegrationTest, ObjectIdBidirectionalSync_Unregister)
     DasGuid  iid = CreateTestGuid(1);
 
     ASSERT_EQ(
-        registry_->RegisterObject(obj_id, iid, 2, "TestObject", 1),
+        registry_.RegisterObject(obj_id, iid, 2, "TestObject", 1),
         DAS_S_OK);
 
     // 2. Host 进程销毁对象，RELEASE_OBJECT fire-and-forget 通知主进程
-    DasResult result = registry_->UnregisterObject(obj_id);
+    DasResult result = registry_.UnregisterObject(obj_id);
     ASSERT_EQ(result, DAS_S_OK);
 
     // 3. 验证主进程查询不到
     RemoteObjectInfo info;
-    result = registry_->GetObjectInfo(obj_id, info);
+    result = registry_.GetObjectInfo(obj_id, info);
     EXPECT_EQ(result, DAS_E_IPC_OBJECT_NOT_FOUND);
 }
 

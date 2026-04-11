@@ -116,13 +116,11 @@ protected:
     {
         ctx_ = MainProcess::CreateIpcContextEz(false);
         ASSERT_NE(ctx_.get(), nullptr);
-
-        static_cast<MainProcess::IpcContext*>(ctx_.get())->registry_.Clear();
     }
 
     void TearDown() override
     {
-        static_cast<MainProcess::IpcContext*>(ctx_.get())->registry_.Clear();
+        ctx_->UnregisterService(DAS_IID_READ_ONLY_STRING);
     }
 
     MainProcess::IpcContextPtr ctx_;

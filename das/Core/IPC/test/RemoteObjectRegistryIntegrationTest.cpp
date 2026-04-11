@@ -67,17 +67,17 @@ TEST_F(RemoteObjectRegistryIntegrationTest, SessionIdAllocationAndUsage)
     std::string name = "TestObject";
 
     DasResult result =
-        registry_->RegisterObject(obj_id, iid, host_session_id, name, 1);
+        registry_.RegisterObject(obj_id, iid, host_session_id, name, 1);
     ASSERT_EQ(result, DAS_S_OK);
 
     std::vector<RemoteObjectInfo> objects;
-    registry_->ListObjectsBySession(host_session_id, objects);
+    registry_.ListObjectsBySession(host_session_id, objects);
     ASSERT_EQ(objects.size(), 1);
     EXPECT_EQ(objects[0].name, "TestObject");
     EXPECT_EQ(objects[0].session_id, host_session_id);
 
     RemoteObjectInfo found_info;
-    result = registry_->LookupByName("TestObject", found_info);
+    result = registry_.LookupByName("TestObject", found_info);
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_EQ(found_info.session_id, host_session_id);
     EXPECT_EQ(found_info.object_id.local_id, 100);
@@ -105,20 +105,19 @@ TEST_F(RemoteObjectRegistryIntegrationTest, MultipleHosts)
         std::string name = "HostObject_" + std::to_string(i);
 
         DasResult result =
-            registry_
-                ->RegisterObject(obj_id, iid, host_session_ids[i], name, 1);
+            registry_.RegisterObject(obj_id, iid, host_session_ids[i], name, 1);
         ASSERT_EQ(result, DAS_S_OK);
     }
 
     for (size_t i = 0; i < host_session_ids.size(); ++i)
     {
         std::vector<RemoteObjectInfo> objects;
-        registry_->ListObjectsBySession(host_session_ids[i], objects);
+        registry_.ListObjectsBySession(host_session_ids[i], objects);
         ASSERT_EQ(objects.size(), 1);
         EXPECT_EQ(objects[0].name, "HostObject_" + std::to_string(i));
 
         RemoteObjectInfo found_info;
-        DasResult        result = registry_->LookupByName(
+        DasResult        result = registry_.LookupByName(
             "HostObject_" + std::to_string(i),
             found_info);
         ASSERT_EQ(result, DAS_S_OK);
@@ -137,11 +136,11 @@ TEST_F(RemoteObjectRegistryIntegrationTest, SessionIdSequentialAllocation)
     std::string name1 = "Object1";
 
     DasResult result =
-        registry_->RegisterObject(obj_id1, iid1, session_id1, name1, 1);
+        registry_.RegisterObject(obj_id1, iid1, session_id1, name1, 1);
     ASSERT_EQ(result, DAS_S_OK);
 
     std::vector<RemoteObjectInfo> objects;
-    registry_->ListObjectsBySession(session_id1, objects);
+    registry_.ListObjectsBySession(session_id1, objects);
     ASSERT_EQ(objects.size(), 1);
 
     uint16_t session_id2 = AllocateTestSessionId();
@@ -151,10 +150,10 @@ TEST_F(RemoteObjectRegistryIntegrationTest, SessionIdSequentialAllocation)
     DasGuid     iid2 = CreateTestGuid(2);
     std::string name2 = "Object2";
 
-    result = registry_->RegisterObject(obj_id2, iid2, session_id2, name2, 1);
+    result = registry_.RegisterObject(obj_id2, iid2, session_id2, name2, 1);
     ASSERT_EQ(result, DAS_S_OK);
 
-    registry_->ListObjectsBySession(session_id2, objects);
+    registry_.ListObjectsBySession(session_id2, objects);
     ASSERT_EQ(objects.size(), 1);
     EXPECT_EQ(objects[0].name, "Object2");
 }
@@ -168,19 +167,19 @@ TEST_F(RemoteObjectRegistryIntegrationTest, EdgeCases)
     DasGuid     iid = CreateTestGuid(1);
     std::string name = "TestObject";
     DasResult   result =
-        registry_->RegisterObject(obj_id, iid, session_id, name, 1);
+        registry_.RegisterObject(obj_id, iid, session_id, name, 1);
     ASSERT_EQ(result, DAS_S_OK);
 
     RemoteObjectInfo not_found;
-    result = registry_->LookupByName("NonExistent", not_found);
+    result = registry_.LookupByName("NonExistent", not_found);
     EXPECT_EQ(result, DAS_E_IPC_OBJECT_NOT_FOUND);
 
     ObjectId non_existent_id = {1, 1, 999};
-    result = registry_->UnregisterObject(non_existent_id);
+    result = registry_.UnregisterObject(non_existent_id);
     EXPECT_EQ(result, DAS_E_IPC_OBJECT_NOT_FOUND);
 
     RemoteObjectInfo info;
-    result = registry_->GetObjectInfo(non_existent_id, info);
+    result = registry_.GetObjectInfo(non_existent_id, info);
     EXPECT_EQ(result, DAS_E_IPC_OBJECT_NOT_FOUND);
 }
 
@@ -195,23 +194,23 @@ TEST_F(RemoteObjectRegistryIntegrationTest, DuplicateNames)
     DasGuid   iid1 = CreateTestGuid(1);
     DasResult result =
         registry_
-            ->RegisterObject(obj_id1, iid1, session_id1, "DuplicateName", 1);
+            .RegisterObject(obj_id1, iid1, session_id1, "DuplicateName", 1);
     ASSERT_EQ(result, DAS_S_OK);
 
     ObjectId obj_id2 = {session_id2, 1, 100};
     DasGuid  iid2 = CreateTestGuid(2);
     result =
         registry_
-            ->RegisterObject(obj_id2, iid2, session_id2, "DuplicateName", 1);
+            .RegisterObject(obj_id2, iid2, session_id2, "DuplicateName", 1);
     EXPECT_EQ(result, DAS_E_DUPLICATE_ELEMENT);
 
     RemoteObjectInfo found_info;
-    result = registry_->LookupByName("DuplicateName", found_info);
+    result = registry_.LookupByName("DuplicateName", found_info);
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_EQ(found_info.session_id, session_id1);
 
     RemoteObjectInfo info1;
-    result = registry_->LookupByInterface(
+    result = registry_.LookupByInterface(
         RemoteObjectRegistry::ComputeInterfaceId(iid1),
         info1);
     ASSERT_EQ(result, DAS_S_OK);

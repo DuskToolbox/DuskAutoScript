@@ -9,7 +9,6 @@
  */
 
 #include <das/Core/IPC/CurrentIpcContextScope.h>
-#include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/MainProcess/IpcContext.h>
 #include <das/DasString.hpp>
 #include <das/DasSwigApi.h>
@@ -114,19 +113,14 @@ class QueryMainProcessInterfaceE2ETest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        // Create real IpcContext with heartbeat disabled
         concrete_ctx_ = MainProcess::CreateIpcContextEz(false);
         ASSERT_NE(concrete_ctx_.get(), nullptr);
-
-        // Clear per-context registry to avoid interference from other tests
-        concrete_ctx_->registry_.Clear();
     }
 
     void TearDown() override
     {
-        // Clean up the per-context registry
-        concrete_ctx_->registry_.Clear();
-        // concrete_ctx_ destructor cleans up everything internally
+        // Unregister any services we registered to avoid interference
+        concrete_ctx_->UnregisterService(DAS_IID_READ_ONLY_STRING);
     }
 
     MainProcess::IpcContextPtr concrete_ctx_;
@@ -136,27 +130,16 @@ TEST_F(
     QueryMainProcessInterfaceE2ETest,
     QueryRegisteredString_ReturnsValidObject)
 {
-    // Create real IDasReadOnlyString implementation
     auto* test_string = new TestReadOnlyString("Hello from main process!");
 
-    // Register to DistributedObjectManager (takes ownership via AddRef)
-    ObjectId  obj_id;
-    DasResult reg_result =
-        concrete_ctx_->object_manager_.RegisterLocalObject(test_string, obj_id);
-    ASSERT_EQ(reg_result, DAS_S_OK);
-
-    // Register to RemoteObjectRegistry for interface-based lookup
-    DasResult registry_result = concrete_ctx_->registry_.RegisterObject(
-        obj_id,
-        DAS_IID_READ_ONLY_STRING,
-        1,
-        "test_readonly_string",
-        1);
-    ASSERT_EQ(registry_result, DAS_S_OK);
-
-    // Bind IPC context
+    // Use public RegisterService API (replaces direct object_manager_ +
+    // registry_ access)
     ScopedCurrentIpcContext scope(
         static_cast<MainProcess::IpcContext*>(concrete_ctx_.get()));
+
+    DasResult reg_result =
+        concrete_ctx_->RegisterService(test_string, DAS_IID_READ_ONLY_STRING);
+    ASSERT_EQ(reg_result, DAS_S_OK);
 
     // Query via public API
     auto result = QueryMainProcessInterface(DAS_IID_READ_ONLY_STRING);
@@ -172,8 +155,6 @@ TEST_F(
     EXPECT_STREQ(utf8, "Hello from main process!");
 
     // Release the initial reference (the one from new)
-    // DistributedObjectManager holds its own DasPtr, so we need to balance
-    // the initial ref_count of 1
     test_string->Release();
 }
 
@@ -181,16 +162,14 @@ TEST_F(
     QueryMainProcessInterfaceE2ETest,
     QueryUnregisteredIID_ReturnsObjectNotFound)
 {
-    // Register an object under DAS_IID_READ_ONLY_STRING
-    auto*    test_string = new TestReadOnlyString("test");
-    ObjectId obj_id;
-    concrete_ctx_->object_manager_.RegisterLocalObject(test_string, obj_id);
-
-    concrete_ctx_->registry_
-        .RegisterObject(obj_id, DAS_IID_READ_ONLY_STRING, 1, "test_string", 1);
+    auto* test_string = new TestReadOnlyString("test");
 
     ScopedCurrentIpcContext scope(
         static_cast<MainProcess::IpcContext*>(concrete_ctx_.get()));
+
+    DasResult reg_result =
+        concrete_ctx_->RegisterService(test_string, DAS_IID_READ_ONLY_STRING);
+    ASSERT_EQ(reg_result, DAS_S_OK);
 
     // Query with a different IID — should fail
     DasGuid unknown_iid = {
@@ -210,22 +189,21 @@ TEST_F(
     QueryMainProcessInterfaceE2ETest,
     QueryMultipleStrings_CorrectOneReturned)
 {
-    // Register two different strings
     auto* str1 = new TestReadOnlyString("First string");
     auto* str2 = new TestReadOnlyString("Second string");
 
-    ObjectId id1, id2;
-    concrete_ctx_->object_manager_.RegisterLocalObject(str1, id1);
-    concrete_ctx_->object_manager_.RegisterLocalObject(str2, id2);
-
-    // Both registered under same IID — LookupByInterface returns the first
-    concrete_ctx_->registry_
-        .RegisterObject(id1, DAS_IID_READ_ONLY_STRING, 1, "str1", 1);
-    concrete_ctx_->registry_
-        .RegisterObject(id2, DAS_IID_READ_ONLY_STRING, 1, "str2", 1);
-
     ScopedCurrentIpcContext scope(
         static_cast<MainProcess::IpcContext*>(concrete_ctx_.get()));
+
+    // Register first string under DAS_IID_READ_ONLY_STRING
+    DasResult reg1 =
+        concrete_ctx_->RegisterService(str1, DAS_IID_READ_ONLY_STRING);
+    ASSERT_EQ(reg1, DAS_S_OK);
+
+    // Second registration with same IID should fail (duplicate)
+    DasResult reg2 =
+        concrete_ctx_->RegisterService(str2, DAS_IID_READ_ONLY_STRING);
+    EXPECT_EQ(reg2, DAS_E_DUPLICATE_ELEMENT);
 
     auto result = QueryMainProcessInterface(DAS_IID_READ_ONLY_STRING);
     ASSERT_EQ(result.GetErrorCode(), DAS_S_OK);
@@ -235,10 +213,7 @@ TEST_F(
     const char* utf8 = nullptr;
     readonly_str->GetUtf8(&utf8);
     ASSERT_NE(utf8, nullptr);
-    // Either "First string" or "Second string" is valid — both are registered
-    EXPECT_TRUE(
-        strcmp(utf8, "First string") == 0
-        || strcmp(utf8, "Second string") == 0);
+    EXPECT_STREQ(utf8, "First string");
 
     str1->Release();
     str2->Release();
