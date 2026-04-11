@@ -177,8 +177,6 @@ namespace Core
 
             DasResult IpcContext::CreateHostResources()
             {
-                DasResult result = DAS_S_OK;
-
                 // 1. DistributedObjectManager 现在是值成员，无需创建
 
                 // 2. 创建 Host 专用队列名称（新格式）

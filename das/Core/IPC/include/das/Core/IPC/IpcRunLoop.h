@@ -26,7 +26,7 @@
 #include <boost/asio/steady_timer.hpp>
 
 #include <das/Core/IPC/AsyncIpcTransport.h>
-#include <das/Core/IPC/DasPtr.hpp>
+#include <das/DasPtr.hpp>
 #include <das/Core/IPC/DefaultAsyncIpcTransport.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/HostLauncher.h>
