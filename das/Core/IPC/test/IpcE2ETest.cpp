@@ -164,7 +164,7 @@ protected:
     {
         host_object_manager_ = std::make_unique<DistributedObjectManager>();
         plugin_object_manager_ = std::make_unique<DistributedObjectManager>();
-        connection_manager_ = ConnectionManager::Create(1); // local_id = 1
+        connection_manager_ = std::make_unique<ConnectionManager>(1);
 
         ASSERT_NE(connection_manager_, nullptr);
     }

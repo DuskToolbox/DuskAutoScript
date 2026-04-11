@@ -9,7 +9,7 @@ using DAS::Core::IPC::ConnectionManager;
 class IpcConnectionManagerTest : public ::testing::Test
 {
 protected:
-    void SetUp() override { manager_ = ConnectionManager::Create(1); }  // local_id = 1
+    void SetUp() override { manager_ = std::make_unique<ConnectionManager>(1); }
 
     void TearDown() override
     {
@@ -205,7 +205,9 @@ TEST_F(IpcConnectionManagerTest, RegisterUnregisterCycle)
 
 // ====== SendHeartbeatToAll Tests ======
 
-TEST_F(IpcConnectionManagerTest, SendHeartbeatToAll_NoConnections_ReturnsSuccess)
+TEST_F(
+    IpcConnectionManagerTest,
+    SendHeartbeatToAll_NoConnections_ReturnsSuccess)
 {
     // Manager is already initialized in SetUp via Create()
 
@@ -214,7 +216,9 @@ TEST_F(IpcConnectionManagerTest, SendHeartbeatToAll_NoConnections_ReturnsSuccess
     EXPECT_EQ(result, DAS_S_OK);
 }
 
-TEST_F(IpcConnectionManagerTest, SendHeartbeatToAll_WithConnections_ReturnsSuccess)
+TEST_F(
+    IpcConnectionManagerTest,
+    SendHeartbeatToAll_WithConnections_ReturnsSuccess)
 {
     // Manager is already initialized in SetUp via Create()
     ASSERT_EQ(manager_->RegisterConnection(2, 1), DAS_S_OK);
@@ -224,7 +228,9 @@ TEST_F(IpcConnectionManagerTest, SendHeartbeatToAll_WithConnections_ReturnsSucce
     EXPECT_EQ(result, DAS_S_OK);
 }
 
-TEST_F(IpcConnectionManagerTest, SendHeartbeatToAll_MultipleConnections_ReturnsSuccess)
+TEST_F(
+    IpcConnectionManagerTest,
+    SendHeartbeatToAll_MultipleConnections_ReturnsSuccess)
 {
     // Manager is already initialized in SetUp via Create()
     ASSERT_EQ(manager_->RegisterConnection(2, 1), DAS_S_OK);
