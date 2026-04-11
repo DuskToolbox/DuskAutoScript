@@ -7,6 +7,7 @@ C# SWIG 生成器
 from typing import List, Optional, TYPE_CHECKING
 from das_idl_parser import InterfaceDef, MethodDef, ParameterDef, ParamDirection, TypeInfo, TypeKind
 from swig_lang_generator_base import SwigLangGenerator
+from shared_utils import build_param_signatures
 
 if TYPE_CHECKING:
     from swig_api_model import SwigInterfaceModel, OutParamInfo
@@ -507,26 +508,9 @@ class CSharpSwigGenerator(SwigLangGenerator):
     def _generate_ignore_directive_for_binary_buffer(self, interface: InterfaceDef, method: MethodDef) -> str:
         qualified_interface = f"{interface.namespace}::{interface.name}" if interface.namespace else interface.name
 
-        param_signatures_with_prefix = []
-        param_signatures_without_prefix = []
-        current_namespace = interface.namespace
-
-        for param in method.parameters:
-            param_type = param.type_info.base_type
-            param_type_with_prefix = param_type
-            namespace = self.get_type_namespace(param_type)
-            if not namespace and param.type_info.type_kind == TypeKind.INTERFACE:
-                param_type_with_prefix = f'::{param_type}'
-            elif namespace and namespace != current_namespace:
-                param_type_with_prefix = f'::{namespace}::{param_type}'
-
-            if param.type_info.is_pointer:
-                stars = '*' * param.type_info.pointer_level
-                param_signatures_with_prefix.append(f"{param_type_with_prefix}{stars}")
-                param_signatures_without_prefix.append(f"{param_type}{stars}")
-            else:
-                param_signatures_with_prefix.append(param_type_with_prefix)
-                param_signatures_without_prefix.append(param_type)
+        param_signatures_with_prefix, param_signatures_without_prefix = build_param_signatures(
+            method, self.get_type_namespace, interface.namespace, TypeKind.INTERFACE,
+        )
 
         param_list_with_prefix = ", ".join(param_signatures_with_prefix)
         param_list_without_prefix = ", ".join(param_signatures_without_prefix)
@@ -547,33 +531,10 @@ class CSharpSwigGenerator(SwigLangGenerator):
     def _generate_ignore_directive_for_string_method(self, interface: InterfaceDef, method: MethodDef) -> str:
         qualified_interface = f"{interface.namespace}::{interface.name}" if interface.namespace else interface.name
 
-        param_signatures_with_prefix = []
-        param_signatures_without_prefix = []
-        current_namespace = interface.namespace
-        for param in method.parameters:
-            param_type = param.type_info.base_type
-            param_type_with_prefix = param_type
-            namespace = self.get_type_namespace(param_type)
-            if not namespace and param.type_info.type_kind == TypeKind.INTERFACE:
-                param_type_with_prefix = f'::{param_type}'
-            elif namespace and namespace != current_namespace:
-                param_type_with_prefix = f'::{namespace}::{param_type}'
-
-            if param.type_info.is_pointer:
-                stars = '*' * param.type_info.pointer_level
-                const_prefix = "const " if param.type_info.is_const else ""
-                param_signatures_with_prefix.append(f"{const_prefix}{param_type_with_prefix}{stars}")
-                param_signatures_without_prefix.append(f"{const_prefix}{param_type}{stars}")
-            elif param.type_info.is_reference:
-                if param.type_info.is_const:
-                    param_signatures_with_prefix.append(f"const {param_type_with_prefix}&")
-                    param_signatures_without_prefix.append(f"const {param_type}&")
-                else:
-                    param_signatures_with_prefix.append(f"{param_type_with_prefix}&")
-                    param_signatures_without_prefix.append(f"{param_type}&")
-            else:
-                param_signatures_with_prefix.append(param_type_with_prefix)
-                param_signatures_without_prefix.append(param_type)
+        param_signatures_with_prefix, param_signatures_without_prefix = build_param_signatures(
+            method, self.get_type_namespace, interface.namespace, TypeKind.INTERFACE,
+            include_const=True, include_reference=True,
+        )
 
         param_list_with_prefix = ", ".join(param_signatures_with_prefix)
         param_list_without_prefix = ", ".join(param_signatures_without_prefix)

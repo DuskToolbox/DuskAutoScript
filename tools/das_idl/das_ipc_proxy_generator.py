@@ -32,7 +32,7 @@ from typing import Dict, List, Optional, Any
 import importlib
 import sys
 
-from ipc_common import fnv1a_hash_guid
+from ipc_common import fnv1a_hash_guid, fnv1a_hash, properties_to_methods
 
 # 既支持作为包内模块导入（tools.das_idl.*），也支持直接脚本运行。
 try:
@@ -307,27 +307,6 @@ class ProxyTypeMapper:
                     pass  # Skip unparseable files
 
 
-def fnv1a_hash(data: str) -> int:
-    """计算字符串的 FNV-1a 32-bit hash
-    
-    Args:
-        data: 要计算 hash 的字符串
-        
-    Returns:
-        32-bit FNV-1a hash 值
-    """
-    FNV_PRIME = 0x01000193
-    FNV_OFFSET_BASIS = 0x811c9dc5
-    
-    hash_value = FNV_OFFSET_BASIS
-    for char in data.encode('utf-8'):
-        hash_value ^= char
-        hash_value = (hash_value * FNV_PRIME) & 0xFFFFFFFF
-    
-    return hash_value
-
-
-
 
 class IpcProxyGenerator:
     """IPC Proxy 代码生成器"""
@@ -346,41 +325,6 @@ class IpcProxyGenerator:
         # 额外的接口命名空间映射（来自其他 IDL 文件的接口）
         if extra_interface_namespaces:
             self.type_mapper.interface_namespaces.update(extra_interface_namespaces)
-
-    @staticmethod
-    def _properties_to_methods(properties: list) -> list:
-        """将 PropertyDef 列表转换为 MethodDef 列表（getter/setter）"""
-        methods = []
-        for prop in properties:
-            is_interface = (prop.type_info.type_kind == TypeKind.INTERFACE
-                            and prop.type_info.pointer_level == 0)
-            is_string = prop.type_info.base_type in ('string', 'IDasReadOnlyString')
-
-            if prop.has_getter:
-                if is_interface or is_string:
-                    out_type = TypeInfo(base_type=prop.type_info.base_type, pointer_level=2, is_pointer=True,
-                                        type_kind=prop.type_info.type_kind)
-                    params = [ParameterDef(name="pp_out", type_info=out_type, direction=ParamDirection.OUT)]
-                else:
-                    out_type = TypeInfo(base_type=prop.type_info.base_type, pointer_level=1, is_pointer=True,
-                                        type_kind=prop.type_info.type_kind)
-                    params = [ParameterDef(name="p_out", type_info=out_type, direction=ParamDirection.OUT)]
-                methods.append(MethodDef(name=f"Get{prop.name}", return_type=TypeInfo(base_type="DasResult", pointer_level=0), parameters=params))
-
-            if prop.has_setter:
-                if is_interface:
-                    in_type = TypeInfo(base_type=prop.type_info.base_type, pointer_level=1, is_pointer=True,
-                                       type_kind=prop.type_info.type_kind)
-                elif is_string:
-                    in_type = TypeInfo(base_type="IDasReadOnlyString", pointer_level=1, is_pointer=True,
-                                       type_kind=prop.type_info.type_kind)
-                else:
-                    in_type = TypeInfo(base_type=prop.type_info.base_type, pointer_level=0,
-                                       type_kind=prop.type_info.type_kind)
-                params = [ParameterDef(name="p_value", type_info=in_type, direction=ParamDirection.IN)]
-                methods.append(MethodDef(name=f"Set{prop.name}", return_type=TypeInfo(base_type="DasResult", pointer_level=0), parameters=params))
-
-        return methods
 
     def _collect_all_methods(self, interface: InterfaceDef) -> list:
         """收集接口及其所有父接口的方法（深度优先，从根到叶）
@@ -422,7 +366,7 @@ class IpcProxyGenerator:
             for method in iface.methods:
                 all_methods.append((method, iface))
             # 属性生成的 getter/setter 也作为方法
-            for method in self._properties_to_methods(iface.properties):
+            for method in properties_to_methods(iface.properties):
                 all_methods.append((method, iface))
 
         return all_methods

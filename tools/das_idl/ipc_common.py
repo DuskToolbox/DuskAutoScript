@@ -1,10 +1,32 @@
 """IPC code generation shared utilities.
 
-Consolidates FNV-1a hashing and built-in interface IDs used by
-das_ipc_stub_generator, das_ipc_proxy_generator, and aggregate_ipc.
+Consolidates FNV-1a hashing, built-in interface IDs, and property-to-method
+conversion used by das_ipc_stub_generator, das_ipc_proxy_generator, and
+aggregate_ipc.
 """
 
+import importlib
 import struct
+import sys
+from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Parser type imports — support both package import and direct script execution
+# ---------------------------------------------------------------------------
+
+try:
+    from . import das_idl_parser as _das_idl_parser
+except ImportError:
+    this_dir = str(Path(__file__).resolve().parent)
+    if this_dir not in sys.path:
+        sys.path.insert(0, this_dir)
+    _das_idl_parser = importlib.import_module("das_idl_parser")
+
+TypeKind = _das_idl_parser.TypeKind
+ParamDirection = _das_idl_parser.ParamDirection
+MethodDef = _das_idl_parser.MethodDef
+ParameterDef = _das_idl_parser.ParameterDef
+TypeInfo = _das_idl_parser.TypeInfo
 
 # ---------------------------------------------------------------------------
 # FNV-1a 32-bit hash of a Windows GUID binary layout
@@ -49,6 +71,18 @@ def fnv1a_hash_guid(guid_str: str) -> int:
     return hash_value
 
 
+def fnv1a_hash(data: str) -> int:
+    """Compute FNV-1a 32-bit hash of a UTF-8 encoded string.
+
+    Used to derive method IDs from ``"InterfaceName::MethodName"`` strings.
+    """
+    hash_value = FNV_OFFSET_BASIS
+    for byte in data.encode("utf-8"):
+        hash_value ^= byte
+        hash_value = (hash_value * FNV_PRIME) & 0xFFFFFFFF
+    return hash_value
+
+
 # ---------------------------------------------------------------------------
 # Built-in interface IDs (FNV-1a hash of GUID, pre-computed)
 #
@@ -60,3 +94,42 @@ def fnv1a_hash_guid(guid_str: str) -> int:
 BUILTIN_INTERFACE_HASHES: dict[str, int] = {
     "IDasBase": 0x7BC07313,
 }
+
+
+# ---------------------------------------------------------------------------
+# Property → getter/setter MethodDef conversion
+# ---------------------------------------------------------------------------
+
+def properties_to_methods(properties: list) -> list:
+    """Convert PropertyDef list to MethodDef list (getter/setter pairs)."""
+    methods = []
+    for prop in properties:
+        is_interface = (prop.type_info.type_kind == TypeKind.INTERFACE
+                        and prop.type_info.pointer_level == 0)
+        is_string = prop.type_info.base_type in ('string', 'IDasReadOnlyString')
+
+        if prop.has_getter:
+            if is_interface or is_string:
+                out_type = TypeInfo(base_type=prop.type_info.base_type, pointer_level=2, is_pointer=True,
+                                    type_kind=prop.type_info.type_kind)
+                params = [ParameterDef(name="pp_out", type_info=out_type, direction=ParamDirection.OUT)]
+            else:
+                out_type = TypeInfo(base_type=prop.type_info.base_type, pointer_level=1, is_pointer=True,
+                                    type_kind=prop.type_info.type_kind)
+                params = [ParameterDef(name="p_out", type_info=out_type, direction=ParamDirection.OUT)]
+            methods.append(MethodDef(name=f"Get{prop.name}", return_type=TypeInfo(base_type="DasResult", pointer_level=0), parameters=params))
+
+        if prop.has_setter:
+            if is_interface:
+                in_type = TypeInfo(base_type=prop.type_info.base_type, pointer_level=1, is_pointer=True,
+                                   type_kind=prop.type_info.type_kind)
+            elif is_string:
+                in_type = TypeInfo(base_type="IDasReadOnlyString", pointer_level=1, is_pointer=True,
+                                   type_kind=prop.type_info.type_kind)
+            else:
+                in_type = TypeInfo(base_type=prop.type_info.base_type, pointer_level=0,
+                                   type_kind=prop.type_info.type_kind)
+            params = [ParameterDef(name="p_value", type_info=in_type, direction=ParamDirection.IN)]
+            methods.append(MethodDef(name=f"Set{prop.name}", return_type=TypeInfo(base_type="DasResult", pointer_level=0), parameters=params))
+
+    return methods

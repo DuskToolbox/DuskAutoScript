@@ -32,6 +32,7 @@ from das_idl_parser import InterfaceDef, MethodDef, ParameterDef, ParamDirection
 from typing import Any, Optional, Dict
 
 from swig_lang_generator_base import SwigLangGenerator
+from shared_utils import build_param_signatures
 
 
 class JavaSwigGenerator(SwigLangGenerator):
@@ -764,35 +765,9 @@ class JavaSwigGenerator(SwigLangGenerator):
         qualified_interface = f"{interface.namespace}::{interface.name}"
 
         # 构建完整参数签名
-        param_signatures_with_prefix = []
-        param_signatures_without_prefix = []
-        current_namespace = interface.namespace
-
-        for param in method.parameters:
-            param_type = param.type_info.base_type
-            param_type_with_prefix = param_type
-
-            # 对于全局命名空间的接口类型，添加 :: 前缀
-            # 注意：unsigned char 和 size_t 是 C++ 原生类型，不能添加 :: 前缀（会导致非法语法）
-            namespace = self.get_type_namespace(param_type)
-            if not namespace and param.type_info.type_kind == TypeKind.INTERFACE:
-                # namespace 为 None 或空字符串，说明是全局命名空间
-                param_type_with_prefix = f'::{param_type}'
-            # 对于其他接口类型，检查命名空间
-            elif namespace:
-                if namespace == current_namespace:
-                    param_type_with_prefix = param_type
-                else:
-                    param_type_with_prefix = f'::{namespace}::{param_type}'
-            
-            # 构建完整的类型签名，包括 const、指针和引用修饰符
-            if param.type_info.is_pointer:
-                stars = '*' * param.type_info.pointer_level
-                param_signatures_with_prefix.append(f"{param_type_with_prefix}{stars}")
-                param_signatures_without_prefix.append(f"{param_type}{stars}")
-            else:
-                param_signatures_with_prefix.append(param_type_with_prefix)
-                param_signatures_without_prefix.append(param_type)
+        param_signatures_with_prefix, param_signatures_without_prefix = build_param_signatures(
+            method, self.get_type_namespace, interface.namespace, TypeKind.INTERFACE,
+        )
 
         param_list_with_prefix = ", ".join(param_signatures_with_prefix)
         param_list_without_prefix = ", ".join(param_signatures_without_prefix)
@@ -823,38 +798,10 @@ class JavaSwigGenerator(SwigLangGenerator):
 
         # 构建完整参数签名
         # 同时生成带 :: 前缀和不带前缀的版本
-        param_signatures_with_prefix = []
-        param_signatures_without_prefix = []
-        current_namespace = interface.namespace
-        for param in method.parameters:
-            param_type = param.type_info.base_type
-            param_type_with_prefix = param_type
-            # 对于全局命名空间的类型，添加 :: 前缀
-            namespace = self.get_type_namespace(param_type)
-            if not namespace and param.type_info.type_kind == TypeKind.INTERFACE:
-                # namespace 为 None 或空字符串，说明是全局命名空间
-                param_type_with_prefix = f'::{param_type}'
-            elif namespace:
-                if namespace == current_namespace:
-                    param_type_with_prefix = param_type
-                else:
-                    param_type_with_prefix = f'::{namespace}::{param_type}'
-            if param.type_info.is_pointer:
-                stars = '*' * param.type_info.pointer_level
-                const_prefix = "const " if param.type_info.is_const else ""
-                param_signatures_with_prefix.append(f"{const_prefix}{param_type_with_prefix}{stars}")
-                param_signatures_without_prefix.append(f"{const_prefix}{param_type}{stars}")
-            elif param.type_info.is_reference:
-                # 处理引用类型（如 const DasGuid&）
-                if param.type_info.is_const:
-                    param_signatures_with_prefix.append(f"const {param_type_with_prefix}&")
-                    param_signatures_without_prefix.append(f"const {param_type}&")
-                else:
-                    param_signatures_with_prefix.append(f"{param_type_with_prefix}&")
-                    param_signatures_without_prefix.append(f"{param_type}&")
-            else:
-                param_signatures_with_prefix.append(param_type_with_prefix)
-                param_signatures_without_prefix.append(param_type)
+        param_signatures_with_prefix, param_signatures_without_prefix = build_param_signatures(
+            method, self.get_type_namespace, interface.namespace, TypeKind.INTERFACE,
+            include_const=True, include_reference=True,
+        )
 
         param_list_with_prefix = ", ".join(param_signatures_with_prefix)
         param_list_without_prefix = ", ".join(param_signatures_without_prefix)

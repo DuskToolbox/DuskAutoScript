@@ -15,6 +15,7 @@ from das_idl_parser import (
     ParameterDef, TypeInfo, ParamDirection, ImportDef,
     StructDef, StructFieldDef, TypeKind,
 )
+from shared_utils import to_upper_snake
 
 
 class CppTypeMapper:
@@ -329,15 +330,6 @@ class CppCodeGenerator:
 #endif // {guard_name}
 """
 
-    def _to_upper_snake(self, name: str) -> str:
-        """将 PascalCase 转换为 UPPER_SNAKE_CASE"""
-        result = []
-        for i, c in enumerate(name):
-            if c.isupper() and i > 0:
-                result.append('_')
-            result.append(c.upper())
-        return ''.join(result)
-
     def _generate_namespace_open(self, namespace: str) -> str:
         """生成命名空间开始标记，支持 C++17 嵌套命名空间语法"""
         if namespace:
@@ -371,7 +363,7 @@ class CppCodeGenerator:
             iid_suffix = interface.name[4:]  # 去掉 IDas 前缀
         else:
             iid_suffix = interface.name[1:]  # 去掉 I 前缀
-        iid_name = f"DAS_IID_{self._to_upper_snake(iid_suffix)}"
+        iid_name = f"DAS_IID_{to_upper_snake(iid_suffix)}"
 
         # 根据是否在命名空间中选择不同的宏
         if namespace:
@@ -453,7 +445,7 @@ DAS_DEFINE_GUID(
             # 如果没有任何枚举值等于 0x7FFFFFFF，则添加 FORCE_DWORD
             if not has_force_dword_value:
                 import warnings
-                force_dword_name = f"{self._to_upper_snake(enum.name)}_FORCE_DWORD"
+                force_dword_name = f"{to_upper_snake(enum.name)}_FORCE_DWORD"
                 warnings.warn(
                     f"Enum '{enum.name}' does not contain a value equal to 0x7FFFFFFF. "
                     f"Adding {force_dword_name} = 0x7FFFFFFF",
@@ -465,7 +457,7 @@ DAS_DEFINE_GUID(
         else:
             # 枚举没有任何值，补充 FORCE_DWORD
             import warnings
-            force_dword_name = f"{self._to_upper_snake(enum.name)}_FORCE_DWORD"
+            force_dword_name = f"{to_upper_snake(enum.name)}_FORCE_DWORD"
             warnings.warn(
                 f"Enum '{enum.name}' has no values. "
                 f"Adding {force_dword_name} = 0x7FFFFFFF",

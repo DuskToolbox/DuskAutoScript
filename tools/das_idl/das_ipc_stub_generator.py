@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional
 import importlib
 import sys
 
-from ipc_common import fnv1a_hash_guid, BUILTIN_INTERFACE_HASHES
+from ipc_common import fnv1a_hash_guid, fnv1a_hash, BUILTIN_INTERFACE_HASHES, properties_to_methods
 
 try:
     from . import das_idl_parser as _das_idl_parser
@@ -305,20 +305,6 @@ class StubTypeMapper:
                     pass  # Skip unparseable files
 
 
-def fnv1a_hash(data: str) -> int:
-    """计算字符串的 FNV-1a 32-bit hash"""
-    FNV_PRIME = 0x01000193
-    FNV_OFFSET_BASIS = 0x811c9dc5
-    
-    hash_value = FNV_OFFSET_BASIS
-    for char in data.encode('utf-8'):
-        hash_value ^= char
-        hash_value = (hash_value * FNV_PRIME) & 0xFFFFFFFF
-    
-    return hash_value
-
-
-
 
 class IpcStubGenerator:
     """IPC Stub 代码生成器"""
@@ -372,41 +358,6 @@ class IpcStubGenerator:
                             pass
                 _parse_imports_recursive(self.document.imports, Path(idl_file_path).resolve().parent)
 
-    @staticmethod
-    def _properties_to_methods(properties: list) -> list:
-        """将 PropertyDef 列表转换为 MethodDef 列表（getter/setter）"""
-        methods = []
-        for prop in properties:
-            is_interface = (prop.type_info.type_kind == TypeKind.INTERFACE
-                            and prop.type_info.pointer_level == 0)
-            is_string = prop.type_info.base_type in ('string', 'IDasReadOnlyString')
-
-            if prop.has_getter:
-                if is_interface or is_string:
-                    out_type = TypeInfo(base_type=prop.type_info.base_type, pointer_level=2, is_pointer=True,
-                                        type_kind=prop.type_info.type_kind)
-                    params = [ParameterDef(name="pp_out", type_info=out_type, direction=ParamDirection.OUT)]
-                else:
-                    out_type = TypeInfo(base_type=prop.type_info.base_type, pointer_level=1, is_pointer=True,
-                                        type_kind=prop.type_info.type_kind)
-                    params = [ParameterDef(name="p_out", type_info=out_type, direction=ParamDirection.OUT)]
-                methods.append(MethodDef(name=f"Get{prop.name}", return_type=TypeInfo(base_type="DasResult", pointer_level=0), parameters=params))
-
-            if prop.has_setter:
-                if is_interface:
-                    in_type = TypeInfo(base_type=prop.type_info.base_type, pointer_level=1, is_pointer=True,
-                                       type_kind=prop.type_info.type_kind)
-                elif is_string:
-                    in_type = TypeInfo(base_type="IDasReadOnlyString", pointer_level=1, is_pointer=True,
-                                       type_kind=prop.type_info.type_kind)
-                else:
-                    in_type = TypeInfo(base_type=prop.type_info.base_type, pointer_level=0,
-                                       type_kind=prop.type_info.type_kind)
-                params = [ParameterDef(name="p_value", type_info=in_type, direction=ParamDirection.IN)]
-                methods.append(MethodDef(name=f"Set{prop.name}", return_type=TypeInfo(base_type="DasResult", pointer_level=0), parameters=params))
-
-        return methods
-
     def _collect_all_methods(self, interface: InterfaceDef) -> list:
         """收集接口及其所有父接口的方法（深度优先，从根到叶）"""
         iface_map = {iface.name: iface for iface in self.all_interfaces}
@@ -424,7 +375,7 @@ class IpcStubGenerator:
         for iface in chain:
             for method in iface.methods:
                 all_methods.append((method, iface))
-            for method in self._properties_to_methods(iface.properties):
+            for method in properties_to_methods(iface.properties):
                 all_methods.append((method, iface))
         return all_methods
     

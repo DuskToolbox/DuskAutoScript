@@ -19,6 +19,7 @@ from das_idl_parser import (
     IdlDocument, InterfaceDef, EnumDef, MethodDef, PropertyDef,
     ParameterDef, TypeInfo, ParamDirection, TypeKind
 )
+from shared_utils import to_upper_snake
 
 
 class CppImplementsTypeMapper:
@@ -231,15 +232,6 @@ class CppImplementsGenerator:
         return f"""
 #endif // {guard_name}
 """
-
-    def _to_upper_snake(self, name: str) -> str:
-        """将 PascalCase 转换为 UPPER_SNAKE_CASE"""
-        result = []
-        for i, c in enumerate(name):
-            if c.isupper() and i > 0:
-                result.append('_')
-            result.append(c.upper())
-        return ''.join(result)
 
     def _generate_namespace_open(self, namespace: str) -> str:
         """生成命名空间开始标记，支持 C++17 嵌套命名空间语法"""
