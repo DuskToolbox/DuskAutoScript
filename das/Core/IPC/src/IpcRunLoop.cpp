@@ -24,6 +24,7 @@
 #include <das/Core/IPC/DasVariantVectorByValueStub.h>
 #include <das/Core/IPC/DefaultAsyncIpcTransport.h>
 #include <das/Core/IPC/QueryInterfaceStub.h>
+#include <das/Core/IPC/RemoteObjectRegistry.h>
 
 #include <das/Core/Logger/Logger.h>
 #include <das/Utils/StringUtils.h>
@@ -307,9 +308,10 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
             {
                 IpcResponseSender               sender(transport, *this);
                 static DistributedObjectManager null_manager;
+                static RemoteObjectRegistry     null_registry;
                 DistributedObjectManager&       obj_mgr =
                     object_manager_ ? *object_manager_ : null_manager;
-                StubContext ctx{obj_mgr, *this, {}, header};
+                StubContext ctx{obj_mgr, null_registry, *this, {}, header};
                 auto result = co_await awaitable_handler
                                   ->HandleMessage(header, body, sender, ctx);
                 if (DAS::IsFailed(result))
@@ -349,9 +351,10 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
             // 控制平面 handler 不使用 object_manager，但接口需要此参数
             // 如果 object_manager_ 为 nullptr，使用一个静态的空对象
             static DistributedObjectManager null_manager;
+            static RemoteObjectRegistry     null_registry;
             DistributedObjectManager&       obj_mgr =
                 object_manager_ ? *object_manager_ : null_manager;
-            StubContext ctx{obj_mgr, *this, {}, header};
+            StubContext ctx{obj_mgr, null_registry, *this, {}, header};
             auto result = handler->HandleMessage(header, body, sender, ctx);
             if (DAS::IsFailed(result))
             {

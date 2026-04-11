@@ -52,9 +52,6 @@ namespace Core
              */
             struct IIpcContext
             {
-                virtual DistributedObjectManager& GetObjectManager() = 0;
-                virtual RemoteObjectRegistry&     GetRegistry() = 0;
-
                 /**
                  * @brief 创建 HostLauncher 实例
                  *
@@ -186,16 +183,15 @@ namespace Core
                  * @return DasResult DAS_S_OK 成功
                  */
                 virtual DasResult RegisterService(
-                    IDasBase*        p_object,
-                    const DasGuid&   iid) = 0;
+                    IDasBase*      p_object,
+                    const DasGuid& iid) = 0;
 
                 /**
                  * @brief 从主进程全局服务表注销一个服务对象
                  * @param iid 要注销的服务 IID
                  * @return DasResult DAS_S_OK 成功
                  */
-                virtual DasResult UnregisterService(
-                    const DasGuid&   iid) = 0;
+                virtual DasResult UnregisterService(const DasGuid& iid) = 0;
 
             protected:
                 virtual ~IIpcContext() = default;

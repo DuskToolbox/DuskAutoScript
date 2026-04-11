@@ -53,8 +53,7 @@ DasResult PluginManager::Shutdown()
         // 先注销对象
         for (auto& feature : plugin.features)
         {
-            Core::IPC::RemoteObjectRegistry::GetInstance().UnregisterObject(
-                feature.object_id);
+            registry_->UnregisterObject(feature.object_id);
         }
     }
 
@@ -72,6 +71,11 @@ DasResult PluginManager::SetRuntime(DasPtr<IForeignLanguageRuntime> runtime)
     std::lock_guard<std::mutex> lock(mutex_);
     runtime_ = std::move(runtime);
     return DAS_S_OK;
+}
+
+void PluginManager::SetRegistry(Core::IPC::RemoteObjectRegistry& registry)
+{
+    registry_ = &registry;
 }
 
 DasResult PluginManager::LoadPlugin(
@@ -202,8 +206,7 @@ DasResult PluginManager::UnloadPlugin(const std::filesystem::path& path)
     {
         if (!Core::IPC::IsNullObjectId(feature.object_id))
         {
-            Core::IPC::RemoteObjectRegistry::GetInstance().UnregisterObject(
-                feature.object_id);
+            registry_->UnregisterObject(feature.object_id);
         }
         // 从 feature_map_ 中移除
         feature_map_.erase(feature.feature_name);
@@ -275,7 +278,7 @@ DasResult PluginManager::RegisterPluginObjects(
         return DAS_E_NOT_FOUND;
     }
 
-    auto&    registry = Core::IPC::RemoteObjectRegistry::GetInstance();
+    auto&    registry = *registry_;
     uint32_t local_id = 1;
 
     for (auto& feature : it->second.features)
@@ -333,7 +336,7 @@ DasResult PluginManager::UnregisterPluginObjects(
         return DAS_E_NOT_FOUND;
     }
 
-    auto& registry = Core::IPC::RemoteObjectRegistry::GetInstance();
+    auto& registry = *registry_;
 
     for (auto& feature : it->second.features)
     {

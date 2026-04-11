@@ -73,21 +73,8 @@ namespace Core
                     *runloop_,
                     *this);
 
-                // 7. Initialize ProxyFactory with runloop_
-                auto& proxy_factory = ProxyFactory::GetInstance();
-                result = proxy_factory.Initialize(
-                    &object_manager_,
-                    &RemoteObjectRegistry::GetInstance(),
-                    runloop_.get());
-                if (result != DAS_S_OK)
-                {
-                    DAS_CORE_LOG_ERROR(
-                        "ProxyFactory initialization failed, result = {}",
-                        result);
-                    runloop_.reset();
-                    throw std::runtime_error(
-                        "ProxyFactory initialization failed");
-                }
+                // 7. Initialize ProxyFactory as value member
+                proxy_factory_.emplace(object_manager_, registry_, *runloop_);
 
                 // 8. 创建并初始化 IpcCommandHandler
                 command_handler_ = IpcCommandHandler::Create();
@@ -131,8 +118,10 @@ namespace Core
                 }
 
                 // Clear ProxyFactory
-                auto& proxy_factory = ProxyFactory::GetInstance();
-                proxy_factory.ClearAllProxies();
+                if (proxy_factory_.has_value())
+                {
+                    proxy_factory_->ClearAllProxies();
+                }
 
                 // 关闭顺序：inbound_queue -> business_thread -> io_context
                 // 1. 关闭入站队列，让业务线程的 Pop() 返回 nullopt
@@ -156,19 +145,9 @@ namespace Core
                 is_initialized_ = false;
             }
 
-            DistributedObjectManager& IpcContext::GetObjectManager()
-            {
-                return object_manager_;
-            }
-
             ProxyFactory& IpcContext::GetProxyFactory()
             {
-                return ProxyFactory::GetInstance();
-            }
-
-            RemoteObjectRegistry& IpcContext::GetRegistry()
-            {
-                return RemoteObjectRegistry::GetInstance();
+                return *proxy_factory_;
             }
 
             boost::asio::io_context& IpcContext::GetIoContext()
@@ -319,7 +298,7 @@ namespace Core
                 // 启动业务线程
                 if (business_thread_)
                 {
-                    business_thread_->Start(object_manager_);
+                    business_thread_->Start(object_manager_, registry_);
                 }
 
                 return runloop_->Run();
@@ -562,9 +541,7 @@ namespace Core
                     RemoteObjectRegistry::ComputeInterfaceId(iid);
                 RemoteObjectInfo info;
                 DasResult        lookup_result =
-                    RemoteObjectRegistry::GetInstance().LookupByInterface(
-                        interface_id,
-                        info);
+                    registry_.LookupByInterface(interface_id, info);
                 if (DAS::IsFailed(lookup_result))
                 {
                     return DAS_E_IPC_OBJECT_NOT_FOUND;
@@ -606,8 +583,8 @@ namespace Core
                 //    name
                 auto name = DAS::fmt::format("{}", iid);
                 auto session_id = runloop_->GetSessionId();
-                result = RemoteObjectRegistry::GetInstance()
-                             .RegisterObject(obj_id, iid, session_id, name);
+                result =
+                    registry_.RegisterObject(obj_id, iid, session_id, name);
 
                 // 4. Partial failure rollback
                 if (DAS::IsFailed(result))
@@ -626,18 +603,14 @@ namespace Core
                     RemoteObjectRegistry::ComputeInterfaceId(iid);
 
                 RemoteObjectInfo info;
-                auto             result =
-                    RemoteObjectRegistry::GetInstance().LookupByInterface(
-                        interface_id,
-                        info);
+                auto result = registry_.LookupByInterface(interface_id, info);
                 if (DAS::IsFailed(result))
                 {
                     return DAS_E_IPC_OBJECT_NOT_FOUND;
                 }
 
                 // 2. Remove from Registry first
-                result = RemoteObjectRegistry::GetInstance().UnregisterObject(
-                    info.object_id);
+                result = registry_.UnregisterObject(info.object_id);
                 if (DAS::IsFailed(result))
                 {
                     return result;

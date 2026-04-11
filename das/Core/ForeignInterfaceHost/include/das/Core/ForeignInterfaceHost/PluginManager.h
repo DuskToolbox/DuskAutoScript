@@ -82,6 +82,11 @@ public:
     DasResult SetRuntime(DasPtr<IForeignLanguageRuntime> runtime);
 
     /**
+     * @brief 设置远程对象注册表引用
+     */
+    void SetRegistry(Core::IPC::RemoteObjectRegistry& registry);
+
+    /**
      * @brief 加载插件
      * @param path 插件路径
      * @param pp_out_package 输出的插件包接口（可选）
@@ -205,6 +210,7 @@ private:
     mutable std::mutex                            mutex_;
     uint16_t                                      session_id_ = 0;
     DasPtr<IForeignLanguageRuntime>               runtime_;
+    Core::IPC::RemoteObjectRegistry*              registry_ = nullptr;
     std::unordered_map<std::string, LoadedPlugin> loaded_plugins_;
     std::unordered_map<std::string, FeatureInfo*>
         feature_map_; // feature_name -> FeatureInfo

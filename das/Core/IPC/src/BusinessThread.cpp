@@ -20,7 +20,9 @@ BusinessThread::BusinessThread(
 
 BusinessThread::~BusinessThread() { Stop(); }
 
-void BusinessThread::Start(DistributedObjectManager& object_manager)
+void BusinessThread::Start(
+    DistributedObjectManager& object_manager,
+    RemoteObjectRegistry&     registry)
 {
     if (running_.load())
     {
@@ -28,6 +30,7 @@ void BusinessThread::Start(DistributedObjectManager& object_manager)
     }
 
     object_manager_ = &object_manager;
+    registry_ = &registry;
     running_.store(true);
     thread_ = std::thread(&BusinessThread::Run, this);
 
@@ -127,6 +130,7 @@ void BusinessThread::ProcessInboundMessage(InboundMessage& msg)
             {
                 StubContext ctx{
                     *object_manager_,
+                    *registry_,
                     run_loop_,
                     weak_from_this(),
                     header};

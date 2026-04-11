@@ -16,6 +16,7 @@
 #include <das/DasPtr.hpp>
 #include <das/IDasAsyncLoadPluginOperation.h>
 #include <memory>
+#include <optional>
 
 DAS_NS_BEGIN
 namespace Core
@@ -40,7 +41,7 @@ namespace Core
              * 管理的组件：
              * - DistributedObjectManager：分布式对象生命周期管理
              * - ProxyFactory：Proxy 工厂，负责创建远程对象代理
-             * - RemoteObjectRegistry（单例）：远程对象注册表
+             * - RemoteObjectRegistry：远程对象注册表
              * - IpcRunLoop：IPC 运行循环（持有 ConnectionManager）
              */
             class IpcContext final : public IIpcContext, public IResolveContext
@@ -54,11 +55,7 @@ namespace Core
                 IpcContext(IpcContext&&) = delete;
                 IpcContext& operator=(IpcContext&&) = delete;
 
-                class DistributedObjectManager& GetObjectManager() override;
-
                 class ProxyFactory& GetProxyFactory();
-
-                class RemoteObjectRegistry& GetRegistry() override;
 
                 DasResult CreateHostLauncher(
                     IHostLauncher** pp_out_launcher) override;
@@ -112,6 +109,13 @@ namespace Core
 
                 /// IPC 运行循环
                 std::unique_ptr<IpcRunLoop> runloop_;
+
+                /// 远程对象注册表（值成员）
+                RemoteObjectRegistry registry_;
+
+                /// Proxy 工厂（值成员，optional 因为 ProxyFactory
+                /// 引用非默认可构造）
+                std::optional<ProxyFactory> proxy_factory_;
 
                 /// 入站消息队列（值成员）
                 IpcMessageQueue<InboundMessage> inbound_queue_{1024};

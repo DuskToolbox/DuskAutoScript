@@ -11,6 +11,7 @@
 DAS_CORE_IPC_NS_BEGIN
 
 class DistributedObjectManager;
+class RemoteObjectRegistry;
 
 /**
  * @brief 业务线程类
@@ -44,8 +45,11 @@ public:
     /**
      * @brief 启动业务线程
      * @param object_manager DistributedObjectManager 引用（由 IpcContext 传入）
+     * @param registry RemoteObjectRegistry 引用（由 IpcContext 传入）
      */
-    void Start(DistributedObjectManager& object_manager);
+    void Start(
+        DistributedObjectManager& object_manager,
+        RemoteObjectRegistry&     registry);
 
     /**
      * @brief 停止业务线程
@@ -106,6 +110,9 @@ private:
 
     /// DistributedObjectManager 指针（由 Start() 设置）
     DistributedObjectManager* object_manager_ = nullptr;
+
+    /// RemoteObjectRegistry 指针（由 Start() 设置）
+    RemoteObjectRegistry* registry_ = nullptr;
 
     /// 业务线程
     std::thread thread_;

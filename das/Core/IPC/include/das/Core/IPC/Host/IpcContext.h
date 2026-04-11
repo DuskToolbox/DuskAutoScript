@@ -12,6 +12,7 @@
 #include <das/Core/IPC/IpcMessageQueue.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/ObjectId.h>
+#include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
@@ -144,6 +145,9 @@ namespace Core
 
                 /// IPC 运行循环
                 std::unique_ptr<IpcRunLoop> run_loop_;
+
+                /// 远程对象注册表（值成员）
+                RemoteObjectRegistry registry_;
 
                 /// 入站消息队列（值成员）
                 IpcMessageQueue<InboundMessage> inbound_queue_{1024};

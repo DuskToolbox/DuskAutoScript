@@ -536,7 +536,7 @@ namespace Core
                 // 启动业务线程
                 if (business_thread_)
                 {
-                    business_thread_->Start(object_manager_);
+                    business_thread_->Start(object_manager_, registry_);
                 }
 
                 auto& io = run_loop_->GetIoContext();
