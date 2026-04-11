@@ -219,7 +219,9 @@ namespace Core
                 run_loop_->SetInboundQueue(&inbound_queue_);
 
                 // 5.5 DistributedObjectManager 绑定 IpcRunLoop
-                object_manager_.SetRunLoop(run_loop_.get());
+                proxy_factory_.emplace(registry_, *run_loop_, business_thread_);
+                proxy_factory_->GetObjectManager().SetRunLoop(run_loop_.get());
+                run_loop_->SetProxyFactory(&*proxy_factory_);
 
                 // 6. 创建 BusinessThread
                 business_thread_ = std::make_shared<BusinessThread>(
@@ -425,7 +427,7 @@ namespace Core
                 // 7. 关闭 SharedMemoryPool
                 shared_memory_.reset();
 
-                // 8. object_manager_ 是值成员，自动析构
+                // 8. proxy_factory_ 是 optional 值成员，自动析构
 
                 is_initialized_ = false;
                 is_connected_ = false;
@@ -499,7 +501,7 @@ namespace Core
 
             IDistributedObjectManager& IpcContext::GetObjectManager()
             {
-                return object_manager_;
+                return proxy_factory_->GetObjectManager();
             }
 
             void IpcContext::RegisterCommandHandler(
@@ -536,7 +538,7 @@ namespace Core
                 // 启动业务线程
                 if (business_thread_)
                 {
-                    business_thread_->Start(object_manager_, registry_);
+                    business_thread_->Start(*proxy_factory_, registry_);
                 }
 
                 auto& io = run_loop_->GetIoContext();
@@ -822,13 +824,10 @@ namespace Core
                 uint32_t interface_hash =
                     RemoteObjectRegistry::ComputeInterfaceId(iid);
 
-                // Create proxy using fallback factory
-                IDasBase* proxy = CreateProxyByInterfaceIdWithFallback(
-                    interface_hash,
-                    object_id,
-                    *run_loop_,
-                    business_thread_,
-                    object_manager_);
+                // Create proxy using unified GetOrCreateProxy (cache +
+                // RegisterRemoteObject)
+                IDasBase* proxy =
+                    proxy_factory_->GetOrCreateProxy(object_id, interface_hash);
 
                 if (!proxy)
                 {
@@ -837,9 +836,6 @@ namespace Core
                         interface_hash);
                     return DAS_E_NO_INTERFACE;
                 }
-
-                // Register remote object via object_manager_
-                object_manager_.RegisterRemoteObject(object_id);
 
                 *pp_out_object = proxy;
 
@@ -867,7 +863,7 @@ namespace Core
                 IDasBase* object_ptr,
                 ObjectId& out_object_id)
             {
-                return object_manager_.RegisterLocalObject(
+                return proxy_factory_->GetObjectManager().RegisterLocalObject(
                     object_ptr,
                     out_object_id);
             }

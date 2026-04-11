@@ -101,9 +101,6 @@ namespace Core
             private:
                 void Uninitialize();
 
-                /// 分布式对象管理器（值成员）
-                DistributedObjectManager object_manager_;
-
                 /// IPC 命令处理器
                 DasPtr<IpcCommandHandler> command_handler_;
 
@@ -113,15 +110,15 @@ namespace Core
                 /// 远程对象注册表（值成员）
                 RemoteObjectRegistry registry_;
 
-                /// Proxy 工厂（值成员，optional 因为 ProxyFactory
-                /// 引用非默认可构造）
-                std::optional<ProxyFactory> proxy_factory_;
-
                 /// 入站消息队列（值成员）
                 IpcMessageQueue<InboundMessage> inbound_queue_{1024};
 
                 /// 业务线程
                 std::shared_ptr<BusinessThread> business_thread_;
+
+                /// Proxy 工厂（值持有 DistributedObjectManager，optional 因为
+                /// ProxyFactory 引用非默认可构造）
+                std::optional<ProxyFactory> proxy_factory_;
 
                 bool is_initialized_ = false;
 

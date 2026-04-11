@@ -11,6 +11,7 @@
 DAS_CORE_IPC_NS_BEGIN
 
 class DistributedObjectManager;
+class ProxyFactory;
 class RemoteObjectRegistry;
 
 /**
@@ -44,12 +45,10 @@ public:
 
     /**
      * @brief 启动业务线程
-     * @param object_manager DistributedObjectManager 引用（由 IpcContext 传入）
+     * @param proxy_factory ProxyFactory 引用（由 IpcContext 传入）
      * @param registry RemoteObjectRegistry 引用（由 IpcContext 传入）
      */
-    void Start(
-        DistributedObjectManager& object_manager,
-        RemoteObjectRegistry&     registry);
+    void Start(ProxyFactory& proxy_factory, RemoteObjectRegistry& registry);
 
     /**
      * @brief 停止业务线程
@@ -108,7 +107,10 @@ private:
     /// IResolveContext 引用（用于绑定 g_current_context）
     IResolveContext& resolve_context_;
 
-    /// DistributedObjectManager 指针（由 Start() 设置）
+    /// ProxyFactory 指针（由 Start() 设置）
+    ProxyFactory* proxy_factory_ = nullptr;
+
+    /// DistributedObjectManager 指针（由 Start() 从 ProxyFactory 获取）
     DistributedObjectManager* object_manager_ = nullptr;
 
     /// RemoteObjectRegistry 指针（由 Start() 设置）

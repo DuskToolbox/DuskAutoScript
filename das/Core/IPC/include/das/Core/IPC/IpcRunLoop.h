@@ -31,6 +31,7 @@
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/IpcResponseSender.h>
+#include <das/Core/IPC/ProxyFactory.h>
 
 DAS_CORE_IPC_NS_BEGIN
 
@@ -582,6 +583,20 @@ public:
     /// 分布式对象管理器指针（非持有，由 IpcContext 管理）
     /// 用于传递给控制平面 handler（控制平面 handler 不使用此参数）
     DistributedObjectManager* object_manager_ = nullptr;
+
+    /// ProxyFactory 指针（非持有，由 IpcContext 管理）
+    /// 用于传递给控制平面 handler 的 StubContext
+    ProxyFactory* proxy_factory_ = nullptr;
+
+    /**
+     * @brief 设置 ProxyFactory 指针
+     *
+     * IpcRunLoop 不持有此工厂，仅保存指针用于传递给控制平面 handler。
+     * 控制平面 handler 不使用此参数，但接口需要此参数。
+     *
+     * @param proxy_factory ProxyFactory 指针（IpcContext 持有）
+     */
+    void SetProxyFactory(ProxyFactory* proxy_factory);
 
 private:
     /// @brief 发送失败时构造失败 RESPONSE 并推入 inbound_queue_

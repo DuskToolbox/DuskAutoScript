@@ -83,6 +83,7 @@ DasResult DeserializeInInterfaceParam(
     DistributedObjectManager&     object_manager,
     IpcRunLoop&                   run_loop,
     std::weak_ptr<BusinessThread> business_thread,
+    ProxyFactory&                 proxy_factory,
     IDasBase**                    out_ptr) noexcept
 {
     if (out_ptr == nullptr)
@@ -114,7 +115,7 @@ DasResult DeserializeInInterfaceParam(
             id,
             run_loop,
             business_thread,
-            object_manager);
+            proxy_factory);
         object_manager.RegisterRemoteObject(id);
         *out_ptr = by_value_proxy;
         return DAS_S_OK;
@@ -126,7 +127,7 @@ DasResult DeserializeInInterfaceParam(
         id,
         run_loop,
         business_thread,
-        object_manager);
+        proxy_factory);
 
     if (proxy == nullptr)
     {

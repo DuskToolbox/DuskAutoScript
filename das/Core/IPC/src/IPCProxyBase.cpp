@@ -1,11 +1,17 @@
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/IPCProxyBase.h>
 #include <das/Core/IPC/IpcRunLoop.h>
+#include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/Logger/Logger.h>
 #include <stdexec/execution.hpp>
 #include <tuple>
 
 DAS_CORE_IPC_NS_BEGIN
+
+DistributedObjectManager& IPCProxyBase::GetObjectManager() const noexcept
+{
+    return proxy_factory_.GetObjectManager();
+}
 
 // V3: IPCProxyBase 的 SendRequest 方法实现
 // 通过 PostSend 发送请求，然后 PumpUntilResponse 等待响应

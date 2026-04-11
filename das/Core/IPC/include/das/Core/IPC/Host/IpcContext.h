@@ -12,12 +12,14 @@
 #include <das/Core/IPC/IpcMessageQueue.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/ObjectId.h>
+#include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <thread>
 
 #ifdef _MSC_VER
@@ -140,9 +142,6 @@ namespace Core
                 IpcContextConfig config_;
                 uint16_t         session_id_ = 0;
 
-                /// 分布式对象管理器（值成员）
-                DistributedObjectManager object_manager_;
-
                 /// IPC 运行循环
                 std::unique_ptr<IpcRunLoop> run_loop_;
 
@@ -154,6 +153,10 @@ namespace Core
 
                 /// 业务线程
                 std::shared_ptr<BusinessThread> business_thread_;
+
+                /// Proxy 工厂（值持有 DistributedObjectManager，optional 因为
+                /// ProxyFactory 引用非默认可构造）
+                std::optional<ProxyFactory> proxy_factory_;
 
                 DasPtr<IpcCommandHandler>                 command_handler_;
                 DasPtr<HandshakeHandler>                  handshake_handler_;

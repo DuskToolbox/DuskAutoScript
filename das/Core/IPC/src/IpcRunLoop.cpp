@@ -311,7 +311,13 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
                 static RemoteObjectRegistry     null_registry;
                 DistributedObjectManager&       obj_mgr =
                     object_manager_ ? *object_manager_ : null_manager;
-                StubContext ctx{obj_mgr, null_registry, *this, {}, header};
+                static ProxyFactory null_proxy_factory{
+                    null_registry,
+                    *this,
+                    std::weak_ptr<BusinessThread>{}};
+                ProxyFactory& pf =
+                    proxy_factory_ ? *proxy_factory_ : null_proxy_factory;
+                StubContext ctx{obj_mgr, null_registry, *this, {}, pf, header};
                 auto result = co_await awaitable_handler
                                   ->HandleMessage(header, body, sender, ctx);
                 if (DAS::IsFailed(result))
@@ -354,7 +360,13 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
             static RemoteObjectRegistry     null_registry;
             DistributedObjectManager&       obj_mgr =
                 object_manager_ ? *object_manager_ : null_manager;
-            StubContext ctx{obj_mgr, null_registry, *this, {}, header};
+            static ProxyFactory null_proxy_factory{
+                null_registry,
+                *this,
+                std::weak_ptr<BusinessThread>{}};
+            ProxyFactory& pf =
+                proxy_factory_ ? *proxy_factory_ : null_proxy_factory;
+            StubContext ctx{obj_mgr, null_registry, *this, {}, pf, header};
             auto result = handler->HandleMessage(header, body, sender, ctx);
             if (DAS::IsFailed(result))
             {
@@ -633,6 +645,11 @@ void IpcRunLoop::SetInboundQueue(IpcMessageQueue<InboundMessage>* queue)
 void IpcRunLoop::SetObjectManager(DistributedObjectManager* object_manager)
 {
     object_manager_ = object_manager;
+}
+
+void IpcRunLoop::SetProxyFactory(ProxyFactory* proxy_factory)
+{
+    proxy_factory_ = proxy_factory;
 }
 
 DasResult IpcRunLoop::PostSend(

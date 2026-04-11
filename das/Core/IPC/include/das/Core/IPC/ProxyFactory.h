@@ -2,6 +2,7 @@
 #define DAS_CORE_IPC_PROXY_FACTORY_H
 
 #include <atomic>
+#include <das/Core/IPC/BusinessThread.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IPCProxyBase.h>
 #include <das/Core/IPC/IpcErrors.h>
@@ -24,16 +25,15 @@ DAS_CORE_IPC_NS_BEGIN
  *
  * 提供统一的 Proxy 实例创建、获取和释放接口
  * 通过构造函数注入依赖，作为 IpcContext 的值成员存在
- * 复用 RemoteObjectRegistry 获取对象信息，复用 DistributedObjectManager
- * 管理对象生命周期
+ * 值持有 DistributedObjectManager，复用 RemoteObjectRegistry 获取对象信息
  */
 class ProxyFactory
 {
 public:
     explicit ProxyFactory(
-        DistributedObjectManager& object_manager,
-        RemoteObjectRegistry&     object_registry,
-        IpcRunLoop&               run_loop);
+        RemoteObjectRegistry&         object_registry,
+        IpcRunLoop&                   run_loop,
+        std::weak_ptr<BusinessThread> business_thread);
     ~ProxyFactory();
 
     /**
@@ -41,6 +41,28 @@ public:
      * @return IpcRunLoop& 运行循环引用
      */
     IpcRunLoop& DAS_LIFETIMEBOUND GetRunLoop() const { return run_loop_; }
+
+    /**
+     * @brief 获取分布式对象管理器
+     * @return DistributedObjectManager& 对象管理器引用
+     */
+    [[nodiscard]]
+    DistributedObjectManager& GetObjectManager()
+    {
+        return object_manager_;
+    }
+
+    /**
+     * @brief 获取或创建 Proxy 实例（统一入口）
+     *
+     * 缓存命中时 AddRef 返回现有实例，未命中时创建新 proxy 并注册到缓存
+     * @param object_id 对象 ID
+     * @param interface_id 接口 ID
+     * @return Proxy 实例指针（引用计数已+1），失败返回 nullptr
+     */
+    IPCProxyBase* GetOrCreateProxy(
+        const ObjectId& object_id,
+        uint32_t        interface_id);
 
     /**
      * @brief 获取现有的 Proxy 实例
@@ -131,14 +153,17 @@ private:
     // 互斥锁保护代理缓存
     mutable std::mutex proxy_cache_mutex_;
 
-    // 分布式对象管理器
-    DistributedObjectManager& object_manager_;
+    // 分布式对象管理器（值持有）
+    DistributedObjectManager object_manager_;
 
     // 远程对象注册表
     RemoteObjectRegistry& object_registry_;
 
     // IPC运行循环
     IpcRunLoop& run_loop_;
+
+    // 业务线程（weak_ptr，用于创建 proxy）
+    std::weak_ptr<BusinessThread> business_thread_;
 };
 
 DAS_CORE_IPC_NS_END

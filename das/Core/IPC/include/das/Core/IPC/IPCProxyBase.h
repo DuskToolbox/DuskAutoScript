@@ -33,27 +33,12 @@ DAS_DEFINE_CLASS_IN_NAMESPACE(
 
 DAS_CORE_IPC_NS_BEGIN
 class DistributedObjectManager;
+class ProxyFactory;
 
 class IPCProxyBase
 {
 public:
     virtual ~IPCProxyBase() = default;
-
-    /// @brief 增加引用计数
-    /// @return 新的引用计数
-    virtual uint32_t AddRef() { return ++refcount_; }
-
-    /// @brief 释放引用计数
-    /// @return 新的引用计数
-    virtual uint32_t Release()
-    {
-        if (--refcount_ == 0)
-        {
-            delete this;
-            return 0;
-        }
-        return refcount_;
-    }
 
     /// @brief 获取对象 ID
     /// @note ObjectId 现在通过 body 传递
@@ -72,10 +57,7 @@ public:
 
     /// @brief 获取分布式对象管理器
     [[nodiscard]]
-    DistributedObjectManager& GetObjectManager() const noexcept
-    {
-        return object_manager_;
-    }
+    DistributedObjectManager& GetObjectManager() const noexcept;
 
     /// @brief 获取 run loop
     [[nodiscard]]
@@ -89,6 +71,13 @@ public:
     std::weak_ptr<BusinessThread> GetBusinessThread() const noexcept
     {
         return business_thread_;
+    }
+
+    /// @brief 获取 ProxyFactory
+    [[nodiscard]]
+    ProxyFactory& GetProxyFactory() const noexcept
+    {
+        return proxy_factory_;
     }
 
     /// @brief 发送同步请求（PostSend + PumpUntilResponse）
@@ -126,16 +115,16 @@ protected:
     /// @param object_id 对象 ID（用于 body 序列化）
     /// @param run_loop IPC 运行循环（引用）
     /// @param business_thread 业务线程（weak_ptr，用于 PumpUntilResponse）
-    /// @param object_manager 分布式对象管理器（引用）
+    /// @param proxy_factory ProxyFactory（引用）
     IPCProxyBase(
         uint32_t                      interface_id,
         const ObjectId&               object_id,
         IpcRunLoop&                   run_loop,
         std::weak_ptr<BusinessThread> business_thread,
-        DistributedObjectManager&     object_manager)
+        ProxyFactory&                 proxy_factory)
         : interface_id_(interface_id), object_id_(object_id),
           run_loop_(run_loop), business_thread_(std::move(business_thread)),
-          object_manager_(object_manager)
+          proxy_factory_(proxy_factory)
     {
     }
 
@@ -232,8 +221,7 @@ private:
     ObjectId                      object_id_;
     IpcRunLoop&                   run_loop_;        // 引用，生命周期由外部管理
     std::weak_ptr<BusinessThread> business_thread_; // 用于 PumpUntilResponse
-    DistributedObjectManager&     object_manager_;  // 引用，生命周期由外部管理
-    uint32_t                      refcount_{1};     // 初始引用计数为1（创建时）
+    ProxyFactory&                 proxy_factory_;   // 引用，生命周期由外部管理
 };
 DAS_CORE_IPC_NS_END
 

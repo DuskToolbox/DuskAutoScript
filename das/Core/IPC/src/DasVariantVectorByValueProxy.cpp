@@ -29,13 +29,13 @@ DasVariantVectorByValueProxy::DasVariantVectorByValueProxy(
     const ObjectId&               object_id,
     IpcRunLoop&                   run_loop,
     std::weak_ptr<BusinessThread> business_thread,
-    DistributedObjectManager&     object_manager)
+    ProxyFactory&                 proxy_factory)
     : DasProxyBase<IDasVariantVector>(
           interface_id,
           object_id,
           run_loop,
           std::move(business_thread),
-          object_manager)
+          proxy_factory)
 {
 }
 
@@ -304,7 +304,7 @@ DasResult DasVariantVectorByValueProxy::EnsureDataLoaded(uint16_t method_id)
                 entry.object_id,
                 *GetRunLoop(),
                 GetBusinessThread(),
-                GetObjectManager());
+                GetProxyFactory());
             if (proxy != nullptr)
             {
                 // Attach returns a new DasPtr (static method), must assign back

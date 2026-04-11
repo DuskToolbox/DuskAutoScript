@@ -5,6 +5,7 @@
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcResponseSender.h>
+#include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <das/Core/Logger/Logger.h>
 
@@ -21,15 +22,16 @@ BusinessThread::BusinessThread(
 BusinessThread::~BusinessThread() { Stop(); }
 
 void BusinessThread::Start(
-    DistributedObjectManager& object_manager,
-    RemoteObjectRegistry&     registry)
+    ProxyFactory&         proxy_factory,
+    RemoteObjectRegistry& registry)
 {
     if (running_.load())
     {
         return;
     }
 
-    object_manager_ = &object_manager;
+    proxy_factory_ = &proxy_factory;
+    object_manager_ = &proxy_factory.GetObjectManager();
     registry_ = &registry;
     running_.store(true);
     thread_ = std::thread(&BusinessThread::Run, this);
@@ -133,6 +135,7 @@ void BusinessThread::ProcessInboundMessage(InboundMessage& msg)
                     *registry_,
                     run_loop_,
                     weak_from_this(),
+                    *proxy_factory_,
                     header};
                 auto result =
                     handler->HandleMessage(header, msg.body, sender, ctx);

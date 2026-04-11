@@ -14,6 +14,7 @@ DAS_CORE_IPC_NS_BEGIN
 class IpcResponseSender;
 class ValidatedIPCMessageHeader;
 class DistributedObjectManager;
+class ProxyFactory;
 class RemoteObjectRegistry;
 class IpcRunLoop;
 class BusinessThread;
@@ -31,9 +32,10 @@ struct StubContext
         RemoteObjectRegistry&            reg,
         IpcRunLoop&                      rl,
         std::weak_ptr<BusinessThread>    bt,
+        ProxyFactory&                    pf,
         const ValidatedIPCMessageHeader& hdr)
         : object_manager(obj_mgr), registry(reg), run_loop(rl),
-          business_thread(bt), header(hdr)
+          business_thread(bt), proxy_factory(pf), header(hdr)
     {
     }
 
@@ -41,6 +43,7 @@ struct StubContext
     RemoteObjectRegistry&            registry;
     IpcRunLoop&                      run_loop;
     std::weak_ptr<BusinessThread>    business_thread;
+    ProxyFactory&                    proxy_factory;
     const ValidatedIPCMessageHeader& header;
     uint16_t                         response_flags =
         0; ///< 由 Handle* 方法设置，传递给响应头 flags 字段

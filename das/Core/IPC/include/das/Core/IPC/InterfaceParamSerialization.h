@@ -5,6 +5,7 @@
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/ObjectId.h>
+#include <das/Core/IPC/ProxyFactory.h>
 #include <vector>
 
 DAS_CORE_IPC_NS_BEGIN
@@ -90,6 +91,7 @@ DasResult SerializeInInterfaceParam(
 /// @param object_manager 分布式对象管理器
 /// @param run_loop IPC 运行循环
 /// @param business_thread 业务线程
+/// @param proxy_factory Proxy 工厂（用于创建 proxy）
 /// @param out_ptr [out] 输出的接口指针
 /// @return DasResult
 [[nodiscard]]
@@ -99,6 +101,7 @@ DasResult DeserializeInInterfaceParam(
     DistributedObjectManager&     object_manager,
     IpcRunLoop&                   run_loop,
     std::weak_ptr<BusinessThread> business_thread,
+    ProxyFactory&                 proxy_factory,
     IDasBase**                    out_ptr) noexcept;
 
 /// @brief Check if a DasResult from SendRequest is a transport-level failure.

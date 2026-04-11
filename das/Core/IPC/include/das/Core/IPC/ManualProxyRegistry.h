@@ -3,8 +3,8 @@
 
 #include <cstdint>
 #include <das/Core/IPC/BusinessThread.h>
-#include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IpcRunLoop.h>
+#include <das/Core/IPC/ProxyFactory.h>
 #include <unordered_map>
 
 DAS_CORE_IPC_NS_BEGIN
@@ -14,7 +14,7 @@ using ManualProxyFactory =
                   const ObjectId&               object_id,
                   IpcRunLoop&                   run_loop,
                   std::weak_ptr<BusinessThread> business_thread,
-                  DistributedObjectManager&     object_manager);
+                  ProxyFactory&                 proxy_factory);
 
 // Try autogen factory first, then fall back to manual registry
 IDasBase* CreateProxyByInterfaceIdWithFallback(
@@ -22,7 +22,7 @@ IDasBase* CreateProxyByInterfaceIdWithFallback(
     const ObjectId&               object_id,
     IpcRunLoop&                   run_loop,
     std::weak_ptr<BusinessThread> business_thread,
-    DistributedObjectManager&     object_manager);
+    ProxyFactory&                 proxy_factory);
 
 void RegisterManualProxyFactory(
     uint32_t           interface_id,

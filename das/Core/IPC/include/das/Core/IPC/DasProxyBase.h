@@ -1,11 +1,13 @@
 #ifndef DAS_CORE_IPC_DAS_PROXY_BASE_H
 #define DAS_CORE_IPC_DAS_PROXY_BASE_H
 
+#include <atomic>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IPCProxyBase.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/ManualProxyRegistry.h>
 #include <das/Core/IPC/MemorySerializer.h>
+#include <das/Core/IPC/ProxyFactory.h>
 #include <das/DasConfig.h>
 #include <das/DasTypes.hpp>
 #include <das/IDasBase.h>
@@ -21,7 +23,7 @@ namespace DasIpcProxy
         const ObjectId&               object_id,
         IpcRunLoop&                   run_loop,
         std::weak_ptr<BusinessThread> business_thread,
-        DistributedObjectManager&     object_manager);
+        ProxyFactory&                 proxy_factory);
 }
 
 template <typename TInterface>
@@ -67,7 +69,24 @@ public:
     DistributedObjectManager& GetObjectManager() const noexcept
         DAS_LIFETIMEBOUND
     {
-        return IPCProxyBase::GetObjectManager();
+        return proxy_factory_.GetObjectManager();
+    }
+
+    /// @brief 增加引用计数
+    /// @return 新的引用计数
+    uint32_t AddRef() { return ++ref_count_; }
+
+    /// @brief 释放引用计数
+    /// @return 新的引用计数
+    uint32_t Release()
+    {
+        uint32_t count = --ref_count_;
+        if (count == 0)
+        {
+            proxy_factory_.RemoveFromCache(GetObjectId());
+            delete this;
+        }
+        return count;
     }
 
     /// @brief IPC 远程 QueryInterface
@@ -140,7 +159,7 @@ public:
             new_obj_id,
             *GetRunLoop(),
             GetBusinessThread(),
-            GetObjectManager());
+            proxy_factory_);
 
         if (proxy == nullptr)
         {
@@ -160,13 +179,13 @@ protected:
         const ObjectId&               object_id,
         IpcRunLoop&                   run_loop,
         std::weak_ptr<BusinessThread> business_thread,
-        DistributedObjectManager&     object_manager)
+        ProxyFactory&                 proxy_factory)
         : IPCProxyBase(
               interface_id,
               object_id,
               run_loop,
               std::move(business_thread),
-              object_manager)
+              proxy_factory)
     {
     }
 
@@ -174,12 +193,12 @@ protected:
     static DasResult CreateProxy(
         uint64_t                      encoded_object_id,
         IpcRunLoop*                   run_loop,
-        DistributedObjectManager*     object_manager,
+        ProxyFactory*                 proxy_factory,
         std::weak_ptr<BusinessThread> business_thread,
         TProxy**                      out_proxy,
         Args&&... args)
     {
-        if (!out_proxy || !run_loop || !object_manager)
+        if (!out_proxy || !run_loop || !proxy_factory)
         {
             return DAS_E_INVALID_POINTER;
         }
@@ -187,7 +206,9 @@ protected:
         ObjectId obj_id = DecodeObjectId(encoded_object_id);
 
         DAS::DasPtr<IDasBase> obj_ptr;
-        DasResult result = object_manager->LookupObject(obj_id, obj_ptr.Put());
+        DasResult result = proxy_factory->GetObjectManager().LookupObject(
+            obj_id,
+            obj_ptr.Put());
         if (DAS::IsFailed(result))
         {
             return result;
@@ -198,13 +219,17 @@ protected:
             obj_id,
             *run_loop,
             business_thread,
-            *object_manager,
+            *proxy_factory,
             std::forward<Args>(args)...);
 
         *out_proxy = proxy;
         return DAS_S_OK;
     }
+
+private:
+    std::atomic<uint32_t> ref_count_{1};
 };
+
 DAS_CORE_IPC_NS_END
 
 #endif // DAS_CORE_IPC_DAS_PROXY_BASE_H

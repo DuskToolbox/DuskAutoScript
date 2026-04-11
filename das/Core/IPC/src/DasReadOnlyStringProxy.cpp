@@ -16,13 +16,13 @@ DasReadOnlyStringProxy::DasReadOnlyStringProxy(
     const ObjectId&               object_id,
     IpcRunLoop&                   run_loop,
     std::weak_ptr<BusinessThread> business_thread,
-    DistributedObjectManager&     object_manager)
+    ProxyFactory&                 proxy_factory)
     : DasProxyBase<IDasReadOnlyString>(
           interface_id,
           object_id,
           run_loop,
           std::move(business_thread),
-          object_manager)
+          proxy_factory)
 {
 }
 

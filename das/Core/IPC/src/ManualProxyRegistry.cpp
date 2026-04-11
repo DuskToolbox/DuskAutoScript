@@ -21,7 +21,7 @@ IDasBase* CreateProxyByInterfaceIdWithFallback(
     const ObjectId&               object_id,
     IpcRunLoop&                   run_loop,
     std::weak_ptr<BusinessThread> business_thread,
-    DistributedObjectManager&     object_manager)
+    ProxyFactory&                 proxy_factory)
 {
     // Try autogen factory first
     IDasBase* proxy = DasIpcProxy::CreateProxyByInterfaceId(
@@ -29,7 +29,7 @@ IDasBase* CreateProxyByInterfaceIdWithFallback(
         object_id,
         run_loop,
         business_thread,
-        object_manager);
+        proxy_factory);
 
     if (proxy != nullptr)
     {
@@ -46,7 +46,7 @@ IDasBase* CreateProxyByInterfaceIdWithFallback(
             object_id,
             run_loop,
             business_thread,
-            object_manager);
+            proxy_factory);
     }
 
     return nullptr;
@@ -71,14 +71,14 @@ namespace
                    const ObjectId&               object_id,
                    IpcRunLoop&                   run_loop,
                    std::weak_ptr<BusinessThread> business_thread,
-                   DistributedObjectManager&     object_manager) -> IDasBase*
+                   ProxyFactory&                 proxy_factory) -> IDasBase*
                 {
                     return new DasReadOnlyStringProxy(
                         interface_id,
                         object_id,
                         run_loop,
                         std::move(business_thread),
-                        object_manager);
+                        proxy_factory);
                 });
 
             RegisterManualProxyFactory(
@@ -87,14 +87,14 @@ namespace
                    const ObjectId&               object_id,
                    IpcRunLoop&                   run_loop,
                    std::weak_ptr<BusinessThread> business_thread,
-                   DistributedObjectManager&     object_manager) -> IDasBase*
+                   ProxyFactory&                 proxy_factory) -> IDasBase*
                 {
                     return new DasVariantVectorByValueProxy(
                         interface_id,
                         object_id,
                         run_loop,
                         std::move(business_thread),
-                        object_manager);
+                        proxy_factory);
                 });
         }
     };

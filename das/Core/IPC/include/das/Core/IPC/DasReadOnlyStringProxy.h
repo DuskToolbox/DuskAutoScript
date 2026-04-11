@@ -1,6 +1,7 @@
 #ifndef DAS_CORE_IPC_DAS_READ_ONLY_STRING_PROXY_H
 #define DAS_CORE_IPC_DAS_READ_ONLY_STRING_PROXY_H
 
+#include <atomic>
 #include <das/Core/IPC/DasProxyBase.h>
 #include <das/Core/IPC/MethodMetadata.h>
 #include <das/DasGuidHolder.h>
@@ -22,14 +23,24 @@ public:
         const ObjectId&               object_id,
         IpcRunLoop&                   run_loop,
         std::weak_ptr<BusinessThread> business_thread,
-        DistributedObjectManager&     object_manager);
+        ProxyFactory&                 proxy_factory);
 
     ~DasReadOnlyStringProxy() override = default;
 
-    // IUnknown via IPCProxyBase
-    uint32_t AddRef() override { return IPCProxyBase::AddRef(); }
+    // IUnknown - 由自身 ref_count_ 管理（不继承 IPCProxyBase 的
+    // AddRef/Release）
+    uint32_t AddRef() override { return ++ref_count_; }
 
-    uint32_t Release() override { return IPCProxyBase::Release(); }
+    uint32_t Release() override
+    {
+        uint32_t count = --ref_count_;
+        if (count == 0)
+        {
+            proxy_factory_.RemoveFromCache(GetObjectId());
+            delete this;
+        }
+        return count;
+    }
 
     DasResult QueryInterface(const DasGuid& iid, void** pp_object) override
     {
@@ -83,6 +94,9 @@ private:
     bool utf16_ready_ = false;
     bool w_ready_ = false;
     bool utf32_ready_ = false;
+
+    // 引用计数（自身独立管理，不使用 IPCProxyBase 的）
+    std::atomic<uint32_t> ref_count_{1};
 };
 
 DAS_CORE_IPC_NS_END

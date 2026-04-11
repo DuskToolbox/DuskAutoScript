@@ -2,6 +2,7 @@
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcRunLoop.h>
+#include <das/Core/IPC/ManualProxyRegistry.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/Logger/Logger.h>
@@ -11,15 +12,58 @@
 DAS_CORE_IPC_NS_BEGIN
 
 ProxyFactory::ProxyFactory(
-    DistributedObjectManager& object_manager,
-    RemoteObjectRegistry&     object_registry,
-    IpcRunLoop&               run_loop)
-    : object_manager_(object_manager), object_registry_(object_registry),
-      run_loop_(run_loop)
+    RemoteObjectRegistry&         object_registry,
+    IpcRunLoop&                   run_loop,
+    std::weak_ptr<BusinessThread> business_thread)
+    : object_registry_(object_registry), run_loop_(run_loop),
+      business_thread_(std::move(business_thread))
 {
 }
 
 ProxyFactory::~ProxyFactory() = default;
+
+IPCProxyBase* ProxyFactory::GetOrCreateProxy(
+    const ObjectId& object_id,
+    uint32_t        interface_id)
+{
+    std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
+    auto it = proxy_cache_.find(EncodeObjectId(object_id));
+    if (it != proxy_cache_.end())
+    {
+        // 缓存命中：增加本地计数 + AddRef
+        it->second.local_refcount++;
+        it->second.proxy->AddRef();
+        return it->second.proxy;
+    }
+
+    // 缓存未命中：创建 proxy
+    IDasBase* proxy_raw = CreateProxyByInterfaceIdWithFallback(
+        interface_id,
+        object_id,
+        run_loop_,
+        business_thread_,
+        *this);
+
+    if (proxy_raw == nullptr)
+    {
+        return nullptr;
+    }
+
+    auto* proxy = static_cast<IPCProxyBase*>(proxy_raw);
+
+    // 注册远程对象到 DistributedObjectManager
+    object_manager_.RegisterRemoteObject(object_id);
+
+    // 插入缓存
+    proxy_cache_[EncodeObjectId(object_id)] = ProxyEntry{
+        .proxy = proxy,
+        .object_id_encoded = EncodeObjectId(object_id),
+        .interface_id = interface_id,
+        .session_id = object_id.session_id,
+        .local_refcount = 1};
+
+    return proxy;
+}
 
 IPCProxyBase* ProxyFactory::GetProxy(const ObjectId& object_id)
 {

@@ -65,7 +65,9 @@ namespace Core
                 }
 
                 // 5. DistributedObjectManager 绑定 IpcRunLoop
-                object_manager_.SetRunLoop(runloop_.get());
+                proxy_factory_.emplace(registry_, *runloop_, business_thread_);
+                proxy_factory_->GetObjectManager().SetRunLoop(runloop_.get());
+                runloop_->SetProxyFactory(&*proxy_factory_);
 
                 // 6. Create BusinessThread
                 business_thread_ = std::make_shared<BusinessThread>(
@@ -73,8 +75,7 @@ namespace Core
                     *runloop_,
                     *this);
 
-                // 7. Initialize ProxyFactory as value member
-                proxy_factory_.emplace(object_manager_, registry_, *runloop_);
+                // 7. ProxyFactory already initialized above
 
                 // 8. 创建并初始化 IpcCommandHandler
                 command_handler_ = IpcCommandHandler::Create(registry_);
@@ -141,7 +142,8 @@ namespace Core
                     runloop_.reset();
                 }
 
-                // object_manager_ is value member, automatically destructed
+                // proxy_factory_ is optional value member, automatically
+                // destructed
                 is_initialized_ = false;
             }
 
@@ -298,7 +300,7 @@ namespace Core
                 // 启动业务线程
                 if (business_thread_)
                 {
-                    business_thread_->Start(object_manager_, registry_);
+                    business_thread_->Start(*proxy_factory_, registry_);
                 }
 
                 return runloop_->Run();
@@ -499,13 +501,10 @@ namespace Core
                 uint32_t interface_hash =
                     RemoteObjectRegistry::ComputeInterfaceId(iid);
 
-                // Create proxy directly based on interface hash using factory
-                IDasBase* proxy = DasIpcProxy::CreateProxyByInterfaceId(
-                    interface_hash,
-                    object_id,
-                    *runloop_,
-                    business_thread_,
-                    object_manager_);
+                // Create proxy using unified GetOrCreateProxy (cache +
+                // RegisterRemoteObject)
+                IDasBase* proxy =
+                    proxy_factory_->GetOrCreateProxy(object_id, interface_hash);
 
                 if (!proxy)
                 {
@@ -518,10 +517,6 @@ namespace Core
                         interface_hash);
                     return DAS_E_NO_INTERFACE;
                 }
-
-                // Register remote object so DistributedObjectManager can track
-                // it
-                object_manager_.RegisterRemoteObject(object_id);
 
                 *pp_out = proxy;
                 return DAS_S_OK;
@@ -549,7 +544,9 @@ namespace Core
 
                 IDasBase* local_obj = nullptr;
                 DasResult result =
-                    object_manager_.LookupObject(info.object_id, &local_obj);
+                    proxy_factory_->GetObjectManager().LookupObject(
+                        info.object_id,
+                        &local_obj);
                 if (DAS::IsFailed(result) || !local_obj)
                 {
                     return DAS_E_IPC_OBJECT_NOT_FOUND;
@@ -572,7 +569,9 @@ namespace Core
                 // 2. Register to DistributedObjectManager (AddRef)
                 ObjectId obj_id;
                 auto     result =
-                    object_manager_.RegisterLocalObject(p_object, obj_id);
+                    proxy_factory_->GetObjectManager().RegisterLocalObject(
+                        p_object,
+                        obj_id);
                 if (DAS::IsFailed(result))
                 {
                     return result;
@@ -589,7 +588,7 @@ namespace Core
                 // 4. Partial failure rollback
                 if (DAS::IsFailed(result))
                 {
-                    object_manager_.UnregisterObject(obj_id);
+                    proxy_factory_->GetObjectManager().UnregisterObject(obj_id);
                     return result;
                 }
 
@@ -617,7 +616,8 @@ namespace Core
                 }
 
                 // 3. Release from DistributedObjectManager
-                object_manager_.UnregisterObject(info.object_id);
+                proxy_factory_->GetObjectManager().UnregisterObject(
+                    info.object_id);
                 return DAS_S_OK;
             }
 
