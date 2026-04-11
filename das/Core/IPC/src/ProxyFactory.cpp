@@ -1,5 +1,7 @@
+#include <das/Core/IPC/BusinessThread.h>
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
+#include <das/Core/IPC/IPCProxyBase.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/ManualProxyRegistry.h>
@@ -22,7 +24,7 @@ ProxyFactory::ProxyFactory(
 
 ProxyFactory::~ProxyFactory() = default;
 
-IPCProxyBase* ProxyFactory::GetOrCreateProxy(
+IDasBase* ProxyFactory::GetOrCreateProxy(
     const ObjectId& object_id,
     uint32_t        interface_id)
 {
@@ -37,19 +39,17 @@ IPCProxyBase* ProxyFactory::GetOrCreateProxy(
     }
 
     // 缓存未命中：创建 proxy
-    IDasBase* proxy_raw = CreateProxyByInterfaceIdWithFallback(
+    IDasBase* proxy = CreateProxyByInterfaceIdWithFallback(
         interface_id,
         object_id,
         run_loop_,
         business_thread_,
         *this);
 
-    if (proxy_raw == nullptr)
+    if (proxy == nullptr)
     {
         return nullptr;
     }
-
-    auto* proxy = static_cast<IPCProxyBase*>(proxy_raw);
 
     // 注册远程对象到 DistributedObjectManager
     object_manager_.RegisterRemoteObject(object_id);
@@ -65,7 +65,7 @@ IPCProxyBase* ProxyFactory::GetOrCreateProxy(
     return proxy;
 }
 
-IPCProxyBase* ProxyFactory::GetProxy(const ObjectId& object_id)
+IDasBase* ProxyFactory::GetProxy(const ObjectId& object_id)
 {
     std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
     auto it = proxy_cache_.find(EncodeObjectId(object_id));
@@ -133,7 +133,7 @@ void ProxyFactory::ClearAllProxies()
     proxy_cache_.clear();
 }
 
-IPCProxyBase* ProxyFactory::CreateIPCProxy(const ObjectId& object_id)
+IDasBase* ProxyFactory::CreateIPCProxy(const ObjectId& object_id)
 {
     // Generic Proxy 不再支持，需要使用 IDL 生成的具体 Proxy 类
     (void)object_id; // 未使用的参数

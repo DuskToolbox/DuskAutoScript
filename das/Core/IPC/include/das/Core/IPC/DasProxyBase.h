@@ -2,6 +2,7 @@
 #define DAS_CORE_IPC_DAS_PROXY_BASE_H
 
 #include <atomic>
+#include <das/Core/IPC/BusinessThread.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IPCProxyBase.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
@@ -106,7 +107,7 @@ public:
         if (iid == DasIidOf<IPCProxyBase>())
         {
             *pp_object = static_cast<IPCProxyBase*>(this);
-            IPCProxyBase::AddRef();
+            AddRef();
             return DAS_S_OK;
         }
 

@@ -528,7 +528,10 @@ class IpcProxyGenerator:
             lines.append("")
             lines.append(f"{indent}public:")
 
-        # AddRef/Release 由 DasProxyBase<T> 统一提供（D-24），不再生成
+        # AddRef/Release: satisfy interface pure virtual, delegate to DasProxyBase
+        lines.append(f"{class_indent}uint32_t AddRef() final {{ return DasProxyBase<{interface.name}>::AddRef(); }}")
+        lines.append(f"{class_indent}uint32_t Release() final {{ return DasProxyBase<{interface.name}>::Release(); }}")
+        lines.append("")
         # QueryInterface override — 委托给 DasProxyBase::QueryInterfaceRemote
         lines.append(f"{class_indent}DasResult QueryInterface(const DasGuid& iid, void** pp_object) override")
         lines.append(f"{class_indent}{{")
@@ -1114,7 +1117,7 @@ class IpcProxyGenerator:
             lines.append(f"{indent}        .local_id   = {pn}_local_id}};")
             lines.append(f"{indent}    GetObjectManager().RegisterRemoteObject({pn}_oid);")
             lines.append(f"{indent}    IDasBase* {pn}_base = Das::Core::IPC::DasIpcProxy::CreateProxyByInterfaceId(")
-            lines.append(f"{indent}        {pn}_interface_id, {pn}_oid, *GetRunLoop(), GetBusinessThread(), GetObjectManager());")
+            lines.append(f"{indent}        {pn}_interface_id, {pn}_oid, *GetRunLoop(), GetBusinessThread(), GetProxyFactory());")
             lines.append(f"{indent}    *{pn} = static_cast<{full_interface_name}*>({pn}_base);")
             lines.append(f"{indent}}}")
             lines.append(f"{indent}else")

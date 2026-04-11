@@ -471,6 +471,7 @@ DasResult DasVariantVectorByValueStub::HandleSet(
             ctx.object_manager,
             ctx.run_loop,
             ctx.business_thread,
+            ctx.proxy_factory,
             &base_ptr);
         if (DAS::IsFailed(result))
         {
@@ -505,6 +506,7 @@ DasResult DasVariantVectorByValueStub::HandleSet(
             ctx.object_manager,
             ctx.run_loop,
             ctx.business_thread,
+            ctx.proxy_factory,
             &base_ptr);
         if (DAS::IsFailed(result))
         {
@@ -603,6 +605,7 @@ DasResult DasVariantVectorByValueStub::HandlePushBack(
             ctx.object_manager,
             ctx.run_loop,
             ctx.business_thread,
+            ctx.proxy_factory,
             &base_ptr);
         if (DAS::IsFailed(result))
         {
@@ -637,6 +640,7 @@ DasResult DasVariantVectorByValueStub::HandlePushBack(
             ctx.object_manager,
             ctx.run_loop,
             ctx.business_thread,
+            ctx.proxy_factory,
             &base_ptr);
         if (DAS::IsFailed(result))
         {

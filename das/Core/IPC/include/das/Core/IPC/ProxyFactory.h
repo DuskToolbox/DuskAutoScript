@@ -2,9 +2,7 @@
 #define DAS_CORE_IPC_PROXY_FACTORY_H
 
 #include <atomic>
-#include <das/Core/IPC/BusinessThread.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
-#include <das/Core/IPC/IPCProxyBase.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/ObjectId.h>
@@ -13,6 +11,7 @@
 #include <das/DasPtr.hpp>
 #include <das/IDasBase.h>
 #include <das/Utils/StringUtils.h>
+#include <memory>
 #include <mutex>
 #include <unordered_map>
 
@@ -20,6 +19,9 @@
 #include <das/DasConfig.h>
 
 DAS_CORE_IPC_NS_BEGIN
+
+class BusinessThread; // forward declaration
+class IPCProxyBase;   // forward declaration
 /**
  * @brief Proxy 工厂类，统一获取 Proxy 实例的入口
  *
@@ -60,7 +62,7 @@ public:
      * @param interface_id 接口 ID
      * @return Proxy 实例指针（引用计数已+1），失败返回 nullptr
      */
-    IPCProxyBase* GetOrCreateProxy(
+    IDasBase* GetOrCreateProxy(
         const ObjectId& object_id,
         uint32_t        interface_id);
 
@@ -71,7 +73,7 @@ public:
      * @return 对应的 Proxy
      * 实例，如果不存在则返回 nullptr
      */
-    IPCProxyBase* GetProxy(const ObjectId& object_id);
+    IDasBase* GetProxy(const ObjectId& object_id);
 
     /**
      * @brief 释放 Proxy 实例
@@ -117,7 +119,7 @@ public:
     ProxyFactory& operator=(const ProxyFactory&) = delete;
 
 private:
-    IPCProxyBase* CreateIPCProxy(const ObjectId& object_id);
+    IDasBase* CreateIPCProxy(const ObjectId& object_id);
 
     /**
      * @brief 验证对象是否存在且可访问
@@ -140,11 +142,11 @@ private:
     // 内部数据结构：Proxy 缓存
     struct ProxyEntry
     {
-        IPCProxyBase* proxy; // 使用原始指针，生命周期由引用计数管理
-        uint64_t      object_id_encoded;
-        uint32_t      interface_id;
-        uint16_t      session_id;
-        uint32_t      local_refcount; // 本地 DasPtr 数量
+        IDasBase* proxy; // 使用原始指针，生命周期由引用计数管理
+        uint64_t  object_id_encoded;
+        uint32_t  interface_id;
+        uint16_t  session_id;
+        uint32_t  local_refcount; // 本地 DasPtr 数量
     };
 
     // 缓存已创建的 Proxy

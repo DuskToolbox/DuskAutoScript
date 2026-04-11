@@ -1,3 +1,4 @@
+#include <das/Core/IPC/BusinessThread.h>
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/IPCProxyBase.h>
 #include <das/Core/IPC/IpcRunLoop.h>
@@ -7,6 +8,18 @@
 #include <tuple>
 
 DAS_CORE_IPC_NS_BEGIN
+
+IPCProxyBase::IPCProxyBase(
+    uint32_t                      interface_id,
+    const ObjectId&               object_id,
+    IpcRunLoop&                   run_loop,
+    std::weak_ptr<BusinessThread> business_thread,
+    ProxyFactory&                 proxy_factory)
+    : proxy_factory_(proxy_factory), interface_id_(interface_id),
+      object_id_(object_id), run_loop_(run_loop),
+      business_thread_(std::move(business_thread))
+{
+}
 
 DistributedObjectManager& IPCProxyBase::GetObjectManager() const noexcept
 {

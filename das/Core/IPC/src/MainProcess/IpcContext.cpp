@@ -40,7 +40,6 @@ namespace Core
             IpcContext::IpcContext(bool enable_heartbeat)
             {
                 // 构造即初始化
-                DasResult result = DAS_S_OK;
 
                 // 1. Create IpcRunLoop FIRST (provides io_context)
                 auto runloop_result = IpcRunLoopType::Create(enable_heartbeat);

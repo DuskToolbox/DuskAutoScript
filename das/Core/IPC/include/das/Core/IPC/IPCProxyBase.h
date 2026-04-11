@@ -12,7 +12,6 @@
 #include <memory>
 #include <vector>
 
-#include <das/Core/IPC/BusinessThread.h>
 #include <das/Core/IPC/Config.h>
 
 // {200A224F-5F47-4823-9E51-CC97168B1D1C}
@@ -32,6 +31,7 @@ DAS_DEFINE_CLASS_IN_NAMESPACE(
     0x1C);
 
 DAS_CORE_IPC_NS_BEGIN
+class BusinessThread;
 class DistributedObjectManager;
 class ProxyFactory;
 
@@ -121,12 +121,7 @@ protected:
         const ObjectId&               object_id,
         IpcRunLoop&                   run_loop,
         std::weak_ptr<BusinessThread> business_thread,
-        ProxyFactory&                 proxy_factory)
-        : interface_id_(interface_id), object_id_(object_id),
-          run_loop_(run_loop), business_thread_(std::move(business_thread)),
-          proxy_factory_(proxy_factory)
-    {
-    }
+        ProxyFactory&                 proxy_factory);
 
     [[nodiscard]]
     uint16_t NextCallId() noexcept
@@ -216,12 +211,14 @@ protected:
             .Build();
     }
 
+protected:
+    ProxyFactory& proxy_factory_; // 引用，生命周期由外部管理
+
 private:
     uint32_t                      interface_id_;
     ObjectId                      object_id_;
     IpcRunLoop&                   run_loop_;        // 引用，生命周期由外部管理
     std::weak_ptr<BusinessThread> business_thread_; // 用于 PumpUntilResponse
-    ProxyFactory&                 proxy_factory_;   // 引用，生命周期由外部管理
 };
 DAS_CORE_IPC_NS_END
 
