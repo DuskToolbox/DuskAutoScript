@@ -34,7 +34,7 @@ DasResult IPCProxyBase::SendRequest(
     const uint8_t*        body,
     size_t                body_size,
     std::vector<uint8_t>& out_response,
-    uint16_t* out_flags   DAS_LIFETIMEBOUND)
+    uint16_t*             out_flags)
 {
     (void)method_id;
 

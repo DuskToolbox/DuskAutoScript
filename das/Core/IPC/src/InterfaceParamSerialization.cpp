@@ -125,24 +125,19 @@ DasResult DeserializeInInterfaceParam(
         return DAS_S_OK;
     }
 
-    // Remote object: create proxy (autogen first, then manual fallback)
-    IDasBase* proxy = CreateProxyByInterfaceIdWithFallback(
-        interface_id,
-        id,
-        run_loop,
-        business_thread,
-        proxy_factory);
+    // Remote object: create proxy via cache (autogen first, then manual
+    // fallback)
+    IDasBase* proxy = proxy_factory.GetOrCreateProxy(id, interface_id);
 
     if (proxy == nullptr)
     {
         DAS_CORE_LOG_ERROR(
-            "DeserializeInInterfaceParam: CreateProxyByInterfaceId failed, "
+            "DeserializeInInterfaceParam: GetOrCreateProxy failed, "
             "interface_id = 0x{:08X}",
             interface_id);
         return DAS_E_IPC_DESERIALIZATION_FAILED;
     }
 
-    object_manager.RegisterRemoteObject(id);
     *out_ptr = proxy;
     return DAS_S_OK;
 }

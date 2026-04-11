@@ -94,7 +94,7 @@ public:
         const uint8_t*        body,
         size_t                body_size,
         std::vector<uint8_t>& out_response,
-        uint16_t* out_flags   DAS_LIFETIMEBOUND = nullptr);
+        uint16_t*             out_flags = nullptr);
 
     /// @brief 发送业务控制命令请求（PostSend + PumpUntilResponse）
     /// @param command 命令类型（如 QUERY_INTERFACE）
