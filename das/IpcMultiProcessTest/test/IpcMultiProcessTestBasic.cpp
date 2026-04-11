@@ -87,8 +87,7 @@ TEST(IpcMultiProcessTestBasic, ObjectIdEncodeDecodeRoundTrip)
 
 TEST(IpcMultiProcessTestBasic, RemoteObjectRegistry_RegisterAndLookup)
 {
-    DAS::Core::IPC::RemoteObjectRegistry& registry =
-        DAS::Core::IPC::RemoteObjectRegistry::GetInstance();
+    DAS::Core::IPC::RemoteObjectRegistry registry;
 
     DAS::Core::IPC::ObjectId obj_id = {2, 1, 100};
     DasGuid                  iid = {
@@ -113,8 +112,7 @@ TEST(IpcMultiProcessTestBasic, RemoteObjectRegistry_RegisterAndLookup)
 
 TEST(IpcMultiProcessTestBasic, RemoteObjectRegistry_MultipleObjects)
 {
-    DAS::Core::IPC::RemoteObjectRegistry& registry =
-        DAS::Core::IPC::RemoteObjectRegistry::GetInstance();
+    DAS::Core::IPC::RemoteObjectRegistry registry;
 
     std::vector<std::string> obj_names = {"Object1", "Object2", "Object3"};
     std::vector<DAS::Core::IPC::ObjectId> obj_ids;
@@ -154,8 +152,7 @@ TEST(IpcMultiProcessTestBasic, RemoteObjectRegistry_MultipleObjects)
 
 TEST(IpcMultiProcessTestBasic, RemoteObjectRegistry_SessionCleanup)
 {
-    DAS::Core::IPC::RemoteObjectRegistry& registry =
-        DAS::Core::IPC::RemoteObjectRegistry::GetInstance();
+    DAS::Core::IPC::RemoteObjectRegistry registry;
 
     uint16_t                              session_id = 100;
     std::vector<DAS::Core::IPC::ObjectId> obj_ids;
@@ -194,8 +191,7 @@ TEST(IpcMultiProcessTestBasic, RemoteObjectRegistry_SessionCleanup)
 
 TEST(IpcMultiProcessTestBasic, RemoteObjectRegistry_LookupNonExistent)
 {
-    DAS::Core::IPC::RemoteObjectRegistry& registry =
-        DAS::Core::IPC::RemoteObjectRegistry::GetInstance();
+    DAS::Core::IPC::RemoteObjectRegistry registry;
 
     DAS::Core::IPC::RemoteObjectInfo info;
     DasResult result = registry.LookupByName("NonExistentObject", info);

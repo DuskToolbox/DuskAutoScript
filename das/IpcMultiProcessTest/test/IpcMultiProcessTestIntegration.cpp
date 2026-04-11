@@ -1538,18 +1538,11 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_JavaDirectorLifecycleTest)
     auto callback = DAS::MakeDasPtr<LifecycleCallbackComponent>();
     callback->Configure(GetContext());
 
-    DAS::Core::IPC::ObjectId obj_id{};
-    DasResult reg_result = GetContext().GetObjectManager().RegisterLocalObject(
+    // 通过 RegisterService() 注册服务（内部完成 ObjectManager + Registry
+    // 两步注册）
+    DasResult reg_result = ctx_->RegisterService(
         callback.Get(),
-        obj_id);
-    ASSERT_EQ(reg_result, DAS_S_OK);
-
-    reg_result = GetContext().GetRegistry().RegisterObject(
-        obj_id,
-        DasIidOf<DAS::PluginInterface::IDasComponent>(),
-        1,
-        "LifecycleCallbackComponent",
-        1);
+        DasIidOf<DAS::PluginInterface::IDasComponent>());
     ASSERT_EQ(reg_result, DAS_S_OK);
 
     // 2. 启动 Host 进程
