@@ -203,22 +203,13 @@ namespace Core
                     shm_name,
                     DEFAULT_SHARED_MEMORY_SIZE);
 
-                // 4. 创建 IpcRunLoop（Host 模式不需要心跳）
-                auto runloop_result =
-                    IpcRunLoop::Create(/*enable_heartbeat=*/false);
-                if (!runloop_result.has_value())
-                {
-                    DAS_CORE_LOG_ERROR("IpcRunLoop::Create() failed");
-                    return DAS_E_IPC_NOT_INITIALIZED;
-                }
-                run_loop_ = std::move(runloop_result.value());
-                // Host 模式初始 session_id 为 0，握手完成后会更新
+                // 4. 创建 IpcRunLoop（Host 模式不需要心跳，inbound_queue_ 已在
+                // run_loop_ 之前声明并构造）
+                run_loop_ =
+                    std::make_unique<IpcRunLoop>(false, &inbound_queue_);
                 run_loop_->SetSessionId(session_id_);
 
-                // 5. 设置 inbound_queue 到 IpcRunLoop
-                run_loop_->SetInboundQueue(&inbound_queue_);
-
-                // 5.5 创建 BusinessThread（必须在 ProxyFactory 之前，
+                // 5. 创建 BusinessThread（必须在 ProxyFactory 之前，
                 //      因为 ProxyFactory 会捕获它的 weak_ptr）
                 business_thread_ = std::make_shared<BusinessThread>(
                     inbound_queue_,
@@ -229,19 +220,6 @@ namespace Core
                 proxy_factory_.emplace(registry_, *run_loop_, business_thread_);
                 proxy_factory_->GetObjectManager().SetSessionId(session_id_);
                 run_loop_->SetProxyFactory(&*proxy_factory_);
-
-                // Create() 已包含初始化，不需要再次调用 Initialize()
-                result = DAS_S_OK;
-                if (result != DAS_S_OK)
-                {
-                    std::string err_msg = DAS_FMT_NS::format(
-                        "IpcContext: IpcRunLoop init failed, result={}",
-                        result);
-                    DAS_LOG_ERROR(err_msg.c_str());
-                    shared_memory_.reset();
-                    run_loop_.reset();
-                    return result;
-                }
 
                 // 7. 创建 transport（使用 IpcRunLoop 的 io_context）
                 //    使用 CreateUninitialized 创建未初始化的对象，延迟到 Run()
@@ -266,7 +244,6 @@ namespace Core
                     run_loop_.reset();
                     return DAS_E_FAIL;
                 }
-                handshake_handler_->SetRunLoop(run_loop_.get());
 
                 // 10. 设置 HandshakeHandler 的客户端连接回调
                 //    握手完成后，同步 session_id 到 IpcCommandHandler 和

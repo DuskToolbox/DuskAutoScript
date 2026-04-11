@@ -22,12 +22,6 @@
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
 
-// Define alias for IpcRunLoop in the parent namespace
-namespace Das::Core::IPC::MainProcess
-{
-    using IpcRunLoopType = Das::Core::IPC::IpcRunLoop;
-}
-
 DAS_NS_BEGIN
 namespace Core
 {
@@ -39,59 +33,48 @@ namespace Core
 
             IpcContext::IpcContext(bool enable_heartbeat)
             {
-                // 构造即初始化
+                // 1. Create IpcRunLoop (inbound_queue_ 已在 runloop_
+                // 之前声明并构造)
+                runloop_ = std::make_unique<IpcRunLoop>(
+                    enable_heartbeat,
+                    &inbound_queue_);
 
-                // 1. Create IpcRunLoop FIRST (provides io_context)
-                auto runloop_result = IpcRunLoopType::Create(enable_heartbeat);
-                if (!runloop_result.has_value())
-                {
-                    DAS_CORE_LOG_ERROR("IpcRunLoop::Create() failed");
-                    throw std::runtime_error("IpcRunLoop::Create() failed");
-                }
-                runloop_ = std::move(runloop_result.value());
-                // Create() 已自动完成初始化，无需再调用 Initialize()
-
-                // 2. Set inbound_queue to IpcRunLoop
-                runloop_->SetInboundQueue(&inbound_queue_);
-
-                // 3. 主进程 session_id = 1
+                // 2. 主进程 session_id = 1
                 runloop_->SetSessionId(1);
 
-                // 4. Initialize reserved session IDs
+                // 3. Initialize reserved session IDs
                 for (uint16_t reserved_id : reserved_session_ids_)
                 {
                     allocated_ids_[reserved_id] = true;
                 }
 
-                // 5. Create BusinessThread (must be before ProxyFactory,
-                //    because ProxyFactory captures a weak_ptr to it)
+                // 4. 创建 ProxyFactory (DistributedObjectManager 绑定
+                // session_id=1)
+                proxy_factory_.emplace(registry_, *runloop_, business_thread_);
+                proxy_factory_->GetObjectManager().SetSessionId(1);
+                runloop_->SetProxyFactory(&*proxy_factory_);
+
+                // 5. Create BusinessThread
                 business_thread_ = std::make_shared<BusinessThread>(
                     inbound_queue_,
                     *runloop_,
                     *this);
 
-                // 6. DistributedObjectManager 绑定 IpcRunLoop
-                proxy_factory_.emplace(registry_, *runloop_, business_thread_);
-                proxy_factory_->GetObjectManager().SetSessionId(1);
-                runloop_->SetProxyFactory(&*proxy_factory_);
-
-                // 8. 创建并初始化 IpcCommandHandler
+                // 6. 创建并初始化 IpcCommandHandler
                 command_handler_ = IpcCommandHandler::Create(registry_);
                 command_handler_->SetSessionId(1);
 
-                // 9. 注册 LOOKUP_BY_INTERFACE 到 IpcRunLoop
+                // 7. 注册 LOOKUP_BY_INTERFACE 到 IpcRunLoop
                 runloop_->RegisterHandler(
                     HeaderFlags::BUSINESS_CONTROL,
                     static_cast<uint32_t>(IpcCommandType::LOOKUP_BY_INTERFACE),
                     command_handler_.Get());
 
-                // REMOTE_RELEASE (fire-and-forget EVENT)
                 runloop_->RegisterHandler(
                     HeaderFlags::BUSINESS_CONTROL,
                     static_cast<uint32_t>(IpcCommandType::REMOTE_RELEASE),
                     command_handler_.Get());
 
-                // RELEASE_SHM_BLOCK (fire-and-forget EVENT)
                 runloop_->RegisterHandler(
                     HeaderFlags::BUSINESS_CONTROL,
                     static_cast<uint32_t>(IpcCommandType::RELEASE_SHM_BLOCK),

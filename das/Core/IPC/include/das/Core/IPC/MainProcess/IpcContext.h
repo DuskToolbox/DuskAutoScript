@@ -104,14 +104,14 @@ namespace Core
                 /// IPC 命令处理器
                 DasPtr<IpcCommandHandler> command_handler_;
 
-                /// IPC 运行循环
-                std::unique_ptr<IpcRunLoop> runloop_;
-
                 /// 远程对象注册表（值成员）
                 RemoteObjectRegistry registry_;
 
-                /// 入站消息队列（值成员）
+                /// 入站消息队列（值成员）-- 在 runloop_ 之前声明，确保先初始化
                 IpcMessageQueue<InboundMessage> inbound_queue_{1024};
+
+                /// IPC 运行循环
+                std::unique_ptr<IpcRunLoop> runloop_;
 
                 /// 业务线程
                 std::shared_ptr<BusinessThread> business_thread_;

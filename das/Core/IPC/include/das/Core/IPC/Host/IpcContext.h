@@ -142,14 +142,14 @@ namespace Core
                 IpcContextConfig config_;
                 uint16_t         session_id_ = 0;
 
-                /// IPC 运行循环
-                std::unique_ptr<IpcRunLoop> run_loop_;
-
                 /// 远程对象注册表（值成员）
                 RemoteObjectRegistry registry_;
 
-                /// 入站消息队列（值成员）
+                /// 入站消息队列（值成员）-- 在 run_loop_ 之前声明，确保先初始化
                 IpcMessageQueue<InboundMessage> inbound_queue_{1024};
+
+                /// IPC 运行循环
+                std::unique_ptr<IpcRunLoop> run_loop_;
 
                 /// 业务线程
                 std::shared_ptr<BusinessThread> business_thread_;
