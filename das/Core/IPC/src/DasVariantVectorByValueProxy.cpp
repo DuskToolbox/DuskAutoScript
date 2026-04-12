@@ -678,6 +678,8 @@ DasResult DasVariantVectorByValueProxy::SetComponent(
         return DAS_E_INVALID_ARGUMENT;
     }
 
+    PendingInParamExportGuard guard{GetObjectManager()};
+
     // Serialize interface pointer to ObjectId
     ObjectId oid{};
     bool     newly_registered = false;
@@ -690,6 +692,7 @@ DasResult DasVariantVectorByValueProxy::SetComponent(
     {
         return result;
     }
+    guard.Track(oid, newly_registered);
 
     // Update local cache
     cache_[index].type = ::Das::ExportInterface::DAS_VARIANT_TYPE_COMPONENT;
@@ -710,10 +713,13 @@ DasResult DasVariantVectorByValueProxy::SetComponent(
     writer.WriteUInt16(oid.generation);
     writer.WriteUInt32(oid.local_id);
     writer.WriteUInt32(cache_[index].interface_id);
-    return SendWriteBack(
-        10,
-        writer.GetBuffer().data(),
-        writer.GetBuffer().size());
+    auto send_result =
+        SendWriteBack(10, writer.GetBuffer().data(), writer.GetBuffer().size());
+    if (!IsTransportLevelError(send_result))
+    {
+        guard.Commit();
+    }
+    return send_result;
 }
 
 DasResult DasVariantVectorByValueProxy::SetBase(
@@ -730,6 +736,8 @@ DasResult DasVariantVectorByValueProxy::SetBase(
         return DAS_E_INVALID_ARGUMENT;
     }
 
+    PendingInParamExportGuard guard{GetObjectManager()};
+
     ObjectId oid{};
     bool     newly_registered = false;
     result = SerializeInInterfaceParam(
@@ -741,6 +749,7 @@ DasResult DasVariantVectorByValueProxy::SetBase(
     {
         return result;
     }
+    guard.Track(oid, newly_registered);
 
     cache_[index].type = ::Das::ExportInterface::DAS_VARIANT_TYPE_BASE;
     cache_[index].object_id = oid;
@@ -759,10 +768,13 @@ DasResult DasVariantVectorByValueProxy::SetBase(
     writer.WriteUInt16(oid.generation);
     writer.WriteUInt32(oid.local_id);
     writer.WriteUInt32(cache_[index].interface_id);
-    return SendWriteBack(
-        11,
-        writer.GetBuffer().data(),
-        writer.GetBuffer().size());
+    auto send_result =
+        SendWriteBack(11, writer.GetBuffer().data(), writer.GetBuffer().size());
+    if (!IsTransportLevelError(send_result))
+    {
+        guard.Commit();
+    }
+    return send_result;
 }
 
 DasResult DasVariantVectorByValueProxy::PushBackInt(int64_t in_int)
@@ -880,6 +892,8 @@ DasResult DasVariantVectorByValueProxy::PushBackComponent(
         return result;
     }
 
+    PendingInParamExportGuard guard{GetObjectManager()};
+
     ObjectId oid{};
     bool     newly_registered = false;
     result = SerializeInInterfaceParam(
@@ -891,6 +905,7 @@ DasResult DasVariantVectorByValueProxy::PushBackComponent(
     {
         return result;
     }
+    guard.Track(oid, newly_registered);
 
     CachedVariant entry;
     entry.type = ::Das::ExportInterface::DAS_VARIANT_TYPE_COMPONENT;
@@ -912,10 +927,13 @@ DasResult DasVariantVectorByValueProxy::PushBackComponent(
     writer.WriteUInt32(oid.local_id);
     writer.WriteUInt32(
         ComputeInterfaceId(DasIidOf<Das::PluginInterface::IDasComponent>()));
-    return SendWriteBack(
-        16,
-        writer.GetBuffer().data(),
-        writer.GetBuffer().size());
+    auto send_result =
+        SendWriteBack(16, writer.GetBuffer().data(), writer.GetBuffer().size());
+    if (!IsTransportLevelError(send_result))
+    {
+        guard.Commit();
+    }
+    return send_result;
 }
 
 DasResult DasVariantVectorByValueProxy::PushBackBase(::IDasBase* in_base)
@@ -925,6 +943,8 @@ DasResult DasVariantVectorByValueProxy::PushBackBase(::IDasBase* in_base)
     {
         return result;
     }
+
+    PendingInParamExportGuard guard{GetObjectManager()};
 
     ObjectId oid{};
     bool     newly_registered = false;
@@ -937,6 +957,7 @@ DasResult DasVariantVectorByValueProxy::PushBackBase(::IDasBase* in_base)
     {
         return result;
     }
+    guard.Track(oid, newly_registered);
 
     CachedVariant entry;
     entry.type = ::Das::ExportInterface::DAS_VARIANT_TYPE_BASE;
@@ -956,10 +977,13 @@ DasResult DasVariantVectorByValueProxy::PushBackBase(::IDasBase* in_base)
     writer.WriteUInt16(oid.generation);
     writer.WriteUInt32(oid.local_id);
     writer.WriteUInt32(ComputeInterfaceId(DasIidOf<IDasBase>()));
-    return SendWriteBack(
-        17,
-        writer.GetBuffer().data(),
-        writer.GetBuffer().size());
+    auto send_result =
+        SendWriteBack(17, writer.GetBuffer().data(), writer.GetBuffer().size());
+    if (!IsTransportLevelError(send_result))
+    {
+        guard.Commit();
+    }
+    return send_result;
 }
 
 DasResult DasVariantVectorByValueProxy::RemoveAt(uint64_t index)
