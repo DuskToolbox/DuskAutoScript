@@ -30,7 +30,6 @@
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/IpcResponseSender.h>
-#include <das/Core/IPC/ProxyFactory.h>
 #include <das/DasPtr.hpp>
 
 DAS_CORE_IPC_NS_BEGIN
@@ -41,6 +40,7 @@ class IMessageHandler;
 class IAwaitableMessageHandler;
 class ConnectionManager;
 class IpcRunLoop; // Forward declaration for templates
+class ProxyFactory;
 
 namespace Host
 {

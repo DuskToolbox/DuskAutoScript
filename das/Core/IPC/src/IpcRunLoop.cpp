@@ -12,6 +12,7 @@
 #include <das/Core/IPC/IpcMessageQueue.h>
 #include <das/Core/IPC/IpcResponseSender.h>
 #include <das/Core/IPC/IpcRunLoop.h>
+#include <das/Core/IPC/ProxyFactory.h>
 #include <das/_autogen/idl/ipc/IpcStubFactory.h>
 #include <mutex>
 #include <unordered_map>
