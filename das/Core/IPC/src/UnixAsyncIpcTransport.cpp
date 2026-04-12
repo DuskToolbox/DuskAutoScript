@@ -6,7 +6,6 @@
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/write.hpp>
 #include <chrono>
-#include <filesystem>
 #include <cstring>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
@@ -14,6 +13,7 @@
 #include <das/DasApi.h>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
+#include <filesystem>
 #include <memory>
 #include <stdexcept>
 #include <utility>
@@ -171,112 +171,6 @@ UnixAsyncIpcTransport::CreateAsync(
     }
 
     co_return instance;
-}
-
-DasResult UnixAsyncIpcTransport::Initialize(
-    const std::string& read_endpoint,
-    const std::string& write_endpoint,
-    bool               is_server,
-    size_t             max_message_size)
-{
-    (void)write_endpoint;
-
-    if (is_connected_)
-    {
-        return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
-    }
-
-    endpoint_name_ = NormalizeUnixEndpoint(read_endpoint);
-    is_server_ = is_server;
-    max_message_size_ = max_message_size;
-    body_buffer_.reserve(max_message_size);
-
-    if (is_server)
-    {
-        boost::system::error_code ec;
-
-        acceptor_ =
-            std::make_unique<boost::asio::local::stream_protocol::acceptor>(
-                io_context_);
-
-        acceptor_->open(boost::asio::local::stream_protocol(), ec);
-        if (ec)
-        {
-            const auto msg = DAS_FMT_NS::format(
-                "acceptor open failed: path = {}, error = {}",
-                read_endpoint,
-                ToString(ec.message()));
-            DAS_LOG_ERROR(msg.c_str());
-            return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
-        }
-
-        socket_.open(boost::asio::local::stream_protocol(), ec);
-        if (ec)
-        {
-            const auto msg = DAS_FMT_NS::format(
-                "socket open failed: path = {}, error = {}",
-                read_endpoint,
-                ToString(ec.message()));
-            DAS_LOG_ERROR(msg.c_str());
-            return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
-        }
-
-        auto normalized_path = NormalizeUnixEndpoint(read_endpoint);
-        DAS_UNLINK(normalized_path.c_str());
-
-        boost::system::error_code bind_ec;
-        acceptor_->bind(
-            boost::asio::local::stream_protocol::endpoint(normalized_path),
-            bind_ec);
-
-        if (bind_ec)
-        {
-            const auto msg = DAS_FMT_NS::format(
-                "bind failed: path = {}, error = {}",
-                read_endpoint,
-                ToString(bind_ec.message()));
-            DAS_LOG_ERROR(msg.c_str());
-            socket_.close();
-            return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
-        }
-
-        boost::system::error_code listen_ec;
-        acceptor_->listen(1, listen_ec);
-        if (listen_ec)
-        {
-            const auto msg = DAS_FMT_NS::format(
-                "listen failed: path = {}, error = {}",
-                read_endpoint,
-                ToString(listen_ec.message()));
-            DAS_LOG_ERROR(msg.c_str());
-            socket_.close();
-            DAS_UNLINK(NormalizeUnixEndpoint(read_endpoint).c_str());
-            return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
-        }
-
-        boost::system::error_code accept_ec;
-        auto                      client_socket = acceptor_->accept(accept_ec);
-
-        if (accept_ec)
-        {
-            const auto msg = DAS_FMT_NS::format(
-                "accept failed: path = {}, error = {}",
-                read_endpoint,
-                ToString(accept_ec.message()));
-            DAS_LOG_ERROR(msg.c_str());
-            socket_.close();
-            acceptor_->close();
-            DAS_UNLINK(NormalizeUnixEndpoint(read_endpoint).c_str());
-            return DAS_E_IPC_HANDSHAKE_FAILED;
-        }
-
-        socket_ = std::move(client_socket);
-        acceptor_->close();
-        is_connected_ = true;
-        return DAS_S_OK;
-    }
-
-    return DAS_S_OK;
 }
 
 boost::asio::awaitable<DasResult> UnixAsyncIpcTransport::InitializeAsync(
@@ -474,52 +368,6 @@ UnixAsyncIpcTransport::ConnectToUnixSocketAsync(const std::string& socket_path)
         max_retries);
     DAS_LOG_ERROR(msg.c_str());
     co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
-}
-
-DasResult UnixAsyncIpcTransport::Connect(
-    const std::string& read_endpoint,
-    const std::string& write_endpoint)
-{
-    (void)write_endpoint;
-
-    if (is_connected_)
-    {
-        return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
-    }
-
-    endpoint_name_ = NormalizeUnixEndpoint(read_endpoint);
-
-    boost::system::error_code ec;
-
-    socket_.open(boost::asio::local::stream_protocol(), ec);
-    if (ec)
-    {
-        const auto msg = DAS_FMT_NS::format(
-            "socket open failed: path = {}, error = {}",
-            read_endpoint,
-            ToString(ec.message()));
-        DAS_LOG_ERROR(msg.c_str());
-        return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
-    }
-
-    boost::system::error_code connect_ec;
-    socket_.connect(
-        boost::asio::local::stream_protocol::endpoint(endpoint_name_),
-        connect_ec);
-
-    if (connect_ec)
-    {
-        const auto msg = DAS_FMT_NS::format(
-            "connect failed: path = {}, error = {}",
-            read_endpoint,
-            ToString(connect_ec.message()));
-        DAS_LOG_ERROR(msg.c_str());
-        socket_.close();
-        return DAS_E_IPC_CONNECTION_LOST;
-    }
-
-    is_connected_ = true;
-    return DAS_S_OK;
 }
 
 bool UnixAsyncIpcTransport::IsConnected() const { return is_connected_; }

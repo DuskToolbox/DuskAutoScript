@@ -63,25 +63,12 @@ public:
     Win32AsyncIpcTransport& operator=(Win32AsyncIpcTransport&&) noexcept =
         delete;
 
-    /// 初始化（服务端）
-    /// @deprecated 使用 Create() 工厂函数代替
-    [[deprecated("Use Create() instead")]]
-    DasResult Initialize(
-        const std::string& read_endpoint,
-        const std::string& write_endpoint,
-        bool               is_server,
-        size_t             max_message_size = 65536);
-
     /// 异步初始化（协程版本）
     boost::asio::awaitable<DasResult> InitializeAsync(
         const std::string& read_endpoint,
         const std::string& write_endpoint,
         bool               is_server,
         size_t             max_message_size = 65536);
-
-    DasResult Connect(
-        const std::string& read_endpoint,
-        const std::string& write_endpoint);
 
     [[nodiscard]]
     bool IsConnected() const;

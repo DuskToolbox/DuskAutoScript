@@ -147,67 +147,6 @@ Win32AsyncIpcTransport::CreateUninitialized(boost::asio::io_context& io_context)
 
 Win32AsyncIpcTransport::~Win32AsyncIpcTransport() { Uninitialize(); }
 
-DasResult Win32AsyncIpcTransport::Initialize(
-    const std::string& read_endpoint,
-    const std::string& write_endpoint,
-    bool               is_server,
-    size_t             max_message_size)
-{
-    try
-    {
-        return boost::asio::co_spawn(
-                   io_context_,
-                   InitializeAsync(
-                       read_endpoint,
-                       write_endpoint,
-                       is_server,
-                       max_message_size),
-                   boost::asio::use_future)
-            .get();
-    }
-    catch (const boost::system::system_error& e)
-    {
-        DAS_LOG_ERROR(
-            DAS_FMT_NS::format(
-                "Initialize failed (system_error): {}",
-                ToString(e.what()))
-                .c_str());
-        return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
-    }
-    catch (const std::exception& e)
-    {
-        DAS_LOG_ERROR(
-            DAS_FMT_NS::format("Initialize failed: {}", ToString(e.what()))
-                .c_str());
-        return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
-    }
-}
-
-DasResult Win32AsyncIpcTransport::Connect(
-    const std::string& read_endpoint,
-    const std::string& write_endpoint)
-{
-    if (is_connected_)
-    {
-        return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
-    }
-
-    auto result = ConnectToNamedPipe(read_endpoint, true);
-    if (DAS::IsFailed(result))
-    {
-        return result;
-    }
-
-    result = ConnectToNamedPipe(write_endpoint, false);
-    if (DAS::IsFailed(result))
-    {
-        return result;
-    }
-
-    is_connected_ = true;
-    return DAS_S_OK;
-}
-
 void Win32AsyncIpcTransport::Uninitialize()
 {
     boost::system::error_code ec;
