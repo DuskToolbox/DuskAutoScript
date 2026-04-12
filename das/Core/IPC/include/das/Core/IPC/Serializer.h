@@ -200,7 +200,6 @@ public:
             return DAS_E_IPC_DESERIALIZATION_FAILED;
         }
 
-        // ReadRawPointer: get pointer to current position without copying
         result = ReadRawPointer(
             reinterpret_cast<const uint8_t**>(out_ptr),
             static_cast<size_t>(size));
