@@ -131,7 +131,6 @@ namespace Core
                 using ClientDisconnectedCallback =
                     std::function<void(uint16_t session_id)>;
                 using ShutdownRequestedCallback = std::function<void()>;
-                using ReleaseSessionCallback = std::function<void(uint16_t)>;
 
                 /**
                  * @brief 析构函数
@@ -187,11 +186,6 @@ namespace Core
                  * @param callback 回调函数
                  */
                 void SetOnShutdownRequested(ShutdownRequestedCallback callback);
-
-                void SetReleaseSessionCallback(ReleaseSessionCallback cb)
-                {
-                    release_session_callback_ = std::move(cb);
-                }
 
                 /**
                  * @brief 检查是否存在指定客户端
@@ -287,15 +281,6 @@ namespace Core
                  */
                 DasResult HandleGoodbye(const GoodbyeV1& goodbye);
 
-                /**
-                 * @brief 根据心跳时间戳查找客户端
-                 *
-                 * @param session_id 客户端 session_id
-                 * @return 客户端迭代器
-                 */
-                std::unordered_map<uint16_t, ConnectedClient>::iterator
-                FindClientBySessionId(uint16_t session_id);
-
             private:
                 // 私有构造函数 - 只能通过 Create() 工厂函数调用
                 explicit HandshakeHandler(uint16_t local_session_id);
@@ -322,8 +307,6 @@ namespace Core
                 ShutdownRequestedCallback
                     on_shutdown_requested_; ///< 关闭请求回调（收到 GOODBYE
                                             ///< 时触发）
-
-                ReleaseSessionCallback release_session_callback_;
             };
 
         } // namespace Host

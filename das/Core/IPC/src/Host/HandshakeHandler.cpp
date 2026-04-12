@@ -64,11 +64,6 @@ namespace Core
 
                 for (auto& pair : clients_)
                 {
-                    if (release_session_callback_)
-                    {
-                        release_session_callback_(pair.first);
-                    }
-
                     if (on_client_disconnected_)
                     {
                         on_client_disconnected_(pair.first);
@@ -504,11 +499,6 @@ namespace Core
 
                 if (session_id != 0)
                 {
-                    if (release_session_callback_)
-                    {
-                        release_session_callback_(session_id);
-                    }
-
                     std::string msg = DAS_FMT_NS::format(
                         "HandshakeHandler: Client disconnected: session_id={}, reason={}",
                         session_id,
@@ -530,12 +520,6 @@ namespace Core
                 }
 
                 return DAS_S_OK;
-            }
-
-            std::unordered_map<uint16_t, ConnectedClient>::iterator
-            HandshakeHandler::FindClientBySessionId(uint16_t session_id)
-            {
-                return clients_.find(session_id);
             }
 
         } // namespace Host

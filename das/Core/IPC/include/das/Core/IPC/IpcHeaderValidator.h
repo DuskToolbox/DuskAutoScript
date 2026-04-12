@@ -25,7 +25,6 @@ enum class HeaderValidationError : uint8_t
     INVALID_CONTROL_PLANE_COMMAND,
 
     // 业务平面校验
-    BUSINESS_PLANE_INVALID_SESSION,
 
     // Body 校验
     BODY_SIZE_TOO_SMALL,
@@ -33,15 +32,10 @@ enum class HeaderValidationError : uint8_t
     BODY_SIZE_MISMATCH,
 
     // Session 校验
-    INVALID_SOURCE_SESSION_ID,
     INVALID_TARGET_SESSION_ID,
-    SESSION_NOT_REGISTERED,
 
     // 调用校验
     UNKNOWN_CALL_ID,
-
-    // 标志校验
-    INVALID_FLAGS,
 };
 
 /// @brief 调用点信息（用于日志）
@@ -389,12 +383,6 @@ public:
     }
 
     [[nodiscard]]
-    static bool IsHandshakeMessage(const IPCMessageHeader& header) noexcept
-    {
-        return IsControlPlane(header);
-    }
-
-    [[nodiscard]]
     static bool IsValidControlPlaneCommand(uint32_t interface_id) noexcept
     {
         return interface_id >= static_cast<uint32_t>(
@@ -423,24 +411,16 @@ inline const char* HeaderValidationResult::GetErrorName() const noexcept
         return "UNEXPECTED_MESSAGE_TYPE";
     case HeaderValidationError::INVALID_CONTROL_PLANE_COMMAND:
         return "INVALID_CONTROL_PLANE_COMMAND";
-    case HeaderValidationError::BUSINESS_PLANE_INVALID_SESSION:
-        return "BUSINESS_PLANE_INVALID_SESSION";
     case HeaderValidationError::BODY_SIZE_TOO_SMALL:
         return "BODY_SIZE_TOO_SMALL";
     case HeaderValidationError::BODY_SIZE_EXCEEDS_LIMIT:
         return "BODY_SIZE_EXCEEDS_LIMIT";
     case HeaderValidationError::BODY_SIZE_MISMATCH:
         return "BODY_SIZE_MISMATCH";
-    case HeaderValidationError::INVALID_SOURCE_SESSION_ID:
-        return "INVALID_SOURCE_SESSION_ID";
     case HeaderValidationError::INVALID_TARGET_SESSION_ID:
         return "INVALID_TARGET_SESSION_ID";
-    case HeaderValidationError::SESSION_NOT_REGISTERED:
-        return "SESSION_NOT_REGISTERED";
     case HeaderValidationError::UNKNOWN_CALL_ID:
         return "UNKNOWN_CALL_ID";
-    case HeaderValidationError::INVALID_FLAGS:
-        return "INVALID_FLAGS";
     default:
         return "UNKNOWN";
     }
