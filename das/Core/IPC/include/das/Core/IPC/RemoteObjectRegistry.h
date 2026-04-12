@@ -82,15 +82,11 @@ private:
     struct ObjectEntry
     {
         RemoteObjectInfo info;
-        uint64_t         encoded_id; // 编码后的ObjectId，用于快速查找
     };
 
     std::unordered_map<uint64_t, ObjectEntry> objects_by_id_;
     std::unordered_map<std::string, uint64_t> objects_by_name_;
     std::unordered_map<uint32_t, uint64_t>    objects_by_interface_;
-
-    // 编码ObjectId用于查找
-    uint64_t EncodeObjectIdForLookup(const ObjectId& obj_id) const;
 };
 
 DAS_CORE_IPC_NS_END

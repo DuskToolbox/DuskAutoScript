@@ -69,7 +69,7 @@ public:
     ConnectionManager& operator=(const ConnectionManager&) = delete;
 
     DasResult RegisterConnection(uint16_t remote_id, uint16_t local_id);
-    DasResult UnregisterConnection(uint16_t remote_id, uint16_t local_id);
+    DasResult UnregisterConnection(uint16_t remote_id);
 
     DasResult SendHeartbeat(uint16_t remote_id);
 
@@ -208,7 +208,7 @@ public:
     static constexpr uint32_t HEARTBEAT_TIMEOUT_MS = 5000;
 
 private:
-    DasResult CleanupConnectionResources(uint16_t remote_id, uint16_t local_id);
+    DasResult CleanupConnectionResources(uint16_t remote_id);
 
     struct Impl;
     std::unique_ptr<Impl> impl_;

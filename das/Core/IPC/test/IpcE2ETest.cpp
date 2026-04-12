@@ -287,7 +287,7 @@ TEST_F(IpcE2ETest, Connection_HostPluginHandshake)
     ASSERT_EQ(connection_manager_->SendHeartbeat(2), DAS_S_OK);
 
     // Unregister connection
-    ASSERT_EQ(connection_manager_->UnregisterConnection(2, 1), DAS_S_OK);
+    ASSERT_EQ(connection_manager_->UnregisterConnection(2), DAS_S_OK);
 
     // Verify connection is dead
     EXPECT_FALSE(connection_manager_->IsConnectionAlive(2));

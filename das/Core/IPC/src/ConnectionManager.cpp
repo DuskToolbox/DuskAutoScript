@@ -50,7 +50,7 @@ ConnectionManager::~ConnectionManager()
     std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
     for (auto& [remote_id, info] : impl_->connections_)
     {
-        CleanupConnectionResources(remote_id, impl_->local_id_);
+        CleanupConnectionResources(remote_id);
     }
     impl_->connections_.clear();
     impl_->host_launchers_.clear();
@@ -99,9 +99,7 @@ DasResult ConnectionManager::RegisterConnection(
     return DAS_S_OK;
 }
 
-DasResult ConnectionManager::UnregisterConnection(
-    uint16_t remote_id,
-    uint16_t local_id)
+DasResult ConnectionManager::UnregisterConnection(uint16_t remote_id)
 {
     std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
     auto it = impl_->connections_.find(remote_id);
@@ -113,7 +111,7 @@ DasResult ConnectionManager::UnregisterConnection(
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 
-    CleanupConnectionResources(remote_id, local_id);
+    CleanupConnectionResources(remote_id);
     impl_->connections_.erase(it);
 
     return DAS_S_OK;
@@ -417,6 +415,8 @@ std::vector<uint16_t> ConnectionManager::GetConnectedSessions() const
 
     for (const auto& [session_id, info] : impl_->connections_)
     {
+        // Intentionally filters out Host-mode connections; only returns
+        // sessions managed via HostLauncher
         if (info.is_alive && info.launcher)
         {
             sessions.push_back(session_id);
@@ -479,7 +479,7 @@ void ConnectionManager::StartHeartbeatThread()
                         // 引用计数归零 -> HostLauncher 析构）
                         impl_->host_launchers_.erase(session_id);
 
-                        CleanupConnectionResources(it->first, impl_->local_id_);
+                        CleanupConnectionResources(it->first);
                         it = impl_->connections_.erase(it);
 
                         DAS_CORE_LOG_WARN(
@@ -644,12 +644,8 @@ boost::asio::awaitable<DasResult> ConnectionManager::ForwardMessage(
     co_return result;
 }
 
-DasResult ConnectionManager::CleanupConnectionResources(
-    uint16_t remote_id,
-    uint16_t local_id)
+DasResult ConnectionManager::CleanupConnectionResources(uint16_t remote_id)
 {
-    (void)local_id;
-
     // 清理直接传输层
     impl_->direct_transports_.erase(remote_id);
 

@@ -1,4 +1,3 @@
-#include <cstring>
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/MethodMetadata.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
@@ -53,7 +52,7 @@ DasResult RemoteObjectRegistry::RegisterObject(
     }
 
     // Encode ObjectId for lookup
-    uint64_t encoded_id = EncodeObjectIdForLookup(object_id);
+    uint64_t encoded_id = EncodeObjectId(object_id);
 
     // Check if object already exists
     if (objects_by_id_.find(encoded_id) != objects_by_id_.end())
@@ -74,7 +73,6 @@ DasResult RemoteObjectRegistry::RegisterObject(
     // 添加到各个索引
     ObjectEntry entry;
     entry.info = info;
-    entry.encoded_id = encoded_id;
 
     objects_by_id_[encoded_id] = entry;
     objects_by_name_[name] = encoded_id;
@@ -91,7 +89,7 @@ DasResult RemoteObjectRegistry::UnregisterObject(const ObjectId& object_id)
         return DAS_E_IPC_INVALID_OBJECT_ID;
     }
 
-    uint64_t encoded_id = EncodeObjectIdForLookup(object_id);
+    uint64_t encoded_id = EncodeObjectId(object_id);
     auto     it = objects_by_id_.find(encoded_id);
 
     if (it == objects_by_id_.end())
@@ -226,7 +224,7 @@ DasResult RemoteObjectRegistry::GetObjectInfo(
         return DAS_E_IPC_INVALID_OBJECT_ID;
     }
 
-    uint64_t encoded_id = EncodeObjectIdForLookup(object_id);
+    uint64_t encoded_id = EncodeObjectId(object_id);
     auto     it = objects_by_id_.find(encoded_id);
 
     if (it == objects_by_id_.end())
@@ -273,7 +271,7 @@ bool RemoteObjectRegistry::ObjectExists(const ObjectId& object_id) const
         return false;
     }
 
-    uint64_t encoded_id = EncodeObjectIdForLookup(object_id);
+    uint64_t encoded_id = EncodeObjectId(object_id);
     return objects_by_id_.find(encoded_id) != objects_by_id_.end();
 }
 
@@ -287,12 +285,6 @@ void RemoteObjectRegistry::Clear()
     objects_by_id_.clear();
     objects_by_name_.clear();
     objects_by_interface_.clear();
-}
-
-uint64_t RemoteObjectRegistry::EncodeObjectIdForLookup(
-    const ObjectId& obj_id) const
-{
-    return EncodeObjectId(obj_id);
 }
 
 uint32_t RemoteObjectRegistry::ComputeInterfaceId(const DasGuid& guid)

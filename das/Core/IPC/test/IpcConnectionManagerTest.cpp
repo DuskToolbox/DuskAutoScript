@@ -56,7 +56,7 @@ TEST_F(IpcConnectionManagerTest, UnregisterConnection_Succeeds)
     // Manager is already initialized in SetUp via RAII constructor
     ASSERT_EQ(manager_->RegisterConnection(2, 1), DAS_S_OK);
 
-    auto result = manager_->UnregisterConnection(2, 1);
+    auto result = manager_->UnregisterConnection(2);
     EXPECT_EQ(result, DAS_S_OK);
 }
 
@@ -64,7 +64,7 @@ TEST_F(IpcConnectionManagerTest, UnregisterConnection_NonExistent)
 {
     // Manager is already initialized in SetUp via RAII constructor
 
-    auto result = manager_->UnregisterConnection(999, 1);
+    auto result = manager_->UnregisterConnection(999);
     EXPECT_NE(result, DAS_S_OK);
 }
 
@@ -157,7 +157,7 @@ TEST_F(IpcConnectionManagerTest, CleanupResources_OnUnregister)
     ASSERT_EQ(manager_->RegisterConnection(2, 1), DAS_S_OK);
 
     // Unregister should cleanup resources
-    ASSERT_EQ(manager_->UnregisterConnection(2, 1), DAS_S_OK);
+    ASSERT_EQ(manager_->UnregisterConnection(2), DAS_S_OK);
 
     // Connection should no longer exist
     EXPECT_FALSE(manager_->IsConnectionAlive(2));
@@ -198,7 +198,7 @@ TEST_F(IpcConnectionManagerTest, RegisterUnregisterCycle)
     {
         ASSERT_EQ(manager_->RegisterConnection(2, 1), DAS_S_OK);
         EXPECT_TRUE(manager_->IsConnectionAlive(2));
-        ASSERT_EQ(manager_->UnregisterConnection(2, 1), DAS_S_OK);
+        ASSERT_EQ(manager_->UnregisterConnection(2), DAS_S_OK);
         EXPECT_FALSE(manager_->IsConnectionAlive(2));
     }
 }
