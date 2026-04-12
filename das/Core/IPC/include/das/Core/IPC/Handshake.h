@@ -25,8 +25,6 @@ enum class HandshakeInterfaceId : uint32_t
     HANDSHAKE_IFACE_GOODBYE = 7    // 断开连接
 };
 
-/// 用户自定义 interface_id 起始值
-constexpr uint32_t IPC_IFACE_USER_START = 100;
 /**
  * @brief Goodbye 原因枚举
  */
@@ -50,11 +48,11 @@ enum class GoodbyeReason : uint32_t
  */
 struct alignas(8) HelloRequestV1
 {
-    uint32_t protocol_version;       ///< 协议版本（当前为 3）
-    uint32_t pid;                    ///< 主进程 ID
-    char     plugin_name[64];        ///< 插件名称（UTF-8，null-terminated）
-    uint16_t assigned_session_id;    ///< 主进程分配给 Host 的 session_id
-    uint16_t reserved;               ///< 保留字段
+    uint32_t protocol_version;    ///< 协议版本（当前为 3）
+    uint32_t pid;                 ///< 主进程 ID
+    char     plugin_name[64];     ///< 插件名称（UTF-8，null-terminated）
+    uint16_t assigned_session_id; ///< 主进程分配给 Host 的 session_id
+    uint16_t reserved;            ///< 保留字段
 
     static constexpr uint32_t CURRENT_PROTOCOL_VERSION = 3;
     static constexpr size_t   PLUGIN_NAME_SIZE = 64;
@@ -218,33 +216,6 @@ inline void InitGoodbye(
     gb.reason = static_cast<uint32_t>(reason);
     gb.reserved = 0;
 }
-
-// ============================================================
-// 握手状态机
-// ============================================================
-
-/**
- * @brief 握手状态
- */
-enum class HandshakeState : uint8_t
-{
-    Disconnected = 0, ///< 未连接
-    HelloSent = 1,    ///< HelloRequest 已发送
-    WelcomeRecv = 2,  ///< WelcomeResponse 已接收
-    ReadySent = 3,    ///< ReadyRequest 已发送
-    Connected = 4,    ///< 握手完成，已连接
-    Failed = 5        ///< 握手失败
-};
-
-/**
- * @brief 握手结果
- */
-struct HandshakeResult
-{
-    HandshakeState state;
-    uint16_t       session_id; ///< 分配的 session_id（仅 Connected 状态有效）
-    uint32_t       error_code; ///< 错误码（仅 Failed 状态有效）
-};
 
 DAS_CORE_IPC_NS_END
 

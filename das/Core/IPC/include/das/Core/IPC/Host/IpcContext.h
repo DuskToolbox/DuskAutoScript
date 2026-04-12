@@ -17,7 +17,6 @@
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
-#include <filesystem>
 #include <memory>
 #include <optional>
 #include <thread>
@@ -83,17 +82,6 @@ namespace Core
                  * @brief 请求停止事件循环
                  */
                 void RequestStop() override;
-
-                /**
-                 * @brief 加载插件
-                 *
-                 * @param json_path 插件配置 JSON 文件路径
-                 * @param object_id [out] 创建的插件对象 ID
-                 * @return DasResult 加载结果
-                 */
-                DasResult LoadPlugin(
-                    const std::filesystem::path& json_path,
-                    ObjectId*                    object_id);
 
                 /**
                  * @brief 检查是否已连接

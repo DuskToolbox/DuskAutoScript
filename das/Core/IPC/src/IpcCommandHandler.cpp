@@ -196,12 +196,6 @@ DasResult IpcCommandHandler::HandleCommand(
     case IpcCommandType::GET_OBJECT_COUNT:
         return OnGetObjectCount(header, payload, response);
 
-    case IpcCommandType::REMOTE_ADD_REF:
-        return OnRemoteAddRef(header, payload, response);
-
-    case IpcCommandType::REMOTE_RELEASE:
-        return OnRemoteRelease(header, payload, response);
-
     case IpcCommandType::LOAD_PLUGIN:
         // LOAD_PLUGIN requires custom handler registration.
         // Must call RegisterHandler() before using this command.
@@ -526,65 +520,4 @@ DasResult IpcCommandHandler::OnLoadPlugin(
     return DAS_E_IPC_COMMAND_NOT_REGISTERED;
 }
 
-DasResult IpcCommandHandler::OnRemoteAddRef(
-    const ValidatedIPCMessageHeader& header,
-    std::span<const uint8_t>         payload,
-    IpcCommandResponse&              response)
-{
-    (void)header;
-
-    if (payload.size() < sizeof(RemoteAddRefPayload))
-    {
-        response.error_code = DAS_E_IPC_INVALID_MESSAGE_BODY;
-        return DAS_E_IPC_INVALID_MESSAGE_BODY;
-    }
-
-    size_t offset = 0;
-
-    ObjectId object_id;
-    if (!DeserializeValue(payload, offset, object_id))
-    {
-        response.error_code = DAS_E_IPC_DESERIALIZATION_FAILED;
-        return DAS_E_IPC_DESERIALIZATION_FAILED;
-    }
-
-    // 获取 DistributedObjectManager 单例
-    // 注意：这里需要通过某种方式获取 DistributedObjectManager
-    // 在 Host 进程中，DistributedObjectManager 是单例
-    // 由于 IpcCommandHandler 不知道当前进程是主进程还是 Host 进程，
-    // 这里需要通过全局访问或者在初始化时设置回调
-
-    // 暂时返回 NOT_IMPLEMENTED，实际实现需要在 Host 进程初始化时注册处理器
-    response.error_code = DAS_E_IPC_COMMAND_NOT_REGISTERED;
-    return DAS_E_IPC_COMMAND_NOT_REGISTERED;
-}
-
-DasResult IpcCommandHandler::OnRemoteRelease(
-    const ValidatedIPCMessageHeader& header,
-    std::span<const uint8_t>         payload,
-    IpcCommandResponse&              response)
-{
-    (void)header;
-
-    if (payload.size() < sizeof(RemoteReleasePayload))
-    {
-        response.error_code = DAS_E_IPC_INVALID_MESSAGE_BODY;
-        return DAS_E_IPC_INVALID_MESSAGE_BODY;
-    }
-
-    size_t offset = 0;
-
-    ObjectId object_id;
-    if (!DeserializeValue(payload, offset, object_id))
-    {
-        response.error_code = DAS_E_IPC_DESERIALIZATION_FAILED;
-        return DAS_E_IPC_DESERIALIZATION_FAILED;
-    }
-
-    // REMOTE_RELEASE 是 fire-and-forget 的 EVENT，
-    // 不需要发送响应（HandleMessage 中不会为 EVENT 调用 SendResponse）
-    // 但为了完整性，我们还是返回成功
-    response.error_code = DAS_S_OK;
-    return DAS_S_OK;
-}
 DAS_CORE_IPC_NS_END

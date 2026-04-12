@@ -1,7 +1,6 @@
 #ifndef DAS_CORE_IPC_IPC_COMMAND_HANDLER_H
 #define DAS_CORE_IPC_IPC_COMMAND_HANDLER_H
 
-#include <boost/asio/awaitable.hpp>
 #include <cstdint>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IMessageHandler.h>
@@ -42,14 +41,11 @@ enum class IpcCommandType : uint8_t
     GET_OBJECT_COUNT = 20, // 获取对象数量
 
     // 接口查询 (120-129)
-    QUERY_INTERFACE = 120,     // 远程 QueryInterface 请求
-    QUERY_INTERFACE_ACK = 121, // 远程 QueryInterface 响应
+    QUERY_INTERFACE = 120, // 远程 QueryInterface 请求
 
     // 远程引用计数 (130-139)
-    REMOTE_ADD_REF = 130,     // 远程端增加引用
-    REMOTE_ADD_REF_ACK = 131, // 增加引用确认
-    REMOTE_RELEASE = 132,     // 远程端释放引用
-    REMOTE_RELEASE_ACK = 133, // 释放引用确认
+    REMOTE_ADD_REF = 130, // 远程端增加引用
+    REMOTE_RELEASE = 132, // 远程端释放引用
 
     // 共享内存管理 (140-149)
     RELEASE_SHM_BLOCK = 140, // 释放共享内存块（fire-and-forget EVENT）
@@ -217,16 +213,6 @@ private:
         std::span<const uint8_t>         payload,
         IpcCommandResponse&              response);
 
-    DasResult OnRemoteAddRef(
-        const ValidatedIPCMessageHeader& header,
-        std::span<const uint8_t>         payload,
-        IpcCommandResponse&              response);
-
-    DasResult OnRemoteRelease(
-        const ValidatedIPCMessageHeader& header,
-        std::span<const uint8_t>         payload,
-        IpcCommandResponse&              response);
-
     // 从 interface_id 字段提取命令类型
     static IpcCommandType ExtractCommandType(
         const ValidatedIPCMessageHeader& header);
@@ -332,22 +318,6 @@ struct LoadPluginResponsePayload
     DasGuid  iid;        // 接口ID (IDasBase)
     uint16_t session_id; // 会话ID
     uint16_t version;    // 版本
-};
-
-/**
- * @brief 远程增加引用请求 payload
- */
-struct RemoteAddRefPayload
-{
-    ObjectId object_id; // 对象ID
-};
-
-/**
- * @brief 远程释放引用请求 payload
- */
-struct RemoteReleasePayload
-{
-    ObjectId object_id; // 对象ID
 };
 
 /**

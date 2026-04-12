@@ -714,19 +714,6 @@ namespace Core
                 }
             }
 
-            DasResult IpcContext::LoadPlugin(
-                const std::filesystem::path& /*json_path*/,
-                ObjectId* /*object_id*/)
-            {
-                // TODO: 实现插件加载逻辑
-                // 1. 读取 JSON 配置文件
-                // 2. 加载插件 DLL
-                // 3. 创建插件对象
-                // 4. 注册对象到 DistributedObjectManager
-                // 5. 返回对象 ID
-                return DAS_E_IPC_PLUGIN_LOAD_FAILED;
-            }
-
             bool IpcContext::IsConnected() const { return is_connected_; }
 
             void IpcContext::PostCallback(IDasAsyncCallback* callback)

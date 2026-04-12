@@ -88,18 +88,6 @@ public:
         }
         return Write(data, size);
     }
-
-    DasResult WriteObjectBegin()
-    {
-        // 写入对象开始标记 (0xDEADBEEF)
-        return WriteUInt32(0xDEADBEEF);
-    }
-
-    DasResult WriteObjectEnd()
-    {
-        // 写入对象结束标记 (0xCAFEBABE)
-        return WriteUInt32(0xCAFEBABE);
-    }
 };
 
 class SerializerReader
@@ -241,36 +229,6 @@ public:
         }
 
         return Read(data, size);
-    }
-
-    DasResult ReadObjectBegin()
-    {
-        uint32_t marker;
-        auto     result = ReadUInt32(&marker);
-        if (result != DAS_S_OK)
-        {
-            return result;
-        }
-        if (marker != 0xDEADBEEF)
-        {
-            return DAS_E_IPC_DESERIALIZATION_FAILED;
-        }
-        return DAS_S_OK;
-    }
-
-    DasResult ReadObjectEnd()
-    {
-        uint32_t marker;
-        auto     result = ReadUInt32(&marker);
-        if (result != DAS_S_OK)
-        {
-            return result;
-        }
-        if (marker != 0xCAFEBABE)
-        {
-            return DAS_E_IPC_DESERIALIZATION_FAILED;
-        }
-        return DAS_S_OK;
     }
 };
 DAS_CORE_IPC_NS_END
