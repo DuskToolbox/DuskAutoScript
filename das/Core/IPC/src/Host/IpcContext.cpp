@@ -215,7 +215,7 @@ namespace Core
                     *this);
 
                 // 6. DistributedObjectManager 绑定 IpcRunLoop
-                proxy_factory_.emplace(registry_, *run_loop_, business_thread_);
+                proxy_factory_.emplace(*run_loop_, business_thread_);
                 proxy_factory_->GetObjectManager().SetSessionId(session_id_);
                 run_loop_->SetProxyFactory(&*proxy_factory_);
 

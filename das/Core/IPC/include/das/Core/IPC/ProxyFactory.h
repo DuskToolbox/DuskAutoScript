@@ -6,7 +6,6 @@
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/ObjectId.h>
-#include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
 #include <das/IDasBase.h>
@@ -27,13 +26,12 @@ class IPCProxyBase;   // forward declaration
  *
  * 提供统一的 Proxy 实例创建、获取和释放接口
  * 通过构造函数注入依赖，作为 IpcContext 的值成员存在
- * 值持有 DistributedObjectManager，复用 RemoteObjectRegistry 获取对象信息
+ * 值持有 DistributedObjectManager
  */
 class ProxyFactory
 {
 public:
     explicit ProxyFactory(
-        RemoteObjectRegistry&         object_registry,
         IpcRunLoop&                   run_loop,
         std::weak_ptr<BusinessThread> business_thread);
     ~ProxyFactory();
@@ -65,25 +63,6 @@ public:
     IDasBase* GetOrCreateProxy(
         const ObjectId& object_id,
         uint32_t        interface_id);
-
-    /**
-     * @brief 获取现有的 Proxy 实例
-     *
-     * @param object_id 对象 ID
-     * @return 对应的 Proxy
-     * 实例，如果不存在则返回 nullptr
-     */
-    IDasBase* GetProxy(const ObjectId& object_id);
-
-    /**
-     * @brief 释放 Proxy 实例
-     * @param
-     * object_id 对象 ID
-     * @return DasResult
-     * 操作结果
-
-     */
-    DasResult ReleaseProxy(const ObjectId& object_id);
 
     /**
      * @brief 从缓存中移除
@@ -119,33 +98,11 @@ public:
     ProxyFactory& operator=(const ProxyFactory&) = delete;
 
 private:
-    IDasBase* CreateIPCProxy(const ObjectId& object_id);
-
-    /**
-     * @brief 验证对象是否存在且可访问
-     * @param object_id 对象 ID
-     * @param out_info 输出对象信息
-     * @return DasResult 验证结果
-     */
-    DasResult ValidateObject(
-        const ObjectId&   object_id,
-        RemoteObjectInfo& out_info);
-
-    /**
-     * @brief 获取对象接口 ID
-     * @param object_id 对象 ID
-     * @return 对象的接口 ID
-     * @throws DasException 当无法获取接口 ID 时抛出异常
-     */
-    uint32_t GetObjectInterfaceId(const ObjectId& object_id);
-
     // 内部数据结构：Proxy 缓存
     struct ProxyEntry
     {
         IDasBase* proxy; // 使用原始指针，生命周期由引用计数管理
         uint64_t  object_id_encoded;
-        uint32_t  interface_id;
-        uint16_t  session_id;
         uint32_t  local_refcount; // 本地 DasPtr 数量
     };
 
@@ -157,9 +114,6 @@ private:
 
     // 分布式对象管理器（值持有）
     DistributedObjectManager object_manager_;
-
-    // 远程对象注册表
-    RemoteObjectRegistry& object_registry_;
 
     // IPC运行循环
     IpcRunLoop& run_loop_;

@@ -277,7 +277,6 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
                     proxy_factory_ ? proxy_factory_->GetObjectManager()
                                    : null_manager;
                 static ProxyFactory null_proxy_factory{
-                    null_registry,
                     *this,
                     std::weak_ptr<BusinessThread>{}};
                 ProxyFactory& pf =
@@ -325,7 +324,6 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
                 proxy_factory_ ? proxy_factory_->GetObjectManager()
                                : null_manager;
             static ProxyFactory null_proxy_factory{
-                null_registry,
                 *this,
                 std::weak_ptr<BusinessThread>{}};
             ProxyFactory& pf =

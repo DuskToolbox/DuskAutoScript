@@ -50,7 +50,7 @@ namespace Core
 
                 // 4. 创建 ProxyFactory (DistributedObjectManager 绑定
                 // session_id=1)
-                proxy_factory_.emplace(registry_, *runloop_, business_thread_);
+                proxy_factory_.emplace(*runloop_, business_thread_);
                 proxy_factory_->GetObjectManager().SetSessionId(1);
                 runloop_->SetProxyFactory(&*proxy_factory_);
 
