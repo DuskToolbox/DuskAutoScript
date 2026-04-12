@@ -26,12 +26,12 @@
 #include <boost/asio/steady_timer.hpp>
 
 #include <das/Core/IPC/AsyncIpcTransport.h>
-#include <das/DasPtr.hpp>
 #include <das/Core/IPC/DefaultAsyncIpcTransport.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/IpcResponseSender.h>
 #include <das/Core/IPC/ProxyFactory.h>
+#include <das/DasPtr.hpp>
 
 DAS_CORE_IPC_NS_BEGIN
 
@@ -86,7 +86,6 @@ struct CallKeyHash
 struct PendingCallState
 {
     CallKey                               call_key;
-    std::vector<uint8_t>                  response_buffer;
     std::chrono::steady_clock::time_point deadline;
     PendingCallCompletion                 on_complete;
     uint16_t                              response_flags = 0; ///< 响应头 flags
@@ -218,31 +217,17 @@ public:
         const;
 
     /**
-     * @brief 按接口 ID 查找处理器（兼容接口，查找 NONE 标志的处理器）
-     * @param interface_id 接口 ID
-     * @return 处理器指针，未找到返回 nullptr
-     */
-    [[nodiscard]]
-    IMessageHandler* GetHandler(uint32_t interface_id) const;
-
-    /**
-     * @brief 异步 IPC 调用（返回 sender）
+     * @brief 无 transport 的 SendMessageAsync 已删除
      *
-     * 返回 sender，完成时携带 pair<DasResult, vector<uint8_t>>。
-     * 真正的异步实现：注册到消息循环，由事件驱动完成（零轮询）。
-     *
-     * @param request_header 请求头
-     * @param body 请求体
-     * @param body_size 请求体大小
-     * @param timeout 超时时间（默认30秒）
-     * @return stdexec::sender 包含 pair<DasResult, vector<uint8_t>>
+     * IpcRunLoop 不再持有内部 transport。
+     * 调用者必须使用带 transport 参数的版本。
      */
     [[nodiscard]]
     stdexec::sender auto SendMessageAsync(
         const ValidatedIPCMessageHeader& request_header,
         const uint8_t*                   body,
         size_t                           body_size,
-        std::chrono::milliseconds        timeout = std::chrono::seconds(30));
+        std::chrono::milliseconds timeout = std::chrono::seconds(30)) = delete;
 
     /**
      * @brief 使用指定 transport 的异步 IPC 调用
@@ -619,26 +604,6 @@ void tag_invoke(
 //=============================================================================
 // SendMessageAsync 实现（必须在头文件中，因为返回 auto 类型）
 //=============================================================================
-
-inline stdexec::sender auto IpcRunLoop::SendMessageAsync(
-    const ValidatedIPCMessageHeader& request_header,
-    const uint8_t*                   body,
-    size_t                           body_size,
-    std::chrono::milliseconds        timeout)
-{
-    // IpcRunLoop 不再持有内部 transport
-    // 调用者必须使用带 transport 参数的版本: SendMessageAsync(transport, ...)
-    (void)request_header;
-    (void)body;
-    (void)body_size;
-    (void)timeout;
-
-    // 返回一个立即失败的 sender
-    return AwaitResponseSender{
-        nullptr,
-        CallKey{0, static_cast<uint16_t>(DAS_E_IPC_NOT_INITIALIZED)},
-        std::chrono::milliseconds{0}};
-}
 
 inline stdexec::sender auto IpcRunLoop::SendMessageAsync(
     DefaultAsyncIpcTransport*        transport,

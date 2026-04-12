@@ -184,11 +184,6 @@ IMessageHandler* IpcRunLoop::GetHandler(
     return nullptr;
 }
 
-IMessageHandler* IpcRunLoop::GetHandler(uint32_t interface_id) const
-{
-    return GetHandler(HeaderFlags::NONE, interface_id);
-}
-
 boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
     const ValidatedIPCMessageHeader& header,
     const std::vector<uint8_t>&      body,
@@ -400,7 +395,6 @@ std::pair<DasResult, CallKey> IpcRunLoop::PrepareSendRequestWithTransport(
         std::unique_lock<std::mutex> lock(pending_mutex_);
         pending_calls_[call_key] = PendingCallState{
             .call_key = call_key,
-            .response_buffer = {},
             .deadline = std::chrono::steady_clock::time_point::max(),
             .on_complete = nullptr};
     }
@@ -594,7 +588,6 @@ void IpcRunLoop::RegisterPendingCall(CallKey call_key)
     std::unique_lock<std::mutex> lock(pending_mutex_);
     pending_calls_[call_key] = PendingCallState{
         .call_key = call_key,
-        .response_buffer = {},
         .deadline = std::chrono::steady_clock::time_point::max(),
         .on_complete = nullptr};
 }
