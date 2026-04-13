@@ -65,18 +65,18 @@ public:
     static boost::asio::awaitable<
         DAS::Utils::Expected<std::unique_ptr<UnixAsyncIpcTransport>>>
     CreateAsync(
-        boost::asio::io_context& io_context,
-        const std::string&       read_endpoint,
-        const std::string&       write_endpoint,
-        bool                     is_server,
-        size_t                   max_message_size = 65536);
+        boost::asio::io_context& io_context DAS_LIFETIMEBOUND,
+        const std::string&                  read_endpoint,
+        const std::string&                  write_endpoint,
+        bool                                is_server,
+        size_t                              max_message_size = 65536);
 
     /// 工厂函数：创建未初始化的 UnixAsyncIpcTransport 实例
     /// @param io_context boost::asio io_context 引用（生命周期绑定到返回值）
     /// @return unique_ptr 需要后续调用 InitializeAsync() 完成初始化
     /// @note 用于需要延迟初始化的场景（如 Host 进程在 Run() 时异步连接）
     static std::unique_ptr<UnixAsyncIpcTransport> CreateUninitialized(
-        boost::asio::io_context& io_context);
+        boost::asio::io_context& io_context DAS_LIFETIMEBOUND);
 
     ~UnixAsyncIpcTransport();
 

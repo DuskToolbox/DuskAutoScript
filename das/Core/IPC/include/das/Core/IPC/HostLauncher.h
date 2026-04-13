@@ -65,7 +65,7 @@ public:
     [[nodiscard]]
     uint16_t GetSessionId() const override;
 
-    DefaultAsyncIpcTransport* GetTransport();
+    DefaultAsyncIpcTransport* DAS_LIFETIMEBOUND GetTransport();
 
     uint32_t  AddRef() override;
     uint32_t  Release() override;

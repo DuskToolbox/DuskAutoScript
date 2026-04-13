@@ -58,19 +58,20 @@ namespace Core
                  * @brief 获取 IpcRunLoop 实例
                  * @return IpcRunLoop& 运行循环实例
                  */
-                class IpcRunLoop& GetRunLoop();
+                class IpcRunLoop& GetRunLoop() DAS_LIFETIMEBOUND;
 
                 /**
                  * @brief 获取 IpcCommandHandler 实例
                  * @return IpcCommandHandler& 命令处理器实例
                  */
-                class IpcCommandHandler& GetCommandHandler();
+                class IpcCommandHandler& GetCommandHandler() DAS_LIFETIMEBOUND;
 
                 /**
                  * @brief 获取 IDistributedObjectManager 实例
                  * @return IDistributedObjectManager& 对象管理器实例
                  */
-                struct IDistributedObjectManager& GetObjectManager() override;
+                struct IDistributedObjectManager& GetObjectManager()
+                    DAS_LIFETIMEBOUND override;
 
                 /**
                  * @brief 启动事件循环

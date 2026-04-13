@@ -39,7 +39,7 @@ public:
      * @return DistributedObjectManager& 对象管理器引用
      */
     [[nodiscard]]
-    DistributedObjectManager& GetObjectManager()
+    DistributedObjectManager& DAS_LIFETIMEBOUND GetObjectManager()
     {
         return object_manager_;
     }

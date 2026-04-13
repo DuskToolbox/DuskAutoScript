@@ -145,8 +145,8 @@ public:
      * @return DasResult DAS_S_OK 成功
      */
     DasResult RegisterTransport(
-        uint16_t                            session_id,
-        DefaultAsyncIpcTransport* transport DAS_LIFETIMEBOUND);
+        uint16_t                  session_id,
+        DefaultAsyncIpcTransport* transport);
 
     /**
      * @brief 更新连接的活跃状态

@@ -118,7 +118,8 @@ namespace Core
                  *
                  * @return boost::asio::io_context& io_context 引用
                  */
-                virtual boost::asio::io_context& GetIoContext() = 0;
+                virtual boost::asio::io_context& GetIoContext()
+                    DAS_LIFETIMEBOUND = 0;
 
                 /**
                  * @brief 获取已连接的 session ID 列表

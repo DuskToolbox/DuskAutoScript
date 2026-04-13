@@ -74,13 +74,18 @@ public:
 
     /// @brief 增加引用计数
     /// @return 新的引用计数
-    uint32_t AddRef() { return ++ref_count_; }
+    [[nodiscard]]
+    uint32_t AddRef()
+    {
+        return ++ref_count_;
+    }
 
     /// @brief 释放引用计数
     /// @return 新的引用计数
+    [[nodiscard]]
     uint32_t Release()
     {
-        uint32_t count = --ref_count_;
+        uint32_t count = ref_count_.fetch_sub(1, std::memory_order_acq_rel) - 1;
         if (count == 0)
         {
             proxy_factory_.RemoveFromCache(GetObjectId());
@@ -106,7 +111,7 @@ public:
         if (iid == DasIidOf<IPCProxyBase>())
         {
             *pp_object = static_cast<IPCProxyBase*>(this);
-            AddRef();
+            (void)AddRef();
             return DAS_S_OK;
         }
 
