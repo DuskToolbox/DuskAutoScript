@@ -128,7 +128,9 @@ TEST_F(HandshakeHandlerTest, DISABLED_HandleHeartbeat_NonExistentClientNoCrash)
     EXPECT_EQ(result, DAS_S_OK);
 }
 
-TEST_F(HandshakeHandlerTest, DISABLED_HandleHeartbeat_MultipleClientsIndependent)
+TEST_F(
+    HandshakeHandlerTest,
+    DISABLED_HandleHeartbeat_MultipleClientsIndependent)
 {
     // 注册三个客户端
     RegisterMockClient(10, 2001, "Plugin1");
@@ -154,11 +156,6 @@ TEST_F(HandshakeHandlerTest, DISABLED_HandleHeartbeat_MultipleClientsIndependent
 }
 
 // ====== Basic Tests ======
-
-TEST_F(HandshakeHandlerTest, Initialize_Succeeds)
-{
-    EXPECT_TRUE(handler_->IsInitialized());
-}
 
 TEST_F(HandshakeHandlerTest, GetClientCount_InitiallyZero)
 {

@@ -93,9 +93,9 @@ UnixAsyncIpcTransport::UnixAsyncIpcTransport(
 {
 }
 
-UnixAsyncIpcTransport::~UnixAsyncIpcTransport() { Uninitialize(); }
+UnixAsyncIpcTransport::~UnixAsyncIpcTransport() { Cleanup(); }
 
-void UnixAsyncIpcTransport::Uninitialize()
+void UnixAsyncIpcTransport::Cleanup()
 {
     boost::system::error_code ec;
 

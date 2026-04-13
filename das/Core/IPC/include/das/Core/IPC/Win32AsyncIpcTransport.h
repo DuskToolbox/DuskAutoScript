@@ -102,7 +102,7 @@ private:
         boost::asio::io_context& io_context DAS_LIFETIMEBOUND);
 
     // 私有清理函数 - 只能由析构函数调用
-    void Uninitialize();
+    void Cleanup();
 
     DasResult CreateNamedPipe(const std::string& pipe_name, bool is_read_pipe);
     DasResult ConnectToNamedPipe(

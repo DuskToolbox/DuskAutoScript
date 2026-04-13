@@ -145,9 +145,9 @@ Win32AsyncIpcTransport::CreateUninitialized(boost::asio::io_context& io_context)
         new Win32AsyncIpcTransport(io_context));
 }
 
-Win32AsyncIpcTransport::~Win32AsyncIpcTransport() { Uninitialize(); }
+Win32AsyncIpcTransport::~Win32AsyncIpcTransport() { Cleanup(); }
 
-void Win32AsyncIpcTransport::Uninitialize()
+void Win32AsyncIpcTransport::Cleanup()
 {
     boost::system::error_code ec;
 

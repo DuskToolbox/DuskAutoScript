@@ -90,7 +90,7 @@ private:
         uint32_t           max_messages,
         bool               is_server);
 
-    void Uninitialize();
+    void Cleanup();
 
     DasResult SendSmallMessage(
         const ValidatedIPCMessageHeader& header,

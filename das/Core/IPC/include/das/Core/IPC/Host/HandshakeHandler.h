@@ -1,6 +1,7 @@
 #ifndef DAS_CORE_IPC_HOST_HANDSHAKE_HANDLER_H
 #define DAS_CORE_IPC_HOST_HANDSHAKE_HANDLER_H
 
+#include <atomic>
 #include <boost/asio/awaitable.hpp>
 #include <chrono>
 #include <cstdint>
@@ -218,13 +219,6 @@ namespace Core
                  */
                 size_t GetClientCount() const;
 
-                /**
-                 * @brief 检查处理器是否已初始化
-                 *
-                 * @return true 如果已初始化
-                 */
-                bool IsInitialized() const;
-
             private:
                 /**
                  * @brief 处理 HelloRequestV1
@@ -286,16 +280,12 @@ namespace Core
                 explicit HandshakeHandler(uint16_t local_session_id);
                 friend class std::unique_ptr<HandshakeHandler>;
 
-                // 私有清理方法 - 析构函数自动调用
-                void Uninitialize();
-
                 // 成员变量
                 std::optional<uint16_t>
                     local_session_id_; ///< 本 Host 进程的
                                        ///< session_id（未设置时为 nullopt）
-                bool               initialized_;   ///< 是否已初始化
-                uint32_t           ref_count_ = 0; ///< 引用计数
-                mutable std::mutex clients_mutex_; ///< 客户端列表锁
+                std::atomic<uint32_t> ref_count_{0};  ///< 引用计数
+                mutable std::mutex    clients_mutex_; ///< 客户端列表锁
                 std::unordered_map<uint16_t, ConnectedClient>
                     clients_; ///< 已连接客户端
 

@@ -95,7 +95,7 @@ IpcTransport::IpcTransport(
     }
 }
 
-IpcTransport::~IpcTransport() { Uninitialize(); }
+IpcTransport::~IpcTransport() { Cleanup(); }
 
 DAS::Utils::Expected<std::unique_ptr<IpcTransport>> IpcTransport::Create(
     const std::string& host_queue_name,
@@ -137,7 +137,7 @@ DAS::Utils::Expected<std::unique_ptr<IpcTransport>> IpcTransport::Connect(
     return transport;
 }
 
-void IpcTransport::Uninitialize()
+void IpcTransport::Cleanup()
 {
     if (!impl_->initialized_)
     {

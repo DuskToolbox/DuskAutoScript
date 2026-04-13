@@ -125,7 +125,7 @@ private:
     explicit UnixAsyncIpcTransport(boost::asio::io_context& io_context);
 
     // 私有清理函数 - 只能由析构函数调用
-    void Uninitialize();
+    void Cleanup();
 
     // 异步方法
     boost::asio::awaitable<DasResult> CreateUnixSocketAsync(

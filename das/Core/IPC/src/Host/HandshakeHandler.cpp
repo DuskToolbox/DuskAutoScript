@@ -24,7 +24,6 @@ namespace Core
             }
 
             HandshakeHandler::HandshakeHandler(uint16_t local_session_id)
-                : initialized_(false)
             {
                 // local_session_id = 0 表示等待握手时由主进程分配
                 // 非 0 值需要是有效的 session_id
@@ -43,7 +42,6 @@ namespace Core
                     (local_session_id == 0)
                         ? std::nullopt
                         : std::optional<uint16_t>(local_session_id);
-                initialized_ = true;
 
                 std::string msg = DAS_FMT_NS::format(
                     "HandshakeHandler initialized with session_id: {}",
@@ -51,15 +49,8 @@ namespace Core
                 DAS_LOG_INFO(msg.c_str());
             }
 
-            HandshakeHandler::~HandshakeHandler() { Uninitialize(); }
-
-            void HandshakeHandler::Uninitialize()
+            HandshakeHandler::~HandshakeHandler()
             {
-                if (!initialized_)
-                {
-                    return;
-                }
-
                 std::lock_guard<std::mutex> lock(clients_mutex_);
 
                 for (auto& pair : clients_)
@@ -71,7 +62,6 @@ namespace Core
                 }
 
                 clients_.clear();
-                initialized_ = false;
 
                 std::string msg =
                     DAS_FMT_NS::format("HandshakeHandler shutdown complete");
@@ -85,12 +75,6 @@ namespace Core
                 StubContext&                     ctx)
             {
                 (void)ctx; // 握手处理器不使用 ctx
-
-                if (!initialized_)
-                {
-                    DAS_LOG_ERROR("HandshakeHandler not initialized");
-                    co_return DAS_E_IPC_NOT_INITIALIZED;
-                }
 
                 HandshakeInterfaceId interface_id =
                     static_cast<HandshakeInterfaceId>(header.GetInterfaceId());
@@ -278,11 +262,6 @@ namespace Core
             {
                 std::lock_guard<std::mutex> lock(clients_mutex_);
                 return clients_.size();
-            }
-
-            bool HandshakeHandler::IsInitialized() const
-            {
-                return initialized_;
             }
 
             DasResult HandshakeHandler::HandleHelloRequest(
