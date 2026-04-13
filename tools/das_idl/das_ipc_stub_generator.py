@@ -169,7 +169,12 @@ class IpcStubGenerator:
         includes = set()
 
         def _is_iface_ptr(type_info: TypeInfo) -> bool:
-            return type_info.is_pointer and type_info.type_kind == TypeKind.INTERFACE
+            if not type_info.is_pointer:
+                return False
+            if type_info.type_kind == TypeKind.INTERFACE:
+                return True
+            base_name = type_info.base_type.split("::")[-1]
+            return base_name in self.type_mapper.interface_namespaces
 
         def _iface_name_from_type(type_info: TypeInfo) -> str:
             return type_info.base_type.split("::")[-1]
@@ -323,7 +328,7 @@ class IpcStubGenerator:
         # 接口类型始终返回单指针（IDL 层面）
         # 使用 type_kind 检测接口类型
         if type_info.is_pointer:
-            if type_info.type_kind == TypeKind.INTERFACE:
+            if self._is_interface_type(type_info):
                 # Interface: IDL level is 1 star (pointer_level is ignored for interfaces)
                 result += "*"
             elif type_info.pointer_level > 1:
@@ -338,7 +343,7 @@ class IpcStubGenerator:
 
     def _get_interface_short_name(self, interface_name: str) -> str:
         """从接口名获取短名称（去掉 I 前缀）
-        
+
         IDasLogger -> DasLogger
         """
         if interface_name.startswith('IDas'):
@@ -346,6 +351,21 @@ class IpcStubGenerator:
         if interface_name.startswith('I') and len(interface_name) > 1:
             return interface_name[1:]
         return interface_name
+
+    def _is_interface_type(self, type_info: TypeInfo) -> bool:
+        """检查类型是否是接口指针类型
+
+        同时使用 type_kind 和 interface_namespaces 映射进行判断，
+        以处理跨 IDL 文件导入的接口类型（type_kind 可能为 UNKNOWN）。
+        """
+        if not type_info.is_pointer:
+            return False
+        if type_info.type_kind == TypeKind.INTERFACE:
+            return True
+        base_name = type_info.base_type.split("::")[-1]
+        if base_name in self.type_mapper.interface_namespaces:
+            return True
+        return False
     
     def _generate_method_constants(self, all_methods: list, namespace_depth: int = 0) -> str:
         """生成 Method ID 常量定义"""
@@ -471,9 +491,8 @@ class IpcStubGenerator:
             # 跳过 IDasReadOnlyString - 在 deserialization 中单独处理
             if param.type_info.base_type == "IDasReadOnlyString":
                 continue
-            # 使用 type_kind 检测接口类型
-            is_interface = (param.type_info.type_kind == TypeKind.INTERFACE
-                            and param.type_info.is_pointer)
+            # 使用 type_kind 和 interface_namespaces 检测接口类型
+            is_interface = self._is_interface_type(param.type_info)
             if not is_interface:
                 continue
             # 接口指针参数：声明为 IDL 层类型（单指针）
@@ -493,9 +512,8 @@ class IpcStubGenerator:
 
             # For [out] interface params: IDL gives IDasBinaryBuffer*, ABI expects IDasBinaryBuffer**
             # Declare with IDL-level pointer count (one less than ABI), pass &var to impl
-            # 使用 type_kind 检测接口类型
-            is_interface = (param.type_info.type_kind == TypeKind.INTERFACE
-                            and param.type_info.is_pointer)
+            # 使用 type_kind 和 interface_namespaces 检测接口类型
+            is_interface = self._is_interface_type(param.type_info)
             if param.direction in (ParamDirection.OUT, ParamDirection.INOUT) and is_interface:
                 # Declare with one less pointer level (IDL level)
                 base_cpp = self._get_cpp_type_base(param.type_info)  # IDasBinaryBuffer*
@@ -534,8 +552,7 @@ class IpcStubGenerator:
 
             if param.direction in (ParamDirection.OUT, ParamDirection.INOUT):
                 # For interface [out] params: ABI expects extra * so always pass &var
-                is_iface = (param.type_info.type_kind == TypeKind.INTERFACE
-                            and param.type_info.is_pointer)
+                is_iface = self._is_interface_type(param.type_info)
                 if is_iface:
                     call_params.append(f"&{local_name}")
                 elif param.type_info.is_pointer and param.type_info.pointer_level >= 1:
@@ -546,8 +563,7 @@ class IpcStubGenerator:
             else:
                 # [in] parameters: struct pointers (non-interface) need & prefix
                 # e.g., const DasRect* - deserialize into local struct, pass &local_name
-                is_interface = (param.type_info.type_kind == TypeKind.INTERFACE
-                                and param.type_info.is_pointer)
+                is_interface = self._is_interface_type(param.type_info)
                 if param.type_info.is_pointer and param.type_info.pointer_level >= 1 and not is_interface:
                     call_params.append(f"&{local_name}")
                 else:
@@ -619,7 +635,7 @@ class IpcStubGenerator:
             if bt in self.type_mapper.struct_types:
                 continue
             # Interface pointer [out]: 12 bytes (session_id 2B + generation 2B + local_id 4B + interface_id 4B)
-            if param.type_info.type_kind == TypeKind.INTERFACE and param.type_info.is_pointer:
+            if self._is_interface_type(param.type_info):
                 continue
             # Unknown type — not fixed-size
             return False
@@ -642,7 +658,7 @@ class IpcStubGenerator:
                 total += self.FIXED_SIZES.get(field.type_name, 0)
             return total
         # Interface pointer [out]: 12 bytes
-        if param.type_info.type_kind == TypeKind.INTERFACE and param.type_info.is_pointer:
+        if self._is_interface_type(param.type_info):
             return 12
         return 0
 
@@ -652,8 +668,7 @@ class IpcStubGenerator:
         bt = param.type_info.base_type
 
         # Check if it's an interface pointer [out] using type_kind
-        is_interface = (param.type_info.type_kind == TypeKind.INTERFACE
-                        and param.type_info.is_pointer)
+        is_interface = self._is_interface_type(param.type_info)
 
         if is_interface:
             # Interface pointer [out]: 4 fields for ObjectId + interface_id
@@ -700,8 +715,7 @@ class IpcStubGenerator:
         bt = param.type_info.base_type
 
         # Check if it's an interface pointer [out] using type_kind
-        is_interface = (param.type_info.type_kind == TypeKind.INTERFACE
-                        and param.type_info.is_pointer)
+        is_interface = self._is_interface_type(param.type_info)
 
         if is_interface:
             # Interface pointer [out]: find interface UUID and compute FNV-1a hash
@@ -958,11 +972,10 @@ class IpcStubGenerator:
         lines.append(f"{indent}// SHM path: allocate shared memory block for large buffers")
         lines.append(f"{indent}if (DAS::IsOk(call_result) && binary_data_size >= Das::Core::IPC::LARGE_MESSAGE_THRESHOLD)")
         lines.append(f"{indent}{{")
-        lines.append(f"{indent}    auto* conn_mgr = ctx.run_loop.GetConnectionManager();")
-        lines.append(f"{indent}    if (conn_mgr)")
+        lines.append(f"{indent}    auto& conn_mgr = ctx.run_loop.GetConnectionManager();")
         lines.append(f"{indent}    {{")
         lines.append(f"{indent}        Das::Core::IPC::ConnectionInfo conn_info;")
-        lines.append(f"{indent}        if (DAS::IsOk(conn_mgr->GetConnection(ctx.header.GetSourceSessionId(), conn_info))")
+        lines.append(f"{indent}        if (DAS::IsOk(conn_mgr.GetConnection(ctx.header.GetSourceSessionId(), conn_info))")
         lines.append(f"{indent}            && conn_info.shm_pool != nullptr)")
         lines.append(f"{indent}        {{")
         lines.append(f"{indent}            Das::Core::IPC::SharedMemoryBlock shm_block;")
@@ -1063,9 +1076,8 @@ class IpcStubGenerator:
             lines.append(f"{indent}}}")
             return lines
 
-        # 检查是否是接口指针类型（使用 type_kind）
-        is_interface_for_deser = (param.type_info.type_kind == TypeKind.INTERFACE
-                                  and param.type_info.is_pointer)
+        # 检查是否是接口指针类型（使用 type_kind 和 interface_namespaces）
+        is_interface_for_deser = self._is_interface_type(param.type_info)
         if is_interface_for_deser:
             interface_name = self.type_mapper.get_interface_name(param.type_info.base_type)
             proxy_name = f"{interface_name}Proxy"
@@ -1207,8 +1219,7 @@ class IpcStubGenerator:
 
         # [out] interface pointer serialization: register object + write ObjectId + interface_id
         # 使用 type_kind 检测接口类型
-        is_interface = (param.type_info.type_kind == TypeKind.INTERFACE
-                        and param.type_info.is_pointer)
+        is_interface = self._is_interface_type(param.type_info)
 
         if is_interface and param.type_info.is_pointer:
             # Get the interface name for looking up its UUID
@@ -1299,8 +1310,7 @@ class IpcStubGenerator:
             if struct_def and struct_def.fields:
                 # For interface pointers: use -> because variable is a real pointer
                 # For struct pointers: use . because variable is a value type (pointer was stripped for declaration)
-                is_interface = (param.type_info.type_kind == TypeKind.INTERFACE
-                                and param.type_info.is_pointer)
+                is_interface = self._is_interface_type(param.type_info)
                 accessor = "->" if is_interface else "."
                 for field in struct_def.fields:
                     field_cpp_type, field_write_method, _, field_is_struct = self.type_mapper.get_type_info(field.type_name) or (None, None, None, False)
@@ -1320,8 +1330,7 @@ class IpcStubGenerator:
             else:
                 # Struct has no fields or struct_def is None: use direct write method
                 # For non-interface types passed by pointer: variable is value type, don't dereference
-                is_interface = (param.type_info.type_kind == TypeKind.INTERFACE
-                                and param.type_info.is_pointer)
+                is_interface = self._is_interface_type(param.type_info)
                 if param.type_info.is_pointer and param.type_info.pointer_level >= 1 and is_interface:
                     lines.append(f"{indent}serial_result = writer.{write_method}(*{var_name});")
                 else:
@@ -1330,8 +1339,7 @@ class IpcStubGenerator:
             # Non-struct types (basic types, special types like DasGuid)
             # For interface pointers: dereference because variable is a real pointer
             # For non-interface pointers (e.g., DasGuid*): variable is value type, don't dereference
-            is_interface = (param.type_info.type_kind == TypeKind.INTERFACE
-                            and param.type_info.is_pointer)
+            is_interface = self._is_interface_type(param.type_info)
             if param.type_info.is_pointer and param.type_info.pointer_level >= 1 and is_interface:
                 lines.append(f"{indent}serial_result = writer.{write_method}(*{var_name});")
             else:
