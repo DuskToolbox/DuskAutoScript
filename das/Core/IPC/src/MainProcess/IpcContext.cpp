@@ -81,25 +81,11 @@ namespace Core
                     HeaderFlags::BUSINESS_CONTROL,
                     static_cast<uint32_t>(IpcCommandType::RELEASE_SHM_BLOCK),
                     command_handler_.Get());
-
-                is_initialized_ = true;
             }
 
             IpcContext::~IpcContext()
             {
-                // 析构即清理
-                if (is_initialized_)
-                {
-                    Uninitialize();
-                }
-            }
-
-            void IpcContext::Uninitialize()
-            {
-                if (!is_initialized_)
-                {
-                    return;
-                }
+                // 析构即清理，无条件守卫
 
                 // 生命周期安全：重置 HostLauncher 的回调，防止
                 // ConnectionManager 持有的 DasPtr<HostLauncher>
@@ -135,7 +121,6 @@ namespace Core
 
                 // proxy_factory_ is optional value member, automatically
                 // destructed
-                is_initialized_ = false;
             }
 
             ProxyFactory& IpcContext::GetProxyFactory()

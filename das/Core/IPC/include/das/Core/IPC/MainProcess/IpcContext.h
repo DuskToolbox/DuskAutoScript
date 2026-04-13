@@ -100,8 +100,6 @@ namespace Core
                 DasResult InternalRegisterHostLauncher();
 
             private:
-                void Uninitialize();
-
                 /// IPC 命令处理器
                 DasPtr<IpcCommandHandler> command_handler_;
 
@@ -120,8 +118,6 @@ namespace Core
                 /// Proxy 工厂（值持有 DistributedObjectManager，optional 因为
                 /// ProxyFactory 引用非默认可构造）
                 std::optional<ProxyFactory> proxy_factory_;
-
-                bool is_initialized_ = false;
 
                 /// Internal holder for created launcher (DasPtr for refcount
                 /// management)
