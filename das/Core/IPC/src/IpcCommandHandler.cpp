@@ -147,27 +147,27 @@ DasResult IpcCommandHandler::HandleCommand(
 {
     IpcCommandType cmd_type = ExtractCommandType(header);
 
-    std::string _find_log = DAS_FMT_NS::format(
+    std::string find_log = DAS_FMT_NS::format(
         "[IpcCommandHandler] HandleCommand: cmd_type={}, custom_handlers_.size()={}",
         static_cast<int>(cmd_type),
         custom_handlers_.size());
-    DAS_CORE_LOG_INFO(_find_log.c_str());
+    DAS_CORE_LOG_INFO(find_log.c_str());
     // 检查是否有自定义处理器
     auto it = custom_handlers_.find(cmd_type);
     if (it != custom_handlers_.end())
     {
-        std::string _found_log = DAS_FMT_NS::format(
+        std::string found_log = DAS_FMT_NS::format(
             "[IpcCommandHandler] Found custom handler for cmd_type={}",
             static_cast<int>(cmd_type));
-        DAS_CORE_LOG_INFO(_found_log.c_str());
+        DAS_CORE_LOG_INFO(found_log.c_str());
         return it->second(header, payload, response);
     }
     else
     {
-        std::string _not_found_log = DAS_FMT_NS::format(
+        std::string not_found_log = DAS_FMT_NS::format(
             "[IpcCommandHandler] No custom handler for cmd_type={}",
             static_cast<int>(cmd_type));
-        DAS_CORE_LOG_INFO(_not_found_log.c_str());
+        DAS_CORE_LOG_INFO(not_found_log.c_str());
     }
 
     switch (cmd_type)
@@ -212,10 +212,10 @@ void IpcCommandHandler::RegisterHandler(
     IpcCommandType command_type,
     CommandHandler handler)
 {
-    std::string _log_msg = DAS_FMT_NS::format(
+    std::string log_msg = DAS_FMT_NS::format(
         "[IpcCommandHandler] RegisterHandler: command_type={}",
         static_cast<int>(command_type));
-    DAS_CORE_LOG_INFO(_log_msg.c_str());
+    DAS_CORE_LOG_INFO(log_msg.c_str());
     custom_handlers_[command_type] = std::move(handler);
 }
 

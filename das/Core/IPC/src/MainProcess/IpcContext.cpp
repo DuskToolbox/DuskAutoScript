@@ -144,13 +144,13 @@ namespace Core
                 {
                     // 注入 on_register 回调，IpcContext 自行调用
                     // InternalRegisterHostLauncher
-                    auto* launcher = new HostLauncher(
+                    auto launcher = DAS::DasPtr<HostLauncher>(new HostLauncher(
                         GetIoContext(),
                         session_id,
-                        [this]() { return InternalRegisterHostLauncher(); });
+                        [this]() { return InternalRegisterHostLauncher(); }));
 
-                    launcher_ = DAS::DasPtr<HostLauncher>(launcher);
-                    *pp_out_launcher = launcher;
+                    launcher_ = launcher;
+                    *pp_out_launcher = launcher.Get();
                     return DAS_S_OK;
                 }
                 catch (const std::exception& e)

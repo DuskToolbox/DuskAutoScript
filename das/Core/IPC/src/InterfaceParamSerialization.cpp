@@ -114,14 +114,23 @@ DasResult DeserializeInInterfaceParam(
     // Dispatch path: inject by-value proxy for IDasVariantVector, skip autogen
     if (interface_id == DasVariantVectorByValueProxy::InterfaceId)
     {
-        auto* by_value_proxy = new DasVariantVectorByValueProxy(
-            interface_id,
-            id,
-            run_loop,
-            business_thread,
-            proxy_factory);
-        object_manager.RegisterRemoteObject(id);
-        *out_ptr = by_value_proxy;
+        auto by_value_proxy = std::unique_ptr<DasVariantVectorByValueProxy>(
+            new DasVariantVectorByValueProxy(
+                interface_id,
+                id,
+                run_loop,
+                business_thread,
+                proxy_factory));
+        DasResult register_result = object_manager.RegisterRemoteObject(id);
+        if (DAS::IsFailed(register_result))
+        {
+            DAS_CORE_LOG_ERROR(
+                "DeserializeInInterfaceParam: RegisterRemoteObject failed, "
+                "result = {}",
+                static_cast<int>(register_result));
+            return register_result;
+        }
+        *out_ptr = by_value_proxy.release();
         return DAS_S_OK;
     }
 
