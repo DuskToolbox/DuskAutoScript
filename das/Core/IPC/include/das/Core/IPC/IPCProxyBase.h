@@ -61,9 +61,9 @@ public:
 
     /// @brief 获取 run loop
     [[nodiscard]]
-    IpcRunLoop* GetRunLoop() const noexcept
+    IpcRunLoop& GetRunLoop() const noexcept
     {
-        return &run_loop_;
+        return run_loop_;
     }
 
     /// @brief 获取业务线程

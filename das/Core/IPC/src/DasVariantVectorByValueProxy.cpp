@@ -105,7 +105,7 @@ DasResult DasVariantVectorByValueProxy::EnsureDataLoaded(uint16_t method_id)
     if (bt->IsCurrentThread())
     {
         // Nested pump: called from within BusinessThread
-        DasResult send_result = GetRunLoop()->PostSend(header, std::move(body));
+        DasResult send_result = GetRunLoop().PostSend(header, std::move(body));
         if (send_result != DAS_S_OK)
         {
             DAS_CORE_LOG_ERROR("PostSend failed, result = {}", send_result);
@@ -125,16 +125,16 @@ DasResult DasVariantVectorByValueProxy::EnsureDataLoaded(uint16_t method_id)
     {
         // External thread path
         constexpr auto kTimeout = std::chrono::milliseconds{30000};
-        GetRunLoop()->RegisterPendingCall(call_key);
+        GetRunLoop().RegisterPendingCall(call_key);
 
-        DasResult send_result = GetRunLoop()->PostSend(header, std::move(body));
+        DasResult send_result = GetRunLoop().PostSend(header, std::move(body));
         if (send_result != DAS_S_OK)
         {
             DAS_CORE_LOG_ERROR("PostSend failed, result = {}", send_result);
             return send_result;
         }
 
-        AwaitResponseSender sender{GetRunLoop(), call_key, kTimeout};
+        AwaitResponseSender sender{&GetRunLoop(), call_key, kTimeout};
         auto                result = stdexec::sync_wait(std::move(sender));
         if (!result)
         {
@@ -297,7 +297,7 @@ DasResult DasVariantVectorByValueProxy::EnsureDataLoaded(uint16_t method_id)
                 || entry.object_id.local_id != 0))
         {
             IDasBase* proxy = GetProxyFactory().GetOrCreateProxy(
-                *GetRunLoop(),
+                GetRunLoop(),
                 GetBusinessThread(),
                 entry.object_id,
                 entry.interface_id);
@@ -333,7 +333,7 @@ DasResult DasVariantVectorByValueProxy::SendWriteBack(
             .SetTargetSessionId(GetObjectId().session_id)
             .Build();
 
-    return GetRunLoop()->PostSend(header, std::move(body));
+    return GetRunLoop().PostSend(header, std::move(body));
 }
 
 // ── Read methods ──────────────────────────────────────────────────────────

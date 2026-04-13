@@ -81,11 +81,11 @@ DasResult IpcCommandHandler::HandleMessage(
 
             // Access shm_pool through run_loop -> connection_manager
             auto& run_loop = ctx.run_loop;
-            auto* conn_mgr = run_loop.GetConnectionManager();
-            if (conn_mgr)
+            if (run_loop.connection_manager_)
             {
+                auto&          conn_mgr = run_loop.GetConnectionManager();
                 ConnectionInfo conn_info;
-                if (DAS::IsOk(conn_mgr->GetConnection(
+                if (DAS::IsOk(conn_mgr.GetConnection(
                         shm_payload.source_session_id,
                         conn_info))
                     && conn_info.shm_pool != nullptr)

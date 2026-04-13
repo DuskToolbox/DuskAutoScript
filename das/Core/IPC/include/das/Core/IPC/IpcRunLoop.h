@@ -287,14 +287,13 @@ public:
      * @brief 获取 ConnectionManager（MainProcess 模式）
      *
      * ConnectionManager 用于管理 HostLauncher 实例。
-     * 在 Host 模式下返回 nullptr。
+     * 在 Host 模式下 connection_manager_ 为空，解引用将导致 UB。
      *
-     * @return ConnectionManager* 指针，生命周期绑定到 this，未初始化返回
-     * nullptr
+     * @return ConnectionManager& 引用，生命周期绑定到 this
      */
-    ConnectionManager* GetConnectionManager() DAS_LIFETIMEBOUND
+    ConnectionManager& GetConnectionManager() DAS_LIFETIMEBOUND
     {
-        return connection_manager_.get();
+        return *connection_manager_;
     }
 
     /**

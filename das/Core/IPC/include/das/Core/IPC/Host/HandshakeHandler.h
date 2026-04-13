@@ -17,6 +17,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -200,10 +201,10 @@ namespace Core
                  * @brief 获取客户端信息
                  *
                  * @param session_id 客户端 session_id
-                 * @return 客户端信息指针，如果不存在返回 nullptr
+                 * @return 客户端信息值拷贝，如果不存在返回 std::nullopt
                  */
-                const ConnectedClient* GetClient(uint16_t session_id) const
-                    DAS_LIFETIMEBOUND;
+                std::optional<ConnectedClient> GetClient(
+                    uint16_t session_id) const;
 
                 /**
                  * @brief 获取所有已连接的客户端

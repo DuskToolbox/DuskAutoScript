@@ -234,16 +234,16 @@ namespace Core
                 return clients_.find(session_id) != clients_.end();
             }
 
-            const ConnectedClient* HandshakeHandler::GetClient(
+            std::optional<ConnectedClient> HandshakeHandler::GetClient(
                 uint16_t session_id) const
             {
                 std::lock_guard<std::mutex> lock(clients_mutex_);
                 auto                        it = clients_.find(session_id);
                 if (it != clients_.end())
                 {
-                    return &it->second;
+                    return it->second;
                 }
-                return nullptr;
+                return std::nullopt;
             }
 
             std::vector<ConnectedClient> HandshakeHandler::GetAllClients() const

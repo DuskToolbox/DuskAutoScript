@@ -213,13 +213,14 @@ namespace Core
                         // 1）
                         if (async_transport_)
                         {
-                            auto* conn_mgr = run_loop_.GetConnectionManager();
-                            if (conn_mgr)
+                            if (run_loop_.connection_manager_)
                             {
+                                auto& conn_mgr =
+                                    run_loop_.GetConnectionManager();
                                 // MainProcess 的 session_id 始终为
                                 // 1（我们发送的目标）
                                 uint16_t main_process_session_id = 1;
-                                auto     result = conn_mgr->RegisterTransport(
+                                auto     result = conn_mgr.RegisterTransport(
                                     main_process_session_id,
                                     async_transport_.get());
                                 if (result != DAS_S_OK)

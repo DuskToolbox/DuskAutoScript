@@ -857,15 +857,16 @@ DasResult IpcRunLoop::RegisterHostLauncher(DasPtr<HostLauncher> launcher)
     }
 
     // Register with ConnectionManager
-    auto* conn_mgr = GetConnectionManager();
-    if (!conn_mgr)
+    if (!connection_manager_)
     {
         DAS_CORE_LOG_ERROR("ConnectionManager not initialized");
         return DAS_E_IPC_NOT_INITIALIZED;
     }
 
+    auto& conn_mgr = GetConnectionManager();
+
     DasResult result =
-        conn_mgr->RegisterHostLauncher(session_id, std::move(launcher));
+        conn_mgr.RegisterHostLauncher(session_id, std::move(launcher));
     if (result != DAS_S_OK)
     {
         return result;
@@ -874,9 +875,7 @@ DasResult IpcRunLoop::RegisterHostLauncher(DasPtr<HostLauncher> launcher)
     // Start async receive for this Transport
     // 注意：从 ConnectionManager 获取 DasPtr 副本，协程会捕获它来保持 transport
     // 存活
-    StartAsyncReceiveForTransport(
-        session_id,
-        conn_mgr->GetLauncher(session_id));
+    StartAsyncReceiveForTransport(session_id, conn_mgr.GetLauncher(session_id));
 
     DAS_CORE_LOG_INFO("HostLauncher registered: session_id={}", session_id);
     return DAS_S_OK;

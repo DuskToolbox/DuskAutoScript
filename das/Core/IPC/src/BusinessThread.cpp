@@ -59,6 +59,9 @@ void BusinessThread::Run()
 
     ScopedCurrentIpcContext scope(&resolve_context_);
 
+    proxy_factory_.GetObjectManager().SetBusinessThreadId(
+        std::this_thread::get_id());
+
     while (running_.load())
     {
         auto msg_opt = inbound_.Pop();

@@ -1,6 +1,7 @@
 #ifndef DAS_CORE_IPC_DISTRIBUTED_OBJECT_MANAGER_H
 #define DAS_CORE_IPC_DISTRIBUTED_OBJECT_MANAGER_H
 
+#include <cassert>
 #include <cstdint>
 #include <das/Core/IPC/IDistributedObjectManager.h>
 #include <das/Core/IPC/IpcErrors.h>
@@ -8,6 +9,7 @@
 #include <das/DasPtr.hpp>
 #include <das/IDasBase.h>
 #include <memory>
+#include <thread>
 #include <unordered_map>
 
 #include <das/Core/IPC/Config.h>
@@ -22,6 +24,8 @@ struct ObjectEntry
     bool                  is_local;   // 决定 UnregisterObject 时是否 Release
 };
 
+// DistributedObjectManager 设计为单线程访问（BusinessThread），
+// Debug 模式通过 assert 校验，不加 mutex。
 class DistributedObjectManager final : public IDistributedObjectManager
 {
 public:
@@ -29,6 +33,8 @@ public:
     ~DistributedObjectManager();
 
     void SetSessionId(uint16_t session_id) { session_id_ = session_id; }
+
+    void SetBusinessThreadId(std::thread::id id) { business_thread_id_ = id; }
 
     DasResult RegisterLocalObject(IDasBase* object_ptr, ObjectId& out_object_id)
         override;
@@ -55,7 +61,17 @@ private:
 
     uint16_t GetLocalSessionId() const;
 
-    uint16_t session_id_ = 0;
+#ifndef NDEBUG
+    void AssertBusinessThread() const
+    {
+        assert(
+            business_thread_id_ != std::thread::id()
+            && std::this_thread::get_id() == business_thread_id_);
+    }
+#endif
+
+    uint16_t        session_id_ = 0;
+    std::thread::id business_thread_id_;
 
     std::unordered_map<ObjectId, ObjectEntry> objects_;
     uint32_t                                  next_local_id_{1};

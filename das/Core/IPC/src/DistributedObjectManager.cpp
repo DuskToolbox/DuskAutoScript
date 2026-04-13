@@ -24,6 +24,9 @@ DasResult DistributedObjectManager::RegisterLocalObject(
     IDasBase* object_ptr,
     ObjectId& out_object_id)
 {
+#ifndef NDEBUG
+    AssertBusinessThread();
+#endif
     if (object_ptr == nullptr)
     {
         return DAS_E_INVALID_POINTER;
@@ -88,6 +91,9 @@ DasResult DistributedObjectManager::RegisterLocalObject(
 DasResult DistributedObjectManager::RegisterRemoteObject(
     const ObjectId& object_id)
 {
+#ifndef NDEBUG
+    AssertBusinessThread();
+#endif
     auto result = ValidateObjectId(object_id);
     if (result != DAS_S_OK)
     {
@@ -107,6 +113,9 @@ DasResult DistributedObjectManager::RegisterRemoteObject(
 
 DasResult DistributedObjectManager::UnregisterObject(const ObjectId& object_id)
 {
+#ifndef NDEBUG
+    AssertBusinessThread();
+#endif
     auto result = ValidateObjectId(object_id);
     if (result != DAS_S_OK)
     {
@@ -149,6 +158,9 @@ DasResult DistributedObjectManager::LookupObject(
     const ObjectId& object_id,
     IDasBase**      object_ptr)
 {
+#ifndef NDEBUG
+    AssertBusinessThread();
+#endif
     if (object_ptr == nullptr)
     {
         return DAS_E_INVALID_POINTER;
@@ -188,6 +200,9 @@ DasResult DistributedObjectManager::LookupObject(
 
 bool DistributedObjectManager::IsValidObject(const ObjectId& object_id) const
 {
+#ifndef NDEBUG
+    AssertBusinessThread();
+#endif
     auto result = ValidateObjectId(object_id);
     if (result != DAS_S_OK)
     {
@@ -214,6 +229,9 @@ bool DistributedObjectManager::IsValidObject(const ObjectId& object_id) const
 
 bool DistributedObjectManager::IsLocalObject(const ObjectId& object_id) const
 {
+#ifndef NDEBUG
+    AssertBusinessThread();
+#endif
     auto result = ValidateObjectId(object_id);
     if (result != DAS_S_OK)
     {
@@ -253,6 +271,9 @@ DasResult DistributedObjectManager::LookupObjectIdFromPtr(
     IDasBase* ptr,
     ObjectId& out_id) const noexcept
 {
+#ifndef NDEBUG
+    AssertBusinessThread();
+#endif
     if (ptr == nullptr)
     {
         return DAS_E_INVALID_POINTER;

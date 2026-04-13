@@ -198,15 +198,15 @@ namespace Core
                 }
 
                 // Get Transport via ConnectionManager
-                auto* conn_mgr = runloop_.GetConnectionManager();
-                if (!conn_mgr)
+                if (!runloop_.connection_manager_)
                 {
                     DAS_CORE_LOG_ERROR(
                         "LoadPluginAsync: No ConnectionManager available");
                     return DAS_E_IPC_NOT_INITIALIZED;
                 }
 
-                auto* transport = conn_mgr->GetTransport(session_id);
+                auto& conn_mgr = runloop_.GetConnectionManager();
+                auto* transport = conn_mgr.GetTransport(session_id);
                 if (!transport)
                 {
                     DAS_CORE_LOG_ERROR(
@@ -264,8 +264,7 @@ namespace Core
 
             DasResult IpcContext::InternalRegisterHostLauncher()
             {
-                auto* conn_mgr = runloop_.GetConnectionManager();
-                if (!conn_mgr)
+                if (!runloop_.connection_manager_)
                 {
                     DAS_CORE_LOG_ERROR(
                         "InternalRegisterHostLauncher: ConnectionManager not initialized");
@@ -285,12 +284,11 @@ namespace Core
 
             std::vector<uint16_t> IpcContext::GetConnectedSessions()
             {
-                auto* conn_mgr = runloop_.GetConnectionManager();
-                if (!conn_mgr)
+                if (!runloop_.connection_manager_)
                 {
                     return {};
                 }
-                return conn_mgr->GetConnectedSessions();
+                return runloop_.GetConnectionManager().GetConnectedSessions();
             }
 
             // ====== C API 实现 ======

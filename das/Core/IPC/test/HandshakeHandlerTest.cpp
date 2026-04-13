@@ -94,10 +94,10 @@ TEST_F(HandshakeHandlerTest, DISABLED_HandleHeartbeat_UpdatesOnlySenderClient)
     ASSERT_EQ(handler_->GetClientCount(), 2u);
 
     // 2. 获取两个客户端的初始心跳时间
-    const ConnectedClient* client1 = handler_->GetClient(2);
-    const ConnectedClient* client2 = handler_->GetClient(3);
-    ASSERT_NE(client1, nullptr);
-    ASSERT_NE(client2, nullptr);
+    auto client1 = handler_->GetClient(2);
+    auto client2 = handler_->GetClient(3);
+    ASSERT_TRUE(client1.has_value());
+    ASSERT_TRUE(client2.has_value());
 
     auto initial_heartbeat_1 = client1->last_heartbeat;
     auto initial_heartbeat_2 = client2->last_heartbeat;
@@ -112,8 +112,8 @@ TEST_F(HandshakeHandlerTest, DISABLED_HandleHeartbeat_UpdatesOnlySenderClient)
     // 4. 验证只有 session_id = 2 的客户端的心跳时间被更新
     client1 = handler_->GetClient(2);
     client2 = handler_->GetClient(3);
-    ASSERT_NE(client1, nullptr);
-    ASSERT_NE(client2, nullptr);
+    ASSERT_TRUE(client1.has_value());
+    ASSERT_TRUE(client2.has_value());
 
     // client1 的时间应该已更新
     EXPECT_GT(client1->last_heartbeat, initial_heartbeat_1);

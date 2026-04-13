@@ -61,7 +61,7 @@ public:
                     .Build();
 
             // PostSend 是 fire-and-forget，不检查结果
-            GetRunLoop()->PostSend(release_header, std::move(release_body));
+            GetRunLoop().PostSend(release_header, std::move(release_body));
         }
     }
 
@@ -154,7 +154,7 @@ public:
         ObjectId new_obj_id = DecodeObjectId(new_object_id);
 
         IDasBase* proxy = proxy_factory_.GetOrCreateProxy(
-            *GetRunLoop(),
+            GetRunLoop(),
             GetBusinessThread(),
             new_obj_id,
             interface_id);

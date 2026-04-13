@@ -9,6 +9,10 @@ DAS_CORE_IPC_NS_BEGIN
 
 /// 分布式对象管理器接口（抽象基类）
 /// 外部调用者通过此接口调用，无需导出 DistributedObjectManager 具体类
+///
+/// @note 生命周期约束：不通过基类指针 delete（无 virtual dtor）。
+///       所有使用方通过引用访问。使用 DestroyIpcContext() 销毁 Context
+///       时会清理 DOM，不需要单独 delete。
 struct IDistributedObjectManager
 {
 
