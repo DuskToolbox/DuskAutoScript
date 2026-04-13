@@ -301,21 +301,6 @@ class IpcProxyGenerator:
             return interface_name[1:]
         return interface_name
 
-    def _is_interface_type(self, type_info: TypeInfo) -> bool:
-        """检查类型是否是接口指针类型
-
-        同时使用 type_kind 和 interface_namespaces 映射进行判断，
-        以处理跨 IDL 文件导入的接口类型（type_kind 可能为 UNKNOWN）。
-        """
-        if not type_info.is_pointer:
-            return False
-        if type_info.type_kind == TypeKind.INTERFACE:
-            return True
-        base_name = type_info.base_type.split("::")[-1]
-        if base_name in self.type_mapper.interface_namespaces:
-            return True
-        return False
-
     def _collect_interface_includes(self, interface: InterfaceDef) -> List[str]:
         """收集接口方法中使用的接口类型的头文件路径
 
@@ -350,12 +335,7 @@ class IpcProxyGenerator:
         includes = set()
 
         def _is_iface_ptr(type_info: TypeInfo) -> bool:
-            if not type_info.is_pointer:
-                return False
-            if type_info.type_kind == TypeKind.INTERFACE:
-                return True
-            base_name = type_info.base_type.split("::")[-1]
-            return base_name in self.type_mapper.interface_namespaces
+            return type_info.is_pointer and type_info.type_kind == TypeKind.INTERFACE
 
         def _iface_name_from_type(type_info: TypeInfo) -> str:
             return type_info.base_type.split("::")[-1]
@@ -633,7 +613,7 @@ class IpcProxyGenerator:
             if bt in self.type_mapper.struct_types:
                 continue  # 基本字段的 struct 是固定的
             # 接口指针：ObjectId 编码为 uint64（8字节）
-            if self._is_interface_type(param.type_info):
+            if param.type_info.type_kind == TypeKind.INTERFACE and param.type_info.is_pointer:
                 continue
             # 未知类型 — 不是固定大小
             return False
@@ -656,7 +636,7 @@ class IpcProxyGenerator:
                 total += self.FIXED_SIZES.get(field_bt, 0)
             return total
         # 接口指针：ObjectId 编码为 uint64
-        if self._is_interface_type(param.type_info):
+        if param.type_info.type_kind == TypeKind.INTERFACE and param.type_info.is_pointer:
             return 8
         return 0
 
@@ -695,8 +675,9 @@ class IpcProxyGenerator:
         # an interface pointer — it's handled separately in _generate_serialize_param
         if param.type_info.base_type == "IDasReadOnlyString":
             return False
-        # 使用 type_kind 和 interface_namespaces 进行类型判断
-        return self._is_interface_type(param.type_info)
+        # 使用 type_kind 进行类型判断
+        return (param.type_info.type_kind == TypeKind.INTERFACE
+                and param.type_info.is_pointer)
 
     def _generate_struct_fill(self, param: ParameterDef, prefix: str, indent: str) -> List[str]:
         """生成 packed struct 字段赋值代码"""
@@ -1032,8 +1013,9 @@ class IpcProxyGenerator:
             lines.append(f"{indent}}}")
             return lines
 
-        # 使用 type_kind 和 interface_namespaces 检测接口类型
-        is_iface = self._is_interface_type(param.type_info)
+        # 使用 type_kind 检测接口类型
+        is_iface = (param.type_info.type_kind == TypeKind.INTERFACE
+                    and param.type_info.is_pointer)
         if is_iface:
             interface_name = param.type_info.base_type.split("::")[-1]
             param_name = param.name
@@ -1121,8 +1103,9 @@ class IpcProxyGenerator:
 
         type_info = self.type_mapper.get_type_info(param.type_info.base_type)
 
-        # Check if this is an interface pointer type using type_kind and interface_namespaces
-        is_interface = self._is_interface_type(param.type_info)
+        # Check if this is an interface pointer type using type_kind
+        is_interface = (param.type_info.type_kind == TypeKind.INTERFACE
+                        and param.type_info.is_pointer)
 
         if is_interface and param.type_info.is_pointer:
             # Get the interface namespace for fully qualified name
