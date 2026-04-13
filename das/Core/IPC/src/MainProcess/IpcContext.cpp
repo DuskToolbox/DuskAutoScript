@@ -33,32 +33,34 @@ namespace Core
 
             IpcContext::IpcContext(bool enable_heartbeat)
             {
-                // 1. Create IpcRunLoop (inbound_queue_ 已在 runloop_
+                // 1. 创建 ProxyFactory（零依赖，最先构造）
+                proxy_factory_.emplace();
+                proxy_factory_->GetObjectManager().SetSessionId(1);
+
+                // 2. Create IpcRunLoop (inbound_queue_ 已在 runloop_
                 // 之前声明并构造)
                 runloop_ = std::make_unique<IpcRunLoop>(
                     enable_heartbeat,
-                    &inbound_queue_);
+                    &inbound_queue_,
+                    *proxy_factory_,
+                    registry_);
 
-                // 2. 主进程 session_id = 1
+                // 3. 主进程 session_id = 1
                 runloop_->SetSessionId(1);
 
-                // 3. Initialize reserved session IDs
+                // 4. Initialize reserved session IDs
                 for (uint16_t reserved_id : reserved_session_ids_)
                 {
                     allocated_ids_[reserved_id] = true;
                 }
 
-                // 4. 创建 ProxyFactory (DistributedObjectManager 绑定
-                // session_id=1)
-                proxy_factory_.emplace(*runloop_, business_thread_);
-                proxy_factory_->GetObjectManager().SetSessionId(1);
-                runloop_->SetProxyFactory(&*proxy_factory_);
-
-                // 5. Create BusinessThread
+                // 5. Create BusinessThread（构造即启动线程）
                 business_thread_ = std::make_shared<BusinessThread>(
                     inbound_queue_,
                     *runloop_,
-                    *this);
+                    *this,
+                    *proxy_factory_,
+                    registry_);
 
                 // 6. 创建并初始化 IpcCommandHandler
                 command_handler_ = IpcCommandHandler::Create(registry_);
@@ -297,12 +299,6 @@ namespace Core
                     return DAS_E_IPC_NOT_INITIALIZED;
                 }
 
-                // 启动业务线程
-                if (business_thread_)
-                {
-                    business_thread_->Start(*proxy_factory_, registry_);
-                }
-
                 return runloop_->Run();
             }
 
@@ -503,8 +499,11 @@ namespace Core
 
                 // Create proxy using unified GetOrCreateProxy (cache +
                 // RegisterRemoteObject)
-                IDasBase* proxy =
-                    proxy_factory_->GetOrCreateProxy(object_id, interface_hash);
+                IDasBase* proxy = proxy_factory_->GetOrCreateProxy(
+                    *runloop_,
+                    business_thread_,
+                    object_id,
+                    interface_hash);
 
                 if (!proxy)
                 {

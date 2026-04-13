@@ -14,30 +14,17 @@ DAS_CORE_IPC_NS_BEGIN
 BusinessThread::BusinessThread(
     IpcMessageQueue<InboundMessage>& inbound,
     IpcRunLoop&                      run_loop,
-    IResolveContext&                 resolve_context)
-    : inbound_(inbound), run_loop_(run_loop), resolve_context_(resolve_context)
+    IResolveContext&                 resolve_context,
+    ProxyFactory&                    proxy_factory,
+    RemoteObjectRegistry&            registry)
+    : inbound_(inbound), run_loop_(run_loop), resolve_context_(resolve_context),
+      proxy_factory_(proxy_factory), registry_(registry)
 {
+    running_.store(true);
+    thread_ = std::thread(&BusinessThread::Run, this);
 }
 
 BusinessThread::~BusinessThread() { Stop(); }
-
-void BusinessThread::Start(
-    ProxyFactory&         proxy_factory,
-    RemoteObjectRegistry& registry)
-{
-    if (running_.load())
-    {
-        return;
-    }
-
-    proxy_factory_ = &proxy_factory;
-    object_manager_ = &proxy_factory.GetObjectManager();
-    registry_ = &registry;
-    running_.store(true);
-    thread_ = std::thread(&BusinessThread::Run, this);
-
-    DAS_CORE_LOG_INFO("BusinessThread started");
-}
 
 void BusinessThread::Stop()
 {
@@ -122,7 +109,7 @@ void BusinessThread::ProcessInboundMessage(InboundMessage& msg)
             header.GetHeaderFlags(),
             header.GetInterfaceId());
 
-        if (handler && object_manager_)
+        if (handler)
         {
             // 创建 IpcResponseSender（业务线程模式）
             IpcResponseSender sender(run_loop_);
@@ -131,11 +118,11 @@ void BusinessThread::ProcessInboundMessage(InboundMessage& msg)
             try
             {
                 StubContext ctx{
-                    *object_manager_,
-                    *registry_,
+                    proxy_factory_.GetObjectManager(),
+                    registry_,
                     run_loop_,
                     weak_from_this(),
-                    *proxy_factory_,
+                    proxy_factory_,
                     header};
                 auto result =
                     handler->HandleMessage(header, msg.body, sender, ctx);

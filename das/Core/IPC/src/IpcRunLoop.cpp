@@ -36,8 +36,11 @@ DAS_CORE_IPC_NS_BEGIN
 
 IpcRunLoop::IpcRunLoop(
     bool                             enable_heartbeat,
-    IpcMessageQueue<InboundMessage>* inbound_queue)
-    : enable_heartbeat_(enable_heartbeat), inbound_queue_(inbound_queue)
+    IpcMessageQueue<InboundMessage>* inbound_queue,
+    ProxyFactory&                    proxy_factory,
+    RemoteObjectRegistry&            registry)
+    : enable_heartbeat_(enable_heartbeat), inbound_queue_(inbound_queue),
+      proxy_factory_(proxy_factory), registry_(registry)
 {
     io_context_ = std::make_unique<boost::asio::io_context>();
     timeout_timer_ = std::make_unique<boost::asio::steady_timer>(*io_context_);
@@ -271,18 +274,14 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
                 header.GetInterfaceId());
             try
             {
-                IpcResponseSender               sender(transport, *this);
-                static DistributedObjectManager null_manager;
-                static RemoteObjectRegistry     null_registry;
-                DistributedObjectManager&       obj_mgr =
-                    proxy_factory_ ? proxy_factory_->GetObjectManager()
-                                   : null_manager;
-                static ProxyFactory null_proxy_factory{
+                IpcResponseSender sender(transport, *this);
+                StubContext       ctx{
+                    proxy_factory_.GetObjectManager(),
+                    registry_,
                     *this,
-                    std::weak_ptr<BusinessThread>{}};
-                ProxyFactory& pf =
-                    proxy_factory_ ? *proxy_factory_ : null_proxy_factory;
-                StubContext ctx{obj_mgr, null_registry, *this, {}, pf, header};
+                    {},
+                    proxy_factory_,
+                    header};
                 auto result = co_await awaitable_handler
                                   ->HandleMessage(header, body, sender, ctx);
                 if (DAS::IsFailed(result))
@@ -318,18 +317,14 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
             header.GetInterfaceId());
         try
         {
-            IpcResponseSender               sender(transport, *this);
-            static DistributedObjectManager null_manager;
-            static RemoteObjectRegistry     null_registry;
-            DistributedObjectManager&       obj_mgr =
-                proxy_factory_ ? proxy_factory_->GetObjectManager()
-                               : null_manager;
-            static ProxyFactory null_proxy_factory{
+            IpcResponseSender sender(transport, *this);
+            StubContext       ctx{
+                proxy_factory_.GetObjectManager(),
+                registry_,
                 *this,
-                std::weak_ptr<BusinessThread>{}};
-            ProxyFactory& pf =
-                proxy_factory_ ? *proxy_factory_ : null_proxy_factory;
-            StubContext ctx{obj_mgr, null_registry, *this, {}, pf, header};
+                {},
+                proxy_factory_,
+                header};
             auto result = handler->HandleMessage(header, body, sender, ctx);
             if (DAS::IsFailed(result))
             {
@@ -596,11 +591,6 @@ bool IpcRunLoop::IsRunning() const { return running_.load(); }
 void IpcRunLoop::SetSessionId(uint16_t session_id)
 {
     local_session_id_ = session_id;
-}
-
-void IpcRunLoop::SetProxyFactory(ProxyFactory* proxy_factory)
-{
-    proxy_factory_ = proxy_factory;
 }
 
 DasResult IpcRunLoop::PostSend(

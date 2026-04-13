@@ -3,7 +3,6 @@
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IPCProxyBase.h>
 #include <das/Core/IPC/IpcErrors.h>
-#include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/ManualProxyRegistry.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/Logger/Logger.h>
@@ -12,18 +11,15 @@
 
 DAS_CORE_IPC_NS_BEGIN
 
-ProxyFactory::ProxyFactory(
-    IpcRunLoop&                   run_loop,
-    std::weak_ptr<BusinessThread> business_thread)
-    : run_loop_(run_loop), business_thread_(std::move(business_thread))
-{
-}
+ProxyFactory::ProxyFactory() = default;
 
 ProxyFactory::~ProxyFactory() = default;
 
 IDasBase* ProxyFactory::GetOrCreateProxy(
-    const ObjectId& object_id,
-    uint32_t        interface_id)
+    IpcRunLoop&                   run_loop,
+    std::weak_ptr<BusinessThread> business_thread,
+    const ObjectId&               object_id,
+    uint32_t                      interface_id)
 {
     std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
     auto it = proxy_cache_.find(EncodeObjectId(object_id));
@@ -39,8 +35,8 @@ IDasBase* ProxyFactory::GetOrCreateProxy(
     IDasBase* proxy = CreateProxyByInterfaceIdWithFallback(
         interface_id,
         object_id,
-        run_loop_,
-        business_thread_,
+        run_loop,
+        std::move(business_thread),
         *this);
 
     if (proxy == nullptr)

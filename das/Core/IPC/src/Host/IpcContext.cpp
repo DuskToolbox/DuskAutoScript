@@ -203,21 +203,22 @@ namespace Core
 
                 // 4. 创建 IpcRunLoop（Host 模式不需要心跳，inbound_queue_ 已在
                 // run_loop_ 之前声明并构造）
-                run_loop_ =
-                    std::make_unique<IpcRunLoop>(false, &inbound_queue_);
+                proxy_factory_.emplace();
+                proxy_factory_->GetObjectManager().SetSessionId(session_id_);
+                run_loop_ = std::make_unique<IpcRunLoop>(
+                    false,
+                    &inbound_queue_,
+                    *proxy_factory_,
+                    registry_);
                 run_loop_->SetSessionId(session_id_);
 
-                // 5. 创建 BusinessThread（必须在 ProxyFactory 之前，
-                //      因为 ProxyFactory 会捕获它的 weak_ptr）
+                // 5. 创建 BusinessThread（构造即启动线程）
                 business_thread_ = std::make_shared<BusinessThread>(
                     inbound_queue_,
                     *run_loop_,
-                    *this);
-
-                // 6. DistributedObjectManager 绑定 IpcRunLoop
-                proxy_factory_.emplace(*run_loop_, business_thread_);
-                proxy_factory_->GetObjectManager().SetSessionId(session_id_);
-                run_loop_->SetProxyFactory(&*proxy_factory_);
+                    *this,
+                    *proxy_factory_,
+                    registry_);
 
                 // 7. 创建 transport（使用 IpcRunLoop 的 io_context）
                 //    使用 CreateUninitialized 创建未初始化的对象，延迟到 Run()
@@ -516,12 +517,6 @@ namespace Core
                 is_running_ = true;
                 StartParentProcessMonitor();
 
-                // 启动业务线程
-                if (business_thread_)
-                {
-                    business_thread_->Start(*proxy_factory_, registry_);
-                }
-
                 auto& io = run_loop_->GetIoContext();
 
                 // post 异步连接任务到 io_context
@@ -794,8 +789,11 @@ namespace Core
 
                 // Create proxy using unified GetOrCreateProxy (cache +
                 // RegisterRemoteObject)
-                IDasBase* proxy =
-                    proxy_factory_->GetOrCreateProxy(object_id, interface_hash);
+                IDasBase* proxy = proxy_factory_->GetOrCreateProxy(
+                    *run_loop_,
+                    business_thread_,
+                    object_id,
+                    interface_hash);
 
                 if (!proxy)
                 {

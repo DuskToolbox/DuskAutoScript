@@ -153,8 +153,11 @@ public:
         // 根据 interface_id 创建对应的 Proxy（走 ProxyFactory 缓存）
         ObjectId new_obj_id = DecodeObjectId(new_object_id);
 
-        IDasBase* proxy =
-            proxy_factory_.GetOrCreateProxy(new_obj_id, interface_id);
+        IDasBase* proxy = proxy_factory_.GetOrCreateProxy(
+            *GetRunLoop(),
+            GetBusinessThread(),
+            new_obj_id,
+            interface_id);
 
         if (proxy == nullptr)
         {

@@ -127,7 +127,11 @@ DasResult DeserializeInInterfaceParam(
 
     // Remote object: create proxy via cache (autogen first, then manual
     // fallback)
-    IDasBase* proxy = proxy_factory.GetOrCreateProxy(id, interface_id);
+    IDasBase* proxy = proxy_factory.GetOrCreateProxy(
+        run_loop,
+        business_thread,
+        id,
+        interface_id);
 
     if (proxy == nullptr)
     {

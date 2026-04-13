@@ -4,7 +4,6 @@
 #include <atomic>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IpcErrors.h>
-#include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
@@ -20,27 +19,20 @@
 DAS_CORE_IPC_NS_BEGIN
 
 class BusinessThread; // forward declaration
+class IpcRunLoop;     // forward declaration
 class IPCProxyBase;   // forward declaration
 /**
  * @brief Proxy 工厂类，统一获取 Proxy 实例的入口
  *
  * 提供统一的 Proxy 实例创建、获取和释放接口
- * 通过构造函数注入依赖，作为 IpcContext 的值成员存在
+ * 零依赖默认构造，作为 IpcContext 的值成员存在
  * 值持有 DistributedObjectManager
  */
 class ProxyFactory
 {
 public:
-    explicit ProxyFactory(
-        IpcRunLoop&                   run_loop,
-        std::weak_ptr<BusinessThread> business_thread);
+    ProxyFactory();
     ~ProxyFactory();
-
-    /**
-     * @brief 获取当前的 IPC 运行循环
-     * @return IpcRunLoop& 运行循环引用
-     */
-    IpcRunLoop& DAS_LIFETIMEBOUND GetRunLoop() const { return run_loop_; }
 
     /**
      * @brief 获取分布式对象管理器
@@ -56,13 +48,17 @@ public:
      * @brief 获取或创建 Proxy 实例（统一入口）
      *
      * 缓存命中时 AddRef 返回现有实例，未命中时创建新 proxy 并注册到缓存
+     * @param run_loop IpcRunLoop 引用（传递给 proxy 构造函数）
+     * @param business_thread BusinessThread weak_ptr（传递给 proxy 构造函数）
      * @param object_id 对象 ID
      * @param interface_id 接口 ID
      * @return Proxy 实例指针（引用计数已+1），失败返回 nullptr
      */
     IDasBase* GetOrCreateProxy(
-        const ObjectId& object_id,
-        uint32_t        interface_id);
+        IpcRunLoop&                   run_loop,
+        std::weak_ptr<BusinessThread> business_thread,
+        const ObjectId&               object_id,
+        uint32_t                      interface_id);
 
     /**
      * @brief 从缓存中移除
@@ -114,12 +110,6 @@ private:
 
     // 分布式对象管理器（值持有）
     DistributedObjectManager object_manager_;
-
-    // IPC运行循环
-    IpcRunLoop& run_loop_;
-
-    // 业务线程（weak_ptr，用于创建 proxy）
-    std::weak_ptr<BusinessThread> business_thread_;
 };
 
 DAS_CORE_IPC_NS_END

@@ -41,6 +41,7 @@ class IAwaitableMessageHandler;
 class ConnectionManager;
 class IpcRunLoop; // Forward declaration for templates
 class ProxyFactory;
+class RemoteObjectRegistry;
 
 namespace Host
 {
@@ -156,10 +157,14 @@ public:
      * @param enable_heartbeat 是否启用心跳线程（调试时可禁用，避免超时杀进程）
      * @param inbound_queue 入站消息队列指针（非持有，由 IpcContext 管理），默认
      * nullptr
+     * @param proxy_factory ProxyFactory 引用（由 IpcContext 持有）
+     * @param registry RemoteObjectRegistry 引用（由 IpcContext 持有）
      */
     explicit IpcRunLoop(
         bool                             enable_heartbeat,
-        IpcMessageQueue<InboundMessage>* inbound_queue = nullptr);
+        IpcMessageQueue<InboundMessage>* inbound_queue,
+        ProxyFactory&                    proxy_factory,
+        RemoteObjectRegistry&            registry);
 
     ~IpcRunLoop();
 
@@ -542,19 +547,13 @@ public:
     /// 通过构造函数注入，不可变
     IpcMessageQueue<InboundMessage>* inbound_queue_ = nullptr;
 
-    /// ProxyFactory 指针（非持有，由 IpcContext 管理）
+    /// ProxyFactory 引用（非持有，由 IpcContext 管理）
     /// 用于传递给控制平面 handler 的 StubContext
-    ProxyFactory* proxy_factory_ = nullptr;
+    ProxyFactory& proxy_factory_;
 
-    /**
-     * @brief 设置 ProxyFactory 指针
-     *
-     * IpcRunLoop 不持有此工厂，仅保存指针用于传递给控制平面 handler。
-     * 控制平面 handler 不使用此参数，但接口需要此参数。
-     *
-     * @param proxy_factory ProxyFactory 指针（IpcContext 持有）
-     */
-    void SetProxyFactory(ProxyFactory* proxy_factory);
+    /// RemoteObjectRegistry 引用（非持有，由 IpcContext 管理）
+    /// 用于传递给控制平面 handler 的 StubContext
+    RemoteObjectRegistry& registry_;
 
 private:
     /// @brief 发送失败时构造失败 RESPONSE 并推入 inbound_queue_

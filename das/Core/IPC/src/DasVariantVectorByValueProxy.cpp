@@ -297,6 +297,8 @@ DasResult DasVariantVectorByValueProxy::EnsureDataLoaded(uint16_t method_id)
                 || entry.object_id.local_id != 0))
         {
             IDasBase* proxy = GetProxyFactory().GetOrCreateProxy(
+                *GetRunLoop(),
+                GetBusinessThread(),
                 entry.object_id,
                 entry.interface_id);
             if (proxy != nullptr)

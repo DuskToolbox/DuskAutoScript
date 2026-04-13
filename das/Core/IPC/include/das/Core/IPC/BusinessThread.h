@@ -24,14 +24,19 @@ class BusinessThread : public std::enable_shared_from_this<BusinessThread>
 {
 public:
     /**
-     * @brief 构造函数
+     * @brief 构造函数（构造即启动线程）
      * @param inbound 入站消息队列（IpcContext 持有）
      * @param run_loop IpcRunLoop 引用（用于 PostSend 和 CompletePendingCall）
+     * @param resolve_context IResolveContext 引用（用于绑定 g_current_context）
+     * @param proxy_factory ProxyFactory 引用（由 IpcContext 持有）
+     * @param registry RemoteObjectRegistry 引用（由 IpcContext 持有）
      */
     BusinessThread(
         IpcMessageQueue<InboundMessage>& inbound,
         IpcRunLoop&                      run_loop,
-        IResolveContext&                 resolve_context);
+        IResolveContext&                 resolve_context,
+        ProxyFactory&                    proxy_factory,
+        RemoteObjectRegistry&            registry);
 
     ~BusinessThread();
 
@@ -42,13 +47,6 @@ public:
     // 禁用移动（因为有引用成员）
     BusinessThread(BusinessThread&&) = delete;
     BusinessThread& operator=(BusinessThread&&) = delete;
-
-    /**
-     * @brief 启动业务线程
-     * @param proxy_factory ProxyFactory 引用（由 IpcContext 传入）
-     * @param registry RemoteObjectRegistry 引用（由 IpcContext 传入）
-     */
-    void Start(ProxyFactory& proxy_factory, RemoteObjectRegistry& registry);
 
     /**
      * @brief 停止业务线程
@@ -107,14 +105,11 @@ private:
     /// IResolveContext 引用（用于绑定 g_current_context）
     IResolveContext& resolve_context_;
 
-    /// ProxyFactory 指针（由 Start() 设置）
-    ProxyFactory* proxy_factory_ = nullptr;
+    /// ProxyFactory 引用（由构造函数注入）
+    ProxyFactory& proxy_factory_;
 
-    /// DistributedObjectManager 指针（由 Start() 从 ProxyFactory 获取）
-    DistributedObjectManager* object_manager_ = nullptr;
-
-    /// RemoteObjectRegistry 指针（由 Start() 设置）
-    RemoteObjectRegistry* registry_ = nullptr;
+    /// RemoteObjectRegistry 引用（由构造函数注入）
+    RemoteObjectRegistry& registry_;
 
     /// 业务线程
     std::thread thread_;
