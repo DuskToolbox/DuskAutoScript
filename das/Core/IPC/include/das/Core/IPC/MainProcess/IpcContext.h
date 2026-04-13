@@ -109,15 +109,17 @@ namespace Core
                 /// 入站消息队列（值成员）-- 在 runloop_ 之前声明，确保先初始化
                 IpcMessageQueue<InboundMessage> inbound_queue_{1024};
 
-                /// IPC 运行循环
-                std::unique_ptr<IpcRunLoop> runloop_;
+                /// Proxy 工厂（值持有 DistributedObjectManager，optional 因为
+                /// ProxyFactory 引用非默认可构造）
+                /// 必须在 runloop_ 之前声明（IpcRunLoop 构造需要
+                /// ProxyFactory&）
+                std::optional<ProxyFactory> proxy_factory_;
+
+                /// IPC 运行循环（值成员，构造即初始化）
+                IpcRunLoop runloop_;
 
                 /// 业务线程
                 std::shared_ptr<BusinessThread> business_thread_;
-
-                /// Proxy 工厂（值持有 DistributedObjectManager，optional 因为
-                /// ProxyFactory 引用非默认可构造）
-                std::optional<ProxyFactory> proxy_factory_;
 
                 /// Internal holder for created launcher (DasPtr for refcount
                 /// management)

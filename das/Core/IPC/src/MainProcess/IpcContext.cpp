@@ -32,52 +32,46 @@ namespace Core
             // ====== IpcContext 实现（RAII 风格，无 pimpl）======
 
             IpcContext::IpcContext(bool enable_heartbeat)
+                : proxy_factory_(std::in_place), runloop_(
+                                                     enable_heartbeat,
+                                                     &inbound_queue_,
+                                                     *proxy_factory_,
+                                                     registry_)
             {
-                // 1. 创建 ProxyFactory（零依赖，最先构造）
-                proxy_factory_.emplace();
+                // 1. 设置 session_id
                 proxy_factory_->GetObjectManager().SetSessionId(1);
+                runloop_.SetSessionId(1);
 
-                // 2. Create IpcRunLoop (inbound_queue_ 已在 runloop_
-                // 之前声明并构造)
-                runloop_ = std::make_unique<IpcRunLoop>(
-                    enable_heartbeat,
-                    &inbound_queue_,
-                    *proxy_factory_,
-                    registry_);
-
-                // 3. 主进程 session_id = 1
-                runloop_->SetSessionId(1);
-
-                // 4. Initialize reserved session IDs
+                // 2. Initialize reserved session IDs
                 for (uint16_t reserved_id : reserved_session_ids_)
                 {
                     allocated_ids_[reserved_id] = true;
                 }
 
-                // 5. Create BusinessThread（构造即启动线程）
+                // 3. Create BusinessThread（构造即启动线程）
                 business_thread_ = std::make_shared<BusinessThread>(
                     inbound_queue_,
-                    *runloop_,
+                    runloop_,
                     *this,
                     *proxy_factory_,
                     registry_);
 
-                // 6. 创建并初始化 IpcCommandHandler
+                // 4. 创建并初始化 IpcCommandHandler
                 command_handler_ = IpcCommandHandler::Create(registry_);
                 command_handler_->SetSessionId(1);
 
-                // 7. 注册 LOOKUP_BY_INTERFACE 到 IpcRunLoop
-                runloop_->RegisterHandler(
+                // 5. 注册 LOOKUP_BY_INTERFACE 到 IpcRunLoop
+                runloop_.RegisterHandler(
                     HeaderFlags::BUSINESS_CONTROL,
                     static_cast<uint32_t>(IpcCommandType::LOOKUP_BY_INTERFACE),
                     command_handler_.Get());
 
-                runloop_->RegisterHandler(
+                runloop_.RegisterHandler(
                     HeaderFlags::BUSINESS_CONTROL,
                     static_cast<uint32_t>(IpcCommandType::REMOTE_RELEASE),
                     command_handler_.Get());
 
-                runloop_->RegisterHandler(
+                runloop_.RegisterHandler(
                     HeaderFlags::BUSINESS_CONTROL,
                     static_cast<uint32_t>(IpcCommandType::RELEASE_SHM_BLOCK),
                     command_handler_.Get());
@@ -113,14 +107,10 @@ namespace Core
                 }
 
                 // 3. 停止 IO 线程
-                if (runloop_)
-                {
-                    runloop_->RequestStop();
-                    runloop_.reset();
-                }
+                runloop_.RequestStop();
 
-                // proxy_factory_ is optional value member, automatically
-                // destructed
+                // runloop_ 是值成员，析构时自动清理
+                // proxy_factory_ 是 optional 值成员，自动析构
             }
 
             ProxyFactory& IpcContext::GetProxyFactory()
@@ -130,11 +120,7 @@ namespace Core
 
             boost::asio::io_context& IpcContext::GetIoContext()
             {
-                if (!runloop_)
-                {
-                    throw std::runtime_error("IpcContext not initialized");
-                }
-                return runloop_->GetIoContext();
+                return runloop_.GetIoContext();
             }
 
             DasResult IpcContext::CreateHostLauncher(
@@ -178,7 +164,7 @@ namespace Core
 
             void IpcContext::PostCallback(IDasAsyncCallback* callback)
             {
-                if (!callback || !runloop_)
+                if (!callback)
                 {
                     return;
                 }
@@ -186,7 +172,7 @@ namespace Core
                 // DasPtr 在 post 之前获取所有权（AddRef），保证生命周期安全
                 DasPtr<IDasAsyncCallback> ptr(callback);
                 boost::asio::post(
-                    runloop_->GetIoContext(),
+                    runloop_.GetIoContext(),
                     [ptr = std::move(ptr)]() { ptr->Do(); });
             }
 
@@ -211,15 +197,8 @@ namespace Core
                     return DAS_E_IPC_NOT_INITIALIZED;
                 }
 
-                if (!runloop_)
-                {
-                    DAS_CORE_LOG_ERROR(
-                        "LoadPluginAsync: IpcRunLoop not initialized");
-                    return DAS_E_IPC_NOT_INITIALIZED;
-                }
-
                 // Get Transport via ConnectionManager
-                auto* conn_mgr = runloop_->GetConnectionManager();
+                auto* conn_mgr = runloop_.GetConnectionManager();
                 if (!conn_mgr)
                 {
                     DAS_CORE_LOG_ERROR(
@@ -256,7 +235,7 @@ namespace Core
                     session_id);
 
                 // 4. 发送异步请求（使用指定 transport）
-                auto sender = runloop_->SendMessageAsync(
+                auto sender = runloop_.SendMessageAsync(
                     transport,
                     header,
                     payload.data(),
@@ -278,33 +257,14 @@ namespace Core
             {
                 ScopedCurrentIpcContext scope(this);
 
-                if (!runloop_)
-                {
-                    DAS_CORE_LOG_ERROR("Run: IpcRunLoop not initialized");
-                    return DAS_E_IPC_NOT_INITIALIZED;
-                }
-
-                return runloop_->Run();
+                return runloop_.Run();
             }
 
-            void IpcContext::RequestStop()
-            {
-                if (runloop_)
-                {
-                    runloop_->RequestStop();
-                }
-            }
+            void IpcContext::RequestStop() { runloop_.RequestStop(); }
 
             DasResult IpcContext::InternalRegisterHostLauncher()
             {
-                if (!runloop_)
-                {
-                    DAS_CORE_LOG_ERROR(
-                        "InternalRegisterHostLauncher: IpcRunLoop not initialized");
-                    return DAS_E_IPC_NOT_INITIALIZED;
-                }
-
-                auto* conn_mgr = runloop_->GetConnectionManager();
+                auto* conn_mgr = runloop_.GetConnectionManager();
                 if (!conn_mgr)
                 {
                     DAS_CORE_LOG_ERROR(
@@ -320,16 +280,12 @@ namespace Core
                 }
 
                 // Use internally stored DasPtr for registration
-                return runloop_->RegisterHostLauncher(launcher_);
+                return runloop_.RegisterHostLauncher(launcher_);
             }
 
             std::vector<uint16_t> IpcContext::GetConnectedSessions()
             {
-                if (!runloop_)
-                {
-                    return {};
-                }
-                auto* conn_mgr = runloop_->GetConnectionManager();
+                auto* conn_mgr = runloop_.GetConnectionManager();
                 if (!conn_mgr)
                 {
                     return {};
@@ -470,10 +426,10 @@ namespace Core
                 }
                 *pp_out = nullptr;
 
-                if (!runloop_ || !business_thread_)
+                if (!business_thread_)
                 {
                     DAS_CORE_LOG_ERROR(
-                        "CreateRemoteProxy: IpcRunLoop or BusinessThread not initialized");
+                        "CreateRemoteProxy: BusinessThread not initialized");
                     return DAS_E_IPC_NOT_INITIALIZED;
                 }
 
@@ -485,7 +441,7 @@ namespace Core
                 // Create proxy using unified GetOrCreateProxy (cache +
                 // RegisterRemoteObject)
                 IDasBase* proxy = proxy_factory_->GetOrCreateProxy(
-                    *runloop_,
+                    runloop_,
                     business_thread_,
                     object_id,
                     interface_hash);
@@ -565,7 +521,7 @@ namespace Core
                 //    RemoteObjectRegistry::RegisterObject requires non-empty
                 //    name
                 auto name = DAS::fmt::format("{}", iid);
-                auto session_id = runloop_->GetSessionId();
+                auto session_id = runloop_.GetSessionId();
                 result =
                     registry_.RegisterObject(obj_id, iid, session_id, name);
 
