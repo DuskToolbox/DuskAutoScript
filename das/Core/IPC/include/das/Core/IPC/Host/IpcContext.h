@@ -116,12 +116,6 @@ namespace Core
                 DasResult UnregisterService(const DasGuid& iid) override;
 
             private:
-                void Uninitialize();
-
-                DasResult Initialize();
-                DasResult InitializeAsHost();
-                DasResult CreateHostResources();
-
                 boost::asio::awaitable<void> ReceiveLoopCoroutine();
 
                 void StartParentProcessMonitor();
@@ -151,7 +145,6 @@ namespace Core
                 std::unique_ptr<SharedMemoryPool>         shared_memory_;
                 std::unique_ptr<DefaultAsyncIpcTransport> async_transport_;
 
-                bool is_initialized_ = false;
                 bool is_connected_ = false;
                 bool is_running_ = false;
 

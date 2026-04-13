@@ -28,6 +28,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <stdexcept>
 #include <thread>
 
 #ifdef _WIN32
@@ -116,70 +117,28 @@ namespace Core
             IpcContext::IpcContext(const IpcContextConfig& config)
                 : config_(config)
             {
-                Initialize();
-            }
-
-            IpcContext::~IpcContext() { Uninitialize(); }
-
-            DasResult IpcContext::Initialize()
-            {
                 // 获取当前进程 PID
                 host_pid_ =
                     static_cast<uint32_t>(boost::process::v2::current_pid());
 
-                // 如果 config_.main_pid == 0，返回错误
                 if (config_.main_pid == 0)
                 {
-                    DAS_LOG_ERROR(
+                    throw std::invalid_argument(
                         "IpcContext: main_pid 不能为 0，必须连接主进程");
-                    return DAS_E_INVALID_ARGUMENT;
                 }
 
                 main_pid_ = config_.main_pid;
+
                 std::string msg = DAS_FMT_NS::format(
                     "IpcContext: Host 模式初始化，main_pid={}, host_pid={}",
                     main_pid_,
                     host_pid_);
                 DAS_LOG_INFO(msg.c_str());
-                return InitializeAsHost();
-            }
-
-            DasResult IpcContext::InitializeAsHost()
-            {
-                DasResult result = DAS_S_OK;
 
                 // session_id 初始为 0，握手时由 HandshakeHandler 分配
                 session_id_ = 0;
 
-                std::string msg = DAS_FMT_NS::format(
-                    "IpcContext: Host 模式初始化，main_pid={}, host_pid={}, session_id=待分配",
-                    main_pid_,
-                    host_pid_);
-                DAS_LOG_INFO(msg.c_str());
-
-                // 创建 Host 资源
-                result = CreateHostResources();
-                if (result != DAS_S_OK)
-                {
-                    std::string err_msg = DAS_FMT_NS::format(
-                        "IpcContext: 创建 Host 资源失败，result=0x{:08X}",
-                        result);
-                    DAS_LOG_ERROR(err_msg.c_str());
-                    return result;
-                }
-
-                is_initialized_ = true;
-                msg = DAS_FMT_NS::format(
-                    "IpcContext: Host 模式初始化完成，等待主进程连接分配 session_id");
-                DAS_LOG_INFO(msg.c_str());
-                return DAS_S_OK;
-            }
-
-            DasResult IpcContext::CreateHostResources()
-            {
-                // 1. DistributedObjectManager 现在是值成员，无需创建
-
-                // 2. 创建 Host 专用队列名称（新格式）
+                // 创建 Host 专用队列名称（新格式）
                 host_read_queue_ =
                     MakeMessageQueueName(main_pid_, host_pid_, true);
                 host_write_queue_ =
@@ -189,19 +148,19 @@ namespace Core
                 std::string shm_name =
                     MakeSharedMemoryName(main_pid_, host_pid_);
 
-                std::string msg = DAS_FMT_NS::format(
+                msg = DAS_FMT_NS::format(
                     "IpcContext: Creating Host resources (async mode), M2H={}, H2M={}, SHM={}",
                     host_read_queue_,
                     host_write_queue_,
                     shm_name);
                 DAS_LOG_INFO(msg.c_str());
 
-                // 3. 初始化 SharedMemoryPool
+                // 初始化 SharedMemoryPool
                 shared_memory_ = std::make_unique<SharedMemoryPool>(
                     shm_name,
                     DEFAULT_SHARED_MEMORY_SIZE);
 
-                // 4. 创建 IpcRunLoop（Host 模式不需要心跳，inbound_queue_ 已在
+                // 创建 IpcRunLoop（Host 模式不需要心跳，inbound_queue_ 已在
                 // run_loop_ 之前声明并构造）
                 proxy_factory_.emplace();
                 proxy_factory_->GetObjectManager().SetSessionId(session_id_);
@@ -212,7 +171,7 @@ namespace Core
                     registry_);
                 run_loop_->SetSessionId(session_id_);
 
-                // 5. 创建 BusinessThread（构造即启动线程）
+                // 创建 BusinessThread（构造即启动线程）
                 business_thread_ = std::make_shared<BusinessThread>(
                     inbound_queue_,
                     *run_loop_,
@@ -220,33 +179,29 @@ namespace Core
                     *proxy_factory_,
                     registry_);
 
-                // 7. 创建 transport（使用 IpcRunLoop 的 io_context）
-                //    使用 CreateUninitialized 创建未初始化的对象，延迟到 Run()
-                //    时异步连接
+                // 创建 transport（使用 IpcRunLoop 的 io_context）
+                // 使用 CreateUninitialized 创建未初始化的对象，延迟到 Run()
+                // 时异步连接
                 async_transport_ =
                     DefaultAsyncIpcTransport::CreateUninitialized(
                         run_loop_->GetIoContext());
                 async_transport_->SetSharedMemoryPool(shared_memory_.get());
 
-                // 8. 创建并初始化 IpcCommandHandler
+                // 创建并初始化 IpcCommandHandler
                 command_handler_ = IpcCommandHandler::Create(registry_);
                 command_handler_->SetSessionId(session_id_);
 
-                // 9. 创建 HandshakeHandler（使用 DasPtr 管理生命周期）
+                // 创建 HandshakeHandler（使用 DasPtr 管理生命周期）
                 handshake_handler_ = HandshakeHandler::Create(session_id_);
                 if (!handshake_handler_)
                 {
-                    std::string err_msg = DAS_FMT_NS::format(
+                    throw std::runtime_error(
                         "IpcContext: HandshakeHandler::Create failed");
-                    DAS_LOG_ERROR(err_msg.c_str());
-                    async_transport_.reset();
-                    run_loop_.reset();
-                    return DAS_E_FAIL;
                 }
 
-                // 10. 设置 HandshakeHandler 的客户端连接回调
-                //    握手完成后，同步 session_id 到 IpcCommandHandler 和
-                //    IpcRunLoop，并注册 transport 到 ConnectionManager
+                // 设置 HandshakeHandler 的客户端连接回调
+                // 握手完成后，同步 session_id 到 IpcCommandHandler 和
+                // IpcRunLoop，并注册 transport 到 ConnectionManager
                 handshake_handler_->SetOnClientConnected(
                     [this](const ConnectedClient& client)
                     {
@@ -317,7 +272,7 @@ namespace Core
                         }
                     });
 
-                // 9. 注册消息处理器
+                // 注册消息处理器
                 // HandshakeHandler 处理所有控制平面消息（协程版本）
                 // 注册为 CONTROL_PLANE 标志，按 interface_id 路由
                 // HELLO (interface_id=1)
@@ -357,18 +312,13 @@ namespace Core
                     static_cast<uint32_t>(IpcCommandType::RELEASE_SHM_BLOCK),
                     command_handler_.Get());
 
+                msg = DAS_FMT_NS::format(
+                    "IpcContext: Host 模式初始化完成，等待主进程连接分配 session_id");
                 DAS_LOG_INFO(msg.c_str());
-
-                return DAS_S_OK;
             }
 
-            void IpcContext::Uninitialize()
+            IpcContext::~IpcContext()
             {
-                if (!is_initialized_)
-                {
-                    return;
-                }
-
                 // 停止父进程监控线程
                 StopParentProcessMonitor();
 
@@ -391,12 +341,12 @@ namespace Core
 
                 // 4. 关闭 transport（会导致 ReceiveCoroutine() 抛出
                 // operation_aborted）
-                //    unique_ptr 析构会自动调用 Uninitialize()
+                //    unique_ptr 析构会自动调用 Cleanup()
                 //    此时 io_context 已停止，AsyncMutex 析构是安全的
                 async_transport_.reset();
 
                 // 5. 关闭 IpcRunLoop（RAII：unique_ptr 析构自动调用
-                // Uninitialize）
+                // Cleanup）
                 //    必须在关闭 HandshakeHandler 之前，因为 handlers_by_flags_
                 //    中存储的 DasPtr 会调用 handler->Release()
                 run_loop_.reset();
@@ -411,7 +361,6 @@ namespace Core
 
                 // 8. proxy_factory_ 是 optional 值成员，自动析构
 
-                is_initialized_ = false;
                 is_connected_ = false;
             }
 
@@ -503,11 +452,6 @@ namespace Core
             DasResult IpcContext::Run()
             {
                 ScopedCurrentIpcContext scope(this);
-
-                if (!is_initialized_)
-                {
-                    return DAS_E_FAIL;
-                }
 
                 if (is_running_)
                 {
