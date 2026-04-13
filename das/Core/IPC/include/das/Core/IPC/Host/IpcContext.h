@@ -130,19 +130,26 @@ namespace Core
                 /// 入站消息队列（值成员）-- 在 run_loop_ 之前声明，确保先初始化
                 IpcMessageQueue<InboundMessage> inbound_queue_{1024};
 
-                /// IPC 运行循环
-                std::unique_ptr<IpcRunLoop> run_loop_;
+                /// Proxy 工厂（值持有 DistributedObjectManager，optional 因为
+                /// ProxyFactory 引用非默认可构造）
+                /// 必须在 run_loop_ 之前声明（IpcRunLoop 构造需要
+                /// ProxyFactory&）
+                std::optional<ProxyFactory> proxy_factory_;
+
+                /// IPC 运行循环（值成员，构造即初始化）
+                IpcRunLoop run_loop_;
 
                 /// 业务线程
                 std::shared_ptr<BusinessThread> business_thread_;
 
-                /// Proxy 工厂（值持有 DistributedObjectManager，optional 因为
-                /// ProxyFactory 引用非默认可构造）
-                std::optional<ProxyFactory> proxy_factory_;
+                DasPtr<IpcCommandHandler> command_handler_;
+                DasPtr<HandshakeHandler>  handshake_handler_;
 
-                DasPtr<IpcCommandHandler>                 command_handler_;
-                DasPtr<HandshakeHandler>                  handshake_handler_;
-                std::unique_ptr<SharedMemoryPool>         shared_memory_;
+                /// 共享内存池（optional，因为 shm_name 在构造函数体中计算）
+                std::optional<SharedMemoryPool> shared_memory_;
+
+                /// 异步传输层（unique_ptr，因为 Transport 构造函数是私有的，
+                /// 只能通过 CreateUninitialized 工厂方法创建，无法原地构造）
                 std::unique_ptr<DefaultAsyncIpcTransport> async_transport_;
 
                 bool is_connected_ = false;

@@ -15,6 +15,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -486,7 +487,7 @@ public:
     /// work guard 保持 io_context 运行（确保 Run() 阻塞直到 RequestStop()）
     using WorkGuard = boost::asio::executor_work_guard<
         boost::asio::io_context::executor_type>;
-    std::unique_ptr<WorkGuard> work_guard_;
+    std::optional<WorkGuard> work_guard_;
 
     /// 消息处理器映射（按 header_flags + interface_id 索引）
     std::unordered_map<

@@ -115,7 +115,8 @@ namespace Core
             // ====== IpcContext 实现（无 pimpl）======
 
             IpcContext::IpcContext(const IpcContextConfig& config)
-                : config_(config)
+                : config_(config), proxy_factory_(std::in_place),
+                  run_loop_(false, &inbound_queue_, *proxy_factory_, registry_)
             {
                 // 获取当前进程 PID
                 host_pid_ =
@@ -155,26 +156,16 @@ namespace Core
                     shm_name);
                 DAS_LOG_INFO(msg.c_str());
 
-                // 初始化 SharedMemoryPool
-                shared_memory_ = std::make_unique<SharedMemoryPool>(
-                    shm_name,
-                    DEFAULT_SHARED_MEMORY_SIZE);
+                // 初始化 SharedMemoryPool（optional，因为 shm_name 在此处计算）
+                shared_memory_.emplace(shm_name, DEFAULT_SHARED_MEMORY_SIZE);
 
-                // 创建 IpcRunLoop（Host 模式不需要心跳，inbound_queue_ 已在
-                // run_loop_ 之前声明并构造）
-                proxy_factory_.emplace();
                 proxy_factory_->GetObjectManager().SetSessionId(session_id_);
-                run_loop_ = std::make_unique<IpcRunLoop>(
-                    false,
-                    &inbound_queue_,
-                    *proxy_factory_,
-                    registry_);
-                run_loop_->SetSessionId(session_id_);
+                run_loop_.SetSessionId(session_id_);
 
                 // 创建 BusinessThread（构造即启动线程）
                 business_thread_ = std::make_shared<BusinessThread>(
                     inbound_queue_,
-                    *run_loop_,
+                    run_loop_,
                     *this,
                     *proxy_factory_,
                     registry_);
@@ -184,8 +175,8 @@ namespace Core
                 // 时异步连接
                 async_transport_ =
                     DefaultAsyncIpcTransport::CreateUninitialized(
-                        run_loop_->GetIoContext());
-                async_transport_->SetSharedMemoryPool(shared_memory_.get());
+                        run_loop_.GetIoContext());
+                async_transport_->SetSharedMemoryPool(&*shared_memory_);
 
                 // 创建并初始化 IpcCommandHandler
                 command_handler_ = IpcCommandHandler::Create(registry_);
@@ -210,10 +201,7 @@ namespace Core
                         {
                             command_handler_->SetSessionId(client.session_id);
                         }
-                        if (run_loop_)
-                        {
-                            run_loop_->SetSessionId(client.session_id);
-                        }
+                        run_loop_.SetSessionId(client.session_id);
                         if (proxy_factory_)
                         {
                             proxy_factory_->GetObjectManager().SetSessionId(
@@ -223,9 +211,9 @@ namespace Core
                         // 注册 Host 的 transport 到 ConnectionManager，以便
                         // PostSend 可以将响应路由到 MainProcess（session_id =
                         // 1）
-                        if (run_loop_ && async_transport_)
+                        if (async_transport_)
                         {
-                            auto* conn_mgr = run_loop_->GetConnectionManager();
+                            auto* conn_mgr = run_loop_.GetConnectionManager();
                             if (conn_mgr)
                             {
                                 // MainProcess 的 session_id 始终为
@@ -266,9 +254,9 @@ namespace Core
                             "IpcContext: 收到 GOODBYE，请求退出");
                         DAS_LOG_INFO(msg.c_str());
 
-                        if (run_loop_)
+                        if (run_loop_.IsRunning())
                         {
-                            run_loop_->RequestStop();
+                            run_loop_.RequestStop();
                         }
                     });
 
@@ -276,38 +264,38 @@ namespace Core
                 // HandshakeHandler 处理所有控制平面消息（协程版本）
                 // 注册为 CONTROL_PLANE 标志，按 interface_id 路由
                 // HELLO (interface_id=1)
-                run_loop_->RegisterHandler(
+                run_loop_.RegisterHandler(
                     HeaderFlags::CONTROL_PLANE,
                     static_cast<uint32_t>(
                         HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO),
                     handshake_handler_.Get());
                 // READY (interface_id=3)
-                run_loop_->RegisterHandler(
+                run_loop_.RegisterHandler(
                     HeaderFlags::CONTROL_PLANE,
                     static_cast<uint32_t>(
                         HandshakeInterfaceId::HANDSHAKE_IFACE_READY),
                     handshake_handler_.Get());
                 // HEARTBEAT (interface_id=6)
-                run_loop_->RegisterHandler(
+                run_loop_.RegisterHandler(
                     HeaderFlags::CONTROL_PLANE,
                     static_cast<uint32_t>(
                         HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT),
                     handshake_handler_.Get());
                 // GOODBYE (interface_id=7)
-                run_loop_->RegisterHandler(
+                run_loop_.RegisterHandler(
                     HeaderFlags::CONTROL_PLANE,
                     static_cast<uint32_t>(
                         HandshakeInterfaceId::HANDSHAKE_IFACE_GOODBYE),
                     handshake_handler_.Get());
 
                 // REMOTE_RELEASE (fire-and-forget EVENT)
-                run_loop_->RegisterHandler(
+                run_loop_.RegisterHandler(
                     HeaderFlags::BUSINESS_CONTROL,
                     static_cast<uint32_t>(IpcCommandType::REMOTE_RELEASE),
                     command_handler_.Get());
 
                 // RELEASE_SHM_BLOCK (fire-and-forget EVENT)
-                run_loop_->RegisterHandler(
+                run_loop_.RegisterHandler(
                     HeaderFlags::BUSINESS_CONTROL,
                     static_cast<uint32_t>(IpcCommandType::RELEASE_SHM_BLOCK),
                     command_handler_.Get());
@@ -334,10 +322,7 @@ namespace Core
 
                 // 3. 停止事件循环（必须在 transport 析构之前）
                 //    确保 io_context 已停止，这样 AsyncMutex 析构时走安全路径
-                if (run_loop_)
-                {
-                    run_loop_->RequestStop();
-                }
+                run_loop_.RequestStop();
 
                 // 4. 关闭 transport（会导致 ReceiveCoroutine() 抛出
                 // operation_aborted）
@@ -345,18 +330,16 @@ namespace Core
                 //    此时 io_context 已停止，AsyncMutex 析构是安全的
                 async_transport_.reset();
 
-                // 5. 关闭 IpcRunLoop（RAII：unique_ptr 析构自动调用
-                // Cleanup）
+                // 5. IpcRunLoop 是值成员，析构时自动清理
                 //    必须在关闭 HandshakeHandler 之前，因为 handlers_by_flags_
                 //    中存储的 DasPtr 会调用 handler->Release()
-                run_loop_.reset();
 
                 // 6. HandshakeHandler 和 CommandHandler 使用 DasPtr 管理
                 //    析构时自动减少引用计数，无需手动 reset
                 //    注意：必须确保 run_loop_ 先析构，这样 handlers_ 中的
                 //    DasPtr 会先释放
 
-                // 7. 关闭 SharedMemoryPool
+                // 7. 关闭 SharedMemoryPool（optional，reset 清除）
                 shared_memory_.reset();
 
                 // 8. proxy_factory_ 是 optional 值成员，自动析构
@@ -390,10 +373,7 @@ namespace Core
                                 DAS_LOG_INFO(msg.c_str());
 
                                 // 请求 RunLoop 停止
-                                if (run_loop_)
-                                {
-                                    run_loop_->RequestStop();
-                                }
+                                run_loop_.RequestStop();
                                 break;
                             }
 
@@ -423,7 +403,7 @@ namespace Core
                 }
             }
 
-            IpcRunLoop& IpcContext::GetRunLoop() { return *run_loop_; }
+            IpcRunLoop& IpcContext::GetRunLoop() { return run_loop_; }
 
             IpcCommandHandler& IpcContext::GetCommandHandler()
             {
@@ -443,7 +423,7 @@ namespace Core
                     static_cast<IpcCommandType>(cmd_type),
                     handler);
                 // IpcContext 同时拥有 run_loop_ 和 command_handler_，由它注册
-                run_loop_->RegisterHandler(
+                run_loop_.RegisterHandler(
                     HeaderFlags::BUSINESS_CONTROL,
                     cmd_type,
                     command_handler_.Get());
@@ -461,7 +441,7 @@ namespace Core
                 is_running_ = true;
                 StartParentProcessMonitor();
 
-                auto& io = run_loop_->GetIoContext();
+                auto& io = run_loop_.GetIoContext();
 
                 // post 异步连接任务到 io_context
                 // 这样连接操作会在 io_context 开始运行后执行
@@ -496,7 +476,7 @@ namespace Core
                                         DAS_CORE_LOG_ERROR(
                                             "Host: connect failed: 0x{:08X}",
                                             result);
-                                        run_loop_->RequestStop();
+                                        run_loop_.RequestStop();
                                         co_return;
                                     }
 
@@ -511,21 +491,21 @@ namespace Core
                                     DAS_CORE_LOG_ERROR(
                                         "Host: system_error: {}",
                                         ToString(e.what()));
-                                    run_loop_->RequestStop();
+                                    run_loop_.RequestStop();
                                 }
                                 catch (const std::exception& e)
                                 {
                                     DAS_CORE_LOG_ERROR(
                                         "Host: exception: {}",
                                         ToString(e.what()));
-                                    run_loop_->RequestStop();
+                                    run_loop_.RequestStop();
                                 }
                             },
                             boost::asio::detached);
                     });
 
                 // 运行 io_context（连接任务已 post）
-                DasResult result = run_loop_->Run();
+                DasResult result = run_loop_.Run();
 
                 is_running_ = false;
                 StopParentProcessMonitor();
@@ -535,9 +515,9 @@ namespace Core
             boost::asio::awaitable<void> IpcContext::ReceiveLoopCoroutine()
             {
                 DAS_CORE_LOG_INFO(
-                    "ReceiveLoopCoroutine: starting, run_loop_->IsRunning()={}",
-                    run_loop_->IsRunning());
-                while (run_loop_->IsRunning())
+                    "ReceiveLoopCoroutine: starting, run_loop_.IsRunning()={}",
+                    run_loop_.IsRunning());
+                while (run_loop_.IsRunning())
                 {
                     try
                     {
@@ -550,7 +530,7 @@ namespace Core
                             "ReceiveLoopCoroutine: received result, index={}",
                             result.index());
 
-                        if (!run_loop_->IsRunning())
+                        if (!run_loop_.IsRunning())
                         {
                             co_return;
                         }
@@ -584,7 +564,7 @@ namespace Core
                                 CallKey call_key{
                                     header.GetSourceSessionId(),
                                     header.GetCallId()};
-                                run_loop_->CompletePendingCall(
+                                run_loop_.CompletePendingCall(
                                     call_key,
                                     DAS_S_OK,
                                     std::move(body),
@@ -594,7 +574,7 @@ namespace Core
                             {
                                 // REQUEST/EVENT: 在 IO 线程处理（控制平面
                                 // handler）
-                                co_await run_loop_->DispatchToHandlerCoroutine(
+                                co_await run_loop_.DispatchToHandlerCoroutine(
                                     header,
                                     body,
                                     *async_transport_);
@@ -647,17 +627,14 @@ namespace Core
                 }
 
                 // 2. 然后请求 runloop 停止
-                if (run_loop_)
-                {
-                    run_loop_->RequestStop();
-                }
+                run_loop_.RequestStop();
             }
 
             bool IpcContext::IsConnected() const { return is_connected_; }
 
             void IpcContext::PostCallback(IDasAsyncCallback* callback)
             {
-                if (!callback || !run_loop_)
+                if (!callback)
                 {
                     return;
                 }
@@ -665,7 +642,7 @@ namespace Core
                 // DasPtr 在 post 之前获取所有权（AddRef），保证生命周期安全
                 DasPtr<IDasAsyncCallback> ptr(callback);
                 boost::asio::post(
-                    run_loop_->GetIoContext(),
+                    run_loop_.GetIoContext(),
                     [ptr = std::move(ptr)]() { ptr->Do(); });
             }
 
@@ -679,7 +656,7 @@ namespace Core
                 }
                 *pp_out_object = nullptr;
 
-                if (!run_loop_ || !business_thread_)
+                if (!business_thread_)
                 {
                     DAS_CORE_LOG_ERROR(
                         "IpcRunLoop or BusinessThread not initialized");
@@ -693,7 +670,7 @@ namespace Core
                 std::vector<uint8_t>     response;
 
                 DasResult result = SendBusinessControlRequestRaw(
-                    *run_loop_,
+                    run_loop_,
                     business_thread_,
                     session_id_,
                     1, // target_session_id = main process
@@ -734,7 +711,7 @@ namespace Core
                 // Create proxy using unified GetOrCreateProxy (cache +
                 // RegisterRemoteObject)
                 IDasBase* proxy = proxy_factory_->GetOrCreateProxy(
-                    *run_loop_,
+                    run_loop_,
                     business_thread_,
                     object_id,
                     interface_hash);

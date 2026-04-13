@@ -821,7 +821,7 @@ DasResult IpcRunLoop::Run()
 
     // 创建 work guard 保持 io_context 运行
     // 确保 Run() 阻塞直到 RequestStop() 被调用
-    work_guard_ = std::make_unique<WorkGuard>(io_context_->get_executor());
+    work_guard_.emplace(io_context_->get_executor());
 
     // 启动心跳检测线程（MainProcess 模式，且启用心跳时）
     if (connection_manager_ && enable_heartbeat_)
