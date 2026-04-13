@@ -25,10 +25,9 @@ IDasBase* ProxyFactory::GetOrCreateProxy(
     auto it = proxy_cache_.find(EncodeObjectId(object_id));
     if (it != proxy_cache_.end())
     {
-        // 缓存命中：增加本地计数 + AddRef
-        it->second.local_refcount++;
-        it->second.proxy->AddRef();
-        return it->second.proxy;
+        // 缓存命中：AddRef 返回（DasPtr 持有 1 ref，调用方再 AddRef 1 ref）
+        it->second->AddRef();
+        return it->second.Get();
     }
 
     // 缓存未命中：创建 proxy
@@ -47,11 +46,9 @@ IDasBase* ProxyFactory::GetOrCreateProxy(
     // 注册远程对象到 DistributedObjectManager
     object_manager_.RegisterRemoteObject(object_id);
 
-    // 插入缓存
-    proxy_cache_[EncodeObjectId(object_id)] = ProxyEntry{
-        .proxy = proxy,
-        .object_id_encoded = EncodeObjectId(object_id),
-        .local_refcount = 1};
+    // 插入缓存：DasPtr(proxy) 构造时自动 AddRef
+    // proxy 初始 refcount=1，DasPtr 构造 +1 = 2（缓存 1 + 调用方 1）
+    proxy_cache_[EncodeObjectId(object_id)] = DasPtr<IDasBase>(proxy);
 
     return proxy;
 }
@@ -62,12 +59,8 @@ DasResult ProxyFactory::RemoveFromCache(const ObjectId& object_id)
     auto it = proxy_cache_.find(EncodeObjectId(object_id));
     if (it != proxy_cache_.end())
     {
-        it->second.local_refcount--;
-        if (it->second.local_refcount == 0)
-        {
-            proxy_cache_.erase(it);
-        }
-
+        proxy_cache_.erase(it);
+        // DasPtr 析构自动 Release
         return DAS_S_OK;
     }
 

@@ -94,16 +94,8 @@ public:
     ProxyFactory& operator=(const ProxyFactory&) = delete;
 
 private:
-    // 内部数据结构：Proxy 缓存
-    struct ProxyEntry
-    {
-        IDasBase* proxy; // 使用原始指针，生命周期由引用计数管理
-        uint64_t  object_id_encoded;
-        uint32_t  local_refcount; // 本地 DasPtr 数量
-    };
-
-    // 缓存已创建的 Proxy
-    std::unordered_map<uint64_t, ProxyEntry> proxy_cache_;
+    // 缓存已创建的 Proxy（DasPtr 自动管理 AddRef/Release）
+    std::unordered_map<uint64_t, DasPtr<IDasBase>> proxy_cache_;
 
     // 互斥锁保护代理缓存
     mutable std::mutex proxy_cache_mutex_;
