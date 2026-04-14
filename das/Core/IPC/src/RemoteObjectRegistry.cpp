@@ -197,7 +197,7 @@ DasResult RemoteObjectRegistry::LookupByInterface(
     if (it == objects_by_interface_.end())
     {
         DAS_CORE_LOG_ERROR(
-            "Object not found for interface_id = {}",
+            "Object not found for interface_id = 0x{:08X}",
             interface_id);
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }

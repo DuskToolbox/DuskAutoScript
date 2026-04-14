@@ -448,7 +448,7 @@ namespace Core
                 {
                     DAS_CORE_LOG_ERROR(
                         "CreateRemoteProxy: failed to create proxy "
-                        "for object_id={{session:{}, gen:{}, local:{}}}, interface_hash={}",
+                        "for object_id={{session:{}, gen:{}, local:{}}}, interface_hash=0x{:08X}",
                         object_id.session_id,
                         object_id.generation,
                         object_id.local_id,
