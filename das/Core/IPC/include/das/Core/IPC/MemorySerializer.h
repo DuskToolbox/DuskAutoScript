@@ -63,6 +63,7 @@ public:
     {
         if (position > size_)
         {
+            // 位置越界
             return DAS_E_IPC_DESERIALIZATION_FAILED;
         }
         position_ = position;
@@ -118,6 +119,7 @@ public:
     {
         if (position > buffer_.size())
         {
+            // 位置越界
             return DAS_E_IPC_DESERIALIZATION_FAILED;
         }
         buffer_.resize(position);

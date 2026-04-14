@@ -46,7 +46,7 @@ struct ConnectionInfo
 };
 
 /**
- * @brief 连接管理器（非单例模式）
+ * @brief 连接管理器
  *
  * 由 IpcRunLoop 持有，负责管理 HostLauncher 实例。
  * ConnectionManager 持有 DasPtr<IHostLauncher>，Transport 由 HostLauncher
