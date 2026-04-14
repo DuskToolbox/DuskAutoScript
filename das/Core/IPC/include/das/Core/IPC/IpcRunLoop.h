@@ -35,8 +35,6 @@
 
 DAS_CORE_IPC_NS_BEGIN
 
-// HeaderFlags 已移至 IpcMessageHeader.h
-
 class IMessageHandler;
 class IAwaitableMessageHandler;
 class ConnectionManager;
@@ -60,7 +58,7 @@ DAS_CORE_IPC_NS_BEGIN
 using PendingCallCompletion = std::function<
     void(DasResult, std::vector<uint8_t>, uint16_t response_flags)>;
 
-/// V3: 用于匹配请求和响应的二元组 key
+/// 用于匹配请求和响应的二元组 key
 struct CallKey
 {
     uint16_t source_session_id; // 消息来源 session
@@ -84,7 +82,7 @@ struct CallKeyHash
     }
 };
 
-/// 异步 pending call 状态（IOCP 风格）
+/// 异步 pending call 状态
 struct PendingCallState
 {
     CallKey                               call_key;
@@ -276,7 +274,7 @@ public:
     }
 
     /// 获取 io_context 引用（用于 HostLauncher 等需要共享 io_context 的场景）
-    /// 注意：仅在 Initialize() 成功后可用
+    /// 注意：构造完成后可用
     /// @return io_context 引用，生命周期绑定到 this
     boost::asio::io_context& GetIoContext() DAS_LIFETIMEBOUND
     {
@@ -413,7 +411,7 @@ public:
         size_t                           body_size);
 
     /**
-     * @brief 完成指定 CallKey 的 pending call（IOCP 风格）
+     * @brief 完成指定 CallKey 的 pending call
      *
      * 从 pending_calls_ 中取出 on_complete 回调并调用，
      * 在 mutex 外执行回调以避免死锁。
@@ -466,10 +464,10 @@ public:
     // 成员变量
     //=========================================================================
 
-    /// pending calls 映射 (V3: 使用 CallKey 作为 key)
+    /// pending calls 映射
     std::unordered_map<CallKey, PendingCallState, CallKeyHash> pending_calls_;
 
-    /// 本地 session_id (V3: MainProcess=1, Host 从 Handshake 获取)
+    /// 本地 session_id（MainProcess=1, Host 从 Handshake 获取）
     uint16_t local_session_id_ = 0;
 
     // async_transport_ 已移除
@@ -501,7 +499,7 @@ public:
         std::unordered_map<uint32_t, DasPtr<IAwaitableMessageHandler>>>
         awaitable_handlers_;
 
-    /// 下一个 call_id (V3: uint16_t)
+    /// 下一个 call_id
     std::atomic<uint16_t> next_call_id_{1};
 
 public:
