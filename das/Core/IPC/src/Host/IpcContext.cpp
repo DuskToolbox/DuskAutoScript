@@ -475,7 +475,7 @@ namespace Core
                                     if (DAS::IsFailed(result))
                                     {
                                         DAS_CORE_LOG_ERROR(
-                                            "Host: connect failed: 0x{:08X}",
+                                            "Host: connect failed: {}",
                                             result);
                                         run_loop_.RequestStop();
                                         co_return;
@@ -541,9 +541,7 @@ namespace Core
                             DasResult error = std::get<0>(result);
                             if (error != DAS_S_OK)
                             {
-                                DAS_CORE_LOG_ERROR(
-                                    "Receive failed: 0x{:08X}",
-                                    error);
+                                DAS_CORE_LOG_ERROR("Receive failed: {}", error);
                             }
                             co_return;
                         }
@@ -720,7 +718,7 @@ namespace Core
                 if (!proxy)
                 {
                     DAS_CORE_LOG_ERROR(
-                        "Failed to create proxy for interface_id = {}",
+                        "Failed to create proxy for interface_id = 0x{:08X}",
                         interface_hash);
                     return DAS_E_NO_INTERFACE;
                 }
