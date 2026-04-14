@@ -130,11 +130,9 @@ public:
 
     /**
      * @brief 注册自定义命令处理器
-*
-
-     * * @param command_type 命令类型
-     * @param handler
-     * 处理函数
+     *
+     * @param command_type 命令类型
+     * @param handler 处理函数
      */
     void RegisterHandler(IpcCommandType command_type, CommandHandler handler);
 
@@ -153,7 +151,7 @@ public:
     uint16_t GetSessionId() const;
 
     [[nodiscard]]
-    uint32_t GetInterfaceId() const override
+    uint32_t GetInterfaceId() const noexcept override
     {
         // IpcCommandHandler 不是基于 interface_id 路由的处理器
         // 它通过 IpcContext 直接访问，不通过 IpcRunLoop::GetHandler() 查找

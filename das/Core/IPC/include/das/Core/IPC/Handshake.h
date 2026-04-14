@@ -64,7 +64,6 @@ struct alignas(8) HelloRequestV1
  * 控制平面消息：
  * - ObjectId = {0, 0, 0}
  * - interface_id = HANDSHAKE_IFACE_WELCOME
- * - interface_id = HANDSHAKE_IFACE_HELLO
  */
 struct alignas(8) WelcomeResponseV1
 {
@@ -85,7 +84,6 @@ struct alignas(8) WelcomeResponseV1
  * 控制平面消息：
  * - ObjectId = {0, 0, 0}
  * - interface_id = HANDSHAKE_IFACE_READY
- * - interface_id = HANDSHAKE_IFACE_READY
  */
 struct alignas(8) ReadyRequestV1
 {
@@ -99,7 +97,6 @@ struct alignas(8) ReadyRequestV1
  * 控制平面消息：
  * - ObjectId = {0, 0, 0}
  * - interface_id = HANDSHAKE_IFACE_READY_ACK
- * - interface_id = HANDSHAKE_IFACE_READY
  */
 struct alignas(8) ReadyAckV1
 {
@@ -116,7 +113,6 @@ struct alignas(8) ReadyAckV1
  * 控制平面消息：
  * - ObjectId = {0, 0, 0}
  * - interface_id = HANDSHAKE_IFACE_HEARTBEAT
- * - interface_id = HANDSHAKE_IFACE_HEARTBEAT
  */
 struct alignas(8) HeartbeatV1
 {
@@ -128,7 +124,6 @@ struct alignas(8) HeartbeatV1
  *
  * 控制平面消息：
  * - ObjectId = {0, 0, 0}
- * - interface_id = HANDSHAKE_IFACE_GOODBYE
  * - interface_id = HANDSHAKE_IFACE_GOODBYE
  */
 struct alignas(8) GoodbyeV1

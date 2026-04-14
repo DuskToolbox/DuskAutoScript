@@ -71,7 +71,7 @@ DasResult SerializeInInterfaceParam(
         DAS_CORE_LOG_ERROR(
             "SerializeInInterfaceParam: failed to auto-register local object, "
             "result = {}",
-            static_cast<int>(register_result));
+            register_result);
         return register_result;
     }
     if (out_newly_registered != nullptr)
@@ -127,7 +127,7 @@ DasResult DeserializeInInterfaceParam(
             DAS_CORE_LOG_ERROR(
                 "DeserializeInInterfaceParam: RegisterRemoteObject failed, "
                 "result = {}",
-                static_cast<int>(register_result));
+                register_result);
             return register_result;
         }
         *out_ptr = by_value_proxy.release();

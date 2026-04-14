@@ -94,7 +94,7 @@ DasResult RemoteObjectRegistry::UnregisterObject(const ObjectId& object_id)
 
     if (it == objects_by_id_.end())
     {
-        DAS_CORE_LOG_ERROR("Object not found");
+        DAS_CORE_LOG_ERROR("Object not found for encoded_id = {}", encoded_id);
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 
@@ -229,7 +229,7 @@ DasResult RemoteObjectRegistry::GetObjectInfo(
 
     if (it == objects_by_id_.end())
     {
-        DAS_CORE_LOG_ERROR("Object not found");
+        DAS_CORE_LOG_ERROR("Object not found for encoded_id = {}", encoded_id);
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 

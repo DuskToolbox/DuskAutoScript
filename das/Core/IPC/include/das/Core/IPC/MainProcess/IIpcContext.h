@@ -27,12 +27,8 @@ namespace Core
 
         namespace MainProcess
         {
-            // 前置声明
             struct IIpcContext;
-
         } // namespace MainProcess
-
-        // HostLauncher 前置声明
         class HostLauncher;
 
         namespace MainProcess

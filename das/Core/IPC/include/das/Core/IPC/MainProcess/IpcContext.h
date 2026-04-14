@@ -56,7 +56,7 @@ namespace Core
                 IpcContext(IpcContext&&) = delete;
                 IpcContext& operator=(IpcContext&&) = delete;
 
-                class ProxyFactory& GetProxyFactory() DAS_LIFETIMEBOUND;
+                ProxyFactory& GetProxyFactory() DAS_LIFETIMEBOUND;
 
                 DasResult CreateHostLauncher(
                     IHostLauncher** pp_out_launcher) override;
