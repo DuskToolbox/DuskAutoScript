@@ -8,6 +8,8 @@
 #include <das/Core/IPC/IpcResponseSender.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/IpcTransport.h>
+#include <das/Core/IPC/ProxyFactory.h>
+#include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/IDasAsyncCallback.h>
 #include <das/Utils/fmt.h>
 #include <gtest/gtest.h>
@@ -30,7 +32,11 @@ protected:
     {
         try
         {
-            runloop_ = std::make_unique<IpcRunLoop>(true);
+            runloop_ = std::make_unique<IpcRunLoop>(
+                true,
+                nullptr,
+                proxy_factory_,
+                registry_);
         }
         catch (const std::exception& e)
         {
@@ -80,9 +86,11 @@ protected:
             .Build();
     }
 
-    std::unique_ptr<IpcRunLoop> runloop_;
-    std::string                 host_queue_name_;
-    std::string                 plugin_queue_name_;
+    std::unique_ptr<IpcRunLoop>          runloop_;
+    std::string                          host_queue_name_;
+    std::string                          plugin_queue_name_;
+    DAS::Core::IPC::ProxyFactory         proxy_factory_;
+    DAS::Core::IPC::RemoteObjectRegistry registry_;
 };
 
 // ====== Initialize/Shutdown Tests ======
@@ -321,7 +329,11 @@ TEST_F(IpcRunLoopTest, Run_AfterStopAndReinitialize)
     // Reinitialize and run again
     try
     {
-        runloop_ = std::make_unique<IpcRunLoop>(true);
+        runloop_ = std::make_unique<IpcRunLoop>(
+            true,
+            nullptr,
+            proxy_factory_,
+            registry_);
     }
     catch (const std::exception& e)
     {

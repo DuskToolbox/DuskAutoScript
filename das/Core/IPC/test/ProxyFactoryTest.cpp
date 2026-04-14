@@ -21,7 +21,6 @@ using DAS::Core::IPC::EncodeObjectId;
 using DAS::Core::IPC::IPCProxyBase;
 using DAS::Core::IPC::ObjectId;
 using DAS::Core::IPC::ProxyFactory;
-using DAS::Core::IPC::RemoteObjectRegistry;
 
 // Test ObjectId 编码解码后的状态一致性
 TEST(ProxyFactoryTest, ObjectIdEncodingConsistency)

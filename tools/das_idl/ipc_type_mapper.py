@@ -111,6 +111,10 @@ class IpcBaseTypeMapper:
         self.interface_header_files = {}  # interface_name -> header_filename
         for iface in document.interfaces:
             self.interface_namespaces[iface.name] = iface.namespace
+        # 合并导入 IDL 文件中的接口命名空间（由 resolve_types() 填充）
+        for name, ns in document.imported_interface_namespaces.items():
+            if name not in self.interface_namespaces:
+                self.interface_namespaces[name] = ns
 
     def get_type_info(self, idl_type: str):
         """获取类型信息
