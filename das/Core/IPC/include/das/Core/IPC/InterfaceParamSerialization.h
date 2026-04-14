@@ -115,9 +115,7 @@ inline bool IsTransportLevelError(DasResult result) noexcept
            || result == DAS_E_IPC_DISCONNECTED   // BusinessThread gone
            || result == DAS_E_IPC_NO_CONNECTIONS // no transport for session
            || result == DAS_E_IPC_SEND_FAILED    // SendCoroutine returned error
-           || result == DAS_E_IPC_CANCELED // queue shutdown / thread stopped
-           || result == DAS_E_IPC_REMOTE_ERROR; // SendCoroutine threw /
-                                                // sync_wait failed
+           || result == DAS_E_IPC_CANCELED; // queue shutdown / thread stopped
 }
 
 DAS_CORE_IPC_NS_END

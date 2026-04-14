@@ -86,7 +86,10 @@ TEST_F(InterfaceParamSerializationTest, IsTransportLevelError_AllCodes)
     EXPECT_TRUE(IsTransportLevelError(DAS_E_IPC_NO_CONNECTIONS));
     EXPECT_TRUE(IsTransportLevelError(DAS_E_IPC_SEND_FAILED));
     EXPECT_TRUE(IsTransportLevelError(DAS_E_IPC_CANCELED));
-    EXPECT_TRUE(IsTransportLevelError(DAS_E_IPC_REMOTE_ERROR));
+
+    // REMOTE_ERROR is NOT a transport-level error (request may have reached
+    // remote)
+    EXPECT_FALSE(IsTransportLevelError(DAS_E_IPC_REMOTE_ERROR));
 
     // Non-transport codes must return false
     EXPECT_FALSE(IsTransportLevelError(DAS_S_OK));
