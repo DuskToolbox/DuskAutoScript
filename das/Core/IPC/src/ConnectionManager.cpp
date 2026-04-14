@@ -513,7 +513,6 @@ DasResult ConnectionManager::SendHeartbeatToAll()
 {
     auto sessions = GetConnectedSessions();
 
-    // V3: 获取本地 session_id
     uint16_t local_session_id = impl_->local_id_;
 
     for (uint16_t session_id : sessions)
@@ -551,14 +550,14 @@ DasResult ConnectionManager::SendHeartbeatToAll()
             transport->GetIoContext(),
             [transport,
              header = validated_header,
-             heartbeat_copy = heartbeat]() mutable
+             heartbeat_copy = heartbeat,
+             session_id]() mutable
             {
                 // 使用协程异步发送心跳
                 boost::asio::co_spawn(
                     transport->GetIoContext(),
-                    [transport,
-                     header,
-                     heartbeat_copy]() mutable -> boost::asio::awaitable<void>
+                    [transport, header, heartbeat_copy, session_id]() mutable
+                        -> boost::asio::awaitable<void>
                     {
                         auto result = co_await transport->SendCoroutine(
                             header,
@@ -567,7 +566,8 @@ DasResult ConnectionManager::SendHeartbeatToAll()
                         if (result != DAS_S_OK)
                         {
                             DAS_CORE_LOG_WARN(
-                                "Heartbeat send failed for session, error={}",
+                                "Heartbeat send failed for session_id={}, error={}",
+                                session_id,
                                 result);
                         }
                     },

@@ -71,8 +71,7 @@ namespace Core
              * using namespace Das::Core::IPC;
              *
              * // 创建握手处理器
-             * auto handler = std::make_unique<Host::HandshakeHandler>();
-             * handler->Initialize(1);  // Host 的 session_id
+             * auto handler = Host::HandshakeHandler::Create(1);
              *
              * // 设置回调
              * handler->SetOnClientConnected([](const Host::ConnectedClient&
@@ -84,7 +83,7 @@ namespace Core
              *
              * // 注册到 IpcRunLoop（协程版本）
              * run_loop.RegisterHandler(HeaderFlags::CONTROL_PLANE,
-             * INTERFACE_ID, handler.get());
+             * INTERFACE_ID, handler);
              * @endcode
              */
             class HandshakeHandler : public IAwaitableMessageHandler
@@ -97,7 +96,7 @@ namespace Core
                  *
                  * @param local_session_id 本 Host 进程的 session_id（0
                  * 表示等待握手分配）
-                 * @return std::unique_ptr<HandshakeHandler> HandshakeHandler
+                 * @return DasPtr<HandshakeHandler> HandshakeHandler
                  * 智能指针
                  */
                 static DasPtr<HandshakeHandler> Create(

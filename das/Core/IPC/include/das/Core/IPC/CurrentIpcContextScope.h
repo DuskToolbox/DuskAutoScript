@@ -43,8 +43,7 @@ namespace Core
          * - Host::IpcContext::Run() sets this on its own thread
          * - BusinessThread::Run() sets this on its dedicated worker thread
          *
-         * Phase 35 will validate multi-Context correctness and may introduce
-         * stronger mechanisms if needed.
+         * 多 Context 正确性由现有测试覆盖。
          */
         inline thread_local IResolveContext* g_current_context = nullptr;
 

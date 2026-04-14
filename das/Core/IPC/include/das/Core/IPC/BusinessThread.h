@@ -51,7 +51,7 @@ public:
     /**
      * @brief 停止业务线程
      *
-     * 调用 inbound_.Shutdown() 然后 join 线程
+     * 调用 inbound_.Uninitialize() 然后 join 线程
      */
     void Stop();
 
@@ -78,8 +78,8 @@ public:
     bool IsRunning() const;
 
     /**
-     * @brief Check if the calling thread is the BusinessThread
-     * @return true if called from the BusinessThread's thread of execution
+     * @brief 检查当前线程是否为业务线程
+     * @return true 如果当前线程是业务线程的执行线程
      */
     [[nodiscard]]
     bool IsCurrentThread() const;

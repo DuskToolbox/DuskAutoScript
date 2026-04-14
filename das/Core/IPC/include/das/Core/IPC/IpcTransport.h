@@ -30,7 +30,7 @@ struct ReceiveResult
 
 class IpcTransport
 {
-    // 允许 std::unique_ptr 访问私有构造函数
+    // deprecated factory 残留的 friend 声明，待工厂方法清理后移除
     friend class std::unique_ptr<IpcTransport>;
 
 public:

@@ -391,7 +391,7 @@ DasResult IpcTransport::SendLargeMessage(
     IPCMessageHeader shm_header = header.Raw();
     shm_header.flags |= kFlagLargeMessage;
 
-    // V3: 使用新的 Builder API
+    // 使用 Builder API 构建
     auto validated_shm_header =
         IPCMessageHeaderBuilder()
             .SetMessageType(static_cast<MessageType>(shm_header.message_type))
