@@ -106,9 +106,6 @@ void IpcRunLoop::RequestStop()
 
     running_.store(false);
 
-    // 注意：IpcRunLoop 不再持有 async_transport_
-    // Transport 的关闭由外部管理（HostLauncher 或 IpcContext）
-
     // 1. 重置 work guard，允许 io_context_->run() 返回
     work_guard_.reset();
 
@@ -269,9 +266,6 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
         {
             IAwaitableMessageHandler* awaitable_handler =
                 awaitable_handler_it->second.Get();
-            DAS_CORE_LOG_INFO(
-                "DispatchToHandlerCoroutine: found awaitable handler for interface_id={}",
-                header.GetInterfaceId());
             try
             {
                 IpcResponseSender sender(transport, *this);
@@ -290,11 +284,6 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
                         "Awaitable handler returned error: {}",
                         result);
                 }
-                else
-                {
-                    DAS_CORE_LOG_INFO(
-                        "DispatchToHandlerCoroutine: awaitable handler completed successfully");
-                }
             }
             catch (const std::exception& e)
             {
@@ -312,9 +301,6 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
 
     if (handler)
     {
-        DAS_CORE_LOG_INFO(
-            "DispatchToHandlerCoroutine: found handler for interface_id={}",
-            header.GetInterfaceId());
         try
         {
             IpcResponseSender sender(transport, *this);
@@ -330,11 +316,6 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
             {
                 DAS_CORE_LOG_WARN("Handler returned error: {}", result);
             }
-            else
-            {
-                DAS_CORE_LOG_INFO(
-                    "DispatchToHandlerCoroutine: handler completed successfully");
-            }
         }
         catch (const std::exception& e)
         {
@@ -346,7 +327,7 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
     else
     {
         DAS_CORE_LOG_WARN(
-            "No handler found for interface_id = {}",
+            "No handler found for interface_id = 0x{:08X}",
             header.GetInterfaceId());
     }
 }
@@ -771,7 +752,7 @@ void IpcRunLoop::NotifySendFailure(
     {
         DAS_CORE_LOG_ERROR(
             "NotifySendFailure: inbound_queue_ is null, cannot notify "
-            "failure for call_id = {}, error_code = 0x{:08X}",
+            "failure for call_id = {}, error_code = {}",
             header.GetCallId(),
             error_code);
     }
