@@ -38,6 +38,138 @@ def _write_if_changed(file_path: Path, content: str) -> bool:
     return True
 
 
+def _to_namespace_path(namespace: str) -> str:
+    """将命名空间转换为文件路径格式，例如: DAS::ExportInterface -> DAS.ExportInterface"""
+    if not namespace:
+        return ""
+    return namespace.replace("::", ".")
+
+
+def _get_interface_short_name(interface_name: str) -> str:
+    """从接口名获取短名称（去掉 I 前缀）
+
+    IDasLogger -> DasLogger
+    """
+    if interface_name.startswith('IDas'):
+        return interface_name[1:]
+    if interface_name.startswith('I') and len(interface_name) > 1:
+        return interface_name[1:]
+    return interface_name
+
+
+def list_expected_outputs(task_config: dict) -> List[str]:
+    """根据任务配置，解析 IDL 并计算所有预期输出文件路径（不实际生成文件）。
+
+    用于 CMake configure 阶段，通过 das_idl_batch_gen.py --list-outputs 调用。
+    只做 IDL 解析和文件名计算，不写任何文件。
+
+    Args:
+        task_config: 与 batch config JSON 中单个任务相同结构的字典，
+                     例如 {"-i": "path/to/file.idl", "--raw-output-dir": "...", ...}
+
+    Returns:
+        预期输出文件的路径列表
+    """
+    import os
+    sys.path.insert(0, str(Path(__file__).parent))
+    from das_idl_parser import parse_idl_file
+
+    # 提取参数（与 main() 中 argparse 后的逻辑一致）
+    input_file = task_config.get("-i", task_config.get("--input", ""))
+    if not input_file:
+        return []
+
+    input_path = Path(input_file)
+    if not input_path.exists():
+        print(f"警告: IDL 文件不存在: {input_path}", file=sys.stderr)
+        return []
+
+    base_name = task_config.get("--base-name") or input_path.stem
+
+    default_output = task_config.get("--output-dir", task_config.get("--raw-output-dir", ""))
+    raw_output_dir = task_config.get("--raw-output-dir", default_output)
+    wrapper_output_dir = task_config.get("--wrapper-output-dir", default_output)
+    implements_output_dir = task_config.get("--implements-output-dir", default_output)
+    swig_output_dir = task_config.get("--swig-output-dir", default_output)
+    ipc_output_dir = task_config.get("--ipc-output-dir", default_output)
+
+    do_cpp_wrapper = task_config.get("--cpp-wrapper", False) or task_config.get("--all", False)
+    do_cpp_implements = task_config.get("--cpp-implements", False) or task_config.get("--all", False)
+    do_swig = task_config.get("--swig", False) or task_config.get("--all", False)
+    do_ipc_proxy = task_config.get("--ipc-proxy", False) or task_config.get("--ipc", False)
+    do_ipc_stub = task_config.get("--ipc-stub", False) or task_config.get("--ipc", False)
+
+    # 解析 IDL 文件
+    try:
+        document = parse_idl_file(str(input_path))
+    except Exception as e:
+        print(f"警告: 无法解析 IDL 文件 {input_path}: {e}", file=sys.stderr)
+        return []
+
+    outputs = []
+
+    # === ABI 文件 (das_cpp_generator) ===
+    # 每个 IDL 生成 1 个文件: {base_name}.h
+    if raw_output_dir:
+        outputs.append(os.path.join(raw_output_dir, f"{base_name}.h"))
+
+    # === Wrapper 文件 (das_cpp_wrapper_generator) ===
+    # 每个 IDL 生成 1 个文件: {namespace_path}.{base_name}.hpp
+    if do_cpp_wrapper and wrapper_output_dir:
+        # 找出第一个有命名空间的接口或枚举（与 generate_cpp_wrapper_files 第 1646-1657 行一致）
+        namespace_prefix = None
+        for enum in document.enums:
+            if enum.namespace:
+                namespace_prefix = enum.namespace
+                break
+        if namespace_prefix is None:
+            for interface in document.interfaces:
+                if interface.namespace:
+                    namespace_prefix = interface.namespace
+                    break
+
+        ns_path = _to_namespace_path(namespace_prefix) if namespace_prefix else ""
+        if ns_path:
+            header_filename = f"{ns_path}.{base_name}.hpp"
+        else:
+            header_filename = f"{base_name}.hpp"
+        outputs.append(os.path.join(wrapper_output_dir, header_filename))
+
+    # === Implements 文件 (das_cpp_implements_generator) ===
+    # 每个 interface 生成 1 个文件: {namespace_path}.{interface.name}.Implements.hpp
+    if do_cpp_implements and implements_output_dir:
+        for interface in document.interfaces:
+            ns_path = _to_namespace_path(interface.namespace) if interface.namespace else ""
+            if ns_path:
+                filename = f"{ns_path}.{interface.name}.Implements.hpp"
+            else:
+                filename = f"{interface.name}.Implements.hpp"
+            outputs.append(os.path.join(implements_output_dir, filename))
+
+    # === SWIG 文件 (das_swig_generator) ===
+    # 每个 interface 生成 1 个文件: {interface.name}.i
+    if do_swig and swig_output_dir:
+        for interface in document.interfaces:
+            outputs.append(os.path.join(swig_output_dir, f"{interface.name}.i"))
+
+    # === IPC Proxy 文件 (das_ipc_proxy_generator) ===
+    # 每个 interface 生成 1 个文件: proxy/{short_name}Proxy.h
+    if do_ipc_proxy and ipc_output_dir:
+        for interface in document.interfaces:
+            short_name = _get_interface_short_name(interface.name)
+            outputs.append(os.path.join(ipc_output_dir, "proxy", f"{short_name}Proxy.h"))
+
+    # === IPC Stub 文件 (das_ipc_stub_generator) ===
+    # 每个 interface 生成 1 个文件: stub/{short_name}Stub.h
+    if do_ipc_stub and ipc_output_dir:
+        for interface in document.interfaces:
+            short_name = _get_interface_short_name(interface.name)
+            outputs.append(os.path.join(ipc_output_dir, "stub", f"{short_name}Stub.h"))
+
+    # 统一使用正斜杠（CMake 和 Ninja 兼容）
+    return [p.replace("\\", "/") for p in outputs]
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='DAS IDL Code Generator - 从 IDL 文件生成 C++ 接口代码和 SWIG 配置',

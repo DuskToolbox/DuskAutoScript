@@ -291,8 +291,43 @@ function(das_add_idl_export)
     endif()
 
     # ====== 3. 创建批量生成命令和目标 ======
+
+    # ====== 在 configure 阶段获取生成器预期输出文件列表 ======
+    set(_IPC_CACHE_DIR_ARGS "")
+    if(_IPC_CACHE_DIR)
+        set(_IPC_CACHE_DIR_ARGS "--ipc-cache-dir" "${_IPC_CACHE_DIR}")
+    endif()
+
+    execute_process(
+        COMMAND "${DAS_IDL_VENV_PYTHON}"
+            "${CMAKE_SOURCE_DIR}/tools/das_idl/das_idl_batch_gen.py"
+            --config "${_BATCH_CONFIG_FILE}"
+            --list-outputs
+            ${_IPC_CACHE_DIR_ARGS}
+        OUTPUT_VARIABLE _DYNAMIC_OUTPUT_LIST
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE _LIST_RESULT
+        ERROR_VARIABLE _LIST_ERROR
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/tools/das_idl"
+    )
+
+    if(NOT _LIST_RESULT EQUAL 0)
+        message(WARNING "[das_add_idl_export] Failed to list expected outputs: ${_LIST_ERROR}")
+        set(_DYNAMIC_OUTPUT_LIST "")
+    endif()
+
+    # 换行分隔 → CMake list
+    string(REPLACE "\n" ";" _DYNAMIC_OUTPUT_LIST "${_DYNAMIC_OUTPUT_LIST}")
+    list(FILTER _DYNAMIC_OUTPUT_LIST EXCLUDE REGEX "^$")
+
+    # 确保 IDL 文件和生成器脚本变更触发重新 configure
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        ${_FULL_IDL_PATHS}
+        ${_DAS_IDL_MODULE_TOOLS}
+    )
+
     add_custom_command(
-        OUTPUT ${_GENERATED_STAMP} ${_IPC_GENERATED_CPP}
+        OUTPUT ${_GENERATED_STAMP} ${_DYNAMIC_OUTPUT_LIST}
         COMMAND "${DAS_IDL_VENV_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/das_idl/das_idl_batch_gen.py"
             --config "${_BATCH_CONFIG_FILE}"
             --update-list "${_UPDATE_LIST_FILE}"
@@ -389,60 +424,24 @@ function(das_add_idl_export)
         endif()
     endif()
 
-    # ====== 收集所有生成的文件 (用于输出变量和兼容性) ======
+    # ====== 从动态列表中分类生成文件（全部来自 --list-outputs） ======
     set(_ALL_ABI_FILES "")
     set(_ALL_WRAPPER_FILES "")
     set(_ALL_SWIG_FILES "")
     set(_ALL_IPC_FILES "")
-    set(_ALL_GENERATED_FILES "")
+    set(_ALL_GENERATED_FILES ${_DYNAMIC_OUTPUT_LIST})
 
-    # 为每个 IDL 文件构建预期的生成文件列表
-    foreach(_IDL_FILE_NAME ${DAS_IDL_EXPORT_IDL_FILES})
-        get_filename_component(_IDL_NAME "${_IDL_FILE_NAME}" NAME_WE)
-
-        # ABI 文件
-        list(APPEND _ALL_ABI_FILES
-            "${_ABI_OUTPUT_DIR}/${_IDL_NAME}.h"
-            "${_ABI_OUTPUT_DIR}/${_IDL_NAME}_Swig.h"
-        )
-
-        # Wrapper 文件
-        list(APPEND _ALL_WRAPPER_FILES
-            "${_WRAPPER_OUTPUT_DIR}/${_IDL_NAME}_wrapper.h"
-            "${_WRAPPER_OUTPUT_DIR}/${_IDL_NAME}_wrapper.cpp"
-        )
-
-        # SWIG 文件 (如果需要)
-        if(_NEED_SWIG)
-            list(APPEND _ALL_SWIG_FILES
-                "${_SWIG_OUTPUT_DIR}/${_IDL_NAME}_swig.i"
-            )
-        endif()
-
-        # IPC 文件 (如果需要)
-        if(DAS_IDL_EXPORT_GENERATE_IPC_PROXY)
-            list(APPEND _ALL_IPC_FILES
-                "${_IPC_OUTPUT_DIR}/proxy/${_IDL_NAME}Proxy.h"
-            )
-        endif()
-        if(DAS_IDL_EXPORT_GENERATE_IPC_STUB)
-            list(APPEND _ALL_IPC_FILES
-                "${_IPC_OUTPUT_DIR}/stub/${_IDL_NAME}Stub.h"
-            )
+    foreach(_FILE ${_DYNAMIC_OUTPUT_LIST})
+        if(_FILE MATCHES "/abi/")
+            list(APPEND _ALL_ABI_FILES "${_FILE}")
+        elseif(_FILE MATCHES "/wrapper/")
+            list(APPEND _ALL_WRAPPER_FILES "${_FILE}")
+        elseif(_FILE MATCHES "/swig/")
+            list(APPEND _ALL_SWIG_FILES "${_FILE}")
+        elseif(_FILE MATCHES "/ipc/")
+            list(APPEND _ALL_IPC_FILES "${_FILE}")
         endif()
     endforeach()
-
-    # 合并所有生成的文件
-    set(_ALL_GENERATED_FILES ${_ALL_ABI_FILES})
-    if(_ALL_WRAPPER_FILES)
-        list(APPEND _ALL_GENERATED_FILES ${_ALL_WRAPPER_FILES})
-    endif()
-    if(_ALL_SWIG_FILES)
-        list(APPEND _ALL_GENERATED_FILES ${_ALL_SWIG_FILES})
-    endif()
-    if(_ALL_IPC_FILES)
-        list(APPEND _ALL_GENERATED_FILES ${_ALL_IPC_FILES})
-    endif()
 
     # ====== 如果需要 SWIG 绑定，创建 SWIG 导出库 ======
     if(_NEED_SWIG)

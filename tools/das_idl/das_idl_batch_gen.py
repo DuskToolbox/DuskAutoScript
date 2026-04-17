@@ -515,6 +515,12 @@ JSON 配置格式:
         help='IPC 中间缓存目录（用于批量生成时的 IPC 缓存共享）'
     )
 
+    parser.add_argument(
+        '--list-outputs',
+        action='store_true',
+        help='仅列出将生成的文件路径（每行一个），不实际生成文件。用于 CMake configure 阶段。'
+    )
+
     args = parser.parse_args()
 
     # 读取配置文件
@@ -536,6 +542,44 @@ JSON 配置格式:
     if not isinstance(tasks, list):
         print("错误: 配置文件必须包含任务列表", file=sys.stderr)
         return 1
+
+    # ====== --list-outputs 模式：仅列出预期输出文件，不实际生成 ======
+    if args.list_outputs:
+        # 将 das_idl 目录加入 sys.path 以便 import
+        sys.path.insert(0, str(Path(__file__).parent))
+        from das_idl_gen import list_expected_outputs
+
+        all_outputs = []
+        for task in tasks:
+            all_outputs.extend(list_expected_outputs(task))
+
+        # 追加聚合文件路径（这些由 batch gen 的后处理步骤产出）
+        swig_output_dir = None
+        ipc_output_dir = None
+        for task in tasks:
+            if "--swig-output-dir" in task and swig_output_dir is None:
+                swig_output_dir = task["--swig-output-dir"]
+            if "--ipc-output-dir" in task and ipc_output_dir is None:
+                ipc_output_dir = task["--ipc-output-dir"]
+
+        if swig_output_dir:
+            all_outputs.append(f"{swig_output_dir}/DasTypeMaps.i")
+            all_outputs.append(f"{swig_output_dir}/DasTypeMapsExtend.i")
+            all_outputs.append(f"{swig_output_dir}/DasTypeMapsIgnore.i")
+
+        if ipc_output_dir:
+            all_outputs.append(f"{ipc_output_dir}/IpcGenerated.cpp")
+            all_outputs.append(f"{ipc_output_dir}/IpcAllProxies.h")
+            all_outputs.append(f"{ipc_output_dir}/IpcAllStubs.h")
+            if args.ipc_cache_dir:
+                all_outputs.append(f"{ipc_output_dir}/IpcProxyFactory.h")
+                all_outputs.append(f"{ipc_output_dir}/IpcStubFactory.h")
+                all_outputs.append(f"{ipc_output_dir}/registry/ProxyRegistry.h")
+
+        # 输出到 stdout（每行一个路径），去重并排序，统一使用正斜杠
+        for f in sorted(set(all_outputs)):
+            print(f.replace("\\", "/"))
+        return 0
 
     # 如果指定了更新列表，过滤任务
     if args.update_list:
