@@ -98,6 +98,7 @@ public:
     IDasJsonImpl();
     IDasJsonImpl(const char* p_json_string);
     IDasJsonImpl(nlohmann::json& ref_json);
+    explicit IDasJsonImpl(nlohmann::json&& json);
     ~IDasJsonImpl();
 
     // IDasBase
@@ -147,8 +148,9 @@ public:
         override;
     DasResult Clear() override;
 
-    void SetConnection(const boost::signals2::connection& connection);
-    void OnExpired();
+    void           SetConnection(const boost::signals2::connection& connection);
+    void           OnExpired();
+    nlohmann::json ExtractJson() const;
 };
 
 DAS_NS_ANONYMOUS_DETAILS_BEGIN
@@ -524,6 +526,11 @@ DasResult IDasJsonImpl::GetToImpl(size_t index, IDasReadOnlyString** pp_out_obj)
 IDasJsonImpl::IDasJsonImpl() : impl_{Object{}} {}
 
 IDasJsonImpl::IDasJsonImpl(nlohmann::json& ref_json) : impl_{Ref{&ref_json, {}}}
+{
+}
+
+IDasJsonImpl::IDasJsonImpl(nlohmann::json&& json)
+    : impl_{Object{std::move(json), {}}}
 {
 }
 
@@ -956,6 +963,22 @@ DasResult IDasJsonImpl::Clear()
         impl_);
 }
 
+nlohmann::json IDasJsonImpl::ExtractJson() const
+{
+    if (auto* obj = std::get_if<Object>(&impl_))
+    {
+        return obj->json_;
+    }
+    if (auto* ref = std::get_if<Ref>(&impl_))
+    {
+        if (ref->json_ != nullptr)
+        {
+            return *ref->json_;
+        }
+    }
+    return nlohmann::json{};
+}
+
 DAS_CORE_UTILS_NS_END
 
 DasResult ParseDasJsonFromString(
@@ -1003,4 +1026,44 @@ DasResult CreateEmptyDasJson(Das::ExportInterface::IDasJson** pp_out_json)
         DAS_CORE_LOG_EXCEPTION(ex);
         return DAS_E_OUT_OF_MEMORY;
     }
+}
+
+DasResult CloneDasJsonFromCopy(
+    const nlohmann::json&            src,
+    Das::ExportInterface::IDasJson** pp_out_json)
+{
+    DAS_UTILS_CHECK_POINTER(pp_out_json)
+
+    try
+    {
+        nlohmann::json copy = src;
+        const auto     p_result =
+            DAS::MakeDasPtr<DAS::Core::Utils::IDasJsonImpl>(std::move(copy));
+        DAS::Utils::SetResult(p_result, pp_out_json);
+        return DAS_S_OK;
+    }
+    catch (const std::bad_alloc& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        return DAS_E_OUT_OF_MEMORY;
+    }
+}
+
+DasResult ExtractNlohmannJson(
+    Das::ExportInterface::IDasJson* p_json,
+    nlohmann::json&                 out)
+{
+    DAS_UTILS_CHECK_POINTER(p_json)
+
+    Das::DasPtr<DAS::Core::Utils::IDasJsonImpl> p_impl;
+    const auto                                  result = p_json->QueryInterface(
+        DasIidOf<DAS::Core::Utils::IDasJsonImpl>(),
+        p_impl.PutVoid());
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+
+    out = p_impl->ExtractJson();
+    return DAS_S_OK;
 }
