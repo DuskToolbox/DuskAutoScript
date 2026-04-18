@@ -2,14 +2,17 @@
 #define DAS_CORE_FOREIGNINTERFACEHOST_PLUGINMANAGER_H
 
 #include <das/Core/ForeignInterfaceHost/Config.h>
+#include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/DasPtr.hpp>
 #include <das/IDasBase.h>
+#include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <filesystem>
 #include <mutex>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -21,16 +24,16 @@ DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 #endif
 
 /**
- * @brief Feature 名称到接口 IID 的映射信息
+ * @brief Feature 类型到接口 IID 的映射信息
  */
 struct FeatureInfo
 {
-    std::string         feature_name;  // Feature 名称（如 "CAPTURE_FACTORY"）
-    DasGuid             iid;           // 对应的接口 IID
-    DasPtr<IDasBase>    interface_ptr; // 创建的接口指针
-    Core::IPC::ObjectId object_id;     // 在 RemoteObjectRegistry 中的对象 ID
-    uint16_t            session_id;    // 所属会话 ID
-    std::string         plugin_name;   // 所属插件名称
+    Das::PluginInterface::DasPluginFeature feature_type;  // Feature 类型枚举
+    DasGuid                                iid;           // 对应的接口 IID
+    DasPtr<IDasBase>                       interface_ptr; // 创建的接口指针
+    Core::IPC::ObjectId object_id;   // 在 RemoteObjectRegistry 中的对象 ID
+    uint16_t            session_id;  // 所属会话 ID
+    std::string         plugin_name; // 所属插件名称
 };
 
 /**
@@ -51,7 +54,7 @@ struct LoadedPlugin
  * - 加载/卸载插件
  * - 枚举插件的 Features
  * - 将插件对象注册到 RemoteObjectRegistry
- * - 通过 Feature 名称查找对象
+ * - 通过 GUID 主索引和 Feature-type 索引查找对象
  */
 class DAS_API PluginManager
 {
@@ -133,18 +136,6 @@ public:
     DasResult UnregisterPluginObjects(const std::filesystem::path& path);
 
     /**
-     * @brief 通过 Feature 名称获取对象接口
-     * @param feature_name Feature 名称（如 "CAPTURE_FACTORY", "ERROR_LENS"）
-     * @param iid 请求的接口 IID
-     * @param pp_out_object 输出对象指针
-     * @return DAS_S_OK 成功，DAS_E_NOT_FOUND 未找到
-     */
-    DasResult GetObjectByFeature(
-        const std::string& feature_name,
-        const DasGuid&     iid,
-        void**             pp_out_object);
-
-    /**
      * @brief 通过 Feature 类型获取对象接口
      * @param feature Feature 类型
      * @param iid 请求的接口 IID
@@ -157,10 +148,12 @@ public:
         void**                                 pp_out_object);
 
     /**
-     * @brief 获取所有可用的 Feature 名称
-     * @param out_features 输出 Feature 名称列表
+     * @brief 按类型获取已注册的 Feature 列表
+     * @param type Feature 类型
+     * @return 指向 FeatureInfo 指针数组的 span
      */
-    void GetAllFeatures(std::vector<std::string>& out_features) const;
+    std::span<FeatureInfo* const> GetFeaturesByType(
+        Das::PluginInterface::DasPluginFeature type) const;
 
     /**
      * @brief 获取指定插件的所有 Feature
@@ -207,13 +200,21 @@ private:
     std::filesystem::path NormalizePath(
         const std::filesystem::path& path) const;
 
-    mutable std::mutex                            mutex_;
-    uint16_t                                      session_id_ = 0;
-    DasPtr<IForeignLanguageRuntime>               runtime_;
-    Core::IPC::RemoteObjectRegistry*              registry_ = nullptr;
-    std::unordered_map<std::string, LoadedPlugin> loaded_plugins_;
-    std::unordered_map<std::string, FeatureInfo*>
-        feature_map_; // feature_name -> FeatureInfo
+    /**
+     * @brief 通过 GUID 查找已加载插件
+     */
+    LoadedPlugin* FindPluginByGuid(const DasGuid& guid);
+
+    mutable std::mutex                        mutex_;
+    uint16_t                                  session_id_ = 0;
+    DasPtr<IForeignLanguageRuntime>           runtime_;
+    Core::IPC::RemoteObjectRegistry*          registry_ = nullptr;
+    std::unordered_map<DasGuid, LoadedPlugin> loaded_plugins_;
+    std::unordered_map<std::string, DasGuid>  path_to_guid_;
+    std::unordered_map<
+        Das::PluginInterface::DasPluginFeature,
+        std::vector<FeatureInfo*>>
+        feature_type_index_;
 };
 
 #ifdef _MSC_VER

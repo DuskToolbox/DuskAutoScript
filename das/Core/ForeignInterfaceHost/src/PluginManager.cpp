@@ -8,6 +8,9 @@
 #include <das/_autogen/idl/abi/IDasTask.h>
 
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
+#include <nlohmann/json.hpp>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
@@ -48,7 +51,7 @@ DasResult PluginManager::Shutdown()
     std::lock_guard<std::mutex> lock(mutex_);
 
     // 卸载所有插件
-    for (auto& [path, plugin] : loaded_plugins_)
+    for (auto& [guid, plugin] : loaded_plugins_)
     {
         // 先注销对象
         for (auto& feature : plugin.features)
@@ -57,7 +60,8 @@ DasResult PluginManager::Shutdown()
         }
     }
 
-    feature_map_.clear();
+    feature_type_index_.clear();
+    path_to_guid_.clear();
     loaded_plugins_.clear();
     runtime_.Reset();
     session_id_ = 0;
@@ -93,13 +97,18 @@ DasResult PluginManager::LoadPlugin(
     auto normalized_path = NormalizePath(path);
     auto path_str = normalized_path.string();
 
-    if (loaded_plugins_.contains(path_str))
+    // 路径去重检查
+    if (path_to_guid_.contains(path_str))
     {
         DAS_CORE_LOG_WARN("Plugin already loaded: {}", path_str);
-        if (pp_out_package && loaded_plugins_[path_str].package)
+        if (pp_out_package)
         {
-            *pp_out_package = loaded_plugins_[path_str].package.Get();
-            (*pp_out_package)->AddRef();
+            auto it = loaded_plugins_.find(path_to_guid_[path_str]);
+            if (it != loaded_plugins_.end() && it->second.package)
+            {
+                *pp_out_package = it->second.package.Get();
+                (*pp_out_package)->AddRef();
+            }
         }
         return DAS_S_FALSE;
     }
@@ -130,6 +139,41 @@ DasResult PluginManager::LoadPlugin(
     }
     plugin.package = std::move(package);
 
+    // 解析 manifest JSON 获取 PluginPackageDesc（含 guid）
+    auto desc = std::make_shared<PluginPackageDesc>();
+    // 尝试读取 <plugin_path>/manifest.json
+    auto manifest_path = normalized_path / "manifest.json";
+    if (std::filesystem::exists(manifest_path))
+    {
+        std::ifstream ifs(manifest_path);
+        if (ifs.is_open())
+        {
+            try
+            {
+                auto json_data = nlohmann::json::parse(ifs);
+                from_json(json_data, *desc);
+            }
+            catch (const std::exception& e)
+            {
+                DAS_CORE_LOG_WARN(
+                    "Failed to parse manifest for {}: {}",
+                    path_str,
+                    e.what());
+            }
+        }
+    }
+
+    // GUID 冲突检测
+    if (loaded_plugins_.contains(desc->guid))
+    {
+        DAS_CORE_LOG_ERROR(
+            "Plugin GUID conflict: path={}, existing plugin with same GUID",
+            path_str);
+        return DAS_E_DUPLICATE_ELEMENT;
+    }
+
+    plugin.desc = desc;
+
     // 枚举插件的 Features 并创建接口
     uint64_t index = 0;
     while (true)
@@ -142,7 +186,7 @@ DasResult PluginManager::LoadPlugin(
         }
 
         FeatureInfo feature_info;
-        feature_info.feature_name = GetFeatureName(feature);
+        feature_info.feature_type = feature;
         feature_info.iid = GetIidForFeature(feature);
         feature_info.session_id = session_id_;
         feature_info.plugin_name = normalized_path.stem().string();
@@ -160,16 +204,19 @@ DasResult PluginManager::LoadPlugin(
         ++index;
     }
 
-    loaded_plugins_[path_str] = std::move(plugin);
+    // 先保存 guid，避免 move 后访问问题
+    const auto guid = desc->guid;
+    loaded_plugins_[guid] = std::move(plugin);
+    path_to_guid_[path_str] = guid;
 
     DAS_CORE_LOG_INFO(
         "Loaded plugin: {} with {} features",
         path_str,
-        loaded_plugins_[path_str].features.size());
+        loaded_plugins_[guid].features.size());
 
-    if (pp_out_package && loaded_plugins_[path_str].package)
+    if (pp_out_package && loaded_plugins_[guid].package)
     {
-        *pp_out_package = loaded_plugins_[path_str].package.Get();
+        *pp_out_package = loaded_plugins_[guid].package.Get();
         (*pp_out_package)->AddRef();
     }
 
@@ -183,17 +230,26 @@ DasResult PluginManager::UnloadPlugin(const std::filesystem::path& path)
     auto normalized_path = NormalizePath(path);
     auto path_str = normalized_path.string();
 
-    auto it = loaded_plugins_.find(path_str);
-    if (it == loaded_plugins_.end())
+    // 路径 -> GUID 查找
+    auto path_it = path_to_guid_.find(path_str);
+    if (path_it == path_to_guid_.end())
+    {
+        DAS_CORE_LOG_WARN("Plugin not loaded: {}", path_str);
+        return DAS_E_NOT_FOUND;
+    }
+
+    auto guid = path_it->second;
+    auto plug_it = loaded_plugins_.find(guid);
+    if (plug_it == loaded_plugins_.end())
     {
         DAS_CORE_LOG_WARN("Plugin not loaded: {}", path_str);
         return DAS_E_NOT_FOUND;
     }
 
     bool can_unload = false;
-    if (it->second.package)
+    if (plug_it->second.package)
     {
-        auto unload_result = it->second.package->CanUnloadNow(&can_unload);
+        auto unload_result = plug_it->second.package->CanUnloadNow(&can_unload);
         if (unload_result != DAS_S_OK || !can_unload)
         {
             DAS_CORE_LOG_WARN("Plugin cannot be unloaded now: {}", path_str);
@@ -201,18 +257,28 @@ DasResult PluginManager::UnloadPlugin(const std::filesystem::path& path)
         }
     }
 
+    // 先从 feature_type_index_ 中移除指针（在 erase loaded_plugins_ 之前）
+    for (auto& feature : plug_it->second.features)
+    {
+        auto type_it = feature_type_index_.find(feature.feature_type);
+        if (type_it != feature_type_index_.end())
+        {
+            auto& vec = type_it->second;
+            vec.erase(std::remove(vec.begin(), vec.end(), &feature), vec.end());
+        }
+    }
+
     // 注销对象
-    for (auto& feature : it->second.features)
+    for (auto& feature : plug_it->second.features)
     {
         if (!Core::IPC::IsNullObjectId(feature.object_id))
         {
             registry_->UnregisterObject(feature.object_id);
         }
-        // 从 feature_map_ 中移除
-        feature_map_.erase(feature.feature_name);
     }
 
-    loaded_plugins_.erase(it);
+    loaded_plugins_.erase(plug_it);
+    path_to_guid_.erase(path_it);
 
     DAS_CORE_LOG_INFO("Unloaded plugin: {}", path_str);
     return DAS_S_OK;
@@ -232,7 +298,13 @@ DasResult PluginManager::GetPlugin(
     auto normalized_path = NormalizePath(path);
     auto path_str = normalized_path.string();
 
-    auto it = loaded_plugins_.find(path_str);
+    auto path_it = path_to_guid_.find(path_str);
+    if (path_it == path_to_guid_.end())
+    {
+        return DAS_E_NOT_FOUND;
+    }
+
+    auto it = loaded_plugins_.find(path_it->second);
     if (it == loaded_plugins_.end())
     {
         return DAS_E_NOT_FOUND;
@@ -255,7 +327,7 @@ std::vector<std::filesystem::path> PluginManager::GetLoadedPluginPaths() const
     std::vector<std::filesystem::path> paths;
     paths.reserve(loaded_plugins_.size());
 
-    for (const auto& [path, plugin] : loaded_plugins_)
+    for (const auto& [guid, plugin] : loaded_plugins_)
     {
         paths.push_back(plugin.plugin_path);
     }
@@ -271,7 +343,14 @@ DasResult PluginManager::RegisterPluginObjects(
     auto normalized_path = NormalizePath(path);
     auto path_str = normalized_path.string();
 
-    auto it = loaded_plugins_.find(path_str);
+    auto path_it = path_to_guid_.find(path_str);
+    if (path_it == path_to_guid_.end())
+    {
+        DAS_CORE_LOG_WARN("Plugin not loaded: {}", path_str);
+        return DAS_E_NOT_FOUND;
+    }
+
+    auto it = loaded_plugins_.find(path_it->second);
     if (it == loaded_plugins_.end())
     {
         DAS_CORE_LOG_WARN("Plugin not loaded: {}", path_str);
@@ -300,21 +379,23 @@ DasResult PluginManager::RegisterPluginObjects(
             feature.iid,
             interface_id,
             session_id_,
-            feature.feature_name,
+            GetFeatureName(feature.feature_type),
             1);
 
         if (register_result == DAS_S_OK)
         {
             feature.object_id = obj_id;
-            feature_map_[feature.feature_name] = &feature;
+            feature_type_index_[feature.feature_type].push_back(&feature);
 
-            DAS_CORE_LOG_INFO("Registered feature {}", feature.feature_name);
+            DAS_CORE_LOG_INFO(
+                "Registered feature {}",
+                GetFeatureName(feature.feature_type));
         }
         else
         {
             DAS_CORE_LOG_WARN(
                 "Failed to register feature {}: error={}",
-                feature.feature_name,
+                GetFeatureName(feature.feature_type),
                 static_cast<int>(register_result));
         }
     }
@@ -330,7 +411,13 @@ DasResult PluginManager::UnregisterPluginObjects(
     auto normalized_path = NormalizePath(path);
     auto path_str = normalized_path.string();
 
-    auto it = loaded_plugins_.find(path_str);
+    auto path_it = path_to_guid_.find(path_str);
+    if (path_it == path_to_guid_.end())
+    {
+        return DAS_E_NOT_FOUND;
+    }
+
+    auto it = loaded_plugins_.find(path_it->second);
     if (it == loaded_plugins_.end())
     {
         return DAS_E_NOT_FOUND;
@@ -345,16 +432,23 @@ DasResult PluginManager::UnregisterPluginObjects(
             registry.UnregisterObject(feature.object_id);
             feature.object_id = Core::IPC::ObjectId{};
         }
-        feature_map_.erase(feature.feature_name);
+
+        // 从 feature_type_index_ 中移除
+        auto type_it = feature_type_index_.find(feature.feature_type);
+        if (type_it != feature_type_index_.end())
+        {
+            auto& vec = type_it->second;
+            vec.erase(std::remove(vec.begin(), vec.end(), &feature), vec.end());
+        }
     }
 
     return DAS_S_OK;
 }
 
 DasResult PluginManager::GetObjectByFeature(
-    const std::string& feature_name,
-    const DasGuid&     iid,
-    void**             pp_out_object)
+    Das::PluginInterface::DasPluginFeature feature,
+    const DasGuid&                         iid,
+    void**                                 pp_out_object)
 {
     std::lock_guard<std::mutex> lock(mutex_);
 
@@ -365,43 +459,37 @@ DasResult PluginManager::GetObjectByFeature(
 
     *pp_out_object = nullptr;
 
-    auto it = feature_map_.find(feature_name);
-    if (it == feature_map_.end() || !it->second)
+    auto type_it = feature_type_index_.find(feature);
+    if (type_it == feature_type_index_.end() || type_it->second.empty())
     {
-        DAS_CORE_LOG_WARN("Feature not found: {}", feature_name);
+        DAS_CORE_LOG_WARN("Feature not found: {}", GetFeatureName(feature));
         return DAS_E_NOT_FOUND;
     }
 
-    auto& feature = *it->second;
-    if (!feature.interface_ptr)
+    auto& feature_info = *type_it->second.front();
+    if (!feature_info.interface_ptr)
     {
         return DAS_E_INVALID_POINTER;
     }
 
     // QueryInterface 获取请求的接口
-    auto result = feature.interface_ptr->QueryInterface(iid, pp_out_object);
+    auto result =
+        feature_info.interface_ptr->QueryInterface(iid, pp_out_object);
     return result;
 }
 
-DasResult PluginManager::GetObjectByFeature(
-    Das::PluginInterface::DasPluginFeature feature,
-    const DasGuid&                         iid,
-    void**                                 pp_out_object)
-{
-    return GetObjectByFeature(GetFeatureName(feature), iid, pp_out_object);
-}
-
-void PluginManager::GetAllFeatures(std::vector<std::string>& out_features) const
+std::span<FeatureInfo* const> PluginManager::GetFeaturesByType(
+    Das::PluginInterface::DasPluginFeature type) const
 {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    out_features.clear();
-    out_features.reserve(feature_map_.size());
-
-    for (const auto& [name, info] : feature_map_)
+    auto it = feature_type_index_.find(type);
+    if (it == feature_type_index_.end())
     {
-        out_features.push_back(name);
+        return {};
     }
+
+    return it->second;
 }
 
 DasResult PluginManager::GetPluginFeatures(
@@ -413,7 +501,13 @@ DasResult PluginManager::GetPluginFeatures(
     auto normalized_path = NormalizePath(path);
     auto path_str = normalized_path.string();
 
-    auto it = loaded_plugins_.find(path_str);
+    auto path_it = path_to_guid_.find(path_str);
+    if (path_it == path_to_guid_.end())
+    {
+        return DAS_E_NOT_FOUND;
+    }
+
+    auto it = loaded_plugins_.find(path_it->second);
     if (it == loaded_plugins_.end())
     {
         return DAS_E_NOT_FOUND;
@@ -426,7 +520,7 @@ DasResult PluginManager::GetPluginFeatures(
 bool PluginManager::IsPluginLoaded(const std::filesystem::path& path) const
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    return loaded_plugins_.contains(NormalizePath(path).string());
+    return path_to_guid_.contains(NormalizePath(path).string());
 }
 
 size_t PluginManager::GetLoadedPluginCount() const
@@ -484,6 +578,16 @@ std::filesystem::path PluginManager::NormalizePath(
 {
     auto result = std::filesystem::weakly_canonical(path);
     return result;
+}
+
+LoadedPlugin* PluginManager::FindPluginByGuid(const DasGuid& guid)
+{
+    auto it = loaded_plugins_.find(guid);
+    if (it == loaded_plugins_.end())
+    {
+        return nullptr;
+    }
+    return &it->second;
 }
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
