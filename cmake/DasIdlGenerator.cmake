@@ -39,6 +39,17 @@ function(das_idl_setup_venv)
         if(NOT VENV_RESULT EQUAL 0)
             message(FATAL_ERROR "[DAS IDL] Failed to create virtual environment: ${VENV_ERROR}")
         endif()
+
+        # 等待文件系统同步，确保 python 可执行文件已落盘
+        execute_process(
+            COMMAND ${CMAKE_COMMAND} -E sleep 2
+        )
+
+        if(NOT EXISTS "${DAS_IDL_VENV_PYTHON}")
+            message(FATAL_ERROR
+                "[DAS IDL] Python executable not found at ${DAS_IDL_VENV_PYTHON} "
+                "after creating virtual environment")
+        endif()
     else()
         message(STATUS "[DAS IDL] Using existing virtual environment at ${DAS_IDL_VENV_DIR}")
     endif()
