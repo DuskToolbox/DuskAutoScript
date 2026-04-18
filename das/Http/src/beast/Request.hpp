@@ -131,9 +131,9 @@ namespace Das::Http::Beast
         {
             HttpResponse   response;
             nlohmann::json body;
-            body["code"] = error_code;
-            body["message"] = message;
-            body["data"] = nullptr;
+            body["Code"] = error_code;
+            body["Message"] = message;
+            body["Data"] = nullptr;
             response.SetBody(body);
             return response;
         }
@@ -143,9 +143,9 @@ namespace Das::Http::Beast
         {
             HttpResponse   response;
             nlohmann::json body;
-            body["code"] = DAS_S_OK;
-            body["message"] = "";
-            body["data"] = data;
+            body["Code"] = DAS_S_OK;
+            body["Message"] = "";
+            body["Data"] = data;
             response.SetBody(body);
             return response;
         }

@@ -200,9 +200,9 @@ namespace Das::Http::Beast
             // 未找到路由
             HttpResponse   response(http::status::not_found);
             nlohmann::json body;
-            body["code"] = DAS_E_FILE_NOT_FOUND;
-            body["message"] = "Route not found";
-            body["data"] = nullptr;
+            body["Code"] = DAS_E_FILE_NOT_FOUND;
+            body["Message"] = "Route not found";
+            body["Data"] = nullptr;
             response.SetBody(body);
             return response;
         }

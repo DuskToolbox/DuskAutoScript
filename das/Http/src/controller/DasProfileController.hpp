@@ -7,7 +7,6 @@
 #include "component/Helper.hpp"
 #include "das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h"
 #include "das/_autogen/idl/abi/DasLogger.h"
-#include "das/_autogen/idl/abi/DasSettings.h"
 #include "das/_autogen/idl/abi/IDasTaskScheduler.h"
 #include "dto/Profile.hpp"
 #include "dto/Settings.hpp"
@@ -25,13 +24,11 @@ namespace Das::Http
     class DasProfileManagerController
     {
         DAS::DasPtr<ExportInterface::IDasTaskScheduler> p_task_scheduler_{};
-        DAS::DasPtr<ExportInterface::IDasJsonSetting>   p_settings_for_ui_{};
 
     public:
         DasProfileManagerController()
         {
-            // TODO: GetIDasSettingsForUi is not available, will be rewritten
-            // GetIDasSettingsForUi(p_settings_for_ui_.Put());
+            // Will be rewritten in Plan 02 to use SettingsManager
             // GetIDasTaskScheduler(p_task_scheduler_.Put());
         }
 

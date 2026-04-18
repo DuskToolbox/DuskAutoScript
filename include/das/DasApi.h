@@ -27,7 +27,6 @@ namespace Das::ExportInterface
     struct IDasReadOnlyGuidVector;
     struct IDasInitializeIDasPluginManagerCallback;
     struct IDasInitializeIDasPluginManagerWaiter;
-    struct IDasJsonSetting;
     struct IDasVariantVector;
 } // namespace Das::ExportInterface
 
@@ -123,18 +122,12 @@ DAS_C_API DasResult InitializeIDasPluginManager(
     Das::ExportInterface::IDasInitializeIDasPluginManagerWaiter**
         pp_out_waiter);
 
-DAS_C_API DasResult GetExistingIDasPluginManager(
-    Das::ExportInterface::IDasPluginManager** pp_out_result);
-
 DAS_C_API DasResult CreateIDasMemory(
     size_t                             size_in_byte,
     Das::ExportInterface::IDasMemory** pp_out_memory);
 
 DAS_C_API DasResult GetIDasTaskScheduler(
     Das::ExportInterface::IDasTaskScheduler** pp_out_task_scheduler);
-
-DAS_C_API DasResult SetIDasTaskSchedulerJsonState(
-    Das::ExportInterface::IDasJsonSetting* p_scheduler_state);
 
 DAS_C_API DasResult CreateIDasImageFromEncodedData(
     DasImageDesc*                     p_desc,

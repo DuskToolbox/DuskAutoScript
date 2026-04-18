@@ -75,9 +75,9 @@ namespace Das::Http::Beast::JsonUtils
         const nlohmann::json& data = nullptr)
     {
         nlohmann::json response;
-        response["code"] = DAS_S_OK;
-        response["message"] = "";
-        response["data"] = data;
+        response["Code"] = DAS_S_OK;
+        response["Message"] = "";
+        response["Data"] = data;
         return response;
     }
 
@@ -87,9 +87,9 @@ namespace Das::Http::Beast::JsonUtils
         const std::string& message)
     {
         nlohmann::json response;
-        response["code"] = error_code;
-        response["message"] = message;
-        response["data"] = nullptr;
+        response["Code"] = error_code;
+        response["Message"] = message;
+        response["Data"] = nullptr;
         return response;
     }
 
