@@ -54,9 +54,12 @@ DasResult PluginManager::Shutdown()
     for (auto& [guid, plugin] : loaded_plugins_)
     {
         // 先注销对象
-        for (auto& feature : plugin.features)
+        if (registry_)
         {
-            registry_->UnregisterObject(feature.object_id);
+            for (auto& feature : plugin.features)
+            {
+                registry_->UnregisterObject(feature.object_id);
+            }
         }
     }
 
