@@ -52,6 +52,23 @@ namespace Das::Http::Beast
             return "";
         }
 
+        // Path parameter access
+        std::string GetPathParameter(const std::string& name) const
+        {
+            auto it = path_params_.find(name);
+            if (it != path_params_.end())
+            {
+                return it->second;
+            }
+            return "";
+        }
+
+        void SetPathParameter(const std::string& name, const std::string& value)
+            const
+        {
+            path_params_[name] = value;
+        }
+
     private:
         void ParseBody()
         {
@@ -69,8 +86,9 @@ namespace Das::Http::Beast
             }
         }
 
-        request_type   request_;
-        nlohmann::json json_body_;
+        request_type                               request_;
+        nlohmann::json                             json_body_;
+        mutable std::map<std::string, std::string> path_params_;
     };
 
     // HTTP响应封装
