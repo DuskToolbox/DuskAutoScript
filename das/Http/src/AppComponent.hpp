@@ -3,6 +3,7 @@
 
 #include "beast/Router.hpp"
 #include "beast/Server.hpp"
+#include <das/Core/SettingsManager/SettingsManager.h>
 #include <string>
 
 namespace Das::Http
@@ -11,10 +12,15 @@ namespace Das::Http
     class AppComponent
     {
     public:
-        std::shared_ptr<Beast::Router> router;
-        std::function<bool()>          stop_condition;
+        std::shared_ptr<Beast::Router>              router;
+        std::function<bool()>                       stop_condition;
+        Das::Core::SettingsManager::SettingsManager settings_manager;
 
-        AppComponent() { router = std::make_shared<Beast::Router>(); }
+        AppComponent()
+            : router(std::make_shared<Beast::Router>()),
+              settings_manager(std::filesystem::path("settings"))
+        {
+        }
     };
 
 } // namespace Das::Http

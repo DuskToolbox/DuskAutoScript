@@ -2,107 +2,191 @@
 #define DAS_HTTP_CONTROLLER_DASPROFILECONTROLLER_HPP
 
 #include "Config.h"
-#include "beast/JsonUtils.hpp"
 #include "beast/Request.hpp"
-#include "component/Helper.hpp"
-#include "das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h"
-#include "das/_autogen/idl/abi/DasLogger.h"
-#include "das/_autogen/idl/abi/IDasTaskScheduler.h"
-#include "dto/Profile.hpp"
-#include "dto/Settings.hpp"
+#include <das/Core/SettingsManager/SettingsManager.h>
 #include <nlohmann/json.hpp>
 #include <string>
-#include <vector>
 
 namespace Das::Http
 {
 
-    /**
-     *  @brief 定义配置文件管理相关API
-     *  Define profile related APIs
-     */
-    class DasProfileManagerController
+    class DasProfileController
     {
-        DAS::DasPtr<ExportInterface::IDasTaskScheduler> p_task_scheduler_{};
-
     public:
-        DasProfileManagerController()
+        explicit DasProfileController(
+            Das::Core::SettingsManager::SettingsManager& sm)
+            : settings_manager_(sm)
         {
-            // Will be rewritten in Plan 02 to use SettingsManager
-            // GetIDasTaskScheduler(p_task_scheduler_.Put());
         }
 
-        // 获取配置文件列表
-        // Get profile list
         Beast::HttpResponse GetProfileList(const Beast::HttpRequest& request)
         {
-            return Beast::HttpResponse::CreateErrorResponse(
-                DAS_E_NO_IMPLEMENTATION,
-                "Profile list API is not implemented");
-        }
-
-        Beast::HttpResponse GetProfile(const Beast::HttpRequest& request)
-        {
-            return Beast::HttpResponse::CreateErrorResponse(
-                DAS_E_NO_IMPLEMENTATION,
-                "Profile get API is not implemented");
-        }
-
-        // 获取配置文件状态
-        // Get profile status
-        Beast::HttpResponse GetProfileStatus(const Beast::HttpRequest& request)
-        {
-            return Beast::HttpResponse::CreateErrorResponse(
-                DAS_E_NO_IMPLEMENTATION,
-                "Profile status API is not implemented");
+            auto json_str = settings_manager_.GetProfileList();
+            try
+            {
+                auto json = nlohmann::json::parse(json_str);
+                return Beast::HttpResponse::CreateSuccessResponse(json);
+            }
+            catch (const nlohmann::json::exception&)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_JSON,
+                    "Failed to parse profile list");
+            }
         }
 
         Beast::HttpResponse CreateProfile(const Beast::HttpRequest& request)
         {
-            return Beast::HttpResponse::CreateErrorResponse(
-                DAS_E_NO_IMPLEMENTATION,
-                "Profile create API is not implemented");
+            const auto& body = request.JsonBody();
+            if (!body.contains("profileId") || !body["profileId"].is_string())
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Missing or invalid 'profileId' field");
+            }
+
+            auto profile_id = body["profileId"].get<std::string>();
+            auto result = settings_manager_.CreateProfile(profile_id);
+            if (DAS::IsFailed(result))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    result,
+                    "Failed to create profile");
+            }
+            return Beast::HttpResponse::CreateSuccessResponse();
         }
 
         Beast::HttpResponse DeleteProfile(const Beast::HttpRequest& request)
         {
-            return Beast::HttpResponse::CreateErrorResponse(
-                DAS_E_NO_IMPLEMENTATION,
-                "Profile delete API is not implemented");
+            const auto& body = request.JsonBody();
+            if (!body.contains("profileId") || !body["profileId"].is_string())
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Missing or invalid 'profileId' field");
+            }
+
+            auto profile_id = body["profileId"].get<std::string>();
+            auto result = settings_manager_.DeleteProfile(profile_id);
+            if (DAS::IsFailed(result))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    result,
+                    "Failed to delete profile");
+            }
+            return Beast::HttpResponse::CreateSuccessResponse();
         }
 
-        // 启用/禁用配置文件
-        // Enable/disable profile
-        Beast::HttpResponse SetEnable(const Beast::HttpRequest& request)
+        Beast::HttpResponse GetProfile(const Beast::HttpRequest& request)
         {
-            return Beast::HttpResponse::CreateErrorResponse(
-                DAS_E_NO_IMPLEMENTATION,
-                "Profile set enable API is not implemented");
+            auto pid = request.GetPathParameter("pid");
+            if (pid != "0")
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Profile ID must be 0 in v1.2");
+            }
+
+            auto json_str = settings_manager_.GetProfile(pid);
+            try
+            {
+                auto json = nlohmann::json::parse(json_str);
+                return Beast::HttpResponse::CreateSuccessResponse(json);
+            }
+            catch (const nlohmann::json::exception&)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_JSON,
+                    "Failed to parse profile data");
+            }
         }
 
-        Beast::HttpResponse StartProfile(const Beast::HttpRequest& request)
+        Beast::HttpResponse UpdateProfile(const Beast::HttpRequest& request)
         {
-            return Beast::HttpResponse::CreateErrorResponse(
-                DAS_E_NO_IMPLEMENTATION,
-                "Profile start API is not implemented");
+            auto pid = request.GetPathParameter("pid");
+            if (pid != "0")
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Profile ID must be 0 in v1.2");
+            }
+
+            const auto& body = request.JsonBody();
+            if (!body.is_object())
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Invalid request body");
+            }
+
+            auto result = settings_manager_.UpdateProfile(pid, body.dump());
+            if (DAS::IsFailed(result))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    result,
+                    "Failed to update profile");
+            }
+            return Beast::HttpResponse::CreateSuccessResponse();
         }
 
-        Beast::HttpResponse StopProfile(const Beast::HttpRequest& request)
+        Beast::HttpResponse GetPluginSettings(const Beast::HttpRequest& request)
         {
-            return Beast::HttpResponse::CreateErrorResponse(
-                DAS_E_NO_IMPLEMENTATION,
-                "Profile stop API is not implemented");
+            auto pid = request.GetPathParameter("pid");
+            auto guid = request.GetPathParameter("guid");
+            if (pid != "0")
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Profile ID must be 0 in v1.2");
+            }
+
+            auto json_str = settings_manager_.GetPluginSettings(pid, guid);
+            try
+            {
+                auto json = nlohmann::json::parse(json_str);
+                return Beast::HttpResponse::CreateSuccessResponse(json);
+            }
+            catch (const nlohmann::json::exception&)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_JSON,
+                    "Failed to parse plugin settings");
+            }
+        }
+
+        Beast::HttpResponse UpdatePluginSettings(
+            const Beast::HttpRequest& request)
+        {
+            auto pid = request.GetPathParameter("pid");
+            auto guid = request.GetPathParameter("guid");
+            if (pid != "0")
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Profile ID must be 0 in v1.2");
+            }
+
+            const auto& body = request.JsonBody();
+            if (!body.is_object())
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Invalid request body");
+            }
+
+            auto result =
+                settings_manager_.UpdatePluginSettings(pid, guid, body.dump());
+            if (DAS::IsFailed(result))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    result,
+                    "Failed to update plugin settings");
+            }
+            return Beast::HttpResponse::CreateSuccessResponse();
         }
 
     private:
-        // 获取任务列表
-        // Get task list
-        Beast::HttpResponse GetTaskList(const Beast::HttpRequest& request)
-        {
-            return Beast::HttpResponse::CreateErrorResponse(
-                DAS_E_NO_IMPLEMENTATION,
-                "Task list API is not implemented");
-        }
+        Das::Core::SettingsManager::SettingsManager& settings_manager_;
     };
 
 } // namespace Das::Http

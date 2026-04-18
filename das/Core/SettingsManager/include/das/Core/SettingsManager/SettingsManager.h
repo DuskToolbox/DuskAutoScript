@@ -2,6 +2,7 @@
 #define DAS_CORE_SETTINGS_MANAGER_SETTINGS_MANAGER_H
 
 #include <das/Core/SettingsManager/Config.h>
+#include <das/DasExport.h>
 #include <filesystem>
 #include <nlohmann/json.hpp>
 #include <shared_mutex>
@@ -10,7 +11,7 @@
 
 DAS_CORE_SETTINGS_MANAGER_NS_BEGIN
 
-class SettingsManager
+class DAS_API SettingsManager
 {
 public:
     explicit SettingsManager(const std::filesystem::path& base_dir);

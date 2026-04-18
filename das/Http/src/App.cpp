@@ -46,9 +46,11 @@ namespace Das::Http
         auto misc_controller = std::make_shared<Das::Http::DasMiscController>();
         auto log_controller = std::make_shared<Das::Http::DasLogController>();
         auto profile_controller =
-            std::make_shared<Das::Http::DasProfileManagerController>();
+            std::make_shared<Das::Http::DasProfileController>(
+                components.settings_manager);
         auto settings_controller =
-            std::make_shared<Das::Http::DasUiSettingsController>();
+            std::make_shared<Das::Http::DasUiSettingsController>(
+                components.settings_manager);
 
         // 注册路由
         // Misc
@@ -67,37 +69,35 @@ namespace Das::Http
             [log_controller](const Das::Http::Beast::HttpRequest& req)
             { return log_controller->GetLogs(req); });
 
-        // Profile 未来重写
-        // components.router->Post(DAS_HTTP_API_PREFIX "profile/list",
-        //     [profile_controller](const Das::Http::Beast::HttpRequest& req) {
-        //     return profile_controller->GetProfileList(req); });
-        // components.router->Post(DAS_HTTP_API_PREFIX "profile/get",
-        //     [profile_controller](const Das::Http::Beast::HttpRequest& req) {
-        //     return profile_controller->GetProfile(req); });
-        // components.router->Post(DAS_HTTP_API_PREFIX "profile/status",
-        //     [profile_controller](const Das::Http::Beast::HttpRequest& req) {
-        //     return profile_controller->GetProfileStatus(req); });
-        // components.router->Post(DAS_HTTP_API_PREFIX "profile/create",
-        //     [profile_controller](const Das::Http::Beast::HttpRequest& req) {
-        //     return profile_controller->CreateProfile(req); });
-        // components.router->Post(DAS_HTTP_API_PREFIX "profile/delete",
-        //     [profile_controller](const Das::Http::Beast::HttpRequest& req) {
-        //     return profile_controller->DeleteProfile(req); });
-        // components.router->Post(DAS_HTTP_API_PREFIX "profile/save",
-        //     [profile_controller](const Das::Http::Beast::HttpRequest& req) {
-        //     return profile_controller->SaveProfile(req); });
-        // components.router->Post(DAS_HTTP_API_PREFIX "profile/enable",
-        //     [profile_controller](const Das::Http::Beast::HttpRequest& req) {
-        //     return profile_controller->SetEnable(req); });
-        // components.router->Post(DAS_HTTP_API_PREFIX "profile/start",
-        //     [profile_controller](const Das::Http::Beast::HttpRequest& req) {
-        //     return profile_controller->StartProfile(req); });
-        // components.router->Post(DAS_HTTP_API_PREFIX "profile/stop",
-        //     [profile_controller](const Das::Http::Beast::HttpRequest& req) {
-        //     return profile_controller->StopProfile(req); });
-        // components.router->Post(DAS_HTTP_API_PREFIX "settings/task/list",
-        //     [profile_controller](const Das::Http::Beast::HttpRequest& req) {
-        //     return profile_controller->GetTaskList(req); });
+        // Profile
+        components.router->Post(
+            DAS_HTTP_API_PREFIX "profile/get",
+            [profile_controller](const Das::Http::Beast::HttpRequest& req)
+            { return profile_controller->GetProfileList(req); });
+        components.router->Post(
+            DAS_HTTP_API_PREFIX "profile/create",
+            [profile_controller](const Das::Http::Beast::HttpRequest& req)
+            { return profile_controller->CreateProfile(req); });
+        components.router->Post(
+            DAS_HTTP_API_PREFIX "profile/delete",
+            [profile_controller](const Das::Http::Beast::HttpRequest& req)
+            { return profile_controller->DeleteProfile(req); });
+        components.router->Post(
+            DAS_HTTP_API_PREFIX "profile/{pid}/get",
+            [profile_controller](const Das::Http::Beast::HttpRequest& req)
+            { return profile_controller->GetProfile(req); });
+        components.router->Post(
+            DAS_HTTP_API_PREFIX "profile/{pid}/update",
+            [profile_controller](const Das::Http::Beast::HttpRequest& req)
+            { return profile_controller->UpdateProfile(req); });
+        components.router->Post(
+            DAS_HTTP_API_PREFIX "profile/{pid}/{guid}/get",
+            [profile_controller](const Das::Http::Beast::HttpRequest& req)
+            { return profile_controller->GetPluginSettings(req); });
+        components.router->Post(
+            DAS_HTTP_API_PREFIX "profile/{pid}/{guid}/update",
+            [profile_controller](const Das::Http::Beast::HttpRequest& req)
+            { return profile_controller->UpdatePluginSettings(req); });
 
         // Plugin Manager
         // TODO: 重写后移除注释
