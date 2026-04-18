@@ -1,5 +1,6 @@
 #include <das/Core/ForeignInterfaceHost/PluginScanner.h>
 
+#include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/Logger/Logger.h>
 
 #include <fstream>

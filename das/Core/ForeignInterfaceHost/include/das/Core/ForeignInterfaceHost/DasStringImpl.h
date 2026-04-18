@@ -3,6 +3,7 @@
 
 #include <array>
 #include <das/Core/ForeignInterfaceHost/DasStringJsonInterop.h>
+#include <das/DasExport.h>
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/Config.h>
@@ -120,7 +121,7 @@ auto ToU8String(IDasReadOnlyString* p_string) -> Utils::Expected<std::string>;
 
 DAS_UTILS_NS_END
 
-class DasReadOnlyStringWrapper
+class DAS_API DasReadOnlyStringWrapper
 {
     mutable DAS::DasPtr<IDasReadOnlyString> p_impl_{
         []

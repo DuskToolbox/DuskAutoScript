@@ -4,6 +4,7 @@
 #include "beast/Router.hpp"
 #include "beast/Server.hpp"
 #include <das/Core/SettingsManager/SettingsManager.h>
+#include <filesystem>
 #include <string>
 
 namespace Das::Http
@@ -15,10 +16,12 @@ namespace Das::Http
         std::shared_ptr<Beast::Router>              router;
         std::function<bool()>                       stop_condition;
         Das::Core::SettingsManager::SettingsManager settings_manager;
+        std::filesystem::path                       plugin_dir;
 
-        AppComponent()
+        explicit AppComponent(const std::filesystem::path& plugin_dir)
             : router(std::make_shared<Beast::Router>()),
-              settings_manager(std::filesystem::path("settings"))
+              settings_manager(std::filesystem::path("settings")),
+              plugin_dir(plugin_dir)
         {
         }
     };

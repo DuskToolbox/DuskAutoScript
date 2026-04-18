@@ -3,6 +3,7 @@
 
 #include <das/Core/Exceptions/InvalidGuidStringException.h>
 #include <das/Core/ForeignInterfaceHost/Config.h>
+#include <das/DasExport.h>
 #include <das/IDasBase.h>
 #include <das/Utils/fmt.h>
 #include <nlohmann/json_fwd.hpp>
@@ -23,7 +24,7 @@ struct DAS_FMT_NS::formatter<DasGuid, char>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
-DasGuid MakeDasGuid(const std::string_view guid_string);
+DAS_EXPORT DasGuid MakeDasGuid(const std::string_view guid_string);
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
 

@@ -6,13 +6,15 @@
 #include "das/Utils/ThreadUtils.h"
 
 #include "./AppComponent.hpp"
+#include "./beast/Server.hpp"
 #include "./controller/DasLogController.hpp"
 #include "./controller/DasMiscController.hpp"
-// TODO: 重写后移除注释
-// #include "./controller/DasPluginManagerController.hpp"
-#include "./beast/Server.hpp"
+#include "./controller/DasPluginManagerController.hpp"
 #include "./controller/DasProfileController.hpp"
 #include "./controller/UISettingsController.hpp"
+#include <boost/program_options.hpp>
+#include <das/Core/ForeignInterfaceHost/PluginScanner.h>
+#include <filesystem>
 
 namespace Das::Http
 {
@@ -28,9 +30,12 @@ namespace Das::Http
         return [this]() -> bool { return server_should_continue_; };
     }
 
-    DasResult run()
+    DasResult run(const std::filesystem::path& plugin_dir)
     {
-        Das::Http::AppComponent components;
+        Das::Http::AppComponent components(plugin_dir);
+
+        // Cleanup plugins marked for deletion before starting HTTP server
+        Das::Core::ForeignInterfaceHost::CleanupMarkedPlugins(plugin_dir);
 
         const auto init_result = InitializeDasCore();
         if (DAS::IsFailed(init_result))
@@ -100,15 +105,21 @@ namespace Das::Http
             { return profile_controller->UpdatePluginSettings(req); });
 
         // Plugin Manager
-        // TODO: 重写后移除注释
-        // components.router->Post(
-        //     DAS_HTTP_API_PREFIX "profile/initialize",
-        //     [plugin_controller](const Das::Http::Beast::HttpRequest& req)
-        //     { return plugin_controller->Initialize(req); });
-        // components.router->Post(
-        //     DAS_HTTP_API_PREFIX "settings/plugin/list",
-        //     [plugin_controller](const Das::Http::Beast::HttpRequest& req)
-        //     { return plugin_controller->GetPluginList(req); });
+        auto plugin_controller =
+            std::make_shared<Das::Http::DasPluginManagerController>(
+                components.plugin_dir);
+        components.router->Post(
+            DAS_HTTP_API_PREFIX "plugin/list/get",
+            [plugin_controller](const Das::Http::Beast::HttpRequest& req)
+            { return plugin_controller->GetPluginList(req); });
+        components.router->Post(
+            DAS_HTTP_API_PREFIX "plugin/update",
+            [plugin_controller](const Das::Http::Beast::HttpRequest& req)
+            { return plugin_controller->UpdatePlugin(req); });
+        components.router->Post(
+            DAS_HTTP_API_PREFIX "plugin/{guid}/delete",
+            [plugin_controller](const Das::Http::Beast::HttpRequest& req)
+            { return plugin_controller->DeletePlugin(req); });
 
         // Settings
         components.router->Post(
@@ -142,7 +153,21 @@ int main(int argc, const char* argv[])
 
     DAS::Utils::SetCurrentThreadName(L"MAIN");
 
-    const auto run_result = Das::Http::run();
+    boost::program_options::options_description desc("DasHttp Server");
+    desc.add_options()("help,h", "Show help")(
+        "plugin-dir",
+        boost::program_options::value<std::string>()->default_value("plugins"),
+        "Plugin directory path");
+
+    boost::program_options::variables_map vm;
+    boost::program_options::store(
+        boost::program_options::parse_command_line(argc, argv, desc),
+        vm);
+    boost::program_options::notify(vm);
+
+    std::filesystem::path plugin_dir = vm["plugin-dir"].as<std::string>();
+
+    const auto run_result = Das::Http::run(plugin_dir);
     if (DAS::IsFailed(run_result))
     {
         return run_result;

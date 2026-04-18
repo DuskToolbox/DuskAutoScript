@@ -3,6 +3,7 @@
 
 #include <das/Core/ForeignInterfaceHost/Config.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
+#include <das/DasExport.h>
 #include <das/IDasBase.h>
 
 #include <filesystem>
@@ -10,19 +11,19 @@
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
-std::vector<PluginPackageDesc> ScanPlugins(
+DAS_EXPORT std::vector<PluginPackageDesc> ScanPlugins(
     const std::filesystem::path& plugin_dir);
 
-void CleanupMarkedPlugins(const std::filesystem::path& plugin_dir);
+DAS_EXPORT void CleanupMarkedPlugins(const std::filesystem::path& plugin_dir);
 
-DasResult MarkForDeletion(
-    const std::filesystem::path& plugin_dir,
-    const DasGuid&               guid);
+DAS_EXPORT DasResult
+MarkForDeletion(const std::filesystem::path& plugin_dir, const DasGuid& guid);
 
-std::filesystem::path FindManifest(
+DAS_EXPORT std::filesystem::path FindManifest(
     const std::filesystem::path& plugin_dir_entry);
 
-nlohmann::json PluginPackageDescToJson(const PluginPackageDesc& desc);
+DAS_EXPORT nlohmann::json PluginPackageDescToJson(
+    const PluginPackageDesc& desc);
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
 

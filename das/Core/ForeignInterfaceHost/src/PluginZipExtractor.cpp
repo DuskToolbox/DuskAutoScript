@@ -116,7 +116,8 @@ namespace
         output.resize(uncompressed_size);
 
         z_stream stream{};
-        stream.next_in = reinterpret_cast<const Bytef*>(compressed.data());
+        stream.next_in =
+            reinterpret_cast<Bytef*>(const_cast<char*>(compressed.data()));
         stream.avail_in = static_cast<uInt>(compressed_size);
         stream.next_out = reinterpret_cast<Bytef*>(output.data());
         stream.avail_out = static_cast<uInt>(uncompressed_size);
@@ -204,16 +205,6 @@ namespace
         }
 
         return true;
-    }
-
-    std::string GenerateTempSuffix()
-    {
-        std::random_device              rd;
-        std::mt19937                    gen(rd());
-        std::uniform_int_distribution<> dis(0, 0xFFFF);
-        std::array<char, 9>             buf{};
-        std::snprintf(buf.data(), buf.size(), "%04x%04x", dis(gen), dis(gen));
-        return {buf.data(), 8};
     }
 
     struct ExtractedEntry
