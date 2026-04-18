@@ -3,6 +3,7 @@
 
 #include <das/Core/SettingsManager/Config.h>
 #include <das/DasExport.h>
+#include <das/DasTypes.hpp>
 #include <filesystem>
 #include <nlohmann/json.hpp>
 #include <shared_mutex>
