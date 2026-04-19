@@ -7,6 +7,7 @@
 #include <das/Core/IPC/BusinessThread.h>
 #include <das/Core/IPC/CurrentIpcContextScope.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
+#include <das/Core/IPC/InternalCallbackHandler.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcMessageQueue.h>
 #include <das/Core/IPC/IpcRunLoop.h>
@@ -70,6 +71,8 @@ namespace Core
 
                 void PostCallback(IDasAsyncCallback* callback) override;
 
+                void PostToBusinessThread(IDasAsyncCallback* callback) override;
+
                 DasResult Run() override;
                 void      RequestStop() override;
 
@@ -103,6 +106,9 @@ namespace Core
                 /// IPC 命令处理器
                 DasPtr<IpcCommandHandler> command_handler_;
 
+                /// 内部回调处理器（PostToBusinessThread 用）
+                DasPtr<InternalCallbackHandler> internal_callback_handler_;
+
                 /// 远程对象注册表（值成员）
                 RemoteObjectRegistry registry_;
 
@@ -133,6 +139,14 @@ namespace Core
                 uint16_t FindAvailableSessionId();
                 void     MarkSessionIdAsAllocated(uint16_t session_id);
                 void     MarkSessionIdAsFree(uint16_t session_id);
+
+                /// RegisterService 的实际实现（在 BusinessThread 上执行）
+                DasResult RegisterServiceImpl(
+                    IDasBase*      p_object,
+                    const DasGuid& iid);
+
+                /// UnregisterService 的实际实现（在 BusinessThread 上执行）
+                DasResult UnregisterServiceImpl(const DasGuid& iid);
             };
 
         } // namespace MainProcess

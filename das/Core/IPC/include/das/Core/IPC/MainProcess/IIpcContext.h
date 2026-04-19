@@ -90,6 +90,19 @@ namespace Core
                 virtual void PostCallback(IDasAsyncCallback* callback) = 0;
 
                 /**
+                 * @brief 将回调投递到 BusinessThread 执行
+                 *
+                 * 通过 inbound_queue 将工作模拟为 IPC 消息投递到
+                 * BusinessThread 的 inbound queue，保证在 BusinessThread
+                 * 上执行。
+                 *
+                 * @param callback 回调接口指针（调用者传递所有权，
+                 *                 内部 AddRef 保持生命周期）
+                 */
+                virtual void PostToBusinessThread(
+                    IDasAsyncCallback* callback) = 0;
+
+                /**
                  * @brief 阻塞运行事件循环
                  *
                  * 调用内部 IpcRunLoop::Run() 阻塞运行 io_context 事件循环。

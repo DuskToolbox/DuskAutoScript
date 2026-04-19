@@ -174,6 +174,167 @@ namespace Core::IPC
     }
 
     //=============================================================================
+    // BusinessThreadScheduler — scheduler 包装器（前向声明）
+    //=============================================================================
+
+    template <typename Context>
+    struct BusinessThreadScheduler;
+
+    //=============================================================================
+    // BusinessThreadScheduleSender — 将 work 投递到 BusinessThread
+    //=============================================================================
+
+    /**
+     * @brief 为有 PostToBusinessThread 方法的 Context 实现的 schedule sender
+     *
+     * 与 IpcContextScheduleSender 结构相同，但通过 PostToBusinessThread
+     * 将回调投递到 BusinessThread 的 inbound queue。
+     */
+    template <typename Context>
+    class BusinessThreadScheduleSender
+    {
+    public:
+        using sender_concept = stdexec::sender_t;
+        using completion_signatures =
+            stdexec::completion_signatures<stdexec::set_value_t()>;
+
+    private:
+        Context* ctx_;
+
+        template <class Receiver>
+        struct OperationState
+        {
+            Context* ctx_;
+            Receiver rcvr_;
+
+            template <typename R>
+            class DasAsyncCallback final : public IDasAsyncCallback
+            {
+            public:
+                std::atomic<uint32_t> ref_{1};
+                R                     rcvr_;
+
+                explicit DasAsyncCallback(R rcvr) : rcvr_(std::move(rcvr)) {}
+
+                uint32_t AddRef() override { return ++ref_; }
+
+                uint32_t Release() override
+                {
+                    auto r = --ref_;
+                    if (r == 0)
+                        delete this;
+                    return r;
+                }
+
+                DasResult QueryInterface(const DasGuid& iid, void** pp) override
+                {
+                    if (iid == DasIidOf<IDasAsyncCallback>())
+                    {
+                        AddRef();
+                        *pp = this;
+                        return DAS_S_OK;
+                    }
+                    return DAS_E_NO_INTERFACE;
+                }
+
+                DasResult Do() noexcept override
+                {
+                    stdexec::set_value(std::move(rcvr_));
+                    return DAS_S_OK;
+                }
+            };
+
+            friend void tag_invoke(
+                stdexec::start_t,
+                OperationState& self) noexcept
+            {
+                auto* callback =
+                    new DasAsyncCallback<Receiver>(std::move(self.rcvr_));
+                self.ctx_->PostToBusinessThread(callback);
+                callback->Release();
+            }
+        };
+
+        template <class Receiver>
+        friend auto tag_invoke(
+            stdexec::connect_t,
+            BusinessThreadScheduleSender self,
+            Receiver                     rcvr) noexcept
+        {
+            return OperationState<Receiver>{self.ctx_, std::move(rcvr)};
+        }
+
+    public:
+        explicit BusinessThreadScheduleSender(Context* ctx) noexcept : ctx_(ctx)
+        {
+        }
+
+        BusinessThreadScheduler<Context> get_env() const noexcept
+        {
+            return BusinessThreadScheduler<Context>{ctx_};
+        }
+    };
+
+    /**
+     * @brief BusinessThread scheduler 包装器
+     *
+     * 包装 Context*，提供 tag_invoke(schedule_t, ...) 重载。
+     * 注意：必须通过值持有 Context* 而非 Context&，因为 stdexec
+     * 内部会对 completion_scheduler 执行 decay_copy。
+     */
+    template <typename Context>
+    struct BusinessThreadScheduler
+    {
+        Context* ctx;
+
+        friend bool operator==(
+            const BusinessThreadScheduler& a,
+            const BusinessThreadScheduler& b) noexcept
+        {
+            return a.ctx == b.ctx;
+        }
+
+        friend bool operator!=(
+            const BusinessThreadScheduler& a,
+            const BusinessThreadScheduler& b) noexcept
+        {
+            return a.ctx != b.ctx;
+        }
+
+        friend BusinessThreadScheduler tag_invoke(
+            stdexec::get_completion_scheduler_t<stdexec::set_value_t>,
+            const BusinessThreadScheduler& self) noexcept
+        {
+            return self;
+        }
+
+        friend BusinessThreadScheduleSender<Context> tag_invoke(
+            stdexec::schedule_t,
+            const BusinessThreadScheduler& self) noexcept
+        {
+            return BusinessThreadScheduleSender<Context>{self.ctx};
+        }
+    };
+
+    /**
+     * @brief 创建 BusinessThread scheduler
+     *
+     * 返回的 scheduler 通过 PostToBusinessThread 投递工作到 BusinessThread。
+     *
+     * @param ctx 上下文引用（需要有 PostToBusinessThread 方法）
+     * @return BusinessThreadScheduler 可用于 schedule + let_value + wait
+     */
+    template <typename Context>
+        requires requires(Context& c, IDasAsyncCallback* cb) {
+            c.PostToBusinessThread(cb);
+        }
+    BusinessThreadScheduler<Context> schedule_on_business_thread(
+        Context& ctx) noexcept
+    {
+        return BusinessThreadScheduler<Context>{&ctx};
+    }
+
+    //=============================================================================
     // DasAsyncSender — 将 IDasAsyncOperation 包装为 stdexec sender（模板化）
     //=============================================================================
 

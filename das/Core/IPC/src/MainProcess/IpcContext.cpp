@@ -1,13 +1,16 @@
 #include <IpcProxyFactory.h>
 #include <boost/asio/post.hpp>
+#include <condition_variable>
 #include <cstring>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/IPC/AsyncOperationImpl.h>
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/CurrentIpcContextScope.h>
+#include <das/Core/IPC/DasAsyncSender.h>
 #include <das/Core/IPC/DasProxyBase.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/HostLauncher.h>
+#include <das/Core/IPC/InternalCallbackHandler.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcRunLoop.h>
@@ -29,6 +32,58 @@ namespace Core
     {
         namespace MainProcess
         {
+            // ====== 同步回调（用于 RegisterService/UnregisterService
+            // 线程调度）======
+
+            /**
+             * @brief 同步回调，包装一个 lambda 在 BusinessThread 上执行
+             *
+             * 用于 RegisterService/UnregisterService 的跨线程同步调用。
+             * PostToBusinessThread 接管 AddRef 后的引用，
+             * InternalCallbackHandler 用 DasPtr::Attach 管理生命周期，
+             * Do() 在 BusinessThread 上执行 lambda 后自动析构。
+             */
+            class SyncBusinessCallback final : public IDasAsyncCallback
+            {
+            public:
+                std::atomic<uint32_t> ref_{1};
+                std::function<void()> fn_;
+
+                explicit SyncBusinessCallback(std::function<void()> fn)
+                    : fn_(std::move(fn))
+                {
+                }
+
+                uint32_t AddRef() override { return ++ref_; }
+
+                uint32_t Release() override
+                {
+                    auto r = --ref_;
+                    if (r == 0)
+                    {
+                        delete this;
+                    }
+                    return r;
+                }
+
+                DasResult QueryInterface(const DasGuid& iid, void** pp) override
+                {
+                    if (iid == DasIidOf<IDasAsyncCallback>())
+                    {
+                        AddRef();
+                        *pp = this;
+                        return DAS_S_OK;
+                    }
+                    return DAS_E_NO_INTERFACE;
+                }
+
+                DasResult Do() noexcept override
+                {
+                    fn_();
+                    return DAS_S_OK;
+                }
+            };
+
             // ====== IpcContext 实现（RAII 风格，无 pimpl）======
 
             IpcContext::IpcContext(bool enable_heartbeat)
@@ -60,7 +115,16 @@ namespace Core
                 command_handler_ = IpcCommandHandler::Create(registry_);
                 command_handler_->SetSessionId(1);
 
-                // 5. 注册 LOOKUP_BY_INTERFACE 到 IpcRunLoop
+                // 5. 创建并注册 InternalCallbackHandler
+                internal_callback_handler_ = DasPtr<InternalCallbackHandler>(
+                    new InternalCallbackHandler());
+                runloop_.RegisterHandler(
+                    HeaderFlags::BUSINESS_CONTROL,
+                    static_cast<uint32_t>(
+                        InternalBusinessCommand::ASYNC_CALLBACK),
+                    internal_callback_handler_.Get());
+
+                // 6. 注册 LOOKUP_BY_INTERFACE 到 IpcRunLoop
                 runloop_.RegisterHandler(
                     HeaderFlags::BUSINESS_CONTROL,
                     static_cast<uint32_t>(IpcCommandType::LOOKUP_BY_INTERFACE),
@@ -174,6 +238,48 @@ namespace Core
                 boost::asio::post(
                     runloop_.GetIoContext(),
                     [ptr = std::move(ptr)]() { ptr->Do(); });
+            }
+
+            void IpcContext::PostToBusinessThread(IDasAsyncCallback* callback)
+            {
+                if (!callback)
+                {
+                    return;
+                }
+
+                // AddRef 保持生命周期（body 持有的引用）
+                callback->AddRef();
+
+                // body 编码 callback 原始指针
+                std::vector<uint8_t> body(sizeof(IDasAsyncCallback*));
+                std::memcpy(body.data(), &callback, sizeof(IDasAsyncCallback*));
+
+                // 构造 header: BUSINESS_CONTROL +
+                // InternalBusinessCommand::ASYNC_CALLBACK
+                auto header =
+                    IPCMessageHeaderBuilder()
+                        .SetMessageType(MessageType::EVENT)
+                        .SetHeaderFlags(HeaderFlags::BUSINESS_CONTROL)
+                        .SetInterfaceId(
+                            static_cast<uint32_t>(
+                                InternalBusinessCommand::ASYNC_CALLBACK))
+                        .SetBodySize(static_cast<uint32_t>(body.size()))
+                        .Build();
+
+                InboundMessage msg;
+                msg.header = header;
+                msg.body = std::move(body);
+
+                DasResult push_result = inbound_queue_.Push(std::move(msg));
+                if (DAS::IsFailed(push_result))
+                {
+                    // Push 失败，用 DasPtr::Attach 释放 callback 引用
+                    auto released = DasPtr<IDasAsyncCallback>::Attach(callback);
+                    (void)released;
+                    DAS_CORE_LOG_ERROR(
+                        "PostToBusinessThread: Push failed, result={}",
+                        push_result);
+                }
             }
 
             DasResult IpcContext::LoadPluginAsync(
@@ -498,6 +604,46 @@ namespace Core
                 IDasBase*      p_object,
                 const DasGuid& iid)
             {
+                // 快速路径：已在 BusinessThread 上，直接执行
+                if (business_thread_ && business_thread_->IsCurrentThread())
+                {
+                    return RegisterServiceImpl(p_object, iid);
+                }
+
+                // 投递到 BusinessThread 并同步等待
+                DasResult               out_result = DAS_E_IPC_TIMEOUT;
+                std::mutex              mtx;
+                std::condition_variable cv;
+                bool                    done = false;
+
+                auto* callback = new SyncBusinessCallback(
+                    [&]()
+                    {
+                        DasResult r = RegisterServiceImpl(p_object, iid);
+                        {
+                            std::lock_guard<std::mutex> lock(mtx);
+                            out_result = r;
+                            done = true;
+                        }
+                        cv.notify_one();
+                    });
+                PostToBusinessThread(callback);
+                callback->Release();
+
+                // 等待最多 30 秒
+                std::unique_lock<std::mutex> lock(mtx);
+                cv.wait_for(
+                    lock,
+                    std::chrono::seconds(30),
+                    [&]() { return done; });
+
+                return out_result;
+            }
+
+            DasResult IpcContext::RegisterServiceImpl(
+                IDasBase*      p_object,
+                const DasGuid& iid)
+            {
                 // 1. Parameter validation
                 if (!p_object)
                 {
@@ -516,8 +662,6 @@ namespace Core
                 }
 
                 // 3. Auto-generate name and register to RemoteObjectRegistry
-                //    RemoteObjectRegistry::RegisterObject requires non-empty
-                //    name
                 auto name = DAS::fmt::format("{}", iid);
                 auto session_id = runloop_.GetSessionId();
                 result =
@@ -534,6 +678,44 @@ namespace Core
             }
 
             DasResult IpcContext::UnregisterService(const DasGuid& iid)
+            {
+                // 快速路径：已在 BusinessThread 上，直接执行
+                if (business_thread_ && business_thread_->IsCurrentThread())
+                {
+                    return UnregisterServiceImpl(iid);
+                }
+
+                // 投递到 BusinessThread 并同步等待
+                DasResult               out_result = DAS_E_IPC_TIMEOUT;
+                std::mutex              mtx;
+                std::condition_variable cv;
+                bool                    done = false;
+
+                auto* callback = new SyncBusinessCallback(
+                    [&]()
+                    {
+                        DasResult r = UnregisterServiceImpl(iid);
+                        {
+                            std::lock_guard<std::mutex> lock(mtx);
+                            out_result = r;
+                            done = true;
+                        }
+                        cv.notify_one();
+                    });
+                PostToBusinessThread(callback);
+                callback->Release();
+
+                // 等待最多 30 秒
+                std::unique_lock<std::mutex> lock(mtx);
+                cv.wait_for(
+                    lock,
+                    std::chrono::seconds(30),
+                    [&]() { return done; });
+
+                return out_result;
+            }
+
+            DasResult IpcContext::UnregisterServiceImpl(const DasGuid& iid)
             {
                 // 1. Lookup by IID
                 auto interface_id =
