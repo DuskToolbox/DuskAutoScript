@@ -3,7 +3,6 @@
 
 #include "Das.PluginInterface.IDasCapture.hpp"
 #include <das/Core/ForeignInterfaceHost/Config.h>
-#include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/Expected.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasCaptureManager.Implements.hpp>
@@ -11,7 +10,7 @@
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
-class CaptureManagerImpl
+class DAS_API CaptureManagerImpl
     : public ExportInterface::DasCaptureManagerImplBase<CaptureManagerImpl>
 {
 public:

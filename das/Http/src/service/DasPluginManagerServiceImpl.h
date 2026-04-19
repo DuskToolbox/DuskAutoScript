@@ -1,8 +1,12 @@
 #pragma once
 
+#include <das/Core/ForeignInterfaceHost/IDasCaptureManagerImpl.h>
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
+#include <das/DasString.hpp>
+#include <das/_autogen/idl/abi/IDasCapture.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasPluginManager.Implements.hpp>
+#include <das/_autogen/idl/wrapper/IDasTypeInfo.hpp>
 
 namespace Das::Http
 {
