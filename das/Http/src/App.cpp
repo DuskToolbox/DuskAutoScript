@@ -11,6 +11,7 @@
 #include "./controller/DasMiscController.hpp"
 #include "./controller/DasPluginManagerController.hpp"
 #include "./controller/DasProfileController.hpp"
+#include "./controller/DasSchedulerController.hpp"
 #include "./controller/UISettingsController.hpp"
 #include <boost/program_options.hpp>
 #include <das/Core/ForeignInterfaceHost/PluginScanner.h>
@@ -109,6 +110,7 @@ namespace Das::Http
 
         // 注入 IPC 上下文到 PluginManager
         components.plugin_manager.SetIpcContext(*ipc_context);
+        components.scheduler_service.SetIpcContext(*ipc_context);
 
         // 设置 Host 可执行文件路径
         const char* host_exe = std::getenv("DAS_HOST_EXE_PATH");
@@ -126,6 +128,10 @@ namespace Das::Http
         auto settings_controller =
             std::make_shared<Das::Http::DasUiSettingsController>(
                 components.settings_manager);
+        auto scheduler_controller =
+            std::make_shared<Das::Http::DasSchedulerController>(
+                components.scheduler_service,
+                components.plugin_dir);
 
         // 注册路由
         // Misc
@@ -200,6 +206,24 @@ namespace Das::Http
             DAS_HTTP_API_PREFIX "settings/update",
             [settings_controller](const Das::Http::Beast::HttpRequest& req)
             { return settings_controller->V1SettingsUpdate(req); });
+
+        // Scheduler
+        components.router->Post(
+            DAS_HTTP_API_PREFIX "scheduler/{profile}/enable",
+            [scheduler_controller](const Das::Http::Beast::HttpRequest& req)
+            { return scheduler_controller->Enable(req); });
+        components.router->Post(
+            DAS_HTTP_API_PREFIX "scheduler/{profile}/disable",
+            [scheduler_controller](const Das::Http::Beast::HttpRequest& req)
+            { return scheduler_controller->Disable(req); });
+        components.router->Post(
+            DAS_HTTP_API_PREFIX "scheduler/{profile}/status",
+            [scheduler_controller](const Das::Http::Beast::HttpRequest& req)
+            { return scheduler_controller->Status(req); });
+        components.router->Post(
+            DAS_HTTP_API_PREFIX "scheduler/{profile}/initialize",
+            [scheduler_controller](const Das::Http::Beast::HttpRequest& req)
+            { return scheduler_controller->Initialize(req); });
 
         // 创建并启动服务器
         Das::Http::Beast::Server server(
