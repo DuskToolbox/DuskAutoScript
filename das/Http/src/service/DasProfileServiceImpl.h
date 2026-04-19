@@ -1,5 +1,6 @@
 #pragma once
 
+#include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/_autogen/idl/abi/DasSettings.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasProfileService.Implements.hpp>
@@ -18,14 +19,16 @@ namespace Das::Http
     {
     public:
         explicit DasProfileServiceImpl(
-            Das::Core::SettingsManager::SettingsManager& settings_manager);
+            Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager,
+            Das::Core::SettingsManager::SettingsManager&    settings_manager);
 
         DAS_IMPL GetProfile(
             const DasGuid&                            plugin_guid,
             Das::ExportInterface::IDasPluginProfile** pp_out) override;
 
     private:
-        Das::Core::SettingsManager::SettingsManager& settings_manager_;
+        Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager_;
+        Das::Core::SettingsManager::SettingsManager&    settings_manager_;
     };
 
 } // namespace Das::Http

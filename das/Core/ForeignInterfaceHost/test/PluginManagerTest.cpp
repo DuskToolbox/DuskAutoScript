@@ -2,6 +2,7 @@
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
+#include <das/Core/SettingsManager/SettingsManager.h>
 #include <gtest/gtest.h>
 
 using namespace DAS::Core::ForeignInterfaceHost;
@@ -42,7 +43,10 @@ class PluginManagerGuidTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        pm_ = &PluginManager::GetInstance();
+        settings_manager_ =
+            std::make_unique<DAS::Core::SettingsManager::SettingsManager>(
+                std::filesystem::current_path() / "das_test_settings_guid");
+        pm_ = std::make_unique<PluginManager>(*settings_manager_);
         auto runtime = CreateCppRuntime();
         ASSERT_NE(runtime, nullptr) << "Failed to create Cpp runtime";
         ASSERT_EQ(pm_->Initialize(1, runtime), DAS_S_OK);
@@ -50,7 +54,9 @@ protected:
 
     void TearDown() override { pm_->Shutdown(); }
 
-    PluginManager* pm_{};
+    std::unique_ptr<DAS::Core::SettingsManager::SettingsManager>
+                                   settings_manager_;
+    std::unique_ptr<PluginManager> pm_;
 };
 
 TEST_F(PluginManagerGuidTest, LoadPluginAndFindByGuid)
@@ -134,7 +140,10 @@ class PluginManagerFeatureTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        pm_ = &PluginManager::GetInstance();
+        settings_manager_ =
+            std::make_unique<DAS::Core::SettingsManager::SettingsManager>(
+                std::filesystem::current_path() / "das_test_settings_guid");
+        pm_ = std::make_unique<PluginManager>(*settings_manager_);
         auto runtime = CreateCppRuntime();
         ASSERT_NE(runtime, nullptr) << "Failed to create Cpp runtime";
         ASSERT_EQ(pm_->Initialize(1, runtime), DAS_S_OK);
@@ -157,7 +166,9 @@ protected:
             << "RegisterPluginObjects failed";
     }
 
-    PluginManager*                        pm_{};
+    std::unique_ptr<DAS::Core::SettingsManager::SettingsManager>
+                                          settings_manager_;
+    std::unique_ptr<PluginManager>        pm_;
     std::unique_ptr<RemoteObjectRegistry> registry_;
     std::filesystem::path                 plugin_path_;
 };

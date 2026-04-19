@@ -61,6 +61,9 @@ DasResult PluginManager::Shutdown()
                 registry_->UnregisterObject(feature.object_id);
             }
         }
+
+        // 通知 ComponentFactoryManager 释放工厂引用
+        component_factory_mgr_.OnPluginUnloading(guid);
     }
 
     feature_type_index_.clear();

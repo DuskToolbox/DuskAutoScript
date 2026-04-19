@@ -63,8 +63,9 @@ namespace Das::Http
                 static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(
                     ipc_context.get()));
 
-            auto* profile_service =
-                new DasProfileServiceImpl(components.settings_manager);
+            auto* profile_service = new DasProfileServiceImpl(
+                components.plugin_manager,
+                components.settings_manager);
             profile_service->AddRef();
 
             const auto reg_result = ipc_context->RegisterService(
@@ -82,7 +83,9 @@ namespace Das::Http
 
             // Register IDasPluginManager service
             {
-                auto* plugin_mgr_service = new DasPluginManagerServiceImpl();
+                auto* plugin_mgr_service = new DasPluginManagerServiceImpl(
+                    components.plugin_manager,
+                    components.settings_manager);
                 plugin_mgr_service->AddRef();
 
                 const auto plugin_reg_result = ipc_context->RegisterService(
