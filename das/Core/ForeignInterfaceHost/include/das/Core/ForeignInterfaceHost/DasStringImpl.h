@@ -69,6 +69,7 @@ namespace Details
             auto result = DynamicBuffer();
             result.up_data_ = std::unique_ptr<T[]>(p_data);
             result.size_ = size_used;
+            return result;
         }
 
         T* DiscardAndGetNullTerminateBufferPointer(std::size_t new_size)
