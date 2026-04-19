@@ -31,7 +31,8 @@ namespace
             }
             return c;
         }
-        DasResult DAS_STD_CALL QueryInterface(const DasGuid& iid, void** pp) override
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp) override
         {
             if (!pp)
             {
@@ -49,13 +50,14 @@ namespace
             }
             return DAS_S_OK;
         }
-        DasResult DAS_STD_CALL GetRuntimeClassName(IDasReadOnlyString** pp) override
+        DasResult DAS_STD_CALL
+        GetRuntimeClassName(IDasReadOnlyString** pp) override
         {
             return DAS_E_NO_IMPLEMENTATION;
         }
         DasResult DAS_STD_CALL Dispatch(
-            IDasReadOnlyString*                        p_fn,
-            ::Das::ExportInterface::IDasVariantVector* p_args,
+            IDasReadOnlyString*                         p_fn,
+            ::Das::ExportInterface::IDasVariantVector*  p_args,
             ::Das::ExportInterface::IDasVariantVector** pp_out) override
         {
             return DAS_E_NO_IMPLEMENTATION;
@@ -69,8 +71,8 @@ namespace
 
     public:
         std::unordered_map<DasGuid, DasResult> supported_iids;
-        int is_supported_call_count    = 0;
-        int create_instance_call_count = 0;
+        int                                    is_supported_call_count = 0;
+        int                                    create_instance_call_count = 0;
 
         uint32_t DAS_STD_CALL AddRef() override { return ++ref_; }
         uint32_t DAS_STD_CALL Release() override
@@ -82,7 +84,8 @@ namespace
             }
             return c;
         }
-        DasResult DAS_STD_CALL QueryInterface(const DasGuid& iid, void** pp) override
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp) override
         {
             if (!pp)
             {
@@ -100,7 +103,8 @@ namespace
             }
             return DAS_S_OK;
         }
-        DasResult DAS_STD_CALL GetRuntimeClassName(IDasReadOnlyString** pp) override
+        DasResult DAS_STD_CALL
+        GetRuntimeClassName(IDasReadOnlyString** pp) override
         {
             return DAS_E_NO_IMPLEMENTATION;
         }
@@ -114,7 +118,8 @@ namespace
             }
             return DAS_E_NOT_FOUND;
         }
-        DasResult CreateInstance(const DasGuid&, IDasComponent** pp_out) override
+        DasResult CreateInstance(const DasGuid&, IDasComponent** pp_out)
+            override
         {
             if (!pp_out)
             {
@@ -143,9 +148,9 @@ namespace
         FeatureInfo MakeFeature(MockFactory& factory)
         {
             FeatureInfo feat{};
-            feat.feature_type  = DAS_PLUGIN_FEATURE_COMPONENT_FACTORY;
-            feat.interface_ptr = DasPtr<IDasBase>(
-                static_cast<IDasBase*>(&factory));
+            feat.feature_type = DAS_PLUGIN_FEATURE_COMPONENT_FACTORY;
+            feat.interface_ptr =
+                DasPtr<IDasBase>(static_cast<IDasBase*>(&factory));
             return feat;
         }
     };
@@ -156,8 +161,8 @@ namespace
         f->AddRef();
         f->supported_iids[MakeTestGuid(42)] = DAS_S_OK;
 
-        auto feat    = MakeFeature(*f);
-        auto guid    = MakeTestGuid(1);
+        auto         feat = MakeFeature(*f);
+        auto         guid = MakeTestGuid(1);
         FeatureInfo* fp = &feat;
         ASSERT_EQ(mgr.OnPluginLoaded(guid, {&fp, 1}), DAS_S_OK);
 
@@ -179,8 +184,8 @@ namespace
         f->AddRef();
         f->supported_iids[MakeTestGuid(42)] = DAS_S_OK;
 
-        auto feat    = MakeFeature(*f);
-        auto guid    = MakeTestGuid(1);
+        auto         feat = MakeFeature(*f);
+        auto         guid = MakeTestGuid(1);
         FeatureInfo* fp = &feat;
         mgr.OnPluginLoaded(guid, {&fp, 1});
 
@@ -199,8 +204,8 @@ namespace
         f->AddRef();
         f->supported_iids[MakeTestGuid(99)] = DAS_S_OK;
 
-        auto feat    = MakeFeature(*f);
-        auto guid    = MakeTestGuid(1);
+        auto         feat = MakeFeature(*f);
+        auto         guid = MakeTestGuid(1);
         FeatureInfo* fp = &feat;
         mgr.OnPluginLoaded(guid, {&fp, 1});
 
@@ -220,14 +225,15 @@ namespace
         auto* f = new MockFactory();
         f->AddRef();
 
-        auto feat    = MakeFeature(*f);
-        auto guid    = MakeTestGuid(1);
+        auto         feat = MakeFeature(*f);
+        auto         guid = MakeTestGuid(1);
         FeatureInfo* fp = &feat;
         mgr.OnPluginLoaded(guid, {&fp, 1});
 
         DasPtr<IDasComponent> comp;
-        EXPECT_EQ(mgr.CreateComponent(MakeTestGuid(999), comp.Put()),
-                  DAS_E_NOT_FOUND);
+        EXPECT_EQ(
+            mgr.CreateComponent(MakeTestGuid(999), comp.Put()),
+            DAS_E_NOT_FOUND);
 
         f->Release();
     }
@@ -238,8 +244,8 @@ namespace
         f->AddRef();
         f->supported_iids[MakeTestGuid(42)] = DAS_S_OK;
 
-        auto feat    = MakeFeature(*f);
-        auto guid    = MakeTestGuid(1);
+        auto         feat = MakeFeature(*f);
+        auto         guid = MakeTestGuid(1);
         FeatureInfo* fp = &feat;
         mgr.OnPluginLoaded(guid, {&fp, 1});
 
@@ -249,16 +255,18 @@ namespace
         mgr.OnPluginUnloading(guid);
 
         DasPtr<IDasComponent> c2;
-        EXPECT_EQ(mgr.CreateComponent(MakeTestGuid(42), c2.Put()),
-                  DAS_E_NOT_FOUND);
+        EXPECT_EQ(
+            mgr.CreateComponent(MakeTestGuid(42), c2.Put()),
+            DAS_E_NOT_FOUND);
 
         f->Release();
     }
 
     TEST_F(ComponentFactoryManagerTest, NullOutParamReturnsInvalidPointer)
     {
-        EXPECT_EQ(mgr.CreateComponent(MakeTestGuid(42), nullptr),
-                  DAS_E_INVALID_POINTER);
+        EXPECT_EQ(
+            mgr.CreateComponent(MakeTestGuid(42), nullptr),
+            DAS_E_INVALID_POINTER);
     }
 
     TEST_F(ComponentFactoryManagerTest, ConcurrentCreateComponent)
@@ -267,8 +275,8 @@ namespace
         f->AddRef();
         f->supported_iids[MakeTestGuid(42)] = DAS_S_OK;
 
-        auto feat    = MakeFeature(*f);
-        auto guid    = MakeTestGuid(1);
+        auto         feat = MakeFeature(*f);
+        auto         guid = MakeTestGuid(1);
         FeatureInfo* fp = &feat;
         mgr.OnPluginLoaded(guid, {&fp, 1});
 
@@ -276,13 +284,16 @@ namespace
         std::atomic<int>         ok{0};
         for (int i = 0; i < 8; ++i)
         {
-            threads.emplace_back([&]() {
-                DasPtr<IDasComponent> c;
-                if (mgr.CreateComponent(MakeTestGuid(42), c.Put()) == DAS_S_OK)
+            threads.emplace_back(
+                [&]()
                 {
-                    ++ok;
-                }
-            });
+                    DasPtr<IDasComponent> c;
+                    if (mgr.CreateComponent(MakeTestGuid(42), c.Put())
+                        == DAS_S_OK)
+                    {
+                        ++ok;
+                    }
+                });
         }
         for (auto& t : threads)
         {
