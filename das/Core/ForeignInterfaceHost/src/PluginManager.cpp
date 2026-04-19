@@ -223,6 +223,25 @@ DasResult PluginManager::LoadPlugin(
         (*pp_out_package)->AddRef();
     }
 
+    // Notify ComponentFactoryManager about factory features
+    {
+        std::vector<FeatureInfo*> plugin_factories;
+        for (auto& feat : loaded_plugins_[guid].features)
+        {
+            if (feat.feature_type
+                    == Das::PluginInterface::
+                        DAS_PLUGIN_FEATURE_COMPONENT_FACTORY
+                && feat.interface_ptr)
+            {
+                plugin_factories.push_back(&feat);
+            }
+        }
+        if (!plugin_factories.empty())
+        {
+            component_factory_mgr_.OnPluginLoaded(guid, plugin_factories);
+        }
+    }
+
     return DAS_S_OK;
 }
 
@@ -261,6 +280,8 @@ DasResult PluginManager::UnloadPlugin(const std::filesystem::path& path)
     }
 
     // 先从 feature_type_index_ 中移除指针（在 erase loaded_plugins_ 之前）
+    component_factory_mgr_.OnPluginUnloading(guid);
+
     for (auto& feature : plug_it->second.features)
     {
         auto type_it = feature_type_index_.find(feature.feature_type);
@@ -601,6 +622,11 @@ PluginPackageDesc* PluginManager::FindPluginPackageByGuid(const DasGuid& guid)
         return plugin->desc.get();
     }
     return nullptr;
+}
+
+ComponentFactoryManager& PluginManager::GetComponentFactoryManager()
+{
+    return component_factory_mgr_;
 }
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END

@@ -1,6 +1,7 @@
 #ifndef DAS_CORE_FOREIGNINTERFACEHOST_PLUGINMANAGER_H
 #define DAS_CORE_FOREIGNINTERFACEHOST_PLUGINMANAGER_H
 
+#include <das/Core/ForeignInterfaceHost/ComponentFactoryManager.h>
 #include <das/Core/ForeignInterfaceHost/Config.h>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
@@ -182,6 +183,8 @@ public:
      */
     PluginPackageDesc* FindPluginPackageByGuid(const DasGuid& guid);
 
+    ComponentFactoryManager& GetComponentFactoryManager();
+
 private:
     PluginManager() = default;
     ~PluginManager() = default;
@@ -221,7 +224,8 @@ private:
     std::unordered_map<
         Das::PluginInterface::DasPluginFeature,
         std::vector<FeatureInfo*>>
-        feature_type_index_;
+                            feature_type_index_;
+    ComponentFactoryManager component_factory_mgr_;
 };
 
 #ifdef _MSC_VER
