@@ -147,9 +147,37 @@ DasResult PluginManager::LoadPlugin(
 
     // 解析 manifest JSON 获取 PluginPackageDesc（含 guid）
     auto desc = std::make_shared<PluginPackageDesc>();
-    // 尝试读取 <plugin_path>/manifest.json
-    auto manifest_path = normalized_path / "manifest.json";
-    if (std::filesystem::exists(manifest_path))
+
+    // Manifest 路径解析：支持两种插件模式
+    // 1. 目录模式：path 是目录，manifest 在 <dir>/<dirname>.json 或
+    // <dir>/manifest.json
+    // 2. 扁平文件模式：path 本身就是 .json manifest 文件
+    std::filesystem::path manifest_path;
+    if (std::filesystem::is_directory(normalized_path))
+    {
+        // 目录模式：与 PluginScanner::FindManifest 逻辑一致
+        auto dirname = normalized_path.filename().string();
+        auto primary = normalized_path / (dirname + ".json");
+        if (std::filesystem::exists(primary))
+        {
+            manifest_path = primary;
+        }
+        else
+        {
+            auto fallback = normalized_path / "manifest.json";
+            if (std::filesystem::exists(fallback))
+            {
+                manifest_path = fallback;
+            }
+        }
+    }
+    else if (normalized_path.extension() == ".json")
+    {
+        // 扁平文件模式：path 本身就是 manifest
+        manifest_path = normalized_path;
+    }
+
+    if (!manifest_path.empty() && std::filesystem::exists(manifest_path))
     {
         std::ifstream ifs(manifest_path);
         if (ifs.is_open())
