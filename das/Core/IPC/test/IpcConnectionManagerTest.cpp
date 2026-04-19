@@ -1,9 +1,15 @@
 #include <chrono>
 #include <das/Core/IPC/ConnectionManager.h>
+#include <das/Core/IPC/HostLauncher.h>
+#include <das/DasPtr.hpp>
 #include <gtest/gtest.h>
 #include <thread>
 
+#include <boost/asio/io_context.hpp>
+
+using Das::DasPtr;
 using DAS::Core::IPC::ConnectionManager;
+using DAS::Core::IPC::HostLauncher;
 
 // Test fixture for ConnectionManager tests
 class IpcConnectionManagerTest : public ::testing::Test
@@ -272,4 +278,48 @@ TEST_F(IpcConnectionManagerTest, UpdateHeartbeatTimestamp_NonExistentConnection)
     // 不存在的连接应该安全处理
     manager_->UpdateHeartbeatTimestamp(999);
     // 不崩溃即成功
+}
+
+// ====== Heartbeat Timeout Two-Phase Tests ======
+
+TEST_F(IpcConnectionManagerTest, HeartbeatTimeout_TriggersCallback)
+{
+    boost::asio::io_context io_ctx;
+
+    // Create a HostLauncher (no real process launched)
+    DasPtr<HostLauncher> launcher(new HostLauncher(io_ctx, 2, nullptr));
+
+    // Setup heartbeat timeout callback
+    bool    callback_called = false;
+    DasGuid test_guid{
+        0x01020304,
+        0x0506,
+        0x0708,
+        {0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10}};
+    DasGuid received_guid{};
+
+    launcher->SetAssociatedGuid(test_guid);
+    launcher->SetOnHeartbeatTimeout(
+        [&](DasGuid guid)
+        {
+            callback_called = true;
+            received_guid = guid;
+        });
+
+    // Register the launcher with ConnectionManager
+    ASSERT_EQ(manager_->RegisterHostLauncher(2, launcher), DAS_S_OK);
+
+    // Start heartbeat thread - it will detect timeout after
+    // HEARTBEAT_TIMEOUT_MS (5000ms)
+    manager_->StartHeartbeatThread();
+
+    // Wait long enough for timeout detection
+    // HEARTBEAT_INTERVAL_MS (1000ms) + HEARTBEAT_TIMEOUT_MS (5000ms) + margin
+    std::this_thread::sleep_for(std::chrono::milliseconds(7000));
+
+    manager_->StopHeartbeatThread();
+
+    // Verify: the heartbeat timeout callback was invoked with correct GUID
+    EXPECT_TRUE(callback_called);
+    EXPECT_EQ(received_guid, test_guid);
 }

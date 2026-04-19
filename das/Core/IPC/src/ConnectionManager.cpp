@@ -16,6 +16,7 @@
 #include <das/Core/Logger/Logger.h>
 #include <shared_mutex>
 #include <unordered_map>
+#include <vector>
 
 #include <das/Core/IPC/DefaultAsyncIpcTransport.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
@@ -453,42 +454,75 @@ void ConnectionManager::StartHeartbeatThread()
                 // 1. 发送心跳消息
                 SendHeartbeatToAll();
 
-                // 2. 检查超时并清理
+                // 2. 检查超时并处理
                 uint64_t current_time_ms = static_cast<uint64_t>(
                     std::chrono::duration_cast<std::chrono::milliseconds>(
                         std::chrono::steady_clock::now().time_since_epoch())
                         .count());
 
-                std::unique_lock<std::shared_mutex> lock(
-                    impl_->connections_mutex_);
-
-                for (auto it = impl_->connections_.begin();
-                     it != impl_->connections_.end();)
+                // 阶段 1: 锁内收集超时连接信息
+                struct TimedOutConnection
                 {
-                    uint64_t elapsed_ms =
-                        current_time_ms - it->second.last_heartbeat_ms;
+                    uint16_t             session_id;
+                    uint32_t             pid;
+                    DasPtr<HostLauncher> launcher;
+                };
 
-                    if (elapsed_ms > timeout_ms)
+                std::vector<TimedOutConnection> timed_out;
+
+                {
+                    std::unique_lock<std::shared_mutex> lock(
+                        impl_->connections_mutex_);
+
+                    for (auto it = impl_->connections_.begin();
+                         it != impl_->connections_.end();)
                     {
-                        it->second.is_alive = false;
+                        uint64_t elapsed_ms =
+                            current_time_ms - it->second.last_heartbeat_ms;
 
-                        // 获取 session_id 用于清理 host_launchers_
-                        uint16_t session_id = it->first;
+                        if (elapsed_ms > timeout_ms)
+                        {
+                            it->second.is_alive = false;
+                            uint16_t session_id = it->first;
 
-                        // 从 host_launchers_ 中移除（触发 DasPtr 释放 ->
-                        // 引用计数归零 -> HostLauncher 析构）
-                        impl_->host_launchers_.erase(session_id);
+                            TimedOutConnection toc;
+                            toc.session_id = session_id;
+                            toc.pid = 0;
 
-                        CleanupConnectionResources(it->first);
-                        it = impl_->connections_.erase(it);
+                            auto launcher_it =
+                                impl_->host_launchers_.find(session_id);
+                            if (launcher_it != impl_->host_launchers_.end())
+                            {
+                                toc.launcher = launcher_it->second;
+                                toc.pid = toc.launcher->GetPid();
+                                impl_->host_launchers_.erase(launcher_it);
+                            }
 
-                        DAS_CORE_LOG_WARN(
-                            "Connection timed out, cleaning up: session_id={}",
-                            session_id);
+                            CleanupConnectionResources(session_id);
+                            it = impl_->connections_.erase(it);
+
+                            timed_out.push_back(std::move(toc));
+
+                            DAS_CORE_LOG_WARN(
+                                "Connection timed out: session_id={}, pid={}",
+                                session_id,
+                                toc.pid);
+                        }
+                        else
+                        {
+                            ++it;
+                        }
                     }
-                    else
+                }
+
+                // 阶段 2: 锁外通知 PluginManager 和 terminate 进程
+                for (auto& toc : timed_out)
+                {
+                    if (toc.launcher)
                     {
-                        ++it;
+                        toc.launcher->NotifyHeartbeatTimeout();
+                        toc.launcher->ClearCallbacks();
+                        toc.launcher->TerminateIfRunning();
                     }
                 }
             }
