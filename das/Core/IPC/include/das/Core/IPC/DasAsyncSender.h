@@ -372,7 +372,7 @@ namespace Core::IPC
             //=====================================================================
             // Handler — 桥接 OnCompleted 回调到 set_value
             //=====================================================================
-            struct Handler : IDasAsyncCompletedHandler
+            struct Handler final : IDasAsyncCompletedHandler
             {
                 std::atomic<uint32_t> ref_{1};
                 DasPtr<TAsyncOp>      op_;

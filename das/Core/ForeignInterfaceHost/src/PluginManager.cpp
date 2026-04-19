@@ -1,5 +1,7 @@
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
 
+#include <das/Core/IPC/DasAsyncSender.h>
+#include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/_autogen/idl/abi/IDasCapture.h>
 #include <das/_autogen/idl/abi/IDasComponent.h>
@@ -49,6 +51,28 @@ DasResult PluginManager::Initialize(
 DasResult PluginManager::Shutdown()
 {
     std::lock_guard<std::mutex> lock(mutex_);
+
+    // 停止所有 HostLauncher
+    // 先清除进程退出回调，避免 Stop 触发回调
+    for (auto& [guid, launcher] : host_launchers_)
+    {
+        if (launcher)
+        {
+            auto* concrete =
+                static_cast<DAS::Core::IPC::HostLauncher*>(launcher.Get());
+            if (concrete)
+            {
+                concrete->ClearCallbacks();
+            }
+            if (launcher->IsRunning())
+            {
+                DAS_CORE_LOG_INFO("Shutdown: stopping Host launcher");
+                launcher->Stop();
+            }
+        }
+    }
+    host_launchers_.clear();
+    session_to_guid_.clear();
 
     // 卸载所有插件
     for (auto& [guid, plugin] : loaded_plugins_)
@@ -103,205 +127,229 @@ DasResult PluginManager::LoadPlugin(
     const std::filesystem::path&              path,
     Das::PluginInterface::IDasPluginPackage** pp_out_package)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    if (!runtime_)
+    // 阶段1: 锁内快速检查 + manifest 解析
+    std::filesystem::path              normalized_path;
+    std::string                        path_str;
+    std::shared_ptr<PluginPackageDesc> desc;
     {
-        DAS_CORE_LOG_ERROR("No runtime set for loading plugins");
-        return DAS_E_OBJECT_NOT_INIT;
-    }
+        std::lock_guard<std::mutex> lock(mutex_);
 
-    auto normalized_path = NormalizePath(path);
-    auto path_str = normalized_path.string();
-
-    // 路径去重检查
-    if (path_to_guid_.contains(path_str))
-    {
-        DAS_CORE_LOG_WARN("Plugin already loaded: {}", path_str);
-        if (pp_out_package)
+        if (!runtime_)
         {
-            auto it = loaded_plugins_.find(path_to_guid_[path_str]);
-            if (it != loaded_plugins_.end() && it->second.package)
+            DAS_CORE_LOG_ERROR("No runtime set for loading plugins");
+            return DAS_E_OBJECT_NOT_INIT;
+        }
+
+        normalized_path = NormalizePath(path);
+        path_str = normalized_path.string();
+
+        // 路径去重检查
+        if (path_to_guid_.contains(path_str))
+        {
+            DAS_CORE_LOG_WARN("Plugin already loaded: {}", path_str);
+            if (pp_out_package)
             {
-                *pp_out_package = it->second.package.Get();
-                (*pp_out_package)->AddRef();
+                auto it = loaded_plugins_.find(path_to_guid_[path_str]);
+                if (it != loaded_plugins_.end() && it->second.package)
+                {
+                    *pp_out_package = it->second.package.Get();
+                    (*pp_out_package)->AddRef();
+                }
+            }
+            return DAS_S_FALSE;
+        }
+
+        // 解析 manifest JSON 获取 PluginPackageDesc（含 guid）
+        desc = std::make_shared<PluginPackageDesc>();
+
+        // Manifest 路径解析：支持两种插件模式
+        // 1. 目录模式：path 是目录，manifest 在 <dir>/<dirname>.json 或
+        // <dir>/manifest.json
+        // 2. 扁平文件模式：path 本身就是 .json manifest 文件
+        std::filesystem::path manifest_path;
+        if (std::filesystem::is_directory(normalized_path))
+        {
+            // 目录模式：与 PluginScanner::FindManifest 逻辑一致
+            auto dirname = normalized_path.filename().string();
+            auto primary = normalized_path / (dirname + ".json");
+            if (std::filesystem::exists(primary))
+            {
+                manifest_path = primary;
+            }
+            else
+            {
+                auto fallback = normalized_path / "manifest.json";
+                if (std::filesystem::exists(fallback))
+                {
+                    manifest_path = fallback;
+                }
             }
         }
-        return DAS_S_FALSE;
-    }
-
-    auto result = runtime_->LoadPlugin(normalized_path);
-    if (!result)
-    {
-        DAS_CORE_LOG_ERROR(
-            "Failed to load plugin {}: error={}",
-            path_str,
-            static_cast<int>(result.error()));
-        return result.error();
-    }
-
-    LoadedPlugin plugin;
-    plugin.plugin_path = normalized_path;
-
-    DasPtr<Das::PluginInterface::IDasPluginPackage> package;
-    auto qi_result = (*result)->QueryInterface(
-        DAS_IID_PLUGIN_PACKAGE,
-        reinterpret_cast<void**>(package.Put()));
-    if (DAS::IsFailed(qi_result))
-    {
-        DAS_CORE_LOG_ERROR(
-            "Plugin does not implement IDasPluginPackage: {}",
-            path_str);
-        return DAS_E_NO_INTERFACE;
-    }
-    plugin.package = std::move(package);
-
-    // 解析 manifest JSON 获取 PluginPackageDesc（含 guid）
-    auto desc = std::make_shared<PluginPackageDesc>();
-
-    // Manifest 路径解析：支持两种插件模式
-    // 1. 目录模式：path 是目录，manifest 在 <dir>/<dirname>.json 或
-    // <dir>/manifest.json
-    // 2. 扁平文件模式：path 本身就是 .json manifest 文件
-    std::filesystem::path manifest_path;
-    if (std::filesystem::is_directory(normalized_path))
-    {
-        // 目录模式：与 PluginScanner::FindManifest 逻辑一致
-        auto dirname = normalized_path.filename().string();
-        auto primary = normalized_path / (dirname + ".json");
-        if (std::filesystem::exists(primary))
+        else if (normalized_path.extension() == ".json")
         {
-            manifest_path = primary;
+            // 扁平文件模式：path 本身就是 manifest
+            manifest_path = normalized_path;
         }
-        else
-        {
-            auto fallback = normalized_path / "manifest.json";
-            if (std::filesystem::exists(fallback))
-            {
-                manifest_path = fallback;
-            }
-        }
-    }
-    else if (normalized_path.extension() == ".json")
-    {
-        // 扁平文件模式：path 本身就是 manifest
-        manifest_path = normalized_path;
-    }
 
-    if (!manifest_path.empty() && std::filesystem::exists(manifest_path))
-    {
-        std::ifstream ifs(manifest_path);
-        if (ifs.is_open())
+        if (!manifest_path.empty() && std::filesystem::exists(manifest_path))
         {
-            try
+            std::ifstream ifs(manifest_path);
+            if (ifs.is_open())
             {
-                auto json_data = nlohmann::json::parse(ifs);
-                from_json(json_data, *desc);
-            }
-            catch (const std::exception& e)
-            {
-                DAS_CORE_LOG_WARN(
-                    "Failed to parse manifest for {}: {}",
-                    path_str,
-                    e.what());
+                try
+                {
+                    auto json_data = nlohmann::json::parse(ifs);
+                    from_json(json_data, *desc);
+                }
+                catch (const std::exception& e)
+                {
+                    DAS_CORE_LOG_WARN(
+                        "Failed to parse manifest for {}: {}",
+                        path_str,
+                        e.what());
+                }
             }
         }
     }
 
-    // 白名单内语言走进程内直接加载
+    // 阶段2: 锁外执行加载（进程内或 IPC）
     static const std::unordered_set<ForeignInterfaceLanguage>
         kInProcessLanguages = {
             ForeignInterfaceLanguage::Cpp,
             ForeignInterfaceLanguage::Python,
         };
 
-    if (!kInProcessLanguages.contains(desc->language))
+    if (kInProcessLanguages.contains(desc->language)
+        && desc->load_mode != LoadMode::Ipc)
     {
-        DAS_CORE_LOG_WARN(
-            "Plugin '{}' language={} not in in-process whitelist, deferring load",
-            path_str,
-            static_cast<int>(desc->language));
-        return DAS_E_NO_IMPLEMENTATION;
-    }
-
-    // GUID 冲突检测
-    if (loaded_plugins_.contains(desc->guid))
-    {
-        DAS_CORE_LOG_ERROR(
-            "Plugin GUID conflict: path={}, existing plugin with same GUID",
-            path_str);
-        return DAS_E_DUPLICATE_ELEMENT;
-    }
-
-    plugin.desc = desc;
-
-    // 枚举插件的 Features 并创建接口
-    uint64_t index = 0;
-    while (true)
-    {
-        Das::PluginInterface::DasPluginFeature feature{};
-        auto enum_result = plugin.package->EnumFeature(index, &feature);
-        if (enum_result != DAS_S_OK)
+        // 进程内路径（白名单内语言且未显式指定 IPC 模式）
+        auto result = runtime_->LoadPlugin(normalized_path);
+        if (!result)
         {
-            break; // 枚举结束
+            DAS_CORE_LOG_ERROR(
+                "Failed to load plugin {}: error={}",
+                path_str,
+                static_cast<int>(result.error()));
+            return result.error();
         }
 
-        FeatureInfo feature_info;
-        feature_info.feature_type = feature;
-        feature_info.iid = GetIidForFeature(feature);
-        feature_info.session_id = session_id_;
-        feature_info.plugin_name = normalized_path.stem().string();
-        feature_info.plugin_guid = desc->guid;
+        LoadedPlugin plugin;
+        plugin.plugin_path = normalized_path;
 
-        // 创建 Feature 接口
-        DasPtr<IDasBase> p_interface = nullptr;
-        auto             create_result =
-            plugin.package->CreateFeatureInterface(index, p_interface.Put());
-        if (create_result == DAS_S_OK)
+        DasPtr<Das::PluginInterface::IDasPluginPackage> package;
+        auto qi_result = (*result)->QueryInterface(
+            DAS_IID_PLUGIN_PACKAGE,
+            reinterpret_cast<void**>(package.Put()));
+        if (DAS::IsFailed(qi_result))
         {
-            feature_info.interface_ptr = p_interface;
+            DAS_CORE_LOG_ERROR(
+                "Plugin does not implement IDasPluginPackage: {}",
+                path_str);
+            return DAS_E_NO_INTERFACE;
         }
+        plugin.package = std::move(package);
+        plugin.desc = desc;
 
-        plugin.features.push_back(std::move(feature_info));
-        ++index;
-    }
-
-    // 先保存 guid，避免 move 后访问问题
-    const auto guid = desc->guid;
-    loaded_plugins_[guid] = std::move(plugin);
-    path_to_guid_[path_str] = guid;
-
-    DAS_CORE_LOG_INFO(
-        "Loaded plugin: {} with {} features",
-        path_str,
-        loaded_plugins_[guid].features.size());
-
-    if (pp_out_package && loaded_plugins_[guid].package)
-    {
-        *pp_out_package = loaded_plugins_[guid].package.Get();
-        (*pp_out_package)->AddRef();
-    }
-
-    // Notify ComponentFactoryManager about factory features
-    {
-        std::vector<FeatureInfo*> plugin_factories;
-        for (auto& feat : loaded_plugins_[guid].features)
+        // 枚举插件的 Features 并创建接口
+        uint64_t index = 0;
+        while (true)
         {
-            if (feat.feature_type
-                    == Das::PluginInterface::
-                        DAS_PLUGIN_FEATURE_COMPONENT_FACTORY
-                && feat.interface_ptr)
+            Das::PluginInterface::DasPluginFeature feature{};
+            auto enum_result = plugin.package->EnumFeature(index, &feature);
+            if (enum_result != DAS_S_OK)
             {
-                plugin_factories.push_back(&feat);
+                break;
+            }
+
+            FeatureInfo feature_info;
+            feature_info.feature_type = feature;
+            feature_info.iid = GetIidForFeature(feature);
+            feature_info.session_id = session_id_;
+            feature_info.plugin_name = normalized_path.stem().string();
+            feature_info.plugin_guid = desc->guid;
+
+            DasPtr<IDasBase> p_interface = nullptr;
+            auto create_result = plugin.package->CreateFeatureInterface(
+                index,
+                p_interface.Put());
+            if (create_result == DAS_S_OK)
+            {
+                feature_info.interface_ptr = p_interface;
+            }
+
+            plugin.features.push_back(std::move(feature_info));
+            ++index;
+        }
+
+        // 阶段3: 锁内更新索引
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+
+            // GUID 冲突检测（双检：锁外加载期间可能有并发加载）
+            if (loaded_plugins_.contains(desc->guid))
+            {
+                DAS_CORE_LOG_ERROR(
+                    "Plugin GUID conflict: path={}, existing plugin with same GUID",
+                    path_str);
+                return DAS_E_DUPLICATE_ELEMENT;
+            }
+
+            const auto guid = desc->guid;
+            loaded_plugins_[guid] = std::move(plugin);
+            path_to_guid_[path_str] = guid;
+
+            DAS_CORE_LOG_INFO(
+                "Loaded plugin: {} with {} features",
+                path_str,
+                loaded_plugins_[guid].features.size());
+
+            if (pp_out_package && loaded_plugins_[guid].package)
+            {
+                *pp_out_package = loaded_plugins_[guid].package.Get();
+                (*pp_out_package)->AddRef();
+            }
+
+            // Notify ComponentFactoryManager about factory features
+            {
+                std::vector<FeatureInfo*> plugin_factories;
+                for (auto& feat : loaded_plugins_[guid].features)
+                {
+                    if (feat.feature_type
+                            == Das::PluginInterface::
+                                DAS_PLUGIN_FEATURE_COMPONENT_FACTORY
+                        && feat.interface_ptr)
+                    {
+                        plugin_factories.push_back(&feat);
+                    }
+                }
+                if (!plugin_factories.empty())
+                {
+                    component_factory_mgr_.OnPluginLoaded(
+                        guid,
+                        plugin_factories);
+                }
             }
         }
-        if (!plugin_factories.empty())
-        {
-            component_factory_mgr_.OnPluginLoaded(guid, plugin_factories);
-        }
+
+        return DAS_S_OK;
     }
 
-    return DAS_S_OK;
+    // IPC 路径：委托给 Host 进程加载
+    if (!ipc_context_)
+    {
+        DAS_CORE_LOG_ERROR(
+            "Cannot load plugin '{}' via IPC: no IIpcContext set",
+            path_str);
+        return DAS_E_NO_IMPLEMENTATION;
+    }
+    if (host_exe_path_.empty())
+    {
+        DAS_CORE_LOG_ERROR(
+            "Cannot load plugin '{}' via IPC: no Host exe path set",
+            path_str);
+        return DAS_E_NO_IMPLEMENTATION;
+    }
+    return LoadPluginViaIpc(normalized_path, desc->guid, desc);
 }
 
 DasResult PluginManager::UnloadPlugin(const std::filesystem::path& path)
@@ -338,7 +386,19 @@ DasResult PluginManager::UnloadPlugin(const std::filesystem::path& path)
         }
     }
 
-    // 先从 feature_type_index_ 中移除指针（在 erase loaded_plugins_ 之前）
+    // 检查是否为 IPC 加载的插件
+    if (host_launchers_.contains(guid))
+    {
+        // 从 loaded_plugins_ 取出 plugin（UnloadPluginIpc 负责 erase）
+        LoadedPlugin ipc_plugin = std::move(plug_it->second);
+        loaded_plugins_.erase(plug_it);
+        path_to_guid_.erase(path_it);
+        lock.~lock_guard();
+        return UnloadPluginIpc(guid, ipc_plugin);
+    }
+
+    // 进程内路径：先从 feature_type_index_ 中移除指针（在 erase
+    // loaded_plugins_ 之前）
     component_factory_mgr_.OnPluginUnloading(guid);
 
     for (auto& feature : plug_it->second.features)
@@ -686,6 +746,223 @@ PluginPackageDesc* PluginManager::FindPluginPackageByGuid(const DasGuid& guid)
 ComponentFactoryManager& PluginManager::GetComponentFactoryManager()
 {
     return component_factory_mgr_;
+}
+
+DasResult PluginManager::LoadPluginViaIpc(
+    const std::filesystem::path&       manifest_path,
+    const DasGuid&                     plugin_guid,
+    std::shared_ptr<PluginPackageDesc> desc)
+{
+    // 查找或创建 HostLauncher
+    DasPtr<DAS::Core::IPC::IHostLauncher> launcher;
+
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto                        host_it = host_launchers_.find(plugin_guid);
+        if (host_it != host_launchers_.end())
+        {
+            launcher = host_it->second;
+        }
+    }
+
+    if (!launcher)
+    {
+        // 首次加载时创建并启动 Host 进程
+        DAS::Core::IPC::IHostLauncher* raw_launcher = nullptr;
+        auto result = ipc_context_->CreateHostLauncher(&raw_launcher);
+        if (DAS::IsFailed(result))
+        {
+            DAS_CORE_LOG_ERROR(
+                "LoadPluginViaIpc: CreateHostLauncher failed: error={}",
+                static_cast<int>(result));
+            return result;
+        }
+        launcher = DasPtr<DAS::Core::IPC::IHostLauncher>(raw_launcher);
+
+        uint16_t session_id = 0;
+        result = launcher->Start(host_exe_path_, session_id, 30000);
+        if (DAS::IsFailed(result))
+        {
+            DAS_CORE_LOG_ERROR(
+                "LoadPluginViaIpc: HostLauncher::Start failed: error={}",
+                static_cast<int>(result));
+            return result;
+        }
+
+        // 注册进程退出回调
+        // 将 IHostLauncher* 转换为 HostLauncher* 以访问 SetOnProcessExit
+        auto* concrete_launcher =
+            static_cast<DAS::Core::IPC::HostLauncher*>(launcher.Get());
+        if (concrete_launcher)
+        {
+            concrete_launcher->SetOnProcessExit(
+                [this](uint16_t sid, int exit_code)
+                { OnHostProcessExit(sid, exit_code); });
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            host_launchers_[plugin_guid] = launcher;
+            session_to_guid_[session_id] = plugin_guid;
+        }
+    }
+
+    // 异步加载插件 -> sync_wait 同步等待
+    DasPtr<IDasAsyncLoadPluginOperation> op;
+    auto                                 result = ipc_context_->LoadPluginAsync(
+        launcher.Get(),
+        manifest_path.string().c_str(),
+        op.Put());
+    if (DAS::IsFailed(result))
+    {
+        DAS_CORE_LOG_ERROR(
+            "LoadPluginViaIpc: LoadPluginAsync failed: error={}",
+            static_cast<int>(result));
+        return result;
+    }
+
+    // sync_wait 阻塞等待（HTTP 线程安全，走 IO 线程 pending_calls_）
+    auto sender = DAS::Core::IPC::async_op(*ipc_context_, std::move(op));
+    auto wait_result = DAS::Core::IPC::wait(*ipc_context_, std::move(sender));
+    if (!wait_result)
+    {
+        DAS_CORE_LOG_ERROR(
+            "LoadPluginViaIpc: sync_wait timed out for path={}",
+            manifest_path.string());
+        return DAS_E_IPC_REMOTE_ERROR;
+    }
+
+    auto [ipc_result, raw_proxy] = *wait_result;
+    if (DAS::IsFailed(ipc_result) || !raw_proxy)
+    {
+        DAS_CORE_LOG_ERROR(
+            "LoadPluginViaIpc: IPC load failed: error={}",
+            static_cast<int>(ipc_result));
+        return ipc_result;
+    }
+
+    // 获取 IDasPluginPackage proxy
+    DasPtr<Das::PluginInterface::IDasPluginPackage> package;
+    auto qi_result = raw_proxy->QueryInterface(
+        DAS_IID_PLUGIN_PACKAGE,
+        reinterpret_cast<void**>(package.Put()));
+    raw_proxy->Release();
+
+    if (DAS::IsFailed(qi_result))
+    {
+        DAS_CORE_LOG_ERROR(
+            "LoadPluginViaIpc: plugin does not implement IDasPluginPackage: "
+            "path={}",
+            manifest_path.string());
+        return DAS_E_NO_INTERFACE;
+    }
+
+    // 构造 LoadedPlugin 并更新索引
+    LoadedPlugin plugin;
+    plugin.plugin_path = manifest_path;
+    plugin.package = std::move(package);
+    plugin.desc = desc;
+
+    const auto guid = desc->guid;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        // 双检：IPC 加载期间可能有并发加载
+        if (loaded_plugins_.contains(guid))
+        {
+            DAS_CORE_LOG_ERROR(
+                "LoadPluginViaIpc: GUID conflict after IPC load: path={}",
+                manifest_path.string());
+            return DAS_E_DUPLICATE_ELEMENT;
+        }
+
+        loaded_plugins_[guid] = std::move(plugin);
+        path_to_guid_[manifest_path.string()] = guid;
+    }
+
+    DAS_CORE_LOG_INFO("Loaded plugin via IPC: {}", manifest_path.string());
+
+    return DAS_S_OK;
+}
+
+DasResult PluginManager::UnloadPluginIpc(
+    const DasGuid& guid,
+    LoadedPlugin&  plugin)
+{
+    // 通过 IPC proxy 调用 CanUnloadNow
+    if (plugin.package)
+    {
+        bool can_unload = false;
+        auto unload_result = plugin.package->CanUnloadNow(&can_unload);
+        if (unload_result != DAS_S_OK || !can_unload)
+        {
+            DAS_CORE_LOG_WARN("UnloadPluginIpc: plugin cannot be unloaded now");
+            return DAS_E_FAIL;
+        }
+    }
+
+    // 从索引中移除（必须在 Stop 之前，Stop 可能触发断连回调）
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        component_factory_mgr_.OnPluginUnloading(guid);
+        path_to_guid_.erase(plugin.plugin_path.string());
+        loaded_plugins_.erase(guid);
+    }
+
+    // 发送 GOODBYE 让 Host 优雅退出
+    // HostLauncher::Stop() 内部发送 GOODBYE + 等待进程退出
+    auto host_it = host_launchers_.find(guid);
+    if (host_it != host_launchers_.end())
+    {
+        auto launcher = host_it->second;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            uint16_t                    sid = launcher->GetSessionId();
+            session_to_guid_.erase(sid);
+            host_launchers_.erase(host_it);
+        }
+        launcher->Stop();
+    }
+
+    DAS_CORE_LOG_INFO("Unloaded plugin via IPC");
+    return DAS_S_OK;
+}
+
+void PluginManager::OnHostProcessExit(uint16_t session_id, int exit_code)
+{
+    // 此回调在 io_context 线程上执行
+    DAS_CORE_LOG_WARN(
+        "Host process exited unexpectedly: session_id={}, exit_code={}",
+        session_id,
+        exit_code);
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // 通过 session_id 反查 plugin GUID
+    auto guid_it = session_to_guid_.find(session_id);
+    if (guid_it == session_to_guid_.end())
+    {
+        return;
+    }
+
+    DasGuid plugin_guid = guid_it->second;
+
+    // 清理 loaded_plugins_ 索引
+    auto plugin_it = loaded_plugins_.find(plugin_guid);
+    if (plugin_it != loaded_plugins_.end())
+    {
+        component_factory_mgr_.OnPluginUnloading(plugin_guid);
+        path_to_guid_.erase(plugin_it->second.plugin_path.string());
+        loaded_plugins_.erase(plugin_it);
+    }
+
+    // 清理索引映射
+    host_launchers_.erase(plugin_guid);
+    session_to_guid_.erase(guid_it);
+
+    DAS_CORE_LOG_INFO(
+        "Cleaned up plugin index after Host exit: session_id={}",
+        session_id);
 }
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
