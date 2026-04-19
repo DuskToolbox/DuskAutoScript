@@ -3,7 +3,6 @@
 #include <das/Core/ForeignInterfaceHost/PluginScanner.h>
 #include <das/Core/Logger/Logger.h>
 
-#include <array>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -27,57 +26,7 @@ namespace
     constexpr size_t   kEndOfCentralDirSize = 22;
     constexpr size_t   kMaxCommentSize = 65535;
 
-#pragma pack(push, 1)
-    struct LocalFileHeader
-    {
-        uint32_t signature;
-        uint16_t version_needed;
-        uint16_t flags;
-        uint16_t compression;
-        uint16_t mod_time;
-        uint16_t mod_date;
-        uint32_t crc32;
-        uint32_t compressed_size;
-        uint32_t uncompressed_size;
-        uint16_t filename_length;
-        uint16_t extra_field_length;
-    };
-
-    struct CentralDirectoryEntry
-    {
-        uint32_t signature;
-        uint16_t version_made_by;
-        uint16_t version_needed;
-        uint16_t flags;
-        uint16_t compression;
-        uint16_t mod_time;
-        uint16_t mod_date;
-        uint32_t crc32;
-        uint32_t compressed_size;
-        uint32_t uncompressed_size;
-        uint16_t filename_length;
-        uint16_t extra_field_length;
-        uint16_t comment_length;
-        uint16_t disk_start;
-        uint16_t internal_attr;
-        uint32_t external_attr;
-        uint32_t local_header_offset;
-    };
-
-    struct EndOfCentralDirRecord
-    {
-        uint32_t signature;
-        uint16_t disk_number;
-        uint16_t disk_with_cd;
-        uint16_t num_entries_on_disk;
-        uint16_t num_entries;
-        uint32_t cd_size;
-        uint32_t cd_offset;
-        uint16_t comment_length;
-    };
-#pragma pack(pop)
-
-    // Helper: read little-endian values from byte buffer
+    // Read little-endian values from byte buffer
     template <typename T>
     T ReadLE(const char* data, size_t offset)
     {
@@ -88,7 +37,6 @@ namespace
 
     bool FindEndOfCentralDir(const std::string& zip_data, size_t& eocd_offset)
     {
-        // EOCD is at most 22 + 65535 bytes from the end
         size_t max_search =
             std::min(zip_data.size(), kEndOfCentralDirSize + kMaxCommentSize);
 
@@ -106,7 +54,7 @@ namespace
         return false;
     }
 
-    // Decompress Deflate data using zlib
+    // Decompress raw Deflate using zlib
     bool InflateData(
         const std::string& compressed,
         size_t             compressed_size,
@@ -122,7 +70,6 @@ namespace
         stream.next_out = reinterpret_cast<Bytef*>(output.data());
         stream.avail_out = static_cast<uInt>(uncompressed_size);
 
-        // -MAX_WBITS tells zlib to expect raw deflate (no zlib/gzip header)
         if (inflateInit2(&stream, -MAX_WBITS) != Z_OK)
         {
             return false;
@@ -134,7 +81,6 @@ namespace
         return ret == Z_STREAM_END;
     }
 
-    // Validate that a path does not escape the target directory
     bool IsPathSafe(
         const std::filesystem::path& target_dir,
         const std::filesystem::path& entry_path)
@@ -153,8 +99,6 @@ namespace
             return false;
         }
 
-        // Use lexically_relative to check containment: if the entry is inside
-        // target, the relative path will not start with ".."
         auto relative = canonical_entry.lexically_relative(canonical_target);
         auto rel_str = relative.string();
         if (rel_str.size() >= 2 && rel_str.substr(0, 2) == "..")
@@ -163,13 +107,11 @@ namespace
         }
         if (rel_str == ".")
         {
-            // entry_path is exactly target_dir
             return false;
         }
         return !rel_str.empty();
     }
 
-    // Check filename for path traversal patterns
     bool IsFilenameSafe(const std::string& filename)
     {
         if (filename.empty())
@@ -177,13 +119,11 @@ namespace
             return false;
         }
 
-        // Must not start with '/' or '\'
         if (filename[0] == '/' || filename[0] == '\\')
         {
             return false;
         }
 
-        // Must not contain ".." path component
         std::istringstream ss(filename);
         std::string        component;
         while (std::getline(ss, component, '/'))
@@ -194,7 +134,6 @@ namespace
             }
         }
 
-        // Also check backslash separators
         std::istringstream ss2(filename);
         while (std::getline(ss2, component, '\\'))
         {
@@ -207,16 +146,21 @@ namespace
         return true;
     }
 
-    struct ExtractedEntry
+    // ZIP entry metadata — no file data, extracted directly to disk
+    struct ZipEntryMeta
     {
         std::string filename;
-        std::string data;
+        uint16_t    compression;
+        uint32_t    compressed_size;
+        uint32_t    uncompressed_size;
+        uint32_t    local_header_offset;
         bool        is_directory;
     };
 
-    DasResult ParseAndExtractZip(
-        const std::string&           zip_data,
-        std::vector<ExtractedEntry>& entries)
+    // Parse Central Directory to enumerate entries (metadata only)
+    DasResult EnumerateZipEntries(
+        const std::string&         zip_data,
+        std::vector<ZipEntryMeta>& entries)
     {
         size_t eocd_offset = 0;
         if (!FindEndOfCentralDir(zip_data, eocd_offset))
@@ -232,7 +176,7 @@ namespace
         size_t pos = cd_offset;
         for (uint16_t i = 0; i < num_entries; ++i)
         {
-            if (pos + sizeof(CentralDirectoryEntry) > zip_data.size())
+            if (pos + 46 > zip_data.size())
             {
                 DAS_CORE_LOG_WARN("Invalid ZIP: truncated central directory");
                 return DAS_E_INVALID_ARGUMENT;
@@ -256,11 +200,17 @@ namespace
             auto local_header_offset =
                 ReadLE<uint32_t>(zip_data.data(), pos + 42);
 
+            if (pos + 46 + filename_length + extra_length + comment_length
+                > zip_data.size())
+            {
+                DAS_CORE_LOG_WARN("Invalid ZIP: truncated entry metadata");
+                return DAS_E_INVALID_ARGUMENT;
+            }
+
             std::string filename(zip_data.data() + pos + 46, filename_length);
 
             pos += 46 + filename_length + extra_length + comment_length;
 
-            // Validate filename
             if (!IsFilenameSafe(filename))
             {
                 DAS_CORE_LOG_WARN(
@@ -269,84 +219,172 @@ namespace
                 return DAS_E_INVALID_ARGUMENT;
             }
 
-            bool is_directory = !filename.empty() && filename.back() == '/';
+            ZipEntryMeta meta;
+            meta.filename = filename;
+            meta.compression = compression;
+            meta.compressed_size = compressed_size;
+            meta.uncompressed_size = uncompressed_size;
+            meta.local_header_offset = local_header_offset;
+            meta.is_directory = !filename.empty() && filename.back() == '/';
 
-            // Read from local file header to get actual data
-            if (local_header_offset + sizeof(LocalFileHeader) > zip_data.size())
-            {
-                DAS_CORE_LOG_WARN("Invalid ZIP: truncated local file header");
-                return DAS_E_INVALID_ARGUMENT;
-            }
-
-            auto local_sig =
-                ReadLE<uint32_t>(zip_data.data(), local_header_offset);
-            if (local_sig != kLocalFileHeaderSig)
-            {
-                DAS_CORE_LOG_WARN(
-                    "Invalid ZIP: bad local file header signature");
-                return DAS_E_INVALID_ARGUMENT;
-            }
-
-            auto local_filename_length =
-                ReadLE<uint16_t>(zip_data.data(), local_header_offset + 26);
-            auto local_extra_length =
-                ReadLE<uint16_t>(zip_data.data(), local_header_offset + 28);
-
-            size_t data_offset = local_header_offset + 30
-                                 + local_filename_length + local_extra_length;
-
-            ExtractedEntry entry;
-            entry.filename = filename;
-            entry.is_directory = is_directory;
-
-            if (!is_directory && compressed_size > 0)
-            {
-                if (data_offset + compressed_size > zip_data.size())
-                {
-                    DAS_CORE_LOG_WARN(
-                        "Invalid ZIP: truncated file data for {}",
-                        filename);
-                    return DAS_E_INVALID_ARGUMENT;
-                }
-
-                if (compression == kCompressionStored)
-                {
-                    entry.data.assign(
-                        zip_data.data() + data_offset,
-                        compressed_size);
-                }
-                else if (compression == kCompressionDeflate)
-                {
-                    std::string compressed(
-                        zip_data.data() + data_offset,
-                        compressed_size);
-                    if (!InflateData(
-                            compressed,
-                            compressed_size,
-                            entry.data,
-                            uncompressed_size))
-                    {
-                        DAS_CORE_LOG_WARN(
-                            "ZIP decompression failed for {}",
-                            filename);
-                        return DAS_E_INVALID_ARGUMENT;
-                    }
-                }
-                else
-                {
-                    DAS_CORE_LOG_WARN(
-                        "ZIP entry uses unsupported compression {}: {}",
-                        compression,
-                        filename);
-                    return DAS_E_INVALID_ARGUMENT;
-                }
-            }
-
-            entries.push_back(std::move(entry));
+            entries.push_back(std::move(meta));
         }
 
         return DAS_S_OK;
     }
+
+    // Extract a single ZIP entry directly to disk
+    DasResult ExtractEntryToDisk(
+        const std::string&           zip_data,
+        const ZipEntryMeta&          meta,
+        const std::filesystem::path& target_path)
+    {
+        if (meta.is_directory)
+        {
+            std::error_code ec;
+            std::filesystem::create_directories(target_path, ec);
+            if (ec)
+            {
+                DAS_CORE_LOG_WARN(
+                    "Failed to create directory: {}",
+                    target_path.string());
+                return DAS_E_FAIL;
+            }
+            return DAS_S_OK;
+        }
+
+        // Ensure parent directory exists
+        auto parent = target_path.parent_path();
+        if (!parent.empty())
+        {
+            std::error_code ec;
+            std::filesystem::create_directories(parent, ec);
+        }
+
+        std::ofstream ofs(target_path, std::ios::binary | std::ios::trunc);
+        if (!ofs)
+        {
+            DAS_CORE_LOG_WARN("Failed to write file: {}", target_path.string());
+            return DAS_E_FAIL;
+        }
+
+        if (meta.compressed_size == 0)
+        {
+            return DAS_S_OK;
+        }
+
+        // Resolve data offset from Local File Header
+        auto local_header = meta.local_header_offset;
+        if (local_header + 30 > zip_data.size())
+        {
+            DAS_CORE_LOG_WARN("Invalid ZIP: truncated local file header");
+            return DAS_E_INVALID_ARGUMENT;
+        }
+
+        auto local_sig = ReadLE<uint32_t>(zip_data.data(), local_header);
+        if (local_sig != kLocalFileHeaderSig)
+        {
+            DAS_CORE_LOG_WARN("Invalid ZIP: bad local file header signature");
+            return DAS_E_INVALID_ARGUMENT;
+        }
+
+        auto local_filename_length =
+            ReadLE<uint16_t>(zip_data.data(), local_header + 26);
+        auto local_extra_length =
+            ReadLE<uint16_t>(zip_data.data(), local_header + 28);
+        size_t data_offset =
+            local_header + 30 + local_filename_length + local_extra_length;
+
+        if (data_offset + meta.compressed_size > zip_data.size())
+        {
+            DAS_CORE_LOG_WARN(
+                "Invalid ZIP: truncated file data for {}",
+                meta.filename);
+            return DAS_E_INVALID_ARGUMENT;
+        }
+
+        if (meta.compression == kCompressionStored)
+        {
+            ofs.write(zip_data.data() + data_offset, meta.compressed_size);
+        }
+        else if (meta.compression == kCompressionDeflate)
+        {
+            std::string compressed(
+                zip_data.data() + data_offset,
+                meta.compressed_size);
+            std::string output;
+            if (!InflateData(
+                    compressed,
+                    meta.compressed_size,
+                    output,
+                    meta.uncompressed_size))
+            {
+                DAS_CORE_LOG_WARN(
+                    "ZIP decompression failed for {}",
+                    meta.filename);
+                return DAS_E_INVALID_ARGUMENT;
+            }
+            ofs.write(output.data(), output.size());
+        }
+        else
+        {
+            DAS_CORE_LOG_WARN(
+                "ZIP entry uses unsupported compression {}: {}",
+                meta.compression,
+                meta.filename);
+            return DAS_E_INVALID_ARGUMENT;
+        }
+
+        if (!ofs)
+        {
+            DAS_CORE_LOG_WARN(
+                "Failed to write file data: {}",
+                target_path.string());
+            return DAS_E_FAIL;
+        }
+
+        return DAS_S_OK;
+    }
+
+    // Create a unique temp directory under parent
+    std::filesystem::path CreateTempDir(const std::filesystem::path& parent)
+    {
+        std::random_device                      rd;
+        std::uniform_int_distribution<unsigned> dist;
+
+        for (int attempt = 0; attempt < 8; ++attempt)
+        {
+            auto            name = fmt::format(".tmp_install_{:08x}", dist(rd));
+            auto            path = parent / name;
+            std::error_code ec;
+            std::filesystem::create_directories(path, ec);
+            if (!ec)
+            {
+                return path;
+            }
+        }
+
+        DAS_CORE_LOG_WARN(
+            "Failed to create temp directory under {}",
+            parent.string());
+        return {};
+    }
+
+    // RAII guard that removes a directory on scope exit
+    struct TempDirGuard
+    {
+        std::filesystem::path path;
+        bool                  dismiss = false;
+
+        ~TempDirGuard()
+        {
+            if (!dismiss && !path.empty())
+            {
+                std::error_code ec;
+                std::filesystem::remove_all(path, ec);
+            }
+        }
+    };
 
 } // anonymous namespace
 
@@ -372,11 +410,11 @@ DasResult InstallPlugin(
         }
     }
 
-    // Parse and extract ZIP entries in memory
-    std::string                 zip_str(zip_data.data(), zip_data.size());
-    std::vector<ExtractedEntry> entries;
+    // --- Phase 1: Enumerate ZIP entries (metadata only, no decompression) ---
+    std::string               zip_str(zip_data.data(), zip_data.size());
+    std::vector<ZipEntryMeta> entries;
 
-    auto result = ParseAndExtractZip(zip_str, entries);
+    auto result = EnumerateZipEntries(zip_str, entries);
     if (result != DAS_S_OK)
     {
         return result;
@@ -388,9 +426,16 @@ DasResult InstallPlugin(
         return DAS_E_INVALID_ARGUMENT;
     }
 
-    // Detect flat ZIP (no subdirectory wrapping) and auto-wrap into a
-    // plugin subdirectory. Flat ZIP means all filenames contain no '/' or
-    // '\' separator.
+    // --- Phase 2: Create temp directory for atomic extraction ---
+    auto temp_dir = CreateTempDir(plugin_dir);
+    if (temp_dir.empty())
+    {
+        return DAS_E_FAIL;
+    }
+
+    TempDirGuard temp_guard{temp_dir};
+
+    // --- Phase 3: Detect flat ZIP, compute effective filenames ---
     bool has_subdir = false;
     for (const auto& e : entries)
     {
@@ -401,26 +446,65 @@ DasResult InstallPlugin(
         }
     }
 
-    // If flat ZIP, parse manifest to get plugin name, then prefix all
-    // entries with "<name>/"
+    std::string auto_prefix;
     if (!has_subdir)
     {
-        std::string plugin_name;
+        // Need to find manifest entry to get plugin name for auto-wrap.
+        // Only decompress the manifest .json entry temporarily.
         for (const auto& e : entries)
         {
             if (e.is_directory)
             {
                 continue;
             }
+
             if (e.filename.size() >= 5
                 && e.filename.compare(e.filename.size() - 5, 5, ".json") == 0)
             {
+                // Read and decompress just this one entry to get plugin name
+                auto local_header = e.local_header_offset;
+                if (local_header + 30 > zip_str.size())
+                {
+                    continue;
+                }
+
+                auto lfn_len =
+                    ReadLE<uint16_t>(zip_str.data(), local_header + 26);
+                auto lex_len =
+                    ReadLE<uint16_t>(zip_str.data(), local_header + 28);
+                size_t data_off = local_header + 30 + lfn_len + lex_len;
+
+                if (data_off + e.compressed_size > zip_str.size())
+                {
+                    continue;
+                }
+
+                std::string file_data;
+                if (e.compression == kCompressionStored)
+                {
+                    file_data.assign(
+                        zip_str.data() + data_off,
+                        e.compressed_size);
+                }
+                else if (e.compression == kCompressionDeflate)
+                {
+                    std::string compressed(
+                        zip_str.data() + data_off,
+                        e.compressed_size);
+                    InflateData(
+                        compressed,
+                        e.compressed_size,
+                        file_data,
+                        e.uncompressed_size);
+                }
+
                 try
                 {
-                    auto json_data = nlohmann::json::parse(e.data);
+                    auto json_data = nlohmann::json::parse(file_data);
                     if (json_data.contains("name"))
                     {
-                        plugin_name = json_data["name"].get<std::string>();
+                        auto_prefix =
+                            json_data["name"].get<std::string>() + "/";
                     }
                 }
                 catch (const std::exception&)
@@ -430,77 +514,43 @@ DasResult InstallPlugin(
             }
         }
 
-        if (plugin_name.empty())
+        if (auto_prefix.empty())
         {
             DAS_CORE_LOG_WARN("Flat ZIP has no manifest with 'name' field");
             return DAS_E_INVALID_ARGUMENT;
         }
-
-        for (auto& e : entries)
-        {
-            e.filename = plugin_name + "/" + e.filename;
-        }
     }
 
-    // Write extracted files to plugin_dir
-    for (const auto& entry : entries)
+    // --- Phase 4: Extract each entry directly to temp dir ---
+    for (const auto& meta : entries)
     {
-        auto target_path = plugin_dir / entry.filename;
+        auto effective_name = auto_prefix + meta.filename;
+        auto target_path = temp_dir / effective_name;
 
-        if (!IsPathSafe(plugin_dir, target_path))
+        if (!IsPathSafe(temp_dir, target_path))
         {
             DAS_CORE_LOG_WARN(
                 "ZIP entry escapes target directory: {}",
-                entry.filename);
+                effective_name);
             return DAS_E_INVALID_ARGUMENT;
         }
 
-        if (entry.is_directory)
-        {
-            std::error_code ec;
-            std::filesystem::create_directories(target_path, ec);
-            if (ec)
-            {
-                DAS_CORE_LOG_WARN(
-                    "Failed to create directory: {}",
-                    target_path.string());
-                return DAS_E_FAIL;
-            }
-        }
-        else
-        {
-            // Ensure parent directory exists
-            auto parent = target_path.parent_path();
-            if (!parent.empty())
-            {
-                std::error_code ec;
-                std::filesystem::create_directories(parent, ec);
-            }
+        ZipEntryMeta effective_meta = meta;
+        effective_meta.filename = effective_name;
 
-            std::ofstream ofs(target_path, std::ios::binary | std::ios::trunc);
-            if (!ofs)
-            {
-                DAS_CORE_LOG_WARN(
-                    "Failed to write file: {}",
-                    target_path.string());
-                return DAS_E_FAIL;
-            }
-            ofs.write(entry.data.data(), entry.data.size());
-            if (!ofs)
-            {
-                DAS_CORE_LOG_WARN(
-                    "Failed to write file data: {}",
-                    target_path.string());
-                return DAS_E_FAIL;
-            }
+        result = ExtractEntryToDisk(zip_str, effective_meta, target_path);
+        if (result != DAS_S_OK)
+        {
+            return result;
         }
     }
 
-    // Verify at least one valid manifest exists
+    // --- Phase 5: Validate manifest in temp dir ---
     bool            found_manifest = false;
+    std::string     plugin_name;
     std::error_code ec;
     for (const auto& entry : std::filesystem::directory_iterator(
-             plugin_dir,
+             temp_dir,
              std::filesystem::directory_options::skip_permission_denied,
              ec))
     {
@@ -513,6 +563,7 @@ DasResult InstallPlugin(
         if (!manifest.empty())
         {
             found_manifest = true;
+            plugin_name = entry.path().filename().string();
             break;
         }
     }
@@ -520,25 +571,51 @@ DasResult InstallPlugin(
     if (!found_manifest)
     {
         DAS_CORE_LOG_WARN("ZIP does not contain a valid plugin manifest");
-
-        // Clean up extracted entries in reverse order (files first, then
-        // dirs)
-        for (auto it = entries.rbegin(); it != entries.rend(); ++it)
-        {
-            auto            target = plugin_dir / it->filename;
-            std::error_code ec;
-            if (it->is_directory)
-            {
-                std::filesystem::remove_all(target, ec);
-            }
-            else
-            {
-                std::filesystem::remove(target, ec);
-            }
-        }
-
         return DAS_E_FAIL;
     }
+
+    // --- Phase 6: Atomic install — rename temp into final location ---
+    auto src = temp_dir / plugin_name;
+    auto dst = plugin_dir / plugin_name;
+    auto old = plugin_dir / (plugin_name + ".old");
+
+    // Move existing plugin aside
+    if (std::filesystem::exists(dst))
+    {
+        std::filesystem::rename(dst, old, ec);
+        if (ec)
+        {
+            DAS_CORE_LOG_WARN(
+                "Failed to rename existing plugin: {}",
+                dst.string());
+            return DAS_E_FAIL;
+        }
+    }
+
+    // Move new plugin into place
+    std::filesystem::rename(src, dst, ec);
+    if (ec)
+    {
+        DAS_CORE_LOG_WARN(
+            "Failed to install plugin: {} -> {}",
+            src.string(),
+            dst.string());
+        // Restore old plugin
+        if (std::filesystem::exists(old))
+        {
+            std::filesystem::rename(old, dst, ec);
+        }
+        return DAS_E_FAIL;
+    }
+
+    // Cleanup: remove old version and temp dir
+    if (std::filesystem::exists(old))
+    {
+        std::filesystem::remove_all(old, ec);
+    }
+
+    temp_guard.dismiss = true;
+    std::filesystem::remove_all(temp_dir, ec);
 
     return DAS_S_OK;
 }
