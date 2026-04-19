@@ -467,12 +467,19 @@ DasResult InstallPlugin(
     {
         DAS_CORE_LOG_WARN("ZIP does not contain a valid plugin manifest");
 
-        // Clean up extracted files
-        for (const auto& entry : entries)
+        // Clean up extracted entries in reverse order (files first, then
+        // dirs)
+        for (auto it = entries.rbegin(); it != entries.rend(); ++it)
         {
-            if (!entry.is_directory)
+            auto            target = plugin_dir / it->filename;
+            std::error_code ec;
+            if (it->is_directory)
             {
-                std::filesystem::remove(plugin_dir / entry.filename);
+                std::filesystem::remove_all(target, ec);
+            }
+            else
+            {
+                std::filesystem::remove(target, ec);
             }
         }
 
