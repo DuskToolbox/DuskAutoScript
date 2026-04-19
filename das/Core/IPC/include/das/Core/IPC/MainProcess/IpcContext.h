@@ -19,6 +19,7 @@
 #include <das/IDasAsyncLoadPluginOperation.h>
 #include <memory>
 #include <optional>
+#include <unordered_map>
 
 DAS_NS_BEGIN
 namespace Core
@@ -100,7 +101,7 @@ namespace Core
 
                 /// Internal registration method (called by HostLauncher after
                 /// Start succeeds)
-                DasResult InternalRegisterHostLauncher();
+                DasResult InternalRegisterHostLauncher(uint16_t session_id);
 
             private:
                 /// IPC 命令处理器
@@ -127,9 +128,9 @@ namespace Core
                 /// 业务线程
                 std::shared_ptr<BusinessThread> business_thread_;
 
-                /// Internal holder for created launcher (DasPtr for refcount
-                /// management)
-                DAS::DasPtr<HostLauncher> launcher_;
+                /// Created launchers indexed by session_id
+                std::unordered_map<uint16_t, DAS::DasPtr<HostLauncher>>
+                    launchers_;
 
                 std::atomic<uint16_t> next_session_id_{2};
                 mutable std::mutex    allocated_ids_mutex_;

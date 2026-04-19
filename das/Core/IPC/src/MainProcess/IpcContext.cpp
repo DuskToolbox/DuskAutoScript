@@ -92,12 +92,15 @@ namespace Core
             {
                 // 析构即清理，无条件守卫
 
-                // 生命周期安全：重置 HostLauncher 的回调，防止
+                // 生命周期安全：重置所有 HostLauncher 的回调，防止
                 // ConnectionManager 持有的 DasPtr<HostLauncher>
                 // 在 IpcContext 析构后仍触发悬空回调
-                if (launcher_)
+                for (auto& [sid, launcher] : launchers_)
                 {
-                    launcher_->ClearCallbacks();
+                    if (launcher)
+                    {
+                        launcher->ClearCallbacks();
+                    }
                 }
 
                 // Clear ProxyFactory
@@ -158,9 +161,10 @@ namespace Core
                     auto launcher = DAS::DasPtr<HostLauncher>(new HostLauncher(
                         GetIoContext(),
                         session_id,
-                        [this]() { return InternalRegisterHostLauncher(); }));
+                        [this, session_id]()
+                        { return InternalRegisterHostLauncher(session_id); }));
 
-                    launcher_ = launcher;
+                    launchers_[session_id] = launcher;
                     *pp_out_launcher = launcher.Get();
                     return DAS_S_OK;
                 }
@@ -315,7 +319,8 @@ namespace Core
 
             void IpcContext::RequestStop() { runloop_.RequestStop(); }
 
-            DasResult IpcContext::InternalRegisterHostLauncher()
+            DasResult IpcContext::InternalRegisterHostLauncher(
+                uint16_t session_id)
             {
                 if (!runloop_.connection_manager_)
                 {
@@ -324,15 +329,16 @@ namespace Core
                     return DAS_E_IPC_NOT_INITIALIZED;
                 }
 
-                if (!launcher_)
+                auto it = launchers_.find(session_id);
+                if (it == launchers_.end() || !it->second)
                 {
                     DAS_CORE_LOG_ERROR(
-                        "InternalRegisterHostLauncher: no launcher stored");
+                        "InternalRegisterHostLauncher: no launcher for session_id={}",
+                        session_id);
                     return DAS_E_INVALID_ARGUMENT;
                 }
 
-                // Use internally stored DasPtr for registration
-                return runloop_.RegisterHostLauncher(launcher_);
+                return runloop_.RegisterHostLauncher(it->second);
             }
 
             std::vector<uint16_t> IpcContext::GetConnectedSessions()
