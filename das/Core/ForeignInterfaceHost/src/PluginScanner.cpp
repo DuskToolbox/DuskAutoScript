@@ -109,6 +109,14 @@ void CleanupMarkedPlugins(const std::filesystem::path& plugin_dir)
             if (sub.path().extension() == ".willBeDelete")
             {
                 auto plugin_name = sub.path().stem().string();
+                auto parent_name = entry.path().filename().string();
+                if (plugin_name != parent_name)
+                {
+                    // Marker is in a directory whose name doesn't match the
+                    // marker stem -- skip
+                    continue;
+                }
+
                 DAS_CORE_LOG_INFO("Cleaning up marked plugin: {}", plugin_name);
 
                 try
