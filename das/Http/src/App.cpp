@@ -53,18 +53,15 @@ namespace Das::Http
 
         const auto port = DAS_HTTP_PORT;
 
-        // === IPC Initialization (per D-07/D-17) ===
+        // IPC Initialization
         auto ipc_context =
             DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
 
         {
-            // Per RESEARCH Pitfall 2: ScopedCurrentIpcContext must be set
-            // before RegisterService
             DAS::Core::IPC::ScopedCurrentIpcContext scope(
                 static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(
                     ipc_context.get()));
 
-            // Create and register IDasProfileService (per D-05/D-18)
             auto* profile_service =
                 new DasProfileServiceImpl(components.settings_manager);
             profile_service->AddRef();
@@ -83,8 +80,6 @@ namespace Das::Http
             }
         }
 
-        // Per RESEARCH Pitfall 1: Run IPC event loop on dedicated thread
-        // (Run() is blocking)
         components.ipc_thread =
             std::thread([&ipc_context]() { ipc_context->Run(); });
         components.ipc_context = ipc_context;

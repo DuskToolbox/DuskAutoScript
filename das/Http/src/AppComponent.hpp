@@ -20,10 +20,9 @@ namespace Das::Http
         Das::Core::SettingsManager::SettingsManager settings_manager;
         std::filesystem::path                       plugin_dir;
 
-        // IPC context (process-level) — per D-17/D-18
+        // IPC context (process-level)
         std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context;
 
-        // IPC event loop thread
         std::thread ipc_thread;
 
         explicit AppComponent(const std::filesystem::path& plugin_dir)

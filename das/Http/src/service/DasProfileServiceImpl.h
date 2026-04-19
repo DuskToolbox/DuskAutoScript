@@ -8,14 +8,8 @@
 namespace Das::Http
 {
 
-    /**
-     * @brief IDasProfileService Stub 实现
-     *
-     * GetProfile(guid) 解析插件 GUID 到 IDasPluginProfile。
-     * 从 PluginManager 查询 GUID 所属 Package 的 settings_desc
-     * 构建白名单（D-12/D-14）。 生命周期由 DistributedObjectManager
-     * 管理（D-16）。
-     */
+    // IDasProfileService Stub。GetProfile(guid) 查询 PluginManager
+    // 获取白名单后创建 IDasPluginProfile。
     class DasProfileServiceImpl final
         : public Das::ExportInterface::DasProfileServiceImplBase<
               DasProfileServiceImpl>

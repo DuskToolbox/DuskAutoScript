@@ -11,13 +11,8 @@ namespace Das::Http
 
     class DasAutoFlushJsonImpl;
 
-    /**
-     * @brief IDasPluginProfile Stub 实现
-     *
-     * 持有 SettingsManager& 引用和白名单（D-12/D-14）。
-     * GetSettingJson() 返回缓存的 DasAutoFlushJsonImpl 实例（Pitfall 5 缓解）。
-     * 生命周期由 DistributedObjectManager 管理（D-16）。
-     */
+    // IDasPluginProfile Stub。GetSettingJson() 返回缓存的 DasAutoFlushJsonImpl
+    // 实例。
     class DasPluginProfileImpl final
         : public Das::ExportInterface::DasPluginProfileImplBase<
               DasPluginProfileImpl>

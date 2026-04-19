@@ -33,19 +33,15 @@ namespace Das::Http
             return DAS_E_NOT_FOUND;
         }
 
-        // Build whitelist from settings_desc (D-12/D-14)
         std::unordered_set<std::string> whitelist;
         for (const auto& setting : desc->settings_desc)
         {
             whitelist.insert(setting.name);
         }
 
-        // Convert GUID to string for SettingsManager file lookup
-        // DasReadOnlyString ctor calls DasGuidToString internally
         DasReadOnlyString guid_string(&plugin_guid);
         std::string       guid_str = guid_string.GetUtf8();
 
-        // Strip surrounding braces if present
         if (guid_str.size() >= 2 && guid_str.front() == '{'
             && guid_str.back() == '}')
         {

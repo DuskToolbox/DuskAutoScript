@@ -39,9 +39,9 @@ namespace Das::Http
             case nlohmann::json::value_t::boolean:
                 return DAS_TYPE_BOOL;
             case nlohmann::json::value_t::number_integer:
-                return DAS_TYPE_UINT;
-            case nlohmann::json::value_t::number_unsigned:
                 return DAS_TYPE_INT;
+            case nlohmann::json::value_t::number_unsigned:
+                return DAS_TYPE_UINT;
             case nlohmann::json::value_t::number_float:
                 return DAS_TYPE_FLOAT;
             case nlohmann::json::value_t::binary:
@@ -89,8 +89,6 @@ namespace Das::Http
 
         return DAS_S_OK;
     }
-
-    // === GetByName methods ===
 
     DasResult DasAutoFlushJsonImpl::GetIntByName(
         IDasReadOnlyString* key,
@@ -263,13 +261,6 @@ namespace Das::Http
                 return DAS_E_TYPE_ERROR;
             }
 
-            auto full_settings_str =
-                settings_manager_.GetPluginSettings(profile_id_, plugin_guid_);
-            auto  full_settings = nlohmann::json::parse(full_settings_str);
-            auto& sub_object = full_settings[u8_key];
-
-            // Create a new DasAutoFlushJsonImpl for the sub-object with same
-            // whitelist
             auto* sub_impl = new DasAutoFlushJsonImpl(
                 settings_manager_,
                 profile_id_,
@@ -290,8 +281,6 @@ namespace Das::Http
             return DAS_E_OUT_OF_MEMORY;
         }
     }
-
-    // === SetByName methods ===
 
     DasResult DasAutoFlushJsonImpl::SetIntByName(
         IDasReadOnlyString* key,
@@ -399,7 +388,6 @@ namespace Das::Http
 
         DAS_UTILS_CHECK_POINTER(p_in_das_json)
 
-        // Get JSON string from the input IDasJson via ToString
         IDasReadOnlyString* p_json_str = nullptr;
         auto to_string_result = p_in_das_json->ToString(-1, &p_json_str);
         if (DAS::IsFailed(to_string_result))
@@ -423,8 +411,6 @@ namespace Das::Http
             u8_key,
             expected_value.value());
     }
-
-    // === ByIndex methods ===
 
     DasResult DasAutoFlushJsonImpl::GetIntByIndex(
         size_t   index,
@@ -492,8 +478,6 @@ namespace Das::Http
         return DAS_E_NOT_FOUND;
     }
 
-    // === Type/query methods ===
-
     DasResult DasAutoFlushJsonImpl::GetTypeByName(
         IDasReadOnlyString* key,
         DasType*            p_out_type)
@@ -549,7 +533,7 @@ namespace Das::Http
                 settings_manager_.GetPluginSettings(profile_id_, plugin_guid_);
             auto full_settings = nlohmann::json::parse(full_settings_str);
 
-            // Filter to whitelist-only keys
+            // Only include whitelisted keys
             nlohmann::json filtered = nlohmann::json::object();
             for (const auto& key : whitelist_)
             {

@@ -3,9 +3,7 @@ import "DasJson.idl";
 
 namespace Das::ExportInterface {
 
-// Phase 41: IDasJsonSettingOnDeletedHandler, IDasJsonSettingOperator, IDasJsonSetting removed.
-// SettingsManager now uses nlohmann::json directly in the main process.
-// Phase 43: IDasProfileService + IDasPluginProfile added for per-plugin settings access.
+// Phase 41 removed: IDasJsonSettingOnDeletedHandler, IDasJsonSettingOperator, IDasJsonSetting
 
 enum DasProfileProperty {
     DAS_PROFILE_PROPERTY_PROFILE = 0,
