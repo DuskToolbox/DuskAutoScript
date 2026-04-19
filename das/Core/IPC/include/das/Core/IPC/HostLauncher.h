@@ -34,13 +34,31 @@ class HostLauncher final : public IHostLauncher
 public:
     using OnRegisterCallback = std::function<DasResult()>;
 
+    /**
+     * @brief Host 进程退出回调
+     * @param session_id 退出进程的 session_id
+     * @param exit_code 进程退出码（如果正常退出）
+     */
+    using OnProcessExitCallback =
+        std::function<void(uint16_t session_id, int exit_code)>;
+
     explicit HostLauncher(
         boost::asio::io_context& io_ctx,
         uint16_t                 session_id,
         OnRegisterCallback       on_register = nullptr);
     ~HostLauncher() override;
 
-    void ClearCallbacks() { on_register_ = nullptr; }
+    void ClearCallbacks()
+    {
+        on_register_ = nullptr;
+        on_process_exit_ = nullptr;
+    }
+
+    /**
+     * @brief 设置 Host 进程退出回调
+     * @param callback 进程退出时触发的回调（在 io_context 线程上执行）
+     */
+    void SetOnProcessExit(OnProcessExitCallback callback);
 
     HostLauncher(const HostLauncher&) = delete;
     HostLauncher& operator=(const HostLauncher&) = delete;
@@ -151,8 +169,9 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 
-    uint16_t           session_id_ = 0;
-    OnRegisterCallback on_register_;
+    uint16_t              session_id_ = 0;
+    OnRegisterCallback    on_register_;
+    OnProcessExitCallback on_process_exit_;
 };
 DAS_CORE_IPC_NS_END
 

@@ -46,6 +46,7 @@
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/redirect_error.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/use_future.hpp>
@@ -308,11 +309,43 @@ DasResult HostLauncher::Start(
         out_session_id);
     DAS_LOG_INFO(msg.c_str());
 
+    // 异步监控 Host 进程退出（per D-07/D-09）
+    // 在 io_context 线程上等待进程退出，触发回调通知 PluginManager
+    if (impl_->process && on_process_exit_)
+    {
+        auto callback = on_process_exit_;
+        auto session_id = session_id_;
+        auto process_ptr = impl_->process.get();
+
+        boost::asio::co_spawn(
+            impl_->io_ctx,
+            [process_ptr,
+             callback,
+             session_id]() -> boost::asio::awaitable<void>
+            {
+                boost::system::error_code ec;
+                co_await process_ptr->async_wait(
+                    boost::asio::redirect_error(
+                        boost::asio::use_awaitable,
+                        ec));
+                int exit_code = ec ? -1 : process_ptr->exit_code();
+                if (callback)
+                {
+                    callback(session_id, exit_code);
+                }
+                co_return;
+            },
+            boost::asio::detached);
+    }
+
     return DAS_S_OK;
 }
 
 void HostLauncher::Stop()
 {
+    // 清除进程退出回调，避免 Stop() 主动关闭进程时触发回调
+    on_process_exit_ = nullptr;
+
     // 先发送 GOODBYE 消息让 Host 进程优雅退出
     if (impl_->async_transport && impl_->is_running)
     {
@@ -469,6 +502,11 @@ DasResult HostLauncher::StartAsync(
 
     *pp_out_operation = op;
     return DAS_S_OK;
+}
+
+void HostLauncher::SetOnProcessExit(OnProcessExitCallback callback)
+{
+    on_process_exit_ = std::move(callback);
 }
 
 uint32_t HostLauncher::AddRef() { return ++impl_->ref_count; }
@@ -1322,6 +1360,34 @@ boost::asio::awaitable<void> HostLauncher::RunAsync(
             impl_->pid,
             session_id);
         DAS_LOG_INFO(success_msg.c_str());
+
+        // 异步监控 Host 进程退出（per D-07/D-09）
+        if (impl_->process && on_process_exit_)
+        {
+            auto callback = on_process_exit_;
+            auto cb_session_id = session_id;
+            auto process_ptr = impl_->process.get();
+
+            boost::asio::co_spawn(
+                impl_->io_ctx,
+                [process_ptr,
+                 callback,
+                 cb_session_id]() -> boost::asio::awaitable<void>
+                {
+                    boost::system::error_code ec;
+                    co_await process_ptr->async_wait(
+                        boost::asio::redirect_error(
+                            boost::asio::use_awaitable,
+                            ec));
+                    int exit_code = ec ? -1 : process_ptr->exit_code();
+                    if (callback)
+                    {
+                        callback(cb_session_id, exit_code);
+                    }
+                    co_return;
+                },
+                boost::asio::detached);
+        }
 
         op->Complete(DAS_S_OK, session_id);
     }
