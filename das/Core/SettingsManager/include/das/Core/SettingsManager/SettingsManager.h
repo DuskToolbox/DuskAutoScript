@@ -34,6 +34,9 @@ public:
         const std::string& json_str);
 
     // Plugin settings (settings/${pid}/${guid}.json)
+    nlohmann::json GetPluginSettingsJson(
+        const std::string& profile_id,
+        const std::string& guid);
     std::string GetPluginSettings(
         const std::string& profile_id,
         const std::string& guid);
@@ -42,7 +45,18 @@ public:
         const std::string& guid,
         const std::string& json_str);
 
-    // Plugin settings field-level access
+    // Plugin settings field-level access (JSON object, no serialization)
+    nlohmann::json GetPluginSettingsFieldJson(
+        const std::string& profile_id,
+        const std::string& guid,
+        const std::string& field_name);
+    DasResult UpdatePluginSettingsFieldJson(
+        const std::string&    profile_id,
+        const std::string&    guid,
+        const std::string&    field_name,
+        const nlohmann::json& value);
+
+    // Plugin settings field-level access (string-based, legacy)
     std::string GetPluginSettingsField(
         const std::string& profile_id,
         const std::string& guid,

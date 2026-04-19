@@ -10,16 +10,7 @@ using Das::Utils::ToU8StringWithoutOwnership;
 namespace Das::Http
 {
 
-    using Das::ExportInterface::DAS_TYPE_BOOL;
-    using Das::ExportInterface::DAS_TYPE_FLOAT;
-    using Das::ExportInterface::DAS_TYPE_INT;
-    using Das::ExportInterface::DAS_TYPE_JSON_ARRAY;
-    using Das::ExportInterface::DAS_TYPE_JSON_OBJECT;
-    using Das::ExportInterface::DAS_TYPE_NULL;
-    using Das::ExportInterface::DAS_TYPE_STRING;
-    using Das::ExportInterface::DAS_TYPE_UINT;
-    using Das::ExportInterface::DAS_TYPE_UNSUPPORTED;
-    using Das::ExportInterface::DasType;
+    using namespace Das::ExportInterface;
 
     namespace
     {
@@ -59,11 +50,38 @@ namespace Das::Http
         Das::Core::SettingsManager::SettingsManager& settings_manager,
         std::string                                  profile_id,
         std::string                                  plugin_guid,
-        std::unordered_set<std::string>              whitelist)
+        std::unordered_set<std::string>              whitelist,
+        std::string                                  path_prefix)
         : settings_manager_{settings_manager},
           profile_id_{std::move(profile_id)},
-          plugin_guid_{std::move(plugin_guid)}, whitelist_{std::move(whitelist)}
+          plugin_guid_{std::move(plugin_guid)},
+          whitelist_{std::move(whitelist)}, path_prefix_{std::move(path_prefix)}
     {
+    }
+
+    // ── Private helpers ──
+
+    std::string DasAutoFlushJsonImpl::MakeFullPath(const std::string& key) const
+    {
+        if (path_prefix_.empty())
+        {
+            return key;
+        }
+        return path_prefix_ + "." + key;
+    }
+
+    bool DasAutoFlushJsonImpl::IsPrefixAllowed(const std::string& prefix) const
+    {
+        const std::string prefix_dot = prefix + ".";
+        for (const auto& item : whitelist_)
+        {
+            if (item.size() > prefix_dot.size()
+                && item.compare(0, prefix_dot.size(), prefix_dot) == 0)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     DasResult DasAutoFlushJsonImpl::CheckWhitelist(
@@ -72,23 +90,58 @@ namespace Das::Http
     {
         DAS_UTILS_CHECK_POINTER(key)
 
-        const auto expected_u8_key = ToU8StringWithoutOwnership(key);
-        if (!expected_u8_key)
+        const auto expected = ToU8StringWithoutOwnership(key);
+        if (!expected)
         {
-            return expected_u8_key.error();
+            return expected.error();
         }
-        out_key = expected_u8_key.value();
+        out_key = expected.value();
 
-        if (whitelist_.find(out_key) == whitelist_.end())
+        const auto full_path = MakeFullPath(out_key);
+        if (whitelist_.find(full_path) == whitelist_.end())
         {
             DAS_CORE_LOG_ERROR(
                 "Field '{}' is not in whitelist. Access denied.",
-                out_key);
+                full_path);
             return DAS_E_PERMISSION_DENIED;
         }
-
         return DAS_S_OK;
     }
+
+    nlohmann::json DasAutoFlushJsonImpl::GetField(const std::string& full_path)
+    {
+        return settings_manager_.GetPluginSettingsFieldJson(
+            profile_id_,
+            plugin_guid_,
+            full_path);
+    }
+
+    DasResult DasAutoFlushJsonImpl::SetField(
+        const std::string&    full_path,
+        const nlohmann::json& value)
+    {
+        return settings_manager_.UpdatePluginSettingsFieldJson(
+            profile_id_,
+            plugin_guid_,
+            full_path,
+            value);
+    }
+
+    nlohmann::json DasAutoFlushJsonImpl::GetCurrentJson()
+    {
+        if (path_prefix_.empty())
+        {
+            return settings_manager_.GetPluginSettingsJson(
+                profile_id_,
+                plugin_guid_);
+        }
+        return settings_manager_.GetPluginSettingsFieldJson(
+            profile_id_,
+            plugin_guid_,
+            path_prefix_);
+    }
+
+    // ── GetByName ──
 
     DasResult DasAutoFlushJsonImpl::GetIntByName(
         IDasReadOnlyString* key,
@@ -103,19 +156,15 @@ namespace Das::Http
             return result;
         }
 
-        auto field_str = settings_manager_.GetPluginSettingsField(
-            profile_id_,
-            plugin_guid_,
-            u8_key);
-        if (field_str.empty())
+        auto field = GetField(MakeFullPath(u8_key));
+        if (field.is_null())
         {
             return DAS_E_NOT_FOUND;
         }
 
         try
         {
-            auto json_val = nlohmann::json::parse(field_str);
-            *p_out_int = json_val.get<int64_t>();
+            *p_out_int = field.get<int64_t>();
             return DAS_S_OK;
         }
         catch (const nlohmann::json::exception& ex)
@@ -138,19 +187,15 @@ namespace Das::Http
             return result;
         }
 
-        auto field_str = settings_manager_.GetPluginSettingsField(
-            profile_id_,
-            plugin_guid_,
-            u8_key);
-        if (field_str.empty())
+        auto field = GetField(MakeFullPath(u8_key));
+        if (field.is_null())
         {
             return DAS_E_NOT_FOUND;
         }
 
         try
         {
-            auto json_val = nlohmann::json::parse(field_str);
-            *p_out_float = json_val.get<float>();
+            *p_out_float = field.get<float>();
             return DAS_S_OK;
         }
         catch (const nlohmann::json::exception& ex)
@@ -173,20 +218,16 @@ namespace Das::Http
             return result;
         }
 
-        auto field_str = settings_manager_.GetPluginSettingsField(
-            profile_id_,
-            plugin_guid_,
-            u8_key);
-        if (field_str.empty())
+        auto field = GetField(MakeFullPath(u8_key));
+        if (field.is_null())
         {
             return DAS_E_NOT_FOUND;
         }
 
         try
         {
-            auto json_val = nlohmann::json::parse(field_str);
             return CreateIDasReadOnlyStringFromUtf8(
-                json_val.get_ref<const std::string&>().c_str(),
+                field.get_ref<const std::string&>().c_str(),
                 pp_out_string);
         }
         catch (const nlohmann::json::exception& ex)
@@ -209,19 +250,15 @@ namespace Das::Http
             return result;
         }
 
-        auto field_str = settings_manager_.GetPluginSettingsField(
-            profile_id_,
-            plugin_guid_,
-            u8_key);
-        if (field_str.empty())
+        auto field = GetField(MakeFullPath(u8_key));
+        if (field.is_null())
         {
             return DAS_E_NOT_FOUND;
         }
 
         try
         {
-            auto json_val = nlohmann::json::parse(field_str);
-            *p_out_bool = json_val.get<bool>();
+            *p_out_bool = field.get<bool>();
             return DAS_S_OK;
         }
         catch (const nlohmann::json::exception& ex)
@@ -238,42 +275,47 @@ namespace Das::Http
         DAS_UTILS_CHECK_POINTER(pp_out_das_json)
 
         std::string u8_key;
-        auto        result = CheckWhitelist(key, u8_key);
-        if (DAS::IsFailed(result))
+        const auto  expected = ToU8StringWithoutOwnership(key);
+        if (!expected)
         {
-            return result;
+            return expected.error();
+        }
+        u8_key = expected.value();
+
+        const auto full_path = MakeFullPath(u8_key);
+
+        const bool is_exact = whitelist_.find(full_path) != whitelist_.end();
+        const bool is_prefix = IsPrefixAllowed(full_path);
+        if (!is_exact && !is_prefix)
+        {
+            DAS_CORE_LOG_ERROR(
+                "Field '{}' is not in whitelist. Access denied.",
+                full_path);
+            return DAS_E_PERMISSION_DENIED;
         }
 
-        auto field_str = settings_manager_.GetPluginSettingsField(
-            profile_id_,
-            plugin_guid_,
-            u8_key);
-        if (field_str.empty())
+        auto field = GetField(full_path);
+        if (field.is_null())
         {
             return DAS_E_NOT_FOUND;
         }
 
+        if (!field.is_object() && !field.is_array())
+        {
+            return DAS_E_TYPE_ERROR;
+        }
+
         try
         {
-            auto json_val = nlohmann::json::parse(field_str);
-            if (!json_val.is_object())
-            {
-                return DAS_E_TYPE_ERROR;
-            }
-
-            auto* sub_impl = new DasAutoFlushJsonImpl(
+            auto* sub = new DasAutoFlushJsonImpl(
                 settings_manager_,
                 profile_id_,
                 plugin_guid_,
-                whitelist_);
-            sub_impl->AddRef();
-            *pp_out_das_json = sub_impl;
+                whitelist_,
+                full_path);
+            sub->AddRef();
+            *pp_out_das_json = sub;
             return DAS_S_OK;
-        }
-        catch (const nlohmann::json::exception& ex)
-        {
-            DAS_CORE_LOG_EXCEPTION(ex);
-            return DAS_E_TYPE_ERROR;
         }
         catch (const std::bad_alloc& ex)
         {
@@ -281,6 +323,8 @@ namespace Das::Http
             return DAS_E_OUT_OF_MEMORY;
         }
     }
+
+    // ── SetByName ──
 
     DasResult DasAutoFlushJsonImpl::SetIntByName(
         IDasReadOnlyString* key,
@@ -293,12 +337,7 @@ namespace Das::Http
             return result;
         }
 
-        auto field_json_str = std::to_string(in_int);
-        return settings_manager_.UpdatePluginSettingsField(
-            profile_id_,
-            plugin_guid_,
-            u8_key,
-            field_json_str);
+        return SetField(MakeFullPath(u8_key), in_int);
     }
 
     DasResult DasAutoFlushJsonImpl::SetFloatByName(
@@ -312,12 +351,7 @@ namespace Das::Http
             return result;
         }
 
-        auto field_json_str = std::to_string(in_float);
-        return settings_manager_.UpdatePluginSettingsField(
-            profile_id_,
-            plugin_guid_,
-            u8_key,
-            field_json_str);
+        return SetField(MakeFullPath(u8_key), in_float);
     }
 
     DasResult DasAutoFlushJsonImpl::SetStringByName(
@@ -338,22 +372,10 @@ namespace Das::Http
         {
             return expected_value.error();
         }
-        const auto u8_value = expected_value.value();
 
-        try
-        {
-            nlohmann::json field_json = u8_value;
-            return settings_manager_.UpdatePluginSettingsField(
-                profile_id_,
-                plugin_guid_,
-                u8_key,
-                field_json.dump());
-        }
-        catch (const nlohmann::json::exception& ex)
-        {
-            DAS_CORE_LOG_EXCEPTION(ex);
-            return DAS_E_INVALID_JSON;
-        }
+        return SetField(
+            MakeFullPath(u8_key),
+            std::string(expected_value.value()));
     }
 
     DasResult DasAutoFlushJsonImpl::SetBoolByName(
@@ -367,12 +389,7 @@ namespace Das::Http
             return result;
         }
 
-        auto field_json_str = in_bool ? "true" : "false";
-        return settings_manager_.UpdatePluginSettingsField(
-            profile_id_,
-            plugin_guid_,
-            u8_key,
-            field_json_str);
+        return SetField(MakeFullPath(u8_key), in_bool);
     }
 
     DasResult DasAutoFlushJsonImpl::SetObjectByName(
@@ -405,78 +422,348 @@ namespace Das::Http
             return expected_value.error();
         }
 
-        return settings_manager_.UpdatePluginSettingsField(
-            profile_id_,
-            plugin_guid_,
-            u8_key,
-            expected_value.value());
+        try
+        {
+            auto json_val = nlohmann::json::parse(expected_value.value());
+            return SetField(MakeFullPath(u8_key), json_val);
+        }
+        catch (const nlohmann::json::exception& ex)
+        {
+            DAS_CORE_LOG_EXCEPTION(ex);
+            return DAS_E_INVALID_JSON;
+        }
     }
+
+    // ── GetByIndex ──
 
     DasResult DasAutoFlushJsonImpl::GetIntByIndex(
         size_t   index,
         int64_t* p_out_int)
     {
-        return DAS_E_NOT_FOUND;
+        DAS_UTILS_CHECK_POINTER(p_out_int)
+
+        if (path_prefix_.empty())
+        {
+            return DAS_E_NOT_FOUND;
+        }
+
+        auto json = GetCurrentJson();
+        if (!json.is_array())
+        {
+            return DAS_E_TYPE_ERROR;
+        }
+        if (index >= json.size())
+        {
+            return DAS_E_OUT_OF_RANGE;
+        }
+
+        try
+        {
+            *p_out_int = json[index].get<int64_t>();
+            return DAS_S_OK;
+        }
+        catch (const nlohmann::json::exception& ex)
+        {
+            DAS_CORE_LOG_EXCEPTION(ex);
+            return DAS_E_TYPE_ERROR;
+        }
     }
 
     DasResult DasAutoFlushJsonImpl::GetFloatByIndex(
         size_t index,
         float* p_out_float)
     {
-        return DAS_E_NOT_FOUND;
+        DAS_UTILS_CHECK_POINTER(p_out_float)
+
+        if (path_prefix_.empty())
+        {
+            return DAS_E_NOT_FOUND;
+        }
+
+        auto json = GetCurrentJson();
+        if (!json.is_array())
+        {
+            return DAS_E_TYPE_ERROR;
+        }
+        if (index >= json.size())
+        {
+            return DAS_E_OUT_OF_RANGE;
+        }
+
+        try
+        {
+            *p_out_float = json[index].get<float>();
+            return DAS_S_OK;
+        }
+        catch (const nlohmann::json::exception& ex)
+        {
+            DAS_CORE_LOG_EXCEPTION(ex);
+            return DAS_E_TYPE_ERROR;
+        }
     }
 
     DasResult DasAutoFlushJsonImpl::GetStringByIndex(
         size_t               index,
         IDasReadOnlyString** pp_out_string)
     {
-        return DAS_E_NOT_FOUND;
+        DAS_UTILS_CHECK_POINTER(pp_out_string)
+
+        if (path_prefix_.empty())
+        {
+            return DAS_E_NOT_FOUND;
+        }
+
+        auto json = GetCurrentJson();
+        if (!json.is_array())
+        {
+            return DAS_E_TYPE_ERROR;
+        }
+        if (index >= json.size())
+        {
+            return DAS_E_OUT_OF_RANGE;
+        }
+
+        try
+        {
+            return CreateIDasReadOnlyStringFromUtf8(
+                json[index].get_ref<const std::string&>().c_str(),
+                pp_out_string);
+        }
+        catch (const nlohmann::json::exception& ex)
+        {
+            DAS_CORE_LOG_EXCEPTION(ex);
+            return DAS_E_TYPE_ERROR;
+        }
     }
 
     DasResult DasAutoFlushJsonImpl::GetBoolByIndex(
         size_t index,
         bool*  p_out_bool)
     {
-        return DAS_E_NOT_FOUND;
+        DAS_UTILS_CHECK_POINTER(p_out_bool)
+
+        if (path_prefix_.empty())
+        {
+            return DAS_E_NOT_FOUND;
+        }
+
+        auto json = GetCurrentJson();
+        if (!json.is_array())
+        {
+            return DAS_E_TYPE_ERROR;
+        }
+        if (index >= json.size())
+        {
+            return DAS_E_OUT_OF_RANGE;
+        }
+
+        try
+        {
+            *p_out_bool = json[index].get<bool>();
+            return DAS_S_OK;
+        }
+        catch (const nlohmann::json::exception& ex)
+        {
+            DAS_CORE_LOG_EXCEPTION(ex);
+            return DAS_E_TYPE_ERROR;
+        }
     }
 
     DasResult DasAutoFlushJsonImpl::GetObjectRefByIndex(
         size_t     index,
         IDasJson** pp_out_das_json)
     {
-        return DAS_E_NOT_FOUND;
+        DAS_UTILS_CHECK_POINTER(pp_out_das_json)
+
+        if (path_prefix_.empty())
+        {
+            return DAS_E_NOT_FOUND;
+        }
+
+        auto json = GetCurrentJson();
+        if (!json.is_array())
+        {
+            return DAS_E_TYPE_ERROR;
+        }
+        if (index >= json.size())
+        {
+            return DAS_E_OUT_OF_RANGE;
+        }
+
+        auto& element = json[index];
+        if (!element.is_object() && !element.is_array())
+        {
+            return DAS_E_TYPE_ERROR;
+        }
+
+        try
+        {
+            auto* sub = new DasAutoFlushJsonImpl(
+                settings_manager_,
+                profile_id_,
+                plugin_guid_,
+                whitelist_,
+                path_prefix_ + "." + std::to_string(index));
+            sub->AddRef();
+            *pp_out_das_json = sub;
+            return DAS_S_OK;
+        }
+        catch (const std::bad_alloc& ex)
+        {
+            DAS_CORE_LOG_EXCEPTION(ex);
+            return DAS_E_OUT_OF_MEMORY;
+        }
     }
+
+    // ── SetByIndex ──
 
     DasResult DasAutoFlushJsonImpl::SetIntByIndex(size_t index, int64_t in_int)
     {
-        return DAS_E_NOT_FOUND;
+        if (path_prefix_.empty())
+        {
+            return DAS_E_NOT_FOUND;
+        }
+
+        auto json = GetCurrentJson();
+        if (!json.is_array())
+        {
+            return DAS_E_TYPE_ERROR;
+        }
+        if (index >= json.size())
+        {
+            return DAS_E_OUT_OF_RANGE;
+        }
+
+        json[index] = in_int;
+        return SetField(path_prefix_, json);
     }
 
     DasResult DasAutoFlushJsonImpl::SetFloatByIndex(
         size_t index,
         float  in_float)
     {
-        return DAS_E_NOT_FOUND;
+        if (path_prefix_.empty())
+        {
+            return DAS_E_NOT_FOUND;
+        }
+
+        auto json = GetCurrentJson();
+        if (!json.is_array())
+        {
+            return DAS_E_TYPE_ERROR;
+        }
+        if (index >= json.size())
+        {
+            return DAS_E_OUT_OF_RANGE;
+        }
+
+        json[index] = in_float;
+        return SetField(path_prefix_, json);
     }
 
     DasResult DasAutoFlushJsonImpl::SetStringByIndex(
         size_t              index,
         IDasReadOnlyString* p_in_string)
     {
-        return DAS_E_NOT_FOUND;
+        if (path_prefix_.empty())
+        {
+            return DAS_E_NOT_FOUND;
+        }
+
+        DAS_UTILS_CHECK_POINTER(p_in_string)
+
+        auto json = GetCurrentJson();
+        if (!json.is_array())
+        {
+            return DAS_E_TYPE_ERROR;
+        }
+        if (index >= json.size())
+        {
+            return DAS_E_OUT_OF_RANGE;
+        }
+
+        const auto expected = ToU8StringWithoutOwnership(p_in_string);
+        if (!expected)
+        {
+            return expected.error();
+        }
+
+        json[index] = expected.value();
+        return SetField(path_prefix_, json);
     }
 
     DasResult DasAutoFlushJsonImpl::SetBoolByIndex(size_t index, bool in_bool)
     {
-        return DAS_E_NOT_FOUND;
+        if (path_prefix_.empty())
+        {
+            return DAS_E_NOT_FOUND;
+        }
+
+        auto json = GetCurrentJson();
+        if (!json.is_array())
+        {
+            return DAS_E_TYPE_ERROR;
+        }
+        if (index >= json.size())
+        {
+            return DAS_E_OUT_OF_RANGE;
+        }
+
+        json[index] = in_bool;
+        return SetField(path_prefix_, json);
     }
 
     DasResult DasAutoFlushJsonImpl::SetObjectByIndex(
         size_t    index,
         IDasJson* p_in_das_json)
     {
-        return DAS_E_NOT_FOUND;
+        if (path_prefix_.empty())
+        {
+            return DAS_E_NOT_FOUND;
+        }
+
+        DAS_UTILS_CHECK_POINTER(p_in_das_json)
+
+        auto json = GetCurrentJson();
+        if (!json.is_array())
+        {
+            return DAS_E_TYPE_ERROR;
+        }
+        if (index >= json.size())
+        {
+            return DAS_E_OUT_OF_RANGE;
+        }
+
+        IDasReadOnlyString* p_json_str = nullptr;
+        auto to_string_result = p_in_das_json->ToString(-1, &p_json_str);
+        if (DAS::IsFailed(to_string_result))
+        {
+            return to_string_result;
+        }
+
+        const auto expected_value = ToU8StringWithoutOwnership(p_json_str);
+        if (p_json_str)
+        {
+            p_json_str->Release();
+        }
+        if (!expected_value)
+        {
+            return expected_value.error();
+        }
+
+        try
+        {
+            json[index] = nlohmann::json::parse(expected_value.value());
+            return SetField(path_prefix_, json);
+        }
+        catch (const nlohmann::json::exception& ex)
+        {
+            DAS_CORE_LOG_EXCEPTION(ex);
+            return DAS_E_INVALID_JSON;
+        }
     }
+
+    // ── GetType ──
 
     DasResult DasAutoFlushJsonImpl::GetTypeByName(
         IDasReadOnlyString* key,
@@ -491,35 +778,73 @@ namespace Das::Http
             return result;
         }
 
-        auto field_str = settings_manager_.GetPluginSettingsField(
-            profile_id_,
-            plugin_guid_,
-            u8_key);
-        if (field_str.empty())
+        auto field = GetField(MakeFullPath(u8_key));
+        if (field.is_null())
         {
             *p_out_type = DAS_TYPE_NULL;
             return DAS_S_OK;
         }
 
-        try
-        {
-            auto json_val = nlohmann::json::parse(field_str);
-            *p_out_type = ToDasType(json_val.type());
-            return DAS_S_OK;
-        }
-        catch (const nlohmann::json::exception& ex)
-        {
-            DAS_CORE_LOG_EXCEPTION(ex);
-            return DAS_E_INVALID_JSON;
-        }
+        *p_out_type = ToDasType(field.type());
+        return DAS_S_OK;
     }
 
     DasResult DasAutoFlushJsonImpl::GetTypeByIndex(
         size_t   index,
         DasType* p_out_type)
     {
-        return DAS_E_NOT_FOUND;
+        DAS_UTILS_CHECK_POINTER(p_out_type)
+
+        if (path_prefix_.empty())
+        {
+            return DAS_E_NOT_FOUND;
+        }
+
+        auto json = GetCurrentJson();
+        if (!json.is_array())
+        {
+            return DAS_E_TYPE_ERROR;
+        }
+        if (index >= json.size())
+        {
+            return DAS_E_OUT_OF_RANGE;
+        }
+
+        *p_out_type = ToDasType(json[index].type());
+        return DAS_S_OK;
     }
+
+    // ── GetSize ──
+
+    DasResult DasAutoFlushJsonImpl::GetSize(uint64_t* p_out_size)
+    {
+        DAS_UTILS_CHECK_POINTER(p_out_size)
+
+        if (path_prefix_.empty())
+        {
+            auto   json = GetCurrentJson();
+            size_t count = 0;
+            for (const auto& key : whitelist_)
+            {
+                auto field = settings_manager_.GetPluginSettingsFieldJson(
+                    profile_id_,
+                    plugin_guid_,
+                    key);
+                if (!field.is_null())
+                {
+                    ++count;
+                }
+            }
+            *p_out_size = static_cast<uint64_t>(count);
+            return DAS_S_OK;
+        }
+
+        auto json = GetCurrentJson();
+        *p_out_size = static_cast<uint64_t>(json.size());
+        return DAS_S_OK;
+    }
+
+    // ── ToString ──
 
     DasResult DasAutoFlushJsonImpl::ToString(
         int32_t              indent,
@@ -529,21 +854,44 @@ namespace Das::Http
 
         try
         {
-            auto full_settings_str =
-                settings_manager_.GetPluginSettings(profile_id_, plugin_guid_);
-            auto full_settings = nlohmann::json::parse(full_settings_str);
-
-            // Only include whitelisted keys
-            nlohmann::json filtered = nlohmann::json::object();
-            for (const auto& key : whitelist_)
+            if (path_prefix_.empty())
             {
-                if (full_settings.contains(key))
+                auto           full_settings = GetCurrentJson();
+                nlohmann::json filtered = nlohmann::json::object();
+                for (const auto& key : whitelist_)
                 {
-                    filtered[key] = full_settings[key];
+                    auto field = settings_manager_.GetPluginSettingsFieldJson(
+                        profile_id_,
+                        plugin_guid_,
+                        key);
+                    if (!field.is_null())
+                    {
+                        // Navigate dot-path to set in filtered output
+                        auto*  current = &filtered;
+                        size_t start = 0;
+                        size_t end = key.find('.');
+                        while (end != std::string::npos)
+                        {
+                            auto seg = key.substr(start, end - start);
+                            if (!current->contains(seg))
+                            {
+                                (*current)[seg] = nlohmann::json::object();
+                            }
+                            current = &(*current)[seg];
+                            start = end + 1;
+                            end = key.find('.', start);
+                        }
+                        (*current)[key.substr(start)] = field;
+                    }
                 }
+                auto output_str = filtered.dump(indent);
+                return CreateIDasReadOnlyStringFromUtf8(
+                    output_str.c_str(),
+                    pp_out_string);
             }
 
-            auto output_str = filtered.dump(indent);
+            auto json = GetCurrentJson();
+            auto output_str = json.dump(indent);
             return CreateIDasReadOnlyStringFromUtf8(
                 output_str.c_str(),
                 pp_out_string);
@@ -559,6 +907,8 @@ namespace Das::Http
             return DAS_E_OUT_OF_MEMORY;
         }
     }
+
+    // ── Clear ──
 
     DasResult DasAutoFlushJsonImpl::Clear() { return DAS_E_PERMISSION_DENIED; }
 

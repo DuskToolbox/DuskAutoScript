@@ -7,6 +7,59 @@
 
 DAS_CORE_SETTINGS_MANAGER_NS_BEGIN
 
+namespace
+{
+    nlohmann::json* ResolveDotPath(
+        nlohmann::json&    root,
+        const std::string& path)
+    {
+        nlohmann::json* current = &root;
+        size_t          start = 0;
+        size_t          end = path.find('.');
+        while (end != std::string::npos)
+        {
+            auto key = path.substr(start, end - start);
+            if (!current->contains(key))
+            {
+                return nullptr;
+            }
+            current = &(*current)[key];
+            start = end + 1;
+            end = path.find('.', start);
+        }
+        auto key = path.substr(start);
+        if (!current->contains(key))
+        {
+            return nullptr;
+        }
+        return &(*current)[key];
+    }
+
+    nlohmann::json* EnsureDotPath(nlohmann::json& root, const std::string& path)
+    {
+        nlohmann::json* current = &root;
+        size_t          start = 0;
+        size_t          end = path.find('.');
+        while (end != std::string::npos)
+        {
+            auto key = path.substr(start, end - start);
+            if (!current->contains(key))
+            {
+                (*current)[key] = nlohmann::json::object();
+            }
+            else if (!(*current)[key].is_object())
+            {
+                (*current)[key] = nlohmann::json::object();
+            }
+            current = &(*current)[key];
+            start = end + 1;
+            end = path.find('.', start);
+        }
+        auto key = path.substr(start);
+        return &(*current)[key];
+    }
+} // namespace
+
 SettingsManager::SettingsManager(const std::filesystem::path& base_dir)
     : base_dir_{base_dir}
 {
@@ -312,6 +365,34 @@ DasResult SettingsManager::UpdateProfile(
     }
 }
 
+nlohmann::json SettingsManager::GetPluginSettingsJson(
+    const std::string& profile_id,
+    const std::string& guid)
+{
+    std::shared_lock lock{mutex_};
+
+    auto cache_key = profile_id + "/" + guid;
+    auto it = plugin_settings_cache_.find(cache_key);
+    if (it != plugin_settings_cache_.end())
+    {
+        return it->second;
+    }
+
+    lock.unlock();
+    auto content = ReadJsonFile(GetPluginSettingsPath(profile_id, guid));
+    std::unique_lock write_lock{mutex_};
+    try
+    {
+        plugin_settings_cache_[cache_key] = nlohmann::json::parse(content);
+        return plugin_settings_cache_[cache_key];
+    }
+    catch (const nlohmann::json::exception& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        return nlohmann::json::object();
+    }
+}
+
 std::string SettingsManager::GetPluginSettings(
     const std::string& profile_id,
     const std::string& guid)
@@ -365,6 +446,90 @@ DasResult SettingsManager::UpdatePluginSettings(
     }
 }
 
+nlohmann::json SettingsManager::GetPluginSettingsFieldJson(
+    const std::string& profile_id,
+    const std::string& guid,
+    const std::string& field_name)
+{
+    std::shared_lock lock{mutex_};
+
+    auto           cache_key = profile_id + "/" + guid;
+    auto           it = plugin_settings_cache_.find(cache_key);
+    nlohmann::json settings;
+
+    if (it != plugin_settings_cache_.end())
+    {
+        settings = it->second;
+    }
+    else
+    {
+        lock.unlock();
+        auto content = ReadJsonFile(GetPluginSettingsPath(profile_id, guid));
+        std::unique_lock write_lock{mutex_};
+        try
+        {
+            settings = nlohmann::json::parse(content);
+            plugin_settings_cache_[cache_key] = settings;
+        }
+        catch (const nlohmann::json::exception& ex)
+        {
+            DAS_CORE_LOG_EXCEPTION(ex);
+            return nullptr;
+        }
+    }
+
+    auto* field = ResolveDotPath(settings, field_name);
+    if (field == nullptr)
+    {
+        return nullptr;
+    }
+    return *field;
+}
+
+DasResult SettingsManager::UpdatePluginSettingsFieldJson(
+    const std::string&    profile_id,
+    const std::string&    guid,
+    const std::string&    field_name,
+    const nlohmann::json& value)
+{
+    std::unique_lock lock{mutex_};
+
+    auto cache_key = profile_id + "/" + guid;
+    auto it = plugin_settings_cache_.find(cache_key);
+    if (it == plugin_settings_cache_.end())
+    {
+        auto content = ReadJsonFile(GetPluginSettingsPath(profile_id, guid));
+        try
+        {
+            plugin_settings_cache_[cache_key] = nlohmann::json::parse(content);
+        }
+        catch (const nlohmann::json::exception& ex)
+        {
+            DAS_CORE_LOG_EXCEPTION(ex);
+        }
+        it = plugin_settings_cache_.find(cache_key);
+    }
+
+    try
+    {
+        auto* target = EnsureDotPath(it->second, field_name);
+        *target = value;
+        return WriteJsonFile(
+            GetPluginSettingsPath(profile_id, guid),
+            it->second.dump());
+    }
+    catch (const nlohmann::json::exception& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        return DAS_E_INVALID_JSON;
+    }
+    catch (const std::bad_alloc& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        return DAS_E_OUT_OF_MEMORY;
+    }
+}
+
 std::string SettingsManager::GetPluginSettingsField(
     const std::string& profile_id,
     const std::string& guid,
@@ -397,14 +562,15 @@ std::string SettingsManager::GetPluginSettingsField(
         }
     }
 
-    if (!settings.contains(field_name))
+    auto* field = ResolveDotPath(settings, field_name);
+    if (field == nullptr)
     {
         return {};
     }
 
     try
     {
-        return settings[field_name].dump();
+        return field->dump();
     }
     catch (const nlohmann::json::exception& ex)
     {
@@ -455,7 +621,8 @@ DasResult SettingsManager::UpdatePluginSettingsField(
 
     try
     {
-        it->second[field_name] = field_value;
+        auto* target = EnsureDotPath(it->second, field_name);
+        *target = field_value;
         auto result = WriteJsonFile(
             GetPluginSettingsPath(profile_id, guid),
             it->second.dump());

@@ -146,6 +146,7 @@ public:
     DasResult GetTypeByIndex(size_t index, DasType* p_out_type) override;
     DasResult ToString(int32_t indent, IDasReadOnlyString** pp_out_string)
         override;
+    DasResult GetSize(uint64_t* p_out_size) override;
     DasResult Clear() override;
 
     void           SetConnection(const boost::signals2::connection& connection);
@@ -940,6 +941,40 @@ DasResult IDasJsonImpl::ToString(
                 return DAS_E_DANGLING_REFERENCE;
             }},
         impl_);
+}
+
+DasResult IDasJsonImpl::GetSize(uint64_t* p_out_size)
+{
+    DAS_UTILS_CHECK_POINTER(p_out_size)
+
+    std::scoped_lock _{mutex_};
+    try
+    {
+        *p_out_size = std::visit(
+            Utils::overload_set{
+                [](const Object& j)
+                { return static_cast<uint64_t>(j.json_.size()); },
+                [](const Ref& j)
+                {
+                    if (j.json_ != nullptr)
+                    {
+                        return static_cast<uint64_t>(j.json_->size());
+                    }
+                    throw DasJsonImplRefExpiredException{};
+                }},
+            impl_);
+        return DAS_S_OK;
+    }
+    catch (const DasJsonImplRefExpiredException& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        return DAS_E_DANGLING_REFERENCE;
+    }
+    catch (const std::bad_alloc& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        return DAS_E_OUT_OF_MEMORY;
+    }
 }
 
 DasResult IDasJsonImpl::Clear()

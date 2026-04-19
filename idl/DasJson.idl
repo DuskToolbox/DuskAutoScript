@@ -44,6 +44,7 @@ interface IDasJson : IDasBase {
     DasResult GetTypeByIndex(size_t index, [out] DasType* p_out_type);
 
     DasResult ToString(int32_t indent, [out] IDasReadOnlyString** pp_out_string);
+    DasResult GetSize([out] uint64_t* p_out_size);
     DasResult Clear();
 }
 
