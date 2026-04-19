@@ -127,8 +127,12 @@ namespace Das::Http::Beast
         // 处理请求
         HttpResponse Handle(const HttpRequest& request) const
         {
-            std::string key = std::string(request.Method()) + ":"
-                              + std::string(request.Target());
+            std::string target = std::string(request.Target());
+            if (!target.empty() && target.front() == '/')
+            {
+                target = target.substr(1);
+            }
+            std::string key = std::string(request.Method()) + ":" + target;
 
             // Try exact match first
             auto it = routes_.find(key);
