@@ -39,10 +39,20 @@ std::vector<PluginPackageDesc> ScanPlugins(
     }
 
     std::error_code ec;
-    for (const auto& entry : std::filesystem::directory_iterator(
-             plugin_dir,
-             std::filesystem::directory_options::skip_permission_denied,
-             ec))
+    auto            dir_iter = std::filesystem::directory_iterator(
+        plugin_dir,
+        std::filesystem::directory_options::skip_permission_denied,
+        ec);
+    if (ec)
+    {
+        DAS_CORE_LOG_WARN(
+            "Failed to iterate plugin directory {}: {}",
+            plugin_dir.string(),
+            ec.message());
+        return result;
+    }
+
+    for (const auto& entry : dir_iter)
     {
         if (!entry.is_directory())
         {
