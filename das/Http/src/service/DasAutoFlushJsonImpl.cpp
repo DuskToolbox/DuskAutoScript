@@ -5,6 +5,8 @@
 #include <das/Utils/CommonUtils.hpp>
 #include <nlohmann/json.hpp>
 
+using Das::Utils::ToU8StringWithoutOwnership;
+
 namespace Das::Http
 {
 

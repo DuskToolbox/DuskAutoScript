@@ -115,10 +115,11 @@ DAS_NS_END
 
 DAS_UTILS_NS_BEGIN
 
-auto ToU8StringWithoutOwnership(IDasReadOnlyString* p_string)
+DAS_API auto ToU8StringWithoutOwnership(IDasReadOnlyString* p_string)
     -> Expected<const char*>;
 
-auto ToU8String(IDasReadOnlyString* p_string) -> Utils::Expected<std::string>;
+DAS_API auto ToU8String(IDasReadOnlyString* p_string)
+    -> Utils::Expected<std::string>;
 
 DAS_UTILS_NS_END
 

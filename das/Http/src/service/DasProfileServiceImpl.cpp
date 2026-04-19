@@ -41,12 +41,9 @@ namespace Das::Http
         }
 
         // Convert GUID to string for SettingsManager file lookup
-        // DasGuidToString returns "{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}"
-        // SettingsManager expects "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-        DasReadOnlyString guid_string = DasGuidToString(plugin_guid);
-        const char*       u8_str = nullptr;
-        guid_string.GetTo(u8_str);
-        std::string guid_str(u8_str);
+        // DasReadOnlyString ctor calls DasGuidToString internally
+        DasReadOnlyString guid_string(&plugin_guid);
+        std::string       guid_str = guid_string.GetUtf8();
 
         // Strip surrounding braces if present
         if (guid_str.size() >= 2 && guid_str.front() == '{'

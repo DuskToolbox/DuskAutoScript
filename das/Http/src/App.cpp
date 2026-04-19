@@ -16,6 +16,12 @@
 #include <das/Core/ForeignInterfaceHost/PluginScanner.h>
 #include <filesystem>
 
+#include "./service/DasProfileServiceImpl.h"
+#include <das/Core/IPC/CurrentIpcContextScope.h>
+#include <das/Core/IPC/MainProcess/IpcContext.h>
+#include <das/Core/Logger/Logger.h>
+#include <das/_autogen/idl/abi/DasSettings.h>
+
 namespace Das::Http
 {
     DAS_DEFINE_VARIABLE(g_server_condition){};
@@ -46,6 +52,42 @@ namespace Das::Http
         }
 
         const auto port = DAS_HTTP_PORT;
+
+        // === IPC Initialization (per D-07/D-17) ===
+        auto ipc_context =
+            DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+
+        {
+            // Per RESEARCH Pitfall 2: ScopedCurrentIpcContext must be set
+            // before RegisterService
+            DAS::Core::IPC::ScopedCurrentIpcContext scope(
+                static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(
+                    ipc_context.get()));
+
+            // Create and register IDasProfileService (per D-05/D-18)
+            auto* profile_service =
+                new DasProfileServiceImpl(components.settings_manager);
+            profile_service->AddRef();
+
+            const auto reg_result = ipc_context->RegisterService(
+                profile_service,
+                DasIidOf<Das::ExportInterface::IDasProfileService>());
+
+            if (DAS::IsFailed(reg_result))
+            {
+                DAS_CORE_LOG_ERROR(
+                    "Failed to register IDasProfileService. result = {}",
+                    reg_result);
+                profile_service->Release();
+                return reg_result;
+            }
+        }
+
+        // Per RESEARCH Pitfall 1: Run IPC event loop on dedicated thread
+        // (Run() is blocking)
+        components.ipc_thread =
+            std::thread([&ipc_context]() { ipc_context->Run(); });
+        components.ipc_context = ipc_context;
 
         // 创建控制器实例
         auto misc_controller = std::make_shared<Das::Http::DasMiscController>();
@@ -141,6 +183,16 @@ namespace Das::Http
         std::cout << "[DasHttp] Server running on port " << port << std::endl;
 
         server.Run();
+
+        // Shutdown IPC context
+        if (components.ipc_context)
+        {
+            components.ipc_context->RequestStop();
+        }
+        if (components.ipc_thread.joinable())
+        {
+            components.ipc_thread.join();
+        }
 
         return DAS_S_OK;
     }
