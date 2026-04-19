@@ -9,9 +9,11 @@
 namespace Das::Http
 {
 
-    // IDasJson 实现：通过 SettingsManager 读写，每次 Set 自动落盘。
-    // 持有 SettingsManager& 裸引用，调用方需保证 SettingsManager 存活。
-    // 白名单外的字段访问返回 DAS_E_PERMISSION_DENIED。
+    /**
+     * @brief IDasJson 实现：通过 SettingsManager 读写，每次 Set 自动落盘。
+     * 持有 SettingsManager& 裸引用，调用方需保证 SettingsManager 存活。
+     * 白名单外的字段访问返回 DAS_E_PERMISSION_DENIED。
+     */
     class DasAutoFlushJsonImpl final
         : public Das::ExportInterface::DasJsonImplBase<DasAutoFlushJsonImpl>
     {
@@ -46,8 +48,8 @@ namespace Das::Http
             IDasReadOnlyString* key,
             IDasJson*           p_in_das_json) override;
 
-        // ByIndex 方法不适用（settings 是 JSON object 而非 array），均返回
-        // DAS_E_NOT_FOUND
+        /** ByIndex 方法不适用（settings 是 JSON object 而非 array），均返回
+         * DAS_E_NOT_FOUND */
         DAS_IMPL GetIntByIndex(size_t index, int64_t* p_out_int) override;
         DAS_IMPL GetFloatByIndex(size_t index, float* p_out_float) override;
         DAS_IMPL GetStringByIndex(

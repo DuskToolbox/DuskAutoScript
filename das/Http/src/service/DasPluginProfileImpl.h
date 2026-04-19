@@ -11,8 +11,10 @@ namespace Das::Http
 
     class DasAutoFlushJsonImpl;
 
-    // IDasPluginProfile Stub。GetSettingJson() 返回缓存的 DasAutoFlushJsonImpl
-    // 实例。
+    /**
+     * @brief IDasPluginProfile Stub。GetSettingJson() 返回缓存的
+     * DasAutoFlushJsonImpl 实例。
+     */
     class DasPluginProfileImpl final
         : public Das::ExportInterface::DasPluginProfileImplBase<
               DasPluginProfileImpl>

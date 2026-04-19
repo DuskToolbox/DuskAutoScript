@@ -8,8 +8,10 @@
 namespace Das::Http
 {
 
-    // IDasProfileService Stub。GetProfile(guid) 查询 PluginManager
-    // 获取白名单后创建 IDasPluginProfile。
+    /**
+     * @brief IDasProfileService Stub。GetProfile(guid) 查询 PluginManager
+     * 获取白名单后创建 IDasPluginProfile。
+     */
     class DasProfileServiceImpl final
         : public Das::ExportInterface::DasProfileServiceImplBase<
               DasProfileServiceImpl>
