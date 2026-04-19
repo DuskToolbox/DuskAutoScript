@@ -5,7 +5,7 @@ namespace Das::ExportInterface {
 
 // Phase 41: IDasJsonSettingOnDeletedHandler, IDasJsonSettingOperator, IDasJsonSetting removed.
 // SettingsManager now uses nlohmann::json directly in the main process.
-// IDasProfile will be restored in Phase 43.
+// Phase 43: IDasProfileService + IDasPluginProfile added for per-plugin settings access.
 
 enum DasProfileProperty {
     DAS_PROFILE_PROPERTY_PROFILE = 0,
@@ -15,11 +15,14 @@ enum DasProfileProperty {
     DAS_PROFILE_PROPERTY_FORCE_DWORD = 0x7FFFFFFF
 }
 
-// Phase 43 will restore and update IDasProfile with new method signatures.
-// [uuid("774869F9-B453-4CA5-8512-B08E659383EA")]
-// interface IDasProfile : IDasBase {
-//     DasResult GetStringProperty(DasProfileProperty profile_property, [out] IDasReadOnlyString** pp_out_property);
-//     DasResult GetJsonSettingPropertyAsString(DasProfileProperty profile_property, [out] IDasReadOnlyString** pp_out_string);
-// }
+[uuid("8A7B3D5E-1F2A-4C6D-9E8B-3A4F5D6C7B8E")]
+interface IDasProfileService : IDasBase {
+    DasResult GetProfile(const DasGuid& plugin_guid, [out] IDasPluginProfile** pp_out);
+}
+
+[uuid("2D4E6F8A-3B5C-4D7E-A1C2-E3F4A5B6C7D8")]
+interface IDasPluginProfile : IDasBase {
+    DasResult GetSettingJson([out] IDasJson** pp_out);
+}
 
 }
