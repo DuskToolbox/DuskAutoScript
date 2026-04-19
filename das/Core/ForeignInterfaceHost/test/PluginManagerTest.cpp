@@ -6,8 +6,10 @@
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 
+#include <atomic>
 #include <cstring>
 #include <fstream>
+#include <random>
 
 using namespace DAS::Core::ForeignInterfaceHost;
 using namespace DAS::Core::IPC;
@@ -16,6 +18,15 @@ using namespace Das::PluginInterface;
 
 namespace
 {
+    std::filesystem::path UniqueSettingsDir()
+    {
+        static std::atomic<int> counter{0};
+        std::random_device      rd;
+        auto name = "das_test_settings_" + std::to_string(rd()) + "_"
+                    + std::to_string(counter.fetch_add(1));
+        return std::filesystem::current_path() / name;
+    }
+
     std::filesystem::path GetTestPluginPath()
     {
         // CppRuntime::LoadPlugin expects a path to the JSON manifest file.
@@ -47,20 +58,26 @@ class PluginManagerGuidTest : public ::testing::Test
 protected:
     void SetUp() override
     {
+        settings_dir_ = UniqueSettingsDir();
         settings_manager_ =
             std::make_unique<DAS::Core::SettingsManager::SettingsManager>(
-                std::filesystem::current_path() / "das_test_settings_guid");
+                settings_dir_);
         pm_ = std::make_unique<PluginManager>(*settings_manager_);
         auto runtime = CreateCppRuntime();
         ASSERT_NE(runtime, nullptr) << "Failed to create Cpp runtime";
         ASSERT_EQ(pm_->Initialize(1, runtime), DAS_S_OK);
     }
 
-    void TearDown() override { pm_->Shutdown(); }
+    void TearDown() override
+    {
+        pm_->Shutdown();
+        std::filesystem::remove_all(settings_dir_);
+    }
 
     std::unique_ptr<DAS::Core::SettingsManager::SettingsManager>
                                    settings_manager_;
     std::unique_ptr<PluginManager> pm_;
+    std::filesystem::path          settings_dir_;
 };
 
 TEST_F(PluginManagerGuidTest, LoadPluginAndFindByGuid)
@@ -144,9 +161,10 @@ class PluginManagerFeatureTest : public ::testing::Test
 protected:
     void SetUp() override
     {
+        settings_dir_ = UniqueSettingsDir();
         settings_manager_ =
             std::make_unique<DAS::Core::SettingsManager::SettingsManager>(
-                std::filesystem::current_path() / "das_test_settings_guid");
+                settings_dir_);
         pm_ = std::make_unique<PluginManager>(*settings_manager_);
         auto runtime = CreateCppRuntime();
         ASSERT_NE(runtime, nullptr) << "Failed to create Cpp runtime";
@@ -162,7 +180,11 @@ protected:
         plugin_path_ = plugin_path;
     }
 
-    void TearDown() override { pm_->Shutdown(); }
+    void TearDown() override
+    {
+        pm_->Shutdown();
+        std::filesystem::remove_all(settings_dir_);
+    }
 
     void RegisterObjects()
     {
@@ -175,6 +197,7 @@ protected:
     std::unique_ptr<PluginManager>        pm_;
     std::unique_ptr<RemoteObjectRegistry> registry_;
     std::filesystem::path                 plugin_path_;
+    std::filesystem::path                 settings_dir_;
 };
 
 TEST_F(PluginManagerFeatureTest, GetFeaturesByTypeReturnsInputFactory)
