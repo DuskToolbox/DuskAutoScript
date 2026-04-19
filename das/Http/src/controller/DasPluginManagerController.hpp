@@ -42,6 +42,18 @@ namespace Das::Http
             // Must use Body() instead of JsonBody():
             // binary ZIP data is not JSON, JsonBody() parse failure returns
             // empty object
+            auto content_type = request.GetHeader("Content-Type");
+            if (!content_type.empty()
+                && content_type.find("application/zip") == std::string::npos
+                && content_type.find("application/octet-stream")
+                       == std::string::npos)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Expected Content-Type: application/zip or "
+                    "application/octet-stream");
+            }
+
             const auto& raw_body = request.Body();
             if (raw_body.empty())
             {
