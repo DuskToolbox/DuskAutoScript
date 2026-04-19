@@ -109,6 +109,25 @@ DasGuid MakeDasGuid(const std::string_view guid_string)
     return result;
 }
 
+std::string DasGuidToStdString(const DasGuid& guid)
+{
+    constexpr auto template_string =
+        "{:08x}-{:04x}-{:04x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}";
+    return DAS::fmt::format(
+        template_string,
+        guid.data1,
+        guid.data2,
+        guid.data3,
+        guid.data4[0],
+        guid.data4[1],
+        guid.data4[2],
+        guid.data4[3],
+        guid.data4[4],
+        guid.data4[5],
+        guid.data4[6],
+        guid.data4[7]);
+}
+
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
 
 void nlohmann::adl_serializer<DasGuid>::to_json(json& j, const DasGuid& guid)
@@ -134,23 +153,9 @@ DasResult DasGuidToString(
 
 DasReadOnlyString DasGuidToString(const DasGuid& guid)
 {
-    constexpr auto template_string =
-        "{:08x}-{:04x}-{:04x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}";
-    const auto string = DAS::fmt::format(
-        template_string,
-        guid.data1,
-        guid.data2,
-        guid.data3,
-        guid.data4[0],
-        guid.data4[1],
-        guid.data4[2],
-        guid.data4[3],
-        guid.data4[4],
-        guid.data4[5],
-        guid.data4[6],
-        guid.data4[7]);
-
     DAS::DasPtr<IDasString> p_result;
-    ::CreateIDasStringFromUtf8(string.c_str(), p_result.Put());
+    ::CreateIDasStringFromUtf8(
+        Das::Core::ForeignInterfaceHost::DasGuidToStdString(guid).c_str(),
+        p_result.Put());
     return DasReadOnlyString{p_result};
 }

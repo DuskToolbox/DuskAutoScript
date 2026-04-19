@@ -38,14 +38,8 @@ namespace Das::Http
             whitelist.insert(setting.name);
         }
 
-        DasReadOnlyString guid_string(&plugin_guid);
-        std::string       guid_str = guid_string.GetUtf8();
-
-        if (guid_str.size() >= 2 && guid_str.front() == '{'
-            && guid_str.back() == '}')
-        {
-            guid_str = guid_str.substr(1, guid_str.size() - 2);
-        }
+        const auto guid_str =
+            Das::Core::ForeignInterfaceHost::DasGuidToStdString(plugin_guid);
 
         try
         {

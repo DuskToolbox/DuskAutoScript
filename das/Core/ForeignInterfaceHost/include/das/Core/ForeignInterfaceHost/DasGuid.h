@@ -26,6 +26,8 @@ DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
 DAS_EXPORT DasGuid MakeDasGuid(const std::string_view guid_string);
 
+DAS_EXPORT std::string DasGuidToStdString(const DasGuid& guid);
+
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
 
 namespace nlohmann

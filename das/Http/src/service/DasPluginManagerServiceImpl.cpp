@@ -71,13 +71,9 @@ namespace Das::Http
             }
 
             // 从 SettingsManager 按工厂所属插件 GUID 获取 plugin_config
-            DasReadOnlyString guid_string(&feat->plugin_guid);
-            std::string       guid_str = guid_string.GetUtf8();
-            if (guid_str.size() >= 2 && guid_str.front() == '{'
-                && guid_str.back() == '}')
-            {
-                guid_str = guid_str.substr(1, guid_str.size() - 2);
-            }
+            const auto guid_str =
+                Das::Core::ForeignInterfaceHost::DasGuidToStdString(
+                    feat->plugin_guid);
 
             // profile_id 硬编码 "0" (v1.2)
             auto settings_json =
