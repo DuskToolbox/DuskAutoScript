@@ -5,6 +5,8 @@
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <gtest/gtest.h>
 
+#include <cstring>
+
 using namespace DAS::Core::ForeignInterfaceHost;
 using namespace DAS::Core::IPC;
 using Das::DasPtr;
@@ -232,4 +234,17 @@ TEST_F(PluginManagerFeatureTest, LoadOrderPreservedInSpan)
     ASSERT_EQ(comp_span.size(), 1u);
     EXPECT_EQ(comp_span[0]->feature_type, DAS_PLUGIN_FEATURE_COMPONENT_FACTORY);
     EXPECT_FALSE(comp_span[0]->plugin_name.empty());
+}
+
+TEST_F(PluginManagerFeatureTest, FeatureInfoContainsPluginGuid)
+{
+    RegisterObjects();
+
+    auto input_span = pm_->GetFeaturesByType(DAS_PLUGIN_FEATURE_INPUT_FACTORY);
+    ASSERT_EQ(input_span.size(), 1u);
+
+    // plugin_guid 应该非零（与 manifest.json 中的 GUID 匹配）
+    DasGuid zero_guid{};
+    EXPECT_FALSE(std::memcmp(&input_span[0]->plugin_guid, &zero_guid, sizeof(DasGuid)) == 0)
+        << "plugin_guid should be populated after LoadPlugin";
 }
