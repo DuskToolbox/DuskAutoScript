@@ -107,6 +107,16 @@ namespace Das::Http
             std::thread([&ipc_context]() { ipc_context->Run(); });
         components.ipc_context = ipc_context;
 
+        // 注入 IPC 上下文到 PluginManager
+        components.plugin_manager.SetIpcContext(*ipc_context);
+
+        // 设置 Host 可执行文件路径
+        const char* host_exe = std::getenv("DAS_HOST_EXE_PATH");
+        if (host_exe && strlen(host_exe) > 0)
+        {
+            components.plugin_manager.SetHostExePath(host_exe);
+        }
+
         // 创建控制器实例
         auto misc_controller = std::make_shared<Das::Http::DasMiscController>();
         auto log_controller = std::make_shared<Das::Http::DasLogController>();

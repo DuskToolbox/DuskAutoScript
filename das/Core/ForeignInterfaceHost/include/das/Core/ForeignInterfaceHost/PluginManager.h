@@ -6,6 +6,8 @@
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
+#include <das/Core/IPC/HostLauncher.h>
+#include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
@@ -104,6 +106,18 @@ public:
      * @brief 设置远程对象注册表引用
      */
     void SetRegistry(Core::IPC::RemoteObjectRegistry& registry);
+
+    /**
+     * @brief 设置 IPC 上下文引用
+     * @param ipc_context IPC 上下文引用（非拥有）
+     */
+    void SetIpcContext(DAS::Core::IPC::MainProcess::IIpcContext& ipc_context);
+
+    /**
+     * @brief 设置 Host 可执行文件路径
+     * @param path DasHost 可执行文件路径
+     */
+    void SetHostExePath(const std::string& path);
 
     /**
      * @brief 加载插件
@@ -227,6 +241,29 @@ private:
      */
     LoadedPlugin* FindPluginByGuid(const DasGuid& guid);
 
+    /**
+     * @brief 通过 IPC 委托 Host 进程加载插件
+     * @note 必须在 mutex_ 锁外调用（内部使用 sync_wait 可能阻塞 30 秒）
+     */
+    DasResult LoadPluginViaIpc(
+        const std::filesystem::path&       manifest_path,
+        const DasGuid&                     plugin_guid,
+        std::shared_ptr<PluginPackageDesc> desc);
+
+    /**
+     * @brief 通过 IPC 卸载插件（关闭 Host 进程）
+     * @note 必须在 mutex_ 锁外调用（Stop 可能阻塞等待进程退出）
+     */
+    DasResult UnloadPluginIpc(const DasGuid& guid, LoadedPlugin& plugin);
+
+    /**
+     * @brief Host 进程退出回调
+     * @param session_id 退出的 Host 进程 session_id
+     * @param exit_code 进程退出码
+     * @note 在 io_context 线程上执行，访问成员需要 mutex_ 保护
+     */
+    void OnHostProcessExit(uint16_t session_id, int exit_code);
+
     Das::Core::SettingsManager::SettingsManager& settings_manager_;
     mutable std::mutex                           mutex_;
     uint16_t                                     session_id_ = 0;
@@ -239,6 +276,13 @@ private:
         std::vector<FeatureInfo*>>
                             feature_type_index_;
     ComponentFactoryManager component_factory_mgr_;
+
+    // IPC 相关成员
+    DAS::Core::IPC::MainProcess::IIpcContext* ipc_context_ = nullptr;
+    std::unordered_map<DasGuid, DasPtr<DAS::Core::IPC::IHostLauncher>>
+                                          host_launchers_;
+    std::unordered_map<uint16_t, DasGuid> session_to_guid_;
+    std::string                           host_exe_path_;
 };
 
 #ifdef _MSC_VER

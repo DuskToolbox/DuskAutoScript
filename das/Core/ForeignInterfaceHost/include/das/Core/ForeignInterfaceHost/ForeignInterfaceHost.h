@@ -75,6 +75,7 @@ void from_json(const ::nlohmann::json& input, PluginSettingDesc& output);
 struct PluginPackageDesc
 {
     ForeignInterfaceLanguage       language;
+    LoadMode                       load_mode = LoadMode::InProcess;
     std::string                    name;
     std::string                    description;
     std::string                    author;

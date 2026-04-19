@@ -88,6 +88,17 @@ void PluginManager::SetRegistry(Core::IPC::RemoteObjectRegistry& registry)
     registry_ = &registry;
 }
 
+void PluginManager::SetIpcContext(
+    DAS::Core::IPC::MainProcess::IIpcContext& ipc_context)
+{
+    ipc_context_ = &ipc_context;
+}
+
+void PluginManager::SetHostExePath(const std::string& path)
+{
+    host_exe_path_ = path;
+}
+
 DasResult PluginManager::LoadPlugin(
     const std::filesystem::path&              path,
     Das::PluginInterface::IDasPluginPackage** pp_out_package)

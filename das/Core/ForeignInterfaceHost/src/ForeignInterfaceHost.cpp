@@ -268,6 +268,15 @@ void from_json(const nlohmann::json& input, PluginPackageDesc& output)
     DAS_CORE_TRACE_SCOPE;
 
     input.at("language").get_to(output.language);
+    if (const auto it_load_mode = input.find("loadMode");
+        it_load_mode != input.end())
+    {
+        it_load_mode->get_to(output.load_mode);
+    }
+    else
+    {
+        output.load_mode = LoadMode::InProcess;
+    }
     input.at("name").get_to(output.name);
     input.at("description").get_to(output.description);
     input.at("author").get_to(output.author);
