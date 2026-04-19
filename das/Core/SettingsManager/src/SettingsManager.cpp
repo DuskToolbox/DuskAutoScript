@@ -365,6 +365,114 @@ DasResult SettingsManager::UpdatePluginSettings(
     }
 }
 
+std::string SettingsManager::GetPluginSettingsField(
+    const std::string& profile_id,
+    const std::string& guid,
+    const std::string& field_name)
+{
+    std::shared_lock lock{mutex_};
+
+    auto           cache_key = profile_id + "/" + guid;
+    auto           it = plugin_settings_cache_.find(cache_key);
+    nlohmann::json settings;
+
+    if (it != plugin_settings_cache_.end())
+    {
+        settings = it->second;
+    }
+    else
+    {
+        lock.unlock();
+        auto content = ReadJsonFile(GetPluginSettingsPath(profile_id, guid));
+        std::unique_lock write_lock{mutex_};
+        try
+        {
+            settings = nlohmann::json::parse(content);
+            plugin_settings_cache_[cache_key] = settings;
+        }
+        catch (const nlohmann::json::exception& ex)
+        {
+            DAS_CORE_LOG_EXCEPTION(ex);
+            return {};
+        }
+    }
+
+    if (!settings.contains(field_name))
+    {
+        return {};
+    }
+
+    try
+    {
+        return settings[field_name].dump();
+    }
+    catch (const nlohmann::json::exception& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        return {};
+    }
+}
+
+DasResult SettingsManager::UpdatePluginSettingsField(
+    const std::string& profile_id,
+    const std::string& guid,
+    const std::string& field_name,
+    const std::string& field_json_value)
+{
+    nlohmann::json field_value;
+    try
+    {
+        field_value = nlohmann::json::parse(field_json_value);
+    }
+    catch (const nlohmann::json::exception& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        return DAS_E_INVALID_JSON;
+    }
+    catch (const std::bad_alloc& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        return DAS_E_OUT_OF_MEMORY;
+    }
+
+    std::unique_lock lock{mutex_};
+
+    auto cache_key = profile_id + "/" + guid;
+    auto it = plugin_settings_cache_.find(cache_key);
+    if (it == plugin_settings_cache_.end())
+    {
+        auto content = ReadJsonFile(GetPluginSettingsPath(profile_id, guid));
+        try
+        {
+            plugin_settings_cache_[cache_key] = nlohmann::json::parse(content);
+        }
+        catch (const nlohmann::json::exception& ex)
+        {
+            DAS_CORE_LOG_EXCEPTION(ex);
+        }
+        it = plugin_settings_cache_.find(cache_key);
+    }
+
+    try
+    {
+        it->second[field_name] = field_value;
+        auto result = WriteJsonFile(
+            GetPluginSettingsPath(profile_id, guid),
+            it->second.dump());
+        return result;
+    }
+    catch (const nlohmann::json::exception& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        return DAS_E_INVALID_JSON;
+    }
+    catch (const std::bad_alloc& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        return DAS_E_OUT_OF_MEMORY;
+    }
+}
+
 std::filesystem::path SettingsManager::GetProfileDir(
     const std::string& profile_id) const
 {

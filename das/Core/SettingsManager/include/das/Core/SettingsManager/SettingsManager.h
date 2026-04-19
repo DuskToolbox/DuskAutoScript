@@ -42,6 +42,17 @@ public:
         const std::string& guid,
         const std::string& json_str);
 
+    // Plugin settings field-level access
+    std::string GetPluginSettingsField(
+        const std::string& profile_id,
+        const std::string& guid,
+        const std::string& field_name);
+    DasResult UpdatePluginSettingsField(
+        const std::string& profile_id,
+        const std::string& guid,
+        const std::string& field_name,
+        const std::string& field_json_value);
+
 private:
     std::filesystem::path GetProfileDir(const std::string& profile_id) const;
     std::filesystem::path GetProfileUiPath(const std::string& profile_id) const;
