@@ -54,39 +54,78 @@ std::vector<PluginPackageDesc> ScanPlugins(
 
     for (const auto& entry : dir_iter)
     {
-        if (!entry.is_directory())
+        if (entry.is_directory())
         {
-            continue;
-        }
+            auto dirname = entry.path().filename().string();
 
-        auto dirname = entry.path().filename().string();
+            auto marker = entry.path() / (dirname + ".willBeDelete");
+            if (std::filesystem::exists(marker))
+            {
+                continue;
+            }
 
-        auto marker = entry.path() / (dirname + ".willBeDelete");
-        if (std::filesystem::exists(marker))
-        {
-            continue;
-        }
+            auto manifest_path = FindManifest(entry.path());
+            if (manifest_path.empty())
+            {
+                continue;
+            }
 
-        auto manifest_path = FindManifest(entry.path());
-        if (manifest_path.empty())
-        {
-            continue;
+            try
+            {
+                std::ifstream     ifs(manifest_path);
+                auto              json_data = nlohmann::json::parse(ifs);
+                PluginPackageDesc desc;
+                from_json(json_data, desc);
+                result.push_back(std::move(desc));
+            }
+            catch (const std::exception& e)
+            {
+                DAS_CORE_LOG_WARN(
+                    "Failed to parse manifest {}: {}",
+                    manifest_path.string(),
+                    e.what());
+            }
         }
+        else
+        {
+            // Flat-file mode: manifest .json at plugin_dir root
+            auto path = entry.path();
+            if (path.extension() != ".json")
+            {
+                continue;
+            }
 
-        try
-        {
-            std::ifstream     ifs(manifest_path);
-            auto              json_data = nlohmann::json::parse(ifs);
-            PluginPackageDesc desc;
-            from_json(json_data, desc);
-            result.push_back(std::move(desc));
-        }
-        catch (const std::exception& e)
-        {
-            DAS_CORE_LOG_WARN(
-                "Failed to parse manifest {}: {}",
-                manifest_path.string(),
-                e.what());
+            auto stem = path.stem().string();
+
+            // Check for flat-file deletion marker
+            auto marker = plugin_dir / (stem + ".willBeDelete");
+            if (std::filesystem::exists(marker))
+            {
+                continue;
+            }
+
+            try
+            {
+                std::ifstream     ifs(path);
+                auto              json_data = nlohmann::json::parse(ifs);
+                PluginPackageDesc desc;
+                from_json(json_data, desc);
+
+                // Verify companion plugin binary exists
+                auto plugin_file =
+                    plugin_dir
+                    / (desc.name + "." + desc.plugin_filename_extension);
+                if (!std::filesystem::exists(plugin_file))
+                {
+                    continue;
+                }
+
+                result.push_back(std::move(desc));
+            }
+            catch (const std::exception&)
+            {
+                // Not a valid manifest — skip silently
+            }
         }
     }
 
@@ -106,42 +145,82 @@ void CleanupMarkedPlugins(const std::filesystem::path& plugin_dir)
              std::filesystem::directory_options::skip_permission_denied,
              ec))
     {
-        if (!entry.is_directory())
+        if (entry.is_directory())
         {
-            continue;
-        }
-
-        for (const auto& sub : std::filesystem::directory_iterator(
-                 entry.path(),
-                 std::filesystem::directory_options::skip_permission_denied,
-                 ec))
-        {
-            if (sub.path().extension() == ".willBeDelete")
+            // Directory-mode: look for .willBeDelete inside subdirectory
+            for (const auto& sub : std::filesystem::directory_iterator(
+                     entry.path(),
+                     std::filesystem::directory_options::skip_permission_denied,
+                     ec))
             {
-                auto plugin_name = sub.path().stem().string();
-                auto parent_name = entry.path().filename().string();
-                if (plugin_name != parent_name)
+                if (sub.path().extension() == ".willBeDelete")
                 {
-                    // Marker is in a directory whose name doesn't match the
-                    // marker stem -- skip
-                    continue;
+                    auto plugin_name = sub.path().stem().string();
+                    auto parent_name = entry.path().filename().string();
+                    if (plugin_name != parent_name)
+                    {
+                        continue;
+                    }
+
+                    DAS_CORE_LOG_INFO(
+                        "Cleaning up marked plugin: {}",
+                        plugin_name);
+
+                    try
+                    {
+                        auto plugin_path = plugin_dir / plugin_name;
+                        std::filesystem::remove_all(plugin_path);
+                    }
+                    catch (const std::exception& e)
+                    {
+                        DAS_CORE_LOG_WARN(
+                            "Failed to clean up plugin {}: {}",
+                            plugin_name,
+                            e.what());
+                    }
+                }
+            }
+        }
+        else
+        {
+            // Flat-file mode: .willBeDelete marker at plugin_dir root
+            if (entry.path().extension() != ".willBeDelete")
+            {
+                continue;
+            }
+
+            auto plugin_name = entry.path().stem().string();
+            DAS_CORE_LOG_INFO(
+                "Cleaning up marked flat-file plugin: {}",
+                plugin_name);
+
+            try
+            {
+                // Delete manifest and plugin binary by scanning companion
+                // files matching the plugin name
+                auto manifest = plugin_dir / (plugin_name + ".json");
+                if (std::filesystem::exists(manifest))
+                {
+                    std::ifstream     ifs(manifest);
+                    auto              json_data = nlohmann::json::parse(ifs);
+                    PluginPackageDesc desc;
+                    from_json(json_data, desc);
+
+                    auto plugin_file =
+                        plugin_dir
+                        / (desc.name + "." + desc.plugin_filename_extension);
+                    std::filesystem::remove(plugin_file, ec);
                 }
 
-                DAS_CORE_LOG_INFO("Cleaning up marked plugin: {}", plugin_name);
-
-                try
-                {
-                    auto plugin_path = plugin_dir / plugin_name;
-                    std::filesystem::remove_all(plugin_path);
-                    std::filesystem::remove(sub.path());
-                }
-                catch (const std::exception& e)
-                {
-                    DAS_CORE_LOG_WARN(
-                        "Failed to clean up plugin {}: {}",
-                        plugin_name,
-                        e.what());
-                }
+                std::filesystem::remove(manifest, ec);
+                std::filesystem::remove(entry.path(), ec);
+            }
+            catch (const std::exception& e)
+            {
+                DAS_CORE_LOG_WARN(
+                    "Failed to clean up flat-file plugin {}: {}",
+                    plugin_name,
+                    e.what());
             }
         }
     }
@@ -157,8 +236,18 @@ DasResult MarkForDeletion(
     {
         if (desc.guid == guid)
         {
-            auto marker_path =
-                plugin_dir / desc.name / (desc.name + ".willBeDelete");
+            // Determine plugin mode: directory or flat-file
+            auto                  plugin_subdir = plugin_dir / desc.name;
+            std::filesystem::path marker_path;
+            if (std::filesystem::exists(plugin_subdir)
+                && std::filesystem::is_directory(plugin_subdir))
+            {
+                marker_path = plugin_subdir / (desc.name + ".willBeDelete");
+            }
+            else
+            {
+                marker_path = plugin_dir / (desc.name + ".willBeDelete");
+            }
 
             std::ofstream ofs(marker_path);
             if (!ofs)

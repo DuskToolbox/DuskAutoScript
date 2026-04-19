@@ -388,6 +388,60 @@ DasResult InstallPlugin(
         return DAS_E_INVALID_ARGUMENT;
     }
 
+    // Detect flat ZIP (no subdirectory wrapping) and auto-wrap into a
+    // plugin subdirectory. Flat ZIP means all filenames contain no '/' or
+    // '\' separator.
+    bool has_subdir = false;
+    for (const auto& e : entries)
+    {
+        if (!e.is_directory && e.filename.find('/') != std::string::npos)
+        {
+            has_subdir = true;
+            break;
+        }
+    }
+
+    // If flat ZIP, parse manifest to get plugin name, then prefix all
+    // entries with "<name>/"
+    if (!has_subdir)
+    {
+        std::string plugin_name;
+        for (const auto& e : entries)
+        {
+            if (e.is_directory)
+            {
+                continue;
+            }
+            if (e.filename.size() >= 5
+                && e.filename.compare(e.filename.size() - 5, 5, ".json") == 0)
+            {
+                try
+                {
+                    auto json_data = nlohmann::json::parse(e.data);
+                    if (json_data.contains("name"))
+                    {
+                        plugin_name = json_data["name"].get<std::string>();
+                    }
+                }
+                catch (const std::exception&)
+                {
+                }
+                break;
+            }
+        }
+
+        if (plugin_name.empty())
+        {
+            DAS_CORE_LOG_WARN("Flat ZIP has no manifest with 'name' field");
+            return DAS_E_INVALID_ARGUMENT;
+        }
+
+        for (auto& e : entries)
+        {
+            e.filename = plugin_name + "/" + e.filename;
+        }
+    }
+
     // Write extracted files to plugin_dir
     for (const auto& entry : entries)
     {
