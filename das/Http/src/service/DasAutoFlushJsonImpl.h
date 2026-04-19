@@ -82,6 +82,13 @@ namespace Das::Http
         std::string                                  plugin_guid_;
         std::unordered_set<std::string>              whitelist_;
 
+        /**
+         * @brief 提取 UTF-8 key 并检查白名单
+         * @param key 输入的只读字符串 key
+         * @param[out] out_key 提取后的 UTF-8 字符串
+         * @return DAS_S_OK 如果 key 在白名单中，DAS_E_PERMISSION_DENIED
+         * 如果不在
+         */
         DasResult CheckWhitelist(IDasReadOnlyString* key, std::string& out_key);
     };
 
