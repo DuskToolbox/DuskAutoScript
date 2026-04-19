@@ -282,6 +282,7 @@ target_link_libraries(DasCore PUBLIC DasCoreObjects)
      das_add_core_test(Utils)
      das_add_core_test(SettingsManager)
      das_add_core_test(Exceptions)
+     das_add_core_test(TaskScheduler)
      das_add_core_test(IPC)
  endif ()
 
