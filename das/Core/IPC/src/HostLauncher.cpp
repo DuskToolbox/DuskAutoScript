@@ -309,8 +309,7 @@ DasResult HostLauncher::Start(
         out_session_id);
     DAS_LOG_INFO(msg.c_str());
 
-    // 异步监控 Host 进程退出（per D-07/D-09）
-    // 在 io_context 线程上等待进程退出，触发回调通知 PluginManager
+    // 异步监控 Host 进程退出，触发回调通知 PluginManager 清理索引
     if (impl_->process && on_process_exit_)
     {
         auto callback = on_process_exit_;
@@ -1361,7 +1360,7 @@ boost::asio::awaitable<void> HostLauncher::RunAsync(
             session_id);
         DAS_LOG_INFO(success_msg.c_str());
 
-        // 异步监控 Host 进程退出（per D-07/D-09）
+        // 异步监控 Host 进程退出，触发回调通知 PluginManager 清理索引
         if (impl_->process && on_process_exit_)
         {
             auto callback = on_process_exit_;
