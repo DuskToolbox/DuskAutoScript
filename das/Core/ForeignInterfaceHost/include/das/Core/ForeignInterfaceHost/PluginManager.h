@@ -22,6 +22,9 @@
 #include <unordered_set>
 #include <vector>
 
+// Forward declaration for test friend access
+class PluginManagerGuidTest_OnHostProcessExit_CleansUpIndex_Test;
+
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 // Disable C4251 warning for DLL export with STL types
 #ifdef _MSC_VER
@@ -283,6 +286,10 @@ private:
                                           host_launchers_;
     std::unordered_map<uint16_t, DasGuid> session_to_guid_;
     std::string                           host_exe_path_;
+
+    // Allow specific unit test to access private members for index cleanup
+    // verification. Forward declaration is at top of file (global namespace).
+    friend class ::PluginManagerGuidTest_OnHostProcessExit_CleansUpIndex_Test;
 };
 
 #ifdef _MSC_VER

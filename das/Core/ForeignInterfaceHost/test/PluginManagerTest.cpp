@@ -4,8 +4,10 @@
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <gtest/gtest.h>
+#include <nlohmann/json.hpp>
 
 #include <cstring>
+#include <fstream>
 
 using namespace DAS::Core::ForeignInterfaceHost;
 using namespace DAS::Core::IPC;
@@ -249,4 +251,145 @@ TEST_F(PluginManagerFeatureTest, FeatureInfoContainsPluginGuid)
         std::memcmp(&input_span[0]->plugin_guid, &zero_guid, sizeof(DasGuid))
         == 0)
         << "plugin_guid should be populated after LoadPlugin";
+}
+
+// ============================================================
+// IPC routing tests
+// ============================================================
+
+TEST_F(PluginManagerGuidTest, LoadPlugin_NoIpcContext_ReturnsError)
+{
+    // Create a CSharp manifest (white-listed-out language)
+    auto test_dir = std::filesystem::current_path() / "test_plugin_no_ipc_ctx";
+    std::filesystem::create_directories(test_dir);
+    auto manifest_path = test_dir / "test_plugin_no_ipc_ctx.json";
+
+    nlohmann::json manifest = {
+        {"guid", "{00000000-0000-0000-0000-000000000001}"},
+        {"name", "TestCSharpPlugin"},
+        {"language", "CSharp"},
+        {"description", "test"},
+        {"author", "test"},
+        {"version", "1.0"},
+        {"supportedSystem", "win"},
+        {"pluginFilenameExtension", ".dll"},
+    };
+    {
+        std::ofstream ofs(manifest_path);
+        ofs << manifest.dump();
+    }
+
+    // No IPC context set -- should return DAS_E_NO_IMPLEMENTATION
+    auto result = pm_->LoadPlugin(test_dir);
+    EXPECT_EQ(result, DAS_E_NO_IMPLEMENTATION);
+
+    std::filesystem::remove_all(test_dir);
+}
+
+TEST_F(PluginManagerGuidTest, LoadPlugin_NoHostPath_ReturnsError)
+{
+    // Create a CSharp manifest
+    auto test_dir =
+        std::filesystem::current_path() / "test_plugin_no_host_path";
+    std::filesystem::create_directories(test_dir);
+    auto manifest_path = test_dir / "test_plugin_no_host_path.json";
+
+    nlohmann::json manifest = {
+        {"guid", "{00000000-0000-0000-0000-000000000002}"},
+        {"name", "TestCSharpPlugin2"},
+        {"language", "CSharp"},
+        {"description", "test"},
+        {"author", "test"},
+        {"version", "1.0"},
+        {"supportedSystem", "win"},
+        {"pluginFilenameExtension", ".dll"},
+    };
+    {
+        std::ofstream ofs(manifest_path);
+        ofs << manifest.dump();
+    }
+
+    // No host exe path set -- should return DAS_E_NO_IMPLEMENTATION
+    auto result = pm_->LoadPlugin(test_dir);
+    EXPECT_EQ(result, DAS_E_NO_IMPLEMENTATION);
+
+    std::filesystem::remove_all(test_dir);
+}
+
+TEST_F(PluginManagerGuidTest, LoadPlugin_CppLanguage_StaysInProcess)
+{
+    // Cpp (white-listed language) should NOT take the IPC path.
+    // A nonexistent path returns an error from CppRuntime::LoadPlugin,
+    // but NOT DAS_E_NO_IMPLEMENTATION (which is the IPC rejection code).
+    auto result = pm_->LoadPlugin("/nonexistent/plugin/path");
+    EXPECT_NE(result, DAS_E_NO_IMPLEMENTATION);
+}
+
+TEST_F(PluginManagerGuidTest, LoadPlugin_CppWithLoadModeIpc_GoesIpcPath)
+{
+    // Cpp (white-listed) with loadMode=Ipc should be forced to IPC path.
+    auto test_dir =
+        std::filesystem::current_path() / "test_plugin_loadmode_ipc";
+    std::filesystem::create_directories(test_dir);
+    auto manifest_path = test_dir / "test_plugin_loadmode_ipc.json";
+
+    nlohmann::json manifest = {
+        {"guid", "{00000000-0000-0000-0000-000000000010}"},
+        {"name", "TestPluginCppIpc"},
+        {"language", "Cpp"},
+        {"loadMode", "ipc"},
+        {"description", "test"},
+        {"author", "test"},
+        {"version", "1.0"},
+        {"supportedSystem", "win"},
+        {"pluginFilenameExtension", ".dll"},
+    };
+    {
+        std::ofstream ofs(manifest_path);
+        ofs << manifest.dump();
+    }
+
+    // No IPC context set -> IPC path returns DAS_E_NO_IMPLEMENTATION
+    auto result = pm_->LoadPlugin(test_dir);
+    EXPECT_EQ(result, DAS_E_NO_IMPLEMENTATION);
+
+    std::filesystem::remove_all(test_dir);
+}
+
+TEST_F(PluginManagerGuidTest, SetIpcContext_And_SetHostExePath)
+{
+    // Verify that setter methods do not crash.
+    pm_->SetHostExePath("/path/to/DasHost");
+    // SetIpcContext requires a real IIpcContext reference;
+    // its integration is verified in IpcMultiProcessTest.
+}
+
+TEST_F(PluginManagerGuidTest, OnHostProcessExit_CleansUpIndex)
+{
+    // Manually set up internal state to simulate post-IPC-load state.
+    // This test uses friend access to PluginManager private members.
+    DasGuid test_guid{};
+    test_guid.data1 = 0x00000099;
+    uint16_t test_session_id = 42;
+
+    pm_->session_to_guid_[test_session_id] = test_guid;
+
+    LoadedPlugin fake_plugin;
+    fake_plugin.plugin_path = "/fake/ipc/plugin";
+    pm_->loaded_plugins_[test_guid] = std::move(fake_plugin);
+    pm_->path_to_guid_["/fake/ipc/plugin"] = test_guid;
+
+    // Verify setup
+    EXPECT_TRUE(pm_->loaded_plugins_.contains(test_guid));
+    EXPECT_TRUE(pm_->session_to_guid_.contains(test_session_id));
+    EXPECT_TRUE(pm_->path_to_guid_.contains("/fake/ipc/plugin"));
+
+    // Trigger the disconnect callback
+    pm_->OnHostProcessExit(test_session_id, 1);
+
+    // Verify all indexes are cleaned up
+    EXPECT_FALSE(pm_->loaded_plugins_.contains(test_guid));
+    EXPECT_FALSE(pm_->session_to_guid_.contains(test_session_id));
+    EXPECT_FALSE(pm_->path_to_guid_.contains("/fake/ipc/plugin"));
+    EXPECT_FALSE(pm_->host_launchers_.contains(test_guid));
 }
