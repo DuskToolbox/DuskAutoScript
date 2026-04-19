@@ -393,9 +393,6 @@ TEST_F(PluginManagerGuidTest, OnHostProcessExit_CleansUpIndex)
     // This test uses friend access to PluginManager private members.
     DasGuid test_guid{};
     test_guid.data1 = 0x00000099;
-    uint16_t test_session_id = 42;
-
-    pm_->session_to_guid_[test_session_id] = test_guid;
 
     LoadedPlugin fake_plugin;
     fake_plugin.plugin_path = "/fake/ipc/plugin";
@@ -404,15 +401,41 @@ TEST_F(PluginManagerGuidTest, OnHostProcessExit_CleansUpIndex)
 
     // Verify setup
     EXPECT_TRUE(pm_->loaded_plugins_.contains(test_guid));
-    EXPECT_TRUE(pm_->session_to_guid_.contains(test_session_id));
     EXPECT_TRUE(pm_->path_to_guid_.contains("/fake/ipc/plugin"));
 
-    // Trigger the disconnect callback
-    pm_->OnHostProcessExit(test_session_id, 1);
+    // Trigger the disconnect callback (new GUID-first signature)
+    pm_->OnHostProcessExit(test_guid, 1);
 
     // Verify all indexes are cleaned up
     EXPECT_FALSE(pm_->loaded_plugins_.contains(test_guid));
-    EXPECT_FALSE(pm_->session_to_guid_.contains(test_session_id));
     EXPECT_FALSE(pm_->path_to_guid_.contains("/fake/ipc/plugin"));
+    EXPECT_FALSE(pm_->host_launchers_.contains(test_guid));
+}
+
+TEST_F(PluginManagerGuidTest, OnHeartbeatTimeout_CleansUpIndex)
+{
+    // Manually set up internal state to simulate post-IPC-load state.
+    // Tests the CleanupPluginByGuid path used by heartbeat timeout callback.
+    DasGuid test_guid{};
+    test_guid.data1 = 0x000000AA;
+
+    LoadedPlugin fake_plugin;
+    fake_plugin.plugin_path = "/fake/heartbeat/plugin";
+    pm_->loaded_plugins_[test_guid] = std::move(fake_plugin);
+    pm_->path_to_guid_["/fake/heartbeat/plugin"] = test_guid;
+
+    // Verify setup
+    EXPECT_TRUE(pm_->loaded_plugins_.contains(test_guid));
+    EXPECT_TRUE(pm_->path_to_guid_.contains("/fake/heartbeat/plugin"));
+
+    // Directly call CleanupPluginByGuid (simulates heartbeat timeout callback)
+    {
+        std::lock_guard<std::mutex> lock(pm_->mutex_);
+        pm_->CleanupPluginByGuid(test_guid);
+    }
+
+    // Verify all indexes are cleaned up
+    EXPECT_FALSE(pm_->loaded_plugins_.contains(test_guid));
+    EXPECT_FALSE(pm_->path_to_guid_.contains("/fake/heartbeat/plugin"));
     EXPECT_FALSE(pm_->host_launchers_.contains(test_guid));
 }

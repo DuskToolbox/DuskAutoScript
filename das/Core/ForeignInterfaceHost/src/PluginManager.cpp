@@ -72,7 +72,6 @@ DasResult PluginManager::Shutdown()
         }
     }
     host_launchers_.clear();
-    session_to_guid_.clear();
 
     // 卸载所有插件
     for (auto& [guid, plugin] : loaded_plugins_)
@@ -789,21 +788,29 @@ DasResult PluginManager::LoadPluginViaIpc(
             return result;
         }
 
-        // 注册进程退出回调
-        // 将 IHostLauncher* 转换为 HostLauncher* 以访问 SetOnProcessExit
+        // 注册进程退出回调 + 心跳超时回调
+        // 将 IHostLauncher* 转换为 HostLauncher* 以访问扩展接口
         auto* concrete_launcher =
             static_cast<DAS::Core::IPC::HostLauncher*>(launcher.Get());
         if (concrete_launcher)
         {
+            concrete_launcher->SetAssociatedGuid(plugin_guid);
+
             concrete_launcher->SetOnProcessExit(
-                [this](uint16_t sid, int exit_code)
-                { OnHostProcessExit(sid, exit_code); });
+                [this, plugin_guid](uint16_t /*sid*/, int exit_code)
+                { OnHostProcessExit(plugin_guid, exit_code); });
+
+            concrete_launcher->SetOnHeartbeatTimeout(
+                [this](DasGuid guid)
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    CleanupPluginByGuid(guid);
+                });
         }
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
             host_launchers_[plugin_guid] = launcher;
-            session_to_guid_[session_id] = plugin_guid;
         }
     }
 
@@ -917,8 +924,6 @@ DasResult PluginManager::UnloadPluginIpc(
         auto launcher = host_it->second;
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            uint16_t                    sid = launcher->GetSessionId();
-            session_to_guid_.erase(sid);
             host_launchers_.erase(host_it);
         }
         launcher->Stop();
@@ -928,24 +933,9 @@ DasResult PluginManager::UnloadPluginIpc(
     return DAS_S_OK;
 }
 
-void PluginManager::OnHostProcessExit(uint16_t session_id, int exit_code)
+void PluginManager::CleanupPluginByGuid(DasGuid plugin_guid)
 {
-    // 此回调在 io_context 线程上执行
-    DAS_CORE_LOG_WARN(
-        "Host process exited unexpectedly: session_id={}, exit_code={}",
-        session_id,
-        exit_code);
-
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    // 通过 session_id 反查 plugin GUID
-    auto guid_it = session_to_guid_.find(session_id);
-    if (guid_it == session_to_guid_.end())
-    {
-        return;
-    }
-
-    DasGuid plugin_guid = guid_it->second;
+    // 调用方已持有 mutex_
 
     // 清理 loaded_plugins_ 索引
     auto plugin_it = loaded_plugins_.find(plugin_guid);
@@ -956,13 +946,21 @@ void PluginManager::OnHostProcessExit(uint16_t session_id, int exit_code)
         loaded_plugins_.erase(plugin_it);
     }
 
-    // 清理索引映射
+    // 清理 HostLauncher
     host_launchers_.erase(plugin_guid);
-    session_to_guid_.erase(guid_it);
 
-    DAS_CORE_LOG_INFO(
-        "Cleaned up plugin index after Host exit: session_id={}",
-        session_id);
+    DAS_CORE_LOG_INFO("Cleaned up plugin index by GUID");
+}
+
+void PluginManager::OnHostProcessExit(DasGuid plugin_guid, int exit_code)
+{
+    // 此回调在 io_context 线程上执行
+    DAS_CORE_LOG_WARN(
+        "Host process exited unexpectedly: exit_code={}",
+        exit_code);
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    CleanupPluginByGuid(plugin_guid);
 }
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END

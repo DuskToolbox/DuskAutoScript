@@ -22,8 +22,9 @@
 #include <unordered_set>
 #include <vector>
 
-// Forward declaration for test friend access
+// Forward declarations for test friend access
 class PluginManagerGuidTest_OnHostProcessExit_CleansUpIndex_Test;
+class PluginManagerGuidTest_OnHeartbeatTimeout_CleansUpIndex_Test;
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 // Disable C4251 warning for DLL export with STL types
@@ -260,12 +261,22 @@ private:
     DasResult UnloadPluginIpc(const DasGuid& guid, LoadedPlugin& plugin);
 
     /**
-     * @brief Host 进程退出回调
-     * @param session_id 退出的 Host 进程 session_id
-     * @param exit_code 进程退出码
-     * @note 在 io_context 线程上执行，访问成员需要 mutex_ 保护
+     * @brief 统一按 GUID 清理插件索引
+     * @param plugin_guid 插件 GUID
+     *
+     * 清理 loaded_plugins_、path_to_guid_、host_launchers_ 三个索引。
+     * 进程退出和心跳超时两条路径最终都调用此方法。
+     * 调用方必须已持有 mutex_。
      */
-    void OnHostProcessExit(uint16_t session_id, int exit_code);
+    void CleanupPluginByGuid(DasGuid plugin_guid);
+
+    /**
+     * @brief Host 进程退出回调
+     * @param plugin_guid 关联的插件 GUID
+     * @param exit_code 进程退出码
+     * @note 在 io_context 线程上执行，内部获取 mutex_ 保护
+     */
+    void OnHostProcessExit(DasGuid plugin_guid, int exit_code);
 
     Das::Core::SettingsManager::SettingsManager& settings_manager_;
     mutable std::mutex                           mutex_;
@@ -283,13 +294,13 @@ private:
     // IPC 相关成员
     DAS::Core::IPC::MainProcess::IIpcContext* ipc_context_ = nullptr;
     std::unordered_map<DasGuid, DasPtr<DAS::Core::IPC::IHostLauncher>>
-                                          host_launchers_;
-    std::unordered_map<uint16_t, DasGuid> session_to_guid_;
-    std::string                           host_exe_path_;
+                host_launchers_;
+    std::string host_exe_path_;
 
-    // Allow specific unit test to access private members for index cleanup
-    // verification. Forward declaration is at top of file (global namespace).
+    // Allow specific unit tests to access private members for index cleanup
+    // verification. Forward declarations are at top of file (global namespace).
     friend class ::PluginManagerGuidTest_OnHostProcessExit_CleansUpIndex_Test;
+    friend class ::PluginManagerGuidTest_OnHeartbeatTimeout_CleansUpIndex_Test;
 };
 
 #ifdef _MSC_VER
