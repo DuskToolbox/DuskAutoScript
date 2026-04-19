@@ -16,6 +16,7 @@
 #include <das/Core/ForeignInterfaceHost/PluginScanner.h>
 #include <filesystem>
 
+#include "./service/DasPluginManagerServiceImpl.h"
 #include "./service/DasProfileServiceImpl.h"
 #include <das/Core/IPC/CurrentIpcContextScope.h>
 #include <das/Core/IPC/MainProcess/IpcContext.h>
@@ -77,6 +78,25 @@ namespace Das::Http
                     reg_result);
                 profile_service->Release();
                 return reg_result;
+            }
+
+            // Register IDasPluginManager service
+            {
+                auto* plugin_mgr_service = new DasPluginManagerServiceImpl();
+                plugin_mgr_service->AddRef();
+
+                const auto plugin_reg_result = ipc_context->RegisterService(
+                    plugin_mgr_service,
+                    DasIidOf<Das::ExportInterface::IDasPluginManager>());
+
+                if (DAS::IsFailed(plugin_reg_result))
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "Failed to register IDasPluginManager. result = {}",
+                        plugin_reg_result);
+                    plugin_mgr_service->Release();
+                    return plugin_reg_result;
+                }
             }
         }
 
