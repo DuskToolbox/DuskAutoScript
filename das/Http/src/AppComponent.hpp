@@ -6,6 +6,7 @@
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
+#include <das/Core/TaskScheduler/SchedulerService.h>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -20,6 +21,7 @@ namespace Das::Http
         std::function<bool()>                          stop_condition;
         Das::Core::SettingsManager::SettingsManager    settings_manager;
         Das::Core::ForeignInterfaceHost::PluginManager plugin_manager;
+        Das::Core::TaskScheduler::SchedulerService     scheduler_service;
         std::filesystem::path                          plugin_dir;
 
         // IPC context (process-level)
@@ -30,7 +32,8 @@ namespace Das::Http
         explicit AppComponent(const std::filesystem::path& plugin_dir)
             : router(std::make_shared<Beast::Router>()),
               settings_manager(std::filesystem::path("settings")),
-              plugin_manager(settings_manager), plugin_dir(plugin_dir)
+              plugin_manager(settings_manager),
+              scheduler_service(plugin_manager), plugin_dir(plugin_dir)
         {
         }
     };

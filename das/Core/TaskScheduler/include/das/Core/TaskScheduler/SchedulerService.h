@@ -4,6 +4,7 @@
 #include <condition_variable>
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
+#include <das/DasExport.h>
 #include <das/DasPtr.hpp>
 #include <das/IDasAsyncCallback.h>
 #include <das/IDasSchedulerService.h>
@@ -18,7 +19,7 @@
 namespace Das::Core::TaskScheduler
 {
 
-    class SchedulerService : public IDasSchedulerService
+    class DAS_API SchedulerService : public IDasSchedulerService
     {
     public:
         explicit SchedulerService(

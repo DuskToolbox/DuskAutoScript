@@ -17,10 +17,8 @@ namespace Das::ExportInterface
     struct IDasSourceLocation;
     struct IDasJson;
     struct IDasGuidVector;
-    struct IDasTaskManager;
     struct IDasPluginManager;
     struct IDasMemory;
-    struct IDasTaskScheduler;
     struct IDasImage;
     struct IDasBasicErrorLens;
     struct IDasLogRequester;
@@ -111,10 +109,6 @@ DAS_C_API DasResult CreateIDasGuidVector(
     size_t                                 size,
     Das::ExportInterface::IDasGuidVector** pp_out_guid);
 
-DAS_C_API DasResult CreateIDasTaskManager(
-    IDasReadOnlyString*                     p_connection_json,
-    Das::ExportInterface::IDasTaskManager** ppIDasTaskManager);
-
 DAS_C_API DasResult InitializeIDasPluginManager(
     Das::ExportInterface::IDasReadOnlyGuidVector* p_ignore_plugins_guid,
     Das::ExportInterface::IDasInitializeIDasPluginManagerCallback*
@@ -125,9 +119,6 @@ DAS_C_API DasResult InitializeIDasPluginManager(
 DAS_C_API DasResult CreateIDasMemory(
     size_t                             size_in_byte,
     Das::ExportInterface::IDasMemory** pp_out_memory);
-
-DAS_C_API DasResult GetIDasTaskScheduler(
-    Das::ExportInterface::IDasTaskScheduler** pp_out_task_scheduler);
 
 DAS_C_API DasResult CreateIDasImageFromEncodedData(
     DasImageDesc*                     p_desc,
