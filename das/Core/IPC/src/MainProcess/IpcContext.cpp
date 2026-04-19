@@ -1,6 +1,5 @@
 #include <IpcProxyFactory.h>
 #include <boost/asio/post.hpp>
-#include <condition_variable>
 #include <cstring>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/IPC/AsyncOperationImpl.h>
@@ -32,58 +31,6 @@ namespace Core
     {
         namespace MainProcess
         {
-            // ====== 同步回调（用于 RegisterService/UnregisterService
-            // 线程调度）======
-
-            /**
-             * @brief 同步回调，包装一个 lambda 在 BusinessThread 上执行
-             *
-             * 用于 RegisterService/UnregisterService 的跨线程同步调用。
-             * PostToBusinessThread 接管 AddRef 后的引用，
-             * InternalCallbackHandler 用 DasPtr::Attach 管理生命周期，
-             * Do() 在 BusinessThread 上执行 lambda 后自动析构。
-             */
-            class SyncBusinessCallback final : public IDasAsyncCallback
-            {
-            public:
-                std::atomic<uint32_t> ref_{1};
-                std::function<void()> fn_;
-
-                explicit SyncBusinessCallback(std::function<void()> fn)
-                    : fn_(std::move(fn))
-                {
-                }
-
-                uint32_t AddRef() override { return ++ref_; }
-
-                uint32_t Release() override
-                {
-                    auto r = --ref_;
-                    if (r == 0)
-                    {
-                        delete this;
-                    }
-                    return r;
-                }
-
-                DasResult QueryInterface(const DasGuid& iid, void** pp) override
-                {
-                    if (iid == DasIidOf<IDasAsyncCallback>())
-                    {
-                        AddRef();
-                        *pp = this;
-                        return DAS_S_OK;
-                    }
-                    return DAS_E_NO_INTERFACE;
-                }
-
-                DasResult Do() noexcept override
-                {
-                    fn_();
-                    return DAS_S_OK;
-                }
-            };
-
             // ====== IpcContext 实现（RAII 风格，无 pimpl）======
 
             IpcContext::IpcContext(bool enable_heartbeat)
@@ -604,40 +551,25 @@ namespace Core
                 IDasBase*      p_object,
                 const DasGuid& iid)
             {
-                // 快速路径：已在 BusinessThread 上，直接执行
                 if (business_thread_ && business_thread_->IsCurrentThread())
                 {
                     return RegisterServiceImpl(p_object, iid);
                 }
 
-                // 投递到 BusinessThread 并同步等待
-                DasResult               out_result = DAS_E_IPC_TIMEOUT;
-                std::mutex              mtx;
-                std::condition_variable cv;
-                bool                    done = false;
-
-                auto* callback = new SyncBusinessCallback(
-                    [&]()
-                    {
-                        DasResult r = RegisterServiceImpl(p_object, iid);
+                auto result = wait(
+                    stdexec::let_value(
+                        stdexec::schedule(schedule_on_business_thread(*this)),
+                        [this, p_object, iid]()
                         {
-                            std::lock_guard<std::mutex> lock(mtx);
-                            out_result = r;
-                            done = true;
-                        }
-                        cv.notify_one();
-                    });
-                PostToBusinessThread(callback);
-                callback->Release();
+                            return stdexec::just(
+                                RegisterServiceImpl(p_object, iid));
+                        }));
 
-                // 等待最多 30 秒
-                std::unique_lock<std::mutex> lock(mtx);
-                cv.wait_for(
-                    lock,
-                    std::chrono::seconds(30),
-                    [&]() { return done; });
-
-                return out_result;
+                if (!result.has_value())
+                {
+                    return DAS_E_IPC_TIMEOUT;
+                }
+                return std::get<0>(*result);
             }
 
             DasResult IpcContext::RegisterServiceImpl(
@@ -679,40 +611,22 @@ namespace Core
 
             DasResult IpcContext::UnregisterService(const DasGuid& iid)
             {
-                // 快速路径：已在 BusinessThread 上，直接执行
                 if (business_thread_ && business_thread_->IsCurrentThread())
                 {
                     return UnregisterServiceImpl(iid);
                 }
 
-                // 投递到 BusinessThread 并同步等待
-                DasResult               out_result = DAS_E_IPC_TIMEOUT;
-                std::mutex              mtx;
-                std::condition_variable cv;
-                bool                    done = false;
+                auto result = wait(
+                    stdexec::let_value(
+                        stdexec::schedule(schedule_on_business_thread(*this)),
+                        [this, iid]()
+                        { return stdexec::just(UnregisterServiceImpl(iid)); }));
 
-                auto* callback = new SyncBusinessCallback(
-                    [&]()
-                    {
-                        DasResult r = UnregisterServiceImpl(iid);
-                        {
-                            std::lock_guard<std::mutex> lock(mtx);
-                            out_result = r;
-                            done = true;
-                        }
-                        cv.notify_one();
-                    });
-                PostToBusinessThread(callback);
-                callback->Release();
-
-                // 等待最多 30 秒
-                std::unique_lock<std::mutex> lock(mtx);
-                cv.wait_for(
-                    lock,
-                    std::chrono::seconds(30),
-                    [&]() { return done; });
-
-                return out_result;
+                if (!result.has_value())
+                {
+                    return DAS_E_IPC_TIMEOUT;
+                }
+                return std::get<0>(*result);
             }
 
             DasResult IpcContext::UnregisterServiceImpl(const DasGuid& iid)

@@ -522,6 +522,19 @@ namespace Core::IPC
             }
 
             friend void tag_invoke(
+                stdexec::set_error_t,
+                SyncWaitReceiver&& self,
+                std::exception_ptr) noexcept
+            {
+                *self.done = true;
+                if (self.wakeup)
+                {
+                    auto** wakeup_ptr = static_cast<void**>(self.wakeup);
+                    *wakeup_ptr = &self;
+                }
+            }
+
+            friend void tag_invoke(
                 stdexec::set_stopped_t,
                 SyncWaitReceiver&& self) noexcept
             {
