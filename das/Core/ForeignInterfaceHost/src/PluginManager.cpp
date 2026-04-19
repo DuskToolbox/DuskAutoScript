@@ -14,10 +14,10 @@
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
-PluginManager& PluginManager::GetInstance()
+PluginManager::PluginManager(
+    Das::Core::SettingsManager::SettingsManager& settings_manager)
+    : settings_manager_(settings_manager)
 {
-    static PluginManager instance;
-    return instance;
 }
 
 DasResult PluginManager::Initialize(
@@ -164,6 +164,22 @@ DasResult PluginManager::LoadPlugin(
                     e.what());
             }
         }
+    }
+
+    // 白名单内语言走进程内直接加载
+    static const std::unordered_set<ForeignInterfaceLanguage>
+        kInProcessLanguages = {
+            ForeignInterfaceLanguage::Cpp,
+            ForeignInterfaceLanguage::Python,
+        };
+
+    if (!kInProcessLanguages.contains(desc->language))
+    {
+        DAS_CORE_LOG_WARN(
+            "Plugin '{}' language={} not in in-process whitelist, deferring load",
+            path_str,
+            static_cast<int>(desc->language));
+        return DAS_E_NO_IMPLEMENTATION;
     }
 
     // GUID 冲突检测
