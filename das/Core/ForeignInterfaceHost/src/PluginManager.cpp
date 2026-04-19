@@ -593,4 +593,14 @@ LoadedPlugin* PluginManager::FindPluginByGuid(const DasGuid& guid)
     return &it->second;
 }
 
+PluginPackageDesc* PluginManager::FindPluginPackageByGuid(const DasGuid& guid)
+{
+    auto* plugin = FindPluginByGuid(guid);
+    if (plugin && plugin->desc)
+    {
+        return plugin->desc.get();
+    }
+    return nullptr;
+}
+
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END

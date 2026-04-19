@@ -175,6 +175,13 @@ public:
      */
     size_t GetLoadedPluginCount() const;
 
+    /**
+     * @brief 获取指定 GUID 插件的 PluginPackageDesc
+     * @param guid 插件 GUID
+     * @return PluginPackageDesc* 插件描述指针，未找到返回 nullptr
+     */
+    PluginPackageDesc* FindPluginPackageByGuid(const DasGuid& guid);
+
 private:
     PluginManager() = default;
     ~PluginManager() = default;
