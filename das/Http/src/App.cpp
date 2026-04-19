@@ -138,7 +138,7 @@ namespace Das::Http
             components.router,
             g_server_condition.GetCondition());
 
-        std::cout << "[DasHttp] Server running on port " << 8080 << std::endl;
+        std::cout << "[DasHttp] Server running on port " << port << std::endl;
 
         server.Run();
 
