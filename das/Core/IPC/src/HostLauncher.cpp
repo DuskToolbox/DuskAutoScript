@@ -61,6 +61,7 @@
 #pragma warning(pop)
 #endif
 
+#include <cassert>
 #include <chrono>
 #include <filesystem>
 #include <limits>
@@ -342,6 +343,12 @@ DasResult HostLauncher::Start(
 
 void HostLauncher::Stop()
 {
+    // Stop() 使用 co_spawn + use_future 阻塞当前线程等待 io_context 完成操作，
+    // 因此不能从 io_context 线程调用，否则会死锁。
+    assert(
+        !impl_->io_ctx.get_executor().running_in_this_thread()
+        && "Stop() must not be called from the io_context thread");
+
     // 清除进程退出回调，避免 Stop() 主动关闭进程时触发回调
     on_process_exit_ = nullptr;
 
@@ -506,6 +513,54 @@ DasResult HostLauncher::StartAsync(
 void HostLauncher::SetOnProcessExit(OnProcessExitCallback callback)
 {
     on_process_exit_ = std::move(callback);
+}
+
+void HostLauncher::SetOnHeartbeatTimeout(OnHeartbeatTimeoutCallback callback)
+{
+    on_heartbeat_timeout_ = std::move(callback);
+}
+
+void HostLauncher::SetAssociatedGuid(DasGuid guid) { associated_guid_ = guid; }
+
+DasGuid HostLauncher::GetAssociatedGuid() const { return associated_guid_; }
+
+void HostLauncher::NotifyHeartbeatTimeout()
+{
+    if (on_heartbeat_timeout_)
+    {
+        on_heartbeat_timeout_(associated_guid_);
+    }
+}
+
+void HostLauncher::TerminateIfRunning()
+{
+    if (impl_->process)
+    {
+        boost::system::error_code ec;
+        bool                      still_running = impl_->process->running(ec);
+
+        if (still_running)
+        {
+            DAS_CORE_LOG_INFO(
+                "Terminating Host process (heartbeat timeout): pid={}, "
+                "session_id={}",
+                impl_->pid,
+                impl_->session_id);
+            impl_->process->terminate(ec);
+        }
+
+        // 释放进程句柄所有权
+        (void)impl_->process.release();
+    }
+
+    if (impl_->async_transport)
+    {
+        impl_->async_transport.reset();
+    }
+
+    impl_->is_running = false;
+    impl_->session_id = 0;
+    impl_->pid = 0;
 }
 
 uint32_t HostLauncher::AddRef() { return ++impl_->ref_count; }

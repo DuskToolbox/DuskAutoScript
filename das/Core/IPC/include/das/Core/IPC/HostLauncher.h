@@ -42,6 +42,12 @@ public:
     using OnProcessExitCallback =
         std::function<void(uint16_t session_id, int exit_code)>;
 
+    /**
+     * @brief 心跳超时断连回调
+     * @param guid 关联的插件 GUID
+     */
+    using OnHeartbeatTimeoutCallback = std::function<void(DasGuid guid)>;
+
     explicit HostLauncher(
         boost::asio::io_context& io_ctx,
         uint16_t                 session_id,
@@ -52,6 +58,7 @@ public:
     {
         on_register_ = nullptr;
         on_process_exit_ = nullptr;
+        on_heartbeat_timeout_ = nullptr;
     }
 
     /**
@@ -59,6 +66,43 @@ public:
      * @param callback 进程退出时触发的回调（在 io_context 线程上执行）
      */
     void SetOnProcessExit(OnProcessExitCallback callback);
+
+    /**
+     * @brief 设置心跳超时断连回调
+     * @param callback 心跳超时时触发的回调
+     */
+    void SetOnHeartbeatTimeout(OnHeartbeatTimeoutCallback callback);
+
+    /**
+     * @brief 设置关联的插件 GUID
+     * @param guid 插件 GUID
+     */
+    void SetAssociatedGuid(DasGuid guid);
+
+    /**
+     * @brief 获取关联的插件 GUID
+     * @return DasGuid 关联的插件 GUID
+     */
+    [[nodiscard]]
+    DasGuid GetAssociatedGuid() const;
+
+    /**
+     * @brief 触发心跳超时回调
+     *
+     * 由 ConnectionManager 在心跳超时时调用。
+     * 内部调用 on_heartbeat_timeout_ 回调（传递 associated_guid_）。
+     * 回调在调用线程上同步执行。
+     */
+    void NotifyHeartbeatTimeout();
+
+    /**
+     * @brief 终止 Host 进程（不发送 GOODBYE）
+     *
+     * 用于心跳超时场景，直接 terminate 进程而不发 GOODBYE 消息。
+     * 与 Stop() 不同，此方法不会尝试优雅关闭。
+     * 进程句柄被释放以避免阻塞。
+     */
+    void TerminateIfRunning();
 
     HostLauncher(const HostLauncher&) = delete;
     HostLauncher& operator=(const HostLauncher&) = delete;
@@ -169,9 +213,11 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 
-    uint16_t              session_id_ = 0;
-    OnRegisterCallback    on_register_;
-    OnProcessExitCallback on_process_exit_;
+    uint16_t                   session_id_ = 0;
+    OnRegisterCallback         on_register_;
+    OnProcessExitCallback      on_process_exit_;
+    OnHeartbeatTimeoutCallback on_heartbeat_timeout_;
+    DasGuid                    associated_guid_{};
 };
 DAS_CORE_IPC_NS_END
 
