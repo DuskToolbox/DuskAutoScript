@@ -240,6 +240,7 @@ DasResult PluginManager::LoadPlugin(
         feature_info.iid = GetIidForFeature(feature);
         feature_info.session_id = session_id_;
         feature_info.plugin_name = normalized_path.stem().string();
+        feature_info.plugin_guid = desc->guid;
 
         // 创建 Feature 接口
         DasPtr<IDasBase> p_interface = nullptr;

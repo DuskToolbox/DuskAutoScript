@@ -245,6 +245,8 @@ TEST_F(PluginManagerFeatureTest, FeatureInfoContainsPluginGuid)
 
     // plugin_guid 应该非零（与 manifest.json 中的 GUID 匹配）
     DasGuid zero_guid{};
-    EXPECT_FALSE(std::memcmp(&input_span[0]->plugin_guid, &zero_guid, sizeof(DasGuid)) == 0)
+    EXPECT_FALSE(
+        std::memcmp(&input_span[0]->plugin_guid, &zero_guid, sizeof(DasGuid))
+        == 0)
         << "plugin_guid should be populated after LoadPlugin";
 }

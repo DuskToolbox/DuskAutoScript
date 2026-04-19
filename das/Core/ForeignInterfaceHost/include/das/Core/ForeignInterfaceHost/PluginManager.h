@@ -37,6 +37,7 @@ struct FeatureInfo
     Core::IPC::ObjectId object_id;   // 在 RemoteObjectRegistry 中的对象 ID
     uint16_t            session_id;  // 所属会话 ID
     std::string         plugin_name; // 所属插件名称
+    DasGuid             plugin_guid; // 所属插件 GUID
 };
 
 /**
