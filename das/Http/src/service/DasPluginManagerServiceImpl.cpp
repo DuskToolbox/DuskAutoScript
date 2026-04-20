@@ -35,7 +35,7 @@ namespace Das::Http
         return plugin_manager_service_.CreateCaptureManager(
             p_environment_config,
             &settings_service_,
-            reinterpret_cast<void**>(pp_out_capture_manager));
+            pp_out_capture_manager);
     }
 
 } // namespace Das::Http

@@ -1,9 +1,16 @@
 #ifndef DAS_PLUGIN_MANAGER_SERVICE_H
 #define DAS_PLUGIN_MANAGER_SERVICE_H
 
+#include <das/DasString.hpp>
 #include <das/IDasBase.h>
+#include <das/IDasSettingsService.h>
 #include <string>
 #include <vector>
+
+namespace Das::ExportInterface
+{
+    DAS_INTERFACE IDasCaptureManager;
+}
 
 DAS_DEFINE_GUID(
     DAS_IID_PLUGIN_MANAGER_SERVICE,
@@ -31,13 +38,10 @@ DAS_INTERFACE IDasPluginManagerService : public IDasBase
     GetPluginSettingsFieldNames(const DasGuid& plugin_guid) const = 0;
 
     // Create capture manager (hides FeatureInfo/internal iteration)
-    // p_environment_config: IDasReadOnlyString*
-    // p_settings_service: IDasSettingsService*
-    // pp_out: IDasCaptureManager**
     DAS_METHOD CreateCaptureManager(
-        void*  p_environment_config,
-        void*  p_settings_service,
-        void** pp_out) = 0;
+        IDasReadOnlyString * p_environment_config,
+        IDasSettingsService * p_settings_service,
+        Das::ExportInterface::IDasCaptureManager * *pp_out) = 0;
 };
 
 #endif // DAS_PLUGIN_MANAGER_SERVICE_H

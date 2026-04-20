@@ -24,9 +24,9 @@ public:
     std::vector<std::string> GetPluginSettingsFieldNames(
         const DasGuid& plugin_guid) const override;
     DasResult CreateCaptureManager(
-        void*  p_environment_config,
-        void*  p_settings_service,
-        void** pp_out) override;
+        IDasReadOnlyString*                        p_environment_config,
+        IDasSettingsService*                       p_settings_service,
+        Das::ExportInterface::IDasCaptureManager** pp_out) override;
 
 private:
     std::atomic<uint32_t> ref_count_{0};
