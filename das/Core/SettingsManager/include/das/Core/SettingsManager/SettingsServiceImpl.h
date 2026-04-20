@@ -4,6 +4,7 @@
 #include <atomic>
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/IDasSettingsService.h>
+#include <nlohmann/json.hpp>
 
 DAS_CORE_SETTINGS_MANAGER_NS_BEGIN
 
@@ -20,31 +21,40 @@ public:
     QueryInterface(const DasGuid& iid, void** pp_out) override;
 
     // IDasSettingsService
-    nlohmann::json GetGlobalSettings() override;
-    DasResult      UpdateGlobalSettings(const nlohmann::json& data) override;
-    nlohmann::json GetProfileList() override;
-    DasResult      CreateProfile(const std::string& profile_id) override;
-    DasResult      DeleteProfile(const std::string& profile_id) override;
-    nlohmann::json GetProfile(const std::string& profile_id) override;
-    DasResult      UpdateProfile(
-         const std::string&    profile_id,
-         const nlohmann::json& data) override;
-    nlohmann::json GetPluginSettings(
-        const std::string& profile_id,
-        const std::string& guid) override;
-    DasResult UpdatePluginSettings(
-        const std::string&    profile_id,
-        const std::string&    guid,
-        const nlohmann::json& data) override;
-    nlohmann::json GetPluginSettingsField(
-        const std::string& profile_id,
-        const std::string& guid,
-        const std::string& field_name) override;
-    DasResult UpdatePluginSettingsField(
-        const std::string&    profile_id,
-        const std::string&    guid,
-        const std::string&    field_name,
-        const nlohmann::json& value) override;
+    DAS_IMPL GetGlobalSettings(
+        Das::ExportInterface::IDasJson** pp_out) override;
+    DAS_IMPL UpdateGlobalSettings(
+        Das::ExportInterface::IDasJson* p_data) override;
+
+    DAS_IMPL GetProfileList(Das::ExportInterface::IDasJson** pp_out) override;
+    DAS_IMPL CreateProfile(IDasReadOnlyString* p_profile_id) override;
+    DAS_IMPL DeleteProfile(IDasReadOnlyString* p_profile_id) override;
+    DAS_IMPL GetProfile(
+        IDasReadOnlyString*              p_profile_id,
+        Das::ExportInterface::IDasJson** pp_out) override;
+    DAS_IMPL UpdateProfile(
+        IDasReadOnlyString*             p_profile_id,
+        Das::ExportInterface::IDasJson* p_data) override;
+
+    DAS_IMPL GetPluginSettings(
+        IDasReadOnlyString*              p_profile_id,
+        IDasReadOnlyString*              p_guid,
+        Das::ExportInterface::IDasJson** pp_out) override;
+    DAS_IMPL UpdatePluginSettings(
+        IDasReadOnlyString*             p_profile_id,
+        IDasReadOnlyString*             p_guid,
+        Das::ExportInterface::IDasJson* p_data) override;
+
+    DAS_IMPL GetPluginSettingsField(
+        IDasReadOnlyString*              p_profile_id,
+        IDasReadOnlyString*              p_guid,
+        IDasReadOnlyString*              p_field_name,
+        Das::ExportInterface::IDasJson** pp_out) override;
+    DAS_IMPL UpdatePluginSettingsField(
+        IDasReadOnlyString*             p_profile_id,
+        IDasReadOnlyString*             p_guid,
+        IDasReadOnlyString*             p_field_name,
+        Das::ExportInterface::IDasJson* p_value) override;
 
 private:
     std::atomic<uint32_t> ref_count_{0};
