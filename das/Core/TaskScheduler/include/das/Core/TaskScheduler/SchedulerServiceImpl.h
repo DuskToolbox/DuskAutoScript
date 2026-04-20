@@ -20,8 +20,9 @@ namespace Das::Core::TaskScheduler
 
         // IDasSchedulerService
         DasResult Initialize(
-            const std::filesystem::path& plugin_dir,
-            const std::vector<DasGuid>&  disabled_guids) override;
+            IDasReadOnlyString*                           p_plugin_dir,
+            Das::ExportInterface::IDasReadOnlyGuidVector* p_disabled_guids)
+            override;
         DasResult      Enable() override;
         DasResult      Disable() override;
         SchedulerState Status() const override;

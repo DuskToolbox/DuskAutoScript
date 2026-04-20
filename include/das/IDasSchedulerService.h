@@ -1,8 +1,13 @@
 #pragma once
 
 #include <das/IDasBase.h>
-#include <filesystem>
-#include <vector>
+
+struct IDasReadOnlyString;
+
+namespace Das::ExportInterface
+{
+    DAS_INTERFACE IDasReadOnlyGuidVector;
+} // namespace Das::ExportInterface
 
 DAS_DEFINE_GUID(
     DAS_IID_SCHEDULER_SERVICE,
@@ -28,10 +33,10 @@ DAS_INTERFACE IDasSchedulerService : public IDasBase
         Running = 1,
     };
 
-    virtual DasResult Initialize(
-        const std::filesystem::path& plugin_dir,
-        const std::vector<DasGuid>&  disabled_guids) = 0;
-    virtual DasResult      Enable() = 0;
-    virtual DasResult      Disable() = 0;
-    virtual SchedulerState Status() const = 0;
+    DAS_METHOD Initialize(
+        IDasReadOnlyString * p_plugin_dir,
+        Das::ExportInterface::IDasReadOnlyGuidVector * p_disabled_guids) = 0;
+    DAS_METHOD Enable() = 0;
+    DAS_METHOD Disable() = 0;
+    DAS_METHOD_(SchedulerState) Status() const = 0;
 };

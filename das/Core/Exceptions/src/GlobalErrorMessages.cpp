@@ -40,6 +40,7 @@ namespace Details
             {DAS_E_INTERNAL_FATAL_ERROR, "Internal fatal error"},
             {DAS_E_NOT_FOUND, "Not found"},
             {DAS_E_CAPTURE_FAILED, "Capture failed"},
+            {DAS_E_ACCESS_DENIED, "Access denied"},
     };
 }
 
