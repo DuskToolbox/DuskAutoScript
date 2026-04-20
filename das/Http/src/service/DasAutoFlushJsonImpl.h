@@ -3,6 +3,7 @@
 #include <das/IDasSettingsService.h>
 #include <das/_autogen/idl/abi/DasJson.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasJson.Implements.hpp>
+#include <nlohmann/json.hpp>
 #include <string>
 #include <unordered_set>
 
@@ -12,7 +13,7 @@ namespace Das::Http
     /**
      * @brief IDasJson 实现：通过 IDasSettingsService 读写，每次 Set 自动落盘。
      * 持有 IDasSettingsService& 引用，调用方需保证接口实现存活。
-     * 白名单外的字段访问返回 DAS_E_PERMISSION_DENIED。
+     * 白名单外的字段访问返回 DAS_E_ACCESS_DENIED。
      * 支持 path_prefix_ 实现嵌套 JSON 子对象访问。
      */
     class DasAutoFlushJsonImpl final

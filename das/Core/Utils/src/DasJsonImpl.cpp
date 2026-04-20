@@ -1063,7 +1063,7 @@ DasResult CreateEmptyDasJson(Das::ExportInterface::IDasJson** pp_out_json)
     }
 }
 
-DasResult CloneDasJsonFromCopy(
+DAS_C_API DasResult CloneDasJsonFromCopy(
     const nlohmann::json&            src,
     Das::ExportInterface::IDasJson** pp_out_json)
 {
@@ -1084,7 +1084,7 @@ DasResult CloneDasJsonFromCopy(
     }
 }
 
-DasResult ExtractNlohmannJson(
+DAS_C_API DasResult ExtractNlohmannJson(
     Das::ExportInterface::IDasJson* p_json,
     nlohmann::json&                 out)
 {

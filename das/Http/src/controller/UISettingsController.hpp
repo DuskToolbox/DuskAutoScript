@@ -3,9 +3,16 @@
 
 #include "Config.h"
 #include "beast/Request.hpp"
+#include <das/DasPtr.hpp>
+#include <das/DasString.hpp>
 #include <das/IDasSettingsService.h>
 #include <nlohmann/json.hpp>
 #include <string>
+
+// Defined in DasJsonImpl.cpp, exported via DAS_C_API from libDasCore.dll
+extern "C" DasResult CloneDasJsonFromCopy(
+    const nlohmann::json&            src,
+    Das::ExportInterface::IDasJson** pp_out_json);
 
 namespace Das::Http
 {
@@ -19,8 +26,28 @@ namespace Das::Http
 
         Beast::HttpResponse V1SettingsGet(const Beast::HttpRequest& request)
         {
-            auto json = settings_service_.GetGlobalSettings();
-            return Beast::HttpResponse::CreateSuccessResponse(json);
+            DasPtr<Das::ExportInterface::IDasJson> json;
+            auto result = settings_service_.GetGlobalSettings(json.Put());
+            if (DAS::IsFailed(result))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    result,
+                    "Failed to get global settings");
+            }
+
+            IDasReadOnlyString* p_str = nullptr;
+            auto                to_str_result = json->ToString(-1, &p_str);
+            if (DAS::IsFailed(to_str_result))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    to_str_result,
+                    "Failed to serialize settings");
+            }
+            const char* c_str = nullptr;
+            p_str->GetUtf8(&c_str);
+            auto parsed = nlohmann::json::parse(c_str);
+            p_str->Release();
+            return Beast::HttpResponse::CreateSuccessResponse(parsed);
         }
 
         Beast::HttpResponse V1SettingsUpdate(const Beast::HttpRequest& request)
@@ -33,7 +60,17 @@ namespace Das::Http
                     "Invalid request body");
             }
 
-            auto result = settings_service_.UpdateGlobalSettings(body);
+            DasPtr<Das::ExportInterface::IDasJson> json_data;
+            auto clone_result = CloneDasJsonFromCopy(body, json_data.Put());
+            if (DAS::IsFailed(clone_result))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    clone_result,
+                    "Failed to clone JSON data");
+            }
+
+            auto result =
+                settings_service_.UpdateGlobalSettings(json_data.Get());
             if (DAS::IsFailed(result))
             {
                 return Beast::HttpResponse::CreateErrorResponse(

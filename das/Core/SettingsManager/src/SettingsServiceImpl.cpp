@@ -1,9 +1,19 @@
+#include <das/Core/Logger/Logger.h>
 #include <das/Core/SettingsManager/SettingsServiceImpl.h>
-#include <das/DasApi.h>
 #include <das/DasExport.h>
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
+#include <das/_autogen/idl/abi/DasJson.h>
 #include <new>
+
+// These functions are defined in DasJsonImpl.cpp, exported via DAS_C_API.
+extern "C" DasResult CloneDasJsonFromCopy(
+    const nlohmann::json&            src,
+    Das::ExportInterface::IDasJson** pp_out_json);
+
+extern "C" DasResult ExtractNlohmannJson(
+    Das::ExportInterface::IDasJson* p_json,
+    nlohmann::json&                 out);
 
 DAS_CORE_SETTINGS_MANAGER_NS_BEGIN
 
@@ -71,40 +81,14 @@ namespace
         Das::ExportInterface::IDasJson** pp_out)
     {
         DAS_UTILS_CHECK_POINTER(pp_out)
-
-        auto dump =
-            json.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
-        return ParseDasJsonFromString(dump.c_str(), pp_out);
+        return CloneDasJsonFromCopy(json, pp_out);
     }
 
     DasResult IDasJsonToNlohmann(
         Das::ExportInterface::IDasJson* p_data,
         nlohmann::json&                 out)
     {
-        DAS_UTILS_CHECK_POINTER(p_data)
-
-        IDasReadOnlyString* p_str = nullptr;
-        auto                result = p_data->ToString(-1, &p_str);
-        if (DAS::IsFailed(result))
-        {
-            return result;
-        }
-
-        std::string json_str = ToString(p_str);
-        if (p_str)
-        {
-            p_str->Release();
-        }
-
-        try
-        {
-            out = nlohmann::json::parse(json_str);
-            return DAS_S_OK;
-        }
-        catch (const nlohmann::json::exception&)
-        {
-            return DAS_E_INVALID_JSON;
-        }
+        return ExtractNlohmannJson(p_data, out);
     }
 } // namespace
 
@@ -114,7 +98,7 @@ DasResult SettingsServiceImpl::GetGlobalSettings(
     Das::ExportInterface::IDasJson** pp_out)
 {
     DAS_UTILS_CHECK_POINTER(pp_out)
-    auto& json = mgr_.GetGlobalSettingsJson();
+    auto json = mgr_.GetGlobalSettingsJson();
     return JsonToIDasJson(json, pp_out);
 }
 
@@ -136,7 +120,7 @@ DasResult SettingsServiceImpl::GetProfileList(
     Das::ExportInterface::IDasJson** pp_out)
 {
     DAS_UTILS_CHECK_POINTER(pp_out)
-    auto& json = mgr_.GetProfileListJson();
+    auto json = mgr_.GetProfileListJson();
     return JsonToIDasJson(json, pp_out);
 }
 
@@ -158,7 +142,7 @@ DasResult SettingsServiceImpl::GetProfile(
 {
     DAS_UTILS_CHECK_POINTER(pp_out)
     DAS_UTILS_CHECK_POINTER(p_profile_id)
-    auto& json = mgr_.GetProfileJson(ToString(p_profile_id));
+    auto json = mgr_.GetProfileJson(ToString(p_profile_id));
     return JsonToIDasJson(json, pp_out);
 }
 
@@ -186,7 +170,7 @@ DasResult SettingsServiceImpl::GetPluginSettings(
     DAS_UTILS_CHECK_POINTER(pp_out)
     DAS_UTILS_CHECK_POINTER(p_profile_id)
     DAS_UTILS_CHECK_POINTER(p_guid)
-    auto& json =
+    auto json =
         mgr_.GetPluginSettingsJson(ToString(p_profile_id), ToString(p_guid));
     return JsonToIDasJson(json, pp_out);
 }
@@ -222,7 +206,7 @@ DasResult SettingsServiceImpl::GetPluginSettingsField(
     DAS_UTILS_CHECK_POINTER(p_profile_id)
     DAS_UTILS_CHECK_POINTER(p_guid)
     DAS_UTILS_CHECK_POINTER(p_field_name)
-    auto& json = mgr_.GetPluginSettingsFieldJson(
+    auto json = mgr_.GetPluginSettingsFieldJson(
         ToString(p_profile_id),
         ToString(p_guid),
         ToString(p_field_name));

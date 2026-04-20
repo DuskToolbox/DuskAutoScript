@@ -2,8 +2,15 @@
 
 #include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
 #include <das/Core/Logger/Logger.h>
+#include <das/DasPtr.hpp>
+#include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
 #include <nlohmann/json.hpp>
+
+// Defined in DasJsonImpl.cpp, exported via DAS_C_API from libDasCore.dll
+extern "C" DasResult CloneDasJsonFromCopy(
+    const nlohmann::json&            src,
+    Das::ExportInterface::IDasJson** pp_out_json);
 
 using Das::Utils::ToU8StringWithoutOwnership;
 
@@ -42,6 +49,52 @@ namespace Das::Http
             default:
                 return DAS_TYPE_UNSUPPORTED;
             }
+        }
+
+        std::string ToStringFromReadOnly(IDasReadOnlyString* p_str)
+        {
+            if (!p_str)
+            {
+                return {};
+            }
+            const char* c_str = nullptr;
+            auto        result = p_str->GetUtf8(&c_str);
+            if (DAS::IsFailed(result) || !c_str)
+            {
+                return {};
+            }
+            return std::string(c_str);
+        }
+
+        nlohmann::json ExtractJsonFromIDasJson(IDasJson* p_json)
+        {
+            if (!p_json)
+            {
+                return {};
+            }
+            IDasReadOnlyString* p_str = nullptr;
+            auto                result = p_json->ToString(-1, &p_str);
+            if (DAS::IsFailed(result) || !p_str)
+            {
+                return {};
+            }
+            std::string json_str = ToStringFromReadOnly(p_str);
+            p_str->Release();
+            try
+            {
+                return nlohmann::json::parse(json_str);
+            }
+            catch (const nlohmann::json::exception&)
+            {
+                return {};
+            }
+        }
+
+        DasResult CreateReadOnlyString(
+            const char*                 str,
+            DasPtr<IDasReadOnlyString>& out)
+        {
+            return CreateIDasReadOnlyStringFromUtf8(str, out.Put());
         }
 
     } // namespace
@@ -103,42 +156,93 @@ namespace Das::Http
             DAS_CORE_LOG_ERROR(
                 "Field '{}' is not in whitelist. Access denied.",
                 full_path);
-            return DAS_E_PERMISSION_DENIED;
+            return DAS_E_ACCESS_DENIED;
         }
         return DAS_S_OK;
     }
 
     nlohmann::json DasAutoFlushJsonImpl::GetField(const std::string& full_path)
     {
-        return settings_service_.GetPluginSettingsField(
-            profile_id_,
-            plugin_guid_,
-            full_path);
+        DasPtr<IDasReadOnlyString> p_profile_id;
+        CreateReadOnlyString(profile_id_.c_str(), p_profile_id);
+        DasPtr<IDasReadOnlyString> p_guid;
+        CreateReadOnlyString(plugin_guid_.c_str(), p_guid);
+        DasPtr<IDasReadOnlyString> p_field;
+        CreateReadOnlyString(full_path.c_str(), p_field);
+
+        DasPtr<IDasJson> json_result;
+        auto             result = settings_service_.GetPluginSettingsField(
+            p_profile_id.Get(),
+            p_guid.Get(),
+            p_field.Get(),
+            json_result.Put());
+        if (DAS::IsFailed(result))
+        {
+            return {};
+        }
+        return ExtractJsonFromIDasJson(json_result.Get());
     }
 
     DasResult DasAutoFlushJsonImpl::SetField(
         const std::string&    full_path,
         const nlohmann::json& value)
     {
+        DasPtr<IDasReadOnlyString> p_profile_id;
+        CreateReadOnlyString(profile_id_.c_str(), p_profile_id);
+        DasPtr<IDasReadOnlyString> p_guid;
+        CreateReadOnlyString(plugin_guid_.c_str(), p_guid);
+        DasPtr<IDasReadOnlyString> p_field;
+        CreateReadOnlyString(full_path.c_str(), p_field);
+
+        DasPtr<IDasJson> json_value;
+        auto             result = CloneDasJsonFromCopy(value, json_value.Put());
+        if (DAS::IsFailed(result))
+        {
+            return result;
+        }
+
         return settings_service_.UpdatePluginSettingsField(
-            profile_id_,
-            plugin_guid_,
-            full_path,
-            value);
+            p_profile_id.Get(),
+            p_guid.Get(),
+            p_field.Get(),
+            json_value.Get());
     }
 
     nlohmann::json DasAutoFlushJsonImpl::GetCurrentJson()
     {
+        DasPtr<IDasReadOnlyString> p_profile_id;
+        CreateReadOnlyString(profile_id_.c_str(), p_profile_id);
+        DasPtr<IDasReadOnlyString> p_guid;
+        CreateReadOnlyString(plugin_guid_.c_str(), p_guid);
+
         if (path_prefix_.empty())
         {
-            return settings_service_.GetPluginSettings(
-                profile_id_,
-                plugin_guid_);
+            DasPtr<IDasJson> json_result;
+            auto             result = settings_service_.GetPluginSettings(
+                p_profile_id.Get(),
+                p_guid.Get(),
+                json_result.Put());
+            if (DAS::IsFailed(result))
+            {
+                return {};
+            }
+            return ExtractJsonFromIDasJson(json_result.Get());
         }
-        return settings_service_.GetPluginSettingsField(
-            profile_id_,
-            plugin_guid_,
-            path_prefix_);
+
+        DasPtr<IDasReadOnlyString> p_field;
+        CreateReadOnlyString(path_prefix_.c_str(), p_field);
+
+        DasPtr<IDasJson> json_result;
+        auto             result = settings_service_.GetPluginSettingsField(
+            p_profile_id.Get(),
+            p_guid.Get(),
+            p_field.Get(),
+            json_result.Put());
+        if (DAS::IsFailed(result))
+        {
+            return {};
+        }
+        return ExtractJsonFromIDasJson(json_result.Get());
     }
 
     // ── GetByName ──
@@ -291,7 +395,7 @@ namespace Das::Http
             DAS_CORE_LOG_ERROR(
                 "Field '{}' is not in whitelist. Access denied.",
                 full_path);
-            return DAS_E_PERMISSION_DENIED;
+            return DAS_E_ACCESS_DENIED;
         }
 
         auto field = GetField(full_path);
@@ -822,14 +926,10 @@ namespace Das::Http
 
         if (path_prefix_.empty())
         {
-            auto   json = GetCurrentJson();
             size_t count = 0;
             for (const auto& key : whitelist_)
             {
-                auto field = settings_service_.GetPluginSettingsField(
-                    profile_id_,
-                    plugin_guid_,
-                    key);
+                auto field = GetField(key);
                 if (!field.is_null())
                 {
                     ++count;
@@ -856,14 +956,10 @@ namespace Das::Http
         {
             if (path_prefix_.empty())
             {
-                auto           full_settings = GetCurrentJson();
                 nlohmann::json filtered = nlohmann::json::object();
                 for (const auto& key : whitelist_)
                 {
-                    auto field = settings_service_.GetPluginSettingsField(
-                        profile_id_,
-                        plugin_guid_,
-                        key);
+                    auto field = GetField(key);
                     if (!field.is_null())
                     {
                         // Navigate dot-path to set in filtered output
@@ -910,6 +1006,6 @@ namespace Das::Http
 
     // ── Clear ──
 
-    DasResult DasAutoFlushJsonImpl::Clear() { return DAS_E_PERMISSION_DENIED; }
+    DasResult DasAutoFlushJsonImpl::Clear() { return DAS_E_ACCESS_DENIED; }
 
 } // namespace Das::Http
