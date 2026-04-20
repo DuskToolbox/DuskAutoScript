@@ -26,6 +26,7 @@ namespace Das::ExportInterface
     struct IDasInitializeIDasPluginManagerCallback;
     struct IDasInitializeIDasPluginManagerWaiter;
     struct IDasVariantVector;
+    struct IDasStringVector;
 } // namespace Das::ExportInterface
 
 DAS_INTERFACE IDasSettingsService;
@@ -112,6 +113,9 @@ DAS_C_API DasResult CreateIDasGuidVector(
     const DasGuid*                         p_data,
     size_t                                 size,
     Das::ExportInterface::IDasGuidVector** pp_out_guid);
+
+DAS_C_API DasResult
+CreateIDasStringVector(Das::ExportInterface::IDasStringVector** pp_out_vector);
 
 DAS_C_API DasResult InitializeIDasPluginManager(
     Das::ExportInterface::IDasReadOnlyGuidVector* p_ignore_plugins_guid,

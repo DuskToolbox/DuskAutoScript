@@ -1,0 +1,13 @@
+import "DasBasicTypes.idl";
+
+namespace Das::ExportInterface {
+
+[uuid("3DFACD7E-1FD3-4DFB-A880-1981B30ED172")]
+interface IDasStringVector : IDasBase {
+    DasResult Size([out] uint64_t* p_out_size);
+    DasResult At(uint64_t index, [out] IDasReadOnlyString** pp_out_string);
+    DasResult Find(IDasReadOnlyString* p_string);
+    DasResult PushBack(IDasReadOnlyString* p_string);
+}
+
+} // namespace Das::ExportInterface
