@@ -18,8 +18,8 @@ namespace Das::Http
     {
     public:
         explicit DasSchedulerController(
-            Das::Core::TaskScheduler::IDasSchedulerService& scheduler,
-            const std::filesystem::path&                    plugin_dir)
+            IDasSchedulerService&        scheduler,
+            const std::filesystem::path& plugin_dir)
             : scheduler_(scheduler), plugin_dir_(plugin_dir)
         {
         }
@@ -77,7 +77,7 @@ namespace Das::Http
             auto           state = scheduler_.Status();
             nlohmann::json data;
             data["state"] =
-                (state == Das::Core::TaskScheduler::SchedulerState::Running)
+                (state == IDasSchedulerService::SchedulerState::Running)
                     ? "running"
                     : "stopped";
             return Beast::HttpResponse::CreateSuccessResponse(data);
@@ -142,8 +142,8 @@ namespace Das::Http
         }
 
     private:
-        Das::Core::TaskScheduler::IDasSchedulerService& scheduler_;
-        std::filesystem::path                           plugin_dir_;
+        IDasSchedulerService& scheduler_;
+        std::filesystem::path plugin_dir_;
     };
 
 } // namespace Das::Http

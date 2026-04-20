@@ -34,6 +34,7 @@ namespace Das::Http
         // Interface pointers via Create factory (per D-06)
         DasPtr<IDasSettingsService>      settings_service;
         DasPtr<IDasPluginManagerService> plugin_mgr_service;
+        DasPtr<IDasSchedulerService>     scheduler_svc;
 
         // IPC context (process-level)
         std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context;
@@ -51,6 +52,7 @@ namespace Das::Http
             CreateDasPluginManagerService(
                 plugin_manager,
                 plugin_mgr_service.Put());
+            CreateDasSchedulerService(scheduler_service, scheduler_svc.Put());
         }
     };
 

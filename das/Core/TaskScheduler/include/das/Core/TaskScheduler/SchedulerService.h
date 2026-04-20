@@ -10,6 +10,7 @@
 #include <das/IDasSchedulerService.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <das/_autogen/idl/abi/IDasTask.h>
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -19,7 +20,10 @@
 namespace Das::Core::TaskScheduler
 {
 
-    class DAS_API SchedulerService : public IDasSchedulerService
+    // SchedulerState is defined in IDasSchedulerService
+    using SchedulerState = IDasSchedulerService::SchedulerState;
+
+    class DAS_API SchedulerService
     {
     public:
         explicit SchedulerService(
@@ -28,13 +32,12 @@ namespace Das::Core::TaskScheduler
         void SetIpcContext(
             DAS::Core::IPC::MainProcess::IIpcContext& ipc_context);
 
-        // IDasSchedulerService
         DasResult Initialize(
             const std::filesystem::path& plugin_dir,
-            const std::vector<DasGuid>&  disabled_guids) override;
-        DasResult      Enable() override;
-        DasResult      Disable() override;
-        SchedulerState Status() const override;
+            const std::vector<DasGuid>&  disabled_guids);
+        DasResult      Enable();
+        DasResult      Disable();
+        SchedulerState Status() const;
 
     private:
         void StartTickTimer();

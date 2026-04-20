@@ -30,6 +30,7 @@ namespace Das::ExportInterface
 
 DAS_INTERFACE IDasSettingsService;
 DAS_INTERFACE IDasPluginManagerService;
+struct IDasSchedulerService;
 
 #ifndef SWIG
 
@@ -237,6 +238,10 @@ namespace Das::Core::ForeignInterfaceHost
 {
     class PluginManager;
 }
+namespace Das::Core::TaskScheduler
+{
+    class SchedulerService;
+}
 
 /**
  * @brief 创建 IDasSettingsService 实例
@@ -257,6 +262,16 @@ DAS_C_API DasResult CreateDasSettingsService(
 DAS_C_API DasResult CreateDasPluginManagerService(
     Das::Core::ForeignInterfaceHost::PluginManager& mgr,
     IDasPluginManagerService**                      pp_out);
+
+/**
+ * @brief 创建 IDasSchedulerService 实例
+ * @param mgr SchedulerService 具体类引用
+ * @param pp_out 输出接口指针（调用者必须 Release）
+ * @return DAS_S_OK 成功
+ */
+DAS_C_API DasResult CreateDasSchedulerService(
+    Das::Core::TaskScheduler::SchedulerService& mgr,
+    IDasSchedulerService**                      pp_out);
 
 #define DAS_LOG_ERROR(...) DAS_LOG_WITH_SOURCE_LOCATION(Error, __VA_ARGS__)
 #define DAS_LOG_WARNING(...) DAS_LOG_WITH_SOURCE_LOCATION(Warning, __VA_ARGS__)

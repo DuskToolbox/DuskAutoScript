@@ -130,7 +130,7 @@ namespace Das::Http
                 *components.settings_service);
         auto scheduler_controller =
             std::make_shared<Das::Http::DasSchedulerController>(
-                components.scheduler_service,
+                *components.scheduler_svc,
                 components.plugin_dir);
 
         // 注册路由
