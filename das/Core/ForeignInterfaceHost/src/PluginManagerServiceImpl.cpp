@@ -105,7 +105,8 @@ DasResult PluginManagerServiceImpl::GetPluginSettingsFieldNames(
             DAS_CORE_LOG_WARN(
                 "Failed to create IDasReadOnlyString for field name: {}",
                 setting.name);
-            continue;
+            raw_result->Release();
+            return cr;
         }
         raw_result->PushBack(field_name.Get());
     }
