@@ -19,19 +19,26 @@ public:
     ~SettingsManager() = default;
 
     // Global Settings (settings/ui.json)
-    std::string GetGlobalSettings();
-    DasResult   UpdateGlobalSettings(const std::string& json_str);
+    std::string  GetGlobalSettings();
+    nlohmann::json GetGlobalSettingsJson();
+    DasResult    UpdateGlobalSettings(const std::string& json_str);
+    DasResult    UpdateGlobalSettingsJson(const nlohmann::json& data);
 
     // Profile management (settings/${pid}/)
-    std::string GetProfileList();
-    DasResult   CreateProfile(const std::string& profile_id);
-    DasResult   DeleteProfile(const std::string& profile_id);
+    std::string  GetProfileList();
+    nlohmann::json GetProfileListJson();
+    DasResult    CreateProfile(const std::string& profile_id);
+    DasResult    DeleteProfile(const std::string& profile_id);
 
     // Profile data (settings/${pid}/ui.json)
-    std::string GetProfile(const std::string& profile_id);
-    DasResult   UpdateProfile(
+    std::string  GetProfile(const std::string& profile_id);
+    nlohmann::json GetProfileJson(const std::string& profile_id);
+    DasResult    UpdateProfile(
         const std::string& profile_id,
         const std::string& json_str);
+    DasResult    UpdateProfileJson(
+        const std::string&    profile_id,
+        const nlohmann::json& data);
 
     // Plugin settings (settings/${pid}/${guid}.json)
     nlohmann::json GetPluginSettingsJson(
@@ -44,6 +51,10 @@ public:
         const std::string& profile_id,
         const std::string& guid,
         const std::string& json_str);
+    DasResult UpdatePluginSettingsJson(
+        const std::string&    profile_id,
+        const std::string&    guid,
+        const nlohmann::json& data);
 
     // Plugin settings field-level access (JSON object, no serialization)
     nlohmann::json GetPluginSettingsFieldJson(
@@ -79,6 +90,9 @@ private:
     static DasResult   WriteJsonFile(
         const std::filesystem::path& path,
         const std::string&           json_str);
+    static DasResult   WriteJsonFile(
+        const std::filesystem::path& path,
+        const nlohmann::json&        data);
 
     std::filesystem::path                           base_dir_;
     nlohmann::json                                  global_settings_cache_;

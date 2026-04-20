@@ -19,18 +19,8 @@ namespace Das::Http
 
         Beast::HttpResponse V1SettingsGet(const Beast::HttpRequest& request)
         {
-            auto json_str = settings_service_.GetGlobalSettings();
-            try
-            {
-                auto json = nlohmann::json::parse(json_str);
-                return Beast::HttpResponse::CreateSuccessResponse(json);
-            }
-            catch (const nlohmann::json::exception&)
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    DAS_E_INVALID_JSON,
-                    "Failed to parse global settings");
-            }
+            auto json = settings_service_.GetGlobalSettings();
+            return Beast::HttpResponse::CreateSuccessResponse(json);
         }
 
         Beast::HttpResponse V1SettingsUpdate(const Beast::HttpRequest& request)
@@ -43,7 +33,7 @@ namespace Das::Http
                     "Invalid request body");
             }
 
-            auto result = settings_service_.UpdateGlobalSettings(body.dump());
+            auto result = settings_service_.UpdateGlobalSettings(body);
             if (DAS::IsFailed(result))
             {
                 return Beast::HttpResponse::CreateErrorResponse(

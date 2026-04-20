@@ -20,30 +20,27 @@ public:
     QueryInterface(const DasGuid& iid, void** pp_out) override;
 
     // IDasSettingsService
-    std::string GetGlobalSettings() override;
-    DasResult   UpdateGlobalSettings(const std::string& json_str) override;
-    std::string GetProfileList() override;
-    DasResult   CreateProfile(const std::string& profile_id) override;
-    DasResult   DeleteProfile(const std::string& profile_id) override;
-    std::string GetProfile(const std::string& profile_id) override;
-    DasResult   UpdateProfile(
-        const std::string& profile_id,
-        const std::string& json_str) override;
-    std::string GetPluginSettings(
+    nlohmann::json GetGlobalSettings() override;
+    DasResult      UpdateGlobalSettings(const nlohmann::json& data) override;
+    nlohmann::json GetProfileList() override;
+    DasResult      CreateProfile(const std::string& profile_id) override;
+    DasResult      DeleteProfile(const std::string& profile_id) override;
+    nlohmann::json GetProfile(const std::string& profile_id) override;
+    DasResult      UpdateProfile(
+         const std::string&    profile_id,
+         const nlohmann::json& data) override;
+    nlohmann::json GetPluginSettings(
         const std::string& profile_id,
         const std::string& guid) override;
     DasResult UpdatePluginSettings(
-        const std::string& profile_id,
-        const std::string& guid,
-        const std::string& json_str) override;
-    nlohmann::json GetPluginSettingsJson(
-        const std::string& profile_id,
-        const std::string& guid) override;
-    nlohmann::json GetPluginSettingsFieldJson(
+        const std::string&    profile_id,
+        const std::string&    guid,
+        const nlohmann::json& data) override;
+    nlohmann::json GetPluginSettingsField(
         const std::string& profile_id,
         const std::string& guid,
         const std::string& field_name) override;
-    DasResult UpdatePluginSettingsFieldJson(
+    DasResult UpdatePluginSettingsField(
         const std::string&    profile_id,
         const std::string&    guid,
         const std::string&    field_name,

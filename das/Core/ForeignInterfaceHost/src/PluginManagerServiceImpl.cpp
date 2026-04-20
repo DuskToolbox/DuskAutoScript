@@ -1,5 +1,5 @@
-#include <das/Core/ForeignInterfaceHost/IDasCaptureManagerImpl.h>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
+#include <das/Core/ForeignInterfaceHost/IDasCaptureManagerImpl.h>
 #include <das/Core/ForeignInterfaceHost/PluginManagerServiceImpl.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasExport.h>
@@ -88,19 +88,14 @@ std::vector<std::string> PluginManagerServiceImpl::GetPluginSettingsFieldNames(
 }
 
 DasResult PluginManagerServiceImpl::CreateCaptureManager(
-    void*  p_environment_config,
-    void*  p_settings_service,
-    void** pp_out)
+    IDasReadOnlyString*                        p_environment_config,
+    IDasSettingsService*                       p_settings_service,
+    Das::ExportInterface::IDasCaptureManager** pp_out)
 {
     if (pp_out == nullptr)
     {
         return DAS_E_INVALID_POINTER;
     }
-
-    auto*  env_config = static_cast<IDasReadOnlyString*>(p_environment_config);
-    auto*  settings_svc = static_cast<IDasSettingsService*>(p_settings_service);
-    auto** pp_out_mgr =
-        reinterpret_cast<Das::ExportInterface::IDasCaptureManager**>(pp_out);
 
     auto capture_features = mgr_.GetFeaturesByType(
         Das::PluginInterface::DAS_PLUGIN_FEATURE_CAPTURE_FACTORY);
@@ -137,7 +132,8 @@ DasResult PluginManagerServiceImpl::CreateCaptureManager(
         }
 
         auto guid_str = DasGuidToStdString(feat->plugin_guid);
-        auto settings_json = settings_svc->GetPluginSettingsJson("0", guid_str);
+        auto settings_json =
+            p_settings_service->GetPluginSettings("0", guid_str);
 
         DAS::DasPtr<IDasReadOnlyString> plugin_config;
         if (!settings_json.is_null())
@@ -156,7 +152,7 @@ DasResult PluginManagerServiceImpl::CreateCaptureManager(
 
         DAS::DasPtr<Das::PluginInterface::IDasCapture> capture;
         const auto create_result = factory->CreateInstance(
-            env_config,
+            p_environment_config,
             plugin_config.Get(),
             capture.Put());
 
@@ -195,7 +191,7 @@ DasResult PluginManagerServiceImpl::CreateCaptureManager(
         capture_mgr->AddInstance(std::move(capture_name), std::move(capture));
     }
 
-    *pp_out_mgr = capture_mgr;
+    *pp_out = capture_mgr;
     capture_mgr->AddRef();
 
     return overall_result;

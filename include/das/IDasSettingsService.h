@@ -24,38 +24,34 @@ DAS_SWIG_EXPORT_ATTRIBUTE(IDasSettingsService)
 DAS_INTERFACE IDasSettingsService : public IDasBase
 {
     // Global Settings (settings/ui.json)
-    DAS_METHOD_(std::string) GetGlobalSettings() = 0;
-    DAS_METHOD UpdateGlobalSettings(const std::string& json_str) = 0;
+    DAS_METHOD_(nlohmann::json) GetGlobalSettings() = 0;
+    DAS_METHOD UpdateGlobalSettings(const nlohmann::json& data) = 0;
 
     // Profile management
-    DAS_METHOD_(std::string) GetProfileList() = 0;
+    DAS_METHOD_(nlohmann::json) GetProfileList() = 0;
     DAS_METHOD CreateProfile(const std::string& profile_id) = 0;
     DAS_METHOD DeleteProfile(const std::string& profile_id) = 0;
-    DAS_METHOD_(std::string) GetProfile(const std::string& profile_id) = 0;
+    DAS_METHOD_(nlohmann::json) GetProfile(const std::string& profile_id) = 0;
     DAS_METHOD UpdateProfile(
-        const std::string& profile_id,
-        const std::string& json_str) = 0;
+        const std::string&    profile_id,
+        const nlohmann::json& data) = 0;
 
-    // Plugin settings (full read/write, string-based)
-    DAS_METHOD_(std::string)
+    // Plugin settings
+    DAS_METHOD_(nlohmann::json)
     GetPluginSettings(const std::string& profile_id, const std::string& guid) =
         0;
     DAS_METHOD UpdatePluginSettings(
-        const std::string& profile_id,
-        const std::string& guid,
-        const std::string& json_str) = 0;
+        const std::string&    profile_id,
+        const std::string&    guid,
+        const nlohmann::json& data) = 0;
 
-    // Plugin settings (field-level, JSON-based)
+    // Plugin settings field-level access
     DAS_METHOD_(nlohmann::json)
-    GetPluginSettingsJson(
-        const std::string& profile_id,
-        const std::string& guid) = 0;
-    DAS_METHOD_(nlohmann::json)
-    GetPluginSettingsFieldJson(
+    GetPluginSettingsField(
         const std::string& profile_id,
         const std::string& guid,
         const std::string& field_name) = 0;
-    DAS_METHOD UpdatePluginSettingsFieldJson(
+    DAS_METHOD UpdatePluginSettingsField(
         const std::string&    profile_id,
         const std::string&    guid,
         const std::string&    field_name,

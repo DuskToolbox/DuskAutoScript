@@ -20,18 +20,8 @@ namespace Das::Http
 
         Beast::HttpResponse GetProfileList(const Beast::HttpRequest& request)
         {
-            auto json_str = settings_service_.GetProfileList();
-            try
-            {
-                auto json = nlohmann::json::parse(json_str);
-                return Beast::HttpResponse::CreateSuccessResponse(json);
-            }
-            catch (const nlohmann::json::exception&)
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    DAS_E_INVALID_JSON,
-                    "Failed to parse profile list");
-            }
+            auto json = settings_service_.GetProfileList();
+            return Beast::HttpResponse::CreateSuccessResponse(json);
         }
 
         Beast::HttpResponse CreateProfile(const Beast::HttpRequest& request)
@@ -86,18 +76,8 @@ namespace Das::Http
                     "Profile ID must be 0 in v1.2");
             }
 
-            auto json_str = settings_service_.GetProfile(pid);
-            try
-            {
-                auto json = nlohmann::json::parse(json_str);
-                return Beast::HttpResponse::CreateSuccessResponse(json);
-            }
-            catch (const nlohmann::json::exception&)
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    DAS_E_INVALID_JSON,
-                    "Failed to parse profile data");
-            }
+            auto json = settings_service_.GetProfile(pid);
+            return Beast::HttpResponse::CreateSuccessResponse(json);
         }
 
         Beast::HttpResponse UpdateProfile(const Beast::HttpRequest& request)
@@ -118,7 +98,7 @@ namespace Das::Http
                     "Invalid request body");
             }
 
-            auto result = settings_service_.UpdateProfile(pid, body.dump());
+            auto result = settings_service_.UpdateProfile(pid, body);
             if (DAS::IsFailed(result))
             {
                 return Beast::HttpResponse::CreateErrorResponse(
@@ -139,18 +119,8 @@ namespace Das::Http
                     "Profile ID must be 0 in v1.2");
             }
 
-            auto json_str = settings_service_.GetPluginSettings(pid, guid);
-            try
-            {
-                auto json = nlohmann::json::parse(json_str);
-                return Beast::HttpResponse::CreateSuccessResponse(json);
-            }
-            catch (const nlohmann::json::exception&)
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    DAS_E_INVALID_JSON,
-                    "Failed to parse plugin settings");
-            }
+            auto json = settings_service_.GetPluginSettings(pid, guid);
+            return Beast::HttpResponse::CreateSuccessResponse(json);
         }
 
         Beast::HttpResponse UpdatePluginSettings(
@@ -174,7 +144,7 @@ namespace Das::Http
             }
 
             auto result =
-                settings_service_.UpdatePluginSettings(pid, guid, body.dump());
+                settings_service_.UpdatePluginSettings(pid, guid, body);
             if (DAS::IsFailed(result))
             {
                 return Beast::HttpResponse::CreateErrorResponse(

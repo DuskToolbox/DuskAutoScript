@@ -44,19 +44,19 @@ SettingsServiceImpl::QueryInterface(const DasGuid& iid, void** pp_out)
     return DAS_E_NO_INTERFACE;
 }
 
-std::string SettingsServiceImpl::GetGlobalSettings()
+nlohmann::json SettingsServiceImpl::GetGlobalSettings()
 {
-    return mgr_.GetGlobalSettings();
+    return mgr_.GetGlobalSettingsJson();
 }
 
-DasResult SettingsServiceImpl::UpdateGlobalSettings(const std::string& json_str)
+DasResult SettingsServiceImpl::UpdateGlobalSettings(const nlohmann::json& data)
 {
-    return mgr_.UpdateGlobalSettings(json_str);
+    return mgr_.UpdateGlobalSettingsJson(data);
 }
 
-std::string SettingsServiceImpl::GetProfileList()
+nlohmann::json SettingsServiceImpl::GetProfileList()
 {
-    return mgr_.GetProfileList();
+    return mgr_.GetProfileListJson();
 }
 
 DasResult SettingsServiceImpl::CreateProfile(const std::string& profile_id)
@@ -69,41 +69,34 @@ DasResult SettingsServiceImpl::DeleteProfile(const std::string& profile_id)
     return mgr_.DeleteProfile(profile_id);
 }
 
-std::string SettingsServiceImpl::GetProfile(const std::string& profile_id)
+nlohmann::json SettingsServiceImpl::GetProfile(const std::string& profile_id)
 {
-    return mgr_.GetProfile(profile_id);
+    return mgr_.GetProfileJson(profile_id);
 }
 
 DasResult SettingsServiceImpl::UpdateProfile(
-    const std::string& profile_id,
-    const std::string& json_str)
+    const std::string&    profile_id,
+    const nlohmann::json& data)
 {
-    return mgr_.UpdateProfile(profile_id, json_str);
+    return mgr_.UpdateProfileJson(profile_id, data);
 }
 
-std::string SettingsServiceImpl::GetPluginSettings(
-    const std::string& profile_id,
-    const std::string& guid)
-{
-    return mgr_.GetPluginSettings(profile_id, guid);
-}
-
-DasResult SettingsServiceImpl::UpdatePluginSettings(
-    const std::string& profile_id,
-    const std::string& guid,
-    const std::string& json_str)
-{
-    return mgr_.UpdatePluginSettings(profile_id, guid, json_str);
-}
-
-nlohmann::json SettingsServiceImpl::GetPluginSettingsJson(
+nlohmann::json SettingsServiceImpl::GetPluginSettings(
     const std::string& profile_id,
     const std::string& guid)
 {
     return mgr_.GetPluginSettingsJson(profile_id, guid);
 }
 
-nlohmann::json SettingsServiceImpl::GetPluginSettingsFieldJson(
+DasResult SettingsServiceImpl::UpdatePluginSettings(
+    const std::string&    profile_id,
+    const std::string&    guid,
+    const nlohmann::json& data)
+{
+    return mgr_.UpdatePluginSettingsJson(profile_id, guid, data);
+}
+
+nlohmann::json SettingsServiceImpl::GetPluginSettingsField(
     const std::string& profile_id,
     const std::string& guid,
     const std::string& field_name)
@@ -111,14 +104,13 @@ nlohmann::json SettingsServiceImpl::GetPluginSettingsFieldJson(
     return mgr_.GetPluginSettingsFieldJson(profile_id, guid, field_name);
 }
 
-DasResult SettingsServiceImpl::UpdatePluginSettingsFieldJson(
+DasResult SettingsServiceImpl::UpdatePluginSettingsField(
     const std::string&    profile_id,
     const std::string&    guid,
     const std::string&    field_name,
     const nlohmann::json& value)
 {
-    return mgr_
-        .UpdatePluginSettingsFieldJson(profile_id, guid, field_name, value);
+    return mgr_.UpdatePluginSettingsFieldJson(profile_id, guid, field_name, value);
 }
 
 DAS_CORE_SETTINGS_MANAGER_NS_END
