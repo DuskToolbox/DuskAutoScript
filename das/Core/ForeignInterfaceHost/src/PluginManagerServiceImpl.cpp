@@ -79,8 +79,8 @@ DasResult PluginManagerServiceImpl::GetPluginSettingsFieldNames(
 {
     DAS_UTILS_CHECK_POINTER(pp_out)
 
-    Das::ExportInterface::IDasStringVector* raw_result = nullptr;
-    auto create_result = CreateIDasStringVector(&raw_result);
+    DAS::DasOutPtr<Das::ExportInterface::IDasStringVector> result(pp_out);
+    auto create_result = CreateIDasStringVector(result.Put());
     if (DAS::IsFailed(create_result))
     {
         return create_result;
@@ -89,8 +89,7 @@ DasResult PluginManagerServiceImpl::GetPluginSettingsFieldNames(
     auto* desc = mgr_.FindPluginPackageByGuid(plugin_guid);
     if (!desc)
     {
-        // Return empty vector, not an error
-        *pp_out = raw_result;
+        result.Keep();
         return DAS_S_OK;
     }
 
@@ -105,13 +104,12 @@ DasResult PluginManagerServiceImpl::GetPluginSettingsFieldNames(
             DAS_CORE_LOG_WARN(
                 "Failed to create IDasReadOnlyString for field name: {}",
                 setting.name);
-            raw_result->Release();
             return cr;
         }
-        raw_result->PushBack(field_name.Get());
+        result->PushBack(field_name.Get());
     }
 
-    *pp_out = raw_result;
+    result.Keep();
     return DAS_S_OK;
 }
 

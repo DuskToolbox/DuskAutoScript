@@ -217,6 +217,112 @@ template <class T>
 DasPtr(T*) -> DasPtr<T>;
 #endif // __cplusplus >= 201703L
 
+/**
+ * @brief Non-copyable smart pointer for COM out-parameter ownership pattern.
+ *
+ * Binds to caller's T** out-parameter at construction (writes nullptr).
+ * The object lives directly at *pp_out; destructor Releases it automatically.
+ * Call Keep() on success paths to relinquish ownership to the caller.
+ * Forgetting Keep() is safe: object is Released, caller gets nullptr.
+ */
+template <class T>
+class DasOutPtr
+{
+    T** pp_out_;
+
+public:
+    /**
+     * @brief Bind to caller's out-parameter. Initializes *pp_out to nullptr.
+     */
+    explicit DasOutPtr(T** pp_out) noexcept : pp_out_(pp_out)
+    {
+        if (pp_out_)
+        {
+            *pp_out_ = nullptr;
+        }
+    }
+
+    DasOutPtr(const DasOutPtr&) = delete;
+    DasOutPtr& operator=(const DasOutPtr&) = delete;
+
+    DasOutPtr(DasOutPtr&& other) noexcept
+        : pp_out_(std::exchange(other.pp_out_, nullptr))
+    {
+    }
+
+    DasOutPtr& operator=(DasOutPtr&& other) noexcept
+    {
+        if (this != std::addressof(other))
+        {
+            if (pp_out_ && *pp_out_)
+            {
+                static_cast<void>((*pp_out_)->Release());
+                *pp_out_ = nullptr;
+            }
+            pp_out_ = std::exchange(other.pp_out_, nullptr);
+        }
+        return *this;
+    }
+
+    /**
+     * @brief Releases *pp_out if still bound.
+     */
+    ~DasOutPtr() noexcept
+    {
+        if (pp_out_ && *pp_out_)
+        {
+            static_cast<void>((*pp_out_)->Release());
+            *pp_out_ = nullptr;
+        }
+    }
+
+    /**
+     * @brief Returns T** for factory out-parameter usage. Releases current
+     * pointer first.
+     */
+    T** Put() noexcept
+    {
+        if (pp_out_ && *pp_out_)
+        {
+            static_cast<void>((*pp_out_)->Release());
+            *pp_out_ = nullptr;
+        }
+        return pp_out_;
+    }
+
+    /**
+     * @brief Confirm the result and relinquish ownership. Destructor will not
+     * Release.
+     */
+    void Keep() noexcept { pp_out_ = nullptr; }
+
+    [[nodiscard]]
+    T* Get() const noexcept
+    {
+        return pp_out_ ? *pp_out_ : nullptr;
+    }
+    [[nodiscard]]
+    T* operator->() const noexcept
+    {
+        return *pp_out_;
+    }
+    [[nodiscard]]
+    T& operator*() const noexcept
+    {
+        return **pp_out_;
+    }
+    [[nodiscard]]
+    explicit operator bool() const noexcept
+    {
+        return pp_out_ && *pp_out_;
+    }
+};
+
+#if __cplusplus >= 201703L
+template <class T>
+DasOutPtr(T**) -> DasOutPtr<T>;
+#endif // __cplusplus >= 201703L
+
 DAS_NS_END
 
 template <class T>
