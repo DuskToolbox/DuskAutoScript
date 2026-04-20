@@ -1,9 +1,9 @@
 #ifndef DAS_HTTP_CONTROLLER_UISETTINGSCONTROLLER_HPP
 #define DAS_HTTP_CONTROLLER_UISETTINGSCONTROLLER_HPP
 
+#include "../service/DasHttpJson.h"
 #include "Config.h"
 #include "beast/Request.hpp"
-#include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/IDasSettingsService.h>
@@ -56,15 +56,9 @@ namespace Das::Http
                     "Invalid request body");
             }
 
-            DasPtr<Das::ExportInterface::IDasJson> json_data;
-            auto                                   clone_result =
-                ParseDasJsonFromString(body.dump().c_str(), json_data.Put());
-            if (DAS::IsFailed(clone_result))
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    clone_result,
-                    "Failed to clone JSON data");
-            }
+            DasPtr<Das::ExportInterface::IDasJson> json_data =
+                DasPtr<Das::ExportInterface::IDasJson>::Attach(
+                    DasHttpJson::MakeRaw(body));
 
             auto result =
                 settings_service_.UpdateGlobalSettings(json_data.Get());

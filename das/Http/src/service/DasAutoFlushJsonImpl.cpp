@@ -1,8 +1,8 @@
 #include "DasAutoFlushJsonImpl.h"
+#include "DasHttpJson.h"
 
 #include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
 #include <das/Core/Logger/Logger.h>
-#include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
@@ -190,13 +190,8 @@ namespace Das::Http
         DasPtr<IDasReadOnlyString> p_field;
         CreateReadOnlyString(full_path.c_str(), p_field);
 
-        DasPtr<IDasJson> json_value;
-        auto             result =
-            ParseDasJsonFromString(value.dump().c_str(), json_value.Put());
-        if (DAS::IsFailed(result))
-        {
-            return result;
-        }
+        DasPtr<IDasJson> json_value =
+            DasPtr<IDasJson>::Attach(DasHttpJson::MakeRaw(value));
 
         return settings_service_.UpdatePluginSettingsField(
             p_profile_id.Get(),

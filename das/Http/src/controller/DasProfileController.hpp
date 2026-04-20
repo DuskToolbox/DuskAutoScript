@@ -1,12 +1,13 @@
 #ifndef DAS_HTTP_CONTROLLER_DASPROFILECONTROLLER_HPP
 #define DAS_HTTP_CONTROLLER_DASPROFILECONTROLLER_HPP
 
+#include "../service/DasHttpJson.h"
 #include "Config.h"
 #include "beast/Request.hpp"
-#include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/IDasSettingsService.h>
+#include <das/Utils/CommonUtils.hpp>
 #include <nlohmann/json.hpp>
 #include <string>
 
@@ -59,7 +60,16 @@ namespace Das::Http
 
             auto profile_id = body["profileId"].get<std::string>();
             DasPtr<IDasReadOnlyString> p_pid;
-            CreateIDasReadOnlyStringFromUtf8(profile_id.c_str(), p_pid.Put());
+            auto                       cr = CreateIDasReadOnlyStringFromUtf8(
+                profile_id.c_str(),
+                p_pid.Put());
+            if (DAS::IsFailed(cr))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    cr,
+                    "Failed to create string");
+            }
+
             auto result = settings_service_.CreateProfile(p_pid.Get());
             if (DAS::IsFailed(result))
             {
@@ -82,7 +92,16 @@ namespace Das::Http
 
             auto profile_id = body["profileId"].get<std::string>();
             DasPtr<IDasReadOnlyString> p_pid;
-            CreateIDasReadOnlyStringFromUtf8(profile_id.c_str(), p_pid.Put());
+            auto                       cr = CreateIDasReadOnlyStringFromUtf8(
+                profile_id.c_str(),
+                p_pid.Put());
+            if (DAS::IsFailed(cr))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    cr,
+                    "Failed to create string");
+            }
+
             auto result = settings_service_.DeleteProfile(p_pid.Get());
             if (DAS::IsFailed(result))
             {
@@ -104,7 +123,14 @@ namespace Das::Http
             }
 
             DasPtr<IDasReadOnlyString> p_pid;
-            CreateIDasReadOnlyStringFromUtf8(pid.c_str(), p_pid.Put());
+            auto                       cr =
+                CreateIDasReadOnlyStringFromUtf8(pid.c_str(), p_pid.Put());
+            if (DAS::IsFailed(cr))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    cr,
+                    "Failed to create string");
+            }
 
             DasPtr<Das::ExportInterface::IDasJson> json;
             auto result = settings_service_.GetProfile(p_pid.Get(), json.Put());
@@ -143,10 +169,18 @@ namespace Das::Http
             }
 
             DasPtr<IDasReadOnlyString> p_pid;
-            CreateIDasReadOnlyStringFromUtf8(pid.c_str(), p_pid.Put());
+            auto                       pid_cr =
+                CreateIDasReadOnlyStringFromUtf8(pid.c_str(), p_pid.Put());
+            if (DAS::IsFailed(pid_cr))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    pid_cr,
+                    "Failed to create string");
+            }
 
-            DasPtr<Das::ExportInterface::IDasJson> json_data;
-            ParseDasJsonFromString(body.dump().c_str(), json_data.Put());
+            DasPtr<Das::ExportInterface::IDasJson> json_data =
+                DasPtr<Das::ExportInterface::IDasJson>::Attach(
+                    DasHttpJson::MakeRaw(body));
 
             auto result =
                 settings_service_.UpdateProfile(p_pid.Get(), json_data.Get());
@@ -171,9 +205,24 @@ namespace Das::Http
             }
 
             DasPtr<IDasReadOnlyString> p_pid;
-            CreateIDasReadOnlyStringFromUtf8(pid.c_str(), p_pid.Put());
+            auto                       pid_cr =
+                CreateIDasReadOnlyStringFromUtf8(pid.c_str(), p_pid.Put());
+            if (DAS::IsFailed(pid_cr))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    pid_cr,
+                    "Failed to create string");
+            }
+
             DasPtr<IDasReadOnlyString> p_guid;
-            CreateIDasReadOnlyStringFromUtf8(guid.c_str(), p_guid.Put());
+            auto                       guid_cr =
+                CreateIDasReadOnlyStringFromUtf8(guid.c_str(), p_guid.Put());
+            if (DAS::IsFailed(guid_cr))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    guid_cr,
+                    "Failed to create string");
+            }
 
             DasPtr<Das::ExportInterface::IDasJson> json;
             auto result = settings_service_.GetPluginSettings(
@@ -217,12 +266,28 @@ namespace Das::Http
             }
 
             DasPtr<IDasReadOnlyString> p_pid;
-            CreateIDasReadOnlyStringFromUtf8(pid.c_str(), p_pid.Put());
-            DasPtr<IDasReadOnlyString> p_guid;
-            CreateIDasReadOnlyStringFromUtf8(guid.c_str(), p_guid.Put());
+            auto                       pid_cr =
+                CreateIDasReadOnlyStringFromUtf8(pid.c_str(), p_pid.Put());
+            if (DAS::IsFailed(pid_cr))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    pid_cr,
+                    "Failed to create string");
+            }
 
-            DasPtr<Das::ExportInterface::IDasJson> json_data;
-            ParseDasJsonFromString(body.dump().c_str(), json_data.Put());
+            DasPtr<IDasReadOnlyString> p_guid;
+            auto                       guid_cr =
+                CreateIDasReadOnlyStringFromUtf8(guid.c_str(), p_guid.Put());
+            if (DAS::IsFailed(guid_cr))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    guid_cr,
+                    "Failed to create string");
+            }
+
+            DasPtr<Das::ExportInterface::IDasJson> json_data =
+                DasPtr<Das::ExportInterface::IDasJson>::Attach(
+                    DasHttpJson::MakeRaw(body));
 
             auto result = settings_service_.UpdatePluginSettings(
                 p_pid.Get(),

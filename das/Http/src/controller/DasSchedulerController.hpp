@@ -4,10 +4,10 @@
 #include "Config.h"
 #include "beast/Request.hpp"
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
-#include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/IDasSchedulerService.h>
+#include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/fmt.h>
 #include <das/_autogen/idl/abi/IDasGuidVector.h>
 #include <filesystem>
@@ -135,20 +135,29 @@ namespace Das::Http
                 }
             }
 
-            // 构造 IDasReadOnlyString* for plugin_dir
             DasPtr<IDasReadOnlyString> p_plugin_dir;
             auto                       u8_path = plugin_dir_.u8string();
-            CreateIDasReadOnlyStringFromUtf8(
+            auto dir_cr = CreateIDasReadOnlyStringFromUtf8(
                 reinterpret_cast<const char*>(u8_path.c_str()),
                 p_plugin_dir.Put());
+            if (DAS::IsFailed(dir_cr))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    dir_cr,
+                    "Failed to create plugin dir string");
+            }
 
-            // 构造 IDasGuidVector for disabled_guids，然后获取
-            // IDasReadOnlyGuidVector
             DasPtr<Das::ExportInterface::IDasGuidVector> p_guid_vec;
-            CreateIDasGuidVector(
+            auto gv_result = CreateIDasGuidVector(
                 disabled_guids.empty() ? nullptr : disabled_guids.data(),
                 disabled_guids.size(),
                 p_guid_vec.Put());
+            if (DAS::IsFailed(gv_result))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    gv_result,
+                    "Failed to create GUID vector");
+            }
 
             DasPtr<Das::ExportInterface::IDasReadOnlyGuidVector>
                 p_readonly_guids;

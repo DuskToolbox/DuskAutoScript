@@ -1,5 +1,6 @@
 #pragma once
 
+#include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
@@ -13,6 +14,7 @@ namespace Das::Http
 {
 
     using namespace Das::ExportInterface;
+    using Das::Utils::ToU8StringWithoutOwnership;
 
     namespace Details
     {
