@@ -47,15 +47,10 @@ namespace Das::Http
               scheduler_service(plugin_manager), plugin_dir(plugin_dir)
         {
             // Create interface wrappers per D-06
-            IDasSettingsService* raw_settings = nullptr;
-            CreateDasSettingsService(settings_manager, &raw_settings);
-            settings_service =
-                DasPtr<IDasSettingsService>::Attach(raw_settings);
-
-            IDasPluginManagerService* raw_plugin_mgr = nullptr;
-            CreateDasPluginManagerService(plugin_manager, &raw_plugin_mgr);
-            plugin_mgr_service =
-                DasPtr<IDasPluginManagerService>::Attach(raw_plugin_mgr);
+            CreateDasSettingsService(settings_manager, settings_service.Put());
+            CreateDasPluginManagerService(
+                plugin_manager,
+                plugin_mgr_service.Put());
         }
     };
 
