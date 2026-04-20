@@ -21,11 +21,11 @@ public:
 
     // IDasPluginManagerService
     DasResult CreateComponent(const DasGuid& iid, void** pp_out) override;
-    std::vector<std::string> GetPluginSettingsFieldNames(
-        const DasGuid& plugin_guid) const override;
+    DasResult GetPluginSettingsFieldNames(
+        const DasGuid&                           plugin_guid,
+        Das::ExportInterface::IDasStringVector** pp_out) const override;
     DasResult CreateCaptureManager(
         IDasReadOnlyString*                        p_environment_config,
-        IDasSettingsService*                       p_settings_service,
         Das::ExportInterface::IDasCaptureManager** pp_out) override;
 
 private:

@@ -1,10 +1,12 @@
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/IDasCaptureManagerImpl.h>
+#include <das/Core/ForeignInterfaceHost/IDasStringVectorImpl.h>
 #include <das/Core/ForeignInterfaceHost/PluginManagerServiceImpl.h>
 #include <das/Core/Logger/Logger.h>
+#include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/DasExport.h>
+#include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
-#include <das/IDasSettingsService.h>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/_autogen/idl/abi/IDasCapture.h>
 #include <das/_autogen/idl/wrapper/IDasTypeInfo.hpp>
@@ -71,25 +73,49 @@ DasResult PluginManagerServiceImpl::CreateComponent(
         reinterpret_cast<Das::PluginInterface::IDasComponent**>(pp_out));
 }
 
-std::vector<std::string> PluginManagerServiceImpl::GetPluginSettingsFieldNames(
-    const DasGuid& guid) const
+DasResult PluginManagerServiceImpl::GetPluginSettingsFieldNames(
+    const DasGuid&                           plugin_guid,
+    Das::ExportInterface::IDasStringVector** pp_out) const
 {
-    std::vector<std::string> result;
-    auto*                    desc = mgr_.FindPluginPackageByGuid(guid);
+    DAS_UTILS_CHECK_POINTER(pp_out)
+
+    Das::ExportInterface::IDasStringVector* raw_result = nullptr;
+    auto create_result = CreateIDasStringVector(&raw_result);
+    if (DAS::IsFailed(create_result))
+    {
+        return create_result;
+    }
+
+    auto* desc = mgr_.FindPluginPackageByGuid(plugin_guid);
     if (!desc)
     {
-        return result;
+        // Return empty vector, not an error
+        *pp_out = raw_result;
+        return DAS_S_OK;
     }
+
     for (const auto& setting : desc->settings_desc)
     {
-        result.push_back(setting.name);
+        DAS::DasPtr<IDasReadOnlyString> field_name;
+        auto                            cr = CreateIDasReadOnlyStringFromUtf8(
+            setting.name.c_str(),
+            field_name.Put());
+        if (DAS::IsFailed(cr))
+        {
+            DAS_CORE_LOG_WARN(
+                "Failed to create IDasReadOnlyString for field name: {}",
+                setting.name);
+            continue;
+        }
+        raw_result->PushBack(field_name.Get());
     }
-    return result;
+
+    *pp_out = raw_result;
+    return DAS_S_OK;
 }
 
 DasResult PluginManagerServiceImpl::CreateCaptureManager(
     IDasReadOnlyString*                        p_environment_config,
-    IDasSettingsService*                       p_settings_service,
     Das::ExportInterface::IDasCaptureManager** pp_out)
 {
     if (pp_out == nullptr)
@@ -132,8 +158,10 @@ DasResult PluginManagerServiceImpl::CreateCaptureManager(
         }
 
         auto guid_str = DasGuidToStdString(feat->plugin_guid);
-        auto settings_json =
-            p_settings_service->GetPluginSettings("0", guid_str);
+
+        // D-11: Obtain settings internally via PluginManager -> SettingsManager
+        auto& settings_mgr = mgr_.GetSettingsManager();
+        auto  settings_json = settings_mgr.GetPluginSettingsJson("0", guid_str);
 
         DAS::DasPtr<IDasReadOnlyString> plugin_config;
         if (!settings_json.is_null())

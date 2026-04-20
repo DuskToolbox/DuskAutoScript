@@ -138,7 +138,7 @@ auto DasStringVectorImpl::GetImpl() noexcept -> std::vector<std::string>&
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
 
-DAS_C_API DasResult
+DasResult
 CreateIDasStringVector(Das::ExportInterface::IDasStringVector** pp_out)
 {
     DAS_UTILS_CHECK_POINTER(pp_out)

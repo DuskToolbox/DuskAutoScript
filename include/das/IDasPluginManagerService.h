@@ -3,12 +3,10 @@
 
 #include <das/DasString.hpp>
 #include <das/IDasBase.h>
-#include <das/IDasSettingsService.h>
-#include <string>
-#include <vector>
 
 namespace Das::ExportInterface
 {
+    DAS_INTERFACE IDasStringVector;
     DAS_INTERFACE IDasCaptureManager;
 }
 
@@ -34,13 +32,13 @@ DAS_INTERFACE IDasPluginManagerService : public IDasBase
     DAS_METHOD CreateComponent(const DasGuid& iid, void** pp_out) = 0;
 
     // Get settings field names for a plugin (hides PluginPackageDesc)
-    DAS_METHOD_(std::vector<std::string>)
-    GetPluginSettingsFieldNames(const DasGuid& plugin_guid) const = 0;
+    DAS_METHOD GetPluginSettingsFieldNames(
+        const DasGuid&                           plugin_guid,
+        Das::ExportInterface::IDasStringVector** pp_out) const = 0;
 
     // Create capture manager (hides FeatureInfo/internal iteration)
     DAS_METHOD CreateCaptureManager(
         IDasReadOnlyString * p_environment_config,
-        IDasSettingsService * p_settings_service,
         Das::ExportInterface::IDasCaptureManager * *pp_out) = 0;
 };
 

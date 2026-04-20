@@ -3,7 +3,6 @@
 #include <das/Core/ForeignInterfaceHost/IDasCaptureManagerImpl.h>
 #include <das/DasString.hpp>
 #include <das/IDasPluginManagerService.h>
-#include <das/IDasSettingsService.h>
 #include <das/_autogen/idl/abi/IDasCapture.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasPluginManager.Implements.hpp>
 #include <das/_autogen/idl/wrapper/IDasTypeInfo.hpp>
@@ -17,8 +16,7 @@ namespace Das::Http
     {
     public:
         explicit DasPluginManagerServiceImpl(
-            IDasPluginManagerService& plugin_manager_service,
-            IDasSettingsService&      settings_service);
+            IDasPluginManagerService& plugin_manager_service);
 
         DAS_IMPL CreateComponent(
             const DasGuid&                        iid,
@@ -31,7 +29,6 @@ namespace Das::Http
 
     private:
         IDasPluginManagerService& plugin_manager_service_;
-        IDasSettingsService&      settings_service_;
     };
 
 } // namespace Das::Http

@@ -85,8 +85,7 @@ namespace Das::Http
             // Register IDasPluginManager service
             {
                 auto* plugin_mgr_service_impl = new DasPluginManagerServiceImpl(
-                    *components.plugin_mgr_service,
-                    *components.settings_service);
+                    *components.plugin_mgr_service);
                 plugin_mgr_service_impl->AddRef();
 
                 const auto plugin_reg_result = ipc_context->RegisterService(

@@ -7,10 +7,8 @@ namespace Das::Http
 {
 
     DasPluginManagerServiceImpl::DasPluginManagerServiceImpl(
-        IDasPluginManagerService& plugin_manager_service,
-        IDasSettingsService&      settings_service)
-        : plugin_manager_service_(plugin_manager_service),
-          settings_service_(settings_service)
+        IDasPluginManagerService& plugin_manager_service)
+        : plugin_manager_service_(plugin_manager_service)
     {
     }
 
@@ -34,7 +32,6 @@ namespace Das::Http
 
         return plugin_manager_service_.CreateCaptureManager(
             p_environment_config,
-            &settings_service_,
             pp_out_capture_manager);
     }
 
