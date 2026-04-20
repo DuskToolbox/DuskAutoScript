@@ -69,7 +69,7 @@ PluginPackageDesc* PluginManagerServiceImpl::FindPluginPackageByGuid(
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
 
-extern "C" DAS_C_API DasResult CreateDasPluginManagerService(
+DAS_C_API DasResult CreateDasPluginManagerService(
     Das::Core::ForeignInterfaceHost::PluginManager& mgr,
     IDasPluginManagerService**                      pp_out)
 {

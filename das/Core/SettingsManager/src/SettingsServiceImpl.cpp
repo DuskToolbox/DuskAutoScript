@@ -123,7 +123,7 @@ DasResult SettingsServiceImpl::UpdatePluginSettingsFieldJson(
 
 DAS_CORE_SETTINGS_MANAGER_NS_END
 
-extern "C" DAS_C_API DasResult CreateDasSettingsService(
+DAS_C_API DasResult CreateDasSettingsService(
     Das::Core::SettingsManager::SettingsManager& mgr,
     IDasSettingsService**                        pp_out)
 {

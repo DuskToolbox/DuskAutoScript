@@ -11,7 +11,7 @@ class SettingsServiceImpl final : public IDasSettingsService
 {
 public:
     explicit SettingsServiceImpl(SettingsManager& mgr);
-    ~SettingsServiceImpl() override = default;
+    ~SettingsServiceImpl() = default;
 
     // IDasBase
     uint32_t DAS_STD_CALL AddRef() override;

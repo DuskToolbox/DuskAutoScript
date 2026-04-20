@@ -11,7 +11,7 @@ class PluginManagerServiceImpl final : public IDasPluginManagerService
 {
 public:
     explicit PluginManagerServiceImpl(PluginManager& mgr);
-    ~PluginManagerServiceImpl() override = default;
+    ~PluginManagerServiceImpl() = default;
 
     // IDasBase
     uint32_t DAS_STD_CALL AddRef() override;
