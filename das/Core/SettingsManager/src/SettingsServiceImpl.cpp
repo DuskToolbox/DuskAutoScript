@@ -4,6 +4,7 @@
 #include <das/DasExport.h>
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
+#include <das/Utils/StringUtils.h>
 #include <das/_autogen/idl/abi/DasJson.h>
 #include <new>
 
@@ -51,23 +52,10 @@ SettingsServiceImpl::QueryInterface(const DasGuid& iid, void** pp_out)
 
 // ── Helper: extract std::string from IDasReadOnlyString ──
 
+using Das::Utils::ToString;
+
 namespace
 {
-    std::string ToString(IDasReadOnlyString* p_str)
-    {
-        if (!p_str)
-        {
-            return {};
-        }
-        const char* c_str = nullptr;
-        auto        result = p_str->GetUtf8(&c_str);
-        if (DAS::IsFailed(result) || !c_str)
-        {
-            return {};
-        }
-        return std::string(c_str);
-    }
-
     DasResult JsonToIDasJson(
         const nlohmann::json&            json,
         Das::ExportInterface::IDasJson** pp_out)

@@ -6,8 +6,10 @@
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
+#include <das/Utils/StringUtils.h>
 #include <nlohmann/json.hpp>
 
+using Das::Utils::ToString;
 using Das::Utils::ToU8StringWithoutOwnership;
 
 namespace Das::Http
@@ -47,21 +49,6 @@ namespace Das::Http
             }
         }
 
-        std::string ToStringFromReadOnly(IDasReadOnlyString* p_str)
-        {
-            if (!p_str)
-            {
-                return {};
-            }
-            const char* c_str = nullptr;
-            auto        result = p_str->GetUtf8(&c_str);
-            if (DAS::IsFailed(result) || !c_str)
-            {
-                return {};
-            }
-            return std::string(c_str);
-        }
-
         nlohmann::json ExtractJsonFromIDasJson(IDasJson* p_json)
         {
             if (!p_json)
@@ -74,7 +61,7 @@ namespace Das::Http
             {
                 return {};
             }
-            std::string json_str = ToStringFromReadOnly(p_str);
+            std::string json_str = ToString(p_str);
             p_str->Release();
             try
             {
@@ -540,7 +527,7 @@ namespace Das::Http
 
         if (path_prefix_.empty())
         {
-            return DAS_E_NOT_FOUND;
+            return DAS_E_TYPE_ERROR;
         }
 
         auto json = GetCurrentJson();
@@ -573,7 +560,7 @@ namespace Das::Http
 
         if (path_prefix_.empty())
         {
-            return DAS_E_NOT_FOUND;
+            return DAS_E_TYPE_ERROR;
         }
 
         auto json = GetCurrentJson();
@@ -606,7 +593,7 @@ namespace Das::Http
 
         if (path_prefix_.empty())
         {
-            return DAS_E_NOT_FOUND;
+            return DAS_E_TYPE_ERROR;
         }
 
         auto json = GetCurrentJson();
@@ -640,7 +627,7 @@ namespace Das::Http
 
         if (path_prefix_.empty())
         {
-            return DAS_E_NOT_FOUND;
+            return DAS_E_TYPE_ERROR;
         }
 
         auto json = GetCurrentJson();
@@ -673,7 +660,7 @@ namespace Das::Http
 
         if (path_prefix_.empty())
         {
-            return DAS_E_NOT_FOUND;
+            return DAS_E_TYPE_ERROR;
         }
 
         auto json = GetCurrentJson();
@@ -717,7 +704,7 @@ namespace Das::Http
     {
         if (path_prefix_.empty())
         {
-            return DAS_E_NOT_FOUND;
+            return DAS_E_TYPE_ERROR;
         }
 
         auto json = GetCurrentJson();
@@ -740,7 +727,7 @@ namespace Das::Http
     {
         if (path_prefix_.empty())
         {
-            return DAS_E_NOT_FOUND;
+            return DAS_E_TYPE_ERROR;
         }
 
         auto json = GetCurrentJson();
@@ -763,7 +750,7 @@ namespace Das::Http
     {
         if (path_prefix_.empty())
         {
-            return DAS_E_NOT_FOUND;
+            return DAS_E_TYPE_ERROR;
         }
 
         DAS_UTILS_CHECK_POINTER(p_in_string)
@@ -792,7 +779,7 @@ namespace Das::Http
     {
         if (path_prefix_.empty())
         {
-            return DAS_E_NOT_FOUND;
+            return DAS_E_TYPE_ERROR;
         }
 
         auto json = GetCurrentJson();
@@ -815,7 +802,7 @@ namespace Das::Http
     {
         if (path_prefix_.empty())
         {
-            return DAS_E_NOT_FOUND;
+            return DAS_E_TYPE_ERROR;
         }
 
         DAS_UTILS_CHECK_POINTER(p_in_das_json)
@@ -893,7 +880,7 @@ namespace Das::Http
 
         if (path_prefix_.empty())
         {
-            return DAS_E_NOT_FOUND;
+            return DAS_E_TYPE_ERROR;
         }
 
         auto json = GetCurrentJson();

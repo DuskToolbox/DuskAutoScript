@@ -95,6 +95,25 @@ struct DasReadOnlyStringHash
         const DasPtr<IDasReadOnlyString>& das_ro_string) const noexcept;
 };
 
+/**
+ * @brief Extract std::string from IDasReadOnlyString*
+ * Returns empty string on null pointer or failure.
+ */
+inline std::string ToString(IDasReadOnlyString* p_str)
+{
+    if (!p_str)
+    {
+        return {};
+    }
+    const char* c_str = nullptr;
+    auto        result = p_str->GetUtf8(&c_str);
+    if (DAS::IsFailed(result) || !c_str)
+    {
+        return {};
+    }
+    return std::string(c_str);
+}
+
 DAS_UTILS_NS_END
 
 constexpr char operator""_das_as_char(char8_t c) { return c; }
