@@ -28,6 +28,9 @@ namespace Das::ExportInterface
     struct IDasVariantVector;
 } // namespace Das::ExportInterface
 
+DAS_INTERFACE IDasSettingsService;
+DAS_INTERFACE IDasPluginManagerService;
+
 #ifndef SWIG
 
 namespace Das::PluginInterface
@@ -221,6 +224,39 @@ DAS_C_API DasResult DasUnregisterMainProcessService(const DasGuid& iid);
  * @param level One of DAS_LOG_LEVEL_TRACE/DEBUG/INFO/WARN/ERROR/CRITICAL/OFF
  */
 DAS_C_API void DasSetLogLevel(int level);
+
+//=============================================================================
+// Settings/PluginManager service factory functions
+//=============================================================================
+
+namespace Das::Core::SettingsManager
+{
+    class SettingsManager;
+}
+namespace Das::Core::ForeignInterfaceHost
+{
+    class PluginManager;
+}
+
+/**
+ * @brief 创建 IDasSettingsService 实例
+ * @param mgr SettingsManager 具体类引用
+ * @param pp_out 输出接口指针（调用者必须 Release）
+ * @return DAS_S_OK 成功
+ */
+DAS_C_API DasResult CreateDasSettingsService(
+    Das::Core::SettingsManager::SettingsManager& mgr,
+    IDasSettingsService**                        pp_out);
+
+/**
+ * @brief 创建 IDasPluginManagerService 实例
+ * @param mgr PluginManager 具体类引用
+ * @param pp_out 输出接口指针（调用者必须 Release）
+ * @return DAS_S_OK 成功
+ */
+DAS_C_API DasResult CreateDasPluginManagerService(
+    Das::Core::ForeignInterfaceHost::PluginManager& mgr,
+    IDasPluginManagerService**                      pp_out);
 
 #define DAS_LOG_ERROR(...) DAS_LOG_WITH_SOURCE_LOCATION(Error, __VA_ARGS__)
 #define DAS_LOG_WARNING(...) DAS_LOG_WITH_SOURCE_LOCATION(Warning, __VA_ARGS__)
