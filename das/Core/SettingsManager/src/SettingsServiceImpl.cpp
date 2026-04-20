@@ -8,6 +8,14 @@
 #include <das/_autogen/idl/abi/DasJson.h>
 #include <new>
 
+// DasCore-internal: zero-copy IDasJsonImpl creation from nlohmann::json
+namespace Das::Core::Utils
+{
+    DasResult CreateDasJsonFromNlohmann(
+        const nlohmann::json&            json,
+        Das::ExportInterface::IDasJson** pp_out);
+}
+
 DAS_CORE_SETTINGS_MANAGER_NS_BEGIN
 
 SettingsServiceImpl::SettingsServiceImpl(SettingsManager& mgr) : mgr_(mgr) {}
@@ -60,8 +68,8 @@ namespace
         const nlohmann::json&            json,
         Das::ExportInterface::IDasJson** pp_out)
     {
-        DAS_UTILS_CHECK_POINTER(pp_out)
-        return ParseDasJsonFromString(json.dump().c_str(), pp_out);
+        using Das::Core::Utils::CreateDasJsonFromNlohmann;
+        return CreateDasJsonFromNlohmann(json, pp_out);
     }
 
     DasResult IDasJsonToNlohmann(

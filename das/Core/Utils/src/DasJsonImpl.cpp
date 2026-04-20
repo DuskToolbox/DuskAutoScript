@@ -170,9 +170,9 @@ DasType ToDasType(nlohmann::json::value_t type)
     case nlohmann::json::value_t::boolean:
         return Das::ExportInterface::DAS_TYPE_BOOL;
     case nlohmann::json::value_t::number_integer:
-        return Das::ExportInterface::DAS_TYPE_UINT;
-    case nlohmann::json::value_t::number_unsigned:
         return Das::ExportInterface::DAS_TYPE_INT;
+    case nlohmann::json::value_t::number_unsigned:
+        return Das::ExportInterface::DAS_TYPE_UINT;
     case nlohmann::json::value_t::number_float:
         return Das::ExportInterface::DAS_TYPE_FLOAT;
     case nlohmann::json::value_t::binary:
@@ -999,6 +999,26 @@ nlohmann::json IDasJsonImpl::ExtractJson() const
         }
     }
     return nlohmann::json{};
+}
+
+DasResult CreateDasJsonFromNlohmann(
+    const nlohmann::json&       json,
+    ExportInterface::IDasJson** pp_out)
+{
+    DAS_UTILS_CHECK_POINTER(pp_out)
+    *pp_out = nullptr;
+    try
+    {
+        const auto p_result =
+            DAS::MakeDasPtr<IDasJsonImpl>(nlohmann::json(json));
+        DAS::Utils::SetResult(p_result, pp_out);
+        return DAS_S_OK;
+    }
+    catch (const std::bad_alloc& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        return DAS_E_OUT_OF_MEMORY;
+    }
 }
 
 DAS_CORE_UTILS_NS_END
