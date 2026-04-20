@@ -147,11 +147,21 @@ namespace Das::Http
     nlohmann::json DasAutoFlushJsonImpl::GetField(const std::string& full_path)
     {
         DasPtr<IDasReadOnlyString> p_profile_id;
-        CreateReadOnlyString(profile_id_.c_str(), p_profile_id);
+        if (DAS::IsFailed(
+                CreateReadOnlyString(profile_id_.c_str(), p_profile_id)))
+        {
+            return {};
+        }
         DasPtr<IDasReadOnlyString> p_guid;
-        CreateReadOnlyString(plugin_guid_.c_str(), p_guid);
+        if (DAS::IsFailed(CreateReadOnlyString(plugin_guid_.c_str(), p_guid)))
+        {
+            return {};
+        }
         DasPtr<IDasReadOnlyString> p_field;
-        CreateReadOnlyString(full_path.c_str(), p_field);
+        if (DAS::IsFailed(CreateReadOnlyString(full_path.c_str(), p_field)))
+        {
+            return {};
+        }
 
         DasPtr<IDasJson> json_result;
         auto             result = settings_service_.GetPluginSettingsField(
@@ -171,11 +181,23 @@ namespace Das::Http
         const nlohmann::json& value)
     {
         DasPtr<IDasReadOnlyString> p_profile_id;
-        CreateReadOnlyString(profile_id_.c_str(), p_profile_id);
+        auto cr = CreateReadOnlyString(profile_id_.c_str(), p_profile_id);
+        if (DAS::IsFailed(cr))
+        {
+            return cr;
+        }
         DasPtr<IDasReadOnlyString> p_guid;
-        CreateReadOnlyString(plugin_guid_.c_str(), p_guid);
+        cr = CreateReadOnlyString(plugin_guid_.c_str(), p_guid);
+        if (DAS::IsFailed(cr))
+        {
+            return cr;
+        }
         DasPtr<IDasReadOnlyString> p_field;
-        CreateReadOnlyString(full_path.c_str(), p_field);
+        cr = CreateReadOnlyString(full_path.c_str(), p_field);
+        if (DAS::IsFailed(cr))
+        {
+            return cr;
+        }
 
         DasPtr<IDasJson> json_value =
             DasPtr<IDasJson>::Attach(DasHttpJson::MakeRaw(value));
@@ -190,9 +212,16 @@ namespace Das::Http
     nlohmann::json DasAutoFlushJsonImpl::GetCurrentJson()
     {
         DasPtr<IDasReadOnlyString> p_profile_id;
-        CreateReadOnlyString(profile_id_.c_str(), p_profile_id);
+        if (DAS::IsFailed(
+                CreateReadOnlyString(profile_id_.c_str(), p_profile_id)))
+        {
+            return {};
+        }
         DasPtr<IDasReadOnlyString> p_guid;
-        CreateReadOnlyString(plugin_guid_.c_str(), p_guid);
+        if (DAS::IsFailed(CreateReadOnlyString(plugin_guid_.c_str(), p_guid)))
+        {
+            return {};
+        }
 
         if (path_prefix_.empty())
         {
@@ -209,7 +238,10 @@ namespace Das::Http
         }
 
         DasPtr<IDasReadOnlyString> p_field;
-        CreateReadOnlyString(path_prefix_.c_str(), p_field);
+        if (DAS::IsFailed(CreateReadOnlyString(path_prefix_.c_str(), p_field)))
+        {
+            return {};
+        }
 
         DasPtr<IDasJson> json_result;
         auto             result = settings_service_.GetPluginSettingsField(

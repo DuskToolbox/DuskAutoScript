@@ -194,6 +194,8 @@ DasResult PluginManagerServiceImpl::CreateCaptureManager(
             std::string error_msg = DAS_FMT_NS::format(
                 "Capture instance creation failed, result={}",
                 create_result);
+            // best-effort: error message creation failure should not mask the
+            // original error from CaptureFactory::CreateInstance
             DAS::DasPtr<IDasReadOnlyString> p_error_msg;
             CreateIDasReadOnlyStringFromUtf8(
                 error_msg.c_str(),

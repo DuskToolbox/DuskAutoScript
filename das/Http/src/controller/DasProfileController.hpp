@@ -142,9 +142,22 @@ namespace Das::Http
             }
 
             IDasReadOnlyString* p_str = nullptr;
-            json->ToString(-1, &p_str);
+            auto                to_str_result = json->ToString(-1, &p_str);
+            if (DAS::IsFailed(to_str_result))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    to_str_result,
+                    "Failed to serialize profile");
+            }
             const char* c_str = nullptr;
-            p_str->GetUtf8(&c_str);
+            auto        get_result = p_str->GetUtf8(&c_str);
+            if (DAS::IsFailed(get_result) || !c_str)
+            {
+                p_str->Release();
+                return Beast::HttpResponse::CreateErrorResponse(
+                    get_result,
+                    "Failed to get profile string");
+            }
             auto parsed = nlohmann::json::parse(c_str);
             p_str->Release();
             return Beast::HttpResponse::CreateSuccessResponse(parsed);
@@ -237,9 +250,22 @@ namespace Das::Http
             }
 
             IDasReadOnlyString* p_str = nullptr;
-            json->ToString(-1, &p_str);
+            auto                to_str_result = json->ToString(-1, &p_str);
+            if (DAS::IsFailed(to_str_result))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    to_str_result,
+                    "Failed to serialize plugin settings");
+            }
             const char* c_str = nullptr;
-            p_str->GetUtf8(&c_str);
+            auto        get_result = p_str->GetUtf8(&c_str);
+            if (DAS::IsFailed(get_result) || !c_str)
+            {
+                p_str->Release();
+                return Beast::HttpResponse::CreateErrorResponse(
+                    get_result,
+                    "Failed to get plugin settings string");
+            }
             auto parsed = nlohmann::json::parse(c_str);
             p_str->Release();
             return Beast::HttpResponse::CreateSuccessResponse(parsed);

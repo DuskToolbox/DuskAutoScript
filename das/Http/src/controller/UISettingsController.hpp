@@ -40,7 +40,14 @@ namespace Das::Http
                     "Failed to serialize settings");
             }
             const char* c_str = nullptr;
-            p_str->GetUtf8(&c_str);
+            auto        get_result = p_str->GetUtf8(&c_str);
+            if (DAS::IsFailed(get_result) || !c_str)
+            {
+                p_str->Release();
+                return Beast::HttpResponse::CreateErrorResponse(
+                    get_result,
+                    "Failed to get settings string");
+            }
             auto parsed = nlohmann::json::parse(c_str);
             p_str->Release();
             return Beast::HttpResponse::CreateSuccessResponse(parsed);
