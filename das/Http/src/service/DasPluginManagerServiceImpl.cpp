@@ -8,9 +8,10 @@ namespace Das::Http
 {
 
     DasPluginManagerServiceImpl::DasPluginManagerServiceImpl(
-        Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager,
-        Das::Core::SettingsManager::SettingsManager&    settings_manager)
-        : plugin_manager_(plugin_manager), settings_manager_(settings_manager)
+        IDasPluginManagerService& plugin_manager_service,
+        IDasSettingsService&      settings_service)
+        : plugin_manager_service_(plugin_manager_service),
+          settings_service_(settings_service)
     {
     }
 
@@ -20,7 +21,8 @@ namespace Das::Http
     {
         DAS_UTILS_CHECK_POINTER(pp_out_component)
 
-        auto& factory_mgr = plugin_manager_.GetComponentFactoryManager();
+        auto& factory_mgr =
+            plugin_manager_service_.GetComponentFactoryManager();
 
         return factory_mgr.CreateComponent(iid, pp_out_component);
     }
@@ -32,7 +34,7 @@ namespace Das::Http
         DAS_UTILS_CHECK_POINTER(pp_out_capture_manager)
         DAS_UTILS_CHECK_POINTER(p_environment_config)
 
-        auto capture_features = plugin_manager_.GetFeaturesByType(
+        auto capture_features = plugin_manager_service_.GetFeaturesByType(
             Das::PluginInterface::DAS_PLUGIN_FEATURE_CAPTURE_FACTORY);
 
         if (capture_features.empty())
@@ -77,7 +79,7 @@ namespace Das::Http
 
             // profile_id 硬编码 "0" (v1.2)
             auto settings_json =
-                settings_manager_.GetPluginSettingsJson("0", guid_str);
+                settings_service_.GetPluginSettingsJson("0", guid_str);
 
             // 将 nlohmann::json 转为 IDasReadOnlyString 传递给工厂
             DAS::DasPtr<IDasReadOnlyString> plugin_config;

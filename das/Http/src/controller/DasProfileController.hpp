@@ -3,7 +3,7 @@
 
 #include "Config.h"
 #include "beast/Request.hpp"
-#include <das/Core/SettingsManager/SettingsManager.h>
+#include <das/IDasSettingsService.h>
 #include <nlohmann/json.hpp>
 #include <string>
 
@@ -13,15 +13,14 @@ namespace Das::Http
     class DasProfileController
     {
     public:
-        explicit DasProfileController(
-            Das::Core::SettingsManager::SettingsManager& sm)
-            : settings_manager_(sm)
+        explicit DasProfileController(IDasSettingsService& settings_svc)
+            : settings_service_(settings_svc)
         {
         }
 
         Beast::HttpResponse GetProfileList(const Beast::HttpRequest& request)
         {
-            auto json_str = settings_manager_.GetProfileList();
+            auto json_str = settings_service_.GetProfileList();
             try
             {
                 auto json = nlohmann::json::parse(json_str);
@@ -46,7 +45,7 @@ namespace Das::Http
             }
 
             auto profile_id = body["profileId"].get<std::string>();
-            auto result = settings_manager_.CreateProfile(profile_id);
+            auto result = settings_service_.CreateProfile(profile_id);
             if (DAS::IsFailed(result))
             {
                 return Beast::HttpResponse::CreateErrorResponse(
@@ -67,7 +66,7 @@ namespace Das::Http
             }
 
             auto profile_id = body["profileId"].get<std::string>();
-            auto result = settings_manager_.DeleteProfile(profile_id);
+            auto result = settings_service_.DeleteProfile(profile_id);
             if (DAS::IsFailed(result))
             {
                 return Beast::HttpResponse::CreateErrorResponse(
@@ -87,7 +86,7 @@ namespace Das::Http
                     "Profile ID must be 0 in v1.2");
             }
 
-            auto json_str = settings_manager_.GetProfile(pid);
+            auto json_str = settings_service_.GetProfile(pid);
             try
             {
                 auto json = nlohmann::json::parse(json_str);
@@ -119,7 +118,7 @@ namespace Das::Http
                     "Invalid request body");
             }
 
-            auto result = settings_manager_.UpdateProfile(pid, body.dump());
+            auto result = settings_service_.UpdateProfile(pid, body.dump());
             if (DAS::IsFailed(result))
             {
                 return Beast::HttpResponse::CreateErrorResponse(
@@ -140,7 +139,7 @@ namespace Das::Http
                     "Profile ID must be 0 in v1.2");
             }
 
-            auto json_str = settings_manager_.GetPluginSettings(pid, guid);
+            auto json_str = settings_service_.GetPluginSettings(pid, guid);
             try
             {
                 auto json = nlohmann::json::parse(json_str);
@@ -175,7 +174,7 @@ namespace Das::Http
             }
 
             auto result =
-                settings_manager_.UpdatePluginSettings(pid, guid, body.dump());
+                settings_service_.UpdatePluginSettings(pid, guid, body.dump());
             if (DAS::IsFailed(result))
             {
                 return Beast::HttpResponse::CreateErrorResponse(
@@ -186,7 +185,7 @@ namespace Das::Http
         }
 
     private:
-        Das::Core::SettingsManager::SettingsManager& settings_manager_;
+        IDasSettingsService& settings_service_;
     };
 
 } // namespace Das::Http

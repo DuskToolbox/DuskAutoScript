@@ -9,11 +9,11 @@ namespace Das::Http
 {
 
     DasPluginProfileImpl::DasPluginProfileImpl(
-        Das::Core::SettingsManager::SettingsManager& settings_manager,
-        std::string                                  profile_id,
-        std::string                                  plugin_guid,
-        std::unordered_set<std::string>              whitelist)
-        : settings_manager_{settings_manager},
+        IDasSettingsService&            settings_service,
+        std::string                     profile_id,
+        std::string                     plugin_guid,
+        std::unordered_set<std::string> whitelist)
+        : settings_service_{settings_service},
           profile_id_{std::move(profile_id)},
           plugin_guid_{std::move(plugin_guid)}, whitelist_{std::move(whitelist)}
     {
@@ -29,7 +29,7 @@ namespace Das::Http
             try
             {
                 auto* impl = new DasAutoFlushJsonImpl(
-                    settings_manager_,
+                    settings_service_,
                     profile_id_,
                     plugin_guid_,
                     whitelist_);

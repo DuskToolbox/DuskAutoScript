@@ -13,9 +13,10 @@ namespace Das::Http
 {
 
     DasProfileServiceImpl::DasProfileServiceImpl(
-        Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager,
-        Das::Core::SettingsManager::SettingsManager&    settings_manager)
-        : plugin_manager_(plugin_manager), settings_manager_(settings_manager)
+        IDasPluginManagerService& plugin_manager_service,
+        IDasSettingsService&      settings_service)
+        : plugin_manager_service_(plugin_manager_service),
+          settings_service_(settings_service)
     {
     }
 
@@ -25,7 +26,8 @@ namespace Das::Http
     {
         DAS_UTILS_CHECK_POINTER(pp_out)
 
-        auto* desc = plugin_manager_.FindPluginPackageByGuid(plugin_guid);
+        auto* desc =
+            plugin_manager_service_.FindPluginPackageByGuid(plugin_guid);
         if (!desc)
         {
             DAS_CORE_LOG_ERROR("Plugin not found for GUID.");
@@ -44,7 +46,7 @@ namespace Das::Http
         try
         {
             auto* profile_impl = new DasPluginProfileImpl(
-                settings_manager_,
+                settings_service_,
                 "0", // v1.2 hardcode: profile_id = "0"
                 guid_str,
                 std::move(whitelist));

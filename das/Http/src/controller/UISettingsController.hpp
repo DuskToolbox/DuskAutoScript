@@ -3,7 +3,7 @@
 
 #include "Config.h"
 #include "beast/Request.hpp"
-#include <das/Core/SettingsManager/SettingsManager.h>
+#include <das/IDasSettingsService.h>
 #include <nlohmann/json.hpp>
 #include <string>
 
@@ -12,15 +12,14 @@ namespace Das::Http
 
     struct DasUiSettingsController
     {
-        explicit DasUiSettingsController(
-            Das::Core::SettingsManager::SettingsManager& sm)
-            : settings_manager_(sm)
+        explicit DasUiSettingsController(IDasSettingsService& settings_svc)
+            : settings_service_(settings_svc)
         {
         }
 
         Beast::HttpResponse V1SettingsGet(const Beast::HttpRequest& request)
         {
-            auto json_str = settings_manager_.GetGlobalSettings();
+            auto json_str = settings_service_.GetGlobalSettings();
             try
             {
                 auto json = nlohmann::json::parse(json_str);
@@ -44,7 +43,7 @@ namespace Das::Http
                     "Invalid request body");
             }
 
-            auto result = settings_manager_.UpdateGlobalSettings(body.dump());
+            auto result = settings_service_.UpdateGlobalSettings(body.dump());
             if (DAS::IsFailed(result))
             {
                 return Beast::HttpResponse::CreateErrorResponse(
@@ -55,7 +54,7 @@ namespace Das::Http
         }
 
     private:
-        Das::Core::SettingsManager::SettingsManager& settings_manager_;
+        IDasSettingsService& settings_service_;
     };
 
 } // namespace Das::Http

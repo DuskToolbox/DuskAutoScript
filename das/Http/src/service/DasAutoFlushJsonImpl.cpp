@@ -47,12 +47,12 @@ namespace Das::Http
     } // namespace
 
     DasAutoFlushJsonImpl::DasAutoFlushJsonImpl(
-        Das::Core::SettingsManager::SettingsManager& settings_manager,
-        std::string                                  profile_id,
-        std::string                                  plugin_guid,
-        std::unordered_set<std::string>              whitelist,
-        std::string                                  path_prefix)
-        : settings_manager_{settings_manager},
+        IDasSettingsService&            settings_service,
+        std::string                     profile_id,
+        std::string                     plugin_guid,
+        std::unordered_set<std::string> whitelist,
+        std::string                     path_prefix)
+        : settings_service_{settings_service},
           profile_id_{std::move(profile_id)},
           plugin_guid_{std::move(plugin_guid)},
           whitelist_{std::move(whitelist)}, path_prefix_{std::move(path_prefix)}
@@ -110,7 +110,7 @@ namespace Das::Http
 
     nlohmann::json DasAutoFlushJsonImpl::GetField(const std::string& full_path)
     {
-        return settings_manager_.GetPluginSettingsFieldJson(
+        return settings_service_.GetPluginSettingsFieldJson(
             profile_id_,
             plugin_guid_,
             full_path);
@@ -120,7 +120,7 @@ namespace Das::Http
         const std::string&    full_path,
         const nlohmann::json& value)
     {
-        return settings_manager_.UpdatePluginSettingsFieldJson(
+        return settings_service_.UpdatePluginSettingsFieldJson(
             profile_id_,
             plugin_guid_,
             full_path,
@@ -131,11 +131,11 @@ namespace Das::Http
     {
         if (path_prefix_.empty())
         {
-            return settings_manager_.GetPluginSettingsJson(
+            return settings_service_.GetPluginSettingsJson(
                 profile_id_,
                 plugin_guid_);
         }
-        return settings_manager_.GetPluginSettingsFieldJson(
+        return settings_service_.GetPluginSettingsFieldJson(
             profile_id_,
             plugin_guid_,
             path_prefix_);
@@ -308,7 +308,7 @@ namespace Das::Http
         try
         {
             auto* sub = new DasAutoFlushJsonImpl(
-                settings_manager_,
+                settings_service_,
                 profile_id_,
                 plugin_guid_,
                 whitelist_,
@@ -599,7 +599,7 @@ namespace Das::Http
         try
         {
             auto* sub = new DasAutoFlushJsonImpl(
-                settings_manager_,
+                settings_service_,
                 profile_id_,
                 plugin_guid_,
                 whitelist_,
@@ -826,7 +826,7 @@ namespace Das::Http
             size_t count = 0;
             for (const auto& key : whitelist_)
             {
-                auto field = settings_manager_.GetPluginSettingsFieldJson(
+                auto field = settings_service_.GetPluginSettingsFieldJson(
                     profile_id_,
                     plugin_guid_,
                     key);
@@ -860,7 +860,7 @@ namespace Das::Http
                 nlohmann::json filtered = nlohmann::json::object();
                 for (const auto& key : whitelist_)
                 {
-                    auto field = settings_manager_.GetPluginSettingsFieldJson(
+                    auto field = settings_service_.GetPluginSettingsFieldJson(
                         profile_id_,
                         plugin_guid_,
                         key);

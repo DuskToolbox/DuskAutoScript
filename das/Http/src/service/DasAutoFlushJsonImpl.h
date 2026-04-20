@@ -1,6 +1,6 @@
 #pragma once
 
-#include <das/Core/SettingsManager/SettingsManager.h>
+#include <das/IDasSettingsService.h>
 #include <das/_autogen/idl/abi/DasJson.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasJson.Implements.hpp>
 #include <string>
@@ -20,11 +20,11 @@ namespace Das::Http
     {
     public:
         DasAutoFlushJsonImpl(
-            Das::Core::SettingsManager::SettingsManager& settings_manager,
-            std::string                                  profile_id,
-            std::string                                  plugin_guid,
-            std::unordered_set<std::string>              whitelist,
-            std::string                                  path_prefix = {});
+            IDasSettingsService&            settings_service,
+            std::string                     profile_id,
+            std::string                     plugin_guid,
+            std::unordered_set<std::string> whitelist,
+            std::string                     path_prefix = {});
 
         DAS_IMPL GetIntByName(IDasReadOnlyString* key, int64_t* p_out_int)
             override;
@@ -78,11 +78,11 @@ namespace Das::Http
         DAS_IMPL Clear() override;
 
     private:
-        Das::Core::SettingsManager::SettingsManager& settings_manager_;
-        std::string                                  profile_id_;
-        std::string                                  plugin_guid_;
-        std::unordered_set<std::string>              whitelist_;
-        std::string                                  path_prefix_;
+        IDasSettingsService&            settings_service_;
+        std::string                     profile_id_;
+        std::string                     plugin_guid_;
+        std::unordered_set<std::string> whitelist_;
+        std::string                     path_prefix_;
 
         DasResult CheckWhitelist(IDasReadOnlyString* key, std::string& out_key);
 

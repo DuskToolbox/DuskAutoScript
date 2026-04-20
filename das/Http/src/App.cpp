@@ -65,8 +65,8 @@ namespace Das::Http
                     ipc_context.get()));
 
             auto* profile_service = new DasProfileServiceImpl(
-                components.plugin_manager,
-                components.settings_manager);
+                *components.plugin_mgr_service,
+                *components.settings_service);
             profile_service->AddRef();
 
             const auto reg_result = ipc_context->RegisterService(
@@ -84,13 +84,13 @@ namespace Das::Http
 
             // Register IDasPluginManager service
             {
-                auto* plugin_mgr_service = new DasPluginManagerServiceImpl(
-                    components.plugin_manager,
-                    components.settings_manager);
-                plugin_mgr_service->AddRef();
+                auto* plugin_mgr_service_impl = new DasPluginManagerServiceImpl(
+                    *components.plugin_mgr_service,
+                    *components.settings_service);
+                plugin_mgr_service_impl->AddRef();
 
                 const auto plugin_reg_result = ipc_context->RegisterService(
-                    plugin_mgr_service,
+                    plugin_mgr_service_impl,
                     DasIidOf<Das::ExportInterface::IDasPluginManager>());
 
                 if (DAS::IsFailed(plugin_reg_result))
@@ -98,7 +98,7 @@ namespace Das::Http
                     DAS_CORE_LOG_ERROR(
                         "Failed to register IDasPluginManager. result = {}",
                         plugin_reg_result);
-                    plugin_mgr_service->Release();
+                    plugin_mgr_service_impl->Release();
                     return plugin_reg_result;
                 }
             }
@@ -124,10 +124,10 @@ namespace Das::Http
         auto log_controller = std::make_shared<Das::Http::DasLogController>();
         auto profile_controller =
             std::make_shared<Das::Http::DasProfileController>(
-                components.settings_manager);
+                *components.settings_service);
         auto settings_controller =
             std::make_shared<Das::Http::DasUiSettingsController>(
-                components.settings_manager);
+                *components.settings_service);
         auto scheduler_controller =
             std::make_shared<Das::Http::DasSchedulerController>(
                 components.scheduler_service,
