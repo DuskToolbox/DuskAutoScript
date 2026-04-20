@@ -3,16 +3,12 @@
 
 #include "Config.h"
 #include "beast/Request.hpp"
+#include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/IDasSettingsService.h>
 #include <nlohmann/json.hpp>
 #include <string>
-
-// Defined in DasJsonImpl.cpp, exported via DAS_C_API from libDasCore.dll
-extern "C" DasResult CloneDasJsonFromCopy(
-    const nlohmann::json&            src,
-    Das::ExportInterface::IDasJson** pp_out_json);
 
 namespace Das::Http
 {
@@ -61,7 +57,8 @@ namespace Das::Http
             }
 
             DasPtr<Das::ExportInterface::IDasJson> json_data;
-            auto clone_result = CloneDasJsonFromCopy(body, json_data.Put());
+            auto                                   clone_result =
+                ParseDasJsonFromString(body.dump().c_str(), json_data.Put());
             if (DAS::IsFailed(clone_result))
             {
                 return Beast::HttpResponse::CreateErrorResponse(

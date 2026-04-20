@@ -1,6 +1,7 @@
 #include <das/Core/TaskScheduler/SchedulerServiceImpl.h>
 #include <das/DasExport.h>
 #include <das/DasString.hpp>
+#include <das/Utils/CommonUtils.hpp>
 #include <das/_autogen/idl/abi/IDasGuidVector.h>
 #include <filesystem>
 #include <new>
@@ -59,6 +60,8 @@ namespace Das::Core::TaskScheduler
         IDasReadOnlyString*                           p_plugin_dir,
         Das::ExportInterface::IDasReadOnlyGuidVector* p_disabled_guids)
     {
+        DAS_UTILS_CHECK_POINTER(p_plugin_dir)
+
         // 反序列化 plugin_dir: IDasReadOnlyString -> std::filesystem::path
         const char* u8_path = nullptr;
         auto        result = p_plugin_dir->GetUtf8(&u8_path);

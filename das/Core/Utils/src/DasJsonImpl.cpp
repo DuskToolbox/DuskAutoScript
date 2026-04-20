@@ -2,6 +2,7 @@
 #include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/Utils/Config.h>
+#include <das/DasExport.h>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/Expected.h>
 #include <das/_autogen/idl/abi/DasJson.h>
@@ -1002,7 +1003,7 @@ nlohmann::json IDasJsonImpl::ExtractJson() const
 
 DAS_CORE_UTILS_NS_END
 
-DasResult ParseDasJsonFromString(
+DAS_C_API DasResult ParseDasJsonFromString(
     const char*                      p_u8_string,
     DAS::ExportInterface::IDasJson** pp_out_json)
 {
@@ -1032,7 +1033,8 @@ DasResult ParseDasJsonFromString(
     }
 }
 
-DasResult CreateEmptyDasJson(Das::ExportInterface::IDasJson** pp_out_json)
+DAS_C_API DasResult
+CreateEmptyDasJson(Das::ExportInterface::IDasJson** pp_out_json)
 {
     DAS_UTILS_CHECK_POINTER(pp_out_json)
 

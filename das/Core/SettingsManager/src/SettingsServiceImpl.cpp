@@ -1,19 +1,11 @@
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/SettingsManager/SettingsServiceImpl.h>
+#include <das/DasApi.h>
 #include <das/DasExport.h>
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/_autogen/idl/abi/DasJson.h>
 #include <new>
-
-// These functions are defined in DasJsonImpl.cpp, exported via DAS_C_API.
-extern "C" DasResult CloneDasJsonFromCopy(
-    const nlohmann::json&            src,
-    Das::ExportInterface::IDasJson** pp_out_json);
-
-extern "C" DasResult ExtractNlohmannJson(
-    Das::ExportInterface::IDasJson* p_json,
-    nlohmann::json&                 out);
 
 DAS_CORE_SETTINGS_MANAGER_NS_BEGIN
 
@@ -81,14 +73,37 @@ namespace
         Das::ExportInterface::IDasJson** pp_out)
     {
         DAS_UTILS_CHECK_POINTER(pp_out)
-        return CloneDasJsonFromCopy(json, pp_out);
+        return ParseDasJsonFromString(json.dump().c_str(), pp_out);
     }
 
     DasResult IDasJsonToNlohmann(
         Das::ExportInterface::IDasJson* p_data,
         nlohmann::json&                 out)
     {
-        return ExtractNlohmannJson(p_data, out);
+        DAS_UTILS_CHECK_POINTER(p_data)
+        IDasReadOnlyString* p_str = nullptr;
+        auto                result = p_data->ToString(-1, &p_str);
+        if (DAS::IsFailed(result))
+        {
+            return result;
+        }
+        const char* c_str = nullptr;
+        auto        get_result = p_str->GetUtf8(&c_str);
+        p_str->Release();
+        if (DAS::IsFailed(get_result) || !c_str)
+        {
+            return get_result;
+        }
+        try
+        {
+            out = nlohmann::json::parse(c_str);
+            return DAS_S_OK;
+        }
+        catch (const nlohmann::json::exception& ex)
+        {
+            DAS_CORE_LOG_EXCEPTION(ex);
+            return DAS_E_INVALID_JSON;
+        }
     }
 } // namespace
 

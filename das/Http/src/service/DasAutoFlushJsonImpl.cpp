@@ -2,15 +2,11 @@
 
 #include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
 #include <das/Core/Logger/Logger.h>
+#include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
 #include <nlohmann/json.hpp>
-
-// Defined in DasJsonImpl.cpp, exported via DAS_C_API from libDasCore.dll
-extern "C" DasResult CloneDasJsonFromCopy(
-    const nlohmann::json&            src,
-    Das::ExportInterface::IDasJson** pp_out_json);
 
 using Das::Utils::ToU8StringWithoutOwnership;
 
@@ -195,7 +191,8 @@ namespace Das::Http
         CreateReadOnlyString(full_path.c_str(), p_field);
 
         DasPtr<IDasJson> json_value;
-        auto             result = CloneDasJsonFromCopy(value, json_value.Put());
+        auto             result =
+            ParseDasJsonFromString(value.dump().c_str(), json_value.Put());
         if (DAS::IsFailed(result))
         {
             return result;
