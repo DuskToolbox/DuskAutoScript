@@ -4,8 +4,12 @@
 #include "Config.h"
 #include "beast/Request.hpp"
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
+#include <das/DasApi.h>
+#include <das/DasPtr.hpp>
+#include <das/DasString.hpp>
 #include <das/IDasSchedulerService.h>
 #include <das/Utils/fmt.h>
+#include <das/_autogen/idl/abi/IDasGuidVector.h>
 #include <filesystem>
 #include <nlohmann/json.hpp>
 #include <string>
@@ -131,7 +135,28 @@ namespace Das::Http
                 }
             }
 
-            auto result = scheduler_.Initialize(plugin_dir_, disabled_guids);
+            // 构造 IDasReadOnlyString* for plugin_dir
+            DasPtr<IDasReadOnlyString> p_plugin_dir;
+            auto                       u8_path = plugin_dir_.u8string();
+            CreateIDasReadOnlyStringFromUtf8(
+                reinterpret_cast<const char*>(u8_path.c_str()),
+                p_plugin_dir.Put());
+
+            // 构造 IDasGuidVector for disabled_guids，然后获取
+            // IDasReadOnlyGuidVector
+            DasPtr<Das::ExportInterface::IDasGuidVector> p_guid_vec;
+            CreateIDasGuidVector(
+                disabled_guids.empty() ? nullptr : disabled_guids.data(),
+                disabled_guids.size(),
+                p_guid_vec.Put());
+
+            DasPtr<Das::ExportInterface::IDasReadOnlyGuidVector>
+                p_readonly_guids;
+            p_guid_vec->ToConst(p_readonly_guids.Put());
+
+            auto result = scheduler_.Initialize(
+                p_plugin_dir.Get(),
+                p_readonly_guids.Get());
             if (DAS::IsFailed(result))
             {
                 return Beast::HttpResponse::CreateErrorResponse(
