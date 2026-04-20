@@ -76,7 +76,6 @@ public:
 private:
     std::recursive_mutex      mutex_;
     std::variant<Object, Ref> impl_;
-    uint32_t                  ref_counter_{};
 
     template <class T>
     DasResult GetToImpl(IDasReadOnlyString* p_string, T* obj);
@@ -101,9 +100,8 @@ public:
     explicit IDasJsonImpl(nlohmann::json&& json);
     ~IDasJsonImpl();
 
-    // IDasBase
-    uint32_t  AddRef() override;
-    uint32_t  Release() override;
+    // IDasBase — AddRef/Release inherited from DasJsonImplBase (atomic + delete
+    // this)
     DasResult QueryInterface(const DasGuid& iid, void** pp_out_object) override;
     DasResult GetIntByName(IDasReadOnlyString* key, int64_t* p_out_int)
         override;
@@ -536,18 +534,6 @@ IDasJsonImpl::IDasJsonImpl(nlohmann::json&& json)
 }
 
 IDasJsonImpl::~IDasJsonImpl() {}
-
-uint32_t IDasJsonImpl::AddRef()
-{
-    ++ref_counter_;
-    return ref_counter_;
-}
-
-uint32_t IDasJsonImpl::Release()
-{
-    --ref_counter_;
-    return ref_counter_;
-}
 
 DasResult IDasJsonImpl::QueryInterface(const DasGuid& iid, void** pp_out_object)
 {
@@ -1061,44 +1047,4 @@ DasResult CreateEmptyDasJson(Das::ExportInterface::IDasJson** pp_out_json)
         DAS_CORE_LOG_EXCEPTION(ex);
         return DAS_E_OUT_OF_MEMORY;
     }
-}
-
-DAS_C_API DasResult CloneDasJsonFromCopy(
-    const nlohmann::json&            src,
-    Das::ExportInterface::IDasJson** pp_out_json)
-{
-    DAS_UTILS_CHECK_POINTER(pp_out_json)
-
-    try
-    {
-        nlohmann::json copy = src;
-        const auto     p_result =
-            DAS::MakeDasPtr<DAS::Core::Utils::IDasJsonImpl>(std::move(copy));
-        DAS::Utils::SetResult(p_result, pp_out_json);
-        return DAS_S_OK;
-    }
-    catch (const std::bad_alloc& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        return DAS_E_OUT_OF_MEMORY;
-    }
-}
-
-DAS_C_API DasResult ExtractNlohmannJson(
-    Das::ExportInterface::IDasJson* p_json,
-    nlohmann::json&                 out)
-{
-    DAS_UTILS_CHECK_POINTER(p_json)
-
-    Das::DasPtr<DAS::Core::Utils::IDasJsonImpl> p_impl;
-    const auto                                  result = p_json->QueryInterface(
-        DasIidOf<DAS::Core::Utils::IDasJsonImpl>(),
-        p_impl.PutVoid());
-    if (DAS::IsFailed(result))
-    {
-        return result;
-    }
-
-    out = p_impl->ExtractJson();
-    return DAS_S_OK;
 }
