@@ -88,6 +88,7 @@ class TaskTiming:
         self.duration: Optional[float] = None
         self.status: str = "pending"
         self.error: Optional[str] = None
+        self.worker_pid: int = 0
 
     def start(self):
         """开始计时"""
@@ -144,6 +145,7 @@ def execute_single_task(task_config: Dict[str, Any], task_id: int) -> TaskTiming
                 cmd.append(str(value))
 
         timing.start()
+        timing.worker_pid = os.getpid()
 
         # 执行命令
         result = subprocess.run(
@@ -169,213 +171,126 @@ def execute_single_task(task_config: Dict[str, Any], task_id: int) -> TaskTiming
     return timing
 
 
-def generate_gantt_chart(timings: List[TaskTiming], use_multiprocessing: bool) -> str:
-    """
-    生成ASCII格式的甘特图
-
-    Args:
-        timings: 任务计时列表
-        use_multiprocessing: 是否使用多进程
-
-    Returns:
-        str: ASCII格式的甘特图
-    """
+def generate_timeline(timings: List[TaskTiming], use_multiprocessing: bool) -> str:
+    """生成 ASCII 任务执行时间线"""
     if not timings:
         return "无任务数据"
 
-    execution_mode = "多进程" if use_multiprocessing else "多线程"
-
-    # 计算总时间
-    valid_timings = [t for t in timings if t.start_time is not None and t.end_time is not None]
-    if not valid_timings:
+    valid = [t for t in timings if t.start_time is not None and t.end_time is not None]
+    if not valid:
         return "无有效的任务时间数据"
 
-    total_duration = max(t.end_time for t in valid_timings) - min(t.start_time for t in valid_timings)
-    base_time = min(t.start_time for t in valid_timings)
+    total_width = 110
+    label_width = 40
+    timeline_width = 54
 
-    # 计算甘特图宽度
-    chart_width = 90  # ASCII图宽度
-    time_scale = chart_width / total_duration if total_duration > 0 else 1
+    base_time = min(t.start_time for t in valid)
+    wall_duration = max(t.end_time for t in valid) - base_time
+    if wall_duration <= 0:
+        wall_duration = 1.0
 
-    # 构建图表
-    chart_lines = []
+    # 将 worker PID 映射为顺序编号 W1, W2, ...
+    unique_pids = sorted(set(t.worker_pid for t in valid if t.worker_pid))
+    worker_map = {pid: i + 1 for i, pid in enumerate(unique_pids)}
 
-    # 检测任务并行情况
-    # 为每个时间点统计正在运行的任务数
-    time_resolution = 20  # 时间采样点数
-    parallel_matrix = []
-    for i in range(time_resolution + 1):
-        check_time = base_time + (total_duration * i / time_resolution)
-        running_count = 0
-        for t in valid_timings:
-            if t.start_time <= check_time <= t.end_time:
-                running_count += 1
-        parallel_matrix.append(running_count)
+    lines = []
+    lines.append("=" * total_width)
 
-    # 时间轴和刻度
-    chart_lines.append("  ┌" + "─" * chart_width + "┐")
+    # --- 时间刻度尺 ---
+    # 分 5 个等间隔
+    num_intervals = 5
+    tick_chars = ["|"] + ["-"] * (timeline_width // num_intervals)
+    tick_unit = "".join(tick_chars)
+    tick_line = tick_unit * num_intervals
+    if len(tick_line) > timeline_width:
+        tick_line = tick_line[:timeline_width]
+    elif len(tick_line) < timeline_width:
+        tick_line += "-" * (timeline_width - len(tick_line))
 
-    # 分成10个区间，每个区间9个字符宽（90/10）
-    interval_width = chart_width // 10
+    # 时间标签行
+    label_chars = [" "] * timeline_width
+    for i in range(num_intervals + 1):
+        pos = int(i / num_intervals * timeline_width)
+        pos = min(pos, timeline_width - 1)
+        t_val = i / num_intervals * wall_duration
+        lbl = f"{t_val:.1f}s"
+        start = max(0, pos - len(lbl) + 1)
+        for j, ch in enumerate(lbl):
+            idx = start + j
+            if 0 <= idx < timeline_width:
+                label_chars[idx] = ch
 
-    # 重新设计时间轴
-    # 竖线位置：0, 9, 18, 27, 36, 45, 54, 63, 72, 81, 90（共11个竖线）
-    # chart_width=90，竖线间距=9
+    lines.append(" " * label_width + "".join(label_chars))
+    lines.append(" " * label_width + tick_line)
 
-    # 生成百分比行（先创建一个chart_width+2长的列表）
-    percent_list = list(" " * (chart_width + 2))
-    percent_list[0] = "│"  # 左边框
-    percent_list[-1] = "│"  # 右边框
-
-    # 在竖线位置放置百分比（右对齐到竖线位置）
-    for i in range(11):
-        pos = i * interval_width  # 竖线在chart内的位置：0, 9, 18, ..., 90
-        pct = int((pos / chart_width) * 100)  # 百分比：0, 10, 20, ..., 100
-        pct_str = f"{pct}%"
-
-        # 百分比字符串放在竖线位置（%在竖线上）
-        # 如果是100%，放在倒数第二个位置
-        if i == 10:  # 最后一个100%
-            # 放在末尾竖线前
-            start_pos = chart_width + 1 - len(pct_str)
-            for j, ch in enumerate(pct_str):
-                if start_pos + j < chart_width + 1:
-                    percent_list[start_pos + j] = ch
-        else:
-            # 其他百分比放在竖线位置（%在竖线上）
-            start_pos = pos + 1 - len(pct_str)
-            if start_pos >= 1:  # 确保不覆盖左边框
-                for j, ch in enumerate(pct_str):
-                    if start_pos + j < chart_width + 1:
-                        percent_list[start_pos + j] = ch
-
-    percent_line = "".join(percent_list)
-    chart_lines.append("  " + percent_line)
-
-    # 生成标记线
-    # marker_list: 索引0是左边框│，索引1-90是内容区域，索引91是右边框│
-    marker_list = ["│"] + ["─"] * chart_width + ["│"]
-    # 在位置 9, 18, 27, 36, 45, 54, 63, 72, 81 放置竖线（共9个内部竖线）
-    for i in range(1, 10):  # 1到9，对应位置 9, 18, ..., 81
-        pos = i * interval_width  # 9, 18, 27, ..., 81
-        if pos < chart_width:  # 确保不超出范围
-            marker_list[pos] = "│"
-
-    marker_line = "".join(marker_list)
-    chart_lines.append("  " + marker_line)
-    chart_lines.append("  ├" + "─" * chart_width + "┤")
-
-    # 任务条
-    for idx, timing in enumerate(timings):
+    # --- 任务行 ---
+    for timing in timings:
         if timing.start_time is None or timing.end_time is None:
             continue
 
-        # 计算起始位置和长度
-        start_offset = (timing.start_time - base_time) * time_scale
-        duration = (timing.end_time - timing.start_time) * time_scale
+        # 左侧: T## filename
+        filename = Path(timing.task_name).name if (
+            "/" in timing.task_name or "\\" in timing.task_name
+        ) else timing.task_name
+        left = f"T{timing.task_id:02d} {filename}"
+        if len(left) > label_width:
+            left = left[:label_width - 2] + ".."
+        left = f"{left:<{label_width}}"
 
-        # 计算该任务执行期间的最大并行数
-        start_sample_idx = int((timing.start_time - base_time) / total_duration * time_resolution)
-        end_sample_idx = int((timing.end_time - base_time) / total_duration * time_resolution)
-        start_sample_idx = max(0, min(start_sample_idx, time_resolution))
-        end_sample_idx = max(0, min(end_sample_idx, time_resolution))
+        # 时间轴 # 条
+        start_pos = int((timing.start_time - base_time) / wall_duration * timeline_width)
+        bar_len = max(1, round((timing.duration or 0) / wall_duration * timeline_width))
+        start_pos = max(0, min(start_pos, timeline_width - 1))
+        bar_len = min(bar_len, timeline_width - start_pos)
 
-        max_parallel = max(parallel_matrix[start_sample_idx:end_sample_idx+1]) if end_sample_idx >= start_sample_idx else 1
-        is_parallel = max_parallel > 1
-
-        # 构建任务名称（只显示文件名部分）
-        task_name = Path(timing.task_name).name if "/" in timing.task_name or "\\" in timing.task_name else timing.task_name
-        task_name = task_name[:25]
-
-        # 状态符号
-        status_symbol = "✓" if timing.status == "completed" else "✗"
-        task_id_str = f"#{timing.task_id + 1}"
-
-        # 左侧标签
-        left_label = f"  {task_id_str} {status_symbol} {task_name:<25}"
-        left_label = left_label[:30]
-
-        # 构建进度条
-        bar_prefix = " " * int(start_offset)
-
-        # 根据状态和并行情况选择不同的填充字符
         if timing.status == "completed":
-            if is_parallel and duration > 5:
-                # 并行任务使用特殊填充
-                bar_char = "#"
-            else:
-                bar_char = "■"
+            bar_char = "#"
+        elif timing.status == "failed":
+            bar_char = "X"
         else:
-            bar_char = "□"
+            bar_char = "!"
 
-        bar = bar_char * int(duration)
-        bar_line = bar_prefix + bar
+        bar = list(" " * timeline_width)
+        for i in range(bar_len):
+            idx = start_pos + i
+            if 0 <= idx < timeline_width:
+                bar[idx] = bar_char
 
-        # 计算剩余空间
-        used_width = len(bar_prefix) + len(bar)
-        remaining = chart_width - used_width
-        if remaining > 0:
-            bar_line += " " * remaining
+        # 右侧: [+] 0.03s W2
+        marker = "[+]" if timing.status == "completed" else "[-]" if timing.status == "failed" else "[T]"
+        dur_str = f"{timing.duration:.2f}s" if timing.duration else "  N/A"
+        w_num = worker_map.get(timing.worker_pid, 0)
+        w_str = f"W{w_num}" if w_num > 0 else ""
+        right = f"{marker} {dur_str:>6} {w_str}"
 
-        # 组合输出
-        chart_lines.append(f"  │{bar_line}│")
+        lines.append(f"{left}{''.join(bar)}{right}")
 
-        # 在条形图下方显示耗时
-        if duration > 3:  # 只有足够长的任务才显示耗时
-            time_label = "  │"
-            time_label += " " * int(start_offset)
-            time_label += f"{timing.duration:.2f}s"
-            time_label += " " * (chart_width - len(time_label) + 3)
-            time_label += "│"
-            chart_lines.append(time_label)
+    lines.append("-" * total_width)
+    lines.append("Legend: [#] Success  [X] Failed  [!] Timeout")
+    lines.append("        [+] OK  [-] Error  [T] Timeout")
 
-    chart_lines.append("  └" + "─" * chart_width + "┘")
-
-    # 图例
-    chart_lines.append("  ───────────────────────────────────────────────────────────────")
-    chart_lines.append("     ■ 任务执行中（已完成）   # 任务并行执行中   □ 任务执行失败")
-    chart_lines.append("  ───────────────────────────────────────────────────────────────")
-    chart_lines.append("")
-
-    return "\n".join(chart_lines)
-
-
-def print_task_timings(timings: List[TaskTiming]):
-    """
-    打印任务耗时列表
-
-    Args:
-        timings: 任务计时列表
-    """
-    print(f"\n{'='*100}")
-    print(f"任务耗时详情")
-    print(f"{'='*100}")
-    print(f"{'ID':<4} {'状态':<10} {'耗时':<12} {'文件名'}")
-    print(f"{'-'*100}")
-
-    for timing in timings:
-        status_symbol = "OK" if timing.status == "completed" else "FAIL"
-        duration_str = f"{timing.duration:.2f}s" if timing.duration else "N/A"
-
-        print(f"{timing.task_id:<4} {status_symbol} {timing.status:<9} {duration_str:<12} {timing.task_name}")
-
-        if timing.error:
-            print(f"     错误: {timing.error[:80]}")
-            if len(timing.error) > 80:
-                print(f"           ...")
-
-    # 统计 - 纯文本格式
+    # 统计摘要
     completed = sum(1 for t in timings if t.status == "completed")
     failed = sum(1 for t in timings if t.status == "failed")
-    total_duration = max(t.end_time for t in timings if t.end_time) - min(t.start_time for t in timings if t.start_time)
-    total_cpu_time = sum(t.duration for t in timings if t.duration)
+    cpu_time = sum(t.duration for t in timings if t.duration)
+    speedup = cpu_time / wall_duration if wall_duration > 0 else 1.0
+    lines.append(
+        f"Total: {len(timings)} tasks, {completed} ok, {failed} failed, "
+        f"CPU: {cpu_time:.2f}s, Wall: {wall_duration:.2f}s, Speedup: {speedup:.2f}x"
+    )
+    lines.append("")
 
-    print(f"\n{'='*100}")
-    print(f"统计摘要")
-    print(f"{'='*100}")
-    print(f"总任务数: {len(timings)}, 成功: {completed}, 失败: {failed}")
-    print(f"任务总耗时: {total_cpu_time:.2f}s, 总耗时: {total_duration:.2f}s, 加速比: {total_cpu_time / total_duration:.2f}x")
-    print(f"{'='*100}")
+    return "\n".join(lines)
+
+
+def _format_task_line(timing: TaskTiming) -> str:
+    """格式化单行任务状态，用于实时输出"""
+    marker = "[+]" if timing.status == "completed" else "[-]" if timing.status == "failed" else "[T]"
+    dur_str = f"{timing.duration:.2f}s" if timing.duration else "  N/A"
+    filename = Path(timing.task_name).name if (
+        "/" in timing.task_name or "\\" in timing.task_name
+    ) else timing.task_name
+    return f"{marker} {dur_str:>6}  T{timing.task_id:02d} {filename}"
 
 
 def run_with_multiprocessing(tasks: List[Dict[str, Any]], max_workers: Optional[int] = None) -> List[TaskTiming]:
@@ -406,9 +321,9 @@ def run_with_multiprocessing(tasks: List[Dict[str, Any]], max_workers: Optional[
             try:
                 timing = future.result()
                 timings.append(timing)
-                print(f"[{task_id + 1}/{len(tasks)}] {timing.task_name} - {timing.status} ({timing.duration:.2f}s)")
+                print(_format_task_line(timing))
             except Exception as e:
-                print(f"任务 {task_id} 执行异常: {e}")
+                print(f"[-]    N/A  T{task_id:02d} {tasks[task_id].get('-i', 'unknown')} - {e}")
                 task_timing = TaskTiming(tasks[task_id].get("-i", "unknown"), task_id)
                 task_timing.finish(str(e))
                 timings.append(task_timing)
@@ -452,9 +367,9 @@ def run_with_threading(tasks: List[Dict[str, Any]], max_workers: Optional[int] =
             task_id = future_to_task[future]
             try:
                 timing = future.result()
-                print(f"[{task_id + 1}/{len(tasks)}] {timing.task_name} - {timing.status} ({timing.duration:.2f}s)")
+                print(_format_task_line(timing))
             except Exception as e:
-                print(f"任务 {task_id} 执行异常: {e}")
+                print(f"[-]    N/A  T{task_id:02d} {tasks[task_id].get('-i', 'unknown')} - {e}")
 
     # 按任务ID排序
     timings.sort(key=lambda t: t.task_id)
@@ -651,11 +566,9 @@ JSON 配置格式:
 
     total_duration = time.time() - start_time
 
-    # 打印任务耗时详情
-    print_task_timings(timings)
-
-    # 生成甘特图
-    print(generate_gantt_chart(timings, use_multiprocessing))
+    # 打印任务执行时间线
+    print(f"\nTask Execution Timeline")
+    print(generate_timeline(timings, use_multiprocessing))
 
     # 返回状态
     failed_count = sum(1 for t in timings if t.status == "failed")
