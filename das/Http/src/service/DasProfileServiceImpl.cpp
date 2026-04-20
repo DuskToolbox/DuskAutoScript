@@ -4,7 +4,6 @@
 
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
-#include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>

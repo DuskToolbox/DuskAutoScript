@@ -10,8 +10,8 @@ namespace Das::Http
 {
 
     /**
-     * @brief IDasJson 实现：通过 SettingsManager 读写，每次 Set 自动落盘。
-     * 持有 SettingsManager& 裸引用，调用方需保证 SettingsManager 存活。
+     * @brief IDasJson 实现：通过 IDasSettingsService 读写，每次 Set 自动落盘。
+     * 持有 IDasSettingsService& 引用，调用方需保证接口实现存活。
      * 白名单外的字段访问返回 DAS_E_PERMISSION_DENIED。
      * 支持 path_prefix_ 实现嵌套 JSON 子对象访问。
      */
