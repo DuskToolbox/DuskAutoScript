@@ -20,10 +20,13 @@ public:
     QueryInterface(const DasGuid& iid, void** pp_out) override;
 
     // IDasPluginManagerService
-    ComponentFactoryManager&      GetComponentFactoryManager() override;
-    std::span<FeatureInfo* const> GetFeaturesByType(
-        Das::PluginInterface::DasPluginFeature type) const override;
-    PluginPackageDesc* FindPluginPackageByGuid(const DasGuid& guid) override;
+    DasResult CreateComponent(const DasGuid& iid, void** pp_out) override;
+    std::vector<std::string> GetPluginSettingsFieldNames(
+        const DasGuid& plugin_guid) const override;
+    DasResult CreateCaptureManager(
+        void*  p_environment_config,
+        void*  p_settings_service,
+        void** pp_out) override;
 
 private:
     std::atomic<uint32_t> ref_count_{0};

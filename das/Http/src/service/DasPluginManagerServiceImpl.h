@@ -11,10 +11,6 @@
 namespace Das::Http
 {
 
-    /**
-     * @brief IDasPluginManager Stub。CreateComponent 委托到
-     * ComponentFactoryManager，CreateCaptureManager 返回 NOT_IMPLEMENTED。
-     */
     class DasPluginManagerServiceImpl final
         : public Das::ExportInterface::DasPluginManagerImplBase<
               DasPluginManagerServiceImpl>

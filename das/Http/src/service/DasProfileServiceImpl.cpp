@@ -25,19 +25,17 @@ namespace Das::Http
     {
         DAS_UTILS_CHECK_POINTER(pp_out)
 
-        auto* desc =
-            plugin_manager_service_.FindPluginPackageByGuid(plugin_guid);
-        if (!desc)
+        auto field_names =
+            plugin_manager_service_.GetPluginSettingsFieldNames(plugin_guid);
+        if (field_names.empty())
         {
             DAS_CORE_LOG_ERROR("Plugin not found for GUID.");
             return DAS_E_NOT_FOUND;
         }
 
-        std::unordered_set<std::string> whitelist;
-        for (const auto& setting : desc->settings_desc)
-        {
-            whitelist.insert(setting.name);
-        }
+        std::unordered_set<std::string> whitelist(
+            std::make_move_iterator(field_names.begin()),
+            std::make_move_iterator(field_names.end()));
 
         const auto guid_str =
             Das::Core::ForeignInterfaceHost::DasGuidToStdString(plugin_guid);

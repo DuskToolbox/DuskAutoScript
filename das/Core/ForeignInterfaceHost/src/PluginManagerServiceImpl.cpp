@@ -1,5 +1,13 @@
+#include <das/Core/ForeignInterfaceHost/IDasCaptureManagerImpl.h>
+#include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/PluginManagerServiceImpl.h>
+#include <das/Core/Logger/Logger.h>
 #include <das/DasExport.h>
+#include <das/DasString.hpp>
+#include <das/IDasSettingsService.h>
+#include <das/Utils/CommonUtils.hpp>
+#include <das/_autogen/idl/abi/IDasCapture.h>
+#include <das/_autogen/idl/wrapper/IDasTypeInfo.hpp>
 #include <new>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
@@ -50,21 +58,147 @@ PluginManagerServiceImpl::QueryInterface(const DasGuid& iid, void** pp_out)
     return DAS_E_NO_INTERFACE;
 }
 
-ComponentFactoryManager& PluginManagerServiceImpl::GetComponentFactoryManager()
+DasResult PluginManagerServiceImpl::CreateComponent(
+    const DasGuid& iid,
+    void**         pp_out)
 {
-    return mgr_.GetComponentFactoryManager();
+    if (pp_out == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+    return mgr_.GetComponentFactoryManager().CreateComponent(
+        iid,
+        reinterpret_cast<Das::PluginInterface::IDasComponent**>(pp_out));
 }
 
-std::span<FeatureInfo* const> PluginManagerServiceImpl::GetFeaturesByType(
-    Das::PluginInterface::DasPluginFeature type) const
+std::vector<std::string> PluginManagerServiceImpl::GetPluginSettingsFieldNames(
+    const DasGuid& guid) const
 {
-    return mgr_.GetFeaturesByType(type);
+    std::vector<std::string> result;
+    auto*                    desc = mgr_.FindPluginPackageByGuid(guid);
+    if (!desc)
+    {
+        return result;
+    }
+    for (const auto& setting : desc->settings_desc)
+    {
+        result.push_back(setting.name);
+    }
+    return result;
 }
 
-PluginPackageDesc* PluginManagerServiceImpl::FindPluginPackageByGuid(
-    const DasGuid& guid)
+DasResult PluginManagerServiceImpl::CreateCaptureManager(
+    void*  p_environment_config,
+    void*  p_settings_service,
+    void** pp_out)
 {
-    return mgr_.FindPluginPackageByGuid(guid);
+    if (pp_out == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    auto*  env_config = static_cast<IDasReadOnlyString*>(p_environment_config);
+    auto*  settings_svc = static_cast<IDasSettingsService*>(p_settings_service);
+    auto** pp_out_mgr =
+        reinterpret_cast<Das::ExportInterface::IDasCaptureManager**>(pp_out);
+
+    auto capture_features = mgr_.GetFeaturesByType(
+        Das::PluginInterface::DAS_PLUGIN_FEATURE_CAPTURE_FACTORY);
+
+    if (capture_features.empty())
+    {
+        DAS_CORE_LOG_WARN("No CAPTURE_FACTORY features found");
+        return DAS_E_NOT_FOUND;
+    }
+
+    auto* capture_mgr = new CaptureManagerImpl();
+    capture_mgr->ReserveInstanceContainer(capture_features.size());
+
+    DasResult overall_result = DAS_S_OK;
+
+    for (auto* feat : capture_features)
+    {
+        if (!feat->interface_ptr)
+        {
+            DAS_CORE_LOG_WARN("CAPTURE_FACTORY feature has null interface_ptr");
+            continue;
+        }
+
+        DAS::DasPtr<Das::PluginInterface::IDasCaptureFactory> factory;
+        auto qi_result = feat->interface_ptr->QueryInterface(
+            DasIidOf<Das::PluginInterface::IDasCaptureFactory>(),
+            reinterpret_cast<void**>(factory.Put()));
+        if (DAS::IsFailed(qi_result) || !factory)
+        {
+            DAS_CORE_LOG_WARN(
+                "Failed to QI IDasCaptureFactory from feature, result={}",
+                qi_result);
+            continue;
+        }
+
+        auto guid_str = DasGuidToStdString(feat->plugin_guid);
+        auto settings_json = settings_svc->GetPluginSettingsJson("0", guid_str);
+
+        DAS::DasPtr<IDasReadOnlyString> plugin_config;
+        if (!settings_json.is_null())
+        {
+            auto       config_str = settings_json.dump();
+            const auto create_result = CreateIDasReadOnlyStringFromUtf8(
+                config_str.c_str(),
+                plugin_config.Put());
+            if (DAS::IsFailed(create_result))
+            {
+                DAS_CORE_LOG_WARN(
+                    "Failed to create IDasReadOnlyString for plugin config, guid={}",
+                    guid_str);
+            }
+        }
+
+        DAS::DasPtr<Das::PluginInterface::IDasCapture> capture;
+        const auto create_result = factory->CreateInstance(
+            env_config,
+            plugin_config.Get(),
+            capture.Put());
+
+        if (DAS::IsFailed(create_result) || !capture)
+        {
+            DAS_CORE_LOG_WARN(
+                "CaptureFactory::CreateInstance failed, result={}",
+                create_result);
+
+            CaptureManagerImpl::ErrorInfo error_info{};
+            error_info.error_code = create_result;
+            std::string error_msg = DAS_FMT_NS::format(
+                "Capture instance creation failed, result={}",
+                create_result);
+            DAS::DasPtr<IDasReadOnlyString> p_error_msg;
+            CreateIDasReadOnlyStringFromUtf8(
+                error_msg.c_str(),
+                p_error_msg.Put());
+            error_info.p_error_message = p_error_msg;
+            capture_mgr->AddInstance(error_info);
+            overall_result = DAS_S_FALSE;
+            continue;
+        }
+
+        DAS::DasPtr<IDasReadOnlyString> capture_name;
+        auto* type_info = static_cast<IDasTypeInfo*>(capture.Get());
+        if (type_info)
+        {
+            type_info->GetRuntimeClassName(capture_name.Put());
+        }
+        if (!capture_name)
+        {
+            CreateIDasReadOnlyStringFromUtf8("unknown", capture_name.Put());
+        }
+
+        capture_mgr->AddInstance(std::move(capture_name), std::move(capture));
+    }
+
+    *pp_out_mgr = capture_mgr;
+    capture_mgr->AddRef();
+
+    return overall_result;
 }
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END

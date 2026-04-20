@@ -1,9 +1,9 @@
 #ifndef DAS_PLUGIN_MANAGER_SERVICE_H
 #define DAS_PLUGIN_MANAGER_SERVICE_H
 
-#include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/IDasBase.h>
-#include <span>
+#include <string>
+#include <vector>
 
 DAS_DEFINE_GUID(
     DAS_IID_PLUGIN_MANAGER_SERVICE,
@@ -23,12 +23,21 @@ DAS_DEFINE_GUID(
 DAS_SWIG_EXPORT_ATTRIBUTE(IDasPluginManagerService)
 DAS_INTERFACE IDasPluginManagerService : public IDasBase
 {
-    DAS_METHOD_(Das::Core::ForeignInterfaceHost::ComponentFactoryManager&)
-    GetComponentFactoryManager() = 0;
-    DAS_METHOD_(std::span<Das::Core::ForeignInterfaceHost::FeatureInfo* const>)
-    GetFeaturesByType(Das::PluginInterface::DasPluginFeature type) const = 0;
-    DAS_METHOD_(Das::Core::ForeignInterfaceHost::PluginPackageDesc*)
-    FindPluginPackageByGuid(const DasGuid& guid) = 0;
+    // Component creation (hides ComponentFactoryManager)
+    DAS_METHOD CreateComponent(const DasGuid& iid, void** pp_out) = 0;
+
+    // Get settings field names for a plugin (hides PluginPackageDesc)
+    DAS_METHOD_(std::vector<std::string>)
+    GetPluginSettingsFieldNames(const DasGuid& plugin_guid) const = 0;
+
+    // Create capture manager (hides FeatureInfo/internal iteration)
+    // p_environment_config: IDasReadOnlyString*
+    // p_settings_service: IDasSettingsService*
+    // pp_out: IDasCaptureManager**
+    DAS_METHOD CreateCaptureManager(
+        void*  p_environment_config,
+        void*  p_settings_service,
+        void** pp_out) = 0;
 };
 
 #endif // DAS_PLUGIN_MANAGER_SERVICE_H
