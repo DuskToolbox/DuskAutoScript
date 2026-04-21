@@ -55,14 +55,15 @@ namespace Das::Http
             {
                 return {};
             }
-            IDasReadOnlyString* p_str = nullptr;
-            auto                result = p_json->ToString(-1, &p_str);
-            if (DAS::IsFailed(result) || !p_str)
+            DasPtr<IDasReadOnlyString> p_str;
+            auto                       result = p_json->ToString(
+                -1,
+                p_str.Put());
+            if (DAS::IsFailed(result))
             {
                 return {};
             }
-            std::string json_str = ToString(p_str);
-            p_str->Release();
+            std::string json_str = ToString(p_str.Get());
             try
             {
                 return nlohmann::json::parse(json_str);
@@ -520,18 +521,15 @@ namespace Das::Http
 
         DAS_UTILS_CHECK_POINTER(p_in_das_json)
 
-        IDasReadOnlyString* p_json_str = nullptr;
-        auto to_string_result = p_in_das_json->ToString(-1, &p_json_str);
+        DasPtr<IDasReadOnlyString> p_json_str;
+        auto to_string_result = p_in_das_json->ToString(-1, p_json_str.Put());
         if (DAS::IsFailed(to_string_result))
         {
             return to_string_result;
         }
 
-        const auto expected_value = ToU8StringWithoutOwnership(p_json_str);
-        if (p_json_str)
-        {
-            p_json_str->Release();
-        }
+        const auto expected_value =
+            ToU8StringWithoutOwnership(p_json_str.Get());
         if (!expected_value)
         {
             return expected_value.error();
@@ -849,18 +847,15 @@ namespace Das::Http
             return DAS_E_OUT_OF_RANGE;
         }
 
-        IDasReadOnlyString* p_json_str = nullptr;
-        auto to_string_result = p_in_das_json->ToString(-1, &p_json_str);
+        DasPtr<IDasReadOnlyString> p_json_str;
+        auto to_string_result = p_in_das_json->ToString(-1, p_json_str.Put());
         if (DAS::IsFailed(to_string_result))
         {
             return to_string_result;
         }
 
-        const auto expected_value = ToU8StringWithoutOwnership(p_json_str);
-        if (p_json_str)
-        {
-            p_json_str->Release();
-        }
+        const auto expected_value =
+            ToU8StringWithoutOwnership(p_json_str.Get());
         if (!expected_value)
         {
             return expected_value.error();

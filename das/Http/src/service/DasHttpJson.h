@@ -317,18 +317,16 @@ namespace Das::Http
                 return expected_key.error();
             }
 
-            IDasReadOnlyString* p_json_str = nullptr;
-            auto to_string_result = p_in_das_json->ToString(-1, &p_json_str);
+            DasPtr<IDasReadOnlyString> p_json_str;
+            auto to_string_result =
+                p_in_das_json->ToString(-1, p_json_str.Put());
             if (DAS::IsFailed(to_string_result))
             {
                 return to_string_result;
             }
 
-            const auto expected_value = ToU8StringWithoutOwnership(p_json_str);
-            if (p_json_str)
-            {
-                p_json_str->Release();
-            }
+            const auto expected_value =
+                ToU8StringWithoutOwnership(p_json_str.Get());
             if (!expected_value)
             {
                 return expected_value.error();
@@ -583,18 +581,16 @@ namespace Das::Http
                 return DAS_E_OUT_OF_RANGE;
             }
 
-            IDasReadOnlyString* p_json_str = nullptr;
-            auto to_string_result = p_in_das_json->ToString(-1, &p_json_str);
+            DasPtr<IDasReadOnlyString> p_json_str;
+            auto to_string_result =
+                p_in_das_json->ToString(-1, p_json_str.Put());
             if (DAS::IsFailed(to_string_result))
             {
                 return to_string_result;
             }
 
-            const auto expected_value = ToU8StringWithoutOwnership(p_json_str);
-            if (p_json_str)
-            {
-                p_json_str->Release();
-            }
+            const auto expected_value =
+                ToU8StringWithoutOwnership(p_json_str.Get());
             if (!expected_value)
             {
                 return expected_value.error();

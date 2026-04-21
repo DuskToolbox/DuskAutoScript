@@ -197,9 +197,17 @@ DasResult PluginManagerServiceImpl::CreateCaptureManager(
             // best-effort: error message creation failure should not mask the
             // original error from CaptureFactory::CreateInstance
             DAS::DasPtr<IDasReadOnlyString> p_error_msg;
-            CreateIDasReadOnlyStringFromUtf8(
-                error_msg.c_str(),
-                p_error_msg.Put());
+            const auto create_error_msg_result =
+                CreateIDasReadOnlyStringFromUtf8(
+                    error_msg.c_str(),
+                    p_error_msg.Put());
+            if (DAS::IsFailed(create_error_msg_result))
+            {
+                DAS_CORE_LOG_WARN(
+                    "Failed to create capture error message string, result={}",
+                    create_error_msg_result);
+                CreateNullDasString(p_error_msg.Put());
+            }
             error_info.p_error_message = p_error_msg;
             capture_mgr->AddInstance(error_info);
             overall_result = DAS_S_FALSE;
@@ -214,7 +222,15 @@ DasResult PluginManagerServiceImpl::CreateCaptureManager(
         }
         if (!capture_name)
         {
-            CreateIDasReadOnlyStringFromUtf8("unknown", capture_name.Put());
+            const auto create_name_result =
+                CreateIDasReadOnlyStringFromUtf8("unknown", capture_name.Put());
+            if (DAS::IsFailed(create_name_result))
+            {
+                DAS_CORE_LOG_WARN(
+                    "Failed to create fallback capture name, result={}",
+                    create_name_result);
+                CreateNullDasString(capture_name.Put());
+            }
         }
 
         capture_mgr->AddInstance(std::move(capture_name), std::move(capture));

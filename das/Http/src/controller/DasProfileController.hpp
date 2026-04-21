@@ -33,8 +33,9 @@ namespace Das::Http
                     "Failed to get profile list");
             }
 
-            IDasReadOnlyString* p_str = nullptr;
-            auto                to_str_result = json->ToString(-1, &p_str);
+            DasPtr<IDasReadOnlyString> p_str;
+            auto                       to_str_result =
+                json->ToString(-1, p_str.Put());
             if (DAS::IsFailed(to_str_result))
             {
                 return Beast::HttpResponse::CreateErrorResponse(
@@ -42,9 +43,14 @@ namespace Das::Http
                     "Failed to serialize profile list");
             }
             const char* c_str = nullptr;
-            p_str->GetUtf8(&c_str);
+            auto        get_result = p_str->GetUtf8(&c_str);
+            if (DAS::IsFailed(get_result))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    get_result,
+                    "Failed to get profile list string");
+            }
             auto parsed = nlohmann::json::parse(c_str);
-            p_str->Release();
             return Beast::HttpResponse::CreateSuccessResponse(parsed);
         }
 
@@ -141,8 +147,9 @@ namespace Das::Http
                     "Failed to get profile");
             }
 
-            IDasReadOnlyString* p_str = nullptr;
-            auto                to_str_result = json->ToString(-1, &p_str);
+            DasPtr<IDasReadOnlyString> p_str;
+            auto                       to_str_result =
+                json->ToString(-1, p_str.Put());
             if (DAS::IsFailed(to_str_result))
             {
                 return Beast::HttpResponse::CreateErrorResponse(
@@ -151,15 +158,13 @@ namespace Das::Http
             }
             const char* c_str = nullptr;
             auto        get_result = p_str->GetUtf8(&c_str);
-            if (DAS::IsFailed(get_result) || !c_str)
+            if (DAS::IsFailed(get_result))
             {
-                p_str->Release();
                 return Beast::HttpResponse::CreateErrorResponse(
                     get_result,
                     "Failed to get profile string");
             }
             auto parsed = nlohmann::json::parse(c_str);
-            p_str->Release();
             return Beast::HttpResponse::CreateSuccessResponse(parsed);
         }
 
@@ -249,8 +254,9 @@ namespace Das::Http
                     "Failed to get plugin settings");
             }
 
-            IDasReadOnlyString* p_str = nullptr;
-            auto                to_str_result = json->ToString(-1, &p_str);
+            DasPtr<IDasReadOnlyString> p_str;
+            auto                       to_str_result =
+                json->ToString(-1, p_str.Put());
             if (DAS::IsFailed(to_str_result))
             {
                 return Beast::HttpResponse::CreateErrorResponse(
@@ -259,15 +265,13 @@ namespace Das::Http
             }
             const char* c_str = nullptr;
             auto        get_result = p_str->GetUtf8(&c_str);
-            if (DAS::IsFailed(get_result) || !c_str)
+            if (DAS::IsFailed(get_result))
             {
-                p_str->Release();
                 return Beast::HttpResponse::CreateErrorResponse(
                     get_result,
                     "Failed to get plugin settings string");
             }
             auto parsed = nlohmann::json::parse(c_str);
-            p_str->Release();
             return Beast::HttpResponse::CreateSuccessResponse(parsed);
         }
 

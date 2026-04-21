@@ -2,6 +2,7 @@
 #include <das/Core/SettingsManager/SettingsServiceImpl.h>
 #include <das/DasApi.h>
 #include <das/DasExport.h>
+#include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/StringUtils.h>
@@ -77,16 +78,16 @@ namespace
         nlohmann::json&                 out)
     {
         DAS_UTILS_CHECK_POINTER(p_data)
-        IDasReadOnlyString* p_str = nullptr;
-        auto                result = p_data->ToString(-1, &p_str);
+        DAS::DasPtr<IDasReadOnlyString> p_str;
+        auto                            result =
+            p_data->ToString(-1, p_str.Put());
         if (DAS::IsFailed(result))
         {
             return result;
         }
         const char* c_str = nullptr;
         auto        get_result = p_str->GetUtf8(&c_str);
-        p_str->Release();
-        if (DAS::IsFailed(get_result) || !c_str)
+        if (DAS::IsFailed(get_result))
         {
             return get_result;
         }
