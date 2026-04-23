@@ -19,8 +19,8 @@ namespace Das::Http
         DAS_UTILS_CHECK_POINTER(pp_out_component)
 
         return plugin_manager_service_.CreateComponent(
-            iid,
-            reinterpret_cast<void**>(pp_out_component));
+            &iid,
+            reinterpret_cast<IDasBase**>(pp_out_component));
     }
 
     DasResult DasPluginManagerServiceImpl::CreateCaptureManager(

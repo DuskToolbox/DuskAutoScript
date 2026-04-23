@@ -2,16 +2,35 @@
 
 #include "DasPluginProfileImpl.h"
 
-#include <das/Core/ForeignInterfaceHost/DasGuid.h>
-#include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/_autogen/idl/abi/IDasStringVector.h>
+#include <format>
 
 namespace Das::Http
 {
+
+    namespace
+    {
+        std::string FormatDasGuid(const DasGuid& guid)
+        {
+            return std::format(
+                "{:08x}-{:04x}-{:04x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+                guid.data1,
+                guid.data2,
+                guid.data3,
+                guid.data4[0],
+                guid.data4[1],
+                guid.data4[2],
+                guid.data4[3],
+                guid.data4[4],
+                guid.data4[5],
+                guid.data4[6],
+                guid.data4[7]);
+        }
+    } // namespace
 
     DasProfileServiceImpl::DasProfileServiceImpl(
         IDasPluginManagerService& plugin_manager_service,
@@ -29,7 +48,7 @@ namespace Das::Http
 
         DAS::DasPtr<Das::ExportInterface::IDasStringVector> field_names;
         auto fn_result = plugin_manager_service_.GetPluginSettingsFieldNames(
-            plugin_guid,
+            &plugin_guid,
             field_names.Put());
         if (DAS::IsFailed(fn_result))
         {
@@ -61,8 +80,7 @@ namespace Das::Http
             }
         }
 
-        const auto guid_str =
-            Das::Core::ForeignInterfaceHost::DasGuidToStdString(plugin_guid);
+        const auto guid_str = FormatDasGuid(plugin_guid);
 
         try
         {

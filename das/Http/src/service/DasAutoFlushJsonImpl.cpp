@@ -56,9 +56,7 @@ namespace Das::Http
                 return {};
             }
             DasPtr<IDasReadOnlyString> p_str;
-            auto                       result = p_json->ToString(
-                -1,
-                p_str.Put());
+            auto result = p_json->ToString(-1, p_str.Put());
             if (DAS::IsFailed(result))
             {
                 return {};
@@ -153,8 +151,8 @@ namespace Das::Http
         {
             return {};
         }
-        DasPtr<IDasReadOnlyString> p_guid;
-        if (DAS::IsFailed(CreateReadOnlyString(plugin_guid_.c_str(), p_guid)))
+        DasGuid guid;
+        if (DAS::IsFailed(DasMakeDasGuid(plugin_guid_.c_str(), &guid)))
         {
             return {};
         }
@@ -167,7 +165,7 @@ namespace Das::Http
         DasPtr<IDasJson> json_result;
         auto             result = settings_service_.GetPluginSettingsField(
             p_profile_id.Get(),
-            p_guid.Get(),
+            &guid,
             p_field.Get(),
             json_result.Put());
         if (DAS::IsFailed(result))
@@ -187,8 +185,8 @@ namespace Das::Http
         {
             return cr;
         }
-        DasPtr<IDasReadOnlyString> p_guid;
-        cr = CreateReadOnlyString(plugin_guid_.c_str(), p_guid);
+        DasGuid guid;
+        cr = DasMakeDasGuid(plugin_guid_.c_str(), &guid);
         if (DAS::IsFailed(cr))
         {
             return cr;
@@ -205,7 +203,7 @@ namespace Das::Http
 
         return settings_service_.UpdatePluginSettingsField(
             p_profile_id.Get(),
-            p_guid.Get(),
+            &guid,
             p_field.Get(),
             json_value.Get());
     }
@@ -218,8 +216,8 @@ namespace Das::Http
         {
             return {};
         }
-        DasPtr<IDasReadOnlyString> p_guid;
-        if (DAS::IsFailed(CreateReadOnlyString(plugin_guid_.c_str(), p_guid)))
+        DasGuid guid;
+        if (DAS::IsFailed(DasMakeDasGuid(plugin_guid_.c_str(), &guid)))
         {
             return {};
         }
@@ -229,7 +227,7 @@ namespace Das::Http
             DasPtr<IDasJson> json_result;
             auto             result = settings_service_.GetPluginSettings(
                 p_profile_id.Get(),
-                p_guid.Get(),
+                &guid,
                 json_result.Put());
             if (DAS::IsFailed(result))
             {
@@ -247,7 +245,7 @@ namespace Das::Http
         DasPtr<IDasJson> json_result;
         auto             result = settings_service_.GetPluginSettingsField(
             p_profile_id.Get(),
-            p_guid.Get(),
+            &guid,
             p_field.Get(),
             json_result.Put());
         if (DAS::IsFailed(result))

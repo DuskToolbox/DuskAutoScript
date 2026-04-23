@@ -1,6 +1,5 @@
 #pragma once
 
-#include <das/Core/ForeignInterfaceHost/IDasCaptureManagerImpl.h>
 #include <das/DasString.hpp>
 #include <das/IDasPluginManagerService.h>
 #include <das/_autogen/idl/abi/IDasCapture.h>
