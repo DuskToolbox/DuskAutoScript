@@ -605,4 +605,78 @@ namespace
             "B4F60C54-67DF-407A-B891-6D3C90CDB9A1");
     }
 
+    // --- GetPluginSettingsWithStatus tests ---
+
+    TEST_F(SettingsManagerTest, GetPluginSettingsWithStatus_ValidFile_ReturnsOK)
+    {
+        Das::Core::SettingsManager::SettingsManager sm(test_dir_);
+        sm.CreateProfile("0");
+
+        nlohmann::json plugin_data;
+        plugin_data["setting1"] = "value1";
+        sm.UpdatePluginSettingsJson("0", "test-guid", plugin_data);
+
+        auto [json, status] = sm.GetPluginSettingsWithStatus("0", "test-guid");
+        EXPECT_EQ(status, DAS_S_OK);
+        EXPECT_EQ(json["setting1"], "value1");
+    }
+
+    TEST_F(
+        SettingsManagerTest,
+        GetPluginSettingsWithStatus_CorruptFile_ReturnsSFalse)
+    {
+        Das::Core::SettingsManager::SettingsManager sm(test_dir_);
+        sm.CreateProfile("0");
+
+        // Write corrupt JSON to plugin settings file
+        auto guid_file = test_dir_ / "0" / "corrupt-guid.json";
+        {
+            std::ofstream ofs{guid_file};
+            ofs << "{not valid json!!!";
+        }
+
+        auto [json, status] =
+            sm.GetPluginSettingsWithStatus("0", "corrupt-guid");
+        EXPECT_EQ(status, DAS_S_FALSE);
+        EXPECT_TRUE(json.is_object());
+    }
+
+    TEST_F(
+        SettingsManagerTest,
+        GetPluginSettingsWithStatus_MissingFile_ReturnsSFalse)
+    {
+        Das::Core::SettingsManager::SettingsManager sm(test_dir_);
+        sm.CreateProfile("0");
+
+        auto guid_file = test_dir_ / "0" / "missing-guid.json";
+        EXPECT_FALSE(std::filesystem::exists(guid_file));
+
+        auto [json, status] =
+            sm.GetPluginSettingsWithStatus("0", "missing-guid");
+        EXPECT_EQ(status, DAS_S_FALSE);
+        EXPECT_TRUE(json.is_object());
+
+        // File should now exist (rebuilt)
+        EXPECT_TRUE(std::filesystem::exists(guid_file));
+    }
+
+    TEST_F(
+        SettingsManagerTest,
+        GetPluginSettingsWithStatus_NonObjectJson_ReturnsSFalse)
+    {
+        Das::Core::SettingsManager::SettingsManager sm(test_dir_);
+        sm.CreateProfile("0");
+
+        // Write a valid JSON array (not an object) to the plugin settings file
+        auto guid_file = test_dir_ / "0" / "array-guid.json";
+        {
+            std::ofstream ofs{guid_file};
+            ofs << "[1, 2, 3]";
+        }
+
+        auto [json, status] = sm.GetPluginSettingsWithStatus("0", "array-guid");
+        EXPECT_EQ(status, DAS_S_FALSE);
+        EXPECT_TRUE(json.is_object());
+    }
+
 } // anonymous namespace

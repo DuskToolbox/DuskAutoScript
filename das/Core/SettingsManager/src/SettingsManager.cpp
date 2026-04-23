@@ -4,6 +4,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <utility>
 
 DAS_CORE_SETTINGS_MANAGER_NS_BEGIN
 
@@ -459,6 +460,61 @@ nlohmann::json SettingsManager::GetPluginSettingsJson(
         DAS_CORE_LOG_EXCEPTION(ex);
         return nlohmann::json::object();
     }
+}
+
+std::pair<nlohmann::json, DasResult>
+SettingsManager::GetPluginSettingsWithStatus(
+    const std::string& profile_id,
+    const std::string& guid)
+{
+    auto path = GetPluginSettingsPath(profile_id, guid);
+
+    // Check if file exists
+    if (!std::filesystem::exists(path))
+    {
+        DAS_CORE_LOG_WARN(
+            "Plugin settings file missing: {}, returning empty defaults",
+            path.string());
+        auto defaults = nlohmann::json::object();
+        // Persist empty defaults so future reads succeed
+        WriteJsonFile(path, defaults);
+        return {defaults, DAS_S_FALSE};
+    }
+
+    // Read raw file content directly (not via ReadJsonFile which silently
+    // returns "{}" for corrupt JSON)
+    {
+        std::shared_lock lock{mutex_};
+        try
+        {
+            std::ifstream ifs{path};
+            if (!ifs.is_open())
+            {
+                lock.unlock();
+                auto defaults = nlohmann::json::object();
+                WriteJsonFile(path, defaults);
+                return {defaults, DAS_S_FALSE};
+            }
+            auto parsed = nlohmann::json::parse(ifs);
+            if (parsed.is_object())
+            {
+                return {parsed, DAS_S_OK};
+            }
+            // Not an object - treat as corrupt
+        }
+        catch (const nlohmann::json::exception& ex)
+        {
+            DAS_CORE_LOG_EXCEPTION(ex);
+        }
+    }
+
+    // File is corrupt - rebuild with empty defaults
+    DAS_CORE_LOG_WARN(
+        "Plugin settings file corrupt: {}, restoring empty defaults",
+        path.string());
+    auto defaults = nlohmann::json::object();
+    WriteJsonFile(path, defaults);
+    return {defaults, DAS_S_FALSE};
 }
 
 DasResult SettingsManager::UpdatePluginSettingsJson(

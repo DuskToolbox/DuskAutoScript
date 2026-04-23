@@ -150,6 +150,20 @@ namespace Das::Http::Beast
             return response;
         }
 
+        static HttpResponse CreateSuccessResponse(
+            DasResult             code,
+            const std::string&    message,
+            const nlohmann::json& data = nullptr)
+        {
+            HttpResponse   response;
+            nlohmann::json body;
+            body["Code"] = code;
+            body["Message"] = message;
+            body["Data"] = data;
+            response.SetBody(body);
+            return response;
+        }
+
     private:
         response_type response_;
     };

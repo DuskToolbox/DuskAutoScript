@@ -201,10 +201,15 @@ DasResult SettingsServiceImpl::GetPluginSettings(
     DAS_UTILS_CHECK_POINTER(pp_out)
     DAS_UTILS_CHECK_POINTER(p_profile_id)
     DAS_UTILS_CHECK_POINTER(p_plugin_guid)
-    auto json = mgr_.GetPluginSettingsJson(
+    auto [json, status] = mgr_.GetPluginSettingsWithStatus(
         ToString(p_profile_id),
         GuidToString(*p_plugin_guid));
-    return JsonToIDasJson(json, pp_out);
+    auto json_result = JsonToIDasJson(json, pp_out);
+    if (DAS::IsFailed(json_result))
+    {
+        return json_result;
+    }
+    return status;
 }
 
 DasResult SettingsServiceImpl::UpdatePluginSettings(

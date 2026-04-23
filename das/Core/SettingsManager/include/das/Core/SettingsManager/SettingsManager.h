@@ -44,6 +44,13 @@ public:
     nlohmann::json GetPluginSettingsJson(
         const std::string& profile_id,
         const std::string& guid);
+
+    /// Get plugin settings with status. Returns {json, DAS_S_OK} for valid
+    /// files, {rebuilt_empty_json, DAS_S_FALSE} when the file was corrupt or
+    /// missing and rebuilt from defaults.
+    std::pair<nlohmann::json, DasResult> GetPluginSettingsWithStatus(
+        const std::string& profile_id,
+        const std::string& guid);
     std::string GetPluginSettings(
         const std::string& profile_id,
         const std::string& guid);

@@ -269,6 +269,15 @@ namespace Das::Http
                     "Failed to get plugin settings string");
             }
             auto parsed = nlohmann::json::parse(c_str);
+
+            if (result == DAS_S_FALSE)
+            {
+                return Beast::HttpResponse::CreateSuccessResponse(
+                    DAS_S_FALSE,
+                    "Plugin settings were invalid and restored from manifest "
+                    "defaults",
+                    parsed);
+            }
             return Beast::HttpResponse::CreateSuccessResponse(parsed);
         }
 
