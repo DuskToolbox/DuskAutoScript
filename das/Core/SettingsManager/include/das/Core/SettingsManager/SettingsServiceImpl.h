@@ -38,21 +38,21 @@ public:
 
     DAS_IMPL GetPluginSettings(
         IDasReadOnlyString*              p_profile_id,
-        IDasReadOnlyString*              p_guid,
+        const DasGuid*                   p_plugin_guid,
         Das::ExportInterface::IDasJson** pp_out) override;
     DAS_IMPL UpdatePluginSettings(
         IDasReadOnlyString*             p_profile_id,
-        IDasReadOnlyString*             p_guid,
+        const DasGuid*                  p_plugin_guid,
         Das::ExportInterface::IDasJson* p_data) override;
 
     DAS_IMPL GetPluginSettingsField(
         IDasReadOnlyString*              p_profile_id,
-        IDasReadOnlyString*              p_guid,
+        const DasGuid*                   p_plugin_guid,
         IDasReadOnlyString*              p_field_name,
         Das::ExportInterface::IDasJson** pp_out) override;
     DAS_IMPL UpdatePluginSettingsField(
         IDasReadOnlyString*             p_profile_id,
-        IDasReadOnlyString*             p_guid,
+        const DasGuid*                  p_plugin_guid,
         IDasReadOnlyString*             p_field_name,
         Das::ExportInterface::IDasJson* p_value) override;
 

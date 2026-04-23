@@ -6,6 +6,7 @@
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/StringUtils.h>
+#include <das/Utils/fmt.h>
 #include <das/_autogen/idl/abi/DasJson.h>
 #include <new>
 
@@ -65,6 +66,25 @@ using Das::Utils::ToString;
 
 namespace
 {
+    std::string GuidToString(const DasGuid& guid)
+    {
+        constexpr auto fmt_str =
+            "{:08x}-{:04x}-{:04x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}";
+        return DAS_FMT_NS::format(
+            fmt_str,
+            guid.data1,
+            guid.data2,
+            guid.data3,
+            guid.data4[0],
+            guid.data4[1],
+            guid.data4[2],
+            guid.data4[3],
+            guid.data4[4],
+            guid.data4[5],
+            guid.data4[6],
+            guid.data4[7]);
+    }
+
     DasResult JsonToIDasJson(
         const nlohmann::json&            json,
         Das::ExportInterface::IDasJson** pp_out)
@@ -79,8 +99,7 @@ namespace
     {
         DAS_UTILS_CHECK_POINTER(p_data)
         DAS::DasPtr<IDasReadOnlyString> p_str;
-        auto                            result =
-            p_data->ToString(-1, p_str.Put());
+        auto result = p_data->ToString(-1, p_str.Put());
         if (DAS::IsFailed(result))
         {
             return result;
@@ -176,24 +195,25 @@ DasResult SettingsServiceImpl::UpdateProfile(
 
 DasResult SettingsServiceImpl::GetPluginSettings(
     IDasReadOnlyString*              p_profile_id,
-    IDasReadOnlyString*              p_guid,
+    const DasGuid*                   p_plugin_guid,
     Das::ExportInterface::IDasJson** pp_out)
 {
     DAS_UTILS_CHECK_POINTER(pp_out)
     DAS_UTILS_CHECK_POINTER(p_profile_id)
-    DAS_UTILS_CHECK_POINTER(p_guid)
-    auto json =
-        mgr_.GetPluginSettingsJson(ToString(p_profile_id), ToString(p_guid));
+    DAS_UTILS_CHECK_POINTER(p_plugin_guid)
+    auto json = mgr_.GetPluginSettingsJson(
+        ToString(p_profile_id),
+        GuidToString(*p_plugin_guid));
     return JsonToIDasJson(json, pp_out);
 }
 
 DasResult SettingsServiceImpl::UpdatePluginSettings(
     IDasReadOnlyString*             p_profile_id,
-    IDasReadOnlyString*             p_guid,
+    const DasGuid*                  p_plugin_guid,
     Das::ExportInterface::IDasJson* p_data)
 {
     DAS_UTILS_CHECK_POINTER(p_profile_id)
-    DAS_UTILS_CHECK_POINTER(p_guid)
+    DAS_UTILS_CHECK_POINTER(p_plugin_guid)
     nlohmann::json data;
     auto           result = IDasJsonToNlohmann(p_data, data);
     if (DAS::IsFailed(result))
@@ -202,7 +222,7 @@ DasResult SettingsServiceImpl::UpdatePluginSettings(
     }
     return mgr_.UpdatePluginSettingsJson(
         ToString(p_profile_id),
-        ToString(p_guid),
+        GuidToString(*p_plugin_guid),
         data);
 }
 
@@ -210,29 +230,29 @@ DasResult SettingsServiceImpl::UpdatePluginSettings(
 
 DasResult SettingsServiceImpl::GetPluginSettingsField(
     IDasReadOnlyString*              p_profile_id,
-    IDasReadOnlyString*              p_guid,
+    const DasGuid*                   p_plugin_guid,
     IDasReadOnlyString*              p_field_name,
     Das::ExportInterface::IDasJson** pp_out)
 {
     DAS_UTILS_CHECK_POINTER(pp_out)
     DAS_UTILS_CHECK_POINTER(p_profile_id)
-    DAS_UTILS_CHECK_POINTER(p_guid)
+    DAS_UTILS_CHECK_POINTER(p_plugin_guid)
     DAS_UTILS_CHECK_POINTER(p_field_name)
     auto json = mgr_.GetPluginSettingsFieldJson(
         ToString(p_profile_id),
-        ToString(p_guid),
+        GuidToString(*p_plugin_guid),
         ToString(p_field_name));
     return JsonToIDasJson(json, pp_out);
 }
 
 DasResult SettingsServiceImpl::UpdatePluginSettingsField(
     IDasReadOnlyString*             p_profile_id,
-    IDasReadOnlyString*             p_guid,
+    const DasGuid*                  p_plugin_guid,
     IDasReadOnlyString*             p_field_name,
     Das::ExportInterface::IDasJson* p_value)
 {
     DAS_UTILS_CHECK_POINTER(p_profile_id)
-    DAS_UTILS_CHECK_POINTER(p_guid)
+    DAS_UTILS_CHECK_POINTER(p_plugin_guid)
     DAS_UTILS_CHECK_POINTER(p_field_name)
     nlohmann::json data;
     auto           result = IDasJsonToNlohmann(p_value, data);
@@ -242,7 +262,7 @@ DasResult SettingsServiceImpl::UpdatePluginSettingsField(
     }
     return mgr_.UpdatePluginSettingsFieldJson(
         ToString(p_profile_id),
-        ToString(p_guid),
+        GuidToString(*p_plugin_guid),
         ToString(p_field_name),
         data);
 }

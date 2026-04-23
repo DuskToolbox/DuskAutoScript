@@ -95,13 +95,18 @@ namespace Das::Core::TaskScheduler
         return svc_.Initialize(plugin_dir, disabled_guids);
     }
 
-    DasResult SchedulerServiceImpl::Enable() { return svc_.Enable(); }
+    DasResult SchedulerServiceImpl::Start() { return svc_.Enable(); }
 
-    DasResult SchedulerServiceImpl::Disable() { return svc_.Disable(); }
+    DasResult SchedulerServiceImpl::Stop() { return svc_.Disable(); }
 
-    IDasSchedulerService::SchedulerState SchedulerServiceImpl::Status() const
+    DasResult SchedulerServiceImpl::GetState(SchedulerState* p_out_state) const
     {
-        return svc_.Status();
+        if (p_out_state == nullptr)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        *p_out_state = svc_.Status();
+        return DAS_S_OK;
     }
 
 } // namespace Das::Core::TaskScheduler

@@ -4,13 +4,16 @@
 #include <atomic>
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/IDasPluginManagerService.h>
+#include <filesystem>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
 class PluginManagerServiceImpl final : public IDasPluginManagerService
 {
 public:
-    explicit PluginManagerServiceImpl(PluginManager& mgr);
+    explicit PluginManagerServiceImpl(
+        PluginManager&        mgr,
+        std::filesystem::path plugin_dir);
     ~PluginManagerServiceImpl() = default;
 
     // IDasBase
@@ -20,17 +23,26 @@ public:
     QueryInterface(const DasGuid& iid, void** pp_out) override;
 
     // IDasPluginManagerService
-    DasResult CreateComponent(const DasGuid& iid, void** pp_out) override;
+    DasResult ScanInstalledPlugins(
+        Das::ExportInterface::IDasJson** pp_out_plugins) override;
+    DasResult InstallPluginPackage(IDasReadOnlyString* p_package_path) override;
+    DasResult MarkPluginPackageForDeletion(
+        const DasGuid* p_package_guid) override;
+    DasResult CreateComponent(
+        const DasGuid* p_component_iid,
+        IDasBase**     pp_out_component) override;
     DasResult GetPluginSettingsFieldNames(
-        const DasGuid&                           plugin_guid,
+        const DasGuid*                           p_plugin_guid,
         Das::ExportInterface::IDasStringVector** pp_out) const override;
     DasResult CreateCaptureManager(
         IDasReadOnlyString*                        p_environment_config,
         Das::ExportInterface::IDasCaptureManager** pp_out) override;
+    DasResult SetHostExePath(IDasReadOnlyString* p_host_exe_path) override;
 
 private:
     std::atomic<uint32_t> ref_count_{0};
     PluginManager&        mgr_;
+    std::filesystem::path plugin_dir_;
 };
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END

@@ -23,9 +23,9 @@ namespace Das::Core::TaskScheduler
             IDasReadOnlyString*                           p_plugin_dir,
             Das::ExportInterface::IDasReadOnlyGuidVector* p_disabled_guids)
             override;
-        DasResult      Enable() override;
-        DasResult      Disable() override;
-        SchedulerState Status() const override;
+        DasResult Start() override;
+        DasResult Stop() override;
+        DasResult GetState(SchedulerState* p_out_state) const override;
 
     private:
         std::atomic<uint32_t> ref_count_{0};

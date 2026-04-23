@@ -30,7 +30,8 @@ CoreServicesImpl::CoreServicesImpl(
 
     auto* plugin_mgr_impl =
         new Das::Core::ForeignInterfaceHost::PluginManagerServiceImpl(
-            plugin_manager_);
+            plugin_manager_,
+            plugin_dir);
     plugin_mgr_impl->AddRef();
     plugin_manager_service_ =
         DasPtr<IDasPluginManagerService>::Attach(plugin_mgr_impl);

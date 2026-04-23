@@ -2,6 +2,7 @@
 #include <das/Core/ForeignInterfaceHost/IDasCaptureManagerImpl.h>
 #include <das/Core/ForeignInterfaceHost/IDasStringVectorImpl.h>
 #include <das/Core/ForeignInterfaceHost/PluginManagerServiceImpl.h>
+#include <das/Core/ForeignInterfaceHost/PluginScanner.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/DasExport.h>
@@ -11,11 +12,22 @@
 #include <das/_autogen/idl/abi/IDasCapture.h>
 #include <das/_autogen/idl/wrapper/IDasTypeInfo.hpp>
 #include <new>
+#include <nlohmann/json.hpp>
+
+// DasCore-internal: zero-copy IDasJsonImpl creation from nlohmann::json
+namespace Das::Core::Utils
+{
+    DasResult CreateDasJsonFromNlohmann(
+        const nlohmann::json&            json,
+        Das::ExportInterface::IDasJson** pp_out);
+}
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
-PluginManagerServiceImpl::PluginManagerServiceImpl(PluginManager& mgr)
-    : mgr_(mgr)
+PluginManagerServiceImpl::PluginManagerServiceImpl(
+    PluginManager&        mgr,
+    std::filesystem::path plugin_dir)
+    : mgr_(mgr), plugin_dir_{std::move(plugin_dir)}
 {
 }
 
@@ -61,23 +73,26 @@ PluginManagerServiceImpl::QueryInterface(const DasGuid& iid, void** pp_out)
 }
 
 DasResult PluginManagerServiceImpl::CreateComponent(
-    const DasGuid& iid,
-    void**         pp_out)
+    const DasGuid* p_component_iid,
+    IDasBase**     pp_out_component)
 {
-    if (pp_out == nullptr)
+    if (pp_out_component == nullptr)
     {
         return DAS_E_INVALID_POINTER;
     }
+    DAS_UTILS_CHECK_POINTER(p_component_iid)
     return mgr_.GetComponentFactoryManager().CreateComponent(
-        iid,
-        reinterpret_cast<Das::PluginInterface::IDasComponent**>(pp_out));
+        *p_component_iid,
+        reinterpret_cast<Das::PluginInterface::IDasComponent**>(
+            pp_out_component));
 }
 
 DasResult PluginManagerServiceImpl::GetPluginSettingsFieldNames(
-    const DasGuid&                           plugin_guid,
+    const DasGuid*                           p_plugin_guid,
     Das::ExportInterface::IDasStringVector** pp_out) const
 {
     DAS_UTILS_CHECK_POINTER(pp_out)
+    DAS_UTILS_CHECK_POINTER(p_plugin_guid)
 
     DAS::DasOutPtr<Das::ExportInterface::IDasStringVector> result(pp_out);
     auto create_result = CreateIDasStringVector(result.Put());
@@ -86,7 +101,7 @@ DasResult PluginManagerServiceImpl::GetPluginSettingsFieldNames(
         return create_result;
     }
 
-    auto* desc = mgr_.FindPluginPackageByGuid(plugin_guid);
+    auto* desc = mgr_.FindPluginPackageByGuid(*p_plugin_guid);
     if (!desc)
     {
         result.Keep();
@@ -110,6 +125,61 @@ DasResult PluginManagerServiceImpl::GetPluginSettingsFieldNames(
     }
 
     result.Keep();
+    return DAS_S_OK;
+}
+
+DasResult PluginManagerServiceImpl::ScanInstalledPlugins(
+    Das::ExportInterface::IDasJson** pp_out_plugins)
+{
+    DAS_UTILS_CHECK_POINTER(pp_out_plugins)
+
+    auto descs = ScanPlugins(plugin_dir_);
+
+    nlohmann::json arr = nlohmann::json::array();
+    for (const auto& desc : descs)
+    {
+        arr.push_back(PluginPackageDescToJson(desc));
+    }
+
+    using Das::Core::Utils::CreateDasJsonFromNlohmann;
+    return CreateDasJsonFromNlohmann(arr, pp_out_plugins);
+}
+
+DasResult PluginManagerServiceImpl::InstallPluginPackage(
+    IDasReadOnlyString* p_package_path)
+{
+    DAS_UTILS_CHECK_POINTER(p_package_path)
+    const char* u8_path = nullptr;
+    auto        result = p_package_path->GetUtf8(&u8_path);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+    // TODO: InstallPlugin currently takes zip_data; the HTTP layer will
+    // provide the package content. This method signature accepts a path
+    // for future file-based installation support.
+    (void)u8_path;
+    return DAS_E_NO_IMPLEMENTATION;
+}
+
+DasResult PluginManagerServiceImpl::MarkPluginPackageForDeletion(
+    const DasGuid* p_package_guid)
+{
+    DAS_UTILS_CHECK_POINTER(p_package_guid)
+    return MarkForDeletion(plugin_dir_, *p_package_guid);
+}
+
+DasResult PluginManagerServiceImpl::SetHostExePath(
+    IDasReadOnlyString* p_host_exe_path)
+{
+    DAS_UTILS_CHECK_POINTER(p_host_exe_path)
+    const char* u8_path = nullptr;
+    auto        result = p_host_exe_path->GetUtf8(&u8_path);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+    mgr_.SetHostExePath(std::string{u8_path});
     return DAS_S_OK;
 }
 
@@ -197,7 +267,7 @@ DasResult PluginManagerServiceImpl::CreateCaptureManager(
             // best-effort: error message creation failure should not mask the
             // original error from CaptureFactory::CreateInstance
             DAS::DasPtr<IDasReadOnlyString> p_error_msg;
-            const auto create_error_msg_result =
+            const auto                      create_error_msg_result =
                 CreateIDasReadOnlyStringFromUtf8(
                     error_msg.c_str(),
                     p_error_msg.Put());
@@ -255,8 +325,12 @@ DAS_C_API DasResult CreateDasPluginManagerService(
 
     try
     {
+        // plugin_dir left empty for legacy callers; ScanInstalledPlugins
+        // will return an empty list until migrated to CreateIDasCoreServices.
         auto* impl =
-            new Das::Core::ForeignInterfaceHost::PluginManagerServiceImpl(mgr);
+            new Das::Core::ForeignInterfaceHost::PluginManagerServiceImpl(
+                mgr,
+                std::filesystem::path{});
         impl->AddRef();
         *pp_out = impl;
         return DAS_S_OK;
