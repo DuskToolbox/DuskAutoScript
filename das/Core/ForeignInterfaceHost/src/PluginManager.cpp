@@ -341,7 +341,7 @@ DasResult PluginManager::LoadPlugin(
 
 DasResult PluginManager::UnloadPlugin(const std::filesystem::path& path)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<std::mutex> lock(mutex_);
 
     auto normalized_path = NormalizePath(path);
     auto path_str = normalized_path.string();
@@ -380,7 +380,7 @@ DasResult PluginManager::UnloadPlugin(const std::filesystem::path& path)
         LoadedPlugin ipc_plugin = std::move(plug_it->second);
         loaded_plugins_.erase(plug_it);
         path_to_guid_.erase(path_it);
-        lock.~lock_guard();
+        lock.unlock();
         return UnloadPluginIpc(guid, ipc_plugin);
     }
 

@@ -26,23 +26,7 @@ namespace Das::Core::TaskScheduler
 
     static std::string GuidToString(const DasGuid& guid)
     {
-        char buf[64];
-        std::snprintf(
-            buf,
-            sizeof(buf),
-            "%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X",
-            static_cast<unsigned long>(guid.data1),
-            guid.data2,
-            guid.data3,
-            guid.data4[0],
-            guid.data4[1],
-            guid.data4[2],
-            guid.data4[3],
-            guid.data4[4],
-            guid.data4[5],
-            guid.data4[6],
-            guid.data4[7]);
-        return buf;
+        return DAS_FMT_NS::format("{}", guid);
     }
 
     TaskTypeRecord* SchedulerService::FindTaskType(const DasGuid& task_guid)
@@ -123,15 +107,6 @@ namespace Das::Core::TaskScheduler
             }
             loaded_plugin_paths_.clear();
             initialized_ = false;
-        }
-
-        if (!std::filesystem::exists(plugin_dir))
-        {
-            DAS_CORE_LOG_WARN(
-                "SchedulerService::Initialize: plugin directory does "
-                "not exist: {}",
-                plugin_dir.string());
-            return DAS_E_FAIL;
         }
 
         std::error_code ec;
@@ -458,7 +433,10 @@ namespace Das::Core::TaskScheduler
             tick_timer_.reset();
         }
 
-        // Request cooperative cancellation on the stop token
+        // Request cooperative cancellation on the stop token.
+        // stop_token_ is always created via DasStopTokenImpl::Make() in
+        // OnTick(), so this static_cast is safe as long as OnTick remains
+        // the sole creator.
         if (stop_token_)
         {
             auto* impl = static_cast<Das::Core::Utils::DasStopTokenImpl*>(

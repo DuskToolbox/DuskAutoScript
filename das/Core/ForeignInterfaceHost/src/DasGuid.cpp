@@ -27,7 +27,7 @@ auto(DAS_FMT_NS::formatter<DasGuid, char>::format)(
     typename std::remove_reference_t<decltype(ctx)>::iterator
 {
     constexpr auto template_string =
-        "{{{:08x}-{:04x}-{:04x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}}}";
+        "{{{:08X}-{:04X}-{:04X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}}}";
 
     return formatter<std::string>::format(
         DAS::fmt::format(
