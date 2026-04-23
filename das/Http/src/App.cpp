@@ -306,21 +306,41 @@ namespace Das::Http
 
         // Scheduler
         components.router->Post(
-            DAS_HTTP_API_PREFIX "scheduler/{profile}/enable",
-            [scheduler_controller](const Das::Http::Beast::HttpRequest& req)
-            { return scheduler_controller->Enable(req); });
-        components.router->Post(
-            DAS_HTTP_API_PREFIX "scheduler/{profile}/disable",
-            [scheduler_controller](const Das::Http::Beast::HttpRequest& req)
-            { return scheduler_controller->Disable(req); });
-        components.router->Post(
-            DAS_HTTP_API_PREFIX "scheduler/{profile}/status",
-            [scheduler_controller](const Das::Http::Beast::HttpRequest& req)
-            { return scheduler_controller->Status(req); });
-        components.router->Post(
             DAS_HTTP_API_PREFIX "scheduler/{profile}/initialize",
             [scheduler_controller](const Das::Http::Beast::HttpRequest& req)
             { return scheduler_controller->Initialize(req); });
+        components.router->Post(
+            DAS_HTTP_API_PREFIX "scheduler/{profile}/start",
+            [scheduler_controller](const Das::Http::Beast::HttpRequest& req)
+            { return scheduler_controller->Start(req); });
+        components.router->Post(
+            DAS_HTTP_API_PREFIX "scheduler/{profile}/stop",
+            [scheduler_controller](const Das::Http::Beast::HttpRequest& req)
+            { return scheduler_controller->Stop(req); });
+        components.router->Post(
+            DAS_HTTP_API_PREFIX "scheduler/{profile}/get",
+            [scheduler_controller](const Das::Http::Beast::HttpRequest& req)
+            { return scheduler_controller->Get(req); });
+        components.router->Post(
+            DAS_HTTP_API_PREFIX "scheduler/{profile}/{taskGuid}/put",
+            [scheduler_controller](const Das::Http::Beast::HttpRequest& req)
+            { return scheduler_controller->AddTask(req); });
+        components.router->Post(
+            DAS_HTTP_API_PREFIX "scheduler/{profile}/{taskId}/delete",
+            [scheduler_controller](const Das::Http::Beast::HttpRequest& req)
+            { return scheduler_controller->DeleteTask(req); });
+        components.router->Post(
+            DAS_HTTP_API_PREFIX
+            "scheduler/{profile}/{taskId}/properties/update",
+            [scheduler_controller](const Das::Http::Beast::HttpRequest& req)
+            { return scheduler_controller->UpdateTaskProperties(req); });
+        components.router->Post(
+            DAS_HTTP_API_PREFIX
+            "scheduler/{profile}/{taskId}/internal/properties/update",
+            [scheduler_controller](const Das::Http::Beast::HttpRequest& req)
+            {
+                return scheduler_controller->UpdateTaskInternalProperties(req);
+            });
 
         // Create and start server
         Das::Http::Beast::Server server(

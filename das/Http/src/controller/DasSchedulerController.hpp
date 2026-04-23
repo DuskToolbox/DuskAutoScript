@@ -27,73 +27,7 @@ namespace Das::Http
         {
         }
 
-        Beast::HttpResponse Enable(const Beast::HttpRequest& request)
-        {
-            auto profile = request.GetPathParameter("profile");
-            if (profile != "0")
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    DAS_E_INVALID_ARGUMENT,
-                    "Profile ID must be 0 in v1.2");
-            }
-
-            auto result = scheduler_.Start();
-            if (DAS::IsFailed(result))
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    result,
-                    "Failed to enable scheduler");
-            }
-            return Beast::HttpResponse::CreateSuccessResponse();
-        }
-
-        Beast::HttpResponse Disable(const Beast::HttpRequest& request)
-        {
-            auto profile = request.GetPathParameter("profile");
-            if (profile != "0")
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    DAS_E_INVALID_ARGUMENT,
-                    "Profile ID must be 0 in v1.2");
-            }
-
-            auto result = scheduler_.Stop();
-            if (DAS::IsFailed(result))
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    result,
-                    "Failed to disable scheduler");
-            }
-            return Beast::HttpResponse::CreateSuccessResponse();
-        }
-
-        Beast::HttpResponse Status(const Beast::HttpRequest& request)
-        {
-            auto profile = request.GetPathParameter("profile");
-            if (profile != "0")
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    DAS_E_INVALID_ARGUMENT,
-                    "Profile ID must be 0 in v1.2");
-            }
-
-            IDasSchedulerService::SchedulerState state =
-                IDasSchedulerService::SchedulerState::Stopped;
-            auto result = scheduler_.GetState(&state);
-            if (DAS::IsFailed(result))
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    result,
-                    "Failed to get scheduler state");
-            }
-
-            nlohmann::json data;
-            data["state"] =
-                (state == IDasSchedulerService::SchedulerState::Running)
-                    ? "running"
-                    : "stopped";
-            return Beast::HttpResponse::CreateSuccessResponse(data);
-        }
+        // ── Lifecycle ──
 
         Beast::HttpResponse Initialize(const Beast::HttpRequest& request)
         {
@@ -107,22 +41,30 @@ namespace Das::Http
 
             const auto& body = request.JsonBody();
 
-            std::vector<DasGuid> disabled_guids;
+            // Accept lower camelCase disabledGuids; reject old disabled_guids
             if (body.contains("disabled_guids"))
             {
-                if (!body["disabled_guids"].is_array())
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Use 'disabledGuids' instead of 'disabled_guids'");
+            }
+
+            std::vector<DasGuid> disabled_guids;
+            if (body.contains("disabledGuids"))
+            {
+                if (!body["disabledGuids"].is_array())
                 {
                     return Beast::HttpResponse::CreateErrorResponse(
                         DAS_E_INVALID_ARGUMENT,
-                        "disabled_guids must be an array");
+                        "disabledGuids must be an array");
                 }
 
-                for (const auto& item : body["disabled_guids"])
+                for (const auto& item : body["disabledGuids"])
                 {
                     if (!item.is_string())
                     {
                         DAS_CORE_LOG_WARN(
-                            "Skipping non-string element in disabled_guids");
+                            "Skipping non-string element in disabledGuids");
                         continue;
                     }
 
@@ -132,7 +74,7 @@ namespace Das::Http
                     if (DAS::IsFailed(parse_result))
                     {
                         DAS_CORE_LOG_WARN(
-                            "Invalid GUID '{}' in disabled_guids",
+                            "Invalid GUID '{}' in disabledGuids",
                             item.get<std::string>());
                         continue;
                     }
@@ -176,6 +118,259 @@ namespace Das::Http
                 return Beast::HttpResponse::CreateErrorResponse(
                     result,
                     "Failed to initialize scheduler");
+            }
+            return Beast::HttpResponse::CreateSuccessResponse();
+        }
+
+        Beast::HttpResponse Start(const Beast::HttpRequest& request)
+        {
+            auto profile = request.GetPathParameter("profile");
+            if (profile != "0")
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Profile ID must be 0 in v1.2");
+            }
+
+            auto result = scheduler_.Start();
+            if (DAS::IsFailed(result))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    result,
+                    "Failed to start scheduler");
+            }
+            return Beast::HttpResponse::CreateSuccessResponse();
+        }
+
+        Beast::HttpResponse Stop(const Beast::HttpRequest& request)
+        {
+            auto profile = request.GetPathParameter("profile");
+            if (profile != "0")
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Profile ID must be 0 in v1.2");
+            }
+
+            auto result = scheduler_.Stop();
+            if (DAS::IsFailed(result))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    result,
+                    "Failed to stop scheduler");
+            }
+            return Beast::HttpResponse::CreateSuccessResponse();
+        }
+
+        // ── State query ──
+
+        Beast::HttpResponse Get(const Beast::HttpRequest& request)
+        {
+            auto profile = request.GetPathParameter("profile");
+            if (profile != "0")
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Profile ID must be 0 in v1.2");
+            }
+
+            DasPtr<IDasReadOnlyString> p_json;
+            auto                       result = scheduler_.Get(p_json.Put());
+            if (DAS::IsFailed(result))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    result,
+                    "Failed to get scheduler state");
+            }
+
+            const char* c_str = nullptr;
+            auto        get_result = p_json->GetUtf8(&c_str);
+            if (DAS::IsFailed(get_result))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    get_result,
+                    "Failed to get scheduler state string");
+            }
+
+            auto parsed = nlohmann::json::parse(c_str);
+            return Beast::HttpResponse::CreateSuccessResponse(parsed);
+        }
+
+        // ── Task instance mutations ──
+
+        Beast::HttpResponse AddTask(const Beast::HttpRequest& request)
+        {
+            auto profile = request.GetPathParameter("profile");
+            auto task_guid_str = request.GetPathParameter("taskGuid");
+            if (profile != "0")
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Profile ID must be 0 in v1.2");
+            }
+
+            DasGuid task_guid;
+            auto    guid_cr = DasMakeDasGuid(task_guid_str.c_str(), &task_guid);
+            if (DAS::IsFailed(guid_cr))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Invalid task GUID format");
+            }
+
+            int64_t out_task_id = 0;
+            auto    result = scheduler_.AddTask(task_guid, &out_task_id);
+            if (DAS::IsFailed(result))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    result,
+                    "Failed to add task");
+            }
+
+            nlohmann::json data;
+            data["taskId"] = out_task_id;
+            return Beast::HttpResponse::CreateSuccessResponse(data);
+        }
+
+        Beast::HttpResponse DeleteTask(const Beast::HttpRequest& request)
+        {
+            auto profile = request.GetPathParameter("profile");
+            auto task_id_str = request.GetPathParameter("taskId");
+            if (profile != "0")
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Profile ID must be 0 in v1.2");
+            }
+
+            int64_t task_id = 0;
+            try
+            {
+                task_id = std::stoll(task_id_str);
+            }
+            catch (const std::exception&)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Invalid task ID format");
+            }
+
+            auto result = scheduler_.DeleteTask(task_id);
+            if (DAS::IsFailed(result))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    result,
+                    "Failed to delete task");
+            }
+            return Beast::HttpResponse::CreateSuccessResponse();
+        }
+
+        Beast::HttpResponse UpdateTaskProperties(
+            const Beast::HttpRequest& request)
+        {
+            auto profile = request.GetPathParameter("profile");
+            auto task_id_str = request.GetPathParameter("taskId");
+            if (profile != "0")
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Profile ID must be 0 in v1.2");
+            }
+
+            int64_t task_id = 0;
+            try
+            {
+                task_id = std::stoll(task_id_str);
+            }
+            catch (const std::exception&)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Invalid task ID format");
+            }
+
+            const auto& body = request.JsonBody();
+            if (!body.is_object())
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Request body must be a JSON object");
+            }
+
+            DasPtr<IDasReadOnlyString> p_props;
+            auto                       props_str = body.dump();
+            auto                       cr = CreateIDasReadOnlyStringFromUtf8(
+                props_str.c_str(),
+                p_props.Put());
+            if (DAS::IsFailed(cr))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    cr,
+                    "Failed to create properties string");
+            }
+
+            auto result =
+                scheduler_.UpdateTaskProperties(task_id, p_props.Get());
+            if (DAS::IsFailed(result))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    result,
+                    "Failed to update task properties");
+            }
+            return Beast::HttpResponse::CreateSuccessResponse();
+        }
+
+        Beast::HttpResponse UpdateTaskInternalProperties(
+            const Beast::HttpRequest& request)
+        {
+            auto profile = request.GetPathParameter("profile");
+            auto task_id_str = request.GetPathParameter("taskId");
+            if (profile != "0")
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Profile ID must be 0 in v1.2");
+            }
+
+            int64_t task_id = 0;
+            try
+            {
+                task_id = std::stoll(task_id_str);
+            }
+            catch (const std::exception&)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Invalid task ID format");
+            }
+
+            const auto& body = request.JsonBody();
+            if (!body.is_object())
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Request body must be a JSON object");
+            }
+
+            DasPtr<IDasReadOnlyString> p_props;
+            auto                       props_str = body.dump();
+            auto                       cr = CreateIDasReadOnlyStringFromUtf8(
+                props_str.c_str(),
+                p_props.Put());
+            if (DAS::IsFailed(cr))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    cr,
+                    "Failed to create properties string");
+            }
+
+            auto result =
+                scheduler_.UpdateTaskInternalProperties(task_id, p_props.Get());
+            if (DAS::IsFailed(result))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    result,
+                    "Failed to update task internal properties");
             }
             return Beast::HttpResponse::CreateSuccessResponse();
         }
