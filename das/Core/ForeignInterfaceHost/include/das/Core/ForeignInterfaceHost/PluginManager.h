@@ -12,6 +12,7 @@
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/DasPtr.hpp>
+#include <das/DasSharedRef.hpp>
 #include <das/IDasBase.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <filesystem>
@@ -66,15 +67,18 @@ struct LoadedPlugin
  * - 将插件对象注册到 RemoteObjectRegistry
  * - 通过 GUID 主索引和 Feature-type 索引查找对象
  */
-class DAS_API PluginManager
+class PluginManager
 {
 public:
     /**
-     * @brief 构造函数，接收 SettingsManager 引用
+     * @brief 构造函数
      * @param settings_manager 设置管理器引用
+     * @param ipc_context IPC 上下文（共享所有权）
      */
     explicit PluginManager(
-        Das::Core::SettingsManager::SettingsManager& settings_manager);
+        Das::Core::SettingsManager::SettingsManager& settings_manager,
+        Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>
+            ipc_context);
 
     ~PluginManager() = default;
 
@@ -110,12 +114,6 @@ public:
      * @brief 设置远程对象注册表引用
      */
     void SetRegistry(Core::IPC::RemoteObjectRegistry& registry);
-
-    /**
-     * @brief 设置 IPC 上下文引用
-     * @param ipc_context IPC 上下文引用（非拥有）
-     */
-    void SetIpcContext(DAS::Core::IPC::MainProcess::IIpcContext& ipc_context);
 
     /**
      * @brief 设置 Host 可执行文件路径
@@ -292,7 +290,7 @@ private:
     ComponentFactoryManager component_factory_mgr_;
 
     // IPC 相关成员
-    DAS::Core::IPC::MainProcess::IIpcContext* ipc_context_ = nullptr;
+    Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context_;
     std::unordered_map<DasGuid, DasPtr<DAS::Core::IPC::IHostLauncher>>
                 host_launchers_;
     std::string host_exe_path_;

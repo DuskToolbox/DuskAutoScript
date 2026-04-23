@@ -6,6 +6,7 @@
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/DasExport.h>
 #include <das/DasPtr.hpp>
+#include <das/DasSharedRef.hpp>
 #include <das/IDasAsyncCallback.h>
 #include <das/IDasSchedulerService.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
@@ -23,14 +24,13 @@ namespace Das::Core::TaskScheduler
     // SchedulerState is defined in IDasSchedulerService
     using SchedulerState = IDasSchedulerService::SchedulerState;
 
-    class DAS_API SchedulerService
+    class SchedulerService
     {
     public:
         explicit SchedulerService(
-            Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager);
-
-        void SetIpcContext(
-            DAS::Core::IPC::MainProcess::IIpcContext& ipc_context);
+            Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager,
+            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>
+                ipc_context);
 
         DasResult Initialize(
             const std::filesystem::path& plugin_dir,
@@ -90,7 +90,8 @@ namespace Das::Core::TaskScheduler
         };
 
         Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager_;
-        DAS::Core::IPC::MainProcess::IIpcContext*       ipc_context_ = nullptr;
+        Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>
+            ipc_context_;
 
         mutable std::mutex          mutex_;
         std::atomic<SchedulerState> state_{SchedulerState::Stopped};

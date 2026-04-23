@@ -1,8 +1,10 @@
 #include <IpcTestConfig.h>
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
+#include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
+#include <das/DasSharedRef.hpp>
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 
@@ -62,7 +64,12 @@ protected:
         settings_manager_ =
             std::make_unique<DAS::Core::SettingsManager::SettingsManager>(
                 settings_dir_);
-        pm_ = std::make_unique<PluginManager>(*settings_manager_);
+        ipc_sp_ =
+            DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+        pm_ = std::make_unique<PluginManager>(
+            *settings_manager_,
+            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp_));
         auto runtime = CreateCppRuntime();
         ASSERT_NE(runtime, nullptr) << "Failed to create Cpp runtime";
         ASSERT_EQ(pm_->Initialize(1, runtime), DAS_S_OK);
@@ -75,9 +82,10 @@ protected:
     }
 
     std::unique_ptr<DAS::Core::SettingsManager::SettingsManager>
-                                   settings_manager_;
-    std::unique_ptr<PluginManager> pm_;
-    std::filesystem::path          settings_dir_;
+        settings_manager_;
+    std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
+    std::unique_ptr<PluginManager>                              pm_;
+    std::filesystem::path                                       settings_dir_;
 };
 
 TEST_F(PluginManagerGuidTest, LoadPluginAndFindByGuid)
@@ -165,7 +173,12 @@ protected:
         settings_manager_ =
             std::make_unique<DAS::Core::SettingsManager::SettingsManager>(
                 settings_dir_);
-        pm_ = std::make_unique<PluginManager>(*settings_manager_);
+        auto ipc_sp =
+            DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+        pm_ = std::make_unique<PluginManager>(
+            *settings_manager_,
+            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp));
         auto runtime = CreateCppRuntime();
         ASSERT_NE(runtime, nullptr) << "Failed to create Cpp runtime";
         ASSERT_EQ(pm_->Initialize(1, runtime), DAS_S_OK);
@@ -280,12 +293,14 @@ TEST_F(PluginManagerFeatureTest, FeatureInfoContainsPluginGuid)
 // IPC routing tests
 // ============================================================
 
-TEST_F(PluginManagerGuidTest, LoadPlugin_NoIpcContext_ReturnsError)
+TEST_F(PluginManagerGuidTest, LoadPlugin_NoHostPath_ReturnsError)
 {
-    // Create a CSharp manifest (white-listed-out language)
-    auto test_dir = std::filesystem::current_path() / "test_plugin_no_ipc_ctx";
+    // IPC context is always present via constructor; this tests that
+    // missing host_exe_path_ still blocks the IPC load path.
+    auto test_dir =
+        std::filesystem::current_path() / "test_plugin_no_host_path";
     std::filesystem::create_directories(test_dir);
-    auto manifest_path = test_dir / "test_plugin_no_ipc_ctx.json";
+    auto manifest_path = test_dir / "test_plugin_no_host_path.json";
 
     nlohmann::json manifest = {
         {"guid", "{00000000-0000-0000-0000-000000000001}"},
@@ -302,37 +317,6 @@ TEST_F(PluginManagerGuidTest, LoadPlugin_NoIpcContext_ReturnsError)
         ofs << manifest.dump();
     }
 
-    // No IPC context set -- should return DAS_E_NO_IMPLEMENTATION
-    auto result = pm_->LoadPlugin(test_dir);
-    EXPECT_EQ(result, DAS_E_NO_IMPLEMENTATION);
-
-    std::filesystem::remove_all(test_dir);
-}
-
-TEST_F(PluginManagerGuidTest, LoadPlugin_NoHostPath_ReturnsError)
-{
-    // Create a CSharp manifest
-    auto test_dir =
-        std::filesystem::current_path() / "test_plugin_no_host_path";
-    std::filesystem::create_directories(test_dir);
-    auto manifest_path = test_dir / "test_plugin_no_host_path.json";
-
-    nlohmann::json manifest = {
-        {"guid", "{00000000-0000-0000-0000-000000000002}"},
-        {"name", "TestCSharpPlugin2"},
-        {"language", "CSharp"},
-        {"description", "test"},
-        {"author", "test"},
-        {"version", "1.0"},
-        {"supportedSystem", "win"},
-        {"pluginFilenameExtension", ".dll"},
-    };
-    {
-        std::ofstream ofs(manifest_path);
-        ofs << manifest.dump();
-    }
-
-    // No host exe path set -- should return DAS_E_NO_IMPLEMENTATION
     auto result = pm_->LoadPlugin(test_dir);
     EXPECT_EQ(result, DAS_E_NO_IMPLEMENTATION);
 
@@ -379,12 +363,9 @@ TEST_F(PluginManagerGuidTest, LoadPlugin_CppWithLoadModeIpc_GoesIpcPath)
     std::filesystem::remove_all(test_dir);
 }
 
-TEST_F(PluginManagerGuidTest, SetIpcContext_And_SetHostExePath)
+TEST_F(PluginManagerGuidTest, SetHostExePath)
 {
-    // Verify that setter methods do not crash.
     pm_->SetHostExePath("/path/to/DasHost");
-    // SetIpcContext requires a real IIpcContext reference;
-    // its integration is verified in IpcMultiProcessTest.
 }
 
 TEST_F(PluginManagerGuidTest, OnHostProcessExit_CleansUpIndex)

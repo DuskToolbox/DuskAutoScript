@@ -12,31 +12,31 @@
 
 DAS_CORE_SETTINGS_MANAGER_NS_BEGIN
 
-class DAS_API SettingsManager
+class SettingsManager
 {
 public:
     explicit SettingsManager(const std::filesystem::path& base_dir);
     ~SettingsManager() = default;
 
     // Global Settings (settings/ui.json)
-    std::string  GetGlobalSettings();
+    std::string    GetGlobalSettings();
     nlohmann::json GetGlobalSettingsJson();
-    DasResult    UpdateGlobalSettings(const std::string& json_str);
-    DasResult    UpdateGlobalSettingsJson(const nlohmann::json& data);
+    DasResult      UpdateGlobalSettings(const std::string& json_str);
+    DasResult      UpdateGlobalSettingsJson(const nlohmann::json& data);
 
     // Profile management (settings/${pid}/)
-    std::string  GetProfileList();
+    std::string    GetProfileList();
     nlohmann::json GetProfileListJson();
-    DasResult    CreateProfile(const std::string& profile_id);
-    DasResult    DeleteProfile(const std::string& profile_id);
+    DasResult      CreateProfile(const std::string& profile_id);
+    DasResult      DeleteProfile(const std::string& profile_id);
 
     // Profile data (settings/${pid}/ui.json)
-    std::string  GetProfile(const std::string& profile_id);
+    std::string    GetProfile(const std::string& profile_id);
     nlohmann::json GetProfileJson(const std::string& profile_id);
-    DasResult    UpdateProfile(
+    DasResult      UpdateProfile(
         const std::string& profile_id,
         const std::string& json_str);
-    DasResult    UpdateProfileJson(
+    DasResult UpdateProfileJson(
         const std::string&    profile_id,
         const nlohmann::json& data);
 
@@ -90,7 +90,7 @@ private:
     static DasResult   WriteJsonFile(
         const std::filesystem::path& path,
         const std::string&           json_str);
-    static DasResult   WriteJsonFile(
+    static DasResult WriteJsonFile(
         const std::filesystem::path& path,
         const nlohmann::json&        data);
 

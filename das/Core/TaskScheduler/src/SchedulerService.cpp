@@ -18,15 +18,10 @@ namespace Das::Core::TaskScheduler
     using Das::Core::ForeignInterfaceHost::PluginPackageDesc;
 
     SchedulerService::SchedulerService(
-        Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager)
-        : plugin_manager_(plugin_manager)
+        Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager,
+        Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context)
+        : plugin_manager_(plugin_manager), ipc_context_{std::move(ipc_context)}
     {
-    }
-
-    void SchedulerService::SetIpcContext(
-        DAS::Core::IPC::MainProcess::IIpcContext& ipc_context)
-    {
-        ipc_context_ = &ipc_context;
     }
 
     DasResult SchedulerService::Initialize(
@@ -180,11 +175,8 @@ namespace Das::Core::TaskScheduler
 
         state_.store(SchedulerState::Running);
 
-        if (ipc_context_)
-        {
-            tick_timer_ = std::make_unique<boost::asio::steady_timer>(
-                ipc_context_->GetIoContext());
-        }
+        tick_timer_ = std::make_unique<boost::asio::steady_timer>(
+            ipc_context_.get().GetIoContext());
 
         StartTickTimer();
 
@@ -245,7 +237,7 @@ namespace Das::Core::TaskScheduler
 
     void SchedulerService::StartTickTimer()
     {
-        if (!tick_timer_ || !ipc_context_)
+        if (!tick_timer_)
         {
             return;
         }
@@ -257,7 +249,7 @@ namespace Das::Core::TaskScheduler
                 if (!ec && state_.load() == SchedulerState::Running)
                 {
                     auto* callback = new TickCallback(this);
-                    ipc_context_->PostToBusinessThread(callback);
+                    ipc_context_.get().PostToBusinessThread(callback);
                     callback->Release();
                 }
             });

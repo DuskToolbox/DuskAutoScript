@@ -17,8 +17,9 @@
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
 PluginManager::PluginManager(
-    Das::Core::SettingsManager::SettingsManager& settings_manager)
-    : settings_manager_(settings_manager)
+    Das::Core::SettingsManager::SettingsManager& settings_manager,
+    Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context)
+    : settings_manager_(settings_manager), ipc_context_{std::move(ipc_context)}
 {
 }
 
@@ -109,12 +110,6 @@ DasResult PluginManager::SetRuntime(DasPtr<IForeignLanguageRuntime> runtime)
 void PluginManager::SetRegistry(Core::IPC::RemoteObjectRegistry& registry)
 {
     registry_ = &registry;
-}
-
-void PluginManager::SetIpcContext(
-    DAS::Core::IPC::MainProcess::IIpcContext& ipc_context)
-{
-    ipc_context_ = &ipc_context;
 }
 
 void PluginManager::SetHostExePath(const std::string& path)
@@ -334,13 +329,6 @@ DasResult PluginManager::LoadPlugin(
     }
 
     // IPC 路径：委托给 Host 进程加载
-    if (!ipc_context_)
-    {
-        DAS_CORE_LOG_ERROR(
-            "Cannot load plugin '{}' via IPC: no IIpcContext set",
-            path_str);
-        return DAS_E_NO_IMPLEMENTATION;
-    }
     if (host_exe_path_.empty())
     {
         DAS_CORE_LOG_ERROR(
@@ -768,7 +756,7 @@ DasResult PluginManager::LoadPluginViaIpc(
     {
         // 首次加载时创建并启动 Host 进程
         DAS::Core::IPC::IHostLauncher* raw_launcher = nullptr;
-        auto result = ipc_context_->CreateHostLauncher(&raw_launcher);
+        auto result = ipc_context_.get().CreateHostLauncher(&raw_launcher);
         if (DAS::IsFailed(result))
         {
             DAS_CORE_LOG_ERROR(
@@ -816,7 +804,7 @@ DasResult PluginManager::LoadPluginViaIpc(
 
     // 异步加载插件 -> sync_wait 同步等待
     DasPtr<IDasAsyncLoadPluginOperation> op;
-    auto                                 result = ipc_context_->LoadPluginAsync(
+    auto result = ipc_context_.get().LoadPluginAsync(
         launcher.Get(),
         manifest_path.string().c_str(),
         op.Put());
@@ -829,8 +817,8 @@ DasResult PluginManager::LoadPluginViaIpc(
     }
 
     // sync_wait 阻塞等待（HTTP 线程安全，走 IO 线程 pending_calls_）
-    auto sender = DAS::Core::IPC::async_op(*ipc_context_, std::move(op));
-    auto wait_result = DAS::Core::IPC::wait(*ipc_context_, std::move(sender));
+    auto sender = DAS::Core::IPC::async_op(ipc_context_.get(), std::move(op));
+    auto wait_result = DAS::Core::IPC::wait(ipc_context_.get(), std::move(sender));
     if (!wait_result)
     {
         DAS_CORE_LOG_ERROR(

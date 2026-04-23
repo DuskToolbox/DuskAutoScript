@@ -1,6 +1,8 @@
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
+#include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/Core/TaskScheduler/SchedulerService.h>
+#include <das/DasSharedRef.hpp>
 #include <das/IDasSchedulerService.h>
 #include <gtest/gtest.h>
 
@@ -37,10 +39,17 @@ protected:
         settings_manager_ =
             std::make_unique<Das::Core::SettingsManager::SettingsManager>(
                 settings_dir_);
+        auto ipc_sp =
+            DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
         plugin_manager_ =
             std::make_unique<Das::Core::ForeignInterfaceHost::PluginManager>(
-                *settings_manager_);
-        scheduler_ = std::make_unique<SchedulerService>(*plugin_manager_);
+                *settings_manager_,
+                Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                    ipc_sp));
+        scheduler_ = std::make_unique<SchedulerService>(
+            *plugin_manager_,
+            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp));
     }
 
     void TearDown() override
