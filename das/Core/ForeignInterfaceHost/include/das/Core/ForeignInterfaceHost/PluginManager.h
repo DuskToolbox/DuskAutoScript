@@ -216,6 +216,16 @@ public:
 
     ComponentFactoryManager& GetComponentFactoryManager();
 
+    /**
+     * @brief Inject a feature directly into the type index for testing.
+     * Only for use in unit tests that need to simulate loaded features
+     * without a real plugin DLL.
+     */
+    void RegisterTestFeature(
+        Das::PluginInterface::DasPluginFeature type,
+        const DasGuid&                         plugin_guid,
+        IDasBase*                              interface_ptr);
+
 private:
     PluginManager(const PluginManager&) = delete;
     PluginManager& operator=(const PluginManager&) = delete;

@@ -20,4 +20,18 @@ void DasStopTokenImplOnStack::RequestStop() { is_stop_requested_ = true; }
 
 void DasStopTokenImplOnStack::Reset() { is_stop_requested_ = false; }
 
+DasResult DasStopTokenImpl::StopRequested(bool* canStop)
+{
+    if (canStop == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+    *canStop = is_stop_requested_;
+    return DAS_S_OK;
+}
+
+void DasStopTokenImpl::RequestStop() { is_stop_requested_ = true; }
+
+void DasStopTokenImpl::Reset() { is_stop_requested_ = false; }
+
 DAS_CORE_UTILS_NS_END

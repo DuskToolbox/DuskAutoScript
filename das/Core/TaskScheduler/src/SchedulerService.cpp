@@ -3,6 +3,7 @@
 #include <das/Core/ForeignInterfaceHost/PluginScanner.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/TaskScheduler/SchedulerService.h>
+#include <das/DasString.hpp>
 #include <das/IDasBase.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <das/_autogen/idl/abi/IDasTask.h>
@@ -457,8 +458,22 @@ namespace Das::Core::TaskScheduler
             tick_timer_.reset();
         }
 
+        // Request cooperative cancellation on the stop token
+        if (stop_token_)
+        {
+            auto* impl = static_cast<Das::Core::Utils::DasStopTokenImpl*>(
+                stop_token_.Get());
+            if (impl)
+            {
+                impl->RequestStop();
+            }
+        }
+
         // Wait for current task to complete
         cv_.wait(lock, [this] { return current_task_ == nullptr; });
+
+        // Reset stop token
+        stop_token_.Reset();
 
         // Unload plugins in reverse order
         for (auto it = loaded_plugin_paths_.rbegin();
@@ -916,7 +931,143 @@ namespace Das::Core::TaskScheduler
             return;
         }
 
-        DAS_CORE_LOG_DEBUG("SchedulerService::OnTick: tick");
+        // Select a runnable task instance under lock, then release lock
+        // before calling plugin Do.
+        Das::PluginInterface::IDasTask* task_ptr = nullptr;
+        TaskInstanceRecord*             selected_inst = nullptr;
+        nlohmann::json                  properties_copy;
+        int64_t                         selected_id = -1;
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+
+            if (state_.load() != SchedulerState::Running)
+            {
+                StartTickTimer();
+                return;
+            }
+
+            // Find the first available task instance with an executable
+            // IDasTask pointer
+            for (auto& inst : task_instances_)
+            {
+                if (inst.availability != TaskAvailability::Available)
+                {
+                    continue;
+                }
+
+                if (!inst.task_type || !inst.task_type->task_instance)
+                {
+                    continue;
+                }
+
+                task_ptr = inst.task_type->task_instance.Get();
+                selected_inst = &inst;
+                properties_copy = inst.properties;
+                selected_id = inst.id;
+                break;
+            }
+
+            if (!task_ptr || !selected_inst)
+            {
+                DAS_CORE_LOG_DEBUG(
+                    "SchedulerService::OnTick: no runnable task");
+                StartTickTimer();
+                return;
+            }
+
+            current_task_ = task_ptr;
+
+            // Create or reuse stop token for cooperative cancellation
+            if (!stop_token_)
+            {
+                stop_token_ = Das::Core::Utils::DasStopTokenImpl::Make();
+            }
+        }
+
+        // Create JSON string inputs outside the lock
+        DasPtr<IDasReadOnlyString> p_env_json;
+        auto env_cr = CreateIDasReadOnlyStringFromUtf8("{}", p_env_json.Put());
+        if (IsFailed(env_cr))
+        {
+            p_env_json.Reset();
+        }
+
+        DasPtr<IDasReadOnlyString> p_props_json;
+        auto                       props_str = properties_copy.dump();
+        auto                       props_cr = CreateIDasReadOnlyStringFromUtf8(
+            props_str.c_str(),
+            p_props_json.Put());
+        if (IsFailed(props_cr))
+        {
+            p_props_json.Reset();
+        }
+
+        // Call IDasTask::Do WITHOUT holding the mutex
+        auto do_result = task_ptr->Do(
+            stop_token_.Get(),
+            p_env_json ? p_env_json.Get() : nullptr,
+            p_props_json ? p_props_json.Get() : nullptr);
+
+        if (IsFailed(do_result))
+        {
+            DAS_CORE_LOG_WARN(
+                "SchedulerService::OnTick: task {} Do returned result={}",
+                selected_id,
+                do_result);
+        }
+
+        // Refresh nextExecutionTime from the task
+        std::string                   refreshed_time;
+        bool                          has_refreshed_time = false;
+        Das::ExportInterface::DasDate next_date{};
+        auto net_result = task_ptr->GetNextExecutionTime(&next_date);
+        if (IsOk(net_result))
+        {
+            char buf[64];
+            std::snprintf(
+                buf,
+                sizeof(buf),
+                "%04d-%02d-%02dT%02d:%02d:%02d",
+                next_date.year,
+                next_date.month,
+                next_date.day,
+                next_date.hour,
+                next_date.minute,
+                next_date.second);
+            refreshed_time = buf;
+            has_refreshed_time = true;
+        }
+
+        // Re-acquire lock to update state
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+
+            // Update the instance record with refreshed nextExecutionTime
+            if (selected_inst && has_refreshed_time)
+            {
+                selected_inst->next_execution_time = refreshed_time;
+
+                // Persist refreshed nextExecutionTime
+                auto& settings = plugin_manager_.GetSettingsManager();
+                auto  instance_json =
+                    settings.GetTaskInstanceJson("0", selected_id);
+                if (instance_json.is_null() || !instance_json.is_object())
+                {
+                    instance_json = nlohmann::json::object();
+                }
+                instance_json["nextExecutionTime"] = refreshed_time;
+                settings.UpdateTaskInstanceJson(
+                    "0",
+                    selected_id,
+                    instance_json);
+            }
+
+            current_task_ = nullptr;
+            cv_.notify_all();
+        }
+
+        DAS_CORE_LOG_DEBUG("SchedulerService::OnTick: tick complete");
         StartTickTimer();
     }
 

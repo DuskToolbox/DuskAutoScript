@@ -35,6 +35,23 @@ private:
     std::atomic_bool is_stop_requested_{false};
 };
 
+/**
+ * @brief Heap-allocated stop token with cooperative cancellation.
+ * Supports AddRef/Release lifetime management via DasStopTokenImplBase.
+ */
+class DasStopTokenImpl final
+    : public Das::PluginInterface::DasStopTokenImplBase<DasStopTokenImpl>
+{
+public:
+    DasResult StopRequested(bool* canStop) override;
+
+    void RequestStop();
+    void Reset();
+
+private:
+    std::atomic_bool is_stop_requested_{false};
+};
+
 DAS_CORE_UTILS_NS_END
 
 #endif // DAS_CORE_UTILS_IDASSTOPTOKENIMPL_H

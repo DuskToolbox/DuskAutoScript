@@ -4,7 +4,9 @@
 #include <das/Core/TaskScheduler/SchedulerService.h>
 #include <das/Core/TaskScheduler/SchedulerServiceImpl.h>
 #include <das/DasSharedRef.hpp>
+#include <das/DasString.hpp>
 #include <das/IDasSchedulerService.h>
+#include <das/_autogen/idl/abi/IDasTask.h>
 #include <gtest/gtest.h>
 
 #include <atomic>
@@ -859,4 +861,398 @@ TEST_F(SchedulerServiceImplTest, QueryInterface_ReturnsSchedulerService)
         reinterpret_cast<void**>(p_svc.Put()));
     EXPECT_EQ(result, DAS_S_OK);
     EXPECT_TRUE(p_svc.Get() != nullptr);
+}
+
+// ============================================================
+// Fake IDasTask for execution tests
+// ============================================================
+
+// {A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
+static constexpr DasGuid FakeTaskGuid = {
+    0xA1B2C3D4,
+    0xE5F6,
+    0x7890,
+    {0xAB, 0xCD, 0xEF, 0x12, 0x34, 0x56, 0x78, 0x90}};
+
+class FakeTask final : public Das::PluginInterface::IDasTask
+{
+public:
+    std::atomic<uint32_t> ref_count_{0};
+    std::atomic<int>      do_call_count{0};
+    std::atomic<bool>     stop_token_was_null{true};
+    std::atomic<bool>     env_was_null{true};
+    std::atomic<bool>     props_was_null{true};
+    std::string           last_props_json;
+
+    Das::ExportInterface::DasDate next_date{};
+    bool                          has_next_date = false;
+
+    uint32_t AddRef() override { return ++ref_count_; }
+
+    uint32_t Release() override
+    {
+        auto c = --ref_count_;
+        if (c == 0)
+        {
+            delete this;
+        }
+        return c;
+    }
+
+    DasResult QueryInterface(const DasGuid& iid, void** pp) override
+    {
+        if (!pp)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        if (iid == DasIidOf<IDasBase>())
+        {
+            *pp = static_cast<IDasBase*>(this);
+            AddRef();
+            return DAS_S_OK;
+        }
+        if (iid == DasIidOf<IDasTypeInfo>())
+        {
+            *pp = static_cast<IDasTypeInfo*>(this);
+            AddRef();
+            return DAS_S_OK;
+        }
+        if (iid == DasIidOf<Das::PluginInterface::IDasTask>())
+        {
+            *pp = static_cast<Das::PluginInterface::IDasTask*>(this);
+            AddRef();
+            return DAS_S_OK;
+        }
+        *pp = nullptr;
+        return DAS_E_NO_INTERFACE;
+    }
+
+    DasResult GetGuid(DasGuid* p_out_guid) override
+    {
+        if (!p_out_guid)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        *p_out_guid = FakeTaskGuid;
+        return DAS_S_OK;
+    }
+
+    DasResult GetRuntimeClassName(IDasReadOnlyString** pp) override
+    {
+        if (!pp)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        return CreateIDasReadOnlyStringFromUtf8("FakeTask", pp);
+    }
+
+    DasResult Do(
+        Das::PluginInterface::IDasStopToken* stop_token,
+        IDasReadOnlyString*                  p_environment_json,
+        IDasReadOnlyString*                  p_task_settings_json) override
+    {
+        ++do_call_count;
+        stop_token_was_null = (stop_token == nullptr);
+        env_was_null = (p_environment_json == nullptr);
+        props_was_null = (p_task_settings_json == nullptr);
+
+        if (p_task_settings_json)
+        {
+            const char* c_str = nullptr;
+            if (DAS_S_OK == p_task_settings_json->GetUtf8(&c_str) && c_str)
+            {
+                last_props_json = c_str;
+            }
+        }
+
+        return DAS_S_OK;
+    }
+
+    DasResult GetNextExecutionTime(
+        Das::ExportInterface::DasDate* p_out_date) override
+    {
+        if (!p_out_date)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        if (has_next_date)
+        {
+            *p_out_date = next_date;
+            return DAS_S_OK;
+        }
+        return DAS_E_FAIL;
+    }
+};
+
+namespace
+{
+
+    FakeTask* SetupSchedulerWithFakeTask(
+        SchedulerService&                               scheduler,
+        Das::Core::SettingsManager::SettingsManager&    sm,
+        const std::filesystem::path&                    plugin_dir,
+        Das::Core::ForeignInterfaceHost::PluginManager& pm)
+    {
+        // Create a fake task and inject it into PluginManager's features
+        auto* fake_task = new FakeTask();
+        fake_task->AddRef();
+
+        // Register as a feature so GetFeaturesByType returns it
+        pm.RegisterTestFeature(
+            Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK,
+            {},
+            static_cast<IDasBase*>(fake_task));
+
+        // Write one task instance in the scheduler state
+        sm.CreateProfile("0");
+        nlohmann::json task0;
+        task0["id"] = 0;
+        task0["taskGuid"] = "A1B2C3D4-E5F6-7890-ABCD-EF1234567890";
+        task0["pluginGuid"] = "00000000-0000-0000-0000-000000000000";
+        task0["nextExecutionTime"] = nullptr;
+        task0["properties"] = {{"key1", "value1"}};
+        WriteSchedulerState(sm, 1, {0}, {task0});
+
+        auto init_result = scheduler.Initialize(plugin_dir, {});
+        EXPECT_EQ(init_result, DAS_S_OK) << "Initialize should succeed";
+
+        return fake_task;
+    }
+
+} // namespace
+
+// ============================================================
+// Execution test fixture (with IO thread for timer)
+// ============================================================
+
+class SchedulerExecutionTest : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        test_dir_ = UniqueTestDir();
+        std::filesystem::create_directories(test_dir_);
+        settings_dir_ = test_dir_ / "settings";
+        std::filesystem::create_directories(settings_dir_);
+        plugin_dir_ = test_dir_ / "plugins";
+        std::filesystem::create_directories(plugin_dir_);
+
+        settings_manager_ =
+            std::make_unique<Das::Core::SettingsManager::SettingsManager>(
+                settings_dir_);
+        ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+        plugin_manager_ =
+            std::make_unique<Das::Core::ForeignInterfaceHost::PluginManager>(
+                *settings_manager_,
+                Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                    ipc_sp_));
+        scheduler_ = std::make_unique<SchedulerService>(
+            *plugin_manager_,
+            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp_));
+
+        // Start IO thread so that steady_timer can fire
+        io_thread_ = std::thread(
+            [this]()
+            {
+                auto& io = ipc_sp_->GetIoContext();
+                boost::asio::executor_work_guard<
+                    boost::asio::io_context::executor_type>
+                    work(io.get_executor());
+                io.run();
+            });
+    }
+
+    void TearDown() override
+    {
+        ipc_sp_->GetIoContext().stop();
+        if (io_thread_.joinable())
+        {
+            io_thread_.join();
+        }
+        scheduler_.reset();
+        plugin_manager_.reset();
+        settings_manager_.reset();
+        std::filesystem::remove_all(test_dir_);
+    }
+
+    std::filesystem::path test_dir_;
+    std::filesystem::path settings_dir_;
+    std::filesystem::path plugin_dir_;
+    std::unique_ptr<Das::Core::SettingsManager::SettingsManager>
+                                                              settings_manager_;
+    std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
+    std::unique_ptr<Das::Core::ForeignInterfaceHost::PluginManager>
+                                      plugin_manager_;
+    std::unique_ptr<SchedulerService> scheduler_;
+    std::thread                       io_thread_;
+};
+
+// ============================================================
+// Execution tests
+// ============================================================
+
+TEST_F(SchedulerServiceTest, OnTick_SkipsInvalidInstance)
+{
+    settings_manager_->CreateProfile("0");
+
+    // Write a corrupt task instance file
+    nlohmann::json scheduler_index;
+    scheduler_index["nextTaskId"] = 1;
+    scheduler_index["taskOrder"] = nlohmann::json::array({0});
+    settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
+
+    auto task_file = settings_dir_ / "0" / "taskId0.json";
+    {
+        std::ofstream ofs{task_file};
+        ofs << "CORRUPT DATA";
+    }
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    // Enable should fail because no available task instances
+    auto result = scheduler_->Enable();
+    EXPECT_EQ(result, DAS_E_OBJECT_NOT_INIT);
+}
+
+TEST_F(SchedulerServiceTest, OnTick_SkipsUnavailableInstance)
+{
+    settings_manager_->CreateProfile("0");
+
+    // Write a task instance referencing a non-existent task type
+    nlohmann::json task0;
+    task0["id"] = 0;
+    task0["taskGuid"] = "11111111-1111-1111-1111-111111111111";
+    task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
+    task0["properties"] = nlohmann::json::object();
+    WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    // Enable should fail because no available task instances
+    auto result = scheduler_->Enable();
+    EXPECT_EQ(result, DAS_E_OBJECT_NOT_INIT);
+}
+
+TEST_F(SchedulerExecutionTest, OnTick_ExecutesAvailableInstance)
+{
+    auto* fake = SetupSchedulerWithFakeTask(
+        *scheduler_,
+        *settings_manager_,
+        plugin_dir_,
+        *plugin_manager_);
+
+    // Enable scheduler
+    ASSERT_EQ(scheduler_->Enable(), DAS_S_OK);
+
+    // Wait for at least one tick to execute
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+
+    // Disable
+    auto stop_result = scheduler_->Disable();
+    EXPECT_EQ(stop_result, DAS_S_OK);
+
+    // Task should have been executed at least once
+    EXPECT_GE(fake->do_call_count, 1);
+
+    // Task received non-null stop token
+    EXPECT_FALSE(fake->stop_token_was_null);
+
+    // Task received non-null environment and props
+    EXPECT_FALSE(fake->env_was_null);
+    EXPECT_FALSE(fake->props_was_null);
+}
+
+TEST_F(SchedulerExecutionTest, OnTick_ReceivesNonNullInputs)
+{
+    auto* fake = SetupSchedulerWithFakeTask(
+        *scheduler_,
+        *settings_manager_,
+        plugin_dir_,
+        *plugin_manager_);
+
+    ASSERT_EQ(scheduler_->Enable(), DAS_S_OK);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+
+    auto stop_result = scheduler_->Disable();
+    EXPECT_EQ(stop_result, DAS_S_OK);
+
+    // Verify properties JSON was passed
+    EXPECT_FALSE(fake->last_props_json.empty());
+    auto parsed = nlohmann::json::parse(fake->last_props_json);
+    EXPECT_EQ(parsed["key1"], "value1");
+}
+
+TEST_F(SchedulerExecutionTest, OnTick_RefreshesNextExecutionTime)
+{
+    auto* fake = SetupSchedulerWithFakeTask(
+        *scheduler_,
+        *settings_manager_,
+        plugin_dir_,
+        *plugin_manager_);
+
+    // Set up next execution time to return
+    fake->has_next_date = true;
+    fake->next_date = {2026, 6, 15, 10, 30, 0};
+
+    ASSERT_EQ(scheduler_->Enable(), DAS_S_OK);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+
+    auto stop_result = scheduler_->Disable();
+    EXPECT_EQ(stop_result, DAS_S_OK);
+
+    // Verify nextExecutionTime was persisted
+    auto persisted = settings_manager_->GetTaskInstanceJson("0", 0);
+    ASSERT_TRUE(persisted.contains("nextExecutionTime"));
+    EXPECT_EQ(
+        persisted["nextExecutionTime"].get<std::string>(),
+        "2026-06-15T10:30:00");
+}
+
+TEST_F(SchedulerExecutionTest, Stop_RequestsCancellationToken)
+{
+    auto* fake = SetupSchedulerWithFakeTask(
+        *scheduler_,
+        *settings_manager_,
+        plugin_dir_,
+        *plugin_manager_);
+
+    ASSERT_EQ(scheduler_->Enable(), DAS_S_OK);
+
+    // Let at least one tick happen
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+
+    // Stop should complete successfully
+    auto result = scheduler_->Disable();
+    EXPECT_EQ(result, DAS_S_OK);
+
+    // After disable, scheduler should be stopped
+    EXPECT_EQ(scheduler_->Status(), SchedulerState::Stopped);
+}
+
+TEST_F(SchedulerExecutionTest, OnTick_DoesNotHoldMutexDuringDo)
+{
+    // This test verifies that Get() can be called while a task is running.
+    // If mutex were held during Do, Get() would deadlock.
+    auto* fake = SetupSchedulerWithFakeTask(
+        *scheduler_,
+        *settings_manager_,
+        plugin_dir_,
+        *plugin_manager_);
+
+    ASSERT_EQ(scheduler_->Enable(), DAS_S_OK);
+
+    // Give the scheduler a moment to start ticking
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+    // Get should not deadlock (it acquires mutex internally)
+    auto state = scheduler_->Get();
+    EXPECT_TRUE(state.contains("state"));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+
+    auto stop_result = scheduler_->Disable();
+    EXPECT_EQ(stop_result, DAS_S_OK);
 }

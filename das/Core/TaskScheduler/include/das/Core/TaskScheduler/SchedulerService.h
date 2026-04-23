@@ -6,6 +6,7 @@
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
+#include <das/Core/Utils/IDasStopTokenImpl.h>
 #include <das/DasExport.h>
 #include <das/DasPtr.hpp>
 #include <das/DasSharedRef.hpp>
@@ -188,6 +189,9 @@ namespace Das::Core::TaskScheduler
 
         Das::PluginInterface::IDasTask*    current_task_ = nullptr;
         std::vector<std::filesystem::path> loaded_plugin_paths_;
+
+        // Cooperative cancellation token for the currently executing task
+        DasPtr<Das::PluginInterface::IDasStopToken> stop_token_;
 
         std::unique_ptr<boost::asio::steady_timer> tick_timer_;
     };

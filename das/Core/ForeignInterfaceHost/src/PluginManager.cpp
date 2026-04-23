@@ -735,6 +735,29 @@ ComponentFactoryManager& PluginManager::GetComponentFactoryManager()
     return component_factory_mgr_;
 }
 
+void PluginManager::RegisterTestFeature(
+    Das::PluginInterface::DasPluginFeature type,
+    const DasGuid&                         plugin_guid,
+    IDasBase*                              interface_ptr)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Allocate a stable FeatureInfo that persists until Shutdown
+    static std::vector<std::unique_ptr<FeatureInfo>> test_features;
+    auto fi = std::make_unique<FeatureInfo>();
+    fi->feature_type = type;
+    fi->iid = DasGuid{};
+    fi->interface_ptr = interface_ptr;
+    fi->plugin_guid = plugin_guid;
+    fi->plugin_name = "test_plugin";
+    fi->session_id = 0;
+
+    auto* raw = fi.get();
+    test_features.push_back(std::move(fi));
+
+    feature_type_index_[type].push_back(raw);
+}
+
 DasResult PluginManager::LoadPluginViaIpc(
     const std::filesystem::path&       manifest_path,
     const DasGuid&                     plugin_guid,
@@ -818,7 +841,8 @@ DasResult PluginManager::LoadPluginViaIpc(
 
     // sync_wait 阻塞等待（HTTP 线程安全，走 IO 线程 pending_calls_）
     auto sender = DAS::Core::IPC::async_op(ipc_context_.get(), std::move(op));
-    auto wait_result = DAS::Core::IPC::wait(ipc_context_.get(), std::move(sender));
+    auto wait_result =
+        DAS::Core::IPC::wait(ipc_context_.get(), std::move(sender));
     if (!wait_result)
     {
         DAS_CORE_LOG_ERROR(
