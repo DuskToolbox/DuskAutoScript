@@ -2,6 +2,7 @@
 #define DAS_CORE_FOREIGNINTERFACEHOST_FOREIGNINTERFACEHOST_H
 
 #include <das/Core/ForeignInterfaceHost/Config.h>
+#include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHostEnum.h>
 #include <das/IDasBase.h>
@@ -11,6 +12,7 @@
 #include <nlohmann/json_fwd.hpp>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <variant>
 #include <vector>
 
@@ -60,6 +62,7 @@ struct PluginSettingDesc
     std::optional<std::vector<std::string>> enum_values;
     std::optional<std::vector<std::string>> enum_descriptions;
     std::optional<std::string>              deprecation_message;
+    bool                                    required = false;
 
     ExportInterface::DasType type = Das::ExportInterface::DAS_TYPE_STRING;
     /**
@@ -71,6 +74,37 @@ struct PluginSettingDesc
 
 void from_json(const ::nlohmann::json& input, PluginSettingDesc& output);
 // void to_json(const ::nlohmann::json& output, PluginSettingDesc& input);
+
+/**
+ * @brief Plugin-GUID-keyed settings descriptor group.
+ * Each plugin GUID maps to a group with a name, description, and descriptor
+ * list.
+ */
+struct PluginSettingsGroup
+{
+    std::string                    name;
+    std::string                    description;
+    std::vector<PluginSettingDesc> descriptors;
+};
+
+void from_json(
+    const ::nlohmann::json&                           input,
+    std::unordered_map<DasGuid, PluginSettingsGroup>& output);
+
+/**
+ * @brief Task type descriptor keyed by task GUID in the manifest.
+ * Declares task metadata and property descriptors for scheduler task instances.
+ */
+struct TaskDescriptor
+{
+    DasGuid                        plugin_guid;
+    std::string                    name;
+    std::string                    description;
+    std::optional<std::string>     game_name;
+    std::vector<PluginSettingDesc> descriptors;
+};
+
+void from_json(const ::nlohmann::json& input, TaskDescriptor& output);
 
 struct PluginPackageDesc
 {
@@ -85,6 +119,11 @@ struct PluginPackageDesc
     std::optional<std::string>     opt_resource_path;
     DasGuid                        guid;
     std::vector<PluginSettingDesc> settings_desc;
+
+    /// Plugin-GUID-keyed settings descriptor groups from manifest.
+    std::unordered_map<DasGuid, PluginSettingsGroup> settings_groups;
+    /// Task-GUID-keyed task descriptors from manifest.
+    std::unordered_map<DasGuid, TaskDescriptor> task_descriptors;
 
     class SettingsJson
     {

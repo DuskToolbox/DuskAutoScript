@@ -7,5 +7,22 @@
     "supportedSystem": "Windows",
     "language": "Cpp",
     "pluginFilenameExtension": "dll",
-    "settings": []
+    "settings": {},
+    "tasks": {
+        "D4E5F6A7-B8C9-4D0E-1F2A-3B4C5D6E7F80": {
+            "pluginGuid": "2B3C4D5E-6F7A-5B6C-9D0E-1F2A3B4C5D6E",
+            "name": "componentTask",
+            "description": "A component factory test task",
+            "gameName": "TestGame",
+            "descriptors": [
+                {
+                    "name": "scriptName",
+                    "type": 4,
+                    "defaultValue": "",
+                    "description": "Script to execute",
+                    "required": true
+                }
+            ]
+        }
+    }
 }

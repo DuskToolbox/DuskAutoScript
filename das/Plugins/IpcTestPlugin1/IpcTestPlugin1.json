@@ -7,5 +7,22 @@
   "supportedSystem": "Windows",
   "language": "Cpp",
   "pluginFilenameExtension": "dll",
-  "settings": []
+  "settings": {},
+  "tasks": {
+    "A1B2C3D4-E5F6-4A7B-8C9D-0E1F2A3B4C5D": {
+      "pluginGuid": "2A3B4C5D-6E7F-4B5C-9D0E-1F2A3B4C5D6E",
+      "name": "testTask",
+      "description": "A test task for IPC testing",
+      "gameName": "TestGame",
+      "descriptors": [
+        {
+          "name": "retryCount",
+          "type": 0,
+          "defaultValue": 3,
+          "description": "Number of retries",
+          "required": false
+        }
+      ]
+    }
+  }
 }

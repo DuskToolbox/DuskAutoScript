@@ -12,9 +12,6 @@ interface IDasStopToken : IDasBase {
 interface IDasTask : IDasTypeInfo {
     DasResult Do(IDasStopToken* stop_token, IDasReadOnlyString* p_environment_json, IDasReadOnlyString* p_task_settings_json);
     DasResult GetNextExecutionTime([out] Das::ExportInterface::DasDate* p_out_date);
-    DasResult GetName([out] IDasReadOnlyString** pp_out_name);
-    DasResult GetDescription([out] IDasReadOnlyString** pp_out_settings);
-    DasResult GetGameName([out] IDasReadOnlyString** pp_out_label);
 }
 
 }

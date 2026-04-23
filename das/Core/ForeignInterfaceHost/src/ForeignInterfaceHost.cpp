@@ -247,8 +247,51 @@ void from_json(const nlohmann::json& input, PluginSettingDesc& output)
         output.enum_descriptions);
     Details::OptionalFromJson(
         input,
-        "deprecation_message",
+        "deprecationMessage",
         output.deprecation_message);
+    if (const auto it = input.find("required"); it != input.end())
+    {
+        output.required = it->get<bool>();
+    }
+}
+
+void from_json(
+    const nlohmann::json&                             input,
+    std::unordered_map<DasGuid, PluginSettingsGroup>& output)
+{
+    DAS_CORE_TRACE_SCOPE;
+
+    if (!input.is_object())
+    {
+        return;
+    }
+    for (const auto& [key, value] : input.items())
+    {
+        const auto          guid = MakeDasGuid(key);
+        PluginSettingsGroup group;
+        value.at("name").get_to(group.name);
+        value.at("description").get_to(group.description);
+        if (const auto it = value.find("descriptors"); it != value.end())
+        {
+            it->get_to(group.descriptors);
+        }
+        output.emplace(guid, std::move(group));
+    }
+}
+
+void from_json(const nlohmann::json& input, TaskDescriptor& output)
+{
+    DAS_CORE_TRACE_SCOPE;
+
+    const auto plugin_guid_string = input.at("pluginGuid").get<std::string>();
+    output.plugin_guid = MakeDasGuid(plugin_guid_string);
+    input.at("name").get_to(output.name);
+    input.at("description").get_to(output.description);
+    Details::OptionalFromJson(input, "gameName", output.game_name);
+    if (const auto it = input.find("descriptors"); it != input.end())
+    {
+        it->get_to(output.descriptors);
+    }
 }
 
 void PluginPackageDesc::SettingsJson::SetValue(IDasReadOnlyString* p_json)
@@ -296,46 +339,71 @@ void from_json(const nlohmann::json& input, PluginPackageDesc& output)
     }
     const auto guid_string = input.at("guid").get<std::string>();
     output.guid = MakeDasGuid(guid_string);
+
+    // Parse "settings" field: support both legacy array and new
+    // plugin-GUID-keyed object format.
     if (const auto it_settings = input.find("settings");
-        it_settings == input.end())
+        it_settings != input.end())
     {
-        return;
-    }
-    const auto& settings = input.at("settings");
-    settings.get_to(output.settings_desc);
-    output.settings_desc_json = settings.dump();
-    output.default_settings = nlohmann::json{};
-    for (const auto& setting : output.settings_desc)
-    {
-        switch (setting.type)
+        const auto& settings = *it_settings;
+        if (settings.is_array())
         {
-        case Das::ExportInterface::DAS_TYPE_BOOL:
-            output.default_settings[output.name] =
-                std::get<bool>(setting.default_value);
-            break;
-        case Das::ExportInterface::DAS_TYPE_INT:
-            output.default_settings[output.name] =
-                std::get<std::int64_t>(setting.default_value);
-            break;
-        case Das::ExportInterface::DAS_TYPE_FLOAT:
-            output.default_settings[output.name] =
-                std::get<float>(setting.default_value);
-            break;
-        case Das::ExportInterface::DAS_TYPE_STRING:
-            output.default_settings[output.name] =
-                std::get<std::string>(setting.default_value);
-            break;
-        default:
-            DAS_CORE_LOG_ERROR(
-                "Unexpected enum value. Setting name = {}, value = {}.",
-                setting.name,
-                setting.type);
-            throw Utils::UnexpectedEnumException::FromEnum(setting.type);
+            // Legacy flat array format.
+            settings.get_to(output.settings_desc);
+            output.settings_desc_json = settings.dump();
+            output.default_settings = nlohmann::json{};
+            for (const auto& setting : output.settings_desc)
+            {
+                switch (setting.type)
+                {
+                case Das::ExportInterface::DAS_TYPE_BOOL:
+                    output.default_settings[output.name] =
+                        std::get<bool>(setting.default_value);
+                    break;
+                case Das::ExportInterface::DAS_TYPE_INT:
+                    output.default_settings[output.name] =
+                        std::get<std::int64_t>(setting.default_value);
+                    break;
+                case Das::ExportInterface::DAS_TYPE_FLOAT:
+                    output.default_settings[output.name] =
+                        std::get<float>(setting.default_value);
+                    break;
+                case Das::ExportInterface::DAS_TYPE_STRING:
+                    output.default_settings[output.name] =
+                        std::get<std::string>(setting.default_value);
+                    break;
+                default:
+                    DAS_CORE_LOG_ERROR(
+                        "Unexpected enum value. Setting name = {}, value = {}.",
+                        setting.name,
+                        setting.type);
+                    throw Utils::UnexpectedEnumException::FromEnum(
+                        setting.type);
+                }
+            }
+            const DasReadOnlyStringWrapper default_settings_json{
+                output.default_settings.dump()};
+            output.settings_json_->SetValue(default_settings_json.Get());
+        }
+        else if (settings.is_object())
+        {
+            // New plugin-GUID-keyed object format.
+            settings.get_to(output.settings_groups);
+            output.settings_desc_json = settings.dump();
         }
     }
-    const DasReadOnlyStringWrapper default_settings_json{
-        output.default_settings.dump()};
-    output.settings_json_->SetValue(default_settings_json.Get());
+
+    // Parse "tasks" field: task-GUID-keyed object.
+    if (const auto it_tasks = input.find("tasks");
+        it_tasks != input.end() && it_tasks->is_object())
+    {
+        for (const auto& [key, value] : it_tasks->items())
+        {
+            const auto     task_guid = MakeDasGuid(key);
+            TaskDescriptor desc = value.get<TaskDescriptor>();
+            output.task_descriptors.emplace(task_guid, std::move(desc));
+        }
+    }
 }
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
