@@ -6,6 +6,7 @@
 #include <das/DasSharedRef.hpp>
 #include <das/DasString.hpp>
 #include <das/IDasSchedulerService.h>
+#include <das/_autogen/idl/abi/IDasGuidVector.h>
 #include <das/_autogen/idl/abi/IDasTask.h>
 #include <gtest/gtest.h>
 
@@ -1255,4 +1256,430 @@ TEST_F(SchedulerExecutionTest, OnTick_DoesNotHoldMutexDuringDo)
 
     auto stop_result = scheduler_->Disable();
     EXPECT_EQ(stop_result, DAS_S_OK);
+}
+
+// ============================================================
+// Scheduler controller validation tests
+// ============================================================
+
+#include "controller/DasSchedulerController.hpp"
+
+namespace
+{
+
+    /// Fake IDasSchedulerService that records method calls.
+    class FakeSchedulerService final : public IDasSchedulerService
+    {
+    public:
+        std::atomic<uint32_t> ref_count_{0};
+
+        // Records
+        std::atomic<bool> initialize_called{false};
+        std::atomic<bool> start_called{false};
+        std::atomic<bool> stop_called{false};
+        std::atomic<bool> get_called{false};
+        std::atomic<bool> add_task_called{false};
+        std::atomic<bool> delete_task_called{false};
+        std::atomic<bool> update_props_called{false};
+        std::atomic<bool> update_internal_props_called{false};
+
+        DasResult next_result{DAS_S_OK};
+
+        uint32_t AddRef() override { return ++ref_count_; }
+        uint32_t Release() override
+        {
+            auto c = --ref_count_;
+            if (c == 0)
+            {
+                delete this;
+            }
+            return c;
+        }
+        DasResult QueryInterface(const DasGuid&, void**) override
+        {
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult Initialize(
+            IDasReadOnlyString*,
+            Das::ExportInterface::IDasReadOnlyGuidVector*) override
+        {
+            initialize_called = true;
+            return next_result;
+        }
+        DasResult Start() override
+        {
+            start_called = true;
+            return next_result;
+        }
+        DasResult Stop() override
+        {
+            stop_called = true;
+            return next_result;
+        }
+        DasResult GetState(SchedulerState* p) const override
+        {
+            if (p)
+            {
+                *p = SchedulerState::Stopped;
+            }
+            return DAS_S_OK;
+        }
+        DasResult Get(IDasReadOnlyString** pp) override
+        {
+            get_called = true;
+            if (pp)
+            {
+                return CreateIDasReadOnlyStringFromUtf8(
+                    R"({"state":"stopped"})",
+                    pp);
+            }
+            return DAS_E_INVALID_POINTER;
+        }
+        DasResult AddTask(const DasGuid&, int64_t* p_id) override
+        {
+            add_task_called = true;
+            if (p_id)
+            {
+                *p_id = 42;
+            }
+            return next_result;
+        }
+        DasResult DeleteTask(int64_t) override
+        {
+            delete_task_called = true;
+            return next_result;
+        }
+        DasResult UpdateTaskProperties(int64_t, IDasReadOnlyString*) override
+        {
+            update_props_called = true;
+            return next_result;
+        }
+        DasResult UpdateTaskInternalProperties(int64_t, IDasReadOnlyString*)
+            override
+        {
+            update_internal_props_called = true;
+            return next_result;
+        }
+    };
+
+    /// Build a Beast::HttpRequest with path parameters set.
+    Das::Http::Beast::HttpRequest MakeRequest(
+        const std::string&                   target,
+        const std::string&                   body,
+        std::map<std::string, std::string>&& path_params)
+    {
+        namespace http = boost::beast::http;
+        http::request<http::string_body> raw_req{http::verb::post, target, 11};
+        raw_req.body() = body;
+        raw_req.prepare_payload();
+
+        Das::Http::Beast::HttpRequest req{std::move(raw_req)};
+        for (auto& [k, v] : path_params)
+        {
+            req.SetPathParameter(k, v);
+        }
+        return req;
+    }
+
+} // namespace
+
+class SchedulerControllerTest : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        fake_svc_ = new FakeSchedulerService();
+        fake_svc_->AddRef();
+        controller_ = std::make_unique<Das::Http::DasSchedulerController>(
+            *fake_svc_,
+            std::filesystem::current_path() / "plugins");
+    }
+
+    void TearDown() override
+    {
+        controller_.reset();
+        if (fake_svc_)
+        {
+            fake_svc_->Release();
+            fake_svc_ = nullptr;
+        }
+    }
+
+    FakeSchedulerService*                              fake_svc_ = nullptr;
+    std::unique_ptr<Das::Http::DasSchedulerController> controller_;
+};
+
+// ── Profile guard ──
+
+TEST_F(SchedulerControllerTest, Initialize_ProfileNonZero_Rejected)
+{
+    auto req =
+        MakeRequest("/api/scheduler/1/initialize", "{}", {{"profile", "1"}});
+    auto resp = controller_->Initialize(req);
+    auto body = nlohmann::json::parse(resp.Release().body());
+    EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
+    EXPECT_FALSE(fake_svc_->initialize_called);
+}
+
+TEST_F(SchedulerControllerTest, Start_ProfileNonZero_Rejected)
+{
+    auto req = MakeRequest("/api/scheduler/1/start", "{}", {{"profile", "1"}});
+    auto resp = controller_->Start(req);
+    auto body = nlohmann::json::parse(resp.Release().body());
+    EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
+    EXPECT_FALSE(fake_svc_->start_called);
+}
+
+TEST_F(SchedulerControllerTest, Stop_ProfileNonZero_Rejected)
+{
+    auto req = MakeRequest("/api/scheduler/1/stop", "{}", {{"profile", "1"}});
+    auto resp = controller_->Stop(req);
+    auto body = nlohmann::json::parse(resp.Release().body());
+    EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
+    EXPECT_FALSE(fake_svc_->stop_called);
+}
+
+TEST_F(SchedulerControllerTest, Get_ProfileNonZero_Rejected)
+{
+    auto req = MakeRequest("/api/scheduler/1/get", "{}", {{"profile", "1"}});
+    auto resp = controller_->Get(req);
+    auto body = nlohmann::json::parse(resp.Release().body());
+    EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
+    EXPECT_FALSE(fake_svc_->get_called);
+}
+
+TEST_F(SchedulerControllerTest, AddTask_ProfileNonZero_Rejected)
+{
+    auto req = MakeRequest(
+        "/api/scheduler/1/{taskGuid}/put",
+        "{}",
+        {{"profile", "1"},
+         {"taskGuid", "A1B2C3D4-E5F6-7890-ABCD-EF1234567890"}});
+    auto resp = controller_->AddTask(req);
+    auto body = nlohmann::json::parse(resp.Release().body());
+    EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
+    EXPECT_FALSE(fake_svc_->add_task_called);
+}
+
+TEST_F(SchedulerControllerTest, DeleteTask_ProfileNonZero_Rejected)
+{
+    auto req = MakeRequest(
+        "/api/scheduler/1/0/delete",
+        "{}",
+        {{"profile", "1"}, {"taskId", "0"}});
+    auto resp = controller_->DeleteTask(req);
+    auto body = nlohmann::json::parse(resp.Release().body());
+    EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
+    EXPECT_FALSE(fake_svc_->delete_task_called);
+}
+
+// ── Malformed GUID ──
+
+TEST_F(SchedulerControllerTest, AddTask_MalformedGuid_Rejected)
+{
+    auto req = MakeRequest(
+        "/api/scheduler/0/not-a-guid/put",
+        "{}",
+        {{"profile", "0"}, {"taskGuid", "not-a-guid"}});
+    auto resp = controller_->AddTask(req);
+    auto body = nlohmann::json::parse(resp.Release().body());
+    EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
+    EXPECT_FALSE(fake_svc_->add_task_called);
+}
+
+// ── Malformed taskId ──
+
+TEST_F(SchedulerControllerTest, DeleteTask_MalformedTaskId_Rejected)
+{
+    auto req = MakeRequest(
+        "/api/scheduler/0/abc/delete",
+        "{}",
+        {{"profile", "0"}, {"taskId", "abc"}});
+    auto resp = controller_->DeleteTask(req);
+    auto body = nlohmann::json::parse(resp.Release().body());
+    EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
+    EXPECT_FALSE(fake_svc_->delete_task_called);
+}
+
+TEST_F(SchedulerControllerTest, UpdateProps_MalformedTaskId_Rejected)
+{
+    auto req = MakeRequest(
+        "/api/scheduler/0/xyz/properties/update",
+        R"({"key":"val"})",
+        {{"profile", "0"}, {"taskId", "xyz"}});
+    auto resp = controller_->UpdateTaskProperties(req);
+    auto body = nlohmann::json::parse(resp.Release().body());
+    EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
+    EXPECT_FALSE(fake_svc_->update_props_called);
+}
+
+TEST_F(SchedulerControllerTest, UpdateInternalProps_MalformedTaskId_Rejected)
+{
+    auto req = MakeRequest(
+        "/api/scheduler/0/abc/internal/properties/update",
+        R"({"nextExecutionTime":null})",
+        {{"profile", "0"}, {"taskId", "abc"}});
+    auto resp = controller_->UpdateTaskInternalProperties(req);
+    auto body = nlohmann::json::parse(resp.Release().body());
+    EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
+    EXPECT_FALSE(fake_svc_->update_internal_props_called);
+}
+
+// ── disabledGuids validation ──
+
+TEST_F(SchedulerControllerTest, Initialize_OldDisabledUnderscoreGuids_Rejected)
+{
+    auto req = MakeRequest(
+        "/api/scheduler/0/initialize",
+        R"({"disabled_guids":[]})",
+        {{"profile", "0"}});
+    auto resp = controller_->Initialize(req);
+    auto body = nlohmann::json::parse(resp.Release().body());
+    EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
+    EXPECT_FALSE(fake_svc_->initialize_called);
+}
+
+TEST_F(SchedulerControllerTest, Initialize_NonArrayDisabledGuids_Rejected)
+{
+    auto req = MakeRequest(
+        "/api/scheduler/0/initialize",
+        R"({"disabledGuids":"not-array"})",
+        {{"profile", "0"}});
+    auto resp = controller_->Initialize(req);
+    auto body = nlohmann::json::parse(resp.Release().body());
+    EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
+    EXPECT_FALSE(fake_svc_->initialize_called);
+}
+
+TEST_F(SchedulerControllerTest, Initialize_MalformedGuidMember_Skipped)
+{
+    auto req = MakeRequest(
+        "/api/scheduler/0/initialize",
+        R"({"disabledGuids":["not-a-guid","00000000-0000-0000-0000-000000000000"]})",
+        {{"profile", "0"}});
+    auto resp = controller_->Initialize(req);
+    auto body = nlohmann::json::parse(resp.Release().body());
+    // Should succeed (malformed GUIDs are skipped, valid ones pass)
+    EXPECT_EQ(body["Code"], DAS_S_OK);
+    EXPECT_TRUE(fake_svc_->initialize_called);
+}
+
+// ── Valid request forwarding ──
+
+TEST_F(SchedulerControllerTest, Initialize_Valid_Forwarded)
+{
+    auto req = MakeRequest(
+        "/api/scheduler/0/initialize",
+        R"({"disabledGuids":[]})",
+        {{"profile", "0"}});
+    auto resp = controller_->Initialize(req);
+    auto body = nlohmann::json::parse(resp.Release().body());
+    EXPECT_EQ(body["Code"], DAS_S_OK);
+    EXPECT_TRUE(fake_svc_->initialize_called);
+}
+
+TEST_F(SchedulerControllerTest, Start_Valid_Forwarded)
+{
+    auto req = MakeRequest("/api/scheduler/0/start", "{}", {{"profile", "0"}});
+    auto resp = controller_->Start(req);
+    auto body = nlohmann::json::parse(resp.Release().body());
+    EXPECT_EQ(body["Code"], DAS_S_OK);
+    EXPECT_TRUE(fake_svc_->start_called);
+}
+
+TEST_F(SchedulerControllerTest, Stop_Valid_Forwarded)
+{
+    auto req = MakeRequest("/api/scheduler/0/stop", "{}", {{"profile", "0"}});
+    auto resp = controller_->Stop(req);
+    auto body = nlohmann::json::parse(resp.Release().body());
+    EXPECT_EQ(body["Code"], DAS_S_OK);
+    EXPECT_TRUE(fake_svc_->stop_called);
+}
+
+TEST_F(SchedulerControllerTest, Get_Valid_Forwarded)
+{
+    auto req = MakeRequest("/api/scheduler/0/get", "{}", {{"profile", "0"}});
+    auto resp = controller_->Get(req);
+    auto body = nlohmann::json::parse(resp.Release().body());
+    EXPECT_EQ(body["Code"], DAS_S_OK);
+    EXPECT_TRUE(body["Data"].contains("state"));
+    EXPECT_TRUE(fake_svc_->get_called);
+}
+
+TEST_F(SchedulerControllerTest, AddTask_Valid_Forwarded)
+{
+    auto req = MakeRequest(
+        "/api/scheduler/0/A1B2C3D4-E5F6-7890-ABCD-EF1234567890/put",
+        "{}",
+        {{"profile", "0"},
+         {"taskGuid", "A1B2C3D4-E5F6-7890-ABCD-EF1234567890"}});
+    auto resp = controller_->AddTask(req);
+    auto body = nlohmann::json::parse(resp.Release().body());
+    EXPECT_EQ(body["Code"], DAS_S_OK);
+    EXPECT_EQ(body["Data"]["taskId"], 42);
+    EXPECT_TRUE(fake_svc_->add_task_called);
+}
+
+TEST_F(SchedulerControllerTest, DeleteTask_Valid_Forwarded)
+{
+    auto req = MakeRequest(
+        "/api/scheduler/0/5/delete",
+        "{}",
+        {{"profile", "0"}, {"taskId", "5"}});
+    auto resp = controller_->DeleteTask(req);
+    auto body = nlohmann::json::parse(resp.Release().body());
+    EXPECT_EQ(body["Code"], DAS_S_OK);
+    EXPECT_TRUE(fake_svc_->delete_task_called);
+}
+
+TEST_F(SchedulerControllerTest, UpdateProps_Valid_Forwarded)
+{
+    auto req = MakeRequest(
+        "/api/scheduler/0/3/properties/update",
+        R"({"key":"value"})",
+        {{"profile", "0"}, {"taskId", "3"}});
+    auto resp = controller_->UpdateTaskProperties(req);
+    auto body = nlohmann::json::parse(resp.Release().body());
+    EXPECT_EQ(body["Code"], DAS_S_OK);
+    EXPECT_TRUE(fake_svc_->update_props_called);
+}
+
+TEST_F(SchedulerControllerTest, UpdateInternalProps_Valid_Forwarded)
+{
+    auto req = MakeRequest(
+        "/api/scheduler/0/3/internal/properties/update",
+        R"({"nextExecutionTime":"2026-05-01T08:00:00+08:00"})",
+        {{"profile", "0"}, {"taskId", "3"}});
+    auto resp = controller_->UpdateTaskInternalProperties(req);
+    auto body = nlohmann::json::parse(resp.Release().body());
+    EXPECT_EQ(body["Code"], DAS_S_OK);
+    EXPECT_TRUE(fake_svc_->update_internal_props_called);
+}
+
+// ── Non-initialize paths do not load scheduler plugins ──
+
+TEST_F(SchedulerControllerTest, NonInitializePaths_DelegateOnly)
+{
+    // Start, Stop, Get, DeleteTask, UpdateTaskProperties,
+    // UpdateTaskInternalProperties only delegate to the service.
+    // They never call Initialize.
+
+    auto start_req =
+        MakeRequest("/api/scheduler/0/start", "{}", {{"profile", "0"}});
+    controller_->Start(start_req);
+    EXPECT_TRUE(fake_svc_->start_called);
+    EXPECT_FALSE(fake_svc_->initialize_called);
+
+    auto stop_req =
+        MakeRequest("/api/scheduler/0/stop", "{}", {{"profile", "0"}});
+    controller_->Stop(stop_req);
+    EXPECT_TRUE(fake_svc_->stop_called);
+    EXPECT_FALSE(fake_svc_->initialize_called);
+
+    auto get_req =
+        MakeRequest("/api/scheduler/0/get", "{}", {{"profile", "0"}});
+    controller_->Get(get_req);
+    EXPECT_TRUE(fake_svc_->get_called);
+    EXPECT_FALSE(fake_svc_->initialize_called);
 }

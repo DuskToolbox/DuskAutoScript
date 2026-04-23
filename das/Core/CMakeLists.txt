@@ -284,6 +284,8 @@ target_link_libraries(DasCore PUBLIC DasCoreObjects)
      das_add_core_test(SettingsManager)
      das_add_core_test(Exceptions)
      das_add_core_test(TaskScheduler)
+     # TaskSchedulerTest needs Http headers for controller validation tests
+     target_include_directories(TaskSchedulerTest PRIVATE ${CMAKE_SOURCE_DIR}/das/Http/src)
      das_add_core_test(IPC)
  endif ()
 
