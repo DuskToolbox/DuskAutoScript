@@ -32,6 +32,7 @@ namespace Das::ExportInterface
 DAS_INTERFACE IDasSettingsService;
 DAS_INTERFACE IDasPluginManagerService;
 struct IDasSchedulerService;
+DAS_INTERFACE IDasCoreServices;
 
 #ifndef SWIG
 
@@ -231,51 +232,36 @@ DAS_C_API DasResult DasUnregisterMainProcessService(const DasGuid& iid);
 DAS_C_API void DasSetLogLevel(int level);
 
 //=============================================================================
-// Settings/PluginManager service factory functions
+// Core Services factory
 //=============================================================================
 
-namespace Das::Core::SettingsManager
+namespace Das::Core::IPC::MainProcess
 {
-    class SettingsManager;
-}
-namespace Das::Core::ForeignInterfaceHost
-{
-    class PluginManager;
-}
-namespace Das::Core::TaskScheduler
-{
-    class SchedulerService;
+    struct IIpcContext;
 }
 
 /**
- * @brief 创建 IDasSettingsService 实例
- * @param mgr SettingsManager 具体类引用
- * @param pp_out 输出接口指针（调用者必须 Release）
+ * @brief 创建 IDasCoreServices 实例
+ *
+ * 通过 ABI 安全的参数创建 DasCore 服务束。内部构造
+ * SettingsManager、PluginManager、SchedulerService 并包装为
+ * COM 风格服务接口。
+ *
+ * p_ipc_context 必须通过 CreateIpcContext() 创建的裸指针传入，
+ * 所有权在调用后转移给 CoreServices（内部包装为 DasSharedRef）。
+ * 不要传入从 CreateIpcContextShared/CreateIpcContextEz 借用的指针。
+ *
+ * @param p_settings_dir 设置目录路径
+ * @param p_plugin_dir   插件目录路径
+ * @param p_ipc_context  已初始化的 IPC 上下文（所有权转移）
+ * @param pp_out         输出 IDasCoreServices 接口指针（调用者必须 Release）
  * @return DAS_S_OK 成功
  */
-DAS_C_API DasResult CreateDasSettingsService(
-    Das::Core::SettingsManager::SettingsManager& mgr,
-    IDasSettingsService**                        pp_out);
-
-/**
- * @brief 创建 IDasPluginManagerService 实例
- * @param mgr PluginManager 具体类引用
- * @param pp_out 输出接口指针（调用者必须 Release）
- * @return DAS_S_OK 成功
- */
-DAS_C_API DasResult CreateDasPluginManagerService(
-    Das::Core::ForeignInterfaceHost::PluginManager& mgr,
-    IDasPluginManagerService**                      pp_out);
-
-/**
- * @brief 创建 IDasSchedulerService 实例
- * @param mgr SchedulerService 具体类引用
- * @param pp_out 输出接口指针（调用者必须 Release）
- * @return DAS_S_OK 成功
- */
-DAS_C_API DasResult CreateDasSchedulerService(
-    Das::Core::TaskScheduler::SchedulerService& mgr,
-    IDasSchedulerService**                      pp_out);
+DAS_C_API DasResult CreateIDasCoreServices(
+    IDasReadOnlyString*                          p_settings_dir,
+    IDasReadOnlyString*                          p_plugin_dir,
+    Das::Core::IPC::MainProcess::IIpcContext*    p_ipc_context,
+    IDasCoreServices**                           pp_out);
 
 #define DAS_LOG_ERROR(...) DAS_LOG_WITH_SOURCE_LOCATION(Error, __VA_ARGS__)
 #define DAS_LOG_WARNING(...) DAS_LOG_WITH_SOURCE_LOCATION(Warning, __VA_ARGS__)
