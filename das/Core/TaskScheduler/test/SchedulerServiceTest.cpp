@@ -24,6 +24,25 @@ namespace
         auto name = "scheduler_test_" + std::to_string(counter.fetch_add(1));
         return std::filesystem::current_path() / name;
     }
+
+    /// Helper to write scheduler index + task instance files directly.
+    void WriteSchedulerState(
+        Das::Core::SettingsManager::SettingsManager& sm,
+        int64_t                                      nextTaskId,
+        const std::vector<int64_t>&                  taskOrder,
+        const std::vector<nlohmann::json>&           taskInstances)
+    {
+        nlohmann::json index;
+        index["nextTaskId"] = nextTaskId;
+        index["taskOrder"] = taskOrder;
+        sm.UpdateSchedulerIndexJson("0", index);
+
+        for (size_t i = 0; i < taskInstances.size() && i < taskOrder.size();
+             ++i)
+        {
+            sm.UpdateTaskInstanceJson("0", taskOrder[i], taskInstances[i]);
+        }
+    }
 } // namespace
 
 class SchedulerServiceTest : public ::testing::Test
@@ -119,14 +138,10 @@ TEST_F(SchedulerServiceTest, Initialize_WithDisabledGuids_Succeeds)
 
 TEST_F(SchedulerServiceTest, NoPluginLoadBeforeInitialize)
 {
-    // Status, Get, Enable do not trigger plugin loading.
-    // This test verifies the path: constructor does not load plugins.
-    // PluginManager::GetFeaturesByType returns empty before Initialize.
     auto features = plugin_manager_->GetFeaturesByType(
         Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK);
     EXPECT_EQ(features.size(), 0u);
 
-    // Get should work before initialize without crashing
     auto state = scheduler_->Get();
     EXPECT_TRUE(state.contains("state"));
     EXPECT_EQ(state["tasks"].size(), 0u);
@@ -144,7 +159,6 @@ TEST_F(SchedulerServiceTest, Enable_EmptyTasks_ReturnsError)
 {
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
-    // Enable should fail because no available task instances
     auto result = scheduler_->Enable();
     EXPECT_EQ(result, DAS_E_OBJECT_NOT_INIT);
     EXPECT_EQ(scheduler_->Status(), SchedulerState::Stopped);
@@ -156,25 +170,16 @@ TEST_F(SchedulerServiceTest, Enable_EmptyTasks_ReturnsError)
 
 TEST_F(SchedulerServiceTest, Initialize_MaterializesPersistedInstances)
 {
-    // Create profile and write scheduler state
     settings_manager_->CreateProfile("0");
 
-    nlohmann::json scheduler_index;
-    scheduler_index["nextTaskId"] = 1;
-    scheduler_index["taskOrder"] = nlohmann::json::array({0});
-    settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
+    nlohmann::json task0;
+    task0["id"] = 0;
+    task0["taskGuid"] = "00000000-0000-0000-0000-000000000001";
+    task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
+    task0["nextExecutionTime"] = nullptr;
+    task0["properties"] = {{"key1", "value1"}};
+    WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
-    // Write a task instance file
-    nlohmann::json task_instance;
-    task_instance["id"] = 0;
-    task_instance["taskGuid"] = "00000000-0000-0000-0000-000000000001";
-    task_instance["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
-    task_instance["nextExecutionTime"] = nullptr;
-    task_instance["properties"] = {{"key1", "value1"}};
-    settings_manager_->UpdateTaskInstanceJson("0", 0, task_instance);
-
-    // Initialize should materialize the instance as unavailable
-    // (no actual plugins loaded, so task type is missing)
     auto result = scheduler_->Initialize(plugin_dir_, {});
     ASSERT_EQ(result, DAS_S_OK);
 
@@ -194,7 +199,6 @@ TEST_F(SchedulerServiceTest, Initialize_CorruptTaskFile_VisibleAsInvalid)
     scheduler_index["taskOrder"] = nlohmann::json::array({0});
     settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
 
-    // Write corrupt task instance file
     auto task_file = settings_dir_ / "0" / "taskId0.json";
     {
         std::ofstream ofs{task_file};
@@ -208,37 +212,33 @@ TEST_F(SchedulerServiceTest, Initialize_CorruptTaskFile_VisibleAsInvalid)
     ASSERT_EQ(state["tasks"].size(), 1u);
     EXPECT_EQ(state["tasks"][0]["id"], 0);
     EXPECT_EQ(state["tasks"][0]["availability"], "invalid");
+    EXPECT_FALSE(
+        state["tasks"][0]["unavailabilityReason"].get<std::string>().empty());
 }
 
 TEST_F(SchedulerServiceTest, Initialize_MissingTaskType_Unavailable)
 {
     settings_manager_->CreateProfile("0");
 
-    nlohmann::json scheduler_index;
-    scheduler_index["nextTaskId"] = 2;
-    scheduler_index["taskOrder"] = nlohmann::json::array({0, 1});
-    settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
-
     nlohmann::json task0;
     task0["id"] = 0;
     task0["taskGuid"] = "11111111-1111-1111-1111-111111111111";
     task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
     task0["properties"] = nlohmann::json::object();
-    settings_manager_->UpdateTaskInstanceJson("0", 0, task0);
 
     nlohmann::json task1;
     task1["id"] = 1;
     task1["taskGuid"] = "22222222-2222-2222-2222-222222222222";
     task1["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
     task1["properties"] = nlohmann::json::object();
-    settings_manager_->UpdateTaskInstanceJson("0", 1, task1);
+
+    WriteSchedulerState(*settings_manager_, 2, {0, 1}, {task0, task1});
 
     auto result = scheduler_->Initialize(plugin_dir_, {});
     ASSERT_EQ(result, DAS_S_OK);
 
     auto state = scheduler_->Get();
     ASSERT_EQ(state["tasks"].size(), 2u);
-    // Both should be unavailable since no plugins are loaded
     EXPECT_EQ(state["tasks"][0]["availability"], "unavailable");
     EXPECT_EQ(state["tasks"][1]["availability"], "unavailable");
 }
@@ -249,30 +249,19 @@ TEST_F(SchedulerServiceTest, Initialize_MissingTaskType_Unavailable)
 
 TEST_F(SchedulerServiceTest, Initialize_WhileRunning_Rejected)
 {
-    // We can't easily get to Running state without real tasks,
-    // so we test the direct state check.
-    // The state is Stopped by default, so this tests the code path.
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
-
-    // After initialize, state is still Stopped.
-    // We cannot test Running rejection in this unit test environment
-    // because Enable requires available task instances.
-    // This is covered by the acceptance criteria that Initialize
-    // rejects when Running.
+    // Cannot transition to Running without real tasks, so the state
+    // remains Stopped. The Running rejection path is exercised in
+    // production when Initialize is called during an active scheduler.
 }
 
 // ============================================================
-// Invalid/unavailable instances not selected for execution
+// Get: merged frontend view
 // ============================================================
 
 TEST_F(SchedulerServiceTest, Get_ReturnsMergedView)
 {
     settings_manager_->CreateProfile("0");
-
-    nlohmann::json scheduler_index;
-    scheduler_index["nextTaskId"] = 1;
-    scheduler_index["taskOrder"] = nlohmann::json::array({0});
-    settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
 
     nlohmann::json task0;
     task0["id"] = 0;
@@ -280,7 +269,7 @@ TEST_F(SchedulerServiceTest, Get_ReturnsMergedView)
     task0["pluginGuid"] = "FFFFFFFF-0000-0000-0000-000000000000";
     task0["nextExecutionTime"] = "2026-04-23T12:30:00+08:00";
     task0["properties"] = {{"setting1", "value1"}, {"setting2", 42}};
-    settings_manager_->UpdateTaskInstanceJson("0", 0, task0);
+    WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
@@ -298,6 +287,45 @@ TEST_F(SchedulerServiceTest, Get_ReturnsMergedView)
     EXPECT_EQ(state["tasks"][0]["properties"]["setting2"], 42);
 }
 
+TEST_F(SchedulerServiceTest, Get_CorruptTaskFile_VisibleWithInvalidMarker)
+{
+    settings_manager_->CreateProfile("0");
+
+    nlohmann::json scheduler_index;
+    scheduler_index["nextTaskId"] = 2;
+    scheduler_index["taskOrder"] = nlohmann::json::array({0, 1});
+    settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
+
+    // Task 0: corrupt file
+    auto task_file = settings_dir_ / "0" / "taskId0.json";
+    {
+        std::ofstream ofs{task_file};
+        ofs << "{broken json";
+    }
+
+    // Task 1: valid file
+    nlohmann::json task1;
+    task1["id"] = 1;
+    task1["taskGuid"] = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
+    task1["pluginGuid"] = "FFFFFFFF-0000-0000-0000-000000000000";
+    task1["properties"] = {{"key", "value"}};
+    settings_manager_->UpdateTaskInstanceJson("0", 1, task1);
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto state = scheduler_->Get();
+    ASSERT_EQ(state["tasks"].size(), 2u);
+
+    // Corrupt task should be visible as invalid
+    EXPECT_EQ(state["tasks"][0]["id"], 0);
+    EXPECT_EQ(state["tasks"][0]["availability"], "invalid");
+
+    // Valid task should be visible as unavailable (no plugin loaded)
+    EXPECT_EQ(state["tasks"][1]["id"], 1);
+    EXPECT_EQ(state["tasks"][1]["availability"], "unavailable");
+    EXPECT_EQ(state["tasks"][1]["properties"]["key"], "value");
+}
+
 // ============================================================
 // Status read
 // ============================================================
@@ -308,6 +336,311 @@ TEST_F(SchedulerServiceTest, Status_ReturnsCorrectState)
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
     EXPECT_EQ(scheduler_->Status(), SchedulerState::Stopped);
+}
+
+// ============================================================
+// Delete task
+// ============================================================
+
+TEST_F(SchedulerServiceTest, DeleteTask_PersistsRemoval)
+{
+    settings_manager_->CreateProfile("0");
+
+    nlohmann::json task0;
+    task0["id"] = 0;
+    task0["taskGuid"] = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
+    task0["pluginGuid"] = "FFFFFFFF-0000-0000-0000-000000000000";
+    task0["properties"] = nlohmann::json::object();
+
+    nlohmann::json task1;
+    task1["id"] = 1;
+    task1["taskGuid"] = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
+    task1["pluginGuid"] = "FFFFFFFF-0000-0000-0000-000000000000";
+    task1["properties"] = nlohmann::json::object();
+
+    WriteSchedulerState(*settings_manager_, 2, {0, 1}, {task0, task1});
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    // Delete task 0
+    auto result = scheduler_->DeleteTask(0);
+    EXPECT_EQ(result, DAS_S_OK);
+
+    // Verify in-memory state
+    auto state = scheduler_->Get();
+    ASSERT_EQ(state["tasks"].size(), 1u);
+    EXPECT_EQ(state["tasks"][0]["id"], 1);
+
+    // Verify persisted state: taskId0.json should be deleted
+    EXPECT_FALSE(std::filesystem::exists(settings_dir_ / "0" / "taskId0.json"));
+    EXPECT_TRUE(std::filesystem::exists(settings_dir_ / "0" / "taskId1.json"));
+
+    auto index = settings_manager_->GetSchedulerIndexJson("0");
+    ASSERT_EQ(index["taskOrder"].size(), 1u);
+    EXPECT_EQ(index["taskOrder"][0], 1);
+}
+
+TEST_F(SchedulerServiceTest, DeleteTask_NotFound)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto result = scheduler_->DeleteTask(99);
+    EXPECT_EQ(result, DAS_E_NOT_FOUND);
+}
+
+TEST_F(SchedulerServiceTest, DeleteTask_InvalidInstance_Succeeds)
+{
+    settings_manager_->CreateProfile("0");
+
+    nlohmann::json scheduler_index;
+    scheduler_index["nextTaskId"] = 1;
+    scheduler_index["taskOrder"] = nlohmann::json::array({0});
+    settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
+
+    // Corrupt task file
+    auto task_file = settings_dir_ / "0" / "taskId0.json";
+    {
+        std::ofstream ofs{task_file};
+        ofs << "corrupt";
+    }
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto state = scheduler_->Get();
+    ASSERT_EQ(state["tasks"].size(), 1u);
+    EXPECT_EQ(state["tasks"][0]["availability"], "invalid");
+
+    // Deleting an invalid instance should succeed
+    auto result = scheduler_->DeleteTask(0);
+    EXPECT_EQ(result, DAS_S_OK);
+
+    state = scheduler_->Get();
+    EXPECT_EQ(state["tasks"].size(), 0u);
+}
+
+TEST_F(SchedulerServiceTest, DeleteTask_UnavailableInstance_Succeeds)
+{
+    settings_manager_->CreateProfile("0");
+
+    nlohmann::json task0;
+    task0["id"] = 0;
+    task0["taskGuid"] = "11111111-1111-1111-1111-111111111111";
+    task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
+    task0["properties"] = nlohmann::json::object();
+    WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto state = scheduler_->Get();
+    ASSERT_EQ(state["tasks"].size(), 1u);
+    EXPECT_EQ(state["tasks"][0]["availability"], "unavailable");
+
+    auto result = scheduler_->DeleteTask(0);
+    EXPECT_EQ(result, DAS_S_OK);
+
+    state = scheduler_->Get();
+    EXPECT_EQ(state["tasks"].size(), 0u);
+}
+
+// ============================================================
+// UpdateTaskInternalProperties
+// ============================================================
+
+TEST_F(SchedulerServiceTest, UpdateInternalProperties_NextExecutionTime)
+{
+    settings_manager_->CreateProfile("0");
+
+    nlohmann::json task0;
+    task0["id"] = 0;
+    task0["taskGuid"] = "11111111-1111-1111-1111-111111111111";
+    task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
+    task0["nextExecutionTime"] = nullptr;
+    task0["properties"] = nlohmann::json::object();
+    WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    // Update nextExecutionTime
+    nlohmann::json internal_props;
+    internal_props["nextExecutionTime"] = "2026-05-01T08:00:00+08:00";
+    auto result = scheduler_->UpdateTaskInternalProperties(0, internal_props);
+    EXPECT_EQ(result, DAS_S_OK);
+
+    // Verify in-memory
+    auto state = scheduler_->Get();
+    EXPECT_EQ(
+        state["tasks"][0]["nextExecutionTime"],
+        "2026-05-01T08:00:00+08:00");
+
+    // Verify persisted
+    auto persisted = settings_manager_->GetTaskInstanceJson("0", 0);
+    EXPECT_EQ(persisted["nextExecutionTime"], "2026-05-01T08:00:00+08:00");
+}
+
+TEST_F(SchedulerServiceTest, UpdateInternalProperties_ClearNextExecutionTime)
+{
+    settings_manager_->CreateProfile("0");
+
+    nlohmann::json task0;
+    task0["id"] = 0;
+    task0["taskGuid"] = "11111111-1111-1111-1111-111111111111";
+    task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
+    task0["nextExecutionTime"] = "2026-05-01T08:00:00+08:00";
+    task0["properties"] = nlohmann::json::object();
+    WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    nlohmann::json internal_props;
+    internal_props["nextExecutionTime"] = nullptr;
+    auto result = scheduler_->UpdateTaskInternalProperties(0, internal_props);
+    EXPECT_EQ(result, DAS_S_OK);
+
+    auto state = scheduler_->Get();
+    EXPECT_TRUE(state["tasks"][0]["nextExecutionTime"].is_null());
+}
+
+TEST_F(SchedulerServiceTest, UpdateInternalProperties_NotFound)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    nlohmann::json internal_props;
+    internal_props["nextExecutionTime"] = "2026-05-01T08:00:00+08:00";
+    auto result = scheduler_->UpdateTaskInternalProperties(99, internal_props);
+    EXPECT_EQ(result, DAS_E_NOT_FOUND);
+}
+
+// ============================================================
+// UpdateTaskProperties on unavailable/invalid instances
+// ============================================================
+
+TEST_F(SchedulerServiceTest, UpdateProperties_UnavailableInstance_ReturnsError)
+{
+    settings_manager_->CreateProfile("0");
+
+    nlohmann::json task0;
+    task0["id"] = 0;
+    task0["taskGuid"] = "11111111-1111-1111-1111-111111111111";
+    task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
+    task0["properties"] = nlohmann::json::object();
+    WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    nlohmann::json props;
+    props["someKey"] = "someValue";
+    auto result = scheduler_->UpdateTaskProperties(0, props);
+    EXPECT_NE(result, DAS_S_OK);
+}
+
+TEST_F(SchedulerServiceTest, UpdateProperties_InvalidInstance_ReturnsError)
+{
+    settings_manager_->CreateProfile("0");
+
+    nlohmann::json scheduler_index;
+    scheduler_index["nextTaskId"] = 1;
+    scheduler_index["taskOrder"] = nlohmann::json::array({0});
+    settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
+
+    auto task_file = settings_dir_ / "0" / "taskId0.json";
+    {
+        std::ofstream ofs{task_file};
+        ofs << "corrupt";
+    }
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    nlohmann::json props;
+    props["someKey"] = "someValue";
+    auto result = scheduler_->UpdateTaskProperties(0, props);
+    EXPECT_NE(result, DAS_S_OK);
+}
+
+// ============================================================
+// Running mutation guards
+// ============================================================
+
+TEST_F(SchedulerServiceTest, AddTask_NotInitialized_ReturnsError)
+{
+    DasGuid task_guid{};
+    int64_t out_id = -1;
+    auto    result = scheduler_->AddTask(task_guid, &out_id);
+    EXPECT_EQ(result, DAS_E_OBJECT_NOT_INIT);
+}
+
+TEST_F(SchedulerServiceTest, AddTask_NotFound)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    DasGuid task_guid{};
+    task_guid.data1 = 0xDEADBEEF;
+    int64_t out_id = -1;
+    auto    result = scheduler_->AddTask(task_guid, &out_id);
+    EXPECT_EQ(result, DAS_E_NOT_FOUND);
+}
+
+TEST_F(SchedulerServiceTest, DeleteTask_NotInitialized)
+{
+    auto result = scheduler_->DeleteTask(0);
+    // Should not crash. Behavior may be DAS_E_NOT_FOUND since
+    // there are no instances.
+}
+
+TEST_F(SchedulerServiceTest, UpdateProperties_NotFound)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    nlohmann::json props;
+    props["key"] = "value";
+    auto result = scheduler_->UpdateTaskProperties(99, props);
+    EXPECT_EQ(result, DAS_E_NOT_FOUND);
+}
+
+TEST_F(SchedulerServiceTest, AddTask_NullPointer)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    DasGuid task_guid{};
+    auto    result = scheduler_->AddTask(task_guid, nullptr);
+    EXPECT_EQ(result, DAS_E_INVALID_POINTER);
+}
+
+// ============================================================
+// Persistence verification
+// ============================================================
+
+TEST_F(SchedulerServiceTest, UpdateInternalProperties_PersistsToFile)
+{
+    settings_manager_->CreateProfile("0");
+
+    nlohmann::json task0;
+    task0["id"] = 0;
+    task0["taskGuid"] = "11111111-1111-1111-1111-111111111111";
+    task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
+    task0["nextExecutionTime"] = nullptr;
+    task0["properties"] = nlohmann::json::object();
+    WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    nlohmann::json internal_props;
+    internal_props["nextExecutionTime"] = "2026-06-01T10:00:00+08:00";
+    ASSERT_EQ(
+        scheduler_->UpdateTaskInternalProperties(0, internal_props),
+        DAS_S_OK);
+
+    // Re-initialize a new scheduler to verify persistence
+    auto ipc_sp = DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+    auto scheduler2 = std::make_unique<SchedulerService>(
+        *plugin_manager_,
+        Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(ipc_sp));
+    ASSERT_EQ(scheduler2->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto state = scheduler2->Get();
+    ASSERT_EQ(state["tasks"].size(), 1u);
+    EXPECT_EQ(
+        state["tasks"][0]["nextExecutionTime"],
+        "2026-06-01T10:00:00+08:00");
 }
 
 // ============================================================
