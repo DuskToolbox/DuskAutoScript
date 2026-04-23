@@ -2,6 +2,7 @@
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/Core/TaskScheduler/SchedulerService.h>
+#include <das/Core/TaskScheduler/SchedulerServiceImpl.h>
 #include <das/DasSharedRef.hpp>
 #include <das/IDasSchedulerService.h>
 #include <gtest/gtest.h>
@@ -15,6 +16,7 @@
 #include <vector>
 
 using namespace Das::Core::TaskScheduler;
+using Das::DasPtr;
 
 namespace
 {
@@ -691,4 +693,170 @@ TEST_F(SchedulerServiceTest, ConcurrentEnableDisable)
     EXPECT_TRUE(
         final_state == SchedulerState::Stopped
         || final_state == SchedulerState::Running);
+}
+
+// ============================================================
+// SchedulerServiceImpl wrapper tests
+// ============================================================
+
+class SchedulerServiceImplTest : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        test_dir_ = UniqueTestDir();
+        std::filesystem::create_directories(test_dir_);
+        settings_dir_ = test_dir_ / "settings";
+        std::filesystem::create_directories(settings_dir_);
+        plugin_dir_ = test_dir_ / "plugins";
+        std::filesystem::create_directories(plugin_dir_);
+
+        settings_manager_ =
+            std::make_unique<Das::Core::SettingsManager::SettingsManager>(
+                settings_dir_);
+        auto ipc_sp =
+            DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+        plugin_manager_ =
+            std::make_unique<Das::Core::ForeignInterfaceHost::PluginManager>(
+                *settings_manager_,
+                Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                    ipc_sp));
+        scheduler_ = std::make_unique<SchedulerService>(
+            *plugin_manager_,
+            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp));
+        // Use raw pointer with AddRef/Release lifecycle
+        impl_ = new SchedulerServiceImpl(*scheduler_);
+        impl_->AddRef();
+    }
+
+    void TearDown() override
+    {
+        if (impl_)
+        {
+            impl_->Release();
+            impl_ = nullptr;
+        }
+        scheduler_.reset();
+        plugin_manager_.reset();
+        settings_manager_.reset();
+        std::filesystem::remove_all(test_dir_);
+    }
+
+    std::filesystem::path test_dir_;
+    std::filesystem::path settings_dir_;
+    std::filesystem::path plugin_dir_;
+    std::unique_ptr<Das::Core::SettingsManager::SettingsManager>
+        settings_manager_;
+    std::unique_ptr<Das::Core::ForeignInterfaceHost::PluginManager>
+                                      plugin_manager_;
+    std::unique_ptr<SchedulerService> scheduler_;
+    SchedulerServiceImpl*             impl_ = nullptr;
+};
+
+TEST_F(SchedulerServiceImplTest, Get_NullPointer_ReturnsError)
+{
+    auto result = impl_->Get(nullptr);
+    EXPECT_EQ(result, DAS_E_INVALID_POINTER);
+}
+
+TEST_F(SchedulerServiceImplTest, Get_ReturnsJsonString)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    DasPtr<IDasReadOnlyString> p_json;
+    auto                       result = impl_->Get(p_json.Put());
+    EXPECT_EQ(result, DAS_S_OK);
+    ASSERT_TRUE(p_json);
+
+    const char* c_str = nullptr;
+    auto        get_result = p_json->GetUtf8(&c_str);
+    EXPECT_EQ(get_result, DAS_S_OK);
+
+    auto parsed = nlohmann::json::parse(c_str);
+    EXPECT_TRUE(parsed.contains("state"));
+    EXPECT_TRUE(parsed.contains("tasks"));
+    EXPECT_TRUE(parsed.contains("availableTaskTypes"));
+}
+
+TEST_F(SchedulerServiceImplTest, AddTask_NullPointer_ReturnsError)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    DasGuid guid{};
+    auto    result = impl_->AddTask(guid, nullptr);
+    EXPECT_EQ(result, DAS_E_INVALID_POINTER);
+}
+
+TEST_F(SchedulerServiceImplTest, AddTask_NotFound)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    DasGuid guid{};
+    guid.data1 = 0xDEADBEEF;
+    int64_t out_id = -1;
+    auto    result = impl_->AddTask(guid, &out_id);
+    EXPECT_EQ(result, DAS_E_NOT_FOUND);
+}
+
+TEST_F(SchedulerServiceImplTest, DeleteTask_NotFound)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto result = impl_->DeleteTask(99);
+    EXPECT_EQ(result, DAS_E_NOT_FOUND);
+}
+
+TEST_F(SchedulerServiceImplTest, UpdateTaskProperties_NullPointer_ReturnsError)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto result = impl_->UpdateTaskProperties(0, nullptr);
+    EXPECT_EQ(result, DAS_E_INVALID_POINTER);
+}
+
+TEST_F(SchedulerServiceImplTest, UpdateTaskProperties_InvalidJson_ReturnsError)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    DasPtr<IDasReadOnlyString> p_bad_json;
+    auto                       cr = CreateIDasReadOnlyStringFromUtf8(
+        "not valid json {{{",
+        p_bad_json.Put());
+    ASSERT_EQ(cr, DAS_S_OK);
+
+    auto result = impl_->UpdateTaskProperties(0, p_bad_json.Get());
+    EXPECT_EQ(result, DAS_E_INVALID_JSON);
+}
+
+TEST_F(SchedulerServiceImplTest, UpdateTaskInternalProperties_NullPointer)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto result = impl_->UpdateTaskInternalProperties(0, nullptr);
+    EXPECT_EQ(result, DAS_E_INVALID_POINTER);
+}
+
+TEST_F(SchedulerServiceImplTest, AddTask_DelegatesToSchedulerService)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    // Verify AddTask returns same error as direct call
+    DasGuid guid{};
+    guid.data1 = 0xDEAD;
+    int64_t out_id = -1;
+
+    auto impl_result = impl_->AddTask(guid, &out_id);
+    auto direct_result = scheduler_->AddTask(guid, &out_id);
+    EXPECT_EQ(impl_result, direct_result);
+}
+
+TEST_F(SchedulerServiceImplTest, QueryInterface_ReturnsSchedulerService)
+{
+    DasPtr<IDasSchedulerService> p_svc;
+    auto                         result = impl_->QueryInterface(
+        DasIidOf<IDasSchedulerService>(),
+        reinterpret_cast<void**>(p_svc.Put()));
+    EXPECT_EQ(result, DAS_S_OK);
+    EXPECT_TRUE(p_svc.Get() != nullptr);
 }

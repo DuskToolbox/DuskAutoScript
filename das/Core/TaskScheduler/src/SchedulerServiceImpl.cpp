@@ -5,6 +5,7 @@
 #include <das/_autogen/idl/abi/IDasGuidVector.h>
 #include <filesystem>
 #include <new>
+#include <nlohmann/json.hpp>
 #include <vector>
 
 namespace Das::Core::TaskScheduler
@@ -107,6 +108,78 @@ namespace Das::Core::TaskScheduler
         }
         *p_out_state = svc_.Status();
         return DAS_S_OK;
+    }
+
+    DasResult SchedulerServiceImpl::Get(IDasReadOnlyString** pp_out_json)
+    {
+        DAS_UTILS_CHECK_POINTER(pp_out_json)
+
+        auto json = svc_.Get();
+        auto json_str = json.dump();
+
+        return CreateIDasReadOnlyStringFromUtf8(json_str.c_str(), pp_out_json);
+    }
+
+    DasResult SchedulerServiceImpl::AddTask(
+        const DasGuid& task_guid,
+        int64_t*       p_out_task_id)
+    {
+        DAS_UTILS_CHECK_POINTER(p_out_task_id)
+
+        return svc_.AddTask(task_guid, p_out_task_id);
+    }
+
+    DasResult SchedulerServiceImpl::DeleteTask(int64_t task_id)
+    {
+        return svc_.DeleteTask(task_id);
+    }
+
+    DasResult SchedulerServiceImpl::UpdateTaskProperties(
+        int64_t             task_id,
+        IDasReadOnlyString* p_properties_json)
+    {
+        DAS_UTILS_CHECK_POINTER(p_properties_json)
+
+        const char* u8_str = nullptr;
+        auto        result = p_properties_json->GetUtf8(&u8_str);
+        if (DAS::IsFailed(result))
+        {
+            return result;
+        }
+
+        try
+        {
+            auto props = nlohmann::json::parse(u8_str);
+            return svc_.UpdateTaskProperties(task_id, props);
+        }
+        catch (const nlohmann::json::exception&)
+        {
+            return DAS_E_INVALID_JSON;
+        }
+    }
+
+    DasResult SchedulerServiceImpl::UpdateTaskInternalProperties(
+        int64_t             task_id,
+        IDasReadOnlyString* p_properties_json)
+    {
+        DAS_UTILS_CHECK_POINTER(p_properties_json)
+
+        const char* u8_str = nullptr;
+        auto        result = p_properties_json->GetUtf8(&u8_str);
+        if (DAS::IsFailed(result))
+        {
+            return result;
+        }
+
+        try
+        {
+            auto props = nlohmann::json::parse(u8_str);
+            return svc_.UpdateTaskInternalProperties(task_id, props);
+        }
+        catch (const nlohmann::json::exception&)
+        {
+            return DAS_E_INVALID_JSON;
+        }
     }
 
 } // namespace Das::Core::TaskScheduler
