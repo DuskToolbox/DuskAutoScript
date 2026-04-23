@@ -409,20 +409,14 @@ DasResult SettingsManager::UpdateProfile(
     }
 }
 
-// --- Plugin settings (profile-root GUID keys) ---
+// --- Plugin settings (split file: settings/${pid}/${pluginGuid}.json) ---
 
 std::string SettingsManager::GetPluginSettings(
     const std::string& profile_id,
     const std::string& guid)
 {
-    std::unique_lock lock{mutex_};
-
-    auto& profile = EnsureProfileCached(profile_id);
-    if (!profile.contains(guid))
-    {
-        return "{}";
-    }
-    return profile[guid].dump();
+    std::shared_lock lock{mutex_};
+    return ReadJsonFile(GetPluginSettingsPath(profile_id, guid));
 }
 
 DasResult SettingsManager::UpdatePluginSettings(
@@ -432,12 +426,11 @@ DasResult SettingsManager::UpdatePluginSettings(
 {
     try
     {
-        auto parsed = nlohmann::json::parse(json_str);
+        // Validate JSON before writing
+        (void)nlohmann::json::parse(json_str);
 
         std::unique_lock lock{mutex_};
-        auto&            profile = EnsureProfileCached(profile_id);
-        profile[guid] = std::move(parsed);
-        return WriteJsonFile(GetProfileUiPath(profile_id), profile);
+        return WriteJsonFile(GetPluginSettingsPath(profile_id, guid), json_str);
     }
     catch (const nlohmann::json::exception& ex)
     {
@@ -451,20 +444,43 @@ DasResult SettingsManager::UpdatePluginSettings(
     }
 }
 
+nlohmann::json SettingsManager::GetPluginSettingsJson(
+    const std::string& profile_id,
+    const std::string& guid)
+{
+    std::shared_lock lock{mutex_};
+    auto content = ReadJsonFile(GetPluginSettingsPath(profile_id, guid));
+    try
+    {
+        return nlohmann::json::parse(content);
+    }
+    catch (const nlohmann::json::exception& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        return nlohmann::json::object();
+    }
+}
+
+DasResult SettingsManager::UpdatePluginSettingsJson(
+    const std::string&    profile_id,
+    const std::string&    guid,
+    const nlohmann::json& data)
+{
+    std::unique_lock lock{mutex_};
+    return WriteJsonFile(GetPluginSettingsPath(profile_id, guid), data);
+}
+
 std::string SettingsManager::GetPluginSettingsField(
     const std::string& profile_id,
     const std::string& guid,
     const std::string& field_name)
 {
-    std::unique_lock lock{mutex_};
-
-    auto& profile = EnsureProfileCached(profile_id);
-    if (!profile.contains(guid))
+    auto settings = GetPluginSettingsJson(profile_id, guid);
+    if (settings.is_null() || !settings.is_object())
     {
         return {};
     }
 
-    auto& settings = profile[guid];
     auto* field = ResolveDotPath(settings, field_name);
     if (field == nullptr)
     {
@@ -504,19 +520,58 @@ DasResult SettingsManager::UpdatePluginSettingsField(
         return DAS_E_OUT_OF_MEMORY;
     }
 
+    return UpdatePluginSettingsFieldJson(
+        profile_id,
+        guid,
+        field_name,
+        field_value);
+}
+
+nlohmann::json SettingsManager::GetPluginSettingsFieldJson(
+    const std::string& profile_id,
+    const std::string& guid,
+    const std::string& field_name)
+{
+    auto settings = GetPluginSettingsJson(profile_id, guid);
+    if (settings.is_null() || !settings.is_object())
+    {
+        return nullptr;
+    }
+
+    auto* field = ResolveDotPath(settings, field_name);
+    if (field == nullptr)
+    {
+        return nullptr;
+    }
+    return *field;
+}
+
+DasResult SettingsManager::UpdatePluginSettingsFieldJson(
+    const std::string&    profile_id,
+    const std::string&    guid,
+    const std::string&    field_name,
+    const nlohmann::json& value)
+{
     std::unique_lock lock{mutex_};
 
-    auto& profile = EnsureProfileCached(profile_id);
-    if (!profile.contains(guid))
+    auto           path = GetPluginSettingsPath(profile_id, guid);
+    auto           content = ReadJsonFile(path);
+    nlohmann::json settings;
+    try
     {
-        profile[guid] = nlohmann::json::object();
+        settings = nlohmann::json::parse(content);
+    }
+    catch (const nlohmann::json::exception& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        settings = nlohmann::json::object();
     }
 
     try
     {
-        auto* target = EnsureDotPath(profile[guid], field_name);
-        *target = field_value;
-        return WriteJsonFile(GetProfileUiPath(profile_id), profile);
+        auto* target = EnsureDotPath(settings, field_name);
+        *target = value;
+        return WriteJsonFile(path, settings);
     }
     catch (const nlohmann::json::exception& ex)
     {
@@ -528,6 +583,79 @@ DasResult SettingsManager::UpdatePluginSettingsField(
         DAS_CORE_LOG_EXCEPTION(ex);
         return DAS_E_OUT_OF_MEMORY;
     }
+}
+
+DasResult SettingsManager::RebuildPluginSettingsFromDefaults(
+    const std::string&              profile_id,
+    const std::string&              guid,
+    const std::vector<std::string>& field_names,
+    const std::vector<std::string>& default_values)
+{
+    if (field_names.size() != default_values.size())
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    std::unique_lock lock{mutex_};
+
+    auto path = GetPluginSettingsPath(profile_id, guid);
+
+    // Try to read existing file
+    bool needs_rebuild = false;
+    if (!std::filesystem::exists(path))
+    {
+        needs_rebuild = true;
+    }
+    else
+    {
+        try
+        {
+            std::ifstream ifs{path};
+            if (!ifs.is_open())
+            {
+                needs_rebuild = true;
+            }
+            else
+            {
+                auto existing = nlohmann::json::parse(ifs);
+                if (!existing.is_object())
+                {
+                    needs_rebuild = true;
+                }
+            }
+        }
+        catch (const nlohmann::json::exception&)
+        {
+            needs_rebuild = true;
+        }
+    }
+
+    if (!needs_rebuild)
+    {
+        return DAS_S_OK;
+    }
+
+    // Rebuild from defaults
+    nlohmann::json rebuilt = nlohmann::json::object();
+    for (size_t i = 0; i < field_names.size(); ++i)
+    {
+        try
+        {
+            rebuilt[field_names[i]] = nlohmann::json::parse(default_values[i]);
+        }
+        catch (const nlohmann::json::exception&)
+        {
+            rebuilt[field_names[i]] = default_values[i];
+        }
+    }
+
+    auto write_result = WriteJsonFile(path, rebuilt);
+    if (IsFailed(write_result))
+    {
+        return write_result;
+    }
+
+    return DAS_S_FALSE;
 }
 
 // --- JSON-based methods (zero-copy) ---
@@ -642,122 +770,104 @@ DasResult SettingsManager::UpdateProfileJson(
     }
 }
 
-nlohmann::json SettingsManager::GetPluginSettingsJson(
-    const std::string& profile_id,
-    const std::string& guid)
-{
-    std::unique_lock lock{mutex_};
+// --- Scheduler state (settings/${pid}/scheduler.json) ---
 
-    auto& profile = EnsureProfileCached(profile_id);
-    if (!profile.contains(guid))
-    {
-        return nlohmann::json::object();
-    }
-    return profile[guid];
-}
-
-DasResult SettingsManager::UpdatePluginSettingsJson(
-    const std::string&    profile_id,
-    const std::string&    guid,
-    const nlohmann::json& data)
+nlohmann::json SettingsManager::GetSchedulerIndexJson(
+    const std::string& profile_id)
 {
+    std::shared_lock lock{mutex_};
+    auto             content = ReadJsonFile(GetSchedulerIndexPath(profile_id));
     try
     {
-        std::unique_lock lock{mutex_};
-        auto&            profile = EnsureProfileCached(profile_id);
-        profile[guid] = data;
-        return WriteJsonFile(GetProfileUiPath(profile_id), profile);
-    }
-    catch (const std::bad_alloc& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        return DAS_E_OUT_OF_MEMORY;
-    }
-}
-
-nlohmann::json SettingsManager::GetPluginSettingsFieldJson(
-    const std::string& profile_id,
-    const std::string& guid,
-    const std::string& field_name)
-{
-    std::unique_lock lock{mutex_};
-
-    auto& profile = EnsureProfileCached(profile_id);
-    if (!profile.contains(guid))
-    {
-        return nullptr;
-    }
-
-    auto* field = ResolveDotPath(profile[guid], field_name);
-    if (field == nullptr)
-    {
-        return nullptr;
-    }
-    return *field;
-}
-
-DasResult SettingsManager::UpdatePluginSettingsFieldJson(
-    const std::string&    profile_id,
-    const std::string&    guid,
-    const std::string&    field_name,
-    const nlohmann::json& value)
-{
-    std::unique_lock lock{mutex_};
-
-    auto& profile = EnsureProfileCached(profile_id);
-    if (!profile.contains(guid))
-    {
-        profile[guid] = nlohmann::json::object();
-    }
-
-    try
-    {
-        auto* target = EnsureDotPath(profile[guid], field_name);
-        *target = value;
-        return WriteJsonFile(GetProfileUiPath(profile_id), profile);
+        auto parsed = nlohmann::json::parse(content);
+        if (!parsed.is_object() || !parsed.contains("nextTaskId")
+            || !parsed.contains("taskOrder"))
+        {
+            return {{"nextTaskId", 0}, {"taskOrder", nlohmann::json::array()}};
+        }
+        return parsed;
     }
     catch (const nlohmann::json::exception& ex)
     {
         DAS_CORE_LOG_EXCEPTION(ex);
-        return DAS_E_INVALID_JSON;
-    }
-    catch (const std::bad_alloc& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        return DAS_E_OUT_OF_MEMORY;
+        return {{"nextTaskId", 0}, {"taskOrder", nlohmann::json::array()}};
     }
 }
 
-// --- Scheduler state ---
-
-nlohmann::json SettingsManager::GetSchedulerStateJson(
-    const std::string& profile_id)
-{
-    std::unique_lock lock{mutex_};
-
-    auto& profile = EnsureProfileCached(profile_id);
-    if (!profile.contains("scheduler"))
-    {
-        return {{"nextTaskId", 0}, {"tasks", nlohmann::json::array()}};
-    }
-    return profile["scheduler"];
-}
-
-DasResult SettingsManager::UpdateSchedulerStateJson(
+DasResult SettingsManager::UpdateSchedulerIndexJson(
     const std::string&    profile_id,
     const nlohmann::json& scheduler_json)
 {
     try
     {
         std::unique_lock lock{mutex_};
-        auto&            profile = EnsureProfileCached(profile_id);
-        profile["scheduler"] = scheduler_json;
-        return WriteJsonFile(GetProfileUiPath(profile_id), profile);
+        return WriteJsonFile(GetSchedulerIndexPath(profile_id), scheduler_json);
     }
     catch (const std::bad_alloc& ex)
     {
         DAS_CORE_LOG_EXCEPTION(ex);
         return DAS_E_OUT_OF_MEMORY;
+    }
+}
+
+// --- Task instance (settings/${pid}/taskId${taskId}.json) ---
+
+nlohmann::json SettingsManager::GetTaskInstanceJson(
+    const std::string& profile_id,
+    int64_t            task_id)
+{
+    std::shared_lock lock{mutex_};
+    auto content = ReadJsonFile(GetTaskInstancePath(profile_id, task_id));
+    try
+    {
+        return nlohmann::json::parse(content);
+    }
+    catch (const nlohmann::json::exception& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        return nlohmann::json::object();
+    }
+}
+
+DasResult SettingsManager::UpdateTaskInstanceJson(
+    const std::string&    profile_id,
+    int64_t               task_id,
+    const nlohmann::json& task_json)
+{
+    try
+    {
+        std::unique_lock lock{mutex_};
+        return WriteJsonFile(
+            GetTaskInstancePath(profile_id, task_id),
+            task_json);
+    }
+    catch (const std::bad_alloc& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        return DAS_E_OUT_OF_MEMORY;
+    }
+}
+
+DasResult SettingsManager::DeleteTaskInstanceJson(
+    const std::string& profile_id,
+    int64_t            task_id)
+{
+    std::unique_lock lock{mutex_};
+
+    try
+    {
+        auto path = GetTaskInstancePath(profile_id, task_id);
+        if (!std::filesystem::exists(path))
+        {
+            return DAS_S_FALSE;
+        }
+        std::filesystem::remove(path);
+        return DAS_S_OK;
+    }
+    catch (const std::filesystem::filesystem_error& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        return DAS_E_INVALID_FILE;
     }
 }
 
@@ -773,6 +883,27 @@ std::filesystem::path SettingsManager::GetProfileUiPath(
     const std::string& profile_id) const
 {
     return base_dir_ / profile_id / "ui.json";
+}
+
+std::filesystem::path SettingsManager::GetPluginSettingsPath(
+    const std::string& profile_id,
+    const std::string& guid) const
+{
+    return base_dir_ / profile_id / (guid + ".json");
+}
+
+std::filesystem::path SettingsManager::GetSchedulerIndexPath(
+    const std::string& profile_id) const
+{
+    return base_dir_ / profile_id / "scheduler.json";
+}
+
+std::filesystem::path SettingsManager::GetTaskInstancePath(
+    const std::string& profile_id,
+    int64_t            task_id) const
+{
+    return base_dir_ / profile_id
+           / ("taskId" + std::to_string(task_id) + ".json");
 }
 
 DAS_CORE_SETTINGS_MANAGER_NS_END

@@ -40,7 +40,7 @@ public:
         const std::string&    profile_id,
         const nlohmann::json& data);
 
-    // Plugin settings (profile[guid] within settings/${pid}/ui.json)
+    // Plugin settings (settings/${pid}/${pluginGuid}.json)
     nlohmann::json GetPluginSettingsJson(
         const std::string& profile_id,
         const std::string& guid);
@@ -78,15 +78,43 @@ public:
         const std::string& field_name,
         const std::string& field_json_value);
 
-    // Scheduler state (profile.scheduler within settings/${pid}/ui.json)
-    nlohmann::json GetSchedulerStateJson(const std::string& profile_id);
-    DasResult      UpdateSchedulerStateJson(
+    // Plugin settings recovery: rebuild from manifest defaults if file is
+    // corrupt or missing. Returns DAS_S_FALSE when defaults were restored.
+    DasResult RebuildPluginSettingsFromDefaults(
+        const std::string&              profile_id,
+        const std::string&              guid,
+        const std::vector<std::string>& field_names,
+        const std::vector<std::string>& default_values);
+
+    // Scheduler state (settings/${pid}/scheduler.json)
+    nlohmann::json GetSchedulerIndexJson(const std::string& profile_id);
+    DasResult      UpdateSchedulerIndexJson(
         const std::string&    profile_id,
         const nlohmann::json& scheduler_json);
+
+    // Task instance (settings/${pid}/taskId${taskId}.json)
+    nlohmann::json GetTaskInstanceJson(
+        const std::string& profile_id,
+        int64_t            task_id);
+    DasResult UpdateTaskInstanceJson(
+        const std::string&    profile_id,
+        int64_t               task_id,
+        const nlohmann::json& task_json);
+    DasResult DeleteTaskInstanceJson(
+        const std::string& profile_id,
+        int64_t            task_id);
 
 private:
     std::filesystem::path GetProfileDir(const std::string& profile_id) const;
     std::filesystem::path GetProfileUiPath(const std::string& profile_id) const;
+    std::filesystem::path GetPluginSettingsPath(
+        const std::string& profile_id,
+        const std::string& guid) const;
+    std::filesystem::path GetSchedulerIndexPath(
+        const std::string& profile_id) const;
+    std::filesystem::path GetTaskInstancePath(
+        const std::string& profile_id,
+        int64_t            task_id) const;
 
     // File I/O helpers
     static std::string ReadJsonFile(const std::filesystem::path& path);
