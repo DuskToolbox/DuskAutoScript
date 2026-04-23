@@ -55,7 +55,7 @@ private:
     // Concrete business services (owned)
     Das::Core::SettingsManager::SettingsManager    settings_manager_;
     Das::Core::ForeignInterfaceHost::PluginManager plugin_manager_;
-    Das::Core::TaskScheduler::SchedulerService     scheduler_service_;
+    Das::Core::TaskScheduler::SchedulerService     scheduler_svc_;
 
     // COM-style service wrappers (owned)
     DasPtr<IDasSettingsService>      settings_service_;

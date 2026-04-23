@@ -16,11 +16,11 @@ CoreServicesImpl::CoreServicesImpl(
     std::filesystem::path                                  plugin_dir)
     : ipc_context_{std::move(ipc_context)},
       settings_manager_{std::move(settings_dir)},
-      plugin_manager_{settings_manager_}, scheduler_service_{plugin_manager_}
+      plugin_manager_{settings_manager_}, scheduler_svc_{plugin_manager_}
 {
     // 将 IPC context 注入到需要的具体服务中
     plugin_manager_.SetIpcContext(ipc_context_.get());
-    scheduler_service_.SetIpcContext(ipc_context_.get());
+    scheduler_svc_.SetIpcContext(ipc_context_.get());
 
     // 创建 COM 风格的服务包装器
     auto* settings_impl =
@@ -37,7 +37,7 @@ CoreServicesImpl::CoreServicesImpl(
         DasPtr<IDasPluginManagerService>::Attach(plugin_mgr_impl);
 
     auto* scheduler_impl =
-        new Das::Core::TaskScheduler::SchedulerServiceImpl(scheduler_service_);
+        new Das::Core::TaskScheduler::SchedulerServiceImpl(scheduler_svc_);
     scheduler_impl->AddRef();
     scheduler_service_ = DasPtr<IDasSchedulerService>::Attach(scheduler_impl);
 }
