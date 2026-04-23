@@ -3,10 +3,10 @@
 
 #include "Config.h"
 #include "beast/Request.hpp"
-#include <das/Core/ForeignInterfaceHost/DasGuid.h>
-#include <das/Core/ForeignInterfaceHost/PluginScanner.h>
-#include <das/Core/ForeignInterfaceHost/PluginZipExtractor.h>
-#include <filesystem>
+#include <das/DasPtr.hpp>
+#include <das/DasString.hpp>
+#include <das/IDasPluginManagerService.h>
+#include <das/_autogen/idl/abi/DasJson.h>
 #include <nlohmann/json.hpp>
 
 namespace Das::Http
@@ -16,62 +16,55 @@ namespace Das::Http
     {
     public:
         explicit DasPluginManagerController(
-            const std::filesystem::path& plugin_dir)
-            : plugin_dir_(plugin_dir)
+            IDasPluginManagerService& plugin_manager_service)
+            : plugin_manager_service_(plugin_manager_service)
         {
         }
 
         // POST /plugin/list/get
         Beast::HttpResponse GetPluginList(const Beast::HttpRequest& request)
         {
-            auto descs =
-                Das::Core::ForeignInterfaceHost::ScanPlugins(plugin_dir_);
-            nlohmann::json data = nlohmann::json::array();
-            for (const auto& desc : descs)
+            DasPtr<Das::ExportInterface::IDasJson> json;
+            auto                                   result =
+                plugin_manager_service_.ScanInstalledPlugins(json.Put());
+            if (DAS::IsFailed(result))
             {
-                data.push_back(
-                    Das::Core::ForeignInterfaceHost::PluginPackageDescToJson(
-                        desc));
+                return Beast::HttpResponse::CreateErrorResponse(
+                    result,
+                    "Failed to scan installed plugins");
             }
-            return Beast::HttpResponse::CreateSuccessResponse(data);
+
+            DasPtr<IDasReadOnlyString> p_str;
+            auto to_str_result = json->ToString(-1, p_str.Put());
+            if (DAS::IsFailed(to_str_result))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    to_str_result,
+                    "Failed to serialize plugin list");
+            }
+            const char* c_str = nullptr;
+            auto        get_result = p_str->GetUtf8(&c_str);
+            if (DAS::IsFailed(get_result))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    get_result,
+                    "Failed to get plugin list string");
+            }
+            auto parsed = nlohmann::json::parse(c_str);
+            return Beast::HttpResponse::CreateSuccessResponse(parsed);
         }
 
         // POST /plugin/update -- receive binary ZIP body
         Beast::HttpResponse UpdatePlugin(const Beast::HttpRequest& request)
         {
-            // Must use Body() instead of JsonBody():
-            // binary ZIP data is not JSON, JsonBody() parse failure returns
-            // empty object
-            auto content_type = request.GetHeader("Content-Type");
-            if (!content_type.empty()
-                && content_type.find("application/zip") == std::string::npos
-                && content_type.find("application/octet-stream")
-                       == std::string::npos)
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    DAS_E_INVALID_ARGUMENT,
-                    "Expected Content-Type: application/zip or "
-                    "application/octet-stream");
-            }
-
-            const auto& raw_body = request.Body();
-            if (raw_body.empty())
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    DAS_E_INVALID_ARGUMENT,
-                    "Empty request body");
-            }
-
-            auto result = Das::Core::ForeignInterfaceHost::InstallPlugin(
-                plugin_dir_,
-                std::string_view(raw_body.data(), raw_body.size()));
-            if (DAS::IsFailed(result))
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    result,
-                    "Failed to install plugin");
-            }
-            return Beast::HttpResponse::CreateSuccessResponse();
+            // TODO: The current InstallPluginPackage API accepts a package
+            // path string, but HTTP clients send binary ZIP data in the
+            // request body. For now this returns not-implemented until the
+            // service interface supports binary package data.
+            (void)request;
+            return Beast::HttpResponse::CreateErrorResponse(
+                DAS_E_NO_IMPLEMENTATION,
+                "Plugin installation via HTTP is not yet supported");
         }
 
         // POST /plugin/{guid}/delete
@@ -86,20 +79,16 @@ namespace Das::Http
             }
 
             DasGuid guid;
-            try
-            {
-                guid = Das::Core::ForeignInterfaceHost::MakeDasGuid(guid_str);
-            }
-            catch (const std::exception&)
+            auto    guid_cr = DasMakeDasGuid(guid_str.c_str(), &guid);
+            if (DAS::IsFailed(guid_cr))
             {
                 return Beast::HttpResponse::CreateErrorResponse(
                     DAS_E_INVALID_ARGUMENT,
                     "Invalid GUID format");
             }
 
-            auto result = Das::Core::ForeignInterfaceHost::MarkForDeletion(
-                plugin_dir_,
-                guid);
+            auto result =
+                plugin_manager_service_.MarkPluginPackageForDeletion(&guid);
             if (DAS::IsFailed(result))
             {
                 return Beast::HttpResponse::CreateErrorResponse(
@@ -110,7 +99,7 @@ namespace Das::Http
         }
 
     private:
-        std::filesystem::path plugin_dir_;
+        IDasPluginManagerService& plugin_manager_service_;
     };
 
 } // namespace Das::Http

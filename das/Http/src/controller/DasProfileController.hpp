@@ -34,8 +34,7 @@ namespace Das::Http
             }
 
             DasPtr<IDasReadOnlyString> p_str;
-            auto                       to_str_result =
-                json->ToString(-1, p_str.Put());
+            auto to_str_result = json->ToString(-1, p_str.Put());
             if (DAS::IsFailed(to_str_result))
             {
                 return Beast::HttpResponse::CreateErrorResponse(
@@ -148,8 +147,7 @@ namespace Das::Http
             }
 
             DasPtr<IDasReadOnlyString> p_str;
-            auto                       to_str_result =
-                json->ToString(-1, p_str.Put());
+            auto to_str_result = json->ToString(-1, p_str.Put());
             if (DAS::IsFailed(to_str_result))
             {
                 return Beast::HttpResponse::CreateErrorResponse(
@@ -214,7 +212,7 @@ namespace Das::Http
         Beast::HttpResponse GetPluginSettings(const Beast::HttpRequest& request)
         {
             auto pid = request.GetPathParameter("pid");
-            auto guid = request.GetPathParameter("guid");
+            auto guid_str = request.GetPathParameter("guid");
             if (pid != "0")
             {
                 return Beast::HttpResponse::CreateErrorResponse(
@@ -232,20 +230,20 @@ namespace Das::Http
                     "Failed to create string");
             }
 
-            DasPtr<IDasReadOnlyString> p_guid;
-            auto                       guid_cr =
-                CreateIDasReadOnlyStringFromUtf8(guid.c_str(), p_guid.Put());
+            // Parse GUID string into DasGuid for service boundary
+            DasGuid guid;
+            auto    guid_cr = DasMakeDasGuid(guid_str.c_str(), &guid);
             if (DAS::IsFailed(guid_cr))
             {
                 return Beast::HttpResponse::CreateErrorResponse(
                     guid_cr,
-                    "Failed to create string");
+                    "Invalid GUID format");
             }
 
             DasPtr<Das::ExportInterface::IDasJson> json;
             auto result = settings_service_.GetPluginSettings(
                 p_pid.Get(),
-                p_guid.Get(),
+                &guid,
                 json.Put());
             if (DAS::IsFailed(result))
             {
@@ -255,8 +253,7 @@ namespace Das::Http
             }
 
             DasPtr<IDasReadOnlyString> p_str;
-            auto                       to_str_result =
-                json->ToString(-1, p_str.Put());
+            auto to_str_result = json->ToString(-1, p_str.Put());
             if (DAS::IsFailed(to_str_result))
             {
                 return Beast::HttpResponse::CreateErrorResponse(
@@ -279,7 +276,7 @@ namespace Das::Http
             const Beast::HttpRequest& request)
         {
             auto pid = request.GetPathParameter("pid");
-            auto guid = request.GetPathParameter("guid");
+            auto guid_str = request.GetPathParameter("guid");
             if (pid != "0")
             {
                 return Beast::HttpResponse::CreateErrorResponse(
@@ -305,14 +302,14 @@ namespace Das::Http
                     "Failed to create string");
             }
 
-            DasPtr<IDasReadOnlyString> p_guid;
-            auto                       guid_cr =
-                CreateIDasReadOnlyStringFromUtf8(guid.c_str(), p_guid.Put());
+            // Parse GUID string into DasGuid for service boundary
+            DasGuid guid;
+            auto    guid_cr = DasMakeDasGuid(guid_str.c_str(), &guid);
             if (DAS::IsFailed(guid_cr))
             {
                 return Beast::HttpResponse::CreateErrorResponse(
                     guid_cr,
-                    "Failed to create string");
+                    "Invalid GUID format");
             }
 
             DasPtr<Das::ExportInterface::IDasJson> json_data =
@@ -321,7 +318,7 @@ namespace Das::Http
 
             auto result = settings_service_.UpdatePluginSettings(
                 p_pid.Get(),
-                p_guid.Get(),
+                &guid,
                 json_data.Get());
             if (DAS::IsFailed(result))
             {

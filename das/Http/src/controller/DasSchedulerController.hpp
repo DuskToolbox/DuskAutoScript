@@ -3,7 +3,6 @@
 
 #include "Config.h"
 #include "beast/Request.hpp"
-#include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/IDasSchedulerService.h>
@@ -38,7 +37,7 @@ namespace Das::Http
                     "Profile ID must be 0 in v1.2");
             }
 
-            auto result = scheduler_.Enable();
+            auto result = scheduler_.Start();
             if (DAS::IsFailed(result))
             {
                 return Beast::HttpResponse::CreateErrorResponse(
@@ -58,7 +57,7 @@ namespace Das::Http
                     "Profile ID must be 0 in v1.2");
             }
 
-            auto result = scheduler_.Disable();
+            auto result = scheduler_.Stop();
             if (DAS::IsFailed(result))
             {
                 return Beast::HttpResponse::CreateErrorResponse(
@@ -78,7 +77,16 @@ namespace Das::Http
                     "Profile ID must be 0 in v1.2");
             }
 
-            auto           state = scheduler_.Status();
+            IDasSchedulerService::SchedulerState state =
+                IDasSchedulerService::SchedulerState::Stopped;
+            auto result = scheduler_.GetState(&state);
+            if (DAS::IsFailed(result))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    result,
+                    "Failed to get scheduler state");
+            }
+
             nlohmann::json data;
             data["state"] =
                 (state == IDasSchedulerService::SchedulerState::Running)
@@ -118,20 +126,17 @@ namespace Das::Http
                         continue;
                     }
 
-                    try
-                    {
-                        auto guid =
-                            Das::Core::ForeignInterfaceHost::MakeDasGuid(
-                                item.get<std::string>());
-                        disabled_guids.push_back(guid);
-                    }
-                    catch (const std::exception& e)
+                    DasGuid guid;
+                    auto    parse_result =
+                        DasMakeDasGuid(item.get<std::string>().c_str(), &guid);
+                    if (DAS::IsFailed(parse_result))
                     {
                         DAS_CORE_LOG_WARN(
-                            "Invalid GUID '{}' in disabled_guids: {}",
-                            item.get<std::string>(),
-                            e.what());
+                            "Invalid GUID '{}' in disabled_guids",
+                            item.get<std::string>());
+                        continue;
                     }
+                    disabled_guids.push_back(guid);
                 }
             }
 
