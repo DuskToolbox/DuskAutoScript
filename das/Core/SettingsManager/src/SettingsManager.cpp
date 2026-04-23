@@ -203,6 +203,29 @@ DasResult SettingsManager::WriteJsonFile(
     }
 }
 
+nlohmann::json& SettingsManager::EnsureProfileCached(
+    const std::string& profile_id)
+{
+    auto cache_key = profile_id + "/ui";
+    auto it = profile_cache_.find(cache_key);
+    if (it != profile_cache_.end())
+    {
+        return it->second;
+    }
+
+    auto content = ReadJsonFile(GetProfileUiPath(profile_id));
+    try
+    {
+        profile_cache_[cache_key] = nlohmann::json::parse(content);
+    }
+    catch (const nlohmann::json::exception& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        profile_cache_[cache_key] = nlohmann::json::object();
+    }
+    return profile_cache_[cache_key];
+}
+
 // --- String-based methods (legacy) ---
 
 std::string SettingsManager::GetGlobalSettings()
@@ -326,19 +349,6 @@ DasResult SettingsManager::DeleteProfile(const std::string& profile_id)
         std::filesystem::remove_all(profile_dir);
 
         profile_cache_.erase(profile_id + "/ui");
-        auto prefix = profile_id + "/";
-        for (auto it = plugin_settings_cache_.begin();
-             it != plugin_settings_cache_.end();)
-        {
-            if (it->first.substr(0, prefix.size()) == prefix)
-            {
-                it = plugin_settings_cache_.erase(it);
-            }
-            else
-            {
-                ++it;
-            }
-        }
 
         return DAS_S_OK;
     }
@@ -399,31 +409,20 @@ DasResult SettingsManager::UpdateProfile(
     }
 }
 
+// --- Plugin settings (profile-root GUID keys) ---
+
 std::string SettingsManager::GetPluginSettings(
     const std::string& profile_id,
     const std::string& guid)
 {
-    std::shared_lock lock{mutex_};
+    std::unique_lock lock{mutex_};
 
-    auto cache_key = profile_id + "/" + guid;
-    auto it = plugin_settings_cache_.find(cache_key);
-    if (it != plugin_settings_cache_.end())
+    auto& profile = EnsureProfileCached(profile_id);
+    if (!profile.contains(guid))
     {
-        return it->second.dump();
+        return "{}";
     }
-
-    lock.unlock();
-    auto content = ReadJsonFile(GetPluginSettingsPath(profile_id, guid));
-    std::unique_lock write_lock{mutex_};
-    try
-    {
-        plugin_settings_cache_[cache_key] = nlohmann::json::parse(content);
-    }
-    catch (const nlohmann::json::exception& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-    }
-    return content;
+    return profile[guid].dump();
 }
 
 DasResult SettingsManager::UpdatePluginSettings(
@@ -436,9 +435,9 @@ DasResult SettingsManager::UpdatePluginSettings(
         auto parsed = nlohmann::json::parse(json_str);
 
         std::unique_lock lock{mutex_};
-        auto             cache_key = profile_id + "/" + guid;
-        plugin_settings_cache_[cache_key] = std::move(parsed);
-        return WriteJsonFile(GetPluginSettingsPath(profile_id, guid), json_str);
+        auto&            profile = EnsureProfileCached(profile_id);
+        profile[guid] = std::move(parsed);
+        return WriteJsonFile(GetProfileUiPath(profile_id), profile);
     }
     catch (const nlohmann::json::exception& ex)
     {
@@ -457,33 +456,15 @@ std::string SettingsManager::GetPluginSettingsField(
     const std::string& guid,
     const std::string& field_name)
 {
-    std::shared_lock lock{mutex_};
+    std::unique_lock lock{mutex_};
 
-    auto           cache_key = profile_id + "/" + guid;
-    auto           it = plugin_settings_cache_.find(cache_key);
-    nlohmann::json settings;
-
-    if (it != plugin_settings_cache_.end())
+    auto& profile = EnsureProfileCached(profile_id);
+    if (!profile.contains(guid))
     {
-        settings = it->second;
-    }
-    else
-    {
-        lock.unlock();
-        auto content = ReadJsonFile(GetPluginSettingsPath(profile_id, guid));
-        std::unique_lock write_lock{mutex_};
-        try
-        {
-            settings = nlohmann::json::parse(content);
-            plugin_settings_cache_[cache_key] = settings;
-        }
-        catch (const nlohmann::json::exception& ex)
-        {
-            DAS_CORE_LOG_EXCEPTION(ex);
-            return {};
-        }
+        return {};
     }
 
+    auto& settings = profile[guid];
     auto* field = ResolveDotPath(settings, field_name);
     if (field == nullptr)
     {
@@ -525,30 +506,17 @@ DasResult SettingsManager::UpdatePluginSettingsField(
 
     std::unique_lock lock{mutex_};
 
-    auto cache_key = profile_id + "/" + guid;
-    auto it = plugin_settings_cache_.find(cache_key);
-    if (it == plugin_settings_cache_.end())
+    auto& profile = EnsureProfileCached(profile_id);
+    if (!profile.contains(guid))
     {
-        auto content = ReadJsonFile(GetPluginSettingsPath(profile_id, guid));
-        try
-        {
-            plugin_settings_cache_[cache_key] = nlohmann::json::parse(content);
-        }
-        catch (const nlohmann::json::exception& ex)
-        {
-            DAS_CORE_LOG_EXCEPTION(ex);
-        }
-        it = plugin_settings_cache_.find(cache_key);
+        profile[guid] = nlohmann::json::object();
     }
 
     try
     {
-        auto* target = EnsureDotPath(it->second, field_name);
+        auto* target = EnsureDotPath(profile[guid], field_name);
         *target = field_value;
-        auto result = WriteJsonFile(
-            GetPluginSettingsPath(profile_id, guid),
-            it->second.dump());
-        return result;
+        return WriteJsonFile(GetProfileUiPath(profile_id), profile);
     }
     catch (const nlohmann::json::exception& ex)
     {
@@ -678,28 +646,14 @@ nlohmann::json SettingsManager::GetPluginSettingsJson(
     const std::string& profile_id,
     const std::string& guid)
 {
-    std::shared_lock lock{mutex_};
+    std::unique_lock lock{mutex_};
 
-    auto cache_key = profile_id + "/" + guid;
-    auto it = plugin_settings_cache_.find(cache_key);
-    if (it != plugin_settings_cache_.end())
+    auto& profile = EnsureProfileCached(profile_id);
+    if (!profile.contains(guid))
     {
-        return it->second;
-    }
-
-    lock.unlock();
-    auto content = ReadJsonFile(GetPluginSettingsPath(profile_id, guid));
-    std::unique_lock write_lock{mutex_};
-    try
-    {
-        plugin_settings_cache_[cache_key] = nlohmann::json::parse(content);
-        return plugin_settings_cache_[cache_key];
-    }
-    catch (const nlohmann::json::exception& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
         return nlohmann::json::object();
     }
+    return profile[guid];
 }
 
 DasResult SettingsManager::UpdatePluginSettingsJson(
@@ -710,9 +664,9 @@ DasResult SettingsManager::UpdatePluginSettingsJson(
     try
     {
         std::unique_lock lock{mutex_};
-        auto             cache_key = profile_id + "/" + guid;
-        plugin_settings_cache_[cache_key] = data;
-        return WriteJsonFile(GetPluginSettingsPath(profile_id, guid), data);
+        auto&            profile = EnsureProfileCached(profile_id);
+        profile[guid] = data;
+        return WriteJsonFile(GetProfileUiPath(profile_id), profile);
     }
     catch (const std::bad_alloc& ex)
     {
@@ -726,34 +680,15 @@ nlohmann::json SettingsManager::GetPluginSettingsFieldJson(
     const std::string& guid,
     const std::string& field_name)
 {
-    std::shared_lock lock{mutex_};
+    std::unique_lock lock{mutex_};
 
-    auto           cache_key = profile_id + "/" + guid;
-    auto           it = plugin_settings_cache_.find(cache_key);
-    nlohmann::json settings;
-
-    if (it != plugin_settings_cache_.end())
+    auto& profile = EnsureProfileCached(profile_id);
+    if (!profile.contains(guid))
     {
-        settings = it->second;
-    }
-    else
-    {
-        lock.unlock();
-        auto content = ReadJsonFile(GetPluginSettingsPath(profile_id, guid));
-        std::unique_lock write_lock{mutex_};
-        try
-        {
-            settings = nlohmann::json::parse(content);
-            plugin_settings_cache_[cache_key] = settings;
-        }
-        catch (const nlohmann::json::exception& ex)
-        {
-            DAS_CORE_LOG_EXCEPTION(ex);
-            return nullptr;
-        }
+        return nullptr;
     }
 
-    auto* field = ResolveDotPath(settings, field_name);
+    auto* field = ResolveDotPath(profile[guid], field_name);
     if (field == nullptr)
     {
         return nullptr;
@@ -769,34 +704,55 @@ DasResult SettingsManager::UpdatePluginSettingsFieldJson(
 {
     std::unique_lock lock{mutex_};
 
-    auto cache_key = profile_id + "/" + guid;
-    auto it = plugin_settings_cache_.find(cache_key);
-    if (it == plugin_settings_cache_.end())
+    auto& profile = EnsureProfileCached(profile_id);
+    if (!profile.contains(guid))
     {
-        auto content = ReadJsonFile(GetPluginSettingsPath(profile_id, guid));
-        try
-        {
-            plugin_settings_cache_[cache_key] = nlohmann::json::parse(content);
-        }
-        catch (const nlohmann::json::exception& ex)
-        {
-            DAS_CORE_LOG_EXCEPTION(ex);
-        }
-        it = plugin_settings_cache_.find(cache_key);
+        profile[guid] = nlohmann::json::object();
     }
 
     try
     {
-        auto* target = EnsureDotPath(it->second, field_name);
+        auto* target = EnsureDotPath(profile[guid], field_name);
         *target = value;
-        return WriteJsonFile(
-            GetPluginSettingsPath(profile_id, guid),
-            it->second);
+        return WriteJsonFile(GetProfileUiPath(profile_id), profile);
     }
     catch (const nlohmann::json::exception& ex)
     {
         DAS_CORE_LOG_EXCEPTION(ex);
         return DAS_E_INVALID_JSON;
+    }
+    catch (const std::bad_alloc& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        return DAS_E_OUT_OF_MEMORY;
+    }
+}
+
+// --- Scheduler state ---
+
+nlohmann::json SettingsManager::GetSchedulerStateJson(
+    const std::string& profile_id)
+{
+    std::unique_lock lock{mutex_};
+
+    auto& profile = EnsureProfileCached(profile_id);
+    if (!profile.contains("scheduler"))
+    {
+        return {{"nextTaskId", 0}, {"tasks", nlohmann::json::array()}};
+    }
+    return profile["scheduler"];
+}
+
+DasResult SettingsManager::UpdateSchedulerStateJson(
+    const std::string&    profile_id,
+    const nlohmann::json& scheduler_json)
+{
+    try
+    {
+        std::unique_lock lock{mutex_};
+        auto&            profile = EnsureProfileCached(profile_id);
+        profile["scheduler"] = scheduler_json;
+        return WriteJsonFile(GetProfileUiPath(profile_id), profile);
     }
     catch (const std::bad_alloc& ex)
     {
@@ -817,13 +773,6 @@ std::filesystem::path SettingsManager::GetProfileUiPath(
     const std::string& profile_id) const
 {
     return base_dir_ / profile_id / "ui.json";
-}
-
-std::filesystem::path SettingsManager::GetPluginSettingsPath(
-    const std::string& profile_id,
-    const std::string& guid) const
-{
-    return base_dir_ / profile_id / (guid + ".json");
 }
 
 DAS_CORE_SETTINGS_MANAGER_NS_END

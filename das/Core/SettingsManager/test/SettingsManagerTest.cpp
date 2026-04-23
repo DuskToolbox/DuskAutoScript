@@ -197,4 +197,220 @@ namespace
         EXPECT_TRUE(final_json.contains("iteration"));
     }
 
+    // --- Profile-root plugin settings tests ---
+
+    TEST_F(SettingsManagerTest, PluginSettings_StoredInProfileRoot)
+    {
+        Das::Core::SettingsManager::SettingsManager sm(test_dir_);
+        sm.CreateProfile("0");
+
+        nlohmann::json plugin_data;
+        plugin_data["adbPath"] = "/usr/bin/adb";
+        plugin_data["timeout"] = 30;
+        auto result =
+            sm.UpdatePluginSettingsJson("0", "plugin-guid-1", plugin_data);
+        EXPECT_EQ(result, DAS_S_OK);
+
+        // Verify the GUID key is at the profile root
+        auto profile = sm.GetProfileJson("0");
+        ASSERT_TRUE(profile.contains("plugin-guid-1"));
+        EXPECT_EQ(profile["plugin-guid-1"]["adbPath"], "/usr/bin/adb");
+        EXPECT_EQ(profile["plugin-guid-1"]["timeout"], 30);
+
+        // Read back through GetPluginSettingsJson
+        auto loaded = sm.GetPluginSettingsJson("0", "plugin-guid-1");
+        EXPECT_EQ(loaded["adbPath"], "/usr/bin/adb");
+        EXPECT_EQ(loaded["timeout"], 30);
+    }
+
+    TEST_F(SettingsManagerTest, PluginSettings_NoSplitGuidFiles)
+    {
+        Das::Core::SettingsManager::SettingsManager sm(test_dir_);
+        sm.CreateProfile("0");
+
+        nlohmann::json plugin_data;
+        plugin_data["key"] = "value";
+        auto result =
+            sm.UpdatePluginSettingsJson("0", "some-guid", plugin_data);
+        EXPECT_EQ(result, DAS_S_OK);
+
+        // Verify no split guid.json file was created
+        auto guid_file = test_dir_ / "0" / "some-guid.json";
+        EXPECT_FALSE(std::filesystem::exists(guid_file));
+
+        // Only ui.json should exist in the profile directory
+        auto ui_file = test_dir_ / "0" / "ui.json";
+        EXPECT_TRUE(std::filesystem::exists(ui_file));
+    }
+
+    TEST_F(SettingsManagerTest, PluginSettings_FieldUpdate)
+    {
+        Das::Core::SettingsManager::SettingsManager sm(test_dir_);
+        sm.CreateProfile("0");
+
+        // Set initial plugin settings
+        nlohmann::json plugin_data;
+        plugin_data["field1"] = "original";
+        plugin_data["field2"] = 100;
+        sm.UpdatePluginSettingsJson("0", "my-guid", plugin_data);
+
+        // Update a single field
+        auto result = sm.UpdatePluginSettingsFieldJson(
+            "0",
+            "my-guid",
+            "field1",
+            nlohmann::json("updated"));
+        EXPECT_EQ(result, DAS_S_OK);
+
+        // Verify field was updated
+        auto field = sm.GetPluginSettingsFieldJson("0", "my-guid", "field1");
+        EXPECT_EQ(field.get<std::string>(), "updated");
+
+        // Verify other field unchanged
+        auto field2 = sm.GetPluginSettingsFieldJson("0", "my-guid", "field2");
+        EXPECT_EQ(field2, 100);
+    }
+
+    TEST_F(SettingsManagerTest, PluginSettings_PersistsAcrossInstances)
+    {
+        Das::Core::SettingsManager::SettingsManager sm(test_dir_);
+        sm.CreateProfile("0");
+
+        nlohmann::json plugin_data;
+        plugin_data["setting"] = "persistent";
+        sm.UpdatePluginSettingsJson("0", "guid-123", plugin_data);
+
+        // New instance should read the same data
+        Das::Core::SettingsManager::SettingsManager sm2(test_dir_);
+        auto loaded = sm2.GetPluginSettingsJson("0", "guid-123");
+        EXPECT_EQ(loaded["setting"], "persistent");
+    }
+
+    // --- Scheduler state tests ---
+
+    TEST_F(SettingsManagerTest, GetSchedulerState_ReturnsDefault_WhenMissing)
+    {
+        Das::Core::SettingsManager::SettingsManager sm(test_dir_);
+        sm.CreateProfile("0");
+
+        auto state = sm.GetSchedulerStateJson("0");
+        EXPECT_EQ(state["nextTaskId"], 0);
+        EXPECT_TRUE(state["tasks"].is_array());
+        EXPECT_EQ(state["tasks"].size(), 0u);
+    }
+
+    TEST_F(SettingsManagerTest, UpdateSchedulerState_PersistsNextTaskId)
+    {
+        Das::Core::SettingsManager::SettingsManager sm(test_dir_);
+        sm.CreateProfile("0");
+
+        nlohmann::json state;
+        state["nextTaskId"] = 5;
+        state["tasks"] = nlohmann::json::array();
+        auto result = sm.UpdateSchedulerStateJson("0", state);
+        EXPECT_EQ(result, DAS_S_OK);
+
+        // Read back
+        auto loaded = sm.GetSchedulerStateJson("0");
+        EXPECT_EQ(loaded["nextTaskId"], 5);
+        EXPECT_TRUE(loaded["tasks"].is_array());
+    }
+
+    TEST_F(SettingsManagerTest, SchedulerState_PersistsAcrossInstances)
+    {
+        Das::Core::SettingsManager::SettingsManager sm(test_dir_);
+        sm.CreateProfile("0");
+
+        nlohmann::json state;
+        state["nextTaskId"] = 3;
+        state["tasks"] = nlohmann::json::array();
+        state["tasks"].push_back(
+            {{"id", 0},
+             {"taskGuid", "B4F60C54-67DF-407A-B891-6D3C90CDB9A1"},
+             {"nextExecutionTime", nullptr},
+             {"properties", {{"claimMail", true}}}});
+        state["tasks"].push_back(
+            {{"id", 1},
+             {"taskGuid", "B4F60C54-67DF-407A-B891-6D3C90CDB9A1"},
+             {"nextExecutionTime", nullptr},
+             {"properties", {{"claimMail", false}}}});
+        sm.UpdateSchedulerStateJson("0", state);
+
+        // New instance reads the same state
+        Das::Core::SettingsManager::SettingsManager sm2(test_dir_);
+        auto loaded = sm2.GetSchedulerStateJson("0");
+        EXPECT_EQ(loaded["nextTaskId"], 3);
+        ASSERT_EQ(loaded["tasks"].size(), 2u);
+        EXPECT_EQ(loaded["tasks"][0]["id"], 0);
+        EXPECT_EQ(loaded["tasks"][1]["id"], 1);
+        EXPECT_EQ(loaded["tasks"][0]["properties"]["claimMail"], true);
+        EXPECT_EQ(loaded["tasks"][1]["properties"]["claimMail"], false);
+    }
+
+    TEST_F(SettingsManagerTest, SchedulerState_OrderedTasksPreserved)
+    {
+        Das::Core::SettingsManager::SettingsManager sm(test_dir_);
+        sm.CreateProfile("0");
+
+        nlohmann::json state;
+        state["nextTaskId"] = 3;
+        state["tasks"] = nlohmann::json::array();
+        state["tasks"].push_back({{"id", 0}, {"name", "first"}});
+        state["tasks"].push_back({{"id", 1}, {"name", "second"}});
+        state["tasks"].push_back({{"id", 2}, {"name", "third"}});
+        sm.UpdateSchedulerStateJson("0", state);
+
+        auto loaded = sm.GetSchedulerStateJson("0");
+        ASSERT_EQ(loaded["tasks"].size(), 3u);
+        EXPECT_EQ(loaded["tasks"][0]["name"], "first");
+        EXPECT_EQ(loaded["tasks"][1]["name"], "second");
+        EXPECT_EQ(loaded["tasks"][2]["name"], "third");
+    }
+
+    TEST_F(SettingsManagerTest, SchedulerState_StoredInProfileRoot)
+    {
+        Das::Core::SettingsManager::SettingsManager sm(test_dir_);
+        sm.CreateProfile("0");
+
+        nlohmann::json state;
+        state["nextTaskId"] = 1;
+        state["tasks"] = nlohmann::json::array();
+        sm.UpdateSchedulerStateJson("0", state);
+
+        // Verify scheduler is at profile root
+        auto profile = sm.GetProfileJson("0");
+        ASSERT_TRUE(profile.contains("scheduler"));
+        EXPECT_EQ(profile["scheduler"]["nextTaskId"], 1);
+    }
+
+    TEST_F(SettingsManagerTest, PluginSettingsAndSchedulerCoexist)
+    {
+        Das::Core::SettingsManager::SettingsManager sm(test_dir_);
+        sm.CreateProfile("0");
+
+        // Write plugin settings
+        nlohmann::json plugin_data;
+        plugin_data["setting1"] = "value1";
+        sm.UpdatePluginSettingsJson("0", "guid-A", plugin_data);
+
+        // Write scheduler state
+        nlohmann::json state;
+        state["nextTaskId"] = 2;
+        state["tasks"] = nlohmann::json::array();
+        sm.UpdateSchedulerStateJson("0", state);
+
+        // Both coexist in profile
+        auto profile = sm.GetProfileJson("0");
+        ASSERT_TRUE(profile.contains("guid-A"));
+        ASSERT_TRUE(profile.contains("scheduler"));
+        EXPECT_EQ(profile["guid-A"]["setting1"], "value1");
+        EXPECT_EQ(profile["scheduler"]["nextTaskId"], 2);
+
+        // Both readable through dedicated APIs
+        auto loaded_settings = sm.GetPluginSettingsJson("0", "guid-A");
+        EXPECT_EQ(loaded_settings["setting1"], "value1");
+        auto loaded_state = sm.GetSchedulerStateJson("0");
+        EXPECT_EQ(loaded_state["nextTaskId"], 2);
+    }
+
 } // anonymous namespace

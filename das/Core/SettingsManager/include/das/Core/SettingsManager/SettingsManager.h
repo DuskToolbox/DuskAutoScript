@@ -40,7 +40,7 @@ public:
         const std::string&    profile_id,
         const nlohmann::json& data);
 
-    // Plugin settings (settings/${pid}/${guid}.json)
+    // Plugin settings (profile[guid] within settings/${pid}/ui.json)
     nlohmann::json GetPluginSettingsJson(
         const std::string& profile_id,
         const std::string& guid);
@@ -78,12 +78,15 @@ public:
         const std::string& field_name,
         const std::string& field_json_value);
 
+    // Scheduler state (profile.scheduler within settings/${pid}/ui.json)
+    nlohmann::json GetSchedulerStateJson(const std::string& profile_id);
+    DasResult      UpdateSchedulerStateJson(
+        const std::string&    profile_id,
+        const nlohmann::json& scheduler_json);
+
 private:
     std::filesystem::path GetProfileDir(const std::string& profile_id) const;
     std::filesystem::path GetProfileUiPath(const std::string& profile_id) const;
-    std::filesystem::path GetPluginSettingsPath(
-        const std::string& profile_id,
-        const std::string& guid) const;
 
     // File I/O helpers
     static std::string ReadJsonFile(const std::filesystem::path& path);
@@ -94,10 +97,13 @@ private:
         const std::filesystem::path& path,
         const nlohmann::json&        data);
 
+    /// Ensure the profile JSON is loaded and cached. Returns the cached
+    /// profile JSON reference under write lock.
+    nlohmann::json& EnsureProfileCached(const std::string& profile_id);
+
     std::filesystem::path                           base_dir_;
     nlohmann::json                                  global_settings_cache_;
     std::unordered_map<std::string, nlohmann::json> profile_cache_;
-    std::unordered_map<std::string, nlohmann::json> plugin_settings_cache_;
     mutable std::shared_mutex                       mutex_;
 };
 
