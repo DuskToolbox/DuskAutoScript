@@ -222,6 +222,7 @@ das_add_core_component(Logger)
 das_add_core_component(Exceptions)
 das_add_core_component(i18n)
 das_add_core_component(TaskScheduler)
+das_add_core_component(CoreServices)
 das_add_core_component(IPC)
 
 # 将IpcGenerated.cpp添加到DasCoreObjects（与OfficialIids相同的模式）
