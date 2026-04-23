@@ -14,7 +14,6 @@
 #include "./controller/DasSchedulerController.hpp"
 #include "./controller/UISettingsController.hpp"
 #include <boost/program_options.hpp>
-#include <das/Core/ForeignInterfaceHost/PluginScanner.h>
 #include <filesystem>
 
 #include "./service/DasPluginManagerServiceImpl.h"
@@ -22,6 +21,8 @@
 #include <das/Core/IPC/CurrentIpcContextScope.h>
 #include <das/Core/IPC/MainProcess/IpcContext.h>
 #include <das/Core/Logger/Logger.h>
+#include <das/DasPtr.hpp>
+#include <das/DasString.hpp>
 #include <das/_autogen/idl/abi/DasSettings.h>
 
 namespace Das::Http
@@ -42,9 +43,6 @@ namespace Das::Http
     {
         Das::Http::AppComponent components(plugin_dir);
 
-        // Cleanup plugins marked for deletion before starting HTTP server
-        Das::Core::ForeignInterfaceHost::CleanupMarkedPlugins(plugin_dir);
-
         const auto init_result = InitializeDasCore();
         if (DAS::IsFailed(init_result))
         {
@@ -55,9 +53,110 @@ namespace Das::Http
 
         const auto port = DAS_HTTP_PORT;
 
-        // IPC Initialization
+        // Create IPC context as raw pointer — ownership transfers into
+        // CoreServices via CreateIDasCoreServices.
+        auto* raw_ipc = DAS::Core::IPC::MainProcess::CreateIpcContext(false);
+
+        // Build settings_dir and plugin_dir as ABI-safe strings
+        DasPtr<IDasReadOnlyString> p_settings_dir;
+        auto settings_dir_str = std::filesystem::path("settings").u8string();
+        auto sd_cr = CreateIDasReadOnlyStringFromUtf8(
+            reinterpret_cast<const char*>(settings_dir_str.c_str()),
+            p_settings_dir.Put());
+        if (DAS::IsFailed(sd_cr))
+        {
+            std::cerr << "Failed to create settings_dir string" << std::endl;
+            return sd_cr;
+        }
+
+        DasPtr<IDasReadOnlyString> p_plugin_dir;
+        auto                       plugin_dir_str = plugin_dir.u8string();
+        auto                       pd_cr = CreateIDasReadOnlyStringFromUtf8(
+            reinterpret_cast<const char*>(plugin_dir_str.c_str()),
+            p_plugin_dir.Put());
+        if (DAS::IsFailed(pd_cr))
+        {
+            std::cerr << "Failed to create plugin_dir string" << std::endl;
+            return pd_cr;
+        }
+
+        // Create CoreServices — IPC ownership transfers here
+        auto cs_result = CreateIDasCoreServices(
+            p_settings_dir.Get(),
+            p_plugin_dir.Get(),
+            raw_ipc,
+            components.core_services.Put());
+        if (DAS::IsFailed(cs_result))
+        {
+            std::cerr << "Failed to create CoreServices. Error code = "
+                      << cs_result << std::endl;
+            return cs_result;
+        }
+
+        // Obtain service interfaces through CoreServices
+        auto ss_result = components.core_services->GetSettingsService(
+            components.settings_service.Put());
+        if (DAS::IsFailed(ss_result))
+        {
+            std::cerr << "Failed to get settings service" << std::endl;
+            return ss_result;
+        }
+
+        auto pm_result = components.core_services->GetPluginManagerService(
+            components.plugin_mgr_service.Put());
+        if (DAS::IsFailed(pm_result))
+        {
+            std::cerr << "Failed to get plugin manager service" << std::endl;
+            return pm_result;
+        }
+
+        auto sc_result = components.core_services->GetSchedulerService(
+            components.scheduler_svc.Put());
+        if (DAS::IsFailed(sc_result))
+        {
+            std::cerr << "Failed to get scheduler service" << std::endl;
+            return sc_result;
+        }
+
+        // Set host exe path through service interface (not concrete class)
+        const char* host_exe = std::getenv("DAS_HOST_EXE_PATH");
+        if (host_exe && strlen(host_exe) > 0)
+        {
+            DasPtr<IDasReadOnlyString> p_host_path;
+            auto                       hp_cr =
+                CreateIDasReadOnlyStringFromUtf8(host_exe, p_host_path.Put());
+            if (DAS::IsOk(hp_cr))
+            {
+                components.plugin_mgr_service->SetHostExePath(
+                    p_host_path.Get());
+            }
+        }
+
+        // IPC context for registration: get from CoreServices
+        // CoreServices owns the IPC, we need a borrowed pointer for
+        // ScopedCurrentIpcContext and thread launching.
+        // We create a shared_ptr that does NOT own (null deleter) just for
+        // the scope and thread — CoreServices is the real owner.
+        // However, CreateIpcContext returned a raw pointer that was consumed
+        // by CoreServices. We need to retrieve the IIpcContext pointer.
+        // CoreServices wraps it with shared_ptr internally. We can get a raw
+        // pointer from CoreServices for IPC registration and thread.
+        //
+        // Actually, we need the IpcContext for:
+        // 1. ScopedCurrentIpcContext (needs IpcContext* for downcast)
+        // 2. RegisterService calls
+        // 3. ipc_context->Run() on a separate thread
+        // 4. ipc_context->RequestStop() at shutdown
+        //
+        // The raw_ipc pointer is still valid since CoreServices holds it via
+        // shared_ptr. We can use it directly for the scope/thread.
         auto ipc_context =
-            DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+            std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext>(
+                raw_ipc,
+                [](DAS::Core::IPC::MainProcess::IIpcContext*)
+                {
+                    // No-op deleter: CoreServices owns the real lifetime
+                });
 
         {
             DAS::Core::IPC::ScopedCurrentIpcContext scope(
@@ -107,18 +206,7 @@ namespace Das::Http
             std::thread([&ipc_context]() { ipc_context->Run(); });
         components.ipc_context = ipc_context;
 
-        // 注入 IPC 上下文到 PluginManager
-        components.plugin_manager.SetIpcContext(*ipc_context);
-        components.scheduler_service.SetIpcContext(*ipc_context);
-
-        // 设置 Host 可执行文件路径
-        const char* host_exe = std::getenv("DAS_HOST_EXE_PATH");
-        if (host_exe && strlen(host_exe) > 0)
-        {
-            components.plugin_manager.SetHostExePath(host_exe);
-        }
-
-        // 创建控制器实例
+        // Create controller instances
         auto misc_controller = std::make_shared<Das::Http::DasMiscController>();
         auto log_controller = std::make_shared<Das::Http::DasLogController>();
         auto profile_controller =
@@ -132,7 +220,7 @@ namespace Das::Http
                 *components.scheduler_svc,
                 components.plugin_dir);
 
-        // 注册路由
+        // Register routes
         // Misc
         components.router->Post(
             DAS_HTTP_API_PREFIX "alive",
@@ -182,7 +270,7 @@ namespace Das::Http
         // Plugin Manager
         auto plugin_controller =
             std::make_shared<Das::Http::DasPluginManagerController>(
-                components.plugin_dir);
+                *components.plugin_mgr_service);
         components.router->Post(
             DAS_HTTP_API_PREFIX "plugin/list/get",
             [plugin_controller](const Das::Http::Beast::HttpRequest& req)
@@ -224,7 +312,7 @@ namespace Das::Http
             [scheduler_controller](const Das::Http::Beast::HttpRequest& req)
             { return scheduler_controller->Initialize(req); });
 
-        // 创建并启动服务器
+        // Create and start server
         Das::Http::Beast::Server server(
             "0.0.0.0",
             port,

@@ -3,13 +3,12 @@
 
 #include "beast/Router.hpp"
 #include "beast/Server.hpp"
-#include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
-#include <das/Core/SettingsManager/SettingsManager.h>
-#include <das/Core/TaskScheduler/SchedulerService.h>
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
+#include <das/IDasCoreServices.h>
 #include <das/IDasPluginManagerService.h>
+#include <das/IDasSchedulerService.h>
 #include <das/IDasSettingsService.h>
 #include <filesystem>
 #include <memory>
@@ -24,17 +23,15 @@ namespace Das::Http
         std::shared_ptr<Beast::Router> router;
         std::function<bool()>          stop_condition;
 
-        // Concrete instances (construction order matters — must be declared
-        // before interface wrappers)
-        Das::Core::SettingsManager::SettingsManager    settings_manager;
-        Das::Core::ForeignInterfaceHost::PluginManager plugin_manager;
-        Das::Core::TaskScheduler::SchedulerService     scheduler_service;
-        std::filesystem::path                          plugin_dir;
+        // CoreServices bundle (owns concrete service construction internally)
+        DasPtr<IDasCoreServices> core_services;
 
-        // Interface pointers via Create factory (per D-06)
+        // Service interfaces obtained through IDasCoreServices
         DasPtr<IDasSettingsService>      settings_service;
         DasPtr<IDasPluginManagerService> plugin_mgr_service;
         DasPtr<IDasSchedulerService>     scheduler_svc;
+
+        std::filesystem::path plugin_dir;
 
         // IPC context (process-level)
         std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context;
@@ -42,17 +39,8 @@ namespace Das::Http
         std::thread ipc_thread;
 
         explicit AppComponent(const std::filesystem::path& plugin_dir)
-            : router(std::make_shared<Beast::Router>()),
-              settings_manager(std::filesystem::path("settings")),
-              plugin_manager(settings_manager),
-              scheduler_service(plugin_manager), plugin_dir(plugin_dir)
+            : router(std::make_shared<Beast::Router>()), plugin_dir(plugin_dir)
         {
-            // Create interface wrappers per D-06
-            CreateDasSettingsService(settings_manager, settings_service.Put());
-            CreateDasPluginManagerService(
-                plugin_manager,
-                plugin_mgr_service.Put());
-            CreateDasSchedulerService(scheduler_service, scheduler_svc.Put());
         }
     };
 
