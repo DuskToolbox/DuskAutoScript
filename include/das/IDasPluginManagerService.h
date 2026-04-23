@@ -1,6 +1,7 @@
 #ifndef DAS_PLUGIN_MANAGER_SERVICE_H
 #define DAS_PLUGIN_MANAGER_SERVICE_H
 
+#include <cstdint>
 #include <das/DasString.hpp>
 #include <das/IDasBase.h>
 
@@ -37,6 +38,10 @@ DAS_INTERFACE IDasPluginManagerService : public IDasBase
 
     // Plugin package management
     DAS_METHOD InstallPluginPackage(IDasReadOnlyString * p_package_path) = 0;
+
+    DAS_METHOD InstallPluginPackageData(
+        const uint8_t* p_package_data,
+        uint64_t       package_size) = 0;
 
     DAS_METHOD MarkPluginPackageForDeletion(const DasGuid* p_package_guid) = 0;
 

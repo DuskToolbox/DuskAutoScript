@@ -26,6 +26,9 @@ public:
     DasResult ScanInstalledPlugins(
         Das::ExportInterface::IDasJson** pp_out_plugins) override;
     DasResult InstallPluginPackage(IDasReadOnlyString* p_package_path) override;
+    DasResult InstallPluginPackageData(
+        const uint8_t* p_package_data,
+        uint64_t       package_size) override;
     DasResult MarkPluginPackageForDeletion(
         const DasGuid* p_package_guid) override;
     DasResult CreateComponent(

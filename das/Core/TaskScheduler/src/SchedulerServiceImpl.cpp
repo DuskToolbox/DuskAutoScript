@@ -110,25 +110,3 @@ namespace Das::Core::TaskScheduler
     }
 
 } // namespace Das::Core::TaskScheduler
-
-DAS_C_API DasResult CreateDasSchedulerService(
-    Das::Core::TaskScheduler::SchedulerService& mgr,
-    IDasSchedulerService**                      pp_out)
-{
-    if (pp_out == nullptr)
-    {
-        return DAS_E_INVALID_POINTER;
-    }
-
-    try
-    {
-        auto* impl = new Das::Core::TaskScheduler::SchedulerServiceImpl(mgr);
-        impl->AddRef();
-        *pp_out = impl;
-        return DAS_S_OK;
-    }
-    catch (const std::bad_alloc&)
-    {
-        return DAS_E_OUT_OF_MEMORY;
-    }
-}

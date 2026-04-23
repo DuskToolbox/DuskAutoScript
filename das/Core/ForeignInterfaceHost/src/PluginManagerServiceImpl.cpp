@@ -3,6 +3,7 @@
 #include <das/Core/ForeignInterfaceHost/IDasStringVectorImpl.h>
 #include <das/Core/ForeignInterfaceHost/PluginManagerServiceImpl.h>
 #include <das/Core/ForeignInterfaceHost/PluginScanner.h>
+#include <das/Core/ForeignInterfaceHost/PluginZipExtractor.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/DasExport.h>
@@ -10,6 +11,7 @@
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/_autogen/idl/abi/IDasCapture.h>
+#include <das/_autogen/idl/abi/IDasComponent.h>
 #include <das/_autogen/idl/wrapper/IDasTypeInfo.hpp>
 #include <new>
 #include <nlohmann/json.hpp>
@@ -81,10 +83,23 @@ DasResult PluginManagerServiceImpl::CreateComponent(
         return DAS_E_INVALID_POINTER;
     }
     DAS_UTILS_CHECK_POINTER(p_component_iid)
-    return mgr_.GetComponentFactoryManager().CreateComponent(
+
+    DAS::DasPtr<Das::PluginInterface::IDasComponent> component;
+    auto result = mgr_.GetComponentFactoryManager().CreateComponent(
         *p_component_iid,
-        reinterpret_cast<Das::PluginInterface::IDasComponent**>(
-            pp_out_component));
+        component.Put());
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+    if (!component)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    *pp_out_component = static_cast<IDasBase*>(component.Get());
+    (*pp_out_component)->AddRef();
+    return DAS_S_OK;
 }
 
 DasResult PluginManagerServiceImpl::GetPluginSettingsFieldNames(
@@ -160,6 +175,22 @@ DasResult PluginManagerServiceImpl::InstallPluginPackage(
     // for future file-based installation support.
     (void)u8_path;
     return DAS_E_NO_IMPLEMENTATION;
+}
+
+DasResult PluginManagerServiceImpl::InstallPluginPackageData(
+    const uint8_t* p_package_data,
+    uint64_t       package_size)
+{
+    DAS_UTILS_CHECK_POINTER(p_package_data)
+    if (package_size == 0)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+    return InstallPlugin(
+        plugin_dir_,
+        std::string_view{
+            reinterpret_cast<const char*>(p_package_data),
+            static_cast<size_t>(package_size)});
 }
 
 DasResult PluginManagerServiceImpl::MarkPluginPackageForDeletion(
@@ -313,30 +344,3 @@ DasResult PluginManagerServiceImpl::CreateCaptureManager(
 }
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
-
-DAS_C_API DasResult CreateDasPluginManagerService(
-    Das::Core::ForeignInterfaceHost::PluginManager& mgr,
-    IDasPluginManagerService**                      pp_out)
-{
-    if (pp_out == nullptr)
-    {
-        return DAS_E_INVALID_POINTER;
-    }
-
-    try
-    {
-        // plugin_dir left empty for legacy callers; ScanInstalledPlugins
-        // will return an empty list until migrated to CreateIDasCoreServices.
-        auto* impl =
-            new Das::Core::ForeignInterfaceHost::PluginManagerServiceImpl(
-                mgr,
-                std::filesystem::path{});
-        impl->AddRef();
-        *pp_out = impl;
-        return DAS_S_OK;
-    }
-    catch (const std::bad_alloc&)
-    {
-        return DAS_E_OUT_OF_MEMORY;
-    }
-}

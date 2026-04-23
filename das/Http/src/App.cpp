@@ -1,6 +1,6 @@
 #include <functional>
 #include <iostream>
-#include <ostream>
+#include <string>
 
 #include "das/DasApi.h"
 #include "das/Utils/ThreadUtils.h"
@@ -46,16 +46,14 @@ namespace Das::Http
         const auto init_result = InitializeDasCore();
         if (DAS::IsFailed(init_result))
         {
-            std::cerr << "Init DAS Core failed. Error code = " << init_result
-                      << std::endl;
+            const auto message =
+                std::string{"Init DAS Core failed. Error code = "}
+                + std::to_string(init_result);
+            DAS_LOG_ERROR(message.c_str());
             return init_result;
         }
 
         const auto port = DAS_HTTP_PORT;
-
-        // Create IPC context as raw pointer — ownership transfers into
-        // CoreServices via CreateIDasCoreServices.
-        auto* raw_ipc = DAS::Core::IPC::MainProcess::CreateIpcContext(false);
 
         // Build settings_dir and plugin_dir as ABI-safe strings
         DasPtr<IDasReadOnlyString> p_settings_dir;
@@ -65,7 +63,7 @@ namespace Das::Http
             p_settings_dir.Put());
         if (DAS::IsFailed(sd_cr))
         {
-            std::cerr << "Failed to create settings_dir string" << std::endl;
+            DAS_LOG_ERROR("Failed to create settings_dir string");
             return sd_cr;
         }
 
@@ -76,9 +74,18 @@ namespace Das::Http
             p_plugin_dir.Put());
         if (DAS::IsFailed(pd_cr))
         {
-            std::cerr << "Failed to create plugin_dir string" << std::endl;
+            DAS_LOG_ERROR("Failed to create plugin_dir string");
             return pd_cr;
         }
+
+        auto ipc_owner = DAS::Core::IPC::MainProcess::IpcContextPtr{
+            DAS::Core::IPC::MainProcess::CreateIpcContext(false)};
+        if (!ipc_owner)
+        {
+            DAS_LOG_ERROR("Failed to create IPC context");
+            return DAS_E_FAIL;
+        }
+        auto* raw_ipc = ipc_owner.get();
 
         // Create CoreServices — IPC ownership transfers here
         auto cs_result = CreateIDasCoreServices(
@@ -86,10 +93,13 @@ namespace Das::Http
             p_plugin_dir.Get(),
             raw_ipc,
             components.core_services.Put());
+        static_cast<void>(ipc_owner.release());
         if (DAS::IsFailed(cs_result))
         {
-            std::cerr << "Failed to create CoreServices. Error code = "
-                      << cs_result << std::endl;
+            const auto message =
+                std::string{"Failed to create CoreServices. Error code = "}
+                + std::to_string(cs_result);
+            DAS_LOG_ERROR(message.c_str());
             return cs_result;
         }
 
@@ -98,7 +108,7 @@ namespace Das::Http
             components.settings_service.Put());
         if (DAS::IsFailed(ss_result))
         {
-            std::cerr << "Failed to get settings service" << std::endl;
+            DAS_LOG_ERROR("Failed to get settings service");
             return ss_result;
         }
 
@@ -106,7 +116,7 @@ namespace Das::Http
             components.plugin_mgr_service.Put());
         if (DAS::IsFailed(pm_result))
         {
-            std::cerr << "Failed to get plugin manager service" << std::endl;
+            DAS_LOG_ERROR("Failed to get plugin manager service");
             return pm_result;
         }
 
@@ -114,7 +124,7 @@ namespace Das::Http
             components.scheduler_svc.Put());
         if (DAS::IsFailed(sc_result))
         {
-            std::cerr << "Failed to get scheduler service" << std::endl;
+            DAS_LOG_ERROR("Failed to get scheduler service");
             return sc_result;
         }
 

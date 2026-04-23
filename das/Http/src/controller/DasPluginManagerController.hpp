@@ -57,14 +57,36 @@ namespace Das::Http
         // POST /plugin/update -- receive binary ZIP body
         Beast::HttpResponse UpdatePlugin(const Beast::HttpRequest& request)
         {
-            // TODO: The current InstallPluginPackage API accepts a package
-            // path string, but HTTP clients send binary ZIP data in the
-            // request body. For now this returns not-implemented until the
-            // service interface supports binary package data.
-            (void)request;
-            return Beast::HttpResponse::CreateErrorResponse(
-                DAS_E_NO_IMPLEMENTATION,
-                "Plugin installation via HTTP is not yet supported");
+            auto content_type = request.GetHeader("Content-Type");
+            if (!content_type.empty()
+                && content_type.find("application/zip") == std::string::npos
+                && content_type.find("application/octet-stream")
+                       == std::string::npos)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Expected Content-Type: application/zip or "
+                    "application/octet-stream");
+            }
+
+            const auto& raw_body = request.Body();
+            if (raw_body.empty())
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Empty request body");
+            }
+
+            auto result = plugin_manager_service_.InstallPluginPackageData(
+                reinterpret_cast<const uint8_t*>(raw_body.data()),
+                static_cast<uint64_t>(raw_body.size()));
+            if (DAS::IsFailed(result))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    result,
+                    "Failed to install plugin");
+            }
+            return Beast::HttpResponse::CreateSuccessResponse();
         }
 
         // POST /plugin/{guid}/delete

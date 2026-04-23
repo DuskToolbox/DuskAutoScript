@@ -1,5 +1,6 @@
 #include <das/Core/CoreServices/CoreServicesImpl.h>
 #include <das/Core/ForeignInterfaceHost/PluginManagerServiceImpl.h>
+#include <das/Core/ForeignInterfaceHost/PluginScanner.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/SettingsManager/SettingsServiceImpl.h>
 #include <das/Core/TaskScheduler/SchedulerServiceImpl.h>
@@ -25,6 +26,8 @@ CoreServicesImpl::CoreServicesImpl(
           DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
               ipc_context_.shared())}
 {
+    Das::Core::ForeignInterfaceHost::CleanupMarkedPlugins(plugin_dir);
+
     // 创建 COM 风格的服务包装器
     auto* settings_impl =
         new Das::Core::SettingsManager::SettingsServiceImpl(settings_manager_);
@@ -147,6 +150,12 @@ DAS_C_API DasResult CreateIDasCoreServices(
 
     try
     {
+        // Take ownership before any fallible path conversion below so the
+        // raw IPC context is released even when argument decoding fails.
+        Das::DasSharedRef<Das::Core::IPC::MainProcess::IIpcContext> ipc_context{
+            p_ipc_context,
+            Das::Core::IPC::MainProcess::IpcContextDeleter{}};
+
         // 反序列化路径参数
         const char* u8_settings_dir = nullptr;
         auto        result = p_settings_dir->GetUtf8(&u8_settings_dir);
@@ -165,11 +174,6 @@ DAS_C_API DasResult CreateIDasCoreServices(
         }
         std::filesystem::path plugin_dir = std::filesystem::path(
             reinterpret_cast<const char8_t*>(u8_plugin_dir));
-
-        // 包装 IPC context 为 DasSharedRef（获取所有权）
-        Das::DasSharedRef<Das::Core::IPC::MainProcess::IIpcContext> ipc_context{
-            p_ipc_context,
-            Das::Core::IPC::MainProcess::IpcContextDeleter{}};
 
         auto* impl = new Das::Core::CoreServices::CoreServicesImpl(
             std::move(ipc_context),

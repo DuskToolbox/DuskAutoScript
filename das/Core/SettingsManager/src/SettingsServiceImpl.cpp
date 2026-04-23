@@ -268,25 +268,3 @@ DasResult SettingsServiceImpl::UpdatePluginSettingsField(
 }
 
 DAS_CORE_SETTINGS_MANAGER_NS_END
-
-DAS_C_API DasResult CreateDasSettingsService(
-    Das::Core::SettingsManager::SettingsManager& mgr,
-    IDasSettingsService**                        pp_out)
-{
-    if (pp_out == nullptr)
-    {
-        return DAS_E_INVALID_POINTER;
-    }
-
-    try
-    {
-        auto* impl = new Das::Core::SettingsManager::SettingsServiceImpl(mgr);
-        impl->AddRef();
-        *pp_out = impl;
-        return DAS_S_OK;
-    }
-    catch (const std::bad_alloc&)
-    {
-        return DAS_E_OUT_OF_MEMORY;
-    }
-}

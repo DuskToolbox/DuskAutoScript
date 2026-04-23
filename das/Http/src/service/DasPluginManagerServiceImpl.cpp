@@ -1,6 +1,7 @@
 #include "DasPluginManagerServiceImpl.h"
 
 #include <das/Core/Logger/Logger.h>
+#include <das/DasPtr.hpp>
 #include <das/Utils/CommonUtils.hpp>
 
 namespace Das::Http
@@ -18,9 +19,21 @@ namespace Das::Http
     {
         DAS_UTILS_CHECK_POINTER(pp_out_component)
 
-        return plugin_manager_service_.CreateComponent(
-            &iid,
-            reinterpret_cast<IDasBase**>(pp_out_component));
+        DAS::DasPtr<IDasBase> base_component;
+        auto                  result =
+            plugin_manager_service_.CreateComponent(&iid, base_component.Put());
+        if (DAS::IsFailed(result))
+        {
+            return result;
+        }
+        if (!base_component)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+
+        return base_component->QueryInterface(
+            DasIidOf<Das::PluginInterface::IDasComponent>(),
+            reinterpret_cast<void**>(pp_out_component));
     }
 
     DasResult DasPluginManagerServiceImpl::CreateCaptureManager(
