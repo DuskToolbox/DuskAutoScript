@@ -1683,3 +1683,472 @@ TEST_F(SchedulerControllerTest, NonInitializePaths_DelegateOnly)
     EXPECT_TRUE(fake_svc_->get_called);
     EXPECT_FALSE(fake_svc_->initialize_called);
 }
+
+// ============================================================
+// End-to-end task-instance lifecycle test
+// ============================================================
+
+class SchedulerLifecycleTest : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        test_dir_ = UniqueTestDir();
+        std::filesystem::create_directories(test_dir_);
+        settings_dir_ = test_dir_ / "settings";
+        std::filesystem::create_directories(settings_dir_);
+        plugin_dir_ = test_dir_ / "plugins";
+        std::filesystem::create_directories(plugin_dir_);
+
+        settings_manager_ =
+            std::make_unique<Das::Core::SettingsManager::SettingsManager>(
+                settings_dir_);
+        ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+        plugin_manager_ =
+            std::make_unique<Das::Core::ForeignInterfaceHost::PluginManager>(
+                *settings_manager_,
+                Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                    ipc_sp_));
+        scheduler_ = std::make_unique<SchedulerService>(
+            *plugin_manager_,
+            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp_));
+
+        settings_manager_->CreateProfile("0");
+    }
+
+    void TearDown() override
+    {
+        scheduler_.reset();
+        plugin_manager_.reset();
+        settings_manager_.reset();
+        std::filesystem::remove_all(test_dir_);
+    }
+
+    std::filesystem::path test_dir_;
+    std::filesystem::path settings_dir_;
+    std::filesystem::path plugin_dir_;
+    std::unique_ptr<Das::Core::SettingsManager::SettingsManager>
+                                                              settings_manager_;
+    std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
+    std::unique_ptr<Das::Core::ForeignInterfaceHost::PluginManager>
+                                      plugin_manager_;
+    std::unique_ptr<SchedulerService> scheduler_;
+};
+
+TEST_F(SchedulerLifecycleTest, FullTaskInstanceLifecycle)
+{
+    // -- Phase 1: Initialize, add, update, verify split files --
+
+    // 1. Create a FakeTask and register it
+    auto* fake = new FakeTask();
+    fake->AddRef();
+    DasGuid fake_plugin_guid{};
+    fake_plugin_guid.data1 = 0xAAAA;
+    plugin_manager_->RegisterTestFeature(
+        Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK,
+        fake_plugin_guid,
+        static_cast<IDasBase*>(fake));
+
+    // 2. Initialize
+    auto init_result = scheduler_->Initialize(plugin_dir_, {});
+    ASSERT_EQ(init_result, DAS_S_OK);
+
+    // 3. Get: initial state has empty tasks queue
+    auto state = scheduler_->Get();
+    EXPECT_EQ(state["state"], "stopped");
+    EXPECT_EQ(state["tasks"].size(), 0u);
+
+    // 4. AddTask (put): create two task instances
+    int64_t task_id_0 = -1;
+    auto    add_result = scheduler_->AddTask(FakeTaskGuid, &task_id_0);
+    ASSERT_EQ(add_result, DAS_S_OK);
+    EXPECT_EQ(task_id_0, 0);
+
+    int64_t task_id_1 = -1;
+    add_result = scheduler_->AddTask(FakeTaskGuid, &task_id_1);
+    ASSERT_EQ(add_result, DAS_S_OK);
+    EXPECT_EQ(task_id_1, 1);
+
+    // 5. Assert split files directly:
+    //    scheduler.json.nextTaskId increments
+    auto scheduler_index = settings_manager_->GetSchedulerIndexJson("0");
+    EXPECT_EQ(scheduler_index["nextTaskId"], 2);
+    //    scheduler.json.taskOrder[] order is stable
+    ASSERT_EQ(scheduler_index["taskOrder"].size(), 2u);
+    EXPECT_EQ(scheduler_index["taskOrder"][0], 0);
+    EXPECT_EQ(scheduler_index["taskOrder"][1], 1);
+
+    //    taskId{taskId}.json is created for each task instance
+    EXPECT_TRUE(std::filesystem::exists(settings_dir_ / "0" / "taskId0.json"));
+    EXPECT_TRUE(std::filesystem::exists(settings_dir_ / "0" / "taskId1.json"));
+
+    //    Verify task instance file content
+    auto task0_json = settings_manager_->GetTaskInstanceJson("0", 0);
+    EXPECT_EQ(task0_json["id"], 0);
+    EXPECT_EQ(task0_json["taskGuid"], "A1B2C3D4-E5F6-7890-ABCD-EF1234567890");
+
+    // 6. Get: verify two task instances in queue
+    state = scheduler_->Get();
+    ASSERT_EQ(state["tasks"].size(), 2u);
+    EXPECT_EQ(state["tasks"][0]["id"], 0);
+    EXPECT_EQ(state["tasks"][1]["id"], 1);
+    EXPECT_EQ(state["tasks"][0]["availability"], "available");
+    EXPECT_EQ(state["tasks"][1]["availability"], "available");
+
+    // 7. UpdateTaskInternalProperties on instance 0
+    //    (no descriptors from manifest, so UpdateTaskProperties would reject;
+    //     internal properties are always writable when not running)
+    nlohmann::json internal_props;
+    internal_props["nextExecutionTime"] = "2026-07-01T09:00:00";
+    auto update_result =
+        scheduler_->UpdateTaskInternalProperties(0, internal_props);
+    EXPECT_EQ(update_result, DAS_S_OK);
+
+    //    Verify updated properties are persisted under the selected instance
+    auto task0_updated = settings_manager_->GetTaskInstanceJson("0", 0);
+    EXPECT_EQ(task0_updated["nextExecutionTime"], "2026-07-01T09:00:00");
+
+    // -- Phase 2: Start, verify running mutation guard, stop --
+
+    // 8. Enable (start)
+    ASSERT_EQ(scheduler_->Enable(), DAS_S_OK);
+    EXPECT_EQ(scheduler_->Status(), SchedulerState::Running);
+
+    // 9. Running mutation guard: add/delete/property mutations reject
+    int64_t rejected_id = -1;
+    EXPECT_EQ(
+        scheduler_->AddTask(FakeTaskGuid, &rejected_id),
+        DAS_E_TASK_WORKING);
+    EXPECT_EQ(scheduler_->DeleteTask(0), DAS_E_TASK_WORKING);
+
+    nlohmann::json rejected_props;
+    rejected_props["key"] = "val";
+    EXPECT_EQ(
+        scheduler_->UpdateTaskProperties(0, rejected_props),
+        DAS_E_TASK_WORKING);
+    EXPECT_EQ(
+        scheduler_->UpdateTaskInternalProperties(0, internal_props),
+        DAS_E_TASK_WORKING);
+
+    // 10. Disable (stop) -- clears runtime state but split files remain
+    ASSERT_EQ(scheduler_->Disable(), DAS_S_OK);
+    EXPECT_EQ(scheduler_->Status(), SchedulerState::Stopped);
+
+    // Split files should still exist after Disable
+    EXPECT_TRUE(std::filesystem::exists(settings_dir_ / "0" / "taskId0.json"));
+    EXPECT_TRUE(std::filesystem::exists(settings_dir_ / "0" / "taskId1.json"));
+    auto index_after_stop = settings_manager_->GetSchedulerIndexJson("0");
+    EXPECT_EQ(index_after_stop["nextTaskId"], 2);
+
+    // -- Phase 3: Re-initialize, delete, verify persistence across instances --
+
+    // 11. Re-register the fake task (Disable unloaded plugins)
+    plugin_manager_->RegisterTestFeature(
+        Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK,
+        fake_plugin_guid,
+        static_cast<IDasBase*>(fake));
+
+    // 12. Re-initialize to re-materialize from persisted split files
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    state = scheduler_->Get();
+    ASSERT_EQ(state["tasks"].size(), 2u);
+    EXPECT_EQ(state["tasks"][0]["id"], 0);
+    EXPECT_EQ(state["tasks"][1]["id"], 1);
+    // Task 0's nextExecutionTime was persisted
+    EXPECT_EQ(state["tasks"][0]["nextExecutionTime"], "2026-07-01T09:00:00");
+
+    // 13. Delete task 0
+    auto delete_result = scheduler_->DeleteTask(0);
+    ASSERT_EQ(delete_result, DAS_S_OK);
+
+    //    delete removes only the selected taskId{taskId}.json and queue-order
+    //    entry
+    EXPECT_FALSE(std::filesystem::exists(settings_dir_ / "0" / "taskId0.json"));
+    EXPECT_TRUE(std::filesystem::exists(settings_dir_ / "0" / "taskId1.json"));
+
+    auto index_after_delete = settings_manager_->GetSchedulerIndexJson("0");
+    ASSERT_EQ(index_after_delete["taskOrder"].size(), 1u);
+    EXPECT_EQ(index_after_delete["taskOrder"][0], 1);
+
+    // 14. Get: only task 1 remains
+    state = scheduler_->Get();
+    ASSERT_EQ(state["tasks"].size(), 1u);
+    EXPECT_EQ(state["tasks"][0]["id"], 1);
+
+    // 15. A new scheduler instance sees persisted final state
+    auto ipc_sp2 = DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+    auto scheduler2 = std::make_unique<SchedulerService>(
+        *plugin_manager_,
+        Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(ipc_sp2));
+    ASSERT_EQ(scheduler2->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto state2 = scheduler2->Get();
+    ASSERT_EQ(state2["tasks"].size(), 1u);
+    EXPECT_EQ(state2["tasks"][0]["id"], 1);
+    EXPECT_EQ(
+        state2["tasks"][0]["taskGuid"],
+        "A1B2C3D4-E5F6-7890-ABCD-EF1234567890");
+
+    // Cleanup: release the fake task
+    fake->Release();
+}
+
+// ============================================================
+// Unavailable and corrupt persisted task-instance coverage
+// ============================================================
+
+class SchedulerUnavailableTest : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        test_dir_ = UniqueTestDir();
+        std::filesystem::create_directories(test_dir_);
+        settings_dir_ = test_dir_ / "settings";
+        std::filesystem::create_directories(settings_dir_);
+        plugin_dir_ = test_dir_ / "plugins";
+        std::filesystem::create_directories(plugin_dir_);
+
+        settings_manager_ =
+            std::make_unique<Das::Core::SettingsManager::SettingsManager>(
+                settings_dir_);
+        ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+        plugin_manager_ =
+            std::make_unique<Das::Core::ForeignInterfaceHost::PluginManager>(
+                *settings_manager_,
+                Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                    ipc_sp_));
+        scheduler_ = std::make_unique<SchedulerService>(
+            *plugin_manager_,
+            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp_));
+
+        settings_manager_->CreateProfile("0");
+    }
+
+    void TearDown() override
+    {
+        scheduler_.reset();
+        plugin_manager_.reset();
+        settings_manager_.reset();
+        std::filesystem::remove_all(test_dir_);
+    }
+
+    std::filesystem::path test_dir_;
+    std::filesystem::path settings_dir_;
+    std::filesystem::path plugin_dir_;
+    std::unique_ptr<Das::Core::SettingsManager::SettingsManager>
+                                                              settings_manager_;
+    std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
+    std::unique_ptr<Das::Core::ForeignInterfaceHost::PluginManager>
+                                      plugin_manager_;
+    std::unique_ptr<SchedulerService> scheduler_;
+};
+
+TEST_F(SchedulerUnavailableTest, UnavailableAndCorruptInstances_VisibleInGet)
+{
+    // Seed scheduler.json with two task ids: one referencing an absent task
+    // type GUID (unavailable), one with a corrupt JSON file (invalid).
+    nlohmann::json scheduler_index;
+    scheduler_index["nextTaskId"] = 2;
+    scheduler_index["taskOrder"] = nlohmann::json::array({0, 1});
+    settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
+
+    // Task 0: unavailable -- references a GUID not in loaded manifests
+    nlohmann::json task0;
+    task0["id"] = 0;
+    task0["taskGuid"] = "11111111-2222-3333-4444-555555555555";
+    task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
+    task0["nextExecutionTime"] = nullptr;
+    task0["properties"] = {{"customProp", "preservedValue"}};
+    settings_manager_->UpdateTaskInstanceJson("0", 0, task0);
+
+    // Task 1: corrupt task-instance JSON file
+    auto task1_file = settings_dir_ / "0" / "taskId1.json";
+    {
+        std::ofstream ofs{task1_file};
+        ofs << "CORRUPT DATA {{{{";
+    }
+
+    // Initialize and assert
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto state = scheduler_->Get();
+    ASSERT_EQ(state["tasks"].size(), 2u);
+
+    // Unavailable instance: visible with original id/GUID/properties
+    EXPECT_EQ(state["tasks"][0]["id"], 0);
+    EXPECT_EQ(state["tasks"][0]["availability"], "unavailable");
+    EXPECT_EQ(
+        state["tasks"][0]["taskGuid"],
+        "11111111-2222-3333-4444-555555555555");
+    EXPECT_EQ(state["tasks"][0]["properties"]["customProp"], "preservedValue");
+
+    // Invalid/corrupt instance: visible with original id
+    EXPECT_EQ(state["tasks"][1]["id"], 1);
+    EXPECT_EQ(state["tasks"][1]["availability"], "invalid");
+    EXPECT_FALSE(
+        state["tasks"][1]["unavailabilityReason"].get<std::string>().empty());
+}
+
+TEST_F(SchedulerUnavailableTest, UnavailableInstance_NotExecutedOnStart)
+{
+    // Seed scheduler with an unavailable task type
+    nlohmann::json task0;
+    task0["id"] = 0;
+    task0["taskGuid"] = "11111111-2222-3333-4444-555555555555";
+    task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
+    task0["properties"] = nlohmann::json::object();
+    WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    // Enable should fail because no available task instances
+    auto result = scheduler_->Enable();
+    EXPECT_EQ(result, DAS_E_OBJECT_NOT_INIT);
+    EXPECT_EQ(scheduler_->Status(), SchedulerState::Stopped);
+}
+
+TEST_F(SchedulerUnavailableTest, CorruptInstance_NotExecutedOnStart)
+{
+    // Seed scheduler with a corrupt task file
+    nlohmann::json scheduler_index;
+    scheduler_index["nextTaskId"] = 1;
+    scheduler_index["taskOrder"] = nlohmann::json::array({0});
+    settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
+
+    auto task_file = settings_dir_ / "0" / "taskId0.json";
+    {
+        std::ofstream ofs{task_file};
+        ofs << "CORRUPT";
+    }
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    // Enable should fail because no available task instances
+    auto result = scheduler_->Enable();
+    EXPECT_EQ(result, DAS_E_OBJECT_NOT_INIT);
+    EXPECT_EQ(scheduler_->Status(), SchedulerState::Stopped);
+}
+
+TEST_F(SchedulerUnavailableTest, DeleteUnavailableInstance_Succeeds)
+{
+    nlohmann::json task0;
+    task0["id"] = 0;
+    task0["taskGuid"] = "11111111-2222-3333-4444-555555555555";
+    task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
+    task0["properties"] = nlohmann::json::object();
+    WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto state = scheduler_->Get();
+    ASSERT_EQ(state["tasks"].size(), 1u);
+    EXPECT_EQ(state["tasks"][0]["availability"], "unavailable");
+
+    auto result = scheduler_->DeleteTask(0);
+    EXPECT_EQ(result, DAS_S_OK);
+
+    state = scheduler_->Get();
+    EXPECT_EQ(state["tasks"].size(), 0u);
+
+    // Verify persisted removal
+    EXPECT_FALSE(std::filesystem::exists(settings_dir_ / "0" / "taskId0.json"));
+    auto index = settings_manager_->GetSchedulerIndexJson("0");
+    EXPECT_EQ(index["taskOrder"].size(), 0u);
+}
+
+TEST_F(SchedulerUnavailableTest, DeleteCorruptInstance_Succeeds)
+{
+    nlohmann::json scheduler_index;
+    scheduler_index["nextTaskId"] = 1;
+    scheduler_index["taskOrder"] = nlohmann::json::array({0});
+    settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
+
+    auto task_file = settings_dir_ / "0" / "taskId0.json";
+    {
+        std::ofstream ofs{task_file};
+        ofs << "corrupt";
+    }
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto state = scheduler_->Get();
+    ASSERT_EQ(state["tasks"].size(), 1u);
+    EXPECT_EQ(state["tasks"][0]["availability"], "invalid");
+
+    auto result = scheduler_->DeleteTask(0);
+    EXPECT_EQ(result, DAS_S_OK);
+
+    state = scheduler_->Get();
+    EXPECT_EQ(state["tasks"].size(), 0u);
+}
+
+TEST_F(SchedulerUnavailableTest, MixedAvailableAndUnavailable_OnlyAvailableRuns)
+{
+    // Start IO thread so steady_timer can fire for tick execution
+    auto&       io = ipc_sp_->GetIoContext();
+    std::thread io_thread(
+        [&io]()
+        {
+            boost::asio::executor_work_guard<
+                boost::asio::io_context::executor_type>
+                work(io.get_executor());
+            io.run();
+        });
+
+    // Register a fake available task
+    auto* fake = new FakeTask();
+    fake->AddRef();
+    DasGuid fake_plugin_guid{};
+    fake_plugin_guid.data1 = 0xAAAA;
+    plugin_manager_->RegisterTestFeature(
+        Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK,
+        fake_plugin_guid,
+        static_cast<IDasBase*>(fake));
+
+    // Task 0: unavailable (GUID not matching any loaded task)
+    nlohmann::json task0;
+    task0["id"] = 0;
+    task0["taskGuid"] = "11111111-2222-3333-4444-555555555555";
+    task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
+    task0["properties"] = nlohmann::json::object();
+
+    // Task 1: available (matches FakeTaskGuid)
+    nlohmann::json task1;
+    task1["id"] = 1;
+    task1["taskGuid"] = "A1B2C3D4-E5F6-7890-ABCD-EF1234567890";
+    task1["pluginGuid"] = "00000000-0000-0000-0000-000000000000";
+    task1["properties"] = {{"testKey", "testValue"}};
+
+    WriteSchedulerState(*settings_manager_, 2, {0, 1}, {task0, task1});
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto state = scheduler_->Get();
+    ASSERT_EQ(state["tasks"].size(), 2u);
+    EXPECT_EQ(state["tasks"][0]["availability"], "unavailable");
+    EXPECT_EQ(state["tasks"][1]["availability"], "available");
+
+    // Enable should succeed because at least one available instance exists
+    EXPECT_EQ(scheduler_->Enable(), DAS_S_OK);
+
+    // Give the scheduler time to execute
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+
+    // Disable
+    ASSERT_EQ(scheduler_->Disable(), DAS_S_OK);
+
+    // The fake task should have been executed (not the unavailable one)
+    EXPECT_GE(fake->do_call_count, 1);
+
+    io.stop();
+    if (io_thread.joinable())
+    {
+        io_thread.join();
+    }
+
+    fake->Release();
+}
