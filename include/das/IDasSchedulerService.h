@@ -36,7 +36,7 @@ DAS_INTERFACE IDasSchedulerService : public IDasBase
     DAS_METHOD Initialize(
         IDasReadOnlyString * p_plugin_dir,
         Das::ExportInterface::IDasReadOnlyGuidVector * p_disabled_guids) = 0;
-    DAS_METHOD Enable() = 0;
-    DAS_METHOD Disable() = 0;
-    DAS_METHOD_(SchedulerState) Status() const = 0;
+    DAS_METHOD Start() = 0;
+    DAS_METHOD Stop() = 0;
+    DAS_METHOD GetState(SchedulerState * p_out_state) const = 0;
 };

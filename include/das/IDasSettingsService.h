@@ -44,27 +44,27 @@ DAS_INTERFACE IDasSettingsService : public IDasBase
         IDasReadOnlyString * p_profile_id,
         Das::ExportInterface::IDasJson * p_data) = 0;
 
-    // Plugin settings
+    // Plugin settings (routed by plugin GUID)
     DAS_METHOD GetPluginSettings(
         IDasReadOnlyString * p_profile_id,
-        IDasReadOnlyString * p_guid,
-        Das::ExportInterface::IDasJson * *pp_out) = 0;
+        const DasGuid*                   p_plugin_guid,
+        Das::ExportInterface::IDasJson** pp_out) = 0;
     DAS_METHOD UpdatePluginSettings(
         IDasReadOnlyString * p_profile_id,
-        IDasReadOnlyString * p_guid,
-        Das::ExportInterface::IDasJson * p_data) = 0;
+        const DasGuid*                  p_plugin_guid,
+        Das::ExportInterface::IDasJson* p_data) = 0;
 
     // Plugin settings field-level access
     DAS_METHOD GetPluginSettingsField(
         IDasReadOnlyString * p_profile_id,
-        IDasReadOnlyString * p_guid,
-        IDasReadOnlyString * p_field_name,
-        Das::ExportInterface::IDasJson * *pp_out) = 0;
+        const DasGuid*                   p_plugin_guid,
+        IDasReadOnlyString*              p_field_name,
+        Das::ExportInterface::IDasJson** pp_out) = 0;
     DAS_METHOD UpdatePluginSettingsField(
         IDasReadOnlyString * p_profile_id,
-        IDasReadOnlyString * p_guid,
-        IDasReadOnlyString * p_field_name,
-        Das::ExportInterface::IDasJson * p_value) = 0;
+        const DasGuid*                  p_plugin_guid,
+        IDasReadOnlyString*             p_field_name,
+        Das::ExportInterface::IDasJson* p_value) = 0;
 };
 
 #endif // DAS_SETTINGS_SERVICE_H
