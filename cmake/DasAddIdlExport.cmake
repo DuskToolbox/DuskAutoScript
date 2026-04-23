@@ -265,8 +265,8 @@ function(das_add_idl_export)
 
     string(APPEND _BATCH_JSON_CONFIG "\n]")
 
-    # 将 JSON 配置写入文件
-    file(WRITE "${_BATCH_CONFIG_FILE}" "${_BATCH_JSON_CONFIG}")
+    # 将 JSON 配置写入文件（仅内容变化时才更新，避免触发不必要的重新生成）
+    file(CONFIGURE OUTPUT "${_BATCH_CONFIG_FILE}" CONTENT "${_BATCH_JSON_CONFIG}" @ONLY)
     message(STATUS "[das_add_idl_export] Generated IDL batch configuration: ${_BATCH_CONFIG_FILE}")
 
     # ====== 2. 创建增量检查命令和目标 ======
