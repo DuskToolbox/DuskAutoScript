@@ -5,9 +5,16 @@
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
+#include <das/DasApi.h>
 #include <das/DasSharedRef.hpp>
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
+
+DAS_DISABLE_WARNING_BEGIN
+DAS_IGNORE_OPENCV_WARNING
+#include <opencv2/core/mat.hpp>
+#include <opencv2/imgcodecs.hpp>
+DAS_DISABLE_WARNING_END
 
 #include <atomic>
 #include <cstring>
@@ -605,4 +612,236 @@ TEST_F(PluginResourceIndexTest, InvalidResourcePath_AbsoluteFails)
     const PluginResourceEntry* p_entry = nullptr;
     auto result = index.ResolvePluginResourceEntryByGuid(guid, &p_entry);
     EXPECT_EQ(result, DAS_E_NOT_FOUND);
+}
+
+// ============================================================
+// DasPluginLoadImageFromResource end-to-end tests
+// ============================================================
+
+namespace
+{
+    void WriteTinyRedPng(const std::filesystem::path& path)
+    {
+        // Create a 2x2 red image (B=0, G=0, R=255 in BGR format)
+        cv::Mat              red_img(2, 2, CV_8UC3, cv::Scalar(0, 0, 255));
+        std::vector<uint8_t> buf;
+        cv::imencode(".png", red_img, buf);
+        assert(!buf.empty() && "imencode returned empty buffer");
+        std::ofstream ofs(path, std::ios::binary);
+        assert(ofs.is_open() && "Failed to open file for writing");
+        ofs.write(
+            reinterpret_cast<const char*>(buf.data()),
+            static_cast<std::streamsize>(buf.size()));
+        ofs.flush();
+        ofs.close();
+    }
+
+    // A minimal mock that returns a configurable GUID from GetGuid().
+    class MockTypeInfo final : public IDasTypeInfo
+    {
+    public:
+        explicit MockTypeInfo(DasGuid guid) : guid_(guid) {}
+
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            auto count = --ref_count_;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out) override
+        {
+            if (pp_out == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (iid == DasIidOf<IDasBase>())
+            {
+                *pp_out = static_cast<IDasBase*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            if (iid == DasIidOf<IDasTypeInfo>())
+            {
+                *pp_out = static_cast<IDasTypeInfo*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            *pp_out = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult DAS_STD_CALL GetGuid(DasGuid* p_out_guid) override
+        {
+            if (p_out_guid == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *p_out_guid = guid_;
+            return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL
+        GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override
+        {
+            return CreateIDasReadOnlyStringFromUtf8(
+                "MockTypeInfo",
+                pp_out_name);
+        }
+
+    private:
+        DasGuid               guid_;
+        std::atomic<uint32_t> ref_count_{0};
+    };
+} // anonymous namespace
+
+class DasPluginLoadImageFromResourceTest : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        test_dir_ =
+            std::filesystem::current_path()
+            / ("test_load_image_" + std::to_string(std::random_device{}()));
+        plugin_dir_ = test_dir_ / "plugins";
+        std::filesystem::create_directories(plugin_dir_);
+
+        auto& index = PluginResourceIndex::GetInstance();
+        index.InvalidateCache();
+        index.ConfigurePluginResourceScanRoot(plugin_dir_);
+
+        // Set up a folder-mode plugin with a tiny PNG in its resource dir
+        auto pkg_dir = plugin_dir_ / "ImagePlugin";
+        auto res_dir = pkg_dir / "resource";
+        std::filesystem::create_directories(res_dir);
+
+        nlohmann::json manifest = {
+            {"guid", kTestGuid1},
+            {"name", "ImagePlugin"},
+            {"language", "Cpp"},
+            {"description", "test image plugin"},
+            {"author", "test"},
+            {"version", "1.0"},
+            {"supportedSystem", "win"},
+            {"pluginFilenameExtension", "dll"},
+            {"settings", nlohmann::json::array()},
+        };
+
+        auto manifest_path = pkg_dir / "ImagePlugin.json";
+        {
+            std::ofstream ofs(manifest_path);
+            ofs << manifest.dump();
+        }
+
+        WriteTinyRedPng(res_dir / "tiny.png");
+
+        test_guid_ = MakeDasGuid(kTestGuid1);
+    }
+
+    void TearDown() override
+    {
+        auto& index = PluginResourceIndex::GetInstance();
+        index.InvalidateCache();
+        index.ConfigurePluginResourceScanRoot(plugin_dir_);
+
+        std::filesystem::remove_all(test_dir_);
+    }
+
+    std::filesystem::path test_dir_;
+    std::filesystem::path plugin_dir_;
+    DasGuid               test_guid_;
+};
+
+TEST_F(DasPluginLoadImageFromResourceTest, SuccessPath_ReturnsValidImage)
+{
+    auto* p_type_info = new MockTypeInfo(test_guid_);
+    p_type_info->AddRef();
+
+    IDasReadOnlyString* p_path = nullptr;
+    ASSERT_EQ(CreateIDasReadOnlyStringFromUtf8("tiny.png", &p_path), DAS_S_OK);
+
+    Das::ExportInterface::IDasImage* p_image = nullptr;
+    auto result = DasPluginLoadImageFromResource(p_type_info, p_path, &p_image);
+
+    ASSERT_EQ(result, DAS_S_OK);
+    ASSERT_NE(p_image, nullptr);
+
+    Das::ExportInterface::DasSize size{};
+    EXPECT_EQ(p_image->GetSize(&size), DAS_S_OK);
+    EXPECT_EQ(size.width, 2);
+    EXPECT_EQ(size.height, 2);
+
+    int32_t channel_count = 0;
+    EXPECT_EQ(p_image->GetChannelCount(&channel_count), DAS_S_OK);
+    EXPECT_EQ(channel_count, 3); // RGB
+
+    p_image->Release();
+    p_path->Release();
+    p_type_info->Release();
+}
+
+TEST_F(DasPluginLoadImageFromResourceTest, TraversalPath_ReturnsInvalidPath)
+{
+    auto* p_type_info = new MockTypeInfo(test_guid_);
+    p_type_info->AddRef();
+
+    IDasReadOnlyString* p_path = nullptr;
+    ASSERT_EQ(
+        CreateIDasReadOnlyStringFromUtf8("../escape.png", &p_path),
+        DAS_S_OK);
+
+    Das::ExportInterface::IDasImage* p_image = nullptr;
+    auto result = DasPluginLoadImageFromResource(p_type_info, p_path, &p_image);
+
+    EXPECT_EQ(result, DAS_E_INVALID_PATH);
+    EXPECT_EQ(p_image, nullptr);
+
+    p_path->Release();
+    p_type_info->Release();
+}
+
+TEST_F(DasPluginLoadImageFromResourceTest, AbsolutePath_ReturnsInvalidPath)
+{
+    auto* p_type_info = new MockTypeInfo(test_guid_);
+    p_type_info->AddRef();
+
+    IDasReadOnlyString* p_path = nullptr;
+    ASSERT_EQ(
+        CreateIDasReadOnlyStringFromUtf8("/etc/passwd", &p_path),
+        DAS_S_OK);
+
+    Das::ExportInterface::IDasImage* p_image = nullptr;
+    auto result = DasPluginLoadImageFromResource(p_type_info, p_path, &p_image);
+
+    EXPECT_EQ(result, DAS_E_INVALID_PATH);
+    EXPECT_EQ(p_image, nullptr);
+
+    p_path->Release();
+    p_type_info->Release();
+}
+
+TEST_F(DasPluginLoadImageFromResourceTest, MissingFile_ReturnsFileNotFound)
+{
+    auto* p_type_info = new MockTypeInfo(test_guid_);
+    p_type_info->AddRef();
+
+    IDasReadOnlyString* p_path = nullptr;
+    ASSERT_EQ(
+        CreateIDasReadOnlyStringFromUtf8("nonexistent.png", &p_path),
+        DAS_S_OK);
+
+    Das::ExportInterface::IDasImage* p_image = nullptr;
+    auto result = DasPluginLoadImageFromResource(p_type_info, p_path, &p_image);
+
+    EXPECT_EQ(result, DAS_E_FILE_NOT_FOUND);
+    EXPECT_EQ(p_image, nullptr);
+
+    p_path->Release();
+    p_type_info->Release();
 }

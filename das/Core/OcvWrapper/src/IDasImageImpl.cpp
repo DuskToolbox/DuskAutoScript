@@ -329,8 +329,8 @@ auto ReadFromFile(const std::filesystem::path& full_path) -> cv::Mat
 
             binary.reserve(size);
             std::copy(
-                std::istream_iterator<char>{stream},
-                std::istream_iterator<char>{},
+                std::istreambuf_iterator<char>{stream},
+                std::istreambuf_iterator<char>{},
                 std::back_inserter(binary));
         });
 
