@@ -58,14 +58,13 @@ DasResult PluginResourceIndex::ResolvePluginResourceEntryByGuid(
                 return DAS_S_OK;
             }
         }
-    }
-
-    if (!scan_root_configured_)
-    {
-        DAS_CORE_LOG_WARN(
-            "PluginResourceIndex: scan root not configured, "
-            "cannot resolve GUID");
-        return DAS_E_NOT_FOUND;
+        if (!scan_root_configured_)
+        {
+            DAS_CORE_LOG_WARN(
+                "PluginResourceIndex: scan root not configured, "
+                "cannot resolve GUID");
+            return DAS_E_NOT_FOUND;
+        }
     }
 
     auto result = ScanAndPublish();
@@ -165,15 +164,21 @@ void PluginResourceIndex::InvalidateCache()
 
 DasResult PluginResourceIndex::ScanAndPublish()
 {
+    std::filesystem::path scan_root;
+    {
+        std::shared_lock lock(mutex_);
+        scan_root = scan_root_;
+    }
+
     DAS_CORE_LOG_INFO(
         "PluginResourceIndex: starting full scan of {}",
-        scan_root_.string());
+        scan_root.string());
 
-    if (!std::filesystem::exists(scan_root_))
+    if (!std::filesystem::exists(scan_root))
     {
         DAS_CORE_LOG_WARN(
             "PluginResourceIndex: scan root does not exist: {}",
-            scan_root_.string());
+            scan_root.string());
         return DAS_E_NOT_FOUND;
     }
 
@@ -181,7 +186,7 @@ DasResult PluginResourceIndex::ScanAndPublish()
 
     std::error_code ec;
     auto            dir_iter = std::filesystem::directory_iterator(
-        scan_root_,
+        scan_root,
         std::filesystem::directory_options::skip_permission_denied,
         ec);
 
@@ -276,15 +281,17 @@ DasResult PluginResourceIndex::ScanAndPublish()
             resource_root.string());
     }
 
+    size_t published_count = 0;
     {
         std::unique_lock lock(mutex_);
+        published_count = temp_entries.size();
         entries_ = std::move(temp_entries);
         cache_stale_ = false;
     }
 
     DAS_CORE_LOG_INFO(
         "PluginResourceIndex: scan complete, {} entries published",
-        entries_.size());
+        published_count);
 
     return DAS_S_OK;
 }
