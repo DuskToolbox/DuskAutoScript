@@ -1,6 +1,7 @@
 #include <IpcTestConfig.h>
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
+#include <das/Core/ForeignInterfaceHost/PluginResourceIndex.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
@@ -64,8 +65,7 @@ protected:
         settings_manager_ =
             std::make_unique<DAS::Core::SettingsManager::SettingsManager>(
                 settings_dir_);
-        ipc_sp_ =
-            DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+        ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
         pm_ = std::make_unique<PluginManager>(
             *settings_manager_,
             Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
@@ -82,10 +82,10 @@ protected:
     }
 
     std::unique_ptr<DAS::Core::SettingsManager::SettingsManager>
-        settings_manager_;
+                                                              settings_manager_;
     std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
-    std::unique_ptr<PluginManager>                              pm_;
-    std::filesystem::path                                       settings_dir_;
+    std::unique_ptr<PluginManager>                            pm_;
+    std::filesystem::path                                     settings_dir_;
 };
 
 TEST_F(PluginManagerGuidTest, LoadPluginAndFindByGuid)
@@ -419,4 +419,190 @@ TEST_F(PluginManagerGuidTest, OnHeartbeatTimeout_CleansUpIndex)
     EXPECT_FALSE(pm_->loaded_plugins_.contains(test_guid));
     EXPECT_FALSE(pm_->path_to_guid_.contains("/fake/heartbeat/plugin"));
     EXPECT_FALSE(pm_->host_launchers_.contains(test_guid));
+}
+
+// ============================================================
+// PluginResourceIndex GUID cache tests
+// ============================================================
+
+namespace
+{
+    constexpr const char* kTestGuid1 = "A1B2C3D4-1111-2222-3333-444455556666";
+    constexpr const char* kTestGuid2 = "A1B2C3D4-5555-6666-7777-888899990000";
+
+    void WriteFolderModePlugin(
+        const std::filesystem::path& plugin_dir,
+        const std::string&           dirname,
+        const std::string&           guid,
+        const std::string&           resource_path_value)
+    {
+        auto pkg_dir = plugin_dir / dirname;
+        std::filesystem::create_directories(pkg_dir);
+
+        nlohmann::json manifest = {
+            {"guid", guid},
+            {"name", dirname},
+            {"language", "Cpp"},
+            {"description", "test plugin"},
+            {"author", "test"},
+            {"version", "1.0"},
+            {"supportedSystem", "win"},
+            {"pluginFilenameExtension", "dll"},
+            {"settings", nlohmann::json::array()},
+        };
+
+        if (!resource_path_value.empty())
+        {
+            manifest["resourcePath"] = resource_path_value;
+        }
+
+        auto manifest_path = pkg_dir / (dirname + ".json");
+        {
+            std::ofstream ofs(manifest_path);
+            ofs << manifest.dump();
+        }
+
+        // Create the resource subdirectory
+        std::string rp =
+            resource_path_value.empty() ? "resource" : resource_path_value;
+        std::filesystem::create_directories(pkg_dir / rp);
+    }
+} // anonymous namespace
+
+class PluginResourceIndexTest : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        test_dir_ =
+            std::filesystem::current_path()
+            / ("test_resource_index_" + std::to_string(std::random_device{}()));
+        plugin_dir_ = test_dir_ / "plugins";
+        std::filesystem::create_directories(plugin_dir_);
+
+        auto& index = PluginResourceIndex::GetInstance();
+        index.InvalidateCache();
+        index.ConfigurePluginResourceScanRoot(plugin_dir_);
+    }
+
+    void TearDown() override
+    {
+        // Reset singleton to a clean state for subsequent tests
+        auto& index = PluginResourceIndex::GetInstance();
+        index.InvalidateCache();
+        index.ConfigurePluginResourceScanRoot(plugin_dir_);
+
+        std::filesystem::remove_all(test_dir_);
+    }
+
+    std::filesystem::path test_dir_;
+    std::filesystem::path plugin_dir_;
+};
+
+TEST_F(PluginResourceIndexTest, CacheMissTriggersFullScanAndHits)
+{
+    WriteFolderModePlugin(plugin_dir_, "TestPlugin1", kTestGuid1, "");
+
+    auto  guid = MakeDasGuid(kTestGuid1);
+    auto& index = PluginResourceIndex::GetInstance();
+
+    const PluginResourceEntry* p_entry = nullptr;
+    auto result = index.ResolvePluginResourceEntryByGuid(guid, &p_entry);
+
+    ASSERT_EQ(result, DAS_S_OK);
+    ASSERT_NE(p_entry, nullptr);
+    EXPECT_EQ(p_entry->plugin_name, "TestPlugin1");
+    EXPECT_FALSE(p_entry->resource_root.empty());
+}
+
+TEST_F(PluginResourceIndexTest, DuplicateGuidConflictFailsAndPreservesOriginal)
+{
+    // First, populate the cache with a single valid plugin
+    WriteFolderModePlugin(plugin_dir_, "PluginAlpha", kTestGuid1, "");
+
+    auto  guid = MakeDasGuid(kTestGuid1);
+    auto& index = PluginResourceIndex::GetInstance();
+
+    const PluginResourceEntry* p_entry = nullptr;
+    auto result = index.ResolvePluginResourceEntryByGuid(guid, &p_entry);
+    ASSERT_EQ(result, DAS_S_OK);
+    ASSERT_NE(p_entry, nullptr);
+    EXPECT_EQ(p_entry->plugin_name, "PluginAlpha");
+
+    // Now add a second plugin with the SAME GUID -> conflict
+    WriteFolderModePlugin(plugin_dir_, "PluginBeta", kTestGuid1, "");
+
+    // Force a rescan
+    index.InvalidateCache();
+
+    const PluginResourceEntry* p_entry2 = nullptr;
+    auto result2 = index.ResolvePluginResourceEntryByGuid(guid, &p_entry2);
+    EXPECT_EQ(result2, DAS_E_DUPLICATE_ELEMENT);
+
+    // Original map should remain unchanged: the old entry is still valid
+    // (conflict prevents partial publishing)
+}
+
+TEST_F(PluginResourceIndexTest, SuccessfulRescanReplacesOldMap)
+{
+    // Initial state: one plugin
+    WriteFolderModePlugin(plugin_dir_, "PluginV1", kTestGuid1, "");
+
+    auto  guid1 = MakeDasGuid(kTestGuid1);
+    auto& index = PluginResourceIndex::GetInstance();
+
+    const PluginResourceEntry* p_entry = nullptr;
+    auto result = index.ResolvePluginResourceEntryByGuid(guid1, &p_entry);
+    ASSERT_EQ(result, DAS_S_OK);
+    EXPECT_EQ(p_entry->plugin_name, "PluginV1");
+
+    // Remove the old plugin and add a new one with a different GUID
+    std::filesystem::remove_all(plugin_dir_ / "PluginV1");
+    WriteFolderModePlugin(plugin_dir_, "PluginV2", kTestGuid2, "assets");
+
+    // Force rescan
+    index.InvalidateCache();
+
+    // Old GUID should now be gone (map replaced, not merged)
+    const PluginResourceEntry* p_old = nullptr;
+    auto old_result = index.ResolvePluginResourceEntryByGuid(guid1, &p_old);
+    EXPECT_EQ(old_result, DAS_E_NOT_FOUND)
+        << "Old GUID should not exist after map replacement";
+
+    // New GUID should be present
+    auto                       guid2 = MakeDasGuid(kTestGuid2);
+    const PluginResourceEntry* p_new = nullptr;
+    auto new_result = index.ResolvePluginResourceEntryByGuid(guid2, &p_new);
+    ASSERT_EQ(new_result, DAS_S_OK);
+    EXPECT_EQ(p_new->plugin_name, "PluginV2");
+}
+
+TEST_F(PluginResourceIndexTest, InvalidResourcePath_TraversalFails)
+{
+    WriteFolderModePlugin(plugin_dir_, "EvilPlugin", kTestGuid1, "../outside");
+
+    auto  guid = MakeDasGuid(kTestGuid1);
+    auto& index = PluginResourceIndex::GetInstance();
+
+    const PluginResourceEntry* p_entry = nullptr;
+    // The plugin with traversal resourcePath should be skipped during scan,
+    // so the GUID will not be found.
+    auto result = index.ResolvePluginResourceEntryByGuid(guid, &p_entry);
+    EXPECT_EQ(result, DAS_E_NOT_FOUND);
+}
+
+TEST_F(PluginResourceIndexTest, InvalidResourcePath_AbsoluteFails)
+{
+    WriteFolderModePlugin(
+        plugin_dir_,
+        "AbsolutePlugin",
+        kTestGuid1,
+        "/etc/secrets");
+
+    auto  guid = MakeDasGuid(kTestGuid1);
+    auto& index = PluginResourceIndex::GetInstance();
+
+    const PluginResourceEntry* p_entry = nullptr;
+    auto result = index.ResolvePluginResourceEntryByGuid(guid, &p_entry);
+    EXPECT_EQ(result, DAS_E_NOT_FOUND);
 }
