@@ -1,5 +1,6 @@
 #include <das/Core/CoreServices/CoreServicesImpl.h>
 #include <das/Core/ForeignInterfaceHost/PluginManagerServiceImpl.h>
+#include <das/Core/ForeignInterfaceHost/PluginResourceIndex.h>
 #include <das/Core/ForeignInterfaceHost/PluginScanner.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/SettingsManager/SettingsServiceImpl.h>
@@ -27,6 +28,9 @@ CoreServicesImpl::CoreServicesImpl(
               ipc_context_.shared())}
 {
     Das::Core::ForeignInterfaceHost::CleanupMarkedPlugins(plugin_dir);
+
+    Das::Core::ForeignInterfaceHost::PluginResourceIndex::GetInstance()
+        .ConfigurePluginResourceScanRoot(plugin_dir);
 
     // 创建 COM 风格的服务包装器
     auto* settings_impl =

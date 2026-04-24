@@ -2,7 +2,7 @@
 #define DAS_CORE_FOREIGNINTERFACEHOST_PLUGINRESOURCEINDEX_H
 
 #include <das/Core/ForeignInterfaceHost/Config.h>
-#include <das/IDasBase.h>
+#include <das/Core/ForeignInterfaceHost/DasGuid.h>
 
 #include <filesystem>
 #include <shared_mutex>
