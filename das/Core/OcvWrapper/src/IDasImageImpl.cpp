@@ -7,6 +7,7 @@
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasBinaryBuffer.Implements.hpp>
 
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
+#include <das/Core/ForeignInterfaceHost/PluginResourceIndex.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/Expected.h>
@@ -347,52 +348,112 @@ DasResult DasPluginLoadImageFromResource(
     DAS_UTILS_CHECK_POINTER(p_relative_path)
     DAS_UTILS_CHECK_POINTER(pp_out_image)
 
-    // todo: plugin manager 相关，未来重写
+    DasGuid guid{};
+    {
+        const auto guid_result = p_type_info->GetGuid(&guid);
+        if (DAS::IsFailed(guid_result))
+        {
+            DAS_CORE_LOG_ERROR(
+                "DasPluginLoadImageFromResource: GetGuid() failed, result={}",
+                guid_result);
+            return guid_result;
+        }
+    }
 
-    // const auto expected_storage =
-    //     DAS::Core::ForeignInterfaceHost::g_plugin_manager
-    //         .GetInterfaceStaticStorage(p_type_info);
-    // if (!expected_storage)
-    // {
-    //     const auto error_code = expected_storage.error();
-    //     DAS_CORE_LOG_ERROR(
-    //         "Get interface static storage failed. Error code = {}.",
-    //         error_code);
-    //     return error_code;
-    // }
-    //
-    // const char* p_u8_relative_path{};
-    // p_relative_path->GetUtf8(&p_u8_relative_path);
-    //
-    // const auto full_path =
-    //     expected_storage.value().get().path / p_u8_relative_path;
-    //
-    // try
-    // {
-    //     const auto mat = Details::ReadFromFile(full_path);
-    //     auto*      p_result = new Das::Core::OcvWrapper::IDasImageImpl{mat};
-    //     *pp_out_image = p_result;
-    //     p_result->AddRef();
-    //     return DAS_S_OK;
-    // }
-    // catch (const std::ios_base::failure& ex)
-    // {
-    //     DAS_CORE_LOG_EXCEPTION(ex);
-    //     DAS_CORE_LOG_ERROR(
-    //         "Error happened when reading resource file. Error code = "
-    //         DAS_STR(
-    //             DAS_E_INVALID_FILE) ".");
-    //     return DAS_E_INVALID_FILE;
-    // }
-    // catch (cv::Exception& ex)
-    // {
-    //     DAS_CORE_LOG_ERROR(ex.err);
-    //     DAS_CORE_LOG_ERROR(
-    //         "NOTE:\nfile = {}\nline = {}\nfunction = {}",
-    //         ex.file,
-    //         ex.line,
-    //         ex.func);
-    //     return DAS_E_OPENCV_ERROR;
-    // }
-    return DAS_E_NO_IMPLEMENTATION;
+    const DAS::Core::ForeignInterfaceHost::PluginResourceEntry* p_entry =
+        nullptr;
+    {
+        auto& index =
+            DAS::Core::ForeignInterfaceHost::PluginResourceIndex::GetInstance();
+        const auto resolve_result =
+            index.ResolvePluginResourceEntryByGuid(guid, &p_entry);
+        if (DAS::IsFailed(resolve_result))
+        {
+            DAS_CORE_LOG_ERROR(
+                "DasPluginLoadImageFromResource: GUID resolve failed, "
+                "result={}",
+                resolve_result);
+            return resolve_result;
+        }
+    }
+
+    const char* p_u8_path = nullptr;
+    {
+        const auto utf8_result = p_relative_path->GetUtf8(&p_u8_path);
+        if (DAS::IsFailed(utf8_result))
+        {
+            DAS_CORE_LOG_ERROR(
+                "DasPluginLoadImageFromResource: GetUtf8() failed, result={}",
+                utf8_result);
+            return utf8_result;
+        }
+    }
+
+    std::filesystem::path full_path;
+    {
+        auto& index =
+            DAS::Core::ForeignInterfaceHost::PluginResourceIndex::GetInstance();
+        const auto path_result = index.ResolveResourceFullPath(
+            p_entry->resource_root,
+            p_u8_path,
+            full_path);
+        if (DAS::IsFailed(path_result))
+        {
+            DAS_CORE_LOG_ERROR(
+                "DasPluginLoadImageFromResource: path resolve failed, "
+                "result={}",
+                path_result);
+            return path_result;
+        }
+    }
+
+    if (!std::filesystem::exists(full_path))
+    {
+        DAS_CORE_LOG_ERROR(
+            "DasPluginLoadImageFromResource: file not found: {}",
+            full_path.string());
+        return DAS_E_FILE_NOT_FOUND;
+    }
+
+    try
+    {
+        const auto mat = Details::ReadFromFile(full_path);
+        if (mat.empty())
+        {
+            DAS_CORE_LOG_ERROR(
+                "DasPluginLoadImageFromResource: decoded image is empty for "
+                "file: {}",
+                full_path.string());
+            return DAS_E_OPENCV_ERROR;
+        }
+
+        cv::Mat rgb_mat{};
+        cv::cvtColor(mat, rgb_mat, cv::COLOR_BGR2RGB);
+
+        auto* p_result =
+            new DAS::Core::OcvWrapper::IDasImageImpl{std::move(rgb_mat)};
+        p_result->AddRef();
+        *pp_out_image = p_result;
+        return DAS_S_OK;
+    }
+    catch (const std::ios_base::failure& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        DAS_CORE_LOG_ERROR(
+            "DasPluginLoadImageFromResource: file read failed, result={}",
+            DAS_E_INVALID_FILE);
+        return DAS_E_INVALID_FILE;
+    }
+    catch (const cv::Exception& ex)
+    {
+        DAS_CORE_LOG_ERROR(
+            "DasPluginLoadImageFromResource: OpenCV decode failed: {}",
+            ex.err);
+        DAS_CORE_LOG_ERROR(
+            "NOTE:\nfile = {}\nline = {}\nfunction = {}",
+            ex.file,
+            ex.line,
+            ex.func);
+        return DAS_E_OPENCV_ERROR;
+    }
 }
