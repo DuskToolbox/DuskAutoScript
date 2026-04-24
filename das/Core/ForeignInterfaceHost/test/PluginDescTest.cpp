@@ -301,6 +301,86 @@ TEST(PluginPackageDescTest, TaskDescriptorsKeyedByGuid)
     EXPECT_TRUE(it2->second.descriptors[0].required);
 }
 
+TEST(PluginPackageDescTest, ResourcePath_ExplicitValue)
+{
+    constexpr auto test_string = R"(
+    {
+        "name": "TestPlugin",
+        "author": "test",
+        "version": "1.0",
+        "guid": "35BF38D4-7760-42EA-8A9C-9F2BF7C3CBDA",
+        "description": "test",
+        "supportedSystem": "Windows",
+        "language": "Cpp",
+        "pluginFilenameExtension": "dll",
+        "resourcePath": "assets/images",
+        "settings": []
+    }
+    )";
+
+    const auto desc =
+        JsonToStruct<DAS::Core::ForeignInterfaceHost::PluginPackageDesc>(
+            test_string);
+
+    ASSERT_TRUE(desc.opt_resource_path.has_value());
+    EXPECT_EQ(desc.opt_resource_path.value(), "assets/images");
+}
+
+TEST(PluginPackageDescTest, ResourcePath_DefaultValue)
+{
+    constexpr auto test_string = R"(
+    {
+        "name": "TestPlugin",
+        "author": "test",
+        "version": "1.0",
+        "guid": "35BF38D4-7760-42EA-8A9C-9F2BF7C3CBDA",
+        "description": "test",
+        "supportedSystem": "Windows",
+        "language": "Cpp",
+        "pluginFilenameExtension": "dll",
+        "settings": []
+    }
+    )";
+
+    const auto desc =
+        JsonToStruct<DAS::Core::ForeignInterfaceHost::PluginPackageDesc>(
+            test_string);
+
+    ASSERT_TRUE(desc.opt_resource_path.has_value());
+    EXPECT_EQ(desc.opt_resource_path.value(), "resource");
+}
+
+TEST(PluginPackageDescTest, ResourcePath_FolderModeOnlySemantics)
+{
+    // resourcePath is parsed from JSON regardless of manifest layout.
+    // However, the resource lookup semantics (PluginResourceIndex) only
+    // apply to folder-mode packages. Flat-file manifest mode is not
+    // supported for resource loading per Phase 51 D-03.
+    constexpr auto test_string = R"(
+    {
+        "name": "TestPlugin",
+        "author": "test",
+        "version": "1.0",
+        "guid": "35BF38D4-7760-42EA-8A9C-9F2BF7C3CBDA",
+        "description": "test",
+        "supportedSystem": "Windows",
+        "language": "Cpp",
+        "pluginFilenameExtension": "dll",
+        "resourcePath": "res",
+        "settings": []
+    }
+    )";
+
+    const auto desc =
+        JsonToStruct<DAS::Core::ForeignInterfaceHost::PluginPackageDesc>(
+            test_string);
+
+    ASSERT_TRUE(desc.opt_resource_path.has_value());
+    EXPECT_EQ(desc.opt_resource_path.value(), "res");
+    // Note: folder-mode enforcement happens at scan time in
+    // PluginResourceIndex::ScanAndPublish, not at parser level.
+}
+
 TEST(PluginPackageDescTest, SettingsAndTasksTogether)
 {
     constexpr auto test_string = R"(
