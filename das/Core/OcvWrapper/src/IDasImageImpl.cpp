@@ -206,6 +206,10 @@ DasResult CreateIDasImageFromEncodedData(
         }
 
         auto mat = cv::imdecode({p_data, int_data_size}, cv::IMREAD_UNCHANGED);
+        if (mat.empty())
+        {
+            return DAS_E_OPENCV_ERROR;
+        }
         cv::Mat rgb_mat{};
         cv::cvtColor(mat, rgb_mat, cv::COLOR_BGR2RGB);
 
