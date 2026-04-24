@@ -348,14 +348,14 @@ DasResult DasPluginLoadImageFromResource(
     DAS_UTILS_CHECK_POINTER(p_relative_path)
     DAS_UTILS_CHECK_POINTER(pp_out_image)
 
+    DAS::DasOutPtr<DAS::ExportInterface::IDasImage> result(pp_out_image);
+
     DasGuid guid{};
     {
         const auto guid_result = p_type_info->GetGuid(&guid);
         if (DAS::IsFailed(guid_result))
         {
-            DAS_CORE_LOG_ERROR(
-                "DasPluginLoadImageFromResource: GetGuid() failed, result={}",
-                guid_result);
+            DAS_CORE_LOG_ERROR("GetGuid() failed, result={}", guid_result);
             return guid_result;
         }
     }
@@ -370,8 +370,7 @@ DasResult DasPluginLoadImageFromResource(
         if (DAS::IsFailed(resolve_result))
         {
             DAS_CORE_LOG_ERROR(
-                "DasPluginLoadImageFromResource: GUID resolve failed, "
-                "result={}",
+                "GUID resolve failed, result={}",
                 resolve_result);
             return resolve_result;
         }
@@ -382,9 +381,7 @@ DasResult DasPluginLoadImageFromResource(
         const auto utf8_result = p_relative_path->GetUtf8(&p_u8_path);
         if (DAS::IsFailed(utf8_result))
         {
-            DAS_CORE_LOG_ERROR(
-                "DasPluginLoadImageFromResource: GetUtf8() failed, result={}",
-                utf8_result);
+            DAS_CORE_LOG_ERROR("GetUtf8() failed, result={}", utf8_result);
             return utf8_result;
         }
     }
@@ -399,19 +396,14 @@ DasResult DasPluginLoadImageFromResource(
             full_path);
         if (DAS::IsFailed(path_result))
         {
-            DAS_CORE_LOG_ERROR(
-                "DasPluginLoadImageFromResource: path resolve failed, "
-                "result={}",
-                path_result);
+            DAS_CORE_LOG_ERROR("path resolve failed, result={}", path_result);
             return path_result;
         }
     }
 
     if (!std::filesystem::exists(full_path))
     {
-        DAS_CORE_LOG_ERROR(
-            "DasPluginLoadImageFromResource: file not found: {}",
-            full_path.string());
+        DAS_CORE_LOG_ERROR("file not found: {}", full_path.string());
         return DAS_E_FILE_NOT_FOUND;
     }
 
@@ -421,8 +413,7 @@ DasResult DasPluginLoadImageFromResource(
         if (mat.empty())
         {
             DAS_CORE_LOG_ERROR(
-                "DasPluginLoadImageFromResource: decoded image is empty for "
-                "file: {}",
+                "decoded image is empty for file: {}",
                 full_path.string());
             return DAS_E_OPENCV_ERROR;
         }
@@ -433,22 +424,19 @@ DasResult DasPluginLoadImageFromResource(
         auto* p_result =
             new DAS::Core::OcvWrapper::IDasImageImpl{std::move(rgb_mat)};
         p_result->AddRef();
-        *pp_out_image = p_result;
+        *result.Put() = p_result;
+        result.Keep();
         return DAS_S_OK;
     }
     catch (const std::ios_base::failure& ex)
     {
         DAS_CORE_LOG_EXCEPTION(ex);
-        DAS_CORE_LOG_ERROR(
-            "DasPluginLoadImageFromResource: file read failed, result={}",
-            DAS_E_INVALID_FILE);
+        DAS_CORE_LOG_ERROR("file read failed, result={}", DAS_E_INVALID_FILE);
         return DAS_E_INVALID_FILE;
     }
     catch (const cv::Exception& ex)
     {
-        DAS_CORE_LOG_ERROR(
-            "DasPluginLoadImageFromResource: OpenCV decode failed: {}",
-            ex.err);
+        DAS_CORE_LOG_ERROR("OpenCV decode failed: {}", ex.err);
         DAS_CORE_LOG_ERROR(
             "NOTE:\nfile = {}\nline = {}\nfunction = {}",
             ex.file,
