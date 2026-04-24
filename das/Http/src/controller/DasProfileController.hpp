@@ -274,8 +274,8 @@ namespace Das::Http
             {
                 return Beast::HttpResponse::CreateSuccessResponse(
                     DAS_S_FALSE,
-                    "Plugin settings were invalid and restored from manifest "
-                    "defaults",
+                    "Plugin settings were invalid and restored to an empty "
+                    "object",
                     parsed);
             }
             return Beast::HttpResponse::CreateSuccessResponse(parsed);

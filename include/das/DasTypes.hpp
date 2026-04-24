@@ -60,7 +60,7 @@ typedef struct _das_GUID
 #define DAS_E_OPENCV_ERROR -1073750025
 #define DAS_E_ONNX_RUNTIME_ERROR -1073750026
 #define DAS_E_TIMEOUT -1073750027
-#define DAS_E_PERMISSION_DENIED -1073750029
+#define DAS_E_ACCESS_DENIED -1073750029
 #define DAS_E_SYMBOL_NOT_FOUND -1073750030
 #define DAS_E_DANGLING_REFERENCE -1073750031
 #define DAS_E_OBJECT_NOT_INIT -1073750032
@@ -73,7 +73,6 @@ typedef struct _das_GUID
 #define DAS_E_CAPTURE_FAILED -1073750039
 #define DAS_E_NOT_FOUND -1073750040
 #define DAS_E_IPC_UNKNOWN_METHOD -1073750041
-#define DAS_E_ACCESS_DENIED -1073750042
 
 // ============================================================================
 // 接口前置声明（用于打破循环依赖）

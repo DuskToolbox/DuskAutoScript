@@ -27,7 +27,7 @@ namespace Details
             {DAS_E_INVALID_FILE, "Invalid file"},
             {DAS_E_FILE_NOT_FOUND, "File not found"},
             {DAS_E_INVALID_PATH, "Invalid path"},
-            {DAS_E_PERMISSION_DENIED, "Permission denied"},
+            {DAS_E_ACCESS_DENIED, "Access denied"},
             {DAS_E_TIMEOUT, "Operation timeout"},
             {DAS_E_INVALID_JSON, "Invalid JSON"},
             {DAS_E_TYPE_ERROR, "Type error"},

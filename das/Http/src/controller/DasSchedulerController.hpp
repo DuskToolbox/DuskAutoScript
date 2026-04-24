@@ -3,6 +3,7 @@
 
 #include "Config.h"
 #include "beast/Request.hpp"
+#include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/IDasSchedulerService.h>

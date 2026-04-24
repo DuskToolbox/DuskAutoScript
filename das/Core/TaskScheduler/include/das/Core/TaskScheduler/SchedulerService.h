@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
@@ -40,7 +41,8 @@ namespace Das::Core::TaskScheduler
         std::optional<std::string> game_name;
         std::vector<Das::Core::ForeignInterfaceHost::PluginSettingDesc>
                                                descriptors;
-        DasPtr<Das::PluginInterface::IDasTask> task_instance;
+        uint64_t                               feature_index = 0;
+        DasPtr<Das::PluginInterface::IDasTask> prototype_task;
     };
 
     /// Availability status for a queued task instance.
@@ -62,7 +64,8 @@ namespace Das::Core::TaskScheduler
         std::optional<std::string> next_execution_time;
         nlohmann::json             properties;
         // Pointer to the task type record if available
-        TaskTypeRecord* task_type = nullptr;
+        TaskTypeRecord*                        task_type = nullptr;
+        DasPtr<Das::PluginInterface::IDasTask> task_instance;
     };
 
     class SchedulerService
@@ -114,8 +117,11 @@ namespace Das::Core::TaskScheduler
         bool IsInitialized() const { return initialized_; }
 
     private:
-        void StartTickTimer();
-        void OnTick();
+        void      StartTickTimer(std::chrono::steady_clock::duration delay);
+        void      OnTick();
+        DasResult CreateTaskInstance(
+            const TaskTypeRecord&            task_type,
+            Das::PluginInterface::IDasTask** pp_out_task);
 
         // IDasAsyncCallback implementation for PostToBusinessThread dispatch
         class TickCallback final : public IDasAsyncCallback

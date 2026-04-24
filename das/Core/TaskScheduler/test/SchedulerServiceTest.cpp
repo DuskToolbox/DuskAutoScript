@@ -1,18 +1,28 @@
+#include "controller/DasProfileController.hpp"
+#include "controller/DasSchedulerController.hpp"
+#include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
+#include <das/Core/SettingsManager/SettingsServiceImpl.h>
 #include <das/Core/TaskScheduler/SchedulerService.h>
 #include <das/Core/TaskScheduler/SchedulerServiceImpl.h>
+#include <das/DasApi.h>
 #include <das/DasSharedRef.hpp>
 #include <das/DasString.hpp>
 #include <das/IDasSchedulerService.h>
+#include <das/IDasSettingsService.h>
+#include <das/Utils/Expected.h>
 #include <das/_autogen/idl/abi/IDasGuidVector.h>
+#include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <das/_autogen/idl/abi/IDasTask.h>
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <condition_variable>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <nlohmann/json.hpp>
 #include <string>
 #include <thread>
@@ -447,6 +457,42 @@ TEST_F(SchedulerServiceTest, DeleteTask_UnavailableInstance_Succeeds)
     EXPECT_EQ(state["tasks"].size(), 0u);
 }
 
+TEST_F(SchedulerServiceTest, DeleteTask_PersistenceFailure_RollsBack)
+{
+    settings_manager_->CreateProfile("0");
+
+    nlohmann::json task0;
+    task0["id"] = 0;
+    task0["taskGuid"] = "11111111-1111-1111-1111-111111111111";
+    task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
+    task0["properties"] = nlohmann::json::object();
+    WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    // Verify the instance exists
+    auto state = scheduler_->Get();
+    ASSERT_EQ(state["tasks"].size(), 1u);
+
+    // Replace the profile directory with a regular file so that
+    // create_directories fails and WriteJsonFile returns an error.
+    auto profile_dir = settings_dir_ / "0";
+    std::filesystem::remove_all(profile_dir);
+    {
+        std::ofstream ofs{profile_dir};
+        ofs << "blocker";
+    }
+
+    auto result = scheduler_->DeleteTask(0);
+    // Should fail because persistence failed
+    EXPECT_TRUE(DAS::IsFailed(result));
+
+    // The instance should be restored in memory
+    state = scheduler_->Get();
+    EXPECT_EQ(state["tasks"].size(), 1u);
+    EXPECT_EQ(state["tasks"][0]["id"], 0);
+}
+
 // ============================================================
 // UpdateTaskInternalProperties
 // ============================================================
@@ -503,6 +549,31 @@ TEST_F(SchedulerServiceTest, UpdateInternalProperties_ClearNextExecutionTime)
 
     auto state = scheduler_->Get();
     EXPECT_TRUE(state["tasks"][0]["nextExecutionTime"].is_null());
+}
+
+TEST_F(SchedulerServiceTest, UnparseableNextExecutionTime_PreservedInGet)
+{
+    settings_manager_->CreateProfile("0");
+
+    nlohmann::json task0;
+    task0["id"] = 0;
+    task0["taskGuid"] = "11111111-2222-3333-4444-555555555555";
+    task0["pluginGuid"] = "00000000-0000-0000-0000-000000000000";
+    task0["nextExecutionTime"] = "not-a-valid-timestamp";
+    task0["properties"] = nlohmann::json::object();
+
+    WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    // The unparseable timestamp should be preserved in Get() output.
+    // ComputeNextDelay and FindNextRunnableTask skip unparseable timestamps
+    // (treat as far-future) instead of treating them as immediately runnable.
+    auto state = scheduler_->Get();
+    ASSERT_EQ(state["tasks"].size(), 1u);
+    EXPECT_EQ(state["tasks"][0]["availability"], "unavailable");
+    EXPECT_EQ(
+        state["tasks"][0]["nextExecutionTime"], "not-a-valid-timestamp");
 }
 
 TEST_F(SchedulerServiceTest, UpdateInternalProperties_NotFound)
@@ -985,6 +1056,313 @@ public:
     }
 };
 
+// {12345678-9ABC-4DEF-8123-456789ABCDEF}
+static constexpr DasGuid FactoryPluginGuid = {
+    0x12345678,
+    0x9ABC,
+    0x4DEF,
+    {0x81, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF}};
+
+// {87654321-CBA9-4FED-9123-FEDCBA987654}
+static constexpr DasGuid FactoryTaskGuid = {
+    0x87654321,
+    0xCBA9,
+    0x4FED,
+    {0x91, 0x23, 0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54}};
+
+constexpr char FactoryPluginGuidString[] =
+    "12345678-9ABC-4DEF-8123-456789ABCDEF";
+constexpr char FactoryTaskGuidString[] = "87654321-CBA9-4FED-9123-FEDCBA987654";
+
+struct FactoryTaskSharedState
+{
+    std::mutex              mutex;
+    std::condition_variable cv;
+    int                     created_instance_count = 0;
+    std::vector<int>        executed_instance_ids;
+};
+
+class FactoryBackedTask final : public Das::PluginInterface::IDasTask
+{
+public:
+    explicit FactoryBackedTask(std::shared_ptr<FactoryTaskSharedState> state)
+        : state_(std::move(state))
+    {
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        instance_id_ = ++state_->created_instance_count;
+    }
+
+    uint32_t AddRef() override { return ++ref_count_; }
+
+    uint32_t Release() override
+    {
+        auto count = --ref_count_;
+        if (count == 0)
+        {
+            delete this;
+        }
+        return count;
+    }
+
+    DasResult QueryInterface(const DasGuid& iid, void** pp) override
+    {
+        if (!pp)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        if (iid == DasIidOf<IDasBase>())
+        {
+            *pp = static_cast<IDasBase*>(this);
+            AddRef();
+            return DAS_S_OK;
+        }
+        if (iid == DasIidOf<IDasTypeInfo>())
+        {
+            *pp = static_cast<IDasTypeInfo*>(this);
+            AddRef();
+            return DAS_S_OK;
+        }
+        if (iid == DasIidOf<Das::PluginInterface::IDasTask>())
+        {
+            *pp = static_cast<Das::PluginInterface::IDasTask*>(this);
+            AddRef();
+            return DAS_S_OK;
+        }
+        *pp = nullptr;
+        return DAS_E_NO_INTERFACE;
+    }
+
+    DasResult GetGuid(DasGuid* p_out_guid) override
+    {
+        if (!p_out_guid)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        *p_out_guid = FactoryTaskGuid;
+        return DAS_S_OK;
+    }
+
+    DasResult GetRuntimeClassName(IDasReadOnlyString** pp) override
+    {
+        if (!pp)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        return CreateIDasReadOnlyStringFromUtf8("FactoryBackedTask", pp);
+    }
+
+    DasResult Do(
+        Das::PluginInterface::IDasStopToken*,
+        IDasReadOnlyString*,
+        IDasReadOnlyString*) override
+    {
+        {
+            std::lock_guard<std::mutex> lock(state_->mutex);
+            state_->executed_instance_ids.push_back(instance_id_);
+        }
+        state_->cv.notify_all();
+        return DAS_S_OK;
+    }
+
+    DasResult GetNextExecutionTime(
+        Das::ExportInterface::DasDate* p_out_date) override
+    {
+        if (!p_out_date)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+
+        *p_out_date = {2030, 1, 1, 0, 0, static_cast<uint8_t>(instance_id_)};
+        return DAS_S_OK;
+    }
+
+private:
+    std::atomic<uint32_t>                   ref_count_{0};
+    std::shared_ptr<FactoryTaskSharedState> state_;
+    int                                     instance_id_ = 0;
+};
+
+class FactoryTaskPluginPackage final
+    : public Das::PluginInterface::IDasPluginPackage
+{
+public:
+    explicit FactoryTaskPluginPackage(
+        std::shared_ptr<FactoryTaskSharedState> state)
+        : state_(std::move(state))
+    {
+    }
+
+    uint32_t AddRef() override { return ++ref_count_; }
+
+    uint32_t Release() override
+    {
+        auto count = --ref_count_;
+        if (count == 0)
+        {
+            delete this;
+        }
+        return count;
+    }
+
+    DasResult QueryInterface(const DasGuid& iid, void** pp_out) override
+    {
+        if (!pp_out)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        if (iid == DasIidOf<IDasBase>())
+        {
+            *pp_out = static_cast<IDasBase*>(this);
+            AddRef();
+            return DAS_S_OK;
+        }
+        if (iid == DasIidOf<Das::PluginInterface::IDasPluginPackage>())
+        {
+            *pp_out =
+                static_cast<Das::PluginInterface::IDasPluginPackage*>(this);
+            AddRef();
+            return DAS_S_OK;
+        }
+        *pp_out = nullptr;
+        return DAS_E_NO_INTERFACE;
+    }
+
+    DasResult EnumFeature(
+        uint64_t                                index,
+        Das::PluginInterface::DasPluginFeature* p_out_feature) override
+    {
+        if (!p_out_feature)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        if (index != 0)
+        {
+            return DAS_E_OUT_OF_RANGE;
+        }
+        *p_out_feature = Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK;
+        return DAS_S_OK;
+    }
+
+    DasResult CreateFeatureInterface(
+        uint64_t   index,
+        IDasBase** pp_out_interface) override
+    {
+        if (!pp_out_interface)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        if (index != 0)
+        {
+            return DAS_E_OUT_OF_RANGE;
+        }
+
+        auto* task = new FactoryBackedTask(state_);
+        task->AddRef();
+        *pp_out_interface = task;
+        return DAS_S_OK;
+    }
+
+    DasResult CanUnloadNow(bool* can_unload_now) override
+    {
+        if (!can_unload_now)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        *can_unload_now = true;
+        return DAS_S_OK;
+    }
+
+private:
+    std::atomic<uint32_t>                   ref_count_{0};
+    std::shared_ptr<FactoryTaskSharedState> state_;
+};
+
+class FakeFactoryRuntime final
+    : public DAS::Core::ForeignInterfaceHost::IForeignLanguageRuntime
+{
+public:
+    explicit FakeFactoryRuntime(
+        Das::PluginInterface::IDasPluginPackage* package)
+        : package_(package)
+    {
+    }
+
+    uint32_t AddRef() override { return ++ref_count_; }
+
+    uint32_t Release() override
+    {
+        auto count = --ref_count_;
+        if (count == 0)
+        {
+            delete this;
+        }
+        return count;
+    }
+
+    DasResult QueryInterface(const DasGuid& iid, void** pp_out) override
+    {
+        if (!pp_out)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        if (iid == DasIidOf<IDasBase>())
+        {
+            *pp_out = static_cast<IDasBase*>(this);
+            AddRef();
+            return DAS_S_OK;
+        }
+        *pp_out = nullptr;
+        return DAS_E_NO_INTERFACE;
+    }
+
+    auto LoadPlugin(const std::filesystem::path& path)
+        -> DAS::Utils::Expected<DasPtr<IDasBase>> override
+    {
+        if (!std::filesystem::exists(path))
+        {
+            return DAS::Utils::MakeUnexpected(DAS_E_FILE_NOT_FOUND);
+        }
+
+        DasPtr<IDasBase> package_base;
+        auto             result = package_->QueryInterface(
+            DasIidOf<IDasBase>(),
+            reinterpret_cast<void**>(package_base.Put()));
+        if (DAS::IsFailed(result))
+        {
+            return DAS::Utils::MakeUnexpected(result);
+        }
+
+        return package_base;
+    }
+
+private:
+    std::atomic<uint32_t>                           ref_count_{0};
+    DasPtr<Das::PluginInterface::IDasPluginPackage> package_;
+};
+
+void WriteFactoryPluginManifest(const std::filesystem::path& manifest_path)
+{
+    nlohmann::json manifest;
+    manifest["name"] = "FactoryPlugin";
+    manifest["author"] = "Tests";
+    manifest["version"] = "1.0";
+    manifest["guid"] = FactoryPluginGuidString;
+    manifest["description"] = "Factory-backed scheduler test plugin";
+    manifest["supportedSystem"] = "Windows";
+    manifest["language"] = "Cpp";
+    manifest["pluginFilenameExtension"] = "dll";
+    manifest["settings"] = nlohmann::json::object();
+    manifest["tasks"] = {
+        {FactoryTaskGuidString,
+         {{"pluginGuid", FactoryPluginGuidString},
+          {"name", "factoryTask"},
+          {"description", "Scheduler test task"},
+          {"descriptors", nlohmann::json::array()}}}};
+
+    std::ofstream ofs(manifest_path);
+    ofs << manifest.dump(2);
+}
+
 namespace
 {
 
@@ -1047,6 +1425,8 @@ protected:
                 *settings_manager_,
                 Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
                     ipc_sp_));
+        registry_ = std::make_unique<DAS::Core::IPC::RemoteObjectRegistry>();
+        plugin_manager_->SetRegistry(*registry_);
         scheduler_ = std::make_unique<SchedulerService>(
             *plugin_manager_,
             Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
@@ -1083,10 +1463,120 @@ protected:
     std::unique_ptr<Das::Core::SettingsManager::SettingsManager>
                                                               settings_manager_;
     std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
+    std::unique_ptr<DAS::Core::IPC::RemoteObjectRegistry>     registry_;
     std::unique_ptr<Das::Core::ForeignInterfaceHost::PluginManager>
                                       plugin_manager_;
     std::unique_ptr<SchedulerService> scheduler_;
     std::thread                       io_thread_;
+};
+
+class SchedulerRuntimeBackedTest : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        test_dir_ = UniqueTestDir();
+        std::filesystem::create_directories(test_dir_);
+        settings_dir_ = test_dir_ / "settings";
+        std::filesystem::create_directories(settings_dir_);
+        plugin_dir_ = test_dir_ / "plugins";
+        std::filesystem::create_directories(plugin_dir_);
+        manifest_path_ = plugin_dir_ / "FactoryPlugin.json";
+        WriteFactoryPluginManifest(manifest_path_);
+
+        settings_manager_ =
+            std::make_unique<Das::Core::SettingsManager::SettingsManager>(
+                settings_dir_);
+        settings_manager_->CreateProfile("0");
+
+        ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+        plugin_manager_ =
+            std::make_unique<Das::Core::ForeignInterfaceHost::PluginManager>(
+                *settings_manager_,
+                Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                    ipc_sp_));
+        registry_ = std::make_unique<DAS::Core::IPC::RemoteObjectRegistry>();
+        plugin_manager_->SetRegistry(*registry_);
+        scheduler_ = std::make_unique<SchedulerService>(
+            *plugin_manager_,
+            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp_));
+
+        shared_state_ = std::make_shared<FactoryTaskSharedState>();
+        auto* raw_package = new FactoryTaskPluginPackage(shared_state_);
+        raw_package->AddRef();
+        DasPtr<Das::PluginInterface::IDasPluginPackage> package(raw_package);
+
+        auto* raw_runtime = new FakeFactoryRuntime(package.Get());
+        raw_runtime->AddRef();
+        DasPtr<DAS::Core::ForeignInterfaceHost::IForeignLanguageRuntime>
+            runtime(raw_runtime);
+
+        ASSERT_EQ(plugin_manager_->Initialize(1, runtime), DAS_S_OK);
+
+        io_thread_ = std::thread(
+            [this]()
+            {
+                auto& io = ipc_sp_->GetIoContext();
+                boost::asio::executor_work_guard<
+                    boost::asio::io_context::executor_type>
+                    work(io.get_executor());
+                io.run();
+            });
+    }
+
+    void TearDown() override
+    {
+        if (scheduler_ && scheduler_->Status() == SchedulerState::Running)
+        {
+            EXPECT_EQ(scheduler_->Disable(), DAS_S_OK);
+        }
+
+        ipc_sp_->GetIoContext().stop();
+        if (io_thread_.joinable())
+        {
+            io_thread_.join();
+        }
+
+        scheduler_.reset();
+        if (plugin_manager_)
+        {
+            plugin_manager_->Shutdown();
+        }
+        plugin_manager_.reset();
+        settings_manager_.reset();
+        std::filesystem::remove_all(test_dir_);
+    }
+
+    bool WaitForExecutions(
+        size_t                    expected_count,
+        std::chrono::milliseconds timeout)
+    {
+        auto deadline = std::chrono::steady_clock::now() + timeout;
+        std::unique_lock<std::mutex> lock(shared_state_->mutex);
+        return shared_state_->cv.wait_until(
+            lock,
+            deadline,
+            [this, expected_count]()
+            {
+                return shared_state_->executed_instance_ids.size()
+                       >= expected_count;
+            });
+    }
+
+    std::filesystem::path test_dir_;
+    std::filesystem::path settings_dir_;
+    std::filesystem::path plugin_dir_;
+    std::filesystem::path manifest_path_;
+    std::unique_ptr<Das::Core::SettingsManager::SettingsManager>
+                                                              settings_manager_;
+    std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
+    std::unique_ptr<DAS::Core::IPC::RemoteObjectRegistry>     registry_;
+    std::unique_ptr<Das::Core::ForeignInterfaceHost::PluginManager>
+                                            plugin_manager_;
+    std::unique_ptr<SchedulerService>       scheduler_;
+    std::shared_ptr<FactoryTaskSharedState> shared_state_;
+    std::thread                             io_thread_;
 };
 
 // ============================================================
@@ -1212,6 +1702,37 @@ TEST_F(SchedulerExecutionTest, OnTick_RefreshesNextExecutionTime)
         "2026-06-15T10:30:00");
 }
 
+TEST_F(SchedulerExecutionTest, OnTick_GetNextExecutionTimeFailure_SetsSentinel)
+{
+    auto* fake = SetupSchedulerWithFakeTask(
+        *scheduler_,
+        *settings_manager_,
+        plugin_dir_,
+        *plugin_manager_);
+
+    // GetNextExecutionTime returns failure (has_next_date = false by default)
+    fake->has_next_date = false;
+
+    ASSERT_EQ(scheduler_->Enable(), DAS_S_OK);
+
+    // Wait for one tick to execute
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+
+    auto stop_result = scheduler_->Disable();
+    EXPECT_EQ(stop_result, DAS_S_OK);
+
+    // Task should have been executed at least once
+    EXPECT_GE(fake->do_call_count, 1);
+
+    // The sentinel far-future timestamp should be persisted
+    auto persisted = settings_manager_->GetTaskInstanceJson("0", 0);
+    ASSERT_TRUE(persisted.contains("nextExecutionTime"));
+    ASSERT_TRUE(persisted["nextExecutionTime"].is_string());
+    EXPECT_EQ(
+        persisted["nextExecutionTime"].get<std::string>(),
+        "2099-12-31T23:59:59");
+}
+
 TEST_F(SchedulerExecutionTest, Stop_RequestsCancellationToken)
 {
     auto* fake = SetupSchedulerWithFakeTask(
@@ -1258,11 +1779,80 @@ TEST_F(SchedulerExecutionTest, OnTick_DoesNotHoldMutexDuringDo)
     EXPECT_EQ(stop_result, DAS_S_OK);
 }
 
+TEST_F(SchedulerRuntimeBackedTest, Initialize_DiscoversFlatManifestTaskTypes)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto state = scheduler_->Get();
+    ASSERT_EQ(state["availableTaskTypes"].size(), 1u);
+    EXPECT_EQ(
+        state["availableTaskTypes"][0]["taskGuid"],
+        FactoryTaskGuidString);
+    EXPECT_EQ(plugin_manager_->GetLoadedPluginCount(), 1u);
+}
+
+TEST_F(SchedulerRuntimeBackedTest, OnTick_RespectsPersistedNextExecutionTime)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    int64_t first_task_id = -1;
+    int64_t second_task_id = -1;
+    ASSERT_EQ(scheduler_->AddTask(FactoryTaskGuid, &first_task_id), DAS_S_OK);
+    ASSERT_EQ(scheduler_->AddTask(FactoryTaskGuid, &second_task_id), DAS_S_OK);
+
+    nlohmann::json internal_props;
+    internal_props["nextExecutionTime"] = "2099-01-01T00:00:00";
+    ASSERT_EQ(
+        scheduler_->UpdateTaskInternalProperties(first_task_id, internal_props),
+        DAS_S_OK);
+
+    ASSERT_EQ(scheduler_->Enable(), DAS_S_OK);
+    ASSERT_TRUE(WaitForExecutions(1, std::chrono::milliseconds(500)));
+    ASSERT_EQ(scheduler_->Disable(), DAS_S_OK);
+
+    auto first_task_json =
+        settings_manager_->GetTaskInstanceJson("0", first_task_id);
+    auto second_task_json =
+        settings_manager_->GetTaskInstanceJson("0", second_task_id);
+
+    EXPECT_EQ(first_task_json["nextExecutionTime"], "2099-01-01T00:00:00");
+    EXPECT_NE(second_task_json["nextExecutionTime"], nullptr);
+}
+
+TEST_F(SchedulerRuntimeBackedTest, AddTask_CreatesDistinctRuntimeInstances)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    int64_t first_task_id = -1;
+    int64_t second_task_id = -1;
+    ASSERT_EQ(scheduler_->AddTask(FactoryTaskGuid, &first_task_id), DAS_S_OK);
+    ASSERT_EQ(scheduler_->AddTask(FactoryTaskGuid, &second_task_id), DAS_S_OK);
+
+    ASSERT_EQ(scheduler_->Enable(), DAS_S_OK);
+    ASSERT_TRUE(WaitForExecutions(2, std::chrono::milliseconds(500)));
+    ASSERT_EQ(scheduler_->Disable(), DAS_S_OK);
+
+    auto first_task_json =
+        settings_manager_->GetTaskInstanceJson("0", first_task_id);
+    auto second_task_json =
+        settings_manager_->GetTaskInstanceJson("0", second_task_id);
+
+    ASSERT_TRUE(first_task_json["nextExecutionTime"].is_string());
+    ASSERT_TRUE(second_task_json["nextExecutionTime"].is_string());
+    EXPECT_NE(
+        first_task_json["nextExecutionTime"].get<std::string>(),
+        second_task_json["nextExecutionTime"].get<std::string>());
+
+    std::lock_guard<std::mutex> lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->executed_instance_ids.size(), 2u);
+    EXPECT_NE(
+        shared_state_->executed_instance_ids[0],
+        shared_state_->executed_instance_ids[1]);
+}
+
 // ============================================================
 // Scheduler controller validation tests
 // ============================================================
-
-#include "controller/DasSchedulerController.hpp"
 
 namespace
 {
@@ -1682,6 +2272,42 @@ TEST_F(SchedulerControllerTest, NonInitializePaths_DelegateOnly)
     controller_->Get(get_req);
     EXPECT_TRUE(fake_svc_->get_called);
     EXPECT_FALSE(fake_svc_->initialize_called);
+}
+
+TEST(ProfileControllerTest, GetPluginSettings_SFalseReportsEmptyObjectRecovery)
+{
+    auto test_dir = UniqueTestDir();
+    std::filesystem::create_directories(test_dir);
+
+    Das::Core::SettingsManager::SettingsManager settings_manager(test_dir);
+    ASSERT_EQ(settings_manager.CreateProfile("0"), DAS_S_OK);
+
+    auto plugin_settings_path =
+        test_dir / "0" / (std::string(FactoryPluginGuidString) + ".json");
+    {
+        std::ofstream ofs(plugin_settings_path);
+        ofs << "{corrupt";
+    }
+
+    Das::Core::SettingsManager::SettingsServiceImpl settings_service(
+        settings_manager);
+    Das::Http::DasProfileController controller(settings_service);
+
+    auto request = MakeRequest(
+        "/api/profile/0/plugin/get",
+        "{}",
+        {{"pid", "0"}, {"guid", FactoryPluginGuidString}});
+
+    auto response = controller.GetPluginSettings(request);
+    auto body = nlohmann::json::parse(response.Release().body());
+
+    EXPECT_EQ(body["Code"], DAS_S_FALSE);
+    EXPECT_EQ(
+        body["Message"],
+        "Plugin settings were invalid and restored to an empty object");
+    EXPECT_TRUE(body["Data"].is_object());
+
+    std::filesystem::remove_all(test_dir);
 }
 
 // ============================================================

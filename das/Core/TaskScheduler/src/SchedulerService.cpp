@@ -9,8 +9,12 @@
 #include <das/_autogen/idl/abi/IDasTask.h>
 
 #include <algorithm>
+#include <chrono>
+#include <cstdio>
+#include <ctime>
 #include <fstream>
 #include <nlohmann/json.hpp>
+#include <thread>
 
 namespace Das::Core::TaskScheduler
 {
@@ -20,6 +24,160 @@ namespace Das::Core::TaskScheduler
     using Das::Core::ForeignInterfaceHost::PluginSettingDesc;
     using Das::Core::ForeignInterfaceHost::TaskDescriptor;
 
+    namespace
+    {
+        using SystemClock = std::chrono::system_clock;
+
+        // Sentinel far-future timestamp used when a task's
+        // GetNextExecutionTime() fails. Prevents zero-delay hot loops by
+        // pushing the next run far into the future.
+        static constexpr char SENTINEL_FUTURE_TIMESTAMP[] =
+            "2099-12-31T23:59:59";
+
+        time_t TimegmPortable(std::tm* tm)
+        {
+#ifdef _WIN32
+            return _mkgmtime(tm);
+#else
+            return timegm(tm);
+#endif
+        }
+
+        bool ParseNextExecutionTime(
+            const std::string&       value,
+            SystemClock::time_point& out_time)
+        {
+            if (value.size() < 19)
+            {
+                return false;
+            }
+
+            auto parse_component =
+                [&value](size_t offset, size_t length, int& out) -> bool
+            {
+                try
+                {
+                    out = std::stoi(value.substr(offset, length));
+                    return true;
+                }
+                catch (const std::exception&)
+                {
+                    return false;
+                }
+            };
+
+            if (value[4] != '-' || value[7] != '-' || value[10] != 'T'
+                || value[13] != ':' || value[16] != ':')
+            {
+                return false;
+            }
+
+            std::tm tm{};
+            int     year = 0;
+            int     month = 0;
+            int     day = 0;
+            int     hour = 0;
+            int     minute = 0;
+            int     second = 0;
+            if (!parse_component(0, 4, year) || !parse_component(5, 2, month)
+                || !parse_component(8, 2, day) || !parse_component(11, 2, hour)
+                || !parse_component(14, 2, minute)
+                || !parse_component(17, 2, second))
+            {
+                return false;
+            }
+
+            tm.tm_year = year - 1900;
+            tm.tm_mon = month - 1;
+            tm.tm_mday = day;
+            tm.tm_hour = hour;
+            tm.tm_min = minute;
+            tm.tm_sec = second;
+            tm.tm_isdst = -1;
+
+            const bool has_timezone = value.size() > 19;
+            int        offset_seconds = 0;
+            if (has_timezone)
+            {
+                if (value[19] == 'Z')
+                {
+                    offset_seconds = 0;
+                }
+                else if (
+                    (value[19] == '+' || value[19] == '-') && value.size() >= 25
+                    && value[22] == ':')
+                {
+                    int offset_hours = 0;
+                    int offset_minutes = 0;
+                    if (!parse_component(20, 2, offset_hours)
+                        || !parse_component(23, 2, offset_minutes))
+                    {
+                        return false;
+                    }
+
+                    offset_seconds = offset_hours * 3600 + offset_minutes * 60;
+                    if (value[19] == '-')
+                    {
+                        offset_seconds = -offset_seconds;
+                    }
+                }
+                else
+                {
+                    return false;
+                }
+            }
+
+            time_t time_value = 0;
+            if (has_timezone)
+            {
+                time_value = TimegmPortable(&tm);
+                if (time_value == static_cast<time_t>(-1))
+                {
+                    return false;
+                }
+                time_value -= offset_seconds;
+            }
+            else
+            {
+                time_value = std::mktime(&tm);
+                if (time_value == static_cast<time_t>(-1))
+                {
+                    return false;
+                }
+            }
+
+            out_time = SystemClock::from_time_t(time_value);
+            return true;
+        }
+
+        std::string FormatDasDate(const Das::ExportInterface::DasDate& date)
+        {
+            char buffer[64];
+            std::snprintf(
+                buffer,
+                sizeof(buffer),
+                "%04d-%02d-%02dT%02d:%02d:%02d",
+                date.year,
+                date.month,
+                date.day,
+                date.hour,
+                date.minute,
+                date.second);
+            return buffer;
+        }
+
+        std::chrono::steady_clock::duration ClampNextDelay(
+            const SystemClock::duration& delay)
+        {
+            if (delay <= SystemClock::duration::zero())
+            {
+                return std::chrono::steady_clock::duration::zero();
+            }
+            return std::chrono::duration_cast<
+                std::chrono::steady_clock::duration>(delay);
+        }
+    } // namespace
+
     // ----------------------------------------------------------------
     // Helpers
     // ----------------------------------------------------------------
@@ -27,6 +185,95 @@ namespace Das::Core::TaskScheduler
     static std::string GuidToString(const DasGuid& guid)
     {
         return DAS_FMT_NS::format("{}", guid);
+    }
+
+    static std::chrono::steady_clock::duration ComputeNextDelay(
+        const std::vector<TaskInstanceRecord>& task_instances,
+        const SystemClock::time_point&         now)
+    {
+        bool                    has_future_due = false;
+        SystemClock::time_point earliest_due{};
+
+        for (const auto& inst : task_instances)
+        {
+            if (inst.availability != TaskAvailability::Available
+                || !inst.task_instance)
+            {
+                continue;
+            }
+
+            if (!inst.next_execution_time)
+            {
+                return std::chrono::steady_clock::duration::zero();
+            }
+
+            SystemClock::time_point due_time;
+            if (!ParseNextExecutionTime(*inst.next_execution_time, due_time))
+            {
+                continue;
+            }
+
+            if (due_time <= now)
+            {
+                return std::chrono::steady_clock::duration::zero();
+            }
+
+            if (!has_future_due || due_time < earliest_due)
+            {
+                earliest_due = due_time;
+                has_future_due = true;
+            }
+        }
+
+        if (!has_future_due)
+        {
+            return std::chrono::seconds(1);
+        }
+
+        return ClampNextDelay(earliest_due - now);
+    }
+
+    static TaskInstanceRecord* FindNextRunnableTask(
+        std::vector<TaskInstanceRecord>& task_instances,
+        const SystemClock::time_point&   now)
+    {
+        TaskInstanceRecord*     selected = nullptr;
+        SystemClock::time_point selected_due{};
+        bool                    selected_has_due = false;
+
+        for (auto& inst : task_instances)
+        {
+            if (inst.availability != TaskAvailability::Available
+                || !inst.task_instance)
+            {
+                continue;
+            }
+
+            if (!inst.next_execution_time)
+            {
+                return &inst;
+            }
+
+            SystemClock::time_point due_time;
+            if (!ParseNextExecutionTime(*inst.next_execution_time, due_time))
+            {
+                continue;
+            }
+
+            if (due_time > now)
+            {
+                continue;
+            }
+
+            if (!selected || !selected_has_due || due_time < selected_due)
+            {
+                selected = &inst;
+                selected_due = due_time;
+                selected_has_due = true;
+            }
+        }
+
+        return selected;
     }
 
     TaskTypeRecord* SchedulerService::FindTaskType(const DasGuid& task_guid)
@@ -75,6 +322,37 @@ namespace Das::Core::TaskScheduler
         Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context)
         : plugin_manager_(plugin_manager), ipc_context_{std::move(ipc_context)}
     {
+    }
+
+    DasResult SchedulerService::CreateTaskInstance(
+        const TaskTypeRecord&            task_type,
+        Das::PluginInterface::IDasTask** pp_out_task)
+    {
+        if (!pp_out_task)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+
+        *pp_out_task = nullptr;
+
+        auto create_result = plugin_manager_.CreateFeatureInterface(
+            task_type.plugin_guid,
+            task_type.feature_index,
+            DasIidOf<Das::PluginInterface::IDasTask>(),
+            reinterpret_cast<void**>(pp_out_task));
+        if (IsOk(create_result) && *pp_out_task)
+        {
+            return create_result;
+        }
+
+        if (create_result != DAS_E_NOT_FOUND || !task_type.prototype_task)
+        {
+            return create_result;
+        }
+
+        *pp_out_task = task_type.prototype_task.Get();
+        (*pp_out_task)->AddRef();
+        return DAS_S_OK;
     }
 
     // ----------------------------------------------------------------
@@ -127,19 +405,23 @@ namespace Das::Core::TaskScheduler
         // Load allowed plugin packages
         for (const auto& entry : dir_iter)
         {
-            if (!entry.is_directory())
+            std::filesystem::path manifest_path;
+            if (entry.is_directory())
             {
-                continue;
+                auto dirname = entry.path().filename().string();
+                auto marker = entry.path() / (dirname + ".willBeDelete");
+                if (std::filesystem::exists(marker))
+                {
+                    continue;
+                }
+
+                manifest_path = FindManifest(entry.path());
+            }
+            else if (entry.path().extension() == ".json")
+            {
+                manifest_path = entry.path();
             }
 
-            auto dirname = entry.path().filename().string();
-            auto marker = entry.path() / (dirname + ".willBeDelete");
-            if (std::filesystem::exists(marker))
-            {
-                continue;
-            }
-
-            auto manifest_path = FindManifest(entry.path());
             if (manifest_path.empty())
             {
                 continue;
@@ -176,6 +458,19 @@ namespace Das::Core::TaskScheduler
                     continue;
                 }
 
+                auto register_result =
+                    plugin_manager_.RegisterPluginObjects(manifest_path);
+                if (DAS::IsFailed(register_result))
+                {
+                    DAS_CORE_LOG_WARN(
+                        "SchedulerService::Initialize: failed to register "
+                        "plugin objects for {}, result={}",
+                        desc.name,
+                        register_result);
+                    plugin_manager_.UnloadPlugin(manifest_path);
+                    continue;
+                }
+
                 loaded_plugin_paths_.push_back(manifest_path);
             }
             catch (const std::exception& e)
@@ -192,18 +487,19 @@ namespace Das::Core::TaskScheduler
             Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK);
         for (auto* feature_info : task_features)
         {
-            Das::PluginInterface::IDasTask* task = nullptr;
+            DasPtr<Das::PluginInterface::IDasTask> task;
             auto qi_result = feature_info->interface_ptr->QueryInterface(
                 DasIidOf<Das::PluginInterface::IDasTask>(),
-                reinterpret_cast<void**>(&task));
+                reinterpret_cast<void**>(task.Put()));
             if (!IsOk(qi_result) || !task)
             {
                 continue;
             }
 
             auto type_record = std::make_unique<TaskTypeRecord>();
-            type_record->task_instance = task;
+            type_record->prototype_task = task;
             type_record->plugin_guid = feature_info->plugin_guid;
+            type_record->feature_index = feature_info->feature_index;
 
             // Get task type GUID from IDasTypeInfo
             DasGuid task_guid{};
@@ -336,9 +632,20 @@ namespace Das::Core::TaskScheduler
                 auto* type_rec = FindTaskType(rec.task_guid);
                 if (type_rec)
                 {
-                    rec.availability = TaskAvailability::Available;
                     rec.task_type = type_rec;
                     rec.plugin_guid = type_rec->plugin_guid;
+                    auto create_result =
+                        CreateTaskInstance(*type_rec, rec.task_instance.Put());
+                    if (IsOk(create_result) && rec.task_instance)
+                    {
+                        rec.availability = TaskAvailability::Available;
+                    }
+                    else
+                    {
+                        rec.availability = TaskAvailability::Unavailable;
+                        rec.unavailability_reason =
+                            "failed to create task instance";
+                    }
                 }
                 else
                 {
@@ -403,10 +710,13 @@ namespace Das::Core::TaskScheduler
 
         state_.store(SchedulerState::Running);
 
-        tick_timer_ = std::make_unique<boost::asio::steady_timer>(
-            ipc_context_.get().GetIoContext());
+        if (!tick_timer_)
+        {
+            tick_timer_ = std::make_unique<boost::asio::steady_timer>(
+                ipc_context_.get().GetIoContext());
+        }
 
-        StartTickTimer();
+        StartTickTimer(ComputeNextDelay(task_instances_, SystemClock::now()));
 
         DAS_CORE_LOG_INFO("SchedulerService::Enable: scheduler started");
         return DAS_S_OK;
@@ -426,11 +736,12 @@ namespace Das::Core::TaskScheduler
 
         state_.store(SchedulerState::Stopped);
 
-        // Cancel timer to stop new OnTick dispatches
+        // Cancel the timer but keep the object alive until the scheduler is
+        // torn down, otherwise Boost.Asio may still hold internal references
+        // to the timer entry while draining the io_context.
         if (tick_timer_)
         {
             tick_timer_->cancel();
-            tick_timer_.reset();
         }
 
         // Request cooperative cancellation on the stop token.
@@ -612,6 +923,12 @@ namespace Das::Core::TaskScheduler
         rec.availability = TaskAvailability::Available;
         rec.task_type = type_rec;
         rec.properties = nlohmann::json::object();
+        auto create_result =
+            CreateTaskInstance(*type_rec, rec.task_instance.Put());
+        if (IsFailed(create_result) || !rec.task_instance)
+        {
+            return IsFailed(create_result) ? create_result : DAS_E_FAIL;
+        }
 
         // Initialize properties from descriptor defaults
         for (const auto& desc : type_rec->descriptors)
@@ -689,15 +1006,14 @@ namespace Das::Core::TaskScheduler
             return DAS_E_NOT_FOUND;
         }
 
+        auto erased = *it;
+        auto erased_index =
+            static_cast<size_t>(std::distance(task_instances_.begin(), it));
         task_instances_.erase(it);
 
-        // Update persisted state
+        // Update persisted state with retry
         auto& settings = plugin_manager_.GetSettingsManager();
 
-        // Delete task instance file
-        settings.DeleteTaskInstanceJson("0", task_id);
-
-        // Update scheduler index (remove from taskOrder)
         auto scheduler_index = settings.GetSchedulerIndexJson("0");
         if (scheduler_index.contains("taskOrder")
             && scheduler_index["taskOrder"].is_array())
@@ -712,9 +1028,45 @@ namespace Das::Core::TaskScheduler
                 }
             }
         }
-        settings.UpdateSchedulerIndexJson("0", scheduler_index);
 
-        return DAS_S_OK;
+        constexpr int MAX_RETRIES = 3;
+        constexpr int BASE_DELAY_MS = 100;
+        DasResult     last_error = DAS_S_OK;
+
+        for (int attempt = 0; attempt < MAX_RETRIES; ++attempt)
+        {
+            if (attempt > 0)
+            {
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(BASE_DELAY_MS << (attempt - 1)));
+            }
+
+            auto delete_result = settings.DeleteTaskInstanceJson("0", task_id);
+            auto index_result =
+                settings.UpdateSchedulerIndexJson("0", scheduler_index);
+
+            if (!DAS::IsFailed(delete_result) && !DAS::IsFailed(index_result))
+            {
+                return DAS_S_OK;
+            }
+
+            last_error =
+                DAS::IsFailed(delete_result) ? delete_result : index_result;
+        }
+
+        // All retries failed: restore the in-memory instance
+        task_instances_.insert(
+            task_instances_.begin() + static_cast<ptrdiff_t>(erased_index),
+            std::move(erased));
+
+        DAS_CORE_LOG_ERROR(
+            "SchedulerService::DeleteTask: persistence failed for task {} "
+            "after {} retries, result={}",
+            task_id,
+            MAX_RETRIES,
+            last_error);
+
+        return last_error;
     }
 
     // ----------------------------------------------------------------
@@ -882,14 +1234,15 @@ namespace Das::Core::TaskScheduler
     // Timer and tick
     // ----------------------------------------------------------------
 
-    void SchedulerService::StartTickTimer()
+    void SchedulerService::StartTickTimer(
+        std::chrono::steady_clock::duration delay)
     {
         if (!tick_timer_)
         {
             return;
         }
 
-        tick_timer_->expires_after(std::chrono::seconds(1));
+        tick_timer_->expires_after(delay);
         tick_timer_->async_wait(
             [this](const boost::system::error_code& ec)
             {
@@ -911,48 +1264,37 @@ namespace Das::Core::TaskScheduler
 
         // Select a runnable task instance under lock, then release lock
         // before calling plugin Do.
-        Das::PluginInterface::IDasTask* task_ptr = nullptr;
-        TaskInstanceRecord*             selected_inst = nullptr;
-        nlohmann::json                  properties_copy;
-        int64_t                         selected_id = -1;
+        Das::PluginInterface::IDasTask*     task_ptr = nullptr;
+        TaskInstanceRecord*                 selected_inst = nullptr;
+        nlohmann::json                      properties_copy;
+        int64_t                             selected_id = -1;
+        std::chrono::steady_clock::duration next_delay =
+            std::chrono::seconds(1);
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
 
             if (state_.load() != SchedulerState::Running)
             {
-                StartTickTimer();
                 return;
             }
 
-            // Find the first available task instance with an executable
-            // IDasTask pointer
-            for (auto& inst : task_instances_)
-            {
-                if (inst.availability != TaskAvailability::Available)
-                {
-                    continue;
-                }
+            selected_inst =
+                FindNextRunnableTask(task_instances_, SystemClock::now());
 
-                if (!inst.task_type || !inst.task_type->task_instance)
-                {
-                    continue;
-                }
-
-                task_ptr = inst.task_type->task_instance.Get();
-                selected_inst = &inst;
-                properties_copy = inst.properties;
-                selected_id = inst.id;
-                break;
-            }
-
-            if (!task_ptr || !selected_inst)
+            if (!selected_inst)
             {
                 DAS_CORE_LOG_DEBUG(
                     "SchedulerService::OnTick: no runnable task");
-                StartTickTimer();
+                next_delay =
+                    ComputeNextDelay(task_instances_, SystemClock::now());
+                StartTickTimer(next_delay);
                 return;
             }
+
+            task_ptr = selected_inst->task_instance.Get();
+            properties_copy = selected_inst->properties;
+            selected_id = selected_inst->id;
 
             current_task_ = task_ptr;
 
@@ -1002,19 +1344,20 @@ namespace Das::Core::TaskScheduler
         auto net_result = task_ptr->GetNextExecutionTime(&next_date);
         if (IsOk(net_result))
         {
-            char buf[64];
-            std::snprintf(
-                buf,
-                sizeof(buf),
-                "%04d-%02d-%02dT%02d:%02d:%02d",
-                next_date.year,
-                next_date.month,
-                next_date.day,
-                next_date.hour,
-                next_date.minute,
-                next_date.second);
-            refreshed_time = buf;
+            refreshed_time = FormatDasDate(next_date);
             has_refreshed_time = true;
+        }
+        else
+        {
+            // GetNextExecutionTime failed: use sentinel to prevent hot loop
+            refreshed_time = SENTINEL_FUTURE_TIMESTAMP;
+            has_refreshed_time = true;
+            DAS_CORE_LOG_WARN(
+                "SchedulerService::OnTick: task {} GetNextExecutionTime "
+                "failed (result={}), setting sentinel nextExecutionTime={}",
+                selected_id,
+                net_result,
+                SENTINEL_FUTURE_TIMESTAMP);
         }
 
         // Re-acquire lock to update state
@@ -1043,10 +1386,19 @@ namespace Das::Core::TaskScheduler
 
             current_task_ = nullptr;
             cv_.notify_all();
+
+            if (state_.load() == SchedulerState::Running)
+            {
+                next_delay =
+                    ComputeNextDelay(task_instances_, SystemClock::now());
+            }
         }
 
         DAS_CORE_LOG_DEBUG("SchedulerService::OnTick: tick complete");
-        StartTickTimer();
+        if (state_.load() == SchedulerState::Running)
+        {
+            StartTickTimer(next_delay);
+        }
     }
 
 } // namespace Das::Core::TaskScheduler

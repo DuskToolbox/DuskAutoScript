@@ -38,11 +38,12 @@ DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
  */
 struct FeatureInfo
 {
+    uint64_t                               feature_index = 0;
     Das::PluginInterface::DasPluginFeature feature_type;  // Feature 类型枚举
     DasGuid                                iid;           // 对应的接口 IID
     DasPtr<IDasBase>                       interface_ptr; // 创建的接口指针
-    Core::IPC::ObjectId object_id;   // 在 RemoteObjectRegistry 中的对象 ID
-    uint16_t            session_id;  // 所属会话 ID
+    Core::IPC::ObjectId object_id{}; // 在 RemoteObjectRegistry 中的对象 ID
+    uint16_t            session_id = 0; // 所属会话 ID
     std::string         plugin_name; // 所属插件名称
     DasGuid             plugin_guid; // 所属插件 GUID
 };
@@ -186,6 +187,28 @@ public:
      */
     std::span<FeatureInfo* const> GetFeaturesByType(
         Das::PluginInterface::DasPluginFeature type) const;
+
+    /**
+     * @brief Create a fresh feature interface for a loaded plugin
+
+     * * feature.
+     * @param plugin_guid Plugin GUID that owns the feature
+
+     * * @param feature_index Index passed to
+     *
+     * IDasPluginPackage::CreateFeatureInterface
+     * @param iid Requested
+     * interface IID
+     * @param pp_out_object Output interface pointer
+ *
+
+     * * @return DAS_S_OK on success, DAS_E_NOT_FOUND when plugin missing
+ */
+    DasResult CreateFeatureInterface(
+        const DasGuid& plugin_guid,
+        uint64_t       feature_index,
+        const DasGuid& iid,
+        void**         pp_out_object);
 
     /**
      * @brief 获取指定插件的所有 Feature

@@ -256,6 +256,7 @@ DasResult PluginManager::LoadPlugin(
             }
 
             FeatureInfo feature_info;
+            feature_info.feature_index = index;
             feature_info.feature_type = feature;
             feature_info.iid = GetIidForFeature(feature);
             feature_info.session_id = session_id_;
@@ -622,6 +623,41 @@ std::span<FeatureInfo* const> PluginManager::GetFeaturesByType(
     return it->second;
 }
 
+DasResult PluginManager::CreateFeatureInterface(
+    const DasGuid& plugin_guid,
+    uint64_t       feature_index,
+    const DasGuid& iid,
+    void**         pp_out_object)
+{
+    if (!pp_out_object)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    *pp_out_object = nullptr;
+
+    DasPtr<Das::PluginInterface::IDasPluginPackage> package;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto                        it = loaded_plugins_.find(plugin_guid);
+        if (it == loaded_plugins_.end() || !it->second.package)
+        {
+            return DAS_E_NOT_FOUND;
+        }
+        package = it->second.package;
+    }
+
+    DasPtr<IDasBase> feature_base;
+    auto             create_result =
+        package->CreateFeatureInterface(feature_index, feature_base.Put());
+    if (DAS::IsFailed(create_result))
+    {
+        return create_result;
+    }
+
+    return feature_base->QueryInterface(iid, pp_out_object);
+}
+
 DasResult PluginManager::GetPluginFeatures(
     const std::filesystem::path& path,
     std::vector<FeatureInfo>&    out_features) const
@@ -745,6 +781,7 @@ void PluginManager::RegisterTestFeature(
     // Allocate a stable FeatureInfo that persists until Shutdown
     static std::vector<std::unique_ptr<FeatureInfo>> test_features;
     auto fi = std::make_unique<FeatureInfo>();
+    fi->feature_index = 0;
     fi->feature_type = type;
     fi->iid = DasGuid{};
     fi->interface_ptr = interface_ptr;
