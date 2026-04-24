@@ -75,6 +75,25 @@ public:
         const PluginResourceEntry** pp_out);
 
     /**
+     * @brief Resolve a safe full path from a resource entry and a relative
+     * path.
+     *
+     * Validates that the relative path is safe (non-empty, not absolute, no
+     * ".." traversal) and that the resolved full path stays within the resource
+     * root.
+     *
+     * @param resource_root The validated resource root from a
+     * PluginResourceEntry.
+     * @param relative_path The relative path to resolve (UTF-8).
+     * @param full_path     [out] The resolved full path on success.
+     * @return DAS_S_OK on success, DAS_E_INVALID_PATH if the path is unsafe.
+     */
+    static DasResult ResolveResourceFullPath(
+        const std::filesystem::path& resource_root,
+        const std::string&           relative_path,
+        std::filesystem::path&       full_path);
+
+    /**
      * @brief Force a full rescan on the next cache miss.
      *
      * Marks the cache as stale so the next ResolvePluginResourceEntryByGuid

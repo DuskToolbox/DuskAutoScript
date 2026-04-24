@@ -86,6 +86,76 @@ DasResult PluginResourceIndex::ResolvePluginResourceEntryByGuid(
     return DAS_E_NOT_FOUND;
 }
 
+DasResult PluginResourceIndex::ResolveResourceFullPath(
+    const std::filesystem::path& resource_root,
+    const std::string&           relative_path,
+    std::filesystem::path&       full_path)
+{
+    if (relative_path.empty())
+    {
+        DAS_CORE_LOG_WARN("PluginResourceIndex: relative path is empty");
+        return DAS_E_INVALID_PATH;
+    }
+
+    std::filesystem::path rp(relative_path);
+
+    if (rp.is_absolute())
+    {
+        DAS_CORE_LOG_WARN(
+            "PluginResourceIndex: relative path must not be absolute: {}",
+            relative_path);
+        return DAS_E_INVALID_PATH;
+    }
+
+    if (relative_path.find("..") != std::string::npos)
+    {
+        DAS_CORE_LOG_WARN(
+            "PluginResourceIndex: relative path must not contain '..': {}",
+            relative_path);
+        return DAS_E_INVALID_PATH;
+    }
+
+    std::error_code ec;
+    auto canonical_root = std::filesystem::weakly_canonical(resource_root, ec);
+    if (ec)
+    {
+        DAS_CORE_LOG_WARN(
+            "PluginResourceIndex: cannot canonicalize resource_root: {}",
+            ec.message());
+        return DAS_E_INVALID_PATH;
+    }
+
+    auto resolved = canonical_root / rp;
+    auto canonical_resolved = std::filesystem::weakly_canonical(resolved, ec);
+    if (ec)
+    {
+        ec.clear();
+        canonical_resolved = resolved;
+    }
+
+    auto relative = canonical_resolved.lexically_relative(canonical_root);
+    auto rel_str = relative.string();
+    if (rel_str.empty())
+    {
+        DAS_CORE_LOG_WARN(
+            "PluginResourceIndex: relative path resolves outside resource root: "
+            "{}",
+            relative_path);
+        return DAS_E_INVALID_PATH;
+    }
+
+    if (rel_str.size() >= 2 && rel_str.substr(0, 2) == "..")
+    {
+        DAS_CORE_LOG_WARN(
+            "PluginResourceIndex: relative path escapes resource root: {}",
+            relative_path);
+        return DAS_E_INVALID_PATH;
+    }
+
+    full_path = std::move(canonical_resolved);
+    return DAS_S_OK;
+}
+
 void PluginResourceIndex::InvalidateCache()
 {
     std::unique_lock lock(mutex_);
