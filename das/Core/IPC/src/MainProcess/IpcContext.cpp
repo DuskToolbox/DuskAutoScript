@@ -1,5 +1,6 @@
 #include <IpcProxyFactory.h>
 #include <boost/asio/post.hpp>
+#include <cassert>
 #include <cstring>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/IPC/AsyncOperationImpl.h>
@@ -490,6 +491,24 @@ namespace Core
                     return DAS_E_IPC_NOT_INITIALIZED;
                 }
 
+                /**
+                 * BusinessThread-only guard: CreateRemoteProxy creates/caches
+                 * proxy and registers remote object in DOM. This operation
+                 * must run on BusinessThread because DOM/Registry/ProxyCache
+                 * are single-threaded BT-owned state. Non-BT callers are
+                 * programming errors — they must schedule proxy creation on
+                 * BusinessThread before calling this method.
+                 */
+                if (!business_thread_->IsCurrentThread())
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "CreateRemoteProxy must be called on BusinessThread");
+                    assert(
+                        false
+                        && "CreateRemoteProxy must run on BusinessThread");
+                    return DAS_E_UNEXPECTED_THREAD_DETECTED;
+                }
+
                 // Convert DasGuid (UUID) to uint32_t FNV-1a hash using the same
                 // algorithm as RemoteObjectRegistry::ComputeInterfaceId
                 uint32_t interface_hash =
@@ -529,6 +548,58 @@ namespace Core
                 }
                 *pp_out_object = nullptr;
 
+                /**
+                 * ResolveMainProcessInterface must run on BusinessThread
+                 * because it accesses RemoteObjectRegistry and
+                 * DistributedObjectManager (BT single-threaded state).
+                 *
+                 * BT fast path: direct execution (zero overhead).
+                 * Non-BT path: schedule_on_business_thread + synchronous wait
+                 * (caller expects synchronous return).
+                 */
+                if (business_thread_ && business_thread_->IsCurrentThread())
+                {
+                    return ResolveMainProcessInterfaceImpl(iid, pp_out_object);
+                }
+
+                auto result = wait(
+                    stdexec::let_value(
+                        stdexec::schedule(schedule_on_business_thread(*this)),
+                        [this, iid]()
+                        {
+                            IDasBase* obj = nullptr;
+                            auto      hr =
+                                ResolveMainProcessInterfaceImpl(iid, &obj);
+                            // DasPtr(obj) AddRefs; when the pair is
+                            // destructed it Releases, leaving the caller's
+                            // AddRef from LookupObject intact.
+                            return stdexec::just(
+                                std::make_pair(hr, DasPtr<IDasBase>(obj)));
+                        }));
+
+                if (!result.has_value())
+                {
+                    return DAS_E_IPC_TIMEOUT;
+                }
+                auto& [hr, ptr] = std::get<0>(*result);
+                if (IsOk(hr))
+                {
+                    // ptr.Get() is valid until ptr destructs.
+                    // AddRef for caller; ptr's destructor will Release its
+                    // own reference.
+                    if (ptr)
+                    {
+                        ptr->AddRef();
+                    }
+                    *pp_out_object = ptr.Get();
+                }
+                return hr;
+            }
+
+            DasResult IpcContext::ResolveMainProcessInterfaceImpl(
+                const DasGuid& iid,
+                IDasBase**     pp_out_object)
+            {
                 uint32_t interface_id =
                     RemoteObjectRegistry::ComputeInterfaceId(iid);
                 RemoteObjectInfo info;

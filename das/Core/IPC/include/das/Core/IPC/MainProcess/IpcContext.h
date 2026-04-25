@@ -148,6 +148,12 @@ namespace Core
 
                 /// UnregisterService 的实际实现（在 BusinessThread 上执行）
                 DasResult UnregisterServiceImpl(const DasGuid& iid);
+
+                /// ResolveMainProcessInterface 的实际实现（在 BusinessThread
+                /// 上执行）
+                DasResult ResolveMainProcessInterfaceImpl(
+                    const DasGuid& iid,
+                    IDasBase**     pp_out_object);
             };
 
         } // namespace MainProcess

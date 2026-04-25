@@ -2,6 +2,7 @@
 #define DAS_CORE_IPC_LOAD_PLUGIN_ASYNC_OPERATION_IMPL_H
 
 #include <atomic>
+#include <cassert>
 #include <cstring>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
@@ -27,8 +28,13 @@ namespace Core
         /**
          * @brief LoadPlugin 专用异步操作实现
          *
-         * 独立于 AsyncOperationImpl 模板，直接解析 28 字节响应
-         * 并通过 CreateRemoteProxy 创建代理对象。
+         * 独立于 AsyncOperationImpl 模板，直接解析 28 字节响应，
+         * 然后将 proxy 创建 continuation 投递到 BusinessThread。
+         *
+         * LOAD_PLUGIN response completion 在 IPC IO completion 线程上
+         * 解析 ObjectId 和 IID，但不直接创建 proxy（CreateRemoteProxy
+         * 是 BusinessThread-only API）。它通过 PostToBusinessThread 投递
+         * continuation，在 BT 上创建 proxy 后再 Complete operation。
          *
          * @tparam Sender sender 类型（通常是 AwaitResponseSender）
          */
@@ -42,6 +48,76 @@ namespace Core
             DasPtr<IDasBase>      proxy_; // uses Attach to take ownership
             DasPtr<IDasAsyncCompletedHandler> handler_;
             MainProcess::IIpcContext*         ctx_; // raw pointer, not owning
+
+            //=================================================================
+            // BtContinuation — proxy creation continuation for BusinessThread
+            //=================================================================
+
+            /**
+             * @brief IDasAsyncCallback that runs on BusinessThread to create
+             * the proxy and complete the async operation.
+             *
+             * This callback is posted via IIpcContext::PostToBusinessThread.
+             * It holds a DasPtr to the operation to prevent premature
+             * destruction while the continuation is in-flight.
+             */
+            class BtContinuation final : public IDasAsyncCallback
+            {
+            public:
+                std::atomic<uint32_t>                ref_{1};
+                ObjectId                             object_id_;
+                DasGuid                              iid_;
+                DasPtr<LoadPluginAsyncOperationImpl> self_;
+
+                BtContinuation(
+                    ObjectId                             object_id,
+                    DasGuid                              iid,
+                    DasPtr<LoadPluginAsyncOperationImpl> self)
+                    : object_id_(object_id), iid_(iid), self_(std::move(self))
+                {
+                }
+
+                uint32_t AddRef() override { return ++ref_; }
+
+                uint32_t Release() override
+                {
+                    auto r = --ref_;
+                    if (r == 0)
+                    {
+                        delete this;
+                    }
+                    return r;
+                }
+
+                DasResult QueryInterface(const DasGuid& iid, void** pp) override
+                {
+                    if (iid == DasIidOf<IDasAsyncCallback>())
+                    {
+                        AddRef();
+                        *pp = this;
+                        return DAS_S_OK;
+                    }
+                    return DAS_E_NO_INTERFACE;
+                }
+
+                DasResult Do() noexcept override
+                {
+                    IDasBase* proxy = nullptr;
+                    auto      result = self_->ctx_->CreateRemoteProxy(
+                        object_id_,
+                        iid_,
+                        &proxy);
+                    if (DAS::IsOk(result) && proxy)
+                    {
+                        self_->Complete(DAS_S_OK, proxy);
+                    }
+                    else
+                    {
+                        self_->Complete(DAS_E_IPC_PROXY_CREATION_FAILED);
+                    }
+                    return DAS_S_OK;
+                }
+            };
 
             //=================================================================
             // CompletionReceiver
@@ -83,19 +159,20 @@ namespace Core
                             sizeof(DasGuid));
                         // session_id [24, 26) and version [26, 28) ignored
 
-                        IDasBase* proxy = nullptr;
-                        auto      result = r.self_->ctx_->CreateRemoteProxy(
+                        // AddRef self to keep operation alive during
+                        // BT continuation
+                        r.self_->AddRef();
+                        auto continuation = new BtContinuation(
                             object_id,
                             iid,
-                            &proxy);
-                        if (DAS::IsOk(result) && proxy)
-                        {
-                            r.self_->Complete(DAS_S_OK, proxy);
-                        }
-                        else
-                        {
-                            r.self_->Complete(DAS_E_IPC_PROXY_CREATION_FAILED);
-                        }
+                            DasPtr<LoadPluginAsyncOperationImpl>::Attach(
+                                r.self_));
+
+                        // Post continuation to BusinessThread for proxy
+                        // creation. PostToBusinessThread is fire-and-forget;
+                        // on failure, complete with error on current thread.
+                        r.self_->ctx_->PostToBusinessThread(continuation);
+                        continuation->Release();
                     }
                     else
                     {
