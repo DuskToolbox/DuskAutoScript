@@ -7,6 +7,7 @@
 #include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/IMessageHandler.h>
+#include <das/Core/IPC/InternalCallbackHandler.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcMessageQueue.h>
@@ -572,6 +573,57 @@ bool IpcRunLoop::IsRunning() const { return running_.load(); }
 void IpcRunLoop::SetSessionId(uint16_t session_id)
 {
     local_session_id_ = session_id;
+}
+
+DasResult IpcRunLoop::PostToBusinessThread(IDasAsyncCallback* callback) noexcept
+{
+    if (!callback)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    if (!inbound_queue_)
+    {
+        DAS_CORE_LOG_ERROR(
+            "PostToBusinessThread: inbound_queue_ not initialized");
+        return DAS_E_IPC_NOT_INITIALIZED;
+    }
+
+    // AddRef to extend lifetime through the queue (body holds reference)
+    callback->AddRef();
+
+    // Encode callback pointer as body
+    std::vector<uint8_t> body(sizeof(IDasAsyncCallback*));
+    std::memcpy(body.data(), &callback, sizeof(IDasAsyncCallback*));
+
+    // Construct header: BUSINESS_CONTROL +
+    // InternalBusinessCommand::ASYNC_CALLBACK
+    auto header =
+        IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::EVENT)
+            .SetHeaderFlags(HeaderFlags::BUSINESS_CONTROL)
+            .SetInterfaceId(
+                static_cast<uint32_t>(InternalBusinessCommand::ASYNC_CALLBACK))
+            .SetBodySize(static_cast<uint32_t>(body.size()))
+            .Build();
+
+    InboundMessage msg;
+    msg.header = header;
+    msg.body = std::move(body);
+
+    DasResult push_result = inbound_queue_->Push(std::move(msg));
+    if (DAS::IsFailed(push_result))
+    {
+        // Push failed: release the callback reference we AddRef'd above
+        auto released = DasPtr<IDasAsyncCallback>::Attach(callback);
+        (void)released;
+        DAS_CORE_LOG_ERROR(
+            "PostToBusinessThread: Push failed, result={}",
+            push_result);
+        return push_result;
+    }
+
+    return DAS_S_OK;
 }
 
 DasResult IpcRunLoop::PostSend(

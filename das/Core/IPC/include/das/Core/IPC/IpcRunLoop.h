@@ -11,6 +11,7 @@
 #include <das/Core/IPC/IpcMessageQueue.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <das/Core/Utils/StdExecution.h>
+#include <das/IDasAsyncCallback.h>
 #include <das/IDasBase.h>
 #include <functional>
 #include <memory>
@@ -324,6 +325,24 @@ public:
         DefaultAsyncIpcTransport*        transport,
         const ValidatedIPCMessageHeader& header,
         std::vector<uint8_t>&&           body);
+
+    /**
+     * @brief Fire-and-forget enqueue to BusinessThread.
+     *
+     * Wraps callback in an ASYNC_CALLBACK inbound message and pushes it to
+     * the BusinessThread queue via the existing inbound_queue_ channel.
+     * This reports only immediate enqueue failure; it does not wait for
+     * or report callback execution result.
+     *
+     * @param callback IDasAsyncCallback to execute on BusinessThread
+     * @return DasResult DAS_S_OK on success, error on enqueue failure
+     *
+     * @thread_safety May be called from any thread that owns a proxy
+     * reference.
+     * @architecture Bridges non-BT proxy teardown to the BusinessThread
+     * runtime domain without exposing DOM/Registry to the caller.
+     */
+    DasResult PostToBusinessThread(IDasAsyncCallback* callback) noexcept;
 
     /**
      * @brief Register a pending call entry (on_complete filled later by

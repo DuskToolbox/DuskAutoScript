@@ -609,6 +609,73 @@ namespace Core::IPC
         return wait(std::forward<Sender>(sender));
     }
 
+    //=============================================================================
+    // MakeAsyncCallback — lambda to IDasAsyncCallback convenience wrapper
+    //=============================================================================
+
+    /**
+     * @brief Create an IDasAsyncCallback from a lambda for fire-and-forget
+     * dispatch.
+     *
+     * Returns a DasPtr<IDasAsyncCallback> that wraps the given callable.
+     * The callback is self-deleting (ref-counted) and executes fn() in Do().
+     *
+     * Used by DasProxyBase destructor to enqueue DOM::UnregisterObject to
+     * BusinessThread via IpcRunLoop::PostToBusinessThread, and by
+     * LoadPluginAsyncOperationImpl BtContinuation as an alternative to
+     * hand-rolled callback classes.
+     *
+     * @tparam F Callable type
+     * @param fn Callable to wrap
+     * @return DasPtr<IDasAsyncCallback> owning the callback
+     *
+     * @architecture This is the fire-and-forget adapter for the BusinessThread
+     * runtime domain. It bridges non-BT teardown paths (proxy Release on
+     * arbitrary threads) to the BT inbound queue without exposing DOM/Registry
+     * to the caller.
+     */
+    template <typename F>
+    auto MakeAsyncCallback(F&& fn)
+    {
+        struct Callback final : IDasAsyncCallback
+        {
+            std::atomic<uint32_t> ref_{1};
+            std::decay_t<F>       fn_;
+
+            explicit Callback(F&& f) : fn_(std::move(f)) {}
+
+            uint32_t AddRef() override { return ++ref_; }
+
+            uint32_t Release() override
+            {
+                auto r = --ref_;
+                if (r == 0)
+                {
+                    delete this;
+                }
+                return r;
+            }
+
+            DasResult QueryInterface(const DasGuid& iid, void** pp) override
+            {
+                if (iid == DasIidOf<IDasAsyncCallback>())
+                {
+                    AddRef();
+                    *pp = this;
+                    return DAS_S_OK;
+                }
+                return DAS_E_NO_INTERFACE;
+            }
+
+            DasResult Do() noexcept override
+            {
+                fn_();
+                return DAS_S_OK;
+            }
+        };
+        return DasPtr<IDasAsyncCallback>(new Callback(std::forward<F>(fn)));
+    }
+
 } // namespace Core::IPC
 
 // Inject tag_invoke into MainProcess namespace so that ADL can find

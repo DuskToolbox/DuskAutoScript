@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <das/Core/IPC/BusinessThread.h>
+#include <das/Core/IPC/DasAsyncSender.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IPCProxyBase.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
@@ -32,18 +33,49 @@ class DasProxyBase : public IPCProxyBase
 public:
     using InterfaceType = TInterface;
 
+    /**
+     * @brief Destructor with BusinessThread-aware DOM::UnregisterObject.
+     *
+     * On BusinessThread: calls DOM::UnregisterObject directly.
+     * On non-BT thread: fire-and-forget enqueue via MakeAsyncCallback +
+     * IpcRunLoop::PostToBusinessThread. Does not wait for callback
+     * execution.
+     *
+     * The REMOTE_RELEASE message is always sent fire-and-forget
+     * regardless of the calling thread.
+     */
     ~DasProxyBase() override
     {
         const ObjectId& oid = GetObjectId();
         if (oid.session_id != 0 || oid.local_id != 0)
         {
-            // 注销远程对象
-            GetObjectManager().UnregisterObject(oid);
+            // DOM::UnregisterObject: BT-aware dispatch
+            auto  bt = GetBusinessThread().lock();
+            auto& dom = GetObjectManager();
+            if (bt && bt->IsCurrentThread())
+            {
+                // BT: direct call
+                dom.UnregisterObject(oid);
+            }
+            else if (bt)
+            {
+                // Non-BT: fire-and-forget enqueue to BusinessThread
+                // dom is a reference (owner guarantees lifetime), oid
+                // captured by value
+                auto cb = MakeAsyncCallback([&dom, oid]()
+                                            { dom.UnregisterObject(oid); });
+                auto post_result = GetRunLoop().PostToBusinessThread(cb.Get());
+                if (DAS::IsFailed(post_result))
+                {
+                    DAS_CORE_LOG_WARN(
+                        "DasProxyBase::~DasProxyBase: failed to enqueue "
+                        "DOM unregister to BusinessThread, result={}",
+                        post_result);
+                }
+            }
 
-            // 发送 RELEASE_OBJECT fire-and-forget 消息到远程
-            // 构建控制平面 EVENT 消息
+            // REMOTE_RELEASE fire-and-forget message (unchanged)
             std::vector<uint8_t> release_body;
-            // 序列化 ObjectId 到 body
             release_body.insert(
                 release_body.end(),
                 reinterpret_cast<const uint8_t*>(&oid),
@@ -60,7 +92,7 @@ public:
                     .SetBodySize(static_cast<uint32_t>(release_body.size()))
                     .Build();
 
-            // PostSend 是 fire-and-forget，不检查结果
+            // PostSend is fire-and-forget, does not check result
             GetRunLoop().PostSend(release_header, std::move(release_body));
         }
     }
