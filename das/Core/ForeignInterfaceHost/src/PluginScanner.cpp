@@ -58,6 +58,14 @@ std::vector<PluginPackageDesc> ScanPlugins(
         {
             auto dirname = entry.path().filename().string();
 
+            // Skip temporary/transient states from concurrent installs
+            if (dirname.ends_with(".installing")
+                || dirname.ends_with(".willBeDelete")
+                || dirname.starts_with(".tmp_install_"))
+            {
+                continue;
+            }
+
             auto marker = entry.path() / (dirname + ".willBeDelete");
             if (std::filesystem::exists(marker))
             {

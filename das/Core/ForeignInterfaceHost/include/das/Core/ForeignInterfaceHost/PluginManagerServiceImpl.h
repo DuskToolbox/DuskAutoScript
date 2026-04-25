@@ -2,9 +2,12 @@
 #define DAS_CORE_FOREIGNINTERFACEHOST_PLUGINMANAGERSERVICEIMPL_H
 
 #include <atomic>
+#include <condition_variable>
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/IDasPluginManagerService.h>
 #include <filesystem>
+#include <mutex>
+#include <unordered_set>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
@@ -46,6 +49,28 @@ private:
     std::atomic<uint32_t> ref_count_{0};
     PluginManager&        mgr_;
     std::filesystem::path plugin_dir_;
+
+    /**
+     * @name Per-plugin inflight guard
+     *
+     * Protects InstallPluginPackageData and MarkPluginPackageForDeletion
+     * for the same plugin GUID or name. Dual-key RAII InflightGuard
+     * acquires both "guid:{guid}" and "name:{name}" keys in sorted
+     * order to prevent deadlock.
+     *
+     * Same GUID or same name operations serialize; different GUID AND
+     * different name operations proceed independently.
+     *
+     * @architecture HTTP config domain (Phase 52). Multiple HTTP workers
+     * may call these methods concurrently; the inflight guard ensures
+     * same-plugin operations are serialized without blocking different
+     * plugins.
+     * @{
+     */
+    mutable std::mutex              inflight_mutex_;
+    std::condition_variable         inflight_cv_;
+    std::unordered_set<std::string> inflight_plugin_ops_;
+    /** @} */
 };
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END

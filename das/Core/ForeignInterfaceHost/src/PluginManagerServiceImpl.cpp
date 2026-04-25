@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/IDasCaptureManagerImpl.h>
 #include <das/Core/ForeignInterfaceHost/IDasStringVectorImpl.h>
@@ -25,6 +26,87 @@ namespace Das::Core::Utils
 }
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
+
+namespace
+{
+    /**
+     * @brief RAII inflight guard for per-plugin operation serialization.
+     *
+     * Acquires BOTH keys (guid and name) in deterministic sorted order
+     * to prevent deadlock. Blocks in constructor until all keys are
+     * available, removes keys and notifies waiters in destructor.
+     * Exception-safe: destructor always releases acquired keys.
+     *
+     * @architecture HTTP config domain (Phase 52). Used by
+     * InstallPluginPackageData and MarkPluginPackageForDeletion to
+     * serialize same-GUID or same-name operations. Different GUID AND
+     * different name operations proceed independently.
+     */
+    class InflightGuard
+    {
+    public:
+        InflightGuard(
+            std::mutex&                      mtx,
+            std::condition_variable&         cv,
+            std::unordered_set<std::string>& set,
+            const std::string&               guid_key,
+            const std::string&               name_key)
+            : mutex_(mtx), cv_(cv), set_(set)
+        {
+            if (!guid_key.empty())
+            {
+                keys_.push_back("guid:" + guid_key);
+            }
+            if (!name_key.empty())
+            {
+                keys_.push_back("name:" + name_key);
+            }
+            // Sort to prevent deadlock: always acquire in same order
+            std::sort(keys_.begin(), keys_.end());
+
+            std::unique_lock<std::mutex> lock(mutex_);
+            cv_.wait(
+                lock,
+                [&]
+                {
+                    for (const auto& k : keys_)
+                    {
+                        if (set_.find(k) != set_.end())
+                        {
+                            return false;
+                        }
+                    }
+                    return true;
+                });
+            for (const auto& k : keys_)
+            {
+                set_.insert(k);
+            }
+        }
+
+        ~InflightGuard()
+        {
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                for (const auto& k : keys_)
+                {
+                    set_.erase(k);
+                }
+            }
+            cv_.notify_all();
+        }
+
+        InflightGuard(const InflightGuard&) = delete;
+        InflightGuard& operator=(const InflightGuard&) = delete;
+
+    private:
+        std::mutex&                      mutex_;
+        std::condition_variable&         cv_;
+        std::unordered_set<std::string>& set_;
+        std::vector<std::string>         keys_;
+    };
+
+} // anonymous namespace
 
 PluginManagerServiceImpl::PluginManagerServiceImpl(
     PluginManager&        mgr,
@@ -186,6 +268,44 @@ DasResult PluginManagerServiceImpl::InstallPluginPackageData(
     {
         return DAS_E_INVALID_ARGUMENT;
     }
+
+    // Phase 1: Read identity from in-memory ZIP manifest BEFORE any
+    // filesystem mutation. Reuses existing ZIP parsing infrastructure
+    // (EnumerateZipEntries, local header, decompression).
+    std::string plugin_guid;
+    std::string plugin_name;
+    auto        meta_result = ReadPluginManifestMetadataFromZip(
+        std::string_view{
+            reinterpret_cast<const char*>(p_package_data),
+            static_cast<size_t>(package_size)},
+        plugin_guid,
+        plugin_name);
+    if (DAS::IsFailed(meta_result))
+    {
+        DAS_CORE_LOG_ERROR(
+            "InstallPluginPackageData: failed to read identity "
+            "from zip manifest");
+        return meta_result;
+    }
+
+    if (plugin_guid.empty() && plugin_name.empty())
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    // Phase 2: RAII inflight guard — acquires both guid and name keys
+    // in sorted order, blocks until all are available.
+    // Same GUID or same name operations serialize.
+    InflightGuard guard(
+        inflight_mutex_,
+        inflight_cv_,
+        inflight_plugin_ops_,
+        plugin_guid,
+        plugin_name);
+
+    // Phase 3: Install (filesystem mutation under inflight guard scope).
+    // InflightGuard destructor releases both keys and notifies waiters
+    // on any exit path (including exceptions).
     return InstallPlugin(
         plugin_dir_,
         std::string_view{
@@ -197,6 +317,31 @@ DasResult PluginManagerServiceImpl::MarkPluginPackageForDeletion(
     const DasGuid* p_package_guid)
 {
     DAS_UTILS_CHECK_POINTER(p_package_guid)
+
+    // Convert DasGuid to string for inflight key
+    std::string guid_str = DasGuidToStdString(*p_package_guid);
+
+    // Resolve plugin name from scanning installed plugins
+    std::string plugin_name;
+    auto        installed = ScanPlugins(plugin_dir_);
+    for (const auto& info : installed)
+    {
+        if (info.guid == *p_package_guid)
+        {
+            plugin_name = info.name;
+            break;
+        }
+    }
+
+    // RAII inflight guard — acquires both guid and name keys
+    // in sorted order, blocks until all are available.
+    InflightGuard guard(
+        inflight_mutex_,
+        inflight_cv_,
+        inflight_plugin_ops_,
+        guid_str,
+        plugin_name);
+
     return MarkForDeletion(plugin_dir_, *p_package_guid);
 }
 

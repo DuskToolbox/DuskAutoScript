@@ -3,6 +3,7 @@
 #include <das/Core/ForeignInterfaceHost/PluginScanner.h>
 #include <das/Core/Logger/Logger.h>
 
+#include <algorithm>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -11,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include <nlohmann/json.hpp>
 #include <zlib.h>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
@@ -618,6 +620,185 @@ DasResult InstallPlugin(
     std::filesystem::remove_all(temp_dir, ec);
 
     return DAS_S_OK;
+}
+
+DasResult ReadPluginManifestMetadataFromZip(
+    std::string_view zip_data,
+    std::string&     out_guid,
+    std::string&     out_name)
+{
+    out_guid.clear();
+    out_name.clear();
+
+    if (zip_data.empty())
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    std::string               zip_str(zip_data.data(), zip_data.size());
+    std::vector<ZipEntryMeta> entries;
+    auto                      result = EnumerateZipEntries(zip_str, entries);
+    if (result != DAS_S_OK)
+    {
+        return result;
+    }
+
+    if (entries.empty())
+    {
+        DAS_CORE_LOG_WARN(
+            "ReadPluginManifestMetadataFromZip: ZIP archive is empty");
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    // Find manifest entry — same logic as InstallPlugin:
+    // For flat ZIPs (no subdirs), look for a .json entry at root.
+    // For packaged ZIPs (with subdirs), look for */manifest.json.
+    bool has_subdir = false;
+    for (const auto& e : entries)
+    {
+        if (!e.is_directory && e.filename.find('/') != std::string::npos)
+        {
+            has_subdir = true;
+            break;
+        }
+    }
+
+    // Candidate manifest entries to try
+    std::vector<const ZipEntryMeta*> candidates;
+
+    if (!has_subdir)
+    {
+        // Flat ZIP: any root .json file is a candidate
+        for (const auto& e : entries)
+        {
+            if (!e.is_directory && e.filename.size() >= 5
+                && e.filename.compare(e.filename.size() - 5, 5, ".json") == 0
+                && e.filename.find('/') == std::string::npos)
+            {
+                candidates.push_back(&e);
+            }
+        }
+    }
+    else
+    {
+        // Packaged ZIP: look for */manifest.json or */{dirname}.json
+        for (const auto& e : entries)
+        {
+            if (e.is_directory)
+            {
+                continue;
+            }
+            if (e.filename == "manifest.json"
+                || e.filename.find("/manifest.json") != std::string::npos)
+            {
+                candidates.push_back(&e);
+            }
+        }
+    }
+
+    if (candidates.empty())
+    {
+        DAS_CORE_LOG_WARN(
+            "ReadPluginManifestMetadataFromZip: no manifest candidate found");
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    // Try each candidate until one has guid and name
+    for (const auto* meta : candidates)
+    {
+        // Read entry data from memory using local header offset
+        auto local_header = meta->local_header_offset;
+        if (local_header + 30 > zip_str.size())
+        {
+            continue;
+        }
+
+        auto local_sig = ReadLE<uint32_t>(zip_str.data(), local_header);
+        if (local_sig != kLocalFileHeaderSig)
+        {
+            continue;
+        }
+
+        auto   lfn_len = ReadLE<uint16_t>(zip_str.data(), local_header + 26);
+        auto   lex_len = ReadLE<uint16_t>(zip_str.data(), local_header + 28);
+        size_t data_off = local_header + 30 + lfn_len + lex_len;
+
+        if (data_off + meta->compressed_size > zip_str.size())
+        {
+            continue;
+        }
+
+        std::string file_data;
+        if (meta->compression == kCompressionStored)
+        {
+            file_data.assign(zip_str.data() + data_off, meta->compressed_size);
+        }
+        else if (meta->compression == kCompressionDeflate)
+        {
+            std::string compressed(
+                zip_str.data() + data_off,
+                meta->compressed_size);
+            if (!InflateData(
+                    compressed,
+                    meta->compressed_size,
+                    file_data,
+                    meta->uncompressed_size))
+            {
+                DAS_CORE_LOG_WARN(
+                    "ReadPluginManifestMetadataFromZip: decompression failed "
+                    "for {}",
+                    meta->filename);
+                continue;
+            }
+        }
+        else
+        {
+            DAS_CORE_LOG_WARN(
+                "ReadPluginManifestMetadataFromZip: unsupported compression {} "
+                "for {}",
+                meta->compression,
+                meta->filename);
+            continue;
+        }
+
+        try
+        {
+            auto json_data = nlohmann::json::parse(file_data);
+
+            if (json_data.contains("guid") && json_data["guid"].is_string())
+            {
+                out_guid = json_data["guid"].get<std::string>();
+            }
+            if (json_data.contains("name") && json_data["name"].is_string())
+            {
+                out_name = json_data["name"].get<std::string>();
+            }
+
+            if (!out_guid.empty() && !out_name.empty())
+            {
+                return DAS_S_OK;
+            }
+        }
+        catch (const std::exception& e)
+        {
+            DAS_CORE_LOG_WARN(
+                "ReadPluginManifestMetadataFromZip: JSON parse failed for "
+                "{}: {}",
+                meta->filename,
+                e.what());
+            continue;
+        }
+    }
+
+    // If we found at least a guid or name from partial results, that's OK
+    if (!out_guid.empty() || !out_name.empty())
+    {
+        return DAS_S_OK;
+    }
+
+    DAS_CORE_LOG_WARN(
+        "ReadPluginManifestMetadataFromZip: no manifest with guid/name found");
+    return DAS_E_INVALID_ARGUMENT;
 }
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
