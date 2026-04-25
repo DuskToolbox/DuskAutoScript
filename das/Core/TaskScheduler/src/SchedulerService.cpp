@@ -988,30 +988,29 @@ namespace Das::Core::TaskScheduler
 
     DasResult SchedulerService::DeleteTask(int64_t task_id)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-
-        if (state_.load() == SchedulerState::Running)
+        // Phase 1: Short lock to validate state and check existence
         {
-            return DAS_E_TASK_WORKING;
-        }
+            std::lock_guard<std::mutex> lock(mutex_);
 
-        // Find and remove instance
-        auto it = std::find_if(
-            task_instances_.begin(),
-            task_instances_.end(),
-            [task_id](const TaskInstanceRecord& r) { return r.id == task_id; });
+            if (state_.load() == SchedulerState::Running)
+            {
+                return DAS_E_TASK_WORKING;
+            }
 
-        if (it == task_instances_.end())
-        {
-            return DAS_E_NOT_FOUND;
-        }
+            auto it = std::find_if(
+                task_instances_.begin(),
+                task_instances_.end(),
+                [task_id](const TaskInstanceRecord& r)
+                { return r.id == task_id; });
 
-        auto erased = *it;
-        auto erased_index =
-            static_cast<size_t>(std::distance(task_instances_.begin(), it));
-        task_instances_.erase(it);
+            if (it == task_instances_.end())
+            {
+                return DAS_E_NOT_FOUND;
+            }
+        } // lock released — Config side validation done
 
-        // Update persisted state with retry
+        // Phase 2: Lock-free SettingsManager persistence with retry.
+        // All file I/O and sleep_for execute outside mutex_.
         auto& settings = plugin_manager_.GetSettingsManager();
 
         auto scheduler_index = settings.GetSchedulerIndexJson("0");
@@ -1047,6 +1046,17 @@ namespace Das::Core::TaskScheduler
 
             if (!DAS::IsFailed(delete_result) && !DAS::IsFailed(index_result))
             {
+                // Persistence succeeded — remove from runtime state
+                std::lock_guard<std::mutex> commit_lock(mutex_);
+                auto                        it = std::find_if(
+                    task_instances_.begin(),
+                    task_instances_.end(),
+                    [task_id](const TaskInstanceRecord& r)
+                    { return r.id == task_id; });
+                if (it != task_instances_.end())
+                {
+                    task_instances_.erase(it);
+                }
                 return DAS_S_OK;
             }
 
@@ -1054,11 +1064,8 @@ namespace Das::Core::TaskScheduler
                 DAS::IsFailed(delete_result) ? delete_result : index_result;
         }
 
-        // All retries failed: restore the in-memory instance
-        task_instances_.insert(
-            task_instances_.begin() + static_cast<ptrdiff_t>(erased_index),
-            std::move(erased));
-
+        // All retries failed: runtime state unchanged (task remains in
+        // task_instances_), no rollback needed.
         DAS_CORE_LOG_ERROR(
             "SchedulerService::DeleteTask: persistence failed for task {} "
             "after {} retries, result={}",
