@@ -57,13 +57,13 @@ namespace Das::Core::TaskScheduler
     /// Represents a materialized queued task instance in the scheduler runtime.
     struct TaskInstanceRecord
     {
-        int64_t                    id = 0;
-        DasGuid                    task_guid;
-        DasGuid                    plugin_guid;
-        TaskAvailability           availability = TaskAvailability::Available;
-        std::string                unavailability_reason;
-        std::optional<std::string> next_execution_time;
-        nlohmann::json             properties;
+        int64_t                id = 0;
+        DasGuid                task_guid;
+        DasGuid                plugin_guid;
+        TaskAvailability       availability = TaskAvailability::Available;
+        std::string            unavailability_reason;
+        std::optional<int64_t> next_execution_time;
+        nlohmann::json         properties;
         // Pointer to the task type record if available
         TaskTypeRecord*                        task_type = nullptr;
         DasPtr<Das::PluginInterface::IDasTask> task_instance;
@@ -200,12 +200,12 @@ namespace Das::Core::TaskScheduler
          */
         struct ConfigPersistEvent
         {
-            int64_t     task_id;
-            std::string next_execution_time;
+            int64_t task_id;
+            int64_t next_execution_time;
         };
 
         /// Post a persistence event for the config-side thread.
-        void PostPersistEvent(int64_t task_id, const std::string& next_time);
+        void PostPersistEvent(int64_t task_id, int64_t next_time);
 
         /// Background loop: waits on CV, drains queue, calls SettingsManager.
         void ConfigPersistThreadLoop();

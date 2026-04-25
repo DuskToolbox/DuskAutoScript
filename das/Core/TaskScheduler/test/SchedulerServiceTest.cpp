@@ -282,7 +282,8 @@ TEST_F(SchedulerServiceTest, Get_ReturnsMergedView)
     task0["id"] = 0;
     task0["taskGuid"] = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
     task0["pluginGuid"] = "FFFFFFFF-0000-0000-0000-000000000000";
-    task0["nextExecutionTime"] = "2026-04-23T12:30:00+08:00";
+    // 2026-04-23T12:30:00+08:00 = 2026-04-23T04:30:00Z = 1776918600
+    task0["nextExecutionTime"] = 1776918600;
     task0["properties"] = {{"setting1", "value1"}, {"setting2", 42}};
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
@@ -295,9 +296,7 @@ TEST_F(SchedulerServiceTest, Get_ReturnsMergedView)
 
     ASSERT_EQ(state["tasks"].size(), 1u);
     EXPECT_EQ(state["tasks"][0]["id"], 0);
-    EXPECT_EQ(
-        state["tasks"][0]["nextExecutionTime"],
-        "2026-04-23T12:30:00+08:00");
+    EXPECT_EQ(state["tasks"][0]["nextExecutionTime"], 1776918600);
     EXPECT_EQ(state["tasks"][0]["properties"]["setting1"], "value1");
     EXPECT_EQ(state["tasks"][0]["properties"]["setting2"], 42);
 }
@@ -512,20 +511,19 @@ TEST_F(SchedulerServiceTest, UpdateInternalProperties_NextExecutionTime)
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
     // Update nextExecutionTime
+    // 2026-05-01T08:00:00+08:00 = 2026-05-01T00:00:00Z = 1777593600
     nlohmann::json internal_props;
-    internal_props["nextExecutionTime"] = "2026-05-01T08:00:00+08:00";
+    internal_props["nextExecutionTime"] = 1777593600;
     auto result = scheduler_->UpdateTaskInternalProperties(0, internal_props);
     EXPECT_EQ(result, DAS_S_OK);
 
     // Verify in-memory
     auto state = scheduler_->Get();
-    EXPECT_EQ(
-        state["tasks"][0]["nextExecutionTime"],
-        "2026-05-01T08:00:00+08:00");
+    EXPECT_EQ(state["tasks"][0]["nextExecutionTime"], 1777593600);
 
     // Verify persisted
     auto persisted = settings_manager_->GetTaskInstanceJson("0", 0);
-    EXPECT_EQ(persisted["nextExecutionTime"], "2026-05-01T08:00:00+08:00");
+    EXPECT_EQ(persisted["nextExecutionTime"], 1777593600);
 }
 
 TEST_F(SchedulerServiceTest, UpdateInternalProperties_ClearNextExecutionTime)
@@ -536,7 +534,8 @@ TEST_F(SchedulerServiceTest, UpdateInternalProperties_ClearNextExecutionTime)
     task0["id"] = 0;
     task0["taskGuid"] = "11111111-1111-1111-1111-111111111111";
     task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
-    task0["nextExecutionTime"] = "2026-05-01T08:00:00+08:00";
+    // 2026-05-01T08:00:00+08:00 = 2026-05-01T00:00:00Z = 1777593600
+    task0["nextExecutionTime"] = 1777593600;
     task0["properties"] = nlohmann::json::object();
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
@@ -559,21 +558,18 @@ TEST_F(SchedulerServiceTest, UnparseableNextExecutionTime_PreservedInGet)
     task0["id"] = 0;
     task0["taskGuid"] = "11111111-2222-3333-4444-555555555555";
     task0["pluginGuid"] = "00000000-0000-0000-0000-000000000000";
-    task0["nextExecutionTime"] = "not-a-valid-timestamp";
+    task0["nextExecutionTime"] = -1; // Invalid timestamp, preserved as-is
     task0["properties"] = nlohmann::json::object();
 
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
-    // The unparseable timestamp should be preserved in Get() output.
-    // ComputeNextDelay and FindNextRunnableTask skip unparseable timestamps
-    // (treat as far-future) instead of treating them as immediately runnable.
+    // Negative timestamps are preserved as-is in Get() output.
     auto state = scheduler_->Get();
     ASSERT_EQ(state["tasks"].size(), 1u);
     EXPECT_EQ(state["tasks"][0]["availability"], "unavailable");
-    EXPECT_EQ(
-        state["tasks"][0]["nextExecutionTime"], "not-a-valid-timestamp");
+    EXPECT_EQ(state["tasks"][0]["nextExecutionTime"], -1);
 }
 
 TEST_F(SchedulerServiceTest, UpdateInternalProperties_NotFound)
@@ -581,7 +577,7 @@ TEST_F(SchedulerServiceTest, UpdateInternalProperties_NotFound)
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
     nlohmann::json internal_props;
-    internal_props["nextExecutionTime"] = "2026-05-01T08:00:00+08:00";
+    internal_props["nextExecutionTime"] = 1777593600;
     auto result = scheduler_->UpdateTaskInternalProperties(99, internal_props);
     EXPECT_EQ(result, DAS_E_NOT_FOUND);
 }
@@ -700,7 +696,8 @@ TEST_F(SchedulerServiceTest, UpdateInternalProperties_PersistsToFile)
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
     nlohmann::json internal_props;
-    internal_props["nextExecutionTime"] = "2026-06-01T10:00:00+08:00";
+    // 2026-06-01T10:00:00+08:00 = 2026-06-01T02:00:00Z = 1780279200
+    internal_props["nextExecutionTime"] = 1780279200;
     ASSERT_EQ(
         scheduler_->UpdateTaskInternalProperties(0, internal_props),
         DAS_S_OK);
@@ -714,9 +711,32 @@ TEST_F(SchedulerServiceTest, UpdateInternalProperties_PersistsToFile)
 
     auto state = scheduler2->Get();
     ASSERT_EQ(state["tasks"].size(), 1u);
-    EXPECT_EQ(
-        state["tasks"][0]["nextExecutionTime"],
-        "2026-06-01T10:00:00+08:00");
+    EXPECT_EQ(state["tasks"][0]["nextExecutionTime"], 1780279200);
+}
+
+TEST_F(
+    SchedulerServiceTest,
+    Initialize_LegacyStringNextExecutionTime_MigratedToUnix)
+{
+    settings_manager_->CreateProfile("0");
+
+    nlohmann::json task0;
+    task0["id"] = 0;
+    task0["taskGuid"] = "11111111-1111-1111-1111-111111111111";
+    task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
+    task0["nextExecutionTime"] = "2026-06-15T10:30:00Z"; // Legacy string format
+    task0["properties"] = nlohmann::json::object();
+    WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto state = scheduler_->Get();
+    ASSERT_EQ(state["tasks"].size(), 1u);
+    // Should be migrated to Unix timestamp (number)
+    ASSERT_TRUE(state["tasks"][0]["nextExecutionTime"].is_number_integer());
+    // 2026-06-15T10:30:00Z = 1781519400
+    int64_t ts = state["tasks"][0]["nextExecutionTime"].get<int64_t>();
+    EXPECT_EQ(ts, 1781519400);
 }
 
 // ============================================================
@@ -1697,9 +1717,9 @@ TEST_F(SchedulerExecutionTest, OnTick_RefreshesNextExecutionTime)
     // Verify nextExecutionTime was persisted
     auto persisted = settings_manager_->GetTaskInstanceJson("0", 0);
     ASSERT_TRUE(persisted.contains("nextExecutionTime"));
-    EXPECT_EQ(
-        persisted["nextExecutionTime"].get<std::string>(),
-        "2026-06-15T10:30:00");
+    ASSERT_TRUE(persisted["nextExecutionTime"].is_number_integer());
+    // 2026-06-15T10:30:00Z = 1781519400
+    EXPECT_EQ(persisted["nextExecutionTime"].get<int64_t>(), 1781519400);
 }
 
 TEST_F(SchedulerExecutionTest, OnTick_GetNextExecutionTimeFailure_SetsSentinel)
@@ -1727,10 +1747,8 @@ TEST_F(SchedulerExecutionTest, OnTick_GetNextExecutionTimeFailure_SetsSentinel)
     // The sentinel far-future timestamp should be persisted
     auto persisted = settings_manager_->GetTaskInstanceJson("0", 0);
     ASSERT_TRUE(persisted.contains("nextExecutionTime"));
-    ASSERT_TRUE(persisted["nextExecutionTime"].is_string());
-    EXPECT_EQ(
-        persisted["nextExecutionTime"].get<std::string>(),
-        "2099-12-31T23:59:59");
+    ASSERT_TRUE(persisted["nextExecutionTime"].is_number_integer());
+    EXPECT_EQ(persisted["nextExecutionTime"].get<int64_t>(), 4102444799LL);
 }
 
 TEST_F(SchedulerExecutionTest, Stop_RequestsCancellationToken)
@@ -1801,7 +1819,8 @@ TEST_F(SchedulerRuntimeBackedTest, OnTick_RespectsPersistedNextExecutionTime)
     ASSERT_EQ(scheduler_->AddTask(FactoryTaskGuid, &second_task_id), DAS_S_OK);
 
     nlohmann::json internal_props;
-    internal_props["nextExecutionTime"] = "2099-01-01T00:00:00";
+    // 2099-01-01T00:00:00Z = 4070908800
+    internal_props["nextExecutionTime"] = 4070908800;
     ASSERT_EQ(
         scheduler_->UpdateTaskInternalProperties(first_task_id, internal_props),
         DAS_S_OK);
@@ -1815,7 +1834,7 @@ TEST_F(SchedulerRuntimeBackedTest, OnTick_RespectsPersistedNextExecutionTime)
     auto second_task_json =
         settings_manager_->GetTaskInstanceJson("0", second_task_id);
 
-    EXPECT_EQ(first_task_json["nextExecutionTime"], "2099-01-01T00:00:00");
+    EXPECT_EQ(first_task_json["nextExecutionTime"], 4070908800);
     EXPECT_NE(second_task_json["nextExecutionTime"], nullptr);
 }
 
@@ -1832,16 +1851,19 @@ TEST_F(SchedulerRuntimeBackedTest, AddTask_CreatesDistinctRuntimeInstances)
     ASSERT_TRUE(WaitForExecutions(2, std::chrono::milliseconds(500)));
     ASSERT_EQ(scheduler_->Disable(), DAS_S_OK);
 
+    // Allow config persist thread to flush queued events
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
     auto first_task_json =
         settings_manager_->GetTaskInstanceJson("0", first_task_id);
     auto second_task_json =
         settings_manager_->GetTaskInstanceJson("0", second_task_id);
 
-    ASSERT_TRUE(first_task_json["nextExecutionTime"].is_string());
-    ASSERT_TRUE(second_task_json["nextExecutionTime"].is_string());
+    ASSERT_TRUE(first_task_json["nextExecutionTime"].is_number_integer());
+    ASSERT_TRUE(second_task_json["nextExecutionTime"].is_number_integer());
     EXPECT_NE(
-        first_task_json["nextExecutionTime"].get<std::string>(),
-        second_task_json["nextExecutionTime"].get<std::string>());
+        first_task_json["nextExecutionTime"].get<int64_t>(),
+        second_task_json["nextExecutionTime"].get<int64_t>());
 
     std::lock_guard<std::mutex> lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->executed_instance_ids.size(), 2u);
@@ -2426,14 +2448,15 @@ TEST_F(SchedulerLifecycleTest, FullTaskInstanceLifecycle)
     //    (no descriptors from manifest, so UpdateTaskProperties would reject;
     //     internal properties are always writable when not running)
     nlohmann::json internal_props;
-    internal_props["nextExecutionTime"] = "2026-07-01T09:00:00";
+    // 2026-07-01T09:00:00Z = 1782896400
+    internal_props["nextExecutionTime"] = 1782896400;
     auto update_result =
         scheduler_->UpdateTaskInternalProperties(0, internal_props);
     EXPECT_EQ(update_result, DAS_S_OK);
 
     //    Verify updated properties are persisted under the selected instance
     auto task0_updated = settings_manager_->GetTaskInstanceJson("0", 0);
-    EXPECT_EQ(task0_updated["nextExecutionTime"], "2026-07-01T09:00:00");
+    EXPECT_EQ(task0_updated["nextExecutionTime"], 1782896400);
 
     // -- Phase 2: Start, verify running mutation guard, stop --
 
@@ -2483,7 +2506,7 @@ TEST_F(SchedulerLifecycleTest, FullTaskInstanceLifecycle)
     EXPECT_EQ(state["tasks"][0]["id"], 0);
     EXPECT_EQ(state["tasks"][1]["id"], 1);
     // Task 0's nextExecutionTime was persisted
-    EXPECT_EQ(state["tasks"][0]["nextExecutionTime"], "2026-07-01T09:00:00");
+    EXPECT_EQ(state["tasks"][0]["nextExecutionTime"], 1782896400);
 
     // 13. Delete task 0
     auto delete_result = scheduler_->DeleteTask(0);

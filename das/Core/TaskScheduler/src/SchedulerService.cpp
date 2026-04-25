@@ -31,8 +31,8 @@ namespace Das::Core::TaskScheduler
         // Sentinel far-future timestamp used when a task's
         // GetNextExecutionTime() fails. Prevents zero-delay hot loops by
         // pushing the next run far into the future.
-        static constexpr char SENTINEL_FUTURE_TIMESTAMP[] =
-            "2099-12-31T23:59:59";
+        // 2099-12-31T23:59:59 UTC
+        static constexpr int64_t SENTINEL_FUTURE_TIMESTAMP = 4102444799LL;
 
         time_t TimegmPortable(std::tm* tm)
         {
@@ -43,7 +43,9 @@ namespace Das::Core::TaskScheduler
 #endif
         }
 
-        bool ParseNextExecutionTime(
+        // Legacy ISO 8601 parser — only used for migrating old persisted
+        // string-format nextExecutionTime values.
+        bool ParseLegacyIsoTimestamp(
             const std::string&       value,
             SystemClock::time_point& out_time)
         {
@@ -150,26 +152,43 @@ namespace Das::Core::TaskScheduler
             return true;
         }
 
-        std::string FormatDasDate(const Das::ExportInterface::DasDate& date)
+        int64_t DasDateToUnix(const Das::ExportInterface::DasDate& date)
         {
-            char buffer[64];
-            std::snprintf(
-                buffer,
-                sizeof(buffer),
-                "%04d-%02d-%02dT%02d:%02d:%02d",
-                date.year,
-                date.month,
-                date.day,
-                date.hour,
-                date.minute,
-                date.second);
-            return buffer;
+            std::tm tm{};
+            tm.tm_year = date.year - 1900;
+            tm.tm_mon = date.month - 1;
+            tm.tm_mday = date.day;
+            tm.tm_hour = date.hour;
+            tm.tm_min = date.minute;
+            tm.tm_sec = date.second;
+            tm.tm_isdst = -1;
+            return static_cast<int64_t>(TimegmPortable(&tm));
+        }
+
+        [[maybe_unused]] Das::ExportInterface::DasDate
+            UnixToDasDate(int64_t unix_seconds)
+        {
+            time_t  t = static_cast<time_t>(unix_seconds);
+            std::tm tm{};
+#ifdef _WIN32
+            gmtime_s(&tm, &t);
+#else
+            gmtime_r(&t, &tm);
+#endif
+            Das::ExportInterface::DasDate date{};
+            date.year = static_cast<uint16_t>(tm.tm_year + 1900);
+            date.month = static_cast<uint8_t>(tm.tm_mon + 1);
+            date.day = static_cast<uint8_t>(tm.tm_mday);
+            date.hour = static_cast<uint8_t>(tm.tm_hour);
+            date.minute = static_cast<uint8_t>(tm.tm_min);
+            date.second = static_cast<uint8_t>(tm.tm_sec);
+            return date;
         }
 
         std::chrono::steady_clock::duration ClampNextDelay(
-            const SystemClock::duration& delay)
+            const std::chrono::seconds& delay)
         {
-            if (delay <= SystemClock::duration::zero())
+            if (delay <= std::chrono::seconds::zero())
             {
                 return std::chrono::steady_clock::duration::zero();
             }
@@ -189,10 +208,10 @@ namespace Das::Core::TaskScheduler
 
     static std::chrono::steady_clock::duration ComputeNextDelay(
         const std::vector<TaskInstanceRecord>& task_instances,
-        const SystemClock::time_point&         now)
+        int64_t                                now_unix)
     {
-        bool                    has_future_due = false;
-        SystemClock::time_point earliest_due{};
+        bool    has_future_due = false;
+        int64_t earliest_due = 0;
 
         for (const auto& inst : task_instances)
         {
@@ -207,20 +226,16 @@ namespace Das::Core::TaskScheduler
                 return std::chrono::steady_clock::duration::zero();
             }
 
-            SystemClock::time_point due_time;
-            if (!ParseNextExecutionTime(*inst.next_execution_time, due_time))
-            {
-                continue;
-            }
+            int64_t due = *inst.next_execution_time;
 
-            if (due_time <= now)
+            if (due <= now_unix)
             {
                 return std::chrono::steady_clock::duration::zero();
             }
 
-            if (!has_future_due || due_time < earliest_due)
+            if (!has_future_due || due < earliest_due)
             {
-                earliest_due = due_time;
+                earliest_due = due;
                 has_future_due = true;
             }
         }
@@ -230,16 +245,16 @@ namespace Das::Core::TaskScheduler
             return std::chrono::seconds(1);
         }
 
-        return ClampNextDelay(earliest_due - now);
+        return ClampNextDelay(std::chrono::seconds(earliest_due - now_unix));
     }
 
     static TaskInstanceRecord* FindNextRunnableTask(
         std::vector<TaskInstanceRecord>& task_instances,
-        const SystemClock::time_point&   now)
+        int64_t                          now_unix)
     {
-        TaskInstanceRecord*     selected = nullptr;
-        SystemClock::time_point selected_due{};
-        bool                    selected_has_due = false;
+        TaskInstanceRecord* selected = nullptr;
+        int64_t             selected_due = 0;
+        bool                selected_has_due = false;
 
         for (auto& inst : task_instances)
         {
@@ -254,21 +269,17 @@ namespace Das::Core::TaskScheduler
                 return &inst;
             }
 
-            SystemClock::time_point due_time;
-            if (!ParseNextExecutionTime(*inst.next_execution_time, due_time))
+            int64_t due = *inst.next_execution_time;
+
+            if (due > now_unix)
             {
                 continue;
             }
 
-            if (due_time > now)
-            {
-                continue;
-            }
-
-            if (!selected || !selected_has_due || due_time < selected_due)
+            if (!selected || !selected_has_due || due < selected_due)
             {
                 selected = &inst;
-                selected_due = due_time;
+                selected_due = due;
                 selected_has_due = true;
             }
         }
@@ -620,19 +631,26 @@ namespace Das::Core::TaskScheduler
                     }
                 }
 
-                // Parse nextExecutionTime
+                // Parse nextExecutionTime — support both legacy string
+                // and new numeric format
                 if (instance_json.contains("nextExecutionTime")
                     && !instance_json["nextExecutionTime"].is_null())
                 {
-                    try
+                    const auto& net_val = instance_json["nextExecutionTime"];
+                    if (net_val.is_number_integer())
                     {
-                        rec.next_execution_time =
-                            instance_json["nextExecutionTime"]
-                                .get<std::string>();
+                        rec.next_execution_time = net_val.get<int64_t>();
                     }
-                    catch (const std::exception&)
+                    else if (net_val.is_string())
                     {
-                        // Keep nullopt
+                        SystemClock::time_point tp;
+                        if (ParseLegacyIsoTimestamp(
+                                net_val.get<std::string>(),
+                                tp))
+                        {
+                            rec.next_execution_time =
+                                SystemClock::to_time_t(tp);
+                        }
                     }
                 }
 
@@ -753,7 +771,8 @@ namespace Das::Core::TaskScheduler
                 ipc_context_.get().GetIoContext());
         }
 
-        StartTickTimer(ComputeNextDelay(task_instances_, SystemClock::now()));
+        int64_t now_unix = SystemClock::to_time_t(SystemClock::now());
+        StartTickTimer(ComputeNextDelay(task_instances_, now_unix));
 
         DAS_CORE_LOG_INFO("SchedulerService::Enable: scheduler started");
         return DAS_S_OK;
@@ -1267,8 +1286,8 @@ namespace Das::Core::TaskScheduler
         const nlohmann::json& internal_props)
     {
         // Phase 1: Short lock for validation and snapshot
-        std::optional<std::string> new_next_time;
-        bool                       has_update = false;
+        std::optional<int64_t> new_next_time;
+        bool                   has_update = false;
         {
             std::lock_guard<std::mutex> lock(mutex_);
 
@@ -1292,10 +1311,24 @@ namespace Das::Core::TaskScheduler
                     new_next_time = std::nullopt;
                     has_update = true;
                 }
+                else if (val.is_number_integer())
+                {
+                    new_next_time = val.get<int64_t>();
+                    has_update = true;
+                }
                 else if (val.is_string())
                 {
-                    new_next_time = val.get<std::string>();
-                    has_update = true;
+                    // Legacy: parse ISO string to Unix timestamp
+                    SystemClock::time_point tp;
+                    if (ParseLegacyIsoTimestamp(val.get<std::string>(), tp))
+                    {
+                        new_next_time = SystemClock::to_time_t(tp);
+                        has_update = true;
+                    }
+                    else
+                    {
+                        return DAS_E_TYPE_ERROR;
+                    }
                 }
                 else
                 {
@@ -1337,7 +1370,7 @@ namespace Das::Core::TaskScheduler
             auto*                       inst = FindTaskInstance(task_id);
             if (inst)
             {
-                inst->next_execution_time = std::move(new_next_time);
+                inst->next_execution_time = new_next_time;
             }
         }
 
@@ -1385,6 +1418,8 @@ namespace Das::Core::TaskScheduler
         std::chrono::steady_clock::duration next_delay =
             std::chrono::seconds(1);
 
+        int64_t now_unix = SystemClock::to_time_t(SystemClock::now());
+
         {
             std::lock_guard<std::mutex> lock(mutex_);
 
@@ -1393,15 +1428,13 @@ namespace Das::Core::TaskScheduler
                 return;
             }
 
-            selected_inst =
-                FindNextRunnableTask(task_instances_, SystemClock::now());
+            selected_inst = FindNextRunnableTask(task_instances_, now_unix);
 
             if (!selected_inst)
             {
                 DAS_CORE_LOG_DEBUG(
                     "SchedulerService::OnTick: no runnable task");
-                next_delay =
-                    ComputeNextDelay(task_instances_, SystemClock::now());
+                next_delay = ComputeNextDelay(task_instances_, now_unix);
                 StartTickTimer(next_delay);
                 return;
             }
@@ -1452,13 +1485,13 @@ namespace Das::Core::TaskScheduler
         }
 
         // Refresh nextExecutionTime from the task
-        std::string                   refreshed_time;
+        int64_t                       refreshed_time = 0;
         bool                          has_refreshed_time = false;
         Das::ExportInterface::DasDate next_date{};
         auto net_result = task_ptr->GetNextExecutionTime(&next_date);
         if (IsOk(net_result))
         {
-            refreshed_time = FormatDasDate(next_date);
+            refreshed_time = DasDateToUnix(next_date);
             has_refreshed_time = true;
         }
         else
@@ -1477,9 +1510,9 @@ namespace Das::Core::TaskScheduler
         // Re-acquire lock to update in-memory state only.
         // Persistence is posted to config persist thread (no SettingsManager
         // call under mutex_).
-        bool        should_persist = false;
-        int64_t     persist_id = 0;
-        std::string persist_time;
+        bool    should_persist = false;
+        int64_t persist_id = 0;
+        int64_t persist_time = 0;
         {
             std::lock_guard<std::mutex> lock(mutex_);
 
@@ -1497,8 +1530,8 @@ namespace Das::Core::TaskScheduler
 
             if (state_.load() == SchedulerState::Running)
             {
-                next_delay =
-                    ComputeNextDelay(task_instances_, SystemClock::now());
+                now_unix = SystemClock::to_time_t(SystemClock::now());
+                next_delay = ComputeNextDelay(task_instances_, now_unix);
             }
         }
 
@@ -1521,9 +1554,7 @@ namespace Das::Core::TaskScheduler
     // Config-side persistence thread
     // ----------------------------------------------------------------
 
-    void SchedulerService::PostPersistEvent(
-        int64_t            task_id,
-        const std::string& next_time)
+    void SchedulerService::PostPersistEvent(int64_t task_id, int64_t next_time)
     {
         {
             std::lock_guard<std::mutex> lock(config_persist_mutex_);
