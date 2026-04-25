@@ -12,6 +12,43 @@
 
 DAS_CORE_SETTINGS_MANAGER_NS_BEGIN
 
+/// Per-key state cell: one shared_mutex + one snapshot per settings file key.
+/// Keys follow the pattern: "global/ui", "profile/{pid}/ui",
+/// "profile/{pid}/plugin/{guid}", "profile/{pid}/scheduler",
+/// "profile/{pid}/task/{taskId}".
+///
+/// Thread model (Phase 52 per-key domain):
+///   - cells_mutex_ protects ONLY map lookup/create for these cells.
+///   - Each cell's mutex covers the full RMW cycle for that key:
+///     read current value -> apply mutation -> WriteJsonFile -> update
+///     snapshot.
+///   - Different keys use independent shared_mutex instances and do not block
+///     each other.
+///   - Read operations use shared_lock (concurrent readers).
+///   - Write/RMW operations use unique_lock (exclusive access).
+struct SettingsKeyCell
+{
+    std::shared_mutex mutex;
+    nlohmann::json    snapshot;
+
+    SettingsKeyCell() = default;
+    SettingsKeyCell(SettingsKeyCell&& other) noexcept
+        : snapshot(std::move(other.snapshot))
+    {
+    }
+    SettingsKeyCell& operator=(SettingsKeyCell&& other) noexcept
+    {
+        if (this != &other)
+        {
+            snapshot = std::move(other.snapshot);
+        }
+        return *this;
+    }
+    // Non-copyable (shared_mutex is not copyable)
+    SettingsKeyCell(const SettingsKeyCell&) = delete;
+    SettingsKeyCell& operator=(const SettingsKeyCell&) = delete;
+};
+
 class SettingsManager
 {
 public:
@@ -132,14 +169,25 @@ private:
         const std::filesystem::path& path,
         const nlohmann::json&        data);
 
-    /// Ensure the profile JSON is loaded and cached. Returns the cached
-    /// profile JSON reference under write lock.
-    nlohmann::json& EnsureProfileCached(const std::string& profile_id);
+    /// Find or create per-key state cell. Uses cells_mutex_ for short
+    /// lookup/create with double-checked locking pattern.
+    /// Returns non-null pointer to the cell. The cell's mutex is NOT locked
+    /// by this call.
+    SettingsKeyCell* GetOrCreateCell(const std::string& key);
 
-    std::filesystem::path                           base_dir_;
-    nlohmann::json                                  global_settings_cache_;
-    std::unordered_map<std::string, nlohmann::json> profile_cache_;
-    mutable std::shared_mutex                       mutex_;
+    std::filesystem::path base_dir_;
+
+    /// Per-key state cells: one shared_mutex + snapshot per settings file key.
+    /// Access patterns:
+    ///   - cells_mutex_ protects ONLY map lookup/insert (no I/O under this
+    ///     lock).
+    ///   - Each cell's mutex covers the full RMW cycle for that specific key.
+    std::unordered_map<std::string, SettingsKeyCell> key_cells_;
+
+    /// Registry/map lock: used ONLY for finding/creating per-key state cells.
+    /// NEVER covers file I/O (WriteJsonFile/ReadJsonFile/exists/directory_ite
+    /// rator).
+    mutable std::shared_mutex cells_mutex_;
 };
 
 DAS_CORE_SETTINGS_MANAGER_NS_END
