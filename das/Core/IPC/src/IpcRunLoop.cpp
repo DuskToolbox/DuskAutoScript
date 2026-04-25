@@ -256,8 +256,13 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
         // REQUEST 继续交给 handler 处理
     }
 
-    // 使用 header_flags + interface_id 路由
-    // 优先检查可等待 handler（协程版本，控制平面用）
+    // CONTROL_PLANE dispatch: use IO-safe ControlPlaneContext.
+    // This path runs on the IO coroutine domain and must not access
+    // BusinessThread-owned DOM/Registry/proxy state.
+    // Priority: awaitable handler (IAwaitableMessageHandler +
+    // ControlPlaneContext) over sync handler (IMessageHandler + StubContext).
+
+    // 1. Check for awaitable handler (CONTROL_PLANE coroutine handler)
     auto awaitable_it = awaitable_handlers_.find(header.GetHeaderFlags());
     if (awaitable_it != awaitable_handlers_.end())
     {
@@ -269,14 +274,8 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
                 awaitable_handler_it->second.Get();
             try
             {
-                IpcResponseSender sender(transport, *this);
-                StubContext       ctx{
-                    proxy_factory_.GetObjectManager(),
-                    registry_,
-                    *this,
-                    {},
-                    proxy_factory_,
-                    header};
+                IpcResponseSender   sender(transport, *this);
+                ControlPlaneContext ctx{*this, header};
                 auto result = co_await awaitable_handler
                                   ->HandleMessage(header, body, sender, ctx);
                 if (DAS::IsFailed(result))
@@ -296,34 +295,24 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
         }
     }
 
-    // 同步 handler（业务 handler 用）
+    // 2. Sync handler via IMessageHandler + StubContext is NOT permitted on
+    //    the CONTROL_PLANE IO path. StubContext contains BusinessThread-owned
+    //    DOM/Registry/proxy references that must not be accessed from the IO
+    //    thread. All CONTROL_PLANE handlers must be registered as
+    //    IAwaitableMessageHandler. Business handlers (BUSINESS_CONTROL /
+    //    BUSINESS_EVENT) continue through the inbound_queue_ ->
+    //    BusinessThread::ProcessInboundMessage path where StubContext is
+    //    safely constructed on the BusinessThread.
     IMessageHandler* handler =
         GetHandler(header.GetHeaderFlags(), header.GetInterfaceId());
 
     if (handler)
     {
-        try
-        {
-            IpcResponseSender sender(transport, *this);
-            StubContext       ctx{
-                proxy_factory_.GetObjectManager(),
-                registry_,
-                *this,
-                {},
-                proxy_factory_,
-                header};
-            auto result = handler->HandleMessage(header, body, sender, ctx);
-            if (DAS::IsFailed(result))
-            {
-                DAS_CORE_LOG_WARN("Handler returned error: {}", result);
-            }
-        }
-        catch (const std::exception& e)
-        {
-            DAS_CORE_LOG_ERROR(
-                "DispatchToHandlerCoroutine: exception in HandleMessage: {}",
-                e.what());
-        }
+        DAS_CORE_LOG_ERROR(
+            "DispatchToHandlerCoroutine: sync IMessageHandler registered "
+            "for CONTROL_PLANE interface_id=0x{:08X} -- not allowed. "
+            "Use IAwaitableMessageHandler instead.",
+            header.GetInterfaceId());
     }
     else
     {

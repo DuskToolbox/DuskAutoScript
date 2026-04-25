@@ -20,10 +20,47 @@ class IpcRunLoop;
 class BusinessThread;
 
 /**
- * @brief Stub 上下文结构体
+ * @brief IO-thread context for CONTROL_PLANE handlers.
  *
- * 打包业务 handler 所需的运行时引用，避免虚函数签名参数膨胀。
+ * CONTROL_PLANE handlers run on the IPC IO coroutine domain and may only
+ * perform transport/session/handshake work. They must not access
+ * BusinessThread-owned state: DistributedObjectManager, RemoteObjectRegistry,
+ * ProxyFactory, proxy cache, BusinessThread, or BT TLS-dependent
+ * Registry/DOM resolution.
+ *
+ * If a CONTROL_PLANE operation truly needs BT-owned state and cannot be
+ * fire-and-forget, it must be modeled as an awaitable/coroutine operation
+ * that sends an explicit response. It must not synchronously block the IO
+ * thread, and must not use a default-constructed result to feign success.
+ *
+ * @note Execution domain: IPC IO thread (coroutine context only).
+ *       Synchronous semantics: handler runs inside a co_await; no sync wait
+ *       on other threads is permitted.
+ *       Phase 52 position: this context replaces StubContext usage on the
+ *       CONTROL_PLANE IO path, enforcing the thread-model boundary.
+ */
+struct ControlPlaneContext
+{
+    IpcRunLoop&                      run_loop;
+    const ValidatedIPCMessageHeader& header;
+};
+
+/**
+ * @brief BusinessThread context for business message handlers.
+ *
+ * 打包 BusinessThread/business handler
+ * 所需的运行时引用，避免虚函数签名参数膨胀。
  * 新增字段只需修改此结构体，无需修改虚函数签名。
+ *
+ * This context is only valid on the BusinessThread execution domain.
+ * BUSINESS_CONTROL and BUSINESS_EVENT handlers receive this context via
+ * the inbound_queue_ -> BusinessThread::ProcessInboundMessage path.
+ *
+ * @note Execution domain: BusinessThread only.
+ *       Synchronous semantics: handler runs synchronously on BT;
+ *       nested PumpUntilResponse is supported for blocking RESPONSE waits.
+ *       Phase 52 position: the sole domain that may access DOM/Registry/proxy.
+ *       CONTROL_PLANE handlers must NOT receive this context.
  */
 struct StubContext
 {
@@ -97,13 +134,21 @@ public:
 };
 
 /**
- * @brief 可等待消息处理器接口（协程版本）
+ * @brief Awaitable (coroutine) message handler interface for CONTROL_PLANE.
  *
- * 控制平面 handler（如 HandshakeHandler）使用此接口，
- * 通过协程异步发送响应。
+ * CONTROL_PLANE handlers (e.g. HandshakeHandler) use this interface.
+ * They run on the IPC IO coroutine domain and receive ControlPlaneContext,
+ * which provides only IO-safe references (IpcRunLoop, message header).
+ * They must not access BusinessThread-owned DOM/Registry/proxy state.
  *
- * 注意：不继承 IMessageHandler，因为 HandleMessage 返回类型不同。
- * 实现类需要同时实现两个接口的引用计数方法。
+ * Note: Does not inherit IMessageHandler because HandleMessage return type
+ * differs (awaitable<DasResult> vs DasResult). Implementations must provide
+ * their own AddRef/Release for lifetime management.
+ *
+ * @note Execution domain: IPC IO thread (coroutine context).
+ *       Synchronous semantics: co_await-based; no sync blocking permitted.
+ *       Phase 52 position: replaces the previous StubContext& parameter
+ *       to enforce the CONTROL_PLANE/BusinessThread boundary.
  */
 class IAwaitableMessageHandler
 {
@@ -132,19 +177,23 @@ public:
     virtual uint32_t GetInterfaceId() const = 0;
 
     /**
-     * @brief 处理 IPC 消息（协程版本）
+     * @brief Handle a CONTROL_PLANE IPC message (coroutine version).
      *
-     * @param header 已验证的消息头
-     * @param body 消息体
-     * @param sender 响应发送器（包含 transport）
-     * @param ctx Stub 上下文（包含 object_manager、run_loop、business_thread）
-     * @return boost::asio::awaitable<DasResult> 协程结果
+     * Runs on the IPC IO thread coroutine domain. The ControlPlaneContext
+     * provides only IO-safe references: IpcRunLoop and message header.
+     * Handlers must not access BusinessThread-owned DOM/Registry/proxy.
+     *
+     * @param header Validated message header.
+     * @param body   Message body bytes.
+     * @param sender Response sender (contains transport for async response).
+     * @param ctx    IO-safe control-plane context (run_loop + header).
+     * @return boost::asio::awaitable<DasResult> Coroutine result.
      */
     virtual boost::asio::awaitable<DasResult> HandleMessage(
         const ValidatedIPCMessageHeader& header,
         const std::vector<uint8_t>&      body,
         IpcResponseSender&               sender,
-        StubContext&                     ctx) = 0;
+        ControlPlaneContext&             ctx) = 0;
 };
 
 DAS_CORE_IPC_NS_END

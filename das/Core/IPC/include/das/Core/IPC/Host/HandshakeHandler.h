@@ -5,7 +5,6 @@
 #include <boost/asio/awaitable.hpp>
 #include <chrono>
 #include <cstdint>
-#include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/IMessageHandler.h>
 #include <das/Core/IPC/IpcResponseSender.h>
@@ -146,19 +145,22 @@ namespace Core
                  * @brief 处理握手消息（协程版本）
                  *
                  * 实现 IAwaitableMessageHandler 接口。
-                 * 内部调用现有实现逻辑，然后使用协程发送响应。
+                 * 运行在 IPC IO control-plane
+                 * domain，只处理握手/心跳/连接状态， 不访问
+                 * BusinessThread-owned DOM/Registry/proxy state。 需要 BT state
+                 * 的操作必须走业务控制/BT 路径或显式 awaitable 响应。
                  *
                  * @param header 消息头
                  * @param body 消息体
                  * @param sender 响应发送器（包含 transport）
-                 * @param ctx Stub 上下文（包含 object_manager）
+                 * @param ctx IO-safe 控制平面上下文
                  * @return boost::asio::awaitable<DasResult> 协程结果
                  */
                 boost::asio::awaitable<DasResult> HandleMessage(
                     const ValidatedIPCMessageHeader& header,
                     const std::vector<uint8_t>&      body,
                     IpcResponseSender&               sender,
-                    StubContext&                     ctx) override;
+                    ControlPlaneContext&             ctx) override;
 
                 /**
                  * @brief 设置客户端连接回调

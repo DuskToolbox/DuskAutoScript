@@ -72,9 +72,9 @@ namespace Core
                 const ValidatedIPCMessageHeader& header,
                 const std::vector<uint8_t>&      body,
                 IpcResponseSender&               sender,
-                StubContext&                     ctx)
+                ControlPlaneContext&             ctx)
             {
-                (void)ctx; // 握手处理器不使用 ctx
+                (void)ctx; // CONTROL_PLANE handler: IO-safe context only
 
                 HandshakeInterfaceId interface_id =
                     static_cast<HandshakeInterfaceId>(header.GetInterfaceId());
