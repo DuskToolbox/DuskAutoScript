@@ -43,115 +43,6 @@ namespace Das::Core::TaskScheduler
 #endif
         }
 
-        // Legacy ISO 8601 parser — only used for migrating old persisted
-        // string-format nextExecutionTime values.
-        bool ParseLegacyIsoTimestamp(
-            const std::string&       value,
-            SystemClock::time_point& out_time)
-        {
-            if (value.size() < 19)
-            {
-                return false;
-            }
-
-            auto parse_component =
-                [&value](size_t offset, size_t length, int& out) -> bool
-            {
-                try
-                {
-                    out = std::stoi(value.substr(offset, length));
-                    return true;
-                }
-                catch (const std::exception&)
-                {
-                    return false;
-                }
-            };
-
-            if (value[4] != '-' || value[7] != '-' || value[10] != 'T'
-                || value[13] != ':' || value[16] != ':')
-            {
-                return false;
-            }
-
-            std::tm tm{};
-            int     year = 0;
-            int     month = 0;
-            int     day = 0;
-            int     hour = 0;
-            int     minute = 0;
-            int     second = 0;
-            if (!parse_component(0, 4, year) || !parse_component(5, 2, month)
-                || !parse_component(8, 2, day) || !parse_component(11, 2, hour)
-                || !parse_component(14, 2, minute)
-                || !parse_component(17, 2, second))
-            {
-                return false;
-            }
-
-            tm.tm_year = year - 1900;
-            tm.tm_mon = month - 1;
-            tm.tm_mday = day;
-            tm.tm_hour = hour;
-            tm.tm_min = minute;
-            tm.tm_sec = second;
-            tm.tm_isdst = -1;
-
-            const bool has_timezone = value.size() > 19;
-            int        offset_seconds = 0;
-            if (has_timezone)
-            {
-                if (value[19] == 'Z')
-                {
-                    offset_seconds = 0;
-                }
-                else if (
-                    (value[19] == '+' || value[19] == '-') && value.size() >= 25
-                    && value[22] == ':')
-                {
-                    int offset_hours = 0;
-                    int offset_minutes = 0;
-                    if (!parse_component(20, 2, offset_hours)
-                        || !parse_component(23, 2, offset_minutes))
-                    {
-                        return false;
-                    }
-
-                    offset_seconds = offset_hours * 3600 + offset_minutes * 60;
-                    if (value[19] == '-')
-                    {
-                        offset_seconds = -offset_seconds;
-                    }
-                }
-                else
-                {
-                    return false;
-                }
-            }
-
-            time_t time_value = 0;
-            if (has_timezone)
-            {
-                time_value = TimegmPortable(&tm);
-                if (time_value == static_cast<time_t>(-1))
-                {
-                    return false;
-                }
-                time_value -= offset_seconds;
-            }
-            else
-            {
-                time_value = std::mktime(&tm);
-                if (time_value == static_cast<time_t>(-1))
-                {
-                    return false;
-                }
-            }
-
-            out_time = SystemClock::from_time_t(time_value);
-            return true;
-        }
-
         int64_t DasDateToUnix(const Das::ExportInterface::DasDate& date)
         {
             std::tm tm{};
@@ -163,26 +54,6 @@ namespace Das::Core::TaskScheduler
             tm.tm_sec = date.second;
             tm.tm_isdst = -1;
             return static_cast<int64_t>(TimegmPortable(&tm));
-        }
-
-        [[maybe_unused]] Das::ExportInterface::DasDate
-            UnixToDasDate(int64_t unix_seconds)
-        {
-            time_t  t = static_cast<time_t>(unix_seconds);
-            std::tm tm{};
-#ifdef _WIN32
-            gmtime_s(&tm, &t);
-#else
-            gmtime_r(&t, &tm);
-#endif
-            Das::ExportInterface::DasDate date{};
-            date.year = static_cast<uint16_t>(tm.tm_year + 1900);
-            date.month = static_cast<uint8_t>(tm.tm_mon + 1);
-            date.day = static_cast<uint8_t>(tm.tm_mday);
-            date.hour = static_cast<uint8_t>(tm.tm_hour);
-            date.minute = static_cast<uint8_t>(tm.tm_min);
-            date.second = static_cast<uint8_t>(tm.tm_sec);
-            return date;
         }
 
         std::chrono::steady_clock::duration ClampNextDelay(
@@ -631,8 +502,7 @@ namespace Das::Core::TaskScheduler
                     }
                 }
 
-                // Parse nextExecutionTime — support both legacy string
-                // and new numeric format
+                // Parse nextExecutionTime
                 if (instance_json.contains("nextExecutionTime")
                     && !instance_json["nextExecutionTime"].is_null())
                 {
@@ -640,17 +510,6 @@ namespace Das::Core::TaskScheduler
                     if (net_val.is_number_integer())
                     {
                         rec.next_execution_time = net_val.get<int64_t>();
-                    }
-                    else if (net_val.is_string())
-                    {
-                        SystemClock::time_point tp;
-                        if (ParseLegacyIsoTimestamp(
-                                net_val.get<std::string>(),
-                                tp))
-                        {
-                            rec.next_execution_time =
-                                SystemClock::to_time_t(tp);
-                        }
                     }
                 }
 
@@ -1315,20 +1174,6 @@ namespace Das::Core::TaskScheduler
                 {
                     new_next_time = val.get<int64_t>();
                     has_update = true;
-                }
-                else if (val.is_string())
-                {
-                    // Legacy: parse ISO string to Unix timestamp
-                    SystemClock::time_point tp;
-                    if (ParseLegacyIsoTimestamp(val.get<std::string>(), tp))
-                    {
-                        new_next_time = SystemClock::to_time_t(tp);
-                        has_update = true;
-                    }
-                    else
-                    {
-                        return DAS_E_TYPE_ERROR;
-                    }
                 }
                 else
                 {

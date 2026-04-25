@@ -714,31 +714,6 @@ TEST_F(SchedulerServiceTest, UpdateInternalProperties_PersistsToFile)
     EXPECT_EQ(state["tasks"][0]["nextExecutionTime"], 1780279200);
 }
 
-TEST_F(
-    SchedulerServiceTest,
-    Initialize_LegacyStringNextExecutionTime_MigratedToUnix)
-{
-    settings_manager_->CreateProfile("0");
-
-    nlohmann::json task0;
-    task0["id"] = 0;
-    task0["taskGuid"] = "11111111-1111-1111-1111-111111111111";
-    task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
-    task0["nextExecutionTime"] = "2026-06-15T10:30:00Z"; // Legacy string format
-    task0["properties"] = nlohmann::json::object();
-    WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
-
-    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
-
-    auto state = scheduler_->Get();
-    ASSERT_EQ(state["tasks"].size(), 1u);
-    // Should be migrated to Unix timestamp (number)
-    ASSERT_TRUE(state["tasks"][0]["nextExecutionTime"].is_number_integer());
-    // 2026-06-15T10:30:00Z = 1781519400
-    int64_t ts = state["tasks"][0]["nextExecutionTime"].get<int64_t>();
-    EXPECT_EQ(ts, 1781519400);
-}
-
 // ============================================================
 // Concurrent safety
 // ============================================================
