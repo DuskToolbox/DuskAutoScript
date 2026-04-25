@@ -658,7 +658,8 @@ namespace Core::IPC
 
             DasResult QueryInterface(const DasGuid& iid, void** pp) override
             {
-                if (iid == DasIidOf<IDasAsyncCallback>())
+                if (iid == DasIidOf<IDasAsyncCallback>()
+                    || iid == DasIidOf<IDasBase>())
                 {
                     AddRef();
                     *pp = this;
