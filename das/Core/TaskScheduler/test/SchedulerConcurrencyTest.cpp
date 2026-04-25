@@ -169,10 +169,11 @@ TEST_F(SchedulerConcurrencyTest, ConcurrentUpdatesNoNestedLockDeadlock)
         threads.emplace_back(
             [this, &success_count, i]()
             {
+                // 2026-06-01T00:00:00 UTC = 1780272000, each thread offsets by
+                // hour
                 nlohmann::json internal_props;
                 internal_props["nextExecutionTime"] =
-                    "2026-06-01T" + std::string(i < 10 ? "0" : "")
-                    + std::to_string(i) + ":00:00";
+                    static_cast<int64_t>(1780272000LL + i * 3600);
                 auto result =
                     scheduler_->UpdateTaskInternalProperties(0, internal_props);
                 if (DAS::IsOk(result))
