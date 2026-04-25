@@ -9,6 +9,7 @@
 #include <boost/beast/http.hpp>
 #include <boost/beast/version.hpp>
 #include <boost/config.hpp>
+#include <das/Core/Logger/Logger.h>
 #include <functional>
 #include <memory>
 #include <string>
@@ -189,7 +190,7 @@ namespace Das::Http::Beast
             std::shared_ptr<Router> router,
             std::function<bool()>   stop_condition)
             : router_(std::move(router)),
-              stop_condition_(std::move(stop_condition)), ioc_(1)
+              stop_condition_(std::move(stop_condition)), ioc_(4)
         {
             auto const addr = boost::asio::ip::make_address(address);
             auto const endpoint = tcp::endpoint{addr, port};
@@ -201,13 +202,83 @@ namespace Das::Http::Beast
                 stop_condition_);
         }
 
+        /**
+         * @brief Run the HTTP server with 4 workers (blocking).
+         *
+         * Starts the listener and runs io_context on 4 threads total:
+         * 3 dedicated worker threads + the calling thread. Blocks until
+         * ioc_.stop() is called (typically via Stop() from a shutdown
+         * signal).
+         *
+         * After ioc_.run() returns on the calling thread, joins all worker
+         * threads and returns. This preserves the blocking contract expected
+         * by App.cpp's lifecycle (Run() -> IPC shutdown -> exit).
+         *
+         * @thread_safety  Must be called once from the main thread.
+         * @architecture   HTTP multi-worker execution domain (Phase 52).
+         */
         void Run()
         {
             listener_->Run();
-            ioc_.run();
+
+            // Launch 3 worker threads (4 total with calling thread)
+            constexpr unsigned int worker_count = 3;
+            threads_.reserve(worker_count);
+            for (unsigned int i = 0; i < worker_count; ++i)
+            {
+                threads_.emplace_back(
+                    [this]()
+                    {
+                        try
+                        {
+                            ioc_.run();
+                        }
+                        catch (const std::exception& ex)
+                        {
+                            DAS_CORE_LOG_ERROR(
+                                "HTTP worker thread exception: {}",
+                                ex.what());
+                        }
+                    });
+            }
+
+            // Calling thread also runs ioc_.run() — total 4 workers
+            try
+            {
+                ioc_.run();
+            }
+            catch (const std::exception& ex)
+            {
+                DAS_CORE_LOG_ERROR("HTTP main thread exception: {}", ex.what());
+            }
+
+            // ioc_.run() returned — join all worker threads
+            for (auto& t : threads_)
+            {
+                if (t.joinable())
+                {
+                    t.join();
+                }
+            }
+            threads_.clear();
         }
 
-        void Stop() { ioc_.stop(); }
+        /**
+         * @brief Stop the HTTP server and join all workers.
+         *
+         * Calls ioc_.stop() to unblock all ioc_.run() calls (including
+         * the calling thread's). Run() will then join all worker threads
+         * and return.
+         *
+         * @architecture   Called from shutdown signal handler or test
+         *                 teardown.
+         */
+        void Stop()
+        {
+            ioc_.stop();
+            // Note: thread joining happens in Run() after ioc_.run()
+            // returns
+        }
 
         Router& GetRouter() { return *router_; }
 
@@ -218,6 +289,7 @@ namespace Das::Http::Beast
         std::function<bool()>     stop_condition_;
         boost::asio::io_context   ioc_;
         std::shared_ptr<Listener> listener_;
+        std::vector<std::thread>  threads_;
     };
 
 } // namespace Das::Http::Beast
