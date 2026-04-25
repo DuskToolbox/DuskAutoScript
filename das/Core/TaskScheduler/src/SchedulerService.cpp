@@ -930,8 +930,9 @@ namespace Das::Core::TaskScheduler
 
         *out_task_id = 0;
 
-        // Phase 1: Short lock for validation and id allocation
-        TaskTypeRecord* type_rec = nullptr;
+        // Phase 1: Short lock for validation — copy type data to avoid
+        // dangling pointer if Initialize/Disable clears task_types_.
+        TaskTypeRecord type_snapshot;
         {
             std::lock_guard<std::mutex> lock(mutex_);
 
@@ -945,15 +946,18 @@ namespace Das::Core::TaskScheduler
                 return DAS_E_OBJECT_NOT_INIT;
             }
 
-            type_rec = FindTaskType(task_guid);
+            auto* type_rec = FindTaskType(task_guid);
             if (!type_rec)
             {
                 return DAS_E_NOT_FOUND;
             }
+
+            type_snapshot = *type_rec;
         } // lock released
 
         // Phase 2: Lock-free persistence — all SettingsManager calls
-        // and file I/O execute outside mutex_.
+        // and file I/O execute outside mutex_. Uses type_snapshot
+        // (value copy) so no dangling pointer risk.
         auto&   settings = plugin_manager_.GetSettingsManager();
         auto    scheduler_index = settings.GetSchedulerIndexJson("0");
         int64_t next_id = scheduler_index.value("nextTaskId", 0);
@@ -962,19 +966,18 @@ namespace Das::Core::TaskScheduler
         TaskInstanceRecord rec;
         rec.id = next_id;
         rec.task_guid = task_guid;
-        rec.plugin_guid = type_rec->plugin_guid;
+        rec.plugin_guid = type_snapshot.plugin_guid;
         rec.availability = TaskAvailability::Available;
-        rec.task_type = type_rec;
         rec.properties = nlohmann::json::object();
         auto create_result =
-            CreateTaskInstance(*type_rec, rec.task_instance.Put());
+            CreateTaskInstance(type_snapshot, rec.task_instance.Put());
         if (IsFailed(create_result) || !rec.task_instance)
         {
             return IsFailed(create_result) ? create_result : DAS_E_FAIL;
         }
 
         // Initialize properties from descriptor defaults
-        for (const auto& desc : type_rec->descriptors)
+        for (const auto& desc : type_snapshot.descriptors)
         {
             if (!std::holds_alternative<std::monostate>(desc.default_value))
             {
@@ -1022,6 +1025,8 @@ namespace Das::Core::TaskScheduler
         // Phase 3: Short lock to commit to runtime state
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            auto*                       type_rec = FindTaskType(task_guid);
+            rec.task_type = type_rec;
             task_instances_.push_back(std::move(rec));
         }
 
@@ -1131,9 +1136,11 @@ namespace Das::Core::TaskScheduler
         int64_t               task_id,
         const nlohmann::json& properties)
     {
-        // Phase 1: Short lock for validation and snapshot
-        TaskTypeRecord* type_rec = nullptr;
-        nlohmann::json  current_properties;
+        // Phase 1: Short lock for validation and snapshot — copy
+        // descriptors to avoid dangling pointer across lock-free phases.
+        std::vector<Das::Core::ForeignInterfaceHost::PluginSettingDesc>
+                       descriptors;
+        nlohmann::json current_properties;
         {
             std::lock_guard<std::mutex> lock(mutex_);
 
@@ -1154,12 +1161,12 @@ namespace Das::Core::TaskScheduler
                 return DAS_E_FAIL;
             }
 
-            type_rec = inst->task_type;
-            if (!type_rec)
+            if (!inst->task_type)
             {
                 return DAS_E_FAIL;
             }
 
+            descriptors = inst->task_type->descriptors;
             current_properties = inst->properties;
         } // lock released
 
@@ -1173,7 +1180,7 @@ namespace Das::Core::TaskScheduler
         {
             const auto& prop_name = it.key();
             bool        found = false;
-            for (const auto& desc : type_rec->descriptors)
+            for (const auto& desc : descriptors)
             {
                 if (desc.name == prop_name)
                 {

@@ -451,6 +451,7 @@ void IpcRunLoop::TickPendingSenders()
 
     std::vector<std::pair<CallKey, PendingCallCompletion>> expired;
 
+    bool calls_empty = false;
     {
         std::unique_lock<std::mutex> lock(pending_mutex_);
         for (auto it = pending_calls_.begin(); it != pending_calls_.end();)
@@ -467,6 +468,7 @@ void IpcRunLoop::TickPendingSenders()
                 ++it;
             }
         }
+        calls_empty = pending_calls_.empty();
     }
 
     for (auto& [call_key, cb] : expired)
@@ -475,7 +477,7 @@ void IpcRunLoop::TickPendingSenders()
     }
 
     // SHM stale block cleanup (every 60s when idle)
-    if (pending_calls_.empty())
+    if (calls_empty)
     {
         if (now - last_shm_cleanup_time_ > std::chrono::seconds(60))
         {
