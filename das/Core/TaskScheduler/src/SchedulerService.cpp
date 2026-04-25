@@ -322,7 +322,11 @@ namespace Das::Core::TaskScheduler
         Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context)
         : plugin_manager_(plugin_manager), ipc_context_{std::move(ipc_context)}
     {
+        config_persist_thread_ =
+            std::thread(&SchedulerService::ConfigPersistThreadLoop, this);
     }
+
+    SchedulerService::~SchedulerService() { ShutdownConfigPersistQueue(); }
 
     DasResult SchedulerService::CreateTaskInstance(
         const TaskTypeRecord&            task_type,
@@ -363,30 +367,37 @@ namespace Das::Core::TaskScheduler
         const std::filesystem::path& plugin_dir,
         const std::vector<DasGuid>&  disabled_guids)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-
-        if (state_.load() == SchedulerState::Running)
+        // Phase 1: Short lock for state validation and cleanup
         {
-            DAS_CORE_LOG_ERROR(
-                "SchedulerService::Initialize: reject, scheduler is Running");
-            return DAS_E_TASK_WORKING;
-        }
+            std::lock_guard<std::mutex> lock(mutex_);
 
-        if (initialized_)
-        {
-            // Re-initialize: clear existing runtime state
-            task_types_.clear();
-            task_instances_.clear();
-            for (auto it = loaded_plugin_paths_.rbegin();
-                 it != loaded_plugin_paths_.rend();
-                 ++it)
+            if (state_.load() == SchedulerState::Running)
             {
-                plugin_manager_.UnloadPlugin(*it);
+                DAS_CORE_LOG_ERROR(
+                    "SchedulerService::Initialize: reject, scheduler is "
+                    "Running");
+                return DAS_E_TASK_WORKING;
             }
-            loaded_plugin_paths_.clear();
-            initialized_ = false;
-        }
 
+            if (initialized_)
+            {
+                // Re-initialize: clear existing runtime state
+                task_types_.clear();
+                task_instances_.clear();
+                for (auto it = loaded_plugin_paths_.rbegin();
+                     it != loaded_plugin_paths_.rend();
+                     ++it)
+                {
+                    plugin_manager_.UnloadPlugin(*it);
+                }
+                loaded_plugin_paths_.clear();
+                initialized_ = false;
+            }
+        } // lock released
+
+        // Phase 2: Lock-free I/O — directory traversal, manifest reading,
+        // plugin loading, and SettingsManager reads all execute outside
+        // mutex_.
         std::error_code ec;
         auto            dir_iter = std::filesystem::directory_iterator(
             plugin_dir,
@@ -401,6 +412,10 @@ namespace Das::Core::TaskScheduler
                 ec.message());
             return DAS_E_FAIL;
         }
+
+        // Temp vectors to accumulate loaded data outside the lock
+        std::vector<std::filesystem::path>           temp_paths;
+        std::vector<std::unique_ptr<TaskTypeRecord>> temp_types;
 
         // Load allowed plugin packages
         for (const auto& entry : dir_iter)
@@ -471,7 +486,7 @@ namespace Das::Core::TaskScheduler
                     continue;
                 }
 
-                loaded_plugin_paths_.push_back(manifest_path);
+                temp_paths.push_back(manifest_path);
             }
             catch (const std::exception& e)
             {
@@ -530,16 +545,20 @@ namespace Das::Core::TaskScheduler
                 }
             }
 
-            task_types_.push_back(std::move(type_record));
+            temp_types.push_back(std::move(type_record));
         }
 
         DAS_CORE_LOG_INFO(
             "SchedulerService::Initialize: discovered {} task types",
-            task_types_.size());
+            temp_types.size());
 
-        // Materialize persisted queued task instances from profile state
+        // Phase 3: SettingsManager reads for task instances (lock-free
+        // from SchedulerService::mutex_ perspective; SettingsManager uses
+        // per-key mutex internally).
         auto& settings = plugin_manager_.GetSettingsManager();
         auto  scheduler_index = settings.GetSchedulerIndexJson("0");
+
+        std::vector<TaskInstanceRecord> temp_instances;
 
         if (scheduler_index.contains("taskOrder")
             && scheduler_index["taskOrder"].is_array())
@@ -564,7 +583,7 @@ namespace Das::Core::TaskScheduler
                     rec.availability = TaskAvailability::Invalid;
                     rec.unavailability_reason =
                         "task instance file is missing or corrupt";
-                    task_instances_.push_back(std::move(rec));
+                    temp_instances.push_back(std::move(rec));
                     continue;
                 }
 
@@ -580,7 +599,7 @@ namespace Das::Core::TaskScheduler
                     rec.availability = TaskAvailability::Invalid;
                     rec.unavailability_reason =
                         std::string("invalid taskGuid: ") + e.what();
-                    task_instances_.push_back(std::move(rec));
+                    temp_instances.push_back(std::move(rec));
                     continue;
                 }
 
@@ -628,8 +647,19 @@ namespace Das::Core::TaskScheduler
                     rec.properties = nlohmann::json::object();
                 }
 
-                // Link to available task type
-                auto* type_rec = FindTaskType(rec.task_guid);
+                // Link to available task type — note: FindTaskType
+                // searches temp_types (not yet committed), so we
+                // search it manually here
+                TaskTypeRecord* type_rec = nullptr;
+                for (auto& ttr : temp_types)
+                {
+                    if (ttr->task_guid == rec.task_guid)
+                    {
+                        type_rec = ttr.get();
+                        break;
+                    }
+                }
+
                 if (type_rec)
                 {
                     rec.task_type = type_rec;
@@ -654,11 +684,18 @@ namespace Das::Core::TaskScheduler
                         "task type not found among loaded plugins";
                 }
 
-                task_instances_.push_back(std::move(rec));
+                temp_instances.push_back(std::move(rec));
             }
         }
 
-        initialized_ = true;
+        // Phase 4: Short lock to commit results to runtime state
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            task_types_ = std::move(temp_types);
+            task_instances_ = std::move(temp_instances);
+            loaded_plugin_paths_ = std::move(temp_paths);
+            initialized_ = true;
+        }
 
         DAS_CORE_LOG_INFO(
             "SchedulerService::Initialize: materialized {} task instances",
@@ -891,26 +928,32 @@ namespace Das::Core::TaskScheduler
             return DAS_E_INVALID_POINTER;
         }
 
-        std::lock_guard<std::mutex> lock(mutex_);
+        *out_task_id = 0;
 
-        if (state_.load() == SchedulerState::Running)
+        // Phase 1: Short lock for validation and id allocation
+        TaskTypeRecord* type_rec = nullptr;
         {
-            return DAS_E_TASK_WORKING;
-        }
+            std::lock_guard<std::mutex> lock(mutex_);
 
-        if (!initialized_)
-        {
-            return DAS_E_OBJECT_NOT_INIT;
-        }
+            if (state_.load() == SchedulerState::Running)
+            {
+                return DAS_E_TASK_WORKING;
+            }
 
-        // Find task type
-        auto* type_rec = FindTaskType(task_guid);
-        if (!type_rec)
-        {
-            return DAS_E_NOT_FOUND;
-        }
+            if (!initialized_)
+            {
+                return DAS_E_OBJECT_NOT_INIT;
+            }
 
-        // Allocate next task id
+            type_rec = FindTaskType(task_guid);
+            if (!type_rec)
+            {
+                return DAS_E_NOT_FOUND;
+            }
+        } // lock released
+
+        // Phase 2: Lock-free persistence — all SettingsManager calls
+        // and file I/O execute outside mutex_.
         auto&   settings = plugin_manager_.GetSettingsManager();
         auto    scheduler_index = settings.GetSchedulerIndexJson("0");
         int64_t next_id = scheduler_index.value("nextTaskId", 0);
@@ -971,14 +1014,18 @@ namespace Das::Core::TaskScheduler
             settings.UpdateSchedulerIndexJson("0", scheduler_index);
         if (IsFailed(index_result))
         {
-            // Rollback task instance file
+            // Rollback task instance file (best-effort)
             settings.DeleteTaskInstanceJson("0", rec.id);
             return index_result;
         }
 
-        task_instances_.push_back(std::move(rec));
-        *out_task_id = next_id;
+        // Phase 3: Short lock to commit to runtime state
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            task_instances_.push_back(std::move(rec));
+        }
 
+        *out_task_id = next_id;
         return DAS_S_OK;
     }
 
@@ -1084,37 +1131,44 @@ namespace Das::Core::TaskScheduler
         int64_t               task_id,
         const nlohmann::json& properties)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-
-        if (state_.load() == SchedulerState::Running)
+        // Phase 1: Short lock for validation and snapshot
+        TaskTypeRecord* type_rec = nullptr;
+        nlohmann::json  current_properties;
         {
-            return DAS_E_TASK_WORKING;
-        }
+            std::lock_guard<std::mutex> lock(mutex_);
 
-        auto* inst = FindTaskInstance(task_id);
-        if (!inst)
-        {
-            return DAS_E_NOT_FOUND;
-        }
+            if (state_.load() == SchedulerState::Running)
+            {
+                return DAS_E_TASK_WORKING;
+            }
 
-        // Invalid/unavailable instances cannot have properties updated
-        if (inst->availability != TaskAvailability::Available)
-        {
-            return DAS_E_FAIL;
-        }
+            auto* inst = FindTaskInstance(task_id);
+            if (!inst)
+            {
+                return DAS_E_NOT_FOUND;
+            }
 
-        // Validate property names and types against descriptors
-        auto* type_rec = inst->task_type;
-        if (!type_rec)
-        {
-            return DAS_E_FAIL;
-        }
+            // Invalid/unavailable instances cannot have properties updated
+            if (inst->availability != TaskAvailability::Available)
+            {
+                return DAS_E_FAIL;
+            }
+
+            type_rec = inst->task_type;
+            if (!type_rec)
+            {
+                return DAS_E_FAIL;
+            }
+
+            current_properties = inst->properties;
+        } // lock released
 
         if (!properties.is_object())
         {
             return DAS_E_INVALID_JSON;
         }
 
+        // Validate property names and types against descriptors
         for (auto it = properties.begin(); it != properties.end(); ++it)
         {
             const auto& prop_name = it.key();
@@ -1163,21 +1217,38 @@ namespace Das::Core::TaskScheduler
             }
         }
 
-        // Apply validated properties
+        // Apply validated properties to snapshot
         for (auto it = properties.begin(); it != properties.end(); ++it)
         {
-            inst->properties[it.key()] = it.value();
+            current_properties[it.key()] = it.value();
         }
 
-        // Persist
+        // Phase 2: Lock-free SettingsManager persistence
         auto& settings = plugin_manager_.GetSettingsManager();
         auto  instance_json = settings.GetTaskInstanceJson("0", task_id);
         if (instance_json.is_null() || !instance_json.is_object())
         {
             instance_json = nlohmann::json::object();
         }
-        instance_json["properties"] = inst->properties;
-        return settings.UpdateTaskInstanceJson("0", task_id, instance_json);
+        instance_json["properties"] = current_properties;
+        auto persist_result =
+            settings.UpdateTaskInstanceJson("0", task_id, instance_json);
+        if (IsFailed(persist_result))
+        {
+            return persist_result;
+        }
+
+        // Phase 3: Short lock to commit properties to runtime state
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto*                       inst = FindTaskInstance(task_id);
+            if (inst)
+            {
+                inst->properties = std::move(current_properties);
+            }
+        }
+
+        return DAS_S_OK;
     }
 
     // ----------------------------------------------------------------
@@ -1188,53 +1259,82 @@ namespace Das::Core::TaskScheduler
         int64_t               task_id,
         const nlohmann::json& internal_props)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-
-        if (state_.load() == SchedulerState::Running)
+        // Phase 1: Short lock for validation and snapshot
+        std::optional<std::string> new_next_time;
+        bool                       has_update = false;
         {
-            return DAS_E_TASK_WORKING;
+            std::lock_guard<std::mutex> lock(mutex_);
+
+            if (state_.load() == SchedulerState::Running)
+            {
+                return DAS_E_TASK_WORKING;
+            }
+
+            auto* inst = FindTaskInstance(task_id);
+            if (!inst)
+            {
+                return DAS_E_NOT_FOUND;
+            }
+
+            // Parse nextExecutionTime if provided
+            if (internal_props.contains("nextExecutionTime"))
+            {
+                const auto& val = internal_props["nextExecutionTime"];
+                if (val.is_null())
+                {
+                    new_next_time = std::nullopt;
+                    has_update = true;
+                }
+                else if (val.is_string())
+                {
+                    new_next_time = val.get<std::string>();
+                    has_update = true;
+                }
+                else
+                {
+                    return DAS_E_TYPE_ERROR;
+                }
+            }
+        } // lock released
+
+        if (!has_update)
+        {
+            return DAS_S_OK;
         }
 
-        auto* inst = FindTaskInstance(task_id);
-        if (!inst)
-        {
-            return DAS_E_NOT_FOUND;
-        }
-
-        // Update nextExecutionTime if provided
-        if (internal_props.contains("nextExecutionTime"))
-        {
-            const auto& val = internal_props["nextExecutionTime"];
-            if (val.is_null())
-            {
-                inst->next_execution_time = std::nullopt;
-            }
-            else if (val.is_string())
-            {
-                inst->next_execution_time = val.get<std::string>();
-            }
-            else
-            {
-                return DAS_E_TYPE_ERROR;
-            }
-        }
-
-        // Persist
+        // Phase 2: Lock-free SettingsManager persistence
         auto& settings = plugin_manager_.GetSettingsManager();
         auto  instance_json = settings.GetTaskInstanceJson("0", task_id);
         if (instance_json.is_null() || !instance_json.is_object())
         {
             instance_json = nlohmann::json::object();
         }
-        if (inst->next_execution_time)
+        if (new_next_time.has_value())
         {
-            instance_json["nextExecutionTime"] = *inst->next_execution_time;
+            instance_json["nextExecutionTime"] = *new_next_time;
         }
         else
         {
             instance_json["nextExecutionTime"] = nullptr;
         }
-        return settings.UpdateTaskInstanceJson("0", task_id, instance_json);
+        auto persist_result =
+            settings.UpdateTaskInstanceJson("0", task_id, instance_json);
+        if (IsFailed(persist_result))
+        {
+            return persist_result;
+        }
+
+        // Phase 3: Short lock to commit to runtime state
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto*                       inst = FindTaskInstance(task_id);
+            if (inst)
+            {
+                inst->next_execution_time = std::move(new_next_time);
+            }
+        }
+
+        return DAS_S_OK;
     }
 
     // ----------------------------------------------------------------
@@ -1367,7 +1467,12 @@ namespace Das::Core::TaskScheduler
                 SENTINEL_FUTURE_TIMESTAMP);
         }
 
-        // Re-acquire lock to update state
+        // Re-acquire lock to update in-memory state only.
+        // Persistence is posted to config persist thread (no SettingsManager
+        // call under mutex_).
+        bool        should_persist = false;
+        int64_t     persist_id = 0;
+        std::string persist_time;
         {
             std::lock_guard<std::mutex> lock(mutex_);
 
@@ -1375,20 +1480,9 @@ namespace Das::Core::TaskScheduler
             if (selected_inst && has_refreshed_time)
             {
                 selected_inst->next_execution_time = refreshed_time;
-
-                // Persist refreshed nextExecutionTime
-                auto& settings = plugin_manager_.GetSettingsManager();
-                auto  instance_json =
-                    settings.GetTaskInstanceJson("0", selected_id);
-                if (instance_json.is_null() || !instance_json.is_object())
-                {
-                    instance_json = nlohmann::json::object();
-                }
-                instance_json["nextExecutionTime"] = refreshed_time;
-                settings.UpdateTaskInstanceJson(
-                    "0",
-                    selected_id,
-                    instance_json);
+                should_persist = true;
+                persist_id = selected_id;
+                persist_time = refreshed_time;
             }
 
             current_task_ = nullptr;
@@ -1405,6 +1499,93 @@ namespace Das::Core::TaskScheduler
         if (state_.load() == SchedulerState::Running)
         {
             StartTickTimer(next_delay);
+        }
+
+        // Post persistence event to config-side thread (outside mutex_).
+        // Failures are logged by the persist thread and do not affect
+        // runtime state.
+        if (should_persist)
+        {
+            PostPersistEvent(persist_id, persist_time);
+        }
+    }
+
+    // ----------------------------------------------------------------
+    // Config-side persistence thread
+    // ----------------------------------------------------------------
+
+    void SchedulerService::PostPersistEvent(
+        int64_t            task_id,
+        const std::string& next_time)
+    {
+        {
+            std::lock_guard<std::mutex> lock(config_persist_mutex_);
+            config_persist_queue_.push({task_id, next_time});
+        }
+        config_persist_cv_.notify_one();
+    }
+
+    void SchedulerService::ConfigPersistThreadLoop()
+    {
+        while (true)
+        {
+            std::unique_lock<std::mutex> lock(config_persist_mutex_);
+            config_persist_cv_.wait(
+                lock,
+                [this]
+                {
+                    return !config_persist_queue_.empty()
+                           || config_persist_shutdown_.load();
+                });
+
+            // Drain all pending events before checking shutdown
+            while (!config_persist_queue_.empty())
+            {
+                auto event = std::move(config_persist_queue_.front());
+                config_persist_queue_.pop();
+                lock.unlock();
+
+                // Execute SettingsManager I/O without holding any
+                // SchedulerService::mutex_
+                auto& settings = plugin_manager_.GetSettingsManager();
+                auto  instance_json =
+                    settings.GetTaskInstanceJson("0", event.task_id);
+                if (instance_json.is_null() || !instance_json.is_object())
+                {
+                    instance_json = nlohmann::json::object();
+                }
+                instance_json["nextExecutionTime"] = event.next_execution_time;
+                auto result = settings.UpdateTaskInstanceJson(
+                    "0",
+                    event.task_id,
+                    instance_json);
+
+                if (DAS::IsFailed(result))
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "SchedulerService::ConfigPersistThread: failed to "
+                        "persist nextExecutionTime for task {}, result={}",
+                        event.task_id,
+                        result);
+                }
+
+                lock.lock();
+            }
+
+            if (config_persist_shutdown_.load())
+            {
+                return;
+            }
+        }
+    }
+
+    void SchedulerService::ShutdownConfigPersistQueue()
+    {
+        config_persist_shutdown_.store(true);
+        config_persist_cv_.notify_all();
+        if (config_persist_thread_.joinable())
+        {
+            config_persist_thread_.join();
         }
     }
 

@@ -19,6 +19,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <queue>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -75,6 +76,8 @@ namespace Das::Core::TaskScheduler
             Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager,
             Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>
                 ipc_context);
+
+        ~SchedulerService();
 
         /// Initialize scheduler: load plugins, discover task types,
         /// materialize persisted task instances. Must be called before
@@ -178,6 +181,39 @@ namespace Das::Core::TaskScheduler
         /// Find task instance by id (const).
         const TaskInstanceRecord* FindTaskInstance(int64_t task_id) const;
 
+        // ----------------------------------------------------------------
+        // Config-side persistence (OnTick nextExecutionTime)
+        // ----------------------------------------------------------------
+
+        /**
+         * @brief Persistence request produced by BusinessThread runtime.
+         *
+         * Produced after OnTick updates in-memory nextExecutionTime.
+         * Consumed by the config persistence thread, which calls
+         * SettingsManager::UpdateTaskInstanceJson. Failures are logged
+         * and do not roll back runtime state; the next OnTick republishes
+         * a fresh value.
+         *
+         * @architecture Phase 52 BusinessThread runtime domain -> Settings
+         * config domain. SchedulerService::mutex_ must NOT be held when
+         * the config persist thread processes these events.
+         */
+        struct ConfigPersistEvent
+        {
+            int64_t     task_id;
+            std::string next_execution_time;
+        };
+
+        /// Post a persistence event for the config-side thread.
+        void PostPersistEvent(int64_t task_id, const std::string& next_time);
+
+        /// Background loop: waits on CV, drains queue, calls SettingsManager.
+        void ConfigPersistThreadLoop();
+
+        /// Signal shutdown, drain remaining events, join the thread.
+        /// Must be called before SettingsManager dependencies are destroyed.
+        void ShutdownConfigPersistQueue();
+
         Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager_;
         Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>
             ipc_context_;
@@ -200,6 +236,13 @@ namespace Das::Core::TaskScheduler
         DasPtr<Das::PluginInterface::IDasStopToken> stop_token_;
 
         std::unique_ptr<boost::asio::steady_timer> tick_timer_;
+
+        // Config-side persistence queue for OnTick nextExecutionTime
+        std::queue<ConfigPersistEvent> config_persist_queue_;
+        mutable std::mutex             config_persist_mutex_;
+        std::condition_variable        config_persist_cv_;
+        std::thread                    config_persist_thread_;
+        std::atomic<bool>              config_persist_shutdown_{false};
     };
 
 } // namespace Das::Core::TaskScheduler
