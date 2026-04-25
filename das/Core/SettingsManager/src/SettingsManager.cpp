@@ -61,6 +61,25 @@ namespace
     }
 } // namespace
 
+SettingsKeyCell* SettingsManager::GetOrCreateCell(const std::string& key)
+{
+    // Double-checked locking: first try shared_lock read
+    {
+        std::shared_lock lock(cells_mutex_);
+        auto             it = key_cells_.find(key);
+        if (it != key_cells_.end())
+        {
+            return &it->second;
+        }
+    }
+    // Not found: acquire unique_lock and create
+    {
+        std::unique_lock lock(cells_mutex_);
+        auto [it, inserted] = key_cells_.emplace(key, SettingsKeyCell{});
+        return &it->second;
+    }
+}
+
 SettingsManager::SettingsManager(const std::filesystem::path& base_dir)
     : base_dir_{base_dir}
 {
@@ -76,13 +95,12 @@ SettingsManager::SettingsManager(const std::filesystem::path& base_dir)
     const auto ui_path = base_dir_ / "ui.json";
     if (std::filesystem::exists(ui_path))
     {
+        auto*                               cell = GetOrCreateCell("global/ui");
+        std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
+        auto                                content = ReadJsonFile(ui_path);
         try
         {
-            std::ifstream ifs{ui_path};
-            if (ifs.is_open())
-            {
-                global_settings_cache_ = nlohmann::json::parse(ifs);
-            }
+            cell->snapshot = nlohmann::json::parse(content);
         }
         catch (const nlohmann::json::exception& ex)
         {
@@ -204,63 +222,47 @@ DasResult SettingsManager::WriteJsonFile(
     }
 }
 
-nlohmann::json& SettingsManager::EnsureProfileCached(
-    const std::string& profile_id)
-{
-    auto cache_key = profile_id + "/ui";
-    auto it = profile_cache_.find(cache_key);
-    if (it != profile_cache_.end())
-    {
-        return it->second;
-    }
-
-    auto content = ReadJsonFile(GetProfileUiPath(profile_id));
-    try
-    {
-        profile_cache_[cache_key] = nlohmann::json::parse(content);
-    }
-    catch (const nlohmann::json::exception& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        profile_cache_[cache_key] = nlohmann::json::object();
-    }
-    return profile_cache_[cache_key];
-}
-
 // --- String-based methods (legacy) ---
 
 std::string SettingsManager::GetGlobalSettings()
 {
-    std::shared_lock lock{mutex_};
+    auto* cell = GetOrCreateCell("global/ui");
 
-    if (global_settings_cache_.is_null())
+    // Fast path: shared_lock for concurrent read access
     {
-        lock.unlock();
-        auto             content = ReadJsonFile(base_dir_ / "ui.json");
-        std::unique_lock write_lock{mutex_};
-        try
+        std::shared_lock lock(cell->mutex);
+        if (!cell->snapshot.is_null())
         {
-            global_settings_cache_ = nlohmann::json::parse(content);
+            return cell->snapshot.dump();
         }
-        catch (const nlohmann::json::exception& ex)
-        {
-            DAS_CORE_LOG_EXCEPTION(ex);
-        }
-        return content;
     }
 
-    return global_settings_cache_.dump();
+    // Cache miss: acquire unique_lock for file read + snapshot fill
+    std::unique_lock<std::shared_mutex> lock(cell->mutex);
+    // Double-check after upgrade (another thread may have filled it)
+    if (!cell->snapshot.is_null())
+    {
+        return cell->snapshot.dump();
+    }
+
+    auto content = ReadJsonFile(base_dir_ / "ui.json");
+    try
+    {
+        cell->snapshot = nlohmann::json::parse(content);
+    }
+    catch (const nlohmann::json::exception& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+    }
+    return content;
 }
 
 DasResult SettingsManager::UpdateGlobalSettings(const std::string& json_str)
 {
+    nlohmann::json parsed;
     try
     {
-        auto parsed = nlohmann::json::parse(json_str);
-
-        std::unique_lock lock{mutex_};
-        global_settings_cache_ = std::move(parsed);
-        return WriteJsonFile(base_dir_ / "ui.json", json_str);
+        parsed = nlohmann::json::parse(json_str);
     }
     catch (const nlohmann::json::exception& ex)
     {
@@ -272,12 +274,19 @@ DasResult SettingsManager::UpdateGlobalSettings(const std::string& json_str)
         DAS_CORE_LOG_EXCEPTION(ex);
         return DAS_E_OUT_OF_MEMORY;
     }
+
+    auto* cell = GetOrCreateCell("global/ui");
+
+    // Per-key mutex covers the entire write cycle:
+    // snapshot update + WriteJsonFile are both under this mutex
+    std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
+    cell->snapshot = parsed;
+    return WriteJsonFile(base_dir_ / "ui.json", parsed);
 }
 
 std::string SettingsManager::GetProfileList()
 {
-    std::shared_lock lock{mutex_};
-
+    // No lock needed for read-only directory traversal
     nlohmann::json profiles = nlohmann::json::array();
 
     try
@@ -306,8 +315,6 @@ std::string SettingsManager::GetProfileList()
 
 DasResult SettingsManager::CreateProfile(const std::string& profile_id)
 {
-    std::unique_lock lock{mutex_};
-
     try
     {
         auto profile_dir = GetProfileDir(profile_id);
@@ -337,8 +344,6 @@ DasResult SettingsManager::CreateProfile(const std::string& profile_id)
 
 DasResult SettingsManager::DeleteProfile(const std::string& profile_id)
 {
-    std::unique_lock lock{mutex_};
-
     try
     {
         auto profile_dir = GetProfileDir(profile_id);
@@ -348,9 +353,6 @@ DasResult SettingsManager::DeleteProfile(const std::string& profile_id)
         }
 
         std::filesystem::remove_all(profile_dir);
-
-        profile_cache_.erase(profile_id + "/ui");
-
         return DAS_S_OK;
     }
     catch (const std::filesystem::filesystem_error& ex)
@@ -362,21 +364,29 @@ DasResult SettingsManager::DeleteProfile(const std::string& profile_id)
 
 std::string SettingsManager::GetProfile(const std::string& profile_id)
 {
-    std::shared_lock lock{mutex_};
+    auto  key = profile_id + "/ui";
+    auto* cell = GetOrCreateCell(key);
 
-    auto cache_key = profile_id + "/ui";
-    auto it = profile_cache_.find(cache_key);
-    if (it != profile_cache_.end())
+    // Fast path: shared_lock for concurrent read access
     {
-        return it->second.dump();
+        std::shared_lock lock(cell->mutex);
+        if (!cell->snapshot.is_null())
+        {
+            return cell->snapshot.dump();
+        }
     }
 
-    lock.unlock();
-    auto             content = ReadJsonFile(GetProfileUiPath(profile_id));
-    std::unique_lock write_lock{mutex_};
+    // Cache miss: acquire unique_lock for file read + snapshot fill
+    std::unique_lock<std::shared_mutex> lock(cell->mutex);
+    if (!cell->snapshot.is_null())
+    {
+        return cell->snapshot.dump();
+    }
+
+    auto content = ReadJsonFile(GetProfileUiPath(profile_id));
     try
     {
-        profile_cache_[cache_key] = nlohmann::json::parse(content);
+        cell->snapshot = nlohmann::json::parse(content);
     }
     catch (const nlohmann::json::exception& ex)
     {
@@ -389,14 +399,10 @@ DasResult SettingsManager::UpdateProfile(
     const std::string& profile_id,
     const std::string& json_str)
 {
+    nlohmann::json parsed;
     try
     {
-        auto parsed = nlohmann::json::parse(json_str);
-
-        std::unique_lock lock{mutex_};
-        auto             cache_key = profile_id + "/ui";
-        profile_cache_[cache_key] = std::move(parsed);
-        return WriteJsonFile(GetProfileUiPath(profile_id), json_str);
+        parsed = nlohmann::json::parse(json_str);
     }
     catch (const nlohmann::json::exception& ex)
     {
@@ -408,6 +414,13 @@ DasResult SettingsManager::UpdateProfile(
         DAS_CORE_LOG_EXCEPTION(ex);
         return DAS_E_OUT_OF_MEMORY;
     }
+
+    auto  key = profile_id + "/ui";
+    auto* cell = GetOrCreateCell(key);
+
+    std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
+    cell->snapshot = parsed;
+    return WriteJsonFile(GetProfileUiPath(profile_id), parsed);
 }
 
 // --- Plugin settings (split file: settings/${pid}/${pluginGuid}.json) ---
@@ -416,8 +429,8 @@ std::string SettingsManager::GetPluginSettings(
     const std::string& profile_id,
     const std::string& guid)
 {
-    std::shared_lock lock{mutex_};
-    return ReadJsonFile(GetPluginSettingsPath(profile_id, guid));
+    auto json = GetPluginSettingsJson(profile_id, guid);
+    return json.dump();
 }
 
 DasResult SettingsManager::UpdatePluginSettings(
@@ -428,10 +441,14 @@ DasResult SettingsManager::UpdatePluginSettings(
     try
     {
         // Validate JSON before writing
-        (void)nlohmann::json::parse(json_str);
+        auto parsed = nlohmann::json::parse(json_str);
 
-        std::unique_lock lock{mutex_};
-        return WriteJsonFile(GetPluginSettingsPath(profile_id, guid), json_str);
+        auto  key = "profile/" + profile_id + "/plugin/" + guid;
+        auto* cell = GetOrCreateCell(key);
+
+        std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
+        cell->snapshot = parsed;
+        return WriteJsonFile(GetPluginSettingsPath(profile_id, guid), parsed);
     }
     catch (const nlohmann::json::exception& ex)
     {
@@ -449,17 +466,36 @@ nlohmann::json SettingsManager::GetPluginSettingsJson(
     const std::string& profile_id,
     const std::string& guid)
 {
-    std::shared_lock lock{mutex_};
+    auto  key = "profile/" + profile_id + "/plugin/" + guid;
+    auto* cell = GetOrCreateCell(key);
+
+    // Fast path: shared_lock for concurrent read access
+    {
+        std::shared_lock lock(cell->mutex);
+        if (!cell->snapshot.is_null())
+        {
+            return cell->snapshot;
+        }
+    }
+
+    // Cache miss: acquire unique_lock for file read + snapshot fill
+    std::unique_lock<std::shared_mutex> lock(cell->mutex);
+    if (!cell->snapshot.is_null())
+    {
+        return cell->snapshot;
+    }
+
     auto content = ReadJsonFile(GetPluginSettingsPath(profile_id, guid));
     try
     {
-        return nlohmann::json::parse(content);
+        cell->snapshot = nlohmann::json::parse(content);
     }
     catch (const nlohmann::json::exception& ex)
     {
         DAS_CORE_LOG_EXCEPTION(ex);
-        return nlohmann::json::object();
+        cell->snapshot = nlohmann::json::object();
     }
+    return cell->snapshot;
 }
 
 std::pair<nlohmann::json, DasResult>
@@ -467,7 +503,12 @@ SettingsManager::GetPluginSettingsWithStatus(
     const std::string& profile_id,
     const std::string& guid)
 {
-    auto path = GetPluginSettingsPath(profile_id, guid);
+    auto  key = "profile/" + profile_id + "/plugin/" + guid;
+    auto* cell = GetOrCreateCell(key);
+    auto  path = GetPluginSettingsPath(profile_id, guid);
+
+    // Per-key mutex covers the entire check-read-write cycle
+    std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
 
     // Check if file exists
     if (!std::filesystem::exists(path))
@@ -478,34 +519,33 @@ SettingsManager::GetPluginSettingsWithStatus(
         auto defaults = nlohmann::json::object();
         // Persist empty defaults so future reads succeed
         WriteJsonFile(path, defaults);
+        cell->snapshot = defaults;
         return {defaults, DAS_S_FALSE};
     }
 
     // Read raw file content directly (not via ReadJsonFile which silently
     // returns "{}" for corrupt JSON)
+    try
     {
-        std::shared_lock lock{mutex_};
-        try
+        std::ifstream ifs{path};
+        if (!ifs.is_open())
         {
-            std::ifstream ifs{path};
-            if (!ifs.is_open())
-            {
-                lock.unlock();
-                auto defaults = nlohmann::json::object();
-                WriteJsonFile(path, defaults);
-                return {defaults, DAS_S_FALSE};
-            }
-            auto parsed = nlohmann::json::parse(ifs);
-            if (parsed.is_object())
-            {
-                return {parsed, DAS_S_OK};
-            }
-            // Not an object - treat as corrupt
+            auto defaults = nlohmann::json::object();
+            WriteJsonFile(path, defaults);
+            cell->snapshot = defaults;
+            return {defaults, DAS_S_FALSE};
         }
-        catch (const nlohmann::json::exception& ex)
+        auto parsed = nlohmann::json::parse(ifs);
+        if (parsed.is_object())
         {
-            DAS_CORE_LOG_EXCEPTION(ex);
+            cell->snapshot = parsed;
+            return {parsed, DAS_S_OK};
         }
+        // Not an object - treat as corrupt
+    }
+    catch (const nlohmann::json::exception& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
     }
 
     // File is corrupt - rebuild with empty defaults
@@ -514,6 +554,7 @@ SettingsManager::GetPluginSettingsWithStatus(
         path.string());
     auto defaults = nlohmann::json::object();
     WriteJsonFile(path, defaults);
+    cell->snapshot = defaults;
     return {defaults, DAS_S_FALSE};
 }
 
@@ -522,7 +563,11 @@ DasResult SettingsManager::UpdatePluginSettingsJson(
     const std::string&    guid,
     const nlohmann::json& data)
 {
-    std::unique_lock lock{mutex_};
+    auto  key = "profile/" + profile_id + "/plugin/" + guid;
+    auto* cell = GetOrCreateCell(key);
+
+    std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
+    cell->snapshot = data;
     return WriteJsonFile(GetPluginSettingsPath(profile_id, guid), data);
 }
 
@@ -608,26 +653,43 @@ DasResult SettingsManager::UpdatePluginSettingsFieldJson(
     const std::string&    field_name,
     const nlohmann::json& value)
 {
-    std::unique_lock lock{mutex_};
+    auto  key = "profile/" + profile_id + "/plugin/" + guid;
+    auto* cell = GetOrCreateCell(key);
+
+    // Per-key mutex protects the entire RMW cycle:
+    // read current -> modify -> WriteJsonFile -> update snapshot
+    std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
 
     auto           path = GetPluginSettingsPath(profile_id, guid);
-    auto           content = ReadJsonFile(path);
-    nlohmann::json settings;
-    try
+    nlohmann::json current = cell->snapshot;
+    if (current.is_null())
     {
-        settings = nlohmann::json::parse(content);
+        auto content = ReadJsonFile(path);
+        try
+        {
+            current = nlohmann::json::parse(content);
+        }
+        catch (const nlohmann::json::exception& ex)
+        {
+            DAS_CORE_LOG_EXCEPTION(ex);
+        }
     }
-    catch (const nlohmann::json::exception& ex)
+
+    if (!current.is_object())
     {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        settings = nlohmann::json::object();
+        current = nlohmann::json::object();
     }
 
     try
     {
-        auto* target = EnsureDotPath(settings, field_name);
+        auto* target = EnsureDotPath(current, field_name);
         *target = value;
-        return WriteJsonFile(path, settings);
+        auto result = WriteJsonFile(path, current);
+        if (DAS::IsOk(result))
+        {
+            cell->snapshot = std::move(current);
+        }
+        return result;
     }
     catch (const nlohmann::json::exception& ex)
     {
@@ -652,7 +714,12 @@ DasResult SettingsManager::RebuildPluginSettingsFromDefaults(
         return DAS_E_INVALID_ARGUMENT;
     }
 
-    std::unique_lock lock{mutex_};
+    auto  key = "profile/" + profile_id + "/plugin/" + guid;
+    auto* cell = GetOrCreateCell(key);
+
+    // Per-key mutex protects the entire rebuild cycle:
+    // exists check + ifstream + parse/defaults + WriteJsonFile + snapshot
+    std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
 
     auto path = GetPluginSettingsPath(profile_id, guid);
 
@@ -711,6 +778,7 @@ DasResult SettingsManager::RebuildPluginSettingsFromDefaults(
         return write_result;
     }
 
+    cell->snapshot = rebuilt;
     return DAS_S_FALSE;
 }
 
@@ -718,44 +786,48 @@ DasResult SettingsManager::RebuildPluginSettingsFromDefaults(
 
 nlohmann::json SettingsManager::GetGlobalSettingsJson()
 {
-    std::shared_lock lock{mutex_};
+    auto* cell = GetOrCreateCell("global/ui");
 
-    if (global_settings_cache_.is_null())
+    // Fast path: shared_lock for concurrent read access
     {
-        lock.unlock();
-        auto             content = ReadJsonFile(base_dir_ / "ui.json");
-        std::unique_lock write_lock{mutex_};
-        try
+        std::shared_lock lock(cell->mutex);
+        if (!cell->snapshot.is_null())
         {
-            global_settings_cache_ = nlohmann::json::parse(content);
+            return cell->snapshot;
         }
-        catch (const nlohmann::json::exception& ex)
-        {
-            DAS_CORE_LOG_EXCEPTION(ex);
-        }
-        return global_settings_cache_;
     }
 
-    return global_settings_cache_;
+    // Cache miss: acquire unique_lock for file read + snapshot fill
+    std::unique_lock<std::shared_mutex> lock(cell->mutex);
+    if (!cell->snapshot.is_null())
+    {
+        return cell->snapshot;
+    }
+
+    auto content = ReadJsonFile(base_dir_ / "ui.json");
+    try
+    {
+        cell->snapshot = nlohmann::json::parse(content);
+    }
+    catch (const nlohmann::json::exception& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+    }
+    return cell->snapshot;
 }
 
 DasResult SettingsManager::UpdateGlobalSettingsJson(const nlohmann::json& data)
 {
-    try
-    {
-        std::unique_lock lock{mutex_};
-        global_settings_cache_ = data;
-        return WriteJsonFile(base_dir_ / "ui.json", data);
-    }
-    catch (const std::bad_alloc& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        return DAS_E_OUT_OF_MEMORY;
-    }
+    auto* cell = GetOrCreateCell("global/ui");
+
+    std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
+    cell->snapshot = data;
+    return WriteJsonFile(base_dir_ / "ui.json", data);
 }
 
 nlohmann::json SettingsManager::GetProfileListJson()
 {
+    // No lock needed for read-only directory traversal
     nlohmann::json profiles = nlohmann::json::array();
 
     try
@@ -784,22 +856,30 @@ nlohmann::json SettingsManager::GetProfileListJson()
 
 nlohmann::json SettingsManager::GetProfileJson(const std::string& profile_id)
 {
-    std::shared_lock lock{mutex_};
+    auto  key = profile_id + "/ui";
+    auto* cell = GetOrCreateCell(key);
 
-    auto cache_key = profile_id + "/ui";
-    auto it = profile_cache_.find(cache_key);
-    if (it != profile_cache_.end())
+    // Fast path: shared_lock for concurrent read access
     {
-        return it->second;
+        std::shared_lock lock(cell->mutex);
+        if (!cell->snapshot.is_null())
+        {
+            return cell->snapshot;
+        }
     }
 
-    lock.unlock();
-    auto             content = ReadJsonFile(GetProfileUiPath(profile_id));
-    std::unique_lock write_lock{mutex_};
+    // Cache miss: acquire unique_lock for file read + snapshot fill
+    std::unique_lock<std::shared_mutex> lock(cell->mutex);
+    if (!cell->snapshot.is_null())
+    {
+        return cell->snapshot;
+    }
+
+    auto content = ReadJsonFile(GetProfileUiPath(profile_id));
     try
     {
-        profile_cache_[cache_key] = nlohmann::json::parse(content);
-        return profile_cache_[cache_key];
+        cell->snapshot = nlohmann::json::parse(content);
+        return cell->snapshot;
     }
     catch (const nlohmann::json::exception& ex)
     {
@@ -812,18 +892,12 @@ DasResult SettingsManager::UpdateProfileJson(
     const std::string&    profile_id,
     const nlohmann::json& data)
 {
-    try
-    {
-        std::unique_lock lock{mutex_};
-        auto             cache_key = profile_id + "/ui";
-        profile_cache_[cache_key] = data;
-        return WriteJsonFile(GetProfileUiPath(profile_id), data);
-    }
-    catch (const std::bad_alloc& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        return DAS_E_OUT_OF_MEMORY;
-    }
+    auto  key = profile_id + "/ui";
+    auto* cell = GetOrCreateCell(key);
+
+    std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
+    cell->snapshot = data;
+    return WriteJsonFile(GetProfileUiPath(profile_id), data);
 }
 
 // --- Scheduler state (settings/${pid}/scheduler.json) ---
@@ -831,22 +905,47 @@ DasResult SettingsManager::UpdateProfileJson(
 nlohmann::json SettingsManager::GetSchedulerIndexJson(
     const std::string& profile_id)
 {
-    std::shared_lock lock{mutex_};
-    auto             content = ReadJsonFile(GetSchedulerIndexPath(profile_id));
+    auto  key = "profile/" + profile_id + "/scheduler";
+    auto* cell = GetOrCreateCell(key);
+
+    // Fast path: shared_lock for concurrent read access
+    {
+        std::shared_lock lock(cell->mutex);
+        if (!cell->snapshot.is_null())
+        {
+            return cell->snapshot;
+        }
+    }
+
+    // Cache miss: acquire unique_lock for file read + snapshot fill
+    std::unique_lock<std::shared_mutex> lock(cell->mutex);
+    if (!cell->snapshot.is_null())
+    {
+        return cell->snapshot;
+    }
+
+    auto content = ReadJsonFile(GetSchedulerIndexPath(profile_id));
     try
     {
         auto parsed = nlohmann::json::parse(content);
         if (!parsed.is_object() || !parsed.contains("nextTaskId")
             || !parsed.contains("taskOrder"))
         {
-            return {{"nextTaskId", 0}, {"taskOrder", nlohmann::json::array()}};
+            cell->snapshot = {
+                {"nextTaskId", 0},
+                {"taskOrder", nlohmann::json::array()}};
+            return cell->snapshot;
         }
-        return parsed;
+        cell->snapshot = parsed;
+        return cell->snapshot;
     }
     catch (const nlohmann::json::exception& ex)
     {
         DAS_CORE_LOG_EXCEPTION(ex);
-        return {{"nextTaskId", 0}, {"taskOrder", nlohmann::json::array()}};
+        cell->snapshot = {
+            {"nextTaskId", 0},
+            {"taskOrder", nlohmann::json::array()}};
+        return cell->snapshot;
     }
 }
 
@@ -854,16 +953,12 @@ DasResult SettingsManager::UpdateSchedulerIndexJson(
     const std::string&    profile_id,
     const nlohmann::json& scheduler_json)
 {
-    try
-    {
-        std::unique_lock lock{mutex_};
-        return WriteJsonFile(GetSchedulerIndexPath(profile_id), scheduler_json);
-    }
-    catch (const std::bad_alloc& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        return DAS_E_OUT_OF_MEMORY;
-    }
+    auto  key = "profile/" + profile_id + "/scheduler";
+    auto* cell = GetOrCreateCell(key);
+
+    std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
+    cell->snapshot = scheduler_json;
+    return WriteJsonFile(GetSchedulerIndexPath(profile_id), scheduler_json);
 }
 
 // --- Task instance (settings/${pid}/taskId${taskId}.json) ---
@@ -872,11 +967,30 @@ nlohmann::json SettingsManager::GetTaskInstanceJson(
     const std::string& profile_id,
     int64_t            task_id)
 {
-    std::shared_lock lock{mutex_};
+    auto  key = "profile/" + profile_id + "/task/" + std::to_string(task_id);
+    auto* cell = GetOrCreateCell(key);
+
+    // Fast path: shared_lock for concurrent read access
+    {
+        std::shared_lock lock(cell->mutex);
+        if (!cell->snapshot.is_null())
+        {
+            return cell->snapshot;
+        }
+    }
+
+    // Cache miss: acquire unique_lock for file read + snapshot fill
+    std::unique_lock<std::shared_mutex> lock(cell->mutex);
+    if (!cell->snapshot.is_null())
+    {
+        return cell->snapshot;
+    }
+
     auto content = ReadJsonFile(GetTaskInstancePath(profile_id, task_id));
     try
     {
-        return nlohmann::json::parse(content);
+        cell->snapshot = nlohmann::json::parse(content);
+        return cell->snapshot;
     }
     catch (const nlohmann::json::exception& ex)
     {
@@ -890,25 +1004,23 @@ DasResult SettingsManager::UpdateTaskInstanceJson(
     int64_t               task_id,
     const nlohmann::json& task_json)
 {
-    try
-    {
-        std::unique_lock lock{mutex_};
-        return WriteJsonFile(
-            GetTaskInstancePath(profile_id, task_id),
-            task_json);
-    }
-    catch (const std::bad_alloc& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        return DAS_E_OUT_OF_MEMORY;
-    }
+    auto  key = "profile/" + profile_id + "/task/" + std::to_string(task_id);
+    auto* cell = GetOrCreateCell(key);
+
+    std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
+    cell->snapshot = task_json;
+    return WriteJsonFile(GetTaskInstancePath(profile_id, task_id), task_json);
 }
 
 DasResult SettingsManager::DeleteTaskInstanceJson(
     const std::string& profile_id,
     int64_t            task_id)
 {
-    std::unique_lock lock{mutex_};
+    auto  key = "profile/" + profile_id + "/task/" + std::to_string(task_id);
+    auto* cell = GetOrCreateCell(key);
+
+    // Per-key mutex protects the delete operation + snapshot update
+    std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
 
     try
     {
@@ -918,6 +1030,7 @@ DasResult SettingsManager::DeleteTaskInstanceJson(
             return DAS_S_FALSE;
         }
         std::filesystem::remove(path);
+        cell->snapshot = nlohmann::json();
         return DAS_S_OK;
     }
     catch (const std::filesystem::filesystem_error& ex)
