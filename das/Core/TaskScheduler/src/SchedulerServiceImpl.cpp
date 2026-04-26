@@ -1,5 +1,6 @@
 #include <das/Core/TaskScheduler/SchedulerServiceImpl.h>
 #include <das/DasExport.h>
+#include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/_autogen/idl/abi/IDasGuidVector.h>
@@ -114,10 +115,18 @@ namespace Das::Core::TaskScheduler
     {
         DAS_UTILS_CHECK_POINTER(pp_out_json)
 
+        DasOutPtr<IDasReadOnlyString> result(pp_out_json);
+
         auto json = svc_.Get();
         auto json_str = json.dump();
 
-        return CreateIDasReadOnlyStringFromUtf8(json_str.c_str(), pp_out_json);
+        auto cr =
+            CreateIDasReadOnlyStringFromUtf8(json_str.c_str(), result.Put());
+        if (DAS::IsOk(cr))
+        {
+            result.Keep();
+        }
+        return cr;
     }
 
     DasResult SchedulerServiceImpl::AddTask(

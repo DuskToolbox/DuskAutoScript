@@ -3,6 +3,7 @@
 #include <das/Core/ForeignInterfaceHost/PluginScanner.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/TaskScheduler/SchedulerService.h>
+#include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/IDasBase.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
@@ -219,15 +220,16 @@ namespace Das::Core::TaskScheduler
             return DAS_E_INVALID_POINTER;
         }
 
-        *pp_out_task = nullptr;
+        DasOutPtr<Das::PluginInterface::IDasTask> result(pp_out_task);
 
         auto create_result = plugin_manager_.CreateFeatureInterface(
             task_type.plugin_guid,
             task_type.feature_index,
             DasIidOf<Das::PluginInterface::IDasTask>(),
-            reinterpret_cast<void**>(pp_out_task));
-        if (IsOk(create_result) && *pp_out_task)
+            reinterpret_cast<void**>(result.Put()));
+        if (IsOk(create_result) && result)
         {
+            result.Keep();
             return create_result;
         }
 
@@ -236,8 +238,9 @@ namespace Das::Core::TaskScheduler
             return create_result;
         }
 
-        *pp_out_task = task_type.prototype_task.Get();
-        (*pp_out_task)->AddRef();
+        *result.Put() = task_type.prototype_task.Get();
+        result->AddRef();
+        result.Keep();
         return DAS_S_OK;
     }
 
