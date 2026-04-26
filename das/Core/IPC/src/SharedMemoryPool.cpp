@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cstdint>
 #include <das/Core/IPC/Config.h>
+#include <das/Core/IPC/IpcPermissions.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <das/Core/Logger/Logger.h>
 #include <mutex>
@@ -49,11 +50,14 @@ SharedMemoryPool::SharedMemoryPool(
 
         boost::interprocess::shared_memory_object::remove(pool_name.c_str());
 
+        IpcSecurityAttributes ipc_sec;
         impl_->segment_ =
             std::make_unique<boost::interprocess::managed_shared_memory>(
                 boost::interprocess::create_only,
                 pool_name.c_str(),
-                initial_size);
+                initial_size,
+                nullptr, // addr
+                ipc_sec.GetPermissions());
     }
     else
     {

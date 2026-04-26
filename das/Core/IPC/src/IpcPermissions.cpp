@@ -5,9 +5,11 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
-#include <sddl.h>
-#include <vector>
+// clang-format off: windows.h must be included before sddl.h
 #include <windows.h>
+#include <sddl.h>
+// clang-format on
+#include <vector>
 #endif
 
 DAS_CORE_IPC_NS_BEGIN
@@ -61,10 +63,6 @@ IpcSecurityAttributes::IpcSecurityAttributes()
     LocalFree(sidString);
 
     // Convert SDDL to SECURITY_DESCRIPTOR
-    SECURITY_ATTRIBUTES sa{};
-    sa.nLength = sizeof(SECURITY_ATTRIBUTES);
-    sa.bInheritHandle = FALSE;
-
     void* pSecurityDescriptor = nullptr;
     if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
             sddl.c_str(),
@@ -81,10 +79,15 @@ IpcSecurityAttributes::IpcSecurityAttributes()
     }
 
     security_descriptor_ = pSecurityDescriptor;
-    sa.lpSecurityDescriptor = pSecurityDescriptor;
+
+    // Build SECURITY_ATTRIBUTES as member data so it outlives this object
+    security_attributes_ = SECURITY_ATTRIBUTES{};
+    security_attributes_.nLength = sizeof(SECURITY_ATTRIBUTES);
+    security_attributes_.bInheritHandle = FALSE;
+    security_attributes_.lpSecurityDescriptor = pSecurityDescriptor;
 
     // Wrap in boost::permissions
-    perm_ = boost::interprocess::permissions(&sa);
+    perm_ = boost::interprocess::permissions(&security_attributes_);
 #else
     // POSIX: owner read/write only
     perm_ = boost::interprocess::permissions(static_cast<mode_t>(0600));

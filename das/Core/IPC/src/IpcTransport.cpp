@@ -4,6 +4,7 @@
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/IpcHeaderValidator.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
+#include <das/Core/IPC/IpcPermissions.h>
 #include <das/Core/IPC/IpcTransport.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <das/Core/Logger/Logger.h>
@@ -50,19 +51,23 @@ IpcTransport::IpcTransport(
             boost::interprocess::message_queue::remove(
                 plugin_queue_name.c_str());
 
+            IpcSecurityAttributes ipc_sec;
+
             impl_->host_queue_ =
                 std::make_unique<boost::interprocess::message_queue>(
                     boost::interprocess::create_only,
                     host_queue_name.c_str(),
                     max_messages,
-                    max_message_size);
+                    max_message_size,
+                    ipc_sec.GetPermissions());
 
             impl_->plugin_queue_ =
                 std::make_unique<boost::interprocess::message_queue>(
                     boost::interprocess::create_only,
                     plugin_queue_name.c_str(),
                     max_messages,
-                    max_message_size);
+                    max_message_size,
+                    ipc_sec.GetPermissions());
         }
         else
         {

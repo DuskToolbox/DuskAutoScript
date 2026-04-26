@@ -4,6 +4,13 @@
 #include <boost/interprocess/permissions.hpp>
 #include <das/Core/IPC/Config.h>
 
+#if defined(_WIN32) || defined(__CYGWIN__)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
 DAS_CORE_IPC_NS_BEGIN
 
 /// RAII wrapper for boost::interprocess::permissions.
@@ -32,6 +39,7 @@ private:
     boost::interprocess::permissions perm_;
 
 #if defined(_WIN32) || defined(__CYGWIN__)
+    SECURITY_ATTRIBUTES security_attributes_{};
     void* security_descriptor_{nullptr}; // owns the SECURITY_DESCRIPTOR memory
 #endif
 };
