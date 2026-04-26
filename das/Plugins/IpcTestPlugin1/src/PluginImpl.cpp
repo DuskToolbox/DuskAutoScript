@@ -13,11 +13,6 @@ DAS_NS_BEGIN
 
 // === DasTouchMockImpl ===
 
-DasTouchMockImpl::DasTouchMockImpl(uint16_t session_id)
-    : session_id_(session_id)
-{
-}
-
 DasResult DasTouchMockImpl::GetGuid(DasGuid* p_out_guid)
 {
     if (!p_out_guid)
@@ -64,11 +59,6 @@ DasResult DasTouchMockImpl::Swipe(
 }
 
 // === DasQueryComponentImpl ===
-
-DasQueryComponentImpl::DasQueryComponentImpl(uint16_t session_id)
-    : session_id_(session_id)
-{
-}
 
 DasResult DasQueryComponentImpl::GetGuid(DasGuid* p_out_guid)
 {
@@ -240,11 +230,6 @@ DasResult DasQueryComponentImpl::HandleQueryMainProcessVariantVector(
 
 // === DasQueryComponentFactoryImpl ===
 
-DasQueryComponentFactoryImpl::DasQueryComponentFactoryImpl(uint16_t session_id)
-    : session_id_(session_id)
-{
-}
-
 DasResult DasQueryComponentFactoryImpl::GetGuid(DasGuid* p_out_guid)
 {
     if (!p_out_guid)
@@ -290,18 +275,13 @@ DasResult DasQueryComponentFactoryImpl::CreateInstance(
         return DAS_E_NO_IMPLEMENTATION;
     }
 
-    auto* instance = new DasQueryComponentImpl(session_id_);
+    auto* instance = new DasQueryComponentImpl();
     instance->AddRef();
     *pp_out_component = instance;
     return DAS_S_OK;
 }
 
 // === IpcTestPlugin1 ===
-
-void IpcTestPlugin1::SetSessionId(uint16_t session_id)
-{
-    session_id_ = session_id;
-}
 
 DasResult IpcTestPlugin1::EnumFeature(
     const size_t                       index,
@@ -339,7 +319,7 @@ DasResult IpcTestPlugin1::CreateFeatureInterface(
     if (index == 0)
     {
         // 创建 DasTouchMockImpl 实例
-        auto* touch_impl = new DasTouchMockImpl(session_id_);
+        auto* touch_impl = new DasTouchMockImpl();
         touch_impl->AddRef();
         *pp_out_interface =
             static_cast<PluginInterface::IDasTouch*>(touch_impl);
@@ -347,7 +327,7 @@ DasResult IpcTestPlugin1::CreateFeatureInterface(
     else
     {
         // index == 1: 创建 DasQueryComponentFactoryImpl
-        auto* factory = new DasQueryComponentFactoryImpl(session_id_);
+        auto* factory = new DasQueryComponentFactoryImpl();
         factory->AddRef();
         *pp_out_interface =
             static_cast<PluginInterface::IDasComponentFactory*>(factory);

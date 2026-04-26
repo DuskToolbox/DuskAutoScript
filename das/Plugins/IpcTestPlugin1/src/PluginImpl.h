@@ -1,7 +1,6 @@
 #ifndef DAS_PLUGINS_IPCTESTPLUGIN1_PLUGINIMPL_H
 #define DAS_PLUGINS_IPCTESTPLUGIN1_PLUGINIMPL_H
 
-#include <cstdint>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/_autogen/idl/abi/IDasComponent.h>
 #include <das/_autogen/idl/abi/IDasInput.h>
@@ -70,7 +69,7 @@ class DasTouchMockImpl final
     : public PluginInterface::DasTouchImplBase<DasTouchMockImpl>
 {
 public:
-    explicit DasTouchMockImpl(uint16_t session_id);
+    DasTouchMockImpl() = default;
 
     // IDasTypeInfo methods (必须手动实现，因为 DasTouchImplBase 没有实现它们)
     DAS_IMPL GetGuid(DasGuid* p_out_guid) override;
@@ -82,10 +81,6 @@ public:
         PluginInterface::DasPoint from,
         PluginInterface::DasPoint to,
         int32_t                   duration_ms) override;
-
-private:
-    [[maybe_unused]]
-    uint16_t session_id_ = 0;
 };
 
 /**
@@ -99,7 +94,7 @@ class DasQueryComponentImpl final
     : public PluginInterface::DasComponentImplBase<DasQueryComponentImpl>
 {
 public:
-    explicit DasQueryComponentImpl(uint16_t session_id);
+    DasQueryComponentImpl() = default;
 
     DAS_IMPL GetGuid(DasGuid* p_out_guid) override;
     DAS_IMPL GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override;
@@ -110,9 +105,6 @@ public:
         ExportInterface::IDasVariantVector** pp_out_result) override;
 
 private:
-    [[maybe_unused]]
-    uint16_t session_id_ = 0;
-
     DasResult HandleQueryMainProcessString(
         ExportInterface::IDasVariantVector** pp_out_result);
 
@@ -130,7 +122,7 @@ class DasQueryComponentFactoryImpl final
           DasQueryComponentFactoryImpl>
 {
 public:
-    explicit DasQueryComponentFactoryImpl(uint16_t session_id);
+    DasQueryComponentFactoryImpl() = default;
 
     DAS_IMPL GetGuid(DasGuid* p_out_guid) override;
     DAS_IMPL GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override;
@@ -139,10 +131,6 @@ public:
     DAS_IMPL CreateInstance(
         const DasGuid&                   component_iid,
         PluginInterface::IDasComponent** pp_out_component) override;
-
-private:
-    [[maybe_unused]]
-    uint16_t session_id_ = 0;
 };
 
 /**
@@ -156,9 +144,6 @@ class IpcTestPlugin1 final
     : public PluginInterface::DasPluginPackageImplBase<IpcTestPlugin1>
 {
 public:
-    // 设置 session_id（由 Host 进程调用）
-    void SetSessionId(uint16_t session_id);
-
     // IDasPluginPackage methods
     DAS_IMPL EnumFeature(
         const size_t                       index,
@@ -168,9 +153,6 @@ public:
         override;
 
     DAS_IMPL CanUnloadNow(bool* p_can_unload) override;
-
-private:
-    uint16_t session_id_ = 0;
 };
 
 DAS_NS_END

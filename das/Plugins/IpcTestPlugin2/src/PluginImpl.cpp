@@ -10,11 +10,6 @@ DAS_NS_BEGIN
 
 // === DasComponentImpl ===
 
-DasComponentImpl::DasComponentImpl(uint16_t session_id)
-    : session_id_(session_id)
-{
-}
-
 DasResult DasComponentImpl::GetGuid(DasGuid* p_out_guid)
 {
     if (!p_out_guid)
@@ -24,7 +19,8 @@ DasResult DasComponentImpl::GetGuid(DasGuid* p_out_guid)
     return DAS_S_OK;
 }
 
-DasResult DasComponentImpl::GetRuntimeClassName(IDasReadOnlyString** pp_out_name)
+DasResult DasComponentImpl::GetRuntimeClassName(
+    IDasReadOnlyString** pp_out_name)
 {
     if (!pp_out_name)
         return DAS_E_INVALID_ARGUMENT;
@@ -87,16 +83,10 @@ DasResult DasComponentImpl::HandleGetSessionInfo(
     // TODO: Return session_id as part of result
     std::ignore = args;
     std::ignore = out;
-    std::ignore = session_id_;
     return DAS_S_OK;
 }
 
 // === DasComponentFactoryImpl ===
-
-DasComponentFactoryImpl::DasComponentFactoryImpl(uint16_t session_id)
-    : session_id_(session_id)
-{
-}
 
 DasResult DasComponentFactoryImpl::GetGuid(DasGuid* p_out_guid)
 {
@@ -107,7 +97,8 @@ DasResult DasComponentFactoryImpl::GetGuid(DasGuid* p_out_guid)
     return DAS_S_OK;
 }
 
-DasResult DasComponentFactoryImpl::GetRuntimeClassName(IDasReadOnlyString** pp_out_name)
+DasResult DasComponentFactoryImpl::GetRuntimeClassName(
+    IDasReadOnlyString** pp_out_name)
 {
     if (!pp_out_name)
         return DAS_E_INVALID_ARGUMENT;
@@ -136,18 +127,13 @@ DasResult DasComponentFactoryImpl::CreateInstance(
     if (component_iid != DasIidOf<PluginInterface::IDasComponent>())
         return DAS_E_NO_IMPLEMENTATION;
 
-    auto* instance = new DasComponentImpl(session_id_);
+    auto* instance = new DasComponentImpl();
     instance->AddRef();
     *pp_out_component = instance;
     return DAS_S_OK;
 }
 
 // === IpcTestPlugin2 ===
-
-void IpcTestPlugin2::SetSessionId(uint16_t session_id)
-{
-    session_id_ = session_id;
-}
 
 DasResult IpcTestPlugin2::EnumFeature(
     const size_t                       index,
@@ -166,7 +152,7 @@ DasResult IpcTestPlugin2::EnumFeature(
 }
 
 DasResult IpcTestPlugin2::CreateFeatureInterface(
-    size_t index,
+    size_t     index,
     IDasBase** pp_out_interface)
 {
     if (!pp_out_interface)
@@ -174,7 +160,7 @@ DasResult IpcTestPlugin2::CreateFeatureInterface(
 
     if (index == 0)
     {
-        auto* factory = new DasComponentFactoryImpl(session_id_);
+        auto* factory = new DasComponentFactoryImpl();
         factory->AddRef();
         *pp_out_interface = factory;
         return DAS_S_OK;

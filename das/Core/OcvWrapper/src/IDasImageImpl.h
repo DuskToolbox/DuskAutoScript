@@ -37,8 +37,6 @@ class IDasImageImpl final
 {
     DAS::ExportInterface::DasMemory p_memory_;
     cv::Mat                         mat_;
-    [[maybe_unused]]
-    uint32_t ref_counter_{};
 
 public:
     /**

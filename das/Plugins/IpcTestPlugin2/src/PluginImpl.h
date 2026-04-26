@@ -1,7 +1,6 @@
 #ifndef DAS_PLUGINS_IPCTESTPLUGIN2_PLUGINIMPL_H
 #define DAS_PLUGINS_IPCTESTPLUGIN2_PLUGINIMPL_H
 
-#include <cstdint>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/_autogen/idl/abi/IDasComponent.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasComponent.Implements.hpp>
@@ -61,7 +60,7 @@ class DasComponentImpl final
     : public PluginInterface::DasComponentImplBase<DasComponentImpl>
 {
 public:
-    explicit DasComponentImpl(uint16_t session_id);
+    DasComponentImpl() = default;
 
     // IDasTypeInfo methods (必须手动实现)
     DAS_IMPL GetGuid(DasGuid* p_out_guid) override;
@@ -73,8 +72,6 @@ public:
         ExportInterface::IDasVariantVector** pp_out_result) override;
 
 private:
-    uint16_t session_id_;
-
     DasResult HandleEcho(
         ExportInterface::IDasVariantVector*  args,
         ExportInterface::IDasVariantVector** out);
@@ -91,7 +88,7 @@ class DasComponentFactoryImpl final
           DasComponentFactoryImpl>
 {
 public:
-    explicit DasComponentFactoryImpl(uint16_t session_id);
+    DasComponentFactoryImpl() = default;
 
     // IDasTypeInfo methods (必须手动实现)
     DAS_IMPL GetGuid(DasGuid* p_out_guid) override;
@@ -101,17 +98,12 @@ public:
     DAS_IMPL CreateInstance(
         const DasGuid&                   component_iid,
         PluginInterface::IDasComponent** pp_out_component) override;
-
-private:
-    uint16_t session_id_;
 };
 
 class IpcTestPlugin2 final
     : public PluginInterface::DasPluginPackageImplBase<IpcTestPlugin2>
 {
 public:
-    void SetSessionId(uint16_t session_id);
-
     DAS_IMPL EnumFeature(
         const size_t                       index,
         PluginInterface::DasPluginFeature* p_out_feature) override;
@@ -120,9 +112,6 @@ public:
         override;
 
     DAS_IMPL CanUnloadNow(bool* p_can_unload) override;
-
-private:
-    uint16_t session_id_ = 0;
 };
 
 DAS_NS_END
