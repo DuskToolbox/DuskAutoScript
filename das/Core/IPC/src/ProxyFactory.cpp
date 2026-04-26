@@ -15,7 +15,7 @@ ProxyFactory::ProxyFactory() = default;
 
 ProxyFactory::~ProxyFactory() = default;
 
-IDasBase* ProxyFactory::GetOrCreateProxy(
+DasPtr<IDasBase> ProxyFactory::GetOrCreateProxy(
     IpcRunLoop&                   run_loop,
     std::weak_ptr<BusinessThread> business_thread,
     const ObjectId&               object_id,
@@ -25,12 +25,11 @@ IDasBase* ProxyFactory::GetOrCreateProxy(
     auto it = proxy_cache_.find(EncodeObjectId(object_id));
     if (it != proxy_cache_.end())
     {
-        // 缓存命中：AddRef 返回（DasPtr 持有 1 ref，调用方再 AddRef 1 ref）
-        it->second->AddRef();
-        return it->second.Get();
+        // Cache hit: copy DasPtr (AddRef) and return
+        return it->second;
     }
 
-    // 缓存未命中：创建 proxy
+    // Cache miss: create proxy
     IDasBase* proxy = CreateProxyByInterfaceIdWithFallback(
         interface_id,
         object_id,
@@ -43,28 +42,16 @@ IDasBase* ProxyFactory::GetOrCreateProxy(
         return nullptr;
     }
 
-    // 注册远程对象到 DistributedObjectManager
+    // Register remote object
     object_manager_.RegisterRemoteObject(object_id);
 
-    // 插入缓存：DasPtr(proxy) 构造时自动 AddRef
-    // proxy 初始 refcount=1，DasPtr 构造 +1 = 2（缓存 1 + 调用方 1）
-    proxy_cache_[EncodeObjectId(object_id)] = DasPtr<IDasBase>(proxy);
+    // proxy refcount=1 from constructor
+    // Attach: no AddRef, cache "owns" the initial ref -> refcount stays 1
+    proxy_cache_[EncodeObjectId(object_id)] = DasPtr<IDasBase>::Attach(proxy);
 
-    return proxy;
-}
-
-DasResult ProxyFactory::RemoveFromCache(const ObjectId& object_id)
-{
-    std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
-    auto it = proxy_cache_.find(EncodeObjectId(object_id));
-    if (it != proxy_cache_.end())
-    {
-        proxy_cache_.erase(it);
-        // DasPtr 析构自动 Release
-        return DAS_S_OK;
-    }
-
-    return DAS_E_IPC_OBJECT_NOT_FOUND;
+    // Return copy from cache: DasPtr copy -> AddRef -> refcount=2
+    // cache holds 1 ref, caller holds 1 ref
+    return proxy_cache_[EncodeObjectId(object_id)];
 }
 
 bool ProxyFactory::HasProxy(const ObjectId& object_id) const
