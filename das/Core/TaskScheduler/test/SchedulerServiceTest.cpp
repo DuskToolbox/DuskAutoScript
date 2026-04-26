@@ -29,6 +29,7 @@
 #include <vector>
 
 using namespace Das::Core::TaskScheduler;
+using Das::DasOutPtr;
 using Das::DasPtr;
 
 namespace
@@ -1251,9 +1252,11 @@ public:
             return DAS_E_OUT_OF_RANGE;
         }
 
-        auto* task = new FactoryBackedTask(state_);
+        DasOutPtr<IDasBase> result(pp_out_interface);
+        auto*               task = new FactoryBackedTask(state_);
         task->AddRef();
-        *pp_out_interface = task;
+        *result.Put() = task;
+        result.Keep();
         return DAS_S_OK;
     }
 
@@ -1917,9 +1920,15 @@ namespace
             get_called = true;
             if (pp)
             {
-                return CreateIDasReadOnlyStringFromUtf8(
+                DasOutPtr<IDasReadOnlyString> result(pp);
+                auto cr = CreateIDasReadOnlyStringFromUtf8(
                     R"({"state":"stopped"})",
-                    pp);
+                    result.Put());
+                if (DAS::IsOk(cr))
+                {
+                    result.Keep();
+                }
+                return cr;
             }
             return DAS_E_INVALID_POINTER;
         }

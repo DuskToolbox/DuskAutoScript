@@ -10,6 +10,7 @@
 #include <vector>
 
 using namespace DAS::Core::ForeignInterfaceHost;
+using Das::DasOutPtr;
 using Das::DasPtr;
 using namespace Das::PluginInterface;
 
@@ -126,9 +127,11 @@ namespace
                 return DAS_E_INVALID_POINTER;
             }
             ++create_instance_call_count;
-            auto* comp = new MockComponent();
+            DasOutPtr<IDasComponent> result(pp_out);
+            auto*                    comp = new MockComponent();
             comp->AddRef();
-            *pp_out = comp;
+            *result.Put() = comp;
+            result.Keep();
             return DAS_S_OK;
         }
     };
