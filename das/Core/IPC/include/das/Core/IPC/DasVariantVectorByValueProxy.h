@@ -66,7 +66,6 @@ public:
         uint32_t count = --ref_count_;
         if (count == 0)
         {
-            proxy_factory_.RemoveFromCache(GetObjectId());
             delete this;
         }
         return count;
