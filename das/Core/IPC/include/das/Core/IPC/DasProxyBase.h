@@ -120,7 +120,6 @@ public:
         uint32_t count = ref_count_.fetch_sub(1, std::memory_order_acq_rel) - 1;
         if (count == 0)
         {
-            proxy_factory_.RemoveFromCache(GetObjectId());
             delete this;
         }
         return count;
@@ -190,19 +189,21 @@ public:
         // 根据 interface_id 创建对应的 Proxy（走 ProxyFactory 缓存）
         ObjectId new_obj_id = DecodeObjectId(new_object_id);
 
-        IDasBase* proxy = proxy_factory_.GetOrCreateProxy(
+        DasPtr<IDasBase> proxy = proxy_factory_.GetOrCreateProxy(
             GetRunLoop(),
             GetBusinessThread(),
             new_obj_id,
             interface_id);
 
-        if (proxy == nullptr)
+        if (!proxy)
         {
             return DAS_E_NO_INTERFACE;
         }
 
-        *pp_object = proxy;
+        *pp_object = proxy.Get();
+        (*pp_object)->AddRef(); // QI contract: AddRef for caller
         return DAS_S_OK;
+        // proxy (DasPtr) 析构时 Release，与 AddRef 配对
     }
 
 protected:
