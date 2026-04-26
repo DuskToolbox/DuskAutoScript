@@ -47,29 +47,20 @@ public:
     /**
      * @brief 获取或创建 Proxy 实例（统一入口）
      *
-     * 缓存命中时 AddRef 返回现有实例，未命中时创建新 proxy 并注册到缓存
+     * 缓存命中时返回 cache 中 DasPtr 的 copy（自动 AddRef），未命中时创建新
+     * proxy 并通过 Attach 插入缓存（不额外 AddRef），返回 cache 中的 DasPtr
+     * copy
      * @param run_loop IpcRunLoop 引用（传递给 proxy 构造函数）
      * @param business_thread BusinessThread weak_ptr（传递给 proxy 构造函数）
      * @param object_id 对象 ID
      * @param interface_id 接口 ID
-     * @return Proxy 实例指针（引用计数已+1），失败返回 nullptr
+     * @return DasPtr<IDasBase> Proxy 实例智能指针，失败返回空 DasPtr
      */
-    IDasBase* GetOrCreateProxy(
+    DasPtr<IDasBase> GetOrCreateProxy(
         IpcRunLoop&                   run_loop,
         std::weak_ptr<BusinessThread> business_thread,
         const ObjectId&               object_id,
         uint32_t                      interface_id);
-
-    /**
-     * @brief 从缓存中移除
-     Proxy（内部方法，供
-     Proxy::Release 调用）
-     * @param object_id 对象
-     ID
-
-     * * @return DasResult 操作结果
-     */
-    DasResult RemoveFromCache(const ObjectId& object_id);
 
     /**
      * @brief 检查 Proxy 实例是否存在
