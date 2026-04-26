@@ -89,11 +89,12 @@ namespace
         EXPECT_EQ(ref.get().GetValue(), 42);
     }
 
-    // Test 2: Nullptr construction throws
+    // Test 2: Null construction throws via T* constructor
     TEST(DasRefTest, ConstructFromNullThrows)
     {
+        ITestInterface* null_ptr = nullptr;
         EXPECT_THROW(
-            { DAS::DasRef<ITestInterface> ref(nullptr); },
+            { DAS::DasRef<ITestInterface> ref(null_ptr); },
             std::invalid_argument);
     }
 
