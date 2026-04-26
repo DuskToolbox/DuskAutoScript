@@ -123,7 +123,7 @@ DAS_API auto ToU8String(IDasReadOnlyString* p_string)
 
 DAS_UTILS_NS_END
 
-class DAS_API DasReadOnlyStringWrapper
+class DasReadOnlyStringWrapper
 {
     mutable DAS::DasPtr<IDasReadOnlyString> p_impl_{
         []

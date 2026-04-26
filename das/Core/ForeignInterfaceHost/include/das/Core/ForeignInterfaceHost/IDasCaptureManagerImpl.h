@@ -9,7 +9,7 @@
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
-class DAS_API CaptureManagerImpl
+class CaptureManagerImpl
     : public ExportInterface::DasCaptureManagerImplBase<CaptureManagerImpl>
 {
 public:

@@ -19,7 +19,7 @@ struct FeatureInfo;
  * 负责发现已加载插件提供的 IDasComponentFactory 实例，
  * 并通过 lazy probe routing table 按 component IID 路由 CreateComponent 调用。
  */
-class DAS_API ComponentFactoryManager
+class ComponentFactoryManager
 {
 public:
     ComponentFactoryManager() = default;

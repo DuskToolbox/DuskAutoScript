@@ -11,7 +11,7 @@
 namespace nlohmann
 {
     template <>
-    struct DAS_API adl_serializer<DasReadOnlyString>
+    struct adl_serializer<DasReadOnlyString>
     {
         static void to_json(json& j, const DasReadOnlyString& das_string);
 
@@ -19,7 +19,7 @@ namespace nlohmann
     };
 
     template <>
-    struct DAS_API adl_serializer<DAS::DasPtr<IDasReadOnlyString>>
+    struct adl_serializer<DAS::DasPtr<IDasReadOnlyString>>
     {
         static void to_json(
             json&                                  j,
