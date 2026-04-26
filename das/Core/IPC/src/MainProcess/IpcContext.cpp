@@ -244,7 +244,8 @@ namespace Core
                 {
                     return DAS_E_INVALID_ARGUMENT;
                 }
-                *pp_out_operation = nullptr;
+                DAS::DasOutPtr<IDasAsyncLoadPluginOperation> out_op(
+                    pp_out_operation);
 
                 // 从 IHostLauncher 获取 session_id
                 uint16_t session_id = host_launcher->GetSessionId();
@@ -303,11 +304,12 @@ namespace Core
                 // 5. 包装为 IDasAsyncLoadPluginOperation
                 auto op = MakeLoadPluginAsyncOperation(std::move(sender), this);
 
-                *pp_out_operation = op.Get();
-                if (*pp_out_operation)
+                *out_op.Put() = op.Get();
+                if (out_op.Get())
                 {
-                    (*pp_out_operation)->AddRef();
+                    out_op->AddRef();
                 }
+                out_op.Keep();
                 return DAS_S_OK;
             }
 
@@ -473,7 +475,7 @@ namespace Core
                 {
                     return DAS_E_INVALID_ARGUMENT;
                 }
-                *pp_out = nullptr;
+                DAS::DasOutPtr<IDasBase> out_proxy(pp_out);
 
                 if (!business_thread_)
                 {
@@ -525,8 +527,9 @@ namespace Core
                     return DAS_E_NO_INTERFACE;
                 }
 
-                *pp_out = proxy.Get();
-                (*pp_out)->AddRef();
+                *out_proxy.Put() = proxy.Get();
+                out_proxy->AddRef();
+                out_proxy.Keep();
                 return DAS_S_OK;
             }
 

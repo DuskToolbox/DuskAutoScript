@@ -166,6 +166,8 @@ DasResult PluginManagerServiceImpl::CreateComponent(
     }
     DAS_UTILS_CHECK_POINTER(p_component_iid)
 
+    DAS::DasOutPtr<IDasBase> out_component(pp_out_component);
+
     DAS::DasPtr<Das::PluginInterface::IDasComponent> component;
     auto result = mgr_.GetComponentFactoryManager().CreateComponent(
         *p_component_iid,
@@ -179,8 +181,9 @@ DasResult PluginManagerServiceImpl::CreateComponent(
         return DAS_E_INVALID_POINTER;
     }
 
-    *pp_out_component = static_cast<IDasBase*>(component.Get());
-    (*pp_out_component)->AddRef();
+    *out_component.Put() = static_cast<IDasBase*>(component.Get());
+    out_component->AddRef();
+    out_component.Keep();
     return DAS_S_OK;
 }
 

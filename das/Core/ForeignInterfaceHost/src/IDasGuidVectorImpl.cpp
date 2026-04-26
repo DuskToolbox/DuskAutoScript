@@ -102,14 +102,17 @@ DasResult DasGuidVectorImpl::ToConst(
     ExportInterface::IDasReadOnlyGuidVector** pp_out_object)
 {
     DAS_UTILS_CHECK_POINTER(pp_out_object);
+    DAS::DasOutPtr<ExportInterface::IDasReadOnlyGuidVector> result(
+        pp_out_object);
 
     auto expected_p_impl = ToConst();
     if (!expected_p_impl)
     {
         return expected_p_impl.error();
     }
-    *pp_out_object = expected_p_impl.value().Get();
-    (*pp_out_object)->AddRef();
+    *result.Put() = expected_p_impl.value().Get();
+    result->AddRef();
+    result.Keep();
     return DAS_S_OK;
 }
 

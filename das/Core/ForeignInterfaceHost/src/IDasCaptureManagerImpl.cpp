@@ -168,6 +168,11 @@ DasResult CaptureManagerImpl::EnumPerformanceTestResult(
     {
         return DAS_E_OUT_OF_RANGE;
     }
+
+    DAS::DasOutPtr<PluginInterface::IDasCapture> capture_guard(pp_out_capture);
+    DAS::DasOutPtr<IDasReadOnlyString>           explanation_guard(
+        pp_out_error_explanation);
+
     try
     {
         auto& [object, error_info] = performance_results_.at(index);
@@ -182,14 +187,17 @@ DasResult CaptureManagerImpl::EnumPerformanceTestResult(
         }
         if (pp_out_capture)
         {
-            *pp_out_capture = object.Get();
-            (*pp_out_capture)->AddRef();
+            *capture_guard.Put() = object.Get();
+            capture_guard->AddRef();
         }
         if (pp_out_error_explanation)
         {
-            *pp_out_error_explanation = error_info.p_error_message.Get();
-            (*pp_out_error_explanation)->AddRef();
+            *explanation_guard.Put() = error_info.p_error_message.Get();
+            explanation_guard->AddRef();
         }
+
+        capture_guard.Keep();
+        explanation_guard.Keep();
         return DAS_S_OK;
     }
     catch (const std::out_of_range& ex)

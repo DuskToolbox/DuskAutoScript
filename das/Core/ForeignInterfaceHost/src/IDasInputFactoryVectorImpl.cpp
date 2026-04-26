@@ -49,9 +49,12 @@ DasResult DasInputFactoryVectorImpl::At(
     if (index < input_factory_vector_.size())
     {
         DAS_UTILS_CHECK_POINTER(pp_out_factory)
+        DAS::DasOutPtr<PluginInterface::IDasInputFactory> result(
+            pp_out_factory);
 
-        *pp_out_factory = input_factory_vector_[index].Get();
-        (*pp_out_factory)->AddRef();
+        *result.Put() = input_factory_vector_[index].Get();
+        result->AddRef();
+        result.Keep();
         return DAS_S_OK;
     }
     return DAS_E_OUT_OF_RANGE;

@@ -653,7 +653,7 @@ namespace Core
                 {
                     return DAS_E_INVALID_ARGUMENT;
                 }
-                *pp_out_object = nullptr;
+                DAS::DasOutPtr<IDasBase> out_object(pp_out_object);
 
                 if (!business_thread_)
                 {
@@ -723,11 +723,12 @@ namespace Core
                     return DAS_E_NO_INTERFACE;
                 }
 
-                *pp_out_object = proxy.Get();
-                (*pp_out_object)->AddRef();
+                *out_object.Put() = proxy.Get();
+                out_object->AddRef();
 
                 DAS_CORE_LOG_TRACE(
                     "Successfully resolved main process interface");
+                out_object.Keep();
                 return DAS_S_OK;
             }
 
