@@ -93,12 +93,14 @@ CoreServicesImpl::QueryInterface(const DasGuid& iid, void** pp_out)
 DasResult CoreServicesImpl::GetSettingsService(IDasSettingsService** pp_out)
 {
     DAS_UTILS_CHECK_POINTER(pp_out)
+    DasOutPtr<IDasSettingsService> result(pp_out);
     if (!settings_service_)
     {
         return DAS_E_NOT_FOUND;
     }
-    *pp_out = settings_service_.Get();
-    settings_service_->AddRef();
+    *result.Put() = settings_service_.Get();
+    result->AddRef();
+    result.Keep();
     return DAS_S_OK;
 }
 
@@ -106,24 +108,28 @@ DasResult CoreServicesImpl::GetPluginManagerService(
     IDasPluginManagerService** pp_out)
 {
     DAS_UTILS_CHECK_POINTER(pp_out)
+    DasOutPtr<IDasPluginManagerService> result(pp_out);
     if (!plugin_manager_service_)
     {
         return DAS_E_NOT_FOUND;
     }
-    *pp_out = plugin_manager_service_.Get();
-    plugin_manager_service_->AddRef();
+    *result.Put() = plugin_manager_service_.Get();
+    result->AddRef();
+    result.Keep();
     return DAS_S_OK;
 }
 
 DasResult CoreServicesImpl::GetSchedulerService(IDasSchedulerService** pp_out)
 {
     DAS_UTILS_CHECK_POINTER(pp_out)
+    DasOutPtr<IDasSchedulerService> result(pp_out);
     if (!scheduler_service_)
     {
         return DAS_E_NOT_FOUND;
     }
-    *pp_out = scheduler_service_.Get();
-    scheduler_service_->AddRef();
+    *result.Put() = scheduler_service_.Get();
+    result->AddRef();
+    result.Keep();
     return DAS_S_OK;
 }
 
@@ -139,6 +145,7 @@ DAS_C_API DasResult CreateIDasCoreServices(
     {
         return DAS_E_INVALID_POINTER;
     }
+    Das::DasOutPtr<IDasCoreServices> out(pp_out);
     if (p_settings_dir == nullptr)
     {
         return DAS_E_INVALID_POINTER;
@@ -162,19 +169,19 @@ DAS_C_API DasResult CreateIDasCoreServices(
 
         // 反序列化路径参数
         const char* u8_settings_dir = nullptr;
-        auto        result = p_settings_dir->GetUtf8(&u8_settings_dir);
-        if (Das::IsFailed(result))
+        auto        get_result = p_settings_dir->GetUtf8(&u8_settings_dir);
+        if (Das::IsFailed(get_result))
         {
-            return result;
+            return get_result;
         }
         std::filesystem::path settings_dir = std::filesystem::path(
             reinterpret_cast<const char8_t*>(u8_settings_dir));
 
         const char* u8_plugin_dir = nullptr;
-        result = p_plugin_dir->GetUtf8(&u8_plugin_dir);
-        if (Das::IsFailed(result))
+        get_result = p_plugin_dir->GetUtf8(&u8_plugin_dir);
+        if (Das::IsFailed(get_result))
         {
-            return result;
+            return get_result;
         }
         std::filesystem::path plugin_dir = std::filesystem::path(
             reinterpret_cast<const char8_t*>(u8_plugin_dir));
@@ -184,7 +191,8 @@ DAS_C_API DasResult CreateIDasCoreServices(
             std::move(settings_dir),
             std::move(plugin_dir));
         impl->AddRef();
-        *pp_out = impl;
+        *out.Put() = impl;
+        out.Keep();
         return DAS_S_OK;
     }
     catch (const std::bad_alloc&)
