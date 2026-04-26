@@ -3,6 +3,7 @@
 #include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
+#include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/_autogen/idl/abi/IDasStringVector.h>
@@ -78,9 +79,14 @@ DasResult DasStringVectorImpl::At(
         return DAS_E_OUT_OF_RANGE;
     }
 
-    return CreateIDasReadOnlyStringFromUtf8(
-        strings_[index].c_str(),
-        pp_out_string);
+    DasOutPtr<IDasReadOnlyString> result(pp_out_string);
+    auto                          cr =
+        CreateIDasReadOnlyStringFromUtf8(strings_[index].c_str(), result.Put());
+    if (DAS::IsOk(cr))
+    {
+        result.Keep();
+    }
+    return cr;
 }
 
 DasResult DasStringVectorImpl::Find(IDasReadOnlyString* p_string)
@@ -138,17 +144,19 @@ auto DasStringVectorImpl::GetImpl() noexcept -> std::vector<std::string>&
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
 
-DasResult
-CreateIDasStringVector(Das::ExportInterface::IDasStringVector** pp_out)
+DasResult CreateIDasStringVector(
+    Das::ExportInterface::IDasStringVector** pp_out)
 {
     DAS_UTILS_CHECK_POINTER(pp_out)
 
+    Das::DasOutPtr<Das::ExportInterface::IDasStringVector> result(pp_out);
+
     try
     {
-        auto* result =
-            new DAS::Core::ForeignInterfaceHost::DasStringVectorImpl{};
-        result->AddRef();
-        *pp_out = result;
+        auto* impl = new DAS::Core::ForeignInterfaceHost::DasStringVectorImpl{};
+        impl->AddRef();
+        *result.Put() = impl;
+        result.Keep();
         return DAS_S_OK;
     }
     catch (const std::bad_alloc&)

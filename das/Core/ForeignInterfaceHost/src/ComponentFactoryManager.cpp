@@ -1,6 +1,7 @@
 #include <das/Core/ForeignInterfaceHost/ComponentFactoryManager.h>
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Core/Logger/Logger.h>
+#include <das/DasPtr.hpp>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/_autogen/idl/abi/IDasComponent.h>
 
@@ -78,12 +79,19 @@ DasResult ComponentFactoryManager::CreateComponent(
 {
     DAS_UTILS_CHECK_POINTER(pp_out_component)
 
+    DasOutPtr<Das::PluginInterface::IDasComponent> result(pp_out_component);
+
     {
         std::shared_lock lock{mutex_};
         auto             it = routing_table_.find(component_iid);
         if (it != routing_table_.end())
         {
-            return it->second->CreateInstance(component_iid, pp_out_component);
+            auto cr = it->second->CreateInstance(component_iid, result.Put());
+            if (DAS::IsOk(cr))
+            {
+                result.Keep();
+            }
+            return cr;
         }
     }
 
@@ -92,7 +100,12 @@ DasResult ComponentFactoryManager::CreateComponent(
         auto             it = routing_table_.find(component_iid);
         if (it != routing_table_.end())
         {
-            return it->second->CreateInstance(component_iid, pp_out_component);
+            auto cr = it->second->CreateInstance(component_iid, result.Put());
+            if (DAS::IsOk(cr))
+            {
+                result.Keep();
+            }
+            return cr;
         }
 
         for (auto& [guid, factory] : factories_)
@@ -100,7 +113,12 @@ DasResult ComponentFactoryManager::CreateComponent(
             if (factory->IsSupported(component_iid) == DAS_S_OK)
             {
                 routing_table_[component_iid] = factory;
-                return factory->CreateInstance(component_iid, pp_out_component);
+                auto cr = factory->CreateInstance(component_iid, result.Put());
+                if (DAS::IsOk(cr))
+                {
+                    result.Keep();
+                }
+                return cr;
             }
         }
     }

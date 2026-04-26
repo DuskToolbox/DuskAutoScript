@@ -3,6 +3,7 @@
 #include <das/Core/IPC/DasAsyncSender.h>
 #include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/Logger/Logger.h>
+#include <das/DasPtr.hpp>
 #include <das/_autogen/idl/abi/IDasCapture.h>
 #include <das/_autogen/idl/abi/IDasComponent.h>
 #include <das/_autogen/idl/abi/IDasErrorLens.h>
@@ -121,6 +122,9 @@ DasResult PluginManager::LoadPlugin(
     const std::filesystem::path&              path,
     Das::PluginInterface::IDasPluginPackage** pp_out_package)
 {
+    DasOutPtr<Das::PluginInterface::IDasPluginPackage> out_package(
+        pp_out_package);
+
     // 阶段1: 锁内快速检查 + manifest 解析
     std::filesystem::path              normalized_path;
     std::string                        path_str;
@@ -141,14 +145,12 @@ DasResult PluginManager::LoadPlugin(
         if (path_to_guid_.contains(path_str))
         {
             DAS_CORE_LOG_WARN("Plugin already loaded: {}", path_str);
-            if (pp_out_package)
+            auto it = loaded_plugins_.find(path_to_guid_[path_str]);
+            if (it != loaded_plugins_.end() && it->second.package)
             {
-                auto it = loaded_plugins_.find(path_to_guid_[path_str]);
-                if (it != loaded_plugins_.end() && it->second.package)
-                {
-                    *pp_out_package = it->second.package.Get();
-                    (*pp_out_package)->AddRef();
-                }
+                *out_package.Put() = it->second.package.Get();
+                out_package->AddRef();
+                out_package.Keep();
             }
             return DAS_S_FALSE;
         }
@@ -298,10 +300,10 @@ DasResult PluginManager::LoadPlugin(
                 path_str,
                 loaded_plugins_[guid].features.size());
 
-            if (pp_out_package && loaded_plugins_[guid].package)
+            if (out_package && loaded_plugins_[guid].package)
             {
-                *pp_out_package = loaded_plugins_[guid].package.Get();
-                (*pp_out_package)->AddRef();
+                *out_package.Put() = loaded_plugins_[guid].package.Get();
+                out_package->AddRef();
             }
 
             // Notify ComponentFactoryManager about factory features
@@ -326,6 +328,7 @@ DasResult PluginManager::LoadPlugin(
             }
         }
 
+        out_package.Keep();
         return DAS_S_OK;
     }
 
@@ -419,12 +422,11 @@ DasResult PluginManager::GetPlugin(
     const std::filesystem::path&              path,
     Das::PluginInterface::IDasPluginPackage** pp_out_package)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    DAS_UTILS_CHECK_POINTER(pp_out_package)
 
-    if (!pp_out_package)
-    {
-        return DAS_E_INVALID_POINTER;
-    }
+    DasOutPtr<Das::PluginInterface::IDasPluginPackage> result(pp_out_package);
+
+    std::lock_guard<std::mutex> lock(mutex_);
 
     auto normalized_path = NormalizePath(path);
     auto path_str = normalized_path.string();
@@ -446,8 +448,9 @@ DasResult PluginManager::GetPlugin(
         return DAS_E_INVALID_POINTER;
     }
 
-    *pp_out_package = it->second.package.Get();
-    (*pp_out_package)->AddRef();
+    *result.Put() = it->second.package.Get();
+    result->AddRef();
+    result.Keep();
     return DAS_S_OK;
 }
 
