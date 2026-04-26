@@ -259,14 +259,10 @@ private:
 
 TEST_F(IpcRunLoopTest, RegisterHandler_Succeeds)
 {
-    // RAII constructor completes initialization
-
     // 注册处理器（使用 header_flags=NONE, interface_id=1）
-    auto handler = std::make_unique<TestMessageHandler>();
-    runloop_->RegisterHandler(
-        DAS::Core::IPC::HeaderFlags::NONE,
-        1,
-        handler.get());
+    // IpcRunLoop 通过 DasPtr 接管引用（AddRef），析构时 Release 释放
+    auto* handler = new TestMessageHandler();
+    runloop_->RegisterHandler(DAS::Core::IPC::HeaderFlags::NONE, 1, handler);
 
     // 验证可以通过 GetHandler 获取
     IMessageHandler* retrieved =

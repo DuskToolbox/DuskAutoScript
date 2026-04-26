@@ -201,7 +201,8 @@ public:
         }
 
         *pp_object = proxy.Get();
-        (*pp_object)->AddRef(); // QI contract: AddRef for caller
+        static_cast<IDasBase*>(*pp_object)
+            ->AddRef(); // QI contract: AddRef for caller
         return DAS_S_OK;
         // proxy (DasPtr) 析构时 Release，与 AddRef 配对
     }
