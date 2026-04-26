@@ -129,8 +129,7 @@ namespace
             ++create_instance_call_count;
             DasOutPtr<IDasComponent> result(pp_out);
             auto*                    comp = new MockComponent();
-            comp->AddRef();
-            *result.Put() = comp;
+            result.Set(comp);
             result.Keep();
             return DAS_S_OK;
         }

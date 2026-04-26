@@ -110,8 +110,7 @@ DasResult DasGuidVectorImpl::ToConst(
     {
         return expected_p_impl.error();
     }
-    *result.Put() = expected_p_impl.value().Get();
-    result->AddRef();
+    result.Set(expected_p_impl.value().Get());
     result.Keep();
     return DAS_S_OK;
 }

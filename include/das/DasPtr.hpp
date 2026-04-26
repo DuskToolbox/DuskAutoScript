@@ -297,6 +297,27 @@ public:
     }
 
     /**
+     * @brief Assign a pointer with automatic AddRef. Releases current pointer
+     * first.
+     */
+    void Set(T* p) noexcept
+    {
+        if (!pp_out_)
+        {
+            return;
+        }
+        if (*pp_out_)
+        {
+            static_cast<void>((*pp_out_)->Release());
+        }
+        *pp_out_ = p;
+        if (p)
+        {
+            static_cast<void>(p->AddRef());
+        }
+    }
+
+    /**
      * @brief Confirm the result and relinquish ownership. Destructor will not
      * Release.
      */

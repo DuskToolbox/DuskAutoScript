@@ -154,8 +154,7 @@ DasResult CreateIDasStringVector(
     try
     {
         auto* impl = new DAS::Core::ForeignInterfaceHost::DasStringVectorImpl{};
-        impl->AddRef();
-        *result.Put() = impl;
+        result.Set(impl);
         result.Keep();
         return DAS_S_OK;
     }

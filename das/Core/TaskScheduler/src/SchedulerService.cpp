@@ -238,8 +238,7 @@ namespace Das::Core::TaskScheduler
             return create_result;
         }
 
-        *result.Put() = task_type.prototype_task.Get();
-        result->AddRef();
+        result.Set(task_type.prototype_task.Get());
         result.Keep();
         return DAS_S_OK;
     }

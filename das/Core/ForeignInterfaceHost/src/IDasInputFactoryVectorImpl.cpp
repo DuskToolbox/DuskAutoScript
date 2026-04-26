@@ -52,8 +52,7 @@ DasResult DasInputFactoryVectorImpl::At(
         DAS::DasOutPtr<PluginInterface::IDasInputFactory> result(
             pp_out_factory);
 
-        *result.Put() = input_factory_vector_[index].Get();
-        result->AddRef();
+        result.Set(input_factory_vector_[index].Get());
         result.Keep();
         return DAS_S_OK;
     }

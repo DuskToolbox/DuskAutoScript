@@ -187,13 +187,11 @@ DasResult CaptureManagerImpl::EnumPerformanceTestResult(
         }
         if (pp_out_capture)
         {
-            *capture_guard.Put() = object.Get();
-            capture_guard->AddRef();
+            capture_guard.Set(object.Get());
         }
         if (pp_out_error_explanation)
         {
-            *explanation_guard.Put() = error_info.p_error_message.Get();
-            explanation_guard->AddRef();
+            explanation_guard.Set(error_info.p_error_message.Get());
         }
 
         capture_guard.Keep();

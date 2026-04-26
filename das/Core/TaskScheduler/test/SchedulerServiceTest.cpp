@@ -1254,8 +1254,7 @@ public:
 
         DasOutPtr<IDasBase> result(pp_out_interface);
         auto*               task = new FactoryBackedTask(state_);
-        task->AddRef();
-        *result.Put() = task;
+        result.Set(task);
         result.Keep();
         return DAS_S_OK;
     }

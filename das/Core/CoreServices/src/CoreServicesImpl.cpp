@@ -98,8 +98,7 @@ DasResult CoreServicesImpl::GetSettingsService(IDasSettingsService** pp_out)
     {
         return DAS_E_NOT_FOUND;
     }
-    *result.Put() = settings_service_.Get();
-    result->AddRef();
+    result.Set(settings_service_.Get());
     result.Keep();
     return DAS_S_OK;
 }
@@ -113,8 +112,7 @@ DasResult CoreServicesImpl::GetPluginManagerService(
     {
         return DAS_E_NOT_FOUND;
     }
-    *result.Put() = plugin_manager_service_.Get();
-    result->AddRef();
+    result.Set(plugin_manager_service_.Get());
     result.Keep();
     return DAS_S_OK;
 }
@@ -127,8 +125,7 @@ DasResult CoreServicesImpl::GetSchedulerService(IDasSchedulerService** pp_out)
     {
         return DAS_E_NOT_FOUND;
     }
-    *result.Put() = scheduler_service_.Get();
-    result->AddRef();
+    result.Set(scheduler_service_.Get());
     result.Keep();
     return DAS_S_OK;
 }

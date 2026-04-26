@@ -776,8 +776,7 @@ DAS_C_API DasResult CreateDasString(IDasString** pp_out_string)
 
     try
     {
-        *result.Put() = new DasStringCppImpl();
-        result->AddRef();
+        result.Set(new DasStringCppImpl());
     }
     catch (const std::bad_alloc& ex)
     {

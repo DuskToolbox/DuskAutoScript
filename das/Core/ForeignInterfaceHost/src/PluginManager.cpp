@@ -448,8 +448,7 @@ DasResult PluginManager::GetPlugin(
         return DAS_E_INVALID_POINTER;
     }
 
-    *result.Put() = it->second.package.Get();
-    result->AddRef();
+    result.Set(it->second.package.Get());
     result.Keep();
     return DAS_S_OK;
 }

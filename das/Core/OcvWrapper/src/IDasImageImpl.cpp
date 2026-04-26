@@ -427,8 +427,7 @@ DasResult DasPluginLoadImageFromResource(
 
         auto* p_result =
             new DAS::Core::OcvWrapper::IDasImageImpl{std::move(rgb_mat)};
-        p_result->AddRef();
-        *result.Put() = p_result;
+        result.Set(p_result);
         result.Keep();
         return DAS_S_OK;
     }
