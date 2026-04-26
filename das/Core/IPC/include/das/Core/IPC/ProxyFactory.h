@@ -44,6 +44,21 @@ public:
         return object_manager_;
     }
 
+    struct ProxyCacheEntry
+    {
+        IDasBase* ptr_ = nullptr;
+
+        ProxyCacheEntry() = default;
+        explicit ProxyCacheEntry(IDasBase* ptr) : ptr_(ptr) {}
+        [[nodiscard]]
+        IDasBase* Get() const
+        {
+            return ptr_;
+        }
+    };
+
+    void InvalidateCacheEntry(const ObjectId& object_id);
+
     /**
      * @brief 获取或创建 Proxy 实例（统一入口）
      *
@@ -85,8 +100,8 @@ public:
     ProxyFactory& operator=(const ProxyFactory&) = delete;
 
 private:
-    // 缓存已创建的 Proxy（DasPtr 自动管理 AddRef/Release）
-    std::unordered_map<uint64_t, DasPtr<IDasBase>> proxy_cache_;
+    // 缓存已创建的 Proxy（非拥有引用，外部 DasPtr 持有唯一强引用）
+    std::unordered_map<uint64_t, ProxyCacheEntry> proxy_cache_;
 
     // 互斥锁保护代理缓存
     mutable std::mutex proxy_cache_mutex_;

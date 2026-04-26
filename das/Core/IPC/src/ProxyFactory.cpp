@@ -22,22 +22,23 @@ DasPtr<IDasBase> ProxyFactory::GetOrCreateProxy(
     uint32_t                      interface_id)
 {
     std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
-    auto it = proxy_cache_.find(EncodeObjectId(object_id));
-    if (it != proxy_cache_.end())
+    uint64_t                    key = EncodeObjectId(object_id);
+    auto                        it = proxy_cache_.find(key);
+    if (it != proxy_cache_.end() && it->second.Get() != nullptr)
     {
-        // Cache hit: copy DasPtr (AddRef) and return
-        return it->second;
+        // Cache hit: DasPtr 构造函数内部 AddRef
+        return DasPtr<IDasBase>(it->second.Get());
     }
 
-    // Cache miss: create proxy
-    IDasBase* proxy = CreateProxyByInterfaceIdWithFallback(
+    // Cache miss: 工厂返回 DasPtr，存 ProxyCacheEntry，move 出去
+    DasPtr<IDasBase> proxy = CreateProxyByInterfaceIdWithFallback(
         interface_id,
         object_id,
         run_loop,
         std::move(business_thread),
         *this);
 
-    if (proxy == nullptr)
+    if (!proxy)
     {
         return nullptr;
     }
@@ -45,20 +46,17 @@ DasPtr<IDasBase> ProxyFactory::GetOrCreateProxy(
     // Register remote object
     object_manager_.RegisterRemoteObject(object_id);
 
-    // proxy refcount=1 from constructor
-    // Attach: no AddRef, cache "owns" the initial ref -> refcount stays 1
-    proxy_cache_[EncodeObjectId(object_id)] = DasPtr<IDasBase>::Attach(proxy);
-
-    // Return copy from cache: DasPtr copy -> AddRef -> refcount=2
-    // cache holds 1 ref, caller holds 1 ref
-    return proxy_cache_[EncodeObjectId(object_id)];
+    // 存非拥有引用，proxy refcount 不变 (=1)
+    proxy_cache_[key] = ProxyCacheEntry(proxy.Get());
+    // move 出去，调用方拥有唯一强引用
+    return proxy;
 }
 
 bool ProxyFactory::HasProxy(const ObjectId& object_id) const
 {
     std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
     auto it = proxy_cache_.find(EncodeObjectId(object_id));
-    return (it != proxy_cache_.end());
+    return (it != proxy_cache_.end() && it->second.Get() != nullptr);
 }
 
 size_t ProxyFactory::GetProxyCount() const
@@ -67,9 +65,23 @@ size_t ProxyFactory::GetProxyCount() const
     return proxy_cache_.size();
 }
 
+// 只清查找表，proxy 由外部 DasPtr 自然释放
 void ProxyFactory::ClearAllProxies()
 {
     std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
     proxy_cache_.clear();
 }
+
+void ProxyFactory::InvalidateCacheEntry(const ObjectId& object_id)
+{
+    std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
+    uint64_t                    key = EncodeObjectId(object_id);
+    auto                        it = proxy_cache_.find(key);
+    if (it != proxy_cache_.end())
+    {
+        it->second.ptr_ = nullptr;
+        proxy_cache_.erase(it);
+    }
+}
+
 DAS_CORE_IPC_NS_END

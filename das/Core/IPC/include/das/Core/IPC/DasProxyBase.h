@@ -46,6 +46,8 @@ public:
      */
     ~DasProxyBase() override
     {
+        proxy_factory_.InvalidateCacheEntry(GetObjectId());
+
         const ObjectId& oid = GetObjectId();
         if (oid.session_id != 0 || oid.local_id != 0)
         {

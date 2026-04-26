@@ -5,6 +5,7 @@
 #include <das/Core/IPC/BusinessThread.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/ProxyFactory.h>
+#include <das/DasPtr.hpp>
 #include <unordered_map>
 
 DAS_CORE_IPC_NS_BEGIN
@@ -17,7 +18,7 @@ using ManualProxyFactory =
                   ProxyFactory&                 proxy_factory);
 
 // Try autogen factory first, then fall back to manual registry
-IDasBase* CreateProxyByInterfaceIdWithFallback(
+DasPtr<IDasBase> CreateProxyByInterfaceIdWithFallback(
     uint32_t                      interface_id,
     const ObjectId&               object_id,
     IpcRunLoop&                   run_loop,

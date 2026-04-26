@@ -16,7 +16,7 @@ namespace
     }
 } // namespace
 
-IDasBase* CreateProxyByInterfaceIdWithFallback(
+DasPtr<IDasBase> CreateProxyByInterfaceIdWithFallback(
     uint32_t                      interface_id,
     const ObjectId&               object_id,
     IpcRunLoop&                   run_loop,
@@ -33,7 +33,7 @@ IDasBase* CreateProxyByInterfaceIdWithFallback(
 
     if (proxy != nullptr)
     {
-        return proxy;
+        return DasPtr<IDasBase>::Attach(proxy);
     }
 
     // Fall back to manually registered factory
@@ -41,12 +41,16 @@ IDasBase* CreateProxyByInterfaceIdWithFallback(
     auto  it = registry.find(interface_id);
     if (it != registry.end())
     {
-        return it->second(
+        IDasBase* manual_proxy = it->second(
             interface_id,
             object_id,
             run_loop,
             business_thread,
             proxy_factory);
+        if (manual_proxy != nullptr)
+        {
+            return DasPtr<IDasBase>::Attach(manual_proxy);
+        }
     }
 
     return nullptr;
