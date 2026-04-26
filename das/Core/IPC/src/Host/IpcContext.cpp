@@ -709,7 +709,7 @@ namespace Core
 
                 // Create proxy using unified GetOrCreateProxy (cache +
                 // RegisterRemoteObject)
-                IDasBase* proxy = proxy_factory_->GetOrCreateProxy(
+                DasPtr<IDasBase> proxy = proxy_factory_->GetOrCreateProxy(
                     run_loop_,
                     business_thread_,
                     object_id,
@@ -723,7 +723,8 @@ namespace Core
                     return DAS_E_NO_INTERFACE;
                 }
 
-                *pp_out_object = proxy;
+                *pp_out_object = proxy.Get();
+                (*pp_out_object)->AddRef();
 
                 DAS_CORE_LOG_TRACE(
                     "Successfully resolved main process interface");

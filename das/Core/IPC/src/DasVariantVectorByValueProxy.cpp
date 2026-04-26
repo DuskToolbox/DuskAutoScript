@@ -296,15 +296,14 @@ DasResult DasVariantVectorByValueProxy::EnsureDataLoaded(uint16_t method_id)
             && (entry.object_id.session_id != 0
                 || entry.object_id.local_id != 0))
         {
-            IDasBase* proxy = GetProxyFactory().GetOrCreateProxy(
+            DasPtr<IDasBase> proxy = GetProxyFactory().GetOrCreateProxy(
                 GetRunLoop(),
                 GetBusinessThread(),
                 entry.object_id,
                 entry.interface_id);
-            if (proxy != nullptr)
+            if (proxy)
             {
-                // Attach returns a new DasPtr (static method), must assign back
-                entry.base_ptr = DasPtr<IDasBase>::Attach(proxy);
+                entry.base_ptr = std::move(proxy);
             }
         }
     }
