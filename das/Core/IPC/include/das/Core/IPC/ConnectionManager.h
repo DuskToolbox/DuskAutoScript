@@ -76,13 +76,6 @@ public:
     bool IsConnectionAlive(uint16_t remote_id) const;
 
     /**
-     * @brief 获取所有已连接的 session_id 列表
-     *
-     * @return std::vector<uint16_t> session_id 列表
-     */
-    std::vector<uint16_t> GetConnectedSessions() const;
-
-    /**
      * @brief 获取到指定 session 的连接信息
      *
      * @param session_id 目标会话ID

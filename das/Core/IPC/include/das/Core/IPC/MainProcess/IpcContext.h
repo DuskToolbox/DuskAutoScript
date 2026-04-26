@@ -79,8 +79,6 @@ namespace Core
 
                 boost::asio::io_context& GetIoContext() override;
 
-                std::vector<uint16_t> GetConnectedSessions() override;
-
                 uint16_t AllocateSessionId() override;
                 void     ReleaseSessionId(uint16_t session_id) override;
 

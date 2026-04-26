@@ -407,26 +407,6 @@ DasResult ConnectionManager::SetConnectionAlive(
     return DAS_S_OK;
 }
 
-std::vector<uint16_t> ConnectionManager::GetConnectedSessions() const
-{
-    std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
-
-    std::vector<uint16_t> sessions;
-    sessions.reserve(impl_->connections_.size());
-
-    for (const auto& [session_id, info] : impl_->connections_)
-    {
-        // Intentionally filters out Host-mode connections; only returns
-        // sessions managed via HostLauncher
-        if (info.is_alive && info.launcher)
-        {
-            sessions.push_back(session_id);
-        }
-    }
-
-    return sessions;
-}
-
 void ConnectionManager::StartHeartbeatThread()
 {
     if (impl_->running_.load())
@@ -545,16 +525,20 @@ void ConnectionManager::StopHeartbeatThread()
 
 DasResult ConnectionManager::SendHeartbeatToAll()
 {
-    auto sessions = GetConnectedSessions();
+    std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
 
     uint16_t local_session_id = impl_->local_id_;
 
-    for (uint16_t session_id : sessions)
+    for (const auto& [session_id, info] : impl_->connections_)
     {
+        if (!info.is_alive || !info.launcher)
+        {
+            continue;
+        }
+
         auto* transport = GetTransport(session_id);
         if (!transport || !transport->IsConnected())
         {
-            // 跳过无效连接
             continue;
         }
 

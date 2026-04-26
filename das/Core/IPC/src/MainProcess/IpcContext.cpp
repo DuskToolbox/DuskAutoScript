@@ -342,15 +342,6 @@ namespace Core
                 return runloop_.RegisterHostLauncher(it->second);
             }
 
-            std::vector<uint16_t> IpcContext::GetConnectedSessions()
-            {
-                if (!runloop_.connection_manager_)
-                {
-                    return {};
-                }
-                return runloop_.GetConnectionManager().GetConnectedSessions();
-            }
-
             // ====== C API 实现 ======
 
             DAS_API IIpcContext* CreateIpcContext(bool enable_heartbeat)

@@ -131,13 +131,6 @@ namespace Core
                     DAS_LIFETIMEBOUND = 0;
 
                 /**
-                 * @brief 获取已连接的 session ID 列表
-                 *
-                 * @return std::vector<uint16_t> 已连接的 session ID 列表
-                 */
-                virtual std::vector<uint16_t> GetConnectedSessions() = 0;
-
-                /**
                  * @brief 分配新的 session_id（主进程侧）
                  * @return 分配的 session_id，如果失败返回 0
                  */

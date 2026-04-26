@@ -248,10 +248,6 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
     auto proxy_b = DAS::DasPtr<IDasBase>::Attach(p_b);
     ASSERT_NE(proxy_a.Get(), proxy_b.Get());
 
-    // 5. 验证 IPC 上下文可以获取已连接的 session
-    auto connected_sessions = ctx_->GetConnectedSessions();
-    EXPECT_EQ(connected_sessions.size(), 2);
-
     DAS_CORE_LOG_INFO(
         "[CrossProcess_HostToHostCall] Cross-process infrastructure verified: "
         "HostA(session={}) can reach HostB(session={}) via IpcContext",
