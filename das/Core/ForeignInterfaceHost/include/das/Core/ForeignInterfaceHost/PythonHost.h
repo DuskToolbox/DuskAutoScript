@@ -6,6 +6,7 @@
 #include <atomic>
 
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
+#include <das/DasRef.hpp>
 
 /**
  * @brief 在Python.h中声明，其中：typedef _object* PyObject;
@@ -165,7 +166,7 @@ class PythonPluginHolder final : public IDasBase
 private:
     std::atomic<uint32_t> ref_count_{1};
     _object*              py_obj_;  // Py_INCREF 持有 (PyObject* = _object*)
-    IDasBase*             cpp_ptr_; // 已 AddRef 持有
+    Das::DasRef<IDasBase> cpp_ptr_; // COM AddRef/Release 通过 DasRef 管理
 
 public:
     PythonPluginHolder(_object* py_obj, IDasBase* cpp_ptr);

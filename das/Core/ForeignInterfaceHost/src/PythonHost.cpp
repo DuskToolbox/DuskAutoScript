@@ -284,8 +284,8 @@ public:
             ptr_ = PyObjectPtr::Attach(func_result);
             owned_ = false;
         }
-        else if constexpr (std::
-                               is_same_v<decltype(func(TEST_PTR)), PyObjectPtr>)
+        else if constexpr (
+            std::is_same_v<decltype(func(TEST_PTR)), PyObjectPtr>)
         {
             auto func_result = func(ptr_.Get());
             DetachIfNotOwned();
@@ -367,7 +367,7 @@ public:
 
         size_t stack_trace_message_size{0};
         auto   string_list = DAS::Utils::MakeEmptyContainerOfReservedSize<
-              std::vector<std::pair<const char*, size_t>>>(10);
+            std::vector<std::pair<const char*, size_t>>>(10);
 
         const auto list_size = ::PyList_Size(formatted_list.Get());
         for (Py_ssize_t i = 0; i < list_size; ++i)
@@ -471,17 +471,16 @@ void RaisePythonInterpreterException() { PythonResult::RaiseIfError(); }
 // ============================================================================
 
 PythonPluginHolder::PythonPluginHolder(PyObject* py_obj, IDasBase* cpp_ptr)
-    : py_obj_(py_obj), cpp_ptr_(cpp_ptr)
+    : py_obj_(py_obj), cpp_ptr_(cpp_ptr) // DasRef 自动 AddRef
 {
     Py_INCREF(py_obj_);
-    cpp_ptr_->AddRef();
 }
 
 PythonPluginHolder::~PythonPluginHolder()
 {
     PyGILGuard gil;
     Py_DECREF(py_obj_);
-    cpp_ptr_->Release();
+    // cpp_ptr_ 析构时自动 Release（DasRef 通过 DasPtr）
 }
 
 uint32_t PythonPluginHolder::AddRef() { return ++ref_count_; }
@@ -505,7 +504,7 @@ DasResult PythonPluginHolder::QueryInterface(
     {
         return DAS_E_INVALID_ARGUMENT;
     }
-    return cpp_ptr_->QueryInterface(iid, pp_object);
+    return cpp_ptr_.get().QueryInterface(iid, pp_object);
 }
 
 // ============================================================================
