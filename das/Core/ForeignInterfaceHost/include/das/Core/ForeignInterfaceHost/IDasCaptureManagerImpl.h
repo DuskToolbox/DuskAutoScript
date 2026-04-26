@@ -3,7 +3,6 @@
 
 #include "Das.PluginInterface.IDasCapture.hpp"
 #include <das/Core/ForeignInterfaceHost/Config.h>
-#include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/Expected.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasCaptureManager.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasCaptureManager.hpp>
@@ -31,8 +30,7 @@ private:
         ExpectedInstance  instance;
     };
 
-    DAS::Utils::RefCounter<CaptureManagerImpl> ref_counter_{};
-    std::vector<CaptureInstance>               instances_{};
+    std::vector<CaptureInstance> instances_{};
     std::vector<std::tuple<PluginInterface::DasCapture, ErrorInfo>>
         performance_results_{};
 
@@ -45,13 +43,6 @@ public:
         uint64_t                            index,
         DAS::PluginInterface::IDasCapture** pp_out_interface) override;
     DAS_IMPL RunPerformanceTest() override;
-    // TODO: EnumCapturePerformanceTestResult 重构到 EnumPerformanceTestResult
-    DAS_IMPL EnumCapturePerformanceTestResult(
-        uint64_t                       index,
-        DasResult*                     p_out_error_code,
-        int32_t*                       p_out_time_spent_in_ms,
-        PluginInterface::IDasCapture** pp_out_capture,
-        IDasReadOnlyString**           pp_out_error_explanation);
     DAS_IMPL EnumPerformanceTestResult(
         uint64_t                            index,
         DasResult*                          p_out_error_code,

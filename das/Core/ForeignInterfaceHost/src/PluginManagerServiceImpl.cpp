@@ -435,27 +435,41 @@ DasResult PluginManagerServiceImpl::CreateCaptureManager(
                 "CaptureFactory::CreateInstance failed, result={}",
                 create_result);
 
+            // Get the factory's type name to identify which capture failed
+            DAS::DasPtr<IDasReadOnlyString> factory_name;
+            auto* type_info = static_cast<IDasTypeInfo*>(factory.Get());
+            if (type_info)
+            {
+                type_info->GetRuntimeClassName(factory_name.Put());
+            }
+            if (!factory_name)
+            {
+                const auto create_name_result =
+                    CreateIDasReadOnlyStringFromUtf8(
+                        "unknown",
+                        factory_name.Put());
+                if (DAS::IsFailed(create_name_result))
+                {
+                    CreateNullDasString(factory_name.Put());
+                }
+            }
+
             CaptureManagerImpl::ErrorInfo error_info{};
             error_info.error_code = create_result;
-            std::string error_msg = DAS_FMT_NS::format(
-                "Capture instance creation failed, result={}",
-                create_result);
-            // best-effort: error message creation failure should not mask the
-            // original error from CaptureFactory::CreateInstance
             DAS::DasPtr<IDasReadOnlyString> p_error_msg;
             const auto                      create_error_msg_result =
                 CreateIDasReadOnlyStringFromUtf8(
-                    error_msg.c_str(),
+                    DAS_FMT_NS::format(
+                        "Capture instance creation failed, result={}",
+                        create_result)
+                        .c_str(),
                     p_error_msg.Put());
             if (DAS::IsFailed(create_error_msg_result))
             {
-                DAS_CORE_LOG_WARN(
-                    "Failed to create capture error message string, result={}",
-                    create_error_msg_result);
                 CreateNullDasString(p_error_msg.Put());
             }
             error_info.p_error_message = p_error_msg;
-            capture_mgr->AddInstance(error_info);
+            capture_mgr->AddInstance(std::move(factory_name), error_info);
             overall_result = DAS_S_FALSE;
             continue;
         }

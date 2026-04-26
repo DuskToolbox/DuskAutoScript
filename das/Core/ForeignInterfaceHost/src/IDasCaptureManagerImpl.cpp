@@ -56,41 +56,6 @@ No error explanation found. Result: {}.)",
     return result;
 }
 
-auto MakeErrorInfo(
-    DasResult           error_code,
-    IDasReadOnlyString* p_capture_factory_name) -> CaptureManagerImpl::ErrorInfo
-{
-    CaptureManagerImpl::ErrorInfo result{};
-
-    result.error_code = error_code;
-    const auto error_message = DAS_FMT_NS::format(
-        R"(Error happened when creating capture instance.
-TypeName: {}.
-Error code: {}.)",
-        *p_capture_factory_name,
-        result.error_code);
-    DAS::DasPtr<IDasReadOnlyString> p_error_message{};
-    DAS_THROW_IF_FAILED(
-        ::CreateIDasReadOnlyStringFromUtf8(
-            error_message.c_str(),
-            p_error_message.Put()))
-    result.p_error_message = p_error_message.Get();
-    return result;
-}
-
-[[maybe_unused]]
-void OnCreateCaptureInstanceFailed(
-    DAS::Core::ForeignInterfaceHost::CaptureManagerImpl::ErrorInfo&
-                                           in_error_info,
-    const DAS::DasPtr<IDasReadOnlyString>& p_capture_factory_name,
-    const DAS::DasPtr<DAS::Core::ForeignInterfaceHost::CaptureManagerImpl>&
-        p_capture_manager)
-{
-    in_error_info =
-        MakeErrorInfo(in_error_info.error_code, p_capture_factory_name.Get());
-    p_capture_manager->AddInstance(p_capture_factory_name, in_error_info);
-}
-
 DAS_NS_ANONYMOUS_DETAILS_END
 
 DasResult CaptureManagerImpl::EnumLoadErrorState(
@@ -189,7 +154,6 @@ DasResult CaptureManagerImpl::RunPerformanceTest()
         ::CreateNullDasString(capture_error_info.p_error_message.Put());
         performance_results_.emplace_back(p_capture, capture_error_info);
     }
-    // 实现调度队列后再实现这个函数
     return result;
 }
 
