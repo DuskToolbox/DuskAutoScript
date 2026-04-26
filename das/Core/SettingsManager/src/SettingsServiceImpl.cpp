@@ -116,8 +116,15 @@ DasResult SettingsServiceImpl::GetGlobalSettings(
     Das::ExportInterface::IDasJson** pp_out)
 {
     DAS_UTILS_CHECK_POINTER(pp_out)
+    DasOutPtr<Das::ExportInterface::IDasJson> result(pp_out);
     auto json = mgr_.GetGlobalSettingsJson();
-    return JsonToIDasJson(json, pp_out);
+    auto cr = JsonToIDasJson(json, result.Put());
+    if (DAS::IsFailed(cr))
+    {
+        return cr;
+    }
+    result.Keep();
+    return DAS_S_OK;
 }
 
 DasResult SettingsServiceImpl::UpdateGlobalSettings(
@@ -138,8 +145,15 @@ DasResult SettingsServiceImpl::GetProfileList(
     Das::ExportInterface::IDasJson** pp_out)
 {
     DAS_UTILS_CHECK_POINTER(pp_out)
-    auto json = mgr_.GetProfileListJson();
-    return JsonToIDasJson(json, pp_out);
+    DasOutPtr<Das::ExportInterface::IDasJson> result(pp_out);
+    auto                                      json = mgr_.GetProfileListJson();
+    auto cr = JsonToIDasJson(json, result.Put());
+    if (DAS::IsFailed(cr))
+    {
+        return cr;
+    }
+    result.Keep();
+    return DAS_S_OK;
 }
 
 DasResult SettingsServiceImpl::CreateProfile(IDasReadOnlyString* p_profile_id)
@@ -159,9 +173,16 @@ DasResult SettingsServiceImpl::GetProfile(
     Das::ExportInterface::IDasJson** pp_out)
 {
     DAS_UTILS_CHECK_POINTER(pp_out)
+    DasOutPtr<Das::ExportInterface::IDasJson> result(pp_out);
     DAS_UTILS_CHECK_POINTER(p_profile_id)
     auto json = mgr_.GetProfileJson(ToString(p_profile_id));
-    return JsonToIDasJson(json, pp_out);
+    auto cr = JsonToIDasJson(json, result.Put());
+    if (DAS::IsFailed(cr))
+    {
+        return cr;
+    }
+    result.Keep();
+    return DAS_S_OK;
 }
 
 DasResult SettingsServiceImpl::UpdateProfile(
@@ -186,16 +207,18 @@ DasResult SettingsServiceImpl::GetPluginSettings(
     Das::ExportInterface::IDasJson** pp_out)
 {
     DAS_UTILS_CHECK_POINTER(pp_out)
+    DasOutPtr<Das::ExportInterface::IDasJson> result(pp_out);
     DAS_UTILS_CHECK_POINTER(p_profile_id)
     DAS_UTILS_CHECK_POINTER(p_plugin_guid)
     auto [json, status] = mgr_.GetPluginSettingsWithStatus(
         ToString(p_profile_id),
         GuidToString(*p_plugin_guid));
-    auto json_result = JsonToIDasJson(json, pp_out);
+    auto json_result = JsonToIDasJson(json, result.Put());
     if (DAS::IsFailed(json_result))
     {
         return json_result;
     }
+    result.Keep();
     return status;
 }
 
@@ -227,6 +250,7 @@ DasResult SettingsServiceImpl::GetPluginSettingsField(
     Das::ExportInterface::IDasJson** pp_out)
 {
     DAS_UTILS_CHECK_POINTER(pp_out)
+    DasOutPtr<Das::ExportInterface::IDasJson> result(pp_out);
     DAS_UTILS_CHECK_POINTER(p_profile_id)
     DAS_UTILS_CHECK_POINTER(p_plugin_guid)
     DAS_UTILS_CHECK_POINTER(p_field_name)
@@ -234,7 +258,13 @@ DasResult SettingsServiceImpl::GetPluginSettingsField(
         ToString(p_profile_id),
         GuidToString(*p_plugin_guid),
         ToString(p_field_name));
-    return JsonToIDasJson(json, pp_out);
+    auto cr = JsonToIDasJson(json, result.Put());
+    if (DAS::IsFailed(cr))
+    {
+        return cr;
+    }
+    result.Keep();
+    return DAS_S_OK;
 }
 
 DasResult SettingsServiceImpl::UpdatePluginSettingsField(
