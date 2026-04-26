@@ -1,5 +1,6 @@
 #include "DasPluginManagerServiceImpl.h"
 
+#include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/Utils/CommonUtils.hpp>
 
@@ -16,7 +17,7 @@ namespace Das::Http
         const DasGuid&                        iid,
         Das::PluginInterface::IDasComponent** pp_out_component)
     {
-        DAS_UTILS_CHECK_POINTER(pp_out_component)
+        DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(pp_out_component)
 
         DAS::DasPtr<IDasBase> base_component;
         auto                  result =
@@ -39,8 +40,8 @@ namespace Das::Http
         IDasReadOnlyString*                        p_environment_config,
         Das::ExportInterface::IDasCaptureManager** pp_out_capture_manager)
     {
-        DAS_UTILS_CHECK_POINTER(pp_out_capture_manager)
-        DAS_UTILS_CHECK_POINTER(p_environment_config)
+        DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(pp_out_capture_manager)
+        DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_environment_config)
 
         return plugin_manager_service_.CreateCaptureManager(
             p_environment_config,

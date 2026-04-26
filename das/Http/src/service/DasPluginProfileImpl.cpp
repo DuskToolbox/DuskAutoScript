@@ -22,7 +22,7 @@ namespace Das::Http
     DasResult DasPluginProfileImpl::GetSettingJson(
         Das::ExportInterface::IDasJson** pp_out)
     {
-        DAS_UTILS_CHECK_POINTER(pp_out)
+        DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(pp_out)
 
         if (!cached_json_)
         {

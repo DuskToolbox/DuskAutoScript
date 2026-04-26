@@ -124,7 +124,7 @@ namespace Das::Http
         IDasReadOnlyString* key,
         std::string&        out_key)
     {
-        DAS_UTILS_CHECK_POINTER(key)
+        DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(key)
 
         const auto expected = ToU8StringWithoutOwnership(key);
         if (!expected)
@@ -264,7 +264,7 @@ namespace Das::Http
         IDasReadOnlyString* key,
         int64_t*            p_out_int)
     {
-        DAS_UTILS_CHECK_POINTER(p_out_int)
+        DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_out_int)
 
         std::string u8_key;
         auto        result = CheckWhitelist(key, u8_key);
@@ -295,7 +295,7 @@ namespace Das::Http
         IDasReadOnlyString* key,
         float*              p_out_float)
     {
-        DAS_UTILS_CHECK_POINTER(p_out_float)
+        DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_out_float)
 
         std::string u8_key;
         auto        result = CheckWhitelist(key, u8_key);
@@ -326,7 +326,7 @@ namespace Das::Http
         IDasReadOnlyString*  key,
         IDasReadOnlyString** pp_out_string)
     {
-        DAS_UTILS_CHECK_POINTER(pp_out_string)
+        DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(pp_out_string)
 
         std::string u8_key;
         auto        result = CheckWhitelist(key, u8_key);
@@ -358,7 +358,7 @@ namespace Das::Http
         IDasReadOnlyString* key,
         bool*               p_out_bool)
     {
-        DAS_UTILS_CHECK_POINTER(p_out_bool)
+        DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_out_bool)
 
         std::string u8_key;
         auto        result = CheckWhitelist(key, u8_key);
@@ -389,7 +389,7 @@ namespace Das::Http
         IDasReadOnlyString* key,
         IDasJson**          pp_out_das_json)
     {
-        DAS_UTILS_CHECK_POINTER(pp_out_das_json)
+        DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(pp_out_das_json)
 
         std::string u8_key;
         const auto  expected = ToU8StringWithoutOwnership(key);
@@ -484,7 +484,7 @@ namespace Das::Http
             return result;
         }
 
-        DAS_UTILS_CHECK_POINTER(p_in_string)
+        DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_in_string)
 
         const auto expected_value = ToU8StringWithoutOwnership(p_in_string);
         if (!expected_value)
@@ -522,7 +522,7 @@ namespace Das::Http
             return result;
         }
 
-        DAS_UTILS_CHECK_POINTER(p_in_das_json)
+        DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_in_das_json)
 
         DasPtr<IDasReadOnlyString> p_json_str;
         auto to_string_result = p_in_das_json->ToString(-1, p_json_str.Put());
@@ -556,7 +556,7 @@ namespace Das::Http
         size_t   index,
         int64_t* p_out_int)
     {
-        DAS_UTILS_CHECK_POINTER(p_out_int)
+        DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_out_int)
 
         if (path_prefix_.empty())
         {
@@ -589,7 +589,7 @@ namespace Das::Http
         size_t index,
         float* p_out_float)
     {
-        DAS_UTILS_CHECK_POINTER(p_out_float)
+        DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_out_float)
 
         if (path_prefix_.empty())
         {
@@ -622,7 +622,7 @@ namespace Das::Http
         size_t               index,
         IDasReadOnlyString** pp_out_string)
     {
-        DAS_UTILS_CHECK_POINTER(pp_out_string)
+        DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(pp_out_string)
 
         if (path_prefix_.empty())
         {
@@ -656,7 +656,7 @@ namespace Das::Http
         size_t index,
         bool*  p_out_bool)
     {
-        DAS_UTILS_CHECK_POINTER(p_out_bool)
+        DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_out_bool)
 
         if (path_prefix_.empty())
         {
@@ -689,7 +689,7 @@ namespace Das::Http
         size_t     index,
         IDasJson** pp_out_das_json)
     {
-        DAS_UTILS_CHECK_POINTER(pp_out_das_json)
+        DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(pp_out_das_json)
 
         if (path_prefix_.empty())
         {
@@ -786,7 +786,7 @@ namespace Das::Http
             return DAS_E_TYPE_ERROR;
         }
 
-        DAS_UTILS_CHECK_POINTER(p_in_string)
+        DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_in_string)
 
         auto json = GetCurrentJson();
         if (!json.is_array())
@@ -838,7 +838,7 @@ namespace Das::Http
             return DAS_E_TYPE_ERROR;
         }
 
-        DAS_UTILS_CHECK_POINTER(p_in_das_json)
+        DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_in_das_json)
 
         auto json = GetCurrentJson();
         if (!json.is_array())
@@ -882,7 +882,7 @@ namespace Das::Http
         IDasReadOnlyString* key,
         DasType*            p_out_type)
     {
-        DAS_UTILS_CHECK_POINTER(p_out_type)
+        DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_out_type)
 
         std::string u8_key;
         auto        result = CheckWhitelist(key, u8_key);
@@ -906,7 +906,7 @@ namespace Das::Http
         size_t   index,
         DasType* p_out_type)
     {
-        DAS_UTILS_CHECK_POINTER(p_out_type)
+        DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_out_type)
 
         if (path_prefix_.empty())
         {
@@ -931,7 +931,7 @@ namespace Das::Http
 
     DasResult DasAutoFlushJsonImpl::GetSize(uint64_t* p_out_size)
     {
-        DAS_UTILS_CHECK_POINTER(p_out_size)
+        DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_out_size)
 
         if (path_prefix_.empty())
         {
@@ -959,7 +959,7 @@ namespace Das::Http
         int32_t              indent,
         IDasReadOnlyString** pp_out_string)
     {
-        DAS_UTILS_CHECK_POINTER(pp_out_string)
+        DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(pp_out_string)
 
         try
         {

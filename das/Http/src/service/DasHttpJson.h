@@ -67,8 +67,8 @@ namespace Das::Http
         DAS_IMPL GetIntByName(IDasReadOnlyString* key, int64_t* p_out_int)
             override
         {
-            DAS_UTILS_CHECK_POINTER(key)
-            DAS_UTILS_CHECK_POINTER(p_out_int)
+            DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(key)
+            DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_out_int)
 
             const auto expected = ToU8StringWithoutOwnership(key);
             if (!expected)
@@ -99,8 +99,8 @@ namespace Das::Http
         DAS_IMPL GetFloatByName(IDasReadOnlyString* key, float* p_out_float)
             override
         {
-            DAS_UTILS_CHECK_POINTER(key)
-            DAS_UTILS_CHECK_POINTER(p_out_float)
+            DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(key)
+            DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_out_float)
 
             const auto expected = ToU8StringWithoutOwnership(key);
             if (!expected)
@@ -132,8 +132,8 @@ namespace Das::Http
             IDasReadOnlyString*  key,
             IDasReadOnlyString** pp_out_string) override
         {
-            DAS_UTILS_CHECK_POINTER(key)
-            DAS_UTILS_CHECK_POINTER(pp_out_string)
+            DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(key)
+            DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(pp_out_string)
 
             const auto expected = ToU8StringWithoutOwnership(key);
             if (!expected)
@@ -167,8 +167,8 @@ namespace Das::Http
         DAS_IMPL GetBoolByName(IDasReadOnlyString* key, bool* p_out_bool)
             override
         {
-            DAS_UTILS_CHECK_POINTER(key)
-            DAS_UTILS_CHECK_POINTER(p_out_bool)
+            DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(key)
+            DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_out_bool)
 
             const auto expected = ToU8StringWithoutOwnership(key);
             if (!expected)
@@ -200,8 +200,8 @@ namespace Das::Http
             IDasReadOnlyString* key,
             IDasJson**          pp_out_das_json) override
         {
-            DAS_UTILS_CHECK_POINTER(key)
-            DAS_UTILS_CHECK_POINTER(pp_out_das_json)
+            DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(key)
+            DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(pp_out_das_json)
 
             const auto expected = ToU8StringWithoutOwnership(key);
             if (!expected)
@@ -245,7 +245,7 @@ namespace Das::Http
 
         DAS_IMPL SetIntByName(IDasReadOnlyString* key, int64_t in_int) override
         {
-            DAS_UTILS_CHECK_POINTER(key)
+            DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(key)
 
             const auto expected = ToU8StringWithoutOwnership(key);
             if (!expected)
@@ -259,7 +259,7 @@ namespace Das::Http
         DAS_IMPL SetFloatByName(IDasReadOnlyString* key, float in_float)
             override
         {
-            DAS_UTILS_CHECK_POINTER(key)
+            DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(key)
 
             const auto expected = ToU8StringWithoutOwnership(key);
             if (!expected)
@@ -274,8 +274,8 @@ namespace Das::Http
             IDasReadOnlyString* key,
             IDasReadOnlyString* p_in_string) override
         {
-            DAS_UTILS_CHECK_POINTER(key)
-            DAS_UTILS_CHECK_POINTER(p_in_string)
+            DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(key)
+            DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_in_string)
 
             const auto expected_key = ToU8StringWithoutOwnership(key);
             if (!expected_key)
@@ -293,7 +293,7 @@ namespace Das::Http
 
         DAS_IMPL SetBoolByName(IDasReadOnlyString* key, bool in_bool) override
         {
-            DAS_UTILS_CHECK_POINTER(key)
+            DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(key)
 
             const auto expected = ToU8StringWithoutOwnership(key);
             if (!expected)
@@ -308,8 +308,8 @@ namespace Das::Http
             IDasReadOnlyString* key,
             IDasJson*           p_in_das_json) override
         {
-            DAS_UTILS_CHECK_POINTER(key)
-            DAS_UTILS_CHECK_POINTER(p_in_das_json)
+            DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(key)
+            DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_in_das_json)
 
             const auto expected_key = ToU8StringWithoutOwnership(key);
             if (!expected_key)
@@ -349,7 +349,7 @@ namespace Das::Http
 
         DAS_IMPL GetIntByIndex(size_t index, int64_t* p_out_int) override
         {
-            DAS_UTILS_CHECK_POINTER(p_out_int)
+            DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_out_int)
 
             if (!json_.is_array())
             {
@@ -378,7 +378,7 @@ namespace Das::Http
 
         DAS_IMPL GetFloatByIndex(size_t index, float* p_out_float) override
         {
-            DAS_UTILS_CHECK_POINTER(p_out_float)
+            DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_out_float)
 
             if (!json_.is_array())
             {
@@ -409,7 +409,7 @@ namespace Das::Http
             size_t               index,
             IDasReadOnlyString** pp_out_string) override
         {
-            DAS_UTILS_CHECK_POINTER(pp_out_string)
+            DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(pp_out_string)
 
             if (!json_.is_array())
             {
@@ -439,7 +439,7 @@ namespace Das::Http
 
         DAS_IMPL GetBoolByIndex(size_t index, bool* p_out_bool) override
         {
-            DAS_UTILS_CHECK_POINTER(p_out_bool)
+            DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_out_bool)
 
             if (!json_.is_array())
             {
@@ -469,7 +469,7 @@ namespace Das::Http
         DAS_IMPL GetObjectRefByIndex(size_t index, IDasJson** pp_out_das_json)
             override
         {
-            DAS_UTILS_CHECK_POINTER(pp_out_das_json)
+            DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(pp_out_das_json)
 
             if (!json_.is_array())
             {
@@ -533,7 +533,7 @@ namespace Das::Http
         DAS_IMPL SetStringByIndex(size_t index, IDasReadOnlyString* p_in_string)
             override
         {
-            DAS_UTILS_CHECK_POINTER(p_in_string)
+            DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_in_string)
 
             if (!json_.is_array())
             {
@@ -570,7 +570,7 @@ namespace Das::Http
         DAS_IMPL SetObjectByIndex(size_t index, IDasJson* p_in_das_json)
             override
         {
-            DAS_UTILS_CHECK_POINTER(p_in_das_json)
+            DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_in_das_json)
 
             if (!json_.is_array())
             {
@@ -613,8 +613,8 @@ namespace Das::Http
         DAS_IMPL GetTypeByName(IDasReadOnlyString* key, DasType* p_out_type)
             override
         {
-            DAS_UTILS_CHECK_POINTER(key)
-            DAS_UTILS_CHECK_POINTER(p_out_type)
+            DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(key)
+            DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_out_type)
 
             const auto expected = ToU8StringWithoutOwnership(key);
             if (!expected)
@@ -634,7 +634,7 @@ namespace Das::Http
 
         DAS_IMPL GetTypeByIndex(size_t index, DasType* p_out_type) override
         {
-            DAS_UTILS_CHECK_POINTER(p_out_type)
+            DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_out_type)
 
             if (!json_.is_array())
             {
@@ -650,7 +650,7 @@ namespace Das::Http
 
         DAS_IMPL GetSize(uint64_t* p_out_size) override
         {
-            DAS_UTILS_CHECK_POINTER(p_out_size)
+            DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_out_size)
             *p_out_size = static_cast<uint64_t>(json_.size());
             return DAS_S_OK;
         }
@@ -658,7 +658,7 @@ namespace Das::Http
         DAS_IMPL ToString(int32_t indent, IDasReadOnlyString** pp_out_string)
             override
         {
-            DAS_UTILS_CHECK_POINTER(pp_out_string)
+            DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(pp_out_string)
             try
             {
                 auto output_str = json_.dump(indent);

@@ -47,7 +47,7 @@ namespace Das::Http
         const DasGuid&                            plugin_guid,
         Das::ExportInterface::IDasPluginProfile** pp_out)
     {
-        DAS_UTILS_CHECK_POINTER(pp_out)
+        DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(pp_out)
 
         DAS::DasPtr<Das::ExportInterface::IDasStringVector> field_names;
         auto fn_result = plugin_manager_service_.GetPluginSettingsFieldNames(
