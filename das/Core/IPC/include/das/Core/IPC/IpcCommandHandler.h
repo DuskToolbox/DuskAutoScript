@@ -7,6 +7,7 @@
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <das/IDasBase.h>
+#include <das/Utils/CommonUtils.hpp>
 #include <functional>
 #include <span>
 #include <string>
@@ -92,24 +93,7 @@ public:
         return DasPtr<IpcCommandHandler>(new IpcCommandHandler(registry));
     }
 
-    /// 增加引用计数
-    [[nodiscard]]
-    uint32_t AddRef() override
-    {
-        return ++ref_count_;
-    }
-
-    /// 减少引用计数
-    [[nodiscard]]
-    uint32_t Release() override
-    {
-        if (--ref_count_ == 0)
-        {
-            delete this;
-            return 0;
-        }
-        return ref_count_;
-    }
+    DAS_UTILS_IDASBASE_AUTO_IMPL(IpcCommandHandler)
 
     // 禁止拷贝
     IpcCommandHandler(const IpcCommandHandler&) = delete;
@@ -219,9 +203,6 @@ private:
 
     /// 远程对象注册表引用（构造时注入，per-IpcContext 依赖）
     RemoteObjectRegistry& registry_;
-
-    /// 引用计数
-    uint32_t ref_count_ = 0;
 
     std::unordered_map<IpcCommandType, CommandHandler> custom_handlers_;
 };

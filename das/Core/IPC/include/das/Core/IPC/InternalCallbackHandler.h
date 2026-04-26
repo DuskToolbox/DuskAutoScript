@@ -5,6 +5,7 @@
 #include <das/Core/IPC/IMessageHandler.h>
 #include <das/DasPtr.hpp>
 #include <das/IDasAsyncCallback.h>
+#include <das/Utils/CommonUtils.hpp>
 
 DAS_CORE_IPC_NS_BEGIN
 
@@ -29,22 +30,7 @@ public:
     InternalCallbackHandler() = default;
     ~InternalCallbackHandler() override = default;
 
-    [[nodiscard]]
-    uint32_t AddRef() override
-    {
-        return ++ref_count_;
-    }
-
-    [[nodiscard]]
-    uint32_t Release() override
-    {
-        if (--ref_count_ == 0)
-        {
-            delete this;
-            return 0;
-        }
-        return ref_count_;
-    }
+    DAS_UTILS_IDASBASE_AUTO_IMPL(InternalCallbackHandler)
 
     [[nodiscard]]
     uint32_t GetInterfaceId() const noexcept override
@@ -57,9 +43,6 @@ public:
         const std::vector<uint8_t>&      body,
         IpcResponseSender&               sender,
         StubContext&                     ctx) override;
-
-private:
-    uint32_t ref_count_ = 0;
 };
 
 DAS_CORE_IPC_NS_END
