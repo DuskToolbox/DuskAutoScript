@@ -26,6 +26,8 @@ namespace Das::Http
             std::string                     plugin_guid,
             std::unordered_set<std::string> whitelist);
 
+        ~DasPluginProfileImpl();
+
         DAS_IMPL GetSettingJson(
             Das::ExportInterface::IDasJson** pp_out) override;
 

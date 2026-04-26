@@ -1,5 +1,6 @@
 #include "DasProfileServiceImpl.h"
 
+#include "DasAutoFlushJsonImpl.h"
 #include "DasPluginProfileImpl.h"
 
 #include <das/Core/Logger/Logger.h>
@@ -39,6 +40,8 @@ namespace Das::Http
           settings_service_(settings_service)
     {
     }
+
+    DasPluginProfileImpl::~DasPluginProfileImpl() = default;
 
     DasResult DasProfileServiceImpl::GetProfile(
         const DasGuid&                            plugin_guid,
