@@ -128,8 +128,11 @@ public:
         void* result = nullptr;
         if (ptr_)
         {
-            ptr_->QueryInterface(id, &result);
-            ptr_->AddRef();
+            const auto qi_result = ptr_->QueryInterface(id, &result);
+            if (DAS::IsFailed(qi_result))
+            {
+                return nullptr;
+            }
         }
         return static_cast<Other*>(result);
     }
@@ -146,7 +149,7 @@ public:
             {
                 return query_interface_result;
             }
-            other = {static_cast<Other*>(result)};
+            other = DasPtr<Other>::Attach(static_cast<Other*>(result));
             return DAS_S_OK;
         }
         return DAS_E_INVALID_POINTER;
@@ -157,10 +160,13 @@ public:
     {
         if (ptr_)
         {
-            ptr_->QueryInterface(
+            const auto qi_result = ptr_->QueryInterface(
                 DasIidOf<Other>(),
                 reinterpret_cast<void**>(pp_out_other));
-            (*pp_out_other)->AddRef();
+            if (DAS::IsFailed(qi_result))
+            {
+                return qi_result;
+            }
             return DAS_S_OK;
         }
         return DAS_E_NO_INTERFACE;

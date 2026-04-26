@@ -370,6 +370,7 @@ namespace Details
                 {
                     return DAS_E_NO_INTERFACE;
                 }
+                AddRef();
                 return DAS_S_OK;
             }
             // I
@@ -404,6 +405,7 @@ namespace Details
                 {
                     return DAS_E_NO_INTERFACE;
                 }
+                AddRef();
                 return DAS_S_OK;
             }
             // I
