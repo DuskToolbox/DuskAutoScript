@@ -64,7 +64,7 @@ namespace Das::Http
                 {
                     if (!item.is_string())
                     {
-                        DAS_CORE_LOG_WARN(
+                        DAS_LOG_WARNING(
                             "Skipping non-string element in disabledGuids");
                         continue;
                     }
@@ -74,9 +74,11 @@ namespace Das::Http
                         DasMakeDasGuid(item.get<std::string>().c_str(), &guid);
                     if (DAS::IsFailed(parse_result))
                     {
-                        DAS_CORE_LOG_WARN(
-                            "Invalid GUID '{}' in disabledGuids",
-                            item.get<std::string>());
+                        DAS_LOG_WARNING(
+                            DAS_FMT_NS::format(
+                                "Invalid GUID '{}' in disabledGuids",
+                                item.get<std::string>())
+                                .c_str());
                         continue;
                     }
                     disabled_guids.push_back(guid);

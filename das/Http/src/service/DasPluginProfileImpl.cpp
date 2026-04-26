@@ -2,7 +2,7 @@
 
 #include "DasAutoFlushJsonImpl.h"
 
-#include <das/Core/Logger/Logger.h>
+#include <das/DasApi.h>
 #include <das/Utils/CommonUtils.hpp>
 
 namespace Das::Http
@@ -37,7 +37,7 @@ namespace Das::Http
             }
             catch (const std::bad_alloc& ex)
             {
-                DAS_CORE_LOG_EXCEPTION(ex);
+                DAS_LOG_ERROR(ex.what());
                 return DAS_E_OUT_OF_MEMORY;
             }
         }

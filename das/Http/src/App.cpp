@@ -4,6 +4,7 @@
 
 #include "das/DasApi.h"
 #include "das/Utils/ThreadUtils.h"
+#include "das/Utils/fmt.h"
 
 #include "./AppComponent.hpp"
 #include "./beast/Server.hpp"
@@ -20,7 +21,6 @@
 #include "./service/DasProfileServiceImpl.h"
 #include <das/Core/IPC/CurrentIpcContextScope.h>
 #include <das/Core/IPC/MainProcess/IpcContext.h>
-#include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/_autogen/idl/abi/DasSettings.h>
@@ -184,9 +184,11 @@ namespace Das::Http
 
             if (DAS::IsFailed(reg_result))
             {
-                DAS_CORE_LOG_ERROR(
-                    "Failed to register IDasProfileService. result = {}",
-                    reg_result);
+                DAS_LOG_ERROR(
+                    DAS_FMT_NS::format(
+                        "Failed to register IDasProfileService. result = {}",
+                        reg_result)
+                        .c_str());
                 profile_service->Release();
                 return reg_result;
             }
@@ -203,9 +205,11 @@ namespace Das::Http
 
                 if (DAS::IsFailed(plugin_reg_result))
                 {
-                    DAS_CORE_LOG_ERROR(
-                        "Failed to register IDasPluginManager. result = {}",
-                        plugin_reg_result);
+                    DAS_LOG_ERROR(
+                        DAS_FMT_NS::format(
+                            "Failed to register IDasPluginManager. result = {}",
+                            plugin_reg_result)
+                            .c_str());
                     plugin_mgr_service_impl->Release();
                     return plugin_reg_result;
                 }

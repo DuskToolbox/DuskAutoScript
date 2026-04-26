@@ -1,7 +1,7 @@
 #pragma once
 
 #include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
-#include <das/Core/Logger/Logger.h>
+#include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
@@ -86,12 +86,12 @@ namespace Das::Http
             }
             catch (const nlohmann::json::type_error& ex)
             {
-                DAS_CORE_LOG_EXCEPTION(ex);
+                DAS_LOG_ERROR(ex.what());
                 return DAS_E_TYPE_ERROR;
             }
             catch (const nlohmann::json::exception& ex)
             {
-                DAS_CORE_LOG_EXCEPTION(ex);
+                DAS_LOG_ERROR(ex.what());
                 return DAS_E_INVALID_JSON;
             }
         }
@@ -118,12 +118,12 @@ namespace Das::Http
             }
             catch (const nlohmann::json::type_error& ex)
             {
-                DAS_CORE_LOG_EXCEPTION(ex);
+                DAS_LOG_ERROR(ex.what());
                 return DAS_E_TYPE_ERROR;
             }
             catch (const nlohmann::json::exception& ex)
             {
-                DAS_CORE_LOG_EXCEPTION(ex);
+                DAS_LOG_ERROR(ex.what());
                 return DAS_E_INVALID_JSON;
             }
         }
@@ -154,12 +154,12 @@ namespace Das::Http
             }
             catch (const nlohmann::json::type_error& ex)
             {
-                DAS_CORE_LOG_EXCEPTION(ex);
+                DAS_LOG_ERROR(ex.what());
                 return DAS_E_TYPE_ERROR;
             }
             catch (const nlohmann::json::exception& ex)
             {
-                DAS_CORE_LOG_EXCEPTION(ex);
+                DAS_LOG_ERROR(ex.what());
                 return DAS_E_INVALID_JSON;
             }
         }
@@ -186,12 +186,12 @@ namespace Das::Http
             }
             catch (const nlohmann::json::type_error& ex)
             {
-                DAS_CORE_LOG_EXCEPTION(ex);
+                DAS_LOG_ERROR(ex.what());
                 return DAS_E_TYPE_ERROR;
             }
             catch (const nlohmann::json::exception& ex)
             {
-                DAS_CORE_LOG_EXCEPTION(ex);
+                DAS_LOG_ERROR(ex.what());
                 return DAS_E_INVALID_JSON;
             }
         }
@@ -226,17 +226,17 @@ namespace Das::Http
             }
             catch (const nlohmann::json::type_error& ex)
             {
-                DAS_CORE_LOG_EXCEPTION(ex);
+                DAS_LOG_ERROR(ex.what());
                 return DAS_E_TYPE_ERROR;
             }
             catch (const std::bad_alloc& ex)
             {
-                DAS_CORE_LOG_EXCEPTION(ex);
+                DAS_LOG_ERROR(ex.what());
                 return DAS_E_OUT_OF_MEMORY;
             }
             catch (const nlohmann::json::exception& ex)
             {
-                DAS_CORE_LOG_EXCEPTION(ex);
+                DAS_LOG_ERROR(ex.what());
                 return DAS_E_INVALID_JSON;
             }
         }
@@ -318,7 +318,7 @@ namespace Das::Http
             }
 
             DasPtr<IDasReadOnlyString> p_json_str;
-            auto to_string_result =
+            auto                       to_string_result =
                 p_in_das_json->ToString(-1, p_json_str.Put());
             if (DAS::IsFailed(to_string_result))
             {
@@ -340,7 +340,7 @@ namespace Das::Http
             }
             catch (const nlohmann::json::exception& ex)
             {
-                DAS_CORE_LOG_EXCEPTION(ex);
+                DAS_LOG_ERROR(ex.what());
                 return DAS_E_INVALID_JSON;
             }
         }
@@ -366,12 +366,12 @@ namespace Das::Http
             }
             catch (const nlohmann::json::type_error& ex)
             {
-                DAS_CORE_LOG_EXCEPTION(ex);
+                DAS_LOG_ERROR(ex.what());
                 return DAS_E_TYPE_ERROR;
             }
             catch (const nlohmann::json::exception& ex)
             {
-                DAS_CORE_LOG_EXCEPTION(ex);
+                DAS_LOG_ERROR(ex.what());
                 return DAS_E_INVALID_JSON;
             }
         }
@@ -395,12 +395,12 @@ namespace Das::Http
             }
             catch (const nlohmann::json::type_error& ex)
             {
-                DAS_CORE_LOG_EXCEPTION(ex);
+                DAS_LOG_ERROR(ex.what());
                 return DAS_E_TYPE_ERROR;
             }
             catch (const nlohmann::json::exception& ex)
             {
-                DAS_CORE_LOG_EXCEPTION(ex);
+                DAS_LOG_ERROR(ex.what());
                 return DAS_E_INVALID_JSON;
             }
         }
@@ -427,12 +427,12 @@ namespace Das::Http
             }
             catch (const nlohmann::json::type_error& ex)
             {
-                DAS_CORE_LOG_EXCEPTION(ex);
+                DAS_LOG_ERROR(ex.what());
                 return DAS_E_TYPE_ERROR;
             }
             catch (const nlohmann::json::exception& ex)
             {
-                DAS_CORE_LOG_EXCEPTION(ex);
+                DAS_LOG_ERROR(ex.what());
                 return DAS_E_INVALID_JSON;
             }
         }
@@ -456,12 +456,12 @@ namespace Das::Http
             }
             catch (const nlohmann::json::type_error& ex)
             {
-                DAS_CORE_LOG_EXCEPTION(ex);
+                DAS_LOG_ERROR(ex.what());
                 return DAS_E_TYPE_ERROR;
             }
             catch (const nlohmann::json::exception& ex)
             {
-                DAS_CORE_LOG_EXCEPTION(ex);
+                DAS_LOG_ERROR(ex.what());
                 return DAS_E_INVALID_JSON;
             }
         }
@@ -495,7 +495,7 @@ namespace Das::Http
             }
             catch (const std::bad_alloc& ex)
             {
-                DAS_CORE_LOG_EXCEPTION(ex);
+                DAS_LOG_ERROR(ex.what());
                 return DAS_E_OUT_OF_MEMORY;
             }
         }
@@ -582,7 +582,7 @@ namespace Das::Http
             }
 
             DasPtr<IDasReadOnlyString> p_json_str;
-            auto to_string_result =
+            auto                       to_string_result =
                 p_in_das_json->ToString(-1, p_json_str.Put());
             if (DAS::IsFailed(to_string_result))
             {
@@ -603,7 +603,7 @@ namespace Das::Http
             }
             catch (const nlohmann::json::exception& ex)
             {
-                DAS_CORE_LOG_EXCEPTION(ex);
+                DAS_LOG_ERROR(ex.what());
                 return DAS_E_INVALID_JSON;
             }
         }
@@ -668,12 +668,12 @@ namespace Das::Http
             }
             catch (const nlohmann::json::exception& ex)
             {
-                DAS_CORE_LOG_EXCEPTION(ex);
+                DAS_LOG_ERROR(ex.what());
                 return DAS_E_INVALID_JSON;
             }
             catch (const std::bad_alloc& ex)
             {
-                DAS_CORE_LOG_EXCEPTION(ex);
+                DAS_LOG_ERROR(ex.what());
                 return DAS_E_OUT_OF_MEMORY;
             }
         }

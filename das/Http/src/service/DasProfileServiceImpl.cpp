@@ -3,7 +3,7 @@
 #include "DasAutoFlushJsonImpl.h"
 #include "DasPluginProfileImpl.h"
 
-#include <das/Core/Logger/Logger.h>
+#include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
@@ -62,7 +62,7 @@ namespace Das::Http
         field_names->Size(&field_count);
         if (field_count == 0)
         {
-            DAS_CORE_LOG_ERROR("Plugin not found for GUID.");
+            DAS_LOG_ERROR("Plugin not found for GUID.");
             return DAS_E_NOT_FOUND;
         }
 
@@ -98,7 +98,7 @@ namespace Das::Http
         }
         catch (const std::bad_alloc& ex)
         {
-            DAS_CORE_LOG_EXCEPTION(ex);
+            DAS_LOG_ERROR(ex.what());
             return DAS_E_OUT_OF_MEMORY;
         }
     }

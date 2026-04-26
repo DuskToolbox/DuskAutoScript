@@ -9,7 +9,8 @@
 #include <boost/beast/http.hpp>
 #include <boost/beast/version.hpp>
 #include <boost/config.hpp>
-#include <das/Core/Logger/Logger.h>
+#include <das/DasApi.h>
+#include <das/Utils/fmt.h>
 #include <functional>
 #include <memory>
 #include <string>
@@ -235,9 +236,11 @@ namespace Das::Http::Beast
                         }
                         catch (const std::exception& ex)
                         {
-                            DAS_CORE_LOG_ERROR(
-                                "HTTP worker thread exception: {}",
-                                ex.what());
+                            DAS_LOG_ERROR(
+                                DAS_FMT_NS::format(
+                                    "HTTP worker thread exception: {}",
+                                    ex.what())
+                                    .c_str());
                         }
                     });
             }
@@ -249,7 +252,11 @@ namespace Das::Http::Beast
             }
             catch (const std::exception& ex)
             {
-                DAS_CORE_LOG_ERROR("HTTP main thread exception: {}", ex.what());
+                DAS_LOG_ERROR(
+                    DAS_FMT_NS::format(
+                        "HTTP main thread exception: {}",
+                        ex.what())
+                        .c_str());
             }
 
             // ioc_.run() returned — join all worker threads

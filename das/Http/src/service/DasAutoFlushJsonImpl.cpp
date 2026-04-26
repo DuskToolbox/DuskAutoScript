@@ -2,11 +2,12 @@
 #include "DasHttpJson.h"
 
 #include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
-#include <das/Core/Logger/Logger.h>
+#include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/StringUtils.h>
+#include <das/Utils/fmt.h>
 #include <nlohmann/json.hpp>
 
 using Das::Utils::ToString;
@@ -135,9 +136,11 @@ namespace Das::Http
         const auto full_path = MakeFullPath(out_key);
         if (whitelist_.find(full_path) == whitelist_.end())
         {
-            DAS_CORE_LOG_ERROR(
-                "Field '{}' is not in whitelist. Access denied.",
-                full_path);
+            DAS_LOG_ERROR(
+                DAS_FMT_NS::format(
+                    "Field '{}' is not in whitelist. Access denied.",
+                    full_path)
+                    .c_str());
             return DAS_E_ACCESS_DENIED;
         }
         return DAS_S_OK;
@@ -283,7 +286,7 @@ namespace Das::Http
         }
         catch (const nlohmann::json::exception& ex)
         {
-            DAS_CORE_LOG_EXCEPTION(ex);
+            DAS_LOG_ERROR(ex.what());
             return DAS_E_TYPE_ERROR;
         }
     }
@@ -314,7 +317,7 @@ namespace Das::Http
         }
         catch (const nlohmann::json::exception& ex)
         {
-            DAS_CORE_LOG_EXCEPTION(ex);
+            DAS_LOG_ERROR(ex.what());
             return DAS_E_TYPE_ERROR;
         }
     }
@@ -346,7 +349,7 @@ namespace Das::Http
         }
         catch (const nlohmann::json::exception& ex)
         {
-            DAS_CORE_LOG_EXCEPTION(ex);
+            DAS_LOG_ERROR(ex.what());
             return DAS_E_TYPE_ERROR;
         }
     }
@@ -377,7 +380,7 @@ namespace Das::Http
         }
         catch (const nlohmann::json::exception& ex)
         {
-            DAS_CORE_LOG_EXCEPTION(ex);
+            DAS_LOG_ERROR(ex.what());
             return DAS_E_TYPE_ERROR;
         }
     }
@@ -402,9 +405,11 @@ namespace Das::Http
         const bool is_prefix = IsPrefixAllowed(full_path);
         if (!is_exact && !is_prefix)
         {
-            DAS_CORE_LOG_ERROR(
-                "Field '{}' is not in whitelist. Access denied.",
-                full_path);
+            DAS_LOG_ERROR(
+                DAS_FMT_NS::format(
+                    "Field '{}' is not in whitelist. Access denied.",
+                    full_path)
+                    .c_str());
             return DAS_E_ACCESS_DENIED;
         }
 
@@ -433,7 +438,7 @@ namespace Das::Http
         }
         catch (const std::bad_alloc& ex)
         {
-            DAS_CORE_LOG_EXCEPTION(ex);
+            DAS_LOG_ERROR(ex.what());
             return DAS_E_OUT_OF_MEMORY;
         }
     }
@@ -540,7 +545,7 @@ namespace Das::Http
         }
         catch (const nlohmann::json::exception& ex)
         {
-            DAS_CORE_LOG_EXCEPTION(ex);
+            DAS_LOG_ERROR(ex.what());
             return DAS_E_INVALID_JSON;
         }
     }
@@ -575,7 +580,7 @@ namespace Das::Http
         }
         catch (const nlohmann::json::exception& ex)
         {
-            DAS_CORE_LOG_EXCEPTION(ex);
+            DAS_LOG_ERROR(ex.what());
             return DAS_E_TYPE_ERROR;
         }
     }
@@ -608,7 +613,7 @@ namespace Das::Http
         }
         catch (const nlohmann::json::exception& ex)
         {
-            DAS_CORE_LOG_EXCEPTION(ex);
+            DAS_LOG_ERROR(ex.what());
             return DAS_E_TYPE_ERROR;
         }
     }
@@ -642,7 +647,7 @@ namespace Das::Http
         }
         catch (const nlohmann::json::exception& ex)
         {
-            DAS_CORE_LOG_EXCEPTION(ex);
+            DAS_LOG_ERROR(ex.what());
             return DAS_E_TYPE_ERROR;
         }
     }
@@ -675,7 +680,7 @@ namespace Das::Http
         }
         catch (const nlohmann::json::exception& ex)
         {
-            DAS_CORE_LOG_EXCEPTION(ex);
+            DAS_LOG_ERROR(ex.what());
             return DAS_E_TYPE_ERROR;
         }
     }
@@ -721,7 +726,7 @@ namespace Das::Http
         }
         catch (const std::bad_alloc& ex)
         {
-            DAS_CORE_LOG_EXCEPTION(ex);
+            DAS_LOG_ERROR(ex.what());
             return DAS_E_OUT_OF_MEMORY;
         }
     }
@@ -866,7 +871,7 @@ namespace Das::Http
         }
         catch (const nlohmann::json::exception& ex)
         {
-            DAS_CORE_LOG_EXCEPTION(ex);
+            DAS_LOG_ERROR(ex.what());
             return DAS_E_INVALID_JSON;
         }
     }
@@ -998,12 +1003,12 @@ namespace Das::Http
         }
         catch (const nlohmann::json::exception& ex)
         {
-            DAS_CORE_LOG_EXCEPTION(ex);
+            DAS_LOG_ERROR(ex.what());
             return DAS_E_INVALID_JSON;
         }
         catch (const std::bad_alloc& ex)
         {
-            DAS_CORE_LOG_EXCEPTION(ex);
+            DAS_LOG_ERROR(ex.what());
             return DAS_E_OUT_OF_MEMORY;
         }
     }

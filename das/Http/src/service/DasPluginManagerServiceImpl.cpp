@@ -1,6 +1,5 @@
 #include "DasPluginManagerServiceImpl.h"
 
-#include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
 #include <das/Utils/CommonUtils.hpp>
 
