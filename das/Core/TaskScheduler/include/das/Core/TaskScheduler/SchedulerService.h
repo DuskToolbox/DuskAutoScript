@@ -224,6 +224,7 @@ namespace Das::Core::TaskScheduler
         mutable std::mutex          mutex_;
         std::atomic<SchedulerState> state_{SchedulerState::Stopped};
         std::condition_variable     cv_;
+        std::thread                 disable_thread_;
         bool                        initialized_ = false;
 
         // Available task types discovered from loaded manifests

@@ -209,7 +209,14 @@ namespace Das::Core::TaskScheduler
             std::thread(&SchedulerService::ConfigPersistThreadLoop, this);
     }
 
-    SchedulerService::~SchedulerService() { ShutdownConfigPersistQueue(); }
+    SchedulerService::~SchedulerService()
+    {
+        ShutdownConfigPersistQueue();
+        if (disable_thread_.joinable())
+        {
+            disable_thread_.join();
+        }
+    }
 
     DasResult SchedulerService::CreateTaskInstance(
         const TaskTypeRecord&            task_type,
@@ -255,11 +262,12 @@ namespace Das::Core::TaskScheduler
         {
             std::lock_guard<std::mutex> lock(mutex_);
 
-            if (state_.load() == SchedulerState::Running)
+            if (state_.load() == SchedulerState::Running
+                || state_.load() == SchedulerState::Stopping)
             {
                 DAS_CORE_LOG_ERROR(
                     "SchedulerService::Initialize: reject, scheduler is "
-                    "Running");
+                    "Running or Stopping");
                 return DAS_E_TASK_WORKING;
             }
 
@@ -641,68 +649,66 @@ namespace Das::Core::TaskScheduler
 
     DasResult SchedulerService::Disable()
     {
-        std::unique_lock<std::mutex> lock(mutex_);
-
-        if (state_.load() != SchedulerState::Running)
         {
-            DAS_CORE_LOG_ERROR(
-                "SchedulerService::Disable: invalid state, must be "
-                "Running");
-            return DAS_E_FAIL;
-        }
+            std::lock_guard<std::mutex> lock(mutex_);
 
-        state_.store(SchedulerState::Stopped);
-
-        // Cancel the timer but keep the object alive until the scheduler is
-        // torn down, otherwise Boost.Asio may still hold internal references
-        // to the timer entry while draining the io_context.
-        if (tick_timer_)
-        {
-            tick_timer_->cancel();
-        }
-
-        // Request cooperative cancellation on the stop token.
-        // stop_token_ is always created via DasStopTokenImpl::Make() in
-        // OnTick(), so this static_cast is safe as long as OnTick remains
-        // the sole creator.
-        if (stop_token_)
-        {
-            auto* impl = static_cast<Das::Core::Utils::DasStopTokenImpl*>(
-                stop_token_.Get());
-            if (impl)
-            {
-                impl->RequestStop();
-            }
-        }
-
-        // Wait for current task to complete
-        cv_.wait(lock, [this] { return current_task_ == nullptr; });
-
-        // Reset stop token
-        stop_token_.Reset();
-
-        // Unload plugins in reverse order
-        for (auto it = loaded_plugin_paths_.rbegin();
-             it != loaded_plugin_paths_.rend();
-             ++it)
-        {
-            auto unload_result = plugin_manager_.UnloadPlugin(*it);
-            if (DAS::IsFailed(unload_result))
+            if (state_.load() == SchedulerState::Stopping)
             {
                 DAS_CORE_LOG_WARN(
-                    "SchedulerService::Disable: failed to unload "
-                    "plugin {}, result={}",
-                    it->string(),
-                    unload_result);
+                    "SchedulerService::Disable: already stopping, ignored");
+                return DAS_S_OK;
+            }
+
+            if (state_.load() != SchedulerState::Running)
+            {
+                DAS_CORE_LOG_ERROR(
+                    "SchedulerService::Disable: invalid state, must be "
+                    "Running");
+                return DAS_E_FAIL;
+            }
+
+            state_.store(SchedulerState::Stopping);
+
+            // Cancel the timer but keep the object alive until the scheduler is
+            // torn down, otherwise Boost.Asio may still hold internal
+            // references to the timer entry while draining the io_context.
+            if (tick_timer_)
+            {
+                tick_timer_->cancel();
+            }
+
+            // Request cooperative cancellation on the stop token.
+            // stop_token_ is always created via DasStopTokenImpl::Make() in
+            // OnTick(), so this static_cast is safe as long as OnTick remains
+            // the sole creator.
+            if (stop_token_)
+            {
+                auto* impl = static_cast<Das::Core::Utils::DasStopTokenImpl*>(
+                    stop_token_.Get());
+                if (impl)
+                {
+                    impl->RequestStop();
+                }
             }
         }
 
-        task_types_.clear();
-        task_instances_.clear();
-        loaded_plugin_paths_.clear();
-        initialized_ = false;
+        // Spawns a dedicated thread to wait for the current task to complete.
+        // The Stopping state guard above guarantees only one such thread exists
+        // at any time, so defensive joinable() check is unnecessary here.
+        disable_thread_ = std::thread(
+            [this]
+            {
+                {
+                    std::unique_lock<std::mutex> lock(mutex_);
+                    cv_.wait(lock, [this] { return current_task_ == nullptr; });
+                }
 
-        DAS_CORE_LOG_INFO("SchedulerService::Disable: scheduler stopped");
+                stop_token_.Reset();
+                state_.store(SchedulerState::Stopped);
+                DAS_CORE_LOG_INFO(
+                    "SchedulerService::Disable: scheduler stopped");
+            });
+
         return DAS_S_OK;
     }
 
@@ -717,8 +723,10 @@ namespace Das::Core::TaskScheduler
         std::lock_guard<std::mutex> lock(mutex_);
 
         nlohmann::json result;
-        result["state"] =
-            state_.load() == SchedulerState::Running ? "running" : "stopped";
+        result["state"] = state_.load() == SchedulerState::Running ? "running"
+                          : state_.load() == SchedulerState::Stopping
+                              ? "stopping"
+                              : "stopped";
 
         // Available task types
         auto& types_arr = result["availableTaskTypes"];
@@ -816,7 +824,8 @@ namespace Das::Core::TaskScheduler
         {
             std::lock_guard<std::mutex> lock(mutex_);
 
-            if (state_.load() == SchedulerState::Running)
+            if (state_.load() == SchedulerState::Running
+                || state_.load() == SchedulerState::Stopping)
             {
                 return DAS_E_TASK_WORKING;
             }
@@ -924,7 +933,8 @@ namespace Das::Core::TaskScheduler
         {
             std::lock_guard<std::mutex> lock(mutex_);
 
-            if (state_.load() == SchedulerState::Running)
+            if (state_.load() == SchedulerState::Running
+                || state_.load() == SchedulerState::Stopping)
             {
                 return DAS_E_TASK_WORKING;
             }
@@ -1024,7 +1034,8 @@ namespace Das::Core::TaskScheduler
         {
             std::lock_guard<std::mutex> lock(mutex_);
 
-            if (state_.load() == SchedulerState::Running)
+            if (state_.load() == SchedulerState::Running
+                || state_.load() == SchedulerState::Stopping)
             {
                 return DAS_E_TASK_WORKING;
             }
@@ -1152,7 +1163,8 @@ namespace Das::Core::TaskScheduler
         {
             std::lock_guard<std::mutex> lock(mutex_);
 
-            if (state_.load() == SchedulerState::Running)
+            if (state_.load() == SchedulerState::Running
+                || state_.load() == SchedulerState::Stopping)
             {
                 return DAS_E_TASK_WORKING;
             }
