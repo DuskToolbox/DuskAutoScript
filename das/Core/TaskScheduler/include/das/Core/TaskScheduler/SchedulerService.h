@@ -119,6 +119,9 @@ namespace Das::Core::TaskScheduler
         /// Check whether the scheduler has been initialized.
         bool IsInitialized() const { return initialized_; }
 
+        /// Register a callback to be invoked when scheduler state changes.
+        void SetStateNotifyCallback(SchedulerNotifyFunc func, void* user_data);
+
     private:
         void      StartTickTimer(std::chrono::steady_clock::duration delay);
         void      OnTick();
@@ -243,6 +246,15 @@ namespace Das::Core::TaskScheduler
         std::condition_variable        config_persist_cv_;
         std::thread                    config_persist_thread_;
         std::atomic<bool>              config_persist_shutdown_{false};
+
+        struct StateNotify
+        {
+            SchedulerNotifyFunc func = nullptr;
+            void*               user_data = nullptr;
+
+            void operator()(const char* json) const { func(json, user_data); }
+            explicit operator bool() const { return func != nullptr; }
+        } state_notify_;
     };
 
 } // namespace Das::Core::TaskScheduler

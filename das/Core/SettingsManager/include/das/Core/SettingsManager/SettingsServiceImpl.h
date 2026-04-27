@@ -56,6 +56,9 @@ public:
         IDasReadOnlyString*             p_field_name,
         Das::ExportInterface::IDasJson* p_value) override;
 
+    DAS_IMPL SetSettingsNotifyCallback(SettingsNotifyFunc func, void* user_data)
+        override;
+
 private:
     std::atomic<uint32_t> ref_count_{0};
     SettingsManager&      mgr_;

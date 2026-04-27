@@ -4,6 +4,8 @@
 
 struct IDasReadOnlyString;
 
+typedef void (*SchedulerNotifyFunc)(const char* json, void* user_data);
+
 namespace Das::ExportInterface
 {
     DAS_INTERFACE IDasReadOnlyGuidVector;
@@ -48,4 +50,7 @@ DAS_INTERFACE IDasSchedulerService : public IDasBase
     DAS_METHOD UpdateTaskInternalProperties(
         int64_t             task_id,
         IDasReadOnlyString* p_properties_json) = 0;
+    DAS_METHOD SetStateNotifyCallback(
+        SchedulerNotifyFunc func,
+        void*               user_data) = 0;
 };

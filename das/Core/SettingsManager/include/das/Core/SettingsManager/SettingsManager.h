@@ -4,6 +4,7 @@
 #include <das/Core/SettingsManager/Config.h>
 #include <das/DasExport.h>
 #include <das/DasTypes.hpp>
+#include <das/IDasSettingsService.h>
 #include <filesystem>
 #include <nlohmann/json.hpp>
 #include <shared_mutex>
@@ -148,6 +149,9 @@ public:
         const std::string& profile_id,
         int64_t            task_id);
 
+    /// Register a callback to be invoked when settings change.
+    void SetSettingsNotifyCallback(SettingsNotifyFunc func, void* user_data);
+
 private:
     std::filesystem::path GetProfileDir(const std::string& profile_id) const;
     std::filesystem::path GetProfileUiPath(const std::string& profile_id) const;
@@ -188,6 +192,15 @@ private:
     /// NEVER covers file I/O (WriteJsonFile/ReadJsonFile/exists/directory_ite
     /// rator).
     mutable std::shared_mutex cells_mutex_;
+
+    struct SettingsNotify
+    {
+        SettingsNotifyFunc func = nullptr;
+        void*              user_data = nullptr;
+
+        void     operator()(const char* json) const { func(json, user_data); }
+        explicit operator bool() const { return func != nullptr; }
+    } settings_notify_;
 };
 
 DAS_CORE_SETTINGS_MANAGER_NS_END

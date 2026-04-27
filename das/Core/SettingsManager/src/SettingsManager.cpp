@@ -568,7 +568,23 @@ DasResult SettingsManager::UpdatePluginSettingsJson(
 
     std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
     cell->snapshot = data;
-    return WriteJsonFile(GetPluginSettingsPath(profile_id, guid), data);
+    auto result = WriteJsonFile(GetPluginSettingsPath(profile_id, guid), data);
+
+    if (DAS::IsOk(result))
+    {
+        nlohmann::json event;
+        event["type"] = "settings_changed";
+        event["profile"] = profile_id;
+        event["guid"] = guid;
+        event["field"] = ""; // full replacement
+        event["value"] = data;
+        auto event_str = event.dump();
+        if (settings_notify_)
+        {
+            settings_notify_(event_str.c_str());
+        }
+    }
+    return result;
 }
 
 std::string SettingsManager::GetPluginSettingsField(
@@ -688,6 +704,19 @@ DasResult SettingsManager::UpdatePluginSettingsFieldJson(
         if (DAS::IsOk(result))
         {
             cell->snapshot = std::move(current);
+
+            // Notify WebSocket clients of settings change
+            nlohmann::json event;
+            event["type"] = "settings_changed";
+            event["profile"] = profile_id;
+            event["guid"] = guid;
+            event["field"] = field_name;
+            event["value"] = value;
+            auto event_str = event.dump();
+            if (settings_notify_)
+            {
+                settings_notify_(event_str.c_str());
+            }
         }
         return result;
     }
@@ -1073,6 +1102,13 @@ std::filesystem::path SettingsManager::GetTaskInstancePath(
 {
     return base_dir_ / profile_id
            / ("taskId" + std::to_string(task_id) + ".json");
+}
+
+void SettingsManager::SetSettingsNotifyCallback(
+    SettingsNotifyFunc func,
+    void*              user_data)
+{
+    settings_notify_ = {func, user_data};
 }
 
 DAS_CORE_SETTINGS_MANAGER_NS_END

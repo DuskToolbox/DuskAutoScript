@@ -1395,11 +1395,26 @@ namespace Das::Core::TaskScheduler
         {
             PostPersistEvent(persist_id, persist_time);
         }
+
+        // Notify WebSocket clients of state change (server-triggered only)
+        if (state_notify_)
+        {
+            auto state_json = Get();
+            auto state_str = state_json.dump();
+            state_notify_(state_str.c_str());
+        }
     }
 
     // ----------------------------------------------------------------
     // Config-side persistence thread
     // ----------------------------------------------------------------
+
+    void SchedulerService::SetStateNotifyCallback(
+        SchedulerNotifyFunc func,
+        void*               user_data)
+    {
+        state_notify_ = {func, user_data};
+    }
 
     void SchedulerService::PostPersistEvent(int64_t task_id, int64_t next_time)
     {

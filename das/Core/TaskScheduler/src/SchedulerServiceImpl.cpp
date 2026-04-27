@@ -191,4 +191,12 @@ namespace Das::Core::TaskScheduler
         }
     }
 
+    DasResult SchedulerServiceImpl::SetStateNotifyCallback(
+        SchedulerNotifyFunc func,
+        void*               user_data)
+    {
+        svc_.SetStateNotifyCallback(func, user_data);
+        return DAS_S_OK;
+    }
+
 } // namespace Das::Core::TaskScheduler

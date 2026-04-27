@@ -1956,6 +1956,10 @@ namespace
             update_internal_props_called = true;
             return next_result;
         }
+        DasResult SetStateNotifyCallback(SchedulerNotifyFunc, void*) override
+        {
+            return DAS_S_OK;
+        }
     };
 
     /// Build a Beast::HttpRequest with path parameters set.

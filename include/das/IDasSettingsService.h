@@ -3,6 +3,8 @@
 
 #include <das/IDasBase.h>
 
+typedef void (*SettingsNotifyFunc)(const char* json, void* user_data);
+
 namespace Das::ExportInterface
 {
     DAS_INTERFACE IDasJson;
@@ -65,6 +67,9 @@ DAS_INTERFACE IDasSettingsService : public IDasBase
         const DasGuid*                  p_plugin_guid,
         IDasReadOnlyString*             p_field_name,
         Das::ExportInterface::IDasJson* p_value) = 0;
+    DAS_METHOD SetSettingsNotifyCallback(
+        SettingsNotifyFunc func,
+        void*              user_data) = 0;
 };
 
 #endif // DAS_SETTINGS_SERVICE_H

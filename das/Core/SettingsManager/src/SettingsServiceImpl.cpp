@@ -289,4 +289,12 @@ DasResult SettingsServiceImpl::UpdatePluginSettingsField(
         data);
 }
 
+DasResult SettingsServiceImpl::SetSettingsNotifyCallback(
+    SettingsNotifyFunc func,
+    void*              user_data)
+{
+    mgr_.SetSettingsNotifyCallback(func, user_data);
+    return DAS_S_OK;
+}
+
 DAS_CORE_SETTINGS_MANAGER_NS_END

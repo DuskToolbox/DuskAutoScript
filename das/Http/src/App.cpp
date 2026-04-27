@@ -7,6 +7,7 @@
 #include "das/Utils/fmt.h"
 
 #include "./AppComponent.hpp"
+#include "./NotificationHub.hpp"
 #include "./beast/Server.hpp"
 #include "./controller/DasLogController.hpp"
 #include "./controller/DasMiscController.hpp"
@@ -352,6 +353,33 @@ namespace Das::Http
             port,
             components.router,
             g_server_condition.GetCondition());
+
+        // Create NotificationHub (needs io_context from Server)
+        auto hub = std::make_shared<Das::Http::NotificationHub>(server.IoCtx());
+        server.SetHub(hub);
+        components.notification_hub = hub;
+
+        // Wire notify callbacks through COM interfaces → WebSocket broadcast
+        components.settings_service->SetSettingsNotifyCallback(
+            [](const char* json_event, void* user_data)
+            {
+                auto* hub = static_cast<Das::Http::NotificationHub*>(user_data);
+                if (hub && json_event)
+                {
+                    hub->Broadcast(std::string(json_event));
+                }
+            },
+            hub.get());
+        components.scheduler_svc->SetStateNotifyCallback(
+            [](const char* json_state, void* user_data)
+            {
+                auto* hub = static_cast<Das::Http::NotificationHub*>(user_data);
+                if (hub && json_state)
+                {
+                    hub->Broadcast(std::string(json_state));
+                }
+            },
+            hub.get());
 
         std::cout << "[DasHttp] Server running on port " << port << std::endl;
 

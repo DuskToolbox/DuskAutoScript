@@ -36,6 +36,9 @@ namespace Das::Core::TaskScheduler
         DasResult UpdateTaskInternalProperties(
             int64_t             task_id,
             IDasReadOnlyString* p_properties_json) override;
+        DasResult SetStateNotifyCallback(
+            SchedulerNotifyFunc func,
+            void*               user_data) override;
 
     private:
         std::atomic<uint32_t> ref_count_{0};
