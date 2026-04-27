@@ -1,6 +1,7 @@
 #ifndef DAS_HTTP_APP_COMPONENT_HPP
 #define DAS_HTTP_APP_COMPONENT_HPP
 
+#include "NotificationHub.hpp"
 #include "beast/Router.hpp"
 #include "beast/Server.hpp"
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
@@ -37,6 +38,9 @@ namespace Das::Http
         std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context;
 
         std::thread ipc_thread;
+
+        // WebSocket notification hub
+        std::shared_ptr<NotificationHub> notification_hub;
 
         explicit AppComponent(const std::filesystem::path& plugin_dir)
             : router(std::make_shared<Beast::Router>()), plugin_dir(plugin_dir)

@@ -8,14 +8,22 @@
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/beast/version.hpp>
+#include <boost/beast/websocket.hpp>
 #include <boost/config.hpp>
 #include <das/DasApi.h>
 #include <das/Utils/fmt.h>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
+
+// Forward declare NotificationHub
+namespace Das::Http
+{
+    class NotificationHub;
+}
 
 namespace Das::Http::Beast
 {
@@ -43,6 +51,18 @@ namespace Das::Http::Beast
         }
 
         void Run() { DoRead(); }
+
+        /**
+         * @brief 使用已读取的请求启动会话（由 UpgradeDetector 调用）。
+         *
+         * 当 UpgradeDetector 已从 socket 读取 HTTP 头并判定为普通 HTTP
+         * 请求时，直接复用已读取的 parser，避免重复读取。
+         */
+        void RunWithParser(http::request<http::string_body> request)
+        {
+            request_ = std::move(request);
+            ProcessRequest();
+        }
 
     private:
         void DoRead()
@@ -104,21 +124,199 @@ namespace Das::Http::Beast
         boost::beast::flat_buffer buffer_;
     };
 
+    // ── WebSocket 会话 ──
+
+    class WsSession : public std::enable_shared_from_this<WsSession>
+    {
+        boost::beast::websocket::stream<tcp::socket> ws_;
+        std::shared_ptr<NotificationHub>             hub_;
+        std::mutex                                   write_mutex_;
+
+    public:
+        WsSession(tcp::socket socket, std::shared_ptr<NotificationHub> hub)
+            : ws_(std::move(socket)), hub_(std::move(hub))
+        {
+        }
+
+        /**
+         * @brief 获取 executor（用于 dispatch WebSocket 写操作）。
+         */
+        boost::asio::any_io_executor GetExecutor()
+        {
+            return ws_.get_executor();
+        }
+
+        /**
+         * @brief 执行 WebSocket 握手并启动读写循环。
+         *
+         * 必须在 Listener 接受连接、检测到 Upgrade 请求后调用。
+         *
+         * @param req 原始的 HTTP Upgrade 请求。
+         */
+        template <typename Body, typename Allocator>
+        void DoHandshake(boost::beast::http::request<Body, Allocator>& req)
+        {
+            auto self = shared_from_this();
+
+            ws_.set_option(
+                boost::beast::websocket::stream_base::timeout::suggested(
+                    boost::beast::role_type::server));
+
+            ws_.async_accept(
+                req,
+                [self](boost::beast::error_code ec)
+                {
+                    if (ec)
+                    {
+                        return;
+                    }
+
+                    // 注册到 NotificationHub
+                    self->hub_->Register(self);
+
+                    // 启动读循环
+                    self->DoReadLoop();
+                });
+        }
+
+        /**
+         * @brief 向客户端发送文本消息。
+         *
+         * 由 NotificationHub::Broadcast 通过 dispatch 调用。
+         *
+         * @param message 共享消息，避免拷贝。
+         */
+        void WriteMessage(std::shared_ptr<const std::string> message)
+        {
+            // Beast websocket::stream 不允许并发写
+            std::lock_guard<std::mutex> lock(write_mutex_);
+
+            auto self = shared_from_this();
+            ws_.async_write(
+                boost::asio::buffer(*message),
+                [self,
+                 message](boost::beast::error_code ec, std::size_t /*bytes*/)
+                { boost::ignore_unused(ec); });
+        }
+
+    private:
+        void DoReadLoop()
+        {
+            auto self = shared_from_this();
+
+            ws_.async_read(
+                read_buffer_,
+                [self](boost::beast::error_code ec, std::size_t bytes_read)
+                {
+                    boost::ignore_unused(bytes_read);
+
+                    if (ec == boost::beast::websocket::error::closed)
+                    {
+                        self->hub_->Unregister(self.get());
+                        return;
+                    }
+
+                    if (ec)
+                    {
+                        self->hub_->Unregister(self.get());
+                        return;
+                    }
+
+                    // 继续读取（客户端可发送 ping/subscribe 等消息）
+                    self->DoReadLoop();
+                });
+        }
+
+        boost::beast::flat_buffer read_buffer_;
+    };
+
+    // ── WebSocket/HTTP 升级检测器 ──
+
+    /**
+     * @brief 检测 HTTP 请求是否为 WebSocket 升级请求。
+     *
+     * 先读取 HTTP 请求头，检查是否为 Upgrade: websocket。
+     * - 是 WebSocket → 创建 WsSession 并执行握手
+     * - 否 → 创建普通 HTTP Session 并处理
+     */
+    class UpgradeDetector : public std::enable_shared_from_this<UpgradeDetector>
+    {
+        tcp::socket                      socket_;
+        std::shared_ptr<Router>          router_;
+        std::function<bool()>            stop_condition_;
+        std::shared_ptr<NotificationHub> hub_;
+        boost::beast::flat_buffer        buffer_;
+
+    public:
+        UpgradeDetector(
+            tcp::socket                      socket,
+            std::shared_ptr<Router>          router,
+            std::function<bool()>            stop_condition,
+            std::shared_ptr<NotificationHub> hub)
+            : socket_(std::move(socket)), router_(std::move(router)),
+              stop_condition_(std::move(stop_condition)), hub_(std::move(hub))
+        {
+        }
+
+        void Detect()
+        {
+            // Read only the HTTP header — use request_parser
+            auto self = shared_from_this();
+
+            http::async_read_header(
+                socket_,
+                buffer_,
+                parser_,
+                [self](boost::beast::error_code ec, std::size_t)
+                {
+                    if (ec)
+                    {
+                        return;
+                    }
+
+                    auto& req = self->parser_.get();
+                    if (boost::beast::websocket::is_upgrade(req)
+                        && req.target() == "/ws")
+                    {
+                        // WebSocket upgrade — create WsSession
+                        auto ws = std::make_shared<WsSession>(
+                            std::move(self->socket_),
+                            self->hub_);
+                        ws->DoHandshake(req);
+                    }
+                    else
+                    {
+                        // Normal HTTP — create Session with pre-read data
+                        auto session = std::make_shared<Session>(
+                            std::move(self->socket_),
+                            self->router_,
+                            self->stop_condition_);
+                        session->RunWithParser(self->parser_.release());
+                    }
+                });
+        }
+
+    private:
+        http::request_parser<http::string_body> parser_;
+    };
+
     // 监听器，接受传入的连接
     class Listener : public std::enable_shared_from_this<Listener>
     {
-        tcp::acceptor           acceptor_;
-        std::shared_ptr<Router> router_;
-        std::function<bool()>   stop_condition_;
+        tcp::acceptor                    acceptor_;
+        std::shared_ptr<Router>          router_;
+        std::shared_ptr<NotificationHub> hub_;
+        std::function<bool()>            stop_condition_;
 
     public:
         Listener(
-            boost::asio::io_context& ioc,
-            tcp::endpoint            endpoint,
-            std::shared_ptr<Router>  router,
-            std::function<bool()>    stop_condition)
+            boost::asio::io_context&         ioc,
+            tcp::endpoint                    endpoint,
+            std::shared_ptr<Router>          router,
+            std::function<bool()>            stop_condition,
+            std::shared_ptr<NotificationHub> hub)
             : acceptor_(boost::asio::make_strand(ioc)),
-              router_(std::move(router)),
+              router_(std::move(router)), hub_(std::move(hub)),
               stop_condition_(std::move(stop_condition))
         {
             boost::beast::error_code ec;
@@ -154,6 +352,14 @@ namespace Das::Http::Beast
 
         void Run() { DoAccept(); }
 
+        /**
+         * @brief 设置 NotificationHub（延迟注入，解决初始化顺序问题）。
+         */
+        void SetHub(std::shared_ptr<NotificationHub> hub)
+        {
+            hub_ = std::move(hub);
+        }
+
     private:
         void DoAccept()
         {
@@ -168,14 +374,16 @@ namespace Das::Http::Beast
                         return;
                     }
 
-                    // 创建会话并运行
-                    std::make_shared<Session>(
+                    // Use request_parser to peek at headers before
+                    // deciding HTTP vs WebSocket
+                    auto detector = std::make_shared<UpgradeDetector>(
                         std::move(socket),
                         self->router_,
-                        self->stop_condition_)
-                        ->Run();
+                        self->stop_condition_,
+                        self->hub_);
+                    detector->Detect();
 
-                    // 继续接受下一个连接
+                    // Continue accepting
                     self->DoAccept();
                 });
         }
@@ -186,11 +394,12 @@ namespace Das::Http::Beast
     {
     public:
         Server(
-            const std::string&      address,
-            unsigned short          port,
-            std::shared_ptr<Router> router,
-            std::function<bool()>   stop_condition)
-            : router_(std::move(router)),
+            const std::string&               address,
+            unsigned short                   port,
+            std::shared_ptr<Router>          router,
+            std::function<bool()>            stop_condition,
+            std::shared_ptr<NotificationHub> hub = nullptr)
+            : router_(std::move(router)), hub_(std::move(hub)),
               stop_condition_(std::move(stop_condition)), ioc_(4)
         {
             auto const addr = boost::asio::ip::make_address(address);
@@ -200,8 +409,28 @@ namespace Das::Http::Beast
                 ioc_,
                 endpoint,
                 router_,
-                stop_condition_);
+                stop_condition_,
+                hub_);
         }
+
+        /**
+         * @brief 设置 NotificationHub（延迟注入，解决初始化顺序问题）。
+         *
+         * 同时传播到 Listener。
+         */
+        void SetHub(std::shared_ptr<NotificationHub> hub)
+        {
+            hub_ = std::move(hub);
+            if (listener_)
+            {
+                listener_->SetHub(hub_);
+            }
+        }
+
+        /**
+         * @brief 获取 io_context 引用（用于创建 NotificationHub）。
+         */
+        boost::asio::io_context& IoCtx() noexcept { return ioc_; }
 
         /**
          * @brief Run the HTTP server with 4 workers (blocking).
@@ -292,11 +521,12 @@ namespace Das::Http::Beast
         const Router& GetRouter() const { return *router_; }
 
     private:
-        std::shared_ptr<Router>   router_;
-        std::function<bool()>     stop_condition_;
-        boost::asio::io_context   ioc_;
-        std::shared_ptr<Listener> listener_;
-        std::vector<std::thread>  threads_;
+        std::shared_ptr<Router>          router_;
+        std::shared_ptr<NotificationHub> hub_;
+        std::function<bool()>            stop_condition_;
+        boost::asio::io_context          ioc_;
+        std::shared_ptr<Listener>        listener_;
+        std::vector<std::thread>         threads_;
     };
 
 } // namespace Das::Http::Beast
