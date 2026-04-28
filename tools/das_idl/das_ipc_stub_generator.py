@@ -1064,7 +1064,7 @@ class IpcStubGenerator:
             param_name = local_name
 
             # 获取接口的命名空间前缀
-            interface_ns = self.type_mapper.interface_namespaces.get(param.type_info.base_type, "")
+            interface_ns = self.type_mapper.interface_namespaces.get(interface_name, "")
             if interface_ns:
                 full_interface_name = f"{interface_ns}::{interface_name}"
             else:

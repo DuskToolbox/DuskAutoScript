@@ -3,6 +3,8 @@
 #include <das/Core/ForeignInterfaceHost/PluginScanner.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/TaskScheduler/SchedulerService.h>
+#include <das/Core/Utils/DasJsonImpl.h>
+#include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/IDasBase.h>
@@ -1311,22 +1313,22 @@ namespace Das::Core::TaskScheduler
             }
         }
 
-        // Create JSON string inputs outside the lock
-        DasPtr<IDasReadOnlyString> p_env_json;
-        auto env_cr = CreateIDasReadOnlyStringFromUtf8("{}", p_env_json.Put());
+        // Create IDasJson inputs outside the lock (no serialization round-trip)
+        DasPtr<Das::ExportInterface::IDasJson> p_env_json;
+        auto env_cr = CreateEmptyDasJson(p_env_json.Put());
         if (IsFailed(env_cr))
         {
             p_env_json.Reset();
         }
 
-        DasPtr<IDasReadOnlyString> p_props_json;
-        auto                       props_str = properties_copy.dump();
-        auto                       props_cr = CreateIDasReadOnlyStringFromUtf8(
-            props_str.c_str(),
-            p_props_json.Put());
-        if (IsFailed(props_cr))
+        DasPtr<Das::ExportInterface::IDasJson> p_props_json;
+        try
         {
-            p_props_json.Reset();
+            p_props_json = Das::MakeDasPtr<Das::Core::Utils::IDasJsonImpl>(
+                std::move(properties_copy));
+        }
+        catch (const std::bad_alloc&)
+        {
         }
 
         // Call IDasTask::Do WITHOUT holding the mutex

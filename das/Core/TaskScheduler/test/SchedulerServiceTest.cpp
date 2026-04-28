@@ -1016,8 +1016,8 @@ public:
 
     DasResult Do(
         Das::PluginInterface::IDasStopToken* stop_token,
-        IDasReadOnlyString*                  p_environment_json,
-        IDasReadOnlyString*                  p_task_settings_json) override
+        Das::ExportInterface::IDasJson*      p_environment_json,
+        Das::ExportInterface::IDasJson*      p_task_settings_json) override
     {
         ++do_call_count;
         stop_token_was_null = (stop_token == nullptr);
@@ -1026,10 +1026,14 @@ public:
 
         if (p_task_settings_json)
         {
-            const char* c_str = nullptr;
-            if (DAS_S_OK == p_task_settings_json->GetUtf8(&c_str) && c_str)
+            DasPtr<IDasReadOnlyString> p_str;
+            if (DAS_S_OK == p_task_settings_json->ToString(-1, p_str.Put()))
             {
-                last_props_json = c_str;
+                const char* c_str = nullptr;
+                if (DAS_S_OK == p_str->GetUtf8(&c_str) && c_str)
+                {
+                    last_props_json = c_str;
+                }
             }
         }
 
@@ -1149,8 +1153,8 @@ public:
 
     DasResult Do(
         Das::PluginInterface::IDasStopToken*,
-        IDasReadOnlyString*,
-        IDasReadOnlyString*) override
+        Das::ExportInterface::IDasJson*,
+        Das::ExportInterface::IDasJson*) override
     {
         {
             std::lock_guard<std::mutex> lock(state_->mutex);
