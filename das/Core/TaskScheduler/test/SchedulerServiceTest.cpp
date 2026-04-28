@@ -950,7 +950,7 @@ public:
     std::atomic<bool>     stop_token_was_null{true};
     std::atomic<bool>     env_was_null{true};
     std::atomic<bool>     props_was_null{true};
-    std::string           last_props_json;
+    std::string           last_props_key1_value;
 
     Das::ExportInterface::DasDate next_date{};
     bool                          has_next_date = false;
@@ -1024,15 +1024,24 @@ public:
         env_was_null = (p_environment_json == nullptr);
         props_was_null = (p_task_settings_json == nullptr);
 
-        if (p_task_settings_json)
+        if (p_task_settings_json != nullptr)
         {
-            DasPtr<IDasReadOnlyString> p_str;
-            if (DAS_S_OK == p_task_settings_json->ToString(-1, p_str.Put()))
+            DasPtr<IDasReadOnlyString> key;
+            auto cr = CreateIDasReadOnlyStringFromUtf8("key1", key.Put());
+            if (DAS_S_OK == cr && key)
             {
-                const char* c_str = nullptr;
-                if (DAS_S_OK == p_str->GetUtf8(&c_str) && c_str)
+                DasPtr<IDasReadOnlyString> value;
+                if (DAS_S_OK
+                        == p_task_settings_json->GetStringByName(
+                            key.Get(),
+                            value.Put())
+                    && value)
                 {
-                    last_props_json = c_str;
+                    const char* c_str = nullptr;
+                    if (DAS_S_OK == value->GetUtf8(&c_str) && c_str)
+                    {
+                        last_props_key1_value = c_str;
+                    }
                 }
             }
         }
@@ -1670,10 +1679,8 @@ TEST_F(SchedulerExecutionTest, OnTick_ReceivesNonNullInputs)
     auto stop_result = scheduler_->Disable();
     EXPECT_EQ(stop_result, DAS_S_OK);
 
-    // Verify properties JSON was passed
-    EXPECT_FALSE(fake->last_props_json.empty());
-    auto parsed = nlohmann::json::parse(fake->last_props_json);
-    EXPECT_EQ(parsed["key1"], "value1");
+    // Verify properties JSON was passed via IDasJson::GetStringByName
+    EXPECT_EQ(fake->last_props_key1_value, "value1");
 }
 
 TEST_F(SchedulerExecutionTest, OnTick_RefreshesNextExecutionTime)
