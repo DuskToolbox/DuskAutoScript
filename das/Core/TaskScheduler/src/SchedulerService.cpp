@@ -1329,6 +1329,8 @@ namespace Das::Core::TaskScheduler
         }
         catch (const std::bad_alloc&)
         {
+            DAS_CORE_LOG_WARN(
+                "Failed to allocate IDasJson for task properties");
         }
 
         // Call IDasTask::Do WITHOUT holding the mutex
