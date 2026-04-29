@@ -1,9 +1,11 @@
 #pragma once
 
+#include <cpp_yyjson.hpp>
 #include <das/IDasSettingsService.h>
+#include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/DasJson.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasJson.Implements.hpp>
-#include <nlohmann/json.hpp>
+#include <optional>
 #include <string>
 #include <unordered_set>
 
@@ -90,12 +92,13 @@ namespace Das::Http
         std::string MakeFullPath(const std::string& key) const;
         bool        IsPrefixAllowed(const std::string& prefix) const;
 
-        nlohmann::json GetField(const std::string& full_path);
-        DasResult      SetField(
-            const std::string&    full_path,
-            const nlohmann::json& value);
+        std::optional<yyjson::writer::detail::value> GetField(
+            const std::string& full_path);
+        DasResult SetField(
+            const std::string&                   full_path,
+            const yyjson::writer::detail::value& value);
 
-        nlohmann::json GetCurrentJson();
+        std::optional<yyjson::writer::detail::value> GetCurrentJson();
     };
 
 } // namespace Das::Http
