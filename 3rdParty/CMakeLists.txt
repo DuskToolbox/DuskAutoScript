@@ -495,27 +495,16 @@ if (NOT MSVC)
     endif ()
 endif ()
 
-# config Nlohmann Json
-# Notice: This library assume string is encoded in UTF-8.
-set(DAS_NLOHMANN_JSON_VERSION v3.12.0)
-message(STATUS "Downloading and collecting headers in nlohmann json. (VERSION = ${DAS_NLOHMANN_JSON_VERSION})")
+# yyjson-cpp (replaces nlohmann/json) — per D-09/D-10
+set(CPPYYJSON_PFR_TARGET Boost::headers CACHE STRING "Boost.PFR target for yyjson-cpp")
 FetchContent_Declare(
-        nlohmann_json
-        URL ${GITHUB_MIRROR_URL}/nlohmann/json/releases/download/${DAS_NLOHMANN_JSON_VERSION}/include.zip
-        URL_HASH SHA256=B8CB0EF2DD7F57F18933997C9934BB1FA962594F701CD5A8D3C2C80541559372)
-
-if (NOT nlohmann_json_POPULATED)
-    FetchContent_Populate(nlohmann_json)
-endif ()
-
-message(${nlohmann_json_SOURCE_DIR}/include)
-target_include_directories(Das3rdParty INTERFACE ${nlohmann_json_SOURCE_DIR}/include)
-
-# 创建 nlohmann_json::nlohmann_json 目标供其他库使用
-add_library(nlohmann_json::nlohmann_json INTERFACE IMPORTED)
-set_target_properties(nlohmann_json::nlohmann_json PROPERTIES
-    INTERFACE_INCLUDE_DIRECTORIES "${nlohmann_json_SOURCE_DIR}/include"
+    cpp_yyjson
+    GIT_REPOSITORY https://github.com/BombaxCeiba/yyjson-cpp
+    GIT_TAG        6eec776982caae9a298be02a61d73c97ec8b7196
+    GIT_SHALLOW    TRUE
 )
+FetchContent_MakeAvailable(cpp_yyjson)
+target_link_libraries(Das3rdParty INTERFACE cpp_yyjson::cpp_yyjson)
 
 # See [added support for cmake "find_package"](https://github.com/microsoft/onnxruntime/pull/8919)
 # prevent warning when package not found.
