@@ -8,15 +8,17 @@
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/IDasBase.h>
+#include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <das/_autogen/idl/abi/IDasTask.h>
 
 #include <algorithm>
+#include <cassert>
 #include <chrono>
 #include <cstdio>
 #include <ctime>
 #include <fstream>
-#include <nlohmann/json.hpp>
+#include <sstream>
 #include <thread>
 
 namespace Das::Core::TaskScheduler
@@ -339,9 +341,41 @@ namespace Das::Core::TaskScheduler
             try
             {
                 std::ifstream     ifs(manifest_path);
-                auto              json_data = nlohmann::json::parse(ifs);
+                std::stringstream ss;
+                ss << ifs.rdbuf();
+                auto content = ss.str();
+                auto json_data = Das::Utils::ParseYyjsonFromString(content);
+                if (!json_data)
+                {
+                    DAS_CORE_LOG_WARN(
+                        "SchedulerService::Initialize: failed to "
+                        "parse manifest: {}",
+                        manifest_path.string());
+                    continue;
+                }
+
                 PluginPackageDesc desc;
-                from_json(json_data, desc);
+                auto              obj = json_data->as_object();
+                if (obj)
+                {
+                    const auto& jo = *obj;
+                    // Parse name
+                    auto name_val = jo[std::string_view("name")];
+                    auto name_str = name_val.as_string();
+                    if (name_str)
+                    {
+                        desc.name = std::string(*name_str);
+                    }
+                    // Parse guid
+                    auto guid_val = jo[std::string_view("guid")];
+                    auto guid_str = guid_val.as_string();
+                    if (guid_str)
+                    {
+                        desc.guid =
+                            Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                                std::string(*guid_str));
+                    }
+                }
 
                 if (std::find(
                         disabled_guids.begin(),
@@ -454,25 +488,30 @@ namespace Das::Core::TaskScheduler
 
         std::vector<TaskInstanceRecord> temp_instances;
 
-        if (scheduler_index.contains("taskOrder")
-            && scheduler_index["taskOrder"].is_array())
+        auto sched_obj = scheduler_index.as_object();
+        if (sched_obj && sched_obj->contains(std::string_view("taskOrder"))
+            && sched_obj->operator[](std::string_view("taskOrder")).is_array())
         {
-            for (const auto& task_id_val : scheduler_index["taskOrder"])
+            auto task_order_arr =
+                *sched_obj->operator[](std::string_view("taskOrder"))
+                     .as_array();
+            for (auto arr_it = task_order_arr.begin();
+                 arr_it != task_order_arr.end();
+                 ++arr_it)
             {
-                if (!task_id_val.is_number_integer())
+                const auto& task_id_val = *arr_it;
+                if (!task_id_val.is_int())
                 {
                     continue;
                 }
-                int64_t tid = task_id_val.get<int64_t>();
+                int64_t tid = static_cast<int64_t>(task_id_val);
 
                 auto instance_json = settings.GetTaskInstanceJson("0", tid);
-
+                auto inst_obj_opt = instance_json.as_object();
                 TaskInstanceRecord rec;
                 rec.id = tid;
 
-                // Check if the file was valid
-                if (instance_json.is_null() || !instance_json.is_object()
-                    || !instance_json.contains("taskGuid"))
+                if (!inst_obj_opt || !instance_json.is_object())
                 {
                     rec.availability = TaskAvailability::Invalid;
                     rec.unavailability_reason =
@@ -480,60 +519,72 @@ namespace Das::Core::TaskScheduler
                     temp_instances.push_back(std::move(rec));
                     continue;
                 }
+                const auto& inst_obj = *inst_obj_opt;
 
                 // Parse taskGuid
-                try
-                {
-                    auto tg_str = instance_json["taskGuid"].get<std::string>();
-                    rec.task_guid =
-                        Das::Core::ForeignInterfaceHost::MakeDasGuid(tg_str);
-                }
-                catch (const std::exception& e)
+                auto tg_val = inst_obj[std::string_view("taskGuid")];
+                if (!tg_val.is_string())
                 {
                     rec.availability = TaskAvailability::Invalid;
-                    rec.unavailability_reason =
-                        std::string("invalid taskGuid: ") + e.what();
+                    rec.unavailability_reason = "invalid taskGuid";
                     temp_instances.push_back(std::move(rec));
                     continue;
                 }
+                {
+                    auto tg_view = *tg_val.as_string();
+                    rec.task_guid =
+                        Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                            std::string(tg_view));
+                }
 
                 // Parse pluginGuid
-                if (instance_json.contains("pluginGuid"))
+                if (inst_obj.contains(std::string_view("pluginGuid")))
                 {
-                    try
+                    auto pg_val = inst_obj[std::string_view("pluginGuid")];
+                    if (pg_val.is_string())
                     {
-                        auto pg_str =
-                            instance_json["pluginGuid"].get<std::string>();
+                        auto pg_view = *pg_val.as_string();
                         rec.plugin_guid =
                             Das::Core::ForeignInterfaceHost::MakeDasGuid(
-                                pg_str);
-                    }
-                    catch (const std::exception&)
-                    {
-                        // Keep default empty guid
+                                std::string(pg_view));
                     }
                 }
 
                 // Parse nextExecutionTime
-                if (instance_json.contains("nextExecutionTime")
-                    && !instance_json["nextExecutionTime"].is_null())
+                auto net_key = std::string_view("nextExecutionTime");
+                if (inst_obj.contains(net_key) && !inst_obj[net_key].is_null())
                 {
-                    const auto& net_val = instance_json["nextExecutionTime"];
-                    if (net_val.is_number_integer())
+                    const auto& net_val = inst_obj[net_key];
+                    auto        net_int = net_val.as_sint();
+                    if (net_int)
                     {
-                        rec.next_execution_time = net_val.get<int64_t>();
+                        rec.next_execution_time = *net_int;
                     }
                 }
 
                 // Parse properties
-                if (instance_json.contains("properties")
-                    && instance_json["properties"].is_object())
+                auto props_key = std::string_view("properties");
+                if (inst_obj.contains(props_key)
+                    && inst_obj[props_key].is_object())
                 {
-                    rec.properties = instance_json["properties"];
+                    auto props_serialized =
+                        inst_obj[props_key].write(yyjson::WriteFlag::NoFlag);
+                    auto props_parsed = Das::Utils::ParseYyjsonFromString(
+                        std::string_view(
+                            props_serialized.data(),
+                            props_serialized.size()));
+                    if (props_parsed)
+                    {
+                        rec.properties = std::move(*props_parsed);
+                    }
+                    else
+                    {
+                        rec.properties = Das::Utils::MakeYyjsonObject();
+                    }
                 }
                 else
                 {
-                    rec.properties = nlohmann::json::object();
+                    rec.properties = Das::Utils::MakeYyjsonObject();
                 }
 
                 // Link to available task type — note: FindTaskType
@@ -720,88 +771,134 @@ namespace Das::Core::TaskScheduler
     // Get: merged scheduler state JSON
     // ----------------------------------------------------------------
 
-    nlohmann::json SchedulerService::Get()
+    yyjson::writer::detail::value SchedulerService::Get()
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
-        nlohmann::json result;
-        result["state"] = state_.load() == SchedulerState::Running ? "running"
-                          : state_.load() == SchedulerState::Stopping
-                              ? "stopping"
-                              : "stopped";
+        auto result = Das::Utils::MakeYyjsonObject();
+        auto result_obj = *result.as_object();
+
+        result_obj[std::string_view("state")] = std::string_view(
+            state_.load() == SchedulerState::Running    ? "running"
+            : state_.load() == SchedulerState::Stopping ? "stopping"
+                                                        : "stopped");
 
         // Available task types
-        auto& types_arr = result["availableTaskTypes"];
-        types_arr = nlohmann::json::array();
+        auto types_arr = Das::Utils::MakeYyjsonArray();
+        auto types_arr_ref = *types_arr.as_array();
         for (const auto& ttr : task_types_)
         {
-            nlohmann::json type_obj;
-            type_obj["taskGuid"] = GuidToString(ttr->task_guid);
-            type_obj["pluginGuid"] = GuidToString(ttr->plugin_guid);
-            type_obj["name"] = ttr->name;
-            type_obj["description"] = ttr->description;
+            auto type_obj = Das::Utils::MakeYyjsonObject();
+            auto type_ref = *type_obj.as_object();
+            type_ref[std::string_view("taskGuid")] =
+                std::string_view(GuidToString(ttr->task_guid));
+            type_ref[std::string_view("pluginGuid")] =
+                std::string_view(GuidToString(ttr->plugin_guid));
+            type_ref[std::string_view("name")] = std::string_view(ttr->name);
+            type_ref[std::string_view("description")] =
+                std::string_view(ttr->description);
             if (ttr->game_name)
             {
-                type_obj["gameName"] = *ttr->game_name;
+                type_ref[std::string_view("gameName")] =
+                    std::string_view(*ttr->game_name);
             }
 
             // Include descriptors
-            auto& desc_arr = type_obj["descriptors"];
-            desc_arr = nlohmann::json::array();
+            auto desc_arr = Das::Utils::MakeYyjsonArray();
+            auto desc_arr_ref = *desc_arr.as_array();
             for (const auto& d : ttr->descriptors)
             {
-                nlohmann::json desc_obj;
-                desc_obj["name"] = d.name;
-                desc_obj["type"] = static_cast<int>(d.type);
-                desc_obj["required"] = d.required;
+                auto desc_obj = Das::Utils::MakeYyjsonObject();
+                auto desc_ref = *desc_obj.as_object();
+                desc_ref[std::string_view("name")] = std::string_view(d.name);
+                desc_ref[std::string_view("type")] =
+                    static_cast<int64_t>(d.type);
+                desc_ref[std::string_view("required")] = d.required;
                 if (d.description)
                 {
-                    desc_obj["description"] = *d.description;
+                    desc_ref[std::string_view("description")] =
+                        std::string_view(*d.description);
                 }
-                desc_arr.push_back(desc_obj);
+                desc_arr_ref.emplace_back(std::move(desc_obj));
             }
-
-            types_arr.push_back(type_obj);
+            type_ref[std::string_view("descriptors")] = std::move(desc_arr);
+            types_arr_ref.emplace_back(std::move(type_obj));
         }
+        result_obj[std::string_view("availableTaskTypes")] =
+            std::move(types_arr);
 
         // Queued task instances
-        auto& tasks_arr = result["tasks"];
-        tasks_arr = nlohmann::json::array();
+        auto tasks_arr = Das::Utils::MakeYyjsonArray();
+        auto tasks_arr_ref = *tasks_arr.as_array();
         for (const auto& inst : task_instances_)
         {
-            nlohmann::json task_obj;
-            task_obj["id"] = inst.id;
-            task_obj["taskGuid"] = GuidToString(inst.task_guid);
-            task_obj["pluginGuid"] = GuidToString(inst.plugin_guid);
+            auto task_obj = Das::Utils::MakeYyjsonObject();
+            auto task_ref = *task_obj.as_object();
+            task_ref[std::string_view("id")] = inst.id;
+            task_ref[std::string_view("taskGuid")] =
+                std::string_view(GuidToString(inst.task_guid));
+            task_ref[std::string_view("pluginGuid")] =
+                std::string_view(GuidToString(inst.plugin_guid));
 
             if (inst.availability == TaskAvailability::Available)
             {
-                task_obj["availability"] = "available";
+                task_ref[std::string_view("availability")] =
+                    std::string_view("available");
             }
             else if (inst.availability == TaskAvailability::Unavailable)
             {
-                task_obj["availability"] = "unavailable";
-                task_obj["unavailabilityReason"] = inst.unavailability_reason;
+                task_ref[std::string_view("availability")] =
+                    std::string_view("unavailable");
+                task_ref[std::string_view("unavailabilityReason")] =
+                    std::string_view(inst.unavailability_reason);
             }
             else
             {
-                task_obj["availability"] = "invalid";
-                task_obj["unavailabilityReason"] = inst.unavailability_reason;
+                task_ref[std::string_view("availability")] =
+                    std::string_view("invalid");
+                task_ref[std::string_view("unavailabilityReason")] =
+                    std::string_view(inst.unavailability_reason);
             }
 
             if (inst.next_execution_time)
             {
-                task_obj["nextExecutionTime"] = *inst.next_execution_time;
+                task_ref[std::string_view("nextExecutionTime")] =
+                    *inst.next_execution_time;
             }
             else
             {
-                task_obj["nextExecutionTime"] = nullptr;
+                task_ref[std::string_view("nextExecutionTime")] = nullptr;
             }
 
-            task_obj["properties"] = inst.properties;
-            tasks_arr.push_back(task_obj);
+            // Serialize properties and re-parse to create an owning copy
+            if (!inst.properties.is_null())
+            {
+                auto props_serialized =
+                    inst.properties.write(yyjson::WriteFlag::NoFlag);
+                auto props_parsed = Das::Utils::ParseYyjsonFromString(
+                    std::string_view(
+                        props_serialized.data(),
+                        props_serialized.size()));
+                if (props_parsed)
+                {
+                    task_ref[std::string_view("properties")] =
+                        std::move(*props_parsed);
+                }
+                else
+                {
+                    task_ref[std::string_view("properties")] =
+                        Das::Utils::MakeYyjsonObject();
+                }
+            }
+            else
+            {
+                task_ref[std::string_view("properties")] =
+                    Das::Utils::MakeYyjsonObject();
+            }
+            tasks_arr_ref.emplace_back(std::move(task_obj));
         }
 
+        result_obj[std::string_view("tasks")] = std::move(tasks_arr);
         return result;
     }
 
@@ -851,7 +948,20 @@ namespace Das::Core::TaskScheduler
         // (value copy) so no dangling pointer risk.
         auto&   settings = plugin_manager_.GetSettingsManager();
         auto    scheduler_index = settings.GetSchedulerIndexJson("0");
-        int64_t next_id = scheduler_index.value("nextTaskId", 0);
+        int64_t next_id = 0;
+        {
+            auto si_obj = scheduler_index.as_object();
+            if (si_obj)
+            {
+                auto nid_val =
+                    si_obj->operator[](std::string_view("nextTaskId"));
+                auto nid = nid_val.as_sint();
+                if (nid)
+                {
+                    next_id = *nid;
+                }
+            }
+        }
 
         // Build instance with descriptor defaults
         TaskInstanceRecord rec;
@@ -859,7 +969,7 @@ namespace Das::Core::TaskScheduler
         rec.task_guid = task_guid;
         rec.plugin_guid = type_snapshot.plugin_guid;
         rec.availability = TaskAvailability::Available;
-        rec.properties = nlohmann::json::object();
+        rec.properties = Das::Utils::MakeYyjsonObject();
         auto create_result =
             CreateTaskInstance(type_snapshot, rec.task_instance.Put());
         if (IsFailed(create_result) || !rec.task_instance)
@@ -868,31 +978,63 @@ namespace Das::Core::TaskScheduler
         }
 
         // Initialize properties from descriptor defaults
-        for (const auto& desc : type_snapshot.descriptors)
         {
-            if (!std::holds_alternative<std::monostate>(desc.default_value))
+            auto props_obj = rec.properties.as_object();
+            for (const auto& desc : type_snapshot.descriptors)
             {
-                std::visit(
-                    [&](const auto& val)
-                    {
-                        if constexpr (!std::is_same_v<
-                                          std::decay_t<decltype(val)>,
-                                          std::monostate>)
+                if (!std::holds_alternative<std::monostate>(desc.default_value))
+                {
+                    std::visit(
+                        [&props_obj, &desc](const auto& val)
                         {
-                            rec.properties[desc.name] = val;
-                        }
-                    },
-                    desc.default_value);
+                            if constexpr (!std::is_same_v<
+                                              std::decay_t<decltype(val)>,
+                                              std::monostate>)
+                            {
+                                props_obj->operator[](
+                                    std::string_view(desc.name)) = val;
+                            }
+                        },
+                        desc.default_value);
+                }
             }
         }
 
         // Persist task instance file
-        nlohmann::json instance_json;
-        instance_json["id"] = rec.id;
-        instance_json["taskGuid"] = GuidToString(rec.task_guid);
-        instance_json["pluginGuid"] = GuidToString(rec.plugin_guid);
-        instance_json["nextExecutionTime"] = nullptr;
-        instance_json["properties"] = rec.properties;
+        auto instance_json = Das::Utils::MakeYyjsonObject();
+        auto inst_obj = *instance_json.as_object();
+        inst_obj[std::string_view("id")] = rec.id;
+        inst_obj[std::string_view("taskGuid")] =
+            std::string_view(GuidToString(rec.task_guid));
+        inst_obj[std::string_view("pluginGuid")] =
+            std::string_view(GuidToString(rec.plugin_guid));
+        inst_obj[std::string_view("nextExecutionTime")] = nullptr;
+
+        // Serialize properties and re-parse to create an owning copy
+        if (!rec.properties.is_null())
+        {
+            auto props_serialized =
+                rec.properties.write(yyjson::WriteFlag::NoFlag);
+            auto props_parsed = Das::Utils::ParseYyjsonFromString(
+                std::string_view(
+                    props_serialized.data(),
+                    props_serialized.size()));
+            if (props_parsed)
+            {
+                inst_obj[std::string_view("properties")] =
+                    std::move(*props_parsed);
+            }
+            else
+            {
+                inst_obj[std::string_view("properties")] =
+                    Das::Utils::MakeYyjsonObject();
+            }
+        }
+        else
+        {
+            inst_obj[std::string_view("properties")] =
+                Das::Utils::MakeYyjsonObject();
+        }
 
         auto persist_result =
             settings.UpdateTaskInstanceJson("0", rec.id, instance_json);
@@ -902,8 +1044,21 @@ namespace Das::Core::TaskScheduler
         }
 
         // Update scheduler index
-        scheduler_index["nextTaskId"] = next_id + 1;
-        scheduler_index["taskOrder"].push_back(next_id);
+        {
+            auto si_obj = scheduler_index.as_object();
+            if (si_obj)
+            {
+                si_obj->operator[](std::string_view("nextTaskId")) =
+                    next_id + 1;
+                auto order_arr =
+                    si_obj->operator[](std::string_view("taskOrder"))
+                        .as_array();
+                if (order_arr)
+                {
+                    order_arr->emplace_back(next_id);
+                }
+            }
+        }
         auto index_result =
             settings.UpdateSchedulerIndexJson("0", scheduler_index);
         if (IsFailed(index_result))
@@ -958,17 +1113,38 @@ namespace Das::Core::TaskScheduler
         auto& settings = plugin_manager_.GetSettingsManager();
 
         auto scheduler_index = settings.GetSchedulerIndexJson("0");
-        if (scheduler_index.contains("taskOrder")
-            && scheduler_index["taskOrder"].is_array())
         {
-            auto& order = scheduler_index["taskOrder"];
-            for (auto oit = order.begin(); oit != order.end(); ++oit)
+            auto si_obj = scheduler_index.as_object();
+            if (si_obj && si_obj->contains(std::string_view("taskOrder"))
+                && si_obj->operator[](std::string_view("taskOrder")).is_array())
             {
-                if (oit->is_number_integer() && oit->get<int64_t>() == task_id)
+                auto order_arr =
+                    *si_obj->operator[](std::string_view("taskOrder"))
+                         .as_array();
+                // Build new array without the deleted task
+                auto new_arr = Das::Utils::MakeYyjsonArray();
+                auto new_arr_ref = *new_arr.as_array();
+                for (auto oit = order_arr.begin(); oit != order_arr.end();
+                     ++oit)
                 {
-                    order.erase(oit);
-                    break;
+                    if (!(*oit).is_int()
+                        || static_cast<int64_t>(*oit) != task_id)
+                    {
+                        // Create owning copy of the value
+                        auto serialized =
+                            (*oit).write(yyjson::WriteFlag::NoFlag);
+                        auto parsed = Das::Utils::ParseYyjsonFromString(
+                            std::string_view(
+                                serialized.data(),
+                                serialized.size()));
+                        if (parsed)
+                        {
+                            new_arr_ref.emplace_back(std::move(*parsed));
+                        }
+                    }
                 }
+                si_obj->operator[](std::string_view("taskOrder")) =
+                    std::move(new_arr);
             }
         }
 
@@ -1025,14 +1201,14 @@ namespace Das::Core::TaskScheduler
     // ----------------------------------------------------------------
 
     DasResult SchedulerService::UpdateTaskProperties(
-        int64_t               task_id,
-        const nlohmann::json& properties)
+        int64_t                              task_id,
+        const yyjson::writer::detail::value& properties)
     {
         // Phase 1: Short lock for validation and snapshot — copy
         // descriptors to avoid dangling pointer across lock-free phases.
         std::vector<Das::Core::ForeignInterfaceHost::PluginSettingDesc>
-                       descriptors;
-        nlohmann::json current_properties;
+                                      descriptors;
+        yyjson::writer::detail::value current_properties;
         {
             std::lock_guard<std::mutex> lock(mutex_);
 
@@ -1060,7 +1236,26 @@ namespace Das::Core::TaskScheduler
             }
 
             descriptors = inst->task_type->descriptors;
-            current_properties = inst->properties;
+            // Deep copy properties
+            if (!inst->properties.is_null())
+            {
+                auto serialized =
+                    inst->properties.write(yyjson::WriteFlag::NoFlag);
+                auto parsed = Das::Utils::ParseYyjsonFromString(
+                    std::string_view(serialized.data(), serialized.size()));
+                if (parsed)
+                {
+                    current_properties = std::move(*parsed);
+                }
+                else
+                {
+                    current_properties = Das::Utils::MakeYyjsonObject();
+                }
+            }
+            else
+            {
+                current_properties = Das::Utils::MakeYyjsonObject();
+            }
         } // lock released
 
         if (!properties.is_object())
@@ -1069,37 +1264,39 @@ namespace Das::Core::TaskScheduler
         }
 
         // Validate property names and types against descriptors
-        for (auto it = properties.begin(); it != properties.end(); ++it)
+        auto props_obj = properties.as_object();
+        for (auto it = props_obj->begin(); it != props_obj->end(); ++it)
         {
-            const auto& prop_name = it.key();
+            const auto& prop_name = it->first;
+            const auto& prop_val = it->second;
             bool        found = false;
             for (const auto& desc : descriptors)
             {
-                if (desc.name == prop_name)
+                if (desc.name == std::string_view(prop_name))
                 {
                     // Type validation
                     switch (desc.type)
                     {
                     case Das::ExportInterface::DAS_TYPE_BOOL:
-                        if (!it->is_boolean())
+                        if (!prop_val.is_bool())
                         {
                             return DAS_E_TYPE_ERROR;
                         }
                         break;
                     case Das::ExportInterface::DAS_TYPE_INT:
-                        if (!it->is_number_integer())
+                        if (!prop_val.is_int())
                         {
                             return DAS_E_TYPE_ERROR;
                         }
                         break;
                     case Das::ExportInterface::DAS_TYPE_FLOAT:
-                        if (!it->is_number())
+                        if (!prop_val.is_num())
                         {
                             return DAS_E_TYPE_ERROR;
                         }
                         break;
                     case Das::ExportInterface::DAS_TYPE_STRING:
-                        if (!it->is_string())
+                        if (!prop_val.is_string())
                         {
                             return DAS_E_TYPE_ERROR;
                         }
@@ -1117,10 +1314,23 @@ namespace Das::Core::TaskScheduler
             }
         }
 
-        // Apply validated properties to snapshot
-        for (auto it = properties.begin(); it != properties.end(); ++it)
+        // Apply validated properties to snapshot (mutable copy)
         {
-            current_properties[it.key()] = it.value();
+            auto cur_obj = current_properties.as_object();
+            for (auto it = props_obj->begin(); it != props_obj->end(); ++it)
+            {
+                const auto& prop_name = it->first;
+                const auto& prop_val = it->second;
+                // Deep copy the property value
+                auto serialized = prop_val.write(yyjson::WriteFlag::NoFlag);
+                auto parsed = Das::Utils::ParseYyjsonFromString(
+                    std::string_view(serialized.data(), serialized.size()));
+                if (parsed)
+                {
+                    cur_obj->operator[](std::string_view(prop_name)) =
+                        std::move(*parsed);
+                }
+            }
         }
 
         // Phase 2: Lock-free SettingsManager persistence
@@ -1128,9 +1338,23 @@ namespace Das::Core::TaskScheduler
         auto  instance_json = settings.GetTaskInstanceJson("0", task_id);
         if (instance_json.is_null() || !instance_json.is_object())
         {
-            instance_json = nlohmann::json::object();
+            instance_json = Das::Utils::MakeYyjsonObject();
         }
-        instance_json["properties"] = current_properties;
+        {
+            auto inst_obj = instance_json.as_object();
+            // Serialize current_properties and re-parse for owning copy
+            auto props_serialized =
+                current_properties.write(yyjson::WriteFlag::NoFlag);
+            auto props_parsed = Das::Utils::ParseYyjsonFromString(
+                std::string_view(
+                    props_serialized.data(),
+                    props_serialized.size()));
+            if (props_parsed)
+            {
+                inst_obj->operator[](std::string_view("properties")) =
+                    std::move(*props_parsed);
+            }
+        }
         auto persist_result =
             settings.UpdateTaskInstanceJson("0", task_id, instance_json);
         if (IsFailed(persist_result))
@@ -1156,8 +1380,8 @@ namespace Das::Core::TaskScheduler
     // ----------------------------------------------------------------
 
     DasResult SchedulerService::UpdateTaskInternalProperties(
-        int64_t               task_id,
-        const nlohmann::json& internal_props)
+        int64_t                              task_id,
+        const yyjson::writer::detail::value& internal_props)
     {
         // Phase 1: Short lock for validation and snapshot
         std::optional<int64_t> new_next_time;
@@ -1178,18 +1402,28 @@ namespace Das::Core::TaskScheduler
             }
 
             // Parse nextExecutionTime if provided
-            if (internal_props.contains("nextExecutionTime"))
+            auto ip_obj = internal_props.as_object();
+            auto net_key = std::string_view("nextExecutionTime");
+            if (ip_obj && ip_obj->contains(net_key))
             {
-                const auto& val = internal_props["nextExecutionTime"];
+                const auto& val = ip_obj->operator[](net_key);
                 if (val.is_null())
                 {
                     new_next_time = std::nullopt;
                     has_update = true;
                 }
-                else if (val.is_number_integer())
+                else if (val.is_int())
                 {
-                    new_next_time = val.get<int64_t>();
-                    has_update = true;
+                    auto net_int = val.as_sint();
+                    if (net_int)
+                    {
+                        new_next_time = *net_int;
+                        has_update = true;
+                    }
+                    else
+                    {
+                        return DAS_E_TYPE_ERROR;
+                    }
                 }
                 else
                 {
@@ -1208,15 +1442,20 @@ namespace Das::Core::TaskScheduler
         auto  instance_json = settings.GetTaskInstanceJson("0", task_id);
         if (instance_json.is_null() || !instance_json.is_object())
         {
-            instance_json = nlohmann::json::object();
+            instance_json = Das::Utils::MakeYyjsonObject();
         }
-        if (new_next_time.has_value())
         {
-            instance_json["nextExecutionTime"] = *new_next_time;
-        }
-        else
-        {
-            instance_json["nextExecutionTime"] = nullptr;
+            auto inst_obj = instance_json.as_object();
+            if (new_next_time.has_value())
+            {
+                inst_obj->operator[](std::string_view("nextExecutionTime")) =
+                    *new_next_time;
+            }
+            else
+            {
+                inst_obj->operator[](std::string_view("nextExecutionTime")) =
+                    nullptr;
+            }
         }
         auto persist_result =
             settings.UpdateTaskInstanceJson("0", task_id, instance_json);
@@ -1274,7 +1513,7 @@ namespace Das::Core::TaskScheduler
         // before calling plugin Do.
         Das::PluginInterface::IDasTask*     task_ptr = nullptr;
         TaskInstanceRecord*                 selected_inst = nullptr;
-        nlohmann::json                      properties_copy;
+        yyjson::writer::detail::value       properties_copy;
         int64_t                             selected_id = -1;
         std::chrono::steady_clock::duration next_delay =
             std::chrono::seconds(1);
@@ -1416,8 +1655,12 @@ namespace Das::Core::TaskScheduler
         if (state_notify_)
         {
             auto state_json = Get();
-            auto state_str = state_json.dump();
-            state_notify_(state_str.c_str());
+            auto state_serialized =
+                Das::Utils::SerializeYyjsonValue(state_json, false);
+            if (state_serialized)
+            {
+                state_notify_(state_serialized->c_str());
+            }
         }
     }
 
@@ -1468,9 +1711,13 @@ namespace Das::Core::TaskScheduler
                     settings.GetTaskInstanceJson("0", event.task_id);
                 if (instance_json.is_null() || !instance_json.is_object())
                 {
-                    instance_json = nlohmann::json::object();
+                    instance_json = Das::Utils::MakeYyjsonObject();
                 }
-                instance_json["nextExecutionTime"] = event.next_execution_time;
+                {
+                    auto inst_obj = instance_json.as_object();
+                    inst_obj->operator[](std::string_view(
+                        "nextExecutionTime")) = event.next_execution_time;
+                }
                 auto result = settings.UpdateTaskInstanceJson(
                     "0",
                     event.task_id,

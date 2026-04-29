@@ -1,6 +1,7 @@
 #ifndef DAS_UTILS_DASJSONCORE_H
 #define DAS_UTILS_DASJSONCORE_H
 
+#include <cassert>
 #include <cpp_yyjson.hpp>
 #include <das/IDasBase.h>
 #include <das/Utils/Config.h>

@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cpp_yyjson.hpp>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
@@ -13,6 +14,7 @@
 #include <das/DasSharedRef.hpp>
 #include <das/IDasAsyncCallback.h>
 #include <das/IDasSchedulerService.h>
+#include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <das/_autogen/idl/abi/IDasTask.h>
 #include <filesystem>
@@ -63,7 +65,7 @@ namespace Das::Core::TaskScheduler
         TaskAvailability       availability = TaskAvailability::Available;
         std::string            unavailability_reason;
         std::optional<int64_t> next_execution_time;
-        nlohmann::json         properties;
+        yyjson::writer::detail::value properties;
         // Pointer to the task type record if available
         TaskTypeRecord*                        task_type = nullptr;
         DasPtr<Das::PluginInterface::IDasTask> task_instance;
@@ -97,7 +99,7 @@ namespace Das::Core::TaskScheduler
         SchedulerState Status() const;
 
         /// Returns the merged scheduler state as lower camelCase JSON.
-        nlohmann::json Get();
+        yyjson::writer::detail::value Get();
 
         /// Add a new task instance by task type GUID. Returns the allocated
         /// instance id via out_task_id.
@@ -108,13 +110,13 @@ namespace Das::Core::TaskScheduler
 
         /// Update task instance properties (validated against descriptors).
         DasResult UpdateTaskProperties(
-            int64_t               task_id,
-            const nlohmann::json& properties);
+            int64_t                              task_id,
+            const yyjson::writer::detail::value& properties);
 
         /// Update scheduler-owned internal properties (nextExecutionTime).
         DasResult UpdateTaskInternalProperties(
-            int64_t               task_id,
-            const nlohmann::json& internal_props);
+            int64_t                              task_id,
+            const yyjson::writer::detail::value& internal_props);
 
         /// Check whether the scheduler has been initialized.
         bool IsInitialized() const { return initialized_; }

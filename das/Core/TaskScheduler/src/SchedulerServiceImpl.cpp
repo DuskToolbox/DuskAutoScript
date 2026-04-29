@@ -3,10 +3,10 @@
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
+#include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasGuidVector.h>
 #include <filesystem>
 #include <new>
-#include <nlohmann/json.hpp>
 #include <vector>
 
 namespace Das::Core::TaskScheduler
@@ -118,10 +118,14 @@ namespace Das::Core::TaskScheduler
         DasOutPtr<IDasReadOnlyString> result(pp_out_json);
 
         auto json = svc_.Get();
-        auto json_str = json.dump();
+        auto serialized = Das::Utils::SerializeYyjsonValue(json, false);
+        if (!serialized)
+        {
+            return DAS_E_INVALID_JSON;
+        }
 
         auto cr =
-            CreateIDasReadOnlyStringFromUtf8(json_str.c_str(), result.Put());
+            CreateIDasReadOnlyStringFromUtf8(serialized->c_str(), result.Put());
         if (DAS::IsOk(cr))
         {
             result.Keep();
@@ -156,15 +160,13 @@ namespace Das::Core::TaskScheduler
             return result;
         }
 
-        try
-        {
-            auto props = nlohmann::json::parse(u8_str);
-            return svc_.UpdateTaskProperties(task_id, props);
-        }
-        catch (const nlohmann::json::exception&)
+        auto props = Das::Utils::ParseYyjsonFromString(
+            u8_str ? std::string_view(u8_str) : std::string_view{});
+        if (!props)
         {
             return DAS_E_INVALID_JSON;
         }
+        return svc_.UpdateTaskProperties(task_id, *props);
     }
 
     DasResult SchedulerServiceImpl::UpdateTaskInternalProperties(
@@ -180,15 +182,13 @@ namespace Das::Core::TaskScheduler
             return result;
         }
 
-        try
-        {
-            auto props = nlohmann::json::parse(u8_str);
-            return svc_.UpdateTaskInternalProperties(task_id, props);
-        }
-        catch (const nlohmann::json::exception&)
+        auto props = Das::Utils::ParseYyjsonFromString(
+            u8_str ? std::string_view(u8_str) : std::string_view{});
+        if (!props)
         {
             return DAS_E_INVALID_JSON;
         }
+        return svc_.UpdateTaskInternalProperties(task_id, *props);
     }
 
     DasResult SchedulerServiceImpl::SetStateNotifyCallback(
