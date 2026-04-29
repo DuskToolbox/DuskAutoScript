@@ -4,8 +4,9 @@
 #include <das/Core/Logger/Logger.h>
 #include <das/DasExport.h>
 #include <das/Utils/CommonUtils.hpp>
+#include <das/Utils/DasJsonCore.h>
 #include <das/Utils/Expected.h>
-#include <nlohmann/json.hpp>
+#include <yyjson.h>
 
 using Das::ExportInterface::DAS_TYPE_BOOL;
 using Das::ExportInterface::DAS_TYPE_FLOAT;
@@ -17,135 +18,167 @@ using Das::ExportInterface::DAS_TYPE_STRING;
 using Das::ExportInterface::DAS_TYPE_UINT;
 using Das::ExportInterface::DAS_TYPE_UNSUPPORTED;
 using Das::ExportInterface::DasType;
+using Das::Utils::ParseYyjsonFromString;
 
 DAS_CORE_UTILS_NS_BEGIN
 
 DAS_NS_ANONYMOUS_DETAILS_BEGIN
 
-DasType ToDasType(nlohmann::json::value_t type)
+/// Helper: access a named sub-value from an Object or Ref variant.
+/// Returns a const_value_ref if found, or nullopt if the key does not
+/// exist. Throws DasJsonImplRefExpiredException if Ref is expired.
+std::optional<yyjson::writer::detail::const_value_ref> GetValueByName(
+    std::variant<IDasJsonImpl::Object, IDasJsonImpl::Ref>& impl,
+    std::string_view                                       key)
 {
-    switch (type)
-    {
-    case nlohmann::json::value_t::null:
-        return Das::ExportInterface::DAS_TYPE_NULL;
-    case nlohmann::json::value_t::object:
-        return Das::ExportInterface::DAS_TYPE_JSON_OBJECT;
-    case nlohmann::json::value_t::array:
-        return Das::ExportInterface::DAS_TYPE_JSON_ARRAY;
-    case nlohmann::json::value_t::string:
-        return Das::ExportInterface::DAS_TYPE_STRING;
-    case nlohmann::json::value_t::boolean:
-        return Das::ExportInterface::DAS_TYPE_BOOL;
-    case nlohmann::json::value_t::number_integer:
-        return Das::ExportInterface::DAS_TYPE_INT;
-    case nlohmann::json::value_t::number_unsigned:
-        return Das::ExportInterface::DAS_TYPE_UINT;
-    case nlohmann::json::value_t::number_float:
-        return Das::ExportInterface::DAS_TYPE_FLOAT;
-    case nlohmann::json::value_t::binary:
-        [[fallthrough]];
-    case nlohmann::json::value_t::discarded:
-        [[fallthrough]];
-    default:
-        return Das::ExportInterface::DAS_TYPE_UNSUPPORTED;
-    }
+    return std::visit(
+        Utils::overload_set{
+            [key](IDasJsonImpl::Object& obj)
+                -> std::optional<yyjson::writer::detail::const_value_ref>
+            {
+                auto obj_opt = obj.value_.as_object();
+                if (!obj_opt)
+                {
+                    return std::nullopt;
+                }
+                const auto& object_ref = obj_opt.value();
+                auto        it = object_ref.find(key);
+                if (it == object_ref.end())
+                {
+                    return std::nullopt;
+                }
+                return it->second;
+            },
+            [key](IDasJsonImpl::Ref& ref)
+                -> std::optional<yyjson::writer::detail::const_value_ref>
+            {
+                if (ref.val_ == nullptr)
+                {
+                    throw DasJsonImplRefExpiredException{};
+                }
+                auto obj_opt = ref.val_->as_object();
+                if (!obj_opt)
+                {
+                    return std::nullopt;
+                }
+                const auto& object_ref = obj_opt.value();
+                auto        it = object_ref.find(key);
+                if (it == object_ref.end())
+                {
+                    return std::nullopt;
+                }
+                return it->second;
+            }},
+        impl);
 }
 
-template <class Arg>
-class CallOperatorSquareBrackets
+/// Helper: access a sub-value by index from an Object or Ref variant.
+/// Returns a const_value_ref if found, or nullopt if the index is out of
+/// range. Throws DasJsonImplRefExpiredException if Ref is expired. Throws
+/// DasJsonImplJsonIsNotArray if value is not an array.
+std::optional<yyjson::writer::detail::const_value_ref> GetValueByIndex(
+    std::variant<IDasJsonImpl::Object, IDasJsonImpl::Ref>& impl,
+    size_t                                                 index)
 {
-    const Arg arg_;
-
-public:
-    CallOperatorSquareBrackets(Arg arg) : arg_{arg} {}
-
-    decltype(auto) operator()(IDasJsonImpl::Object& object) const
-    {
-        return object.json_[arg_];
-    }
-
-    decltype(auto) operator()(const IDasJsonImpl::Object& object) const
-    {
-        return object.json_[arg_];
-    }
-
-    decltype(auto) operator()(IDasJsonImpl::Ref& ref) const
-    {
-        if (ref.json_ != nullptr)
-        {
-            return (*ref.json_)[arg_];
-        }
-        throw DasJsonImplRefExpiredException{};
-    }
-
-    decltype(auto) operator()(const IDasJsonImpl::Ref& ref) const
-    {
-        if (ref.json_ != nullptr)
-        {
-            return (*ref.json_)[arg_];
-        }
-        throw DasJsonImplRefExpiredException{};
-    }
-};
-
-class CheckOverflow
-{
-    const size_t arg_;
-
-public:
-    CheckOverflow(size_t index) : arg_{index} {}
-
-    bool operator()(const IDasJsonImpl::Object& object) const
-    {
-        if (!object.json_.is_array())
-        {
-            throw DasJsonImplJsonIsNotArray{};
-        }
-        return arg_ < object.json_.size();
-    }
-
-    bool operator()(const IDasJsonImpl::Ref& ref) const
-    {
-        if (ref.json_ != nullptr)
-        {
-            if (!ref.json_->is_array())
+    return std::visit(
+        Utils::overload_set{
+            [index](IDasJsonImpl::Object& obj)
+                -> std::optional<yyjson::writer::detail::const_value_ref>
             {
-                throw DasJsonImplJsonIsNotArray{};
-            }
-            return arg_ < ref.json_->size();
-        }
-        throw DasJsonImplRefExpiredException{};
-    }
-};
+                auto arr_opt = obj.value_.as_array();
+                if (!arr_opt)
+                {
+                    throw DasJsonImplJsonIsNotArray{};
+                }
+                const auto& arr = arr_opt.value();
+                if (index >= arr.size())
+                {
+                    return std::nullopt;
+                }
+                return arr[index];
+            },
+            [index](IDasJsonImpl::Ref& ref)
+                -> std::optional<yyjson::writer::detail::const_value_ref>
+            {
+                if (ref.val_ == nullptr)
+                {
+                    throw DasJsonImplRefExpiredException{};
+                }
+                auto arr_opt = ref.val_->as_array();
+                if (!arr_opt)
+                {
+                    throw DasJsonImplJsonIsNotArray{};
+                }
+                const auto& arr = arr_opt.value();
+                if (index >= arr.size())
+                {
+                    return std::nullopt;
+                }
+                return arr[index];
+            }},
+        impl);
+}
 
-template <class Arg, class Value>
-class CallOperatorSquareBracketsForAssign
+/// Helper: ensure the value is an object (for SetByName operations).
+/// Returns a mutable object_ref or nullopt on failure.
+/// Throws DasJsonImplRefExpiredException if Ref is expired.
+std::optional<yyjson::writer::detail::object_ref> GetObjectForSet(
+    std::variant<IDasJsonImpl::Object, IDasJsonImpl::Ref>& impl)
 {
-    Arg    arg_;
-    Value& value_;
+    return std::visit(
+        Utils::overload_set{
+            [](IDasJsonImpl::Object& obj)
+                -> std::optional<yyjson::writer::detail::object_ref>
+            { return obj.value_.as_object(); },
+            [](IDasJsonImpl::Ref& ref)
+                -> std::optional<yyjson::writer::detail::object_ref>
+            {
+                if (ref.val_ == nullptr)
+                {
+                    throw DasJsonImplRefExpiredException{};
+                }
+                return ref.val_->as_object();
+            }},
+        impl);
+}
 
-public:
-    CallOperatorSquareBracketsForAssign(Arg arg, Value& value)
-        : arg_{arg}, value_{value}
-    {
-    }
+/// Helper: ensure the value is an array (for SetByIndex operations).
+/// Returns a mutable array_ref or nullopt on failure.
+/// Throws DasJsonImplRefExpiredException if Ref is expired.
+std::optional<yyjson::writer::detail::array_ref> GetArrayForSet(
+    std::variant<IDasJsonImpl::Object, IDasJsonImpl::Ref>& impl)
+{
+    return std::visit(
+        Utils::overload_set{
+            [](IDasJsonImpl::Object& obj)
+                -> std::optional<yyjson::writer::detail::array_ref>
+            { return obj.value_.as_array(); },
+            [](IDasJsonImpl::Ref& ref)
+                -> std::optional<yyjson::writer::detail::array_ref>
+            {
+                if (ref.val_ == nullptr)
+                {
+                    throw DasJsonImplRefExpiredException{};
+                }
+                return ref.val_->as_array();
+            }},
+        impl);
+}
 
-    void operator()(IDasJsonImpl::Object& object) const
-    {
-        object.json_[arg_] = value_;
-    }
-
-    void operator()(IDasJsonImpl::Ref& ref) const
-    {
-        if (ref.json_ != nullptr)
-        {
-            (*ref.json_)[arg_] = value_;
-        }
-        throw DasJsonImplRefExpiredException{};
-    }
-};
+/// Helper: Creates an owning copy of a const_value_ref as a new value.
+yyjson::writer::detail::value CopyValue(
+    const yyjson::writer::detail::const_value_ref& src)
+{
+    yyjson::writer::detail::value result;
+    result = src;
+    return result;
+}
 
 DAS_NS_ANONYMOUS_DETAILS_END
+
+// ========================================================================
+// GetToImpl — ByName (string key)
+// ========================================================================
 
 template <class T>
 DasResult IDasJsonImpl::GetToImpl(IDasReadOnlyString* p_string, T* obj)
@@ -163,150 +196,63 @@ DasResult IDasJsonImpl::GetToImpl(IDasReadOnlyString* p_string, T* obj)
     std::scoped_lock _{mutex_};
     try
     {
-        std::visit(Details::CallOperatorSquareBrackets{p_u8_key}, impl_)
-            .get_to(*obj);
-        return DAS_S_OK;
-    }
-    catch (const nlohmann::json::type_error& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        return DAS_E_TYPE_ERROR;
-    }
-    catch (const nlohmann::json::exception& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        return DAS_E_INVALID_JSON;
-    }
-    catch (const DasJsonImplRefExpiredException& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        return DAS_E_DANGLING_REFERENCE;
-    }
-    catch (const std::bad_alloc& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        return DAS_E_OUT_OF_MEMORY;
-    }
-}
-
-template <class T>
-DasResult IDasJsonImpl::GetToImpl(size_t index, T* obj)
-{
-    DAS_UTILS_CHECK_POINTER(obj)
-
-    std::scoped_lock _{mutex_};
-    try
-    {
-        if (!std::visit(Details::CheckOverflow{index}, impl_))
+        auto val_opt = Details::GetValueByName(impl_, p_u8_key);
+        if (!val_opt)
         {
-            return DAS_E_OUT_OF_RANGE;
+            return DAS_E_NOT_FOUND;
         }
-        return std::visit(Details::CallOperatorSquareBrackets{index}, impl_);
-    }
-    catch (const nlohmann::json::type_error& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        return DAS_E_TYPE_ERROR;
-    }
-    catch (const nlohmann::json::exception& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        return DAS_E_INVALID_JSON;
+        const auto& val = val_opt.value();
+
+        if constexpr (std::is_same_v<T, int64_t>)
+        {
+            auto opt = val.as_sint();
+            if (!opt)
+            {
+                return DAS_E_TYPE_ERROR;
+            }
+            *obj = opt.value();
+            return DAS_S_OK;
+        }
+        else if constexpr (std::is_same_v<T, float>)
+        {
+            auto opt = val.as_real();
+            if (!opt)
+            {
+                return DAS_E_TYPE_ERROR;
+            }
+            *obj = static_cast<float>(opt.value());
+            return DAS_S_OK;
+        }
+        else if constexpr (std::is_same_v<T, bool>)
+        {
+            auto opt = val.as_bool();
+            if (!opt)
+            {
+                return DAS_E_TYPE_ERROR;
+            }
+            *obj = opt.value();
+            return DAS_S_OK;
+        }
+        else
+        {
+            return DAS_E_INVALID_JSON;
+        }
     }
     catch (const DasJsonImplRefExpiredException& ex)
     {
         DAS_CORE_LOG_EXCEPTION(ex);
         return DAS_E_DANGLING_REFERENCE;
     }
-    catch (const DasJsonImplJsonIsNotArray& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        return DAS_E_TYPE_ERROR;
-    }
-    catch (const std::bad_alloc& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        return DAS_E_OUT_OF_MEMORY;
-    }
-}
-
-template <class T>
-DasResult IDasJsonImpl::SetImpl(IDasReadOnlyString* p_string, const T& value)
-{
-
-    DAS_UTILS_CHECK_POINTER(p_string)
-
-    const auto expected_u8_key = ToU8StringWithoutOwnership(p_string);
-    if (!expected_u8_key)
-    {
-        return expected_u8_key.error();
-    }
-    const auto p_u8_key = expected_u8_key.value();
-
-    std::scoped_lock _{mutex_};
-    try
-    {
-        std::visit(
-            Details::CallOperatorSquareBracketsForAssign{p_u8_key, value},
-            impl_);
-        return DAS_S_OK;
-    }
-    catch (const nlohmann::json::type_error& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        DAS_CORE_LOG_ERROR("Note: key = {}", p_u8_key);
-        return DAS_E_TYPE_ERROR;
-    }
-    catch (const nlohmann::json::exception& ex)
+    catch (const std::exception& ex)
     {
         DAS_CORE_LOG_EXCEPTION(ex);
         return DAS_E_INVALID_JSON;
     }
-    catch (const DasJsonImplRefExpiredException& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        return DAS_E_DANGLING_REFERENCE;
-    }
-    catch (const std::bad_alloc& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        return DAS_E_OUT_OF_MEMORY;
-    }
 }
 
-template <class T>
-DasResult IDasJsonImpl::SetImpl(size_t index, const T& value)
-{
-    std::scoped_lock _{mutex_};
-    try
-    {
-        std::visit(
-            Details::CallOperatorSquareBracketsForAssign{index, value},
-            impl_);
-        return DAS_S_OK;
-    }
-    catch (const nlohmann::json::type_error& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        DAS_CORE_LOG_ERROR("Note: index = {}", index);
-        return DAS_E_TYPE_ERROR;
-    }
-    catch (const nlohmann::json::exception& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        return DAS_E_INVALID_JSON;
-    }
-    catch (const DasJsonImplRefExpiredException& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        return DAS_E_DANGLING_REFERENCE;
-    }
-    catch (const std::bad_alloc& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        return DAS_E_OUT_OF_MEMORY;
-    }
-}
+// ========================================================================
+// GetToImpl — ByName (string key, string out)
+// ========================================================================
 
 DasResult IDasJsonImpl::GetToImpl(
     IDasReadOnlyString*  p_string,
@@ -325,34 +271,107 @@ DasResult IDasJsonImpl::GetToImpl(
     std::scoped_lock _{mutex_};
     try
     {
-        return ::CreateIDasReadOnlyStringFromUtf8(
-            std::visit(Details::CallOperatorSquareBrackets{p_u8_key}, impl_)
-                .get_ref<const std::string&>()
-                .c_str(),
-            obj);
+        auto val_opt = Details::GetValueByName(impl_, p_u8_key);
+        if (!val_opt)
+        {
+            return DAS_E_NOT_FOUND;
+        }
+        const auto& val = val_opt.value();
+        auto        opt = val.as_string();
+        if (!opt)
+        {
+            return DAS_E_TYPE_ERROR;
+        }
+        std::string str_val(opt.value());
+        return ::CreateIDasReadOnlyStringFromUtf8(str_val.c_str(), obj);
     }
-    catch (const nlohmann::json::type_error& ex)
+    catch (const DasJsonImplRefExpiredException& ex)
     {
         DAS_CORE_LOG_EXCEPTION(ex);
         DAS_CORE_LOG_ERROR("Note: key = {}", p_u8_key);
-        return DAS_E_TYPE_ERROR;
+        return DAS_E_DANGLING_REFERENCE;
     }
-    catch (const nlohmann::json::exception& ex)
+    catch (const std::exception& ex)
     {
         DAS_CORE_LOG_EXCEPTION(ex);
         return DAS_E_INVALID_JSON;
+    }
+}
+
+// ========================================================================
+// GetToImpl — ByIndex
+// ========================================================================
+
+template <class T>
+DasResult IDasJsonImpl::GetToImpl(size_t index, T* obj)
+{
+    DAS_UTILS_CHECK_POINTER(obj)
+
+    std::scoped_lock _{mutex_};
+    try
+    {
+        auto val_opt = Details::GetValueByIndex(impl_, index);
+        if (!val_opt)
+        {
+            return DAS_E_OUT_OF_RANGE;
+        }
+        const auto& val = val_opt.value();
+
+        if constexpr (std::is_same_v<T, int64_t>)
+        {
+            auto opt = val.as_sint();
+            if (!opt)
+            {
+                return DAS_E_TYPE_ERROR;
+            }
+            *obj = opt.value();
+            return DAS_S_OK;
+        }
+        else if constexpr (std::is_same_v<T, float>)
+        {
+            auto opt = val.as_real();
+            if (!opt)
+            {
+                return DAS_E_TYPE_ERROR;
+            }
+            *obj = static_cast<float>(opt.value());
+            return DAS_S_OK;
+        }
+        else if constexpr (std::is_same_v<T, bool>)
+        {
+            auto opt = val.as_bool();
+            if (!opt)
+            {
+                return DAS_E_TYPE_ERROR;
+            }
+            *obj = opt.value();
+            return DAS_S_OK;
+        }
+        else
+        {
+            return DAS_E_INVALID_JSON;
+        }
     }
     catch (const DasJsonImplRefExpiredException& ex)
     {
         DAS_CORE_LOG_EXCEPTION(ex);
         return DAS_E_DANGLING_REFERENCE;
     }
-    catch (const std::bad_alloc& ex)
+    catch (const DasJsonImplJsonIsNotArray& ex)
     {
         DAS_CORE_LOG_EXCEPTION(ex);
-        return DAS_E_OUT_OF_MEMORY;
+        return DAS_E_TYPE_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        return DAS_E_INVALID_JSON;
     }
 }
+
+// ========================================================================
+// GetToImpl — ByIndex (string out)
+// ========================================================================
 
 DasResult IDasJsonImpl::GetToImpl(size_t index, IDasReadOnlyString** pp_out_obj)
 {
@@ -361,47 +380,212 @@ DasResult IDasJsonImpl::GetToImpl(size_t index, IDasReadOnlyString** pp_out_obj)
     std::scoped_lock _{mutex_};
     try
     {
-        return ::CreateIDasReadOnlyStringFromUtf8(
-            std::visit(Details::CallOperatorSquareBrackets{index}, impl_)
-                .get_ref<const std::string&>()
-                .c_str(),
-            pp_out_obj);
+        auto val_opt = Details::GetValueByIndex(impl_, index);
+        if (!val_opt)
+        {
+            return DAS_E_OUT_OF_RANGE;
+        }
+        const auto& val = val_opt.value();
+        auto        opt = val.as_string();
+        if (!opt)
+        {
+            return DAS_E_TYPE_ERROR;
+        }
+        std::string str_val(opt.value());
+        return ::CreateIDasReadOnlyStringFromUtf8(str_val.c_str(), pp_out_obj);
     }
-    catch (const nlohmann::json::type_error& ex)
+    catch (const DasJsonImplRefExpiredException& ex)
     {
         DAS_CORE_LOG_EXCEPTION(ex);
         DAS_CORE_LOG_ERROR("Note: index = {}", index);
+        return DAS_E_DANGLING_REFERENCE;
+    }
+    catch (const DasJsonImplJsonIsNotArray& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
         return DAS_E_TYPE_ERROR;
     }
-    catch (const nlohmann::json::exception& ex)
+    catch (const std::exception& ex)
     {
         DAS_CORE_LOG_EXCEPTION(ex);
         return DAS_E_INVALID_JSON;
+    }
+}
+
+// ========================================================================
+// SetImpl — ByName (string key)
+// ========================================================================
+
+template <class T>
+DasResult IDasJsonImpl::SetImpl(IDasReadOnlyString* p_string, const T& value)
+{
+    DAS_UTILS_CHECK_POINTER(p_string)
+
+    const auto expected_u8_key = ToU8StringWithoutOwnership(p_string);
+    if (!expected_u8_key)
+    {
+        return expected_u8_key.error();
+    }
+    const auto p_u8_key = expected_u8_key.value();
+
+    std::scoped_lock _{mutex_};
+    try
+    {
+        auto obj_opt = Details::GetObjectForSet(impl_);
+        if (!obj_opt)
+        {
+            return DAS_E_TYPE_ERROR;
+        }
+        auto& obj = obj_opt.value();
+
+        if constexpr (std::is_same_v<T, int64_t>)
+        {
+            obj[p_u8_key] = value;
+            return DAS_S_OK;
+        }
+        else if constexpr (std::is_same_v<T, float>)
+        {
+            obj[p_u8_key] = value;
+            return DAS_S_OK;
+        }
+        else if constexpr (std::is_same_v<T, bool>)
+        {
+            obj[p_u8_key] = value;
+            return DAS_S_OK;
+        }
+        else if constexpr (std::is_same_v<T, yyjson::writer::detail::value>)
+        {
+            obj[p_u8_key] = value;
+            return DAS_S_OK;
+        }
+        else if constexpr (
+            std::is_same_v<T, yyjson::writer::detail::const_value_ref>)
+        {
+            obj[p_u8_key] = value;
+            return DAS_S_OK;
+        }
+        else if constexpr (std::is_same_v<T, std::string>)
+        {
+            obj[p_u8_key] = value;
+            return DAS_S_OK;
+        }
+        else if constexpr (std::is_same_v<T, const char*>)
+        {
+            obj[p_u8_key] = std::string(value);
+            return DAS_S_OK;
+        }
+        else
+        {
+            return DAS_E_INVALID_JSON;
+        }
     }
     catch (const DasJsonImplRefExpiredException& ex)
     {
         DAS_CORE_LOG_EXCEPTION(ex);
         return DAS_E_DANGLING_REFERENCE;
     }
-    catch (const std::bad_alloc& ex)
+    catch (const std::exception& ex)
     {
         DAS_CORE_LOG_EXCEPTION(ex);
-        return DAS_E_OUT_OF_MEMORY;
+        DAS_CORE_LOG_ERROR("Note: key = {}", p_u8_key);
+        return DAS_E_INVALID_JSON;
     }
 }
 
+// ========================================================================
+// SetImpl — ByIndex
+// ========================================================================
+
+template <class T>
+DasResult IDasJsonImpl::SetImpl(size_t index, const T& value)
+{
+    std::scoped_lock _{mutex_};
+    try
+    {
+        auto arr_opt = Details::GetArrayForSet(impl_);
+        if (!arr_opt)
+        {
+            return DAS_E_TYPE_ERROR;
+        }
+        auto& arr = arr_opt.value();
+        if (index >= arr.size())
+        {
+            return DAS_E_OUT_OF_RANGE;
+        }
+
+        if constexpr (std::is_same_v<T, int64_t>)
+        {
+            arr[index] = value;
+            return DAS_S_OK;
+        }
+        else if constexpr (std::is_same_v<T, float>)
+        {
+            arr[index] = value;
+            return DAS_S_OK;
+        }
+        else if constexpr (std::is_same_v<T, bool>)
+        {
+            arr[index] = value;
+            return DAS_S_OK;
+        }
+        else if constexpr (std::is_same_v<T, std::string>)
+        {
+            arr[index] = value;
+            return DAS_S_OK;
+        }
+        else if constexpr (std::is_same_v<T, yyjson::writer::detail::value>)
+        {
+            arr[index] = value;
+            return DAS_S_OK;
+        }
+        else
+        {
+            return DAS_E_INVALID_JSON;
+        }
+    }
+    catch (const DasJsonImplRefExpiredException& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        return DAS_E_DANGLING_REFERENCE;
+    }
+    catch (const std::exception& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        return DAS_E_INVALID_JSON;
+    }
+}
+
+// ========================================================================
+// Constructors / Destructor
+// ========================================================================
+
 IDasJsonImpl::IDasJsonImpl() : impl_{Object{}} {}
 
-IDasJsonImpl::IDasJsonImpl(nlohmann::json& ref_json) : impl_{Ref{&ref_json, {}}}
+IDasJsonImpl::IDasJsonImpl(yyjson::writer::detail::value& ref_value)
+    : impl_{Ref{&ref_value, {}}}
 {
 }
 
-IDasJsonImpl::IDasJsonImpl(nlohmann::json&& json)
-    : impl_{Object{std::move(json), {}}}
+IDasJsonImpl::IDasJsonImpl(yyjson::writer::detail::value&& value)
+    : impl_{Object{std::move(value), {}}}
 {
 }
 
 IDasJsonImpl::~IDasJsonImpl() {}
+
+IDasJsonImpl::IDasJsonImpl(const char* p_json_string) : impl_{Object{{}, {}}}
+{
+    auto parsed = ParseYyjsonFromString(p_json_string);
+    if (!parsed)
+    {
+        throw std::runtime_error("JSON parse failed");
+    }
+    impl_.emplace<Object>(std::move(parsed.value()));
+}
+
+// ========================================================================
+// QueryInterface
+// ========================================================================
 
 DasResult IDasJsonImpl::QueryInterface(const DasGuid& iid, void** pp_out_object)
 {
@@ -437,6 +621,10 @@ DasResult IDasJsonImpl::QueryInterface(const DasGuid& iid, void** pp_out_object)
     *pp_out_object = nullptr;
     return DAS_E_NO_INTERFACE;
 }
+
+// ========================================================================
+// Get*ByName — delegates to GetToImpl
+// ========================================================================
 
 DasResult IDasJsonImpl::GetIntByName(
     IDasReadOnlyString* key,
@@ -478,43 +666,42 @@ DasResult IDasJsonImpl::GetObjectRefByName(
     }
     const auto p_u8_key = expected_u8_key.value();
 
+    std::scoped_lock _{mutex_};
     try
     {
-        std::scoped_lock _{mutex_};
-        auto&&           object =
-            std::visit(Details::CallOperatorSquareBrackets{p_u8_key}, impl_);
-        const auto ref_object = MakeDasPtr<IDasJsonImpl>(object);
-        auto&      ref_out_das_json = *pp_out_das_json;
-        ref_out_das_json = ref_object.Get();
-        ref_out_das_json->AddRef();
-
-        if (auto* const p_internal_object = std::get_if<Object>(&impl_);
-            p_internal_object != nullptr) [[likely]]
+        auto val_opt = Details::GetValueByName(impl_, p_u8_key);
+        if (!val_opt)
         {
-            const auto connection = p_internal_object->signal_.connect(
-                [p_ref = ref_object.Get()] { p_ref->OnExpired(); });
-            ref_object->SetConnection(connection);
-            return DAS_S_OK;
+            return DAS_E_NOT_FOUND;
         }
-        DAS_CORE_LOG_ERROR("Can not get object from impl_.");
-        return DAS_E_INTERNAL_FATAL_ERROR;
-    }
-    catch (const nlohmann::json::exception& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        return DAS_E_INVALID_JSON;
+        const auto& sub_val = val_opt.value();
+        if (!sub_val.is_object() && !sub_val.is_array())
+        {
+            return DAS_E_TYPE_ERROR;
+        }
+
+        // Create an owning copy (returns Object, not Ref)
+        auto  new_val = Details::CopyValue(sub_val);
+        auto* p_result = new IDasJsonImpl(std::move(new_val));
+        p_result->AddRef();
+        *pp_out_das_json = p_result;
+        return DAS_S_OK;
     }
     catch (const DasJsonImplRefExpiredException& ex)
     {
         DAS_CORE_LOG_EXCEPTION(ex);
         return DAS_E_DANGLING_REFERENCE;
     }
-    catch (const std::bad_alloc& ex)
+    catch (const std::exception& ex)
     {
         DAS_CORE_LOG_EXCEPTION(ex);
-        return DAS_E_OUT_OF_MEMORY;
+        return DAS_E_INVALID_JSON;
     }
 }
+
+// ========================================================================
+// Set*ByName
+// ========================================================================
 
 DasResult IDasJsonImpl::SetIntByName(IDasReadOnlyString* key, int64_t in_int)
 {
@@ -530,14 +717,16 @@ DasResult IDasJsonImpl::SetStringByName(
     IDasReadOnlyString* key,
     IDasReadOnlyString* p_in_string)
 {
-    const auto expected_u8_key = ToU8StringWithoutOwnership(p_in_string);
-    if (!expected_u8_key)
-    {
-        return expected_u8_key.error();
-    }
-    const auto p_in_u8_key = expected_u8_key.value();
+    DAS_UTILS_CHECK_POINTER(p_in_string)
 
-    return SetImpl(key, p_in_u8_key);
+    const auto expected_u8_value = ToU8StringWithoutOwnership(p_in_string);
+    if (!expected_u8_value)
+    {
+        return expected_u8_value.error();
+    }
+    const auto p_in_u8_value = expected_u8_value.value();
+
+    return SetImpl(key, std::string(p_in_u8_value));
 }
 
 DasResult IDasJsonImpl::SetBoolByName(IDasReadOnlyString* key, bool in_bool)
@@ -550,7 +739,6 @@ DasResult IDasJsonImpl::SetObjectByName(
     IDasJson*           p_in_das_json)
 {
     DasPtr<IDasJsonImpl> p_impl;
-
     if (const auto qi_result = p_in_das_json->QueryInterface(
             DasIidOf<IDasJsonImpl>(),
             p_impl.PutVoid());
@@ -559,11 +747,18 @@ DasResult IDasJsonImpl::SetObjectByName(
         return qi_result;
     }
 
-    const auto* in_json = std::visit(
+    const auto in_json = std::visit(
         Utils::overload_set{
-            [](const Object& j) { return &j.json_; },
-            [](const Ref& j)
-            { return static_cast<const decltype(Object::json_)*>(j.json_); }},
+            [](IDasJsonImpl::Object& j) -> yyjson::writer::detail::value*
+            { return &j.value_; },
+            [](IDasJsonImpl::Ref& j) -> yyjson::writer::detail::value*
+            {
+                if (j.val_ == nullptr)
+                {
+                    return nullptr;
+                }
+                return j.val_;
+            }},
         p_impl->impl_);
 
     if (in_json == nullptr)
@@ -573,6 +768,10 @@ DasResult IDasJsonImpl::SetObjectByName(
 
     return SetImpl(key, *in_json);
 }
+
+// ========================================================================
+// Get*ByIndex — delegates to GetToImpl
+// ========================================================================
 
 DasResult IDasJsonImpl::GetIntByIndex(size_t index, int64_t* p_out_int)
 {
@@ -602,43 +801,47 @@ DasResult IDasJsonImpl::GetObjectRefByIndex(
 {
     DAS_UTILS_CHECK_POINTER(pp_out_das_json)
 
+    std::scoped_lock _{mutex_};
     try
     {
-        std::scoped_lock _{mutex_};
-        auto&&           object =
-            std::visit(Details::CallOperatorSquareBrackets{index}, impl_);
-        const auto ref_object = MakeDasPtr<IDasJsonImpl>(object);
-        auto&      ref_out_das_json = *pp_out_das_json;
-        ref_out_das_json = ref_object.Get();
-        ref_out_das_json->AddRef();
-
-        if (auto* const p_internal_object = std::get_if<Object>(&impl_);
-            p_internal_object != nullptr) [[likely]]
+        auto val_opt = Details::GetValueByIndex(impl_, index);
+        if (!val_opt)
         {
-            const auto connection = p_internal_object->signal_.connect(
-                [p_ref = ref_object.Get()] { p_ref->OnExpired(); });
-            ref_object->SetConnection(connection);
-            return DAS_S_OK;
+            return DAS_E_OUT_OF_RANGE;
         }
-        DAS_CORE_LOG_ERROR("Can not get object from impl_.");
-        return DAS_E_INTERNAL_FATAL_ERROR;
-    }
-    catch (const nlohmann::json::exception& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        return DAS_E_INVALID_JSON;
+        const auto& sub_val = val_opt.value();
+        if (!sub_val.is_object() && !sub_val.is_array())
+        {
+            return DAS_E_TYPE_ERROR;
+        }
+
+        // Create an owning copy (returns Object, not Ref)
+        auto  new_val = Details::CopyValue(sub_val);
+        auto* p_result = new IDasJsonImpl(std::move(new_val));
+        p_result->AddRef();
+        *pp_out_das_json = p_result;
+        return DAS_S_OK;
     }
     catch (const DasJsonImplRefExpiredException& ex)
     {
         DAS_CORE_LOG_EXCEPTION(ex);
         return DAS_E_DANGLING_REFERENCE;
     }
-    catch (const std::bad_alloc& ex)
+    catch (const DasJsonImplJsonIsNotArray& ex)
     {
         DAS_CORE_LOG_EXCEPTION(ex);
-        return DAS_E_OUT_OF_MEMORY;
+        return DAS_E_TYPE_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        return DAS_E_INVALID_JSON;
     }
 }
+
+// ========================================================================
+// Set*ByIndex
+// ========================================================================
 
 DasResult IDasJsonImpl::SetIntByIndex(size_t index, int64_t in_int)
 {
@@ -660,9 +863,9 @@ DasResult IDasJsonImpl::SetStringByIndex(
     {
         return expected_u8_value.error();
     }
-    const auto p_u8_key = expected_u8_value.value();
+    const auto p_u8_value = expected_u8_value.value();
 
-    return SetImpl(index, p_u8_key);
+    return SetImpl(index, std::string(p_u8_value));
 }
 
 DasResult IDasJsonImpl::SetBoolByIndex(size_t index, bool in_bool)
@@ -673,7 +876,6 @@ DasResult IDasJsonImpl::SetBoolByIndex(size_t index, bool in_bool)
 DasResult IDasJsonImpl::SetObjectByIndex(size_t index, IDasJson* p_in_das_json)
 {
     DasPtr<IDasJsonImpl> p_impl;
-
     if (const auto qi_result = p_in_das_json->QueryInterface(
             DasIidOf<IDasJsonImpl>(),
             p_impl.PutVoid());
@@ -682,11 +884,18 @@ DasResult IDasJsonImpl::SetObjectByIndex(size_t index, IDasJson* p_in_das_json)
         return qi_result;
     }
 
-    const auto* in_json = std::visit(
+    const auto in_json = std::visit(
         Utils::overload_set{
-            [](const Object& j) { return &j.json_; },
-            [](const Ref& j)
-            { return static_cast<const decltype(Object::json_)*>(j.json_); }},
+            [](IDasJsonImpl::Object& j) -> yyjson::writer::detail::value*
+            { return &j.value_; },
+            [](IDasJsonImpl::Ref& j) -> yyjson::writer::detail::value*
+            {
+                if (j.val_ == nullptr)
+                {
+                    return nullptr;
+                }
+                return j.val_;
+            }},
         p_impl->impl_);
 
     if (in_json == nullptr)
@@ -696,6 +905,10 @@ DasResult IDasJsonImpl::SetObjectByIndex(size_t index, IDasJson* p_in_das_json)
 
     return SetImpl(index, *in_json);
 }
+
+// ========================================================================
+// GetTypeByName / GetTypeByIndex
+// ========================================================================
 
 DasResult IDasJsonImpl::GetTypeByName(
     IDasReadOnlyString* key,
@@ -710,23 +923,67 @@ DasResult IDasJsonImpl::GetTypeByName(
     }
     const auto p_u8_key = expected_u8_key.value();
 
-    const auto raw_type =
-        std::visit(Details::CallOperatorSquareBrackets{p_u8_key}, impl_).type();
-    *p_out_type = Details::ToDasType(raw_type);
-
-    return DAS_S_OK;
+    std::scoped_lock _{mutex_};
+    try
+    {
+        auto val_opt = Details::GetValueByName(impl_, p_u8_key);
+        if (!val_opt)
+        {
+            *p_out_type = DAS_TYPE_NULL;
+            return DAS_S_OK;
+        }
+        const auto& val = val_opt.value();
+        *p_out_type = Das::Utils::YyjsonValueToDasType(val);
+        return DAS_S_OK;
+    }
+    catch (const DasJsonImplRefExpiredException& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        return DAS_E_DANGLING_REFERENCE;
+    }
+    catch (const std::exception& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        return DAS_E_INVALID_JSON;
+    }
 }
 
 DasResult IDasJsonImpl::GetTypeByIndex(size_t index, DasType* p_out_type)
 {
     DAS_UTILS_CHECK_POINTER(p_out_type)
 
-    const auto raw_type =
-        std::visit(Details::CallOperatorSquareBrackets{index}, impl_).type();
-    *p_out_type = Details::ToDasType(raw_type);
-
-    return DAS_S_OK;
+    std::scoped_lock _{mutex_};
+    try
+    {
+        auto val_opt = Details::GetValueByIndex(impl_, index);
+        if (!val_opt)
+        {
+            return DAS_E_OUT_OF_RANGE;
+        }
+        const auto& val = val_opt.value();
+        *p_out_type = Das::Utils::YyjsonValueToDasType(val);
+        return DAS_S_OK;
+    }
+    catch (const DasJsonImplRefExpiredException& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        return DAS_E_DANGLING_REFERENCE;
+    }
+    catch (const DasJsonImplJsonIsNotArray& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        return DAS_E_TYPE_ERROR;
+    }
+    catch (const std::exception& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        return DAS_E_INVALID_JSON;
+    }
 }
+
+// ========================================================================
+// SetConnection / OnExpired
+// ========================================================================
 
 void IDasJsonImpl::SetConnection(const boost::signals2::connection& connection)
 {
@@ -747,55 +1004,67 @@ void IDasJsonImpl::OnExpired()
                 DAS_CORE_LOG_ERROR(
                     "Type not matched. Expected reference but instance found.");
             },
-            [](Ref& ref) { ref.json_ = nullptr; }},
+            [](Ref& ref) { ref.val_ = nullptr; }},
         impl_);
 }
 
-IDasJsonImpl::IDasJsonImpl(const char* p_json_string)
-    : impl_{Object{nlohmann::json::parse(p_json_string), {}}}
-{
-}
+// ========================================================================
+// ToString
+// ========================================================================
 
 DasResult IDasJsonImpl::ToString(
     int32_t              indent,
     IDasReadOnlyString** pp_out_string)
 {
-    return std::visit(
-        Utils::overload_set{
-            [pp_out_string, indent](const Object& j)
-            {
-                try
+    DAS_UTILS_CHECK_POINTER(pp_out_string)
+
+    std::scoped_lock _{mutex_};
+    try
+    {
+        return std::visit(
+            Utils::overload_set{
+                [pp_out_string, indent](Object& obj) -> DasResult
                 {
-                    const auto json_string = j.json_.dump(indent);
+                    auto serialized = Das::Utils::SerializeYyjsonValue(
+                        obj.value_,
+                        indent >= 0);
+                    if (!serialized)
+                    {
+                        return DAS_E_INVALID_JSON;
+                    }
                     return ::CreateIDasReadOnlyStringFromUtf8(
-                        json_string.c_str(),
+                        serialized.value().c_str(),
                         pp_out_string);
-                }
-                catch (const std::bad_alloc&)
+                },
+                [pp_out_string, indent](Ref& ref) -> DasResult
                 {
-                    return DAS_E_OUT_OF_MEMORY;
-                }
-            },
-            [pp_out_string, indent](const Ref& j)
-            {
-                if (j.json_ != nullptr)
-                {
-                    try
+                    if (ref.val_ == nullptr)
                     {
-                        const auto json_string = j.json_->dump(indent);
-                        return ::CreateIDasReadOnlyStringFromUtf8(
-                            json_string.c_str(),
-                            pp_out_string);
+                        return DAS_E_DANGLING_REFERENCE;
                     }
-                    catch (const std::bad_alloc&)
+                    auto serialized = Das::Utils::SerializeYyjsonValue(
+                        *ref.val_,
+                        indent >= 0);
+                    if (!serialized)
                     {
-                        return DAS_E_OUT_OF_MEMORY;
+                        return DAS_E_INVALID_JSON;
                     }
-                }
-                return DAS_E_DANGLING_REFERENCE;
-            }},
-        impl_);
+                    return ::CreateIDasReadOnlyStringFromUtf8(
+                        serialized.value().c_str(),
+                        pp_out_string);
+                }},
+            impl_);
+    }
+    catch (const std::bad_alloc& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        return DAS_E_OUT_OF_MEMORY;
+    }
 }
+
+// ========================================================================
+// GetSize
+// ========================================================================
 
 DasResult IDasJsonImpl::GetSize(uint64_t* p_out_size)
 {
@@ -806,15 +1075,33 @@ DasResult IDasJsonImpl::GetSize(uint64_t* p_out_size)
     {
         *p_out_size = std::visit(
             Utils::overload_set{
-                [](const Object& j)
-                { return static_cast<uint64_t>(j.json_.size()); },
-                [](const Ref& j)
+                [](const Object& obj) -> uint64_t
                 {
-                    if (j.json_ != nullptr)
+                    if (auto arr_opt = obj.value_.as_array())
                     {
-                        return static_cast<uint64_t>(j.json_->size());
+                        return static_cast<uint64_t>(arr_opt->size());
                     }
-                    throw DasJsonImplRefExpiredException{};
+                    if (auto obj_opt = obj.value_.as_object())
+                    {
+                        return static_cast<uint64_t>(obj_opt->size());
+                    }
+                    return 0;
+                },
+                [](const Ref& ref) -> uint64_t
+                {
+                    if (ref.val_ == nullptr)
+                    {
+                        throw DasJsonImplRefExpiredException{};
+                    }
+                    if (auto arr_opt = ref.val_->as_array())
+                    {
+                        return static_cast<uint64_t>(arr_opt->size());
+                    }
+                    if (auto obj_opt = ref.val_->as_object())
+                    {
+                        return static_cast<uint64_t>(obj_opt->size());
+                    }
+                    return 0;
                 }},
             impl_);
         return DAS_S_OK;
@@ -831,53 +1118,58 @@ DasResult IDasJsonImpl::GetSize(uint64_t* p_out_size)
     }
 }
 
+// ========================================================================
+// Clear
+// ========================================================================
+
 DasResult IDasJsonImpl::Clear()
 {
-    return std::visit(
-        Utils::overload_set{
-            [](Object& j)
-            {
-                j.signal_();
-                j.json_ = {};
-                return DAS_S_OK;
-            },
-            [](Ref& j)
-            {
-                if (j.json_ != nullptr)
+    std::scoped_lock _{mutex_};
+    try
+    {
+        return std::visit(
+            Utils::overload_set{
+                [](Object& obj) -> DasResult
                 {
-                    *j.json_ = {};
-                }
-                return DAS_E_DANGLING_REFERENCE;
-            }},
-        impl_);
+                    obj.signal_();
+                    obj.value_ = yyjson::writer::detail::object{};
+                    return DAS_S_OK;
+                },
+                [](Ref& ref) -> DasResult
+                {
+                    if (ref.val_ != nullptr)
+                    {
+                        *ref.val_ = yyjson::writer::detail::object{};
+                    }
+                    return DAS_E_DANGLING_REFERENCE;
+                }},
+            impl_);
+    }
+    catch (const std::bad_alloc& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        return DAS_E_OUT_OF_MEMORY;
+    }
 }
 
-nlohmann::json IDasJsonImpl::ExtractJson() const
-{
-    if (auto* obj = std::get_if<Object>(&impl_))
-    {
-        return obj->json_;
-    }
-    if (auto* ref = std::get_if<Ref>(&impl_))
-    {
-        if (ref->json_ != nullptr)
-        {
-            return *ref->json_;
-        }
-    }
-    return nlohmann::json{};
-}
+// ========================================================================
+// C API — ParseDasJsonFromString
+// ========================================================================
 
-DasResult CreateDasJsonFromNlohmann(
-    const nlohmann::json&       json,
-    ExportInterface::IDasJson** pp_out)
+// ========================================================================
+// C API — CreateDasJsonFromYyjson
+// ========================================================================
+
+DasResult CreateDasJsonFromYyjson(
+    const yyjson::writer::detail::value& value,
+    ExportInterface::IDasJson**          pp_out)
 {
     DAS_UTILS_CHECK_POINTER(pp_out)
     *pp_out = nullptr;
     try
     {
         const auto p_result =
-            DAS::MakeDasPtr<IDasJsonImpl>(nlohmann::json(json));
+            DAS::MakeDasPtr<IDasJsonImpl>(yyjson::writer::detail::value(value));
         DAS::Utils::SetResult(p_result, pp_out);
         return DAS_S_OK;
     }
@@ -904,19 +1196,16 @@ DAS_C_API DasResult ParseDasJsonFromString(
         DAS::Utils::SetResult(p_result, pp_out_json);
         return DAS_S_OK;
     }
-    catch (const nlohmann::json::exception& ex)
-    {
-        DAS_CORE_LOG_ERROR(
-            "Parse json failed. Id = {}. What = {}",
-            ex.id,
-            ex.what());
-        DAS_CORE_LOG_ERROR("json = {}", p_u8_string);
-        return DAS_E_INVALID_JSON;
-    }
     catch (const std::bad_alloc& ex)
     {
         DAS_CORE_LOG_EXCEPTION(ex);
         return DAS_E_OUT_OF_MEMORY;
+    }
+    catch (const std::exception& ex)
+    {
+        DAS_CORE_LOG_ERROR("Parse json failed. What = {}", ex.what());
+        DAS_CORE_LOG_ERROR("json = {}", p_u8_string);
+        return DAS_E_INVALID_JSON;
     }
 }
 

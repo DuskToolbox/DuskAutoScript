@@ -6,7 +6,6 @@
 #include <das/DasExport.h>
 #include <das/IDasBase.h>
 #include <das/Utils/fmt.h>
-#include <nlohmann/json_fwd.hpp>
 
 template <>
 struct std::hash<DasGuid>
@@ -29,16 +28,5 @@ DAS_EXPORT DasGuid MakeDasGuid(const std::string_view guid_string);
 DAS_EXPORT std::string DasGuidToStdString(const DasGuid& guid);
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
-
-namespace nlohmann
-{
-    template <>
-    struct adl_serializer<DasGuid>
-    {
-        static void to_json(json& j, const DasGuid& guid);
-
-        static void from_json(const json& j, DasGuid& guid);
-    };
-}
 
 #endif // DAS_CORE_FOREIGNINTERFACEHOST_DASGUID_H

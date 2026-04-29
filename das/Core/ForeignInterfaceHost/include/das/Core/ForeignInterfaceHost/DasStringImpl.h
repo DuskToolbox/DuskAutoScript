@@ -10,7 +10,6 @@
 #include <das/Utils/Expected.h>
 #include <das/Utils/fmt.h>
 #include <filesystem>
-#include <nlohmann/json_fwd.hpp>
 #include <unicode/unistr.h>
 
 bool operator==(DasReadOnlyString lhs, DasReadOnlyString rhs);
@@ -159,10 +158,6 @@ public:
     IDasReadOnlyString** Put();
 };
 
-void from_json(nlohmann::json input, DasReadOnlyStringWrapper& output);
-
-void from_json(nlohmann::json input, DasReadOnlyString& output);
-
 // {85648BDC-B73A-41F9-AF7A-71C83085C4B0}
 DAS_DEFINE_CLASS_GUID(
     DasStringCppImpl,
@@ -267,20 +262,5 @@ public:
     DasResult GetImpl(ICUString** out_icu_string) noexcept;
     DasResult GetImpl(const ICUString** out_icu_string) const noexcept;
 };
-
-namespace nlohmann
-{
-    template <>
-    struct adl_serializer<DasReadOnlyStringWrapper>
-    {
-        static void to_json(
-            json&                           j,
-            const DasReadOnlyStringWrapper& das_string);
-
-        static void from_json(
-            const json&               j,
-            DasReadOnlyStringWrapper& das_string);
-    };
-}
 
 #endif // DAS_CORE_FOREIGNINTERFACEHOST_DASSTRINGIMPL_H

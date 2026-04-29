@@ -2,7 +2,6 @@
 #define DAS_CORE_FOREIGNINTERFACEHOST_FOREIGNINTERFACEHOSTENUM_H
 
 #include <das/Core/ForeignInterfaceHost/Config.h>
-#include <nlohmann/json.hpp>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
@@ -15,29 +14,11 @@ enum class ForeignInterfaceLanguage
     Lua
 };
 
-#define DAS_CORE_FOREIGNINTERFACEHOST_DEFAULT_ENUM_SERIALIZE(x)                \
-    {ForeignInterfaceLanguage::x, #x}
-
-NLOHMANN_JSON_SERIALIZE_ENUM(
-    ForeignInterfaceLanguage,
-    {DAS_CORE_FOREIGNINTERFACEHOST_DEFAULT_ENUM_SERIALIZE(Python),
-     DAS_CORE_FOREIGNINTERFACEHOST_DEFAULT_ENUM_SERIALIZE(CSharp),
-     DAS_CORE_FOREIGNINTERFACEHOST_DEFAULT_ENUM_SERIALIZE(Java),
-     DAS_CORE_FOREIGNINTERFACEHOST_DEFAULT_ENUM_SERIALIZE(Cpp),
-     DAS_CORE_FOREIGNINTERFACEHOST_DEFAULT_ENUM_SERIALIZE(Lua)});
-
 enum class LoadMode
 {
     InProcess,
     Ipc
 };
-
-NLOHMANN_JSON_SERIALIZE_ENUM(
-    LoadMode,
-    {
-        {LoadMode::InProcess, "in_process"},
-        {LoadMode::Ipc, "ipc"},
-    });
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
 

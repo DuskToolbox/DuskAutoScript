@@ -7,7 +7,6 @@
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
 #include <functional>
-#include <nlohmann/json.hpp>
 
 std::size_t std::hash<DasGuid>::operator()(const DasGuid& guid) const noexcept
 {
@@ -129,18 +128,6 @@ std::string DasGuidToStdString(const DasGuid& guid)
 }
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
-
-void nlohmann::adl_serializer<DasGuid>::to_json(json& j, const DasGuid& guid)
-{
-    const auto guid_string = DAS::fmt::format("{}", guid);
-    j = guid_string;
-}
-
-void nlohmann::adl_serializer<DasGuid>::from_json(const json& j, DasGuid& guid)
-{
-    const auto guid_string = j.get<std::string_view>();
-    guid = DAS::Core::ForeignInterfaceHost::MakeDasGuid(guid_string);
-}
 
 DasResult DasGuidToString(
     const DasGuid*       p_in_guid,

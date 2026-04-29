@@ -9,7 +9,6 @@
 #include <das/Utils/fmt.h>
 #include <das/_autogen/idl/abi/DasJson.h>
 #include <mutex>
-#include <nlohmann/json_fwd.hpp>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -72,7 +71,10 @@ struct PluginSettingDesc
     // DasSettingScope scope = DasSettingScope::Global;
 };
 
+#if __has_include(<nlohmann/json_fwd.hpp>)
+#include <nlohmann/json_fwd.hpp>
 void from_json(const ::nlohmann::json& input, PluginSettingDesc& output);
+#endif
 // void to_json(const ::nlohmann::json& output, PluginSettingDesc& input);
 
 /**
@@ -87,9 +89,11 @@ struct PluginSettingsGroup
     std::vector<PluginSettingDesc> descriptors;
 };
 
+#if __has_include(<nlohmann/json_fwd.hpp>)
 void from_json(
     const ::nlohmann::json&                           input,
     std::unordered_map<DasGuid, PluginSettingsGroup>& output);
+#endif
 
 /**
  * @brief Task type descriptor keyed by task GUID in the manifest.
@@ -104,7 +108,9 @@ struct TaskDescriptor
     std::vector<PluginSettingDesc> descriptors;
 };
 
+#if __has_include(<nlohmann/json_fwd.hpp>)
 void from_json(const ::nlohmann::json& input, TaskDescriptor& output);
+#endif
 
 struct PluginPackageDesc
 {
@@ -139,12 +145,16 @@ struct PluginPackageDesc
     std::shared_ptr<SettingsJson> settings_json_ =
         std::make_shared<SettingsJson>();
     DasReadOnlyStringWrapper settings_desc_json;
+#if __has_include(<nlohmann/json_fwd.hpp>)
     nlohmann::json           default_settings;
+#endif
     boost::signals2::signal<void(std::shared_ptr<SettingsJson>)>
         on_settings_changed{};
 };
 
+#if __has_include(<nlohmann/json_fwd.hpp>)
 void from_json(const ::nlohmann::json& input, PluginPackageDesc& output);
+#endif
 // void to_json(const ::nlohmann::json& output, PluginDesc& input);
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
