@@ -1,6 +1,7 @@
 // clang-format off
 #include <das/DasConfig.h>
 // clang-format on
+#include <cassert>
 #include <cpp_yyjson.hpp>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
@@ -8,7 +9,7 @@
 #include <das/DasPtr.hpp>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/DasJsonCore.h>
-#include <das/Utils/EnumUtils.hpp>
+
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/UnexpectedEnumException.h>
 #include <das/_autogen/idl/abi/DasSettings.h>
@@ -190,12 +191,11 @@ DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 namespace Details
 {
     template <class T>
-    T JsonValueToYyjsonScalar(
-        const yyjson::writer::detail::value_ref& value_ref);
+    T JsonValueToYyjsonScalar(const yyjson::writer::detail::const_value_ref& v);
 
     template <>
     inline bool JsonValueToYyjsonScalar<bool>(
-        const yyjson::writer::detail::value_ref& v)
+        const yyjson::writer::detail::const_value_ref& v)
     {
         auto opt = v.as_bool();
         if (!opt)
@@ -207,7 +207,7 @@ namespace Details
 
     template <>
     inline std::int64_t JsonValueToYyjsonScalar<std::int64_t>(
-        const yyjson::writer::detail::value_ref& v)
+        const yyjson::writer::detail::const_value_ref& v)
     {
         auto opt = v.as_sint();
         if (!opt)
@@ -219,7 +219,7 @@ namespace Details
 
     template <>
     inline float JsonValueToYyjsonScalar<float>(
-        const yyjson::writer::detail::value_ref& v)
+        const yyjson::writer::detail::const_value_ref& v)
     {
         auto opt = v.as_real();
         if (!opt)
@@ -231,7 +231,7 @@ namespace Details
 
     template <>
     inline std::string JsonValueToYyjsonScalar<std::string>(
-        const yyjson::writer::detail::value_ref& v)
+        const yyjson::writer::detail::const_value_ref& v)
     {
         auto opt = v.as_string();
         if (!opt)
@@ -244,7 +244,7 @@ namespace Details
     template <>
     inline Das::ExportInterface::DasType
     JsonValueToYyjsonScalar<Das::ExportInterface::DasType>(
-        const yyjson::writer::detail::value_ref& v)
+        const yyjson::writer::detail::const_value_ref& v)
     {
         auto opt = v.as_sint();
         if (!opt)
@@ -254,60 +254,12 @@ namespace Details
         return static_cast<Das::ExportInterface::DasType>(*opt);
     }
 
-    inline void OptionalFromYyjson(
-        const yyjson::writer::detail::value_ref& json_val,
-        const std::string_view                   key,
-        std::optional<bool>&                     opt_value)
+    inline void OptionalFieldFromYyjson(
+        const yyjson::writer::detail::const_object_ref& obj,
+        std::string_view                                key,
+        std::optional<std::string>&                     opt_value)
     {
-        auto field = json_val[key];
-        if (!field.is_null())
-        {
-            opt_value = JsonValueToYyjsonScalar<bool>(field);
-        }
-        else
-        {
-            opt_value = std::nullopt;
-        }
-    }
-
-    inline void OptionalFromYyjson(
-        const yyjson::writer::detail::value_ref& json_val,
-        const std::string_view                   key,
-        std::optional<std::int64_t>&             opt_value)
-    {
-        auto field = json_val[key];
-        if (!field.is_null())
-        {
-            opt_value = JsonValueToYyjsonScalar<std::int64_t>(field);
-        }
-        else
-        {
-            opt_value = std::nullopt;
-        }
-    }
-
-    inline void OptionalFromYyjson(
-        const yyjson::writer::detail::value_ref& json_val,
-        const std::string_view                   key,
-        std::optional<float>&                    opt_value)
-    {
-        auto field = json_val[key];
-        if (!field.is_null())
-        {
-            opt_value = JsonValueToYyjsonScalar<float>(field);
-        }
-        else
-        {
-            opt_value = std::nullopt;
-        }
-    }
-
-    inline void OptionalFromYyjson(
-        const yyjson::writer::detail::value_ref& json_val,
-        const std::string_view                   key,
-        std::optional<std::string>&              opt_value)
-    {
-        auto field = json_val[key];
+        auto field = obj[std::string_view(key)];
         if (!field.is_null())
         {
             opt_value = JsonValueToYyjsonScalar<std::string>(field);
@@ -318,12 +270,12 @@ namespace Details
         }
     }
 
-    inline void OptionalFromYyjson(
-        const yyjson::writer::detail::value_ref& json_val,
-        const std::string_view                   key,
-        std::optional<std::vector<std::string>>& opt_value)
+    inline void OptionalFieldFromYyjson(
+        const yyjson::writer::detail::const_object_ref& obj,
+        std::string_view                                key,
+        std::optional<std::vector<std::string>>&        opt_value)
     {
-        auto field = json_val[key];
+        auto field = obj[std::string_view(key)];
         if (field.is_null())
         {
             opt_value = std::nullopt;
@@ -337,7 +289,7 @@ namespace Details
         auto                     arr = *field.as_array();
         for (const auto& elem : arr)
         {
-            auto opt = elem.template as_string();
+            auto opt = elem.as_string();
             if (opt)
             {
                 result.emplace_back(*opt);
@@ -349,47 +301,51 @@ namespace Details
 } // namespace Details
 
 void ParsePluginSettingDescFromJson(
-    const yyjson::writer::detail::value_ref input,
-    PluginSettingDesc&                      output)
+    const yyjson::writer::detail::const_object_ref& obj,
+    PluginSettingDesc&                              output)
 {
     DAS_CORE_TRACE_SCOPE;
 
-    output.name = Details::JsonValueToYyjsonScalar<std::string>(input["name"]);
+    output.name = Details::JsonValueToYyjsonScalar<std::string>(
+        obj[std::string_view("name")]);
     output.type =
         Details::JsonValueToYyjsonScalar<Das::ExportInterface::DasType>(
-            input["type"]);
+            obj[std::string_view("type")]);
+
     switch (output.type)
     {
     case Das::ExportInterface::DAS_TYPE_BOOL:
-        output.default_value =
-            Details::JsonValueToYyjsonScalar<bool>(input["defaultValue"]);
+        output.default_value = Details::JsonValueToYyjsonScalar<bool>(
+            obj[std::string_view("defaultValue")]);
         break;
     case Das::ExportInterface::DAS_TYPE_INT:
         output.default_value = Details::JsonValueToYyjsonScalar<std::int64_t>(
-            input["defaultValue"]);
+            obj[std::string_view("defaultValue")]);
         break;
     case Das::ExportInterface::DAS_TYPE_FLOAT:
-        output.default_value =
-            Details::JsonValueToYyjsonScalar<float>(input["defaultValue"]);
+        output.default_value = Details::JsonValueToYyjsonScalar<float>(
+            obj[std::string_view("defaultValue")]);
         break;
     case Das::ExportInterface::DAS_TYPE_STRING:
         output.default_value = Details::JsonValueToYyjsonScalar<std::string>(
-            input["defaultValue"]);
+            obj[std::string_view("defaultValue")]);
         break;
     default:
         throw Utils::UnexpectedEnumException::FromEnum(output.type);
     }
-    Details::OptionalFromYyjson(input, "description", output.description);
-    Details::OptionalFromYyjson(input, "enumValues", output.enum_values);
-    Details::OptionalFromYyjson(
-        input,
+
+    Details::OptionalFieldFromYyjson(obj, "description", output.description);
+    Details::OptionalFieldFromYyjson(obj, "enumValues", output.enum_values);
+    Details::OptionalFieldFromYyjson(
+        obj,
         "enumDescriptions",
         output.enum_descriptions);
-    Details::OptionalFromYyjson(
-        input,
+    Details::OptionalFieldFromYyjson(
+        obj,
         "deprecationMessage",
         output.deprecation_message);
-    auto required_val = input["required"];
+
+    auto required_val = obj[std::string_view("required")];
     if (!required_val.is_null())
     {
         auto opt = required_val.as_bool();
@@ -401,32 +357,38 @@ void ParsePluginSettingDescFromJson(
 }
 
 void ParsePluginSettingsGroupFromJson(
-    const yyjson::writer::detail::value_ref           input,
+    const yyjson::writer::detail::const_object_ref&   obj,
     std::unordered_map<DasGuid, PluginSettingsGroup>& output)
 {
     DAS_CORE_TRACE_SCOPE;
 
-    if (!input.is_object())
-    {
-        return;
-    }
-    auto obj = *input.as_object();
     for (const auto& [key, value] : obj)
     {
         const auto          guid = MakeDasGuid(std::string(key));
         PluginSettingsGroup group;
-        group.name =
-            Details::JsonValueToYyjsonScalar<std::string>(value["name"]);
-        group.description =
-            Details::JsonValueToYyjsonScalar<std::string>(value["description"]);
-        auto descriptors_field = value["descriptors"];
+        auto                val_obj = value.as_object();
+        if (!val_obj)
+        {
+            continue;
+        }
+        const auto& sub_obj = *val_obj;
+        group.name = Details::JsonValueToYyjsonScalar<std::string>(
+            sub_obj[std::string_view("name")]);
+        group.description = Details::JsonValueToYyjsonScalar<std::string>(
+            sub_obj[std::string_view("description")]);
+        auto descriptors_field = sub_obj[std::string_view("descriptors")];
         if (!descriptors_field.is_null())
         {
             auto desc_arr = *descriptors_field.as_array();
             for (const auto& elem : desc_arr)
             {
+                auto elem_obj = elem.as_object();
+                if (!elem_obj)
+                {
+                    continue;
+                }
                 PluginSettingDesc desc;
-                ParsePluginSettingDescFromJson(elem, desc);
+                ParsePluginSettingDescFromJson(*elem_obj, desc);
                 group.descriptors.push_back(std::move(desc));
             }
         }
@@ -435,26 +397,32 @@ void ParsePluginSettingsGroupFromJson(
 }
 
 void ParseTaskDescriptorFromJson(
-    const yyjson::writer::detail::value_ref input,
-    TaskDescriptor&                         output)
+    const yyjson::writer::detail::const_object_ref& obj,
+    TaskDescriptor&                                 output)
 {
     DAS_CORE_TRACE_SCOPE;
 
-    auto plugin_guid_str =
-        Details::JsonValueToYyjsonScalar<std::string>(input["pluginGuid"]);
+    auto plugin_guid_str = Details::JsonValueToYyjsonScalar<std::string>(
+        obj[std::string_view("pluginGuid")]);
     output.plugin_guid = MakeDasGuid(plugin_guid_str);
-    output.name = Details::JsonValueToYyjsonScalar<std::string>(input["name"]);
-    output.description =
-        Details::JsonValueToYyjsonScalar<std::string>(input["description"]);
-    Details::OptionalFromYyjson(input, "gameName", output.game_name);
-    auto descriptors_field = input["descriptors"];
+    output.name = Details::JsonValueToYyjsonScalar<std::string>(
+        obj[std::string_view("name")]);
+    output.description = Details::JsonValueToYyjsonScalar<std::string>(
+        obj[std::string_view("description")]);
+    Details::OptionalFieldFromYyjson(obj, "gameName", output.game_name);
+    auto descriptors_field = obj[std::string_view("descriptors")];
     if (!descriptors_field.is_null())
     {
         auto desc_arr = *descriptors_field.as_array();
         for (const auto& elem : desc_arr)
         {
+            auto elem_obj = elem.as_object();
+            if (!elem_obj)
+            {
+                continue;
+            }
             PluginSettingDesc desc;
-            ParsePluginSettingDescFromJson(elem, desc);
+            ParsePluginSettingDescFromJson(*elem_obj, desc);
             output.descriptors.push_back(std::move(desc));
         }
     }
@@ -473,12 +441,12 @@ void PluginPackageDesc::SettingsJson::GetValue(IDasReadOnlyString** pp_out_json)
 }
 
 void ParsePluginPackageDescFromJson(
-    const yyjson::writer::detail::value_ref input,
-    PluginPackageDesc&                      output)
+    const yyjson::writer::detail::const_object_ref& obj,
+    PluginPackageDesc&                              output)
 {
     DAS_CORE_TRACE_SCOPE;
 
-    auto lang_val = input["language"];
+    auto lang_val = obj[std::string_view("language")];
     auto lang_opt = lang_val.as_sint();
     if (lang_opt)
     {
@@ -514,7 +482,7 @@ void ParsePluginPackageDescFromJson(
         }
     }
 
-    auto load_mode_val = input["loadMode"];
+    auto load_mode_val = obj[std::string_view("loadMode")];
     if (!load_mode_val.is_null())
     {
         auto lmo = load_mode_val.as_sint();
@@ -528,20 +496,21 @@ void ParsePluginPackageDescFromJson(
         output.load_mode = LoadMode::InProcess;
     }
 
-    output.name = Details::JsonValueToYyjsonScalar<std::string>(input["name"]);
-    output.description =
-        Details::JsonValueToYyjsonScalar<std::string>(input["description"]);
-    output.author =
-        Details::JsonValueToYyjsonScalar<std::string>(input["author"]);
-    output.version =
-        Details::JsonValueToYyjsonScalar<std::string>(input["version"]);
-    output.supported_system =
-        Details::JsonValueToYyjsonScalar<std::string>(input["supportedSystem"]);
+    output.name = Details::JsonValueToYyjsonScalar<std::string>(
+        obj[std::string_view("name")]);
+    output.description = Details::JsonValueToYyjsonScalar<std::string>(
+        obj[std::string_view("description")]);
+    output.author = Details::JsonValueToYyjsonScalar<std::string>(
+        obj[std::string_view("author")]);
+    output.version = Details::JsonValueToYyjsonScalar<std::string>(
+        obj[std::string_view("version")]);
+    output.supported_system = Details::JsonValueToYyjsonScalar<std::string>(
+        obj[std::string_view("supportedSystem")]);
     output.plugin_filename_extension =
         Details::JsonValueToYyjsonScalar<std::string>(
-            input["pluginFilenameExtension"]);
+            obj[std::string_view("pluginFilenameExtension")]);
 
-    auto resource_path_val = input["resourcePath"];
+    auto resource_path_val = obj[std::string_view("resourcePath")];
     if (!resource_path_val.is_null())
     {
         auto opt = resource_path_val.as_string();
@@ -556,13 +525,13 @@ void ParsePluginPackageDescFromJson(
             DAS_UTILS_STRINGUTILS_DEFINE_U8STR("resource");
     }
 
-    auto guid_str =
-        Details::JsonValueToYyjsonScalar<std::string>(input["guid"]);
+    auto guid_str = Details::JsonValueToYyjsonScalar<std::string>(
+        obj[std::string_view("guid")]);
     output.guid = MakeDasGuid(guid_str);
 
     // Parse "settings" field: support both legacy array and new
     // plugin-GUID-keyed object format.
-    auto settings_val = input["settings"];
+    auto settings_val = obj[std::string_view("settings")];
     if (!settings_val.is_null())
     {
         if (settings_val.is_array())
@@ -571,39 +540,40 @@ void ParsePluginPackageDescFromJson(
             auto arr = *settings_val.as_array();
             for (const auto& elem : arr)
             {
+                auto elem_obj = elem.as_object();
+                if (!elem_obj)
+                {
+                    continue;
+                }
                 PluginSettingDesc desc;
-                ParsePluginSettingDescFromJson(elem, desc);
+                ParsePluginSettingDescFromJson(*elem_obj, desc);
                 output.settings_desc.push_back(std::move(desc));
             }
-            auto serialized = Das::Utils::SerializeYyjsonValue(
-                yyjson::writer::detail::value{
-                    yyjson::writer::detail::value_ref(settings_val)},
-                false);
-            if (serialized)
-            {
-                output.settings_desc_json = *serialized;
-            }
-            // Build default_settings object
-            output.default_settings = yyjson::writer::detail::value{
-                yyjson::construct_object_type_t{}};
+            // Build default_settings as a yyjson value object
+            output.default_settings = Das::Utils::MakeYyjsonObject();
+            auto ds_obj = output.default_settings.as_object();
             for (const auto& setting : output.settings_desc)
             {
+                if (!ds_obj)
+                {
+                    break;
+                }
                 switch (setting.type)
                 {
                 case Das::ExportInterface::DAS_TYPE_BOOL:
-                    output.default_settings[output.name] =
+                    (*ds_obj)[output.name] =
                         std::get<bool>(setting.default_value);
                     break;
                 case Das::ExportInterface::DAS_TYPE_INT:
-                    output.default_settings[output.name] =
+                    (*ds_obj)[output.name] =
                         std::get<std::int64_t>(setting.default_value);
                     break;
                 case Das::ExportInterface::DAS_TYPE_FLOAT:
-                    output.default_settings[output.name] =
+                    (*ds_obj)[output.name] =
                         std::get<float>(setting.default_value);
                     break;
                 case Das::ExportInterface::DAS_TYPE_STRING:
-                    output.default_settings[output.name] =
+                    (*ds_obj)[output.name] =
                         std::get<std::string>(setting.default_value);
                     break;
                 default:
@@ -633,30 +603,31 @@ void ParsePluginPackageDescFromJson(
         else if (settings_val.is_object())
         {
             // New plugin-GUID-keyed object format.
-            ParsePluginSettingsGroupFromJson(
-                settings_val,
-                output.settings_groups);
-            auto serialized = Das::Utils::SerializeYyjsonValue(
-                yyjson::writer::detail::value{
-                    yyjson::writer::detail::value_ref(settings_val)},
-                false);
-            if (serialized)
+            auto settings_obj = settings_val.as_object();
+            if (settings_obj)
             {
-                output.settings_desc_json = *serialized;
+                ParsePluginSettingsGroupFromJson(
+                    *settings_obj,
+                    output.settings_groups);
             }
         }
     }
 
     // Parse "tasks" field: task-GUID-keyed object.
-    auto tasks_val = input["tasks"];
+    auto tasks_val = obj[std::string_view("tasks")];
     if (!tasks_val.is_null() && tasks_val.is_object())
     {
         auto tasks_obj = *tasks_val.as_object();
         for (const auto& [key, value] : tasks_obj)
         {
-            const auto     task_guid = MakeDasGuid(std::string(key));
+            const auto task_guid = MakeDasGuid(std::string(key));
+            auto       task_obj = value.as_object();
+            if (!task_obj)
+            {
+                continue;
+            }
             TaskDescriptor desc;
-            ParseTaskDescriptorFromJson(value, desc);
+            ParseTaskDescriptorFromJson(*task_obj, desc);
             output.task_descriptors.emplace(task_guid, std::move(desc));
         }
     }

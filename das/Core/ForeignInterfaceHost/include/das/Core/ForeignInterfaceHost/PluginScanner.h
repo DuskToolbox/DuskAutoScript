@@ -1,6 +1,7 @@
 #ifndef DAS_CORE_FOREIGNINTERFACEHOST_PLUGINSCANNER_H
 #define DAS_CORE_FOREIGNINTERFACEHOST_PLUGINSCANNER_H
 
+#include <cassert>
 #include <cpp_yyjson.hpp>
 #include <das/Core/ForeignInterfaceHost/Config.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>

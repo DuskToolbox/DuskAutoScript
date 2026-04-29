@@ -1,6 +1,7 @@
 #ifndef DAS_CORE_FOREIGNINTERFACEHOST_FOREIGNINTERFACEHOST_H
 #define DAS_CORE_FOREIGNINTERFACEHOST_FOREIGNINTERFACEHOST_H
 
+#include <cassert>
 #include <cpp_yyjson.hpp>
 #include <das/Core/ForeignInterfaceHost/Config.h>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
@@ -74,8 +75,8 @@ struct PluginSettingDesc
 };
 
 void ParsePluginSettingDescFromJson(
-    const yyjson::writer::detail::value& input,
-    PluginSettingDesc&                   output);
+    const yyjson::writer::detail::const_object_ref& input,
+    PluginSettingDesc&                              output);
 
 /**
  * @brief Plugin-GUID-keyed settings descriptor group.
@@ -90,7 +91,7 @@ struct PluginSettingsGroup
 };
 
 void ParsePluginSettingsGroupFromJson(
-    const yyjson::writer::detail::value&              input,
+    const yyjson::writer::detail::const_object_ref&   input,
     std::unordered_map<DasGuid, PluginSettingsGroup>& output);
 
 /**
@@ -107,8 +108,8 @@ struct TaskDescriptor
 };
 
 void ParseTaskDescriptorFromJson(
-    const yyjson::writer::detail::value& input,
-    TaskDescriptor&                      output);
+    const yyjson::writer::detail::const_object_ref& input,
+    TaskDescriptor&                                 output);
 
 struct PluginPackageDesc
 {
@@ -143,15 +144,14 @@ struct PluginPackageDesc
     std::shared_ptr<SettingsJson> settings_json_ =
         std::make_shared<SettingsJson>();
     DasReadOnlyStringWrapper      settings_desc_json;
-    yyjson::writer::detail::value default_settings =
-        yyjson::writer::detail::value{yyjson::construct_object_type_t{}};
+    yyjson::writer::detail::value default_settings;
     boost::signals2::signal<void(std::shared_ptr<SettingsJson>)>
         on_settings_changed{};
 };
 
 void ParsePluginPackageDescFromJson(
-    const yyjson::writer::detail::value& input,
-    PluginPackageDesc&                   output);
+    const yyjson::writer::detail::const_object_ref& input,
+    PluginPackageDesc&                              output);
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
 

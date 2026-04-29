@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cassert>
 #include <cpp_yyjson.hpp>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/IDasCaptureManagerImpl.h>
@@ -236,10 +237,14 @@ DasResult PluginManagerServiceImpl::ScanInstalledPlugins(
 
     auto descs = ScanPlugins(plugin_dir_);
 
-    yyjson::writer::detail::value arr(yyjson::construct_array_type_t{});
+    auto arr = Das::Utils::MakeYyjsonArray();
+    auto arr_ref = arr.as_array();
     for (const auto& desc : descs)
     {
-        arr.push_back(PluginPackageDescToJson(desc));
+        if (arr_ref)
+        {
+            arr_ref->emplace_back(PluginPackageDescToJson(desc));
+        }
     }
 
     using Das::Core::Utils::CreateDasJsonFromYyjson;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cassert>
 #include <chrono>
 #include <condition_variable>
 #include <cpp_yyjson.hpp>

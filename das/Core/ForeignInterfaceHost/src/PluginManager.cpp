@@ -205,7 +205,12 @@ DasResult PluginManager::LoadPlugin(
                             | yyjson::ReadFlag::AllowTrailingCommas);
                     if (parsed)
                     {
-                        ParsePluginPackageDescFromJson(*parsed, *desc);
+                        const auto& const_val = *parsed;
+                        auto        obj = const_val.as_object();
+                        if (obj)
+                        {
+                            ParsePluginPackageDescFromJson(*obj, *desc);
+                        }
                     }
                     else
                     {

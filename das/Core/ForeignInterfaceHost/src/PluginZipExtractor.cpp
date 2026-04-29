@@ -1,5 +1,6 @@
 #include <das/Core/ForeignInterfaceHost/PluginZipExtractor.h>
 
+#include <cassert>
 #include <cpp_yyjson.hpp>
 #include <das/Core/ForeignInterfaceHost/PluginScanner.h>
 #include <das/Core/Logger/Logger.h>
@@ -506,11 +507,15 @@ DasResult InstallPlugin(
                     auto parsed = Das::Utils::ParseYyjsonFromString(file_data);
                     if (parsed)
                     {
-                        auto name_val = (*parsed)[std::string_view("name")];
-                        auto name_opt = name_val.as_string();
-                        if (name_opt)
+                        auto obj = parsed->as_object();
+                        if (obj)
                         {
-                            auto_prefix = std::string(*name_opt) + "/";
+                            auto name_val = (*obj)[std::string_view("name")];
+                            auto name_opt = name_val.as_string();
+                            if (name_opt)
+                            {
+                                auto_prefix = std::string(*name_opt) + "/";
+                            }
                         }
                     }
                 }
@@ -778,9 +783,17 @@ DasResult ReadPluginManifestMetadataFromZip(
                 continue;
             }
 
-            auto& json_data = *parsed;
+            auto obj = parsed->as_object();
+            if (!obj)
+            {
+                DAS_CORE_LOG_WARN(
+                    "ReadPluginManifestMetadataFromZip: manifest is not an object "
+                    "for {}",
+                    meta->filename);
+                continue;
+            }
 
-            auto guid_val = json_data[std::string_view("guid")];
+            auto guid_val = (*obj)[std::string_view("guid")];
             if (!guid_val.is_null() && guid_val.is_string())
             {
                 auto guid_opt = guid_val.as_string();
@@ -789,7 +802,7 @@ DasResult ReadPluginManifestMetadataFromZip(
                     out_guid = std::string(*guid_opt);
                 }
             }
-            auto name_val = json_data[std::string_view("name")];
+            auto name_val = (*obj)[std::string_view("name")];
             if (!name_val.is_null() && name_val.is_string())
             {
                 auto name_opt = name_val.as_string();

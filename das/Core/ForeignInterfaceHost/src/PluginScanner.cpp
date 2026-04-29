@@ -97,8 +97,17 @@ std::vector<PluginPackageDesc> ScanPlugins(
                         manifest_path.string());
                     continue;
                 }
+                const auto& const_val = *parsed;
+                auto        obj = const_val.as_object();
+                if (!obj)
+                {
+                    DAS_CORE_LOG_WARN(
+                        "Failed to parse manifest {}: not an object",
+                        manifest_path.string());
+                    continue;
+                }
                 PluginPackageDesc desc;
-                ParsePluginPackageDescFromJson(*parsed, desc);
+                ParsePluginPackageDescFromJson(*obj, desc);
                 result.push_back(std::move(desc));
             }
             catch (const std::exception& e)
@@ -141,8 +150,14 @@ std::vector<PluginPackageDesc> ScanPlugins(
                 {
                     continue;
                 }
+                const auto& const_val = *parsed;
+                auto        obj = const_val.as_object();
+                if (!obj)
+                {
+                    continue;
+                }
                 PluginPackageDesc desc;
-                ParsePluginPackageDescFromJson(*parsed, desc);
+                ParsePluginPackageDescFromJson(*obj, desc);
 
                 // Verify companion plugin binary exists
                 auto plugin_file =
@@ -245,7 +260,12 @@ void CleanupMarkedPlugins(const std::filesystem::path& plugin_dir)
                     if (parsed)
                     {
                         PluginPackageDesc desc;
-                        ParsePluginPackageDescFromJson(*parsed, desc);
+                        const auto&       const_val = *parsed;
+                        auto              obj = const_val.as_object();
+                        if (obj)
+                        {
+                            ParsePluginPackageDescFromJson(*obj, desc);
+                        }
 
                         auto plugin_file = plugin_dir
                                            / (desc.name + "."
@@ -310,20 +330,28 @@ DasResult MarkForDeletion(
 yyjson::writer::detail::value PluginPackageDescToJson(
     const PluginPackageDesc& desc)
 {
-    yyjson::writer::detail::value j(yyjson::construct_object_type_t{});
-    j[std::string_view("name")] = desc.name;
-    j[std::string_view("description")] = desc.description;
-    j[std::string_view("author")] = desc.author;
-    j[std::string_view("version")] = desc.version;
-    j[std::string_view("guid")] = desc.guid;
-    j[std::string_view("supportedSystem")] = desc.supported_system;
-    j[std::string_view("language")] = static_cast<std::int64_t>(desc.language);
-    j[std::string_view("pluginFilenameExtension")] =
+    auto j = Das::Utils::MakeYyjsonObject();
+    auto obj = j.as_object();
+    if (!obj)
+    {
+        return j;
+    }
+    (*obj)[std::string_view("name")] = desc.name;
+    (*obj)[std::string_view("description")] = desc.description;
+    (*obj)[std::string_view("author")] = desc.author;
+    (*obj)[std::string_view("version")] = desc.version;
+    (*obj)[std::string_view("guid")] =
+        Das::Core::ForeignInterfaceHost::DasGuidToStdString(desc.guid);
+    (*obj)[std::string_view("supportedSystem")] = desc.supported_system;
+    (*obj)[std::string_view("language")] =
+        static_cast<std::int64_t>(desc.language);
+    (*obj)[std::string_view("pluginFilenameExtension")] =
         desc.plugin_filename_extension;
 
     if (desc.opt_resource_path.has_value())
     {
-        j[std::string_view("resourcePath")] = desc.opt_resource_path.value();
+        (*obj)[std::string_view("resourcePath")] =
+            desc.opt_resource_path.value();
     }
 
     return j;

@@ -1,16 +1,19 @@
 #ifndef DAS_CORE_I18N_I18N_H
 #define DAS_CORE_I18N_I18N_H
 
+#include <cassert>
+#include <cpp_yyjson.hpp>
 #include <das/Core/Exceptions/TypeError.h>
 #include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/i18n/Config.h>
 #include <das/Utils/CommonUtils.hpp>
+#include <das/Utils/DasJsonCore.h>
 #include <das/Utils/StreamUtils.hpp>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <map>
-#include <nlohmann/json.hpp>
 #include <string>
 #include <unordered_map>
 
@@ -106,29 +109,77 @@ public:
             ifs,
             std::ios::badbit | std::ios::failbit,
             [&json_path](auto& stream) { stream.open(json_path); });
-        const auto json = ::nlohmann::json::parse(ifs);
-        *this = I18n{json};
+        std::string content(
+            (std::istreambuf_iterator<char>(ifs)),
+            std::istreambuf_iterator<char>());
+        auto parsed = Das::Utils::ParseYyjsonFromString(content);
+        if (!parsed)
+        {
+            DAS_CORE_LOG_ERROR(
+                "Failed to parse i18n JSON: {}",
+                json_path.string());
+            return;
+        }
+        ParseFromYyjsonValue(*parsed);
     }
-    explicit I18n(const nlohmann::json& json)
+    explicit I18n(const yyjson::writer::detail::value& json)
     {
-        const auto type = json.at("type").get<ExportInterface::DasType>();
+        ParseFromYyjsonValue(json);
+    }
+
+    void ParseFromYyjsonValue(const yyjson::writer::detail::value& json)
+    {
+        auto obj = json.as_object();
+        if (!obj)
+        {
+            DAS_CORE_LOG_ERROR(
+                "Failed to parse i18n: JSON root is not an object");
+            return;
+        }
+        auto type_val = (*obj)[std::string_view("type")];
+        auto type_opt = type_val.as_sint();
+        if (!type_opt)
+        {
+            DAS_CORE_LOG_ERROR(
+                "Failed to parse i18n: missing or invalid 'type' field");
+            return;
+        }
+        const auto type = static_cast<ExportInterface::DasType>(*type_opt);
         // NOTE: If T changes, we need to add code to handle this situation.
         Details::CheckInput<T>(type);
         const auto string_to_number_converter = Details::GetConverter<T>();
-        for (const auto& [locale_name, i18n_resource] :
-             json.at("resource").items())
+
+        auto resource_val = (*obj)[std::string_view("resource")];
+        if (resource_val.is_null() || !resource_val.is_object())
+        {
+            DAS_CORE_LOG_ERROR(
+                "Failed to parse i18n: missing or invalid 'resource' field");
+            return;
+        }
+        auto resource_obj = *resource_val.as_object();
+        for (const auto& [locale_name, i18n_resource] : resource_obj)
         {
             TranslateItemMap<T, DasReadOnlyStringWrapper> tmp_map{};
+            if (!i18n_resource.is_object())
+            {
+                continue;
+            }
+            auto resource_inner = *i18n_resource.as_object();
             for (const auto& [error_code_string, error_message] :
-                 i18n_resource.items())
+                 resource_inner)
             {
                 T    error_code = string_to_number_converter(error_code_string);
-                auto error_message_string =
-                    error_message.template get<DasReadOnlyStringWrapper>();
-                tmp_map.emplace(std::make_pair(error_code, error_message));
+                auto opt_str = error_message.as_string();
+                if (opt_str)
+                {
+                    DasReadOnlyStringWrapper wrapper{std::string(*opt_str)};
+                    tmp_map.emplace(error_code, std::move(wrapper));
+                }
             }
-            translate_resource_[{DAS_FULL_RANGE_OF(locale_name)}] =
-                std::move(tmp_map);
+            std::u8string locale_key(
+                reinterpret_cast<const char8_t*>(locale_name.data()),
+                locale_name.size());
+            translate_resource_[std::move(locale_key)] = std::move(tmp_map);
         }
         SetDefaultLocale(u8"en");
     }
@@ -157,8 +208,8 @@ public:
     }
     std::u8string GetDefaultLocale() const { return default_locale_; }
     DasResult     GetErrorMessage(
-            const T&             result,
-            IDasReadOnlyString** pp_out_error_explanation) const
+        const T&             result,
+        IDasReadOnlyString** pp_out_error_explanation) const
     {
         if (pp_out_error_explanation == nullptr)
         {

@@ -1,5 +1,6 @@
 #include <das/Core/ForeignInterfaceHost/PluginResourceIndex.h>
 
+#include <cassert>
 #include <cpp_yyjson.hpp>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
@@ -223,7 +224,12 @@ DasResult PluginResourceIndex::ScanAndPublish()
             auto parsed = Das::Utils::ParseYyjsonFromString(content);
             if (parsed)
             {
-                ParsePluginPackageDescFromJson(*parsed, desc);
+                const auto& const_val = *parsed;
+                auto        obj = const_val.as_object();
+                if (obj)
+                {
+                    ParsePluginPackageDescFromJson(*obj, desc);
+                }
             }
             else
             {
