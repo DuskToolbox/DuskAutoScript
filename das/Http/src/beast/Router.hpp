@@ -2,10 +2,10 @@
 #define DAS_HTTP_BEAST_ROUTER_HPP
 
 #include "Request.hpp"
+#include <cpp_yyjson.hpp>
 #include <das/IDasBase.h>
 #include <functional>
 #include <memory>
-#include <nlohmann/json.hpp>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -202,11 +202,12 @@ namespace Das::Http::Beast
             }
 
             // 未找到路由
-            HttpResponse   response(http::status::not_found);
-            nlohmann::json body;
-            body["Code"] = DAS_E_FILE_NOT_FOUND;
-            body["Message"] = "Route not found";
-            body["Data"] = nullptr;
+            HttpResponse                  response(http::status::not_found);
+            yyjson::writer::detail::value body(
+                yyjson::construct_object_type_t{});
+            body["Code"] = static_cast<int64_t>(DAS_E_FILE_NOT_FOUND);
+            body["Message"] = std::string("Route not found");
+            body["Data"] = yyjson::writer::detail::value{};
             response.SetBody(body);
             return response;
         }

@@ -1,12 +1,14 @@
 #ifndef DAS_HTTP_BEAST_REQUEST_HPP
 #define DAS_HTTP_BEAST_REQUEST_HPP
 
+#include "JsonUtils.hpp"
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/beast/version.hpp>
+#include <cpp_yyjson.hpp>
 #include <das/IDasBase.h>
+#include <das/Utils/DasJsonCore.h>
 #include <map>
-#include <nlohmann/json.hpp>
 #include <string>
 
 namespace Das::Http::Beast
@@ -38,7 +40,10 @@ namespace Das::Http::Beast
 
         const std::string& Body() const noexcept { return request_.body(); }
 
-        const nlohmann::json& JsonBody() const noexcept { return json_body_; }
+        const yyjson::writer::detail::value& JsonBody() const noexcept
+        {
+            return json_body_;
+        }
 
         const request_type& RawRequest() const noexcept { return request_; }
 
@@ -72,22 +77,22 @@ namespace Das::Http::Beast
     private:
         void ParseBody()
         {
-            try
+            if (!request_.body().empty())
             {
-                if (!request_.body().empty())
+                auto parsed =
+                    Das::Utils::ParseYyjsonFromString(request_.body());
+                if (parsed)
                 {
-                    json_body_ = nlohmann::json::parse(request_.body());
+                    json_body_ = std::move(parsed.value());
+                    return;
                 }
             }
-            catch (const nlohmann::json::exception&)
-            {
-                // JSON解析失败，json_body_为空对象
-                json_body_ = nlohmann::json::object();
-            }
+            json_body_ = yyjson::writer::detail::value(
+                yyjson::construct_object_type_t{});
         }
 
         request_type                               request_;
-        nlohmann::json                             json_body_;
+        yyjson::writer::detail::value              json_body_;
         mutable std::map<std::string, std::string> path_params_;
     };
 
@@ -112,10 +117,14 @@ namespace Das::Http::Beast
             response_.content_length(body.size());
         }
 
-        void SetBody(const nlohmann::json& json)
+        void SetBody(const yyjson::writer::detail::value& json)
         {
-            response_.body() = json.dump();
-            response_.content_length(response_.body().size());
+            auto opt_str = Das::Utils::SerializeYyjsonValue(json);
+            if (opt_str)
+            {
+                response_.body() = std::move(opt_str.value());
+                response_.content_length(response_.body().size());
+            }
         }
 
         void SetHeader(const std::string& name, const std::string& value)
@@ -129,38 +138,32 @@ namespace Das::Http::Beast
             DasResult          error_code,
             const std::string& message)
         {
-            HttpResponse   response;
-            nlohmann::json body;
-            body["Code"] = error_code;
-            body["Message"] = message;
-            body["Data"] = nullptr;
-            response.SetBody(body);
+            HttpResponse response;
+            auto         json_body =
+                JsonUtils::CreateErrorResponse(error_code, message);
+            response.SetBody(json_body);
             return response;
         }
 
         static HttpResponse CreateSuccessResponse(
-            const nlohmann::json& data = nullptr)
+            const yyjson::writer::detail::value& data = {})
         {
-            HttpResponse   response;
-            nlohmann::json body;
-            body["Code"] = DAS_S_OK;
-            body["Message"] = "";
-            body["Data"] = data;
-            response.SetBody(body);
+            HttpResponse response;
+            auto         json_body = JsonUtils::CreateSuccessResponse(data);
+            response.SetBody(json_body);
             return response;
         }
 
         static HttpResponse CreateSuccessResponse(
-            DasResult             code,
-            const std::string&    message,
-            const nlohmann::json& data = nullptr)
+            DasResult                            code,
+            const std::string&                   message,
+            const yyjson::writer::detail::value& data = {})
         {
-            HttpResponse   response;
-            nlohmann::json body;
-            body["Code"] = code;
-            body["Message"] = message;
-            body["Data"] = data;
-            response.SetBody(body);
+            HttpResponse response;
+            auto         json_body = JsonUtils::CreateSuccessResponse(data);
+            json_body["Code"] = static_cast<int64_t>(code);
+            json_body["Message"] = std::string{message};
+            response.SetBody(json_body);
             return response;
         }
 
