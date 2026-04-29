@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cassert>
 #include <cpp_yyjson.hpp>
 #include <das/IDasSettingsService.h>
 #include <das/Utils/DasJsonCore.h>

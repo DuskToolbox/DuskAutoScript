@@ -1,7 +1,7 @@
 #pragma once
 
+#include <cassert>
 #include <cpp_yyjson.hpp>
-#include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
@@ -15,7 +15,6 @@ namespace Das::Http
 {
 
     using namespace Das::ExportInterface;
-    using Das::Utils::ToU8StringWithoutOwnership;
 
     // ToDasType removed — use Das::Utils::YyjsonValueToDasType instead.
 
@@ -34,8 +33,7 @@ namespace Das::Http
             auto parsed = Das::Utils::ParseYyjsonFromString(json_string);
             if (!parsed)
             {
-                json_ = yyjson::writer::detail::value(
-                    yyjson::construct_object_type_t{});
+                json_ = yyjson::writer::detail::object{};
             }
             else
             {
@@ -51,10 +49,11 @@ namespace Das::Http
             DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(key)
             DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_out_int)
 
-            const auto expected = ToU8StringWithoutOwnership(key);
-            if (!expected)
+            const char* key_str = nullptr;
+            auto        cr = key->GetUtf8(&key_str);
+            if (DAS::IsFailed(cr))
             {
-                return expected.error();
+                return cr;
             }
 
             auto obj_opt = json_.as_object();
@@ -63,7 +62,7 @@ namespace Das::Http
                 return DAS_E_NOT_FOUND;
             }
             const auto& obj = obj_opt.value();
-            auto        it = obj.find(expected.value());
+            auto        it = obj.find(key_str);
             if (it == obj.end())
             {
                 return DAS_E_NOT_FOUND;
@@ -84,10 +83,11 @@ namespace Das::Http
             DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(key)
             DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_out_float)
 
-            const auto expected = ToU8StringWithoutOwnership(key);
-            if (!expected)
+            const char* key_str = nullptr;
+            auto        cr = key->GetUtf8(&key_str);
+            if (DAS::IsFailed(cr))
             {
-                return expected.error();
+                return cr;
             }
 
             auto obj_opt = json_.as_object();
@@ -96,7 +96,7 @@ namespace Das::Http
                 return DAS_E_NOT_FOUND;
             }
             const auto& obj = obj_opt.value();
-            auto        it = obj.find(expected.value());
+            auto        it = obj.find(key_str);
             if (it == obj.end())
             {
                 return DAS_E_NOT_FOUND;
@@ -118,10 +118,11 @@ namespace Das::Http
             DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(key)
             DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(pp_out_string)
 
-            const auto expected = ToU8StringWithoutOwnership(key);
-            if (!expected)
+            const char* key_str = nullptr;
+            auto        cr = key->GetUtf8(&key_str);
+            if (DAS::IsFailed(cr))
             {
-                return expected.error();
+                return cr;
             }
 
             auto obj_opt = json_.as_object();
@@ -130,7 +131,7 @@ namespace Das::Http
                 return DAS_E_NOT_FOUND;
             }
             const auto& obj = obj_opt.value();
-            auto        it = obj.find(expected.value());
+            auto        it = obj.find(key_str);
             if (it == obj.end())
             {
                 return DAS_E_NOT_FOUND;
@@ -154,10 +155,11 @@ namespace Das::Http
             DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(key)
             DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_out_bool)
 
-            const auto expected = ToU8StringWithoutOwnership(key);
-            if (!expected)
+            const char* key_str = nullptr;
+            auto        cr = key->GetUtf8(&key_str);
+            if (DAS::IsFailed(cr))
             {
-                return expected.error();
+                return cr;
             }
 
             auto obj_opt = json_.as_object();
@@ -166,7 +168,7 @@ namespace Das::Http
                 return DAS_E_NOT_FOUND;
             }
             const auto& obj = obj_opt.value();
-            auto        it = obj.find(expected.value());
+            auto        it = obj.find(key_str);
             if (it == obj.end())
             {
                 return DAS_E_NOT_FOUND;
@@ -188,10 +190,11 @@ namespace Das::Http
             DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(key)
             DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(pp_out_das_json)
 
-            const auto expected = ToU8StringWithoutOwnership(key);
-            if (!expected)
+            const char* key_str = nullptr;
+            auto        cr = key->GetUtf8(&key_str);
+            if (DAS::IsFailed(cr))
             {
-                return expected.error();
+                return cr;
             }
 
             auto obj_opt = json_.as_object();
@@ -200,7 +203,7 @@ namespace Das::Http
                 return DAS_E_NOT_FOUND;
             }
             const auto& obj = obj_opt.value();
-            auto        it = obj.find(expected.value());
+            auto        it = obj.find(key_str);
             if (it == obj.end())
             {
                 return DAS_E_NOT_FOUND;
@@ -231,16 +234,16 @@ namespace Das::Http
         {
             DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(key)
 
-            const auto expected = ToU8StringWithoutOwnership(key);
-            if (!expected)
+            const char* key_str = nullptr;
+            auto        cr = key->GetUtf8(&key_str);
+            if (DAS::IsFailed(cr))
             {
-                return expected.error();
+                return cr;
             }
 
             if (json_.is_null())
             {
-                json_ = yyjson::writer::detail::value(
-                    yyjson::construct_object_type_t{});
+                json_ = yyjson::writer::detail::object{};
             }
 
             auto obj_opt = json_.as_object();
@@ -249,7 +252,7 @@ namespace Das::Http
                 return DAS_E_TYPE_ERROR;
             }
             auto& obj = obj_opt.value();
-            obj[expected.value()] = in_int;
+            obj[key_str] = in_int;
             return DAS_S_OK;
         }
 
@@ -258,16 +261,16 @@ namespace Das::Http
         {
             DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(key)
 
-            const auto expected = ToU8StringWithoutOwnership(key);
-            if (!expected)
+            const char* key_str = nullptr;
+            auto        cr = key->GetUtf8(&key_str);
+            if (DAS::IsFailed(cr))
             {
-                return expected.error();
+                return cr;
             }
 
             if (json_.is_null())
             {
-                json_ = yyjson::writer::detail::value(
-                    yyjson::construct_object_type_t{});
+                json_ = yyjson::writer::detail::object{};
             }
 
             auto obj_opt = json_.as_object();
@@ -276,7 +279,7 @@ namespace Das::Http
                 return DAS_E_TYPE_ERROR;
             }
             auto& obj = obj_opt.value();
-            obj[expected.value()] = in_float;
+            obj[key_str] = in_float;
             return DAS_S_OK;
         }
 
@@ -287,21 +290,23 @@ namespace Das::Http
             DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(key)
             DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_in_string)
 
-            const auto expected_key = ToU8StringWithoutOwnership(key);
-            if (!expected_key)
+            const char* key_str = nullptr;
+            auto        cr = key->GetUtf8(&key_str);
+            if (DAS::IsFailed(cr))
             {
-                return expected_key.error();
+                return cr;
             }
-            const auto expected_value = ToU8StringWithoutOwnership(p_in_string);
-            if (!expected_value)
+
+            const char* value_str = nullptr;
+            cr = p_in_string->GetUtf8(&value_str);
+            if (DAS::IsFailed(cr))
             {
-                return expected_value.error();
+                return cr;
             }
 
             if (json_.is_null())
             {
-                json_ = yyjson::writer::detail::value(
-                    yyjson::construct_object_type_t{});
+                json_ = yyjson::writer::detail::object{};
             }
 
             auto obj_opt = json_.as_object();
@@ -310,7 +315,7 @@ namespace Das::Http
                 return DAS_E_TYPE_ERROR;
             }
             auto& obj = obj_opt.value();
-            obj[expected_key.value()] = expected_value.value();
+            obj[key_str] = std::string(value_str);
             return DAS_S_OK;
         }
 
@@ -318,16 +323,16 @@ namespace Das::Http
         {
             DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(key)
 
-            const auto expected = ToU8StringWithoutOwnership(key);
-            if (!expected)
+            const char* key_str = nullptr;
+            auto        cr = key->GetUtf8(&key_str);
+            if (DAS::IsFailed(cr))
             {
-                return expected.error();
+                return cr;
             }
 
             if (json_.is_null())
             {
-                json_ = yyjson::writer::detail::value(
-                    yyjson::construct_object_type_t{});
+                json_ = yyjson::writer::detail::object{};
             }
 
             auto obj_opt = json_.as_object();
@@ -336,7 +341,7 @@ namespace Das::Http
                 return DAS_E_TYPE_ERROR;
             }
             auto& obj = obj_opt.value();
-            obj[expected.value()] = in_bool;
+            obj[key_str] = in_bool;
             return DAS_S_OK;
         }
 
@@ -347,10 +352,11 @@ namespace Das::Http
             DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(key)
             DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_in_das_json)
 
-            const auto expected_key = ToU8StringWithoutOwnership(key);
-            if (!expected_key)
+            const char* key_str = nullptr;
+            auto        cr = key->GetUtf8(&key_str);
+            if (DAS::IsFailed(cr))
             {
-                return expected_key.error();
+                return cr;
             }
 
             DasPtr<IDasReadOnlyString> p_json_str;
@@ -361,15 +367,14 @@ namespace Das::Http
                 return to_string_result;
             }
 
-            const auto expected_value =
-                ToU8StringWithoutOwnership(p_json_str.Get());
-            if (!expected_value)
+            const char* value_str = nullptr;
+            cr = p_json_str->GetUtf8(&value_str);
+            if (DAS::IsFailed(cr))
             {
-                return expected_value.error();
+                return cr;
             }
 
-            auto parsed =
-                Das::Utils::ParseYyjsonFromString(expected_value.value());
+            auto parsed = Das::Utils::ParseYyjsonFromString(value_str);
             if (!parsed)
             {
                 return DAS_E_INVALID_JSON;
@@ -377,8 +382,7 @@ namespace Das::Http
 
             if (json_.is_null())
             {
-                json_ = yyjson::writer::detail::value(
-                    yyjson::construct_object_type_t{});
+                json_ = yyjson::writer::detail::object{};
             }
 
             auto obj_opt = json_.as_object();
@@ -387,7 +391,7 @@ namespace Das::Http
                 return DAS_E_TYPE_ERROR;
             }
             auto& obj = obj_opt.value();
-            obj[expected_key.value()] = std::move(parsed.value());
+            obj[key_str] = std::move(parsed.value());
             return DAS_S_OK;
         }
 
@@ -537,12 +541,12 @@ namespace Das::Http
             {
                 return DAS_E_TYPE_ERROR;
             }
-            const auto& arr = arr_opt.value();
+            auto& arr = arr_opt.value();
             if (index >= arr.size())
             {
                 return DAS_E_OUT_OF_RANGE;
             }
-            json_[index] = in_int;
+            arr[index] = in_int;
             return DAS_S_OK;
         }
 
@@ -553,12 +557,12 @@ namespace Das::Http
             {
                 return DAS_E_TYPE_ERROR;
             }
-            const auto& arr = arr_opt.value();
+            auto& arr = arr_opt.value();
             if (index >= arr.size())
             {
                 return DAS_E_OUT_OF_RANGE;
             }
-            json_[index] = in_float;
+            arr[index] = in_float;
             return DAS_S_OK;
         }
 
@@ -572,19 +576,20 @@ namespace Das::Http
             {
                 return DAS_E_TYPE_ERROR;
             }
-            const auto& arr = arr_opt.value();
+            auto& arr = arr_opt.value();
             if (index >= arr.size())
             {
                 return DAS_E_OUT_OF_RANGE;
             }
 
-            const auto expected = ToU8StringWithoutOwnership(p_in_string);
-            if (!expected)
+            const char* value_str = nullptr;
+            auto        cr = p_in_string->GetUtf8(&value_str);
+            if (DAS::IsFailed(cr))
             {
-                return expected.error();
+                return cr;
             }
 
-            json_[index] = expected.value();
+            arr[index] = std::string(value_str);
             return DAS_S_OK;
         }
 
@@ -595,12 +600,12 @@ namespace Das::Http
             {
                 return DAS_E_TYPE_ERROR;
             }
-            const auto& arr = arr_opt.value();
+            auto& arr = arr_opt.value();
             if (index >= arr.size())
             {
                 return DAS_E_OUT_OF_RANGE;
             }
-            json_[index] = in_bool;
+            arr[index] = in_bool;
             return DAS_S_OK;
         }
 
@@ -614,7 +619,7 @@ namespace Das::Http
             {
                 return DAS_E_TYPE_ERROR;
             }
-            const auto& arr = arr_opt.value();
+            auto& arr = arr_opt.value();
             if (index >= arr.size())
             {
                 return DAS_E_OUT_OF_RANGE;
@@ -628,21 +633,20 @@ namespace Das::Http
                 return to_string_result;
             }
 
-            const auto expected_value =
-                ToU8StringWithoutOwnership(p_json_str.Get());
-            if (!expected_value)
+            const char* value_str = nullptr;
+            auto        cr = p_json_str->GetUtf8(&value_str);
+            if (DAS::IsFailed(cr))
             {
-                return expected_value.error();
+                return cr;
             }
 
-            auto parsed =
-                Das::Utils::ParseYyjsonFromString(expected_value.value());
+            auto parsed = Das::Utils::ParseYyjsonFromString(value_str);
             if (!parsed)
             {
                 return DAS_E_INVALID_JSON;
             }
 
-            json_[index] = std::move(parsed.value());
+            arr[index] = std::move(parsed.value());
             return DAS_S_OK;
         }
 
@@ -654,10 +658,11 @@ namespace Das::Http
             DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(key)
             DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_out_type)
 
-            const auto expected = ToU8StringWithoutOwnership(key);
-            if (!expected)
+            const char* key_str = nullptr;
+            auto        cr = key->GetUtf8(&key_str);
+            if (DAS::IsFailed(cr))
             {
-                return expected.error();
+                return cr;
             }
 
             auto obj_opt = json_.as_object();
@@ -667,7 +672,7 @@ namespace Das::Http
                 return DAS_S_OK;
             }
             const auto& obj = obj_opt.value();
-            auto        it = obj.find(expected.value());
+            auto        it = obj.find(key_str);
             if (it == obj.end())
             {
                 *p_out_type = DAS_TYPE_NULL;
@@ -742,8 +747,7 @@ namespace Das::Http
 
         DAS_IMPL Clear() override
         {
-            json_ = yyjson::writer::detail::value(
-                yyjson::construct_object_type_t{});
+            json_ = yyjson::writer::detail::object{};
             return DAS_S_OK;
         }
 
