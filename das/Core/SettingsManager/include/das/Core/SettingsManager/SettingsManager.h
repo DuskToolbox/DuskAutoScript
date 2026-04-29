@@ -1,6 +1,7 @@
 #ifndef DAS_CORE_SETTINGS_MANAGER_SETTINGS_MANAGER_H
 #define DAS_CORE_SETTINGS_MANAGER_SETTINGS_MANAGER_H
 
+#include <cassert>
 #include <cpp_yyjson.hpp>
 #include <das/Core/SettingsManager/Config.h>
 #include <das/DasExport.h>

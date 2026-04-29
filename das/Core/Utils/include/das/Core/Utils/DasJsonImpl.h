@@ -2,6 +2,7 @@
 #define DAS_CORE_UTILS_DASJSONIMPL_H
 
 #include <boost/signals2.hpp>
+#include <cassert>
 #include <cpp_yyjson.hpp>
 #include <das/Core/Utils/Config.h>
 #include <das/Utils/DasJsonCore.h>
