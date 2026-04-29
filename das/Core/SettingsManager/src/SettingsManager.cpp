@@ -4,60 +4,79 @@
 
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <utility>
 
 DAS_CORE_SETTINGS_MANAGER_NS_BEGIN
 
 namespace
 {
-    nlohmann::json* ResolveDotPath(
-        nlohmann::json&    root,
-        const std::string& path)
+    /// Navigate a dot-separated path in a yyjson value tree.
+    /// Returns nullopt if any intermediate key is missing.
+    std::optional<yyjson::writer::detail::const_value_ref> ResolveDotPath(
+        const yyjson::writer::detail::value& root,
+        const std::string&                   path)
     {
-        nlohmann::json* current = &root;
-        size_t          start = 0;
-        size_t          end = path.find('.');
+        auto obj_opt = root.as_object();
+        if (!obj_opt)
+        {
+            return std::nullopt;
+        }
+
+        yyjson::writer::detail::const_object_ref obj = *obj_opt;
+        size_t                                   start = 0;
+        size_t                                   end = path.find('.');
         while (end != std::string::npos)
         {
             auto key = path.substr(start, end - start);
-            if (!current->contains(key))
+            if (!obj.contains(std::string_view(key)))
             {
-                return nullptr;
+                return std::nullopt;
             }
-            current = &(*current)[key];
+            auto sub_val = obj[std::string_view(key)];
+            auto sub_obj = sub_val.as_object();
+            if (!sub_obj)
+            {
+                return std::nullopt;
+            }
+            obj = *sub_obj;
             start = end + 1;
             end = path.find('.', start);
         }
         auto key = path.substr(start);
-        if (!current->contains(key))
+        if (!obj.contains(std::string_view(key)))
         {
-            return nullptr;
+            return std::nullopt;
         }
-        return &(*current)[key];
+        return obj[std::string_view(key)];
     }
 
-    nlohmann::json* EnsureDotPath(nlohmann::json& root, const std::string& path)
+    /// Ensure a dot-separated path exists in a mutable yyjson value tree.
+    /// Creates any missing intermediate objects.
+    /// Returns the value at the final key (or creates it if missing).
+    yyjson::writer::detail::value_ref EnsureDotPath(
+        yyjson::writer::detail::value& root,
+        const std::string&             path)
     {
-        nlohmann::json* current = &root;
-        size_t          start = 0;
-        size_t          end = path.find('.');
+        auto obj_opt = root.as_object();
+        // Should always be an object after json::object() init
+        yyjson::writer::detail::object_ref obj = *obj_opt;
+        size_t                             start = 0;
+        size_t                             end = path.find('.');
         while (end != std::string::npos)
         {
             auto key = path.substr(start, end - start);
-            if (!current->contains(key))
+            auto sub_val = obj[std::string_view(key)];
+            if (!sub_val.is_object())
             {
-                (*current)[key] = nlohmann::json::object();
+                sub_val = Das::Utils::MakeYyjsonObject();
             }
-            else if (!(*current)[key].is_object())
-            {
-                (*current)[key] = nlohmann::json::object();
-            }
-            current = &(*current)[key];
+            obj = *sub_val.as_object();
             start = end + 1;
             end = path.find('.', start);
         }
         auto key = path.substr(start);
-        return &(*current)[key];
+        return obj[std::string_view(key)];
     }
 } // namespace
 
@@ -98,17 +117,10 @@ SettingsManager::SettingsManager(const std::filesystem::path& base_dir)
         auto*                               cell = GetOrCreateCell("global/ui");
         std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
         auto                                content = ReadJsonFile(ui_path);
-        try
+        auto parsed = Das::Utils::ParseYyjsonFromString(content);
+        if (parsed)
         {
-            cell->snapshot = nlohmann::json::parse(content);
-        }
-        catch (const nlohmann::json::exception& ex)
-        {
-            DAS_CORE_LOG_EXCEPTION(ex);
-        }
-        catch (const std::bad_alloc& ex)
-        {
-            DAS_CORE_LOG_EXCEPTION(ex);
+            cell->snapshot = std::move(*parsed);
         }
     }
 }
@@ -127,12 +139,15 @@ std::string SettingsManager::ReadJsonFile(const std::filesystem::path& path)
         {
             return "{}";
         }
-        auto json = nlohmann::json::parse(ifs);
-        return json.dump();
-    }
-    catch (const nlohmann::json::exception& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
+        std::stringstream ss;
+        ss << ifs.rdbuf();
+        auto content = ss.str();
+        // Validate by parsing; if OK, re-serialize
+        auto parsed = Das::Utils::ParseYyjsonFromString(content);
+        if (parsed)
+        {
+            return *Das::Utils::SerializeYyjsonValue(*parsed, false);
+        }
         return "{}";
     }
     catch (const std::bad_alloc& ex)
@@ -156,22 +171,27 @@ DasResult SettingsManager::WriteJsonFile(
         auto tmp_path = path;
         tmp_path += ".tmp";
         {
+            auto parsed = Das::Utils::ParseYyjsonFromString(json_str);
+            if (!parsed)
+            {
+                return DAS_E_INVALID_JSON;
+            }
+            auto serialized = Das::Utils::SerializeYyjsonValue(*parsed, true);
+            if (!serialized)
+            {
+                return DAS_E_INVALID_JSON;
+            }
+
             std::ofstream ofs{tmp_path};
             if (!ofs.is_open())
             {
                 return DAS_E_INVALID_FILE;
             }
-            auto json = nlohmann::json::parse(json_str);
-            ofs << json.dump(4);
+            ofs << *serialized;
         }
 
         std::filesystem::rename(tmp_path, path);
         return DAS_S_OK;
-    }
-    catch (const nlohmann::json::exception& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        return DAS_E_INVALID_JSON;
     }
     catch (const std::filesystem::filesystem_error& ex)
     {
@@ -186,8 +206,8 @@ DasResult SettingsManager::WriteJsonFile(
 }
 
 DasResult SettingsManager::WriteJsonFile(
-    const std::filesystem::path& path,
-    const nlohmann::json&        data)
+    const std::filesystem::path&         path,
+    const yyjson::writer::detail::value& data)
 {
     try
     {
@@ -199,12 +219,18 @@ DasResult SettingsManager::WriteJsonFile(
         auto tmp_path = path;
         tmp_path += ".tmp";
         {
+            auto serialized = Das::Utils::SerializeYyjsonValue(data, true);
+            if (!serialized)
+            {
+                return DAS_E_INVALID_JSON;
+            }
+
             std::ofstream ofs{tmp_path};
             if (!ofs.is_open())
             {
                 return DAS_E_INVALID_FILE;
             }
-            ofs << data.dump(4);
+            ofs << *serialized;
         }
 
         std::filesystem::rename(tmp_path, path);
@@ -233,7 +259,9 @@ std::string SettingsManager::GetGlobalSettings()
         std::shared_lock lock(cell->mutex);
         if (!cell->snapshot.is_null())
         {
-            return cell->snapshot.dump();
+            auto serialized =
+                Das::Utils::SerializeYyjsonValue(cell->snapshot, false);
+            return serialized ? *serialized : std::string{};
         }
     }
 
@@ -242,37 +270,26 @@ std::string SettingsManager::GetGlobalSettings()
     // Double-check after upgrade (another thread may have filled it)
     if (!cell->snapshot.is_null())
     {
-        return cell->snapshot.dump();
+        auto serialized =
+            Das::Utils::SerializeYyjsonValue(cell->snapshot, false);
+        return serialized ? *serialized : std::string{};
     }
 
     auto content = ReadJsonFile(base_dir_ / "ui.json");
-    try
+    auto parsed = Das::Utils::ParseYyjsonFromString(content);
+    if (parsed)
     {
-        cell->snapshot = nlohmann::json::parse(content);
-    }
-    catch (const nlohmann::json::exception& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
+        cell->snapshot = std::move(*parsed);
     }
     return content;
 }
 
 DasResult SettingsManager::UpdateGlobalSettings(const std::string& json_str)
 {
-    nlohmann::json parsed;
-    try
+    auto parsed = Das::Utils::ParseYyjsonFromString(json_str);
+    if (!parsed)
     {
-        parsed = nlohmann::json::parse(json_str);
-    }
-    catch (const nlohmann::json::exception& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
         return DAS_E_INVALID_JSON;
-    }
-    catch (const std::bad_alloc& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        return DAS_E_OUT_OF_MEMORY;
     }
 
     auto* cell = GetOrCreateCell("global/ui");
@@ -280,28 +297,32 @@ DasResult SettingsManager::UpdateGlobalSettings(const std::string& json_str)
     // Per-key mutex covers the entire write cycle:
     // snapshot update + WriteJsonFile are both under this mutex
     std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
-    cell->snapshot = parsed;
-    return WriteJsonFile(base_dir_ / "ui.json", parsed);
+    cell->snapshot = *parsed;
+    return WriteJsonFile(base_dir_ / "ui.json", *parsed);
 }
 
 std::string SettingsManager::GetProfileList()
 {
     // No lock needed for read-only directory traversal
-    nlohmann::json profiles = nlohmann::json::array();
+    auto profiles = Das::Utils::MakeYyjsonArray();
 
     try
     {
         if (!std::filesystem::exists(base_dir_))
         {
-            return profiles.dump();
+            auto serialized = Das::Utils::SerializeYyjsonValue(profiles, false);
+            return serialized ? *serialized : std::string{};
         }
 
         for (const auto& entry : std::filesystem::directory_iterator(base_dir_))
         {
             if (entry.is_directory())
             {
-                profiles.push_back(
-                    {{"profileId", entry.path().filename().string()}});
+                auto profile_obj = Das::Utils::MakeYyjsonObject();
+                auto obj_ref = *profile_obj.as_object();
+                obj_ref[std::string_view("profileId")] =
+                    std::string_view(entry.path().filename().string());
+                profiles.as_array()->push_back(std::move(profile_obj));
             }
         }
     }
@@ -310,7 +331,8 @@ std::string SettingsManager::GetProfileList()
         DAS_CORE_LOG_EXCEPTION(ex);
     }
 
-    return profiles.dump();
+    auto serialized = Das::Utils::SerializeYyjsonValue(profiles, false);
+    return serialized ? *serialized : std::string{};
 }
 
 DasResult SettingsManager::CreateProfile(const std::string& profile_id)
@@ -367,30 +389,29 @@ std::string SettingsManager::GetProfile(const std::string& profile_id)
     auto  key = profile_id + "/ui";
     auto* cell = GetOrCreateCell(key);
 
-    // Fast path: shared_lock for concurrent read access
     {
         std::shared_lock lock(cell->mutex);
         if (!cell->snapshot.is_null())
         {
-            return cell->snapshot.dump();
+            auto serialized =
+                Das::Utils::SerializeYyjsonValue(cell->snapshot, false);
+            return serialized ? *serialized : std::string{};
         }
     }
 
-    // Cache miss: acquire unique_lock for file read + snapshot fill
     std::unique_lock<std::shared_mutex> lock(cell->mutex);
     if (!cell->snapshot.is_null())
     {
-        return cell->snapshot.dump();
+        auto serialized =
+            Das::Utils::SerializeYyjsonValue(cell->snapshot, false);
+        return serialized ? *serialized : std::string{};
     }
 
     auto content = ReadJsonFile(GetProfileUiPath(profile_id));
-    try
+    auto parsed = Das::Utils::ParseYyjsonFromString(content);
+    if (parsed)
     {
-        cell->snapshot = nlohmann::json::parse(content);
-    }
-    catch (const nlohmann::json::exception& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
+        cell->snapshot = std::move(*parsed);
     }
     return content;
 }
@@ -399,28 +420,18 @@ DasResult SettingsManager::UpdateProfile(
     const std::string& profile_id,
     const std::string& json_str)
 {
-    nlohmann::json parsed;
-    try
+    auto parsed = Das::Utils::ParseYyjsonFromString(json_str);
+    if (!parsed)
     {
-        parsed = nlohmann::json::parse(json_str);
-    }
-    catch (const nlohmann::json::exception& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
         return DAS_E_INVALID_JSON;
-    }
-    catch (const std::bad_alloc& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        return DAS_E_OUT_OF_MEMORY;
     }
 
     auto  key = profile_id + "/ui";
     auto* cell = GetOrCreateCell(key);
 
     std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
-    cell->snapshot = parsed;
-    return WriteJsonFile(GetProfileUiPath(profile_id), parsed);
+    cell->snapshot = *parsed;
+    return WriteJsonFile(GetProfileUiPath(profile_id), *parsed);
 }
 
 // --- Plugin settings (split file: settings/${pid}/${pluginGuid}.json) ---
@@ -430,7 +441,8 @@ std::string SettingsManager::GetPluginSettings(
     const std::string& guid)
 {
     auto json = GetPluginSettingsJson(profile_id, guid);
-    return json.dump();
+    auto serialized = Das::Utils::SerializeYyjsonValue(json, false);
+    return serialized ? *serialized : std::string{};
 }
 
 DasResult SettingsManager::UpdatePluginSettings(
@@ -438,31 +450,21 @@ DasResult SettingsManager::UpdatePluginSettings(
     const std::string& guid,
     const std::string& json_str)
 {
-    try
+    auto parsed = Das::Utils::ParseYyjsonFromString(json_str);
+    if (!parsed)
     {
-        // Validate JSON before writing
-        auto parsed = nlohmann::json::parse(json_str);
-
-        auto  key = "profile/" + profile_id + "/plugin/" + guid;
-        auto* cell = GetOrCreateCell(key);
-
-        std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
-        cell->snapshot = parsed;
-        return WriteJsonFile(GetPluginSettingsPath(profile_id, guid), parsed);
-    }
-    catch (const nlohmann::json::exception& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
         return DAS_E_INVALID_JSON;
     }
-    catch (const std::bad_alloc& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        return DAS_E_OUT_OF_MEMORY;
-    }
+
+    auto  key = "profile/" + profile_id + "/plugin/" + guid;
+    auto* cell = GetOrCreateCell(key);
+
+    std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
+    cell->snapshot = *parsed;
+    return WriteJsonFile(GetPluginSettingsPath(profile_id, guid), *parsed);
 }
 
-nlohmann::json SettingsManager::GetPluginSettingsJson(
+yyjson::writer::detail::value SettingsManager::GetPluginSettingsJson(
     const std::string& profile_id,
     const std::string& guid)
 {
@@ -486,19 +488,19 @@ nlohmann::json SettingsManager::GetPluginSettingsJson(
     }
 
     auto content = ReadJsonFile(GetPluginSettingsPath(profile_id, guid));
-    try
+    auto parsed = Das::Utils::ParseYyjsonFromString(content);
+    if (parsed)
     {
-        cell->snapshot = nlohmann::json::parse(content);
+        cell->snapshot = std::move(*parsed);
     }
-    catch (const nlohmann::json::exception& ex)
+    else
     {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        cell->snapshot = nlohmann::json::object();
+        cell->snapshot = Das::Utils::MakeYyjsonObject();
     }
     return cell->snapshot;
 }
 
-std::pair<nlohmann::json, DasResult>
+std::pair<yyjson::writer::detail::value, DasResult>
 SettingsManager::GetPluginSettingsWithStatus(
     const std::string& profile_id,
     const std::string& guid)
@@ -516,34 +518,34 @@ SettingsManager::GetPluginSettingsWithStatus(
         DAS_CORE_LOG_WARN(
             "Plugin settings file missing: {}, returning empty defaults",
             path.string());
-        auto defaults = nlohmann::json::object();
+        auto defaults = Das::Utils::MakeYyjsonObject();
         // Persist empty defaults so future reads succeed
         WriteJsonFile(path, defaults);
         cell->snapshot = defaults;
         return {defaults, DAS_S_FALSE};
     }
 
-    // Read raw file content directly (not via ReadJsonFile which silently
-    // returns "{}" for corrupt JSON)
+    // Read raw file content directly
     try
     {
         std::ifstream ifs{path};
         if (!ifs.is_open())
         {
-            auto defaults = nlohmann::json::object();
+            auto defaults = Das::Utils::MakeYyjsonObject();
             WriteJsonFile(path, defaults);
             cell->snapshot = defaults;
             return {defaults, DAS_S_FALSE};
         }
-        auto parsed = nlohmann::json::parse(ifs);
-        if (parsed.is_object())
+        std::stringstream ss;
+        ss << ifs.rdbuf();
+        auto parsed = Das::Utils::ParseYyjsonFromString(ss.str());
+        if (parsed && parsed->is_object())
         {
-            cell->snapshot = parsed;
-            return {parsed, DAS_S_OK};
+            cell->snapshot = std::move(*parsed);
+            return {cell->snapshot, DAS_S_OK};
         }
-        // Not an object - treat as corrupt
     }
-    catch (const nlohmann::json::exception& ex)
+    catch (const std::bad_alloc& ex)
     {
         DAS_CORE_LOG_EXCEPTION(ex);
     }
@@ -552,16 +554,16 @@ SettingsManager::GetPluginSettingsWithStatus(
     DAS_CORE_LOG_WARN(
         "Plugin settings file corrupt: {}, restoring empty defaults",
         path.string());
-    auto defaults = nlohmann::json::object();
+    auto defaults = Das::Utils::MakeYyjsonObject();
     WriteJsonFile(path, defaults);
     cell->snapshot = defaults;
     return {defaults, DAS_S_FALSE};
 }
 
 DasResult SettingsManager::UpdatePluginSettingsJson(
-    const std::string&    profile_id,
-    const std::string&    guid,
-    const nlohmann::json& data)
+    const std::string&                   profile_id,
+    const std::string&                   guid,
+    const yyjson::writer::detail::value& data)
 {
     auto  key = "profile/" + profile_id + "/plugin/" + guid;
     auto* cell = GetOrCreateCell(key);
@@ -572,16 +574,17 @@ DasResult SettingsManager::UpdatePluginSettingsJson(
 
     if (DAS::IsOk(result))
     {
-        nlohmann::json event;
-        event["type"] = "settings_changed";
-        event["profile"] = profile_id;
-        event["guid"] = guid;
-        event["field"] = ""; // full replacement
-        event["value"] = data;
-        auto event_str = event.dump();
-        if (settings_notify_)
+        auto event = Das::Utils::MakeYyjsonObject();
+        auto obj = *event.as_object();
+        obj[std::string_view("type")] = std::string_view("settings_changed");
+        obj[std::string_view("profile")] = std::string_view(profile_id);
+        obj[std::string_view("guid")] = std::string_view(guid);
+        obj[std::string_view("field")] = std::string_view("");
+        obj[std::string_view("value")] = data;
+        auto serialized = Das::Utils::SerializeYyjsonValue(event, false);
+        if (serialized && settings_notify_)
         {
-            settings_notify_(event_str.c_str());
+            settings_notify_(serialized->c_str());
         }
     }
     return result;
@@ -598,17 +601,18 @@ std::string SettingsManager::GetPluginSettingsField(
         return {};
     }
 
-    auto* field = ResolveDotPath(settings, field_name);
-    if (field == nullptr)
+    auto field = ResolveDotPath(settings, field_name);
+    if (!field)
     {
         return {};
     }
 
     try
     {
-        return field->dump();
+        auto result = field->write(yyjson::WriteFlag::NoFlag);
+        return std::string(result.data(), result.size());
     }
-    catch (const nlohmann::json::exception& ex)
+    catch (const std::exception& ex)
     {
         DAS_CORE_LOG_EXCEPTION(ex);
         return {};
@@ -621,30 +625,20 @@ DasResult SettingsManager::UpdatePluginSettingsField(
     const std::string& field_name,
     const std::string& field_json_value)
 {
-    nlohmann::json field_value;
-    try
+    auto field_value = Das::Utils::ParseYyjsonFromString(field_json_value);
+    if (!field_value)
     {
-        field_value = nlohmann::json::parse(field_json_value);
-    }
-    catch (const nlohmann::json::exception& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
         return DAS_E_INVALID_JSON;
-    }
-    catch (const std::bad_alloc& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        return DAS_E_OUT_OF_MEMORY;
     }
 
     return UpdatePluginSettingsFieldJson(
         profile_id,
         guid,
         field_name,
-        field_value);
+        *field_value);
 }
 
-nlohmann::json SettingsManager::GetPluginSettingsFieldJson(
+yyjson::writer::detail::value SettingsManager::GetPluginSettingsFieldJson(
     const std::string& profile_id,
     const std::string& guid,
     const std::string& field_name)
@@ -652,22 +646,36 @@ nlohmann::json SettingsManager::GetPluginSettingsFieldJson(
     auto settings = GetPluginSettingsJson(profile_id, guid);
     if (settings.is_null() || !settings.is_object())
     {
-        return nullptr;
+        return yyjson::writer::detail::value{};
     }
 
-    auto* field = ResolveDotPath(settings, field_name);
-    if (field == nullptr)
+    auto field = ResolveDotPath(settings, field_name);
+    if (!field)
     {
-        return nullptr;
+        return yyjson::writer::detail::value{};
     }
-    return *field;
+
+    // We need to create an owning copy of the field value.
+    // Parse the serialized form to get a new yyjson::value.
+    try
+    {
+        auto serialized = field->write(yyjson::WriteFlag::NoFlag);
+        auto parsed = Das::Utils::ParseYyjsonFromString(
+            std::string_view(serialized.data(), serialized.size()));
+        return parsed ? std::move(*parsed) : yyjson::writer::detail::value{};
+    }
+    catch (const std::exception& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        return yyjson::writer::detail::value{};
+    }
 }
 
 DasResult SettingsManager::UpdatePluginSettingsFieldJson(
-    const std::string&    profile_id,
-    const std::string&    guid,
-    const std::string&    field_name,
-    const nlohmann::json& value)
+    const std::string&                   profile_id,
+    const std::string&                   guid,
+    const std::string&                   field_name,
+    const yyjson::writer::detail::value& value)
 {
     auto  key = "profile/" + profile_id + "/plugin/" + guid;
     auto* cell = GetOrCreateCell(key);
@@ -676,54 +684,48 @@ DasResult SettingsManager::UpdatePluginSettingsFieldJson(
     // read current -> modify -> WriteJsonFile -> update snapshot
     std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
 
-    auto           path = GetPluginSettingsPath(profile_id, guid);
-    nlohmann::json current = cell->snapshot;
+    auto path = GetPluginSettingsPath(profile_id, guid);
+    auto current = cell->snapshot;
     if (current.is_null())
     {
         auto content = ReadJsonFile(path);
-        try
+        auto parsed = Das::Utils::ParseYyjsonFromString(content);
+        if (parsed)
         {
-            current = nlohmann::json::parse(content);
-        }
-        catch (const nlohmann::json::exception& ex)
-        {
-            DAS_CORE_LOG_EXCEPTION(ex);
+            current = std::move(*parsed);
         }
     }
 
     if (!current.is_object())
     {
-        current = nlohmann::json::object();
+        current = Das::Utils::MakeYyjsonObject();
     }
 
     try
     {
-        auto* target = EnsureDotPath(current, field_name);
-        *target = value;
+        auto target = EnsureDotPath(current, field_name);
+        target = value;
         auto result = WriteJsonFile(path, current);
         if (DAS::IsOk(result))
         {
             cell->snapshot = std::move(current);
 
             // Notify WebSocket clients of settings change
-            nlohmann::json event;
-            event["type"] = "settings_changed";
-            event["profile"] = profile_id;
-            event["guid"] = guid;
-            event["field"] = field_name;
-            event["value"] = value;
-            auto event_str = event.dump();
-            if (settings_notify_)
+            auto event = Das::Utils::MakeYyjsonObject();
+            auto obj = *event.as_object();
+            obj[std::string_view("type")] =
+                std::string_view("settings_changed");
+            obj[std::string_view("profile")] = std::string_view(profile_id);
+            obj[std::string_view("guid")] = std::string_view(guid);
+            obj[std::string_view("field")] = std::string_view(field_name);
+            obj[std::string_view("value")] = value;
+            auto serialized = Das::Utils::SerializeYyjsonValue(event, false);
+            if (serialized && settings_notify_)
             {
-                settings_notify_(event_str.c_str());
+                settings_notify_(serialized->c_str());
             }
         }
         return result;
-    }
-    catch (const nlohmann::json::exception& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        return DAS_E_INVALID_JSON;
     }
     catch (const std::bad_alloc& ex)
     {
@@ -769,14 +771,16 @@ DasResult SettingsManager::RebuildPluginSettingsFromDefaults(
             }
             else
             {
-                auto existing = nlohmann::json::parse(ifs);
-                if (!existing.is_object())
+                std::stringstream ss;
+                ss << ifs.rdbuf();
+                auto parsed = Das::Utils::ParseYyjsonFromString(ss.str());
+                if (!parsed || !parsed->is_object())
                 {
                     needs_rebuild = true;
                 }
             }
         }
-        catch (const nlohmann::json::exception&)
+        catch (const std::exception&)
         {
             needs_rebuild = true;
         }
@@ -788,16 +792,20 @@ DasResult SettingsManager::RebuildPluginSettingsFromDefaults(
     }
 
     // Rebuild from defaults
-    nlohmann::json rebuilt = nlohmann::json::object();
+    auto rebuilt = Das::Utils::MakeYyjsonObject();
+    auto obj = *rebuilt.as_object();
     for (size_t i = 0; i < field_names.size(); ++i)
     {
-        try
+        auto parsed_default =
+            Das::Utils::ParseYyjsonFromString(default_values[i]);
+        if (parsed_default)
         {
-            rebuilt[field_names[i]] = nlohmann::json::parse(default_values[i]);
+            obj[std::string_view(field_names[i])] = std::move(*parsed_default);
         }
-        catch (const nlohmann::json::exception&)
+        else
         {
-            rebuilt[field_names[i]] = default_values[i];
+            obj[std::string_view(field_names[i])] =
+                std::string_view(default_values[i]);
         }
     }
 
@@ -813,7 +821,7 @@ DasResult SettingsManager::RebuildPluginSettingsFromDefaults(
 
 // --- JSON-based methods (zero-copy) ---
 
-nlohmann::json SettingsManager::GetGlobalSettingsJson()
+yyjson::writer::detail::value SettingsManager::GetGlobalSettingsJson()
 {
     auto* cell = GetOrCreateCell("global/ui");
 
@@ -834,18 +842,16 @@ nlohmann::json SettingsManager::GetGlobalSettingsJson()
     }
 
     auto content = ReadJsonFile(base_dir_ / "ui.json");
-    try
+    auto parsed = Das::Utils::ParseYyjsonFromString(content);
+    if (parsed)
     {
-        cell->snapshot = nlohmann::json::parse(content);
-    }
-    catch (const nlohmann::json::exception& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
+        cell->snapshot = std::move(*parsed);
     }
     return cell->snapshot;
 }
 
-DasResult SettingsManager::UpdateGlobalSettingsJson(const nlohmann::json& data)
+DasResult SettingsManager::UpdateGlobalSettingsJson(
+    const yyjson::writer::detail::value& data)
 {
     auto* cell = GetOrCreateCell("global/ui");
 
@@ -854,10 +860,10 @@ DasResult SettingsManager::UpdateGlobalSettingsJson(const nlohmann::json& data)
     return WriteJsonFile(base_dir_ / "ui.json", data);
 }
 
-nlohmann::json SettingsManager::GetProfileListJson()
+yyjson::writer::detail::value SettingsManager::GetProfileListJson()
 {
     // No lock needed for read-only directory traversal
-    nlohmann::json profiles = nlohmann::json::array();
+    auto profiles = Das::Utils::MakeYyjsonArray();
 
     try
     {
@@ -870,8 +876,11 @@ nlohmann::json SettingsManager::GetProfileListJson()
         {
             if (entry.is_directory())
             {
-                profiles.push_back(
-                    {{"profileId", entry.path().filename().string()}});
+                auto profile_obj = Das::Utils::MakeYyjsonObject();
+                auto obj_ref = *profile_obj.as_object();
+                obj_ref[std::string_view("profileId")] =
+                    std::string_view(entry.path().filename().string());
+                profiles.as_array()->push_back(std::move(profile_obj));
             }
         }
     }
@@ -883,7 +892,8 @@ nlohmann::json SettingsManager::GetProfileListJson()
     return profiles;
 }
 
-nlohmann::json SettingsManager::GetProfileJson(const std::string& profile_id)
+yyjson::writer::detail::value SettingsManager::GetProfileJson(
+    const std::string& profile_id)
 {
     auto  key = profile_id + "/ui";
     auto* cell = GetOrCreateCell(key);
@@ -905,21 +915,20 @@ nlohmann::json SettingsManager::GetProfileJson(const std::string& profile_id)
     }
 
     auto content = ReadJsonFile(GetProfileUiPath(profile_id));
-    try
+    auto parsed = Das::Utils::ParseYyjsonFromString(content);
+    if (parsed)
     {
-        cell->snapshot = nlohmann::json::parse(content);
+        cell->snapshot = std::move(*parsed);
         return cell->snapshot;
     }
-    catch (const nlohmann::json::exception& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        return nlohmann::json::object();
-    }
+
+    cell->snapshot = Das::Utils::MakeYyjsonObject();
+    return cell->snapshot;
 }
 
 DasResult SettingsManager::UpdateProfileJson(
-    const std::string&    profile_id,
-    const nlohmann::json& data)
+    const std::string&                   profile_id,
+    const yyjson::writer::detail::value& data)
 {
     auto  key = profile_id + "/ui";
     auto* cell = GetOrCreateCell(key);
@@ -931,7 +940,7 @@ DasResult SettingsManager::UpdateProfileJson(
 
 // --- Scheduler state (settings/${pid}/scheduler.json) ---
 
-nlohmann::json SettingsManager::GetSchedulerIndexJson(
+yyjson::writer::detail::value SettingsManager::GetSchedulerIndexJson(
     const std::string& profile_id)
 {
     auto  key = "profile/" + profile_id + "/scheduler";
@@ -954,33 +963,34 @@ nlohmann::json SettingsManager::GetSchedulerIndexJson(
     }
 
     auto content = ReadJsonFile(GetSchedulerIndexPath(profile_id));
-    try
+    auto parsed = Das::Utils::ParseYyjsonFromString(content);
+    auto init_scheduler = [&]() -> yyjson::writer::detail::value
     {
-        auto parsed = nlohmann::json::parse(content);
-        if (!parsed.is_object() || !parsed.contains("nextTaskId")
-            || !parsed.contains("taskOrder"))
+        auto sched = Das::Utils::MakeYyjsonObject();
+        auto obj = *sched.as_object();
+        obj[std::string_view("nextTaskId")] = static_cast<int64_t>(0);
+        obj[std::string_view("taskOrder")] = Das::Utils::MakeYyjsonArray();
+        return sched;
+    };
+
+    if (parsed && parsed->is_object())
+    {
+        auto obj_ref = parsed->as_object();
+        if (obj_ref && obj_ref->contains(std::string_view("nextTaskId"))
+            && obj_ref->contains(std::string_view("taskOrder")))
         {
-            cell->snapshot = {
-                {"nextTaskId", 0},
-                {"taskOrder", nlohmann::json::array()}};
+            cell->snapshot = std::move(*parsed);
             return cell->snapshot;
         }
-        cell->snapshot = parsed;
-        return cell->snapshot;
     }
-    catch (const nlohmann::json::exception& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        cell->snapshot = {
-            {"nextTaskId", 0},
-            {"taskOrder", nlohmann::json::array()}};
-        return cell->snapshot;
-    }
+
+    cell->snapshot = init_scheduler();
+    return cell->snapshot;
 }
 
 DasResult SettingsManager::UpdateSchedulerIndexJson(
-    const std::string&    profile_id,
-    const nlohmann::json& scheduler_json)
+    const std::string&                   profile_id,
+    const yyjson::writer::detail::value& scheduler_json)
 {
     auto  key = "profile/" + profile_id + "/scheduler";
     auto* cell = GetOrCreateCell(key);
@@ -992,7 +1002,7 @@ DasResult SettingsManager::UpdateSchedulerIndexJson(
 
 // --- Task instance (settings/${pid}/taskId${taskId}.json) ---
 
-nlohmann::json SettingsManager::GetTaskInstanceJson(
+yyjson::writer::detail::value SettingsManager::GetTaskInstanceJson(
     const std::string& profile_id,
     int64_t            task_id)
 {
@@ -1016,22 +1026,21 @@ nlohmann::json SettingsManager::GetTaskInstanceJson(
     }
 
     auto content = ReadJsonFile(GetTaskInstancePath(profile_id, task_id));
-    try
+    auto parsed = Das::Utils::ParseYyjsonFromString(content);
+    if (parsed)
     {
-        cell->snapshot = nlohmann::json::parse(content);
+        cell->snapshot = std::move(*parsed);
         return cell->snapshot;
     }
-    catch (const nlohmann::json::exception& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        return nlohmann::json::object();
-    }
+
+    cell->snapshot = Das::Utils::MakeYyjsonObject();
+    return cell->snapshot;
 }
 
 DasResult SettingsManager::UpdateTaskInstanceJson(
-    const std::string&    profile_id,
-    int64_t               task_id,
-    const nlohmann::json& task_json)
+    const std::string&                   profile_id,
+    int64_t                              task_id,
+    const yyjson::writer::detail::value& task_json)
 {
     auto  key = "profile/" + profile_id + "/task/" + std::to_string(task_id);
     auto* cell = GetOrCreateCell(key);
@@ -1059,7 +1068,7 @@ DasResult SettingsManager::DeleteTaskInstanceJson(
             return DAS_S_FALSE;
         }
         std::filesystem::remove(path);
-        cell->snapshot = nlohmann::json();
+        cell->snapshot = yyjson::writer::detail::value{};
         return DAS_S_OK;
     }
     catch (const std::filesystem::filesystem_error& ex)

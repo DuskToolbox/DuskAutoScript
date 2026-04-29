@@ -4,7 +4,6 @@
 #include <atomic>
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/IDasSettingsService.h>
-#include <nlohmann/json.hpp>
 
 DAS_CORE_SETTINGS_MANAGER_NS_BEGIN
 

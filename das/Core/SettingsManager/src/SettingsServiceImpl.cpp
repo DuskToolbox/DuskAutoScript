@@ -1,23 +1,17 @@
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/SettingsManager/SettingsServiceImpl.h>
+#include <das/Core/Utils/DasJsonImpl.h>
 #include <das/DasApi.h>
 #include <das/DasExport.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
+#include <das/Utils/DasJsonCore.h>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
 #include <das/_autogen/idl/abi/DasJson.h>
 #include <new>
-
-// DasCore-internal: zero-copy IDasJsonImpl creation from nlohmann::json
-namespace Das::Core::Utils
-{
-    DasResult CreateDasJsonFromNlohmann(
-        const nlohmann::json&            json,
-        Das::ExportInterface::IDasJson** pp_out);
-}
 
 DAS_CORE_SETTINGS_MANAGER_NS_BEGIN
 
@@ -73,16 +67,29 @@ namespace
     }
 
     DasResult JsonToIDasJson(
-        const nlohmann::json&            json,
-        Das::ExportInterface::IDasJson** pp_out)
+        const yyjson::writer::detail::value& json,
+        Das::ExportInterface::IDasJson**     pp_out)
     {
-        using Das::Core::Utils::CreateDasJsonFromNlohmann;
-        return CreateDasJsonFromNlohmann(json, pp_out);
+        DAS_UTILS_CHECK_POINTER(pp_out)
+        try
+        {
+            auto       copy = json;
+            const auto p_result =
+                Das::MakeDasPtr<Das::Core::Utils::IDasJsonImpl>(
+                    std::move(copy));
+            DAS::Utils::SetResult(p_result, pp_out);
+            return DAS_S_OK;
+        }
+        catch (const std::bad_alloc& ex)
+        {
+            DAS_CORE_LOG_EXCEPTION(ex);
+            return DAS_E_OUT_OF_MEMORY;
+        }
     }
 
-    DasResult IDasJsonToNlohmann(
+    DasResult IDasJsonToYyjson(
         Das::ExportInterface::IDasJson* p_data,
-        nlohmann::json&                 out)
+        yyjson::writer::detail::value&  out)
     {
         DAS_UTILS_CHECK_POINTER(p_data)
         DAS::DasPtr<IDasReadOnlyString> p_str;
@@ -97,16 +104,14 @@ namespace
         {
             return get_result;
         }
-        try
+        auto parsed = Das::Utils::ParseYyjsonFromString(
+            c_str ? std::string_view(c_str) : std::string_view{});
+        if (!parsed)
         {
-            out = nlohmann::json::parse(c_str);
-            return DAS_S_OK;
-        }
-        catch (const nlohmann::json::exception& ex)
-        {
-            DAS_CORE_LOG_EXCEPTION(ex);
             return DAS_E_INVALID_JSON;
         }
+        out = std::move(*parsed);
+        return DAS_S_OK;
     }
 } // namespace
 
@@ -130,8 +135,8 @@ DasResult SettingsServiceImpl::GetGlobalSettings(
 DasResult SettingsServiceImpl::UpdateGlobalSettings(
     Das::ExportInterface::IDasJson* p_data)
 {
-    nlohmann::json data;
-    auto           result = IDasJsonToNlohmann(p_data, data);
+    yyjson::writer::detail::value data;
+    auto                          result = IDasJsonToYyjson(p_data, data);
     if (DAS::IsFailed(result))
     {
         return result;
@@ -190,8 +195,8 @@ DasResult SettingsServiceImpl::UpdateProfile(
     Das::ExportInterface::IDasJson* p_data)
 {
     DAS_UTILS_CHECK_POINTER(p_profile_id)
-    nlohmann::json data;
-    auto           result = IDasJsonToNlohmann(p_data, data);
+    yyjson::writer::detail::value data;
+    auto                          result = IDasJsonToYyjson(p_data, data);
     if (DAS::IsFailed(result))
     {
         return result;
@@ -229,8 +234,8 @@ DasResult SettingsServiceImpl::UpdatePluginSettings(
 {
     DAS_UTILS_CHECK_POINTER(p_profile_id)
     DAS_UTILS_CHECK_POINTER(p_plugin_guid)
-    nlohmann::json data;
-    auto           result = IDasJsonToNlohmann(p_data, data);
+    yyjson::writer::detail::value data;
+    auto                          result = IDasJsonToYyjson(p_data, data);
     if (DAS::IsFailed(result))
     {
         return result;
@@ -276,8 +281,8 @@ DasResult SettingsServiceImpl::UpdatePluginSettingsField(
     DAS_UTILS_CHECK_POINTER(p_profile_id)
     DAS_UTILS_CHECK_POINTER(p_plugin_guid)
     DAS_UTILS_CHECK_POINTER(p_field_name)
-    nlohmann::json data;
-    auto           result = IDasJsonToNlohmann(p_value, data);
+    yyjson::writer::detail::value data;
+    auto                          result = IDasJsonToYyjson(p_value, data);
     if (DAS::IsFailed(result))
     {
         return result;

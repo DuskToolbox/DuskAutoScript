@@ -90,6 +90,20 @@ inline std::optional<std::string> SerializeYyjsonValue(
     }
 }
 
+/// Create an empty JSON object ({}).
+inline yyjson::writer::detail::value MakeYyjsonObject()
+{
+    auto result = ParseYyjsonFromString("{}");
+    return result ? std::move(*result) : yyjson::writer::detail::value{};
+}
+
+/// Create an empty JSON array ([]).
+inline yyjson::writer::detail::value MakeYyjsonArray()
+{
+    auto result = ParseYyjsonFromString("[]");
+    return result ? std::move(*result) : yyjson::writer::detail::value{};
+}
+
 DAS_UTILS_NS_END
 
 #endif // DAS_UTILS_DASJSONCORE_H

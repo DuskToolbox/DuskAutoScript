@@ -1,12 +1,13 @@
 #ifndef DAS_CORE_SETTINGS_MANAGER_SETTINGS_MANAGER_H
 #define DAS_CORE_SETTINGS_MANAGER_SETTINGS_MANAGER_H
 
+#include <cpp_yyjson.hpp>
 #include <das/Core/SettingsManager/Config.h>
 #include <das/DasExport.h>
 #include <das/DasTypes.hpp>
 #include <das/IDasSettingsService.h>
+#include <das/Utils/DasJsonCore.h>
 #include <filesystem>
-#include <nlohmann/json.hpp>
 #include <shared_mutex>
 #include <string>
 #include <unordered_map>
@@ -29,8 +30,8 @@ DAS_CORE_SETTINGS_MANAGER_NS_BEGIN
 ///   - Write/RMW operations use unique_lock (exclusive access).
 struct SettingsKeyCell
 {
-    std::shared_mutex mutex;
-    nlohmann::json    snapshot;
+    std::shared_mutex             mutex;
+    yyjson::writer::detail::value snapshot;
 
     SettingsKeyCell() = default;
     SettingsKeyCell(SettingsKeyCell&& other) noexcept
@@ -57,38 +58,40 @@ public:
     ~SettingsManager() = default;
 
     // Global Settings (settings/ui.json)
-    std::string    GetGlobalSettings();
-    nlohmann::json GetGlobalSettingsJson();
-    DasResult      UpdateGlobalSettings(const std::string& json_str);
-    DasResult      UpdateGlobalSettingsJson(const nlohmann::json& data);
+    std::string                   GetGlobalSettings();
+    yyjson::writer::detail::value GetGlobalSettingsJson();
+    DasResult UpdateGlobalSettings(const std::string& json_str);
+    DasResult UpdateGlobalSettingsJson(
+        const yyjson::writer::detail::value& data);
 
     // Profile management (settings/${pid}/)
-    std::string    GetProfileList();
-    nlohmann::json GetProfileListJson();
-    DasResult      CreateProfile(const std::string& profile_id);
-    DasResult      DeleteProfile(const std::string& profile_id);
+    std::string                   GetProfileList();
+    yyjson::writer::detail::value GetProfileListJson();
+    DasResult                     CreateProfile(const std::string& profile_id);
+    DasResult                     DeleteProfile(const std::string& profile_id);
 
     // Profile data (settings/${pid}/ui.json)
-    std::string    GetProfile(const std::string& profile_id);
-    nlohmann::json GetProfileJson(const std::string& profile_id);
-    DasResult      UpdateProfile(
+    std::string                   GetProfile(const std::string& profile_id);
+    yyjson::writer::detail::value GetProfileJson(const std::string& profile_id);
+    DasResult                     UpdateProfile(
         const std::string& profile_id,
         const std::string& json_str);
     DasResult UpdateProfileJson(
-        const std::string&    profile_id,
-        const nlohmann::json& data);
+        const std::string&                   profile_id,
+        const yyjson::writer::detail::value& data);
 
     // Plugin settings (settings/${pid}/${pluginGuid}.json)
-    nlohmann::json GetPluginSettingsJson(
+    yyjson::writer::detail::value GetPluginSettingsJson(
         const std::string& profile_id,
         const std::string& guid);
 
     /// Get plugin settings with status. Returns {json, DAS_S_OK} for valid
     /// files, {rebuilt_empty_json, DAS_S_FALSE} when the file was corrupt or
     /// missing and rebuilt from defaults.
-    std::pair<nlohmann::json, DasResult> GetPluginSettingsWithStatus(
-        const std::string& profile_id,
-        const std::string& guid);
+    std::pair<yyjson::writer::detail::value, DasResult>
+                GetPluginSettingsWithStatus(
+                    const std::string& profile_id,
+                    const std::string& guid);
     std::string GetPluginSettings(
         const std::string& profile_id,
         const std::string& guid);
@@ -97,20 +100,20 @@ public:
         const std::string& guid,
         const std::string& json_str);
     DasResult UpdatePluginSettingsJson(
-        const std::string&    profile_id,
-        const std::string&    guid,
-        const nlohmann::json& data);
+        const std::string&                   profile_id,
+        const std::string&                   guid,
+        const yyjson::writer::detail::value& data);
 
     // Plugin settings field-level access (JSON object, no serialization)
-    nlohmann::json GetPluginSettingsFieldJson(
+    yyjson::writer::detail::value GetPluginSettingsFieldJson(
         const std::string& profile_id,
         const std::string& guid,
         const std::string& field_name);
     DasResult UpdatePluginSettingsFieldJson(
-        const std::string&    profile_id,
-        const std::string&    guid,
-        const std::string&    field_name,
-        const nlohmann::json& value);
+        const std::string&                   profile_id,
+        const std::string&                   guid,
+        const std::string&                   field_name,
+        const yyjson::writer::detail::value& value);
 
     // Plugin settings field-level access (string-based, legacy)
     std::string GetPluginSettingsField(
@@ -132,19 +135,20 @@ public:
         const std::vector<std::string>& default_values);
 
     // Scheduler state (settings/${pid}/scheduler.json)
-    nlohmann::json GetSchedulerIndexJson(const std::string& profile_id);
-    DasResult      UpdateSchedulerIndexJson(
-        const std::string&    profile_id,
-        const nlohmann::json& scheduler_json);
+    yyjson::writer::detail::value GetSchedulerIndexJson(
+        const std::string& profile_id);
+    DasResult UpdateSchedulerIndexJson(
+        const std::string&                   profile_id,
+        const yyjson::writer::detail::value& scheduler_json);
 
     // Task instance (settings/${pid}/taskId${taskId}.json)
-    nlohmann::json GetTaskInstanceJson(
+    yyjson::writer::detail::value GetTaskInstanceJson(
         const std::string& profile_id,
         int64_t            task_id);
     DasResult UpdateTaskInstanceJson(
-        const std::string&    profile_id,
-        int64_t               task_id,
-        const nlohmann::json& task_json);
+        const std::string&                   profile_id,
+        int64_t                              task_id,
+        const yyjson::writer::detail::value& task_json);
     DasResult DeleteTaskInstanceJson(
         const std::string& profile_id,
         int64_t            task_id);
@@ -170,8 +174,8 @@ private:
         const std::filesystem::path& path,
         const std::string&           json_str);
     static DasResult WriteJsonFile(
-        const std::filesystem::path& path,
-        const nlohmann::json&        data);
+        const std::filesystem::path&         path,
+        const yyjson::writer::detail::value& data);
 
     /// Find or create per-key state cell. Uses cells_mutex_ for short
     /// lookup/create with double-checked locking pattern.
