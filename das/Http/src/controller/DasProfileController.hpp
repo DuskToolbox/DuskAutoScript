@@ -8,7 +8,7 @@
 #include <das/DasString.hpp>
 #include <das/IDasSettingsService.h>
 #include <das/Utils/CommonUtils.hpp>
-#include <nlohmann/json.hpp>
+#include <das/Utils/DasJsonCore.h>
 #include <string>
 
 namespace Das::Http
@@ -49,21 +49,34 @@ namespace Das::Http
                     get_result,
                     "Failed to get profile list string");
             }
-            auto parsed = nlohmann::json::parse(c_str);
-            return Beast::HttpResponse::CreateSuccessResponse(parsed);
+            auto parsed = Das::Utils::ParseYyjsonFromString(c_str);
+            if (!parsed)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_JSON,
+                    "Failed to parse profile list JSON");
+            }
+            return Beast::HttpResponse::CreateSuccessResponse(parsed.value());
         }
 
         Beast::HttpResponse CreateProfile(const Beast::HttpRequest& request)
         {
             const auto& body = request.JsonBody();
-            if (!body.contains("profileId") || !body["profileId"].is_string())
+            if (body["profileId"].is_null() || !body["profileId"].is_string())
             {
                 return Beast::HttpResponse::CreateErrorResponse(
                     DAS_E_INVALID_ARGUMENT,
                     "Missing or invalid 'profileId' field");
             }
 
-            auto profile_id = body["profileId"].get<std::string>();
+            auto profile_id_opt = body["profileId"].as_string();
+            if (!profile_id_opt)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Missing or invalid 'profileId' field");
+            }
+            std::string                profile_id(profile_id_opt.value());
             DasPtr<IDasReadOnlyString> p_pid;
             auto                       cr = CreateIDasReadOnlyStringFromUtf8(
                 profile_id.c_str(),
@@ -88,14 +101,21 @@ namespace Das::Http
         Beast::HttpResponse DeleteProfile(const Beast::HttpRequest& request)
         {
             const auto& body = request.JsonBody();
-            if (!body.contains("profileId") || !body["profileId"].is_string())
+            if (body["profileId"].is_null() || !body["profileId"].is_string())
             {
                 return Beast::HttpResponse::CreateErrorResponse(
                     DAS_E_INVALID_ARGUMENT,
                     "Missing or invalid 'profileId' field");
             }
 
-            auto profile_id = body["profileId"].get<std::string>();
+            auto profile_id_opt = body["profileId"].as_string();
+            if (!profile_id_opt)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Missing or invalid 'profileId' field");
+            }
+            std::string                profile_id(profile_id_opt.value());
             DasPtr<IDasReadOnlyString> p_pid;
             auto                       cr = CreateIDasReadOnlyStringFromUtf8(
                 profile_id.c_str(),
@@ -162,8 +182,14 @@ namespace Das::Http
                     get_result,
                     "Failed to get profile string");
             }
-            auto parsed = nlohmann::json::parse(c_str);
-            return Beast::HttpResponse::CreateSuccessResponse(parsed);
+            auto parsed = Das::Utils::ParseYyjsonFromString(c_str);
+            if (!parsed)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_JSON,
+                    "Failed to parse profile JSON");
+            }
+            return Beast::HttpResponse::CreateSuccessResponse(parsed.value());
         }
 
         Beast::HttpResponse UpdateProfile(const Beast::HttpRequest& request)
@@ -268,17 +294,24 @@ namespace Das::Http
                     get_result,
                     "Failed to get plugin settings string");
             }
-            auto parsed = nlohmann::json::parse(c_str);
+            auto parsed = Das::Utils::ParseYyjsonFromString(c_str);
+
+            if (!parsed)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_JSON,
+                    "Failed to parse plugin settings JSON");
+            }
 
             if (result == DAS_S_FALSE)
             {
                 return Beast::HttpResponse::CreateSuccessResponse(
                     DAS_S_FALSE,
-                    "Plugin settings were invalid and restored to an empty "
-                    "object",
-                    parsed);
+                    "Plugin settings were invalid and restored to an "
+                    "empty object",
+                    parsed.value());
             }
-            return Beast::HttpResponse::CreateSuccessResponse(parsed);
+            return Beast::HttpResponse::CreateSuccessResponse(parsed.value());
         }
 
         Beast::HttpResponse UpdatePluginSettings(

@@ -15,19 +15,37 @@ namespace Das::Http::Dto
     {
         std::vector<std::string> logs;
 
-        nlohmann::json ToJson() const
+        yyjson::writer::detail::value ToJson() const
         {
-            nlohmann::json j;
-            j["logs"] = logs;
+            auto j = Das::Utils::MakeYyjsonObject();
+            auto arr = Das::Utils::MakeYyjsonArray();
+            auto arr_ref = arr.as_array();
+            if (arr_ref)
+            {
+                for (const auto& log : logs)
+                {
+                    arr_ref->emplace_back(std::string{log});
+                }
+            }
+            j["logs"] = std::move(arr);
             return j;
         }
 
-        static LogsData FromJson(const nlohmann::json& j)
+        static LogsData FromJson(const yyjson::writer::detail::value& j)
         {
             LogsData data;
-            if (j.contains("logs") && j["logs"].is_array())
+            auto     logs_val = j["logs"];
+            auto     logs_opt = logs_val.as_array();
+            if (logs_opt)
             {
-                data.logs = j["logs"].get<std::vector<std::string>>();
+                for (const auto& item : logs_opt.value())
+                {
+                    auto str_opt = item.as_string();
+                    if (str_opt)
+                    {
+                        data.logs.push_back(std::string(str_opt.value()));
+                    }
+                }
             }
             return data;
         }

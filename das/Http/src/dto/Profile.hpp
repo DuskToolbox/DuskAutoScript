@@ -18,19 +18,23 @@ namespace Das::Http::Dto
         std::string name;
         std::string profile_id;
 
-        nlohmann::json ToJson() const
+        yyjson::writer::detail::value ToJson() const
         {
-            nlohmann::json j;
-            j["name"] = name;
-            j["profileId"] = profile_id;
+            yyjson::writer::detail::value j(yyjson::construct_object_type_t{});
+            j["name"] = std::string{name};
+            j["profileId"] = std::string{profile_id};
             return j;
         }
 
-        static ProfileDesc FromJson(const nlohmann::json& j)
+        static ProfileDesc FromJson(const yyjson::writer::detail::value& j)
         {
             ProfileDesc desc;
-            desc.name = j.value("name", "");
-            desc.profile_id = j.value("profileId", "");
+            auto        name_val = j["name"];
+            auto        name_opt = name_val.as_string();
+            desc.name = name_opt ? std::string(name_opt.value()) : "";
+            auto pid_val = j["profileId"];
+            auto pid_opt = pid_val.as_string();
+            desc.profile_id = pid_opt ? std::string(pid_opt.value()) : "";
             return desc;
         }
     };
@@ -39,24 +43,30 @@ namespace Das::Http::Dto
     {
         std::vector<ProfileDesc> profile_list;
 
-        nlohmann::json ToJson() const
+        yyjson::writer::detail::value ToJson() const
         {
-            nlohmann::json j;
-            nlohmann::json arr = nlohmann::json::array();
-            for (const auto& desc : profile_list)
+            auto j = Das::Utils::MakeYyjsonObject();
+            auto arr = Das::Utils::MakeYyjsonArray();
+            auto arr_ref = arr.as_array();
+            if (arr_ref)
             {
-                arr.push_back(desc.ToJson());
+                for (const auto& desc : profile_list)
+                {
+                    arr_ref->emplace_back(desc.ToJson());
+                }
             }
-            j["profileList"] = arr;
+            j["profileList"] = std::move(arr);
             return j;
         }
 
-        static ProfileDescList FromJson(const nlohmann::json& j)
+        static ProfileDescList FromJson(const yyjson::writer::detail::value& j)
         {
             ProfileDescList list;
-            if (j.contains("profileList") && j["profileList"].is_array())
+            auto            pl_val = j["profileList"];
+            auto            pl_opt = pl_val.as_array();
+            if (pl_opt)
             {
-                for (const auto& item : j["profileList"])
+                for (const auto& item : pl_opt.value())
                 {
                     list.profile_list.push_back(ProfileDesc::FromJson(item));
                 }
@@ -73,24 +83,44 @@ namespace Das::Http::Dto
         std::vector<std::string> ignored_guid_list;
         std::string              profile_id;
 
-        nlohmann::json ToJson() const
+        yyjson::writer::detail::value ToJson() const
         {
-            nlohmann::json j;
-            j["ignoredGuidList"] = ignored_guid_list;
-            j["profileId"] = profile_id;
+            auto j = Das::Utils::MakeYyjsonObject();
+            auto arr = Das::Utils::MakeYyjsonArray();
+            auto arr_ref = arr.as_array();
+            if (arr_ref)
+            {
+                for (const auto& guid : ignored_guid_list)
+                {
+                    arr_ref->emplace_back(std::string{guid});
+                }
+            }
+            j["ignoredGuidList"] = std::move(arr);
+            j["profileId"] = std::string{profile_id};
             return j;
         }
 
-        static ProfileInitializeParms FromJson(const nlohmann::json& j)
+        static ProfileInitializeParms FromJson(
+            const yyjson::writer::detail::value& j)
         {
             ProfileInitializeParms parms;
-            if (j.contains("ignoredGuidList")
-                && j["ignoredGuidList"].is_array())
+            auto                   igl_val = j["ignoredGuidList"];
+            auto                   igl_opt = igl_val.as_array();
+            if (igl_opt)
             {
-                parms.ignored_guid_list =
-                    j["ignoredGuidList"].get<std::vector<std::string>>();
+                for (const auto& item : igl_opt.value())
+                {
+                    auto str_opt = item.as_string();
+                    if (str_opt)
+                    {
+                        parms.ignored_guid_list.push_back(
+                            std::string(str_opt.value()));
+                    }
+                }
             }
-            parms.profile_id = j.value("profileId", "");
+            auto pid_val = j["profileId"];
+            auto pid_opt = pid_val.as_string();
+            parms.profile_id = pid_opt ? std::string(pid_opt.value()) : "";
             return parms;
         }
     };
@@ -103,21 +133,27 @@ namespace Das::Http::Dto
         bool        run;
         bool        enable;
 
-        nlohmann::json ToJson() const
+        yyjson::writer::detail::value ToJson() const
         {
-            nlohmann::json j;
-            j["profileId"] = profile_id;
+            yyjson::writer::detail::value j(yyjson::construct_object_type_t{});
+            j["profileId"] = std::string{profile_id};
             j["run"] = run;
             j["enable"] = enable;
             return j;
         }
 
-        static ProfileStatus FromJson(const nlohmann::json& j)
+        static ProfileStatus FromJson(const yyjson::writer::detail::value& j)
         {
             ProfileStatus status;
-            status.profile_id = j.value("profileId", "");
-            status.run = j.value("run", false);
-            status.enable = j.value("enable", false);
+            auto          pid_val = j["profileId"];
+            auto          pid_opt = pid_val.as_string();
+            status.profile_id = pid_opt ? std::string(pid_opt.value()) : "";
+            auto run_val = j["run"];
+            auto run_opt = run_val.as_bool();
+            status.run = run_opt ? run_opt.value() : false;
+            auto enable_val = j["enable"];
+            auto enable_opt = enable_val.as_bool();
+            status.enable = enable_opt ? enable_opt.value() : false;
             return status;
         }
     };
@@ -131,19 +167,23 @@ namespace Das::Http::Dto
         std::string profile_id;
         bool        run;
 
-        nlohmann::json ToJson() const
+        yyjson::writer::detail::value ToJson() const
         {
-            nlohmann::json j;
-            j["profileId"] = profile_id;
+            yyjson::writer::detail::value j(yyjson::construct_object_type_t{});
+            j["profileId"] = std::string{profile_id};
             j["run"] = run;
             return j;
         }
 
-        static ProfileRunning FromJson(const nlohmann::json& j)
+        static ProfileRunning FromJson(const yyjson::writer::detail::value& j)
         {
             ProfileRunning running;
-            running.profile_id = j.value("profileId", "");
-            running.run = j.value("run", false);
+            auto           pid_val = j["profileId"];
+            auto           pid_opt = pid_val.as_string();
+            running.profile_id = pid_opt ? std::string(pid_opt.value()) : "";
+            auto run_val = j["run"];
+            auto run_opt = run_val.as_bool();
+            running.run = run_opt ? run_opt.value() : false;
             return running;
         }
     };
@@ -152,17 +192,19 @@ namespace Das::Http::Dto
     {
         std::string profile_id;
 
-        nlohmann::json ToJson() const
+        yyjson::writer::detail::value ToJson() const
         {
-            nlohmann::json j;
-            j["profileId"] = profile_id;
+            yyjson::writer::detail::value j(yyjson::construct_object_type_t{});
+            j["profileId"] = std::string{profile_id};
             return j;
         }
 
-        static ProfileId FromJson(const nlohmann::json& j)
+        static ProfileId FromJson(const yyjson::writer::detail::value& j)
         {
             ProfileId id;
-            id.profile_id = j.value("profileId", "");
+            auto      pid_val = j["profileId"];
+            auto      pid_opt = pid_val.as_string();
+            id.profile_id = pid_opt ? std::string(pid_opt.value()) : "";
             return id;
         }
     };
@@ -172,19 +214,23 @@ namespace Das::Http::Dto
         std::string profile_id;
         int32_t     enabled;
 
-        nlohmann::json ToJson() const
+        yyjson::writer::detail::value ToJson() const
         {
-            nlohmann::json j;
-            j["profileId"] = profile_id;
-            j["enabled"] = enabled;
+            yyjson::writer::detail::value j(yyjson::construct_object_type_t{});
+            j["profileId"] = std::string{profile_id};
+            j["enabled"] = static_cast<int64_t>(enabled);
             return j;
         }
 
-        static ProfileEnabled FromJson(const nlohmann::json& j)
+        static ProfileEnabled FromJson(const yyjson::writer::detail::value& j)
         {
             ProfileEnabled enabled;
-            enabled.profile_id = j.value("profileId", "");
-            enabled.enabled = j.value("enabled", 0);
+            auto           pid_val = j["profileId"];
+            auto           pid_opt = pid_val.as_string();
+            enabled.profile_id = pid_opt ? std::string(pid_opt.value()) : "";
+            auto en_val = j["enabled"];
+            auto en_opt = en_val.as_sint();
+            enabled.enabled = en_opt ? static_cast<int32_t>(en_opt.value()) : 0;
             return enabled;
         }
     };
@@ -194,19 +240,23 @@ namespace Das::Http::Dto
         std::string profile_id;
         int32_t     enabled;
 
-        nlohmann::json ToJson() const
+        yyjson::writer::detail::value ToJson() const
         {
-            nlohmann::json j;
-            j["profileId"] = profile_id;
-            j["enabled"] = enabled;
+            yyjson::writer::detail::value j(yyjson::construct_object_type_t{});
+            j["profileId"] = std::string{profile_id};
+            j["enabled"] = static_cast<int64_t>(enabled);
             return j;
         }
 
-        static ProfileInfo FromJson(const nlohmann::json& j)
+        static ProfileInfo FromJson(const yyjson::writer::detail::value& j)
         {
             ProfileInfo info;
-            info.profile_id = j.value("profileId", "");
-            info.enabled = j.value("enabled", 0);
+            auto        pid_val = j["profileId"];
+            auto        pid_opt = pid_val.as_string();
+            info.profile_id = pid_opt ? std::string(pid_opt.value()) : "";
+            auto en_val = j["enabled"];
+            auto en_opt = en_val.as_sint();
+            info.enabled = en_opt ? static_cast<int32_t>(en_opt.value()) : 0;
             return info;
         }
     };

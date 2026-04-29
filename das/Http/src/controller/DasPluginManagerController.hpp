@@ -6,8 +6,8 @@
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/IDasPluginManagerService.h>
+#include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/DasJson.h>
-#include <nlohmann/json.hpp>
 
 namespace Das::Http
 {
@@ -50,8 +50,14 @@ namespace Das::Http
                     get_result,
                     "Failed to get plugin list string");
             }
-            auto parsed = nlohmann::json::parse(c_str);
-            return Beast::HttpResponse::CreateSuccessResponse(parsed);
+            auto parsed = Das::Utils::ParseYyjsonFromString(c_str);
+            if (!parsed)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_JSON,
+                    "Failed to parse plugin list JSON");
+            }
+            return Beast::HttpResponse::CreateSuccessResponse(parsed.value());
         }
 
         // POST /plugin/update -- receive binary ZIP body

@@ -6,8 +6,9 @@
  *  API global type
  */
 
+#include <cpp_yyjson.hpp>
 #include <das/IDasBase.h>
-#include <nlohmann/json.hpp>
+#include <das/Utils/DasJsonCore.h>
 #include <optional>
 
 namespace Das::Http::Dto
@@ -23,12 +24,12 @@ namespace Das::Http::Dto
         T           data;
 
         // 转换为JSON
-        nlohmann::json ToJson() const
+        yyjson::writer::detail::value ToJson() const
         {
-            nlohmann::json j;
-            j["code"] = code;
-            j["message"] = message;
-            if constexpr (std::is_same_v<T, nlohmann::json>)
+            yyjson::writer::detail::value j(yyjson::construct_object_type_t{});
+            j["code"] = static_cast<int64_t>(code);
+            j["message"] = std::string{message};
+            if constexpr (std::is_same_v<T, yyjson::writer::detail::value>)
             {
                 j["data"] = data;
             }
@@ -40,19 +41,16 @@ namespace Das::Http::Dto
         }
 
         // 从JSON构造
-        static ApiResponse<T> FromJson(const nlohmann::json& j)
+        static ApiResponse<T> FromJson(const yyjson::writer::detail::value& j)
         {
             ApiResponse<T> response;
-            response.code = j.value("code", 0);
-            response.message = j.value("message", "");
-            if constexpr (std::is_same_v<T, nlohmann::json>)
-            {
-                response.data = j.value("data", nlohmann::json());
-            }
-            else
-            {
-                response.data = j.value("data", T{});
-            }
+            auto           code_val = j["code"];
+            auto           code_opt = code_val.as_sint();
+            response.code =
+                code_opt ? static_cast<int32_t>(code_opt.value()) : 0;
+            auto msg_val = j["message"];
+            auto msg_opt = msg_val.as_string();
+            response.message = msg_opt ? std::string(msg_opt.value()) : "";
             return response;
         }
 
@@ -75,29 +73,29 @@ namespace Das::Http::Dto
     template <>
     struct ApiResponse<void>
     {
-        int32_t        code;
-        std::string    message;
-        nlohmann::json data;
+        int32_t                       code;
+        std::string                   message;
+        yyjson::writer::detail::value data;
 
-        nlohmann::json ToJson() const
+        yyjson::writer::detail::value ToJson() const
         {
-            nlohmann::json j;
-            j["code"] = code;
-            j["message"] = message;
+            yyjson::writer::detail::value j(yyjson::construct_object_type_t{});
+            j["code"] = static_cast<int64_t>(code);
+            j["message"] = std::string{message};
             j["data"] = data;
             return j;
         }
 
         static ApiResponse<void> Success(const std::string& message = "")
         {
-            return ApiResponse<void>{DAS_S_OK, message, nullptr};
+            return ApiResponse<void>{DAS_S_OK, message, {}};
         }
 
         static ApiResponse<void> Error(
             DasResult          code,
             const std::string& message)
         {
-            return ApiResponse<void>{code, message, nullptr};
+            return ApiResponse<void>{code, message, {}};
         }
     };
 

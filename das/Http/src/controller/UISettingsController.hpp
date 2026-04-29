@@ -7,7 +7,7 @@
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/IDasSettingsService.h>
-#include <nlohmann/json.hpp>
+#include <das/Utils/DasJsonCore.h>
 #include <string>
 
 namespace Das::Http
@@ -32,8 +32,7 @@ namespace Das::Http
             }
 
             DasPtr<IDasReadOnlyString> p_str;
-            auto                       to_str_result =
-                json->ToString(-1, p_str.Put());
+            auto to_str_result = json->ToString(-1, p_str.Put());
             if (DAS::IsFailed(to_str_result))
             {
                 return Beast::HttpResponse::CreateErrorResponse(
@@ -48,8 +47,14 @@ namespace Das::Http
                     get_result,
                     "Failed to get settings string");
             }
-            auto parsed = nlohmann::json::parse(c_str);
-            return Beast::HttpResponse::CreateSuccessResponse(parsed);
+            auto parsed = Das::Utils::ParseYyjsonFromString(c_str);
+            if (!parsed)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_JSON,
+                    "Failed to parse settings JSON");
+            }
+            return Beast::HttpResponse::CreateSuccessResponse(parsed.value());
         }
 
         Beast::HttpResponse V1SettingsUpdate(const Beast::HttpRequest& request)

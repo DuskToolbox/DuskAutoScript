@@ -15,8 +15,6 @@ namespace Das
     using DasResult = int32_t;
 }
 
-#include <nlohmann/json.hpp>
-
 #define DAS_HTTP_MAKE_RESPONSE(error_code)                                     \
     Beast::HttpResponse::CreateErrorResponse(                                  \
         error_code,                                                            \

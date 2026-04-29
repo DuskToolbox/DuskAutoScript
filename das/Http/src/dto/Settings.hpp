@@ -18,19 +18,23 @@ namespace Das::Http::Dto
         std::string name;
         std::string package_name;
 
-        nlohmann::json ToJson() const
+        yyjson::writer::detail::value ToJson() const
         {
-            nlohmann::json j;
-            j["name"] = name;
-            j["packageName"] = package_name;
+            yyjson::writer::detail::value j(yyjson::construct_object_type_t{});
+            j["name"] = std::string{name};
+            j["packageName"] = std::string{package_name};
             return j;
         }
 
-        static AppDesc FromJson(const nlohmann::json& j)
+        static AppDesc FromJson(const yyjson::writer::detail::value& j)
         {
             AppDesc desc;
-            desc.name = j.value("name", "");
-            desc.package_name = j.value("packageName", "");
+            auto    name_val = j["name"];
+            auto    name_opt = name_val.as_string();
+            desc.name = name_opt ? std::string(name_opt.value()) : "";
+            auto pn_val = j["packageName"];
+            auto pn_opt = pn_val.as_string();
+            desc.package_name = pn_opt ? std::string(pn_opt.value()) : "";
             return desc;
         }
     };
@@ -44,19 +48,24 @@ namespace Das::Http::Dto
         std::string name;
         std::string plugin_id;
 
-        nlohmann::json ToJson() const
+        yyjson::writer::detail::value ToJson() const
         {
-            nlohmann::json j;
-            j["name"] = name;
-            j["pluginId"] = plugin_id;
+            yyjson::writer::detail::value j(yyjson::construct_object_type_t{});
+            j["name"] = std::string{name};
+            j["pluginId"] = std::string{plugin_id};
             return j;
         }
 
-        static PluginPackageDesc FromJson(const nlohmann::json& j)
+        static PluginPackageDesc FromJson(
+            const yyjson::writer::detail::value& j)
         {
             PluginPackageDesc desc;
-            desc.name = j.value("name", "");
-            desc.plugin_id = j.value("pluginId", "");
+            auto              name_val = j["name"];
+            auto              name_opt = name_val.as_string();
+            desc.name = name_opt ? std::string(name_opt.value()) : "";
+            auto pid_val = j["pluginId"];
+            auto pid_opt = pid_val.as_string();
+            desc.plugin_id = pid_opt ? std::string(pid_opt.value()) : "";
             return desc;
         }
     };
@@ -73,21 +82,27 @@ namespace Das::Http::Dto
         // 此字段由前端内部管理
         // std::string sub_group;
 
-        nlohmann::json ToJson() const
+        yyjson::writer::detail::value ToJson() const
         {
-            nlohmann::json j;
-            j["name"] = name;
-            j["pluginId"] = plugin_id;
-            j["gameName"] = game_name;
+            yyjson::writer::detail::value j(yyjson::construct_object_type_t{});
+            j["name"] = std::string{name};
+            j["pluginId"] = std::string{plugin_id};
+            j["gameName"] = std::string{game_name};
             return j;
         }
 
-        static TaskDesc FromJson(const nlohmann::json& j)
+        static TaskDesc FromJson(const yyjson::writer::detail::value& j)
         {
             TaskDesc desc;
-            desc.name = j.value("name", "");
-            desc.plugin_id = j.value("pluginId", "");
-            desc.game_name = j.value("gameName", "");
+            auto     name_val = j["name"];
+            auto     name_opt = name_val.as_string();
+            desc.name = name_opt ? std::string(name_opt.value()) : "";
+            auto pid_val = j["pluginId"];
+            auto pid_opt = pid_val.as_string();
+            desc.plugin_id = pid_opt ? std::string(pid_opt.value()) : "";
+            auto gn_val = j["gameName"];
+            auto gn_opt = gn_val.as_string();
+            desc.game_name = gn_opt ? std::string(gn_opt.value()) : "";
             return desc;
         }
     };

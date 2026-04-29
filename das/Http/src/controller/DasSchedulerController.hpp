@@ -8,10 +8,10 @@
 #include <das/DasString.hpp>
 #include <das/IDasSchedulerService.h>
 #include <das/Utils/CommonUtils.hpp>
+#include <das/Utils/DasJsonCore.h>
 #include <das/Utils/fmt.h>
 #include <das/_autogen/idl/abi/IDasGuidVector.h>
 #include <filesystem>
-#include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
 
@@ -43,7 +43,7 @@ namespace Das::Http
             const auto& body = request.JsonBody();
 
             // Accept lower camelCase disabledGuids; reject old disabled_guids
-            if (body.contains("disabled_guids"))
+            if (!body["disabled_guids"].is_null())
             {
                 return Beast::HttpResponse::CreateErrorResponse(
                     DAS_E_INVALID_ARGUMENT,
@@ -51,7 +51,7 @@ namespace Das::Http
             }
 
             std::vector<DasGuid> disabled_guids;
-            if (body.contains("disabledGuids"))
+            if (!body["disabledGuids"].is_null())
             {
                 if (!body["disabledGuids"].is_array())
                 {
@@ -65,19 +65,26 @@ namespace Das::Http
                     if (!item.is_string())
                     {
                         DAS_LOG_WARNING(
-                            "Skipping non-string element in disabledGuids");
+                            "Skipping non-string element in "
+                            "disabledGuids");
                         continue;
                     }
 
                     DasGuid guid;
-                    auto    parse_result =
-                        DasMakeDasGuid(item.get<std::string>().c_str(), &guid);
+                    auto    str_opt = item.as_string();
+                    if (!str_opt)
+                    {
+                        continue;
+                    }
+                    auto parse_result = DasMakeDasGuid(
+                        std::string(str_opt.value()).c_str(),
+                        &guid);
                     if (DAS::IsFailed(parse_result))
                     {
                         DAS_LOG_WARNING(
                             DAS_FMT_NS::format(
                                 "Invalid GUID '{}' in disabledGuids",
-                                item.get<std::string>())
+                                std::string(str_opt.value()))
                                 .c_str());
                         continue;
                     }
@@ -195,8 +202,14 @@ namespace Das::Http
                     "Failed to get scheduler state string");
             }
 
-            auto parsed = nlohmann::json::parse(c_str);
-            return Beast::HttpResponse::CreateSuccessResponse(parsed);
+            auto parsed = Das::Utils::ParseYyjsonFromString(c_str);
+            if (!parsed)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_JSON,
+                    "Failed to parse scheduler state JSON");
+            }
+            return Beast::HttpResponse::CreateSuccessResponse(parsed.value());
         }
 
         // ── Task instance mutations ──
@@ -230,8 +243,9 @@ namespace Das::Http
                     "Failed to add task");
             }
 
-            nlohmann::json data;
-            data["taskId"] = out_task_id;
+            yyjson::writer::detail::value data(
+                yyjson::construct_object_type_t{});
+            data["taskId"] = static_cast<int64_t>(out_task_id);
             return Beast::HttpResponse::CreateSuccessResponse(data);
         }
 
@@ -300,10 +314,17 @@ namespace Das::Http
                     "Request body must be a JSON object");
             }
 
+            auto props_opt = Das::Utils::SerializeYyjsonValue(body);
+            if (!props_opt)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_JSON,
+                    "Failed to serialize request body");
+            }
+
             DasPtr<IDasReadOnlyString> p_props;
-            auto                       props_str = body.dump();
             auto                       cr = CreateIDasReadOnlyStringFromUtf8(
-                props_str.c_str(),
+                props_opt.value().c_str(),
                 p_props.Put());
             if (DAS::IsFailed(cr))
             {
@@ -355,10 +376,17 @@ namespace Das::Http
                     "Request body must be a JSON object");
             }
 
+            auto props_opt = Das::Utils::SerializeYyjsonValue(body);
+            if (!props_opt)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_JSON,
+                    "Failed to serialize request body");
+            }
+
             DasPtr<IDasReadOnlyString> p_props;
-            auto                       props_str = body.dump();
             auto                       cr = CreateIDasReadOnlyStringFromUtf8(
-                props_str.c_str(),
+                props_opt.value().c_str(),
                 p_props.Put());
             if (DAS::IsFailed(cr))
             {

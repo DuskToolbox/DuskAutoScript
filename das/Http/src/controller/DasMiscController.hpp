@@ -5,7 +5,7 @@
 #include "beast/Request.hpp"
 #include "das/DasApi.h"
 
-#include <nlohmann/json.hpp>
+#include <cpp_yyjson.hpp>
 
 namespace Das::Http
 {
@@ -15,8 +15,9 @@ namespace Das::Http
     public:
         Beast::HttpResponse Alive(const Beast::HttpRequest& request)
         {
-            nlohmann::json data;
-            data["alive"] = 1;
+            yyjson::writer::detail::value data(
+                yyjson::construct_object_type_t{});
+            data["alive"] = static_cast<int64_t>(1);
             return Beast::HttpResponse::CreateSuccessResponse(data);
         }
 
@@ -24,7 +25,7 @@ namespace Das::Http
         {
             DAS::Http::g_server_condition.RequestServerStop();
             DAS_LOG_INFO("RequestServerStop!");
-            return Beast::HttpResponse::CreateSuccessResponse(nullptr);
+            return Beast::HttpResponse::CreateSuccessResponse();
         }
     };
 
