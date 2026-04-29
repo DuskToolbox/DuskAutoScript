@@ -20,10 +20,10 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <das/Utils/DasJsonCore.h>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
-#include <nlohmann/json.hpp>
 #include <string>
 #include <thread>
 #include <vector>
@@ -43,14 +43,22 @@ namespace
 
     /// Helper to write scheduler index + task instance files directly.
     void WriteSchedulerState(
-        Das::Core::SettingsManager::SettingsManager& sm,
-        int64_t                                      nextTaskId,
-        const std::vector<int64_t>&                  taskOrder,
-        const std::vector<nlohmann::json>&           taskInstances)
+        Das::Core::SettingsManager::SettingsManager&      sm,
+        int64_t                                           nextTaskId,
+        const std::vector<int64_t>&                       taskOrder,
+        const std::vector<yyjson::writer::detail::value>& taskInstances)
     {
-        nlohmann::json index;
+        yyjson::writer::detail::value index(yyjson::construct_object_type_t{});
         index["nextTaskId"] = nextTaskId;
-        index["taskOrder"] = taskOrder;
+        {
+            yyjson::writer::detail::value order_arr(
+                yyjson::construct_array_type_t{});
+            for (auto id : taskOrder)
+            {
+                order_arr.array_append(id);
+            }
+            index["taskOrder"] = std::move(order_arr);
+        }
         sm.UpdateSchedulerIndexJson("0", index);
 
         for (size_t i = 0; i < taskInstances.size() && i < taskOrder.size();
@@ -188,12 +196,16 @@ TEST_F(SchedulerServiceTest, Initialize_MaterializesPersistedInstances)
 {
     settings_manager_->CreateProfile("0");
 
-    nlohmann::json task0;
+    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
     task0["id"] = 0;
     task0["taskGuid"] = "00000000-0000-0000-0000-000000000001";
     task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
-    task0["nextExecutionTime"] = nullptr;
-    task0["properties"] = {{"key1", "value1"}};
+    task0["nextExecutionTime"] = yyjson::writer::detail::value{};
+    {
+        yyjson::writer::detail::value p(yyjson::construct_object_type_t{});
+        p["key1"] = "value1";
+        task0["properties"] = std::move(p);
+    }
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     auto result = scheduler_->Initialize(plugin_dir_, {});
@@ -210,9 +222,14 @@ TEST_F(SchedulerServiceTest, Initialize_CorruptTaskFile_VisibleAsInvalid)
 {
     settings_manager_->CreateProfile("0");
 
-    nlohmann::json scheduler_index;
+    yyjson::writer::detail::value scheduler_index(
+        yyjson::construct_object_type_t{});
     scheduler_index["nextTaskId"] = 1;
-    scheduler_index["taskOrder"] = nlohmann::json::array({0});
+    {
+        yyjson::writer::detail::value arr(yyjson::construct_array_type_t{});
+        arr.array_append(0);
+        scheduler_index["taskOrder"] = std::move(arr);
+    }
     settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
 
     auto task_file = settings_dir_ / "0" / "taskId0.json";
@@ -228,25 +245,26 @@ TEST_F(SchedulerServiceTest, Initialize_CorruptTaskFile_VisibleAsInvalid)
     ASSERT_EQ(state["tasks"].size(), 1u);
     EXPECT_EQ(state["tasks"][0]["id"], 0);
     EXPECT_EQ(state["tasks"][0]["availability"], "invalid");
-    EXPECT_FALSE(
-        state["tasks"][0]["unavailabilityReason"].get<std::string>().empty());
+    EXPECT_FALSE(state["tasks"][0]["unavailabilityReason"].empty());
 }
 
 TEST_F(SchedulerServiceTest, Initialize_MissingTaskType_Unavailable)
 {
     settings_manager_->CreateProfile("0");
 
-    nlohmann::json task0;
+    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
     task0["id"] = 0;
     task0["taskGuid"] = "11111111-1111-1111-1111-111111111111";
     task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
-    task0["properties"] = nlohmann::json::object();
+    task0["properties"] =
+        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
 
-    nlohmann::json task1;
+    yyjson::writer::detail::value task1(yyjson::construct_object_type_t{});
     task1["id"] = 1;
     task1["taskGuid"] = "22222222-2222-2222-2222-222222222222";
     task1["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
-    task1["properties"] = nlohmann::json::object();
+    task1["properties"] =
+        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
 
     WriteSchedulerState(*settings_manager_, 2, {0, 1}, {task0, task1});
 
@@ -279,13 +297,18 @@ TEST_F(SchedulerServiceTest, Get_ReturnsMergedView)
 {
     settings_manager_->CreateProfile("0");
 
-    nlohmann::json task0;
+    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
     task0["id"] = 0;
     task0["taskGuid"] = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
     task0["pluginGuid"] = "FFFFFFFF-0000-0000-0000-000000000000";
     // 2026-04-23T12:30:00+08:00 = 2026-04-23T04:30:00Z = 1776918600
     task0["nextExecutionTime"] = 1776918600;
-    task0["properties"] = {{"setting1", "value1"}, {"setting2", 42}};
+    {
+        yyjson::writer::detail::value p(yyjson::construct_object_type_t{});
+        p["setting1"] = "value1";
+        p["setting2"] = 42;
+        task0["properties"] = std::move(p);
+    }
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
@@ -306,9 +329,15 @@ TEST_F(SchedulerServiceTest, Get_CorruptTaskFile_VisibleWithInvalidMarker)
 {
     settings_manager_->CreateProfile("0");
 
-    nlohmann::json scheduler_index;
+    yyjson::writer::detail::value scheduler_index(
+        yyjson::construct_object_type_t{});
     scheduler_index["nextTaskId"] = 2;
-    scheduler_index["taskOrder"] = nlohmann::json::array({0, 1});
+    {
+        yyjson::writer::detail::value arr(yyjson::construct_array_type_t{});
+        arr.array_append(0);
+        arr.array_append(1);
+        scheduler_index["taskOrder"] = std::move(arr);
+    }
     settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
 
     // Task 0: corrupt file
@@ -319,11 +348,15 @@ TEST_F(SchedulerServiceTest, Get_CorruptTaskFile_VisibleWithInvalidMarker)
     }
 
     // Task 1: valid file
-    nlohmann::json task1;
+    yyjson::writer::detail::value task1(yyjson::construct_object_type_t{});
     task1["id"] = 1;
     task1["taskGuid"] = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
     task1["pluginGuid"] = "FFFFFFFF-0000-0000-0000-000000000000";
-    task1["properties"] = {{"key", "value"}};
+    {
+        yyjson::writer::detail::value p(yyjson::construct_object_type_t{});
+        p["key"] = "value";
+        task1["properties"] = std::move(p);
+    }
     settings_manager_->UpdateTaskInstanceJson("0", 1, task1);
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
@@ -361,17 +394,19 @@ TEST_F(SchedulerServiceTest, DeleteTask_PersistsRemoval)
 {
     settings_manager_->CreateProfile("0");
 
-    nlohmann::json task0;
+    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
     task0["id"] = 0;
     task0["taskGuid"] = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
     task0["pluginGuid"] = "FFFFFFFF-0000-0000-0000-000000000000";
-    task0["properties"] = nlohmann::json::object();
+    task0["properties"] =
+        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
 
-    nlohmann::json task1;
+    yyjson::writer::detail::value task1(yyjson::construct_object_type_t{});
     task1["id"] = 1;
     task1["taskGuid"] = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
     task1["pluginGuid"] = "FFFFFFFF-0000-0000-0000-000000000000";
-    task1["properties"] = nlohmann::json::object();
+    task1["properties"] =
+        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
 
     WriteSchedulerState(*settings_manager_, 2, {0, 1}, {task0, task1});
 
@@ -407,9 +442,14 @@ TEST_F(SchedulerServiceTest, DeleteTask_InvalidInstance_Succeeds)
 {
     settings_manager_->CreateProfile("0");
 
-    nlohmann::json scheduler_index;
+    yyjson::writer::detail::value scheduler_index(
+        yyjson::construct_object_type_t{});
     scheduler_index["nextTaskId"] = 1;
-    scheduler_index["taskOrder"] = nlohmann::json::array({0});
+    {
+        yyjson::writer::detail::value arr(yyjson::construct_array_type_t{});
+        arr.array_append(0);
+        scheduler_index["taskOrder"] = std::move(arr);
+    }
     settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
 
     // Corrupt task file
@@ -437,11 +477,12 @@ TEST_F(SchedulerServiceTest, DeleteTask_UnavailableInstance_Succeeds)
 {
     settings_manager_->CreateProfile("0");
 
-    nlohmann::json task0;
+    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
     task0["id"] = 0;
     task0["taskGuid"] = "11111111-1111-1111-1111-111111111111";
     task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
-    task0["properties"] = nlohmann::json::object();
+    task0["properties"] =
+        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
@@ -461,11 +502,12 @@ TEST_F(SchedulerServiceTest, DeleteTask_PersistenceFailure_RollsBack)
 {
     settings_manager_->CreateProfile("0");
 
-    nlohmann::json task0;
+    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
     task0["id"] = 0;
     task0["taskGuid"] = "11111111-1111-1111-1111-111111111111";
     task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
-    task0["properties"] = nlohmann::json::object();
+    task0["properties"] =
+        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
@@ -501,19 +543,21 @@ TEST_F(SchedulerServiceTest, UpdateInternalProperties_NextExecutionTime)
 {
     settings_manager_->CreateProfile("0");
 
-    nlohmann::json task0;
+    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
     task0["id"] = 0;
     task0["taskGuid"] = "11111111-1111-1111-1111-111111111111";
     task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
-    task0["nextExecutionTime"] = nullptr;
-    task0["properties"] = nlohmann::json::object();
+    task0["nextExecutionTime"] = yyjson::writer::detail::value{};
+    task0["properties"] =
+        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
     // Update nextExecutionTime
     // 2026-05-01T08:00:00+08:00 = 2026-05-01T00:00:00Z = 1777593600
-    nlohmann::json internal_props;
+    yyjson::writer::detail::value internal_props(
+        yyjson::construct_object_type_t{});
     internal_props["nextExecutionTime"] = 1777593600;
     auto result = scheduler_->UpdateTaskInternalProperties(0, internal_props);
     EXPECT_EQ(result, DAS_S_OK);
@@ -531,18 +575,20 @@ TEST_F(SchedulerServiceTest, UpdateInternalProperties_ClearNextExecutionTime)
 {
     settings_manager_->CreateProfile("0");
 
-    nlohmann::json task0;
+    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
     task0["id"] = 0;
     task0["taskGuid"] = "11111111-1111-1111-1111-111111111111";
     task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
     // 2026-05-01T08:00:00+08:00 = 2026-05-01T00:00:00Z = 1777593600
     task0["nextExecutionTime"] = 1777593600;
-    task0["properties"] = nlohmann::json::object();
+    task0["properties"] =
+        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
-    nlohmann::json internal_props;
+    yyjson::writer::detail::value internal_props(
+        yyjson::construct_object_type_t{});
     internal_props["nextExecutionTime"] = nullptr;
     auto result = scheduler_->UpdateTaskInternalProperties(0, internal_props);
     EXPECT_EQ(result, DAS_S_OK);
@@ -555,12 +601,13 @@ TEST_F(SchedulerServiceTest, UnparseableNextExecutionTime_PreservedInGet)
 {
     settings_manager_->CreateProfile("0");
 
-    nlohmann::json task0;
+    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
     task0["id"] = 0;
     task0["taskGuid"] = "11111111-2222-3333-4444-555555555555";
     task0["pluginGuid"] = "00000000-0000-0000-0000-000000000000";
     task0["nextExecutionTime"] = -1; // Invalid timestamp, preserved as-is
-    task0["properties"] = nlohmann::json::object();
+    task0["properties"] =
+        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
 
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
@@ -577,7 +624,8 @@ TEST_F(SchedulerServiceTest, UpdateInternalProperties_NotFound)
 {
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
-    nlohmann::json internal_props;
+    yyjson::writer::detail::value internal_props(
+        yyjson::construct_object_type_t{});
     internal_props["nextExecutionTime"] = 1777593600;
     auto result = scheduler_->UpdateTaskInternalProperties(99, internal_props);
     EXPECT_EQ(result, DAS_E_NOT_FOUND);
@@ -591,16 +639,17 @@ TEST_F(SchedulerServiceTest, UpdateProperties_UnavailableInstance_ReturnsError)
 {
     settings_manager_->CreateProfile("0");
 
-    nlohmann::json task0;
+    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
     task0["id"] = 0;
     task0["taskGuid"] = "11111111-1111-1111-1111-111111111111";
     task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
-    task0["properties"] = nlohmann::json::object();
+    task0["properties"] =
+        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
-    nlohmann::json props;
+    yyjson::writer::detail::value props(yyjson::construct_object_type_t{});
     props["someKey"] = "someValue";
     auto result = scheduler_->UpdateTaskProperties(0, props);
     EXPECT_NE(result, DAS_S_OK);
@@ -610,9 +659,14 @@ TEST_F(SchedulerServiceTest, UpdateProperties_InvalidInstance_ReturnsError)
 {
     settings_manager_->CreateProfile("0");
 
-    nlohmann::json scheduler_index;
+    yyjson::writer::detail::value scheduler_index(
+        yyjson::construct_object_type_t{});
     scheduler_index["nextTaskId"] = 1;
-    scheduler_index["taskOrder"] = nlohmann::json::array({0});
+    {
+        yyjson::writer::detail::value arr(yyjson::construct_array_type_t{});
+        arr.array_append(0);
+        scheduler_index["taskOrder"] = std::move(arr);
+    }
     settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
 
     auto task_file = settings_dir_ / "0" / "taskId0.json";
@@ -623,7 +677,7 @@ TEST_F(SchedulerServiceTest, UpdateProperties_InvalidInstance_ReturnsError)
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
-    nlohmann::json props;
+    yyjson::writer::detail::value props(yyjson::construct_object_type_t{});
     props["someKey"] = "someValue";
     auto result = scheduler_->UpdateTaskProperties(0, props);
     EXPECT_NE(result, DAS_S_OK);
@@ -663,7 +717,7 @@ TEST_F(SchedulerServiceTest, UpdateProperties_NotFound)
 {
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
-    nlohmann::json props;
+    yyjson::writer::detail::value props(yyjson::construct_object_type_t{});
     props["key"] = "value";
     auto result = scheduler_->UpdateTaskProperties(99, props);
     EXPECT_EQ(result, DAS_E_NOT_FOUND);
@@ -686,17 +740,19 @@ TEST_F(SchedulerServiceTest, UpdateInternalProperties_PersistsToFile)
 {
     settings_manager_->CreateProfile("0");
 
-    nlohmann::json task0;
+    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
     task0["id"] = 0;
     task0["taskGuid"] = "11111111-1111-1111-1111-111111111111";
     task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
-    task0["nextExecutionTime"] = nullptr;
-    task0["properties"] = nlohmann::json::object();
+    task0["nextExecutionTime"] = yyjson::writer::detail::value{};
+    task0["properties"] =
+        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
-    nlohmann::json internal_props;
+    yyjson::writer::detail::value internal_props(
+        yyjson::construct_object_type_t{});
     // 2026-06-01T10:00:00+08:00 = 2026-06-01T02:00:00Z = 1780279200
     internal_props["nextExecutionTime"] = 1780279200;
     ASSERT_EQ(
@@ -843,7 +899,7 @@ TEST_F(SchedulerServiceImplTest, Get_ReturnsJsonString)
     auto        get_result = p_json->GetUtf8(&c_str);
     EXPECT_EQ(get_result, DAS_S_OK);
 
-    auto parsed = nlohmann::json::parse(c_str);
+    auto parsed = *Das::Utils::ParseYyjsonFromString(c_str);
     EXPECT_TRUE(parsed.contains("state"));
     EXPECT_TRUE(parsed.contains("tasks"));
     EXPECT_TRUE(parsed.contains("availableTaskTypes"));
@@ -1352,7 +1408,7 @@ private:
 
 void WriteFactoryPluginManifest(const std::filesystem::path& manifest_path)
 {
-    nlohmann::json manifest;
+    yyjson::writer::detail::value manifest(yyjson::construct_object_type_t{});
     manifest["name"] = "FactoryPlugin";
     manifest["author"] = "Tests";
     manifest["version"] = "1.0";
@@ -1361,16 +1417,24 @@ void WriteFactoryPluginManifest(const std::filesystem::path& manifest_path)
     manifest["supportedSystem"] = "Windows";
     manifest["language"] = "Cpp";
     manifest["pluginFilenameExtension"] = "dll";
-    manifest["settings"] = nlohmann::json::object();
-    manifest["tasks"] = {
-        {FactoryTaskGuidString,
-         {{"pluginGuid", FactoryPluginGuidString},
-          {"name", "factoryTask"},
-          {"description", "Scheduler test task"},
-          {"descriptors", nlohmann::json::array()}}}};
+    manifest["settings"] =
+        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
+    {
+        yyjson::writer::detail::value task_entry(
+            yyjson::construct_object_type_t{});
+        task_entry["pluginGuid"] = FactoryPluginGuidString;
+        task_entry["name"] = "factoryTask";
+        task_entry["description"] = "Scheduler test task";
+        task_entry["descriptors"] =
+            yyjson::writer::detail::value(yyjson::construct_array_type_t{});
+        yyjson::writer::detail::value tasks_obj(
+            yyjson::construct_object_type_t{});
+        tasks_obj[FactoryTaskGuidString] = std::move(task_entry);
+        manifest["tasks"] = std::move(tasks_obj);
+    }
 
     std::ofstream ofs(manifest_path);
-    ofs << manifest.dump(2);
+    ofs << *Das::Utils::SerializeYyjsonValue(manifest, true);
 }
 
 namespace
@@ -1394,12 +1458,16 @@ namespace
 
         // Write one task instance in the scheduler state
         sm.CreateProfile("0");
-        nlohmann::json task0;
+        yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
         task0["id"] = 0;
         task0["taskGuid"] = "A1B2C3D4-E5F6-7890-ABCD-EF1234567890";
         task0["pluginGuid"] = "00000000-0000-0000-0000-000000000000";
-        task0["nextExecutionTime"] = nullptr;
-        task0["properties"] = {{"key1", "value1"}};
+        task0["nextExecutionTime"] = yyjson::writer::detail::value{};
+        {
+            yyjson::writer::detail::value p(yyjson::construct_object_type_t{});
+            p["key1"] = "value1";
+            task0["properties"] = std::move(p);
+        }
         WriteSchedulerState(sm, 1, {0}, {task0});
 
         auto init_result = scheduler.Initialize(plugin_dir, {});
@@ -1598,9 +1666,14 @@ TEST_F(SchedulerServiceTest, OnTick_SkipsInvalidInstance)
     settings_manager_->CreateProfile("0");
 
     // Write a corrupt task instance file
-    nlohmann::json scheduler_index;
+    yyjson::writer::detail::value scheduler_index(
+        yyjson::construct_object_type_t{});
     scheduler_index["nextTaskId"] = 1;
-    scheduler_index["taskOrder"] = nlohmann::json::array({0});
+    {
+        yyjson::writer::detail::value arr(yyjson::construct_array_type_t{});
+        arr.array_append(0);
+        scheduler_index["taskOrder"] = std::move(arr);
+    }
     settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
 
     auto task_file = settings_dir_ / "0" / "taskId0.json";
@@ -1621,11 +1694,12 @@ TEST_F(SchedulerServiceTest, OnTick_SkipsUnavailableInstance)
     settings_manager_->CreateProfile("0");
 
     // Write a task instance referencing a non-existent task type
-    nlohmann::json task0;
+    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
     task0["id"] = 0;
     task0["taskGuid"] = "11111111-1111-1111-1111-111111111111";
     task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
-    task0["properties"] = nlohmann::json::object();
+    task0["properties"] =
+        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
@@ -1705,9 +1779,9 @@ TEST_F(SchedulerExecutionTest, OnTick_RefreshesNextExecutionTime)
     // Verify nextExecutionTime was persisted
     auto persisted = settings_manager_->GetTaskInstanceJson("0", 0);
     ASSERT_TRUE(persisted.contains("nextExecutionTime"));
-    ASSERT_TRUE(persisted["nextExecutionTime"].is_number_integer());
+    ASSERT_TRUE(persisted["nextExecutionTime"].is_sint());
     // 2026-06-15T10:30:00Z = 1781519400
-    EXPECT_EQ(persisted["nextExecutionTime"].get<int64_t>(), 1781519400);
+    EXPECT_EQ(persisted["nextExecutionTime"], 1781519400);
 }
 
 TEST_F(SchedulerExecutionTest, OnTick_GetNextExecutionTimeFailure_SetsSentinel)
@@ -1735,8 +1809,8 @@ TEST_F(SchedulerExecutionTest, OnTick_GetNextExecutionTimeFailure_SetsSentinel)
     // The sentinel far-future timestamp should be persisted
     auto persisted = settings_manager_->GetTaskInstanceJson("0", 0);
     ASSERT_TRUE(persisted.contains("nextExecutionTime"));
-    ASSERT_TRUE(persisted["nextExecutionTime"].is_number_integer());
-    EXPECT_EQ(persisted["nextExecutionTime"].get<int64_t>(), 4102444799LL);
+    ASSERT_TRUE(persisted["nextExecutionTime"].is_sint());
+    EXPECT_EQ(persisted["nextExecutionTime"], 4102444799LL);
 }
 
 TEST_F(SchedulerExecutionTest, Stop_RequestsCancellationToken)
@@ -1806,7 +1880,8 @@ TEST_F(SchedulerRuntimeBackedTest, OnTick_RespectsPersistedNextExecutionTime)
     ASSERT_EQ(scheduler_->AddTask(FactoryTaskGuid, &first_task_id), DAS_S_OK);
     ASSERT_EQ(scheduler_->AddTask(FactoryTaskGuid, &second_task_id), DAS_S_OK);
 
-    nlohmann::json internal_props;
+    yyjson::writer::detail::value internal_props(
+        yyjson::construct_object_type_t{});
     // 2099-01-01T00:00:00Z = 4070908800
     internal_props["nextExecutionTime"] = 4070908800;
     ASSERT_EQ(
@@ -1847,11 +1922,11 @@ TEST_F(SchedulerRuntimeBackedTest, AddTask_CreatesDistinctRuntimeInstances)
     auto second_task_json =
         settings_manager_->GetTaskInstanceJson("0", second_task_id);
 
-    ASSERT_TRUE(first_task_json["nextExecutionTime"].is_number_integer());
-    ASSERT_TRUE(second_task_json["nextExecutionTime"].is_number_integer());
+    ASSERT_TRUE(first_task_json["nextExecutionTime"].is_sint());
+    ASSERT_TRUE(second_task_json["nextExecutionTime"].is_sint());
     EXPECT_NE(
-        first_task_json["nextExecutionTime"].get<int64_t>(),
-        second_task_json["nextExecutionTime"].get<int64_t>());
+        first_task_json["nextExecutionTime"],
+        second_task_json["nextExecutionTime"]);
 
     std::lock_guard<std::mutex> lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->executed_instance_ids.size(), 2u);
@@ -2027,7 +2102,7 @@ TEST_F(SchedulerControllerTest, Initialize_ProfileNonZero_Rejected)
     auto req =
         MakeRequest("/api/scheduler/1/initialize", "{}", {{"profile", "1"}});
     auto resp = controller_->Initialize(req);
-    auto body = nlohmann::json::parse(resp.Release().body());
+    auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->initialize_called);
 }
@@ -2036,7 +2111,7 @@ TEST_F(SchedulerControllerTest, Start_ProfileNonZero_Rejected)
 {
     auto req = MakeRequest("/api/scheduler/1/start", "{}", {{"profile", "1"}});
     auto resp = controller_->Start(req);
-    auto body = nlohmann::json::parse(resp.Release().body());
+    auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->start_called);
 }
@@ -2045,7 +2120,7 @@ TEST_F(SchedulerControllerTest, Stop_ProfileNonZero_Rejected)
 {
     auto req = MakeRequest("/api/scheduler/1/stop", "{}", {{"profile", "1"}});
     auto resp = controller_->Stop(req);
-    auto body = nlohmann::json::parse(resp.Release().body());
+    auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->stop_called);
 }
@@ -2054,7 +2129,7 @@ TEST_F(SchedulerControllerTest, Get_ProfileNonZero_Rejected)
 {
     auto req = MakeRequest("/api/scheduler/1/get", "{}", {{"profile", "1"}});
     auto resp = controller_->Get(req);
-    auto body = nlohmann::json::parse(resp.Release().body());
+    auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->get_called);
 }
@@ -2067,7 +2142,7 @@ TEST_F(SchedulerControllerTest, AddTask_ProfileNonZero_Rejected)
         {{"profile", "1"},
          {"taskGuid", "A1B2C3D4-E5F6-7890-ABCD-EF1234567890"}});
     auto resp = controller_->AddTask(req);
-    auto body = nlohmann::json::parse(resp.Release().body());
+    auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->add_task_called);
 }
@@ -2079,7 +2154,7 @@ TEST_F(SchedulerControllerTest, DeleteTask_ProfileNonZero_Rejected)
         "{}",
         {{"profile", "1"}, {"taskId", "0"}});
     auto resp = controller_->DeleteTask(req);
-    auto body = nlohmann::json::parse(resp.Release().body());
+    auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->delete_task_called);
 }
@@ -2093,7 +2168,7 @@ TEST_F(SchedulerControllerTest, AddTask_MalformedGuid_Rejected)
         "{}",
         {{"profile", "0"}, {"taskGuid", "not-a-guid"}});
     auto resp = controller_->AddTask(req);
-    auto body = nlohmann::json::parse(resp.Release().body());
+    auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->add_task_called);
 }
@@ -2107,7 +2182,7 @@ TEST_F(SchedulerControllerTest, DeleteTask_MalformedTaskId_Rejected)
         "{}",
         {{"profile", "0"}, {"taskId", "abc"}});
     auto resp = controller_->DeleteTask(req);
-    auto body = nlohmann::json::parse(resp.Release().body());
+    auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->delete_task_called);
 }
@@ -2119,7 +2194,7 @@ TEST_F(SchedulerControllerTest, UpdateProps_MalformedTaskId_Rejected)
         R"({"key":"val"})",
         {{"profile", "0"}, {"taskId", "xyz"}});
     auto resp = controller_->UpdateTaskProperties(req);
-    auto body = nlohmann::json::parse(resp.Release().body());
+    auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->update_props_called);
 }
@@ -2131,7 +2206,7 @@ TEST_F(SchedulerControllerTest, UpdateInternalProps_MalformedTaskId_Rejected)
         R"({"nextExecutionTime":null})",
         {{"profile", "0"}, {"taskId", "abc"}});
     auto resp = controller_->UpdateTaskInternalProperties(req);
-    auto body = nlohmann::json::parse(resp.Release().body());
+    auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->update_internal_props_called);
 }
@@ -2145,7 +2220,7 @@ TEST_F(SchedulerControllerTest, Initialize_OldDisabledUnderscoreGuids_Rejected)
         R"({"disabled_guids":[]})",
         {{"profile", "0"}});
     auto resp = controller_->Initialize(req);
-    auto body = nlohmann::json::parse(resp.Release().body());
+    auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->initialize_called);
 }
@@ -2157,7 +2232,7 @@ TEST_F(SchedulerControllerTest, Initialize_NonArrayDisabledGuids_Rejected)
         R"({"disabledGuids":"not-array"})",
         {{"profile", "0"}});
     auto resp = controller_->Initialize(req);
-    auto body = nlohmann::json::parse(resp.Release().body());
+    auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->initialize_called);
 }
@@ -2169,7 +2244,7 @@ TEST_F(SchedulerControllerTest, Initialize_MalformedGuidMember_Skipped)
         R"({"disabledGuids":["not-a-guid","00000000-0000-0000-0000-000000000000"]})",
         {{"profile", "0"}});
     auto resp = controller_->Initialize(req);
-    auto body = nlohmann::json::parse(resp.Release().body());
+    auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     // Should succeed (malformed GUIDs are skipped, valid ones pass)
     EXPECT_EQ(body["Code"], DAS_S_OK);
     EXPECT_TRUE(fake_svc_->initialize_called);
@@ -2184,7 +2259,7 @@ TEST_F(SchedulerControllerTest, Initialize_Valid_Forwarded)
         R"({"disabledGuids":[]})",
         {{"profile", "0"}});
     auto resp = controller_->Initialize(req);
-    auto body = nlohmann::json::parse(resp.Release().body());
+    auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(body["Code"], DAS_S_OK);
     EXPECT_TRUE(fake_svc_->initialize_called);
 }
@@ -2193,7 +2268,7 @@ TEST_F(SchedulerControllerTest, Start_Valid_Forwarded)
 {
     auto req = MakeRequest("/api/scheduler/0/start", "{}", {{"profile", "0"}});
     auto resp = controller_->Start(req);
-    auto body = nlohmann::json::parse(resp.Release().body());
+    auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(body["Code"], DAS_S_OK);
     EXPECT_TRUE(fake_svc_->start_called);
 }
@@ -2202,7 +2277,7 @@ TEST_F(SchedulerControllerTest, Stop_Valid_Forwarded)
 {
     auto req = MakeRequest("/api/scheduler/0/stop", "{}", {{"profile", "0"}});
     auto resp = controller_->Stop(req);
-    auto body = nlohmann::json::parse(resp.Release().body());
+    auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(body["Code"], DAS_S_OK);
     EXPECT_TRUE(fake_svc_->stop_called);
 }
@@ -2211,7 +2286,7 @@ TEST_F(SchedulerControllerTest, Get_Valid_Forwarded)
 {
     auto req = MakeRequest("/api/scheduler/0/get", "{}", {{"profile", "0"}});
     auto resp = controller_->Get(req);
-    auto body = nlohmann::json::parse(resp.Release().body());
+    auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(body["Code"], DAS_S_OK);
     EXPECT_TRUE(body["Data"].contains("state"));
     EXPECT_TRUE(fake_svc_->get_called);
@@ -2225,7 +2300,7 @@ TEST_F(SchedulerControllerTest, AddTask_Valid_Forwarded)
         {{"profile", "0"},
          {"taskGuid", "A1B2C3D4-E5F6-7890-ABCD-EF1234567890"}});
     auto resp = controller_->AddTask(req);
-    auto body = nlohmann::json::parse(resp.Release().body());
+    auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(body["Code"], DAS_S_OK);
     EXPECT_EQ(body["Data"]["taskId"], 42);
     EXPECT_TRUE(fake_svc_->add_task_called);
@@ -2238,7 +2313,7 @@ TEST_F(SchedulerControllerTest, DeleteTask_Valid_Forwarded)
         "{}",
         {{"profile", "0"}, {"taskId", "5"}});
     auto resp = controller_->DeleteTask(req);
-    auto body = nlohmann::json::parse(resp.Release().body());
+    auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(body["Code"], DAS_S_OK);
     EXPECT_TRUE(fake_svc_->delete_task_called);
 }
@@ -2250,7 +2325,7 @@ TEST_F(SchedulerControllerTest, UpdateProps_Valid_Forwarded)
         R"({"key":"value"})",
         {{"profile", "0"}, {"taskId", "3"}});
     auto resp = controller_->UpdateTaskProperties(req);
-    auto body = nlohmann::json::parse(resp.Release().body());
+    auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(body["Code"], DAS_S_OK);
     EXPECT_TRUE(fake_svc_->update_props_called);
 }
@@ -2262,7 +2337,7 @@ TEST_F(SchedulerControllerTest, UpdateInternalProps_Valid_Forwarded)
         R"({"nextExecutionTime":"2026-05-01T08:00:00+08:00"})",
         {{"profile", "0"}, {"taskId", "3"}});
     auto resp = controller_->UpdateTaskInternalProperties(req);
-    auto body = nlohmann::json::parse(resp.Release().body());
+    auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(body["Code"], DAS_S_OK);
     EXPECT_TRUE(fake_svc_->update_internal_props_called);
 }
@@ -2319,7 +2394,7 @@ TEST(ProfileControllerTest, GetPluginSettings_SFalseReportsEmptyObjectRecovery)
         {{"pid", "0"}, {"guid", FactoryPluginGuidString}});
 
     auto response = controller.GetPluginSettings(request);
-    auto body = nlohmann::json::parse(response.Release().body());
+    auto body = *Das::Utils::ParseYyjsonFromString(response.Release().body());
 
     EXPECT_EQ(body["Code"], DAS_S_FALSE);
     EXPECT_EQ(
@@ -2445,7 +2520,8 @@ TEST_F(SchedulerLifecycleTest, FullTaskInstanceLifecycle)
     // 7. UpdateTaskInternalProperties on instance 0
     //    (no descriptors from manifest, so UpdateTaskProperties would reject;
     //     internal properties are always writable when not running)
-    nlohmann::json internal_props;
+    yyjson::writer::detail::value internal_props(
+        yyjson::construct_object_type_t{});
     // 2026-07-01T09:00:00Z = 1782896400
     internal_props["nextExecutionTime"] = 1782896400;
     auto update_result =
@@ -2469,7 +2545,8 @@ TEST_F(SchedulerLifecycleTest, FullTaskInstanceLifecycle)
         DAS_E_TASK_WORKING);
     EXPECT_EQ(scheduler_->DeleteTask(0), DAS_E_TASK_WORKING);
 
-    nlohmann::json rejected_props;
+    yyjson::writer::detail::value rejected_props(
+        yyjson::construct_object_type_t{});
     rejected_props["key"] = "val";
     EXPECT_EQ(
         scheduler_->UpdateTaskProperties(0, rejected_props),
@@ -2598,18 +2675,28 @@ TEST_F(SchedulerUnavailableTest, UnavailableAndCorruptInstances_VisibleInGet)
 {
     // Seed scheduler.json with two task ids: one referencing an absent task
     // type GUID (unavailable), one with a corrupt JSON file (invalid).
-    nlohmann::json scheduler_index;
+    yyjson::writer::detail::value scheduler_index(
+        yyjson::construct_object_type_t{});
     scheduler_index["nextTaskId"] = 2;
-    scheduler_index["taskOrder"] = nlohmann::json::array({0, 1});
+    {
+        yyjson::writer::detail::value arr(yyjson::construct_array_type_t{});
+        arr.array_append(0);
+        arr.array_append(1);
+        scheduler_index["taskOrder"] = std::move(arr);
+    }
     settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
 
     // Task 0: unavailable -- references a GUID not in loaded manifests
-    nlohmann::json task0;
+    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
     task0["id"] = 0;
     task0["taskGuid"] = "11111111-2222-3333-4444-555555555555";
     task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
-    task0["nextExecutionTime"] = nullptr;
-    task0["properties"] = {{"customProp", "preservedValue"}};
+    task0["nextExecutionTime"] = yyjson::writer::detail::value{};
+    {
+        yyjson::writer::detail::value p(yyjson::construct_object_type_t{});
+        p["customProp"] = "preservedValue";
+        task0["properties"] = std::move(p);
+    }
     settings_manager_->UpdateTaskInstanceJson("0", 0, task0);
 
     // Task 1: corrupt task-instance JSON file
@@ -2636,18 +2723,18 @@ TEST_F(SchedulerUnavailableTest, UnavailableAndCorruptInstances_VisibleInGet)
     // Invalid/corrupt instance: visible with original id
     EXPECT_EQ(state["tasks"][1]["id"], 1);
     EXPECT_EQ(state["tasks"][1]["availability"], "invalid");
-    EXPECT_FALSE(
-        state["tasks"][1]["unavailabilityReason"].get<std::string>().empty());
+    EXPECT_FALSE(state["tasks"][1]["unavailabilityReason"].empty());
 }
 
 TEST_F(SchedulerUnavailableTest, UnavailableInstance_NotExecutedOnStart)
 {
     // Seed scheduler with an unavailable task type
-    nlohmann::json task0;
+    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
     task0["id"] = 0;
     task0["taskGuid"] = "11111111-2222-3333-4444-555555555555";
     task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
-    task0["properties"] = nlohmann::json::object();
+    task0["properties"] =
+        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
@@ -2661,9 +2748,14 @@ TEST_F(SchedulerUnavailableTest, UnavailableInstance_NotExecutedOnStart)
 TEST_F(SchedulerUnavailableTest, CorruptInstance_NotExecutedOnStart)
 {
     // Seed scheduler with a corrupt task file
-    nlohmann::json scheduler_index;
+    yyjson::writer::detail::value scheduler_index(
+        yyjson::construct_object_type_t{});
     scheduler_index["nextTaskId"] = 1;
-    scheduler_index["taskOrder"] = nlohmann::json::array({0});
+    {
+        yyjson::writer::detail::value arr(yyjson::construct_array_type_t{});
+        arr.array_append(0);
+        scheduler_index["taskOrder"] = std::move(arr);
+    }
     settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
 
     auto task_file = settings_dir_ / "0" / "taskId0.json";
@@ -2682,11 +2774,12 @@ TEST_F(SchedulerUnavailableTest, CorruptInstance_NotExecutedOnStart)
 
 TEST_F(SchedulerUnavailableTest, DeleteUnavailableInstance_Succeeds)
 {
-    nlohmann::json task0;
+    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
     task0["id"] = 0;
     task0["taskGuid"] = "11111111-2222-3333-4444-555555555555";
     task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
-    task0["properties"] = nlohmann::json::object();
+    task0["properties"] =
+        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
@@ -2709,9 +2802,14 @@ TEST_F(SchedulerUnavailableTest, DeleteUnavailableInstance_Succeeds)
 
 TEST_F(SchedulerUnavailableTest, DeleteCorruptInstance_Succeeds)
 {
-    nlohmann::json scheduler_index;
+    yyjson::writer::detail::value scheduler_index(
+        yyjson::construct_object_type_t{});
     scheduler_index["nextTaskId"] = 1;
-    scheduler_index["taskOrder"] = nlohmann::json::array({0});
+    {
+        yyjson::writer::detail::value arr(yyjson::construct_array_type_t{});
+        arr.array_append(0);
+        scheduler_index["taskOrder"] = std::move(arr);
+    }
     settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
 
     auto task_file = settings_dir_ / "0" / "taskId0.json";
@@ -2757,18 +2855,23 @@ TEST_F(SchedulerUnavailableTest, MixedAvailableAndUnavailable_OnlyAvailableRuns)
         static_cast<IDasBase*>(fake));
 
     // Task 0: unavailable (GUID not matching any loaded task)
-    nlohmann::json task0;
+    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
     task0["id"] = 0;
     task0["taskGuid"] = "11111111-2222-3333-4444-555555555555";
     task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
-    task0["properties"] = nlohmann::json::object();
+    task0["properties"] =
+        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
 
     // Task 1: available (matches FakeTaskGuid)
-    nlohmann::json task1;
+    yyjson::writer::detail::value task1(yyjson::construct_object_type_t{});
     task1["id"] = 1;
     task1["taskGuid"] = "A1B2C3D4-E5F6-7890-ABCD-EF1234567890";
     task1["pluginGuid"] = "00000000-0000-0000-0000-000000000000";
-    task1["properties"] = {{"testKey", "testValue"}};
+    {
+        yyjson::writer::detail::value p(yyjson::construct_object_type_t{});
+        p["testKey"] = "testValue";
+        task1["properties"] = std::move(p);
+    }
 
     WriteSchedulerState(*settings_manager_, 2, {0, 1}, {task0, task1});
 

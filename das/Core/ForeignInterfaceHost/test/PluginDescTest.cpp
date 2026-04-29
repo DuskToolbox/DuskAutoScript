@@ -1,19 +1,34 @@
 #include <cstring>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
+#include <das/Utils/DasJsonCore.h>
 #include <gtest/gtest.h>
-#include <nlohmann/json.hpp>
+#include <optional>
+#include <string>
 
 namespace
 {
     template <class T>
     T JsonToStruct(const std::string& string)
     {
-        const auto json = nlohmann::json::parse(string);
-        T          result = json.template get<T>();
+        const auto json_opt = Das::Utils::ParseYyjsonFromString(string);
+        if (!json_opt)
+        {
+            throw std::runtime_error("Failed to parse JSON");
+        }
+        T result{};
+        if constexpr (
+            std::is_same_v<
+                T,
+                DAS::Core::ForeignInterfaceHost::PluginPackageDesc>)
+        {
+            DAS::Core::ForeignInterfaceHost::ParsePluginPackageDescFromJson(
+                json_opt->as_object().value(),
+                result);
+        }
         return result;
     }
-} // Annonymous namespace
+} // anonymous namespace
 
 TEST(PluginPackageDescTest, FromBasicJson)
 {

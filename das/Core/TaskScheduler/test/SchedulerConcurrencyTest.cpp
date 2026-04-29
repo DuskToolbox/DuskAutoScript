@@ -2,13 +2,14 @@
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/Core/TaskScheduler/SchedulerService.h>
+#include <das/Utils/DasJsonCore.h>
 #include <gtest/gtest.h>
 
 #include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <mutex>
-#include <nlohmann/json.hpp>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -26,14 +27,22 @@ namespace
 
     /// Helper to write scheduler index + task instance files directly.
     void WriteSchedulerState(
-        Das::Core::SettingsManager::SettingsManager& sm,
-        int64_t                                      nextTaskId,
-        const std::vector<int64_t>&                  taskOrder,
-        const std::vector<nlohmann::json>&           taskInstances)
+        Das::Core::SettingsManager::SettingsManager&      sm,
+        int64_t                                           nextTaskId,
+        const std::vector<int64_t>&                       taskOrder,
+        const std::vector<yyjson::writer::detail::value>& taskInstances)
     {
-        nlohmann::json index;
+        yyjson::writer::detail::value index(yyjson::construct_object_type_t{});
         index["nextTaskId"] = nextTaskId;
-        index["taskOrder"] = taskOrder;
+        {
+            yyjson::writer::detail::value order_arr(
+                yyjson::construct_array_type_t{});
+            for (auto id : taskOrder)
+            {
+                order_arr.array_append(id);
+            }
+            index["taskOrder"] = std::move(order_arr);
+        }
         sm.UpdateSchedulerIndexJson("0", index);
 
         for (size_t i = 0; i < taskInstances.size() && i < taskOrder.size();
@@ -99,17 +108,19 @@ TEST_F(SchedulerConcurrencyTest, DeleteRetrySleepDoesNotBlockConcurrentOps)
     settings_manager_->CreateProfile("0");
 
     // Create two task instances
-    nlohmann::json task0;
+    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
     task0["id"] = 0;
     task0["taskGuid"] = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
     task0["pluginGuid"] = "FFFFFFFF-0000-0000-0000-000000000000";
-    task0["properties"] = nlohmann::json::object();
+    task0["properties"] =
+        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
 
-    nlohmann::json task1;
+    yyjson::writer::detail::value task1(yyjson::construct_object_type_t{});
     task1["id"] = 1;
     task1["taskGuid"] = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
     task1["pluginGuid"] = "FFFFFFFF-0000-0000-0000-000000000000";
-    task1["properties"] = nlohmann::json::object();
+    task1["properties"] =
+        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
 
     WriteSchedulerState(*settings_manager_, 2, {0, 1}, {task0, task1});
 
@@ -149,12 +160,13 @@ TEST_F(SchedulerConcurrencyTest, ConcurrentUpdatesNoNestedLockDeadlock)
 {
     settings_manager_->CreateProfile("0");
 
-    nlohmann::json task0;
+    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
     task0["id"] = 0;
     task0["taskGuid"] = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
     task0["pluginGuid"] = "FFFFFFFF-0000-0000-0000-000000000000";
-    task0["nextExecutionTime"] = nullptr;
-    task0["properties"] = nlohmann::json::object();
+    task0["nextExecutionTime"] = yyjson::writer::detail::value{};
+    task0["properties"] =
+        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
 
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
@@ -171,7 +183,8 @@ TEST_F(SchedulerConcurrencyTest, ConcurrentUpdatesNoNestedLockDeadlock)
             {
                 // 2026-06-01T00:00:00 UTC = 1780272000, each thread offsets by
                 // hour
-                nlohmann::json internal_props;
+                yyjson::writer::detail::value internal_props(
+                    yyjson::construct_object_type_t{});
                 internal_props["nextExecutionTime"] =
                     static_cast<int64_t>(1780272000LL + i * 3600);
                 auto result =

@@ -1,11 +1,11 @@
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/IDasBase.h>
+#include <das/Utils/DasJsonCore.h>
 
 #include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <gtest/gtest.h>
-#include <nlohmann/json.hpp>
 #include <string>
 #include <thread>
 
@@ -60,7 +60,8 @@ TEST_F(SettingsManagerConcurrencyTest, SameKeySerialized)
     {
         for (int i = 0; i < 50; ++i)
         {
-            nlohmann::json data;
+            yyjson::writer::detail::value data(
+                yyjson::construct_object_type_t{});
             data["value"] = start_value + i;
             sm_->UpdatePluginSettingsJson("0", key_guid, data);
         }
@@ -74,8 +75,8 @@ TEST_F(SettingsManagerConcurrencyTest, SameKeySerialized)
 
     EXPECT_EQ(ops_done.load(), 2);
 
-    auto result = sm_->GetPluginSettingsJson("0", key_guid);
-    int  final_value = result["value"].get<int>();
+    auto    result = sm_->GetPluginSettingsJson("0", key_guid);
+    int64_t final_value = result["value"].as_sint().value();
     EXPECT_TRUE(final_value >= 49);
     EXPECT_TRUE(final_value <= 1049);
 }
@@ -92,7 +93,8 @@ TEST_F(SettingsManagerConcurrencyTest, HttpWholeFileVsPluginFieldRace)
     {
         for (int i = 0; i < 20; ++i)
         {
-            nlohmann::json data;
+            yyjson::writer::detail::value data(
+                yyjson::construct_object_type_t{});
             data["field_a"] = i;
             data["field_b"] = "http_write";
             sm_->UpdatePluginSettingsJson("0", key_guid, data);
@@ -105,11 +107,12 @@ TEST_F(SettingsManagerConcurrencyTest, HttpWholeFileVsPluginFieldRace)
     {
         for (int i = 0; i < 20; ++i)
         {
+            yyjson::writer::detail::value field_val(std::to_string(i));
             sm_->UpdatePluginSettingsFieldJson(
                 "0",
                 key_guid,
                 "field_c",
-                nlohmann::json(std::to_string(i)));
+                field_val);
         }
         done_b.store(true);
     };
@@ -145,7 +148,9 @@ TEST_F(SettingsManagerConcurrencyTest, DifferentKeysNonBlocking)
         {
             std::this_thread::yield();
         }
-        sm_->UpdatePluginSettingsJson("0", "plugin-A", {{"data", "A"}});
+        yyjson::writer::detail::value data_a(yyjson::construct_object_type_t{});
+        data_a["data"] = "A";
+        sm_->UpdatePluginSettingsJson("0", "plugin-A", data_a);
     };
 
     auto writer_b = [&]()
@@ -154,7 +159,9 @@ TEST_F(SettingsManagerConcurrencyTest, DifferentKeysNonBlocking)
         {
             std::this_thread::yield();
         }
-        sm_->UpdatePluginSettingsJson("0", "plugin-B", {{"data", "B"}});
+        yyjson::writer::detail::value data_b(yyjson::construct_object_type_t{});
+        data_b["data"] = "B";
+        sm_->UpdatePluginSettingsJson("0", "plugin-B", data_b);
     };
 
     std::thread ta(writer_a);
@@ -166,8 +173,8 @@ TEST_F(SettingsManagerConcurrencyTest, DifferentKeysNonBlocking)
     // Both operations should complete; different keys use different mutexes
     auto ra = sm_->GetPluginSettingsJson("0", "plugin-A");
     auto rb = sm_->GetPluginSettingsJson("0", "plugin-B");
-    EXPECT_EQ(ra["data"], "A");
-    EXPECT_EQ(rb["data"], "B");
+    EXPECT_EQ(std::string(ra["data"].as_string().value()), "A");
+    EXPECT_EQ(std::string(rb["data"].as_string().value()), "B");
 }
 
 // Test 4: Concurrent field updates to same plugin key are serialized
@@ -182,7 +189,12 @@ TEST_F(
     const int         iterations = 100;
 
     // Initialize plugin settings with a counter field
-    sm_->UpdatePluginSettingsJson("0", test_guid, {{"counter", "0"}});
+    {
+        yyjson::writer::detail::value init_data(
+            yyjson::construct_object_type_t{});
+        init_data["counter"] = "0";
+        sm_->UpdatePluginSettingsJson("0", test_guid, init_data);
+    }
 
     auto field_updater = [&]()
     {
@@ -191,11 +203,12 @@ TEST_F(
             // UpdatePluginSettingsFieldJson performs a single-API RMW:
             // per-key mutex -> read current -> set field -> WriteJsonFile ->
             // snapshot
+            yyjson::writer::detail::value field_val(std::to_string(i));
             sm_->UpdatePluginSettingsFieldJson(
                 "0",
                 test_guid,
                 "counter",
-                nlohmann::json(std::to_string(i)));
+                field_val);
         }
     };
 
@@ -225,10 +238,9 @@ TEST_F(SettingsManagerConcurrencyTest, RegistryLockNotHeldDuringIO)
     auto writer = [&](const std::string& plugin_name)
     {
         phase.fetch_add(1);
-        sm_->UpdatePluginSettingsJson(
-            "0",
-            plugin_name,
-            {{"name", plugin_name}});
+        yyjson::writer::detail::value data(yyjson::construct_object_type_t{});
+        data["name"] = plugin_name;
+        sm_->UpdatePluginSettingsJson("0", plugin_name, data);
     };
 
     std::thread t1(writer, "concurrent-1");
@@ -239,6 +251,6 @@ TEST_F(SettingsManagerConcurrencyTest, RegistryLockNotHeldDuringIO)
     // Both writes should succeed
     auto r1 = sm_->GetPluginSettingsJson("0", "concurrent-1");
     auto r2 = sm_->GetPluginSettingsJson("0", "concurrent-2");
-    EXPECT_EQ(r1["name"], "concurrent-1");
-    EXPECT_EQ(r2["name"], "concurrent-2");
+    EXPECT_EQ(std::string(r1["name"].as_string().value()), "concurrent-1");
+    EXPECT_EQ(std::string(r2["name"].as_string().value()), "concurrent-2");
 }

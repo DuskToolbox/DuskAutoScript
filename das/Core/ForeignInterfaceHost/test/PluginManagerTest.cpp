@@ -7,8 +7,8 @@
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/DasApi.h>
 #include <das/DasSharedRef.hpp>
+#include <das/Utils/DasJsonCore.h>
 #include <gtest/gtest.h>
-#include <nlohmann/json.hpp>
 
 DAS_DISABLE_WARNING_BEGIN
 DAS_IGNORE_OPENCV_WARNING
@@ -309,19 +309,18 @@ TEST_F(PluginManagerGuidTest, LoadPlugin_NoHostPath_ReturnsError)
     std::filesystem::create_directories(test_dir);
     auto manifest_path = test_dir / "test_plugin_no_host_path.json";
 
-    nlohmann::json manifest = {
-        {"guid", "{00000000-0000-0000-0000-000000000001}"},
-        {"name", "TestCSharpPlugin"},
-        {"language", "CSharp"},
-        {"description", "test"},
-        {"author", "test"},
-        {"version", "1.0"},
-        {"supportedSystem", "win"},
-        {"pluginFilenameExtension", ".dll"},
-    };
+    yyjson::writer::detail::value manifest(yyjson::construct_object_type_t{});
+    manifest["guid"] = "{00000000-0000-0000-0000-000000000001}";
+    manifest["name"] = "TestCSharpPlugin";
+    manifest["language"] = "CSharp";
+    manifest["description"] = "test";
+    manifest["author"] = "test";
+    manifest["version"] = "1.0";
+    manifest["supportedSystem"] = "win";
+    manifest["pluginFilenameExtension"] = ".dll";
     {
         std::ofstream ofs(manifest_path);
-        ofs << manifest.dump();
+        ofs << *Das::Utils::SerializeYyjsonValue(manifest, false);
     }
 
     auto result = pm_->LoadPlugin(test_dir);
@@ -347,20 +346,19 @@ TEST_F(PluginManagerGuidTest, LoadPlugin_CppWithLoadModeIpc_GoesIpcPath)
     std::filesystem::create_directories(test_dir);
     auto manifest_path = test_dir / "test_plugin_loadmode_ipc.json";
 
-    nlohmann::json manifest = {
-        {"guid", "{00000000-0000-0000-0000-000000000010}"},
-        {"name", "TestPluginCppIpc"},
-        {"language", "Cpp"},
-        {"loadMode", "ipc"},
-        {"description", "test"},
-        {"author", "test"},
-        {"version", "1.0"},
-        {"supportedSystem", "win"},
-        {"pluginFilenameExtension", ".dll"},
-    };
+    yyjson::writer::detail::value manifest(yyjson::construct_object_type_t{});
+    manifest["guid"] = "{00000000-0000-0000-0000-000000000010}";
+    manifest["name"] = "TestPluginCppIpc";
+    manifest["language"] = "Cpp";
+    manifest["loadMode"] = "ipc";
+    manifest["description"] = "test";
+    manifest["author"] = "test";
+    manifest["version"] = "1.0";
+    manifest["supportedSystem"] = "win";
+    manifest["pluginFilenameExtension"] = ".dll";
     {
         std::ofstream ofs(manifest_path);
-        ofs << manifest.dump();
+        ofs << *Das::Utils::SerializeYyjsonValue(manifest, false);
     }
 
     // No IPC context set -> IPC path returns DAS_E_NO_IMPLEMENTATION
@@ -446,17 +444,18 @@ namespace
         auto pkg_dir = plugin_dir / dirname;
         std::filesystem::create_directories(pkg_dir);
 
-        nlohmann::json manifest = {
-            {"guid", guid},
-            {"name", dirname},
-            {"language", "Cpp"},
-            {"description", "test plugin"},
-            {"author", "test"},
-            {"version", "1.0"},
-            {"supportedSystem", "win"},
-            {"pluginFilenameExtension", "dll"},
-            {"settings", nlohmann::json::array()},
-        };
+        yyjson::writer::detail::value manifest(
+            yyjson::construct_object_type_t{});
+        manifest["guid"] = guid;
+        manifest["name"] = dirname;
+        manifest["language"] = "Cpp";
+        manifest["description"] = "test plugin";
+        manifest["author"] = "test";
+        manifest["version"] = "1.0";
+        manifest["supportedSystem"] = "win";
+        manifest["pluginFilenameExtension"] = "dll";
+        manifest["settings"] =
+            yyjson::writer::detail::value(yyjson::construct_array_type_t{});
 
         if (!resource_path_value.empty())
         {
@@ -466,7 +465,7 @@ namespace
         auto manifest_path = pkg_dir / (dirname + ".json");
         {
             std::ofstream ofs(manifest_path);
-            ofs << manifest.dump();
+            ofs << *Das::Utils::SerializeYyjsonValue(manifest, false);
         }
 
         // Create the resource subdirectory
@@ -721,22 +720,23 @@ protected:
         auto res_dir = pkg_dir / "resource";
         std::filesystem::create_directories(res_dir);
 
-        nlohmann::json manifest = {
-            {"guid", kTestGuid1},
-            {"name", "ImagePlugin"},
-            {"language", "Cpp"},
-            {"description", "test image plugin"},
-            {"author", "test"},
-            {"version", "1.0"},
-            {"supportedSystem", "win"},
-            {"pluginFilenameExtension", "dll"},
-            {"settings", nlohmann::json::array()},
-        };
+        yyjson::writer::detail::value manifest(
+            yyjson::construct_object_type_t{});
+        manifest["guid"] = kTestGuid1;
+        manifest["name"] = "ImagePlugin";
+        manifest["language"] = "Cpp";
+        manifest["description"] = "test image plugin";
+        manifest["author"] = "test";
+        manifest["version"] = "1.0";
+        manifest["supportedSystem"] = "win";
+        manifest["pluginFilenameExtension"] = "dll";
+        manifest["settings"] =
+            yyjson::writer::detail::value(yyjson::construct_array_type_t{});
 
         auto manifest_path = pkg_dir / "ImagePlugin.json";
         {
             std::ofstream ofs(manifest_path);
-            ofs << manifest.dump();
+            ofs << *Das::Utils::SerializeYyjsonValue(manifest, false);
         }
 
         WriteTinyRedPng(res_dir / "tiny.png");
