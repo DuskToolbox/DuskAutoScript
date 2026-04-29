@@ -7,10 +7,10 @@
 #include <das/DasString.hpp>
 #include <das/IDasBase.h>
 #include <das/Utils/CommonUtils.hpp>
+#include <das/Utils/DasJsonCore.h>
 #include <das/Utils/fmt.h>
 #include <dwmapi.h>
 #include <memory>
-#include <nlohmann/json.hpp>
 #include <psapi.h>
 #include <tlhelp32.h>
 
@@ -106,16 +106,25 @@ namespace
 
 DAS_NS_BEGIN
 
-bool WindowsCapture::ParseConfigAndSelectMode(const nlohmann::json& config)
+bool WindowsCapture::ParseConfigAndSelectMode(
+    const yyjson::writer::detail::value& config)
 {
-    if (!config_.contains("capture_mode"))
+    config_ = config;
+    auto obj = config_.as_object();
+    if (!obj)
+    {
+        DAS_LOG_ERROR("Config is not a JSON object");
+        return false;
+    }
+    auto capture_mode_val = (*obj)[std::string_view("capture_mode")];
+    auto capture_mode_str = capture_mode_val.as_string();
+    if (!capture_mode_str)
     {
         DAS_LOG_ERROR("Missing capture_mode in config");
         return false;
     }
 
-    config_ = config;
-    std::string mode_str = config_["capture_mode"];
+    std::string mode_str = std::string(*capture_mode_str);
     capture_mode_ = mode_str;
 
     if (mode_str == "windows_graphics_capture")
@@ -146,11 +155,20 @@ bool WindowsCapture::ParseConfigAndSelectMode(const nlohmann::json& config)
 
 DasResult WindowsCapture::InitializeGDICapture()
 {
+    auto obj = config_.as_object();
+    if (!obj)
+    {
+        DAS_LOG_ERROR("Config is not a JSON object");
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
     HWND target_hwnd = nullptr;
 
-    if (config_.contains("window_handle"))
+    auto wh_val = (*obj)[std::string_view("window_handle")];
+    auto wh_str = wh_val.as_string();
+    if (wh_str)
     {
-        std::string handle_str = config_["window_handle"];
+        std::string handle_str = std::string(*wh_str);
         if (handle_str.find("0x") == 0 || handle_str.find("0X") == 0)
         {
             target_hwnd =
@@ -167,67 +185,93 @@ DasResult WindowsCapture::InitializeGDICapture()
             DAS_LOG_INFO(info_msg.c_str());
         }
     }
-    else if (config_.contains("window_title"))
-    {
-        std::string title = config_["window_title"];
-        target_hwnd = FindWindowByTitle(title.c_str());
-        if (target_hwnd == nullptr)
-        {
-            DAS_LOG_ERROR(
-                DAS::fmt::format("Window not found with title: {}", title)
-                    .c_str());
-            return DAS_E_NOT_FOUND;
-        }
-        DAS_LOG_INFO(
-            DAS::fmt::format("Target window by title: {}", title).c_str());
-    }
-    else if (config_.contains("process_name"))
-    {
-        std::string proc_name = config_["process_name"];
-        DWORD       pid = FindProcessByName(proc_name.c_str());
-        if (pid == 0)
-        {
-            DAS_LOG_ERROR(
-                DAS::fmt::format("Process not found: {}", proc_name).c_str());
-            return DAS_E_NOT_FOUND;
-        }
-        target_hwnd = FindMainWindowForProcess(pid);
-        if (target_hwnd == nullptr)
-        {
-            DAS_LOG_ERROR(
-                DAS::fmt::format(
-                    "Main window not found for process: {}",
-                    proc_name)
-                    .c_str());
-            return DAS_E_NOT_FOUND;
-        }
-        DAS_LOG_INFO(DAS::fmt::format("Target process: {}", proc_name).c_str());
-    }
-    else if (config_.contains("process_id"))
-    {
-        uint32_t pid = config_["process_id"];
-        target_hwnd = FindMainWindowForProcess(pid);
-        if (target_hwnd == nullptr)
-        {
-            auto error_msg =
-                DAS::fmt::format("Main window not found for PID: {}", pid);
-            DAS_LOG_ERROR(error_msg.c_str());
-            return DAS_E_NOT_FOUND;
-        }
-        DAS_LOG_INFO(DAS::fmt::format("Target PID: {}", pid).c_str());
-    }
-    else if (config_.contains("monitor_index"))
-    {
-        target_hwnd = GetDesktopWindow();
-        target_monitor_index_ = config_["monitor_index"];
-        DAS_LOG_INFO(
-            DAS::fmt::format("Target monitor index: {}", target_monitor_index_)
-                .c_str());
-    }
     else
     {
-        DAS_LOG_ERROR("No valid target key in config");
-        return DAS_E_INVALID_ARGUMENT;
+        auto wt_val = (*obj)[std::string_view("window_title")];
+        auto wt_str = wt_val.as_string();
+        if (wt_str)
+        {
+            std::string title = std::string(*wt_str);
+            target_hwnd = FindWindowByTitle(title.c_str());
+            if (target_hwnd == nullptr)
+            {
+                DAS_LOG_ERROR(
+                    DAS::fmt::format("Window not found with title: {}", title)
+                        .c_str());
+                return DAS_E_NOT_FOUND;
+            }
+            DAS_LOG_INFO(
+                DAS::fmt::format("Target window by title: {}", title).c_str());
+        }
+        else
+        {
+            auto pn_val = (*obj)[std::string_view("process_name")];
+            auto pn_str = pn_val.as_string();
+            if (pn_str)
+            {
+                std::string proc_name = std::string(*pn_str);
+                DWORD       pid = FindProcessByName(proc_name.c_str());
+                if (pid == 0)
+                {
+                    DAS_LOG_ERROR(
+                        DAS::fmt::format("Process not found: {}", proc_name)
+                            .c_str());
+                    return DAS_E_NOT_FOUND;
+                }
+                target_hwnd = FindMainWindowForProcess(pid);
+                if (target_hwnd == nullptr)
+                {
+                    DAS_LOG_ERROR(
+                        DAS::fmt::format(
+                            "Main window not found for process: {}",
+                            proc_name)
+                            .c_str());
+                    return DAS_E_NOT_FOUND;
+                }
+                DAS_LOG_INFO(
+                    DAS::fmt::format("Target process: {}", proc_name).c_str());
+            }
+            else
+            {
+                auto pid_val = (*obj)[std::string_view("process_id")];
+                auto pid_uint = pid_val.as_uint();
+                if (pid_uint)
+                {
+                    uint32_t pid = static_cast<uint32_t>(*pid_uint);
+                    target_hwnd = FindMainWindowForProcess(pid);
+                    if (target_hwnd == nullptr)
+                    {
+                        auto error_msg = DAS::fmt::format(
+                            "Main window not found for PID: {}",
+                            pid);
+                        DAS_LOG_ERROR(error_msg.c_str());
+                        return DAS_E_NOT_FOUND;
+                    }
+                    DAS_LOG_INFO(
+                        DAS::fmt::format("Target PID: {}", pid).c_str());
+                }
+                else
+                {
+                    auto mi_val = (*obj)[std::string_view("monitor_index")];
+                    auto mi_uint = mi_val.as_uint();
+                    if (mi_uint)
+                    {
+                        target_hwnd = GetDesktopWindow();
+                        target_monitor_index_ = static_cast<uint32_t>(*mi_uint);
+                        DAS_LOG_INFO(
+                            DAS::fmt::format(
+                                "Target monitor index: {}",
+                                target_monitor_index_)
+                                .c_str());
+                    }
+                    else
+                    {
+                        DAS_LOG_ERROR("No valid target key in config");
+                        return DAS_E_INVALID_ARGUMENT;
+                    }
+                }
+            }
+        }
     }
 
     target_window_handle_ = target_hwnd;
@@ -246,11 +290,20 @@ DasResult WindowsCapture::InitializeGDICapture()
 
 DasResult WindowsCapture::InitializeGraphicsCapture()
 {
+    auto obj = config_.as_object();
+    if (!obj)
+    {
+        DAS_LOG_ERROR("Config is not a JSON object");
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
     HWND target_hwnd = nullptr;
 
-    if (config_.contains("window_handle"))
+    auto wh_val = (*obj)[std::string_view("window_handle")];
+    auto wh_str = wh_val.as_string();
+    if (wh_str)
     {
-        std::string handle_str = config_["window_handle"];
+        std::string handle_str = std::string(*wh_str);
         if (handle_str.find("0x") == 0 || handle_str.find("0X") == 0)
         {
             target_hwnd =
@@ -261,29 +314,49 @@ DasResult WindowsCapture::InitializeGraphicsCapture()
             target_hwnd = reinterpret_cast<HWND>(std::stoull(handle_str));
         }
     }
-    else if (config_.contains("window_title"))
+    else
     {
-        std::string title = config_["window_title"];
-        target_hwnd = FindWindowByTitle(title.c_str());
-    }
-    else if (config_.contains("process_name"))
-    {
-        std::string proc_name = config_["process_name"];
-        DWORD       pid = FindProcessByName(proc_name.c_str());
-        if (pid != 0)
+        auto wt_val = (*obj)[std::string_view("window_title")];
+        auto wt_str = wt_val.as_string();
+        if (wt_str)
         {
-            target_hwnd = FindMainWindowForProcess(pid);
+            std::string title = std::string(*wt_str);
+            target_hwnd = FindWindowByTitle(title.c_str());
         }
-    }
-    else if (config_.contains("process_id"))
-    {
-        uint32_t pid = config_["process_id"];
-        target_hwnd = FindMainWindowForProcess(pid);
-    }
-    else if (config_.contains("monitor_index"))
-    {
-        target_hwnd = GetDesktopWindow();
-        target_monitor_index_ = config_["monitor_index"];
+        else
+        {
+            auto pn_val = (*obj)[std::string_view("process_name")];
+            auto pn_str = pn_val.as_string();
+            if (pn_str)
+            {
+                std::string proc_name = std::string(*pn_str);
+                DWORD       pid = FindProcessByName(proc_name.c_str());
+                if (pid != 0)
+                {
+                    target_hwnd = FindMainWindowForProcess(pid);
+                }
+            }
+            else
+            {
+                auto pid_val = (*obj)[std::string_view("process_id")];
+                auto pid_uint = pid_val.as_uint();
+                if (pid_uint)
+                {
+                    uint32_t pid = static_cast<uint32_t>(*pid_uint);
+                    target_hwnd = FindMainWindowForProcess(pid);
+                }
+                else
+                {
+                    auto mi_val = (*obj)[std::string_view("monitor_index")];
+                    auto mi_uint = mi_val.as_uint();
+                    if (mi_uint)
+                    {
+                        target_hwnd = GetDesktopWindow();
+                        target_monitor_index_ = static_cast<uint32_t>(*mi_uint);
+                    }
+                }
+            }
+        }
     }
 
     if (target_hwnd == nullptr)

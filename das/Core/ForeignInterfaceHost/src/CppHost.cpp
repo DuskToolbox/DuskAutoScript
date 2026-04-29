@@ -6,10 +6,10 @@
 #include <das/DasPtr.hpp>
 #include <das/IDasBase.h>
 #include <das/Utils/CommonUtils.hpp>
+#include <das/Utils/DasJsonCore.h>
 #include <das/Utils/Expected.h>
 #include <filesystem>
 #include <fstream>
-#include <nlohmann/json.hpp>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
@@ -57,32 +57,50 @@ public:
 
         std::string plugin_name;
         std::string plugin_extension;
-        try
         {
-            nlohmann::json manifest = nlohmann::json::parse(file);
+            std::string manifest_content(
+                (std::istreambuf_iterator<char>(file)),
+                std::istreambuf_iterator<char>());
+            auto manifest_opt =
+                Das::Utils::ParseYyjsonFromString(manifest_content);
+            if (!manifest_opt)
+            {
+                DAS_CORE_LOG_ERROR(
+                    "Failed to parse plugin manifest: {}",
+                    path.string());
+                return tl::make_unexpected(DAS_E_FAIL);
+            }
+            auto manifest = std::move(*manifest_opt);
+            auto obj = manifest.as_object();
+            if (!obj)
+            {
+                DAS_CORE_LOG_ERROR(
+                    "Plugin manifest is not a JSON object: {}",
+                    path.string());
+                return tl::make_unexpected(DAS_E_FAIL);
+            }
 
-            if (!manifest.contains("name"))
+            auto name_val = (*obj)[std::string_view("name")];
+            auto name_str = name_val.as_string();
+            if (!name_str)
             {
                 DAS_CORE_LOG_ERROR(
                     "Plugin manifest missing 'name' field: {}",
                     path.string());
                 return tl::make_unexpected(DAS_E_FAIL);
             }
-            if (!manifest.contains("pluginFilenameExtension"))
+            plugin_name = std::string(*name_str);
+
+            auto ext_val = (*obj)[std::string_view("pluginFilenameExtension")];
+            auto ext_str = ext_val.as_string();
+            if (!ext_str)
             {
                 DAS_CORE_LOG_ERROR(
                     "Plugin manifest missing 'pluginFilenameExtension' field: {}",
                     path.string());
                 return tl::make_unexpected(DAS_E_FAIL);
             }
-
-            manifest["name"].get_to(plugin_name);
-            manifest["pluginFilenameExtension"].get_to(plugin_extension);
-        }
-        catch (const nlohmann::json::exception& e)
-        {
-            DAS_CORE_LOG_ERROR("Failed to parse plugin manifest: {}", e.what());
-            return tl::make_unexpected(DAS_E_FAIL);
+            plugin_extension = std::string(*ext_str);
         }
 
         // 2. Construct dll path

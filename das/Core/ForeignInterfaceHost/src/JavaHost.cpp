@@ -4,9 +4,9 @@
 
 #include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
+#include <das/Utils/DasJsonCore.h>
 #include <filesystem>
 #include <fstream>
-#include <nlohmann/json.hpp>
 
 #include <boost/dll.hpp>
 
@@ -873,13 +873,33 @@ DasResult JavaRuntime::LoadPluginConfig(
             json_path.string());
         return DAS_E_FILE_NOT_FOUND;
     }
-    try
     {
-        nlohmann::json config = nlohmann::json::parse(file);
-
-        if (config.contains("entryPoint"))
+        std::string config_content(
+            (std::istreambuf_iterator<char>(file)),
+            std::istreambuf_iterator<char>());
+        auto config_opt = Das::Utils::ParseYyjsonFromString(config_content);
+        if (!config_opt)
         {
-            config["entryPoint"].get_to(out_entry_point);
+            DAS_CORE_LOG_ERROR(
+                "Failed to parse plugin config: {}",
+                json_path.string());
+            return DAS_E_FAIL;
+        }
+        auto config = std::move(*config_opt);
+        auto obj = config.as_object();
+        if (!obj)
+        {
+            DAS_CORE_LOG_ERROR(
+                "Plugin config is not a JSON object: {}",
+                json_path.string());
+            return DAS_E_FAIL;
+        }
+
+        auto entry_point_val = (*obj)[std::string_view("entryPoint")];
+        auto entry_point_str = entry_point_val.as_string();
+        if (entry_point_str)
+        {
+            out_entry_point = std::string(*entry_point_str);
         }
         else
         {
@@ -890,22 +910,18 @@ DasResult JavaRuntime::LoadPluginConfig(
         }
 
         // 从 name + pluginFilenameExtension 计算插件文件路径
-        if (config.contains("name")
-            && config.contains("pluginFilenameExtension"))
+        auto name_val = (*obj)[std::string_view("name")];
+        auto ext_val = (*obj)[std::string_view("pluginFilenameExtension")];
+        auto name_str = name_val.as_string();
+        auto ext_str = ext_val.as_string();
+        if (name_str && ext_str)
         {
-            std::string name;
-            std::string ext;
-            config["name"].get_to(name);
-            config["pluginFilenameExtension"].get_to(ext);
-            plugin_file_path_ = json_path.parent_path() / (name + "." + ext);
+            plugin_file_path_ =
+                json_path.parent_path()
+                / (std::string(*name_str) + "." + std::string(*ext_str));
         }
 
         return DAS_S_OK;
-    }
-    catch (const nlohmann::json::exception& e)
-    {
-        DAS_CORE_LOG_ERROR("Failed to parse plugin config: {}", e.what());
-        return DAS_E_FAIL;
     }
 }
 // ============================================================================

@@ -7,10 +7,10 @@
 #include <cstdint>
 #include <d3d11.h>
 #include <das/IDasBase.h>
+#include <das/Utils/DasJsonCore.h>
 #include <das/Utils/StringUtils.h>
 #include <das/_autogen/idl/abi/IDasCapture.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasCapture.Implements.hpp>
-#include <nlohmann/json.hpp>
 #include <winrt/Windows.Graphics.Capture.h>
 #include <winrt/base.h>
 
@@ -80,10 +80,10 @@ private:
     DasResult (WindowsCapture::*pInitializeGraphicsCapture)();
 
     // 捕获实例
-    bool                         initialized_ = false;
-    GDICapture                   gdi_capture_;
-    class WindowsGraphicsCapture graphics_capture_;
-    nlohmann::json               config_;
+    bool                          initialized_ = false;
+    GDICapture                    gdi_capture_;
+    class WindowsGraphicsCapture  graphics_capture_;
+    yyjson::writer::detail::value config_;
 
 public:
     WindowsCapture()
@@ -105,7 +105,7 @@ public:
     DAS_IMPL GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override;
 
     // 解析配置并选择捕获模式（公有方法，供工厂类调用）
-    bool ParseConfigAndSelectMode(const nlohmann::json& config);
+    bool ParseConfigAndSelectMode(const yyjson::writer::detail::value& config);
 
 private:
     // 初始化选择的捕获方法

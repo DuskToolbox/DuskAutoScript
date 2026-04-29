@@ -2,9 +2,9 @@
 #include "AdbTouch.h"
 #include <boost/url.hpp>
 #include <das/DasApi.h>
+#include <das/Utils/DasJsonCore.h>
 #include <das/Utils/StringUtils.h>
 #include <das/_autogen/idl/abi/DasLogger.h>
-#include <nlohmann/json.hpp>
 
 DAS_NS_BEGIN
 
@@ -18,8 +18,6 @@ struct AdbConnectionDesc
     std::string type{};
     std::string url{};
     std::string adbPath{};
-
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(AdbConnectionDesc, type, url, adbPath);
 };
 
 DAS_DISABLE_WARNING_END
@@ -97,12 +95,54 @@ DasResult AdbTouchFactory::CreateInstance(
 
     Details::AdbConnectionDesc connection_desc{};
 
+    auto config_opt = Das::Utils::ParseYyjsonFromString(
+        p_u8_json_config ? std::string_view(p_u8_json_config)
+                         : std::string_view{});
+    if (!config_opt)
+    {
+        DAS_LOG_ERROR(
+            "Can not parse json config. Error message and json dump is below:");
+        DAS_LOG_ERROR("Failed to parse JSON from config string");
+        DAS_LOG_ERROR(p_u8_json_config);
+        return DAS_E_INTERNAL_FATAL_ERROR;
+    }
+    const auto config = std::move(*config_opt);
+    auto       obj = config.as_object();
+    if (!obj)
+    {
+        DAS_LOG_ERROR("Can not parse json config. Config is not a JSON object");
+        DAS_LOG_ERROR(p_u8_json_config);
+        return DAS_E_INTERNAL_FATAL_ERROR;
+    }
+
+    auto connection_val = (*obj)[std::string_view("connection")];
+    auto connection_obj = connection_val.as_object();
+    if (!connection_obj)
+    {
+        DAS_LOG_ERROR("Can not parse json config. Missing 'connection' field");
+        DAS_LOG_ERROR(p_u8_json_config);
+        return DAS_E_INTERNAL_FATAL_ERROR;
+    }
+
+    auto type_opt = (*connection_obj)[std::string_view("type")].as_string();
+    auto url_opt = (*connection_obj)[std::string_view("url")].as_string();
+    auto adb_path_opt =
+        (*connection_obj)[std::string_view("adbPath")].as_string();
+    if (type_opt)
+    {
+        connection_desc.type = std::string(*type_opt);
+    }
+    if (url_opt)
+    {
+        connection_desc.url = std::string(*url_opt);
+    }
+    if (adb_path_opt)
+    {
+        connection_desc.adbPath = std::string(*adb_path_opt);
+    }
+
     try
     {
-        const auto config = nlohmann::json::parse(p_u8_json_config);
-
-        config.at("connection").get_to(connection_desc);
-
         const auto adb_url = boost::url{connection_desc.url};
         if (adb_url.scheme() != std::string_view{"adb"})
         {
@@ -117,14 +157,6 @@ DasResult AdbTouchFactory::CreateInstance(
         *pp_out_input = p_result;
         p_result->AddRef();
         return DAS_S_OK;
-    }
-    catch (const nlohmann::json::exception& ex)
-    {
-        DAS_LOG_ERROR(
-            "Can not parse json config. Error message and json dump is below:");
-        DAS_LOG_ERROR(ex.what());
-        DAS_LOG_ERROR(p_u8_json_config);
-        return DAS_E_INTERNAL_FATAL_ERROR;
     }
     catch (const std::bad_alloc& ex)
     {

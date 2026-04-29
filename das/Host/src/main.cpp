@@ -18,12 +18,12 @@
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/DasApi.h>
 #include <das/IDasBase.h>
+#include <das/Utils/DasJsonCore.h>
 #include <das/Utils/fmt.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <nlohmann/json.hpp>
 #include <sstream>
 #include <string>
 
@@ -86,36 +86,49 @@ void RegisterLoadPluginHandler(DAS::Core::IPC::Host::IIpcContext* ctx)
                 return DAS_E_IPC_PLUGIN_LOAD_FAILED;
             }
 
-            nlohmann::json manifest_json;
-            try
-            {
-                json_file >> manifest_json;
-            }
-            catch (const nlohmann::json::exception& e)
+            std::string manifest_content(
+                (std::istreambuf_iterator<char>(json_file)),
+                std::istreambuf_iterator<char>());
+            auto manifest_json_opt =
+                Das::Utils::ParseYyjsonFromString(manifest_content);
+            if (!manifest_json_opt)
             {
                 std::string msg = DAS_FMT_NS::format(
-                    "解析 manifest JSON 失败: {} - {}",
-                    manifest_path,
-                    e.what());
+                    "解析 manifest JSON 失败: {}",
+                    manifest_path);
                 DAS_LOG_ERROR(msg.c_str());
                 response.error_code = DAS_E_IPC_PLUGIN_LOAD_FAILED;
                 response.response_data.clear();
                 return DAS_E_IPC_PLUGIN_LOAD_FAILED;
             }
+            yyjson::writer::detail::value manifest_json =
+                std::move(*manifest_json_opt);
 
             std::string plugin_language;
-            try
             {
-                manifest_json["language"].get_to(plugin_language);
-            }
-            catch (const nlohmann::json::exception& e)
-            {
-                std::string msg =
-                    DAS_FMT_NS::format("提取插件信息失败: {}", e.what());
-                DAS_LOG_ERROR(msg.c_str());
-                response.error_code = DAS_E_IPC_PLUGIN_LOAD_FAILED;
-                response.response_data.clear();
-                return DAS_E_IPC_PLUGIN_LOAD_FAILED;
+                auto manifest_obj = manifest_json.as_object();
+                if (!manifest_obj)
+                {
+                    std::string msg =
+                        "提取插件信息失败: manifest root is not an object";
+                    DAS_LOG_ERROR(msg.c_str());
+                    response.error_code = DAS_E_IPC_PLUGIN_LOAD_FAILED;
+                    response.response_data.clear();
+                    return DAS_E_IPC_PLUGIN_LOAD_FAILED;
+                }
+                auto language_val =
+                    (*manifest_obj)[std::string_view("language")];
+                auto language_str = language_val.as_string();
+                if (!language_str)
+                {
+                    std::string msg =
+                        "提取插件信息失败: manifest missing 'language' field";
+                    DAS_LOG_ERROR(msg.c_str());
+                    response.error_code = DAS_E_IPC_PLUGIN_LOAD_FAILED;
+                    response.response_data.clear();
+                    return DAS_E_IPC_PLUGIN_LOAD_FAILED;
+                }
+                plugin_language = std::string(*language_str);
             }
 
             std::string lang_lower;

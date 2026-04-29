@@ -20,8 +20,8 @@ DAS_IGNORE_UNUSED_PARAMETER
 
 DAS_DISABLE_WARNING_END
 
+#include <das/Utils/DasJsonCore.h>
 #include <fstream>
-#include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <tuple>
 #include <utility>
@@ -184,13 +184,33 @@ DasResult LoadPluginConfig(
         return DAS_E_FILE_NOT_FOUND;
     }
 
-    try
     {
-        nlohmann::json config = nlohmann::json::parse(file);
-
-        if (config.contains("entryPoint"))
+        std::string config_content(
+            (std::istreambuf_iterator<char>(file)),
+            std::istreambuf_iterator<char>());
+        auto config_opt = Das::Utils::ParseYyjsonFromString(config_content);
+        if (!config_opt)
         {
-            config["entryPoint"].get_to(out_entry_point);
+            DAS_CORE_LOG_ERROR(
+                "Failed to parse plugin config: {}",
+                json_path.string());
+            return DAS_E_FAIL;
+        }
+        auto config = std::move(*config_opt);
+        auto obj = config.as_object();
+        if (!obj)
+        {
+            DAS_CORE_LOG_ERROR(
+                "Plugin config is not a JSON object: {}",
+                json_path.string());
+            return DAS_E_FAIL;
+        }
+
+        auto entry_point_val = (*obj)[std::string_view("entryPoint")];
+        auto entry_point_str = entry_point_val.as_string();
+        if (entry_point_str)
+        {
+            out_entry_point = std::string(*entry_point_str);
         }
         else
         {
@@ -201,11 +221,6 @@ DasResult LoadPluginConfig(
         }
 
         return DAS_S_OK;
-    }
-    catch (const nlohmann::json::exception& e)
-    {
-        DAS_CORE_LOG_ERROR("Failed to parse plugin config: {}", e.what());
-        return DAS_E_FAIL;
     }
 }
 

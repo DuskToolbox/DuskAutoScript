@@ -5,8 +5,8 @@
 #include <das/DasString.hpp>
 #include <das/IDasBase.h>
 #include <das/Utils/CommonUtils.hpp>
+#include <das/Utils/DasJsonCore.h>
 #include <das/Utils/fmt.h>
-#include <nlohmann/json.hpp>
 #include <stdexcept>
 
 DAS_NS_BEGIN
@@ -40,27 +40,35 @@ DasResult WindowsCaptureFactoryImpl::CreateInstance(
         return result;
     }
 
-    nlohmann::json config;
-    try
-    {
-        config = nlohmann::json::parse(p_u8_plugin_config);
-    }
-    catch (const nlohmann::json::exception& ex)
+    auto config_opt = Das::Utils::ParseYyjsonFromString(
+        p_u8_plugin_config ? std::string_view(p_u8_plugin_config)
+                           : std::string_view{});
+    if (!config_opt)
     {
         DAS_LOG_ERROR("Failed to parse plugin config JSON");
-        DAS_LOG_ERROR(ex.what());
         *pp_out_object = nullptr;
         return DAS_E_INVALID_JSON;
     }
+    auto config = std::move(*config_opt);
 
-    if (!config.contains("capture_mode"))
+    auto obj = config.as_object();
+    if (!obj)
+    {
+        DAS_LOG_ERROR("Plugin config is not a JSON object");
+        *pp_out_object = nullptr;
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    auto cm_val = (*obj)[std::string_view("capture_mode")];
+    auto cm_str = cm_val.as_string();
+    if (!cm_str)
     {
         DAS_LOG_ERROR("Missing required 'capture_mode' in plugin config");
         *pp_out_object = nullptr;
         return DAS_E_INVALID_ARGUMENT;
     }
 
-    std::string capture_mode = config["capture_mode"];
+    std::string capture_mode = std::string(*cm_str);
     if (capture_mode != "windows_graphics_capture"
         && capture_mode != "gdi_bitblt")
     {
