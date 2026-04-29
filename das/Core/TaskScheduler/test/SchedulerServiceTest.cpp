@@ -48,16 +48,17 @@ namespace
         const std::vector<int64_t>&                       taskOrder,
         const std::vector<yyjson::writer::detail::value>& taskInstances)
     {
-        yyjson::writer::detail::value index(yyjson::construct_object_type_t{});
-        index["nextTaskId"] = nextTaskId;
+        yyjson::writer::detail::value index(Das::Utils::MakeYyjsonObject());
+        (*index.as_object())[std::string_view("nextTaskId")] = nextTaskId;
         {
             yyjson::writer::detail::value order_arr(
-                yyjson::construct_array_type_t{});
+                Das::Utils::MakeYyjsonArray());
             for (auto id : taskOrder)
             {
-                order_arr.array_append(id);
+                (*order_arr.as_array()).emplace_back(id);
             }
-            index["taskOrder"] = std::move(order_arr);
+            (*index.as_object())[std::string_view("taskOrder")] =
+                std::move(order_arr);
         }
         sm.UpdateSchedulerIndexJson("0", index);
 
@@ -167,9 +168,15 @@ TEST_F(SchedulerServiceTest, NoPluginLoadBeforeInitialize)
     EXPECT_EQ(features.size(), 0u);
 
     auto state = scheduler_->Get();
-    EXPECT_TRUE(state.contains("state"));
-    EXPECT_EQ(state["tasks"].size(), 0u);
-    EXPECT_EQ(state["availableTaskTypes"].size(), 0u);
+    EXPECT_TRUE((*state.as_object()).contains(std::string_view("state")));
+    EXPECT_EQ(
+        (*state.as_object())[std::string_view("tasks")].as_array()->size(),
+        0u);
+    EXPECT_EQ(
+        (*state.as_object())[std::string_view("availableTaskTypes")]
+            .as_array()
+            ->size(),
+        0u);
 }
 
 TEST_F(SchedulerServiceTest, Enable_WithoutInitialize_ReturnsError)
@@ -196,15 +203,18 @@ TEST_F(SchedulerServiceTest, Initialize_MaterializesPersistedInstances)
 {
     settings_manager_->CreateProfile("0");
 
-    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
-    task0["id"] = 0;
-    task0["taskGuid"] = "00000000-0000-0000-0000-000000000001";
-    task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
-    task0["nextExecutionTime"] = yyjson::writer::detail::value{};
+    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    (*task0.as_object())[std::string_view("id")] = 0;
+    (*task0.as_object())[std::string_view("taskGuid")] =
+        "00000000-0000-0000-0000-000000000001";
+    (*task0.as_object())[std::string_view("pluginGuid")] =
+        "00000000-0000-0000-0000-000000000002";
+    (*task0.as_object())[std::string_view("nextExecutionTime")] =
+        yyjson::writer::detail::value{};
     {
-        yyjson::writer::detail::value p(yyjson::construct_object_type_t{});
-        p["key1"] = "value1";
-        task0["properties"] = std::move(p);
+        yyjson::writer::detail::value p(Das::Utils::MakeYyjsonObject());
+        (*p.as_object())[std::string_view("key1")] = "value1";
+        (*task0.as_object())[std::string_view("properties")] = std::move(p);
     }
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
@@ -212,10 +222,28 @@ TEST_F(SchedulerServiceTest, Initialize_MaterializesPersistedInstances)
     ASSERT_EQ(result, DAS_S_OK);
 
     auto state = scheduler_->Get();
-    ASSERT_EQ(state["tasks"].size(), 1u);
-    EXPECT_EQ(state["tasks"][0]["id"], 0);
-    EXPECT_EQ(state["tasks"][0]["availability"], "unavailable");
-    EXPECT_EQ(state["tasks"][0]["properties"]["key1"], "value1");
+    ASSERT_EQ(
+        (*state.as_object())[std::string_view("tasks")].as_array()->size(),
+        1u);
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+              .as_object())[std::string_view("id")]
+            .as_sint()
+            .value(),
+        0);
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+              .as_object())[std::string_view("availability")]
+            .as_string()
+            .value(),
+        "unavailable");
+    EXPECT_EQ(
+        (*(*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+                .as_object())[std::string_view("properties")]
+              .as_object())[std::string_view("key1")]
+            .as_string()
+            .value(),
+        "value1");
 }
 
 TEST_F(SchedulerServiceTest, Initialize_CorruptTaskFile_VisibleAsInvalid)
@@ -223,12 +251,13 @@ TEST_F(SchedulerServiceTest, Initialize_CorruptTaskFile_VisibleAsInvalid)
     settings_manager_->CreateProfile("0");
 
     yyjson::writer::detail::value scheduler_index(
-        yyjson::construct_object_type_t{});
-    scheduler_index["nextTaskId"] = 1;
+        Das::Utils::MakeYyjsonObject());
+    (*scheduler_index.as_object())[std::string_view("nextTaskId")] = 1;
     {
-        yyjson::writer::detail::value arr(yyjson::construct_array_type_t{});
-        arr.array_append(0);
-        scheduler_index["taskOrder"] = std::move(arr);
+        yyjson::writer::detail::value arr(Das::Utils::MakeYyjsonArray());
+        (*arr.as_array()).emplace_back(0);
+        (*scheduler_index.as_object())[std::string_view("taskOrder")] =
+            std::move(arr);
     }
     settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
 
@@ -242,29 +271,49 @@ TEST_F(SchedulerServiceTest, Initialize_CorruptTaskFile_VisibleAsInvalid)
     ASSERT_EQ(result, DAS_S_OK);
 
     auto state = scheduler_->Get();
-    ASSERT_EQ(state["tasks"].size(), 1u);
-    EXPECT_EQ(state["tasks"][0]["id"], 0);
-    EXPECT_EQ(state["tasks"][0]["availability"], "invalid");
-    EXPECT_FALSE(state["tasks"][0]["unavailabilityReason"].empty());
+    ASSERT_EQ(
+        (*state.as_object())[std::string_view("tasks")].as_array()->size(),
+        1u);
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+              .as_object())[std::string_view("id")]
+            .as_sint()
+            .value(),
+        0);
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+              .as_object())[std::string_view("availability")]
+            .as_string()
+            .value(),
+        "invalid");
+    EXPECT_FALSE(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+              .as_object())[std::string_view("unavailabilityReason")]
+            .as_object()
+            ->empty());
 }
 
 TEST_F(SchedulerServiceTest, Initialize_MissingTaskType_Unavailable)
 {
     settings_manager_->CreateProfile("0");
 
-    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
-    task0["id"] = 0;
-    task0["taskGuid"] = "11111111-1111-1111-1111-111111111111";
-    task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
-    task0["properties"] =
-        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
+    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    (*task0.as_object())[std::string_view("id")] = 0;
+    (*task0.as_object())[std::string_view("taskGuid")] =
+        "11111111-1111-1111-1111-111111111111";
+    (*task0.as_object())[std::string_view("pluginGuid")] =
+        "00000000-0000-0000-0000-000000000002";
+    (*task0.as_object())[std::string_view("properties")] =
+        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
 
-    yyjson::writer::detail::value task1(yyjson::construct_object_type_t{});
-    task1["id"] = 1;
-    task1["taskGuid"] = "22222222-2222-2222-2222-222222222222";
-    task1["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
-    task1["properties"] =
-        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
+    yyjson::writer::detail::value task1(Das::Utils::MakeYyjsonObject());
+    (*task1.as_object())[std::string_view("id")] = 1;
+    (*task1.as_object())[std::string_view("taskGuid")] =
+        "22222222-2222-2222-2222-222222222222";
+    (*task1.as_object())[std::string_view("pluginGuid")] =
+        "00000000-0000-0000-0000-000000000002";
+    (*task1.as_object())[std::string_view("properties")] =
+        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
 
     WriteSchedulerState(*settings_manager_, 2, {0, 1}, {task0, task1});
 
@@ -272,9 +321,21 @@ TEST_F(SchedulerServiceTest, Initialize_MissingTaskType_Unavailable)
     ASSERT_EQ(result, DAS_S_OK);
 
     auto state = scheduler_->Get();
-    ASSERT_EQ(state["tasks"].size(), 2u);
-    EXPECT_EQ(state["tasks"][0]["availability"], "unavailable");
-    EXPECT_EQ(state["tasks"][1]["availability"], "unavailable");
+    ASSERT_EQ(
+        (*state.as_object())[std::string_view("tasks")].as_array()->size(),
+        2u);
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+              .as_object())[std::string_view("availability")]
+            .as_string()
+            .value(),
+        "unavailable");
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[1]
+              .as_object())[std::string_view("availability")]
+            .as_string()
+            .value(),
+        "unavailable");
 }
 
 // ============================================================
@@ -297,32 +358,59 @@ TEST_F(SchedulerServiceTest, Get_ReturnsMergedView)
 {
     settings_manager_->CreateProfile("0");
 
-    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
-    task0["id"] = 0;
-    task0["taskGuid"] = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
-    task0["pluginGuid"] = "FFFFFFFF-0000-0000-0000-000000000000";
+    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    (*task0.as_object())[std::string_view("id")] = 0;
+    (*task0.as_object())[std::string_view("taskGuid")] =
+        "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
+    (*task0.as_object())[std::string_view("pluginGuid")] =
+        "FFFFFFFF-0000-0000-0000-000000000000";
     // 2026-04-23T12:30:00+08:00 = 2026-04-23T04:30:00Z = 1776918600
-    task0["nextExecutionTime"] = 1776918600;
+    (*task0.as_object())[std::string_view("nextExecutionTime")] = 1776918600;
     {
-        yyjson::writer::detail::value p(yyjson::construct_object_type_t{});
-        p["setting1"] = "value1";
-        p["setting2"] = 42;
-        task0["properties"] = std::move(p);
+        yyjson::writer::detail::value p(Das::Utils::MakeYyjsonObject());
+        (*p.as_object())[std::string_view("setting1")] = "value1";
+        (*p.as_object())[std::string_view("setting2")] = 42;
+        (*task0.as_object())[std::string_view("properties")] = std::move(p);
     }
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
     auto state = scheduler_->Get();
-    EXPECT_TRUE(state.contains("state"));
-    EXPECT_TRUE(state.contains("tasks"));
-    EXPECT_TRUE(state.contains("availableTaskTypes"));
+    EXPECT_TRUE((*state.as_object()).contains(std::string_view("state")));
+    EXPECT_TRUE((*state.as_object()).contains(std::string_view("tasks")));
+    EXPECT_TRUE(
+        (*state.as_object()).contains(std::string_view("availableTaskTypes")));
 
-    ASSERT_EQ(state["tasks"].size(), 1u);
-    EXPECT_EQ(state["tasks"][0]["id"], 0);
-    EXPECT_EQ(state["tasks"][0]["nextExecutionTime"], 1776918600);
-    EXPECT_EQ(state["tasks"][0]["properties"]["setting1"], "value1");
-    EXPECT_EQ(state["tasks"][0]["properties"]["setting2"], 42);
+    ASSERT_EQ(
+        (*state.as_object())[std::string_view("tasks")].as_array()->size(),
+        1u);
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+              .as_object())[std::string_view("id")]
+            .as_sint()
+            .value(),
+        0);
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+              .as_object())[std::string_view("nextExecutionTime")]
+            .as_sint()
+            .value(),
+        1776918600);
+    EXPECT_EQ(
+        (*(*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+                .as_object())[std::string_view("properties")]
+              .as_object())[std::string_view("setting1")]
+            .as_string()
+            .value(),
+        "value1");
+    EXPECT_EQ(
+        (*(*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+                .as_object())[std::string_view("properties")]
+              .as_object())[std::string_view("setting2")]
+            .as_sint()
+            .value(),
+        42);
 }
 
 TEST_F(SchedulerServiceTest, Get_CorruptTaskFile_VisibleWithInvalidMarker)
@@ -330,13 +418,14 @@ TEST_F(SchedulerServiceTest, Get_CorruptTaskFile_VisibleWithInvalidMarker)
     settings_manager_->CreateProfile("0");
 
     yyjson::writer::detail::value scheduler_index(
-        yyjson::construct_object_type_t{});
-    scheduler_index["nextTaskId"] = 2;
+        Das::Utils::MakeYyjsonObject());
+    (*scheduler_index.as_object())[std::string_view("nextTaskId")] = 2;
     {
-        yyjson::writer::detail::value arr(yyjson::construct_array_type_t{});
-        arr.array_append(0);
-        arr.array_append(1);
-        scheduler_index["taskOrder"] = std::move(arr);
+        yyjson::writer::detail::value arr(Das::Utils::MakeYyjsonArray());
+        (*arr.as_array()).emplace_back(0);
+        (*arr.as_array()).emplace_back(1);
+        (*scheduler_index.as_object())[std::string_view("taskOrder")] =
+            std::move(arr);
     }
     settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
 
@@ -348,30 +437,60 @@ TEST_F(SchedulerServiceTest, Get_CorruptTaskFile_VisibleWithInvalidMarker)
     }
 
     // Task 1: valid file
-    yyjson::writer::detail::value task1(yyjson::construct_object_type_t{});
-    task1["id"] = 1;
-    task1["taskGuid"] = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
-    task1["pluginGuid"] = "FFFFFFFF-0000-0000-0000-000000000000";
+    yyjson::writer::detail::value task1(Das::Utils::MakeYyjsonObject());
+    (*task1.as_object())[std::string_view("id")] = 1;
+    (*task1.as_object())[std::string_view("taskGuid")] =
+        "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
+    (*task1.as_object())[std::string_view("pluginGuid")] =
+        "FFFFFFFF-0000-0000-0000-000000000000";
     {
-        yyjson::writer::detail::value p(yyjson::construct_object_type_t{});
-        p["key"] = "value";
-        task1["properties"] = std::move(p);
+        yyjson::writer::detail::value p(Das::Utils::MakeYyjsonObject());
+        (*p.as_object())[std::string_view("key")] = "value";
+        (*task1.as_object())[std::string_view("properties")] = std::move(p);
     }
     settings_manager_->UpdateTaskInstanceJson("0", 1, task1);
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
     auto state = scheduler_->Get();
-    ASSERT_EQ(state["tasks"].size(), 2u);
+    ASSERT_EQ(
+        (*state.as_object())[std::string_view("tasks")].as_array()->size(),
+        2u);
 
     // Corrupt task should be visible as invalid
-    EXPECT_EQ(state["tasks"][0]["id"], 0);
-    EXPECT_EQ(state["tasks"][0]["availability"], "invalid");
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+              .as_object())[std::string_view("id")]
+            .as_sint()
+            .value(),
+        0);
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+              .as_object())[std::string_view("availability")]
+            .as_string()
+            .value(),
+        "invalid");
 
     // Valid task should be visible as unavailable (no plugin loaded)
-    EXPECT_EQ(state["tasks"][1]["id"], 1);
-    EXPECT_EQ(state["tasks"][1]["availability"], "unavailable");
-    EXPECT_EQ(state["tasks"][1]["properties"]["key"], "value");
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[1]
+              .as_object())[std::string_view("id")]
+            .as_sint()
+            .value(),
+        1);
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[1]
+              .as_object())[std::string_view("availability")]
+            .as_string()
+            .value(),
+        "unavailable");
+    EXPECT_EQ(
+        (*(*(*(*state.as_object())[std::string_view("tasks")].as_array())[1]
+                .as_object())[std::string_view("properties")]
+              .as_object())[std::string_view("key")]
+            .as_string()
+            .value(),
+        "value");
 }
 
 // ============================================================
@@ -394,19 +513,23 @@ TEST_F(SchedulerServiceTest, DeleteTask_PersistsRemoval)
 {
     settings_manager_->CreateProfile("0");
 
-    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
-    task0["id"] = 0;
-    task0["taskGuid"] = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
-    task0["pluginGuid"] = "FFFFFFFF-0000-0000-0000-000000000000";
-    task0["properties"] =
-        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
+    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    (*task0.as_object())[std::string_view("id")] = 0;
+    (*task0.as_object())[std::string_view("taskGuid")] =
+        "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
+    (*task0.as_object())[std::string_view("pluginGuid")] =
+        "FFFFFFFF-0000-0000-0000-000000000000";
+    (*task0.as_object())[std::string_view("properties")] =
+        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
 
-    yyjson::writer::detail::value task1(yyjson::construct_object_type_t{});
-    task1["id"] = 1;
-    task1["taskGuid"] = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
-    task1["pluginGuid"] = "FFFFFFFF-0000-0000-0000-000000000000";
-    task1["properties"] =
-        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
+    yyjson::writer::detail::value task1(Das::Utils::MakeYyjsonObject());
+    (*task1.as_object())[std::string_view("id")] = 1;
+    (*task1.as_object())[std::string_view("taskGuid")] =
+        "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
+    (*task1.as_object())[std::string_view("pluginGuid")] =
+        "FFFFFFFF-0000-0000-0000-000000000000";
+    (*task1.as_object())[std::string_view("properties")] =
+        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
 
     WriteSchedulerState(*settings_manager_, 2, {0, 1}, {task0, task1});
 
@@ -418,16 +541,29 @@ TEST_F(SchedulerServiceTest, DeleteTask_PersistsRemoval)
 
     // Verify in-memory state
     auto state = scheduler_->Get();
-    ASSERT_EQ(state["tasks"].size(), 1u);
-    EXPECT_EQ(state["tasks"][0]["id"], 1);
+    ASSERT_EQ(
+        (*state.as_object())[std::string_view("tasks")].as_array()->size(),
+        1u);
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+              .as_object())[std::string_view("id")]
+            .as_sint()
+            .value(),
+        1);
 
     // Verify persisted state: taskId0.json should be deleted
     EXPECT_FALSE(std::filesystem::exists(settings_dir_ / "0" / "taskId0.json"));
     EXPECT_TRUE(std::filesystem::exists(settings_dir_ / "0" / "taskId1.json"));
 
     auto index = settings_manager_->GetSchedulerIndexJson("0");
-    ASSERT_EQ(index["taskOrder"].size(), 1u);
-    EXPECT_EQ(index["taskOrder"][0], 1);
+    ASSERT_EQ(
+        (*index.as_object())[std::string_view("taskOrder")].as_array()->size(),
+        1u);
+    EXPECT_EQ(
+        (*(*index.as_object())[std::string_view("taskOrder")].as_array())[0]
+            .as_sint()
+            .value(),
+        1);
 }
 
 TEST_F(SchedulerServiceTest, DeleteTask_NotFound)
@@ -443,12 +579,13 @@ TEST_F(SchedulerServiceTest, DeleteTask_InvalidInstance_Succeeds)
     settings_manager_->CreateProfile("0");
 
     yyjson::writer::detail::value scheduler_index(
-        yyjson::construct_object_type_t{});
-    scheduler_index["nextTaskId"] = 1;
+        Das::Utils::MakeYyjsonObject());
+    (*scheduler_index.as_object())[std::string_view("nextTaskId")] = 1;
     {
-        yyjson::writer::detail::value arr(yyjson::construct_array_type_t{});
-        arr.array_append(0);
-        scheduler_index["taskOrder"] = std::move(arr);
+        yyjson::writer::detail::value arr(Das::Utils::MakeYyjsonArray());
+        (*arr.as_array()).emplace_back(0);
+        (*scheduler_index.as_object())[std::string_view("taskOrder")] =
+            std::move(arr);
     }
     settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
 
@@ -462,59 +599,83 @@ TEST_F(SchedulerServiceTest, DeleteTask_InvalidInstance_Succeeds)
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
     auto state = scheduler_->Get();
-    ASSERT_EQ(state["tasks"].size(), 1u);
-    EXPECT_EQ(state["tasks"][0]["availability"], "invalid");
+    ASSERT_EQ(
+        (*state.as_object())[std::string_view("tasks")].as_array()->size(),
+        1u);
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+              .as_object())[std::string_view("availability")]
+            .as_string()
+            .value(),
+        "invalid");
 
     // Deleting an invalid instance should succeed
     auto result = scheduler_->DeleteTask(0);
     EXPECT_EQ(result, DAS_S_OK);
 
     state = scheduler_->Get();
-    EXPECT_EQ(state["tasks"].size(), 0u);
+    EXPECT_EQ(
+        (*state.as_object())[std::string_view("tasks")].as_array()->size(),
+        0u);
 }
 
 TEST_F(SchedulerServiceTest, DeleteTask_UnavailableInstance_Succeeds)
 {
     settings_manager_->CreateProfile("0");
 
-    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
-    task0["id"] = 0;
-    task0["taskGuid"] = "11111111-1111-1111-1111-111111111111";
-    task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
-    task0["properties"] =
-        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
+    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    (*task0.as_object())[std::string_view("id")] = 0;
+    (*task0.as_object())[std::string_view("taskGuid")] =
+        "11111111-1111-1111-1111-111111111111";
+    (*task0.as_object())[std::string_view("pluginGuid")] =
+        "00000000-0000-0000-0000-000000000002";
+    (*task0.as_object())[std::string_view("properties")] =
+        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
     auto state = scheduler_->Get();
-    ASSERT_EQ(state["tasks"].size(), 1u);
-    EXPECT_EQ(state["tasks"][0]["availability"], "unavailable");
+    ASSERT_EQ(
+        (*state.as_object())[std::string_view("tasks")].as_array()->size(),
+        1u);
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+              .as_object())[std::string_view("availability")]
+            .as_string()
+            .value(),
+        "unavailable");
 
     auto result = scheduler_->DeleteTask(0);
     EXPECT_EQ(result, DAS_S_OK);
 
     state = scheduler_->Get();
-    EXPECT_EQ(state["tasks"].size(), 0u);
+    EXPECT_EQ(
+        (*state.as_object())[std::string_view("tasks")].as_array()->size(),
+        0u);
 }
 
 TEST_F(SchedulerServiceTest, DeleteTask_PersistenceFailure_RollsBack)
 {
     settings_manager_->CreateProfile("0");
 
-    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
-    task0["id"] = 0;
-    task0["taskGuid"] = "11111111-1111-1111-1111-111111111111";
-    task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
-    task0["properties"] =
-        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
+    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    (*task0.as_object())[std::string_view("id")] = 0;
+    (*task0.as_object())[std::string_view("taskGuid")] =
+        "11111111-1111-1111-1111-111111111111";
+    (*task0.as_object())[std::string_view("pluginGuid")] =
+        "00000000-0000-0000-0000-000000000002";
+    (*task0.as_object())[std::string_view("properties")] =
+        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
     // Verify the instance exists
     auto state = scheduler_->Get();
-    ASSERT_EQ(state["tasks"].size(), 1u);
+    ASSERT_EQ(
+        (*state.as_object())[std::string_view("tasks")].as_array()->size(),
+        1u);
 
     // Replace the profile directory with a regular file so that
     // create_directories fails and WriteJsonFile returns an error.
@@ -531,8 +692,15 @@ TEST_F(SchedulerServiceTest, DeleteTask_PersistenceFailure_RollsBack)
 
     // The instance should be restored in memory
     state = scheduler_->Get();
-    EXPECT_EQ(state["tasks"].size(), 1u);
-    EXPECT_EQ(state["tasks"][0]["id"], 0);
+    EXPECT_EQ(
+        (*state.as_object())[std::string_view("tasks")].as_array()->size(),
+        1u);
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+              .as_object())[std::string_view("id")]
+            .as_sint()
+            .value(),
+        0);
 }
 
 // ============================================================
@@ -543,13 +711,16 @@ TEST_F(SchedulerServiceTest, UpdateInternalProperties_NextExecutionTime)
 {
     settings_manager_->CreateProfile("0");
 
-    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
-    task0["id"] = 0;
-    task0["taskGuid"] = "11111111-1111-1111-1111-111111111111";
-    task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
-    task0["nextExecutionTime"] = yyjson::writer::detail::value{};
-    task0["properties"] =
-        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
+    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    (*task0.as_object())[std::string_view("id")] = 0;
+    (*task0.as_object())[std::string_view("taskGuid")] =
+        "11111111-1111-1111-1111-111111111111";
+    (*task0.as_object())[std::string_view("pluginGuid")] =
+        "00000000-0000-0000-0000-000000000002";
+    (*task0.as_object())[std::string_view("nextExecutionTime")] =
+        yyjson::writer::detail::value{};
+    (*task0.as_object())[std::string_view("properties")] =
+        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
@@ -557,57 +728,76 @@ TEST_F(SchedulerServiceTest, UpdateInternalProperties_NextExecutionTime)
     // Update nextExecutionTime
     // 2026-05-01T08:00:00+08:00 = 2026-05-01T00:00:00Z = 1777593600
     yyjson::writer::detail::value internal_props(
-        yyjson::construct_object_type_t{});
-    internal_props["nextExecutionTime"] = 1777593600;
+        Das::Utils::MakeYyjsonObject());
+    (*internal_props.as_object())[std::string_view("nextExecutionTime")] =
+        1777593600;
     auto result = scheduler_->UpdateTaskInternalProperties(0, internal_props);
     EXPECT_EQ(result, DAS_S_OK);
 
     // Verify in-memory
     auto state = scheduler_->Get();
-    EXPECT_EQ(state["tasks"][0]["nextExecutionTime"], 1777593600);
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+              .as_object())[std::string_view("nextExecutionTime")]
+            .as_sint()
+            .value(),
+        1777593600);
 
     // Verify persisted
     auto persisted = settings_manager_->GetTaskInstanceJson("0", 0);
-    EXPECT_EQ(persisted["nextExecutionTime"], 1777593600);
+    EXPECT_EQ(
+        (*persisted.as_object())[std::string_view("nextExecutionTime")]
+            .as_sint()
+            .value(),
+        1777593600);
 }
 
 TEST_F(SchedulerServiceTest, UpdateInternalProperties_ClearNextExecutionTime)
 {
     settings_manager_->CreateProfile("0");
 
-    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
-    task0["id"] = 0;
-    task0["taskGuid"] = "11111111-1111-1111-1111-111111111111";
-    task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
+    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    (*task0.as_object())[std::string_view("id")] = 0;
+    (*task0.as_object())[std::string_view("taskGuid")] =
+        "11111111-1111-1111-1111-111111111111";
+    (*task0.as_object())[std::string_view("pluginGuid")] =
+        "00000000-0000-0000-0000-000000000002";
     // 2026-05-01T08:00:00+08:00 = 2026-05-01T00:00:00Z = 1777593600
-    task0["nextExecutionTime"] = 1777593600;
-    task0["properties"] =
-        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
+    (*task0.as_object())[std::string_view("nextExecutionTime")] = 1777593600;
+    (*task0.as_object())[std::string_view("properties")] =
+        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
     yyjson::writer::detail::value internal_props(
-        yyjson::construct_object_type_t{});
-    internal_props["nextExecutionTime"] = nullptr;
+        Das::Utils::MakeYyjsonObject());
+    (*internal_props.as_object())[std::string_view("nextExecutionTime")] =
+        nullptr;
     auto result = scheduler_->UpdateTaskInternalProperties(0, internal_props);
     EXPECT_EQ(result, DAS_S_OK);
 
     auto state = scheduler_->Get();
-    EXPECT_TRUE(state["tasks"][0]["nextExecutionTime"].is_null());
+    EXPECT_TRUE(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+              .as_object())[std::string_view("nextExecutionTime")]
+            .is_null());
 }
 
 TEST_F(SchedulerServiceTest, UnparseableNextExecutionTime_PreservedInGet)
 {
     settings_manager_->CreateProfile("0");
 
-    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
-    task0["id"] = 0;
-    task0["taskGuid"] = "11111111-2222-3333-4444-555555555555";
-    task0["pluginGuid"] = "00000000-0000-0000-0000-000000000000";
-    task0["nextExecutionTime"] = -1; // Invalid timestamp, preserved as-is
-    task0["properties"] =
-        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
+    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    (*task0.as_object())[std::string_view("id")] = 0;
+    (*task0.as_object())[std::string_view("taskGuid")] =
+        "11111111-2222-3333-4444-555555555555";
+    (*task0.as_object())[std::string_view("pluginGuid")] =
+        "00000000-0000-0000-0000-000000000000";
+    (*task0.as_object())[std::string_view("nextExecutionTime")] =
+        -1; // Invalid timestamp, preserved as-is
+    (*task0.as_object())[std::string_view("properties")] =
+        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
 
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
@@ -615,9 +805,21 @@ TEST_F(SchedulerServiceTest, UnparseableNextExecutionTime_PreservedInGet)
 
     // Negative timestamps are preserved as-is in Get() output.
     auto state = scheduler_->Get();
-    ASSERT_EQ(state["tasks"].size(), 1u);
-    EXPECT_EQ(state["tasks"][0]["availability"], "unavailable");
-    EXPECT_EQ(state["tasks"][0]["nextExecutionTime"], -1);
+    ASSERT_EQ(
+        (*state.as_object())[std::string_view("tasks")].as_array()->size(),
+        1u);
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+              .as_object())[std::string_view("availability")]
+            .as_string()
+            .value(),
+        "unavailable");
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+              .as_object())[std::string_view("nextExecutionTime")]
+            .as_sint()
+            .value(),
+        -1);
 }
 
 TEST_F(SchedulerServiceTest, UpdateInternalProperties_NotFound)
@@ -625,8 +827,9 @@ TEST_F(SchedulerServiceTest, UpdateInternalProperties_NotFound)
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
     yyjson::writer::detail::value internal_props(
-        yyjson::construct_object_type_t{});
-    internal_props["nextExecutionTime"] = 1777593600;
+        Das::Utils::MakeYyjsonObject());
+    (*internal_props.as_object())[std::string_view("nextExecutionTime")] =
+        1777593600;
     auto result = scheduler_->UpdateTaskInternalProperties(99, internal_props);
     EXPECT_EQ(result, DAS_E_NOT_FOUND);
 }
@@ -639,18 +842,20 @@ TEST_F(SchedulerServiceTest, UpdateProperties_UnavailableInstance_ReturnsError)
 {
     settings_manager_->CreateProfile("0");
 
-    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
-    task0["id"] = 0;
-    task0["taskGuid"] = "11111111-1111-1111-1111-111111111111";
-    task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
-    task0["properties"] =
-        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
+    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    (*task0.as_object())[std::string_view("id")] = 0;
+    (*task0.as_object())[std::string_view("taskGuid")] =
+        "11111111-1111-1111-1111-111111111111";
+    (*task0.as_object())[std::string_view("pluginGuid")] =
+        "00000000-0000-0000-0000-000000000002";
+    (*task0.as_object())[std::string_view("properties")] =
+        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
-    yyjson::writer::detail::value props(yyjson::construct_object_type_t{});
-    props["someKey"] = "someValue";
+    yyjson::writer::detail::value props(Das::Utils::MakeYyjsonObject());
+    (*props.as_object())[std::string_view("someKey")] = "someValue";
     auto result = scheduler_->UpdateTaskProperties(0, props);
     EXPECT_NE(result, DAS_S_OK);
 }
@@ -660,12 +865,13 @@ TEST_F(SchedulerServiceTest, UpdateProperties_InvalidInstance_ReturnsError)
     settings_manager_->CreateProfile("0");
 
     yyjson::writer::detail::value scheduler_index(
-        yyjson::construct_object_type_t{});
-    scheduler_index["nextTaskId"] = 1;
+        Das::Utils::MakeYyjsonObject());
+    (*scheduler_index.as_object())[std::string_view("nextTaskId")] = 1;
     {
-        yyjson::writer::detail::value arr(yyjson::construct_array_type_t{});
-        arr.array_append(0);
-        scheduler_index["taskOrder"] = std::move(arr);
+        yyjson::writer::detail::value arr(Das::Utils::MakeYyjsonArray());
+        (*arr.as_array()).emplace_back(0);
+        (*scheduler_index.as_object())[std::string_view("taskOrder")] =
+            std::move(arr);
     }
     settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
 
@@ -677,8 +883,8 @@ TEST_F(SchedulerServiceTest, UpdateProperties_InvalidInstance_ReturnsError)
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
-    yyjson::writer::detail::value props(yyjson::construct_object_type_t{});
-    props["someKey"] = "someValue";
+    yyjson::writer::detail::value props(Das::Utils::MakeYyjsonObject());
+    (*props.as_object())[std::string_view("someKey")] = "someValue";
     auto result = scheduler_->UpdateTaskProperties(0, props);
     EXPECT_NE(result, DAS_S_OK);
 }
@@ -717,8 +923,8 @@ TEST_F(SchedulerServiceTest, UpdateProperties_NotFound)
 {
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
-    yyjson::writer::detail::value props(yyjson::construct_object_type_t{});
-    props["key"] = "value";
+    yyjson::writer::detail::value props(Das::Utils::MakeYyjsonObject());
+    (*props.as_object())[std::string_view("key")] = "value";
     auto result = scheduler_->UpdateTaskProperties(99, props);
     EXPECT_EQ(result, DAS_E_NOT_FOUND);
 }
@@ -740,21 +946,25 @@ TEST_F(SchedulerServiceTest, UpdateInternalProperties_PersistsToFile)
 {
     settings_manager_->CreateProfile("0");
 
-    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
-    task0["id"] = 0;
-    task0["taskGuid"] = "11111111-1111-1111-1111-111111111111";
-    task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
-    task0["nextExecutionTime"] = yyjson::writer::detail::value{};
-    task0["properties"] =
-        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
+    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    (*task0.as_object())[std::string_view("id")] = 0;
+    (*task0.as_object())[std::string_view("taskGuid")] =
+        "11111111-1111-1111-1111-111111111111";
+    (*task0.as_object())[std::string_view("pluginGuid")] =
+        "00000000-0000-0000-0000-000000000002";
+    (*task0.as_object())[std::string_view("nextExecutionTime")] =
+        yyjson::writer::detail::value{};
+    (*task0.as_object())[std::string_view("properties")] =
+        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
     yyjson::writer::detail::value internal_props(
-        yyjson::construct_object_type_t{});
+        Das::Utils::MakeYyjsonObject());
     // 2026-06-01T10:00:00+08:00 = 2026-06-01T02:00:00Z = 1780279200
-    internal_props["nextExecutionTime"] = 1780279200;
+    (*internal_props.as_object())[std::string_view("nextExecutionTime")] =
+        1780279200;
     ASSERT_EQ(
         scheduler_->UpdateTaskInternalProperties(0, internal_props),
         DAS_S_OK);
@@ -767,8 +977,15 @@ TEST_F(SchedulerServiceTest, UpdateInternalProperties_PersistsToFile)
     ASSERT_EQ(scheduler2->Initialize(plugin_dir_, {}), DAS_S_OK);
 
     auto state = scheduler2->Get();
-    ASSERT_EQ(state["tasks"].size(), 1u);
-    EXPECT_EQ(state["tasks"][0]["nextExecutionTime"], 1780279200);
+    ASSERT_EQ(
+        (*state.as_object())[std::string_view("tasks")].as_array()->size(),
+        1u);
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+              .as_object())[std::string_view("nextExecutionTime")]
+            .as_sint()
+            .value(),
+        1780279200);
 }
 
 // ============================================================
@@ -900,9 +1117,10 @@ TEST_F(SchedulerServiceImplTest, Get_ReturnsJsonString)
     EXPECT_EQ(get_result, DAS_S_OK);
 
     auto parsed = *Das::Utils::ParseYyjsonFromString(c_str);
-    EXPECT_TRUE(parsed.contains("state"));
-    EXPECT_TRUE(parsed.contains("tasks"));
-    EXPECT_TRUE(parsed.contains("availableTaskTypes"));
+    EXPECT_TRUE((*parsed.as_object()).contains(std::string_view("state")));
+    EXPECT_TRUE((*parsed.as_object()).contains(std::string_view("tasks")));
+    EXPECT_TRUE(
+        (*parsed.as_object()).contains(std::string_view("availableTaskTypes")));
 }
 
 TEST_F(SchedulerServiceImplTest, AddTask_NullPointer_ReturnsError)
@@ -1408,29 +1626,34 @@ private:
 
 void WriteFactoryPluginManifest(const std::filesystem::path& manifest_path)
 {
-    yyjson::writer::detail::value manifest(yyjson::construct_object_type_t{});
-    manifest["name"] = "FactoryPlugin";
-    manifest["author"] = "Tests";
-    manifest["version"] = "1.0";
-    manifest["guid"] = FactoryPluginGuidString;
-    manifest["description"] = "Factory-backed scheduler test plugin";
-    manifest["supportedSystem"] = "Windows";
-    manifest["language"] = "Cpp";
-    manifest["pluginFilenameExtension"] = "dll";
-    manifest["settings"] =
-        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
+    yyjson::writer::detail::value manifest(Das::Utils::MakeYyjsonObject());
+    (*manifest.as_object())[std::string_view("name")] = "FactoryPlugin";
+    (*manifest.as_object())[std::string_view("author")] = "Tests";
+    (*manifest.as_object())[std::string_view("version")] = "1.0";
+    (*manifest.as_object())[std::string_view("guid")] = FactoryPluginGuidString;
+    (*manifest.as_object())[std::string_view("description")] =
+        "Factory-backed scheduler test plugin";
+    (*manifest.as_object())[std::string_view("supportedSystem")] = "Windows";
+    (*manifest.as_object())[std::string_view("language")] = "Cpp";
+    (*manifest.as_object())[std::string_view("pluginFilenameExtension")] =
+        "dll";
+    (*manifest.as_object())[std::string_view("settings")] =
+        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
     {
         yyjson::writer::detail::value task_entry(
-            yyjson::construct_object_type_t{});
-        task_entry["pluginGuid"] = FactoryPluginGuidString;
-        task_entry["name"] = "factoryTask";
-        task_entry["description"] = "Scheduler test task";
-        task_entry["descriptors"] =
-            yyjson::writer::detail::value(yyjson::construct_array_type_t{});
-        yyjson::writer::detail::value tasks_obj(
-            yyjson::construct_object_type_t{});
-        tasks_obj[FactoryTaskGuidString] = std::move(task_entry);
-        manifest["tasks"] = std::move(tasks_obj);
+            Das::Utils::MakeYyjsonObject());
+        (*task_entry.as_object())[std::string_view("pluginGuid")] =
+            FactoryPluginGuidString;
+        (*task_entry.as_object())[std::string_view("name")] = "factoryTask";
+        (*task_entry.as_object())[std::string_view("description")] =
+            "Scheduler test task";
+        (*task_entry.as_object())[std::string_view("descriptors")] =
+            yyjson::writer::detail::value(Das::Utils::MakeYyjsonArray());
+        yyjson::writer::detail::value tasks_obj(Das::Utils::MakeYyjsonObject());
+        (*tasks_obj.as_object())[std::string_view(FactoryTaskGuidString)] =
+            std::move(task_entry);
+        (*manifest.as_object())[std::string_view("tasks")] =
+            std::move(tasks_obj);
     }
 
     std::ofstream ofs(manifest_path);
@@ -1458,15 +1681,18 @@ namespace
 
         // Write one task instance in the scheduler state
         sm.CreateProfile("0");
-        yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
-        task0["id"] = 0;
-        task0["taskGuid"] = "A1B2C3D4-E5F6-7890-ABCD-EF1234567890";
-        task0["pluginGuid"] = "00000000-0000-0000-0000-000000000000";
-        task0["nextExecutionTime"] = yyjson::writer::detail::value{};
+        yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+        (*task0.as_object())[std::string_view("id")] = 0;
+        (*task0.as_object())[std::string_view("taskGuid")] =
+            "A1B2C3D4-E5F6-7890-ABCD-EF1234567890";
+        (*task0.as_object())[std::string_view("pluginGuid")] =
+            "00000000-0000-0000-0000-000000000000";
+        (*task0.as_object())[std::string_view("nextExecutionTime")] =
+            yyjson::writer::detail::value{};
         {
-            yyjson::writer::detail::value p(yyjson::construct_object_type_t{});
-            p["key1"] = "value1";
-            task0["properties"] = std::move(p);
+            yyjson::writer::detail::value p(Das::Utils::MakeYyjsonObject());
+            (*p.as_object())[std::string_view("key1")] = "value1";
+            (*task0.as_object())[std::string_view("properties")] = std::move(p);
         }
         WriteSchedulerState(sm, 1, {0}, {task0});
 
@@ -1667,12 +1893,13 @@ TEST_F(SchedulerServiceTest, OnTick_SkipsInvalidInstance)
 
     // Write a corrupt task instance file
     yyjson::writer::detail::value scheduler_index(
-        yyjson::construct_object_type_t{});
-    scheduler_index["nextTaskId"] = 1;
+        Das::Utils::MakeYyjsonObject());
+    (*scheduler_index.as_object())[std::string_view("nextTaskId")] = 1;
     {
-        yyjson::writer::detail::value arr(yyjson::construct_array_type_t{});
-        arr.array_append(0);
-        scheduler_index["taskOrder"] = std::move(arr);
+        yyjson::writer::detail::value arr(Das::Utils::MakeYyjsonArray());
+        (*arr.as_array()).emplace_back(0);
+        (*scheduler_index.as_object())[std::string_view("taskOrder")] =
+            std::move(arr);
     }
     settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
 
@@ -1694,12 +1921,14 @@ TEST_F(SchedulerServiceTest, OnTick_SkipsUnavailableInstance)
     settings_manager_->CreateProfile("0");
 
     // Write a task instance referencing a non-existent task type
-    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
-    task0["id"] = 0;
-    task0["taskGuid"] = "11111111-1111-1111-1111-111111111111";
-    task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
-    task0["properties"] =
-        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
+    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    (*task0.as_object())[std::string_view("id")] = 0;
+    (*task0.as_object())[std::string_view("taskGuid")] =
+        "11111111-1111-1111-1111-111111111111";
+    (*task0.as_object())[std::string_view("pluginGuid")] =
+        "00000000-0000-0000-0000-000000000002";
+    (*task0.as_object())[std::string_view("properties")] =
+        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
@@ -1778,10 +2007,16 @@ TEST_F(SchedulerExecutionTest, OnTick_RefreshesNextExecutionTime)
 
     // Verify nextExecutionTime was persisted
     auto persisted = settings_manager_->GetTaskInstanceJson("0", 0);
-    ASSERT_TRUE(persisted.contains("nextExecutionTime"));
-    ASSERT_TRUE(persisted["nextExecutionTime"].is_sint());
+    ASSERT_TRUE((*persisted.as_object())
+                    .contains(std::string_view("nextExecutionTime")));
+    ASSERT_TRUE((*persisted.as_object())[std::string_view("nextExecutionTime")]
+                    .is_sint());
     // 2026-06-15T10:30:00Z = 1781519400
-    EXPECT_EQ(persisted["nextExecutionTime"], 1781519400);
+    EXPECT_EQ(
+        (*persisted.as_object())[std::string_view("nextExecutionTime")]
+            .as_sint()
+            .value(),
+        1781519400);
 }
 
 TEST_F(SchedulerExecutionTest, OnTick_GetNextExecutionTimeFailure_SetsSentinel)
@@ -1808,9 +2043,15 @@ TEST_F(SchedulerExecutionTest, OnTick_GetNextExecutionTimeFailure_SetsSentinel)
 
     // The sentinel far-future timestamp should be persisted
     auto persisted = settings_manager_->GetTaskInstanceJson("0", 0);
-    ASSERT_TRUE(persisted.contains("nextExecutionTime"));
-    ASSERT_TRUE(persisted["nextExecutionTime"].is_sint());
-    EXPECT_EQ(persisted["nextExecutionTime"], 4102444799LL);
+    ASSERT_TRUE((*persisted.as_object())
+                    .contains(std::string_view("nextExecutionTime")));
+    ASSERT_TRUE((*persisted.as_object())[std::string_view("nextExecutionTime")]
+                    .is_sint());
+    EXPECT_EQ(
+        (*persisted.as_object())[std::string_view("nextExecutionTime")]
+            .as_sint()
+            .value(),
+        4102444799LL);
 }
 
 TEST_F(SchedulerExecutionTest, Stop_RequestsCancellationToken)
@@ -1851,7 +2092,7 @@ TEST_F(SchedulerExecutionTest, OnTick_DoesNotHoldMutexDuringDo)
 
     // Get should not deadlock (it acquires mutex internally)
     auto state = scheduler_->Get();
-    EXPECT_TRUE(state.contains("state"));
+    EXPECT_TRUE((*state.as_object()).contains(std::string_view("state")));
 
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
@@ -1864,9 +2105,17 @@ TEST_F(SchedulerRuntimeBackedTest, Initialize_DiscoversFlatManifestTaskTypes)
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
     auto state = scheduler_->Get();
-    ASSERT_EQ(state["availableTaskTypes"].size(), 1u);
+    ASSERT_EQ(
+        (*state.as_object())[std::string_view("availableTaskTypes")]
+            .as_array()
+            ->size(),
+        1u);
     EXPECT_EQ(
-        state["availableTaskTypes"][0]["taskGuid"],
+        (*(*(*state.as_object())[std::string_view("availableTaskTypes")]
+                .as_array())[0]
+              .as_object())[std::string_view("taskGuid")]
+            .as_string()
+            .value(),
         FactoryTaskGuidString);
     EXPECT_EQ(plugin_manager_->GetLoadedPluginCount(), 1u);
 }
@@ -1881,9 +2130,10 @@ TEST_F(SchedulerRuntimeBackedTest, OnTick_RespectsPersistedNextExecutionTime)
     ASSERT_EQ(scheduler_->AddTask(FactoryTaskGuid, &second_task_id), DAS_S_OK);
 
     yyjson::writer::detail::value internal_props(
-        yyjson::construct_object_type_t{});
+        Das::Utils::MakeYyjsonObject());
     // 2099-01-01T00:00:00Z = 4070908800
-    internal_props["nextExecutionTime"] = 4070908800;
+    (*internal_props.as_object())[std::string_view("nextExecutionTime")] =
+        4070908800;
     ASSERT_EQ(
         scheduler_->UpdateTaskInternalProperties(first_task_id, internal_props),
         DAS_S_OK);
@@ -1897,8 +2147,14 @@ TEST_F(SchedulerRuntimeBackedTest, OnTick_RespectsPersistedNextExecutionTime)
     auto second_task_json =
         settings_manager_->GetTaskInstanceJson("0", second_task_id);
 
-    EXPECT_EQ(first_task_json["nextExecutionTime"], 4070908800);
-    EXPECT_NE(second_task_json["nextExecutionTime"], nullptr);
+    EXPECT_EQ(
+        (*first_task_json.as_object())[std::string_view("nextExecutionTime")]
+            .as_sint()
+            .value(),
+        4070908800);
+    EXPECT_FALSE(
+        (*second_task_json.as_object())[std::string_view("nextExecutionTime")]
+            .is_null());
 }
 
 TEST_F(SchedulerRuntimeBackedTest, AddTask_CreatesDistinctRuntimeInstances)
@@ -1922,11 +2178,19 @@ TEST_F(SchedulerRuntimeBackedTest, AddTask_CreatesDistinctRuntimeInstances)
     auto second_task_json =
         settings_manager_->GetTaskInstanceJson("0", second_task_id);
 
-    ASSERT_TRUE(first_task_json["nextExecutionTime"].is_sint());
-    ASSERT_TRUE(second_task_json["nextExecutionTime"].is_sint());
+    ASSERT_TRUE(
+        (*first_task_json.as_object())[std::string_view("nextExecutionTime")]
+            .is_sint());
+    ASSERT_TRUE(
+        (*second_task_json.as_object())[std::string_view("nextExecutionTime")]
+            .is_sint());
     EXPECT_NE(
-        first_task_json["nextExecutionTime"],
-        second_task_json["nextExecutionTime"]);
+        (*first_task_json.as_object())[std::string_view("nextExecutionTime")]
+            .as_sint()
+            .value(),
+        (*second_task_json.as_object())[std::string_view("nextExecutionTime")]
+            .as_sint()
+            .value());
 
     std::lock_guard<std::mutex> lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->executed_instance_ids.size(), 2u);
@@ -2103,7 +2367,9 @@ TEST_F(SchedulerControllerTest, Initialize_ProfileNonZero_Rejected)
         MakeRequest("/api/scheduler/1/initialize", "{}", {{"profile", "1"}});
     auto resp = controller_->Initialize(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
-    EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
+    EXPECT_EQ(
+        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->initialize_called);
 }
 
@@ -2112,7 +2378,9 @@ TEST_F(SchedulerControllerTest, Start_ProfileNonZero_Rejected)
     auto req = MakeRequest("/api/scheduler/1/start", "{}", {{"profile", "1"}});
     auto resp = controller_->Start(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
-    EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
+    EXPECT_EQ(
+        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->start_called);
 }
 
@@ -2121,7 +2389,9 @@ TEST_F(SchedulerControllerTest, Stop_ProfileNonZero_Rejected)
     auto req = MakeRequest("/api/scheduler/1/stop", "{}", {{"profile", "1"}});
     auto resp = controller_->Stop(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
-    EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
+    EXPECT_EQ(
+        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->stop_called);
 }
 
@@ -2130,7 +2400,9 @@ TEST_F(SchedulerControllerTest, Get_ProfileNonZero_Rejected)
     auto req = MakeRequest("/api/scheduler/1/get", "{}", {{"profile", "1"}});
     auto resp = controller_->Get(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
-    EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
+    EXPECT_EQ(
+        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->get_called);
 }
 
@@ -2143,7 +2415,9 @@ TEST_F(SchedulerControllerTest, AddTask_ProfileNonZero_Rejected)
          {"taskGuid", "A1B2C3D4-E5F6-7890-ABCD-EF1234567890"}});
     auto resp = controller_->AddTask(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
-    EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
+    EXPECT_EQ(
+        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->add_task_called);
 }
 
@@ -2155,7 +2429,9 @@ TEST_F(SchedulerControllerTest, DeleteTask_ProfileNonZero_Rejected)
         {{"profile", "1"}, {"taskId", "0"}});
     auto resp = controller_->DeleteTask(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
-    EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
+    EXPECT_EQ(
+        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->delete_task_called);
 }
 
@@ -2169,7 +2445,9 @@ TEST_F(SchedulerControllerTest, AddTask_MalformedGuid_Rejected)
         {{"profile", "0"}, {"taskGuid", "not-a-guid"}});
     auto resp = controller_->AddTask(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
-    EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
+    EXPECT_EQ(
+        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->add_task_called);
 }
 
@@ -2183,7 +2461,9 @@ TEST_F(SchedulerControllerTest, DeleteTask_MalformedTaskId_Rejected)
         {{"profile", "0"}, {"taskId", "abc"}});
     auto resp = controller_->DeleteTask(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
-    EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
+    EXPECT_EQ(
+        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->delete_task_called);
 }
 
@@ -2195,7 +2475,9 @@ TEST_F(SchedulerControllerTest, UpdateProps_MalformedTaskId_Rejected)
         {{"profile", "0"}, {"taskId", "xyz"}});
     auto resp = controller_->UpdateTaskProperties(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
-    EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
+    EXPECT_EQ(
+        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->update_props_called);
 }
 
@@ -2207,7 +2489,9 @@ TEST_F(SchedulerControllerTest, UpdateInternalProps_MalformedTaskId_Rejected)
         {{"profile", "0"}, {"taskId", "abc"}});
     auto resp = controller_->UpdateTaskInternalProperties(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
-    EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
+    EXPECT_EQ(
+        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->update_internal_props_called);
 }
 
@@ -2221,7 +2505,9 @@ TEST_F(SchedulerControllerTest, Initialize_OldDisabledUnderscoreGuids_Rejected)
         {{"profile", "0"}});
     auto resp = controller_->Initialize(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
-    EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
+    EXPECT_EQ(
+        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->initialize_called);
 }
 
@@ -2233,7 +2519,9 @@ TEST_F(SchedulerControllerTest, Initialize_NonArrayDisabledGuids_Rejected)
         {{"profile", "0"}});
     auto resp = controller_->Initialize(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
-    EXPECT_EQ(body["Code"], DAS_E_INVALID_ARGUMENT);
+    EXPECT_EQ(
+        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->initialize_called);
 }
 
@@ -2246,7 +2534,9 @@ TEST_F(SchedulerControllerTest, Initialize_MalformedGuidMember_Skipped)
     auto resp = controller_->Initialize(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     // Should succeed (malformed GUIDs are skipped, valid ones pass)
-    EXPECT_EQ(body["Code"], DAS_S_OK);
+    EXPECT_EQ(
+        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        DAS_S_OK);
     EXPECT_TRUE(fake_svc_->initialize_called);
 }
 
@@ -2260,7 +2550,9 @@ TEST_F(SchedulerControllerTest, Initialize_Valid_Forwarded)
         {{"profile", "0"}});
     auto resp = controller_->Initialize(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
-    EXPECT_EQ(body["Code"], DAS_S_OK);
+    EXPECT_EQ(
+        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        DAS_S_OK);
     EXPECT_TRUE(fake_svc_->initialize_called);
 }
 
@@ -2269,7 +2561,9 @@ TEST_F(SchedulerControllerTest, Start_Valid_Forwarded)
     auto req = MakeRequest("/api/scheduler/0/start", "{}", {{"profile", "0"}});
     auto resp = controller_->Start(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
-    EXPECT_EQ(body["Code"], DAS_S_OK);
+    EXPECT_EQ(
+        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        DAS_S_OK);
     EXPECT_TRUE(fake_svc_->start_called);
 }
 
@@ -2278,7 +2572,9 @@ TEST_F(SchedulerControllerTest, Stop_Valid_Forwarded)
     auto req = MakeRequest("/api/scheduler/0/stop", "{}", {{"profile", "0"}});
     auto resp = controller_->Stop(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
-    EXPECT_EQ(body["Code"], DAS_S_OK);
+    EXPECT_EQ(
+        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        DAS_S_OK);
     EXPECT_TRUE(fake_svc_->stop_called);
 }
 
@@ -2287,8 +2583,12 @@ TEST_F(SchedulerControllerTest, Get_Valid_Forwarded)
     auto req = MakeRequest("/api/scheduler/0/get", "{}", {{"profile", "0"}});
     auto resp = controller_->Get(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
-    EXPECT_EQ(body["Code"], DAS_S_OK);
-    EXPECT_TRUE(body["Data"].contains("state"));
+    EXPECT_EQ(
+        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        DAS_S_OK);
+    EXPECT_TRUE(
+        (*body.as_object())[std::string_view("Data")].as_object()->contains(
+            std::string_view("state")));
     EXPECT_TRUE(fake_svc_->get_called);
 }
 
@@ -2301,8 +2601,15 @@ TEST_F(SchedulerControllerTest, AddTask_Valid_Forwarded)
          {"taskGuid", "A1B2C3D4-E5F6-7890-ABCD-EF1234567890"}});
     auto resp = controller_->AddTask(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
-    EXPECT_EQ(body["Code"], DAS_S_OK);
-    EXPECT_EQ(body["Data"]["taskId"], 42);
+    EXPECT_EQ(
+        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        DAS_S_OK);
+    EXPECT_EQ(
+        (*(*body.as_object())[std::string_view("Data")]
+              .as_object())[std::string_view("taskId")]
+            .as_sint()
+            .value(),
+        42);
     EXPECT_TRUE(fake_svc_->add_task_called);
 }
 
@@ -2314,7 +2621,9 @@ TEST_F(SchedulerControllerTest, DeleteTask_Valid_Forwarded)
         {{"profile", "0"}, {"taskId", "5"}});
     auto resp = controller_->DeleteTask(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
-    EXPECT_EQ(body["Code"], DAS_S_OK);
+    EXPECT_EQ(
+        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        DAS_S_OK);
     EXPECT_TRUE(fake_svc_->delete_task_called);
 }
 
@@ -2326,7 +2635,9 @@ TEST_F(SchedulerControllerTest, UpdateProps_Valid_Forwarded)
         {{"profile", "0"}, {"taskId", "3"}});
     auto resp = controller_->UpdateTaskProperties(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
-    EXPECT_EQ(body["Code"], DAS_S_OK);
+    EXPECT_EQ(
+        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        DAS_S_OK);
     EXPECT_TRUE(fake_svc_->update_props_called);
 }
 
@@ -2338,7 +2649,9 @@ TEST_F(SchedulerControllerTest, UpdateInternalProps_Valid_Forwarded)
         {{"profile", "0"}, {"taskId", "3"}});
     auto resp = controller_->UpdateTaskInternalProperties(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
-    EXPECT_EQ(body["Code"], DAS_S_OK);
+    EXPECT_EQ(
+        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        DAS_S_OK);
     EXPECT_TRUE(fake_svc_->update_internal_props_called);
 }
 
@@ -2396,11 +2709,13 @@ TEST(ProfileControllerTest, GetPluginSettings_SFalseReportsEmptyObjectRecovery)
     auto response = controller.GetPluginSettings(request);
     auto body = *Das::Utils::ParseYyjsonFromString(response.Release().body());
 
-    EXPECT_EQ(body["Code"], DAS_S_FALSE);
     EXPECT_EQ(
-        body["Message"],
+        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        DAS_S_FALSE);
+    EXPECT_EQ(
+        (*body.as_object())[std::string_view("Message")].as_string().value(),
         "Plugin settings were invalid and restored to an empty object");
-    EXPECT_TRUE(body["Data"].is_object());
+    EXPECT_TRUE((*body.as_object())[std::string_view("Data")].is_object());
 
     std::filesystem::remove_all(test_dir);
 }
@@ -2477,8 +2792,12 @@ TEST_F(SchedulerLifecycleTest, FullTaskInstanceLifecycle)
 
     // 3. Get: initial state has empty tasks queue
     auto state = scheduler_->Get();
-    EXPECT_EQ(state["state"], "stopped");
-    EXPECT_EQ(state["tasks"].size(), 0u);
+    EXPECT_EQ(
+        (*state.as_object())[std::string_view("state")].as_string().value(),
+        "stopped");
+    EXPECT_EQ(
+        (*state.as_object())[std::string_view("tasks")].as_array()->size(),
+        0u);
 
     // 4. AddTask (put): create two task instances
     int64_t task_id_0 = -1;
@@ -2494,11 +2813,29 @@ TEST_F(SchedulerLifecycleTest, FullTaskInstanceLifecycle)
     // 5. Assert split files directly:
     //    scheduler.json.nextTaskId increments
     auto scheduler_index = settings_manager_->GetSchedulerIndexJson("0");
-    EXPECT_EQ(scheduler_index["nextTaskId"], 2);
+    EXPECT_EQ(
+        (*scheduler_index.as_object())[std::string_view("nextTaskId")]
+            .as_sint()
+            .value(),
+        2);
     //    scheduler.json.taskOrder[] order is stable
-    ASSERT_EQ(scheduler_index["taskOrder"].size(), 2u);
-    EXPECT_EQ(scheduler_index["taskOrder"][0], 0);
-    EXPECT_EQ(scheduler_index["taskOrder"][1], 1);
+    ASSERT_EQ(
+        (*scheduler_index.as_object())[std::string_view("taskOrder")]
+            .as_array()
+            ->size(),
+        2u);
+    EXPECT_EQ(
+        (*(*scheduler_index.as_object())[std::string_view("taskOrder")]
+              .as_array())[0]
+            .as_sint()
+            .value(),
+        0);
+    EXPECT_EQ(
+        (*(*scheduler_index.as_object())[std::string_view("taskOrder")]
+              .as_array())[1]
+            .as_sint()
+            .value(),
+        1);
 
     //    taskId{taskId}.json is created for each task instance
     EXPECT_TRUE(std::filesystem::exists(settings_dir_ / "0" / "taskId0.json"));
@@ -2506,31 +2843,64 @@ TEST_F(SchedulerLifecycleTest, FullTaskInstanceLifecycle)
 
     //    Verify task instance file content
     auto task0_json = settings_manager_->GetTaskInstanceJson("0", 0);
-    EXPECT_EQ(task0_json["id"], 0);
-    EXPECT_EQ(task0_json["taskGuid"], "A1B2C3D4-E5F6-7890-ABCD-EF1234567890");
+    EXPECT_EQ(
+        (*task0_json.as_object())[std::string_view("id")].as_sint().value(),
+        0);
+    EXPECT_EQ(
+        (*task0_json.as_object())[std::string_view("taskGuid")]
+            .as_string()
+            .value(),
+        "A1B2C3D4-E5F6-7890-ABCD-EF1234567890");
 
     // 6. Get: verify two task instances in queue
     state = scheduler_->Get();
-    ASSERT_EQ(state["tasks"].size(), 2u);
-    EXPECT_EQ(state["tasks"][0]["id"], 0);
-    EXPECT_EQ(state["tasks"][1]["id"], 1);
-    EXPECT_EQ(state["tasks"][0]["availability"], "available");
-    EXPECT_EQ(state["tasks"][1]["availability"], "available");
+    ASSERT_EQ(
+        (*state.as_object())[std::string_view("tasks")].as_array()->size(),
+        2u);
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+              .as_object())[std::string_view("id")]
+            .as_sint()
+            .value(),
+        0);
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[1]
+              .as_object())[std::string_view("id")]
+            .as_sint()
+            .value(),
+        1);
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+              .as_object())[std::string_view("availability")]
+            .as_string()
+            .value(),
+        "available");
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[1]
+              .as_object())[std::string_view("availability")]
+            .as_string()
+            .value(),
+        "available");
 
     // 7. UpdateTaskInternalProperties on instance 0
     //    (no descriptors from manifest, so UpdateTaskProperties would reject;
     //     internal properties are always writable when not running)
     yyjson::writer::detail::value internal_props(
-        yyjson::construct_object_type_t{});
+        Das::Utils::MakeYyjsonObject());
     // 2026-07-01T09:00:00Z = 1782896400
-    internal_props["nextExecutionTime"] = 1782896400;
+    (*internal_props.as_object())[std::string_view("nextExecutionTime")] =
+        1782896400;
     auto update_result =
         scheduler_->UpdateTaskInternalProperties(0, internal_props);
     EXPECT_EQ(update_result, DAS_S_OK);
 
     //    Verify updated properties are persisted under the selected instance
     auto task0_updated = settings_manager_->GetTaskInstanceJson("0", 0);
-    EXPECT_EQ(task0_updated["nextExecutionTime"], 1782896400);
+    EXPECT_EQ(
+        (*task0_updated.as_object())[std::string_view("nextExecutionTime")]
+            .as_sint()
+            .value(),
+        1782896400);
 
     // -- Phase 2: Start, verify running mutation guard, stop --
 
@@ -2546,8 +2916,8 @@ TEST_F(SchedulerLifecycleTest, FullTaskInstanceLifecycle)
     EXPECT_EQ(scheduler_->DeleteTask(0), DAS_E_TASK_WORKING);
 
     yyjson::writer::detail::value rejected_props(
-        yyjson::construct_object_type_t{});
-    rejected_props["key"] = "val";
+        Das::Utils::MakeYyjsonObject());
+    (*rejected_props.as_object())[std::string_view("key")] = "val";
     EXPECT_EQ(
         scheduler_->UpdateTaskProperties(0, rejected_props),
         DAS_E_TASK_WORKING);
@@ -2563,7 +2933,11 @@ TEST_F(SchedulerLifecycleTest, FullTaskInstanceLifecycle)
     EXPECT_TRUE(std::filesystem::exists(settings_dir_ / "0" / "taskId0.json"));
     EXPECT_TRUE(std::filesystem::exists(settings_dir_ / "0" / "taskId1.json"));
     auto index_after_stop = settings_manager_->GetSchedulerIndexJson("0");
-    EXPECT_EQ(index_after_stop["nextTaskId"], 2);
+    EXPECT_EQ(
+        (*index_after_stop.as_object())[std::string_view("nextTaskId")]
+            .as_sint()
+            .value(),
+        2);
 
     // -- Phase 3: Re-initialize, delete, verify persistence across instances --
 
@@ -2577,11 +2951,28 @@ TEST_F(SchedulerLifecycleTest, FullTaskInstanceLifecycle)
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
     state = scheduler_->Get();
-    ASSERT_EQ(state["tasks"].size(), 2u);
-    EXPECT_EQ(state["tasks"][0]["id"], 0);
-    EXPECT_EQ(state["tasks"][1]["id"], 1);
+    ASSERT_EQ(
+        (*state.as_object())[std::string_view("tasks")].as_array()->size(),
+        2u);
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+              .as_object())[std::string_view("id")]
+            .as_sint()
+            .value(),
+        0);
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[1]
+              .as_object())[std::string_view("id")]
+            .as_sint()
+            .value(),
+        1);
     // Task 0's nextExecutionTime was persisted
-    EXPECT_EQ(state["tasks"][0]["nextExecutionTime"], 1782896400);
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+              .as_object())[std::string_view("nextExecutionTime")]
+            .as_sint()
+            .value(),
+        1782896400);
 
     // 13. Delete task 0
     auto delete_result = scheduler_->DeleteTask(0);
@@ -2593,13 +2984,29 @@ TEST_F(SchedulerLifecycleTest, FullTaskInstanceLifecycle)
     EXPECT_TRUE(std::filesystem::exists(settings_dir_ / "0" / "taskId1.json"));
 
     auto index_after_delete = settings_manager_->GetSchedulerIndexJson("0");
-    ASSERT_EQ(index_after_delete["taskOrder"].size(), 1u);
-    EXPECT_EQ(index_after_delete["taskOrder"][0], 1);
+    ASSERT_EQ(
+        (*index_after_delete.as_object())[std::string_view("taskOrder")]
+            .as_array()
+            ->size(),
+        1u);
+    EXPECT_EQ(
+        (*(*index_after_delete.as_object())[std::string_view("taskOrder")]
+              .as_array())[0]
+            .as_sint()
+            .value(),
+        1);
 
     // 14. Get: only task 1 remains
     state = scheduler_->Get();
-    ASSERT_EQ(state["tasks"].size(), 1u);
-    EXPECT_EQ(state["tasks"][0]["id"], 1);
+    ASSERT_EQ(
+        (*state.as_object())[std::string_view("tasks")].as_array()->size(),
+        1u);
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+              .as_object())[std::string_view("id")]
+            .as_sint()
+            .value(),
+        1);
 
     // 15. A new scheduler instance sees persisted final state
     auto ipc_sp2 = DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
@@ -2609,10 +3016,20 @@ TEST_F(SchedulerLifecycleTest, FullTaskInstanceLifecycle)
     ASSERT_EQ(scheduler2->Initialize(plugin_dir_, {}), DAS_S_OK);
 
     auto state2 = scheduler2->Get();
-    ASSERT_EQ(state2["tasks"].size(), 1u);
-    EXPECT_EQ(state2["tasks"][0]["id"], 1);
+    ASSERT_EQ(
+        (*state2.as_object())[std::string_view("tasks")].as_array()->size(),
+        1u);
     EXPECT_EQ(
-        state2["tasks"][0]["taskGuid"],
+        (*(*(*state2.as_object())[std::string_view("tasks")].as_array())[0]
+              .as_object())[std::string_view("id")]
+            .as_sint()
+            .value(),
+        1);
+    EXPECT_EQ(
+        (*(*(*state2.as_object())[std::string_view("tasks")].as_array())[0]
+              .as_object())[std::string_view("taskGuid")]
+            .as_string()
+            .value(),
         "A1B2C3D4-E5F6-7890-ABCD-EF1234567890");
 
     // Cleanup: release the fake task
@@ -2676,26 +3093,30 @@ TEST_F(SchedulerUnavailableTest, UnavailableAndCorruptInstances_VisibleInGet)
     // Seed scheduler.json with two task ids: one referencing an absent task
     // type GUID (unavailable), one with a corrupt JSON file (invalid).
     yyjson::writer::detail::value scheduler_index(
-        yyjson::construct_object_type_t{});
-    scheduler_index["nextTaskId"] = 2;
+        Das::Utils::MakeYyjsonObject());
+    (*scheduler_index.as_object())[std::string_view("nextTaskId")] = 2;
     {
-        yyjson::writer::detail::value arr(yyjson::construct_array_type_t{});
-        arr.array_append(0);
-        arr.array_append(1);
-        scheduler_index["taskOrder"] = std::move(arr);
+        yyjson::writer::detail::value arr(Das::Utils::MakeYyjsonArray());
+        (*arr.as_array()).emplace_back(0);
+        (*arr.as_array()).emplace_back(1);
+        (*scheduler_index.as_object())[std::string_view("taskOrder")] =
+            std::move(arr);
     }
     settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
 
     // Task 0: unavailable -- references a GUID not in loaded manifests
-    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
-    task0["id"] = 0;
-    task0["taskGuid"] = "11111111-2222-3333-4444-555555555555";
-    task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
-    task0["nextExecutionTime"] = yyjson::writer::detail::value{};
+    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    (*task0.as_object())[std::string_view("id")] = 0;
+    (*task0.as_object())[std::string_view("taskGuid")] =
+        "11111111-2222-3333-4444-555555555555";
+    (*task0.as_object())[std::string_view("pluginGuid")] =
+        "00000000-0000-0000-0000-000000000002";
+    (*task0.as_object())[std::string_view("nextExecutionTime")] =
+        yyjson::writer::detail::value{};
     {
-        yyjson::writer::detail::value p(yyjson::construct_object_type_t{});
-        p["customProp"] = "preservedValue";
-        task0["properties"] = std::move(p);
+        yyjson::writer::detail::value p(Das::Utils::MakeYyjsonObject());
+        (*p.as_object())[std::string_view("customProp")] = "preservedValue";
+        (*task0.as_object())[std::string_view("properties")] = std::move(p);
     }
     settings_manager_->UpdateTaskInstanceJson("0", 0, task0);
 
@@ -2710,31 +3131,68 @@ TEST_F(SchedulerUnavailableTest, UnavailableAndCorruptInstances_VisibleInGet)
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
     auto state = scheduler_->Get();
-    ASSERT_EQ(state["tasks"].size(), 2u);
+    ASSERT_EQ(
+        (*state.as_object())[std::string_view("tasks")].as_array()->size(),
+        2u);
 
     // Unavailable instance: visible with original id/GUID/properties
-    EXPECT_EQ(state["tasks"][0]["id"], 0);
-    EXPECT_EQ(state["tasks"][0]["availability"], "unavailable");
     EXPECT_EQ(
-        state["tasks"][0]["taskGuid"],
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+              .as_object())[std::string_view("id")]
+            .as_sint()
+            .value(),
+        0);
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+              .as_object())[std::string_view("availability")]
+            .as_string()
+            .value(),
+        "unavailable");
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+              .as_object())[std::string_view("taskGuid")]
+            .as_string()
+            .value(),
         "11111111-2222-3333-4444-555555555555");
-    EXPECT_EQ(state["tasks"][0]["properties"]["customProp"], "preservedValue");
+    EXPECT_EQ(
+        (*(*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+                .as_object())[std::string_view("properties")]
+              .as_object())[std::string_view("customProp")]
+            .as_string()
+            .value(),
+        "preservedValue");
 
     // Invalid/corrupt instance: visible with original id
-    EXPECT_EQ(state["tasks"][1]["id"], 1);
-    EXPECT_EQ(state["tasks"][1]["availability"], "invalid");
-    EXPECT_FALSE(state["tasks"][1]["unavailabilityReason"].empty());
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[1]
+              .as_object())[std::string_view("id")]
+            .as_sint()
+            .value(),
+        1);
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[1]
+              .as_object())[std::string_view("availability")]
+            .as_string()
+            .value(),
+        "invalid");
+    EXPECT_FALSE(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[1]
+              .as_object())[std::string_view("unavailabilityReason")]
+            .as_object()
+            ->empty());
 }
 
 TEST_F(SchedulerUnavailableTest, UnavailableInstance_NotExecutedOnStart)
 {
     // Seed scheduler with an unavailable task type
-    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
-    task0["id"] = 0;
-    task0["taskGuid"] = "11111111-2222-3333-4444-555555555555";
-    task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
-    task0["properties"] =
-        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
+    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    (*task0.as_object())[std::string_view("id")] = 0;
+    (*task0.as_object())[std::string_view("taskGuid")] =
+        "11111111-2222-3333-4444-555555555555";
+    (*task0.as_object())[std::string_view("pluginGuid")] =
+        "00000000-0000-0000-0000-000000000002";
+    (*task0.as_object())[std::string_view("properties")] =
+        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
@@ -2749,12 +3207,13 @@ TEST_F(SchedulerUnavailableTest, CorruptInstance_NotExecutedOnStart)
 {
     // Seed scheduler with a corrupt task file
     yyjson::writer::detail::value scheduler_index(
-        yyjson::construct_object_type_t{});
-    scheduler_index["nextTaskId"] = 1;
+        Das::Utils::MakeYyjsonObject());
+    (*scheduler_index.as_object())[std::string_view("nextTaskId")] = 1;
     {
-        yyjson::writer::detail::value arr(yyjson::construct_array_type_t{});
-        arr.array_append(0);
-        scheduler_index["taskOrder"] = std::move(arr);
+        yyjson::writer::detail::value arr(Das::Utils::MakeYyjsonArray());
+        (*arr.as_array()).emplace_back(0);
+        (*scheduler_index.as_object())[std::string_view("taskOrder")] =
+            std::move(arr);
     }
     settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
 
@@ -2774,41 +3233,55 @@ TEST_F(SchedulerUnavailableTest, CorruptInstance_NotExecutedOnStart)
 
 TEST_F(SchedulerUnavailableTest, DeleteUnavailableInstance_Succeeds)
 {
-    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
-    task0["id"] = 0;
-    task0["taskGuid"] = "11111111-2222-3333-4444-555555555555";
-    task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
-    task0["properties"] =
-        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
+    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    (*task0.as_object())[std::string_view("id")] = 0;
+    (*task0.as_object())[std::string_view("taskGuid")] =
+        "11111111-2222-3333-4444-555555555555";
+    (*task0.as_object())[std::string_view("pluginGuid")] =
+        "00000000-0000-0000-0000-000000000002";
+    (*task0.as_object())[std::string_view("properties")] =
+        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
     auto state = scheduler_->Get();
-    ASSERT_EQ(state["tasks"].size(), 1u);
-    EXPECT_EQ(state["tasks"][0]["availability"], "unavailable");
+    ASSERT_EQ(
+        (*state.as_object())[std::string_view("tasks")].as_array()->size(),
+        1u);
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+              .as_object())[std::string_view("availability")]
+            .as_string()
+            .value(),
+        "unavailable");
 
     auto result = scheduler_->DeleteTask(0);
     EXPECT_EQ(result, DAS_S_OK);
 
     state = scheduler_->Get();
-    EXPECT_EQ(state["tasks"].size(), 0u);
+    EXPECT_EQ(
+        (*state.as_object())[std::string_view("tasks")].as_array()->size(),
+        0u);
 
     // Verify persisted removal
     EXPECT_FALSE(std::filesystem::exists(settings_dir_ / "0" / "taskId0.json"));
     auto index = settings_manager_->GetSchedulerIndexJson("0");
-    EXPECT_EQ(index["taskOrder"].size(), 0u);
+    EXPECT_EQ(
+        (*index.as_object())[std::string_view("taskOrder")].as_array()->size(),
+        0u);
 }
 
 TEST_F(SchedulerUnavailableTest, DeleteCorruptInstance_Succeeds)
 {
     yyjson::writer::detail::value scheduler_index(
-        yyjson::construct_object_type_t{});
-    scheduler_index["nextTaskId"] = 1;
+        Das::Utils::MakeYyjsonObject());
+    (*scheduler_index.as_object())[std::string_view("nextTaskId")] = 1;
     {
-        yyjson::writer::detail::value arr(yyjson::construct_array_type_t{});
-        arr.array_append(0);
-        scheduler_index["taskOrder"] = std::move(arr);
+        yyjson::writer::detail::value arr(Das::Utils::MakeYyjsonArray());
+        (*arr.as_array()).emplace_back(0);
+        (*scheduler_index.as_object())[std::string_view("taskOrder")] =
+            std::move(arr);
     }
     settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
 
@@ -2821,14 +3294,23 @@ TEST_F(SchedulerUnavailableTest, DeleteCorruptInstance_Succeeds)
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
     auto state = scheduler_->Get();
-    ASSERT_EQ(state["tasks"].size(), 1u);
-    EXPECT_EQ(state["tasks"][0]["availability"], "invalid");
+    ASSERT_EQ(
+        (*state.as_object())[std::string_view("tasks")].as_array()->size(),
+        1u);
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+              .as_object())[std::string_view("availability")]
+            .as_string()
+            .value(),
+        "invalid");
 
     auto result = scheduler_->DeleteTask(0);
     EXPECT_EQ(result, DAS_S_OK);
 
     state = scheduler_->Get();
-    EXPECT_EQ(state["tasks"].size(), 0u);
+    EXPECT_EQ(
+        (*state.as_object())[std::string_view("tasks")].as_array()->size(),
+        0u);
 }
 
 TEST_F(SchedulerUnavailableTest, MixedAvailableAndUnavailable_OnlyAvailableRuns)
@@ -2855,22 +3337,26 @@ TEST_F(SchedulerUnavailableTest, MixedAvailableAndUnavailable_OnlyAvailableRuns)
         static_cast<IDasBase*>(fake));
 
     // Task 0: unavailable (GUID not matching any loaded task)
-    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
-    task0["id"] = 0;
-    task0["taskGuid"] = "11111111-2222-3333-4444-555555555555";
-    task0["pluginGuid"] = "00000000-0000-0000-0000-000000000002";
-    task0["properties"] =
-        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
+    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    (*task0.as_object())[std::string_view("id")] = 0;
+    (*task0.as_object())[std::string_view("taskGuid")] =
+        "11111111-2222-3333-4444-555555555555";
+    (*task0.as_object())[std::string_view("pluginGuid")] =
+        "00000000-0000-0000-0000-000000000002";
+    (*task0.as_object())[std::string_view("properties")] =
+        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
 
     // Task 1: available (matches FakeTaskGuid)
-    yyjson::writer::detail::value task1(yyjson::construct_object_type_t{});
-    task1["id"] = 1;
-    task1["taskGuid"] = "A1B2C3D4-E5F6-7890-ABCD-EF1234567890";
-    task1["pluginGuid"] = "00000000-0000-0000-0000-000000000000";
+    yyjson::writer::detail::value task1(Das::Utils::MakeYyjsonObject());
+    (*task1.as_object())[std::string_view("id")] = 1;
+    (*task1.as_object())[std::string_view("taskGuid")] =
+        "A1B2C3D4-E5F6-7890-ABCD-EF1234567890";
+    (*task1.as_object())[std::string_view("pluginGuid")] =
+        "00000000-0000-0000-0000-000000000000";
     {
-        yyjson::writer::detail::value p(yyjson::construct_object_type_t{});
-        p["testKey"] = "testValue";
-        task1["properties"] = std::move(p);
+        yyjson::writer::detail::value p(Das::Utils::MakeYyjsonObject());
+        (*p.as_object())[std::string_view("testKey")] = "testValue";
+        (*task1.as_object())[std::string_view("properties")] = std::move(p);
     }
 
     WriteSchedulerState(*settings_manager_, 2, {0, 1}, {task0, task1});
@@ -2878,9 +3364,21 @@ TEST_F(SchedulerUnavailableTest, MixedAvailableAndUnavailable_OnlyAvailableRuns)
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
     auto state = scheduler_->Get();
-    ASSERT_EQ(state["tasks"].size(), 2u);
-    EXPECT_EQ(state["tasks"][0]["availability"], "unavailable");
-    EXPECT_EQ(state["tasks"][1]["availability"], "available");
+    ASSERT_EQ(
+        (*state.as_object())[std::string_view("tasks")].as_array()->size(),
+        2u);
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+              .as_object())[std::string_view("availability")]
+            .as_string()
+            .value(),
+        "unavailable");
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[1]
+              .as_object())[std::string_view("availability")]
+            .as_string()
+            .value(),
+        "available");
 
     // Enable should succeed because at least one available instance exists
     EXPECT_EQ(scheduler_->Enable(), DAS_S_OK);

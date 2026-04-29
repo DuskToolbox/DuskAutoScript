@@ -32,16 +32,17 @@ namespace
         const std::vector<int64_t>&                       taskOrder,
         const std::vector<yyjson::writer::detail::value>& taskInstances)
     {
-        yyjson::writer::detail::value index(yyjson::construct_object_type_t{});
-        index["nextTaskId"] = nextTaskId;
+        yyjson::writer::detail::value index(Das::Utils::MakeYyjsonObject());
+        (*index.as_object())[std::string_view("nextTaskId")] = nextTaskId;
         {
             yyjson::writer::detail::value order_arr(
-                yyjson::construct_array_type_t{});
+                Das::Utils::MakeYyjsonArray());
             for (auto id : taskOrder)
             {
-                order_arr.array_append(id);
+                (*order_arr.as_array()).emplace_back(id);
             }
-            index["taskOrder"] = std::move(order_arr);
+            (*index.as_object())[std::string_view("taskOrder")] =
+                std::move(order_arr);
         }
         sm.UpdateSchedulerIndexJson("0", index);
 
@@ -108,19 +109,23 @@ TEST_F(SchedulerConcurrencyTest, DeleteRetrySleepDoesNotBlockConcurrentOps)
     settings_manager_->CreateProfile("0");
 
     // Create two task instances
-    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
-    task0["id"] = 0;
-    task0["taskGuid"] = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
-    task0["pluginGuid"] = "FFFFFFFF-0000-0000-0000-000000000000";
-    task0["properties"] =
-        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
+    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    (*task0.as_object())[std::string_view("id")] = 0;
+    (*task0.as_object())[std::string_view("taskGuid")] =
+        "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
+    (*task0.as_object())[std::string_view("pluginGuid")] =
+        "FFFFFFFF-0000-0000-0000-000000000000";
+    (*task0.as_object())[std::string_view("properties")] =
+        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
 
-    yyjson::writer::detail::value task1(yyjson::construct_object_type_t{});
-    task1["id"] = 1;
-    task1["taskGuid"] = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
-    task1["pluginGuid"] = "FFFFFFFF-0000-0000-0000-000000000000";
-    task1["properties"] =
-        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
+    yyjson::writer::detail::value task1(Das::Utils::MakeYyjsonObject());
+    (*task1.as_object())[std::string_view("id")] = 1;
+    (*task1.as_object())[std::string_view("taskGuid")] =
+        "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
+    (*task1.as_object())[std::string_view("pluginGuid")] =
+        "FFFFFFFF-0000-0000-0000-000000000000";
+    (*task1.as_object())[std::string_view("properties")] =
+        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
 
     WriteSchedulerState(*settings_manager_, 2, {0, 1}, {task0, task1});
 
@@ -144,7 +149,7 @@ TEST_F(SchedulerConcurrencyTest, DeleteRetrySleepDoesNotBlockConcurrentOps)
     auto state = scheduler_->Get();
     auto elapsed = std::chrono::steady_clock::now() - start;
 
-    EXPECT_TRUE(state.contains("state"));
+    EXPECT_TRUE((*state.as_object()).contains(std::string_view("state")));
     EXPECT_LT(
         std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count(),
         200);
@@ -160,13 +165,16 @@ TEST_F(SchedulerConcurrencyTest, ConcurrentUpdatesNoNestedLockDeadlock)
 {
     settings_manager_->CreateProfile("0");
 
-    yyjson::writer::detail::value task0(yyjson::construct_object_type_t{});
-    task0["id"] = 0;
-    task0["taskGuid"] = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
-    task0["pluginGuid"] = "FFFFFFFF-0000-0000-0000-000000000000";
-    task0["nextExecutionTime"] = yyjson::writer::detail::value{};
-    task0["properties"] =
-        yyjson::writer::detail::value(yyjson::construct_object_type_t{});
+    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    (*task0.as_object())[std::string_view("id")] = 0;
+    (*task0.as_object())[std::string_view("taskGuid")] =
+        "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
+    (*task0.as_object())[std::string_view("pluginGuid")] =
+        "FFFFFFFF-0000-0000-0000-000000000000";
+    (*task0.as_object())[std::string_view("nextExecutionTime")] =
+        yyjson::writer::detail::value{};
+    (*task0.as_object())[std::string_view("properties")] =
+        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
 
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
@@ -184,8 +192,9 @@ TEST_F(SchedulerConcurrencyTest, ConcurrentUpdatesNoNestedLockDeadlock)
                 // 2026-06-01T00:00:00 UTC = 1780272000, each thread offsets by
                 // hour
                 yyjson::writer::detail::value internal_props(
-                    yyjson::construct_object_type_t{});
-                internal_props["nextExecutionTime"] =
+                    Das::Utils::MakeYyjsonObject());
+                (*internal_props
+                      .as_object())[std::string_view("nextExecutionTime")] =
                     static_cast<int64_t>(1780272000LL + i * 3600);
                 auto result =
                     scheduler_->UpdateTaskInternalProperties(0, internal_props);
@@ -207,7 +216,8 @@ TEST_F(SchedulerConcurrencyTest, ConcurrentUpdatesNoNestedLockDeadlock)
     // Verify the persisted state is valid JSON (no corruption)
     auto persisted = settings_manager_->GetTaskInstanceJson("0", 0);
     EXPECT_TRUE(persisted.is_object());
-    EXPECT_TRUE(persisted.contains("nextExecutionTime"));
+    EXPECT_TRUE((*persisted.as_object())
+                    .contains(std::string_view("nextExecutionTime")));
 }
 
 // Test 3: OnTick nextExecutionTime persistence is offloaded to

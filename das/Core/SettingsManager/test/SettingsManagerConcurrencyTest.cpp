@@ -60,9 +60,8 @@ TEST_F(SettingsManagerConcurrencyTest, SameKeySerialized)
     {
         for (int i = 0; i < 50; ++i)
         {
-            yyjson::writer::detail::value data(
-                yyjson::construct_object_type_t{});
-            data["value"] = start_value + i;
+            yyjson::writer::detail::value data(Das::Utils::MakeYyjsonObject());
+            (*data.as_object())[std::string_view("value")] = start_value + i;
             sm_->UpdatePluginSettingsJson("0", key_guid, data);
         }
         ops_done.fetch_add(1);
@@ -76,7 +75,8 @@ TEST_F(SettingsManagerConcurrencyTest, SameKeySerialized)
     EXPECT_EQ(ops_done.load(), 2);
 
     auto    result = sm_->GetPluginSettingsJson("0", key_guid);
-    int64_t final_value = result["value"].as_sint().value();
+    int64_t final_value =
+        (*result.as_object())[std::string_view("value")].as_sint().value();
     EXPECT_TRUE(final_value >= 49);
     EXPECT_TRUE(final_value <= 1049);
 }
@@ -93,10 +93,9 @@ TEST_F(SettingsManagerConcurrencyTest, HttpWholeFileVsPluginFieldRace)
     {
         for (int i = 0; i < 20; ++i)
         {
-            yyjson::writer::detail::value data(
-                yyjson::construct_object_type_t{});
-            data["field_a"] = i;
-            data["field_b"] = "http_write";
+            yyjson::writer::detail::value data(Das::Utils::MakeYyjsonObject());
+            (*data.as_object())[std::string_view("field_a")] = i;
+            (*data.as_object())[std::string_view("field_b")] = "http_write";
             sm_->UpdatePluginSettingsJson("0", key_guid, data);
         }
         done_a.store(true);
@@ -134,7 +133,9 @@ TEST_F(SettingsManagerConcurrencyTest, HttpWholeFileVsPluginFieldRace)
     auto result = sm_->GetPluginSettingsJson("0", key_guid);
     EXPECT_TRUE(result.is_object());
     // At minimum, one of the writers' fields must be present
-    EXPECT_TRUE(result.contains("field_a") || result.contains("field_c"));
+    EXPECT_TRUE(
+        (*result.as_object()).contains(std::string_view("field_a"))
+        || (*result.as_object()).contains(std::string_view("field_c")));
 }
 
 // Test 3: Different keys do not block each other
@@ -148,8 +149,8 @@ TEST_F(SettingsManagerConcurrencyTest, DifferentKeysNonBlocking)
         {
             std::this_thread::yield();
         }
-        yyjson::writer::detail::value data_a(yyjson::construct_object_type_t{});
-        data_a["data"] = "A";
+        yyjson::writer::detail::value data_a(Das::Utils::MakeYyjsonObject());
+        (*data_a.as_object())[std::string_view("data")] = "A";
         sm_->UpdatePluginSettingsJson("0", "plugin-A", data_a);
     };
 
@@ -159,8 +160,8 @@ TEST_F(SettingsManagerConcurrencyTest, DifferentKeysNonBlocking)
         {
             std::this_thread::yield();
         }
-        yyjson::writer::detail::value data_b(yyjson::construct_object_type_t{});
-        data_b["data"] = "B";
+        yyjson::writer::detail::value data_b(Das::Utils::MakeYyjsonObject());
+        (*data_b.as_object())[std::string_view("data")] = "B";
         sm_->UpdatePluginSettingsJson("0", "plugin-B", data_b);
     };
 
@@ -173,8 +174,14 @@ TEST_F(SettingsManagerConcurrencyTest, DifferentKeysNonBlocking)
     // Both operations should complete; different keys use different mutexes
     auto ra = sm_->GetPluginSettingsJson("0", "plugin-A");
     auto rb = sm_->GetPluginSettingsJson("0", "plugin-B");
-    EXPECT_EQ(std::string(ra["data"].as_string().value()), "A");
-    EXPECT_EQ(std::string(rb["data"].as_string().value()), "B");
+    EXPECT_EQ(
+        std::string(
+            (*ra.as_object())[std::string_view("data")].as_string().value()),
+        "A");
+    EXPECT_EQ(
+        std::string(
+            (*rb.as_object())[std::string_view("data")].as_string().value()),
+        "B");
 }
 
 // Test 4: Concurrent field updates to same plugin key are serialized
@@ -190,9 +197,8 @@ TEST_F(
 
     // Initialize plugin settings with a counter field
     {
-        yyjson::writer::detail::value init_data(
-            yyjson::construct_object_type_t{});
-        init_data["counter"] = "0";
+        yyjson::writer::detail::value init_data(Das::Utils::MakeYyjsonObject());
+        (*init_data.as_object())[std::string_view("counter")] = "0";
         sm_->UpdatePluginSettingsJson("0", test_guid, init_data);
     }
 
@@ -222,9 +228,9 @@ TEST_F(
     // sees the previous value and writes back atomically.
     auto result = sm_->GetPluginSettingsJson("0", test_guid);
     EXPECT_TRUE(result.is_object());
-    EXPECT_TRUE(result.contains("counter"));
+    EXPECT_TRUE((*result.as_object()).contains(std::string_view("counter")));
     // Counter value is one of the written values (0 to iterations-1)
-    EXPECT_TRUE(result["counter"].is_string());
+    EXPECT_TRUE((*result.as_object())[std::string_view("counter")].is_string());
 }
 
 // Test 5: cells_mutex_ does not cover I/O (different keys proceed concurrently)
@@ -238,8 +244,8 @@ TEST_F(SettingsManagerConcurrencyTest, RegistryLockNotHeldDuringIO)
     auto writer = [&](const std::string& plugin_name)
     {
         phase.fetch_add(1);
-        yyjson::writer::detail::value data(yyjson::construct_object_type_t{});
-        data["name"] = plugin_name;
+        yyjson::writer::detail::value data(Das::Utils::MakeYyjsonObject());
+        (*data.as_object())[std::string_view("name")] = plugin_name;
         sm_->UpdatePluginSettingsJson("0", plugin_name, data);
     };
 
@@ -251,6 +257,12 @@ TEST_F(SettingsManagerConcurrencyTest, RegistryLockNotHeldDuringIO)
     // Both writes should succeed
     auto r1 = sm_->GetPluginSettingsJson("0", "concurrent-1");
     auto r2 = sm_->GetPluginSettingsJson("0", "concurrent-2");
-    EXPECT_EQ(std::string(r1["name"].as_string().value()), "concurrent-1");
-    EXPECT_EQ(std::string(r2["name"].as_string().value()), "concurrent-2");
+    EXPECT_EQ(
+        std::string(
+            (*r1.as_object())[std::string_view("name")].as_string().value()),
+        "concurrent-1");
+    EXPECT_EQ(
+        std::string(
+            (*r2.as_object())[std::string_view("name")].as_string().value()),
+        "concurrent-2");
 }
