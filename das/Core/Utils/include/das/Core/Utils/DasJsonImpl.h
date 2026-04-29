@@ -2,11 +2,12 @@
 #define DAS_CORE_UTILS_DASJSONIMPL_H
 
 #include <boost/signals2.hpp>
+#include <cpp_yyjson.hpp>
 #include <das/Core/Utils/Config.h>
+#include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/DasJson.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasJson.Implements.hpp>
 #include <mutex>
-#include <nlohmann/json.hpp>
 #include <variant>
 
 // {A9EC9C65-66E1-45B1-9C73-C95A6620BA6A}
@@ -51,13 +52,13 @@ class IDasJsonImpl final
 public:
     struct Object
     {
-        nlohmann::json                  json_{};
+        yyjson::writer::detail::value   value_{};
         boost::signals2::signal<void()> signal_{};
     };
 
     struct Ref
     {
-        nlohmann::json*                    json_{nullptr};
+        yyjson::writer::detail::value*     val_{nullptr};
         boost::signals2::scoped_connection connection_{};
     };
 
@@ -84,8 +85,8 @@ private:
 public:
     IDasJsonImpl();
     IDasJsonImpl(const char* p_json_string);
-    IDasJsonImpl(nlohmann::json& ref_json);
-    explicit IDasJsonImpl(nlohmann::json&& json);
+    IDasJsonImpl(yyjson::writer::detail::value& ref_value);
+    explicit IDasJsonImpl(yyjson::writer::detail::value&& value);
     ~IDasJsonImpl();
 
     // IDasBase — AddRef/Release inherited from DasJsonImplBase (atomic + delete
@@ -138,9 +139,8 @@ public:
     DasResult GetSize(uint64_t* p_out_size) override;
     DasResult Clear() override;
 
-    void           SetConnection(const boost::signals2::connection& connection);
-    void           OnExpired();
-    nlohmann::json ExtractJson() const;
+    void SetConnection(const boost::signals2::connection& connection);
+    void OnExpired();
 };
 
 DAS_CORE_UTILS_NS_END
