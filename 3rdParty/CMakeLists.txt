@@ -502,6 +502,7 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/BombaxCeiba/yyjson-cpp
     GIT_TAG        6eec776982caae9a298be02a61d73c97ec8b7196
     GIT_SHALLOW    TRUE
+    GIT_SUBMODULES "" # Skip benchmark vendor submodules (simdjson, etc.) not needed for core library
 )
 FetchContent_MakeAvailable(cpp_yyjson)
 target_link_libraries(Das3rdParty INTERFACE cpp_yyjson::cpp_yyjson)
