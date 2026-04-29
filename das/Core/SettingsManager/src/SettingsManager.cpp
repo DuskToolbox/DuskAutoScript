@@ -1,54 +1,65 @@
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/SettingsManager/Config.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
+#include <das/Utils/DasJsonCore.h>
 
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <utility>
+#include <vector>
 
 DAS_CORE_SETTINGS_MANAGER_NS_BEGIN
 
 namespace
 {
+    /// Recursive helper: navigate one segment then recurse.
+    std::optional<yyjson::writer::detail::const_value_ref>
+    ResolveDotPathRecurse(
+        std::string_view                     remaining_path,
+        const yyjson::writer::detail::value& current)
+    {
+        auto obj_opt = current.as_object();
+        if (!obj_opt)
+        {
+            return std::nullopt;
+        }
+        const auto& obj = obj_opt.value();
+        auto        dot = remaining_path.find('.');
+        auto        key = remaining_path.substr(0, dot);
+        if (!obj.contains(key))
+        {
+            return std::nullopt;
+        }
+        if (dot == std::string_view::npos)
+        {
+            return obj[key];
+        }
+        auto sub_val = obj[key];
+        auto sub_obj = sub_val.as_object();
+        if (!sub_obj)
+        {
+            return std::nullopt;
+        }
+        // Serialize sub-object to avoid the const_object_ref assignment
+        // limitation (libc++ optional requires value type to be assignable).
+        auto json_str = sub_obj->write();
+        auto parsed = Das::Utils::ParseYyjsonFromString(
+            std::string_view(json_str.data(), json_str.size()));
+        if (!parsed)
+        {
+            return std::nullopt;
+        }
+        return ResolveDotPathRecurse(remaining_path.substr(dot + 1), *parsed);
+    }
+
     /// Navigate a dot-separated path in a yyjson value tree.
     /// Returns nullopt if any intermediate key is missing.
     std::optional<yyjson::writer::detail::const_value_ref> ResolveDotPath(
         const yyjson::writer::detail::value& root,
         const std::string&                   path)
     {
-        auto obj_opt = root.as_object();
-        if (!obj_opt)
-        {
-            return std::nullopt;
-        }
-
-        yyjson::writer::detail::const_object_ref obj = *obj_opt;
-        size_t                                   start = 0;
-        size_t                                   end = path.find('.');
-        while (end != std::string::npos)
-        {
-            auto key = path.substr(start, end - start);
-            if (!obj.contains(std::string_view(key)))
-            {
-                return std::nullopt;
-            }
-            auto sub_val = obj[std::string_view(key)];
-            auto sub_obj = sub_val.as_object();
-            if (!sub_obj)
-            {
-                return std::nullopt;
-            }
-            obj = *sub_obj;
-            start = end + 1;
-            end = path.find('.', start);
-        }
-        auto key = path.substr(start);
-        if (!obj.contains(std::string_view(key)))
-        {
-            return std::nullopt;
-        }
-        return obj[std::string_view(key)];
+        return ResolveDotPathRecurse(path, root);
     }
 
     /// Ensure a dot-separated path exists in a mutable yyjson value tree.
@@ -58,25 +69,29 @@ namespace
         yyjson::writer::detail::value& root,
         const std::string&             path)
     {
-        auto obj_opt = root.as_object();
-        // Should always be an object after json::object() init
-        yyjson::writer::detail::object_ref obj = *obj_opt;
-        size_t                             start = 0;
-        size_t                             end = path.find('.');
+        using ObjOpt = std::optional<yyjson::writer::detail::object_ref>;
+        ObjOpt cur = root.as_object();
+        assert(cur.has_value());
+
+        size_t start = 0;
+        size_t end = path.find('.');
         while (end != std::string::npos)
         {
-            auto key = path.substr(start, end - start);
-            auto sub_val = obj[std::string_view(key)];
+            auto& cur_obj = cur.value();
+            auto  key = path.substr(start, end - start);
+            auto  sub_val = cur_obj[std::string_view(key)];
             if (!sub_val.is_object())
             {
                 sub_val = Das::Utils::MakeYyjsonObject();
             }
-            obj = *sub_val.as_object();
+            cur = sub_val.as_object();
+            assert(cur.has_value());
             start = end + 1;
             end = path.find('.', start);
         }
-        auto key = path.substr(start);
-        return obj[std::string_view(key)];
+        auto& cur_obj = cur.value();
+        auto  key = path.substr(start);
+        return cur_obj[std::string_view(key)];
     }
 } // namespace
 
@@ -322,7 +337,7 @@ std::string SettingsManager::GetProfileList()
                 auto obj_ref = *profile_obj.as_object();
                 obj_ref[std::string_view("profileId")] =
                     std::string_view(entry.path().filename().string());
-                profiles.as_array()->push_back(std::move(profile_obj));
+                profiles.as_array()->emplace_back(std::move(profile_obj));
             }
         }
     }
@@ -880,7 +895,7 @@ yyjson::writer::detail::value SettingsManager::GetProfileListJson()
                 auto obj_ref = *profile_obj.as_object();
                 obj_ref[std::string_view("profileId")] =
                     std::string_view(entry.path().filename().string());
-                profiles.as_array()->push_back(std::move(profile_obj));
+                profiles.as_array()->emplace_back(std::move(profile_obj));
             }
         }
     }

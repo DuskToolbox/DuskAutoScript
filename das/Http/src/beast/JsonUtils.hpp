@@ -21,8 +21,14 @@ namespace Das::Http::Beast::JsonUtils
         const std::string_view key,
         const std::string&     default_value = "")
     {
-        auto val = j[key];
-        auto opt_str = val.as_string();
+        auto obj_opt = j.as_object();
+        if (!obj_opt)
+        {
+            return default_value;
+        }
+        const auto& obj = obj_opt.value();
+        auto        val = obj[key];
+        auto        opt_str = val.as_string();
         return opt_str ? std::string(opt_str.value()) : default_value;
     }
 
@@ -32,8 +38,14 @@ namespace Das::Http::Beast::JsonUtils
         const std::string_view key,
         int64_t                default_value = 0)
     {
-        auto val = j[key];
-        auto opt_int = val.as_sint();
+        auto obj_opt = j.as_object();
+        if (!obj_opt)
+        {
+            return default_value;
+        }
+        const auto& obj = obj_opt.value();
+        auto        val = obj[key];
+        auto        opt_int = val.as_sint();
         return opt_int ? opt_int.value() : default_value;
     }
 
@@ -43,8 +55,14 @@ namespace Das::Http::Beast::JsonUtils
         const std::string_view key,
         bool                   default_value = false)
     {
-        auto val = j[key];
-        auto opt_bool = val.as_bool();
+        auto obj_opt = j.as_object();
+        if (!obj_opt)
+        {
+            return default_value;
+        }
+        const auto& obj = obj_opt.value();
+        auto        val = obj[key];
+        auto        opt_bool = val.as_bool();
         return opt_bool ? opt_bool.value() : default_value;
     }
 
@@ -55,13 +73,20 @@ namespace Das::Http::Beast::JsonUtils
         const std::string_view key)
     {
         std::vector<T> result;
-        auto           val = j[key];
-        auto           opt_arr = val.as_array();
-        if (opt_arr)
+        auto           obj_opt = j.as_object();
+        if (!obj_opt)
         {
-            for (auto& elem : opt_arr.value())
+            return result;
+        }
+        const auto& obj = obj_opt.value();
+        auto        val = obj[key];
+        auto        arr_opt = val.as_array();
+        if (arr_opt)
+        {
+            const auto& arr = arr_opt.value();
+            for (const auto& elem : arr)
             {
-                auto opt_v = elem.template as_sint();
+                auto opt_v = elem.as_sint();
                 if (opt_v)
                 {
                     result.push_back(static_cast<T>(opt_v.value()));
@@ -74,16 +99,27 @@ namespace Das::Http::Beast::JsonUtils
     // 检查字段是否存在
     inline bool HasField(const JsonValue& j, const std::string_view key)
     {
-        return !j[key].is_null();
+        auto obj_opt = j.as_object();
+        if (!obj_opt)
+        {
+            return false;
+        }
+        const auto& obj = obj_opt.value();
+        return !obj[key].is_null();
     }
 
     // 创建标准响应
     inline JsonValue CreateSuccessResponse(const JsonValue& data = JsonValue{})
     {
-        JsonValue response(yyjson::construct_object_type_t{});
-        response["Code"] = static_cast<int64_t>(DAS_S_OK);
-        response["Message"] = std::string{};
-        response["Data"] = data;
+        auto response = Das::Utils::MakeYyjsonObject();
+        auto obj_opt = response.as_object();
+        if (obj_opt)
+        {
+            auto& obj = obj_opt.value();
+            obj["Code"] = static_cast<int64_t>(DAS_S_OK);
+            obj["Message"] = std::string{};
+            obj["Data"] = data;
+        }
         return response;
     }
 
@@ -92,10 +128,15 @@ namespace Das::Http::Beast::JsonUtils
         DasResult          error_code,
         const std::string& message)
     {
-        JsonValue response(yyjson::construct_object_type_t{});
-        response["Code"] = static_cast<int64_t>(error_code);
-        response["Message"] = std::string{message};
-        response["Data"] = JsonValue{};
+        auto response = Das::Utils::MakeYyjsonObject();
+        auto obj_opt = response.as_object();
+        if (obj_opt)
+        {
+            auto& obj = obj_opt.value();
+            obj["Code"] = static_cast<int64_t>(error_code);
+            obj["Message"] = std::string{message};
+            obj["Data"] = JsonValue{};
+        }
         return response;
     }
 

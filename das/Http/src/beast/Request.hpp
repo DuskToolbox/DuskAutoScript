@@ -87,8 +87,7 @@ namespace Das::Http::Beast
                     return;
                 }
             }
-            json_body_ = yyjson::writer::detail::value(
-                yyjson::construct_object_type_t{});
+            json_body_ = Das::Utils::MakeYyjsonObject();
         }
 
         request_type                               request_;
@@ -161,8 +160,13 @@ namespace Das::Http::Beast
         {
             HttpResponse response;
             auto         json_body = JsonUtils::CreateSuccessResponse(data);
-            json_body["Code"] = static_cast<int64_t>(code);
-            json_body["Message"] = std::string{message};
+            auto         obj_opt = json_body.as_object();
+            if (obj_opt)
+            {
+                auto& obj = obj_opt.value();
+                obj["Code"] = static_cast<int64_t>(code);
+                obj["Message"] = std::string{message};
+            }
             response.SetBody(json_body);
             return response;
         }

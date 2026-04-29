@@ -61,7 +61,15 @@ namespace Das::Http
 
         Beast::HttpResponse CreateProfile(const Beast::HttpRequest& request)
         {
-            const auto& body = request.JsonBody();
+            const auto& body_raw = request.JsonBody();
+            auto        body_obj_opt = body_raw.as_object();
+            if (!body_obj_opt)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Request body must be a JSON object");
+            }
+            const auto& body = body_obj_opt.value();
             if (body["profileId"].is_null() || !body["profileId"].is_string())
             {
                 return Beast::HttpResponse::CreateErrorResponse(
@@ -100,7 +108,15 @@ namespace Das::Http
 
         Beast::HttpResponse DeleteProfile(const Beast::HttpRequest& request)
         {
-            const auto& body = request.JsonBody();
+            const auto& body_raw = request.JsonBody();
+            auto        body_obj_opt = body_raw.as_object();
+            if (!body_obj_opt)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Request body must be a JSON object");
+            }
+            const auto& body = body_obj_opt.value();
             if (body["profileId"].is_null() || !body["profileId"].is_string())
             {
                 return Beast::HttpResponse::CreateErrorResponse(

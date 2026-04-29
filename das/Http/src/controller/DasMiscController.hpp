@@ -15,9 +15,12 @@ namespace Das::Http
     public:
         Beast::HttpResponse Alive(const Beast::HttpRequest& request)
         {
-            yyjson::writer::detail::value data(
-                yyjson::construct_object_type_t{});
-            data["alive"] = static_cast<int64_t>(1);
+            auto data = Das::Utils::MakeYyjsonObject();
+            auto data_obj_opt = data.as_object();
+            if (data_obj_opt)
+            {
+                data_obj_opt.value()["alive"] = static_cast<int64_t>(1);
+            }
             return Beast::HttpResponse::CreateSuccessResponse(data);
         }
 

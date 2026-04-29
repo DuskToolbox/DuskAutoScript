@@ -26,16 +26,21 @@ namespace Das::Http::Dto
         // 转换为JSON
         yyjson::writer::detail::value ToJson() const
         {
-            yyjson::writer::detail::value j(yyjson::construct_object_type_t{});
-            j["code"] = static_cast<int64_t>(code);
-            j["message"] = std::string{message};
-            if constexpr (std::is_same_v<T, yyjson::writer::detail::value>)
+            auto j = Das::Utils::MakeYyjsonObject();
+            auto obj_opt = j.as_object();
+            if (obj_opt)
             {
-                j["data"] = data;
-            }
-            else
-            {
-                j["data"] = data;
+                auto& obj = obj_opt.value();
+                obj["code"] = static_cast<int64_t>(code);
+                obj["message"] = std::string{message};
+                if constexpr (std::is_same_v<T, yyjson::writer::detail::value>)
+                {
+                    obj["data"] = data;
+                }
+                else
+                {
+                    obj["data"] = data;
+                }
             }
             return j;
         }
@@ -44,13 +49,18 @@ namespace Das::Http::Dto
         static ApiResponse<T> FromJson(const yyjson::writer::detail::value& j)
         {
             ApiResponse<T> response;
-            auto           code_val = j["code"];
-            auto           code_opt = code_val.as_sint();
-            response.code =
-                code_opt ? static_cast<int32_t>(code_opt.value()) : 0;
-            auto msg_val = j["message"];
-            auto msg_opt = msg_val.as_string();
-            response.message = msg_opt ? std::string(msg_opt.value()) : "";
+            auto           obj_opt = j.as_object();
+            if (obj_opt)
+            {
+                const auto& obj = obj_opt.value();
+                auto        code_val = obj["code"];
+                auto        code_opt = code_val.as_sint();
+                response.code =
+                    code_opt ? static_cast<int32_t>(code_opt.value()) : 0;
+                auto msg_val = obj["message"];
+                auto msg_opt = msg_val.as_string();
+                response.message = msg_opt ? std::string(msg_opt.value()) : "";
+            }
             return response;
         }
 
@@ -79,23 +89,30 @@ namespace Das::Http::Dto
 
         yyjson::writer::detail::value ToJson() const
         {
-            yyjson::writer::detail::value j(yyjson::construct_object_type_t{});
-            j["code"] = static_cast<int64_t>(code);
-            j["message"] = std::string{message};
-            j["data"] = data;
+            auto j = Das::Utils::MakeYyjsonObject();
+            auto obj_opt = j.as_object();
+            if (obj_opt)
+            {
+                auto& obj = obj_opt.value();
+                obj["code"] = static_cast<int64_t>(code);
+                obj["message"] = std::string{message};
+                obj["data"] = data;
+            }
             return j;
         }
 
         static ApiResponse<void> Success(const std::string& message = "")
         {
-            return ApiResponse<void>{DAS_S_OK, message, {}};
+            yyjson::writer::detail::value null_val{};
+            return ApiResponse<void>{DAS_S_OK, message, std::move(null_val)};
         }
 
         static ApiResponse<void> Error(
             DasResult          code,
             const std::string& message)
         {
-            return ApiResponse<void>{code, message, {}};
+            yyjson::writer::detail::value null_val{};
+            return ApiResponse<void>{code, message, std::move(null_val)};
         }
     };
 

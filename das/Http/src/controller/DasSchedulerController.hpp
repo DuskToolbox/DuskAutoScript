@@ -40,7 +40,15 @@ namespace Das::Http
                     "Profile ID must be 0 in v1.2");
             }
 
-            const auto& body = request.JsonBody();
+            const auto& body_raw = request.JsonBody();
+            auto        body_obj_opt = body_raw.as_object();
+            if (!body_obj_opt)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Request body must be a JSON object");
+            }
+            const auto& body = body_obj_opt.value();
 
             // Accept lower camelCase disabledGuids; reject old disabled_guids
             if (!body["disabled_guids"].is_null())
@@ -53,14 +61,15 @@ namespace Das::Http
             std::vector<DasGuid> disabled_guids;
             if (!body["disabledGuids"].is_null())
             {
-                if (!body["disabledGuids"].is_array())
+                auto dg_arr_opt = body["disabledGuids"].as_array();
+                if (!dg_arr_opt)
                 {
                     return Beast::HttpResponse::CreateErrorResponse(
                         DAS_E_INVALID_ARGUMENT,
                         "disabledGuids must be an array");
                 }
 
-                for (const auto& item : body["disabledGuids"])
+                for (const auto& item : dg_arr_opt.value())
                 {
                     if (!item.is_string())
                     {
@@ -243,9 +252,13 @@ namespace Das::Http
                     "Failed to add task");
             }
 
-            yyjson::writer::detail::value data(
-                yyjson::construct_object_type_t{});
-            data["taskId"] = static_cast<int64_t>(out_task_id);
+            auto data = Das::Utils::MakeYyjsonObject();
+            auto data_obj_opt = data.as_object();
+            if (data_obj_opt)
+            {
+                data_obj_opt.value()["taskId"] =
+                    static_cast<int64_t>(out_task_id);
+            }
             return Beast::HttpResponse::CreateSuccessResponse(data);
         }
 
