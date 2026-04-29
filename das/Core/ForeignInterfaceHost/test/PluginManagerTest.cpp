@@ -309,15 +309,19 @@ TEST_F(PluginManagerGuidTest, LoadPlugin_NoHostPath_ReturnsError)
     std::filesystem::create_directories(test_dir);
     auto manifest_path = test_dir / "test_plugin_no_host_path.json";
 
-    yyjson::writer::detail::value manifest(yyjson::construct_object_type_t{});
-    manifest["guid"] = "{00000000-0000-0000-0000-000000000001}";
-    manifest["name"] = "TestCSharpPlugin";
-    manifest["language"] = "CSharp";
-    manifest["description"] = "test";
-    manifest["author"] = "test";
-    manifest["version"] = "1.0";
-    manifest["supportedSystem"] = "win";
-    manifest["pluginFilenameExtension"] = ".dll";
+    auto manifest = Das::Utils::MakeYyjsonObject();
+    {
+        auto obj = *manifest.as_object();
+        obj[std::string_view("guid")] =
+            "{00000000-0000-0000-0000-000000000001}";
+        obj[std::string_view("name")] = "TestCSharpPlugin";
+        obj[std::string_view("language")] = "CSharp";
+        obj[std::string_view("description")] = "test";
+        obj[std::string_view("author")] = "test";
+        obj[std::string_view("version")] = "1.0";
+        obj[std::string_view("supportedSystem")] = "win";
+        obj[std::string_view("pluginFilenameExtension")] = ".dll";
+    }
     {
         std::ofstream ofs(manifest_path);
         ofs << *Das::Utils::SerializeYyjsonValue(manifest, false);
@@ -346,16 +350,20 @@ TEST_F(PluginManagerGuidTest, LoadPlugin_CppWithLoadModeIpc_GoesIpcPath)
     std::filesystem::create_directories(test_dir);
     auto manifest_path = test_dir / "test_plugin_loadmode_ipc.json";
 
-    yyjson::writer::detail::value manifest(yyjson::construct_object_type_t{});
-    manifest["guid"] = "{00000000-0000-0000-0000-000000000010}";
-    manifest["name"] = "TestPluginCppIpc";
-    manifest["language"] = "Cpp";
-    manifest["loadMode"] = "ipc";
-    manifest["description"] = "test";
-    manifest["author"] = "test";
-    manifest["version"] = "1.0";
-    manifest["supportedSystem"] = "win";
-    manifest["pluginFilenameExtension"] = ".dll";
+    auto manifest = Das::Utils::MakeYyjsonObject();
+    {
+        auto obj = *manifest.as_object();
+        obj[std::string_view("guid")] =
+            "{00000000-0000-0000-0000-000000000010}";
+        obj[std::string_view("name")] = "TestPluginCppIpc";
+        obj[std::string_view("language")] = "Cpp";
+        obj[std::string_view("loadMode")] = "ipc";
+        obj[std::string_view("description")] = "test";
+        obj[std::string_view("author")] = "test";
+        obj[std::string_view("version")] = "1.0";
+        obj[std::string_view("supportedSystem")] = "win";
+        obj[std::string_view("pluginFilenameExtension")] = ".dll";
+    }
     {
         std::ofstream ofs(manifest_path);
         ofs << *Das::Utils::SerializeYyjsonValue(manifest, false);
@@ -444,22 +452,24 @@ namespace
         auto pkg_dir = plugin_dir / dirname;
         std::filesystem::create_directories(pkg_dir);
 
-        yyjson::writer::detail::value manifest(
-            yyjson::construct_object_type_t{});
-        manifest["guid"] = guid;
-        manifest["name"] = dirname;
-        manifest["language"] = "Cpp";
-        manifest["description"] = "test plugin";
-        manifest["author"] = "test";
-        manifest["version"] = "1.0";
-        manifest["supportedSystem"] = "win";
-        manifest["pluginFilenameExtension"] = "dll";
-        manifest["settings"] =
-            yyjson::writer::detail::value(yyjson::construct_array_type_t{});
+        auto manifest = Das::Utils::MakeYyjsonObject();
+        {
+            auto obj = *manifest.as_object();
+            obj[std::string_view("guid")] = guid;
+            obj[std::string_view("name")] = dirname;
+            obj[std::string_view("language")] = "Cpp";
+            obj[std::string_view("description")] = "test plugin";
+            obj[std::string_view("author")] = "test";
+            obj[std::string_view("version")] = "1.0";
+            obj[std::string_view("supportedSystem")] = "win";
+            obj[std::string_view("pluginFilenameExtension")] = "dll";
+            obj[std::string_view("settings")] = Das::Utils::MakeYyjsonArray();
+        }
 
         if (!resource_path_value.empty())
         {
-            manifest["resourcePath"] = resource_path_value;
+            (*manifest.as_object())[std::string_view("resourcePath")] =
+                resource_path_value;
         }
 
         auto manifest_path = pkg_dir / (dirname + ".json");
@@ -720,18 +730,19 @@ protected:
         auto res_dir = pkg_dir / "resource";
         std::filesystem::create_directories(res_dir);
 
-        yyjson::writer::detail::value manifest(
-            yyjson::construct_object_type_t{});
-        manifest["guid"] = kTestGuid1;
-        manifest["name"] = "ImagePlugin";
-        manifest["language"] = "Cpp";
-        manifest["description"] = "test image plugin";
-        manifest["author"] = "test";
-        manifest["version"] = "1.0";
-        manifest["supportedSystem"] = "win";
-        manifest["pluginFilenameExtension"] = "dll";
-        manifest["settings"] =
-            yyjson::writer::detail::value(yyjson::construct_array_type_t{});
+        auto manifest = Das::Utils::MakeYyjsonObject();
+        {
+            auto obj = *manifest.as_object();
+            obj[std::string_view("guid")] = kTestGuid1;
+            obj[std::string_view("name")] = "ImagePlugin";
+            obj[std::string_view("language")] = "Cpp";
+            obj[std::string_view("description")] = "test image plugin";
+            obj[std::string_view("author")] = "test";
+            obj[std::string_view("version")] = "1.0";
+            obj[std::string_view("supportedSystem")] = "win";
+            obj[std::string_view("pluginFilenameExtension")] = "dll";
+            obj[std::string_view("settings")] = Das::Utils::MakeYyjsonArray();
+        }
 
         auto manifest_path = pkg_dir / "ImagePlugin.json";
         {
