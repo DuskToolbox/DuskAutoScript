@@ -1,11 +1,12 @@
 #ifndef DAS_UTILS_ENUMTUILS_HPP
 #define DAS_UTILS_ENUMTUILS_HPP
 
+#include <cpp_yyjson.hpp>
 #include <das/DasConfig.h>
+#include <das/Utils/DasJsonCore.h>
 #include <das/Utils/UnexpectedEnumException.h>
 #include <das/_autogen/idl/abi/DasJson.h>
 #include <magic_enum.hpp>
-#include <nlohmann/json.hpp>
 #include <string_view>
 
 DAS_UTILS_NS_BEGIN
@@ -22,19 +23,25 @@ Enum StringToEnum(const std::string_view string)
 }
 
 template <class Enum>
-Enum JsonToEnum(const nlohmann::json& json, const char* key)
+Enum JsonToEnum(
+    const yyjson::writer::detail::const_value_ref& json,
+    const char*                                    key)
 {
-    const auto string = json.at(key).get<std::string>();
-    return StringToEnum<Enum>(string);
+    auto obj = json.as_object();
+    if (!obj)
+    {
+        throw UnexpectedEnumException("JSON value is not an object");
+    }
+    auto val = (*obj)[std::string_view(key)];
+    auto str = val.as_string();
+    if (!str)
+    {
+        throw UnexpectedEnumException(
+            std::string("Missing or invalid key: ") + key);
+    }
+    return StringToEnum<Enum>(*str);
 }
 
 DAS_UTILS_NS_END
-
-NLOHMANN_JSON_SERIALIZE_ENUM(
-    Das::ExportInterface::DasType,
-    {{Das::ExportInterface::DAS_TYPE_INT, "int"},
-     {Das::ExportInterface::DAS_TYPE_FLOAT, "float"},
-     {Das::ExportInterface::DAS_TYPE_STRING, "string"},
-     {Das::ExportInterface::DAS_TYPE_BOOL, "bool"}});
 
 #endif // DAS_UTILS_ENUMTUILS_HPP

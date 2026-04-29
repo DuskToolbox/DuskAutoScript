@@ -1,9 +1,9 @@
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/i18n/i18n.hpp>
+#include <das/Utils/DasJsonCore.h>
 #include <das/Utils/EnumUtils.hpp>
 #include <das/Utils/StringUtils.h>
 #include <gtest/gtest.h>
-#include <nlohmann/json.hpp>
 
 const static auto text = DAS_UTILS_STRINGUTILS_DEFINE_U8STR(R"(
 {
@@ -24,8 +24,8 @@ const static auto text = DAS_UTILS_STRINGUTILS_DEFINE_U8STR(R"(
 
 auto GetJson()
 {
-    const static auto result = nlohmann::json::parse(text);
-    return result;
+    const static auto result = Das::Utils::ParseYyjsonFromString(text);
+    return result ? std::move(*result) : yyjson::writer::detail::value{};
 }
 
 TEST(DasCoreI18n, DasResultDefaultLocaleTest)
