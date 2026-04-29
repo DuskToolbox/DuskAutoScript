@@ -2,7 +2,6 @@
 #define DAS_CORE_FOREIGNINTERFACEHOST_DASSTRINGIMPL_H
 
 #include <array>
-#include <das/Core/ForeignInterfaceHost/DasStringJsonInterop.h>
 #include <das/DasExport.h>
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>

@@ -1,11 +1,13 @@
 #ifndef DAS_CORE_FOREIGNINTERFACEHOST_FOREIGNINTERFACEHOST_H
 #define DAS_CORE_FOREIGNINTERFACEHOST_FOREIGNINTERFACEHOST_H
 
+#include <cpp_yyjson.hpp>
 #include <das/Core/ForeignInterfaceHost/Config.h>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHostEnum.h>
 #include <das/IDasBase.h>
+#include <das/Utils/DasJsonCore.h>
 #include <das/Utils/fmt.h>
 #include <das/_autogen/idl/abi/DasJson.h>
 #include <mutex>
@@ -71,11 +73,9 @@ struct PluginSettingDesc
     // DasSettingScope scope = DasSettingScope::Global;
 };
 
-#if __has_include(<nlohmann/json_fwd.hpp>)
-#include <nlohmann/json_fwd.hpp>
-void from_json(const ::nlohmann::json& input, PluginSettingDesc& output);
-#endif
-// void to_json(const ::nlohmann::json& output, PluginSettingDesc& input);
+void ParsePluginSettingDescFromJson(
+    const yyjson::writer::detail::value& input,
+    PluginSettingDesc&                   output);
 
 /**
  * @brief Plugin-GUID-keyed settings descriptor group.
@@ -89,11 +89,9 @@ struct PluginSettingsGroup
     std::vector<PluginSettingDesc> descriptors;
 };
 
-#if __has_include(<nlohmann/json_fwd.hpp>)
-void from_json(
-    const ::nlohmann::json&                           input,
+void ParsePluginSettingsGroupFromJson(
+    const yyjson::writer::detail::value&              input,
     std::unordered_map<DasGuid, PluginSettingsGroup>& output);
-#endif
 
 /**
  * @brief Task type descriptor keyed by task GUID in the manifest.
@@ -108,9 +106,9 @@ struct TaskDescriptor
     std::vector<PluginSettingDesc> descriptors;
 };
 
-#if __has_include(<nlohmann/json_fwd.hpp>)
-void from_json(const ::nlohmann::json& input, TaskDescriptor& output);
-#endif
+void ParseTaskDescriptorFromJson(
+    const yyjson::writer::detail::value& input,
+    TaskDescriptor&                      output);
 
 struct PluginPackageDesc
 {
@@ -144,18 +142,16 @@ struct PluginPackageDesc
     // 下面的变量不被序列化到json
     std::shared_ptr<SettingsJson> settings_json_ =
         std::make_shared<SettingsJson>();
-    DasReadOnlyStringWrapper settings_desc_json;
-#if __has_include(<nlohmann/json_fwd.hpp>)
-    nlohmann::json           default_settings;
-#endif
+    DasReadOnlyStringWrapper      settings_desc_json;
+    yyjson::writer::detail::value default_settings =
+        yyjson::writer::detail::value{yyjson::construct_object_type_t{}};
     boost::signals2::signal<void(std::shared_ptr<SettingsJson>)>
         on_settings_changed{};
 };
 
-#if __has_include(<nlohmann/json_fwd.hpp>)
-void from_json(const ::nlohmann::json& input, PluginPackageDesc& output);
-#endif
-// void to_json(const ::nlohmann::json& output, PluginDesc& input);
+void ParsePluginPackageDescFromJson(
+    const yyjson::writer::detail::value& input,
+    PluginPackageDesc&                   output);
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
 

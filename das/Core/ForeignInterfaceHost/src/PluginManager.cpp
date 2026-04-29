@@ -1,9 +1,11 @@
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
 
+#include <cpp_yyjson.hpp>
 #include <das/Core/IPC/DasAsyncSender.h>
 #include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
+#include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasCapture.h>
 #include <das/_autogen/idl/abi/IDasComponent.h>
 #include <das/_autogen/idl/abi/IDasErrorLens.h>
@@ -13,7 +15,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
-#include <nlohmann/json.hpp>
+#include <iterator>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
@@ -194,8 +196,23 @@ DasResult PluginManager::LoadPlugin(
             {
                 try
                 {
-                    auto json_data = nlohmann::json::parse(ifs);
-                    from_json(json_data, *desc);
+                    std::string content(
+                        (std::istreambuf_iterator<char>(ifs)),
+                        std::istreambuf_iterator<char>());
+                    auto parsed = Das::Utils::ParseYyjsonFromString(
+                        content,
+                        yyjson::ReadFlag::AllowComments
+                            | yyjson::ReadFlag::AllowTrailingCommas);
+                    if (parsed)
+                    {
+                        ParsePluginPackageDescFromJson(*parsed, *desc);
+                    }
+                    else
+                    {
+                        DAS_CORE_LOG_WARN(
+                            "Failed to parse manifest for {}",
+                            path_str);
+                    }
                 }
                 catch (const std::exception& e)
                 {

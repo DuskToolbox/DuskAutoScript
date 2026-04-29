@@ -1,7 +1,9 @@
 #include <das/Core/ForeignInterfaceHost/PluginZipExtractor.h>
 
+#include <cpp_yyjson.hpp>
 #include <das/Core/ForeignInterfaceHost/PluginScanner.h>
 #include <das/Core/Logger/Logger.h>
+#include <das/Utils/DasJsonCore.h>
 
 #include <algorithm>
 #include <cstring>
@@ -12,7 +14,6 @@
 #include <string>
 #include <vector>
 
-#include <nlohmann/json.hpp>
 #include <zlib.h>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
@@ -502,11 +503,15 @@ DasResult InstallPlugin(
 
                 try
                 {
-                    auto json_data = nlohmann::json::parse(file_data);
-                    if (json_data.contains("name"))
+                    auto parsed = Das::Utils::ParseYyjsonFromString(file_data);
+                    if (parsed)
                     {
-                        auto_prefix =
-                            json_data["name"].get<std::string>() + "/";
+                        auto name_val = (*parsed)[std::string_view("name")];
+                        auto name_opt = name_val.as_string();
+                        if (name_opt)
+                        {
+                            auto_prefix = std::string(*name_opt) + "/";
+                        }
                     }
                 }
                 catch (const std::exception&)
@@ -763,15 +768,35 @@ DasResult ReadPluginManifestMetadataFromZip(
 
         try
         {
-            auto json_data = nlohmann::json::parse(file_data);
-
-            if (json_data.contains("guid") && json_data["guid"].is_string())
+            auto parsed = Das::Utils::ParseYyjsonFromString(file_data);
+            if (!parsed)
             {
-                out_guid = json_data["guid"].get<std::string>();
+                DAS_CORE_LOG_WARN(
+                    "ReadPluginManifestMetadataFromZip: JSON parse failed for "
+                    "{}",
+                    meta->filename);
+                continue;
             }
-            if (json_data.contains("name") && json_data["name"].is_string())
+
+            auto& json_data = *parsed;
+
+            auto guid_val = json_data[std::string_view("guid")];
+            if (!guid_val.is_null() && guid_val.is_string())
             {
-                out_name = json_data["name"].get<std::string>();
+                auto guid_opt = guid_val.as_string();
+                if (guid_opt)
+                {
+                    out_guid = std::string(*guid_opt);
+                }
+            }
+            auto name_val = json_data[std::string_view("name")];
+            if (!name_val.is_null() && name_val.is_string())
+            {
+                auto name_opt = name_val.as_string();
+                if (name_opt)
+                {
+                    out_name = std::string(*name_opt);
+                }
             }
 
             if (!out_guid.empty() && !out_name.empty())

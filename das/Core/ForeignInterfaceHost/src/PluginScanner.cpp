@@ -1,10 +1,12 @@
 #include <das/Core/ForeignInterfaceHost/PluginScanner.h>
 
+#include <cpp_yyjson.hpp>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/Logger/Logger.h>
+#include <das/Utils/DasJsonCore.h>
 
 #include <fstream>
-#include <nlohmann/json.hpp>
+#include <iterator>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
@@ -80,10 +82,23 @@ std::vector<PluginPackageDesc> ScanPlugins(
 
             try
             {
-                std::ifstream     ifs(manifest_path);
-                auto              json_data = nlohmann::json::parse(ifs);
+                std::ifstream ifs(manifest_path);
+                std::string   content(
+                    (std::istreambuf_iterator<char>(ifs)),
+                    std::istreambuf_iterator<char>());
+                auto parsed = Das::Utils::ParseYyjsonFromString(
+                    content,
+                    yyjson::ReadFlag::AllowComments
+                        | yyjson::ReadFlag::AllowTrailingCommas);
+                if (!parsed)
+                {
+                    DAS_CORE_LOG_WARN(
+                        "Failed to parse manifest {}",
+                        manifest_path.string());
+                    continue;
+                }
                 PluginPackageDesc desc;
-                from_json(json_data, desc);
+                ParsePluginPackageDescFromJson(*parsed, desc);
                 result.push_back(std::move(desc));
             }
             catch (const std::exception& e)
@@ -114,10 +129,20 @@ std::vector<PluginPackageDesc> ScanPlugins(
 
             try
             {
-                std::ifstream     ifs(path);
-                auto              json_data = nlohmann::json::parse(ifs);
+                std::ifstream ifs(path);
+                std::string   content(
+                    (std::istreambuf_iterator<char>(ifs)),
+                    std::istreambuf_iterator<char>());
+                auto parsed = Das::Utils::ParseYyjsonFromString(
+                    content,
+                    yyjson::ReadFlag::AllowComments
+                        | yyjson::ReadFlag::AllowTrailingCommas);
+                if (!parsed)
+                {
+                    continue;
+                }
                 PluginPackageDesc desc;
-                from_json(json_data, desc);
+                ParsePluginPackageDescFromJson(*parsed, desc);
 
                 // Verify companion plugin binary exists
                 auto plugin_file =
@@ -209,15 +234,24 @@ void CleanupMarkedPlugins(const std::filesystem::path& plugin_dir)
                 auto manifest = plugin_dir / (plugin_name + ".json");
                 if (std::filesystem::exists(manifest))
                 {
-                    std::ifstream     ifs(manifest);
-                    auto              json_data = nlohmann::json::parse(ifs);
-                    PluginPackageDesc desc;
-                    from_json(json_data, desc);
+                    std::ifstream ifs(manifest);
+                    std::string   content(
+                        (std::istreambuf_iterator<char>(ifs)),
+                        std::istreambuf_iterator<char>());
+                    auto parsed = Das::Utils::ParseYyjsonFromString(
+                        content,
+                        yyjson::ReadFlag::AllowComments
+                            | yyjson::ReadFlag::AllowTrailingCommas);
+                    if (parsed)
+                    {
+                        PluginPackageDesc desc;
+                        ParsePluginPackageDescFromJson(*parsed, desc);
 
-                    auto plugin_file =
-                        plugin_dir
-                        / (desc.name + "." + desc.plugin_filename_extension);
-                    std::filesystem::remove(plugin_file, ec);
+                        auto plugin_file = plugin_dir
+                                           / (desc.name + "."
+                                              + desc.plugin_filename_extension);
+                        std::filesystem::remove(plugin_file, ec);
+                    }
                 }
 
                 std::filesystem::remove(manifest, ec);
@@ -273,21 +307,23 @@ DasResult MarkForDeletion(
     return DAS_E_NOT_FOUND;
 }
 
-nlohmann::json PluginPackageDescToJson(const PluginPackageDesc& desc)
+yyjson::writer::detail::value PluginPackageDescToJson(
+    const PluginPackageDesc& desc)
 {
-    nlohmann::json j;
-    j["name"] = desc.name;
-    j["description"] = desc.description;
-    j["author"] = desc.author;
-    j["version"] = desc.version;
-    j["guid"] = desc.guid;
-    j["supportedSystem"] = desc.supported_system;
-    j["language"] = desc.language;
-    j["pluginFilenameExtension"] = desc.plugin_filename_extension;
+    yyjson::writer::detail::value j(yyjson::construct_object_type_t{});
+    j[std::string_view("name")] = desc.name;
+    j[std::string_view("description")] = desc.description;
+    j[std::string_view("author")] = desc.author;
+    j[std::string_view("version")] = desc.version;
+    j[std::string_view("guid")] = desc.guid;
+    j[std::string_view("supportedSystem")] = desc.supported_system;
+    j[std::string_view("language")] = static_cast<std::int64_t>(desc.language);
+    j[std::string_view("pluginFilenameExtension")] =
+        desc.plugin_filename_extension;
 
     if (desc.opt_resource_path.has_value())
     {
-        j["resourcePath"] = desc.opt_resource_path.value();
+        j[std::string_view("resourcePath")] = desc.opt_resource_path.value();
     }
 
     return j;

@@ -1,10 +1,13 @@
 // clang-format off
 #include <das/DasConfig.h>
 // clang-format on
+#include <cpp_yyjson.hpp>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
 #include <das/Core/Logger/Logger.h>
+#include <das/DasPtr.hpp>
 #include <das/Utils/CommonUtils.hpp>
+#include <das/Utils/DasJsonCore.h>
 #include <das/Utils/EnumUtils.hpp>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/UnexpectedEnumException.h>
@@ -187,15 +190,79 @@ DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 namespace Details
 {
     template <class T>
-    void OptionalFromJson(
-        const nlohmann::json& json,
-        const char*           key,
-        std::optional<T>&     opt_value)
+    T JsonValueToYyjsonScalar(
+        const yyjson::writer::detail::value_ref& value_ref);
+
+    template <>
+    inline bool JsonValueToYyjsonScalar<bool>(
+        const yyjson::writer::detail::value_ref& v)
     {
-        const auto it = json.find(key);
-        if (it != json.end())
+        auto opt = v.as_bool();
+        if (!opt)
         {
-            opt_value = it->template get<T>();
+            throw std::runtime_error("Expected bool value");
+        }
+        return *opt;
+    }
+
+    template <>
+    inline std::int64_t JsonValueToYyjsonScalar<std::int64_t>(
+        const yyjson::writer::detail::value_ref& v)
+    {
+        auto opt = v.as_sint();
+        if (!opt)
+        {
+            throw std::runtime_error("Expected int64_t value");
+        }
+        return *opt;
+    }
+
+    template <>
+    inline float JsonValueToYyjsonScalar<float>(
+        const yyjson::writer::detail::value_ref& v)
+    {
+        auto opt = v.as_real();
+        if (!opt)
+        {
+            throw std::runtime_error("Expected float value");
+        }
+        return static_cast<float>(*opt);
+    }
+
+    template <>
+    inline std::string JsonValueToYyjsonScalar<std::string>(
+        const yyjson::writer::detail::value_ref& v)
+    {
+        auto opt = v.as_string();
+        if (!opt)
+        {
+            throw std::runtime_error("Expected string value");
+        }
+        return std::string(*opt);
+    }
+
+    template <>
+    inline Das::ExportInterface::DasType
+    JsonValueToYyjsonScalar<Das::ExportInterface::DasType>(
+        const yyjson::writer::detail::value_ref& v)
+    {
+        auto opt = v.as_sint();
+        if (!opt)
+        {
+            throw std::runtime_error("Expected DasType value");
+        }
+        return static_cast<Das::ExportInterface::DasType>(*opt);
+    }
+
+    inline void OptionalFromYyjson(
+        const yyjson::writer::detail::value_ref& json_val,
+        const std::string_view                   key,
+        std::optional<bool>&                     opt_value)
+    {
+        auto field = json_val[key];
+        if (!field.is_null())
+        {
+            opt_value = JsonValueToYyjsonScalar<bool>(field);
         }
         else
         {
@@ -203,60 +270,138 @@ namespace Details
         }
     }
 
-    template <class T>
-    void OptionalToJson(
-        nlohmann::json&         json,
-        const char*             key,
-        const std::optional<T>& opt_value)
+    inline void OptionalFromYyjson(
+        const yyjson::writer::detail::value_ref& json_val,
+        const std::string_view                   key,
+        std::optional<std::int64_t>&             opt_value)
     {
-        if (opt_value)
+        auto field = json_val[key];
+        if (!field.is_null())
         {
-            json[key] = opt_value.value();
+            opt_value = JsonValueToYyjsonScalar<std::int64_t>(field);
+        }
+        else
+        {
+            opt_value = std::nullopt;
         }
     }
-}
 
-void from_json(const nlohmann::json& input, PluginSettingDesc& output)
+    inline void OptionalFromYyjson(
+        const yyjson::writer::detail::value_ref& json_val,
+        const std::string_view                   key,
+        std::optional<float>&                    opt_value)
+    {
+        auto field = json_val[key];
+        if (!field.is_null())
+        {
+            opt_value = JsonValueToYyjsonScalar<float>(field);
+        }
+        else
+        {
+            opt_value = std::nullopt;
+        }
+    }
+
+    inline void OptionalFromYyjson(
+        const yyjson::writer::detail::value_ref& json_val,
+        const std::string_view                   key,
+        std::optional<std::string>&              opt_value)
+    {
+        auto field = json_val[key];
+        if (!field.is_null())
+        {
+            opt_value = JsonValueToYyjsonScalar<std::string>(field);
+        }
+        else
+        {
+            opt_value = std::nullopt;
+        }
+    }
+
+    inline void OptionalFromYyjson(
+        const yyjson::writer::detail::value_ref& json_val,
+        const std::string_view                   key,
+        std::optional<std::vector<std::string>>& opt_value)
+    {
+        auto field = json_val[key];
+        if (field.is_null())
+        {
+            opt_value = std::nullopt;
+            return;
+        }
+        if (!field.is_array())
+        {
+            throw std::runtime_error("Expected array value");
+        }
+        std::vector<std::string> result;
+        auto                     arr = *field.as_array();
+        for (const auto& elem : arr)
+        {
+            auto opt = elem.template as_string();
+            if (opt)
+            {
+                result.emplace_back(*opt);
+            }
+        }
+        opt_value = std::move(result);
+    }
+
+} // namespace Details
+
+void ParsePluginSettingDescFromJson(
+    const yyjson::writer::detail::value_ref input,
+    PluginSettingDesc&                      output)
 {
     DAS_CORE_TRACE_SCOPE;
 
-    input.at("name").get_to(output.name);
-    input.at("type").get_to(output.type);
+    output.name = Details::JsonValueToYyjsonScalar<std::string>(input["name"]);
+    output.type =
+        Details::JsonValueToYyjsonScalar<Das::ExportInterface::DasType>(
+            input["type"]);
     switch (output.type)
     {
     case Das::ExportInterface::DAS_TYPE_BOOL:
-        output.default_value = input.at("defaultValue").get<bool>();
+        output.default_value =
+            Details::JsonValueToYyjsonScalar<bool>(input["defaultValue"]);
         break;
     case Das::ExportInterface::DAS_TYPE_INT:
-        output.default_value = input.at("defaultValue").get<std::int64_t>();
+        output.default_value = Details::JsonValueToYyjsonScalar<std::int64_t>(
+            input["defaultValue"]);
         break;
     case Das::ExportInterface::DAS_TYPE_FLOAT:
-        output.default_value = input.at("defaultValue").get<float>();
+        output.default_value =
+            Details::JsonValueToYyjsonScalar<float>(input["defaultValue"]);
         break;
     case Das::ExportInterface::DAS_TYPE_STRING:
-        output.default_value = input.at("defaultValue").get<std::string>();
+        output.default_value = Details::JsonValueToYyjsonScalar<std::string>(
+            input["defaultValue"]);
         break;
     default:
         throw Utils::UnexpectedEnumException::FromEnum(output.type);
     }
-    Details::OptionalFromJson(input, "description", output.description);
-    Details::OptionalFromJson(input, "enumValues", output.enum_values);
-    Details::OptionalFromJson(
+    Details::OptionalFromYyjson(input, "description", output.description);
+    Details::OptionalFromYyjson(input, "enumValues", output.enum_values);
+    Details::OptionalFromYyjson(
         input,
         "enumDescriptions",
         output.enum_descriptions);
-    Details::OptionalFromJson(
+    Details::OptionalFromYyjson(
         input,
         "deprecationMessage",
         output.deprecation_message);
-    if (const auto it = input.find("required"); it != input.end())
+    auto required_val = input["required"];
+    if (!required_val.is_null())
     {
-        output.required = it->get<bool>();
+        auto opt = required_val.as_bool();
+        if (opt)
+        {
+            output.required = *opt;
+        }
     }
 }
 
-void from_json(
-    const nlohmann::json&                             input,
+void ParsePluginSettingsGroupFromJson(
+    const yyjson::writer::detail::value_ref           input,
     std::unordered_map<DasGuid, PluginSettingsGroup>& output)
 {
     DAS_CORE_TRACE_SCOPE;
@@ -265,32 +410,53 @@ void from_json(
     {
         return;
     }
-    for (const auto& [key, value] : input.items())
+    auto obj = *input.as_object();
+    for (const auto& [key, value] : obj)
     {
-        const auto          guid = MakeDasGuid(key);
+        const auto          guid = MakeDasGuid(std::string(key));
         PluginSettingsGroup group;
-        value.at("name").get_to(group.name);
-        value.at("description").get_to(group.description);
-        if (const auto it = value.find("descriptors"); it != value.end())
+        group.name =
+            Details::JsonValueToYyjsonScalar<std::string>(value["name"]);
+        group.description =
+            Details::JsonValueToYyjsonScalar<std::string>(value["description"]);
+        auto descriptors_field = value["descriptors"];
+        if (!descriptors_field.is_null())
         {
-            it->get_to(group.descriptors);
+            auto desc_arr = *descriptors_field.as_array();
+            for (const auto& elem : desc_arr)
+            {
+                PluginSettingDesc desc;
+                ParsePluginSettingDescFromJson(elem, desc);
+                group.descriptors.push_back(std::move(desc));
+            }
         }
         output.emplace(guid, std::move(group));
     }
 }
 
-void from_json(const nlohmann::json& input, TaskDescriptor& output)
+void ParseTaskDescriptorFromJson(
+    const yyjson::writer::detail::value_ref input,
+    TaskDescriptor&                         output)
 {
     DAS_CORE_TRACE_SCOPE;
 
-    const auto plugin_guid_string = input.at("pluginGuid").get<std::string>();
-    output.plugin_guid = MakeDasGuid(plugin_guid_string);
-    input.at("name").get_to(output.name);
-    input.at("description").get_to(output.description);
-    Details::OptionalFromJson(input, "gameName", output.game_name);
-    if (const auto it = input.find("descriptors"); it != input.end())
+    auto plugin_guid_str =
+        Details::JsonValueToYyjsonScalar<std::string>(input["pluginGuid"]);
+    output.plugin_guid = MakeDasGuid(plugin_guid_str);
+    output.name = Details::JsonValueToYyjsonScalar<std::string>(input["name"]);
+    output.description =
+        Details::JsonValueToYyjsonScalar<std::string>(input["description"]);
+    Details::OptionalFromYyjson(input, "gameName", output.game_name);
+    auto descriptors_field = input["descriptors"];
+    if (!descriptors_field.is_null())
     {
-        it->get_to(output.descriptors);
+        auto desc_arr = *descriptors_field.as_array();
+        for (const auto& elem : desc_arr)
+        {
+            PluginSettingDesc desc;
+            ParsePluginSettingDescFromJson(elem, desc);
+            output.descriptors.push_back(std::move(desc));
+        }
     }
 }
 
@@ -306,52 +472,120 @@ void PluginPackageDesc::SettingsJson::GetValue(IDasReadOnlyString** pp_out_json)
     Utils::SetResult(settings_json_, pp_out_json);
 }
 
-void from_json(const nlohmann::json& input, PluginPackageDesc& output)
+void ParsePluginPackageDescFromJson(
+    const yyjson::writer::detail::value_ref input,
+    PluginPackageDesc&                      output)
 {
     DAS_CORE_TRACE_SCOPE;
 
-    input.at("language").get_to(output.language);
-    if (const auto it_load_mode = input.find("loadMode");
-        it_load_mode != input.end())
+    auto lang_val = input["language"];
+    auto lang_opt = lang_val.as_sint();
+    if (lang_opt)
     {
-        it_load_mode->get_to(output.load_mode);
+        output.language = static_cast<ForeignInterfaceLanguage>(*lang_opt);
+    }
+    else
+    {
+        auto lang_str_opt = lang_val.as_string();
+        if (lang_str_opt)
+        {
+            // Try to parse language from string (for manifest files)
+            auto lang_str = std::string(*lang_str_opt);
+            if (lang_str == "Python")
+            {
+                output.language = ForeignInterfaceLanguage::Python;
+            }
+            else if (lang_str == "CSharp")
+            {
+                output.language = ForeignInterfaceLanguage::CSharp;
+            }
+            else if (lang_str == "Java")
+            {
+                output.language = ForeignInterfaceLanguage::Java;
+            }
+            else if (lang_str == "Cpp")
+            {
+                output.language = ForeignInterfaceLanguage::Cpp;
+            }
+            else if (lang_str == "Lua")
+            {
+                output.language = ForeignInterfaceLanguage::Lua;
+            }
+        }
+    }
+
+    auto load_mode_val = input["loadMode"];
+    if (!load_mode_val.is_null())
+    {
+        auto lmo = load_mode_val.as_sint();
+        if (lmo)
+        {
+            output.load_mode = static_cast<LoadMode>(*lmo);
+        }
     }
     else
     {
         output.load_mode = LoadMode::InProcess;
     }
-    input.at("name").get_to(output.name);
-    input.at("description").get_to(output.description);
-    input.at("author").get_to(output.author);
-    input.at("version").get_to(output.version);
-    input.at("supportedSystem").get_to(output.supported_system);
-    input.at("pluginFilenameExtension")
-        .get_to(output.plugin_filename_extension);
-    if (const auto it_resource_path = input.find("resourcePath");
-        it_resource_path != input.end())
+
+    output.name = Details::JsonValueToYyjsonScalar<std::string>(input["name"]);
+    output.description =
+        Details::JsonValueToYyjsonScalar<std::string>(input["description"]);
+    output.author =
+        Details::JsonValueToYyjsonScalar<std::string>(input["author"]);
+    output.version =
+        Details::JsonValueToYyjsonScalar<std::string>(input["version"]);
+    output.supported_system =
+        Details::JsonValueToYyjsonScalar<std::string>(input["supportedSystem"]);
+    output.plugin_filename_extension =
+        Details::JsonValueToYyjsonScalar<std::string>(
+            input["pluginFilenameExtension"]);
+
+    auto resource_path_val = input["resourcePath"];
+    if (!resource_path_val.is_null())
     {
-        output.opt_resource_path = it_resource_path->get<std::string>();
+        auto opt = resource_path_val.as_string();
+        if (opt)
+        {
+            output.opt_resource_path = std::string(*opt);
+        }
     }
     else
     {
         output.opt_resource_path =
             DAS_UTILS_STRINGUTILS_DEFINE_U8STR("resource");
     }
-    const auto guid_string = input.at("guid").get<std::string>();
-    output.guid = MakeDasGuid(guid_string);
+
+    auto guid_str =
+        Details::JsonValueToYyjsonScalar<std::string>(input["guid"]);
+    output.guid = MakeDasGuid(guid_str);
 
     // Parse "settings" field: support both legacy array and new
     // plugin-GUID-keyed object format.
-    if (const auto it_settings = input.find("settings");
-        it_settings != input.end())
+    auto settings_val = input["settings"];
+    if (!settings_val.is_null())
     {
-        const auto& settings = *it_settings;
-        if (settings.is_array())
+        if (settings_val.is_array())
         {
             // Legacy flat array format.
-            settings.get_to(output.settings_desc);
-            output.settings_desc_json = settings.dump();
-            output.default_settings = nlohmann::json{};
+            auto arr = *settings_val.as_array();
+            for (const auto& elem : arr)
+            {
+                PluginSettingDesc desc;
+                ParsePluginSettingDescFromJson(elem, desc);
+                output.settings_desc.push_back(std::move(desc));
+            }
+            auto serialized = Das::Utils::SerializeYyjsonValue(
+                yyjson::writer::detail::value{
+                    yyjson::writer::detail::value_ref(settings_val)},
+                false);
+            if (serialized)
+            {
+                output.settings_desc_json = *serialized;
+            }
+            // Build default_settings object
+            output.default_settings = yyjson::writer::detail::value{
+                yyjson::construct_object_type_t{}};
             for (const auto& setting : output.settings_desc)
             {
                 switch (setting.type)
@@ -381,26 +615,48 @@ void from_json(const nlohmann::json& input, PluginPackageDesc& output)
                         setting.type);
                 }
             }
-            const DasReadOnlyStringWrapper default_settings_json{
-                output.default_settings.dump()};
-            output.settings_json_->SetValue(default_settings_json.Get());
+            auto ds_serialized = Das::Utils::SerializeYyjsonValue(
+                output.default_settings,
+                false);
+            if (ds_serialized)
+            {
+                DasPtr<IDasReadOnlyString> p_str;
+                auto cr = CreateIDasReadOnlyStringFromUtf8(
+                    ds_serialized->c_str(),
+                    p_str.Put());
+                if (DAS::IsOk(cr))
+                {
+                    output.settings_json_->SetValue(p_str.Get());
+                }
+            }
         }
-        else if (settings.is_object())
+        else if (settings_val.is_object())
         {
             // New plugin-GUID-keyed object format.
-            settings.get_to(output.settings_groups);
-            output.settings_desc_json = settings.dump();
+            ParsePluginSettingsGroupFromJson(
+                settings_val,
+                output.settings_groups);
+            auto serialized = Das::Utils::SerializeYyjsonValue(
+                yyjson::writer::detail::value{
+                    yyjson::writer::detail::value_ref(settings_val)},
+                false);
+            if (serialized)
+            {
+                output.settings_desc_json = *serialized;
+            }
         }
     }
 
     // Parse "tasks" field: task-GUID-keyed object.
-    if (const auto it_tasks = input.find("tasks");
-        it_tasks != input.end() && it_tasks->is_object())
+    auto tasks_val = input["tasks"];
+    if (!tasks_val.is_null() && tasks_val.is_object())
     {
-        for (const auto& [key, value] : it_tasks->items())
+        auto tasks_obj = *tasks_val.as_object();
+        for (const auto& [key, value] : tasks_obj)
         {
-            const auto     task_guid = MakeDasGuid(key);
-            TaskDescriptor desc = value.get<TaskDescriptor>();
+            const auto     task_guid = MakeDasGuid(std::string(key));
+            TaskDescriptor desc;
+            ParseTaskDescriptorFromJson(value, desc);
             output.task_descriptors.emplace(task_guid, std::move(desc));
         }
     }

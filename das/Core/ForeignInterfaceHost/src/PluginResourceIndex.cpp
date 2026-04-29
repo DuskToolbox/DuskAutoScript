@@ -1,12 +1,14 @@
 #include <das/Core/ForeignInterfaceHost/PluginResourceIndex.h>
 
+#include <cpp_yyjson.hpp>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
 #include <das/Core/ForeignInterfaceHost/PluginScanner.h>
 #include <das/Core/Logger/Logger.h>
+#include <das/Utils/DasJsonCore.h>
 
 #include <fstream>
-#include <nlohmann/json.hpp>
+#include <iterator>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
@@ -215,8 +217,21 @@ DasResult PluginResourceIndex::ScanAndPublish()
         try
         {
             std::ifstream ifs(manifest_path);
-            auto          json_data = nlohmann::json::parse(ifs);
-            from_json(json_data, desc);
+            std::string   content(
+                (std::istreambuf_iterator<char>(ifs)),
+                std::istreambuf_iterator<char>());
+            auto parsed = Das::Utils::ParseYyjsonFromString(content);
+            if (parsed)
+            {
+                ParsePluginPackageDescFromJson(*parsed, desc);
+            }
+            else
+            {
+                DAS_CORE_LOG_WARN(
+                    "PluginResourceIndex: failed to parse manifest {}",
+                    manifest_path.string());
+                continue;
+            }
         }
         catch (const std::exception& e)
         {

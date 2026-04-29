@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cpp_yyjson.hpp>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/IDasCaptureManagerImpl.h>
 #include <das/Core/ForeignInterfaceHost/IDasStringVectorImpl.h>
@@ -11,18 +12,18 @@
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
+#include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasCapture.h>
 #include <das/_autogen/idl/abi/IDasComponent.h>
 #include <das/_autogen/idl/wrapper/IDasTypeInfo.hpp>
 #include <new>
-#include <nlohmann/json.hpp>
 
-// DasCore-internal: zero-copy IDasJsonImpl creation from nlohmann::json
+// DasCore-internal: IDasJsonImpl creation from yyjson value
 namespace Das::Core::Utils
 {
-    DasResult CreateDasJsonFromNlohmann(
-        const nlohmann::json&            json,
-        Das::ExportInterface::IDasJson** pp_out);
+    DasResult CreateDasJsonFromYyjson(
+        const yyjson::writer::detail::value& value,
+        Das::ExportInterface::IDasJson**     pp_out);
 }
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
@@ -235,14 +236,14 @@ DasResult PluginManagerServiceImpl::ScanInstalledPlugins(
 
     auto descs = ScanPlugins(plugin_dir_);
 
-    nlohmann::json arr = nlohmann::json::array();
+    yyjson::writer::detail::value arr(yyjson::construct_array_type_t{});
     for (const auto& desc : descs)
     {
         arr.push_back(PluginPackageDescToJson(desc));
     }
 
-    using Das::Core::Utils::CreateDasJsonFromNlohmann;
-    return CreateDasJsonFromNlohmann(arr, pp_out_plugins);
+    using Das::Core::Utils::CreateDasJsonFromYyjson;
+    return CreateDasJsonFromYyjson(arr, pp_out_plugins);
 }
 
 DasResult PluginManagerServiceImpl::InstallPluginPackage(
@@ -414,15 +415,18 @@ DasResult PluginManagerServiceImpl::CreateCaptureManager(
         DAS::DasPtr<IDasReadOnlyString> plugin_config;
         if (!settings_json.is_null())
         {
-            auto       config_str = settings_json.dump();
-            const auto create_result = CreateIDasReadOnlyStringFromUtf8(
-                config_str.c_str(),
-                plugin_config.Put());
-            if (DAS::IsFailed(create_result))
+            auto serialized = Das::Utils::SerializeYyjsonValue(settings_json);
+            if (serialized)
             {
-                DAS_CORE_LOG_WARN(
-                    "Failed to create IDasReadOnlyString for plugin config, guid={}",
-                    guid_str);
+                const auto create_result = CreateIDasReadOnlyStringFromUtf8(
+                    serialized->c_str(),
+                    plugin_config.Put());
+                if (DAS::IsFailed(create_result))
+                {
+                    DAS_CORE_LOG_WARN(
+                        "Failed to create IDasReadOnlyString for plugin config, guid={}",
+                        guid_str);
+                }
             }
         }
 

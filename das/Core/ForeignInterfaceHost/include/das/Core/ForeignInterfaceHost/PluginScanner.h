@@ -1,6 +1,7 @@
 #ifndef DAS_CORE_FOREIGNINTERFACEHOST_PLUGINSCANNER_H
 #define DAS_CORE_FOREIGNINTERFACEHOST_PLUGINSCANNER_H
 
+#include <cpp_yyjson.hpp>
 #include <das/Core/ForeignInterfaceHost/Config.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
 #include <das/DasExport.h>
@@ -22,7 +23,7 @@ MarkForDeletion(const std::filesystem::path& plugin_dir, const DasGuid& guid);
 DAS_EXPORT std::filesystem::path FindManifest(
     const std::filesystem::path& plugin_dir_entry);
 
-DAS_EXPORT nlohmann::json PluginPackageDescToJson(
+DAS_EXPORT yyjson::writer::detail::value PluginPackageDescToJson(
     const PluginPackageDesc& desc);
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
