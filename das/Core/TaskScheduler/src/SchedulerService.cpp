@@ -1007,9 +1007,9 @@ namespace Das::Core::TaskScheduler
         auto inst_obj = *instance_json.as_object();
         inst_obj[std::string_view("id")] = rec.id;
         inst_obj[std::string_view("taskGuid")] =
-            std::string_view(GuidToString(rec.task_guid));
+            yyjson::writer::detail::value(GuidToString(rec.task_guid));
         inst_obj[std::string_view("pluginGuid")] =
-            std::string_view(GuidToString(rec.plugin_guid));
+            yyjson::writer::detail::value(GuidToString(rec.plugin_guid));
         inst_obj[std::string_view("nextExecutionTime")] = nullptr;
 
         // Serialize properties and re-parse to create an owning copy
