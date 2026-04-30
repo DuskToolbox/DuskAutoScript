@@ -500,7 +500,7 @@ set(CPPYYJSON_PFR_TARGET Boost::headers CACHE STRING "Boost.PFR target for yyjso
 FetchContent_Declare(
     cpp_yyjson
     GIT_REPOSITORY https://github.com/BombaxCeiba/yyjson-cpp
-    GIT_TAG        6eec776982caae9a298be02a61d73c97ec8b7196
+    GIT_TAG        bd659255e7da43264f9ad8e6729d681a377a181c
     GIT_SHALLOW    TRUE
     GIT_SUBMODULES "" # Skip benchmark vendor submodules (simdjson, etc.) not needed for core library
 )
