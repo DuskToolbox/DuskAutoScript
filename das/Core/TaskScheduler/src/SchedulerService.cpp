@@ -791,16 +791,17 @@ namespace Das::Core::TaskScheduler
             auto type_obj = Das::Utils::MakeYyjsonObject();
             auto type_ref = *type_obj.as_object();
             type_ref[std::string_view("taskGuid")] =
-                std::string_view(GuidToString(ttr->task_guid));
+                yyjson::writer::detail::value(GuidToString(ttr->task_guid));
             type_ref[std::string_view("pluginGuid")] =
-                std::string_view(GuidToString(ttr->plugin_guid));
-            type_ref[std::string_view("name")] = std::string_view(ttr->name);
+                yyjson::writer::detail::value(GuidToString(ttr->plugin_guid));
+            type_ref[std::string_view("name")] =
+                yyjson::writer::detail::value(ttr->name);
             type_ref[std::string_view("description")] =
-                std::string_view(ttr->description);
+                yyjson::writer::detail::value(ttr->description);
             if (ttr->game_name)
             {
                 type_ref[std::string_view("gameName")] =
-                    std::string_view(*ttr->game_name);
+                    yyjson::writer::detail::value(*ttr->game_name);
             }
 
             // Include descriptors
@@ -810,14 +811,15 @@ namespace Das::Core::TaskScheduler
             {
                 auto desc_obj = Das::Utils::MakeYyjsonObject();
                 auto desc_ref = *desc_obj.as_object();
-                desc_ref[std::string_view("name")] = std::string_view(d.name);
+                desc_ref[std::string_view("name")] =
+                    yyjson::writer::detail::value(d.name);
                 desc_ref[std::string_view("type")] =
                     static_cast<int64_t>(d.type);
                 desc_ref[std::string_view("required")] = d.required;
                 if (d.description)
                 {
                     desc_ref[std::string_view("description")] =
-                        std::string_view(*d.description);
+                        yyjson::writer::detail::value(*d.description);
                 }
                 desc_arr_ref.emplace_back(std::move(desc_obj));
             }
@@ -836,9 +838,9 @@ namespace Das::Core::TaskScheduler
             auto task_ref = *task_obj.as_object();
             task_ref[std::string_view("id")] = inst.id;
             task_ref[std::string_view("taskGuid")] =
-                std::string_view(GuidToString(inst.task_guid));
+                yyjson::writer::detail::value(GuidToString(inst.task_guid));
             task_ref[std::string_view("pluginGuid")] =
-                std::string_view(GuidToString(inst.plugin_guid));
+                yyjson::writer::detail::value(GuidToString(inst.plugin_guid));
 
             if (inst.availability == TaskAvailability::Available)
             {
@@ -850,14 +852,14 @@ namespace Das::Core::TaskScheduler
                 task_ref[std::string_view("availability")] =
                     std::string_view("unavailable");
                 task_ref[std::string_view("unavailabilityReason")] =
-                    std::string_view(inst.unavailability_reason);
+                    yyjson::writer::detail::value(inst.unavailability_reason);
             }
             else
             {
                 task_ref[std::string_view("availability")] =
                     std::string_view("invalid");
                 task_ref[std::string_view("unavailabilityReason")] =
-                    std::string_view(inst.unavailability_reason);
+                    yyjson::writer::detail::value(inst.unavailability_reason);
             }
 
             if (inst.next_execution_time)
