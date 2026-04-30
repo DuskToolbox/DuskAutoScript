@@ -23,47 +23,6 @@ namespace Das::Http::Dto
         std::string message;
         T           data;
 
-        // 转换为JSON
-        yyjson::value ToJson() const
-        {
-            auto j = Das::Utils::MakeYyjsonObject();
-            auto obj_opt = j.as_object();
-            if (obj_opt)
-            {
-                auto& obj = obj_opt.value();
-                obj["code"] = static_cast<int64_t>(code);
-                obj["message"] = std::string{message};
-                if constexpr (std::is_same_v<T, yyjson::value>)
-                {
-                    obj["data"] = data;
-                }
-                else
-                {
-                    obj["data"] = data;
-                }
-            }
-            return j;
-        }
-
-        // 从JSON构造
-        static ApiResponse<T> FromJson(const yyjson::value& j)
-        {
-            ApiResponse<T> response;
-            auto           obj_opt = j.as_object();
-            if (obj_opt)
-            {
-                const auto& obj = obj_opt.value();
-                auto        code_val = obj["code"];
-                auto        code_opt = code_val.as_sint();
-                response.code =
-                    code_opt ? static_cast<int32_t>(code_opt.value()) : 0;
-                auto msg_val = obj["message"];
-                auto msg_opt = msg_val.as_string();
-                response.message = msg_opt ? std::string(msg_opt.value()) : "";
-            }
-            return response;
-        }
-
         // 创建成功响应
         static ApiResponse<T> Success(
             const T&           data = T{},
@@ -86,20 +45,6 @@ namespace Das::Http::Dto
         int32_t       code;
         std::string   message;
         yyjson::value data;
-
-        yyjson::value ToJson() const
-        {
-            auto j = Das::Utils::MakeYyjsonObject();
-            auto obj_opt = j.as_object();
-            if (obj_opt)
-            {
-                auto& obj = obj_opt.value();
-                obj["code"] = static_cast<int64_t>(code);
-                obj["message"] = std::string{message};
-                obj["data"] = data;
-            }
-            return j;
-        }
 
         static ApiResponse<void> Success(const std::string& message = "")
         {

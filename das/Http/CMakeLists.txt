@@ -14,7 +14,8 @@ if(WIN32)
     target_link_libraries(DasHttp PRIVATE mswsock)
 endif()
 
-target_compile_definitions(DasHttp PRIVATE _WIN32_WINNT=0x0601)
+target_compile_definitions(DasHttp PRIVATE _WIN32_WINNT=0x0601
+        CPPYYJSON_DEFAULT_TRANSFORM=::yyjson::snake_to_camel_transform)
 
 set_target_properties(DasHttp PROPERTIES
         CXX_STANDARD 20

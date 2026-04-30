@@ -25,6 +25,11 @@ namespace Das::Http
 
         explicit DasHttpJson(yyjson::value json) : json_(std::move(json)) {}
 
+        static DasHttpJson* MakeRaw(yyjson::value json)
+        {
+            return new DasHttpJson(std::move(json));
+        }
+
         explicit DasHttpJson(const char* json_string)
         {
             auto parsed = Das::Utils::ParseYyjsonFromString(json_string);
