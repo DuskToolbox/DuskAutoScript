@@ -333,11 +333,13 @@ std::string SettingsManager::GetProfileList()
         {
             if (entry.is_directory())
             {
-                auto profile_obj = Das::Utils::MakeYyjsonObject();
-                auto obj_ref = *profile_obj.as_object();
-                obj_ref[std::string_view("profileId")] =
-                    std::string_view(entry.path().filename().string());
-                profiles.as_array()->emplace_back(std::move(profile_obj));
+                auto filename = entry.path().filename().string();
+                auto profile_str = "{\"profileId\":\"" + filename + "\"}";
+                auto parsed = Das::Utils::ParseYyjsonFromString(profile_str);
+                if (parsed)
+                {
+                    profiles.as_array()->emplace_back(std::move(*parsed));
+                }
             }
         }
     }
@@ -891,11 +893,13 @@ yyjson::writer::detail::value SettingsManager::GetProfileListJson()
         {
             if (entry.is_directory())
             {
-                auto profile_obj = Das::Utils::MakeYyjsonObject();
-                auto obj_ref = *profile_obj.as_object();
-                obj_ref[std::string_view("profileId")] =
-                    std::string_view(entry.path().filename().string());
-                profiles.as_array()->emplace_back(std::move(profile_obj));
+                auto filename = entry.path().filename().string();
+                auto profile_str = "{\"profileId\":\"" + filename + "\"}";
+                auto parsed = Das::Utils::ParseYyjsonFromString(profile_str);
+                if (parsed)
+                {
+                    profiles.as_array()->emplace_back(std::move(*parsed));
+                }
             }
         }
     }
