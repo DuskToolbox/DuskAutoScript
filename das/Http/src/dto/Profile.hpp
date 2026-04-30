@@ -19,6 +19,12 @@ namespace Das::Http::Dto
         std::string profile_id;
     };
 
+    static_assert(
+        yyjson::detail::transformed_name<0, ProfileDesc>().view() == "name");
+    static_assert(
+        yyjson::detail::transformed_name<1, ProfileDesc>().view()
+        == "profileId");
+
     struct ProfileDescList
     {
         std::vector<ProfileDesc> profile_list;
