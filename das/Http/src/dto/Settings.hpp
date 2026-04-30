@@ -18,7 +18,7 @@ namespace Das::Http::Dto
         std::string name;
         std::string package_name;
 
-        yyjson::writer::detail::value ToJson() const
+        yyjson::value ToJson() const
         {
             auto j = Das::Utils::MakeYyjsonObject();
             auto obj_opt = j.as_object();
@@ -31,7 +31,7 @@ namespace Das::Http::Dto
             return j;
         }
 
-        static AppDesc FromJson(const yyjson::writer::detail::value& j)
+        static AppDesc FromJson(const yyjson::value& j)
         {
             AppDesc desc;
             auto    obj_opt = j.as_object();
@@ -58,7 +58,7 @@ namespace Das::Http::Dto
         std::string name;
         std::string plugin_id;
 
-        yyjson::writer::detail::value ToJson() const
+        yyjson::value ToJson() const
         {
             auto j = Das::Utils::MakeYyjsonObject();
             auto obj_opt = j.as_object();
@@ -71,8 +71,7 @@ namespace Das::Http::Dto
             return j;
         }
 
-        static PluginPackageDesc FromJson(
-            const yyjson::writer::detail::value& j)
+        static PluginPackageDesc FromJson(const yyjson::value& j)
         {
             PluginPackageDesc desc;
             auto              obj_opt = j.as_object();
@@ -102,7 +101,7 @@ namespace Das::Http::Dto
         // 此字段由前端内部管理
         // std::string sub_group;
 
-        yyjson::writer::detail::value ToJson() const
+        yyjson::value ToJson() const
         {
             auto j = Das::Utils::MakeYyjsonObject();
             auto obj_opt = j.as_object();
@@ -116,7 +115,7 @@ namespace Das::Http::Dto
             return j;
         }
 
-        static TaskDesc FromJson(const yyjson::writer::detail::value& j)
+        static TaskDesc FromJson(const yyjson::value& j)
         {
             TaskDesc desc;
             auto     obj_opt = j.as_object();

@@ -67,8 +67,8 @@ namespace
     }
 
     DasResult JsonToIDasJson(
-        const yyjson::writer::detail::value& json,
-        Das::ExportInterface::IDasJson**     pp_out)
+        const yyjson::value&             json,
+        Das::ExportInterface::IDasJson** pp_out)
     {
         DAS_UTILS_CHECK_POINTER(pp_out)
         try
@@ -89,7 +89,7 @@ namespace
 
     DasResult IDasJsonToYyjson(
         Das::ExportInterface::IDasJson* p_data,
-        yyjson::writer::detail::value&  out)
+        yyjson::value&                  out)
     {
         DAS_UTILS_CHECK_POINTER(p_data)
         DAS::DasPtr<IDasReadOnlyString> p_str;
@@ -135,8 +135,8 @@ DasResult SettingsServiceImpl::GetGlobalSettings(
 DasResult SettingsServiceImpl::UpdateGlobalSettings(
     Das::ExportInterface::IDasJson* p_data)
 {
-    yyjson::writer::detail::value data;
-    auto                          result = IDasJsonToYyjson(p_data, data);
+    yyjson::value data;
+    auto          result = IDasJsonToYyjson(p_data, data);
     if (DAS::IsFailed(result))
     {
         return result;
@@ -195,8 +195,8 @@ DasResult SettingsServiceImpl::UpdateProfile(
     Das::ExportInterface::IDasJson* p_data)
 {
     DAS_UTILS_CHECK_POINTER(p_profile_id)
-    yyjson::writer::detail::value data;
-    auto                          result = IDasJsonToYyjson(p_data, data);
+    yyjson::value data;
+    auto          result = IDasJsonToYyjson(p_data, data);
     if (DAS::IsFailed(result))
     {
         return result;
@@ -234,8 +234,8 @@ DasResult SettingsServiceImpl::UpdatePluginSettings(
 {
     DAS_UTILS_CHECK_POINTER(p_profile_id)
     DAS_UTILS_CHECK_POINTER(p_plugin_guid)
-    yyjson::writer::detail::value data;
-    auto                          result = IDasJsonToYyjson(p_data, data);
+    yyjson::value data;
+    auto          result = IDasJsonToYyjson(p_data, data);
     if (DAS::IsFailed(result))
     {
         return result;
@@ -281,8 +281,8 @@ DasResult SettingsServiceImpl::UpdatePluginSettingsField(
     DAS_UTILS_CHECK_POINTER(p_profile_id)
     DAS_UTILS_CHECK_POINTER(p_plugin_guid)
     DAS_UTILS_CHECK_POINTER(p_field_name)
-    yyjson::writer::detail::value data;
-    auto                          result = IDasJsonToYyjson(p_value, data);
+    yyjson::value data;
+    auto          result = IDasJsonToYyjson(p_value, data);
     if (DAS::IsFailed(result))
     {
         return result;

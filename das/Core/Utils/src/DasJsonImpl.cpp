@@ -27,14 +27,14 @@ DAS_NS_ANONYMOUS_DETAILS_BEGIN
 /// Helper: access a named sub-value from an Object or Ref variant.
 /// Returns a const_value_ref if found, or nullopt if the key does not
 /// exist. Throws DasJsonImplRefExpiredException if Ref is expired.
-std::optional<yyjson::writer::detail::const_value_ref> GetValueByName(
+std::optional<yyjson::writer::const_value_ref> GetValueByName(
     std::variant<IDasJsonImpl::Object, IDasJsonImpl::Ref>& impl,
     std::string_view                                       key)
 {
     return std::visit(
         Utils::overload_set{
             [key](IDasJsonImpl::Object& obj)
-                -> std::optional<yyjson::writer::detail::const_value_ref>
+                -> std::optional<yyjson::writer::const_value_ref>
             {
                 auto obj_opt = obj.value_.as_object();
                 if (!obj_opt)
@@ -50,7 +50,7 @@ std::optional<yyjson::writer::detail::const_value_ref> GetValueByName(
                 return it->second;
             },
             [key](IDasJsonImpl::Ref& ref)
-                -> std::optional<yyjson::writer::detail::const_value_ref>
+                -> std::optional<yyjson::writer::const_value_ref>
             {
                 if (ref.val_ == nullptr)
                 {
@@ -76,14 +76,14 @@ std::optional<yyjson::writer::detail::const_value_ref> GetValueByName(
 /// Returns a const_value_ref if found, or nullopt if the index is out of
 /// range. Throws DasJsonImplRefExpiredException if Ref is expired. Throws
 /// DasJsonImplJsonIsNotArray if value is not an array.
-std::optional<yyjson::writer::detail::const_value_ref> GetValueByIndex(
+std::optional<yyjson::writer::const_value_ref> GetValueByIndex(
     std::variant<IDasJsonImpl::Object, IDasJsonImpl::Ref>& impl,
     size_t                                                 index)
 {
     return std::visit(
         Utils::overload_set{
             [index](IDasJsonImpl::Object& obj)
-                -> std::optional<yyjson::writer::detail::const_value_ref>
+                -> std::optional<yyjson::writer::const_value_ref>
             {
                 auto arr_opt = obj.value_.as_array();
                 if (!arr_opt)
@@ -98,7 +98,7 @@ std::optional<yyjson::writer::detail::const_value_ref> GetValueByIndex(
                 return arr[index];
             },
             [index](IDasJsonImpl::Ref& ref)
-                -> std::optional<yyjson::writer::detail::const_value_ref>
+                -> std::optional<yyjson::writer::const_value_ref>
             {
                 if (ref.val_ == nullptr)
                 {
@@ -122,16 +122,16 @@ std::optional<yyjson::writer::detail::const_value_ref> GetValueByIndex(
 /// Helper: ensure the value is an object (for SetByName operations).
 /// Returns a mutable object_ref or nullopt on failure.
 /// Throws DasJsonImplRefExpiredException if Ref is expired.
-std::optional<yyjson::writer::detail::object_ref> GetObjectForSet(
+std::optional<yyjson::writer::object_ref> GetObjectForSet(
     std::variant<IDasJsonImpl::Object, IDasJsonImpl::Ref>& impl)
 {
     return std::visit(
         Utils::overload_set{
             [](IDasJsonImpl::Object& obj)
-                -> std::optional<yyjson::writer::detail::object_ref>
+                -> std::optional<yyjson::writer::object_ref>
             { return obj.value_.as_object(); },
             [](IDasJsonImpl::Ref& ref)
-                -> std::optional<yyjson::writer::detail::object_ref>
+                -> std::optional<yyjson::writer::object_ref>
             {
                 if (ref.val_ == nullptr)
                 {
@@ -145,16 +145,16 @@ std::optional<yyjson::writer::detail::object_ref> GetObjectForSet(
 /// Helper: ensure the value is an array (for SetByIndex operations).
 /// Returns a mutable array_ref or nullopt on failure.
 /// Throws DasJsonImplRefExpiredException if Ref is expired.
-std::optional<yyjson::writer::detail::array_ref> GetArrayForSet(
+std::optional<yyjson::writer::array_ref> GetArrayForSet(
     std::variant<IDasJsonImpl::Object, IDasJsonImpl::Ref>& impl)
 {
     return std::visit(
         Utils::overload_set{
             [](IDasJsonImpl::Object& obj)
-                -> std::optional<yyjson::writer::detail::array_ref>
+                -> std::optional<yyjson::writer::array_ref>
             { return obj.value_.as_array(); },
             [](IDasJsonImpl::Ref& ref)
-                -> std::optional<yyjson::writer::detail::array_ref>
+                -> std::optional<yyjson::writer::array_ref>
             {
                 if (ref.val_ == nullptr)
                 {
@@ -166,10 +166,9 @@ std::optional<yyjson::writer::detail::array_ref> GetArrayForSet(
 }
 
 /// Helper: Creates an owning copy of a const_value_ref as a new value.
-yyjson::writer::detail::value CopyValue(
-    const yyjson::writer::detail::const_value_ref& src)
+yyjson::value CopyValue(const yyjson::writer::const_value_ref& src)
 {
-    yyjson::writer::detail::value result;
+    yyjson::value result;
     result = src;
     return result;
 }
@@ -453,13 +452,12 @@ DasResult IDasJsonImpl::SetImpl(IDasReadOnlyString* p_string, const T& value)
             obj[p_u8_key] = value;
             return DAS_S_OK;
         }
-        else if constexpr (std::is_same_v<T, yyjson::writer::detail::value>)
+        else if constexpr (std::is_same_v<T, yyjson::value>)
         {
             obj[p_u8_key] = value;
             return DAS_S_OK;
         }
-        else if constexpr (
-            std::is_same_v<T, yyjson::writer::detail::const_value_ref>)
+        else if constexpr (std::is_same_v<T, yyjson::writer::const_value_ref>)
         {
             obj[p_u8_key] = value;
             return DAS_S_OK;
@@ -533,7 +531,7 @@ DasResult IDasJsonImpl::SetImpl(size_t index, const T& value)
             arr[index] = value;
             return DAS_S_OK;
         }
-        else if constexpr (std::is_same_v<T, yyjson::writer::detail::value>)
+        else if constexpr (std::is_same_v<T, yyjson::value>)
         {
             arr[index] = value;
             return DAS_S_OK;
@@ -561,12 +559,12 @@ DasResult IDasJsonImpl::SetImpl(size_t index, const T& value)
 
 IDasJsonImpl::IDasJsonImpl() : impl_{Object{}} {}
 
-IDasJsonImpl::IDasJsonImpl(yyjson::writer::detail::value& ref_value)
+IDasJsonImpl::IDasJsonImpl(yyjson::value& ref_value)
     : impl_{Ref{&ref_value, {}}}
 {
 }
 
-IDasJsonImpl::IDasJsonImpl(yyjson::writer::detail::value&& value)
+IDasJsonImpl::IDasJsonImpl(yyjson::value&& value)
     : impl_{Object{std::move(value), {}}}
 {
 }
@@ -749,9 +747,8 @@ DasResult IDasJsonImpl::SetObjectByName(
 
     const auto in_json = std::visit(
         Utils::overload_set{
-            [](IDasJsonImpl::Object& j) -> yyjson::writer::detail::value*
-            { return &j.value_; },
-            [](IDasJsonImpl::Ref& j) -> yyjson::writer::detail::value*
+            [](IDasJsonImpl::Object& j) -> yyjson::value* { return &j.value_; },
+            [](IDasJsonImpl::Ref& j) -> yyjson::value*
             {
                 if (j.val_ == nullptr)
                 {
@@ -886,9 +883,8 @@ DasResult IDasJsonImpl::SetObjectByIndex(size_t index, IDasJson* p_in_das_json)
 
     const auto in_json = std::visit(
         Utils::overload_set{
-            [](IDasJsonImpl::Object& j) -> yyjson::writer::detail::value*
-            { return &j.value_; },
-            [](IDasJsonImpl::Ref& j) -> yyjson::writer::detail::value*
+            [](IDasJsonImpl::Object& j) -> yyjson::value* { return &j.value_; },
+            [](IDasJsonImpl::Ref& j) -> yyjson::value*
             {
                 if (j.val_ == nullptr)
                 {
@@ -1132,14 +1128,14 @@ DasResult IDasJsonImpl::Clear()
                 [](Object& obj) -> DasResult
                 {
                     obj.signal_();
-                    obj.value_ = yyjson::writer::detail::object{};
+                    obj.value_ = yyjson::object{};
                     return DAS_S_OK;
                 },
                 [](Ref& ref) -> DasResult
                 {
                     if (ref.val_ != nullptr)
                     {
-                        *ref.val_ = yyjson::writer::detail::object{};
+                        *ref.val_ = yyjson::object{};
                     }
                     return DAS_E_DANGLING_REFERENCE;
                 }},
@@ -1161,15 +1157,15 @@ DasResult IDasJsonImpl::Clear()
 // ========================================================================
 
 DasResult CreateDasJsonFromYyjson(
-    const yyjson::writer::detail::value& value,
-    ExportInterface::IDasJson**          pp_out)
+    const yyjson::value&        value,
+    ExportInterface::IDasJson** pp_out)
 {
     DAS_UTILS_CHECK_POINTER(pp_out)
     *pp_out = nullptr;
     try
     {
         const auto p_result =
-            DAS::MakeDasPtr<IDasJsonImpl>(yyjson::writer::detail::value(value));
+            DAS::MakeDasPtr<IDasJsonImpl>(yyjson::value(value));
         DAS::Utils::SetResult(p_result, pp_out);
         return DAS_S_OK;
     }

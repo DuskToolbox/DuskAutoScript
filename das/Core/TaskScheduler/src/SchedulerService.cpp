@@ -771,7 +771,7 @@ namespace Das::Core::TaskScheduler
     // Get: merged scheduler state JSON
     // ----------------------------------------------------------------
 
-    yyjson::writer::detail::value SchedulerService::Get()
+    yyjson::value SchedulerService::Get()
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
@@ -791,17 +791,16 @@ namespace Das::Core::TaskScheduler
             auto type_obj = Das::Utils::MakeYyjsonObject();
             auto type_ref = *type_obj.as_object();
             type_ref[std::string_view("taskGuid")] =
-                yyjson::writer::detail::value(GuidToString(ttr->task_guid));
+                yyjson::value(GuidToString(ttr->task_guid));
             type_ref[std::string_view("pluginGuid")] =
-                yyjson::writer::detail::value(GuidToString(ttr->plugin_guid));
-            type_ref[std::string_view("name")] =
-                yyjson::writer::detail::value(ttr->name);
+                yyjson::value(GuidToString(ttr->plugin_guid));
+            type_ref[std::string_view("name")] = yyjson::value(ttr->name);
             type_ref[std::string_view("description")] =
-                yyjson::writer::detail::value(ttr->description);
+                yyjson::value(ttr->description);
             if (ttr->game_name)
             {
                 type_ref[std::string_view("gameName")] =
-                    yyjson::writer::detail::value(*ttr->game_name);
+                    yyjson::value(*ttr->game_name);
             }
 
             // Include descriptors
@@ -811,15 +810,14 @@ namespace Das::Core::TaskScheduler
             {
                 auto desc_obj = Das::Utils::MakeYyjsonObject();
                 auto desc_ref = *desc_obj.as_object();
-                desc_ref[std::string_view("name")] =
-                    yyjson::writer::detail::value(d.name);
+                desc_ref[std::string_view("name")] = yyjson::value(d.name);
                 desc_ref[std::string_view("type")] =
                     static_cast<int64_t>(d.type);
                 desc_ref[std::string_view("required")] = d.required;
                 if (d.description)
                 {
                     desc_ref[std::string_view("description")] =
-                        yyjson::writer::detail::value(*d.description);
+                        yyjson::value(*d.description);
                 }
                 desc_arr_ref.emplace_back(std::move(desc_obj));
             }
@@ -838,9 +836,9 @@ namespace Das::Core::TaskScheduler
             auto task_ref = *task_obj.as_object();
             task_ref[std::string_view("id")] = inst.id;
             task_ref[std::string_view("taskGuid")] =
-                yyjson::writer::detail::value(GuidToString(inst.task_guid));
+                yyjson::value(GuidToString(inst.task_guid));
             task_ref[std::string_view("pluginGuid")] =
-                yyjson::writer::detail::value(GuidToString(inst.plugin_guid));
+                yyjson::value(GuidToString(inst.plugin_guid));
 
             if (inst.availability == TaskAvailability::Available)
             {
@@ -852,14 +850,14 @@ namespace Das::Core::TaskScheduler
                 task_ref[std::string_view("availability")] =
                     std::string_view("unavailable");
                 task_ref[std::string_view("unavailabilityReason")] =
-                    yyjson::writer::detail::value(inst.unavailability_reason);
+                    yyjson::value(inst.unavailability_reason);
             }
             else
             {
                 task_ref[std::string_view("availability")] =
                     std::string_view("invalid");
                 task_ref[std::string_view("unavailabilityReason")] =
-                    yyjson::writer::detail::value(inst.unavailability_reason);
+                    yyjson::value(inst.unavailability_reason);
             }
 
             if (inst.next_execution_time)
@@ -1007,9 +1005,9 @@ namespace Das::Core::TaskScheduler
         auto inst_obj = *instance_json.as_object();
         inst_obj[std::string_view("id")] = rec.id;
         inst_obj[std::string_view("taskGuid")] =
-            yyjson::writer::detail::value(GuidToString(rec.task_guid));
+            yyjson::value(GuidToString(rec.task_guid));
         inst_obj[std::string_view("pluginGuid")] =
-            yyjson::writer::detail::value(GuidToString(rec.plugin_guid));
+            yyjson::value(GuidToString(rec.plugin_guid));
         inst_obj[std::string_view("nextExecutionTime")] = nullptr;
 
         // Serialize properties and re-parse to create an owning copy
@@ -1203,14 +1201,14 @@ namespace Das::Core::TaskScheduler
     // ----------------------------------------------------------------
 
     DasResult SchedulerService::UpdateTaskProperties(
-        int64_t                              task_id,
-        const yyjson::writer::detail::value& properties)
+        int64_t              task_id,
+        const yyjson::value& properties)
     {
         // Phase 1: Short lock for validation and snapshot — copy
         // descriptors to avoid dangling pointer across lock-free phases.
         std::vector<Das::Core::ForeignInterfaceHost::PluginSettingDesc>
-                                      descriptors;
-        yyjson::writer::detail::value current_properties;
+                      descriptors;
+        yyjson::value current_properties;
         {
             std::lock_guard<std::mutex> lock(mutex_);
 
@@ -1382,8 +1380,8 @@ namespace Das::Core::TaskScheduler
     // ----------------------------------------------------------------
 
     DasResult SchedulerService::UpdateTaskInternalProperties(
-        int64_t                              task_id,
-        const yyjson::writer::detail::value& internal_props)
+        int64_t              task_id,
+        const yyjson::value& internal_props)
     {
         // Phase 1: Short lock for validation and snapshot
         std::optional<int64_t> new_next_time;
@@ -1515,7 +1513,7 @@ namespace Das::Core::TaskScheduler
         // before calling plugin Do.
         Das::PluginInterface::IDasTask*     task_ptr = nullptr;
         TaskInstanceRecord*                 selected_inst = nullptr;
-        yyjson::writer::detail::value       properties_copy;
+        yyjson::value                       properties_copy;
         int64_t                             selected_id = -1;
         std::chrono::steady_clock::duration next_delay =
             std::chrono::seconds(1);

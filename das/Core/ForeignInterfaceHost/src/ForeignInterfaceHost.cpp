@@ -191,11 +191,11 @@ DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 namespace Details
 {
     template <class T>
-    T JsonValueToYyjsonScalar(const yyjson::writer::detail::const_value_ref& v);
+    T JsonValueToYyjsonScalar(const yyjson::writer::const_value_ref& v);
 
     template <>
     inline bool JsonValueToYyjsonScalar<bool>(
-        const yyjson::writer::detail::const_value_ref& v)
+        const yyjson::writer::const_value_ref& v)
     {
         auto opt = v.as_bool();
         if (!opt)
@@ -207,7 +207,7 @@ namespace Details
 
     template <>
     inline std::int64_t JsonValueToYyjsonScalar<std::int64_t>(
-        const yyjson::writer::detail::const_value_ref& v)
+        const yyjson::writer::const_value_ref& v)
     {
         auto opt = v.as_sint();
         if (!opt)
@@ -219,7 +219,7 @@ namespace Details
 
     template <>
     inline float JsonValueToYyjsonScalar<float>(
-        const yyjson::writer::detail::const_value_ref& v)
+        const yyjson::writer::const_value_ref& v)
     {
         auto opt = v.as_real();
         if (!opt)
@@ -231,7 +231,7 @@ namespace Details
 
     template <>
     inline std::string JsonValueToYyjsonScalar<std::string>(
-        const yyjson::writer::detail::const_value_ref& v)
+        const yyjson::writer::const_value_ref& v)
     {
         auto opt = v.as_string();
         if (!opt)
@@ -242,9 +242,8 @@ namespace Details
     }
 
     template <>
-    inline Das::ExportInterface::DasType
-    JsonValueToYyjsonScalar<Das::ExportInterface::DasType>(
-        const yyjson::writer::detail::const_value_ref& v)
+    inline Das::ExportInterface::DasType JsonValueToYyjsonScalar<
+        Das::ExportInterface::DasType>(const yyjson::writer::const_value_ref& v)
     {
         auto opt = v.as_sint();
         if (!opt)
@@ -255,9 +254,9 @@ namespace Details
     }
 
     inline void OptionalFieldFromYyjson(
-        const yyjson::writer::detail::const_object_ref& obj,
-        std::string_view                                key,
-        std::optional<std::string>&                     opt_value)
+        const yyjson::writer::const_object_ref& obj,
+        std::string_view                        key,
+        std::optional<std::string>&             opt_value)
     {
         auto field = obj[std::string_view(key)];
         if (!field.is_null())
@@ -271,9 +270,9 @@ namespace Details
     }
 
     inline void OptionalFieldFromYyjson(
-        const yyjson::writer::detail::const_object_ref& obj,
-        std::string_view                                key,
-        std::optional<std::vector<std::string>>&        opt_value)
+        const yyjson::writer::const_object_ref&  obj,
+        std::string_view                         key,
+        std::optional<std::vector<std::string>>& opt_value)
     {
         auto field = obj[std::string_view(key)];
         if (field.is_null())
@@ -301,8 +300,8 @@ namespace Details
 } // namespace Details
 
 void ParsePluginSettingDescFromJson(
-    const yyjson::writer::detail::const_object_ref& obj,
-    PluginSettingDesc&                              output)
+    const yyjson::writer::const_object_ref& obj,
+    PluginSettingDesc&                      output)
 {
     DAS_CORE_TRACE_SCOPE;
 
@@ -357,7 +356,7 @@ void ParsePluginSettingDescFromJson(
 }
 
 void ParsePluginSettingsGroupFromJson(
-    const yyjson::writer::detail::const_object_ref&   obj,
+    const yyjson::writer::const_object_ref&           obj,
     std::unordered_map<DasGuid, PluginSettingsGroup>& output)
 {
     DAS_CORE_TRACE_SCOPE;
@@ -397,8 +396,8 @@ void ParsePluginSettingsGroupFromJson(
 }
 
 void ParseTaskDescriptorFromJson(
-    const yyjson::writer::detail::const_object_ref& obj,
-    TaskDescriptor&                                 output)
+    const yyjson::writer::const_object_ref& obj,
+    TaskDescriptor&                         output)
 {
     DAS_CORE_TRACE_SCOPE;
 
@@ -441,8 +440,8 @@ void PluginPackageDesc::SettingsJson::GetValue(IDasReadOnlyString** pp_out_json)
 }
 
 void ParsePluginPackageDescFromJson(
-    const yyjson::writer::detail::const_object_ref& obj,
-    PluginPackageDesc&                              output)
+    const yyjson::writer::const_object_ref& obj,
+    PluginPackageDesc&                      output)
 {
     DAS_CORE_TRACE_SCOPE;
 

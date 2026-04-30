@@ -101,8 +101,7 @@ void RegisterLoadPluginHandler(DAS::Core::IPC::Host::IIpcContext* ctx)
                 response.response_data.clear();
                 return DAS_E_IPC_PLUGIN_LOAD_FAILED;
             }
-            yyjson::writer::detail::value manifest_json =
-                std::move(*manifest_json_opt);
+            yyjson::value manifest_json = std::move(*manifest_json_opt);
 
             std::string plugin_language;
             {

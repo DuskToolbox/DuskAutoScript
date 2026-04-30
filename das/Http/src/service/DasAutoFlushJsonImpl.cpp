@@ -21,8 +21,7 @@ namespace Das::Http
     namespace
     {
 
-        std::optional<yyjson::writer::detail::value> ExtractJsonFromIDasJson(
-            IDasJson* p_json)
+        std::optional<yyjson::value> ExtractJsonFromIDasJson(IDasJson* p_json)
         {
             if (!p_json)
             {
@@ -112,7 +111,7 @@ namespace Das::Http
         return DAS_S_OK;
     }
 
-    std::optional<yyjson::writer::detail::value> DasAutoFlushJsonImpl::GetField(
+    std::optional<yyjson::value> DasAutoFlushJsonImpl::GetField(
         const std::string& full_path)
     {
         DasPtr<IDasReadOnlyString> p_profile_id;
@@ -146,8 +145,8 @@ namespace Das::Http
     }
 
     DasResult DasAutoFlushJsonImpl::SetField(
-        const std::string&                   full_path,
-        const yyjson::writer::detail::value& value)
+        const std::string&   full_path,
+        const yyjson::value& value)
     {
         DasPtr<IDasReadOnlyString> p_profile_id;
         auto cr = CreateReadOnlyString(profile_id_.c_str(), p_profile_id);
@@ -186,8 +185,7 @@ namespace Das::Http
             json_value.Get());
     }
 
-    std::optional<yyjson::writer::detail::value>
-    DasAutoFlushJsonImpl::GetCurrentJson()
+    std::optional<yyjson::value> DasAutoFlushJsonImpl::GetCurrentJson()
     {
         DasPtr<IDasReadOnlyString> p_profile_id;
         if (DAS::IsFailed(
@@ -1045,8 +1043,7 @@ namespace Das::Http
             if (path_prefix_.empty())
             {
                 // Build filtered output from whitelist with dot-path nesting
-                auto filtered = yyjson::writer::detail::value(
-                    yyjson::writer::detail::object{});
+                auto filtered = yyjson::value(yyjson::object{});
                 for (const auto& key : whitelist_)
                 {
                     auto field_opt = GetField(key);
@@ -1071,8 +1068,7 @@ namespace Das::Http
                         auto child_ref = obj[seg];
                         if (!child_ref.is_object())
                         {
-                            child_ref = yyjson::writer::detail::value(
-                                yyjson::writer::detail::object{});
+                            child_ref = yyjson::value(yyjson::object{});
                         }
                         auto child_obj_opt = child_ref.as_object();
                         if (!child_obj_opt)

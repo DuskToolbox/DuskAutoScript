@@ -13,7 +13,7 @@
 namespace Das::Http::Beast::JsonUtils
 {
 
-    using JsonValue = yyjson::writer::detail::value;
+    using JsonValue = yyjson::value;
 
     // 从JSON中获取字符串，带默认值
     inline std::string GetString(

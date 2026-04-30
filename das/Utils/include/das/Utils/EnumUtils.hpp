@@ -23,9 +23,7 @@ Enum StringToEnum(const std::string_view string)
 }
 
 template <class Enum>
-Enum JsonToEnum(
-    const yyjson::writer::detail::const_value_ref& json,
-    const char*                                    key)
+Enum JsonToEnum(const yyjson::writer::const_value_ref& json, const char* key)
 {
     auto obj = json.as_object();
     if (!obj)

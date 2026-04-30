@@ -18,7 +18,7 @@ namespace Das::Http::Dto
         std::string name;
         std::string profile_id;
 
-        yyjson::writer::detail::value ToJson() const
+        yyjson::value ToJson() const
         {
             auto j = Das::Utils::MakeYyjsonObject();
             auto obj_opt = j.as_object();
@@ -31,7 +31,7 @@ namespace Das::Http::Dto
             return j;
         }
 
-        static ProfileDesc FromJson(const yyjson::writer::detail::value& j)
+        static ProfileDesc FromJson(const yyjson::value& j)
         {
             ProfileDesc desc;
             auto        obj_opt = j.as_object();
@@ -53,7 +53,7 @@ namespace Das::Http::Dto
     {
         std::vector<ProfileDesc> profile_list;
 
-        yyjson::writer::detail::value ToJson() const
+        yyjson::value ToJson() const
         {
             auto j = Das::Utils::MakeYyjsonObject();
             auto arr = Das::Utils::MakeYyjsonArray();
@@ -74,7 +74,7 @@ namespace Das::Http::Dto
             return j;
         }
 
-        static ProfileDescList FromJson(const yyjson::writer::detail::value& j)
+        static ProfileDescList FromJson(const yyjson::value& j)
         {
             ProfileDescList list;
             auto            obj_opt = j.as_object();
@@ -104,7 +104,7 @@ namespace Das::Http::Dto
         std::vector<std::string> ignored_guid_list;
         std::string              profile_id;
 
-        yyjson::writer::detail::value ToJson() const
+        yyjson::value ToJson() const
         {
             auto j = Das::Utils::MakeYyjsonObject();
             auto arr = Das::Utils::MakeYyjsonArray();
@@ -127,8 +127,7 @@ namespace Das::Http::Dto
             return j;
         }
 
-        static ProfileInitializeParms FromJson(
-            const yyjson::writer::detail::value& j)
+        static ProfileInitializeParms FromJson(const yyjson::value& j)
         {
             ProfileInitializeParms parms;
             auto                   obj_opt = j.as_object();
@@ -165,7 +164,7 @@ namespace Das::Http::Dto
         bool        run;
         bool        enable;
 
-        yyjson::writer::detail::value ToJson() const
+        yyjson::value ToJson() const
         {
             auto j = Das::Utils::MakeYyjsonObject();
             auto obj_opt = j.as_object();
@@ -179,7 +178,7 @@ namespace Das::Http::Dto
             return j;
         }
 
-        static ProfileStatus FromJson(const yyjson::writer::detail::value& j)
+        static ProfileStatus FromJson(const yyjson::value& j)
         {
             ProfileStatus status;
             auto          obj_opt = j.as_object();
@@ -209,7 +208,7 @@ namespace Das::Http::Dto
         std::string profile_id;
         bool        run;
 
-        yyjson::writer::detail::value ToJson() const
+        yyjson::value ToJson() const
         {
             auto j = Das::Utils::MakeYyjsonObject();
             auto obj_opt = j.as_object();
@@ -222,7 +221,7 @@ namespace Das::Http::Dto
             return j;
         }
 
-        static ProfileRunning FromJson(const yyjson::writer::detail::value& j)
+        static ProfileRunning FromJson(const yyjson::value& j)
         {
             ProfileRunning running;
             auto           obj_opt = j.as_object();
@@ -245,7 +244,7 @@ namespace Das::Http::Dto
     {
         std::string profile_id;
 
-        yyjson::writer::detail::value ToJson() const
+        yyjson::value ToJson() const
         {
             auto j = Das::Utils::MakeYyjsonObject();
             auto obj_opt = j.as_object();
@@ -257,7 +256,7 @@ namespace Das::Http::Dto
             return j;
         }
 
-        static ProfileId FromJson(const yyjson::writer::detail::value& j)
+        static ProfileId FromJson(const yyjson::value& j)
         {
             ProfileId id;
             auto      obj_opt = j.as_object();
@@ -277,7 +276,7 @@ namespace Das::Http::Dto
         std::string profile_id;
         int32_t     enabled;
 
-        yyjson::writer::detail::value ToJson() const
+        yyjson::value ToJson() const
         {
             auto j = Das::Utils::MakeYyjsonObject();
             auto obj_opt = j.as_object();
@@ -290,7 +289,7 @@ namespace Das::Http::Dto
             return j;
         }
 
-        static ProfileEnabled FromJson(const yyjson::writer::detail::value& j)
+        static ProfileEnabled FromJson(const yyjson::value& j)
         {
             ProfileEnabled enabled;
             auto           obj_opt = j.as_object();
@@ -315,7 +314,7 @@ namespace Das::Http::Dto
         std::string profile_id;
         int32_t     enabled;
 
-        yyjson::writer::detail::value ToJson() const
+        yyjson::value ToJson() const
         {
             auto j = Das::Utils::MakeYyjsonObject();
             auto obj_opt = j.as_object();
@@ -328,7 +327,7 @@ namespace Das::Http::Dto
             return j;
         }
 
-        static ProfileInfo FromJson(const yyjson::writer::detail::value& j)
+        static ProfileInfo FromJson(const yyjson::value& j)
         {
             ProfileInfo info;
             auto        obj_opt = j.as_object();

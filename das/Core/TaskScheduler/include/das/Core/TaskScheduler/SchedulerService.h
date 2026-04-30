@@ -66,7 +66,7 @@ namespace Das::Core::TaskScheduler
         TaskAvailability       availability = TaskAvailability::Available;
         std::string            unavailability_reason;
         std::optional<int64_t> next_execution_time;
-        yyjson::writer::detail::value properties;
+        yyjson::value          properties;
         // Pointer to the task type record if available
         TaskTypeRecord*                        task_type = nullptr;
         DasPtr<Das::PluginInterface::IDasTask> task_instance;
@@ -100,7 +100,7 @@ namespace Das::Core::TaskScheduler
         SchedulerState Status() const;
 
         /// Returns the merged scheduler state as lower camelCase JSON.
-        yyjson::writer::detail::value Get();
+        yyjson::value Get();
 
         /// Add a new task instance by task type GUID. Returns the allocated
         /// instance id via out_task_id.
@@ -111,13 +111,13 @@ namespace Das::Core::TaskScheduler
 
         /// Update task instance properties (validated against descriptors).
         DasResult UpdateTaskProperties(
-            int64_t                              task_id,
-            const yyjson::writer::detail::value& properties);
+            int64_t              task_id,
+            const yyjson::value& properties);
 
         /// Update scheduler-owned internal properties (nextExecutionTime).
         DasResult UpdateTaskInternalProperties(
-            int64_t                              task_id,
-            const yyjson::writer::detail::value& internal_props);
+            int64_t              task_id,
+            const yyjson::value& internal_props);
 
         /// Check whether the scheduler has been initialized.
         bool IsInitialized() const { return initialized_; }

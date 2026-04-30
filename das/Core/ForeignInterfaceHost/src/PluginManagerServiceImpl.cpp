@@ -23,8 +23,8 @@
 namespace Das::Core::Utils
 {
     DasResult CreateDasJsonFromYyjson(
-        const yyjson::writer::detail::value& value,
-        Das::ExportInterface::IDasJson**     pp_out);
+        const yyjson::value&             value,
+        Das::ExportInterface::IDasJson** pp_out);
 }
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN

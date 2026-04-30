@@ -60,7 +60,7 @@ TEST_F(SettingsManagerConcurrencyTest, SameKeySerialized)
     {
         for (int i = 0; i < 50; ++i)
         {
-            yyjson::writer::detail::value data(Das::Utils::MakeYyjsonObject());
+            yyjson::value data(Das::Utils::MakeYyjsonObject());
             (*data.as_object())[std::string_view("value")] = start_value + i;
             sm_->UpdatePluginSettingsJson("0", key_guid, data);
         }
@@ -93,7 +93,7 @@ TEST_F(SettingsManagerConcurrencyTest, HttpWholeFileVsPluginFieldRace)
     {
         for (int i = 0; i < 20; ++i)
         {
-            yyjson::writer::detail::value data(Das::Utils::MakeYyjsonObject());
+            yyjson::value data(Das::Utils::MakeYyjsonObject());
             (*data.as_object())[std::string_view("field_a")] = i;
             (*data.as_object())[std::string_view("field_b")] = "http_write";
             sm_->UpdatePluginSettingsJson("0", key_guid, data);
@@ -106,7 +106,7 @@ TEST_F(SettingsManagerConcurrencyTest, HttpWholeFileVsPluginFieldRace)
     {
         for (int i = 0; i < 20; ++i)
         {
-            yyjson::writer::detail::value field_val(std::to_string(i));
+            yyjson::value field_val(std::to_string(i));
             sm_->UpdatePluginSettingsFieldJson(
                 "0",
                 key_guid,
@@ -149,7 +149,7 @@ TEST_F(SettingsManagerConcurrencyTest, DifferentKeysNonBlocking)
         {
             std::this_thread::yield();
         }
-        yyjson::writer::detail::value data_a(Das::Utils::MakeYyjsonObject());
+        yyjson::value data_a(Das::Utils::MakeYyjsonObject());
         (*data_a.as_object())[std::string_view("data")] = "A";
         sm_->UpdatePluginSettingsJson("0", "plugin-A", data_a);
     };
@@ -160,7 +160,7 @@ TEST_F(SettingsManagerConcurrencyTest, DifferentKeysNonBlocking)
         {
             std::this_thread::yield();
         }
-        yyjson::writer::detail::value data_b(Das::Utils::MakeYyjsonObject());
+        yyjson::value data_b(Das::Utils::MakeYyjsonObject());
         (*data_b.as_object())[std::string_view("data")] = "B";
         sm_->UpdatePluginSettingsJson("0", "plugin-B", data_b);
     };
@@ -197,7 +197,7 @@ TEST_F(
 
     // Initialize plugin settings with a counter field
     {
-        yyjson::writer::detail::value init_data(Das::Utils::MakeYyjsonObject());
+        yyjson::value init_data(Das::Utils::MakeYyjsonObject());
         (*init_data.as_object())[std::string_view("counter")] = "0";
         sm_->UpdatePluginSettingsJson("0", test_guid, init_data);
     }
@@ -209,7 +209,7 @@ TEST_F(
             // UpdatePluginSettingsFieldJson performs a single-API RMW:
             // per-key mutex -> read current -> set field -> WriteJsonFile ->
             // snapshot
-            yyjson::writer::detail::value field_val(std::to_string(i));
+            yyjson::value field_val(std::to_string(i));
             sm_->UpdatePluginSettingsFieldJson(
                 "0",
                 test_guid,
@@ -244,7 +244,7 @@ TEST_F(SettingsManagerConcurrencyTest, RegistryLockNotHeldDuringIO)
     auto writer = [&](const std::string& plugin_name)
     {
         phase.fetch_add(1);
-        yyjson::writer::detail::value data(Das::Utils::MakeYyjsonObject());
+        yyjson::value data(Das::Utils::MakeYyjsonObject());
         (*data.as_object())[std::string_view("name")] = plugin_name;
         sm_->UpdatePluginSettingsJson("0", plugin_name, data);
     };

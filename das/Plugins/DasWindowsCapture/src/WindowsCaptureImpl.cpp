@@ -106,8 +106,7 @@ namespace
 
 DAS_NS_BEGIN
 
-bool WindowsCapture::ParseConfigAndSelectMode(
-    const yyjson::writer::detail::value& config)
+bool WindowsCapture::ParseConfigAndSelectMode(const yyjson::value& config)
 {
     config_ = config;
     auto obj = config_.as_object();

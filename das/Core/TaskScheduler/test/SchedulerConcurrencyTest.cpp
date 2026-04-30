@@ -27,16 +27,15 @@ namespace
 
     /// Helper to write scheduler index + task instance files directly.
     void WriteSchedulerState(
-        Das::Core::SettingsManager::SettingsManager&      sm,
-        int64_t                                           nextTaskId,
-        const std::vector<int64_t>&                       taskOrder,
-        const std::vector<yyjson::writer::detail::value>& taskInstances)
+        Das::Core::SettingsManager::SettingsManager& sm,
+        int64_t                                      nextTaskId,
+        const std::vector<int64_t>&                  taskOrder,
+        const std::vector<yyjson::value>&            taskInstances)
     {
-        yyjson::writer::detail::value index(Das::Utils::MakeYyjsonObject());
+        yyjson::value index(Das::Utils::MakeYyjsonObject());
         (*index.as_object())[std::string_view("nextTaskId")] = nextTaskId;
         {
-            yyjson::writer::detail::value order_arr(
-                Das::Utils::MakeYyjsonArray());
+            yyjson::value order_arr(Das::Utils::MakeYyjsonArray());
             for (auto id : taskOrder)
             {
                 (*order_arr.as_array()).emplace_back(id);
@@ -109,23 +108,23 @@ TEST_F(SchedulerConcurrencyTest, DeleteRetrySleepDoesNotBlockConcurrentOps)
     settings_manager_->CreateProfile("0");
 
     // Create two task instances
-    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    yyjson::value task0(Das::Utils::MakeYyjsonObject());
     (*task0.as_object())[std::string_view("id")] = 0;
     (*task0.as_object())[std::string_view("taskGuid")] =
         "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
     (*task0.as_object())[std::string_view("pluginGuid")] =
         "FFFFFFFF-0000-0000-0000-000000000000";
     (*task0.as_object())[std::string_view("properties")] =
-        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
+        yyjson::value(Das::Utils::MakeYyjsonObject());
 
-    yyjson::writer::detail::value task1(Das::Utils::MakeYyjsonObject());
+    yyjson::value task1(Das::Utils::MakeYyjsonObject());
     (*task1.as_object())[std::string_view("id")] = 1;
     (*task1.as_object())[std::string_view("taskGuid")] =
         "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
     (*task1.as_object())[std::string_view("pluginGuid")] =
         "FFFFFFFF-0000-0000-0000-000000000000";
     (*task1.as_object())[std::string_view("properties")] =
-        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
+        yyjson::value(Das::Utils::MakeYyjsonObject());
 
     WriteSchedulerState(*settings_manager_, 2, {0, 1}, {task0, task1});
 
@@ -165,16 +164,16 @@ TEST_F(SchedulerConcurrencyTest, ConcurrentUpdatesNoNestedLockDeadlock)
 {
     settings_manager_->CreateProfile("0");
 
-    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    yyjson::value task0(Das::Utils::MakeYyjsonObject());
     (*task0.as_object())[std::string_view("id")] = 0;
     (*task0.as_object())[std::string_view("taskGuid")] =
         "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
     (*task0.as_object())[std::string_view("pluginGuid")] =
         "FFFFFFFF-0000-0000-0000-000000000000";
     (*task0.as_object())[std::string_view("nextExecutionTime")] =
-        yyjson::writer::detail::value{};
+        yyjson::value{};
     (*task0.as_object())[std::string_view("properties")] =
-        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
+        yyjson::value(Das::Utils::MakeYyjsonObject());
 
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
@@ -191,8 +190,7 @@ TEST_F(SchedulerConcurrencyTest, ConcurrentUpdatesNoNestedLockDeadlock)
             {
                 // 2026-06-01T00:00:00 UTC = 1780272000, each thread offsets by
                 // hour
-                yyjson::writer::detail::value internal_props(
-                    Das::Utils::MakeYyjsonObject());
+                yyjson::value internal_props(Das::Utils::MakeYyjsonObject());
                 (*internal_props
                       .as_object())[std::string_view("nextExecutionTime")] =
                     static_cast<int64_t>(1780272000LL + i * 3600);

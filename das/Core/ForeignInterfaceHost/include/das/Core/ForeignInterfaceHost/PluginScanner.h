@@ -24,8 +24,7 @@ MarkForDeletion(const std::filesystem::path& plugin_dir, const DasGuid& guid);
 DAS_EXPORT std::filesystem::path FindManifest(
     const std::filesystem::path& plugin_dir_entry);
 
-DAS_EXPORT yyjson::writer::detail::value PluginPackageDescToJson(
-    const PluginPackageDesc& desc);
+DAS_EXPORT yyjson::value PluginPackageDescToJson(const PluginPackageDesc& desc);
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
 

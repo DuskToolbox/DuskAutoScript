@@ -132,8 +132,7 @@ namespace
         Das::Core::SettingsManager::SettingsManager sm(test_dir_);
         sm.CreateProfile("0");
 
-        yyjson::writer::detail::value profile_data(
-            Das::Utils::MakeYyjsonObject());
+        yyjson::value profile_data(Das::Utils::MakeYyjsonObject());
         (*profile_data.as_object())[std::string_view("name")] = "test-profile";
         (*profile_data.as_object())[std::string_view("active")] = true;
         auto update_result = sm.UpdateProfile(
@@ -160,8 +159,7 @@ namespace
         Das::Core::SettingsManager::SettingsManager sm(test_dir_);
         sm.CreateProfile("0");
 
-        yyjson::writer::detail::value plugin_data(
-            Das::Utils::MakeYyjsonObject());
+        yyjson::value plugin_data(Das::Utils::MakeYyjsonObject());
         (*plugin_data.as_object())[std::string_view("setting1")] = "value1";
         (*plugin_data.as_object())[std::string_view("count")] = 42;
         auto update_result = sm.UpdatePluginSettings(
@@ -203,8 +201,7 @@ namespace
                 {
                     for (int i = 0; i < num_iterations; ++i)
                     {
-                        yyjson::writer::detail::value data(
-                            Das::Utils::MakeYyjsonObject());
+                        yyjson::value data(Das::Utils::MakeYyjsonObject());
                         (*data.as_object())[std::string_view("writer")] = w;
                         (*data.as_object())[std::string_view("iteration")] = i;
                         sm.UpdateGlobalSettings(
@@ -255,8 +252,7 @@ namespace
         Das::Core::SettingsManager::SettingsManager sm(test_dir_);
         sm.CreateProfile("0");
 
-        yyjson::writer::detail::value plugin_data(
-            Das::Utils::MakeYyjsonObject());
+        yyjson::value plugin_data(Das::Utils::MakeYyjsonObject());
         (*plugin_data.as_object())[std::string_view("adbPath")] =
             "/usr/bin/adb";
         (*plugin_data.as_object())[std::string_view("timeout")] = 30;
@@ -287,8 +283,7 @@ namespace
         Das::Core::SettingsManager::SettingsManager sm(test_dir_);
         sm.CreateProfile("0");
 
-        yyjson::writer::detail::value plugin_data(
-            Das::Utils::MakeYyjsonObject());
+        yyjson::value plugin_data(Das::Utils::MakeYyjsonObject());
         (*plugin_data.as_object())[std::string_view("key")] = "value";
         auto result =
             sm.UpdatePluginSettingsJson("0", "some-guid", plugin_data);
@@ -306,16 +301,15 @@ namespace
         sm.CreateProfile("0");
 
         // Set initial plugin settings
-        yyjson::writer::detail::value plugin_data(
-            Das::Utils::MakeYyjsonObject());
+        yyjson::value plugin_data(Das::Utils::MakeYyjsonObject());
         (*plugin_data.as_object())[std::string_view("field1")] = "original";
         (*plugin_data.as_object())[std::string_view("field2")] = 100;
         sm.UpdatePluginSettingsJson("0", "my-guid", plugin_data);
 
         // Update a single field
         {
-            yyjson::writer::detail::value field_val("updated");
-            auto result = sm.UpdatePluginSettingsFieldJson(
+            yyjson::value field_val("updated");
+            auto          result = sm.UpdatePluginSettingsFieldJson(
                 "0",
                 "my-guid",
                 "field1",
@@ -337,8 +331,7 @@ namespace
         Das::Core::SettingsManager::SettingsManager sm(test_dir_);
         sm.CreateProfile("0");
 
-        yyjson::writer::detail::value plugin_data(
-            Das::Utils::MakeYyjsonObject());
+        yyjson::value plugin_data(Das::Utils::MakeYyjsonObject());
         (*plugin_data.as_object())[std::string_view("setting")] = "persistent";
         sm.UpdatePluginSettingsJson("0", "guid-123", plugin_data);
 
@@ -379,10 +372,10 @@ namespace
         Das::Core::SettingsManager::SettingsManager sm(test_dir_);
         sm.CreateProfile("0");
 
-        yyjson::writer::detail::value state(Das::Utils::MakeYyjsonObject());
+        yyjson::value state(Das::Utils::MakeYyjsonObject());
         (*state.as_object())[std::string_view("nextTaskId")] = 5;
         (*state.as_object())[std::string_view("taskOrder")] =
-            yyjson::writer::detail::value(Das::Utils::MakeYyjsonArray());
+            yyjson::value(Das::Utils::MakeYyjsonArray());
         auto result = sm.UpdateSchedulerIndexJson("0", state);
         EXPECT_EQ(result, DAS_S_OK);
 
@@ -406,10 +399,10 @@ namespace
         Das::Core::SettingsManager::SettingsManager sm(test_dir_);
         sm.CreateProfile("0");
 
-        yyjson::writer::detail::value state(Das::Utils::MakeYyjsonObject());
+        yyjson::value state(Das::Utils::MakeYyjsonObject());
         (*state.as_object())[std::string_view("nextTaskId")] = 3;
         {
-            yyjson::writer::detail::value arr(Das::Utils::MakeYyjsonArray());
+            yyjson::value arr(Das::Utils::MakeYyjsonArray());
             (*arr.as_array()).emplace_back(0);
             (*arr.as_array()).emplace_back(1);
             (*state.as_object())[std::string_view("taskOrder")] =
@@ -449,10 +442,10 @@ namespace
         Das::Core::SettingsManager::SettingsManager sm(test_dir_);
         sm.CreateProfile("0");
 
-        yyjson::writer::detail::value state(Das::Utils::MakeYyjsonObject());
+        yyjson::value state(Das::Utils::MakeYyjsonObject());
         (*state.as_object())[std::string_view("nextTaskId")] = 3;
         {
-            yyjson::writer::detail::value arr(Das::Utils::MakeYyjsonArray());
+            yyjson::value arr(Das::Utils::MakeYyjsonArray());
             (*arr.as_array()).emplace_back(2);
             (*arr.as_array()).emplace_back(0);
             (*arr.as_array()).emplace_back(1);
@@ -492,10 +485,10 @@ namespace
         Das::Core::SettingsManager::SettingsManager sm(test_dir_);
         sm.CreateProfile("0");
 
-        yyjson::writer::detail::value state(Das::Utils::MakeYyjsonObject());
+        yyjson::value state(Das::Utils::MakeYyjsonObject());
         (*state.as_object())[std::string_view("nextTaskId")] = 1;
         (*state.as_object())[std::string_view("taskOrder")] =
-            yyjson::writer::detail::value(Das::Utils::MakeYyjsonArray());
+            yyjson::value(Das::Utils::MakeYyjsonArray());
         sm.UpdateSchedulerIndexJson("0", state);
 
         // ui.json should not contain scheduler data
@@ -511,16 +504,16 @@ namespace
         Das::Core::SettingsManager::SettingsManager sm(test_dir_);
         sm.CreateProfile("0");
 
-        yyjson::writer::detail::value task(Das::Utils::MakeYyjsonObject());
+        yyjson::value task(Das::Utils::MakeYyjsonObject());
         (*task.as_object())[std::string_view("id")] = 0;
         (*task.as_object())[std::string_view("taskGuid")] =
             "B4F60C54-67DF-407A-B891-6D3C90CDB9A1";
         (*task.as_object())[std::string_view("pluginGuid")] =
             "8F08935F-11B9-4D3A-BB0D-96D1862FE3F6";
         (*task.as_object())[std::string_view("nextExecutionTime")] =
-            yyjson::writer::detail::value{};
+            yyjson::value{};
         {
-            yyjson::writer::detail::value props(Das::Utils::MakeYyjsonObject());
+            yyjson::value props(Das::Utils::MakeYyjsonObject());
             (*props.as_object())[std::string_view("claimMail")] = true;
             (*props.as_object())[std::string_view("maxRetryCount")] = 3;
             (*task.as_object())[std::string_view("properties")] =
@@ -562,7 +555,7 @@ namespace
         Das::Core::SettingsManager::SettingsManager sm(test_dir_);
         sm.CreateProfile("0");
 
-        yyjson::writer::detail::value task(Das::Utils::MakeYyjsonObject());
+        yyjson::value task(Das::Utils::MakeYyjsonObject());
         (*task.as_object())[std::string_view("id")] = 5;
         sm.UpdateTaskInstanceJson("0", 5, task);
 
@@ -588,12 +581,12 @@ namespace
         Das::Core::SettingsManager::SettingsManager sm(test_dir_);
         sm.CreateProfile("0");
 
-        yyjson::writer::detail::value task(Das::Utils::MakeYyjsonObject());
+        yyjson::value task(Das::Utils::MakeYyjsonObject());
         (*task.as_object())[std::string_view("id")] = 0;
         (*task.as_object())[std::string_view("taskGuid")] =
             "B4F60C54-67DF-407A-B891-6D3C90CDB9A1";
         {
-            yyjson::writer::detail::value props(Das::Utils::MakeYyjsonObject());
+            yyjson::value props(Das::Utils::MakeYyjsonObject());
             (*props.as_object())[std::string_view("claimMail")] = false;
             (*task.as_object())[std::string_view("properties")] =
                 std::move(props);
@@ -661,7 +654,7 @@ namespace
         sm.CreateProfile("0");
 
         // Write valid JSON first
-        yyjson::writer::detail::value valid(Das::Utils::MakeYyjsonObject());
+        yyjson::value valid(Das::Utils::MakeYyjsonObject());
         (*valid.as_object())[std::string_view("existingKey")] = "existingValue";
         sm.UpdatePluginSettingsJson("0", "good-guid", valid);
 
@@ -690,12 +683,12 @@ namespace
         sm.CreateProfile("0");
 
         // Create two task instance files
-        yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+        yyjson::value task0(Das::Utils::MakeYyjsonObject());
         (*task0.as_object())[std::string_view("id")] = 0;
         (*task0.as_object())[std::string_view("taskGuid")] = "guid-A";
         sm.UpdateTaskInstanceJson("0", 0, task0);
 
-        yyjson::writer::detail::value task1(Das::Utils::MakeYyjsonObject());
+        yyjson::value task1(Das::Utils::MakeYyjsonObject());
         (*task1.as_object())[std::string_view("id")] = 1;
         (*task1.as_object())[std::string_view("taskGuid")] = "guid-B";
         sm.UpdateTaskInstanceJson("0", 1, task1);
@@ -767,16 +760,14 @@ namespace
 
         // Write to ui.json
         {
-            yyjson::writer::detail::value ui_data(
-                Das::Utils::MakeYyjsonObject());
+            yyjson::value ui_data(Das::Utils::MakeYyjsonObject());
             (*ui_data.as_object())[std::string_view("theme")] = "dark";
             sm.UpdateProfileJson("0", ui_data);
         }
 
         // Write plugin settings
         {
-            yyjson::writer::detail::value plugin_data(
-                Das::Utils::MakeYyjsonObject());
+            yyjson::value plugin_data(Das::Utils::MakeYyjsonObject());
             (*plugin_data.as_object())[std::string_view("adbPath")] =
                 "/usr/bin/adb";
             sm.UpdatePluginSettingsJson(
@@ -787,12 +778,10 @@ namespace
 
         // Write scheduler index
         {
-            yyjson::writer::detail::value scheduler(
-                Das::Utils::MakeYyjsonObject());
+            yyjson::value scheduler(Das::Utils::MakeYyjsonObject());
             (*scheduler.as_object())[std::string_view("nextTaskId")] = 1;
             {
-                yyjson::writer::detail::value arr(
-                    Das::Utils::MakeYyjsonArray());
+                yyjson::value arr(Das::Utils::MakeYyjsonArray());
                 (*arr.as_array()).emplace_back(0);
                 (*scheduler.as_object())[std::string_view("taskOrder")] =
                     std::move(arr);
@@ -802,7 +791,7 @@ namespace
 
         // Write task instance
         {
-            yyjson::writer::detail::value task(Das::Utils::MakeYyjsonObject());
+            yyjson::value task(Das::Utils::MakeYyjsonObject());
             (*task.as_object())[std::string_view("id")] = 0;
             (*task.as_object())[std::string_view("taskGuid")] =
                 "B4F60C54-67DF-407A-B891-6D3C90CDB9A1";
@@ -854,8 +843,7 @@ namespace
         Das::Core::SettingsManager::SettingsManager sm(test_dir_);
         sm.CreateProfile("0");
 
-        yyjson::writer::detail::value plugin_data(
-            Das::Utils::MakeYyjsonObject());
+        yyjson::value plugin_data(Das::Utils::MakeYyjsonObject());
         (*plugin_data.as_object())[std::string_view("setting1")] = "value1";
         sm.UpdatePluginSettingsJson("0", "test-guid", plugin_data);
 

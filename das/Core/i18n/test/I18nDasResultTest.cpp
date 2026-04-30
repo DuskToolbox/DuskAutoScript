@@ -25,7 +25,7 @@ const static auto text = DAS_UTILS_STRINGUTILS_DEFINE_U8STR(R"(
 auto GetJson()
 {
     const static auto result = Das::Utils::ParseYyjsonFromString(text);
-    return result ? std::move(*result) : yyjson::writer::detail::value{};
+    return result ? std::move(*result) : yyjson::value{};
 }
 
 TEST(DasCoreI18n, DasResultDefaultLocaleTest)

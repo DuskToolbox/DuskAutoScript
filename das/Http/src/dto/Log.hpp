@@ -15,7 +15,7 @@ namespace Das::Http::Dto
     {
         std::vector<std::string> logs;
 
-        yyjson::writer::detail::value ToJson() const
+        yyjson::value ToJson() const
         {
             auto j = Das::Utils::MakeYyjsonObject();
             auto arr = Das::Utils::MakeYyjsonArray();
@@ -36,7 +36,7 @@ namespace Das::Http::Dto
             return j;
         }
 
-        static LogsData FromJson(const yyjson::writer::detail::value& j)
+        static LogsData FromJson(const yyjson::value& j)
         {
             LogsData data;
             auto     obj_opt = j.as_object();

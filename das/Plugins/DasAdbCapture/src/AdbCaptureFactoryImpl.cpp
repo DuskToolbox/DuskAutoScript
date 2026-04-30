@@ -19,7 +19,7 @@ AdbCaptureFactoryImpl::~AdbCaptureFactoryImpl() { AdbCaptureRelease(); }
 DAS_NS_ANONYMOUS_DETAILS_BEGIN
 
 auto GetUrlFromJson(
-    const yyjson::writer::detail::value& config,
+    const yyjson::value& config,
     const char** current_access_key) -> Das::Utils::Expected<boost::url_view>
 {
     auto           on_exit = DAS::Utils::OnExit{[&current_access_key]()

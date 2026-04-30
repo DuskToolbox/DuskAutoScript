@@ -43,16 +43,15 @@ namespace
 
     /// Helper to write scheduler index + task instance files directly.
     void WriteSchedulerState(
-        Das::Core::SettingsManager::SettingsManager&      sm,
-        int64_t                                           nextTaskId,
-        const std::vector<int64_t>&                       taskOrder,
-        const std::vector<yyjson::writer::detail::value>& taskInstances)
+        Das::Core::SettingsManager::SettingsManager& sm,
+        int64_t                                      nextTaskId,
+        const std::vector<int64_t>&                  taskOrder,
+        const std::vector<yyjson::value>&            taskInstances)
     {
-        yyjson::writer::detail::value index(Das::Utils::MakeYyjsonObject());
+        yyjson::value index(Das::Utils::MakeYyjsonObject());
         (*index.as_object())[std::string_view("nextTaskId")] = nextTaskId;
         {
-            yyjson::writer::detail::value order_arr(
-                Das::Utils::MakeYyjsonArray());
+            yyjson::value order_arr(Das::Utils::MakeYyjsonArray());
             for (auto id : taskOrder)
             {
                 (*order_arr.as_array()).emplace_back(id);
@@ -203,16 +202,16 @@ TEST_F(SchedulerServiceTest, Initialize_MaterializesPersistedInstances)
 {
     settings_manager_->CreateProfile("0");
 
-    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    yyjson::value task0(Das::Utils::MakeYyjsonObject());
     (*task0.as_object())[std::string_view("id")] = 0;
     (*task0.as_object())[std::string_view("taskGuid")] =
         "00000000-0000-0000-0000-000000000001";
     (*task0.as_object())[std::string_view("pluginGuid")] =
         "00000000-0000-0000-0000-000000000002";
     (*task0.as_object())[std::string_view("nextExecutionTime")] =
-        yyjson::writer::detail::value{};
+        yyjson::value{};
     {
-        yyjson::writer::detail::value p(Das::Utils::MakeYyjsonObject());
+        yyjson::value p(Das::Utils::MakeYyjsonObject());
         (*p.as_object())[std::string_view("key1")] = "value1";
         (*task0.as_object())[std::string_view("properties")] = std::move(p);
     }
@@ -250,11 +249,10 @@ TEST_F(SchedulerServiceTest, Initialize_CorruptTaskFile_VisibleAsInvalid)
 {
     settings_manager_->CreateProfile("0");
 
-    yyjson::writer::detail::value scheduler_index(
-        Das::Utils::MakeYyjsonObject());
+    yyjson::value scheduler_index(Das::Utils::MakeYyjsonObject());
     (*scheduler_index.as_object())[std::string_view("nextTaskId")] = 1;
     {
-        yyjson::writer::detail::value arr(Das::Utils::MakeYyjsonArray());
+        yyjson::value arr(Das::Utils::MakeYyjsonArray());
         (*arr.as_array()).emplace_back(0);
         (*scheduler_index.as_object())[std::string_view("taskOrder")] =
             std::move(arr);
@@ -297,23 +295,23 @@ TEST_F(SchedulerServiceTest, Initialize_MissingTaskType_Unavailable)
 {
     settings_manager_->CreateProfile("0");
 
-    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    yyjson::value task0(Das::Utils::MakeYyjsonObject());
     (*task0.as_object())[std::string_view("id")] = 0;
     (*task0.as_object())[std::string_view("taskGuid")] =
         "11111111-1111-1111-1111-111111111111";
     (*task0.as_object())[std::string_view("pluginGuid")] =
         "00000000-0000-0000-0000-000000000002";
     (*task0.as_object())[std::string_view("properties")] =
-        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
+        yyjson::value(Das::Utils::MakeYyjsonObject());
 
-    yyjson::writer::detail::value task1(Das::Utils::MakeYyjsonObject());
+    yyjson::value task1(Das::Utils::MakeYyjsonObject());
     (*task1.as_object())[std::string_view("id")] = 1;
     (*task1.as_object())[std::string_view("taskGuid")] =
         "22222222-2222-2222-2222-222222222222";
     (*task1.as_object())[std::string_view("pluginGuid")] =
         "00000000-0000-0000-0000-000000000002";
     (*task1.as_object())[std::string_view("properties")] =
-        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
+        yyjson::value(Das::Utils::MakeYyjsonObject());
 
     WriteSchedulerState(*settings_manager_, 2, {0, 1}, {task0, task1});
 
@@ -358,7 +356,7 @@ TEST_F(SchedulerServiceTest, Get_ReturnsMergedView)
 {
     settings_manager_->CreateProfile("0");
 
-    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    yyjson::value task0(Das::Utils::MakeYyjsonObject());
     (*task0.as_object())[std::string_view("id")] = 0;
     (*task0.as_object())[std::string_view("taskGuid")] =
         "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
@@ -367,7 +365,7 @@ TEST_F(SchedulerServiceTest, Get_ReturnsMergedView)
     // 2026-04-23T12:30:00+08:00 = 2026-04-23T04:30:00Z = 1776918600
     (*task0.as_object())[std::string_view("nextExecutionTime")] = 1776918600;
     {
-        yyjson::writer::detail::value p(Das::Utils::MakeYyjsonObject());
+        yyjson::value p(Das::Utils::MakeYyjsonObject());
         (*p.as_object())[std::string_view("setting1")] = "value1";
         (*p.as_object())[std::string_view("setting2")] = 42;
         (*task0.as_object())[std::string_view("properties")] = std::move(p);
@@ -417,11 +415,10 @@ TEST_F(SchedulerServiceTest, Get_CorruptTaskFile_VisibleWithInvalidMarker)
 {
     settings_manager_->CreateProfile("0");
 
-    yyjson::writer::detail::value scheduler_index(
-        Das::Utils::MakeYyjsonObject());
+    yyjson::value scheduler_index(Das::Utils::MakeYyjsonObject());
     (*scheduler_index.as_object())[std::string_view("nextTaskId")] = 2;
     {
-        yyjson::writer::detail::value arr(Das::Utils::MakeYyjsonArray());
+        yyjson::value arr(Das::Utils::MakeYyjsonArray());
         (*arr.as_array()).emplace_back(0);
         (*arr.as_array()).emplace_back(1);
         (*scheduler_index.as_object())[std::string_view("taskOrder")] =
@@ -437,14 +434,14 @@ TEST_F(SchedulerServiceTest, Get_CorruptTaskFile_VisibleWithInvalidMarker)
     }
 
     // Task 1: valid file
-    yyjson::writer::detail::value task1(Das::Utils::MakeYyjsonObject());
+    yyjson::value task1(Das::Utils::MakeYyjsonObject());
     (*task1.as_object())[std::string_view("id")] = 1;
     (*task1.as_object())[std::string_view("taskGuid")] =
         "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
     (*task1.as_object())[std::string_view("pluginGuid")] =
         "FFFFFFFF-0000-0000-0000-000000000000";
     {
-        yyjson::writer::detail::value p(Das::Utils::MakeYyjsonObject());
+        yyjson::value p(Das::Utils::MakeYyjsonObject());
         (*p.as_object())[std::string_view("key")] = "value";
         (*task1.as_object())[std::string_view("properties")] = std::move(p);
     }
@@ -513,23 +510,23 @@ TEST_F(SchedulerServiceTest, DeleteTask_PersistsRemoval)
 {
     settings_manager_->CreateProfile("0");
 
-    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    yyjson::value task0(Das::Utils::MakeYyjsonObject());
     (*task0.as_object())[std::string_view("id")] = 0;
     (*task0.as_object())[std::string_view("taskGuid")] =
         "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
     (*task0.as_object())[std::string_view("pluginGuid")] =
         "FFFFFFFF-0000-0000-0000-000000000000";
     (*task0.as_object())[std::string_view("properties")] =
-        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
+        yyjson::value(Das::Utils::MakeYyjsonObject());
 
-    yyjson::writer::detail::value task1(Das::Utils::MakeYyjsonObject());
+    yyjson::value task1(Das::Utils::MakeYyjsonObject());
     (*task1.as_object())[std::string_view("id")] = 1;
     (*task1.as_object())[std::string_view("taskGuid")] =
         "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
     (*task1.as_object())[std::string_view("pluginGuid")] =
         "FFFFFFFF-0000-0000-0000-000000000000";
     (*task1.as_object())[std::string_view("properties")] =
-        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
+        yyjson::value(Das::Utils::MakeYyjsonObject());
 
     WriteSchedulerState(*settings_manager_, 2, {0, 1}, {task0, task1});
 
@@ -578,11 +575,10 @@ TEST_F(SchedulerServiceTest, DeleteTask_InvalidInstance_Succeeds)
 {
     settings_manager_->CreateProfile("0");
 
-    yyjson::writer::detail::value scheduler_index(
-        Das::Utils::MakeYyjsonObject());
+    yyjson::value scheduler_index(Das::Utils::MakeYyjsonObject());
     (*scheduler_index.as_object())[std::string_view("nextTaskId")] = 1;
     {
-        yyjson::writer::detail::value arr(Das::Utils::MakeYyjsonArray());
+        yyjson::value arr(Das::Utils::MakeYyjsonArray());
         (*arr.as_array()).emplace_back(0);
         (*scheduler_index.as_object())[std::string_view("taskOrder")] =
             std::move(arr);
@@ -623,14 +619,14 @@ TEST_F(SchedulerServiceTest, DeleteTask_UnavailableInstance_Succeeds)
 {
     settings_manager_->CreateProfile("0");
 
-    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    yyjson::value task0(Das::Utils::MakeYyjsonObject());
     (*task0.as_object())[std::string_view("id")] = 0;
     (*task0.as_object())[std::string_view("taskGuid")] =
         "11111111-1111-1111-1111-111111111111";
     (*task0.as_object())[std::string_view("pluginGuid")] =
         "00000000-0000-0000-0000-000000000002";
     (*task0.as_object())[std::string_view("properties")] =
-        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
+        yyjson::value(Das::Utils::MakeYyjsonObject());
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
@@ -659,14 +655,14 @@ TEST_F(SchedulerServiceTest, DeleteTask_PersistenceFailure_RollsBack)
 {
     settings_manager_->CreateProfile("0");
 
-    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    yyjson::value task0(Das::Utils::MakeYyjsonObject());
     (*task0.as_object())[std::string_view("id")] = 0;
     (*task0.as_object())[std::string_view("taskGuid")] =
         "11111111-1111-1111-1111-111111111111";
     (*task0.as_object())[std::string_view("pluginGuid")] =
         "00000000-0000-0000-0000-000000000002";
     (*task0.as_object())[std::string_view("properties")] =
-        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
+        yyjson::value(Das::Utils::MakeYyjsonObject());
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
@@ -711,24 +707,23 @@ TEST_F(SchedulerServiceTest, UpdateInternalProperties_NextExecutionTime)
 {
     settings_manager_->CreateProfile("0");
 
-    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    yyjson::value task0(Das::Utils::MakeYyjsonObject());
     (*task0.as_object())[std::string_view("id")] = 0;
     (*task0.as_object())[std::string_view("taskGuid")] =
         "11111111-1111-1111-1111-111111111111";
     (*task0.as_object())[std::string_view("pluginGuid")] =
         "00000000-0000-0000-0000-000000000002";
     (*task0.as_object())[std::string_view("nextExecutionTime")] =
-        yyjson::writer::detail::value{};
+        yyjson::value{};
     (*task0.as_object())[std::string_view("properties")] =
-        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
+        yyjson::value(Das::Utils::MakeYyjsonObject());
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
     // Update nextExecutionTime
     // 2026-05-01T08:00:00+08:00 = 2026-05-01T00:00:00Z = 1777593600
-    yyjson::writer::detail::value internal_props(
-        Das::Utils::MakeYyjsonObject());
+    yyjson::value internal_props(Das::Utils::MakeYyjsonObject());
     (*internal_props.as_object())[std::string_view("nextExecutionTime")] =
         1777593600;
     auto result = scheduler_->UpdateTaskInternalProperties(0, internal_props);
@@ -756,7 +751,7 @@ TEST_F(SchedulerServiceTest, UpdateInternalProperties_ClearNextExecutionTime)
 {
     settings_manager_->CreateProfile("0");
 
-    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    yyjson::value task0(Das::Utils::MakeYyjsonObject());
     (*task0.as_object())[std::string_view("id")] = 0;
     (*task0.as_object())[std::string_view("taskGuid")] =
         "11111111-1111-1111-1111-111111111111";
@@ -765,13 +760,12 @@ TEST_F(SchedulerServiceTest, UpdateInternalProperties_ClearNextExecutionTime)
     // 2026-05-01T08:00:00+08:00 = 2026-05-01T00:00:00Z = 1777593600
     (*task0.as_object())[std::string_view("nextExecutionTime")] = 1777593600;
     (*task0.as_object())[std::string_view("properties")] =
-        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
+        yyjson::value(Das::Utils::MakeYyjsonObject());
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
-    yyjson::writer::detail::value internal_props(
-        Das::Utils::MakeYyjsonObject());
+    yyjson::value internal_props(Das::Utils::MakeYyjsonObject());
     (*internal_props.as_object())[std::string_view("nextExecutionTime")] =
         nullptr;
     auto result = scheduler_->UpdateTaskInternalProperties(0, internal_props);
@@ -788,7 +782,7 @@ TEST_F(SchedulerServiceTest, UnparseableNextExecutionTime_PreservedInGet)
 {
     settings_manager_->CreateProfile("0");
 
-    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    yyjson::value task0(Das::Utils::MakeYyjsonObject());
     (*task0.as_object())[std::string_view("id")] = 0;
     (*task0.as_object())[std::string_view("taskGuid")] =
         "11111111-2222-3333-4444-555555555555";
@@ -797,7 +791,7 @@ TEST_F(SchedulerServiceTest, UnparseableNextExecutionTime_PreservedInGet)
     (*task0.as_object())[std::string_view("nextExecutionTime")] =
         -1; // Invalid timestamp, preserved as-is
     (*task0.as_object())[std::string_view("properties")] =
-        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
+        yyjson::value(Das::Utils::MakeYyjsonObject());
 
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
@@ -826,8 +820,7 @@ TEST_F(SchedulerServiceTest, UpdateInternalProperties_NotFound)
 {
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
-    yyjson::writer::detail::value internal_props(
-        Das::Utils::MakeYyjsonObject());
+    yyjson::value internal_props(Das::Utils::MakeYyjsonObject());
     (*internal_props.as_object())[std::string_view("nextExecutionTime")] =
         1777593600;
     auto result = scheduler_->UpdateTaskInternalProperties(99, internal_props);
@@ -842,19 +835,19 @@ TEST_F(SchedulerServiceTest, UpdateProperties_UnavailableInstance_ReturnsError)
 {
     settings_manager_->CreateProfile("0");
 
-    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    yyjson::value task0(Das::Utils::MakeYyjsonObject());
     (*task0.as_object())[std::string_view("id")] = 0;
     (*task0.as_object())[std::string_view("taskGuid")] =
         "11111111-1111-1111-1111-111111111111";
     (*task0.as_object())[std::string_view("pluginGuid")] =
         "00000000-0000-0000-0000-000000000002";
     (*task0.as_object())[std::string_view("properties")] =
-        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
+        yyjson::value(Das::Utils::MakeYyjsonObject());
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
-    yyjson::writer::detail::value props(Das::Utils::MakeYyjsonObject());
+    yyjson::value props(Das::Utils::MakeYyjsonObject());
     (*props.as_object())[std::string_view("someKey")] = "someValue";
     auto result = scheduler_->UpdateTaskProperties(0, props);
     EXPECT_NE(result, DAS_S_OK);
@@ -864,11 +857,10 @@ TEST_F(SchedulerServiceTest, UpdateProperties_InvalidInstance_ReturnsError)
 {
     settings_manager_->CreateProfile("0");
 
-    yyjson::writer::detail::value scheduler_index(
-        Das::Utils::MakeYyjsonObject());
+    yyjson::value scheduler_index(Das::Utils::MakeYyjsonObject());
     (*scheduler_index.as_object())[std::string_view("nextTaskId")] = 1;
     {
-        yyjson::writer::detail::value arr(Das::Utils::MakeYyjsonArray());
+        yyjson::value arr(Das::Utils::MakeYyjsonArray());
         (*arr.as_array()).emplace_back(0);
         (*scheduler_index.as_object())[std::string_view("taskOrder")] =
             std::move(arr);
@@ -883,7 +875,7 @@ TEST_F(SchedulerServiceTest, UpdateProperties_InvalidInstance_ReturnsError)
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
-    yyjson::writer::detail::value props(Das::Utils::MakeYyjsonObject());
+    yyjson::value props(Das::Utils::MakeYyjsonObject());
     (*props.as_object())[std::string_view("someKey")] = "someValue";
     auto result = scheduler_->UpdateTaskProperties(0, props);
     EXPECT_NE(result, DAS_S_OK);
@@ -923,7 +915,7 @@ TEST_F(SchedulerServiceTest, UpdateProperties_NotFound)
 {
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
-    yyjson::writer::detail::value props(Das::Utils::MakeYyjsonObject());
+    yyjson::value props(Das::Utils::MakeYyjsonObject());
     (*props.as_object())[std::string_view("key")] = "value";
     auto result = scheduler_->UpdateTaskProperties(99, props);
     EXPECT_EQ(result, DAS_E_NOT_FOUND);
@@ -946,22 +938,21 @@ TEST_F(SchedulerServiceTest, UpdateInternalProperties_PersistsToFile)
 {
     settings_manager_->CreateProfile("0");
 
-    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    yyjson::value task0(Das::Utils::MakeYyjsonObject());
     (*task0.as_object())[std::string_view("id")] = 0;
     (*task0.as_object())[std::string_view("taskGuid")] =
         "11111111-1111-1111-1111-111111111111";
     (*task0.as_object())[std::string_view("pluginGuid")] =
         "00000000-0000-0000-0000-000000000002";
     (*task0.as_object())[std::string_view("nextExecutionTime")] =
-        yyjson::writer::detail::value{};
+        yyjson::value{};
     (*task0.as_object())[std::string_view("properties")] =
-        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
+        yyjson::value(Das::Utils::MakeYyjsonObject());
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
-    yyjson::writer::detail::value internal_props(
-        Das::Utils::MakeYyjsonObject());
+    yyjson::value internal_props(Das::Utils::MakeYyjsonObject());
     // 2026-06-01T10:00:00+08:00 = 2026-06-01T02:00:00Z = 1780279200
     (*internal_props.as_object())[std::string_view("nextExecutionTime")] =
         1780279200;
@@ -1626,7 +1617,7 @@ private:
 
 void WriteFactoryPluginManifest(const std::filesystem::path& manifest_path)
 {
-    yyjson::writer::detail::value manifest(Das::Utils::MakeYyjsonObject());
+    yyjson::value manifest(Das::Utils::MakeYyjsonObject());
     (*manifest.as_object())[std::string_view("name")] = "FactoryPlugin";
     (*manifest.as_object())[std::string_view("author")] = "Tests";
     (*manifest.as_object())[std::string_view("version")] = "1.0";
@@ -1638,18 +1629,17 @@ void WriteFactoryPluginManifest(const std::filesystem::path& manifest_path)
     (*manifest.as_object())[std::string_view("pluginFilenameExtension")] =
         "dll";
     (*manifest.as_object())[std::string_view("settings")] =
-        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
+        yyjson::value(Das::Utils::MakeYyjsonObject());
     {
-        yyjson::writer::detail::value task_entry(
-            Das::Utils::MakeYyjsonObject());
+        yyjson::value task_entry(Das::Utils::MakeYyjsonObject());
         (*task_entry.as_object())[std::string_view("pluginGuid")] =
             FactoryPluginGuidString;
         (*task_entry.as_object())[std::string_view("name")] = "factoryTask";
         (*task_entry.as_object())[std::string_view("description")] =
             "Scheduler test task";
         (*task_entry.as_object())[std::string_view("descriptors")] =
-            yyjson::writer::detail::value(Das::Utils::MakeYyjsonArray());
-        yyjson::writer::detail::value tasks_obj(Das::Utils::MakeYyjsonObject());
+            yyjson::value(Das::Utils::MakeYyjsonArray());
+        yyjson::value tasks_obj(Das::Utils::MakeYyjsonObject());
         (*tasks_obj.as_object())[std::string_view(FactoryTaskGuidString)] =
             std::move(task_entry);
         (*manifest.as_object())[std::string_view("tasks")] =
@@ -1681,16 +1671,16 @@ namespace
 
         // Write one task instance in the scheduler state
         sm.CreateProfile("0");
-        yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+        yyjson::value task0(Das::Utils::MakeYyjsonObject());
         (*task0.as_object())[std::string_view("id")] = 0;
         (*task0.as_object())[std::string_view("taskGuid")] =
             "A1B2C3D4-E5F6-7890-ABCD-EF1234567890";
         (*task0.as_object())[std::string_view("pluginGuid")] =
             "00000000-0000-0000-0000-000000000000";
         (*task0.as_object())[std::string_view("nextExecutionTime")] =
-            yyjson::writer::detail::value{};
+            yyjson::value{};
         {
-            yyjson::writer::detail::value p(Das::Utils::MakeYyjsonObject());
+            yyjson::value p(Das::Utils::MakeYyjsonObject());
             (*p.as_object())[std::string_view("key1")] = "value1";
             (*task0.as_object())[std::string_view("properties")] = std::move(p);
         }
@@ -1892,11 +1882,10 @@ TEST_F(SchedulerServiceTest, OnTick_SkipsInvalidInstance)
     settings_manager_->CreateProfile("0");
 
     // Write a corrupt task instance file
-    yyjson::writer::detail::value scheduler_index(
-        Das::Utils::MakeYyjsonObject());
+    yyjson::value scheduler_index(Das::Utils::MakeYyjsonObject());
     (*scheduler_index.as_object())[std::string_view("nextTaskId")] = 1;
     {
-        yyjson::writer::detail::value arr(Das::Utils::MakeYyjsonArray());
+        yyjson::value arr(Das::Utils::MakeYyjsonArray());
         (*arr.as_array()).emplace_back(0);
         (*scheduler_index.as_object())[std::string_view("taskOrder")] =
             std::move(arr);
@@ -1921,14 +1910,14 @@ TEST_F(SchedulerServiceTest, OnTick_SkipsUnavailableInstance)
     settings_manager_->CreateProfile("0");
 
     // Write a task instance referencing a non-existent task type
-    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    yyjson::value task0(Das::Utils::MakeYyjsonObject());
     (*task0.as_object())[std::string_view("id")] = 0;
     (*task0.as_object())[std::string_view("taskGuid")] =
         "11111111-1111-1111-1111-111111111111";
     (*task0.as_object())[std::string_view("pluginGuid")] =
         "00000000-0000-0000-0000-000000000002";
     (*task0.as_object())[std::string_view("properties")] =
-        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
+        yyjson::value(Das::Utils::MakeYyjsonObject());
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
@@ -2129,8 +2118,7 @@ TEST_F(SchedulerRuntimeBackedTest, OnTick_RespectsPersistedNextExecutionTime)
     ASSERT_EQ(scheduler_->AddTask(FactoryTaskGuid, &first_task_id), DAS_S_OK);
     ASSERT_EQ(scheduler_->AddTask(FactoryTaskGuid, &second_task_id), DAS_S_OK);
 
-    yyjson::writer::detail::value internal_props(
-        Das::Utils::MakeYyjsonObject());
+    yyjson::value internal_props(Das::Utils::MakeYyjsonObject());
     // 2099-01-01T00:00:00Z = 4070908800
     (*internal_props.as_object())[std::string_view("nextExecutionTime")] =
         4070908800;
@@ -2885,8 +2873,7 @@ TEST_F(SchedulerLifecycleTest, FullTaskInstanceLifecycle)
     // 7. UpdateTaskInternalProperties on instance 0
     //    (no descriptors from manifest, so UpdateTaskProperties would reject;
     //     internal properties are always writable when not running)
-    yyjson::writer::detail::value internal_props(
-        Das::Utils::MakeYyjsonObject());
+    yyjson::value internal_props(Das::Utils::MakeYyjsonObject());
     // 2026-07-01T09:00:00Z = 1782896400
     (*internal_props.as_object())[std::string_view("nextExecutionTime")] =
         1782896400;
@@ -2915,8 +2902,7 @@ TEST_F(SchedulerLifecycleTest, FullTaskInstanceLifecycle)
         DAS_E_TASK_WORKING);
     EXPECT_EQ(scheduler_->DeleteTask(0), DAS_E_TASK_WORKING);
 
-    yyjson::writer::detail::value rejected_props(
-        Das::Utils::MakeYyjsonObject());
+    yyjson::value rejected_props(Das::Utils::MakeYyjsonObject());
     (*rejected_props.as_object())[std::string_view("key")] = "val";
     EXPECT_EQ(
         scheduler_->UpdateTaskProperties(0, rejected_props),
@@ -3092,11 +3078,10 @@ TEST_F(SchedulerUnavailableTest, UnavailableAndCorruptInstances_VisibleInGet)
 {
     // Seed scheduler.json with two task ids: one referencing an absent task
     // type GUID (unavailable), one with a corrupt JSON file (invalid).
-    yyjson::writer::detail::value scheduler_index(
-        Das::Utils::MakeYyjsonObject());
+    yyjson::value scheduler_index(Das::Utils::MakeYyjsonObject());
     (*scheduler_index.as_object())[std::string_view("nextTaskId")] = 2;
     {
-        yyjson::writer::detail::value arr(Das::Utils::MakeYyjsonArray());
+        yyjson::value arr(Das::Utils::MakeYyjsonArray());
         (*arr.as_array()).emplace_back(0);
         (*arr.as_array()).emplace_back(1);
         (*scheduler_index.as_object())[std::string_view("taskOrder")] =
@@ -3105,16 +3090,16 @@ TEST_F(SchedulerUnavailableTest, UnavailableAndCorruptInstances_VisibleInGet)
     settings_manager_->UpdateSchedulerIndexJson("0", scheduler_index);
 
     // Task 0: unavailable -- references a GUID not in loaded manifests
-    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    yyjson::value task0(Das::Utils::MakeYyjsonObject());
     (*task0.as_object())[std::string_view("id")] = 0;
     (*task0.as_object())[std::string_view("taskGuid")] =
         "11111111-2222-3333-4444-555555555555";
     (*task0.as_object())[std::string_view("pluginGuid")] =
         "00000000-0000-0000-0000-000000000002";
     (*task0.as_object())[std::string_view("nextExecutionTime")] =
-        yyjson::writer::detail::value{};
+        yyjson::value{};
     {
-        yyjson::writer::detail::value p(Das::Utils::MakeYyjsonObject());
+        yyjson::value p(Das::Utils::MakeYyjsonObject());
         (*p.as_object())[std::string_view("customProp")] = "preservedValue";
         (*task0.as_object())[std::string_view("properties")] = std::move(p);
     }
@@ -3185,14 +3170,14 @@ TEST_F(SchedulerUnavailableTest, UnavailableAndCorruptInstances_VisibleInGet)
 TEST_F(SchedulerUnavailableTest, UnavailableInstance_NotExecutedOnStart)
 {
     // Seed scheduler with an unavailable task type
-    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    yyjson::value task0(Das::Utils::MakeYyjsonObject());
     (*task0.as_object())[std::string_view("id")] = 0;
     (*task0.as_object())[std::string_view("taskGuid")] =
         "11111111-2222-3333-4444-555555555555";
     (*task0.as_object())[std::string_view("pluginGuid")] =
         "00000000-0000-0000-0000-000000000002";
     (*task0.as_object())[std::string_view("properties")] =
-        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
+        yyjson::value(Das::Utils::MakeYyjsonObject());
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
@@ -3206,11 +3191,10 @@ TEST_F(SchedulerUnavailableTest, UnavailableInstance_NotExecutedOnStart)
 TEST_F(SchedulerUnavailableTest, CorruptInstance_NotExecutedOnStart)
 {
     // Seed scheduler with a corrupt task file
-    yyjson::writer::detail::value scheduler_index(
-        Das::Utils::MakeYyjsonObject());
+    yyjson::value scheduler_index(Das::Utils::MakeYyjsonObject());
     (*scheduler_index.as_object())[std::string_view("nextTaskId")] = 1;
     {
-        yyjson::writer::detail::value arr(Das::Utils::MakeYyjsonArray());
+        yyjson::value arr(Das::Utils::MakeYyjsonArray());
         (*arr.as_array()).emplace_back(0);
         (*scheduler_index.as_object())[std::string_view("taskOrder")] =
             std::move(arr);
@@ -3233,14 +3217,14 @@ TEST_F(SchedulerUnavailableTest, CorruptInstance_NotExecutedOnStart)
 
 TEST_F(SchedulerUnavailableTest, DeleteUnavailableInstance_Succeeds)
 {
-    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    yyjson::value task0(Das::Utils::MakeYyjsonObject());
     (*task0.as_object())[std::string_view("id")] = 0;
     (*task0.as_object())[std::string_view("taskGuid")] =
         "11111111-2222-3333-4444-555555555555";
     (*task0.as_object())[std::string_view("pluginGuid")] =
         "00000000-0000-0000-0000-000000000002";
     (*task0.as_object())[std::string_view("properties")] =
-        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
+        yyjson::value(Das::Utils::MakeYyjsonObject());
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
@@ -3274,11 +3258,10 @@ TEST_F(SchedulerUnavailableTest, DeleteUnavailableInstance_Succeeds)
 
 TEST_F(SchedulerUnavailableTest, DeleteCorruptInstance_Succeeds)
 {
-    yyjson::writer::detail::value scheduler_index(
-        Das::Utils::MakeYyjsonObject());
+    yyjson::value scheduler_index(Das::Utils::MakeYyjsonObject());
     (*scheduler_index.as_object())[std::string_view("nextTaskId")] = 1;
     {
-        yyjson::writer::detail::value arr(Das::Utils::MakeYyjsonArray());
+        yyjson::value arr(Das::Utils::MakeYyjsonArray());
         (*arr.as_array()).emplace_back(0);
         (*scheduler_index.as_object())[std::string_view("taskOrder")] =
             std::move(arr);
@@ -3337,24 +3320,24 @@ TEST_F(SchedulerUnavailableTest, MixedAvailableAndUnavailable_OnlyAvailableRuns)
         static_cast<IDasBase*>(fake));
 
     // Task 0: unavailable (GUID not matching any loaded task)
-    yyjson::writer::detail::value task0(Das::Utils::MakeYyjsonObject());
+    yyjson::value task0(Das::Utils::MakeYyjsonObject());
     (*task0.as_object())[std::string_view("id")] = 0;
     (*task0.as_object())[std::string_view("taskGuid")] =
         "11111111-2222-3333-4444-555555555555";
     (*task0.as_object())[std::string_view("pluginGuid")] =
         "00000000-0000-0000-0000-000000000002";
     (*task0.as_object())[std::string_view("properties")] =
-        yyjson::writer::detail::value(Das::Utils::MakeYyjsonObject());
+        yyjson::value(Das::Utils::MakeYyjsonObject());
 
     // Task 1: available (matches FakeTaskGuid)
-    yyjson::writer::detail::value task1(Das::Utils::MakeYyjsonObject());
+    yyjson::value task1(Das::Utils::MakeYyjsonObject());
     (*task1.as_object())[std::string_view("id")] = 1;
     (*task1.as_object())[std::string_view("taskGuid")] =
         "A1B2C3D4-E5F6-7890-ABCD-EF1234567890";
     (*task1.as_object())[std::string_view("pluginGuid")] =
         "00000000-0000-0000-0000-000000000000";
     {
-        yyjson::writer::detail::value p(Das::Utils::MakeYyjsonObject());
+        yyjson::value p(Das::Utils::MakeYyjsonObject());
         (*p.as_object())[std::string_view("testKey")] = "testValue";
         (*task1.as_object())[std::string_view("properties")] = std::move(p);
     }

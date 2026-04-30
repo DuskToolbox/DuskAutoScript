@@ -24,7 +24,7 @@ namespace Das::Http::Dto
         T           data;
 
         // 转换为JSON
-        yyjson::writer::detail::value ToJson() const
+        yyjson::value ToJson() const
         {
             auto j = Das::Utils::MakeYyjsonObject();
             auto obj_opt = j.as_object();
@@ -33,7 +33,7 @@ namespace Das::Http::Dto
                 auto& obj = obj_opt.value();
                 obj["code"] = static_cast<int64_t>(code);
                 obj["message"] = std::string{message};
-                if constexpr (std::is_same_v<T, yyjson::writer::detail::value>)
+                if constexpr (std::is_same_v<T, yyjson::value>)
                 {
                     obj["data"] = data;
                 }
@@ -46,7 +46,7 @@ namespace Das::Http::Dto
         }
 
         // 从JSON构造
-        static ApiResponse<T> FromJson(const yyjson::writer::detail::value& j)
+        static ApiResponse<T> FromJson(const yyjson::value& j)
         {
             ApiResponse<T> response;
             auto           obj_opt = j.as_object();
@@ -83,11 +83,11 @@ namespace Das::Http::Dto
     template <>
     struct ApiResponse<void>
     {
-        int32_t                       code;
-        std::string                   message;
-        yyjson::writer::detail::value data;
+        int32_t       code;
+        std::string   message;
+        yyjson::value data;
 
-        yyjson::writer::detail::value ToJson() const
+        yyjson::value ToJson() const
         {
             auto j = Das::Utils::MakeYyjsonObject();
             auto obj_opt = j.as_object();
@@ -103,7 +103,7 @@ namespace Das::Http::Dto
 
         static ApiResponse<void> Success(const std::string& message = "")
         {
-            yyjson::writer::detail::value null_val{};
+            yyjson::value null_val{};
             return ApiResponse<void>{DAS_S_OK, message, std::move(null_val)};
         }
 
@@ -111,7 +111,7 @@ namespace Das::Http::Dto
             DasResult          code,
             const std::string& message)
         {
-            yyjson::writer::detail::value null_val{};
+            yyjson::value null_val{};
             return ApiResponse<void>{code, message, std::move(null_val)};
         }
     };

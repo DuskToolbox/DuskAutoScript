@@ -75,8 +75,8 @@ struct PluginSettingDesc
 };
 
 void ParsePluginSettingDescFromJson(
-    const yyjson::writer::detail::const_object_ref& input,
-    PluginSettingDesc&                              output);
+    const yyjson::writer::const_object_ref& input,
+    PluginSettingDesc&                      output);
 
 /**
  * @brief Plugin-GUID-keyed settings descriptor group.
@@ -91,7 +91,7 @@ struct PluginSettingsGroup
 };
 
 void ParsePluginSettingsGroupFromJson(
-    const yyjson::writer::detail::const_object_ref&   input,
+    const yyjson::writer::const_object_ref&           input,
     std::unordered_map<DasGuid, PluginSettingsGroup>& output);
 
 /**
@@ -108,8 +108,8 @@ struct TaskDescriptor
 };
 
 void ParseTaskDescriptorFromJson(
-    const yyjson::writer::detail::const_object_ref& input,
-    TaskDescriptor&                                 output);
+    const yyjson::writer::const_object_ref& input,
+    TaskDescriptor&                         output);
 
 struct PluginPackageDesc
 {
@@ -143,15 +143,15 @@ struct PluginPackageDesc
     // 下面的变量不被序列化到json
     std::shared_ptr<SettingsJson> settings_json_ =
         std::make_shared<SettingsJson>();
-    DasReadOnlyStringWrapper      settings_desc_json;
-    yyjson::writer::detail::value default_settings;
+    DasReadOnlyStringWrapper settings_desc_json;
+    yyjson::value            default_settings;
     boost::signals2::signal<void(std::shared_ptr<SettingsJson>)>
         on_settings_changed{};
 };
 
 void ParsePluginPackageDescFromJson(
-    const yyjson::writer::detail::const_object_ref& input,
-    PluginPackageDesc&                              output);
+    const yyjson::writer::const_object_ref& input,
+    PluginPackageDesc&                      output);
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
 

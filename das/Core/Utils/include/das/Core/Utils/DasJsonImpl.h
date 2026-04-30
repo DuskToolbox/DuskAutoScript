@@ -53,13 +53,13 @@ class IDasJsonImpl final
 public:
     struct Object
     {
-        yyjson::writer::detail::value   value_{};
+        yyjson::value                   value_{};
         boost::signals2::signal<void()> signal_{};
     };
 
     struct Ref
     {
-        yyjson::writer::detail::value*     val_{nullptr};
+        yyjson::value*                     val_{nullptr};
         boost::signals2::scoped_connection connection_{};
     };
 
@@ -86,8 +86,8 @@ private:
 public:
     IDasJsonImpl();
     IDasJsonImpl(const char* p_json_string);
-    IDasJsonImpl(yyjson::writer::detail::value& ref_value);
-    explicit IDasJsonImpl(yyjson::writer::detail::value&& value);
+    IDasJsonImpl(yyjson::value& ref_value);
+    explicit IDasJsonImpl(yyjson::value&& value);
     ~IDasJsonImpl();
 
     // IDasBase — AddRef/Release inherited from DasJsonImplBase (atomic + delete

@@ -40,10 +40,7 @@ namespace Das::Http::Beast
 
         const std::string& Body() const noexcept { return request_.body(); }
 
-        const yyjson::writer::detail::value& JsonBody() const noexcept
-        {
-            return json_body_;
-        }
+        const yyjson::value& JsonBody() const noexcept { return json_body_; }
 
         const request_type& RawRequest() const noexcept { return request_; }
 
@@ -91,7 +88,7 @@ namespace Das::Http::Beast
         }
 
         request_type                               request_;
-        yyjson::writer::detail::value              json_body_;
+        yyjson::value                              json_body_;
         mutable std::map<std::string, std::string> path_params_;
     };
 
@@ -116,7 +113,7 @@ namespace Das::Http::Beast
             response_.content_length(body.size());
         }
 
-        void SetBody(const yyjson::writer::detail::value& json)
+        void SetBody(const yyjson::value& json)
         {
             auto opt_str = Das::Utils::SerializeYyjsonValue(json);
             if (opt_str)
@@ -145,7 +142,7 @@ namespace Das::Http::Beast
         }
 
         static HttpResponse CreateSuccessResponse(
-            const yyjson::writer::detail::value& data = {})
+            const yyjson::value& data = {})
         {
             HttpResponse response;
             auto         json_body = JsonUtils::CreateSuccessResponse(data);
@@ -154,9 +151,9 @@ namespace Das::Http::Beast
         }
 
         static HttpResponse CreateSuccessResponse(
-            DasResult                            code,
-            const std::string&                   message,
-            const yyjson::writer::detail::value& data = {})
+            DasResult            code,
+            const std::string&   message,
+            const yyjson::value& data = {})
         {
             HttpResponse response;
             auto         json_body = JsonUtils::CreateSuccessResponse(data);

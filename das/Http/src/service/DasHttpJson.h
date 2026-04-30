@@ -23,17 +23,14 @@ namespace Das::Http
     public:
         DasHttpJson() = default;
 
-        explicit DasHttpJson(yyjson::writer::detail::value json)
-            : json_(std::move(json))
-        {
-        }
+        explicit DasHttpJson(yyjson::value json) : json_(std::move(json)) {}
 
         explicit DasHttpJson(const char* json_string)
         {
             auto parsed = Das::Utils::ParseYyjsonFromString(json_string);
             if (!parsed)
             {
-                json_ = yyjson::writer::detail::object{};
+                json_ = yyjson::object{};
             }
             else
             {
@@ -215,7 +212,7 @@ namespace Das::Http
             }
             try
             {
-                auto  new_val = yyjson::writer::detail::value(val);
+                auto  new_val = yyjson::value(val);
                 auto* sub = new DasHttpJson(std::move(new_val));
                 sub->AddRef();
                 *pp_out_das_json = sub;
@@ -243,7 +240,7 @@ namespace Das::Http
 
             if (json_.is_null())
             {
-                json_ = yyjson::writer::detail::object{};
+                json_ = yyjson::object{};
             }
 
             auto obj_opt = json_.as_object();
@@ -270,7 +267,7 @@ namespace Das::Http
 
             if (json_.is_null())
             {
-                json_ = yyjson::writer::detail::object{};
+                json_ = yyjson::object{};
             }
 
             auto obj_opt = json_.as_object();
@@ -306,7 +303,7 @@ namespace Das::Http
 
             if (json_.is_null())
             {
-                json_ = yyjson::writer::detail::object{};
+                json_ = yyjson::object{};
             }
 
             auto obj_opt = json_.as_object();
@@ -332,7 +329,7 @@ namespace Das::Http
 
             if (json_.is_null())
             {
-                json_ = yyjson::writer::detail::object{};
+                json_ = yyjson::object{};
             }
 
             auto obj_opt = json_.as_object();
@@ -382,7 +379,7 @@ namespace Das::Http
 
             if (json_.is_null())
             {
-                json_ = yyjson::writer::detail::object{};
+                json_ = yyjson::object{};
             }
 
             auto obj_opt = json_.as_object();
@@ -519,7 +516,7 @@ namespace Das::Http
             }
             try
             {
-                auto  new_val = yyjson::writer::detail::value(val);
+                auto  new_val = yyjson::value(val);
                 auto* sub = new DasHttpJson(std::move(new_val));
                 sub->AddRef();
                 *pp_out_das_json = sub;
@@ -747,12 +744,12 @@ namespace Das::Http
 
         DAS_IMPL Clear() override
         {
-            json_ = yyjson::writer::detail::object{};
+            json_ = yyjson::object{};
             return DAS_S_OK;
         }
 
     private:
-        yyjson::writer::detail::value json_;
+        yyjson::value json_;
     };
 
 } // namespace Das::Http

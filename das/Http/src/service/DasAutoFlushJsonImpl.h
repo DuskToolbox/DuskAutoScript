@@ -93,13 +93,12 @@ namespace Das::Http
         std::string MakeFullPath(const std::string& key) const;
         bool        IsPrefixAllowed(const std::string& prefix) const;
 
-        std::optional<yyjson::writer::detail::value> GetField(
-            const std::string& full_path);
-        DasResult SetField(
-            const std::string&                   full_path,
-            const yyjson::writer::detail::value& value);
+        std::optional<yyjson::value> GetField(const std::string& full_path);
+        DasResult                    SetField(
+            const std::string&   full_path,
+            const yyjson::value& value);
 
-        std::optional<yyjson::writer::detail::value> GetCurrentJson();
+        std::optional<yyjson::value> GetCurrentJson();
     };
 
 } // namespace Das::Http

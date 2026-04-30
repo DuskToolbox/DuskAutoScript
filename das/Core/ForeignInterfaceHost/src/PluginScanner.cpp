@@ -327,8 +327,7 @@ DasResult MarkForDeletion(
     return DAS_E_NOT_FOUND;
 }
 
-yyjson::writer::detail::value PluginPackageDescToJson(
-    const PluginPackageDesc& desc)
+yyjson::value PluginPackageDescToJson(const PluginPackageDesc& desc)
 {
     auto j = Das::Utils::MakeYyjsonObject();
     auto obj = j.as_object();

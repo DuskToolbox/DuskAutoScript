@@ -14,10 +14,9 @@ DAS_CORE_SETTINGS_MANAGER_NS_BEGIN
 namespace
 {
     /// Recursive helper: navigate one segment then recurse.
-    std::optional<yyjson::writer::detail::const_value_ref>
-    ResolveDotPathRecurse(
-        std::string_view                     remaining_path,
-        const yyjson::writer::detail::value& current)
+    std::optional<yyjson::writer::const_value_ref> ResolveDotPathRecurse(
+        std::string_view     remaining_path,
+        const yyjson::value& current)
     {
         auto obj_opt = current.as_object();
         if (!obj_opt)
@@ -55,9 +54,9 @@ namespace
 
     /// Navigate a dot-separated path in a yyjson value tree.
     /// Returns nullopt if any intermediate key is missing.
-    std::optional<yyjson::writer::detail::const_value_ref> ResolveDotPath(
-        const yyjson::writer::detail::value& root,
-        const std::string&                   path)
+    std::optional<yyjson::writer::const_value_ref> ResolveDotPath(
+        const yyjson::value& root,
+        const std::string&   path)
     {
         return ResolveDotPathRecurse(path, root);
     }
@@ -65,11 +64,11 @@ namespace
     /// Ensure a dot-separated path exists in a mutable yyjson value tree.
     /// Creates any missing intermediate objects.
     /// Returns the value at the final key (or creates it if missing).
-    yyjson::writer::detail::value_ref EnsureDotPath(
-        yyjson::writer::detail::value& root,
-        const std::string&             path)
+    yyjson::writer::value_ref EnsureDotPath(
+        yyjson::value&     root,
+        const std::string& path)
     {
-        using ObjOpt = std::optional<yyjson::writer::detail::object_ref>;
+        using ObjOpt = std::optional<yyjson::writer::object_ref>;
         ObjOpt cur = root.as_object();
         assert(cur.has_value());
 
@@ -221,8 +220,8 @@ DasResult SettingsManager::WriteJsonFile(
 }
 
 DasResult SettingsManager::WriteJsonFile(
-    const std::filesystem::path&         path,
-    const yyjson::writer::detail::value& data)
+    const std::filesystem::path& path,
+    const yyjson::value&         data)
 {
     try
     {
@@ -481,7 +480,7 @@ DasResult SettingsManager::UpdatePluginSettings(
     return WriteJsonFile(GetPluginSettingsPath(profile_id, guid), *parsed);
 }
 
-yyjson::writer::detail::value SettingsManager::GetPluginSettingsJson(
+yyjson::value SettingsManager::GetPluginSettingsJson(
     const std::string& profile_id,
     const std::string& guid)
 {
@@ -517,7 +516,7 @@ yyjson::writer::detail::value SettingsManager::GetPluginSettingsJson(
     return cell->snapshot;
 }
 
-std::pair<yyjson::writer::detail::value, DasResult>
+std::pair<yyjson::value, DasResult>
 SettingsManager::GetPluginSettingsWithStatus(
     const std::string& profile_id,
     const std::string& guid)
@@ -578,9 +577,9 @@ SettingsManager::GetPluginSettingsWithStatus(
 }
 
 DasResult SettingsManager::UpdatePluginSettingsJson(
-    const std::string&                   profile_id,
-    const std::string&                   guid,
-    const yyjson::writer::detail::value& data)
+    const std::string&   profile_id,
+    const std::string&   guid,
+    const yyjson::value& data)
 {
     auto  key = "profile/" + profile_id + "/plugin/" + guid;
     auto* cell = GetOrCreateCell(key);
@@ -655,7 +654,7 @@ DasResult SettingsManager::UpdatePluginSettingsField(
         *field_value);
 }
 
-yyjson::writer::detail::value SettingsManager::GetPluginSettingsFieldJson(
+yyjson::value SettingsManager::GetPluginSettingsFieldJson(
     const std::string& profile_id,
     const std::string& guid,
     const std::string& field_name)
@@ -663,13 +662,13 @@ yyjson::writer::detail::value SettingsManager::GetPluginSettingsFieldJson(
     auto settings = GetPluginSettingsJson(profile_id, guid);
     if (settings.is_null() || !settings.is_object())
     {
-        return yyjson::writer::detail::value{};
+        return yyjson::value{};
     }
 
     auto field = ResolveDotPath(settings, field_name);
     if (!field)
     {
-        return yyjson::writer::detail::value{};
+        return yyjson::value{};
     }
 
     // We need to create an owning copy of the field value.
@@ -679,20 +678,20 @@ yyjson::writer::detail::value SettingsManager::GetPluginSettingsFieldJson(
         auto serialized = field->write(yyjson::WriteFlag::NoFlag);
         auto parsed = Das::Utils::ParseYyjsonFromString(
             std::string_view(serialized.data(), serialized.size()));
-        return parsed ? std::move(*parsed) : yyjson::writer::detail::value{};
+        return parsed ? std::move(*parsed) : yyjson::value{};
     }
     catch (const std::exception& ex)
     {
         DAS_CORE_LOG_EXCEPTION(ex);
-        return yyjson::writer::detail::value{};
+        return yyjson::value{};
     }
 }
 
 DasResult SettingsManager::UpdatePluginSettingsFieldJson(
-    const std::string&                   profile_id,
-    const std::string&                   guid,
-    const std::string&                   field_name,
-    const yyjson::writer::detail::value& value)
+    const std::string&   profile_id,
+    const std::string&   guid,
+    const std::string&   field_name,
+    const yyjson::value& value)
 {
     auto  key = "profile/" + profile_id + "/plugin/" + guid;
     auto* cell = GetOrCreateCell(key);
@@ -838,7 +837,7 @@ DasResult SettingsManager::RebuildPluginSettingsFromDefaults(
 
 // --- JSON-based methods (zero-copy) ---
 
-yyjson::writer::detail::value SettingsManager::GetGlobalSettingsJson()
+yyjson::value SettingsManager::GetGlobalSettingsJson()
 {
     auto* cell = GetOrCreateCell("global/ui");
 
@@ -867,8 +866,7 @@ yyjson::writer::detail::value SettingsManager::GetGlobalSettingsJson()
     return cell->snapshot;
 }
 
-DasResult SettingsManager::UpdateGlobalSettingsJson(
-    const yyjson::writer::detail::value& data)
+DasResult SettingsManager::UpdateGlobalSettingsJson(const yyjson::value& data)
 {
     auto* cell = GetOrCreateCell("global/ui");
 
@@ -877,7 +875,7 @@ DasResult SettingsManager::UpdateGlobalSettingsJson(
     return WriteJsonFile(base_dir_ / "ui.json", data);
 }
 
-yyjson::writer::detail::value SettingsManager::GetProfileListJson()
+yyjson::value SettingsManager::GetProfileListJson()
 {
     // No lock needed for read-only directory traversal
     auto profiles = Das::Utils::MakeYyjsonArray();
@@ -911,8 +909,7 @@ yyjson::writer::detail::value SettingsManager::GetProfileListJson()
     return profiles;
 }
 
-yyjson::writer::detail::value SettingsManager::GetProfileJson(
-    const std::string& profile_id)
+yyjson::value SettingsManager::GetProfileJson(const std::string& profile_id)
 {
     auto  key = profile_id + "/ui";
     auto* cell = GetOrCreateCell(key);
@@ -946,8 +943,8 @@ yyjson::writer::detail::value SettingsManager::GetProfileJson(
 }
 
 DasResult SettingsManager::UpdateProfileJson(
-    const std::string&                   profile_id,
-    const yyjson::writer::detail::value& data)
+    const std::string&   profile_id,
+    const yyjson::value& data)
 {
     auto  key = profile_id + "/ui";
     auto* cell = GetOrCreateCell(key);
@@ -959,7 +956,7 @@ DasResult SettingsManager::UpdateProfileJson(
 
 // --- Scheduler state (settings/${pid}/scheduler.json) ---
 
-yyjson::writer::detail::value SettingsManager::GetSchedulerIndexJson(
+yyjson::value SettingsManager::GetSchedulerIndexJson(
     const std::string& profile_id)
 {
     auto  key = "profile/" + profile_id + "/scheduler";
@@ -983,7 +980,7 @@ yyjson::writer::detail::value SettingsManager::GetSchedulerIndexJson(
 
     auto content = ReadJsonFile(GetSchedulerIndexPath(profile_id));
     auto parsed = Das::Utils::ParseYyjsonFromString(content);
-    auto init_scheduler = [&]() -> yyjson::writer::detail::value
+    auto init_scheduler = [&]() -> yyjson::value
     {
         auto sched = Das::Utils::MakeYyjsonObject();
         auto obj = *sched.as_object();
@@ -1008,8 +1005,8 @@ yyjson::writer::detail::value SettingsManager::GetSchedulerIndexJson(
 }
 
 DasResult SettingsManager::UpdateSchedulerIndexJson(
-    const std::string&                   profile_id,
-    const yyjson::writer::detail::value& scheduler_json)
+    const std::string&   profile_id,
+    const yyjson::value& scheduler_json)
 {
     auto  key = "profile/" + profile_id + "/scheduler";
     auto* cell = GetOrCreateCell(key);
@@ -1021,7 +1018,7 @@ DasResult SettingsManager::UpdateSchedulerIndexJson(
 
 // --- Task instance (settings/${pid}/taskId${taskId}.json) ---
 
-yyjson::writer::detail::value SettingsManager::GetTaskInstanceJson(
+yyjson::value SettingsManager::GetTaskInstanceJson(
     const std::string& profile_id,
     int64_t            task_id)
 {
@@ -1057,9 +1054,9 @@ yyjson::writer::detail::value SettingsManager::GetTaskInstanceJson(
 }
 
 DasResult SettingsManager::UpdateTaskInstanceJson(
-    const std::string&                   profile_id,
-    int64_t                              task_id,
-    const yyjson::writer::detail::value& task_json)
+    const std::string&   profile_id,
+    int64_t              task_id,
+    const yyjson::value& task_json)
 {
     auto  key = "profile/" + profile_id + "/task/" + std::to_string(task_id);
     auto* cell = GetOrCreateCell(key);
@@ -1087,7 +1084,7 @@ DasResult SettingsManager::DeleteTaskInstanceJson(
             return DAS_S_FALSE;
         }
         std::filesystem::remove(path);
-        cell->snapshot = yyjson::writer::detail::value{};
+        cell->snapshot = yyjson::value{};
         return DAS_S_OK;
     }
     catch (const std::filesystem::filesystem_error& ex)

@@ -122,12 +122,9 @@ public:
         }
         ParseFromYyjsonValue(*parsed);
     }
-    explicit I18n(const yyjson::writer::detail::value& json)
-    {
-        ParseFromYyjsonValue(json);
-    }
+    explicit I18n(const yyjson::value& json) { ParseFromYyjsonValue(json); }
 
-    void ParseFromYyjsonValue(const yyjson::writer::detail::value& json)
+    void ParseFromYyjsonValue(const yyjson::value& json)
     {
         auto obj = json.as_object();
         if (!obj)

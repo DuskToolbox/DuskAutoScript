@@ -80,10 +80,10 @@ private:
     DasResult (WindowsCapture::*pInitializeGraphicsCapture)();
 
     // 捕获实例
-    bool                          initialized_ = false;
-    GDICapture                    gdi_capture_;
-    class WindowsGraphicsCapture  graphics_capture_;
-    yyjson::writer::detail::value config_;
+    bool                         initialized_ = false;
+    GDICapture                   gdi_capture_;
+    class WindowsGraphicsCapture graphics_capture_;
+    yyjson::value                config_;
 
 public:
     WindowsCapture()
@@ -105,7 +105,7 @@ public:
     DAS_IMPL GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override;
 
     // 解析配置并选择捕获模式（公有方法，供工厂类调用）
-    bool ParseConfigAndSelectMode(const yyjson::writer::detail::value& config);
+    bool ParseConfigAndSelectMode(const yyjson::value& config);
 
 private:
     // 初始化选择的捕获方法
