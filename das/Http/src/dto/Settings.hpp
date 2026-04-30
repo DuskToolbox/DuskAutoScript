@@ -17,36 +17,6 @@ namespace Das::Http::Dto
     {
         std::string name;
         std::string package_name;
-
-        yyjson::value ToJson() const
-        {
-            auto j = Das::Utils::MakeYyjsonObject();
-            auto obj_opt = j.as_object();
-            if (obj_opt)
-            {
-                auto& obj = obj_opt.value();
-                obj["name"] = std::string{name};
-                obj["packageName"] = std::string{package_name};
-            }
-            return j;
-        }
-
-        static AppDesc FromJson(const yyjson::value& j)
-        {
-            AppDesc desc;
-            auto    obj_opt = j.as_object();
-            if (obj_opt)
-            {
-                const auto& obj = obj_opt.value();
-                auto        name_val = obj["name"];
-                auto        name_opt = name_val.as_string();
-                desc.name = name_opt ? std::string(name_opt.value()) : "";
-                auto pn_val = obj["packageName"];
-                auto pn_opt = pn_val.as_string();
-                desc.package_name = pn_opt ? std::string(pn_opt.value()) : "";
-            }
-            return desc;
-        }
     };
 
     using AppDescList = ApiResponse<std::vector<AppDesc>>;
@@ -57,36 +27,6 @@ namespace Das::Http::Dto
     {
         std::string name;
         std::string plugin_id;
-
-        yyjson::value ToJson() const
-        {
-            auto j = Das::Utils::MakeYyjsonObject();
-            auto obj_opt = j.as_object();
-            if (obj_opt)
-            {
-                auto& obj = obj_opt.value();
-                obj["name"] = std::string{name};
-                obj["pluginId"] = std::string{plugin_id};
-            }
-            return j;
-        }
-
-        static PluginPackageDesc FromJson(const yyjson::value& j)
-        {
-            PluginPackageDesc desc;
-            auto              obj_opt = j.as_object();
-            if (obj_opt)
-            {
-                const auto& obj = obj_opt.value();
-                auto        name_val = obj["name"];
-                auto        name_opt = name_val.as_string();
-                desc.name = name_opt ? std::string(name_opt.value()) : "";
-                auto pid_val = obj["pluginId"];
-                auto pid_opt = pid_val.as_string();
-                desc.plugin_id = pid_opt ? std::string(pid_opt.value()) : "";
-            }
-            return desc;
-        }
     };
 
     using PluginPackageDescList = ApiResponse<std::vector<PluginPackageDesc>>;
@@ -98,42 +38,6 @@ namespace Das::Http::Dto
         std::string name;
         std::string plugin_id;
         std::string game_name;
-        // 此字段由前端内部管理
-        // std::string sub_group;
-
-        yyjson::value ToJson() const
-        {
-            auto j = Das::Utils::MakeYyjsonObject();
-            auto obj_opt = j.as_object();
-            if (obj_opt)
-            {
-                auto& obj = obj_opt.value();
-                obj["name"] = std::string{name};
-                obj["pluginId"] = std::string{plugin_id};
-                obj["gameName"] = std::string{game_name};
-            }
-            return j;
-        }
-
-        static TaskDesc FromJson(const yyjson::value& j)
-        {
-            TaskDesc desc;
-            auto     obj_opt = j.as_object();
-            if (obj_opt)
-            {
-                const auto& obj = obj_opt.value();
-                auto        name_val = obj["name"];
-                auto        name_opt = name_val.as_string();
-                desc.name = name_opt ? std::string(name_opt.value()) : "";
-                auto pid_val = obj["pluginId"];
-                auto pid_opt = pid_val.as_string();
-                desc.plugin_id = pid_opt ? std::string(pid_opt.value()) : "";
-                auto gn_val = obj["gameName"];
-                auto gn_opt = gn_val.as_string();
-                desc.game_name = gn_opt ? std::string(gn_opt.value()) : "";
-            }
-            return desc;
-        }
     };
 
     using TaskDescList = ApiResponse<std::vector<TaskDesc>>;
