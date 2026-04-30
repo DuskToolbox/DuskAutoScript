@@ -66,8 +66,7 @@ namespace Das::Http
                 }
             }
 
-            return Beast::HttpResponse::CreateSuccessResponse(
-                response.data.ToJson());
+            return Beast::HttpResponse::CreateSuccessResponse(response.data);
         }
     };
 
