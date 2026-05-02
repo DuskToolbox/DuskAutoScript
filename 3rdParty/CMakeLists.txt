@@ -200,8 +200,11 @@ function(_download_and_config_opencv)
     set(DAS_OPENCV_VERSION "4.10.0")
     message(STATUS "Downloading OpenCV source. VERSION = ${DAS_OPENCV_VERSION}")
 
-    # NOTICE: OpenCV wil turn this option ON automatically, so I explicitly set it.
-    set(BUILD_SHARED_LIBS ON)
+    set(BUILD_SHARED_LIBS OFF)
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+    if (NOT MSVC)
+        add_compile_options(-fvisibility=hidden -fvisibility-inlines-hidden)
+    endif ()
 
     include(DasResetLibPrefix)
 
@@ -215,13 +218,12 @@ function(_download_and_config_opencv)
     endif ()
 
     # config OpenCV
+    set(BUILD_WITH_STATIC_CRT OFF)
     set(BUILD_opencv_apps OFF)
     set(BUILD_opencv_calib3d OFF)
     set(BUILD_opencv_dnn OFF)
-    set(BUILD_opencv_features2d OFF)
     set(BUILD_opencv_highgui OFF)
     set(BUILD_opencv_gapi OFF)
-    set(BUILD_opencv_flann OFF)
     set(BUILD_opencv_ml OFF)
     set(BUILD_opencv_photo OFF)
     set(BUILD_opencv_stitching OFF)
@@ -240,10 +242,9 @@ function(_download_and_config_opencv)
     set(BUILD_TESTS OFF)
     set(BUILD_ZLIB OFF)
 
-    list(APPEND DAS_OPENCV_COMPONENTS opencv_core opencv_imgcodecs opencv_imgproc)
+    list(APPEND DAS_OPENCV_COMPONENTS opencv_core opencv_imgcodecs opencv_imgproc opencv_features2d opencv_flann)
     foreach (DAS_OCV_LIB ${DAS_OPENCV_COMPONENTS})
         set(BUILD_${DAS_OCV_LIB} ON)
-        das_add_auto_copy_dll_path("$<TARGET_FILE:${DAS_OCV_LIB}>")
     endforeach ()
 
     FetchContent_MakeAvailable(opencv)
@@ -259,6 +260,8 @@ function(_download_and_config_opencv)
             ${opencv_SOURCE_DIR}/modules/core/include/opencv2
             ${opencv_SOURCE_DIR}/modules/imgcodecs/include/opencv2
             ${opencv_SOURCE_DIR}/modules/imgproc/include/opencv2
+            ${opencv_SOURCE_DIR}/modules/features2d/include/opencv2
+            ${opencv_SOURCE_DIR}/modules/flann/include/opencv2
             DESTINATION  ${CMAKE_BINARY_DIR}/DasOpenCV)
     target_include_directories(Das3rdParty INTERFACE ${CMAKE_BINARY_DIR}/DasOpenCV)
 endfunction()
@@ -415,6 +418,10 @@ function(_download_and_config_boost)
         message(STATUS "Setting BOOST_LIB_TOOLSET to vc145 for MSVC_VERSION ${MSVC_VERSION}")
     endif()
 
+    if (NOT MSVC)
+        add_compile_options(-fvisibility=hidden -fvisibility-inlines-hidden)
+    endif ()
+
     FetchContent_MakeAvailable(DasBoost)
 endfunction()
 
@@ -500,7 +507,7 @@ set(CPPYYJSON_PFR_TARGET Boost::headers CACHE STRING "Boost.PFR target for yyjso
 FetchContent_Declare(
     cpp_yyjson
     GIT_REPOSITORY https://github.com/BombaxCeiba/yyjson-cpp
-    GIT_TAG        bd659255e7da43264f9ad8e6729d681a377a181c
+    GIT_TAG        fce057b30aab7a274063ac441e3f286f42e25977
     GIT_SHALLOW    TRUE
     GIT_SUBMODULES "" # Skip benchmark vendor submodules (simdjson, etc.) not needed for core library
 )
