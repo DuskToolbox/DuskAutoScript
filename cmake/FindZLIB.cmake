@@ -33,16 +33,19 @@ set(ZLIB_VERSION_STATUS "")
 set(ZLIB_INCLUDE_DIRS ${ZLIB_NG_INCLUDE_DIR})
 set(ZLIB_INCLUDE_DIR ${ZLIB_NG_INCLUDE_DIR})
 
+if(NOT TARGET ZLIB::ZLIB)
+    add_library(ZLIB::ZLIB INTERFACE IMPORTED)
+    target_link_libraries(ZLIB::ZLIB INTERFACE zlib)
+endif()
+
+# Use the IMPORTED target so that downstream projects (e.g. OpenCV) linking
+# against ZLIB_LIBRARIES are not subject to export-set membership checks.
 if(NOT ZLIB_LIBRARIES)
-    set(ZLIB_LIBRARIES ${ZLIB_NG_LIBRARY})
+    set(ZLIB_LIBRARIES ZLIB::ZLIB)
 endif()
 
 if(NOT ZLIB_LIBRARY)
-    set(ZLIB_LIBRARY ${ZLIB_NG_LIBRARY})
-endif()
-
-if(NOT TARGET ZLIB::ZLIB)
-    add_library(ZLIB::ZLIB ALIAS zlib)
+    set(ZLIB_LIBRARY ZLIB::ZLIB)
 endif()
 
 set(ZLIB_FOUND ON)

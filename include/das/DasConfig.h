@@ -66,7 +66,7 @@
 
 #define DAS_IGNORE_OPENCV_WARNING                                              \
     DAS_IGNORE_UNUSED_PARAMETER                                                \
-    DAS_PRAGMA(warning(disable : 4127 4244 4251 4275 4305 5054))
+    DAS_PRAGMA(warning(disable : 4127 4244 4251 4275 4305 4864 5054))
 
 #define DAS_IGNORE_STDEXEC_PARAMETERS                                          \
     DAS_IGNORE_UNUSED_PARAMETER                                                \
