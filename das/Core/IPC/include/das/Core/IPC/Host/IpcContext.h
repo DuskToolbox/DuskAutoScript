@@ -120,14 +120,9 @@ namespace Core
 
                 DasResult UnregisterService(const DasGuid& iid) override;
 
-                // IResolveContext ByName overrides (delegate to Host
-                // ResolveMainProcessInterfaceByName)
-                DasResult ResolveMainProcessInterfaceByName(
-                    const char* name,
-                    IDasBase**  pp_out) override
-                {
-                    return ResolveMainProcessInterfaceByName(name, pp_out);
-                }
+                // IResolveContext ByName overrides
+                // ResolveMainProcessInterfaceByName: single override covers
+                // both IIpcContext and IResolveContext (same signature)
 
                 DasResult RegisterServiceByName(
                     IDasBase*      p_object,

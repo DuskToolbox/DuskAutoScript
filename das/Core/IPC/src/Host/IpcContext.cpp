@@ -8,8 +8,8 @@
 #include <das/Core/IPC/DasProxyBase.h>
 #include <das/Core/IPC/DefaultAsyncIpcTransport.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
-#include <das/Core/IPC/HandshakeHandler.h>
 #include <das/Core/IPC/HandshakeSerialization.h>
+#include <das/Core/IPC/Host/HandshakeHandler.h>
 #include <das/Core/IPC/Host/HostConfig.h>
 #include <das/Core/IPC/Host/IIpcContext.h>
 #include <das/Core/IPC/Host/IpcContext.h>
