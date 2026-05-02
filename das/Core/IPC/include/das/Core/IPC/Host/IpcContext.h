@@ -110,11 +110,41 @@ namespace Core
                     const DasGuid& iid,
                     IDasBase**     pp_out_object) override;
 
+                DasResult ResolveMainProcessInterfaceByName(
+                    const char* name,
+                    IDasBase**  pp_out_object) override;
+
                 DasResult RegisterService(
                     IDasBase*      p_object,
                     const DasGuid& iid) override;
 
                 DasResult UnregisterService(const DasGuid& iid) override;
+
+                // IResolveContext ByName overrides (delegate to Host
+                // ResolveMainProcessInterfaceByName)
+                DasResult ResolveMainProcessInterfaceByName(
+                    const char* name,
+                    IDasBase**  pp_out) override
+                {
+                    return ResolveMainProcessInterfaceByName(name, pp_out);
+                }
+
+                DasResult RegisterServiceByName(
+                    IDasBase*      p_object,
+                    const DasGuid& iid,
+                    const char*    name) override
+                {
+                    (void)p_object;
+                    (void)iid;
+                    (void)name;
+                    return DAS_E_NO_IMPLEMENTATION;
+                }
+
+                DasResult UnregisterServiceByName(const char* name) override
+                {
+                    (void)name;
+                    return DAS_E_NO_IMPLEMENTATION;
+                }
 
             private:
                 boost::asio::awaitable<void> ReceiveLoopCoroutine();

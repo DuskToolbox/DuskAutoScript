@@ -8,7 +8,8 @@
 #include <das/Core/IPC/DasProxyBase.h>
 #include <das/Core/IPC/DefaultAsyncIpcTransport.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
-#include <das/Core/IPC/Host/HandshakeHandler.h>
+#include <das/Core/IPC/HandshakeHandler.h>
+#include <das/Core/IPC/HandshakeSerialization.h>
 #include <das/Core/IPC/Host/HostConfig.h>
 #include <das/Core/IPC/Host/IIpcContext.h>
 #include <das/Core/IPC/Host/IpcContext.h>
@@ -728,6 +729,104 @@ namespace Core
 
                 DAS_CORE_LOG_TRACE(
                     "Successfully resolved main process interface");
+                out_object.Keep();
+                return DAS_S_OK;
+            }
+
+            DasResult IpcContext::ResolveMainProcessInterfaceByName(
+                const char* name,
+                IDasBase**  pp_out_object)
+            {
+                if (!name || !pp_out_object)
+                {
+                    return DAS_E_INVALID_ARGUMENT;
+                }
+                DAS::DasOutPtr<IDasBase> out_object(pp_out_object);
+
+                if (!business_thread_)
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "IpcRunLoop or BusinessThread not initialized");
+                    return DAS_E_IPC_NOT_INITIALIZED;
+                }
+
+                DAS_CORE_LOG_TRACE(
+                    "Resolving main process interface by name: {}",
+                    name);
+
+                // Build LOOKUP_BY_NAME request body: [uint16_t
+                // name_len][char[] name]
+                std::vector<uint8_t> payload;
+                DAS::Core::IPC::SerializeString(payload, std::string(name));
+
+                std::vector<uint8_t> response;
+
+                DasResult result = SendBusinessControlRequestRaw(
+                    run_loop_,
+                    business_thread_,
+                    session_id_,
+                    1, // target_session_id = main process
+                    IpcCommandType::LOOKUP_BY_NAME,
+                    payload.data(),
+                    payload.size(),
+                    response);
+
+                if (DAS::IsFailed(result))
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "Failed to resolve main process interface by name, "
+                        "error = {}",
+                        static_cast<int>(result));
+                    return result;
+                }
+
+                // Parse response as ObjectInfoResponsePayload
+                // Layout: ObjectId(8) + DasGuid(16) + session_id(2) +
+                // version(2) + name_len(2) + name[name_len]
+                if (response.size() < sizeof(ObjectId) + sizeof(DasGuid))
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "Response too small to parse ObjectInfoResponsePayload, "
+                        "size = {}",
+                        response.size());
+                    return DAS_E_IPC_INVALID_MESSAGE_BODY;
+                }
+
+                ObjectId object_id;
+                std::memcpy(&object_id, response.data(), sizeof(ObjectId));
+
+                DasGuid resolved_iid;
+                std::memcpy(
+                    &resolved_iid,
+                    response.data() + sizeof(ObjectId),
+                    sizeof(DasGuid));
+
+                // Compute interface hash from the resolved IID
+                uint32_t interface_hash =
+                    RemoteObjectRegistry::ComputeInterfaceId(resolved_iid);
+
+                // Create proxy using unified GetOrCreateProxy
+                DasPtr<IDasBase> proxy = proxy_factory_->GetOrCreateProxy(
+                    run_loop_,
+                    business_thread_,
+                    object_id,
+                    interface_hash);
+
+                if (!proxy)
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "Failed to create proxy for name = {}, interface_hash = 0x{:08X}",
+                        name,
+                        interface_hash);
+                    return DAS_E_NO_INTERFACE;
+                }
+
+                *out_object.Put() = proxy.Get();
+                out_object->AddRef();
+
+                DAS_CORE_LOG_TRACE(
+                    "Successfully resolved main process interface by name: {}",
+                    name);
                 out_object.Keep();
                 return DAS_S_OK;
             }
