@@ -23,4 +23,6 @@ DAS_API DasRetIDasVariantVector CreateDasRetIDasVariantVector();
 
 DAS_API DasRetIDasBase QueryMainProcessInterface(const DasGuid& iid);
 
+DAS_API DasRetIDasBase QueryMainProcessInterfaceByName(const char* name);
+
 DAS_SWIG_NS_END

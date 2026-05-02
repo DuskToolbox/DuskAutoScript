@@ -25,6 +25,16 @@ namespace Core
                 const DasGuid& iid) = 0;
             virtual DasResult UnregisterService(const DasGuid& iid) = 0;
 
+            // By-name variants
+            virtual DasResult ResolveMainProcessInterfaceByName(
+                const char* name,
+                IDasBase**  pp_out) = 0;
+            virtual DasResult RegisterServiceByName(
+                IDasBase*      p_object,
+                const DasGuid& iid,
+                const char*    name) = 0;
+            virtual DasResult UnregisterServiceByName(const char* name) = 0;
+
         protected:
             ~IResolveContext() = default;
         };

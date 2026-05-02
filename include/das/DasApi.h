@@ -216,6 +216,89 @@ DasRegisterMainProcessService(IDasBase* p_object, const DasGuid& iid);
  */
 DAS_C_API DasResult DasUnregisterMainProcessService(const DasGuid& iid);
 
+/**
+ * @brief 通过名称查询主进程全局服务接口
+ *
+ * 与 DasQueryMainProcessInterface 对称，但使用注册名称而非 IID 查找。
+ * 返回 IDasBase*，调用者可自行 QueryInterface 到具体接口。
+ *
+ * @param name 服务注册名称
+ * @param pp_out_object [out] 接收接口指针（调用者必须 Release）
+ * @return DasResult DAS_S_OK 成功，DAS_E_INVALID_POINTER name 或 pp_out 为
+ * nullptr
+ *         DAS_E_OBJECT_NOT_INIT 未绑定 IPC 上下文
+ */
+DAS_C_API DasResult
+DasQueryMainProcessInterfaceByName(const char* name, IDasBase** pp_out_object);
+
+/**
+ * @brief 通过名称注册一个服务对象到主进程全局服务表
+ *
+ * @param p_object 服务对象指针
+ * @param iid 对象实现的接口 IID
+ * @param name 自定义注册名称（全局唯一，不按 IID 分桶）
+ * @return DAS_S_OK 成功
+ *         DAS_E_INVALID_POINTER p_object 或 name 为 nullptr
+ *         DAS_E_OBJECT_NOT_INIT 当前线程无有效 IpcContext
+ *         DAS_E_NO_IMPLEMENTATION Host 进程不支持注册
+ *         DAS_E_DUPLICATE_ELEMENT 同名服务已存在
+ */
+DAS_C_API DasResult DasRegisterMainProcessServiceByName(
+    IDasBase*      p_object,
+    const DasGuid& iid,
+    const char*    name);
+
+/**
+ * @brief 通过名称从主进程全局服务表注销一个服务对象
+ * @param name 要注销的服务名称
+ * @return DAS_S_OK 成功
+ *         DAS_E_INVALID_POINTER name 为 nullptr
+ *         DAS_E_OBJECT_NOT_INIT 当前线程无有效 IpcContext
+ *         DAS_E_NO_IMPLEMENTATION Host 进程不支持注销
+ *         DAS_E_IPC_OBJECT_NOT_FOUND 指定名称的服务不存在
+ */
+DAS_C_API DasResult DasUnregisterMainProcessServiceByName(const char* name);
+
+/**
+ * @brief 通过名称查询主进程服务接口（类型安全 Ez 版本）
+ *
+ * 先调用 DasQueryMainProcessInterfaceByName 获取 IDasBase*，
+ * 再对 T 的 IID 执行 QueryInterface。
+ *
+ * @tparam T 目标接口类型（必须有 DasIidOf<T>() 特化）
+ * @param name 服务注册名称
+ * @param pp_out [out] 接收类型化接口指针（调用者必须 Release）
+ * @return DasResult DAS_S_OK 成功，失败时中间 IDasBase* 会被释放
+ */
+template <class T>
+DasResult DasQueryMainProcessInterfaceByNameEz(const char* name, T** pp_out)
+{
+    if (!pp_out)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+    *pp_out = nullptr;
+
+    IDasBase* base = nullptr;
+    DasResult hr = DasQueryMainProcessInterfaceByName(name, &base);
+    if (DAS::IsFailed(hr))
+    {
+        return hr;
+    }
+
+    void* queried = nullptr;
+    hr = base->QueryInterface(DasIidOf<T>(), &queried);
+    base->Release();
+
+    if (DAS::IsFailed(hr) || !queried)
+    {
+        return DAS_E_NO_INTERFACE;
+    }
+
+    *pp_out = static_cast<T*>(queried);
+    return DAS_S_OK;
+}
+
 // Log level constants (match spdlog::level::level_enum values)
 #define DAS_LOG_LEVEL_TRACE 0
 #define DAS_LOG_LEVEL_DEBUG 1
@@ -258,10 +341,10 @@ namespace Das::Core::IPC::MainProcess
  * @return DAS_S_OK 成功
  */
 DAS_C_API DasResult CreateIDasCoreServices(
-    IDasReadOnlyString*                          p_settings_dir,
-    IDasReadOnlyString*                          p_plugin_dir,
-    Das::Core::IPC::MainProcess::IIpcContext*    p_ipc_context,
-    IDasCoreServices**                           pp_out);
+    IDasReadOnlyString*                       p_settings_dir,
+    IDasReadOnlyString*                       p_plugin_dir,
+    Das::Core::IPC::MainProcess::IIpcContext* p_ipc_context,
+    IDasCoreServices**                        pp_out);
 
 #define DAS_LOG_ERROR(...) DAS_LOG_WITH_SOURCE_LOCATION(Error, __VA_ARGS__)
 #define DAS_LOG_WARNING(...) DAS_LOG_WITH_SOURCE_LOCATION(Warning, __VA_ARGS__)
