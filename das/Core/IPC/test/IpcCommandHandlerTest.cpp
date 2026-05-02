@@ -221,7 +221,26 @@ TEST_F(IpcCommandHandlerTest, LookupByName_Success)
     size_t   offset = 0;
     ObjectId returned_id =
         ReadFromBuffer<ObjectId>(response.response_data, offset);
+    EXPECT_EQ(returned_id.session_id, 1);
     EXPECT_EQ(returned_id.local_id, 100);
+
+    // Verify DasGuid in response matches the registered IID
+    DasGuid returned_iid =
+        ReadFromBuffer<DasGuid>(response.response_data, offset);
+    EXPECT_EQ(returned_iid.data1, 0x12345678);
+    EXPECT_EQ(returned_iid.data2, 0x1234);
+    EXPECT_EQ(returned_iid.data3, 0x5678);
+
+    uint16_t returned_session =
+        ReadFromBuffer<uint16_t>(response.response_data, offset);
+    EXPECT_EQ(returned_session, 1);
+
+    uint16_t returned_version =
+        ReadFromBuffer<uint16_t>(response.response_data, offset);
+    EXPECT_EQ(returned_version, 1);
+
+    std::string name = ReadStringFromBuffer(response.response_data, offset);
+    EXPECT_EQ(name, "test_object");
 }
 
 TEST_F(IpcCommandHandlerTest, LookupByName_NotFound)

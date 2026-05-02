@@ -87,6 +87,13 @@ TEST(QueryMainProcessInterfaceTest, NoContext_ReturnsObjectNotInit)
     EXPECT_EQ(result.value.Get(), nullptr);
 }
 
+TEST(QueryMainProcessInterfaceTest, NoContext_QueryByName_ReturnsObjectNotInit)
+{
+    auto result = Das::Swig::QueryMainProcessInterfaceByName("any_name");
+    EXPECT_EQ(result.GetErrorCode(), DAS_E_OBJECT_NOT_INIT);
+    EXPECT_EQ(result.value.Get(), nullptr);
+}
+
 // ====== DasRetIDasBase default state ======
 
 TEST(QueryMainProcessInterfaceTest, DasRetIDasBase_DefaultState)
@@ -217,4 +224,48 @@ TEST_F(
 
     str1->Release();
     str2->Release();
+}
+
+// ====== By-name query tests ======
+
+TEST_F(QueryMainProcessInterfaceE2ETest, QueryRegisteredName_ReturnsValidObject)
+{
+    auto* test_string = new TestReadOnlyString("Hello by name!");
+
+    ScopedCurrentIpcContext scope(
+        static_cast<MainProcess::IpcContext*>(concrete_ctx_.get()));
+
+    DasResult reg_result = concrete_ctx_->RegisterServiceByName(
+        test_string,
+        DAS_IID_READ_ONLY_STRING,
+        "greeting_service");
+    ASSERT_EQ(reg_result, DAS_S_OK);
+
+    // Query by name
+    auto result =
+        Das::Swig::QueryMainProcessInterfaceByName("greeting_service");
+    ASSERT_EQ(result.GetErrorCode(), DAS_S_OK);
+    ASSERT_NE(result.value.Get(), nullptr);
+
+    auto* readonly_str = static_cast<IDasReadOnlyString*>(result.value.Get());
+    const char* utf8 = nullptr;
+    DasResult   hr = readonly_str->GetUtf8(&utf8);
+    EXPECT_EQ(hr, DAS_S_OK);
+    ASSERT_NE(utf8, nullptr);
+    EXPECT_STREQ(utf8, "Hello by name!");
+
+    // Clean up
+    concrete_ctx_->UnregisterServiceByName("greeting_service");
+    test_string->Release();
+}
+
+TEST_F(QueryMainProcessInterfaceE2ETest, QueryUnknownName_ReturnsObjectNotFound)
+{
+    ScopedCurrentIpcContext scope(
+        static_cast<MainProcess::IpcContext*>(concrete_ctx_.get()));
+
+    auto result =
+        Das::Swig::QueryMainProcessInterfaceByName("nonexistent_service");
+    EXPECT_EQ(result.GetErrorCode(), DAS_E_IPC_OBJECT_NOT_FOUND);
+    EXPECT_EQ(result.value.Get(), nullptr);
 }
