@@ -78,6 +78,12 @@ namespace Core
                     static_cast<uint32_t>(IpcCommandType::LOOKUP_BY_INTERFACE),
                     command_handler_.Get());
 
+                // 7. 注册 LOOKUP_BY_NAME 到 IpcRunLoop
+                runloop_.RegisterHandler(
+                    HeaderFlags::BUSINESS_CONTROL,
+                    static_cast<uint32_t>(IpcCommandType::LOOKUP_BY_NAME),
+                    command_handler_.Get());
+
                 runloop_.RegisterHandler(
                     HeaderFlags::BUSINESS_CONTROL,
                     static_cast<uint32_t>(IpcCommandType::REMOTE_RELEASE),
@@ -646,7 +652,8 @@ namespace Core
 
             DasResult IpcContext::RegisterServiceImpl(
                 IDasBase*      p_object,
-                const DasGuid& iid)
+                const DasGuid& iid,
+                const char*    custom_name)
             {
                 // 1. Parameter validation
                 if (!p_object)
@@ -665,11 +672,16 @@ namespace Core
                     return result;
                 }
 
-                // 3. Auto-generate name and register to RemoteObjectRegistry
-                auto name = DAS::fmt::format("{}", iid);
+                // 3. Resolve name: custom_name if provided, else GUID string
+                const std::string resolved_name =
+                    custom_name ? std::string(custom_name)
+                                : DAS::fmt::format("{}", iid);
                 auto session_id = runloop_.GetSessionId();
-                result =
-                    registry_.RegisterObject(obj_id, iid, session_id, name);
+                result = registry_.RegisterObject(
+                    obj_id,
+                    iid,
+                    session_id,
+                    resolved_name);
 
                 // 4. Partial failure rollback
                 if (DAS::IsFailed(result))
@@ -709,6 +721,159 @@ namespace Core
 
                 RemoteObjectInfo info;
                 auto result = registry_.LookupByInterface(interface_id, info);
+                if (DAS::IsFailed(result))
+                {
+                    return DAS_E_IPC_OBJECT_NOT_FOUND;
+                }
+
+                // 2. Remove from Registry first
+                result = registry_.UnregisterObject(info.object_id);
+                if (DAS::IsFailed(result))
+                {
+                    return result;
+                }
+
+                // 3. Release from DistributedObjectManager
+                proxy_factory_->GetObjectManager().UnregisterObject(
+                    info.object_id);
+                return DAS_S_OK;
+            }
+
+            // ====== By-name variants ======
+
+            DasResult IpcContext::ResolveMainProcessInterfaceByName(
+                const char* name,
+                IDasBase**  pp_out_object)
+            {
+                if (!name || !pp_out_object)
+                {
+                    return DAS_E_INVALID_ARGUMENT;
+                }
+                *pp_out_object = nullptr;
+
+                if (business_thread_ && business_thread_->IsCurrentThread())
+                {
+                    return ResolveMainProcessInterfaceByNameImpl(
+                        std::string(name),
+                        pp_out_object);
+                }
+
+                auto name_str = std::string(name);
+                auto result = wait(
+                    stdexec::let_value(
+                        stdexec::schedule(schedule_on_business_thread(*this)),
+                        [this, name_str]() mutable
+                        {
+                            IDasBase* obj = nullptr;
+                            auto hr = ResolveMainProcessInterfaceByNameImpl(
+                                name_str,
+                                &obj);
+                            return stdexec::just(
+                                std::make_pair(hr, DasPtr<IDasBase>(obj)));
+                        }));
+
+                if (!result.has_value())
+                {
+                    return DAS_E_IPC_TIMEOUT;
+                }
+                auto& [hr, ptr] = std::get<0>(*result);
+                if (IsOk(hr))
+                {
+                    if (ptr)
+                    {
+                        ptr->AddRef();
+                    }
+                    *pp_out_object = ptr.Get();
+                }
+                return hr;
+            }
+
+            DasResult IpcContext::ResolveMainProcessInterfaceByNameImpl(
+                const std::string& name,
+                IDasBase**         pp_out_object)
+            {
+                RemoteObjectInfo info;
+                DasResult lookup_result = registry_.LookupByName(name, info);
+                if (DAS::IsFailed(lookup_result))
+                {
+                    return DAS_E_IPC_OBJECT_NOT_FOUND;
+                }
+
+                IDasBase* local_obj = nullptr;
+                DasResult result =
+                    proxy_factory_->GetObjectManager().LookupObject(
+                        info.object_id,
+                        &local_obj);
+                if (DAS::IsFailed(result) || !local_obj)
+                {
+                    return DAS_E_IPC_OBJECT_NOT_FOUND;
+                }
+
+                *pp_out_object = local_obj;
+                return DAS_S_OK;
+            }
+
+            DasResult IpcContext::RegisterServiceByName(
+                IDasBase*      p_object,
+                const DasGuid& iid,
+                const char*    name)
+            {
+                if (business_thread_ && business_thread_->IsCurrentThread())
+                {
+                    return RegisterServiceImpl(p_object, iid, name);
+                }
+
+                auto result = wait(
+                    stdexec::let_value(
+                        stdexec::schedule(schedule_on_business_thread(*this)),
+                        [this, p_object, iid, name]()
+                        {
+                            return stdexec::just(
+                                RegisterServiceImpl(p_object, iid, name));
+                        }));
+
+                if (!result.has_value())
+                {
+                    return DAS_E_IPC_TIMEOUT;
+                }
+                return std::get<0>(*result);
+            }
+
+            DasResult IpcContext::UnregisterServiceByName(const char* name)
+            {
+                if (!name)
+                {
+                    return DAS_E_INVALID_ARGUMENT;
+                }
+
+                if (business_thread_ && business_thread_->IsCurrentThread())
+                {
+                    return UnregisterServiceByNameImpl(std::string(name));
+                }
+
+                auto name_str = std::string(name);
+                auto result = wait(
+                    stdexec::let_value(
+                        stdexec::schedule(schedule_on_business_thread(*this)),
+                        [this, name_str]() mutable
+                        {
+                            return stdexec::just(
+                                UnregisterServiceByNameImpl(name_str));
+                        }));
+
+                if (!result.has_value())
+                {
+                    return DAS_E_IPC_TIMEOUT;
+                }
+                return std::get<0>(*result);
+            }
+
+            DasResult IpcContext::UnregisterServiceByNameImpl(
+                const std::string& name)
+            {
+                // 1. Lookup by name
+                RemoteObjectInfo info;
+                auto             result = registry_.LookupByName(name, info);
                 if (DAS::IsFailed(result))
                 {
                     return DAS_E_IPC_OBJECT_NOT_FOUND;

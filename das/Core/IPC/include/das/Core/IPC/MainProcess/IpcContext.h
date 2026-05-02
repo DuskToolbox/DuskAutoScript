@@ -97,6 +97,17 @@ namespace Core
 
                 DasResult UnregisterService(const DasGuid& iid) override;
 
+                DasResult ResolveMainProcessInterfaceByName(
+                    const char* name,
+                    IDasBase**  pp_out_object) override;
+
+                DasResult RegisterServiceByName(
+                    IDasBase*      p_object,
+                    const DasGuid& iid,
+                    const char*    name) override;
+
+                DasResult UnregisterServiceByName(const char* name) override;
+
                 /// Internal registration method (called by HostLauncher after
                 /// Start succeeds)
                 DasResult InternalRegisterHostLauncher(uint16_t session_id);
@@ -142,16 +153,27 @@ namespace Core
                 /// RegisterService 的实际实现（在 BusinessThread 上执行）
                 DasResult RegisterServiceImpl(
                     IDasBase*      p_object,
-                    const DasGuid& iid);
+                    const DasGuid& iid,
+                    const char*    custom_name = nullptr);
 
                 /// UnregisterService 的实际实现（在 BusinessThread 上执行）
                 DasResult UnregisterServiceImpl(const DasGuid& iid);
+
+                /// UnregisterServiceByName 的实际实现（在 BusinessThread
+                /// 上执行）
+                DasResult UnregisterServiceByNameImpl(const std::string& name);
 
                 /// ResolveMainProcessInterface 的实际实现（在 BusinessThread
                 /// 上执行）
                 DasResult ResolveMainProcessInterfaceImpl(
                     const DasGuid& iid,
                     IDasBase**     pp_out_object);
+
+                /// ResolveMainProcessInterfaceByName 的实际实现（在
+                /// BusinessThread 上执行）
+                DasResult ResolveMainProcessInterfaceByNameImpl(
+                    const std::string& name,
+                    IDasBase**         pp_out_object);
             };
 
         } // namespace MainProcess

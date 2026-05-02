@@ -196,6 +196,37 @@ namespace Core
                  */
                 virtual DasResult UnregisterService(const DasGuid& iid) = 0;
 
+                /**
+                 * @brief 通过名称查询主进程全局服务接口
+                 *
+                 * @param name 服务注册名称
+                 * @param pp_out_object [out] Receives the interface pointer
+                 * (caller must Release)
+                 * @return DasResult DAS_S_OK on success
+                 */
+                virtual DasResult ResolveMainProcessInterfaceByName(
+                    const char* name,
+                    IDasBase**  pp_out_object) = 0;
+
+                /**
+                 * @brief 通过名称注册一个服务对象到主进程全局服务表
+                 * @param p_object 服务对象指针
+                 * @param iid 对象实现的接口 IID
+                 * @param name 自定义注册名称（全局唯一）
+                 * @return DasResult DAS_S_OK 成功
+                 */
+                virtual DasResult RegisterServiceByName(
+                    IDasBase*      p_object,
+                    const DasGuid& iid,
+                    const char*    name) = 0;
+
+                /**
+                 * @brief 通过名称从主进程全局服务表注销一个服务对象
+                 * @param name 要注销的服务名称
+                 * @return DasResult DAS_S_OK 成功
+                 */
+                virtual DasResult UnregisterServiceByName(const char* name) = 0;
+
             protected:
                 virtual ~IIpcContext() = default;
 
