@@ -1690,3 +1690,193 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_JavaDirectorLifecycleTest)
     DAS_CORE_LOG_INFO(
         "[CrossProcess_JavaDirectorLifecycleTest] All verifications passed");
 }
+
+// ====== CrossProcess QueryMainProcessInterfaceByName E2E 测试 ======
+
+/**
+ * @brief 测试跨进程按名称查询主进程服务 (ByName)
+ *
+ * 完整 E2E 流程：
+ * 1. 主进程通过 DasRegisterMainProcessServiceByName 注册 IDasReadOnlyString
+ * 2. 启动 Host 进程，加载 IpcTestPlugin1
+ * 3. 通过 IDasComponentFactory 创建 IDasComponent
+ * 4. 调用 Dispatch("queryMainProcessStringByName", [name])
+ *    → Host 插件内部调用 DasQueryMainProcessInterfaceByName(name)
+ *    → LOOKUP_BY_NAME 跨进程 IPC → 主进程 RemoteObjectRegistry 查找
+ * 5. 验证返回的字符串与注册的一致
+ */
+TEST_F(
+    IpcMultiProcessTestIntegration,
+    CrossProcess_QueryMainProcessStringByName)
+{
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHost.exe not found";
+    }
+
+    // 1. 获取插件 JSON 路径
+    std::string plugin_path;
+    try
+    {
+        plugin_path = IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin1");
+    }
+    catch (const std::exception& e)
+    {
+        GTEST_SKIP() << "Plugin JSON not found: " << e.what();
+    }
+
+    // 2. 在主进程中通过 ByName API 注册一个 IDasReadOnlyString 服务
+    DAS::DasPtr<IDasReadOnlyString> service_string;
+    DasResult create_result = CreateIDasReadOnlyStringFromUtf8(
+        "Hello from ByName CrossProcess E2E",
+        service_string.Put());
+    ASSERT_EQ(create_result, DAS_S_OK) << "Failed to create test string";
+
+    const char* kServiceName = "test_string_service";
+
+    // 在 io_context 线程中注册（BusinessThread TLS 已就绪）
+    auto reg_opt = DAS::Core::IPC::wait(
+        stdexec::then(
+            stdexec::then(
+                stdexec::schedule(GetContext()),
+                [&]() noexcept -> DasResult
+                {
+                    return ctx_->RegisterServiceByName(
+                        service_string.Get(),
+                        DasIidOf<IDasReadOnlyString>(),
+                        kServiceName);
+                }),
+            [](DasResult r) noexcept -> DasResult { return r; }));
+
+    ASSERT_TRUE(reg_opt.has_value()) << "RegisterByName: wait failed";
+    DasResult result = std::get<0>(*reg_opt);
+    ASSERT_EQ(result, DAS_S_OK) << "RegisterServiceByName failed";
+
+    DAS_CORE_LOG_INFO(
+        "[CrossProcess_QueryMainProcessStringByName] Registered "
+        "IDasReadOnlyString with name '{}' in main process",
+        kServiceName);
+
+    // 3. 启动 Host 进程
+    result = StartHostAndSetupRunLoop();
+    ASSERT_EQ(result, DAS_S_OK);
+
+    // 4. 加载 IpcTestPlugin1
+    DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
+    result =
+        ctx_->LoadPluginAsync(launcher_.Get(), plugin_path.c_str(), op.Put());
+    ASSERT_EQ(result, DAS_S_OK);
+
+    auto opt = DAS::Core::IPC::wait(
+        GetContext(),
+        DAS::Core::IPC::async_op(GetContext(), std::move(op)));
+    ASSERT_TRUE(opt.has_value()) << "Load plugin: wait failed";
+
+    auto& [load_result, proxy] = *opt;
+    ASSERT_EQ(load_result, DAS_S_OK) << "Load plugin failed";
+    ASSERT_NE(proxy, nullptr);
+
+    // 5. Get IDasPluginPackage → IDasComponentFactory → IDasComponent
+    DAS::DasPtr<IDasBase> raw_proxy;
+    raw_proxy = DAS::DasPtr<IDasBase>::Attach(proxy);
+    ASSERT_NE(raw_proxy, nullptr);
+
+    DAS::PluginInterface::DasPluginPackage plugin_package;
+    ASSERT_EQ(raw_proxy.As(plugin_package.Put()), DAS_S_OK);
+
+    IDasBase* factory_base_raw = nullptr;
+    result = plugin_package->CreateFeatureInterface(1, &factory_base_raw);
+    ASSERT_EQ(result, DAS_S_OK);
+    ASSERT_NE(factory_base_raw, nullptr);
+    DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+
+    DAS::DasPtr<DAS::PluginInterface::IDasComponentFactory> factory;
+    ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
+
+    DAS::PluginInterface::IDasComponent* component_raw = nullptr;
+    result = factory->CreateInstance(
+        DasIidOf<DAS::PluginInterface::IDasComponent>(),
+        &component_raw);
+    ASSERT_EQ(result, DAS_S_OK);
+    ASSERT_NE(component_raw, nullptr);
+    DAS::DasPtr<DAS::PluginInterface::IDasComponent> component(component_raw);
+
+    // 6. Dispatch("queryMainProcessStringByName", [name]) — 核心验证
+    {
+        DasReadOnlyString method_name{"queryMainProcessStringByName"};
+        DAS::ExportInterface::DasVariantVector dispatch_result;
+        DAS::ExportInterface::DasVariantVector params;
+        ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
+
+        // 传递 service name 作为参数
+        DasReadOnlyString name_param{kServiceName};
+        params.PushBackString(name_param.Get());
+
+        DasResult dispatch_hr = component->Dispatch(
+            method_name.Get(),
+            params.Get(),
+            dispatch_result.Put());
+        ASSERT_EQ(dispatch_hr, DAS_S_OK)
+            << "Dispatch(queryMainProcessStringByName) failed — "
+               "ByName cross-process query did not work";
+
+        // 验证返回的 VariantVector 包含 1 个元素
+        ASSERT_NE(dispatch_result.Get(), nullptr);
+        uint64_t size = dispatch_result->GetSize();
+        ASSERT_EQ(size, 1u) << "Expected 1 element in result, got " << size;
+
+        // 验证返回的字符串与注册的一致
+        IDasReadOnlyString* out_string = nullptr;
+        DasResult           get_hr = dispatch_result->GetString(0, &out_string);
+        ASSERT_EQ(get_hr, DAS_S_OK) << "GetString(0) failed";
+        ASSERT_NE(out_string, nullptr);
+
+        const char* out_str = nullptr;
+        DasResult   utf8_hr = out_string->GetUtf8(&out_str);
+        ASSERT_EQ(utf8_hr, DAS_S_OK) << "GetUtf8 failed";
+        ASSERT_NE(out_str, nullptr);
+        EXPECT_STREQ(out_str, "Hello from ByName CrossProcess E2E")
+            << "Returned string does not match the registered value";
+
+        out_string->Release();
+    }
+
+    // 7. 验证注销 ByName 后 Host 查询失败
+    {
+        auto unreg_opt = DAS::Core::IPC::wait(
+            stdexec::then(
+                stdexec::then(
+                    stdexec::schedule(GetContext()),
+                    [&]() noexcept -> DasResult
+                    { return ctx_->UnregisterServiceByName(kServiceName); }),
+                [](DasResult r) noexcept -> DasResult { return r; }));
+        ASSERT_TRUE(unreg_opt.has_value()) << "UnregisterByName: wait failed";
+        result = std::get<0>(*unreg_opt);
+        ASSERT_EQ(result, DAS_S_OK) << "UnregisterServiceByName failed";
+    }
+
+    // 注销后 Host 应查询失败
+    {
+        DasReadOnlyString method_name{"queryMainProcessStringByName"};
+        DAS::ExportInterface::DasVariantVector dispatch_result;
+        DAS::ExportInterface::DasVariantVector params;
+        ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
+
+        DasReadOnlyString name_param{kServiceName};
+        params.PushBackString(name_param.Get());
+
+        DasResult dispatch_hr = component->Dispatch(
+            method_name.Get(),
+            params.Get(),
+            dispatch_result.Put());
+        EXPECT_NE(dispatch_hr, DAS_S_OK)
+            << "Dispatch(queryMainProcessStringByName) should fail after "
+               "unregister — Host-side DasQueryMainProcessInterfaceByName "
+               "must return error for unregistered name";
+    }
+
+    DAS_CORE_LOG_INFO(
+        "[CrossProcess_QueryMainProcessStringByName] Test passed — "
+        "Host plugin queried main process IDasReadOnlyString by name "
+        "via LOOKUP_BY_NAME IPC, and unregister was verified");
+}

@@ -114,6 +114,11 @@ DasResult DasQueryComponentImpl::Dispatch(
         return HandleQueryMainProcessVariantVector(pp_out_result);
     }
 
+    if (method == "queryMainProcessStringByName")
+    {
+        return HandleQueryMainProcessStringByName(p_arguments, pp_out_result);
+    }
+
     return DAS_E_INVALID_ARGUMENT;
 }
 
@@ -225,6 +230,83 @@ DasResult DasQueryComponentImpl::HandleQueryMainProcessVariantVector(
         return hr;
     }
     hr = (*pp_out_result)->PushBackInt(int_val);
+    return hr;
+}
+
+DasResult DasQueryComponentImpl::HandleQueryMainProcessStringByName(
+    ExportInterface::IDasVariantVector*  p_arguments,
+    ExportInterface::IDasVariantVector** pp_out_result)
+{
+    if (!pp_out_result || !p_arguments)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    // 从参数中提取 service name
+    IDasReadOnlyString* name_str = nullptr;
+    DasResult           hr = p_arguments->GetString(0, &name_str);
+    if (DAS::IsFailed(hr) || !name_str)
+    {
+        DAS_LOG_ERROR("queryMainProcessStringByName: GetString(0) failed");
+        return hr;
+    }
+
+    const char* name_ptr = nullptr;
+    hr = name_str->GetUtf8(&name_ptr);
+    name_str->Release();
+    if (DAS::IsFailed(hr) || !name_ptr)
+    {
+        DAS_LOG_ERROR("queryMainProcessStringByName: GetUtf8 failed");
+        return hr;
+    }
+
+    std::string service_name = name_ptr;
+
+    // 通过名称查询主进程中注册的接口
+    IDasBase* raw_obj = nullptr;
+    hr = DasQueryMainProcessInterfaceByName(service_name.c_str(), &raw_obj);
+    if (DAS::IsFailed(hr) || !raw_obj)
+    {
+        std::string err_msg = DAS_FMT_NS::format(
+            "DasQueryMainProcessInterfaceByName('{}') failed, hr = {:#x}",
+            service_name,
+            static_cast<uint32_t>(hr));
+        DAS_LOG_ERROR(err_msg.c_str());
+        return hr;
+    }
+
+    // 获取字符串内容
+    const char* str = nullptr;
+    hr = static_cast<IDasReadOnlyString*>(raw_obj)->GetUtf8(&str);
+    if (DAS::IsFailed(hr))
+    {
+        DAS_LOG_ERROR("GetUtf8 failed on main process string (ByName)");
+        raw_obj->Release();
+        return hr;
+    }
+
+    std::string log_msg = DAS_FMT_NS::format(
+        "queryMainProcessStringByName('{}') got: {}",
+        service_name,
+        str ? str : "(null)");
+    DAS_LOG_INFO(log_msg.c_str());
+
+    // 创建结果 VariantVector 并回传读取到的字符串
+    DAS::DasPtr<IDasReadOnlyString> return_string;
+    hr = CreateIDasReadOnlyStringFromUtf8(str, return_string.Put());
+    raw_obj->Release();
+    if (DAS::IsFailed(hr))
+    {
+        DAS_LOG_ERROR("CreateIDasReadOnlyStringFromUtf8 failed (ByName)");
+        return hr;
+    }
+
+    hr = CreateIDasVariantVector(pp_out_result);
+    if (DAS::IsFailed(hr))
+    {
+        return hr;
+    }
+    hr = (*pp_out_result)->PushBackString(return_string.Get());
     return hr;
 }
 
