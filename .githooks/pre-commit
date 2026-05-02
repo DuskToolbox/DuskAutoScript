@@ -2,4 +2,4 @@
 # Pre-commit hook: cross-platform entry point
 # Uses python3 on Linux/macOS, falls back to python on Windows
 DIR="$(cd "$(dirname "$0")" && pwd)"
-python3 "$DIR/pre-commit.py" "$@" 2>/dev/null || python "$DIR/pre-commit.py" "$@"
+python3 "$DIR/pre-commit.py" "$@" 2>/dev/null || python "$DIR/pre-commit.py" "$@" 2>/dev/null || py "$DIR/pre-commit.py" "$@"
