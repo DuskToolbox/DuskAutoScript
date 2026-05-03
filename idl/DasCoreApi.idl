@@ -21,12 +21,12 @@ module DasCoreApi {
 //=============================================================================
 
 // JSON
-[export, c_abi] DasResult ParseDasJsonFromString(const char* p_u8_string, [out] IDasJson** pp_out_json);
+[export, c_abi] DasResult ParseDasJsonFromString(const char* p_u8_string, [out] Das::ExportInterface::IDasJson** pp_out_json);
 
-[export, c_abi] DasResult CreateEmptyDasJson([out] IDasJson** pp_out_json);
+[export, c_abi] DasResult CreateEmptyDasJson([out] Das::ExportInterface::IDasJson** pp_out_json);
 
 // VariantVector
-[export, c_abi] DasResult CreateIDasVariantVector([out] IDasVariantVector** pp_out_vector);
+[export, c_abi] DasResult CreateIDasVariantVector([out] Das::ExportInterface::IDasVariantVector** pp_out_vector);
 
 // Logging (U8 string variants)
 [export, c_abi] void DasLogInfoU8(const char* p_string);
@@ -38,13 +38,13 @@ module DasCoreApi {
 [export, c_abi] void DasLogDebugU8(const char* p_string);
 
 // Logging with source location
-[export, c_abi] void DasLogDebugU8WithSourceLocation(const char* p_string, IDasSourceLocation* p_source_location);
+[export, c_abi] void DasLogDebugU8WithSourceLocation(const char* p_string, Das::ExportInterface::IDasSourceLocation* p_source_location);
 
-[export, c_abi] void DasLogInfoU8WithSourceLocation(const char* p_string, IDasSourceLocation* p_source_location);
+[export, c_abi] void DasLogInfoU8WithSourceLocation(const char* p_string, Das::ExportInterface::IDasSourceLocation* p_source_location);
 
-[export, c_abi] void DasLogWarningU8WithSourceLocation(const char* p_string, IDasSourceLocation* p_source_location);
+[export, c_abi] void DasLogWarningU8WithSourceLocation(const char* p_string, Das::ExportInterface::IDasSourceLocation* p_source_location);
 
-[export, c_abi] void DasLogErrorU8WithSourceLocation(const char* p_string, IDasSourceLocation* p_source_location);
+[export, c_abi] void DasLogErrorU8WithSourceLocation(const char* p_string, Das::ExportInterface::IDasSourceLocation* p_source_location);
 
 // Error messages
 [export, c_abi] DasResult DasGetErrorMessage(IDasTypeInfo* p_error_generator, DasResult error_code, [out] IDasReadOnlyString** pp_out_error_message);
@@ -57,35 +57,35 @@ module DasCoreApi {
 [export, c_abi] DasResult DasGetDefaultLocale([out] IDasReadOnlyString** locale_name);
 
 // Collections
-[export, c_abi] DasResult CreateIDasGuidVector(const DasGuid* p_data, size_t size, [out] IDasGuidVector** pp_out_guid);
+[export, c_abi] DasResult CreateIDasGuidVector(const DasGuid* p_data, size_t size, [out] Das::ExportInterface::IDasGuidVector** pp_out_guid);
 
-[export, c_abi] DasResult CreateIDasStringVector([out] IDasStringVector** pp_out_vector);
+[export, c_abi] DasResult CreateIDasStringVector([out] Das::ExportInterface::IDasStringVector** pp_out_vector);
 
 // Plugin manager
 [export, c_abi] DasResult InitializeIDasPluginManager(
-    IDasReadOnlyGuidVector* p_ignore_plugins_guid,
-    IDasInitializeIDasPluginManagerCallback* p_on_finished,
-    [out] IDasInitializeIDasPluginManagerWaiter** pp_out_waiter);
+    Das::ExportInterface::IDasReadOnlyGuidVector* p_ignore_plugins_guid,
+    Das::ExportInterface::IDasInitializeIDasPluginManagerCallback* p_on_finished,
+    [out] Das::ExportInterface::IDasInitializeIDasPluginManagerWaiter** pp_out_waiter);
 
 // Memory
-[export, c_abi] DasResult CreateIDasMemory(size_t size_in_byte, [out] IDasMemory** pp_out_memory);
+[export, c_abi] DasResult CreateIDasMemory(size_t size_in_byte, [out] Das::ExportInterface::IDasMemory** pp_out_memory);
 
 // Image
 [export, c_abi] DasResult CreateIDasImageFromRgb888(
-    IDasMemory* p_alias_memory,
-    const DasSize* p_size,
-    [out] IDasImage** pp_out_image);
+    Das::ExportInterface::IDasMemory* p_alias_memory,
+    const Das::ExportInterface::DasSize* p_size,
+    [out] Das::ExportInterface::IDasImage** pp_out_image);
 
 [export, c_abi] DasResult DasPluginLoadImageFromResource(
     IDasTypeInfo* p_type_info,
     IDasReadOnlyString* p_relative_path,
-    [out] IDasImage** pp_out_image);
+    [out] Das::ExportInterface::IDasImage** pp_out_image);
 
 // Error lens
-[export, c_abi] DasResult CreateIDasBasicErrorLens([out] IDasBasicErrorLens** pp_out_error_lens);
+[export, c_abi] DasResult CreateIDasBasicErrorLens([out] Das::ExportInterface::IDasBasicErrorLens** pp_out_error_lens);
 
 // Log requester
-[export, c_abi] DasResult CreateIDasLogRequester(uint32_t max_line_count, [out] IDasLogRequester** pp_out_requester);
+[export, c_abi] DasResult CreateIDasLogRequester(uint32_t max_line_count, [out] Das::ExportInterface::IDasLogRequester** pp_out_requester);
 
 // IPC timeout
 [export, c_abi] DasResult DasSetIpcTimeout(uint32_t timeout_ms);

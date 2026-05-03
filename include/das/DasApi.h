@@ -43,6 +43,8 @@ namespace Das::PluginInterface
 
 struct IDasTypeInfo;
 
+struct IIpcContext;
+
 struct DasImageDesc
 {
     /**
