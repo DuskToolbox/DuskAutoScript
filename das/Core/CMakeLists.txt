@@ -1,6 +1,6 @@
-# 根据导出语言查找依赖包
-if(EXPORT_JAVA)
-    find_package(JNI REQUIRED)
+#根据导出语言查找依赖包
+if (EXPORT_JAVA)
+find_package(JNI REQUIRED)
 endif()
 
 if(EXPORT_PYTHON)
@@ -14,8 +14,8 @@ add_dependencies(
     DasCoreObjectsPreBuild)
 add_dependencies(DasGateway DasCoreObjectsPreBuild)
 
-# ===== das_idl模块工具集（未来独立模块）=====
-# 使用GLOB自动收集das_idl目录下的所有Python脚本
+#== == = das_idl模块工具集（未来独立模块） == == =
+#使用GLOB自动收集das_idl目录下的所有Python脚本
 file(GLOB DAS_IDL_MODULE_TOOLS "${CMAKE_SOURCE_DIR}/tools/das_idl/*.py")
 
 message(STATUS "[DAS IDL] Module tools (${CMAKE_COUNT_VAR} files):")
@@ -23,7 +23,7 @@ foreach(tool ${DAS_IDL_MODULE_TOOLS})
     message(STATUS "  - ${tool}")
 endforeach()
 
-# 引入 DasIdlGenerator.cmake 模块
+#引入 DasIdlGenerator.cmake 模块
 if (NOT EXISTS "${CMAKE_SOURCE_DIR}/cmake/DasIdlGenerator.cmake")
     message(FATAL_ERROR "DasIdlGenerator.cmake not found at ${CMAKE_SOURCE_DIR}/cmake/DasIdlGenerator.cmake")
 endif ()
@@ -31,7 +31,7 @@ include("${CMAKE_SOURCE_DIR}/cmake/DasIdlGenerator.cmake")
 message(STATUS "[DAS IDL] DasIdlGenerator.cmake module loaded successfully")
 include("${CMAKE_SOURCE_DIR}/cmake/DasAddIdlExport.cmake")
 
-# 确保Python虚拟环境已创建（在CMake配置阶段运行）
+#确保Python虚拟环境已创建（在CMake配置阶段运行）
 message(STATUS "[DAS IDL] Setting up Python virtual environment...")
 das_idl_setup_venv()
 if (NOT EXISTS "${DAS_IDL_VENV_PYTHON}")
@@ -39,13 +39,13 @@ if (NOT EXISTS "${DAS_IDL_VENV_PYTHON}")
 endif ()
 message(STATUS "[DAS IDL] Python virtual environment is ready at ${DAS_IDL_VENV_PYTHON}")
 
-# 收集所有IDL文件
+#收集所有IDL文件
 file(GLOB DAS_IDL_ROOT "${CMAKE_SOURCE_DIR}/idl/*.idl")
 
 set(DAS_IDL_FILES ${DAS_IDL_ROOT})
 
-# 使用 das_add_idl_export 函数替换现有的 IDL 生成和 SWIG 导出代码
-# 动态构建 LANGUAGES 参数
+#使用 das_add_idl_export 函数替换现有的 IDL 生成和 SWIG 导出代码
+#动态构建 LANGUAGES 参数
 set(_LANGUAGES "")
 
 if(EXPORT_PYTHON)
@@ -64,7 +64,7 @@ if(EXPORT_LUA)
     list(APPEND _LANGUAGES "Lua")
 endif()
 
-# 获取 idl/ 目录下所有 .idl 文件名
+#获取 idl / 目录下所有.idl 文件名
 file(GLOB _IDL_FILES "${CMAKE_SOURCE_DIR}/idl/*.idl")
 set(_IDL_FILE_NAMES "")
 
@@ -73,10 +73,10 @@ foreach(_FILE ${_IDL_FILES})
     list(APPEND _IDL_FILE_NAMES ${_NAME})
 endforeach()
 
-# 指定用户自定义的 SWIG 文件（SWIG/ExportAll.i 通过 %include 包含自动生成的内容）
+# 指定用户自定义的 SWIG 文件（SWIG / ExportAll.i 通过 %include 包含自动生成的内容）
 set(_USER_SWIG_FILES "${CMAKE_SOURCE_DIR}/SWIG/ExportAll.i")
 
-# 使用新函数替换现有的 IDL 生成和 SWIG 导出代码
+#使用新函数替换现有的 IDL 生成和 SWIG 导出代码
 das_add_idl_export(
     NAME DasCore
     IDL_DIR "${CMAKE_SOURCE_DIR}/idl"
@@ -93,15 +93,15 @@ das_add_idl_export(
     DEPENDS_ON DasCore
 )
 
-# 将 Java JAR 路径变量导出到父作用域（供 Plugins 使用）
+#将 Java JAR 路径变量导出到父作用域（供 Plugins 使用）
 if(EXPORT_JAVA AND DEFINED DAS_CORE_JAVA_JAR)
     set(DAS_CORE_JAVA_JAR "${DAS_CORE_JAVA_JAR}" PARENT_SCOPE)
     set(DAS_JAVA_JAR_DIR "${DAS_JAVA_JAR_DIR}" PARENT_SCOPE)
     message(STATUS "[DasCore] Exporting DAS_CORE_JAVA_JAR: ${DAS_CORE_JAVA_JAR}")
 endif()
 
-# 让预构建目标依赖IDL生成目标
-# 注意：DasCoreSwigAllGenerated 目标只在启用 SWIG 导出时才存在
+#让预构建目标依赖IDL生成目标
+#注意：DasCoreSwigAllGenerated 目标只在启用 SWIG 导出时才存在
 add_dependencies(DasCoreObjectsPreBuild DasCoreIdlUpdateList DasCoreIdlGenerated)
 
 if(_LANGUAGES)
@@ -110,14 +110,14 @@ if(_LANGUAGES)
     endif()
 endif()
 
-# ====== 官方IID列表生成 ======
-# 设置OfficialIids输出目录
+#== == == 官方IID列表生成 == == ==
+#设置OfficialIids输出目录
 set(DAS_OFFICIAL_IIDS_OUTPUT_DIR "${CMAKE_BINARY_DIR}/das/include/das/_autogen/idl/iids")
 set(DAS_OFFICIAL_IIDS_HEADER "${DAS_OFFICIAL_IIDS_OUTPUT_DIR}/OfficialIids.h")
 set(DAS_OFFICIAL_IIDS_SOURCE "${DAS_OFFICIAL_IIDS_OUTPUT_DIR}/OfficialIids.cpp")
 set(DAS_OFFICIAL_IIDS_DEPS_FILE "${CMAKE_BINARY_DIR}/das/official_iids_deps.txt")
 
-# 生成官方IID列表的自定义命令
+#生成官方IID列表的自定义命令
 add_custom_command(
     OUTPUT ${DAS_OFFICIAL_IIDS_HEADER} ${DAS_OFFICIAL_IIDS_SOURCE}
     COMMAND ${CMAKE_COMMAND} -E remove -f ${DAS_OFFICIAL_IIDS_DEPS_FILE}
@@ -133,21 +133,21 @@ add_custom_command(
     VERBATIM
 )
 
-# 创建官方IID列表生成目标
+#创建官方IID列表生成目标
 add_custom_target(DasCoreOfficialIidsGenerated DEPENDS ${DAS_OFFICIAL_IIDS_HEADER} ${DAS_OFFICIAL_IIDS_SOURCE})
 add_dependencies(DasCoreObjectsPreBuild DasCoreOfficialIidsGenerated)
 
-# ====== 官方IID列表生成结束 ======
+#== == == 官方IID列表生成结束 == == ==
 target_compile_options(DasCoreObjects PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX /MP>
     $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic -Werror>
 )
 set_property(TARGET DasCoreObjects PROPERTY POSITION_INDEPENDENT_CODE ON)
 
-# 初始化外部语言库列表
+#初始化外部语言库列表
 set(DAS_FOREIGN_LANGUAGE_LIB_LIST "")
 
-# 设置导出宏列表
+#设置导出宏列表
 set(DAS_EXPORT_MACRO_LIST "")
 
 if(EXPORT_PYTHON)
@@ -164,12 +164,12 @@ if(EXPORT_CSHARP)
     list(APPEND DAS_EXPORT_MACRO_LIST DAS_EXPORT_CSHARP)
 endif()
 
-# 应用导出宏定义
+#应用导出宏定义
 if(DAS_EXPORT_MACRO_LIST)
     target_compile_definitions(DasCoreObjects PUBLIC ${DAS_EXPORT_MACRO_LIST})
 endif()
 
-# Python Stable ABI 配置
+#Python Stable ABI 配置
 if(EXPORT_PYTHON)
     target_compile_definitions(DasCoreObjects PRIVATE Py_LIMITED_API=0x030A0000)
 endif()
@@ -179,6 +179,11 @@ target_include_directories(DasCoreObjects PUBLIC ${DasCore_ABI_OUTPUT_DIR})
 target_include_directories(DasCoreObjects PUBLIC ${DasCore_WRAPPER_OUTPUT_DIR})
 target_include_directories(DasCoreObjects PUBLIC ${DasCore_HEADER_OUTPUT_DIR})
 target_compile_definitions(DasCoreObjects PRIVATE -DDAS_BUILD_SHARED)
+
+# DasUtils needs generated header include path via DasCommonHeaders
+target_include_directories(DasCommonHeaders INTERFACE ${DasCore_HEADER_OUTPUT_DIR})
+add_dependencies(DasUtils DasCoreIdlGenerated)
+
 target_link_libraries(DasCoreObjects PUBLIC
     Boost::filesystem
     ICU::data
@@ -189,17 +194,17 @@ target_link_libraries(DasCoreObjects PUBLIC
 if(DAS_USE_BUNDLED_BOOST)
     target_link_libraries(DasCoreObjects PUBLIC ${DAS_BUNDLED_BOOST_LIBS})
 else()
-    # 对于使用msys包管理器安装boost的用户，使用msys的clangd或使用这个语句强制将Boost_INCLUDE_DIRS添加到compile_commands.json
-    # target_compile_options(DasCoreObjects PRIVATE "-I${Boost_INCLUDE_DIRS}")
+# 对于使用msys包管理器安装boost的用户，使用msys的clangd或使用这个语句强制将Boost_INCLUDE_DIRS添加到compile_commands.json
+#target_compile_options(DasCoreObjects PRIVATE "-I${Boost_INCLUDE_DIRS}")
     target_include_directories(DasCoreObjects PUBLIC ${Boost_INCLUDE_DIRS})
     target_link_libraries(DasCoreObjects PRIVATE ${Boost_LIBRARIES})
 endif()
 
-# ============================================================================
-# Windows AF_UNIX 支持
-# ============================================================================
-# 允许在 Windows 下使用 AF_UNIX (Unix Domain Socket) 替代 Named Pipe
-# 要求: Windows 10 1803+, Boost 1.27+
+#== == == == == == == == == == == == == == == == == == == == == == == == == == == == == == == == == == == == == ==
+#Windows AF_UNIX 支持
+#== == == == == == == == == == == == == == == == == == == == == == == == == == == == == == == == == == == == == ==
+#允许在 Windows 下使用 AF_UNIX(Unix Domain Socket) 替代 Named Pipe
+#要求 : Windows 10 1803 +, Boost 1.27 +
 option(DAS_WINDOWS_USE_AF_UNIX "Use AF_UNIX instead of Named Pipe for IPC on Windows" OFF)
 
 if(WIN32 AND DAS_WINDOWS_USE_AF_UNIX)
@@ -207,7 +212,7 @@ if(WIN32 AND DAS_WINDOWS_USE_AF_UNIX)
     message(STATUS "Windows AF_UNIX transport enabled")
 endif()
 
-# UnixAsyncIpcTransport now compiles on Windows and uses Boost.Asio IOCP
+#UnixAsyncIpcTransport now compiles on Windows and uses Boost.Asio IOCP
 if(WIN32)
     target_link_libraries(DasCoreObjects PRIVATE ws2_32 Mswsock)
 endif()
@@ -217,10 +222,10 @@ das_add_core_component(OcvWrapper)
 das_add_core_component(OrtWrapper)
 das_add_core_component(ForeignInterfaceHost)
 
-# 将OfficialIids生成的文件添加到DasCoreObjects
+#将OfficialIids生成的文件添加到DasCoreObjects
 set(DAS_OFFICIAL_IIDS_OUTPUT_DIR "${CMAKE_BINARY_DIR}/das/include/das/_autogen/idl/iids")
 
-# 注意：无条件添加这些文件，因为 add_custom_command 会确保文件在编译前生成
+#注意：无条件添加这些文件，因为 add_custom_command 会确保文件在编译前生成
 target_sources(DasCoreObjects PRIVATE
     ${DAS_OFFICIAL_IIDS_SOURCE}
     ${DAS_OFFICIAL_IIDS_HEADER}
@@ -235,7 +240,7 @@ das_add_core_component(TaskScheduler)
 das_add_core_component(CoreServices)
 das_add_core_component(IPC)
 
-# 将IpcGenerated.cpp添加到DasCoreObjects（与OfficialIids相同的模式）
+#将IpcGenerated.cpp添加到DasCoreObjects（与OfficialIids相同的模式）
 target_sources(DasCoreObjects PRIVATE ${DasCore_IPC_GENERATED_CPP})
 set_source_files_properties(${DasCore_IPC_GENERATED_CPP} PROPERTIES GENERATED TRUE)
 target_include_directories(DasCoreObjects PUBLIC "${CMAKE_BINARY_DIR}/das/include/das/_autogen/idl/ipc")
@@ -245,34 +250,34 @@ add_dependencies(DasCore DasCoreObjects)
 
 add_compile_definitions(DAS_BUILD_SHARED)
 
-# FetchContent_Declare(
-# Sol2
-# URL ${GITHUB_MIRROR_URL}/ThePhD/sol2/archive/refs/tags/v3.3.0.zip
-# )
-# FetchContent_MakeAvailable(Sol2)
-# target_link_libraries(DasCoreObjects PUBLIC sol2::sol2)
-# find_package(Lua 5.4)
+#FetchContent_Declare(
+#Sol2
+#URL ${GITHUB_MIRROR_URL } / ThePhD / sol2 / archive / refs / tags / v3.3.0.zip
+#)
+#FetchContent_MakeAvailable(Sol2)
+#target_link_libraries(DasCoreObjects PUBLIC sol2::sol2)
+#find_package(Lua 5.4)
 
-# if(NOT ${LUA_FOUND})
-# message(STATUS "Downloading and configuring Lua 5.4.6.")
-# FetchContent_Declare(
-# DasLua
-# URL ${GITHUB_MIRROR_URL}/lua/lua/archive/refs/tags/v5.4.6.zip
-# PATCH_COMMAND ${CMAKE_COMMAND} -E copy
-# "${CMAKE_SOURCE_DIR}/cmake/CompileLua.cmake" <SOURCE_DIR>/CMakeLists.txt
-# )
-# FetchContent_MakeAvailable(DasLua)
-# target_link_libraries(DasCoreObjects PUBLIC Das::Lua)
-# else()
-# target_include_directories(DasCoreObjects PRIVATE ${LUA_INCLUDE_DIR})
-# target_link_libraries(DasCoreObjects PUBLIC ${LUA_LIBRARIES})
-# endif()
+#if (NOT ${LUA_FOUND})
+#message(STATUS "Downloading and configuring Lua 5.4.6.")
+#FetchContent_Declare(
+#DasLua
+#URL ${GITHUB_MIRROR_URL } / lua / lua / archive / refs / tags / v5.4.6.zip
+#PATCH_COMMAND ${CMAKE_COMMAND } - E copy
+#"${CMAKE_SOURCE_DIR}/cmake/CompileLua.cmake"<SOURCE_DIR> / CMakeLists.txt
+#)
+#FetchContent_MakeAvailable(DasLua)
+#target_link_libraries(DasCoreObjects PUBLIC Das::Lua)
+#else()
+#target_include_directories(DasCoreObjects PRIVATE ${LUA_INCLUDE_DIR})
+#target_link_libraries(DasCoreObjects PUBLIC ${LUA_LIBRARIES})
+#endif()
 
 list(APPEND DAS_EXPORT_MACRO_LIST DAS_EXPORT_LUA)
 target_link_libraries(DasCoreObjects
     PUBLIC DasUtils DasPlatformDefs ${DAS_FOREIGN_LANGUAGE_LIB_LIST})
 
-# Windows 平台需要链接 ntdll（Boost.Process 使用了 NT 内部 API）
+#Windows 平台需要链接 ntdll（Boost.Process 使用了 NT 内部 API）
 if(WIN32)
     target_link_libraries(DasCoreObjects PRIVATE ntdll)
 endif()
@@ -283,7 +288,7 @@ target_compile_definitions(DasCoreObjects PRIVATE DAS_CORE_NAME="$<TARGET_FILE_N
 target_link_libraries(DasCore PUBLIC DasCoreObjects)
 
 if(${DAS_BUILD_TEST})
-    # 复制 Python 测试插件到 build 目录（测试工作目录是 build/Test）
+#复制 Python 测试插件到 build 目录（测试工作目录是   build / Test）
     file(COPY ${CMAKE_SOURCE_DIR}/das/Plugins/PythonTestPlugin
         DESTINATION ${CMAKE_BINARY_DIR}/Test/plugins)
 
@@ -294,7 +299,7 @@ if(${DAS_BUILD_TEST})
     das_add_core_test(Exceptions)
     das_add_core_test(TaskScheduler)
 
-    # TaskSchedulerTest needs Http headers for controller validation tests
+#TaskSchedulerTest needs Http headers for controller validation tests
     target_include_directories(TaskSchedulerTest PRIVATE ${CMAKE_SOURCE_DIR}/das/Http/src)
     das_add_core_test(IPC)
 
@@ -313,7 +318,7 @@ if(EXPORT_PYTHON)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:DasCorePythonExport> $<TARGET_FILE_DIR:DasCore>)
 
     if(DAS_BUILD_TEST)
-        # 确保 Test 目录存在
+#确保 Test 目录存在
         if(NOT EXISTS ${CMAKE_BINARY_DIR}/Test)
             file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/Test)
         endif()

@@ -43,7 +43,11 @@ namespace Das::PluginInterface
 
 struct IDasTypeInfo;
 
-struct IIpcContext;
+namespace Das::Core::IPC::MainProcess
+{
+    struct IIpcContext;
+}
+using Das::Core::IPC::MainProcess::IIpcContext;
 
 struct DasImageDesc
 {

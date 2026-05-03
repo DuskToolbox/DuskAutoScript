@@ -4,6 +4,7 @@ Lua SWIG 生成器
 生成 Lua 特定的 SWIG .i 文件代码
 """
 
+import re
 from typing import TYPE_CHECKING, List
 from das_idl_parser import (
     IdlDocument,
@@ -61,18 +62,15 @@ class LuaSwigGenerator(SwigLangGenerator):
         Returns:
             适合用于 sol2 函数参数声明的 C++ 类型字符串。
         """
-        # DasGuid 特殊处理：作为内置原始类型，按 const 引用传递
+        # DasGuid 特殊处理：按值传递时使用 const 引用；带指针时走正常路径
         if type_info.type_kind == TypeKind.BASIC and type_info.base_type == 'DasGuid':
-            return "const DasGuid&"
+            if not type_info.is_pointer:
+                return "const DasGuid&"
 
-        # 根据类型分类确定基础类型名
-        if type_info.type_kind == TypeKind.INTERFACE:
-            result = f"{type_info.base_type}*"
-        else:
-            # BASIC, ENUM, STRUCT, UNKNOWN → 直接使用 base_type
-            result = type_info.base_type
+        # 根据类型分类确定基础类型名（不加指针，统一由 pointer_level 控制）
+        result = type_info.base_type
 
-        # 根据 const / reference / pointer 标志追加修饰
+        # 根据 const / pointer / reference 标志追加修饰
         if type_info.is_const:
             result = f"const {result}"
         if type_info.is_pointer:
@@ -114,6 +112,9 @@ class LuaSwigGenerator(SwigLangGenerator):
 
         # 根据类型分类确定返回类型
         if type_info.type_kind == TypeKind.INTERFACE:
+            # 接口返回指针: TypeName* (pointer_level=1 是接口指针的标准返回)
+            if type_info.is_pointer and type_info.pointer_level > 0:
+                return f"{type_info.base_type}{'*' * type_info.pointer_level}"
             return f"{type_info.base_type}*"
 
         # BASIC, ENUM, STRUCT, UNKNOWN → 直接使用 base_type
@@ -214,7 +215,36 @@ public:
         else:
             return f'ILua{iface_name}'
 
-    def _generate_director_class(self, interface: InterfaceDef) -> str:
+    @staticmethod
+    def _uuid_to_das_guid_literal(uuid_str: str) -> str:
+        """将 IDL UUID 字符串转换为 DasGuid 字面量。
+
+        输入格式: "69A9BDB0-4657-45B6-8ECB-E4A8F0428E95"
+        输出格式: "DasGuid{0x69A9BDB0, 0x4657, 0x45B6, {0x8E, 0xCB, 0xE4, 0xA8, 0xF0, 0x42, 0x8E, 0x95}}"
+
+        Args:
+            uuid_str: IDL 中的 UUID 字符串（含连字符）。
+
+        Returns:
+            DasGuid 初始化列表字符串。
+        """
+        hex_str = uuid_str.replace('-', '')
+        # UUID layout: Data1(4B) Data2(2B) Data3(2B) Data4(8B)
+        d1 = int(hex_str[0:8], 16)
+        d2 = int(hex_str[8:12], 16)
+        d3 = int(hex_str[12:16], 16)
+        d4 = [int(hex_str[16 + i * 2: 16 + i * 2 + 2], 16) for i in range(8)]
+        return (
+            f"DasGuid{{0x{d1:08X}, 0x{d2:04X}, 0x{d3:04X},"
+            f" {{0x{d4[0]:02X}, 0x{d4[1]:02X}, 0x{d4[2]:02X}, 0x{d4[3]:02X},"
+            f" 0x{d4[4]:02X}, 0x{d4[5]:02X}, 0x{d4[6]:02X}, 0x{d4[7]:02X}}}}}"
+        )
+
+    def _generate_director_class(
+        self,
+        interface: InterfaceDef,
+        all_interfaces: dict = None,
+    ) -> str:
         """生成 ILuaDas{Name} Director 包装类的 C++ 定义。
 
         每个 Director 类同时继承 C++ 接口和 LuaDirector，
@@ -226,6 +256,7 @@ public:
 
         Args:
             interface: 经 resolve_types() 标注后的接口定义。
+            all_interfaces: 接口名 → InterfaceDef 映射（用于收集继承链上的方法）。
 
         Returns:
             完整的 Director 类 C++ 定义字符串。
@@ -238,9 +269,12 @@ public:
         lines = []
         lines.append(f'class {class_name} : public {parent}, public LuaDirector {{')
         lines.append('public:')
-        lines.append(f'    explicit {class_name}(lua_State* L, sol::table env)')
+        lines.append(f'    explicit {class_name}(sol::this_state ts, sol::table env)')
         lines.append('        : LuaDirector()')
         lines.append('    {')
+        lines.append(
+            '        lua_State* L = ts;'
+        )
         lines.append(
             '        lua_pushvalue(L, -1);'
             '  // Push copy of the table for registry ref'
@@ -262,39 +296,64 @@ public:
         lines.append('')
         lines.append('    uint32_t Release() override {')
         lines.append(
-            '        uint32_t count = ref_count_.fetch_sub(1,'
+            '            uint32_t count = ref_count_.fetch_sub(1,'
             ' std::memory_order_acq_rel) - 1;'
         )
-        lines.append('        if (count == 0) {')
-        lines.append('            delete this;')
-        lines.append('        }')
-        lines.append('        return count;')
+        lines.append('            if (count == 0) {')
+        lines.append('                delete this;')
+        lines.append('            }')
+        lines.append('            return count;')
         lines.append('    }')
         lines.append('')
         lines.append(
-            '    DasResult QueryInterface(const DasGuid& iid,'
+            '        DasResult QueryInterface(const DasGuid& iid,'
             ' void** pp_object) override {'
         )
         lines.append(
-            '        if (!pp_object) return DAS_E_INVALID_POINTER;'
+            '            if (!pp_object) return DAS_E_INVALID_POINTER;'
+        )
+        # Generate DasGuid literal for this interface's UUID
+        iid_literal = self._uuid_to_das_guid_literal(interface.uuid)
+        lines.append(
+            f'            static const DasGuid IID_MyType = {iid_literal};'
         )
         lines.append(
-            f'        if (iid == IDasBase::GetIID() || iid'
-            f' == {parent}::GetIID()) {{'
+            '            if (iid == DAS_IID_BASE || iid == IID_MyType) {'
         )
         lines.append(
-            f'            *pp_object ='
-            f' static_cast<{parent}*>(this);'
+            f'                *pp_object'
+            f' = static_cast<{parent}*>(this);'
         )
-        lines.append('            AddRef();')
-        lines.append('            return DAS_S_OK;')
+        lines.append('                AddRef();')
+        lines.append('                return DAS_S_OK;')
+        lines.append('            }')
+        lines.append('            *pp_object = nullptr;')
+        lines.append('            return DAS_E_NO_INTERFACE;')
         lines.append('        }')
-        lines.append('        *pp_object = nullptr;')
-        lines.append('        return DAS_E_NO_INTERFACE;')
-        lines.append('    }')
 
-        # 为每个方法生成 override
+        # 收集本接口及所有基接口的方法（递归到 IDasBase 为止）
+        own_method_names = {m.name for m in interface.methods}
+        inherited_methods = []
+        if all_interfaces:
+            base_name = interface.base_interface
+            while base_name and base_name != 'IDasBase':
+                base_iface = all_interfaces.get(base_name)
+                if not base_iface:
+                    break
+                for m in base_iface.methods:
+                    if m.name not in own_method_names:
+                        inherited_methods.append((m, base_name))
+                        own_method_names.add(m.name)
+                base_name = base_iface.base_interface
+
+        # 为本接口的方法生成 override
         for method in interface.methods:
+            lines.append(
+                self._generate_method_override(method, parent)
+            )
+
+        # 为继承的基接口方法生成 override（确保所有纯虚函数都被实现）
+        for method, base_name in inherited_methods:
             lines.append(
                 self._generate_method_override(method, parent)
             )
@@ -326,9 +385,20 @@ public:
         is_interface_ptr = method.return_type.type_kind == TypeKind.INTERFACE
 
         # 构建参数声明列表
+        # 注意: ABI 生成器对 [out] INTERFACE 参数会额外加一层指针
+        # (IDL: IDasImage* → ABI: IDasImage**)，所以 director override
+        # 必须匹配 ABI 签名而非 IDL 原文。
         param_decls = []
         for param in method.parameters:
             param_type = self._get_sol2_param_type(param.type_info)
+            # ABI 生成器对 [out] INTERFACE 且 pointer_level==1 的参数
+            # 会额外加一层指针 (IDL: T* → ABI: T**)。
+            # pointer_level>=2 的情况 ABI 不再加 (IDL: T** → ABI: T**)。
+            # 非 INTERFACE [out] 参数 ABI 不加指针。
+            if (param.direction == ParamDirection.OUT
+                    and param.type_info.type_kind == TypeKind.INTERFACE
+                    and param.type_info.pointer_level == 1):
+                param_type = f"{param_type}*"
             param_decls.append(f'{param_type} {param.name}')
         param_list = ', '.join(param_decls) if param_decls else ''
 
@@ -346,26 +416,20 @@ public:
         lines.append('')
         lines.append(f'    {ret_type} {method.name}({param_list}) override {{')
 
-        # 路径 1: upcall 重入 或 Lua 方法不存在 → 回退到父接口
+        # 路径 1: upcall 重入 或 Lua 方法不存在 → 返回安全默认值
+        # 注意: 不调用 parent::method() 因为接口方法是纯虚函数 (= 0)，没有实现
         lines.append(
             f'        if (is_upcall_active()'
             f' || !has_lua_method("{method.name}")) {{'
         )
         if is_void:
-            if all_args:
-                lines.append(f'            {parent}::{method.name}({all_args});')
-            else:
-                lines.append(f'            {parent}::{method.name}();')
             lines.append('            return;')
+        elif is_das_result:
+            lines.append('            return DAS_E_NOT_FOUND;')
+        elif is_interface_ptr:
+            lines.append('            return nullptr;')
         else:
-            if all_args:
-                lines.append(
-                    f'            return {parent}::{method.name}({all_args});'
-                )
-            else:
-                lines.append(
-                    f'            return {parent}::{method.name}();'
-                )
+            lines.append(f'            return {ret_type}();')
         lines.append('        }')
         lines.append('')
 
@@ -373,26 +437,20 @@ public:
         lines.append('        UpcallGuard guard(this);')
         if lua_args:
             lines.append(
-                f'        auto result = call_lua_method("{method.name}",'
+                f'        auto lua_result = call_lua_method("{method.name}",'
                 f' {lua_args});'
             )
         else:
             lines.append(
-                f'        auto result = call_lua_method("{method.name}");'
+                f'        auto lua_result = call_lua_method("{method.name}");'
             )
-        lines.append('        if (!result.valid()) {')
+        lines.append('        if (!lua_result.valid()) {')
         lines.append(
             '            // Lua call failed — return safe error value'
         )
 
-        # 错误回退
+        # 错误回退 — 不调用纯虚函数
         if is_void:
-            if all_args:
-                lines.append(
-                    f'            {parent}::{method.name}({all_args});'
-                )
-            else:
-                lines.append(f'            {parent}::{method.name}();')
             lines.append('            return;')
         elif is_das_result:
             lines.append('            return DAS_E_FAIL;')
@@ -405,7 +463,7 @@ public:
 
         # 提取返回值（void 无需提取）
         if not is_void:
-            lines.append(f'        return result.get<{ret_type}>();')
+            lines.append(f'        return lua_result.get<{ret_type}>();')
 
         lines.append('    }')
 
@@ -416,7 +474,7 @@ public:
 
         用于 sol2 注册 lambda 中声明局部变量：
           - INTERFACE → TypeName*（接口使用指针作为值类型）
-          - 其他类型 → base_type（去除指针修饰的原始类型）
+          - 其他类型 → base_type + (pointer_level-1) 个 *（去除最外层指针）
 
         Args:
             type_info: 经 resolve_types() 标注后的类型信息。
@@ -425,7 +483,14 @@ public:
             适合用于局部变量声明的 C++ 类型字符串。
         """
         if type_info.type_kind == TypeKind.INTERFACE:
+            # [out] InterfaceType** → 局部变量类型是 InterfaceType*
+            # pointer_level 为 out 参数的指针层级（通常为 2），减 1 得到值类型
+            if type_info.pointer_level > 1:
+                return f"{type_info.base_type}{'*' * (type_info.pointer_level - 1)}"
             return f"{type_info.base_type}*"
+        # 非 INTERFACE 类型：去除最外层指针（pointer_level - 1）
+        if type_info.pointer_level > 1:
+            return f"{type_info.base_type}{'*' * (type_info.pointer_level - 1)}"
         return type_info.base_type
 
     def _generate_out_param_lambda(
@@ -587,10 +652,12 @@ public:
             f'lua.new_usertype<{director_name}>("{director_name}",\n'
             f'    sol::call_constructor,\n'
             f'    sol::initializers(\n'
-            f'        [](lua_State* L, sol::table env) {{\n'
-            f'            return new {director_name}(L, env);\n'
+            f'        []({director_name}& obj, sol::this_state ts,'
+            f' sol::table env) {{\n'
+            f'            new (&obj) {director_name}(ts, env);\n'
             f'        }}\n'
             f'    ),\n'
+            f'    sol::base_classes,\n'
             f'    sol::bases<{iface_name}>(),\n'
             f'    sol::meta_function::garbage_collect,'
             f' []({director_name}* p) {{\n'
@@ -617,7 +684,7 @@ public:
             register_all_das_interfaces 函数的完整 C++ 定义字符串。
         """
         lines = []
-        lines.append('void register_all_das_interfaces(sol::state& lua) {')
+        lines.append('void register_all_das_interfaces(sol::state_view lua) {')
 
         # 抽象接口注册
         if interfaces:
@@ -661,17 +728,17 @@ public:
             register_error_codes 函数的完整 C++ 定义字符串。
         """
         lines = []
-        lines.append('void register_error_codes(sol::state& lua) {')
+        lines.append('void register_error_codes(sol::state_view lua) {')
 
         for error_code in doc.error_codes:
-            # 使用 int32_t 作为底层类型
+            # sol2 new_enum: name-value pairs (no template arg needed)
             entries = []
             for val in error_code.values:
                 entries.append(f'"{val.name}", {val.value}')
 
             entries_str = ',\n        '.join(entries)
             lines.append(
-                f'    lua.new_enum<int32_t>("{error_code.name}",\n'
+                f'    lua.new_enum("{error_code.name}",\n'
                 f'        {entries_str}\n'
                 f'    );'
             )
@@ -680,34 +747,35 @@ public:
         lines.append('}')
         return '\n'.join(lines)
 
-    def _generate_module_binding(self, doc: IdlDocument) -> str:
+    def _generate_module_binding(
+        self,
+        doc: IdlDocument,
+        available_types: set = None,
+    ) -> str:
         """生成模块函数的 sol2 注册代码。
 
         遍历所有模块及其函数，根据是否有 [out] 参数生成不同的绑定：
           - 无 [out] 参数 → 直接绑定函数指针
           - 有 [out] 参数 → 使用 lambda 包装为 tuple 返回值
 
-        生成格式（无 [out]）：
-            lua.set_function("DasLogError", &DasLogError);
-
-        生成格式（有 [out]）：
-            lua.set_function("FuncName", [](params...) -> std::tuple<...> {
-                OutType out_param{};
-                DasResult hr = FuncName(params..., &out_param);
-                return std::make_tuple(hr, out_param);
-            });
-
         Args:
             doc: 经 resolve_types() 标注后的 IDL 文档。
+            available_types: 有完整 ABI 头文件的接口名集合。为 None 表示不过滤。
 
         Returns:
             register_module_functions 函数的完整 C++ 定义字符串。
         """
         lines = []
-        lines.append('void register_module_functions(sol::state& lua) {')
+        lines.append('void register_module_functions(sol::state_view lua) {')
 
         for module in doc.modules:
             for func in module.functions:
+                # 跳过引用了不完整接口类型的函数（无 ABI 头文件的接口）
+                if available_types is not None:
+                    if self._func_references_unavailable_type(
+                        func, available_types
+                    ):
+                        continue
                 out_params = [
                     p
                     for p in func.parameters
@@ -736,6 +804,50 @@ public:
 
         lines.append('}')
         return '\n'.join(lines)
+
+    # IDL 类型名到 C++ 实际类型的映射不一致列表。
+    # 这些 IDL 类型名在生成的 C++ 代码中会导致签名不匹配的链接错误。
+    _IDL_CPP_SIGNATURE_MISMATCH_TYPES = frozenset({
+        'DasReadOnlyString',   # IDL: DasReadOnlyString → C++: IDasReadOnlyString*
+        'DasString',           # IDL: DasString → C++: IDasString*
+    })
+
+    @staticmethod
+    def _func_references_unavailable_type(
+        func, available_types: set
+    ) -> bool:
+        """检查函数是否引用了没有完整定义的接口类型或签名不匹配的类型。
+
+        Args:
+            func: 模块函数定义（ModuleFunctionDef）。
+            available_types: 有完整 ABI 头文件的接口名集合。
+
+        Returns:
+            True 如果函数引用了不可用的接口类型。
+        """
+        def _check_type(type_info):
+            # INTERFACE 类型直接检查
+            if type_info.type_kind == TypeKind.INTERFACE:
+                return type_info.base_type not in available_types
+            # UNKNOWN 类型可能是带命名空间前缀的接口
+            if type_info.type_kind == TypeKind.UNKNOWN:
+                # 提取短名（去掉命名空间前缀）
+                short_name = type_info.base_type.rsplit('::', 1)[-1]
+                if short_name.startswith('IDas') and short_name not in available_types:
+                    return True
+            # 检查签名不匹配的类型（IDL 名与 C++ 名不一致）
+            if type_info.base_type in LuaSwigGenerator._IDL_CPP_SIGNATURE_MISMATCH_TYPES:
+                return True
+            return False
+
+        # Check return type
+        if _check_type(func.return_type):
+            return True
+        # Check parameters
+        for p in func.parameters:
+            if _check_type(p.type_info):
+                return True
+        return False
 
     def _generate_module_function_lambda(
         self, func: ModuleFunctionDef

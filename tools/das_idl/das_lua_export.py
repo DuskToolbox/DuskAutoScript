@@ -74,6 +74,7 @@ def generate_cpp_file(
     doc: IdlDocument,
     interfaces: List[InterfaceDef],
     name: str,
+    abi_dir: str,
 ) -> str:
     """Generate the complete C++ source file for sol2 Lua bindings.
 
@@ -89,6 +90,7 @@ def generate_cpp_file(
         doc: Merged IdlDocument with resolved types.
         interfaces: List of InterfaceDef objects (from doc.interfaces).
         name: Export library base name (e.g., "DasCore").
+        abi_dir: Path to the ABI header directory for checking existence.
 
     Returns:
         Complete C++ source code as a string.
@@ -99,26 +101,51 @@ def generate_cpp_file(
     parts.append('#include <sol/sol.hpp>')
     parts.append('')
 
-    # Include ABI headers for each IDL file
+    # Include ABI headers only when the corresponding header file exists
+    # on disk. Some interfaces (e.g., IDasTemplateMatchResult) are nested
+    # inside other IDL files and don't have their own ABI header.
     for iface in interfaces:
-        parts.append(f'#include "das/_autogen/idl/abi/{iface.name}.h"')
+        abi_header = os.path.join(abi_dir, f'{iface.name}.h')
+        if os.path.isfile(abi_header):
+            parts.append(f'#include "das/_autogen/idl/abi/{iface.name}.h"')
     parts.append('')
 
     # Include wrapper headers (for convenience types)
-    parts.append('#include "das/DasCore.h"')
+    parts.append('#include "das/DasApi.h"')
+    # Include additional headers for types used in module functions
+    # but not covered by individual ABI headers
+    parts.append('#include "das/IDasCoreServices.h"')
     parts.append('')
+
+    # Bring interface namespaces into scope so that generated code can use
+    # interface names (IDasBinaryBuffer, IDasCapture, etc.) without
+    # full qualification.  ABI headers define interfaces inside
+    # Das::ExportInterface or Das::PluginInterface.
+    parts.append('using namespace Das::ExportInterface;')
+    parts.append('using namespace Das::PluginInterface;')
+    parts.append('')
+
+    # Filter interfaces to only those with ABI headers — the Director classes
+    # and registration functions can only be generated for interfaces whose
+    # type definitions are available via ABI headers.
+    abilable_interfaces = [
+        iface for iface in interfaces
+        if os.path.isfile(os.path.join(abi_dir, f'{iface.name}.h'))
+    ]
 
     # ── LuaDirector base class ─────────────────────────────────────────
     parts.append(gen._generate_lua_director_base())
     parts.append('')
 
     # ── Director wrapper classes ───────────────────────────────────────
-    for interface in interfaces:
-        parts.append(gen._generate_director_class(interface))
+    # Build interface name → InterfaceDef map for inherited method resolution
+    iface_map = {iface.name: iface for iface in abilable_interfaces}
+    for interface in abilable_interfaces:
+        parts.append(gen._generate_director_class(interface, iface_map))
         parts.append('')
 
     # ── Registration function (interfaces + directors) ─────────────────
-    parts.append(gen._generate_registration_function(interfaces))
+    parts.append(gen._generate_registration_function(abilable_interfaces))
     parts.append('')
 
     # ── Error code bindings ────────────────────────────────────────────
@@ -129,11 +156,14 @@ def generate_cpp_file(
     # ── Module function bindings ───────────────────────────────────────
     has_functions = any(len(module.functions) > 0 for module in doc.modules)
     if has_functions:
-        parts.append(gen._generate_module_binding(doc))
+        available_types = {iface.name for iface in abilable_interfaces}
+        parts.append(
+            gen._generate_module_binding(doc, available_types)
+        )
         parts.append('')
 
     # ── luaopen entry point ────────────────────────────────────────────
-    parts.append(gen._generate_luaopen_function(doc, interfaces))
+    parts.append(gen._generate_luaopen_function(doc, abilable_interfaces))
 
     return '\n'.join(parts)
 
@@ -190,11 +220,22 @@ def main() -> int:
     gen = LuaSwigGenerator()
     interfaces = merged_doc.interfaces
 
+    # Determine ABI header directory for include filtering.
+    # The ABI headers live at <output>/../abi/ relative to the Lua output dir,
+    # since both are under _autogen/idl/ (lua/ and abi/).
+    abi_dir = os.path.normpath(os.path.join(args.output, '..', 'abi'))
+
     # Generate C++ source
-    cpp_code = generate_cpp_file(gen, merged_doc, interfaces, args.name)
+    cpp_code = generate_cpp_file(gen, merged_doc, interfaces, args.name, abi_dir)
+
+    # Filter interfaces for Lua stub — only those with ABI headers
+    abilable_interfaces = [
+        iface for iface in interfaces
+        if os.path.isfile(os.path.join(abi_dir, f'{iface.name}.h'))
+    ]
 
     # Generate Lua stub
-    lua_stub = gen._generate_lua_stub(interfaces, merged_doc)
+    lua_stub = gen._generate_lua_stub(abilable_interfaces, merged_doc)
 
     # ── Write output files ─────────────────────────────────────────────
     output_dir = Path(args.output)

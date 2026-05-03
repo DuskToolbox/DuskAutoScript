@@ -719,6 +719,15 @@ function(das_add_idl_export)
             sol2::sol2
         )
 
+        # Lua headers and libraries (required by sol2)
+        if(Lua_FOUND)
+            target_include_directories(${_LUA_LIB_NAME} PRIVATE ${LUA_INCLUDE_DIR})
+            target_link_libraries(${_LUA_LIB_NAME} PRIVATE ${LUA_LIBRARIES})
+        elseif(LUA_FOUND)
+            target_include_directories(${_LUA_LIB_NAME} PRIVATE ${LUA_INCLUDE_DIRS})
+            target_link_libraries(${_LUA_LIB_NAME} PRIVATE ${LUA_LIBRARIES})
+        endif()
+
         # 链接外部依赖库
         if(DAS_IDL_EXPORT_DEPENDS_ON)
             target_link_libraries(${_LUA_LIB_NAME} PRIVATE ${DAS_IDL_EXPORT_DEPENDS_ON})

@@ -71,6 +71,15 @@ module DasCoreApi {
 [export, c_abi] DasResult CreateIDasMemory(size_t size_in_byte, [out] Das::ExportInterface::IDasMemory** pp_out_memory);
 
 // Image
+[export, c_abi] DasResult CreateIDasImageFromEncodedData(
+    DasImageDesc* p_desc,
+    [out] Das::ExportInterface::IDasImage** pp_out_image);
+
+[export, c_abi] DasResult CreateIDasImageFromDecodedData(
+    const DasImageDesc* p_desc,
+    const Das::ExportInterface::DasSize* p_size,
+    [out] Das::ExportInterface::IDasImage** pp_out_image);
+
 [export, c_abi] DasResult CreateIDasImageFromRgb888(
     Das::ExportInterface::IDasMemory* p_alias_memory,
     const Das::ExportInterface::DasSize* p_size,
