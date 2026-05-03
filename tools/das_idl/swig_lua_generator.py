@@ -826,6 +826,207 @@ public:
 
         return lines
 
+    # ── EmmyLua 类型映射 ──────────────────────────────────────────────
+
+    _INTEGER_TYPES = frozenset({
+        'int32_t', 'int32', 'int', 'int64', 'uint32', 'uint64',
+        'size_t', 'int8', 'uint8', 'int16', 'uint16',
+        'int64_t', 'uint32_t', 'uint64_t', 'size_t',
+    })
+    _NUMBER_TYPES = frozenset({'float', 'double'})
+    _BOOLEAN_TYPES = frozenset({'bool', 'DasBool'})
+    _STRING_TYPES = frozenset({
+        'DasString', 'DasReadOnlyString', 'IDasReadOnlyString', 'char',
+    })
+
+    def _emmy_lua_type(self, type_info: TypeInfo) -> str:
+        """将 IDL TypeInfo 映射为 EmmyLua 注解类型字符串。
+
+        映射规则:
+          - 整数族 (int32_t, uint32, ...) → "integer"
+          - 浮点族 (float, double) → "number"
+          - 布尔族 (bool, DasBool) → "boolean"
+          - 字符串族 (DasString, char*, ...) → "string"
+          - DasResult → "DasResult"
+          - DasGuid → "DasGuid"
+          - INTERFACE* → 接口名称（去指针）
+          - unsigned char* / uint8_t* → "string"（二进制缓冲区）
+          - void → "nil"
+          - 其他 → base_type
+
+        Args:
+            type_info: 经 resolve_types() 标注后的类型信息。
+
+        Returns:
+            EmmyLua 类型字符串。
+        """
+        base = type_info.base_type
+
+        if base == 'void':
+            return 'nil'
+        if base == 'DasResult':
+            return 'DasResult'
+        if base == 'DasGuid':
+            return 'DasGuid'
+        if base in self._INTEGER_TYPES:
+            return 'integer'
+        if base in self._NUMBER_TYPES:
+            return 'number'
+        if base in self._BOOLEAN_TYPES:
+            return 'boolean'
+        if base in self._STRING_TYPES:
+            return 'string'
+        # unsigned char* / uint8_t* → binary buffer → string
+        if base in ('unsigned char', 'uint8_t') and type_info.is_pointer:
+            return 'string'
+        # char* → string
+        if base == 'char' and type_info.is_pointer:
+            return 'string'
+        # Interface pointer → interface name
+        if type_info.type_kind == TypeKind.INTERFACE:
+            return base
+        # Fallback: use base_type as-is
+        return base
+
+    def _generate_lua_stub(
+        self, interfaces: List[InterfaceDef], doc: IdlDocument
+    ) -> str:
+        """生成纯 EmmyLua 注解的 .lua 桩文件。
+
+        生成的 .lua 文件仅供 LuaLS 类型检查使用，不含任何运行时代码。
+        格式为 100% EmmyLua 注解（---@class / ---@field / ---@param /
+        ---@return / ---@type），不包含空 table、空函数体或 SWIG 代码。
+
+        Args:
+            interfaces: 经 resolve_types() 标注后的 InterfaceDef 列表。
+            doc: 经 resolve_types() 标注后的 IDL 文档。
+
+        Returns:
+            完整的 .lua 桩文件内容字符串。
+        """
+        lines: List[str] = []
+
+        # ── 文件头 ────────────────────────────────────────────────────
+        lines.append(
+            '--- Das Core Lua type stubs (auto-generated — DO NOT MODIFY)'
+        )
+        lines.append(
+            '--- Runtime provided by DasCoreLuaExport.dll'
+        )
+        lines.append('')
+
+        # ── DasGuid（不透明类型）──────────────────────────────────────
+        lines.append('---@class DasGuid')
+        lines.append('')
+
+        # ── DasResult 别名 + 常量 ─────────────────────────────────────
+        lines.append('---@alias DasResult integer')
+        for error_code in doc.error_codes:
+            for val in error_code.values:
+                lines.append(
+                    f'---@type DasResult {val.name} = {val.value}'
+                )
+        lines.append('')
+
+        # ── 接口类注解 ────────────────────────────────────────────────
+        for interface in interfaces:
+            iface_name = interface.name
+            base = interface.base_interface
+
+            # ---@class [Name] [: Base]
+            if base and base != 'IDasBase':
+                lines.append(f'---@class {iface_name} : {base}')
+            else:
+                lines.append(f'---@class {iface_name}')
+
+            # 为每个方法生成 ---@field fun(self, params): returns
+            for method in interface.methods:
+                param_parts = ['self']
+                for param in method.parameters:
+                    if param.direction != ParamDirection.OUT:
+                        emmy_type = self._emmy_lua_type(param.type_info)
+                        param_parts.append(f'{param.name}: {emmy_type}')
+
+                # 返回值: DasResult + out 参数
+                return_parts = []
+                ret_type = method.return_type
+                if ret_type.base_type != 'void':
+                    return_parts.append(self._emmy_lua_type(ret_type))
+                for param in method.parameters:
+                    if param.direction in (ParamDirection.OUT, ParamDirection.INOUT):
+                        return_parts.append(
+                            self._emmy_lua_type(param.type_info)
+                        )
+
+                params_str = ', '.join(param_parts)
+                if return_parts:
+                    returns_str = ', '.join(return_parts)
+                    lines.append(
+                        f'---@field {method.name} fun({params_str}):'
+                        f' {returns_str}'
+                    )
+                else:
+                    lines.append(
+                        f'---@field {method.name} fun({params_str})'
+                    )
+
+            # 为每个属性生成 ---@field
+            for prop in interface.properties:
+                emmy_type = self._emmy_lua_type(prop.type_info)
+                lines.append(f'---@field {prop.name} {emmy_type}')
+
+            lines.append('')
+
+        # ── Director 类注解 ──────────────────────────────────────────
+        for interface in interfaces:
+            iface_name = interface.name
+            director_name = self._get_director_class_name(iface_name)
+            lines.append(
+                f'---@class {director_name} : {iface_name}'
+            )
+            lines.append(
+                f'---@field new fun(self, env: table): {director_name}'
+            )
+            lines.append('')
+
+        # ── 模块函数注解 ─────────────────────────────────────────────
+        for module in doc.modules:
+            for func in module.functions:
+                # ---@param 注解
+                for param in func.parameters:
+                    if param.direction != ParamDirection.OUT:
+                        emmy_type = self._emmy_lua_type(param.type_info)
+                        lines.append(
+                            f'---@param {param.name} {emmy_type}'
+                        )
+
+                # ---@return 注解
+                return_parts = []
+                if func.return_type.base_type != 'void':
+                    return_parts.append(
+                        self._emmy_lua_type(func.return_type)
+                    )
+                for param in func.parameters:
+                    if param.direction in (ParamDirection.OUT, ParamDirection.INOUT):
+                        return_parts.append(
+                            self._emmy_lua_type(param.type_info)
+                        )
+                if return_parts:
+                    lines.append(
+                        f'---@return {", ".join(return_parts)}'
+                    )
+
+                # 函数声明（最小化：仅签名 + end）
+                in_params = [
+                    p for p in func.parameters
+                    if p.direction != ParamDirection.OUT
+                ]
+                param_names = ', '.join(p.name for p in in_params)
+                lines.append(f'function {func.name}({param_names}) end')
+                lines.append('')
+
+        return '\n'.join(lines)
+
     def _generate_luaopen_function(
         self, doc: IdlDocument, interfaces: List[InterfaceDef]
     ) -> str:
