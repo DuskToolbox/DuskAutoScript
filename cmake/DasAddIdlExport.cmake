@@ -5,6 +5,7 @@
 #   - 当 LANGUAGES 为空时：生成 ABI + wrapper + IPC 代码，不执行 find_package(SWIG)
 #   - 当 LANGUAGES 非空时：生成 ABI + wrapper + SWIG 接口 + 目标语言绑定 + IPC 代码
 #   - IPC 代码默认生成到 ${OUTPUT_DIR}/_autogen/idl/ipc/ 目录
+#   - C++ 头文件生成到 ${OUTPUT_DIR}/_autogen/idl/header/ 目录
 #   - 支持增量检查和批量生成，提高构建效率
 #   - 支持用户自定义 SWIG 文件，通过 USER_SWIG_FILES 参数指定
 #
@@ -45,6 +46,7 @@
 #
 # 生成的目标:
 #   - ${NAME}IdlUpdateList: 增量检查目标，生成需要更新的 IDL 列表
+#   - ${NAME}IdlHeadersGenerated: 头文件生成目标，生成 .generated.h 文件
 #   - ${NAME}IdlGenerated: 批量生成目标，执行 IDL 代码生成
 #   - ${NAME}IdlDepsExtracted: (仅当 LANGUAGES 非空) 依赖提取目标
 #   - ${NAME}SwigInterfacesSorted: (仅当 LANGUAGES 非空) 拓扑排序目标
@@ -56,6 +58,7 @@
 #   - ${NAME}_GENERATED_SWIG_FILES: SWIG 文件列表（代码生成器生成）
 #   - ${NAME}_USER_SWIG_FILES: 用户指定的 SWIG 文件列表
 #   - ${NAME}_EXPORT_DEFINITIONS: 导出宏定义列表（如 DAS_EXPORT_PYTHON, DAS_EXPORT_JAVA, DAS_EXPORT_CSHARP）
+#   - ${NAME}_HEADER_OUTPUT_DIR: 头文件输出目录
 #   - ${NAME}_GENERATED_FILES: 所有生成的文件列表
 #   - ${NAME}_GENERATED_ABI_FILES: ABI 文件列表
 #   - ${NAME}_GENERATED_WRAPPER_FILES: Wrapper 文件列表
@@ -151,7 +154,7 @@ function(das_add_idl_export)
     endif()
 
     # ====== 设置输出目录结构 ======
-    # 兼容现有体系: ${OUTPUT_DIR}/_autogen/idl/{abi,wrapper,swig,ipc,iids}
+    # 兼容现有体系: ${OUTPUT_DIR}/_autogen/idl/{abi,wrapper,swig,ipc,iids,header}
     set(_ABI_OUTPUT_DIR "${DAS_IDL_EXPORT_OUTPUT_DIR}/_autogen/idl/abi")
     set(_WRAPPER_OUTPUT_DIR "${DAS_IDL_EXPORT_OUTPUT_DIR}/_autogen/idl/wrapper")
     set(_SWIG_OUTPUT_DIR "${DAS_IDL_EXPORT_OUTPUT_DIR}/_autogen/idl/swig")
@@ -161,6 +164,7 @@ function(das_add_idl_export)
     endif()
     set(_IPC_CACHE_DIR "${DAS_IDL_EXPORT_IPC_CACHE_DIR}")
     set(_IIDS_OUTPUT_DIR "${DAS_IDL_EXPORT_OUTPUT_DIR}/_autogen/idl/iids")
+    set(_HEADER_OUTPUT_DIR "${DAS_IDL_EXPORT_OUTPUT_DIR}/_autogen/idl/header")
     set(_IPC_GENERATED_CPP "${_IPC_OUTPUT_DIR}/IpcGenerated.cpp")
 
     message(STATUS "[das_add_idl_export] Configuring IDL export for ${DAS_IDL_EXPORT_NAME}")
@@ -290,6 +294,40 @@ function(das_add_idl_export)
         )
     endif()
 
+    # ====== 2b. 创建头文件生成命令 ======
+    # 为每个 IDL 文件调用 das_header_generator.py 生成 .generated.h
+    set(_HEADER_GENERATOR_SCRIPT "${CMAKE_SOURCE_DIR}/tools/das_idl/das_header_generator.py")
+    set(_ALL_HEADER_FILES "")
+
+    foreach(_IDL_FILE ${_FULL_IDL_PATHS})
+        get_filename_component(_IDL_STEM "${_IDL_FILE}" NAME_WE)
+        set(_HEADER_OUTPUT "${_HEADER_OUTPUT_DIR}/${_IDL_STEM}.generated.h")
+
+        add_custom_command(
+            OUTPUT "${_HEADER_OUTPUT}"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${_HEADER_OUTPUT_DIR}"
+            COMMAND "${DAS_IDL_VENV_PYTHON}" "${_HEADER_GENERATOR_SCRIPT}"
+                --idl "${_IDL_FILE}"
+                --output-dir "${_HEADER_OUTPUT_DIR}"
+                --export-macro DAS_API
+                --export-c-macro DAS_C_API
+            DEPENDS "${_IDL_FILE}" "${_HEADER_GENERATOR_SCRIPT}"
+                ${_DAS_IDL_MODULE_TOOLS}
+            COMMENT "[das_add_idl_export] Generate header from ${_IDL_STEM}.idl for ${DAS_IDL_EXPORT_NAME}"
+            VERBATIM
+        )
+
+        list(APPEND _ALL_HEADER_FILES "${_HEADER_OUTPUT}")
+    endforeach()
+
+    # 创建头文件生成目标（其他目标可依赖此目标）
+    set(_HEADER_GENERATED_TARGET "${DAS_IDL_EXPORT_NAME}IdlHeadersGenerated")
+    if(NOT TARGET ${_HEADER_GENERATED_TARGET})
+        add_custom_target(${_HEADER_GENERATED_TARGET}
+            DEPENDS ${_ALL_HEADER_FILES}
+        )
+    endif()
+
     # ====== 3. 创建批量生成命令和目标 ======
 
     # ====== 在 configure 阶段获取生成器预期输出文件列表 ======
@@ -346,6 +384,7 @@ function(das_add_idl_export)
             DEPENDS ${_GENERATED_STAMP}
         )
         add_dependencies(${_GENERATED_TARGET} ${_UPDATE_LIST_TARGET})
+        add_dependencies(${_GENERATED_TARGET} ${_HEADER_GENERATED_TARGET})
     endif()
 
     # ====== 4. SWIG 依赖提取和拓扑排序 (仅当 LANGUAGES 非空时) ======
@@ -429,7 +468,7 @@ function(das_add_idl_export)
     set(_ALL_WRAPPER_FILES "")
     set(_ALL_SWIG_FILES "")
     set(_ALL_IPC_FILES "")
-    set(_ALL_GENERATED_FILES ${_DYNAMIC_OUTPUT_LIST})
+    set(_ALL_GENERATED_FILES ${_DYNAMIC_OUTPUT_LIST} ${_ALL_HEADER_FILES})
 
     foreach(_FILE ${_DYNAMIC_OUTPUT_LIST})
         if(_FILE MATCHES "/abi/")
@@ -650,6 +689,7 @@ function(das_add_idl_export)
     set(${DAS_IDL_EXPORT_NAME}_IPC_OUTPUT_DIR ${_IPC_OUTPUT_DIR} PARENT_SCOPE)
     set(${DAS_IDL_EXPORT_NAME}_IPC_GENERATED_CPP "${_IPC_OUTPUT_DIR}/IpcGenerated.cpp" PARENT_SCOPE)
     set(${DAS_IDL_EXPORT_NAME}_IIDS_OUTPUT_DIR ${_IIDS_OUTPUT_DIR} PARENT_SCOPE)
+    set(${DAS_IDL_EXPORT_NAME}_HEADER_OUTPUT_DIR ${_HEADER_OUTPUT_DIR} PARENT_SCOPE)
 
     # 输出用户指定的 SWIG 文件列表（供外部使用）
     if(DAS_IDL_EXPORT_USER_SWIG_FILES)
@@ -669,7 +709,8 @@ function(das_add_idl_export)
     message(STATUS "[das_add_idl_export] IDL export configured for ${DAS_IDL_EXPORT_NAME}")
     message(STATUS "[das_add_idl_export]   Batch config: ${_BATCH_CONFIG_FILE}")
     message(STATUS "[das_add_idl_export]   Update list: ${_UPDATE_LIST_FILE}")
-    message(STATUS "[das_add_idl_export]   Targets: ${_UPDATE_LIST_TARGET}, ${_GENERATED_TARGET}")
+    message(STATUS "[das_add_idl_export]   Targets: ${_UPDATE_LIST_TARGET}, ${_GENERATED_TARGET}, ${_HEADER_GENERATED_TARGET}")
+    message(STATUS "[das_add_idl_export]   Header output: ${_HEADER_OUTPUT_DIR}")
     if(_NEED_SWIG)
         message(STATUS "[das_add_idl_export]   SWIG targets: ${_DEPS_EXTRACTED_TARGET}, ${_SORTED_TARGET}")
     endif()

@@ -36,6 +36,7 @@ endif ()
 option(EXPORT_JAVA "导出Java接口" OFF)
 option(EXPORT_CSHARP "导出C#接口" OFF)
 option(EXPORT_PYTHON "导出Python接口" OFF)
+option(EXPORT_LUA "Export Lua bindings" OFF)
 
 # See [C++ 20 Compiler support](https://en.cppreference.com/w/cpp/compiler_support/20)
 include(DasCheckStdFmt)
@@ -69,8 +70,8 @@ if (NOT DEFINED GITHUB_MIRROR_URL)
     set(GITHUB_MIRROR_URL "https://github.com")
 endif ()
 
-# TODO: 配置时打印当前设置
-# get_property(result CACHE SampleOpt PROPERTY HELPSTRING)
+#TODO : 配置时打印当前设置
+#get_property(result CACHE SampleOpt PROPERTY HELPSTRING)
 
 set(DAS_DEFAULT_SHARED_LIBRARY_PREFIX ${CMAKE_SHARED_LIBRARY_PREFIX})
 set(DAS_DEFAULT_STATIC_LIBRARY_PREFIX ${CMAKE_STATIC_LIBRARY_PREFIX})
@@ -88,7 +89,7 @@ if (${EXPORT_PYTHON})
     find_package(Python3 COMPONENTS Development REQUIRED)
 endif ()
 
-# 选项配置
+#选项配置
 option(DAS_USE_ASAN "Enable AddressSanitizer for memory error detection (Debug only)" ON)
 option(DAS_USE_LTO "Enable Link Time Optimization for Release/RelWithDebInfo builds" OFF)
 
@@ -139,8 +140,8 @@ configure_file(${CMAKE_SOURCE_DIR}/cmake/CTestCustom.cmake ${CMAKE_BINARY_DIR} @
 add_custom_target(RemoveSwigOutput
         COMMAND ${CMAKE_COMMAND} -P ${CMAKE_SOURCE_DIR}/cmake/DasRemoveSwigOutput.cmake)
 
-# Auto-register git hooks when this is the top-level project
-# (skip when fetched via FetchContent as a dependency)
+#Auto - register git hooks when this is the top - level project
+#(skip when fetched via FetchContent as a dependency)
 if(PROJECT_IS_TOP_LEVEL)
     find_program(GIT_EXECUTABLE git)
     if(GIT_EXECUTABLE)
@@ -167,8 +168,8 @@ endif()
 if (${DAS_BUILD_TEST})
     enable_testing()
 endif ()
-# 设置 JavaTestPlugin 配置文件输出目录
-# 多配置生成器下 TARGET_PROPERTY 无法正确展开，使用明确路径
+#设置 JavaTestPlugin 配置文件输出目录
+#多配置生成器下 TARGET_PROPERTY 无法正确展开，使用明确路径
 if(CMAKE_CONFIGURATION_TYPES)
     set(JAVATESTPLUGIN_CONFIG_OUTPUT_DIR "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/plugins")
 endif()
@@ -178,6 +179,6 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
 endif()
 add_subdirectory(das)
 
-# Configuration completed - output timestamp
+#Configuration completed - output timestamp
 string(TIMESTAMP DAS_CONFIG_TIME "%Y-%m-%d %H:%M:%S")
 message(STATUS "CMake configuration completed at ${DAS_CONFIG_TIME}")

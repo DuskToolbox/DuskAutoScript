@@ -10,6 +10,7 @@
       "name": "common-base",
       "hidden": true,
       "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "DAS_BUILD_QT5_GUI": "ON",
         "DAS_BUILD_TEST": "OFF",
         "DAS_USE_CCACHE": "OFF",
