@@ -300,6 +300,18 @@ IDL 语法示例:
         help='生成typemap_info.json文件（用于汇总生成DasTypeMaps.i）'
     )
 
+    gen_group.add_argument(
+        '--export-macro',
+        default='DAS_API',
+        help='C++ 导出宏名称，用于非 C-ABI 函数的导出声明（默认：DAS_API）'
+    )
+
+    gen_group.add_argument(
+        '--export-c-macro',
+        default='DAS_C_API',
+        help='C++ 导出宏名称，用于 C-ABI 函数的导出声明（默认：DAS_C_API）'
+    )
+
     # === IPC 生成选项 ===
     ipc_group = parser.add_argument_group('IPC 生成选项（跨进程通信代理/存根生成）')
 

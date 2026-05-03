@@ -33,6 +33,8 @@ class TokenType(Enum):
     INTERFACE = auto()
     ENUM = auto()
     STRUCT = auto()
+    ERRORCODE = auto()
+    MODULE = auto()
     NAMESPACE = auto()  # 添加 namespace 支持
     IMPORT = auto()  # 添加 import 支持
     IDENTIFIER = auto()
@@ -154,6 +156,41 @@ class EnumDef:
 
 
 @dataclass
+class ErrorCodeValue:
+    """错误码值定义"""
+    name: str
+    value: Optional[int] = None
+    namespace: str = ""
+
+
+@dataclass
+class ErrorCodeDef:
+    """错误码定义"""
+    name: str
+    values: list = field(default_factory=list)  # ErrorCodeValue 列表
+    namespace: str = ""
+
+
+@dataclass
+class ModuleFunctionDef:
+    """模块函数定义"""
+    name: str
+    return_type: TypeInfo
+    parameters: list = field(default_factory=list)  # ParameterDef 列表
+    attributes: dict = field(default_factory=dict)  # 如 {'export': True, 'c_abi': True}
+    namespace: str = ""
+
+
+@dataclass
+class ModuleDef:
+    """模块定义"""
+    name: str
+    module_name: str = ""  # 来自 [module_name = "value"] 属性，缺省等于 name
+    functions: list = field(default_factory=list)  # ModuleFunctionDef 列表
+    namespace: str = ""
+
+
+@dataclass
 class InterfaceDef:
     """接口定义"""
     name: str
@@ -178,6 +215,8 @@ class IdlDocument:
     interfaces: list = field(default_factory=list)
     enums: list = field(default_factory=list)
     structs: list = field(default_factory=list)  # 结构体定义列表
+    error_codes: list = field(default_factory=list)  # ErrorCodeDef 列表
+    modules: list = field(default_factory=list)  # ModuleDef 列表
     includes: list = field(default_factory=list)
     imports: list = field(default_factory=list)  # 导入的其他 IDL 文件
     namespace: str = ""  # 添加文档级别的命名空间
@@ -192,6 +231,8 @@ class Lexer:
         'interface': TokenType.INTERFACE,
         'enum': TokenType.ENUM,
         'struct': TokenType.STRUCT,
+        'errorcode': TokenType.ERRORCODE,
+        'module': TokenType.MODULE,
         'namespace': TokenType.NAMESPACE,  # 添加 namespace 关键字
         'import': TokenType.IMPORT,  # 添加 import 关键字
     }
@@ -461,6 +502,12 @@ class Parser:
             elif self.match(TokenType.STRUCT):
                 struct = self.parse_struct()
                 self.document.structs.append(struct)
+            elif self.match(TokenType.ERRORCODE):
+                errorcode = self.parse_errorcode()
+                self.document.error_codes.append(errorcode)
+            elif self.match(TokenType.MODULE):
+                module = self.parse_module(attributes)
+                self.document.modules.append(module)
             else:
             # 跳过未知内容
                 self.advance()
@@ -535,6 +582,17 @@ class Parser:
                 elif self.match(TokenType.IDENTIFIER):
                     attributes[name] = self.advance().value
                 self.expect(TokenType.RPAREN)
+            elif self.match(TokenType.EQUALS):
+                # 支持 name = value 语法（如 module_name = "DasCore"）
+                self.advance()
+                if self.match(TokenType.STRING):
+                    attributes[name] = self.advance().value
+                elif self.match(TokenType.NUMBER):
+                    attributes[name] = self.advance().value
+                elif self.match(TokenType.IDENTIFIER):
+                    attributes[name] = self.advance().value
+                else:
+                    raise SyntaxError(f"Expected value after '=' in attribute '{name}' at line {self.current().line}")
             else:
                 attributes[name] = True
 
@@ -595,6 +653,12 @@ class Parser:
             elif self.match(TokenType.STRUCT):
                 struct = self.parse_struct()
                 self.document.structs.append(struct)
+            elif self.match(TokenType.ERRORCODE):
+                errorcode = self.parse_errorcode()
+                self.document.error_codes.append(errorcode)
+            elif self.match(TokenType.MODULE):
+                module = self.parse_module(attributes)
+                self.document.modules.append(module)
             else:
                 # 跳过未知内容
                 self.advance()
@@ -859,6 +923,152 @@ class Parser:
             self.advance()
 
         return enum
+
+    def parse_errorcode(self) -> ErrorCodeDef:
+        """解析错误码定义
+
+        支持的语法:
+            errorcode DasResult {
+                DAS_S_OK = 0,
+                DAS_E_NO_INTERFACE = -1073750001,
+            }
+        """
+        self.expect(TokenType.ERRORCODE)
+        name = self.expect(TokenType.IDENTIFIER).value
+
+        errorcode = ErrorCodeDef(name=name, namespace=self._current_namespace)
+
+        self.expect(TokenType.LBRACE)
+
+        current_value = 0
+        while not self.match(TokenType.RBRACE) and not self.match(TokenType.EOF):
+            value_name = self.expect(TokenType.IDENTIFIER).value
+
+            # 检查是否有显式值
+            value = None
+            if self.match(TokenType.EQUALS):
+                self.advance()
+                value_str = self.expect(TokenType.NUMBER).value
+                if value_str.startswith('0x') or value_str.startswith('0X'):
+                    value = int(value_str, 16)
+                else:
+                    value = int(value_str)
+                current_value = value
+            else:
+                value = current_value
+
+            errorcode.values.append(ErrorCodeValue(name=value_name, value=value, namespace=self._current_namespace))
+            current_value += 1
+
+            # 逗号或分号分隔（分号是可选的值终止符）
+            if self.match(TokenType.COMMA):
+                self.advance()
+            elif self.match(TokenType.SEMICOLON):
+                self.advance()
+
+        if self.match(TokenType.EOF):
+            raise SyntaxError(f"Unexpected end of file while parsing errorcode '{name}'")
+
+        self.expect(TokenType.RBRACE)
+
+        # 可选分号
+        if self.match(TokenType.SEMICOLON):
+            self.advance()
+
+        return errorcode
+
+    def parse_module_function(self, attributes: dict) -> ModuleFunctionDef:
+        """解析模块函数声明
+
+        支持的语法:
+            [export, c_abi] DasResult FuncName([out] IBase** pp_obj);
+        """
+        # 返回类型
+        return_type = self.parse_type()
+
+        # 函数名
+        name = self.expect(TokenType.IDENTIFIER).value
+
+        # 参数列表
+        self.expect(TokenType.LPAREN)
+        parameters = []
+
+        while not self.match(TokenType.RPAREN) and not self.match(TokenType.EOF):
+            param = self.parse_parameter()
+            parameters.append(param)
+
+            if self.match(TokenType.COMMA):
+                self.advance()
+
+        if self.match(TokenType.EOF):
+            raise SyntaxError(f"Unexpected end of file while parsing module function '{name}'")
+
+        self.expect(TokenType.RPAREN)
+
+        # 分号
+        if self.match(TokenType.SEMICOLON):
+            self.advance()
+
+        return ModuleFunctionDef(
+            name=name,
+            return_type=return_type,
+            parameters=parameters,
+            attributes=attributes,
+            namespace=self._current_namespace
+        )
+
+    def parse_module(self, pre_attributes: dict = None) -> ModuleDef:
+        """解析模块定义
+
+        支持的语法:
+            module DasCoreApi [module_name = "DasCore"] {
+                [export] void DasLogError(DasReadOnlyString msg);
+                [export, c_abi] DasResult DasQueryInterface(const DasGuid& iid, [out] IDasBase** pp_object);
+            }
+
+        属性可以出现在 module 关键字之前（由 _parse_structure 解析传入 pre_attributes）
+        或模块名之后的 [...] 中。
+        """
+        if pre_attributes is None:
+            pre_attributes = {}
+
+        self.expect(TokenType.MODULE)
+        name = self.expect(TokenType.IDENTIFIER).value
+
+        # 解析名称后的可选属性 [module_name = "DasCore"]
+        post_attributes = {}
+        if self.match(TokenType.LBRACKET):
+            post_attributes = self.parse_attributes()
+
+        # 合并属性：名称后的属性优先
+        attributes = {**pre_attributes, **post_attributes}
+
+        # 获取 module_name 属性，默认等于 name
+        module_name = attributes.get('module_name', name)
+
+        module = ModuleDef(name=name, module_name=module_name, namespace=self._current_namespace)
+
+        self.expect(TokenType.LBRACE)
+
+        while not self.match(TokenType.RBRACE) and not self.match(TokenType.EOF):
+            # 解析函数属性
+            func_attrs = {}
+            if self.match(TokenType.LBRACKET):
+                func_attrs = self.parse_attributes()
+
+            func = self.parse_module_function(func_attrs)
+            module.functions.append(func)
+
+        if self.match(TokenType.EOF):
+            raise SyntaxError(f"Unexpected end of file while parsing module '{name}'")
+
+        self.expect(TokenType.RBRACE)
+
+        # 可选分号
+        if self.match(TokenType.SEMICOLON):
+            self.advance()
+
+        return module
 
     def parse_struct(self) -> StructDef:
         """解析结构体定义
