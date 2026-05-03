@@ -105,7 +105,9 @@ endif()
 add_dependencies(DasCoreObjectsPreBuild DasCoreIdlUpdateList DasCoreIdlGenerated)
 
 if(_LANGUAGES)
-    add_dependencies(DasCoreObjectsPreBuild DasCoreSwigAllGenerated)
+    if(TARGET DasCoreSwigAllGenerated)
+        add_dependencies(DasCoreObjectsPreBuild DasCoreSwigAllGenerated)
+    endif()
 endif()
 
 # ====== 官方IID列表生成 ======
@@ -266,7 +268,7 @@ add_compile_definitions(DAS_BUILD_SHARED)
 # target_link_libraries(DasCoreObjects PUBLIC ${LUA_LIBRARIES})
 # endif()
 
-# list(APPEND DAS_EXPORT_MACRO_LIST DAS_EXPORT_LUA)
+list(APPEND DAS_EXPORT_MACRO_LIST DAS_EXPORT_LUA)
 target_link_libraries(DasCoreObjects
     PUBLIC DasUtils DasPlatformDefs ${DAS_FOREIGN_LANGUAGE_LIB_LIST})
 
@@ -296,45 +298,6 @@ if(${DAS_BUILD_TEST})
     target_include_directories(TaskSchedulerTest PRIVATE ${CMAKE_SOURCE_DIR}/das/Http/src)
     das_add_core_test(IPC)
 
-    # Lua Director lifecycle E2E test — requires sol2 and Lua (WIP)
-    # TODO: enable once build pipeline is stable
-    if(EXPORT_LUA AND FALSE)
-        add_executable(LuaDirectorLifecycleTest
-            test/lua_director_lifecycle_test.cpp
-        )
-
-        target_link_libraries(LuaDirectorLifecycleTest PRIVATE
-            GTest::gtest_main
-            GTest::gtest
-            DasCoreObjects
-            sol2::sol2
-        )
-
-        # Include path for generated DasCore_lua_export.cpp
-        # DasCore_LUA_OUTPUT_DIR is set by das_add_idl_export() when EXPORT_LUA is ON
-        target_include_directories(LuaDirectorLifecycleTest PRIVATE
-            ${DasCore_LUA_OUTPUT_DIR}
-        )
-
-        # Copy include directories from DasCoreObjects (for das/*.h headers)
-        get_target_property(_LUA_TEST_INCLUDE_DIRS DasCoreObjects INCLUDE_DIRECTORIES)
-        target_include_directories(LuaDirectorLifecycleTest PRIVATE ${_LUA_TEST_INCLUDE_DIRS})
-
-        # Output to Test directory (same as other tests)
-        set_target_properties(LuaDirectorLifecycleTest PROPERTIES
-            RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/Test
-            RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_BINARY_DIR}/Test
-            RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/Test
-            RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_BINARY_DIR}/Test
-            RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL ${CMAKE_BINARY_DIR}/Test
-        )
-
-        add_dependencies(LuaDirectorLifecycleTest DasAutoCopyDll)
-
-        gtest_discover_tests(LuaDirectorLifecycleTest
-            WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/Test
-        )
-    endif()
 endif()
 
 # Python 绑定文件拷贝：DuskAutoScript.py 和 _DasCorePythonExport.pyd 必须与 DasCore.dll 在同一目录

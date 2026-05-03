@@ -183,16 +183,12 @@ function(das_add_idl_export)
     message(STATUS "[das_add_idl_export]   IPC_STUB: ${DAS_IDL_EXPORT_GENERATE_IPC_STUB}")
 
     # ====== 判断是否需要 SWIG ======
-    # Lua uses sol2, not SWIG — filter it out before deciding
     set(_NEED_SWIG FALSE)
     if(DAS_IDL_EXPORT_LANGUAGES)
-        foreach(_LANG ${DAS_IDL_EXPORT_LANGUAGES})
-            string(TOLOWER "${_LANG}" _LANG_LOWER)
-            if(NOT _LANG_LOWER STREQUAL "lua")
-                set(_NEED_SWIG TRUE)
-                break()
-            endif()
-        endforeach()
+        list(LENGTH DAS_IDL_EXPORT_LANGUAGES _LANG_COUNT)
+        if(_LANG_COUNT GREATER 0)
+            set(_NEED_SWIG TRUE)
+        endif()
     endif()
 
     # ====== 确保 Python 虚拟环境已设置 ======
