@@ -183,12 +183,16 @@ function(das_add_idl_export)
     message(STATUS "[das_add_idl_export]   IPC_STUB: ${DAS_IDL_EXPORT_GENERATE_IPC_STUB}")
 
     # ====== 判断是否需要 SWIG ======
+    # Lua uses sol2, not SWIG — filter it out before deciding
     set(_NEED_SWIG FALSE)
     if(DAS_IDL_EXPORT_LANGUAGES)
-        list(LENGTH DAS_IDL_EXPORT_LANGUAGES _LANG_COUNT)
-        if(_LANG_COUNT GREATER 0)
-            set(_NEED_SWIG TRUE)
-        endif()
+        foreach(_LANG ${DAS_IDL_EXPORT_LANGUAGES})
+            string(TOLOWER "${_LANG}" _LANG_LOWER)
+            if(NOT _LANG_LOWER STREQUAL "lua")
+                set(_NEED_SWIG TRUE)
+                break()
+            endif()
+        endforeach()
     endif()
 
     # ====== 确保 Python 虚拟环境已设置 ======
@@ -498,6 +502,9 @@ function(das_add_idl_export)
                 set(_LANG_NAME "Java")
             elseif(_LANG_LOWER STREQUAL "csharp")
                 set(_LANG_NAME "CSharp")
+            elseif(_LANG_LOWER STREQUAL "lua")
+                # Lua uses sol2 path, not SWIG — handled separately below
+                continue()
             else()
                 message(WARNING "[das_add_idl_export] Unsupported language: ${_LANG}")
                 continue()
@@ -647,6 +654,93 @@ function(das_add_idl_export)
         endforeach()
     endif()
 
+    # ====== Lua sol2 导出（非 SWIG 路径） ======
+    # 检查 LANGUAGES 列表中是否包含 Lua
+    set(_HAS_LUA FALSE)
+    if(DAS_IDL_EXPORT_LANGUAGES)
+        foreach(_LANG ${DAS_IDL_EXPORT_LANGUAGES})
+            string(TOLOWER "${_LANG}" _LANG_LOWER)
+            if(_LANG_LOWER STREQUAL "lua")
+                set(_HAS_LUA TRUE)
+                break()
+            endif()
+        endforeach()
+    endif()
+
+    if(_HAS_LUA)
+        message(STATUS "[das_add_idl_export] Creating Lua sol2 export library")
+
+        # 查找 sol2（使用 FindSol2.cmake）
+        find_package(sol2 REQUIRED)
+
+        # Lua 输出目录
+        set(_LUA_OUTPUT_DIR "${DAS_IDL_EXPORT_OUTPUT_DIR}/_autogen/idl/lua")
+        file(MAKE_DIRECTORY ${_LUA_OUTPUT_DIR})
+
+        # 生成的输出文件
+        set(_LUA_CPP_FILE "${_LUA_OUTPUT_DIR}/${DAS_IDL_EXPORT_NAME}_lua_export.cpp")
+        set(_LUA_STUB_FILE "${_LUA_OUTPUT_DIR}/${DAS_IDL_EXPORT_NAME}_lua_export.lua")
+
+        # 构造 IDL 文件完整路径列表
+        set(_LUA_IDL_FULL_PATHS "")
+        foreach(_IDL_FILE_NAME ${DAS_IDL_EXPORT_IDL_FILES})
+            list(APPEND _LUA_IDL_FULL_PATHS "${DAS_IDL_EXPORT_IDL_DIR}/${_IDL_FILE_NAME}")
+        endforeach()
+
+        # 调用 das_lua_export.py 生成 sol2 绑定代码
+        add_custom_command(
+            OUTPUT ${_LUA_CPP_FILE} ${_LUA_STUB_FILE}
+            COMMAND "${DAS_IDL_VENV_PYTHON}"
+                "${CMAKE_SOURCE_DIR}/tools/das_idl/das_lua_export.py"
+                --idl-dir "${DAS_IDL_EXPORT_IDL_DIR}"
+                --output "${_LUA_OUTPUT_DIR}"
+                --name "${DAS_IDL_EXPORT_NAME}"
+                --idl-files ${DAS_IDL_EXPORT_IDL_FILES}
+            DEPENDS
+                ${_LUA_IDL_FULL_PATHS}
+                ${_DAS_IDL_MODULE_TOOLS}
+            COMMENT "[das_add_idl_export] Generating Lua sol2 bindings for ${DAS_IDL_EXPORT_NAME}"
+            VERBATIM
+        )
+
+        # 创建 Lua 生成目标
+        set(_LUA_GENERATED_TARGET "${DAS_IDL_EXPORT_NAME}LuaGenerated")
+        add_custom_target(${_LUA_GENERATED_TARGET}
+            DEPENDS ${_LUA_CPP_FILE} ${_LUA_STUB_FILE}
+        )
+
+        # 创建 SHARED 库
+        set(_LUA_LIB_NAME "${DAS_IDL_EXPORT_NAME}LuaExport")
+        add_library(${_LUA_LIB_NAME} SHARED ${_LUA_CPP_FILE})
+        add_dependencies(${_LUA_LIB_NAME} ${_LUA_GENERATED_TARGET})
+
+        target_include_directories(${_LUA_LIB_NAME} PRIVATE
+            ${DAS_IDL_EXPORT_OUTPUT_DIR}
+            ${DAS_IDL_EXPORT_OUTPUT_DIR}/_autogen/idl/abi
+        )
+
+        target_link_libraries(${_LUA_LIB_NAME} PRIVATE
+            sol2::sol2
+        )
+
+        # 链接外部依赖库
+        if(DAS_IDL_EXPORT_DEPENDS_ON)
+            target_link_libraries(${_LUA_LIB_NAME} PRIVATE ${DAS_IDL_EXPORT_DEPENDS_ON})
+        endif()
+
+        # 将 .lua 文件复制到输出目录
+        add_custom_command(
+            TARGET ${_LUA_LIB_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${_LUA_STUB_FILE}"
+                "$<TARGET_FILE_DIR:${_LUA_LIB_NAME}>/${DAS_IDL_EXPORT_NAME}_lua_export.lua"
+            COMMENT "[das_add_idl_export] Copying Lua stub to output directory"
+        )
+
+        # 导出 Lua 输出目录变量
+        set(${DAS_IDL_EXPORT_NAME}_LUA_OUTPUT_DIR ${_LUA_OUTPUT_DIR} PARENT_SCOPE)
+    endif()
+
     # ====== 构建导出宏列表 ======
     set(_EXPORT_DEFINITIONS "")
     if(DAS_IDL_EXPORT_LANGUAGES)
@@ -658,6 +752,8 @@ function(das_add_idl_export)
                 list(APPEND _EXPORT_DEFINITIONS "DAS_EXPORT_JAVA")
             elseif(_LANG_LOWER STREQUAL "csharp")
                 list(APPEND _EXPORT_DEFINITIONS "DAS_EXPORT_CSHARP")
+            elseif(_LANG_LOWER STREQUAL "lua")
+                list(APPEND _EXPORT_DEFINITIONS "DAS_EXPORT_LUA")
             endif()
         endforeach()
     endif()
