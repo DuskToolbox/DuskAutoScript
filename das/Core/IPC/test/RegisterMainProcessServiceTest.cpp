@@ -23,7 +23,6 @@
 #include <das/Utils/fmt.h>
 #include <gtest/gtest.h>
 
-using Das::Swig::QueryMainProcessInterface;
 using namespace Das::Core::IPC;
 
 namespace
@@ -332,7 +331,7 @@ TEST_F(
     ASSERT_EQ(reg_result, DAS_S_OK);
 
     // Query by name
-    auto query = Das::Swig::QueryMainProcessInterfaceByName("my_service");
+    auto query = QueryMainProcessInterfaceByName("my_service");
     ASSERT_EQ(query.GetErrorCode(), DAS_S_OK);
     ASSERT_NE(query.value.Get(), nullptr);
 
@@ -364,7 +363,7 @@ TEST_F(
     std::string guid_name = DAS::fmt::format("{}", DAS_IID_READ_ONLY_STRING);
 
     // Query by the GUID string name
-    auto query = Das::Swig::QueryMainProcessInterfaceByName(guid_name.c_str());
+    auto query = QueryMainProcessInterfaceByName(guid_name.c_str());
     ASSERT_EQ(query.GetErrorCode(), DAS_S_OK);
     ASSERT_NE(query.value.Get(), nullptr);
 
@@ -432,7 +431,7 @@ TEST_F(
     EXPECT_EQ(unreg_result, DAS_S_OK);
 
     // Query by name should now fail
-    auto query = Das::Swig::QueryMainProcessInterfaceByName("my_service");
+    auto query = QueryMainProcessInterfaceByName("my_service");
     EXPECT_EQ(query.GetErrorCode(), DAS_E_IPC_OBJECT_NOT_FOUND);
     EXPECT_EQ(query.value.Get(), nullptr);
 

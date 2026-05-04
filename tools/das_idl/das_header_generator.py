@@ -55,6 +55,40 @@ def _format_return_type(ti: TypeInfo) -> str:
     return _format_type(ti)
 
 
+def _das_ret_name(interface_name: str) -> str:
+    """Derive DasRetXxx name from an interface type name.
+    
+    Strips namespace prefixes (Das::ExportInterface::, Das::PluginInterface::)
+    and derives the Ret wrapper name.
+    
+    Examples:
+        IDasBase -> DasRetIDasBase
+        Das::ExportInterface::IDasImage -> DasRetIDasImage
+        Das::PluginInterface::IPluginComponent -> DasRetIPluginComponent
+    """
+    short = interface_name.rsplit('::', 1)[-1]
+    return f'DasRet{short}'
+
+
+def _generate_ret_struct(interface_name: str) -> str:
+    """Generate a DasRetXxx struct definition with include guard."""
+    ret_name = _das_ret_name(interface_name)
+    guard = f'DAS_RET_{interface_name.replace("::", "_").upper()}_DEFINED'
+    return f"""\
+#ifndef {guard}
+#define {guard}
+struct {ret_name} {{
+    DasResult error_code{{DAS_E_UNDEFINED_RETURN_VALUE}};
+    DAS::DasPtr<{interface_name}> value{{}};
+    
+    DasResult GetErrorCode() noexcept {{ return error_code; }}
+    void SetErrorCode(DasResult in_error_code) noexcept {{ error_code = in_error_code; }}
+    {interface_name}* GetValue() noexcept {{ return value.Get(); }}
+    void SetValue({interface_name}* input_value) {{ value = input_value; }}
+}};
+#endif"""
+
+
 def generate_header(
     doc,
     export_macro: str = "DAS_API",
@@ -92,16 +126,46 @@ def generate_header(
             lines.append(f"#define {v.name} {v.value}")
         lines.append("")
 
+    # ── SWIG-compatible return wrappers ───────────────────────────────
+    # For [export] (non-c_abi) functions with [out] parameters,
+    # generate DasRetXxx structs and use them as return types.
+    # This restores the SWIG-compatible API that was lost during
+    # the dogfood migration from DasSwigApi.h to IDL.
+    ret_types: set[str] = set()
+    for mod in doc.modules:
+        for func in mod.functions:
+            if func.attributes.get('c_abi'):
+                continue  # C ABI functions keep original signature
+            for p in func.parameters:
+                if p.direction.value == 'out':
+                    ret_types.add(p.type_info.base_type)
+
+    if ret_types:
+        lines.append('// SWIG-compatible return wrappers')
+        for iface_name in sorted(ret_types):
+            lines.append(_generate_ret_struct(iface_name))
+            lines.append('')
+        lines.append('')
+
     # module → function declarations
     for mod in doc.modules:
         lines.append(f"// Module: {mod.name}")
         for func in mod.functions:
             if func.attributes.get("c_abi"):
                 macro = export_c_macro
+                params = _format_params(func.parameters)
+                ret = _format_return_type(func.return_type)
             else:
+                # [export] only: filter out [out] params → use DasRet return type
                 macro = export_macro
-            params = _format_params(func.parameters)
-            ret = _format_return_type(func.return_type)
+                out_params = [p for p in func.parameters if p.direction.value == 'out']
+                in_params = [p for p in func.parameters if p.direction.value != 'out']
+                params = _format_params(in_params)
+                if out_params:
+                    # Use DasRetXxx as return type instead of DasResult + [out] ptr
+                    ret = _das_ret_name(out_params[0].type_info.base_type)
+                else:
+                    ret = _format_return_type(func.return_type)
             lines.append(f"{macro} {ret} {func.name}({params});")
         lines.append("")
 

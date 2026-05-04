@@ -105,8 +105,8 @@ DAS_C_API DasResult DasUnregisterMainProcessServiceByName(const char* name)
     return ctx->UnregisterServiceByName(name);
 }
 
-// SWIG version  - thin wrapper, delegates to C API
-DAS_SWIG_NS_BEGIN
+// SWIG-compatible wrappers — now at global scope (moved out of Das::Swig)
+// Thin wrappers that delegate to C API, returning DasRetXxx value types.
 
 DasRetIDasBase QueryMainProcessInterface(const DasGuid& iid)
 {
@@ -118,7 +118,7 @@ DasRetIDasBase QueryMainProcessInterface(const DasGuid& iid)
 
     if (DAS::IsOk(hr) && raw_ptr)
     {
-        result.value = DasPtr<IDasBase>::Attach(raw_ptr);
+        result.value = DAS::DasPtr<IDasBase>::Attach(raw_ptr);
     }
     return result;
 }
@@ -133,9 +133,7 @@ DasRetIDasBase QueryMainProcessInterfaceByName(const char* name)
 
     if (DAS::IsOk(hr) && raw_ptr)
     {
-        result.value = DasPtr<IDasBase>::Attach(raw_ptr);
+        result.value = DAS::DasPtr<IDasBase>::Attach(raw_ptr);
     }
     return result;
 }
-
-DAS_SWIG_NS_END

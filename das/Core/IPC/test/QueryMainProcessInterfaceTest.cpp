@@ -15,7 +15,6 @@
 #include <das/DasTypes.hpp>
 #include <gtest/gtest.h>
 
-using Das::Swig::QueryMainProcessInterface;
 using namespace Das::Core::IPC;
 
 namespace
@@ -89,7 +88,7 @@ TEST(QueryMainProcessInterfaceTest, NoContext_ReturnsObjectNotInit)
 
 TEST(QueryMainProcessInterfaceTest, NoContext_QueryByName_ReturnsObjectNotInit)
 {
-    auto result = Das::Swig::QueryMainProcessInterfaceByName("any_name");
+    auto result = QueryMainProcessInterfaceByName("any_name");
     EXPECT_EQ(result.GetErrorCode(), DAS_E_OBJECT_NOT_INIT);
     EXPECT_EQ(result.value.Get(), nullptr);
 }
@@ -243,7 +242,7 @@ TEST_F(QueryMainProcessInterfaceE2ETest, QueryRegisteredName_ReturnsValidObject)
 
     // Query by name
     auto result =
-        Das::Swig::QueryMainProcessInterfaceByName("greeting_service");
+        QueryMainProcessInterfaceByName("greeting_service");
     ASSERT_EQ(result.GetErrorCode(), DAS_S_OK);
     ASSERT_NE(result.value.Get(), nullptr);
 
@@ -265,7 +264,7 @@ TEST_F(QueryMainProcessInterfaceE2ETest, QueryUnknownName_ReturnsObjectNotFound)
         static_cast<MainProcess::IpcContext*>(concrete_ctx_.get()));
 
     auto result =
-        Das::Swig::QueryMainProcessInterfaceByName("nonexistent_service");
+        QueryMainProcessInterfaceByName("nonexistent_service");
     EXPECT_EQ(result.GetErrorCode(), DAS_E_IPC_OBJECT_NOT_FOUND);
     EXPECT_EQ(result.value.Get(), nullptr);
 }
