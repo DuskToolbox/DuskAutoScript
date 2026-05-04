@@ -71,22 +71,75 @@ def _das_ret_name(interface_name: str) -> str:
 
 
 def _generate_ret_struct(interface_name: str) -> str:
-    """Generate a DasRetXxx struct definition with include guard."""
+    """Generate a DasRetXxx struct aligned with swig_java_generator._generate_ret_class.
+
+    Uses raw pointer (no DasPtr dependency), private members, move-only semantics,
+    manual reference counting, and DAS_SWIG_JAVA_RET_TYPE_RENAME for Java naming.
+    """
     ret_name = _das_ret_name(interface_name)
     guard = f'DAS_RET_{interface_name.replace("::", "_").upper()}_DEFINED'
     return f"""\
 #ifndef {guard}
 #define {guard}
+DAS_SWIG_JAVA_RET_TYPE_RENAME({ret_name})
 struct {ret_name} {{
+private:
     DasResult error_code{{DAS_E_UNDEFINED_RETURN_VALUE}};
-    DAS::DasPtr<{interface_name}> value{{}};
-    
-    DasResult GetErrorCode() noexcept {{ return error_code; }}
-    void SetErrorCode(DasResult in_error_code) noexcept {{ error_code = in_error_code; }}
-    {interface_name}* GetValue() noexcept {{ return value.Get(); }}
-    void SetValue({interface_name}* input_value) {{ value = input_value; }}
+    {interface_name}* value{{nullptr}};
+
+public:
+    {ret_name}() = default;
+
+    ~{ret_name}() {{
+        if (value) {{
+            value->Release();
+        }}
+    }}
+
+    {ret_name}({ret_name}&& other) noexcept
+        : error_code(DAS_E_UNDEFINED_RETURN_VALUE), value(nullptr) {{
+        std::swap(error_code, other.error_code);
+        std::swap(value, other.value);
+    }}
+
+    {ret_name}& operator=({ret_name}&& other) noexcept {{
+        if (this != &other) {{
+            if (value) {{
+                value->Release();
+            }}
+            error_code = DAS_E_UNDEFINED_RETURN_VALUE;
+            std::swap(error_code, other.error_code);
+            std::swap(value, other.value);
+        }}
+        return *this;
+    }}
+
+    {ret_name}(const {ret_name}&) = delete;
+    {ret_name}& operator=(const {ret_name}&) = delete;
+
+    DasResult GetErrorCode() const {{ return error_code; }}
+    void SetErrorCode(DasResult code) {{ error_code = code; }}
+
+    {interface_name}* GetValue() const {{
+        if (value) {{
+            value->AddRef();
+        }}
+        return value;
+    }}
+
+    void SetValue({interface_name}* v) {{
+        if (value) {{
+            value->Release();
+        }}
+        value = v;
+        if (value) {{
+            value->AddRef();
+        }}
+    }}
+
+    bool IsOk() const {{ return error_code >= 0; }}
 }};
-#endif"""
+#endif // {guard}"""
 
 
 def generate_header(

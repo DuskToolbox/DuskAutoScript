@@ -1,4 +1,5 @@
-// DasCoreApi.idl — C API function declarations migrated from DasSwigApi.h and DasApi.h
+// DasCoreApi.idl — C ABI 接口（对齐 DasApi.h）
+// 生成 DasCoreApi.generated.h，供 C++ 代码使用
 
 // Log level constants for DasSetLogLevel()
 defines DasLogLevel {
@@ -14,32 +15,23 @@ defines DasLogLevel {
 module DasCoreApi {
 
 //=============================================================================
-// From DasSwigApi.h — DAS_API functions ([export])
-//=============================================================================
-
-[export] void DasLogError(DasReadOnlyString das_string);
-
-[export] void DasLogWarning(DasReadOnlyString das_string);
-
-[export] void DasLogInfo(DasReadOnlyString das_string);
-
-[export] DasResult QueryMainProcessInterface(const DasGuid& iid, [out] IDasBase** pp_object);
-
-[export] DasResult QueryMainProcessInterfaceByName(const char* name, [out] IDasBase** pp_object);
-
-//=============================================================================
-// From DasApi.h — DAS_C_API functions ([export, c_abi])
-//=============================================================================
-
 // JSON
+//=============================================================================
+
 [export, c_abi] DasResult ParseDasJsonFromString(const char* p_u8_string, [out] Das::ExportInterface::IDasJson** pp_out_json);
 
 [export, c_abi] DasResult CreateEmptyDasJson([out] Das::ExportInterface::IDasJson** pp_out_json);
 
+//=============================================================================
 // VariantVector
+//=============================================================================
+
 [export, c_abi] DasResult CreateIDasVariantVector([out] Das::ExportInterface::IDasVariantVector** pp_out_vector);
 
+//=============================================================================
 // Logging (U8 string variants)
+//=============================================================================
+
 [export, c_abi] void DasLogInfoU8(const char* p_string);
 
 [export, c_abi] void DasLogWarningU8(const char* p_string);
@@ -48,7 +40,10 @@ module DasCoreApi {
 
 [export, c_abi] void DasLogDebugU8(const char* p_string);
 
+//=============================================================================
 // Logging with source location
+//=============================================================================
+
 [export, c_abi] void DasLogDebugU8WithSourceLocation(const char* p_string, Das::ExportInterface::IDasSourceLocation* p_source_location);
 
 [export, c_abi] void DasLogInfoU8WithSourceLocation(const char* p_string, Das::ExportInterface::IDasSourceLocation* p_source_location);
@@ -57,43 +52,61 @@ module DasCoreApi {
 
 [export, c_abi] void DasLogErrorU8WithSourceLocation(const char* p_string, Das::ExportInterface::IDasSourceLocation* p_source_location);
 
+//=============================================================================
 // Error messages
+//=============================================================================
+
 [export, c_abi] DasResult DasGetErrorMessage(IDasTypeInfo* p_error_generator, DasResult error_code, [out] IDasReadOnlyString** pp_out_error_message);
 
 [export, c_abi] DasResult DasGetPredefinedErrorMessage(DasResult error_code, [out] IDasReadOnlyString** pp_out_error_message);
 
+//=============================================================================
 // Locale
+//=============================================================================
+
 [export, c_abi] DasResult DasSetDefaultLocale(IDasReadOnlyString* locale_name);
 
-[export, c_abi] DasResult DasGetDefaultLocale([out] IDasReadOnlyString** locale_name);
+[export, c_abi] DasResult DasGetDefaultLocale([out] IDasReadOnlyString** pp_out_locale);
 
+//=============================================================================
 // Collections
+//=============================================================================
+
 [export, c_abi] DasResult CreateIDasGuidVector(const DasGuid* p_data, size_t size, [out] Das::ExportInterface::IDasGuidVector** pp_out_guid);
 
 [export, c_abi] DasResult CreateIDasStringVector([out] Das::ExportInterface::IDasStringVector** pp_out_vector);
 
+//=============================================================================
 // Plugin manager
+//=============================================================================
+
 [export, c_abi] DasResult InitializeIDasPluginManager(
     Das::ExportInterface::IDasReadOnlyGuidVector* p_ignore_plugins_guid,
     Das::ExportInterface::IDasInitializeIDasPluginManagerCallback* p_on_finished,
     [out] Das::ExportInterface::IDasInitializeIDasPluginManagerWaiter** pp_out_waiter);
 
+//=============================================================================
 // Memory
+//=============================================================================
+
 [export, c_abi] DasResult CreateIDasMemory(size_t size_in_byte, [out] Das::ExportInterface::IDasMemory** pp_out_memory);
 
+//=============================================================================
 // Image
+//=============================================================================
+
 [export, c_abi] DasResult CreateIDasImageFromEncodedData(
     DasImageDesc* p_desc,
     [out] Das::ExportInterface::IDasImage** pp_out_image);
 
 [export, c_abi] DasResult CreateIDasImageFromDecodedData(
     const DasImageDesc* p_desc,
-    const Das::ExportInterface::DasSize* p_size,
+    const DAS::ExportInterface::DasSize* p_size,
     [out] Das::ExportInterface::IDasImage** pp_out_image);
 
 [export, c_abi] DasResult CreateIDasImageFromRgb888(
     Das::ExportInterface::IDasMemory* p_alias_memory,
-    const Das::ExportInterface::DasSize* p_size,
+    const DAS::ExportInterface::DasSize* p_size,
     [out] Das::ExportInterface::IDasImage** pp_out_image);
 
 [export, c_abi] DasResult DasPluginLoadImageFromResource(
@@ -101,18 +114,30 @@ module DasCoreApi {
     IDasReadOnlyString* p_relative_path,
     [out] Das::ExportInterface::IDasImage** pp_out_image);
 
+//=============================================================================
 // Error lens
+//=============================================================================
+
 [export, c_abi] DasResult CreateIDasBasicErrorLens([out] Das::ExportInterface::IDasBasicErrorLens** pp_out_error_lens);
 
+//=============================================================================
 // Log requester
+//=============================================================================
+
 [export, c_abi] DasResult CreateIDasLogRequester(uint32_t max_line_count, [out] Das::ExportInterface::IDasLogRequester** pp_out_requester);
 
+//=============================================================================
 // IPC timeout
+//=============================================================================
+
 [export, c_abi] DasResult DasSetIpcTimeout(uint32_t timeout_ms);
 
 [export, c_abi] DasResult DasGetIpcTimeout([out] uint32_t* p_out_timeout_ms);
 
+//=============================================================================
 // Main process interface (C ABI versions)
+//=============================================================================
+
 [export, c_abi] DasResult DasQueryMainProcessInterface(const DasGuid& iid, [out] IDasBase** pp_out_object);
 
 [export, c_abi] DasResult DasRegisterMainProcessService(IDasBase* p_object, const DasGuid& iid);
@@ -125,10 +150,16 @@ module DasCoreApi {
 
 [export, c_abi] DasResult DasUnregisterMainProcessServiceByName(const char* name);
 
+//=============================================================================
 // Log level
+//=============================================================================
+
 [export, c_abi] void DasSetLogLevel(int level);
 
+//=============================================================================
 // Core services factory
+//=============================================================================
+
 [export, c_abi] DasResult CreateIDasCoreServices(
     IDasReadOnlyString* p_settings_dir,
     IDasReadOnlyString* p_plugin_dir,

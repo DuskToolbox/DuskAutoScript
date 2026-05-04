@@ -118,7 +118,9 @@ DasRetIDasBase QueryMainProcessInterface(const DasGuid& iid)
 
     if (DAS::IsOk(hr) && raw_ptr)
     {
-        result.value = DAS::DasPtr<IDasBase>::Attach(raw_ptr);
+        result.SetValue(raw_ptr);
+        // SetValue 会 AddRef，平衡 QueryInterface 返回的原始引用
+        raw_ptr->Release();
     }
     return result;
 }
@@ -133,7 +135,9 @@ DasRetIDasBase QueryMainProcessInterfaceByName(const char* name)
 
     if (DAS::IsOk(hr) && raw_ptr)
     {
-        result.value = DAS::DasPtr<IDasBase>::Attach(raw_ptr);
+        result.SetValue(raw_ptr);
+        // SetValue 会 AddRef，平衡 QueryInterface 返回的原始引用
+        raw_ptr->Release();
     }
     return result;
 }

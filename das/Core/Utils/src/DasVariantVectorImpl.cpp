@@ -451,9 +451,15 @@ DasRetIDasVariantVector CreateDasRetIDasVariantVector()
     const auto result = CreateIDasVariantVector(p_vector.Put());
     if (DAS::IsFailed(result))
     {
-        return {.error_code = result, .value = nullptr};
+        DasRetIDasVariantVector ret;
+        ret.SetErrorCode(result);
+        return ret;
     }
-    return {.error_code = DAS_S_OK, .value = std::move(p_vector)};
+    DasRetIDasVariantVector ret;
+    ret.SetErrorCode(DAS_S_OK);
+    ret.SetValue(p_vector.Get());
+    p_vector.Reset();
+    return ret;
 }
 
 DAS_SWIG_NS_END

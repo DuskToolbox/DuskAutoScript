@@ -152,9 +152,9 @@ TEST_F(RegisterMainProcessServiceTest, E2E_RegisterQuery_VerifyObject)
     // Query via SWIG wrapper (end-to-end)
     auto query = QueryMainProcessInterface(DAS_IID_READ_ONLY_STRING);
     ASSERT_EQ(query.GetErrorCode(), DAS_S_OK);
-    ASSERT_NE(query.value.Get(), nullptr);
+    ASSERT_NE(query.GetValue(), nullptr);
 
-    auto* readonly_str = static_cast<IDasReadOnlyString*>(query.value.Get());
+    auto* readonly_str = static_cast<IDasReadOnlyString*>(query.GetValue());
     const char* utf8 = nullptr;
     DasResult   hr = readonly_str->GetUtf8(&utf8);
     EXPECT_EQ(hr, DAS_S_OK);
@@ -209,7 +209,7 @@ TEST_F(
     // Query should now fail
     auto query = QueryMainProcessInterface(DAS_IID_READ_ONLY_STRING);
     EXPECT_EQ(query.GetErrorCode(), DAS_E_IPC_OBJECT_NOT_FOUND);
-    EXPECT_EQ(query.value.Get(), nullptr);
+    EXPECT_EQ(query.GetValue(), nullptr);
 }
 
 TEST_F(
@@ -333,9 +333,9 @@ TEST_F(
     // Query by name
     auto query = QueryMainProcessInterfaceByName("my_service");
     ASSERT_EQ(query.GetErrorCode(), DAS_S_OK);
-    ASSERT_NE(query.value.Get(), nullptr);
+    ASSERT_NE(query.GetValue(), nullptr);
 
-    auto* readonly_str = static_cast<IDasReadOnlyString*>(query.value.Get());
+    auto* readonly_str = static_cast<IDasReadOnlyString*>(query.GetValue());
     const char* utf8 = nullptr;
     DasResult   hr = readonly_str->GetUtf8(&utf8);
     EXPECT_EQ(hr, DAS_S_OK);
@@ -365,9 +365,9 @@ TEST_F(
     // Query by the GUID string name
     auto query = QueryMainProcessInterfaceByName(guid_name.c_str());
     ASSERT_EQ(query.GetErrorCode(), DAS_S_OK);
-    ASSERT_NE(query.value.Get(), nullptr);
+    ASSERT_NE(query.GetValue(), nullptr);
 
-    auto* readonly_str = static_cast<IDasReadOnlyString*>(query.value.Get());
+    auto* readonly_str = static_cast<IDasReadOnlyString*>(query.GetValue());
     const char* utf8 = nullptr;
     readonly_str->GetUtf8(&utf8);
     ASSERT_NE(utf8, nullptr);
@@ -433,7 +433,7 @@ TEST_F(
     // Query by name should now fail
     auto query = QueryMainProcessInterfaceByName("my_service");
     EXPECT_EQ(query.GetErrorCode(), DAS_E_IPC_OBJECT_NOT_FOUND);
-    EXPECT_EQ(query.value.Get(), nullptr);
+    EXPECT_EQ(query.GetValue(), nullptr);
 
     test_string->Release();
 }

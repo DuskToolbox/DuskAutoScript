@@ -559,7 +559,8 @@ function(das_add_idl_export)
             set(_SWIG_INCLUDE_DIRS
                 ${DAS_IDL_EXPORT_OUTPUT_DIR}
                 ${DAS_IDL_EXPORT_OUTPUT_DIR}/_autogen/idl/abi
-                ${DAS_IDL_EXPORT_OUTPUT_DIR}/_autogen/idl/swig)
+                ${DAS_IDL_EXPORT_OUTPUT_DIR}/_autogen/idl/swig
+                ${_HEADER_OUTPUT_DIR})
 
             # 添加外部传入的包含目录
             if(DAS_IDL_EXPORT_SWIG_INCLUDE_DIRS)

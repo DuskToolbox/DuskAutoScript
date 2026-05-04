@@ -1,0 +1,33 @@
+// DasCoreApiSwig.idl — SWIG 友好接口（对齐 DasSwigApi.h）
+// 生成 DasCoreApiSwig.generated.h，供 DasSwigApi.h include
+// [export] 函数会被 header generator 自动转为 DasRet 返回类型
+
+module DasCoreApiSwig {
+
+//=============================================================================
+// Logging (DasReadOnlyString 版本，供 SWIG 绑定使用)
+//=============================================================================
+
+[export] void DasLogError(DasReadOnlyString das_string);
+
+[export] void DasLogWarning(DasReadOnlyString das_string);
+
+[export] void DasLogInfo(DasReadOnlyString das_string);
+
+//=============================================================================
+// Main process interface
+// 带 [out] 参数的函数会被 header generator 自动转为 DasRet 返回类型
+//=============================================================================
+
+[export] DasResult QueryMainProcessInterface(const DasGuid& iid, [out] IDasBase** pp_object);
+
+[export] DasResult QueryMainProcessInterfaceByName(const char* name, [out] IDasBase** pp_object);
+
+//=============================================================================
+// DasRetXxx 工厂方法
+// header generator 会将 [out] 参数转为 DasRet 返回类型
+//=============================================================================
+
+[export] DasResult CreateDasRetIDasVariantVector([out] Das::ExportInterface::IDasVariantVector** pp_out);
+
+}

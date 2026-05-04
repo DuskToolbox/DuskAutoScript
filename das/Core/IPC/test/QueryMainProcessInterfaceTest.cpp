@@ -83,14 +83,14 @@ TEST(QueryMainProcessInterfaceTest, NoContext_ReturnsObjectNotInit)
 {
     auto result = QueryMainProcessInterface(DAS_IID_READ_ONLY_STRING);
     EXPECT_EQ(result.GetErrorCode(), DAS_E_OBJECT_NOT_INIT);
-    EXPECT_EQ(result.value.Get(), nullptr);
+    EXPECT_EQ(result.GetValue(), nullptr);
 }
 
 TEST(QueryMainProcessInterfaceTest, NoContext_QueryByName_ReturnsObjectNotInit)
 {
     auto result = QueryMainProcessInterfaceByName("any_name");
     EXPECT_EQ(result.GetErrorCode(), DAS_E_OBJECT_NOT_INIT);
-    EXPECT_EQ(result.value.Get(), nullptr);
+    EXPECT_EQ(result.GetValue(), nullptr);
 }
 
 // ====== DasRetIDasBase default state ======
@@ -99,7 +99,7 @@ TEST(QueryMainProcessInterfaceTest, DasRetIDasBase_DefaultState)
 {
     DasRetIDasBase result;
     EXPECT_EQ(result.GetErrorCode(), DAS_E_UNDEFINED_RETURN_VALUE);
-    EXPECT_EQ(result.value.Get(), nullptr);
+    EXPECT_EQ(result.GetValue(), nullptr);
 }
 
 TEST(QueryMainProcessInterfaceTest, DasRetIDasBase_SetGetErrorCode)
@@ -150,10 +150,10 @@ TEST_F(
     // Query via public API
     auto result = QueryMainProcessInterface(DAS_IID_READ_ONLY_STRING);
     ASSERT_EQ(result.GetErrorCode(), DAS_S_OK);
-    ASSERT_NE(result.value.Get(), nullptr);
+    ASSERT_NE(result.GetValue(), nullptr);
 
     // Verify the object is the same one we registered
-    auto* readonly_str = static_cast<IDasReadOnlyString*>(result.value.Get());
+    auto* readonly_str = static_cast<IDasReadOnlyString*>(result.GetValue());
     const char* utf8 = nullptr;
     DasResult   hr = readonly_str->GetUtf8(&utf8);
     EXPECT_EQ(hr, DAS_S_OK);
@@ -186,7 +186,7 @@ TEST_F(
 
     auto result = QueryMainProcessInterface(unknown_iid);
     EXPECT_EQ(result.GetErrorCode(), DAS_E_IPC_OBJECT_NOT_FOUND);
-    EXPECT_EQ(result.value.Get(), nullptr);
+    EXPECT_EQ(result.GetValue(), nullptr);
 
     test_string->Release();
 }
@@ -213,9 +213,9 @@ TEST_F(
 
     auto result = QueryMainProcessInterface(DAS_IID_READ_ONLY_STRING);
     ASSERT_EQ(result.GetErrorCode(), DAS_S_OK);
-    ASSERT_NE(result.value.Get(), nullptr);
+    ASSERT_NE(result.GetValue(), nullptr);
 
-    auto* readonly_str = static_cast<IDasReadOnlyString*>(result.value.Get());
+    auto* readonly_str = static_cast<IDasReadOnlyString*>(result.GetValue());
     const char* utf8 = nullptr;
     readonly_str->GetUtf8(&utf8);
     ASSERT_NE(utf8, nullptr);
@@ -244,9 +244,9 @@ TEST_F(QueryMainProcessInterfaceE2ETest, QueryRegisteredName_ReturnsValidObject)
     auto result =
         QueryMainProcessInterfaceByName("greeting_service");
     ASSERT_EQ(result.GetErrorCode(), DAS_S_OK);
-    ASSERT_NE(result.value.Get(), nullptr);
+    ASSERT_NE(result.GetValue(), nullptr);
 
-    auto* readonly_str = static_cast<IDasReadOnlyString*>(result.value.Get());
+    auto* readonly_str = static_cast<IDasReadOnlyString*>(result.GetValue());
     const char* utf8 = nullptr;
     DasResult   hr = readonly_str->GetUtf8(&utf8);
     EXPECT_EQ(hr, DAS_S_OK);
@@ -266,5 +266,5 @@ TEST_F(QueryMainProcessInterfaceE2ETest, QueryUnknownName_ReturnsObjectNotFound)
     auto result =
         QueryMainProcessInterfaceByName("nonexistent_service");
     EXPECT_EQ(result.GetErrorCode(), DAS_E_IPC_OBJECT_NOT_FOUND);
-    EXPECT_EQ(result.value.Get(), nullptr);
+    EXPECT_EQ(result.GetValue(), nullptr);
 }
