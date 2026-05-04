@@ -1,5 +1,16 @@
 // DasCoreApi.idl — C API function declarations migrated from DasSwigApi.h and DasApi.h
 
+// Log level constants for DasSetLogLevel()
+defines DasLogLevel {
+    DAS_LOG_LEVEL_TRACE = 0,
+    DAS_LOG_LEVEL_DEBUG = 1,
+    DAS_LOG_LEVEL_INFO = 2,
+    DAS_LOG_LEVEL_WARN = 3,
+    DAS_LOG_LEVEL_ERROR = 4,
+    DAS_LOG_LEVEL_CRITICAL = 5,
+    DAS_LOG_LEVEL_OFF = 6,
+}
+
 module DasCoreApi {
 
 //=============================================================================

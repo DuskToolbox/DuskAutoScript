@@ -85,9 +85,9 @@ def generate_header(
     lines.append("// DO NOT EDIT - this file is auto-generated")
     lines.append("")
 
-    # errorcode → #define
+    # errorcode/defines → #define
     for ec in doc.error_codes:
-        lines.append(f"// Error codes: {ec.name}")
+        lines.append(f"// Constants: {ec.name}")
         for v in ec.values:
             lines.append(f"#define {v.name} {v.value}")
         lines.append("")

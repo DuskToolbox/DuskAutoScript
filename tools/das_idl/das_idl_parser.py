@@ -232,6 +232,7 @@ class Lexer:
         'enum': TokenType.ENUM,
         'struct': TokenType.STRUCT,
         'errorcode': TokenType.ERRORCODE,
+        'defines': TokenType.ERRORCODE,  # alias for generic constant blocks
         'module': TokenType.MODULE,
         'namespace': TokenType.NAMESPACE,  # 添加 namespace 关键字
         'import': TokenType.IMPORT,  # 添加 import 关键字
