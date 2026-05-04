@@ -97,6 +97,30 @@ def generate_cpp_file(
     """
     parts: List[str] = []
 
+    # ── Warning suppression (MUST be before #include <sol/sol.hpp>) ──
+    # 抑制 sol2 为抽象 COM 接口注册时触发的 -Wdelete-abstract-non-virtual-dtor 警告。
+    # sol2 的 new_usertype<T>() 内部无条件实例化 make_destructor<T>()，
+    # 但抽象接口使用 sol::no_constructor 且 GC 已重定向到 Release()，
+    # 运行时不会调用析构函数。
+    # 需要放在 #include <sol/sol.hpp> 之前，确保 pragma 覆盖 sol2 模板实例化。
+    parts.append('#ifdef __clang__')
+    parts.append('#pragma clang diagnostic push')
+    parts.append(
+        '#pragma clang diagnostic ignored'
+        ' "-Wdelete-abstract-non-virtual-dtor"'
+    )
+    parts.append('#elif defined(__GNUC__)')
+    parts.append('#pragma GCC diagnostic push')
+    parts.append(
+        '#pragma GCC diagnostic ignored'
+        ' "-Wdelete-abstract-non-virtual-dtor"'
+    )
+    parts.append('#elif defined(_MSC_VER)')
+    parts.append('#pragma warning(push)')
+    parts.append('#pragma warning(disable: 4265)')
+    parts.append('#endif')
+    parts.append('')
+
     # ── Include directives ─────────────────────────────────────────────
     parts.append('#include <sol/sol.hpp>')
     parts.append('')
@@ -164,6 +188,16 @@ def generate_cpp_file(
 
     # ── luaopen entry point ────────────────────────────────────────────
     parts.append(gen._generate_luaopen_function(doc, abilable_interfaces))
+    parts.append('')
+
+    # ── Restore warning state ──────────────────────────────────────────
+    parts.append('#ifdef __clang__')
+    parts.append('#pragma clang diagnostic pop')
+    parts.append('#elif defined(__GNUC__)')
+    parts.append('#pragma GCC diagnostic pop')
+    parts.append('#elif defined(_MSC_VER)')
+    parts.append('#pragma warning(pop)')
+    parts.append('#endif')
 
     return '\n'.join(parts)
 

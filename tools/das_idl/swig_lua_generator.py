@@ -600,6 +600,10 @@ public:
 
         entries = []
         entries.append('    sol::no_constructor')
+        entries.append(
+            f'    sol::meta_function::garbage_collect, []({iface_name}* p)'
+            f' {{ p->Release(); }}'
+        )
 
         for method in interface.methods:
             out_params = [
