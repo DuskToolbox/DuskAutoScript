@@ -1,9 +1,7 @@
 #ifndef DAS_TYPES_HPP
 #define DAS_TYPES_HPP
 
-#include <cstddef>
 #include <cstdint>
-#include <das/DasExport.h>
 
 // ============================================================================
 // 基础类型定义（所有头文件共用）

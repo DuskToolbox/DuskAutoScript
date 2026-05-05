@@ -1296,7 +1296,7 @@ public:
     def _generate_luaopen_function(
         self, doc: IdlDocument, interfaces: List[InterfaceDef]
     ) -> str:
-        """生成 DLL 入口函数 luaopen_das_core。
+        """生成 DLL 入口函数 luaopen_<module_name>。
 
         该函数是 Lua require 系统的入口点，
         负责依次注册所有类型、枚举和模块函数。
@@ -1306,12 +1306,18 @@ public:
             interfaces: 经 resolve_types() 标注后的 InterfaceDef 列表。
 
         Returns:
-            luaopen_das_core 函数的完整 C++ 定义字符串。
+            luaopen_<module_name> 函数的完整 C++ 定义字符串。
+
+        Raises:
+            ValueError: 当 IDL 文档中未定义 module 声明时。
         """
-        # 确定模块名
-        module_name = "das_core"
-        if doc.modules and doc.modules[0].module_name:
-            module_name = doc.modules[0].module_name
+        # 确定模块名（必须从 IDL module 声明获取，不使用硬编码默认值）
+        if not doc.modules or not doc.modules[0].module_name:
+            raise ValueError(
+                "luaopen 函数需要模块名，但 IDL 文档中未定义 module 声明。"
+                "请在 IDL 文件中添加 module 块，例如: module MyModuleName { }"
+            )
+        module_name = doc.modules[0].module_name
 
         lines = []
         lines.append(

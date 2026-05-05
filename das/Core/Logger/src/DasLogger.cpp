@@ -52,8 +52,6 @@ void DasLogInfo(IDasReadOnlyString* p_string)
     DasLogInfoU8(p_u8_string);
 }
 
-DAS_SWIG_NS_BEGIN
-
 void DasLogError(DasReadOnlyString das_string)
 {
     DAS::DasPtr<IDasReadOnlyString> p_string{};
@@ -74,8 +72,6 @@ void DasLogInfo(DasReadOnlyString das_string)
     das_string.GetImpl(p_string.Put());
     DasLogInfo(p_string.Get());
 }
-
-DAS_SWIG_NS_END
 
 void DasLogErrorU8(const char* p_string) { DC::g_logger->error(p_string); }
 

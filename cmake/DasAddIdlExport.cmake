@@ -667,8 +667,10 @@ function(das_add_idl_export)
     if(_HAS_LUA)
         message(STATUS "[das_add_idl_export] Creating Lua sol2 export library")
 
-        # 查找 sol2（使用 FindSol2.cmake）
-        find_package(sol2 REQUIRED)
+        # sol2::sol2 and Das::Lua are created by FindSol2.cmake / BuildLua.cmake,
+        # included in DasCore/CMakeLists.txt. Guard here for safety.
+        include(BuildLua)
+        include(FindSol2)
 
         # Lua 输出目录
         set(_LUA_OUTPUT_DIR "${DAS_IDL_EXPORT_OUTPUT_DIR}/_autogen/idl/lua")
@@ -720,14 +722,8 @@ function(das_add_idl_export)
             sol2::sol2
         )
 
-        # Lua headers and libraries (required by sol2)
-        if(Lua_FOUND)
-            target_include_directories(${_LUA_LIB_NAME} PRIVATE ${LUA_INCLUDE_DIR})
-            target_link_libraries(${_LUA_LIB_NAME} PRIVATE ${LUA_LIBRARIES})
-        elseif(LUA_FOUND)
-            target_include_directories(${_LUA_LIB_NAME} PRIVATE ${LUA_INCLUDE_DIRS})
-            target_link_libraries(${_LUA_LIB_NAME} PRIVATE ${LUA_LIBRARIES})
-        endif()
+        # Lua static library (built from source via FindSol2.cmake)
+        target_link_libraries(${_LUA_LIB_NAME} PRIVATE Das::Lua)
 
         # 链接外部依赖库
         if(DAS_IDL_EXPORT_DEPENDS_ON)

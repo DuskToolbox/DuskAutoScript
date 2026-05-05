@@ -7,6 +7,11 @@ if(EXPORT_PYTHON)
     find_package(Python3 COMPONENTS Development Development.SABIModule REQUIRED)
 endif()
 
+if(EXPORT_LUA)
+    include(BuildLua)
+    include(FindSol2)
+endif()
+
 add_library(DasCoreObjects OBJECT)
 add_custom_target(DasCoreObjectsPreBuild ALL)
 add_dependencies(
@@ -164,6 +169,11 @@ if(EXPORT_CSHARP)
     list(APPEND DAS_EXPORT_MACRO_LIST DAS_EXPORT_CSHARP)
 endif()
 
+if(EXPORT_LUA)
+    list(APPEND DAS_EXPORT_MACRO_LIST DAS_EXPORT_LUA)
+    list(APPEND DAS_FOREIGN_LANGUAGE_LIB_LIST sol2::sol2 Das::Lua)
+endif()
+
 #应用导出宏定义
 if(DAS_EXPORT_MACRO_LIST)
     target_compile_definitions(DasCoreObjects PUBLIC ${DAS_EXPORT_MACRO_LIST})
@@ -273,7 +283,6 @@ add_compile_definitions(DAS_BUILD_SHARED)
 #target_link_libraries(DasCoreObjects PUBLIC ${LUA_LIBRARIES})
 #endif()
 
-list(APPEND DAS_EXPORT_MACRO_LIST DAS_EXPORT_LUA)
 target_link_libraries(DasCoreObjects
     PUBLIC DasUtils DasPlatformDefs ${DAS_FOREIGN_LANGUAGE_LIB_LIST})
 
@@ -286,6 +295,7 @@ target_compile_definitions(DasCoreObjects PUBLIC ${DAS_EXPORT_MACRO_LIST})
 target_compile_definitions(DasCoreObjects PRIVATE DAS_CORE_NAME="$<TARGET_FILE_NAME:DasCore>")
 
 target_link_libraries(DasCore PUBLIC DasCoreObjects)
+target_link_libraries(DasCore PRIVATE ${DAS_FOREIGN_LANGUAGE_LIB_LIST})
 
 if(${DAS_BUILD_TEST})
 #复制 Python 测试插件到 build 目录（测试工作目录是   build / Test）

@@ -152,6 +152,11 @@ void RegisterLoadPluginHandler(DAS::Core::IPC::Host::IIpcContext* ctx)
                     desc.language = DAS::Core::ForeignInterfaceHost::
                         ForeignInterfaceLanguage::Java;
                 }
+                else if (lang_lower == "lua")
+                {
+                    desc.language = DAS::Core::ForeignInterfaceHost::
+                        ForeignInterfaceLanguage::Lua;
+                }
                 else
                 {
                     desc.language = DAS::Core::ForeignInterfaceHost::

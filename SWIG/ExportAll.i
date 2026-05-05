@@ -7,14 +7,8 @@
 // --- common: %module + SWIG 标准库 ---
 %include "common/DasModule.i"
 
-// --- common: C++ 头文件 ---
+// --- common: C++ 头文件。但是这里用了 %{%}，所以DasRetBase也要塞进来，不然生成的位置不对 ---
 %include "common/DasHeaders.i"
-
-// --- java: DasRetBase pragma/rename/ignore/javacode ---
-%include "java/DasRetBase.i"
-
-// --- common: DasRetBase struct ---
-%include "common/DasRetBase.i"
 
 // --- python: IDasBase director:except ---
 %include "python/IDasBase.i"
@@ -24,9 +18,6 @@
 
 // --- python: Director lifecycle helpers (prevent/release via keepalive dict) ---
 %include "python/DirectorLifecycle.i"
-
-// --- common: IDasBase extend + ignore ---
-%include "common/IDasBaseShared.i"
 
 // --- java: JNI RAII + 日志辅助 + IDasBase javacode ---
 %include "java/JniHelpers.i"
@@ -40,8 +31,8 @@
 // --- csharp: Director lifecycle helpers (prevent/release via GCHandle) ---
 %include "csharp/DirectorLifecycle.i"
 
-// --- common: DasTypeMapsIgnore + headers + ignore ---
-%include "common/DasTypeMapsIgnore.i"
+// --- common: DasTypeMapsIgnore (%ignore 聚合，代码生成器产出) ---
+%include <DasTypeMapsIgnore.i>
 
 // --- java: DasReadOnlyString support ---
 %include "java/DasReadOnlyString.i"

@@ -25,6 +25,11 @@ if(DAS_BUILD_TEST)
     if(EXPORT_JAVA)
         add_subdirectory(JavaTestPlugin)
     endif()
+
+    # Lua 测试插件（仅在启用 Lua 导出时构建）
+    if(EXPORT_LUA)
+        add_subdirectory(LuaTestPlugin)
+    endif()
 endif()
 
 # IpcTestPlugin1 - IDasTouch Mock for IPC testing

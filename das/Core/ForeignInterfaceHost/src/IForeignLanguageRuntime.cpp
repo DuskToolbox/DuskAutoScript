@@ -1,5 +1,6 @@
 #include "CppHost.h"
 #include "JavaHost.h"
+#include "LuaHost.h"
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
 #include <das/Core/ForeignInterfaceHost/PythonHost.h>
 #include <das/Utils/UnexpectedEnumException.h>
@@ -33,7 +34,11 @@ auto CreateForeignLanguageRuntime(
         return JavaHost::CreateJavaRuntime(desc_base);
 #endif // DAS_EXPORT_JAVA
     case Lua:
+#ifndef DAS_EXPORT_LUA
         goto on_no_interface;
+#else
+        return LuaHost::CreateForeignLanguageRuntime(desc_base);
+#endif // DAS_EXPORT_LUA
     case Cpp:
         return CppHost::CreateForeignLanguageRuntime(desc_base);
     default:

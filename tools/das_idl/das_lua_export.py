@@ -122,6 +122,20 @@ def generate_cpp_file(
     parts.append('')
 
     # ── Include directives ─────────────────────────────────────────────
+    # Force include our bundled Lua headers BEFORE sol2 picks up system Lua.
+    # This prevents msys2's Lua 5.5 headers (from internal-isystem) from being
+    # found first, which would break sol2's version detection.
+    # We must include ALL Lua headers that share header guards across versions
+    # (lua_h, lauxlib_h, lualib_h are identical in both Lua 5.4 and 5.5),
+    # otherwise msys2's Lua 5.5 lualib.h will redefine luaL_openlibs as a macro
+    # that expands to luaL_openselectedlibs (a Lua 5.5-only symbol).
+    # Also wrap in extern "C" because the Lua GitHub repo's lua.h lacks the
+    # extern "C" block that the official Lua .tar.gz release includes.
+    parts.append('extern "C" {')
+    parts.append('#include "lua.h"')
+    parts.append('#include "lauxlib.h"')
+    parts.append('#include "lualib.h"')
+    parts.append('}')
     parts.append('#include <sol/sol.hpp>')
     parts.append('')
 

@@ -1691,6 +1691,176 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_JavaDirectorLifecycleTest)
         "[CrossProcess_JavaDirectorLifecycleTest] All verifications passed");
 }
 
+TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LuaDirectorLifecycleTest)
+{
+#ifndef DAS_EXPORT_LUA
+    GTEST_SKIP() << "DAS_EXPORT_LUA is not enabled";
+#endif
+    ASSERT_TRUE(std::filesystem::exists(host_exe_path_))
+        << "DasHost.exe not found at: " << host_exe_path_;
+
+    std::string plugin_json_path;
+    try
+    {
+        plugin_json_path =
+            IpcTestConfig::GetTestPluginJsonPath("LuaTestPlugin");
+    }
+    catch (const std::exception& e)
+    {
+        GTEST_FAIL() << "LuaTestPlugin JSON not found: " << e.what();
+    }
+
+    // 1. 创建 callback 组件并注册
+    auto callback = DAS::MakeDasPtr<LifecycleCallbackComponent>();
+    callback->Configure(GetContext());
+
+    DasResult reg_result = ctx_->RegisterService(
+        callback.Get(),
+        DasIidOf<DAS::PluginInterface::IDasComponent>());
+    ASSERT_EQ(reg_result, DAS_S_OK);
+
+    // 2. 启动 Host 进程
+    DasResult result = StartHostAndSetupRunLoop();
+    ASSERT_EQ(result, DAS_S_OK);
+
+    // 3. 加载 Lua 插件
+    DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
+    result = ctx_->LoadPluginAsync(
+        launcher_.Get(),
+        plugin_json_path.c_str(),
+        op.Put(),
+        IpcTestConfig::GetPluginLoadTimeout());
+    ASSERT_EQ(result, DAS_S_OK);
+
+    auto opt = DAS::Core::IPC::wait(
+        GetContext(),
+        DAS::Core::IPC::async_op(GetContext(), std::move(op)));
+    ASSERT_TRUE(opt.has_value());
+
+    auto& [load_result, proxy] = *opt;
+    ASSERT_TRUE(DAS::IsOk(load_result));
+
+    // 4. 获取 IDasComponent
+    //    注意: Lua Director 的 EnumFeature/CreateFeatureInterface 方法
+    //    存在 [out] 参数，而当前 Lua Director 系统在 Lua 侧调用时不
+    //    传递 [out] 参数（仅返回 DasResult），因此
+    //    CreateFeatureInterface 的 pp_out_interface 输出参数不会被设
+    //    置。需要 Lua Director 生成器支持 [out] 参数后才能完整通过。
+    DAS::DasPtr<IDasBase> raw_proxy;
+    raw_proxy = DAS::DasPtr<IDasBase>::Attach(proxy);
+    DAS::PluginInterface::DasPluginPackage plugin_package;
+    ASSERT_EQ(raw_proxy.As(plugin_package.Put()), DAS_S_OK);
+
+    DAS::PluginInterface::DasPluginFeature feature;
+    ASSERT_EQ(plugin_package->EnumFeature(0, &feature), DAS_S_OK);
+
+    IDasBase* factory_base_raw = nullptr;
+    ASSERT_EQ(
+        plugin_package->CreateFeatureInterface(0, &factory_base_raw),
+        DAS_S_OK);
+    DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+
+    DAS::DasPtr<DAS::PluginInterface::IDasComponentFactory> factory;
+    ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
+
+    DAS::PluginInterface::IDasComponent* component_raw = nullptr;
+    ASSERT_EQ(
+        factory->CreateInstance(
+            DasIidOf<DAS::PluginInterface::IDasComponent>(),
+            &component_raw),
+        DAS_S_OK);
+    DAS::DasPtr<DAS::PluginInterface::IDasComponent> component(component_raw);
+
+    // 5. Dispatch bridgeLifecycleTest
+    {
+        DasReadOnlyString method_name{"bridgeLifecycleTest"};
+        DAS::ExportInterface::DasVariantVector result;
+        DAS::ExportInterface::DasVariantVector params;
+        ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
+
+        params.PushBackBase(callback.Get());
+        params.PushBackString(DasReadOnlyString{"bridge_test_marker"});
+
+        DasResult dispatch_result =
+            component->Dispatch(method_name.Get(), params.Get(), result.Put());
+        ASSERT_EQ(dispatch_result, DAS_S_OK)
+            << "Dispatch(bridgeLifecycleTest) failed";
+
+        if (result.Get())
+        {
+            uint64_t size = result->GetSize();
+            DAS_CORE_LOG_INFO(
+                "[CrossProcess_LuaDirectorLifecycleTest] Dispatch returned "
+                "success, result size = {}",
+                size);
+            if (size > 0)
+            {
+                IDasReadOnlyString* elem0 = nullptr;
+                DasResult           hr = result->GetString(0, &elem0);
+                if (DAS::IsOk(hr) && elem0)
+                {
+                    const char* str = nullptr;
+                    elem0->GetUtf8(&str);
+                    DAS_CORE_LOG_INFO(
+                        "[CrossProcess_LuaDirectorLifecycleTest] result[0] = {}",
+                        str ? str : "(null)");
+                    elem0->Release();
+                }
+            }
+        }
+        else
+        {
+            DAS_CORE_LOG_ERROR(
+                "[CrossProcess_LuaDirectorLifecycleTest] Dispatch returned null "
+                "result");
+        }
+    }
+    // ← result 析构，Director proxy 被释放
+
+    // 6. 释放 Lua 组件 proxy
+    component.Reset();
+    factory.Reset();
+    factory_base.Reset();
+    raw_proxy.Reset();
+
+    // 7. 等待 Lua GC 触发 finalize 回调
+    //    事件驱动通知链路：
+    //    Lua GC → __gc → Director Release → (callback 机制待实现)
+    //    当前 Lua Director 系统不支持 [out] 参数，因此完整的 GC 回调
+    //    链路需要 Director 生成器扩展支持。
+    std::atomic<bool> done{false};
+    auto              signal = DAS::MakeDasPtr<CompletionSignal>(done);
+    callback->completion_signal_ = signal.Get();
+
+    DAS_CORE_LOG_INFO(
+        "[CrossProcess_LuaDirectorLifecycleTest] Waiting for bridge release "
+        "callback from Lua side...");
+
+    constexpr auto kTimeout = std::chrono::seconds(15);
+    auto           start_time = std::chrono::steady_clock::now();
+
+    while (!done.load())
+    {
+        auto elapsed = std::chrono::steady_clock::now() - start_time;
+        if (elapsed >= kTimeout)
+        {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    // 8. 验证结果
+    EXPECT_TRUE(callback->callback_received_)
+        << "Bridge release callback was not received — Director bridge may not "
+           "have been properly released, or GC did not collect the object";
+    EXPECT_TRUE(
+        callback->received_status_.find("bridge_released") != std::string::npos)
+        << "Unexpected status: " << callback->received_status_;
+
+    DAS_CORE_LOG_INFO(
+        "[CrossProcess_LuaDirectorLifecycleTest] All verifications passed");
+}
+
 // ====== CrossProcess QueryMainProcessInterfaceByName E2E 测试 ======
 
 /**
