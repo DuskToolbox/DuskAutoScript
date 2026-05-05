@@ -9,6 +9,7 @@ namespace Das::ExportInterface {
 interface IDasTemplateMatchResult : IDasBase {
     [get, set] double score;
     [get, set] DasRect match_rect;
+    [get, set] double raw_score;
 }
 
 enum DasTemplateMatchType {
@@ -27,6 +28,29 @@ enum DasTemplateMatchType {
     DAS_TEMPLATE_MATCH_TYPE_CCOEFF_NORMED = 5,
     DAS_TEMPLATE_MATCH_TYPE_FORCE_DWORD = 0x7FFFFFFF
 };
+
+// ============= Color Types =============
+
+struct DasColorValue {
+    uint8_t c1;
+    uint8_t c2;
+    uint8_t c3;
+    uint8_t c4;
+};
+
+struct DasColorRange {
+    DasColorValue lower;
+    DasColorValue upper;
+};
+
+// ============= Template Match (All Results) =============
+
+[uuid("F1E2D3C4-B5A6-4987-8765-4321FEDCBA09")]
+interface IDasTemplateMatchResults : IDasBase {
+    DasResult GetCount([out] uint32_t* p_out_count);
+    DasResult GetRawMatchCount([out] uint32_t* p_out_raw_count);
+    DasResult GetAt(uint32_t index, [out] IDasTemplateMatchResult** pp_out_result);
+}
 
 // ============= Feature Match =============
 
@@ -98,6 +122,67 @@ interface IDasCv : IDasBase {
         IDasImage* p_train,
         IDasCvMatchConfig* p_config,
         [out] IDasCvMatchResult** pp_out_result
+    );
+
+    // ============= Multi Template Match =============
+
+    /**
+     * @brief 多模板匹配
+     *
+     * 执行模板匹配并返回所有高于阈值的匹配结果，默认按 score 降序排列。
+     *
+     * @param p_image    目标图像
+     * @param p_template 模板图像
+     * @param type       模板匹配类型
+     * @param threshold  匹配分数阈值（0.0 ~ 1.0），低于此值的匹配将被过滤
+     * @param max_count  最大返回结果数（0 表示不截断）
+     * @param pp_out_results 输出参数，返回匹配结果集合
+     *
+     * @return DasResult 操作结果
+     */
+    DasResult TemplateMatchAll(
+        IDasImage* p_image,
+        IDasImage* p_template,
+        DasTemplateMatchType type,
+        double threshold,
+        int32_t max_count,
+        [out] IDasTemplateMatchResults** pp_out_results
+    );
+
+    // ============= Color Operations =============
+
+    /**
+     * @brief 颜色空间转换
+     *
+     * 将源图像从当前颜色空间转换到目标颜色空间。out-of-place 操作。
+     *
+     * @param p_src         源图像
+     * @param target_format 目标像素格式
+     * @param pp_out_image  输出参数，返回转换后的图像
+     *
+     * @return DasResult 操作结果
+     */
+    DasResult ConvertColor(
+        IDasImage* p_src,
+        DasImagePixelFormat target_format,
+        [out] IDasImage** pp_out_image
+    );
+
+    /**
+     * @brief 颜色范围过滤
+     *
+     * 根据指定的颜色范围对图像进行过滤，输出二值掩码图像。
+     *
+     * @param p_src       源图像
+     * @param p_range     颜色范围（下限和上限）
+     * @param pp_out_mask 输出参数，返回二值掩码图像
+     *
+     * @return DasResult 操作结果
+     */
+    DasResult ColorFilter(
+        IDasImage* p_src,
+        const DasColorRange* p_range,
+        [out] IDasImage** pp_out_mask
     );
 }
 

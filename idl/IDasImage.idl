@@ -17,6 +17,19 @@ struct DasSize {
     int32_t height;
 };
 
+/**
+ * @brief 图像像素格式枚举
+ */
+enum DasImagePixelFormat {
+    DAS_PIXEL_FORMAT_UNKNOWN = 0,
+    DAS_PIXEL_FORMAT_BGR     = 1,
+    DAS_PIXEL_FORMAT_RGB     = 2,
+    DAS_PIXEL_FORMAT_RGBA    = 3,
+    DAS_PIXEL_FORMAT_GRAY    = 4,
+    DAS_PIXEL_FORMAT_HSV     = 5,
+    DAS_PIXEL_FORMAT_FORCE_DWORD = 0x7FFFFFFF
+};
+
 [uuid("6C98E79F-2342-4B98-AC8A-2B29EA53F951")]
 interface IDasImage : IDasBase {
     DasResult GetSize([out] DasSize* p_out_size);
@@ -41,6 +54,15 @@ interface IDasImage : IDasBase {
      * @return DasResult 操作结果
      */
     DasResult GetBinaryBuffer([out] IDasBinaryBuffer** pp_out_buffer);
+
+    /**
+     * @brief 获取图像像素格式
+     *
+     * @param p_out_format 输出参数，返回图像的像素格式枚举值
+     *
+     * @return DasResult 操作结果
+     */
+    DasResult GetPixelFormat([out] DasImagePixelFormat* p_out_format);
 }
 
 }
