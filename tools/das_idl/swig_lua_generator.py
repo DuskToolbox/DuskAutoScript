@@ -582,11 +582,78 @@ public:
 
         return '\n'.join(lines)
 
+    def _generate_binary_buffer_lambda(
+        self, iface_name: str, method: MethodDef, interface: InterfaceDef
+    ) -> str:
+        """为 [binary_buffer] 标记的方法生成特殊的 sol2 lambda 包装。
+
+        Lambda 调用 binary_buffer 方法获取数据指针，再调用同接口中的
+        companion size 方法获取大小，将二进制数据拷贝到 std::string，
+        返回 std::tuple<DasResult, std::string>。
+
+        companion size 方法的查找规则：在同一接口中查找具有单个
+        [out] uint64_t* 参数的方法。
+
+        Args:
+            iface_name: 接口名称。
+            method: 被标记为 [binary_buffer] 的方法。
+            interface: 所属接口定义（用于查找 companion size 方法）。
+
+        Returns:
+            Lambda 表达式字符串（不含 sol::overload 外壳）。
+        """
+        # 查找 companion size 方法（具有单个 [out] uint64_t* 参数）
+        size_method_name = None
+        for m in interface.methods:
+            if m.name == method.name:
+                continue
+            out_ps = [
+                p
+                for p in m.parameters
+                if p.direction == ParamDirection.OUT
+            ]
+            if len(out_ps) == 1 and out_ps[0].type_info.base_type == 'uint64_t':
+                size_method_name = m.name
+                break
+
+        if size_method_name is None:
+            # 回退到命名约定: GetData → GetSize
+            size_method_name = method.name.replace('Data', 'Size')
+
+        lines = []
+        lines.append(
+            f'[]({iface_name}& self)'
+            f' -> std::tuple<DasResult, std::string> {{'
+        )
+        lines.append('    unsigned char* data = nullptr;')
+        lines.append(f'    DasResult hr = self.{method.name}(&data);')
+        lines.append('    if (hr < 0) {')
+        lines.append(
+            '        return std::make_tuple(hr, std::string());'
+        )
+        lines.append('    }')
+        lines.append('    uint64_t size = 0;')
+        lines.append(f'    hr = self.{size_method_name}(&size);')
+        lines.append('    if (hr < 0) {')
+        lines.append(
+            '        return std::make_tuple(hr, std::string());'
+        )
+        lines.append('    }')
+        lines.append(
+            '    return std::make_tuple(DAS_S_OK,'
+            ' std::string(reinterpret_cast<const char*>(data),'
+            ' static_cast<size_t>(size)));'
+        )
+        lines.append('}')
+
+        return '\n'.join(lines)
+
     def _generate_abstract_registration(self, interface: InterfaceDef) -> str:
         """生成抽象接口的 sol2 usertype 注册代码。
 
         抽象接口使用 sol::no_constructor 阻止 Lua 端直接实例化。
         方法绑定规则：
+          - [binary_buffer] 标记 → 特殊 lambda：GetData+GetSize → std::string
           - 无 [out] 参数 → 直接绑定成员函数指针
           - 有 [out] 参数 → 使用 lambda 包装为 tuple 返回值
 
@@ -612,7 +679,21 @@ public:
                 if p.direction == ParamDirection.OUT
             ]
 
-            if not out_params:
+            # [binary_buffer] 方法：生成特殊的 lambda，
+            # 调用 GetData + GetSize 并将数据拷贝到 std::string
+            if method.attributes.get('binary_buffer'):
+                lambda_code = self._generate_binary_buffer_lambda(
+                    iface_name, method, interface
+                )
+                overload_lines = []
+                overload_lines.append(
+                    f'    "{method.name}", sol::overload('
+                )
+                for line in lambda_code.split('\n'):
+                    overload_lines.append(f'        {line}')
+                overload_lines.append('    )')
+                entries.append('\n'.join(overload_lines))
+            elif not out_params:
                 entries.append(
                     f'    "{method.name}", &{iface_name}::{method.name}'
                 )
@@ -760,7 +841,8 @@ public:
 
         遍历所有模块及其函数，根据是否有 [out] 参数生成不同的绑定：
           - 无 [out] 参数 → 直接绑定函数指针
-          - 有 [out] 参数 → 使用 lambda 包装为 tuple 返回值
+          - [swig_ret] 函数 → DasRet lambda（解包 DasRetXxx 为 tuple）
+          - 有 [out] 参数的 C ABI 函数 → lambda 包装为 tuple 返回值
 
         Args:
             doc: 经 resolve_types() 标注后的 IDL 文档。
@@ -792,8 +874,17 @@ public:
                         f'    lua.set_function("{func.name}",'
                         f' &{func.name});'
                     )
+                elif self._is_das_ret_function(func):
+                    # [swig_ret] 函数 → DasRet lambda
+                    lambda_lines = self._generate_das_ret_lambda(func)
+                    lines.append(
+                        f'    lua.set_function("{func.name}",'
+                    )
+                    for ll in lambda_lines:
+                        lines.append(f'    {ll}')
+                    lines.append('    );')
                 else:
-                    # 有 [out] 参数 → lambda 包装
+                    # 有 [out] 参数的 C ABI 函数 → 原始 lambda
                     lambda_lines = (
                         self._generate_module_function_lambda(func)
                     )
@@ -815,6 +906,65 @@ public:
         'DasReadOnlyString',   # IDL: DasReadOnlyString → C++: IDasReadOnlyString*
         'DasString',           # IDL: DasString → C++: IDasString*
     })
+
+    @staticmethod
+    def _is_das_ret_function(func) -> bool:
+        """Check if a module function uses DasRet return pattern.
+
+        Only functions with [swig_ret] attribute should generate DasRet lambda.
+        """
+        return bool(func.attributes.get('swig_ret', False))
+
+    def _generate_das_ret_lambda(self, func) -> List[str]:
+        """为 [swig_ret] 模块函数生成 sol2 lambda 包装。
+
+        DasRet 函数的签名已被 header_generator 转换：
+        - [out] 参数被移除
+        - 返回类型变为 DasRetXxx
+
+        Lambda 直接调用函数，将 DasRetXxx 解包为 std::tuple<DasResult, OutType>。
+        """
+        # Lambda 参数：仅 IN/INOUT 参数（out 参数已被 header_generator 移除）
+        in_params = [
+            p for p in func.parameters if p.direction != ParamDirection.OUT
+        ]
+        lambda_params = []
+        for p in in_params:
+            param_type = self._get_sol2_param_type(p.type_info)
+            lambda_params.append(f'{param_type} {p.name}')
+
+        # 返回类型：std::tuple<DasResult, OutType>
+        # DasRet 函数返回 DasResult，但实际返回类型是 DasRetXxx
+        ret_type = self._get_sol2_return_type(func.return_type)
+        out_params = [
+            p for p in func.parameters if p.direction == ParamDirection.OUT
+        ]
+        out_types = [
+            self._get_out_param_local_type(p.type_info) for p in out_params
+        ]
+
+        all_types = [ret_type] + out_types
+        tuple_types = ', '.join(all_types)
+        ret_type_str = f'std::tuple<{tuple_types}>'
+
+        lines = []
+        params_str = ', '.join(lambda_params)
+        lines.append(f'[]({params_str}) -> {ret_type_str} {{')
+
+        # 调用函数并解包 DasRet
+        in_args = [p.name for p in in_params]
+        call_args_str = ', '.join(in_args)
+        lines.append(f'    auto ret = {func.name}({call_args_str});')
+
+        # 解包 DasRet → (error_code, value)
+        out_values = ['ret.GetErrorCode()'] + [
+            f'ret.GetValue()' for _ in out_params
+        ]
+        values_str = ', '.join(out_values)
+        lines.append(f'    return std::make_tuple({values_str});')
+
+        lines.append('}')
+        return lines
 
     @staticmethod
     def _func_references_unavailable_type(
