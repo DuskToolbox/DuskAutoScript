@@ -1,0 +1,12 @@
+{
+    "name": "LuaTestPlugin",
+    "author": "Dusk",
+    "version": "0.1",
+    "guid": "3A4B5C6D-7E8F-4A9B-0C1D-2E3F4A5B6C7D",
+    "description": "Lua Test Plugin for IPC integration testing",
+    "supportedSystem": "Windows",
+    "language": "Lua",
+    "pluginFilenameExtension": "lua",
+    "entryPoint": "LuaTestPlugin.createInstance",
+    "settings": []
+}
