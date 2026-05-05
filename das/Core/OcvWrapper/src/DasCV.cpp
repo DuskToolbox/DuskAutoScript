@@ -1,9 +1,9 @@
 #include "Config.h"
 #include "DescriptorMatcherFactory.h"
 #include "FeatureDetectorFactory.h"
-#include "IDasImageImpl.h"
 #include "IDasMatchResultImpl.h"
 #include "IDasTemplateMatchResultImpl.h"
+#include "IImageBackend.h"
 #include "IMatchConfigImpl.h"
 #include <das/Core/Logger/Logger.h>
 #include <das/Utils/CommonUtils.hpp>
@@ -24,18 +24,18 @@ DAS_CORE_OCVWRAPPER_NS_BEGIN
 
 DAS_NS_ANONYMOUS_DETAILS_BEGIN
 
-auto GetDasImageImpl(ExportInterface::IDasImage* p_image)
-    -> DAS::Utils::Expected<DasPtr<IDasImageImpl>>
+auto GetImageBackend(ExportInterface::IDasImage* p_image)
+    -> DAS::Utils::Expected<DasPtr<IImageBackend>>
 {
-    DasPtr<IDasImageImpl> p_result{};
+    DasPtr<IImageBackend> p_result{};
 
     if (const auto qi_result = p_image->QueryInterface(
-            DasIidOf<IDasImageImpl>(),
+            DasIidOf<Das::Core::OcvWrapper::IImageBackend>(),
             p_result.PutVoid());
         IsFailed(qi_result))
     {
         DAS_CORE_LOG_ERROR(
-            "Can not find interface Das::Core::OcvWrapper::IDasImageImpl in IDasImage object. Pointer = {}.",
+            "Can not find interface IImageBackend in IDasImage object. Pointer = {}.",
             Utils::VoidP(p_image));
         return tl::make_unexpected(qi_result);
     }
@@ -56,7 +56,7 @@ DasResult TemplateMatchBest(
     DAS_UTILS_CHECK_POINTER(pp_out_result)
 
     const auto expected_p_image =
-        DAS::Core::OcvWrapper::Details::GetDasImageImpl(p_image);
+        DAS::Core::OcvWrapper::Details::GetImageBackend(p_image);
 
     if (!expected_p_image)
     {
@@ -64,15 +64,15 @@ DasResult TemplateMatchBest(
     }
 
     const auto expected_p_template =
-        DAS::Core::OcvWrapper::Details::GetDasImageImpl(p_template);
+        DAS::Core::OcvWrapper::Details::GetImageBackend(p_template);
 
     if (!expected_p_template)
     {
         return expected_p_template.error();
     }
 
-    const auto& image_mat = expected_p_image.value()->GetImpl();
-    const auto& template_mat = expected_p_template.value()->GetImpl();
+    const auto& image_mat = expected_p_image.value()->GetCpuMat();
+    const auto& template_mat = expected_p_template.value()->GetCpuMat();
 
     DAS::Utils::Timer timer{};
     timer.Begin();
@@ -198,17 +198,17 @@ DasResult MatchFeatures(
     }
 
     const auto expected_query =
-        DAS::Core::OcvWrapper::Details::GetDasImageImpl(p_query);
+        DAS::Core::OcvWrapper::Details::GetImageBackend(p_query);
     if (!expected_query)
         return expected_query.error();
 
     const auto expected_train =
-        DAS::Core::OcvWrapper::Details::GetDasImageImpl(p_train);
+        DAS::Core::OcvWrapper::Details::GetImageBackend(p_train);
     if (!expected_train)
         return expected_train.error();
 
-    const auto& query_mat = expected_query.value()->GetImpl();
-    const auto& train_mat = expected_train.value()->GetImpl();
+    const auto& query_mat = expected_query.value()->GetCpuMat();
+    const auto& train_mat = expected_train.value()->GetCpuMat();
 
     auto detector = DAS::Core::OcvWrapper::Details::CreateDetector(
         detector_type,
