@@ -22,6 +22,7 @@
 #include "./service/DasProfileServiceImpl.h"
 #include <das/Core/IPC/CurrentIpcContextScope.h>
 #include <das/Core/IPC/MainProcess/IpcContext.h>
+#include <das/Core/OcvWrapper/DasCVModuleEntry.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/_autogen/idl/abi/DasSettings.h>
@@ -213,6 +214,22 @@ namespace Das::Http
                             .c_str());
                     plugin_mgr_service_impl->Release();
                     return plugin_reg_result;
+                }
+            }
+
+            // Register computer vision services (cv.cpu / cv.cuda)
+            {
+                auto init_cv_result = Das::Core::OcvWrapper::InitDasCore(
+                    static_cast<DAS::Core::IPC::MainProcess::IIpcContext*>(
+                        ipc_context.get()));
+                if (DAS::IsFailed(init_cv_result))
+                {
+                    DAS_LOG_ERROR(
+                        DAS_FMT_NS::format(
+                            "Failed to init CV services. result = {}",
+                            init_cv_result)
+                            .c_str());
+                    return init_cv_result;
                 }
             }
         }
