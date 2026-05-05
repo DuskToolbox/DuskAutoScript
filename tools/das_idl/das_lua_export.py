@@ -136,6 +136,7 @@ def generate_cpp_file(
 
     # Include wrapper headers (for convenience types)
     parts.append('#include "das/DasApi.h"')
+    parts.append('#include "das/DasSwigApi.h"')
     # Include additional headers for types used in module functions
     # but not covered by individual ABI headers
     parts.append('#include "das/IDasCoreServices.h"')

@@ -443,8 +443,6 @@ DasResult CreateIDasVariantVector(
     }
 }
 
-DAS_SWIG_NS_BEGIN
-
 DasRetIDasVariantVector CreateDasRetIDasVariantVector()
 {
     DAS::DasPtr<Das::ExportInterface::IDasVariantVector> p_vector;
@@ -461,5 +459,3 @@ DasRetIDasVariantVector CreateDasRetIDasVariantVector()
     p_vector.Reset();
     return ret;
 }
-
-DAS_SWIG_NS_END
