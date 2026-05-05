@@ -29,15 +29,21 @@ class IDasTemplateMatchResultImpl final
 {
     double                   score_{};
     ExportInterface::DasRect match_rect_{};
+    double                   raw_score_{};
 
 public:
     IDasTemplateMatchResultImpl() = default;
-    IDasTemplateMatchResultImpl(double score, ExportInterface::DasRect rect);
+    IDasTemplateMatchResultImpl(
+        double                   score,
+        ExportInterface::DasRect rect,
+        double                   raw_score = 0.0);
 
     DAS_IMPL Getscore(double* p_out) override;
     DAS_IMPL Setscore(double value) override;
     DAS_IMPL Getmatch_rect(ExportInterface::DasRect* p_out) override;
     DAS_IMPL Setmatch_rect(ExportInterface::DasRect value) override;
+    DAS_IMPL Getraw_score(double* p_out) override;
+    DAS_IMPL Setraw_score(double value) override;
 };
 
 DAS_CORE_OCVWRAPPER_NS_END

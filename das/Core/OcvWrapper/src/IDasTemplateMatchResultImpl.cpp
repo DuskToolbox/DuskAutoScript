@@ -4,8 +4,9 @@ DAS_CORE_OCVWRAPPER_NS_BEGIN
 
 IDasTemplateMatchResultImpl::IDasTemplateMatchResultImpl(
     double                   score,
-    ExportInterface::DasRect rect)
-    : score_(score), match_rect_(rect)
+    ExportInterface::DasRect rect,
+    double                   raw_score)
+    : score_(score), match_rect_(rect), raw_score_(raw_score)
 {
 }
 
@@ -36,6 +37,20 @@ DasResult IDasTemplateMatchResultImpl::Setmatch_rect(
     ExportInterface::DasRect value)
 {
     match_rect_ = value;
+    return DAS_S_OK;
+}
+
+DasResult IDasTemplateMatchResultImpl::Getraw_score(double* p_out)
+{
+    if (!p_out)
+        return DAS_E_INVALID_POINTER;
+    *p_out = raw_score_;
+    return DAS_S_OK;
+}
+
+DasResult IDasTemplateMatchResultImpl::Setraw_score(double value)
+{
+    raw_score_ = value;
     return DAS_S_OK;
 }
 
