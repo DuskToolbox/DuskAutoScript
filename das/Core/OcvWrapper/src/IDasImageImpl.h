@@ -64,6 +64,8 @@ public:
     DAS_IMPL GetDataSize(uint64_t* p_out_size) override;
     DAS_IMPL GetBinaryBuffer(
         Das::ExportInterface::IDasBinaryBuffer** pp_out_buffer) override;
+    DAS_IMPL GetPixelFormat(
+        Das::ExportInterface::DasImagePixelFormat* p_out_format) override;
 
     auto GetImpl() -> cv::Mat;
 };

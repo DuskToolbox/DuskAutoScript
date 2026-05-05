@@ -180,6 +180,15 @@ DasResult IDasImageImpl::GetBinaryBuffer(
     }
 }
 
+DasResult IDasImageImpl::GetPixelFormat(
+    Das::ExportInterface::DasImagePixelFormat* p_out_format)
+{
+    DAS_UTILS_CHECK_POINTER(p_out_format)
+    // Default to BGR for backward compatibility
+    *p_out_format = Das::ExportInterface::DAS_PIXEL_FORMAT_BGR;
+    return DAS_S_OK;
+}
+
 auto IDasImageImpl::GetImpl() -> cv::Mat { return mat_; }
 
 DAS_CORE_OCVWRAPPER_NS_END
