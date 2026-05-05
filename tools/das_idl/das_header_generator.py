@@ -180,15 +180,15 @@ def generate_header(
         lines.append("")
 
     # ── SWIG-compatible return wrappers ───────────────────────────────
-    # For [export] (non-c_abi) functions with [out] parameters,
+    # For [swig_ret] functions with [out] parameters,
     # generate DasRetXxx structs and use them as return types.
     # This restores the SWIG-compatible API that was lost during
     # the dogfood migration from DasSwigApi.h to IDL.
     ret_types: set[str] = set()
     for mod in doc.modules:
         for func in mod.functions:
-            if func.attributes.get('c_abi'):
-                continue  # C ABI functions keep original signature
+            if not func.attributes.get('swig_ret'):
+                continue
             for p in func.parameters:
                 if p.direction.value == 'out':
                     ret_types.add(p.type_info.base_type)
@@ -205,20 +205,25 @@ def generate_header(
         lines.append(f"// Module: {mod.name}")
         for func in mod.functions:
             if func.attributes.get("c_abi"):
+                # [c_abi]: C ABI → keep original signature with all params
                 macro = export_c_macro
                 params = _format_params(func.parameters)
                 ret = _format_return_type(func.return_type)
-            else:
-                # [export] only: filter out [out] params → use DasRet return type
+            elif func.attributes.get("swig_ret"):
+                # [export, swig_ret]: filter out [out] params → use DasRet return type
                 macro = export_macro
                 out_params = [p for p in func.parameters if p.direction.value == 'out']
                 in_params = [p for p in func.parameters if p.direction.value != 'out']
                 params = _format_params(in_params)
                 if out_params:
-                    # Use DasRetXxx as return type instead of DasResult + [out] ptr
                     ret = _das_ret_name(out_params[0].type_info.base_type)
                 else:
                     ret = _format_return_type(func.return_type)
+            else:
+                # [export] only: keep original signature
+                macro = export_macro
+                params = _format_params(func.parameters)
+                ret = _format_return_type(func.return_type)
             lines.append(f"{macro} {ret} {func.name}({params});")
         lines.append("")
 
