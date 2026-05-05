@@ -436,6 +436,7 @@ class Parser:
         self.document = IdlDocument()
         self._current_namespace = ""  # 添加当前命名空间跟踪
         self._namespaces = set()  # 收集所有遇到的命名空间，用于校验
+        self._known_struct_names: set[str] = set()  # 已解析的结构体名，允许后续 struct 字段引用
         self.source_path = source_path  # 源文件路径，用于解析 import 的相对路径
 
     def current(self) -> Token:
@@ -1094,11 +1095,12 @@ class Parser:
             type_token = self.expect(TokenType.IDENTIFIER)
             type_name = type_token.value
 
-            # 验证类型必须是基本类型
-            if type_name not in self.STRUCT_BASIC_TYPES:
+            # 验证类型必须是基本类型或已定义的结构体
+            if type_name not in self.STRUCT_BASIC_TYPES and type_name not in self._known_struct_names:
+                known = sorted(set(self.STRUCT_BASIC_TYPES) | self._known_struct_names)
                 raise SyntaxError(
-                    f"struct '{name}' 的字段类型 '{type_name}' 不是基本类型。"
-                    f"允许的基本类型: {', '.join(sorted(self.STRUCT_BASIC_TYPES))}。"
+                    f"struct '{name}' 的字段类型 '{type_name}' 不在已知类型中。"
+                    f"允许的类型: {', '.join(known)}。"
                     f"位于第 {type_token.line} 行"
                 )
 
@@ -1123,6 +1125,7 @@ class Parser:
         if self.match(TokenType.SEMICOLON):
             self.advance()
 
+        self._known_struct_names.add(name)
         return struct
 
     def resolve_types(self):
