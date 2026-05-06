@@ -1,6 +1,6 @@
 #include "CpuImageImpl.h"
-#include "Config.h"
 #include "IDasMemory.h"
+#include <das/Core/OcvWrapper/Config.h>
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/_autogen/idl/abi/IDasBinaryBuffer.h>

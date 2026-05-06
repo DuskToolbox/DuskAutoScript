@@ -1,7 +1,7 @@
 #ifndef DAS_CORE_OCVWRAPPER_IDASIMAGEIMPL_H
 #define DAS_CORE_OCVWRAPPER_IDASIMAGEIMPL_H
 
-#include "Config.h"
+#include <das/Core/OcvWrapper/Config.h>
 
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasImage.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasImage.hpp>

@@ -1,7 +1,7 @@
 #ifndef DAS_CORE_OCVWRAPPER_CVCUDAIMPL_H
 #define DAS_CORE_OCVWRAPPER_CVCUDAIMPL_H
 
-#include "Config.h"
+#include <das/Core/OcvWrapper/Config.h>
 
 #ifdef DAS_WITH_CUDA
 

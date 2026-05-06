@@ -1,7 +1,7 @@
 #ifndef DAS_CORE_OCVWRAPPER_IMATCHCONFIGIMPL_H
 #define DAS_CORE_OCVWRAPPER_IMATCHCONFIGIMPL_H
 
-#include "Config.h"
+#include <das/Core/OcvWrapper/Config.h>
 
 #include <das/_autogen/idl/abi/DasCV.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasCvMatchConfig.Implements.hpp>

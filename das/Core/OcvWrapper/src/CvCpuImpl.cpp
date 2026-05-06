@@ -1,5 +1,4 @@
 #include "CvCpuImpl.h"
-#include "Config.h"
 #include "CpuImageImpl.h"
 #include "DescriptorMatcherFactory.h"
 #include "FeatureDetectorFactory.h"
@@ -9,6 +8,7 @@
 #include "IDasTemplateMatchResultsImpl.h"
 #include "IImageBackend.h"
 #include "IMatchConfigImpl.h"
+#include <das/Core/OcvWrapper/Config.h>
 
 #include <das/Core/Logger/Logger.h>
 #include <das/Utils/CommonUtils.hpp>

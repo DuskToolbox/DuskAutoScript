@@ -22,7 +22,6 @@
 #include "./service/DasProfileServiceImpl.h"
 #include <das/Core/IPC/CurrentIpcContextScope.h>
 #include <das/Core/IPC/MainProcess/IpcContext.h>
-#include <das/Core/OcvWrapper/DasCVModuleEntry.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/_autogen/idl/abi/DasSettings.h>

@@ -1,7 +1,7 @@
 #include "IDasImageImpl.h"
-#include "Config.h"
 #include "IDasMemory.h"
 #include "das/DasApi.h"
+#include <das/Core/OcvWrapper/Config.h>
 #include <das/DasPtr.hpp>
 #include <das/_autogen/idl/abi/IDasBinaryBuffer.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasBinaryBuffer.Implements.hpp>

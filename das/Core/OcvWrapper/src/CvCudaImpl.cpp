@@ -1,5 +1,6 @@
 #include "CvCudaImpl.h"
-#include "Config.h"
+
+#include <das/Core/OcvWrapper/Config.h>
 
 #ifdef DAS_WITH_CUDA
 

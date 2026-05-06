@@ -1,6 +1,6 @@
 #include "CudaImageImpl.h"
-#include "Config.h"
 #include "CpuImageImpl.h"
+#include <das/Core/OcvWrapper/Config.h>
 #include <das/DasPtr.hpp>
 #include <das/_autogen/idl/abi/IDasBinaryBuffer.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasBinaryBuffer.Implements.hpp>

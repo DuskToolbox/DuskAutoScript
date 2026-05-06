@@ -1,7 +1,7 @@
 #ifndef DAS_CORE_OCVWRAPPER_CVCPUIMPL_H
 #define DAS_CORE_OCVWRAPPER_CVCPUIMPL_H
 
-#include "Config.h"
+#include <das/Core/OcvWrapper/Config.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasCv.Implements.hpp>
 
 // {3D8E5987-F0D2-4AC9-9913-485F61EE55D0}

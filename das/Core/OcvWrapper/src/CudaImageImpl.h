@@ -1,7 +1,7 @@
 #ifndef DAS_CORE_OCVWRAPPER_CUDAIMAGEIMPL_H
 #define DAS_CORE_OCVWRAPPER_CUDAIMAGEIMPL_H
 
-#include "Config.h"
+#include <das/Core/OcvWrapper/Config.h>
 #include "IImageBackend.h"
 
 #include <atomic>

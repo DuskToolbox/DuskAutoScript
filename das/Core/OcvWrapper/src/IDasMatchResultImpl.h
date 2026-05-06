@@ -1,7 +1,7 @@
 #ifndef DAS_CORE_OCVWRAPPER_IDASMATCHRESULTIMPL_H
 #define DAS_CORE_OCVWRAPPER_IDASMATCHRESULTIMPL_H
 
-#include "Config.h"
+#include <das/Core/OcvWrapper/Config.h>
 
 #include <das/_autogen/idl/abi/DasBasicTypes.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasCvMatchResult.Implements.hpp>
