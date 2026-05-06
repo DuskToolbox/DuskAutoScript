@@ -317,6 +317,7 @@ if(${DAS_BUILD_TEST})
 #TaskSchedulerTest needs Http headers for controller validation tests
     target_include_directories(TaskSchedulerTest PRIVATE ${CMAKE_SOURCE_DIR}/das/Http/src)
     das_add_core_test(IPC)
+    das_add_core_test(OcvWrapper)
 
 endif()
 

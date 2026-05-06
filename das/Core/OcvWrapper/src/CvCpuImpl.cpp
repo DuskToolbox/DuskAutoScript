@@ -58,10 +58,10 @@ auto GetImageBackend(ExportInterface::IDasImage* p_image)
 /// @brief Internal scan candidate for TemplateMatchAll
 struct ScanCandidate
 {
-    double score{};
-    double raw_score{};
-    int    x{};
-    int    y{};
+    float score{};
+    float raw_score{};
+    int   x{};
+    int   y{};
 };
 
 /// @brief Compute IoU between two scan candidates
@@ -138,8 +138,8 @@ auto ApplyNms(
 }
 
 /// @brief Unify template match scores to 0..1 (higher is better)
-auto UnifyScore(double raw_score, ExportInterface::DasTemplateMatchType type)
-    -> double
+auto UnifyScore(float raw_score, ExportInterface::DasTemplateMatchType type)
+    -> float
 {
     if (type == ExportInterface::DAS_TEMPLATE_MATCH_TYPE_SQDIFF_NORMED)
     {
@@ -255,6 +255,12 @@ DasResult CvCpuImpl::TemplateMatchAll(
     const auto& image_mat = expected_p_image.value()->GetCpuMat();
     const auto& template_mat = expected_p_template.value()->GetCpuMat();
 
+    if (template_mat.rows > image_mat.rows
+        || template_mat.cols > image_mat.cols)
+    {
+        return DAS_E_INVALID_SIZE;
+    }
+
     const int tmpl_w = template_mat.cols;
     const int tmpl_h = template_mat.rows;
 
@@ -273,11 +279,11 @@ DasResult CvCpuImpl::TemplateMatchAll(
 
     for (int y = 0; y < result_mat.rows; ++y)
     {
-        const auto* row = result_mat.ptr<double>(y);
+        const auto* row = result_mat.ptr<float>(y);
         for (int x = 0; x < result_mat.cols; ++x)
         {
-            const double raw = row[x];
-            const double unified = Details::UnifyScore(raw, type);
+            const float raw = row[x];
+            const float unified = Details::UnifyScore(raw, type);
 
             if (unified >= threshold)
             {
@@ -315,7 +321,7 @@ DasResult CvCpuImpl::TemplateMatchAll(
 
     for (const auto& cand : final_candidates)
     {
-        const double raw_score = cand.raw_score;
+        const float raw_score = cand.raw_score;
 
         auto* p_result = IDasTemplateMatchResultImpl::MakeRaw(
             cand.score,
