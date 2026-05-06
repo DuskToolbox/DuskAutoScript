@@ -446,13 +446,17 @@ JSON 配置格式:
 
     try:
         with open(config_path, 'r', encoding='utf-8') as f:
-            tasks = json.load(f)
+            config = json.load(f)
     except json.JSONDecodeError as e:
         print(f"错误: 配置文件JSON格式错误: {e}", file=sys.stderr)
         return 1
     except Exception as e:
         print(f"错误: 读取配置文件失败: {e}", file=sys.stderr)
         return 1
+
+    # 从顶层结构提取 tasks 和 reduce 配置
+    tasks = config.get("tasks", [])
+    reduce_config = config.get("reduce", {})
 
     if not isinstance(tasks, list):
         print("错误: 配置文件必须包含任务列表", file=sys.stderr)
@@ -490,6 +494,14 @@ JSON 配置格式:
                 all_outputs.append(f"{ipc_output_dir}/IpcProxyFactory.h")
                 all_outputs.append(f"{ipc_output_dir}/IpcStubFactory.h")
                 all_outputs.append(f"{ipc_output_dir}/registry/ProxyRegistry.h")
+
+        # 追加 Lua 聚合文件路径（由 reduce 阶段的 das_lua_export.py 产出）
+        lua_output_dir = reduce_config.get("lua_output_dir")
+        lua_name = reduce_config.get("lua_name")
+
+        if lua_output_dir and lua_name:
+            all_outputs.append(f"{lua_output_dir}/{lua_name}_lua_export.cpp")
+            all_outputs.append(f"{lua_output_dir}/{lua_name}_lua_export.lua")
 
         # 输出到 stdout（每行一个路径），去重并排序，统一使用正斜杠
         for f in sorted(set(all_outputs)):
@@ -576,12 +588,13 @@ JSON 配置格式:
 
     # ====== 执行 Typemap 聚合 ======
     # 只有在没有失败任务时才执行聚合
+    reduce_phases = []  # 收集 reduce 各阶段计时
+
     if batch_result == 0:
         # 从第一个任务获取SWIG输出目录（所有任务的输出目录应该一致）
         if tasks and len(tasks) > 0:
             # 获取SWIG输出目录
             swig_output_dir = None
-            first_task = tasks[0]
             
             # 从任务配置中提取SWIG输出目录
             # 配置中使用 --swig-output-dir 指定SWIG文件输出目录
@@ -601,21 +614,22 @@ JSON 配置格式:
                     ]
                     
                     try:
+                        t0 = time.time()
                         result = subprocess.run(
                             cmd,
                             capture_output=True,
                             text=True,
                             timeout=30
                         )
+                        dt = time.time() - t0
                         
                         if result.returncode == 0:
-                            print(f"\n[Typemap聚合] {result.stdout.strip()}")
+                            reduce_phases.append(("Typemap", dt, "ok", result.stdout.strip()))
                         else:
-                            print(f"\n[Typemap聚合失败] {result.stderr}", file=sys.stderr)
-                            # Typemap聚合失败不视为致命错误，但记录警告
+                            reduce_phases.append(("Typemap", dt, "failed", result.stderr.strip()))
                             print(f"[警告] Typemap聚合失败，但IDL生成成功", file=sys.stderr)
                     except Exception as e:
-                        print(f"\n[Typemap聚合错误] {e}", file=sys.stderr)
+                        reduce_phases.append(("Typemap", 0.0, "error", str(e)))
                         print(f"[警告] Typemap聚合出错，但IDL生成成功", file=sys.stderr)
         
         # ====== 执行 IPC Registry 生成 ======
@@ -639,20 +653,22 @@ JSON 配置格式:
                 ]
                 
                 try:
+                    t0 = time.time()
                     result = subprocess.run(
                         cmd,
                         capture_output=True,
                         text=True,
                         timeout=30
                     )
+                    dt = time.time() - t0
                     
                     if result.returncode == 0:
-                        print(f"\n[IPC Registry] {result.stdout.strip()}")
+                        reduce_phases.append(("IPC Registry", dt, "ok", result.stdout.strip()))
                     else:
-                        print(f"\n[IPC Registry 失败] {result.stderr}", file=sys.stderr)
+                        reduce_phases.append(("IPC Registry", dt, "failed", result.stderr.strip()))
                         batch_result = 1
                 except Exception as e:
-                    print(f"\n[IPC Registry 错误] {e}", file=sys.stderr)
+                    reduce_phases.append(("IPC Registry", 0.0, "error", str(e)))
                     batch_result = 1
         
         # ====== 执行 IPC Proxy/Stub 聚合 ======
@@ -668,15 +684,74 @@ JSON 配置格式:
                     cmd.extend(["--ipc-cache-dir", str(args.ipc_cache_dir)])
 
                 try:
+                    t0 = time.time()
                     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                    dt = time.time() - t0
+
                     if result.returncode == 0:
-                        print(f"\n[IPC聚合] {result.stdout.strip()}")
+                        reduce_phases.append(("IPC Aggregate", dt, "ok", result.stdout.strip()))
                     else:
-                        print(f"\n[IPC聚合失败] {result.stderr}", file=sys.stderr)
+                        reduce_phases.append(("IPC Aggregate", dt, "failed", result.stderr.strip()))
                         batch_result = 1
                 except Exception as e:
-                    print(f"\n[IPC聚合错误] {e}", file=sys.stderr)
+                    reduce_phases.append(("IPC Aggregate", 0.0, "error", str(e)))
                     batch_result = 1
+
+        # ====== 执行 Lua 聚合 ======
+        lua_output_dir = reduce_config.get("lua_output_dir")
+        lua_name = reduce_config.get("lua_name")
+        lua_idl_dir = reduce_config.get("lua_idl_dir")
+        lua_idl_files = reduce_config.get("lua_idl_files", [])
+        # --export-c-macro 从 tasks[0] 获取（所有 task 共享同一值）
+        lua_export_c_macro = tasks[0].get("--export-c-macro") if tasks else None
+
+        if lua_output_dir and lua_name and batch_result == 0:
+            lua_script = Path(__file__).parent / "das_lua_export.py"
+            if lua_script.exists():
+                cmd = [
+                    sys.executable,
+                    str(lua_script),
+                    "--idl-dir", lua_idl_dir,
+                    "--output", lua_output_dir,
+                    "--name", lua_name,
+                    "--export-c-macro", lua_export_c_macro or "DAS_C_API",
+                    "--idl-files", *lua_idl_files,
+                ]
+
+                try:
+                    t0 = time.time()
+                    result = subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=60
+                    )
+                    dt = time.time() - t0
+
+                    if result.returncode == 0:
+                        reduce_phases.append(("Lua Binding", dt, "ok", result.stdout.strip()))
+                    else:
+                        reduce_phases.append(("Lua Binding", dt, "failed", result.stderr.strip()))
+                        batch_result = 1
+                except Exception as e:
+                    reduce_phases.append(("Lua Binding", 0.0, "error", str(e)))
+                    batch_result = 1
+
+    # ====== 打印 Reduce 阶段汇总 ======
+    if reduce_phases:
+        print(f"\nReduce Phase Timeline")
+        print("=" * 72)
+        print(f"  {'Phase':<20} {'Time':>8}   {'Status':<8}  Detail")
+        print("-" * 72)
+        reduce_total = 0.0
+        for name, dt, status, detail in reduce_phases:
+            reduce_total += dt
+            marker = "[+]" if status == "ok" else "[-]"
+            detail_short = detail.split("\n")[0][:30] if detail else ""
+            print(f"  {marker} {name:<18} {dt:>7.3f}s   {'OK' if status == 'ok' else 'FAIL':<8}  {detail_short}")
+        print("-" * 72)
+        print(f"  {'Reduce Total':<20} {reduce_total:>7.3f}s")
+        print("=" * 72)
 
     return batch_result
 

@@ -166,6 +166,13 @@ def list_expected_outputs(task_config: dict) -> List[str]:
             short_name = _get_interface_short_name(interface.name)
             outputs.append(os.path.join(ipc_output_dir, "stub", f"{short_name}Stub.h"))
 
+    # === Header 文件 (das_header_generator) ===
+    # 每个 IDL 生成 1 个文件: {base_name}.generated.h
+    do_header = task_config.get("--header", False)
+    header_output_dir = task_config.get("--header-output-dir", "")
+    if do_header and header_output_dir:
+        outputs.append(os.path.join(header_output_dir, f"{base_name}.generated.h"))
+
     # 统一使用正斜杠（CMake 和 Ninja 兼容）
     return [p.replace("\\", "/") for p in outputs]
 
@@ -292,6 +299,17 @@ IDL 语法示例:
         '--all',
         action='store_true',
         help='生成所有类型的文件（等同于 --swig --cpp-wrapper --cpp-implements）'
+    )
+
+    gen_group.add_argument(
+        '--header',
+        action='store_true',
+        help='生成 .generated.h 头文件（errorcode defines、module 函数声明）'
+    )
+
+    gen_group.add_argument(
+        '--header-output-dir',
+        help='Header .generated.h 文件的输出目录'
     )
 
     gen_group.add_argument(
@@ -596,6 +614,34 @@ IDL 语法示例:
                     import traceback
                     traceback.print_exc()
                 return 7
+
+        # === 生成 Header 文件（如果启用）===
+        if args.header:
+            try:
+                from das_header_generator import generate_header
+
+                header_dir = Path(args.header_output_dir or default_output)
+                header_dir.mkdir(parents=True, exist_ok=True)
+
+                if args.verbose:
+                    print(f"生成 Header 文件到: {header_dir}")
+
+                content = generate_header(
+                    doc=document,
+                    export_macro=args.export_macro,
+                    export_c_macro=args.export_c_macro,
+                    source_filename=input_path.name,
+                )
+                header_path = header_dir / f"{input_path.stem}.generated.h"
+                header_path.write_text(content, encoding="utf-8")
+                all_generated_files.append(str(header_path))
+
+            except Exception as e:
+                print(f"Header 生成错误: {e}", file=sys.stderr)
+                if args.verbose:
+                    import traceback
+                    traceback.print_exc()
+                return 8
 
 # 如果有多个 IDL 文件且启用了 SWIG，生成一个总汇总文件
     if args.swig and len(input_files) > 1 and not args.dry_run:

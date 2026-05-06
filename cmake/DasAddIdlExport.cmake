@@ -218,59 +218,79 @@ function(das_add_idl_export)
     set(_SWIG_ALL_STAMP "${_DAS_IDL_STAMP_DIR}/${DAS_IDL_EXPORT_NAME}_swig_all.stamp")
 
     # ====== 1. 生成批量配置 JSON 文件 ======
-    set(_BATCH_JSON_CONFIG "[\n")
-    set(_IS_FIRST_IDL TRUE)
-
-    foreach(_IDL_FILE ${_FULL_IDL_PATHS})
-        if(_IS_FIRST_IDL)
-            set(_IS_FIRST_IDL FALSE)
-        else()
-            string(APPEND _BATCH_JSON_CONFIG ",\n")
+    # 检测 LANGUAGES 中是否包含 Lua（大小写不敏感），设置 Lua 输出目录
+    set(_LUA_OUTPUT_DIR "")
+    foreach(_LANG ${DAS_IDL_EXPORT_LANGUAGES})
+        string(TOLOWER "${_LANG}" _LANG_LOWER)
+        if(_LANG_LOWER STREQUAL "lua")
+            set(_LUA_OUTPUT_DIR "${DAS_IDL_EXPORT_OUTPUT_DIR}/_autogen/idl/lua")
+            file(MAKE_DIRECTORY ${_LUA_OUTPUT_DIR})
+            break()
         endif()
-
-        get_filename_component(_IDL_NAME "${_IDL_FILE}" NAME_WE)
-
-        string(APPEND _BATCH_JSON_CONFIG "    {\n")
-        string(APPEND _BATCH_JSON_CONFIG "        \"-i\": \"${_IDL_FILE}\",\n")
-        string(APPEND _BATCH_JSON_CONFIG "        \"--raw-output-dir\": \"${_ABI_OUTPUT_DIR}\",\n")
-        string(APPEND _BATCH_JSON_CONFIG "        \"--wrapper-output-dir\": \"${_WRAPPER_OUTPUT_DIR}\",\n")
-        string(APPEND _BATCH_JSON_CONFIG "        \"--implements-output-dir\": \"${_WRAPPER_OUTPUT_DIR}\",\n")
-
-        if(_NEED_SWIG)
-            string(APPEND _BATCH_JSON_CONFIG "        \"--swig-output-dir\": \"${_SWIG_OUTPUT_DIR}\",\n")
-            string(APPEND _BATCH_JSON_CONFIG "        \"--swig\": true,\n")
-        endif()
-
-        string(APPEND _BATCH_JSON_CONFIG "        \"--cpp-wrapper\": true,\n")
-        string(APPEND _BATCH_JSON_CONFIG "        \"--cpp-implements\": true,\n")
-
-        # 添加 IPC 选项
-        if(DAS_IDL_EXPORT_GENERATE_IPC_PROXY OR DAS_IDL_EXPORT_GENERATE_IPC_STUB)
-            string(APPEND _BATCH_JSON_CONFIG "        \"--ipc-output-dir\": \"${_IPC_OUTPUT_DIR}\",\n")
-            string(APPEND _BATCH_JSON_CONFIG "        \"--ipc-cache-dir\": \"${_IPC_CACHE_DIR}\",\n")
-
-            if(DAS_IDL_EXPORT_GENERATE_IPC_PROXY)
-                string(APPEND _BATCH_JSON_CONFIG "        \"--ipc-proxy\": true,\n")
-            endif()
-
-            if(DAS_IDL_EXPORT_GENERATE_IPC_STUB)
-                string(APPEND _BATCH_JSON_CONFIG "        \"--ipc-stub\": true,\n")
-            endif()
-        endif()
-
-        # 添加命名空间
-        if(DAS_IDL_EXPORT_NAMESPACE)
-            string(APPEND _BATCH_JSON_CONFIG "        \"--namespace\": \"${DAS_IDL_EXPORT_NAMESPACE}\",\n")
-        endif()
-
-        string(APPEND _BATCH_JSON_CONFIG "        \"--generate-type-maps\": true\n")
-        string(APPEND _BATCH_JSON_CONFIG "    }")
     endforeach()
 
-    string(APPEND _BATCH_JSON_CONFIG "\n]")
+    # 使用 Python 脚本生成 JSON，替代 file(CONFIGURE OUTPUT ...) 以避免内容比对导致的不更新问题
+    set(_GEN_CONFIG_SCRIPT "${CMAKE_SOURCE_DIR}/tools/das_idl/gen_batch_config.py")
 
-    # 将 JSON 配置写入文件（仅内容变化时才更新，避免触发不必要的重新生成）
-    file(CONFIGURE OUTPUT "${_BATCH_CONFIG_FILE}" CONTENT "${_BATCH_JSON_CONFIG}" @ONLY)
+    set(_GEN_CONFIG_ARGS
+        --output "${_BATCH_CONFIG_FILE}"
+        --idl-dir "${DAS_IDL_EXPORT_IDL_DIR}"
+        --idl-files ${DAS_IDL_EXPORT_IDL_FILES}
+        --raw-output-dir "${_ABI_OUTPUT_DIR}"
+        --wrapper-output-dir "${_WRAPPER_OUTPUT_DIR}"
+        --header-output-dir "${_HEADER_OUTPUT_DIR}"
+        --export-macro "${DAS_IDL_EXPORT_EXPORT_MACRO}"
+        --export-c-macro "${DAS_IDL_EXPORT_EXPORT_C_MACRO}"
+    )
+
+    # SWIG
+    if(_NEED_SWIG)
+        list(APPEND _GEN_CONFIG_ARGS --swig-output-dir "${_SWIG_OUTPUT_DIR}")
+    endif()
+
+    # IPC
+    if(DAS_IDL_EXPORT_GENERATE_IPC_PROXY OR DAS_IDL_EXPORT_GENERATE_IPC_STUB)
+        list(APPEND _GEN_CONFIG_ARGS
+            --ipc-output-dir "${_IPC_OUTPUT_DIR}"
+            --ipc-cache-dir "${_IPC_CACHE_DIR}"
+        )
+        if(DAS_IDL_EXPORT_GENERATE_IPC_PROXY)
+            list(APPEND _GEN_CONFIG_ARGS --ipc-proxy)
+        endif()
+        if(DAS_IDL_EXPORT_GENERATE_IPC_STUB)
+            list(APPEND _GEN_CONFIG_ARGS --ipc-stub)
+        endif()
+    endif()
+
+    # 命名空间
+    if(DAS_IDL_EXPORT_NAMESPACE)
+        list(APPEND _GEN_CONFIG_ARGS --namespace "${DAS_IDL_EXPORT_NAMESPACE}")
+    endif()
+
+    # 语言列表
+    if(DAS_IDL_EXPORT_LANGUAGES)
+        list(APPEND _GEN_CONFIG_ARGS --languages ${DAS_IDL_EXPORT_LANGUAGES})
+    endif()
+
+    # Lua 输出目录（仅在 LANGUAGES 包含 Lua 时设置）
+    if(DEFINED _LUA_OUTPUT_DIR)
+        list(APPEND _GEN_CONFIG_ARGS
+            --lua-output-dir "${_LUA_OUTPUT_DIR}"
+            --lua-name "${DAS_IDL_EXPORT_NAME}"
+        )
+    endif()
+
+    execute_process(
+        COMMAND "${DAS_IDL_VENV_PYTHON}" "${_GEN_CONFIG_SCRIPT}" ${_GEN_CONFIG_ARGS}
+        RESULT_VARIABLE _GEN_CONFIG_RESULT
+        ERROR_VARIABLE _GEN_CONFIG_ERROR
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/tools/das_idl"
+    )
+
+    if(NOT _GEN_CONFIG_RESULT EQUAL 0)
+        message(FATAL_ERROR "[das_add_idl_export] Failed to generate batch config: ${_GEN_CONFIG_ERROR}")
+    endif()
+
     message(STATUS "[das_add_idl_export] Generated IDL batch configuration: ${_BATCH_CONFIG_FILE}")
 
     # ====== 2. 创建增量检查命令和目标 ======
@@ -294,39 +314,10 @@ function(das_add_idl_export)
         )
     endif()
 
-    # ====== 2b. 创建头文件生成命令 ======
-    # 为每个 IDL 文件调用 das_header_generator.py 生成 .generated.h
-    set(_HEADER_GENERATOR_SCRIPT "${CMAKE_SOURCE_DIR}/tools/das_idl/das_header_generator.py")
-    set(_ALL_HEADER_FILES "")
-
-    foreach(_IDL_FILE ${_FULL_IDL_PATHS})
-        get_filename_component(_IDL_STEM "${_IDL_FILE}" NAME_WE)
-        set(_HEADER_OUTPUT "${_HEADER_OUTPUT_DIR}/${_IDL_STEM}.generated.h")
-
-        add_custom_command(
-            OUTPUT "${_HEADER_OUTPUT}"
-            COMMAND "${CMAKE_COMMAND}" -E make_directory "${_HEADER_OUTPUT_DIR}"
-            COMMAND "${DAS_IDL_VENV_PYTHON}" "${_HEADER_GENERATOR_SCRIPT}"
-                --idl "${_IDL_FILE}"
-                --output-dir "${_HEADER_OUTPUT_DIR}"
-                --export-macro ${DAS_IDL_EXPORT_EXPORT_MACRO}
-                --export-c-macro ${DAS_IDL_EXPORT_EXPORT_C_MACRO}
-            DEPENDS "${_IDL_FILE}" "${_HEADER_GENERATOR_SCRIPT}"
-                ${_DAS_IDL_MODULE_TOOLS}
-            COMMENT "[das_add_idl_export] Generate header from ${_IDL_STEM}.idl for ${DAS_IDL_EXPORT_NAME}"
-            VERBATIM
-        )
-
-        list(APPEND _ALL_HEADER_FILES "${_HEADER_OUTPUT}")
-    endforeach()
-
-    # 创建头文件生成目标（其他目标可依赖此目标）
-    set(_HEADER_GENERATED_TARGET "${DAS_IDL_EXPORT_NAME}IdlHeadersGenerated")
-    if(NOT TARGET ${_HEADER_GENERATED_TARGET})
-        add_custom_target(${_HEADER_GENERATED_TARGET}
-            DEPENDS ${_ALL_HEADER_FILES}
-        )
-    endif()
+    # ====== 2b. 头文件生成现在由 batch pipeline 统一处理 ======
+    # header 文件通过 --header 选项注册到 das_idl_gen.py，
+    # 输出文件通过 --list-outputs 发现，从 _DYNAMIC_OUTPUT_LIST 中分类提取。
+    # 不再使用独立的 foreach 循环调用 das_header_generator.py。
 
     # ====== 3. 创建批量生成命令和目标 ======
 
@@ -384,7 +375,6 @@ function(das_add_idl_export)
             DEPENDS ${_GENERATED_STAMP}
         )
         add_dependencies(${_GENERATED_TARGET} ${_UPDATE_LIST_TARGET})
-        add_dependencies(${_GENERATED_TARGET} ${_HEADER_GENERATED_TARGET})
     endif()
 
     # ====== 4. SWIG 依赖提取和拓扑排序 (仅当 LANGUAGES 非空时) ======
@@ -468,7 +458,9 @@ function(das_add_idl_export)
     set(_ALL_WRAPPER_FILES "")
     set(_ALL_SWIG_FILES "")
     set(_ALL_IPC_FILES "")
-    set(_ALL_GENERATED_FILES ${_DYNAMIC_OUTPUT_LIST} ${_ALL_HEADER_FILES})
+    set(_ALL_HEADER_FILES "")
+    set(_ALL_LUA_FILES "")
+    set(_ALL_GENERATED_FILES ${_DYNAMIC_OUTPUT_LIST})
 
     foreach(_FILE ${_DYNAMIC_OUTPUT_LIST})
         if(_FILE MATCHES "/abi/")
@@ -479,8 +471,21 @@ function(das_add_idl_export)
             list(APPEND _ALL_SWIG_FILES "${_FILE}")
         elseif(_FILE MATCHES "/ipc/")
             list(APPEND _ALL_IPC_FILES "${_FILE}")
+        elseif(_FILE MATCHES "/header/")
+            list(APPEND _ALL_HEADER_FILES "${_FILE}")
+        elseif(_FILE MATCHES "/lua/")
+            list(APPEND _ALL_LUA_FILES "${_FILE}")
         endif()
     endforeach()
+
+    # 创建头文件生成目标（从 dynamic list 分类而来，其他目标可依赖此目标）
+    set(_HEADER_GENERATED_TARGET "${DAS_IDL_EXPORT_NAME}IdlHeadersGenerated")
+    if(NOT TARGET ${_HEADER_GENERATED_TARGET})
+        add_custom_target(${_HEADER_GENERATED_TARGET}
+            DEPENDS ${_ALL_HEADER_FILES}
+        )
+        add_dependencies(${_HEADER_GENERATED_TARGET} ${_GENERATED_TARGET})
+    endif()
 
     # ====== 如果需要 SWIG 绑定，创建 SWIG 导出库 ======
     if(_NEED_SWIG)
@@ -652,67 +657,24 @@ function(das_add_idl_export)
     endif()
 
     # ====== Lua sol2 导出（非 SWIG 路径） ======
-    # 检查 LANGUAGES 列表中是否包含 Lua
-    set(_HAS_LUA FALSE)
-    if(DAS_IDL_EXPORT_LANGUAGES)
-        foreach(_LANG ${DAS_IDL_EXPORT_LANGUAGES})
-            string(TOLOWER "${_LANG}" _LANG_LOWER)
-            if(_LANG_LOWER STREQUAL "lua")
-                set(_HAS_LUA TRUE)
-                break()
-            endif()
-        endforeach()
-    endif()
+    # Lua 生成现在由 batch pipeline 的 reduce 阶段统一处理。
+    # 输出文件通过 --list-outputs 注册到 _DYNAMIC_OUTPUT_LIST，
+    # 从中分类到 _ALL_LUA_FILES。此处仅创建 SHARED 库目标。
 
     if(_HAS_LUA)
-        message(STATUS "[das_add_idl_export] Creating Lua sol2 export library")
+        message(STATUS "[das_add_idl_export] Creating Lua sol2 export library (via batch pipeline)")
 
-        # sol2::sol2 and Das::Lua are created by FindSol2.cmake / BuildLua.cmake,
-        # included in DasCore/CMakeLists.txt. Guard here for safety.
         include(BuildLua)
         include(FindSol2)
 
-        # Lua 输出目录
-        set(_LUA_OUTPUT_DIR "${DAS_IDL_EXPORT_OUTPUT_DIR}/_autogen/idl/lua")
-        file(MAKE_DIRECTORY ${_LUA_OUTPUT_DIR})
-
-        # 生成的输出文件
+        # Lua 输出文件路径（由 batch gen 的 reduce 阶段生成）
         set(_LUA_CPP_FILE "${_LUA_OUTPUT_DIR}/${DAS_IDL_EXPORT_NAME}_lua_export.cpp")
         set(_LUA_STUB_FILE "${_LUA_OUTPUT_DIR}/${DAS_IDL_EXPORT_NAME}_lua_export.lua")
-
-        # 构造 IDL 文件完整路径列表
-        set(_LUA_IDL_FULL_PATHS "")
-        foreach(_IDL_FILE_NAME ${DAS_IDL_EXPORT_IDL_FILES})
-            list(APPEND _LUA_IDL_FULL_PATHS "${DAS_IDL_EXPORT_IDL_DIR}/${_IDL_FILE_NAME}")
-        endforeach()
-
-        # 调用 das_lua_export.py 生成 sol2 绑定代码
-        add_custom_command(
-            OUTPUT ${_LUA_CPP_FILE} ${_LUA_STUB_FILE}
-            COMMAND "${DAS_IDL_VENV_PYTHON}"
-                "${CMAKE_SOURCE_DIR}/tools/das_idl/das_lua_export.py"
-                --idl-dir "${DAS_IDL_EXPORT_IDL_DIR}"
-                --output "${_LUA_OUTPUT_DIR}"
-                --name "${DAS_IDL_EXPORT_NAME}"
-                --idl-files ${DAS_IDL_EXPORT_IDL_FILES}
-                --export-c-macro ${DAS_IDL_EXPORT_EXPORT_C_MACRO}
-            DEPENDS
-                ${_LUA_IDL_FULL_PATHS}
-                ${_DAS_IDL_MODULE_TOOLS}
-            COMMENT "[das_add_idl_export] Generating Lua sol2 bindings for ${DAS_IDL_EXPORT_NAME}"
-            VERBATIM
-        )
-
-        # 创建 Lua 生成目标
-        set(_LUA_GENERATED_TARGET "${DAS_IDL_EXPORT_NAME}LuaGenerated")
-        add_custom_target(${_LUA_GENERATED_TARGET}
-            DEPENDS ${_LUA_CPP_FILE} ${_LUA_STUB_FILE}
-        )
 
         # 创建 SHARED 库
         set(_LUA_LIB_NAME "${DAS_IDL_EXPORT_NAME}LuaExport")
         add_library(${_LUA_LIB_NAME} SHARED ${_LUA_CPP_FILE})
-        add_dependencies(${_LUA_LIB_NAME} ${_LUA_GENERATED_TARGET})
+        add_dependencies(${_LUA_LIB_NAME} ${_GENERATED_TARGET})
         if(MSVC)
             target_compile_options(${_LUA_LIB_NAME} PRIVATE /bigobj)
         endif()

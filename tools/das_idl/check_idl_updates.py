@@ -228,11 +228,13 @@ def main():
     # 读取配置文件
     try:
         with open(config_path, 'r', encoding='utf-8') as f:
-            configs = json.load(f)
+            data = json.load(f)
     except Exception as e:
         print(f"错误: 读取配置文件失败: {e}", file=sys.stderr)
         return 1
     
+    configs = data.get("tasks", [])
+
     if not isinstance(configs, list):
         print("错误: 配置文件必须包含任务列表", file=sys.stderr)
         return 1
