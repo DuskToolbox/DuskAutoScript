@@ -45,16 +45,6 @@ namespace Das::Http
     {
         Das::Http::AppComponent components(plugin_dir);
 
-        const auto init_result = InitializeDasCore();
-        if (DAS::IsFailed(init_result))
-        {
-            const auto message =
-                std::string{"Init DAS Core failed. Error code = "}
-                + std::to_string(init_result);
-            DAS_LOG_ERROR(message.c_str());
-            return init_result;
-        }
-
         const auto port = DAS_HTTP_PORT;
 
         // Build settings_dir and plugin_dir as ABI-safe strings
@@ -219,9 +209,7 @@ namespace Das::Http
 
             // Register computer vision services (cv.cpu / cv.cuda)
             {
-                auto init_cv_result = Das::Core::OcvWrapper::InitDasCore(
-                    static_cast<DAS::Core::IPC::MainProcess::IIpcContext*>(
-                        ipc_context.get()));
+                auto init_cv_result = InitializeDasCore(ipc_context.get());
                 if (DAS::IsFailed(init_cv_result))
                 {
                     DAS_LOG_ERROR(

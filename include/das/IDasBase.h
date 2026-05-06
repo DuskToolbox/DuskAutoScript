@@ -236,7 +236,8 @@ DAS_NS_END
 
 #endif // __cplusplus
 
-DAS_C_API DasResult InitializeDasCore();
+DAS_C_API DasResult
+InitializeDasCore(Das::Core::IPC::MainProcess::IIpcContext* p_ipc_context);
 
 #endif // SWIG
 

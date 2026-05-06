@@ -1,6 +1,8 @@
 #include <cstring>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
+#include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/Logger/Logger.h>
+#include <das/Core/OcvWrapper/CvServiceRegistrar.h>
 #include <das/DasException.hpp>
 #include <das/IDasBase.h>
 #include <das/Utils/CommonUtils.hpp>
@@ -43,17 +45,14 @@ DasResult DasMakeDasGuid(const char* p_guid_string, DasGuid* p_out_guid)
     return result.error_code;
 }
 
-DasResult InitializeDasCore()
+DasResult InitializeDasCore(
+    Das::Core::IPC::MainProcess::IIpcContext* p_ipc_context)
 {
-    try
+    if (!p_ipc_context)
     {
-        // DAS::Gateway::InitializeProfileManager();
-        // return DAS::Core::InitializeGlobalTaskScheduler();
+        DAS_CORE_LOG_ERROR("InitializeDasCore: p_ipc_context is null");
+        return DAS_E_INVALID_ARGUMENT;
     }
-    catch (const DasException& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-        return ex.GetErrorCode();
-    }
-    return DAS_S_OK;
+
+    return Das::Core::OcvWrapper::RegisterCvServices(*p_ipc_context);
 }
