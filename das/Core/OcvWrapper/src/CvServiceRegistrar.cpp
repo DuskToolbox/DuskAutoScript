@@ -1,7 +1,8 @@
-#include "CvServiceRegistrar.h"
-#include "Config.h"
 #include "CvCpuImpl.h"
 #include <das/Core/Logger/Logger.h>
+#include <das/Core/OcvWrapper/Config.h>
+#include <das/Core/OcvWrapper/CvServiceRegistrar.h>
+
 
 #ifdef DAS_WITH_CUDA
 #include "CvCudaImpl.h"
