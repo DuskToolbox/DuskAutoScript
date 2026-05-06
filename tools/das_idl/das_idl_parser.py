@@ -50,6 +50,8 @@ class TokenType(Enum):
     EQUALS = auto()
     STAR = auto()
     AMPERSAND = auto()
+    SLASH = auto()
+    DOT = auto()
     STRING = auto()
     NUMBER = auto()
     COMMENT = auto()
@@ -382,6 +384,8 @@ class Lexer:
                 '=': TokenType.EQUALS,
                 '*': TokenType.STAR,
                 '&': TokenType.AMPERSAND,
+                '/': TokenType.SLASH,
+                '.': TokenType.DOT,
             }
 
             if char in single_char_tokens:
