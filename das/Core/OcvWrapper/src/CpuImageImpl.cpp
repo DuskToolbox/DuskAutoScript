@@ -86,7 +86,6 @@ uint32_t DAS_STD_CALL CpuImageImpl::Release()
     const auto count = --ref_count_;
     if (count == 0)
     {
-        ref_count_ = 1;
         delete this;
         return 0;
     }
