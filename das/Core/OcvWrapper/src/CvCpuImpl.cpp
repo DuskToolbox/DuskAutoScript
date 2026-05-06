@@ -2,7 +2,6 @@
 #include "CpuImageImpl.h"
 #include "DescriptorMatcherFactory.h"
 #include "FeatureDetectorFactory.h"
-#include "IDasImageImpl.h"
 #include "IDasMatchResultImpl.h"
 #include "IDasTemplateMatchResultImpl.h"
 #include "IDasTemplateMatchResultsImpl.h"
