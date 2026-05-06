@@ -285,11 +285,10 @@ DasResult CvCudaImpl::TemplateMatchAll(
         gpu_result_mat,
         DAS::Utils::ToUnderlying(type));
 
-    // Download result to CPU for threshold filtering and NMS
+    // Download result to CPU for threshold filtering and NMS.
+    // cv::cuda::matchTemplate always outputs CV_32FC1 (32-bit float).
     cv::Mat result_mat;
     gpu_result_mat.download(result_mat);
-    // result_mat is CV_32FC1 (single-channel 32-bit float)
-    const bool is_float_result = (result_mat.type() == CV_32FC1);
 
     // Step 1: Threshold filtering — collect all candidates with score >=
     // threshold
@@ -298,32 +297,15 @@ DasResult CvCudaImpl::TemplateMatchAll(
 
     for (int y = 0; y < result_mat.rows; ++y)
     {
-        if (is_float_result)
+        const float* row = result_mat.ptr<float>(y);
+        for (int x = 0; x < result_mat.cols; ++x)
         {
-            const float* row = result_mat.ptr<float>(y);
-            for (int x = 0; x < result_mat.cols; ++x)
-            {
-                const double raw = static_cast<double>(row[x]);
-                const double unified = Details::UnifyScore(raw, type);
+            const double raw = static_cast<double>(row[x]);
+            const double unified = Details::UnifyScore(raw, type);
 
-                if (unified >= threshold)
-                {
-                    candidates.push_back({unified, raw, x, y});
-                }
-            }
-        }
-        else
-        {
-            const double* row = result_mat.ptr<double>(y);
-            for (int x = 0; x < result_mat.cols; ++x)
+            if (unified >= threshold)
             {
-                const double raw = row[x];
-                const double unified = Details::UnifyScore(raw, type);
-
-                if (unified >= threshold)
-                {
-                    candidates.push_back({unified, raw, x, y});
-                }
+                candidates.push_back({unified, raw, x, y});
             }
         }
     }
