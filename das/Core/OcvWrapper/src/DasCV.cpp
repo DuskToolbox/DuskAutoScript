@@ -136,8 +136,7 @@ DasResult CreateMatchConfig(
     Das::ExportInterface::DasMatchParams      params,
     Das::ExportInterface::IDasCvMatchConfig** pp_out_config)
 {
-    if (!pp_out_config)
-        return DAS_E_INVALID_POINTER;
+    DAS_UTILS_CHECK_POINTER(pp_out_config)
 
     if (params.ratio_threshold < 0.0f || params.ratio_threshold > 1.0f)
     {
@@ -168,11 +167,14 @@ DasResult MatchFeatures(
     Das::ExportInterface::IDasCvMatchConfig*  p_config,
     Das::ExportInterface::IDasCvMatchResult** pp_out_result)
 {
-    if (!p_query || !p_train || !pp_out_result)
-        return DAS_E_INVALID_POINTER;
+    DAS_UTILS_CHECK_POINTER(p_query)
+    DAS_UTILS_CHECK_POINTER(p_train)
+    DAS_UTILS_CHECK_POINTER(pp_out_result)
 
     if (!p_config)
+    {
         return DAS_E_INVALID_POINTER;
+    }
 
     Das::Utils::Timer timer{};
     timer.Begin();
@@ -205,12 +207,16 @@ DasResult MatchFeatures(
     const auto expected_query =
         DAS::Core::OcvWrapper::Details::GetImageBackend(p_query);
     if (!expected_query)
+    {
         return expected_query.error();
+    }
 
     const auto expected_train =
         DAS::Core::OcvWrapper::Details::GetImageBackend(p_train);
     if (!expected_train)
+    {
         return expected_train.error();
+    }
 
     const auto& query_mat = expected_query.value()->GetCpuMat();
     const auto& train_mat = expected_train.value()->GetCpuMat();
