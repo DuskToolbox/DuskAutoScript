@@ -143,7 +143,7 @@ auto UnifyScore(float raw_score, ExportInterface::DasTemplateMatchType type)
 {
     if (type == ExportInterface::DAS_TEMPLATE_MATCH_TYPE_SQDIFF_NORMED)
     {
-        return 1.0 - raw_score;
+        return 1.0f - raw_score;
     }
     return raw_score;
 }
