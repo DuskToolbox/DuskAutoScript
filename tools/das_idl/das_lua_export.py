@@ -75,6 +75,7 @@ def generate_cpp_file(
     interfaces: List[InterfaceDef],
     name: str,
     abi_dir: str,
+    export_c_macro: str,
 ) -> str:
     """Generate the complete C++ source file for sol2 Lua bindings.
 
@@ -91,6 +92,7 @@ def generate_cpp_file(
         interfaces: List of InterfaceDef objects (from doc.interfaces).
         name: Export library base name (e.g., "DasCore").
         abi_dir: Path to the ABI header directory for checking existence.
+        export_c_macro: Export macro for luaopen entry point (e.g. "DAS_C_API").
 
     Returns:
         Complete C++ source code as a string.
@@ -154,6 +156,8 @@ def generate_cpp_file(
     # Include additional headers for types used in module functions
     # but not covered by individual ABI headers
     parts.append('#include "das/IDasCoreServices.h"')
+    # IDasBase is needed by ExtractDasBasePointer() and Director base classes
+    parts.append('#include "das/IDasBase.h"')
     parts.append('')
 
     # Bring interface namespaces into scope so that generated code can use
@@ -201,8 +205,14 @@ def generate_cpp_file(
         )
         parts.append('')
 
+    # ── ExtractDasBasePointer helper ───────────────────────────────────
+    # 导出辅助函数，供 DasCore.dll 跨 DLL 从 Lua userdata 提取 IDasBase* 指针。
+    # 绕过 sol2 的 derive<T>/weak_derive<T> 继承检查（DLL 边界不可靠）。
+    parts.append(gen._generate_extract_base_pointer_function(export_c_macro))
+    parts.append('')
+
     # ── luaopen entry point ────────────────────────────────────────────
-    parts.append(gen._generate_luaopen_function(doc, abilable_interfaces))
+    parts.append(gen._generate_luaopen_function(doc, abilable_interfaces, export_c_macro))
     parts.append('')
 
     # ── Restore warning state ──────────────────────────────────────────
@@ -242,6 +252,11 @@ def main() -> int:
         required=True,
         help='List of IDL file names (relative to --idl-dir)',
     )
+    parser.add_argument(
+        '--export-c-macro',
+        required=True,
+        help='Export macro for luaopen entry point (e.g. DAS_C_API)',
+    )
     args = parser.parse_args()
 
     # ── Parse all IDL files ────────────────────────────────────────────
@@ -275,7 +290,7 @@ def main() -> int:
     abi_dir = os.path.normpath(os.path.join(args.output, '..', 'abi'))
 
     # Generate C++ source
-    cpp_code = generate_cpp_file(gen, merged_doc, interfaces, args.name, abi_dir)
+    cpp_code = generate_cpp_file(gen, merged_doc, interfaces, args.name, abi_dir, args.export_c_macro)
 
     # Filter interfaces for Lua stub — only those with ABI headers
     abilable_interfaces = [

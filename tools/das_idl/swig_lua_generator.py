@@ -194,6 +194,41 @@ public:
 };
 """
 
+    @staticmethod
+    def _get_base_chain(
+        interface: InterfaceDef,
+        all_interfaces: dict = None,
+    ) -> list:
+        """构建接口的完整基类链（从直接父类到 IDasBase）。
+
+        Sol3 的 sol::bases<> 要求列出所有传递基类，不会自动遍历
+        继承树。例如对于 ILuaDasPluginPackage : IDasPluginPackage
+        (: IDasBase)，必须声明 sol::bases<IDasPluginPackage, IDasBase>()
+        才能使 as<IDasBase*>() 正常工作。
+
+        Args:
+            interface: 目标接口定义。
+            all_interfaces: 接口名 → InterfaceDef 映射（用于遍历链）。
+
+        Returns:
+            基类名列表，例如 ['IDasPluginPackage', 'IDasBase']。
+            如果接口无基类，返回空列表。
+        """
+        chain = []
+        base_name = interface.base_interface
+        while base_name:
+            chain.append(base_name)
+            if base_name == 'IDasBase':
+                break
+            if all_interfaces:
+                base_iface = all_interfaces.get(base_name)
+                if not base_iface:
+                    break
+                base_name = base_iface.base_interface
+            else:
+                break
+        return chain
+
     def _get_director_class_name(self, iface_name: str) -> str:
         """根据接口名推导 Director 类名。
 
@@ -304,6 +339,19 @@ public:
         lines.append('            }')
         lines.append('            return count;')
         lines.append('    }')
+        # 收集完整的接口继承链（含自身），从最具体到最泛化
+        # 例如: IDasLogger : IDasTypeInfo : IDasBase
+        #       → [IDasLogger, IDasTypeInfo]
+        iface_chain = [parent]
+        if all_interfaces:
+            base_name = interface.base_interface
+            while base_name and base_name != 'IDasBase':
+                iface_chain.append(base_name)
+                base_iface = all_interfaces.get(base_name)
+                if not base_iface:
+                    break
+                base_name = base_iface.base_interface
+
         lines.append('')
         lines.append(
             '        DasResult QueryInterface(const DasGuid& iid,'
@@ -312,21 +360,31 @@ public:
         lines.append(
             '            if (!pp_object) return DAS_E_INVALID_POINTER;'
         )
-        # Generate DasGuid literal for this interface's UUID
-        iid_literal = self._uuid_to_das_guid_literal(interface.uuid)
+
+        # 为继承链上的每个接口生成 IID 检查
+        for iface in iface_chain:
+            lines.append(
+                f'            if (iid == DasIidOf<{iface}>()) {{'
+            )
+            lines.append(
+                f'                *pp_object'
+                f' = static_cast<{iface}*>(this);'
+            )
+            lines.append('                AddRef();')
+            lines.append('                return DAS_S_OK;')
+            lines.append('            }')
+
+        # DAS_IID_BASE 检查
         lines.append(
-            f'            static const DasGuid IID_MyType = {iid_literal};'
+            '            if (iid == DAS_IID_BASE) {'
         )
         lines.append(
-            '            if (iid == DAS_IID_BASE || iid == IID_MyType) {'
-        )
-        lines.append(
-            f'                *pp_object'
-            f' = static_cast<{parent}*>(this);'
+            '                *pp_object = static_cast<IDasBase*>(this);'
         )
         lines.append('                AddRef();')
         lines.append('                return DAS_S_OK;')
         lines.append('            }')
+
         lines.append('            *pp_object = nullptr;')
         lines.append('            return DAS_E_NO_INTERFACE;')
         lines.append('        }')
@@ -648,7 +706,11 @@ public:
 
         return '\n'.join(lines)
 
-    def _generate_abstract_registration(self, interface: InterfaceDef) -> str:
+    def _generate_abstract_registration(
+        self,
+        interface: InterfaceDef,
+        all_interfaces: dict = None,
+    ) -> str:
         """生成抽象接口的 sol2 usertype 注册代码。
 
         抽象接口使用 sol::no_constructor 阻止 Lua 端直接实例化。
@@ -657,16 +719,38 @@ public:
           - 无 [out] 参数 → 直接绑定成员函数指针
           - 有 [out] 参数 → 使用 lambda 包装为 tuple 返回值
 
+        对于有基类的接口，使用 sol::base_classes / sol::bases<>() 声明
+        完整基类链，使同一 DLL 内 sol2 的 as<Base*>() 能正确转换。
+
         Args:
             interface: 经 resolve_types() 标注后的接口定义。
+            all_interfaces: 接口名 → InterfaceDef 映射（用于构建完整基类链）。
 
         Returns:
             lua.new_usertype<Interface>(...) 调用的 C++ 代码字符串。
         """
         iface_name = interface.name
 
+        # 构建基类链（用于 sol::bases 声明）
+        base_chain = self._get_base_chain(interface, all_interfaces)
+        iface_map = all_interfaces if all_interfaces else {}
+
         entries = []
         entries.append('    sol::no_constructor')
+
+        # 如果有基类，声明 sol::bases
+        if base_chain:
+            qualified_bases = []
+            for base_name in base_chain:
+                if base_name == 'IDasBase':
+                    qualified_bases.append('IDasBase')
+                else:
+                    base_iface = iface_map.get(base_name)
+                    ns = f'{base_iface.namespace}::' if (base_iface and base_iface.namespace) else ''
+                    qualified_bases.append(f'{ns}{base_name}')
+            bases_str = ', '.join(qualified_bases)
+            entries.append(f'    sol::base_classes, sol::bases<{bases_str}>()')
+
         entries.append(
             f'    sol::meta_function::garbage_collect, []({iface_name}* p)'
             f' {{ p->Release(); }}'
@@ -717,15 +801,24 @@ public:
             f');'
         )
 
-    def _generate_director_registration(self, interface: InterfaceDef) -> str:
+    def _generate_director_registration(
+        self,
+        interface: InterfaceDef,
+        all_interfaces: dict = None,
+    ) -> str:
         """生成 Director 具体类的 sol2 usertype 注册代码。
 
         Director 类使用 sol::call_constructor 允许 Lua 端通过
-        构造函数语法创建实例（传入 Lua table 作为方法覆盖表），
-        并通过 sol::bases 声明与抽象接口的继承关系。
+        构造函数语法创建实例（传入 Lua table 作为方法覆盖表）。
+
+        使用 sol::base_classes / sol::bases<>() 声明完整基类链，
+        使 sol2 在同一 DLL 内的 as<Base*>() 能正确转换。
+        基类链包含所有传递基类（如 IDasPluginPackage, IDasBase），
+        sol2 要求列出所有层级，不会自动遍历继承树。
 
         Args:
             interface: 经 resolve_types() 标注后的接口定义。
+            all_interfaces: 接口名 → InterfaceDef 映射（用于构建完整基类链）。
 
         Returns:
             lua.new_usertype<DirectorClass>(...) 调用的 C++ 代码字符串。
@@ -733,8 +826,23 @@ public:
         iface_name = interface.name
         director_name = self._get_director_class_name(iface_name)
 
+        # 构建完整基类链：直接父接口 → ... → IDasBase
+        base_chain = self._get_base_chain(interface, all_interfaces)
+        # 基类链中需要全限定名（带命名空间）
+        iface_map = all_interfaces if all_interfaces else {}
+        qualified_bases = []
+        for base_name in base_chain:
+            if base_name == 'IDasBase':
+                qualified_bases.append('IDasBase')
+            else:
+                base_iface = iface_map.get(base_name)
+                ns = f'{base_iface.namespace}::' if (base_iface and base_iface.namespace) else ''
+                qualified_bases.append(f'{ns}{base_name}')
+        bases_str = ', '.join(qualified_bases)
+
         return (
             f'lua.new_usertype<{director_name}>("{director_name}",\n'
+            f'    sol::base_classes, sol::bases<{bases_str}>(),\n'
             f'    sol::call_constructor,\n'
             f'    sol::initializers(\n'
             f'        []({director_name}& obj, sol::this_state ts,'
@@ -742,8 +850,6 @@ public:
             f'            new (&obj) {director_name}(ts, env);\n'
             f'        }}\n'
             f'    ),\n'
-            f'    sol::base_classes,\n'
-            f'    sol::bases<{iface_name}>(),\n'
             f'    sol::meta_function::garbage_collect,'
             f' []({director_name}* p) {{\n'
             f'        p->Release();\n'
@@ -771,11 +877,16 @@ public:
         lines = []
         lines.append('void register_all_das_interfaces(sol::state_view lua) {')
 
+        # Build interface map for base chain resolution
+        iface_map = {iface.name: iface for iface in interfaces} if interfaces else {}
+
         # 抽象接口注册
         if interfaces:
             lines.append('    // Abstract interfaces')
             for interface in interfaces:
-                reg = self._generate_abstract_registration(interface)
+                reg = self._generate_abstract_registration(
+                    interface, iface_map
+                )
                 for line in reg.split('\n'):
                     lines.append(f'    {line}')
                 lines.append('')
@@ -784,7 +895,9 @@ public:
         if interfaces:
             lines.append('    // Director concrete classes')
             for interface in interfaces:
-                reg = self._generate_director_registration(interface)
+                reg = self._generate_director_registration(
+                    interface, iface_map
+                )
                 for line in reg.split('\n'):
                     lines.append(f'    {line}')
                 lines.append('')
@@ -1293,8 +1406,39 @@ public:
 
         return '\n'.join(lines)
 
+    @staticmethod
+    def _generate_extract_base_pointer_function(export_c_macro: str) -> str:
+        """生成 ExtractDasBasePointer 辅助函数。
+
+        该函数从 Lua 栈上的 userdata 中提取 Director 对象指针，
+        并通过 static_cast 转换为 IDasBase*。
+
+        所有 Director 类都继承自 IDasBase（通过各自的接口父类），
+        因此 static_cast 在类型系统层面是安全的。
+
+        该函数供 LuaHost.cpp（DasCore.dll）跨 DLL 调用，
+        绕过 sol2 的 derive<T>/weak_derive<T> 继承检查机制
+        （该机制在 Windows DLL 边界上不可靠）。
+
+        Args:
+            export_c_macro: 导出宏名称（如 "DAS_C_API"）。
+
+        Returns:
+            ExtractDasBasePointer 函数的完整 C++ 定义字符串。
+        """
+        return (
+            f'{export_c_macro} IDasBase* ExtractDasBasePointer(lua_State* L, int index) {{\n'
+            f'    void* raw_memory = lua_touserdata(L, index);\n'
+            f'    if (!raw_memory) return nullptr;\n'
+            f'    void** ptr_to_obj = static_cast<void**>(raw_memory);\n'
+            f'    void* obj_ptr = *ptr_to_obj;\n'
+            f'    return static_cast<IDasBase*>(obj_ptr);\n'
+            f'}}\n'
+        )
+
     def _generate_luaopen_function(
-        self, doc: IdlDocument, interfaces: List[InterfaceDef]
+        self, doc: IdlDocument, interfaces: List[InterfaceDef],
+        export_c_macro: str,
     ) -> str:
         """生成 DLL 入口函数 luaopen_<module_name>。
 
@@ -1321,7 +1465,7 @@ public:
 
         lines = []
         lines.append(
-            f'extern "C" int luaopen_{module_name}(lua_State* L) {{'
+            f'{export_c_macro} int luaopen_{module_name}(lua_State* L) {{'
         )
         lines.append('    sol::state_view lua(L);')
         lines.append('')

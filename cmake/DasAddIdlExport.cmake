@@ -122,7 +122,7 @@ function(das_add_idl_export)
     cmake_parse_arguments(
         DAS_IDL_EXPORT                          # 前缀
         ""                                      # 选项 (无值参数)
-        "NAME;IDL_DIR;OUTPUT_DIR;NAMESPACE;GENERATE_IPC_PROXY;GENERATE_IPC_STUB;IPC_CACHE_DIR;SWIG_MODULE_NAME"  # 单值参数
+        "NAME;IDL_DIR;OUTPUT_DIR;NAMESPACE;GENERATE_IPC_PROXY;GENERATE_IPC_STUB;IPC_CACHE_DIR;SWIG_MODULE_NAME;EXPORT_MACRO;EXPORT_C_MACRO"  # 单值参数
         "IDL_FILES;LANGUAGES;USER_SWIG_FILES;GENERATED_FILES;GENERATED_ABI_FILES;GENERATED_WRAPPER_FILES;GENERATED_SWIG_FILES;GENERATED_IPC_FILES;SWIG_OPTIONS_Python;SWIG_OPTIONS_Java;SWIG_OPTIONS_CSharp;SWIG_INCLUDE_DIRS;DEPENDS_ON"  # 多值参数
         ${ARGN}
     )
@@ -309,8 +309,8 @@ function(das_add_idl_export)
             COMMAND "${DAS_IDL_VENV_PYTHON}" "${_HEADER_GENERATOR_SCRIPT}"
                 --idl "${_IDL_FILE}"
                 --output-dir "${_HEADER_OUTPUT_DIR}"
-                --export-macro DAS_API
-                --export-c-macro DAS_C_API
+                --export-macro ${DAS_IDL_EXPORT_EXPORT_MACRO}
+                --export-c-macro ${DAS_IDL_EXPORT_EXPORT_C_MACRO}
             DEPENDS "${_IDL_FILE}" "${_HEADER_GENERATOR_SCRIPT}"
                 ${_DAS_IDL_MODULE_TOOLS}
             COMMENT "[das_add_idl_export] Generate header from ${_IDL_STEM}.idl for ${DAS_IDL_EXPORT_NAME}"
@@ -695,6 +695,7 @@ function(das_add_idl_export)
                 --output "${_LUA_OUTPUT_DIR}"
                 --name "${DAS_IDL_EXPORT_NAME}"
                 --idl-files ${DAS_IDL_EXPORT_IDL_FILES}
+                --export-c-macro ${DAS_IDL_EXPORT_EXPORT_C_MACRO}
             DEPENDS
                 ${_LUA_IDL_FULL_PATHS}
                 ${_DAS_IDL_MODULE_TOOLS}
@@ -712,6 +713,9 @@ function(das_add_idl_export)
         set(_LUA_LIB_NAME "${DAS_IDL_EXPORT_NAME}LuaExport")
         add_library(${_LUA_LIB_NAME} SHARED ${_LUA_CPP_FILE})
         add_dependencies(${_LUA_LIB_NAME} ${_LUA_GENERATED_TARGET})
+        if(MSVC)
+            target_compile_options(${_LUA_LIB_NAME} PRIVATE /bigobj)
+        endif()
 
         target_include_directories(${_LUA_LIB_NAME} PRIVATE
             ${DAS_IDL_EXPORT_OUTPUT_DIR}

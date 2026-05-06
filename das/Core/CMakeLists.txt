@@ -95,6 +95,8 @@ das_add_idl_export(
     SWIG_MODULE_NAME DuskAutoScript
     SWIG_OPTIONS_Python -threads
     SWIG_OPTIONS_Java -package org.das
+    EXPORT_MACRO DAS_API
+    EXPORT_C_MACRO DAS_C_API
     SWIG_INCLUDE_DIRS
     "${CMAKE_SOURCE_DIR}/include/"
     "${CMAKE_BINARY_DIR}/das/include"

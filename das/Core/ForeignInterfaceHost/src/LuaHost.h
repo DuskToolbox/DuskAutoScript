@@ -44,9 +44,17 @@ private:
         -> std::pair<std::string, std::string>;
 
 private:
+    /// Helper function type exported by DasCoreLuaExport.dll.
+    /// Extracts an IDasBase* from a Lua userdata on the stack,
+    /// performing the correct static_cast within the DLL where
+    /// Director class types are defined.
+    using ExtractBasePointerFunc = IDasBase*(lua_State*, int);
+    using ExtractBasePointerFuncPointer = std::add_pointer_t<ExtractBasePointerFunc>;
+
     DAS::Utils::RefCounter<LuaRuntime> ref_counter_{};
     lua_State*                         lua_state_{nullptr};
     boost::dll::shared_library         export_lib_;
+    ExtractBasePointerFuncPointer      extract_base_ptr_{nullptr};
 };
 
 auto CreateForeignLanguageRuntime(const ForeignLanguageRuntimeFactoryDesc& desc)

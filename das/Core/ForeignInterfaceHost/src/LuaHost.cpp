@@ -35,7 +35,7 @@ DAS_NS_LUAHOST_BEGIN
 namespace
 {
     // luaopen_DasCoreApi function signature
-    using LuaOpenFunction = int (*)(lua_State* L);
+    using LuaOpenFunction = int(lua_State*);
 
     // DLL filename for the Lua export library
     constexpr const char* kLuaExportDllName = "DasCoreLuaExport.dll";
@@ -44,6 +44,9 @@ namespace
 
     // luaopen function symbol name
     constexpr const char* kLuaOpenFunctionName = "luaopen_DasCoreApi";
+
+    // ExtractDasBasePointer helper function symbol name
+    constexpr const char* kExtractBasePointerName = "ExtractDasBasePointer";
 
     /// Try to find a DLL by name in the given directory
     auto TryDllInDir(const std::filesystem::path& dir, const char* dll_name)
@@ -277,6 +280,25 @@ auto LuaRuntime::LoadPlugin(const std::filesystem::path& path)
             "[LuaRuntime::LoadPlugin] {} returned {}",
             kLuaOpenFunctionName,
             luaopen_result);
+
+        // ── 4b. Get ExtractDasBasePointer helper ──────────────────────
+        // This function lives in the same DLL as the Director classes,
+        // so the static_cast<IDasBase*> is performed where the complete
+        // type information is available.
+        if (export_lib_.has(kExtractBasePointerName))
+        {
+            extract_base_ptr_ = &export_lib_.get<ExtractBasePointerFunc>(
+                kExtractBasePointerName);
+            DAS_CORE_LOG_INFO(
+                "[LuaRuntime::LoadPlugin] Loaded {} helper",
+                kExtractBasePointerName);
+        }
+        else
+        {
+            DAS_CORE_LOG_WARN(
+                "Lua export library missing '{}' helper function",
+                kExtractBasePointerName);
+        }
     }
 
     // ── 5. Parse entryPoint "Module.Func" ───────────────────────────────
@@ -328,16 +350,38 @@ auto LuaRuntime::LoadPlugin(const std::filesystem::path& path)
         return tl::make_unexpected(DAS_E_FAIL);
     }
 
-    // The returned userdata is a Director object (e.g., ILuaDasPluginPackage)
-    // which inherits from IDasPluginPackage -> IDasBase via sol::bases
-    // registration. DasPtr constructor calls AddRef, keeping the object alive
-    // after Lua GC reclaims its reference.
-    auto* base_ptr = ret_obj.as<IDasBase*>();
+    // Extract IDasBase* via the helper function exported by
+    // DasCoreLuaExport.dll.  The static_cast<IDasBase*> happens inside
+    // the DLL where the complete Director type is defined, so it is
+    // guaranteed correct regardless of DLL-boundary limitations on
+    // sol2's derive/weak_derive mechanism.
+    //
+    // Fallback: if the helper was not loaded (old export DLL), extract
+    // manually via lua_touserdata.  sol2 stores usertype objects as
+    // [T* | T object]; the first sizeof(T*) bytes point to the object.
+    IDasBase* base_ptr = nullptr;
+
+    if (extract_base_ptr_)
+    {
+        base_ptr = extract_base_ptr_(lua_state_, result.stack_index());
+    }
+    else
+    {
+        DAS_CORE_LOG_WARN(
+            "ExtractDasBasePointer not available, using inline fallback");
+        void*  raw_memory = lua_touserdata(lua_state_, result.stack_index());
+        void** ptr_to_obj = static_cast<void**>(raw_memory);
+        base_ptr = static_cast<IDasBase*>(*ptr_to_obj);
+    }
+
     if (!base_ptr)
     {
         DAS_CORE_LOG_ERROR("Failed to extract IDasBase from Lua return value");
         return tl::make_unexpected(DAS_E_FAIL);
     }
+
+    // Call AddRef since we're taking ownership via DasPtr
+    base_ptr->AddRef();
 
     DAS_CORE_LOG_INFO(
         "[LuaRuntime::LoadPlugin] Successfully loaded Lua plugin: {}",
