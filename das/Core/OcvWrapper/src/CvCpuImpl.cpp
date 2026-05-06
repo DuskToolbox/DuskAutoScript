@@ -315,10 +315,7 @@ DasResult CvCpuImpl::TemplateMatchAll(
 
     for (const auto& cand : final_candidates)
     {
-        const double raw_score =
-            (type == ExportInterface::DAS_TEMPLATE_MATCH_TYPE_SQDIFF_NORMED)
-                ? cand.raw_score
-                : cand.raw_score;
+        const double raw_score = cand.raw_score;
 
         auto* p_result = IDasTemplateMatchResultImpl::MakeRaw(
             cand.score,
