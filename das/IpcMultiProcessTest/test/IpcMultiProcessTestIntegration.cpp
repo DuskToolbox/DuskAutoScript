@@ -1741,11 +1741,6 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LuaDirectorLifecycleTest)
     ASSERT_TRUE(DAS::IsOk(load_result));
 
     // 4. 获取 IDasComponent
-    //    注意: Lua Director 的 EnumFeature/CreateFeatureInterface 方法
-    //    存在 [out] 参数，而当前 Lua Director 系统在 Lua 侧调用时不
-    //    传递 [out] 参数（仅返回 DasResult），因此
-    //    CreateFeatureInterface 的 pp_out_interface 输出参数不会被设
-    //    置。需要 Lua Director 生成器支持 [out] 参数后才能完整通过。
     DAS::DasPtr<IDasBase> raw_proxy;
     raw_proxy = DAS::DasPtr<IDasBase>::Attach(proxy);
     DAS::PluginInterface::DasPluginPackage plugin_package;
@@ -1823,11 +1818,13 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LuaDirectorLifecycleTest)
     factory_base.Reset();
     raw_proxy.Reset();
 
-    // 7. 等待 Lua GC 触发 finalize 回调
-    //    事件驱动通知链路：
-    //    Lua GC → __gc → Director Release → (callback 机制待实现)
-    //    当前 Lua Director 系统不支持 [out] 参数，因此完整的 GC 回调
-    //    链路需要 Director 生成器扩展支持。
+    // 7. 等待 Lua GC 触发 __gc → Release 回调
+    //    事件驱动通知链路（对照 Java 版 Java GC → finalize → callback）：
+    //    Lua GC → __gc 元方法 → Director Release → ref_count=0 → 析构
+    //    → (LuaTestPlugin.dispatch_callback) → callback Dispatch("lifecycle_callback")
+    //    → LifecycleCallbackComponent.Dispatch()
+    //    → ctx_->PostCallback(completion_signal_)
+    //    → CompletionSignal.Do() → done = true
     std::atomic<bool> done{false};
     auto              signal = DAS::MakeDasPtr<CompletionSignal>(done);
     callback->completion_signal_ = signal.Get();
