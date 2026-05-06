@@ -7,10 +7,16 @@
 #include "../src/IDasTemplateMatchResultsImpl.h"
 #include "../src/IImageBackend.h"
 
+#include <das/DasApi.h>
+
 #include <opencv2/core.hpp>
+#include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include <atomic>
 #include <cstdint>
+#include <cstring>
+#include <vector>
 
 namespace Das::Core::OcvWrapper::Test
 {
@@ -416,6 +422,402 @@ namespace Das::Core::OcvWrapper::Test
         EXPECT_EQ(mat.cols, 64);
         backend->Release();
         img->Release();
+    }
+
+    // ==================== Factory Migration Tests ====================
+
+    namespace
+    {
+        // Mock IDasBinaryBuffer for tests
+        class TestBinaryBuffer final : public ExportInterface::IDasBinaryBuffer
+        {
+            std::atomic<uint32_t> ref_count_{0};
+            std::vector<uint8_t>  data_;
+
+        public:
+            TestBinaryBuffer(const uint8_t* data, size_t size)
+                : data_(data, data + size)
+            {
+            }
+
+            // IUnknown
+            uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+            uint32_t DAS_STD_CALL Release() override
+            {
+                auto c = --ref_count_;
+                if (c == 0)
+                {
+                    delete this;
+                }
+                return c;
+            }
+            DasResult DAS_STD_CALL
+            QueryInterface(const DasGuid& iid, void** pp) override
+            {
+                if (!pp)
+                {
+                    return DAS_E_INVALID_POINTER;
+                }
+                if (iid == DasIidOf<IDasBase>())
+                {
+                    *pp = static_cast<IDasBase*>(this);
+                    AddRef();
+                    return DAS_S_OK;
+                }
+                if (iid == DasIidOf<ExportInterface::IDasBinaryBuffer>())
+                {
+                    *pp = static_cast<ExportInterface::IDasBinaryBuffer*>(this);
+                    AddRef();
+                    return DAS_S_OK;
+                }
+                *pp = nullptr;
+                return DAS_E_NO_INTERFACE;
+            }
+
+            DasResult GetData(unsigned char** pp_out_data) override
+            {
+                if (!pp_out_data)
+                {
+                    return DAS_E_INVALID_POINTER;
+                }
+                *pp_out_data = data_.data();
+                return DAS_S_OK;
+            }
+
+            DasResult GetSize(uint64_t* p_out_size) override
+            {
+                if (!p_out_size)
+                {
+                    return DAS_E_INVALID_POINTER;
+                }
+                *p_out_size = data_.size();
+                return DAS_S_OK;
+            }
+        };
+
+        // Mock IDasMemory for tests
+        class TestMemory final : public ExportInterface::IDasMemory
+        {
+            std::atomic<uint32_t> ref_count_{0};
+            std::vector<uint8_t>  data_;
+
+        public:
+            explicit TestMemory(std::vector<uint8_t> data)
+                : data_(std::move(data))
+            {
+            }
+
+            // IUnknown
+            uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+            uint32_t DAS_STD_CALL Release() override
+            {
+                auto c = --ref_count_;
+                if (c == 0)
+                {
+                    delete this;
+                }
+                return c;
+            }
+            DasResult DAS_STD_CALL
+            QueryInterface(const DasGuid& iid, void** pp) override
+            {
+                if (!pp)
+                {
+                    return DAS_E_INVALID_POINTER;
+                }
+                if (iid == DasIidOf<IDasBase>())
+                {
+                    *pp = static_cast<IDasBase*>(this);
+                    AddRef();
+                    return DAS_S_OK;
+                }
+                if (iid == DasIidOf<ExportInterface::IDasMemory>())
+                {
+                    *pp = static_cast<ExportInterface::IDasMemory*>(this);
+                    AddRef();
+                    return DAS_S_OK;
+                }
+                *pp = nullptr;
+                return DAS_E_NO_INTERFACE;
+            }
+
+            DasResult GetBinaryBuffer(
+                ExportInterface::IDasBinaryBuffer** pp_out) override
+            {
+                if (!pp_out)
+                {
+                    return DAS_E_INVALID_POINTER;
+                }
+                auto* buf = new TestBinaryBuffer(data_.data(), data_.size());
+                buf->AddRef();
+                *pp_out = buf;
+                return DAS_S_OK;
+            }
+
+            DasResult GetSize(uint64_t* p_out_size) override
+            {
+                if (!p_out_size)
+                {
+                    return DAS_E_INVALID_POINTER;
+                }
+                *p_out_size = data_.size();
+                return DAS_S_OK;
+            }
+
+            DasResult GetOffset(int64_t*) override
+            {
+                return DAS_E_NO_IMPLEMENTATION;
+            }
+            DasResult SetOffset(int64_t) override
+            {
+                return DAS_E_NO_IMPLEMENTATION;
+            }
+            DasResult Resize(uint64_t) override
+            {
+                return DAS_E_NO_IMPLEMENTATION;
+            }
+        };
+
+        // Helper: create RGBA test data
+        auto
+        MakeRgbaData(int w, int h, uint8_t r, uint8_t g, uint8_t b, uint8_t a)
+            -> std::vector<uint8_t>
+        {
+            std::vector<uint8_t> data(static_cast<size_t>(w * h * 4));
+            for (size_t i = 0; i < data.size(); i += 4)
+            {
+                data[i] = r;
+                data[i + 1] = g;
+                data[i + 2] = b;
+                data[i + 3] = a;
+            }
+            return data;
+        }
+
+        // Helper: create PNG-encoded test data
+        auto MakePngData(int w, int h) -> std::vector<uint8_t>
+        {
+            cv::Mat              img = MakeTestImage(h, w, 128, 64, 32);
+            std::vector<uint8_t> buf;
+            cv::imencode(".png", img, buf);
+            return buf;
+        }
+
+        // Helper: verify IImageBackend QI succeeds
+        void AssertBackendQI(ExportInterface::IDasImage* p_image)
+        {
+            ASSERT_NE(p_image, nullptr);
+            void* p_backend = nullptr;
+            auto  qi = p_image->QueryInterface(
+                DasIidOf<Das::Core::OcvWrapper::IImageBackend>(),
+                &p_backend);
+            ASSERT_EQ(qi, DAS_S_OK);
+            ASSERT_NE(p_backend, nullptr);
+            static_cast<IImageBackend*>(p_backend)->Release();
+        }
+
+    } // unnamed namespace
+
+    // --- Test 1: CreateIDasImageFromEncodedData ---
+
+    TEST(FactoryMigrationTest, FromEncodedData_ReturnsCpuImageWithRGBFormat)
+    {
+        auto png = MakePngData(32, 32);
+
+        DasImageDesc desc{};
+        desc.p_data = reinterpret_cast<char*>(png.data());
+        desc.data_size = png.size();
+        desc.data_format = ExportInterface::DAS_IMAGE_FORMAT_PNG;
+
+        ExportInterface::IDasImage* p_image = nullptr;
+        auto result = CreateIDasImageFromEncodedData(&desc, &p_image);
+        ASSERT_EQ(result, DAS_S_OK);
+
+        // Key assertion: must support IImageBackend QI (CpuImageImpl)
+        AssertBackendQI(p_image);
+
+        ExportInterface::DasImagePixelFormat fmt{};
+        EXPECT_EQ(p_image->GetPixelFormat(&fmt), DAS_S_OK);
+        EXPECT_EQ(fmt, ExportInterface::DAS_PIXEL_FORMAT_RGB);
+
+        p_image->Release();
+    }
+
+    // --- Test 2: CreateIDasImageFromDecodedData ---
+
+    TEST(FactoryMigrationTest, FromDecodedData_ReturnsCpuImageWithBGRFormat)
+    {
+        constexpr int        kWidth = 32;
+        constexpr int        kHeight = 24;
+        std::vector<uint8_t> rgb_data(
+            static_cast<size_t>(kWidth * kHeight * 3),
+            128);
+
+        DasImageDesc desc{};
+        desc.p_data = reinterpret_cast<char*>(rgb_data.data());
+        desc.data_size = rgb_data.size();
+        desc.data_format = ExportInterface::DAS_IMAGE_FORMAT_RGB_888;
+
+        ExportInterface::DasSize    size{kWidth, kHeight};
+        ExportInterface::IDasImage* p_image = nullptr;
+        auto result = CreateIDasImageFromDecodedData(&desc, &size, &p_image);
+        ASSERT_EQ(result, DAS_S_OK);
+
+        AssertBackendQI(p_image);
+
+        ExportInterface::DasImagePixelFormat fmt{};
+        EXPECT_EQ(p_image->GetPixelFormat(&fmt), DAS_S_OK);
+        EXPECT_EQ(fmt, ExportInterface::DAS_PIXEL_FORMAT_BGR);
+
+        ExportInterface::DasSize img_size{};
+        EXPECT_EQ(p_image->GetSize(&img_size), DAS_S_OK);
+        EXPECT_EQ(img_size.width, kWidth);
+        EXPECT_EQ(img_size.height, kHeight);
+
+        p_image->Release();
+    }
+
+    // --- Test 3: CreateIDasImageFromRgb888 ---
+
+    TEST(FactoryMigrationTest, FromRgb888_ReturnsCpuImageWithRGBAFormat)
+    {
+        constexpr int kWidth = 16;
+        constexpr int kHeight = 16;
+        auto rgba_data = MakeRgbaData(kWidth, kHeight, 255, 128, 64, 255);
+
+        auto* p_memory = new TestMemory(std::move(rgba_data));
+        p_memory->AddRef();
+
+        ExportInterface::DasSize    size{kWidth, kHeight};
+        ExportInterface::IDasImage* p_image = nullptr;
+        auto result = CreateIDasImageFromRgb888(p_memory, &size, &p_image);
+        ASSERT_EQ(result, DAS_S_OK);
+
+        AssertBackendQI(p_image);
+
+        ExportInterface::DasImagePixelFormat fmt{};
+        EXPECT_EQ(p_image->GetPixelFormat(&fmt), DAS_S_OK);
+        EXPECT_EQ(fmt, ExportInterface::DAS_PIXEL_FORMAT_RGBA);
+
+        int32_t channels = 0;
+        EXPECT_EQ(p_image->GetChannelCount(&channels), DAS_S_OK);
+        EXPECT_EQ(channels, 4);
+
+        // Release the original memory — image must survive with cloned data
+        p_memory->Release();
+
+        uint64_t data_size = 0;
+        EXPECT_EQ(p_image->GetDataSize(&data_size), DAS_S_OK);
+        EXPECT_EQ(data_size, static_cast<uint64_t>(kWidth * kHeight * 4));
+
+        ExportInterface::IDasBinaryBuffer* p_buffer = nullptr;
+        EXPECT_EQ(p_image->GetBinaryBuffer(&p_buffer), DAS_S_OK);
+        ASSERT_NE(p_buffer, nullptr);
+        uint64_t buf_size = 0;
+        EXPECT_EQ(p_buffer->GetSize(&buf_size), DAS_S_OK);
+        EXPECT_EQ(buf_size, data_size);
+        p_buffer->Release();
+
+        p_image->Release();
+    }
+
+    // --- Test 4: DasPluginLoadImageFromResource ---
+
+    TEST(
+        FactoryMigrationTest,
+        DISABLED_FromResource_RequiresPluginInfrastructure)
+    {
+        // DasPluginLoadImageFromResource requires PluginManager and
+        // PluginResourceIndex infrastructure. Tested via integration tests.
+        GTEST_SKIP()
+            << "DasPluginLoadImageFromResource requires plugin infrastructure";
+    }
+
+    // --- Test 5: GetBinaryBuffer consistency for all factories ---
+
+    TEST(FactoryMigrationTest, FromEncodedData_BinaryBufferSizeMatchesDataSize)
+    {
+        auto png = MakePngData(16, 16);
+
+        DasImageDesc desc{};
+        desc.p_data = reinterpret_cast<char*>(png.data());
+        desc.data_size = png.size();
+        desc.data_format = ExportInterface::DAS_IMAGE_FORMAT_PNG;
+
+        ExportInterface::IDasImage* p_image = nullptr;
+        ASSERT_EQ(CreateIDasImageFromEncodedData(&desc, &p_image), DAS_S_OK);
+
+        uint64_t data_size = 0;
+        EXPECT_EQ(p_image->GetDataSize(&data_size), DAS_S_OK);
+
+        ExportInterface::IDasBinaryBuffer* p_buffer = nullptr;
+        EXPECT_EQ(p_image->GetBinaryBuffer(&p_buffer), DAS_S_OK);
+        ASSERT_NE(p_buffer, nullptr);
+        uint64_t buf_size = 0;
+        EXPECT_EQ(p_buffer->GetSize(&buf_size), DAS_S_OK);
+        EXPECT_EQ(buf_size, data_size);
+        p_buffer->Release();
+
+        p_image->Release();
+    }
+
+    TEST(FactoryMigrationTest, FromDecodedData_BinaryBufferSizeMatchesDataSize)
+    {
+        constexpr int        kW = 8;
+        constexpr int        kH = 8;
+        std::vector<uint8_t> rgb(static_cast<size_t>(kW * kH * 3), 100);
+
+        DasImageDesc desc{};
+        desc.p_data = reinterpret_cast<char*>(rgb.data());
+        desc.data_size = rgb.size();
+        desc.data_format = ExportInterface::DAS_IMAGE_FORMAT_RGB_888;
+
+        ExportInterface::DasSize    size{kW, kH};
+        ExportInterface::IDasImage* p_image = nullptr;
+        ASSERT_EQ(
+            CreateIDasImageFromDecodedData(&desc, &size, &p_image),
+            DAS_S_OK);
+
+        uint64_t data_size = 0;
+        EXPECT_EQ(p_image->GetDataSize(&data_size), DAS_S_OK);
+
+        ExportInterface::IDasBinaryBuffer* p_buffer = nullptr;
+        EXPECT_EQ(p_image->GetBinaryBuffer(&p_buffer), DAS_S_OK);
+        ASSERT_NE(p_buffer, nullptr);
+        uint64_t buf_size = 0;
+        EXPECT_EQ(p_buffer->GetSize(&buf_size), DAS_S_OK);
+        EXPECT_EQ(buf_size, data_size);
+        p_buffer->Release();
+
+        p_image->Release();
+    }
+
+    TEST(FactoryMigrationTest, FromRgb888_BinaryBufferSizeMatchesDataSize)
+    {
+        constexpr int kW = 8;
+        constexpr int kH = 8;
+        auto          rgba = MakeRgbaData(kW, kH, 200, 100, 50, 255);
+
+        auto* p_mem = new TestMemory(std::move(rgba));
+        p_mem->AddRef();
+
+        ExportInterface::DasSize    size{kW, kH};
+        ExportInterface::IDasImage* p_image = nullptr;
+        ASSERT_EQ(CreateIDasImageFromRgb888(p_mem, &size, &p_image), DAS_S_OK);
+
+        uint64_t data_size = 0;
+        EXPECT_EQ(p_image->GetDataSize(&data_size), DAS_S_OK);
+
+        ExportInterface::IDasBinaryBuffer* p_buffer = nullptr;
+        EXPECT_EQ(p_image->GetBinaryBuffer(&p_buffer), DAS_S_OK);
+        ASSERT_NE(p_buffer, nullptr);
+        uint64_t buf_size = 0;
+        EXPECT_EQ(p_buffer->GetSize(&buf_size), DAS_S_OK);
+        EXPECT_EQ(buf_size, data_size);
+        p_buffer->Release();
+
+        p_mem->Release();
+        p_image->Release();
     }
 
 } // namespace Das::Core::OcvWrapper::Test
