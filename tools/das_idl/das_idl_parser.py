@@ -411,7 +411,9 @@ class Parser:
         'size_t', 'DasResult', 'DasBool', 'DasGuid', 'DasString',
         'DasReadOnlyString', 'char',
         'unsigned char', 'unsigned int', 'unsigned short', 'unsigned long',
-        'signed char', 'signed int', 'signed short', 'signed long'
+        'signed char', 'signed int', 'signed short', 'signed long',
+        'int8_t', 'int16_t', 'int32_t', 'int64_t',
+        'uint8_t', 'uint16_t', 'uint32_t', 'uint64_t',
     }
 
     # 这些类型名虽然在 BUILTIN_TYPES 中不是基本类型，但 IDL 中没有定义，
