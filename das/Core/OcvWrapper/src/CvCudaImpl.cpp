@@ -217,6 +217,11 @@ DasResult CvCudaImpl::TemplateMatchBest(
         max_score = 0;
     }
 
+    if (std::isnan(min_score) || std::isinf(min_score))
+    {
+        min_score = 0;
+    }
+
     cv::Point matched_location{};
     double    score{};
     if (type == ExportInterface::DAS_TEMPLATE_MATCH_TYPE_SQDIFF_NORMED)
