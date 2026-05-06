@@ -236,6 +236,19 @@ DAS_NS_END
 
 #endif // __cplusplus
 
+DAS_NS_BEGIN
+namespace Core
+{
+    namespace IPC
+    {
+        namespace MainProcess
+        {
+            DAS_INTERFACE IIpcContext;
+        } // namespace MainProcess
+    } // namespace IPC
+} // namespace Core
+DAS_NS_END
+
 DAS_C_API DasResult
 InitializeDasCore(Das::Core::IPC::MainProcess::IIpcContext* p_ipc_context);
 

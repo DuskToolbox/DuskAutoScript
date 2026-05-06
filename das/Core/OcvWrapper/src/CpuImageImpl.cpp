@@ -100,7 +100,7 @@ CpuImageImpl::QueryInterface(const DasGuid& iid, void** pp_out_object)
         return DAS_E_INVALID_POINTER;
     }
 
-    if (iid == DasIidOf<ExportInterface::IDasBase>()
+    if (iid == DasIidOf<IDasBase>()
         || iid == DasIidOf<ExportInterface::IDasImage>()
         || iid == DasIidOf<Das::Core::OcvWrapper::IImageBackend>())
     {

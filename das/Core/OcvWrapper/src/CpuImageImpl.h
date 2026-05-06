@@ -4,6 +4,8 @@
 #include "Config.h"
 #include "IImageBackend.h"
 
+#include <das/_autogen/idl/abi/IDasMemory.h>
+
 #include <atomic>
 
 DAS_CORE_OCVWRAPPER_NS_BEGIN

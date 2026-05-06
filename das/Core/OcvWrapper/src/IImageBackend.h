@@ -43,7 +43,7 @@ DAS_CORE_OCVWRAPPER_NS_BEGIN
  * Provides unified access to CPU/GPU image data through QueryInterface.
  * Inherits from IDasImage so all implementations also satisfy the public ABI.
  */
-class IImageBackend : public ExportInterface::IDasImage
+struct IImageBackend : public ExportInterface::IDasImage
 {
 public:
     /// @brief Get CPU-side image data (auto-download from GPU if needed)
