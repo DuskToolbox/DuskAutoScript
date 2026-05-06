@@ -5,6 +5,9 @@ endif()
 
 if(EXPORT_PYTHON)
     find_package(Python3 COMPONENTS Development Development.SABIModule REQUIRED)
+    # 创建 DasPython::SABI 包装目标（带 /NODEFAULTLIB 修复 MSVC pyconfig.h 冲突）
+    include(DasPythonFallback)
+    das_python_debug_fallback()
 endif()
 
 if(EXPORT_LUA)
@@ -157,7 +160,7 @@ set(DAS_EXPORT_MACRO_LIST "")
 
 if(EXPORT_PYTHON)
     list(APPEND DAS_EXPORT_MACRO_LIST DAS_EXPORT_PYTHON)
-    list(APPEND DAS_FOREIGN_LANGUAGE_LIB_LIST Python3::SABIModule)
+    list(APPEND DAS_FOREIGN_LANGUAGE_LIB_LIST DasPython::SABI)
 endif()
 
 if(EXPORT_JAVA)

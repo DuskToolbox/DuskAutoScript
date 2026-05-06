@@ -87,6 +87,8 @@ include(DasSetOutputPath)
 if (${EXPORT_PYTHON})
     set(Python3_FIND_STRATEGY LOCATION)
     find_package(Python3 COMPONENTS Development REQUIRED)
+    include(DasPythonFallback)
+    das_python_debug_fallback()
 endif ()
 
 #选项配置

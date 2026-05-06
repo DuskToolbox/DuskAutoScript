@@ -153,9 +153,10 @@ function(das_add_swig_export_library LANGUAGE RAW_NAME FILES)
     if(LANGUAGE STREQUAL "Python")
         target_compile_definitions(${RAW_NAME} PRIVATE Py_LIMITED_API=0x030A0000)
 
-        # Python 调试版需要 _d 后缀
+        # Python 调试版需要 _d 后缀，但仅在 Python debug 库可用时添加
+        # 当 Python debug 不可用时，Release 版 Python 解释器无法加载 _d.pyd
         # 参考: https://gitlab.kitware.com/cmake/cmake/-/issues/27185
-        if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_CONFIGURATION_TYPES)
+        if(DAS_PYTHON_DEBUG_AVAILABLE AND (CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_CONFIGURATION_TYPES))
             set_property(TARGET ${RAW_NAME} PROPERTY SUFFIX "_d.pyd")
         endif()
     endif()
