@@ -13,7 +13,9 @@ DasResult IDasTensorVectorImpl::GetCount(uint32_t* p_count)
     return DAS_S_OK;
 }
 
-DasResult IDasTensorVectorImpl::GetAt(uint32_t index, IDasTensor** pp_out_value)
+DasResult IDasTensorVectorImpl::GetAt(
+    uint32_t                      index,
+    ExportInterface::IDasTensor** pp_out_value)
 {
     DAS_UTILS_CHECK_POINTER(pp_out_value);
 
@@ -27,7 +29,7 @@ DasResult IDasTensorVectorImpl::GetAt(uint32_t index, IDasTensor** pp_out_value)
     return DAS_S_OK;
 }
 
-void IDasTensorVectorImpl::AddTensor(IDasTensor* p_tensor)
+void IDasTensorVectorImpl::AddTensor(ExportInterface::IDasTensor* p_tensor)
 {
     items_.emplace_back(p_tensor);
 }

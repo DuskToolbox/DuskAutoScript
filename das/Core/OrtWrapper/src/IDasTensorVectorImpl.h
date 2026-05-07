@@ -24,20 +24,19 @@ DAS_DEFINE_CLASS_IN_NAMESPACE(
 
 DAS_CORE_ORTWRAPPER_NS_BEGIN
 
-using Das::ExportInterface::IDasTensor;
-
 class IDasTensorVectorImpl final
     : public Das::ExportInterface::DasTensorVectorImplBase<IDasTensorVectorImpl>
 {
-    std::vector<Das::DasPtr<IDasTensor>> items_;
+    std::vector<Das::DasPtr<ExportInterface::IDasTensor>> items_;
 
 public:
     IDasTensorVectorImpl() = default;
 
     DAS_IMPL GetCount(uint32_t* p_count) override;
-    DAS_IMPL GetAt(uint32_t index, IDasTensor** pp_out_value) override;
+    DAS_IMPL GetAt(uint32_t index, ExportInterface::IDasTensor** pp_out_value)
+        override;
 
-    void AddTensor(IDasTensor* p_tensor);
+    void AddTensor(ExportInterface::IDasTensor* p_tensor);
     void Reserve(size_t count);
 };
 
