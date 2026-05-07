@@ -23,13 +23,6 @@ DAS_DEFINE_CLASS_IN_NAMESPACE(
 
 DAS_CORE_ORTWRAPPER_NS_BEGIN
 
-using Das::ExportInterface::IDasImage;
-using Das::ExportInterface::IDasJson;
-using Das::ExportInterface::IDasOcr;
-using Das::ExportInterface::IDasReadOnlyString;
-using Das::ExportInterface::IDasSession;
-using Das::ExportInterface::IDasTensor;
-
 class AiCpuImpl final : public Das::ExportInterface::DasAIImplBase<AiCpuImpl>,
                         public DasOrt
 {
@@ -37,24 +30,24 @@ public:
     AiCpuImpl() : DasOrt("AiCpuImpl") {}
 
     DAS_IMPL CreateSession(
-        IDasReadOnlyString* model_path,
-        IDasJson*           options,
-        IDasSession**       pp_session) override;
+        IDasReadOnlyString*            model_path,
+        ExportInterface::IDasJson*     options,
+        ExportInterface::IDasSession** pp_session) override;
 
     DAS_IMPL CreateTensorFromImage(
-        IDasImage*   image,
-        int64_t*     shape,
-        uint32_t     rank,
-        double*      mean,
-        double*      std,
-        uint32_t     value_count,
-        IDasTensor** pp_tensor) override;
+        ExportInterface::IDasImage*   image,
+        int64_t*                      shape,
+        uint32_t                      rank,
+        double*                       mean,
+        double*                       std,
+        uint32_t                      value_count,
+        ExportInterface::IDasTensor** pp_tensor) override;
 
     DAS_IMPL CreateOcr(
-        IDasReadOnlyString* det_model,
-        IDasReadOnlyString* rec_model,
-        IDasReadOnlyString* dict,
-        IDasOcr**           pp_ocr) override;
+        IDasReadOnlyString*        det_model,
+        IDasReadOnlyString*        rec_model,
+        IDasReadOnlyString*        dict,
+        ExportInterface::IDasOcr** pp_ocr) override;
 };
 
 DAS_CORE_ORTWRAPPER_NS_END

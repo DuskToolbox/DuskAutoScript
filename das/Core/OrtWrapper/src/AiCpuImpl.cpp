@@ -3,6 +3,7 @@
 #include "IDasTensorImpl.h"
 
 #include <das/Core/Logger/Logger.h>
+#include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
 
@@ -13,8 +14,8 @@ DAS_CORE_ORTWRAPPER_NS_BEGIN
 
 DasResult AiCpuImpl::CreateSession(
     IDasReadOnlyString* model_path,
-    IDasJson*           options,
-    IDasSession**       pp_session)
+    ExportInterface::IDasJson* /*options*/,
+    ExportInterface::IDasSession** pp_session)
 {
     DAS_UTILS_CHECK_POINTER(pp_session);
     DAS_UTILS_CHECK_POINTER(model_path);
@@ -43,7 +44,7 @@ DasResult AiCpuImpl::CreateSession(
             "CreateSession failed: model_path={}, error={}",
             path_wrapper.GetUtf8(),
             e.what());
-        return DAS_E_INTERNAL_ERROR;
+        return DAS_E_ONNX_RUNTIME_ERROR;
     }
     catch (const std::bad_alloc&)
     {
@@ -52,13 +53,13 @@ DasResult AiCpuImpl::CreateSession(
 }
 
 DasResult AiCpuImpl::CreateTensorFromImage(
-    IDasImage*   image,
-    int64_t*     shape,
-    uint32_t     rank,
-    double*      mean,
-    double*      std,
-    uint32_t     value_count,
-    IDasTensor** pp_tensor)
+    ExportInterface::IDasImage*   image,
+    int64_t*                      shape,
+    uint32_t                      rank,
+    double*                       mean,
+    double*                       std,
+    uint32_t                      value_count,
+    ExportInterface::IDasTensor** pp_tensor)
 {
     DAS_UTILS_CHECK_POINTER(pp_tensor);
     DAS_UTILS_CHECK_POINTER(image);
@@ -69,8 +70,8 @@ DasResult AiCpuImpl::CreateTensorFromImage(
     try
     {
         // Get image data via IDasBinaryBuffer
-        Das::DasPtr<IDasBinaryBuffer> buf;
-        auto                          cr = image->GetBinaryBuffer(buf.Put());
+        Das::DasPtr<ExportInterface::IDasBinaryBuffer> buf;
+        auto cr = image->GetBinaryBuffer(buf.Put());
         if (Das::IsFailed(cr))
         {
             DAS_CORE_LOG_ERROR("GetBinaryBuffer failed: result={}", cr);
@@ -154,7 +155,7 @@ DasResult AiCpuImpl::CreateTensorFromImage(
     catch (const Ort::Exception& e)
     {
         DAS_CORE_LOG_ERROR("CreateTensorFromImage failed: {}", e.what());
-        return DAS_E_INTERNAL_ERROR;
+        return DAS_E_ONNX_RUNTIME_ERROR;
     }
     catch (const std::bad_alloc&)
     {
@@ -163,10 +164,10 @@ DasResult AiCpuImpl::CreateTensorFromImage(
 }
 
 DasResult AiCpuImpl::CreateOcr(
-    IDasReadOnlyString* det_model,
-    IDasReadOnlyString* rec_model,
-    IDasReadOnlyString* dict,
-    IDasOcr**           pp_ocr)
+    IDasReadOnlyString* /*det_model*/,
+    IDasReadOnlyString* /*rec_model*/,
+    IDasReadOnlyString* /*dict*/,
+    ExportInterface::IDasOcr** pp_ocr)
 {
     DAS_UTILS_CHECK_POINTER(pp_ocr);
 
