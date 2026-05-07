@@ -38,7 +38,9 @@ namespace
 
 IDasTensorImpl::IDasTensorImpl(Ort::Value value) : value_{std::move(value)} {}
 
-IDasTensorImpl::IDasTensorImpl(Ort::Value value, IDasImage* image)
+IDasTensorImpl::IDasTensorImpl(
+    Ort::Value                  value,
+    ExportInterface::IDasImage* image)
     : value_{std::move(value)}, source_image_{image}
 {
     if (source_image_)
@@ -64,7 +66,7 @@ DasResult IDasTensorImpl::GetDim(uint32_t index, int64_t* p_value)
     catch (const Ort::Exception& e)
     {
         DAS_CORE_LOG_ERROR("GetDim failed: {}", e.what());
-        return DAS_E_INTERNAL_ERROR;
+        return DAS_E_ONNX_RUNTIME_ERROR;
     }
 }
 
@@ -81,11 +83,12 @@ DasResult IDasTensorImpl::GetRank(uint32_t* p_rank)
     catch (const Ort::Exception& e)
     {
         DAS_CORE_LOG_ERROR("GetRank failed: {}", e.what());
-        return DAS_E_INTERNAL_ERROR;
+        return DAS_E_ONNX_RUNTIME_ERROR;
     }
 }
 
-DasResult IDasTensorImpl::GetDataType(DasTensorDataType* p_type)
+DasResult IDasTensorImpl::GetDataType(
+    ExportInterface::DasTensorDataType* p_type)
 {
     DAS_UTILS_CHECK_POINTER(p_type);
 
@@ -98,7 +101,7 @@ DasResult IDasTensorImpl::GetDataType(DasTensorDataType* p_type)
     catch (const Ort::Exception& e)
     {
         DAS_CORE_LOG_ERROR("GetDataType failed: {}", e.what());
-        return DAS_E_INTERNAL_ERROR;
+        return DAS_E_ONNX_RUNTIME_ERROR;
     }
 }
 
@@ -109,7 +112,7 @@ DasResult IDasTensorImpl::GetRawData(void** pp_data, uint64_t* p_size)
 
     try
     {
-        auto& shape_info = value_.GetTensorTypeAndShapeInfo();
+        auto shape_info = value_.GetTensorTypeAndShapeInfo();
         *pp_data = value_.GetTensorMutableData<void>();
         const auto element_count = shape_info.GetElementCount();
         const auto element_size = GetElementSize(shape_info.GetElementType());
@@ -119,7 +122,7 @@ DasResult IDasTensorImpl::GetRawData(void** pp_data, uint64_t* p_size)
     catch (const Ort::Exception& e)
     {
         DAS_CORE_LOG_ERROR("GetRawData failed: {}", e.what());
-        return DAS_E_INTERNAL_ERROR;
+        return DAS_E_ONNX_RUNTIME_ERROR;
     }
 }
 

@@ -23,22 +23,19 @@ DAS_DEFINE_CLASS_IN_NAMESPACE(
 
 DAS_CORE_ORTWRAPPER_NS_BEGIN
 
-using Das::ExportInterface::DasTensorDataType;
-using Das::ExportInterface::IDasImage;
-
 class IDasTensorImpl final
     : public Das::ExportInterface::DasTensorImplBase<IDasTensorImpl>
 {
-    Ort::Value             value_;
-    Das::DasPtr<IDasImage> source_image_;
+    Ort::Value                              value_;
+    Das::DasPtr<ExportInterface::IDasImage> source_image_;
 
 public:
     explicit IDasTensorImpl(Ort::Value value);
-    IDasTensorImpl(Ort::Value value, IDasImage* image);
+    IDasTensorImpl(Ort::Value value, ExportInterface::IDasImage* image);
 
     DAS_IMPL GetDim(uint32_t index, int64_t* p_value) override;
     DAS_IMPL GetRank(uint32_t* p_rank) override;
-    DAS_IMPL GetDataType(DasTensorDataType* p_type) override;
+    DAS_IMPL GetDataType(ExportInterface::DasTensorDataType* p_type) override;
     DAS_IMPL GetRawData(void** pp_data, uint64_t* p_size) override;
 
     const Ort::Value& GetOrtValue() const { return value_; }
