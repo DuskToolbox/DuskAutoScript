@@ -5,6 +5,7 @@
 #include <das/DasTypes.hpp>
 
 #include <filesystem>
+#include <memory>
 
 DAS_CORE_DEBUG_NS_BEGIN
 
@@ -24,6 +25,8 @@ public:
     static bool IsEnabled();
     static const std::filesystem::path& DebugDir();
     static DasResult SubmitEvent(const DebugEvent& event);
+    static void RegisterSink(std::shared_ptr<IDebugSink> sink);
+    static void RegisterDrain(std::shared_ptr<IDebugDrain> drain);
     static DasResult Flush();
     static void Shutdown();
     static void ResetForTest();
