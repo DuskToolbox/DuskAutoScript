@@ -273,7 +273,7 @@ function(das_add_idl_export)
     endif()
 
     # Lua 输出目录（仅在 LANGUAGES 包含 Lua 时设置）
-    if(DEFINED _LUA_OUTPUT_DIR)
+    if(_LUA_OUTPUT_DIR)
         list(APPEND _GEN_CONFIG_ARGS
             --lua-output-dir "${_LUA_OUTPUT_DIR}"
             --lua-name "${DAS_IDL_EXPORT_NAME}"
