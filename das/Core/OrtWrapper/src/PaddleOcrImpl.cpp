@@ -44,7 +44,7 @@ static constexpr double kRecStd[] = {127.5, 127.5, 127.5};
 
 // ===== Helper: query tensor dimensions =====
 static void GetTensorDims(
-    Das::ExportInterface::IDasTensor* tensor,
+    DAS::ExportInterface::IDasTensor* tensor,
     std::vector<int64_t>&             dims)
 {
     uint32_t rank = 0;
@@ -264,28 +264,28 @@ static CtcResult CtcGreedyDecode(
 
 // ===== Helper: create a session Run call wrapper =====
 static DasResult RunSession(
-    Das::ExportInterface::IDasSession*       session,
+    DAS::ExportInterface::IDasSession*       session,
     const std::vector<std::string>&          input_name_strs,
-    Das::ExportInterface::IDasTensor*        input_tensor,
+    DAS::ExportInterface::IDasTensor*        input_tensor,
     const std::vector<std::string>&          output_name_strs,
-    Das::ExportInterface::IDasTensorVector** pp_outputs)
+    DAS::ExportInterface::IDasTensorVector** pp_outputs)
 {
     // Build input names vector
     auto input_names = new IDasReadOnlyStringVectorImpl(input_name_strs);
     input_names->AddRef();
-    Das::DasPtr<Das::ExportInterface::IDasReadOnlyStringVector> input_names_ptr(
+    DAS::DasPtr<DAS::ExportInterface::IDasReadOnlyStringVector> input_names_ptr(
         input_names);
 
     // Build inputs vector
     auto inputs = new IDasTensorVectorImpl();
     inputs->AddRef();
     inputs->AddTensor(input_tensor);
-    Das::DasPtr<Das::ExportInterface::IDasTensorVector> inputs_ptr(inputs);
+    DAS::DasPtr<DAS::ExportInterface::IDasTensorVector> inputs_ptr(inputs);
 
     // Build output names vector
     auto output_names = new IDasReadOnlyStringVectorImpl(output_name_strs);
     output_names->AddRef();
-    Das::DasPtr<Das::ExportInterface::IDasReadOnlyStringVector>
+    DAS::DasPtr<DAS::ExportInterface::IDasReadOnlyStringVector>
         output_names_ptr(output_names);
 
     auto result = session->Run(input_names, inputs, output_names, pp_outputs);
@@ -294,8 +294,8 @@ static DasResult RunSession(
 
 // ===== Helper: run recognition on a single text crop =====
 static DasResult RecognizeTextCrop(
-    Das::ExportInterface::IDasAI* /*ai*/,
-    Das::ExportInterface::IDasSession* rec_session,
+    DAS::ExportInterface::IDasAI* /*ai*/,
+    DAS::ExportInterface::IDasSession* rec_session,
     const std::vector<std::string>&    rec_output_names,
     int64_t                            rec_input_height,
     int64_t                            rec_input_width,
@@ -336,11 +336,20 @@ static DasResult RecognizeTextCrop(
         static_cast<int64_t>(resized.cols)};
     int64_t total_elements = shape[0] * shape[1] * shape[2] * shape[3];
 
-    // Preprocess: (pixel / 255.0 - mean) / std  (Pitfall 3: rec normalization)
-    std::vector<float> float_data(static_cast<size_t>(total_elements));
-    int                height = resized.rows;
-    int                width = resized.cols;
-    int                channels = resized.channels();
+    // Preprocess into DAS-owned memory so the ORT tensor never outlives its
+    // backing buffer.
+    FloatTensorBackingBuffer backing{};
+    auto backing_result = CreateFloatTensorBackingBuffer(total_elements, &backing);
+    if (DAS::IsFailed(backing_result))
+    {
+        return backing_result;
+    }
+    auto* float_data = backing.data;
+    std::fill_n(float_data, backing.element_count, 0.0f);
+
+    int height = resized.rows;
+    int width = resized.cols;
+    int channels = resized.channels();
 
     for (int h = 0; h < height; ++h)
     {
@@ -355,7 +364,7 @@ static DasResult RecognizeTextCrop(
                     / (kRecStd[c] / 255.0));
                 auto dst_idx =
                     static_cast<size_t>(c * height * width + h * width + w);
-                if (dst_idx < float_data.size())
+                if (dst_idx < backing.element_count)
                 {
                     float_data[dst_idx] = val;
                 }
@@ -369,35 +378,38 @@ static DasResult RecognizeTextCrop(
         Ort::MemoryInfo::CreateCpu(
             OrtAllocatorType::OrtArenaAllocator,
             OrtMemType::OrtMemTypeCPU),
-        float_data.data(),
-        static_cast<size_t>(total_elements),
+        float_data,
+        backing.element_count,
         shape,
         4);
 
-    auto* tensor_impl = new IDasTensorImpl(std::move(input_tensor));
+    auto* tensor_impl = new IDasTensorImpl(
+        std::move(input_tensor),
+        backing.memory.Get(),
+        backing.buffer.Get());
     tensor_impl->AddRef();
-    Das::DasPtr<Das::ExportInterface::IDasTensor> tensor_ptr(tensor_impl);
+    DAS::DasPtr<DAS::ExportInterface::IDasTensor> tensor_ptr(tensor_impl);
 
     // Run rec inference
     // Discover rec model input name — use first input name from session
     // PaddleOCR rec model input name is typically "x"
     std::vector<std::string> rec_input_names = {"x"};
 
-    Das::DasPtr<Das::ExportInterface::IDasTensorVector> outputs;
+    DAS::DasPtr<DAS::ExportInterface::IDasTensorVector> outputs;
     auto                                                result = RunSession(
         rec_session,
         rec_input_names,
         tensor_impl,
         rec_output_names,
         outputs.Put());
-    if (Das::IsFailed(result))
+    if (DAS::IsFailed(result))
     {
         DAS_CORE_LOG_ERROR("Rec inference failed: result={}", result);
         return result;
     }
 
     // Get output tensor
-    Das::DasPtr<Das::ExportInterface::IDasTensor> out_tensor;
+    DAS::DasPtr<DAS::ExportInterface::IDasTensor> out_tensor;
     outputs->GetAt(0, out_tensor.Put());
 
     // Get output shape and data
@@ -433,21 +445,21 @@ static DasResult RecognizeTextCrop(
 // PaddleOcrImpl constructor
 // =====================================================================
 PaddleOcrImpl::PaddleOcrImpl(
-    Das::ExportInterface::IDasAI*      ai,
-    Das::ExportInterface::IDasSession* det_session,
-    Das::ExportInterface::IDasSession* rec_session,
+    DAS::ExportInterface::IDasAI*      ai,
+    DAS::ExportInterface::IDasSession* det_session,
+    DAS::ExportInterface::IDasSession* rec_session,
     std::vector<std::string>           dict)
-    : ai_(Das::DasPtr<Das::ExportInterface::IDasAI>(ai)), dict_(std::move(dict))
+    : ai_(DAS::DasPtr<DAS::ExportInterface::IDasAI>(ai)), dict_(std::move(dict))
 {
     if (det_session)
     {
         det_session_ =
-            Das::DasPtr<Das::ExportInterface::IDasSession>(det_session);
+            DAS::DasPtr<DAS::ExportInterface::IDasSession>(det_session);
     }
     if (rec_session)
     {
         rec_session_ =
-            Das::DasPtr<Das::ExportInterface::IDasSession>(rec_session);
+            DAS::DasPtr<DAS::ExportInterface::IDasSession>(rec_session);
     }
 }
 
@@ -455,8 +467,8 @@ PaddleOcrImpl::PaddleOcrImpl(
 // PaddleOcrImpl::Recognize — full det+rec pipeline
 // =====================================================================
 DasResult PaddleOcrImpl::Recognize(
-    Das::ExportInterface::IDasImage*            p_image,
-    Das::ExportInterface::IDasOcrResultVector** pp_results)
+    DAS::ExportInterface::IDasImage*            p_image,
+    DAS::ExportInterface::IDasOcrResultVector** pp_results)
 {
     DAS_UTILS_CHECK_POINTER(p_image);
     DAS_UTILS_CHECK_POINTER(pp_results);
@@ -464,9 +476,9 @@ DasResult PaddleOcrImpl::Recognize(
     try
     {
         // Get image dimensions
-        Das::ExportInterface::DasSize img_size{};
+        DAS::ExportInterface::DasSize img_size{};
         auto                          cr = p_image->GetSize(&img_size);
-        if (Das::IsFailed(cr))
+        if (DAS::IsFailed(cr))
         {
             DAS_CORE_LOG_ERROR("Recognize: GetSize failed: result={}", cr);
             return cr;
@@ -484,9 +496,9 @@ DasResult PaddleOcrImpl::Recognize(
         }
 
         // Get raw pixel data
-        Das::DasPtr<Das::ExportInterface::IDasBinaryBuffer> buf;
+        DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer> buf;
         cr = p_image->GetBinaryBuffer(buf.Put());
-        if (Das::IsFailed(cr))
+        if (DAS::IsFailed(cr))
         {
             DAS_CORE_LOG_ERROR(
                 "Recognize: GetBinaryBuffer failed: result={}",
@@ -541,7 +553,14 @@ DasResult PaddleOcrImpl::Recognize(
                 static_cast<int64_t>(target_w)};
             int64_t total_elements = shape[0] * shape[1] * shape[2] * shape[3];
 
-            std::vector<float> float_data(static_cast<size_t>(total_elements));
+            FloatTensorBackingBuffer det_backing{};
+            cr = CreateFloatTensorBackingBuffer(total_elements, &det_backing);
+            if (DAS::IsFailed(cr))
+            {
+                return cr;
+            }
+            auto* float_data = det_backing.data;
+            std::fill_n(float_data, det_backing.element_count, 0.0f);
 
             // Det normalization: ImageNet (Pitfall 3)
             int channels = resized.channels();
@@ -557,7 +576,7 @@ DasResult PaddleOcrImpl::Recognize(
                             (src_byte / 255.0 - kDetMean[c]) / kDetStd[c]);
                         auto dst_idx = static_cast<size_t>(
                             c * target_h * target_w + h * target_w + w);
-                        if (dst_idx < float_data.size())
+                        if (dst_idx < det_backing.element_count)
                         {
                             float_data[dst_idx] = val;
                         }
@@ -569,35 +588,37 @@ DasResult PaddleOcrImpl::Recognize(
                 Ort::MemoryInfo::CreateCpu(
                     OrtAllocatorType::OrtArenaAllocator,
                     OrtMemType::OrtMemTypeCPU),
-                float_data.data(),
-                static_cast<size_t>(total_elements),
+                float_data,
+                det_backing.element_count,
                 shape,
                 4);
 
-            auto* det_tensor_impl =
-                new IDasTensorImpl(std::move(det_input_tensor));
+            auto* det_tensor_impl = new IDasTensorImpl(
+                std::move(det_input_tensor),
+                det_backing.memory.Get(),
+                det_backing.buffer.Get());
             det_tensor_impl->AddRef();
-            Das::DasPtr<Das::ExportInterface::IDasTensor> det_tensor_ptr(
+            DAS::DasPtr<DAS::ExportInterface::IDasTensor> det_tensor_ptr(
                 det_tensor_impl);
 
             // --- Det inference ---
             std::vector<std::string> det_input_names = {"x"};
 
-            Das::DasPtr<Das::ExportInterface::IDasTensorVector> det_outputs;
+            DAS::DasPtr<DAS::ExportInterface::IDasTensorVector> det_outputs;
             cr = RunSession(
                 det_session_.Get(),
                 det_input_names,
                 det_tensor_impl,
                 det_output_names_,
                 det_outputs.Put());
-            if (Das::IsFailed(cr))
+            if (DAS::IsFailed(cr))
             {
                 DAS_CORE_LOG_ERROR("Det inference failed: result={}", cr);
                 return cr;
             }
 
             // --- DB post-processing ---
-            Das::DasPtr<Das::ExportInterface::IDasTensor> det_out_tensor;
+            DAS::DasPtr<DAS::ExportInterface::IDasTensor> det_out_tensor;
             det_outputs->GetAt(0, det_out_tensor.Put());
 
             std::vector<int64_t> det_out_dims;
@@ -835,7 +856,7 @@ DasResult PaddleOcrImpl::Recognize(
                 dict_,
                 ctc_result);
 
-            if (Das::IsFailed(cr))
+            if (DAS::IsFailed(cr))
             {
                 DAS_CORE_LOG_WARN(
                     "Recognition failed for a text region: result={}",
@@ -852,7 +873,7 @@ DasResult PaddleOcrImpl::Recognize(
             // Build char boxes: distribute evenly across detection box
             // Use UTF-8 code point count (not byte count) for multi-byte
             // characters like Chinese (3 bytes per character in UTF-8)
-            std::vector<Das::ExportInterface::DasRect> char_boxes;
+            std::vector<DAS::ExportInterface::DasRect> char_boxes;
             uint32_t                                   char_count = 0;
             {
                 const auto& text = ctc_result.text;
@@ -887,7 +908,7 @@ DasResult PaddleOcrImpl::Recognize(
                 int char_w = det_box.rect.width / static_cast<int>(char_count);
                 for (uint32_t ci = 0; ci < char_count; ++ci)
                 {
-                    Das::ExportInterface::DasRect cr{};
+                    DAS::ExportInterface::DasRect cr{};
                     cr.x = det_box.rect.x + static_cast<int>(ci) * char_w;
                     cr.y = det_box.rect.y;
                     cr.width = char_w;
@@ -897,7 +918,7 @@ DasResult PaddleOcrImpl::Recognize(
             }
 
             // Create IDasOcrResultImpl
-            Das::ExportInterface::DasRect line_box{};
+            DAS::ExportInterface::DasRect line_box{};
             line_box.x = det_box.rect.x;
             line_box.y = det_box.rect.y;
             line_box.width = det_box.rect.width;

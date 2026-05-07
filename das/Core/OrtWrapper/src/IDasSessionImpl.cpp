@@ -40,9 +40,43 @@ DasResult IDasSessionImpl::Run(
     try
     {
         uint32_t input_count = 0;
-        input_names->GetCount(&input_count);
+        auto cr = input_names->GetCount(&input_count);
+        if (DAS::IsFailed(cr))
+        {
+            DAS_CORE_LOG_ERROR(
+                "Session Run failed: input_names->GetCount returned {}",
+                cr);
+            return cr;
+        }
+
+        uint32_t tensor_count = 0;
+        cr = inputs->GetCount(&tensor_count);
+        if (DAS::IsFailed(cr))
+        {
+            DAS_CORE_LOG_ERROR(
+                "Session Run failed: inputs->GetCount returned {}",
+                cr);
+            return cr;
+        }
+        if (tensor_count != input_count)
+        {
+            DAS_CORE_LOG_ERROR(
+                "Session Run failed: input count mismatch, names={}, "
+                "tensors={}",
+                input_count,
+                tensor_count);
+            return DAS_E_INVALID_ARGUMENT;
+        }
+
         uint32_t output_count = 0;
-        output_names->GetCount(&output_count);
+        cr = output_names->GetCount(&output_count);
+        if (DAS::IsFailed(cr))
+        {
+            DAS_CORE_LOG_ERROR(
+                "Session Run failed: output_names->GetCount returned {}",
+                cr);
+            return cr;
+        }
 
         // Use IoBinding to pass tensor references without copying
         Ort::IoBinding io_binding{session_};
@@ -50,12 +84,43 @@ DasResult IDasSessionImpl::Run(
         // Bind inputs
         for (uint32_t i = 0; i < input_count; ++i)
         {
-            Das::DasPtr<ExportInterface::IDasTensor> p_tensor;
-            inputs->GetAt(i, p_tensor.Put());
-            auto* tensor_impl = static_cast<IDasTensorImpl*>(p_tensor.Get());
+            DAS::DasPtr<ExportInterface::IDasTensor> p_tensor;
+            cr = inputs->GetAt(i, p_tensor.Put());
+            if (DAS::IsFailed(cr) || !p_tensor)
+            {
+                DAS_CORE_LOG_ERROR(
+                    "Session Run failed: inputs->GetAt({}) returned {}, "
+                    "tensor={}",
+                    i,
+                    cr,
+                    static_cast<bool>(p_tensor));
+                return DAS::IsFailed(cr) ? cr : DAS_E_INVALID_POINTER;
+            }
 
-            Das::DasPtr<IDasReadOnlyString> p_name;
-            input_names->GetAt(i, p_name.Put());
+            DAS::DasPtr<IDasTensorImpl> tensor_impl;
+            cr = p_tensor.As(tensor_impl);
+            if (DAS::IsFailed(cr) || !tensor_impl)
+            {
+                DAS_CORE_LOG_ERROR(
+                    "Session Run failed: input tensor {} does not expose "
+                    "IDasTensorImpl, result={}",
+                    i,
+                    cr);
+                return DAS::IsFailed(cr) ? cr : DAS_E_NO_INTERFACE;
+            }
+
+            DAS::DasPtr<IDasReadOnlyString> p_name;
+            cr = input_names->GetAt(i, p_name.Put());
+            if (DAS::IsFailed(cr) || !p_name)
+            {
+                DAS_CORE_LOG_ERROR(
+                    "Session Run failed: input_names->GetAt({}) returned {}, "
+                    "name={}",
+                    i,
+                    cr,
+                    static_cast<bool>(p_name));
+                return DAS::IsFailed(cr) ? cr : DAS_E_INVALID_POINTER;
+            }
             DasReadOnlyString name_wrapper(p_name.Get());
 
             io_binding.BindInput(
@@ -66,12 +131,24 @@ DasResult IDasSessionImpl::Run(
         // Bind outputs — let ORT allocate output memory
         // If caller provided no output names, fall back to names discovered
         // at session construction time (Pitfall 2)
-        auto bind_outputs = [&]()
+        auto bind_outputs = [&]() -> DasResult
         {
             for (uint32_t i = 0; i < output_count; ++i)
             {
-                Das::DasPtr<IDasReadOnlyString> p_name;
-                output_names->GetAt(i, p_name.Put());
+                DAS::DasPtr<IDasReadOnlyString> p_name;
+                const auto get_name_result = output_names->GetAt(i, p_name.Put());
+                if (DAS::IsFailed(get_name_result) || !p_name)
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "Session Run failed: output_names->GetAt({}) returned "
+                        "{}, name={}",
+                        i,
+                        get_name_result,
+                        static_cast<bool>(p_name));
+                    return DAS::IsFailed(get_name_result)
+                               ? get_name_result
+                               : DAS_E_INVALID_POINTER;
+                }
                 DasReadOnlyString name_wrapper(p_name.Get());
                 io_binding.BindOutput(
                     name_wrapper.GetUtf8(),
@@ -86,8 +163,13 @@ DasResult IDasSessionImpl::Run(
                         allocator_.GetInfo());
                 }
             }
+            return DAS_S_OK;
         };
-        bind_outputs();
+        cr = bind_outputs();
+        if (DAS::IsFailed(cr))
+        {
+            return cr;
+        }
 
         // Run inference
         session_.Run(Ort::RunOptions{nullptr}, io_binding);

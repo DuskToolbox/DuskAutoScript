@@ -8,6 +8,7 @@
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
 
+#include <algorithm>
 #include <vector>
 
 DAS_CORE_ORTWRAPPER_NS_BEGIN
@@ -74,9 +75,9 @@ DasResult AiCudaImpl::CreateTensorFromImage(
     try
     {
         // Get image data via IDasBinaryBuffer
-        Das::DasPtr<ExportInterface::IDasBinaryBuffer> buf;
+        DAS::DasPtr<ExportInterface::IDasBinaryBuffer> buf;
         auto cr = image->GetBinaryBuffer(buf.Put());
-        if (Das::IsFailed(cr))
+        if (DAS::IsFailed(cr))
         {
             DAS_CORE_LOG_ERROR("GetBinaryBuffer failed: result={}", cr);
             return cr;
@@ -94,8 +95,15 @@ DasResult AiCudaImpl::CreateTensorFromImage(
             total_elements *= shape[i];
         }
 
-        // Materialize: preprocess pixel data to float tensor
-        std::vector<float> float_data(total_elements);
+        // Materialize: preprocess pixel data to DAS-owned tensor memory.
+        FloatTensorBackingBuffer backing{};
+        cr = CreateFloatTensorBackingBuffer(total_elements, &backing);
+        if (DAS::IsFailed(cr))
+        {
+            return cr;
+        }
+        auto* float_data = backing.data;
+        std::fill_n(float_data, backing.element_count, 0.0f);
 
         // Simple preprocessing: normalize each pixel channel
         // Shape is expected to be [N, C, H, W] (CHW format)
@@ -123,7 +131,7 @@ DasResult AiCudaImpl::CreateTensorFromImage(
                             float val = static_cast<float>(
                                 (src_byte / 255.0 - mean[c]) / std[c]);
                             auto dst_idx = c * pixel_count + h * width + w;
-                            if (dst_idx < static_cast<uint64_t>(total_elements))
+                            if (dst_idx < backing.element_count)
                             {
                                 float_data[dst_idx] = val;
                             }
@@ -143,15 +151,18 @@ DasResult AiCudaImpl::CreateTensorFromImage(
             }
         }
 
-        // Create ORT tensor (copies data)
+        // Create ORT tensor over DAS-owned memory.
         auto input_tensor = Ort::Value::CreateTensor<float>(
             GetDefaultCpuMemoryInfo(),
-            float_data.data(),
-            total_elements,
+            float_data,
+            backing.element_count,
             shape,
             rank);
 
-        auto* impl = new IDasTensorImpl(std::move(input_tensor));
+        auto* impl = new IDasTensorImpl(
+            std::move(input_tensor),
+            backing.memory.Get(),
+            backing.buffer.Get());
         impl->AddRef();
         *pp_tensor = impl;
         return DAS_S_OK;
