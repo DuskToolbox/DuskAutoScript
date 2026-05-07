@@ -10,6 +10,8 @@
 #include <das/Utils/CommonUtils.hpp>
 #include <das/_autogen/idl/abi/IDasTask.h>
 
+#include "../../Debug/src/DebugWriterImpl.h"
+
 DasRetGuid DasMakeDasGuid(const char* p_guid_string)
 {
     DAS_CORE_TRACE_SCOPE;
@@ -74,6 +76,13 @@ DasResult InitializeDasCoreWithOptions(
     if (Das::IsFailed(debug_result))
     {
         return debug_result;
+    }
+
+    auto debug_writer_result =
+        Das::Core::Debug::RegisterDebugWriterService(*p_ipc_context);
+    if (Das::IsFailed(debug_writer_result))
+    {
+        return debug_writer_result;
     }
 
     auto cv_result = Das::Core::OcvWrapper::RegisterCvServices(*p_ipc_context);

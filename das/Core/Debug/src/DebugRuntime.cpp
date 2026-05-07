@@ -1,8 +1,13 @@
 #define _CRT_SECURE_NO_WARNINGS
 
 #include <das/Core/Debug/DebugEvent.h>
+#include <das/Core/Debug/DebugImageAnnotator.h>
 #include <das/Core/Debug/DebugRuntime.h>
 #include <das/Core/Debug/DebugSink.h>
+#include <das/DasApi.h>
+#include <das/DasPtr.hpp>
+#include <das/Utils/DasJsonCore.h>
+#include <das/_autogen/idl/abi/DasDebug.h>
 
 #include <chrono>
 #include <cstdlib>
@@ -24,6 +29,7 @@ namespace
         std::filesystem::path              debug_dir{"logs/debug"};
         std::vector<std::shared_ptr<IDebugSink>>  sinks;
         std::vector<std::shared_ptr<IDebugDrain>> drains;
+        std::shared_ptr<DebugImageSnapshot>        latest_image;
     };
 
     RuntimeState& State()
@@ -68,6 +74,53 @@ namespace
         std::ostringstream stream;
         stream << std::put_time(&utc, "%Y-%m-%dT%H:%M:%SZ");
         return stream.str();
+    }
+
+    auto JsonOrEmptyObject(const std::string& json) -> yyjson::value
+    {
+        auto parsed = DAS::Utils::ParseYyjsonFromString(json);
+        return parsed ? std::move(*parsed) : DAS::Utils::MakeYyjsonObject();
+    }
+
+    auto SerializeEventForSender(const DebugEvent& event) -> std::string
+    {
+        auto obj = DAS::Utils::MakeYyjsonObject();
+        (*obj.as_object())[std::string_view("type")] = event.type;
+        (*obj.as_object())[std::string_view("timestamp")] =
+            event.timestamp.empty() ? NowIsoString() : event.timestamp;
+        (*obj.as_object())[std::string_view("params")] =
+            JsonOrEmptyObject(event.params_json);
+        (*obj.as_object())[std::string_view("result")] =
+            JsonOrEmptyObject(event.result_json);
+        (*obj.as_object())[std::string_view("elapsed_ms")] =
+            event.elapsed_ms;
+        (*obj.as_object())[std::string_view("image_filename")] =
+            event.image_filename;
+        auto serialized = DAS::Utils::SerializeYyjsonValue(obj);
+        return serialized.value_or("{}");
+    }
+
+    DasResult SubmitEventByName(const DebugEvent& event)
+    {
+        IDasBase* p_base = nullptr;
+        const auto query_result =
+            DasQueryMainProcessInterfaceByName("debug.writer", &p_base);
+        if (query_result < 0)
+        {
+            return query_result;
+        }
+        auto base = Das::DasPtr<IDasBase>::Attach(p_base);
+
+        Das::DasPtr<Das::ExportInterface::IDasDebugWriter> writer;
+        const auto qi_result = base.As(writer);
+        if (qi_result < 0)
+        {
+            return qi_result;
+        }
+
+        auto               payload = SerializeEventForSender(event);
+        DasU8StringOnStack payload_string{payload.c_str()};
+        return writer->LogEntry(&payload_string);
     }
 
 } // namespace
@@ -153,7 +206,7 @@ DasResult DebugRuntime::SubmitEvent(const DebugEvent& event)
             }
         }
     }
-    return DAS_S_OK;
+    return sinks.empty() ? SubmitEventByName(event) : DAS_S_OK;
 }
 
 void DebugRuntime::RegisterSink(std::shared_ptr<IDebugSink> sink)
@@ -178,6 +231,27 @@ void DebugRuntime::RegisterDrain(std::shared_ptr<IDebugDrain> drain)
     auto& state = State();
     std::lock_guard lock{state.mutex};
     state.drains.emplace_back(std::move(drain));
+}
+
+void DebugRuntime::SetLatestImage(std::shared_ptr<DebugImageSnapshot> image)
+{
+    auto& state = State();
+    std::lock_guard lock{state.mutex};
+    state.latest_image = std::move(image);
+}
+
+std::shared_ptr<DebugImageSnapshot> DebugRuntime::GetLatestImage()
+{
+    auto& state = State();
+    std::lock_guard lock{state.mutex};
+    return state.latest_image;
+}
+
+void DebugRuntime::ClearLatestImage()
+{
+    auto& state = State();
+    std::lock_guard lock{state.mutex};
+    state.latest_image.reset();
 }
 
 DasResult DebugRuntime::Flush()
@@ -218,7 +292,7 @@ DasResult DebugRuntime::Flush()
             }
         }
     }
-    return DAS_S_OK;
+    return DrainImageJobs();
 }
 
 void DebugRuntime::Shutdown()
@@ -249,6 +323,8 @@ void DebugRuntime::Shutdown()
             drain->Shutdown();
         }
     }
+    ShutdownImageWorker();
+    ClearLatestImage();
 }
 
 void DebugRuntime::ResetForTest()
@@ -260,6 +336,7 @@ void DebugRuntime::ResetForTest()
     state.debug_dir = std::filesystem::path{"logs/debug"};
     state.sinks.clear();
     state.drains.clear();
+    state.latest_image.reset();
 }
 
 DAS_CORE_DEBUG_NS_END

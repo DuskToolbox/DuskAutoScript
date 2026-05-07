@@ -15,6 +15,7 @@ struct DebugRuntimeOptions
 };
 
 struct DebugEvent;
+struct DebugImageSnapshot;
 class IDebugSink;
 class IDebugDrain;
 
@@ -27,6 +28,9 @@ public:
     static DasResult SubmitEvent(const DebugEvent& event);
     static void RegisterSink(std::shared_ptr<IDebugSink> sink);
     static void RegisterDrain(std::shared_ptr<IDebugDrain> drain);
+    static void SetLatestImage(std::shared_ptr<DebugImageSnapshot> image);
+    static std::shared_ptr<DebugImageSnapshot> GetLatestImage();
+    static void ClearLatestImage();
     static DasResult Flush();
     static void Shutdown();
     static void ResetForTest();
