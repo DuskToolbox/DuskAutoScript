@@ -94,7 +94,7 @@ DasResult IDasTensorImpl::GetDataType(
 
     try
     {
-        *p_type = static_cast<DasTensorDataType>(
+        *p_type = static_cast<ExportInterface::DasTensorDataType>(
             value_.GetTensorTypeAndShapeInfo().GetElementType());
         return DAS_S_OK;
     }
