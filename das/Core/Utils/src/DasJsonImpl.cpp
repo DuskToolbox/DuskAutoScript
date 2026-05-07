@@ -8,17 +8,17 @@
 #include <das/Utils/Expected.h>
 #include <yyjson.h>
 
-using Das::ExportInterface::DAS_TYPE_BOOL;
-using Das::ExportInterface::DAS_TYPE_FLOAT;
-using Das::ExportInterface::DAS_TYPE_INT;
-using Das::ExportInterface::DAS_TYPE_JSON_ARRAY;
-using Das::ExportInterface::DAS_TYPE_JSON_OBJECT;
-using Das::ExportInterface::DAS_TYPE_NULL;
-using Das::ExportInterface::DAS_TYPE_STRING;
-using Das::ExportInterface::DAS_TYPE_UINT;
-using Das::ExportInterface::DAS_TYPE_UNSUPPORTED;
-using Das::ExportInterface::DasType;
-using Das::Utils::ParseYyjsonFromString;
+using DAS::ExportInterface::DAS_TYPE_BOOL;
+using DAS::ExportInterface::DAS_TYPE_FLOAT;
+using DAS::ExportInterface::DAS_TYPE_INT;
+using DAS::ExportInterface::DAS_TYPE_JSON_ARRAY;
+using DAS::ExportInterface::DAS_TYPE_JSON_OBJECT;
+using DAS::ExportInterface::DAS_TYPE_NULL;
+using DAS::ExportInterface::DAS_TYPE_STRING;
+using DAS::ExportInterface::DAS_TYPE_UINT;
+using DAS::ExportInterface::DAS_TYPE_UNSUPPORTED;
+using DAS::ExportInterface::DasType;
+using DAS::Utils::ParseYyjsonFromString;
 
 DAS_CORE_UTILS_NS_BEGIN
 
@@ -578,7 +578,7 @@ IDasJsonImpl::IDasJsonImpl(const char* p_json_string) : impl_{Object{{}, {}}}
     {
         throw std::runtime_error("JSON parse failed");
     }
-    impl_.emplace<Object>(std::move(parsed.value()));
+    impl_.emplace<Object>(Object{std::move(parsed.value()), {}});
 }
 
 // ========================================================================
@@ -929,7 +929,7 @@ DasResult IDasJsonImpl::GetTypeByName(
             return DAS_S_OK;
         }
         const auto& val = val_opt.value();
-        *p_out_type = Das::Utils::YyjsonValueToDasType(val);
+        *p_out_type = DAS::Utils::YyjsonValueToDasType(val);
         return DAS_S_OK;
     }
     catch (const DasJsonImplRefExpiredException& ex)
@@ -957,7 +957,7 @@ DasResult IDasJsonImpl::GetTypeByIndex(size_t index, DasType* p_out_type)
             return DAS_E_OUT_OF_RANGE;
         }
         const auto& val = val_opt.value();
-        *p_out_type = Das::Utils::YyjsonValueToDasType(val);
+        *p_out_type = DAS::Utils::YyjsonValueToDasType(val);
         return DAS_S_OK;
     }
     catch (const DasJsonImplRefExpiredException& ex)
@@ -1021,7 +1021,7 @@ DasResult IDasJsonImpl::ToString(
             Utils::overload_set{
                 [pp_out_string, indent](Object& obj) -> DasResult
                 {
-                    auto serialized = Das::Utils::SerializeYyjsonValue(
+                    auto serialized = DAS::Utils::SerializeYyjsonValue(
                         obj.value_,
                         indent >= 0);
                     if (!serialized)
@@ -1038,7 +1038,7 @@ DasResult IDasJsonImpl::ToString(
                     {
                         return DAS_E_DANGLING_REFERENCE;
                     }
-                    auto serialized = Das::Utils::SerializeYyjsonValue(
+                    auto serialized = DAS::Utils::SerializeYyjsonValue(
                         *ref.val_,
                         indent >= 0);
                     if (!serialized)
@@ -1206,7 +1206,7 @@ DAS_C_API DasResult ParseDasJsonFromString(
 }
 
 DAS_C_API DasResult
-CreateEmptyDasJson(Das::ExportInterface::IDasJson** pp_out_json)
+CreateEmptyDasJson(DAS::ExportInterface::IDasJson** pp_out_json)
 {
     DAS_UTILS_CHECK_POINTER(pp_out_json)
 

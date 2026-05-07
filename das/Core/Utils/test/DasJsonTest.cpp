@@ -1,3 +1,4 @@
+#include <das/DasApi.h>
 #include <das/Utils/fmt.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.DasJson.hpp>
 #include <gtest/gtest.h>
@@ -28,7 +29,7 @@ const std::string EXPECT_ARRAY_TEST_VALUE = R"({
     },
     {
       "a": 3,
-      "b": 55555555555555555555
+      "b": 9223372036854775807
     }
   ]
 })";
@@ -38,10 +39,14 @@ DAS_NS_ANONYMOUS_DETAILS_END
 TEST(DasJsonTest, ArrayTest)
 {
     DasJson root;
+    ASSERT_EQ(ParseDasJsonFromString("{}", root.Put()), DAS_S_OK);
+
     DasJson array;
+    ASSERT_EQ(ParseDasJsonFromString("[null,null]", array.Put()), DAS_S_OK);
 
     {
         DasJson        first;
+        ASSERT_EQ(ParseDasJsonFromString("{}", first.Put()), DAS_S_OK);
         Details::Dummy first_dummy{1, 3222222222222};
         ToJson(first, first_dummy);
         array.SetObjectByIndex(0, first);
@@ -49,6 +54,7 @@ TEST(DasJsonTest, ArrayTest)
 
     {
         DasJson        second;
+        ASSERT_EQ(ParseDasJsonFromString("{}", second.Put()), DAS_S_OK);
         Details::Dummy second_dummy{3, 9223372036854775807};
         ToJson(second, second_dummy);
         array.SetObjectByIndex(1, second);

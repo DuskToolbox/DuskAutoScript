@@ -13,42 +13,42 @@
 DAS_UTILS_NS_BEGIN
 
 /// 将 yyjson writer value 映射到 DasType 枚举。
-inline Das::ExportInterface::DasType YyjsonValueToDasType(
+inline DAS::ExportInterface::DasType YyjsonValueToDasType(
     const yyjson::writer::const_value_ref& v)
 {
     if (v.is_null())
     {
-        return Das::ExportInterface::DAS_TYPE_NULL;
+        return DAS::ExportInterface::DAS_TYPE_NULL;
     }
     if (v.is_object())
     {
-        return Das::ExportInterface::DAS_TYPE_JSON_OBJECT;
+        return DAS::ExportInterface::DAS_TYPE_JSON_OBJECT;
     }
     if (v.is_array())
     {
-        return Das::ExportInterface::DAS_TYPE_JSON_ARRAY;
+        return DAS::ExportInterface::DAS_TYPE_JSON_ARRAY;
     }
     if (v.is_string())
     {
-        return Das::ExportInterface::DAS_TYPE_STRING;
+        return DAS::ExportInterface::DAS_TYPE_STRING;
     }
     if (v.is_bool())
     {
-        return Das::ExportInterface::DAS_TYPE_BOOL;
+        return DAS::ExportInterface::DAS_TYPE_BOOL;
     }
     if (v.is_uint())
     {
-        return Das::ExportInterface::DAS_TYPE_UINT;
+        return DAS::ExportInterface::DAS_TYPE_UINT;
     }
     if (v.is_sint())
     {
-        return Das::ExportInterface::DAS_TYPE_INT;
+        return DAS::ExportInterface::DAS_TYPE_INT;
     }
     if (v.is_real())
     {
-        return Das::ExportInterface::DAS_TYPE_FLOAT;
+        return DAS::ExportInterface::DAS_TYPE_FLOAT;
     }
-    return Das::ExportInterface::DAS_TYPE_UNSUPPORTED;
+    return DAS::ExportInterface::DAS_TYPE_UNSUPPORTED;
 }
 
 /// 从 UTF-8 字符串解析 JSON。
@@ -62,7 +62,7 @@ inline std::optional<yyjson::value> ParseYyjsonFromString(
     try
     {
         auto result = yyjson::read(sv, flags);
-        return yyjson::value(result);
+        return result;
     }
     catch (const yyjson::read_error&)
     {
@@ -80,8 +80,17 @@ inline std::optional<std::string> SerializeYyjsonValue(
 {
     try
     {
-        auto flags =
-            pretty ? yyjson::WriteFlag::Pretty : yyjson::WriteFlag::NoFlag;
+        auto flags = yyjson::WriteFlag::NoFlag;
+        if (pretty)
+        {
+#if YYJSON_VERSION_HEX >= 0x000700
+            flags =
+                yyjson::WriteFlag::Pretty |
+                yyjson::WriteFlag::PrettyTwoSpaces;
+#else
+            flags = yyjson::WriteFlag::Pretty;
+#endif
+        }
         auto json_str = v.write(flags);
         return std::string(json_str.data(), json_str.size());
     }
