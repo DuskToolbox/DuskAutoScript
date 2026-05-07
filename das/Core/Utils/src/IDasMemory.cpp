@@ -1,45 +1,14 @@
 #include <cstring>
 #include <das/Core/Logger/Logger.h>
+#include <das/Core/Utils/BinaryBuffer.h>
 #include <das/DasApi.h>
 #include <das/Utils/CommonUtils.hpp>
+#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasBinaryBuffer.hpp>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasMemory.Implements.hpp>
 #include <memory>
 
-#include <das/_autogen/idl/abi/IDasBinaryBuffer.h>
-#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasBinaryBuffer.Implements.hpp>
-#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasBinaryBuffer.hpp>
-
 namespace
 {
-    class DasBinaryBufferImpl final
-        : public DAS::ExportInterface::DasBinaryBufferImplBase<
-              DasBinaryBufferImpl>
-    {
-    public:
-        explicit DasBinaryBufferImpl(const size_t size) : size_{size}
-        {
-            up_data_ = std::make_unique<unsigned char[]>(size);
-        }
-
-        DasResult GetData(unsigned char** pp_out_data) override
-        {
-            DAS_UTILS_CHECK_POINTER(pp_out_data);
-            *pp_out_data = up_data_.get();
-            return DAS_S_OK;
-        }
-
-        DasResult GetSize(uint64_t* p_out_size) override
-        {
-            DAS_UTILS_CHECK_POINTER(p_out_size);
-            *p_out_size = size_;
-            return DAS_S_OK;
-        }
-
-    private:
-        size_t                           size_;
-        std::unique_ptr<unsigned char[]> up_data_;
-    };
-
     class DasMemoryImpl final
         : public DAS::ExportInterface::DasMemoryImplBase<DasMemoryImpl>
     {
@@ -57,7 +26,8 @@ namespace
 
             try
             {
-                auto* const    p_buffer = DasBinaryBufferImpl::MakeRaw(size);
+                auto* const p_buffer =
+                    DAS::Core::Utils::DasBinaryBufferImpl::MakeRaw(size);
                 unsigned char* p_buffer_data{};
                 const auto get_data_result = p_buffer->GetData(&p_buffer_data);
                 if (DAS::IsFailed(get_data_result))
