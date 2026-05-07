@@ -14,6 +14,7 @@
 #include "IMatchConfigImpl.h"
 
 #include <das/Core/Logger/Logger.h>
+#include <das/DasPtr.hpp>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/Expected.h>
 #include <das/Utils/Timer.hpp>
@@ -32,6 +33,7 @@ DAS_DISABLE_WARNING_END
 
 #include <algorithm>
 #include <cmath>
+#include <string_view>
 #include <vector>
 
 DAS_CORE_OCVWRAPPER_NS_BEGIN
@@ -43,10 +45,16 @@ DAS_NS_ANONYMOUS_DETAILS_BEGIN
 auto GetImageBackend(ExportInterface::IDasImage* p_image)
     -> DAS::Utils::Expected<DasPtr<IImageBackend>>
 {
+    if (p_image == nullptr)
+    {
+        DAS_CORE_LOG_ERROR("IDasImage pointer is null");
+        return tl::make_unexpected(DAS_E_INVALID_POINTER);
+    }
+
     DasPtr<IImageBackend> p_result{};
 
     if (const auto qi_result = p_image->QueryInterface(
-            DasIidOf<Das::Core::OcvWrapper::IImageBackend>(),
+            DasIidOf<DAS::Core::OcvWrapper::IImageBackend>(),
             p_result.PutVoid());
         IsFailed(qi_result))
     {
@@ -58,6 +66,58 @@ auto GetImageBackend(ExportInterface::IDasImage* p_image)
     }
 
     return p_result;
+}
+
+auto ValidateTemplateMatchInputs(
+    const cv::cuda::GpuMat& image,
+    const cv::cuda::GpuMat& templ,
+    std::string_view        function_name) -> DasResult
+{
+    if (image.empty() || templ.empty())
+    {
+        DAS_CORE_LOG_ERROR(
+            "{}: image/template is empty, image={}x{}, template={}x{}",
+            function_name,
+            image.cols,
+            image.rows,
+            templ.cols,
+            templ.rows);
+        return DAS_E_INVALID_SIZE;
+    }
+
+    if (templ.rows > image.rows || templ.cols > image.cols)
+    {
+        DAS_CORE_LOG_ERROR(
+            "{}: template larger than image, image={}x{}, template={}x{}",
+            function_name,
+            image.cols,
+            image.rows,
+            templ.cols,
+            templ.rows);
+        return DAS_E_INVALID_SIZE;
+    }
+
+    if (image.type() != templ.type())
+    {
+        DAS_CORE_LOG_ERROR(
+            "{}: image/template type mismatch, image_type={}, template_type={}",
+            function_name,
+            image.type(),
+            templ.type());
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    const auto depth = image.depth();
+    if (depth != CV_8U && depth != CV_32F)
+    {
+        DAS_CORE_LOG_ERROR(
+            "{}: unsupported image depth for cuda::matchTemplate, depth={}",
+            function_name,
+            depth);
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    return DAS_S_OK;
 }
 
 /// @brief Internal scan candidate for TemplateMatchAll
@@ -181,22 +241,31 @@ DasResult CvCudaImpl::TemplateMatchBest(
     auto&             tmpl_backend = *expected_p_template.value();
     cv::cuda::GpuMat& gpu_image = image_backend.GetGpuMat();
     cv::cuda::GpuMat& gpu_tmpl = tmpl_backend.GetGpuMat();
+    if (const auto validate_result = Details::ValidateTemplateMatchInputs(
+            gpu_image,
+            gpu_tmpl,
+            "CvCudaImpl::TemplateMatchBest");
+        DAS::IsFailed(validate_result))
+    {
+        return validate_result;
+    }
 
     DAS::Utils::Timer timer{};
     timer.Begin();
 
     cv::cuda::GpuMat gpu_result;
-    cv::cuda::matchTemplate(
-        gpu_image,
-        gpu_tmpl,
-        gpu_result,
-        DAS::Utils::ToUnderlying(type));
-
-    double    min_score = 0.0;
-    double    max_score = 0.0;
-    cv::Point min_location{};
-    cv::Point max_location{};
+    double           min_score = 0.0;
+    double           max_score = 0.0;
+    cv::Point        min_location{};
+    cv::Point        max_location{};
+    try
     {
+        cv::cuda::matchTemplate(
+            gpu_image,
+            gpu_tmpl,
+            gpu_result,
+            DAS::Utils::ToUnderlying(type));
+
         cv::Mat cpu_result;
         gpu_result.download(cpu_result);
         cv::minMaxLoc(
@@ -205,6 +274,13 @@ DasResult CvCudaImpl::TemplateMatchBest(
             &max_score,
             &min_location,
             &max_location);
+    }
+    catch (const cv::Exception& ex)
+    {
+        DAS_CORE_LOG_ERROR(
+            "CvCudaImpl::TemplateMatchBest: OpenCV exception: {}",
+            ex.what());
+        return DAS_E_OPENCV_ERROR;
     }
 
     const auto cv_cost = timer.End();
@@ -269,33 +345,45 @@ DasResult CvCudaImpl::TemplateMatchAll(
         return expected_p_template.error();
     }
 
-    auto& image_backend = *expected_p_image.value();
-    auto& tmpl_backend = *expected_p_template.value();
-
-    if (tmpl_backend.GetGpuMat().rows > image_backend.GetGpuMat().rows
-        || tmpl_backend.GetGpuMat().cols > image_backend.GetGpuMat().cols)
-    {
-        return DAS_E_INVALID_SIZE;
-    }
-
+    auto&             image_backend = *expected_p_image.value();
+    auto&             tmpl_backend = *expected_p_template.value();
     cv::cuda::GpuMat& gpu_image = image_backend.GetGpuMat();
     cv::cuda::GpuMat& gpu_tmpl = tmpl_backend.GetGpuMat();
+
+    if (const auto validate_result = Details::ValidateTemplateMatchInputs(
+            gpu_image,
+            gpu_tmpl,
+            "CvCudaImpl::TemplateMatchAll");
+        DAS::IsFailed(validate_result))
+    {
+        return validate_result;
+    }
 
     const int tmpl_w = gpu_tmpl.cols;
     const int tmpl_h = gpu_tmpl.rows;
 
     // Run cuda::matchTemplate on GPU
     cv::cuda::GpuMat gpu_result_mat;
-    cv::cuda::matchTemplate(
-        gpu_image,
-        gpu_tmpl,
-        gpu_result_mat,
-        DAS::Utils::ToUnderlying(type));
+    cv::Mat          result_mat;
+    try
+    {
+        cv::cuda::matchTemplate(
+            gpu_image,
+            gpu_tmpl,
+            gpu_result_mat,
+            DAS::Utils::ToUnderlying(type));
 
-    // Download result to CPU for threshold filtering and NMS.
-    // cv::cuda::matchTemplate always outputs CV_32FC1 (32-bit float).
-    cv::Mat result_mat;
-    gpu_result_mat.download(result_mat);
+        // Download result to CPU for threshold filtering and NMS.
+        // cv::cuda::matchTemplate always outputs CV_32FC1 (32-bit float).
+        gpu_result_mat.download(result_mat);
+    }
+    catch (const cv::Exception& ex)
+    {
+        DAS_CORE_LOG_ERROR(
+            "CvCudaImpl::TemplateMatchAll: OpenCV exception: {}",
+            ex.what());
+        return DAS_E_OPENCV_ERROR;
+    }
 
     // Step 1: Threshold filtering — collect all candidates with score >=
     // threshold
@@ -401,7 +489,7 @@ DasResult CvCudaImpl::MatchFeatures(
         return DAS_E_INVALID_POINTER;
     }
 
-    Das::Utils::Timer timer{};
+    DAS::Utils::Timer timer{};
     timer.Begin();
 
     ExportInterface::DasDetectorType detector_type{};
@@ -409,21 +497,21 @@ DasResult CvCudaImpl::MatchFeatures(
     ExportInterface::DasMatchParams  params{};
 
     auto result = p_config->GetDetectorType(&detector_type);
-    if (Das::IsFailed(result))
+    if (DAS::IsFailed(result))
     {
         DAS_CORE_LOG_ERROR("Failed to get detector type");
         return result;
     }
 
     result = p_config->GetMatcherType(&matcher_type);
-    if (Das::IsFailed(result))
+    if (DAS::IsFailed(result))
     {
         DAS_CORE_LOG_ERROR("Failed to get matcher type");
         return result;
     }
 
     result = p_config->GetParams(&params);
-    if (Das::IsFailed(result))
+    if (DAS::IsFailed(result))
     {
         DAS_CORE_LOG_ERROR("Failed to get match params");
         return result;
@@ -644,13 +732,25 @@ DasResult CvCudaImpl::ConvertColor(
 
     // Perform GPU color conversion
     cv::cuda::GpuMat gpu_dst;
-    cv::cuda::cvtColor(gpu_src, gpu_dst, conversion_code);
+    try
+    {
+        cv::cuda::cvtColor(gpu_src, gpu_dst, conversion_code);
+    }
+    catch (const cv::Exception& ex)
+    {
+        DAS_CORE_LOG_ERROR(
+            "CvCudaImpl::ConvertColor: OpenCV exception: {}",
+            ex.what());
+        return DAS_E_OPENCV_ERROR;
+    }
 
     // Create a GPU-only image from the result
     auto* p_result =
         CudaImageImpl::MakeFromGpuMat(std::move(gpu_dst), target_format);
-    p_result->AddRef();
-    *pp_out_image = p_result;
+    DAS::DasOutPtr<ExportInterface::IDasImage> result(pp_out_image);
+    result.Set(p_result);
+    p_result->Release();
+    result.Keep();
     return DAS_S_OK;
 }
 
@@ -716,14 +816,26 @@ DasResult CvCudaImpl::ColorFilter(
 
     // Apply GPU inRange to produce a binary mask
     cv::cuda::GpuMat gpu_mask;
-    cv::cuda::inRange(gpu_src, lower, upper, gpu_mask);
+    try
+    {
+        cv::cuda::inRange(gpu_src, lower, upper, gpu_mask);
+    }
+    catch (const cv::Exception& ex)
+    {
+        DAS_CORE_LOG_ERROR(
+            "CvCudaImpl::ColorFilter: OpenCV exception: {}",
+            ex.what());
+        return DAS_E_OPENCV_ERROR;
+    }
 
     // Create a GPU-only image for the mask (GRAY format, single channel)
     auto* p_result = CudaImageImpl::MakeFromGpuMat(
         std::move(gpu_mask),
         ExportInterface::DAS_PIXEL_FORMAT_GRAY);
-    p_result->AddRef();
-    *pp_out_mask = p_result;
+    DAS::DasOutPtr<ExportInterface::IDasImage> result(pp_out_mask);
+    result.Set(p_result);
+    p_result->Release();
+    result.Keep();
     return DAS_S_OK;
 }
 

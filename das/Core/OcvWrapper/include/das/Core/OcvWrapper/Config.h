@@ -29,6 +29,22 @@ inline auto ToMat(ExportInterface::DasRect rect) -> cv::Rect
     return {rect.x, rect.y, rect.width, rect.height};
 }
 
+inline auto IsValidClipRect(ExportInterface::DasRect rect, int cols, int rows)
+    -> bool
+{
+    if (rect.x < 0 || rect.y < 0 || rect.width <= 0 || rect.height <= 0)
+    {
+        return false;
+    }
+
+    const int64_t right =
+        static_cast<int64_t>(rect.x) + static_cast<int64_t>(rect.width);
+    const int64_t bottom =
+        static_cast<int64_t>(rect.y) + static_cast<int64_t>(rect.height);
+
+    return right <= cols && bottom <= rows;
+}
+
 DAS_CORE_OCVWRAPPER_NS_END
 
 #endif // DAS_CORE_OCVWRAPPER_CONFIG_H

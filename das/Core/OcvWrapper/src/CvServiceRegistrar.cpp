@@ -3,7 +3,6 @@
 #include <das/Core/OcvWrapper/Config.h>
 #include <das/Core/OcvWrapper/CvServiceRegistrar.h>
 
-
 #ifdef DAS_WITH_CUDA
 #include "CvCudaImpl.h"
 #include <opencv2/core/cuda.hpp>
@@ -29,8 +28,9 @@ DasResult RegisterCvServices(IPC::MainProcess::IIpcContext& ipc_context)
             cpu_impl->Release();
             return result;
         }
+        cpu_impl->Release();
         DAS_CORE_LOG_INFO("Registered cv.cpu service");
-        // cpu_impl ownership transfers to the service table, no Release needed
+        // RegisterServiceByName stores its own reference in the service table.
     }
 
     // 2. Probe and register CUDA backend (per D-03: unavailable not registered)
@@ -55,6 +55,7 @@ DasResult RegisterCvServices(IPC::MainProcess::IIpcContext& ipc_context)
             }
             else
             {
+                cuda_impl->Release();
                 DAS_CORE_LOG_INFO(
                     "Registered cv.cuda service ({} CUDA devices)",
                     cuda_device_count);

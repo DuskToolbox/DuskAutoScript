@@ -5,7 +5,7 @@ namespace Das::ExportInterface {
 
 // ============= Template Match =============
 
-[uuid("DD8AE823-3493-4106-86DD-2B9C14C5655F")]
+[uuid("3A49B127-065B-4802-82EE-555C3653AECC")]
 interface IDasTemplateMatchResult : IDasBase {
     [get, set] double score;
     [get, set] DasRect match_rect;
@@ -104,7 +104,7 @@ interface IDasCvMatchResult : IDasBase {
 
 // ============= CV Interface =============
 
-[uuid("5D8E5986-E0C2-4AB8-9802-475E60EE55C0")]
+[uuid("01A5D474-DA73-4C5C-A8EA-2B1BAA491A75")]
 interface IDasCv : IDasBase {
     // 模板匹配
     DasResult TemplateMatchBest(IDasImage* p_image, IDasImage* p_template, DasTemplateMatchType type, [out] IDasTemplateMatchResult** pp_out_result);

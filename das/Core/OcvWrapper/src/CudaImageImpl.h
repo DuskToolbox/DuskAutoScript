@@ -51,11 +51,11 @@ public:
     DAS_IMPL GetSize(ExportInterface::DasSize* p_out_size) override;
     DAS_IMPL GetChannelCount(int32_t* p_out_channel_count) override;
     DAS_IMPL Clip(
-        const Das::ExportInterface::DasRect* p_rect,
-        Das::ExportInterface::IDasImage**    pp_out_image) override;
+        const DAS::ExportInterface::DasRect* p_rect,
+        DAS::ExportInterface::IDasImage**    pp_out_image) override;
     DAS_IMPL GetDataSize(uint64_t* p_out_size) override;
     DAS_IMPL GetBinaryBuffer(
-        Das::ExportInterface::IDasBinaryBuffer** pp_out_buffer) override;
+        DAS::ExportInterface::IDasBinaryBuffer** pp_out_buffer) override;
     DAS_IMPL
     GetPixelFormat(ExportInterface::DasImagePixelFormat* p_out_format) override;
 

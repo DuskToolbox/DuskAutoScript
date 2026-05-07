@@ -22,10 +22,13 @@
 #include <atomic>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <utility>
 #include <vector>
 
-namespace Das::Core::OcvWrapper::Test
+namespace Das
+{
+namespace Core::OcvWrapper::Test
 {
     namespace
     {
@@ -66,7 +69,7 @@ namespace Das::Core::OcvWrapper::Test
 
         void* p_backend = nullptr;
         auto  result = img->QueryInterface(
-            DasIidOf<Das::Core::OcvWrapper::IImageBackend>(),
+            DasIidOf<DAS::Core::OcvWrapper::IImageBackend>(),
             &p_backend);
         EXPECT_EQ(result, DAS_S_OK);
         EXPECT_NE(p_backend, nullptr);
@@ -617,7 +620,7 @@ namespace Das::Core::OcvWrapper::Test
             ASSERT_NE(p_image, nullptr);
             void* p_backend = nullptr;
             auto  qi = p_image->QueryInterface(
-                DasIidOf<Das::Core::OcvWrapper::IImageBackend>(),
+                DasIidOf<DAS::Core::OcvWrapper::IImageBackend>(),
                 &p_backend);
             ASSERT_EQ(qi, DAS_S_OK);
             ASSERT_NE(p_backend, nullptr);
@@ -653,7 +656,7 @@ namespace Das::Core::OcvWrapper::Test
 
     // --- Test 2: CreateIDasImageFromDecodedData ---
 
-    TEST(FactoryMigrationTest, FromDecodedData_ReturnsCpuImageWithBGRFormat)
+    TEST(FactoryMigrationTest, FromDecodedData_ReturnsCpuImageWithRGBFormat)
     {
         constexpr int        kWidth = 32;
         constexpr int        kHeight = 24;
@@ -675,7 +678,7 @@ namespace Das::Core::OcvWrapper::Test
 
         ExportInterface::DasImagePixelFormat fmt{};
         EXPECT_EQ(p_image->GetPixelFormat(&fmt), DAS_S_OK);
-        EXPECT_EQ(fmt, ExportInterface::DAS_PIXEL_FORMAT_BGR);
+        EXPECT_EQ(fmt, ExportInterface::DAS_PIXEL_FORMAT_RGB);
 
         ExportInterface::DasSize img_size{};
         EXPECT_EQ(p_image->GetSize(&img_size), DAS_S_OK);
@@ -683,6 +686,55 @@ namespace Das::Core::OcvWrapper::Test
         EXPECT_EQ(img_size.height, kHeight);
 
         p_image->Release();
+    }
+
+    TEST(FactoryMigrationTest, FromDecodedData_RejectsNullBuffer)
+    {
+        DasImageDesc desc{};
+        desc.p_data = nullptr;
+        desc.data_size = 12;
+        desc.data_format = ExportInterface::DAS_IMAGE_FORMAT_RGB_888;
+
+        ExportInterface::DasSize    size{2, 2};
+        ExportInterface::IDasImage* p_image = nullptr;
+        EXPECT_EQ(
+            CreateIDasImageFromDecodedData(&desc, &size, &p_image),
+            DAS_E_INVALID_POINTER);
+        EXPECT_EQ(p_image, nullptr);
+    }
+
+    TEST(FactoryMigrationTest, FromDecodedData_RejectsShortBuffer)
+    {
+        std::vector<uint8_t> rgb(2, 128);
+
+        DasImageDesc desc{};
+        desc.p_data = reinterpret_cast<char*>(rgb.data());
+        desc.data_size = rgb.size();
+        desc.data_format = ExportInterface::DAS_IMAGE_FORMAT_RGB_888;
+
+        ExportInterface::DasSize    size{2, 2};
+        ExportInterface::IDasImage* p_image = nullptr;
+        EXPECT_EQ(
+            CreateIDasImageFromDecodedData(&desc, &size, &p_image),
+            DAS_E_OUT_OF_RANGE);
+        EXPECT_EQ(p_image, nullptr);
+    }
+
+    TEST(FactoryMigrationTest, FromDecodedData_RejectsInvalidDimensions)
+    {
+        std::vector<uint8_t> rgb(12, 128);
+
+        DasImageDesc desc{};
+        desc.p_data = reinterpret_cast<char*>(rgb.data());
+        desc.data_size = rgb.size();
+        desc.data_format = ExportInterface::DAS_IMAGE_FORMAT_RGB_888;
+
+        ExportInterface::DasSize    size{0, 2};
+        ExportInterface::IDasImage* p_image = nullptr;
+        EXPECT_EQ(
+            CreateIDasImageFromDecodedData(&desc, &size, &p_image),
+            DAS_E_INVALID_SIZE);
+        EXPECT_EQ(p_image, nullptr);
     }
 
     // --- Test 3: CreateIDasImageFromRgb888 ---
@@ -727,6 +779,40 @@ namespace Das::Core::OcvWrapper::Test
         p_buffer->Release();
 
         p_image->Release();
+    }
+
+    TEST(FactoryMigrationTest, FromRgb888_RejectsShortBuffer)
+    {
+        std::vector<uint8_t> rgba(2, 255);
+        auto*                p_memory = new TestMemory(std::move(rgba));
+        p_memory->AddRef();
+
+        ExportInterface::DasSize    size{2, 2};
+        ExportInterface::IDasImage* p_image = nullptr;
+        EXPECT_EQ(
+            CreateIDasImageFromRgb888(p_memory, &size, &p_image),
+            DAS_E_OUT_OF_RANGE);
+        EXPECT_EQ(p_image, nullptr);
+
+        p_memory->Release();
+    }
+
+    TEST(FactoryMigrationTest, FromRgb888_RejectsOverflowedIntMath)
+    {
+        std::vector<uint8_t> rgba(16, 255);
+        auto*                p_memory = new TestMemory(std::move(rgba));
+        p_memory->AddRef();
+
+        ExportInterface::DasSize size{
+            std::numeric_limits<int32_t>::max(),
+            std::numeric_limits<int32_t>::max()};
+        ExportInterface::IDasImage* p_image = nullptr;
+        EXPECT_EQ(
+            CreateIDasImageFromRgb888(p_memory, &size, &p_image),
+            DAS_E_OUT_OF_RANGE);
+        EXPECT_EQ(p_image, nullptr);
+
+        p_memory->Release();
     }
 
     // --- Test 4: DasPluginLoadImageFromResource ---
@@ -916,4 +1002,5 @@ namespace Das::Core::OcvWrapper::Test
     }
 #endif // DAS_WITH_CUDA
 
-} // namespace Das::Core::OcvWrapper::Test
+} // namespace Core::OcvWrapper::Test
+} // namespace Das

@@ -13,6 +13,9 @@
 DAS_DISABLE_WARNING_BEGIN
 
 DAS_IGNORE_OPENCV_WARNING
+#ifdef DAS_WITH_CUDA
+#include <opencv2/core/cuda.hpp>
+#endif
 #include <opencv2/core/mat.hpp>
 #include <opencv2/core/types.hpp>
 
@@ -21,7 +24,7 @@ DAS_DISABLE_WARNING_END
 // {B3C4D5E6-0001-4000-8000-000000000002}
 DAS_DEFINE_GUID_IN_NAMESPACE(
     DAS_IID_IMAGE_BACKEND,
-    Das::Core::OcvWrapper,
+    DAS::Core::OcvWrapper,
     IImageBackend,
     0xB3C4D5E6,
     0x0001,

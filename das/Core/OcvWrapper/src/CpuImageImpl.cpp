@@ -23,6 +23,8 @@ DAS_DISABLE_WARNING_END
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
+#include <string_view>
 
 DAS_CORE_OCVWRAPPER_NS_BEGIN
 
@@ -33,15 +35,93 @@ auto ToOcvType(ExportInterface::DasImageFormat format)
 {
     switch (format)
     {
-    case Das::ExportInterface::DAS_IMAGE_FORMAT_RGB_888:
+    case DAS::ExportInterface::DAS_IMAGE_FORMAT_RGB_888:
         return CV_8UC3;
-    case Das::ExportInterface::DAS_IMAGE_FORMAT_RGBA_8888:
+    case DAS::ExportInterface::DAS_IMAGE_FORMAT_RGBA_8888:
         [[fallthrough]];
-    case Das::ExportInterface::DAS_IMAGE_FORMAT_RGBX_8888:
+    case DAS::ExportInterface::DAS_IMAGE_FORMAT_RGBX_8888:
         return CV_8UC4;
     default:
         return tl::make_unexpected(DAS_E_INVALID_ENUM);
     }
+}
+
+auto ToDecodedPixelFormat(ExportInterface::DasImageFormat format)
+    -> DAS::Utils::Expected<ExportInterface::DasImagePixelFormat>
+{
+    switch (format)
+    {
+    case ExportInterface::DAS_IMAGE_FORMAT_RGB_888:
+        return ExportInterface::DAS_PIXEL_FORMAT_RGB;
+    case ExportInterface::DAS_IMAGE_FORMAT_RGBA_8888:
+        [[fallthrough]];
+    case ExportInterface::DAS_IMAGE_FORMAT_RGBX_8888:
+        return ExportInterface::DAS_PIXEL_FORMAT_RGBA;
+    default:
+        return tl::make_unexpected(DAS_E_INVALID_ENUM);
+    }
+}
+
+auto ValidateRawImageInput(
+    const DasImageDesc&             desc,
+    const ExportInterface::DasSize& size,
+    size_t                          element_size,
+    std::string_view function_name) -> DAS::Utils::Expected<uint64_t>
+{
+    if (desc.p_data == nullptr)
+    {
+        DAS_CORE_LOG_ERROR("{}: p_data is null", function_name);
+        return tl::make_unexpected(DAS_E_INVALID_POINTER);
+    }
+
+    if (size.width <= 0 || size.height <= 0)
+    {
+        DAS_CORE_LOG_ERROR(
+            "{}: invalid image dimensions width={}, height={}",
+            function_name,
+            size.width,
+            size.height);
+        return tl::make_unexpected(DAS_E_INVALID_SIZE);
+    }
+
+    const auto width = static_cast<uint64_t>(size.width);
+    const auto height = static_cast<uint64_t>(size.height);
+    const auto bytes_per_pixel = static_cast<uint64_t>(element_size);
+    const auto max_size = std::numeric_limits<uint64_t>::max();
+
+    if (width > max_size / height)
+    {
+        DAS_CORE_LOG_ERROR(
+            "{}: image pixel count overflows, width={}, height={}",
+            function_name,
+            size.width,
+            size.height);
+        return tl::make_unexpected(DAS_E_OUT_OF_RANGE);
+    }
+
+    const auto pixel_count = width * height;
+    if (bytes_per_pixel != 0 && pixel_count > max_size / bytes_per_pixel)
+    {
+        DAS_CORE_LOG_ERROR(
+            "{}: image byte count overflows, pixels={}, bytes_per_pixel={}",
+            function_name,
+            pixel_count,
+            bytes_per_pixel);
+        return tl::make_unexpected(DAS_E_OUT_OF_RANGE);
+    }
+
+    const auto expected_size = pixel_count * bytes_per_pixel;
+    if (static_cast<uint64_t>(desc.data_size) < expected_size)
+    {
+        DAS_CORE_LOG_ERROR(
+            "{}: buffer too small, data_size={}, expected_size={}",
+            function_name,
+            desc.data_size,
+            expected_size);
+        return tl::make_unexpected(DAS_E_OUT_OF_RANGE);
+    }
+
+    return expected_size;
 }
 
 DAS_NS_ANONYMOUS_DETAILS_END
@@ -82,42 +162,113 @@ DAS_NS_ANONYMOUS_DETAILS_END
 
 DasResult CreateIDasImageFromEncodedData(
     DasImageDesc*                     p_desc,
-    Das::ExportInterface::IDasImage** pp_out_image)
+    DAS::ExportInterface::IDasImage** pp_out_image)
 {
-    DAS_UTILS_CHECK_POINTER(p_desc)
-    DAS_UTILS_CHECK_POINTER(pp_out_image)
+    if (p_desc == nullptr)
+    {
+        DAS_CORE_LOG_ERROR("CreateIDasImageFromEncodedData: p_desc is null");
+        return DAS_E_INVALID_POINTER;
+    }
+    if (pp_out_image == nullptr)
+    {
+        DAS_CORE_LOG_ERROR(
+            "CreateIDasImageFromEncodedData: pp_out_image is null");
+        return DAS_E_INVALID_POINTER;
+    }
 
     auto& [p_data, data_size, data_format] = *p_desc;
 
-    const auto int_data_size = static_cast<int>(data_size);
     switch (data_format)
     {
-    case Das::ExportInterface::DAS_IMAGE_FORMAT_JPG:
+    case DAS::ExportInterface::DAS_IMAGE_FORMAT_JPG:
         [[fallthrough]];
-    case Das::ExportInterface::DAS_IMAGE_FORMAT_PNG:
+    case DAS::ExportInterface::DAS_IMAGE_FORMAT_PNG:
     {
         if (data_size == 0)
         {
+            DAS_CORE_LOG_ERROR(
+                "CreateIDasImageFromEncodedData: data_size is zero");
             return DAS_E_INVALID_SIZE;
         }
 
-        auto mat = cv::imdecode({p_data, int_data_size}, cv::IMREAD_UNCHANGED);
-        if (mat.empty())
+        if (p_data == nullptr)
         {
+            DAS_CORE_LOG_ERROR(
+                "CreateIDasImageFromEncodedData: p_data is null");
+            return DAS_E_INVALID_POINTER;
+        }
+
+        if (data_size > static_cast<size_t>(std::numeric_limits<int>::max()))
+        {
+            DAS_CORE_LOG_ERROR(
+                "CreateIDasImageFromEncodedData: data_size too large, size={}",
+                data_size);
+            return DAS_E_INVALID_SIZE;
+        }
+
+        try
+        {
+            const auto int_data_size = static_cast<int>(data_size);
+            cv::Mat    encoded_data{1, int_data_size, CV_8UC1, p_data};
+            auto       mat = cv::imdecode(encoded_data, cv::IMREAD_UNCHANGED);
+            if (mat.empty())
+            {
+                DAS_CORE_LOG_ERROR(
+                    "CreateIDasImageFromEncodedData: OpenCV decode failed");
+                return DAS_E_OPENCV_ERROR;
+            }
+
+            cv::Mat normalized_mat{};
+            auto pixel_format = DAS::ExportInterface::DAS_PIXEL_FORMAT_UNKNOWN;
+            switch (mat.channels())
+            {
+            case 1:
+                normalized_mat = mat.clone();
+                pixel_format = DAS::ExportInterface::DAS_PIXEL_FORMAT_GRAY;
+                break;
+            case 3:
+                cv::cvtColor(mat, normalized_mat, cv::COLOR_BGR2RGB);
+                pixel_format = DAS::ExportInterface::DAS_PIXEL_FORMAT_RGB;
+                break;
+            case 4:
+                cv::cvtColor(mat, normalized_mat, cv::COLOR_BGRA2RGBA);
+                pixel_format = DAS::ExportInterface::DAS_PIXEL_FORMAT_RGBA;
+                break;
+            default:
+                DAS_CORE_LOG_ERROR(
+                    "CreateIDasImageFromEncodedData: unsupported channel "
+                    "count={}",
+                    mat.channels());
+                return DAS_E_OPENCV_ERROR;
+            }
+
+            DAS::DasOutPtr<DAS::ExportInterface::IDasImage> result(
+                pp_out_image);
+            auto* p_result = DAS::Core::OcvWrapper::CpuImageImpl<
+                DAS::Core::OcvWrapper::Storage::OwningStorage>::
+                MakeFromCpuMat(std::move(normalized_mat), pixel_format);
+            result.Set(p_result);
+            p_result->Release();
+            result.Keep();
+            return DAS_S_OK;
+        }
+        catch (const std::bad_alloc&)
+        {
+            DAS_CORE_LOG_ERROR("CreateIDasImageFromEncodedData: out of memory");
+            return DAS_E_OUT_OF_MEMORY;
+        }
+        catch (const cv::Exception& ex)
+        {
+            DAS_CORE_LOG_ERROR(
+                "CreateIDasImageFromEncodedData: OpenCV exception: {}",
+                ex.what());
             return DAS_E_OPENCV_ERROR;
         }
-        cv::Mat rgb_mat{};
-        cv::cvtColor(mat, rgb_mat, cv::COLOR_BGR2RGB);
-
-        auto* p_result = DAS::Core::OcvWrapper::CpuImageImpl<
-            DAS::Core::OcvWrapper::Storage::OwningStorage>::
-            MakeFromCpuMat(
-                std::move(rgb_mat),
-                Das::ExportInterface::DAS_PIXEL_FORMAT_RGB);
-        *pp_out_image = p_result;
-        return DAS_S_OK;
     }
     default:
+        DAS_CORE_LOG_ERROR(
+            "CreateIDasImageFromEncodedData: invalid data_format={}",
+            static_cast<int>(data_format));
         return DAS_E_INVALID_ENUM;
     }
 }
@@ -127,9 +278,22 @@ DasResult CreateIDasImageFromDecodedData(
     const DAS::ExportInterface::DasSize* p_size,
     DAS::ExportInterface::IDasImage**    pp_out_image)
 {
-    DAS_UTILS_CHECK_POINTER(p_desc)
-    DAS_UTILS_CHECK_POINTER(p_size)
-    DAS_UTILS_CHECK_POINTER(pp_out_image)
+    if (p_desc == nullptr)
+    {
+        DAS_CORE_LOG_ERROR("CreateIDasImageFromDecodedData: p_desc is null");
+        return DAS_E_INVALID_POINTER;
+    }
+    if (p_size == nullptr)
+    {
+        DAS_CORE_LOG_ERROR("CreateIDasImageFromDecodedData: p_size is null");
+        return DAS_E_INVALID_POINTER;
+    }
+    if (pp_out_image == nullptr)
+    {
+        DAS_CORE_LOG_ERROR(
+            "CreateIDasImageFromDecodedData: pp_out_image is null");
+        return DAS_E_INVALID_POINTER;
+    }
 
     auto&      desc = *p_desc;
     auto&      size = *p_size;
@@ -138,22 +302,62 @@ DasResult CreateIDasImageFromDecodedData(
 
     if (!expected_type)
     {
+        DAS_CORE_LOG_ERROR(
+            "CreateIDasImageFromDecodedData: invalid data_format={}",
+            static_cast<int>(desc.data_format));
         return expected_type.error();
     }
 
-    cv::Mat input_image{
-        size.height,
-        size.width,
-        expected_type.value(),
-        desc.p_data};
-    auto owned_image = input_image.clone();
+    const auto expected_format =
+        DAS::Core::OcvWrapper::Details::ToDecodedPixelFormat(desc.data_format);
+    if (!expected_format)
+    {
+        DAS_CORE_LOG_ERROR(
+            "CreateIDasImageFromDecodedData: no pixel format for data_format={}",
+            static_cast<int>(desc.data_format));
+        return expected_format.error();
+    }
 
-    auto* p_result = DAS::Core::OcvWrapper::CpuImageImpl<
-        DAS::Core::OcvWrapper::Storage::OwningStorage>::
-        MakeFromCpuMat(
-            std::move(owned_image),
-            Das::ExportInterface::DAS_PIXEL_FORMAT_BGR);
-    *pp_out_image = p_result;
+    const auto expected_size =
+        DAS::Core::OcvWrapper::Details::ValidateRawImageInput(
+            desc,
+            size,
+            CV_ELEM_SIZE(expected_type.value()),
+            "CreateIDasImageFromDecodedData");
+    if (!expected_size)
+    {
+        return expected_size.error();
+    }
+
+    try
+    {
+        cv::Mat input_image{
+            size.height,
+            size.width,
+            expected_type.value(),
+            desc.p_data};
+        auto owned_image = input_image.clone();
+
+        DAS::DasOutPtr<DAS::ExportInterface::IDasImage> result(pp_out_image);
+        auto* p_result = DAS::Core::OcvWrapper::CpuImageImpl<
+            DAS::Core::OcvWrapper::Storage::OwningStorage>::
+            MakeFromCpuMat(std::move(owned_image), expected_format.value());
+        result.Set(p_result);
+        p_result->Release();
+        result.Keep();
+    }
+    catch (const std::bad_alloc&)
+    {
+        DAS_CORE_LOG_ERROR("CreateIDasImageFromDecodedData: out of memory");
+        return DAS_E_OUT_OF_MEMORY;
+    }
+    catch (const cv::Exception& ex)
+    {
+        DAS_CORE_LOG_ERROR(
+            "CreateIDasImageFromDecodedData: OpenCV exception: {}",
+            ex.what());
+        return DAS_E_OPENCV_ERROR;
+    }
 
     return DAS_S_OK;
 }
@@ -163,9 +367,21 @@ DasResult CreateIDasImageFromRgb888(
     const DAS::ExportInterface::DasSize* p_size,
     DAS::ExportInterface::IDasImage**    pp_out_image)
 {
-    DAS_UTILS_CHECK_POINTER(p_alias_memory)
-    DAS_UTILS_CHECK_POINTER(p_size)
-    DAS_UTILS_CHECK_POINTER(pp_out_image)
+    if (p_alias_memory == nullptr)
+    {
+        DAS_CORE_LOG_ERROR("CreateIDasImageFromRgb888: p_alias_memory is null");
+        return DAS_E_INVALID_POINTER;
+    }
+    if (p_size == nullptr)
+    {
+        DAS_CORE_LOG_ERROR("CreateIDasImageFromRgb888: p_size is null");
+        return DAS_E_INVALID_POINTER;
+    }
+    if (pp_out_image == nullptr)
+    {
+        DAS_CORE_LOG_ERROR("CreateIDasImageFromRgb888: pp_out_image is null");
+        return DAS_E_INVALID_POINTER;
+    }
 
     const auto&    size = *p_size;
     uint64_t       data_size{};
@@ -174,6 +390,9 @@ DasResult CreateIDasImageFromRgb888(
     if (const auto get_size_result = p_alias_memory->GetSize(&data_size);
         DAS::IsFailed(get_size_result)) [[unlikely]]
     {
+        DAS_CORE_LOG_ERROR(
+            "CreateIDasImageFromRgb888: GetSize failed, result={}",
+            get_size_result);
         return get_size_result;
     }
 
@@ -182,33 +401,66 @@ DasResult CreateIDasImageFromRgb888(
             p_alias_memory->GetBinaryBuffer(&p_buffer);
         DAS::IsFailed(get_buffer_result)) [[unlikely]]
     {
+        DAS_CORE_LOG_ERROR(
+            "CreateIDasImageFromRgb888: GetBinaryBuffer failed, result={}",
+            get_buffer_result);
         return get_buffer_result;
     }
 
-    DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer> buffer_guard(p_buffer);
+    auto buffer_guard =
+        DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer>::Attach(p_buffer);
 
     if (const auto get_data_result = p_buffer->GetData(&p_data);
         DAS::IsFailed(get_data_result)) [[unlikely]]
     {
+        DAS_CORE_LOG_ERROR(
+            "CreateIDasImageFromRgb888: GetData failed, result={}",
+            get_data_result);
         return get_data_result;
     }
 
-    const size_t required_size =
-        static_cast<size_t>(std::abs(size.height * size.width * 4));
-    if (required_size > data_size)
+    DasImageDesc desc{
+        .p_data = reinterpret_cast<char*>(p_data),
+        .data_size = static_cast<size_t>(data_size),
+        .data_format = DAS::ExportInterface::DAS_IMAGE_FORMAT_RGBA_8888};
+    const auto expected_size =
+        DAS::Core::OcvWrapper::Details::ValidateRawImageInput(
+            desc,
+            size,
+            4,
+            "CreateIDasImageFromRgb888");
+    if (!expected_size)
     {
-        return DAS_E_OUT_OF_RANGE;
+        return expected_size.error();
     }
 
-    // Clone the data to ensure ownership — the cv::Mat constructor with
-    // external data creates a non-owning header.
-    cv::Mat owned{size.height, size.width, CV_8UC4, p_data};
-    auto*   p_result = DAS::Core::OcvWrapper::CpuImageImpl<
-        DAS::Core::OcvWrapper::Storage::OwningStorage>::
-        MakeFromCpuMat(
-            owned.clone(),
-            Das::ExportInterface::DAS_PIXEL_FORMAT_RGBA);
-    *pp_out_image = p_result;
+    try
+    {
+        // Clone the data to ensure ownership — the cv::Mat constructor with
+        // external data creates a non-owning header.
+        cv::Mat owned{size.height, size.width, CV_8UC4, p_data};
+        DAS::DasOutPtr<DAS::ExportInterface::IDasImage> result(pp_out_image);
+        auto* p_result = DAS::Core::OcvWrapper::CpuImageImpl<
+            DAS::Core::OcvWrapper::Storage::OwningStorage>::
+            MakeFromCpuMat(
+                owned.clone(),
+                DAS::ExportInterface::DAS_PIXEL_FORMAT_RGBA);
+        result.Set(p_result);
+        p_result->Release();
+        result.Keep();
+    }
+    catch (const std::bad_alloc&)
+    {
+        DAS_CORE_LOG_ERROR("CreateIDasImageFromRgb888: out of memory");
+        return DAS_E_OUT_OF_MEMORY;
+    }
+    catch (const cv::Exception& ex)
+    {
+        DAS_CORE_LOG_ERROR(
+            "CreateIDasImageFromRgb888: OpenCV exception: {}",
+            ex.what());
+        return DAS_E_OPENCV_ERROR;
+    }
 
     return DAS_S_OK;
 }
@@ -299,8 +551,9 @@ DasResult DasPluginLoadImageFromResource(
             DAS::Core::OcvWrapper::Storage::OwningStorage>::
             MakeFromCpuMat(
                 std::move(rgb_mat),
-                Das::ExportInterface::DAS_PIXEL_FORMAT_RGB);
+                DAS::ExportInterface::DAS_PIXEL_FORMAT_RGB);
         result.Set(p_result);
+        p_result->Release();
         result.Keep();
         return DAS_S_OK;
     }

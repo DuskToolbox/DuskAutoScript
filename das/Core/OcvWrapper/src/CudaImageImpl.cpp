@@ -55,7 +55,7 @@ CudaImageImpl::QueryInterface(const DasGuid& iid, void** pp_out_object)
 
     if (iid == DasIidOf<IDasBase>()
         || iid == DasIidOf<ExportInterface::IDasImage>()
-        || iid == DasIidOf<Das::Core::OcvWrapper::IImageBackend>())
+        || iid == DasIidOf<DAS::Core::OcvWrapper::IImageBackend>())
     {
         *pp_out_object = static_cast<IImageBackend*>(this);
         AddRef();
@@ -91,8 +91,8 @@ DasResult CudaImageImpl::GetChannelCount(int32_t* p_out_channel_count)
 }
 
 DasResult CudaImageImpl::Clip(
-    const Das::ExportInterface::DasRect* p_rect,
-    Das::ExportInterface::IDasImage**    pp_out_image)
+    const DAS::ExportInterface::DasRect* p_rect,
+    DAS::ExportInterface::IDasImage**    pp_out_image)
 {
     DAS_UTILS_CHECK_POINTER(p_rect)
     DAS_UTILS_CHECK_POINTER(pp_out_image)
@@ -103,18 +103,45 @@ DasResult CudaImageImpl::Clip(
         // (GPU clip operations are more complex and not needed here)
         auto&       cpu_mat = GetCpuMat();
         const auto& rect = *p_rect;
+        if (!DAS::Core::OcvWrapper::IsValidClipRect(
+                rect,
+                cpu_mat.cols,
+                cpu_mat.rows))
+        {
+            DAS_CORE_LOG_ERROR(
+                "CudaImageImpl::Clip: invalid rect x={}, y={}, width={}, "
+                "height={}, image_width={}, image_height={}",
+                rect.x,
+                rect.y,
+                rect.width,
+                rect.height,
+                cpu_mat.cols,
+                cpu_mat.rows);
+            return DAS_E_INVALID_SIZE;
+        }
+
         const auto  clipped_mat = cpu_mat(DAS::Core::OcvWrapper::ToMat(rect));
         auto* const p_result =
             CpuImageImpl<Storage::OwningStorage>::MakeFromCpuMat(
                 clipped_mat.clone(),
                 pixel_format_);
-        p_result->AddRef();
-        *pp_out_image = p_result;
+        DAS::DasOutPtr<DAS::ExportInterface::IDasImage> result(pp_out_image);
+        result.Set(p_result);
+        p_result->Release();
+        result.Keep();
         return DAS_S_OK;
     }
     catch (std::bad_alloc&)
     {
+        DAS_CORE_LOG_ERROR("CudaImageImpl::Clip: out of memory");
         return DAS_E_OUT_OF_MEMORY;
+    }
+    catch (const cv::Exception& ex)
+    {
+        DAS_CORE_LOG_ERROR(
+            "CudaImageImpl::Clip: OpenCV exception: {}",
+            ex.what());
+        return DAS_E_OPENCV_ERROR;
     }
 }
 
@@ -123,13 +150,13 @@ DasResult CudaImageImpl::GetDataSize(uint64_t* p_out_size)
     DAS_UTILS_CHECK_POINTER(p_out_size)
     auto&    cpu_mat = GetCpuMat();
     uint64_t result = cpu_mat.total();
-    result *= cpu_mat.elemSize1();
+    result *= cpu_mat.elemSize();
     *p_out_size = result;
     return DAS_S_OK;
 }
 
 DasResult CudaImageImpl::GetBinaryBuffer(
-    Das::ExportInterface::IDasBinaryBuffer** pp_out_buffer)
+    DAS::ExportInterface::IDasBinaryBuffer** pp_out_buffer)
 {
     DAS_UTILS_CHECK_POINTER(pp_out_buffer);
     *pp_out_buffer = static_cast<ExportInterface::IDasBinaryBuffer*>(this);

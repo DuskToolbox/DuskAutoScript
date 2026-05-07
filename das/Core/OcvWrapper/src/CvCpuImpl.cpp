@@ -10,6 +10,7 @@
 #include <das/Core/OcvWrapper/IImageBackend.h>
 
 #include <das/Core/Logger/Logger.h>
+#include <das/DasPtr.hpp>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/Expected.h>
 #include <das/Utils/Timer.hpp>
@@ -26,6 +27,7 @@ DAS_DISABLE_WARNING_END
 
 #include <algorithm>
 #include <cmath>
+#include <string_view>
 #include <vector>
 
 DAS_CORE_OCVWRAPPER_NS_BEGIN
@@ -37,10 +39,16 @@ DAS_NS_ANONYMOUS_DETAILS_BEGIN
 auto GetImageBackend(ExportInterface::IDasImage* p_image)
     -> DAS::Utils::Expected<DasPtr<IImageBackend>>
 {
+    if (p_image == nullptr)
+    {
+        DAS_CORE_LOG_ERROR("IDasImage pointer is null");
+        return tl::make_unexpected(DAS_E_INVALID_POINTER);
+    }
+
     DasPtr<IImageBackend> p_result{};
 
     if (const auto qi_result = p_image->QueryInterface(
-            DasIidOf<Das::Core::OcvWrapper::IImageBackend>(),
+            DasIidOf<DAS::Core::OcvWrapper::IImageBackend>(),
             p_result.PutVoid());
         IsFailed(qi_result))
     {
@@ -52,6 +60,58 @@ auto GetImageBackend(ExportInterface::IDasImage* p_image)
     }
 
     return p_result;
+}
+
+auto ValidateTemplateMatchInputs(
+    const cv::Mat&   image,
+    const cv::Mat&   templ,
+    std::string_view function_name) -> DasResult
+{
+    if (image.empty() || templ.empty())
+    {
+        DAS_CORE_LOG_ERROR(
+            "{}: image/template is empty, image={}x{}, template={}x{}",
+            function_name,
+            image.cols,
+            image.rows,
+            templ.cols,
+            templ.rows);
+        return DAS_E_INVALID_SIZE;
+    }
+
+    if (templ.rows > image.rows || templ.cols > image.cols)
+    {
+        DAS_CORE_LOG_ERROR(
+            "{}: template larger than image, image={}x{}, template={}x{}",
+            function_name,
+            image.cols,
+            image.rows,
+            templ.cols,
+            templ.rows);
+        return DAS_E_INVALID_SIZE;
+    }
+
+    if (image.type() != templ.type())
+    {
+        DAS_CORE_LOG_ERROR(
+            "{}: image/template type mismatch, image_type={}, template_type={}",
+            function_name,
+            image.type(),
+            templ.type());
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    const auto depth = image.depth();
+    if (depth != CV_8U && depth != CV_32F)
+    {
+        DAS_CORE_LOG_ERROR(
+            "{}: unsupported image depth for matchTemplate, depth={}",
+            function_name,
+            depth);
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    return DAS_S_OK;
 }
 
 /// @brief Internal scan candidate for TemplateMatchAll
@@ -173,6 +233,14 @@ DasResult CvCpuImpl::TemplateMatchBest(
 
     const auto& image_mat = expected_p_image.value()->GetCpuMat();
     const auto& template_mat = expected_p_template.value()->GetCpuMat();
+    if (const auto validate_result = Details::ValidateTemplateMatchInputs(
+            image_mat,
+            template_mat,
+            "CvCpuImpl::TemplateMatchBest");
+        DAS::IsFailed(validate_result))
+    {
+        return validate_result;
+    }
 
     DAS::Utils::Timer timer{};
     timer.Begin();
@@ -182,12 +250,27 @@ DasResult CvCpuImpl::TemplateMatchBest(
     cv::Point min_location{};
     cv::Point max_location{};
     cv::Mat   output;
-    cv::matchTemplate(
-        image_mat,
-        template_mat,
-        output,
-        DAS::Utils::ToUnderlying(type));
-    cv::minMaxLoc(output, &min_score, &max_score, &min_location, &max_location);
+    try
+    {
+        cv::matchTemplate(
+            image_mat,
+            template_mat,
+            output,
+            DAS::Utils::ToUnderlying(type));
+        cv::minMaxLoc(
+            output,
+            &min_score,
+            &max_score,
+            &min_location,
+            &max_location);
+    }
+    catch (const cv::Exception& ex)
+    {
+        DAS_CORE_LOG_ERROR(
+            "CvCpuImpl::TemplateMatchBest: OpenCV exception: {}",
+            ex.what());
+        return DAS_E_OPENCV_ERROR;
+    }
 
     const auto cv_cost = timer.End();
     DAS_CORE_LOG_INFO(
@@ -254,10 +337,13 @@ DasResult CvCpuImpl::TemplateMatchAll(
     const auto& image_mat = expected_p_image.value()->GetCpuMat();
     const auto& template_mat = expected_p_template.value()->GetCpuMat();
 
-    if (template_mat.rows > image_mat.rows
-        || template_mat.cols > image_mat.cols)
+    if (const auto validate_result = Details::ValidateTemplateMatchInputs(
+            image_mat,
+            template_mat,
+            "CvCpuImpl::TemplateMatchAll");
+        DAS::IsFailed(validate_result))
     {
-        return DAS_E_INVALID_SIZE;
+        return validate_result;
     }
 
     const int tmpl_w = template_mat.cols;
@@ -265,11 +351,21 @@ DasResult CvCpuImpl::TemplateMatchAll(
 
     // Run matchTemplate to get the score map
     cv::Mat result_mat;
-    cv::matchTemplate(
-        image_mat,
-        template_mat,
-        result_mat,
-        DAS::Utils::ToUnderlying(type));
+    try
+    {
+        cv::matchTemplate(
+            image_mat,
+            template_mat,
+            result_mat,
+            DAS::Utils::ToUnderlying(type));
+    }
+    catch (const cv::Exception& ex)
+    {
+        DAS_CORE_LOG_ERROR(
+            "CvCpuImpl::TemplateMatchAll: OpenCV exception: {}",
+            ex.what());
+        return DAS_E_OPENCV_ERROR;
+    }
 
     // Step 1: Threshold filtering — collect all candidates with score >=
     // threshold
@@ -381,7 +477,7 @@ DasResult CvCpuImpl::MatchFeatures(
         return DAS_E_INVALID_POINTER;
     }
 
-    Das::Utils::Timer timer{};
+    DAS::Utils::Timer timer{};
     timer.Begin();
 
     ExportInterface::DasDetectorType detector_type{};
@@ -389,21 +485,21 @@ DasResult CvCpuImpl::MatchFeatures(
     ExportInterface::DasMatchParams  params{};
 
     auto result = p_config->GetDetectorType(&detector_type);
-    if (Das::IsFailed(result))
+    if (DAS::IsFailed(result))
     {
         DAS_CORE_LOG_ERROR("Failed to get detector type");
         return result;
     }
 
     result = p_config->GetMatcherType(&matcher_type);
-    if (Das::IsFailed(result))
+    if (DAS::IsFailed(result))
     {
         DAS_CORE_LOG_ERROR("Failed to get matcher type");
         return result;
     }
 
     result = p_config->GetParams(&params);
-    if (Das::IsFailed(result))
+    if (DAS::IsFailed(result))
     {
         DAS_CORE_LOG_ERROR("Failed to get match params");
         return result;
@@ -623,14 +719,26 @@ DasResult CvCpuImpl::ConvertColor(
 
     // Perform out-of-place color conversion
     cv::Mat dst_mat;
-    cv::cvtColor(src_mat, dst_mat, conversion_code);
+    try
+    {
+        cv::cvtColor(src_mat, dst_mat, conversion_code);
+    }
+    catch (const cv::Exception& ex)
+    {
+        DAS_CORE_LOG_ERROR(
+            "CvCpuImpl::ConvertColor: OpenCV exception: {}",
+            ex.what());
+        return DAS_E_OPENCV_ERROR;
+    }
 
     // Create a new CpuImageImpl with the target format
     auto* p_result = CpuImageImpl<Storage::OwningStorage>::MakeFromCpuMat(
         std::move(dst_mat),
         target_format);
-    p_result->AddRef();
-    *pp_out_image = p_result;
+    DAS::DasOutPtr<ExportInterface::IDasImage> result(pp_out_image);
+    result.Set(p_result);
+    p_result->Release();
+    result.Keep();
     return DAS_S_OK;
 }
 
@@ -696,14 +804,26 @@ DasResult CvCpuImpl::ColorFilter(
 
     // Apply inRange to produce a binary mask
     cv::Mat mask_mat;
-    cv::inRange(src_mat, lower, upper, mask_mat);
+    try
+    {
+        cv::inRange(src_mat, lower, upper, mask_mat);
+    }
+    catch (const cv::Exception& ex)
+    {
+        DAS_CORE_LOG_ERROR(
+            "CvCpuImpl::ColorFilter: OpenCV exception: {}",
+            ex.what());
+        return DAS_E_OPENCV_ERROR;
+    }
 
     // Create a new CpuImageImpl for the mask (GRAY format, single channel)
     auto* p_result = CpuImageImpl<Storage::OwningStorage>::MakeFromCpuMat(
         std::move(mask_mat),
         ExportInterface::DAS_PIXEL_FORMAT_GRAY);
-    p_result->AddRef();
-    *pp_out_mask = p_result;
+    DAS::DasOutPtr<ExportInterface::IDasImage> result(pp_out_mask);
+    result.Set(p_result);
+    p_result->Release();
+    result.Keep();
     return DAS_S_OK;
 }
 

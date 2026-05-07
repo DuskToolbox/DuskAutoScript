@@ -13,6 +13,7 @@
 
 #include <atomic>
 #include <cstring>
+#include <exception>
 #include <optional>
 
 DAS_CORE_OCVWRAPPER_NS_BEGIN
@@ -121,7 +122,7 @@ public:
 
         if (iid == DasIidOf<IDasBase>()
             || iid == DasIidOf<ExportInterface::IDasImage>()
-            || iid == DasIidOf<Das::Core::OcvWrapper::IImageBackend>())
+            || iid == DasIidOf<DAS::Core::OcvWrapper::IImageBackend>())
         {
             *pp_out_object = static_cast<IImageBackend*>(this);
             AddRef();
@@ -159,8 +160,8 @@ public:
     }
 
     DAS_IMPL Clip(
-        const Das::ExportInterface::DasRect* p_rect,
-        Das::ExportInterface::IDasImage**    pp_out_image) override
+        const DAS::ExportInterface::DasRect* p_rect,
+        DAS::ExportInterface::IDasImage**    pp_out_image) override
     {
         DAS_UTILS_CHECK_POINTER(p_rect)
         DAS_UTILS_CHECK_POINTER(pp_out_image)
@@ -168,18 +169,46 @@ public:
         try
         {
             const auto& rect = *p_rect;
-            const auto  clipped_mat =
+            if (!DAS::Core::OcvWrapper::IsValidClipRect(
+                    rect,
+                    storage_.GetCpuMat().cols,
+                    storage_.GetCpuMat().rows))
+            {
+                DAS_CORE_LOG_ERROR(
+                    "CpuImageImpl::Clip: invalid rect x={}, y={}, width={}, "
+                    "height={}, image_width={}, image_height={}",
+                    rect.x,
+                    rect.y,
+                    rect.width,
+                    rect.height,
+                    storage_.GetCpuMat().cols,
+                    storage_.GetCpuMat().rows);
+                return DAS_E_INVALID_SIZE;
+            }
+
+            const auto clipped_mat =
                 storage_.GetCpuMat()(DAS::Core::OcvWrapper::ToMat(rect));
             auto* const p_result =
                 CpuImageImpl<DAS::Core::OcvWrapper::Storage::OwningStorage>::
                     MakeFromCpuMat(clipped_mat.clone(), pixel_format_);
-            p_result->AddRef();
-            *pp_out_image = p_result;
+            DAS::DasOutPtr<DAS::ExportInterface::IDasImage> result(
+                pp_out_image);
+            result.Set(p_result);
+            p_result->Release();
+            result.Keep();
             return DAS_S_OK;
         }
         catch (std::bad_alloc&)
         {
+            DAS_CORE_LOG_ERROR("CpuImageImpl::Clip: out of memory");
             return DAS_E_OUT_OF_MEMORY;
+        }
+        catch (const std::exception& ex)
+        {
+            DAS_CORE_LOG_ERROR(
+                "CpuImageImpl::Clip: OpenCV exception: {}",
+                ex.what());
+            return DAS_E_OPENCV_ERROR;
         }
     }
 
@@ -196,7 +225,7 @@ public:
     }
 
     DAS_IMPL GetBinaryBuffer(
-        Das::ExportInterface::IDasBinaryBuffer** pp_out_buffer) override
+        DAS::ExportInterface::IDasBinaryBuffer** pp_out_buffer) override
     {
         DAS_UTILS_CHECK_POINTER(pp_out_buffer);
         *pp_out_buffer = static_cast<ExportInterface::IDasBinaryBuffer*>(this);

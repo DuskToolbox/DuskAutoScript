@@ -30,7 +30,7 @@ enum DasImagePixelFormat {
     DAS_PIXEL_FORMAT_FORCE_DWORD = 0x7FFFFFFF
 };
 
-[uuid("6C98E79F-2342-4B98-AC8A-2B29EA53F951")]
+[uuid("277C2E08-DE62-4E01-91E3-40170C2C4FD2")]
 interface IDasImage : IDasBase {
     DasResult GetSize([out] DasSize* p_out_size);
     DasResult GetChannelCount([out] int32_t* p_out_channel_count);
