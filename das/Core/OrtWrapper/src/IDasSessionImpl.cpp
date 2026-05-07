@@ -39,61 +39,45 @@ DasResult IDasSessionImpl::Run(
 
     try
     {
-        // Collect input name strings
         uint32_t input_count = 0;
         input_names->GetCount(&input_count);
+        uint32_t output_count = 0;
+        output_names->GetCount(&output_count);
 
-        std::vector<std::string> input_name_strs;
-        std::vector<const char*> input_name_cstrs;
-        input_name_strs.reserve(input_count);
-        input_name_cstrs.reserve(input_count);
+        // Use IoBinding to pass tensor references without copying
+        Ort::IoBinding io_binding{session_};
 
-        for (uint32_t i = 0; i < input_count; ++i)
-        {
-            Das::DasPtr<IDasReadOnlyString> p_name;
-            input_names->GetAt(i, p_name.Put());
-            DasReadOnlyString wrapper(p_name.Get());
-            input_name_strs.push_back(wrapper.GetUtf8());
-            input_name_cstrs.push_back(input_name_strs.back().c_str());
-        }
-
-        // Collect input Ort::Value references
-        std::vector<const Ort::Value*> ort_values;
-        ort_values.reserve(input_count);
+        // Bind inputs
         for (uint32_t i = 0; i < input_count; ++i)
         {
             Das::DasPtr<ExportInterface::IDasTensor> p_tensor;
             inputs->GetAt(i, p_tensor.Put());
             auto* tensor_impl = static_cast<IDasTensorImpl*>(p_tensor.Get());
-            ort_values.push_back(&tensor_impl->GetOrtValue());
+
+            Das::DasPtr<IDasReadOnlyString> p_name;
+            input_names->GetAt(i, p_name.Put());
+            DasReadOnlyString name_wrapper(p_name.Get());
+
+            io_binding.BindInput(
+                name_wrapper.GetUtf8(),
+                tensor_impl->GetOrtValue());
         }
 
-        // Collect output name strings
-        uint32_t output_count = 0;
-        output_names->GetCount(&output_count);
-
-        std::vector<std::string> output_name_strs;
-        std::vector<const char*> output_name_cstrs;
-        output_name_strs.reserve(output_count);
-        output_name_cstrs.reserve(output_count);
-
+        // Bind outputs — let ORT allocate output memory
         for (uint32_t i = 0; i < output_count; ++i)
         {
             Das::DasPtr<IDasReadOnlyString> p_name;
             output_names->GetAt(i, p_name.Put());
-            DasReadOnlyString wrapper(p_name.Get());
-            output_name_strs.push_back(wrapper.GetUtf8());
-            output_name_cstrs.push_back(output_name_strs.back().c_str());
+            DasReadOnlyString name_wrapper(p_name.Get());
+
+            io_binding.BindOutput(name_wrapper.GetUtf8(), allocator_.GetInfo());
         }
 
         // Run inference
-        auto outputs = session_.Run(
-            Ort::RunOptions{nullptr},
-            input_name_cstrs.data(),
-            ort_values.data(),
-            input_count,
-            output_name_cstrs.data(),
-            output_count);
+        session_.Run(Ort::RunOptions{nullptr}, io_binding);
+
+        // Retrieve outputs
+        auto outputs = io_binding.GetOutputValues();
 
         // Wrap outputs into IDasTensorVector
         auto* result_vector = new IDasTensorVectorImpl{};
