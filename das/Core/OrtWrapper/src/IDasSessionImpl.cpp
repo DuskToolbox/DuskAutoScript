@@ -27,10 +27,10 @@ IDasSessionImpl::IDasSessionImpl(Ort::Session session)
 }
 
 DasResult IDasSessionImpl::Run(
-    IDasReadOnlyStringVector* input_names,
-    IDasTensorVectorImpl*     inputs,
-    IDasReadOnlyStringVector* output_names,
-    IDasTensorVector**        pp_outputs)
+    ExportInterface::IDasReadOnlyStringVector* input_names,
+    ExportInterface::IDasTensorVector*         inputs,
+    ExportInterface::IDasReadOnlyStringVector* output_names,
+    ExportInterface::IDasTensorVector**        pp_outputs)
 {
     DAS_UTILS_CHECK_POINTER(pp_outputs);
     DAS_UTILS_CHECK_POINTER(inputs);
@@ -62,7 +62,7 @@ DasResult IDasSessionImpl::Run(
         ort_values.reserve(input_count);
         for (uint32_t i = 0; i < input_count; ++i)
         {
-            Das::DasPtr<IDasTensor> p_tensor;
+            Das::DasPtr<ExportInterface::IDasTensor> p_tensor;
             inputs->GetAt(i, p_tensor.Put());
             auto* tensor_impl = static_cast<IDasTensorImpl*>(p_tensor.Get());
             ort_values.push_back(&tensor_impl->GetOrtValue());
@@ -114,7 +114,7 @@ DasResult IDasSessionImpl::Run(
     catch (const Ort::Exception& e)
     {
         DAS_CORE_LOG_ERROR("Session Run failed: {}", e.what());
-        return DAS_E_INTERNAL_ERROR;
+        return DAS_E_ONNX_RUNTIME_ERROR;
     }
     catch (const std::bad_alloc&)
     {

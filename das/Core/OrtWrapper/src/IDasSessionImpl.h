@@ -26,9 +26,6 @@ DAS_DEFINE_CLASS_IN_NAMESPACE(
 
 DAS_CORE_ORTWRAPPER_NS_BEGIN
 
-using Das::ExportInterface::IDasReadOnlyStringVector;
-using Das::ExportInterface::IDasSession;
-
 class IDasSessionImpl final
     : public Das::ExportInterface::DasSessionImplBase<IDasSessionImpl>
 {
@@ -41,10 +38,10 @@ public:
     explicit IDasSessionImpl(Ort::Session session);
 
     DAS_IMPL Run(
-        IDasReadOnlyStringVector* input_names,
-        IDasTensorVectorImpl*     inputs,
-        IDasReadOnlyStringVector* output_names,
-        IDasTensorVector**        pp_outputs) override;
+        ExportInterface::IDasReadOnlyStringVector* input_names,
+        ExportInterface::IDasTensorVector*         inputs,
+        ExportInterface::IDasReadOnlyStringVector* output_names,
+        ExportInterface::IDasTensorVector**        pp_outputs) override;
 };
 
 DAS_CORE_ORTWRAPPER_NS_END
