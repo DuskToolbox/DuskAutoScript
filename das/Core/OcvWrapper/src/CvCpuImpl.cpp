@@ -1,13 +1,13 @@
 #include "CvCpuImpl.h"
-#include "CpuImageImpl.h"
 #include "DescriptorMatcherFactory.h"
 #include "FeatureDetectorFactory.h"
 #include "IDasMatchResultImpl.h"
 #include "IDasTemplateMatchResultImpl.h"
 #include "IDasTemplateMatchResultsImpl.h"
-#include "IImageBackend.h"
 #include "IMatchConfigImpl.h"
 #include <das/Core/OcvWrapper/Config.h>
+#include <das/Core/OcvWrapper/CpuImageImpl.hpp>
+#include <das/Core/OcvWrapper/IImageBackend.h>
 
 #include <das/Core/Logger/Logger.h>
 #include <das/Utils/CommonUtils.hpp>
@@ -626,8 +626,9 @@ DasResult CvCpuImpl::ConvertColor(
     cv::cvtColor(src_mat, dst_mat, conversion_code);
 
     // Create a new CpuImageImpl with the target format
-    auto* p_result =
-        CpuImageImpl::MakeFromCpuMat(std::move(dst_mat), target_format);
+    auto* p_result = CpuImageImpl<Storage::OwningStorage>::MakeFromCpuMat(
+        std::move(dst_mat),
+        target_format);
     p_result->AddRef();
     *pp_out_image = p_result;
     return DAS_S_OK;
@@ -698,7 +699,7 @@ DasResult CvCpuImpl::ColorFilter(
     cv::inRange(src_mat, lower, upper, mask_mat);
 
     // Create a new CpuImageImpl for the mask (GRAY format, single channel)
-    auto* p_result = CpuImageImpl::MakeFromCpuMat(
+    auto* p_result = CpuImageImpl<Storage::OwningStorage>::MakeFromCpuMat(
         std::move(mask_mat),
         ExportInterface::DAS_PIXEL_FORMAT_GRAY);
     p_result->AddRef();

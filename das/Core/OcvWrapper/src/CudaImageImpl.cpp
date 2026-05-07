@@ -1,9 +1,7 @@
 #include "CudaImageImpl.h"
-#include "CpuImageImpl.h"
 #include <das/Core/OcvWrapper/Config.h>
+#include <das/Core/OcvWrapper/CpuImageImpl.hpp>
 #include <das/DasPtr.hpp>
-#include <das/_autogen/idl/abi/IDasBinaryBuffer.h>
-#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasBinaryBuffer.Implements.hpp>
 
 #include <das/Core/Logger/Logger.h>
 #include <das/Utils/CommonUtils.hpp>
@@ -18,45 +16,11 @@ DAS_IGNORE_OPENCV_WARNING
 DAS_DISABLE_WARNING_END
 
 #include <cstring>
-#include <memory>
 #include <utility>
 
 DAS_CORE_OCVWRAPPER_NS_BEGIN
 
 #ifdef DAS_WITH_CUDA
-
-namespace
-{
-    class DasBinaryBufferImpl final
-        : public DAS::ExportInterface::DasBinaryBufferImplBase<
-              DasBinaryBufferImpl>
-    {
-    public:
-        explicit DasBinaryBufferImpl(const size_t size_in_bytes)
-            : size_{size_in_bytes}
-        {
-            up_data_ = std::make_unique<unsigned char[]>(size_in_bytes);
-        }
-
-        DAS_IMPL GetData(unsigned char** pp_out_data) override
-        {
-            DAS_UTILS_CHECK_POINTER(pp_out_data);
-            *pp_out_data = up_data_.get();
-            return DAS_S_OK;
-        }
-
-        DAS_IMPL GetSize(uint64_t* p_out_size) override
-        {
-            DAS_UTILS_CHECK_POINTER(p_out_size);
-            *p_out_size = size_;
-            return DAS_S_OK;
-        }
-
-    private:
-        size_t                           size_;
-        std::unique_ptr<unsigned char[]> up_data_;
-    };
-} // unnamed namespace
 
 // ==================== Constructor ====================
 
@@ -135,7 +99,9 @@ DasResult CudaImageImpl::Clip(
         const auto& rect = *p_rect;
         const auto  clipped_mat = cpu_mat(DAS::Core::OcvWrapper::ToMat(rect));
         auto* const p_result =
-            CpuImageImpl::MakeFromCpuMat(clipped_mat.clone(), pixel_format_);
+            CpuImageImpl<Storage::OwningStorage>::MakeFromCpuMat(
+                clipped_mat.clone(),
+                pixel_format_);
         p_result->AddRef();
         *pp_out_image = p_result;
         return DAS_S_OK;
@@ -171,7 +137,8 @@ DasResult CudaImageImpl::GetBinaryBuffer(
             return get_size_result;
         }
 
-        auto* const    p_buffer = DasBinaryBufferImpl::MakeRaw(data_size);
+        auto* const p_buffer =
+            DAS::Core::Utils::DasBinaryBufferImpl::MakeRaw(data_size);
         unsigned char* p_buffer_data{};
         const auto     get_data_result = p_buffer->GetData(&p_buffer_data);
         if (DAS::IsFailed(get_data_result))

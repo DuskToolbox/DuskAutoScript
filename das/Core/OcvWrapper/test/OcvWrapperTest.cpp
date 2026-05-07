@@ -1,11 +1,12 @@
 #include <gtest/gtest.h>
 
-#include "../src/CpuImageImpl.h"
+#include <das/Core/OcvWrapper/CpuImageImpl.hpp>
+#include <das/Core/OcvWrapper/IImageBackend.h>
+
 #include "../src/CudaImageImpl.h"
 #include "../src/CvCpuImpl.h"
 #include "../src/IDasTemplateMatchResultImpl.h"
 #include "../src/IDasTemplateMatchResultsImpl.h"
-#include "../src/IImageBackend.h"
 
 #include <das/DasApi.h>
 
@@ -40,9 +41,10 @@ namespace Das::Core::OcvWrapper::Test
             int                                       h,
             int                                       w,
             DAS::ExportInterface::DasImagePixelFormat fmt =
-                DAS::ExportInterface::DAS_PIXEL_FORMAT_BGR) -> CpuImageImpl*
+                DAS::ExportInterface::DAS_PIXEL_FORMAT_BGR)
+            -> CpuImageImpl<Storage::OwningStorage>*
         {
-            return CpuImageImpl::MakeFromCpuMat(
+            return CpuImageImpl<Storage::OwningStorage>::MakeFromCpuMat(
                 MakeTestImage(h, w, 128, 64, 32),
                 fmt);
         }
