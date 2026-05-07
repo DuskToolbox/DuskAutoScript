@@ -822,4 +822,45 @@ namespace Das::Core::OcvWrapper::Test
         p_image->Release();
     }
 
+    // ==================== CpuImageImpl IDasBinaryBuffer ====================
+
+    TEST(CpuImageBinaryBufferTest, QI_Returns_IDasBinaryBuffer)
+    {
+        cv::Mat mat = cv::Mat::zeros(10, 20, CV_8UC3);
+        auto*   img = CpuImageImpl<Storage::OwningStorage>::MakeFromCpuMat(
+            mat, ExportInterface::DAS_PIXEL_FORMAT_BGR);
+        DAS::DasPtr<IImageBackend> guard(img);
+
+        void* ptr = nullptr;
+        auto  result = img->QueryInterface(
+            DasIidOf<ExportInterface::IDasBinaryBuffer>(), &ptr);
+        EXPECT_EQ(result, DAS_S_OK);
+        EXPECT_NE(ptr, nullptr);
+        if (ptr)
+        {
+            static_cast<IDasBase*>(ptr)->Release();
+        }
+    }
+
+    TEST(CpuImageBinaryBufferTest, GetBinaryBuffer_ZeroCopy)
+    {
+        cv::Mat mat = cv::Mat::zeros(10, 20, CV_8UC3);
+        mat.at<cv::Vec3b>(5, 10) = cv::Vec3b(100, 150, 200);
+        auto* img = CpuImageImpl<Storage::OwningStorage>::MakeFromCpuMat(
+            mat.clone(), ExportInterface::DAS_PIXEL_FORMAT_BGR);
+        DAS::DasPtr<IImageBackend> guard(img);
+
+        ExportInterface::IDasBinaryBuffer* p_buffer = nullptr;
+        auto result = img->GetBinaryBuffer(&p_buffer);
+        ASSERT_EQ(result, DAS_S_OK);
+        DAS::DasPtr<ExportInterface::IDasBinaryBuffer> buffer_guard(p_buffer);
+
+        unsigned char* data = nullptr;
+        result = p_buffer->GetData(&data);
+        ASSERT_EQ(result, DAS_S_OK);
+
+        // Zero-copy: GetData should return same data as GetCpuMat
+        EXPECT_EQ(data, img->GetCpuMat().data);
+    }
+
 } // namespace Das::Core::OcvWrapper::Test
