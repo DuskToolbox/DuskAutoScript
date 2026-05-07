@@ -9,14 +9,20 @@
 #include "../src/IDasTemplateMatchResultsImpl.h"
 
 #include <das/DasApi.h>
+#include <das/DasPtr.hpp>
 
 #include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
+#ifdef DAS_WITH_CUDA
+#include <opencv2/core/cuda.hpp>
+#endif
+
 #include <atomic>
 #include <cstdint>
 #include <cstring>
+#include <utility>
 #include <vector>
 
 namespace Das::Core::OcvWrapper::Test
@@ -828,12 +834,14 @@ namespace Das::Core::OcvWrapper::Test
     {
         cv::Mat mat = cv::Mat::zeros(10, 20, CV_8UC3);
         auto*   img = CpuImageImpl<Storage::OwningStorage>::MakeFromCpuMat(
-            mat, ExportInterface::DAS_PIXEL_FORMAT_BGR);
+            mat,
+            ExportInterface::DAS_PIXEL_FORMAT_BGR);
         DAS::DasPtr<IImageBackend> guard(img);
 
         void* ptr = nullptr;
         auto  result = img->QueryInterface(
-            DasIidOf<ExportInterface::IDasBinaryBuffer>(), &ptr);
+            DasIidOf<ExportInterface::IDasBinaryBuffer>(),
+            &ptr);
         EXPECT_EQ(result, DAS_S_OK);
         EXPECT_NE(ptr, nullptr);
         if (ptr)
@@ -847,7 +855,8 @@ namespace Das::Core::OcvWrapper::Test
         cv::Mat mat = cv::Mat::zeros(10, 20, CV_8UC3);
         mat.at<cv::Vec3b>(5, 10) = cv::Vec3b(100, 150, 200);
         auto* img = CpuImageImpl<Storage::OwningStorage>::MakeFromCpuMat(
-            mat.clone(), ExportInterface::DAS_PIXEL_FORMAT_BGR);
+            mat.clone(),
+            ExportInterface::DAS_PIXEL_FORMAT_BGR);
         DAS::DasPtr<IImageBackend> guard(img);
 
         ExportInterface::IDasBinaryBuffer* p_buffer = nullptr;
@@ -862,5 +871,49 @@ namespace Das::Core::OcvWrapper::Test
         // Zero-copy: GetData should return same data as GetCpuMat
         EXPECT_EQ(data, img->GetCpuMat().data);
     }
+
+    // ==================== CudaImageImpl IDasBinaryBuffer ====================
+
+#ifdef DAS_WITH_CUDA
+    TEST(CudaImageBinaryBufferTest, QI_Returns_IDasBinaryBuffer)
+    {
+        cv::cuda::GpuMat gpu_mat(10, 20, CV_8UC3);
+        gpu_mat.setTo(cv::Scalar(0));
+        auto* img = CudaImageImpl::MakeFromGpuMat(
+            std::move(gpu_mat),
+            ExportInterface::DAS_PIXEL_FORMAT_BGR);
+        DAS::DasPtr<IImageBackend> guard(img);
+
+        void* ptr = nullptr;
+        auto  result = img->QueryInterface(
+            DasIidOf<ExportInterface::IDasBinaryBuffer>(),
+            &ptr);
+        EXPECT_EQ(result, DAS_S_OK);
+        EXPECT_NE(ptr, nullptr);
+        if (ptr)
+        {
+            static_cast<IDasBase*>(ptr)->Release();
+        }
+    }
+
+    TEST(CudaImageBinaryBufferTest, GetBinaryBuffer_ZeroCopy)
+    {
+        cv::cuda::GpuMat gpu_mat(10, 20, CV_8UC3);
+        gpu_mat.setTo(cv::Scalar(100, 150, 200));
+        auto* img = CudaImageImpl::MakeFromGpuMat(
+            std::move(gpu_mat),
+            ExportInterface::DAS_PIXEL_FORMAT_BGR);
+        DAS::DasPtr<IImageBackend> guard(img);
+
+        ExportInterface::IDasBinaryBuffer* p_buffer = nullptr;
+        auto result = img->GetBinaryBuffer(&p_buffer);
+        ASSERT_EQ(result, DAS_S_OK);
+        DAS::DasPtr<ExportInterface::IDasBinaryBuffer> buffer_guard(p_buffer);
+
+        uint64_t buffer_size = 0;
+        p_buffer->GetSize(&buffer_size);
+        EXPECT_EQ(buffer_size, static_cast<uint64_t>(10 * 20 * 3));
+    }
+#endif // DAS_WITH_CUDA
 
 } // namespace Das::Core::OcvWrapper::Test
