@@ -233,6 +233,7 @@ if(WIN32)
 endif()
 
 das_add_core_component(Utils)
+das_add_core_component(Debug)
 das_add_core_component(OcvWrapper)
 das_add_core_component(OrtWrapper)
 das_add_core_component(ForeignInterfaceHost)
@@ -317,6 +318,7 @@ if(${DAS_BUILD_TEST})
 #TaskSchedulerTest needs Http headers for controller validation tests
     target_include_directories(TaskSchedulerTest PRIVATE ${CMAKE_SOURCE_DIR}/das/Http/src)
     das_add_core_test(IPC)
+    das_add_core_test(Debug)
     das_add_core_test(OcvWrapper)
     das_add_core_test(OrtWrapper)
 
