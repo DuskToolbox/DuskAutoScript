@@ -32,6 +32,33 @@ struct DebugDrawBox
     std::string                   label;
 };
 
+struct DebugDrawPoint
+{
+    int32_t              x{0};
+    int32_t              y{0};
+    int32_t              radius{5};
+    DebugAnnotationColor color{DebugAnnotationColor::Red};
+    std::string          label;
+};
+
+struct DebugDrawLine
+{
+    int32_t              from_x{0};
+    int32_t              from_y{0};
+    int32_t              to_x{0};
+    int32_t              to_y{0};
+    int32_t              thickness{2};
+    DebugAnnotationColor color{DebugAnnotationColor::Blue};
+    std::string          label;
+};
+
+struct DebugImageAnnotations
+{
+    std::vector<DebugDrawBox>   boxes;
+    std::vector<DebugDrawPoint> points;
+    std::vector<DebugDrawLine>  lines;
+};
+
 struct DebugImageSnapshot
 {
     bool                                available{false};
@@ -55,6 +82,11 @@ DebugImageWriteResult SaveOriginalAndAnnotated(
     const std::string&                         step_name,
     std::shared_ptr<const DebugImageSnapshot>  snapshot,
     const std::vector<DebugDrawBox>&           annotations);
+
+DebugImageWriteResult SaveOriginalAndAnnotated(
+    const std::string&                        step_name,
+    std::shared_ptr<const DebugImageSnapshot> snapshot,
+    const DebugImageAnnotations&              annotations);
 
 std::string BuildImageJson(const DebugImageWriteResult& result);
 

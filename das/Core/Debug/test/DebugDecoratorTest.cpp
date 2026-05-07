@@ -324,7 +324,10 @@ namespace Das::Core::Debug::Test
         auto snapshot = MakeSnapshot();
 
         const auto image_result =
-            SaveOriginalAndAnnotated("ocr_result", snapshot, {});
+            SaveOriginalAndAnnotated(
+                "ocr_result",
+                snapshot,
+                std::vector<DebugDrawBox>{});
         ASSERT_EQ(image_result.image_status, "available");
         EXPECT_EQ(image_result.image_filename.find("hello_secret_text"),
                   std::string::npos);
@@ -343,7 +346,10 @@ namespace Das::Core::Debug::Test
     {
         const auto snapshot = CaptureImageSnapshot(nullptr);
         const auto image_result =
-            SaveOriginalAndAnnotated("unsupported", snapshot, {});
+            SaveOriginalAndAnnotated(
+                "unsupported",
+                snapshot,
+                std::vector<DebugDrawBox>{});
         EXPECT_EQ(image_result.image_status, "not_available");
         ExpectContains(BuildImageJson(image_result), "\"not_available\"");
     }
@@ -358,7 +364,10 @@ namespace Das::Core::Debug::Test
         DebugRuntime::SetLatestImage(snapshot);
 
         const auto image_result =
-            SaveOriginalAndAnnotated("shutdown_drain", snapshot, {});
+            SaveOriginalAndAnnotated(
+                "shutdown_drain",
+                snapshot,
+                std::vector<DebugDrawBox>{});
         auto event = MakeDebugEvent(
             "shutdown_drain",
             "{}",

@@ -1,22 +1,43 @@
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/InputFactoryManager.h>
 
+#include <das/Core/Debug/DebugDecorators.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasException.hpp>
 #include <das/Utils/CommonUtils.hpp>
+
+#include <utility>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
 DasResult ForeignInterfaceHost::InputFactoryManager::Register(
     Das::PluginInterface::IDasInputFactory* p_factory)
 {
+    if (!p_factory)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    p_factory->AddRef();
+    bool factory_ref_consumed = false;
+
     try
     {
-        common_input_factory_vector_.emplace_back(p_factory);
+        auto* p_decorated_factory =
+            Das::Core::Debug::MaybeDecorateInputFactory(p_factory, nullptr);
+        factory_ref_consumed = true;
+        auto wrapped_factory =
+            Das::PluginInterface::DasInputFactory::Attach(
+                p_decorated_factory);
+        common_input_factory_vector_.emplace_back(std::move(wrapped_factory));
         return DAS_S_OK;
     }
     catch (const std::bad_alloc&)
     {
+        if (!factory_ref_consumed)
+        {
+            p_factory->Release();
+        }
         return DAS_E_OUT_OF_MEMORY;
     }
 }

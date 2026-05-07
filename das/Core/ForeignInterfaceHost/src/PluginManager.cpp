@@ -1,6 +1,7 @@
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
 
 #include <cpp_yyjson.hpp>
+#include <das/Core/Debug/DebugDecorators.h>
 #include <das/Core/IPC/DasAsyncSender.h>
 #include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/Logger/Logger.h>
@@ -627,10 +628,26 @@ DasResult PluginManager::GetObjectByFeature(
         return DAS_E_INVALID_POINTER;
     }
 
+    if (feature == Das::PluginInterface::DAS_PLUGIN_FEATURE_INPUT_FACTORY
+        && iid == DasIidOf<Das::PluginInterface::IDasInputFactory>())
+    {
+        Das::PluginInterface::IDasInputFactory* p_factory = nullptr;
+        const auto result = feature_info.interface_ptr->QueryInterface(
+            iid,
+            reinterpret_cast<void**>(&p_factory));
+        if (DAS::IsFailed(result) || !p_factory)
+        {
+            return result;
+        }
+
+        *pp_out_object = Das::Core::Debug::MaybeDecorateInputFactory(
+            p_factory,
+            feature_info.plugin_name.c_str());
+        return result;
+    }
+
     // QueryInterface 获取请求的接口
-    auto result =
-        feature_info.interface_ptr->QueryInterface(iid, pp_out_object);
-    return result;
+    return feature_info.interface_ptr->QueryInterface(iid, pp_out_object);
 }
 
 std::span<FeatureInfo* const> PluginManager::GetFeaturesByType(

@@ -220,7 +220,7 @@ namespace
         return snapshot;
     }
 
-    void DrawAnnotations(
+    void DrawBoxes(
         cv::Mat&                         image,
         const std::vector<DebugDrawBox>& annotations)
     {
@@ -249,6 +249,92 @@ namespace
                     1);
             }
         }
+    }
+
+    void DrawPoints(
+        cv::Mat&                           image,
+        const std::vector<DebugDrawPoint>& annotations)
+    {
+        for (const auto& annotation : annotations)
+        {
+            if (annotation.radius <= 0)
+            {
+                continue;
+            }
+
+            const auto color = ColorOf(annotation.color);
+            const auto point = cv::Point{annotation.x, annotation.y};
+            cv::circle(image, point, annotation.radius, color, 2);
+            cv::line(
+                image,
+                cv::Point{annotation.x - annotation.radius, annotation.y},
+                cv::Point{annotation.x + annotation.radius, annotation.y},
+                color,
+                1);
+            cv::line(
+                image,
+                cv::Point{annotation.x, annotation.y - annotation.radius},
+                cv::Point{annotation.x, annotation.y + annotation.radius},
+                color,
+                1);
+            if (!annotation.label.empty())
+            {
+                cv::putText(
+                    image,
+                    annotation.label,
+                    cv::Point{
+                        annotation.x + annotation.radius + 3,
+                        std::max(0, annotation.y - annotation.radius - 3)},
+                    cv::FONT_HERSHEY_SIMPLEX,
+                    0.45,
+                    color,
+                    1);
+            }
+        }
+    }
+
+    void DrawLines(
+        cv::Mat&                          image,
+        const std::vector<DebugDrawLine>& annotations)
+    {
+        for (const auto& annotation : annotations)
+        {
+            if (annotation.thickness <= 0)
+            {
+                continue;
+            }
+
+            const auto color = ColorOf(annotation.color);
+            const auto from = cv::Point{annotation.from_x, annotation.from_y};
+            const auto to = cv::Point{annotation.to_x, annotation.to_y};
+            cv::line(image, from, to, color, annotation.thickness);
+            cv::circle(image, from, annotation.thickness + 2, color, -1);
+            cv::circle(image, to, annotation.thickness + 2, color, -1);
+            if (!annotation.label.empty())
+            {
+                cv::putText(
+                    image,
+                    annotation.label,
+                    cv::Point{
+                        std::min(annotation.from_x, annotation.to_x),
+                        std::max(
+                            0,
+                            std::min(annotation.from_y, annotation.to_y) - 4)},
+                    cv::FONT_HERSHEY_SIMPLEX,
+                    0.45,
+                    color,
+                    1);
+            }
+        }
+    }
+
+    void DrawAnnotations(
+        cv::Mat&                      image,
+        const DebugImageAnnotations& annotations)
+    {
+        DrawBoxes(image, annotations.boxes);
+        DrawPoints(image, annotations.points);
+        DrawLines(image, annotations.lines);
     }
 
     void WorkerLoop()
@@ -332,6 +418,16 @@ DebugImageWriteResult SaveOriginalAndAnnotated(
     const std::string&                        step_name,
     std::shared_ptr<const DebugImageSnapshot> snapshot,
     const std::vector<DebugDrawBox>&          annotations)
+{
+    DebugImageAnnotations all_annotations{};
+    all_annotations.boxes = annotations;
+    return SaveOriginalAndAnnotated(step_name, std::move(snapshot), all_annotations);
+}
+
+DebugImageWriteResult SaveOriginalAndAnnotated(
+    const std::string&                        step_name,
+    std::shared_ptr<const DebugImageSnapshot> snapshot,
+    const DebugImageAnnotations&              annotations)
 {
     DebugImageWriteResult result{};
     if (!snapshot || !snapshot->available || snapshot->bgr_image.empty())
