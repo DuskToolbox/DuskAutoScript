@@ -4,6 +4,7 @@
 #include "DasOrt.h"
 
 #include <das/_autogen/idl/abi/IDasBinaryBuffer.h>
+#include <das/_autogen/idl/abi/IDasImage.h>
 #include <das/_autogen/idl/abi/IDasMemory.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasTensor.Implements.hpp>
 
@@ -48,6 +49,15 @@ struct FloatTensorBackingBuffer final
 DasResult CreateFloatTensorBackingBuffer(
     int64_t                   element_count,
     FloatTensorBackingBuffer* p_out_backing);
+
+DasResult CreateFloatTensorBackingBufferFromImage(
+    ExportInterface::IDasImage* image,
+    const int64_t*              shape,
+    uint32_t                    rank,
+    const double*               mean,
+    const double*               stddev,
+    uint32_t                    value_count,
+    FloatTensorBackingBuffer*   p_out_backing);
 
 class IDasTensorImpl final
     : public DAS::ExportInterface::DasTensorImplBase<IDasTensorImpl>

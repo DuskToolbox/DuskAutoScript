@@ -22,6 +22,7 @@ DAS_DISABLE_WARNING_END
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <limits>
 #include <numeric>
 
 DAS_CORE_ORTWRAPPER_NS_BEGIN
@@ -41,6 +42,148 @@ static constexpr double kDetStd[] = {0.229, 0.224, 0.225};
 // ===== Recognition normalization: (pixel/255 - 0.5) / 0.5 (Pitfall 3) =====
 static constexpr double kRecMean[] = {127.5, 127.5, 127.5};
 static constexpr double kRecStd[] = {127.5, 127.5, 127.5};
+
+static bool TryMultiplyUint64(
+    uint64_t  lhs,
+    uint64_t  rhs,
+    uint64_t* p_out_value)
+{
+    if (lhs != 0 && rhs > std::numeric_limits<uint64_t>::max() / lhs)
+    {
+        return false;
+    }
+    *p_out_value = lhs * rhs;
+    return true;
+}
+
+static DasResult GetOcrImageData(
+    DAS::ExportInterface::IDasImage*            image,
+    const DAS::ExportInterface::DasSize&        image_size,
+    unsigned char**                             pp_out_raw_data,
+    DAS::ExportInterface::DasImagePixelFormat*  p_out_pixel_format)
+{
+    DAS_UTILS_CHECK_POINTER(image);
+    DAS_UTILS_CHECK_POINTER(pp_out_raw_data);
+    DAS_UTILS_CHECK_POINTER(p_out_pixel_format);
+
+    int32_t channel_count = 0;
+    auto    result = image->GetChannelCount(&channel_count);
+    if (DAS::IsFailed(result))
+    {
+        DAS_CORE_LOG_ERROR(
+            "Recognize: GetChannelCount failed: result={}",
+            result);
+        return result;
+    }
+    if (channel_count != 3)
+    {
+        DAS_CORE_LOG_ERROR(
+            "Recognize: PaddleOCR requires a 3-channel image, got {}",
+            channel_count);
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    DAS::ExportInterface::DasImagePixelFormat pixel_format =
+        DAS::ExportInterface::DAS_PIXEL_FORMAT_UNKNOWN;
+    result = image->GetPixelFormat(&pixel_format);
+    if (DAS::IsFailed(result))
+    {
+        DAS_CORE_LOG_ERROR(
+            "Recognize: GetPixelFormat failed: result={}",
+            result);
+        return result;
+    }
+    if (pixel_format != DAS::ExportInterface::DAS_PIXEL_FORMAT_RGB
+        && pixel_format != DAS::ExportInterface::DAS_PIXEL_FORMAT_BGR)
+    {
+        DAS_CORE_LOG_ERROR(
+            "Recognize: unsupported 3-channel pixel_format={}, expected BGR "
+            "or RGB input for PP-OCRv5 BGR preprocessing",
+            static_cast<int>(pixel_format));
+        return DAS_E_INVALID_ENUM;
+    }
+
+    uint64_t pixel_count = 0;
+    if (!TryMultiplyUint64(
+            static_cast<uint64_t>(image_size.width),
+            static_cast<uint64_t>(image_size.height),
+            &pixel_count))
+    {
+        DAS_CORE_LOG_ERROR(
+            "Recognize: image pixel count overflow, size={}x{}",
+            image_size.width,
+            image_size.height);
+        return DAS_E_INVALID_SIZE;
+    }
+
+    uint64_t required_size = 0;
+    if (!TryMultiplyUint64(pixel_count, 3, &required_size))
+    {
+        DAS_CORE_LOG_ERROR(
+            "Recognize: image byte count overflow, pixels={}",
+            pixel_count);
+        return DAS_E_INVALID_SIZE;
+    }
+
+    uint64_t image_data_size = 0;
+    result = image->GetDataSize(&image_data_size);
+    if (DAS::IsFailed(result))
+    {
+        DAS_CORE_LOG_ERROR("Recognize: GetDataSize failed: result={}", result);
+        return result;
+    }
+    if (image_data_size != required_size)
+    {
+        DAS_CORE_LOG_ERROR(
+            "Recognize: image data size mismatch, required={}, actual={}",
+            required_size,
+            image_data_size);
+        return DAS_E_INVALID_SIZE;
+    }
+
+    DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer> buffer;
+    result = image->GetBinaryBuffer(buffer.Put());
+    if (DAS::IsFailed(result))
+    {
+        DAS_CORE_LOG_ERROR(
+            "Recognize: GetBinaryBuffer failed: result={}",
+            result);
+        return result;
+    }
+
+    unsigned char* raw_data = nullptr;
+    result = buffer->GetData(&raw_data);
+    if (DAS::IsFailed(result))
+    {
+        DAS_CORE_LOG_ERROR("Recognize: GetData failed: result={}", result);
+        return result;
+    }
+    if (raw_data == nullptr)
+    {
+        DAS_CORE_LOG_ERROR("Recognize: GetData returned null");
+        return DAS_E_INVALID_POINTER;
+    }
+
+    uint64_t buffer_size = 0;
+    result = buffer->GetSize(&buffer_size);
+    if (DAS::IsFailed(result))
+    {
+        DAS_CORE_LOG_ERROR("Recognize: GetSize failed: result={}", result);
+        return result;
+    }
+    if (buffer_size < required_size)
+    {
+        DAS_CORE_LOG_ERROR(
+            "Recognize: binary buffer too small, required={}, actual={}",
+            required_size,
+            buffer_size);
+        return DAS_E_INVALID_SIZE;
+    }
+
+    *pp_out_raw_data = raw_data;
+    *p_out_pixel_format = pixel_format;
+    return DAS_S_OK;
+}
 
 // ===== Helper: query tensor dimensions =====
 static void GetTensorDims(
@@ -303,6 +446,19 @@ static DasResult RecognizeTextCrop(
     const std::vector<std::string>&    dict,
     CtcResult&                         out_result)
 {
+    if (crop.empty() || crop.rows <= 0 || crop.cols <= 0
+        || rec_input_height <= 0 || rec_input_width <= 0)
+    {
+        DAS_CORE_LOG_ERROR(
+            "RecognizeTextCrop: invalid crop or rec shape, crop={}x{}, "
+            "rec={}x{}",
+            crop.cols,
+            crop.rows,
+            rec_input_width,
+            rec_input_height);
+        return DAS_E_INVALID_SIZE;
+    }
+
     // Resize to rec_input_height, preserving aspect ratio
     double scale = static_cast<double>(rec_input_height) / crop.rows;
     int    target_w = std::min(
@@ -315,6 +471,15 @@ static DasResult RecognizeTextCrop(
         crop,
         resized,
         cv::Size(target_w, static_cast<int>(rec_input_height)));
+    if (resized.empty() || resized.channels() != 3)
+    {
+        DAS_CORE_LOG_ERROR(
+            "RecognizeTextCrop: resized crop must be 3-channel, got empty={}, "
+            "channels={}",
+            resized.empty(),
+            resized.empty() ? 0 : resized.channels());
+        return DAS_E_INVALID_ARGUMENT;
+    }
 
     // Create IDasImage from the resized cv::Mat — we use CreateTensorFromImage
     // which takes IDasImage*. We wrap the cv::Mat data as an
@@ -345,17 +510,15 @@ static DasResult RecognizeTextCrop(
         return backing_result;
     }
     auto* float_data = backing.data;
-    std::fill_n(float_data, backing.element_count, 0.0f);
 
     int height = resized.rows;
     int width = resized.cols;
-    int channels = resized.channels();
 
     for (int h = 0; h < height; ++h)
     {
         for (int w = 0; w < width; ++w)
         {
-            for (int c = 0; c < 3 && c < channels; ++c)
+            for (int c = 0; c < 3; ++c)
             {
                 auto src_byte =
                     static_cast<double>(resized.at<cv::Vec3b>(h, w)[c]);
@@ -364,10 +527,7 @@ static DasResult RecognizeTextCrop(
                     / (kRecStd[c] / 255.0));
                 auto dst_idx =
                     static_cast<size_t>(c * height * width + h * width + w);
-                if (dst_idx < backing.element_count)
-                {
-                    float_data[dst_idx] = val;
-                }
+                float_data[dst_idx] = val;
             }
         }
     }
@@ -495,27 +655,31 @@ DasResult PaddleOcrImpl::Recognize(
             return DAS_E_INVALID_ARGUMENT;
         }
 
-        // Get raw pixel data
-        DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer> buf;
-        cr = p_image->GetBinaryBuffer(buf.Put());
+        unsigned char* raw_data = nullptr;
+        DAS::ExportInterface::DasImagePixelFormat pixel_format =
+            DAS::ExportInterface::DAS_PIXEL_FORMAT_UNKNOWN;
+        cr = GetOcrImageData(p_image, img_size, &raw_data, &pixel_format);
         if (DAS::IsFailed(cr))
         {
-            DAS_CORE_LOG_ERROR(
-                "Recognize: GetBinaryBuffer failed: result={}",
-                cr);
             return cr;
         }
-
-        unsigned char* raw_data = nullptr;
-        buf->GetData(&raw_data);
-        uint64_t data_size = 0;
-        buf->GetSize(&data_size);
 
         int img_w = img_size.width;
         int img_h = img_size.height;
 
-        // Construct cv::Mat from raw image data
-        cv::Mat image(img_h, img_w, CV_8UC3, raw_data);
+        // PP-OCRv5 tools/infer uses OpenCV BGR channel order. Accept RGB input
+        // from DAS image producers, but normalize the working Mat to BGR before
+        // resize, crop, detection, and recognition preprocessing.
+        cv::Mat src_image(img_h, img_w, CV_8UC3, raw_data);
+        cv::Mat image;
+        if (pixel_format == DAS::ExportInterface::DAS_PIXEL_FORMAT_RGB)
+        {
+            cv::cvtColor(src_image, image, cv::COLOR_RGB2BGR);
+        }
+        else
+        {
+            image = src_image;
+        }
 
         std::vector<DetBox> detected_boxes;
 
@@ -560,15 +724,22 @@ DasResult PaddleOcrImpl::Recognize(
                 return cr;
             }
             auto* float_data = det_backing.data;
-            std::fill_n(float_data, det_backing.element_count, 0.0f);
 
             // Det normalization: ImageNet (Pitfall 3)
-            int channels = resized.channels();
+            if (resized.empty() || resized.channels() != 3)
+            {
+                DAS_CORE_LOG_ERROR(
+                    "Recognize: resized det image must be 3-channel, got "
+                    "empty={}, channels={}",
+                    resized.empty(),
+                    resized.empty() ? 0 : resized.channels());
+                return DAS_E_INVALID_ARGUMENT;
+            }
             for (int h = 0; h < target_h; ++h)
             {
                 for (int w = 0; w < target_w; ++w)
                 {
-                    for (int c = 0; c < 3 && c < channels; ++c)
+                    for (int c = 0; c < 3; ++c)
                     {
                         auto src_byte =
                             static_cast<double>(resized.at<cv::Vec3b>(h, w)[c]);
@@ -576,10 +747,7 @@ DasResult PaddleOcrImpl::Recognize(
                             (src_byte / 255.0 - kDetMean[c]) / kDetStd[c]);
                         auto dst_idx = static_cast<size_t>(
                             c * target_h * target_w + h * target_w + w);
-                        if (dst_idx < det_backing.element_count)
-                        {
-                            float_data[dst_idx] = val;
-                        }
+                        float_data[dst_idx] = val;
                     }
                 }
             }

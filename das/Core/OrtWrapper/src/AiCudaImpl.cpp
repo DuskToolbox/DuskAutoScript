@@ -8,7 +8,6 @@
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
 
-#include <algorithm>
 #include <vector>
 
 DAS_CORE_ORTWRAPPER_NS_BEGIN
@@ -74,87 +73,24 @@ DasResult AiCudaImpl::CreateTensorFromImage(
 
     try
     {
-        // Get image data via IDasBinaryBuffer
-        DAS::DasPtr<ExportInterface::IDasBinaryBuffer> buf;
-        auto cr = image->GetBinaryBuffer(buf.Put());
-        if (DAS::IsFailed(cr))
-        {
-            DAS_CORE_LOG_ERROR("GetBinaryBuffer failed: result={}", cr);
-            return cr;
-        }
-
-        unsigned char* raw_data = nullptr;
-        buf->GetData(&raw_data);
-        uint64_t data_size = 0;
-        buf->GetSize(&data_size);
-
-        // Calculate total element count from shape
-        int64_t total_elements = 1;
-        for (uint32_t i = 0; i < rank; ++i)
-        {
-            total_elements *= shape[i];
-        }
-
-        // Materialize: preprocess pixel data to DAS-owned tensor memory.
         FloatTensorBackingBuffer backing{};
-        cr = CreateFloatTensorBackingBuffer(total_elements, &backing);
+        auto cr = CreateFloatTensorBackingBufferFromImage(
+            image,
+            shape,
+            rank,
+            mean,
+            std,
+            value_count,
+            &backing);
         if (DAS::IsFailed(cr))
         {
             return cr;
-        }
-        auto* float_data = backing.data;
-        std::fill_n(float_data, backing.element_count, 0.0f);
-
-        // Simple preprocessing: normalize each pixel channel
-        // Shape is expected to be [N, C, H, W] (CHW format)
-        // value_count = number of channels (typically 3)
-        if (rank >= 3 && value_count > 0)
-        {
-            auto channel_count = static_cast<uint32_t>(shape[rank - 3]);
-            auto height = static_cast<uint64_t>(shape[rank - 2]);
-            auto width = static_cast<uint64_t>(shape[rank - 1]);
-            auto pixel_count = height * width;
-            auto bytes_per_pixel = data_size / pixel_count;
-
-            for (uint64_t h = 0; h < height; ++h)
-            {
-                for (uint64_t w = 0; w < width; ++w)
-                {
-                    for (uint32_t c = 0; c < channel_count && c < value_count;
-                         ++c)
-                    {
-                        if (c < bytes_per_pixel)
-                        {
-                            auto pixel_idx = h * width + w;
-                            auto src_byte = static_cast<double>(
-                                raw_data[pixel_idx * bytes_per_pixel + c]);
-                            float val = static_cast<float>(
-                                (src_byte / 255.0 - mean[c]) / std[c]);
-                            auto dst_idx = c * pixel_count + h * width + w;
-                            if (dst_idx < backing.element_count)
-                            {
-                                float_data[dst_idx] = val;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        else
-        {
-            // Fallback: raw byte copy
-            for (int64_t i = 0;
-                 i < total_elements && i < static_cast<int64_t>(data_size);
-                 ++i)
-            {
-                float_data[i] = static_cast<float>(raw_data[i]);
-            }
         }
 
         // Create ORT tensor over DAS-owned memory.
         auto input_tensor = Ort::Value::CreateTensor<float>(
             GetDefaultCpuMemoryInfo(),
-            float_data,
+            backing.data,
             backing.element_count,
             shape,
             rank);
