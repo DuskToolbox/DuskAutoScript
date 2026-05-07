@@ -1,4 +1,5 @@
 import "DasBasicTypes.idl";
+import "DasJson.idl";
 import "IDasImage.idl";
 import "IDasOcr.idl";
 

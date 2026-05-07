@@ -10,13 +10,14 @@ def to_upper_snake(name: str) -> str:
     Examples:
         ``DasResult`` → ``DAS_RESULT``
         ``MyClass``   → ``MY_CLASS``
+        ``IDasAI``    → ``I_DAS_AI``  (consecutive uppercase kept together)
     """
-    result = []
-    for i, c in enumerate(name):
-        if c.isupper() and i > 0:
-            result.append('_')
-        result.append(c.upper())
-    return ''.join(result)
+    import re
+    # Handle consecutive uppercase followed by uppercase+lowercase (e.g., "AIModel" -> "AI_Model")
+    name = re.sub(r'([A-Z]+)([A-Z][a-z])', r'\1_\2', name)
+    # Handle lowercase/digit followed by uppercase (e.g., "getResult" -> "get_Result")
+    name = re.sub(r'([a-z\d])([A-Z])', r'\1_\2', name)
+    return name.upper()
 
 
 def build_param_signatures(

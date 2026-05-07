@@ -56,6 +56,8 @@ protected:
 
 public:
     DasOrt(const char* model_name);
+
+    const Ort::Env& GetEnv() const { return env_; }
 };
 
 DAS_CORE_ORTWRAPPER_NS_END
