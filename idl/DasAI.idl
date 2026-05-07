@@ -1,0 +1,156 @@
+import "DasBasicTypes.idl";
+import "IDasImage.idl";
+import "IDasOcr.idl";
+
+namespace Das::ExportInterface {
+
+// ============= Tensor Data Type =============
+
+/**
+ * @brief Tensor element data type, numerically aligned with ONNXTensorElementDataType.
+ *
+ * Values match ONNX Runtime enum values exactly, enabling zero-cost conversion
+ * via static_cast.
+ */
+enum DasTensorDataType {
+    DAS_TENSOR_TYPE_UNDEFINED    = 0,
+    DAS_TENSOR_TYPE_FLOAT        = 1,   // ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT
+    DAS_TENSOR_TYPE_UINT8        = 2,   // ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8
+    DAS_TENSOR_TYPE_INT8         = 3,   // ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8
+    DAS_TENSOR_TYPE_UINT16       = 4,
+    DAS_TENSOR_TYPE_INT16        = 5,
+    DAS_TENSOR_TYPE_INT32        = 6,
+    DAS_TENSOR_TYPE_INT64        = 7,
+    DAS_TENSOR_TYPE_FLOAT16      = 10,  // ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16
+    DAS_TENSOR_TYPE_DOUBLE       = 11,
+    DAS_TENSOR_TYPE_FORCE_DWORD  = 0x7FFFFFFF
+};
+
+// ============= Auxiliary Collection Types =============
+
+/**
+ * @brief Read-only string vector for passing name lists (e.g., Run input/output names).
+ */
+[uuid("EBD58C35-6F2A-4B7D-9A2E-F5A6B7C8D9EA")]
+interface IDasReadOnlyStringVector : IDasBase {
+    DasResult GetCount([out] uint32_t* p_count);
+    DasResult GetAt(uint32_t index, [out] IDasReadOnlyString** pp_out_value);
+}
+
+/**
+ * @brief Tensor vector for passing tensor lists (e.g., Run inputs/outputs).
+ */
+[uuid("FCE69D46-7A3B-4C8E-9A5F-A6B7C8D9EAFB")]
+interface IDasTensorVector : IDasBase {
+    DasResult GetCount([out] uint32_t* p_count);
+    DasResult GetAt(uint32_t index, [out] IDasTensor** pp_out_value);
+}
+
+// ============= Tensor =============
+
+/**
+ * @brief Tensor interface wrapping an ONNX Runtime value.
+ *
+ * Owns the underlying Ort::Value. Provides per-dimension shape query (ABI-safe)
+ * and raw data pointer access.
+ */
+[uuid("DAC47B24-5E1F-4A8C-9A3D-E4F5A6B7C8D9")]
+interface IDasTensor : IDasBase {
+    /// Get the size of the specified dimension.
+    DasResult GetDim(uint32_t index, [out] int64_t* p_value);
+    /// Get the number of dimensions (rank).
+    DasResult GetRank([out] uint32_t* p_rank);
+    /// Get the tensor element data type.
+    DasResult GetDataType([out] DasTensorDataType* p_type);
+    /// Get the raw data pointer and byte size.
+    DasResult GetRawData([out] void** pp_data, [out] uint64_t* p_size);
+}
+
+// ============= Session =============
+
+/**
+ * @brief Inference session wrapping an ONNX Runtime session.
+ *
+ * Created by IDasAI::CreateSession. Binds inputs/outputs by name for Run.
+ * Session destruction releases all ORT resources (Arena memory, etc.).
+ */
+[uuid("C9B36A13-4D0E-4F7B-9A2C-D3E4F5A6B7C8")]
+interface IDasSession : IDasBase {
+    /**
+     * @brief Run inference with named inputs/outputs.
+     *
+     * @param input_names  Name list for input tensors.
+     * @param inputs       Input tensors.
+     * @param output_names Name list for output tensors.
+     * @param pp_outputs   Output tensor vector (caller must Release).
+     */
+    DasResult Run(
+        IDasReadOnlyStringVector* input_names,
+        IDasTensorVector* inputs,
+        IDasReadOnlyStringVector* output_names,
+        [out] IDasTensorVector** pp_outputs
+    );
+}
+
+// ============= AI Backend =============
+
+/**
+ * @brief Stateless AI inference backend.
+ *
+ * Holds Ort::Env + Allocator, but no models. Each CreateSession call creates
+ * an independent Ort::Session. Backend-specific SessionOptions are determined
+ * implicitly by the service name (e.g., ai.cpu -> CPU EP, ai.cuda -> CUDA EP).
+ */
+[uuid("B8A25F12-3C9D-4E6A-9A1B-C2D3E4F5A6B7")]
+interface IDasAI : IDasBase {
+    /**
+     * @brief Create an inference session.
+     *
+     * @param model_path  Path to the ONNX model file.
+     * @param options     Optional JSON config (nullptr for defaults).
+     * @param pp_session  Output session (caller must Release).
+     */
+    DasResult CreateSession(
+        [in] IDasReadOnlyString* model_path,
+        [in] IDasJson* options,
+        [out] IDasSession** pp_session
+    );
+
+    /**
+     * @brief Create a tensor from image data with preprocessing.
+     *
+     * @param image       Source image.
+     * @param shape       Target tensor shape (e.g., [1, 3, H, W]).
+     * @param rank        Number of shape dimensions.
+     * @param mean        Per-channel mean for normalization.
+     * @param std         Per-channel std for normalization.
+     * @param value_count Number of mean/std values.
+     * @param pp_tensor   Output tensor (caller must Release).
+     */
+    DasResult CreateTensorFromImage(
+        IDasImage* image,
+        [in] int64_t* shape,
+        uint32_t rank,
+        [in] double* mean,
+        [in] double* std,
+        uint32_t value_count,
+        [out] IDasTensor** pp_tensor
+    );
+
+    /**
+     * @brief Create an OCR pipeline (det + rec sessions + dict loading).
+     *
+     * @param det_model  Detection model path (nullptr -> only_rec mode).
+     * @param rec_model  Recognition model path.
+     * @param dict       Dictionary file path.
+     * @param pp_ocr     Output OCR instance (caller must Release).
+     */
+    DasResult CreateOcr(
+        [in] IDasReadOnlyString* det_model,
+        [in] IDasReadOnlyString* rec_model,
+        [in] IDasReadOnlyString* dict,
+        [out] IDasOcr** pp_ocr
+    );
+}
+
+}
