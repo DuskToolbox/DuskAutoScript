@@ -1,0 +1,11 @@
+import "DasBasicTypes.idl";
+
+namespace Das::ExportInterface {
+
+[uuid("7E9979A4-91C4-4C54-A73B-9B43C9961501")]
+interface IDasDebugWriter : IDasBase {
+    DasResult LogEntry(IDasReadOnlyString* p_event_json);
+    DasResult Flush();
+}
+
+}

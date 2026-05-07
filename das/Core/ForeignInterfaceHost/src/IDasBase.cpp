@@ -1,4 +1,5 @@
 #include <cstring>
+#include <das/Core/Debug/DebugRuntime.h>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/Logger/Logger.h>
@@ -49,10 +50,30 @@ DasResult DasMakeDasGuid(const char* p_guid_string, DasGuid* p_out_guid)
 DasResult InitializeDasCore(
     Das::Core::IPC::MainProcess::IIpcContext* p_ipc_context)
 {
+    return InitializeDasCoreWithOptions(p_ipc_context, nullptr);
+}
+
+DasResult InitializeDasCoreWithOptions(
+    Das::Core::IPC::MainProcess::IIpcContext* p_ipc_context,
+    const DasCoreInitOptions*                 p_options)
+{
     if (!p_ipc_context)
     {
         DAS_CORE_LOG_ERROR("InitializeDasCore: p_ipc_context is null");
         return DAS_E_INVALID_ARGUMENT;
+    }
+
+    Das::Core::Debug::DebugRuntimeOptions debug_options{};
+    if (p_options && p_options->p_debug_dir && p_options->p_debug_dir[0] != 0)
+    {
+        debug_options.debug_dir = p_options->p_debug_dir;
+    }
+
+    auto debug_result =
+        Das::Core::Debug::DebugRuntime::Initialize(debug_options);
+    if (Das::IsFailed(debug_result))
+    {
+        return debug_result;
     }
 
     auto cv_result = Das::Core::OcvWrapper::RegisterCvServices(*p_ipc_context);

@@ -40,7 +40,9 @@ namespace Das::Http
         return [this]() -> bool { return server_should_continue_; };
     }
 
-    DasResult run(const std::filesystem::path& plugin_dir)
+    DasResult run(
+        const std::filesystem::path& plugin_dir,
+        const std::filesystem::path& debug_dir)
     {
         Das::Http::AppComponent components(plugin_dir);
 
@@ -208,7 +210,11 @@ namespace Das::Http
 
             // Register computer vision services (cv.cpu / cv.cuda)
             {
-                auto init_cv_result = InitializeDasCore(ipc_context.get());
+                auto debug_dir_str = debug_dir.u8string();
+                DasCoreInitOptions init_options{
+                    reinterpret_cast<const char*>(debug_dir_str.c_str())};
+                auto init_cv_result =
+                    InitializeDasCoreWithOptions(ipc_context.get(), &init_options);
                 if (DAS::IsFailed(init_cv_result))
                 {
                     DAS_LOG_ERROR(
@@ -414,7 +420,10 @@ int main(int argc, const char* argv[])
     desc.add_options()("help,h", "Show help")(
         "plugin-dir",
         boost::program_options::value<std::string>()->default_value("plugins"),
-        "Plugin directory path");
+        "Plugin directory path")(
+        "debug-dir",
+        boost::program_options::value<std::string>()->default_value("logs/debug"),
+        "Debug artifact directory path");
 
     boost::program_options::variables_map vm;
     boost::program_options::store(
@@ -423,8 +432,9 @@ int main(int argc, const char* argv[])
     boost::program_options::notify(vm);
 
     std::filesystem::path plugin_dir = vm["plugin-dir"].as<std::string>();
+    std::filesystem::path debug_dir = vm["debug-dir"].as<std::string>();
 
-    const auto run_result = Das::Http::run(plugin_dir);
+    const auto run_result = Das::Http::run(plugin_dir, debug_dir);
     if (DAS::IsFailed(run_result))
     {
         return run_result;

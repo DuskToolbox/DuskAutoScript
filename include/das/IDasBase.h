@@ -249,8 +249,17 @@ namespace Core
 } // namespace Core
 DAS_NS_END
 
+struct DasCoreInitOptions
+{
+    const char* p_debug_dir;
+};
+
 DAS_C_API DasResult
 InitializeDasCore(Das::Core::IPC::MainProcess::IIpcContext* p_ipc_context);
+
+DAS_C_API DasResult InitializeDasCoreWithOptions(
+    Das::Core::IPC::MainProcess::IIpcContext* p_ipc_context,
+    const DasCoreInitOptions*                 p_options);
 
 #endif // SWIG
 
