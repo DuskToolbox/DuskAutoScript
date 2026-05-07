@@ -4,6 +4,8 @@
 #include <das/Core/OcvWrapper/Config.h>
 #include <das/Core/OcvWrapper/IImageBackend.h>
 
+#include <das/_autogen/idl/abi/IDasBinaryBuffer.h>
+
 #include <atomic>
 #include <optional>
 
@@ -17,9 +19,11 @@ DAS_CORE_OCVWRAPPER_NS_BEGIN
  * gpu_mat_ is always valid (RAII initialized in constructor).
  * cpu_mat_ is an optional lazy-download cache.
  *
- * QueryInterface supports IDasBase, IDasImage, and IImageBackend.
+ * QueryInterface supports IDasBase, IDasImage, IImageBackend, and
+ * IDasBinaryBuffer.
  */
-class CudaImageImpl final : public IImageBackend
+class CudaImageImpl final : public IImageBackend,
+                            public ExportInterface::IDasBinaryBuffer
 {
     std::atomic<uint32_t>                ref_count_{0};
     cv::cuda::GpuMat                     gpu_mat_;
@@ -54,6 +58,10 @@ public:
         Das::ExportInterface::IDasBinaryBuffer** pp_out_buffer) override;
     DAS_IMPL
     GetPixelFormat(ExportInterface::DasImagePixelFormat* p_out_format) override;
+
+    // ---- IDasBinaryBuffer ----
+    DAS_IMPL GetData(unsigned char** pp_out_data) override;
+    DAS_IMPL GetSize(uint64_t* p_out_size) override;
 
     // ---- IImageBackend ----
     cv::Mat& GetCpuMat() override;

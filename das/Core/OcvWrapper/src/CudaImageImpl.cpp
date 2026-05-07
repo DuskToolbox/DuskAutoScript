@@ -5,7 +5,7 @@
 
 #include <das/Core/Logger/Logger.h>
 #include <das/Utils/CommonUtils.hpp>
-#include <das/Utils/Expected.h>
+#include <das/_autogen/idl/abi/IDasBinaryBuffer.h>
 
 DAS_DISABLE_WARNING_BEGIN
 
@@ -15,7 +15,6 @@ DAS_IGNORE_OPENCV_WARNING
 
 DAS_DISABLE_WARNING_END
 
-#include <cstring>
 #include <utility>
 
 DAS_CORE_OCVWRAPPER_NS_BEGIN
@@ -59,6 +58,13 @@ CudaImageImpl::QueryInterface(const DasGuid& iid, void** pp_out_object)
         || iid == DasIidOf<Das::Core::OcvWrapper::IImageBackend>())
     {
         *pp_out_object = static_cast<IImageBackend*>(this);
+        AddRef();
+        return DAS_S_OK;
+    }
+
+    if (iid == DasIidOf<ExportInterface::IDasBinaryBuffer>())
+    {
+        *pp_out_object = static_cast<ExportInterface::IDasBinaryBuffer*>(this);
         AddRef();
         return DAS_S_OK;
     }
@@ -126,36 +132,9 @@ DasResult CudaImageImpl::GetBinaryBuffer(
     Das::ExportInterface::IDasBinaryBuffer** pp_out_buffer)
 {
     DAS_UTILS_CHECK_POINTER(pp_out_buffer);
-
-    try
-    {
-        auto&      cpu_mat = GetCpuMat();
-        uint64_t   data_size{};
-        const auto get_size_result = GetDataSize(&data_size);
-        if (DAS::IsFailed(get_size_result))
-        {
-            return get_size_result;
-        }
-
-        auto* const p_buffer =
-            DAS::Core::Utils::DasBinaryBufferImpl::MakeRaw(data_size);
-        unsigned char* p_buffer_data{};
-        const auto     get_data_result = p_buffer->GetData(&p_buffer_data);
-        if (DAS::IsFailed(get_data_result))
-        {
-            p_buffer->Release();
-            return get_data_result;
-        }
-
-        std::memcpy(p_buffer_data, cpu_mat.data, data_size);
-
-        *pp_out_buffer = p_buffer;
-        return DAS_S_OK;
-    }
-    catch (std::bad_alloc&)
-    {
-        return DAS_E_OUT_OF_MEMORY;
-    }
+    *pp_out_buffer = static_cast<ExportInterface::IDasBinaryBuffer*>(this);
+    AddRef();
+    return DAS_S_OK;
 }
 
 DasResult CudaImageImpl::GetPixelFormat(
@@ -163,6 +142,23 @@ DasResult CudaImageImpl::GetPixelFormat(
 {
     DAS_UTILS_CHECK_POINTER(p_out_format)
     *p_out_format = pixel_format_;
+    return DAS_S_OK;
+}
+
+// ==================== IDasBinaryBuffer ====================
+
+DasResult CudaImageImpl::GetData(unsigned char** pp_out_data)
+{
+    DAS_UTILS_CHECK_POINTER(pp_out_data)
+    *pp_out_data = GetCpuMat().data;
+    return DAS_S_OK;
+}
+
+DasResult CudaImageImpl::GetSize(uint64_t* p_out_size)
+{
+    DAS_UTILS_CHECK_POINTER(p_out_size)
+    auto& mat = GetCpuMat();
+    *p_out_size = mat.total() * mat.elemSize();
     return DAS_S_OK;
 }
 
