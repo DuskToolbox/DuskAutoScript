@@ -3,6 +3,7 @@
 #include "IDasTensorImpl.h"
 #include "PaddleOcrImpl.h"
 
+#include <das/Core/Debug/DebugDecorators.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
@@ -195,7 +196,7 @@ DasResult CreateOcrImpl(
             rec_session.Get(),
             std::move(dict));
         impl->AddRef();
-        *pp_ocr = impl;
+        *pp_ocr = DAS::Core::Debug::MaybeDecorateOcrRaw(impl, "ocr");
         return DAS_S_OK;
     }
     catch (const std::bad_alloc&)
