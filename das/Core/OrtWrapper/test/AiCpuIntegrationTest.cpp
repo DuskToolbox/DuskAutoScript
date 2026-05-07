@@ -134,13 +134,13 @@ TEST(AiCpuImplTest, CreateTensorFromImageNullImage_ReturnsInvalidPointer)
     ai->Release();
 }
 
-TEST(AiCpuImplTest, CreateOcr_ReturnsNoImplementation)
+TEST(AiCpuImplTest, CreateOcrNullArgs_ReturnsInvalidPointer)
 {
     auto* ai = new Das::Core::OrtWrapper::AiCpuImpl{};
 
     DasPtr<Das::ExportInterface::IDasOcr> ocr;
     auto result = ai->CreateOcr(nullptr, nullptr, nullptr, ocr.Put());
-    EXPECT_EQ(result, DAS_E_NO_IMPLEMENTATION);
+    EXPECT_EQ(result, DAS_E_INVALID_POINTER);
 
     ai->Release();
 }

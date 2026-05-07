@@ -3,6 +3,7 @@
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/OcvWrapper/CvServiceRegistrar.h>
+#include <das/Core/OrtWrapper/AiServiceRegistrar.h>
 #include <das/DasException.hpp>
 #include <das/IDasBase.h>
 #include <das/Utils/CommonUtils.hpp>
@@ -54,5 +55,11 @@ DasResult InitializeDasCore(
         return DAS_E_INVALID_ARGUMENT;
     }
 
-    return Das::Core::OcvWrapper::RegisterCvServices(*p_ipc_context);
+    auto cv_result = Das::Core::OcvWrapper::RegisterCvServices(*p_ipc_context);
+    if (Das::IsFailed(cv_result))
+    {
+        return cv_result;
+    }
+
+    return Das::Core::OrtWrapper::RegisterAiServices(*p_ipc_context);
 }

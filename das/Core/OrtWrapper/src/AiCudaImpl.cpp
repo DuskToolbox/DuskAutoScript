@@ -1,20 +1,18 @@
+#include "AiCudaImpl.h"
 #include "AiCpuImpl.h"
 #include "IDasSessionImpl.h"
 #include "IDasTensorImpl.h"
-#include "PaddleOcrImpl.h"
 
 #include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
 
-#include <algorithm>
-#include <fstream>
 #include <vector>
 
 DAS_CORE_ORTWRAPPER_NS_BEGIN
 
-DasResult AiCpuImpl::CreateSession(
+DasResult AiCudaImpl::CreateSession(
     IDasReadOnlyString* model_path,
     ExportInterface::IDasJson* /*options*/,
     ExportInterface::IDasSession** pp_session)
@@ -31,7 +29,11 @@ DasResult AiCpuImpl::CreateSession(
         session_options.SetGraphOptimizationLevel(
             GraphOptimizationLevel::ORT_ENABLE_ALL);
 
-        // CPU EP is default — no explicit provider registration needed
+        // Register CUDA execution provider
+        OrtCUDAProviderOptions cuda_opts;
+        cuda_opts.device_id = 0;
+        session_options.AppendExecutionProvider_CUDA(cuda_opts);
+
         auto session = Ort::Session(GetEnv(), model_path_ort, session_options);
 
         auto* impl = new IDasSessionImpl(std::move(session));
@@ -43,7 +45,7 @@ DasResult AiCpuImpl::CreateSession(
     {
         DasReadOnlyString path_wrapper(model_path);
         DAS_CORE_LOG_ERROR(
-            "CreateSession failed: model_path={}, error={}",
+            "CreateSession (CUDA EP) failed: model_path={}, error={}",
             path_wrapper.GetUtf8(),
             e.what());
         return DAS_E_ONNX_RUNTIME_ERROR;
@@ -54,7 +56,7 @@ DasResult AiCpuImpl::CreateSession(
     }
 }
 
-DasResult AiCpuImpl::CreateTensorFromImage(
+DasResult AiCudaImpl::CreateTensorFromImage(
     ExportInterface::IDasImage*   image,
     int64_t*                      shape,
     uint32_t                      rank,
@@ -165,102 +167,13 @@ DasResult AiCpuImpl::CreateTensorFromImage(
     }
 }
 
-DasResult AiCpuImpl::CreateOcr(
+DasResult AiCudaImpl::CreateOcr(
     IDasReadOnlyString*        det_model,
     IDasReadOnlyString*        rec_model,
     IDasReadOnlyString*        dict_path,
     ExportInterface::IDasOcr** pp_ocr)
 {
     return CreateOcrImpl(this, det_model, rec_model, dict_path, pp_ocr);
-}
-
-// Shared CreateOcr implementation
-DasResult CreateOcrImpl(
-    ExportInterface::IDasAI*   ai,
-    IDasReadOnlyString*        det_model,
-    IDasReadOnlyString*        rec_model,
-    IDasReadOnlyString*        dict_path,
-    ExportInterface::IDasOcr** pp_ocr)
-{
-    DAS_UTILS_CHECK_POINTER(pp_ocr);
-    DAS_UTILS_CHECK_POINTER(rec_model);
-    DAS_UTILS_CHECK_POINTER(dict_path);
-    // det_model can be nullptr -> only_rec mode (D-14)
-
-    try
-    {
-        // 1. Load dictionary (D-22)
-        std::vector<std::string> dict;
-        {
-            const char* dict_utf8 = nullptr;
-            dict_path->GetUtf8(&dict_utf8);
-            if (!dict_utf8)
-            {
-                return DAS_E_INVALID_POINTER;
-            }
-            std::ifstream dict_file(dict_utf8);
-            if (!dict_file.is_open())
-            {
-                DAS_CORE_LOG_ERROR("Failed to open dict file: {}", dict_utf8);
-                return DAS_E_FILE_NOT_FOUND;
-            }
-            std::string line;
-            while (std::getline(dict_file, line))
-            {
-                dict.push_back(line);
-            }
-        }
-
-        if (dict.empty())
-        {
-            DAS_CORE_LOG_ERROR("Dictionary is empty");
-            return DAS_E_INVALID_FILE;
-        }
-
-        // 2. Create rec session (required)
-        Das::DasPtr<ExportInterface::IDasSession> rec_session;
-        auto result = ai->CreateSession(rec_model, nullptr, rec_session.Put());
-        if (Das::IsFailed(result))
-        {
-            DAS_CORE_LOG_ERROR(
-                "CreateOcr: rec session failed, result={}",
-                result);
-            return result;
-        }
-
-        // 3. Create det session (optional, D-14)
-        Das::DasPtr<ExportInterface::IDasSession> det_session;
-        if (det_model)
-        {
-            result = ai->CreateSession(det_model, nullptr, det_session.Put());
-            if (Das::IsFailed(result))
-            {
-                DAS_CORE_LOG_ERROR(
-                    "CreateOcr: det session failed, result={}",
-                    result);
-                return result;
-            }
-        }
-
-        // 4. Construct PaddleOcrImpl (D-13: RAII construction)
-        auto* impl = new PaddleOcrImpl(
-            ai,
-            det_session.Get(),
-            rec_session.Get(),
-            std::move(dict));
-        impl->AddRef();
-        *pp_ocr = impl;
-        return DAS_S_OK;
-    }
-    catch (const std::bad_alloc&)
-    {
-        return DAS_E_OUT_OF_MEMORY;
-    }
-    catch (const std::exception& e)
-    {
-        DAS_CORE_LOG_ERROR("CreateOcr failed: {}", e.what());
-        return DAS_E_FAIL;
-    }
 }
 
 DAS_CORE_ORTWRAPPER_NS_END

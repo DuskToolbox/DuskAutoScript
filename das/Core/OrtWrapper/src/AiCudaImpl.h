@@ -1,33 +1,33 @@
-#ifndef DAS_CORE_ORTWRAPPER_AICPUIMPL_H
-#define DAS_CORE_ORTWRAPPER_AICPUIMPL_H
+#ifndef DAS_CORE_ORTWRAPPER_AICUDAIMPL_H
+#define DAS_CORE_ORTWRAPPER_AICUDAIMPL_H
 
 #include "DasOrt.h"
 
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasAI.Implements.hpp>
 
-// {2F528F8E-EF04-4251-9C78-27502280B68C}
+// {EDEC874A-0642-4756-B9F9-1EC8A2279B22}
 DAS_DEFINE_CLASS_IN_NAMESPACE(
     Das::Core::OrtWrapper,
-    AiCpuImpl,
-    0x2f528f8e,
-    0xef04,
-    0x4251,
-    0x9c,
-    0x78,
+    AiCudaImpl,
+    0xedec874a,
+    0x0642,
+    0x4756,
+    0xb9,
+    0xf9,
+    0x1e,
+    0xc8,
+    0xa2,
     0x27,
-    0x50,
-    0x22,
-    0x80,
-    0xb6,
-    0x8c);
+    0x9b,
+    0x22);
 
 DAS_CORE_ORTWRAPPER_NS_BEGIN
 
-class AiCpuImpl final : public Das::ExportInterface::DasAIImplBase<AiCpuImpl>,
-                        public DasOrt
+class AiCudaImpl final : public Das::ExportInterface::DasAIImplBase<AiCudaImpl>,
+                         public DasOrt
 {
 public:
-    AiCpuImpl() : DasOrt("AiCpuImpl") {}
+    AiCudaImpl() : DasOrt("AiCudaImpl") {}
 
     DAS_IMPL CreateSession(
         IDasReadOnlyString*            model_path,
@@ -50,14 +50,6 @@ public:
         ExportInterface::IDasOcr** pp_ocr) override;
 };
 
-// Shared CreateOcr implementation used by both AiCpuImpl and AiCudaImpl
-DasResult CreateOcrImpl(
-    ExportInterface::IDasAI*   ai,
-    IDasReadOnlyString*        det_model,
-    IDasReadOnlyString*        rec_model,
-    IDasReadOnlyString*        dict_path,
-    ExportInterface::IDasOcr** pp_ocr);
-
 DAS_CORE_ORTWRAPPER_NS_END
 
-#endif // DAS_CORE_ORTWRAPPER_AICPUIMPL_H
+#endif // DAS_CORE_ORTWRAPPER_AICUDAIMPL_H

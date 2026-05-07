@@ -1,19 +1,59 @@
 import "DasBasicTypes.idl";
+import "IDasImage.idl";
 
 namespace Das::ExportInterface {
 
+// ============= OCR Result =============
+
+/**
+ * @brief Single-line OCR recognition result (D-16: line-level + per-char in public ABI)
+ */
 [uuid("C3E877F4-C8F2-4F54-8755-45F145935589")]
 interface IDasOcrResult : IDasBase {
+    /// Recognized text (line-level)
+    DasResult GetText([out] IDasReadOnlyString** pp_text);
+    /// Text bounding box (line-level)
+    DasResult GetBox([out] DasRect* p_box);
+    /// Recognition confidence (line-level, 0..1)
+    DasResult GetScore([out] double* p_score);
+    /// Per-character count
+    DasResult GetCharCount([out] uint32_t* p_count);
+    /// Bounding box for character at index (per-char)
+    DasResult GetCharBox(uint32_t index, [out] DasRect* p_box);
+    /// Confidence for character at index (per-char, 0..1)
+    DasResult GetCharScore(uint32_t index, [out] double* p_score);
 }
 
+// ============= OCR Result Vector =============
+
+/**
+ * @brief OCR result vector (D-17: GetCount + GetAt pattern)
+ */
 [uuid("FD7FE14E-BA30-4992-B114-F2CCC67A64E2")]
 interface IDasOcrResultVector : IDasBase {
-    DasResult EnumResult(uint64_t index, [out] IDasOcrResult** pp_out_result);
+    /// Number of result lines
+    DasResult GetCount([out] uint32_t* p_count);
+    /// Result at index
+    DasResult GetAt(uint32_t index, [out] IDasOcrResult** pp_result);
 }
 
+// ============= OCR Interface =============
+
+/**
+ * @brief OCR recognition pipeline (D-13: created via IDasAI::CreateOcr, no Init)
+ *
+ * IDasOcr is a high-level user-facing wrapper (D-18).
+ * Technical details are encapsulated in the IDasAI layer.
+ */
 [uuid("E809216C-6C3B-4562-95E6-88B7BC4AA6C1")]
 interface IDasOcr : IDasBase {
-    DasResult FindText([out] IDasOcrResult** result, [out] uint64_t* result_count);
+    /// Recognize all text in the image
+    /// @param p_image      Input image (BGR or RGB, color conversion handled internally)
+    /// @param pp_results   Output: IDasOcrResultVector (one result per line, in reading order)
+    DasResult Recognize(
+        IDasImage* p_image,
+        [out] IDasOcrResultVector** pp_results
+    );
 }
 
 }

@@ -64,14 +64,30 @@ DasResult IDasSessionImpl::Run(
         }
 
         // Bind outputs — let ORT allocate output memory
-        for (uint32_t i = 0; i < output_count; ++i)
+        // If caller provided no output names, fall back to names discovered
+        // at session construction time (Pitfall 2)
+        auto bind_outputs = [&]()
         {
-            Das::DasPtr<IDasReadOnlyString> p_name;
-            output_names->GetAt(i, p_name.Put());
-            DasReadOnlyString name_wrapper(p_name.Get());
-
-            io_binding.BindOutput(name_wrapper.GetUtf8(), allocator_.GetInfo());
-        }
+            for (uint32_t i = 0; i < output_count; ++i)
+            {
+                Das::DasPtr<IDasReadOnlyString> p_name;
+                output_names->GetAt(i, p_name.Put());
+                DasReadOnlyString name_wrapper(p_name.Get());
+                io_binding.BindOutput(
+                    name_wrapper.GetUtf8(),
+                    allocator_.GetInfo());
+            }
+            if (output_count == 0)
+            {
+                for (const auto& name : output_names_)
+                {
+                    io_binding.BindOutput(
+                        name.c_str(),
+                        allocator_.GetInfo());
+                }
+            }
+        };
+        bind_outputs();
 
         // Run inference
         session_.Run(Ort::RunOptions{nullptr}, io_binding);
