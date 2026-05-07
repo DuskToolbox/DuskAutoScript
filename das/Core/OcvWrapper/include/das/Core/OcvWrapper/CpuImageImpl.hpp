@@ -8,6 +8,7 @@
 #include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
 #include <das/Utils/CommonUtils.hpp>
+#include <das/_autogen/idl/abi/IDasBinaryBuffer.h>
 #include <das/_autogen/idl/abi/IDasMemory.h>
 
 #include <atomic>
@@ -67,10 +68,12 @@ namespace Storage
  *           buffer alive via DasPtr
  *
  * Both instantiations share the same COM IID (per D-06).
- * QueryInterface supports IDasBase, IDasImage, and IImageBackend.
+ * QueryInterface supports IDasBase, IDasImage, IImageBackend, and
+ * IDasBinaryBuffer.
  */
 template <class Storage>
-class CpuImageImpl final : public IImageBackend
+class CpuImageImpl final : public IImageBackend,
+                           public ExportInterface::IDasBinaryBuffer
 {
     std::atomic<uint32_t>                ref_count_{0};
     Storage                              storage_;
@@ -121,6 +124,14 @@ public:
             || iid == DasIidOf<Das::Core::OcvWrapper::IImageBackend>())
         {
             *pp_out_object = static_cast<IImageBackend*>(this);
+            AddRef();
+            return DAS_S_OK;
+        }
+
+        if (iid == DasIidOf<ExportInterface::IDasBinaryBuffer>())
+        {
+            *pp_out_object =
+                static_cast<ExportInterface::IDasBinaryBuffer*>(this);
             AddRef();
             return DAS_S_OK;
         }
@@ -188,35 +199,9 @@ public:
         Das::ExportInterface::IDasBinaryBuffer** pp_out_buffer) override
     {
         DAS_UTILS_CHECK_POINTER(pp_out_buffer);
-
-        try
-        {
-            uint64_t   data_size{};
-            const auto get_size_result = GetDataSize(&data_size);
-            if (DAS::IsFailed(get_size_result))
-            {
-                return get_size_result;
-            }
-
-            auto* const p_buffer =
-                DAS::Core::Utils::DasBinaryBufferImpl::MakeRaw(data_size);
-            unsigned char* p_buffer_data{};
-            const auto     get_data_result = p_buffer->GetData(&p_buffer_data);
-            if (DAS::IsFailed(get_data_result))
-            {
-                p_buffer->Release();
-                return get_data_result;
-            }
-
-            std::memcpy(p_buffer_data, storage_.GetCpuMat().data, data_size);
-
-            *pp_out_buffer = p_buffer;
-            return DAS_S_OK;
-        }
-        catch (std::bad_alloc&)
-        {
-            return DAS_E_OUT_OF_MEMORY;
-        }
+        *pp_out_buffer = static_cast<ExportInterface::IDasBinaryBuffer*>(this);
+        AddRef();
+        return DAS_S_OK;
     }
 
     DAS_IMPL GetPixelFormat(
@@ -224,6 +209,23 @@ public:
     {
         DAS_UTILS_CHECK_POINTER(p_out_format)
         *p_out_format = pixel_format_;
+        return DAS_S_OK;
+    }
+
+    // ---- IDasBinaryBuffer ----
+
+    DAS_IMPL GetData(unsigned char** pp_out_data) override
+    {
+        DAS_UTILS_CHECK_POINTER(pp_out_data)
+        *pp_out_data = storage_.GetCpuMat().data;
+        return DAS_S_OK;
+    }
+
+    DAS_IMPL GetSize(uint64_t* p_out_size) override
+    {
+        DAS_UTILS_CHECK_POINTER(p_out_size)
+        auto& mat = storage_.GetCpuMat();
+        *p_out_size = mat.total() * mat.elemSize();
         return DAS_S_OK;
     }
 
