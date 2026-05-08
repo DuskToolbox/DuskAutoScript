@@ -199,6 +199,51 @@ static void GetTensorDims(
     }
 }
 
+static DasResult GetTensorRawData(
+    DAS::ExportInterface::IDasTensor*              tensor,
+    DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer>& buffer,
+    unsigned char**                                pp_out_data,
+    uint64_t*                                      p_out_size)
+{
+    DAS_UTILS_CHECK_POINTER(tensor);
+    DAS_UTILS_CHECK_POINTER(pp_out_data);
+    DAS_UTILS_CHECK_POINTER(p_out_size);
+
+    auto result = tensor->GetBinaryBuffer(buffer.Put());
+    if (DAS::IsFailed(result))
+    {
+        DAS_CORE_LOG_ERROR(
+            "GetTensorRawData: GetBinaryBuffer failed: result={}",
+            result);
+        return result;
+    }
+
+    result = buffer->GetData(pp_out_data);
+    if (DAS::IsFailed(result))
+    {
+        DAS_CORE_LOG_ERROR(
+            "GetTensorRawData: GetData failed: result={}",
+            result);
+        return result;
+    }
+    if (*pp_out_data == nullptr)
+    {
+        DAS_CORE_LOG_ERROR("GetTensorRawData: GetData returned null");
+        return DAS_E_INVALID_POINTER;
+    }
+
+    result = buffer->GetSize(p_out_size);
+    if (DAS::IsFailed(result))
+    {
+        DAS_CORE_LOG_ERROR(
+            "GetTensorRawData: GetSize failed: result={}",
+            result);
+        return result;
+    }
+
+    return DAS_S_OK;
+}
+
 // ===== Helper: BoxScoreFast — mean probability inside candidate box =====
 // Aligned with PaddleOCR db_postprocess.py: box_score_fast()
 static float BoxScoreFast(
@@ -576,11 +621,20 @@ static DasResult RecognizeTextCrop(
     std::vector<int64_t> out_dims;
     GetTensorDims(out_tensor.Get(), out_dims);
 
-    void*    out_data = nullptr;
-    uint64_t out_size = 0;
-    out_tensor->GetRawData(&out_data, &out_size);
+    DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer> out_buffer;
+    unsigned char*                                      out_data = nullptr;
+    uint64_t                                            out_size = 0;
+    result = GetTensorRawData(
+        out_tensor.Get(),
+        out_buffer,
+        &out_data,
+        &out_size);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
 
-    auto* logits = static_cast<float*>(out_data);
+    auto* logits = reinterpret_cast<float*>(out_data);
 
     // Output shape: [1, T, num_classes] or [T, num_classes]
     int time_steps = 1;
@@ -792,11 +846,21 @@ DasResult PaddleOcrImpl::Recognize(
             std::vector<int64_t> det_out_dims;
             GetTensorDims(det_out_tensor.Get(), det_out_dims);
 
-            void*    det_out_data = nullptr;
-            uint64_t det_out_size = 0;
-            det_out_tensor->GetRawData(&det_out_data, &det_out_size);
+            DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer>
+                det_out_buffer;
+            unsigned char* det_out_data = nullptr;
+            uint64_t       det_out_size = 0;
+            cr = GetTensorRawData(
+                det_out_tensor.Get(),
+                det_out_buffer,
+                &det_out_data,
+                &det_out_size);
+            if (DAS::IsFailed(cr))
+            {
+                return cr;
+            }
 
-            auto* prob_map = static_cast<float*>(det_out_data);
+            auto* prob_map = reinterpret_cast<float*>(det_out_data);
 
             // prob_map shape: [1, 1, prob_h, prob_w]
             int prob_h = 1, prob_w = 1;

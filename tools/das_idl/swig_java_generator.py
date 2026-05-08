@@ -49,7 +49,9 @@ class JavaSwigGenerator(SwigLangGenerator):
         # 'int64_t': 'DasRetInt',  # 由代码生成器生成
         # 'uint64_t': 'DasRetUInt',  # 由代码生成器生成
         'DasReadOnlyString': 'DasRetReadOnlyString',
-        # void** 类型 -> 映射到 DasRetBase（返回 IDasBase）
+        # QueryInterface/SWIG compatibility: void** is represented as DasRetBase.
+        # IDL parsing rejects void** signatures, so this branch is intentionally
+        # kept as code documentation and for internal/manual QueryInterface paths.
         'void': 'DasRetBase',
     }
 
@@ -168,7 +170,7 @@ class JavaSwigGenerator(SwigLangGenerator):
 
     @staticmethod
     def _is_void_pointer_pointer(type_name: str) -> bool:
-        """判断是否是 void** 类型"""
+        """判断是否是 void** 类型（SWIG 中按 DasRetBase 处理）"""
         simple_name = type_name.split('::')[-1].strip()
         return simple_name == 'void'
 
@@ -1954,7 +1956,6 @@ struct {class_name} {{
         qualified_interface = f"{interface.namespace}::{interface.name}" if interface.namespace else interface.name
         out_type = out_param.type_info.base_type
         ret_class_name = self._get_ret_class_name(out_type)
-        is_interface = out_param.type_info.type_kind == TypeKind.INTERFACE
         is_idas_readonly_string_out = self._is_idas_readonly_string_out_param(out_type)
         is_void_pointer_pointer = self._is_void_pointer_pointer(out_type)
 
@@ -2008,7 +2009,8 @@ struct {class_name} {{
 
         lines: list[str] = []
 
-        # 对于 void** 类型的 [out] 参数，映射到 DasRetBase（返回 IDasBase）
+        # 对于 void** 类型的 [out] 参数，映射到 DasRetBase（返回 IDasBase）。
+        # 解析器禁止 IDL 声明 void**，但这里保留 QueryInterface/SWIG 兼容路径。
         if is_void_pointer_pointer:
             call_args_with_temp = call_args.copy()
             call_args_with_temp.append("reinterpret_cast<void**>(&result.value)")

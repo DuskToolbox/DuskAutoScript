@@ -41,7 +41,7 @@ namespace
         }
 
         DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer> buffer;
-        result = memory->GetBinaryBuffer(buffer.Put());
+        result = memory->GetBinaryBuffer(0, buffer.Put());
         if (DAS::IsFailed(result))
         {
             return result;
@@ -204,14 +204,16 @@ TEST(AiCpuImplTest, CreateTensorFromImageValidRgbaInput_WritesTensor)
     ASSERT_EQ(result, DAS_S_OK);
     ASSERT_TRUE(tensor);
 
-    void*    raw_tensor_data = nullptr;
-    uint64_t raw_tensor_size = 0;
-    ASSERT_EQ(
-        tensor->GetRawData(&raw_tensor_data, &raw_tensor_size),
-        DAS_S_OK);
+    DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer> raw_tensor_buffer;
+    ASSERT_EQ(tensor->GetBinaryBuffer(raw_tensor_buffer.Put()), DAS_S_OK);
+
+    unsigned char* raw_tensor_data = nullptr;
+    uint64_t       raw_tensor_size = 0;
+    ASSERT_EQ(raw_tensor_buffer->GetData(&raw_tensor_data), DAS_S_OK);
+    ASSERT_EQ(raw_tensor_buffer->GetSize(&raw_tensor_size), DAS_S_OK);
     ASSERT_EQ(raw_tensor_size, 6 * sizeof(float));
 
-    const auto* values = static_cast<const float*>(raw_tensor_data);
+    const auto* values = reinterpret_cast<const float*>(raw_tensor_data);
     EXPECT_FLOAT_EQ(values[0], 10.0f / 255.0f);
     EXPECT_FLOAT_EQ(values[1], 40.0f / 255.0f);
     EXPECT_FLOAT_EQ(values[2], 20.0f / 255.0f);

@@ -1,4 +1,5 @@
 import "DasBasicTypes.idl";
+import "IDasBinaryBuffer.idl";
 import "DasJson.idl";
 import "IDasImage.idl";
 import "IDasOcr.idl";
@@ -53,7 +54,7 @@ interface IDasTensorVector : IDasBase {
  * @brief Tensor interface wrapping an ONNX Runtime value.
  *
  * Owns the underlying Ort::Value. Provides per-dimension shape query (ABI-safe)
- * and raw data pointer access.
+ * and binary buffer access to the raw tensor bytes.
  */
 [uuid("DAC47B24-5E1F-4A8C-9A3D-E4F5A6B7C8D9")]
 interface IDasTensor : IDasBase {
@@ -63,8 +64,8 @@ interface IDasTensor : IDasBase {
     DasResult GetRank([out] uint32_t* p_rank);
     /// Get the tensor element data type.
     DasResult GetDataType([out] DasTensorDataType* p_type);
-    /// Get the raw data pointer and byte size.
-    DasResult GetRawData([out] void** pp_data, [out] uint64_t* p_size);
+    /// Get a binary view of the raw tensor bytes.
+    DasResult GetBinaryBuffer([out] IDasBinaryBuffer** pp_out_buffer);
 }
 
 // ============= Session =============

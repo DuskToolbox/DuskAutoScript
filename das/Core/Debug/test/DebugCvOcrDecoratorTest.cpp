@@ -8,6 +8,7 @@
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasAI.Implements.hpp>
+#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasBinaryBuffer.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasOcr.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasOcrResult.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasOcrResultVector.Implements.hpp>
@@ -192,6 +193,42 @@ namespace Das::Core::Debug::Test
             return Das::DasPtr<Das::ExportInterface::IDasImage>::Attach(raw);
         }
 
+        class FakeTensorBuffer final
+            : public Das::ExportInterface::DasBinaryBufferImplBase<
+                  FakeTensorBuffer>
+        {
+        public:
+            explicit FakeTensorBuffer(std::vector<float> data)
+                : data_(std::move(data))
+            {
+            }
+
+            DAS_IMPL GetData(unsigned char** pp_out_data) override
+            {
+                if (!pp_out_data)
+                {
+                    return DAS_E_INVALID_POINTER;
+                }
+                *pp_out_data =
+                    reinterpret_cast<unsigned char*>(data_.data());
+                return DAS_S_OK;
+            }
+
+            DAS_IMPL GetSize(uint64_t* p_out_size) override
+            {
+                if (!p_out_size)
+                {
+                    return DAS_E_INVALID_POINTER;
+                }
+                *p_out_size =
+                    static_cast<uint64_t>(data_.size() * sizeof(float));
+                return DAS_S_OK;
+            }
+
+        private:
+            std::vector<float> data_;
+        };
+
         class FakeTensor final
             : public Das::ExportInterface::DasTensorImplBase<FakeTensor>
         {
@@ -236,15 +273,15 @@ namespace Das::Core::Debug::Test
                 return DAS_S_OK;
             }
 
-            DAS_IMPL GetRawData(void** pp_data, uint64_t* p_size) override
+            DAS_IMPL GetBinaryBuffer(
+                Das::ExportInterface::IDasBinaryBuffer** pp_out_buffer)
+                override
             {
-                if (!pp_data || !p_size)
+                if (!pp_out_buffer)
                 {
                     return DAS_E_INVALID_POINTER;
                 }
-                *pp_data = data_.data();
-                *p_size = static_cast<uint64_t>(
-                    data_.size() * sizeof(data_.front()));
+                *pp_out_buffer = FakeTensorBuffer::MakeRaw(data_);
                 return DAS_S_OK;
             }
 

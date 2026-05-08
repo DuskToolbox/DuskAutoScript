@@ -757,7 +757,8 @@ class Parser:
             self.advance()
 
         # 基础类型（支持复合类型如 unsigned char）
-        base_type = self.expect(TokenType.IDENTIFIER).value
+        base_type_token = self.expect(TokenType.IDENTIFIER)
+        base_type = base_type_token.value
 
         # 支持命名空间限定符（如 Das::ExportInterface::DasDate）
         while self.match(TokenType.COLON):
@@ -788,6 +789,12 @@ class Parser:
                 self.advance()
             else:
                 break
+
+        if base_type == 'void' and pointer_level >= 2:
+            raise SyntaxError(
+                "IDL forbids void**. Use IDasBase** for [out] object "
+                f"pointers at line {base_type_token.line}"
+            )
 
         return TypeInfo(
             base_type=base_type,

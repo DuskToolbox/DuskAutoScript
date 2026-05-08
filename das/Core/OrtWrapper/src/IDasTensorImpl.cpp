@@ -3,10 +3,12 @@
 #include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
 #include <das/Utils/CommonUtils.hpp>
+#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasBinaryBuffer.Implements.hpp>
 #include <onnxruntime_c_api.h>
 
 #include <cmath>
 #include <limits>
+#include <new>
 
 DAS_CORE_ORTWRAPPER_NS_BEGIN
 
@@ -92,6 +94,39 @@ namespace
             return 1;
         }
     }
+
+    class TensorBinaryBufferImpl final
+        : public ExportInterface::DasBinaryBufferImplBase<
+              TensorBinaryBufferImpl>
+    {
+    public:
+        TensorBinaryBufferImpl(
+            ExportInterface::IDasTensor* owner,
+            unsigned char*               data,
+            uint64_t                     size)
+            : owner_{owner}, data_{data}, size_{size}
+        {
+        }
+
+        DAS_IMPL GetData(unsigned char** pp_out_data) override
+        {
+            DAS_UTILS_CHECK_POINTER(pp_out_data);
+            *pp_out_data = data_;
+            return DAS_S_OK;
+        }
+
+        DAS_IMPL GetSize(uint64_t* p_out_size) override
+        {
+            DAS_UTILS_CHECK_POINTER(p_out_size);
+            *p_out_size = size_;
+            return DAS_S_OK;
+        }
+
+    private:
+        DAS::DasPtr<ExportInterface::IDasTensor> owner_;
+        unsigned char*                           data_{};
+        uint64_t                                 size_{};
+    };
 } // namespace
 
 IDasTensorImpl::IDasTensorImpl(Ort::Value value) : value_{std::move(value)} {}
@@ -592,23 +627,31 @@ DasResult IDasTensorImpl::GetDataType(
     }
 }
 
-DasResult IDasTensorImpl::GetRawData(void** pp_data, uint64_t* p_size)
+DasResult IDasTensorImpl::GetBinaryBuffer(
+    ExportInterface::IDasBinaryBuffer** pp_out_buffer)
 {
-    DAS_UTILS_CHECK_POINTER(pp_data);
-    DAS_UTILS_CHECK_POINTER(p_size);
+    DAS_UTILS_CHECK_POINTER(pp_out_buffer);
+    *pp_out_buffer = nullptr;
 
     try
     {
         auto shape_info = value_.GetTensorTypeAndShapeInfo();
-        *pp_data = value_.GetTensorMutableData<void>();
+        auto* data = static_cast<unsigned char*>(
+            value_.GetTensorMutableData<void>());
         const auto element_count = shape_info.GetElementCount();
         const auto element_size = GetElementSize(shape_info.GetElementType());
-        *p_size = static_cast<uint64_t>(element_count) * element_size;
+        const auto size = static_cast<uint64_t>(element_count) * element_size;
+
+        *pp_out_buffer = TensorBinaryBufferImpl::MakeRaw(this, data, size);
         return DAS_S_OK;
+    }
+    catch (const std::bad_alloc&)
+    {
+        return DAS_E_OUT_OF_MEMORY;
     }
     catch (const Ort::Exception& e)
     {
-        DAS_CORE_LOG_ERROR("GetRawData failed: {}", e.what());
+        DAS_CORE_LOG_ERROR("GetBinaryBuffer failed: {}", e.what());
         return DAS_E_ONNX_RUNTIME_ERROR;
     }
 }

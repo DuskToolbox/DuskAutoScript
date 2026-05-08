@@ -236,6 +236,67 @@ class TestMixedIdl(unittest.TestCase):
         self.assertEqual(doc.modules[1].name, "Mod2")
 
 
+class TestForbiddenVoidPointerPointer(unittest.TestCase):
+    """void** is forbidden in IDL signatures"""
+
+    def test_rejects_interface_void_pointer_pointer_out_param(self):
+        """接口方法参数中出现 void** 时直接报错"""
+        idl = """
+        [uuid("12345678-1234-1234-1234-123456789012")]
+        interface IFoo : IDasBase {
+            DasResult Query([out] void** pp_out);
+        }
+        """
+
+        with self.assertRaisesRegex(SyntaxError, r"void\*\*"):
+            parse_idl(idl)
+
+    def test_rejects_module_void_pointer_pointer_out_param(self):
+        """module 函数参数中出现 void** 时直接报错"""
+        idl = """
+        module Api {
+            DasResult Query([out] void** pp_out);
+        }
+        """
+
+        with self.assertRaisesRegex(SyntaxError, r"void\*\*"):
+            parse_idl(idl)
+
+    def test_rejects_multi_out_void_pointer_pointer(self):
+        """多返回值路径中的 void** 必须在解析阶段报错"""
+        idl = """
+        [uuid("12345678-1234-1234-1234-123456789012")]
+        interface IFoo : IDasBase {
+            DasResult GetRawData([out] void** pp_data, [out] uint64_t* p_size);
+        }
+        """
+
+        with self.assertRaisesRegex(SyntaxError, r"void\*\*"):
+            parse_idl(idl)
+
+    def test_allows_idasbase_out_object_pointer(self):
+        """任意 IDasBase 或其子类型指针出参使用 IDasBase**"""
+        idl = """
+        [uuid("12345678-1234-1234-1234-123456789012")]
+        interface IFoo : IDasBase {
+            DasResult Query([out] IDasBase** pp_out);
+        }
+        """
+
+        doc = parse_idl(idl)
+        param = doc.interfaces[0].methods[0].parameters[0]
+        self.assertEqual(param.type_info.base_type, "IDasBase")
+        self.assertEqual(param.type_info.pointer_level, 2)
+        self.assertEqual(param.type_info.type_kind, TypeKind.INTERFACE)
+
+    def test_allows_plain_void_return(self):
+        """普通 void 返回值仍然合法"""
+        doc = parse_idl("module Api { void Shutdown(); }")
+        func = doc.modules[0].functions[0]
+        self.assertEqual(func.return_type.base_type, "void")
+        self.assertEqual(func.return_type.pointer_level, 0)
+
+
 class TestNamespaceScoped(unittest.TestCase):
     """命名空间作用域测试"""
 

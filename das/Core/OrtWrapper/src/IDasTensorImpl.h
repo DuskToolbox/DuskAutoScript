@@ -79,7 +79,8 @@ public:
     DAS_IMPL GetDim(uint32_t index, int64_t* p_value) override;
     DAS_IMPL GetRank(uint32_t* p_rank) override;
     DAS_IMPL GetDataType(ExportInterface::DasTensorDataType* p_type) override;
-    DAS_IMPL GetRawData(void** pp_data, uint64_t* p_size) override;
+    DAS_IMPL GetBinaryBuffer(
+        ExportInterface::IDasBinaryBuffer** pp_out_buffer) override;
 
     const Ort::Value& GetOrtValue() const { return value_; }
     ExportInterface::IDasMemory* GetBackingMemory() const
