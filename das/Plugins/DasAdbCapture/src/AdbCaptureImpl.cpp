@@ -135,10 +135,19 @@ public:
     unsigned char* GetData() const
     {
         DasPtr<ExportInterface::IDasBinaryBuffer> p_binary_buffer{};
-        DAS_THROW_IF_FAILED(p_data_->GetBinaryBuffer(p_binary_buffer.Put()));
+        DAS_THROW_IF_FAILED(p_data_->GetMutableView(0, p_binary_buffer.Put()));
         unsigned char* p_data{nullptr};
         DAS_THROW_IF_FAILED(p_binary_buffer->GetData(&p_data));
         return p_data;
+    }
+
+    DasPtr<ExportInterface::IDasBinaryBuffer> GetBinaryBuffer(
+        const uint64_t offset) const
+    {
+        DasPtr<ExportInterface::IDasBinaryBuffer> p_binary_buffer{};
+        DAS_THROW_IF_FAILED(
+            p_data_->GetBinaryBuffer(offset, p_binary_buffer.Put()));
+        return p_binary_buffer;
     }
 
     size_t GetSize() const
@@ -147,8 +156,6 @@ public:
         p_data_->GetSize(&size);
         return size;
     }
-
-    void SetOffset(const int64_t offset) { p_data_->SetOffset(offset); }
 
     // stl-like api
     unsigned char& operator[](size_t size_in_bytes)
@@ -388,9 +395,7 @@ DasResult AdbCapture::CaptureRawWithGZip()
         context.GetBuffer().data(),
         context.GetBuffer().size());
 
-    DasPtr<ExportInterface::IDasBinaryBuffer> p_decompressed_binary_buffer{};
-    DAS_THROW_IF_FAILED(decompressed_data.GetImpl()->GetBinaryBuffer(
-        p_decompressed_binary_buffer.Put()));
+    auto p_decompressed_binary_buffer = decompressed_data.GetBinaryBuffer(0);
     unsigned char* p_decompressed_data = nullptr;
     DAS_THROW_IF_FAILED(
         p_decompressed_binary_buffer->GetData(&p_decompressed_data));
@@ -428,37 +433,20 @@ DasResult AdbCapture::CaptureRawWithGZip()
                 ExportInterface::DasSize size{
                     static_cast<int32_t>(header.w),
                     static_cast<int32_t>(header.h)};
-                decompressed_data.SetOffset(ADB_CAPTURE_HEADER_SIZE);
 
-                // 格式符合预期则直接避免拷贝
-                if (color_format == ExportInterface::DAS_IMAGE_FORMAT_RGB_888)
-                {
-                    DasPtr<ExportInterface::IDasImage> p_image{};
-                    const auto                         create_image_result =
-                        ::CreateIDasImageFromRgb888(
-                            decompressed_data.GetImpl(),
-                            &size,
-                            p_image.Put());
-                    if (IsOk(create_image_result)) [[likely]]
-                    {
-                        return {};
-                    }
-                    return tl::make_unexpected(create_image_result);
-                }
-
-                DasPtr<ExportInterface::IDasBinaryBuffer>
-                    p_desc_binary_buffer{};
-                DAS_THROW_IF_FAILED(
-                    decompressed_data.GetImpl()->GetBinaryBuffer(
-                        p_desc_binary_buffer.Put()));
+                auto p_desc_binary_buffer = decompressed_data.GetBinaryBuffer(
+                    ADB_CAPTURE_HEADER_SIZE);
                 unsigned char* p_decompressed_data_for_desc = nullptr;
                 DAS_THROW_IF_FAILED(p_desc_binary_buffer->GetData(
                     &p_decompressed_data_for_desc));
+                uint64_t desc_data_size{};
+                DAS_THROW_IF_FAILED(
+                    p_desc_binary_buffer->GetSize(&desc_data_size));
+
                 DasImageDesc desc{
                     .p_data =
                         reinterpret_cast<char*>(p_decompressed_data_for_desc),
-                    .data_size =
-                        decompressed_data.GetSize() - ADB_CAPTURE_HEADER_SIZE,
+                    .data_size = static_cast<std::size_t>(desc_data_size),
                     .data_format = color_format};
 
                 DasPtr<ExportInterface::IDasImage> p_image{};
