@@ -6,20 +6,25 @@ namespace Das::ExportInterface {
 [uuid("0E8E6129-512E-4AAB-A4A6-327ADCACB019")]
 interface IDasMemory : IDasBase {
     /**
-     * @brief 获取二进制缓冲区对象
-     * @note 此方法替代了原来的 GetRawData 方法
-     *       提供更安全的二进制数据访问方式
-     *       SWIG: 提供目标语言友好的访问方法
-     */
-    DasResult GetBinaryBuffer([out] IDasBinaryBuffer* p_out_buffer);
-
-    /**
-     * @brief 如果确定输入的指针不是空指针，则返回值可以忽略
+     * @brief Return the total backing storage size in bytes.
      */
     DasResult GetSize([out] uint64_t* p_out_size);
-    DasResult GetOffset([out] int64_t* p_out_offset);
-    DasResult SetOffset(int64_t offset);
-    DasResult Resize(uint64_t new_size_in_byte);
+
+    /**
+     * @brief Return a read-intent binary view from offset to the end.
+     *
+     * @note GetBinaryBuffer(0, out) is the migration path for callers that
+     *       previously requested the whole backing storage.
+     */
+    DasResult GetBinaryBuffer(uint64_t offset, [out] IDasBinaryBuffer** pp_out_buffer);
+
+    /**
+     * @brief Return a mutable-intent binary view from offset to the end.
+     *
+     * @note Phase 66 keeps IDasBinaryBuffer unchanged; read/write intent is an
+     *       application-level contract enforced by the caller.
+     */
+    DasResult GetMutableView(uint64_t offset, [out] IDasBinaryBuffer** pp_out_buffer);
 }
 
 }
