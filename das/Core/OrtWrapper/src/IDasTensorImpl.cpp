@@ -62,7 +62,7 @@ namespace
             return DAS_S_OK;
         default:
             DAS_CORE_LOG_ERROR(
-                "CreateTensorFromImage failed: unsupported pixel_format={}",
+                "unsupported pixel_format={}",
                 static_cast<int>(pixel_format));
             return DAS_E_INVALID_ENUM;
         }
@@ -250,17 +250,17 @@ DasResult CreateFloatTensorBackingBufferFromImage(
     if (tensor_channel_count == 0 || tensor_channel_count > 4)
     {
         DAS_CORE_LOG_ERROR(
-            "CreateTensorFromImage failed: channel_count {} must be in [1, 4]",
+            "channel_count {} must be in [1, 4]",
             tensor_channel_count);
         return DAS_E_INVALID_ARGUMENT;
     }
 
-    const double mean_values[] = {
+    const std::array mean_values = {
         options.mean0,
         options.mean1,
         options.mean2,
         options.mean3};
-    const double stddev_values[] = {
+    const std::array stddev_values = {
         options.std0,
         options.std1,
         options.std2,
@@ -271,7 +271,7 @@ DasResult CreateFloatTensorBackingBufferFromImage(
         if (!std::isfinite(mean_values[c]) || !std::isfinite(stddev_values[c]))
         {
             DAS_CORE_LOG_ERROR(
-                "CreateTensorFromImage failed: normalization value at channel "
+                "normalization value at channel "
                 "{} is not finite, mean={}, std={}",
                 c,
                 mean_values[c],
@@ -281,7 +281,7 @@ DasResult CreateFloatTensorBackingBufferFromImage(
         if (stddev_values[c] == 0.0)
         {
             DAS_CORE_LOG_ERROR(
-                "CreateTensorFromImage failed: std at channel {} is zero",
+                "std at channel {} is zero",
                 c);
             return DAS_E_INVALID_ARGUMENT;
         }
@@ -292,14 +292,14 @@ DasResult CreateFloatTensorBackingBufferFromImage(
     if (DAS::IsFailed(result))
     {
         DAS_CORE_LOG_ERROR(
-            "CreateTensorFromImage failed: GetSize returned {}",
+            "GetSize returned {}",
             result);
         return result;
     }
     if (image_size.width <= 0 || image_size.height <= 0)
     {
         DAS_CORE_LOG_ERROR(
-            "CreateTensorFromImage failed: invalid image size {}x{}",
+            "invalid image size {}x{}",
             image_size.width,
             image_size.height);
         return DAS_E_INVALID_SIZE;
@@ -319,7 +319,7 @@ DasResult CreateFloatTensorBackingBufferFromImage(
                 &total_elements))
         {
             DAS_CORE_LOG_ERROR(
-                "CreateTensorFromImage failed: shape product overflow at "
+                "shape product overflow at "
                 "index {}, value={}",
                 i,
                 tensor_shape[i]);
@@ -332,14 +332,14 @@ DasResult CreateFloatTensorBackingBufferFromImage(
     if (DAS::IsFailed(result))
     {
         DAS_CORE_LOG_ERROR(
-            "CreateTensorFromImage failed: GetChannelCount returned {}",
+            "GetChannelCount returned {}",
             result);
         return result;
     }
     if (image_channel_count_raw <= 0)
     {
         DAS_CORE_LOG_ERROR(
-            "CreateTensorFromImage failed: invalid image channel count {}",
+            "invalid image channel count {}",
             image_channel_count_raw);
         return DAS_E_INVALID_ARGUMENT;
     }
@@ -352,7 +352,7 @@ DasResult CreateFloatTensorBackingBufferFromImage(
     if (DAS::IsFailed(result))
     {
         DAS_CORE_LOG_ERROR(
-            "CreateTensorFromImage failed: GetPixelFormat returned {}",
+            "GetPixelFormat returned {}",
             result);
         return result;
     }
@@ -366,7 +366,7 @@ DasResult CreateFloatTensorBackingBufferFromImage(
     if (image_channel_count != format_channel_count)
     {
         DAS_CORE_LOG_ERROR(
-            "CreateTensorFromImage failed: image channel count {} does not "
+            "image channel count {} does not "
             "match pixel_format {} channel count {}",
             image_channel_count,
             static_cast<int>(pixel_format),
@@ -376,7 +376,7 @@ DasResult CreateFloatTensorBackingBufferFromImage(
     if (tensor_channel_count > image_channel_count)
     {
         DAS_CORE_LOG_ERROR(
-            "CreateTensorFromImage failed: tensor channels {} exceed image "
+            "tensor channels {} exceed image "
             "channels {}",
             tensor_channel_count,
             image_channel_count);
@@ -390,7 +390,7 @@ DasResult CreateFloatTensorBackingBufferFromImage(
             &pixel_count))
     {
         DAS_CORE_LOG_ERROR(
-            "CreateTensorFromImage failed: image pixel count overflow, "
+            "image pixel count overflow, "
             "size={}x{}",
             image_size.width,
             image_size.height);
@@ -404,7 +404,7 @@ DasResult CreateFloatTensorBackingBufferFromImage(
             &required_image_bytes))
     {
         DAS_CORE_LOG_ERROR(
-            "CreateTensorFromImage failed: image byte count overflow, "
+            "image byte count overflow, "
             "pixels={}, channels={}",
             pixel_count,
             image_channel_count);
@@ -416,14 +416,14 @@ DasResult CreateFloatTensorBackingBufferFromImage(
     if (DAS::IsFailed(result))
     {
         DAS_CORE_LOG_ERROR(
-            "CreateTensorFromImage failed: GetDataSize returned {}",
+            "GetDataSize returned {}",
             result);
         return result;
     }
     if (image_data_size != required_image_bytes)
     {
         DAS_CORE_LOG_ERROR(
-            "CreateTensorFromImage failed: image data size mismatch, "
+            "image data size mismatch, "
             "required={}, "
             "actual={}",
             required_image_bytes,
@@ -436,7 +436,7 @@ DasResult CreateFloatTensorBackingBufferFromImage(
     if (DAS::IsFailed(result))
     {
         DAS_CORE_LOG_ERROR(
-            "CreateTensorFromImage failed: GetBinaryBuffer returned {}",
+            "GetBinaryBuffer returned {}",
             result);
         return result;
     }
@@ -446,14 +446,14 @@ DasResult CreateFloatTensorBackingBufferFromImage(
     if (DAS::IsFailed(result))
     {
         DAS_CORE_LOG_ERROR(
-            "CreateTensorFromImage failed: buffer GetData returned {}",
+            "buffer GetData returned {}",
             result);
         return result;
     }
     if (raw_data == nullptr)
     {
         DAS_CORE_LOG_ERROR(
-            "CreateTensorFromImage failed: buffer GetData returned null");
+            "buffer GetData returned null");
         return DAS_E_INVALID_POINTER;
     }
 
@@ -462,14 +462,14 @@ DasResult CreateFloatTensorBackingBufferFromImage(
     if (DAS::IsFailed(result))
     {
         DAS_CORE_LOG_ERROR(
-            "CreateTensorFromImage failed: buffer GetSize returned {}",
+            "buffer GetSize returned {}",
             result);
         return result;
     }
     if (buffer_size < required_image_bytes)
     {
         DAS_CORE_LOG_ERROR(
-            "CreateTensorFromImage failed: binary buffer too small, "
+            "binary buffer too small, "
             "required={}, actual={}",
             required_image_bytes,
             buffer_size);
