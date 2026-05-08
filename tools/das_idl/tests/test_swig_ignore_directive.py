@@ -135,8 +135,19 @@ namespace Das::ExportInterface {
 
     def test_ignore_directive_with_global_namespace_prefix(self):
         """测试生成的 ignore 语句包含 :: 前缀（针对全局命名空间类型）"""
+        weak_ref_idl = """
+[uuid("B0397D85-1EC0-4AC8-AB73-05CBFBB3E1D1")]
+interface IDasWeakReference : IDasBase {
+    DasResult Resolve([out] IDasBase** pp_out_object);
+}
+"""
+        with open(os.path.join(self.test_dir, "IDasWeakReference.idl"), 'w', encoding='utf-8') as f:
+            f.write(weak_ref_idl)
+
         # 创建测试 IDL - 带有全局命名空间类型参数的方法
         idl_content = """
+import "IDasWeakReference.idl";
+
 namespace Das::ExportInterface {
     [uuid(\"12345678-1234-1234-1234-123456789020\")]
     interface IDasTestGlobalNamespace : IDasBase {
