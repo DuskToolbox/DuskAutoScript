@@ -398,7 +398,7 @@ DasResult CreateIDasImageFromRgb888(
 
     DAS::ExportInterface::IDasBinaryBuffer* p_buffer = nullptr;
     if (const auto get_buffer_result =
-            p_alias_memory->GetBinaryBuffer(&p_buffer);
+            p_alias_memory->GetBinaryBuffer(0, &p_buffer);
         DAS::IsFailed(get_buffer_result)) [[unlikely]]
     {
         DAS_CORE_LOG_ERROR(

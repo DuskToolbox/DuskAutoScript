@@ -29,10 +29,7 @@ namespace
         return true;
     }
 
-    bool TryMultiplyUint64(
-        uint64_t  lhs,
-        uint64_t  rhs,
-        uint64_t* p_out_value)
+    bool TryMultiplyUint64(uint64_t lhs, uint64_t rhs, uint64_t* p_out_value)
     {
         if (lhs != 0 && rhs > std::numeric_limits<uint64_t>::max() / lhs)
         {
@@ -156,7 +153,7 @@ DasResult CreateFloatTensorBackingBuffer(
         return result;
     }
 
-    result = backing.memory->GetBinaryBuffer(backing.buffer.Put());
+    result = backing.memory->GetBinaryBuffer(0, backing.buffer.Put());
     if (DAS::IsFailed(result))
     {
         DAS_CORE_LOG_ERROR(
@@ -241,7 +238,10 @@ DasResult CreateFloatTensorBackingBufferFromImage(
                 shape[i]);
             return DAS_E_INVALID_SIZE;
         }
-        if (!TryMultiplyPositiveInt64(total_elements, shape[i], &total_elements))
+        if (!TryMultiplyPositiveInt64(
+                total_elements,
+                shape[i],
+                &total_elements))
         {
             DAS_CORE_LOG_ERROR(
                 "CreateTensorFromImage failed: shape product overflow at "
@@ -301,7 +301,7 @@ DasResult CreateFloatTensorBackingBufferFromImage(
     }
 
     ExportInterface::DasSize image_size{};
-    auto result = image->GetSize(&image_size);
+    auto                     result = image->GetSize(&image_size);
     if (DAS::IsFailed(result))
     {
         DAS_CORE_LOG_ERROR(
