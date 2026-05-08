@@ -83,3 +83,54 @@ TEST(IDasMemoryTest, GetBinaryBufferCreatesStableOffsetViews)
     EXPECT_EQ(offset_eight_data[0], 42);
     EXPECT_EQ(offset_eight_size, 8);
 }
+
+TEST(IDasMemoryTest, OffsetEqualSizeReturnsEmptyView)
+{
+    DAS::DasPtr<DAS::ExportInterface::IDasMemory> memory;
+    ASSERT_EQ(::CreateIDasMemory(16, memory.Put()), DAS_S_OK);
+
+    DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer> base_buffer;
+    ASSERT_EQ(memory->GetBinaryBuffer(0, base_buffer.Put()), DAS_S_OK);
+    auto* base_data = GetData(base_buffer.Get());
+
+    DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer> empty_buffer;
+    ASSERT_EQ(memory->GetBinaryBuffer(16, empty_buffer.Put()), DAS_S_OK);
+
+    uint64_t empty_size = 1;
+    ASSERT_EQ(empty_buffer->GetSize(&empty_size), DAS_S_OK);
+
+    auto* empty_data = GetData(empty_buffer.Get());
+    EXPECT_EQ(empty_size, 0);
+    EXPECT_EQ(empty_data, base_data + 16);
+}
+
+TEST(IDasMemoryTest, OffsetGreaterThanSizeReturnsOutOfRange)
+{
+    DAS::DasPtr<DAS::ExportInterface::IDasMemory> memory;
+    ASSERT_EQ(::CreateIDasMemory(16, memory.Put()), DAS_S_OK);
+
+    auto* buffer =
+        reinterpret_cast<DAS::ExportInterface::IDasBinaryBuffer*>(uintptr_t{1});
+    EXPECT_EQ(memory->GetBinaryBuffer(17, &buffer), DAS_E_OUT_OF_RANGE);
+    EXPECT_EQ(buffer, nullptr);
+
+    buffer =
+        reinterpret_cast<DAS::ExportInterface::IDasBinaryBuffer*>(uintptr_t{1});
+    EXPECT_EQ(memory->GetMutableView(17, &buffer), DAS_E_OUT_OF_RANGE);
+    EXPECT_EQ(buffer, nullptr);
+}
+
+TEST(IDasMemoryTest, NullOutPointerReturnsInvalidPointer)
+{
+    DAS::DasPtr<DAS::ExportInterface::IDasMemory> memory;
+    ASSERT_EQ(::CreateIDasMemory(16, memory.Put()), DAS_S_OK);
+
+    EXPECT_EQ(memory->GetBinaryBuffer(0, nullptr), DAS_E_INVALID_POINTER);
+    EXPECT_EQ(memory->GetMutableView(0, nullptr), DAS_E_INVALID_POINTER);
+
+    DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer> buffer;
+    ASSERT_EQ(memory->GetBinaryBuffer(0, buffer.Put()), DAS_S_OK);
+
+    EXPECT_EQ(buffer->GetData(nullptr), DAS_E_INVALID_POINTER);
+    EXPECT_EQ(buffer->GetSize(nullptr), DAS_E_INVALID_POINTER);
+}
