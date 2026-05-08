@@ -553,13 +553,40 @@ namespace Core::OcvWrapper::Test
             }
 
             DasResult GetBinaryBuffer(
+                uint64_t offset,
                 ExportInterface::IDasBinaryBuffer** pp_out) override
             {
                 if (!pp_out)
                 {
                     return DAS_E_INVALID_POINTER;
                 }
-                auto* buf = new TestBinaryBuffer(data_.data(), data_.size());
+                if (offset >= data_.size())
+                {
+                    return DAS_E_INVALID_ARGUMENT;
+                }
+                auto* buf = new TestBinaryBuffer(
+                    data_.data() + offset,
+                    data_.size() - offset);
+                buf->AddRef();
+                *pp_out = buf;
+                return DAS_S_OK;
+            }
+
+            DasResult GetMutableView(
+                uint64_t offset,
+                ExportInterface::IDasBinaryBuffer** pp_out) override
+            {
+                if (!pp_out)
+                {
+                    return DAS_E_INVALID_POINTER;
+                }
+                if (offset >= data_.size())
+                {
+                    return DAS_E_INVALID_ARGUMENT;
+                }
+                auto* buf = new TestBinaryBuffer(
+                    data_.data() + offset,
+                    data_.size() - offset);
                 buf->AddRef();
                 *pp_out = buf;
                 return DAS_S_OK;
@@ -573,19 +600,6 @@ namespace Core::OcvWrapper::Test
                 }
                 *p_out_size = data_.size();
                 return DAS_S_OK;
-            }
-
-            DasResult GetOffset(int64_t*) override
-            {
-                return DAS_E_NO_IMPLEMENTATION;
-            }
-            DasResult SetOffset(int64_t) override
-            {
-                return DAS_E_NO_IMPLEMENTATION;
-            }
-            DasResult Resize(uint64_t) override
-            {
-                return DAS_E_NO_IMPLEMENTATION;
             }
         };
 
