@@ -1,4 +1,5 @@
 #include <das/Core/CoreServices/CoreServicesImpl.h>
+#include <das/Core/Debug/DebugRuntime.h>
 #include <das/Core/ForeignInterfaceHost/PluginManagerServiceImpl.h>
 #include <das/Core/ForeignInterfaceHost/PluginResourceIndex.h>
 #include <das/Core/ForeignInterfaceHost/PluginScanner.h>
@@ -8,6 +9,7 @@
 #include <das/DasApi.h>
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
+#include <exception>
 #include <new>
 
 DAS_CORE_CORE_SERVICES_NS_BEGIN
@@ -50,6 +52,40 @@ CoreServicesImpl::CoreServicesImpl(
         new Das::Core::TaskScheduler::SchedulerServiceImpl(scheduler_svc_);
     scheduler_impl->AddRef();
     scheduler_service_ = DasPtr<IDasSchedulerService>::Attach(scheduler_impl);
+}
+
+CoreServicesImpl::~CoreServicesImpl()
+{
+    static_cast<void>(ShutdownCoreRuntime());
+}
+
+DasResult CoreServicesImpl::ShutdownCoreRuntime() noexcept
+{
+    if (shutdown_called_.exchange(true))
+    {
+        return DAS_S_OK;
+    }
+
+    try
+    {
+        Das::Core::Debug::DebugRuntime::Shutdown();
+        return DAS_S_OK;
+    }
+    catch (const std::bad_alloc&)
+    {
+        DAS_CORE_LOG_ERROR("CoreServices shutdown ran out of memory");
+        return DAS_E_OUT_OF_MEMORY;
+    }
+    catch (const std::exception& ex)
+    {
+        DAS_CORE_LOG_ERROR("CoreServices shutdown failed: {}", ex.what());
+        return DAS_E_FAIL;
+    }
+    catch (...)
+    {
+        DAS_CORE_LOG_ERROR("CoreServices shutdown failed with unknown exception");
+        return DAS_E_FAIL;
+    }
 }
 
 uint32_t DAS_STD_CALL CoreServicesImpl::AddRef() { return ++ref_count_; }
@@ -128,6 +164,11 @@ DasResult CoreServicesImpl::GetSchedulerService(IDasSchedulerService** pp_out)
     result.Set(scheduler_service_.Get());
     result.Keep();
     return DAS_S_OK;
+}
+
+DasResult CoreServicesImpl::Shutdown()
+{
+    return ShutdownCoreRuntime();
 }
 
 DAS_CORE_CORE_SERVICES_NS_END

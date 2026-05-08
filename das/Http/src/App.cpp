@@ -18,7 +18,6 @@
 #include <boost/program_options.hpp>
 #include <filesystem>
 
-#include <das/Core/Debug/DebugRuntime.h>
 #include "./service/DasPluginManagerServiceImpl.h"
 #include "./service/DasProfileServiceImpl.h"
 #include <das/Core/IPC/CurrentIpcContextScope.h>
@@ -396,7 +395,15 @@ namespace Das::Http
 
         server.Run();
 
-        DAS::Core::Debug::DebugRuntime::Shutdown();
+        const auto shutdown_result = components.core_services->Shutdown();
+        if (DAS::IsFailed(shutdown_result))
+        {
+            DAS_LOG_ERROR(
+                DAS_FMT_NS::format(
+                    "Failed to shutdown CoreServices. result = {}",
+                    shutdown_result)
+                    .c_str());
+        }
 
         // Shutdown IPC context
         if (components.ipc_context)
@@ -408,7 +415,7 @@ namespace Das::Http
             components.ipc_thread.join();
         }
 
-        return DAS_S_OK;
+        return shutdown_result;
     }
 }
 

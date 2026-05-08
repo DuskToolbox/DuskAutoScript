@@ -28,6 +28,7 @@ DAS_INTERFACE IDasCoreServices : public IDasBase
     DAS_METHOD GetSettingsService(IDasSettingsService * *pp_out) = 0;
     DAS_METHOD GetPluginManagerService(IDasPluginManagerService * *pp_out) = 0;
     DAS_METHOD GetSchedulerService(IDasSchedulerService * *pp_out) = 0;
+    DAS_METHOD Shutdown() = 0;
 };
 
 #endif // DAS_CORE_SERVICES_H

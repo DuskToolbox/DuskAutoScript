@@ -32,7 +32,7 @@ public:
         std::filesystem::path                                  settings_dir,
         std::filesystem::path                                  plugin_dir);
 
-    ~CoreServicesImpl() = default;
+    ~CoreServicesImpl();
 
     // IDasBase
     uint32_t DAS_STD_CALL AddRef() override;
@@ -45,9 +45,13 @@ public:
     DAS_IMPL GetPluginManagerService(
         IDasPluginManagerService** pp_out) override;
     DAS_IMPL GetSchedulerService(IDasSchedulerService** pp_out) override;
+    DAS_IMPL Shutdown() override;
 
 private:
+    DasResult ShutdownCoreRuntime() noexcept;
+
     std::atomic<uint32_t> ref_count_{0};
+    std::atomic_bool      shutdown_called_{false};
 
     // IPC context (shared ownership via DasSharedRef)
     DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context_;
