@@ -30,8 +30,8 @@ class DebugInputFactoryDecorator final
 {
 public:
     DebugInputFactoryDecorator(
-        Das::PluginInterface::IDasInputFactory* p_inner,
-        const char*                             p_factory_name);
+        Das::DasPtr<Das::PluginInterface::IDasInputFactory> inner,
+        const char*                                          p_factory_name);
 
     DasResult DAS_STD_CALL GetGuid(DasGuid* p_out_guid) override;
     DasResult DAS_STD_CALL

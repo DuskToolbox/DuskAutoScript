@@ -10,8 +10,10 @@
 #include <das/Utils/fmt.h>
 
 #include <chrono>
+#include <exception>
 #include <fstream>
 #include <iomanip>
+#include <new>
 #include <optional>
 #include <sstream>
 #include <utility>
@@ -87,6 +89,48 @@ namespace
         return field ? std::string{*field} : fallback;
     }
 
+    auto JsonField(
+        yyjson::value&     value,
+        std::string_view   key,
+        const std::string& fallback) -> std::string
+    {
+        auto object = value.as_object();
+        if (!object || !object->contains(key))
+        {
+            return fallback;
+        }
+
+        yyjson::value field_copy;
+        field_copy = (*object)[key];
+        auto serialized = DAS::Utils::SerializeYyjsonValue(field_copy);
+        return serialized.value_or(fallback);
+    }
+
+    auto DoubleField(yyjson::value& value, std::string_view key, double fallback)
+        -> double
+    {
+        auto object = value.as_object();
+        if (!object || !object->contains(key))
+        {
+            return fallback;
+        }
+
+        auto field = (*object)[key];
+        if (auto real = field.as_real())
+        {
+            return *real;
+        }
+        if (auto sint = field.as_sint())
+        {
+            return static_cast<double>(*sint);
+        }
+        if (auto uint = field.as_uint())
+        {
+            return static_cast<double>(*uint);
+        }
+        return fallback;
+    }
+
     auto EventFromRawJson(const std::string& raw_json) -> DebugEvent
     {
         auto event = MakeDebugEvent("raw", RawParamsJson(raw_json), "{}");
@@ -98,6 +142,10 @@ namespace
 
         event.type = StringField(*parsed, "type", event.type);
         event.timestamp = StringField(*parsed, "timestamp", event.timestamp);
+        event.params_json = JsonField(*parsed, "params", event.params_json);
+        event.result_json = JsonField(*parsed, "result", event.result_json);
+        event.elapsed_ms =
+            DoubleField(*parsed, "elapsed_ms", event.elapsed_ms);
         event.image_filename =
             StringField(*parsed, "image_filename", event.image_filename);
         return event;
@@ -232,10 +280,33 @@ void DebugWriterImpl::WorkerLoop()
             step = next_step_++;
         }
 
-        static_cast<void>(WriteOne(item, step));
+        DasResult result = DAS_S_OK;
+        try
+        {
+            result = WriteOne(item, step);
+        }
+        catch (const std::bad_alloc& ex)
+        {
+            DAS_CORE_LOG_ERROR("Debug writer worker exception: {}", ex.what());
+            result = DAS_E_OUT_OF_MEMORY;
+        }
+        catch (const std::exception& ex)
+        {
+            DAS_CORE_LOG_ERROR("Debug writer worker exception: {}", ex.what());
+            result = DAS_E_FAIL;
+        }
+        catch (...)
+        {
+            DAS_CORE_LOG_ERROR("Debug writer worker unknown exception");
+            result = DAS_E_FAIL;
+        }
 
         {
             std::lock_guard lock{mutex_};
+            if (result < 0 && worker_error_ >= 0)
+            {
+                worker_error_ = result;
+            }
             writer_active_ = false;
         }
         cv_.notify_all();
@@ -268,7 +339,9 @@ DasResult DebugWriterImpl::Flush()
     cv_.wait(
         lock,
         [this]() { return queue_.empty() && !writer_active_; });
-    return DAS_S_OK;
+    const auto result = worker_error_;
+    worker_error_ = DAS_S_OK;
+    return result;
 }
 
 void DebugWriterImpl::Shutdown()
@@ -297,19 +370,19 @@ DasResult RegisterDebugWriterService(
         return DAS_S_OK;
     }
 
-    auto* writer = DebugWriterImpl::MakeRaw(DebugRuntime::DebugDir());
+    auto writer = Das::DasPtr<DebugWriterImpl>::Attach(
+        DebugWriterImpl::MakeRaw(DebugRuntime::DebugDir()));
     auto  result = ipc_context.RegisterServiceByName(
-        writer,
+        writer.Get(),
         DasIidOf<Das::ExportInterface::IDasDebugWriter>(),
         kDebugWriterServiceName);
     if (result < 0)
     {
-        writer->Release();
         return result;
     }
 
-    DebugRuntime::RegisterSink(MakeSinkRef(writer));
-    DebugRuntime::RegisterDrain(MakeDrainRef(writer));
+    DebugRuntime::RegisterSink(MakeSinkRef(writer.Get()));
+    DebugRuntime::RegisterDrain(MakeDrainRef(writer.Get()));
     return DAS_S_OK;
 }
 

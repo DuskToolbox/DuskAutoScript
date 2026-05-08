@@ -2,6 +2,7 @@
 #define DAS_CORE_DEBUG_DEBUGDECORATORS_H
 
 #include <das/Core/Debug/Config.h>
+#include <das/DasPtr.hpp>
 #include <das/_autogen/idl/abi/DasCV.h>
 #include <das/_autogen/idl/abi/IDasCapture.h>
 #include <das/_autogen/idl/abi/IDasInput.h>
@@ -28,9 +29,9 @@ Das::PluginInterface::IDasInput* MaybeDecorateInput(
     Das::PluginInterface::IDasInput* p_raw,
     const char*                      p_input_name);
 
-Das::PluginInterface::IDasInputFactory* MaybeDecorateInputFactory(
-    Das::PluginInterface::IDasInputFactory* p_raw,
-    const char*                             p_factory_name);
+Das::DasPtr<Das::PluginInterface::IDasInputFactory> MaybeDecorateInputFactory(
+    Das::DasPtr<Das::PluginInterface::IDasInputFactory> factory,
+    const char*                                         p_factory_name);
 
 DAS_CORE_DEBUG_NS_END
 

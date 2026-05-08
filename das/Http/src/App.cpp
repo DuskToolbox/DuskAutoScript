@@ -18,6 +18,7 @@
 #include <boost/program_options.hpp>
 #include <filesystem>
 
+#include <das/Core/Debug/DebugRuntime.h>
 #include "./service/DasPluginManagerServiceImpl.h"
 #include "./service/DasProfileServiceImpl.h"
 #include <das/Core/IPC/CurrentIpcContextScope.h>
@@ -394,6 +395,8 @@ namespace Das::Http
         std::cout << "[DasHttp] Server running on port " << port << std::endl;
 
         server.Run();
+
+        DAS::Core::Debug::DebugRuntime::Shutdown();
 
         // Shutdown IPC context
         if (components.ipc_context)

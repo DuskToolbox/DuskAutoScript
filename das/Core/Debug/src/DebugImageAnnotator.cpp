@@ -1,6 +1,7 @@
 #include <das/Core/Debug/DebugImageAnnotator.h>
 
 #include <das/Core/Debug/DebugRuntime.h>
+#include <das/Core/Logger/Logger.h>
 #include <das/Core/OcvWrapper/IImageBackend.h>
 #include <das/DasPtr.hpp>
 #include <das/Utils/DasJsonCore.h>
@@ -12,10 +13,12 @@
 #include <condition_variable>
 #include <cctype>
 #include <deque>
+#include <exception>
 #include <filesystem>
 #include <iomanip>
 #include <mutex>
 #include <sstream>
+#include <system_error>
 #include <thread>
 #include <utility>
 
@@ -44,6 +47,7 @@ namespace
         bool                    stopping{false};
         bool                    active{false};
         bool                    running{false};
+        DasResult               first_error{DAS_S_OK};
         std::thread             worker;
     };
 
@@ -99,6 +103,24 @@ namespace
         return result;
     }
 
+    auto ExpectedChannelCount(
+        Das::ExportInterface::DasImagePixelFormat format) -> int32_t
+    {
+        switch (format)
+        {
+        case Das::ExportInterface::DAS_PIXEL_FORMAT_BGR:
+        case Das::ExportInterface::DAS_PIXEL_FORMAT_RGB:
+        case Das::ExportInterface::DAS_PIXEL_FORMAT_HSV:
+            return 3;
+        case Das::ExportInterface::DAS_PIXEL_FORMAT_RGBA:
+            return 4;
+        case Das::ExportInterface::DAS_PIXEL_FORMAT_GRAY:
+            return 1;
+        default:
+            return 0;
+        }
+    }
+
     auto ColorOf(DebugAnnotationColor color) -> cv::Scalar
     {
         switch (color)
@@ -143,7 +165,6 @@ namespace
             cv::cvtColor(src, bgr, cv::COLOR_HSV2BGR);
             break;
         default:
-            bgr = src.clone();
             break;
         }
         return bgr;
@@ -185,6 +206,12 @@ namespace
         if (p_image->GetSize(&size) < 0 || p_image->GetChannelCount(&channels) < 0
             || p_image->GetPixelFormat(&format) < 0 || size.width <= 0
             || size.height <= 0 || channels <= 0 || channels > 4)
+        {
+            return nullptr;
+        }
+
+        const auto expected_channels = ExpectedChannelCount(format);
+        if (expected_channels == 0 || channels != expected_channels)
         {
             return nullptr;
         }
@@ -337,6 +364,76 @@ namespace
         DrawLines(image, annotations.lines);
     }
 
+    auto WriteImageFile(
+        const std::filesystem::path& path,
+        const cv::Mat&               image) -> DasResult
+    {
+        const auto parent = path.parent_path();
+        if (!parent.empty())
+        {
+            std::error_code ec;
+            std::filesystem::create_directories(parent, ec);
+            if (ec)
+            {
+                DAS_CORE_LOG_ERROR(
+                    "Debug image directory creation failed for {}: {}",
+                    parent.string(),
+                    ec.message());
+                return DAS_E_INVALID_PATH;
+            }
+        }
+
+        if (!cv::imwrite(path.string(), image))
+        {
+            DAS_CORE_LOG_ERROR(
+                "Debug image write failed for {}",
+                path.string());
+            return DAS_E_INVALID_FILE;
+        }
+
+        return DAS_S_OK;
+    }
+
+    auto ProcessImageJob(const ImageJob& job) -> DasResult
+    {
+        try
+        {
+            auto result = WriteImageFile(job.original_path, job.original);
+            if (DAS::IsFailed(result))
+            {
+                return result;
+            }
+
+            result = WriteImageFile(job.annotated_path, job.annotated);
+            if (DAS::IsFailed(result))
+            {
+                return result;
+            }
+
+            return DAS_S_OK;
+        }
+        catch (const std::bad_alloc& ex)
+        {
+            DAS_CORE_LOG_ERROR("Debug image worker out of memory: {}", ex.what());
+            return DAS_E_OUT_OF_MEMORY;
+        }
+        catch (const cv::Exception& ex)
+        {
+            DAS_CORE_LOG_ERROR("Debug image worker OpenCV error: {}", ex.what());
+            return DAS_E_OPENCV_ERROR;
+        }
+        catch (const std::exception& ex)
+        {
+            DAS_CORE_LOG_ERROR("Debug image worker error: {}", ex.what());
+            return DAS_E_FAIL;
+        }
+        catch (...)
+        {
+            DAS_CORE_LOG_ERROR("Debug image worker unknown error");
+            return DAS_E_FAIL;
+        }
+    }
+
     void WorkerLoop()
     {
         auto& state = WorkerState();
@@ -357,13 +454,15 @@ namespace
                 state.active = true;
             }
 
-            std::filesystem::create_directories(job.original_path.parent_path());
-            static_cast<void>(cv::imwrite(job.original_path.string(), job.original));
-            static_cast<void>(
-                cv::imwrite(job.annotated_path.string(), job.annotated));
+            const auto job_result = ProcessImageJob(job);
 
             {
                 std::lock_guard lock{state.mutex};
+                if (DAS::IsFailed(job_result)
+                    && !DAS::IsFailed(state.first_error))
+                {
+                    state.first_error = job_result;
+                }
                 state.active = false;
             }
             state.cv.notify_all();
@@ -403,13 +502,24 @@ std::shared_ptr<DebugImageSnapshot> CaptureImageSnapshot(
         return std::make_shared<DebugImageSnapshot>();
     }
 
-    if (auto snapshot = CaptureViaBackend(p_image))
+    try
     {
-        return snapshot;
+        if (auto snapshot = CaptureViaBackend(p_image))
+        {
+            return snapshot;
+        }
+        if (auto snapshot = CaptureViaPublicAbi(p_image))
+        {
+            return snapshot;
+        }
     }
-    if (auto snapshot = CaptureViaPublicAbi(p_image))
+    catch (const cv::Exception& ex)
     {
-        return snapshot;
+        DAS_CORE_LOG_ERROR("Debug image capture OpenCV error: {}", ex.what());
+    }
+    catch (const std::exception& ex)
+    {
+        DAS_CORE_LOG_ERROR("Debug image capture error: {}", ex.what());
     }
     return std::make_shared<DebugImageSnapshot>();
 }
@@ -475,7 +585,9 @@ DasResult DrainImageJobs()
     state.cv.wait(
         lock,
         [&state]() { return state.queue.empty() && !state.active; });
-    return DAS_S_OK;
+    const auto result = state.first_error;
+    state.first_error = DAS_S_OK;
+    return result;
 }
 
 void ShutdownImageWorker()

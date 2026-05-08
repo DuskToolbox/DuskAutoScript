@@ -18,26 +18,25 @@ DasResult ForeignInterfaceHost::InputFactoryManager::Register(
         return DAS_E_INVALID_POINTER;
     }
 
-    p_factory->AddRef();
-    bool factory_ref_consumed = false;
-
     try
     {
-        auto* p_decorated_factory =
-            Das::Core::Debug::MaybeDecorateInputFactory(p_factory, nullptr);
-        factory_ref_consumed = true;
-        auto wrapped_factory =
-            Das::PluginInterface::DasInputFactory::Attach(
-                p_decorated_factory);
+        DasPtr<Das::PluginInterface::IDasInputFactory> factory{p_factory};
+        auto p_decorated_factory =
+            Das::Core::Debug::MaybeDecorateInputFactory(
+                std::move(factory),
+                nullptr);
+        if (!p_decorated_factory)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+
+        Das::PluginInterface::DasInputFactory wrapped_factory{
+            std::move(p_decorated_factory)};
         common_input_factory_vector_.emplace_back(std::move(wrapped_factory));
         return DAS_S_OK;
     }
     catch (const std::bad_alloc&)
     {
-        if (!factory_ref_consumed)
-        {
-            p_factory->Release();
-        }
         return DAS_E_OUT_OF_MEMORY;
     }
 }

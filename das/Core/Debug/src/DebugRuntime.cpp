@@ -4,6 +4,7 @@
 #include <das/Core/Debug/DebugImageAnnotator.h>
 #include <das/Core/Debug/DebugRuntime.h>
 #include <das/Core/Debug/DebugSink.h>
+#include <das/Core/IPC/IpcErrors.h>
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/Utils/DasJsonCore.h>
@@ -121,6 +122,33 @@ namespace
         auto               payload = SerializeEventForSender(event);
         DasU8StringOnStack payload_string{payload.c_str()};
         return writer->LogEntry(&payload_string);
+    }
+
+    DasResult FlushByName()
+    {
+        IDasBase* p_base = nullptr;
+        const auto query_result =
+            DasQueryMainProcessInterfaceByName("debug.writer", &p_base);
+        if (query_result < 0)
+        {
+            return query_result;
+        }
+        auto base = Das::DasPtr<IDasBase>::Attach(p_base);
+
+        Das::DasPtr<Das::ExportInterface::IDasDebugWriter> writer;
+        const auto qi_result = base.As(writer);
+        if (qi_result < 0)
+        {
+            return qi_result;
+        }
+
+        return writer->Flush();
+    }
+
+    bool IsRemoteWriterAbsent(DasResult result)
+    {
+        return result == DAS_E_OBJECT_NOT_INIT
+            || result == DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 
 } // namespace
@@ -267,6 +295,16 @@ DasResult DebugRuntime::Flush()
         }
         sinks = state.sinks;
         drains = state.drains;
+    }
+
+    if (sinks.empty() && drains.empty())
+    {
+        const auto result = FlushByName();
+        if (result < 0 && !IsRemoteWriterAbsent(result))
+        {
+            return result;
+        }
+        return DrainImageJobs();
     }
 
     for (const auto& sink : sinks)

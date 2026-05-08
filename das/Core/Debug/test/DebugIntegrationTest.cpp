@@ -466,8 +466,11 @@ namespace Das::Core::Debug::Test
                   FakeInputFactory>
         {
         public:
-            explicit FakeInputFactory(bool create_touch = false)
-                : create_touch_(create_touch)
+            explicit FakeInputFactory(
+                bool create_touch = false,
+                bool return_null_success = false)
+                : create_touch_(create_touch),
+                  return_null_success_(return_null_success)
             {
             }
 
@@ -498,6 +501,12 @@ namespace Das::Core::Debug::Test
                     return DAS_E_INVALID_POINTER;
                 }
 
+                if (return_null_success_)
+                {
+                    *pp_out_input = nullptr;
+                    return DAS_S_OK;
+                }
+
                 if (create_touch_)
                 {
                     auto* touch = FakeTouch::MakeRaw();
@@ -521,6 +530,7 @@ namespace Das::Core::Debug::Test
 
         private:
             bool create_touch_{false};
+            bool return_null_success_{false};
         };
 
         class PluginManagerHarness
@@ -659,6 +669,32 @@ namespace Das::Core::Debug::Test
         ASSERT_EQ(DebugRuntime::Flush(), DAS_S_OK);
         ExpectFileContains(dir / "debug.jsonl", "\"type\":\"input_click\"");
         EXPECT_GE(CountPngFiles(dir / "img"), 2U);
+
+        ctx->UnregisterServiceByName("debug.writer");
+    }
+
+    TEST_F(
+        DebugInputFactoryTest,
+        EnabledCreateInstanceNullSuccessReturnsInvalidPointer)
+    {
+        const auto dir = UniqueTempDir("InputFactoryNullSuccess");
+        auto ctx = RegisterWriterForRuntime(dir);
+
+        auto* raw_factory = FakeInputFactory::MakeRaw(false, true);
+        DasPtr<PluginInterface::IDasInputFactory> factory_guard =
+            DasPtr<PluginInterface::IDasInputFactory>::Attach(raw_factory);
+
+        ForeignInterfaceHost::InputFactoryManager manager;
+        ASSERT_EQ(manager.Register(raw_factory), DAS_S_OK);
+
+        DasPtr<PluginInterface::IDasInputFactory> stored_factory;
+        manager.At(0, stored_factory);
+
+        PluginInterface::IDasInput* p_raw_input = nullptr;
+        EXPECT_EQ(
+            stored_factory->CreateInstance(nullptr, &p_raw_input),
+            DAS_E_INVALID_POINTER);
+        EXPECT_EQ(p_raw_input, nullptr);
 
         ctx->UnregisterServiceByName("debug.writer");
     }

@@ -640,9 +640,18 @@ DasResult PluginManager::GetObjectByFeature(
             return result;
         }
 
-        *pp_out_object = Das::Core::Debug::MaybeDecorateInputFactory(
-            p_factory,
+        auto factory =
+            DasPtr<Das::PluginInterface::IDasInputFactory>::Attach(p_factory);
+        auto decorated_factory = Das::Core::Debug::MaybeDecorateInputFactory(
+            std::move(factory),
             feature_info.plugin_name.c_str());
+        if (!decorated_factory)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+
+        decorated_factory->AddRef();
+        *pp_out_object = decorated_factory.Get();
         return result;
     }
 

@@ -221,7 +221,9 @@ namespace Das::Core::Debug::Test
         auto* writer = DebugWriterImpl::MakeRaw(dir);
 
         DasU8StringOnStack first{
-            "{\"type\":\"first\",\"params\":{\"a\":1},\"result\":{\"ok\":true}}"};
+            "{\"type\":\"first\",\"timestamp\":\"2026-05-07T01:02:03Z\","
+            "\"params\":{\"a\":1},\"result\":{\"ok\":true},"
+            "\"elapsed_ms\":12.5,\"image_filename\":\"img.png\"}"};
         DasU8StringOnStack second{
             "{\"type\":\"second\",\"params\":{},\"result\":{}}"};
 
@@ -236,6 +238,11 @@ namespace Das::Core::Debug::Test
         ExpectContains(lines[0], "\"step\":1");
         ExpectContains(lines[1], "\"step\":2");
         ExpectContains(lines[0], "\"type\":\"first\"");
+        ExpectContains(lines[0], "\"timestamp\":\"2026-05-07T01:02:03Z\"");
+        ExpectContains(lines[0], "\"params\":{\"a\":1}");
+        ExpectContains(lines[0], "\"result\":{\"ok\":true}");
+        ExpectContains(lines[0], "\"elapsed_ms\":12.5");
+        ExpectContains(lines[0], "\"image_filename\":\"img.png\"");
         ExpectContains(lines[0], "\"timestamp\"");
         ExpectContains(lines[0], "\"params\"");
         ExpectContains(lines[0], "\"result\"");

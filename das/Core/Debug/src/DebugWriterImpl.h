@@ -51,6 +51,7 @@ private:
     bool                  stopping_{false};
     bool                  worker_started_{false};
     bool                  writer_active_{false};
+    DasResult             worker_error_{DAS_S_OK};
     uint64_t              next_step_{1};
     std::thread           worker_;
 };
