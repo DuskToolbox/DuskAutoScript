@@ -55,30 +55,19 @@ DasResult AiCpuImpl::CreateSession(
 }
 
 DasResult AiCpuImpl::CreateTensorFromImage(
-    ExportInterface::IDasImage*   image,
-    int64_t*                      shape,
-    uint32_t                      rank,
-    double*                       mean,
-    double*                       std,
-    uint32_t                      value_count,
-    ExportInterface::IDasTensor** pp_tensor)
+    ExportInterface::IDasImage*                  image,
+    const ExportInterface::DasImageTensorOptions& options,
+    ExportInterface::IDasTensor**                pp_tensor)
 {
     DAS_UTILS_CHECK_POINTER(pp_tensor);
     DAS_UTILS_CHECK_POINTER(image);
-    DAS_UTILS_CHECK_POINTER(shape);
-    DAS_UTILS_CHECK_POINTER(mean);
-    DAS_UTILS_CHECK_POINTER(std);
 
     try
     {
         FloatTensorBackingBuffer backing{};
         auto cr = CreateFloatTensorBackingBufferFromImage(
             image,
-            shape,
-            rank,
-            mean,
-            std,
-            value_count,
+            options,
             &backing);
         if (DAS::IsFailed(cr))
         {
@@ -90,8 +79,8 @@ DasResult AiCpuImpl::CreateTensorFromImage(
             GetDefaultCpuMemoryInfo(),
             backing.data,
             backing.element_count,
-            shape,
-            rank);
+            backing.shape.data(),
+            backing.shape.size());
 
         auto* impl = new IDasTensorImpl(
             std::move(input_tensor),

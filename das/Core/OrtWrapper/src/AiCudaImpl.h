@@ -35,13 +35,9 @@ public:
         ExportInterface::IDasSession** pp_session) override;
 
     DAS_IMPL CreateTensorFromImage(
-        ExportInterface::IDasImage*   image,
-        int64_t*                      shape,
-        uint32_t                      rank,
-        double*                       mean,
-        double*                       std,
-        uint32_t                      value_count,
-        ExportInterface::IDasTensor** pp_tensor) override;
+        ExportInterface::IDasImage*                  image,
+        const ExportInterface::DasImageTensorOptions& options,
+        ExportInterface::IDasTensor**                pp_tensor) override;
 
     DAS_IMPL CreateOcr(
         IDasReadOnlyString*        det_model,

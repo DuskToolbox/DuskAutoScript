@@ -375,11 +375,7 @@ namespace Das::Core::Debug::Test
 
             DAS_IMPL CreateTensorFromImage(
                 Das::ExportInterface::IDasImage*,
-                int64_t*,
-                uint32_t,
-                double*,
-                double*,
-                uint32_t,
+                const Das::ExportInterface::DasImageTensorOptions&,
                 Das::ExportInterface::IDasTensor**) override
             {
                 return DAS_E_FAIL;

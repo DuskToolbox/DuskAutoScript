@@ -297,6 +297,51 @@ class TestForbiddenVoidPointerPointer(unittest.TestCase):
         self.assertEqual(func.return_type.pointer_level, 0)
 
 
+class TestForbiddenCStyleArrayInputs(unittest.TestCase):
+    """C-style scalar arrays are forbidden for input parameters"""
+
+    def test_rejects_double_pointer_input(self):
+        """[in] double* 会暴露成 SWIGTYPE_p_double，必须报错"""
+        idl = """
+        [uuid("12345678-1234-1234-1234-123456789012")]
+        interface IFoo : IDasBase {
+            DasResult SetValues([in] double* values, uint32_t count);
+        }
+        """
+
+        with self.assertRaisesRegex(SyntaxError, r"C-style array input"):
+            parse_idl(idl)
+
+    def test_rejects_int64_pointer_input(self):
+        """[in] int64_t* 会暴露成 SWIGTYPE_p_long_long，必须报错"""
+        idl = """
+        [uuid("12345678-1234-1234-1234-123456789012")]
+        interface IFoo : IDasBase {
+            DasResult SetShape([in] int64_t* shape, uint32_t rank);
+        }
+        """
+
+        with self.assertRaisesRegex(SyntaxError, r"C-style array input"):
+            parse_idl(idl)
+
+    def test_allows_struct_reference_input(self):
+        """单个配置对象使用 const struct& 入参"""
+        idl = """
+        struct Options { double mean0; double std0; }
+        [uuid("12345678-1234-1234-1234-123456789012")]
+        interface IFoo : IDasBase {
+            DasResult Configure(const Options& options);
+        }
+        """
+
+        doc = parse_idl(idl)
+        param = doc.interfaces[0].methods[0].parameters[0]
+        self.assertEqual(param.type_info.base_type, "Options")
+        self.assertTrue(param.type_info.is_const)
+        self.assertTrue(param.type_info.is_reference)
+        self.assertEqual(param.type_info.type_kind, TypeKind.STRUCT)
+
+
 class TestNamespaceScoped(unittest.TestCase):
     """命名空间作用域测试"""
 

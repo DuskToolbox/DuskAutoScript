@@ -436,6 +436,17 @@ class Parser:
         'signed char', 'signed int', 'signed short', 'signed long'
     }
 
+    C_STYLE_ARRAY_ELEMENT_TYPES = {
+        'bool', 'int', 'int8', 'int16', 'int32', 'int64',
+        'uint8', 'uint16', 'uint32', 'uint64', 'float', 'double',
+        'size_t',
+        'int8_t', 'int16_t', 'int32_t', 'int64_t',
+        'uint8_t', 'uint16_t', 'uint32_t', 'uint64_t',
+        'unsigned char', 'unsigned int', 'unsigned short', 'unsigned long',
+        'signed char', 'signed int', 'signed short', 'signed long',
+        'DasBool',
+    }
+
     def __init__(self, tokens: list, source_path: str = ""):
         self.tokens = tokens
         self.pos = 0
@@ -864,6 +875,17 @@ class Parser:
 
         # 参数名
         name = self.expect(TokenType.IDENTIFIER).value
+
+        if (
+            direction in (ParamDirection.IN, ParamDirection.INOUT)
+            and type_info.is_pointer
+            and type_info.base_type in self.C_STYLE_ARRAY_ELEMENT_TYPES
+        ):
+            raise SyntaxError(
+                "IDL forbids C-style array input parameters. Use a vector "
+                f"interface or a struct/reference instead of {type_info.base_type}"
+                f"{'*' * type_info.pointer_level} for parameter '{name}'"
+            )
 
         return ParameterDef(
             name=name,

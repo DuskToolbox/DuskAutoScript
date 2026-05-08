@@ -48,6 +48,25 @@ interface IDasTensorVector : IDasBase {
     DasResult GetAt(uint32_t index, [out] IDasTensor** pp_out_value);
 }
 
+/**
+ * @brief Image-to-tensor preprocessing options.
+ *
+ * CreateTensorFromImage always creates an NCHW float tensor with N=1 and
+ * H/W taken from the source image. channel_count selects the leading image
+ * channels to copy and determines how many mean/std entries are used.
+ */
+struct DasImageTensorOptions {
+    uint32_t channel_count;
+    double mean0;
+    double mean1;
+    double mean2;
+    double mean3;
+    double std0;
+    double std1;
+    double std2;
+    double std3;
+};
+
 // ============= Tensor =============
 
 /**
@@ -121,21 +140,13 @@ interface IDasAI : IDasBase {
     /**
      * @brief Create a tensor from image data with preprocessing.
      *
-     * @param image       Source image.
-     * @param shape       Target tensor shape (e.g., [1, 3, H, W]).
-     * @param rank        Number of shape dimensions.
-     * @param mean        Per-channel mean for normalization.
-     * @param std         Per-channel std for normalization.
-     * @param value_count Number of mean/std values.
-     * @param pp_tensor   Output tensor (caller must Release).
+     * @param image     Source image.
+     * @param options   Tensor preprocessing options.
+     * @param pp_tensor Output tensor (caller must Release).
      */
     DasResult CreateTensorFromImage(
         IDasImage* image,
-        [in] int64_t* shape,
-        uint32_t rank,
-        [in] double* mean,
-        [in] double* std,
-        uint32_t value_count,
+        const DasImageTensorOptions& options,
         [out] IDasTensor** pp_tensor
     );
 

@@ -239,94 +239,46 @@ DasResult CreateFloatTensorBackingBuffer(
 }
 
 DasResult CreateFloatTensorBackingBufferFromImage(
-    ExportInterface::IDasImage* image,
-    const int64_t*              shape,
-    uint32_t                    rank,
-    const double*               mean,
-    const double*               stddev,
-    uint32_t                    value_count,
-    FloatTensorBackingBuffer*   p_out_backing)
+    ExportInterface::IDasImage*                  image,
+    const ExportInterface::DasImageTensorOptions& options,
+    FloatTensorBackingBuffer*                    p_out_backing)
 {
     DAS_UTILS_CHECK_POINTER(image);
-    DAS_UTILS_CHECK_POINTER(shape);
-    DAS_UTILS_CHECK_POINTER(mean);
-    DAS_UTILS_CHECK_POINTER(stddev);
     DAS_UTILS_CHECK_POINTER(p_out_backing);
 
-    if (rank != 4)
+    const auto tensor_channel_count = options.channel_count;
+    if (tensor_channel_count == 0 || tensor_channel_count > 4)
     {
         DAS_CORE_LOG_ERROR(
-            "CreateTensorFromImage failed: expected NCHW rank 4, got {}",
-            rank);
-        return DAS_E_INVALID_ARGUMENT;
-    }
-
-    int64_t total_elements = 1;
-    for (uint32_t i = 0; i < rank; ++i)
-    {
-        if (shape[i] <= 0)
-        {
-            DAS_CORE_LOG_ERROR(
-                "CreateTensorFromImage failed: shape[{}] must be positive, "
-                "got {}",
-                i,
-                shape[i]);
-            return DAS_E_INVALID_SIZE;
-        }
-        if (!TryMultiplyPositiveInt64(
-                total_elements,
-                shape[i],
-                &total_elements))
-        {
-            DAS_CORE_LOG_ERROR(
-                "CreateTensorFromImage failed: shape product overflow at "
-                "index {}, value={}",
-                i,
-                shape[i]);
-            return DAS_E_INVALID_SIZE;
-        }
-    }
-
-    if (shape[0] != 1)
-    {
-        DAS_CORE_LOG_ERROR(
-            "CreateTensorFromImage failed: only single-image batches are "
-            "supported, N={}",
-            shape[0]);
-        return DAS_E_INVALID_ARGUMENT;
-    }
-
-    if (shape[1] > std::numeric_limits<uint32_t>::max())
-    {
-        DAS_CORE_LOG_ERROR(
-            "CreateTensorFromImage failed: channel dimension too large, C={}",
-            shape[1]);
-        return DAS_E_INVALID_SIZE;
-    }
-    const auto tensor_channel_count = static_cast<uint32_t>(shape[1]);
-    if (value_count != tensor_channel_count)
-    {
-        DAS_CORE_LOG_ERROR(
-            "CreateTensorFromImage failed: value_count {} must match tensor "
-            "channels {}",
-            value_count,
+            "CreateTensorFromImage failed: channel_count {} must be in [1, 4]",
             tensor_channel_count);
         return DAS_E_INVALID_ARGUMENT;
     }
 
+    const double mean_values[] = {
+        options.mean0,
+        options.mean1,
+        options.mean2,
+        options.mean3};
+    const double stddev_values[] = {
+        options.std0,
+        options.std1,
+        options.std2,
+        options.std3};
+
     for (uint32_t c = 0; c < tensor_channel_count; ++c)
     {
-        if (!std::isfinite(mean[c]) || !std::isfinite(stddev[c]))
+        if (!std::isfinite(mean_values[c]) || !std::isfinite(stddev_values[c]))
         {
             DAS_CORE_LOG_ERROR(
                 "CreateTensorFromImage failed: normalization value at channel "
                 "{} is not finite, mean={}, std={}",
                 c,
-                mean[c],
-                stddev[c]);
+                mean_values[c],
+                stddev_values[c]);
             return DAS_E_INVALID_ARGUMENT;
         }
-        if (stddev[c] == 0.0)
+        if (stddev_values[c] == 0.0)
         {
             DAS_CORE_LOG_ERROR(
                 "CreateTensorFromImage failed: std at channel {} is zero",
@@ -352,16 +304,27 @@ DasResult CreateFloatTensorBackingBufferFromImage(
             image_size.height);
         return DAS_E_INVALID_SIZE;
     }
-    if (image_size.height != shape[2] || image_size.width != shape[3])
+    std::array<int64_t, 4> tensor_shape{
+        1,
+        static_cast<int64_t>(tensor_channel_count),
+        static_cast<int64_t>(image_size.height),
+        static_cast<int64_t>(image_size.width)};
+
+    int64_t total_elements = 1;
+    for (size_t i = 0; i < tensor_shape.size(); ++i)
     {
-        DAS_CORE_LOG_ERROR(
-            "CreateTensorFromImage failed: image size {}x{} does not match "
-            "tensor WxH {}x{}",
-            image_size.width,
-            image_size.height,
-            shape[3],
-            shape[2]);
-        return DAS_E_INVALID_SIZE;
+        if (!TryMultiplyPositiveInt64(
+                total_elements,
+                tensor_shape[i],
+                &total_elements))
+        {
+            DAS_CORE_LOG_ERROR(
+                "CreateTensorFromImage failed: shape product overflow at "
+                "index {}, value={}",
+                i,
+                tensor_shape[i]);
+            return DAS_E_INVALID_SIZE;
+        }
     }
 
     int32_t image_channel_count_raw = 0;
@@ -519,10 +482,11 @@ DasResult CreateFloatTensorBackingBufferFromImage(
     {
         return result;
     }
+    backing.shape = tensor_shape;
 
     auto* const float_data = backing.data;
-    const auto  height = static_cast<uint64_t>(shape[2]);
-    const auto  width = static_cast<uint64_t>(shape[3]);
+    const auto  height = static_cast<uint64_t>(tensor_shape[2]);
+    const auto  width = static_cast<uint64_t>(tensor_shape[3]);
     for (uint64_t h = 0; h < height; ++h)
     {
         for (uint64_t w = 0; w < width; ++w)
@@ -537,7 +501,7 @@ DasResult CreateFloatTensorBackingBufferFromImage(
                     + static_cast<size_t>(pixel_idx);
                 const auto src_byte = static_cast<double>(raw_data[src_idx]);
                 float_data[dst_idx] = static_cast<float>(
-                    (src_byte / 255.0 - mean[c]) / stddev[c]);
+                    (src_byte / 255.0 - mean_values[c]) / stddev_values[c]);
             }
         }
     }

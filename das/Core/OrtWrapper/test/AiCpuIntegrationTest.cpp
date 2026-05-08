@@ -68,6 +68,22 @@ namespace
         DAS::ExportInterface::DasSize size{width, height};
         return ::CreateIDasImageFromRgb888(memory.Get(), &size, pp_out_image);
     }
+
+    DAS::ExportInterface::DasImageTensorOptions MakeTensorOptions(
+        uint32_t channel_count,
+        double   std1 = 1.0)
+    {
+        return DAS::ExportInterface::DasImageTensorOptions{
+            channel_count,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            std1,
+            1.0,
+            1.0};
+    }
 } // namespace
 
 // ====== Service Registration Tests ======
@@ -163,17 +179,11 @@ TEST(AiCpuImplTest, CreateTensorFromImageNullImage_ReturnsInvalidPointer)
 {
     auto* ai = new Das::Core::OrtWrapper::AiCpuImpl{};
 
-    int64_t                                  shape[] = {1, 3, 224, 224};
-    double                                   mean[] = {0.5, 0.5, 0.5};
-    double                                   std[] = {0.5, 0.5, 0.5};
+    const auto                               options = MakeTensorOptions(3);
     DasPtr<Das::ExportInterface::IDasTensor> tensor;
     auto                                     result = ai->CreateTensorFromImage(
         nullptr,
-        shape,
-        4,
-        mean,
-        std,
-        3,
+        options,
         tensor.Put());
     EXPECT_EQ(result, DAS_E_INVALID_POINTER);
 
@@ -188,21 +198,29 @@ TEST(AiCpuImplTest, CreateTensorFromImageValidRgbaInput_WritesTensor)
     DAS::DasPtr<DAS::ExportInterface::IDasImage> image;
     ASSERT_EQ(CreateRgbaTestImage(2, 1, image.Put()), DAS_S_OK);
 
-    int64_t                                   shape[] = {1, 3, 1, 2};
-    double                                    mean[] = {0.0, 0.0, 0.0};
-    double                                    stddev[] = {1.0, 1.0, 1.0};
+    const auto                                options = MakeTensorOptions(3);
     DAS::DasPtr<DAS::ExportInterface::IDasTensor> tensor;
     const auto result = ai->CreateTensorFromImage(
         image.Get(),
-        shape,
-        4,
-        mean,
-        stddev,
-        3,
+        options,
         tensor.Put());
 
     ASSERT_EQ(result, DAS_S_OK);
     ASSERT_TRUE(tensor);
+
+    uint32_t rank = 0;
+    ASSERT_EQ(tensor->GetRank(&rank), DAS_S_OK);
+    EXPECT_EQ(rank, 4);
+
+    int64_t dim = 0;
+    ASSERT_EQ(tensor->GetDim(0, &dim), DAS_S_OK);
+    EXPECT_EQ(dim, 1);
+    ASSERT_EQ(tensor->GetDim(1, &dim), DAS_S_OK);
+    EXPECT_EQ(dim, 3);
+    ASSERT_EQ(tensor->GetDim(2, &dim), DAS_S_OK);
+    EXPECT_EQ(dim, 1);
+    ASSERT_EQ(tensor->GetDim(3, &dim), DAS_S_OK);
+    EXPECT_EQ(dim, 2);
 
     DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer> raw_tensor_buffer;
     ASSERT_EQ(tensor->GetBinaryBuffer(raw_tensor_buffer.Put()), DAS_S_OK);
@@ -222,7 +240,7 @@ TEST(AiCpuImplTest, CreateTensorFromImageValidRgbaInput_WritesTensor)
     EXPECT_FLOAT_EQ(values[5], 60.0f / 255.0f);
 }
 
-TEST(AiCpuImplTest, CreateTensorFromImageShapeMismatch_ReturnsInvalidSize)
+TEST(AiCpuImplTest, CreateTensorFromImageInvalidChannelCount_ReturnsInvalidArgument)
 {
     DAS::DasPtr<DAS::Core::OrtWrapper::AiCpuImpl> ai{
         new DAS::Core::OrtWrapper::AiCpuImpl{}};
@@ -230,20 +248,14 @@ TEST(AiCpuImplTest, CreateTensorFromImageShapeMismatch_ReturnsInvalidSize)
     DAS::DasPtr<DAS::ExportInterface::IDasImage> image;
     ASSERT_EQ(CreateRgbaTestImage(2, 1, image.Put()), DAS_S_OK);
 
-    int64_t                                   shape[] = {1, 3, 2, 2};
-    double                                    mean[] = {0.0, 0.0, 0.0};
-    double                                    stddev[] = {1.0, 1.0, 1.0};
+    const auto                                options = MakeTensorOptions(0);
     DAS::DasPtr<DAS::ExportInterface::IDasTensor> tensor;
     const auto result = ai->CreateTensorFromImage(
         image.Get(),
-        shape,
-        4,
-        mean,
-        stddev,
-        3,
+        options,
         tensor.Put());
 
-    EXPECT_EQ(result, DAS_E_INVALID_SIZE);
+    EXPECT_EQ(result, DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(tensor);
 }
 
@@ -255,17 +267,11 @@ TEST(AiCpuImplTest, CreateTensorFromImageZeroStd_ReturnsInvalidArgument)
     DAS::DasPtr<DAS::ExportInterface::IDasImage> image;
     ASSERT_EQ(CreateRgbaTestImage(2, 1, image.Put()), DAS_S_OK);
 
-    int64_t                                   shape[] = {1, 3, 1, 2};
-    double                                    mean[] = {0.0, 0.0, 0.0};
-    double                                    stddev[] = {1.0, 0.0, 1.0};
+    const auto                                options = MakeTensorOptions(3, 0.0);
     DAS::DasPtr<DAS::ExportInterface::IDasTensor> tensor;
     const auto result = ai->CreateTensorFromImage(
         image.Get(),
-        shape,
-        4,
-        mean,
-        stddev,
-        3,
+        options,
         tensor.Put());
 
     EXPECT_EQ(result, DAS_E_INVALID_ARGUMENT);
