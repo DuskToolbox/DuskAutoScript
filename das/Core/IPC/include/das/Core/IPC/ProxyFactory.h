@@ -21,6 +21,7 @@ DAS_CORE_IPC_NS_BEGIN
 class BusinessThread; // forward declaration
 class IpcRunLoop;     // forward declaration
 class IPCProxyBase;   // forward declaration
+class IpcRuntimeState;
 /**
  * @brief Proxy 工厂类，统一获取 Proxy 实例的入口
  *
@@ -33,6 +34,14 @@ class ProxyFactory
 public:
     ProxyFactory();
     ~ProxyFactory();
+
+    [[nodiscard]]
+    std::weak_ptr<IpcRuntimeState> GetRuntimeState() const noexcept;
+
+    void BeginShutdown() noexcept;
+
+    [[nodiscard]]
+    bool IsShuttingDown() const noexcept;
 
     /**
      * @brief 获取分布式对象管理器
@@ -122,6 +131,8 @@ private:
 
     // 分布式对象管理器（值持有）
     DistributedObjectManager object_manager_;
+
+    std::shared_ptr<IpcRuntimeState> runtime_state_;
 };
 
 DAS_CORE_IPC_NS_END

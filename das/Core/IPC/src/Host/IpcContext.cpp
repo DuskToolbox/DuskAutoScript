@@ -256,6 +256,10 @@ namespace Core
                             "IpcContext: 收到 GOODBYE，请求退出");
                         DAS_LOG_INFO(msg.c_str());
 
+                        if (proxy_factory_)
+                        {
+                            proxy_factory_->BeginShutdown();
+                        }
                         if (run_loop_.IsRunning())
                         {
                             run_loop_.RequestStop();
@@ -309,6 +313,13 @@ namespace Core
 
             IpcContext::~IpcContext()
             {
+                if (proxy_factory_)
+                {
+                    // Flip the runtime token before tearing down transport,
+                    // run loop, and proxy tables.
+                    proxy_factory_->BeginShutdown();
+                }
+
                 // 停止父进程监控线程
                 StopParentProcessMonitor();
 
@@ -618,6 +629,11 @@ namespace Core
 
             void IpcContext::RequestStop()
             {
+                if (proxy_factory_)
+                {
+                    proxy_factory_->BeginShutdown();
+                }
+
                 // 1. 先关闭 transport（自己持有的）
                 //    这会导致 ReceiveCoroutine() 抛出
                 //    operation_aborted，接收协程退出

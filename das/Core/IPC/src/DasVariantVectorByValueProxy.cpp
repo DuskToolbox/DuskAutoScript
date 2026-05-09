@@ -70,6 +70,13 @@ DasResult DasVariantVectorByValueProxy::EnsureDataLoaded(uint16_t method_id)
         return DAS_S_OK;
     }
 
+    DasResult runtime_result =
+        CheckRuntimeAvailable("DasVariantVectorByValueProxy::EnsureDataLoaded");
+    if (DAS::IsFailed(runtime_result))
+    {
+        return runtime_result;
+    }
+
     // Build business body with the method_id (stub ignores it for Get, but
     // includes it for logging/routing)
     auto body = BuildBusinessBody(method_id);
@@ -296,6 +303,14 @@ DasResult DasVariantVectorByValueProxy::EnsureDataLoaded(uint16_t method_id)
             && (entry.object_id.session_id != 0
                 || entry.object_id.local_id != 0))
         {
+            runtime_result = CheckRuntimeAvailable(
+                "DasVariantVectorByValueProxy::EnsureDataLoaded");
+            if (DAS::IsFailed(runtime_result))
+            {
+                cache_.clear();
+                return runtime_result;
+            }
+
             DasPtr<IDasBase> proxy = GetProxyFactory().GetOrCreateProxy(
                 GetRunLoop(),
                 GetBusinessThread(),
@@ -317,6 +332,13 @@ DasResult DasVariantVectorByValueProxy::SendWriteBack(
     const uint8_t* params,
     size_t         params_size)
 {
+    DasResult runtime_result =
+        CheckRuntimeAvailable("DasVariantVectorByValueProxy::SendWriteBack");
+    if (DAS::IsFailed(runtime_result))
+    {
+        return runtime_result;
+    }
+
     // Build body: standard V3 body header (interface_id + method_id +
     // reserved + ObjectId) + write params
     auto body = BuildBusinessBody(method_id, params, params_size);

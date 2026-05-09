@@ -46,7 +46,7 @@ public:
     ~DasProxyBase() override
     {
         const ObjectId& oid = GetObjectId();
-        if (oid.session_id != 0 || oid.local_id != 0)
+        if ((oid.session_id != 0 || oid.local_id != 0) && IsRuntimeAvailable())
         {
             proxy_factory_.OnProxyFinalRelease(
                 oid,
@@ -165,6 +165,12 @@ public:
 
         // 根据 interface_id 创建对应的 Proxy（走 ProxyFactory 缓存）
         ObjectId new_obj_id = DecodeObjectId(new_object_id);
+
+        result = CheckRuntimeAvailable("DasProxyBase::QueryInterfaceRemote");
+        if (DAS::IsFailed(result))
+        {
+            return result;
+        }
 
         DasPtr<IDasBase> proxy = proxy_factory_.GetOrCreateProxy(
             GetRunLoop(),

@@ -98,6 +98,12 @@ namespace Core
             IpcContext::~IpcContext()
             {
                 // 析构即清理，无条件守卫
+                if (proxy_factory_.has_value())
+                {
+                    // Flip the runtime token before tearing down run loop and
+                    // proxy tables.
+                    proxy_factory_->BeginShutdown();
+                }
 
                 // 生命周期安全：重置所有 HostLauncher 的回调，防止
                 // ConnectionManager 持有的 DasPtr<HostLauncher>
@@ -108,12 +114,6 @@ namespace Core
                     {
                         launcher->ClearCallbacks();
                     }
-                }
-
-                // Clear ProxyFactory
-                if (proxy_factory_.has_value())
-                {
-                    proxy_factory_->ClearAllProxies();
                 }
 
                 // 关闭顺序：inbound_queue -> business_thread -> io_context
@@ -326,7 +326,14 @@ namespace Core
                 return runloop_.Run();
             }
 
-            void IpcContext::RequestStop() { runloop_.RequestStop(); }
+            void IpcContext::RequestStop()
+            {
+                if (proxy_factory_.has_value())
+                {
+                    proxy_factory_->BeginShutdown();
+                }
+                runloop_.RequestStop();
+            }
 
             DasResult IpcContext::InternalRegisterHostLauncher(
                 uint16_t session_id)

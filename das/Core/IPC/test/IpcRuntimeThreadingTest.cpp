@@ -1,15 +1,22 @@
 #include <atomic>
 #include <cstdint>
+#include <das/Core/IPC/DasReadOnlyStringProxy.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
+#include <das/Core/IPC/IpcRunLoop.h>
+#include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <gtest/gtest.h>
+#include <memory>
 #include <thread>
 #include <vector>
 
 #include "MockDasObject.h"
 
+using DAS::Core::IPC::DasReadOnlyStringProxy;
 using DAS::Core::IPC::DistributedObjectManager;
+using DAS::Core::IPC::IpcRunLoop;
 using DAS::Core::IPC::ObjectId;
+using DAS::Core::IPC::ProxyFactory;
 using DAS::Core::IPC::RemoteObjectInfo;
 using DAS::Core::IPC::RemoteObjectRegistry;
 
@@ -289,4 +296,27 @@ TEST(IpcRuntimeThreadingTest, DistributedObjectManagerFinalReleaseIsOutsideLock)
     ASSERT_EQ(manager.UnregisterObject(id), DAS_S_OK);
     EXPECT_FALSE(manager.IsValidObject(id));
     EXPECT_TRUE(ReentrantReleaseObject::CallbackEntered());
+}
+
+TEST(
+    IpcRuntimeThreadingTest,
+    LateProxyReleaseAfterRuntimeTokenExpiredSkipsRuntimeTables)
+{
+    auto                 proxy_factory = std::make_unique<ProxyFactory>();
+    RemoteObjectRegistry registry;
+    auto                 run_loop =
+        std::make_unique<IpcRunLoop>(false, nullptr, *proxy_factory, registry);
+
+    auto* proxy = new DasReadOnlyStringProxy(
+        DasReadOnlyStringProxy::InterfaceId,
+        ObjectId{.session_id = 9, .generation = 1, .local_id = 44},
+        *run_loop,
+        {},
+        *proxy_factory);
+
+    proxy_factory->BeginShutdown();
+    run_loop.reset();
+    proxy_factory.reset();
+
+    EXPECT_EQ(proxy->Release(), 0u);
 }

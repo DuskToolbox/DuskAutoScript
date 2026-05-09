@@ -3,6 +3,7 @@
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IPCProxyBase.h>
 #include <das/Core/IPC/IpcErrors.h>
+#include <das/Core/IPC/IpcRuntimeState.h>
 #include <das/Core/IPC/ManualProxyRegistry.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/Logger/Logger.h>
@@ -11,9 +12,31 @@
 
 DAS_CORE_IPC_NS_BEGIN
 
-ProxyFactory::ProxyFactory() = default;
+ProxyFactory::ProxyFactory()
+    : runtime_state_(std::make_shared<IpcRuntimeState>())
+{
+}
 
-ProxyFactory::~ProxyFactory() = default;
+ProxyFactory::~ProxyFactory() { BeginShutdown(); }
+
+std::weak_ptr<IpcRuntimeState> ProxyFactory::GetRuntimeState() const noexcept
+{
+    return runtime_state_;
+}
+
+void ProxyFactory::BeginShutdown() noexcept
+{
+    if (runtime_state_)
+    {
+        runtime_state_->BeginShutdown();
+    }
+    ClearAllProxies();
+}
+
+bool ProxyFactory::IsShuttingDown() const noexcept
+{
+    return runtime_state_ && runtime_state_->IsShuttingDown();
+}
 
 DasPtr<IDasBase> ProxyFactory::GetOrCreateProxy(
     IpcRunLoop&                   run_loop,
@@ -21,9 +44,19 @@ DasPtr<IDasBase> ProxyFactory::GetOrCreateProxy(
     const ObjectId&               object_id,
     uint32_t                      interface_id)
 {
+    if (IsShuttingDown())
+    {
+        return nullptr;
+    }
+
     std::unique_lock<std::mutex> lock(proxy_cache_mutex_);
-    uint64_t                     key = EncodeObjectId(object_id);
-    auto                         it = proxy_cache_.find(key);
+    if (IsShuttingDown())
+    {
+        return nullptr;
+    }
+
+    uint64_t key = EncodeObjectId(object_id);
+    auto     it = proxy_cache_.find(key);
     if (it != proxy_cache_.end())
     {
         auto view_it = it->second.interfaces.find(interface_id);
@@ -57,6 +90,11 @@ DasPtr<IDasBase> ProxyFactory::GetOrCreateProxy(
         return nullptr;
     }
 
+    if (IsShuttingDown())
+    {
+        return nullptr;
+    }
+
     IPCProxyBase* runtime_ptr = nullptr;
     DasResult     tag_result = proxy->QueryInterface(
         DasIidOf<IPCProxyBase>(),
@@ -83,6 +121,11 @@ DasPtr<IDasBase> ProxyFactory::GetOrCreateProxy(
 
 bool ProxyFactory::HasProxy(const ObjectId& object_id) const
 {
+    if (IsShuttingDown())
+    {
+        return false;
+    }
+
     std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
     auto it = proxy_cache_.find(EncodeObjectId(object_id));
     if (it == proxy_cache_.end())

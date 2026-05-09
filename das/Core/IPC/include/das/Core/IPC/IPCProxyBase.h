@@ -34,6 +34,7 @@ DAS_DEFINE_CLASS_IN_NAMESPACE(
 DAS_CORE_IPC_NS_BEGIN
 class BusinessThread;
 class DistributedObjectManager;
+class IpcRuntimeState;
 class ProxyFactory;
 
 class IPCProxyBase
@@ -46,6 +47,9 @@ public:
 
     [[nodiscard]]
     uint32_t ReleaseRuntimeTagRef() noexcept;
+
+    [[nodiscard]]
+    bool IsRuntimeAvailable() const noexcept;
 
     /// @brief 获取对象 ID
     /// @note ObjectId 现在通过 body 传递
@@ -142,6 +146,9 @@ protected:
     [[nodiscard]]
     uint32_t ReleaseImpl() noexcept;
 
+    [[nodiscard]]
+    DasResult CheckRuntimeAvailable(const char* operation) const noexcept;
+
     /// @brief 获取本地 session ID (V3)
     /// @return 本地 session ID
     /// @note 用于设置 Header 的 source_session_id
@@ -228,11 +235,12 @@ protected:
     ProxyFactory& proxy_factory_; // 引用，生命周期由外部管理
 
 private:
-    std::atomic<uint32_t>         ref_count_{1};
-    uint32_t                      interface_id_;
-    ObjectId                      object_id_;
-    IpcRunLoop&                   run_loop_;        // 引用，生命周期由外部管理
-    std::weak_ptr<BusinessThread> business_thread_; // 用于 PumpUntilResponse
+    std::atomic<uint32_t>          ref_count_{1};
+    uint32_t                       interface_id_;
+    ObjectId                       object_id_;
+    IpcRunLoop&                    run_loop_;        // 引用，生命周期由外部管理
+    std::weak_ptr<BusinessThread>  business_thread_; // 用于 PumpUntilResponse
+    std::weak_ptr<IpcRuntimeState> runtime_state_;
 };
 DAS_CORE_IPC_NS_END
 

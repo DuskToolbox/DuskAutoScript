@@ -11,6 +11,7 @@
 #include <das/Core/IPC/DasReadOnlyStringProxy.h>
 #include <das/Core/IPC/DasVariantVectorByValueProxy.h>
 #include <das/Core/IPC/IpcRunLoop.h>
+#include <das/Core/IPC/IpcRuntimeState.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
@@ -28,6 +29,7 @@ using DAS::Core::IPC::DistributedObjectManager;
 using DAS::Core::IPC::EncodeObjectId;
 using DAS::Core::IPC::IPCProxyBase;
 using DAS::Core::IPC::IpcRunLoop;
+using DAS::Core::IPC::IpcRuntimeState;
 using DAS::Core::IPC::ObjectId;
 using DAS::Core::IPC::ProxyFactory;
 using DAS::Core::IPC::RemoteObjectRegistry;
@@ -80,6 +82,28 @@ TEST(ProxyFactoryTest, ObjectIdWithZeroValues)
     EXPECT_EQ(decoded.session_id, 0);
     EXPECT_EQ(decoded.generation, 0);
     EXPECT_EQ(decoded.local_id, 0);
+}
+
+TEST(ProxyFactoryTest, BeginShutdownFlipsRuntimeStateAndBlocksProxyCreation)
+{
+    ProxyFactory         proxy_factory;
+    RemoteObjectRegistry registry;
+    IpcRunLoop           run_loop(false, nullptr, proxy_factory, registry);
+    const ObjectId object_id{.session_id = 7, .generation = 1, .local_id = 42};
+
+    auto runtime_state = proxy_factory.GetRuntimeState().lock();
+    ASSERT_TRUE(runtime_state);
+    EXPECT_FALSE(runtime_state->IsShuttingDown());
+
+    proxy_factory.BeginShutdown();
+
+    EXPECT_TRUE(runtime_state->IsShuttingDown());
+    EXPECT_FALSE(proxy_factory.GetOrCreateProxy(
+        run_loop,
+        {},
+        object_id,
+        DasReadOnlyStringProxy::InterfaceId));
+    EXPECT_FALSE(proxy_factory.HasProxy(object_id));
 }
 
 class ProxyRefcountTest : public ::testing::Test
@@ -223,4 +247,29 @@ TEST_F(ProxyRefcountTest, FinalReleaseInvalidationRequiresRuntimePointerMatch)
 
     proxy.Reset();
     EXPECT_FALSE(proxy_factory_.HasProxy(object_id_));
+}
+
+TEST_F(ProxyRefcountTest, ProxyMethodAfterBeginShutdownReturnsDisconnected)
+{
+    DasPtr<IDasBase> base = proxy_factory_.GetOrCreateProxy(
+        *run_loop_,
+        business_thread_,
+        object_id_,
+        DasReadOnlyStringProxy::InterfaceId);
+    ASSERT_TRUE(base);
+
+    IDasReadOnlyString* string_proxy = nullptr;
+    ASSERT_EQ(
+        base->QueryInterface(
+            DAS_IID_READ_ONLY_STRING,
+            reinterpret_cast<void**>(&string_proxy)),
+        DAS_S_OK);
+    ASSERT_NE(string_proxy, nullptr);
+
+    proxy_factory_.BeginShutdown();
+
+    const char* utf8 = nullptr;
+    EXPECT_EQ(string_proxy->GetUtf8(&utf8), DAS_E_IPC_DISCONNECTED);
+    EXPECT_EQ(string_proxy->Release(), 1u);
+    base.Reset();
 }

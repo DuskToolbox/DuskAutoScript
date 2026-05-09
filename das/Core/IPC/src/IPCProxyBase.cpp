@@ -2,6 +2,7 @@
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/IPCProxyBase.h>
 #include <das/Core/IPC/IpcRunLoop.h>
+#include <das/Core/IPC/IpcRuntimeState.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/Logger/Logger.h>
 #include <stdexec/execution.hpp>
@@ -17,7 +18,8 @@ IPCProxyBase::IPCProxyBase(
     ProxyFactory&                 proxy_factory)
     : proxy_factory_(proxy_factory), interface_id_(interface_id),
       object_id_(object_id), run_loop_(run_loop),
-      business_thread_(std::move(business_thread))
+      business_thread_(std::move(business_thread)),
+      runtime_state_(proxy_factory.GetRuntimeState())
 {
 }
 
@@ -44,6 +46,31 @@ bool IPCProxyBase::TryAddRefForCache() noexcept
 }
 
 uint32_t IPCProxyBase::ReleaseRuntimeTagRef() noexcept { return ReleaseImpl(); }
+
+bool IPCProxyBase::IsRuntimeAvailable() const noexcept
+{
+    auto runtime_state = runtime_state_.lock();
+    return runtime_state && !runtime_state->IsShuttingDown();
+}
+
+DasResult IPCProxyBase::CheckRuntimeAvailable(
+    const char* operation) const noexcept
+{
+    auto runtime_state = runtime_state_.lock();
+    if (!runtime_state)
+    {
+        DAS_CORE_LOG_WARN("{}: IPC runtime state expired", operation);
+        return DAS_E_IPC_DISCONNECTED;
+    }
+
+    if (runtime_state->IsShuttingDown())
+    {
+        DAS_CORE_LOG_WARN("{}: IPC runtime is shutting down", operation);
+        return DAS_E_IPC_DISCONNECTED;
+    }
+
+    return DAS_S_OK;
+}
 
 uint32_t IPCProxyBase::AddRefImpl() noexcept
 {
@@ -75,6 +102,13 @@ DasResult IPCProxyBase::SendRequest(
 {
     (void)method_id;
 
+    DasResult runtime_result =
+        CheckRuntimeAvailable("IPCProxyBase::SendRequest");
+    if (DAS::IsFailed(runtime_result))
+    {
+        return runtime_result;
+    }
+
     // 1. Lock weak_ptr to check BusinessThread availability
     auto bt = business_thread_.lock();
     if (!bt)
@@ -96,6 +130,12 @@ DasResult IPCProxyBase::SendRequest(
 
     if (bt->IsCurrentThread())
     {
+        runtime_result = CheckRuntimeAvailable("IPCProxyBase::SendRequest");
+        if (DAS::IsFailed(runtime_result))
+        {
+            return runtime_result;
+        }
+
         // Nested pump: called from within BusinessThread
         // Run() is paused, we pump inbound_queue_ directly
         std::vector<uint8_t> body_vec(body, body + body_size);
@@ -112,6 +152,12 @@ DasResult IPCProxyBase::SendRequest(
     }
     else
     {
+        runtime_result = CheckRuntimeAvailable("IPCProxyBase::SendRequest");
+        if (DAS::IsFailed(runtime_result))
+        {
+            return runtime_result;
+        }
+
         // External thread: register pending_call BEFORE PostSend
         // so the entry exists when the async lambda might fail
         // and push a failure RESPONSE to inbound_queue_
@@ -159,6 +205,13 @@ DasResult IPCProxyBase::SendBusinessControlRequest(
     size_t                body_size,
     std::vector<uint8_t>& out_response)
 {
+    DasResult runtime_result =
+        CheckRuntimeAvailable("IPCProxyBase::SendBusinessControlRequest");
+    if (DAS::IsFailed(runtime_result))
+    {
+        return runtime_result;
+    }
+
     auto bt = business_thread_.lock();
     if (!bt)
     {
@@ -184,6 +237,13 @@ DasResult IPCProxyBase::SendBusinessControlRequest(
 
     if (bt->IsCurrentThread())
     {
+        runtime_result =
+            CheckRuntimeAvailable("IPCProxyBase::SendBusinessControlRequest");
+        if (DAS::IsFailed(runtime_result))
+        {
+            return runtime_result;
+        }
+
         std::vector<uint8_t> body_vec(body, body + body_size);
         DasResult send_result = run_loop_.PostSend(header, std::move(body_vec));
         if (send_result != DAS_S_OK)
@@ -199,6 +259,13 @@ DasResult IPCProxyBase::SendBusinessControlRequest(
     }
     else
     {
+        runtime_result =
+            CheckRuntimeAvailable("IPCProxyBase::SendBusinessControlRequest");
+        if (DAS::IsFailed(runtime_result))
+        {
+            return runtime_result;
+        }
+
         // External thread: register pending_call BEFORE PostSend
         // so the entry exists when the async lambda might fail
         constexpr auto kTimeout = std::chrono::milliseconds{30000};
