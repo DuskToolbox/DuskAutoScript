@@ -45,12 +45,12 @@ if (${DAS_BUILD_TEST})
     )
 
     # 使用 gtest_discover_tests 注册测试
+    das_get_test_runtime_environment(das_test_env)
     gtest_discover_tests(
         ${IpcMultiProcessTest_NAME}
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/Test
         PROPERTIES
-            ENVIRONMENT "DAS_HOST_EXE_PATH=${CMAKE_BINARY_DIR}/bin/$<CONFIG>/DasHost.exe"
-            ENVIRONMENT "DAS_PLUGIN_DIR=${CMAKE_BINARY_DIR}/bin/$<CONFIG>/plugins"
+            ENVIRONMENT "${das_test_env}"
     )
 
     # 将测试添加到构建锁依赖中

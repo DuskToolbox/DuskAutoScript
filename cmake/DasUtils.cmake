@@ -72,6 +72,14 @@ function(das_add_additional_test ADDITIONAL_TEST_DIRECTORY_NAME)
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/Test)
 endfunction()
 
+function(das_get_test_runtime_environment out_var)
+    set(_das_test_env_list
+        "DAS_HOST_EXE_PATH=${CMAKE_BINARY_DIR}/bin/$<CONFIG>/DasHost.exe"
+        "DAS_PLUGIN_DIR=${CMAKE_BINARY_DIR}/bin/$<CONFIG>/plugins")
+    list(JOIN _das_test_env_list "\\;" _das_test_env)
+    set(${out_var} "${_das_test_env}" PARENT_SCOPE)
+endfunction()
+
 function(das_add_core_test TEST_FOLDER)
     aux_source_directory(${TEST_FOLDER}/test TEST_SOURCES)
     set(TEST_NAME "${TEST_FOLDER}Test")
@@ -90,9 +98,12 @@ function(das_add_core_test TEST_FOLDER)
 
     add_dependencies(${TEST_NAME} DasAutoCopyDll)
 
+    das_get_test_runtime_environment(das_test_env)
     gtest_discover_tests(
         ${TEST_NAME}
-        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/Test)
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/Test
+        PROPERTIES
+            ENVIRONMENT "${das_test_env}")
 endfunction()
 
 # das_add_custom_test - 添加自定义测试目标，不链接 gtest_main（允许自定义 main 函数）
