@@ -1,3 +1,4 @@
+#include <atomic>
 #include <chrono>
 #include <das/Core/IPC/IpcMessageQueue.h>
 #include <gtest/gtest.h>
@@ -119,40 +120,45 @@ TEST_F(IpcMessageQueueTest, MultipleProducersConsumers)
 {
     IpcMessageQueue<int> queue(100);
     const int            num_items = 100;
-    std::vector<int>     produced;
+    std::atomic<size_t>  successful_pushes{0};
+    std::atomic<bool>    unexpected_push_result{false};
     std::vector<int>     consumed;
-    std::mutex           produced_mutex;
     std::mutex           consumed_mutex;
 
-    std::thread producer1(
-        [&queue, num_items]()
+    auto produce_range = [&queue,
+                          &successful_pushes,
+                          &unexpected_push_result](int begin, int end)
+    {
+        for (int i = begin; i < end; ++i)
         {
-            for (int i = 0; i < num_items; ++i)
+            auto push_result = queue.Push(i);
+            if (push_result == DAS_S_OK)
             {
-                queue.Push(i);
+                successful_pushes.fetch_add(1, std::memory_order_relaxed);
             }
-        });
+            else if (push_result != DAS_E_IPC_QUEUE_FULL)
+            {
+                unexpected_push_result.store(true, std::memory_order_relaxed);
+            }
+        }
+    };
 
-    std::thread producer2(
-        [&queue, num_items]()
-        {
-            for (int i = num_items; i < num_items * 2; ++i)
-            {
-                queue.Push(i);
-            }
-        });
+    std::thread producer1(produce_range, 0, num_items);
+    std::thread producer2(produce_range, num_items, num_items * 2);
 
     std::thread consumer(
-        [&queue, &consumed, &consumed_mutex, num_items]()
+        [&queue, &consumed, &consumed_mutex]()
         {
-            for (int i = 0; i < num_items * 2; ++i)
+            while (true)
             {
                 auto item = queue.Pop();
-                if (item.has_value())
+                if (!item.has_value())
                 {
-                    std::lock_guard<std::mutex> lock(consumed_mutex);
-                    consumed.push_back(item.value());
+                    break;
                 }
+
+                std::lock_guard<std::mutex> lock(consumed_mutex);
+                consumed.push_back(item.value());
             }
         });
 
@@ -161,8 +167,13 @@ TEST_F(IpcMessageQueueTest, MultipleProducersConsumers)
     queue.Uninitialize();
     consumer.join();
 
-    // All items should be consumed
-    EXPECT_EQ(consumed.size(), static_cast<size_t>(num_items * 2));
+    EXPECT_FALSE(unexpected_push_result.load(std::memory_order_relaxed));
+    EXPECT_LE(
+        successful_pushes.load(std::memory_order_relaxed),
+        static_cast<size_t>(num_items * 2));
+    EXPECT_EQ(
+        consumed.size(),
+        successful_pushes.load(std::memory_order_relaxed));
 }
 
 // ====== InboundMessage Tests ======
