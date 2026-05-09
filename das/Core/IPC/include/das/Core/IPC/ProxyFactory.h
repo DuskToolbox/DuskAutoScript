@@ -46,18 +46,27 @@ public:
 
     struct ProxyCacheEntry
     {
-        IDasBase* ptr_ = nullptr;
+        IPCProxyBase* runtime_ptr = nullptr;
+        IDasBase*     interface_ptr = nullptr;
 
         ProxyCacheEntry() = default;
-        explicit ProxyCacheEntry(IDasBase* ptr) : ptr_(ptr) {}
+        ProxyCacheEntry(IPCProxyBase* runtime, IDasBase* interface)
+            : runtime_ptr(runtime), interface_ptr(interface)
+        {
+        }
         [[nodiscard]]
         IDasBase* Get() const
         {
-            return ptr_;
+            return interface_ptr;
         }
     };
 
     void InvalidateCacheEntry(const ObjectId& object_id);
+
+    void OnProxyFinalRelease(
+        const ObjectId& object_id,
+        uint32_t        interface_id,
+        IPCProxyBase*   runtime_ptr) noexcept;
 
     /**
      * @brief 获取或创建 Proxy 实例（统一入口）
@@ -100,8 +109,13 @@ public:
     ProxyFactory& operator=(const ProxyFactory&) = delete;
 
 private:
+    struct ProxyIdentityEntry
+    {
+        std::unordered_map<uint32_t, ProxyCacheEntry> interfaces;
+    };
+
     // 缓存已创建的 Proxy（非拥有引用，外部 DasPtr 持有唯一强引用）
-    std::unordered_map<uint64_t, ProxyCacheEntry> proxy_cache_;
+    std::unordered_map<uint64_t, ProxyIdentityEntry> proxy_cache_;
 
     // 互斥锁保护代理缓存
     mutable std::mutex proxy_cache_mutex_;

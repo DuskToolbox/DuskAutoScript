@@ -45,35 +45,16 @@ public:
      */
     ~DasProxyBase() override
     {
-        proxy_factory_.InvalidateCacheEntry(GetObjectId());
-
         const ObjectId& oid = GetObjectId();
         if (oid.session_id != 0 || oid.local_id != 0)
         {
-            // DOM::UnregisterObject: BT-aware dispatch
-            auto  bt = GetBusinessThread().lock();
+            proxy_factory_.OnProxyFinalRelease(
+                oid,
+                GetInterfaceId(),
+                static_cast<IPCProxyBase*>(this));
+
             auto& dom = GetObjectManager();
-            if (bt && bt->IsCurrentThread())
-            {
-                // BT: direct call
-                dom.UnregisterObject(oid);
-            }
-            else if (bt)
-            {
-                // Non-BT: fire-and-forget enqueue to BusinessThread
-                // dom is a reference (owner guarantees lifetime), oid
-                // captured by value
-                auto cb = MakeAsyncCallback([&dom, oid]()
-                                            { dom.UnregisterObject(oid); });
-                auto post_result = GetRunLoop().PostToBusinessThread(cb.Get());
-                if (DAS::IsFailed(post_result))
-                {
-                    DAS_CORE_LOG_WARN(
-                        "DasProxyBase::~DasProxyBase: failed to enqueue "
-                        "DOM unregister to BusinessThread, result={}",
-                        post_result);
-                }
-            }
+            dom.UnregisterObject(oid);
 
             // REMOTE_RELEASE fire-and-forget message (unchanged)
             std::vector<uint8_t> release_body;

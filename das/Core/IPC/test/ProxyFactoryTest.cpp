@@ -19,6 +19,7 @@
 #include <gtest/gtest.h>
 #include <memory>
 
+using DAS::DasPtr;
 using DAS::Core::IPC::BusinessThread;
 using DAS::Core::IPC::DasReadOnlyStringProxy;
 using DAS::Core::IPC::DasVariantVectorByValueProxy;
@@ -154,4 +155,72 @@ TEST_F(ProxyRefcountTest, VariantVectorProxyUsesIPCProxyBaseRefcount)
     EXPECT_EQ(proxy->Release(), 2u);
     EXPECT_EQ(proxy->Release(), 1u);
     EXPECT_EQ(proxy->Release(), 0u);
+}
+
+TEST_F(ProxyRefcountTest, GetOrCreateProxyCacheHitUsesLiveRuntimeRef)
+{
+    DasPtr<IDasBase> first = proxy_factory_.GetOrCreateProxy(
+        *run_loop_,
+        business_thread_,
+        object_id_,
+        DasReadOnlyStringProxy::InterfaceId);
+    ASSERT_TRUE(first);
+    EXPECT_TRUE(proxy_factory_.HasProxy(object_id_));
+
+    DasPtr<IDasBase> second = proxy_factory_.GetOrCreateProxy(
+        *run_loop_,
+        business_thread_,
+        object_id_,
+        DasReadOnlyStringProxy::InterfaceId);
+    ASSERT_TRUE(second);
+    EXPECT_EQ(first.Get(), second.Get());
+    EXPECT_EQ(proxy_factory_.GetProxyCount(), 1u);
+
+    second.Reset();
+    EXPECT_TRUE(proxy_factory_.HasProxy(object_id_));
+
+    first.Reset();
+    EXPECT_FALSE(proxy_factory_.HasProxy(object_id_));
+    EXPECT_EQ(proxy_factory_.GetProxyCount(), 0u);
+}
+
+TEST_F(ProxyRefcountTest, GetOrCreateProxyCachesInterfaceViewsPerObjectId)
+{
+    DasPtr<IDasBase> string_proxy = proxy_factory_.GetOrCreateProxy(
+        *run_loop_,
+        business_thread_,
+        object_id_,
+        DasReadOnlyStringProxy::InterfaceId);
+    ASSERT_TRUE(string_proxy);
+
+    DasPtr<IDasBase> vector_proxy = proxy_factory_.GetOrCreateProxy(
+        *run_loop_,
+        business_thread_,
+        object_id_,
+        DasVariantVectorByValueProxy::InterfaceId);
+    ASSERT_TRUE(vector_proxy);
+
+    EXPECT_NE(string_proxy.Get(), vector_proxy.Get());
+    EXPECT_TRUE(proxy_factory_.HasProxy(object_id_));
+    EXPECT_EQ(proxy_factory_.GetProxyCount(), 2u);
+}
+
+TEST_F(ProxyRefcountTest, FinalReleaseInvalidationRequiresRuntimePointerMatch)
+{
+    DasPtr<IDasBase> proxy = proxy_factory_.GetOrCreateProxy(
+        *run_loop_,
+        business_thread_,
+        object_id_,
+        DasReadOnlyStringProxy::InterfaceId);
+    ASSERT_TRUE(proxy);
+    EXPECT_TRUE(proxy_factory_.HasProxy(object_id_));
+
+    proxy_factory_.OnProxyFinalRelease(
+        object_id_,
+        DasReadOnlyStringProxy::InterfaceId,
+        nullptr);
+    EXPECT_TRUE(proxy_factory_.HasProxy(object_id_));
+
+    proxy.Reset();
+    EXPECT_FALSE(proxy_factory_.HasProxy(object_id_));
 }
