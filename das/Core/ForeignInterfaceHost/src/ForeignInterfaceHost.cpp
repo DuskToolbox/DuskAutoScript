@@ -10,9 +10,12 @@
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/DasJsonCore.h>
 
+#include <algorithm>
+#include <cctype>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/UnexpectedEnumException.h>
 #include <das/_autogen/idl/abi/DasSettings.h>
+#include <iterator>
 #include <magic_enum_format.hpp>
 #include <stdexcept>
 
@@ -246,11 +249,68 @@ namespace Details
         Das::ExportInterface::DasType>(const yyjson::writer::const_value_ref& v)
     {
         auto opt = v.as_sint();
-        if (!opt)
+        if (opt)
+        {
+            return static_cast<Das::ExportInterface::DasType>(*opt);
+        }
+
+        auto str = v.as_string();
+        if (!str)
         {
             throw std::runtime_error("Expected DasType value");
         }
-        return static_cast<Das::ExportInterface::DasType>(*opt);
+
+        std::string normalized;
+        normalized.reserve(str->size());
+        for (const auto ch : *str)
+        {
+            if (ch != '_')
+            {
+                normalized.push_back(
+                    static_cast<char>(
+                        std::tolower(static_cast<unsigned char>(ch))));
+            }
+        }
+
+        using Das::ExportInterface::DAS_TYPE_BOOL;
+        using Das::ExportInterface::DAS_TYPE_FLOAT;
+        using Das::ExportInterface::DAS_TYPE_INT;
+        using Das::ExportInterface::DAS_TYPE_JSON_ARRAY;
+        using Das::ExportInterface::DAS_TYPE_JSON_OBJECT;
+        using Das::ExportInterface::DAS_TYPE_STRING;
+        using Das::ExportInterface::DAS_TYPE_UINT;
+
+        if (normalized == "bool")
+        {
+            return DAS_TYPE_BOOL;
+        }
+        if (normalized == "float")
+        {
+            return DAS_TYPE_FLOAT;
+        }
+        if (normalized == "int")
+        {
+            return DAS_TYPE_INT;
+        }
+        if (normalized == "jsonarray")
+        {
+            return DAS_TYPE_JSON_ARRAY;
+        }
+        if (normalized == "jsonobject")
+        {
+            return DAS_TYPE_JSON_OBJECT;
+        }
+        if (normalized == "string")
+        {
+            return DAS_TYPE_STRING;
+        }
+        if (normalized == "uint")
+        {
+            return DAS_TYPE_UINT;
+        }
+
+        throw std::runtime_error(
+            DAS_FMT_NS::format("Invalid DasType value: {}", *str));
     }
 
     inline void OptionalFieldFromYyjson(
@@ -258,6 +318,11 @@ namespace Details
         std::string_view                        key,
         std::optional<std::string>&             opt_value)
     {
+        if (!obj.contains(key))
+        {
+            opt_value = std::nullopt;
+            return;
+        }
         auto field = obj[std::string_view(key)];
         if (!field.is_null())
         {
@@ -274,6 +339,11 @@ namespace Details
         std::string_view                         key,
         std::optional<std::vector<std::string>>& opt_value)
     {
+        if (!obj.contains(key))
+        {
+            opt_value = std::nullopt;
+            return;
+        }
         auto field = obj[std::string_view(key)];
         if (field.is_null())
         {
@@ -295,6 +365,33 @@ namespace Details
             }
         }
         opt_value = std::move(result);
+    }
+
+    inline LoadMode LoadModeFromString(std::string_view value)
+    {
+        std::string normalized;
+        normalized.reserve(value.size());
+        for (const auto ch : value)
+        {
+            if (ch != '_')
+            {
+                normalized.push_back(
+                    static_cast<char>(
+                        std::tolower(static_cast<unsigned char>(ch))));
+            }
+        }
+
+        if (normalized == "ipc")
+        {
+            return LoadMode::Ipc;
+        }
+        if (normalized == "inprocess")
+        {
+            return LoadMode::InProcess;
+        }
+
+        throw std::runtime_error(
+            DAS_FMT_NS::format("Invalid loadMode value: {}", value));
     }
 
 } // namespace Details
@@ -344,13 +441,16 @@ void ParsePluginSettingDescFromJson(
         "deprecationMessage",
         output.deprecation_message);
 
-    auto required_val = obj[std::string_view("required")];
-    if (!required_val.is_null())
+    if (obj.contains(std::string_view("required")))
     {
-        auto opt = required_val.as_bool();
-        if (opt)
+        auto required_val = obj[std::string_view("required")];
+        if (!required_val.is_null())
         {
-            output.required = *opt;
+            auto opt = required_val.as_bool();
+            if (opt)
+            {
+                output.required = *opt;
+            }
         }
     }
 }
@@ -409,20 +509,23 @@ void ParseTaskDescriptorFromJson(
     output.description = Details::JsonValueToYyjsonScalar<std::string>(
         obj[std::string_view("description")]);
     Details::OptionalFieldFromYyjson(obj, "gameName", output.game_name);
-    auto descriptors_field = obj[std::string_view("descriptors")];
-    if (!descriptors_field.is_null())
+    if (obj.contains(std::string_view("descriptors")))
     {
-        auto desc_arr = *descriptors_field.as_array();
-        for (const auto& elem : desc_arr)
+        auto descriptors_field = obj[std::string_view("descriptors")];
+        if (!descriptors_field.is_null())
         {
-            auto elem_obj = elem.as_object();
-            if (!elem_obj)
+            auto desc_arr = *descriptors_field.as_array();
+            for (const auto& elem : desc_arr)
             {
-                continue;
+                auto elem_obj = elem.as_object();
+                if (!elem_obj)
+                {
+                    continue;
+                }
+                PluginSettingDesc desc;
+                ParsePluginSettingDescFromJson(*elem_obj, desc);
+                output.descriptors.push_back(std::move(desc));
             }
-            PluginSettingDesc desc;
-            ParsePluginSettingDescFromJson(*elem_obj, desc);
-            output.descriptors.push_back(std::move(desc));
         }
     }
 }
@@ -481,18 +584,28 @@ void ParsePluginPackageDescFromJson(
         }
     }
 
-    auto load_mode_val = obj[std::string_view("loadMode")];
-    if (!load_mode_val.is_null())
+    output.load_mode = LoadMode::InProcess;
+    if (obj.contains(std::string_view("loadMode")))
     {
-        auto lmo = load_mode_val.as_sint();
-        if (lmo)
+        auto load_mode_val = obj[std::string_view("loadMode")];
+        if (!load_mode_val.is_null())
         {
-            output.load_mode = static_cast<LoadMode>(*lmo);
+            auto lmo = load_mode_val.as_sint();
+            if (lmo)
+            {
+                output.load_mode = static_cast<LoadMode>(*lmo);
+            }
+            else
+            {
+                auto load_mode_str = load_mode_val.as_string();
+                if (!load_mode_str)
+                {
+                    throw std::runtime_error(
+                        "Expected numeric or string loadMode value");
+                }
+                output.load_mode = Details::LoadModeFromString(*load_mode_str);
+            }
         }
-    }
-    else
-    {
-        output.load_mode = LoadMode::InProcess;
     }
 
     output.name = Details::JsonValueToYyjsonScalar<std::string>(
@@ -509,19 +622,19 @@ void ParsePluginPackageDescFromJson(
         Details::JsonValueToYyjsonScalar<std::string>(
             obj[std::string_view("pluginFilenameExtension")]);
 
-    auto resource_path_val = obj[std::string_view("resourcePath")];
-    if (!resource_path_val.is_null())
+    output.opt_resource_path = DAS_UTILS_STRINGUTILS_DEFINE_U8STR("resource");
+    if (obj.contains(std::string_view("resourcePath")))
     {
-        auto opt = resource_path_val.as_string();
-        if (opt)
+        auto resource_path_val = obj[std::string_view("resourcePath")];
+        if (!resource_path_val.is_null())
         {
+            auto opt = resource_path_val.as_string();
+            if (!opt)
+            {
+                throw std::runtime_error("Expected string resourcePath value");
+            }
             output.opt_resource_path = std::string(*opt);
         }
-    }
-    else
-    {
-        output.opt_resource_path =
-            DAS_UTILS_STRINGUTILS_DEFINE_U8STR("resource");
     }
 
     auto guid_str = Details::JsonValueToYyjsonScalar<std::string>(
@@ -530,10 +643,10 @@ void ParsePluginPackageDescFromJson(
 
     // Parse "settings" field: support both legacy array and new
     // plugin-GUID-keyed object format.
-    auto settings_val = obj[std::string_view("settings")];
-    if (!settings_val.is_null())
+    if (obj.contains(std::string_view("settings")))
     {
-        if (settings_val.is_array())
+        auto settings_val = obj[std::string_view("settings")];
+        if (!settings_val.is_null() && settings_val.is_array())
         {
             // Legacy flat array format.
             auto arr = *settings_val.as_array();
@@ -599,7 +712,7 @@ void ParsePluginPackageDescFromJson(
                 }
             }
         }
-        else if (settings_val.is_object())
+        else if (!settings_val.is_null() && settings_val.is_object())
         {
             // New plugin-GUID-keyed object format.
             auto settings_obj = settings_val.as_object();
@@ -613,21 +726,24 @@ void ParsePluginPackageDescFromJson(
     }
 
     // Parse "tasks" field: task-GUID-keyed object.
-    auto tasks_val = obj[std::string_view("tasks")];
-    if (!tasks_val.is_null() && tasks_val.is_object())
+    if (obj.contains(std::string_view("tasks")))
     {
-        auto tasks_obj = *tasks_val.as_object();
-        for (const auto& [key, value] : tasks_obj)
+        auto tasks_val = obj[std::string_view("tasks")];
+        if (!tasks_val.is_null() && tasks_val.is_object())
         {
-            const auto task_guid = MakeDasGuid(std::string(key));
-            auto       task_obj = value.as_object();
-            if (!task_obj)
+            auto tasks_obj = *tasks_val.as_object();
+            for (const auto& [key, value] : tasks_obj)
             {
-                continue;
+                const auto task_guid = MakeDasGuid(std::string(key));
+                auto       task_obj = value.as_object();
+                if (!task_obj)
+                {
+                    continue;
+                }
+                TaskDescriptor desc;
+                ParseTaskDescriptorFromJson(*task_obj, desc);
+                output.task_descriptors.emplace(task_guid, std::move(desc));
             }
-            TaskDescriptor desc;
-            ParseTaskDescriptorFromJson(*task_obj, desc);
-            output.task_descriptors.emplace(task_guid, std::move(desc));
         }
     }
 }
