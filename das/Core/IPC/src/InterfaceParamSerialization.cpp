@@ -2,10 +2,8 @@
 
 #include <das/Core/IPC/BusinessThread.h>
 #include <das/Core/IPC/DasProxyBase.h>
-#include <das/Core/IPC/DasVariantVectorByValueProxy.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IpcRunLoop.h>
-#include <das/Core/IPC/ManualProxyRegistry.h>
 #include <das/Core/IPC/MethodMetadata.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/Logger/Logger.h>
@@ -106,29 +104,6 @@ DasResult DeserializeInInterfaceParam(
         // LookupObject AddRefs on success; caller receives ownership
         DasResult result = object_manager.LookupObject(id, out_ptr);
         return result;
-    }
-
-    // Dispatch path: inject by-value proxy for IDasVariantVector, skip autogen
-    if (interface_id == DasVariantVectorByValueProxy::InterfaceId)
-    {
-        auto by_value_proxy = std::unique_ptr<DasVariantVectorByValueProxy>(
-            new DasVariantVectorByValueProxy(
-                interface_id,
-                id,
-                run_loop,
-                business_thread,
-                proxy_factory));
-        DasResult register_result = object_manager.RegisterRemoteObject(id);
-        if (DAS::IsFailed(register_result))
-        {
-            DAS_CORE_LOG_ERROR(
-                "DeserializeInInterfaceParam: RegisterRemoteObject failed, "
-                "result = {}",
-                register_result);
-            return register_result;
-        }
-        *out_ptr = by_value_proxy.release();
-        return DAS_S_OK;
     }
 
     // Remote object: create proxy via cache (autogen first, then manual

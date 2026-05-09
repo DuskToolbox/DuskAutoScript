@@ -1,15 +1,27 @@
+#include <das/Core/IPC/DasReadOnlyStringProxy.h>
+#include <das/Core/IPC/DasVariantVectorByValueProxy.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/InterfaceParamSerialization.h>
+#include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/ObjectId.h>
+#include <das/Core/IPC/ProxyFactory.h>
+#include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <gtest/gtest.h>
 
 #include "MockDasObject.h"
 
+using Das::Core::IPC::DasReadOnlyStringProxy;
+using Das::Core::IPC::DasVariantVectorByValueProxy;
+using Das::Core::IPC::DeserializeInInterfaceParam;
 using Das::Core::IPC::DistributedObjectManager;
+using Das::Core::IPC::EncodeObjectId;
+using Das::Core::IPC::IpcRunLoop;
 using Das::Core::IPC::IsNullObjectId;
 using Das::Core::IPC::IsTransportLevelError;
 using Das::Core::IPC::ObjectId;
 using Das::Core::IPC::PendingInParamExportGuard;
+using Das::Core::IPC::ProxyFactory;
+using Das::Core::IPC::RemoteObjectRegistry;
 using Das::Core::IPC::SerializeInInterfaceParam;
 
 // Test fixture for InterfaceParamSerialization tests
@@ -180,4 +192,73 @@ TEST_F(
     EXPECT_TRUE(manager_->IsValidObject(id1));
     EXPECT_TRUE(manager_->IsValidObject(id2));
     EXPECT_TRUE(manager_->IsValidObject(id3));
+}
+
+TEST(
+    InterfaceParamSerializationMaterializationTest,
+    RemoteManualProxyUsesProxyFactoryCache)
+{
+    ProxyFactory         proxy_factory;
+    RemoteObjectRegistry registry;
+    IpcRunLoop           run_loop(false, nullptr, proxy_factory, registry);
+    const ObjectId remote_id{.session_id = 88, .generation = 1, .local_id = 5};
+
+    IDasBase* out = nullptr;
+    ASSERT_EQ(
+        DeserializeInInterfaceParam(
+            EncodeObjectId(remote_id),
+            DasReadOnlyStringProxy::InterfaceId,
+            proxy_factory.GetObjectManager(),
+            run_loop,
+            {},
+            proxy_factory,
+            &out),
+        DAS_S_OK);
+    ASSERT_NE(out, nullptr);
+    EXPECT_TRUE(proxy_factory.HasProxy(remote_id));
+
+    EXPECT_EQ(out->Release(), 0u);
+    EXPECT_FALSE(proxy_factory.HasProxy(remote_id));
+}
+
+TEST(
+    InterfaceParamSerializationMaterializationTest,
+    VariantVectorByValueUsesProxyFactoryCache)
+{
+    ProxyFactory         proxy_factory;
+    RemoteObjectRegistry registry;
+    IpcRunLoop           run_loop(false, nullptr, proxy_factory, registry);
+    const ObjectId remote_id{.session_id = 89, .generation = 1, .local_id = 6};
+
+    IDasBase* out = nullptr;
+    ASSERT_EQ(
+        DeserializeInInterfaceParam(
+            EncodeObjectId(remote_id),
+            DasVariantVectorByValueProxy::InterfaceId,
+            proxy_factory.GetObjectManager(),
+            run_loop,
+            {},
+            proxy_factory,
+            &out),
+        DAS_S_OK);
+    ASSERT_NE(out, nullptr);
+    EXPECT_TRUE(proxy_factory.HasProxy(remote_id));
+
+    IDasBase* second = nullptr;
+    ASSERT_EQ(
+        DeserializeInInterfaceParam(
+            EncodeObjectId(remote_id),
+            DasVariantVectorByValueProxy::InterfaceId,
+            proxy_factory.GetObjectManager(),
+            run_loop,
+            {},
+            proxy_factory,
+            &second),
+        DAS_S_OK);
+    ASSERT_NE(second, nullptr);
+    EXPECT_EQ(out, second);
+
+    EXPECT_EQ(second->Release(), 1u);
+    EXPECT_EQ(out->Release(), 0u);
+    EXPECT_FALSE(proxy_factory.HasProxy(remote_id));
 }

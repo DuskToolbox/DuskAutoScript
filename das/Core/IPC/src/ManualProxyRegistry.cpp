@@ -5,6 +5,8 @@
 #include <das/Core/IPC/DasVariantVectorByValueProxy.h>
 #include <das/_autogen/idl/ipc/IpcProxyFactory.h>
 
+#include <mutex>
+
 DAS_CORE_IPC_NS_BEGIN
 
 namespace
@@ -13,6 +15,12 @@ namespace
     {
         static std::unordered_map<uint32_t, ManualProxyFactory> registry;
         return registry;
+    }
+
+    std::mutex& GetManualRegistryMutex()
+    {
+        static std::mutex mutex;
+        return mutex;
     }
 } // namespace
 
@@ -36,12 +44,20 @@ DasPtr<IDasBase> CreateProxyByInterfaceIdWithFallback(
         return DasPtr<IDasBase>::Attach(proxy);
     }
 
-    // Fall back to manually registered factory
-    auto& registry = GetManualRegistry();
-    auto  it = registry.find(interface_id);
-    if (it != registry.end())
+    ManualProxyFactory manual_factory = nullptr;
     {
-        IDasBase* manual_proxy = it->second(
+        std::lock_guard lock{GetManualRegistryMutex()};
+        auto&           registry = GetManualRegistry();
+        auto            it = registry.find(interface_id);
+        if (it != registry.end())
+        {
+            manual_factory = it->second;
+        }
+    }
+
+    if (manual_factory != nullptr)
+    {
+        IDasBase* manual_proxy = manual_factory(
             interface_id,
             object_id,
             run_loop,
@@ -60,6 +76,7 @@ void RegisterManualProxyFactory(
     uint32_t           interface_id,
     ManualProxyFactory factory)
 {
+    std::lock_guard lock{GetManualRegistryMutex()};
     GetManualRegistry()[interface_id] = factory;
 }
 
