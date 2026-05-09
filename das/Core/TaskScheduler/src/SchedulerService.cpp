@@ -522,31 +522,69 @@ namespace Das::Core::TaskScheduler
                 const auto& inst_obj = *inst_obj_opt;
 
                 // Parse taskGuid
-                auto tg_val = inst_obj[std::string_view("taskGuid")];
-                if (!tg_val.is_string())
+                const auto task_guid_key = std::string_view("taskGuid");
+                if (!inst_obj.contains(task_guid_key))
+                {
+                    rec.availability = TaskAvailability::Invalid;
+                    rec.unavailability_reason = "missing taskGuid";
+                    temp_instances.push_back(std::move(rec));
+                    continue;
+                }
+
+                auto tg_val = inst_obj[task_guid_key];
+                auto tg_str = tg_val.as_string();
+                if (!tg_str)
                 {
                     rec.availability = TaskAvailability::Invalid;
                     rec.unavailability_reason = "invalid taskGuid";
                     temp_instances.push_back(std::move(rec));
                     continue;
                 }
+
+                try
                 {
-                    auto tg_view = *tg_val.as_string();
                     rec.task_guid =
                         Das::Core::ForeignInterfaceHost::MakeDasGuid(
-                            std::string(tg_view));
+                            std::string(*tg_str));
+                }
+                catch (const std::exception& e)
+                {
+                    rec.availability = TaskAvailability::Invalid;
+                    rec.unavailability_reason =
+                        std::string("invalid taskGuid: ") + e.what();
+                    temp_instances.push_back(std::move(rec));
+                    continue;
                 }
 
                 // Parse pluginGuid
-                if (inst_obj.contains(std::string_view("pluginGuid")))
+                const auto plugin_guid_key = std::string_view("pluginGuid");
+                if (inst_obj.contains(plugin_guid_key))
                 {
-                    auto pg_val = inst_obj[std::string_view("pluginGuid")];
-                    if (pg_val.is_string())
+                    auto pg_val = inst_obj[plugin_guid_key];
+                    auto pg_str = pg_val.as_string();
+                    if (pg_str)
                     {
-                        auto pg_view = *pg_val.as_string();
-                        rec.plugin_guid =
-                            Das::Core::ForeignInterfaceHost::MakeDasGuid(
-                                std::string(pg_view));
+                        try
+                        {
+                            rec.plugin_guid =
+                                Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                                    std::string(*pg_str));
+                        }
+                        catch (const std::exception& e)
+                        {
+                            rec.availability = TaskAvailability::Invalid;
+                            rec.unavailability_reason =
+                                std::string("invalid pluginGuid: ") + e.what();
+                            temp_instances.push_back(std::move(rec));
+                            continue;
+                        }
+                    }
+                    else if (!pg_val.is_null())
+                    {
+                        rec.availability = TaskAvailability::Invalid;
+                        rec.unavailability_reason = "invalid pluginGuid";
+                        temp_instances.push_back(std::move(rec));
+                        continue;
                     }
                 }
 
