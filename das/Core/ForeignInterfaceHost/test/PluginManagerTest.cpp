@@ -57,6 +57,141 @@ namespace
         }
         return std::move(result.value());
     }
+
+    class CapturingPluginPackage final : public IDasPluginPackage
+    {
+    public:
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out_object) override
+        {
+            if (pp_out_object == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+
+            if (iid == DAS_IID_BASE)
+            {
+                *pp_out_object = static_cast<IDasBase*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            if (iid == DAS_IID_PLUGIN_PACKAGE)
+            {
+                *pp_out_object = static_cast<IDasPluginPackage*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+
+            *pp_out_object = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult DAS_STD_CALL EnumFeature(uint64_t, DasPluginFeature*) override
+        {
+            return DAS_S_FALSE;
+        }
+
+        DasResult DAS_STD_CALL
+        CreateFeatureInterface(uint64_t, IDasBase**) override
+        {
+            return DAS_E_NOT_FOUND;
+        }
+
+        DasResult DAS_STD_CALL CanUnloadNow(bool* can_unload_now) override
+        {
+            if (can_unload_now == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *can_unload_now = true;
+            return DAS_S_OK;
+        }
+
+    private:
+        std::atomic<uint32_t> ref_count_{0};
+    };
+
+    class CapturingRuntime final : public IForeignLanguageRuntime
+    {
+    public:
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out_object) override
+        {
+            if (pp_out_object == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+
+            if (iid == DAS_IID_BASE)
+            {
+                *pp_out_object = static_cast<IDasBase*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+
+            *pp_out_object = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        auto LoadPlugin(const std::filesystem::path& path)
+            -> DAS::Utils::Expected<DasPtr<IDasBase>> override
+        {
+            loaded_paths.push_back(path);
+            auto* package = new CapturingPluginPackage();
+            package->AddRef();
+            return DasPtr<IDasBase>::Attach(static_cast<IDasBase*>(package));
+        }
+
+        std::vector<std::filesystem::path> loaded_paths;
+
+    private:
+        std::atomic<uint32_t> ref_count_{0};
+    };
+
+    void WriteMinimalManifest(
+        const std::filesystem::path& path,
+        const std::string&           guid,
+        const std::string&           name)
+    {
+        std::ofstream ofs(path);
+        ofs << R"({
+            "guid": ")"
+            << guid << R"(",
+            "name": ")"
+            << name << R"(",
+            "language": "Cpp",
+            "description": "test",
+            "author": "test",
+            "version": "1.0",
+            "supportedSystem": "win",
+            "pluginFilenameExtension": "dll",
+            "settings": []
+        })";
+    }
 } // anonymous namespace
 
 // ============================================================
@@ -165,6 +300,130 @@ TEST_F(PluginManagerGuidTest, LoadDuplicateGuidViaSymlinkReturnsAlreadyExists)
 
     // Cleanup symlink
     std::filesystem::remove(symlink_path, ec);
+}
+
+class PluginManagerManifestPathTest : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        test_dir_ =
+            std::filesystem::current_path()
+            / ("manifest_path_test_" + std::to_string(std::random_device{}()));
+        std::filesystem::create_directories(test_dir_);
+
+        settings_dir_ = test_dir_ / "settings";
+        settings_manager_ =
+            std::make_unique<DAS::Core::SettingsManager::SettingsManager>(
+                settings_dir_);
+        ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+        pm_ = std::make_unique<PluginManager>(
+            *settings_manager_,
+            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp_));
+
+        runtime_ = new CapturingRuntime();
+        runtime_->AddRef();
+        runtime_guard_ = DasPtr<IForeignLanguageRuntime>::Attach(runtime_);
+        ASSERT_EQ(pm_->Initialize(1, runtime_guard_), DAS_S_OK);
+    }
+
+    void TearDown() override
+    {
+        pm_->Shutdown();
+        runtime_guard_.Reset();
+        std::filesystem::remove_all(test_dir_);
+    }
+
+    std::filesystem::path Canonical(const std::filesystem::path& path) const
+    {
+        return std::filesystem::weakly_canonical(path);
+    }
+
+    std::filesystem::path test_dir_;
+    std::filesystem::path settings_dir_;
+    std::unique_ptr<DAS::Core::SettingsManager::SettingsManager>
+                                                              settings_manager_;
+    std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
+    std::unique_ptr<PluginManager>                            pm_;
+    CapturingRuntime*               runtime_ = nullptr;
+    DasPtr<IForeignLanguageRuntime> runtime_guard_;
+};
+
+TEST_F(
+    PluginManagerManifestPathTest,
+    DirectoryInputResolvesDirnameManifestBeforeFallback)
+{
+    const auto plugin_dir = test_dir_ / "PriorityPlugin";
+    std::filesystem::create_directories(plugin_dir);
+    const auto primary_manifest = plugin_dir / "PriorityPlugin.json";
+    const auto fallback_manifest = plugin_dir / "manifest.json";
+    WriteMinimalManifest(
+        fallback_manifest,
+        "00000000-0000-0000-0000-000000000202",
+        "FallbackPlugin");
+    WriteMinimalManifest(
+        primary_manifest,
+        "00000000-0000-0000-0000-000000000201",
+        "PrimaryPlugin");
+
+    ASSERT_EQ(pm_->LoadPlugin(plugin_dir), DAS_S_OK);
+
+    ASSERT_EQ(runtime_->loaded_paths.size(), 1u);
+    EXPECT_EQ(
+        Canonical(runtime_->loaded_paths.front()),
+        Canonical(primary_manifest));
+}
+
+TEST_F(PluginManagerManifestPathTest, JsonFileInputIsManifestPath)
+{
+    const auto manifest_path = test_dir_ / "SingleFilePlugin.json";
+    WriteMinimalManifest(
+        manifest_path,
+        "00000000-0000-0000-0000-000000000203",
+        "SingleFilePlugin");
+
+    ASSERT_EQ(pm_->LoadPlugin(manifest_path), DAS_S_OK);
+
+    ASSERT_EQ(runtime_->loaded_paths.size(), 1u);
+    EXPECT_EQ(
+        Canonical(runtime_->loaded_paths.front()),
+        Canonical(manifest_path));
+}
+
+TEST_F(
+    PluginManagerManifestPathTest,
+    DirectoryAndManifestAliasesReturnDuplicateNoOp)
+{
+    const auto plugin_dir = test_dir_ / "AliasPlugin";
+    std::filesystem::create_directories(plugin_dir);
+    const auto manifest_path = plugin_dir / "AliasPlugin.json";
+    WriteMinimalManifest(
+        manifest_path,
+        "00000000-0000-0000-0000-000000000204",
+        "AliasPlugin");
+
+    ASSERT_EQ(pm_->LoadPlugin(plugin_dir), DAS_S_OK);
+    EXPECT_EQ(pm_->LoadPlugin(manifest_path), DAS_S_FALSE);
+
+    EXPECT_EQ(pm_->GetLoadedPluginCount(), 1u);
+    EXPECT_EQ(runtime_->loaded_paths.size(), 1u);
+}
+
+TEST_F(
+    PluginManagerManifestPathTest,
+    DistinctManifestFilesWithSameGuidReturnDuplicateElement)
+{
+    const auto     manifest_a = test_dir_ / "DuplicateA.json";
+    const auto     manifest_b = test_dir_ / "DuplicateB.json";
+    constexpr auto guid = "00000000-0000-0000-0000-000000000205";
+    WriteMinimalManifest(manifest_a, guid, "DuplicateA");
+    WriteMinimalManifest(manifest_b, guid, "DuplicateB");
+
+    ASSERT_EQ(pm_->LoadPlugin(manifest_a), DAS_S_OK);
+    EXPECT_EQ(pm_->LoadPlugin(manifest_b), DAS_E_DUPLICATE_ELEMENT);
+
+    EXPECT_EQ(pm_->GetLoadedPluginCount(), 1u);
 }
 
 // ============================================================
