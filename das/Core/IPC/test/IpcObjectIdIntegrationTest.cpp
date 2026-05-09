@@ -96,6 +96,8 @@ TEST_F(IpcObjectIdIntegrationTest, ObjectId_IsNull)
 TEST_F(IpcObjectIdIntegrationTest, DistributedObjectManager_RegisterLocalObject)
 {
     // 测试注册本地对象
+    object_manager_->SetSessionId(1);
+
     auto      test_object = new MockDasObject();
     ObjectId  out_object_id{};
     DasResult result =
