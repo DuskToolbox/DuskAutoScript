@@ -143,11 +143,13 @@ protected:
     lua_State* L_{nullptr};
     int env_ref_{LUA_NOREF};        // Lua registry reference to environment table
     bool upcall_active_{false};     // Prevents C++→Lua→C++ reentrant calls
+    bool lua_destructor_notified_{false};
 
 public:
     LuaDirector() = default;
 
     virtual ~LuaDirector() {
+        notify_lua_destructor();
         if (L_ != nullptr && env_ref_ != LUA_NOREF) {
             luaL_unref(L_, LUA_REGISTRYINDEX, env_ref_);
         }
@@ -161,6 +163,27 @@ public:
     bool is_upcall_active() const { return upcall_active_; }
 
     void set_upcall_active(bool active) { upcall_active_ = active; }
+
+    void notify_lua_destructor() noexcept {
+        if (L_ == nullptr || env_ref_ == LUA_NOREF) return;
+        if (lua_destructor_notified_) return;
+        lua_destructor_notified_ = true;
+        try {
+            sol::table env(L_, sol::ref_index(env_ref_));
+            sol::object method_obj = env["__gc"];
+            if (!method_obj.valid() || !method_obj.is<sol::function>()) {
+                return;
+            }
+            sol::protected_function func = method_obj.as<sol::protected_function>();
+            auto result = func();
+            if (!result.valid()) {
+                sol::error err = result;
+                std::fprintf(stderr, "[DAS LuaDirector] __gc failed: %s\\n", err.what());
+            }
+        } catch (...) {
+            std::fprintf(stderr, "[DAS LuaDirector] __gc failed with an unknown exception\\n");
+        }
+    }
 
     // RAII guard for upcall detection
     class UpcallGuard {
@@ -189,7 +212,12 @@ public:
             return sol::protected_function_result();
         }
         sol::protected_function func = method_obj.as<sol::protected_function>();
-        return func(std::forward<Args>(args)...);
+        auto result = func(std::forward<Args>(args)...);
+        if (!result.valid()) {
+            sol::error err = result;
+            std::fprintf(stderr, "[DAS LuaDirector] %s failed: %s\\n", name, err.what());
+        }
+        return result;
     }
 };
 """
@@ -311,8 +339,8 @@ public:
             '        lua_State* L = ts;'
         )
         lines.append(
-            '        lua_pushvalue(L, -1);'
-            '  // Push copy of the table for registry ref'
+            '        env.push();'
+            '  // Push the constructor table for registry ref'
         )
         lines.append('        int env_ref = luaL_ref(L, LUA_REGISTRYINDEX);')
         lines.append('        set_lua_environment(L, env_ref);')
@@ -336,6 +364,8 @@ public:
         )
         lines.append('            if (count == 0) {')
         lines.append('                delete this;')
+        lines.append('            } else if (count == 1) {')
+        lines.append('                notify_lua_destructor();')
         lines.append('            }')
         lines.append('            return count;')
         lines.append('    }')
@@ -392,6 +422,8 @@ public:
         # 收集本接口及所有基接口的方法（递归到 IDasBase 为止）
         own_method_names = {m.name for m in interface.methods}
         inherited_methods = []
+        own_property_names = {p.name for p in interface.properties}
+        inherited_properties = []
         if all_interfaces:
             base_name = interface.base_interface
             while base_name and base_name != 'IDasBase':
@@ -402,6 +434,10 @@ public:
                     if m.name not in own_method_names:
                         inherited_methods.append((m, base_name))
                         own_method_names.add(m.name)
+                for prop in base_iface.properties:
+                    if prop.name not in own_property_names:
+                        inherited_properties.append(prop)
+                        own_property_names.add(prop.name)
                 base_name = base_iface.base_interface
 
         # 为本接口的方法生成 override
@@ -409,15 +445,124 @@ public:
             lines.append(
                 self._generate_method_override(method, parent)
             )
+        for prop in interface.properties:
+            lines.append(self._generate_property_overrides(prop, parent))
 
         # 为继承的基接口方法生成 override（确保所有纯虚函数都被实现）
         for method, base_name in inherited_methods:
             lines.append(
                 self._generate_method_override(method, parent)
             )
+        for prop in inherited_properties:
+            lines.append(self._generate_property_overrides(prop, parent))
 
         lines.append('};')
         return '\n'.join(lines)
+
+    def _generate_property_method_defs(self, prop) -> List[MethodDef]:
+        """Convert an IDL property into ABI getter/setter method definitions."""
+        ret_type = TypeInfo('DasResult', type_kind=TypeKind.BASIC)
+        methods: List[MethodDef] = []
+
+        def _copy_type(type_info: TypeInfo, **overrides) -> TypeInfo:
+            values = {
+                'base_type': type_info.base_type,
+                'is_pointer': type_info.is_pointer,
+                'pointer_level': type_info.pointer_level,
+                'is_const': type_info.is_const,
+                'is_reference': type_info.is_reference,
+                'type_kind': type_info.type_kind,
+            }
+            values.update(overrides)
+            return TypeInfo(**values)
+
+        def _property_getter_out_type() -> TypeInfo:
+            if prop.type_info.type_kind == TypeKind.INTERFACE:
+                return _copy_type(
+                    prop.type_info,
+                    is_pointer=True,
+                    pointer_level=1,
+                    is_const=False,
+                    is_reference=False,
+                )
+            if prop.type_info.base_type in self._STRING_TYPES:
+                return TypeInfo(
+                    'IDasReadOnlyString',
+                    is_pointer=True,
+                    pointer_level=1,
+                    type_kind=TypeKind.INTERFACE,
+                )
+            return _copy_type(
+                prop.type_info,
+                is_pointer=True,
+                pointer_level=1,
+                is_const=False,
+                is_reference=False,
+            )
+
+        def _property_setter_in_type() -> TypeInfo:
+            if prop.type_info.type_kind == TypeKind.INTERFACE:
+                return _copy_type(
+                    prop.type_info,
+                    is_pointer=True,
+                    pointer_level=1,
+                    is_const=False,
+                    is_reference=False,
+                )
+            if prop.type_info.base_type in self._STRING_TYPES:
+                return TypeInfo(
+                    'IDasReadOnlyString',
+                    is_pointer=True,
+                    pointer_level=1,
+                    type_kind=TypeKind.INTERFACE,
+                )
+            return _copy_type(
+                prop.type_info,
+                is_pointer=False,
+                pointer_level=0,
+                is_const=False,
+                is_reference=False,
+            )
+
+        if prop.has_getter:
+            getter_out = _property_getter_out_type()
+            methods.append(MethodDef(
+                name=f'Get{prop.name}',
+                return_type=ret_type,
+                parameters=[
+                    ParameterDef(
+                        name='pp_out'
+                        if getter_out.type_kind == TypeKind.INTERFACE
+                        else 'p_out',
+                        type_info=getter_out,
+                        direction=ParamDirection.OUT,
+                    )
+                ],
+            ))
+
+        if prop.has_setter:
+            setter_in = _property_setter_in_type()
+            methods.append(MethodDef(
+                name=f'Set{prop.name}',
+                return_type=ret_type,
+                parameters=[
+                    ParameterDef(
+                        name='p_value'
+                        if setter_in.is_pointer
+                        else 'value',
+                        type_info=setter_in,
+                        direction=ParamDirection.IN,
+                    )
+                ],
+            ))
+
+        return methods
+
+    def _generate_property_overrides(self, prop, parent: str) -> str:
+        return '\n'.join(
+            self._generate_method_override(method, parent)
+            for method in self._generate_property_method_defs(prop)
+        )
 
     def _generate_method_override(
         self, method: MethodDef, parent: str
@@ -441,6 +586,9 @@ public:
         is_void = ret_type == 'void'
         is_das_result = ret_type == 'DasResult'
         is_interface_ptr = method.return_type.type_kind == TypeKind.INTERFACE
+        out_params = [
+            p for p in method.parameters if p.direction == ParamDirection.OUT
+        ]
 
         # 构建参数声明列表
         # 注意: ABI 生成器对 [out] INTERFACE 参数会额外加一层指针
@@ -473,6 +621,20 @@ public:
         lines = []
         lines.append('')
         lines.append(f'    {ret_type} {method.name}({param_list}) override {{')
+
+        for param in out_params:
+            lines.append(f'        if ({param.name} == nullptr) {{')
+            if is_void:
+                lines.append('            return;')
+            elif is_das_result:
+                lines.append('            return DAS_E_INVALID_POINTER;')
+            elif is_interface_ptr:
+                lines.append('            return nullptr;')
+            else:
+                lines.append(f'            return {ret_type}();')
+            lines.append('        }')
+        if out_params:
+            lines.append('')
 
         # 路径 1: upcall 重入 或 Lua 方法不存在 → 返回安全默认值
         # 注意: 不调用 parent::method() 因为接口方法是纯虚函数 (= 0)，没有实现
@@ -519,9 +681,27 @@ public:
 
         lines.append('        }')
 
-        # 提取返回值（void 无需提取）
+        # 提取返回值（void 无需提取）。对于 DasResult + [out] 参数的
+        # Director 方法，Lua 端用多返回值传递: return hr, out1, out2...
         if not is_void:
-            lines.append(f'        return lua_result.get<{ret_type}>();')
+            if is_das_result and out_params:
+                lines.append('        DasResult hr = lua_result.get<DasResult>(0);')
+                lines.append('        if (hr != DAS_S_OK) {')
+                lines.append('            return hr;')
+                lines.append('        }')
+                lines.append(
+                    f'        if (lua_result.return_count() < {len(out_params) + 1}) {{'
+                )
+                lines.append('            return DAS_E_FAIL;')
+                lines.append('        }')
+                for index, param in enumerate(out_params, start=1):
+                    out_type = self._get_out_param_local_type(param.type_info)
+                    lines.append(
+                        f'        *{param.name} = lua_result.get<{out_type}>({index});'
+                    )
+                lines.append('        return hr;')
+            else:
+                lines.append(f'        return lua_result.get<{ret_type}>();')
 
         lines.append('    }')
 
@@ -730,6 +910,9 @@ public:
             lua.new_usertype<Interface>(...) 调用的 C++ 代码字符串。
         """
         iface_name = interface.name
+        has_component_director = bool(
+            all_interfaces and 'IDasComponent' in all_interfaces
+        )
 
         # 构建基类链（用于 sol::bases 声明）
         base_chain = self._get_base_chain(interface, all_interfaces)
@@ -778,9 +961,76 @@ public:
                 overload_lines.append('    )')
                 entries.append('\n'.join(overload_lines))
             elif not out_params:
-                entries.append(
-                    f'    "{method.name}", &{iface_name}::{method.name}'
-                )
+                if iface_name == 'IDasVariantVector' and method.name in {
+                    'SetBase',
+                    'PushBackBase',
+                }:
+                    if method.name == 'SetBase':
+                        component_case = (
+                            '        sol::stack_object obj(L, stack_index);\n'
+                            '        try {\n'
+                            '            if (obj.is<ILuaDasComponent*>()) {\n'
+                            '                auto* component = static_cast<IDasComponent*>(obj.as<ILuaDasComponent*>());\n'
+                            '                lua_pop(L, 1);\n'
+                            '                return self.SetComponent(index, component);\n'
+                            '            }\n'
+                            '        } catch (const sol::error&) {\n'
+                            '            lua_pop(L, 1);\n'
+                            '            return DAS_E_INVALID_POINTER;\n'
+                            '        }\n'
+                        ) if has_component_director else ''
+                        entries.append(
+                            '    "SetBase", [](IDasVariantVector& self, sol::this_state ts, uint64_t index, sol::object value) -> DasResult {\n'
+                            '        lua_State* L = ts;\n'
+                            '        if (!value.valid() || value.get_type() == sol::type::lua_nil) {\n'
+                            '            return self.SetBase(index, nullptr);\n'
+                            '        }\n'
+                            '        value.push();\n'
+                            '        int stack_index = lua_gettop(L);\n'
+                            f'{component_case}'
+                            '        IDasBase* base = ExtractDasBasePointer(L, stack_index);\n'
+                            '        lua_pop(L, 1);\n'
+                            '        if (base == nullptr) {\n'
+                            '            return DAS_E_INVALID_POINTER;\n'
+                            '        }\n'
+                            '        return self.SetBase(index, base);\n'
+                            '    }'
+                        )
+                    else:
+                        component_case = (
+                            '        sol::stack_object obj(L, stack_index);\n'
+                            '        try {\n'
+                            '            if (obj.is<ILuaDasComponent*>()) {\n'
+                            '                auto* component = static_cast<IDasComponent*>(obj.as<ILuaDasComponent*>());\n'
+                            '                lua_pop(L, 1);\n'
+                            '                return self.PushBackComponent(component);\n'
+                            '            }\n'
+                            '        } catch (const sol::error&) {\n'
+                            '            lua_pop(L, 1);\n'
+                            '            return DAS_E_INVALID_POINTER;\n'
+                            '        }\n'
+                        ) if has_component_director else ''
+                        entries.append(
+                            '    "PushBackBase", [](IDasVariantVector& self, sol::this_state ts, sol::object value) -> DasResult {\n'
+                            '        lua_State* L = ts;\n'
+                            '        if (!value.valid() || value.get_type() == sol::type::lua_nil) {\n'
+                            '            return self.PushBackBase(nullptr);\n'
+                            '        }\n'
+                            '        value.push();\n'
+                            '        int stack_index = lua_gettop(L);\n'
+                            f'{component_case}'
+                            '        IDasBase* base = ExtractDasBasePointer(L, stack_index);\n'
+                            '        lua_pop(L, 1);\n'
+                            '        if (base == nullptr) {\n'
+                            '            return DAS_E_INVALID_POINTER;\n'
+                            '        }\n'
+                            '        return self.PushBackBase(base);\n'
+                            '    }'
+                        )
+                else:
+                    entries.append(
+                        f'    "{method.name}", &{iface_name}::{method.name}'
+                    )
             else:
                 lambda_code = self._generate_out_param_lambda(
                     iface_name, method
@@ -826,11 +1076,14 @@ public:
         iface_name = interface.name
         director_name = self._get_director_class_name(iface_name)
 
-        # 构建完整基类链：直接父接口 → ... → IDasBase
+        # 构建完整基类链：当前接口 → 直接父接口 → ... → IDasBase
         base_chain = self._get_base_chain(interface, all_interfaces)
-        # 基类链中需要全限定名（带命名空间）
+        # 基类链中需要全限定名（带命名空间）。Director 类本身实现当前
+        # 接口，sol2 也需要知道这一层，才能把 Director userdata 转为当前
+        # 接口或其基类指针。
         iface_map = all_interfaces if all_interfaces else {}
-        qualified_bases = []
+        current_ns = f'{interface.namespace}::' if interface.namespace else ''
+        qualified_bases = [f'{current_ns}{iface_name}']
         for base_name in base_chain:
             if base_name == 'IDasBase':
                 qualified_bases.append('IDasBase')
@@ -844,10 +1097,9 @@ public:
             f'lua.new_usertype<{director_name}>("{director_name}",\n'
             f'    sol::base_classes, sol::bases<{bases_str}>(),\n'
             f'    sol::call_constructor,\n'
-            f'    sol::initializers(\n'
-            f'        []({director_name}& obj, sol::this_state ts,'
-            f' sol::table env) {{\n'
-            f'            new (&obj) {director_name}(ts, env);\n'
+            f'    sol::factories(\n'
+            f'        [](sol::this_state ts, sol::table env) {{\n'
+            f'            return new {director_name}(ts, env);\n'
             f'        }}\n'
             f'    ),\n'
             f'    sol::meta_function::garbage_collect,'
@@ -855,6 +1107,58 @@ public:
             f'        p->Release();\n'
             f'    }}\n'
             f');'
+        )
+
+    def _generate_builtin_runtime_helpers(self) -> str:
+        """Generate manual bindings for non-IDL ABI helper types/functions.
+
+        IDasReadOnlyString is declared in a hand-written ABI header and is
+        intentionally not parsed from IDL. Generated Lua Director signatures can
+        still receive or return it, so Lua needs a small runtime binding instead
+        of treating values as opaque sol pointers.
+        """
+        return (
+            'lua.new_usertype<IDasReadOnlyString>("IDasReadOnlyString",\n'
+            '    sol::no_constructor,\n'
+            '    sol::meta_function::garbage_collect, [](IDasReadOnlyString* p) {\n'
+            '        if (p) { p->Release(); }\n'
+            '    },\n'
+            '    "GetUtf8", [](IDasReadOnlyString& self) -> std::tuple<DasResult, std::string> {\n'
+            '        const char* value = nullptr;\n'
+            '        DasResult hr = self.GetUtf8(&value);\n'
+            '        if (hr < 0 || value == nullptr) {\n'
+            '            return std::make_tuple(hr, std::string{});\n'
+            '        }\n'
+            '        return std::make_tuple(hr, std::string(value));\n'
+            '    },\n'
+            '    sol::meta_function::to_string, [](IDasReadOnlyString& self) -> std::string {\n'
+            '        const char* value = nullptr;\n'
+            '        DasResult hr = self.GetUtf8(&value);\n'
+            '        if (hr < 0 || value == nullptr) {\n'
+            '            return std::string{};\n'
+            '        }\n'
+            '        return std::string(value);\n'
+            '    }\n'
+            ');\n'
+            '\n'
+            'lua.set_function("CreateIDasReadOnlyStringFromUtf8",\n'
+            '    [](const std::string& value) -> std::tuple<DasResult, IDasReadOnlyString*> {\n'
+            '        IDasReadOnlyString* out_string = nullptr;\n'
+            '        DasResult hr = ::CreateIDasReadOnlyStringFromUtf8(value.c_str(), &out_string);\n'
+            '        return std::make_tuple(hr, out_string);\n'
+            '    }\n'
+            ');\n'
+            '\n'
+            'lua.set_function("DasQueryInterfaceIDasComponent",\n'
+            '    [](IDasBase* value) -> std::tuple<DasResult, IDasComponent*> {\n'
+            '        if (value == nullptr) {\n'
+            '            return std::make_tuple(DAS_E_INVALID_POINTER, static_cast<IDasComponent*>(nullptr));\n'
+            '        }\n'
+            '        void* out_component = nullptr;\n'
+            '        DasResult hr = value->QueryInterface(DasIidOf<IDasComponent>(), &out_component);\n'
+            '        return std::make_tuple(hr, static_cast<IDasComponent*>(out_component));\n'
+            '    }\n'
+            ');'
         )
 
     def _generate_registration_function(
@@ -890,6 +1194,11 @@ public:
                 for line in reg.split('\n'):
                     lines.append(f'    {line}')
                 lines.append('')
+
+        lines.append('    // Built-in runtime helpers')
+        for line in self._generate_builtin_runtime_helpers().split('\n'):
+            lines.append(f'    {line}')
+        lines.append('')
 
         # Director 具体类注册
         if interfaces:
@@ -1406,8 +1715,11 @@ public:
 
         return '\n'.join(lines)
 
-    @staticmethod
-    def _generate_extract_base_pointer_function(export_c_macro: str) -> str:
+    def _generate_extract_base_pointer_function(
+        self,
+        export_c_macro: str,
+        interfaces: List[InterfaceDef] = None,
+    ) -> str:
         """生成 ExtractDasBasePointer 辅助函数。
 
         该函数从 Lua 栈上的 userdata 中提取 Director 对象指针，
@@ -1426,13 +1738,30 @@ public:
         Returns:
             ExtractDasBasePointer 函数的完整 C++ 定义字符串。
         """
+        director_checks = []
+        if interfaces:
+            for interface in interfaces:
+                director_name = self._get_director_class_name(interface.name)
+                director_checks.append(
+                    f'        if (obj.is<{director_name}*>()) {{\n'
+                    f'            auto* p = obj.as<{director_name}*>();\n'
+                    f'            return static_cast<IDasBase*>(p);\n'
+                    f'        }}'
+                )
+        director_checks_str = '\n'.join(director_checks)
         return (
             f'{export_c_macro} IDasBase* ExtractDasBasePointer(lua_State* L, int index) {{\n'
-            f'    void* raw_memory = lua_touserdata(L, index);\n'
-            f'    if (!raw_memory) return nullptr;\n'
-            f'    void** ptr_to_obj = static_cast<void**>(raw_memory);\n'
-            f'    void* obj_ptr = *ptr_to_obj;\n'
-            f'    return static_cast<IDasBase*>(obj_ptr);\n'
+            f'    if (L == nullptr || lua_isnoneornil(L, index)) return nullptr;\n'
+            f'    sol::stack_object obj(L, index);\n'
+            f'    try {{\n'
+            f'{director_checks_str}\n'
+            f'        if (obj.is<IDasBase*>()) {{\n'
+            f'            return obj.as<IDasBase*>();\n'
+            f'        }}\n'
+            f'    }} catch (const sol::error&) {{\n'
+            f'        return nullptr;\n'
+            f'    }}\n'
+            f'    return nullptr;\n'
             f'}}\n'
         )
 

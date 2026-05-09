@@ -219,10 +219,12 @@ function(das_add_idl_export)
 
     # ====== 1. 生成批量配置 JSON 文件 ======
     # 检测 LANGUAGES 中是否包含 Lua（大小写不敏感），设置 Lua 输出目录
+    set(_HAS_LUA FALSE)
     set(_LUA_OUTPUT_DIR "")
     foreach(_LANG ${DAS_IDL_EXPORT_LANGUAGES})
         string(TOLOWER "${_LANG}" _LANG_LOWER)
         if(_LANG_LOWER STREQUAL "lua")
+            set(_HAS_LUA TRUE)
             set(_LUA_OUTPUT_DIR "${DAS_IDL_EXPORT_OUTPUT_DIR}/_autogen/idl/lua")
             file(MAKE_DIRECTORY ${_LUA_OUTPUT_DIR})
             break()

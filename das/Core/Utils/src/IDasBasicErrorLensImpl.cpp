@@ -1,5 +1,7 @@
 #include "IDasBasicErrorLensImpl.h"
 
+#include <das/DasApi.h>
+
 #include <das/Core/Logger/Logger.h>
 #include <das/Utils/CommonUtils.hpp>
 
@@ -99,7 +101,7 @@ DasResult DasBasicErrorLensImpl::GetWritableSupportedIids(
 
 DAS_CORE_UTILS_NS_END
 
-DasResult CreateIDasBasicErrorLens(
+DAS_C_API DasResult CreateIDasBasicErrorLens(
     DAS::PluginInterface::IDasBasicErrorLens** pp_out_error_lens)
 {
     DAS_UTILS_CHECK_POINTER(pp_out_error_lens)

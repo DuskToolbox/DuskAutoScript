@@ -10,6 +10,7 @@
 namespace Das::PluginInterface
 {
     DAS_INTERFACE IDasPluginPackage;
+    DAS_INTERFACE IDasBasicErrorLens;
 } // namespace Das::PluginInterface
 
 namespace Das::ExportInterface
@@ -20,7 +21,6 @@ namespace Das::ExportInterface
     struct IDasPluginManager;
     struct IDasMemory;
     struct IDasImage;
-    struct IDasBasicErrorLens;
     struct IDasLogRequester;
     struct IDasReadOnlyGuidVector;
     struct IDasInitializeIDasPluginManagerCallback;

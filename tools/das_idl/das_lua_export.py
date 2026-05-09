@@ -16,6 +16,7 @@ Usage:
 
 import argparse
 import os
+import re
 import sys
 from pathlib import Path
 from typing import List
@@ -25,6 +26,24 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from das_idl_parser import parse_idl_file, IdlDocument, InterfaceDef
 from swig_lua_generator import LuaSwigGenerator
+
+
+def _collect_abi_interface_names(abi_dir: str) -> set[str]:
+    """Collect interface names that are available from generated ABI headers."""
+    available: set[str] = set()
+    abi_path = Path(abi_dir)
+    if not abi_path.is_dir():
+        return available
+
+    for header in abi_path.glob('*.h'):
+        try:
+            text = header.read_text(encoding='utf-8')
+        except UnicodeDecodeError:
+            text = header.read_text(encoding='utf-8', errors='ignore')
+        available.update(
+            re.findall(r'\bDAS_INTERFACE\s+([A-Za-z_][A-Za-z0-9_]*)\b', text)
+        )
+    return available
 
 
 def _merge_documents(documents: List[IdlDocument]) -> IdlDocument:
@@ -138,16 +157,15 @@ def generate_cpp_file(
     parts.append('#include "lauxlib.h"')
     parts.append('#include "lualib.h"')
     parts.append('}')
+    parts.append('#include <cstdio>')
+    parts.append('#include <string>')
     parts.append('#include <sol/sol.hpp>')
     parts.append('')
 
-    # Include ABI headers only when the corresponding header file exists
-    # on disk. Some interfaces (e.g., IDasTemplateMatchResult) are nested
-    # inside other IDL files and don't have their own ABI header.
-    for iface in interfaces:
-        abi_header = os.path.join(abi_dir, f'{iface.name}.h')
-        if os.path.isfile(abi_header):
-            parts.append(f'#include "das/_autogen/idl/abi/{iface.name}.h"')
+    # Include all ABI headers because one IDL file can define multiple
+    # interfaces while generating a single header named after the file.
+    for header in sorted(Path(abi_dir).glob('*.h')):
+        parts.append(f'#include "das/_autogen/idl/abi/{header.name}"')
     parts.append('')
 
     # Include wrapper headers (for convenience types)
@@ -168,12 +186,13 @@ def generate_cpp_file(
     parts.append('using namespace Das::PluginInterface;')
     parts.append('')
 
-    # Filter interfaces to only those with ABI headers — the Director classes
-    # and registration functions can only be generated for interfaces whose
-    # type definitions are available via ABI headers.
+    # Filter interfaces to only those available from ABI headers. Do not require
+    # a same-named header: multi-interface IDL files such as IDasComponent.idl
+    # generate IDasComponent.h containing both IDasComponent and
+    # IDasComponentFactory.
+    available_interface_names = _collect_abi_interface_names(abi_dir)
     abilable_interfaces = [
-        iface for iface in interfaces
-        if os.path.isfile(os.path.join(abi_dir, f'{iface.name}.h'))
+        iface for iface in interfaces if iface.name in available_interface_names
     ]
 
     # ── LuaDirector base class ─────────────────────────────────────────
@@ -186,6 +205,13 @@ def generate_cpp_file(
     for interface in abilable_interfaces:
         parts.append(gen._generate_director_class(interface, iface_map))
         parts.append('')
+
+    # ── ExtractDasBasePointer helper ───────────────────────────────────
+    # 导出辅助函数，供 DasCore.dll 跨 DLL 从 Lua userdata 提取 IDasBase* 指针。
+    # 同时供 IDasVariantVector::PushBackBase/SetBase 绑定修正 Director→IDasBase
+    # 的多继承指针调整。
+    parts.append(gen._generate_extract_base_pointer_function(export_c_macro, abilable_interfaces))
+    parts.append('')
 
     # ── Registration function (interfaces + directors) ─────────────────
     parts.append(gen._generate_registration_function(abilable_interfaces))
@@ -204,12 +230,6 @@ def generate_cpp_file(
             gen._generate_module_binding(doc, available_types)
         )
         parts.append('')
-
-    # ── ExtractDasBasePointer helper ───────────────────────────────────
-    # 导出辅助函数，供 DasCore.dll 跨 DLL 从 Lua userdata 提取 IDasBase* 指针。
-    # 绕过 sol2 的 derive<T>/weak_derive<T> 继承检查（DLL 边界不可靠）。
-    parts.append(gen._generate_extract_base_pointer_function(export_c_macro))
-    parts.append('')
 
     # ── luaopen entry point ────────────────────────────────────────────
     parts.append(gen._generate_luaopen_function(doc, abilable_interfaces, export_c_macro))
@@ -292,10 +312,10 @@ def main() -> int:
     # Generate C++ source
     cpp_code = generate_cpp_file(gen, merged_doc, interfaces, args.name, abi_dir, args.export_c_macro)
 
-    # Filter interfaces for Lua stub — only those with ABI headers
+    # Filter interfaces for Lua stub — only those available from ABI headers.
+    available_interface_names = _collect_abi_interface_names(abi_dir)
     abilable_interfaces = [
-        iface for iface in interfaces
-        if os.path.isfile(os.path.join(abi_dir, f'{iface.name}.h'))
+        iface for iface in interfaces if iface.name in available_interface_names
     ]
 
     # Generate Lua stub

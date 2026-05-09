@@ -118,7 +118,7 @@ module DasCoreApi {
 // Error lens
 //=============================================================================
 
-[export, c_abi] DasResult CreateIDasBasicErrorLens([out] Das::ExportInterface::IDasBasicErrorLens** pp_out_error_lens);
+[export, c_abi] DasResult CreateIDasBasicErrorLens([out] Das::PluginInterface::IDasBasicErrorLens** pp_out_error_lens);
 
 //=============================================================================
 // Log requester

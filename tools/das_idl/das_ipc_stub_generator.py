@@ -107,6 +107,7 @@ class IpcStubGenerator:
 
         includes = []
         includes.append("#include <das/DasTypes.hpp>")
+        includes.append("#include <das/DasPtr.hpp>")
         includes.append("#include <das/IDasBase.h>")
         includes.append("#include <das/Core/IPC/IStubBase.h>")
         includes.append("#include <das/Core/IPC/MemorySerializer.h>")
@@ -557,6 +558,23 @@ class IpcStubGenerator:
             lines.append(f"{inner_indent}{cpp_return_type} call_result = impl->{method.name}({params_str});")
         else:
             lines.append(f"{inner_indent}impl->{method.name}({params_str});")
+
+        for param in out_params:
+            local_name = f"arg_{param.name}" if param.name in handle_param_names else param.name
+            is_iface = (param.type_info.type_kind == TypeKind.INTERFACE and param.type_info.is_pointer)
+            if not is_iface:
+                continue
+
+            base_cpp = self._get_cpp_type_base(param.type_info)
+            interface_ns = self.type_mapper.interface_namespaces.get(param.type_info.base_type, "")
+            full_cpp_type = f"{interface_ns}::{base_cpp}" if interface_ns else base_cpp
+            owner_type = full_cpp_type.rstrip()
+            if owner_type.endswith("*"):
+                owner_type = owner_type[:-1].rstrip()
+            lines.append(
+                f"{inner_indent}[[maybe_unused]] auto {local_name}_out_owner = "
+                f"DAS::DasPtr<{owner_type}>::Attach({local_name});"
+            )
         lines.append("")
 
         # ===== Response serialization =====

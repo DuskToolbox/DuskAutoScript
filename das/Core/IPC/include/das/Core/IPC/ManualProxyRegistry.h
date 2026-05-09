@@ -17,7 +17,8 @@ using ManualProxyFactory =
                   std::weak_ptr<BusinessThread> business_thread,
                   ProxyFactory&                 proxy_factory);
 
-// Try autogen factory first, then fall back to manual registry
+// Try manual registry first for interfaces that need custom IPC semantics,
+// then fall back to the generated proxy factory.
 DasPtr<IDasBase> CreateProxyByInterfaceIdWithFallback(
     uint32_t                      interface_id,
     const ObjectId&               object_id,

@@ -105,6 +105,20 @@ DAS_C_API DasResult DasUnregisterMainProcessServiceByName(const char* name)
     return ctx->UnregisterServiceByName(name);
 }
 
+DAS_C_API DasResult InitializeIDasPluginManager(
+    Das::ExportInterface::IDasReadOnlyGuidVector*,
+    Das::ExportInterface::IDasInitializeIDasPluginManagerCallback*,
+    Das::ExportInterface::IDasInitializeIDasPluginManagerWaiter** pp_out_waiter)
+{
+    if (pp_out_waiter == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    *pp_out_waiter = nullptr;
+    return DAS_E_NO_IMPLEMENTATION;
+}
+
 // SWIG-compatible wrappers — now at global scope (moved out of Das::Swig)
 // Thin wrappers that delegate to C API, returning DasRetXxx value types.
 

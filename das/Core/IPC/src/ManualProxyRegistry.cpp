@@ -31,19 +31,6 @@ DasPtr<IDasBase> CreateProxyByInterfaceIdWithFallback(
     std::weak_ptr<BusinessThread> business_thread,
     ProxyFactory&                 proxy_factory)
 {
-    // Try autogen factory first
-    IDasBase* proxy = DasIpcProxy::CreateProxyByInterfaceId(
-        interface_id,
-        object_id,
-        run_loop,
-        business_thread,
-        proxy_factory);
-
-    if (proxy != nullptr)
-    {
-        return DasPtr<IDasBase>::Attach(proxy);
-    }
-
     ManualProxyFactory manual_factory = nullptr;
     {
         std::lock_guard lock{GetManualRegistryMutex()};
@@ -67,6 +54,18 @@ DasPtr<IDasBase> CreateProxyByInterfaceIdWithFallback(
         {
             return DasPtr<IDasBase>::Attach(manual_proxy);
         }
+    }
+
+    IDasBase* proxy = DasIpcProxy::CreateProxyByInterfaceId(
+        interface_id,
+        object_id,
+        run_loop,
+        business_thread,
+        proxy_factory);
+
+    if (proxy != nullptr)
+    {
+        return DasPtr<IDasBase>::Attach(proxy);
     }
 
     return nullptr;

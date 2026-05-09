@@ -18,6 +18,62 @@
 
 local LuaTestPlugin = {}
 
+local DAS_S_OK = 0
+local DAS_S_FALSE = 1
+local DAS_PLUGIN_FEATURE_COMPONENT_FACTORY = 8
+
+local function das_string(value)
+    if value == nil then
+        return nil
+    end
+    if type(value) ~= "string" then
+        value = tostring(value)
+    end
+    local hr, out_string = CreateIDasReadOnlyStringFromUtf8(value)
+    if hr < 0 then
+        return nil
+    end
+    return out_string
+end
+
+local function read_das_string(value)
+    if value == nil then
+        return nil
+    end
+    if type(value) == "string" then
+        return value
+    end
+    local hr, out_string = value:GetUtf8()
+    if hr < 0 then
+        return nil
+    end
+    return out_string
+end
+
+local function push_back_string(vector, value)
+    local out_string = das_string(value)
+    if not out_string then
+        return 1
+    end
+    return vector:PushBackString(out_string)
+end
+
+local function dispatch_with_name(component, name, arguments)
+    local function_name = das_string(name)
+    if not function_name then
+        return 1
+    end
+    return component:Dispatch(function_name, arguments)
+end
+
+local function create_variant_vector()
+    local hr, vector = CreateIDasVariantVector()
+    if hr < 0 then
+        return nil
+    end
+    return vector
+end
+
 -- ==========================================================================
 -- BridgeLifecycleDirector — 桥接生命周期验证 Director
 -- 对照 Java BridgeLifecycleDirector (ISwigDasComponent)
@@ -49,10 +105,10 @@ local function dispatch_callback(source)
     callback_fired = true
     if bridge_callback then
         -- 构造 lifecycle_callback 参数并调用 Dispatch
-        local out_args = CreateIDasVariantVector()
+        local out_args = create_variant_vector()
         if out_args then
-            out_args:PushBackString("bridge_released:" .. source)
-            bridge_callback:Dispatch("lifecycle_callback", out_args)
+            push_back_string(out_args, "bridge_released:" .. source)
+            dispatch_with_name(bridge_callback, "lifecycle_callback", out_args)
         end
     end
 end
@@ -61,7 +117,11 @@ end
 --- 对照 Java: new BridgeLifecycleDirector() extends ISwigDasComponent
 local function create_bridge_lifecycle_director()
     local director = ILuaDasComponent({
-        Dispatch = function(self, function_name, arguments)
+        __gc = function()
+            dispatch_callback("director")
+        end,
+
+        Dispatch = function(function_name, arguments)
             -- stub: 不需要实际功能
             return 1  -- DAS_E_NO_IMPLEMENTATION
         end,
@@ -84,32 +144,32 @@ function LuaTestPlugin.createInstance()
     -- PluginPackage: ILuaDasPluginPackage Director
     -- 对照 Java: JavaTestPlugin extends ISwigDasPluginPackage
     local package = ILuaDasPluginPackage({
-        SetSessionId = function(self, sid)
+        SetSessionId = function(sid)
             session_id = sid
         end,
 
-        EnumFeature = function(self, index)
+        EnumFeature = function(index)
             -- 对照 Java: EnumFeature(BigInteger index)
             -- [out] DasPluginFeature* 通过多返回值传递
             if index == 0 then
-                return 0  -- DAS_S_OK (feature 未填充)
+                return DAS_S_OK, DAS_PLUGIN_FEATURE_COMPONENT_FACTORY
             end
-            return 1  -- DAS_E_NOT_FOUND
+            return DAS_S_FALSE
         end,
 
-        CreateFeatureInterface = function(self, index)
+        CreateFeatureInterface = function(index)
             -- 对照 Java: CreateFeatureInterface(BigInteger index)
             -- [out] IDasBase** 通过多返回值传递
             if index == 0 then
                 local factory = LuaTestPlugin._create_factory(session_id)
-                return 0, factory  -- DAS_S_OK + [out] IDasBase*
+                return DAS_S_OK, factory  -- DAS_S_OK + [out] IDasBase*
             end
-            return 1  -- DAS_E_NOT_FOUND
+            return DAS_S_FALSE
         end,
 
-        CanUnloadNow = function(self)
+        CanUnloadNow = function()
             -- 对照 Java: CanUnloadNow() → true
-            return 0, true  -- DAS_S_OK + [out] bool
+            return DAS_S_OK, true  -- DAS_S_OK + [out] bool
         end,
     })
     return package
@@ -121,16 +181,16 @@ end
 
 function LuaTestPlugin._create_factory(session_id)
     return ILuaDasComponentFactory({
-        IsSupported = function(self, component_iid)
+        IsSupported = function(component_iid)
             -- 对照 Java: IsSupported(DasGuid)
-            return 0  -- DAS_S_OK
+            return DAS_S_OK
         end,
 
-        CreateInstance = function(self, component_iid)
+        CreateInstance = function(component_iid)
             -- 对照 Java: CreateInstance(DasGuid) → DasRetDasComponent
             -- [out] IDasComponent** 通过多返回值传递
             local component = LuaTestPlugin._create_component(session_id)
-            return 0, component  -- DAS_S_OK + [out] IDasComponent*
+            return DAS_S_OK, component  -- DAS_S_OK + [out] IDasComponent*
         end,
     })
 end
@@ -142,17 +202,11 @@ end
 
 function LuaTestPlugin._create_component(session_id)
     return ILuaDasComponent({
-        Dispatch = function(self, function_name, arguments)
+        Dispatch = function(function_name, arguments)
             -- 对照 Java: Dispatch(DasReadOnlyString, IDasVariantVector)
             -- [out] IDasVariantVector** 通过多返回值传递
 
-            local name_str = nil
-            if function_name then
-                local hr, str = function_name:GetUtf8()
-                if hr >= 0 and str then
-                    name_str = str
-                end
-            end
+            local name_str = read_das_string(function_name)
 
             if not name_str then
                 return 1  -- DAS_E_INVALID_ARGUMENT
@@ -184,16 +238,20 @@ function LuaTestPlugin._handle_echo(arguments)
         return 1  -- DAS_E_INVALID_ARGUMENT
     end
 
-    local hr, input_str = arguments:GetString(0)
-    if hr < 0 or not input_str then
+    local hr, input_value = arguments:GetString(0)
+    if hr < 0 or not input_value then
+        return 1
+    end
+    local input_str = read_das_string(input_value)
+    if not input_str then
         return 1
     end
 
     local echo_result = "[Lua] echo: " .. input_str
 
-    local out_args = CreateIDasVariantVector()
+    local out_args = create_variant_vector()
     if out_args then
-        out_args:PushBackString(echo_result)
+        push_back_string(out_args, echo_result)
         return 0, out_args  -- DAS_S_OK + [out] IDasVariantVector*
     end
     return 1
@@ -213,8 +271,12 @@ function LuaTestPlugin._handle_compute(arguments)
         return 1
     end
 
-    local hr1, op = arguments:GetString(0)
-    if hr1 < 0 or not op then
+    local hr1, op_value = arguments:GetString(0)
+    if hr1 < 0 or not op_value then
+        return 1
+    end
+    local op = read_das_string(op_value)
+    if not op then
         return 1
     end
 
@@ -240,7 +302,7 @@ function LuaTestPlugin._handle_compute(arguments)
         return 1  -- unknown op
     end
 
-    local out_args = CreateIDasVariantVector()
+    local out_args = create_variant_vector()
     if out_args then
         out_args:PushBackInt(computed)
         return 0, out_args
@@ -255,11 +317,11 @@ end
 -- ==========================================================================
 
 function LuaTestPlugin._handle_get_session_info(session_id, arguments)
-    local out_args = CreateIDasVariantVector()
+    local out_args = create_variant_vector()
     if out_args then
         out_args:PushBackInt(session_id)
-        out_args:PushBackString("Lua")
-        out_args:PushBackString("Das.ComponentImpl")
+        push_back_string(out_args, "Lua")
+        push_back_string(out_args, "Das.ComponentImpl")
         return 0, out_args
     end
     return 1
@@ -291,13 +353,22 @@ function LuaTestPlugin._handle_bridge_lifecycle_test(arguments)
         return 1
     end
 
-    local hr2, marker = arguments:GetString(1)
-    if hr2 < 0 or not marker then
+    local hr2, marker_value = arguments:GetString(1)
+    if hr2 < 0 or not marker_value then
+        return 1
+    end
+    local marker = read_das_string(marker_value)
+    if not marker then
+        return 1
+    end
+
+    local hr3, callback_component = DasQueryInterfaceIDasComponent(callback_base)
+    if hr3 < 0 or not callback_component then
         return 1
     end
 
     -- 设置回调（GC 时使用）
-    LuaTestPlugin.SetBridgeCallback(callback_base)
+    LuaTestPlugin.SetBridgeCallback(callback_component)
 
     -- 验证点 2: 创建继承 ILuaDasComponent 的 Director
     -- C++ bridge 持有引用 → 对象不能被 GC
@@ -305,10 +376,12 @@ function LuaTestPlugin._handle_bridge_lifecycle_test(arguments)
 
     -- 将 Director 通过返回值传给 C++
     -- C++ 收到后不处理返回值 → proxy 释放 → bridge 释放链
-    local out_args = CreateIDasVariantVector()
+    local out_args = create_variant_vector()
     if out_args then
+        push_back_string(out_args, "director_created:" .. marker)
         out_args:PushBackBase(director)
-        out_args:PushBackString("director_created:" .. marker)
+        director = nil
+        collectgarbage("collect")
         return 0, out_args
     end
     return 1
