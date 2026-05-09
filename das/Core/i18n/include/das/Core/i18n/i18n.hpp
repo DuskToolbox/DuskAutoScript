@@ -101,9 +101,17 @@ class I18n
     ConstLocaleToTranslateIt  it_default_translate_map_;
     std::u8string             default_locale_;
 
+    void ResetToEmptyState()
+    {
+        translate_resource_.clear();
+        it_default_translate_map_ = translate_resource_.end();
+        default_locale_.clear();
+    }
+
 public:
     explicit I18n(const std::filesystem::path& json_path)
     {
+        ResetToEmptyState();
         std::ifstream ifs{};
         DAS::Utils::EnableStreamException(
             ifs,
@@ -122,15 +130,27 @@ public:
         }
         ParseFromYyjsonValue(*parsed);
     }
-    explicit I18n(const yyjson::value& json) { ParseFromYyjsonValue(json); }
+    explicit I18n(const yyjson::value& json)
+    {
+        ResetToEmptyState();
+        ParseFromYyjsonValue(json);
+    }
 
     void ParseFromYyjsonValue(const yyjson::value& json)
     {
+        ResetToEmptyState();
+
         auto obj = json.as_object();
         if (!obj)
         {
             DAS_CORE_LOG_ERROR(
                 "Failed to parse i18n: JSON root is not an object");
+            return;
+        }
+        if (!obj->contains(std::string_view("type")))
+        {
+            DAS_CORE_LOG_ERROR(
+                "Failed to parse i18n: missing or invalid 'type' field");
             return;
         }
         auto type_val = (*obj)[std::string_view("type")];
@@ -143,9 +163,23 @@ public:
         }
         const auto type = static_cast<ExportInterface::DasType>(*type_opt);
         // NOTE: If T changes, we need to add code to handle this situation.
-        Details::CheckInput<T>(type);
+        try
+        {
+            Details::CheckInput<T>(type);
+        }
+        catch (const std::exception& ex)
+        {
+            DAS_CORE_LOG_ERROR("Failed to parse i18n: {}", ex.what());
+            return;
+        }
         const auto string_to_number_converter = Details::GetConverter<T>();
 
+        if (!obj->contains(std::string_view("resource")))
+        {
+            DAS_CORE_LOG_ERROR(
+                "Failed to parse i18n: missing or invalid 'resource' field");
+            return;
+        }
         auto resource_val = (*obj)[std::string_view("resource")];
         if (resource_val.is_null() || !resource_val.is_object())
         {
@@ -153,7 +187,8 @@ public:
                 "Failed to parse i18n: missing or invalid 'resource' field");
             return;
         }
-        auto resource_obj = *resource_val.as_object();
+        InternalTranslateResource parsed_resource{};
+        auto                      resource_obj = *resource_val.as_object();
         for (const auto& [locale_name, i18n_resource] : resource_obj)
         {
             TranslateItemMap<T, DasReadOnlyStringWrapper> tmp_map{};
@@ -176,18 +211,21 @@ public:
             std::u8string locale_key(
                 reinterpret_cast<const char8_t*>(locale_name.data()),
                 locale_name.size());
-            translate_resource_[std::move(locale_key)] = std::move(tmp_map);
+            parsed_resource[std::move(locale_key)] = std::move(tmp_map);
         }
+        translate_resource_ = std::move(parsed_resource);
         SetDefaultLocale(u8"en");
     }
     explicit I18n(const InternalTranslateResource& translate_resource)
         : translate_resource_{translate_resource}
     {
+        SetDefaultLocale(u8"en");
     }
 
     explicit I18n(InternalTranslateResource&& translate_resource)
         : translate_resource_{std::move(translate_resource)}
     {
+        SetDefaultLocale(u8"en");
     }
 
     ~I18n() = default;
@@ -201,6 +239,7 @@ public:
             it_default_translate_map_ = it;
             return DAS_S_OK;
         }
+        it_default_translate_map_ = translate_resource_.end();
         return DAS_E_NO_IMPLEMENTATION;
     }
     std::u8string GetDefaultLocale() const { return default_locale_; }
@@ -212,7 +251,12 @@ public:
         {
             return DAS_E_INVALID_POINTER;
         }
+        *pp_out_error_explanation = nullptr;
 
+        if (it_default_translate_map_ == translate_resource_.end())
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
         const auto& translate_table = it_default_translate_map_->second;
         if (const auto it = translate_table.find(result);
             it != translate_table.end())
@@ -220,7 +264,6 @@ public:
             it->second.GetImpl(pp_out_error_explanation);
             return DAS_S_OK;
         }
-        *pp_out_error_explanation = nullptr;
         return DAS_E_OUT_OF_RANGE;
     }
     DasResult GetErrorMessage(
@@ -228,20 +271,21 @@ public:
         const T&             result,
         IDasReadOnlyString** pp_out_error_message) const
     {
+        if (locale == nullptr || pp_out_error_message == nullptr)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        *pp_out_error_message = nullptr;
+
         if (const auto resource_it = translate_resource_.find(locale);
             resource_it != translate_resource_.end())
         {
             const auto& table = resource_it->second;
             if (const auto it = table.find(result); it != table.end())
             {
-                if (pp_out_error_message == nullptr)
-                {
-                    return DAS_E_INVALID_POINTER;
-                }
                 it->second.GetImpl(pp_out_error_message);
                 return DAS_S_OK;
             }
-            *pp_out_error_message = nullptr;
             return DAS_E_OUT_OF_RANGE;
         }
         // fallback to default locale
@@ -251,10 +295,6 @@ public:
             const auto& table = en_us_resource_it->second;
             if (const auto it = table.find(result); it != table.end())
             {
-                if (pp_out_error_message == nullptr)
-                {
-                    return DAS_E_INVALID_POINTER;
-                }
                 it->second.GetImpl(pp_out_error_message);
                 return DAS_S_OK;
             }
