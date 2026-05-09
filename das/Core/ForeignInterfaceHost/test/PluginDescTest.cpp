@@ -5,9 +5,36 @@
 #include <gtest/gtest.h>
 #include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace
 {
+    std::string BasicPluginJsonWith(std::string_view extra_fields)
+    {
+        std::string result = R"(
+    {
+        "name": "TestPlugin",
+        "author": "test",
+        "version": "1.0",
+        "guid": "35BF38D4-7760-42EA-8A9C-9F2BF7C3CBDA",
+        "description": "test",
+        "supportedSystem": "Windows",
+        "language": "Cpp",
+        "pluginFilenameExtension": "dll",
+        "settings": []
+    )";
+
+        if (!extra_fields.empty())
+        {
+            result += ",";
+            result += extra_fields;
+        }
+
+        result += "\n    }";
+        return result;
+    }
+
     template <class T>
     T JsonToStruct(const std::string& string)
     {
@@ -61,6 +88,67 @@ TEST(PluginPackageDescTest, FromBasicJson)
         DAS::Core::ForeignInterfaceHost::ForeignInterfaceLanguage::Cpp);
     EXPECT_EQ(plugin_desc.plugin_filename_extension, "dll");
     EXPECT_EQ(plugin_desc.guid, guid);
+}
+
+TEST(PluginPackageDescTest, LoadMode_MissingDefaultsToInProcess)
+{
+    const auto desc =
+        JsonToStruct<DAS::Core::ForeignInterfaceHost::PluginPackageDesc>(
+            BasicPluginJsonWith(""));
+
+    EXPECT_EQ(
+        desc.load_mode,
+        DAS::Core::ForeignInterfaceHost::LoadMode::InProcess);
+}
+
+TEST(PluginPackageDescTest, LoadMode_NumericValues)
+{
+    const auto in_process =
+        JsonToStruct<DAS::Core::ForeignInterfaceHost::PluginPackageDesc>(
+            BasicPluginJsonWith(R"("loadMode": 0)"));
+    EXPECT_EQ(
+        in_process.load_mode,
+        DAS::Core::ForeignInterfaceHost::LoadMode::InProcess);
+
+    const auto ipc =
+        JsonToStruct<DAS::Core::ForeignInterfaceHost::PluginPackageDesc>(
+            BasicPluginJsonWith(R"("loadMode": 1)"));
+    EXPECT_EQ(ipc.load_mode, DAS::Core::ForeignInterfaceHost::LoadMode::Ipc);
+}
+
+TEST(PluginPackageDescTest, LoadMode_StringValues)
+{
+    using DAS::Core::ForeignInterfaceHost::LoadMode;
+
+    const std::vector<std::pair<std::string, LoadMode>> cases{
+        {"ipc", LoadMode::Ipc},
+        {"IPC", LoadMode::Ipc},
+        {"inProcess", LoadMode::InProcess},
+        {"InProcess", LoadMode::InProcess},
+        {"in_process", LoadMode::InProcess},
+    };
+
+    for (const auto& [value, expected] : cases)
+    {
+        const auto desc =
+            JsonToStruct<DAS::Core::ForeignInterfaceHost::PluginPackageDesc>(
+                BasicPluginJsonWith(R"("loadMode": ")" + value + R"(")"));
+        EXPECT_EQ(desc.load_mode, expected) << "loadMode=" << value;
+    }
+}
+
+TEST(PluginPackageDescTest, LoadMode_InvalidStringFails)
+{
+    try
+    {
+        (void)JsonToStruct<DAS::Core::ForeignInterfaceHost::PluginPackageDesc>(
+            BasicPluginJsonWith(R"("loadMode": "sidecar")"));
+        FAIL() << "Invalid loadMode string should fail";
+    }
+    catch (const std::runtime_error& e)
+    {
+        EXPECT_NE(std::string{e.what()}.find("loadMode"), std::string::npos);
+    }
 }
 
 TEST(PluginPackageDescTest, FromUnexpectedGuidJson)
