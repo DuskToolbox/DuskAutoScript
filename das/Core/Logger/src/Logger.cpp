@@ -1,13 +1,10 @@
 // 因为我们对getenv的使用非常克制，所以这里可以使用宏屏蔽警告
 // warning C4996: 'getenv': This function or variable may be unsafe. Consider
 // using _dupenv_s instead.
-#define _CRT_SECURE_NO_WARNINGS .
+#define _CRT_SECURE_NO_WARNINGS
 #include "IDasLogRequesterImpl.h"
 #include <array>
-#include <boost/interprocess/creation_tags.hpp>
-#include <boost/interprocess/sync/named_mutex.hpp>
-#include <boost/interprocess/sync/scoped_lock.hpp>
-#include <cstdlib>
+#include <das/Core/Logger/CrossProcessMutex.h>
 #include <das/Core/Logger/Logger.h>
 #include <spdlog/details/null_mutex.h>
 #include <spdlog/sinks/base_sink.h>
@@ -66,43 +63,13 @@ DAS_NS_ANONYMOUS_DETAILS_BEGIN
 class ProcessSafeStdoutSink final
     : public spdlog::sinks::base_sink<spdlog::details::null_mutex>
 {
-    spdlog::sinks::stdout_color_sink_mt inner_sink_;
-    boost::interprocess::named_mutex    cross_process_mutex_;
-
-    constexpr static auto DAS_LOGGER_MUTEX = "_DAS_LOGGER_MUTEX";
-    constexpr static auto DAS_MAIN_PROCESS_LAUNCHED_FLAG =
-        "_DAS_MAIN_PROCESS_LAUNCHED_FLAG";
-
-    static bool IsMainProcess()
-    {
-        if (std::getenv(DAS_MAIN_PROCESS_LAUNCHED_FLAG) == nullptr)
-        {
-#ifdef DAS_WINDOWS
-            _putenv_s(DAS_MAIN_PROCESS_LAUNCHED_FLAG, "1");
-#else
-            std::setenv(DAS_MAIN_PROCESS_LAUNCHED_FLAG, "1");
-#endif // DAS_WINDOWS
-            return true;
-        }
-        return false;
-    }
-
-    static boost::interprocess::named_mutex CreateInterprocessMutex()
-    {
-        // 确保在主进程中创建 mutex，避免子进程继承后无法打开
-        if (IsMainProcess())
-        {
-            boost::interprocess::named_mutex::remove(DAS_LOGGER_MUTEX);
-            return {boost::interprocess::create_only, DAS_LOGGER_MUTEX};
-        }
-        return {boost::interprocess::open_only, DAS_LOGGER_MUTEX};
-    }
+    spdlog::sinks::stdout_color_sink_mt  inner_sink_;
+    DAS::Core::Logger::CrossProcessMutex cross_process_mutex_;
 
 protected:
     void sink_it_(const spdlog::details::log_msg& msg) override
     {
-        boost::interprocess::scoped_lock<boost::interprocess::named_mutex> lock(
-            cross_process_mutex_);
+        auto lock = cross_process_mutex_.Acquire();
         inner_sink_.log(msg);
     }
 
@@ -117,13 +84,12 @@ protected:
 
     void flush_() override
     {
-        boost::interprocess::scoped_lock<boost::interprocess::named_mutex> lock(
-            cross_process_mutex_);
+        auto lock = cross_process_mutex_.Acquire();
         inner_sink_.flush();
     }
 
 public:
-    ProcessSafeStdoutSink() : cross_process_mutex_(CreateInterprocessMutex()) {}
+    ProcessSafeStdoutSink() = default;
 
     ~ProcessSafeStdoutSink() override = default;
 };
