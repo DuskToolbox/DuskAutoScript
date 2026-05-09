@@ -284,11 +284,12 @@ TEST_F(SchedulerServiceTest, Initialize_CorruptTaskFile_VisibleAsInvalid)
             .as_string()
             .value(),
         "invalid");
-    EXPECT_FALSE(
+    auto reason =
         (*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
               .as_object())[std::string_view("unavailabilityReason")]
-            .as_object()
-            ->empty());
+            .as_string();
+    ASSERT_TRUE(reason.has_value());
+    EXPECT_FALSE(reason->empty());
 }
 
 TEST_F(SchedulerServiceTest, Initialize_MissingTaskType_Unavailable)
@@ -3160,11 +3161,12 @@ TEST_F(SchedulerUnavailableTest, UnavailableAndCorruptInstances_VisibleInGet)
             .as_string()
             .value(),
         "invalid");
-    EXPECT_FALSE(
+    auto reason =
         (*(*(*state.as_object())[std::string_view("tasks")].as_array())[1]
               .as_object())[std::string_view("unavailabilityReason")]
-            .as_object()
-            ->empty());
+            .as_string();
+    ASSERT_TRUE(reason.has_value());
+    EXPECT_FALSE(reason->empty());
 }
 
 TEST_F(SchedulerUnavailableTest, UnavailableInstance_NotExecutedOnStart)
