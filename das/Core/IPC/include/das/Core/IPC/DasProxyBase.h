@@ -1,7 +1,6 @@
 #ifndef DAS_CORE_IPC_DAS_PROXY_BASE_H
 #define DAS_CORE_IPC_DAS_PROXY_BASE_H
 
-#include <atomic>
 #include <das/Core/IPC/BusinessThread.h>
 #include <das/Core/IPC/DasAsyncSender.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
@@ -111,7 +110,7 @@ public:
     [[nodiscard]]
     uint32_t AddRef()
     {
-        return ++ref_count_;
+        return AddRefImpl();
     }
 
     /// @brief 释放引用计数
@@ -119,12 +118,7 @@ public:
     [[nodiscard]]
     uint32_t Release()
     {
-        uint32_t count = ref_count_.fetch_sub(1, std::memory_order_acq_rel) - 1;
-        if (count == 0)
-        {
-            delete this;
-        }
-        return count;
+        return ReleaseImpl();
     }
 
     /// @brief IPC 远程 QueryInterface
@@ -144,7 +138,7 @@ public:
         if (iid == DasIidOf<IPCProxyBase>())
         {
             *pp_object = static_cast<IPCProxyBase*>(this);
-            (void)AddRef();
+            (void)AddRefImpl();
             return DAS_S_OK;
         }
 
@@ -261,9 +255,6 @@ protected:
         *out_proxy = proxy;
         return DAS_S_OK;
     }
-
-private:
-    std::atomic<uint32_t> ref_count_{1};
 };
 
 DAS_CORE_IPC_NS_END

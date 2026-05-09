@@ -1,7 +1,6 @@
 #ifndef DAS_CORE_IPC_DAS_VARIANT_VECTOR_BY_VALUE_PROXY_H
 #define DAS_CORE_IPC_DAS_VARIANT_VECTOR_BY_VALUE_PROXY_H
 
-#include <atomic>
 #include <das/Core/IPC/DasProxyBase.h>
 #include <das/Core/IPC/MethodMetadata.h>
 #include <das/DasGuidHolder.h>
@@ -57,19 +56,9 @@ public:
 
     ~DasVariantVectorByValueProxy() override = default;
 
-    // IUnknown - 由自身 ref_count_ 管理（不继承 IPCProxyBase 的
-    // AddRef/Release）
-    uint32_t AddRef() override { return ++ref_count_; }
+    uint32_t AddRef() override { return AddRefImpl(); }
 
-    uint32_t Release() override
-    {
-        uint32_t count = --ref_count_;
-        if (count == 0)
-        {
-            delete this;
-        }
-        return count;
-    }
+    uint32_t Release() override { return ReleaseImpl(); }
 
     DasResult QueryInterface(const DasGuid& iid, void** pp_object) override;
 
@@ -124,9 +113,6 @@ private:
     // Local cache
     std::vector<CachedVariant> cache_;
     bool                       data_loaded_ = false;
-
-    // 引用计数（自身独立管理，不使用 IPCProxyBase 的）
-    std::atomic<uint32_t> ref_count_{1};
 };
 
 DAS_CORE_IPC_NS_END

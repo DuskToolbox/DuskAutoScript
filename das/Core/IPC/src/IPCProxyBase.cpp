@@ -26,6 +26,43 @@ DistributedObjectManager& IPCProxyBase::GetObjectManager() const noexcept
     return proxy_factory_.GetObjectManager();
 }
 
+bool IPCProxyBase::TryAddRefForCache() noexcept
+{
+    uint32_t current = ref_count_.load(std::memory_order_acquire);
+    while (current != 0)
+    {
+        if (ref_count_.compare_exchange_weak(
+                current,
+                current + 1,
+                std::memory_order_acq_rel,
+                std::memory_order_acquire))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+uint32_t IPCProxyBase::ReleaseRuntimeTagRef() noexcept { return ReleaseImpl(); }
+
+uint32_t IPCProxyBase::AddRefImpl() noexcept
+{
+    return ref_count_.fetch_add(1, std::memory_order_acq_rel) + 1;
+}
+
+uint32_t IPCProxyBase::ReleaseImpl() noexcept
+{
+    const uint32_t previous =
+        ref_count_.fetch_sub(1, std::memory_order_acq_rel);
+    const uint32_t count = previous - 1;
+    if (count == 0)
+    {
+        std::atomic_thread_fence(std::memory_order_acquire);
+        delete this;
+    }
+    return count;
+}
+
 // V3: IPCProxyBase 的 SendRequest 方法实现
 // 通过 PostSend 发送请求，然后 PumpUntilResponse 等待响应
 

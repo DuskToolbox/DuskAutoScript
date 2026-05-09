@@ -1,7 +1,6 @@
 #ifndef DAS_CORE_IPC_DAS_READ_ONLY_STRING_PROXY_H
 #define DAS_CORE_IPC_DAS_READ_ONLY_STRING_PROXY_H
 
-#include <atomic>
 #include <das/Core/IPC/DasProxyBase.h>
 #include <das/Core/IPC/MethodMetadata.h>
 #include <das/DasGuidHolder.h>
@@ -27,19 +26,9 @@ public:
 
     ~DasReadOnlyStringProxy() override = default;
 
-    // IUnknown - 由自身 ref_count_ 管理（不继承 IPCProxyBase 的
-    // AddRef/Release）
-    uint32_t AddRef() override { return ++ref_count_; }
+    uint32_t AddRef() override { return AddRefImpl(); }
 
-    uint32_t Release() override
-    {
-        uint32_t count = --ref_count_;
-        if (count == 0)
-        {
-            delete this;
-        }
-        return count;
-    }
+    uint32_t Release() override { return ReleaseImpl(); }
 
     DasResult QueryInterface(const DasGuid& iid, void** pp_object) override
     {
@@ -93,9 +82,6 @@ private:
     bool utf16_ready_ = false;
     bool w_ready_ = false;
     bool utf32_ready_ = false;
-
-    // 引用计数（自身独立管理，不使用 IPCProxyBase 的）
-    std::atomic<uint32_t> ref_count_{1};
 };
 
 DAS_CORE_IPC_NS_END

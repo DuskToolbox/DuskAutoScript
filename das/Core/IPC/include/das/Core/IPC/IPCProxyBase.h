@@ -1,6 +1,7 @@
 #ifndef DAS_CORE_IPC_IPC_PROXY_BASE_H
 #define DAS_CORE_IPC_IPC_PROXY_BASE_H
 
+#include <atomic>
 #include <cstdint>
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
@@ -39,6 +40,12 @@ class IPCProxyBase
 {
 public:
     virtual ~IPCProxyBase() = default;
+
+    [[nodiscard]]
+    bool TryAddRefForCache() noexcept;
+
+    [[nodiscard]]
+    uint32_t ReleaseRuntimeTagRef() noexcept;
 
     /// @brief 获取对象 ID
     /// @note ObjectId 现在通过 body 传递
@@ -129,6 +136,12 @@ protected:
         return run_loop_.AllocateCallId();
     }
 
+    [[nodiscard]]
+    uint32_t AddRefImpl() noexcept;
+
+    [[nodiscard]]
+    uint32_t ReleaseImpl() noexcept;
+
     /// @brief 获取本地 session ID (V3)
     /// @return 本地 session ID
     /// @note 用于设置 Header 的 source_session_id
@@ -215,6 +228,7 @@ protected:
     ProxyFactory& proxy_factory_; // 引用，生命周期由外部管理
 
 private:
+    std::atomic<uint32_t>         ref_count_{1};
     uint32_t                      interface_id_;
     ObjectId                      object_id_;
     IpcRunLoop&                   run_loop_;        // 引用，生命周期由外部管理

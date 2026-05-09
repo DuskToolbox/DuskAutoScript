@@ -8,19 +8,28 @@
  * 完整行为通过集成测试覆盖。
  */
 
+#include <das/Core/IPC/DasReadOnlyStringProxy.h>
+#include <das/Core/IPC/DasVariantVectorByValueProxy.h>
+#include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/ProxyFactory.h>
+#include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/DasTypes.hpp>
 #include <das/IDasBase.h>
 #include <gtest/gtest.h>
 #include <memory>
 
+using DAS::Core::IPC::BusinessThread;
+using DAS::Core::IPC::DasReadOnlyStringProxy;
+using DAS::Core::IPC::DasVariantVectorByValueProxy;
 using DAS::Core::IPC::DecodeObjectId;
 using DAS::Core::IPC::DistributedObjectManager;
 using DAS::Core::IPC::EncodeObjectId;
 using DAS::Core::IPC::IPCProxyBase;
+using DAS::Core::IPC::IpcRunLoop;
 using DAS::Core::IPC::ObjectId;
 using DAS::Core::IPC::ProxyFactory;
+using DAS::Core::IPC::RemoteObjectRegistry;
 
 // Test ObjectId 编码解码后的状态一致性
 TEST(ProxyFactoryTest, ObjectIdEncodingConsistency)
@@ -70,4 +79,79 @@ TEST(ProxyFactoryTest, ObjectIdWithZeroValues)
     EXPECT_EQ(decoded.session_id, 0);
     EXPECT_EQ(decoded.generation, 0);
     EXPECT_EQ(decoded.local_id, 0);
+}
+
+class ProxyRefcountTest : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        run_loop_ = std::make_unique<IpcRunLoop>(
+            false,
+            nullptr,
+            proxy_factory_,
+            registry_);
+    }
+
+    ProxyFactory                  proxy_factory_;
+    RemoteObjectRegistry          registry_;
+    std::unique_ptr<IpcRunLoop>   run_loop_;
+    std::weak_ptr<BusinessThread> business_thread_;
+    const ObjectId object_id_{.session_id = 7, .generation = 1, .local_id = 42};
+};
+
+TEST_F(ProxyRefcountTest, ReadOnlyStringProxyUsesIPCProxyBaseRefcount)
+{
+    auto* proxy = new DasReadOnlyStringProxy(
+        DasReadOnlyStringProxy::InterfaceId,
+        object_id_,
+        *run_loop_,
+        business_thread_,
+        proxy_factory_);
+
+    EXPECT_EQ(proxy->AddRef(), 2u);
+
+    IPCProxyBase* runtime_tag = nullptr;
+    ASSERT_EQ(
+        proxy->QueryInterface(
+            DasIidOf<IPCProxyBase>(),
+            reinterpret_cast<void**>(&runtime_tag)),
+        DAS_S_OK);
+    ASSERT_NE(runtime_tag, nullptr);
+    EXPECT_EQ(runtime_tag, static_cast<IPCProxyBase*>(proxy));
+
+    EXPECT_EQ(runtime_tag->ReleaseRuntimeTagRef(), 2u);
+    EXPECT_TRUE(runtime_tag->TryAddRefForCache());
+
+    EXPECT_EQ(proxy->Release(), 2u);
+    EXPECT_EQ(proxy->Release(), 1u);
+    EXPECT_EQ(proxy->Release(), 0u);
+}
+
+TEST_F(ProxyRefcountTest, VariantVectorProxyUsesIPCProxyBaseRefcount)
+{
+    auto* proxy = new DasVariantVectorByValueProxy(
+        DasVariantVectorByValueProxy::InterfaceId,
+        object_id_,
+        *run_loop_,
+        business_thread_,
+        proxy_factory_);
+
+    EXPECT_EQ(proxy->AddRef(), 2u);
+
+    IPCProxyBase* runtime_tag = nullptr;
+    ASSERT_EQ(
+        proxy->QueryInterface(
+            DasIidOf<IPCProxyBase>(),
+            reinterpret_cast<void**>(&runtime_tag)),
+        DAS_S_OK);
+    ASSERT_NE(runtime_tag, nullptr);
+    EXPECT_EQ(runtime_tag, static_cast<IPCProxyBase*>(proxy));
+
+    EXPECT_EQ(runtime_tag->ReleaseRuntimeTagRef(), 2u);
+    EXPECT_TRUE(runtime_tag->TryAddRefForCache());
+
+    EXPECT_EQ(proxy->Release(), 2u);
+    EXPECT_EQ(proxy->Release(), 1u);
+    EXPECT_EQ(proxy->Release(), 0u);
 }

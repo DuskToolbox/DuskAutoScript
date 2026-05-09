@@ -45,17 +45,14 @@ DasResult SerializeInInterfaceParam(
     }
 
     // Check if the pointer is an IPC Proxy via QueryInterface
-    IDasBase* raw_proxy = nullptr;
-    DasResult qi_result = interface_ptr->QueryInterface(
+    IPCProxyBase* runtime_tag = nullptr;
+    DasResult     qi_result = interface_ptr->QueryInterface(
         DasIidOf<IPCProxyBase>(),
-        reinterpret_cast<void**>(&raw_proxy));
-    if (DAS::IsOk(qi_result) && raw_proxy != nullptr)
+        reinterpret_cast<void**>(&runtime_tag));
+    if (DAS::IsOk(qi_result) && runtime_tag != nullptr)
     {
-        // QI for IPCProxyBase GUID succeeded, so raw_proxy points to an
-        // IPCProxyBase subobject. Use reinterpret_cast to access it.
-        auto* ipc_proxy = reinterpret_cast<IPCProxyBase*>(raw_proxy);
-        out_id = ipc_proxy->GetObjectId();
-        raw_proxy->Release();
+        out_id = runtime_tag->GetObjectId();
+        static_cast<void>(runtime_tag->ReleaseRuntimeTagRef());
         return DAS_S_OK;
     }
     // DAS_E_NO_INTERFACE is NOT an error, try auto-register next
