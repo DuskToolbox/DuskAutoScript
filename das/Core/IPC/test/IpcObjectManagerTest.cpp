@@ -313,3 +313,41 @@ TEST_F(IpcObjectManagerTest, RegisterRemoteObject_NotAffectedByDedup)
     IDasBase* ptr = nullptr;
     EXPECT_NE(manager_->LookupObject(remote_id, &ptr), DAS_S_OK);
 }
+
+TEST_F(IpcObjectManagerTest, RegisterRemoteObject_DuplicateUsesRefcount)
+{
+    ObjectId remote_id{.session_id = 2, .generation = 1, .local_id = 101};
+
+    ASSERT_EQ(manager_->RegisterRemoteObject(remote_id), DAS_S_OK);
+    ASSERT_EQ(manager_->RegisterRemoteObject(remote_id), DAS_S_OK);
+
+    ASSERT_EQ(manager_->UnregisterObject(remote_id), DAS_S_OK);
+    EXPECT_TRUE(manager_->IsValidObject(remote_id));
+
+    ASSERT_EQ(manager_->UnregisterObject(remote_id), DAS_S_OK);
+    EXPECT_FALSE(manager_->IsValidObject(remote_id));
+}
+
+TEST_F(
+    IpcObjectManagerTest,
+    RegisterLocalObject_GenerationIncrementsOnlyOnFinalUnregister)
+{
+    auto     mock = new MockDasObject();
+    ObjectId id{};
+
+    ASSERT_EQ(manager_->RegisterLocalObject(mock, id), DAS_S_OK);
+    ASSERT_EQ(manager_->RegisterLocalObject(mock, id), DAS_S_OK);
+
+    ASSERT_EQ(manager_->UnregisterObject(id), DAS_S_OK);
+    EXPECT_TRUE(manager_->IsValidObject(id));
+
+    ObjectId lookup_id{};
+    EXPECT_EQ(manager_->LookupObjectIdFromPtr(mock, lookup_id), DAS_S_OK);
+    EXPECT_EQ(lookup_id, id);
+
+    ASSERT_EQ(manager_->UnregisterObject(id), DAS_S_OK);
+    EXPECT_FALSE(manager_->IsValidObject(id));
+
+    ObjectId stale_id = id;
+    EXPECT_FALSE(manager_->IsLocalObject(stale_id));
+}

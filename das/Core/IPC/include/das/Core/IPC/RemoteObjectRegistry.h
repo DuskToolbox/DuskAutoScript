@@ -5,6 +5,7 @@
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/IDasBase.h>
+#include <shared_mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -83,6 +84,8 @@ private:
     {
         RemoteObjectInfo info;
     };
+
+    mutable std::shared_mutex mutex_;
 
     std::unordered_map<uint64_t, ObjectEntry> objects_by_id_;
     std::unordered_map<std::string, uint64_t> objects_by_name_;

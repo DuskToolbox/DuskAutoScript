@@ -3,6 +3,8 @@
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/IDasBase.h>
+#include <mutex>
+#include <shared_mutex>
 #include <unordered_map>
 
 DAS_CORE_IPC_NS_BEGIN
@@ -17,20 +19,19 @@ DistributedObjectManager::~DistributedObjectManager()
 
 uint16_t DistributedObjectManager::GetLocalSessionId() const
 {
-    return session_id_;
+    return session_id_.load(std::memory_order_acquire);
 }
 
 DasResult DistributedObjectManager::RegisterLocalObject(
     IDasBase* object_ptr,
     ObjectId& out_object_id)
 {
-#ifndef NDEBUG
-    AssertBusinessThread();
-#endif
     if (object_ptr == nullptr)
     {
         return DAS_E_INVALID_POINTER;
     }
+
+    std::unique_lock lock{mutex_};
 
     // 去重检查：同一指针是否已注册
     auto ptr_it = ptr_to_id_.find(object_ptr);
@@ -91,13 +92,22 @@ DasResult DistributedObjectManager::RegisterLocalObject(
 DasResult DistributedObjectManager::RegisterRemoteObject(
     const ObjectId& object_id)
 {
-#ifndef NDEBUG
-    AssertBusinessThread();
-#endif
     auto result = ValidateObjectId(object_id);
     if (result != DAS_S_OK)
     {
         return result;
+    }
+
+    std::unique_lock lock{mutex_};
+    auto             existing = objects_.find(object_id);
+    if (existing != objects_.end())
+    {
+        if (existing->second.is_local)
+        {
+            return DAS_E_DUPLICATE_ELEMENT;
+        }
+        ++existing->second.ref_count_;
+        return DAS_S_OK;
     }
 
     ObjectEntry entry{
@@ -113,41 +123,38 @@ DasResult DistributedObjectManager::RegisterRemoteObject(
 
 DasResult DistributedObjectManager::UnregisterObject(const ObjectId& object_id)
 {
-#ifndef NDEBUG
-    AssertBusinessThread();
-#endif
     auto result = ValidateObjectId(object_id);
     if (result != DAS_S_OK)
     {
         return result;
     }
 
-    auto it = objects_.find(object_id);
-    if (it == objects_.end())
+    DAS::DasPtr<IDasBase> object_to_release;
+
     {
-        return DAS_E_IPC_OBJECT_NOT_FOUND;
-    }
+        std::unique_lock lock{mutex_};
+        auto             it = objects_.find(object_id);
+        if (it == objects_.end())
+        {
+            return DAS_E_IPC_OBJECT_NOT_FOUND;
+        }
 
-    ObjectEntry& entry = it->second;
-    bool         is_local = entry.is_local;
+        ObjectEntry& entry = it->second;
+        if (entry.ref_count_ > 1)
+        {
+            --entry.ref_count_;
+            return DAS_S_OK;
+        }
 
-    if (is_local)
-    {
-        local_id_generations_[object_id.local_id] =
-            IncrementGeneration(object_id.generation);
-    }
-
-    entry.ref_count_--;
-
-    if (entry.ref_count_ == 0)
-    {
-        // 引用计数归零：擦除 ObjectEntry，DasPtr 析构自动 Release
-        // 同时清理反向索引
+        const bool is_local = entry.is_local;
         if (is_local && entry.object_ptr)
         {
             ptr_to_id_.erase(entry.object_ptr.Get());
+            local_id_generations_[object_id.local_id] =
+                IncrementGeneration(object_id.generation);
+            object_to_release = std::move(entry.object_ptr);
         }
-        // DasPtr 析构自动 Release
+
         objects_.erase(it);
     }
 
@@ -158,9 +165,6 @@ DasResult DistributedObjectManager::LookupObject(
     const ObjectId& object_id,
     IDasBase**      object_ptr)
 {
-#ifndef NDEBUG
-    AssertBusinessThread();
-#endif
     if (object_ptr == nullptr)
     {
         return DAS_E_INVALID_POINTER;
@@ -172,7 +176,8 @@ DasResult DistributedObjectManager::LookupObject(
         return result;
     }
 
-    auto it = objects_.find(object_id);
+    std::shared_lock lock{mutex_};
+    auto             it = objects_.find(object_id);
     if (it == objects_.end())
     {
         if (object_id.session_id == GetLocalSessionId())
@@ -194,21 +199,23 @@ DasResult DistributedObjectManager::LookupObject(
 
     // COM 规范：通过输出参数返回引用计数对象必须 AddRef
     *object_ptr = it->second.object_ptr.Get();
+    if (*object_ptr == nullptr)
+    {
+        return DAS_E_IPC_INVALID_STATE;
+    }
     (*object_ptr)->AddRef();
     return DAS_S_OK;
 }
 
 bool DistributedObjectManager::IsValidObject(const ObjectId& object_id) const
 {
-#ifndef NDEBUG
-    AssertBusinessThread();
-#endif
     auto result = ValidateObjectId(object_id);
     if (result != DAS_S_OK)
     {
         return false;
     }
 
+    std::shared_lock lock{mutex_};
     if (objects_.find(object_id) != objects_.end())
     {
         return true;
@@ -229,15 +236,13 @@ bool DistributedObjectManager::IsValidObject(const ObjectId& object_id) const
 
 bool DistributedObjectManager::IsLocalObject(const ObjectId& object_id) const
 {
-#ifndef NDEBUG
-    AssertBusinessThread();
-#endif
     auto result = ValidateObjectId(object_id);
     if (result != DAS_S_OK)
     {
         return false;
     }
 
+    std::shared_lock lock{mutex_};
     if (object_id.session_id != GetLocalSessionId())
     {
         return false;
@@ -271,15 +276,13 @@ DasResult DistributedObjectManager::LookupObjectIdFromPtr(
     IDasBase* ptr,
     ObjectId& out_id) const noexcept
 {
-#ifndef NDEBUG
-    AssertBusinessThread();
-#endif
     if (ptr == nullptr)
     {
         return DAS_E_INVALID_POINTER;
     }
 
-    auto it = ptr_to_id_.find(ptr);
+    std::shared_lock lock{mutex_};
+    auto             it = ptr_to_id_.find(ptr);
     if (it == ptr_to_id_.end())
     {
         return DAS_E_NOT_FOUND;

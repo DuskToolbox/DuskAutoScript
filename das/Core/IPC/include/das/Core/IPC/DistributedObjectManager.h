@@ -1,6 +1,7 @@
 #ifndef DAS_CORE_IPC_DISTRIBUTED_OBJECT_MANAGER_H
 #define DAS_CORE_IPC_DISTRIBUTED_OBJECT_MANAGER_H
 
+#include <atomic>
 #include <cassert>
 #include <cstdint>
 #include <das/Core/IPC/IDistributedObjectManager.h>
@@ -9,6 +10,7 @@
 #include <das/DasPtr.hpp>
 #include <das/IDasBase.h>
 #include <memory>
+#include <shared_mutex>
 #include <thread>
 #include <unordered_map>
 
@@ -24,15 +26,18 @@ struct ObjectEntry
     bool                  is_local;   // 决定 UnregisterObject 时是否 Release
 };
 
-// DistributedObjectManager 设计为单线程访问（BusinessThread），
-// Debug 模式通过 assert 校验，不加 mutex。
+// DistributedObjectManager is a free-threaded runtime table. It only tracks
+// ObjectId bookkeeping; real object execution ownership remains elsewhere.
 class DistributedObjectManager final : public IDistributedObjectManager
 {
 public:
     DistributedObjectManager();
     ~DistributedObjectManager();
 
-    void SetSessionId(uint16_t session_id) { session_id_ = session_id; }
+    void SetSessionId(uint16_t session_id) noexcept
+    {
+        session_id_.store(session_id, std::memory_order_release);
+    }
 
     void SetBusinessThreadId(std::thread::id id) { business_thread_id_ = id; }
 
@@ -70,9 +75,10 @@ private:
     }
 #endif
 
-    uint16_t        session_id_ = 0;
-    std::thread::id business_thread_id_;
+    std::atomic<uint16_t> session_id_{0};
+    std::thread::id       business_thread_id_;
 
+    mutable std::shared_mutex                 mutex_;
     std::unordered_map<ObjectId, ObjectEntry> objects_;
     uint32_t                                  next_local_id_{1};
     std::unordered_map<uint32_t, uint16_t>    local_id_generations_;
