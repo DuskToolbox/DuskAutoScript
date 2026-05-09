@@ -1,8 +1,26 @@
+#include <boost/interprocess/ipc/message_queue.hpp>
+#include <cstdint>
+#include <das/Core/IPC/Config.h>
+#include <das/Core/IPC/IpcErrors.h>
+#include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
+#include <das/Core/IPC/ValidatedIPCMessageHeader.h>
+#include <das/DasConfig.h>
+#include <das/DasExport.h>
+#include <das/IDasBase.h>
+#include <das/Utils/Expected.h>
+#include <memory>
+#include <string>
+#include <vector>
+
+// IpcTransport has no public uninitialized factory; expose the private default
+// constructor only in this test file to validate Send()'s initialization guard.
+#define private public
 #include <das/Core/IPC/IpcTransport.h>
+#undef private
+
 #include <gtest/gtest.h>
 #include <thread>
-#include <vector>
 
 using DAS::Core::IPC::IPCMessageHeader;
 using DAS::Core::IPC::IPCMessageHeaderBuilder;
@@ -160,11 +178,13 @@ TEST_F(IpcMessageQueueTransportTest, MakeQueueName_PluginToHost)
 
 TEST_F(IpcMessageQueueTransportTest, Send_WithoutInitialize)
 {
+    auto uninitialized_transport =
+        std::unique_ptr<IpcTransport>(new IpcTransport());
     uint8_t body[] = {1, 2, 3};
     auto    header = CreateTestHeader(MessageType::REQUEST, 1, sizeof(body));
 
-    auto result = transport_->Send(header, body, sizeof(body));
-    EXPECT_NE(result, DAS_S_OK);
+    auto result = uninitialized_transport->Send(header, body, sizeof(body));
+    EXPECT_EQ(result, DAS_E_IPC_CONNECTION_LOST);
 }
 
 TEST_F(IpcMessageQueueTransportTest, Receive_WithoutInitialize)
