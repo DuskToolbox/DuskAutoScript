@@ -2531,6 +2531,18 @@ TEST_F(SchedulerControllerTest, Initialize_MalformedGuidMember_Skipped)
 
 // ── Valid request forwarding ──
 
+TEST_F(SchedulerControllerTest, Initialize_AbsentDisabledGuids_Forwarded)
+{
+    auto req =
+        MakeRequest("/api/scheduler/0/initialize", "{}", {{"profile", "0"}});
+    auto resp = controller_->Initialize(req);
+    auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
+    EXPECT_EQ(
+        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        DAS_S_OK);
+    EXPECT_TRUE(fake_svc_->initialize_called);
+}
+
 TEST_F(SchedulerControllerTest, Initialize_Valid_Forwarded)
 {
     auto req = MakeRequest(
