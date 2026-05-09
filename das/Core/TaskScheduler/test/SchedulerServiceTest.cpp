@@ -67,6 +67,26 @@ namespace
             sm.UpdateTaskInstanceJson("0", taskOrder[i], taskInstances[i]);
         }
     }
+
+    ::testing::AssertionResult WaitForSchedulerStopped(
+        SchedulerService&         scheduler,
+        std::chrono::milliseconds timeout)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            if (scheduler.Status() == SchedulerState::Stopped)
+            {
+                return ::testing::AssertionSuccess();
+            }
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+
+        return ::testing::AssertionFailure()
+               << "scheduler did not reach Stopped within " << timeout.count()
+               << "ms; last status=" << static_cast<int>(scheduler.Status());
+    }
 } // namespace
 
 class SchedulerServiceTest : public ::testing::Test
@@ -1211,12 +1231,13 @@ static constexpr DasGuid FakeTaskGuid = {
 class FakeTask final : public Das::PluginInterface::IDasTask
 {
 public:
-    std::atomic<uint32_t> ref_count_{0};
-    std::atomic<int>      do_call_count{0};
-    std::atomic<bool>     stop_token_was_null{true};
-    std::atomic<bool>     env_was_null{true};
-    std::atomic<bool>     props_was_null{true};
-    std::string           last_props_key1_value;
+    std::atomic<uint32_t>                       ref_count_{0};
+    std::atomic<int>                            do_call_count{0};
+    std::atomic<bool>                           stop_token_was_null{true};
+    std::atomic<bool>                           env_was_null{true};
+    std::atomic<bool>                           props_was_null{true};
+    std::string                                 last_props_key1_value;
+    DasPtr<Das::PluginInterface::IDasStopToken> last_stop_token;
 
     Das::ExportInterface::DasDate next_date{};
     bool                          has_next_date = false;
@@ -1289,6 +1310,7 @@ public:
         stop_token_was_null = (stop_token == nullptr);
         env_was_null = (p_environment_json == nullptr);
         props_was_null = (p_task_settings_json == nullptr);
+        last_stop_token = stop_token;
 
         if (p_task_settings_json != nullptr)
         {
@@ -2061,8 +2083,16 @@ TEST_F(SchedulerExecutionTest, Stop_RequestsCancellationToken)
     auto result = scheduler_->Disable();
     EXPECT_EQ(result, DAS_S_OK);
 
-    // After disable, scheduler should be stopped
-    EXPECT_EQ(scheduler_->Status(), SchedulerState::Stopped);
+    // Disable is asynchronous: wait for the stop thread to finish before
+    // checking the cancellation token state.
+    ASSERT_TRUE(
+        WaitForSchedulerStopped(*scheduler_, std::chrono::milliseconds(2000)));
+    ASSERT_FALSE(fake->stop_token_was_null);
+    ASSERT_TRUE(fake->last_stop_token);
+
+    bool stop_requested = false;
+    ASSERT_EQ(fake->last_stop_token->StopRequested(&stop_requested), DAS_S_OK);
+    EXPECT_TRUE(stop_requested);
 }
 
 TEST_F(SchedulerExecutionTest, OnTick_DoesNotHoldMutexDuringDo)
@@ -2926,7 +2956,8 @@ TEST_F(SchedulerLifecycleTest, FullTaskInstanceLifecycle)
 
     // 10. Disable (stop) -- clears runtime state but split files remain
     ASSERT_EQ(scheduler_->Disable(), DAS_S_OK);
-    EXPECT_EQ(scheduler_->Status(), SchedulerState::Stopped);
+    ASSERT_TRUE(
+        WaitForSchedulerStopped(*scheduler_, std::chrono::milliseconds(2000)));
 
     // Split files should still exist after Disable
     EXPECT_TRUE(std::filesystem::exists(settings_dir_ / "0" / "taskId0.json"));
