@@ -125,7 +125,7 @@ DAS_C_API void CreateDasExceptionStringWithMessage(
         std::string                     formatted_msg =
             DAS::IsOk(
                 DasGetPredefinedErrorMessage(error_code, p_error_message.Put()))
-                                    ? std::format(
+                ? std::format(
                       "Exception: Code={}, Message='{}', PredefinedErrorMessage = '{}', File={}, Line={}, Function={}",
                       static_cast<int>(error_code),
                       message,
@@ -138,15 +138,15 @@ DAS_C_API void CreateDasExceptionStringWithMessage(
                       p_source_info != nullptr ? p_source_info->file : "null",
                       p_source_info != nullptr ? p_source_info->line : 0,
                       p_source_info != nullptr ? p_source_info->function
-                                                                   : "null")
-                                    : std::format(
+                                               : "null")
+                : std::format(
                       "Exception: Code={}, Message='{}', File={}, Line={}, Function={}",
                       static_cast<int>(error_code),
                       message,
                       p_source_info != nullptr ? p_source_info->file : "null",
                       p_source_info != nullptr ? p_source_info->line : 0,
                       p_source_info != nullptr ? p_source_info->function
-                                                                   : "null");
+                                               : "null");
 
         DAS::Utils::SetResult(
             DAS::MakeDasPtr<Das::Exception::Impl::DasExceptionStringImpl>(
@@ -170,20 +170,49 @@ DAS_C_API void CreateDasExceptionStringWithTypeInfo(
         return;
     }
 
-    DAS::DasPtr<IDasReadOnlyString> p_error_message{};
-    DasGetErrorMessage(p_type_info, error_code, p_error_message.Put());
-
     if (DAS::IsFailed(error_code))
     {
+        auto try_get_utf8 =
+            [](IDasReadOnlyString* const p_string, std::string& output)
+        {
+            if (p_string == nullptr)
+            {
+                return false;
+            }
+
+            const char* p_result{};
+            const auto  get_result = p_string->GetUtf8(&p_result);
+            if (DAS::IsFailed(get_result) || p_result == nullptr)
+            {
+                return false;
+            }
+
+            output = p_result;
+            return true;
+        };
+
+        DAS::DasPtr<IDasReadOnlyString> p_error_message{};
+        std::string                     error_message = "Unknown error";
+        const auto                      get_message_result =
+            DasGetErrorMessage(p_type_info, error_code, p_error_message.Put());
+        if (DAS::IsFailed(get_message_result)
+            || !try_get_utf8(p_error_message.Get(), error_message))
+        {
+            DAS::DasPtr<IDasReadOnlyString> p_predefined_message{};
+            const auto predefined_result = DasGetPredefinedErrorMessage(
+                error_code,
+                p_predefined_message.Put());
+            if (DAS::IsFailed(predefined_result)
+                || !try_get_utf8(p_predefined_message.Get(), error_message))
+            {
+                error_message = "Unknown error";
+            }
+        }
+
         std::string formatted_msg = std::format(
             "Exception: Code={}, Message='{}', File={}, Line={}, Function={}",
             static_cast<int>(error_code),
-            [&p_error_message]
-            {
-                const char* result{""};
-                p_error_message->GetUtf8(&result);
-                return result;
-            }(),
+            error_message,
             p_source_info != nullptr ? p_source_info->file : "null",
             p_source_info != nullptr ? p_source_info->line : 0,
             p_source_info != nullptr ? p_source_info->function : "null");
