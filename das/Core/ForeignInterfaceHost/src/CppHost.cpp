@@ -45,6 +45,14 @@ public:
             "[CppRuntime::LoadPlugin] Starting load for manifest: {}",
             path.string());
 
+        if (path.extension() != ".json")
+        {
+            DAS_CORE_LOG_ERROR(
+                "CppRuntime::LoadPlugin requires a manifest .json path: {}",
+                path.string());
+            return tl::make_unexpected(DAS_E_INVALID_ARGUMENT);
+        }
+
         // 1. Parse manifest.json
         std::ifstream file(path);
         if (!file.is_open())
@@ -147,16 +155,16 @@ public:
             DasPtr<IDasBase> p_plugin{};
             const auto       error_code = p_init_function(p_plugin.Put());
             DAS_CORE_LOG_INFO(
-                "[CppRuntime::LoadPlugin] DasCoCreatePlugin returned: {:#x}",
-                static_cast<uint32_t>(error_code));
+                "[CppRuntime::LoadPlugin] DasCoCreatePlugin returned: {}",
+                error_code);
             if (DAS::IsOk(error_code))
             {
                 DAS_CORE_LOG_INFO("[CppRuntime::LoadPlugin] Success!");
                 return p_plugin;
             }
             DAS_CORE_LOG_ERROR(
-                "DasCoCreatePlugin returned error: {:#x}",
-                static_cast<uint32_t>(error_code));
+                "DasCoCreatePlugin returned error: {}",
+                error_code);
             return tl::make_unexpected(error_code);
         }
         catch (const boost::wrapexcept<boost::system::system_error>& ex)
