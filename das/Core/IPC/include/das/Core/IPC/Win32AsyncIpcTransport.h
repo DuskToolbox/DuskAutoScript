@@ -80,10 +80,7 @@ public:
 
     /// 获取 io_context 引用
     /// @return io_context 引用，生命周期绑定到 this
-    boost::asio::io_context& GetIoContext() DAS_LIFETIMEBOUND
-    {
-        return io_context_;
-    }
+    boost::asio::io_context& GetIoContext() DAS_LIFETIMEBOUND;
 
     /// 直接返回协程接口（用于 IpcRunLoop 的事件驱动模式）
     [[nodiscard]]
@@ -97,6 +94,8 @@ public:
         size_t                           body_size);
 
 private:
+    struct State;
+
     // 私有构造函数（由 Create() 工厂函数调用）
     explicit Win32AsyncIpcTransport(
         boost::asio::io_context& io_context DAS_LIFETIMEBOUND);
@@ -123,17 +122,7 @@ private:
         bool               is_read_pipe,
         bool               wait_for_connection);
 
-    boost::asio::io_context&            io_context_;
-    AsyncMutex                          send_mutex_;
-    boost::asio::windows::stream_handle read_pipe_;
-    boost::asio::windows::stream_handle write_pipe_;
-
-    std::string endpoint_name_;
-    bool        is_server_ = false;
-    bool        is_connected_ = false;
-    size_t      max_message_size_ = 65536;
-
-    SharedMemoryPool* shared_memory_pool_ = nullptr;
+    std::shared_ptr<State> state_;
 };
 
 DAS_CORE_IPC_NS_END

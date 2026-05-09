@@ -536,7 +536,8 @@ DasResult ConnectionManager::SendHeartbeatToAll()
             continue;
         }
 
-        auto* transport = GetTransport(session_id);
+        auto  launcher = info.launcher;
+        auto* transport = launcher ? launcher->GetTransport() : nullptr;
         if (!transport || !transport->IsConnected())
         {
             continue;
@@ -565,18 +566,31 @@ DasResult ConnectionManager::SendHeartbeatToAll()
         // 这样心跳发送和正常消息处理都在同一个 io_context
         // 上，避免跨线程并发问题
         boost::asio::post(
-            transport->GetIoContext(),
-            [transport,
+            launcher->GetIoContext(),
+            [launcher,
              header = validated_header,
              heartbeat_copy = heartbeat,
              session_id]() mutable
             {
+                auto* transport = launcher ? launcher->GetTransport() : nullptr;
+                if (!transport || !transport->IsConnected())
+                {
+                    return;
+                }
+
                 // 使用协程异步发送心跳
                 boost::asio::co_spawn(
                     transport->GetIoContext(),
-                    [transport, header, heartbeat_copy, session_id]() mutable
+                    [launcher, header, heartbeat_copy, session_id]() mutable
                         -> boost::asio::awaitable<void>
                     {
+                        auto* transport =
+                            launcher ? launcher->GetTransport() : nullptr;
+                        if (!transport || !transport->IsConnected())
+                        {
+                            co_return;
+                        }
+
                         auto result = co_await transport->SendCoroutine(
                             header,
                             reinterpret_cast<const uint8_t*>(&heartbeat_copy),

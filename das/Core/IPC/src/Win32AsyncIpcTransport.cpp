@@ -83,11 +83,51 @@ namespace
     };
 } // namespace
 
+struct Win32AsyncIpcTransport::State
+{
+    explicit State(boost::asio::io_context& ctx)
+        : io_context(ctx), send_mutex(ctx), read_pipe(ctx), write_pipe(ctx)
+    {
+    }
+
+    ~State() { Cleanup(); }
+
+    void Cleanup()
+    {
+        boost::system::error_code ec;
+
+        if (read_pipe.is_open())
+        {
+            read_pipe.close(ec);
+        }
+
+        if (write_pipe.is_open())
+        {
+            write_pipe.close(ec);
+        }
+
+        is_connected = false;
+        is_server = false;
+        shared_memory_pool = nullptr;
+    }
+
+    boost::asio::io_context&            io_context;
+    AsyncMutex                          send_mutex;
+    boost::asio::windows::stream_handle read_pipe;
+    boost::asio::windows::stream_handle write_pipe;
+
+    std::string endpoint_name;
+    bool        is_server = false;
+    bool        is_connected = false;
+    size_t      max_message_size = 65536;
+
+    SharedMemoryPool* shared_memory_pool = nullptr;
+};
+
 // 私有构造函数（由 Create() 工厂函数调用）
 Win32AsyncIpcTransport::Win32AsyncIpcTransport(
     boost::asio::io_context& io_context)
-    : io_context_(io_context), send_mutex_(io_context), read_pipe_(io_context),
-      write_pipe_(io_context)
+    : state_(std::make_shared<State>(io_context))
 {
 }
 
@@ -149,38 +189,45 @@ Win32AsyncIpcTransport::~Win32AsyncIpcTransport() { Cleanup(); }
 
 void Win32AsyncIpcTransport::Cleanup()
 {
-    boost::system::error_code ec;
-
-    if (read_pipe_.is_open())
+    if (state_)
     {
-        read_pipe_.close(ec);
+        state_->Cleanup();
     }
-
-    if (write_pipe_.is_open())
-    {
-        write_pipe_.close(ec);
-    }
-
-    is_connected_ = false;
-    is_server_ = false;
 }
 
-bool Win32AsyncIpcTransport::IsConnected() const { return is_connected_; }
+bool Win32AsyncIpcTransport::IsConnected() const
+{
+    return state_ && state_->is_connected;
+}
+
+boost::asio::io_context& Win32AsyncIpcTransport::GetIoContext()
+{
+    return state_->io_context;
+}
 
 std::string Win32AsyncIpcTransport::GetEndpointName() const
 {
-    return endpoint_name_;
+    return state_ ? state_->endpoint_name : std::string{};
 }
 
 void Win32AsyncIpcTransport::SetSharedMemoryPool(SharedMemoryPool* pool)
 {
-    shared_memory_pool_ = pool;
+    if (state_)
+    {
+        state_->shared_memory_pool = pool;
+    }
 }
 
 DasResult Win32AsyncIpcTransport::CreateNamedPipe(
     const std::string& pipe_name,
     bool               is_read_pipe)
 {
+    auto state = state_;
+    if (!state)
+    {
+        return DAS_E_IPC_NOT_INITIALIZED;
+    }
+
     const std::string full_pipe_name =
         DAS_FMT_NS::format("{}{}", PIPE_PREFIX, pipe_name);
     const HANDLE h_pipe = ::CreateNamedPipeA(
@@ -189,8 +236,8 @@ DasResult Win32AsyncIpcTransport::CreateNamedPipe(
                      : PIPE_ACCESS_OUTBOUND | FILE_FLAG_OVERLAPPED,
         PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
         1,
-        static_cast<DWORD>(max_message_size_),
-        static_cast<DWORD>(max_message_size_),
+        static_cast<DWORD>(state->max_message_size),
+        static_cast<DWORD>(state->max_message_size),
         0,
         nullptr);
 
@@ -207,11 +254,11 @@ DasResult Win32AsyncIpcTransport::CreateNamedPipe(
     boost::system::error_code ec;
     if (is_read_pipe)
     {
-        read_pipe_.assign(h_pipe, ec);
+        state->read_pipe.assign(h_pipe, ec);
     }
     else
     {
-        write_pipe_.assign(h_pipe, ec);
+        state->write_pipe.assign(h_pipe, ec);
     }
 
     if (ec)
@@ -225,7 +272,7 @@ DasResult Win32AsyncIpcTransport::CreateNamedPipe(
         return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
 
-    is_connected_ = true;
+    state->is_connected = true;
     return DAS_S_OK;
 }
 
@@ -233,6 +280,12 @@ DasResult Win32AsyncIpcTransport::ConnectToNamedPipe(
     const std::string& pipe_name,
     bool               is_read_pipe)
 {
+    auto state = state_;
+    if (!state)
+    {
+        return DAS_E_IPC_NOT_INITIALIZED;
+    }
+
     const std::string full_pipe_name =
         DAS_FMT_NS::format("{}{}", PIPE_PREFIX, pipe_name);
 
@@ -268,11 +321,11 @@ DasResult Win32AsyncIpcTransport::ConnectToNamedPipe(
     boost::system::error_code ec;
     if (is_read_pipe)
     {
-        read_pipe_.assign(h_pipe, ec);
+        state->read_pipe.assign(h_pipe, ec);
     }
     else
     {
-        write_pipe_.assign(h_pipe, ec);
+        state->write_pipe.assign(h_pipe, ec);
     }
 
     if (ec)
@@ -391,6 +444,12 @@ Win32AsyncIpcTransport::CreateNamedPipeAsync(
     bool               is_read_pipe,
     bool               wait_for_connection)
 {
+    auto state = state_;
+    if (!state)
+    {
+        co_return DAS_E_IPC_NOT_INITIALIZED;
+    }
+
     const std::string full_pipe_name =
         DAS_FMT_NS::format("{}{}", PIPE_PREFIX, pipe_name);
 
@@ -402,8 +461,8 @@ Win32AsyncIpcTransport::CreateNamedPipeAsync(
                          : PIPE_ACCESS_OUTBOUND | FILE_FLAG_OVERLAPPED,
             PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
             1,
-            static_cast<DWORD>(max_message_size_),
-            static_cast<DWORD>(max_message_size_),
+            static_cast<DWORD>(state->max_message_size),
+            static_cast<DWORD>(state->max_message_size),
             0,
             nullptr));
 
@@ -441,13 +500,19 @@ boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::InitializeAsync(
     bool               is_server,
     size_t             max_message_size)
 {
-    max_message_size_ = max_message_size;
+    auto state = state_;
+    if (!state)
+    {
+        co_return DAS_E_IPC_NOT_INITIALIZED;
+    }
+
+    state->max_message_size = max_message_size;
 
     if (is_server)
     {
         // === 服务端 (MainProcess): 创建管道 + 等待连接 ===
         // 重要：必须先创建两个管道，再等待连接。
-        is_server_ = true;
+        state->is_server = true;
 
         // 第一步：创建两个管道（等待连接由 ConnectNamedPipe 处理）
         // CreateNamedPipeAsync 会自动等待连接，这里不需要 wait_for_connection
@@ -480,7 +545,7 @@ boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::InitializeAsync(
 
         // 分配到 stream_handle
         boost::system::error_code ec;
-        read_pipe_.assign(h_read, ec);
+        state->read_pipe.assign(h_read, ec);
         if (ec)
         {
             CloseHandle(h_read);
@@ -488,20 +553,20 @@ boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::InitializeAsync(
             co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
         }
 
-        write_pipe_.assign(h_write, ec);
+        state->write_pipe.assign(h_write, ec);
         if (ec)
         {
-            read_pipe_.close();
+            state->read_pipe.close();
             CloseHandle(h_write);
             co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
         }
 
-        is_connected_ = true;
+        state->is_connected = true;
         co_return DAS_S_OK;
     }
 
     // === 客户端 (Host): 连接管道 ===
-    is_server_ = false;
+    state->is_server = false;
 
     const std::string read_full_name =
         DAS_FMT_NS::format("{}{}", PIPE_PREFIX, read_endpoint);
@@ -522,7 +587,7 @@ boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::InitializeAsync(
 
     // 分配到 stream_handle
     boost::system::error_code ec;
-    read_pipe_.assign(h_read, ec);
+    state->read_pipe.assign(h_read, ec);
     if (ec)
     {
         CloseHandle(h_read);
@@ -530,21 +595,27 @@ boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::InitializeAsync(
         co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
 
-    write_pipe_.assign(h_write, ec);
+    state->write_pipe.assign(h_write, ec);
     if (ec)
     {
-        read_pipe_.close();
+        state->read_pipe.close();
         CloseHandle(h_write);
         co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
 
-    is_connected_ = true;
+    state->is_connected = true;
     co_return DAS_S_OK;
 }
 
 boost::asio::awaitable<std::variant<DasResult, AsyncIpcMessage>>
 Win32AsyncIpcTransport::ReceiveCoroutine()
 {
+    auto state = state_;
+    if (!state)
+    {
+        co_return DAS_E_IPC_NOT_INITIALIZED;
+    }
+
     // 使用局部变量而非成员变量，避免并发协程访问导致数据竞争
     // Header 大小固定，使用 std::array 避免堆分配
     std::array<uint8_t, sizeof(IPCMessageHeader)> header_buffer{};
@@ -552,7 +623,7 @@ Win32AsyncIpcTransport::ReceiveCoroutine()
     try
     {
         co_await boost::asio::async_read(
-            read_pipe_,
+            state->read_pipe,
             boost::asio::buffer(header_buffer),
             boost::asio::use_awaitable);
     }
@@ -598,13 +669,13 @@ Win32AsyncIpcTransport::ReceiveCoroutine()
             static_cast<int>(header.Raw().header_flags))
             .c_str());
 
-    if (body_size > max_message_size_)
+    if (body_size > state->max_message_size)
     {
         DAS_LOG_ERROR(
             DAS_FMT_NS::format(
                 "Message body too large: body_size = {}, max = {}",
                 body_size,
-                max_message_size_)
+                state->max_message_size)
                 .c_str());
         co_return DAS_E_IPC_INVALID_MESSAGE;
     }
@@ -615,14 +686,14 @@ Win32AsyncIpcTransport::ReceiveCoroutine()
     if (body_size > 0)
     {
         co_await boost::asio::async_read(
-            read_pipe_,
+            state->read_pipe,
             boost::asio::buffer(body_buffer),
             boost::asio::use_awaitable);
     }
 
     if (header.Raw().flags & FLAG_LARGE_MESSAGE)
     {
-        if (shared_memory_pool_ == nullptr)
+        if (state->shared_memory_pool == nullptr)
         {
             DAS_LOG_ERROR(
                 "Large message received but shared memory pool not set");
@@ -640,7 +711,7 @@ Win32AsyncIpcTransport::ReceiveCoroutine()
 
         SharedMemoryBlock shm_block;
         const auto        result =
-            shared_memory_pool_->GetBlockByHandle(handle, shm_block);
+            state->shared_memory_pool->GetBlockByHandle(handle, shm_block);
         if (result != DAS_S_OK)
         {
             DAS_LOG_ERROR(
@@ -654,7 +725,7 @@ Win32AsyncIpcTransport::ReceiveCoroutine()
         std::vector<uint8_t> large_body(shm_block.size);
         std::memcpy(large_body.data(), shm_block.data, shm_block.size);
 
-        shared_memory_pool_->Deallocate(handle);
+        state->shared_memory_pool->Deallocate(handle);
 
         co_return AsyncIpcMessage{header, std::move(large_body)};
     }
@@ -667,8 +738,14 @@ boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::SendCoroutine(
     const uint8_t*                   body,
     size_t                           body_size)
 {
+    auto state = state_;
+    if (!state)
+    {
+        co_return DAS_E_IPC_NOT_INITIALIZED;
+    }
+
     // Lock() 返回 bool：true=cancelled，false=正常获取锁
-    bool cancelled = co_await send_mutex_.Lock();
+    bool cancelled = co_await state->send_mutex.Lock();
     if (cancelled)
     {
         co_return DAS_E_IPC_CONNECTION_LOST; // 不访问任何 transport 成员
@@ -684,7 +761,7 @@ boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::SendCoroutine(
     try
     {
         co_await boost::asio::async_write(
-            write_pipe_,
+            state->write_pipe,
             buffers,
             boost::asio::use_awaitable);
     }
@@ -696,7 +773,7 @@ boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::SendCoroutine(
         result = DAS_E_IPC_SEND_FAILED;
     }
 
-    send_mutex_.Unlock();
+    state->send_mutex.Unlock();
     co_return result;
 }
 

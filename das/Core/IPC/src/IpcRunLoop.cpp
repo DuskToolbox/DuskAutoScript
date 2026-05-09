@@ -673,7 +673,17 @@ DasResult IpcRunLoop::PostSend(
                 {
                     try
                     {
-                        auto result = co_await transport->SendCoroutine(
+                        auto* live_transport =
+                            launcher ? launcher->GetTransport() : transport;
+                        if (!live_transport || !live_transport->IsConnected())
+                        {
+                            NotifySendFailure(
+                                header,
+                                DAS_E_IPC_CONNECTION_LOST);
+                            co_return;
+                        }
+
+                        auto result = co_await live_transport->SendCoroutine(
                             header,
                             body.data(),
                             body.size());
@@ -732,7 +742,15 @@ DasResult IpcRunLoop::PostSendWithTransport(
         {
             try
             {
-                auto result = co_await transport->SendCoroutine(
+                auto* live_transport =
+                    launcher ? launcher->GetTransport() : transport;
+                if (!live_transport || !live_transport->IsConnected())
+                {
+                    NotifySendFailure(header, DAS_E_IPC_CONNECTION_LOST);
+                    co_return;
+                }
+
+                auto result = co_await live_transport->SendCoroutine(
                     header,
                     body.data(),
                     body.size());

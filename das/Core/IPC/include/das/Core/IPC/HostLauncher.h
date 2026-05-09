@@ -127,6 +127,8 @@ public:
     [[nodiscard]]
     uint16_t GetSessionId() const override;
 
+    boost::asio::io_context& GetIoContext() DAS_LIFETIMEBOUND;
+
     DefaultAsyncIpcTransport* DAS_LIFETIMEBOUND GetTransport();
 
     uint32_t  AddRef() override;

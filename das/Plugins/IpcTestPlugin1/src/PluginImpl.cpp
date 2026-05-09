@@ -253,14 +253,15 @@ DasResult DasQueryComponentImpl::HandleQueryMainProcessStringByName(
 
     const char* name_ptr = nullptr;
     hr = name_str->GetUtf8(&name_ptr);
-    name_str->Release();
     if (DAS::IsFailed(hr) || !name_ptr)
     {
+        name_str->Release();
         DAS_LOG_ERROR("queryMainProcessStringByName: GetUtf8 failed");
         return hr;
     }
 
     std::string service_name = name_ptr;
+    name_str->Release();
 
     // 通过名称查询主进程中注册的接口
     IDasBase* raw_obj = nullptr;
@@ -292,9 +293,13 @@ DasResult DasQueryComponentImpl::HandleQueryMainProcessStringByName(
     DAS_LOG_INFO(log_msg.c_str());
 
     // 创建结果 VariantVector 并回传读取到的字符串
-    DAS::DasPtr<IDasReadOnlyString> return_string;
-    hr = CreateIDasReadOnlyStringFromUtf8(str, return_string.Put());
+    std::string result_value = str ? str : "";
     raw_obj->Release();
+
+    DAS::DasPtr<IDasReadOnlyString> return_string;
+    hr = CreateIDasReadOnlyStringFromUtf8(
+        result_value.c_str(),
+        return_string.Put());
     if (DAS::IsFailed(hr))
     {
         DAS_LOG_ERROR("CreateIDasReadOnlyStringFromUtf8 failed (ByName)");

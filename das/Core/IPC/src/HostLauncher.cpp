@@ -469,6 +469,8 @@ uint32_t HostLauncher::GetPid() const { return impl_->pid; }
 
 uint16_t HostLauncher::GetSessionId() const { return impl_->session_id; }
 
+boost::asio::io_context& HostLauncher::GetIoContext() { return impl_->io_ctx; }
+
 DefaultAsyncIpcTransport* HostLauncher::GetTransport()
 {
     return impl_->async_transport.get();
