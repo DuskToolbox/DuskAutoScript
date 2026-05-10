@@ -2516,20 +2516,6 @@ TEST_F(SchedulerControllerTest, UpdateInternalProps_MalformedTaskId_Rejected)
 
 // ── disabledGuids validation ──
 
-TEST_F(SchedulerControllerTest, Initialize_OldDisabledUnderscoreGuids_Rejected)
-{
-    auto req = MakeRequest(
-        "/api/scheduler/0/initialize",
-        R"({"disabled_guids":[]})",
-        {{"profile", "0"}});
-    auto resp = controller_->Initialize(req);
-    auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
-    EXPECT_EQ(
-        (*body.as_object())[std::string_view("Code")].as_sint().value(),
-        DAS_E_INVALID_ARGUMENT);
-    EXPECT_FALSE(fake_svc_->initialize_called);
-}
-
 TEST_F(SchedulerControllerTest, Initialize_NonArrayDisabledGuids_Rejected)
 {
     auto req = MakeRequest(

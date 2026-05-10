@@ -50,23 +50,11 @@ namespace Das::Http
             }
             const auto& body = body_obj_opt.value();
 
-            // Accept lower camelCase disabledGuids; reject old disabled_guids
-            // when it is present.
-            const auto legacy_disabled_guids_key =
-                std::string_view("disabled_guids");
-            if (body.contains(legacy_disabled_guids_key))
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    DAS_E_INVALID_ARGUMENT,
-                    "Use 'disabledGuids' instead of 'disabled_guids'");
-            }
-
             std::vector<DasGuid> disabled_guids;
-            const auto disabled_guids_key = std::string_view("disabledGuids");
-            if (body.contains(disabled_guids_key)
-                && !body[disabled_guids_key].is_null())
+            if (body.contains("disabledGuids")
+                && !body["disabledGuids"].is_null())
             {
-                auto dg_arr_opt = body[disabled_guids_key].as_array();
+                auto dg_arr_opt = body["disabledGuids"].as_array();
                 if (!dg_arr_opt)
                 {
                     return Beast::HttpResponse::CreateErrorResponse(
