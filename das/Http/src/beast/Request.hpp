@@ -161,8 +161,8 @@ namespace Das::Http::Beast
             if (obj_opt)
             {
                 auto& obj = obj_opt.value();
-                obj["Code"] = static_cast<int64_t>(code);
-                obj["Message"] = std::string{message};
+                obj["code"] = static_cast<int64_t>(code);
+                obj["message"] = std::string{message};
             }
             response.SetBody(json_body);
             return response;

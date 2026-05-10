@@ -108,34 +108,17 @@ namespace Das::Http
 
         Beast::HttpResponse DeleteProfile(const Beast::HttpRequest& request)
         {
-            const auto& body_raw = request.JsonBody();
-            auto        body_obj_opt = body_raw.as_object();
-            if (!body_obj_opt)
+            auto pid = request.GetPathParameter("pid");
+            if (pid != "0")
             {
                 return Beast::HttpResponse::CreateErrorResponse(
                     DAS_E_INVALID_ARGUMENT,
-                    "Request body must be a JSON object");
-            }
-            const auto& body = body_obj_opt.value();
-            if (body["profileId"].is_null() || !body["profileId"].is_string())
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    DAS_E_INVALID_ARGUMENT,
-                    "Missing or invalid 'profileId' field");
+                    "Profile ID must be 0 in v1.2");
             }
 
-            auto profile_id_opt = body["profileId"].as_string();
-            if (!profile_id_opt)
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    DAS_E_INVALID_ARGUMENT,
-                    "Missing or invalid 'profileId' field");
-            }
-            std::string                profile_id(profile_id_opt.value());
             DasPtr<IDasReadOnlyString> p_pid;
-            auto                       cr = CreateIDasReadOnlyStringFromUtf8(
-                profile_id.c_str(),
-                p_pid.Put());
+            auto                       cr =
+                CreateIDasReadOnlyStringFromUtf8(pid.c_str(), p_pid.Put());
             if (DAS::IsFailed(cr))
             {
                 return Beast::HttpResponse::CreateErrorResponse(

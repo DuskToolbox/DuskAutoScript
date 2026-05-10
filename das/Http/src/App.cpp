@@ -210,11 +210,12 @@ namespace Das::Http
 
             // Register computer vision services (cv.cpu / cv.cuda)
             {
-                auto debug_dir_str = debug_dir.u8string();
+                auto               debug_dir_str = debug_dir.u8string();
                 DasCoreInitOptions init_options{
                     reinterpret_cast<const char*>(debug_dir_str.c_str())};
-                auto init_cv_result =
-                    InitializeDasCoreWithOptions(ipc_context.get(), &init_options);
+                auto init_cv_result = InitializeDasCoreWithOptions(
+                    ipc_context.get(),
+                    &init_options);
                 if (DAS::IsFailed(init_cv_result))
                 {
                     DAS_LOG_ERROR(
@@ -272,7 +273,7 @@ namespace Das::Http
             [profile_controller](const Das::Http::Beast::HttpRequest& req)
             { return profile_controller->CreateProfile(req); });
         components.router->Post(
-            DAS_HTTP_API_PREFIX "profile/delete",
+            DAS_HTTP_API_PREFIX "profile/{pid}/delete",
             [profile_controller](const Das::Http::Beast::HttpRequest& req)
             { return profile_controller->DeleteProfile(req); });
         components.router->Post(
@@ -432,7 +433,8 @@ int main(int argc, const char* argv[])
         boost::program_options::value<std::string>()->default_value("plugins"),
         "Plugin directory path")(
         "debug-dir",
-        boost::program_options::value<std::string>()->default_value("logs/debug"),
+        boost::program_options::value<std::string>()->default_value(
+            "logs/debug"),
         "Debug artifact directory path");
 
     boost::program_options::variables_map vm;

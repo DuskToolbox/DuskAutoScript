@@ -116,9 +116,9 @@ namespace Das::Http::Beast::JsonUtils
         if (obj_opt)
         {
             auto& obj = obj_opt.value();
-            obj["Code"] = static_cast<int64_t>(DAS_S_OK);
-            obj["Message"] = std::string{};
-            obj["Data"] = data;
+            obj["code"] = static_cast<int64_t>(DAS_S_OK);
+            obj["message"] = std::string{};
+            obj["data"] = data;
         }
         return response;
     }
@@ -133,9 +133,9 @@ namespace Das::Http::Beast::JsonUtils
         if (obj_opt)
         {
             auto& obj = obj_opt.value();
-            obj["Code"] = static_cast<int64_t>(error_code);
-            obj["Message"] = std::string{message};
-            obj["Data"] = JsonValue{};
+            obj["code"] = static_cast<int64_t>(error_code);
+            obj["message"] = std::string{message};
+            obj["data"] = JsonValue{};
         }
         return response;
     }

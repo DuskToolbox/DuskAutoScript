@@ -208,9 +208,9 @@ namespace Das::Http::Beast
             if (body_obj_opt)
             {
                 auto& body_obj = body_obj_opt.value();
-                body_obj["Code"] = static_cast<int64_t>(DAS_E_FILE_NOT_FOUND);
-                body_obj["Message"] = std::string("Route not found");
-                body_obj["Data"] = yyjson::value{};
+                body_obj["code"] = static_cast<int64_t>(DAS_E_FILE_NOT_FOUND);
+                body_obj["message"] = std::string("Route not found");
+                body_obj["data"] = yyjson::value{};
             }
             response.SetBody(body);
             return response;
