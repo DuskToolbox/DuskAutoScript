@@ -84,6 +84,30 @@ TEST(IDasMemoryTest, GetBinaryBufferCreatesStableOffsetViews)
     EXPECT_EQ(offset_eight_size, 8);
 }
 
+TEST(IDasMemoryTest, GetMutableViewSharesBackingWithReadView)
+{
+    DAS::DasPtr<DAS::ExportInterface::IDasMemory> memory;
+    ASSERT_EQ(::CreateIDasMemory(16, memory.Put()), DAS_S_OK);
+
+    DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer> mutable_view;
+    ASSERT_EQ(memory->GetMutableView(4, mutable_view.Put()), DAS_S_OK);
+    auto* mutable_data = GetData(mutable_view.Get());
+    mutable_data[0] = 51;
+    mutable_data[3] = 99;
+
+    DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer> read_view;
+    ASSERT_EQ(memory->GetBinaryBuffer(4, read_view.Put()), DAS_S_OK);
+    auto* read_data = GetData(read_view.Get());
+
+    uint64_t read_size = 0;
+    ASSERT_EQ(read_view->GetSize(&read_size), DAS_S_OK);
+
+    EXPECT_EQ(read_data, mutable_data);
+    EXPECT_EQ(read_data[0], 51);
+    EXPECT_EQ(read_data[3], 99);
+    EXPECT_EQ(read_size, 12);
+}
+
 TEST(IDasMemoryTest, OffsetEqualSizeReturnsEmptyView)
 {
     DAS::DasPtr<DAS::ExportInterface::IDasMemory> memory;
