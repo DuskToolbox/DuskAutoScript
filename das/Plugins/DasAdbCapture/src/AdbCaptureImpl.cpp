@@ -20,6 +20,7 @@ DAS_DISABLE_WARNING_END
 #pragma warning(disable : 4068)
 #endif
 #include <cstddef>
+#include <cstdint>
 #include <gzip/decompress.hpp>
 #ifdef _MSC_VER
 #pragma warning(pop)
@@ -46,6 +47,7 @@ DAS_DISABLE_WARNING_END
 #include <das/Utils/fmt.h>
 #include <das/_autogen/idl/abi/DasLogger.h>
 #include <das/_autogen/idl/abi/IDasImage.h>
+#include <limits>
 #include <sstream>
 #include <system_error>
 #include <vector>
@@ -110,6 +112,19 @@ AdbCapture::~AdbCapture() = default;
 DAS_NS_ANONYMOUS_DETAILS_BEGIN
 
 constexpr uint32_t PROCESS_TIMEOUT_IN_S = 10;
+
+bool TryMultiplyUint64(
+    const uint64_t lhs,
+    const uint64_t rhs,
+    uint64_t*      p_out_value) noexcept
+{
+    if (lhs != 0 && rhs > std::numeric_limits<uint64_t>::max() / lhs)
+    {
+        return false;
+    }
+    *p_out_value = lhs * rhs;
+    return true;
+}
 
 std::size_t ComputeScreenshotSize(
     const std::int32_t width,
@@ -218,14 +233,26 @@ AdbCaptureHeader ResolveHeader(const char* p_header)
 auto ComputeDataSizeFromHeader(const AdbCaptureHeader header)
     -> DAS::Utils::Expected<std::size_t>
 {
+    if (header.w == 0 || header.h == 0)
+    {
+        const auto error_message = DAS::fmt::format(
+            "Invalid framebuffer dimensions: {}x{}",
+            header.w,
+            header.h);
+        DAS_LOG_ERROR(error_message.c_str());
+        return tl::make_unexpected(CAPTURE_DATA_TOO_LESS);
+    }
+
+    uint64_t bytes_per_pixel = 0;
     switch (static_cast<AdbCaptureFormat>(header.f))
     {
     case AdbCaptureFormat::RGBA_8888:
-        [[fallthrough]];
     case AdbCaptureFormat::RGBX_8888:
-        [[fallthrough]];
+        bytes_per_pixel = 4;
+        break;
     case AdbCaptureFormat::RGB_888:
-        return header.w * header.h * 4;
+        bytes_per_pixel = 3;
+        break;
     // RGB_565 and so on.
     default:
         const auto error_message =
@@ -233,6 +260,31 @@ auto ComputeDataSizeFromHeader(const AdbCaptureHeader header)
         DAS_LOG_ERROR(error_message.c_str());
         return tl::make_unexpected(UNSUPPORTED_COLOR_FORMAT);
     }
+
+    uint64_t pixels = 0;
+    if (!TryMultiplyUint64(header.w, header.h, &pixels))
+    {
+        const auto error_message = DAS::fmt::format(
+            "Framebuffer pixel count overflow: {}x{}",
+            header.w,
+            header.h);
+        DAS_LOG_ERROR(error_message.c_str());
+        return tl::make_unexpected(CAPTURE_DATA_TOO_LESS);
+    }
+
+    uint64_t byte_count = 0;
+    if (!TryMultiplyUint64(pixels, bytes_per_pixel, &byte_count)
+        || byte_count > std::numeric_limits<std::size_t>::max())
+    {
+        const auto error_message = DAS::fmt::format(
+            "Framebuffer byte count overflow: pixels={}, bytes_per_pixel={}",
+            pixels,
+            bytes_per_pixel);
+        DAS_LOG_ERROR(error_message.c_str());
+        return tl::make_unexpected(CAPTURE_DATA_TOO_LESS);
+    }
+
+    return static_cast<std::size_t>(byte_count);
 }
 
 DAS::Utils::Expected<ExportInterface::DasImageFormat> Convert(
