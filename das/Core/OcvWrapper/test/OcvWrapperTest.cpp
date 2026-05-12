@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -612,6 +613,184 @@ namespace Das
                 }
             };
 
+            class TrackingMemory;
+
+            class TrackingBinaryBuffer final
+                : public ExportInterface::IDasBinaryBuffer
+            {
+                std::atomic<uint32_t>                    ref_count_{0};
+                DAS::DasPtr<ExportInterface::IDasMemory> owner_;
+                uint64_t                                 offset_{};
+
+            public:
+                TrackingBinaryBuffer(TrackingMemory* p_owner, uint64_t offset);
+
+                uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+                uint32_t DAS_STD_CALL Release() override
+                {
+                    auto count = --ref_count_;
+                    if (count == 0)
+                    {
+                        delete this;
+                    }
+                    return count;
+                }
+
+                DasResult DAS_STD_CALL QueryInterface(
+                    const DasGuid& iid,
+                    void**         pp_out_object) override
+                {
+                    if (pp_out_object == nullptr)
+                    {
+                        return DAS_E_INVALID_POINTER;
+                    }
+                    if (iid == DasIidOf<IDasBase>())
+                    {
+                        *pp_out_object = static_cast<IDasBase*>(this);
+                        AddRef();
+                        return DAS_S_OK;
+                    }
+                    if (iid == DasIidOf<ExportInterface::IDasBinaryBuffer>())
+                    {
+                        *pp_out_object =
+                            static_cast<ExportInterface::IDasBinaryBuffer*>(
+                                this);
+                        AddRef();
+                        return DAS_S_OK;
+                    }
+                    *pp_out_object = nullptr;
+                    return DAS_E_NO_INTERFACE;
+                }
+
+                DasResult GetData(unsigned char** pp_out_data) override;
+                DasResult GetSize(uint64_t* p_out_size) override;
+            };
+
+            class TrackingMemory final : public ExportInterface::IDasMemory
+            {
+                std::atomic<uint32_t> ref_count_{0};
+                std::vector<uint8_t>  data_;
+                std::shared_ptr<bool> destroyed_;
+
+            public:
+                explicit TrackingMemory(std::vector<uint8_t> data)
+                    : data_(std::move(data)),
+                      destroyed_(std::make_shared<bool>(false))
+                {
+                }
+
+                ~TrackingMemory() { *destroyed_ = true; }
+
+                uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+                uint32_t DAS_STD_CALL Release() override
+                {
+                    auto count = --ref_count_;
+                    if (count == 0)
+                    {
+                        delete this;
+                    }
+                    return count;
+                }
+
+                DasResult DAS_STD_CALL QueryInterface(
+                    const DasGuid& iid,
+                    void**         pp_out_object) override
+                {
+                    if (pp_out_object == nullptr)
+                    {
+                        return DAS_E_INVALID_POINTER;
+                    }
+                    if (iid == DasIidOf<IDasBase>())
+                    {
+                        *pp_out_object = static_cast<IDasBase*>(this);
+                        AddRef();
+                        return DAS_S_OK;
+                    }
+                    if (iid == DasIidOf<ExportInterface::IDasMemory>())
+                    {
+                        *pp_out_object =
+                            static_cast<ExportInterface::IDasMemory*>(this);
+                        AddRef();
+                        return DAS_S_OK;
+                    }
+                    *pp_out_object = nullptr;
+                    return DAS_E_NO_INTERFACE;
+                }
+
+                DasResult GetBinaryBuffer(
+                    uint64_t                            offset,
+                    ExportInterface::IDasBinaryBuffer** pp_out_buffer) override
+                {
+                    if (pp_out_buffer == nullptr)
+                    {
+                        return DAS_E_INVALID_POINTER;
+                    }
+                    *pp_out_buffer = nullptr;
+                    if (offset > data_.size())
+                    {
+                        return DAS_E_OUT_OF_RANGE;
+                    }
+                    auto* buffer = new TrackingBinaryBuffer(this, offset);
+                    buffer->AddRef();
+                    *pp_out_buffer = buffer;
+                    return DAS_S_OK;
+                }
+
+                DasResult GetMutableView(
+                    uint64_t                            offset,
+                    ExportInterface::IDasBinaryBuffer** pp_out_buffer) override
+                {
+                    return GetBinaryBuffer(offset, pp_out_buffer);
+                }
+
+                DasResult GetSize(uint64_t* p_out_size) override
+                {
+                    if (p_out_size == nullptr)
+                    {
+                        return DAS_E_INVALID_POINTER;
+                    }
+                    *p_out_size = data_.size();
+                    return DAS_S_OK;
+                }
+
+                std::vector<uint8_t>& Data() { return data_; }
+
+                std::shared_ptr<bool> DestroyedFlag() const
+                {
+                    return destroyed_;
+                }
+            };
+
+            TrackingBinaryBuffer::TrackingBinaryBuffer(
+                TrackingMemory* p_owner,
+                uint64_t        offset)
+                : owner_(static_cast<ExportInterface::IDasMemory*>(p_owner)),
+                  offset_(offset)
+            {
+            }
+
+            DasResult TrackingBinaryBuffer::GetData(unsigned char** pp_out_data)
+            {
+                if (pp_out_data == nullptr)
+                {
+                    return DAS_E_INVALID_POINTER;
+                }
+                auto* memory = static_cast<TrackingMemory*>(owner_.Get());
+                *pp_out_data = memory->Data().data() + offset_;
+                return DAS_S_OK;
+            }
+
+            DasResult TrackingBinaryBuffer::GetSize(uint64_t* p_out_size)
+            {
+                if (p_out_size == nullptr)
+                {
+                    return DAS_E_INVALID_POINTER;
+                }
+                auto* memory = static_cast<TrackingMemory*>(owner_.Get());
+                *p_out_size = memory->Data().size() - offset_;
+                return DAS_S_OK;
+            }
+
             // Helper: create RGBA test data
             auto MakeRgbaData(
                 int     w,
@@ -807,6 +986,82 @@ namespace Das
             p_buffer->Release();
 
             p_image->Release();
+        }
+
+        TEST(
+            FactoryMigrationTest,
+            FromRgb888_RetainsReturnedBufferViewAfterMemoryRelease)
+        {
+            constexpr int kWidth = 2;
+            constexpr int kHeight = 1;
+            auto rgba_data = MakeRgbaData(kWidth, kHeight, 10, 20, 30, 40);
+
+            auto* p_memory = new TrackingMemory(std::move(rgba_data));
+            p_memory->AddRef();
+            auto memory_destroyed = p_memory->DestroyedFlag();
+
+            ExportInterface::DasSize    size{kWidth, kHeight};
+            ExportInterface::IDasImage* p_image = nullptr;
+            ASSERT_EQ(
+                CreateIDasImageFromRgb888(p_memory, &size, &p_image),
+                DAS_S_OK);
+            ASSERT_NE(p_image, nullptr);
+
+            p_memory->Release();
+            EXPECT_FALSE(*memory_destroyed);
+
+            ExportInterface::IDasBinaryBuffer* p_buffer = nullptr;
+            ASSERT_EQ(p_image->GetBinaryBuffer(&p_buffer), DAS_S_OK);
+            ASSERT_NE(p_buffer, nullptr);
+
+            uint64_t buffer_size = 0;
+            EXPECT_EQ(p_buffer->GetSize(&buffer_size), DAS_S_OK);
+            EXPECT_EQ(buffer_size, static_cast<uint64_t>(kWidth * kHeight * 4));
+
+            unsigned char* p_image_data = nullptr;
+            EXPECT_EQ(p_buffer->GetData(&p_image_data), DAS_S_OK);
+            ASSERT_NE(p_image_data, nullptr);
+            EXPECT_EQ(p_image_data[0], 10);
+            EXPECT_EQ(p_image_data[1], 20);
+            EXPECT_EQ(p_image_data[2], 30);
+            EXPECT_EQ(p_image_data[3], 40);
+
+            p_buffer->Release();
+            p_image->Release();
+            EXPECT_TRUE(*memory_destroyed);
+        }
+
+        TEST(FactoryMigrationTest, FromRgb888_BinaryBufferSharesReturnedBytes)
+        {
+            constexpr int kWidth = 2;
+            constexpr int kHeight = 1;
+            auto          rgba_data = MakeRgbaData(kWidth, kHeight, 1, 2, 3, 4);
+
+            auto* p_memory = new TrackingMemory(std::move(rgba_data));
+            p_memory->AddRef();
+
+            ExportInterface::DasSize    size{kWidth, kHeight};
+            ExportInterface::IDasImage* p_image = nullptr;
+            ASSERT_EQ(
+                CreateIDasImageFromRgb888(p_memory, &size, &p_image),
+                DAS_S_OK);
+            ASSERT_NE(p_image, nullptr);
+
+            ExportInterface::IDasBinaryBuffer* p_buffer = nullptr;
+            ASSERT_EQ(p_image->GetBinaryBuffer(&p_buffer), DAS_S_OK);
+            ASSERT_NE(p_buffer, nullptr);
+
+            unsigned char* p_image_data = nullptr;
+            ASSERT_EQ(p_buffer->GetData(&p_image_data), DAS_S_OK);
+            ASSERT_NE(p_image_data, nullptr);
+            EXPECT_EQ(p_image_data, p_memory->Data().data());
+
+            p_memory->Data()[0] = 99;
+            EXPECT_EQ(p_image_data[0], 99);
+
+            p_buffer->Release();
+            p_image->Release();
+            p_memory->Release();
         }
 
         TEST(FactoryMigrationTest, FromRgb888_RejectsShortBuffer)
