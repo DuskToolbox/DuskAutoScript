@@ -26,9 +26,9 @@ namespace
     }
 
     DasResult CreateRgbaTestImage(
-        int32_t                                      width,
-        int32_t                                      height,
-        DAS::ExportInterface::IDasImage**           pp_out_image)
+        int32_t                           width,
+        int32_t                           height,
+        DAS::ExportInterface::IDasImage** pp_out_image)
     {
         const auto byte_count =
             static_cast<size_t>(width) * static_cast<size_t>(height) * 4;
@@ -41,7 +41,7 @@ namespace
         }
 
         DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer> buffer;
-        result = memory->GetBinaryBuffer(0, buffer.Put());
+        result = memory->GetMutableView(0, buffer.Put());
         if (DAS::IsFailed(result))
         {
             return result;
@@ -54,15 +54,7 @@ namespace
             return result;
         }
 
-        const unsigned char pixels[] = {
-            10,
-            20,
-            30,
-            255,
-            40,
-            50,
-            60,
-            255};
+        const unsigned char pixels[] = {10, 20, 30, 255, 40, 50, 60, 255};
         std::copy_n(pixels, std::min(byte_count, sizeof(pixels)), data);
 
         DAS::ExportInterface::DasSize size{width, height};
@@ -181,10 +173,7 @@ TEST(AiCpuImplTest, CreateTensorFromImageNullImage_ReturnsInvalidPointer)
 
     const auto                               options = MakeTensorOptions(3);
     DasPtr<Das::ExportInterface::IDasTensor> tensor;
-    auto                                     result = ai->CreateTensorFromImage(
-        nullptr,
-        options,
-        tensor.Put());
+    auto result = ai->CreateTensorFromImage(nullptr, options, tensor.Put());
     EXPECT_EQ(result, DAS_E_INVALID_POINTER);
 
     ai->Release();
@@ -198,12 +187,10 @@ TEST(AiCpuImplTest, CreateTensorFromImageValidRgbaInput_WritesTensor)
     DAS::DasPtr<DAS::ExportInterface::IDasImage> image;
     ASSERT_EQ(CreateRgbaTestImage(2, 1, image.Put()), DAS_S_OK);
 
-    const auto                                options = MakeTensorOptions(3);
+    const auto options = MakeTensorOptions(3);
     DAS::DasPtr<DAS::ExportInterface::IDasTensor> tensor;
-    const auto result = ai->CreateTensorFromImage(
-        image.Get(),
-        options,
-        tensor.Put());
+    const auto                                    result =
+        ai->CreateTensorFromImage(image.Get(), options, tensor.Put());
 
     ASSERT_EQ(result, DAS_S_OK);
     ASSERT_TRUE(tensor);
@@ -240,7 +227,9 @@ TEST(AiCpuImplTest, CreateTensorFromImageValidRgbaInput_WritesTensor)
     EXPECT_FLOAT_EQ(values[5], 60.0f / 255.0f);
 }
 
-TEST(AiCpuImplTest, CreateTensorFromImageInvalidChannelCount_ReturnsInvalidArgument)
+TEST(
+    AiCpuImplTest,
+    CreateTensorFromImageInvalidChannelCount_ReturnsInvalidArgument)
 {
     DAS::DasPtr<DAS::Core::OrtWrapper::AiCpuImpl> ai{
         new DAS::Core::OrtWrapper::AiCpuImpl{}};
@@ -248,12 +237,10 @@ TEST(AiCpuImplTest, CreateTensorFromImageInvalidChannelCount_ReturnsInvalidArgum
     DAS::DasPtr<DAS::ExportInterface::IDasImage> image;
     ASSERT_EQ(CreateRgbaTestImage(2, 1, image.Put()), DAS_S_OK);
 
-    const auto                                options = MakeTensorOptions(0);
+    const auto options = MakeTensorOptions(0);
     DAS::DasPtr<DAS::ExportInterface::IDasTensor> tensor;
-    const auto result = ai->CreateTensorFromImage(
-        image.Get(),
-        options,
-        tensor.Put());
+    const auto                                    result =
+        ai->CreateTensorFromImage(image.Get(), options, tensor.Put());
 
     EXPECT_EQ(result, DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(tensor);
@@ -267,12 +254,10 @@ TEST(AiCpuImplTest, CreateTensorFromImageZeroStd_ReturnsInvalidArgument)
     DAS::DasPtr<DAS::ExportInterface::IDasImage> image;
     ASSERT_EQ(CreateRgbaTestImage(2, 1, image.Put()), DAS_S_OK);
 
-    const auto                                options = MakeTensorOptions(3, 0.0);
+    const auto options = MakeTensorOptions(3, 0.0);
     DAS::DasPtr<DAS::ExportInterface::IDasTensor> tensor;
-    const auto result = ai->CreateTensorFromImage(
-        image.Get(),
-        options,
-        tensor.Put());
+    const auto                                    result =
+        ai->CreateTensorFromImage(image.Get(), options, tensor.Put());
 
     EXPECT_EQ(result, DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(tensor);

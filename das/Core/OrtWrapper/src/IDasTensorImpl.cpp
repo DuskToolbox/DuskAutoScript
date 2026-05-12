@@ -188,11 +188,11 @@ DasResult CreateFloatTensorBackingBuffer(
         return result;
     }
 
-    result = backing.memory->GetBinaryBuffer(0, backing.buffer.Put());
+    result = backing.memory->GetMutableView(0, backing.buffer.Put());
     if (DAS::IsFailed(result))
     {
         DAS_CORE_LOG_ERROR(
-            "CreateFloatTensorBackingBuffer failed: GetBinaryBuffer returned {}",
+            "CreateFloatTensorBackingBuffer failed: GetMutableView returned {}",
             result);
         return result;
     }
@@ -239,9 +239,9 @@ DasResult CreateFloatTensorBackingBuffer(
 }
 
 DasResult CreateFloatTensorBackingBufferFromImage(
-    ExportInterface::IDasImage*                  image,
+    ExportInterface::IDasImage*                   image,
     const ExportInterface::DasImageTensorOptions& options,
-    FloatTensorBackingBuffer*                    p_out_backing)
+    FloatTensorBackingBuffer*                     p_out_backing)
 {
     DAS_UTILS_CHECK_POINTER(image);
     DAS_UTILS_CHECK_POINTER(p_out_backing);
@@ -255,16 +255,10 @@ DasResult CreateFloatTensorBackingBufferFromImage(
         return DAS_E_INVALID_ARGUMENT;
     }
 
-    const std::array mean_values = {
-        options.mean0,
-        options.mean1,
-        options.mean2,
-        options.mean3};
-    const std::array stddev_values = {
-        options.std0,
-        options.std1,
-        options.std2,
-        options.std3};
+    const std::array mean_values =
+        {options.mean0, options.mean1, options.mean2, options.mean3};
+    const std::array stddev_values =
+        {options.std0, options.std1, options.std2, options.std3};
 
     for (uint32_t c = 0; c < tensor_channel_count; ++c)
     {
@@ -280,9 +274,7 @@ DasResult CreateFloatTensorBackingBufferFromImage(
         }
         if (stddev_values[c] == 0.0)
         {
-            DAS_CORE_LOG_ERROR(
-                "std at channel {} is zero",
-                c);
+            DAS_CORE_LOG_ERROR("std at channel {} is zero", c);
             return DAS_E_INVALID_ARGUMENT;
         }
     }
@@ -291,9 +283,7 @@ DasResult CreateFloatTensorBackingBufferFromImage(
     auto                     result = image->GetSize(&image_size);
     if (DAS::IsFailed(result))
     {
-        DAS_CORE_LOG_ERROR(
-            "GetSize returned {}",
-            result);
+        DAS_CORE_LOG_ERROR("GetSize returned {}", result);
         return result;
     }
     if (image_size.width <= 0 || image_size.height <= 0)
@@ -331,9 +321,7 @@ DasResult CreateFloatTensorBackingBufferFromImage(
     result = image->GetChannelCount(&image_channel_count_raw);
     if (DAS::IsFailed(result))
     {
-        DAS_CORE_LOG_ERROR(
-            "GetChannelCount returned {}",
-            result);
+        DAS_CORE_LOG_ERROR("GetChannelCount returned {}", result);
         return result;
     }
     if (image_channel_count_raw <= 0)
@@ -351,9 +339,7 @@ DasResult CreateFloatTensorBackingBufferFromImage(
     result = image->GetPixelFormat(&pixel_format);
     if (DAS::IsFailed(result))
     {
-        DAS_CORE_LOG_ERROR(
-            "GetPixelFormat returned {}",
-            result);
+        DAS_CORE_LOG_ERROR("GetPixelFormat returned {}", result);
         return result;
     }
 
@@ -415,9 +401,7 @@ DasResult CreateFloatTensorBackingBufferFromImage(
     result = image->GetDataSize(&image_data_size);
     if (DAS::IsFailed(result))
     {
-        DAS_CORE_LOG_ERROR(
-            "GetDataSize returned {}",
-            result);
+        DAS_CORE_LOG_ERROR("GetDataSize returned {}", result);
         return result;
     }
     if (image_data_size != required_image_bytes)
@@ -435,9 +419,7 @@ DasResult CreateFloatTensorBackingBufferFromImage(
     result = image->GetBinaryBuffer(buffer.Put());
     if (DAS::IsFailed(result))
     {
-        DAS_CORE_LOG_ERROR(
-            "GetBinaryBuffer returned {}",
-            result);
+        DAS_CORE_LOG_ERROR("GetBinaryBuffer returned {}", result);
         return result;
     }
 
@@ -445,15 +427,12 @@ DasResult CreateFloatTensorBackingBufferFromImage(
     result = buffer->GetData(&raw_data);
     if (DAS::IsFailed(result))
     {
-        DAS_CORE_LOG_ERROR(
-            "buffer GetData returned {}",
-            result);
+        DAS_CORE_LOG_ERROR("buffer GetData returned {}", result);
         return result;
     }
     if (raw_data == nullptr)
     {
-        DAS_CORE_LOG_ERROR(
-            "buffer GetData returned null");
+        DAS_CORE_LOG_ERROR("buffer GetData returned null");
         return DAS_E_INVALID_POINTER;
     }
 
@@ -461,9 +440,7 @@ DasResult CreateFloatTensorBackingBufferFromImage(
     result = buffer->GetSize(&buffer_size);
     if (DAS::IsFailed(result))
     {
-        DAS_CORE_LOG_ERROR(
-            "buffer GetSize returned {}",
-            result);
+        DAS_CORE_LOG_ERROR("buffer GetSize returned {}", result);
         return result;
     }
     if (buffer_size < required_image_bytes)
@@ -599,9 +576,9 @@ DasResult IDasTensorImpl::GetBinaryBuffer(
 
     try
     {
-        auto shape_info = value_.GetTensorTypeAndShapeInfo();
-        auto* data = static_cast<unsigned char*>(
-            value_.GetTensorMutableData<void>());
+        auto  shape_info = value_.GetTensorTypeAndShapeInfo();
+        auto* data =
+            static_cast<unsigned char*>(value_.GetTensorMutableData<void>());
         const auto element_count = shape_info.GetElementCount();
         const auto element_size = GetElementSize(shape_info.GetElementType());
         const auto size = static_cast<uint64_t>(element_count) * element_size;
