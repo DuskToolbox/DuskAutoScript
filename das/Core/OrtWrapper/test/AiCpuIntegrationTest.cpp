@@ -227,6 +227,45 @@ TEST(AiCpuImplTest, CreateTensorFromImageValidRgbaInput_WritesTensor)
     EXPECT_FLOAT_EQ(values[5], 60.0f / 255.0f);
 }
 
+TEST(AiCpuImplTest, CreateTensorFromImageRetainsBackingAfterSourceRelease)
+{
+    DAS::DasPtr<DAS::Core::OrtWrapper::AiCpuImpl> ai{
+        new DAS::Core::OrtWrapper::AiCpuImpl{}};
+
+    DAS::DasPtr<DAS::ExportInterface::IDasTensor> tensor;
+    {
+        DAS::DasPtr<DAS::ExportInterface::IDasImage> image;
+        ASSERT_EQ(CreateRgbaTestImage(2, 1, image.Put()), DAS_S_OK);
+
+        const auto options = MakeTensorOptions(3);
+        const auto result =
+            ai->CreateTensorFromImage(image.Get(), options, tensor.Put());
+
+        ASSERT_EQ(result, DAS_S_OK);
+        ASSERT_TRUE(tensor);
+    }
+
+    for (int read_index = 0; read_index < 3; ++read_index)
+    {
+        DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer> raw_tensor_buffer;
+        ASSERT_EQ(tensor->GetBinaryBuffer(raw_tensor_buffer.Put()), DAS_S_OK);
+
+        unsigned char* raw_tensor_data = nullptr;
+        uint64_t       raw_tensor_size = 0;
+        ASSERT_EQ(raw_tensor_buffer->GetData(&raw_tensor_data), DAS_S_OK);
+        ASSERT_EQ(raw_tensor_buffer->GetSize(&raw_tensor_size), DAS_S_OK);
+        ASSERT_EQ(raw_tensor_size, 6 * sizeof(float));
+
+        const auto* values = reinterpret_cast<const float*>(raw_tensor_data);
+        EXPECT_FLOAT_EQ(values[0], 10.0f / 255.0f);
+        EXPECT_FLOAT_EQ(values[1], 40.0f / 255.0f);
+        EXPECT_FLOAT_EQ(values[2], 20.0f / 255.0f);
+        EXPECT_FLOAT_EQ(values[3], 50.0f / 255.0f);
+        EXPECT_FLOAT_EQ(values[4], 30.0f / 255.0f);
+        EXPECT_FLOAT_EQ(values[5], 60.0f / 255.0f);
+    }
+}
+
 TEST(
     AiCpuImplTest,
     CreateTensorFromImageInvalidChannelCount_ReturnsInvalidArgument)
