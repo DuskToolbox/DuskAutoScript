@@ -34,13 +34,13 @@ DAS_DISABLE_WARNING_END
 #pragma warning(disable : 4100) // Unreferenced parameter in boost::process::v2
 #endif
 
+#include <algorithm>
 #include <array>
 #include <boost/asio.hpp>
 #include <boost/pfr.hpp>
 #include <boost/process/v2/execute.hpp>
 #include <boost/process/v2/process.hpp>
 #include <das/DasApi.h>
-#include <das/DasException.hpp>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
@@ -48,6 +48,7 @@ DAS_DISABLE_WARNING_END
 #include <das/_autogen/idl/abi/IDasImage.h>
 #include <sstream>
 #include <system_error>
+#include <vector>
 
 #ifdef _MSC_VER
 #pragma warning(pop)
@@ -118,72 +119,6 @@ std::size_t ComputeScreenshotSize(
     return ADB_CAPTURE_HEADER_SIZE
            + static_cast<std::size_t>(width * height * 4);
 }
-
-// DasMemoryImpl - 包装类，提供便捷的 C++ API
-class DasMemoryImpl
-{
-    DasPtr<ExportInterface::IDasMemory> p_data_;
-
-public:
-    DasMemoryImpl(size_t size_in_bytes)
-    {
-        ::CreateIDasMemory(size_in_bytes, p_data_.Put());
-    }
-
-    ~DasMemoryImpl() = default;
-
-    unsigned char* GetData() const
-    {
-        auto           p_binary_buffer = GetMutableView(0);
-        unsigned char* p_data{nullptr};
-        DAS_THROW_IF_FAILED(p_binary_buffer->GetData(&p_data));
-        return p_data;
-    }
-
-    DasPtr<ExportInterface::IDasBinaryBuffer> GetReadView(
-        const uint64_t offset) const
-    {
-        DasPtr<ExportInterface::IDasBinaryBuffer> p_binary_buffer{};
-        DAS_THROW_IF_FAILED(
-            p_data_->GetBinaryBuffer(offset, p_binary_buffer.Put()));
-        return p_binary_buffer;
-    }
-
-    DasPtr<ExportInterface::IDasBinaryBuffer> GetMutableView(
-        const uint64_t offset) const
-    {
-        DasPtr<ExportInterface::IDasBinaryBuffer> p_binary_buffer{};
-        DAS_THROW_IF_FAILED(
-            p_data_->GetMutableView(offset, p_binary_buffer.Put()));
-        return p_binary_buffer;
-    }
-
-    size_t GetSize() const
-    {
-        size_t size{};
-        p_data_->GetSize(&size);
-        return size;
-    }
-
-    // stl-like api
-    unsigned char& operator[](size_t size_in_bytes)
-    {
-        return *(GetData() + size_in_bytes);
-    }
-
-    void resize(size_t new_size)
-    {
-        if (new_size > GetSize())
-        {
-            ::CreateIDasMemory(new_size, p_data_.Put());
-        }
-    }
-
-    ExportInterface::IDasMemory* GetImpl() const noexcept
-    {
-        return p_data_.Get();
-    }
-};
 
 template <class Buffer>
 struct CommandExecutorContext : public DAS::Utils::NonCopyableAndNonMovable
@@ -386,11 +321,8 @@ DasResult AdbCapture::CaptureRawWithGZip()
         capture_gzip_raw_command_,
         Details::PROCESS_TIMEOUT_IN_S};
     // Initialize the objects that need to be used later.
-    auto decompressed_data = Details::DasMemoryImpl(
-        Details::ComputeScreenshotSize(
-            adb_device_screen_size_.width,
-            adb_device_screen_size_.height));
-    const gzip::Decompressor decompressor{};
+    std::vector<unsigned char> decompressed_data;
+    const gzip::Decompressor   decompressor{};
     // wait for the process to exit.
     const auto exec_result = context.Run();
     if (!IsOk(exec_result))
@@ -403,17 +335,28 @@ DasResult AdbCapture::CaptureRawWithGZip()
         context.GetBuffer().data(),
         context.GetBuffer().size());
 
-    auto           p_header_binary_buffer = decompressed_data.GetReadView(0);
-    unsigned char* p_decompressed_data = nullptr;
-    DAS_THROW_IF_FAILED(p_header_binary_buffer->GetData(&p_decompressed_data));
-    const auto header =
-        Details::ResolveHeader(reinterpret_cast<char*>(p_decompressed_data));
+    if (decompressed_data.size() < ADB_CAPTURE_HEADER_SIZE) [[unlikely]]
+    {
+        const auto error_message = DAS::fmt::format(
+            "Received truncated framebuffer header. Expected at least {} "
+            "bytes, got {}.",
+            ADB_CAPTURE_HEADER_SIZE,
+            decompressed_data.size());
+        DAS_LOG_ERROR(error_message.c_str());
+        return CAPTURE_DATA_TOO_LESS;
+    }
+
+    const auto header = Details::ResolveHeader(
+        reinterpret_cast<const char*>(decompressed_data.data()));
+    std::size_t expected_payload_size = 0;
     Details::ComputeDataSizeFromHeader(header)
         .and_then(
-            [&decompressed_data, &header](const std::size_t expected_data_size)
+            [&decompressed_data, &expected_payload_size, &header](
+                const std::size_t expected_data_size)
                 -> DAS::Utils::Expected<void>
             {
-                const auto decompressed_data_size = decompressed_data.GetSize();
+                expected_payload_size = expected_data_size;
+                const auto decompressed_data_size = decompressed_data.size();
                 if (decompressed_data_size < ADB_CAPTURE_HEADER_SIZE
                     || expected_data_size
                            > decompressed_data_size - ADB_CAPTURE_HEADER_SIZE)
@@ -437,27 +380,84 @@ DasResult AdbCapture::CaptureRawWithGZip()
                     static_cast<AdbCaptureFormat>(header.f));
             })
         .and_then(
-            [&decompressed_data,
-             &header](const ExportInterface::DasImageFormat color_format)
+            [&decompressed_data, &expected_payload_size, &header](
+                const ExportInterface::DasImageFormat color_format)
                 -> DAS::Utils::Expected<void>
             {
                 ExportInterface::DasSize size{
                     static_cast<int32_t>(header.w),
                     static_cast<int32_t>(header.h)};
 
-                auto p_payload_binary_buffer =
-                    decompressed_data.GetReadView(ADB_CAPTURE_HEADER_SIZE);
+                DasPtr<ExportInterface::IDasMemory> exact_memory;
+                auto create_memory_result = ::CreateIDasMemory(
+                    decompressed_data.size(),
+                    exact_memory.Put());
+                if (!IsOk(create_memory_result)) [[unlikely]]
+                {
+                    return tl::make_unexpected(create_memory_result);
+                }
+                if (!exact_memory) [[unlikely]]
+                {
+                    return tl::make_unexpected(DAS_E_INVALID_POINTER);
+                }
+
+                DasPtr<ExportInterface::IDasBinaryBuffer> memory_buffer;
+                auto                                      get_buffer_result =
+                    exact_memory->GetMutableView(0, memory_buffer.Put());
+                if (!IsOk(get_buffer_result)) [[unlikely]]
+                {
+                    return tl::make_unexpected(get_buffer_result);
+                }
+                if (!memory_buffer) [[unlikely]]
+                {
+                    return tl::make_unexpected(DAS_E_INVALID_POINTER);
+                }
+
+                unsigned char* p_exact_data = nullptr;
+                auto get_data_result = memory_buffer->GetData(&p_exact_data);
+                if (!IsOk(get_data_result)) [[unlikely]]
+                {
+                    return tl::make_unexpected(get_data_result);
+                }
+                if (p_exact_data == nullptr) [[unlikely]]
+                {
+                    return tl::make_unexpected(DAS_E_INVALID_POINTER);
+                }
+                std::copy(
+                    decompressed_data.begin(),
+                    decompressed_data.end(),
+                    p_exact_data);
+
+                DasPtr<ExportInterface::IDasBinaryBuffer>
+                    p_payload_binary_buffer;
+                get_buffer_result = exact_memory->GetBinaryBuffer(
+                    ADB_CAPTURE_HEADER_SIZE,
+                    p_payload_binary_buffer.Put());
+                if (!IsOk(get_buffer_result)) [[unlikely]]
+                {
+                    return tl::make_unexpected(get_buffer_result);
+                }
+                if (!p_payload_binary_buffer) [[unlikely]]
+                {
+                    return tl::make_unexpected(DAS_E_INVALID_POINTER);
+                }
+
                 unsigned char* p_decompressed_data_for_desc = nullptr;
-                DAS_THROW_IF_FAILED(p_payload_binary_buffer->GetData(
-                    &p_decompressed_data_for_desc));
-                uint64_t desc_data_size{};
-                DAS_THROW_IF_FAILED(
-                    p_payload_binary_buffer->GetSize(&desc_data_size));
+                get_data_result = p_payload_binary_buffer->GetData(
+                    &p_decompressed_data_for_desc);
+                if (!IsOk(get_data_result)) [[unlikely]]
+                {
+                    return tl::make_unexpected(get_data_result);
+                }
+                if (p_decompressed_data_for_desc == nullptr) [[unlikely]]
+                {
+                    return tl::make_unexpected(DAS_E_INVALID_POINTER);
+                }
 
                 DasImageDesc desc{
                     .p_data =
                         reinterpret_cast<char*>(p_decompressed_data_for_desc),
-                    .data_size = static_cast<std::size_t>(desc_data_size),
+                    .data_size = expected_payload_size,
                     .data_format = color_format};
 
                 DasPtr<ExportInterface::IDasImage> p_image{};
