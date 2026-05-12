@@ -55,10 +55,11 @@ static bool TryMultiplyUint64(uint64_t lhs, uint64_t rhs, uint64_t* p_out_value)
 }
 
 static DasResult GetOcrImageData(
-    DAS::ExportInterface::IDasImage*           image,
-    const DAS::ExportInterface::DasSize&       image_size,
-    unsigned char**                            pp_out_raw_data,
-    DAS::ExportInterface::DasImagePixelFormat* p_out_pixel_format)
+    DAS::ExportInterface::IDasImage*                     image,
+    const DAS::ExportInterface::DasSize&                 image_size,
+    DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer>& out_buffer,
+    unsigned char**                                      pp_out_raw_data,
+    DAS::ExportInterface::DasImagePixelFormat*           p_out_pixel_format)
 {
     DAS_UTILS_CHECK_POINTER(image);
     DAS_UTILS_CHECK_POINTER(pp_out_raw_data);
@@ -139,8 +140,7 @@ static DasResult GetOcrImageData(
         return DAS_E_INVALID_SIZE;
     }
 
-    DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer> buffer;
-    result = image->GetBinaryBuffer(buffer.Put());
+    result = image->GetBinaryBuffer(out_buffer.Put());
     if (DAS::IsFailed(result))
     {
         DAS_CORE_LOG_ERROR(
@@ -148,9 +148,14 @@ static DasResult GetOcrImageData(
             result);
         return result;
     }
+    if (!out_buffer)
+    {
+        DAS_CORE_LOG_ERROR("Recognize: GetBinaryBuffer returned null");
+        return DAS_E_INVALID_POINTER;
+    }
 
     unsigned char* raw_data = nullptr;
-    result = buffer->GetData(&raw_data);
+    result = out_buffer->GetData(&raw_data);
     if (DAS::IsFailed(result))
     {
         DAS_CORE_LOG_ERROR("Recognize: GetData failed: result={}", result);
@@ -163,7 +168,7 @@ static DasResult GetOcrImageData(
     }
 
     uint64_t buffer_size = 0;
-    result = buffer->GetSize(&buffer_size);
+    result = out_buffer->GetSize(&buffer_size);
     if (DAS::IsFailed(result))
     {
         DAS_CORE_LOG_ERROR("Recognize: GetSize failed: result={}", result);
@@ -700,10 +705,16 @@ DasResult PaddleOcrImpl::Recognize(
             return DAS_E_INVALID_ARGUMENT;
         }
 
-        unsigned char*                            raw_data = nullptr;
-        DAS::ExportInterface::DasImagePixelFormat pixel_format =
+        unsigned char*                                      raw_data = nullptr;
+        DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer> image_buffer;
+        DAS::ExportInterface::DasImagePixelFormat           pixel_format =
             DAS::ExportInterface::DAS_PIXEL_FORMAT_UNKNOWN;
-        cr = GetOcrImageData(p_image, img_size, &raw_data, &pixel_format);
+        cr = GetOcrImageData(
+            p_image,
+            img_size,
+            image_buffer,
+            &raw_data,
+            &pixel_format);
         if (DAS::IsFailed(cr))
         {
             return cr;
