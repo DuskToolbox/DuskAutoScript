@@ -268,6 +268,55 @@ TEST(AiCpuImplTest, CreateTensorFromImageRetainsBackingAfterSourceRelease)
 
 TEST(
     AiCpuImplTest,
+    CreateTensorFromImagePreprocessCopyStableAfterSourceMutation)
+{
+    DAS::DasPtr<DAS::Core::OrtWrapper::AiCpuImpl> ai{
+        new DAS::Core::OrtWrapper::AiCpuImpl{}};
+
+    DAS::DasPtr<DAS::ExportInterface::IDasImage> image;
+    ASSERT_EQ(CreateRgbaTestImage(2, 1, image.Put()), DAS_S_OK);
+
+    const auto options = MakeTensorOptions(3);
+    DAS::DasPtr<DAS::ExportInterface::IDasTensor> tensor;
+    ASSERT_EQ(
+        ai->CreateTensorFromImage(image.Get(), options, tensor.Put()),
+        DAS_S_OK);
+    ASSERT_TRUE(tensor);
+
+    DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer> image_buffer;
+    ASSERT_EQ(image->GetBinaryBuffer(image_buffer.Put()), DAS_S_OK);
+
+    unsigned char* image_data = nullptr;
+    ASSERT_EQ(image_buffer->GetData(&image_data), DAS_S_OK);
+    ASSERT_NE(image_data, nullptr);
+
+    image_data[0] = 200;
+    image_data[1] = 210;
+    image_data[2] = 220;
+    image_data[4] = 230;
+    image_data[5] = 240;
+    image_data[6] = 250;
+
+    DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer> raw_tensor_buffer;
+    ASSERT_EQ(tensor->GetBinaryBuffer(raw_tensor_buffer.Put()), DAS_S_OK);
+
+    unsigned char* raw_tensor_data = nullptr;
+    uint64_t       raw_tensor_size = 0;
+    ASSERT_EQ(raw_tensor_buffer->GetData(&raw_tensor_data), DAS_S_OK);
+    ASSERT_EQ(raw_tensor_buffer->GetSize(&raw_tensor_size), DAS_S_OK);
+    ASSERT_EQ(raw_tensor_size, 6 * sizeof(float));
+
+    const auto* values = reinterpret_cast<const float*>(raw_tensor_data);
+    EXPECT_FLOAT_EQ(values[0], 10.0f / 255.0f);
+    EXPECT_FLOAT_EQ(values[1], 40.0f / 255.0f);
+    EXPECT_FLOAT_EQ(values[2], 20.0f / 255.0f);
+    EXPECT_FLOAT_EQ(values[3], 50.0f / 255.0f);
+    EXPECT_FLOAT_EQ(values[4], 30.0f / 255.0f);
+    EXPECT_FLOAT_EQ(values[5], 60.0f / 255.0f);
+}
+
+TEST(
+    AiCpuImplTest,
     CreateTensorFromImageInvalidChannelCount_ReturnsInvalidArgument)
 {
     DAS::DasPtr<DAS::Core::OrtWrapper::AiCpuImpl> ai{

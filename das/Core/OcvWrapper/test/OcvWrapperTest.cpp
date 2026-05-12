@@ -1064,6 +1064,52 @@ namespace Das
             p_memory->Release();
         }
 
+        TEST(
+            FactoryMigrationTest,
+            FromRgb888_MutableSharingVisibleAcrossImageBuffers)
+        {
+            constexpr int kWidth = 2;
+            constexpr int kHeight = 1;
+            auto rgba_data = MakeRgbaData(kWidth, kHeight, 10, 20, 30, 40);
+
+            auto* p_memory = new TrackingMemory(std::move(rgba_data));
+            p_memory->AddRef();
+
+            ExportInterface::DasSize    size{kWidth, kHeight};
+            ExportInterface::IDasImage* p_image = nullptr;
+            ASSERT_EQ(
+                CreateIDasImageFromRgb888(p_memory, &size, &p_image),
+                DAS_S_OK);
+            ASSERT_NE(p_image, nullptr);
+            p_memory->Release();
+
+            ExportInterface::IDasBinaryBuffer* p_first_buffer = nullptr;
+            ASSERT_EQ(p_image->GetBinaryBuffer(&p_first_buffer), DAS_S_OK);
+            DAS::DasPtr<ExportInterface::IDasBinaryBuffer> first_buffer{
+                p_first_buffer};
+
+            ExportInterface::IDasBinaryBuffer* p_second_buffer = nullptr;
+            ASSERT_EQ(p_image->GetBinaryBuffer(&p_second_buffer), DAS_S_OK);
+            DAS::DasPtr<ExportInterface::IDasBinaryBuffer> second_buffer{
+                p_second_buffer};
+
+            unsigned char* first_data = nullptr;
+            ASSERT_EQ(first_buffer->GetData(&first_data), DAS_S_OK);
+            ASSERT_NE(first_data, nullptr);
+
+            unsigned char* second_data = nullptr;
+            ASSERT_EQ(second_buffer->GetData(&second_data), DAS_S_OK);
+            ASSERT_NE(second_data, nullptr);
+
+            first_data[0] = 77;
+            first_data[3] = 88;
+
+            EXPECT_EQ(second_data[0], 77);
+            EXPECT_EQ(second_data[3], 88);
+
+            p_image->Release();
+        }
+
         TEST(FactoryMigrationTest, FromRgb888_RejectsShortBuffer)
         {
             std::vector<uint8_t> rgba(2, 255);
@@ -1276,7 +1322,7 @@ namespace Das
             }
         }
 
-        TEST(CudaImageBinaryBufferTest, GetBinaryBuffer_ZeroCopy)
+        TEST(CudaImageBinaryBufferTest, GetBinaryBuffer_MaterializesCpuBytes)
         {
             cv::cuda::GpuMat gpu_mat(10, 20, CV_8UC3);
             gpu_mat.setTo(cv::Scalar(100, 150, 200));
@@ -1292,8 +1338,15 @@ namespace Das
                 p_buffer);
 
             uint64_t buffer_size = 0;
-            p_buffer->GetSize(&buffer_size);
+            ASSERT_EQ(p_buffer->GetSize(&buffer_size), DAS_S_OK);
             EXPECT_EQ(buffer_size, static_cast<uint64_t>(10 * 20 * 3));
+
+            unsigned char* data = nullptr;
+            ASSERT_EQ(p_buffer->GetData(&data), DAS_S_OK);
+            ASSERT_NE(data, nullptr);
+            EXPECT_EQ(data[0], 100);
+            EXPECT_EQ(data[1], 150);
+            EXPECT_EQ(data[2], 200);
         }
 #endif // DAS_WITH_CUDA
 
