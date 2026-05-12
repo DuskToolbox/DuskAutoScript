@@ -33,7 +33,7 @@ namespace
         DasMemoryBinaryBufferImpl(
             DAS::ExportInterface::IDasMemory* p_memory,
             uint64_t                          offset)
-            : p_memory_{p_memory}, offset_{offset}
+            : backing_memory_{p_memory}, offset_{offset}
         {
         }
 
@@ -41,7 +41,7 @@ namespace
         DAS_IMPL GetSize(uint64_t* p_out_size) override;
 
     private:
-        DAS::DasPtr<DAS::ExportInterface::IDasMemory> p_memory_;
+        DAS::DasPtr<DAS::ExportInterface::IDasMemory> backing_memory_;
         uint64_t                                      offset_;
     };
 
@@ -53,8 +53,9 @@ namespace
 
     public:
         explicit DasMemoryImpl(const size_t size_in_bytes)
-            : size_{size_in_bytes},
-              up_data_{std::make_unique<unsigned char[]>(size_in_bytes)},
+            : size_in_bytes_{size_in_bytes},
+              backing_storage_{
+                  std::make_unique<unsigned char[]>(size_in_bytes)},
               whole_buffer_view_{*this}
         {
         }
@@ -63,38 +64,40 @@ namespace
             uint64_t                                 offset,
             DAS::ExportInterface::IDasBinaryBuffer** pp_out_buffer) override
         {
-            return CreateView(offset, pp_out_buffer);
+            return CreateOffsetView(offset, pp_out_buffer);
         }
 
         DAS_IMPL GetMutableView(
             uint64_t                                 offset,
             DAS::ExportInterface::IDasBinaryBuffer** pp_out_buffer) override
         {
-            return CreateView(offset, pp_out_buffer);
+            // B+ mutable intent is caller-managed; no hard write barrier is
+            // applied between read-intent and mutable-intent views.
+            return CreateOffsetView(offset, pp_out_buffer);
         }
 
         DAS_IMPL GetSize(uint64_t* p_out_size) override
         {
             DAS_UTILS_CHECK_POINTER(p_out_size);
-            *p_out_size = size_;
+            *p_out_size = size_in_bytes_;
             return DAS_S_OK;
         }
 
     private:
-        DAS_IMPL CreateView(
+        DAS_IMPL CreateOffsetView(
             uint64_t                                 offset,
             DAS::ExportInterface::IDasBinaryBuffer** pp_out_buffer)
         {
             DAS_UTILS_CHECK_POINTER(pp_out_buffer);
             *pp_out_buffer = nullptr;
 
-            if (offset > size_) [[unlikely]]
+            if (offset > size_in_bytes_) [[unlikely]]
             {
                 DAS_CORE_LOG_ERROR(
                     "IDasMemory view offset out of range: offset={}, size={}, "
                     "result={}",
                     offset,
-                    size_,
+                    size_in_bytes_,
                     DAS_E_OUT_OF_RANGE);
                 return DAS_E_OUT_OF_RANGE;
             }
@@ -121,17 +124,17 @@ namespace
         [[nodiscard]]
         unsigned char* Data() noexcept
         {
-            return up_data_.get();
+            return backing_storage_.get();
         }
 
         [[nodiscard]]
         size_t Size() const noexcept
         {
-            return size_;
+            return size_in_bytes_;
         }
 
-        size_t                           size_;
-        std::unique_ptr<unsigned char[]> up_data_;
+        size_t                           size_in_bytes_;
+        std::unique_ptr<unsigned char[]> backing_storage_;
         WholeBufferView                  whole_buffer_view_;
     };
 
@@ -182,7 +185,8 @@ namespace
     {
         DAS_UTILS_CHECK_POINTER(pp_out_data);
         *pp_out_data =
-            static_cast<DasMemoryImpl*>(p_memory_.Get())->Data() + offset_;
+            static_cast<DasMemoryImpl*>(backing_memory_.Get())->Data()
+            + offset_;
         return DAS_S_OK;
     }
 
@@ -190,7 +194,7 @@ namespace
     {
         DAS_UTILS_CHECK_POINTER(p_out_size);
         const auto* const p_memory =
-            static_cast<const DasMemoryImpl*>(p_memory_.Get());
+            static_cast<const DasMemoryImpl*>(backing_memory_.Get());
         *p_out_size = p_memory->Size() - offset_;
         return DAS_S_OK;
     }
