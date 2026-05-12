@@ -134,19 +134,27 @@ public:
 
     unsigned char* GetData() const
     {
-        DasPtr<ExportInterface::IDasBinaryBuffer> p_binary_buffer{};
-        DAS_THROW_IF_FAILED(p_data_->GetMutableView(0, p_binary_buffer.Put()));
+        auto           p_binary_buffer = GetMutableView(0);
         unsigned char* p_data{nullptr};
         DAS_THROW_IF_FAILED(p_binary_buffer->GetData(&p_data));
         return p_data;
     }
 
-    DasPtr<ExportInterface::IDasBinaryBuffer> GetBinaryBuffer(
+    DasPtr<ExportInterface::IDasBinaryBuffer> GetReadView(
         const uint64_t offset) const
     {
         DasPtr<ExportInterface::IDasBinaryBuffer> p_binary_buffer{};
         DAS_THROW_IF_FAILED(
             p_data_->GetBinaryBuffer(offset, p_binary_buffer.Put()));
+        return p_binary_buffer;
+    }
+
+    DasPtr<ExportInterface::IDasBinaryBuffer> GetMutableView(
+        const uint64_t offset) const
+    {
+        DasPtr<ExportInterface::IDasBinaryBuffer> p_binary_buffer{};
+        DAS_THROW_IF_FAILED(
+            p_data_->GetMutableView(offset, p_binary_buffer.Put()));
         return p_binary_buffer;
     }
 
@@ -395,10 +403,9 @@ DasResult AdbCapture::CaptureRawWithGZip()
         context.GetBuffer().data(),
         context.GetBuffer().size());
 
-    auto p_decompressed_binary_buffer = decompressed_data.GetBinaryBuffer(0);
+    auto           p_header_binary_buffer = decompressed_data.GetReadView(0);
     unsigned char* p_decompressed_data = nullptr;
-    DAS_THROW_IF_FAILED(
-        p_decompressed_binary_buffer->GetData(&p_decompressed_data));
+    DAS_THROW_IF_FAILED(p_header_binary_buffer->GetData(&p_decompressed_data));
     const auto header =
         Details::ResolveHeader(reinterpret_cast<char*>(p_decompressed_data));
     Details::ComputeDataSizeFromHeader(header)
@@ -407,12 +414,16 @@ DasResult AdbCapture::CaptureRawWithGZip()
                 -> DAS::Utils::Expected<void>
             {
                 const auto decompressed_data_size = decompressed_data.GetSize();
-                if (expected_data_size > decompressed_data_size) [[unlikely]]
+                if (decompressed_data_size < ADB_CAPTURE_HEADER_SIZE
+                    || expected_data_size
+                           > decompressed_data_size - ADB_CAPTURE_HEADER_SIZE)
+                    [[unlikely]]
                 {
                     const auto error_message = DAS::fmt::format(
-                        "Received unexpected data size.\n Expected data size: {}.\n Received data size: {}.\n Data format: {}.",
+                        "Received unexpected payload size.\n Expected payload size: {}.\n Received total size: {}.\n Header size: {}.\n Data format: {}.",
                         expected_data_size,
                         decompressed_data_size,
+                        ADB_CAPTURE_HEADER_SIZE,
                         header.f);
                     DAS_LOG_ERROR(error_message.c_str());
                     return tl::make_unexpected(CAPTURE_DATA_TOO_LESS);
@@ -434,14 +445,14 @@ DasResult AdbCapture::CaptureRawWithGZip()
                     static_cast<int32_t>(header.w),
                     static_cast<int32_t>(header.h)};
 
-                auto p_desc_binary_buffer = decompressed_data.GetBinaryBuffer(
-                    ADB_CAPTURE_HEADER_SIZE);
+                auto p_payload_binary_buffer =
+                    decompressed_data.GetReadView(ADB_CAPTURE_HEADER_SIZE);
                 unsigned char* p_decompressed_data_for_desc = nullptr;
-                DAS_THROW_IF_FAILED(p_desc_binary_buffer->GetData(
+                DAS_THROW_IF_FAILED(p_payload_binary_buffer->GetData(
                     &p_decompressed_data_for_desc));
                 uint64_t desc_data_size{};
                 DAS_THROW_IF_FAILED(
-                    p_desc_binary_buffer->GetSize(&desc_data_size));
+                    p_payload_binary_buffer->GetSize(&desc_data_size));
 
                 DasImageDesc desc{
                     .p_data =
