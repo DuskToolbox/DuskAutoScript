@@ -36,17 +36,21 @@ DAS_DISABLE_WARNING_END
 #endif
 
 #include <algorithm>
-#include <array>
+#include <atomic>
 #include <boost/asio.hpp>
 #include <boost/pfr.hpp>
 #include <boost/process/v2/execute.hpp>
 #include <boost/process/v2/process.hpp>
+#include <boost/process/v2/stdio.hpp>
+#include <chrono>
 #include <das/DasApi.h>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
 #include <das/_autogen/idl/abi/DasLogger.h>
 #include <das/_autogen/idl/abi/IDasImage.h>
+#include <fstream>
+#include <iterator>
 #include <limits>
 #include <sstream>
 #include <system_error>
@@ -126,37 +130,76 @@ bool TryMultiplyUint64(
     return true;
 }
 
-std::size_t ComputeScreenshotSize(
-    const std::int32_t width,
-    const std::int32_t height) noexcept
-{
-    // header + data (assume 32bit color)
-    return ADB_CAPTURE_HEADER_SIZE
-           + static_cast<std::size_t>(width * height * 4);
-}
-
 template <class Buffer>
 struct CommandExecutorContext : public DAS::Utils::NonCopyableAndNonMovable
 {
 private:
-    boost::asio::io_context          ioc_;
-    boost::asio::steady_timer        timeout_timer_;
-    boost::asio::cancellation_signal sig_;
-    std::chrono::milliseconds        timeout_in_ms_;
-    std::string                      command_;
-    DasResult                        result_;
-    Buffer                           buffer_;
+    boost::asio::io_context              ioc_;
+    boost::asio::steady_timer            timeout_timer_;
+    boost::asio::cancellation_signal     sig_;
+    std::chrono::milliseconds            timeout_in_ms_;
+    boost::process::v2::filesystem::path stdout_file_path_;
+    std::string                          command_;
+    DasResult                            result_;
+    Buffer                               buffer_;
+
+    static boost::process::v2::filesystem::path MakeStdoutCapturePath()
+    {
+        static std::atomic_uint64_t counter{0};
+        const auto                  now =
+            std::chrono::steady_clock::now().time_since_epoch().count();
+
+        return boost::process::v2::filesystem::temp_directory_path()
+               / DAS::fmt::format(
+                   "das-adb-capture-{}-{}.stdout",
+                   now,
+                   counter.fetch_add(1, std::memory_order_relaxed));
+    }
+
+    DasResult LoadStdoutBuffer()
+    {
+        std::ifstream stdout_file{stdout_file_path_.string(), std::ios::binary};
+        if (!stdout_file)
+        {
+            const auto error_message = DAS::fmt::format(
+                "Failed to open stdout capture file for command {}.",
+                command_);
+            DAS_LOG_ERROR(error_message.c_str());
+            return DAS_E_INTERNAL_FATAL_ERROR;
+        }
+
+        buffer_.assign(
+            std::istreambuf_iterator<char>{stdout_file},
+            std::istreambuf_iterator<char>{});
+        if (stdout_file.bad())
+        {
+            const auto error_message = DAS::fmt::format(
+                "Failed to read stdout capture file for command {}.",
+                command_);
+            DAS_LOG_ERROR(error_message.c_str());
+            return DAS_E_INTERNAL_FATAL_ERROR;
+        }
+
+        return DAS_S_OK;
+    }
 
 public:
     CommandExecutorContext(
         std::string_view    command,
         const std::uint32_t timeout)
         : ioc_{}, timeout_timer_{ioc_, std::chrono::seconds(timeout)}, sig_{},
-          timeout_in_ms_{timeout * 1000}, command_{command},
+          timeout_in_ms_{timeout * 1000},
+          stdout_file_path_{MakeStdoutCapturePath()}, command_{command},
           result_{DAS_E_UNDEFINED_RETURN_VALUE}, buffer_{}
     {
+        boost::process::v2::error_code remove_ec;
+        boost::process::v2::filesystem::remove(stdout_file_path_, remove_ec);
         boost::process::v2::async_execute(
-            boost::process::v2::process{ioc_, command_, {}},
+            boost::process::v2::process{
+                ioc_,
+                command_,
+                {},
+                boost::process::v2::process_stdio{{}, stdout_file_path_, {}}},
             boost::asio::bind_cancellation_slot(
                 sig_.slot(),
                 [this](boost::system::error_code ec, int exit_code)
@@ -175,15 +218,19 @@ public:
                         {
                             result_ = DAS_E_INTERNAL_FATAL_ERROR;
                         }
+                        timeout_timer_.cancel();
                         return;
                     }
                     else [[likely]]
                     {
                         DAS_LOG_INFO(info.c_str());
-                        result_ = DAS_S_OK;
+                        if (result_ != DAS_E_TIMEOUT)
+                        {
+                            result_ = LoadStdoutBuffer();
+                        }
                     }
 
-                    timeout_timer_.cancel(); // we're done earlier
+                    timeout_timer_.cancel();
                 }));
 
         timeout_timer_.async_wait(
@@ -221,6 +268,12 @@ public:
 
     const Buffer& GetBuffer() const { return buffer_; }
     Buffer&       GetBuffer() { return buffer_; }
+
+    ~CommandExecutorContext()
+    {
+        boost::process::v2::error_code remove_ec;
+        boost::process::v2::filesystem::remove(stdout_file_path_, remove_ec);
+    }
 };
 
 AdbCaptureHeader ResolveHeader(const char* p_header)
@@ -318,11 +371,7 @@ auto MakeCommandExecutorContext(
     std::string_view    command,
     const std::uint32_t timeout)
 {
-    T tmp_buffer{};
-    return Details::CommandExecutorContext<T>{
-        command,
-        timeout,
-        std::move(tmp_buffer)};
+    return Details::CommandExecutorContext<T>{command, timeout};
 }
 
 DAS::Utils::Expected<AdbCapture::Size> AdbCapture::GetDeviceSize() const
@@ -363,13 +412,8 @@ DAS::Utils::Expected<AdbCapture::Size> AdbCapture::GetDeviceSize() const
 DasResult AdbCapture::CaptureRawWithGZip()
 {
     DasResult result{DAS_S_OK};
-    // Initialize buffer.
-    auto adb_output_buffer = DAS::Utils::MakeContainerOfSize<std::vector<char>>(
-        Details::ComputeScreenshotSize(
-            adb_device_screen_size_.width,
-            adb_device_screen_size_.height));
     // Run adb and receive screen capture.
-    Details::CommandExecutorContext<decltype(adb_output_buffer)> context{
+    Details::CommandExecutorContext<std::vector<char>> context{
         capture_gzip_raw_command_,
         Details::PROCESS_TIMEOUT_IN_S};
     // Initialize the objects that need to be used later.
@@ -380,6 +424,11 @@ DasResult AdbCapture::CaptureRawWithGZip()
     if (!IsOk(exec_result))
     {
         return exec_result;
+    }
+    if (context.GetBuffer().empty()) [[unlikely]]
+    {
+        DAS_LOG_ERROR("ADB gzip capture returned empty stdout.");
+        return CAPTURE_DATA_TOO_LESS;
     }
 
     decompressor.decompress(
