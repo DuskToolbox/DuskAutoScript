@@ -436,18 +436,25 @@ DasResult CreateIDasImageFromRgb888(
 
     try
     {
-        // Clone the data to ensure ownership — the cv::Mat constructor with
-        // external data creates a non-owning header.
-        cv::Mat owned{size.height, size.width, CV_8UC4, p_data};
         DAS::DasOutPtr<DAS::ExportInterface::IDasImage> result(pp_out_image);
-        auto* p_result = DAS::Core::OcvWrapper::CpuImageImpl<
-            DAS::Core::OcvWrapper::Storage::OwningStorage>::
-            MakeFromCpuMat(
-                owned.clone(),
-                DAS::ExportInterface::DAS_PIXEL_FORMAT_RGBA);
+        auto* p_result = new DAS::Core::OcvWrapper::CpuImageImpl<
+            DAS::Core::OcvWrapper::Storage::IDasBinaryBufferStorage>{
+            DAS::ExportInterface::DAS_PIXEL_FORMAT_RGBA,
+            size.height,
+            size.width,
+            CV_8UC4,
+            p_buffer};
+        p_result->AddRef();
         result.Set(p_result);
         p_result->Release();
         result.Keep();
+    }
+    catch (const DAS::Core::OcvWrapper::Storage::StorageValidationError& ex)
+    {
+        DAS_CORE_LOG_ERROR(
+            "CreateIDasImageFromRgb888: buffer storage validation failed: {}",
+            ex.what());
+        return ex.Result();
     }
     catch (const std::bad_alloc&)
     {

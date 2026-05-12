@@ -14,7 +14,9 @@
 #include <atomic>
 #include <cstring>
 #include <exception>
+#include <limits>
 #include <optional>
+#include <stdexcept>
 
 DAS_CORE_OCVWRAPPER_NS_BEGIN
 
@@ -56,6 +58,129 @@ namespace Storage
         cv::Mat& GetCpuMat() { return mat_; }
     };
 
+    class StorageValidationError final : public std::runtime_error
+    {
+        DasResult result_;
+
+    public:
+        StorageValidationError(DasResult result, const char* p_message)
+            : std::runtime_error(p_message), result_(result)
+        {
+        }
+
+        [[nodiscard]]
+        DasResult Result() const noexcept
+        {
+            return result_;
+        }
+    };
+
+    /// @brief Buffer-backed storage: holds the exact returned IDasBinaryBuffer
+    /// view and a cv::Mat header pointing into that view.
+    class IDasBinaryBufferStorage
+    {
+        DAS::DasPtr<ExportInterface::IDasBinaryBuffer> buffer_;
+        cv::Mat                                        mat_;
+
+    public:
+        IDasBinaryBufferStorage(
+            int                                height,
+            int                                width,
+            int                                type,
+            ExportInterface::IDasBinaryBuffer* p_buffer)
+            : buffer_(p_buffer)
+        {
+            if (p_buffer == nullptr)
+            {
+                throw StorageValidationError{
+                    DAS_E_INVALID_POINTER,
+                    "IDasBinaryBufferStorage: p_buffer is null"};
+            }
+
+            const auto expected_size =
+                ComputeExpectedSize(height, width, CV_ELEM_SIZE(type));
+
+            uint64_t buffer_size{};
+            if (const auto result = p_buffer->GetSize(&buffer_size);
+                DAS::IsFailed(result))
+            {
+                throw StorageValidationError{
+                    result,
+                    "IDasBinaryBufferStorage: GetSize failed"};
+            }
+
+            if (buffer_size < expected_size)
+            {
+                throw StorageValidationError{
+                    DAS_E_OUT_OF_RANGE,
+                    "IDasBinaryBufferStorage: buffer too small"};
+            }
+
+            unsigned char* p_data{};
+            if (const auto result = p_buffer->GetData(&p_data);
+                DAS::IsFailed(result))
+            {
+                throw StorageValidationError{
+                    result,
+                    "IDasBinaryBufferStorage: GetData failed"};
+            }
+
+            if (p_data == nullptr)
+            {
+                throw StorageValidationError{
+                    DAS_E_INVALID_POINTER,
+                    "IDasBinaryBufferStorage: buffer data is null"};
+            }
+
+            mat_ = cv::Mat{height, width, type, p_data};
+        }
+
+        cv::Mat& GetCpuMat() { return mat_; }
+
+    private:
+        static uint64_t ComputeExpectedSize(
+            int    height,
+            int    width,
+            size_t element_size)
+        {
+            if (height <= 0 || width <= 0)
+            {
+                throw StorageValidationError{
+                    DAS_E_INVALID_SIZE,
+                    "IDasBinaryBufferStorage: invalid dimensions"};
+            }
+
+            if (element_size == 0)
+            {
+                throw StorageValidationError{
+                    DAS_E_INVALID_ARGUMENT,
+                    "IDasBinaryBufferStorage: invalid element size"};
+            }
+
+            const auto height_size = static_cast<uint64_t>(height);
+            const auto width_size = static_cast<uint64_t>(width);
+            const auto elem_size = static_cast<uint64_t>(element_size);
+            const auto max_size = std::numeric_limits<uint64_t>::max();
+
+            if (width_size > max_size / height_size)
+            {
+                throw StorageValidationError{
+                    DAS_E_OUT_OF_RANGE,
+                    "IDasBinaryBufferStorage: pixel count overflows"};
+            }
+
+            const auto pixel_count = width_size * height_size;
+            if (pixel_count > max_size / elem_size)
+            {
+                throw StorageValidationError{
+                    DAS_E_OUT_OF_RANGE,
+                    "IDasBinaryBufferStorage: byte count overflows"};
+            }
+
+            return pixel_count * elem_size;
+        }
+    };
+
 } // namespace Storage
 
 // ==================== CpuImageImpl<Storage> ====================
@@ -67,6 +192,8 @@ namespace Storage
  *         - CpuImageImpl<OwningStorage>: owns the cv::Mat data
  *         - CpuImageImpl<IDasMemoryStorage>: non-owning, IDasMemory keeps
  *           buffer alive via DasPtr
+ *         - CpuImageImpl<IDasBinaryBufferStorage>: non-owning, returned
+ *           IDasBinaryBuffer view keeps buffer data alive via DasPtr
  *
  * Both instantiations share the same COM IID (per D-06).
  * QueryInterface supports IDasBase, IDasImage, IImageBackend, and
