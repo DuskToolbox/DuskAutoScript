@@ -189,17 +189,108 @@ static DasResult GetOcrImageData(
 }
 
 // ===== Helper: query tensor dimensions =====
-static void GetTensorDims(
+static DasResult GetTensorDims(
     DAS::ExportInterface::IDasTensor* tensor,
     std::vector<int64_t>&             dims)
 {
+    DAS_UTILS_CHECK_POINTER(tensor);
+
     uint32_t rank = 0;
-    tensor->GetRank(&rank);
+    auto     result = tensor->GetRank(&rank);
+    if (DAS::IsFailed(result))
+    {
+        DAS_CORE_LOG_ERROR("GetTensorDims: GetRank failed: result={}", result);
+        return result;
+    }
+    if (rank == 0)
+    {
+        DAS_CORE_LOG_ERROR("GetTensorDims: tensor rank must be positive");
+        return DAS_E_INVALID_SIZE;
+    }
+
     dims.resize(rank);
     for (uint32_t i = 0; i < rank; ++i)
     {
-        tensor->GetDim(i, &dims[i]);
+        result = tensor->GetDim(i, &dims[i]);
+        if (DAS::IsFailed(result))
+        {
+            DAS_CORE_LOG_ERROR(
+                "GetTensorDims: GetDim({}) failed: result={}",
+                i,
+                result);
+            return result;
+        }
+        if (dims[i] <= 0)
+        {
+            DAS_CORE_LOG_ERROR(
+                "GetTensorDims: dimension {} must be positive, got {}",
+                i,
+                dims[i]);
+            return DAS_E_INVALID_SIZE;
+        }
     }
+
+    return DAS_S_OK;
+}
+
+static DasResult GetTensorElementCount(
+    const std::vector<int64_t>& dims,
+    uint64_t*                   p_out_element_count)
+{
+    DAS_UTILS_CHECK_POINTER(p_out_element_count);
+
+    uint64_t element_count = 1;
+    for (auto dim : dims)
+    {
+        uint64_t next_count = 0;
+        if (!TryMultiplyUint64(
+                element_count,
+                static_cast<uint64_t>(dim),
+                &next_count))
+        {
+            DAS_CORE_LOG_ERROR("GetTensorElementCount: element count overflow");
+            return DAS_E_INVALID_SIZE;
+        }
+        element_count = next_count;
+    }
+
+    *p_out_element_count = element_count;
+    return DAS_S_OK;
+}
+
+static DasResult ValidateFloatTensorBufferSize(
+    const char*                 tensor_name,
+    const std::vector<int64_t>& dims,
+    uint64_t                    actual_size)
+{
+    uint64_t element_count = 0;
+    auto     result = GetTensorElementCount(dims, &element_count);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+
+    uint64_t required_size = 0;
+    if (!TryMultiplyUint64(element_count, sizeof(float), &required_size))
+    {
+        DAS_CORE_LOG_ERROR(
+            "{} tensor byte count overflow, elements={}",
+            tensor_name,
+            element_count);
+        return DAS_E_INVALID_SIZE;
+    }
+
+    if (actual_size < required_size)
+    {
+        DAS_CORE_LOG_ERROR(
+            "{} tensor buffer too small, required={}, actual={}",
+            tensor_name,
+            required_size,
+            actual_size);
+        return DAS_E_INVALID_SIZE;
+    }
+
+    return DAS_S_OK;
 }
 
 static DasResult GetTensorRawData(
@@ -219,6 +310,11 @@ static DasResult GetTensorRawData(
             "GetTensorRawData: GetBinaryBuffer failed: result={}",
             result);
         return result;
+    }
+    if (!buffer)
+    {
+        DAS_CORE_LOG_ERROR("GetTensorRawData: GetBinaryBuffer returned null");
+        return DAS_E_INVALID_POINTER;
     }
 
     result = buffer->GetData(pp_out_data);
@@ -611,14 +707,45 @@ static DasResult RecognizeTextCrop(
         DAS_CORE_LOG_ERROR("Rec inference failed: result={}", result);
         return result;
     }
+    if (!outputs)
+    {
+        DAS_CORE_LOG_ERROR("Rec inference returned null output vector");
+        return DAS_E_INVALID_POINTER;
+    }
 
     // Get output tensor
     DAS::DasPtr<DAS::ExportInterface::IDasTensor> out_tensor;
-    outputs->GetAt(0, out_tensor.Put());
+    result = outputs->GetAt(0, out_tensor.Put());
+    if (DAS::IsFailed(result))
+    {
+        DAS_CORE_LOG_ERROR("Rec output GetAt(0) failed: result={}", result);
+        return result;
+    }
+    if (!out_tensor)
+    {
+        DAS_CORE_LOG_ERROR("Rec output GetAt(0) returned null tensor");
+        return DAS_E_INVALID_POINTER;
+    }
 
     // Get output shape and data
     std::vector<int64_t> out_dims;
-    GetTensorDims(out_tensor.Get(), out_dims);
+    result = GetTensorDims(out_tensor.Get(), out_dims);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+    if (out_dims.size() != 2 && out_dims.size() != 3)
+    {
+        DAS_CORE_LOG_ERROR(
+            "Rec output rank must be 2 or 3, got {}",
+            out_dims.size());
+        return DAS_E_INVALID_SIZE;
+    }
+    if (out_dims.size() == 3 && out_dims[0] != 1)
+    {
+        DAS_CORE_LOG_ERROR("Rec output batch must be 1, got {}", out_dims[0]);
+        return DAS_E_INVALID_SIZE;
+    }
 
     DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer> out_buffer;
     unsigned char*                                      out_data = nullptr;
@@ -629,25 +756,44 @@ static DasResult RecognizeTextCrop(
     {
         return result;
     }
+    result = ValidateFloatTensorBufferSize("Rec output", out_dims, out_size);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
 
     auto* logits = reinterpret_cast<float*>(out_data);
 
     // Output shape: [1, T, num_classes] or [T, num_classes]
-    int time_steps = 1;
-    int num_classes = 1;
+    int64_t time_steps_dim = 0;
+    int64_t num_classes_dim = 0;
     if (out_dims.size() == 3)
     {
-        time_steps = static_cast<int>(out_dims[1]);
-        num_classes = static_cast<int>(out_dims[2]);
+        time_steps_dim = out_dims[1];
+        num_classes_dim = out_dims[2];
     }
-    else if (out_dims.size() == 2)
+    else
     {
-        time_steps = static_cast<int>(out_dims[0]);
-        num_classes = static_cast<int>(out_dims[1]);
+        time_steps_dim = out_dims[0];
+        num_classes_dim = out_dims[1];
+    }
+    if (time_steps_dim > std::numeric_limits<int>::max()
+        || num_classes_dim > std::numeric_limits<int>::max())
+    {
+        DAS_CORE_LOG_ERROR(
+            "Rec output dimensions exceed int range, time_steps={}, "
+            "num_classes={}",
+            time_steps_dim,
+            num_classes_dim);
+        return DAS_E_INVALID_SIZE;
     }
 
     // CTC greedy decode (Pitfall 4: blank = index 0)
-    out_result = CtcGreedyDecode(logits, time_steps, num_classes, dict);
+    out_result = CtcGreedyDecode(
+        logits,
+        static_cast<int>(time_steps_dim),
+        static_cast<int>(num_classes_dim),
+        dict);
     return DAS_S_OK;
 }
 
@@ -836,13 +982,60 @@ DasResult PaddleOcrImpl::Recognize(
                 DAS_CORE_LOG_ERROR("Det inference failed: result={}", cr);
                 return cr;
             }
+            if (!det_outputs)
+            {
+                DAS_CORE_LOG_ERROR("Det inference returned null output vector");
+                return DAS_E_INVALID_POINTER;
+            }
 
             // --- DB post-processing ---
             DAS::DasPtr<DAS::ExportInterface::IDasTensor> det_out_tensor;
-            det_outputs->GetAt(0, det_out_tensor.Put());
+            cr = det_outputs->GetAt(0, det_out_tensor.Put());
+            if (DAS::IsFailed(cr))
+            {
+                DAS_CORE_LOG_ERROR("Det output GetAt(0) failed: result={}", cr);
+                return cr;
+            }
+            if (!det_out_tensor)
+            {
+                DAS_CORE_LOG_ERROR("Det output GetAt(0) returned null tensor");
+                return DAS_E_INVALID_POINTER;
+            }
 
             std::vector<int64_t> det_out_dims;
-            GetTensorDims(det_out_tensor.Get(), det_out_dims);
+            cr = GetTensorDims(det_out_tensor.Get(), det_out_dims);
+            if (DAS::IsFailed(cr))
+            {
+                return cr;
+            }
+            if (det_out_dims.size() != 4)
+            {
+                DAS_CORE_LOG_ERROR(
+                    "Det output rank must be 4, got {}",
+                    det_out_dims.size());
+                return DAS_E_INVALID_SIZE;
+            }
+            if (det_out_dims[0] != 1 || det_out_dims[1] != 1)
+            {
+                DAS_CORE_LOG_ERROR(
+                    "Det output shape must be [1, 1, H, W], got [{}, {}, "
+                    "{}, {}]",
+                    det_out_dims[0],
+                    det_out_dims[1],
+                    det_out_dims[2],
+                    det_out_dims[3]);
+                return DAS_E_INVALID_SIZE;
+            }
+            if (det_out_dims[2] > std::numeric_limits<int>::max()
+                || det_out_dims[3] > std::numeric_limits<int>::max())
+            {
+                DAS_CORE_LOG_ERROR(
+                    "Det output dimensions exceed int range, height={}, "
+                    "width={}",
+                    det_out_dims[2],
+                    det_out_dims[3]);
+                return DAS_E_INVALID_SIZE;
+            }
 
             DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer> det_out_buffer;
             unsigned char* det_out_data = nullptr;
@@ -856,22 +1049,37 @@ DasResult PaddleOcrImpl::Recognize(
             {
                 return cr;
             }
+            cr = ValidateFloatTensorBufferSize(
+                "Det output",
+                det_out_dims,
+                det_out_size);
+            if (DAS::IsFailed(cr))
+            {
+                return cr;
+            }
 
             auto* prob_map = reinterpret_cast<float*>(det_out_data);
 
             // prob_map shape: [1, 1, prob_h, prob_w]
-            int prob_h = 1, prob_w = 1;
-            if (det_out_dims.size() >= 2)
+            int      prob_h = static_cast<int>(det_out_dims[2]);
+            int      prob_w = static_cast<int>(det_out_dims[3]);
+            uint64_t prob_element_count = 0;
+            if (!TryMultiplyUint64(
+                    static_cast<uint64_t>(prob_h),
+                    static_cast<uint64_t>(prob_w),
+                    &prob_element_count)
+                || prob_element_count > std::numeric_limits<size_t>::max())
             {
-                prob_h =
-                    static_cast<int>(det_out_dims[det_out_dims.size() - 2]);
-                prob_w =
-                    static_cast<int>(det_out_dims[det_out_dims.size() - 1]);
+                DAS_CORE_LOG_ERROR(
+                    "Det probability map element count overflow, size={}x{}",
+                    prob_w,
+                    prob_h);
+                return DAS_E_INVALID_SIZE;
             }
 
             // Binarize probability map
             cv::Mat bitmap(prob_h, prob_w, CV_8UC1);
-            for (int i = 0; i < prob_h * prob_w; ++i)
+            for (size_t i = 0; i < static_cast<size_t>(prob_element_count); ++i)
             {
                 bitmap.data[i] = prob_map[i] > kDbThreshold ? 255 : 0;
             }
