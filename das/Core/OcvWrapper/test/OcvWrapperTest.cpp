@@ -19,6 +19,7 @@
 #include <opencv2/core/cuda.hpp>
 #endif
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <cstring>
@@ -791,6 +792,118 @@ namespace Das
                 return DAS_S_OK;
             }
 
+            class PayloadViewMemory final : public ExportInterface::IDasMemory
+            {
+                std::atomic<uint32_t>                          ref_count_{0};
+                DAS::DasPtr<ExportInterface::IDasBinaryBuffer> payload_;
+
+            public:
+                explicit PayloadViewMemory(
+                    ExportInterface::IDasBinaryBuffer* p_payload)
+                    : payload_(p_payload)
+                {
+                }
+
+                uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+                uint32_t DAS_STD_CALL Release() override
+                {
+                    auto count = --ref_count_;
+                    if (count == 0)
+                    {
+                        delete this;
+                    }
+                    return count;
+                }
+
+                DasResult DAS_STD_CALL QueryInterface(
+                    const DasGuid& iid,
+                    void**         pp_out_object) override
+                {
+                    if (pp_out_object == nullptr)
+                    {
+                        return DAS_E_INVALID_POINTER;
+                    }
+                    if (iid == DasIidOf<IDasBase>())
+                    {
+                        *pp_out_object = static_cast<IDasBase*>(this);
+                        AddRef();
+                        return DAS_S_OK;
+                    }
+                    if (iid == DasIidOf<ExportInterface::IDasMemory>())
+                    {
+                        *pp_out_object =
+                            static_cast<ExportInterface::IDasMemory*>(this);
+                        AddRef();
+                        return DAS_S_OK;
+                    }
+                    *pp_out_object = nullptr;
+                    return DAS_E_NO_INTERFACE;
+                }
+
+                DasResult GetBinaryBuffer(
+                    uint64_t                            offset,
+                    ExportInterface::IDasBinaryBuffer** pp_out_buffer) override
+                {
+                    return GetView(offset, pp_out_buffer);
+                }
+
+                DasResult GetMutableView(
+                    uint64_t                            offset,
+                    ExportInterface::IDasBinaryBuffer** pp_out_buffer) override
+                {
+                    return GetView(offset, pp_out_buffer);
+                }
+
+                DasResult GetSize(uint64_t* p_out_size) override
+                {
+                    if (p_out_size == nullptr)
+                    {
+                        return DAS_E_INVALID_POINTER;
+                    }
+                    if (!payload_)
+                    {
+                        return DAS_E_INVALID_POINTER;
+                    }
+                    return payload_->GetSize(p_out_size);
+                }
+
+            private:
+                DasResult GetView(
+                    uint64_t                            offset,
+                    ExportInterface::IDasBinaryBuffer** pp_out_buffer)
+                {
+                    if (pp_out_buffer == nullptr)
+                    {
+                        return DAS_E_INVALID_POINTER;
+                    }
+                    *pp_out_buffer = nullptr;
+                    if (!payload_)
+                    {
+                        return DAS_E_INVALID_POINTER;
+                    }
+
+                    uint64_t payload_size = 0;
+                    auto     size_result = payload_->GetSize(&payload_size);
+                    if (DAS::IsFailed(size_result))
+                    {
+                        return size_result;
+                    }
+                    if (offset > payload_size)
+                    {
+                        return DAS_E_OUT_OF_RANGE;
+                    }
+                    if (offset != 0)
+                    {
+                        return DAS_E_NO_IMPLEMENTATION;
+                    }
+
+                    return payload_->QueryInterface(
+                        DasIidOf<ExportInterface::IDasBinaryBuffer>(),
+                        reinterpret_cast<void**>(pp_out_buffer));
+                }
+            };
+
             // Helper: create RGBA test data
             auto MakeRgbaData(
                 int     w,
@@ -1062,6 +1175,98 @@ namespace Das
             p_buffer->Release();
             p_image->Release();
             p_memory->Release();
+        }
+
+        TEST(FactoryMigrationTest, FromRgb888_RetainsOffsetPayloadBufferView)
+        {
+            constexpr std::size_t kHeaderSize = 16;
+            constexpr int         kWidth = 2;
+            constexpr int         kHeight = 1;
+            constexpr std::size_t kPayloadSize =
+                static_cast<std::size_t>(kWidth * kHeight * 4);
+            constexpr std::size_t kTotalSize = kHeaderSize + kPayloadSize;
+
+            DAS::DasPtr<ExportInterface::IDasMemory> framebuffer_memory;
+            ASSERT_EQ(
+                ::CreateIDasMemory(kTotalSize, framebuffer_memory.Put()),
+                DAS_S_OK);
+            ASSERT_TRUE(framebuffer_memory);
+
+            DAS::DasPtr<ExportInterface::IDasBinaryBuffer> whole_buffer;
+            ASSERT_EQ(
+                framebuffer_memory->GetMutableView(0, whole_buffer.Put()),
+                DAS_S_OK);
+            ASSERT_TRUE(whole_buffer);
+
+            unsigned char* p_framebuffer = nullptr;
+            ASSERT_EQ(whole_buffer->GetData(&p_framebuffer), DAS_S_OK);
+            ASSERT_NE(p_framebuffer, nullptr);
+
+            std::fill_n(p_framebuffer, kHeaderSize, 0xEE);
+            auto* const p_payload = p_framebuffer + kHeaderSize;
+            const std::array<unsigned char, kPayloadSize>
+                payload_bytes{1, 2, 3, 4, 5, 6, 7, 8};
+            std::copy(payload_bytes.begin(), payload_bytes.end(), p_payload);
+
+            DAS::DasPtr<ExportInterface::IDasBinaryBuffer> payload_buffer;
+            ASSERT_EQ(
+                framebuffer_memory->GetBinaryBuffer(
+                    kHeaderSize,
+                    payload_buffer.Put()),
+                DAS_S_OK);
+            ASSERT_TRUE(payload_buffer);
+
+            DAS::DasPtr<ExportInterface::IDasMemory> payload_memory{
+                new PayloadViewMemory(payload_buffer.Get())};
+
+            DAS::DasPtr<ExportInterface::IDasBinaryBuffer> unsupported_view;
+            EXPECT_EQ(
+                payload_memory->GetBinaryBuffer(1, unsupported_view.Put()),
+                DAS_E_NO_IMPLEMENTATION);
+            EXPECT_FALSE(unsupported_view);
+            DAS::DasPtr<ExportInterface::IDasBinaryBuffer> out_of_range_view;
+            EXPECT_EQ(
+                payload_memory->GetBinaryBuffer(
+                    kPayloadSize + 1,
+                    out_of_range_view.Put()),
+                DAS_E_OUT_OF_RANGE);
+            EXPECT_FALSE(out_of_range_view);
+
+            ExportInterface::DasSize    size{kWidth, kHeight};
+            ExportInterface::IDasImage* p_image = nullptr;
+            ASSERT_EQ(
+                CreateIDasImageFromRgb888(
+                    payload_memory.Get(),
+                    &size,
+                    &p_image),
+                DAS_S_OK);
+            ASSERT_NE(p_image, nullptr);
+
+            (void)whole_buffer.Reset();
+            (void)payload_buffer.Reset();
+            (void)payload_memory.Reset();
+            (void)framebuffer_memory.Reset();
+
+            ExportInterface::IDasBinaryBuffer* p_image_buffer = nullptr;
+            ASSERT_EQ(p_image->GetBinaryBuffer(&p_image_buffer), DAS_S_OK);
+            ASSERT_NE(p_image_buffer, nullptr);
+
+            uint64_t image_buffer_size = 0;
+            EXPECT_EQ(p_image_buffer->GetSize(&image_buffer_size), DAS_S_OK);
+            EXPECT_EQ(image_buffer_size, static_cast<uint64_t>(kPayloadSize));
+
+            unsigned char* p_image_data = nullptr;
+            ASSERT_EQ(p_image_buffer->GetData(&p_image_data), DAS_S_OK);
+            ASSERT_NE(p_image_data, nullptr);
+            EXPECT_EQ(p_image_data, p_payload);
+            EXPECT_EQ(p_image_data[0], payload_bytes[0]);
+            EXPECT_EQ(p_image_data[7], payload_bytes[7]);
+
+            p_image_data[0] = 99;
+            EXPECT_EQ(p_payload[0], 99);
+
+            p_image_buffer->Release();
+            p_image->Release();
         }
 
         TEST(

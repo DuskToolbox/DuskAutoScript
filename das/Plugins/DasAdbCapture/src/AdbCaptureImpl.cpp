@@ -10,21 +10,12 @@
 #include <Windows.h>
 #endif // WIN32
 
-DAS_DISABLE_WARNING_BEGIN
-DAS_IGNORE_UNUSED_PARAMETER
-
-DAS_DISABLE_WARNING_END
-
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable : 4068)
-#endif
+#include <array>
 #include <cstddef>
 #include <cstdint>
-#include <gzip/decompress.hpp>
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
+#include <cstring>
+#include <memory>
+#include <zlib.h>
 
 #include "AdbCaptureImpl.h"
 #include "ErrorLensImpl.h"
@@ -117,6 +108,167 @@ DAS_NS_ANONYMOUS_DETAILS_BEGIN
 
 constexpr uint32_t PROCESS_TIMEOUT_IN_S = 10;
 
+enum class InflateMode
+{
+    StopWhenOutputFull,
+    RequireExactOutputSize
+};
+
+class InflateStream final : public DAS::Utils::NonCopyableAndNonMovable
+{
+public:
+    InflateStream() = default;
+
+    DasResult Init()
+    {
+        if (const auto result = inflateInit2(&stream_, 15 + 32); result != Z_OK)
+            [[unlikely]]
+        {
+            const auto error_message =
+                DAS::fmt::format("inflateInit2 failed, result={}.", result);
+            DAS_LOG_ERROR(error_message.c_str());
+            return DAS_E_INTERNAL_FATAL_ERROR;
+        }
+        initialized_ = true;
+        return DAS_S_OK;
+    }
+
+    ~InflateStream()
+    {
+        if (initialized_)
+        {
+            inflateEnd(&stream_);
+        }
+    }
+
+    z_stream& Get() noexcept { return stream_; }
+
+private:
+    z_stream stream_{};
+    bool     initialized_{false};
+};
+
+class PayloadMemoryView final : public ExportInterface::IDasMemory
+{
+public:
+    explicit PayloadMemoryView(
+        ExportInterface::IDasBinaryBuffer* p_payload_buffer)
+        : payload_buffer_{p_payload_buffer}
+    {
+    }
+
+    uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+    uint32_t DAS_STD_CALL Release() override
+    {
+        const auto count = --ref_count_;
+        if (count == 0)
+        {
+            delete this;
+        }
+        return count;
+    }
+
+    DasResult DAS_STD_CALL
+    QueryInterface(const DasGuid& iid, void** pp_out_object) override
+    {
+        if (pp_out_object == nullptr) [[unlikely]]
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        if (iid == DasIidOf<IDasBase>())
+        {
+            *pp_out_object = static_cast<IDasBase*>(this);
+            AddRef();
+            return DAS_S_OK;
+        }
+        if (iid == DasIidOf<ExportInterface::IDasMemory>())
+        {
+            *pp_out_object = static_cast<ExportInterface::IDasMemory*>(this);
+            AddRef();
+            return DAS_S_OK;
+        }
+        *pp_out_object = nullptr;
+        return DAS_E_NO_INTERFACE;
+    }
+
+    DasResult GetBinaryBuffer(
+        uint64_t                            offset,
+        ExportInterface::IDasBinaryBuffer** pp_out_buffer) override
+    {
+        return GetView(offset, pp_out_buffer);
+    }
+
+    DasResult GetMutableView(
+        uint64_t                            offset,
+        ExportInterface::IDasBinaryBuffer** pp_out_buffer) override
+    {
+        return GetView(offset, pp_out_buffer);
+    }
+
+    DasResult GetSize(uint64_t* p_out_size) override
+    {
+        if (p_out_size == nullptr) [[unlikely]]
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        if (!payload_buffer_) [[unlikely]]
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        return payload_buffer_->GetSize(p_out_size);
+    }
+
+private:
+    DasResult GetView(
+        uint64_t                            offset,
+        ExportInterface::IDasBinaryBuffer** pp_out_buffer)
+    {
+        if (pp_out_buffer == nullptr) [[unlikely]]
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        *pp_out_buffer = nullptr;
+        if (!payload_buffer_) [[unlikely]]
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+
+        uint64_t payload_size = 0;
+        if (const auto result = payload_buffer_->GetSize(&payload_size);
+            IsFailed(result)) [[unlikely]]
+        {
+            return result;
+        }
+
+        if (offset > payload_size) [[unlikely]]
+        {
+            const auto error_message = DAS::fmt::format(
+                "PayloadMemoryView offset out of range: offset={}, size={}.",
+                offset,
+                payload_size);
+            DAS_LOG_ERROR(error_message.c_str());
+            return DAS_E_OUT_OF_RANGE;
+        }
+
+        if (offset != 0) [[unlikely]]
+        {
+            const auto error_message = DAS::fmt::format(
+                "PayloadMemoryView only supports offset 0, got offset={}.",
+                offset);
+            DAS_LOG_ERROR(error_message.c_str());
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        return payload_buffer_->QueryInterface(
+            DasIidOf<ExportInterface::IDasBinaryBuffer>(),
+            reinterpret_cast<void**>(pp_out_buffer));
+    }
+
+    std::atomic<uint32_t>                     ref_count_{0};
+    DasPtr<ExportInterface::IDasBinaryBuffer> payload_buffer_;
+};
+
 bool TryMultiplyUint64(
     const uint64_t lhs,
     const uint64_t rhs,
@@ -128,6 +280,176 @@ bool TryMultiplyUint64(
     }
     *p_out_value = lhs * rhs;
     return true;
+}
+
+DasResult InflateGzipToBuffer(
+    const char*    p_compressed_data,
+    std::size_t    compressed_size,
+    unsigned char* p_output_data,
+    std::size_t    output_size,
+    InflateMode    mode,
+    std::size_t*   p_out_bytes_written)
+{
+    if (p_out_bytes_written == nullptr) [[unlikely]]
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+    *p_out_bytes_written = 0;
+    if (p_compressed_data == nullptr || compressed_size == 0) [[unlikely]]
+    {
+        DAS_LOG_ERROR("InflateGzipToBuffer received empty gzip input.");
+        return CAPTURE_DATA_TOO_LESS;
+    }
+    if (p_output_data == nullptr && output_size != 0) [[unlikely]]
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    InflateStream inflate_stream;
+    if (const auto init_result = inflate_stream.Init(); IsFailed(init_result))
+        [[unlikely]]
+    {
+        return init_result;
+    }
+
+    auto&         stream = inflate_stream.Get();
+    std::size_t   input_offset = 0;
+    std::size_t   output_base = 0;
+    std::size_t   output_chunk_size = 0;
+    bool          writing_overflow_probe = false;
+    unsigned char overflow_probe = 0;
+
+    const auto refresh_input = [&]()
+    {
+        if (stream.avail_in != 0 || input_offset >= compressed_size)
+        {
+            return;
+        }
+        const auto chunk_size =
+            (std::min)(compressed_size - input_offset,
+                       static_cast<std::size_t>(
+                           std::numeric_limits<uInt>::max()));
+        stream.next_in = reinterpret_cast<Bytef*>(
+            const_cast<char*>(p_compressed_data + input_offset));
+        stream.avail_in = static_cast<uInt>(chunk_size);
+        input_offset += chunk_size;
+    };
+
+    const auto bytes_written = [&]() -> std::size_t
+    {
+        if (writing_overflow_probe)
+        {
+            return output_size + (1U - stream.avail_out);
+        }
+        return output_base + output_chunk_size - stream.avail_out;
+    };
+
+    const auto refresh_output = [&]() -> bool
+    {
+        if (stream.avail_out != 0)
+        {
+            return true;
+        }
+
+        if (!writing_overflow_probe)
+        {
+            output_base += output_chunk_size;
+            output_chunk_size = 0;
+        }
+
+        if (output_base < output_size)
+        {
+            const auto chunk_size =
+                (std::min)(output_size - output_base,
+                           static_cast<std::size_t>(
+                               std::numeric_limits<uInt>::max()));
+            stream.next_out = p_output_data + output_base;
+            stream.avail_out = static_cast<uInt>(chunk_size);
+            output_chunk_size = chunk_size;
+            return true;
+        }
+
+        if (mode == InflateMode::StopWhenOutputFull)
+        {
+            *p_out_bytes_written = output_size;
+            return false;
+        }
+
+        writing_overflow_probe = true;
+        stream.next_out = &overflow_probe;
+        stream.avail_out = 1;
+        output_chunk_size = 1;
+        return true;
+    };
+
+    for (;;)
+    {
+        refresh_input();
+        if (!refresh_output())
+        {
+            return DAS_S_OK;
+        }
+
+        const auto before_avail_in = stream.avail_in;
+        const auto before_avail_out = stream.avail_out;
+        const auto inflate_result = inflate(&stream, Z_NO_FLUSH);
+        const auto written = bytes_written();
+        *p_out_bytes_written = written > output_size ? output_size : written;
+
+        if (inflate_result == Z_STREAM_END)
+        {
+            if (mode == InflateMode::RequireExactOutputSize
+                && written != output_size) [[unlikely]]
+            {
+                const auto error_message = DAS::fmt::format(
+                    "ADB gzip decompressed size mismatch: expected={}, actual={}.",
+                    output_size,
+                    written);
+                DAS_LOG_ERROR(error_message.c_str());
+                return CAPTURE_DATA_TOO_LESS;
+            }
+            if (mode == InflateMode::RequireExactOutputSize
+                && (stream.avail_in != 0 || input_offset < compressed_size))
+                [[unlikely]]
+            {
+                const auto remaining_input =
+                    static_cast<std::size_t>(stream.avail_in)
+                    + (compressed_size - input_offset);
+                const auto error_message = DAS::fmt::format(
+                    "ADB gzip stream ended with trailing input: remaining={}.",
+                    remaining_input);
+                DAS_LOG_ERROR(error_message.c_str());
+                return CAPTURE_DATA_TOO_LESS;
+            }
+            return DAS_S_OK;
+        }
+
+        if (inflate_result != Z_OK) [[unlikely]]
+        {
+            const auto error_message = DAS::fmt::format(
+                "ADB gzip inflate failed: result={}, message={}.",
+                inflate_result,
+                stream.msg != nullptr ? stream.msg : "");
+            DAS_LOG_ERROR(error_message.c_str());
+            return CAPTURE_DATA_TOO_LESS;
+        }
+
+        if (writing_overflow_probe && stream.avail_out == 0) [[unlikely]]
+        {
+            const auto error_message = DAS::fmt::format(
+                "ADB gzip decompressed output is longer than expected: expected={}.",
+                output_size);
+            DAS_LOG_ERROR(error_message.c_str());
+            return CAPTURE_DATA_TOO_LESS;
+        }
+
+        if (stream.avail_in == before_avail_in
+            && stream.avail_out == before_avail_out) [[unlikely]]
+        {
+            DAS_LOG_ERROR("ADB gzip inflate made no progress.");
+            return CAPTURE_DATA_TOO_LESS;
+        }
+    }
 }
 
 template <class Buffer>
@@ -411,14 +733,11 @@ DAS::Utils::Expected<AdbCapture::Size> AdbCapture::GetDeviceSize() const
 
 DasResult AdbCapture::CaptureRawWithGZip()
 {
-    DasResult result{DAS_S_OK};
     // Run adb and receive screen capture.
     Details::CommandExecutorContext<std::vector<char>> context{
         capture_gzip_raw_command_,
         Details::PROCESS_TIMEOUT_IN_S};
-    // Initialize the objects that need to be used later.
-    std::vector<unsigned char> decompressed_data;
-    const gzip::Decompressor   decompressor{};
+
     // wait for the process to exit.
     const auto exec_result = context.Run();
     if (!IsOk(exec_result))
@@ -431,150 +750,227 @@ DasResult AdbCapture::CaptureRawWithGZip()
         return CAPTURE_DATA_TOO_LESS;
     }
 
-    decompressor.decompress(
-        decompressed_data,
+    std::array<unsigned char, ADB_CAPTURE_HEADER_SIZE> header_buffer{};
+    std::size_t                                        header_bytes = 0;
+    auto inflate_result = Details::InflateGzipToBuffer(
         context.GetBuffer().data(),
-        context.GetBuffer().size());
-
-    if (decompressed_data.size() < ADB_CAPTURE_HEADER_SIZE) [[unlikely]]
+        context.GetBuffer().size(),
+        header_buffer.data(),
+        header_buffer.size(),
+        Details::InflateMode::StopWhenOutputFull,
+        &header_bytes);
+    if (!IsOk(inflate_result)) [[unlikely]]
+    {
+        return inflate_result;
+    }
+    if (header_bytes < ADB_CAPTURE_HEADER_SIZE) [[unlikely]]
     {
         const auto error_message = DAS::fmt::format(
             "Received truncated framebuffer header. Expected at least {} "
             "bytes, got {}.",
             ADB_CAPTURE_HEADER_SIZE,
-            decompressed_data.size());
+            header_bytes);
         DAS_LOG_ERROR(error_message.c_str());
         return CAPTURE_DATA_TOO_LESS;
     }
 
     const auto header = Details::ResolveHeader(
-        reinterpret_cast<const char*>(decompressed_data.data()));
-    std::size_t expected_payload_size = 0;
-    Details::ComputeDataSizeFromHeader(header)
-        .and_then(
-            [&decompressed_data, &expected_payload_size, &header](
-                const std::size_t expected_data_size)
-                -> DAS::Utils::Expected<void>
+        reinterpret_cast<const char*>(header_buffer.data()));
+    const auto expected_payload = Details::ComputeDataSizeFromHeader(header);
+    if (!expected_payload) [[unlikely]]
+    {
+        return expected_payload.error();
+    }
+
+    if (expected_payload.value() > std::numeric_limits<std::size_t>::max()
+                                       - ADB_CAPTURE_HEADER_SIZE) [[unlikely]]
+    {
+        const auto error_message = DAS::fmt::format(
+            "ADB framebuffer total byte count overflow: header={}, payload={}.",
+            ADB_CAPTURE_HEADER_SIZE,
+            expected_payload.value());
+        DAS_LOG_ERROR(error_message.c_str());
+        return CAPTURE_DATA_TOO_LESS;
+    }
+
+    if (header.w > static_cast<uint32_t>(std::numeric_limits<int32_t>::max())
+        || header.h > static_cast<uint32_t>(
+               std::numeric_limits<int32_t>::max())) [[unlikely]]
+    {
+        const auto error_message = DAS::fmt::format(
+            "ADB framebuffer dimensions exceed DasSize range: {}x{}.",
+            header.w,
+            header.h);
+        DAS_LOG_ERROR(error_message.c_str());
+        return DAS_E_OUT_OF_RANGE;
+    }
+
+    const auto total_decompressed_size =
+        ADB_CAPTURE_HEADER_SIZE + expected_payload.value();
+    DasPtr<ExportInterface::IDasMemory> exact_memory;
+    const auto                          create_memory_result =
+        ::CreateIDasMemory(total_decompressed_size, exact_memory.Put());
+    if (!IsOk(create_memory_result)) [[unlikely]]
+    {
+        return create_memory_result;
+    }
+    if (!exact_memory) [[unlikely]]
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    DasPtr<ExportInterface::IDasBinaryBuffer> memory_buffer;
+    auto                                      get_buffer_result =
+        exact_memory->GetMutableView(0, memory_buffer.Put());
+    if (!IsOk(get_buffer_result)) [[unlikely]]
+    {
+        return get_buffer_result;
+    }
+    if (!memory_buffer) [[unlikely]]
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    uint64_t memory_buffer_size = 0;
+    auto     get_size_result = memory_buffer->GetSize(&memory_buffer_size);
+    if (!IsOk(get_size_result)) [[unlikely]]
+    {
+        return get_size_result;
+    }
+    if (memory_buffer_size < total_decompressed_size) [[unlikely]]
+    {
+        const auto error_message = DAS::fmt::format(
+            "ADB memory view too small: expected={}, actual={}.",
+            total_decompressed_size,
+            memory_buffer_size);
+        DAS_LOG_ERROR(error_message.c_str());
+        return DAS_E_OUT_OF_RANGE;
+    }
+
+    unsigned char* p_exact_data = nullptr;
+    auto           get_data_result = memory_buffer->GetData(&p_exact_data);
+    if (!IsOk(get_data_result)) [[unlikely]]
+    {
+        return get_data_result;
+    }
+    if (p_exact_data == nullptr) [[unlikely]]
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    std::size_t decompressed_bytes = 0;
+    inflate_result = Details::InflateGzipToBuffer(
+        context.GetBuffer().data(),
+        context.GetBuffer().size(),
+        p_exact_data,
+        total_decompressed_size,
+        Details::InflateMode::RequireExactOutputSize,
+        &decompressed_bytes);
+    if (!IsOk(inflate_result)) [[unlikely]]
+    {
+        return inflate_result;
+    }
+    if (decompressed_bytes != total_decompressed_size) [[unlikely]]
+    {
+        const auto error_message = DAS::fmt::format(
+            "ADB gzip decompressed size mismatch: expected={}, actual={}.",
+            total_decompressed_size,
+            decompressed_bytes);
+        DAS_LOG_ERROR(error_message.c_str());
+        return CAPTURE_DATA_TOO_LESS;
+    }
+
+    DasPtr<ExportInterface::IDasBinaryBuffer> payload_buffer;
+    get_buffer_result = exact_memory->GetBinaryBuffer(
+        ADB_CAPTURE_HEADER_SIZE,
+        payload_buffer.Put());
+    if (!IsOk(get_buffer_result)) [[unlikely]]
+    {
+        return get_buffer_result;
+    }
+    if (!payload_buffer) [[unlikely]]
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    uint64_t payload_view_size = 0;
+    get_size_result = payload_buffer->GetSize(&payload_view_size);
+    if (!IsOk(get_size_result)) [[unlikely]]
+    {
+        return get_size_result;
+    }
+    if (payload_view_size < expected_payload.value()) [[unlikely]]
+    {
+        const auto error_message = DAS::fmt::format(
+            "ADB payload view too small: expected={}, actual={}.",
+            expected_payload.value(),
+            payload_view_size);
+        DAS_LOG_ERROR(error_message.c_str());
+        return CAPTURE_DATA_TOO_LESS;
+    }
+
+    unsigned char* p_payload_data = nullptr;
+    get_data_result = payload_buffer->GetData(&p_payload_data);
+    if (!IsOk(get_data_result)) [[unlikely]]
+    {
+        return get_data_result;
+    }
+    if (p_payload_data == nullptr) [[unlikely]]
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    ExportInterface::DasSize size{
+        static_cast<int32_t>(header.w),
+        static_cast<int32_t>(header.h)};
+    DasPtr<ExportInterface::IDasImage> p_image{};
+    switch (static_cast<AdbCaptureFormat>(header.f))
+    {
+    case AdbCaptureFormat::RGBA_8888:
+    case AdbCaptureFormat::RGBX_8888:
+    {
+        try
+        {
+            DasPtr<ExportInterface::IDasMemory> payload_memory{
+                new Details::PayloadMemoryView(payload_buffer.Get())};
+            const auto create_image_result = ::CreateIDasImageFromRgb888(
+                payload_memory.Get(),
+                &size,
+                p_image.Put());
+            if (IsOk(create_image_result) && !p_image) [[unlikely]]
             {
-                expected_payload_size = expected_data_size;
-                const auto decompressed_data_size = decompressed_data.size();
-                if (decompressed_data_size < ADB_CAPTURE_HEADER_SIZE
-                    || expected_data_size
-                           > decompressed_data_size - ADB_CAPTURE_HEADER_SIZE)
-                    [[unlikely]]
-                {
-                    const auto error_message = DAS::fmt::format(
-                        "Received unexpected payload size.\n Expected payload size: {}.\n Received total size: {}.\n Header size: {}.\n Data format: {}.",
-                        expected_data_size,
-                        decompressed_data_size,
-                        ADB_CAPTURE_HEADER_SIZE,
-                        header.f);
-                    DAS_LOG_ERROR(error_message.c_str());
-                    return tl::make_unexpected(CAPTURE_DATA_TOO_LESS);
-                }
-                return {};
-            })
-        .and_then(
-            [&header]
-            {
-                return Details::Convert(
-                    static_cast<AdbCaptureFormat>(header.f));
-            })
-        .and_then(
-            [&decompressed_data, &expected_payload_size, &header](
-                const ExportInterface::DasImageFormat color_format)
-                -> DAS::Utils::Expected<void>
-            {
-                ExportInterface::DasSize size{
-                    static_cast<int32_t>(header.w),
-                    static_cast<int32_t>(header.h)};
-
-                DasPtr<ExportInterface::IDasMemory> exact_memory;
-                auto create_memory_result = ::CreateIDasMemory(
-                    decompressed_data.size(),
-                    exact_memory.Put());
-                if (!IsOk(create_memory_result)) [[unlikely]]
-                {
-                    return tl::make_unexpected(create_memory_result);
-                }
-                if (!exact_memory) [[unlikely]]
-                {
-                    return tl::make_unexpected(DAS_E_INVALID_POINTER);
-                }
-
-                DasPtr<ExportInterface::IDasBinaryBuffer> memory_buffer;
-                auto                                      get_buffer_result =
-                    exact_memory->GetMutableView(0, memory_buffer.Put());
-                if (!IsOk(get_buffer_result)) [[unlikely]]
-                {
-                    return tl::make_unexpected(get_buffer_result);
-                }
-                if (!memory_buffer) [[unlikely]]
-                {
-                    return tl::make_unexpected(DAS_E_INVALID_POINTER);
-                }
-
-                unsigned char* p_exact_data = nullptr;
-                auto get_data_result = memory_buffer->GetData(&p_exact_data);
-                if (!IsOk(get_data_result)) [[unlikely]]
-                {
-                    return tl::make_unexpected(get_data_result);
-                }
-                if (p_exact_data == nullptr) [[unlikely]]
-                {
-                    return tl::make_unexpected(DAS_E_INVALID_POINTER);
-                }
-                std::copy(
-                    decompressed_data.begin(),
-                    decompressed_data.end(),
-                    p_exact_data);
-
-                DasPtr<ExportInterface::IDasBinaryBuffer>
-                    p_payload_binary_buffer;
-                get_buffer_result = exact_memory->GetBinaryBuffer(
-                    ADB_CAPTURE_HEADER_SIZE,
-                    p_payload_binary_buffer.Put());
-                if (!IsOk(get_buffer_result)) [[unlikely]]
-                {
-                    return tl::make_unexpected(get_buffer_result);
-                }
-                if (!p_payload_binary_buffer) [[unlikely]]
-                {
-                    return tl::make_unexpected(DAS_E_INVALID_POINTER);
-                }
-
-                unsigned char* p_decompressed_data_for_desc = nullptr;
-                get_data_result = p_payload_binary_buffer->GetData(
-                    &p_decompressed_data_for_desc);
-                if (!IsOk(get_data_result)) [[unlikely]]
-                {
-                    return tl::make_unexpected(get_data_result);
-                }
-                if (p_decompressed_data_for_desc == nullptr) [[unlikely]]
-                {
-                    return tl::make_unexpected(DAS_E_INVALID_POINTER);
-                }
-
-                DasImageDesc desc{
-                    .p_data =
-                        reinterpret_cast<char*>(p_decompressed_data_for_desc),
-                    .data_size = expected_payload_size,
-                    .data_format = color_format};
-
-                DasPtr<ExportInterface::IDasImage> p_image{};
-                const auto                         create_image_result =
-                    ::CreateIDasImageFromDecodedData(
-                        &desc,
-                        &size,
-                        p_image.Put());
-                if (IsOk(create_image_result)) [[likely]]
-                {
-                    return {};
-                }
-                return tl::make_unexpected(create_image_result);
-            })
-        .or_else([&result](const auto error_code) { result = error_code; });
-    return result;
+                return DAS_E_INVALID_POINTER;
+            }
+            return create_image_result;
+        }
+        catch (const std::bad_alloc&)
+        {
+            return DAS_E_OUT_OF_MEMORY;
+        }
+    }
+    case AdbCaptureFormat::RGB_888:
+    {
+        const auto color_format =
+            Details::Convert(static_cast<AdbCaptureFormat>(header.f));
+        if (!color_format) [[unlikely]]
+        {
+            return color_format.error();
+        }
+        DasImageDesc desc{
+            .p_data = reinterpret_cast<char*>(p_payload_data),
+            .data_size = expected_payload.value(),
+            .data_format = color_format.value()};
+        const auto create_image_result =
+            ::CreateIDasImageFromDecodedData(&desc, &size, p_image.Put());
+        if (IsOk(create_image_result) && !p_image) [[unlikely]]
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        return create_image_result;
+    }
+    default:
+        return UNSUPPORTED_COLOR_FORMAT;
+    }
 }
 
 DasResult AdbCapture::CaptureRaw() { return DAS_E_NO_IMPLEMENTATION; }
