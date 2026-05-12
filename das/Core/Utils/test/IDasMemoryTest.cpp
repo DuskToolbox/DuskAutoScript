@@ -108,6 +108,54 @@ TEST(IDasMemoryTest, GetMutableViewSharesBackingWithReadView)
     EXPECT_EQ(read_size, 12);
 }
 
+TEST(IDasMemoryTest, ViewKeepsBackingAliveAfterMemoryRelease)
+{
+    DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer> retained_offset_view;
+    {
+        DAS::DasPtr<DAS::ExportInterface::IDasMemory> memory;
+        ASSERT_EQ(::CreateIDasMemory(16, memory.Put()), DAS_S_OK);
+
+        DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer> seeder;
+        ASSERT_EQ(memory->GetBinaryBuffer(0, seeder.Put()), DAS_S_OK);
+        auto* seed_data = GetData(seeder.Get());
+        seed_data[4] = 21;
+        seed_data[7] = 84;
+
+        ASSERT_EQ(
+            memory->GetBinaryBuffer(4, retained_offset_view.Put()),
+            DAS_S_OK);
+    }
+
+    uint64_t offset_size = 0;
+    ASSERT_EQ(retained_offset_view->GetSize(&offset_size), DAS_S_OK);
+    auto* offset_data = GetData(retained_offset_view.Get());
+
+    EXPECT_EQ(offset_size, 12);
+    EXPECT_EQ(offset_data[0], 21);
+    EXPECT_EQ(offset_data[3], 84);
+
+    DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer> retained_whole_view;
+    {
+        DAS::DasPtr<DAS::ExportInterface::IDasMemory> memory;
+        ASSERT_EQ(::CreateIDasMemory(8, memory.Put()), DAS_S_OK);
+        ASSERT_EQ(
+            memory->GetBinaryBuffer(0, retained_whole_view.Put()),
+            DAS_S_OK);
+
+        auto* whole_data = GetData(retained_whole_view.Get());
+        whole_data[0] = 13;
+        whole_data[7] = 55;
+    }
+
+    uint64_t whole_size = 0;
+    ASSERT_EQ(retained_whole_view->GetSize(&whole_size), DAS_S_OK);
+    auto* whole_data = GetData(retained_whole_view.Get());
+
+    EXPECT_EQ(whole_size, 8);
+    EXPECT_EQ(whole_data[0], 13);
+    EXPECT_EQ(whole_data[7], 55);
+}
+
 TEST(IDasMemoryTest, OffsetEqualSizeReturnsEmptyView)
 {
     DAS::DasPtr<DAS::ExportInterface::IDasMemory> memory;
