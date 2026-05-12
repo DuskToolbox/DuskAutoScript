@@ -79,10 +79,17 @@ constexpr std::size_t ADB_CAPTURE_HEADER_SIZE = 16;
 
 struct AdbCaptureHeader
 {
-    uint32_t h;
-    uint32_t w;
-    uint32_t f;
+    uint32_t width;
+    uint32_t height;
+    uint32_t format;
+    uint32_t dataspace;
 };
+
+static_assert(sizeof(AdbCaptureHeader) == ADB_CAPTURE_HEADER_SIZE);
+static_assert(offsetof(AdbCaptureHeader, width) == 0);
+static_assert(offsetof(AdbCaptureHeader, height) == 4);
+static_assert(offsetof(AdbCaptureHeader, format) == 8);
+static_assert(offsetof(AdbCaptureHeader, dataspace) == 12);
 
 AdbCapture::AdbCapture(
     const std::filesystem::path& adb_path,
@@ -608,18 +615,18 @@ AdbCaptureHeader ResolveHeader(const char* p_header)
 auto ComputeDataSizeFromHeader(const AdbCaptureHeader header)
     -> DAS::Utils::Expected<std::size_t>
 {
-    if (header.w == 0 || header.h == 0)
+    if (header.width == 0 || header.height == 0)
     {
         const auto error_message = DAS::fmt::format(
             "Invalid framebuffer dimensions: {}x{}",
-            header.w,
-            header.h);
+            header.width,
+            header.height);
         DAS_LOG_ERROR(error_message.c_str());
         return tl::make_unexpected(CAPTURE_DATA_TOO_LESS);
     }
 
     uint64_t bytes_per_pixel = 0;
-    switch (static_cast<AdbCaptureFormat>(header.f))
+    switch (static_cast<AdbCaptureFormat>(header.format))
     {
     case AdbCaptureFormat::RGBA_8888:
     case AdbCaptureFormat::RGBX_8888:
@@ -631,18 +638,18 @@ auto ComputeDataSizeFromHeader(const AdbCaptureHeader header)
     // RGB_565 and so on.
     default:
         const auto error_message =
-            DAS::fmt::format("Unsupported color format: {}", header.f);
+            DAS::fmt::format("Unsupported color format: {}", header.format);
         DAS_LOG_ERROR(error_message.c_str());
         return tl::make_unexpected(UNSUPPORTED_COLOR_FORMAT);
     }
 
     uint64_t pixels = 0;
-    if (!TryMultiplyUint64(header.w, header.h, &pixels))
+    if (!TryMultiplyUint64(header.width, header.height, &pixels))
     {
         const auto error_message = DAS::fmt::format(
             "Framebuffer pixel count overflow: {}x{}",
-            header.w,
-            header.h);
+            header.width,
+            header.height);
         DAS_LOG_ERROR(error_message.c_str());
         return tl::make_unexpected(CAPTURE_DATA_TOO_LESS);
     }
@@ -793,14 +800,15 @@ DasResult AdbCapture::CaptureRawWithGZip()
         return CAPTURE_DATA_TOO_LESS;
     }
 
-    if (header.w > static_cast<uint32_t>(std::numeric_limits<int32_t>::max())
-        || header.h > static_cast<uint32_t>(
+    if (header.width
+            > static_cast<uint32_t>(std::numeric_limits<int32_t>::max())
+        || header.height > static_cast<uint32_t>(
                std::numeric_limits<int32_t>::max())) [[unlikely]]
     {
         const auto error_message = DAS::fmt::format(
             "ADB framebuffer dimensions exceed DasSize range: {}x{}.",
-            header.w,
-            header.h);
+            header.width,
+            header.height);
         DAS_LOG_ERROR(error_message.c_str());
         return DAS_E_OUT_OF_RANGE;
     }
@@ -921,10 +929,10 @@ DasResult AdbCapture::CaptureRawWithGZip()
     }
 
     ExportInterface::DasSize size{
-        static_cast<int32_t>(header.w),
-        static_cast<int32_t>(header.h)};
+        static_cast<int32_t>(header.width),
+        static_cast<int32_t>(header.height)};
     DasPtr<ExportInterface::IDasImage> p_image{};
-    switch (static_cast<AdbCaptureFormat>(header.f))
+    switch (static_cast<AdbCaptureFormat>(header.format))
     {
     case AdbCaptureFormat::RGBA_8888:
     case AdbCaptureFormat::RGBX_8888:
@@ -951,7 +959,7 @@ DasResult AdbCapture::CaptureRawWithGZip()
     case AdbCaptureFormat::RGB_888:
     {
         const auto color_format =
-            Details::Convert(static_cast<AdbCaptureFormat>(header.f));
+            Details::Convert(static_cast<AdbCaptureFormat>(header.format));
         if (!color_format) [[unlikely]]
         {
             return color_format.error();
