@@ -150,6 +150,56 @@ IDasTensorImpl::IDasTensorImpl(
 {
 }
 
+DasResult CreateFloatTensorFromBacking(
+    const Ort::MemoryInfo&        memory_info,
+    FloatTensorBackingBuffer&&    backing,
+    ExportInterface::IDasTensor** pp_out_tensor)
+{
+    DAS_UTILS_CHECK_POINTER(pp_out_tensor);
+    *pp_out_tensor = nullptr;
+
+    if (backing.data == nullptr || backing.element_count == 0
+        || backing.buffer.Get() == nullptr)
+    {
+        DAS_CORE_LOG_ERROR(
+            "CreateFloatTensorFromBacking failed: invalid backing, data={}, "
+            "element_count={}, buffer={}",
+            static_cast<const void*>(backing.data),
+            backing.element_count,
+            static_cast<void*>(backing.buffer.Get()));
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    try
+    {
+        auto input_tensor = Ort::Value::CreateTensor<float>(
+            memory_info,
+            backing.data,
+            backing.element_count,
+            backing.shape.data(),
+            backing.shape.size());
+
+        // ORT only borrows backing.data, so retain the IDasBinaryBuffer whose
+        // GetData() produced that pointer for the tensor lifetime.
+        auto* impl = new IDasTensorImpl(
+            std::move(input_tensor),
+            backing.memory.Get(),
+            backing.buffer.Get());
+        impl->AddRef();
+        *pp_out_tensor = impl;
+        return DAS_S_OK;
+    }
+    catch (const std::bad_alloc&)
+    {
+        return DAS_E_OUT_OF_MEMORY;
+    }
+    catch (const Ort::Exception& e)
+    {
+        DAS_CORE_LOG_ERROR("CreateFloatTensorFromBacking failed: {}", e.what());
+        return DAS_E_ONNX_RUNTIME_ERROR;
+    }
+}
+
 DasResult CreateFloatTensorBackingBuffer(
     int64_t                   element_count,
     FloatTensorBackingBuffer* p_out_backing)

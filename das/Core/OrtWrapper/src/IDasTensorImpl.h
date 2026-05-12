@@ -14,10 +14,10 @@
 DAS_NS_BEGIN
 namespace Core
 {
-namespace OrtWrapper
-{
-    class IDasTensorImpl;
-}
+    namespace OrtWrapper
+    {
+        class IDasTensorImpl;
+    }
 } // namespace Core
 DAS_NS_END
 
@@ -53,25 +53,30 @@ DasResult CreateFloatTensorBackingBuffer(
     FloatTensorBackingBuffer* p_out_backing);
 
 DasResult CreateFloatTensorBackingBufferFromImage(
-    ExportInterface::IDasImage*                  image,
+    ExportInterface::IDasImage*                   image,
     const ExportInterface::DasImageTensorOptions& options,
-    FloatTensorBackingBuffer*                    p_out_backing);
+    FloatTensorBackingBuffer*                     p_out_backing);
+
+DasResult CreateFloatTensorFromBacking(
+    const Ort::MemoryInfo&        memory_info,
+    FloatTensorBackingBuffer&&    backing,
+    ExportInterface::IDasTensor** pp_out_tensor);
 
 class IDasTensorImpl final
     : public DAS::ExportInterface::DasTensorImplBase<IDasTensorImpl>
 {
-    Ort::Value                              value_;
-    DAS::DasPtr<ExportInterface::IDasImage> source_image_;
-    DAS::DasPtr<ExportInterface::IDasMemory> backing_memory_;
+    Ort::Value                                     value_;
+    DAS::DasPtr<ExportInterface::IDasImage>        source_image_;
+    DAS::DasPtr<ExportInterface::IDasMemory>       backing_memory_;
     DAS::DasPtr<ExportInterface::IDasBinaryBuffer> backing_buffer_;
 
 public:
     explicit IDasTensorImpl(Ort::Value value);
     IDasTensorImpl(Ort::Value value, ExportInterface::IDasImage* image);
     IDasTensorImpl(
-        Ort::Value                          value,
-        ExportInterface::IDasMemory*        memory,
-        ExportInterface::IDasBinaryBuffer*  buffer);
+        Ort::Value                         value,
+        ExportInterface::IDasMemory*       memory,
+        ExportInterface::IDasBinaryBuffer* buffer);
 
     DAS_IMPL QueryInterface(const DasGuid& iid, void** pp_out_object) override;
     DAS_IMPL GetDim(uint32_t index, int64_t* p_value) override;
@@ -80,7 +85,7 @@ public:
     DAS_IMPL GetBinaryBuffer(
         ExportInterface::IDasBinaryBuffer** pp_out_buffer) override;
 
-    const Ort::Value& GetOrtValue() const { return value_; }
+    const Ort::Value&            GetOrtValue() const { return value_; }
     ExportInterface::IDasMemory* GetBackingMemory() const
     {
         return backing_memory_.Get();

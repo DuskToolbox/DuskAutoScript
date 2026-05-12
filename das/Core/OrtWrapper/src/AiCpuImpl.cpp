@@ -55,9 +55,9 @@ DasResult AiCpuImpl::CreateSession(
 }
 
 DasResult AiCpuImpl::CreateTensorFromImage(
-    ExportInterface::IDasImage*                  image,
+    ExportInterface::IDasImage*                   image,
     const ExportInterface::DasImageTensorOptions& options,
-    ExportInterface::IDasTensor**                pp_tensor)
+    ExportInterface::IDasTensor**                 pp_tensor)
 {
     DAS_UTILS_CHECK_POINTER(pp_tensor);
     DAS_UTILS_CHECK_POINTER(image);
@@ -65,30 +65,17 @@ DasResult AiCpuImpl::CreateTensorFromImage(
     try
     {
         FloatTensorBackingBuffer backing{};
-        auto cr = CreateFloatTensorBackingBufferFromImage(
-            image,
-            options,
-            &backing);
+        auto                     cr =
+            CreateFloatTensorBackingBufferFromImage(image, options, &backing);
         if (DAS::IsFailed(cr))
         {
             return cr;
         }
 
-        // Create ORT tensor over DAS-owned memory.
-        auto input_tensor = Ort::Value::CreateTensor<float>(
+        return CreateFloatTensorFromBacking(
             GetDefaultCpuMemoryInfo(),
-            backing.data,
-            backing.element_count,
-            backing.shape.data(),
-            backing.shape.size());
-
-        auto* impl = new IDasTensorImpl(
-            std::move(input_tensor),
-            backing.memory.Get(),
-            backing.buffer.Get());
-        impl->AddRef();
-        *pp_tensor = impl;
-        return DAS_S_OK;
+            std::move(backing),
+            pp_tensor);
     }
     catch (const Ort::Exception& e)
     {

@@ -20,6 +20,7 @@ DAS_IGNORE_OPENCV_WARNING
 DAS_DISABLE_WARNING_END
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <fstream>
 #include <limits>
@@ -43,10 +44,7 @@ static constexpr double kDetStd[] = {0.229, 0.224, 0.225};
 static constexpr double kRecMean[] = {127.5, 127.5, 127.5};
 static constexpr double kRecStd[] = {127.5, 127.5, 127.5};
 
-static bool TryMultiplyUint64(
-    uint64_t  lhs,
-    uint64_t  rhs,
-    uint64_t* p_out_value)
+static bool TryMultiplyUint64(uint64_t lhs, uint64_t rhs, uint64_t* p_out_value)
 {
     if (lhs != 0 && rhs > std::numeric_limits<uint64_t>::max() / lhs)
     {
@@ -57,10 +55,10 @@ static bool TryMultiplyUint64(
 }
 
 static DasResult GetOcrImageData(
-    DAS::ExportInterface::IDasImage*            image,
-    const DAS::ExportInterface::DasSize&        image_size,
-    unsigned char**                             pp_out_raw_data,
-    DAS::ExportInterface::DasImagePixelFormat*  p_out_pixel_format)
+    DAS::ExportInterface::IDasImage*           image,
+    const DAS::ExportInterface::DasSize&       image_size,
+    unsigned char**                            pp_out_raw_data,
+    DAS::ExportInterface::DasImagePixelFormat* p_out_pixel_format)
 {
     DAS_UTILS_CHECK_POINTER(image);
     DAS_UTILS_CHECK_POINTER(pp_out_raw_data);
@@ -200,10 +198,10 @@ static void GetTensorDims(
 }
 
 static DasResult GetTensorRawData(
-    DAS::ExportInterface::IDasTensor*              tensor,
+    DAS::ExportInterface::IDasTensor*                    tensor,
     DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer>& buffer,
-    unsigned char**                                pp_out_data,
-    uint64_t*                                      p_out_size)
+    unsigned char**                                      pp_out_data,
+    uint64_t*                                            p_out_size)
 {
     DAS_UTILS_CHECK_POINTER(tensor);
     DAS_UTILS_CHECK_POINTER(pp_out_data);
@@ -539,7 +537,7 @@ static DasResult RecognizeTextCrop(
     // directly.
 
     // Build shape [1, 3, H, W]
-    int64_t shape[] = {
+    const std::array<int64_t, 4> shape{
         1,
         3,
         static_cast<int64_t>(resized.rows),
@@ -549,11 +547,13 @@ static DasResult RecognizeTextCrop(
     // Preprocess into DAS-owned memory so the ORT tensor never outlives its
     // backing buffer.
     FloatTensorBackingBuffer backing{};
-    auto backing_result = CreateFloatTensorBackingBuffer(total_elements, &backing);
+    auto                     backing_result =
+        CreateFloatTensorBackingBuffer(total_elements, &backing);
     if (DAS::IsFailed(backing_result))
     {
         return backing_result;
     }
+    backing.shape = shape;
     auto* float_data = backing.data;
 
     int height = resized.rows;
@@ -577,23 +577,17 @@ static DasResult RecognizeTextCrop(
         }
     }
 
-    // Create ORT tensor directly (bypass CreateTensorFromImage since we have
-    // cv::Mat)
-    auto input_tensor = Ort::Value::CreateTensor<float>(
+    DAS::DasPtr<DAS::ExportInterface::IDasTensor> tensor_ptr;
+    auto tensor_result = CreateFloatTensorFromBacking(
         Ort::MemoryInfo::CreateCpu(
             OrtAllocatorType::OrtArenaAllocator,
             OrtMemType::OrtMemTypeCPU),
-        float_data,
-        backing.element_count,
-        shape,
-        4);
-
-    auto* tensor_impl = new IDasTensorImpl(
-        std::move(input_tensor),
-        backing.memory.Get(),
-        backing.buffer.Get());
-    tensor_impl->AddRef();
-    DAS::DasPtr<DAS::ExportInterface::IDasTensor> tensor_ptr(tensor_impl);
+        std::move(backing),
+        tensor_ptr.Put());
+    if (DAS::IsFailed(tensor_result))
+    {
+        return tensor_result;
+    }
 
     // Run rec inference
     // Discover rec model input name — use first input name from session
@@ -604,7 +598,7 @@ static DasResult RecognizeTextCrop(
     auto                                                result = RunSession(
         rec_session,
         rec_input_names,
-        tensor_impl,
+        tensor_ptr.Get(),
         rec_output_names,
         outputs.Put());
     if (DAS::IsFailed(result))
@@ -624,11 +618,8 @@ static DasResult RecognizeTextCrop(
     DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer> out_buffer;
     unsigned char*                                      out_data = nullptr;
     uint64_t                                            out_size = 0;
-    result = GetTensorRawData(
-        out_tensor.Get(),
-        out_buffer,
-        &out_data,
-        &out_size);
+    result =
+        GetTensorRawData(out_tensor.Get(), out_buffer, &out_data, &out_size);
     if (DAS::IsFailed(result))
     {
         return result;
@@ -709,7 +700,7 @@ DasResult PaddleOcrImpl::Recognize(
             return DAS_E_INVALID_ARGUMENT;
         }
 
-        unsigned char* raw_data = nullptr;
+        unsigned char*                            raw_data = nullptr;
         DAS::ExportInterface::DasImagePixelFormat pixel_format =
             DAS::ExportInterface::DAS_PIXEL_FORMAT_UNKNOWN;
         cr = GetOcrImageData(p_image, img_size, &raw_data, &pixel_format);
@@ -764,7 +755,7 @@ DasResult PaddleOcrImpl::Recognize(
             // Build an IDasImage wrapper for the resized cv::Mat
             // Since CreateTensorFromImage takes IDasImage*, we instead
             // build the float tensor directly and wrap it.
-            int64_t shape[] = {
+            const std::array<int64_t, 4> shape{
                 1,
                 3,
                 static_cast<int64_t>(target_h),
@@ -777,6 +768,7 @@ DasResult PaddleOcrImpl::Recognize(
             {
                 return cr;
             }
+            det_backing.shape = shape;
             auto* float_data = det_backing.data;
 
             // Det normalization: ImageNet (Pitfall 3)
@@ -806,22 +798,17 @@ DasResult PaddleOcrImpl::Recognize(
                 }
             }
 
-            auto det_input_tensor = Ort::Value::CreateTensor<float>(
+            DAS::DasPtr<DAS::ExportInterface::IDasTensor> det_tensor_ptr;
+            cr = CreateFloatTensorFromBacking(
                 Ort::MemoryInfo::CreateCpu(
                     OrtAllocatorType::OrtArenaAllocator,
                     OrtMemType::OrtMemTypeCPU),
-                float_data,
-                det_backing.element_count,
-                shape,
-                4);
-
-            auto* det_tensor_impl = new IDasTensorImpl(
-                std::move(det_input_tensor),
-                det_backing.memory.Get(),
-                det_backing.buffer.Get());
-            det_tensor_impl->AddRef();
-            DAS::DasPtr<DAS::ExportInterface::IDasTensor> det_tensor_ptr(
-                det_tensor_impl);
+                std::move(det_backing),
+                det_tensor_ptr.Put());
+            if (DAS::IsFailed(cr))
+            {
+                return cr;
+            }
 
             // --- Det inference ---
             std::vector<std::string> det_input_names = {"x"};
@@ -830,7 +817,7 @@ DasResult PaddleOcrImpl::Recognize(
             cr = RunSession(
                 det_session_.Get(),
                 det_input_names,
-                det_tensor_impl,
+                det_tensor_ptr.Get(),
                 det_output_names_,
                 det_outputs.Put());
             if (DAS::IsFailed(cr))
@@ -846,8 +833,7 @@ DasResult PaddleOcrImpl::Recognize(
             std::vector<int64_t> det_out_dims;
             GetTensorDims(det_out_tensor.Get(), det_out_dims);
 
-            DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer>
-                det_out_buffer;
+            DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer> det_out_buffer;
             unsigned char* det_out_data = nullptr;
             uint64_t       det_out_size = 0;
             cr = GetTensorRawData(
