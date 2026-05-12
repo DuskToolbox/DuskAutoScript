@@ -7,9 +7,11 @@ interface IDasBinaryBuffer : IDasBase {
     /**
      * @brief 获取二进制数据指针
      *
-     * @note The buffer object owns or keeps alive the returned pointer.
-     *       Callers must not free the pointer returned by GetData.
+     * @note The buffer object owns or keeps alive the returned data pointer.
+     *       The caller must not free the pointer returned by GetData.
      *       GetSize returns the visible byte size for this buffer view.
+     *       Read/write intent is a B+ caller contract; DAS_E_ACCESS_DENIED
+     *       exists but is not produced for read/write intent mismatch here.
      */
     [binary_buffer] DasResult GetData([out] unsigned char** pp_out_data);
     DasResult GetSize([out] uint64_t* p_out_size);

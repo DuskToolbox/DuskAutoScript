@@ -140,6 +140,12 @@ interface IDasAI : IDasBase {
     /**
      * @brief Create a tensor from image data with preprocessing.
      *
+     * Zero-copy is allowed only when the source representation is exactly compatible
+     * with the tensor dtype, layout, shape, stride, pixel format,
+     * and preprocessing requirements. Otherwise, the implementation
+     * copies/preprocesses image bytes into tensor backing storage retained by
+     * IDasTensor.
+     *
      * @param image     Source image.
      * @param options   Tensor preprocessing options.
      * @param pp_tensor Output tensor (caller must Release).

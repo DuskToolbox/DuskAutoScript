@@ -44,6 +44,13 @@ interface IDasImage : IDasBase {
      *       旧方法：GetData([out] unsigned char**) - 返回裸指针
      *       新方法：GetBinaryBuffer([out] IDasBinaryBuffer*) - 返回包装好的缓冲区对象
      *
+     *       CPU-contiguous images may return a zero-copy buffer view over the
+     *       image bytes. GPU-backed images may materialize CPU data before
+     *       returning the binary buffer; callers must not assume GPU zero-copy.
+     *       If the returned buffer shares image storage, mutable sharing is
+     *       caller-managed and no copy-on-write or conflict prevention is
+     *       implied by IDasImage.
+     *
      *       优势：
      *       - IDasBinaryBuffer 明确持有数据所有权，避免内存管理歧义
      *       - 跨语言绑定更清晰（Python/C#/Java 均有对应的缓冲区对象）
