@@ -387,15 +387,6 @@ DasResult CreateIDasImageFromRgb888(
     uint64_t       data_size{};
     unsigned char* p_data{};
 
-    if (const auto get_size_result = p_alias_memory->GetSize(&data_size);
-        DAS::IsFailed(get_size_result)) [[unlikely]]
-    {
-        DAS_CORE_LOG_ERROR(
-            "CreateIDasImageFromRgb888: GetSize failed, result={}",
-            get_size_result);
-        return get_size_result;
-    }
-
     DAS::ExportInterface::IDasBinaryBuffer* p_buffer = nullptr;
     if (const auto get_buffer_result =
             p_alias_memory->GetBinaryBuffer(0, &p_buffer);
@@ -409,6 +400,15 @@ DasResult CreateIDasImageFromRgb888(
 
     auto buffer_guard =
         DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer>::Attach(p_buffer);
+
+    if (const auto get_size_result = p_buffer->GetSize(&data_size);
+        DAS::IsFailed(get_size_result)) [[unlikely]]
+    {
+        DAS_CORE_LOG_ERROR(
+            "CreateIDasImageFromRgb888: buffer GetSize failed, result={}",
+            get_size_result);
+        return get_size_result;
+    }
 
     if (const auto get_data_result = p_buffer->GetData(&p_data);
         DAS::IsFailed(get_data_result)) [[unlikely]]
