@@ -1,0 +1,154 @@
+{
+  "name": "@CMAKE_SHARED_LIBRARY_PREFIX@DasFlowControl",
+  "author": "Dusk",
+  "version": "0.1",
+  "guid": "7115BBFA-7E57-494E-82D5-D4134C367E13",
+  "description": "Official DAS flow-control task component plugin",
+  "supportedSystem": "Windows",
+  "language": "Cpp",
+  "pluginFilenameExtension": "dll",
+  "settings": {},
+  "taskComponents": {
+    "factories": [
+      "2C6DFCFA-F8B6-4272-8F28-1D31738BD0D4"
+    ],
+    "components": {
+      "68F10001-0000-4000-8000-000000000001": {
+        "factoryGuid": "2C6DFCFA-F8B6-4272-8F28-1D31738BD0D4",
+        "definition": {
+          "schemaVersion": 1,
+          "kind": "das.flow.branch",
+          "componentGuid": "68F10001-0000-4000-8000-000000000001",
+          "inputs": [
+            {
+              "id": "condition",
+              "type": "bool"
+            }
+          ],
+          "outputs": [
+            {
+              "id": "true",
+              "type": "signal"
+            },
+            {
+              "id": "false",
+              "type": "signal"
+            }
+          ],
+          "config": {},
+          "diagnostics": []
+        }
+      },
+      "68F10002-0000-4000-8000-000000000002": {
+        "factoryGuid": "2C6DFCFA-F8B6-4272-8F28-1D31738BD0D4",
+        "definition": {
+          "schemaVersion": 1,
+          "kind": "das.flow.sequence",
+          "componentGuid": "68F10002-0000-4000-8000-000000000002",
+          "inputs": [
+            {
+              "id": "in",
+              "type": "signal"
+            }
+          ],
+          "outputs": [
+            {
+              "id": "next",
+              "type": "signal"
+            }
+          ],
+          "config": {},
+          "diagnostics": []
+        }
+      },
+      "68F10003-0000-4000-8000-000000000003": {
+        "factoryGuid": "2C6DFCFA-F8B6-4272-8F28-1D31738BD0D4",
+        "definition": {
+          "schemaVersion": 1,
+          "kind": "das.flow.delay",
+          "componentGuid": "68F10003-0000-4000-8000-000000000003",
+          "inputs": [
+            {
+              "id": "in",
+              "type": "signal"
+            }
+          ],
+          "outputs": [
+            {
+              "id": "next",
+              "type": "signal"
+            }
+          ],
+          "config": {},
+          "diagnostics": []
+        }
+      },
+      "68F10004-0000-4000-8000-000000000004": {
+        "factoryGuid": "2C6DFCFA-F8B6-4272-8F28-1D31738BD0D4",
+        "definition": {
+          "schemaVersion": 1,
+          "kind": "das.flow.for",
+          "componentGuid": "68F10004-0000-4000-8000-000000000004",
+          "inputs": [
+            {
+              "id": "in",
+              "type": "signal"
+            }
+          ],
+          "outputs": [
+            {
+              "id": "next",
+              "type": "signal"
+            }
+          ],
+          "config": {},
+          "diagnostics": []
+        }
+      },
+      "68F10005-0000-4000-8000-000000000005": {
+        "factoryGuid": "2C6DFCFA-F8B6-4272-8F28-1D31738BD0D4",
+        "definition": {
+          "schemaVersion": 1,
+          "kind": "das.flow.while",
+          "componentGuid": "68F10005-0000-4000-8000-000000000005",
+          "inputs": [
+            {
+              "id": "in",
+              "type": "signal"
+            }
+          ],
+          "outputs": [
+            {
+              "id": "next",
+              "type": "signal"
+            }
+          ],
+          "config": {},
+          "diagnostics": []
+        }
+      },
+      "68F10006-0000-4000-8000-000000000006": {
+        "factoryGuid": "2C6DFCFA-F8B6-4272-8F28-1D31738BD0D4",
+        "definition": {
+          "schemaVersion": 1,
+          "kind": "das.flow.goto",
+          "componentGuid": "68F10006-0000-4000-8000-000000000006",
+          "inputs": [
+            {
+              "id": "target",
+              "type": "string"
+            }
+          ],
+          "outputs": [
+            {
+              "id": "next",
+              "type": "signal"
+            }
+          ],
+          "config": {},
+          "diagnostics": []
+        }
+      }
+    }
+  }
+}
