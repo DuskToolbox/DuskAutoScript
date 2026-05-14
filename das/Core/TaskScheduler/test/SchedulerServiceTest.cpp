@@ -20,6 +20,8 @@
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <condition_variable>
 #include <das/Utils/DasJsonCore.h>
@@ -1406,9 +1408,48 @@ static constexpr DasGuid FactoryTaskGuid = {
     0x4FED,
     {0x91, 0x23, 0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54}};
 
+// {FECAC0D5-E038-4FDB-A6E9-EFCE10BCAE5A}
+static constexpr DasGuid FactoryAuthoringFactoryGuid = {
+    0xFECAC0D5,
+    0xE038,
+    0x4FDB,
+    {0xA6, 0xE9, 0xEF, 0xCE, 0x10, 0xBC, 0xAE, 0x5A}};
+
+// {B56D1081-6838-4251-8CBB-BB223012FEF2}
+static constexpr DasGuid DecoyAuthoringFactoryGuid = {
+    0xB56D1081,
+    0x6838,
+    0x4251,
+    {0x8C, 0xBB, 0xBB, 0x22, 0x30, 0x12, 0xFE, 0xF2}};
+
+// {2B9CE776-E95F-47F1-BD31-180B9238A94C}
+static constexpr DasGuid FactoryTaskComponentFactoryGuid = {
+    0x2B9CE776,
+    0xE95F,
+    0x47F1,
+    {0xBD, 0x31, 0x18, 0x0B, 0x92, 0x38, 0xA9, 0x4C}};
+
+// {97BA1BE0-A199-47CB-9604-440B8BBC6555}
+static constexpr DasGuid FactoryTaskComponentImplGuid = {
+    0x97BA1BE0,
+    0xA199,
+    0x47CB,
+    {0x96, 0x04, 0x44, 0x0B, 0x8B, 0xBC, 0x65, 0x55}};
+
+// {BBCAE0D0-5BC5-4B58-9FBD-585003B62B2D}
+static constexpr DasGuid FactoryAuthoringSessionGuid = {
+    0xBBCAE0D0,
+    0x5BC5,
+    0x4B58,
+    {0x9F, 0xBD, 0x58, 0x50, 0x03, 0xB6, 0x2B, 0x2D}};
+
 constexpr char FactoryPluginGuidString[] =
     "12345678-9ABC-4DEF-8123-456789ABCDEF";
 constexpr char FactoryTaskGuidString[] = "87654321-CBA9-4FED-9123-FEDCBA987654";
+constexpr char FactoryAuthoringFactoryGuidString[] =
+    "FECAC0D5-E038-4FDB-A6E9-EFCE10BCAE5A";
+constexpr char FactoryTaskComponentFactoryGuidString[] =
+    "2B9CE776-E95F-47F1-BD31-180B9238A94C";
 
 struct FactoryTaskSharedState
 {
@@ -1420,6 +1461,7 @@ struct FactoryTaskSharedState
     int                     get_document_count = 0;
     int                     apply_change_count = 0;
     int                     compile_count = 0;
+    int                     decoy_authoring_create_count = 0;
     int64_t                 last_context_revision = -1;
     std::string             last_props_key1_value;
 };
@@ -1581,6 +1623,12 @@ public:
             AddRef();
             return DAS_S_OK;
         }
+        if (iid == DasIidOf<IDasTypeInfo>())
+        {
+            *pp = static_cast<IDasTypeInfo*>(this);
+            AddRef();
+            return DAS_S_OK;
+        }
         if (iid
             == DasIidOf<Das::PluginInterface::IDasTaskAuthoringSession>())
         {
@@ -1591,6 +1639,25 @@ public:
         }
         *pp = nullptr;
         return DAS_E_NO_INTERFACE;
+    }
+
+    DasResult GetGuid(DasGuid* p_out_guid) override
+    {
+        if (!p_out_guid)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        *p_out_guid = FactoryAuthoringSessionGuid;
+        return DAS_S_OK;
+    }
+
+    DasResult GetRuntimeClassName(IDasReadOnlyString** pp) override
+    {
+        if (!pp)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        return CreateIDasReadOnlyStringFromUtf8("FakeAuthoringSession", pp);
     }
 
     DasResult GetDocument(
@@ -1617,8 +1684,12 @@ public:
             yyjson::value(Das::Utils::MakeYyjsonObject());
         (*obj)[std::string_view("schema")] =
             yyjson::value(Das::Utils::MakeYyjsonObject());
-        (*obj)[std::string_view("catalog")] =
-            yyjson::value(Das::Utils::MakeYyjsonObject());
+        {
+            yyjson::value catalog(Das::Utils::MakeYyjsonObject());
+            (*catalog.as_object())[std::string_view("providerField")] =
+                "preserved";
+            (*obj)[std::string_view("catalog")] = std::move(catalog);
+        }
         (*obj)[std::string_view("state")] =
             yyjson::value(Das::Utils::MakeYyjsonObject());
         (*obj)[std::string_view("diagnostics")] =
@@ -1694,8 +1765,12 @@ class FakeAuthoringSessionFactory final
 {
 public:
     explicit FakeAuthoringSessionFactory(
-        std::shared_ptr<FactoryTaskSharedState> state)
-        : state_(std::move(state))
+        std::shared_ptr<FactoryTaskSharedState> state,
+        DasGuid                                 factory_guid,
+        bool                                    can_create_session)
+        : state_(std::move(state)),
+          factory_guid_(factory_guid),
+          can_create_session_(can_create_session)
     {
     }
 
@@ -1723,6 +1798,12 @@ public:
             AddRef();
             return DAS_S_OK;
         }
+        if (iid == DasIidOf<IDasTypeInfo>())
+        {
+            *pp = static_cast<IDasTypeInfo*>(this);
+            AddRef();
+            return DAS_S_OK;
+        }
         if (iid
             == DasIidOf<
                 Das::PluginInterface::IDasTaskAuthoringSessionFactory>())
@@ -1736,6 +1817,27 @@ public:
         return DAS_E_NO_INTERFACE;
     }
 
+    DasResult GetGuid(DasGuid* p_out_guid) override
+    {
+        if (!p_out_guid)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        *p_out_guid = factory_guid_;
+        return DAS_S_OK;
+    }
+
+    DasResult GetRuntimeClassName(IDasReadOnlyString** pp) override
+    {
+        if (!pp)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        return CreateIDasReadOnlyStringFromUtf8(
+            "FakeAuthoringSessionFactory",
+            pp);
+    }
+
     DasResult CreateSession(
         const DasGuid&,
         Das::ExportInterface::IDasJson* p_context_json,
@@ -1745,6 +1847,12 @@ public:
         if (!pp_out_session)
         {
             return DAS_E_INVALID_POINTER;
+        }
+        if (!can_create_session_)
+        {
+            std::lock_guard<std::mutex> lock(state_->mutex);
+            ++state_->decoy_authoring_create_count;
+            return DAS_E_FAIL;
         }
         int64_t revision = -1;
         if (p_context_json)
@@ -1774,6 +1882,255 @@ public:
 private:
     std::atomic<uint32_t>                   ref_count_{0};
     std::shared_ptr<FactoryTaskSharedState> state_;
+    DasGuid                                 factory_guid_{};
+    bool                                    can_create_session_ = true;
+};
+
+class FakeTaskComponent final : public Das::PluginInterface::IDasTaskComponent
+{
+public:
+    uint32_t AddRef() override { return ++ref_count_; }
+
+    uint32_t Release() override
+    {
+        auto count = --ref_count_;
+        if (count == 0)
+        {
+            delete this;
+        }
+        return count;
+    }
+
+    DasResult QueryInterface(const DasGuid& iid, void** pp) override
+    {
+        if (!pp)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        if (iid == DasIidOf<IDasBase>())
+        {
+            *pp = static_cast<IDasBase*>(this);
+            AddRef();
+            return DAS_S_OK;
+        }
+        if (iid == DasIidOf<IDasTypeInfo>())
+        {
+            *pp = static_cast<IDasTypeInfo*>(this);
+            AddRef();
+            return DAS_S_OK;
+        }
+        if (iid == DasIidOf<Das::PluginInterface::IDasTaskComponent>())
+        {
+            *pp = static_cast<Das::PluginInterface::IDasTaskComponent*>(this);
+            AddRef();
+            return DAS_S_OK;
+        }
+        *pp = nullptr;
+        return DAS_E_NO_INTERFACE;
+    }
+
+    DasResult GetGuid(DasGuid* p_out_guid) override
+    {
+        if (!p_out_guid)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        *p_out_guid = FactoryTaskComponentImplGuid;
+        return DAS_S_OK;
+    }
+
+    DasResult GetRuntimeClassName(IDasReadOnlyString** pp) override
+    {
+        if (!pp)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        return CreateIDasReadOnlyStringFromUtf8("FakeTaskComponent", pp);
+    }
+
+    DasResult ApplySettingsChange(
+        Das::ExportInterface::IDasJson*,
+        Das::ExportInterface::IDasJson** pp_out_result_json) override
+    {
+        if (!pp_out_result_json)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        auto result = Das::MakeDasPtr<Das::Core::Utils::IDasJsonImpl>(
+            Das::Utils::MakeYyjsonObject());
+        *pp_out_result_json = result.Get();
+        (*pp_out_result_json)->AddRef();
+        return DAS_S_OK;
+    }
+
+    DasResult Do(
+        Das::PluginInterface::IDasStopToken*,
+        Das::ExportInterface::IDasJson*,
+        Das::ExportInterface::IDasJson*,
+        Das::ExportInterface::IDasJson*,
+        Das::ExportInterface::IDasJson** pp_out_result_json) override
+    {
+        if (!pp_out_result_json)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        auto result_json = Das::Utils::MakeYyjsonObject();
+        (*result_json.as_object())[std::string_view("status")] =
+            "completed";
+        auto result = Das::MakeDasPtr<Das::Core::Utils::IDasJsonImpl>(
+            std::move(result_json));
+        *pp_out_result_json = result.Get();
+        (*pp_out_result_json)->AddRef();
+        return DAS_S_OK;
+    }
+
+private:
+    std::atomic<uint32_t> ref_count_{0};
+};
+
+class FakeTaskComponentFactory final
+    : public Das::PluginInterface::IDasTaskComponentFactory
+{
+public:
+    uint32_t AddRef() override { return ++ref_count_; }
+
+    uint32_t Release() override
+    {
+        auto count = --ref_count_;
+        if (count == 0)
+        {
+            delete this;
+        }
+        return count;
+    }
+
+    DasResult QueryInterface(const DasGuid& iid, void** pp) override
+    {
+        if (!pp)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        if (iid == DasIidOf<IDasBase>())
+        {
+            *pp = static_cast<IDasBase*>(this);
+            AddRef();
+            return DAS_S_OK;
+        }
+        if (iid == DasIidOf<IDasTypeInfo>())
+        {
+            *pp = static_cast<IDasTypeInfo*>(this);
+            AddRef();
+            return DAS_S_OK;
+        }
+        if (iid == DasIidOf<Das::PluginInterface::IDasTaskComponentFactory>())
+        {
+            *pp =
+                static_cast<Das::PluginInterface::IDasTaskComponentFactory*>(
+                    this);
+            AddRef();
+            return DAS_S_OK;
+        }
+        *pp = nullptr;
+        return DAS_E_NO_INTERFACE;
+    }
+
+    DasResult GetGuid(DasGuid* p_out_guid) override
+    {
+        if (!p_out_guid)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        *p_out_guid = FactoryTaskComponentFactoryGuid;
+        return DAS_S_OK;
+    }
+
+    DasResult GetRuntimeClassName(IDasReadOnlyString** pp) override
+    {
+        if (!pp)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        return CreateIDasReadOnlyStringFromUtf8(
+            "FakeTaskComponentFactory",
+            pp);
+    }
+
+    DasResult GetCatalog(
+        Das::ExportInterface::IDasJson** pp_out_catalog_json) override
+    {
+        if (!pp_out_catalog_json)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        auto catalog = Das::MakeDasPtr<Das::Core::Utils::IDasJsonImpl>(
+            Das::Utils::MakeYyjsonObject());
+        *pp_out_catalog_json = catalog.Get();
+        (*pp_out_catalog_json)->AddRef();
+        return DAS_S_OK;
+    }
+
+    DasResult CreateComponent(
+        const DasGuid&                         component_guid,
+        Das::PluginInterface::IDasTaskComponent** pp_out_component) override
+    {
+        if (!pp_out_component)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        *pp_out_component = nullptr;
+
+        static constexpr std::array kSupportedComponents{
+            DasGuid{
+                0x68F10001,
+                0x0000,
+                0x4000,
+                {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}},
+            DasGuid{
+                0x68F10002,
+                0x0000,
+                0x4000,
+                {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02}},
+            DasGuid{
+                0x68F10003,
+                0x0000,
+                0x4000,
+                {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03}},
+            DasGuid{
+                0x68F10004,
+                0x0000,
+                0x4000,
+                {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04}},
+            DasGuid{
+                0x68F10005,
+                0x0000,
+                0x4000,
+                {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05}},
+            DasGuid{
+                0x68F10006,
+                0x0000,
+                0x4000,
+                {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06}}};
+
+        const auto supported = std::any_of(
+            kSupportedComponents.begin(),
+            kSupportedComponents.end(),
+            [&component_guid](const DasGuid& supported_guid)
+            {
+                return component_guid == supported_guid;
+            });
+        if (!supported)
+        {
+            return DAS_E_NOT_FOUND;
+        }
+
+        auto* component = new FakeTaskComponent();
+        component->AddRef();
+        *pp_out_component = component;
+        return DAS_S_OK;
+    }
+
+private:
+    std::atomic<uint32_t> ref_count_{0};
 };
 
 class FactoryTaskPluginPackage final
@@ -1840,6 +2197,18 @@ public:
                 DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY;
             return DAS_S_OK;
         }
+        if (index == 2)
+        {
+            *p_out_feature = Das::PluginInterface::
+                DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY;
+            return DAS_S_OK;
+        }
+        if (index == 3)
+        {
+            *p_out_feature = Das::PluginInterface::
+                DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY;
+            return DAS_S_OK;
+        }
         return DAS_E_OUT_OF_RANGE;
     }
 
@@ -1862,7 +2231,29 @@ public:
         if (index == 1)
         {
             DasOutPtr<IDasBase> result(pp_out_interface);
-            auto* factory = new FakeAuthoringSessionFactory(state_);
+            auto* factory = new FakeAuthoringSessionFactory(
+                state_,
+                DecoyAuthoringFactoryGuid,
+                false);
+            result.Set(factory);
+            result.Keep();
+            return DAS_S_OK;
+        }
+        if (index == 2)
+        {
+            DasOutPtr<IDasBase> result(pp_out_interface);
+            auto* factory = new FakeAuthoringSessionFactory(
+                state_,
+                FactoryAuthoringFactoryGuid,
+                true);
+            result.Set(factory);
+            result.Keep();
+            return DAS_S_OK;
+        }
+        if (index == 3)
+        {
+            DasOutPtr<IDasBase> result(pp_out_interface);
+            auto* factory = new FakeTaskComponentFactory();
             result.Set(factory);
             result.Keep();
             return DAS_S_OK;
@@ -1964,6 +2355,66 @@ void WriteFactoryPluginManifest(const std::filesystem::path& manifest_path)
     (*manifest.as_object())[std::string_view("settings")] =
         yyjson::value(Das::Utils::MakeYyjsonObject());
     {
+        yyjson::value task_components(Das::Utils::MakeYyjsonObject());
+        yyjson::value factories(Das::Utils::MakeYyjsonArray());
+        factories.as_array()->emplace_back(
+            FactoryTaskComponentFactoryGuidString);
+        (*task_components.as_object())[std::string_view("factories")] =
+            std::move(factories);
+
+        yyjson::value components(Das::Utils::MakeYyjsonObject());
+        auto add_component =
+            [&components](
+                std::string_view component_guid,
+                std::string_view kind)
+        {
+            yyjson::value definition(Das::Utils::MakeYyjsonObject());
+            (*definition.as_object())[std::string_view("schemaVersion")] = 1;
+            (*definition.as_object())[std::string_view("kind")] =
+                std::string(kind);
+            (*definition.as_object())[std::string_view("componentGuid")] =
+                std::string(component_guid);
+            (*definition.as_object())[std::string_view("inputs")] =
+                yyjson::value(Das::Utils::MakeYyjsonArray());
+            (*definition.as_object())[std::string_view("outputs")] =
+                yyjson::value(Das::Utils::MakeYyjsonArray());
+            (*definition.as_object())[std::string_view("config")] =
+                yyjson::value(Das::Utils::MakeYyjsonObject());
+            (*definition.as_object())[std::string_view("diagnostics")] =
+                yyjson::value(Das::Utils::MakeYyjsonArray());
+
+            yyjson::value entry(Das::Utils::MakeYyjsonObject());
+            (*entry.as_object())[std::string_view("factoryGuid")] =
+                FactoryTaskComponentFactoryGuidString;
+            (*entry.as_object())[std::string_view("definition")] =
+                std::move(definition);
+            (*components.as_object())[component_guid] = std::move(entry);
+        };
+        add_component(
+            "68F10001-0000-4000-8000-000000000001",
+            "das.flow.branch");
+        add_component(
+            "68F10002-0000-4000-8000-000000000002",
+            "das.flow.sequence");
+        add_component(
+            "68F10003-0000-4000-8000-000000000003",
+            "das.flow.delay");
+        add_component(
+            "68F10004-0000-4000-8000-000000000004",
+            "das.flow.for");
+        add_component(
+            "68F10005-0000-4000-8000-000000000005",
+            "das.flow.while");
+        add_component(
+            "68F10006-0000-4000-8000-000000000006",
+            "das.flow.goto");
+
+        (*task_components.as_object())[std::string_view("components")] =
+            std::move(components);
+        (*manifest.as_object())[std::string_view("taskComponents")] =
+            std::move(task_components);
+    }
+    {
         yyjson::value task_entry(Das::Utils::MakeYyjsonObject());
         (*task_entry.as_object())[std::string_view("pluginGuid")] =
             FactoryPluginGuidString;
@@ -1974,7 +2425,8 @@ void WriteFactoryPluginManifest(const std::filesystem::path& manifest_path)
             yyjson::value(Das::Utils::MakeYyjsonArray());
         {
             yyjson::value authoring(Das::Utils::MakeYyjsonObject());
-            (*authoring.as_object())[std::string_view("featureIndex")] = 1;
+            (*authoring.as_object())[std::string_view("factoryGuid")] =
+                FactoryAuthoringFactoryGuidString;
             yyjson::value supported(Das::Utils::MakeYyjsonArray());
             (*supported.as_array()).emplace_back("formSequence");
             (*authoring.as_object())[std::string_view("supportedKinds")] =
@@ -2564,9 +3016,46 @@ TEST_F(
     EXPECT_EQ(
         (*document)[std::string_view("kind")].as_string().value_or(""),
         std::string_view("formSequence"));
+    auto catalog = (*document)[std::string_view("catalog")].as_object();
+    ASSERT_TRUE(catalog.has_value());
+    EXPECT_EQ(
+        (*catalog)[std::string_view("providerField")]
+            .as_string()
+            .value_or(""),
+        std::string_view("preserved"));
+    auto components =
+        (*catalog)[std::string_view("components")].as_array();
+    ASSERT_TRUE(components.has_value());
+    EXPECT_GE(components->size(), 6u);
+    auto has_component_kind =
+        [&components](std::string_view expected_kind)
+    {
+        return std::any_of(
+            components->begin(),
+            components->end(),
+            [expected_kind](const yyjson::value& component)
+            {
+                auto component_obj = component.as_object();
+                if (!component_obj)
+                {
+                    return false;
+                }
+                return (*component_obj)[std::string_view("kind")]
+                           .as_string()
+                           .value_or("")
+                       == expected_kind;
+            });
+    };
+    EXPECT_TRUE(has_component_kind("das.flow.branch"));
+    EXPECT_TRUE(has_component_kind("das.flow.sequence"));
+    EXPECT_TRUE(has_component_kind("das.flow.delay"));
+    EXPECT_TRUE(has_component_kind("das.flow.for"));
+    EXPECT_TRUE(has_component_kind("das.flow.while"));
+    EXPECT_TRUE(has_component_kind("das.flow.goto"));
 
     std::lock_guard<std::mutex> lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->authoring_session_count, 1);
+    EXPECT_EQ(shared_state_->decoy_authoring_create_count, 0);
     EXPECT_EQ(shared_state_->get_document_count, 1);
     EXPECT_EQ(shared_state_->last_context_revision, 0);
 }
