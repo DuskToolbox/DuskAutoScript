@@ -1,9 +1,10 @@
 #pragma once
 
 #include <cassert>
+
 #include <cpp_yyjson.hpp>
-#include <das/DasPtr.hpp>
-#include <das/_autogen/idl/abi/IDasTaskComponent.h>
+
+#include <string_view>
 
 namespace Das::Core::TaskScheduler
 {
@@ -12,8 +13,5 @@ namespace Das::Core::TaskScheduler
         std::string_view status,
         yyjson::value    outputs,
         yyjson::value    signals);
-
-    DasPtr<Das::PluginInterface::IDasTaskComponentFactory>
-    CreateOfficialFlowControlTaskComponentFactory();
 
 } // namespace Das::Core::TaskScheduler
