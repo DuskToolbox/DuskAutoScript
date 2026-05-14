@@ -15,6 +15,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <variant>
 #include <vector>
 
@@ -97,9 +98,38 @@ void ParsePluginSettingsGroupFromJson(
 /// Declarative authoring capability attached to a task descriptor.
 struct TaskAuthoringCapabilityDesc
 {
-    uint64_t                 feature_index = 0;
+    DasGuid                  factory_guid{};
     std::vector<std::string> supported_kinds;
 };
+
+/// Inline task component definition routed by a factory implementation GUID.
+struct TaskComponentManifestEntryDesc
+{
+    std::optional<std::string> factory_guid;
+    std::optional<yyjson::value> definition;
+};
+
+/// Top-level taskComponents manifest section.
+struct TaskComponentsManifestDesc
+{
+    std::optional<std::vector<std::string>> factories;
+    std::optional<
+        std::unordered_map<std::string, TaskComponentManifestEntryDesc>>
+        components;
+};
+
+struct TaskComponentsValidationResult
+{
+    std::vector<std::string> rejection_reasons;
+
+    [[nodiscard]] bool IsValid() const
+    {
+        return rejection_reasons.empty();
+    }
+};
+
+TaskComponentsValidationResult ValidateTaskComponents(
+    const TaskComponentsManifestDesc& task_components);
 
 /// Declarative task-component capability attached to a task descriptor.
 struct TaskComponentCapabilityDesc
@@ -146,6 +176,8 @@ struct PluginPackageDesc
     std::unordered_map<DasGuid, PluginSettingsGroup> settings_groups;
     /// Task-GUID-keyed task descriptors from manifest.
     std::unordered_map<DasGuid, TaskDescriptor> task_descriptors;
+    /// Top-level taskComponents manifest data for component factory routing.
+    std::optional<TaskComponentsManifestDesc> task_components;
 
     class SettingsJson
     {
@@ -171,5 +203,26 @@ void ParsePluginPackageDescFromJson(
     PluginPackageDesc&                      output);
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
+
+template <>
+struct yyjson::field_name_rule<
+    DAS::Core::ForeignInterfaceHost::TaskAuthoringCapabilityDesc>
+{
+    using type = yyjson::snake_to_camel_transform;
+};
+
+template <>
+struct yyjson::field_name_rule<
+    DAS::Core::ForeignInterfaceHost::TaskComponentManifestEntryDesc>
+{
+    using type = yyjson::snake_to_camel_transform;
+};
+
+template <>
+struct yyjson::field_name_rule<
+    DAS::Core::ForeignInterfaceHost::TaskComponentsManifestDesc>
+{
+    using type = yyjson::snake_to_camel_transform;
+};
 
 #endif // DAS_CORE_FOREIGNINTERFACEHOST_FOREIGNINTERFACEHOST_H

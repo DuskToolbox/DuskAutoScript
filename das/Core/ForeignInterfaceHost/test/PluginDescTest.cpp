@@ -4,12 +4,22 @@
 #include <das/Utils/DasJsonCore.h>
 #include <gtest/gtest.h>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
 namespace
 {
+    constexpr std::string_view kTaskComponentFactoryGuid =
+        "0196057D-1029-4D9D-A2D0-81869F40F721";
+    constexpr std::string_view kAlternateTaskComponentFactoryGuid =
+        "1196057D-1029-4D9D-A2D0-81869F40F722";
+    constexpr std::string_view kTaskComponentGuid =
+        "78B71988-2125-4A2B-8B78-02A804570101";
+    constexpr std::string_view kAlternateTaskComponentGuid =
+        "88B71988-2125-4A2B-8B78-02A804570102";
+
     std::string BasicPluginJsonWith(std::string_view extra_fields)
     {
         std::string result = R"(
@@ -54,6 +64,56 @@ namespace
                 result);
         }
         return result;
+    }
+
+    std::string ValidDefinitionFor(std::string_view component_guid)
+    {
+        return std::string{
+                   R"({"schemaVersion":1,"componentGuid":")"} +
+               std::string{component_guid} +
+               R"(","kind":"branch","inputs":[],"outputs":[],"config":{},"diagnostics":[]})";
+    }
+
+    std::string EntryWithFactoryAndDefinition(
+        std::string_view factory_guid,
+        std::string_view definition)
+    {
+        return std::string{R"({"factoryGuid":")"} +
+               std::string{factory_guid} +
+               R"(","definition":)" + std::string{definition} + "}";
+    }
+
+    std::string TaskComponentsWithEntry(
+        std::string_view component_key,
+        std::string_view entry)
+    {
+        return std::string{R"({"factories":[")"} +
+               std::string{kTaskComponentFactoryGuid} +
+               R"("],"components":{")" + std::string{component_key} +
+               R"(":)" + std::string{entry} + "}}";
+    }
+
+    void ExpectInvalidTaskComponents(
+        std::string_view task_components_json,
+        std::string_view expected_reason)
+    {
+        const auto manifest = BasicPluginJsonWith(
+            std::string{R"("taskComponents":)"} +
+            std::string{task_components_json});
+
+        try
+        {
+            (void)JsonToStruct<
+                DAS::Core::ForeignInterfaceHost::PluginPackageDesc>(manifest);
+            FAIL() << "Invalid taskComponents should fail";
+        }
+        catch (const std::runtime_error& e)
+        {
+            EXPECT_NE(
+                std::string{e.what()}.find(expected_reason),
+                std::string::npos)
+                << e.what();
+        }
     }
 } // anonymous namespace
 
@@ -492,14 +552,16 @@ TEST(PluginDescTaskComponentsTest, ParsesTopLevelManifest)
             test_string);
 
     ASSERT_TRUE(desc.task_components.has_value());
-    ASSERT_EQ(desc.task_components->factories.size(), 1u);
+    ASSERT_TRUE(desc.task_components->factories.has_value());
+    ASSERT_EQ(desc.task_components->factories->size(), 1u);
     EXPECT_EQ(
-        desc.task_components->factories[0],
+        (*desc.task_components->factories)[0],
         "0196057D-1029-4D9D-A2D0-81869F40F721");
 
-    const auto component_it = desc.task_components->components.find(
+    ASSERT_TRUE(desc.task_components->components.has_value());
+    const auto component_it = desc.task_components->components->find(
         "78B71988-2125-4A2B-8B78-02A804570101");
-    ASSERT_NE(component_it, desc.task_components->components.end());
+    ASSERT_NE(component_it, desc.task_components->components->end());
     EXPECT_EQ(
         component_it->second.factory_guid.value(),
         "0196057D-1029-4D9D-A2D0-81869F40F721");
@@ -508,6 +570,172 @@ TEST(PluginDescTaskComponentsTest, ParsesTopLevelManifest)
     ASSERT_TRUE(definition_obj.has_value());
     EXPECT_TRUE(definition_obj->contains(
         std::string_view("thirdPartyDefinitionMetadata")));
+}
+
+TEST(PluginDescTaskComponentsTest, RejectsInvalidFactoryGuid)
+{
+    ExpectInvalidTaskComponents(
+        R"({"factories":["not-a-guid"],"components":{}})",
+        "taskComponents.factories[0]: invalid factory GUID");
+}
+
+TEST(PluginDescTaskComponentsTest, RejectsInvalidComponentGuidKey)
+{
+    const auto entry = EntryWithFactoryAndDefinition(
+        kTaskComponentFactoryGuid,
+        ValidDefinitionFor(kTaskComponentGuid));
+
+    ExpectInvalidTaskComponents(
+        TaskComponentsWithEntry("not-a-guid", entry),
+        "taskComponents.components.not-a-guid: invalid component GUID key");
+}
+
+TEST(PluginDescTaskComponentsTest, RejectsMissingFactoryGuid)
+{
+    const auto entry = std::string{R"({"definition":)"} +
+                       ValidDefinitionFor(kTaskComponentGuid) + "}";
+
+    ExpectInvalidTaskComponents(
+        TaskComponentsWithEntry(kTaskComponentGuid, entry),
+        "taskComponents.components.78B71988-2125-4A2B-8B78-02A804570101."
+        "factoryGuid: missing required string");
+}
+
+TEST(PluginDescTaskComponentsTest, RejectsUndeclaredFactoryGuid)
+{
+    const auto entry = EntryWithFactoryAndDefinition(
+        kAlternateTaskComponentFactoryGuid,
+        ValidDefinitionFor(kTaskComponentGuid));
+
+    ExpectInvalidTaskComponents(
+        TaskComponentsWithEntry(kTaskComponentGuid, entry),
+        "taskComponents.components.78B71988-2125-4A2B-8B78-02A804570101."
+        "factoryGuid: undeclared factory GUID");
+}
+
+TEST(PluginDescTaskComponentsTest, RejectsMissingDefinition)
+{
+    const auto entry = std::string{R"({"factoryGuid":")"} +
+                       std::string{kTaskComponentFactoryGuid} + R"("})";
+
+    ExpectInvalidTaskComponents(
+        TaskComponentsWithEntry(kTaskComponentGuid, entry),
+        "taskComponents.components.78B71988-2125-4A2B-8B78-02A804570101."
+        "definition: missing required object");
+}
+
+TEST(PluginDescTaskComponentsTest, RejectsNonObjectDefinition)
+{
+    const auto entry = EntryWithFactoryAndDefinition(
+        kTaskComponentFactoryGuid,
+        R"([])");
+
+    ExpectInvalidTaskComponents(
+        TaskComponentsWithEntry(kTaskComponentGuid, entry),
+        "taskComponents.components.78B71988-2125-4A2B-8B78-02A804570101."
+        "definition: expected object");
+}
+
+TEST(PluginDescTaskComponentsTest, RejectsMismatchedDefinitionComponentGuid)
+{
+    const auto entry = EntryWithFactoryAndDefinition(
+        kTaskComponentFactoryGuid,
+        ValidDefinitionFor(kAlternateTaskComponentGuid));
+
+    ExpectInvalidTaskComponents(
+        TaskComponentsWithEntry(kTaskComponentGuid, entry),
+        "taskComponents.components.78B71988-2125-4A2B-8B78-02A804570101."
+        "definition.componentGuid: must match component key");
+}
+
+TEST(PluginDescTaskComponentsTest, RejectsMissingDefinitionSchemaVersion)
+{
+    const auto definition = std::string{
+        R"({"componentGuid":"78B71988-2125-4A2B-8B78-02A804570101",)"
+        R"("kind":"branch","inputs":[],"outputs":[],"config":{},"diagnostics":[]})"};
+    const auto entry = EntryWithFactoryAndDefinition(
+        kTaskComponentFactoryGuid,
+        definition);
+
+    ExpectInvalidTaskComponents(
+        TaskComponentsWithEntry(kTaskComponentGuid, entry),
+        "taskComponents.components.78B71988-2125-4A2B-8B78-02A804570101."
+        "definition.schemaVersion: missing required field");
+}
+
+TEST(PluginDescTaskComponentsTest, RejectsMissingDefinitionKind)
+{
+    const auto definition = std::string{
+        R"({"schemaVersion":1,"componentGuid":"78B71988-2125-4A2B-8B78-02A804570101",)"
+        R"("inputs":[],"outputs":[],"config":{},"diagnostics":[]})"};
+    const auto entry = EntryWithFactoryAndDefinition(
+        kTaskComponentFactoryGuid,
+        definition);
+
+    ExpectInvalidTaskComponents(
+        TaskComponentsWithEntry(kTaskComponentGuid, entry),
+        "taskComponents.components.78B71988-2125-4A2B-8B78-02A804570101."
+        "definition.kind: missing required string");
+}
+
+TEST(PluginDescTaskComponentsTest, RejectsNonArrayDefinitionInputs)
+{
+    const auto definition = std::string{
+        R"({"schemaVersion":1,"componentGuid":"78B71988-2125-4A2B-8B78-02A804570101",)"
+        R"("kind":"branch","inputs":{},"outputs":[],"config":{},"diagnostics":[]})"};
+    const auto entry = EntryWithFactoryAndDefinition(
+        kTaskComponentFactoryGuid,
+        definition);
+
+    ExpectInvalidTaskComponents(
+        TaskComponentsWithEntry(kTaskComponentGuid, entry),
+        "taskComponents.components.78B71988-2125-4A2B-8B78-02A804570101."
+        "definition.inputs: expected array");
+}
+
+TEST(PluginDescTaskComponentsTest, RejectsNonArrayDefinitionOutputs)
+{
+    const auto definition = std::string{
+        R"({"schemaVersion":1,"componentGuid":"78B71988-2125-4A2B-8B78-02A804570101",)"
+        R"("kind":"branch","inputs":[],"outputs":{},"config":{},"diagnostics":[]})"};
+    const auto entry = EntryWithFactoryAndDefinition(
+        kTaskComponentFactoryGuid,
+        definition);
+
+    ExpectInvalidTaskComponents(
+        TaskComponentsWithEntry(kTaskComponentGuid, entry),
+        "taskComponents.components.78B71988-2125-4A2B-8B78-02A804570101."
+        "definition.outputs: expected array");
+}
+
+TEST(PluginDescTaskComponentsTest, RejectsInvalidDefinitionConfigContainer)
+{
+    const auto definition = std::string{
+        R"({"schemaVersion":1,"componentGuid":"78B71988-2125-4A2B-8B78-02A804570101",)"
+        R"("kind":"branch","inputs":[],"outputs":[],"config":[],"diagnostics":[]})"};
+    const auto entry = EntryWithFactoryAndDefinition(
+        kTaskComponentFactoryGuid,
+        definition);
+
+    ExpectInvalidTaskComponents(
+        TaskComponentsWithEntry(kTaskComponentGuid, entry),
+        "taskComponents.components.78B71988-2125-4A2B-8B78-02A804570101."
+        "definition.config: expected object");
+}
+
+TEST(PluginDescTaskComponentsTest, RejectsInvalidDefinitionDiagnosticsContainer)
+{
+    const auto definition = std::string{
+        R"({"schemaVersion":1,"componentGuid":"78B71988-2125-4A2B-8B78-02A804570101",)"
+        R"("kind":"branch","inputs":[],"outputs":[],"config":{},"diagnostics":{}})"};
+    const auto entry = EntryWithFactoryAndDefinition(
+        kTaskComponentFactoryGuid,
+        definition);
+
+    ExpectInvalidTaskComponents(
+        TaskComponentsWithEntry(kTaskComponentGuid, entry),
+        "taskComponents.components.78B71988-2125-4A2B-8B78-02A804570101."
+        "definition.diagnostics: expected array");
 }
 
 TEST(PluginPackageDescTest, TaskDescriptorComponentCapabilities)

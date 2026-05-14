@@ -18,6 +18,7 @@
 #include <iterator>
 #include <magic_enum_format.hpp>
 #include <stdexcept>
+#include <unordered_set>
 
 // Compatible with fmt
 #if DAS_USE_STD_FMT
@@ -398,6 +399,65 @@ namespace Details
 
 namespace
 {
+    yyjson::value CopyJsonValue(
+        const yyjson::writer::const_value_ref& value)
+    {
+        yyjson::value result;
+        result = value;
+        return result;
+    }
+
+    std::optional<DasGuid> TryMakeGuid(std::string_view value)
+    {
+        try
+        {
+            return MakeDasGuid(value);
+        }
+        catch (const std::exception&)
+        {
+            return std::nullopt;
+        }
+    }
+
+    std::string JoinReasons(const std::vector<std::string>& reasons)
+    {
+        std::string result;
+        for (std::size_t i = 0; i < reasons.size(); ++i)
+        {
+            if (i != 0)
+            {
+                result += "; ";
+            }
+            result += reasons[i];
+        }
+        return result;
+    }
+
+    std::optional<std::string> OptionalStringFromObject(
+        const yyjson::writer::const_object_ref& obj,
+        std::string_view                        key)
+    {
+        if (!obj.contains(key))
+        {
+            return std::nullopt;
+        }
+
+        auto field = obj[key];
+        auto value = field.as_string();
+        if (!value)
+        {
+            return std::nullopt;
+        }
+        return std::string(*value);
+    }
+
+    std::string ComponentPath(std::string_view component_key)
+    {
+        return DAS_FMT_NS::format(
+            "taskComponents.components.{}",
+            component_key);
+    }
+
     uint64_t JsonValueToFeatureIndex(
         const yyjson::writer::const_object_ref& obj,
         std::string_view                        key)
@@ -433,6 +493,60 @@ namespace
             }
         }
         return result;
+    }
+
+    void ParseTaskComponentsFromJson(
+        const yyjson::writer::const_object_ref& obj,
+        TaskComponentsManifestDesc&             output)
+    {
+        if (obj.contains(std::string_view("factories")))
+        {
+            auto factories_val = obj[std::string_view("factories")];
+            auto factories_arr = factories_val.as_array();
+            if (factories_arr)
+            {
+                std::vector<std::string> factories;
+                for (const auto& elem : *factories_arr)
+                {
+                    auto factory_guid = elem.as_string();
+                    factories.emplace_back(
+                        factory_guid ? std::string(*factory_guid)
+                                     : std::string{});
+                }
+                output.factories = std::move(factories);
+            }
+        }
+
+        if (obj.contains(std::string_view("components")))
+        {
+            auto components_val = obj[std::string_view("components")];
+            auto components_obj = components_val.as_object();
+            if (components_obj)
+            {
+                std::unordered_map<
+                    std::string,
+                    TaskComponentManifestEntryDesc>
+                    components;
+                for (const auto& [key, value] : *components_obj)
+                {
+                    TaskComponentManifestEntryDesc entry;
+                    auto entry_obj = value.as_object();
+                    if (entry_obj)
+                    {
+                        entry.factory_guid = OptionalStringFromObject(
+                            *entry_obj,
+                            "factoryGuid");
+                        if (entry_obj->contains(std::string_view("definition")))
+                        {
+                            entry.definition = CopyJsonValue(
+                                (*entry_obj)[std::string_view("definition")]);
+                        }
+                    }
+                    components.emplace(std::string(key), std::move(entry));
+                }
+                output.components = std::move(components);
+            }
+        }
     }
 } // namespace
 
@@ -556,8 +670,9 @@ void ParseTaskDescriptorFromJson(
         if (authoring_obj)
         {
             TaskAuthoringCapabilityDesc authoring;
-            authoring.feature_index =
-                JsonValueToFeatureIndex(*authoring_obj, "featureIndex");
+            authoring.factory_guid = MakeDasGuid(
+                Details::JsonValueToYyjsonScalar<std::string>(
+                    (*authoring_obj)[std::string_view("factoryGuid")]));
             if (authoring_obj->contains(std::string_view("supportedKinds")))
             {
                 authoring.supported_kinds = JsonStringArrayToVector(
@@ -616,6 +731,182 @@ void ParseTaskDescriptorFromJson(
             }
         }
     }
+}
+
+TaskComponentsValidationResult ValidateTaskComponents(
+    const TaskComponentsManifestDesc& task_components)
+{
+    TaskComponentsValidationResult result;
+    std::unordered_set<DasGuid>     declared_factories;
+
+    if (!task_components.factories.has_value())
+    {
+        result.rejection_reasons.emplace_back(
+            "taskComponents.factories: missing required array");
+    }
+    else
+    {
+        const auto& factories = *task_components.factories;
+        for (std::size_t i = 0; i < factories.size(); ++i)
+        {
+            auto factory_guid = TryMakeGuid(factories[i]);
+            if (!factory_guid)
+            {
+                result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
+                    "taskComponents.factories[{}]: invalid factory GUID",
+                    i));
+                continue;
+            }
+            declared_factories.insert(*factory_guid);
+        }
+    }
+
+    if (!task_components.components.has_value())
+    {
+        result.rejection_reasons.emplace_back(
+            "taskComponents.components: missing required object");
+        return result;
+    }
+
+    for (const auto& [component_key, entry] : *task_components.components)
+    {
+        const auto component_path = ComponentPath(component_key);
+        const auto component_guid = TryMakeGuid(component_key);
+        if (!component_guid)
+        {
+            result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
+                "{}: invalid component GUID key",
+                component_path));
+        }
+
+        std::optional<DasGuid> entry_factory_guid;
+        if (!entry.factory_guid.has_value() || entry.factory_guid->empty())
+        {
+            result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
+                "{}.factoryGuid: missing required string",
+                component_path));
+        }
+        else
+        {
+            entry_factory_guid = TryMakeGuid(*entry.factory_guid);
+            if (!entry_factory_guid)
+            {
+                result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
+                    "{}.factoryGuid: invalid factory GUID",
+                    component_path));
+            }
+            else if (
+                task_components.factories.has_value()
+                && !declared_factories.contains(*entry_factory_guid))
+            {
+                result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
+                    "{}.factoryGuid: undeclared factory GUID",
+                    component_path));
+            }
+        }
+
+        if (!entry.definition.has_value())
+        {
+            result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
+                "{}.definition: missing required object",
+                component_path));
+            continue;
+        }
+
+        auto definition_obj = entry.definition->as_object();
+        if (!definition_obj)
+        {
+            result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
+                "{}.definition: expected object",
+                component_path));
+            continue;
+        }
+
+        auto definition_component_guid =
+            (*definition_obj)[std::string_view("componentGuid")].as_string();
+        if (!definition_component_guid)
+        {
+            result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
+                "{}.definition.componentGuid: missing required string",
+                component_path));
+        }
+        else
+        {
+            auto parsed_definition_guid =
+                TryMakeGuid(*definition_component_guid);
+            if (!parsed_definition_guid)
+            {
+                result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
+                    "{}.definition.componentGuid: invalid component GUID",
+                    component_path));
+            }
+            else if (
+                component_guid && *parsed_definition_guid != *component_guid)
+            {
+                result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
+                    "{}.definition.componentGuid: must match component key",
+                    component_path));
+            }
+        }
+
+        auto schema_version =
+            (*definition_obj)[std::string_view("schemaVersion")];
+        if (schema_version.is_null())
+        {
+            result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
+                "{}.definition.schemaVersion: missing required field",
+                component_path));
+        }
+
+        auto kind = (*definition_obj)[std::string_view("kind")];
+        if (!kind.as_string())
+        {
+            result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
+                "{}.definition.kind: missing required string",
+                component_path));
+        }
+
+        auto inputs = (*definition_obj)[std::string_view("inputs")];
+        if (!inputs.is_array())
+        {
+            result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
+                "{}.definition.inputs: expected array",
+                component_path));
+        }
+
+        auto outputs = (*definition_obj)[std::string_view("outputs")];
+        if (!outputs.is_array())
+        {
+            result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
+                "{}.definition.outputs: expected array",
+                component_path));
+        }
+
+        if (definition_obj->contains(std::string_view("config")))
+        {
+            auto config = (*definition_obj)[std::string_view("config")];
+            if (!config.is_object())
+            {
+                result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
+                    "{}.definition.config: expected object",
+                    component_path));
+            }
+        }
+
+        if (definition_obj->contains(std::string_view("diagnostics")))
+        {
+            auto diagnostics =
+                (*definition_obj)[std::string_view("diagnostics")];
+            if (!diagnostics.is_array())
+            {
+                result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
+                    "{}.definition.diagnostics: expected array",
+                    component_path));
+            }
+        }
+    }
+
+    return result;
 }
 
 void PluginPackageDesc::SettingsJson::SetValue(IDasReadOnlyString* p_json)
@@ -811,6 +1102,30 @@ void ParsePluginPackageDescFromJson(
                     output.settings_groups);
             }
         }
+    }
+
+    if (obj.contains(std::string_view("taskComponents")))
+    {
+        auto task_components_val = obj[std::string_view("taskComponents")];
+        auto task_components_obj = task_components_val.as_object();
+        if (!task_components_obj)
+        {
+            throw std::runtime_error(
+                "taskComponents: expected object");
+        }
+
+        TaskComponentsManifestDesc task_components;
+        ParseTaskComponentsFromJson(*task_components_obj, task_components);
+
+        auto validation = ValidateTaskComponents(task_components);
+        if (!validation.IsValid())
+        {
+            throw std::runtime_error(DAS_FMT_NS::format(
+                "Invalid taskComponents manifest: {}",
+                JoinReasons(validation.rejection_reasons)));
+        }
+
+        output.task_components = std::move(task_components);
     }
 
     // Parse "tasks" field: task-GUID-keyed object.
