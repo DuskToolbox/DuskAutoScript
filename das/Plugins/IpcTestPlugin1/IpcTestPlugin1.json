@@ -8,6 +8,25 @@
   "language": "Cpp",
   "pluginFilenameExtension": "dll",
   "settings": {},
+  "taskComponents": {
+    "factories": [
+      "6164B9FB-F05A-4EBC-A70D-1CF2C2DB0FA3"
+    ],
+    "components": {
+      "68F10701-0000-4000-8000-000000000001": {
+        "factoryGuid": "6164B9FB-F05A-4EBC-A70D-1CF2C2DB0FA3",
+        "definition": {
+          "schemaVersion": 1,
+          "kind": "ipcTest",
+          "componentGuid": "68F10701-0000-4000-8000-000000000001",
+          "inputs": [],
+          "outputs": [],
+          "config": {},
+          "diagnostics": []
+        }
+      }
+    }
+  },
   "tasks": {
     "A1B2C3D4-E5F6-4A7B-8C9D-0E1F2A3B4C5D": {
       "pluginGuid": "2A3B4C5D-6E7F-4B5C-9D0E-1F2A3B4C5D6E",
@@ -15,18 +34,11 @@
       "description": "A test task for IPC testing",
       "gameName": "TestGame",
       "authoring": {
-        "featureIndex": 2,
+        "factoryGuid": "E771CCDC-A445-4F54-BBD4-91A3B5CCC546",
         "supportedKinds": [
           "formSequence"
         ]
       },
-      "components": [
-        {
-          "componentGuid": "68F10701-0000-4000-8000-000000000001",
-          "factoryFeatureIndex": 3,
-          "role": "ipcTest"
-        }
-      ],
       "descriptors": [
         {
           "name": "retryCount",

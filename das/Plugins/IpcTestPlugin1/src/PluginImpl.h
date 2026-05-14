@@ -63,6 +63,70 @@ DAS_DEFINE_CLASS_IN_NAMESPACE(
     0x5d,
     0x6e);
 
+// {E37A8D30-F084-4B8B-BCA3-49713B3F2F87}
+DAS_DEFINE_CLASS_IN_NAMESPACE(
+    Das,
+    IpcTaskAuthoringSessionImpl,
+    0xe37a8d30,
+    0xf084,
+    0x4b8b,
+    0xbc,
+    0xa3,
+    0x49,
+    0x71,
+    0x3b,
+    0x3f,
+    0x2f,
+    0x87);
+
+// {E771CCDC-A445-4F54-BBD4-91A3B5CCC546}
+DAS_DEFINE_CLASS_IN_NAMESPACE(
+    Das,
+    IpcTaskAuthoringSessionFactoryImpl,
+    0xe771ccdc,
+    0xa445,
+    0x4f54,
+    0xbb,
+    0xd4,
+    0x91,
+    0xa3,
+    0xb5,
+    0xcc,
+    0xc5,
+    0x46);
+
+// {697BFE58-C3D1-47E9-961F-D6D81E29DE81}
+DAS_DEFINE_CLASS_IN_NAMESPACE(
+    Das,
+    IpcTaskComponentImpl,
+    0x697bfe58,
+    0xc3d1,
+    0x47e9,
+    0x96,
+    0x1f,
+    0xd6,
+    0xd8,
+    0x1e,
+    0x29,
+    0xde,
+    0x81);
+
+// {6164B9FB-F05A-4EBC-A70D-1CF2C2DB0FA3}
+DAS_DEFINE_CLASS_IN_NAMESPACE(
+    Das,
+    IpcTaskComponentFactoryImpl,
+    0x6164b9fb,
+    0xf05a,
+    0x4ebc,
+    0xa7,
+    0x0d,
+    0x1c,
+    0xf2,
+    0xc2,
+    0xdb,
+    0x0f,
+    0xa3);
+
 DAS_NS_BEGIN
 
 /**
@@ -175,8 +239,6 @@ class IpcTaskComponentImpl final
     : public PluginInterface::DasTaskComponentImplBase<IpcTaskComponentImpl>
 {
 public:
-    DAS_IMPL GetDefinition(
-        ExportInterface::IDasJson** pp_out_definition_json) override;
     DAS_IMPL ApplySettingsChange(
         ExportInterface::IDasJson*  p_request_json,
         ExportInterface::IDasJson** pp_out_result_json) override;

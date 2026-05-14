@@ -479,32 +479,6 @@ DasResult IpcTaskAuthoringSessionFactoryImpl::CreateSession(
 
 // === IpcTaskComponentImpl ===
 
-DasResult IpcTaskComponentImpl::GetDefinition(
-    ExportInterface::IDasJson** pp_out_definition_json)
-{
-    if (!pp_out_definition_json)
-    {
-        return DAS_E_INVALID_POINTER;
-    }
-
-    auto definition = Utils::MakeYyjsonObject();
-    auto obj = *definition.as_object();
-    obj[std::string_view("stableName")] = "das.ipc.testComponent";
-    obj[std::string_view("componentGuid")] =
-        "68F10701-0000-4000-8000-000000000001";
-    obj[std::string_view("kind")] = "ipcTest";
-    obj[std::string_view("label")] = "IPC Test Component";
-    obj[std::string_view("inputs")] = Utils::MakeYyjsonArray();
-    obj[std::string_view("outputs")] = Utils::MakeYyjsonArray();
-    obj[std::string_view("config")] = Utils::MakeYyjsonObject();
-    obj[std::string_view("diagnostics")] = Utils::MakeYyjsonArray();
-
-    auto wrapped = WrapJson(std::move(definition));
-    *pp_out_definition_json = wrapped.Get();
-    (*pp_out_definition_json)->AddRef();
-    return DAS_S_OK;
-}
-
 DasResult IpcTaskComponentImpl::ApplySettingsChange(
     ExportInterface::IDasJson*,
     ExportInterface::IDasJson** pp_out_result_json)
