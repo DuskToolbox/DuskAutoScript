@@ -194,6 +194,434 @@ namespace
             "settings": []
         })";
     }
+
+    DasGuid MakeTaskComponentTestGuid(uint32_t value)
+    {
+        DasGuid guid{};
+        guid.data1 = value;
+        return guid;
+    }
+
+    yyjson::value MakeTaskComponentDefinitionJson(
+        const DasGuid& component_guid)
+    {
+        auto definition = Das::Utils::MakeYyjsonObject();
+        auto obj = *definition.as_object();
+        obj[std::string_view("schemaVersion")] = 1;
+        obj[std::string_view("componentGuid")] =
+            DasGuidToStdString(component_guid);
+        obj[std::string_view("kind")] = "pluginManagerTestComponent";
+        obj[std::string_view("inputs")] = Das::Utils::MakeYyjsonArray();
+        obj[std::string_view("outputs")] = Das::Utils::MakeYyjsonArray();
+        obj[std::string_view("config")] = Das::Utils::MakeYyjsonObject();
+        obj[std::string_view("diagnostics")] = Das::Utils::MakeYyjsonArray();
+        return definition;
+    }
+
+    void WriteTaskComponentManifest(
+        const std::filesystem::path& path,
+        const DasGuid&               plugin_guid,
+        const DasGuid&               factory_guid,
+        const DasGuid&               component_guid)
+    {
+        auto manifest = Das::Utils::MakeYyjsonObject();
+        auto obj = *manifest.as_object();
+        obj[std::string_view("guid")] = DasGuidToStdString(plugin_guid);
+        obj[std::string_view("name")] = "TaskComponentPlugin";
+        obj[std::string_view("language")] = "Cpp";
+        obj[std::string_view("description")] = "test";
+        obj[std::string_view("author")] = "test";
+        obj[std::string_view("version")] = "1.0";
+        obj[std::string_view("supportedSystem")] = "win";
+        obj[std::string_view("pluginFilenameExtension")] = "dll";
+        obj[std::string_view("settings")] = Das::Utils::MakeYyjsonArray();
+
+        auto task_components = Das::Utils::MakeYyjsonObject();
+        auto factories = Das::Utils::MakeYyjsonArray();
+        factories.as_array()->emplace_back(DasGuidToStdString(factory_guid));
+        (*task_components.as_object())[std::string_view("factories")] =
+            std::move(factories);
+
+        auto components = Das::Utils::MakeYyjsonObject();
+        auto entry = Das::Utils::MakeYyjsonObject();
+        auto entry_obj = *entry.as_object();
+        entry_obj[std::string_view("factoryGuid")] =
+            DasGuidToStdString(factory_guid);
+        entry_obj[std::string_view("definition")] =
+            MakeTaskComponentDefinitionJson(component_guid);
+        (*components.as_object())[DasGuidToStdString(component_guid)] =
+            std::move(entry);
+        (*task_components.as_object())[std::string_view("components")] =
+            std::move(components);
+        obj[std::string_view("taskComponents")] = std::move(task_components);
+
+        std::ofstream ofs(path);
+        ofs << *Das::Utils::SerializeYyjsonValue(manifest, false);
+    }
+
+    void WriteTaskComponentManifestMissingFactoryGuid(
+        const std::filesystem::path& path,
+        const DasGuid&               plugin_guid,
+        const DasGuid&               factory_guid,
+        const DasGuid&               component_guid)
+    {
+        auto manifest = Das::Utils::MakeYyjsonObject();
+        auto obj = *manifest.as_object();
+        obj[std::string_view("guid")] = DasGuidToStdString(plugin_guid);
+        obj[std::string_view("name")] = "InvalidTaskComponentPlugin";
+        obj[std::string_view("language")] = "Cpp";
+        obj[std::string_view("description")] = "test";
+        obj[std::string_view("author")] = "test";
+        obj[std::string_view("version")] = "1.0";
+        obj[std::string_view("supportedSystem")] = "win";
+        obj[std::string_view("pluginFilenameExtension")] = "dll";
+        obj[std::string_view("settings")] = Das::Utils::MakeYyjsonArray();
+
+        auto task_components = Das::Utils::MakeYyjsonObject();
+        auto factories = Das::Utils::MakeYyjsonArray();
+        factories.as_array()->emplace_back(DasGuidToStdString(factory_guid));
+        (*task_components.as_object())[std::string_view("factories")] =
+            std::move(factories);
+
+        auto components = Das::Utils::MakeYyjsonObject();
+        auto entry = Das::Utils::MakeYyjsonObject();
+        (*entry.as_object())[std::string_view("definition")] =
+            MakeTaskComponentDefinitionJson(component_guid);
+        (*components.as_object())[DasGuidToStdString(component_guid)] =
+            std::move(entry);
+        (*task_components.as_object())[std::string_view("components")] =
+            std::move(components);
+        obj[std::string_view("taskComponents")] = std::move(task_components);
+
+        std::ofstream ofs(path);
+        ofs << *Das::Utils::SerializeYyjsonValue(manifest, false);
+    }
+
+    class PluginManagerTaskComponent final : public IDasTaskComponent
+    {
+    public:
+        explicit PluginManagerTaskComponent(DasGuid guid) : guid_(guid) {}
+
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out_object) override
+        {
+            if (pp_out_object == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (iid == DasIidOf<IDasBase>())
+            {
+                *pp_out_object = static_cast<IDasBase*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            if (iid == DasIidOf<IDasTypeInfo>())
+            {
+                *pp_out_object = static_cast<IDasTypeInfo*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            if (iid == DasIidOf<IDasTaskComponent>())
+            {
+                *pp_out_object = static_cast<IDasTaskComponent*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            *pp_out_object = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult DAS_STD_CALL GetGuid(DasGuid* p_out_guid) override
+        {
+            if (p_out_guid == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *p_out_guid = guid_;
+            return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL
+        GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override
+        {
+            return CreateIDasReadOnlyStringFromUtf8(
+                "PluginManagerTaskComponent",
+                pp_out_name);
+        }
+
+        DasResult DAS_STD_CALL ApplySettingsChange(
+            Das::ExportInterface::IDasJson*,
+            Das::ExportInterface::IDasJson**) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult DAS_STD_CALL Do(
+            IDasStopToken*,
+            Das::ExportInterface::IDasJson*,
+            Das::ExportInterface::IDasJson*,
+            Das::ExportInterface::IDasJson*,
+            Das::ExportInterface::IDasJson**) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+    private:
+        DasGuid               guid_;
+        std::atomic<uint32_t> ref_count_{0};
+    };
+
+    class PluginManagerTaskComponentFactory final
+        : public IDasTaskComponentFactory
+    {
+    public:
+        explicit PluginManagerTaskComponentFactory(DasGuid guid)
+            : guid_(guid)
+        {
+        }
+
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out_object) override
+        {
+            if (pp_out_object == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (iid == DasIidOf<IDasBase>())
+            {
+                *pp_out_object = static_cast<IDasBase*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            if (iid == DasIidOf<IDasTypeInfo>())
+            {
+                *pp_out_object = static_cast<IDasTypeInfo*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            if (iid == DasIidOf<IDasTaskComponentFactory>())
+            {
+                *pp_out_object =
+                    static_cast<IDasTaskComponentFactory*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            *pp_out_object = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult DAS_STD_CALL GetGuid(DasGuid* p_out_guid) override
+        {
+            if (p_out_guid == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *p_out_guid = guid_;
+            return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL
+        GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override
+        {
+            return CreateIDasReadOnlyStringFromUtf8(
+                "PluginManagerTaskComponentFactory",
+                pp_out_name);
+        }
+
+        DasResult DAS_STD_CALL
+        GetCatalog(Das::ExportInterface::IDasJson**) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult DAS_STD_CALL CreateComponent(
+            const DasGuid&      component_guid,
+            IDasTaskComponent** pp_out_component) override
+        {
+            if (pp_out_component == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            auto* component = new PluginManagerTaskComponent(component_guid);
+            component->AddRef();
+            *pp_out_component = component;
+            return DAS_S_OK;
+        }
+
+    private:
+        DasGuid               guid_;
+        std::atomic<uint32_t> ref_count_{0};
+    };
+
+    class TaskComponentPluginPackage final : public IDasPluginPackage
+    {
+    public:
+        explicit TaskComponentPluginPackage(DasGuid factory_guid)
+            : factory_guid_(factory_guid)
+        {
+        }
+
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out_object) override
+        {
+            if (pp_out_object == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (iid == DAS_IID_BASE)
+            {
+                *pp_out_object = static_cast<IDasBase*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            if (iid == DAS_IID_PLUGIN_PACKAGE)
+            {
+                *pp_out_object = static_cast<IDasPluginPackage*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            *pp_out_object = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult DAS_STD_CALL
+        EnumFeature(uint64_t index, DasPluginFeature* p_out_feature) override
+        {
+            if (p_out_feature == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (index != 0)
+            {
+                return DAS_S_FALSE;
+            }
+            *p_out_feature = DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY;
+            return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL
+        CreateFeatureInterface(uint64_t index, IDasBase** pp_out) override
+        {
+            if (pp_out == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out = nullptr;
+            if (index != 0)
+            {
+                return DAS_E_NOT_FOUND;
+            }
+
+            auto* factory =
+                new PluginManagerTaskComponentFactory(factory_guid_);
+            factory->AddRef();
+            *pp_out = static_cast<IDasTaskComponentFactory*>(factory);
+            return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL CanUnloadNow(bool* can_unload_now) override
+        {
+            if (can_unload_now == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *can_unload_now = true;
+            return DAS_S_OK;
+        }
+
+    private:
+        DasGuid               factory_guid_;
+        std::atomic<uint32_t> ref_count_{0};
+    };
+
+    class TaskComponentRuntime final : public IForeignLanguageRuntime
+    {
+    public:
+        explicit TaskComponentRuntime(DasGuid factory_guid)
+            : factory_guid_(factory_guid)
+        {
+        }
+
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out_object) override
+        {
+            if (pp_out_object == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (iid == DAS_IID_BASE)
+            {
+                *pp_out_object = static_cast<IDasBase*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            *pp_out_object = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        auto LoadPlugin(const std::filesystem::path& path)
+            -> DAS::Utils::Expected<DasPtr<IDasBase>> override
+        {
+            loaded_paths.push_back(path);
+            auto* package = new TaskComponentPluginPackage(factory_guid_);
+            package->AddRef();
+            return DasPtr<IDasBase>::Attach(static_cast<IDasBase*>(package));
+        }
+
+        std::vector<std::filesystem::path> loaded_paths;
+
+    private:
+        DasGuid               factory_guid_;
+        std::atomic<uint32_t> ref_count_{0};
+    };
 } // anonymous namespace
 
 // ============================================================
@@ -426,6 +854,131 @@ TEST_F(
     EXPECT_EQ(pm_->LoadPlugin(manifest_b), DAS_E_DUPLICATE_ELEMENT);
 
     EXPECT_EQ(pm_->GetLoadedPluginCount(), 1u);
+}
+
+class PluginManagerTaskComponentTest : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        test_dir_ =
+            std::filesystem::current_path()
+            / ("task_component_plugin_test_"
+               + std::to_string(std::random_device{}()));
+        std::filesystem::create_directories(test_dir_);
+        settings_dir_ = test_dir_ / "settings";
+
+        settings_manager_ =
+            std::make_unique<DAS::Core::SettingsManager::SettingsManager>(
+                settings_dir_);
+        ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+        pm_ = std::make_unique<PluginManager>(
+            *settings_manager_,
+            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp_));
+
+        factory_guid_ = MakeTaskComponentTestGuid(0x68130002);
+        auto* runtime = new TaskComponentRuntime(factory_guid_);
+        runtime->AddRef();
+        runtime_ = runtime;
+        runtime_guard_ = DasPtr<IForeignLanguageRuntime>::Attach(runtime);
+
+        ASSERT_EQ(pm_->Initialize(1, runtime_guard_), DAS_S_OK);
+    }
+
+    void TearDown() override
+    {
+        pm_->Shutdown();
+        runtime_guard_.Reset();
+        std::filesystem::remove_all(test_dir_);
+    }
+
+    std::filesystem::path test_dir_;
+    std::filesystem::path settings_dir_;
+    std::unique_ptr<DAS::Core::SettingsManager::SettingsManager>
+                                                              settings_manager_;
+    std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
+    std::unique_ptr<PluginManager>                            pm_;
+    DasPtr<IForeignLanguageRuntime> runtime_guard_;
+    TaskComponentRuntime*           runtime_ = nullptr;
+    DasGuid                         factory_guid_{};
+};
+
+TEST_F(
+    PluginManagerTaskComponentTest,
+    LoadPluginRegistersTaskComponentFactoryRoutes)
+{
+    const auto plugin_guid = MakeTaskComponentTestGuid(0x68130001);
+    const auto component_guid = MakeTaskComponentTestGuid(0x68130003);
+    const auto manifest_path = test_dir_ / "TaskComponentPlugin.json";
+    WriteTaskComponentManifest(
+        manifest_path,
+        plugin_guid,
+        factory_guid_,
+        component_guid);
+
+    ASSERT_EQ(pm_->LoadPlugin(manifest_path), DAS_S_OK);
+
+    DasPtr<IDasTaskComponent> component;
+    EXPECT_EQ(
+        pm_->GetTaskComponentFactoryManager().CreateComponent(
+            component_guid,
+            component.Put()),
+        DAS_S_OK);
+    EXPECT_NE(component.Get(), nullptr);
+
+    auto definitions =
+        pm_->GetTaskComponentFactoryManager().EnumerateDefinitions();
+    ASSERT_EQ(definitions.size(), 1u);
+    EXPECT_EQ(definitions.front().plugin_guid, plugin_guid);
+    EXPECT_EQ(definitions.front().factory_guid, factory_guid_);
+    EXPECT_EQ(definitions.front().component_guid, component_guid);
+}
+
+TEST_F(
+    PluginManagerTaskComponentTest,
+    UnloadPluginRemovesTaskComponentRoutes)
+{
+    const auto plugin_guid = MakeTaskComponentTestGuid(0x68130011);
+    const auto component_guid = MakeTaskComponentTestGuid(0x68130013);
+    const auto manifest_path = test_dir_ / "UnloadTaskComponentPlugin.json";
+    WriteTaskComponentManifest(
+        manifest_path,
+        plugin_guid,
+        factory_guid_,
+        component_guid);
+
+    ASSERT_EQ(pm_->LoadPlugin(manifest_path), DAS_S_OK);
+    ASSERT_EQ(pm_->UnloadPlugin(manifest_path), DAS_S_OK);
+
+    DasPtr<IDasTaskComponent> component;
+    EXPECT_EQ(
+        pm_->GetTaskComponentFactoryManager().CreateComponent(
+            component_guid,
+            component.Put()),
+        DAS_E_NOT_FOUND);
+    EXPECT_TRUE(
+        pm_->GetTaskComponentFactoryManager().EnumerateDefinitions().empty());
+}
+
+TEST_F(
+    PluginManagerTaskComponentTest,
+    InvalidTaskComponentsManifestRejectsPluginLoad)
+{
+    const auto plugin_guid = MakeTaskComponentTestGuid(0x68130021);
+    const auto component_guid = MakeTaskComponentTestGuid(0x68130023);
+    const auto manifest_path = test_dir_ / "InvalidTaskComponentPlugin.json";
+    WriteTaskComponentManifestMissingFactoryGuid(
+        manifest_path,
+        plugin_guid,
+        factory_guid_,
+        component_guid);
+
+    EXPECT_EQ(pm_->LoadPlugin(manifest_path), DAS_E_INVALID_JSON);
+    EXPECT_EQ(pm_->GetLoadedPluginCount(), 0u);
+    ASSERT_NE(runtime_, nullptr);
+    EXPECT_TRUE(runtime_->loaded_paths.empty())
+        << "Invalid declared taskComponents must reject before runtime load";
 }
 
 // ============================================================
