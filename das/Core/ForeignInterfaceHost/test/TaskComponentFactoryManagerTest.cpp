@@ -9,9 +9,13 @@
 #include <spdlog/details/log_msg.h>
 #include <spdlog/sinks/base_sink.h>
 
+#include <algorithm>
+#include <array>
 #include <atomic>
+#include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 using namespace DAS::Core::ForeignInterfaceHost;
@@ -101,7 +105,9 @@ namespace
 
         std::unordered_map<std::string, TaskComponentManifestEntryDesc>
             components;
-        components.emplace(DasGuidToStdString(component_guid), std::move(entry));
+        components.emplace(
+            DasGuidToStdString(component_guid),
+            std::move(entry));
         manifest.components = std::move(components);
         return manifest;
     }
@@ -181,12 +187,12 @@ namespace
             return DAS_E_NO_IMPLEMENTATION;
         }
 
-        DasResult DAS_STD_CALL Do(
-            IDasStopToken*,
-            Das::ExportInterface::IDasJson*,
-            Das::ExportInterface::IDasJson*,
-            Das::ExportInterface::IDasJson*,
-            Das::ExportInterface::IDasJson**) override
+        DasResult DAS_STD_CALL
+        Do(IDasStopToken*,
+           Das::ExportInterface::IDasJson*,
+           Das::ExportInterface::IDasJson*,
+           Das::ExportInterface::IDasJson*,
+           Das::ExportInterface::IDasJson**) override
         {
             return DAS_E_NO_IMPLEMENTATION;
         }
@@ -271,8 +277,8 @@ namespace
         }
 
         DasResult DAS_STD_CALL CreateComponent(
-            const DasGuid&       component_guid,
-            IDasTaskComponent**  pp_out_component) override
+            const DasGuid&      component_guid,
+            IDasTaskComponent** pp_out_component) override
         {
             if (pp_out_component == nullptr)
             {
@@ -326,9 +332,9 @@ namespace
 
         auto* factory = new MockTaskComponentFactory(factory_guid);
         factory->AddRef();
-        auto feature = MakeTaskFactoryFeature(*factory);
+        auto         feature = MakeTaskFactoryFeature(*factory);
         FeatureInfo* feature_ptr = &feature;
-        auto manifest = MakeManifest(factory_guid, component_guid);
+        auto         manifest = MakeManifest(factory_guid, component_guid);
 
         ASSERT_EQ(
             manager.OnPluginLoaded(plugin_guid, {&feature_ptr, 1}, manifest),
@@ -397,9 +403,9 @@ namespace
 
         auto* factory = new MockTaskComponentFactory(factory_guid);
         factory->AddRef();
-        auto feature = MakeTaskFactoryFeature(*factory);
+        auto         feature = MakeTaskFactoryFeature(*factory);
         FeatureInfo* feature_ptr = &feature;
-        auto manifest = MakeManifest(factory_guid, component_guid);
+        auto         manifest = MakeManifest(factory_guid, component_guid);
 
         ASSERT_EQ(
             manager.OnPluginLoaded(plugin_guid, {&feature_ptr, 1}, manifest),
@@ -426,7 +432,7 @@ namespace
 
         auto* factory = new MockTaskComponentFactory(loaded_factory_guid);
         factory->AddRef();
-        auto feature = MakeTaskFactoryFeature(*factory);
+        auto         feature = MakeTaskFactoryFeature(*factory);
         FeatureInfo* feature_ptr = &feature;
         auto manifest = MakeManifest(declared_factory_guid, component_guid);
 
@@ -457,9 +463,9 @@ namespace
         auto* factory = new MockTaskComponentFactory(factory_guid);
         factory->AddRef();
         factory->create_result = DAS_E_FAIL;
-        auto feature = MakeTaskFactoryFeature(*factory);
+        auto         feature = MakeTaskFactoryFeature(*factory);
         FeatureInfo* feature_ptr = &feature;
-        auto manifest = MakeManifest(factory_guid, component_guid);
+        auto         manifest = MakeManifest(factory_guid, component_guid);
 
         ScopedLogCapture logs;
         EXPECT_EQ(
