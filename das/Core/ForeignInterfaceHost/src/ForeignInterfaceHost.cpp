@@ -458,22 +458,6 @@ namespace
             component_key);
     }
 
-    uint64_t JsonValueToFeatureIndex(
-        const yyjson::writer::const_object_ref& obj,
-        std::string_view                        key)
-    {
-        auto value = obj[key];
-        if (auto unsigned_value = value.as_uint())
-        {
-            return *unsigned_value;
-        }
-        if (auto signed_value = value.as_sint())
-        {
-            return static_cast<uint64_t>(*signed_value);
-        }
-        throw std::runtime_error("Expected numeric feature index");
-    }
-
     std::vector<std::string> JsonStringArrayToVector(
         const yyjson::writer::const_value_ref& value)
     {
@@ -679,37 +663,6 @@ void ParseTaskDescriptorFromJson(
                     (*authoring_obj)[std::string_view("supportedKinds")]);
             }
             output.authoring = std::move(authoring);
-        }
-    }
-    if (obj.contains(std::string_view("components")))
-    {
-        auto components_val = obj[std::string_view("components")];
-        auto components_arr = components_val.as_array();
-        if (components_arr)
-        {
-            for (const auto& elem : *components_arr)
-            {
-                auto component_obj = elem.as_object();
-                if (!component_obj)
-                {
-                    continue;
-                }
-
-                TaskComponentCapabilityDesc component;
-                component.component_guid = MakeDasGuid(
-                    Details::JsonValueToYyjsonScalar<std::string>(
-                        (*component_obj)[std::string_view("componentGuid")]));
-                component.factory_feature_index = JsonValueToFeatureIndex(
-                    *component_obj,
-                    "factoryFeatureIndex");
-                if (component_obj->contains(std::string_view("role")))
-                {
-                    component.role =
-                        Details::JsonValueToYyjsonScalar<std::string>(
-                            (*component_obj)[std::string_view("role")]);
-                }
-                output.components.push_back(std::move(component));
-            }
         }
     }
     if (obj.contains(std::string_view("descriptors")))

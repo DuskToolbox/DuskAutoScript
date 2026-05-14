@@ -20,6 +20,33 @@ namespace
     constexpr std::string_view kAlternateTaskComponentGuid =
         "88B71988-2125-4A2B-8B78-02A804570102";
 
+    template <class T>
+    concept HasStableNameField = requires(T value) { value.stable_name; };
+
+    template <class T>
+    concept HasDebugNameField = requires(T value) { value.debug_name; };
+
+    template <class T>
+    concept HasRoleField = requires(T value) { value.role; };
+
+    template <class T>
+    concept HasDefinitionPathField = requires(T value) {
+        value.definition_path;
+    };
+
+    static_assert(
+        !HasStableNameField<
+            DAS::Core::ForeignInterfaceHost::TaskComponentManifestEntryDesc>);
+    static_assert(
+        !HasDebugNameField<
+            DAS::Core::ForeignInterfaceHost::TaskComponentManifestEntryDesc>);
+    static_assert(
+        !HasRoleField<
+            DAS::Core::ForeignInterfaceHost::TaskComponentManifestEntryDesc>);
+    static_assert(
+        !HasDefinitionPathField<
+            DAS::Core::ForeignInterfaceHost::TaskComponentManifestEntryDesc>);
+
     std::string BasicPluginJsonWith(std::string_view extra_fields)
     {
         std::string result = R"(
@@ -46,9 +73,11 @@ namespace
     }
 
     template <class T>
-    T JsonToStruct(const std::string& string)
+    T JsonToStruct(
+        const std::string& string,
+        yyjson::ReadFlag   flags = yyjson::ReadFlag::NoFlag)
     {
-        const auto json_opt = Das::Utils::ParseYyjsonFromString(string);
+        const auto json_opt = Das::Utils::ParseYyjsonFromString(string, flags);
         if (!json_opt)
         {
             throw std::runtime_error("Failed to parse JSON");
@@ -738,31 +767,82 @@ TEST(PluginDescTaskComponentsTest, RejectsInvalidDefinitionDiagnosticsContainer)
         "definition.diagnostics: expected array");
 }
 
-TEST(PluginPackageDescTest, TaskDescriptorComponentCapabilities)
+TEST(PluginDescTaskComponentsTest, ParsesCommentsAndTrailingCommasWithManifestFlags)
 {
     constexpr auto test_string = R"(
     {
-        "name": "ComponentPlugin",
+        // Existing manifest load path allows comments.
+        "name": "TaskComponentPlugin",
         "author": "Dusk",
         "version": "1.0.0",
         "guid": "0527CD9E-1F26-44FB-BE5F-D63C5A11B754",
-        "description": "Plugin with component capabilities",
+        "description": "Plugin with task component manifest",
         "supportedSystem": "Windows",
         "language": "Cpp",
         "pluginFilenameExtension": "dll",
         "settings": [],
-        "tasks": {
-            "B4F60C54-67DF-407A-B891-6D3C90CDB9A1": {
-                "pluginGuid": "65EDE9D8-09A8-4F01-B4AF-6614C5BA1C8E",
-                "name": "dailyLogin",
-                "description": "Daily login task",
-                "components": [
-                    {
+        "taskComponents": {
+            "factories": [
+                "0196057D-1029-4D9D-A2D0-81869F40F721",
+            ],
+            "components": {
+                "78B71988-2125-4A2B-8B78-02A804570101": {
+                    "factoryGuid": "0196057D-1029-4D9D-A2D0-81869F40F721",
+                    "definition": {
+                        "schemaVersion": 1,
                         "componentGuid": "78B71988-2125-4A2B-8B78-02A804570101",
-                        "factoryFeatureIndex": 3,
-                        "role": "flowControl"
+                        "kind": "branch",
+                        "inputs": [],
+                        "outputs": [],
+                        "config": {},
+                        "diagnostics": [],
+                    },
+                },
+            }
+        },
+    }
+    )";
+
+    const auto desc =
+        JsonToStruct<DAS::Core::ForeignInterfaceHost::PluginPackageDesc>(
+            test_string,
+            yyjson::ReadFlag::AllowComments |
+                yyjson::ReadFlag::AllowTrailingCommas);
+
+    ASSERT_TRUE(desc.task_components.has_value());
+    ASSERT_TRUE(desc.task_components->components.has_value());
+    EXPECT_TRUE(desc.task_components->components->contains(
+        "78B71988-2125-4A2B-8B78-02A804570101"));
+}
+
+TEST(PluginDescTaskComponentsTest, DoesNotRequireRejectedPublicFields)
+{
+    constexpr auto test_string = R"(
+    {
+        "name": "MinimalTaskComponentPlugin",
+        "author": "Dusk",
+        "version": "1.0.0",
+        "guid": "0527CD9E-1F26-44FB-BE5F-D63C5A11B754",
+        "description": "Plugin with minimal official task component fields",
+        "supportedSystem": "Windows",
+        "language": "Cpp",
+        "pluginFilenameExtension": "dll",
+        "settings": [],
+        "taskComponents": {
+            "factories": ["0196057D-1029-4D9D-A2D0-81869F40F721"],
+            "components": {
+                "78B71988-2125-4A2B-8B78-02A804570101": {
+                    "factoryGuid": "0196057D-1029-4D9D-A2D0-81869F40F721",
+                    "definition": {
+                        "schemaVersion": 1,
+                        "componentGuid": "78B71988-2125-4A2B-8B78-02A804570101",
+                        "kind": "branch",
+                        "inputs": [],
+                        "outputs": [],
+                        "config": {},
+                        "diagnostics": []
                     }
-                ]
+                }
             }
         }
     }
@@ -771,17 +851,10 @@ TEST(PluginPackageDescTest, TaskDescriptorComponentCapabilities)
     const auto desc =
         JsonToStruct<DAS::Core::ForeignInterfaceHost::PluginPackageDesc>(
             test_string);
-    const auto task_guid = DAS::Core::ForeignInterfaceHost::MakeDasGuid(
-        "B4F60C54-67DF-407A-B891-6D3C90CDB9A1");
-    const auto component_guid = DAS::Core::ForeignInterfaceHost::MakeDasGuid(
-        "78B71988-2125-4A2B-8B78-02A804570101");
 
-    const auto it = desc.task_descriptors.find(task_guid);
-    ASSERT_NE(it, desc.task_descriptors.end());
-    ASSERT_EQ(it->second.components.size(), 1u);
-    EXPECT_EQ(it->second.components[0].component_guid, component_guid);
-    EXPECT_EQ(it->second.components[0].factory_feature_index, 3u);
-    EXPECT_EQ(it->second.components[0].role, "flowControl");
+    ASSERT_TRUE(desc.task_components.has_value());
+    ASSERT_TRUE(desc.task_components->components.has_value());
+    EXPECT_EQ(desc.task_components->components->size(), 1u);
 }
 
 TEST(PluginPackageDescTest, ResourcePath_ExplicitValue)
