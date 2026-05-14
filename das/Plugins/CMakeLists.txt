@@ -21,6 +21,10 @@ das_add_plugin_library(DasAdbTouch DAS_EX_PRIVATE_LIBS)
 das_add_plugin_library(DasFlowControl DAS_EX_PRIVATE_LIBS)
 das_add_plugin_library(DasWindowsCapture DAS_EX_PRIVATE_LIBS)
 
+if(TARGET TaskSchedulerTest)
+    add_dependencies(TaskSchedulerTest DasFlowControl DasAutoCopyPluginMetadataFile)
+endif()
+
 if(DAS_BUILD_TEST)
     # Java 测试插件（仅在启用 Java 导出时构建）
     if(EXPORT_JAVA)

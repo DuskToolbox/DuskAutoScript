@@ -1,14 +1,116 @@
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
-#include <das/Core/TaskScheduler/FlowControlTaskComponents.h>
-#include <das/Core/TaskScheduler/TaskComponentRuntime.h>
+#include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
+#include <das/Core/ForeignInterfaceHost/PluginManager.h>
+#include <das/Core/IPC/MainProcess/IIpcContext.h>
+#include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/Core/Utils/DasJsonImpl.h>
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasComponent.h>
+#include <das/_autogen/idl/abi/IDasTaskComponent.h>
 #include <gtest/gtest.h>
+
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <cstdlib>
+#include <filesystem>
+#include <random>
 
 namespace
 {
     using Das::DasPtr;
+    using Das::Core::ForeignInterfaceHost::PluginManager;
+    using Das::PluginInterface::IDasTaskComponent;
+
+    struct OfficialFlowComponent
+    {
+        std::string_view name;
+        std::string_view kind;
+        std::string_view guid_text;
+    };
+
+    constexpr std::array<OfficialFlowComponent, 6> kOfficialComponents{
+        OfficialFlowComponent{
+            "branch",
+            "das.flow.branch",
+            "68F10001-0000-4000-8000-000000000001"},
+        OfficialFlowComponent{
+            "sequence",
+            "das.flow.sequence",
+            "68F10002-0000-4000-8000-000000000002"},
+        OfficialFlowComponent{
+            "delay",
+            "das.flow.delay",
+            "68F10003-0000-4000-8000-000000000003"},
+        OfficialFlowComponent{
+            "for",
+            "das.flow.for",
+            "68F10004-0000-4000-8000-000000000004"},
+        OfficialFlowComponent{
+            "while",
+            "das.flow.while",
+            "68F10005-0000-4000-8000-000000000005"},
+        OfficialFlowComponent{
+            "goto",
+            "das.flow.goto",
+            "68F10006-0000-4000-8000-000000000006"},
+    };
+
+    std::filesystem::path UniqueSettingsDir()
+    {
+        static std::atomic<int> counter{0};
+        std::random_device      rd;
+        return std::filesystem::current_path()
+               / ("task_component_contract_settings_" + std::to_string(rd())
+                  + "_" + std::to_string(counter.fetch_add(1)));
+    }
+
+    DasGuid GuidFromText(std::string_view guid_text)
+    {
+        return Das::Core::ForeignInterfaceHost::MakeDasGuid(
+            std::string{guid_text});
+    }
+
+    DasPtr<Das::Core::ForeignInterfaceHost::IForeignLanguageRuntime>
+    CreateCppRuntime()
+    {
+        Das::Core::ForeignInterfaceHost::ForeignLanguageRuntimeFactoryDesc
+            desc{};
+        desc.language =
+            Das::Core::ForeignInterfaceHost::ForeignInterfaceLanguage::Cpp;
+        auto result =
+            Das::Core::ForeignInterfaceHost::CreateForeignLanguageRuntime(desc);
+        if (!result)
+        {
+            return nullptr;
+        }
+        return std::move(result.value());
+    }
+
+    std::filesystem::path FindDasFlowControlManifest()
+    {
+        if (const char* plugin_dir = std::getenv("DAS_PLUGIN_DIR");
+            plugin_dir != nullptr && plugin_dir[0] != '\0')
+        {
+            return std::filesystem::path{plugin_dir} / "DasFlowControl.json";
+        }
+
+        const auto cwd = std::filesystem::current_path();
+        const std::array<std::filesystem::path, 3> candidates{
+            cwd / "plugins" / "DasFlowControl.json",
+            cwd.parent_path() / "bin" / "Debug" / "plugins"
+                / "DasFlowControl.json",
+            cwd / "build" / "mingw-debug" / "bin" / "Debug" / "plugins"
+                / "DasFlowControl.json",
+        };
+        const auto found = std::ranges::find_if(
+            candidates,
+            [](const std::filesystem::path& candidate)
+            { return std::filesystem::exists(candidate); });
+        return found != candidates.end()
+                   ? *found
+                   : std::filesystem::path{"DasFlowControl.json"};
+    }
 
     yyjson::value ToJson(Das::ExportInterface::IDasJson* json)
     {
@@ -28,69 +130,123 @@ namespace
             std::move(value));
     }
 
-    DasGuid BranchGuid()
+    template <typename ObjectRef>
+    std::string_view StringField(const ObjectRef& object, std::string_view key)
     {
-        return Das::Core::ForeignInterfaceHost::MakeDasGuid(
-            "68F10001-0000-4000-8000-000000000001");
+        return object[key].as_string().value_or("");
     }
+
+    class TaskComponentContractTest : public ::testing::Test
+    {
+    protected:
+        void SetUp() override
+        {
+            settings_dir_ = UniqueSettingsDir();
+            settings_manager_ =
+                std::make_unique<Das::Core::SettingsManager::SettingsManager>(
+                    settings_dir_);
+            ipc_sp_ =
+                DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+            plugin_manager_ = std::make_unique<PluginManager>(
+                *settings_manager_,
+                Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                    ipc_sp_));
+
+            auto runtime = CreateCppRuntime();
+            ASSERT_NE(runtime, nullptr);
+            ASSERT_EQ(plugin_manager_->Initialize(1, runtime), DAS_S_OK);
+
+            manifest_path_ = FindDasFlowControlManifest();
+            ASSERT_TRUE(std::filesystem::exists(manifest_path_))
+                << "DasFlowControl manifest not found at "
+                << manifest_path_.string();
+            ASSERT_EQ(plugin_manager_->LoadPlugin(manifest_path_), DAS_S_OK);
+        }
+
+        void TearDown() override
+        {
+            if (plugin_manager_)
+            {
+                plugin_manager_->Shutdown();
+            }
+            plugin_manager_.reset();
+            settings_manager_.reset();
+            std::filesystem::remove_all(settings_dir_);
+        }
+
+        DasPtr<IDasTaskComponent> CreateComponent(std::string_view guid_text)
+        {
+            DasPtr<IDasTaskComponent> component;
+            EXPECT_EQ(
+                plugin_manager_->GetTaskComponentFactoryManager()
+                    .CreateComponent(GuidFromText(guid_text), component.Put()),
+                DAS_S_OK);
+            EXPECT_NE(component.Get(), nullptr);
+            return component;
+        }
+
+        std::filesystem::path settings_dir_;
+        std::filesystem::path manifest_path_;
+        std::unique_ptr<Das::Core::SettingsManager::SettingsManager>
+            settings_manager_;
+        std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
+        std::unique_ptr<PluginManager> plugin_manager_;
+    };
+
 } // namespace
 
-TEST(TaskComponentContractTest, CatalogListsOfficialFlowComponents)
+TEST_F(TaskComponentContractTest, DasFlowControlCatalogComesFromManager)
 {
-    auto factory = Das::Core::TaskScheduler::
-        CreateOfficialFlowControlTaskComponentFactory();
+    auto definitions = plugin_manager_->GetTaskComponentFactoryManager()
+                           .EnumerateDefinitions();
+    ASSERT_EQ(definitions.size(), kOfficialComponents.size());
 
-    DasPtr<Das::ExportInterface::IDasJson> catalog;
-    ASSERT_EQ(factory->GetCatalog(catalog.Put()), DAS_S_OK);
+    for (const auto& expected : kOfficialComponents)
+    {
+        const auto expected_guid = GuidFromText(expected.guid_text);
+        const auto found = std::ranges::find_if(
+            definitions,
+            [&expected_guid](const auto& definition)
+            { return definition.component_guid == expected_guid; });
+        ASSERT_NE(found, definitions.end()) << expected.name;
 
-    auto json = ToJson(catalog.Get());
-    auto components =
-        (*json.as_object())[std::string_view("components")].as_array();
-    ASSERT_TRUE(components.has_value());
-    ASSERT_EQ(components->size(), 6u);
-    EXPECT_EQ(
-        (*(*components)[0].as_object())[std::string_view("stableName")]
-            .as_string()
-            .value(),
-        "das.flow.branch");
+        auto obj = found->definition.as_object();
+        ASSERT_TRUE(obj.has_value()) << expected.name;
+        EXPECT_EQ(StringField(*obj, "componentGuid"), expected.guid_text)
+            << expected.name;
+        EXPECT_EQ(StringField(*obj, "kind"), expected.kind) << expected.name;
+        EXPECT_TRUE((*obj)[std::string_view("inputs")].is_array())
+            << expected.name;
+        EXPECT_TRUE((*obj)[std::string_view("outputs")].is_array())
+            << expected.name;
+        EXPECT_TRUE((*obj)[std::string_view("config")].is_object())
+            << expected.name;
+        EXPECT_TRUE((*obj)[std::string_view("diagnostics")].is_array())
+            << expected.name;
+    }
 }
 
-TEST(TaskComponentContractTest, BranchDefinitionIsGraphUsable)
+TEST_F(TaskComponentContractTest, CreatesAllOfficialFlowComponentsByGuid)
 {
-    auto factory = Das::Core::TaskScheduler::
-        CreateOfficialFlowControlTaskComponentFactory();
+    for (const auto& expected : kOfficialComponents)
+    {
+        auto component = CreateComponent(expected.guid_text);
+        ASSERT_NE(component.Get(), nullptr) << expected.name;
 
-    DasPtr<Das::PluginInterface::IDasTaskComponent> component;
-    ASSERT_EQ(
-        factory->CreateComponent(BranchGuid(), component.Put()),
-        DAS_S_OK);
-
-    DasPtr<Das::ExportInterface::IDasJson> definition;
-    ASSERT_EQ(component->GetDefinition(definition.Put()), DAS_S_OK);
-
-    auto json = ToJson(definition.Get());
-    auto obj = json.as_object();
-    ASSERT_TRUE(obj.has_value());
-    EXPECT_EQ(
-        (*obj)[std::string_view("stableName")].as_string().value(),
-        "das.flow.branch");
-    EXPECT_EQ((*obj)[std::string_view("kind")].as_string().value(), "branch");
-    EXPECT_TRUE((*obj)[std::string_view("traits")].is_object());
-    EXPECT_TRUE((*obj)[std::string_view("inputs")].is_array());
-    EXPECT_TRUE((*obj)[std::string_view("outputs")].is_array());
-    EXPECT_TRUE((*obj)[std::string_view("config")].is_object());
-    EXPECT_TRUE((*obj)[std::string_view("diagnostics")].is_array());
+        DasPtr<IDasTypeInfo> type_info;
+        EXPECT_EQ(
+            component->QueryInterface(
+                DasIidOf<IDasTypeInfo>(),
+                reinterpret_cast<void**>(type_info.Put())),
+            DAS_S_OK)
+            << expected.name;
+    }
 }
 
-TEST(TaskComponentContractTest, ApplySettingsChangeReturnsAcceptedSettings)
+TEST_F(TaskComponentContractTest, ApplySettingsChangeReturnsAcceptedSettings)
 {
-    auto factory = Das::Core::TaskScheduler::
-        CreateOfficialFlowControlTaskComponentFactory();
-
-    DasPtr<Das::PluginInterface::IDasTaskComponent> component;
-    ASSERT_EQ(
-        factory->CreateComponent(BranchGuid(), component.Put()),
-        DAS_S_OK);
+    auto component = CreateComponent(kOfficialComponents[0].guid_text);
+    ASSERT_NE(component.Get(), nullptr);
 
     auto change = Das::Utils::ParseYyjsonFromString(R"json({
         "kind": "setValue",
@@ -113,50 +269,51 @@ TEST(TaskComponentContractTest, ApplySettingsChangeReturnsAcceptedSettings)
         "choose route");
 }
 
-TEST(TaskComponentContractTest, BranchDoReturnsStructuredResult)
+TEST_F(TaskComponentContractTest, BranchDoReturnsTrueAndFalseSignals)
 {
-    auto factory = Das::Core::TaskScheduler::
-        CreateOfficialFlowControlTaskComponentFactory();
+    auto component = CreateComponent(kOfficialComponents[0].guid_text);
+    ASSERT_NE(component.Get(), nullptr);
 
-    DasPtr<Das::PluginInterface::IDasTaskComponent> component;
-    ASSERT_EQ(
-        factory->CreateComponent(BranchGuid(), component.Put()),
-        DAS_S_OK);
+    const std::array<std::pair<std::string_view, std::string_view>, 2> cases{
+        std::pair{
+            std::string_view{R"json({"condition": true})json"},
+            std::string_view{"true"}},
+        std::pair{
+            std::string_view{R"json({"condition": false})json"},
+            std::string_view{"false"}},
+    };
 
-    auto input =
-        Das::Utils::ParseYyjsonFromString(R"json({"condition": true})json");
-    ASSERT_TRUE(input.has_value());
-    auto input_json = Wrap(std::move(*input));
+    for (const auto& [input_text, expected_signal] : cases)
+    {
+        auto input = Das::Utils::ParseYyjsonFromString(input_text);
+        ASSERT_TRUE(input.has_value());
+        auto input_json = Wrap(std::move(*input));
 
-    DasPtr<Das::ExportInterface::IDasJson> result;
-    ASSERT_EQ(
-        component
-            ->Do(nullptr, nullptr, nullptr, input_json.Get(), result.Put()),
-        DAS_S_OK);
+        DasPtr<Das::ExportInterface::IDasJson> result;
+        ASSERT_EQ(
+            component
+                ->Do(nullptr, nullptr, nullptr, input_json.Get(), result.Put()),
+            DAS_S_OK);
 
-    auto json = ToJson(result.Get());
-    auto obj = json.as_object();
-    ASSERT_TRUE(obj.has_value());
-    EXPECT_EQ(
-        (*obj)[std::string_view("status")].as_string().value(),
-        "completed");
-    EXPECT_TRUE((*obj)[std::string_view("outputs")].is_object());
-    EXPECT_TRUE((*obj)[std::string_view("diagnostics")].is_array());
-    auto signals = (*obj)[std::string_view("signals")].as_array();
-    ASSERT_TRUE(signals.has_value());
-    ASSERT_EQ(signals->size(), 1u);
-    EXPECT_EQ((*signals)[0].as_string().value(), "true");
+        auto json = ToJson(result.Get());
+        auto obj = json.as_object();
+        ASSERT_TRUE(obj.has_value());
+        EXPECT_EQ(
+            (*obj)[std::string_view("status")].as_string().value(),
+            "completed");
+        EXPECT_TRUE((*obj)[std::string_view("outputs")].is_object());
+        EXPECT_TRUE((*obj)[std::string_view("diagnostics")].is_array());
+        auto signals = (*obj)[std::string_view("signals")].as_array();
+        ASSERT_TRUE(signals.has_value());
+        ASSERT_EQ(signals->size(), 1u);
+        EXPECT_EQ((*signals)[0].as_string().value(), expected_signal);
+    }
 }
 
-TEST(TaskComponentContractTest, TaskComponentDoesNotExposeDynamicComponent)
+TEST_F(TaskComponentContractTest, TaskComponentDoesNotExposeDynamicComponent)
 {
-    auto factory = Das::Core::TaskScheduler::
-        CreateOfficialFlowControlTaskComponentFactory();
-
-    DasPtr<Das::PluginInterface::IDasTaskComponent> component;
-    ASSERT_EQ(
-        factory->CreateComponent(BranchGuid(), component.Put()),
-        DAS_S_OK);
+    auto component = CreateComponent(kOfficialComponents[0].guid_text);
+    ASSERT_NE(component.Get(), nullptr);
 
     void* out = nullptr;
     EXPECT_EQ(
