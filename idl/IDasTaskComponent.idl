@@ -1,15 +1,14 @@
 import "DasBasicTypes.idl";
 import "DasJson.idl";
+import "IDasTypeInfo.idl";
 import "IDasTask.idl";
 
 namespace Das::PluginInterface
 {
 
     [uuid("A64B5521-F58C-4231-A7D3-2E167D4DD3B2")] interface IDasTaskComponent
-        : IDasBase
+        : IDasTypeInfo
     {
-        DasResult GetDefinition(
-            [out] Das::ExportInterface::IDasJson ** pp_out_definition_json);
         DasResult ApplySettingsChange(
             Das::ExportInterface::IDasJson * p_request_json,
             [out] Das::ExportInterface::IDasJson ** pp_out_result_json);
@@ -22,7 +21,7 @@ namespace Das::PluginInterface
     }
 
     [uuid("630BB8E7-B2D5-4D1C-9AD8-A0D34E07A270")] interface IDasTaskComponentFactory
-        : IDasBase
+        : IDasTypeInfo
     {
         DasResult GetCatalog(
             [out] Das::ExportInterface::IDasJson ** pp_out_catalog_json);

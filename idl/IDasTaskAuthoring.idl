@@ -1,11 +1,12 @@
 import "DasBasicTypes.idl";
 import "DasJson.idl";
+import "IDasTypeInfo.idl";
 
 namespace Das::PluginInterface
 {
 
     [uuid("0A07F5B0-63CB-4D77-9D41-786C2A602527")] interface IDasTaskAuthoringSession
-        : IDasBase
+        : IDasTypeInfo
     {
         DasResult GetDocument(
             Das::ExportInterface::IDasJson * p_request_json,
@@ -19,7 +20,7 @@ namespace Das::PluginInterface
     }
 
     [uuid("B91C3145-6E11-45E4-876E-1155C13D5E6C")] interface IDasTaskAuthoringSessionFactory
-        : IDasBase
+        : IDasTypeInfo
     {
         DasResult CreateSession(
             const DasGuid & task_guid,
