@@ -24,6 +24,7 @@ import sys
 
 from ipc_common import fnv1a_hash_guid, fnv1a_hash, BUILTIN_INTERFACE_HASHES, properties_to_methods, resolve_import_chain
 from ipc_type_mapper import StubTypeMapper
+from shared_utils import idl_path_to_header_name
 
 try:
     from . import das_idl_parser as _das_idl_parser
@@ -65,11 +66,16 @@ class IpcStubGenerator:
             'DasResult': 4,
             'DasBool': 1,
         }
+        # Register current document's own interface header mappings
+        if idl_file_path:
+            header_name = idl_path_to_header_name(idl_file_path)
+            for iface in document.interfaces:
+                self.type_mapper.interface_header_files[iface.name] = header_name
         # Load external enum/struct definitions from imported IDL files only
         self.all_interfaces = list(self.document.interfaces)
         if idl_file_path:
             imported_docs = resolve_import_chain(document, idl_file_path)
-            self.type_mapper.load_external_definitions(list(imported_docs.values()))
+            self.type_mapper.load_external_definitions(imported_docs)
             # Load interfaces from imported IDL files for cross-IDL UUID resolution
             for imp_doc in imported_docs.values():
                 for iface in imp_doc.interfaces:
@@ -175,6 +181,17 @@ class IpcStubGenerator:
         def _iface_name_from_type(type_info: TypeInfo) -> str:
             return type_info.base_type.split("::")[-1]
 
+        def _resolve_header(iface_name: str) -> str:
+            header = self.type_mapper.interface_header_files.get(iface_name)
+            if header is None:
+                raise RuntimeError(
+                    f"IPC stub generator: cannot resolve header file for "
+                    f"interface '{iface_name}' used in '{interface.name}'. "
+                    f"Ensure the IDL file that defines '{iface_name}' is imported. "
+                    f"Known mappings: {self.type_mapper.interface_header_files}"
+                )
+            return header
+
         # Check if any method has [in] interface pointer params (for DasProxyBase.h)
         has_in_interface_ptr = False
 
@@ -182,15 +199,13 @@ class IpcStubGenerator:
             if _is_iface_ptr(method.return_type):
                 iface_name = _iface_name_from_type(method.return_type)
                 if iface_name not in CORE_TYPES and iface_name not in local_iface_names:
-                    header = self.type_mapper.interface_header_files.get(iface_name, f"{iface_name}.h")
-                    includes.add(header)
+                    includes.add(_resolve_header(iface_name))
 
             for param in method.parameters:
                 if _is_iface_ptr(param.type_info):
                     iface_name = _iface_name_from_type(param.type_info)
                     if iface_name not in CORE_TYPES and iface_name not in local_iface_names:
-                        header = self.type_mapper.interface_header_files.get(iface_name, f"{iface_name}.h")
-                        includes.add(header)
+                        includes.add(_resolve_header(iface_name))
                     # Check if this is an [in] interface pointer (for DasProxyBase.h include)
                     if param.direction != ParamDirection.OUT:
                         has_in_interface_ptr = True
@@ -1478,13 +1493,12 @@ class IpcStubGenerator:
             "methods": methods
         }
     
-    def generate_stub_headers(self, output_dir: str, cache_dir: Optional[str] = None, abi_dir: Optional[str] = None) -> List[str]:
+    def generate_stub_headers(self, output_dir: str, cache_dir: Optional[str] = None) -> List[str]:
         """生成所有接口的 IPC Stub 头文件
 
         Args:
             output_dir: 输出目录
             cache_dir: 缓存目录（用于写入 interface.json）
-            abi_dir: ABI 头文件目录（用于收集接口类型 includes）
 
         Returns:
             生成的文件路径列表
@@ -1497,12 +1511,6 @@ class IpcStubGenerator:
         if cache_dir:
             os.makedirs(cache_dir, exist_ok=True)
 
-        # 从 ABI 目录加载接口命名空间和头文件映射
-        # 如果未指定 abi_dir，自动从 output_dir 的父目录推导
-        if not abi_dir:
-            abi_dir = os.path.join(os.path.dirname(output_dir), "abi")
-        self.type_mapper.load_namespaces_from_abi_dir(abi_dir)
-
         for interface in self.document.interfaces:
             interface_short_name = self._get_interface_short_name(interface.name)
             filename = f"{interface_short_name}Stub.h"
@@ -1514,7 +1522,14 @@ class IpcStubGenerator:
             guard_name = f"DAS_IPC_{ns_prefix}{interface_short_name.upper()}_STUB_H"
 
             # 获取 ABI 头文件名称
-            abi_header = self.type_mapper.interface_header_files.get(interface.name, f"{interface.name}.h")
+            abi_header = self.type_mapper.interface_header_files.get(interface.name)
+            if abi_header is None:
+                raise RuntimeError(
+                    f"IPC stub generator: cannot resolve ABI header for "
+                    f"interface '{interface.name}'. "
+                    f"Ensure the IDL file that defines '{interface.name}' is imported. "
+                    f"Known mappings: {self.type_mapper.interface_header_files}"
+                )
 
             # 收集接口类型 includes
             interface_includes = self._collect_interface_includes(interface)
@@ -1650,8 +1665,7 @@ def generate_ipc_stub_files(
     output_dir: str,
     base_name: Optional[str] = None,
     idl_file_path: Optional[str] = None,
-    cache_dir: Optional[str] = None,
-    abi_dir: Optional[str] = None
+    cache_dir: Optional[str] = None
 ) -> List[str]:
     """生成 IPC Stub 文件
 
@@ -1661,13 +1675,12 @@ def generate_ipc_stub_files(
         base_name: 基础文件名（可选）
         idl_file_path: IDL 文件路径（可选）
         cache_dir: 缓存目录（用于写入 interface.json）
-        abi_dir: ABI 头文件目录（用于收集接口类型 includes）
 
     Returns:
         生成的文件路径列表
     """
     generator = IpcStubGenerator(document, idl_file_path)
-    return generator.generate_stub_headers(output_dir, cache_dir, abi_dir)
+    return generator.generate_stub_headers(output_dir, cache_dir)
 
 
 # 测试代码

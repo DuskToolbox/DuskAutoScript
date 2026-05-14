@@ -3,6 +3,17 @@
 Contains pure functions extracted from multiple generators to avoid duplication.
 """
 
+from pathlib import Path
+
+
+def idl_path_to_header_name(idl_path: str) -> str:
+    """Derive ABI header filename from an IDL file path.
+
+    ``DasJson.idl`` → ``DasJson.h``
+    ``IDasImage.idl`` → ``IDasImage.h``
+    """
+    return Path(idl_path).stem + ".h"
+
 
 def to_upper_snake(name: str) -> str:
     """Convert PascalCase (or camelCase) to UPPER_SNAKE_CASE.

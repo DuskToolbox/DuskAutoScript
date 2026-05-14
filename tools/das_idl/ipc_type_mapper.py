@@ -6,7 +6,6 @@ das_ipc_stub_generator (StubTypeMapper).
 """
 
 import os
-import re
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -19,11 +18,13 @@ import sys
 
 try:
     from . import das_idl_parser as _das_idl_parser
+    from . import shared_utils as _shared_utils
 except ImportError:
     this_dir = str(Path(__file__).resolve().parent)
     if this_dir not in sys.path:
         sys.path.insert(0, this_dir)
     _das_idl_parser = importlib.import_module("das_idl_parser")
+    _shared_utils = importlib.import_module("shared_utils")
 
 IdlDocument = _das_idl_parser.IdlDocument
 TypeInfo = _das_idl_parser.TypeInfo
@@ -166,72 +167,20 @@ class IpcBaseTypeMapper:
             return type_name[:-3]  # 去除 Ptr
         return type_name
 
-    def load_namespaces_from_abi_dir(self, abi_dir: str) -> None:
-        """从 ABI 头文件目录扫描所有接口的命名空间
-
-        扫描 abi_dir 下的所有 .h 文件，提取 namespace 和接口前向声明，
-        构建 interface_namespaces 映射。
+    def load_external_definitions(self, imported_docs: dict) -> None:
+        """Load enum, struct, and interface definitions from imported IDL documents.
 
         Args:
-            abi_dir: ABI 头文件目录路径
+            imported_docs: Dict mapping absolute IDL file path -> parsed IdlDocument.
+                           Used to derive interface_header_files from IDL filenames.
         """
-        abi_path = Path(abi_dir)
-        if not abi_path.is_dir():
-            return
-
-        # 正则表达式匹配 namespace 块中的 DAS_INTERFACE 前向声明
-        ns_block_pattern = re.compile(
-            r'namespace\s+([\w:]+)\s*\{',
-            re.DOTALL
-        )
-        iface_decl_pattern = re.compile(r'DAS_INTERFACE\s+(\w+)\s*;')
-
-        for header_file in abi_path.glob("*.h"):
-            try:
-                content = header_file.read_text(encoding='utf-8')
-                # 查找所有 namespace 块及其中的 DAS_INTERFACE 声明
-                pos = 0
-                open_braces = 0
-                current_ns = ""
-                while pos < len(content):
-                    # 查找 namespace 声明
-                    ns_match = ns_block_pattern.search(content, pos)
-                    if ns_match is None:
-                        break
-                    current_ns = ns_match.group(1)
-                    brace_start = ns_match.end()
-
-                    # 追踪大括号以找到 namespace 块的结束
-                    open_braces = 1
-                    scan_pos = brace_start
-                    while open_braces > 0 and scan_pos < len(content):
-                        if content[scan_pos] == '{':
-                            open_braces += 1
-                        elif content[scan_pos] == '}':
-                            open_braces -= 1
-                        scan_pos += 1
-
-                    # 在 namespace 块中查找 DAS_INTERFACE 声明
-                    ns_content = content[brace_start:scan_pos]
-                    for iface_match in iface_decl_pattern.finditer(ns_content):
-                        iface_name = iface_match.group(1)
-                        if iface_name not in self.interface_namespaces:
-                            self.interface_namespaces[iface_name] = current_ns
-                        # 记录接口到头文件的映射
-                        if iface_name not in self.interface_header_files:
-                            self.interface_header_files[iface_name] = header_file.name
-
-                    pos = scan_pos
-            except Exception:
-                pass
-
-    def load_external_definitions(self, documents: list) -> None:
-        """Load enum and struct definitions from pre-parsed IdlDocument objects.
-
-        Accepts already-parsed documents (e.g. from resolve_import_chain)
-        to avoid redundant parsing overhead.
-        """
-        for ext_doc in documents:
+        for idl_path, ext_doc in imported_docs.items():
+            # Derive ABI header filename from IDL filename:
+            #   "DasJson.idl" -> "DasJson.h"
+            header_name = _shared_utils.idl_path_to_header_name(idl_path)
+            for iface in ext_doc.interfaces:
+                if iface.name not in self.interface_header_files:
+                    self.interface_header_files[iface.name] = header_name
             for enum in ext_doc.enums:
                 self.enum_types.add(enum.name)
                 if enum.namespace:
@@ -253,13 +202,14 @@ class IpcBaseTypeMapper:
 class ProxyTypeMapper(IpcBaseTypeMapper):
     """Proxy TypeMapper — additionally loads interface namespaces from external IDL files."""
 
-    def load_external_definitions(self, documents: list) -> None:
-        """Load enum, struct, and interface definitions from pre-parsed IdlDocument objects.
+    def load_external_definitions(self, imported_docs: dict) -> None:
+        """Load enum, struct, and interface definitions from imported IDL documents.
 
-        Accepts already-parsed documents (e.g. from resolve_import_chain)
-        to avoid redundant parsing overhead.
+        Args:
+            imported_docs: Dict mapping absolute IDL file path -> parsed IdlDocument.
         """
-        for ext_doc in documents:
+        super().load_external_definitions(imported_docs)
+        for idl_path, ext_doc in imported_docs.items():
             for enum in ext_doc.enums:
                 self.enum_types.add(enum.name)
                 if enum.namespace:
@@ -284,8 +234,8 @@ class ProxyTypeMapper(IpcBaseTypeMapper):
 # ---------------------------------------------------------------------------
 
 class StubTypeMapper(IpcBaseTypeMapper):
-    """Stub TypeMapper — adds extra TYPE_MAP entries, IDasReadOnlyString to
-    SPECIAL_TYPES, and interface header file fallback mappings."""
+    """Stub TypeMapper — adds extra TYPE_MAP entries and IDasReadOnlyString to
+    SPECIAL_TYPES."""
 
     TYPE_MAP = {
         **IpcBaseTypeMapper.TYPE_MAP,
@@ -305,20 +255,3 @@ class StubTypeMapper(IpcBaseTypeMapper):
         **IpcBaseTypeMapper.SPECIAL_TYPES,
         'IDasReadOnlyString': ('IDasReadOnlyString', 'WriteString', 'ReadString'),
     }
-
-    def load_namespaces_from_abi_dir(self, abi_dir: str) -> None:
-        """从 ABI 头文件目录扫描所有接口的命名空间
-
-        与基类相同，但额外添加已知的接口头文件回退映射。
-        """
-        # Call base implementation
-        super().load_namespaces_from_abi_dir(abi_dir)
-
-        # 添加已知的接口头文件映射回退（多个接口可能在同一个头文件中）
-        # 这些接口在同一个 IDL 文件中定义但共享一个 ABI 头文件
-        fallback_mappings = {
-            "IDasWeakReferenceSource": "IDasWeakReference.h",
-        }
-        for iface_name, header_name in fallback_mappings.items():
-            if iface_name not in self.interface_header_files:
-                self.interface_header_files[iface_name] = header_name

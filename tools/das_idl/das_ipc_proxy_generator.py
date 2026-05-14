@@ -34,6 +34,7 @@ import sys
 
 from ipc_common import fnv1a_hash_guid, fnv1a_hash, properties_to_methods, resolve_import_chain
 from ipc_type_mapper import ProxyTypeMapper
+from shared_utils import idl_path_to_header_name
 
 # 既支持作为包内模块导入（tools.das_idl.*），也支持直接脚本运行。
 try:
@@ -65,11 +66,16 @@ class IpcProxyGenerator:
         self.idl_file_name = os.path.basename(idl_file_path) if idl_file_path else None
         self.indent = "    "  # 4 空格缩进
         self.type_mapper = ProxyTypeMapper(document)
+        # Register current document's own interface header mappings
+        if idl_file_path:
+            header_name = idl_path_to_header_name(idl_file_path)
+            for iface in document.interfaces:
+                self.type_mapper.interface_header_files[iface.name] = header_name
         # Resolve import chain and load external definitions from imported files only
         self._imported_docs = {}
         if idl_file_path:
             self._imported_docs = resolve_import_chain(document, idl_file_path)
-            self.type_mapper.load_external_definitions(list(self._imported_docs.values()))
+            self.type_mapper.load_external_definitions(self._imported_docs)
         # 额外的接口命名空间映射（来自其他 IDL 文件的接口）
         if extra_interface_namespaces:
             self.type_mapper.interface_namespaces.update(extra_interface_namespaces)
@@ -340,19 +346,28 @@ class IpcProxyGenerator:
         def _iface_name_from_type(type_info: TypeInfo) -> str:
             return type_info.base_type.split("::")[-1]
 
+        def _resolve_header(iface_name: str) -> str:
+            header = self.type_mapper.interface_header_files.get(iface_name)
+            if header is None:
+                raise RuntimeError(
+                    f"IPC proxy generator: cannot resolve header file for "
+                    f"interface '{iface_name}' used in '{interface.name}'. "
+                    f"Ensure the IDL file that defines '{iface_name}' is imported. "
+                    f"Known mappings: {self.type_mapper.interface_header_files}"
+                )
+            return header
+
         for method in interface.methods:
             if _is_iface_ptr(method.return_type):
                 iface_name = _iface_name_from_type(method.return_type)
                 if iface_name not in CORE_TYPES and iface_name not in local_iface_names:
-                    header = self.type_mapper.interface_header_files.get(iface_name, f"{iface_name}.h")
-                    includes.add(header)
+                    includes.add(_resolve_header(iface_name))
 
             for param in method.parameters:
                 if _is_iface_ptr(param.type_info):
                     iface_name = _iface_name_from_type(param.type_info)
                     if iface_name not in CORE_TYPES and iface_name not in local_iface_names:
-                        header = self.type_mapper.interface_header_files.get(iface_name, f"{iface_name}.h")
-                        includes.add(header)
+                        includes.add(_resolve_header(iface_name))
 
         # 排除主接口自身的头文件（已通过 abi_header 包含）
         short_name = self._get_interface_short_name(interface.name)
@@ -1492,10 +1507,6 @@ class IpcProxyGenerator:
 
         if cache_dir:
             os.makedirs(cache_dir, exist_ok=True)
-
-        # 尝试从 ABI 目录加载外部接口的命名空间映射
-        abi_dir = os.path.join(os.path.dirname(output_dir), "abi")
-        self.type_mapper.load_namespaces_from_abi_dir(abi_dir)
         
         for interface in self.document.interfaces:
             interface_short_name = self._get_interface_short_name(interface.name)
