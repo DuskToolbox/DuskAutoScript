@@ -21,20 +21,10 @@ namespace Das::Core::TaskScheduler
             authoring.task_guid = task_guid;
             authoring.plugin_guid = plugin_guid;
             authoring.task_feature_index = task_feature_index;
-            authoring.authoring_feature_index =
-                descriptor.authoring->feature_index;
+            authoring.authoring_factory_guid =
+                descriptor.authoring->factory_guid;
             authoring.supported_kinds = descriptor.authoring->supported_kinds;
             record.authoring = std::move(authoring);
-        }
-
-        for (const auto& component_desc : descriptor.components)
-        {
-            TaskComponentCapability component;
-            component.component_guid = component_desc.component_guid;
-            component.factory_feature_index =
-                component_desc.factory_feature_index;
-            component.role = component_desc.role;
-            record.components.push_back(std::move(component));
         }
 
         records_[task_guid] = std::move(record);

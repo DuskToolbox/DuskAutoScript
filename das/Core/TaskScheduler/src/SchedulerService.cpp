@@ -21,6 +21,7 @@
 #include <fstream>
 #include <sstream>
 #include <thread>
+#include <unordered_set>
 
 namespace Das::Core::TaskScheduler
 {
@@ -266,15 +267,45 @@ namespace Das::Core::TaskScheduler
         DasPtr<Das::PluginInterface::IDasTaskAuthoringSession>& session)
     {
         DasPtr<Das::PluginInterface::IDasTaskAuthoringSessionFactory> factory;
-        auto result = plugin_manager.CreateFeatureInterface(
-            capability.plugin_guid,
-            capability.authoring_feature_index,
-            DasIidOf<
-                Das::PluginInterface::IDasTaskAuthoringSessionFactory>(),
-            reinterpret_cast<void**>(factory.Put()));
-        if (DAS::IsFailed(result) || !factory)
+        auto factory_features = plugin_manager.GetFeaturesByType(
+            Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY);
+        for (auto* feature_info : factory_features)
         {
-            return result;
+            if (!feature_info
+                || feature_info->plugin_guid != capability.plugin_guid
+                || !feature_info->interface_ptr)
+            {
+                continue;
+            }
+
+            DasPtr<Das::PluginInterface::IDasTaskAuthoringSessionFactory>
+                candidate;
+            auto query_result = feature_info->interface_ptr->QueryInterface(
+                DasIidOf<
+                    Das::PluginInterface::IDasTaskAuthoringSessionFactory>(),
+                reinterpret_cast<void**>(candidate.Put()));
+            if (DAS::IsFailed(query_result) || !candidate)
+            {
+                continue;
+            }
+
+            DasGuid candidate_guid{};
+            auto    guid_result = candidate->GetGuid(&candidate_guid);
+            if (DAS::IsFailed(guid_result))
+            {
+                continue;
+            }
+
+            if (candidate_guid == capability.authoring_factory_guid)
+            {
+                factory = std::move(candidate);
+                break;
+            }
+        }
+
+        if (!factory)
+        {
+            return DAS_E_NOT_FOUND;
         }
 
         auto context = WrapJsonValue(
@@ -283,6 +314,88 @@ namespace Das::Core::TaskScheduler
             capability.task_guid,
             context.Get(),
             session.Put());
+    }
+
+    static void MergeTaskComponentCatalog(
+        Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager,
+        yyjson::value&                                  document)
+    {
+        auto definitions =
+            plugin_manager.GetTaskComponentFactoryManager()
+                .EnumerateDefinitions();
+        if (definitions.empty())
+        {
+            return;
+        }
+
+        std::sort(
+            definitions.begin(),
+            definitions.end(),
+            [](const auto& lhs, const auto& rhs)
+            {
+                return GuidToString(lhs.component_guid)
+                       < GuidToString(rhs.component_guid);
+            });
+
+        auto document_obj = document.as_object();
+        if (!document_obj)
+        {
+            return;
+        }
+
+        if (!(*document_obj)[std::string_view("catalog")].is_object())
+        {
+            (*document_obj)[std::string_view("catalog")] =
+                Das::Utils::MakeYyjsonObject();
+        }
+
+        auto catalog_obj =
+            (*document_obj)[std::string_view("catalog")].as_object();
+        if (!catalog_obj)
+        {
+            return;
+        }
+
+        if (!(*catalog_obj)[std::string_view("components")].is_array())
+        {
+            (*catalog_obj)[std::string_view("components")] =
+                Das::Utils::MakeYyjsonArray();
+        }
+
+        auto components =
+            (*catalog_obj)[std::string_view("components")].as_array();
+        if (!components)
+        {
+            return;
+        }
+
+        std::unordered_set<std::string> existing_component_guids;
+        for (const auto& component : *components)
+        {
+            auto component_obj = component.as_object();
+            if (!component_obj)
+            {
+                continue;
+            }
+            auto guid_text =
+                (*component_obj)[std::string_view("componentGuid")]
+                    .as_string();
+            if (guid_text)
+            {
+                existing_component_guids.emplace(*guid_text);
+            }
+        }
+
+        for (const auto& definition : definitions)
+        {
+            auto component_guid_text = GuidToString(definition.component_guid);
+            if (!existing_component_guids.insert(component_guid_text).second)
+            {
+                continue;
+            }
+
+            components->emplace_back(CloneJsonValue(definition.definition));
+        }
     }
 
     static TaskInstanceRecord* FindNextRunnableTask(
@@ -1750,8 +1863,9 @@ namespace Das::Core::TaskScheduler
         auto          obj = result.as_object();
         (*obj)[std::string_view("taskId")] = task_id;
         (*obj)[std::string_view("taskGuid")] = GuidToString(task_guid);
-        (*obj)[std::string_view("document")] =
-            ReadJsonInterface(document_json.Get());
+        auto document = ReadJsonInterface(document_json.Get());
+        MergeTaskComponentCatalog(plugin_manager_, document);
+        (*obj)[std::string_view("document")] = std::move(document);
         return result;
     }
 

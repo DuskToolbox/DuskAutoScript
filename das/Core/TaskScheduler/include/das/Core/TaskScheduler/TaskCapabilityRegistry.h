@@ -14,15 +14,8 @@ namespace Das::Core::TaskScheduler
         DasGuid                  task_guid{};
         DasGuid                  plugin_guid{};
         uint64_t                 task_feature_index = 0;
-        uint64_t                 authoring_feature_index = 0;
+        DasGuid                  authoring_factory_guid{};
         std::vector<std::string> supported_kinds;
-    };
-
-    struct TaskComponentCapability
-    {
-        DasGuid     component_guid{};
-        uint64_t    factory_feature_index = 0;
-        std::string role;
     };
 
     struct TaskCapabilityRecord
@@ -31,7 +24,6 @@ namespace Das::Core::TaskScheduler
         DasGuid                                    plugin_guid{};
         uint64_t                                   task_feature_index = 0;
         std::optional<TaskAuthoringCapability>     authoring;
-        std::vector<TaskComponentCapability>       components;
     };
 
     class TaskCapabilityRegistry
