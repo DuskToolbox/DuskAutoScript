@@ -6,6 +6,7 @@
 #include <das/Core/Utils/DasJsonImpl.h>
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasComponent.h>
+#include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
 #include <gtest/gtest.h>
 
@@ -223,6 +224,74 @@ TEST_F(TaskComponentContractTest, DasFlowControlCatalogComesFromManager)
             << expected.name;
         EXPECT_TRUE((*obj)[std::string_view("diagnostics")].is_array())
             << expected.name;
+    }
+}
+
+TEST_F(TaskComponentContractTest, DasFlowControlGetCatalogUsesPackageFeaturePath)
+{
+    auto runtime = CreateCppRuntime();
+    ASSERT_NE(runtime, nullptr);
+    auto plugin_result = runtime->LoadPlugin(manifest_path_);
+    ASSERT_TRUE(plugin_result.has_value())
+        << "Failed to load DasFlowControl from " << manifest_path_.string();
+
+    auto plugin_base = plugin_result.value();
+    DasPtr<Das::PluginInterface::IDasPluginPackage> package;
+    ASSERT_EQ(plugin_base.As(package.Put()), DAS_S_OK);
+
+    bool     found_factory_feature = false;
+    uint64_t factory_feature_index = 0;
+    for (uint64_t index = 0;; ++index)
+    {
+        Das::PluginInterface::DasPluginFeature feature{};
+        if (package->EnumFeature(index, &feature) != DAS_S_OK)
+        {
+            break;
+        }
+        if (feature
+            == Das::PluginInterface::
+                DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY)
+        {
+            found_factory_feature = true;
+            factory_feature_index = index;
+            break;
+        }
+    }
+    ASSERT_TRUE(found_factory_feature);
+
+    IDasBase* factory_base_raw = nullptr;
+    ASSERT_EQ(
+        package->CreateFeatureInterface(
+            factory_feature_index,
+            &factory_base_raw),
+        DAS_S_OK);
+    ASSERT_NE(factory_base_raw, nullptr);
+    DasPtr<IDasBase> factory_base(factory_base_raw);
+
+    DasPtr<Das::PluginInterface::IDasTaskComponentFactory> factory;
+    ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
+
+    DasPtr<Das::ExportInterface::IDasJson> catalog;
+    ASSERT_EQ(factory->GetCatalog(catalog.Put()), DAS_S_OK);
+    auto catalog_json = ToJson(catalog.Get());
+    auto catalog_obj = catalog_json.as_object();
+    ASSERT_TRUE(catalog_obj.has_value());
+    auto components =
+        (*catalog_obj)[std::string_view("components")].as_array();
+    ASSERT_TRUE(components.has_value());
+
+    for (const auto& expected : kOfficialComponents)
+    {
+        const auto found = std::ranges::any_of(
+            *components,
+            [&expected](const yyjson::value& component)
+            {
+                auto component_obj = component.as_object();
+                return component_obj
+                       && StringField(*component_obj, "kind")
+                              == expected.kind;
+            });
+        EXPECT_TRUE(found) << expected.name;
     }
 }
 
