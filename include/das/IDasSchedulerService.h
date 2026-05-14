@@ -51,6 +51,18 @@ DAS_INTERFACE IDasSchedulerService : public IDasBase
     DAS_METHOD UpdateTaskInternalProperties(
         int64_t             task_id,
         IDasReadOnlyString* p_properties_json) = 0;
+    DAS_METHOD GetTaskAuthoringDocument(
+        int64_t              task_id,
+        IDasReadOnlyString*  p_request_json,
+        IDasReadOnlyString** pp_out_json) = 0;
+    DAS_METHOD ApplyTaskAuthoringChange(
+        int64_t              task_id,
+        IDasReadOnlyString*  p_change_json,
+        IDasReadOnlyString** pp_out_json) = 0;
+    DAS_METHOD CompileTaskAuthoring(
+        int64_t              task_id,
+        IDasReadOnlyString*  p_request_json,
+        IDasReadOnlyString** pp_out_json) = 0;
     DAS_METHOD SetStateNotifyCallback(
         SchedulerNotifyFunc func,
         void*               user_data) = 0;
