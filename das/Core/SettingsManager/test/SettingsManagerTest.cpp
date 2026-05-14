@@ -606,6 +606,56 @@ namespace
             false);
     }
 
+    TEST_F(SettingsManagerTest, AuthoringPersistence_TaskInstanceSiblingMetadata)
+    {
+        Das::Core::SettingsManager::SettingsManager sm(test_dir_);
+        sm.CreateProfile("0");
+
+        yyjson::value task(Das::Utils::MakeYyjsonObject());
+        (*task.as_object())[std::string_view("id")] = 0;
+        (*task.as_object())[std::string_view("taskGuid")] =
+            "B4F60C54-67DF-407A-B891-6D3C90CDB9A1";
+        {
+            yyjson::value props(Das::Utils::MakeYyjsonObject());
+            (*props.as_object())[std::string_view("key1")] = "accepted";
+            (*task.as_object())[std::string_view("properties")] =
+                std::move(props);
+        }
+        {
+            yyjson::value authoring(Das::Utils::MakeYyjsonObject());
+            (*authoring.as_object())[std::string_view("revision")] = 4;
+            (*authoring.as_object())[std::string_view("kind")] =
+                "formSequence";
+            (*authoring.as_object())[std::string_view("sourceFingerprint")] =
+                "fake-source";
+            (*authoring.as_object())[std::string_view("migration")] =
+                Das::Utils::MakeYyjsonObject();
+            (*task.as_object())[std::string_view("authoring")] =
+                std::move(authoring);
+        }
+
+        ASSERT_EQ(sm.UpdateTaskInstanceJson("0", 0, task), DAS_S_OK);
+
+        auto loaded = sm.GetTaskInstanceJson("0", 0);
+        auto obj = loaded.as_object();
+        ASSERT_TRUE(obj.has_value());
+        EXPECT_TRUE(obj->contains(std::string_view("properties")));
+        EXPECT_TRUE(obj->contains(std::string_view("authoring")));
+        EXPECT_FALSE(obj->contains(std::string_view("changes")));
+        EXPECT_FALSE(obj->contains(std::string_view("operations")));
+        EXPECT_FALSE(obj->contains(std::string_view("authoringDocument")));
+
+        auto authoring =
+            (*obj)[std::string_view("authoring")].as_object();
+        ASSERT_TRUE(authoring.has_value());
+        EXPECT_EQ(
+            (*authoring)[std::string_view("revision")].as_sint().value_or(-1),
+            4);
+        EXPECT_EQ(
+            (*authoring)[std::string_view("kind")].as_string().value_or(""),
+            std::string_view("formSequence"));
+    }
+
     // --- Fault isolation tests ---
 
     TEST_F(

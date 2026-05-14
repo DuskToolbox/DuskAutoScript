@@ -23,6 +23,9 @@
 #include "das/DasTypes.hpp"
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
+#include <das/Utils/DasJsonCore.h>
+#include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
+#include <das/_autogen/idl/abi/IDasTaskComponent.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -37,6 +40,33 @@
 
 using namespace Das::PluginInterface;
 using namespace Das::ExportInterface;
+
+namespace
+{
+    constexpr DasGuid kIpcTaskGuid{
+        0xA1B2C3D4,
+        0xE5F6,
+        0x4A7B,
+        {0x8C, 0x9D, 0x0E, 0x1F, 0x2A, 0x3B, 0x4C, 0x5D}};
+
+    constexpr DasGuid kIpcTaskComponentGuid{
+        0x68F10701,
+        0x0000,
+        0x4000,
+        {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}};
+
+    yyjson::value ToYyjson(Das::ExportInterface::IDasJson* json)
+    {
+        DAS::DasPtr<IDasReadOnlyString> text;
+        EXPECT_EQ(json->ToString(0, text.Put()), DAS_S_OK);
+        const char* u8 = nullptr;
+        EXPECT_EQ(text->GetUtf8(&u8), DAS_S_OK);
+        auto parsed =
+            Das::Utils::ParseYyjsonFromString(u8 != nullptr ? u8 : "");
+        EXPECT_TRUE(parsed.has_value());
+        return parsed ? std::move(*parsed) : yyjson::value{};
+    }
+} // namespace
 
 TEST_F(IpcMultiProcessTestIntegration, HostLauncherStart)
 {
@@ -163,6 +193,195 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadPlugin)
     DAS_CORE_LOG_INFO(
         "[CrossProcess_LoadPlugin] Plugin loaded, proxy = {}",
         (void*)proxy);
+}
+
+TEST_F(IpcMultiProcessTestIntegration, CrossProcess_TaskAuthoringFactory)
+{
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+    }
+
+    DasResult result = StartHostAndSetupRunLoop();
+    ASSERT_EQ(result, DAS_S_OK);
+
+    std::string plugin_json_path;
+    try
+    {
+        plugin_json_path =
+            IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin1");
+    }
+    catch (const std::exception& e)
+    {
+        GTEST_SKIP() << "Plugin JSON not found: " << e.what();
+    }
+
+    DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
+    result = ctx_->LoadPluginAsync(
+        launcher_.Get(),
+        plugin_json_path.c_str(),
+        op.Put());
+    ASSERT_EQ(result, DAS_S_OK);
+
+    auto opt = DAS::Core::IPC::wait(
+        GetContext(),
+        DAS::Core::IPC::async_op(GetContext(), std::move(op)));
+    ASSERT_TRUE(opt.has_value()) << "Load plugin: wait failed";
+
+    auto& [load_result, proxy] = *opt;
+    ASSERT_EQ(load_result, DAS_S_OK);
+    ASSERT_NE(proxy, nullptr);
+
+    DAS::DasPtr<IDasBase> raw_proxy =
+        DAS::DasPtr<IDasBase>::Attach(proxy);
+    DAS::PluginInterface::DasPluginPackage plugin_package;
+    ASSERT_EQ(raw_proxy.As(plugin_package.Put()), DAS_S_OK);
+
+    DasPluginFeature feature{};
+    ASSERT_EQ(plugin_package->EnumFeature(2, &feature), DAS_S_OK);
+    EXPECT_EQ(feature, DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY);
+
+    IDasBase* factory_base_raw = nullptr;
+    ASSERT_EQ(
+        plugin_package->CreateFeatureInterface(2, &factory_base_raw),
+        DAS_S_OK);
+    ASSERT_NE(factory_base_raw, nullptr);
+    DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+
+    DAS::DasPtr<IDasTaskAuthoringSessionFactory> factory;
+    ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
+
+    IDasTaskAuthoringSession* session_raw = nullptr;
+    ASSERT_EQ(
+        factory->CreateSession(kIpcTaskGuid, nullptr, &session_raw),
+        DAS_S_OK);
+    ASSERT_NE(session_raw, nullptr);
+    DAS::DasPtr<IDasTaskAuthoringSession> session(session_raw);
+
+    DAS::DasPtr<IDasJson> document;
+    ASSERT_EQ(session->GetDocument(nullptr, document.Put()), DAS_S_OK);
+    auto json = ToYyjson(document.Get());
+    auto obj = json.as_object();
+    ASSERT_TRUE(obj.has_value());
+    EXPECT_EQ(
+        (*obj)[std::string_view("kind")].as_string().value_or(""),
+        std::string_view("formSequence"));
+
+    DAS::DasPtr<IDasJson> apply_result;
+    ASSERT_EQ(session->ApplyChange(nullptr, apply_result.Put()), DAS_S_OK);
+    auto apply_json = ToYyjson(apply_result.Get());
+    EXPECT_TRUE(
+        apply_json.as_object()->contains(
+            std::string_view("acceptedProperties")));
+
+    DAS::DasPtr<IDasJson> compile_result;
+    ASSERT_EQ(session->Compile(nullptr, compile_result.Put()), DAS_S_OK);
+    auto compile_json = ToYyjson(compile_result.Get());
+    EXPECT_TRUE(
+        (*compile_json.as_object())[std::string_view("ok")]
+            .as_bool()
+            .value_or(false));
+}
+
+TEST_F(IpcMultiProcessTestIntegration, CrossProcess_TaskComponentFactory)
+{
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+    }
+
+    DasResult result = StartHostAndSetupRunLoop();
+    ASSERT_EQ(result, DAS_S_OK);
+
+    std::string plugin_json_path;
+    try
+    {
+        plugin_json_path =
+            IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin1");
+    }
+    catch (const std::exception& e)
+    {
+        GTEST_SKIP() << "Plugin JSON not found: " << e.what();
+    }
+
+    DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
+    result = ctx_->LoadPluginAsync(
+        launcher_.Get(),
+        plugin_json_path.c_str(),
+        op.Put());
+    ASSERT_EQ(result, DAS_S_OK);
+
+    auto opt = DAS::Core::IPC::wait(
+        GetContext(),
+        DAS::Core::IPC::async_op(GetContext(), std::move(op)));
+    ASSERT_TRUE(opt.has_value()) << "Load plugin: wait failed";
+
+    auto& [load_result, proxy] = *opt;
+    ASSERT_EQ(load_result, DAS_S_OK);
+    ASSERT_NE(proxy, nullptr);
+
+    DAS::DasPtr<IDasBase> raw_proxy =
+        DAS::DasPtr<IDasBase>::Attach(proxy);
+    DAS::PluginInterface::DasPluginPackage plugin_package;
+    ASSERT_EQ(raw_proxy.As(plugin_package.Put()), DAS_S_OK);
+
+    DasPluginFeature feature{};
+    ASSERT_EQ(plugin_package->EnumFeature(3, &feature), DAS_S_OK);
+    EXPECT_EQ(feature, DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY);
+
+    IDasBase* factory_base_raw = nullptr;
+    ASSERT_EQ(
+        plugin_package->CreateFeatureInterface(3, &factory_base_raw),
+        DAS_S_OK);
+    ASSERT_NE(factory_base_raw, nullptr);
+    DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+
+    DAS::DasPtr<IDasTaskComponentFactory> factory;
+    ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
+
+    DAS::DasPtr<IDasJson> catalog;
+    ASSERT_EQ(factory->GetCatalog(catalog.Put()), DAS_S_OK);
+    auto catalog_json = ToYyjson(catalog.Get());
+    auto components =
+        (*catalog_json.as_object())[std::string_view("components")].as_array();
+    ASSERT_TRUE(components.has_value());
+    ASSERT_EQ(components->size(), 1u);
+
+    IDasTaskComponent* component_raw = nullptr;
+    ASSERT_EQ(
+        factory->CreateComponent(kIpcTaskComponentGuid, &component_raw),
+        DAS_S_OK);
+    ASSERT_NE(component_raw, nullptr);
+    DAS::DasPtr<IDasTaskComponent> component(component_raw);
+
+    DAS::DasPtr<IDasJson> definition;
+    ASSERT_EQ(component->GetDefinition(definition.Put()), DAS_S_OK);
+    auto definition_json = ToYyjson(definition.Get());
+    EXPECT_EQ(
+        (*definition_json.as_object())[std::string_view("stableName")]
+            .as_string()
+            .value_or(""),
+        std::string_view("das.ipc.testComponent"));
+
+    DAS::DasPtr<IDasJson> settings_result;
+    ASSERT_EQ(
+        component->ApplySettingsChange(nullptr, settings_result.Put()),
+        DAS_S_OK);
+    auto settings_json = ToYyjson(settings_result.Get());
+    EXPECT_TRUE(
+        settings_json.as_object()->contains(
+            std::string_view("acceptedSettings")));
+
+    DAS::DasPtr<IDasJson> do_result;
+    ASSERT_EQ(
+        component->Do(nullptr, nullptr, nullptr, nullptr, do_result.Put()),
+        DAS_S_OK);
+    auto do_json = ToYyjson(do_result.Get());
+    EXPECT_EQ(
+        (*do_json.as_object())[std::string_view("status")]
+            .as_string()
+            .value_or(""),
+        std::string_view("completed"));
 }
 
 /**

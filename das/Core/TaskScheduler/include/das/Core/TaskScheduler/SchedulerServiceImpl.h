@@ -36,6 +36,18 @@ namespace Das::Core::TaskScheduler
         DasResult UpdateTaskInternalProperties(
             int64_t             task_id,
             IDasReadOnlyString* p_properties_json) override;
+        DasResult GetTaskAuthoringDocument(
+            int64_t              task_id,
+            IDasReadOnlyString*  p_request_json,
+            IDasReadOnlyString** pp_out_json) override;
+        DasResult ApplyTaskAuthoringChange(
+            int64_t              task_id,
+            IDasReadOnlyString*  p_change_json,
+            IDasReadOnlyString** pp_out_json) override;
+        DasResult CompileTaskAuthoring(
+            int64_t              task_id,
+            IDasReadOnlyString*  p_request_json,
+            IDasReadOnlyString** pp_out_json) override;
         DasResult SetStateNotifyCallback(
             SchedulerNotifyFunc func,
             void*               user_data) override;

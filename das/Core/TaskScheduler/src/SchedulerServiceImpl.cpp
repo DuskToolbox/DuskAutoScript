@@ -7,10 +7,60 @@
 #include <das/_autogen/idl/abi/IDasGuidVector.h>
 #include <filesystem>
 #include <new>
+#include <string_view>
 #include <vector>
 
 namespace Das::Core::TaskScheduler
 {
+    namespace
+    {
+        DasResult ParseObjectJsonString(
+            IDasReadOnlyString* p_json,
+            yyjson::value&      out_json)
+        {
+            DAS_UTILS_CHECK_POINTER(p_json)
+
+            const char* u8_str = nullptr;
+            auto        result = p_json->GetUtf8(&u8_str);
+            if (DAS::IsFailed(result))
+            {
+                return result;
+            }
+
+            auto parsed = Das::Utils::ParseYyjsonFromString(
+                u8_str ? std::string_view(u8_str) : std::string_view{});
+            if (!parsed || !parsed->is_object())
+            {
+                return DAS_E_INVALID_JSON;
+            }
+
+            out_json = std::move(*parsed);
+            return DAS_S_OK;
+        }
+
+        DasResult WriteJsonString(
+            const yyjson::value& json,
+            IDasReadOnlyString** pp_out_json)
+        {
+            DAS_UTILS_CHECK_POINTER(pp_out_json)
+
+            auto serialized = Das::Utils::SerializeYyjsonValue(json, false);
+            if (!serialized)
+            {
+                return DAS_E_INVALID_JSON;
+            }
+
+            DasOutPtr<IDasReadOnlyString> result(pp_out_json);
+            auto cr = CreateIDasReadOnlyStringFromUtf8(
+                serialized->c_str(),
+                result.Put());
+            if (DAS::IsOk(cr))
+            {
+                result.Keep();
+            }
+            return cr;
+        }
+    }
 
     SchedulerServiceImpl::SchedulerServiceImpl(SchedulerService& svc)
         : svc_(svc)
@@ -189,6 +239,60 @@ namespace Das::Core::TaskScheduler
             return DAS_E_INVALID_JSON;
         }
         return svc_.UpdateTaskInternalProperties(task_id, *props);
+    }
+
+    DasResult SchedulerServiceImpl::GetTaskAuthoringDocument(
+        int64_t              task_id,
+        IDasReadOnlyString*  p_request_json,
+        IDasReadOnlyString** pp_out_json)
+    {
+        DAS_UTILS_CHECK_POINTER(pp_out_json)
+
+        yyjson::value request;
+        auto parse_result = ParseObjectJsonString(p_request_json, request);
+        if (DAS::IsFailed(parse_result))
+        {
+            return parse_result;
+        }
+
+        auto result = svc_.GetTaskAuthoringDocument(task_id, request);
+        return WriteJsonString(result, pp_out_json);
+    }
+
+    DasResult SchedulerServiceImpl::ApplyTaskAuthoringChange(
+        int64_t              task_id,
+        IDasReadOnlyString*  p_change_json,
+        IDasReadOnlyString** pp_out_json)
+    {
+        DAS_UTILS_CHECK_POINTER(pp_out_json)
+
+        yyjson::value change;
+        auto parse_result = ParseObjectJsonString(p_change_json, change);
+        if (DAS::IsFailed(parse_result))
+        {
+            return parse_result;
+        }
+
+        auto result = svc_.ApplyTaskAuthoringChange(task_id, change);
+        return WriteJsonString(result, pp_out_json);
+    }
+
+    DasResult SchedulerServiceImpl::CompileTaskAuthoring(
+        int64_t              task_id,
+        IDasReadOnlyString*  p_request_json,
+        IDasReadOnlyString** pp_out_json)
+    {
+        DAS_UTILS_CHECK_POINTER(pp_out_json)
+
+        yyjson::value request;
+        auto parse_result = ParseObjectJsonString(p_request_json, request);
+        if (DAS::IsFailed(parse_result))
+        {
+            return parse_result;
+        }
+
+        auto result = svc_.CompileTaskAuthoring(task_id, request);
+        return WriteJsonString(result, pp_out_json);
     }
 
     DasResult SchedulerServiceImpl::SetStateNotifyCallback(

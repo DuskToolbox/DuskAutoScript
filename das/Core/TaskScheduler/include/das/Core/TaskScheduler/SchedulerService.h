@@ -9,6 +9,7 @@
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
+#include <das/Core/TaskScheduler/TaskCapabilityRegistry.h>
 #include <das/Core/Utils/IDasStopTokenImpl.h>
 #include <das/DasExport.h>
 #include <das/DasPtr.hpp>
@@ -18,6 +19,7 @@
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <das/_autogen/idl/abi/IDasTask.h>
+#include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
 #include <filesystem>
 #include <memory>
 #include <mutex>
@@ -118,6 +120,18 @@ namespace Das::Core::TaskScheduler
         DasResult UpdateTaskInternalProperties(
             int64_t              task_id,
             const yyjson::value& internal_props);
+
+        yyjson::value GetTaskAuthoringDocument(
+            int64_t              task_id,
+            const yyjson::value& request);
+
+        yyjson::value ApplyTaskAuthoringChange(
+            int64_t              task_id,
+            const yyjson::value& change);
+
+        yyjson::value CompileTaskAuthoring(
+            int64_t              task_id,
+            const yyjson::value& request);
 
         /// Check whether the scheduler has been initialized.
         bool IsInitialized() const { return initialized_; }
@@ -232,6 +246,7 @@ namespace Das::Core::TaskScheduler
 
         // Available task types discovered from loaded manifests
         std::vector<std::unique_ptr<TaskTypeRecord>> task_types_;
+        TaskCapabilityRegistry                       capability_registry_;
 
         // Ordered queued task instances materialized from profile state
         std::vector<TaskInstanceRecord> task_instances_;

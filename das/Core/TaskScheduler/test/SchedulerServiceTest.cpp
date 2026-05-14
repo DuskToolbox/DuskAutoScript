@@ -5,6 +5,7 @@
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/Core/SettingsManager/SettingsServiceImpl.h>
+#include <das/Core/Utils/DasJsonImpl.h>
 #include <das/Core/TaskScheduler/SchedulerService.h>
 #include <das/Core/TaskScheduler/SchedulerServiceImpl.h>
 #include <das/DasApi.h>
@@ -16,6 +17,7 @@
 #include <das/_autogen/idl/abi/IDasGuidVector.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <das/_autogen/idl/abi/IDasTask.h>
+#include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
 #include <gtest/gtest.h>
 
 #include <atomic>
@@ -1217,6 +1219,43 @@ TEST_F(SchedulerServiceImplTest, QueryInterface_ReturnsSchedulerService)
     EXPECT_TRUE(p_svc.Get() != nullptr);
 }
 
+TEST_F(SchedulerServiceImplTest, SchedulerServiceImplAuthoringNullOutRejected)
+{
+    DasPtr<IDasReadOnlyString> request;
+    ASSERT_EQ(CreateIDasReadOnlyStringFromUtf8("{}", request.Put()), DAS_S_OK);
+    EXPECT_EQ(
+        impl_->GetTaskAuthoringDocument(0, request.Get(), nullptr),
+        DAS_E_INVALID_POINTER);
+}
+
+TEST_F(SchedulerServiceImplTest, SchedulerServiceImplAuthoringInvalidJson)
+{
+    DasPtr<IDasReadOnlyString> request;
+    ASSERT_EQ(
+        CreateIDasReadOnlyStringFromUtf8("not-json", request.Put()),
+        DAS_S_OK);
+    DasPtr<IDasReadOnlyString> out;
+    EXPECT_EQ(
+        impl_->ApplyTaskAuthoringChange(0, request.Get(), out.Put()),
+        DAS_E_INVALID_JSON);
+}
+
+TEST_F(SchedulerServiceImplTest, SchedulerServiceImplAuthoringReturnsJson)
+{
+    DasPtr<IDasReadOnlyString> request;
+    ASSERT_EQ(CreateIDasReadOnlyStringFromUtf8("{}", request.Put()), DAS_S_OK);
+    DasPtr<IDasReadOnlyString> out;
+    ASSERT_EQ(
+        impl_->CompileTaskAuthoring(99, request.Get(), out.Put()),
+        DAS_S_OK);
+    ASSERT_TRUE(out.Get() != nullptr);
+    const char* raw = nullptr;
+    ASSERT_EQ(out->GetUtf8(&raw), DAS_S_OK);
+    auto parsed = Das::Utils::ParseYyjsonFromString(raw);
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_TRUE(parsed->as_object().has_value());
+}
+
 // ============================================================
 // Fake IDasTask for execution tests
 // ============================================================
@@ -1377,6 +1416,12 @@ struct FactoryTaskSharedState
     std::condition_variable cv;
     int                     created_instance_count = 0;
     std::vector<int>        executed_instance_ids;
+    int                     authoring_session_count = 0;
+    int                     get_document_count = 0;
+    int                     apply_change_count = 0;
+    int                     compile_count = 0;
+    int64_t                 last_context_revision = -1;
+    std::string             last_props_key1_value;
 };
 
 class FactoryBackedTask final : public Das::PluginInterface::IDasTask
@@ -1451,11 +1496,34 @@ public:
     DasResult Do(
         Das::PluginInterface::IDasStopToken*,
         Das::ExportInterface::IDasJson*,
-        Das::ExportInterface::IDasJson*) override
+        Das::ExportInterface::IDasJson* p_task_settings_json) override
     {
+        std::string key1_value;
+        if (p_task_settings_json != nullptr)
+        {
+            DasPtr<IDasReadOnlyString> key;
+            if (DAS_S_OK == CreateIDasReadOnlyStringFromUtf8("key1", key.Put())
+                && key)
+            {
+                DasPtr<IDasReadOnlyString> value;
+                if (DAS_S_OK
+                        == p_task_settings_json->GetStringByName(
+                            key.Get(),
+                            value.Put())
+                    && value)
+                {
+                    const char* raw = nullptr;
+                    if (DAS_S_OK == value->GetUtf8(&raw) && raw)
+                    {
+                        key1_value = raw;
+                    }
+                }
+            }
+        }
         {
             std::lock_guard<std::mutex> lock(state_->mutex);
             state_->executed_instance_ids.push_back(instance_id_);
+            state_->last_props_key1_value = std::move(key1_value);
         }
         state_->cv.notify_all();
         return DAS_S_OK;
@@ -1477,6 +1545,235 @@ private:
     std::atomic<uint32_t>                   ref_count_{0};
     std::shared_ptr<FactoryTaskSharedState> state_;
     int                                     instance_id_ = 0;
+};
+
+class FakeAuthoringSession final
+    : public Das::PluginInterface::IDasTaskAuthoringSession
+{
+public:
+    explicit FakeAuthoringSession(
+        std::shared_ptr<FactoryTaskSharedState> state)
+        : state_(std::move(state))
+    {
+    }
+
+    uint32_t AddRef() override { return ++ref_count_; }
+
+    uint32_t Release() override
+    {
+        auto count = --ref_count_;
+        if (count == 0)
+        {
+            delete this;
+        }
+        return count;
+    }
+
+    DasResult QueryInterface(const DasGuid& iid, void** pp) override
+    {
+        if (!pp)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        if (iid == DasIidOf<IDasBase>())
+        {
+            *pp = static_cast<IDasBase*>(this);
+            AddRef();
+            return DAS_S_OK;
+        }
+        if (iid
+            == DasIidOf<Das::PluginInterface::IDasTaskAuthoringSession>())
+        {
+            *pp = static_cast<
+                Das::PluginInterface::IDasTaskAuthoringSession*>(this);
+            AddRef();
+            return DAS_S_OK;
+        }
+        *pp = nullptr;
+        return DAS_E_NO_INTERFACE;
+    }
+
+    DasResult GetDocument(
+        Das::ExportInterface::IDasJson*,
+        Das::ExportInterface::IDasJson** pp_out_document_json) override
+    {
+        if (!pp_out_document_json)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        {
+            std::lock_guard<std::mutex> lock(state_->mutex);
+            ++state_->get_document_count;
+        }
+
+        yyjson::value document(Das::Utils::MakeYyjsonObject());
+        auto          obj = document.as_object();
+        (*obj)[std::string_view("version")] = 1;
+        (*obj)[std::string_view("kind")] = "formSequence";
+        (*obj)[std::string_view("revision")] = 0;
+        (*obj)[std::string_view("values")] =
+            yyjson::value(Das::Utils::MakeYyjsonObject());
+        (*obj)[std::string_view("view")] =
+            yyjson::value(Das::Utils::MakeYyjsonObject());
+        (*obj)[std::string_view("schema")] =
+            yyjson::value(Das::Utils::MakeYyjsonObject());
+        (*obj)[std::string_view("catalog")] =
+            yyjson::value(Das::Utils::MakeYyjsonObject());
+        (*obj)[std::string_view("state")] =
+            yyjson::value(Das::Utils::MakeYyjsonObject());
+        (*obj)[std::string_view("diagnostics")] =
+            yyjson::value(Das::Utils::MakeYyjsonArray());
+        (*obj)[std::string_view("migration")] =
+            yyjson::value(Das::Utils::MakeYyjsonObject());
+
+        auto wrapped = Das::MakeDasPtr<Das::Core::Utils::IDasJsonImpl>(
+            std::move(document));
+        *pp_out_document_json = wrapped.Get();
+        (*pp_out_document_json)->AddRef();
+        return DAS_S_OK;
+    }
+
+    DasResult ApplyChange(
+        Das::ExportInterface::IDasJson*,
+        Das::ExportInterface::IDasJson** pp_out_result_json) override
+    {
+        if (!pp_out_result_json)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        {
+            std::lock_guard<std::mutex> lock(state_->mutex);
+            ++state_->apply_change_count;
+        }
+
+        yyjson::value result(Das::Utils::MakeYyjsonObject());
+        yyjson::value props(Das::Utils::MakeYyjsonObject());
+        (*props.as_object())[std::string_view("key1")] = "accepted";
+        (*result.as_object())[std::string_view("acceptedProperties")] =
+            std::move(props);
+        (*result.as_object())[std::string_view("sourceFingerprint")] =
+            "fake-source";
+        (*result.as_object())[std::string_view("migration")] =
+            yyjson::value(Das::Utils::MakeYyjsonObject());
+
+        auto wrapped = Das::MakeDasPtr<Das::Core::Utils::IDasJsonImpl>(
+            std::move(result));
+        *pp_out_result_json = wrapped.Get();
+        (*pp_out_result_json)->AddRef();
+        return DAS_S_OK;
+    }
+
+    DasResult Compile(
+        Das::ExportInterface::IDasJson*,
+        Das::ExportInterface::IDasJson** pp_out_result_json) override
+    {
+        if (!pp_out_result_json)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        {
+            std::lock_guard<std::mutex> lock(state_->mutex);
+            ++state_->compile_count;
+        }
+        yyjson::value result(Das::Utils::MakeYyjsonObject());
+        (*result.as_object())[std::string_view("ok")] = true;
+        auto wrapped = Das::MakeDasPtr<Das::Core::Utils::IDasJsonImpl>(
+            std::move(result));
+        *pp_out_result_json = wrapped.Get();
+        (*pp_out_result_json)->AddRef();
+        return DAS_S_OK;
+    }
+
+private:
+    std::atomic<uint32_t>                   ref_count_{0};
+    std::shared_ptr<FactoryTaskSharedState> state_;
+};
+
+class FakeAuthoringSessionFactory final
+    : public Das::PluginInterface::IDasTaskAuthoringSessionFactory
+{
+public:
+    explicit FakeAuthoringSessionFactory(
+        std::shared_ptr<FactoryTaskSharedState> state)
+        : state_(std::move(state))
+    {
+    }
+
+    uint32_t AddRef() override { return ++ref_count_; }
+
+    uint32_t Release() override
+    {
+        auto count = --ref_count_;
+        if (count == 0)
+        {
+            delete this;
+        }
+        return count;
+    }
+
+    DasResult QueryInterface(const DasGuid& iid, void** pp) override
+    {
+        if (!pp)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        if (iid == DasIidOf<IDasBase>())
+        {
+            *pp = static_cast<IDasBase*>(this);
+            AddRef();
+            return DAS_S_OK;
+        }
+        if (iid
+            == DasIidOf<
+                Das::PluginInterface::IDasTaskAuthoringSessionFactory>())
+        {
+            *pp = static_cast<
+                Das::PluginInterface::IDasTaskAuthoringSessionFactory*>(this);
+            AddRef();
+            return DAS_S_OK;
+        }
+        *pp = nullptr;
+        return DAS_E_NO_INTERFACE;
+    }
+
+    DasResult CreateSession(
+        const DasGuid&,
+        Das::ExportInterface::IDasJson* p_context_json,
+        Das::PluginInterface::IDasTaskAuthoringSession** pp_out_session)
+        override
+    {
+        if (!pp_out_session)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        int64_t revision = -1;
+        if (p_context_json)
+        {
+            DasPtr<IDasReadOnlyString> key;
+            if (DAS_S_OK
+                    == CreateIDasReadOnlyStringFromUtf8(
+                        "revision",
+                        key.Put())
+                && key)
+            {
+                p_context_json->GetIntByName(key.Get(), &revision);
+            }
+        }
+        {
+            std::lock_guard<std::mutex> lock(state_->mutex);
+            ++state_->authoring_session_count;
+            state_->last_context_revision = revision;
+        }
+
+        auto* session = new FakeAuthoringSession(state_);
+        session->AddRef();
+        *pp_out_session = session;
+        return DAS_S_OK;
+    }
+
+private:
+    std::atomic<uint32_t>                   ref_count_{0};
+    std::shared_ptr<FactoryTaskSharedState> state_;
 };
 
 class FactoryTaskPluginPackage final
@@ -1532,12 +1829,18 @@ public:
         {
             return DAS_E_INVALID_POINTER;
         }
-        if (index != 0)
+        if (index == 0)
         {
-            return DAS_E_OUT_OF_RANGE;
+            *p_out_feature = Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK;
+            return DAS_S_OK;
         }
-        *p_out_feature = Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK;
-        return DAS_S_OK;
+        if (index == 1)
+        {
+            *p_out_feature = Das::PluginInterface::
+                DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY;
+            return DAS_S_OK;
+        }
+        return DAS_E_OUT_OF_RANGE;
     }
 
     DasResult CreateFeatureInterface(
@@ -1548,16 +1851,23 @@ public:
         {
             return DAS_E_INVALID_POINTER;
         }
-        if (index != 0)
+        if (index == 0)
         {
-            return DAS_E_OUT_OF_RANGE;
+            DasOutPtr<IDasBase> result(pp_out_interface);
+            auto*               task = new FactoryBackedTask(state_);
+            result.Set(task);
+            result.Keep();
+            return DAS_S_OK;
         }
-
-        DasOutPtr<IDasBase> result(pp_out_interface);
-        auto*               task = new FactoryBackedTask(state_);
-        result.Set(task);
-        result.Keep();
-        return DAS_S_OK;
+        if (index == 1)
+        {
+            DasOutPtr<IDasBase> result(pp_out_interface);
+            auto* factory = new FakeAuthoringSessionFactory(state_);
+            result.Set(factory);
+            result.Keep();
+            return DAS_S_OK;
+        }
+        return DAS_E_OUT_OF_RANGE;
     }
 
     DasResult CanUnloadNow(bool* can_unload_now) override
@@ -1662,6 +1972,16 @@ void WriteFactoryPluginManifest(const std::filesystem::path& manifest_path)
             "Scheduler test task";
         (*task_entry.as_object())[std::string_view("descriptors")] =
             yyjson::value(Das::Utils::MakeYyjsonArray());
+        {
+            yyjson::value authoring(Das::Utils::MakeYyjsonObject());
+            (*authoring.as_object())[std::string_view("featureIndex")] = 1;
+            yyjson::value supported(Das::Utils::MakeYyjsonArray());
+            (*supported.as_array()).emplace_back("formSequence");
+            (*authoring.as_object())[std::string_view("supportedKinds")] =
+                std::move(supported);
+            (*task_entry.as_object())[std::string_view("authoring")] =
+                std::move(authoring);
+        }
         yyjson::value tasks_obj(Das::Utils::MakeYyjsonObject());
         (*tasks_obj.as_object())[std::string_view(FactoryTaskGuidString)] =
             std::move(task_entry);
@@ -2218,6 +2538,166 @@ TEST_F(SchedulerRuntimeBackedTest, AddTask_CreatesDistinctRuntimeInstances)
         shared_state_->executed_instance_ids[1]);
 }
 
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerAuthoringTaskCapabilityRegistryGetDocument)
+{
+    yyjson::value task0(Das::Utils::MakeYyjsonObject());
+    (*task0.as_object())[std::string_view("id")] = 0;
+    (*task0.as_object())[std::string_view("taskGuid")] =
+        FactoryTaskGuidString;
+    (*task0.as_object())[std::string_view("pluginGuid")] =
+        FactoryPluginGuidString;
+    (*task0.as_object())[std::string_view("properties")] =
+        yyjson::value(Das::Utils::MakeYyjsonObject());
+    WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    yyjson::value request(Das::Utils::MakeYyjsonObject());
+    auto          result = scheduler_->GetTaskAuthoringDocument(0, request);
+    auto          obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    ASSERT_TRUE(obj->contains(std::string_view("document")));
+    auto document = (*obj)[std::string_view("document")].as_object();
+    ASSERT_TRUE(document.has_value());
+    EXPECT_EQ(
+        (*document)[std::string_view("kind")].as_string().value_or(""),
+        std::string_view("formSequence"));
+
+    std::lock_guard<std::mutex> lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->authoring_session_count, 1);
+    EXPECT_EQ(shared_state_->get_document_count, 1);
+    EXPECT_EQ(shared_state_->last_context_revision, 0);
+}
+
+TEST_F(SchedulerRuntimeBackedTest, SchedulerAuthoringRevisionConflict)
+{
+    yyjson::value task0(Das::Utils::MakeYyjsonObject());
+    (*task0.as_object())[std::string_view("id")] = 0;
+    (*task0.as_object())[std::string_view("taskGuid")] =
+        FactoryTaskGuidString;
+    (*task0.as_object())[std::string_view("pluginGuid")] =
+        FactoryPluginGuidString;
+    (*task0.as_object())[std::string_view("properties")] =
+        yyjson::value(Das::Utils::MakeYyjsonObject());
+    {
+        yyjson::value authoring(Das::Utils::MakeYyjsonObject());
+        (*authoring.as_object())[std::string_view("revision")] = 3;
+        (*task0.as_object())[std::string_view("authoring")] =
+            std::move(authoring);
+    }
+    WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    yyjson::value change(Das::Utils::MakeYyjsonObject());
+    (*change.as_object())[std::string_view("baseRevision")] = 2;
+    (*change.as_object())[std::string_view("kind")] = "setValue";
+
+    auto result = scheduler_->ApplyTaskAuthoringChange(0, change);
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    EXPECT_EQ(
+        (*obj)[std::string_view("errorKind")].as_string().value_or(""),
+        std::string_view("revisionConflict"));
+    EXPECT_EQ(
+        (*obj)[std::string_view("currentRevision")].as_sint().value_or(-1),
+        3);
+
+    std::lock_guard<std::mutex> lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->apply_change_count, 0);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerAuthoringApplyPersistsSnapshot_AuthoringPersistence_ExecutionSnapshot)
+{
+    yyjson::value task0(Das::Utils::MakeYyjsonObject());
+    (*task0.as_object())[std::string_view("id")] = 0;
+    (*task0.as_object())[std::string_view("taskGuid")] =
+        FactoryTaskGuidString;
+    (*task0.as_object())[std::string_view("pluginGuid")] =
+        FactoryPluginGuidString;
+    (*task0.as_object())[std::string_view("nextExecutionTime")] =
+        yyjson::value{};
+    {
+        yyjson::value props(Das::Utils::MakeYyjsonObject());
+        (*props.as_object())[std::string_view("key1")] = "initial";
+        (*task0.as_object())[std::string_view("properties")] =
+            std::move(props);
+    }
+    WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    yyjson::value change(Das::Utils::MakeYyjsonObject());
+    (*change.as_object())[std::string_view("baseRevision")] = 0;
+    (*change.as_object())[std::string_view("kind")] = "setValue";
+
+    auto result = scheduler_->ApplyTaskAuthoringChange(0, change);
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    EXPECT_TRUE((*obj)[std::string_view("ok")].as_bool().value_or(false));
+    EXPECT_EQ((*obj)[std::string_view("revision")].as_sint().value_or(-1), 1);
+
+    auto persisted = settings_manager_->GetTaskInstanceJson("0", 0);
+    auto persisted_obj = persisted.as_object();
+    ASSERT_TRUE(persisted_obj.has_value());
+    auto props =
+        (*persisted_obj)[std::string_view("properties")].as_object();
+    ASSERT_TRUE(props.has_value());
+    EXPECT_EQ(
+        (*props)[std::string_view("key1")].as_string().value_or(""),
+        std::string_view("accepted"));
+    auto authoring =
+        (*persisted_obj)[std::string_view("authoring")].as_object();
+    ASSERT_TRUE(authoring.has_value());
+    EXPECT_EQ(
+        (*authoring)[std::string_view("revision")].as_sint().value_or(-1),
+        1);
+    EXPECT_EQ(
+        (*authoring)[std::string_view("sourceFingerprint")]
+            .as_string()
+            .value_or(""),
+        std::string_view("fake-source"));
+
+    ASSERT_EQ(scheduler_->Enable(), DAS_S_OK);
+    ASSERT_TRUE(WaitForExecutions(1, std::chrono::seconds(2)));
+    ASSERT_EQ(scheduler_->Disable(), DAS_S_OK);
+
+    std::lock_guard<std::mutex> lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->apply_change_count, 1);
+    EXPECT_EQ(shared_state_->last_props_key1_value, "accepted");
+}
+
+TEST_F(SchedulerRuntimeBackedTest, SchedulerAuthoringCompilePreviewOnly)
+{
+    yyjson::value task0(Das::Utils::MakeYyjsonObject());
+    (*task0.as_object())[std::string_view("id")] = 0;
+    (*task0.as_object())[std::string_view("taskGuid")] =
+        FactoryTaskGuidString;
+    (*task0.as_object())[std::string_view("pluginGuid")] =
+        FactoryPluginGuidString;
+    (*task0.as_object())[std::string_view("properties")] =
+        yyjson::value(Das::Utils::MakeYyjsonObject());
+    WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    yyjson::value request(Das::Utils::MakeYyjsonObject());
+    auto          result = scheduler_->CompileTaskAuthoring(0, request);
+    auto          obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    auto compile = (*obj)[std::string_view("compile")].as_object();
+    ASSERT_TRUE(compile.has_value());
+    EXPECT_TRUE((*compile)[std::string_view("ok")].as_bool().value_or(false));
+
+    std::lock_guard<std::mutex> lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->compile_count, 1);
+    EXPECT_TRUE(shared_state_->executed_instance_ids.empty());
+}
+
 // ============================================================
 // Scheduler controller validation tests
 // ============================================================
@@ -2226,7 +2706,7 @@ namespace
 {
 
     /// Fake IDasSchedulerService that records method calls.
-    class FakeSchedulerService final : public IDasSchedulerService
+    class FakeSchedulerService : public IDasSchedulerService
     {
     public:
         std::atomic<uint32_t> ref_count_{0};
@@ -2240,6 +2720,10 @@ namespace
         std::atomic<bool> delete_task_called{false};
         std::atomic<bool> update_props_called{false};
         std::atomic<bool> update_internal_props_called{false};
+        std::atomic<bool> authoring_get_called{false};
+        std::atomic<bool> authoring_apply_called{false};
+        std::atomic<bool> authoring_compile_called{false};
+        int64_t           last_authoring_task_id = -1;
 
         DasResult next_result{DAS_S_OK};
 
@@ -2325,9 +2809,60 @@ namespace
             update_internal_props_called = true;
             return next_result;
         }
+        DasResult GetTaskAuthoringDocument(
+            int64_t              task_id,
+            IDasReadOnlyString*,
+            IDasReadOnlyString** pp_out_json) override
+        {
+            authoring_get_called = true;
+            last_authoring_task_id = task_id;
+            return WriteAuthoringJson(
+                pp_out_json,
+                R"({"taskId":42,"document":{"kind":"formSequence","revision":0}})");
+        }
+        DasResult ApplyTaskAuthoringChange(
+            int64_t              task_id,
+            IDasReadOnlyString*,
+            IDasReadOnlyString** pp_out_json) override
+        {
+            authoring_apply_called = true;
+            last_authoring_task_id = task_id;
+            return WriteAuthoringJson(
+                pp_out_json,
+                R"({"ok":true,"taskId":42,"revision":1})");
+        }
+        DasResult CompileTaskAuthoring(
+            int64_t              task_id,
+            IDasReadOnlyString*,
+            IDasReadOnlyString** pp_out_json) override
+        {
+            authoring_compile_called = true;
+            last_authoring_task_id = task_id;
+            return WriteAuthoringJson(
+                pp_out_json,
+                R"({"taskId":42,"compile":{"ok":true}})");
+        }
         DasResult SetStateNotifyCallback(SchedulerNotifyFunc, void*) override
         {
             return DAS_S_OK;
+        }
+
+    private:
+        DasResult WriteAuthoringJson(
+            IDasReadOnlyString** pp_out_json,
+            const char*          json)
+        {
+            if (!pp_out_json)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            DasOutPtr<IDasReadOnlyString> result(pp_out_json);
+            auto cr = CreateIDasReadOnlyStringFromUtf8(json, result.Put());
+            if (DAS::IsOk(cr))
+            {
+                result.Keep();
+            }
+            return cr;
         }
     };
 
@@ -2387,7 +2922,7 @@ TEST_F(SchedulerControllerTest, Initialize_ProfileNonZero_Rejected)
     auto resp = controller_->Initialize(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(
-        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->initialize_called);
 }
@@ -2398,7 +2933,7 @@ TEST_F(SchedulerControllerTest, Start_ProfileNonZero_Rejected)
     auto resp = controller_->Start(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(
-        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->start_called);
 }
@@ -2409,7 +2944,7 @@ TEST_F(SchedulerControllerTest, Stop_ProfileNonZero_Rejected)
     auto resp = controller_->Stop(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(
-        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->stop_called);
 }
@@ -2420,7 +2955,7 @@ TEST_F(SchedulerControllerTest, Get_ProfileNonZero_Rejected)
     auto resp = controller_->Get(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(
-        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->get_called);
 }
@@ -2435,7 +2970,7 @@ TEST_F(SchedulerControllerTest, AddTask_ProfileNonZero_Rejected)
     auto resp = controller_->AddTask(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(
-        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->add_task_called);
 }
@@ -2449,7 +2984,7 @@ TEST_F(SchedulerControllerTest, DeleteTask_ProfileNonZero_Rejected)
     auto resp = controller_->DeleteTask(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(
-        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->delete_task_called);
 }
@@ -2465,7 +3000,7 @@ TEST_F(SchedulerControllerTest, AddTask_MalformedGuid_Rejected)
     auto resp = controller_->AddTask(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(
-        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->add_task_called);
 }
@@ -2481,7 +3016,7 @@ TEST_F(SchedulerControllerTest, DeleteTask_MalformedTaskId_Rejected)
     auto resp = controller_->DeleteTask(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(
-        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->delete_task_called);
 }
@@ -2495,7 +3030,7 @@ TEST_F(SchedulerControllerTest, UpdateProps_MalformedTaskId_Rejected)
     auto resp = controller_->UpdateTaskProperties(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(
-        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->update_props_called);
 }
@@ -2509,7 +3044,7 @@ TEST_F(SchedulerControllerTest, UpdateInternalProps_MalformedTaskId_Rejected)
     auto resp = controller_->UpdateTaskInternalProperties(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(
-        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->update_internal_props_called);
 }
@@ -2525,7 +3060,7 @@ TEST_F(SchedulerControllerTest, Initialize_NonArrayDisabledGuids_Rejected)
     auto resp = controller_->Initialize(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(
-        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->initialize_called);
 }
@@ -2540,7 +3075,7 @@ TEST_F(SchedulerControllerTest, Initialize_MalformedGuidMember_Skipped)
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     // Should succeed (malformed GUIDs are skipped, valid ones pass)
     EXPECT_EQ(
-        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_S_OK);
     EXPECT_TRUE(fake_svc_->initialize_called);
 }
@@ -2554,7 +3089,7 @@ TEST_F(SchedulerControllerTest, Initialize_AbsentDisabledGuids_Forwarded)
     auto resp = controller_->Initialize(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(
-        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_S_OK);
     EXPECT_TRUE(fake_svc_->initialize_called);
 }
@@ -2568,7 +3103,7 @@ TEST_F(SchedulerControllerTest, Initialize_Valid_Forwarded)
     auto resp = controller_->Initialize(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(
-        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_S_OK);
     EXPECT_TRUE(fake_svc_->initialize_called);
 }
@@ -2579,7 +3114,7 @@ TEST_F(SchedulerControllerTest, Start_Valid_Forwarded)
     auto resp = controller_->Start(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(
-        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_S_OK);
     EXPECT_TRUE(fake_svc_->start_called);
 }
@@ -2590,7 +3125,7 @@ TEST_F(SchedulerControllerTest, Stop_Valid_Forwarded)
     auto resp = controller_->Stop(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(
-        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_S_OK);
     EXPECT_TRUE(fake_svc_->stop_called);
 }
@@ -2601,10 +3136,10 @@ TEST_F(SchedulerControllerTest, Get_Valid_Forwarded)
     auto resp = controller_->Get(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(
-        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_S_OK);
     EXPECT_TRUE(
-        (*body.as_object())[std::string_view("Data")].as_object()->contains(
+        (*body.as_object())[std::string_view("data")].as_object()->contains(
             std::string_view("state")));
     EXPECT_TRUE(fake_svc_->get_called);
 }
@@ -2619,10 +3154,10 @@ TEST_F(SchedulerControllerTest, AddTask_Valid_Forwarded)
     auto resp = controller_->AddTask(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(
-        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_S_OK);
     EXPECT_EQ(
-        (*(*body.as_object())[std::string_view("Data")]
+        (*(*body.as_object())[std::string_view("data")]
               .as_object())[std::string_view("taskId")]
             .as_sint()
             .value(),
@@ -2639,7 +3174,7 @@ TEST_F(SchedulerControllerTest, DeleteTask_Valid_Forwarded)
     auto resp = controller_->DeleteTask(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(
-        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_S_OK);
     EXPECT_TRUE(fake_svc_->delete_task_called);
 }
@@ -2653,7 +3188,7 @@ TEST_F(SchedulerControllerTest, UpdateProps_Valid_Forwarded)
     auto resp = controller_->UpdateTaskProperties(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(
-        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_S_OK);
     EXPECT_TRUE(fake_svc_->update_props_called);
 }
@@ -2667,9 +3202,139 @@ TEST_F(SchedulerControllerTest, UpdateInternalProps_Valid_Forwarded)
     auto resp = controller_->UpdateTaskInternalProperties(req);
     auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
     EXPECT_EQ(
-        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_S_OK);
     EXPECT_TRUE(fake_svc_->update_internal_props_called);
+}
+
+TEST_F(SchedulerControllerTest, SchedulerControllerAuthoringGet_Forwarded)
+{
+    auto req = MakeRequest(
+        "/api/v1/scheduler/0/tasks/42/authoring/get",
+        R"({"view":"default"})",
+        {{"profile", "0"}, {"taskId", "42"}});
+    auto resp = controller_->AuthoringGet(req);
+    auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
+    auto root = body.as_object().value();
+    auto code = root[std::string_view("code")].as_sint();
+    if (!code)
+    {
+        code = root[std::string_view("code")].as_sint();
+    }
+    EXPECT_EQ(code.value_or(DAS_E_FAIL), DAS_S_OK);
+    auto data_value = root[std::string_view("data")];
+    if (data_value.is_null())
+    {
+        data_value = root[std::string_view("data")];
+    }
+    auto data = data_value.as_object();
+    ASSERT_TRUE(data.has_value());
+    EXPECT_TRUE(data->contains(std::string_view("document")));
+    EXPECT_TRUE(fake_svc_->authoring_get_called);
+    EXPECT_EQ(fake_svc_->last_authoring_task_id, 42);
+}
+
+TEST_F(SchedulerControllerTest, SchedulerControllerAuthoringApply_Forwarded)
+{
+    auto req = MakeRequest(
+        "/api/v1/scheduler/0/tasks/42/authoring/apply",
+        R"({"baseRevision":0,"kind":"setValue","payload":{}})",
+        {{"profile", "0"}, {"taskId", "42"}});
+    auto resp = controller_->AuthoringApply(req);
+    auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
+    auto root = body.as_object().value();
+    auto code = root[std::string_view("code")].as_sint();
+    if (!code)
+    {
+        code = root[std::string_view("code")].as_sint();
+    }
+    EXPECT_EQ(code.value_or(DAS_E_FAIL), DAS_S_OK);
+    EXPECT_TRUE(fake_svc_->authoring_apply_called);
+    EXPECT_EQ(fake_svc_->last_authoring_task_id, 42);
+}
+
+TEST_F(SchedulerControllerTest, SchedulerControllerAuthoringCompile_Forwarded)
+{
+    auto req = MakeRequest(
+        "/api/v1/scheduler/0/tasks/42/authoring/compile",
+        R"({"mode":"preview"})",
+        {{"profile", "0"}, {"taskId", "42"}});
+    auto resp = controller_->AuthoringCompile(req);
+    auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
+    auto root = body.as_object().value();
+    auto code = root[std::string_view("code")].as_sint();
+    if (!code)
+    {
+        code = root[std::string_view("code")].as_sint();
+    }
+    EXPECT_EQ(code.value_or(DAS_E_FAIL), DAS_S_OK);
+    EXPECT_TRUE(fake_svc_->authoring_compile_called);
+    EXPECT_EQ(fake_svc_->last_authoring_task_id, 42);
+}
+
+TEST_F(SchedulerControllerTest, SchedulerControllerAuthoringErrorKind_Data)
+{
+    class ErrorAuthoringService final : public FakeSchedulerService
+    {
+    public:
+        DasResult ApplyTaskAuthoringChange(
+            int64_t,
+            IDasReadOnlyString*,
+            IDasReadOnlyString** pp_out_json) override
+        {
+            return WriteError(
+                pp_out_json,
+                R"({"ok":false,"errorKind":"revisionConflict","message":"stale","currentRevision":7})");
+        }
+
+    private:
+        DasResult WriteError(IDasReadOnlyString** pp_out_json, const char* json)
+        {
+            if (!pp_out_json)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            DasOutPtr<IDasReadOnlyString> result(pp_out_json);
+            auto cr = CreateIDasReadOnlyStringFromUtf8(json, result.Put());
+            if (DAS::IsOk(cr))
+            {
+                result.Keep();
+            }
+            return cr;
+        }
+    };
+
+    auto* error_svc = new ErrorAuthoringService();
+    error_svc->AddRef();
+    Das::Http::DasSchedulerController controller(
+        *error_svc,
+        std::filesystem::current_path() / "plugins");
+
+    auto req = MakeRequest(
+        "/api/v1/scheduler/0/tasks/42/authoring/apply",
+        R"({"baseRevision":0,"kind":"setValue","payload":{}})",
+        {{"profile", "0"}, {"taskId", "42"}});
+    auto resp = controller.AuthoringApply(req);
+    auto body = *Das::Utils::ParseYyjsonFromString(resp.Release().body());
+    auto root = body.as_object().value();
+    auto code = root[std::string_view("code")].as_sint();
+    if (!code)
+    {
+        code = root[std::string_view("code")].as_sint();
+    }
+    EXPECT_EQ(code.value_or(DAS_S_OK), DAS_E_FAIL);
+    auto data_value = root[std::string_view("data")];
+    if (data_value.is_null())
+    {
+        data_value = root[std::string_view("data")];
+    }
+    auto data = data_value.as_object();
+    ASSERT_TRUE(data.has_value());
+    EXPECT_EQ(
+        (*data)[std::string_view("errorKind")].as_string().value_or(""),
+        std::string_view("revisionConflict"));
+
+    error_svc->Release();
 }
 
 // ── Non-initialize paths do not load scheduler plugins ──
@@ -2727,12 +3392,12 @@ TEST(ProfileControllerTest, GetPluginSettings_SFalseReportsEmptyObjectRecovery)
     auto body = *Das::Utils::ParseYyjsonFromString(response.Release().body());
 
     EXPECT_EQ(
-        (*body.as_object())[std::string_view("Code")].as_sint().value(),
+        (*body.as_object())[std::string_view("code")].as_sint().value(),
         DAS_S_FALSE);
     EXPECT_EQ(
-        (*body.as_object())[std::string_view("Message")].as_string().value(),
+        (*body.as_object())[std::string_view("message")].as_string().value(),
         "Plugin settings were invalid and restored to an empty object");
-    EXPECT_TRUE((*body.as_object())[std::string_view("Data")].is_object());
+    EXPECT_TRUE((*body.as_object())[std::string_view("data")].is_object());
 
     std::filesystem::remove_all(test_dir);
 }
@@ -3049,6 +3714,67 @@ TEST_F(SchedulerLifecycleTest, FullTaskInstanceLifecycle)
         "A1B2C3D4-E5F6-7890-ABCD-EF1234567890");
 
     // Cleanup: release the fake task
+    fake->Release();
+}
+
+TEST_F(
+    SchedulerLifecycleTest,
+    StaticDescriptorCompatibilityAuthoringCapabilityMissing)
+{
+    auto* fake = new FakeTask();
+    fake->AddRef();
+    DasGuid fake_plugin_guid{};
+    fake_plugin_guid.data1 = 0xAAAA;
+    plugin_manager_->RegisterTestFeature(
+        Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK,
+        fake_plugin_guid,
+        static_cast<IDasBase*>(fake));
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    int64_t task_id = -1;
+    ASSERT_EQ(scheduler_->AddTask(FakeTaskGuid, &task_id), DAS_S_OK);
+
+    yyjson::value request(Das::Utils::MakeYyjsonObject());
+    auto document = scheduler_->GetTaskAuthoringDocument(task_id, request);
+    ASSERT_TRUE(document.is_object());
+    EXPECT_EQ(
+        (*document.as_object())[std::string_view("errorKind")]
+            .as_string()
+            .value_or(""),
+        std::string_view("capabilityMissing"));
+
+    yyjson::value change(Das::Utils::MakeYyjsonObject());
+    (*change.as_object())[std::string_view("baseRevision")] = 0;
+    (*change.as_object())[std::string_view("kind")] = "setValue";
+    auto apply = scheduler_->ApplyTaskAuthoringChange(task_id, change);
+    ASSERT_TRUE(apply.is_object());
+    EXPECT_EQ(
+        (*apply.as_object())[std::string_view("errorKind")]
+            .as_string()
+            .value_or(""),
+        std::string_view("capabilityMissing"));
+
+    auto compile = scheduler_->CompileTaskAuthoring(task_id, request);
+    ASSERT_TRUE(compile.is_object());
+    EXPECT_EQ(
+        (*compile.as_object())[std::string_view("errorKind")]
+            .as_string()
+            .value_or(""),
+        std::string_view("capabilityMissing"));
+
+    auto state = scheduler_->Get();
+    ASSERT_TRUE(state.is_object());
+    ASSERT_EQ(
+        (*state.as_object())[std::string_view("tasks")].as_array()->size(),
+        1u);
+    EXPECT_EQ(
+        (*(*(*state.as_object())[std::string_view("tasks")].as_array())[0]
+              .as_object())[std::string_view("availability")]
+            .as_string()
+            .value_or(""),
+        std::string_view("available"));
+
     fake->Release();
 }
 

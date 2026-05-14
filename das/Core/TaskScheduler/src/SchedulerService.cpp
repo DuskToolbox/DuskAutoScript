@@ -11,6 +11,7 @@
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <das/_autogen/idl/abi/IDasTask.h>
+#include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
 
 #include <algorithm>
 #include <cassert>
@@ -122,6 +123,166 @@ namespace Das::Core::TaskScheduler
         }
 
         return ClampNextDelay(std::chrono::seconds(earliest_due - now_unix));
+    }
+
+    static yyjson::value CloneJsonValue(const yyjson::value& value)
+    {
+        auto serialized = value.write(yyjson::WriteFlag::NoFlag);
+        auto parsed = Das::Utils::ParseYyjsonFromString(
+            std::string_view(serialized.data(), serialized.size()));
+        if (parsed)
+        {
+            return std::move(*parsed);
+        }
+        return Das::Utils::MakeYyjsonObject();
+    }
+
+    static DasPtr<Das::ExportInterface::IDasJson> WrapJsonValue(
+        yyjson::value value)
+    {
+        return Das::MakeDasPtr<Das::Core::Utils::IDasJsonImpl>(
+            std::move(value));
+    }
+
+    static yyjson::value ReadJsonInterface(
+        Das::ExportInterface::IDasJson* json)
+    {
+        if (!json)
+        {
+            return Das::Utils::MakeYyjsonObject();
+        }
+
+        DasPtr<IDasReadOnlyString> text;
+        if (DAS::IsFailed(json->ToString(0, text.Put())) || !text)
+        {
+            return Das::Utils::MakeYyjsonObject();
+        }
+
+        const char* raw = nullptr;
+        if (DAS::IsFailed(text->GetUtf8(&raw)) || raw == nullptr)
+        {
+            return Das::Utils::MakeYyjsonObject();
+        }
+
+        auto parsed = Das::Utils::ParseYyjsonFromString(raw);
+        if (!parsed)
+        {
+            return Das::Utils::MakeYyjsonObject();
+        }
+        return std::move(*parsed);
+    }
+
+    static yyjson::value MakeAuthoringResponseError(
+        std::string_view kind,
+        std::string_view message)
+    {
+        yyjson::value result(Das::Utils::MakeYyjsonObject());
+        auto          obj = result.as_object();
+        (*obj)[std::string_view("ok")] = false;
+        (*obj)[std::string_view("errorKind")] = std::string(kind);
+        (*obj)[std::string_view("message")] = std::string(message);
+        return result;
+    }
+
+    static int64_t GetAuthoringRevision(const yyjson::value& task_json)
+    {
+        auto task_obj = task_json.as_object();
+        if (!task_obj || !task_obj->contains(std::string_view("authoring")))
+        {
+            return 0;
+        }
+        auto auth_obj =
+            (*task_obj)[std::string_view("authoring")].as_object();
+        if (!auth_obj || !auth_obj->contains(std::string_view("revision")))
+        {
+            return 0;
+        }
+        auto revision =
+            (*auth_obj)[std::string_view("revision")].as_sint();
+        return revision ? *revision : 0;
+    }
+
+    static yyjson::value MakeAuthoringContextJson(
+        int64_t task_id,
+        const yyjson::value& properties,
+        const yyjson::value& task_json)
+    {
+        yyjson::value context(Das::Utils::MakeYyjsonObject());
+        auto          obj = context.as_object();
+        (*obj)[std::string_view("taskId")] = task_id;
+        (*obj)[std::string_view("properties")] = CloneJsonValue(properties);
+        (*obj)[std::string_view("revision")] =
+            GetAuthoringRevision(task_json);
+
+        auto task_obj = task_json.as_object();
+        if (task_obj && task_obj->contains(std::string_view("authoring")))
+        {
+            (*obj)[std::string_view("authoring")] =
+                CloneJsonValue((*task_obj)[std::string_view("authoring")]);
+        }
+        return context;
+    }
+
+    static std::optional<int64_t> GetBaseRevision(
+        const yyjson::value& change)
+    {
+        auto obj = change.as_object();
+        if (!obj || !obj->contains(std::string_view("baseRevision")))
+        {
+            return std::nullopt;
+        }
+        auto revision = (*obj)[std::string_view("baseRevision")].as_sint();
+        if (!revision)
+        {
+            return std::nullopt;
+        }
+        return *revision;
+    }
+
+    static std::string GetStringField(
+        const yyjson::value& value,
+        std::string_view key,
+        std::string_view fallback)
+    {
+        auto obj = value.as_object();
+        if (!obj || !obj->contains(key))
+        {
+            return std::string(fallback);
+        }
+        auto str = (*obj)[key].as_string();
+        if (!str)
+        {
+            return std::string(fallback);
+        }
+        return std::string(*str);
+    }
+
+    static DasResult CreateAuthoringSession(
+        Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager,
+        const TaskAuthoringCapability& capability,
+        int64_t task_id,
+        const yyjson::value& properties,
+        const yyjson::value& task_json,
+        DasPtr<Das::PluginInterface::IDasTaskAuthoringSession>& session)
+    {
+        DasPtr<Das::PluginInterface::IDasTaskAuthoringSessionFactory> factory;
+        auto result = plugin_manager.CreateFeatureInterface(
+            capability.plugin_guid,
+            capability.authoring_feature_index,
+            DasIidOf<
+                Das::PluginInterface::IDasTaskAuthoringSessionFactory>(),
+            reinterpret_cast<void**>(factory.Put()));
+        if (DAS::IsFailed(result) || !factory)
+        {
+            return result;
+        }
+
+        auto context = WrapJsonValue(
+            MakeAuthoringContextJson(task_id, properties, task_json));
+        return factory->CreateSession(
+            capability.task_guid,
+            context.Get(),
+            session.Put());
     }
 
     static TaskInstanceRecord* FindNextRunnableTask(
@@ -280,6 +441,7 @@ namespace Das::Core::TaskScheduler
                 // Re-initialize: clear existing runtime state
                 task_types_.clear();
                 task_instances_.clear();
+                capability_registry_.Clear();
                 for (auto it = loaded_plugin_paths_.rbegin();
                      it != loaded_plugin_paths_.rend();
                      ++it)
@@ -470,6 +632,11 @@ namespace Das::Core::TaskScheduler
                     type_record->description = td.description;
                     type_record->game_name = td.game_name;
                     type_record->descriptors = td.descriptors;
+                    capability_registry_.AddTaskDescriptor(
+                        feature_info->plugin_guid,
+                        task_guid,
+                        feature_info->feature_index,
+                        td);
                 }
             }
 
@@ -1513,6 +1680,297 @@ namespace Das::Core::TaskScheduler
         }
 
         return DAS_S_OK;
+    }
+
+    yyjson::value SchedulerService::GetTaskAuthoringDocument(
+        int64_t              task_id,
+        const yyjson::value& request)
+    {
+        TaskAuthoringCapability capability;
+        DasGuid                 task_guid{};
+        yyjson::value           properties;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto*                       inst = FindTaskInstance(task_id);
+            if (!inst)
+            {
+                return MakeAuthoringResponseError(
+                    "notFound",
+                    "Task instance was not found");
+            }
+            if (inst->availability != TaskAvailability::Available)
+            {
+                return MakeAuthoringResponseError(
+                    "unavailable",
+                    "Task instance is unavailable");
+            }
+            auto* authoring =
+                capability_registry_.FindAuthoring(inst->task_guid);
+            if (!authoring)
+            {
+                return MakeAuthoringResponseError(
+                    "capabilityMissing",
+                    "Task does not declare authoring capability");
+            }
+            capability = *authoring;
+            task_guid = inst->task_guid;
+            properties = CloneJsonValue(inst->properties);
+        }
+
+        auto& settings = plugin_manager_.GetSettingsManager();
+        auto  task_json = settings.GetTaskInstanceJson("0", task_id);
+
+        DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
+        auto session_result = CreateAuthoringSession(
+            plugin_manager_,
+            capability,
+            task_id,
+            properties,
+            task_json,
+            session);
+        if (DAS::IsFailed(session_result) || !session)
+        {
+            return MakeAuthoringResponseError(
+                "sessionCreateFailed",
+                "Failed to create task authoring session");
+        }
+
+        auto request_json = WrapJsonValue(CloneJsonValue(request));
+        DasPtr<Das::ExportInterface::IDasJson> document_json;
+        auto document_result =
+            session->GetDocument(request_json.Get(), document_json.Put());
+        if (DAS::IsFailed(document_result) || !document_json)
+        {
+            return MakeAuthoringResponseError(
+                "providerFailed",
+                "Task authoring provider failed to create document");
+        }
+
+        yyjson::value result(Das::Utils::MakeYyjsonObject());
+        auto          obj = result.as_object();
+        (*obj)[std::string_view("taskId")] = task_id;
+        (*obj)[std::string_view("taskGuid")] = GuidToString(task_guid);
+        (*obj)[std::string_view("document")] =
+            ReadJsonInterface(document_json.Get());
+        return result;
+    }
+
+    yyjson::value SchedulerService::ApplyTaskAuthoringChange(
+        int64_t              task_id,
+        const yyjson::value& change)
+    {
+        TaskAuthoringCapability capability;
+        yyjson::value           properties;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (state_.load() == SchedulerState::Running
+                || state_.load() == SchedulerState::Stopping)
+            {
+                return MakeAuthoringResponseError(
+                    "taskWorking",
+                    "Scheduler is running or stopping");
+            }
+
+            auto* inst = FindTaskInstance(task_id);
+            if (!inst)
+            {
+                return MakeAuthoringResponseError(
+                    "notFound",
+                    "Task instance was not found");
+            }
+            if (inst->availability != TaskAvailability::Available)
+            {
+                return MakeAuthoringResponseError(
+                    "unavailable",
+                    "Task instance is unavailable");
+            }
+            auto* authoring =
+                capability_registry_.FindAuthoring(inst->task_guid);
+            if (!authoring)
+            {
+                return MakeAuthoringResponseError(
+                    "capabilityMissing",
+                    "Task does not declare authoring capability");
+            }
+            capability = *authoring;
+            properties = CloneJsonValue(inst->properties);
+        }
+
+        auto& settings = plugin_manager_.GetSettingsManager();
+        auto  task_json = settings.GetTaskInstanceJson("0", task_id);
+        if (task_json.is_null() || !task_json.is_object())
+        {
+            return MakeAuthoringResponseError(
+                "notFound",
+                "Task instance file was not found");
+        }
+
+        const int64_t current_revision = GetAuthoringRevision(task_json);
+        auto          base_revision = GetBaseRevision(change);
+        if (!base_revision || *base_revision != current_revision)
+        {
+            yyjson::value result = MakeAuthoringResponseError(
+                "revisionConflict",
+                "Authoring change baseRevision is stale");
+            (*result.as_object())[std::string_view("currentRevision")] =
+                current_revision;
+            return result;
+        }
+
+        DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
+        auto session_result = CreateAuthoringSession(
+            plugin_manager_,
+            capability,
+            task_id,
+            properties,
+            task_json,
+            session);
+        if (DAS::IsFailed(session_result) || !session)
+        {
+            return MakeAuthoringResponseError(
+                "sessionCreateFailed",
+                "Failed to create task authoring session");
+        }
+
+        auto change_json = WrapJsonValue(CloneJsonValue(change));
+        DasPtr<Das::ExportInterface::IDasJson> apply_result_json;
+        auto apply_result =
+            session->ApplyChange(change_json.Get(), apply_result_json.Put());
+        if (DAS::IsFailed(apply_result) || !apply_result_json)
+        {
+            return MakeAuthoringResponseError(
+                "providerFailed",
+                "Task authoring provider rejected change");
+        }
+
+        auto accepted = ReadJsonInterface(apply_result_json.Get());
+        auto accepted_obj = accepted.as_object();
+        if (!accepted_obj
+            || !accepted_obj->contains(std::string_view("acceptedProperties")))
+        {
+            return MakeAuthoringResponseError(
+                "providerFailed",
+                "Task authoring provider did not return acceptedProperties");
+        }
+
+        const auto next_revision = current_revision + 1;
+        auto       task_obj = task_json.as_object();
+        (*task_obj)[std::string_view("properties")] =
+            CloneJsonValue((*accepted_obj)
+                               [std::string_view("acceptedProperties")]);
+
+        yyjson::value authoring(Das::Utils::MakeYyjsonObject());
+        auto          authoring_obj = authoring.as_object();
+        (*authoring_obj)[std::string_view("revision")] = next_revision;
+        (*authoring_obj)[std::string_view("kind")] =
+            GetStringField(change, "kind", "unknown");
+        (*authoring_obj)[std::string_view("sourceFingerprint")] =
+            GetStringField(accepted, "sourceFingerprint", "");
+        if (accepted_obj->contains(std::string_view("migration")))
+        {
+            (*authoring_obj)[std::string_view("migration")] =
+                CloneJsonValue((*accepted_obj)[std::string_view("migration")]);
+        }
+        else
+        {
+            (*authoring_obj)[std::string_view("migration")] =
+                Das::Utils::MakeYyjsonObject();
+        }
+        (*task_obj)[std::string_view("authoring")] = std::move(authoring);
+
+        auto persist_result =
+            settings.UpdateTaskInstanceJson("0", task_id, task_json);
+        if (DAS::IsFailed(persist_result))
+        {
+            return MakeAuthoringResponseError(
+                "persistenceFailed",
+                "Failed to persist accepted authoring change");
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto*                       inst = FindTaskInstance(task_id);
+            if (inst)
+            {
+                inst->properties =
+                    CloneJsonValue((*task_obj)[std::string_view("properties")]);
+            }
+        }
+
+        yyjson::value result(Das::Utils::MakeYyjsonObject());
+        auto          result_obj = result.as_object();
+        (*result_obj)[std::string_view("ok")] = true;
+        (*result_obj)[std::string_view("taskId")] = task_id;
+        (*result_obj)[std::string_view("revision")] = next_revision;
+        (*result_obj)[std::string_view("acceptedProperties")] =
+            CloneJsonValue((*task_obj)[std::string_view("properties")]);
+        (*result_obj)[std::string_view("authoring")] =
+            CloneJsonValue((*task_obj)[std::string_view("authoring")]);
+        return result;
+    }
+
+    yyjson::value SchedulerService::CompileTaskAuthoring(
+        int64_t              task_id,
+        const yyjson::value& request)
+    {
+        TaskAuthoringCapability capability;
+        yyjson::value           properties;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto*                       inst = FindTaskInstance(task_id);
+            if (!inst)
+            {
+                return MakeAuthoringResponseError(
+                    "notFound",
+                    "Task instance was not found");
+            }
+            auto* authoring =
+                capability_registry_.FindAuthoring(inst->task_guid);
+            if (!authoring)
+            {
+                return MakeAuthoringResponseError(
+                    "capabilityMissing",
+                    "Task does not declare authoring capability");
+            }
+            capability = *authoring;
+            properties = CloneJsonValue(inst->properties);
+        }
+
+        auto& settings = plugin_manager_.GetSettingsManager();
+        auto  task_json = settings.GetTaskInstanceJson("0", task_id);
+
+        DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
+        auto session_result = CreateAuthoringSession(
+            plugin_manager_,
+            capability,
+            task_id,
+            properties,
+            task_json,
+            session);
+        if (DAS::IsFailed(session_result) || !session)
+        {
+            return MakeAuthoringResponseError(
+                "sessionCreateFailed",
+                "Failed to create task authoring session");
+        }
+
+        auto request_json = WrapJsonValue(CloneJsonValue(request));
+        DasPtr<Das::ExportInterface::IDasJson> compile_json;
+        auto compile_result =
+            session->Compile(request_json.Get(), compile_json.Put());
+        if (DAS::IsFailed(compile_result) || !compile_json)
+        {
+            return MakeAuthoringResponseError(
+                "providerFailed",
+                "Task authoring provider failed to compile document");
+        }
+
+        yyjson::value result(Das::Utils::MakeYyjsonObject());
+        auto          obj = result.as_object();
+        (*obj)[std::string_view("taskId")] = task_id;
+        (*obj)[std::string_view("compile")] =
+            ReadJsonInterface(compile_json.Get());
+        return result;
     }
 
     // ----------------------------------------------------------------
