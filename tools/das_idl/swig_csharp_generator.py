@@ -7,7 +7,7 @@ C# SWIG 生成器
 from typing import List, Optional, TYPE_CHECKING
 from das_idl_parser import InterfaceDef, MethodDef, ParameterDef, ParamDirection, TypeInfo, TypeKind
 from swig_lang_generator_base import SwigLangGenerator
-from shared_utils import build_param_signatures
+from shared_utils import build_param_signatures, type_simple_name, type_resolved_namespace
 
 if TYPE_CHECKING:
     from swig_api_model import SwigInterfaceModel, OutParamInfo
@@ -430,7 +430,7 @@ class CSharpSwigGenerator(SwigLangGenerator):
             if any(m.name == method_name for m in interface.methods):
                 continue
 
-            base_type = prop.type_info.base_type
+            base_type = type_simple_name(prop.type_info)
             is_interface = prop.type_info.type_kind == TypeKind.INTERFACE
             is_string = base_type == 'IDasReadOnlyString'
             out_type = base_type if (is_interface or is_string) else base_type
@@ -469,14 +469,14 @@ class CSharpSwigGenerator(SwigLangGenerator):
             if out_params:
                 continue
             has_string_param = any(
-                p.direction == ParamDirection.IN and p.type_info.base_type == 'IDasReadOnlyString'
+                p.direction == ParamDirection.IN and type_simple_name(p.type_info) == 'IDasReadOnlyString'
                 for p in method.parameters
             )
             if has_string_param:
                 result.append(method)
 
         for prop in interface.properties:
-            if not prop.has_setter or prop.type_info.base_type != 'IDasReadOnlyString':
+            if not prop.has_setter or type_simple_name(prop.type_info) != 'IDasReadOnlyString':
                 continue
 
             method_name = f"Set{prop.name}"
@@ -557,9 +557,9 @@ class CSharpSwigGenerator(SwigLangGenerator):
         param_signatures_without_prefix = []
         current_namespace = interface.namespace
         for param in method.parameters:
-            param_type = param.type_info.base_type
+            param_type = type_simple_name(param.type_info)
             param_type_with_prefix = param_type
-            namespace = self.get_type_namespace(param_type)
+            namespace = type_resolved_namespace(param.type_info, self.get_type_namespace)
             if not namespace and param.type_info.type_kind == TypeKind.INTERFACE:
                 param_type_with_prefix = f'::{param_type}'
             elif namespace and namespace != current_namespace:
@@ -604,7 +604,7 @@ class CSharpSwigGenerator(SwigLangGenerator):
 """
 
         if any(
-            p.direction == ParamDirection.IN and p.type_info.base_type == 'IDasReadOnlyString'
+            p.direction == ParamDirection.IN and type_simple_name(p.type_info) == 'IDasReadOnlyString'
             for p in method.parameters
         ):
             extend_param_signatures = []
@@ -612,9 +612,9 @@ class CSharpSwigGenerator(SwigLangGenerator):
                 if param.direction == ParamDirection.OUT:
                     continue
 
-                param_type = param.type_info.base_type
+                param_type = type_simple_name(param.type_info)
                 if param.type_info.type_kind == TypeKind.INTERFACE and param_type != 'IDasReadOnlyString':
-                    namespace = self.get_type_namespace(param_type)
+                    namespace = type_resolved_namespace(param.type_info, self.get_type_namespace)
                     if namespace:
                         param_type = f'{namespace}::{param_type}'
 
@@ -662,7 +662,7 @@ class CSharpSwigGenerator(SwigLangGenerator):
     def _generate_single_string_param_helper(self, method: MethodDef, qualified_name: str) -> str:
         """生成单个字符串参数便捷方法"""
         method_name = method.name
-        return_type = method.return_type.base_type if method.return_type else "DasResult"
+        return_type = type_simple_name(method.return_type) if method.return_type else "DasResult"
         interface_name = self._pending_interface_name
         
         # 构建参数列表
@@ -671,11 +671,11 @@ class CSharpSwigGenerator(SwigLangGenerator):
         
         for p in method.parameters:
             param_name = p.name
-            if p.type_info.base_type == 'IDasReadOnlyString':
+            if type_simple_name(p.type_info) == 'IDasReadOnlyString':
                 cs_params.append(f"string {param_name}")
                 call_args.append(f"new DasReadOnlyString({param_name})")
             else:
-                cs_type = self._get_cs_type(p.type_info.base_type)
+                cs_type = self._get_cs_type(type_simple_name(p.type_info))
                 cs_params.append(f"{cs_type} {param_name}")
                 call_args.append(param_name)
         
@@ -695,6 +695,7 @@ class CSharpSwigGenerator(SwigLangGenerator):
 
     def _get_cs_type(self, type_name: str) -> str:
         """获取 C# 类型名称"""
+        type_name = type_name.split('::')[-1]
         type_map = {
             'bool': 'bool',
             'int8': 'sbyte',

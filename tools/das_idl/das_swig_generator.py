@@ -587,7 +587,7 @@ class SwigCodeGenerator:
 
                 # 只处理跨有名命名空间的类型
                 if type_ns and type_ns != interface.namespace:
-                    usings.append(f"using {type_ns}::{base_type};")
+                    usings.append(f"using namespace {type_ns};")
                     seen.add(base_type)
 
         if not usings:

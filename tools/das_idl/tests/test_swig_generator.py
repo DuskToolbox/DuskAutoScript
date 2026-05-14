@@ -19,6 +19,7 @@ from das_idl_parser import (
     ParameterDef,
     TypeInfo,
     ParamDirection,
+    parse_idl_file,
 )
 from das_swig_generator import SwigCodeGenerator
 
@@ -451,6 +452,114 @@ class TestCSharpSwigGenerator(unittest.TestCase):
         self.assertIn("throw new DasException", output)
         self.assertNotIn("throw new System.Exception", output)
         self.assertIn("CreateDasExceptionStringSwig", output)
+
+
+class TestQualifiedInterfaceOutParamGeneration(unittest.TestCase):
+    """Regression tests for qualified interface [out] T** generation"""
+
+    def setUp(self):
+        SwigCodeGenerator._global_typemaps.clear()
+        SwigCodeGenerator._global_ret_classes.clear()
+        SwigCodeGenerator._global_header_blocks.clear()
+        SwigCodeGenerator._global_typemaps_ignore.clear()
+
+    def test_qualified_idasjson_out_param_uses_simple_target_identifiers(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            (temp / "DasJson.idl").write_text(
+                """
+                namespace Das::ExportInterface {
+                    [uuid("12345678-1234-1234-1234-123456789001")]
+                    interface IDasJson : IDasBase {
+                        DasResult Reset();
+                    }
+                }
+                """,
+                encoding="utf-8",
+            )
+            main = temp / "IDasTaskAuthoringTest.idl"
+            main.write_text(
+                """
+                import "DasJson.idl";
+                namespace Das::PluginInterface {
+                    [uuid("12345678-1234-1234-1234-123456789002")]
+                    interface IDasTaskAuthoringTest : IDasBase {
+                        DasResult GetDocument(
+                            [out] Das::ExportInterface::IDasJson** pp_out_document_json);
+                    }
+                }
+                """,
+                encoding="utf-8",
+            )
+
+            document = parse_idl_file(str(main))
+            interface = document.interfaces[0]
+            param_type = interface.methods[0].parameters[0].type_info
+
+            self.assertEqual(param_type.source_type, "Das::ExportInterface::IDasJson")
+            self.assertEqual(param_type.simple_name, "IDasJson")
+            self.assertEqual(param_type.resolved_namespace, "Das::ExportInterface")
+
+            generated = SwigCodeGenerator(
+                document,
+                idl_file_name=main.name,
+                idl_file_path=str(main),
+            ).generate_interface_i_file(interface)
+            generated_all = "\n".join(
+                [generated]
+                + list(SwigCodeGenerator._global_typemaps.values())
+                + list(SwigCodeGenerator._global_ret_classes.values())
+            )
+
+            self.assertIn("using namespace Das::ExportInterface;", generated)
+            self.assertIn("IDasJson** pp_out_document_json", generated_all)
+            self.assertNotIn("Das::ExportInterface::Das::ExportInterface::IDasJson", generated_all)
+            self.assertNotIn("ExportInterface::IDasJson", "".join(SwigCodeGenerator._global_ret_classes))
+            self.assertNotIn("ExportInterface::IDasJson", "".join(SwigCodeGenerator._global_typemaps))
+
+    def test_simple_idascapture_out_param_remains_unqualified_for_target_helpers(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            (temp / "IDasCapture.idl").write_text(
+                """
+                namespace Das::ExportInterface {
+                    [uuid("12345678-1234-1234-1234-123456789003")]
+                    interface IDasCapture : IDasBase {
+                        DasResult Capture();
+                    }
+                }
+                """,
+                encoding="utf-8",
+            )
+            main = temp / "IDasCaptureManagerTest.idl"
+            main.write_text(
+                """
+                import "IDasCapture.idl";
+                namespace Das::ExportInterface {
+                    [uuid("12345678-1234-1234-1234-123456789004")]
+                    interface IDasCaptureManagerTest : IDasBase {
+                        DasResult EnumInterface(uint64_t index, [out] IDasCapture** pp_out_interface);
+                    }
+                }
+                """,
+                encoding="utf-8",
+            )
+
+            document = parse_idl_file(str(main))
+            interface = document.interfaces[0]
+            generated = SwigCodeGenerator(
+                document,
+                idl_file_name=main.name,
+                idl_file_path=str(main),
+            ).generate_interface_i_file(interface)
+            generated_all = "\n".join(
+                [generated]
+                + list(SwigCodeGenerator._global_typemaps.values())
+                + list(SwigCodeGenerator._global_ret_classes.values())
+            )
+
+            self.assertIn("IDasCapture** pp_out_interface", generated_all)
+            self.assertNotIn("ExportInterface::IDasCapture", "".join(SwigCodeGenerator._global_ret_classes))
 
 
 if __name__ == "__main__":

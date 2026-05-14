@@ -279,7 +279,7 @@ class CppCodeGenerator:
             if type_namespace is None:
                 type_namespace = ""
             if type_namespace and type_namespace != current_namespace:
-                usings.append(f"using {type_namespace}::{base_type};")
+                usings.append(f"using namespace {type_namespace};")
                 seen.add(base_type)
         return usings
 
@@ -649,11 +649,11 @@ DAS_DEFINE_GUID(
                         seen_usings.add(u)
 
         if has_cross_ns and namespace:
-            # using 声明放在 class 前面（namespace 内），仅 SWIG 可见
-            lines.append(f"#ifdef SWIG")
+            # using 声明放在 class 前面（namespace 内），由 strict resolver
+            # 决定来源；签名保持 simple name 以避免 source-qualified text
+            # 泄漏到 SWIG/target-language generated identifiers.
             for u in all_usings:
                 lines.append(u)
-            lines.append(f"#endif")
             lines.append("")
 
         # 接口声明
@@ -672,13 +672,13 @@ DAS_DEFINE_GUID(
                 for m in prop_methods:
                     lines.append(f"{self.indent}{m} = 0;")
 
-            # C++ 分支：完全限定名
+            # C++ 分支：通过 resolver-derived using namespace 使用 simple names.
             lines.append(f"#else")
             for method in interface.methods:
-                sig = self._generate_method_signature(method, namespace)
+                sig = self._generate_method_signature_for_swig(method)
                 lines.append(f"{self.indent}{sig} = 0;")
             for prop in interface.properties:
-                prop_methods = self._generate_property_methods(prop, namespace)
+                prop_methods = self._generate_property_methods(prop)
                 for m in prop_methods:
                     lines.append(f"{self.indent}{m} = 0;")
             lines.append(f"#endif")
