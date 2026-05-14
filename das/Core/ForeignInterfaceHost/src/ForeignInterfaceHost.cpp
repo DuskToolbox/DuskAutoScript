@@ -775,9 +775,7 @@ TaskComponentsValidationResult ValidateTaskComponents(
             continue;
         }
 
-        auto definition_component_guid =
-            (*definition_obj)[std::string_view("componentGuid")].as_string();
-        if (!definition_component_guid)
+        if (!definition_obj->contains(std::string_view("componentGuid")))
         {
             result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
                 "{}.definition.componentGuid: missing required string",
@@ -785,50 +783,62 @@ TaskComponentsValidationResult ValidateTaskComponents(
         }
         else
         {
-            auto parsed_definition_guid =
-                TryMakeGuid(*definition_component_guid);
-            if (!parsed_definition_guid)
+            auto definition_component_guid =
+                (*definition_obj)[std::string_view("componentGuid")]
+                    .as_string();
+            if (!definition_component_guid)
             {
                 result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
-                    "{}.definition.componentGuid: invalid component GUID",
+                    "{}.definition.componentGuid: missing required string",
                     component_path));
             }
-            else if (
-                component_guid && *parsed_definition_guid != *component_guid)
+            else
             {
-                result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
-                    "{}.definition.componentGuid: must match component key",
-                    component_path));
+                auto parsed_definition_guid =
+                    TryMakeGuid(*definition_component_guid);
+                if (!parsed_definition_guid)
+                {
+                    result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
+                        "{}.definition.componentGuid: invalid component GUID",
+                        component_path));
+                }
+                else if (
+                    component_guid
+                    && *parsed_definition_guid != *component_guid)
+                {
+                    result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
+                        "{}.definition.componentGuid: must match component key",
+                        component_path));
+                }
             }
         }
 
-        auto schema_version =
-            (*definition_obj)[std::string_view("schemaVersion")];
-        if (schema_version.is_null())
+        if (!definition_obj->contains(std::string_view("schemaVersion"))
+            || (*definition_obj)[std::string_view("schemaVersion")].is_null())
         {
             result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
                 "{}.definition.schemaVersion: missing required field",
                 component_path));
         }
 
-        auto kind = (*definition_obj)[std::string_view("kind")];
-        if (!kind.as_string())
+        if (!definition_obj->contains(std::string_view("kind"))
+            || !(*definition_obj)[std::string_view("kind")].as_string())
         {
             result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
                 "{}.definition.kind: missing required string",
                 component_path));
         }
 
-        auto inputs = (*definition_obj)[std::string_view("inputs")];
-        if (!inputs.is_array())
+        if (!definition_obj->contains(std::string_view("inputs"))
+            || !(*definition_obj)[std::string_view("inputs")].is_array())
         {
             result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
                 "{}.definition.inputs: expected array",
                 component_path));
         }
 
-        auto outputs = (*definition_obj)[std::string_view("outputs")];
-        if (!outputs.is_array())
+        if (!definition_obj->contains(std::string_view("outputs"))
+            || !(*definition_obj)[std::string_view("outputs")].is_array())
         {
             result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
                 "{}.definition.outputs: expected array",
