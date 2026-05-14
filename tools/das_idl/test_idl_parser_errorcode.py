@@ -16,8 +16,10 @@ from das_idl_parser import (
     ModuleDef,
     ModuleFunctionDef,
     ParamDirection,
+    TypeInfo,
     TypeKind,
     parse_idl,
+    parse_idl_file,
 )
 
 
@@ -340,6 +342,137 @@ class TestForbiddenCStyleArrayInputs(unittest.TestCase):
         self.assertTrue(param.type_info.is_const)
         self.assertTrue(param.type_info.is_reference)
         self.assertEqual(param.type_info.type_kind, TypeKind.STRUCT)
+
+
+class TestTypeInfoMetadata(unittest.TestCase):
+    """TypeInfo preserves source spelling and exposes simple/namespace views"""
+
+    def test_simple_legacy_interface_out_param_metadata(self):
+        idl = """
+        [uuid("12345678-1234-1234-1234-123456789012")]
+        interface IFoo : IDasBase {
+            DasResult GetCapture([out] IDasCapture** pp_out_capture);
+        }
+        """
+
+        doc = parse_idl(idl)
+        type_info = doc.interfaces[0].methods[0].parameters[0].type_info
+
+        self.assertEqual(type_info.source_type, "IDasCapture")
+        self.assertEqual(type_info.base_type, "IDasCapture")
+        self.assertEqual(type_info.simple_name, "IDasCapture")
+        self.assertEqual(type_info.explicit_namespace, "")
+        self.assertFalse(type_info.is_qualified)
+        self.assertEqual(type_info.pointer_level, 2)
+
+    def test_fully_qualified_interface_out_param_metadata(self):
+        idl = """
+        import "DasJson.idl";
+        namespace Das::PluginInterface {
+            [uuid("12345678-1234-1234-1234-123456789012")]
+            interface IFoo : IDasBase {
+                DasResult GetJson([out] Das::ExportInterface::IDasJson ** pp_out_json);
+            }
+        }
+        """
+
+        doc = parse_idl(idl, source_path=str(Path(__file__).parent.parent.parent / "idl" / "Test.idl"))
+        type_info = doc.interfaces[0].methods[0].parameters[0].type_info
+
+        self.assertEqual(type_info.source_type, "Das::ExportInterface::IDasJson")
+        self.assertEqual(type_info.base_type, "Das::ExportInterface::IDasJson")
+        self.assertEqual(type_info.simple_name, "IDasJson")
+        self.assertEqual(type_info.explicit_namespace, "Das::ExportInterface")
+        self.assertTrue(type_info.is_qualified)
+        self.assertEqual(type_info.type_kind, TypeKind.INTERFACE)
+        self.assertEqual(type_info.resolved_namespace, "Das::ExportInterface")
+        self.assertEqual(type_info.resolved_qualified_name, "Das::ExportInterface::IDasJson")
+
+    def test_compound_primitive_metadata(self):
+        doc = parse_idl("module Api { void GetData([out] unsigned char** pp_out); }")
+        type_info = doc.modules[0].functions[0].parameters[0].type_info
+
+        self.assertEqual(type_info.source_type, "unsigned char")
+        self.assertEqual(type_info.simple_name, "unsigned char")
+        self.assertEqual(type_info.explicit_namespace, "")
+        self.assertFalse(type_info.is_qualified)
+        self.assertEqual(type_info.type_kind, TypeKind.BASIC)
+
+    def test_const_reference_metadata(self):
+        doc = parse_idl("module Api { DasResult Find(const DasGuid& guid); }")
+        type_info = doc.modules[0].functions[0].parameters[0].type_info
+
+        self.assertEqual(type_info.source_type, "DasGuid")
+        self.assertEqual(type_info.simple_name, "DasGuid")
+        self.assertTrue(type_info.is_const)
+        self.assertTrue(type_info.is_reference)
+        self.assertEqual(type_info.type_kind, TypeKind.BASIC)
+
+    def test_typeinfo_constructor_derives_metadata_for_legacy_callers(self):
+        type_info = TypeInfo(base_type="Das::ExportInterface::IDasJson", pointer_level=2)
+
+        self.assertEqual(type_info.source_type, "Das::ExportInterface::IDasJson")
+        self.assertEqual(type_info.simple_name, "IDasJson")
+        self.assertEqual(type_info.explicit_namespace, "Das::ExportInterface")
+        self.assertTrue(type_info.is_qualified)
+
+
+class TestStrictTypeResolution(unittest.TestCase):
+    """Strict interface/enum/struct resolution avoids namespace guessing"""
+
+    def test_unresolved_qualified_interface_fails(self):
+        idl = """
+        namespace Das::PluginInterface {
+            [uuid("12345678-1234-1234-1234-123456789012")]
+            interface IFoo : IDasBase {
+                DasResult GetJson([out] Das::Missing::IDasJson** pp_out_json);
+            }
+        }
+        """
+
+        with self.assertRaisesRegex(SyntaxError, "Unresolved qualified"):
+            parse_idl(idl)
+
+    def test_ambiguous_simple_imported_interface_fails(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            (temp / "One.idl").write_text(
+                """
+                namespace One {
+                    [uuid("12345678-1234-1234-1234-123456789011")]
+                    interface IDupe : IDasBase { DasResult A(); }
+                }
+                """,
+                encoding="utf-8",
+            )
+            (temp / "Two.idl").write_text(
+                """
+                namespace Two {
+                    [uuid("12345678-1234-1234-1234-123456789012")]
+                    interface IDupe : IDasBase { DasResult B(); }
+                }
+                """,
+                encoding="utf-8",
+            )
+            main = temp / "Main.idl"
+            main.write_text(
+                """
+                import "One.idl";
+                import "Two.idl";
+                namespace Main {
+                    [uuid("12345678-1234-1234-1234-123456789013")]
+                    interface IMain : IDasBase {
+                        DasResult Get([out] IDupe** pp_out);
+                    }
+                }
+                """,
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(SyntaxError, "Ambiguous interface type 'IDupe'"):
+                parse_idl_file(str(main))
 
 
 class TestNamespaceScoped(unittest.TestCase):

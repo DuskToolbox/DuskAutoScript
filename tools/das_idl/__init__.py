@@ -4,6 +4,13 @@ DAS IDL 代码生成器包
 用于从 IDL 文件生成 C++ 接口代码
 """
 
+import sys
+from pathlib import Path
+
+_PACKAGE_DIR = Path(__file__).resolve().parent
+if str(_PACKAGE_DIR) not in sys.path:
+    sys.path.insert(0, str(_PACKAGE_DIR))
+
 from .das_idl_parser import (
     parse_idl,
     parse_idl_file,

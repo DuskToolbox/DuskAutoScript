@@ -87,12 +87,29 @@ class TypeKind(Enum):
 @dataclass
 class TypeInfo:
     """类型信息"""
-    base_type: str          # 基础类型名称
+    base_type: str          # 兼容字段：IDL source type spelling without const/ref/pointers
+    source_type: str = ""   # IDL source type spelling without const/ref/pointers
+    simple_name: str = ""   # Final component without explicit namespace
+    explicit_namespace: str = ""  # Namespace written explicitly in IDL, if any
+    is_qualified: bool = False  # Whether source_type contains an explicit namespace
     is_pointer: bool = False  # 是否是指针
     pointer_level: int = 0    # 指针层级
     is_const: bool = False    # 是否是 const
     is_reference: bool = False  # 是否是引用
     type_kind: TypeKind = TypeKind.UNKNOWN  # 类型分类（由 resolve_types 标注）
+    resolved_namespace: str = ""  # Namespace resolved from current/imported symbols
+    resolved_qualified_name: str = ""  # Fully-qualified C++ spelling without leading ::
+
+    def __post_init__(self):
+        if not self.source_type:
+            self.source_type = self.base_type
+        # During the transition base_type remains source spelling.
+        self.base_type = self.source_type
+        if not self.simple_name:
+            self.simple_name = self.source_type.split("::")[-1]
+        if not self.explicit_namespace and "::" in self.source_type:
+            self.explicit_namespace = "::".join(self.source_type.split("::")[:-1])
+        self.is_qualified = bool(self.explicit_namespace)
 
 
 @dataclass
@@ -807,8 +824,18 @@ class Parser:
                 f"pointers at line {base_type_token.line}"
             )
 
+        source_type = base_type
+        if "::" in source_type:
+            explicit_namespace, simple_name = source_type.rsplit("::", 1)
+        else:
+            explicit_namespace, simple_name = "", source_type
+
         return TypeInfo(
-            base_type=base_type,
+            base_type=source_type,
+            source_type=source_type,
+            simple_name=simple_name,
+            explicit_namespace=explicit_namespace,
+            is_qualified=bool(explicit_namespace),
             is_pointer=pointer_level > 0,
             pointer_level=pointer_level,
             is_const=is_const,
@@ -1176,18 +1203,23 @@ class Parser:
         2. import 的 IDL 文件中定义的类型
         3. 内置基本类型
         """
-        # 构建已知类型注册表
-        known_interfaces: set[str] = set()
-        known_enums: set[str] = set()
-        known_structs: set[str] = set()
+        # 构建已知类型注册表。simple name maps retain all namespaces so
+        # simple-name resolution can reject ambiguous imports instead of picking
+        # whichever document was parsed first.
+        interface_symbols: dict[str, set[str]] = {}
+        enum_symbols: dict[str, set[str]] = {}
+        struct_symbols: dict[str, set[str]] = {}
+
+        def add_symbol(symbols: dict[str, set[str]], name: str, namespace: str = ""):
+            symbols.setdefault(name, set()).add(namespace or "")
 
         # 1. 收集当前文件定义的类型
         for iface in self.document.interfaces:
-            known_interfaces.add(iface.name)
+            add_symbol(interface_symbols, iface.name, iface.namespace)
         for enum in self.document.enums:
-            known_enums.add(enum.name)
+            add_symbol(enum_symbols, enum.name, enum.namespace)
         for struct in self.document.structs:
-            known_structs.add(struct.name)
+            add_symbol(struct_symbols, struct.name, struct.namespace)
 
         # 2. 扫描 import 的 IDL 文件，收集其中的类型
         if self.source_path:
@@ -1199,38 +1231,89 @@ class Parser:
                 try:
                     imported_doc = parse_idl_file(str(import_path))
                     for iface in imported_doc.interfaces:
-                        known_interfaces.add(iface.name)
+                        add_symbol(interface_symbols, iface.name, iface.namespace)
                         if iface.namespace and iface.name not in self.document.imported_interface_namespaces:
                             self.document.imported_interface_namespaces[iface.name] = iface.namespace
                     for enum in imported_doc.enums:
-                        known_enums.add(enum.name)
-                        if enum.namespace:
-                            known_enums.add(f"{enum.namespace}::{enum.name}")
+                        add_symbol(enum_symbols, enum.name, enum.namespace)
                     for struct in imported_doc.structs:
-                        known_structs.add(struct.name)
-                        if struct.namespace:
-                            known_structs.add(f"{struct.namespace}::{struct.name}")
+                        add_symbol(struct_symbols, struct.name, struct.namespace)
                 except Exception:
                     # import 文件解析失败时静默跳过，不影响当前文件
                     pass
 
+        for iface_name in self._INTERFACE_NAMES_WITHOUT_IDL_DEF:
+            add_symbol(interface_symbols, iface_name, "")
+
         # 内置基本类型集合（来自 BUILTIN_TYPES）
         builtin_types: set[str] = set(self.BUILTIN_TYPES)
 
-        def classify(type_info: TypeInfo) -> TypeKind:
-            """根据 base_type 判断类型分类"""
-            name = type_info.base_type
-            # 去除命名空间前缀
-            simple = name.split("::")[-1] if "::" in name else name
+        def exact_namespace_match(symbols: dict[str, set[str]], type_info: TypeInfo) -> bool:
+            return type_info.explicit_namespace in symbols.get(type_info.simple_name, set())
 
-            if simple in known_interfaces or simple in self._INTERFACE_NAMES_WITHOUT_IDL_DEF:
-                return TypeKind.INTERFACE
-            if simple in known_enums:
-                return TypeKind.ENUM
-            if simple in known_structs:
-                return TypeKind.STRUCT
-            if simple in builtin_types:
+        def resolve_namespace(symbols: dict[str, set[str]], type_info: TypeInfo, kind_name: str) -> str | None:
+            if type_info.is_qualified:
+                if exact_namespace_match(symbols, type_info):
+                    return type_info.explicit_namespace
+                raise SyntaxError(
+                    f"Unresolved qualified {kind_name} type '{type_info.source_type}'"
+                    f" in {self.source_path or '<memory>'}"
+                )
+
+            namespaces = symbols.get(type_info.simple_name, set())
+            if not namespaces:
+                return None
+            if len(namespaces) > 1:
+                candidates = ", ".join(
+                    f"{ns}::{type_info.simple_name}" if ns else type_info.simple_name
+                    for ns in sorted(namespaces)
+                )
+                raise SyntaxError(
+                    f"Ambiguous {kind_name} type '{type_info.source_type}'"
+                    f" in {self.source_path or '<memory>'}; candidates: {candidates}"
+                )
+            return next(iter(namespaces))
+
+        def classify(type_info: TypeInfo) -> TypeKind:
+            """根据 source/simple/namespace views 判断类型分类"""
+            simple = type_info.simple_name
+
+            if simple in builtin_types and not type_info.is_qualified:
+                type_info.resolved_namespace = ""
+                type_info.resolved_qualified_name = simple
                 return TypeKind.BASIC
+
+            namespace = resolve_namespace(interface_symbols, type_info, "interface")
+            if namespace is not None:
+                type_info.resolved_namespace = namespace
+                type_info.resolved_qualified_name = (
+                    f"{namespace}::{simple}" if namespace else simple
+                )
+                return TypeKind.INTERFACE
+
+            namespace = resolve_namespace(enum_symbols, type_info, "enum")
+            if namespace is not None:
+                type_info.resolved_namespace = namespace
+                type_info.resolved_qualified_name = (
+                    f"{namespace}::{simple}" if namespace else simple
+                )
+                return TypeKind.ENUM
+
+            namespace = resolve_namespace(struct_symbols, type_info, "struct")
+            if namespace is not None:
+                type_info.resolved_namespace = namespace
+                type_info.resolved_qualified_name = (
+                    f"{namespace}::{simple}" if namespace else simple
+                )
+                return TypeKind.STRUCT
+
+            if type_info.is_qualified:
+                raise SyntaxError(
+                    f"Unresolved qualified type '{type_info.source_type}'"
+                    f" in {self.source_path or '<memory>'}"
+                )
+            type_info.resolved_namespace = ""
+            type_info.resolved_qualified_name = type_info.source_type
             return TypeKind.UNKNOWN
 
         def annotate_recursive(obj):
