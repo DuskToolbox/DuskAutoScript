@@ -423,7 +423,7 @@ TEST(PluginPackageDescTest, TaskDescriptorAuthoringCapability)
                 "name": "dailyLogin",
                 "description": "Daily login task",
                 "authoring": {
-                    "featureIndex": 2,
+                    "factoryGuid": "0196057D-1029-4D9D-A2D0-81869F40F721",
                     "supportedKinds": ["formSequence", "graph"]
                 }
             }
@@ -440,10 +440,74 @@ TEST(PluginPackageDescTest, TaskDescriptorAuthoringCapability)
     const auto it = desc.task_descriptors.find(task_guid);
     ASSERT_NE(it, desc.task_descriptors.end());
     ASSERT_TRUE(it->second.authoring.has_value());
-    EXPECT_EQ(it->second.authoring->feature_index, 2u);
+    EXPECT_EQ(
+        it->second.authoring->factory_guid,
+        DAS::Core::ForeignInterfaceHost::MakeDasGuid(
+            "0196057D-1029-4D9D-A2D0-81869F40F721"));
     ASSERT_EQ(it->second.authoring->supported_kinds.size(), 2u);
     EXPECT_EQ(it->second.authoring->supported_kinds[0], "formSequence");
     EXPECT_EQ(it->second.authoring->supported_kinds[1], "graph");
+}
+
+TEST(PluginDescTaskComponentsTest, ParsesTopLevelManifest)
+{
+    constexpr auto test_string = R"(
+    {
+        "name": "TaskComponentPlugin",
+        "author": "Dusk",
+        "version": "1.0.0",
+        "guid": "0527CD9E-1F26-44FB-BE5F-D63C5A11B754",
+        "description": "Plugin with task component manifest",
+        "supportedSystem": "Windows",
+        "language": "Cpp",
+        "pluginFilenameExtension": "dll",
+        "settings": [],
+        "taskComponents": {
+            "factories": [
+                "0196057D-1029-4D9D-A2D0-81869F40F721"
+            ],
+            "components": {
+                "78B71988-2125-4A2B-8B78-02A804570101": {
+                    "factoryGuid": "0196057D-1029-4D9D-A2D0-81869F40F721",
+                    "definition": {
+                        "schemaVersion": 1,
+                        "componentGuid": "78B71988-2125-4A2B-8B78-02A804570101",
+                        "kind": "branch",
+                        "inputs": [],
+                        "outputs": [],
+                        "config": {},
+                        "diagnostics": [],
+                        "thirdPartyDefinitionMetadata": true
+                    },
+                    "thirdPartyComponentMetadata": "accepted"
+                }
+            },
+            "thirdPartyManifestMetadata": 42
+        }
+    }
+    )";
+
+    const auto desc =
+        JsonToStruct<DAS::Core::ForeignInterfaceHost::PluginPackageDesc>(
+            test_string);
+
+    ASSERT_TRUE(desc.task_components.has_value());
+    ASSERT_EQ(desc.task_components->factories.size(), 1u);
+    EXPECT_EQ(
+        desc.task_components->factories[0],
+        "0196057D-1029-4D9D-A2D0-81869F40F721");
+
+    const auto component_it = desc.task_components->components.find(
+        "78B71988-2125-4A2B-8B78-02A804570101");
+    ASSERT_NE(component_it, desc.task_components->components.end());
+    EXPECT_EQ(
+        component_it->second.factory_guid.value(),
+        "0196057D-1029-4D9D-A2D0-81869F40F721");
+    ASSERT_TRUE(component_it->second.definition.has_value());
+    const auto definition_obj = component_it->second.definition->as_object();
+    ASSERT_TRUE(definition_obj.has_value());
+    EXPECT_TRUE(definition_obj->contains(
+        std::string_view("thirdPartyDefinitionMetadata")));
 }
 
 TEST(PluginPackageDescTest, TaskDescriptorComponentCapabilities)
