@@ -240,7 +240,7 @@ TEST_F(TaskComponentContractTest, DasFlowControlGetCatalogUsesPackageFeaturePath
     ASSERT_EQ(plugin_base.As(package.Put()), DAS_S_OK);
 
     bool     found_factory_feature = false;
-    uint64_t factory_feature_index = 0;
+    uint64_t task_component_feature_index = 0;
     for (uint64_t index = 0;; ++index)
     {
         Das::PluginInterface::DasPluginFeature feature{};
@@ -253,7 +253,7 @@ TEST_F(TaskComponentContractTest, DasFlowControlGetCatalogUsesPackageFeaturePath
                 DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY)
         {
             found_factory_feature = true;
-            factory_feature_index = index;
+            task_component_feature_index = index;
             break;
         }
     }
@@ -262,7 +262,7 @@ TEST_F(TaskComponentContractTest, DasFlowControlGetCatalogUsesPackageFeaturePath
     IDasBase* factory_base_raw = nullptr;
     ASSERT_EQ(
         package->CreateFeatureInterface(
-            factory_feature_index,
+            task_component_feature_index,
             &factory_base_raw),
         DAS_S_OK);
     ASSERT_NE(factory_base_raw, nullptr);

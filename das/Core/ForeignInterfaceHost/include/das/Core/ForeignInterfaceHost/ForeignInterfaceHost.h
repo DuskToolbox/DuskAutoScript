@@ -131,14 +131,6 @@ struct TaskComponentsValidationResult
 TaskComponentsValidationResult ValidateTaskComponents(
     const TaskComponentsManifestDesc& task_components);
 
-/// Declarative task-component capability attached to a task descriptor.
-struct TaskComponentCapabilityDesc
-{
-    DasGuid     component_guid;
-    uint64_t    factory_feature_index = 0;
-    std::string role;
-};
-
 /**
  * @brief Task type descriptor keyed by task GUID in the manifest.
  * Declares task metadata and property descriptors for scheduler task instances.
@@ -151,7 +143,6 @@ struct TaskDescriptor
     std::optional<std::string>                 game_name;
     std::vector<PluginSettingDesc>             descriptors;
     std::optional<TaskAuthoringCapabilityDesc> authoring;
-    std::vector<TaskComponentCapabilityDesc>   components;
 };
 
 void ParseTaskDescriptorFromJson(

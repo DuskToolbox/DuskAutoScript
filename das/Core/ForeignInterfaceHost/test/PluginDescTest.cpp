@@ -34,6 +34,9 @@ namespace
         value.definition_path;
     };
 
+    template <class T>
+    concept HasComponentsField = requires(T value) { value.components; };
+
     static_assert(
         !HasStableNameField<
             DAS::Core::ForeignInterfaceHost::TaskComponentManifestEntryDesc>);
@@ -46,6 +49,11 @@ namespace
     static_assert(
         !HasDefinitionPathField<
             DAS::Core::ForeignInterfaceHost::TaskComponentManifestEntryDesc>);
+    static_assert(
+        !HasComponentsField<DAS::Core::ForeignInterfaceHost::TaskDescriptor>);
+    static_assert(
+        HasComponentsField<
+            DAS::Core::ForeignInterfaceHost::TaskComponentsManifestDesc>);
 
     std::string BasicPluginJsonWith(std::string_view extra_fields)
     {
