@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cassert>
 #include <chrono>
+#include <cstddef>
 #include <cstdio>
 #include <ctime>
 #include <fstream>
@@ -328,13 +329,19 @@ namespace Das::Core::TaskScheduler
             return;
         }
 
+        std::vector<std::size_t> definition_order;
+        definition_order.reserve(definitions.size());
+        for (std::size_t index = 0; index < definitions.size(); ++index)
+        {
+            definition_order.push_back(index);
+        }
         std::sort(
-            definitions.begin(),
-            definitions.end(),
-            [](const auto& lhs, const auto& rhs)
+            definition_order.begin(),
+            definition_order.end(),
+            [&definitions](std::size_t lhs, std::size_t rhs)
             {
-                return GuidToString(lhs.component_guid)
-                       < GuidToString(rhs.component_guid);
+                return GuidToString(definitions[lhs].component_guid)
+                       < GuidToString(definitions[rhs].component_guid);
             });
 
         auto document_obj = document.as_object();
@@ -386,8 +393,9 @@ namespace Das::Core::TaskScheduler
             }
         }
 
-        for (const auto& definition : definitions)
+        for (const auto definition_index : definition_order)
         {
+            const auto& definition = definitions[definition_index];
             auto component_guid_text = GuidToString(definition.component_guid);
             if (!existing_component_guids.insert(component_guid_text).second)
             {

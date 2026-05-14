@@ -591,10 +591,11 @@ DasResult PluginManager::RegisterPluginObjects(
             GetFeatureName(feature.feature_type),
             1);
 
+        feature_type_index_[feature.feature_type].push_back(&feature);
+
         if (register_result == DAS_S_OK)
         {
             feature.object_id = obj_id;
-            feature_type_index_[feature.feature_type].push_back(&feature);
 
             DAS_CORE_LOG_INFO(
                 "Registered feature {}",
