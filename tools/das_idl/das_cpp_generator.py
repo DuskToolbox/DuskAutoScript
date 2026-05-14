@@ -15,7 +15,7 @@ from das_idl_parser import (
     ParameterDef, TypeInfo, ParamDirection, ImportDef,
     StructDef, StructFieldDef, TypeKind,
 )
-from shared_utils import to_upper_snake
+from shared_utils import to_upper_snake, type_simple_name, type_resolved_namespace
 
 
 class CppTypeMapper:
@@ -48,22 +48,25 @@ class CppTypeMapper:
     @staticmethod
     def is_string_type(type_name: str) -> bool:
         """判断是否是字符串类型"""
-        return type_name in ('DasString', 'DasReadOnlyString', 'IDasReadOnlyString', 'IDasString')
+        simple = type_name.split('::')[-1]
+        return simple in ('DasString', 'DasReadOnlyString', 'IDasReadOnlyString', 'IDasString')
 
     @staticmethod
     def needs_dasstring_include(type_name: str) -> bool:
         """判断类型是否需要包含 DasString.hpp"""
-        return type_name in ('DasReadOnlyString', 'DasString', 'IDasReadOnlyString', 'IDasString')
+        simple = type_name.split('::')[-1]
+        return simple in ('DasReadOnlyString', 'DasString', 'IDasReadOnlyString', 'IDasString')
 
     @staticmethod
     def needs_dastypeinfo_include(type_name: str) -> bool:
         """判断类型是否需要包含 IDasTypeInfo.h"""
-        return type_name == 'IDasTypeInfo'
+        return type_name.split('::')[-1] == 'IDasTypeInfo'
 
     @classmethod
     def map_type(cls, type_info: TypeInfo) -> str:
         """将 IDL 类型转换为 C++ 类型"""
-        base = cls.TYPE_MAP.get(type_info.base_type, type_info.base_type)
+        simple = type_simple_name(type_info)
+        base = cls.TYPE_MAP.get(simple, simple)
 
         result = ""
 
@@ -71,7 +74,7 @@ class CppTypeMapper:
             result += "const "
 
         # 字符串类型作为输入参数时，使用 IDasReadOnlyString*
-        if cls.is_string_type(type_info.base_type) and not type_info.is_pointer and not type_info.is_reference:
+        if cls.is_string_type(simple) and not type_info.is_pointer and not type_info.is_reference:
             result += "IDasReadOnlyString*"
         else:
             result += base
@@ -87,13 +90,14 @@ class CppTypeMapper:
     @classmethod
     def get_out_param_type(cls, type_info: TypeInfo) -> str:
         """获取输出参数类型"""
-        base = cls.TYPE_MAP.get(type_info.base_type, type_info.base_type)
+        simple = type_simple_name(type_info)
+        base = cls.TYPE_MAP.get(simple, simple)
 
         # 对于接口类型，输出参数是 IXxx**
         if type_info.type_kind == TypeKind.INTERFACE:
             return f"{base}**"
         # 对于字符串类型，输出参数是 IDasReadOnlyString**
-        elif cls.is_string_type(type_info.base_type):
+        elif cls.is_string_type(simple):
             return "IDasReadOnlyString**"
         else:
             # 对于其他类型，直接使用原始的 pointer_level
@@ -156,7 +160,7 @@ class CppCodeGenerator:
                 if struct.name not in self.imported_type_to_namespace:
                     self.imported_type_to_namespace[struct.name] = struct.namespace
 
-    def _qualify_type_if_needed(self, type_name: str, current_namespace: str) -> str:
+    def _qualify_type_if_needed(self, type_name: str, current_namespace: str, type_info: TypeInfo = None) -> str:
         """如果类型在不同命名空间，返回完全限定名称
 
         Args:
@@ -168,38 +172,61 @@ class CppCodeGenerator:
             如果类型在相同命名空间，返回 TypeName（不添加任何前缀）
             如果类型没有命名空间，返回 ::TypeName
         """
+        simple_name = type_name.split("::")[-1]
+        if type_info is not None:
+            resolved_namespace = type_resolved_namespace(
+                type_info,
+                lambda name: self.local_type_to_namespace.get(name)
+                if name in self.local_type_to_namespace
+                else self.imported_type_to_namespace.get(name),
+            )
+            if resolved_namespace is not None and type_info.type_kind in (
+                TypeKind.INTERFACE,
+                TypeKind.ENUM,
+                TypeKind.STRUCT,
+            ):
+                if CppTypeMapper.is_string_type(simple_name):
+                    return simple_name
+                if resolved_namespace == current_namespace:
+                    return simple_name
+                if resolved_namespace:
+                    return f"::{resolved_namespace}::{simple_name}"
+                if current_namespace:
+                    return f"::{simple_name}"
+                return simple_name
+
         # 如果类型不在类型注册表中（基本类型或未导入类型），直接返回
         is_known_type = (
-            type_name in self.local_type_to_namespace
-            or type_name in self.imported_type_to_namespace
+            simple_name in self.local_type_to_namespace
+            or simple_name in self.imported_type_to_namespace
         )
         if not is_known_type:
             return type_name
 
         # 字符串接口类型不添加 :: 前缀，避免 SWIG director 生成重复声明
         # （SWIG 的 typemap 使用 IDasReadOnlyString 而非 ::IDasReadOnlyString）
-        if CppTypeMapper.is_string_type(type_name):
-            return type_name
+        if CppTypeMapper.is_string_type(simple_name):
+            return simple_name
 
         # 先在本地类型中查找
-        type_namespace = self.local_type_to_namespace.get(type_name)
+        type_namespace = self.local_type_to_namespace.get(simple_name)
         if type_namespace is None:
             # 再在导入类型中查找
-            type_namespace = self.imported_type_to_namespace.get(type_name, "")
+            type_namespace = self.imported_type_to_namespace.get(simple_name, "")
 
         # 如果类型和当前在同一个命名空间，不需要限定（不添加任何前缀！）
         if type_namespace == current_namespace:
-            return type_name
+            return simple_name
 
         # 如果类型有命名空间且与当前命名空间不同，返回完全限定名称
         if type_namespace:
-            return f"::{type_namespace}::{type_name}"
+            return f"::{type_namespace}::{simple_name}"
 
         # 类型没有命名空间，但当前在命名空间内，需要用 :: 前缀
         if current_namespace:
-            return f"::{type_name}"
+            return f"::{simple_name}"
 
-        return type_name
+        return simple_name
 
     def _has_cross_namespace_types(self, method: MethodDef, current_namespace: str) -> bool:
         """检查方法参数是否包含跨命名空间的接口类型
@@ -209,14 +236,19 @@ class CppCodeGenerator:
         只检查在其他命名空间中定义的类型。
         """
         for param in method.parameters:
-            base_type = param.type_info.base_type
+            base_type = type_simple_name(param.type_info)
             if param.type_info.type_kind != TypeKind.INTERFACE:
                 continue
             if CppTypeMapper.is_string_type(base_type):
                 continue
-            type_namespace = self.local_type_to_namespace.get(base_type)
+            type_namespace = type_resolved_namespace(
+                param.type_info,
+                lambda name: self.local_type_to_namespace.get(name)
+                if name in self.local_type_to_namespace
+                else self.imported_type_to_namespace.get(name),
+            )
             if type_namespace is None:
-                type_namespace = self.imported_type_to_namespace.get(base_type, "")
+                type_namespace = ""
             # 只有在其他**有名**命名空间中定义的类型才算跨命名空间
             if type_namespace and type_namespace != current_namespace:
                 return True
@@ -231,16 +263,21 @@ class CppCodeGenerator:
         usings = []
         seen = set()
         for param in method.parameters:
-            base_type = param.type_info.base_type
+            base_type = type_simple_name(param.type_info)
             if param.type_info.type_kind != TypeKind.INTERFACE:
                 continue
             if CppTypeMapper.is_string_type(base_type):
                 continue
             if base_type in seen:
                 continue
-            type_namespace = self.local_type_to_namespace.get(base_type)
+            type_namespace = type_resolved_namespace(
+                param.type_info,
+                lambda name: self.local_type_to_namespace.get(name)
+                if name in self.local_type_to_namespace
+                else self.imported_type_to_namespace.get(name),
+            )
             if type_namespace is None:
-                type_namespace = self.imported_type_to_namespace.get(base_type, "")
+                type_namespace = ""
             if type_namespace and type_namespace != current_namespace:
                 usings.append(f"using {type_namespace}::{base_type};")
                 seen.add(base_type)
@@ -491,9 +528,9 @@ DAS_DEFINE_GUID(
                 param_type = CppTypeMapper.map_type(param.type_info)
 
             # 对接口类型应用命名空间限定
-            base_type = param.type_info.base_type
+            base_type = type_simple_name(param.type_info)
             if param.type_info.type_kind == TypeKind.INTERFACE:
-                qualified_type = self._qualify_type_if_needed(base_type, current_namespace)
+                qualified_type = self._qualify_type_if_needed(base_type, current_namespace, param.type_info)
                 # 替换类型名中的基本类型为完全限定类型
                 param_type = param_type.replace(base_type, qualified_type)
 
@@ -519,12 +556,12 @@ DAS_DEFINE_GUID(
             current_namespace: 当前所在的命名空间
         """
         methods = []
-        base_type = prop.type_info.base_type
+        base_type = type_simple_name(prop.type_info)
         cpp_type = CppTypeMapper.TYPE_MAP.get(base_type, base_type)
 
         # 对接口类型应用命名空间限定
         if prop.type_info.type_kind == TypeKind.INTERFACE:
-            cpp_type = self._qualify_type_if_needed(base_type, current_namespace)
+            cpp_type = self._qualify_type_if_needed(base_type, current_namespace, prop.type_info)
 
         is_interface = prop.type_info.type_kind == TypeKind.INTERFACE
         is_string = CppTypeMapper.is_string_type(base_type)

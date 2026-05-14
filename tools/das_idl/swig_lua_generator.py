@@ -20,6 +20,7 @@ from das_idl_parser import (
     TypeKind,
 )
 from swig_lang_generator_base import SwigLangGenerator
+from shared_utils import type_simple_name
 
 if TYPE_CHECKING:
     from swig_api_model import SwigInterfaceModel
@@ -68,7 +69,7 @@ class LuaSwigGenerator(SwigLangGenerator):
                 return "const DasGuid&"
 
         # 根据类型分类确定基础类型名（不加指针，统一由 pointer_level 控制）
-        result = type_info.base_type
+        result = type_simple_name(type_info)
 
         # 根据 const / pointer / reference 标志追加修饰
         if type_info.is_const:
@@ -114,11 +115,11 @@ class LuaSwigGenerator(SwigLangGenerator):
         if type_info.type_kind == TypeKind.INTERFACE:
             # 接口返回指针: TypeName* (pointer_level=1 是接口指针的标准返回)
             if type_info.is_pointer and type_info.pointer_level > 0:
-                return f"{type_info.base_type}{'*' * type_info.pointer_level}"
-            return f"{type_info.base_type}*"
+                return f"{type_simple_name(type_info)}{'*' * type_info.pointer_level}"
+            return f"{type_simple_name(type_info)}*"
 
         # BASIC, ENUM, STRUCT, UNKNOWN → 直接使用 base_type
-        return type_info.base_type
+        return type_simple_name(type_info)
 
     def _generate_lua_director_base(self) -> str:
         """生成 LuaDirector 基类的 C++ 代码。
@@ -724,12 +725,12 @@ public:
             # [out] InterfaceType** → 局部变量类型是 InterfaceType*
             # pointer_level 为 out 参数的指针层级（通常为 2），减 1 得到值类型
             if type_info.pointer_level > 1:
-                return f"{type_info.base_type}{'*' * (type_info.pointer_level - 1)}"
-            return f"{type_info.base_type}*"
+                return f"{type_simple_name(type_info)}{'*' * (type_info.pointer_level - 1)}"
+            return f"{type_simple_name(type_info)}*"
         # 非 INTERFACE 类型：去除最外层指针（pointer_level - 1）
         if type_info.pointer_level > 1:
-            return f"{type_info.base_type}{'*' * (type_info.pointer_level - 1)}"
-        return type_info.base_type
+            return f"{type_simple_name(type_info)}{'*' * (type_info.pointer_level - 1)}"
+        return type_simple_name(type_info)
 
     def _generate_out_param_lambda(
         self, iface_name: str, method: MethodDef
@@ -1404,11 +1405,11 @@ public:
         def _check_type(type_info):
             # INTERFACE 类型直接检查
             if type_info.type_kind == TypeKind.INTERFACE:
-                return type_info.base_type not in available_types
+                return type_simple_name(type_info) not in available_types
             # UNKNOWN 类型可能是带命名空间前缀的接口
             if type_info.type_kind == TypeKind.UNKNOWN:
                 # 提取短名（去掉命名空间前缀）
-                short_name = type_info.base_type.rsplit('::', 1)[-1]
+                short_name = type_simple_name(type_info)
                 if short_name.startswith('IDas') and short_name not in available_types:
                     return True
             # 检查签名不匹配的类型（IDL 名与 C++ 名不一致）
@@ -1548,7 +1549,7 @@ public:
         Returns:
             EmmyLua 类型字符串。
         """
-        base = type_info.base_type
+        base = type_simple_name(type_info)
 
         if base == 'void':
             return 'nil'

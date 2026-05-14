@@ -32,7 +32,7 @@ from das_idl_parser import InterfaceDef, MethodDef, ParameterDef, ParamDirection
 from typing import Any, Optional, Dict
 
 from swig_lang_generator_base import SwigLangGenerator
-from shared_utils import build_param_signatures
+from shared_utils import build_param_signatures, type_simple_name, type_resolved_namespace
 
 
 class JavaSwigGenerator(SwigLangGenerator):
@@ -462,7 +462,7 @@ class JavaSwigGenerator(SwigLangGenerator):
         # 所有带 [out] 参数的方法都需要生成 Ez 版本
         
         # 获取返回类型
-        out_type = out_param.type_info.base_type
+        out_type = type_simple_name(out_param.type_info)
         ret_class_name = self._get_ret_class_name(out_type)
         is_interface = out_param.type_info.type_kind == TypeKind.INTERFACE
         
@@ -485,13 +485,13 @@ class JavaSwigGenerator(SwigLangGenerator):
         java_params: list[str] = []
         call_args: list[str] = []
         for p in in_params:
-            if p.type_info.base_type == 'IDasReadOnlyString':
+            if type_simple_name(p.type_info) == 'IDasReadOnlyString':
                 java_params.append(f"String {p.name}")
                 call_args.append(f"DasReadOnlyString.fromString({p.name})")
             else:
-                java_type = self._get_java_type(p.type_info.base_type)
+                java_type = self._get_java_type(type_simple_name(p.type_info))
                 if p.type_info.type_kind == TypeKind.INTERFACE:
-                    java_type = p.type_info.base_type
+                    java_type = type_simple_name(p.type_info)
                 java_params.append(f"{java_type} {p.name}")
                 call_args.append(p.name)
         
@@ -626,7 +626,7 @@ class JavaSwigGenerator(SwigLangGenerator):
                 continue
             
             # 创建虚拟的方法定义
-            base_type = prop.type_info.base_type
+            base_type = type_simple_name(prop.type_info)
             is_interface = prop.type_info.type_kind == TypeKind.INTERFACE
             is_string = base_type == 'IDasReadOnlyString'
             
@@ -718,7 +718,7 @@ class JavaSwigGenerator(SwigLangGenerator):
         for prop in interface.properties:
             if not prop.has_setter:
                 continue
-            if prop.type_info.base_type != 'IDasReadOnlyString':
+            if type_simple_name(prop.type_info) != 'IDasReadOnlyString':
                 continue
             
             method_name = f"Set{prop.name}"
@@ -838,17 +838,17 @@ class JavaSwigGenerator(SwigLangGenerator):
         das_cpp_params: list[str] = []
         das_call_args: list[str] = []
         for p in method.parameters:
-            if p.type_info.base_type == 'IDasReadOnlyString':
+            if type_simple_name(p.type_info) == 'IDasReadOnlyString':
                 das_cpp_params.append(f"DasReadOnlyString {p.name}")
                 das_call_args.append(f"{p.name}.Get()")
             else:
-                cpp_type = self._get_cpp_type(p.type_info.base_type)
+                cpp_type = self._get_cpp_type(type_simple_name(p.type_info))
                 if p.type_info.type_kind == TypeKind.INTERFACE:
-                    namespace = self.get_type_namespace(p.type_info.base_type)
+                    namespace = type_resolved_namespace(p.type_info, self.get_type_namespace)
                     if namespace:
-                        cpp_type = f"{namespace}::{p.type_info.base_type}*"
+                        cpp_type = f"{namespace}::{type_simple_name(p.type_info)}*"
                     else:
-                        cpp_type = f"{p.type_info.base_type}*"
+                        cpp_type = f"{type_simple_name(p.type_info)}*"
                 das_cpp_params.append(f"{cpp_type} {p.name}")
                 das_call_args.append(p.name)
         
@@ -1310,7 +1310,7 @@ struct {ret_class_name} {{
         
         class_name_parts = []
         for param in out_params:
-            type_name = param.type_info.base_type.split('::')[-1]
+            type_name = type_simple_name(param.type_info)
             clean_name = type_name.lstrip('I').rstrip('*')
             class_name_parts.append(clean_name)
         class_name = "DasRet" + "".join(class_name_parts)
@@ -1328,7 +1328,7 @@ struct {ret_class_name} {{
         header_includes.append('#include <utility>')
         
         for i, param in enumerate(out_params):
-            out_type = param.type_info.base_type
+            out_type = type_simple_name(param.type_info)
             simple_type_name = out_type.split('::')[-1]
             
             if "DasGuid" in out_type:
@@ -1366,7 +1366,7 @@ struct {ret_class_name} {{
         interface_indices = []  # 记录哪些 value 成员是接口指针类型
         
         for i, param in enumerate(out_params):
-            out_type = param.type_info.base_type
+            out_type = type_simple_name(param.type_info)
             cpp_type = self._get_cpp_type(out_type)
             java_type = self._get_java_type(out_type)
             is_interface = param.type_info.type_kind == TypeKind.INTERFACE
@@ -1638,7 +1638,7 @@ struct {class_name} {{
         
         ret_class_name_parts = []
         for param in out_params:
-            type_name = param.type_info.base_type.split('::')[-1]
+            type_name = type_simple_name(param.type_info)
             clean_name = type_name.lstrip('I').rstrip('*')
             ret_class_name_parts.append(clean_name)
         ret_class_name = "DasRet" + "".join(ret_class_name_parts)
@@ -1648,19 +1648,19 @@ struct {class_name} {{
         cpp_params: list[str] = []
         call_args: list[str] = []
         for p in in_params:
-            cpp_type = self._get_cpp_type(p.type_info.base_type)
+            cpp_type = self._get_cpp_type(type_simple_name(p.type_info))
             if p.type_info.type_kind == TypeKind.INTERFACE:
-                namespace = self.get_type_namespace(p.type_info.base_type)
+                namespace = type_resolved_namespace(p.type_info, self.get_type_namespace)
                 if namespace:
-                    cpp_type = f"{namespace}::{p.type_info.base_type}*"
+                    cpp_type = f"{namespace}::{type_simple_name(p.type_info)}*"
                 else:
-                    cpp_type = f"{p.type_info.base_type}*"
+                    cpp_type = f"{type_simple_name(p.type_info)}*"
             elif p.type_info.is_pointer:
-                namespace = self.get_type_namespace(p.type_info.base_type)
+                namespace = type_resolved_namespace(p.type_info, self.get_type_namespace)
                 if namespace:
-                    cpp_type = f"{namespace}::{p.type_info.base_type}*"
+                    cpp_type = f"{namespace}::{type_simple_name(p.type_info)}*"
                 else:
-                    cpp_type = f"{p.type_info.base_type}*"
+                    cpp_type = f"{type_simple_name(p.type_info)}*"
             cpp_params.append(f"{cpp_type} {p.name}")
             call_args.append(p.name)
         
@@ -1691,7 +1691,7 @@ struct {class_name} {{
             param_signatures_without_prefix = []
             current_namespace = interface.namespace
             for param in method.parameters:
-                param_type = param.type_info.base_type
+                param_type = type_simple_name(param.type_info)
                 param_type_with_prefix = param_type
                 # 对于全局命名空间的类型，添加 :: 前缀
                 namespace = self.get_type_namespace(param_type)
@@ -1751,7 +1751,7 @@ struct {class_name} {{
         """判断方法是否有 IDasReadOnlyString* 参数（非 [out]）"""
         for p in method.parameters:
             if p.direction != ParamDirection.OUT:
-                if p.type_info.base_type == 'IDasReadOnlyString':
+                if type_simple_name(p.type_info) == 'IDasReadOnlyString':
                     return True
         return False
 
@@ -1819,7 +1819,7 @@ struct {class_name} {{
         if method.attributes and method.attributes.get('binary_buffer', False):
             return False
         STRING_TYPES = ('DasString', 'DasReadOnlyString', 'IDasReadOnlyString')
-        return out_params[0].type_info.base_type not in STRING_TYPES
+        return type_simple_name(out_params[0].type_info) not in STRING_TYPES
 
     def _generate_ignore_directive(self, interface: InterfaceDef, method: MethodDef, out_param: ParameterDef) -> str:
         """生成带参数签名的 %ignore 指令代码
@@ -1845,7 +1845,7 @@ struct {class_name} {{
         param_signatures_without_prefix = []
         current_namespace = interface.namespace  # 当前接口的命名空间
         for param in method.parameters:
-            param_type = param.type_info.base_type
+            param_type = type_simple_name(param.type_info)
             param_type_with_prefix = param_type
             # 对于全局命名空间的类型，添加 :: 前缀
             namespace = self.get_type_namespace(param_type)
@@ -1918,7 +1918,7 @@ struct {class_name} {{
             for param in method.parameters:
                 if param.direction == ParamDirection.OUT:
                     continue  # 跳过 [out] 参数
-                param_type = param.type_info.base_type
+                param_type = type_simple_name(param.type_info)
                 # 对于接口类型，添加命名空间前缀（不带全局 ::）
                 if param.type_info.type_kind == TypeKind.INTERFACE and param_type != 'IDasReadOnlyString':
                     namespace = self.get_type_namespace(param_type)
@@ -1954,7 +1954,7 @@ struct {class_name} {{
             SWIG .i 文件中的 %extend 代码
         """
         qualified_interface = f"{interface.namespace}::{interface.name}" if interface.namespace else interface.name
-        out_type = out_param.type_info.base_type
+        out_type = type_simple_name(out_param.type_info)
         ret_class_name = self._get_ret_class_name(out_type)
         is_idas_readonly_string_out = self._is_idas_readonly_string_out_param(out_type)
         is_void_pointer_pointer = self._is_void_pointer_pointer(out_type)
@@ -1988,20 +1988,20 @@ struct {class_name} {{
         cpp_params: list[str] = []
         call_args: list[str] = []
         for p in in_params:
-            cpp_type = self._get_cpp_type(p.type_info.base_type)
+            cpp_type = self._get_cpp_type(type_simple_name(p.type_info))
             if p.type_info.type_kind == TypeKind.INTERFACE:
                 # 获取接口的完整命名空间限定名，让 SWIG 能正确映射到 Java 类
-                namespace = self.get_type_namespace(p.type_info.base_type)
+                namespace = type_resolved_namespace(p.type_info, self.get_type_namespace)
                 if namespace:
-                    cpp_type = f"{namespace}::{p.type_info.base_type}*"
+                    cpp_type = f"{namespace}::{type_simple_name(p.type_info)}*"
                 else:
-                    cpp_type = f"{p.type_info.base_type}*"
+                    cpp_type = f"{type_simple_name(p.type_info)}*"
             elif p.type_info.is_pointer:
-                namespace = self.get_type_namespace(p.type_info.base_type)
+                namespace = type_resolved_namespace(p.type_info, self.get_type_namespace)
                 if namespace:
-                    cpp_type = f"{namespace}::{p.type_info.base_type}*"
+                    cpp_type = f"{namespace}::{type_simple_name(p.type_info)}*"
                 else:
-                    cpp_type = f"{p.type_info.base_type}*"
+                    cpp_type = f"{type_simple_name(p.type_info)}*"
             cpp_params.append(f"{cpp_type} {p.name}")
             call_args.append(p.name)
 
@@ -2068,23 +2068,23 @@ struct {class_name} {{
             das_cpp_params: list[str] = []
             das_call_args: list[str] = []
             for p in in_params:
-                if p.type_info.base_type == 'IDasReadOnlyString':
+                if type_simple_name(p.type_info) == 'IDasReadOnlyString':
                     das_cpp_params.append(f"DasReadOnlyString {p.name}")
                     das_call_args.append(f"{p.name}.Get()")
                 else:
-                    cpp_type = self._get_cpp_type(p.type_info.base_type)
+                    cpp_type = self._get_cpp_type(type_simple_name(p.type_info))
                     if p.type_info.type_kind == TypeKind.INTERFACE:
-                        namespace = self.get_type_namespace(p.type_info.base_type)
+                        namespace = type_resolved_namespace(p.type_info, self.get_type_namespace)
                         if namespace:
-                            cpp_type = f"{namespace}::{p.type_info.base_type}*"
+                            cpp_type = f"{namespace}::{type_simple_name(p.type_info)}*"
                         else:
-                            cpp_type = f"{p.type_info.base_type}*"
+                            cpp_type = f"{type_simple_name(p.type_info)}*"
                     elif p.type_info.is_pointer:
-                        namespace = self.get_type_namespace(p.type_info.base_type)
+                        namespace = type_resolved_namespace(p.type_info, self.get_type_namespace)
                         if namespace:
-                            cpp_type = f"{namespace}::{p.type_info.base_type}*"
+                            cpp_type = f"{namespace}::{type_simple_name(p.type_info)}*"
                         else:
-                            cpp_type = f"{p.type_info.base_type}*"
+                            cpp_type = f"{type_simple_name(p.type_info)}*"
                     das_cpp_params.append(f"{cpp_type} {p.name}")
                     das_call_args.append(p.name)
 
@@ -2131,7 +2131,7 @@ struct {class_name} {{
                 self._context._global_typemaps[typemap_key] = generated_code
             
             # 生成并收集 DasRetXxx 类定义到 _global_ret_classes
-            ret_class_code = self._generate_ret_class(out_param.type_info.base_type, interface.name, out_param.type_info)
+            ret_class_code = self._generate_ret_class(type_simple_name(out_param.type_info), interface.name, out_param.type_info)
             if ret_class_code:
                 ret_class_key = f"ret_class_{ret_class_name}"
                 if ret_class_key not in self._context._global_ret_classes:
@@ -2177,7 +2177,7 @@ struct {class_name} {{
         if self._is_binary_buffer_method(method):
             return ""
 
-        out_type = out_param.type_info.base_type
+        out_type = type_simple_name(out_param.type_info)
 
         # 跳过非接口指针类型（如 DasGuid*、uint64_t* 等值类型）
         # 这些类型的 out 参数不需要完整的 director typemap 链，

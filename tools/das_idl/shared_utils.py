@@ -31,6 +31,35 @@ def to_upper_snake(name: str) -> str:
     return name.upper()
 
 
+def type_simple_name(type_info) -> str:
+    """Return the identifier-safe simple name for a TypeInfo-like object."""
+    return getattr(type_info, "simple_name", "") or type_info.base_type.split("::")[-1]
+
+
+def type_source_name(type_info) -> str:
+    """Return the source spelling for a TypeInfo-like object."""
+    return getattr(type_info, "source_type", "") or type_info.base_type
+
+
+def type_resolved_namespace(type_info, get_type_namespace=None) -> str | None:
+    """Return the resolved namespace without inventing a fallback.
+
+    ``None`` means the type is not known to the supplied resolver. Empty string
+    means a known global-namespace symbol.
+    """
+    resolved = getattr(type_info, "resolved_namespace", None)
+    if resolved is not None and (
+        resolved != "" or getattr(type_info, "resolved_qualified_name", "")
+    ):
+        return resolved
+    explicit = getattr(type_info, "explicit_namespace", "")
+    if explicit:
+        return explicit
+    if get_type_namespace is None:
+        return None
+    return get_type_namespace(type_simple_name(type_info))
+
+
 def build_param_signatures(
     method,
     get_type_namespace,
@@ -64,10 +93,10 @@ def build_param_signatures(
     param_signatures_without_prefix: list[str] = []
 
     for param in method.parameters:
-        param_type = param.type_info.base_type
+        param_type = type_simple_name(param.type_info)
         param_type_with_prefix = param_type
 
-        namespace = get_type_namespace(param_type)
+        namespace = type_resolved_namespace(param.type_info, get_type_namespace)
         if not namespace and param.type_info.type_kind == type_kind_interface:
             param_type_with_prefix = f'::{param_type}'
         elif namespace and namespace != current_namespace:

@@ -28,6 +28,7 @@ from swig_python_generator import PythonSwigGenerator
 from swig_lua_generator import LuaSwigGenerator
 from swig_lang_generator_base import SwigLangGenerator, SwigLangGeneratorContext
 from swig_api_model import build_swig_interface_model, build_interface_map, SwigInterfaceModel
+from shared_utils import type_simple_name, type_source_name, type_resolved_namespace
 BaseSwigGenerator = SwigLangGenerator
 
 # [binary_buffer] 方法允许的参数类型（只支持 unsigned char** 系列）
@@ -59,12 +60,12 @@ class SwigTypeMapper:
     @staticmethod
     def is_string_type(type_name: str) -> bool:
         """判断是否是字符串类型"""
-        return type_name in ('DasString', 'DasReadOnlyString', 'IDasReadOnlyString')
+        return type_name.split('::')[-1] in ('DasString', 'DasReadOnlyString', 'IDasReadOnlyString')
 
     @classmethod
     def get_swig_ret_type(cls, type_info: TypeInfo) -> str:
         """获取 SWIG 返回类型"""
-        base = type_info.base_type
+        base = type_simple_name(type_info)
 
         if base in cls.SWIG_RET_TYPE_MAP:
             return cls.SWIG_RET_TYPE_MAP[base]
@@ -368,7 +369,7 @@ class SwigCodeGenerator:
         # 查找 [out] 参数
         for param in method.parameters:
             if param.direction == ParamDirection.OUT:
-                base_type = param.type_info.base_type
+                base_type = type_simple_name(param.type_info)
                 # 检查基础类型是否为允许的类型
                 if base_type not in BINARY_BUFFER_ALLOWED_TYPES:
                     print(f"Warning: [binary_buffer] method {interface.name}::{method.name} "
@@ -429,11 +430,11 @@ class SwigCodeGenerator:
             for param in method.parameters:
                 if param.direction == ParamDirection.OUT:
                     if param.type_info.type_kind == TypeKind.INTERFACE:
-                        self._collected_interface_types.add(param.type_info.base_type)
+                        self._collected_interface_types.add(type_simple_name(param.type_info))
 
         for prop in interface.properties:
             if prop.type_info.type_kind == TypeKind.INTERFACE:
-                self._collected_interface_types.add(prop.type_info.base_type)
+                self._collected_interface_types.add(type_simple_name(prop.type_info))
 
     def _generate_ignore_directives(self, interface: InterfaceDef) -> str:
         """生成 %ignore 指令 - 隐藏引用计数方法"""
@@ -573,7 +574,7 @@ class SwigCodeGenerator:
 
         for method in interface.methods:
             for param in method.parameters:
-                base_type = param.type_info.base_type
+                base_type = type_simple_name(param.type_info)
                 if param.type_info.type_kind != TypeKind.INTERFACE:
                     continue
                 if SwigTypeMapper.is_string_type(base_type):
@@ -582,11 +583,7 @@ class SwigCodeGenerator:
                     continue
 
                 # 查找类型的命名空间
-                type_ns = ''
-                for iface in self._all_documents_interfaces():
-                    if iface.name == base_type:
-                        type_ns = iface.namespace
-                        break
+                type_ns = type_resolved_namespace(param.type_info, self._get_type_namespace) or ''
 
                 # 只处理跨有名命名空间的类型
                 if type_ns and type_ns != interface.namespace:
@@ -792,7 +789,7 @@ class SwigCodeGenerator:
                 continue
 
             out_param = out_params[0]
-            out_type = out_param.type_info.base_type
+            out_type = type_simple_name(out_param.type_info)
 
             # 跳过字符串类型的 out 参数 — 已通过 DasReadOnlyString.i 的 director typemap 处理
             if SwigTypeMapper.is_string_type(out_type):
@@ -813,7 +810,7 @@ class SwigCodeGenerator:
             in_call_args = []  # 调用 DasRetXxx 方法时的参数
 
             for param in method.parameters:
-                cpp_type = self._get_cpp_type(param.type_info.base_type)
+                cpp_type = self._get_cpp_type(type_simple_name(param.type_info))
 
                 if param.direction == ParamDirection.OUT:
                     # [out] 参数：接口类型固定 **, 其他类型 *
@@ -890,7 +887,7 @@ class SwigCodeGenerator:
         """
         return True
 
-    def _qualify_param_type(self, cpp_type: str, base_type: str, type_kind: TypeKind, interface: InterfaceDef) -> str:
+    def _qualify_param_type(self, cpp_type: str, base_type: str, type_kind: TypeKind, interface: InterfaceDef, type_info: TypeInfo = None) -> str:
         """为接口/枚举类型添加命名空间限定
 
         在 ISwig 类的 %inline 块中，类定义在特定命名空间内（如 Das::PluginInterface），
@@ -901,11 +898,8 @@ class SwigCodeGenerator:
             return cpp_type
 
         # 查找类型所在的命名空间
-        type_ns = ''
-        for iface in self._all_documents_interfaces():
-            if iface.name == base_type:
-                type_ns = iface.namespace
-                break
+        type_ns = type_resolved_namespace(type_info, self._get_type_namespace) if type_info else self._get_type_namespace(base_type)
+        type_ns = type_ns or ''
 
         if not type_ns:
             # 全局命名空间，添加 :: 前缀
@@ -926,7 +920,7 @@ class SwigCodeGenerator:
                 continue
             if method.attributes and method.attributes.get('binary_buffer', False):
                 continue
-            out_type = out_params[0].type_info.base_type
+            out_type = type_simple_name(out_params[0].type_info)
             if SwigTypeMapper.is_string_type(out_type):
                 continue
             if not self._should_generate_bridge(method):
@@ -967,7 +961,7 @@ class SwigCodeGenerator:
                 continue
             if method.attributes and method.attributes.get('binary_buffer', False):
                 continue
-            out_type = out_params[0].type_info.base_type
+            out_type = type_simple_name(out_params[0].type_info)
             if SwigTypeMapper.is_string_type(out_type):
                 continue
             if not self._should_generate_bridge(method):
@@ -983,7 +977,7 @@ class SwigCodeGenerator:
             base_ns = interface.namespace  # 基类所在命名空间
 
             for param in method.parameters:
-                cpp_type = self._get_cpp_type(param.type_info.base_type)
+                cpp_type = self._get_cpp_type(type_simple_name(param.type_info))
 
                 # 判断类型是否需要加命名空间前缀
                 # 规则：
@@ -994,7 +988,7 @@ class SwigCodeGenerator:
                 #   - 接口类型与基类同命名空间 → 保持无限定
                 #   - 非接口类型 → 保持无限定
                 if param.type_info.type_kind == TypeKind.INTERFACE:
-                    type_ns = self._get_type_namespace(param.type_info.base_type)
+                    type_ns = type_resolved_namespace(param.type_info, self._get_type_namespace)
                     if type_ns and type_ns != base_ns:
                         # 类型定义在其他命名空间，通过 using 引入 → SWIG 解析为 base_ns::Type
                         qualified_type = f'{base_ns}::{cpp_type}' if base_ns else cpp_type
@@ -1171,7 +1165,7 @@ class SwigCodeGenerator:
         if method.attributes and method.attributes.get('binary_buffer', False):
             return False
 
-        out_type = out_params[0].type_info.base_type
+        out_type = type_simple_name(out_params[0].type_info)
         if SwigTypeMapper.is_string_type(out_type):
             return False
 
