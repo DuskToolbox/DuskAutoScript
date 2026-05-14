@@ -13,6 +13,8 @@
 #include <das/_autogen/idl/abi/IDasErrorLens.h>
 #include <das/_autogen/idl/abi/IDasInput.h>
 #include <das/_autogen/idl/abi/IDasTask.h>
+#include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
+#include <das/_autogen/idl/abi/IDasTaskComponent.h>
 
 #include <algorithm>
 #include <filesystem>
@@ -774,6 +776,10 @@ DasGuid PluginManager::GetIidForFeature(
         return DasIidOf<IDasInputFactory>();
     case DAS_PLUGIN_FEATURE_COMPONENT_FACTORY:
         return DasIidOf<IDasComponentFactory>();
+    case DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY:
+        return DasIidOf<IDasTaskAuthoringSessionFactory>();
+    case DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY:
+        return DasIidOf<IDasTaskComponentFactory>();
     default:
         return DasGuid{}; // 空 GUID
     }
@@ -796,6 +802,10 @@ std::string PluginManager::GetFeatureName(
         return "INPUT_FACTORY";
     case DAS_PLUGIN_FEATURE_COMPONENT_FACTORY:
         return "COMPONENT_FACTORY";
+    case DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY:
+        return "TASK_AUTHORING_FACTORY";
+    case DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY:
+        return "TASK_COMPONENT_FACTORY";
     default:
         return "UNKNOWN";
     }
@@ -845,7 +855,7 @@ void PluginManager::RegisterTestFeature(
     auto fi = std::make_unique<FeatureInfo>();
     fi->feature_index = 0;
     fi->feature_type = type;
-    fi->iid = DasGuid{};
+    fi->iid = GetIidForFeature(type);
     fi->interface_ptr = interface_ptr;
     fi->plugin_guid = plugin_guid;
     fi->plugin_name = "test_plugin";
@@ -981,7 +991,38 @@ DasResult PluginManager::LoadPluginViaIpc(
     plugin.package = std::move(package);
     plugin.desc = desc;
 
+    uint64_t index = 0;
+    while (true)
+    {
+        Das::PluginInterface::DasPluginFeature feature{};
+        auto enum_result = plugin.package->EnumFeature(index, &feature);
+        if (enum_result != DAS_S_OK)
+        {
+            break;
+        }
+
+        FeatureInfo feature_info;
+        feature_info.feature_index = index;
+        feature_info.feature_type = feature;
+        feature_info.iid = GetIidForFeature(feature);
+        feature_info.session_id = launcher->GetSessionId();
+        feature_info.plugin_name = manifest_path.stem().string();
+        feature_info.plugin_guid = desc->guid;
+
+        DasPtr<IDasBase> p_interface = nullptr;
+        auto create_result =
+            plugin.package->CreateFeatureInterface(index, p_interface.Put());
+        if (create_result == DAS_S_OK)
+        {
+            feature_info.interface_ptr = p_interface;
+        }
+
+        plugin.features.push_back(std::move(feature_info));
+        ++index;
+    }
+
     const auto guid = desc->guid;
+    size_t feature_count = 0;
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
@@ -996,9 +1037,28 @@ DasResult PluginManager::LoadPluginViaIpc(
 
         loaded_plugins_[guid] = std::move(plugin);
         path_to_guid_[manifest_path.string()] = guid;
+        feature_count = loaded_plugins_[guid].features.size();
+
+        std::vector<FeatureInfo*> plugin_factories;
+        for (auto& feat : loaded_plugins_[guid].features)
+        {
+            if (feat.feature_type
+                    == Das::PluginInterface::DAS_PLUGIN_FEATURE_COMPONENT_FACTORY
+                && feat.interface_ptr)
+            {
+                plugin_factories.push_back(&feat);
+            }
+        }
+        if (!plugin_factories.empty())
+        {
+            component_factory_mgr_.OnPluginLoaded(guid, plugin_factories);
+        }
     }
 
-    DAS_CORE_LOG_INFO("Loaded plugin via IPC: {}", manifest_path.string());
+    DAS_CORE_LOG_INFO(
+        "Loaded plugin via IPC: {} with {} features",
+        manifest_path.string(),
+        feature_count);
 
     return DAS_S_OK;
 }

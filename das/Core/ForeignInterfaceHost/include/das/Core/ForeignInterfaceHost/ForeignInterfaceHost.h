@@ -94,17 +94,34 @@ void ParsePluginSettingsGroupFromJson(
     const yyjson::writer::const_object_ref&           input,
     std::unordered_map<DasGuid, PluginSettingsGroup>& output);
 
+/// Declarative authoring capability attached to a task descriptor.
+struct TaskAuthoringCapabilityDesc
+{
+    uint64_t                 feature_index = 0;
+    std::vector<std::string> supported_kinds;
+};
+
+/// Declarative task-component capability attached to a task descriptor.
+struct TaskComponentCapabilityDesc
+{
+    DasGuid     component_guid;
+    uint64_t    factory_feature_index = 0;
+    std::string role;
+};
+
 /**
  * @brief Task type descriptor keyed by task GUID in the manifest.
  * Declares task metadata and property descriptors for scheduler task instances.
  */
 struct TaskDescriptor
 {
-    DasGuid                        plugin_guid;
-    std::string                    name;
-    std::string                    description;
-    std::optional<std::string>     game_name;
-    std::vector<PluginSettingDesc> descriptors;
+    DasGuid                                    plugin_guid;
+    std::string                                name;
+    std::string                                description;
+    std::optional<std::string>                 game_name;
+    std::vector<PluginSettingDesc>             descriptors;
+    std::optional<TaskAuthoringCapabilityDesc> authoring;
+    std::vector<TaskComponentCapabilityDesc>   components;
 };
 
 void ParseTaskDescriptorFromJson(

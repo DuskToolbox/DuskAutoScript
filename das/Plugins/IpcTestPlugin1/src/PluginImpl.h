@@ -5,9 +5,15 @@
 #include <das/_autogen/idl/abi/IDasComponent.h>
 #include <das/_autogen/idl/abi/IDasInput.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
+#include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
+#include <das/_autogen/idl/abi/IDasTaskComponent.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasComponent.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasComponentFactory.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasPluginPackage.Implements.hpp>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskAuthoringSession.Implements.hpp>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskAuthoringSessionFactory.Implements.hpp>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponent.Implements.hpp>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentFactory.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTouch.Implements.hpp>
 
 // {8A5B6C7D-9E0F-1A2B-3C4D-5E6F7A8B9C0D}
@@ -138,12 +144,70 @@ public:
         PluginInterface::IDasComponent** pp_out_component) override;
 };
 
+class IpcTaskAuthoringSessionImpl final
+    : public PluginInterface::DasTaskAuthoringSessionImplBase<
+          IpcTaskAuthoringSessionImpl>
+{
+public:
+    DAS_IMPL GetDocument(
+        ExportInterface::IDasJson*  p_request_json,
+        ExportInterface::IDasJson** pp_out_document_json) override;
+    DAS_IMPL ApplyChange(
+        ExportInterface::IDasJson*  p_request_json,
+        ExportInterface::IDasJson** pp_out_result_json) override;
+    DAS_IMPL Compile(
+        ExportInterface::IDasJson*  p_request_json,
+        ExportInterface::IDasJson** pp_out_result_json) override;
+};
+
+class IpcTaskAuthoringSessionFactoryImpl final
+    : public PluginInterface::DasTaskAuthoringSessionFactoryImplBase<
+          IpcTaskAuthoringSessionFactoryImpl>
+{
+public:
+    DAS_IMPL CreateSession(
+        const DasGuid&                              task_guid,
+        ExportInterface::IDasJson*                  p_context_json,
+        PluginInterface::IDasTaskAuthoringSession** pp_out_session) override;
+};
+
+class IpcTaskComponentImpl final
+    : public PluginInterface::DasTaskComponentImplBase<IpcTaskComponentImpl>
+{
+public:
+    DAS_IMPL GetDefinition(
+        ExportInterface::IDasJson** pp_out_definition_json) override;
+    DAS_IMPL ApplySettingsChange(
+        ExportInterface::IDasJson*  p_request_json,
+        ExportInterface::IDasJson** pp_out_result_json) override;
+    DAS_IMPL Do(
+        PluginInterface::IDasStopToken* stop_token,
+        ExportInterface::IDasJson*      p_environment_json,
+        ExportInterface::IDasJson*      p_settings_json,
+        ExportInterface::IDasJson*      p_input_json,
+        ExportInterface::IDasJson**     pp_out_result_json) override;
+};
+
+class IpcTaskComponentFactoryImpl final
+    : public PluginInterface::DasTaskComponentFactoryImplBase<
+          IpcTaskComponentFactoryImpl>
+{
+public:
+    DAS_IMPL GetCatalog(
+        ExportInterface::IDasJson** pp_out_catalog_json) override;
+    DAS_IMPL CreateComponent(
+        const DasGuid&                         component_guid,
+        PluginInterface::IDasTaskComponent**   pp_out_component) override;
+};
+
 /**
  * @brief IPC 测试插件1 - 实现 IDasPluginPackage
  *
  * 该插件提供：
  * - index=0: IDasTouch 工厂（DasTouchMockImpl）
  * - index=1: IDasComponentFactory 工厂（DasQueryComponentFactoryImpl）
+ * - index=2: IDasTaskAuthoringSessionFactory 工厂
+ * - index=3: IDasTaskComponentFactory 工厂
  */
 class IpcTestPlugin1 final
     : public PluginInterface::DasPluginPackageImplBase<IpcTestPlugin1>

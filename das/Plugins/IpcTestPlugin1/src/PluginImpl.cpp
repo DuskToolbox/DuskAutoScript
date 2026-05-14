@@ -4,12 +4,40 @@
 #include <das/DasApi.h>
 #include <das/DasString.hpp>
 #include <das/IDasBase.h>
+#include <das/Utils/DasJsonCore.h>
 #include <das/Utils/fmt.h>
 
 #include <array>
+#include <cstring>
 #include <string>
 
 DAS_NS_BEGIN
+
+namespace
+{
+    constexpr DasGuid kIpcTaskComponentGuid{
+        0x68F10701,
+        0x0000,
+        0x4000,
+        {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}};
+
+    DasPtr<ExportInterface::IDasJson> WrapJson(yyjson::value value)
+    {
+        auto serialized = Utils::SerializeYyjsonValue(value);
+        if (!serialized)
+        {
+            return {};
+        }
+        DasPtr<ExportInterface::IDasJson> result;
+        ParseDasJsonFromString(serialized->c_str(), result.Put());
+        return result;
+    }
+
+    bool GuidEquals(const DasGuid& lhs, const DasGuid& rhs)
+    {
+        return std::memcmp(&lhs, &rhs, sizeof(DasGuid)) == 0;
+    }
+} // namespace
 
 // === DasTouchMockImpl ===
 
@@ -359,6 +387,221 @@ DasResult DasQueryComponentFactoryImpl::CreateInstance(
     return DAS_S_OK;
 }
 
+// === IpcTaskAuthoringSessionImpl ===
+
+DasResult IpcTaskAuthoringSessionImpl::GetDocument(
+    ExportInterface::IDasJson*,
+    ExportInterface::IDasJson** pp_out_document_json)
+{
+    if (!pp_out_document_json)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    auto document = Utils::MakeYyjsonObject();
+    auto obj = *document.as_object();
+    obj[std::string_view("version")] = 1;
+    obj[std::string_view("kind")] = "formSequence";
+    obj[std::string_view("revision")] = 0;
+    obj[std::string_view("values")] = Utils::MakeYyjsonObject();
+    obj[std::string_view("view")] = Utils::MakeYyjsonObject();
+    obj[std::string_view("schema")] = Utils::MakeYyjsonObject();
+    obj[std::string_view("catalog")] = Utils::MakeYyjsonObject();
+    obj[std::string_view("state")] = Utils::MakeYyjsonObject();
+    obj[std::string_view("diagnostics")] = Utils::MakeYyjsonArray();
+    obj[std::string_view("migration")] = Utils::MakeYyjsonObject();
+
+    auto wrapped = WrapJson(std::move(document));
+    *pp_out_document_json = wrapped.Get();
+    (*pp_out_document_json)->AddRef();
+    return DAS_S_OK;
+}
+
+DasResult IpcTaskAuthoringSessionImpl::ApplyChange(
+    ExportInterface::IDasJson*,
+    ExportInterface::IDasJson** pp_out_result_json)
+{
+    if (!pp_out_result_json)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    auto result = Utils::MakeYyjsonObject();
+    auto obj = *result.as_object();
+    auto accepted = Utils::MakeYyjsonObject();
+    (*accepted.as_object())[std::string_view("ipcAuthoringValue")] =
+        "accepted";
+    obj[std::string_view("acceptedProperties")] = std::move(accepted);
+    obj[std::string_view("sourceFingerprint")] = "ipc-test-authoring";
+    obj[std::string_view("migration")] = Utils::MakeYyjsonObject();
+
+    auto wrapped = WrapJson(std::move(result));
+    *pp_out_result_json = wrapped.Get();
+    (*pp_out_result_json)->AddRef();
+    return DAS_S_OK;
+}
+
+DasResult IpcTaskAuthoringSessionImpl::Compile(
+    ExportInterface::IDasJson*,
+    ExportInterface::IDasJson** pp_out_result_json)
+{
+    if (!pp_out_result_json)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    auto result = Utils::MakeYyjsonObject();
+    auto obj = *result.as_object();
+    obj[std::string_view("ok")] = true;
+    obj[std::string_view("previewOnly")] = true;
+
+    auto wrapped = WrapJson(std::move(result));
+    *pp_out_result_json = wrapped.Get();
+    (*pp_out_result_json)->AddRef();
+    return DAS_S_OK;
+}
+
+DasResult IpcTaskAuthoringSessionFactoryImpl::CreateSession(
+    const DasGuid&,
+    ExportInterface::IDasJson*,
+    PluginInterface::IDasTaskAuthoringSession** pp_out_session)
+{
+    if (!pp_out_session)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    auto* session = new IpcTaskAuthoringSessionImpl();
+    session->AddRef();
+    *pp_out_session = session;
+    return DAS_S_OK;
+}
+
+// === IpcTaskComponentImpl ===
+
+DasResult IpcTaskComponentImpl::GetDefinition(
+    ExportInterface::IDasJson** pp_out_definition_json)
+{
+    if (!pp_out_definition_json)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    auto definition = Utils::MakeYyjsonObject();
+    auto obj = *definition.as_object();
+    obj[std::string_view("stableName")] = "das.ipc.testComponent";
+    obj[std::string_view("componentGuid")] =
+        "68F10701-0000-4000-8000-000000000001";
+    obj[std::string_view("kind")] = "ipcTest";
+    obj[std::string_view("label")] = "IPC Test Component";
+    obj[std::string_view("inputs")] = Utils::MakeYyjsonArray();
+    obj[std::string_view("outputs")] = Utils::MakeYyjsonArray();
+    obj[std::string_view("config")] = Utils::MakeYyjsonObject();
+    obj[std::string_view("diagnostics")] = Utils::MakeYyjsonArray();
+
+    auto wrapped = WrapJson(std::move(definition));
+    *pp_out_definition_json = wrapped.Get();
+    (*pp_out_definition_json)->AddRef();
+    return DAS_S_OK;
+}
+
+DasResult IpcTaskComponentImpl::ApplySettingsChange(
+    ExportInterface::IDasJson*,
+    ExportInterface::IDasJson** pp_out_result_json)
+{
+    if (!pp_out_result_json)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    auto result = Utils::MakeYyjsonObject();
+    auto accepted = Utils::MakeYyjsonObject();
+    (*accepted.as_object())[std::string_view("ipcSetting")] = "accepted";
+    (*result.as_object())[std::string_view("acceptedSettings")] =
+        std::move(accepted);
+
+    auto wrapped = WrapJson(std::move(result));
+    *pp_out_result_json = wrapped.Get();
+    (*pp_out_result_json)->AddRef();
+    return DAS_S_OK;
+}
+
+DasResult IpcTaskComponentImpl::Do(
+    PluginInterface::IDasStopToken*,
+    ExportInterface::IDasJson*,
+    ExportInterface::IDasJson*,
+    ExportInterface::IDasJson*,
+    ExportInterface::IDasJson** pp_out_result_json)
+{
+    if (!pp_out_result_json)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    auto result = Utils::MakeYyjsonObject();
+    auto obj = *result.as_object();
+    obj[std::string_view("status")] = "completed";
+    auto outputs = Utils::MakeYyjsonObject();
+    (*outputs.as_object())[std::string_view("ipcResult")] = "ok";
+    obj[std::string_view("outputs")] = std::move(outputs);
+    auto signals = Utils::MakeYyjsonArray();
+    signals.as_array()->emplace_back("next");
+    obj[std::string_view("signals")] = std::move(signals);
+
+    auto wrapped = WrapJson(std::move(result));
+    *pp_out_result_json = wrapped.Get();
+    (*pp_out_result_json)->AddRef();
+    return DAS_S_OK;
+}
+
+DasResult IpcTaskComponentFactoryImpl::GetCatalog(
+    ExportInterface::IDasJson** pp_out_catalog_json)
+{
+    if (!pp_out_catalog_json)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    auto catalog = Utils::MakeYyjsonObject();
+    auto components = Utils::MakeYyjsonArray();
+    auto item = Utils::MakeYyjsonObject();
+    auto item_obj = *item.as_object();
+    item_obj[std::string_view("stableName")] = "das.ipc.testComponent";
+    item_obj[std::string_view("componentGuid")] =
+        "68F10701-0000-4000-8000-000000000001";
+    item_obj[std::string_view("label")] = "IPC Test Component";
+    item_obj[std::string_view("kind")] = "ipcTest";
+    components.as_array()->emplace_back(std::move(item));
+    (*catalog.as_object())[std::string_view("components")] =
+        std::move(components);
+
+    auto wrapped = WrapJson(std::move(catalog));
+    *pp_out_catalog_json = wrapped.Get();
+    (*pp_out_catalog_json)->AddRef();
+    return DAS_S_OK;
+}
+
+DasResult IpcTaskComponentFactoryImpl::CreateComponent(
+    const DasGuid&                       component_guid,
+    PluginInterface::IDasTaskComponent** pp_out_component)
+{
+    if (!pp_out_component)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+    *pp_out_component = nullptr;
+
+    if (!GuidEquals(component_guid, kIpcTaskComponentGuid))
+    {
+        return DAS_E_NOT_FOUND;
+    }
+
+    auto* component = new IpcTaskComponentImpl();
+    component->AddRef();
+    *pp_out_component = component;
+    return DAS_S_OK;
+}
+
 // === IpcTestPlugin1 ===
 
 DasResult IpcTestPlugin1::EnumFeature(
@@ -367,7 +610,9 @@ DasResult IpcTestPlugin1::EnumFeature(
 {
     static std::array features{
         PluginInterface::DAS_PLUGIN_FEATURE_INPUT_FACTORY,
-        PluginInterface::DAS_PLUGIN_FEATURE_COMPONENT_FACTORY};
+        PluginInterface::DAS_PLUGIN_FEATURE_COMPONENT_FACTORY,
+        PluginInterface::DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY,
+        PluginInterface::DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY};
     try
     {
         const auto result = features.at(index);
@@ -389,7 +634,7 @@ DasResult IpcTestPlugin1::CreateFeatureInterface(
     {
         return DAS_E_INVALID_ARGUMENT;
     }
-    if (index > 1)
+    if (index > 3)
     {
         return DAS_E_OUT_OF_RANGE;
     }
@@ -402,13 +647,27 @@ DasResult IpcTestPlugin1::CreateFeatureInterface(
         *pp_out_interface =
             static_cast<PluginInterface::IDasTouch*>(touch_impl);
     }
-    else
+    else if (index == 1)
     {
         // index == 1: 创建 DasQueryComponentFactoryImpl
         auto* factory = new DasQueryComponentFactoryImpl();
         factory->AddRef();
         *pp_out_interface =
             static_cast<PluginInterface::IDasComponentFactory*>(factory);
+    }
+    else if (index == 2)
+    {
+        auto* factory = new IpcTaskAuthoringSessionFactoryImpl();
+        factory->AddRef();
+        *pp_out_interface = static_cast<
+            PluginInterface::IDasTaskAuthoringSessionFactory*>(factory);
+    }
+    else
+    {
+        auto* factory = new IpcTaskComponentFactoryImpl();
+        factory->AddRef();
+        *pp_out_interface =
+            static_cast<PluginInterface::IDasTaskComponentFactory*>(factory);
     }
 
     return DAS_S_OK;

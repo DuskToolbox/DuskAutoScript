@@ -404,6 +404,94 @@ TEST(PluginPackageDescTest, TaskDescriptorsKeyedByGuid)
     EXPECT_TRUE(it2->second.descriptors[0].required);
 }
 
+TEST(PluginPackageDescTest, TaskDescriptorAuthoringCapability)
+{
+    constexpr auto test_string = R"(
+    {
+        "name": "AuthoringPlugin",
+        "author": "Dusk",
+        "version": "1.0.0",
+        "guid": "0527CD9E-1F26-44FB-BE5F-D63C5A11B754",
+        "description": "Plugin with authoring capability",
+        "supportedSystem": "Windows",
+        "language": "Cpp",
+        "pluginFilenameExtension": "dll",
+        "settings": [],
+        "tasks": {
+            "B4F60C54-67DF-407A-B891-6D3C90CDB9A1": {
+                "pluginGuid": "65EDE9D8-09A8-4F01-B4AF-6614C5BA1C8E",
+                "name": "dailyLogin",
+                "description": "Daily login task",
+                "authoring": {
+                    "featureIndex": 2,
+                    "supportedKinds": ["formSequence", "graph"]
+                }
+            }
+        }
+    }
+    )";
+
+    const auto desc =
+        JsonToStruct<DAS::Core::ForeignInterfaceHost::PluginPackageDesc>(
+            test_string);
+    const auto task_guid = DAS::Core::ForeignInterfaceHost::MakeDasGuid(
+        "B4F60C54-67DF-407A-B891-6D3C90CDB9A1");
+
+    const auto it = desc.task_descriptors.find(task_guid);
+    ASSERT_NE(it, desc.task_descriptors.end());
+    ASSERT_TRUE(it->second.authoring.has_value());
+    EXPECT_EQ(it->second.authoring->feature_index, 2u);
+    ASSERT_EQ(it->second.authoring->supported_kinds.size(), 2u);
+    EXPECT_EQ(it->second.authoring->supported_kinds[0], "formSequence");
+    EXPECT_EQ(it->second.authoring->supported_kinds[1], "graph");
+}
+
+TEST(PluginPackageDescTest, TaskDescriptorComponentCapabilities)
+{
+    constexpr auto test_string = R"(
+    {
+        "name": "ComponentPlugin",
+        "author": "Dusk",
+        "version": "1.0.0",
+        "guid": "0527CD9E-1F26-44FB-BE5F-D63C5A11B754",
+        "description": "Plugin with component capabilities",
+        "supportedSystem": "Windows",
+        "language": "Cpp",
+        "pluginFilenameExtension": "dll",
+        "settings": [],
+        "tasks": {
+            "B4F60C54-67DF-407A-B891-6D3C90CDB9A1": {
+                "pluginGuid": "65EDE9D8-09A8-4F01-B4AF-6614C5BA1C8E",
+                "name": "dailyLogin",
+                "description": "Daily login task",
+                "components": [
+                    {
+                        "componentGuid": "78B71988-2125-4A2B-8B78-02A804570101",
+                        "factoryFeatureIndex": 3,
+                        "role": "flowControl"
+                    }
+                ]
+            }
+        }
+    }
+    )";
+
+    const auto desc =
+        JsonToStruct<DAS::Core::ForeignInterfaceHost::PluginPackageDesc>(
+            test_string);
+    const auto task_guid = DAS::Core::ForeignInterfaceHost::MakeDasGuid(
+        "B4F60C54-67DF-407A-B891-6D3C90CDB9A1");
+    const auto component_guid = DAS::Core::ForeignInterfaceHost::MakeDasGuid(
+        "78B71988-2125-4A2B-8B78-02A804570101");
+
+    const auto it = desc.task_descriptors.find(task_guid);
+    ASSERT_NE(it, desc.task_descriptors.end());
+    ASSERT_EQ(it->second.components.size(), 1u);
+    EXPECT_EQ(it->second.components[0].component_guid, component_guid);
+    EXPECT_EQ(it->second.components[0].factory_feature_index, 3u);
+    EXPECT_EQ(it->second.components[0].role, "flowControl");
+}
+
 TEST(PluginPackageDescTest, ResourcePath_ExplicitValue)
 {
     constexpr auto test_string = R"(

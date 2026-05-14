@@ -396,6 +396,46 @@ namespace Details
 
 } // namespace Details
 
+namespace
+{
+    uint64_t JsonValueToFeatureIndex(
+        const yyjson::writer::const_object_ref& obj,
+        std::string_view                        key)
+    {
+        auto value = obj[key];
+        if (auto unsigned_value = value.as_uint())
+        {
+            return *unsigned_value;
+        }
+        if (auto signed_value = value.as_sint())
+        {
+            return static_cast<uint64_t>(*signed_value);
+        }
+        throw std::runtime_error("Expected numeric feature index");
+    }
+
+    std::vector<std::string> JsonStringArrayToVector(
+        const yyjson::writer::const_value_ref& value)
+    {
+        std::vector<std::string> result;
+        if (!value.is_array())
+        {
+            return result;
+        }
+
+        auto arr = *value.as_array();
+        for (const auto& elem : arr)
+        {
+            auto str = elem.as_string();
+            if (str)
+            {
+                result.emplace_back(*str);
+            }
+        }
+        return result;
+    }
+} // namespace
+
 void ParsePluginSettingDescFromJson(
     const yyjson::writer::const_object_ref& obj,
     PluginSettingDesc&                      output)
@@ -509,6 +549,54 @@ void ParseTaskDescriptorFromJson(
     output.description = Details::JsonValueToYyjsonScalar<std::string>(
         obj[std::string_view("description")]);
     Details::OptionalFieldFromYyjson(obj, "gameName", output.game_name);
+    if (obj.contains(std::string_view("authoring")))
+    {
+        auto authoring_val = obj[std::string_view("authoring")];
+        auto authoring_obj = authoring_val.as_object();
+        if (authoring_obj)
+        {
+            TaskAuthoringCapabilityDesc authoring;
+            authoring.feature_index =
+                JsonValueToFeatureIndex(*authoring_obj, "featureIndex");
+            if (authoring_obj->contains(std::string_view("supportedKinds")))
+            {
+                authoring.supported_kinds = JsonStringArrayToVector(
+                    (*authoring_obj)[std::string_view("supportedKinds")]);
+            }
+            output.authoring = std::move(authoring);
+        }
+    }
+    if (obj.contains(std::string_view("components")))
+    {
+        auto components_val = obj[std::string_view("components")];
+        auto components_arr = components_val.as_array();
+        if (components_arr)
+        {
+            for (const auto& elem : *components_arr)
+            {
+                auto component_obj = elem.as_object();
+                if (!component_obj)
+                {
+                    continue;
+                }
+
+                TaskComponentCapabilityDesc component;
+                component.component_guid = MakeDasGuid(
+                    Details::JsonValueToYyjsonScalar<std::string>(
+                        (*component_obj)[std::string_view("componentGuid")]));
+                component.factory_feature_index = JsonValueToFeatureIndex(
+                    *component_obj,
+                    "factoryFeatureIndex");
+                if (component_obj->contains(std::string_view("role")))
+                {
+                    component.role =
+                        Details::JsonValueToYyjsonScalar<std::string>(
+                            (*component_obj)[std::string_view("role")]);
+                }
+                output.components.push_back(std::move(component));
+            }
+        }
+    }
     if (obj.contains(std::string_view("descriptors")))
     {
         auto descriptors_field = obj[std::string_view("descriptors")];

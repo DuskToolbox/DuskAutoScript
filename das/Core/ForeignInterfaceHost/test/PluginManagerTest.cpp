@@ -8,6 +8,8 @@
 #include <das/DasApi.h>
 #include <das/DasSharedRef.hpp>
 #include <das/Utils/DasJsonCore.h>
+#include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
+#include <das/_autogen/idl/abi/IDasTaskComponent.h>
 #include <gtest/gtest.h>
 
 DAS_DISABLE_WARNING_BEGIN
@@ -553,6 +555,41 @@ TEST_F(PluginManagerFeatureTest, FeatureInfoContainsPluginGuid)
         std::memcmp(&input_span[0]->plugin_guid, &zero_guid, sizeof(DasGuid))
         == 0)
         << "plugin_guid should be populated after LoadPlugin";
+}
+
+TEST_F(PluginManagerFeatureTest, GetFeaturesByTypeReturnsTaskAuthoringFactory)
+{
+    DasGuid plugin_guid{};
+    plugin_guid.data1 = 0x6803;
+    pm_->RegisterTestFeature(
+        DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY,
+        plugin_guid,
+        nullptr);
+
+    auto span =
+        pm_->GetFeaturesByType(DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY);
+    ASSERT_EQ(span.size(), 1u);
+    EXPECT_EQ(span[0]->feature_type, DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY);
+    EXPECT_EQ(span[0]->feature_index, 0u);
+    EXPECT_EQ(span[0]->plugin_guid, plugin_guid);
+    EXPECT_EQ(span[0]->iid, DasIidOf<IDasTaskAuthoringSessionFactory>());
+}
+
+TEST_F(PluginManagerFeatureTest, GetFeaturesByTypeReturnsTaskComponentFactory)
+{
+    DasGuid plugin_guid{};
+    plugin_guid.data1 = 0x6804;
+    pm_->RegisterTestFeature(
+        DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY,
+        plugin_guid,
+        nullptr);
+
+    auto span =
+        pm_->GetFeaturesByType(DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY);
+    ASSERT_EQ(span.size(), 1u);
+    EXPECT_EQ(span[0]->feature_type, DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY);
+    EXPECT_EQ(span[0]->plugin_guid, plugin_guid);
+    EXPECT_EQ(span[0]->iid, DasIidOf<IDasTaskComponentFactory>());
 }
 
 // ============================================================
