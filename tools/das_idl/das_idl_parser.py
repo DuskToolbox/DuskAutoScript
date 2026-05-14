@@ -1248,19 +1248,14 @@ class Parser:
         # 内置基本类型集合（来自 BUILTIN_TYPES）
         builtin_types: set[str] = set(self.BUILTIN_TYPES)
 
-        def exact_namespace_match(symbols: dict[str, set[str]], type_info: TypeInfo) -> bool:
-            return type_info.explicit_namespace in symbols.get(type_info.simple_name, set())
-
         def resolve_namespace(symbols: dict[str, set[str]], type_info: TypeInfo, kind_name: str) -> str | None:
-            if type_info.is_qualified:
-                if exact_namespace_match(symbols, type_info):
-                    return type_info.explicit_namespace
-                raise SyntaxError(
-                    f"Unresolved qualified {kind_name} type '{type_info.source_type}'"
-                    f" in {self.source_path or '<memory>'}"
-                )
-
             namespaces = symbols.get(type_info.simple_name, set())
+            if type_info.is_qualified:
+                if type_info.explicit_namespace in namespaces:
+                    return type_info.explicit_namespace
+
+                return None
+
             if not namespaces:
                 return None
             if len(namespaces) > 1:
@@ -1274,7 +1269,7 @@ class Parser:
                 )
             return next(iter(namespaces))
 
-        def classify(type_info: TypeInfo) -> TypeKind:
+        def classify(type_info: TypeInfo, allow_unresolved_qualified: bool = False) -> TypeKind:
             """根据 source/simple/namespace views 判断类型分类"""
             simple = type_info.simple_name
 
@@ -1308,6 +1303,10 @@ class Parser:
                 return TypeKind.STRUCT
 
             if type_info.is_qualified:
+                if allow_unresolved_qualified:
+                    type_info.resolved_namespace = type_info.explicit_namespace
+                    type_info.resolved_qualified_name = type_info.source_type
+                    return TypeKind.UNKNOWN
                 raise SyntaxError(
                     f"Unresolved qualified type '{type_info.source_type}'"
                     f" in {self.source_path or '<memory>'}"
@@ -1316,18 +1315,21 @@ class Parser:
             type_info.resolved_qualified_name = type_info.source_type
             return TypeKind.UNKNOWN
 
-        def annotate_recursive(obj):
+        def annotate_recursive(obj, allow_unresolved_qualified: bool = False):
             """递归标注对象中所有 TypeInfo 字段"""
             if obj is None:
                 return
             if isinstance(obj, TypeInfo):
-                obj.type_kind = classify(obj)
+                obj.type_kind = classify(obj, allow_unresolved_qualified)
+            elif isinstance(obj, ModuleFunctionDef):
+                annotate_recursive(obj.return_type, allow_unresolved_qualified=True)
+                annotate_recursive(obj.parameters, allow_unresolved_qualified=True)
             elif isinstance(obj, list):
                 for item in obj:
-                    annotate_recursive(item)
+                    annotate_recursive(item, allow_unresolved_qualified)
             elif hasattr(obj, "__dataclass_fields__"):
                 for field_name in obj.__dataclass_fields__:
-                    annotate_recursive(getattr(obj, field_name))
+                    annotate_recursive(getattr(obj, field_name), allow_unresolved_qualified)
 
         # 遍历 document 中所有结构，递归标注
         annotate_recursive(self.document)

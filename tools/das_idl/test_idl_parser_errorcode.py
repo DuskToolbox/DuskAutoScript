@@ -420,6 +420,49 @@ class TestTypeInfoMetadata(unittest.TestCase):
 class TestStrictTypeResolution(unittest.TestCase):
     """Strict interface/enum/struct resolution avoids namespace guessing"""
 
+    def test_unresolved_qualified_module_type_is_relaxed(self):
+        idl = """
+        module DasCoreApi {
+            [export, c_abi] DasResult CreateExternal(
+                [out] Das::External::IMissing** pp_out);
+            [export] Das::External::IMissing GetExternal();
+        }
+        """
+
+        doc = parse_idl(idl)
+        out_type = doc.modules[0].functions[0].parameters[0].type_info
+        return_type = doc.modules[0].functions[1].return_type
+
+        self.assertEqual(out_type.type_kind, TypeKind.UNKNOWN)
+        self.assertEqual(out_type.source_type, "Das::External::IMissing")
+        self.assertEqual(out_type.simple_name, "IMissing")
+        self.assertEqual(out_type.explicit_namespace, "Das::External")
+        self.assertEqual(out_type.resolved_namespace, "Das::External")
+        self.assertEqual(out_type.resolved_qualified_name, "Das::External::IMissing")
+
+        self.assertEqual(return_type.type_kind, TypeKind.UNKNOWN)
+        self.assertEqual(return_type.resolved_namespace, "Das::External")
+        self.assertEqual(return_type.resolved_qualified_name, "Das::External::IMissing")
+
+    def test_module_relaxation_does_not_hide_strict_interface_miss(self):
+        idl = """
+        module DasCoreApi {
+            [export, c_abi] DasResult CreateExternal(
+                [out] Das::External::IMissing** pp_out);
+        }
+
+        [uuid("12345678-1234-1234-1234-123456789012")]
+        interface IFoo : IDasBase {
+            DasResult GetExternal([out] Das::External::IMissing** pp_out);
+        }
+        """
+
+        with self.assertRaisesRegex(
+            SyntaxError,
+            "Unresolved qualified type 'Das::External::IMissing'",
+        ):
+            parse_idl(idl)
+
     def test_unresolved_qualified_interface_fails(self):
         idl = """
         namespace Das::PluginInterface {
@@ -432,6 +475,41 @@ class TestStrictTypeResolution(unittest.TestCase):
 
         with self.assertRaisesRegex(SyntaxError, "Unresolved qualified"):
             parse_idl(idl)
+
+    def test_qualified_struct_import_resolves_after_interface_miss(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            (temp / "DasBasicTypes.idl").write_text(
+                """
+                namespace Das::ExportInterface {
+                    struct DasDate { uint16_t year; }
+                }
+                """,
+                encoding="utf-8",
+            )
+            main = temp / "IDasTask.idl"
+            main.write_text(
+                """
+                import "DasBasicTypes.idl";
+                namespace Das::PluginInterface {
+                    [uuid("12345678-1234-1234-1234-123456789012")]
+                    interface IDasTask : IDasBase {
+                        DasResult GetNextExecutionTime(
+                            [out] Das::ExportInterface::DasDate* p_out_date);
+                    }
+                }
+                """,
+                encoding="utf-8",
+            )
+
+            doc = parse_idl_file(str(main))
+            type_info = doc.interfaces[0].methods[0].parameters[0].type_info
+
+            self.assertEqual(type_info.type_kind, TypeKind.STRUCT)
+            self.assertEqual(type_info.resolved_namespace, "Das::ExportInterface")
+            self.assertEqual(type_info.resolved_qualified_name, "Das::ExportInterface::DasDate")
 
     def test_ambiguous_simple_imported_interface_fails(self):
         import tempfile

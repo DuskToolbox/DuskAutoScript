@@ -21,6 +21,7 @@ from das_idl_parser import (
     ParamDirection,
     parse_idl_file,
 )
+from das_cpp_generator import CppCodeGenerator
 from das_swig_generator import SwigCodeGenerator
 
 
@@ -560,6 +561,74 @@ class TestQualifiedInterfaceOutParamGeneration(unittest.TestCase):
 
             self.assertIn("IDasCapture** pp_out_interface", generated_all)
             self.assertNotIn("ExportInterface::IDasCapture", "".join(SwigCodeGenerator._global_ret_classes))
+
+    def test_cross_namespace_abi_header_uses_type_level_swig_using(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            (temp / "DasBasicTypes.idl").write_text(
+                """
+                namespace Das::ExportInterface {
+                    struct DasDate { uint16_t year; }
+                }
+                """,
+                encoding="utf-8",
+            )
+            (temp / "IDasVariantVector.idl").write_text(
+                """
+                namespace Das::ExportInterface {
+                    [uuid("12345678-1234-1234-1234-123456789005")]
+                    interface IDasVariantVector : IDasBase {
+                        DasResult GetSize();
+                    }
+                }
+                """,
+                encoding="utf-8",
+            )
+            main = temp / "IDasComponent.idl"
+            main.write_text(
+                """
+                import "DasBasicTypes.idl";
+                import "IDasVariantVector.idl";
+                namespace Das::PluginInterface {
+                    [uuid("12345678-1234-1234-1234-123456789006")]
+                    interface IDasComponent : IDasBase {
+                        DasResult Dispatch(
+                            IDasReadOnlyString* p_function_name,
+                            IDasVariantVector* p_arguments,
+                            [out] IDasVariantVector** pp_out_result);
+                        DasResult GetNextExecutionTime([out] DasDate* p_out_date);
+                    }
+                }
+                """,
+                encoding="utf-8",
+            )
+
+            document = parse_idl_file(str(main))
+            header = CppCodeGenerator(document).generate_header("IDasComponent")
+
+            self.assertIn("#ifdef SWIG", header)
+            self.assertIn("using Das::ExportInterface::IDasVariantVector;", header)
+            self.assertIn("using Das::ExportInterface::DasDate;", header)
+            self.assertNotIn("using namespace Das::ExportInterface;", header)
+            self.assertIn(
+                "DAS_METHOD Dispatch(IDasReadOnlyString* p_function_name, "
+                "IDasVariantVector* p_arguments, IDasVariantVector** pp_out_result) = 0;",
+                header,
+            )
+            self.assertIn(
+                "DAS_METHOD GetNextExecutionTime(DasDate* p_out_date) = 0;",
+                header,
+            )
+            self.assertIn(
+                "DAS_METHOD Dispatch(IDasReadOnlyString* p_function_name, "
+                "::Das::ExportInterface::IDasVariantVector* p_arguments, "
+                "::Das::ExportInterface::IDasVariantVector** pp_out_result) = 0;",
+                header,
+            )
+            self.assertIn(
+                "DAS_METHOD GetNextExecutionTime(::Das::ExportInterface::DasDate* p_out_date) = 0;",
+                header,
+            )
 
 
 if __name__ == "__main__":

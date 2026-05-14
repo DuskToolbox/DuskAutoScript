@@ -237,7 +237,7 @@ class CppCodeGenerator:
         """
         for param in method.parameters:
             base_type = type_simple_name(param.type_info)
-            if param.type_info.type_kind != TypeKind.INTERFACE:
+            if param.type_info.type_kind not in (TypeKind.INTERFACE, TypeKind.ENUM, TypeKind.STRUCT):
                 continue
             if CppTypeMapper.is_string_type(base_type):
                 continue
@@ -264,7 +264,7 @@ class CppCodeGenerator:
         seen = set()
         for param in method.parameters:
             base_type = type_simple_name(param.type_info)
-            if param.type_info.type_kind != TypeKind.INTERFACE:
+            if param.type_info.type_kind not in (TypeKind.INTERFACE, TypeKind.ENUM, TypeKind.STRUCT):
                 continue
             if CppTypeMapper.is_string_type(base_type):
                 continue
@@ -279,7 +279,7 @@ class CppCodeGenerator:
             if type_namespace is None:
                 type_namespace = ""
             if type_namespace and type_namespace != current_namespace:
-                usings.append(f"using namespace {type_namespace};")
+                usings.append(f"using {type_namespace}::{base_type};")
                 seen.add(base_type)
         return usings
 
@@ -527,9 +527,9 @@ DAS_DEFINE_GUID(
             else:
                 param_type = CppTypeMapper.map_type(param.type_info)
 
-            # 对接口类型应用命名空间限定
+            # 对已解析的 IDL 类型应用命名空间限定
             base_type = type_simple_name(param.type_info)
-            if param.type_info.type_kind == TypeKind.INTERFACE:
+            if param.type_info.type_kind in (TypeKind.INTERFACE, TypeKind.ENUM, TypeKind.STRUCT):
                 qualified_type = self._qualify_type_if_needed(base_type, current_namespace, param.type_info)
                 # 替换类型名中的基本类型为完全限定类型
                 param_type = param_type.replace(base_type, qualified_type)
@@ -559,8 +559,8 @@ DAS_DEFINE_GUID(
         base_type = type_simple_name(prop.type_info)
         cpp_type = CppTypeMapper.TYPE_MAP.get(base_type, base_type)
 
-        # 对接口类型应用命名空间限定
-        if prop.type_info.type_kind == TypeKind.INTERFACE:
+        # 对已解析的 IDL 类型应用命名空间限定
+        if prop.type_info.type_kind in (TypeKind.INTERFACE, TypeKind.ENUM, TypeKind.STRUCT):
             cpp_type = self._qualify_type_if_needed(base_type, current_namespace, prop.type_info)
 
         is_interface = prop.type_info.type_kind == TypeKind.INTERFACE
@@ -649,11 +649,12 @@ DAS_DEFINE_GUID(
                         seen_usings.add(u)
 
         if has_cross_ns and namespace:
-            # using 声明放在 class 前面（namespace 内），由 strict resolver
-            # 决定来源；签名保持 simple name 以避免 source-qualified text
-            # 泄漏到 SWIG/target-language generated identifiers.
+            # SWIG needs type-level using declarations so director code can
+            # resolve copied simple names from the global wrapper namespace.
+            lines.append(f"#ifdef SWIG")
             for u in all_usings:
                 lines.append(u)
+            lines.append(f"#endif")
             lines.append("")
 
         # 接口声明
@@ -672,13 +673,13 @@ DAS_DEFINE_GUID(
                 for m in prop_methods:
                     lines.append(f"{self.indent}{m} = 0;")
 
-            # C++ 分支：通过 resolver-derived using namespace 使用 simple names.
+            # C++ 分支：完全限定名
             lines.append(f"#else")
             for method in interface.methods:
-                sig = self._generate_method_signature_for_swig(method)
+                sig = self._generate_method_signature(method, namespace)
                 lines.append(f"{self.indent}{sig} = 0;")
             for prop in interface.properties:
-                prop_methods = self._generate_property_methods(prop)
+                prop_methods = self._generate_property_methods(prop, namespace)
                 for m in prop_methods:
                     lines.append(f"{self.indent}{m} = 0;")
             lines.append(f"#endif")
