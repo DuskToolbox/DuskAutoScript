@@ -6,6 +6,7 @@
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
+#include <das/Core/ForeignInterfaceHost/TaskComponentFactoryManager.h>
 #include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/IPC/ObjectId.h>
@@ -42,10 +43,10 @@ struct FeatureInfo
     Das::PluginInterface::DasPluginFeature feature_type;  // Feature 类型枚举
     DasGuid                                iid;           // 对应的接口 IID
     DasPtr<IDasBase>                       interface_ptr; // 创建的接口指针
-    Core::IPC::ObjectId object_id{}; // 在 RemoteObjectRegistry 中的对象 ID
+    Core::IPC::ObjectId object_id{};    // 在 RemoteObjectRegistry 中的对象 ID
     uint16_t            session_id = 0; // 所属会话 ID
-    std::string         plugin_name; // 所属插件名称
-    DasGuid             plugin_guid; // 所属插件 GUID
+    std::string         plugin_name;    // 所属插件名称
+    DasGuid             plugin_guid;    // 所属插件 GUID
 };
 
 /**
@@ -239,6 +240,8 @@ public:
 
     ComponentFactoryManager& GetComponentFactoryManager();
 
+    TaskComponentFactoryManager& GetTaskComponentFactoryManager();
+
     /**
      * @brief Inject a feature directly into the type index for testing.
      * Only for use in unit tests that need to simulate loaded features
@@ -319,8 +322,9 @@ private:
     std::unordered_map<
         Das::PluginInterface::DasPluginFeature,
         std::vector<FeatureInfo*>>
-                            feature_type_index_;
-    ComponentFactoryManager component_factory_mgr_;
+                                feature_type_index_;
+    ComponentFactoryManager     component_factory_mgr_;
+    TaskComponentFactoryManager task_component_factory_mgr_;
 
     // IPC 相关成员
     Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context_;

@@ -202,8 +202,7 @@ namespace
         return guid;
     }
 
-    yyjson::value MakeTaskComponentDefinitionJson(
-        const DasGuid& component_guid)
+    yyjson::value MakeTaskComponentDefinitionJson(const DasGuid& component_guid)
     {
         auto definition = Das::Utils::MakeYyjsonObject();
         auto obj = *definition.as_object();
@@ -368,12 +367,12 @@ namespace
             return DAS_E_NO_IMPLEMENTATION;
         }
 
-        DasResult DAS_STD_CALL Do(
-            IDasStopToken*,
-            Das::ExportInterface::IDasJson*,
-            Das::ExportInterface::IDasJson*,
-            Das::ExportInterface::IDasJson*,
-            Das::ExportInterface::IDasJson**) override
+        DasResult DAS_STD_CALL
+        Do(IDasStopToken*,
+           Das::ExportInterface::IDasJson*,
+           Das::ExportInterface::IDasJson*,
+           Das::ExportInterface::IDasJson*,
+           Das::ExportInterface::IDasJson**) override
         {
             return DAS_E_NO_IMPLEMENTATION;
         }
@@ -387,8 +386,7 @@ namespace
         : public IDasTaskComponentFactory
     {
     public:
-        explicit PluginManagerTaskComponentFactory(DasGuid guid)
-            : guid_(guid)
+        explicit PluginManagerTaskComponentFactory(DasGuid guid) : guid_(guid)
         {
         }
 
@@ -425,8 +423,7 @@ namespace
             }
             if (iid == DasIidOf<IDasTaskComponentFactory>())
             {
-                *pp_out_object =
-                    static_cast<IDasTaskComponentFactory*>(this);
+                *pp_out_object = static_cast<IDasTaskComponentFactory*>(this);
                 AddRef();
                 return DAS_S_OK;
             }
@@ -861,10 +858,9 @@ class PluginManagerTaskComponentTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        test_dir_ =
-            std::filesystem::current_path()
-            / ("task_component_plugin_test_"
-               + std::to_string(std::random_device{}()));
+        test_dir_ = std::filesystem::current_path()
+                    / ("task_component_plugin_test_"
+                       + std::to_string(std::random_device{}()));
         std::filesystem::create_directories(test_dir_);
         settings_dir_ = test_dir_ / "settings";
 
@@ -899,9 +895,9 @@ protected:
                                                               settings_manager_;
     std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
     std::unique_ptr<PluginManager>                            pm_;
-    DasPtr<IForeignLanguageRuntime> runtime_guard_;
-    TaskComponentRuntime*           runtime_ = nullptr;
-    DasGuid                         factory_guid_{};
+    DasPtr<IForeignLanguageRuntime>                           runtime_guard_;
+    TaskComponentRuntime* runtime_ = nullptr;
+    DasGuid               factory_guid_{};
 };
 
 TEST_F(
@@ -935,9 +931,7 @@ TEST_F(
     EXPECT_EQ(definitions.front().component_guid, component_guid);
 }
 
-TEST_F(
-    PluginManagerTaskComponentTest,
-    UnloadPluginRemovesTaskComponentRoutes)
+TEST_F(PluginManagerTaskComponentTest, UnloadPluginRemovesTaskComponentRoutes)
 {
     const auto plugin_guid = MakeTaskComponentTestGuid(0x68130011);
     const auto component_guid = MakeTaskComponentTestGuid(0x68130013);

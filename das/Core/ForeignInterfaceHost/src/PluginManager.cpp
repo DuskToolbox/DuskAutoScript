@@ -52,6 +52,21 @@ namespace
 
         return normalized_path;
     }
+
+    std::vector<FeatureInfo*> CollectFeaturePointers(
+        LoadedPlugin&                          plugin,
+        Das::PluginInterface::DasPluginFeature feature_type)
+    {
+        std::vector<FeatureInfo*> result;
+        for (auto& feature : plugin.features)
+        {
+            if (feature.feature_type == feature_type && feature.interface_ptr)
+            {
+                result.push_back(&feature);
+            }
+        }
+        return result;
+    }
 } // namespace
 
 PluginManager::PluginManager(
@@ -105,7 +120,7 @@ DasResult PluginManager::Shutdown()
             }
             if (launcher->IsRunning())
             {
-                DAS_CORE_LOG_INFO("Shutdown: stopping Host launcher");
+                DAS_CORE_LOG_INFO("Stopping Host launcher during shutdown");
                 launcher->Stop();
             }
         }
@@ -126,6 +141,7 @@ DasResult PluginManager::Shutdown()
 
         // 通知 ComponentFactoryManager 释放工厂引用
         component_factory_mgr_.OnPluginUnloading(guid);
+        task_component_factory_mgr_.OnPluginUnloading(guid);
     }
 
     feature_type_index_.clear();
@@ -169,6 +185,7 @@ DasResult PluginManager::LoadPlugin(
     std::filesystem::path              runtime_path;
     std::string                        path_str;
     std::shared_ptr<PluginPackageDesc> desc;
+    DasResult                          manifest_parse_result = DAS_S_OK;
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
@@ -235,13 +252,23 @@ DasResult PluginManager::LoadPlugin(
                 }
                 catch (const std::exception& e)
                 {
+                    const std::string reason = e.what();
                     DAS_CORE_LOG_WARN(
                         "Failed to parse manifest for {}: {}",
                         path_str,
-                        e.what());
+                        reason);
+                    if (reason.find("taskComponents") != std::string::npos)
+                    {
+                        manifest_parse_result = DAS_E_INVALID_JSON;
+                    }
                 }
             }
         }
+    }
+
+    if (DAS::IsFailed(manifest_parse_result))
+    {
+        return manifest_parse_result;
     }
 
     // 阶段2: 锁外执行加载（进程内或 IPC）
@@ -336,31 +363,43 @@ DasResult PluginManager::LoadPlugin(
                 path_str,
                 loaded_plugins_[guid].features.size());
 
-            if (out_package && loaded_plugins_[guid].package)
-            {
-                *out_package.Put() = loaded_plugins_[guid].package.Get();
-                out_package->AddRef();
-            }
-
             // Notify ComponentFactoryManager about factory features
             {
-                std::vector<FeatureInfo*> plugin_factories;
-                for (auto& feat : loaded_plugins_[guid].features)
-                {
-                    if (feat.feature_type
-                            == Das::PluginInterface::
-                                DAS_PLUGIN_FEATURE_COMPONENT_FACTORY
-                        && feat.interface_ptr)
-                    {
-                        plugin_factories.push_back(&feat);
-                    }
-                }
+                auto plugin_factories = CollectFeaturePointers(
+                    loaded_plugins_[guid],
+                    Das::PluginInterface::DAS_PLUGIN_FEATURE_COMPONENT_FACTORY);
                 if (!plugin_factories.empty())
                 {
                     component_factory_mgr_.OnPluginLoaded(
                         guid,
                         plugin_factories);
                 }
+            }
+
+            {
+                auto task_component_factories = CollectFeaturePointers(
+                    loaded_plugins_[guid],
+                    Das::PluginInterface::
+                        DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY);
+                const auto register_result =
+                    task_component_factory_mgr_.OnPluginLoaded(
+                        guid,
+                        task_component_factories,
+                        loaded_plugins_[guid].desc->task_components);
+                if (DAS::IsFailed(register_result))
+                {
+                    task_component_factory_mgr_.OnPluginUnloading(guid);
+                    component_factory_mgr_.OnPluginUnloading(guid);
+                    path_to_guid_.erase(path_str);
+                    loaded_plugins_.erase(guid);
+                    return register_result;
+                }
+            }
+
+            if (out_package && loaded_plugins_[guid].package)
+            {
+                *out_package.Put() = loaded_plugins_[guid].package.Get();
+                out_package->AddRef();
             }
         }
 
@@ -427,6 +466,7 @@ DasResult PluginManager::UnloadPlugin(const std::filesystem::path& path)
     // 进程内路径：先从 feature_type_index_ 中移除指针（在 erase
     // loaded_plugins_ 之前）
     component_factory_mgr_.OnPluginUnloading(guid);
+    task_component_factory_mgr_.OnPluginUnloading(guid);
 
     for (auto& feature : plug_it->second.features)
     {
@@ -843,6 +883,11 @@ ComponentFactoryManager& PluginManager::GetComponentFactoryManager()
     return component_factory_mgr_;
 }
 
+TaskComponentFactoryManager& PluginManager::GetTaskComponentFactoryManager()
+{
+    return task_component_factory_mgr_;
+}
+
 void PluginManager::RegisterTestFeature(
     Das::PluginInterface::DasPluginFeature type,
     const DasGuid&                         plugin_guid,
@@ -892,7 +937,8 @@ DasResult PluginManager::LoadPluginViaIpc(
         if (DAS::IsFailed(result))
         {
             DAS_CORE_LOG_ERROR(
-                "LoadPluginViaIpc: CreateHostLauncher failed: error={}",
+                "CreateHostLauncher failed while loading plugin via IPC: "
+                "error={}",
                 static_cast<int>(result));
             return result;
         }
@@ -903,7 +949,8 @@ DasResult PluginManager::LoadPluginViaIpc(
         if (DAS::IsFailed(result))
         {
             DAS_CORE_LOG_ERROR(
-                "LoadPluginViaIpc: HostLauncher::Start failed: error={}",
+                "Host launcher start failed while loading plugin via IPC: "
+                "error={}",
                 static_cast<int>(result));
             return result;
         }
@@ -943,7 +990,8 @@ DasResult PluginManager::LoadPluginViaIpc(
     if (DAS::IsFailed(result))
     {
         DAS_CORE_LOG_ERROR(
-            "LoadPluginViaIpc: LoadPluginAsync failed: error={}",
+            "Async plugin load request failed while loading via IPC: "
+            "error={}",
             static_cast<int>(result));
         return result;
     }
@@ -955,7 +1003,7 @@ DasResult PluginManager::LoadPluginViaIpc(
     if (!wait_result)
     {
         DAS_CORE_LOG_ERROR(
-            "LoadPluginViaIpc: sync_wait timed out for path={}",
+            "Timed out waiting for IPC plugin load: path={}",
             manifest_path.string());
         return DAS_E_IPC_REMOTE_ERROR;
     }
@@ -964,7 +1012,7 @@ DasResult PluginManager::LoadPluginViaIpc(
     if (DAS::IsFailed(ipc_result) || !raw_proxy)
     {
         DAS_CORE_LOG_ERROR(
-            "LoadPluginViaIpc: IPC load failed: error={}",
+            "IPC plugin load failed: error={}",
             static_cast<int>(ipc_result));
         return ipc_result;
     }
@@ -979,7 +1027,7 @@ DasResult PluginManager::LoadPluginViaIpc(
     if (DAS::IsFailed(qi_result))
     {
         DAS_CORE_LOG_ERROR(
-            "LoadPluginViaIpc: plugin does not implement IDasPluginPackage: "
+            "IPC-loaded plugin does not implement IDasPluginPackage: "
             "path={}",
             manifest_path.string());
         return DAS_E_NO_INTERFACE;
@@ -1010,7 +1058,7 @@ DasResult PluginManager::LoadPluginViaIpc(
         feature_info.plugin_guid = desc->guid;
 
         DasPtr<IDasBase> p_interface = nullptr;
-        auto create_result =
+        auto             create_result =
             plugin.package->CreateFeatureInterface(index, p_interface.Put());
         if (create_result == DAS_S_OK)
         {
@@ -1022,7 +1070,9 @@ DasResult PluginManager::LoadPluginViaIpc(
     }
 
     const auto guid = desc->guid;
-    size_t feature_count = 0;
+    size_t     feature_count = 0;
+    DasResult  task_component_registration_result = DAS_S_OK;
+    DasPtr<DAS::Core::IPC::IHostLauncher> failed_launcher;
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
@@ -1030,7 +1080,7 @@ DasResult PluginManager::LoadPluginViaIpc(
         if (loaded_plugins_.contains(guid))
         {
             DAS_CORE_LOG_ERROR(
-                "LoadPluginViaIpc: GUID conflict after IPC load: path={}",
+                "Plugin GUID conflict after IPC load: path={}",
                 manifest_path.string());
             return DAS_E_DUPLICATE_ELEMENT;
         }
@@ -1039,20 +1089,45 @@ DasResult PluginManager::LoadPluginViaIpc(
         path_to_guid_[manifest_path.string()] = guid;
         feature_count = loaded_plugins_[guid].features.size();
 
-        std::vector<FeatureInfo*> plugin_factories;
-        for (auto& feat : loaded_plugins_[guid].features)
-        {
-            if (feat.feature_type
-                    == Das::PluginInterface::DAS_PLUGIN_FEATURE_COMPONENT_FACTORY
-                && feat.interface_ptr)
-            {
-                plugin_factories.push_back(&feat);
-            }
-        }
+        auto plugin_factories = CollectFeaturePointers(
+            loaded_plugins_[guid],
+            Das::PluginInterface::DAS_PLUGIN_FEATURE_COMPONENT_FACTORY);
         if (!plugin_factories.empty())
         {
             component_factory_mgr_.OnPluginLoaded(guid, plugin_factories);
         }
+
+        auto task_component_factories = CollectFeaturePointers(
+            loaded_plugins_[guid],
+            Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY);
+        task_component_registration_result =
+            task_component_factory_mgr_.OnPluginLoaded(
+                guid,
+                task_component_factories,
+                loaded_plugins_[guid].desc->task_components);
+        if (DAS::IsFailed(task_component_registration_result))
+        {
+            task_component_factory_mgr_.OnPluginUnloading(guid);
+            component_factory_mgr_.OnPluginUnloading(guid);
+            path_to_guid_.erase(manifest_path.string());
+            loaded_plugins_.erase(guid);
+
+            auto host_it = host_launchers_.find(guid);
+            if (host_it != host_launchers_.end())
+            {
+                failed_launcher = host_it->second;
+                host_launchers_.erase(host_it);
+            }
+        }
+    }
+
+    if (DAS::IsFailed(task_component_registration_result))
+    {
+        if (failed_launcher)
+        {
+            failed_launcher->Stop();
+        }
+        return task_component_registration_result;
     }
 
     DAS_CORE_LOG_INFO(
@@ -1074,7 +1149,7 @@ DasResult PluginManager::UnloadPluginIpc(
         auto unload_result = plugin.package->CanUnloadNow(&can_unload);
         if (unload_result != DAS_S_OK || !can_unload)
         {
-            DAS_CORE_LOG_WARN("UnloadPluginIpc: plugin cannot be unloaded now");
+            DAS_CORE_LOG_WARN("IPC plugin cannot be unloaded now");
             return DAS_E_FAIL;
         }
     }
@@ -1083,6 +1158,7 @@ DasResult PluginManager::UnloadPluginIpc(
     {
         std::lock_guard<std::mutex> lock(mutex_);
         component_factory_mgr_.OnPluginUnloading(guid);
+        task_component_factory_mgr_.OnPluginUnloading(guid);
         path_to_guid_.erase(plugin.plugin_path.string());
         loaded_plugins_.erase(guid);
     }
@@ -1113,6 +1189,7 @@ void PluginManager::CleanupPluginByGuid(DasGuid plugin_guid)
     if (plugin_it != loaded_plugins_.end())
     {
         component_factory_mgr_.OnPluginUnloading(plugin_guid);
+        task_component_factory_mgr_.OnPluginUnloading(plugin_guid);
         path_to_guid_.erase(plugin_it->second.plugin_path.string());
         loaded_plugins_.erase(plugin_it);
     }
