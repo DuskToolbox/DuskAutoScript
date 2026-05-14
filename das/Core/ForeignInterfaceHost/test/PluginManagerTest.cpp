@@ -4,6 +4,7 @@
 #include <das/Core/ForeignInterfaceHost/PluginResourceIndex.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
+#include <das/Core/Logger/Logger.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/DasApi.h>
 #include <das/DasSharedRef.hpp>
@@ -11,6 +12,8 @@
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
 #include <gtest/gtest.h>
+#include <spdlog/details/log_msg.h>
+#include <spdlog/sinks/base_sink.h>
 
 DAS_DISABLE_WARNING_BEGIN
 DAS_IGNORE_OPENCV_WARNING
@@ -18,9 +21,12 @@ DAS_IGNORE_OPENCV_WARNING
 #include <opencv2/imgcodecs.hpp>
 DAS_DISABLE_WARNING_END
 
+#include <algorithm>
 #include <atomic>
 #include <cstring>
 #include <fstream>
+#include <memory>
+#include <mutex>
 #include <random>
 
 using namespace DAS::Core::ForeignInterfaceHost;
@@ -30,6 +36,51 @@ using namespace Das::PluginInterface;
 
 namespace
 {
+    class PluginManagerCapturingSink final
+        : public spdlog::sinks::base_sink<std::mutex>
+    {
+    public:
+        std::vector<std::string> messages;
+
+    protected:
+        void sink_it_(const spdlog::details::log_msg& msg) override
+        {
+            messages.emplace_back(msg.payload.data(), msg.payload.size());
+        }
+
+        void flush_() override {}
+    };
+
+    class ScopedPluginManagerLogCapture
+    {
+    public:
+        ScopedPluginManagerLogCapture()
+        {
+            sink_ = std::make_shared<PluginManagerCapturingSink>();
+            DAS::Core::g_logger->sinks().push_back(sink_);
+        }
+
+        ~ScopedPluginManagerLogCapture()
+        {
+            auto& sinks = DAS::Core::g_logger->sinks();
+            sinks.erase(
+                std::remove(sinks.begin(), sinks.end(), sink_),
+                sinks.end());
+        }
+
+        bool Contains(std::string_view needle) const
+        {
+            return std::any_of(
+                sink_->messages.begin(),
+                sink_->messages.end(),
+                [needle](const std::string& message)
+                { return message.find(needle) != std::string::npos; });
+        }
+
+    private:
+        std::shared_ptr<PluginManagerCapturingSink> sink_;
+    };
+
     std::filesystem::path UniqueSettingsDir()
     {
         static std::atomic<int> counter{0};
@@ -968,7 +1019,10 @@ TEST_F(
         factory_guid_,
         component_guid);
 
+    ScopedPluginManagerLogCapture logs;
     EXPECT_EQ(pm_->LoadPlugin(manifest_path), DAS_E_INVALID_JSON);
+    EXPECT_TRUE(logs.Contains("factoryGuid"));
+    EXPECT_TRUE(logs.Contains("missing required string"));
     EXPECT_EQ(pm_->GetLoadedPluginCount(), 0u);
     ASSERT_NE(runtime_, nullptr);
     EXPECT_TRUE(runtime_->loaded_paths.empty())

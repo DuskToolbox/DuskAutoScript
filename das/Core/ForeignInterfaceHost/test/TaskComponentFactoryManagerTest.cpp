@@ -454,6 +454,78 @@ namespace
 
     TEST_F(
         TaskComponentFactoryManagerTest,
+        RejectsMissingFactoryGuidWithConcreteReason)
+    {
+        const auto plugin_guid = MakeTestGuid(0x68030035);
+        const auto factory_guid = MakeTestGuid(0x68030036);
+        const auto component_guid = MakeTestGuid(0x68030037);
+
+        auto* factory = new MockTaskComponentFactory(factory_guid);
+        factory->AddRef();
+        auto         feature = MakeTaskFactoryFeature(*factory);
+        FeatureInfo* feature_ptr = &feature;
+        auto         manifest = MakeManifest(factory_guid, component_guid);
+        (*manifest.components)
+            .at(DasGuidToStdString(component_guid))
+            .factory_guid = std::nullopt;
+
+        ScopedLogCapture logs;
+        EXPECT_EQ(
+            manager.OnPluginLoaded(plugin_guid, {&feature_ptr, 1}, manifest),
+            DAS_E_INVALID_ARGUMENT);
+        EXPECT_TRUE(logs.Contains("missing factoryGuid"));
+        EXPECT_TRUE(logs.Contains("componentGuid"));
+
+        DasPtr<IDasTaskComponent> component;
+        EXPECT_EQ(
+            manager.CreateComponent(component_guid, component.Put()),
+            DAS_E_NOT_FOUND);
+
+        factory->Release();
+    }
+
+    TEST_F(
+        TaskComponentFactoryManagerTest,
+        RejectsUndeclaredFactoryGuidWithConcreteReason)
+    {
+        const auto plugin_guid = MakeTestGuid(0x68030038);
+        const auto routed_factory_guid = MakeTestGuid(0x68030039);
+        const auto declared_factory_guid = MakeTestGuid(0x6803003A);
+        const auto component_guid = MakeTestGuid(0x6803003B);
+
+        auto* routed_factory =
+            new MockTaskComponentFactory(routed_factory_guid);
+        auto* declared_factory =
+            new MockTaskComponentFactory(declared_factory_guid);
+        routed_factory->AddRef();
+        declared_factory->AddRef();
+        auto routed_feature = MakeTaskFactoryFeature(*routed_factory);
+        auto declared_feature = MakeTaskFactoryFeature(*declared_factory);
+        std::array<FeatureInfo*, 2> features{
+            &routed_feature,
+            &declared_feature};
+        auto manifest = MakeManifest(routed_factory_guid, component_guid);
+        *manifest.factories =
+            std::vector<std::string>{DasGuidToStdString(declared_factory_guid)};
+
+        ScopedLogCapture logs;
+        EXPECT_EQ(
+            manager.OnPluginLoaded(plugin_guid, features, manifest),
+            DAS_E_INVALID_ARGUMENT);
+        EXPECT_TRUE(logs.Contains("undeclared factoryGuid"));
+        EXPECT_TRUE(logs.Contains("componentGuid"));
+
+        DasPtr<IDasTaskComponent> component;
+        EXPECT_EQ(
+            manager.CreateComponent(component_guid, component.Put()),
+            DAS_E_NOT_FOUND);
+
+        routed_factory->Release();
+        declared_factory->Release();
+    }
+
+    TEST_F(
+        TaskComponentFactoryManagerTest,
         RejectsCreateComponentProbeFailureWithConcreteReason)
     {
         const auto plugin_guid = MakeTestGuid(0x68030041);

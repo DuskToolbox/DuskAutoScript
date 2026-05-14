@@ -6,6 +6,7 @@
 #include <das/Utils/CommonUtils.hpp>
 
 #include <mutex>
+#include <unordered_set>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
@@ -78,10 +79,7 @@ DasResult TaskComponentFactoryManager::OnPluginLoaded(
 
         if (plugin_factories.contains(factory_guid))
         {
-            DAS_CORE_LOG_WARN(
-                "Invalid task component factory feature: duplicate "
-                "factoryGuid={}",
-                factory_guid);
+            DAS_CORE_LOG_WARN("Invalid task component factory feature: duplicate factoryGuid={}", factory_guid);
             return DAS_E_DUPLICATE_ELEMENT;
         }
 
@@ -96,6 +94,7 @@ DasResult TaskComponentFactoryManager::OnPluginLoaded(
         staged_routes.reserve(task_components->components->size());
     }
 
+    std::unordered_set<DasGuid> declared_factories;
     if (task_components->factories)
     {
         for (const auto& declared_factory_guid_text :
@@ -105,20 +104,15 @@ DasResult TaskComponentFactoryManager::OnPluginLoaded(
                 TryMakeGuid(declared_factory_guid_text);
             if (!declared_factory_guid)
             {
-                DAS_CORE_LOG_WARN(
-                    "Invalid taskComponents manifest: invalid "
-                    "factoryGuid={}",
-                    declared_factory_guid_text);
+                DAS_CORE_LOG_WARN("Invalid taskComponents manifest: invalid factoryGuid={}", declared_factory_guid_text);
                 return DAS_E_INVALID_ARGUMENT;
             }
             if (!plugin_factories.contains(*declared_factory_guid))
             {
-                DAS_CORE_LOG_WARN(
-                    "Invalid taskComponents manifest: factoryGuid={} has no "
-                    "loaded task component factory",
-                    *declared_factory_guid);
+                DAS_CORE_LOG_WARN("Invalid taskComponents manifest: factoryGuid={} has no loaded task component factory", *declared_factory_guid);
                 return DAS_E_NOT_FOUND;
             }
+            declared_factories.insert(*declared_factory_guid);
         }
     }
 
@@ -130,41 +124,32 @@ DasResult TaskComponentFactoryManager::OnPluginLoaded(
             const auto component_guid = TryMakeGuid(component_guid_text);
             if (!component_guid)
             {
-                DAS_CORE_LOG_WARN(
-                    "Invalid taskComponents manifest: invalid "
-                    "componentGuid={}",
-                    component_guid_text);
+                DAS_CORE_LOG_WARN("Invalid taskComponents manifest: invalid componentGuid={}", component_guid_text);
                 return DAS_E_INVALID_ARGUMENT;
             }
 
             if (!entry.factory_guid)
             {
-                DAS_CORE_LOG_WARN(
-                    "Invalid taskComponents manifest: missing factoryGuid for "
-                    "componentGuid={}",
-                    *component_guid);
+                DAS_CORE_LOG_WARN("Invalid taskComponents manifest: missing factoryGuid for componentGuid={}", *component_guid);
                 return DAS_E_INVALID_ARGUMENT;
             }
 
             const auto factory_guid = TryMakeGuid(*entry.factory_guid);
             if (!factory_guid)
             {
-                DAS_CORE_LOG_WARN(
-                    "Invalid taskComponents manifest: invalid factoryGuid={} "
-                    "for componentGuid={}",
-                    *entry.factory_guid,
-                    *component_guid);
+                DAS_CORE_LOG_WARN("Invalid taskComponents manifest: invalid factoryGuid={} for componentGuid={}", *entry.factory_guid, *component_guid);
+                return DAS_E_INVALID_ARGUMENT;
+            }
+            if (!declared_factories.contains(*factory_guid))
+            {
+                DAS_CORE_LOG_WARN("Invalid taskComponents manifest: undeclared factoryGuid={} for componentGuid={}", *factory_guid, *component_guid);
                 return DAS_E_INVALID_ARGUMENT;
             }
 
             auto factory_it = plugin_factories.find(*factory_guid);
             if (factory_it == plugin_factories.end())
             {
-                DAS_CORE_LOG_WARN(
-                    "Invalid taskComponents manifest: factoryGuid={} has no "
-                    "loaded task component factory for componentGuid={}",
-                    *factory_guid,
-                    *component_guid);
+                DAS_CORE_LOG_WARN("Invalid taskComponents manifest: factoryGuid={} has no loaded task component factory for componentGuid={}", *factory_guid, *component_guid);
                 return DAS_E_NOT_FOUND;
             }
 
@@ -175,12 +160,7 @@ DasResult TaskComponentFactoryManager::OnPluginLoaded(
                     probe.Put());
             if (DAS::IsFailed(create_result) || !probe)
             {
-                DAS_CORE_LOG_WARN(
-                    "Invalid taskComponents manifest: CreateComponent failed "
-                    "for componentGuid={} factoryGuid={} result={}",
-                    *component_guid,
-                    *factory_guid,
-                    static_cast<int>(create_result));
+                DAS_CORE_LOG_WARN("Invalid taskComponents manifest: CreateComponent failed for componentGuid={} factoryGuid={} result={}", *component_guid, *factory_guid, static_cast<int>(create_result));
                 return DAS::IsFailed(create_result) ? create_result
                                                     : DAS_E_INVALID_POINTER;
             }
@@ -201,10 +181,7 @@ DasResult TaskComponentFactoryManager::OnPluginLoaded(
         if (existing_it != factories_.end()
             && existing_it->second.plugin_guid != plugin_guid)
         {
-            DAS_CORE_LOG_WARN(
-                "Invalid taskComponents manifest: duplicate factoryGuid={} "
-                "already registered by another plugin",
-                factory_guid);
+            DAS_CORE_LOG_WARN("Invalid taskComponents manifest: duplicate factoryGuid={} already registered by another plugin", factory_guid);
             return DAS_E_DUPLICATE_ELEMENT;
         }
     }
@@ -214,10 +191,7 @@ DasResult TaskComponentFactoryManager::OnPluginLoaded(
         if (existing_it != routes_.end()
             && existing_it->second.plugin_guid != route.plugin_guid)
         {
-            DAS_CORE_LOG_WARN(
-                "Invalid taskComponents manifest: duplicate componentGuid={} "
-                "already registered by another plugin",
-                component_guid);
+            DAS_CORE_LOG_WARN("Invalid taskComponents manifest: duplicate componentGuid={} already registered by another plugin", component_guid);
             return DAS_E_DUPLICATE_ELEMENT;
         }
     }
@@ -308,9 +282,7 @@ DasResult TaskComponentFactoryManager::CreateComponent(
         auto             route_it = routes_.find(component_guid);
         if (route_it == routes_.end())
         {
-            DAS_CORE_LOG_WARN(
-                "No task component route found for componentGuid={}",
-                component_guid);
+            DAS_CORE_LOG_WARN("No task component route found for componentGuid={}", component_guid);
             return DAS_E_NOT_FOUND;
         }
 
@@ -318,11 +290,7 @@ DasResult TaskComponentFactoryManager::CreateComponent(
         auto factory_it = factories_.find(factory_guid);
         if (factory_it == factories_.end() || !factory_it->second.factory)
         {
-            DAS_CORE_LOG_WARN(
-                "No task component factory found for factoryGuid={} "
-                "componentGuid={}",
-                factory_guid,
-                component_guid);
+            DAS_CORE_LOG_WARN("No task component factory found for factoryGuid={} componentGuid={}", factory_guid, component_guid);
             return DAS_E_NOT_FOUND;
         }
         factory = factory_it->second.factory;
@@ -337,12 +305,7 @@ DasResult TaskComponentFactoryManager::CreateComponent(
     }
     else
     {
-        DAS_CORE_LOG_WARN(
-            "Task component CreateComponent failed for componentGuid={} "
-            "factoryGuid={} result={}",
-            component_guid,
-            factory_guid,
-            static_cast<int>(create_result));
+        DAS_CORE_LOG_WARN("Task component CreateComponent failed for componentGuid={} factoryGuid={} result={}", component_guid, factory_guid, static_cast<int>(create_result));
     }
     return create_result;
 }
