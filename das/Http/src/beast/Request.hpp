@@ -134,9 +134,17 @@ namespace Das::Http::Beast
             DasResult          error_code,
             const std::string& message)
         {
+            return CreateErrorResponse(error_code, message, yyjson::value{});
+        }
+
+        static HttpResponse CreateErrorResponse(
+            DasResult            error_code,
+            const std::string&   message,
+            const yyjson::value& data)
+        {
             HttpResponse response;
             auto         json_body =
-                JsonUtils::CreateErrorResponse(error_code, message);
+                JsonUtils::CreateErrorResponse(error_code, message, data);
             response.SetBody(json_body);
             return response;
         }

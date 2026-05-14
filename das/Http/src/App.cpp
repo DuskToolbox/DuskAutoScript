@@ -357,6 +357,21 @@ namespace Das::Http
             {
                 return scheduler_controller->UpdateTaskInternalProperties(req);
             });
+        components.router->Post(
+            DAS_HTTP_API_PREFIX
+            "scheduler/{profile}/tasks/{taskId}/authoring/get",
+            [scheduler_controller](const Das::Http::Beast::HttpRequest& req)
+            { return scheduler_controller->AuthoringGet(req); });
+        components.router->Post(
+            DAS_HTTP_API_PREFIX
+            "scheduler/{profile}/tasks/{taskId}/authoring/apply",
+            [scheduler_controller](const Das::Http::Beast::HttpRequest& req)
+            { return scheduler_controller->AuthoringApply(req); });
+        components.router->Post(
+            DAS_HTTP_API_PREFIX
+            "scheduler/{profile}/tasks/{taskId}/authoring/compile",
+            [scheduler_controller](const Das::Http::Beast::HttpRequest& req)
+            { return scheduler_controller->AuthoringCompile(req); });
 
         // Create and start server
         Das::Http::Beast::Server server(

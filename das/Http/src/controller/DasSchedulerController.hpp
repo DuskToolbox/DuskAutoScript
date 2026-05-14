@@ -412,7 +412,168 @@ namespace Das::Http
             return Beast::HttpResponse::CreateSuccessResponse();
         }
 
+        // HTTP contract: task authoring endpoints.
+        // Method/path:
+        //   POST /api/v1/scheduler/{profile}/tasks/{taskId}/authoring/get
+        //   POST /api/v1/scheduler/{profile}/tasks/{taskId}/authoring/apply
+        //   POST /api/v1/scheduler/{profile}/tasks/{taskId}/authoring/compile
+        // request body: JSON object; apply carries baseRevision plus change
+        // payload, get/compile carry provider request context.
+        // success response: standard envelope with Scheduler-returned lower
+        // camelCase JSON in data.
+        // errorKind matrix: taskNotFound, capabilityMissing,
+        // revisionConflict, authoringValidationFailed, pluginFailure,
+        // componentFailure, persistenceFailure.
+        // HTTP thread boundary: controller validates and delegates to
+        // IDasSchedulerService only; plugin authoring logic runs in
+        // SchedulerService, not inside HTTP handlers.
+        Beast::HttpResponse AuthoringGet(const Beast::HttpRequest& request)
+        {
+            return DispatchAuthoring(
+                request,
+                "get",
+                [this](
+                    int64_t task_id,
+                    IDasReadOnlyString* p_body,
+                    IDasReadOnlyString** pp_out)
+                {
+                    return scheduler_.GetTaskAuthoringDocument(
+                        task_id,
+                        p_body,
+                        pp_out);
+                });
+        }
+
+        Beast::HttpResponse AuthoringApply(const Beast::HttpRequest& request)
+        {
+            return DispatchAuthoring(
+                request,
+                "apply",
+                [this](
+                    int64_t task_id,
+                    IDasReadOnlyString* p_body,
+                    IDasReadOnlyString** pp_out)
+                {
+                    return scheduler_.ApplyTaskAuthoringChange(
+                        task_id,
+                        p_body,
+                        pp_out);
+                });
+        }
+
+        Beast::HttpResponse AuthoringCompile(const Beast::HttpRequest& request)
+        {
+            return DispatchAuthoring(
+                request,
+                "compile",
+                [this](
+                    int64_t task_id,
+                    IDasReadOnlyString* p_body,
+                    IDasReadOnlyString** pp_out)
+                {
+                    return scheduler_.CompileTaskAuthoring(
+                        task_id,
+                        p_body,
+                        pp_out);
+                });
+        }
+
     private:
+        template <typename Fn>
+        Beast::HttpResponse DispatchAuthoring(
+            const Beast::HttpRequest& request,
+            const std::string&        operation,
+            Fn&&                      fn)
+        {
+            auto profile = request.GetPathParameter("profile");
+            if (profile != "0")
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Profile ID must be 0 in v1.2");
+            }
+
+            int64_t task_id = 0;
+            try
+            {
+                task_id = std::stoll(request.GetPathParameter("taskId"));
+            }
+            catch (const std::exception&)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Invalid task ID format");
+            }
+
+            const auto& body = request.JsonBody();
+            if (!body.is_object())
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Request body must be a JSON object");
+            }
+
+            auto body_json = Das::Utils::SerializeYyjsonValue(body);
+            if (!body_json)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_JSON,
+                    "Failed to serialize authoring request body");
+            }
+
+            DasPtr<IDasReadOnlyString> p_body;
+            auto cr = CreateIDasReadOnlyStringFromUtf8(
+                body_json->c_str(),
+                p_body.Put());
+            if (DAS::IsFailed(cr))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    cr,
+                    "Failed to create authoring request string");
+            }
+
+            DasPtr<IDasReadOnlyString> p_result;
+            auto result = fn(task_id, p_body.Get(), p_result.Put());
+            if (DAS::IsFailed(result))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    result,
+                    "Failed to dispatch task authoring " + operation);
+            }
+
+            const char* raw = nullptr;
+            auto        get_result = p_result->GetUtf8(&raw);
+            if (DAS::IsFailed(get_result) || raw == nullptr)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    get_result,
+                    "Failed to read task authoring " + operation + " result");
+            }
+
+            auto parsed = Das::Utils::ParseYyjsonFromString(raw);
+            if (!parsed)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_JSON,
+                    "Failed to parse task authoring " + operation + " result");
+            }
+
+            auto obj = parsed->as_object();
+            if (obj && obj->contains(std::string_view("errorKind")))
+            {
+                auto message = std::string{
+                    (*obj)[std::string_view("message")]
+                        .as_string()
+                        .value_or("Task authoring request failed")};
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_FAIL,
+                    message,
+                    *parsed);
+            }
+
+            return Beast::HttpResponse::CreateSuccessResponse(*parsed);
+        }
+
         IDasSchedulerService& scheduler_;
         std::filesystem::path plugin_dir_;
     };

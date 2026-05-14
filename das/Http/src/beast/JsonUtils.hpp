@@ -126,7 +126,8 @@ namespace Das::Http::Beast::JsonUtils
     // 创建错误响应
     inline JsonValue CreateErrorResponse(
         DasResult          error_code,
-        const std::string& message)
+        const std::string& message,
+        const JsonValue&   data = JsonValue{})
     {
         auto response = Das::Utils::MakeYyjsonObject();
         auto obj_opt = response.as_object();
@@ -135,7 +136,7 @@ namespace Das::Http::Beast::JsonUtils
             auto& obj = obj_opt.value();
             obj["code"] = static_cast<int64_t>(error_code);
             obj["message"] = std::string{message};
-            obj["data"] = JsonValue{};
+            obj["data"] = data;
         }
         return response;
     }
