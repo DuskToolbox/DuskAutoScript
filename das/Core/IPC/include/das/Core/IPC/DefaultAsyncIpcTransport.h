@@ -5,8 +5,10 @@
 #include <das/Core/IPC/AsyncIpcTransport.h>
 
 // 平台相关的 Transport include 封装
+// Windows 下两个 transport 同时可用：Win32AsyncIpcTransport (Named Pipe)
+// 和 UnixAsyncIpcTransport (AF_UNIX, Win10 1803+)。运行时通过 AfUnixAvailable() 选择。
 #ifdef DAS_WINDOWS
-#include <das/Core/IPC/UnixAsyncIpcTransport.h> // 运行时可用（AfUnixAvailable）
+#include <das/Core/IPC/UnixAsyncIpcTransport.h>
 #include <das/Core/IPC/Win32AsyncIpcTransport.h>
 #else
 #include <das/Core/IPC/UnixAsyncIpcTransport.h>
