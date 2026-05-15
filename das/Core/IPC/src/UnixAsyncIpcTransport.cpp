@@ -88,12 +88,48 @@ static std::string NormalizeUnixEndpoint(const std::string& endpoint)
 
 UnixAsyncIpcTransport::UnixAsyncIpcTransport(
     boost::asio::io_context& io_context)
-    : io_context_(io_context), send_mutex_(io_context), socket_(io_context),
-      header_buffer_(sizeof(IPCMessageHeader))
+    : io_context_(io_context), send_mutex_(io_context_.get()),
+      socket_(io_context_.get()), header_buffer_(sizeof(IPCMessageHeader))
 {
 }
 
 UnixAsyncIpcTransport::~UnixAsyncIpcTransport() { Cleanup(); }
+
+UnixAsyncIpcTransport::UnixAsyncIpcTransport(
+    UnixAsyncIpcTransport&& other) noexcept
+    : acceptor_(std::move(other.acceptor_)), io_context_(other.io_context_),
+      send_mutex_(std::move(other.send_mutex_)),
+      socket_(std::move(other.socket_)),
+      endpoint_name_(std::move(other.endpoint_name_)),
+      is_server_(std::exchange(other.is_server_, false)),
+      is_connected_(std::exchange(other.is_connected_, false)),
+      max_message_size_(other.max_message_size_),
+      shared_memory_pool_(other.shared_memory_pool_),
+      header_buffer_(std::move(other.header_buffer_)),
+      body_buffer_(std::move(other.body_buffer_))
+{
+}
+
+UnixAsyncIpcTransport& UnixAsyncIpcTransport::operator=(
+    UnixAsyncIpcTransport&& other) noexcept
+{
+    if (this != &other)
+    {
+        Cleanup();
+        acceptor_ = std::move(other.acceptor_);
+        io_context_ = other.io_context_;
+        send_mutex_ = std::move(other.send_mutex_);
+        socket_ = std::move(other.socket_);
+        endpoint_name_ = std::move(other.endpoint_name_);
+        is_server_ = std::exchange(other.is_server_, false);
+        is_connected_ = std::exchange(other.is_connected_, false);
+        max_message_size_ = other.max_message_size_;
+        shared_memory_pool_ = other.shared_memory_pool_;
+        header_buffer_ = std::move(other.header_buffer_);
+        body_buffer_ = std::move(other.body_buffer_);
+    }
+    return *this;
+}
 
 void UnixAsyncIpcTransport::Cleanup()
 {
@@ -217,7 +253,7 @@ boost::asio::awaitable<DasResult> UnixAsyncIpcTransport::CreateUnixSocketAsync(
     boost::system::error_code ec;
 
     acceptor_ = std::make_unique<boost::asio::local::stream_protocol::acceptor>(
-        io_context_);
+        io_context_.get());
 
     acceptor_->open(boost::asio::local::stream_protocol(), ec);
     if (ec)

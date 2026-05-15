@@ -59,9 +59,8 @@ public:
     Win32AsyncIpcTransport(const Win32AsyncIpcTransport&) = delete;
     Win32AsyncIpcTransport& operator=(const Win32AsyncIpcTransport&) = delete;
 
-    Win32AsyncIpcTransport(Win32AsyncIpcTransport&&) noexcept = delete;
-    Win32AsyncIpcTransport& operator=(Win32AsyncIpcTransport&&) noexcept =
-        delete;
+    Win32AsyncIpcTransport(Win32AsyncIpcTransport&&) noexcept;
+    Win32AsyncIpcTransport& operator=(Win32AsyncIpcTransport&&) noexcept;
 
     /// 异步初始化（协程版本）
     boost::asio::awaitable<DasResult> InitializeAsync(

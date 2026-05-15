@@ -6,11 +6,8 @@
 
 // 平台相关的 Transport include 封装
 #ifdef DAS_WINDOWS
-#ifdef DAS_WINDOWS_USE_AF_UNIX
-#include <das/Core/IPC/UnixAsyncIpcTransport.h>
-#else
+#include <das/Core/IPC/UnixAsyncIpcTransport.h> // 运行时可用（AfUnixAvailable）
 #include <das/Core/IPC/Win32AsyncIpcTransport.h>
-#endif
 #else
 #include <das/Core/IPC/UnixAsyncIpcTransport.h>
 #endif

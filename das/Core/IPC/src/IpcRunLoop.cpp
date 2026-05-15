@@ -923,6 +923,254 @@ DasResult IpcRunLoop::RegisterHostLauncher(DasPtr<HostLauncher> launcher)
     return DAS_S_OK;
 }
 
+DasResult IpcRunLoop::RegisterDirectTransport(
+    uint16_t                 session_id,
+    Win32AsyncIpcTransport&& t)
+{
+    if (!t.IsConnected())
+    {
+        DAS_CORE_LOG_ERROR(
+            "RegisterDirectTransport: transport is not connected");
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    if (!connection_manager_)
+    {
+        DAS_CORE_LOG_ERROR("ConnectionManager not initialized");
+        return DAS_E_IPC_NOT_INITIALIZED;
+    }
+
+    auto&     conn_mgr = GetConnectionManager();
+    DasResult result = conn_mgr.RegisterAnyTransport(session_id, std::move(t));
+    if (DAS::IsFailed(result))
+    {
+        DAS_CORE_LOG_ERROR(
+            "RegisterDirectTransport: failed to register, session_id={}, result={}",
+            session_id,
+            result);
+        return result;
+    }
+
+    auto* owned_transport = conn_mgr.GetAnyTransport(session_id);
+    boost::asio::co_spawn(
+        *io_context_,
+        DirectTransportReceiveLoop(session_id, owned_transport),
+        boost::asio::detached);
+    return DAS_S_OK;
+}
+
+DasResult IpcRunLoop::RegisterDirectTransport(
+    uint16_t                session_id,
+    UnixAsyncIpcTransport&& t)
+{
+    if (!t.IsConnected())
+    {
+        DAS_CORE_LOG_ERROR(
+            "RegisterDirectTransport: transport is not connected");
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    if (!connection_manager_)
+    {
+        DAS_CORE_LOG_ERROR("ConnectionManager not initialized");
+        return DAS_E_IPC_NOT_INITIALIZED;
+    }
+
+    auto&     conn_mgr = GetConnectionManager();
+    DasResult result = conn_mgr.RegisterAnyTransport(session_id, std::move(t));
+    if (DAS::IsFailed(result))
+    {
+        DAS_CORE_LOG_ERROR(
+            "RegisterDirectTransport: failed to register, session_id={}, result={}",
+            session_id,
+            result);
+        return result;
+    }
+
+    auto* owned_transport = conn_mgr.GetAnyTransport(session_id);
+    boost::asio::co_spawn(
+        *io_context_,
+        DirectTransportReceiveLoop(session_id, owned_transport),
+        boost::asio::detached);
+    return DAS_S_OK;
+}
+
+DasResult IpcRunLoop::RegisterDirectTransport(
+    uint16_t           session_id,
+    HttpIpcTransport&& t)
+{
+    if (!t.IsConnected())
+    {
+        DAS_CORE_LOG_ERROR(
+            "RegisterDirectTransport: transport is not connected");
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    if (!connection_manager_)
+    {
+        DAS_CORE_LOG_ERROR("ConnectionManager not initialized");
+        return DAS_E_IPC_NOT_INITIALIZED;
+    }
+
+    auto&     conn_mgr = GetConnectionManager();
+    DasResult result = conn_mgr.RegisterAnyTransport(session_id, std::move(t));
+    if (DAS::IsFailed(result))
+    {
+        DAS_CORE_LOG_ERROR(
+            "RegisterDirectTransport: failed to register, session_id={}, result={}",
+            session_id,
+            result);
+        return result;
+    }
+
+    auto* owned_transport = conn_mgr.GetAnyTransport(session_id);
+    boost::asio::co_spawn(
+        *io_context_,
+        DirectTransportReceiveLoop(session_id, owned_transport),
+        boost::asio::detached);
+    return DAS_S_OK;
+}
+
+boost::asio::awaitable<void> IpcRunLoop::DirectTransportReceiveLoop(
+    uint16_t      session_id,
+    AnyTransport* owned_transport)
+{
+    while (running_.load())
+    {
+        if (!owned_transport->IsConnected())
+        {
+            DAS_CORE_LOG_DEBUG(
+                "Direct transport disconnected, exiting: session_id={}",
+                session_id);
+            co_return;
+        }
+
+        try
+        {
+            auto result = co_await owned_transport->ReceiveCoroutine();
+
+            if (!running_.load())
+            {
+                co_return;
+            }
+
+            if (result.index() == 0)
+            {
+                DasResult error_code = std::get<0>(result);
+                if (error_code != DAS_S_OK)
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "Direct transport receive failed: session_id={}, error={}",
+                        session_id,
+                        error_code);
+                }
+                co_return;
+            }
+
+            auto&& [header, body] = std::get<1>(result);
+
+            DAS_CORE_LOG_INFO(
+                "DirectTransport receive: session_id={}, msg_type={}, interface_id={}, call_id={}",
+                session_id,
+                static_cast<int>(header.Raw().message_type),
+                header.Raw().interface_id,
+                header.Raw().call_id);
+
+            if ((header.GetHeaderFlags() & HeaderFlags::CONTROL_PLANE) != 0)
+            {
+                if (header.GetMessageType() == MessageType::RESPONSE)
+                {
+                    CallKey call_key{
+                        header.GetSourceSessionId(),
+                        header.GetCallId()};
+                    CompletePendingCall(
+                        call_key,
+                        DAS_S_OK,
+                        std::move(body),
+                        header.GetFlags());
+                }
+                else
+                {
+                    InboundMessage msg;
+                    msg.header = header;
+                    msg.body = std::move(body);
+                    if (inbound_queue_)
+                    {
+                        auto push_result = inbound_queue_->Push(std::move(msg));
+                        if (push_result != DAS_S_OK)
+                        {
+                            DAS_CORE_LOG_ERROR(
+                                "DirectTransport: failed to push to inbound_queue: session_id={}, result={}",
+                                session_id,
+                                push_result);
+                        }
+                    }
+                }
+            }
+            else
+            {
+                if (connection_manager_
+                    && header.GetTargetSessionId() != local_session_id_)
+                {
+                    auto* fwd_transport = connection_manager_->GetTransport(
+                        header.GetTargetSessionId());
+                    if (fwd_transport)
+                    {
+                        std::vector<uint8_t> fwd_body(body.begin(), body.end());
+                        PostSendWithTransport(
+                            fwd_transport,
+                            header,
+                            std::move(fwd_body));
+                    }
+                    co_return;
+                }
+
+                if (header.GetMessageType() == MessageType::RESPONSE)
+                {
+                    CallKey call_key{
+                        header.GetSourceSessionId(),
+                        header.GetCallId()};
+                    CompletePendingCall(
+                        call_key,
+                        DAS_S_OK,
+                        std::move(body),
+                        header.GetFlags());
+                }
+                else
+                {
+                    InboundMessage msg;
+                    msg.header = header;
+                    msg.body = std::move(body);
+                    if (inbound_queue_)
+                    {
+                        inbound_queue_->Push(std::move(msg));
+                    }
+                }
+            }
+        }
+        catch (const boost::system::system_error& e)
+        {
+            if (e.code() == boost::asio::error::operation_aborted)
+            {
+                co_return;
+            }
+            DAS_CORE_LOG_ERROR(
+                "DirectTransport receive error: session_id={}, {}",
+                session_id,
+                e.what());
+            co_return;
+        }
+        catch (const std::exception& e)
+        {
+            DAS_CORE_LOG_ERROR(
+                "DirectTransport receive exception: session_id={}, {}",
+                session_id,
+                e.what());
+            co_return;
+        }
+    }
+}
+
 void IpcRunLoop::StartAsyncReceiveForTransport(
     uint16_t             session_id,
     DasPtr<HostLauncher> launcher)

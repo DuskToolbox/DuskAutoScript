@@ -10,6 +10,7 @@
 #include <das/Core/IPC/DasProxyBase.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/HostLauncher.h>
+#include <das/Core/IPC/HttpIpcTransport.h>
 #include <das/Core/IPC/InternalCallbackHandler.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
@@ -95,6 +96,106 @@ namespace Core
                     command_handler_.Get());
             }
 
+            IpcContext::IpcContext(
+                bool                  enable_heartbeat,
+                HttpIpcServer::Config http_config)
+                : proxy_factory_(std::in_place), runloop_(
+                                                     enable_heartbeat,
+                                                     &inbound_queue_,
+                                                     *proxy_factory_,
+                                                     registry_)
+            {
+                // Same initialization as Named Pipe constructor
+                proxy_factory_->GetObjectManager().SetSessionId(1);
+                runloop_.SetSessionId(1);
+
+                for (uint16_t reserved_id : reserved_session_ids_)
+                {
+                    allocated_ids_[reserved_id] = true;
+                }
+
+                business_thread_ = std::make_shared<BusinessThread>(
+                    inbound_queue_,
+                    runloop_,
+                    *this,
+                    *proxy_factory_,
+                    registry_);
+
+                command_handler_ = IpcCommandHandler::Create(registry_);
+                command_handler_->SetSessionId(1);
+
+                internal_callback_handler_ = DasPtr<InternalCallbackHandler>(
+                    new InternalCallbackHandler());
+
+                runloop_.RegisterHandler(
+                    HeaderFlags::BUSINESS_CONTROL,
+                    static_cast<uint32_t>(
+                        InternalBusinessCommand::ASYNC_CALLBACK),
+                    internal_callback_handler_.Get());
+
+                runloop_.RegisterHandler(
+                    HeaderFlags::BUSINESS_CONTROL,
+                    static_cast<uint32_t>(IpcCommandType::LOOKUP_BY_INTERFACE),
+                    command_handler_.Get());
+
+                runloop_.RegisterHandler(
+                    HeaderFlags::BUSINESS_CONTROL,
+                    static_cast<uint32_t>(IpcCommandType::LOOKUP_BY_NAME),
+                    command_handler_.Get());
+
+                runloop_.RegisterHandler(
+                    HeaderFlags::BUSINESS_CONTROL,
+                    static_cast<uint32_t>(IpcCommandType::REMOTE_RELEASE),
+                    command_handler_.Get());
+
+                runloop_.RegisterHandler(
+                    HeaderFlags::BUSINESS_CONTROL,
+                    static_cast<uint32_t>(IpcCommandType::RELEASE_SHM_BLOCK),
+                    command_handler_.Get());
+
+                // Create HTTP/WebSocket server (RAII: constructor binds and
+                // starts listening, throws on failure)
+                auto& io_context = runloop_.GetIoContext();
+
+                auto on_connected =
+                    [this](
+                        uint16_t                           session_id,
+                        std::unique_ptr<boost::beast::websocket::stream<
+                            boost::asio::ip::tcp::socket>> ws,
+                        const std::string& endpoint_name) -> DasResult
+                {
+                    // Create HttpIpcTransport from the upgraded WebSocket
+                    // stream
+                    auto transport =
+                        std::make_unique<HttpIpcTransport>(std::move(*ws));
+
+                    // Store transport to keep the connection alive
+                    http_transports_[session_id] = std::move(transport);
+
+                    DAS_CORE_LOG_INFO(
+                        "Host connected via HTTP: session_id={}, endpoint={}",
+                        session_id,
+                        endpoint_name);
+
+                    return DAS_S_OK;
+                };
+
+                try
+                {
+                    http_server_ = std::make_unique<HttpIpcServer>(
+                        io_context,
+                        http_config,
+                        on_connected);
+                }
+                catch (const std::exception& e)
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "Failed to create HTTP IPC server: {}",
+                        ToString(e.what()));
+                    throw;
+                }
+            }
+
             IpcContext::~IpcContext()
             {
                 // 析构即清理，无条件守卫
@@ -127,7 +228,14 @@ namespace Core
                     business_thread_.reset();
                 }
 
-                // 3. 停止 IO 线程
+                // 3. 停止 HTTP server 和清理 HTTP transports
+                if (http_server_)
+                {
+                    http_server_->Stop();
+                }
+                http_transports_.clear();
+
+                // 4. 停止 IO 线程
                 runloop_.RequestStop();
 
                 // runloop_ 是值成员，析构时自动清理
@@ -323,11 +431,22 @@ namespace Core
             {
                 ScopedCurrentIpcContext scope(this);
 
+                if (http_server_)
+                {
+                    DAS_CORE_LOG_INFO(
+                        "HTTP IPC server listening on port {}",
+                        http_server_->GetPort());
+                }
+
                 return runloop_.Run();
             }
 
             void IpcContext::RequestStop()
             {
+                if (http_server_)
+                {
+                    http_server_->Stop();
+                }
                 if (proxy_factory_.has_value())
                 {
                     proxy_factory_->BeginShutdown();

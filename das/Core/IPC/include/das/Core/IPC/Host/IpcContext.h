@@ -8,6 +8,7 @@
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/Host/HandshakeHandler.h>
 #include <das/Core/IPC/Host/IIpcContext.h>
+#include <das/Core/IPC/HttpIpcClient.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcMessageQueue.h>
 #include <das/Core/IPC/IpcRunLoop.h>
@@ -144,6 +145,9 @@ namespace Core
             private:
                 boost::asio::awaitable<void> ReceiveLoopCoroutine();
 
+                /// HTTP/WebSocket 接收循环协程
+                boost::asio::awaitable<void> HttpReceiveLoopCoroutine();
+
                 void StartParentProcessMonitor();
                 void StopParentProcessMonitor();
 
@@ -178,6 +182,16 @@ namespace Core
                 /// 只能通过 CreateUninitialized 工厂方法创建，无法原地构造）
                 std::unique_ptr<DefaultAsyncIpcTransport> async_transport_;
 
+                /// HTTP/WebSocket 客户端（HTTP 传输模式）
+                std::unique_ptr<HttpIpcClient> http_client_;
+
+                /// HTTP 传输层非拥有指针（所有权已转移至 ConnectionManager）
+                HttpIpcTransport* http_transport_ = nullptr;
+
+                /// HTTP 连接参数（从 connect_url 解析）
+                std::string http_host_;
+                std::string http_port_;
+
                 bool is_connected_ = false;
                 bool is_running_ = false;
 
@@ -187,6 +201,9 @@ namespace Core
                 std::string host_read_queue_;
                 std::string host_write_queue_;
                 bool        host_is_server_ = false;
+
+                /// Whether HTTP/WebSocket transport mode is active
+                bool use_http_transport_ = false;
 
                 std::thread       parent_monitor_thread_;
                 std::atomic<bool> parent_monitor_running_{false};

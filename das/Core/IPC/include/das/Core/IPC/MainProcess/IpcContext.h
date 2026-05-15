@@ -7,6 +7,8 @@
 #include <das/Core/IPC/BusinessThread.h>
 #include <das/Core/IPC/CurrentIpcContextScope.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
+#include <das/Core/IPC/HttpIpcServer.h>
+#include <das/Core/IPC/HttpIpcTransport.h>
 #include <das/Core/IPC/InternalCallbackHandler.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcMessageQueue.h>
@@ -51,6 +53,10 @@ namespace Core
             {
             public:
                 explicit IpcContext(bool enable_heartbeat);
+                /// HTTP/WebSocket transport mode constructor
+                explicit IpcContext(
+                    bool                  enable_heartbeat,
+                    HttpIpcServer::Config http_config);
                 ~IpcContext() override; // 自动清理
 
                 IpcContext(const IpcContext&) = delete;
@@ -140,6 +146,14 @@ namespace Core
                 /// Created launchers indexed by session_id
                 std::unordered_map<uint16_t, DAS::DasPtr<HostLauncher>>
                     launchers_;
+
+                /// HTTP/WebSocket IPC server (optional, for HTTP transport
+                /// mode)
+                std::unique_ptr<HttpIpcServer> http_server_;
+
+                /// HTTP/WebSocket transports keyed by session_id
+                std::unordered_map<uint16_t, std::unique_ptr<HttpIpcTransport>>
+                    http_transports_;
 
                 std::atomic<uint16_t> next_session_id_{2};
                 mutable std::mutex    allocated_ids_mutex_;

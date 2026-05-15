@@ -26,6 +26,8 @@ public:
 
     AsyncMutex(const AsyncMutex&) = delete;
     AsyncMutex& operator=(const AsyncMutex&) = delete;
+    AsyncMutex(AsyncMutex&&) noexcept = default;
+    AsyncMutex& operator=(AsyncMutex&&) noexcept = default;
 
     boost::asio::awaitable<bool> Lock()
     {
@@ -40,7 +42,7 @@ public:
             co_return false;
         }
 
-        auto timer = std::make_shared<boost::asio::steady_timer>(io_ctx_);
+        auto timer = std::make_shared<boost::asio::steady_timer>(io_ctx_.get());
         timer->expires_at(std::chrono::steady_clock::time_point::max());
         state->waiters.push(timer);
 
@@ -70,10 +72,10 @@ public:
 
     ~AsyncMutex()
     {
-        if (!io_ctx_.stopped())
+        if (!io_ctx_.get().stopped())
         {
             boost::asio::post(
-                io_ctx_,
+                io_ctx_.get(),
                 [state = std::move(state_)]()
                 {
                     state->cancelled = true;
@@ -87,9 +89,11 @@ public:
         }
     }
 
+    boost::asio::io_context& IoCtx() noexcept { return io_ctx_; }
+
 private:
-    boost::asio::io_context& io_ctx_;
-    std::shared_ptr<State>   state_;
+    std::reference_wrapper<boost::asio::io_context> io_ctx_;
+    std::shared_ptr<State>                          state_;
 };
 
 DAS_CORE_IPC_NS_END

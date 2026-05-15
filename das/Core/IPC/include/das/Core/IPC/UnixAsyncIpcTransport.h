@@ -13,6 +13,7 @@
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <das/DasExport.h>
 #include <das/Utils/Expected.h>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -82,9 +83,8 @@ public:
 
     UnixAsyncIpcTransport(const UnixAsyncIpcTransport&) = delete;
     UnixAsyncIpcTransport& operator=(const UnixAsyncIpcTransport&) = delete;
-
-    UnixAsyncIpcTransport(UnixAsyncIpcTransport&&) noexcept = delete;
-    UnixAsyncIpcTransport& operator=(UnixAsyncIpcTransport&&) noexcept = delete;
+    UnixAsyncIpcTransport(UnixAsyncIpcTransport&&) noexcept;
+    UnixAsyncIpcTransport& operator=(UnixAsyncIpcTransport&&) noexcept;
 
     /// 异步初始化（协程版本）
     boost::asio::awaitable<DasResult> InitializeAsync(
@@ -105,7 +105,7 @@ public:
     /// @return io_context 引用，生命周期绑定到 this
     boost::asio::io_context& GetIoContext() DAS_LIFETIMEBOUND
     {
-        return io_context_;
+        return io_context_.get();
     }
 
     /// 异步接收协程
@@ -136,9 +136,9 @@ private:
     // 服务端 acceptor（仅服务端使用）
     std::unique_ptr<boost::asio::local::stream_protocol::acceptor> acceptor_;
 
-    boost::asio::io_context&                    io_context_;
-    AsyncMutex                                  send_mutex_;
-    boost::asio::local::stream_protocol::socket socket_;
+    std::reference_wrapper<boost::asio::io_context> io_context_;
+    AsyncMutex                                      send_mutex_;
+    boost::asio::local::stream_protocol::socket     socket_;
 
     std::string endpoint_name_;
     bool        is_server_ = false;

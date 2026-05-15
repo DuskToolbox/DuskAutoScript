@@ -14,11 +14,13 @@
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <das/Core/Logger/Logger.h>
+#include <optional>
 #include <shared_mutex>
 #include <unordered_map>
 #include <vector>
 
 #include <das/Core/IPC/DefaultAsyncIpcTransport.h>
+#include <das/Core/IPC/HttpIpcTransport.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 
 DAS_CORE_IPC_NS_BEGIN
@@ -29,7 +31,12 @@ struct ConnectionManager::Impl
     // 存储 HostLauncher 的引用
     std::unordered_map<uint16_t, DasPtr<HostLauncher>> host_launchers_;
     // 直接传输层注册（用于 Host 模式，无需 HostLauncher）
-    std::unordered_map<uint16_t, DefaultAsyncIpcTransport*> direct_transports_;
+    std::unordered_map<
+        uint16_t,
+        std::reference_wrapper<DefaultAsyncIpcTransport>>
+        direct_transports_;
+    // AnyTransport 注册（支持 Named Pipe 和 HTTP/WS 传输器）
+    std::unordered_map<uint16_t, AnyTransport> any_transports_;
     // 共享内存池（每个连接一个，按 remote_id 索引）
     std::unordered_map<uint16_t, std::unique_ptr<SharedMemoryPool>> shm_pools_;
     mutable std::shared_mutex connections_mutex_;
@@ -56,6 +63,7 @@ ConnectionManager::~ConnectionManager()
     impl_->connections_.clear();
     impl_->host_launchers_.clear();
     impl_->direct_transports_.clear();
+    impl_->any_transports_.clear();
 }
 
 DasResult ConnectionManager::RegisterConnection(
@@ -276,7 +284,7 @@ DasResult ConnectionManager::RegisterTransport(
     std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
 
     // 直接存储到 direct_transports_ map
-    impl_->direct_transports_[session_id] = transport;
+    impl_->direct_transports_.emplace(session_id, std::ref(*transport));
 
     // Host side: 打开已存在的 SHM pool（deterministic name）
     // On Host side: main_session_id = remote_id, host_session_id = local_id_
@@ -330,6 +338,66 @@ DasResult ConnectionManager::RegisterTransport(
     return DAS_S_OK;
 }
 
+DasResult ConnectionManager::RegisterAnyTransport(
+    uint16_t                 session_id,
+    Win32AsyncIpcTransport&& t)
+{
+    if (!t.IsConnected())
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+    impl_->any_transports_.try_emplace(session_id, std::move(t));
+    DAS_CORE_LOG_INFO("AnyTransport registered: session_id={}", session_id);
+    return DAS_S_OK;
+}
+
+DasResult ConnectionManager::RegisterAnyTransport(
+    uint16_t                session_id,
+    UnixAsyncIpcTransport&& t)
+{
+    if (!t.IsConnected())
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+    impl_->any_transports_.try_emplace(session_id, std::move(t));
+    DAS_CORE_LOG_INFO("AnyTransport registered: session_id={}", session_id);
+    return DAS_S_OK;
+}
+
+DasResult ConnectionManager::RegisterAnyTransport(
+    uint16_t           session_id,
+    HttpIpcTransport&& t)
+{
+    if (!t.IsConnected())
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+    impl_->any_transports_.try_emplace(session_id, std::move(t));
+    DAS_CORE_LOG_INFO("AnyTransport registered: session_id={}", session_id);
+    return DAS_S_OK;
+}
+
+DasResult ConnectionManager::RegisterAnyTransport(
+    uint16_t       session_id,
+    AnyTransport&& t)
+{
+    if (!t.IsConnected())
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+    impl_->any_transports_.try_emplace(session_id, std::move(t));
+    DAS_CORE_LOG_INFO("AnyTransport registered: session_id={}", session_id);
+    return DAS_S_OK;
+}
+
 DasPtr<HostLauncher> ConnectionManager::GetLauncher(uint16_t session_id) const
 {
     std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
@@ -351,7 +419,22 @@ DefaultAsyncIpcTransport* ConnectionManager::GetTransport(
     auto direct_it = impl_->direct_transports_.find(session_id);
     if (direct_it != impl_->direct_transports_.end())
     {
-        return direct_it->second;
+        return &direct_it->second.get();
+    }
+
+    // 检查 AnyTransport 注册
+    {
+        auto any_it = impl_->any_transports_.find(session_id);
+        if (any_it != impl_->any_transports_.end())
+        {
+            return any_it->second.Visit(
+                [](DefaultAsyncIpcTransport& t) -> DefaultAsyncIpcTransport*
+                { return &t; },
+                [](UnixAsyncIpcTransport&) -> DefaultAsyncIpcTransport*
+                { return nullptr; },
+                [](HttpIpcTransport&) -> DefaultAsyncIpcTransport*
+                { return nullptr; });
+        }
     }
 
     // 从 host_launchers_ 获取 launcher
@@ -378,6 +461,17 @@ DefaultAsyncIpcTransport* ConnectionManager::GetTransport(
 
     // 从 HostLauncher 获取 Transport
     return launcher_it->second->GetTransport();
+}
+
+AnyTransport* ConnectionManager::GetAnyTransport(uint16_t session_id)
+{
+    std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+    auto it = impl_->any_transports_.find(session_id);
+    if (it != impl_->any_transports_.end())
+    {
+        return &it->second;
+    }
+    return nullptr;
 }
 
 DasResult ConnectionManager::SetConnectionAlive(
@@ -680,6 +774,9 @@ DasResult ConnectionManager::CleanupConnectionResources(uint16_t remote_id)
 {
     // 清理直接传输层
     impl_->direct_transports_.erase(remote_id);
+
+    // 清理 AnyTransport
+    impl_->any_transports_.erase(remote_id);
 
     // 清理 SHM pool（unique_ptr 自动析构）
     impl_->shm_pools_.erase(remote_id);

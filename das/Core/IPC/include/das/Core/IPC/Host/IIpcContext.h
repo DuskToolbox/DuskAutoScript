@@ -9,6 +9,7 @@
 #include <functional>
 #include <memory>
 #include <span>
+#include <string>
 
 DAS_NS_BEGIN
 namespace Core
@@ -31,6 +32,10 @@ namespace Core
                 // - 0: 独立模式，Host 自行生成 session_id
                 // - 非0: 连接模式，通过 IPC 向主进程请求 session_id
                 uint32_t main_pid = 0;
+
+                // HTTP/WebSocket 连接 URL（例如 "ws://localhost:9527"）
+                // 非空时启用 HTTP 传输模式，替代 Named Pipe
+                std::string connect_url;
             };
 
             struct IIpcContext;

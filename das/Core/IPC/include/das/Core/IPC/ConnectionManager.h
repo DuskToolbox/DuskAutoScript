@@ -5,12 +5,15 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/interprocess/ipc/message_queue.hpp>
 #include <cstdint>
+#include <das/Core/IPC/AnyTransport.h>
 #include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <das/IDasBase.h>
+#include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <thread>
 
@@ -127,6 +130,14 @@ public:
     GetTransport(uint16_t session_id) const;
 
     /**
+     * @brief 获取 AnyTransport
+     *
+     * @param session_id 目标会话ID
+     * @return AnyTransport 指针，不存在返回 nullptr
+     */
+    AnyTransport* GetAnyTransport(uint16_t session_id);
+
+    /**
      * @brief 注册传输层（轻量级注册，无需 HostLauncher）
      *
      * [Host 专用] MainProcess 不应调用此方法，应使用 RegisterHostLauncher。
@@ -140,6 +151,16 @@ public:
     DasResult RegisterTransport(
         uint16_t                  session_id,
         DefaultAsyncIpcTransport* transport);
+
+    DasResult RegisterAnyTransport(
+        uint16_t                 session_id,
+        Win32AsyncIpcTransport&& t);
+    DasResult RegisterAnyTransport(
+        uint16_t                session_id,
+        UnixAsyncIpcTransport&& t);
+    DasResult RegisterAnyTransport(uint16_t session_id, HttpIpcTransport&& t);
+
+    DasResult RegisterAnyTransport(uint16_t session_id, AnyTransport&& t);
 
     /**
      * @brief 更新连接的活跃状态

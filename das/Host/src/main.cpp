@@ -406,7 +406,11 @@ int main(int argc, char* argv[])
             "Set log level: trace, debug, info, warn, error, critical, off")(
             "main-pid",
             boost::program_options::value<uint32_t>(),
-            "Main process PID (enables connect mode)");
+            "Main process PID (enables Named Pipe connect mode)")(
+            "connect-url",
+            boost::program_options::value<std::string>(),
+            "Main process WebSocket URL (enables HTTP transport mode). "
+            "Example: ws://localhost:9527");
 
         boost::program_options::variables_map vm;
         boost::program_options::store(
@@ -497,17 +501,28 @@ int main(int argc, char* argv[])
         // 创建 IPC Context
         DAS::Core::IPC::Host::IpcContextConfig config{};
 
-        // 如果提供了 --main-pid 参数，设置连接模式
-        if (vm.count("main-pid"))
+        if (vm.count("connect-url"))
+        {
+            config.connect_url = vm["connect-url"].as<std::string>();
+            DAS_LOG_INFO(
+                std::format(
+                    "Host process running in HTTP mode, connect URL: {}",
+                    config.connect_url)
+                    .c_str());
+        }
+        else if (vm.count("main-pid"))
         {
             config.main_pid = vm["main-pid"].as<uint32_t>();
-            std::string _log_msg = DAS_FMT_NS::format(
-                "Host process running in CONNECT mode, main PID: {}",
-                config.main_pid);
-            DAS_LOG_INFO(_log_msg.c_str());
+            DAS_LOG_INFO(
+                std::format(
+                    "Host process running in PIPE mode, main PID: {}",
+                    config.main_pid)
+                    .c_str());
         }
         else
         {
+            DAS_LOG_ERROR(
+                "Either --main-pid or --connect-url must be specified");
             return EXIT_FAILURE;
         }
 

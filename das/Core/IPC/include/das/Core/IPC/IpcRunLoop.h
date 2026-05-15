@@ -27,6 +27,7 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/steady_timer.hpp>
 
+#include <das/Core/IPC/AnyTransport.h>
 #include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/DefaultAsyncIpcTransport.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
@@ -368,6 +369,26 @@ public:
      */
     DasResult RegisterHostLauncher(DasPtr<HostLauncher> launcher);
 
+    /**
+     * @brief 直接注册 Transport（无 HostLauncher）
+     *
+     * HTTP/WebSocket 传输模式下，Host 进程独立连接，无需 HostLauncher。
+     * 注册到 ConnectionManager 并启动异步接收协程。
+     *
+     * @param session_id 会话 ID
+     * @param transport 要注册的 transport（调用方管理生命周期）
+     * @return DasResult DAS_S_OK 成功
+     */
+    DasResult RegisterDirectTransport(
+        uint16_t                 session_id,
+        Win32AsyncIpcTransport&& t);
+    DasResult RegisterDirectTransport(
+        uint16_t                session_id,
+        UnixAsyncIpcTransport&& t);
+    DasResult RegisterDirectTransport(
+        uint16_t           session_id,
+        HttpIpcTransport&& t);
+
     friend class ::Das::Core::IPC::Host::HandshakeHandler;
 
     // AwaitResponseOperation 需要访问内部方法
@@ -406,6 +427,16 @@ public:
     void StartAsyncReceiveForTransport(
         uint16_t             session_id,
         DasPtr<HostLauncher> launcher);
+
+    /**
+     * @brief 直接传输层的接收协程循环
+     *
+     * @param session_id 会话 ID
+     * @param transport AnyTransport 指针（非拥有）
+     */
+    boost::asio::awaitable<void> DirectTransportReceiveLoop(
+        uint16_t      session_id,
+        AnyTransport* transport);
 
     /**
      * @brief 调度超时检查定时器
