@@ -23,8 +23,6 @@ namespace Das::PluginInterface
     [uuid("630BB8E7-B2D5-4D1C-9AD8-A0D34E07A270")] interface IDasTaskComponentFactory
         : IDasTypeInfo
     {
-        DasResult GetCatalog(
-            [out] Das::ExportInterface::IDasJson ** pp_out_catalog_json);
         DasResult CreateComponent(
             const DasGuid & component_guid,
             [out] IDasTaskComponent ** pp_out_component);

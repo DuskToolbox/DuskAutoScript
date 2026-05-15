@@ -196,7 +196,7 @@ namespace
 
 } // namespace
 
-TEST_F(TaskComponentContractTest, DasFlowControlCatalogComesFromManager)
+TEST_F(TaskComponentContractTest, DasFlowControlManifestDefinitionsComeFromManager)
 {
     auto definitions = plugin_manager_->GetTaskComponentFactoryManager()
                            .EnumerateDefinitions();
@@ -227,7 +227,7 @@ TEST_F(TaskComponentContractTest, DasFlowControlCatalogComesFromManager)
     }
 }
 
-TEST_F(TaskComponentContractTest, DasFlowControlGetCatalogUsesPackageFeaturePath)
+TEST_F(TaskComponentContractTest, DasFlowControlFeatureFactoryCreatesManifestComponents)
 {
     auto runtime = CreateCppRuntime();
     ASSERT_NE(runtime, nullptr);
@@ -271,27 +271,16 @@ TEST_F(TaskComponentContractTest, DasFlowControlGetCatalogUsesPackageFeaturePath
     DasPtr<Das::PluginInterface::IDasTaskComponentFactory> factory;
     ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
 
-    DasPtr<Das::ExportInterface::IDasJson> catalog;
-    ASSERT_EQ(factory->GetCatalog(catalog.Put()), DAS_S_OK);
-    auto catalog_json = ToJson(catalog.Get());
-    auto catalog_obj = catalog_json.as_object();
-    ASSERT_TRUE(catalog_obj.has_value());
-    auto components =
-        (*catalog_obj)[std::string_view("components")].as_array();
-    ASSERT_TRUE(components.has_value());
-
     for (const auto& expected : kOfficialComponents)
     {
-        const auto found = std::ranges::any_of(
-            *components,
-            [&expected](const yyjson::value& component)
-            {
-                auto component_obj = component.as_object();
-                return component_obj
-                       && StringField(*component_obj, "kind")
-                              == expected.kind;
-            });
-        EXPECT_TRUE(found) << expected.name;
+        DasPtr<Das::PluginInterface::IDasTaskComponent> component;
+        EXPECT_EQ(
+            factory->CreateComponent(
+                GuidFromText(expected.guid_text),
+                component.Put()),
+            DAS_S_OK)
+            << expected.name;
+        EXPECT_NE(component.Get(), nullptr) << expected.name;
     }
 }
 

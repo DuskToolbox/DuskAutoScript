@@ -270,12 +270,6 @@ namespace
                 pp_out_name);
         }
 
-        DasResult DAS_STD_CALL
-        GetCatalog(Das::ExportInterface::IDasJson**) override
-        {
-            return DAS_E_NO_IMPLEMENTATION;
-        }
-
         DasResult DAS_STD_CALL CreateComponent(
             const DasGuid&      component_guid,
             IDasTaskComponent** pp_out_component) override

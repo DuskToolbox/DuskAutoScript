@@ -339,23 +339,11 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_TaskComponentFactory)
     DAS::DasPtr<IDasTaskComponentFactory> factory;
     ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
 
-    DAS::DasPtr<IDasJson> catalog;
-    ASSERT_EQ(factory->GetCatalog(catalog.Put()), DAS_S_OK);
-    auto catalog_json = ToYyjson(catalog.Get());
-    auto components =
-        (*catalog_json.as_object())[std::string_view("components")].as_array();
-    ASSERT_TRUE(components.has_value());
-    ASSERT_EQ(components->size(), 1u);
-    auto catalog_component = (*components)[0].as_object();
-    ASSERT_TRUE(catalog_component.has_value());
-    EXPECT_EQ(
-        (*catalog_component)[std::string_view("componentGuid")]
-            .as_string()
-            .value_or(""),
-        std::string_view("68F10701-0000-4000-8000-000000000001"));
-    EXPECT_EQ(
-        (*catalog_component)[std::string_view("kind")].as_string().value_or(""),
-        std::string_view("ipcTest"));
+    IDasTaskComponent* missing_component_raw = nullptr;
+    ASSERT_EQ(
+        factory->CreateComponent(kIpcTaskGuid, &missing_component_raw),
+        DAS_E_NOT_FOUND);
+    ASSERT_EQ(missing_component_raw, nullptr);
 
     IDasTaskComponent* component_raw = nullptr;
     ASSERT_EQ(

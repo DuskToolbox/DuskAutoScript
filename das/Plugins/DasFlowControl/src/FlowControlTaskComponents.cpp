@@ -320,39 +320,6 @@ DasResult DasFlowControlTaskComponentFactory::GetRuntimeClassName(
         pp_out_name);
 }
 
-DasResult DasFlowControlTaskComponentFactory::GetCatalog(
-    ExportInterface::IDasJson** pp_out_catalog_json)
-{
-    if (pp_out_catalog_json == nullptr)
-    {
-        return DAS_E_INVALID_POINTER;
-    }
-
-    auto catalog = Das::Utils::MakeYyjsonObject();
-    auto components = Das::Utils::MakeYyjsonArray();
-    auto components_arr = *components.as_array();
-    for (const auto& spec : kComponents)
-    {
-        auto item = Das::Utils::MakeYyjsonObject();
-        auto obj = *item.as_object();
-        obj[std::string_view("componentGuid")] = spec.guid_text;
-        obj[std::string_view("kind")] = spec.kind;
-        components_arr.emplace_back(std::move(item));
-    }
-    (*catalog.as_object())[std::string_view("components")] =
-        std::move(components);
-
-    auto wrapped = WrapJson(std::move(catalog));
-    if (!wrapped)
-    {
-        return DAS_E_INVALID_JSON;
-    }
-
-    *pp_out_catalog_json = wrapped.Get();
-    (*pp_out_catalog_json)->AddRef();
-    return DAS_S_OK;
-}
-
 DasResult DasFlowControlTaskComponentFactory::CreateComponent(
     const DasGuid&                       component_guid,
     PluginInterface::IDasTaskComponent** pp_out_component)

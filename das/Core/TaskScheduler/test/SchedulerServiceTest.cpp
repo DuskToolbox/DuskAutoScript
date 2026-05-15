@@ -2055,20 +2055,6 @@ public:
             pp);
     }
 
-    DasResult GetCatalog(
-        Das::ExportInterface::IDasJson** pp_out_catalog_json) override
-    {
-        if (!pp_out_catalog_json)
-        {
-            return DAS_E_INVALID_POINTER;
-        }
-        auto catalog = Das::MakeDasPtr<Das::Core::Utils::IDasJsonImpl>(
-            Das::Utils::MakeYyjsonObject());
-        *pp_out_catalog_json = catalog.Get();
-        (*pp_out_catalog_json)->AddRef();
-        return DAS_S_OK;
-    }
-
     DasResult CreateComponent(
         const DasGuid&                         component_guid,
         Das::PluginInterface::IDasTaskComponent** pp_out_component) override

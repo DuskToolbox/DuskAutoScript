@@ -255,8 +255,6 @@ class IpcTaskComponentFactoryImpl final
           IpcTaskComponentFactoryImpl>
 {
 public:
-    DAS_IMPL GetCatalog(
-        ExportInterface::IDasJson** pp_out_catalog_json) override;
     DAS_IMPL CreateComponent(
         const DasGuid&                         component_guid,
         PluginInterface::IDasTaskComponent**   pp_out_component) override;

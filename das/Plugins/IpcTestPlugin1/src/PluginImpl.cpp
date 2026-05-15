@@ -528,33 +528,6 @@ DasResult IpcTaskComponentImpl::Do(
     return DAS_S_OK;
 }
 
-DasResult IpcTaskComponentFactoryImpl::GetCatalog(
-    ExportInterface::IDasJson** pp_out_catalog_json)
-{
-    if (!pp_out_catalog_json)
-    {
-        return DAS_E_INVALID_POINTER;
-    }
-
-    auto catalog = Utils::MakeYyjsonObject();
-    auto components = Utils::MakeYyjsonArray();
-    auto item = Utils::MakeYyjsonObject();
-    auto item_obj = *item.as_object();
-    item_obj[std::string_view("stableName")] = "das.ipc.testComponent";
-    item_obj[std::string_view("componentGuid")] =
-        "68F10701-0000-4000-8000-000000000001";
-    item_obj[std::string_view("label")] = "IPC Test Component";
-    item_obj[std::string_view("kind")] = "ipcTest";
-    components.as_array()->emplace_back(std::move(item));
-    (*catalog.as_object())[std::string_view("components")] =
-        std::move(components);
-
-    auto wrapped = WrapJson(std::move(catalog));
-    *pp_out_catalog_json = wrapped.Get();
-    (*pp_out_catalog_json)->AddRef();
-    return DAS_S_OK;
-}
-
 DasResult IpcTaskComponentFactoryImpl::CreateComponent(
     const DasGuid&                       component_guid,
     PluginInterface::IDasTaskComponent** pp_out_component)

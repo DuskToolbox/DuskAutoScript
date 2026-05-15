@@ -79,9 +79,6 @@ public:
     DAS_IMPL GetGuid(DasGuid* p_out_guid) override;
     DAS_IMPL GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override;
 
-    DAS_IMPL GetCatalog(
-        ExportInterface::IDasJson** pp_out_catalog_json) override;
-
     DAS_IMPL CreateComponent(
         const DasGuid&                       component_guid,
         PluginInterface::IDasTaskComponent** pp_out_component) override;
