@@ -3267,6 +3267,36 @@ TEST_F(SchedulerRuntimeBackedTest, SchedulerAuthoringCompilePreviewOnly)
     EXPECT_TRUE(shared_state_->executed_instance_ids.empty());
 }
 
+namespace
+{
+    yyjson::value MakeRepositoryCreateRequest(
+        std::string_view display_name,
+        int64_t          retry_count = 3)
+    {
+        yyjson::value request(Das::Utils::MakeYyjsonObject());
+        (*request.as_object())[std::string_view("pluginGuid")] =
+            FactoryPluginGuidString;
+        (*request.as_object())[std::string_view("taskTypeGuid")] =
+            FactoryTaskGuidString;
+        (*request.as_object())[std::string_view("displayName")] =
+            std::string(display_name);
+
+        yyjson::value initial(Das::Utils::MakeYyjsonObject());
+        (*initial.as_object())[std::string_view("retryCount")] = retry_count;
+        (*request.as_object())[std::string_view("initialProperties")] =
+            std::move(initial);
+        return request;
+    }
+
+    yyjson::value MakeRepositoryRenameRequest(std::string_view display_name)
+    {
+        yyjson::value request(Das::Utils::MakeYyjsonObject());
+        (*request.as_object())[std::string_view("displayName")] =
+            std::string(display_name);
+        return request;
+    }
+} // namespace
+
 TEST_F(
     SchedulerRuntimeBackedTest,
     SchedulerRepositoryCreateReturnsEntryFromDescriptorDefaults)
@@ -3360,24 +3390,8 @@ TEST_F(
 {
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
-    auto make_request = [](std::string_view display_name, int64_t retry_count)
-    {
-        yyjson::value request(Das::Utils::MakeYyjsonObject());
-        (*request.as_object())[std::string_view("pluginGuid")] =
-            FactoryPluginGuidString;
-        (*request.as_object())[std::string_view("taskTypeGuid")] =
-            FactoryTaskGuidString;
-        (*request.as_object())[std::string_view("displayName")] =
-            std::string(display_name);
-
-        yyjson::value initial(Das::Utils::MakeYyjsonObject());
-        (*initial.as_object())[std::string_view("retryCount")] = retry_count;
-        (*request.as_object())[std::string_view("initialProperties")] =
-            std::move(initial);
-        return request;
-    };
-
-    auto first_request = make_request("First repository entry", 1);
+    auto first_request =
+        MakeRepositoryCreateRequest("First repository entry", 1);
     auto first = scheduler_->CreateRepositoryEntry(first_request);
     auto first_obj = first.as_object();
     ASSERT_TRUE(first_obj.has_value());
@@ -3385,7 +3399,8 @@ TEST_F(
         (*first_obj)[std::string_view("entryId")].as_sint().value_or(-1),
         0);
 
-    auto second_request = make_request("Second repository entry", 2);
+    auto second_request =
+        MakeRepositoryCreateRequest("Second repository entry", 2);
     auto second = scheduler_->CreateRepositoryEntry(second_request);
     auto second_obj = second.as_object();
     ASSERT_TRUE(second_obj.has_value());
@@ -3440,6 +3455,141 @@ TEST_F(
     std::lock_guard<std::mutex> lock(shared_state_->mutex);
     EXPECT_TRUE(shared_state_->executed_instance_ids.empty());
     EXPECT_EQ(shared_state_->compile_count, 0);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryDeleteRemovesOnlyRepositoryEntry)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto first = scheduler_->CreateRepositoryEntry(
+        MakeRepositoryCreateRequest("First repository entry", 1));
+    ASSERT_EQ(
+        (*first.as_object())[std::string_view("entryId")].as_sint().value_or(
+            -1),
+        0);
+    auto second = scheduler_->CreateRepositoryEntry(
+        MakeRepositoryCreateRequest("Second repository entry", 2));
+    ASSERT_EQ(
+        (*second.as_object())[std::string_view("entryId")].as_sint().value_or(
+            -1),
+        1);
+
+    EXPECT_EQ(scheduler_->DeleteRepositoryEntry(0), DAS_S_OK);
+
+    EXPECT_FALSE(
+        std::filesystem::exists(settings_dir_ / "0" / "taskRepository0.json"));
+    EXPECT_TRUE(
+        std::filesystem::exists(settings_dir_ / "0" / "taskRepository1.json"));
+
+    auto repository = scheduler_->GetTaskRepository();
+    auto entries =
+        (*repository.as_object())[std::string_view("entries")].as_array();
+    ASSERT_TRUE(entries.has_value());
+    ASSERT_EQ(entries->size(), 1u);
+    EXPECT_EQ(
+        (*(*entries)[0].as_object())[std::string_view("entryId")]
+            .as_sint()
+            .value_or(-1),
+        1);
+
+    auto scheduler_state = scheduler_->Get();
+    EXPECT_EQ(
+        (*scheduler_state.as_object())[std::string_view("tasks")]
+            .as_array()
+            ->size(),
+        0u);
+    auto scheduler_index = settings_manager_->GetSchedulerIndexJson("0");
+    EXPECT_EQ(
+        (*scheduler_index.as_object())[std::string_view("taskOrder")]
+            .as_array()
+            ->size(),
+        0u);
+}
+
+TEST_F(SchedulerRuntimeBackedTest, SchedulerRepositoryDeleteMissingEntry)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    EXPECT_EQ(scheduler_->DeleteRepositoryEntry(404), DAS_E_NOT_FOUND);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryRenamePreservesAuthoringMetadataAndAllowsDuplicates)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto first = scheduler_->CreateRepositoryEntry(
+        MakeRepositoryCreateRequest("Original A", 1));
+    ASSERT_EQ(
+        (*first.as_object())[std::string_view("entryId")].as_sint().value_or(
+            -1),
+        0);
+    auto second = scheduler_->CreateRepositoryEntry(
+        MakeRepositoryCreateRequest("Original B", 2));
+    ASSERT_EQ(
+        (*second.as_object())[std::string_view("entryId")].as_sint().value_or(
+            -1),
+        1);
+
+    auto persisted = settings_manager_->GetTaskRepositoryEntryJson("0", 0);
+    auto authoring =
+        (*persisted.as_object())[std::string_view("authoring")].as_object();
+    ASSERT_TRUE(authoring.has_value());
+    (*authoring)[std::string_view("revision")] = 7;
+    (*authoring)[std::string_view("sourceFingerprint")] = "source-abc";
+    ASSERT_EQ(
+        settings_manager_->UpdateTaskRepositoryEntryJson("0", 0, persisted),
+        DAS_S_OK);
+
+    auto rename_request = MakeRepositoryRenameRequest("Duplicate name");
+    auto renamed = scheduler_->RenameRepositoryEntry(0, rename_request);
+    auto renamed_obj = renamed.as_object();
+    ASSERT_TRUE(renamed_obj.has_value());
+    EXPECT_EQ(
+        (*renamed_obj)[std::string_view("displayName")].as_string().value_or(
+            ""),
+        std::string_view("Duplicate name"));
+    auto renamed_authoring =
+        (*renamed_obj)[std::string_view("authoring")].as_object();
+    ASSERT_TRUE(renamed_authoring.has_value());
+    EXPECT_EQ(
+        (*renamed_authoring)[std::string_view("revision")]
+            .as_sint()
+            .value_or(-1),
+        7);
+    EXPECT_EQ(
+        (*renamed_authoring)[std::string_view("sourceFingerprint")]
+            .as_string()
+            .value_or(""),
+        std::string_view("source-abc"));
+
+    auto duplicate = scheduler_->RenameRepositoryEntry(1, rename_request);
+    auto duplicate_obj = duplicate.as_object();
+    ASSERT_TRUE(duplicate_obj.has_value());
+    EXPECT_EQ(
+        (*duplicate_obj)[std::string_view("displayName")]
+            .as_string()
+            .value_or(""),
+        std::string_view("Duplicate name"));
+
+    auto repository = scheduler_->GetTaskRepository();
+    auto entries =
+        (*repository.as_object())[std::string_view("entries")].as_array();
+    ASSERT_TRUE(entries.has_value());
+    ASSERT_EQ(entries->size(), 2u);
+    EXPECT_EQ(
+        (*(*entries)[0].as_object())[std::string_view("displayName")]
+            .as_string()
+            .value_or(""),
+        std::string_view("Duplicate name"));
+    EXPECT_EQ(
+        (*(*entries)[1].as_object())[std::string_view("displayName")]
+            .as_string()
+            .value_or(""),
+        std::string_view("Duplicate name"));
 }
 
 TEST_F(
