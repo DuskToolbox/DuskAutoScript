@@ -6560,6 +6560,254 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryRename_ServiceError
     EXPECT_EQ(fake_svc_->last_repository_entry_id, 42);
 }
 
+TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryAuthoringGet_Forwarded)
+{
+    auto req = MakeRequest(
+        "/api/v1/scheduler/0/repository/entries/42/authoring/get",
+        R"({"view":"default"})",
+        {{"profile", "0"}, {"entryId", "42"}});
+    auto body = ReleaseJson(controller_->RepositoryAuthoringGet(req));
+    auto root = body.as_object().value();
+
+    EXPECT_EQ(
+        root[std::string_view("code")].as_sint().value_or(DAS_E_FAIL),
+        DAS_S_OK);
+    auto data = root[std::string_view("data")].as_object();
+    ASSERT_TRUE(data.has_value());
+    EXPECT_TRUE(data->contains(std::string_view("document")));
+    EXPECT_TRUE(fake_svc_->repository_authoring_get_called);
+    EXPECT_EQ(fake_svc_->last_repository_entry_id, 42);
+}
+
+TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryAuthoringApply_Forwarded)
+{
+    auto req = MakeRequest(
+        "/api/v1/scheduler/0/repository/entries/42/authoring/apply",
+        R"({"baseRevision":0,"kind":"setValue","payload":{}})",
+        {{"profile", "0"}, {"entryId", "42"}});
+    auto body = ReleaseJson(controller_->RepositoryAuthoringApply(req));
+    auto root = body.as_object().value();
+
+    EXPECT_EQ(
+        root[std::string_view("code")].as_sint().value_or(DAS_E_FAIL),
+        DAS_S_OK);
+    EXPECT_TRUE(fake_svc_->repository_authoring_apply_called);
+    EXPECT_EQ(fake_svc_->last_repository_entry_id, 42);
+    EXPECT_NE(
+        fake_svc_->last_repository_request_json.find("baseRevision"),
+        std::string::npos);
+}
+
+TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryCompile_PreviewOnly)
+{
+    auto req = MakeRequest(
+        "/api/v1/scheduler/0/repository/entries/42/authoring/compile",
+        R"({"mode":"preview"})",
+        {{"profile", "0"}, {"entryId", "42"}});
+    auto body = ReleaseJson(controller_->RepositoryAuthoringCompile(req));
+    auto root = body.as_object().value();
+
+    EXPECT_EQ(
+        root[std::string_view("code")].as_sint().value_or(DAS_E_FAIL),
+        DAS_S_OK);
+    auto data = root[std::string_view("data")].as_object();
+    ASSERT_TRUE(data.has_value());
+    EXPECT_TRUE(data->contains(std::string_view("entryId")));
+    EXPECT_TRUE(data->contains(std::string_view("canExecute")));
+    EXPECT_TRUE(data->contains(std::string_view("summary")));
+    EXPECT_TRUE(data->contains(std::string_view("diagnostics")));
+    EXPECT_FALSE(data->contains(std::string_view("childExecutionSnapshot")));
+    EXPECT_FALSE(data->contains(std::string_view("executionSnapshot")));
+    EXPECT_TRUE(fake_svc_->repository_compile_called);
+    EXPECT_EQ(fake_svc_->last_repository_entry_id, 42);
+}
+
+TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryAuthoringProfile_Rejected)
+{
+    auto get_req = MakeRequest(
+        "/api/v1/scheduler/1/repository/entries/42/authoring/get",
+        "{}",
+        {{"profile", "1"}, {"entryId", "42"}});
+    auto get_body = ReleaseJson(controller_->RepositoryAuthoringGet(get_req));
+    EXPECT_EQ(
+        (*get_body.as_object())[std::string_view("code")]
+            .as_sint()
+            .value_or(DAS_S_OK),
+        DAS_E_INVALID_ARGUMENT);
+
+    auto apply_req = MakeRequest(
+        "/api/v1/scheduler/1/repository/entries/42/authoring/apply",
+        "{}",
+        {{"profile", "1"}, {"entryId", "42"}});
+    auto apply_body =
+        ReleaseJson(controller_->RepositoryAuthoringApply(apply_req));
+    EXPECT_EQ(
+        (*apply_body.as_object())[std::string_view("code")]
+            .as_sint()
+            .value_or(DAS_S_OK),
+        DAS_E_INVALID_ARGUMENT);
+
+    auto compile_req = MakeRequest(
+        "/api/v1/scheduler/1/repository/entries/42/authoring/compile",
+        "{}",
+        {{"profile", "1"}, {"entryId", "42"}});
+    auto compile_body =
+        ReleaseJson(controller_->RepositoryAuthoringCompile(compile_req));
+    EXPECT_EQ(
+        (*compile_body.as_object())[std::string_view("code")]
+            .as_sint()
+            .value_or(DAS_S_OK),
+        DAS_E_INVALID_ARGUMENT);
+
+    EXPECT_FALSE(fake_svc_->repository_authoring_get_called);
+    EXPECT_FALSE(fake_svc_->repository_authoring_apply_called);
+    EXPECT_FALSE(fake_svc_->repository_compile_called);
+}
+
+TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryAuthoringEntryId_Rejected)
+{
+    auto get_req = MakeRequest(
+        "/api/v1/scheduler/0/repository/entries/bad/authoring/get",
+        "{}",
+        {{"profile", "0"}, {"entryId", "bad"}});
+    auto get_body = ReleaseJson(controller_->RepositoryAuthoringGet(get_req));
+    EXPECT_EQ(
+        (*get_body.as_object())[std::string_view("code")]
+            .as_sint()
+            .value_or(DAS_S_OK),
+        DAS_E_INVALID_ARGUMENT);
+
+    auto apply_req = MakeRequest(
+        "/api/v1/scheduler/0/repository/entries/bad/authoring/apply",
+        "{}",
+        {{"profile", "0"}, {"entryId", "bad"}});
+    auto apply_body =
+        ReleaseJson(controller_->RepositoryAuthoringApply(apply_req));
+    EXPECT_EQ(
+        (*apply_body.as_object())[std::string_view("code")]
+            .as_sint()
+            .value_or(DAS_S_OK),
+        DAS_E_INVALID_ARGUMENT);
+
+    auto compile_req = MakeRequest(
+        "/api/v1/scheduler/0/repository/entries/bad/authoring/compile",
+        "{}",
+        {{"profile", "0"}, {"entryId", "bad"}});
+    auto compile_body =
+        ReleaseJson(controller_->RepositoryAuthoringCompile(compile_req));
+    EXPECT_EQ(
+        (*compile_body.as_object())[std::string_view("code")]
+            .as_sint()
+            .value_or(DAS_S_OK),
+        DAS_E_INVALID_ARGUMENT);
+
+    EXPECT_FALSE(fake_svc_->repository_authoring_get_called);
+    EXPECT_FALSE(fake_svc_->repository_authoring_apply_called);
+    EXPECT_FALSE(fake_svc_->repository_compile_called);
+}
+
+TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryAuthoringBody_InvalidJson)
+{
+    auto get_req = MakeRequest(
+        "/api/v1/scheduler/0/repository/entries/42/authoring/get",
+        "{broken",
+        {{"profile", "0"}, {"entryId", "42"}});
+    auto get_body = ReleaseJson(controller_->RepositoryAuthoringGet(get_req));
+    EXPECT_EQ(
+        (*get_body.as_object())[std::string_view("code")]
+            .as_sint()
+            .value_or(DAS_S_OK),
+        DAS_E_INVALID_JSON);
+
+    auto apply_req = MakeRequest(
+        "/api/v1/scheduler/0/repository/entries/42/authoring/apply",
+        "{broken",
+        {{"profile", "0"}, {"entryId", "42"}});
+    auto apply_body =
+        ReleaseJson(controller_->RepositoryAuthoringApply(apply_req));
+    EXPECT_EQ(
+        (*apply_body.as_object())[std::string_view("code")]
+            .as_sint()
+            .value_or(DAS_S_OK),
+        DAS_E_INVALID_JSON);
+
+    auto compile_req = MakeRequest(
+        "/api/v1/scheduler/0/repository/entries/42/authoring/compile",
+        "{broken",
+        {{"profile", "0"}, {"entryId", "42"}});
+    auto compile_body =
+        ReleaseJson(controller_->RepositoryAuthoringCompile(compile_req));
+    EXPECT_EQ(
+        (*compile_body.as_object())[std::string_view("code")]
+            .as_sint()
+            .value_or(DAS_S_OK),
+        DAS_E_INVALID_JSON);
+
+    EXPECT_FALSE(fake_svc_->repository_authoring_get_called);
+    EXPECT_FALSE(fake_svc_->repository_authoring_apply_called);
+    EXPECT_FALSE(fake_svc_->repository_compile_called);
+}
+
+TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryAuthoringBody_NonObject)
+{
+    auto get_req = MakeRequest(
+        "/api/v1/scheduler/0/repository/entries/42/authoring/get",
+        "[]",
+        {{"profile", "0"}, {"entryId", "42"}});
+    auto get_body = ReleaseJson(controller_->RepositoryAuthoringGet(get_req));
+    EXPECT_EQ(
+        (*get_body.as_object())[std::string_view("code")]
+            .as_sint()
+            .value_or(DAS_S_OK),
+        DAS_E_INVALID_ARGUMENT);
+
+    auto apply_req = MakeRequest(
+        "/api/v1/scheduler/0/repository/entries/42/authoring/apply",
+        "[]",
+        {{"profile", "0"}, {"entryId", "42"}});
+    auto apply_body =
+        ReleaseJson(controller_->RepositoryAuthoringApply(apply_req));
+    EXPECT_EQ(
+        (*apply_body.as_object())[std::string_view("code")]
+            .as_sint()
+            .value_or(DAS_S_OK),
+        DAS_E_INVALID_ARGUMENT);
+
+    auto compile_req = MakeRequest(
+        "/api/v1/scheduler/0/repository/entries/42/authoring/compile",
+        "[]",
+        {{"profile", "0"}, {"entryId", "42"}});
+    auto compile_body =
+        ReleaseJson(controller_->RepositoryAuthoringCompile(compile_req));
+    EXPECT_EQ(
+        (*compile_body.as_object())[std::string_view("code")]
+            .as_sint()
+            .value_or(DAS_S_OK),
+        DAS_E_INVALID_ARGUMENT);
+
+    EXPECT_FALSE(fake_svc_->repository_authoring_get_called);
+    EXPECT_FALSE(fake_svc_->repository_authoring_apply_called);
+    EXPECT_FALSE(fake_svc_->repository_compile_called);
+}
+
+TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryCompile_ServiceError)
+{
+    fake_svc_->next_result = DAS_E_FAIL;
+    auto req = MakeRequest(
+        "/api/v1/scheduler/0/repository/entries/42/authoring/compile",
+        R"({"mode":"preview"})",
+        {{"profile", "0"}, {"entryId", "42"}});
+    auto body = ReleaseJson(controller_->RepositoryAuthoringCompile(req));
+
+    EXPECT_EQ(
+        (*body.as_object())[std::string_view("code")]
+            .as_sint()
+            .value_or(DAS_S_OK),
+        DAS_E_FAIL);
+    EXPECT_TRUE(fake_svc_->repository_compile_called);
+    EXPECT_EQ(fake_svc_->last_repository_entry_id, 42);
+}
+
 // ── Non-initialize paths do not load scheduler plugins ──
 
 TEST_F(SchedulerControllerTest, NonInitializePaths_DelegateOnly)
