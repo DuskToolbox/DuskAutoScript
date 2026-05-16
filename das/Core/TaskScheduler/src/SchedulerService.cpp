@@ -1660,6 +1660,11 @@ namespace Das::Core::TaskScheduler
                 "Failed to rename repository entry");
         }
 
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            entry.availability = DeriveRepositoryAvailabilityLocked(entry);
+        }
+
         return CloneJsonValue(yyjson::object(entry));
     }
 
