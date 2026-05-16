@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 
 #include <optional>
+#include <ranges>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -113,6 +114,18 @@ namespace
     {
         EXPECT_FALSE(result.diagnostics.empty());
         return result.diagnostics.front();
+    }
+
+    std::vector<int64_t> CycleEntryIds(
+        const std::vector<RepositoryCyclePathItem>& path)
+    {
+        std::vector<int64_t> ids;
+        ids.reserve(path.size());
+        for (const auto& item : path)
+        {
+            ids.push_back(item.entry_id);
+        }
+        return ids;
     }
 } // namespace
 
@@ -293,4 +306,107 @@ TEST(RepositoryInvokeCompilerTest, MissingExecutionInputReturnsDiagnostic)
     EXPECT_FALSE(result.snapshot.has_value());
     EXPECT_EQ(FirstDiagnostic(result).code, "execution-input-missing");
     EXPECT_EQ(fake.compile_count, 1);
+}
+
+TEST(RepositoryInvokeCompilerTest, ExtractsRepositoryRefEdgesFromSourceNodes)
+{
+    auto graph = ParseJson(R"json({
+        "nodes": [
+            {
+                "id": "node-a",
+                "label": "Invoke child",
+                "taskRepositoryRef": {
+                    "kind": "taskRepositoryRef",
+                    "entryId": 20
+                }
+            }
+        ]
+    })json");
+
+    auto edges = ExtractRepositoryInvokeDependencyEdges(10, graph);
+
+    ASSERT_EQ(edges.size(), 1u);
+    EXPECT_EQ(edges[0].source_entry_id, 10);
+    EXPECT_EQ(edges[0].target_entry_id, 20);
+    EXPECT_EQ(edges[0].source_node_id, "node-a");
+    EXPECT_EQ(edges[0].source_node_label, "Invoke child");
+}
+
+TEST(RepositoryInvokeCompilerTest, DirectCycleReturnsDiagnosticBeforeSnapshot)
+{
+    FakeCompilerServices fake;
+    fake.entry = MakeAvailableEntry();
+    RepositoryInvokeSourceContext context;
+    context.source_entry_id = 42;
+    context.source_graph = ParseJson(R"json({
+        "nodes": [
+            {
+                "id": "node-self",
+                "label": "Invoke self",
+                "taskRepositoryRef": {
+                    "kind": "taskRepositoryRef",
+                    "entryId": 42
+                }
+            }
+        ]
+    })json");
+    auto services = fake.Bind();
+
+    auto result = ResolveRepositoryInvokeSnapshot(services, MakeRef(42), context);
+
+    EXPECT_FALSE(result.ok);
+    EXPECT_FALSE(result.snapshot.has_value());
+    EXPECT_EQ(FirstDiagnostic(result).code, "repository-invoke-cycle");
+    EXPECT_EQ(CycleEntryIds(result.cycle_path), (std::vector<int64_t>{42, 42}));
+    ASSERT_FALSE(result.cycle_path.empty());
+    EXPECT_EQ(result.cycle_path.front().source_node_label, "Invoke self");
+    EXPECT_EQ(fake.load_count, 0);
+    EXPECT_EQ(fake.compile_count, 0);
+}
+
+TEST(RepositoryInvokeCompilerTest, IndirectCycleReturnsFullCyclePath)
+{
+    FakeCompilerServices fake;
+    fake.entry = MakeAvailableEntry();
+    RepositoryInvokeSourceContext context;
+    context.source_entry_id = 1;
+    context.source_graph = ParseJson(R"json({
+        "nodes": [
+            {
+                "sourceEntryId": 1,
+                "id": "node-1",
+                "label": "Invoke two",
+                "taskRepositoryRef": {
+                    "kind": "taskRepositoryRef",
+                    "entryId": 2
+                }
+            },
+            {
+                "sourceEntryId": 2,
+                "id": "node-2",
+                "label": "Invoke one",
+                "settings": {
+                    "repositoryRef": {
+                        "kind": "taskRepositoryRef",
+                        "entryId": 1
+                    }
+                }
+            }
+        ]
+    })json");
+    auto services = fake.Bind();
+
+    auto result = ResolveRepositoryInvokeSnapshot(services, MakeRef(2), context);
+
+    EXPECT_FALSE(result.ok);
+    EXPECT_FALSE(result.snapshot.has_value());
+    EXPECT_EQ(FirstDiagnostic(result).code, "repository-invoke-cycle");
+    EXPECT_EQ(
+        CycleEntryIds(result.cycle_path),
+        (std::vector<int64_t>{1, 2, 1}));
+    ASSERT_GE(result.cycle_path.size(), 3u);
+    EXPECT_EQ(result.cycle_path[0].source_node_label, "Invoke two");
+    EXPECT_EQ(result.cycle_path[1].source_node_label, "Invoke one");
+    EXPECT_EQ(fake.load_count, 0);
+    EXPECT_EQ(fake.compile_count, 0);
 }
