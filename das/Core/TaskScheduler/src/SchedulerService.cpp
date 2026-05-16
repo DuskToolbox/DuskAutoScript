@@ -2312,6 +2312,167 @@ namespace Das::Core::TaskScheduler
             provider_compile.compile);
     }
 
+    RepositoryInvoke::RepositoryInvokeCompileResult
+    SchedulerService::ResolveRepositoryInvokeSnapshot(
+        const RepositoryInvoke::Dto::RepositoryTaskRefDto& repository_ref)
+    {
+        return ResolveRepositoryInvokeSnapshot(
+            repository_ref,
+            RepositoryInvoke::RepositoryInvokeSourceContext{});
+    }
+
+    RepositoryInvoke::RepositoryInvokeCompileResult
+    SchedulerService::ResolveRepositoryInvokeSnapshot(
+        const RepositoryInvoke::Dto::RepositoryTaskRefDto& repository_ref,
+        const RepositoryInvoke::RepositoryInvokeSourceContext& source_context)
+    {
+        auto fail =
+            [](std::string code, std::string message)
+            -> RepositoryInvoke::RepositoryInvokeCompileResult
+        {
+            RepositoryInvoke::RepositoryInvokeCompileDiagnostic diagnostic;
+            diagnostic.code = std::move(code);
+            diagnostic.message = std::move(message);
+
+            RepositoryInvoke::RepositoryInvokeCompileResult result;
+            result.ok = false;
+            result.diagnostics.push_back(std::move(diagnostic));
+            return result;
+        };
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (state_.load() == SchedulerState::Running
+                || state_.load() == SchedulerState::Stopping)
+            {
+                return fail(
+                    "task-working",
+                    "Scheduler is running or stopping");
+            }
+            if (!initialized_ || !task_repository_store_)
+            {
+                return fail(
+                    "not-initialized",
+                    "Scheduler profile has not been initialized");
+            }
+        }
+
+        RepositoryInvoke::RepositoryInvokeCompileServices services;
+        services.load_entry =
+            [this](int64_t entry_id)
+            -> std::optional<Repository::Dto::RepositoryEntryDto>
+        {
+            auto& settings = plugin_manager_.GetSettingsManager();
+            auto  entry_json =
+                settings.GetTaskRepositoryEntryJson("0", entry_id);
+            if (entry_json.is_null() || !entry_json.is_object())
+            {
+                return std::nullopt;
+            }
+
+            Repository::Dto::RepositoryEntryDto entry;
+            try
+            {
+                entry =
+                    yyjson::cast<Repository::Dto::RepositoryEntryDto>(
+                        entry_json);
+            }
+            catch (const yyjson::bad_cast&)
+            {
+                return std::nullopt;
+            }
+
+            std::lock_guard<std::mutex> lock(mutex_);
+            entry.availability = DeriveRepositoryAvailabilityLocked(entry);
+            return entry;
+        };
+        services.find_execution_component =
+            [this](const Repository::Dto::RepositoryEntryDto& entry)
+            -> std::optional<std::string>
+        {
+            DasGuid task_guid{};
+            try
+            {
+                task_guid =
+                    Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                        entry.task_type_guid);
+            }
+            catch (const std::exception&)
+            {
+                return std::nullopt;
+            }
+
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto* execution_component =
+                capability_registry_.FindExecutionComponent(task_guid);
+            if (execution_component == nullptr)
+            {
+                return std::nullopt;
+            }
+            return GuidToString(*execution_component);
+        };
+        services.compile_authoring =
+            [this](
+                const Repository::Dto::RepositoryEntryDto& entry,
+                const yyjson::value& request)
+            -> RepositoryInvoke::RepositoryInvokeProviderCompileResult
+        {
+            DasGuid task_guid{};
+            try
+            {
+                task_guid =
+                    Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                        entry.task_type_guid);
+            }
+            catch (const std::exception&)
+            {
+                RepositoryInvoke::RepositoryInvokeProviderCompileResult result;
+                result.ok = false;
+                return result;
+            }
+
+            TaskAuthoringCapability capability;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                auto* authoring = capability_registry_.FindAuthoring(task_guid);
+                if (authoring == nullptr)
+                {
+                    RepositoryInvoke::
+                        RepositoryInvokeProviderCompileResult result;
+                    result.ok = false;
+                    return result;
+                }
+                capability = *authoring;
+            }
+
+            auto entry_json = CloneJsonValue(yyjson::object(entry));
+            auto provider_compile = CompileRepositoryEntryProvider(
+                plugin_manager_,
+                capability,
+                entry.entry_id,
+                entry,
+                entry_json,
+                request);
+
+            RepositoryInvoke::RepositoryInvokeProviderCompileResult result;
+            result.ok = provider_compile.Succeeded();
+            result.compile_result = std::move(provider_compile.compile);
+            if (!result.ok)
+            {
+                RepositoryInvoke::RepositoryInvokeCompileDiagnostic diagnostic;
+                diagnostic.code = "provider-compile-failed";
+                diagnostic.message = provider_compile.message;
+                result.diagnostics.push_back(std::move(diagnostic));
+            }
+            return result;
+        };
+
+        return RepositoryInvoke::ResolveRepositoryInvokeSnapshot(
+            services,
+            repository_ref,
+            source_context);
+    }
+
     // ----------------------------------------------------------------
     // AddTask
     // ----------------------------------------------------------------

@@ -10,6 +10,7 @@
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/Core/TaskScheduler/TaskCapabilityRegistry.h>
+#include <das/Core/TaskScheduler/RepositoryInvokeCompiler.h>
 #include <das/Core/TaskScheduler/TaskRepositoryStore.h>
 #include <das/Core/Utils/IDasStopTokenImpl.h>
 #include <das/DasExport.h>
@@ -156,6 +157,16 @@ namespace Das::Core::TaskScheduler
 
         std::optional<DasGuid> FindTaskExecutionComponent(
             const DasGuid& task_guid) const;
+
+        RepositoryInvoke::RepositoryInvokeCompileResult
+        ResolveRepositoryInvokeSnapshot(
+            const RepositoryInvoke::Dto::RepositoryTaskRefDto& repository_ref);
+
+        RepositoryInvoke::RepositoryInvokeCompileResult
+        ResolveRepositoryInvokeSnapshot(
+            const RepositoryInvoke::Dto::RepositoryTaskRefDto& repository_ref,
+            const RepositoryInvoke::RepositoryInvokeSourceContext&
+                source_context);
 
         /// Check whether the scheduler has been initialized.
         bool IsInitialized() const { return initialized_; }
