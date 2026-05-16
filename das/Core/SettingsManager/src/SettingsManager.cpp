@@ -1094,6 +1094,87 @@ DasResult SettingsManager::DeleteTaskInstanceJson(
     }
 }
 
+// --- Task repository entry (settings/${pid}/taskRepository${entryId}.json) ---
+
+yyjson::value SettingsManager::GetTaskRepositoryEntryJson(
+    const std::string& profile_id,
+    int64_t            entry_id)
+{
+    auto key =
+        "profile/" + profile_id + "/taskRepository/" + std::to_string(entry_id);
+    auto* cell = GetOrCreateCell(key);
+
+    {
+        std::shared_lock lock(cell->mutex);
+        if (!cell->snapshot.is_null())
+        {
+            return cell->snapshot;
+        }
+    }
+
+    std::unique_lock<std::shared_mutex> lock(cell->mutex);
+    if (!cell->snapshot.is_null())
+    {
+        return cell->snapshot;
+    }
+
+    auto content =
+        ReadJsonFile(GetTaskRepositoryEntryPath(profile_id, entry_id));
+    auto parsed = Das::Utils::ParseYyjsonFromString(content);
+    if (parsed)
+    {
+        cell->snapshot = std::move(*parsed);
+        return cell->snapshot;
+    }
+
+    cell->snapshot = Das::Utils::MakeYyjsonObject();
+    return cell->snapshot;
+}
+
+DasResult SettingsManager::UpdateTaskRepositoryEntryJson(
+    const std::string&   profile_id,
+    int64_t              entry_id,
+    const yyjson::value& entry_json)
+{
+    auto key =
+        "profile/" + profile_id + "/taskRepository/" + std::to_string(entry_id);
+    auto* cell = GetOrCreateCell(key);
+
+    std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
+    cell->snapshot = entry_json;
+    return WriteJsonFile(
+        GetTaskRepositoryEntryPath(profile_id, entry_id),
+        entry_json);
+}
+
+DasResult SettingsManager::DeleteTaskRepositoryEntryJson(
+    const std::string& profile_id,
+    int64_t            entry_id)
+{
+    auto key =
+        "profile/" + profile_id + "/taskRepository/" + std::to_string(entry_id);
+    auto* cell = GetOrCreateCell(key);
+
+    std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
+
+    try
+    {
+        auto path = GetTaskRepositoryEntryPath(profile_id, entry_id);
+        if (!std::filesystem::exists(path))
+        {
+            return DAS_S_FALSE;
+        }
+        std::filesystem::remove(path);
+        cell->snapshot = yyjson::value{};
+        return DAS_S_OK;
+    }
+    catch (const std::filesystem::filesystem_error& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        return DAS_E_INVALID_FILE;
+    }
+}
+
 // --- Path helpers ---
 
 std::filesystem::path SettingsManager::GetProfileDir(
@@ -1127,6 +1208,14 @@ std::filesystem::path SettingsManager::GetTaskInstancePath(
 {
     return base_dir_ / profile_id
            / ("taskId" + std::to_string(task_id) + ".json");
+}
+
+std::filesystem::path SettingsManager::GetTaskRepositoryEntryPath(
+    const std::string& profile_id,
+    int64_t            entry_id) const
+{
+    return base_dir_ / profile_id
+           / ("taskRepository" + std::to_string(entry_id) + ".json");
 }
 
 void SettingsManager::SetSettingsNotifyCallback(

@@ -18,7 +18,8 @@ DAS_CORE_SETTINGS_MANAGER_NS_BEGIN
 /// Per-key state cell: one shared_mutex + one snapshot per settings file key.
 /// Keys follow the pattern: "global/ui", "profile/{pid}/ui",
 /// "profile/{pid}/plugin/{guid}", "profile/{pid}/scheduler",
-/// "profile/{pid}/task/{taskId}".
+/// "profile/{pid}/task/{taskId}",
+/// "profile/{pid}/taskRepository/{entryId}".
 ///
 /// Thread model (Phase 52 per-key domain):
 ///   - cells_mutex_ protects ONLY map lookup/create for these cells.
@@ -151,6 +152,18 @@ public:
         const std::string& profile_id,
         int64_t            task_id);
 
+    // Task repository entry (settings/${pid}/taskRepository${entryId}.json)
+    yyjson::value GetTaskRepositoryEntryJson(
+        const std::string& profile_id,
+        int64_t            entry_id);
+    DasResult UpdateTaskRepositoryEntryJson(
+        const std::string&   profile_id,
+        int64_t              entry_id,
+        const yyjson::value& entry_json);
+    DasResult DeleteTaskRepositoryEntryJson(
+        const std::string& profile_id,
+        int64_t            entry_id);
+
     /// Register a callback to be invoked when settings change.
     void SetSettingsNotifyCallback(SettingsNotifyFunc func, void* user_data);
 
@@ -165,6 +178,9 @@ private:
     std::filesystem::path GetTaskInstancePath(
         const std::string& profile_id,
         int64_t            task_id) const;
+    std::filesystem::path GetTaskRepositoryEntryPath(
+        const std::string& profile_id,
+        int64_t            entry_id) const;
 
     // File I/O helpers
     static std::string ReadJsonFile(const std::filesystem::path& path);
