@@ -901,6 +901,11 @@ namespace Das::Plugins::DasMaaPi
         g_agent_runner_for_test = runner;
     }
 
+    AgentRuntime::IAgentProcessRunner* AgentProcessRunnerForRuntime()
+    {
+        return g_agent_runner_for_test;
+    }
+
     IMaaApiBoundary& MaaApiBoundaryForRuntime()
     {
         return g_boundary_for_test ? *g_boundary_for_test

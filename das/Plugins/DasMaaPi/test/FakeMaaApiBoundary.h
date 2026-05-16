@@ -31,6 +31,11 @@ namespace Das::Plugins::DasMaaPi::Test
             MaaApiResult::Ok();
         MaaApiResult set_agent_client_timeout_result = MaaApiResult::Ok();
         MaaApiResult connect_agent_client_result = MaaApiResult::Ok();
+        std::optional<MaaResourceHandle> last_bound_agent_resource;
+        std::optional<MaaResourceHandle> last_registered_agent_resource_sink;
+        std::optional<MaaControllerHandle>
+            last_registered_agent_controller_sink;
+        std::optional<MaaTaskerHandle> last_registered_agent_tasker_sink;
 
         MaaResourceHandle CreateResource() override
         {
@@ -175,32 +180,36 @@ namespace Das::Plugins::DasMaaPi::Test
 
         MaaApiResult BindAgentClientResource(
             MaaAgentClientHandle,
-            MaaResourceHandle) override
+            MaaResourceHandle resource) override
         {
+            last_bound_agent_resource = resource;
             calls.emplace_back("BindAgentClientResource");
             return bind_agent_client_resource_result;
         }
 
         MaaApiResult RegisterAgentClientResourceSink(
             MaaAgentClientHandle,
-            MaaResourceHandle) override
+            MaaResourceHandle resource) override
         {
+            last_registered_agent_resource_sink = resource;
             calls.emplace_back("RegisterAgentClientResourceSink");
             return register_agent_client_resource_sink_result;
         }
 
         MaaApiResult RegisterAgentClientControllerSink(
             MaaAgentClientHandle,
-            MaaControllerHandle) override
+            MaaControllerHandle controller) override
         {
+            last_registered_agent_controller_sink = controller;
             calls.emplace_back("RegisterAgentClientControllerSink");
             return register_agent_client_controller_sink_result;
         }
 
         MaaApiResult RegisterAgentClientTaskerSink(
             MaaAgentClientHandle,
-            MaaTaskerHandle) override
+            MaaTaskerHandle tasker) override
         {
+            last_registered_agent_tasker_sink = tasker;
             calls.emplace_back("RegisterAgentClientTaskerSink");
             return register_agent_client_tasker_sink_result;
         }

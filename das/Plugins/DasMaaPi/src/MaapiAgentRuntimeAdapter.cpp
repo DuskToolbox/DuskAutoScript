@@ -2,6 +2,8 @@
 
 #include "MaapiAgentRuntimeAdapter.h"
 
+#include "AgentRuntimeMaaContextResolver.h"
+
 #include <das/DasApi.h>
 #include <das/DasString.hpp>
 #include <das/Utils/DasJsonCore.h>
@@ -74,7 +76,33 @@ namespace Das::Plugins::DasMaaPi
         }
         if (request.operation == "start")
         {
-            return service.Start(request, context);
+            auto resolved_context = context;
+            if (!AgentRuntime::IsUsableMaaContext(resolved_context))
+            {
+                if (!request.runtime_ref)
+                {
+                    return MakeAgentAdapterFailure(
+                        {MakeAgentAdapterDiagnostic(
+                            "missing-runtime-ref",
+                            "start requires runtimeRef when the adapter has no "
+                            "injected Maa runtime context",
+                            "runtimeRef")});
+                }
+
+                auto resolved =
+                    AgentRuntime::ResolveMaaContext(*request.runtime_ref);
+                if (!resolved)
+                {
+                    return MakeAgentAdapterFailure(
+                        {MakeAgentAdapterDiagnostic(
+                            "runtime-ref-not-found",
+                            "runtimeRef does not reference an active Maa "
+                            "runtime session",
+                            "runtimeRef")});
+                }
+                resolved_context = *resolved;
+            }
+            return service.Start(request, resolved_context);
         }
         if (request.operation == "stop")
         {

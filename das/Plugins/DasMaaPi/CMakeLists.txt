@@ -1,5 +1,6 @@
 set(DAS_MAAPI_PLUGIN_SOURCES
     src/AgentProcessRunner.cpp
+    src/AgentRuntimeMaaContextResolver.cpp
     src/AgentRuntimeRequest.cpp
     src/AgentRuntimeService.cpp
     src/AuthoringProjector.cpp
@@ -91,6 +92,7 @@ endforeach()
 if(DAS_BUILD_TEST)
     add_executable(DasMaaPiTest
         src/AgentProcessRunner.cpp
+        src/AgentRuntimeMaaContextResolver.cpp
         src/AgentRuntimeRequest.cpp
         src/AgentRuntimeService.cpp
         src/AuthoringProjector.cpp

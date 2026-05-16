@@ -1,4 +1,6 @@
 #include "../src/AgentRuntimeService.h"
+#include "../src/AgentRuntimeMaaContextResolver.h"
+#include "../src/MaaHandle.h"
 #include "../src/MaapiAgentComponent.h"
 #include "../src/MaapiAgentComponentFactory.h"
 #include "../src/MaapiAgentTaskComponent.h"
@@ -12,6 +14,7 @@
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/IDasBase.h>
+#include <das/Plugins/DasMaaPi/MaaRuntime.h>
 #include <das/Plugins/DasMaaPi/MaapiDto.h>
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasComponent.h>
@@ -97,6 +100,22 @@ namespace
 
         std::vector<AgentProcessLaunchRequest> launches;
         std::vector<std::shared_ptr<FakeProcessState>> states;
+    };
+
+    class ScopedRuntimeHooks final
+    {
+    public:
+        ScopedRuntimeHooks(FakeMaaApiBoundary& fake, FakeProcessRunner& runner)
+        {
+            SetMaaApiBoundaryForTest(&fake);
+            SetAgentProcessRunnerForTest(&runner);
+        }
+
+        ~ScopedRuntimeHooks()
+        {
+            SetAgentProcessRunnerForTest(nullptr);
+            SetMaaApiBoundaryForTest(nullptr);
+        }
     };
 
     AgentRuntimeMaaContext TestContext()
@@ -249,6 +268,27 @@ namespace
         })";
     }
 
+    std::string RuntimeRefStartRequestJson()
+    {
+        return R"({
+          "version": 1,
+          "operation": "start",
+          "runtimeRef": {
+            "kind": "maapiRuntimeSession",
+            "sessionId": "runtime-1"
+          },
+          "interfaceDirectory": "C:/maa/project",
+          "agent": {
+            "childExec": "python",
+            "childArgs": ["./agent/main.py"]
+          },
+          "piEnv": {
+            "PI_CLIENT_NAME": "DAS",
+            "PI_VERSION": "project"
+          }
+        })";
+    }
+
     TEST(DasMaaPiAgentPlugin, EnumeratesExistingAndAgentFeatureSurfaces)
     {
         DasMaaPiPlugin plugin;
@@ -320,6 +360,56 @@ namespace
         EXPECT_EQ(actual_guid, component_guid);
     }
 
+    TEST(
+        DasMaaPiAgentComponentFactory,
+        CreatedComponentStartsThroughRuntimeRefContext)
+    {
+        FakeMaaApiBoundary fake;
+        FakeProcessRunner  runner;
+        ScopedRuntimeHooks hooks(fake, runner);
+
+        ScopedResource resource(fake, fake.CreateResource());
+        ScopedController controller(
+            fake,
+            fake.CreateController(
+                ControllerSpec{.name = "Android", .type = "Adb"}));
+        ScopedTasker tasker(fake, fake.CreateTasker());
+        ScopedMaaContextRegistration runtime(
+            RuntimeRefDto{
+                .kind = "maapiRuntimeSession",
+                .session_id = "runtime-1"},
+            AgentRuntimeMaaContext{
+                .resource = resource.get(),
+                .controller = controller.get(),
+                .tasker = tasker.get()});
+
+        MaapiAgentComponentFactory factory;
+        const auto component_guid = GuidFrom(kAgentComponentGuidText);
+        DasPtr<Das::PluginInterface::IDasComponent> component;
+        ASSERT_EQ(
+            factory.CreateInstance(component_guid, component.Put()),
+            DAS_S_OK);
+
+        auto function_name = MakeString("start");
+        auto args = MakeStringArgs(RuntimeRefStartRequestJson());
+        DasPtr<ExportInterface::IDasVariantVector> result;
+        ASSERT_EQ(
+            component->Dispatch(function_name.Get(), args.Get(), result.Put()),
+            DAS_S_OK);
+
+        auto result_json = ParseYyjson(ReadFirstString(result.Get()));
+        auto root = result_json.as_object();
+        ASSERT_TRUE(root.has_value());
+        EXPECT_EQ(
+            (*root)[std::string_view("status")].as_string().value_or(""),
+            "succeeded");
+        ASSERT_EQ(runner.launches.size(), 1u);
+        EXPECT_EQ(fake.last_bound_agent_resource, resource.get());
+        EXPECT_EQ(fake.last_registered_agent_resource_sink, resource.get());
+        EXPECT_EQ(fake.last_registered_agent_controller_sink, controller.get());
+        EXPECT_EQ(fake.last_registered_agent_tasker_sink, tasker.get());
+    }
+
     TEST(DasMaaPiAgentComponent, DispatchUsesOneJsonStringInAndOut)
     {
         FakeMaaApiBoundary fake;
@@ -382,6 +472,55 @@ namespace
         DasGuid actual_guid{};
         ASSERT_EQ(component->GetGuid(&actual_guid), DAS_S_OK);
         EXPECT_EQ(actual_guid, component_guid);
+    }
+
+    TEST(
+        DasMaaPiAgentTaskComponentFactory,
+        CreatedTaskComponentStartsThroughRuntimeRefContext)
+    {
+        FakeMaaApiBoundary fake;
+        FakeProcessRunner  runner;
+        ScopedRuntimeHooks hooks(fake, runner);
+
+        ScopedResource resource(fake, fake.CreateResource());
+        ScopedController controller(
+            fake,
+            fake.CreateController(
+                ControllerSpec{.name = "Android", .type = "Adb"}));
+        ScopedTasker tasker(fake, fake.CreateTasker());
+        ScopedMaaContextRegistration runtime(
+            RuntimeRefDto{
+                .kind = "maapiRuntimeSession",
+                .session_id = "runtime-1"},
+            AgentRuntimeMaaContext{
+                .resource = resource.get(),
+                .controller = controller.get(),
+                .tasker = tasker.get()});
+
+        MaapiAgentTaskComponentFactory factory;
+        const auto component_guid = GuidFrom(kAgentTaskComponentGuidText);
+        DasPtr<Das::PluginInterface::IDasTaskComponent> component;
+        ASSERT_EQ(
+            factory.CreateComponent(component_guid, component.Put()),
+            DAS_S_OK);
+
+        auto input = ParseJson(RuntimeRefStartRequestJson());
+        DasPtr<ExportInterface::IDasJson> result;
+        ASSERT_EQ(
+            component->Do(nullptr, nullptr, nullptr, input.Get(), result.Put()),
+            DAS_S_OK);
+
+        auto result_json = ReadJson(result.Get());
+        auto root = result_json.as_object();
+        ASSERT_TRUE(root.has_value());
+        EXPECT_EQ(
+            (*root)[std::string_view("status")].as_string().value_or(""),
+            "succeeded");
+        ASSERT_EQ(runner.launches.size(), 1u);
+        EXPECT_EQ(fake.last_bound_agent_resource, resource.get());
+        EXPECT_EQ(fake.last_registered_agent_resource_sink, resource.get());
+        EXPECT_EQ(fake.last_registered_agent_controller_sink, controller.get());
+        EXPECT_EQ(fake.last_registered_agent_tasker_sink, tasker.get());
     }
 
     TEST(DasMaaPiAgentTaskComponent, ManifestDefinitionUsesStablePortIds)

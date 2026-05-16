@@ -51,7 +51,10 @@ namespace Plugins::DasMaaPi
               std::make_unique<AgentRuntime::BoostAgentProcessRunner>()),
           owned_service_(std::make_unique<AgentRuntime::AgentRuntimeService>(
               MaaApiBoundaryForRuntime(),
-              *owned_runner_)),
+              AgentProcessRunnerForRuntime()
+                  ? *AgentProcessRunnerForRuntime()
+                  : static_cast<AgentRuntime::IAgentProcessRunner&>(
+                        *owned_runner_))),
           service_(owned_service_.get()),
           settings_(Das::Utils::MakeYyjsonObject())
     {
