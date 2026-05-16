@@ -904,6 +904,13 @@ namespace Core
             }
 #endif // DAS_IPC_USE_HTTP_TRANSPORT
 
+#ifndef DAS_IPC_USE_HTTP_TRANSPORT
+            boost::asio::awaitable<void> IpcContext::HttpReceiveLoopCoroutine()
+            {
+                co_return;
+            }
+#endif
+
             void IpcContext::RequestStop()
             {
                 if (proxy_factory_)

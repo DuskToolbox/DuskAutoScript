@@ -131,6 +131,12 @@ Win32AsyncIpcTransport::Win32AsyncIpcTransport(
 {
 }
 
+Win32AsyncIpcTransport::Win32AsyncIpcTransport(
+    Win32AsyncIpcTransport&&) noexcept = default;
+
+Win32AsyncIpcTransport& Win32AsyncIpcTransport::operator=(
+    Win32AsyncIpcTransport&&) noexcept = default;
+
 // 工厂函数实现（异步版本）
 boost::asio::awaitable<
     DAS::Utils::Expected<std::unique_ptr<Win32AsyncIpcTransport>>>
