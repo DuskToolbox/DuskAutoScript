@@ -44,9 +44,11 @@ endif()
 if(DAS_BUILD_TEST AND TARGET DasMaaPi)
     add_executable(DasMaaPiTest
         DasMaaPi/src/AuthoringProjector.cpp
+        DasMaaPi/src/PiCompiler.cpp
         DasMaaPi/src/PiCatalog.cpp
         DasMaaPi/src/PiParser.cpp
         DasMaaPi/test/MaapiAuthoringTest.cpp
+        DasMaaPi/test/MaapiCompileTest.cpp
         DasMaaPi/test/MaapiPluginScaffoldTest.cpp
         DasMaaPi/test/MaapiPiParserTest.cpp)
     target_link_libraries(DasMaaPiTest PRIVATE

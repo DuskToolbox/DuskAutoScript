@@ -43,6 +43,73 @@ namespace Das::Plugins::DasMaaPi
         template <typename TObject>
         std::vector<std::string> StringArray(
             const TObject&   obj,
+            std::string_view key);
+
+        std::vector<MaapiPiOptionSettingsDto> ParseOptionSettingsArray(
+            const auto&   obj,
+            std::string_view key)
+        {
+            std::vector<MaapiPiOptionSettingsDto> result;
+            if (!obj.contains(key))
+            {
+                return result;
+            }
+            auto arr = obj[key].as_array();
+            if (!arr)
+            {
+                return result;
+            }
+            for (auto it = arr->begin(); it != arr->end(); ++it)
+            {
+                auto option_obj = it->as_object();
+                if (!option_obj)
+                {
+                    continue;
+                }
+                MaapiPiOptionSettingsDto option;
+                option.option_name =
+                    OptionalString(*option_obj, "optionName").value_or("");
+                option.kind = OptionalString(*option_obj, "kind").value_or("");
+                option.selected_cases =
+                    StringArray(*option_obj, "selectedCases");
+                if (option_obj->contains(std::string_view("boolValue"))
+                    && (*option_obj)[std::string_view("boolValue")].is_bool())
+                {
+                    option.bool_value =
+                        (*option_obj)[std::string_view("boolValue")]
+                            .as_bool()
+                            .value_or(false);
+                }
+                if (option_obj->contains(std::string_view("inputValues")))
+                {
+                    if (auto inputs =
+                            (*option_obj)[std::string_view("inputValues")]
+                                .as_object())
+                    {
+                        for (auto input_it = inputs->begin();
+                             input_it != inputs->end();
+                             ++input_it)
+                        {
+                            if (input_it->second.is_string())
+                            {
+                                option.input_values.emplace(
+                                    input_it->first,
+                                    input_it->second.as_string().value_or(""));
+                            }
+                        }
+                    }
+                }
+                if (!option.option_name.empty())
+                {
+                    result.emplace_back(std::move(option));
+                }
+            }
+            return result;
+        }
+
+        template <typename TObject>
+        std::vector<std::string> StringArray(
+            const TObject&   obj,
             std::string_view key)
         {
             std::vector<std::string> result;
@@ -103,6 +170,12 @@ namespace Das::Plugins::DasMaaPi
                     settings.pi.preset_name =
                         OptionalString(*pi, "presetName");
                     settings.pi.orphan_paths = StringArray(*pi, "orphanPaths");
+                    settings.pi.global_options =
+                        ParseOptionSettingsArray(*pi, "globalOptions");
+                    settings.pi.resource_options =
+                        ParseOptionSettingsArray(*pi, "resourceOptions");
+                    settings.pi.controller_options =
+                        ParseOptionSettingsArray(*pi, "controllerOptions");
                     if (pi->contains(std::string_view("tasks")))
                     {
                         if (auto tasks =
@@ -121,6 +194,9 @@ namespace Das::Plugins::DasMaaPi
                                         *task_obj,
                                         "enabled",
                                         true);
+                                    task.options = ParseOptionSettingsArray(
+                                        *task_obj,
+                                        "options");
                                     if (!task.task_name.empty())
                                     {
                                         settings.pi.tasks.emplace_back(
@@ -206,6 +282,52 @@ namespace Das::Plugins::DasMaaPi
                 (*obj)[std::string_view("taskName")] =
                     JsonString(task.task_name);
                 (*obj)[std::string_view("enabled")] = task.enabled;
+                yyjson::value options(Array());
+                for (const auto& option : task.options)
+                {
+                    yyjson::value option_json(Object());
+                    auto          option_obj = option_json.as_object();
+                    (*option_obj)[std::string_view("optionName")] =
+                        JsonString(option.option_name);
+                    (*option_obj)[std::string_view("kind")] =
+                        JsonString(option.kind);
+                    options.as_array()->emplace_back(std::move(option_json));
+                }
+                (*obj)[std::string_view("options")] = std::move(options);
+                arr.as_array()->emplace_back(std::move(value));
+            }
+            return arr;
+        }
+
+        yyjson::value OptionSettingsArray(
+            const std::vector<MaapiPiOptionSettingsDto>& options)
+        {
+            yyjson::value arr(Array());
+            for (const auto& option : options)
+            {
+                yyjson::value value(Object());
+                auto          obj = value.as_object();
+                (*obj)[std::string_view("optionName")] =
+                    JsonString(option.option_name);
+                (*obj)[std::string_view("kind")] = JsonString(option.kind);
+                yyjson::value cases(Array());
+                for (const auto& selected_case : option.selected_cases)
+                {
+                    cases.as_array()->emplace_back(JsonString(selected_case));
+                }
+                (*obj)[std::string_view("selectedCases")] = std::move(cases);
+                if (option.bool_value)
+                {
+                    (*obj)[std::string_view("boolValue")] =
+                        *option.bool_value;
+                }
+                yyjson::value inputs(Object());
+                for (const auto& [key, input_value] : option.input_values)
+                {
+                    (*inputs.as_object())[std::string_view(key)] =
+                        JsonString(input_value);
+                }
+                (*obj)[std::string_view("inputValues")] = std::move(inputs);
                 arr.as_array()->emplace_back(std::move(value));
             }
             return arr;
@@ -287,6 +409,12 @@ namespace Das::Plugins::DasMaaPi
             (*pi_obj)[std::string_view("presetName")] =
                 JsonString(*settings.pi.preset_name);
         }
+        (*pi_obj)[std::string_view("globalOptions")] =
+            OptionSettingsArray(settings.pi.global_options);
+        (*pi_obj)[std::string_view("resourceOptions")] =
+            OptionSettingsArray(settings.pi.resource_options);
+        (*pi_obj)[std::string_view("controllerOptions")] =
+            OptionSettingsArray(settings.pi.controller_options);
         (*pi_obj)[std::string_view("tasks")] =
             TaskSettingsArray(settings.pi.tasks);
         yyjson::value orphans(Array());

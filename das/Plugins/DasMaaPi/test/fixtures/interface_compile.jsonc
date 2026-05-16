@@ -1,0 +1,143 @@
+{
+  "interface_version": 2,
+  "name": "CompileFixture",
+  "version": "1.2.3",
+  "controller": [
+    {
+      "name": "Android",
+      "type": "Adb",
+      "option": ["controller-mode"]
+    }
+  ],
+  "resource": [
+    {
+      "name": "Official",
+      "path": ["resource"],
+      "hash": "hash-expected",
+      "option": ["server"]
+    }
+  ],
+  "task": [
+    {
+      "name": "DailyFarm",
+      "entry": "StartDaily",
+      "default_check": true,
+      "option": ["retry", "medicine", "notify"],
+      "pipeline_override": {
+        "Stage": {
+          "value": "base"
+        }
+      }
+    }
+  ],
+  "global_option": ["difficulty"],
+  "option": {
+    "difficulty": {
+      "type": "select",
+      "cases": [
+        {
+          "name": "hard",
+          "pipeline_override": {
+            "Stage": {
+              "value": "global-hard"
+            }
+          }
+        }
+      ]
+    },
+    "server": {
+      "type": "switch",
+      "cases": [
+        {
+          "name": "Yes",
+          "pipeline_override": {
+            "Server": {
+              "value": "official"
+            }
+          }
+        },
+        {
+          "name": "No"
+        }
+      ]
+    },
+    "controller-mode": {
+      "type": "select",
+      "cases": [
+        {
+          "name": "safe",
+          "pipeline_override": {
+            "Controller": {
+              "value": "safe"
+            }
+          }
+        }
+      ]
+    },
+    "retry": {
+      "type": "input",
+      "inputs": [
+        {
+          "name": "times",
+          "pipeline_type": "int"
+        }
+      ],
+      "pipeline_override": {
+        "Retry": {
+          "times": "{times}"
+        }
+      }
+    },
+    "medicine": {
+      "type": "checkbox",
+      "cases": [
+        {
+          "name": "small",
+          "pipeline_override": {
+            "MedicineSmall": {
+              "enabled": true
+            }
+          }
+        },
+        {
+          "name": "large",
+          "pipeline_override": {
+            "MedicineLarge": {
+              "enabled": true
+            }
+          }
+        }
+      ]
+    },
+    "notify": {
+      "type": "switch",
+      "cases": [
+        {
+          "name": "yes",
+          "pipeline_override": {
+            "Notify": {
+              "enabled": true
+            }
+          }
+        },
+        {
+          "name": "no"
+        }
+      ]
+    },
+    "inactive": {
+      "type": "select",
+      "controller": ["MissingController"],
+      "cases": [
+        {
+          "name": "skip",
+          "pipeline_override": {
+            "Inactive": {
+              "bad": true
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -3,6 +3,7 @@
 #include "PluginImpl.h"
 
 #include <das/DasApi.h>
+#include <das/Plugins/DasMaaPi/PiCompiler.h>
 #include <das/Plugins/DasMaaPi/PiParser.h>
 
 #include <array>
@@ -290,7 +291,7 @@ namespace Plugins::DasMaaPi
     }
 
     DasResult MaapiAuthoringSession::Compile(
-        ExportInterface::IDasJson*,
+        ExportInterface::IDasJson* p_request_json,
         ExportInterface::IDasJson** pp_out_result_json)
     {
         if (!pp_out_result_json)
@@ -298,12 +299,52 @@ namespace Plugins::DasMaaPi
             return DAS_E_INVALID_POINTER;
         }
 
+        std::string purpose = "preview";
+        if (auto request = ReadJson(p_request_json))
+        {
+            if (auto obj = request->as_object();
+                obj && obj->contains(std::string_view("purpose"))
+                && (*obj)[std::string_view("purpose")].is_string())
+            {
+                purpose = std::string(
+                    (*obj)[std::string_view("purpose")]
+                        .as_string()
+                        .value_or("preview"));
+            }
+        }
+
+        std::vector<PiDiagnosticDto> diagnostics;
+        auto catalog = TryParseCatalog(settings_, diagnostics);
         yyjson::value result(Das::Utils::MakeYyjsonObject());
-        auto          obj = result.as_object();
-        (*obj)[std::string_view("ok")] = false;
-        (*obj)[std::string_view("summary")] =
-            "Maa ProjectInterface path is not configured";
-        (*obj)[std::string_view("diagnostics")] = Das::Utils::MakeYyjsonArray();
+        if (!catalog)
+        {
+            auto obj = result.as_object();
+            (*obj)[std::string_view("ok")] = false;
+            (*obj)[std::string_view("canExecute")] = false;
+            (*obj)[std::string_view("summary")] =
+                Das::Utils::MakeYyjsonObject();
+            yyjson::value diagnostics_json(Das::Utils::MakeYyjsonArray());
+            for (const auto& diagnostic : diagnostics)
+            {
+                yyjson::value item(Das::Utils::MakeYyjsonObject());
+                auto          item_obj = item.as_object();
+                (*item_obj)[std::string_view("severity")] =
+                    JsonString(diagnostic.severity);
+                (*item_obj)[std::string_view("code")] =
+                    JsonString(diagnostic.code);
+                (*item_obj)[std::string_view("message")] =
+                    JsonString(diagnostic.message);
+                diagnostics_json.as_array()->emplace_back(std::move(item));
+            }
+            (*obj)[std::string_view("diagnostics")] =
+                std::move(diagnostics_json);
+        }
+        else
+        {
+            result = SerializeCompileResult(
+                CompileMaapi(settings_, *catalog, purpose),
+                purpose);
+        }
 
         auto wrapped = WrapJson(std::move(result));
         *pp_out_result_json = wrapped.Get();

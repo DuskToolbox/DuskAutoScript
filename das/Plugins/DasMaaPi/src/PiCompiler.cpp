@@ -1,0 +1,571 @@
+#include <das/Plugins/DasMaaPi/PiCompiler.h>
+#include <das/Utils/DasJsonCore.h>
+
+#include <algorithm>
+#include <map>
+#include <string_view>
+
+namespace Das::Plugins::DasMaaPi
+{
+    namespace
+    {
+        yyjson::value Object() { return Das::Utils::MakeYyjsonObject(); }
+        yyjson::value Array() { return Das::Utils::MakeYyjsonArray(); }
+        yyjson::value JsonString(std::string_view value)
+        {
+            return yyjson::value(std::string(value));
+        }
+
+        yyjson::value CloneJson(const yyjson::value& value)
+        {
+            const auto serialized = value.write(yyjson::WriteFlag::NoFlag);
+            auto parsed = Das::Utils::ParseYyjsonFromString(
+                std::string_view(serialized.data(), serialized.size()));
+            return parsed ? std::move(*parsed) : Object();
+        }
+
+        yyjson::value ParseRawObject(const std::string& raw)
+        {
+            if (raw.empty())
+            {
+                return Object();
+            }
+            auto parsed = Das::Utils::ParseYyjsonFromString(raw);
+            return parsed && parsed->is_object() ? std::move(*parsed)
+                                                 : Object();
+        }
+
+        void MergeObject(yyjson::value& target, const yyjson::value& source)
+        {
+            auto target_obj = target.as_object();
+            auto source_obj = source.as_object();
+            if (!target_obj || !source_obj)
+            {
+                return;
+            }
+            for (auto it = source_obj->begin(); it != source_obj->end(); ++it)
+            {
+                (*target_obj)[std::string_view(it->first)] =
+                    CloneJson(it->second);
+            }
+        }
+
+        const PiController* FindController(
+            const PiCatalog& catalog,
+            std::string_view name)
+        {
+            auto it = std::find_if(
+                catalog.controllers.begin(),
+                catalog.controllers.end(),
+                [&](const PiController& item) {
+                    return item.dto.name == name;
+                });
+            return it == catalog.controllers.end() ? nullptr : &*it;
+        }
+
+        const PiResource* FindResource(
+            const PiCatalog& catalog,
+            std::string_view name)
+        {
+            auto it = std::find_if(
+                catalog.resources.begin(),
+                catalog.resources.end(),
+                [&](const PiResource& item) {
+                    return item.dto.name == name;
+                });
+            return it == catalog.resources.end() ? nullptr : &*it;
+        }
+
+        const PiTask* FindTask(const PiCatalog& catalog, std::string_view name)
+        {
+            auto it = std::find_if(
+                catalog.tasks.begin(),
+                catalog.tasks.end(),
+                [&](const PiTask& item) {
+                    return item.dto.name == name;
+                });
+            return it == catalog.tasks.end() ? nullptr : &*it;
+        }
+
+        void AddDiagnostic(
+            CompileResultDto& result,
+            std::string       severity,
+            std::string       code,
+            std::string       message)
+        {
+            PiDiagnosticDto diagnostic;
+            diagnostic.severity = std::move(severity);
+            diagnostic.code = std::move(code);
+            diagnostic.message = std::move(message);
+            result.diagnostics.emplace_back(std::move(diagnostic));
+        }
+
+        bool ContainsName(
+            const std::vector<std::string>& names,
+            std::string_view                name)
+        {
+            return names.empty()
+                   || std::find(names.begin(), names.end(), name)
+                          != names.end();
+        }
+
+        bool IsActive(
+            const PiOption&      option,
+            std::string_view     controller,
+            std::string_view     resource)
+        {
+            return ContainsName(option.dto.controller, controller)
+                   && ContainsName(option.dto.resource, resource);
+        }
+
+        std::string SwitchCaseName(
+            const PiOption&                option,
+            const MaapiPiOptionSettingsDto& selected)
+        {
+            if (!selected.bool_value)
+            {
+                return selected.selected_cases.empty()
+                           ? std::string{}
+                           : selected.selected_cases.front();
+            }
+            const bool desired = *selected.bool_value;
+            for (const auto& item : option.dto.cases)
+            {
+                const bool truthy =
+                    item.name == "Yes" || item.name == "yes"
+                    || item.name == "Y" || item.name == "y";
+                const bool falsy =
+                    item.name == "No" || item.name == "no"
+                    || item.name == "N" || item.name == "n";
+                if ((desired && truthy) || (!desired && falsy))
+                {
+                    return item.name;
+                }
+            }
+            return {};
+        }
+
+        std::string ReplaceAll(
+            std::string text,
+            const std::map<std::string, std::string>& values)
+        {
+            for (const auto& [key, value] : values)
+            {
+                const std::string token = "{" + key + "}";
+                size_t            pos = 0;
+                while ((pos = text.find(token, pos)) != std::string::npos)
+                {
+                    text.replace(pos, token.size(), value);
+                    pos += value.size();
+                }
+            }
+            return text;
+        }
+
+        void MergeCaseOverrides(
+            yyjson::value&    pipeline,
+            const PiOption&   option,
+            const std::vector<std::string>& selected_cases)
+        {
+            for (const auto& defined_case : option.dto.cases)
+            {
+                if (std::find(
+                        selected_cases.begin(),
+                        selected_cases.end(),
+                        defined_case.name)
+                    == selected_cases.end())
+                {
+                    continue;
+                }
+                auto raw = Das::Utils::ParseYyjsonFromString(option.raw.raw_json);
+                if (!raw || !raw->is_object())
+                {
+                    continue;
+                }
+                auto opt_obj = raw->as_object();
+                if (!opt_obj->contains(std::string_view("cases")))
+                {
+                    continue;
+                }
+                auto cases = (*opt_obj)[std::string_view("cases")].as_array();
+                if (!cases)
+                {
+                    continue;
+                }
+                for (auto it = cases->begin(); it != cases->end(); ++it)
+                {
+                    auto case_obj = it->as_object();
+                    if (!case_obj
+                        || !case_obj->contains(std::string_view("name"))
+                        || (*case_obj)[std::string_view("name")]
+                                   .as_string()
+                                   .value_or("")
+                               != defined_case.name
+                        || !case_obj->contains(
+                            std::string_view("pipeline_override")))
+                    {
+                        continue;
+                    }
+                    MergeObject(
+                        pipeline,
+                        (*case_obj)[std::string_view("pipeline_override")]);
+                }
+            }
+        }
+
+        void MergeSelectedOption(
+            CompileResultDto&              result,
+            yyjson::value&                 pipeline,
+            const PiCatalog&               catalog,
+            const MaapiPiOptionSettingsDto& selected,
+            std::string_view               controller,
+            std::string_view               resource)
+        {
+            const auto* option = FindOption(catalog, selected.option_name);
+            if (!option)
+            {
+                AddDiagnostic(
+                    result,
+                    "error",
+                    "missing-option",
+                    "Selected PI option is missing from catalog");
+                return;
+            }
+            if (!IsActive(*option, controller, resource))
+            {
+                return;
+            }
+            if (option->dto.type == "input")
+            {
+                MergeObject(
+                    pipeline,
+                    ParseRawObject(ReplaceAll(
+                        option->raw_pipeline_override_json,
+                        selected.input_values)));
+                return;
+            }
+            auto cases = selected.selected_cases;
+            if (option->dto.type == "switch")
+            {
+                cases.clear();
+                auto case_name = SwitchCaseName(*option, selected);
+                if (!case_name.empty())
+                {
+                    cases.emplace_back(std::move(case_name));
+                }
+            }
+            MergeCaseOverrides(pipeline, *option, cases);
+        }
+
+        std::vector<MaapiPiTaskSettingsDto> SelectedTasks(
+            const AcceptedSettingsDto& settings,
+            const PiCatalog&           catalog)
+        {
+            std::vector<MaapiPiTaskSettingsDto> tasks;
+            for (const auto& task : settings.pi.tasks)
+            {
+                if (task.enabled)
+                {
+                    tasks.emplace_back(task);
+                }
+            }
+            if (!tasks.empty())
+            {
+                return tasks;
+            }
+            for (const auto& task : catalog.tasks)
+            {
+                if (task.dto.default_check)
+                {
+                    MaapiPiTaskSettingsDto selected;
+                    selected.task_name = task.dto.name;
+                    tasks.emplace_back(std::move(selected));
+                }
+            }
+            if (tasks.empty() && !catalog.tasks.empty())
+            {
+                MaapiPiTaskSettingsDto selected;
+                selected.task_name = catalog.tasks.front().dto.name;
+                tasks.emplace_back(std::move(selected));
+            }
+            return tasks;
+        }
+
+        yyjson::value SerializeStringArray(const std::vector<std::string>& values)
+        {
+            yyjson::value arr(Array());
+            for (const auto& value : values)
+            {
+                arr.as_array()->emplace_back(JsonString(value));
+            }
+            return arr;
+        }
+
+        yyjson::value SerializeDiagnostics(
+            const std::vector<PiDiagnosticDto>& diagnostics)
+        {
+            yyjson::value arr(Array());
+            for (const auto& diagnostic : diagnostics)
+            {
+                yyjson::value item(Object());
+                auto          obj = item.as_object();
+                (*obj)[std::string_view("severity")] =
+                    JsonString(diagnostic.severity);
+                (*obj)[std::string_view("code")] =
+                    JsonString(diagnostic.code);
+                (*obj)[std::string_view("message")] =
+                    JsonString(diagnostic.message);
+                arr.as_array()->emplace_back(std::move(item));
+            }
+            return arr;
+        }
+
+        yyjson::value SerializeEnvelope(const ExecutionEnvelopeDto& envelope)
+        {
+            yyjson::value root(Object());
+            auto          obj = root.as_object();
+            (*obj)[std::string_view("version")] = envelope.version;
+            (*obj)[std::string_view("pluginGuid")] =
+                JsonString(envelope.plugin_guid);
+            (*obj)[std::string_view("taskTypeGuid")] =
+                JsonString(envelope.task_type_guid);
+
+            yyjson::value maapi(Object());
+            auto          maapi_obj = maapi.as_object();
+            (*maapi_obj)[std::string_view("interfaceDirectory")] =
+                JsonString(envelope.maapi.interface_directory);
+            (*maapi_obj)[std::string_view("controllerName")] =
+                JsonString(envelope.maapi.controller_name);
+            (*maapi_obj)[std::string_view("resourceName")] =
+                JsonString(envelope.maapi.resource_name);
+            (*maapi_obj)[std::string_view("resourcePaths")] =
+                SerializeStringArray(envelope.maapi.resource_paths);
+            if (envelope.maapi.resource_hash)
+            {
+                (*maapi_obj)[std::string_view("resourceHash")] =
+                    JsonString(*envelope.maapi.resource_hash);
+            }
+            (*maapi_obj)[std::string_view("failFast")] =
+                envelope.maapi.fail_fast;
+            (*maapi_obj)[std::string_view("requiresAgentRuntime")] =
+                envelope.maapi.requires_agent_runtime;
+
+            yyjson::value env(Object());
+            auto          env_obj = env.as_object();
+            (*env_obj)[std::string_view("interfaceVersion")] =
+                JsonString(envelope.maapi.pi_env.interface_version);
+            (*env_obj)[std::string_view("clientName")] =
+                JsonString(envelope.maapi.pi_env.client_name);
+            (*env_obj)[std::string_view("clientLanguage")] =
+                JsonString(envelope.maapi.pi_env.client_language);
+            (*env_obj)[std::string_view("projectVersion")] =
+                JsonString(envelope.maapi.pi_env.project_version);
+            (*env_obj)[std::string_view("controllerJson")] =
+                JsonString(envelope.maapi.pi_env.controller_json);
+            (*env_obj)[std::string_view("resourceJson")] =
+                JsonString(envelope.maapi.pi_env.resource_json);
+            (*maapi_obj)[std::string_view("piEnv")] = std::move(env);
+
+            yyjson::value tasks(Array());
+            for (const auto& task : envelope.maapi.tasks)
+            {
+                yyjson::value item(Object());
+                auto          item_obj = item.as_object();
+                (*item_obj)[std::string_view("taskName")] =
+                    JsonString(task.task_name);
+                (*item_obj)[std::string_view("entry")] =
+                    JsonString(task.entry);
+                (*item_obj)[std::string_view("pipelineOverride")] =
+                    CloneJson(task.pipeline_override);
+                tasks.as_array()->emplace_back(std::move(item));
+            }
+            (*maapi_obj)[std::string_view("tasks")] = std::move(tasks);
+            (*obj)[std::string_view("maapi")] = std::move(maapi);
+            return root;
+        }
+    } // namespace
+
+    CompileResultDto CompileMaapi(
+        const AcceptedSettingsDto& settings,
+        const PiCatalog&           catalog,
+        std::string_view)
+    {
+        CompileResultDto result;
+        ExecutionEnvelopeDto envelope;
+        envelope.maapi.interface_directory =
+            catalog.interface_directory.string();
+        envelope.maapi.fail_fast =
+            settings.adapter.execution_policy.fail_fast;
+        envelope.maapi.requires_agent_runtime = !catalog.raw_agent_json.empty();
+        envelope.maapi.pi_env.project_version = catalog.version;
+        result.summary.requires_agent_runtime =
+            envelope.maapi.requires_agent_runtime;
+
+        const auto controller_name =
+            settings.pi.controller_name.value_or(
+                catalog.controllers.empty() ? std::string{}
+                                            : catalog.controllers.front().dto.name);
+        const auto resource_name =
+            settings.pi.resource_name.value_or(
+                catalog.resources.empty() ? std::string{}
+                                          : catalog.resources.front().dto.name);
+        const auto* controller = FindController(catalog, controller_name);
+        const auto* resource = FindResource(catalog, resource_name);
+        if (!controller)
+        {
+            AddDiagnostic(
+                result,
+                "error",
+                "missing-controller",
+                "Selected controller is missing");
+        }
+        if (!resource)
+        {
+            AddDiagnostic(
+                result,
+                "error",
+                "missing-resource",
+                "Selected resource is missing");
+        }
+        if (envelope.maapi.requires_agent_runtime)
+        {
+            AddDiagnostic(
+                result,
+                "error",
+                "requires-agent-runtime",
+                "PI agent runtime is preserved but not executed in Phase 69");
+        }
+        if (!controller || !resource)
+        {
+            result.ok = false;
+            result.can_execute = false;
+            return result;
+        }
+
+        envelope.maapi.controller_name = controller->dto.name;
+        envelope.maapi.resource_name = resource->dto.name;
+        envelope.maapi.resource_hash = resource->dto.hash;
+        for (const auto& path : resource->resolved_paths)
+        {
+            envelope.maapi.resource_paths.emplace_back(path.string());
+        }
+        envelope.maapi.pi_env.controller_json = controller->raw.raw_json;
+        envelope.maapi.pi_env.resource_json = resource->raw.raw_json;
+        result.summary.controller_name = controller->dto.name;
+        result.summary.resource_name = resource->dto.name;
+
+        for (const auto& selected : SelectedTasks(settings, catalog))
+        {
+            const auto* task = FindTask(catalog, selected.task_name);
+            if (!task)
+            {
+                AddDiagnostic(
+                    result,
+                    "error",
+                    "missing-task",
+                    "Selected task is missing");
+                continue;
+            }
+            MaaTaskExecutionDto execution;
+            execution.task_name = task->dto.name;
+            execution.entry = task->dto.entry;
+            execution.pipeline_override =
+                ParseRawObject(task->raw_pipeline_override_json);
+            for (const auto& option : settings.pi.global_options)
+            {
+                MergeSelectedOption(
+                    result,
+                    execution.pipeline_override,
+                    catalog,
+                    option,
+                    controller->dto.name,
+                    resource->dto.name);
+            }
+            for (const auto& option : settings.pi.resource_options)
+            {
+                MergeSelectedOption(
+                    result,
+                    execution.pipeline_override,
+                    catalog,
+                    option,
+                    controller->dto.name,
+                    resource->dto.name);
+            }
+            for (const auto& option : settings.pi.controller_options)
+            {
+                MergeSelectedOption(
+                    result,
+                    execution.pipeline_override,
+                    catalog,
+                    option,
+                    controller->dto.name,
+                    resource->dto.name);
+            }
+            for (const auto& option : selected.options)
+            {
+                MergeSelectedOption(
+                    result,
+                    execution.pipeline_override,
+                    catalog,
+                    option,
+                    controller->dto.name,
+                    resource->dto.name);
+            }
+            result.summary.task_names.emplace_back(task->dto.name);
+            envelope.maapi.tasks.emplace_back(std::move(execution));
+        }
+
+        result.ok = std::none_of(
+            result.diagnostics.begin(),
+            result.diagnostics.end(),
+            [](const PiDiagnosticDto& diagnostic) {
+                return diagnostic.severity == "error";
+            });
+        result.can_execute = result.ok && !envelope.maapi.tasks.empty()
+                             && !envelope.maapi.requires_agent_runtime;
+        result.summary.can_execute = result.can_execute;
+        if (result.ok)
+        {
+            result.execution_input = std::move(envelope);
+        }
+        return result;
+    }
+
+    yyjson::value SerializeCompileResult(
+        const CompileResultDto& result,
+        std::string_view        purpose)
+    {
+        yyjson::value root(Object());
+        auto          obj = root.as_object();
+        (*obj)[std::string_view("ok")] = result.ok;
+        (*obj)[std::string_view("canExecute")] = result.can_execute;
+
+        yyjson::value summary(Object());
+        auto          summary_obj = summary.as_object();
+        (*summary_obj)[std::string_view("canExecute")] =
+            result.summary.can_execute;
+        if (result.summary.controller_name)
+        {
+            (*summary_obj)[std::string_view("controllerName")] =
+                JsonString(*result.summary.controller_name);
+        }
+        if (result.summary.resource_name)
+        {
+            (*summary_obj)[std::string_view("resourceName")] =
+                JsonString(*result.summary.resource_name);
+        }
+        (*summary_obj)[std::string_view("taskNames")] =
+            SerializeStringArray(result.summary.task_names);
+        (*summary_obj)[std::string_view("requiresAgentRuntime")] =
+            result.summary.requires_agent_runtime;
+        (*obj)[std::string_view("summary")] = std::move(summary);
+        (*obj)[std::string_view("diagnostics")] =
+            SerializeDiagnostics(result.diagnostics);
+        if (purpose == "execution" && result.execution_input)
+        {
+            (*obj)[std::string_view("executionInput")] =
+                SerializeEnvelope(*result.execution_input);
+        }
+        return root;
+    }
+} // namespace Das::Plugins::DasMaaPi
