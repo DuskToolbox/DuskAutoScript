@@ -3402,6 +3402,41 @@ namespace
         EXPECT_EQ(state->compile_count, 0);
         EXPECT_EQ(state->decoy_authoring_create_count, 0);
     }
+
+    void ExpectUnavailableRenameDeleteWithoutProviderCalls(
+        SchedulerService&                             scheduler,
+        const std::shared_ptr<FactoryTaskSharedState>& state,
+        const std::filesystem::path&                  settings_dir,
+        std::string_view                              reason)
+    {
+        auto entry = SingleRepositoryEntry(scheduler.GetTaskRepository());
+        ExpectRepositoryAvailability(entry, reason);
+        ExpectNoRepositoryAuthoringProviderCalls(state);
+
+        auto renamed = scheduler.RenameRepositoryEntry(
+            0,
+            MakeRepositoryRenameRequest("Renamed unavailable entry"));
+        auto renamed_obj = renamed.as_object();
+        ASSERT_TRUE(renamed_obj.has_value());
+        EXPECT_EQ(
+            (*renamed_obj)[std::string_view("displayName")]
+                .as_string()
+                .value_or(""),
+            std::string_view("Renamed unavailable entry"));
+        ExpectRepositoryAvailability(renamed, reason);
+        ExpectNoRepositoryAuthoringProviderCalls(state);
+
+        EXPECT_EQ(scheduler.DeleteRepositoryEntry(0), DAS_S_OK);
+        EXPECT_FALSE(
+            std::filesystem::exists(
+                settings_dir / "0" / "taskRepository0.json"));
+        auto repository = scheduler.GetTaskRepository();
+        auto entries =
+            (*repository.as_object())[std::string_view("entries")].as_array();
+        ASSERT_TRUE(entries.has_value());
+        EXPECT_TRUE(entries->empty());
+        ExpectNoRepositoryAuthoringProviderCalls(state);
+    }
 } // namespace
 
 TEST_F(
@@ -3858,6 +3893,150 @@ TEST_F(
     (void)scheduler_->GetTaskRepository();
 
     ExpectNoRepositoryAuthoringProviderCalls(shared_state_);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryUnavailableMissingPluginDeleteRenameNoProviderCall)
+{
+    SeedRepositoryEntry(
+        *settings_manager_,
+        0,
+        MissingPluginGuidString,
+        FactoryTaskGuidString,
+        "Missing plugin entry");
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    ExpectUnavailableRenameDeleteWithoutProviderCalls(
+        *scheduler_,
+        shared_state_,
+        settings_dir_,
+        "pluginUnavailable");
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryUnavailableDisabledDeleteRenameNoProviderCall)
+{
+    SeedRepositoryEntry(
+        *settings_manager_,
+        0,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        "Disabled plugin entry");
+
+    ASSERT_EQ(
+        scheduler_->Initialize(plugin_dir_, {FactoryPluginGuid}),
+        DAS_S_OK);
+
+    ExpectUnavailableRenameDeleteWithoutProviderCalls(
+        *scheduler_,
+        shared_state_,
+        settings_dir_,
+        "pluginUnavailable");
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryUnavailableBannedDeleteRenameNoProviderCall)
+{
+    auto banned_dir = plugin_dir_ / "BannedPlugin";
+    std::filesystem::create_directories(banned_dir);
+    WriteFactoryPluginManifest(
+        banned_dir / "BannedPlugin.json",
+        BannedPluginGuidString);
+    {
+        std::ofstream marker(
+            banned_dir / "BannedPlugin.willBeDelete",
+            std::ios::trunc);
+        marker << "pending deletion";
+    }
+    SeedRepositoryEntry(
+        *settings_manager_,
+        0,
+        BannedPluginGuidString,
+        FactoryTaskGuidString,
+        "Banned plugin entry");
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    ExpectUnavailableRenameDeleteWithoutProviderCalls(
+        *scheduler_,
+        shared_state_,
+        settings_dir_,
+        "pluginUnavailable");
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryUnavailableLoadFailedDeleteRenameNoProviderCall)
+{
+    WriteFactoryPluginManifest(
+        plugin_dir_ / "LoadFailedPlugin.json",
+        LoadFailedPluginGuidString,
+        FactoryTaskGuidString,
+        true,
+        "CSharp");
+    SeedRepositoryEntry(
+        *settings_manager_,
+        0,
+        LoadFailedPluginGuidString,
+        FactoryTaskGuidString,
+        "Load failed entry");
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    ExpectUnavailableRenameDeleteWithoutProviderCalls(
+        *scheduler_,
+        shared_state_,
+        settings_dir_,
+        "pluginLoadFailed");
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryUnavailableMissingTaskTypeDeleteRenameNoProviderCall)
+{
+    SeedRepositoryEntry(
+        *settings_manager_,
+        0,
+        FactoryPluginGuidString,
+        MissingTaskTypeGuidString,
+        "Missing task type entry");
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    ExpectUnavailableRenameDeleteWithoutProviderCalls(
+        *scheduler_,
+        shared_state_,
+        settings_dir_,
+        "taskTypeUnavailable");
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryUnavailableAuthoringCapabilityMissingDeleteRenameNoProviderCall)
+{
+    WriteFactoryPluginManifest(
+        manifest_path_,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        false);
+    SeedRepositoryEntry(
+        *settings_manager_,
+        0,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        "No authoring capability entry");
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    ExpectUnavailableRenameDeleteWithoutProviderCalls(
+        *scheduler_,
+        shared_state_,
+        settings_dir_,
+        "authoringCapabilityMissing");
 }
 
 TEST_F(
