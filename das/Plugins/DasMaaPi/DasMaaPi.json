@@ -20,94 +20,42 @@
           "formSequence"
         ]
       },
+      "executionComponent": {
+        "componentGuid": "69F20008-0000-4000-8000-000000000001"
+      },
       "descriptors": []
     }
   },
   "taskComponents": {
     "factories": [
-      "69F20007-0000-4000-8000-000000000001"
+      "69F20009-0000-4000-8000-000000000001"
     ],
     "components": {
-      "69F20006-0000-4000-8000-000000000001": {
-        "factoryGuid": "69F20007-0000-4000-8000-000000000001",
+      "69F20008-0000-4000-8000-000000000001": {
+        "factoryGuid": "69F20009-0000-4000-8000-000000000001",
         "definition": {
           "schemaVersion": 1,
-          "kind": "das.maapi.agentRuntime",
-          "componentGuid": "69F20006-0000-4000-8000-000000000001",
-          "settings": [
-            {
-              "id": "tcpCompatMode",
-              "type": "bool",
-              "default": false
-            },
-            {
-              "id": "captureOutput",
-              "type": "bool",
-              "default": true
-            },
-            {
-              "id": "stopTimeoutMs",
-              "type": "int",
-              "default": 5000
-            },
-            {
-              "id": "maxOutputTailBytes",
-              "type": "int",
-              "default": 16384
-            }
-          ],
+          "kind": "das.maapi.run",
+          "componentGuid": "69F20008-0000-4000-8000-000000000001",
+          "settings": [],
           "inputs": [
             {
-              "id": "operation",
-              "type": "enum",
-              "values": [
-                "validate",
-                "start",
-                "stop",
-                "status"
-              ]
-            },
-            {
-              "id": "runtimeRef",
+              "id": "executionInput",
               "type": "object"
-            },
-            {
-              "id": "interfaceDirectory",
-              "type": "string"
-            },
-            {
-              "id": "agents",
-              "type": "array<object>"
-            },
-            {
-              "id": "piEnv",
-              "type": "object"
-            },
-            {
-              "id": "sessionId",
-              "type": "string?"
             }
           ],
           "outputs": [
             {
-              "id": "agentSessionId",
-              "type": "string"
+              "id": "completedTasks",
+              "type": "array<string>"
             },
             {
-              "id": "agents",
+              "id": "stopped",
+              "type": "bool"
+            },
+            {
+              "id": "diagnostics",
               "type": "array<object>"
-            },
-            {
-              "id": "runningAgentCount",
-              "type": "int"
-            },
-            {
-              "id": "stdoutTail",
-              "type": "string"
-            },
-            {
-              "id": "stderrTail",
-              "type": "string"
             }
           ],
           "signals": [
@@ -116,6 +64,9 @@
             },
             {
               "id": "failed"
+            },
+            {
+              "id": "cancelled"
             }
           ],
           "config": {},

@@ -3,8 +3,8 @@
 #include "PluginImpl.h"
 
 #include "MaapiAgentComponentFactory.h"
-#include "MaapiAgentTaskComponentFactory.h"
 #include "MaapiAuthoringSessionFactory.h"
+#include "MaapiRunTaskComponent.h"
 #include "MaapiTask.h"
 
 #include <array>
@@ -75,7 +75,7 @@ namespace Plugins::DasMaaPi
             }
             if (index == 3)
             {
-                auto* factory = new MaapiAgentTaskComponentFactory();
+                auto* factory = new MaapiRunTaskComponentFactory();
                 factory->AddRef();
                 *pp_out_interface =
                     static_cast<PluginInterface::IDasTaskComponentFactory*>(

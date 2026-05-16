@@ -29,10 +29,6 @@ namespace
     using Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY;
     using Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY;
 
-    constexpr std::string_view kRunTaskComponentGuidText =
-        "69F20008-0000-4000-8000-000000000001";
-    constexpr std::string_view kRunTaskComponentFactoryGuidText =
-        "69F20009-0000-4000-8000-000000000001";
     constexpr std::string_view kRunTaskComponentKind = "das.maapi.run";
     constexpr std::string_view kAgentRuntimeTaskComponentKind =
         "das.maapi.agentRuntime";

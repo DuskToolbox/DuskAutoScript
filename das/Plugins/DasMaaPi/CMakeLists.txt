@@ -13,6 +13,7 @@ set(DAS_MAAPI_PLUGIN_SOURCES
     src/MaapiAgentTaskComponentFactory.cpp
     src/MaapiAuthoringSession.cpp
     src/MaapiAuthoringSessionFactory.cpp
+    src/MaapiRunTaskComponent.cpp
     src/MaapiTask.cpp
     src/PiCatalog.cpp
     src/PiCompiler.cpp
@@ -104,6 +105,7 @@ if(DAS_BUILD_TEST)
         src/MaapiAgentTaskComponentFactory.cpp
         src/MaapiAuthoringSession.cpp
         src/MaapiAuthoringSessionFactory.cpp
+        src/MaapiRunTaskComponent.cpp
         src/MaapiTask.cpp
         src/PiCompiler.cpp
         src/PiCatalog.cpp
