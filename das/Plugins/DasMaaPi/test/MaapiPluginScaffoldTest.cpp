@@ -9,8 +9,10 @@
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasTask.h>
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
+#include <das/_autogen/idl/abi/IDasTaskComponent.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -25,6 +27,15 @@ namespace
     using namespace Das::Plugins::DasMaaPi;
     using Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK;
     using Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY;
+    using Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY;
+
+    constexpr std::string_view kRunTaskComponentGuidText =
+        "69F20008-0000-4000-8000-000000000001";
+    constexpr std::string_view kRunTaskComponentFactoryGuidText =
+        "69F20009-0000-4000-8000-000000000001";
+    constexpr std::string_view kRunTaskComponentKind = "das.maapi.run";
+    constexpr std::string_view kAgentRuntimeTaskComponentKind =
+        "das.maapi.agentRuntime";
 
     std::filesystem::path PluginPackageDir()
     {
@@ -79,6 +90,18 @@ namespace
             return Das::Utils::MakeYyjsonObject();
         }
         return std::move(*parsed);
+    }
+
+    yyjson::value ReadManifestJson()
+    {
+        std::ifstream manifest_file(MaapiManifestPath());
+        EXPECT_TRUE(manifest_file.is_open());
+        const std::string manifest_content(
+            (std::istreambuf_iterator<char>(manifest_file)),
+            std::istreambuf_iterator<char>());
+        auto parsed = Das::Utils::ParseYyjsonFromString(manifest_content);
+        EXPECT_TRUE(parsed.has_value());
+        return parsed ? std::move(*parsed) : Das::Utils::MakeYyjsonObject();
     }
 
     std::filesystem::path UniqueSettingsDir()
@@ -199,6 +222,97 @@ TEST_F(
     EXPECT_EQ(
         loaded_factory_guid,
         MakeDasGuid(std::string(kAuthoringFactoryGuidText)));
+}
+
+TEST_F(
+    MaapiPluginScaffoldFixture,
+    ManifestExposesRunTaskComponentAndExecutionLink)
+{
+    ASSERT_EQ(plugin_manager_->LoadPlugin(PluginPackageDir()), DAS_S_OK);
+    ASSERT_EQ(
+        plugin_manager_->RegisterPluginObjects(PluginPackageDir()),
+        DAS_S_OK);
+
+    const auto plugin_guid = MakeDasGuid(std::string(kPluginGuidText));
+    auto*      package = plugin_manager_->FindPluginPackageByGuid(plugin_guid);
+    ASSERT_NE(package, nullptr);
+
+    const auto task_guid = MakeDasGuid(std::string(kTaskGuidText));
+    auto       task_it = package->task_descriptors.find(task_guid);
+    ASSERT_NE(task_it, package->task_descriptors.end());
+    ASSERT_TRUE(task_it->second.execution_component.has_value());
+    EXPECT_EQ(
+        task_it->second.execution_component->component_guid,
+        MakeDasGuid(std::string(kRunTaskComponentGuidText)));
+
+    ASSERT_TRUE(package->task_components.has_value());
+    ASSERT_TRUE(package->task_components->factories.has_value());
+    EXPECT_NE(
+        std::find(
+            package->task_components->factories->begin(),
+            package->task_components->factories->end(),
+            std::string(kRunTaskComponentFactoryGuidText)),
+        package->task_components->factories->end());
+
+    ASSERT_TRUE(package->task_components->components.has_value());
+    auto component_it = package->task_components->components->find(
+        std::string(kRunTaskComponentGuidText));
+    ASSERT_NE(component_it, package->task_components->components->end());
+    ASSERT_TRUE(component_it->second.definition.has_value());
+    auto definition = component_it->second.definition->as_object();
+    ASSERT_TRUE(definition.has_value());
+    EXPECT_EQ(
+        (*definition)[std::string_view("kind")].as_string().value_or(""),
+        kRunTaskComponentKind);
+}
+
+TEST_F(MaapiPluginScaffoldFixture, ManifestDoesNotExposeAgentRuntimeTaskComponent)
+{
+    auto manifest = ReadManifestJson();
+    const auto text = manifest.write(yyjson::WriteFlag::NoFlag);
+    const std::string manifest_text(text.data(), text.size());
+
+    EXPECT_EQ(
+        manifest_text.find(std::string(kAgentRuntimeTaskComponentKind)),
+        std::string::npos);
+    EXPECT_EQ(
+        manifest_text.find(std::string(kAgentTaskComponentGuidText)),
+        std::string::npos);
+    EXPECT_EQ(
+        manifest_text.find(std::string(kAgentTaskComponentFactoryGuidText)),
+        std::string::npos);
+}
+
+TEST_F(MaapiPluginScaffoldFixture, TaskComponentFactoryCreatesRunComponent)
+{
+    ASSERT_EQ(plugin_manager_->LoadPlugin(PluginPackageDir()), DAS_S_OK);
+    ASSERT_EQ(
+        plugin_manager_->RegisterPluginObjects(PluginPackageDir()),
+        DAS_S_OK);
+
+    auto factories = plugin_manager_->GetFeaturesByType(
+        DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY);
+    ASSERT_EQ(factories.size(), 1u);
+
+    DasPtr<Das::PluginInterface::IDasTaskComponentFactory> factory;
+    ASSERT_EQ(
+        factories[0]->interface_ptr->QueryInterface(
+            DasIidOf<Das::PluginInterface::IDasTaskComponentFactory>(),
+            reinterpret_cast<void**>(factory.Put())),
+        DAS_S_OK);
+
+    DasPtr<Das::PluginInterface::IDasTaskComponent> component;
+    ASSERT_EQ(
+        factory->CreateComponent(
+            MakeDasGuid(std::string(kRunTaskComponentGuidText)),
+            component.Put()),
+        DAS_S_OK);
+
+    DasGuid loaded_component_guid{};
+    ASSERT_EQ(component->GetGuid(&loaded_component_guid), DAS_S_OK);
+    EXPECT_EQ(
+        loaded_component_guid,
+        MakeDasGuid(std::string(kRunTaskComponentGuidText)));
 }
 
 TEST_F(MaapiPluginScaffoldFixture, AdapterOnlyDocumentBeforeProjectSelection)
