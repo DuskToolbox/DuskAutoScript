@@ -55,4 +55,10 @@ if (${DAS_BUILD_TEST})
 
     # 将测试添加到构建锁依赖中
     add_dependencies(${IpcMultiProcessTest_NAME} DasAutoCopyDll)
+    if(TARGET DasMaaPi)
+        add_dependencies(
+            ${IpcMultiProcessTest_NAME}
+            DasMaaPi
+            DasAutoCopyPluginMetadataFile)
+    endif()
 endif()

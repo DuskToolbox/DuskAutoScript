@@ -1,0 +1,30 @@
+{
+  "interface_version": 2,
+  "name": "SampleInterface",
+  "version": "1.0.0",
+  "controller": [
+    {
+      "name": "Debug",
+      "type": "Dbg"
+    }
+  ],
+  "resource": [
+    {
+      "name": "SampleResource",
+      "path": ["resource"],
+      "hash": "sample-hash"
+    }
+  ],
+  "task": [
+    {
+      "name": "Daily",
+      "entry": "StartDaily",
+      "default_check": true,
+      "pipeline_override": {
+        "StartDaily": {
+          "enabled": true
+        }
+      }
+    }
+  ]
+}

@@ -51,6 +51,7 @@ if(DAS_BUILD_TEST AND TARGET DasMaaPi)
         DasMaaPi/src/PluginImpl.cpp
         DasMaaPi/test/MaapiAuthoringTest.cpp
         DasMaaPi/test/MaapiCompileTest.cpp
+        DasMaaPi/test/MaapiIntegrationTest.cpp
         DasMaaPi/test/MaapiPluginScaffoldTest.cpp
         DasMaaPi/test/MaapiPiParserTest.cpp
         DasMaaPi/test/MaapiRuntimeTest.cpp)
