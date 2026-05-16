@@ -20,6 +20,17 @@ namespace Das::Plugins::DasMaaPi::Test
         std::optional<ControllerSpec>        last_controller_spec;
         std::optional<std::string>           last_agent_client_identifier;
         std::optional<std::uint16_t>         last_agent_client_tcp_port;
+        std::vector<std::string>             agent_client_identifiers{
+            "agent-client-id"};
+        MaaApiResult bind_agent_client_resource_result = MaaApiResult::Ok();
+        MaaApiResult register_agent_client_resource_sink_result =
+            MaaApiResult::Ok();
+        MaaApiResult register_agent_client_controller_sink_result =
+            MaaApiResult::Ok();
+        MaaApiResult register_agent_client_tasker_sink_result =
+            MaaApiResult::Ok();
+        MaaApiResult set_agent_client_timeout_result = MaaApiResult::Ok();
+        MaaApiResult connect_agent_client_result = MaaApiResult::Ok();
 
         MaaResourceHandle CreateResource() override
         {
@@ -155,6 +166,10 @@ namespace Das::Plugins::DasMaaPi::Test
             MaaAgentClientHandle) override
         {
             calls.emplace_back("GetAgentClientIdentifier");
+            if (identifier_index_ < agent_client_identifiers.size())
+            {
+                return agent_client_identifiers[identifier_index_++];
+            }
             return "agent-client-id";
         }
 
@@ -163,7 +178,7 @@ namespace Das::Plugins::DasMaaPi::Test
             MaaResourceHandle) override
         {
             calls.emplace_back("BindAgentClientResource");
-            return MaaApiResult::Ok();
+            return bind_agent_client_resource_result;
         }
 
         MaaApiResult RegisterAgentClientResourceSink(
@@ -171,7 +186,7 @@ namespace Das::Plugins::DasMaaPi::Test
             MaaResourceHandle) override
         {
             calls.emplace_back("RegisterAgentClientResourceSink");
-            return MaaApiResult::Ok();
+            return register_agent_client_resource_sink_result;
         }
 
         MaaApiResult RegisterAgentClientControllerSink(
@@ -179,7 +194,7 @@ namespace Das::Plugins::DasMaaPi::Test
             MaaControllerHandle) override
         {
             calls.emplace_back("RegisterAgentClientControllerSink");
-            return MaaApiResult::Ok();
+            return register_agent_client_controller_sink_result;
         }
 
         MaaApiResult RegisterAgentClientTaskerSink(
@@ -187,7 +202,7 @@ namespace Das::Plugins::DasMaaPi::Test
             MaaTaskerHandle) override
         {
             calls.emplace_back("RegisterAgentClientTaskerSink");
-            return MaaApiResult::Ok();
+            return register_agent_client_tasker_sink_result;
         }
 
         MaaApiResult SetAgentClientTimeout(
@@ -196,14 +211,14 @@ namespace Das::Plugins::DasMaaPi::Test
         {
             calls.emplace_back(
                 "SetAgentClientTimeout:" + std::to_string(milliseconds));
-            return MaaApiResult::Ok();
+            return set_agent_client_timeout_result;
         }
 
         MaaApiResult ConnectAgentClient(
             MaaAgentClientHandle) override
         {
             calls.emplace_back("ConnectAgentClient");
-            return MaaApiResult::Ok();
+            return connect_agent_client_result;
         }
 
         bool DisconnectAgentClient(
@@ -241,5 +256,6 @@ namespace Das::Plugins::DasMaaPi::Test
         MaaResourceHandle next_handle_ = 1;
         MaaAsyncId        next_id_ = 100;
         std::string       last_entry_;
+        std::size_t       identifier_index_ = 0;
     };
 } // namespace Das::Plugins::DasMaaPi::Test
