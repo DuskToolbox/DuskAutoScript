@@ -1,9 +1,12 @@
 #pragma once
 
 #include <das/Core/SettingsManager/SettingsManager.h>
+#include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
 #include <das/Core/TaskScheduler/TaskRepositoryDtos.h>
+#include <das/DasTypes.hpp>
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace Das::Core::TaskScheduler
@@ -16,6 +19,14 @@ namespace Das::Core::TaskScheduler
             std::string                                  profile_id);
 
         std::vector<Repository::Dto::RepositoryEntryDto> ListEntries() const;
+
+        DasResult CreateEntry(
+            const Repository::Dto::CreateRepositoryEntryRequestDto& request,
+            std::string_view descriptor_name,
+            const std::vector<
+                Das::Core::ForeignInterfaceHost::PluginSettingDesc>&
+                descriptors,
+            Repository::Dto::RepositoryEntryDto& out_entry);
 
     private:
         Das::Core::SettingsManager::SettingsManager& settings_;

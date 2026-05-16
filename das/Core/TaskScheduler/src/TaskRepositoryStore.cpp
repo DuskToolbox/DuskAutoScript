@@ -1,9 +1,131 @@
 #include <das/Core/TaskScheduler/TaskRepositoryStore.h>
 
 #include <algorithm>
+#include <type_traits>
+#include <utility>
 
 namespace Das::Core::TaskScheduler
 {
+    namespace
+    {
+        static yyjson::value CloneJsonValue(const yyjson::value& value)
+        {
+            auto serialized = value.write(yyjson::WriteFlag::NoFlag);
+            return yyjson::read(
+                std::string_view(serialized.data(), serialized.size()));
+        }
+
+        static bool MatchesDescriptorType(
+            const yyjson::value&                     value,
+            Das::ExportInterface::DasType descriptor_type)
+        {
+            switch (descriptor_type)
+            {
+            case Das::ExportInterface::DAS_TYPE_BOOL:
+                return value.is_bool();
+            case Das::ExportInterface::DAS_TYPE_INT:
+                return value.is_int();
+            case Das::ExportInterface::DAS_TYPE_FLOAT:
+                return value.is_num();
+            case Das::ExportInterface::DAS_TYPE_STRING:
+                return value.is_string();
+            default:
+                return false;
+            }
+        }
+
+        static const Das::Core::ForeignInterfaceHost::PluginSettingDesc*
+        FindDescriptor(
+            const std::vector<
+                Das::Core::ForeignInterfaceHost::PluginSettingDesc>&
+                             descriptors,
+            std::string_view name)
+        {
+            auto it = std::find_if(
+                descriptors.begin(),
+                descriptors.end(),
+                [name](const auto& descriptor)
+                { return descriptor.name == name; });
+            if (it == descriptors.end())
+            {
+                return nullptr;
+            }
+            return &*it;
+        }
+
+        static void ApplyDescriptorDefaults(
+            yyjson::value& accepted_properties,
+            const std::vector<
+                Das::Core::ForeignInterfaceHost::PluginSettingDesc>&
+                descriptors)
+        {
+            auto props_obj = accepted_properties.as_object();
+            for (const auto& desc : descriptors)
+            {
+                if (std::holds_alternative<std::monostate>(desc.default_value))
+                {
+                    continue;
+                }
+
+                std::visit(
+                    [&props_obj, &desc](const auto& value)
+                    {
+                        if constexpr (!std::is_same_v<
+                                          std::decay_t<decltype(value)>,
+                                          std::monostate>)
+                        {
+                            props_obj->operator[](std::string_view(desc.name)) =
+                                value;
+                        }
+                    },
+                    desc.default_value);
+            }
+        }
+
+        static DasResult MergeInitialProperties(
+            yyjson::value& accepted_properties,
+            const yyjson::value& initial_properties,
+            const std::vector<
+                Das::Core::ForeignInterfaceHost::PluginSettingDesc>&
+                descriptors)
+        {
+            if (initial_properties.is_null())
+            {
+                return DAS_S_OK;
+            }
+
+            auto initial_obj = initial_properties.as_object();
+            if (!initial_obj)
+            {
+                return DAS_E_INVALID_JSON;
+            }
+
+            auto accepted_obj = accepted_properties.as_object();
+            for (auto it = initial_obj->begin(); it != initial_obj->end(); ++it)
+            {
+                const std::string property_name{
+                    std::string_view(it->first)};
+                auto property_value = CloneJsonValue(it->second);
+                auto*       descriptor = FindDescriptor(
+                    descriptors,
+                    property_name);
+                if (!descriptor)
+                {
+                    return DAS_E_NOT_FOUND;
+                }
+                if (!MatchesDescriptorType(property_value, descriptor->type))
+                {
+                    return DAS_E_TYPE_ERROR;
+                }
+
+                accepted_obj->operator[](std::string_view(property_name)) =
+                    CloneJsonValue(property_value);
+            }
+
+            return DAS_S_OK;
+        }
+    } // namespace
+
     TaskRepositoryStore::TaskRepositoryStore(
         Das::Core::SettingsManager::SettingsManager& settings,
         std::string                                  profile_id)
@@ -45,5 +167,47 @@ namespace Das::Core::TaskScheduler
             [](const auto& lhs, const auto& rhs)
             { return lhs.entry_id < rhs.entry_id; });
         return entries;
+    }
+
+    DasResult TaskRepositoryStore::CreateEntry(
+        const Repository::Dto::CreateRepositoryEntryRequestDto& request,
+        std::string_view descriptor_name,
+        const std::vector<
+            Das::Core::ForeignInterfaceHost::PluginSettingDesc>& descriptors,
+        Repository::Dto::RepositoryEntryDto& out_entry)
+    {
+        Repository::Dto::RepositoryEntryDto entry;
+        entry.entry_id =
+            settings_.AllocateNextTaskRepositoryEntryId(profile_id_);
+        entry.display_name = request.display_name.value_or(
+            std::string(descriptor_name));
+        entry.plugin_guid = request.plugin_guid;
+        entry.task_type_guid = request.task_type_guid;
+        entry.authoring.revision = 0;
+        entry.accepted_properties = Das::Utils::MakeYyjsonObject();
+        entry.availability.state = "available";
+
+        ApplyDescriptorDefaults(entry.accepted_properties, descriptors);
+        auto merge_result = MergeInitialProperties(
+            entry.accepted_properties,
+            request.initial_properties,
+            descriptors);
+        if (DAS::IsFailed(merge_result))
+        {
+            return merge_result;
+        }
+
+        auto entry_json = CloneJsonValue(yyjson::object(entry));
+        auto persist_result = settings_.UpdateTaskRepositoryEntryJson(
+            profile_id_,
+            entry.entry_id,
+            entry_json);
+        if (DAS::IsFailed(persist_result))
+        {
+            return persist_result;
+        }
+
+        out_entry = std::move(entry);
+        return DAS_S_OK;
     }
 } // namespace Das::Core::TaskScheduler

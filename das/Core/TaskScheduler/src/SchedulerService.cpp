@@ -197,6 +197,71 @@ namespace Das::Core::TaskScheduler
         return result;
     }
 
+    static std::string RepositoryErrorKindFromResult(DasResult result)
+    {
+        switch (result)
+        {
+        case DAS_E_INVALID_JSON:
+            return "invalidJson";
+        case DAS_E_TYPE_ERROR:
+            return "invalidProperties";
+        case DAS_E_NOT_FOUND:
+            return "notFound";
+        case DAS_E_TASK_WORKING:
+            return "taskWorking";
+        case DAS_E_OBJECT_NOT_INIT:
+            return "notInitialized";
+        default:
+            return "repositoryError";
+        }
+    }
+
+    static bool ParseCreateRepositoryEntryRequest(
+        const yyjson::value& request,
+        Repository::Dto::CreateRepositoryEntryRequestDto& out_request)
+    {
+        auto obj = request.as_object();
+        if (!obj)
+        {
+            return false;
+        }
+
+        auto plugin_guid = (*obj)[std::string_view("pluginGuid")].as_string();
+        auto task_type_guid =
+            (*obj)[std::string_view("taskTypeGuid")].as_string();
+        if (!plugin_guid || !task_type_guid)
+        {
+            return false;
+        }
+
+        out_request.plugin_guid = std::string(*plugin_guid);
+        out_request.task_type_guid = std::string(*task_type_guid);
+
+        if (obj->contains(std::string_view("displayName"))
+            && !(*obj)[std::string_view("displayName")].is_null())
+        {
+            auto display_name =
+                (*obj)[std::string_view("displayName")].as_string();
+            if (!display_name)
+            {
+                return false;
+            }
+            out_request.display_name = std::string(*display_name);
+        }
+
+        if (obj->contains(std::string_view("initialProperties")))
+        {
+            out_request.initial_properties =
+                CloneJsonValue((*obj)[std::string_view("initialProperties")]);
+        }
+        else
+        {
+            out_request.initial_properties = yyjson::value{};
+        }
+
+        return true;
+    }
+
     static int64_t GetAuthoringRevision(const yyjson::value& task_json)
     {
         auto task_obj = task_json.as_object();
@@ -997,7 +1062,7 @@ namespace Das::Core::TaskScheduler
             std::lock_guard<std::mutex> lock(mutex_);
             task_types_ = std::move(temp_types);
             task_instances_ = std::move(temp_instances);
-            task_repository_store_ = std::make_unique<TaskRepositoryStore>(
+            task_repository_store_ = std::make_shared<TaskRepositoryStore>(
                 plugin_manager_.GetSettingsManager(),
                 "0");
             loaded_plugin_paths_ = std::move(temp_paths);
@@ -1313,17 +1378,97 @@ namespace Das::Core::TaskScheduler
 
     yyjson::value SchedulerService::GetTaskRepository()
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (!initialized_ || !task_repository_store_)
+        std::shared_ptr<TaskRepositoryStore> store;
         {
-            return MakeRepositoryResponseError(
-                "notInitialized",
-                "Scheduler profile has not been initialized");
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (!initialized_ || !task_repository_store_)
+            {
+                return MakeRepositoryResponseError(
+                    "notInitialized",
+                    "Scheduler profile has not been initialized");
+            }
+            store = task_repository_store_;
         }
 
         Repository::Dto::RepositoryGetResponseDto response;
-        response.entries = task_repository_store_->ListEntries();
-        return yyjson::object(response);
+        response.entries = store->ListEntries();
+        return CloneJsonValue(yyjson::object(response));
+    }
+
+    yyjson::value SchedulerService::CreateRepositoryEntry(
+        const yyjson::value& request)
+    {
+        Repository::Dto::CreateRepositoryEntryRequestDto create_request;
+        if (!ParseCreateRepositoryEntryRequest(request, create_request))
+        {
+            return MakeRepositoryResponseError(
+                "invalidJson",
+                "Repository create request must include pluginGuid and "
+                "taskTypeGuid strings");
+        }
+
+        DasGuid plugin_guid{};
+        DasGuid task_guid{};
+        try
+        {
+            plugin_guid = Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                create_request.plugin_guid);
+            task_guid = Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                create_request.task_type_guid);
+        }
+        catch (const std::exception&)
+        {
+            return MakeRepositoryResponseError(
+                "invalidGuid",
+                "Repository create request contains an invalid GUID");
+        }
+
+        std::shared_ptr<TaskRepositoryStore> store;
+        TaskTypeRecord                       type_snapshot;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+
+            if (state_.load() == SchedulerState::Running
+                || state_.load() == SchedulerState::Stopping)
+            {
+                return MakeRepositoryResponseError(
+                    "taskWorking",
+                    "Scheduler is running or stopping");
+            }
+
+            if (!initialized_ || !task_repository_store_)
+            {
+                return MakeRepositoryResponseError(
+                    "notInitialized",
+                    "Scheduler profile has not been initialized");
+            }
+
+            auto* type_record = FindTaskType(task_guid);
+            if (!type_record || type_record->plugin_guid != plugin_guid)
+            {
+                return MakeRepositoryResponseError(
+                    "notFound",
+                    "Task type was not found in the initialized registry");
+            }
+
+            type_snapshot = *type_record;
+            store = task_repository_store_;
+        }
+
+        Repository::Dto::RepositoryEntryDto entry;
+        auto create_result = store->CreateEntry(
+            create_request,
+            type_snapshot.name,
+            type_snapshot.descriptors,
+            entry);
+        if (DAS::IsFailed(create_result))
+        {
+            return MakeRepositoryResponseError(
+                RepositoryErrorKindFromResult(create_result),
+                "Failed to create repository entry");
+        }
+
+        return CloneJsonValue(yyjson::object(entry));
     }
 
     // ----------------------------------------------------------------

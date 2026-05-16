@@ -42,7 +42,9 @@ namespace
     {
         static std::atomic<int> counter{0};
         auto name = "scheduler_test_" + std::to_string(counter.fetch_add(1));
-        return std::filesystem::current_path() / name;
+        auto path = std::filesystem::current_path() / name;
+        std::filesystem::remove_all(path);
+        return path;
     }
 
     /// Helper to write scheduler index + task instance files directly.
