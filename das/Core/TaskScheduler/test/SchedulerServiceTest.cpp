@@ -4217,6 +4217,60 @@ TEST_F(
 
 TEST_F(
     SchedulerRuntimeBackedTest,
+    SchedulerRepositoryInvokeCompileBuildsSnapshot)
+{
+    WriteFactoryPluginManifest(
+        manifest_path_,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        true,
+        "Cpp",
+        FactoryExecutionComponentGuidString);
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto created = scheduler_->CreateRepositoryEntry(
+        MakeRepositoryCreateRequest("Repository invoke child", 8));
+    ASSERT_EQ(
+        (*created.as_object())[std::string_view("entryId")]
+            .as_sint()
+            .value_or(-1),
+        0);
+
+    RepositoryInvoke::Dto::RepositoryTaskRefDto ref;
+    ref.entry_id = 0;
+    ref.expected_revision = 0;
+
+    auto result = scheduler_->ResolveRepositoryInvokeSnapshot(ref);
+
+    ASSERT_TRUE(result.ok);
+    ASSERT_TRUE(result.snapshot.has_value());
+    EXPECT_TRUE(result.diagnostics.empty());
+    EXPECT_EQ(result.snapshot->source_entry_id, 0);
+    EXPECT_EQ(result.snapshot->source_revision, 0);
+    EXPECT_EQ(result.snapshot->plugin_guid, FactoryPluginGuidString);
+    EXPECT_EQ(result.snapshot->task_type_guid, FactoryTaskGuidString);
+    EXPECT_EQ(
+        result.snapshot->component_guid,
+        FactoryExecutionComponentGuidString);
+
+    auto execution_input = result.snapshot->execution_input.as_object();
+    ASSERT_TRUE(execution_input.has_value());
+    EXPECT_EQ(
+        (*execution_input)[std::string_view("key1")]
+            .as_string()
+            .value_or(""),
+        std::string_view("compiled"));
+
+    std::lock_guard<std::mutex> lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->compile_count, 1);
+    EXPECT_EQ(shared_state_->last_compile_purpose, "execution");
+    EXPECT_EQ(shared_state_->last_context_entry_id, 0);
+    EXPECT_FALSE(shared_state_->last_context_had_task_id);
+    EXPECT_TRUE(shared_state_->executed_instance_ids.empty());
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
     SchedulerRepositoryCreateReturnsEntryFromDescriptorDefaults)
 {
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
