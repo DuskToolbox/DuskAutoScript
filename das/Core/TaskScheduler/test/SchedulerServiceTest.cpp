@@ -5343,7 +5343,10 @@ namespace
         std::atomic<bool> authoring_compile_called{false};
         std::atomic<bool> repository_get_called{false};
         std::atomic<bool> repository_create_called{false};
+        std::atomic<bool> repository_delete_called{false};
+        std::atomic<bool> repository_rename_called{false};
         int64_t           last_authoring_task_id = -1;
+        int64_t           last_repository_entry_id = -1;
 
         DasResult next_result{DAS_S_OK};
 
@@ -5417,6 +5420,23 @@ namespace
             return WriteAuthoringJson(
                 pp_out_json,
                 R"({"entryId":42,"displayName":"repository entry"})");
+        }
+        DasResult DeleteRepositoryEntry(int64_t entry_id) override
+        {
+            repository_delete_called = true;
+            last_repository_entry_id = entry_id;
+            return next_result;
+        }
+        DasResult RenameRepositoryEntry(
+            int64_t entry_id,
+            IDasReadOnlyString*,
+            IDasReadOnlyString** pp_out_json) override
+        {
+            repository_rename_called = true;
+            last_repository_entry_id = entry_id;
+            return WriteAuthoringJson(
+                pp_out_json,
+                R"({"entryId":42,"displayName":"renamed repository entry"})");
         }
         DasResult AddTask(const DasGuid&, int64_t* p_id) override
         {

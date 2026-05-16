@@ -47,6 +47,11 @@ DAS_INTERFACE IDasSchedulerService : public IDasBase
     DAS_METHOD CreateRepositoryEntry(
         IDasReadOnlyString*  p_request_json,
         IDasReadOnlyString** pp_out_json) = 0;
+    DAS_METHOD DeleteRepositoryEntry(int64_t entry_id) = 0;
+    DAS_METHOD RenameRepositoryEntry(
+        int64_t              entry_id,
+        IDasReadOnlyString*  p_request_json,
+        IDasReadOnlyString** pp_out_json) = 0;
     DAS_METHOD AddTask(const DasGuid& task_guid, int64_t* p_out_task_id) = 0;
     DAS_METHOD DeleteTask(int64_t task_id) = 0;
     DAS_METHOD UpdateTaskProperties(

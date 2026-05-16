@@ -31,6 +31,11 @@ namespace Das::Core::TaskScheduler
         DasResult CreateRepositoryEntry(
             IDasReadOnlyString*  p_request_json,
             IDasReadOnlyString** pp_out_json) override;
+        DasResult DeleteRepositoryEntry(int64_t entry_id) override;
+        DasResult RenameRepositoryEntry(
+            int64_t              entry_id,
+            IDasReadOnlyString*  p_request_json,
+            IDasReadOnlyString** pp_out_json) override;
         DasResult AddTask(const DasGuid& task_guid, int64_t* p_out_task_id)
             override;
         DasResult DeleteTask(int64_t task_id) override;
