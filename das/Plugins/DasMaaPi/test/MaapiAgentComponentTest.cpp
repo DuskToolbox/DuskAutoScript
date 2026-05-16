@@ -8,6 +8,7 @@
 #include "IpcTestConfig.h"
 
 #include <Das.ExportInterface.IDasVariantVector.hpp>
+#include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/IDasBase.h>
@@ -191,7 +192,7 @@ namespace
     }
 
     bool ArrayContainsId(
-        const yyjson::array_ref& array,
+        const yyjson::writer::array_ref& array,
         std::string_view         id)
     {
         return std::any_of(
@@ -207,7 +208,7 @@ namespace
             });
     }
 
-    yyjson::object_ref AgentTaskComponentDefinition()
+    yyjson::value AgentTaskComponentDefinition()
     {
         auto manifest = ParseYyjson(ReadFile(MaapiManifestPath()));
         auto root = manifest.as_object();
@@ -224,7 +225,11 @@ namespace
         auto definition =
             (*entry)[std::string_view("definition")].as_object();
         EXPECT_TRUE(definition.has_value());
-        return *definition;
+        const auto serialized =
+            (*entry)[std::string_view("definition")].write(
+                yyjson::WriteFlag::NoFlag);
+        return ParseYyjson(
+            std::string_view(serialized.data(), serialized.size()));
     }
 
     std::string StartRequestJson()
@@ -381,24 +386,27 @@ namespace
 
     TEST(DasMaaPiAgentTaskComponent, ManifestDefinitionUsesStablePortIds)
     {
-        auto definition = AgentTaskComponentDefinition();
+        auto definition_value = AgentTaskComponentDefinition();
+        auto definition = definition_value.as_object();
+        ASSERT_TRUE(definition.has_value());
 
         EXPECT_EQ(
-            definition[std::string_view("kind")].as_string().value_or(""),
+            (*definition)[std::string_view("kind")].as_string().value_or(""),
             "das.maapi.agentRuntime");
         EXPECT_EQ(
-            definition[std::string_view("componentGuid")].as_string()
+            (*definition)[std::string_view("componentGuid")].as_string()
                 .value_or(""),
             kAgentTaskComponentGuidText);
 
-        auto settings = definition[std::string_view("settings")].as_array();
+        auto settings =
+            (*definition)[std::string_view("settings")].as_array();
         ASSERT_TRUE(settings.has_value());
         EXPECT_TRUE(ArrayContainsId(*settings, "tcpCompatMode"));
         EXPECT_TRUE(ArrayContainsId(*settings, "captureOutput"));
         EXPECT_TRUE(ArrayContainsId(*settings, "stopTimeoutMs"));
         EXPECT_TRUE(ArrayContainsId(*settings, "maxOutputTailBytes"));
 
-        auto inputs = definition[std::string_view("inputs")].as_array();
+        auto inputs = (*definition)[std::string_view("inputs")].as_array();
         ASSERT_TRUE(inputs.has_value());
         EXPECT_TRUE(ArrayContainsId(*inputs, "operation"));
         EXPECT_TRUE(ArrayContainsId(*inputs, "runtimeRef"));
@@ -407,7 +415,7 @@ namespace
         EXPECT_TRUE(ArrayContainsId(*inputs, "piEnv"));
         EXPECT_TRUE(ArrayContainsId(*inputs, "sessionId"));
 
-        auto outputs = definition[std::string_view("outputs")].as_array();
+        auto outputs = (*definition)[std::string_view("outputs")].as_array();
         ASSERT_TRUE(outputs.has_value());
         EXPECT_TRUE(ArrayContainsId(*outputs, "agentSessionId"));
         EXPECT_TRUE(ArrayContainsId(*outputs, "agents"));
@@ -415,7 +423,7 @@ namespace
         EXPECT_TRUE(ArrayContainsId(*outputs, "stdoutTail"));
         EXPECT_TRUE(ArrayContainsId(*outputs, "stderrTail"));
 
-        auto signals = definition[std::string_view("signals")].as_array();
+        auto signals = (*definition)[std::string_view("signals")].as_array();
         ASSERT_TRUE(signals.has_value());
         EXPECT_TRUE(ArrayContainsId(*signals, "succeeded"));
         EXPECT_TRUE(ArrayContainsId(*signals, "failed"));

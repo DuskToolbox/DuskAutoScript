@@ -17,6 +17,14 @@ namespace Das::Plugins::DasMaaPi
         "69F20001-0000-4000-8000-000000000001";
     inline constexpr std::string_view kAuthoringFactoryGuidText =
         "69F20002-0000-4000-8000-000000000001";
+    inline constexpr std::string_view kAgentComponentGuidText =
+        "69F20004-0000-4000-8000-000000000001";
+    inline constexpr std::string_view kAgentComponentFactoryGuidText =
+        "69F20005-0000-4000-8000-000000000001";
+    inline constexpr std::string_view kAgentTaskComponentGuidText =
+        "69F20006-0000-4000-8000-000000000001";
+    inline constexpr std::string_view kAgentTaskComponentFactoryGuidText =
+        "69F20007-0000-4000-8000-000000000001";
 
     struct MaapiExecutionPolicyDto
     {

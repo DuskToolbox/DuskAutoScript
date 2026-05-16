@@ -77,6 +77,7 @@ if(DAS_BUILD_TEST)
         src/AgentRuntimeService.cpp
         src/AuthoringProjector.cpp
         src/MaaRuntime.cpp
+        src/MaapiAgentRuntimeAdapter.cpp
         src/MaapiAgentComponent.cpp
         src/MaapiAgentComponentFactory.cpp
         src/MaapiAgentTaskComponent.cpp
