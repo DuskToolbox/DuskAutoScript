@@ -1,0 +1,50 @@
+{
+  "group": [
+    {
+      "name": "ImportedGroup",
+      "label": "Imported group"
+    }
+  ],
+  "task": [
+    {
+      "name": "ImportedTask",
+      "entry": "ImportedEntry",
+      "option": ["import-only"]
+    }
+  ],
+  "option": {
+    "stage": {
+      "type": "select",
+      "cases": [
+        {
+          "name": "imported-stage"
+        }
+      ]
+    },
+    "import-only": {
+      "type": "switch",
+      "cases": [
+        {
+          "name": "Y"
+        },
+        {
+          "name": "N"
+        }
+      ]
+    }
+  },
+  "preset": [
+    {
+      "name": "ImportedPreset",
+      "task": [
+        {
+          "name": "ImportedTask",
+          "enabled": false,
+          "option": {
+            "import-only": "Y"
+          }
+        }
+      ]
+    }
+  ]
+}

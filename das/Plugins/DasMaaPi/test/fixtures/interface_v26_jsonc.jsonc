@@ -1,0 +1,158 @@
+{
+  // PI files are project-authored JSONC.
+  "interface_version": 2,
+  "languages": {
+    "zh_cn": "languages/zh_cn.json",
+  },
+  "name": "DasFixture",
+  "version": "2.6.0",
+  "future_top_level": {
+    "kept": true
+  },
+  "agent": {
+    "child_exec": "agent.exe",
+    "child_args": ["--serve"]
+  },
+  "import": ["imported_options.jsonc"],
+  "controller": [
+    {
+      "name": "Android",
+      "label": "$controller.android",
+      "type": "Adb",
+      "attach_resource_path": ["resource/attach"],
+      "option": ["controller-mode"],
+      "future_controller": "preserved"
+    }
+  ],
+  "resource": [
+    {
+      "name": "Official",
+      "label": "$resource.official",
+      "path": ["resource/base", "resource/extra"],
+      "controller": ["Android"],
+      "option": ["server"],
+      "hash": "sha256:abc123",
+      "future_resource": 42
+    }
+  ],
+  "group": [
+    {
+      "name": "Daily",
+      "label": "$group.daily",
+      "default_expand": true
+    }
+  ],
+  "task": [
+    {
+      "name": "DailyFarm",
+      "label": "$task.daily",
+      "entry": "StartDaily",
+      "default_check": true,
+      "controller": ["Android"],
+      "resource": ["Official"],
+      "group": ["Daily"],
+      "option": ["stage", "retry", "use-medicine", "notify"],
+      "pipeline_override": {
+        "StartDaily": {
+          "next": "Main"
+        }
+      }
+    }
+  ],
+  "global_option": ["stage"],
+  "option": {
+    "stage": {
+      "type": "select",
+      "resource": ["Official"],
+      "cases": [
+        {
+          "name": "1-1",
+          "option": ["retry"],
+          "pipeline_override": {
+            "Stage": {
+              "expected": "1-1"
+            }
+          }
+        }
+      ]
+    },
+    "retry": {
+      "type": "input",
+      "inputs": [
+        {
+          "name": "times",
+          "default": "3",
+          "pipeline_type": "int",
+          "verify": "^\\d+$"
+        }
+      ],
+      "pipeline_override": {
+        "Retry": {
+          "times": "{times}"
+        }
+      }
+    },
+    "use-medicine": {
+      "type": "checkbox",
+      "cases": [
+        {
+          "name": "small"
+        },
+        {
+          "name": "large"
+        }
+      ],
+      "default_case": ["large"]
+    },
+    "notify": {
+      "type": "switch",
+      "controller": ["Android"],
+      "cases": [
+        {
+          "name": "yes"
+        },
+        {
+          "name": "no"
+        }
+      ],
+      "default_case": "yes"
+    },
+    "controller-mode": {
+      "type": "select",
+      "cases": [
+        {
+          "name": "safe"
+        }
+      ]
+    },
+    "server": {
+      "type": "switch",
+      "cases": [
+        {
+          "name": "Yes"
+        },
+        {
+          "name": "No"
+        }
+      ]
+    }
+  },
+  "preset": [
+    {
+      "name": "DailyPreset",
+      "task": [
+        {
+          "name": "DailyFarm",
+          "enabled": true,
+          "option": {
+            "stage": "1-1",
+            "retry": {
+              "times": "5"
+            },
+            "use-medicine": ["small"]
+          }
+        }
+      ]
+    }
+  ],
+}

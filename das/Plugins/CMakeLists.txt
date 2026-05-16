@@ -42,7 +42,11 @@ if(DAS_BUILD_TEST)
 endif()
 
 if(DAS_BUILD_TEST AND TARGET DasMaaPi)
-    add_executable(DasMaaPiTest DasMaaPi/test/MaapiPluginScaffoldTest.cpp)
+    add_executable(DasMaaPiTest
+        DasMaaPi/src/PiCatalog.cpp
+        DasMaaPi/src/PiParser.cpp
+        DasMaaPi/test/MaapiPluginScaffoldTest.cpp
+        DasMaaPi/test/MaapiPiParserTest.cpp)
     target_link_libraries(DasMaaPiTest PRIVATE
         Das3rdParty
         GTest::gtest_main
@@ -66,6 +70,13 @@ if(DAS_BUILD_TEST AND TARGET DasMaaPi)
         DasMaaPi
         DasAutoCopyDll
         DasAutoCopyPluginMetadataFile)
+
+    add_custom_command(
+        TARGET DasMaaPiTest
+        PRE_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/DasMaaPi/test/fixtures
+            ${CMAKE_BINARY_DIR}/Test/DasMaaPi/test/fixtures)
 
     das_get_test_runtime_environment(das_maapi_test_env)
     gtest_discover_tests(
