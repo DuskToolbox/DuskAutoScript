@@ -8,6 +8,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -33,6 +34,7 @@ namespace
         std::optional<int32_t> exit_code;
         std::string            stdout_text;
         std::string            stderr_text;
+        std::vector<std::string>* call_log = nullptr;
     };
 
     class FakeProcess final : public IAgentProcess
@@ -54,6 +56,10 @@ namespace
 
         bool WaitForExit(std::chrono::milliseconds) override
         {
+            if (state_->call_log)
+            {
+                state_->call_log->emplace_back("WaitForExit");
+            }
             ++state_->wait_calls;
             if (state_->wait_failures_remaining > 0)
             {
@@ -70,6 +76,10 @@ namespace
 
         void Terminate() override
         {
+            if (state_->call_log)
+            {
+                state_->call_log->emplace_back("Terminate");
+            }
             ++state_->terminate_calls;
             state_->terminated = true;
         }
@@ -96,6 +106,7 @@ namespace
             state->stdout_text = next_stdout;
             state->stderr_text = next_stderr;
             state->wait_failures_remaining = next_wait_failures;
+            state->call_log = call_log;
             auto process = std::make_unique<FakeProcess>(state);
             processes.push_back(std::move(state));
             return AgentProcessLaunchResult::Success(std::move(process));
@@ -107,6 +118,7 @@ namespace
         std::string                            next_stdout;
         std::string                            next_stderr;
         int                                    next_wait_failures = 0;
+        std::vector<std::string>*              call_log = nullptr;
     };
 
     AgentRuntimeMaaContext TestContext()
@@ -156,6 +168,15 @@ namespace
         std::string_view                expected)
     {
         return std::find(calls.begin(), calls.end(), expected) != calls.end();
+    }
+
+    std::size_t CallIndex(
+        const std::vector<std::string>& calls,
+        std::string_view                expected)
+    {
+        const auto it = std::find(calls.begin(), calls.end(), expected);
+        EXPECT_NE(it, calls.end()) << expected;
+        return static_cast<std::size_t>(std::distance(calls.begin(), it));
     }
 
     TEST(DasMaaPiMaaHandle, MaaHandlesCleanupInReverseOwnershipOrder)
@@ -477,6 +498,50 @@ namespace
         EXPECT_EQ(stopped.agents[0].state, "stopped");
         EXPECT_TRUE(HasCall(fake.calls, "DisconnectAgentClient:1"));
         EXPECT_TRUE(HasCall(fake.calls, "DestroyAgentClient:1"));
+    }
+
+    TEST(
+        DasMaaPiAgentRuntimeCleanup,
+        ServiceDestructionStopsActiveSessionsInCleanupOrder)
+    {
+        FakeMaaApiBoundary fake;
+        FakeProcessRunner  runner;
+        runner.next_wait_failures = 1;
+        runner.call_log = &fake.calls;
+
+        {
+            AgentRuntimeService service(fake, runner);
+            auto request = StartRequest();
+            request.options.stop_timeout_ms = 1;
+
+            auto started = service.Start(request, TestContext());
+
+            ASSERT_EQ(started.status, "succeeded");
+            ASSERT_TRUE(started.session_id.has_value());
+            ASSERT_EQ(runner.processes.size(), 1u);
+        }
+
+        ASSERT_EQ(runner.processes.size(), 1u);
+        EXPECT_EQ(runner.processes[0]->wait_calls, 2);
+        EXPECT_EQ(runner.processes[0]->terminate_calls, 1);
+
+        const auto disconnect =
+            CallIndex(fake.calls, "DisconnectAgentClient:1");
+        const auto destroy = CallIndex(fake.calls, "DestroyAgentClient:1");
+        const auto first_wait = CallIndex(fake.calls, "WaitForExit");
+        const auto terminate = CallIndex(fake.calls, "Terminate");
+        const auto second_wait =
+            static_cast<std::size_t>(std::find(
+                                         fake.calls.begin() + first_wait + 1,
+                                         fake.calls.end(),
+                                         "WaitForExit")
+                                     - fake.calls.begin());
+
+        ASSERT_LT(second_wait, fake.calls.size());
+        EXPECT_LT(disconnect, destroy);
+        EXPECT_LT(destroy, first_wait);
+        EXPECT_LT(first_wait, terminate);
+        EXPECT_LT(terminate, second_wait);
     }
 
     TEST(DasMaaPiAgentRuntimeProcess, RealRunnerUsesBoostProcessV2AndPerChildEnvironment)

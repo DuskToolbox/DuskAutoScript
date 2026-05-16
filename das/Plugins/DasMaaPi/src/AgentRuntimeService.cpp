@@ -155,6 +155,8 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
         {
         }
 
+        ~Impl() { Shutdown(); }
+
         AgentRuntimeResultDto Start(
             const AgentRuntimeRequestDto& request,
             const AgentRuntimeMaaContext& context)
@@ -587,6 +589,23 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
                     "Agent runtime session was not found",
                     std::nullopt,
                     std::string(session_id))});
+        }
+
+        void Shutdown()
+        {
+            std::lock_guard lock(mutex_);
+            for (auto& [_, session] : sessions_)
+            {
+                bool timed_out = false;
+                for (auto& agent : session.agents)
+                {
+                    timed_out =
+                        CleanupAgent(agent, session.options, "stopped", false)
+                        || timed_out;
+                }
+                session.timed_out = session.timed_out || timed_out;
+                session.stopped = true;
+            }
         }
 
         IMaaApiBoundary&     boundary_;
