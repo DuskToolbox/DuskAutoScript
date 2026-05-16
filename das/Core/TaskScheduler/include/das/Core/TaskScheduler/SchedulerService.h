@@ -139,6 +139,10 @@ namespace Das::Core::TaskScheduler
             int64_t              entry_id,
             const yyjson::value& request);
 
+        yyjson::value ApplyRepositoryEntryAuthoringChange(
+            int64_t              entry_id,
+            const yyjson::value& change);
+
         yyjson::value GetTaskRepository();
         yyjson::value CreateRepositoryEntry(const yyjson::value& request);
         DasResult     DeleteRepositoryEntry(int64_t entry_id);

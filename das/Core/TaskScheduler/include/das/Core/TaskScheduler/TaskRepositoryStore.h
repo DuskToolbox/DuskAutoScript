@@ -35,6 +35,12 @@ namespace Das::Core::TaskScheduler
             const Repository::Dto::RenameRepositoryEntryRequestDto& request,
             Repository::Dto::RepositoryEntryDto& out_entry);
 
+        DasResult UpdateAuthoring(
+            int64_t              entry_id,
+            const yyjson::value& accepted_properties,
+            const yyjson::value& authoring,
+            yyjson::value&       out_entry_json);
+
     private:
         Das::Core::SettingsManager::SettingsManager& settings_;
         std::string                                  profile_id_;

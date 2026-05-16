@@ -265,4 +265,36 @@ namespace Das::Core::TaskScheduler
         out_entry = std::move(entry);
         return DAS_S_OK;
     }
+
+    DasResult TaskRepositoryStore::UpdateAuthoring(
+        int64_t              entry_id,
+        const yyjson::value& accepted_properties,
+        const yyjson::value& authoring,
+        yyjson::value&       out_entry_json)
+    {
+        auto entry_json =
+            settings_.GetTaskRepositoryEntryJson(profile_id_, entry_id);
+        if (!entry_json.is_object())
+        {
+            return DAS_E_NOT_FOUND;
+        }
+
+        auto entry_obj = entry_json.as_object();
+        (*entry_obj)[std::string_view("acceptedProperties")] =
+            CloneJsonValue(accepted_properties);
+        (*entry_obj)[std::string_view("authoring")] =
+            CloneJsonValue(authoring);
+
+        auto persist_result = settings_.UpdateTaskRepositoryEntryJson(
+            profile_id_,
+            entry_id,
+            entry_json);
+        if (DAS::IsFailed(persist_result))
+        {
+            return persist_result;
+        }
+
+        out_entry_json = CloneJsonValue(entry_json);
+        return DAS_S_OK;
+    }
 } // namespace Das::Core::TaskScheduler

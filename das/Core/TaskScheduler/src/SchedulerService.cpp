@@ -1817,6 +1817,228 @@ namespace Das::Core::TaskScheduler
         return result;
     }
 
+    yyjson::value SchedulerService::ApplyRepositoryEntryAuthoringChange(
+        int64_t              entry_id,
+        const yyjson::value& change)
+    {
+        TaskAuthoringCapability             capability;
+        Repository::Dto::RepositoryEntryDto entry;
+        std::shared_ptr<TaskRepositoryStore> store;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (state_.load() == SchedulerState::Running
+                || state_.load() == SchedulerState::Stopping)
+            {
+                return MakeRepositoryResponseError(
+                    "taskWorking",
+                    "Scheduler is running or stopping");
+            }
+            if (!initialized_ || !task_repository_store_)
+            {
+                return MakeRepositoryResponseError(
+                    "notInitialized",
+                    "Scheduler profile has not been initialized");
+            }
+            store = task_repository_store_;
+        }
+
+        auto& settings = plugin_manager_.GetSettingsManager();
+        auto  entry_json = settings.GetTaskRepositoryEntryJson("0", entry_id);
+        if (entry_json.is_null() || !entry_json.is_object())
+        {
+            return MakeRepositoryResponseError(
+                "notFound",
+                "Repository entry was not found");
+        }
+
+        try
+        {
+            entry =
+                yyjson::cast<Repository::Dto::RepositoryEntryDto>(entry_json);
+        }
+        catch (const yyjson::bad_cast&)
+        {
+            return MakeRepositoryResponseError(
+                "invalidJson",
+                "Repository entry could not be parsed");
+        }
+
+        DasGuid task_guid{};
+        try
+        {
+            task_guid = Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                entry.task_type_guid);
+        }
+        catch (const std::exception&)
+        {
+            return MakeRepositoryResponseError(
+                "invalidGuid",
+                "Repository entry contains an invalid task GUID");
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto availability = DeriveRepositoryAvailabilityLocked(entry);
+            if (availability.state != "available")
+            {
+                return MakeRepositoryResponseError(
+                    availability.reason.empty() ? "unavailable"
+                                                : availability.reason,
+                    availability.message.empty()
+                        ? "Repository entry is unavailable"
+                        : availability.message);
+            }
+
+            auto* authoring = capability_registry_.FindAuthoring(task_guid);
+            if (!authoring)
+            {
+                return MakeRepositoryResponseError(
+                    "authoringCapabilityMissing",
+                    "Repository entry task type does not declare authoring "
+                    "capability");
+            }
+            capability = *authoring;
+        }
+
+        const int64_t current_revision = GetAuthoringRevision(entry_json);
+        auto          base_revision = GetBaseRevision(change);
+        if (!base_revision || *base_revision != current_revision)
+        {
+            yyjson::value result = MakeRepositoryResponseError(
+                "revisionConflict",
+                "Repository authoring change baseRevision is stale");
+            (*result.as_object())[std::string_view("currentRevision")] =
+                current_revision;
+            return result;
+        }
+
+        DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
+        auto session_result = CreateAuthoringSessionWithContext(
+            plugin_manager_,
+            capability,
+            MakeRepositoryAuthoringContextJson(
+                entry_id,
+                entry.accepted_properties,
+                entry_json),
+            session);
+        if (DAS::IsFailed(session_result) || !session)
+        {
+            return MakeRepositoryResponseError(
+                "sessionCreateFailed",
+                "Failed to create repository authoring session");
+        }
+
+        auto change_json = WrapJsonValue(CloneJsonValue(change));
+        DasPtr<Das::ExportInterface::IDasJson> apply_result_json;
+        auto                                   apply_result =
+            session->ApplyChange(change_json.Get(), apply_result_json.Put());
+        if (DAS::IsFailed(apply_result) || !apply_result_json)
+        {
+            return MakeRepositoryResponseError(
+                "providerFailed",
+                "Repository authoring provider rejected change");
+        }
+
+        auto accepted = ReadJsonInterface(apply_result_json.Get());
+        auto accepted_obj = accepted.as_object();
+        if (!accepted_obj
+            || !accepted_obj->contains(std::string_view("acceptedProperties")))
+        {
+            return MakeRepositoryResponseError(
+                "providerFailed",
+                "Repository authoring provider did not return "
+                "acceptedProperties");
+        }
+
+        const auto next_revision = current_revision + 1;
+        yyjson::value authoring(Das::Utils::MakeYyjsonObject());
+        auto          authoring_obj = authoring.as_object();
+        (*authoring_obj)[std::string_view("revision")] = next_revision;
+        (*authoring_obj)[std::string_view("kind")] =
+            GetStringField(change, "kind", "unknown");
+        (*authoring_obj)[std::string_view("sourceFingerprint")] =
+            GetStringField(accepted, "sourceFingerprint", "");
+        if (accepted_obj->contains(std::string_view("migration")))
+        {
+            (*authoring_obj)[std::string_view("migration")] =
+                CloneJsonValue((*accepted_obj)[std::string_view("migration")]);
+        }
+        else
+        {
+            (*authoring_obj)[std::string_view("migration")] =
+                Das::Utils::MakeYyjsonObject();
+        }
+
+        yyjson::value updated_entry_json;
+        auto persist_result = store->UpdateAuthoring(
+            entry_id,
+            (*accepted_obj)[std::string_view("acceptedProperties")],
+            authoring,
+            updated_entry_json);
+        if (DAS::IsFailed(persist_result))
+        {
+            return MakeRepositoryResponseError(
+                "persistenceFailed",
+                "Failed to persist accepted repository authoring change");
+        }
+
+        auto updated_obj = updated_entry_json.as_object();
+        yyjson::value document;
+        if (accepted_obj->contains(std::string_view("document"))
+            && (*accepted_obj)[std::string_view("document")].is_object())
+        {
+            document =
+                CloneJsonValue((*accepted_obj)[std::string_view("document")]);
+        }
+        else
+        {
+            DasPtr<Das::PluginInterface::IDasTaskAuthoringSession>
+                 refreshed_session;
+            auto refreshed_session_result = CreateAuthoringSessionWithContext(
+                plugin_manager_,
+                capability,
+                MakeRepositoryAuthoringContextJson(
+                    entry_id,
+                    (*updated_obj)[std::string_view("acceptedProperties")],
+                    updated_entry_json),
+                refreshed_session);
+            if (DAS::IsFailed(refreshed_session_result) || !refreshed_session)
+            {
+                return MakeRepositoryResponseError(
+                    "sessionCreateFailed",
+                    "Failed to refresh repository authoring session");
+            }
+
+            auto refreshed_request = WrapJsonValue(CloneJsonValue(change));
+            DasPtr<Das::ExportInterface::IDasJson> document_json;
+            auto document_result = refreshed_session->GetDocument(
+                refreshed_request.Get(),
+                document_json.Put());
+            if (DAS::IsFailed(document_result) || !document_json)
+            {
+                return MakeRepositoryResponseError(
+                    "providerFailed",
+                    "Repository authoring provider failed to refresh "
+                    "document");
+            }
+            document = ReadJsonInterface(document_json.Get());
+        }
+        MergeTaskComponentCatalog(plugin_manager_, document);
+
+        yyjson::value result(Das::Utils::MakeYyjsonObject());
+        auto          result_obj = result.as_object();
+        (*result_obj)[std::string_view("ok")] = true;
+        (*result_obj)[std::string_view("entryId")] = entry_id;
+        (*result_obj)[std::string_view("revision")] = next_revision;
+        (*result_obj)[std::string_view("acceptedProperties")] =
+            CloneJsonValue((*updated_obj)[std::string_view(
+                "acceptedProperties")]);
+        (*result_obj)[std::string_view("authoring")] =
+            CloneJsonValue((*updated_obj)[std::string_view("authoring")]);
+        (*result_obj)[std::string_view("document")] = std::move(document);
+        return result;
+    }
+
     // ----------------------------------------------------------------
     // AddTask
     // ----------------------------------------------------------------
