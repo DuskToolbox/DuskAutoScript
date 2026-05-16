@@ -1,5 +1,23 @@
-file(GLOB DAS_MAAPI_PLUGIN_SOURCES CONFIGURE_DEPENDS
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/*)
+set(DAS_MAAPI_PLUGIN_SOURCES
+    src/AgentProcessRunner.cpp
+    src/AgentRuntimeRequest.cpp
+    src/AgentRuntimeService.cpp
+    src/AuthoringProjector.cpp
+    src/DllMain.cpp
+    src/MaaRuntime.cpp
+    src/MaapiAgentRuntimeAdapter.cpp
+    src/MaapiAgentComponent.cpp
+    src/MaapiAgentComponentFactory.cpp
+    src/MaapiAgentTaskComponent.cpp
+    src/MaapiAgentTaskComponentFactory.cpp
+    src/MaapiAuthoringSession.cpp
+    src/MaapiAuthoringSessionFactory.cpp
+    src/MaapiTask.cpp
+    src/PiCatalog.cpp
+    src/PiCompiler.cpp
+    src/PiParser.cpp
+    src/PluginImpl.cpp
+    src/PluginUtils.cpp)
 
 add_library(DasMaaPi SHARED ${DAS_MAAPI_PLUGIN_SOURCES})
 target_include_directories(DasMaaPi PUBLIC
