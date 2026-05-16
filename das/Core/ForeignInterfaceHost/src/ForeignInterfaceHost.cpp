@@ -479,6 +479,59 @@ namespace
         return result;
     }
 
+    std::vector<std::string> ValidateTaskExecutionComponents(
+        const std::unordered_map<DasGuid, TaskDescriptor>& task_descriptors,
+        const std::optional<TaskComponentsManifestDesc>& task_components)
+    {
+        std::vector<std::string> reasons;
+        std::unordered_set<DasGuid> declared_components;
+
+        if (task_components.has_value() && task_components->components)
+        {
+            for (const auto& [component_key, entry] :
+                 *task_components->components)
+            {
+                (void)entry;
+                auto component_guid = TryMakeGuid(component_key);
+                if (component_guid)
+                {
+                    declared_components.insert(*component_guid);
+                }
+            }
+        }
+
+        for (const auto& [task_guid, descriptor] : task_descriptors)
+        {
+            if (!descriptor.execution_component.has_value())
+            {
+                continue;
+            }
+
+            const auto path = DAS_FMT_NS::format(
+                "tasks.{}.executionComponent.componentGuid",
+                task_guid);
+            if (!task_components.has_value() || !task_components->components)
+            {
+                reasons.emplace_back(DAS_FMT_NS::format(
+                    "{}: component GUID must be declared in "
+                    "taskComponents.components",
+                    path));
+                continue;
+            }
+
+            if (!declared_components.contains(
+                    descriptor.execution_component->component_guid))
+            {
+                reasons.emplace_back(DAS_FMT_NS::format(
+                    "{}: component GUID must be declared in "
+                    "taskComponents.components",
+                    path));
+            }
+        }
+
+        return reasons;
+    }
+
     void ParseTaskComponentsFromJson(
         const yyjson::writer::const_object_ref& obj,
         TaskComponentsManifestDesc&             output)
@@ -1149,6 +1202,17 @@ void ParsePluginPackageDescFromJson(
                 output.task_descriptors.emplace(task_guid, std::move(desc));
             }
         }
+    }
+
+    auto task_execution_component_validation =
+        ValidateTaskExecutionComponents(
+            output.task_descriptors,
+            output.task_components);
+    if (!task_execution_component_validation.empty())
+    {
+        throw std::runtime_error(DAS_FMT_NS::format(
+            "Invalid task descriptor manifest: {}",
+            JoinReasons(task_execution_component_validation)));
     }
 }
 
