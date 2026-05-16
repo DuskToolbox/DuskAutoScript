@@ -3356,6 +3356,94 @@ TEST_F(
 
 TEST_F(
     SchedulerRuntimeBackedTest,
+    SchedulerRepositoryListExcludesEntriesFromSchedulerLifecycle)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto make_request = [](std::string_view display_name, int64_t retry_count)
+    {
+        yyjson::value request(Das::Utils::MakeYyjsonObject());
+        (*request.as_object())[std::string_view("pluginGuid")] =
+            FactoryPluginGuidString;
+        (*request.as_object())[std::string_view("taskTypeGuid")] =
+            FactoryTaskGuidString;
+        (*request.as_object())[std::string_view("displayName")] =
+            std::string(display_name);
+
+        yyjson::value initial(Das::Utils::MakeYyjsonObject());
+        (*initial.as_object())[std::string_view("retryCount")] = retry_count;
+        (*request.as_object())[std::string_view("initialProperties")] =
+            std::move(initial);
+        return request;
+    };
+
+    auto first_request = make_request("First repository entry", 1);
+    auto first = scheduler_->CreateRepositoryEntry(first_request);
+    auto first_obj = first.as_object();
+    ASSERT_TRUE(first_obj.has_value());
+    EXPECT_EQ(
+        (*first_obj)[std::string_view("entryId")].as_sint().value_or(-1),
+        0);
+
+    auto second_request = make_request("Second repository entry", 2);
+    auto second = scheduler_->CreateRepositoryEntry(second_request);
+    auto second_obj = second.as_object();
+    ASSERT_TRUE(second_obj.has_value());
+    EXPECT_EQ(
+        (*second_obj)[std::string_view("entryId")].as_sint().value_or(-1),
+        1);
+
+    auto repository = scheduler_->GetTaskRepository();
+    auto repository_obj = repository.as_object();
+    ASSERT_TRUE(repository_obj.has_value());
+    auto entries =
+        (*repository_obj)[std::string_view("entries")].as_array();
+    ASSERT_TRUE(entries.has_value());
+    ASSERT_EQ(entries->size(), 2u);
+    EXPECT_EQ(
+        (*(*entries)[0].as_object())[std::string_view("entryId")]
+            .as_sint()
+            .value_or(-1),
+        0);
+    EXPECT_EQ(
+        (*(*entries)[1].as_object())[std::string_view("entryId")]
+            .as_sint()
+            .value_or(-1),
+        1);
+
+    auto scheduler_state = scheduler_->Get();
+    auto scheduler_obj = scheduler_state.as_object();
+    ASSERT_TRUE(scheduler_obj.has_value());
+    auto tasks = (*scheduler_obj)[std::string_view("tasks")].as_array();
+    ASSERT_TRUE(tasks.has_value());
+    EXPECT_EQ(tasks->size(), 0u);
+
+    auto scheduler_index = settings_manager_->GetSchedulerIndexJson("0");
+    auto task_order =
+        (*scheduler_index.as_object())[std::string_view("taskOrder")]
+            .as_array();
+    ASSERT_TRUE(task_order.has_value());
+    EXPECT_EQ(task_order->size(), 0u);
+
+    EXPECT_EQ(scheduler_->DeleteTask(0), DAS_E_NOT_FOUND);
+    auto still_persisted =
+        settings_manager_->GetTaskRepositoryEntryJson("0", 0);
+    auto still_persisted_obj = still_persisted.as_object();
+    ASSERT_TRUE(still_persisted_obj.has_value());
+    EXPECT_EQ(
+        (*still_persisted_obj)[std::string_view("entryId")]
+            .as_sint()
+            .value_or(-1),
+        0);
+
+    EXPECT_EQ(scheduler_->Enable(), DAS_E_OBJECT_NOT_INIT);
+    std::lock_guard<std::mutex> lock(shared_state_->mutex);
+    EXPECT_TRUE(shared_state_->executed_instance_ids.empty());
+    EXPECT_EQ(shared_state_->compile_count, 0);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
     SchedulerExecutionAuthoringCompileFailureSkipsDo)
 {
     yyjson::value task0(Das::Utils::MakeYyjsonObject());
