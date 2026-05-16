@@ -148,6 +148,36 @@
           "config": {},
           "diagnostics": []
         }
+      },
+      "68F10007-0000-4000-8000-000000000007": {
+        "factoryGuid": "2C6DFCFA-F8B6-4272-8F28-1D31738BD0D4",
+        "definition": {
+          "schemaVersion": 1,
+          "kind": "das.flow.invokeRepository",
+          "componentGuid": "68F10007-0000-4000-8000-000000000007",
+          "inputs": [
+            {
+              "id": "compiledSnapshot",
+              "type": "object"
+            },
+            {
+              "id": "runtimeInputs",
+              "type": "object"
+            }
+          ],
+          "outputs": [
+            {
+              "id": "result",
+              "type": "object"
+            }
+          ],
+          "config": {
+            "repositoryRef": {
+              "type": "object"
+            }
+          },
+          "diagnostics": []
+        }
       }
     }
   }

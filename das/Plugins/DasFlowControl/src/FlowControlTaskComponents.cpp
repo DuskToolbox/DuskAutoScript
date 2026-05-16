@@ -21,7 +21,7 @@ namespace
         std::string_view kind;
     };
 
-    constexpr std::array<ComponentSpec, 6> kComponents{
+    constexpr std::array<ComponentSpec, 7> kComponents{
         ComponentSpec{
             DasGuid{
                 0x68f10001,
@@ -70,6 +70,14 @@ namespace
                 {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06}},
             "68F10006-0000-4000-8000-000000000006",
             "das.flow.goto"},
+        ComponentSpec{
+            DasGuid{
+                0x68f10007,
+                0x0000,
+                0x4000,
+                {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07}},
+            "68F10007-0000-4000-8000-000000000007",
+            "das.flow.invokeRepository"},
     };
 
     std::optional<ComponentSpec> FindSpec(const DasGuid& component_guid)
