@@ -2,6 +2,8 @@
 
 #include "PluginImpl.h"
 
+#include "MaapiAgentComponentFactory.h"
+#include "MaapiAgentTaskComponentFactory.h"
 #include "MaapiAuthoringSessionFactory.h"
 #include "MaapiTask.h"
 
@@ -22,7 +24,9 @@ namespace Plugins::DasMaaPi
 
         static constexpr std::array features{
             PluginInterface::DAS_PLUGIN_FEATURE_TASK,
-            PluginInterface::DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY};
+            PluginInterface::DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY,
+            PluginInterface::DAS_PLUGIN_FEATURE_COMPONENT_FACTORY,
+            PluginInterface::DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY};
         if (index >= features.size())
         {
             return DAS_E_OUT_OF_RANGE;
@@ -58,6 +62,24 @@ namespace Plugins::DasMaaPi
                 factory->AddRef();
                 *pp_out_interface = static_cast<
                     PluginInterface::IDasTaskAuthoringSessionFactory*>(factory);
+                return DAS_S_OK;
+            }
+            if (index == 2)
+            {
+                auto* factory = new MaapiAgentComponentFactory();
+                factory->AddRef();
+                *pp_out_interface =
+                    static_cast<PluginInterface::IDasComponentFactory*>(
+                        factory);
+                return DAS_S_OK;
+            }
+            if (index == 3)
+            {
+                auto* factory = new MaapiAgentTaskComponentFactory();
+                factory->AddRef();
+                *pp_out_interface =
+                    static_cast<PluginInterface::IDasTaskComponentFactory*>(
+                        factory);
                 return DAS_S_OK;
             }
         }
