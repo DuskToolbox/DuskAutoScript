@@ -22,43 +22,8 @@ namespace
     using namespace Das::Plugins::DasMaaPi::Test;
     using namespace std::chrono_literals;
 
-    class FakeProcess final : public IAgentProcess
+    struct FakeProcessState
     {
-    public:
-        explicit FakeProcess(uint32_t process_id) : pid(process_id) {}
-
-        AgentProcessSnapshot Snapshot() const override
-        {
-            return AgentProcessSnapshot{
-                .running = running,
-                .pid = pid,
-                .exit_code = exit_code,
-                .stdout_tail = stdout_text,
-                .stderr_tail = stderr_text};
-        }
-
-        bool WaitForExit(std::chrono::milliseconds) override
-        {
-            ++wait_calls;
-            if (wait_failures_remaining > 0)
-            {
-                --wait_failures_remaining;
-                return false;
-            }
-            running = false;
-            if (!exit_code)
-            {
-                exit_code = 0;
-            }
-            return true;
-        }
-
-        void Terminate() override
-        {
-            ++terminate_calls;
-            terminated = true;
-        }
-
         uint32_t               pid = 0;
         bool                   running = true;
         bool                   terminated = false;
@@ -68,6 +33,49 @@ namespace
         std::optional<int32_t> exit_code;
         std::string            stdout_text;
         std::string            stderr_text;
+    };
+
+    class FakeProcess final : public IAgentProcess
+    {
+    public:
+        explicit FakeProcess(std::shared_ptr<FakeProcessState> state)
+            : state_(std::move(state))
+        {}
+
+        AgentProcessSnapshot Snapshot() const override
+        {
+            return AgentProcessSnapshot{
+                .running = state_->running,
+                .pid = state_->pid,
+                .exit_code = state_->exit_code,
+                .stdout_tail = state_->stdout_text,
+                .stderr_tail = state_->stderr_text};
+        }
+
+        bool WaitForExit(std::chrono::milliseconds) override
+        {
+            ++state_->wait_calls;
+            if (state_->wait_failures_remaining > 0)
+            {
+                --state_->wait_failures_remaining;
+                return false;
+            }
+            state_->running = false;
+            if (!state_->exit_code)
+            {
+                state_->exit_code = 0;
+            }
+            return true;
+        }
+
+        void Terminate() override
+        {
+            ++state_->terminate_calls;
+            state_->terminated = true;
+        }
+
+    private:
+        std::shared_ptr<FakeProcessState> state_;
     };
 
     class FakeProcessRunner final : public IAgentProcessRunner
@@ -83,18 +91,18 @@ namespace
                 return AgentProcessLaunchResult::Failure("spawn failed");
             }
 
-            auto process = std::make_unique<FakeProcess>(
-                static_cast<uint32_t>(5000 + index));
-            process->stdout_text = next_stdout;
-            process->stderr_text = next_stderr;
-            process->wait_failures_remaining = next_wait_failures;
-            auto* raw = process.get();
-            processes.push_back(raw);
+            auto state = std::make_shared<FakeProcessState>();
+            state->pid = static_cast<uint32_t>(5000 + index);
+            state->stdout_text = next_stdout;
+            state->stderr_text = next_stderr;
+            state->wait_failures_remaining = next_wait_failures;
+            auto process = std::make_unique<FakeProcess>(state);
+            processes.push_back(std::move(state));
             return AgentProcessLaunchResult::Success(std::move(process));
         }
 
         std::vector<AgentProcessLaunchRequest> launches;
-        std::vector<FakeProcess*>              processes;
+        std::vector<std::shared_ptr<FakeProcessState>> processes;
         std::optional<std::size_t>             fail_launch_index;
         std::string                            next_stdout;
         std::string                            next_stderr;
@@ -469,5 +477,33 @@ namespace
         EXPECT_EQ(stopped.agents[0].state, "stopped");
         EXPECT_TRUE(HasCall(fake.calls, "DisconnectAgentClient:1"));
         EXPECT_TRUE(HasCall(fake.calls, "DestroyAgentClient:1"));
+    }
+
+    TEST(DasMaaPiAgentRuntimeProcess, RealRunnerUsesBoostProcessV2AndPerChildEnvironment)
+    {
+        const auto source_path =
+            std::filesystem::path(__FILE__).parent_path().parent_path()
+            / "src" / "AgentProcessRunner.cpp";
+        std::ifstream input(source_path);
+        ASSERT_TRUE(input.is_open()) << source_path.string();
+
+        std::ostringstream buffer;
+        buffer << input.rdbuf();
+        const auto source = buffer.str();
+
+        EXPECT_NE(source.find("boost::process::v2::process"), std::string::npos);
+        EXPECT_NE(
+            source.find("boost::process::v2::process_start_dir"),
+            std::string::npos);
+        EXPECT_NE(
+            source.find("boost::process::v2::process_stdio"),
+            std::string::npos);
+        EXPECT_NE(
+            source.find("boost::process::v2::process_environment"),
+            std::string::npos);
+        EXPECT_NE(source.find("StartsWithPi(item.key)"), std::string::npos);
+        EXPECT_NE(source.find("AppendBounded"), std::string::npos);
+        EXPECT_EQ(source.find("environment::set("), std::string::npos);
+        EXPECT_EQ(source.find("environment::unset("), std::string::npos);
     }
 } // namespace

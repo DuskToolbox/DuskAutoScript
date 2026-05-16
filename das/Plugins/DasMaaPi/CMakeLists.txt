@@ -12,6 +12,10 @@ target_link_libraries(DasMaaPi PRIVATE
     DasCore
     DasBundledMaaFramework)
 
+if(WIN32)
+    target_link_libraries(DasMaaPi PRIVATE bcrypt)
+endif()
+
 if(TARGET DasBundledMaaFrameworkDll)
     get_target_property(_das_maapi_framework_implib DasBundledMaaFrameworkDll IMPORTED_IMPLIB)
     get_filename_component(_das_maapi_framework_lib_dir "${_das_maapi_framework_implib}" DIRECTORY)
