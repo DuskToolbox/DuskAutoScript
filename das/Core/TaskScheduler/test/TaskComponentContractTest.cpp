@@ -16,8 +16,10 @@
 #include <atomic>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <random>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 
@@ -79,6 +81,8 @@ namespace
         "68F19999-0000-4000-8000-000000000001";
     constexpr std::string_view kMissingChildComponentGuid =
         "68F19999-0000-4000-8000-000000000099";
+    constexpr std::string_view kMaapiRunTaskComponentGuid =
+        "69F20008-0000-4000-8000-000000000001";
 
     std::filesystem::path UniqueSettingsDir()
     {
@@ -134,6 +138,25 @@ namespace
         return found != candidates.end()
                    ? *found
                    : std::filesystem::path{"DasFlowControl.json"};
+    }
+
+    std::filesystem::path SourceRoot()
+    {
+        auto path = std::filesystem::path(__FILE__);
+        for (int i = 0; i < 5; ++i)
+        {
+            path = path.parent_path();
+        }
+        return path;
+    }
+
+    std::string ReadFileText(const std::filesystem::path& path)
+    {
+        std::ifstream input(path);
+        EXPECT_TRUE(input.is_open()) << path.string();
+        std::ostringstream buffer;
+        buffer << input.rdbuf();
+        return buffer.str();
     }
 
     yyjson::value ToJson(Das::ExportInterface::IDasJson* json)
@@ -687,6 +710,52 @@ TEST_F(TaskComponentContractTest, DasFlowControlManifestDefinitionsComeFromManag
         EXPECT_TRUE((*obj)[std::string_view("diagnostics")].is_array())
             << expected.name;
     }
+}
+
+TEST_F(
+    TaskComponentContractTest,
+    RepositoryInvokeFinalCatalogHidesMaapiAgentRuntime)
+{
+    auto definitions = plugin_manager_->GetTaskComponentFactoryManager()
+                           .EnumerateDefinitions();
+    const auto repository_invoke_guid =
+        GuidFromText(kRepositoryInvokeComponentGuid);
+    auto repository_invoke = std::ranges::find_if(
+        definitions,
+        [&repository_invoke_guid](const auto& definition)
+        { return definition.component_guid == repository_invoke_guid; });
+    ASSERT_NE(repository_invoke, definitions.end());
+    auto repository_definition = repository_invoke->definition.as_object();
+    ASSERT_TRUE(repository_definition.has_value());
+    EXPECT_EQ(
+        StringField(*repository_definition, "kind"),
+        std::string_view("das.flow.invokeRepository"));
+
+    const auto maapi_manifest_path =
+        SourceRoot() / "das" / "Plugins" / "DasMaaPi" / "DasMaaPi.json";
+    const auto maapi_manifest_text = ReadFileText(maapi_manifest_path);
+    EXPECT_EQ(
+        maapi_manifest_text.find("das.maapi.agentRuntime"),
+        std::string::npos);
+
+    auto maapi_manifest = ParseJson(maapi_manifest_text);
+    auto maapi_obj = maapi_manifest.as_object();
+    ASSERT_TRUE(maapi_obj.has_value());
+    auto task_components =
+        (*maapi_obj)[std::string_view("taskComponents")].as_object();
+    ASSERT_TRUE(task_components.has_value());
+    auto components =
+        (*task_components)[std::string_view("components")].as_object();
+    ASSERT_TRUE(components.has_value());
+    auto run_entry =
+        (*components)[kMaapiRunTaskComponentGuid].as_object();
+    ASSERT_TRUE(run_entry.has_value());
+    auto definition =
+        (*run_entry)[std::string_view("definition")].as_object();
+    ASSERT_TRUE(definition.has_value());
+    EXPECT_EQ(
+        StringField(*definition, "kind"),
+        std::string_view("das.maapi.run"));
 }
 
 TEST_F(TaskComponentContractTest, DasFlowControlFeatureFactoryCreatesManifestComponents)
