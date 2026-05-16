@@ -1474,6 +1474,14 @@ constexpr char FactoryAuthoringFactoryGuidString[] =
     "FECAC0D5-E038-4FDB-A6E9-EFCE10BCAE5A";
 constexpr char FactoryTaskComponentFactoryGuidString[] =
     "2B9CE776-E95F-47F1-BD31-180B9238A94C";
+constexpr char MissingPluginGuidString[] =
+    "99999999-0000-4000-8000-000000000001";
+constexpr char BannedPluginGuidString[] =
+    "99999999-0000-4000-8000-000000000002";
+constexpr char LoadFailedPluginGuidString[] =
+    "99999999-0000-4000-8000-000000000003";
+constexpr char MissingTaskTypeGuidString[] =
+    "99999999-0000-4000-8000-000000000004";
 
 struct FactoryTaskSharedState
 {
@@ -2371,17 +2379,24 @@ private:
     DasPtr<Das::PluginInterface::IDasPluginPackage> package_;
 };
 
-void WriteFactoryPluginManifest(const std::filesystem::path& manifest_path)
+void WriteFactoryPluginManifest(
+    const std::filesystem::path& manifest_path,
+    std::string_view             plugin_guid = FactoryPluginGuidString,
+    std::string_view             task_guid = FactoryTaskGuidString,
+    bool                         include_authoring = true,
+    std::string_view             language = "Cpp")
 {
     yyjson::value manifest(Das::Utils::MakeYyjsonObject());
     (*manifest.as_object())[std::string_view("name")] = "FactoryPlugin";
     (*manifest.as_object())[std::string_view("author")] = "Tests";
     (*manifest.as_object())[std::string_view("version")] = "1.0";
-    (*manifest.as_object())[std::string_view("guid")] = FactoryPluginGuidString;
+    (*manifest.as_object())[std::string_view("guid")] =
+        std::string(plugin_guid);
     (*manifest.as_object())[std::string_view("description")] =
         "Factory-backed scheduler test plugin";
     (*manifest.as_object())[std::string_view("supportedSystem")] = "Windows";
-    (*manifest.as_object())[std::string_view("language")] = "Cpp";
+    (*manifest.as_object())[std::string_view("language")] =
+        std::string(language);
     (*manifest.as_object())[std::string_view("pluginFilenameExtension")] =
         "dll";
     (*manifest.as_object())[std::string_view("settings")] =
@@ -2440,7 +2455,7 @@ void WriteFactoryPluginManifest(const std::filesystem::path& manifest_path)
     {
         yyjson::value task_entry(Das::Utils::MakeYyjsonObject());
         (*task_entry.as_object())[std::string_view("pluginGuid")] =
-            FactoryPluginGuidString;
+            std::string(plugin_guid);
         (*task_entry.as_object())[std::string_view("name")] = "factoryTask";
         (*task_entry.as_object())[std::string_view("description")] =
             "Scheduler test task";
@@ -2467,6 +2482,7 @@ void WriteFactoryPluginManifest(const std::filesystem::path& manifest_path)
             (*task_entry.as_object())[std::string_view("descriptors")] =
                 std::move(descriptors);
         }
+        if (include_authoring)
         {
             yyjson::value authoring(Das::Utils::MakeYyjsonObject());
             (*authoring.as_object())[std::string_view("factoryGuid")] =
@@ -2479,7 +2495,7 @@ void WriteFactoryPluginManifest(const std::filesystem::path& manifest_path)
                 std::move(authoring);
         }
         yyjson::value tasks_obj(Das::Utils::MakeYyjsonObject());
-        (*tasks_obj.as_object())[std::string_view(FactoryTaskGuidString)] =
+        (*tasks_obj.as_object())[std::string_view(task_guid)] =
             std::move(task_entry);
         (*manifest.as_object())[std::string_view("tasks")] =
             std::move(tasks_obj);
@@ -3295,6 +3311,97 @@ namespace
             std::string(display_name);
         return request;
     }
+
+    void SeedRepositoryEntry(
+        Das::Core::SettingsManager::SettingsManager& settings,
+        int64_t                                      entry_id,
+        std::string_view                             plugin_guid,
+        std::string_view                             task_type_guid,
+        std::string_view                             display_name)
+    {
+        yyjson::value entry(Das::Utils::MakeYyjsonObject());
+        (*entry.as_object())[std::string_view("entryId")] = entry_id;
+        (*entry.as_object())[std::string_view("displayName")] =
+            std::string(display_name);
+        (*entry.as_object())[std::string_view("pluginGuid")] =
+            std::string(plugin_guid);
+        (*entry.as_object())[std::string_view("taskTypeGuid")] =
+            std::string(task_type_guid);
+        {
+            yyjson::value authoring(Das::Utils::MakeYyjsonObject());
+            (*authoring.as_object())[std::string_view("revision")] = 5;
+            (*authoring.as_object())[std::string_view("kind")] =
+                "formSequence";
+            (*authoring.as_object())[std::string_view("sourceFingerprint")] =
+                "seed-source";
+            (*authoring.as_object())[std::string_view("migrationState")] =
+                yyjson::value{};
+            (*entry.as_object())[std::string_view("authoring")] =
+                std::move(authoring);
+        }
+        (*entry.as_object())[std::string_view("acceptedProperties")] =
+            yyjson::value(Das::Utils::MakeYyjsonObject());
+        {
+            yyjson::value availability(Das::Utils::MakeYyjsonObject());
+            (*availability.as_object())[std::string_view("state")] =
+                "available";
+            (*entry.as_object())[std::string_view("availability")] =
+                std::move(availability);
+        }
+
+        ASSERT_EQ(
+            settings.UpdateTaskRepositoryEntryJson("0", entry_id, entry),
+            DAS_S_OK);
+    }
+
+    yyjson::value SingleRepositoryEntry(const yyjson::value& repository)
+    {
+        auto repository_obj = repository.as_object();
+        EXPECT_TRUE(repository_obj.has_value());
+        auto entries =
+            (*repository_obj)[std::string_view("entries")].as_array();
+        EXPECT_TRUE(entries.has_value());
+        EXPECT_EQ(entries->size(), 1u);
+        return entries && !entries->empty()
+                   ? (*entries)[0]
+                   : yyjson::value(Das::Utils::MakeYyjsonObject());
+    }
+
+    void ExpectRepositoryAvailability(
+        const yyjson::value& entry,
+        std::string_view     reason)
+    {
+        auto entry_obj = entry.as_object();
+        ASSERT_TRUE(entry_obj.has_value());
+        auto availability =
+            (*entry_obj)[std::string_view("availability")].as_object();
+        ASSERT_TRUE(availability.has_value());
+        EXPECT_EQ(
+            (*availability)[std::string_view("state")]
+                .as_string()
+                .value_or(""),
+            std::string_view("unavailable"));
+        EXPECT_EQ(
+            (*availability)[std::string_view("reason")]
+                .as_string()
+                .value_or(""),
+            reason);
+        auto message =
+            (*availability)[std::string_view("message")].as_string();
+        ASSERT_TRUE(message.has_value());
+        EXPECT_FALSE(message->empty());
+    }
+
+    void ExpectNoRepositoryAuthoringProviderCalls(
+        const std::shared_ptr<FactoryTaskSharedState>& state)
+    {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        EXPECT_EQ(state->authoring_session_count, 0);
+        EXPECT_EQ(state->get_document_count, 0);
+        EXPECT_EQ(state->apply_change_count, 0);
+        EXPECT_EQ(state->compile_count, 0);
+        EXPECT_EQ(state->decoy_authoring_create_count, 0);
+    }
 } // namespace
 
 TEST_F(
@@ -3590,6 +3697,167 @@ TEST_F(
             .as_string()
             .value_or(""),
         std::string_view("Duplicate name"));
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryUnavailableMissingPluginReason)
+{
+    SeedRepositoryEntry(
+        *settings_manager_,
+        0,
+        MissingPluginGuidString,
+        FactoryTaskGuidString,
+        "Missing plugin entry");
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto entry = SingleRepositoryEntry(scheduler_->GetTaskRepository());
+    ExpectRepositoryAvailability(entry, "pluginUnavailable");
+    EXPECT_TRUE(
+        std::filesystem::exists(settings_dir_ / "0" / "taskRepository0.json"));
+    ExpectNoRepositoryAuthoringProviderCalls(shared_state_);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryUnavailableDisabledPluginReason)
+{
+    SeedRepositoryEntry(
+        *settings_manager_,
+        0,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        "Disabled plugin entry");
+
+    ASSERT_EQ(
+        scheduler_->Initialize(plugin_dir_, {FactoryPluginGuid}),
+        DAS_S_OK);
+
+    auto entry = SingleRepositoryEntry(scheduler_->GetTaskRepository());
+    ExpectRepositoryAvailability(entry, "pluginUnavailable");
+    EXPECT_TRUE(
+        std::filesystem::exists(settings_dir_ / "0" / "taskRepository0.json"));
+    ExpectNoRepositoryAuthoringProviderCalls(shared_state_);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryUnavailableBannedPluginReason)
+{
+    auto banned_dir = plugin_dir_ / "BannedPlugin";
+    std::filesystem::create_directories(banned_dir);
+    WriteFactoryPluginManifest(
+        banned_dir / "BannedPlugin.json",
+        BannedPluginGuidString);
+    {
+        std::ofstream marker(
+            banned_dir / "BannedPlugin.willBeDelete",
+            std::ios::trunc);
+        marker << "pending deletion";
+    }
+    SeedRepositoryEntry(
+        *settings_manager_,
+        0,
+        BannedPluginGuidString,
+        FactoryTaskGuidString,
+        "Banned plugin entry");
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto entry = SingleRepositoryEntry(scheduler_->GetTaskRepository());
+    ExpectRepositoryAvailability(entry, "pluginUnavailable");
+    EXPECT_TRUE(
+        std::filesystem::exists(settings_dir_ / "0" / "taskRepository0.json"));
+    ExpectNoRepositoryAuthoringProviderCalls(shared_state_);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryUnavailableLoadFailedReason)
+{
+    WriteFactoryPluginManifest(
+        plugin_dir_ / "LoadFailedPlugin.json",
+        LoadFailedPluginGuidString,
+        FactoryTaskGuidString,
+        true,
+        "CSharp");
+    SeedRepositoryEntry(
+        *settings_manager_,
+        0,
+        LoadFailedPluginGuidString,
+        FactoryTaskGuidString,
+        "Load failed entry");
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto entry = SingleRepositoryEntry(scheduler_->GetTaskRepository());
+    ExpectRepositoryAvailability(entry, "pluginLoadFailed");
+    EXPECT_TRUE(
+        std::filesystem::exists(settings_dir_ / "0" / "taskRepository0.json"));
+    ExpectNoRepositoryAuthoringProviderCalls(shared_state_);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryUnavailableMissingTaskTypeReason)
+{
+    SeedRepositoryEntry(
+        *settings_manager_,
+        0,
+        FactoryPluginGuidString,
+        MissingTaskTypeGuidString,
+        "Missing task type entry");
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto entry = SingleRepositoryEntry(scheduler_->GetTaskRepository());
+    ExpectRepositoryAvailability(entry, "taskTypeUnavailable");
+    EXPECT_TRUE(
+        std::filesystem::exists(settings_dir_ / "0" / "taskRepository0.json"));
+    ExpectNoRepositoryAuthoringProviderCalls(shared_state_);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryUnavailableAuthoringCapabilityMissingReason)
+{
+    WriteFactoryPluginManifest(
+        manifest_path_,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        false);
+    SeedRepositoryEntry(
+        *settings_manager_,
+        0,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        "No authoring capability entry");
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto entry = SingleRepositoryEntry(scheduler_->GetTaskRepository());
+    ExpectRepositoryAvailability(entry, "authoringCapabilityMissing");
+    EXPECT_TRUE(
+        std::filesystem::exists(settings_dir_ / "0" / "taskRepository0.json"));
+    ExpectNoRepositoryAuthoringProviderCalls(shared_state_);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryUnavailableNoProviderCallForRepositoryGet)
+{
+    SeedRepositoryEntry(
+        *settings_manager_,
+        0,
+        MissingPluginGuidString,
+        FactoryTaskGuidString,
+        "No provider call entry");
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    (void)scheduler_->GetTaskRepository();
+
+    ExpectNoRepositoryAuthoringProviderCalls(shared_state_);
 }
 
 TEST_F(
