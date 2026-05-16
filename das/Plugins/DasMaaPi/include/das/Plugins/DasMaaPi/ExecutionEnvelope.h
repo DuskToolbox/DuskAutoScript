@@ -3,6 +3,7 @@
 #include <cassert>
 
 #include <cpp_yyjson.hpp>
+#include <das/Plugins/DasMaaPi/MaaApiBoundary.h>
 #include <das/Plugins/DasMaaPi/MaapiDto.h>
 #include <das/Plugins/DasMaaPi/PiDto.h>
 
@@ -33,6 +34,7 @@ namespace Das::Plugins::DasMaaPi
     {
         std::string                       interface_directory;
         std::string                       controller_name;
+        ControllerSpec                    controller;
         std::string                       resource_name;
         std::vector<std::string>          resource_paths;
         std::optional<std::string>        resource_hash;
@@ -68,6 +70,12 @@ namespace Das::Plugins::DasMaaPi
         std::optional<ExecutionEnvelopeDto> execution_input;
     };
 } // namespace Das::Plugins::DasMaaPi
+
+template <>
+struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::ControllerSpec>
+{
+    using type = yyjson::snake_to_camel_transform;
+};
 
 template <>
 struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::PiEnvSnapshotDto>

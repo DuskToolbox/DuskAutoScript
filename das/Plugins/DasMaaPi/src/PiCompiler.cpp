@@ -2,7 +2,9 @@
 #include <das/Utils/DasJsonCore.h>
 
 #include <algorithm>
+#include <initializer_list>
 #include <map>
+#include <optional>
 #include <string_view>
 
 namespace Das::Plugins::DasMaaPi
@@ -33,6 +35,77 @@ namespace Das::Plugins::DasMaaPi
             auto parsed = Das::Utils::ParseYyjsonFromString(raw);
             return parsed && parsed->is_object() ? std::move(*parsed)
                                                  : Object();
+        }
+
+        template <typename ObjectRef>
+        std::optional<std::string> OptionalStringField(
+            const ObjectRef& obj,
+            std::string_view key)
+        {
+            if (!obj.contains(key) || !obj[key].is_string())
+            {
+                return std::nullopt;
+            }
+            return std::string(obj[key].as_string().value_or(""));
+        }
+
+        template <typename ObjectRef>
+        std::optional<std::string> OptionalStringField(
+            const ObjectRef& obj,
+            std::initializer_list<std::string_view> keys)
+        {
+            for (const auto key : keys)
+            {
+                auto value = OptionalStringField(obj, key);
+                if (value)
+                {
+                    return value;
+                }
+            }
+            return std::nullopt;
+        }
+
+        template <typename ObjectRef>
+        std::string ControllerConfigJson(const ObjectRef& obj)
+        {
+            if (!obj.contains(std::string_view("config")))
+            {
+                return "{}";
+            }
+            const auto& config = obj[std::string_view("config")];
+            if (config.is_string())
+            {
+                return std::string(config.as_string().value_or("{}"));
+            }
+            return Das::Utils::SerializeYyjsonValue(config).value_or("{}");
+        }
+
+        ControllerSpec NormalizeControllerSpec(const PiController& controller)
+        {
+            ControllerSpec spec;
+            spec.name = controller.dto.name;
+            spec.type = controller.dto.type;
+
+            auto raw = ParseRawObject(controller.raw.raw_json);
+            auto obj = raw.as_object();
+            if (!obj)
+            {
+                return spec;
+            }
+
+            spec.name =
+                OptionalStringField(*obj, "name").value_or(std::move(spec.name));
+            spec.type =
+                OptionalStringField(*obj, "type").value_or(std::move(spec.type));
+            spec.read_path =
+                OptionalStringField(*obj, {"readPath", "read_path"}).value_or("");
+            spec.address = OptionalStringField(*obj, "address").value_or("");
+            spec.adb_path =
+                OptionalStringField(*obj, {"adbPath", "adb_path"}).value_or("adb");
+            spec.config_json = ControllerConfigJson(*obj);
+            spec.agent_path =
+                OptionalStringField(*obj, {"agentPath", "agent_path"}).value_or("");
+            return spec;
         }
 
         void MergeObject(yyjson::value& target, const yyjson::value& source)
@@ -301,6 +374,21 @@ namespace Das::Plugins::DasMaaPi
             return arr;
         }
 
+        yyjson::value SerializeControllerSpec(const ControllerSpec& spec)
+        {
+            yyjson::value controller(Object());
+            auto          obj = controller.as_object();
+            (*obj)[std::string_view("name")] = JsonString(spec.name);
+            (*obj)[std::string_view("type")] = JsonString(spec.type);
+            (*obj)[std::string_view("readPath")] = JsonString(spec.read_path);
+            (*obj)[std::string_view("address")] = JsonString(spec.address);
+            (*obj)[std::string_view("adbPath")] = JsonString(spec.adb_path);
+            (*obj)[std::string_view("configJson")] =
+                JsonString(spec.config_json);
+            (*obj)[std::string_view("agentPath")] = JsonString(spec.agent_path);
+            return controller;
+        }
+
         yyjson::value SerializeDiagnostics(
             const std::vector<PiDiagnosticDto>& diagnostics)
         {
@@ -336,6 +424,8 @@ namespace Das::Plugins::DasMaaPi
                 JsonString(envelope.maapi.interface_directory);
             (*maapi_obj)[std::string_view("controllerName")] =
                 JsonString(envelope.maapi.controller_name);
+            (*maapi_obj)[std::string_view("controller")] =
+                SerializeControllerSpec(envelope.maapi.controller);
             (*maapi_obj)[std::string_view("resourceName")] =
                 JsonString(envelope.maapi.resource_name);
             (*maapi_obj)[std::string_view("resourcePaths")] =
@@ -443,6 +533,7 @@ namespace Das::Plugins::DasMaaPi
         }
 
         envelope.maapi.controller_name = controller->dto.name;
+        envelope.maapi.controller = NormalizeControllerSpec(*controller);
         envelope.maapi.resource_name = resource->dto.name;
         envelope.maapi.resource_hash = resource->dto.hash;
         for (const auto& path : resource->resolved_paths)

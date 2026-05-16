@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <initializer_list>
 #include <memory>
 #include <string>
 #include <utility>
@@ -78,42 +79,29 @@ namespace Das::Plugins::DasMaaPi
                 auto type = Lower(spec.type);
                 if (type == "dbg" || type == "debug")
                 {
-                    const auto read_path =
-                        StringField(spec.raw_json, "readPath")
-                            .value_or(
-                                StringField(spec.raw_json, "read_path")
-                                    .value_or(""));
                     return reinterpret_cast<MaaControllerHandle>(
-                        MaaDbgControllerCreate(read_path.c_str()));
+                        MaaDbgControllerCreate(spec.read_path.c_str()));
                 }
                 if (type == "adb")
                 {
-                    const auto address =
-                        StringField(spec.raw_json, "address").value_or("");
-                    if (address.empty())
+                    if (spec.address.empty())
                     {
                         return kInvalidMaaControllerHandle;
                     }
                     const auto adb_path =
-                        StringField(spec.raw_json, "adbPath")
-                            .value_or(
-                                StringField(spec.raw_json, "adb_path")
-                                    .value_or("adb"));
+                        spec.adb_path.empty() ? std::string("adb")
+                                              : spec.adb_path;
                     const auto config =
-                        StringField(spec.raw_json, "config").value_or("{}");
-                    const auto agent_path =
-                        StringField(spec.raw_json, "agentPath")
-                            .value_or(
-                                StringField(spec.raw_json, "agent_path")
-                                    .value_or(""));
+                        spec.config_json.empty() ? std::string("{}")
+                                                 : spec.config_json;
                     return reinterpret_cast<MaaControllerHandle>(
                         MaaAdbControllerCreate(
                             adb_path.c_str(),
-                            address.c_str(),
+                            spec.address.c_str(),
                             MaaAdbScreencapMethod_Default,
                             MaaAdbInputMethod_Default,
                             config.c_str(),
-                            agent_path.c_str()));
+                            spec.agent_path.c_str()));
                 }
                 return kInvalidMaaControllerHandle;
             }
@@ -212,22 +200,6 @@ namespace Das::Plugins::DasMaaPi
                 return value;
             }
 
-            static std::optional<std::string> StringField(
-                const std::string& json,
-                std::string_view   key)
-            {
-                if (json.empty())
-                {
-                    return std::nullopt;
-                }
-                auto parsed = Das::Utils::ParseYyjsonFromString(json);
-                auto obj = parsed ? parsed->as_object() : std::nullopt;
-                if (!obj || !obj->contains(key) || !(*obj)[key].is_string())
-                {
-                    return std::nullopt;
-                }
-                return std::string((*obj)[key].as_string().value_or(""));
-            }
         };
 #else
         class ScopedMaaApiBoundary final : public IMaaApiBoundary
@@ -398,6 +370,22 @@ namespace Das::Plugins::DasMaaPi
         }
 
         template <typename ObjectRef>
+        std::optional<std::string> OptionalStringField(
+            const ObjectRef& obj,
+            std::initializer_list<std::string_view> keys)
+        {
+            for (const auto key : keys)
+            {
+                auto value = OptionalStringField(obj, key);
+                if (value)
+                {
+                    return value;
+                }
+            }
+            return std::nullopt;
+        }
+
+        template <typename ObjectRef>
         std::optional<std::string> RequiredStringField(
             const ObjectRef& obj,
             std::string_view key,
@@ -453,6 +441,69 @@ namespace Das::Plugins::DasMaaPi
             return obj.contains(key) && obj[key].is_bool()
                        ? obj[key].as_bool().value_or(default_value)
                        : default_value;
+        }
+
+        template <typename ObjectRef>
+        std::string ControllerConfigJson(const ObjectRef& obj)
+        {
+            if (auto config_json =
+                    OptionalStringField(obj, {"configJson", "config_json"}))
+            {
+                return *config_json;
+            }
+            if (!obj.contains(std::string_view("config")))
+            {
+                return "{}";
+            }
+            const auto& config = obj[std::string_view("config")];
+            if (config.is_string())
+            {
+                return std::string(config.as_string().value_or("{}"));
+            }
+            return Das::Utils::SerializeYyjsonValue(config).value_or("{}");
+        }
+
+        template <typename ObjectRef>
+        ControllerSpec ControllerSpecFromObject(
+            const ObjectRef&  obj,
+            std::string       default_name,
+            std::string       default_type)
+        {
+            ControllerSpec spec;
+            spec.name =
+                OptionalStringField(obj, "name").value_or(std::move(default_name));
+            spec.type =
+                OptionalStringField(obj, "type").value_or(std::move(default_type));
+            spec.read_path =
+                OptionalStringField(obj, {"readPath", "read_path"}).value_or("");
+            spec.address = OptionalStringField(obj, "address").value_or("");
+            spec.adb_path =
+                OptionalStringField(obj, {"adbPath", "adb_path"}).value_or("adb");
+            spec.config_json = ControllerConfigJson(obj);
+            spec.agent_path =
+                OptionalStringField(obj, {"agentPath", "agent_path"}).value_or("");
+            return spec;
+        }
+
+        ControllerSpec ControllerSpecFromRawJson(
+            std::string       default_name,
+            std::string_view  controller_json)
+        {
+            if (controller_json.empty())
+            {
+                ControllerSpec spec;
+                spec.name = std::move(default_name);
+                return spec;
+            }
+            auto parsed = Das::Utils::ParseYyjsonFromString(controller_json);
+            auto obj = parsed ? parsed->as_object() : std::nullopt;
+            if (!obj)
+            {
+                ControllerSpec spec;
+                spec.name = std::move(default_name);
+                return spec;
+            }
+            return ControllerSpecFromObject(*obj, std::move(default_name), "");
         }
     } // namespace
 
@@ -560,6 +611,28 @@ namespace Das::Plugins::DasMaaPi
                 plan.pi_env.resource_json =
                     OptionalStringField(*env, "resourceJson").value_or("");
             }
+        }
+
+        if (maapi->contains(std::string_view("controller")))
+        {
+            auto controller =
+                (*maapi)[std::string_view("controller")].as_object();
+            if (!controller)
+            {
+                parsed.result = DAS_E_INVALID_ARGUMENT;
+                parsed.message = "controller must be an object";
+                return parsed;
+            }
+            plan.controller = ControllerSpecFromObject(
+                *controller,
+                plan.controller_name,
+                "");
+        }
+        else
+        {
+            plan.controller = ControllerSpecFromRawJson(
+                plan.controller_name,
+                plan.pi_env.controller_json);
         }
 
         if (!maapi->contains(std::string_view("tasks")))
@@ -690,20 +763,11 @@ namespace Das::Plugins::DasMaaPi
             }
         }
 
-        ControllerSpec controller_spec{
-            .name = envelope.maapi.controller_name,
-            .type = [&] {
-                auto parsed = Das::Utils::ParseYyjsonFromString(
-                    envelope.maapi.pi_env.controller_json);
-                auto obj = parsed ? parsed->as_object() : std::nullopt;
-                return obj && obj->contains(std::string_view("type"))
-                           ? std::string(
-                               (*obj)[std::string_view("type")]
-                                   .as_string()
-                                   .value_or(""))
-                           : std::string{};
-            }(),
-            .raw_json = envelope.maapi.pi_env.controller_json};
+        ControllerSpec controller_spec = envelope.maapi.controller;
+        if (controller_spec.name.empty())
+        {
+            controller_spec.name = envelope.maapi.controller_name;
+        }
         ScopedController controller(
             boundary,
             boundary.CreateController(controller_spec));

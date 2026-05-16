@@ -30,7 +30,11 @@ namespace Das::Plugins::DasMaaPi
     {
         std::string name;
         std::string type;
-        std::string raw_json;
+        std::string read_path;
+        std::string address;
+        std::string adb_path = "adb";
+        std::string config_json = "{}";
+        std::string agent_path;
     };
 
     struct MaaApiResult
