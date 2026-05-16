@@ -112,6 +112,19 @@ namespace
         return manifest;
     }
 
+    void AddManifestComponent(
+        TaskComponentsManifestDesc& manifest,
+        const DasGuid&              factory_guid,
+        const DasGuid&              component_guid)
+    {
+        TaskComponentManifestEntryDesc entry;
+        entry.factory_guid = DasGuidToStdString(factory_guid);
+        entry.definition = MakeDefinition(component_guid);
+        manifest.components->emplace(
+            DasGuidToStdString(component_guid),
+            std::move(entry));
+    }
+
     class MockTaskComponent final : public IDasTaskComponent
     {
     public:
@@ -301,7 +314,141 @@ namespace
         std::atomic<uint32_t> ref_count_{0};
     };
 
-    FeatureInfo MakeTaskFactoryFeature(MockTaskComponentFactory& factory)
+    class HostAwareTaskComponentFactory final
+        : public IDasTaskComponentHostAware
+    {
+    public:
+        HostAwareTaskComponentFactory(
+            DasGuid factory_guid,
+            DasGuid parent_component_guid,
+            DasGuid child_component_guid)
+            : factory_guid_(factory_guid),
+              parent_component_guid_(parent_component_guid),
+              child_component_guid_(child_component_guid)
+        {
+        }
+
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out) override
+        {
+            if (pp_out == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (iid == DasIidOf<IDasBase>())
+            {
+                *pp_out = static_cast<IDasBase*>(
+                    static_cast<IDasTaskComponentFactory*>(this));
+                AddRef();
+                return DAS_S_OK;
+            }
+            if (iid == DasIidOf<IDasTypeInfo>())
+            {
+                *pp_out = static_cast<IDasTypeInfo*>(
+                    static_cast<IDasTaskComponentFactory*>(this));
+                AddRef();
+                return DAS_S_OK;
+            }
+            if (iid == DasIidOf<IDasTaskComponentFactory>())
+            {
+                *pp_out = static_cast<IDasTaskComponentFactory*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            if (iid == DasIidOf<IDasTaskComponentHostAware>())
+            {
+                *pp_out = static_cast<IDasTaskComponentHostAware*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            *pp_out = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult DAS_STD_CALL GetGuid(DasGuid* p_out_guid) override
+        {
+            if (p_out_guid == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *p_out_guid = factory_guid_;
+            return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL
+        GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override
+        {
+            if (pp_out_name == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            return CreateIDasReadOnlyStringFromUtf8(
+                "HostAwareTaskComponentFactory",
+                pp_out_name);
+        }
+
+        DasResult DAS_STD_CALL SetTaskComponentHost(
+            IDasTaskComponentHost* p_host) override
+        {
+            ++set_host_call_count;
+            host = DasPtr<IDasTaskComponentHost>(p_host);
+            return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL CreateComponent(
+            const DasGuid&      component_guid,
+            IDasTaskComponent** pp_out_component) override
+        {
+            if (pp_out_component == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_component = nullptr;
+            ++create_call_count;
+
+            if (enable_reentrant_create
+                && component_guid == parent_component_guid_ && host)
+            {
+                DasPtr<IDasTaskComponent> child;
+                host_create_result = host->CreateTaskComponent(
+                    child_component_guid_,
+                    child.Put());
+                child_created_through_host = child.Get() != nullptr;
+            }
+
+            auto* component = new MockTaskComponent(component_guid);
+            component->AddRef();
+            *pp_out_component = component;
+            return DAS_S_OK;
+        }
+
+        DasPtr<IDasTaskComponentHost> host;
+        DasResult                     host_create_result = DAS_E_FAIL;
+        int                           set_host_call_count = 0;
+        int                           create_call_count = 0;
+        bool                          enable_reentrant_create = false;
+        bool                          child_created_through_host = false;
+
+    private:
+        DasGuid               factory_guid_;
+        DasGuid               parent_component_guid_;
+        DasGuid               child_component_guid_;
+        std::atomic<uint32_t> ref_count_{0};
+    };
+
+    FeatureInfo MakeTaskFactoryFeature(IDasTaskComponentFactory& factory)
     {
         FeatureInfo feature{};
         feature.feature_type = DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY;
@@ -544,6 +691,45 @@ namespace
         EXPECT_EQ(
             manager.CreateComponent(component_guid, component.Put()),
             DAS_E_NOT_FOUND);
+
+        factory->Release();
+    }
+
+    TEST_F(
+        TaskComponentFactoryManagerTest,
+        HostAwareFactoryReceivesHostAndCanCreateChildComponent)
+    {
+        const auto plugin_guid = MakeTestGuid(0x68030051);
+        const auto factory_guid = MakeTestGuid(0x68030052);
+        const auto parent_component_guid = MakeTestGuid(0x68030053);
+        const auto child_component_guid = MakeTestGuid(0x68030054);
+
+        auto* factory = new HostAwareTaskComponentFactory(
+            factory_guid,
+            parent_component_guid,
+            child_component_guid);
+        factory->AddRef();
+        auto         feature = MakeTaskFactoryFeature(*factory);
+        FeatureInfo* feature_ptr = &feature;
+        auto manifest = MakeManifest(factory_guid, parent_component_guid);
+        AddManifestComponent(manifest, factory_guid, child_component_guid);
+
+        ASSERT_EQ(
+            manager.OnPluginLoaded(plugin_guid, {&feature_ptr, 1}, manifest),
+            DAS_S_OK);
+
+        EXPECT_EQ(factory->set_host_call_count, 1);
+        ASSERT_NE(factory->host.Get(), nullptr);
+
+        factory->enable_reentrant_create = true;
+        DasPtr<IDasTaskComponent> component;
+        ASSERT_EQ(
+            manager.CreateComponent(parent_component_guid, component.Put()),
+            DAS_S_OK);
+
+        EXPECT_NE(component.Get(), nullptr);
+        EXPECT_EQ(factory->host_create_result, DAS_S_OK);
+        EXPECT_TRUE(factory->child_created_through_host);
 
         factory->Release();
     }
