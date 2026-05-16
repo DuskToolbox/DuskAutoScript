@@ -2,6 +2,7 @@
 
 #include <das/Utils/DasJsonCore.h>
 
+#include <cstdint>
 #include <string_view>
 
 namespace Das::Core::TaskScheduler::RepositoryInvoke
@@ -79,12 +80,189 @@ namespace Das::Core::TaskScheduler::RepositoryInvoke
             result.snapshot = std::move(snapshot);
             return result;
         }
+
+        template <typename ObjectRef>
+        std::optional<int64_t> GetIntField(
+            const ObjectRef& object,
+            std::string_view key)
+        {
+            if (!object.contains(key))
+            {
+                return std::nullopt;
+            }
+            return object[key].as_sint();
+        }
+
+        template <typename ObjectRef>
+        std::optional<std::string> GetStringField(
+            const ObjectRef& object,
+            std::string_view key)
+        {
+            if (!object.contains(key))
+            {
+                return std::nullopt;
+            }
+            auto value = object[key].as_string();
+            if (!value)
+            {
+                return std::nullopt;
+            }
+            return std::string(*value);
+        }
+
+        template <typename ObjectRef>
+        std::optional<std::string> FirstStringField(
+            const ObjectRef& object,
+            std::string_view first,
+            std::string_view second)
+        {
+            if (auto value = GetStringField(object, first))
+            {
+                return value;
+            }
+            return GetStringField(object, second);
+        }
+
+        template <typename ObjectRef>
+        void AddEdgeFromRepositoryRef(
+            const ObjectRef&                  ref,
+            int64_t                           source_entry_id,
+            const std::optional<std::string>& source_node_id,
+            const std::optional<std::string>& source_node_label,
+            std::vector<RepositoryDependencyEdge>& edges)
+        {
+            auto kind = GetStringField(ref, "kind");
+            if (kind && *kind != "taskRepositoryRef")
+            {
+                return;
+            }
+
+            auto target_entry_id = GetIntField(ref, "entryId");
+            if (!target_entry_id)
+            {
+                return;
+            }
+
+            RepositoryDependencyEdge edge;
+            edge.source_entry_id = source_entry_id;
+            edge.target_entry_id = *target_entry_id;
+            edge.source_node_id = source_node_id;
+            edge.source_node_label = source_node_label;
+            edges.push_back(std::move(edge));
+        }
+
+        template <typename JsonValue>
+        void ExtractEdgesRecursive(
+            int64_t                         inherited_source_entry_id,
+            const JsonValue&                value,
+            std::optional<std::string>      inherited_node_id,
+            std::optional<std::string>      inherited_node_label,
+            std::vector<RepositoryDependencyEdge>& edges)
+        {
+            if (auto array = value.as_array())
+            {
+                for (const auto& item : *array)
+                {
+                    ExtractEdgesRecursive(
+                        inherited_source_entry_id,
+                        item,
+                        inherited_node_id,
+                        inherited_node_label,
+                        edges);
+                }
+                return;
+            }
+
+            auto object = value.as_object();
+            if (!object)
+            {
+                return;
+            }
+
+            auto source_entry_id = inherited_source_entry_id;
+            if (auto source_override = GetIntField(*object, "sourceEntryId"))
+            {
+                source_entry_id = *source_override;
+            }
+
+            auto source_node_id = FirstStringField(*object, "id", "nodeId");
+            if (!source_node_id)
+            {
+                source_node_id = inherited_node_id;
+            }
+            auto source_node_label =
+                FirstStringField(*object, "label", "name");
+            if (!source_node_label)
+            {
+                source_node_label = inherited_node_label;
+            }
+
+            for (auto key :
+                 {std::string_view("taskRepositoryRef"),
+                  std::string_view("repositoryRef")})
+            {
+                if (!object->contains(key))
+                {
+                    continue;
+                }
+                auto ref = (*object)[key].as_object();
+                if (ref)
+                {
+                    AddEdgeFromRepositoryRef(
+                        *ref,
+                        source_entry_id,
+                        source_node_id,
+                        source_node_label,
+                        edges);
+                }
+            }
+
+            for (const auto& [_, child] : *object)
+            {
+                ExtractEdgesRecursive(
+                    source_entry_id,
+                    child,
+                    source_node_id,
+                    source_node_label,
+                    edges);
+            }
+        }
     } // namespace
 
     RepositoryInvokeCompileResult ResolveRepositoryInvokeSnapshot(
         const RepositoryInvokeCompileServices& services,
         const Dto::RepositoryTaskRefDto&       repository_ref)
     {
+        return ResolveRepositoryInvokeSnapshot(
+            services,
+            repository_ref,
+            RepositoryInvokeSourceContext{});
+    }
+
+    RepositoryInvokeCompileResult ResolveRepositoryInvokeSnapshot(
+        const RepositoryInvokeCompileServices& services,
+        const Dto::RepositoryTaskRefDto&       repository_ref,
+        const RepositoryInvokeSourceContext&   source_context)
+    {
+        if (!source_context.source_graph.is_null())
+        {
+            auto edges = ExtractRepositoryInvokeDependencyEdges(
+                source_context.source_entry_id,
+                source_context.source_graph);
+            auto validation = ValidateRepositoryInvokeAcyclic(edges);
+            if (!validation.ok)
+            {
+                auto diagnostic = MakeDiagnostic(
+                    "repository-invoke-cycle",
+                    "Repository invoke graph contains a cycle");
+                diagnostic.cycle_path = validation.cycle_path;
+
+                auto result = Fail(std::move(diagnostic));
+                result.cycle_path = validation.cycle_path;
+                return result;
+            }
+        }
+
         if (!services.load_entry)
         {
             return Fail(MakeDiagnostic(
@@ -202,5 +380,19 @@ namespace Das::Core::TaskScheduler::RepositoryInvoke
         snapshot.component_guid = *execution_component;
         snapshot.execution_input = std::move(*execution_input);
         return Succeed(std::move(snapshot));
+    }
+
+    std::vector<RepositoryDependencyEdge> ExtractRepositoryInvokeDependencyEdges(
+        int64_t              source_entry_id,
+        const yyjson::value& source_graph)
+    {
+        std::vector<RepositoryDependencyEdge> edges;
+        ExtractEdgesRecursive(
+            source_entry_id,
+            source_graph,
+            std::nullopt,
+            std::nullopt,
+            edges);
+        return edges;
     }
 } // namespace Das::Core::TaskScheduler::RepositoryInvoke

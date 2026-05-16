@@ -42,6 +42,12 @@ namespace Das::Core::TaskScheduler::RepositoryInvoke
         std::vector<RepositoryCyclePathItem> cycle_path;
     };
 
+    struct RepositoryInvokeSourceContext
+    {
+        int64_t       source_entry_id = 0;
+        yyjson::value source_graph;
+    };
+
     struct RepositoryInvokeCompileServices
     {
         std::function<std::optional<Repository::Dto::RepositoryEntryDto>(
@@ -59,6 +65,15 @@ namespace Das::Core::TaskScheduler::RepositoryInvoke
     RepositoryInvokeCompileResult ResolveRepositoryInvokeSnapshot(
         const RepositoryInvokeCompileServices& services,
         const Dto::RepositoryTaskRefDto&       repository_ref);
+
+    RepositoryInvokeCompileResult ResolveRepositoryInvokeSnapshot(
+        const RepositoryInvokeCompileServices& services,
+        const Dto::RepositoryTaskRefDto&       repository_ref,
+        const RepositoryInvokeSourceContext&   source_context);
+
+    std::vector<RepositoryDependencyEdge> ExtractRepositoryInvokeDependencyEdges(
+        int64_t              source_entry_id,
+        const yyjson::value& source_graph);
 
 } // namespace Das::Core::TaskScheduler::RepositoryInvoke
 
