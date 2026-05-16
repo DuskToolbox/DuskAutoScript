@@ -400,11 +400,10 @@ namespace Das::Plugins::DasMaaPi
             return result;
         }
 
-        yyjson::value CloneJson(const yyjson::value& value)
+        template <typename JsonValue>
+        yyjson::value CopyJsonValue(const JsonValue& value)
         {
-            auto serialized = SerializeJson(value);
-            auto parsed = Das::Utils::ParseYyjsonFromString(serialized);
-            return parsed ? std::move(*parsed) : Das::Utils::MakeYyjsonObject();
+            return yyjson::value(value);
         }
 
         template <typename ObjectRef>
@@ -674,7 +673,8 @@ namespace Das::Plugins::DasMaaPi
             if (task_obj->contains(std::string_view("pipelineOverride")))
             {
                 task.pipeline_override =
-                    CloneJson((*task_obj)[std::string_view("pipelineOverride")]);
+                    CopyJsonValue(
+                        (*task_obj)[std::string_view("pipelineOverride")]);
             }
             else
             {

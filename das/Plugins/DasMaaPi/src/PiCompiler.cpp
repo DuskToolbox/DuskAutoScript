@@ -18,12 +18,10 @@ namespace Das::Plugins::DasMaaPi
             return yyjson::value(std::string(value));
         }
 
-        yyjson::value CloneJson(const yyjson::value& value)
+        template <typename JsonValue>
+        yyjson::value CopyJsonValue(const JsonValue& value)
         {
-            const auto serialized = value.write(yyjson::WriteFlag::NoFlag);
-            auto parsed = Das::Utils::ParseYyjsonFromString(
-                std::string_view(serialized.data(), serialized.size()));
-            return parsed ? std::move(*parsed) : Object();
+            return yyjson::value(value);
         }
 
         yyjson::value ParseRawObject(const std::string& raw)
@@ -119,7 +117,7 @@ namespace Das::Plugins::DasMaaPi
             for (auto it = source_obj->begin(); it != source_obj->end(); ++it)
             {
                 (*target_obj)[std::string_view(it->first)] =
-                    CloneJson(it->second);
+                    CopyJsonValue(it->second);
             }
         }
 
@@ -466,7 +464,7 @@ namespace Das::Plugins::DasMaaPi
                 (*item_obj)[std::string_view("entry")] =
                     JsonString(task.entry);
                 (*item_obj)[std::string_view("pipelineOverride")] =
-                    CloneJson(task.pipeline_override);
+                    CopyJsonValue(task.pipeline_override);
                 tasks.as_array()->emplace_back(std::move(item));
             }
             (*maapi_obj)[std::string_view("tasks")] = std::move(tasks);
