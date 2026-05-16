@@ -411,6 +411,107 @@ namespace Das::Core::TaskScheduler
         return bool_value && !*bool_value;
     }
 
+    static bool GetBoolField(
+        const yyjson::value& value,
+        std::string_view     key,
+        bool                 fallback)
+    {
+        auto obj = value.as_object();
+        if (!obj || !obj->contains(key))
+        {
+            return fallback;
+        }
+
+        auto bool_value = (*obj)[key].as_bool();
+        return bool_value ? *bool_value : fallback;
+    }
+
+    static std::vector<std::string> GetStringArrayField(
+        const yyjson::value& value,
+        std::string_view     key)
+    {
+        std::vector<std::string> result;
+        auto                     obj = value.as_object();
+        if (!obj || !obj->contains(key))
+        {
+            return result;
+        }
+
+        auto array = (*obj)[key].as_array();
+        if (!array)
+        {
+            return result;
+        }
+
+        result.reserve(array->size());
+        for (const auto& item : *array)
+        {
+            auto text = item.as_string();
+            if (text)
+            {
+                result.emplace_back(*text);
+            }
+        }
+        return result;
+    }
+
+    static yyjson::value ProjectRepositoryCompilePreview(
+        int64_t              entry_id,
+        const yyjson::value& provider_compile)
+    {
+        const bool can_execute = GetBoolField(
+            provider_compile,
+            "canExecute",
+            GetBoolField(provider_compile, "ok", false));
+
+        Repository::Dto::RepositoryCompileSummaryDto summary;
+        summary.can_execute = can_execute;
+        auto provider_obj = provider_compile.as_object();
+        if (provider_obj
+            && provider_obj->contains(std::string_view("summary")))
+        {
+            auto provider_summary =
+                (*provider_obj)[std::string_view("summary")];
+            summary.can_execute = GetBoolField(
+                provider_summary,
+                "canExecute",
+                summary.can_execute);
+            summary.task_names =
+                GetStringArrayField(provider_summary, "taskNames");
+            summary.requires_agent_runtime = GetBoolField(
+                provider_summary,
+                "requiresAgentRuntime",
+                false);
+        }
+
+        yyjson::value result(Das::Utils::MakeYyjsonObject());
+        auto          result_obj = result.as_object();
+        (*result_obj)[std::string_view("entryId")] = entry_id;
+        (*result_obj)[std::string_view("canExecute")] = can_execute;
+        (*result_obj)[std::string_view("summary")] =
+            CloneJsonValue(yyjson::object(summary));
+
+        yyjson::value diagnostics(Das::Utils::MakeYyjsonArray());
+        auto          diagnostics_array = diagnostics.as_array();
+        if (provider_obj
+            && provider_obj->contains(std::string_view("diagnostics")))
+        {
+            auto provider_diagnostics =
+                (*provider_obj)[std::string_view("diagnostics")].as_array();
+            if (provider_diagnostics)
+            {
+                for (const auto& diagnostic : *provider_diagnostics)
+                {
+                    diagnostics_array->emplace_back(
+                        CloneJsonValue(diagnostic));
+                }
+            }
+        }
+        (*result_obj)[std::string_view("diagnostics")] =
+            std::move(diagnostics);
+        return result;
+    }
+
     static yyjson::value MakeExecutionCompileRequest()
     {
         yyjson::value request(Das::Utils::MakeYyjsonObject());
@@ -2044,6 +2145,101 @@ namespace Das::Core::TaskScheduler
             CloneJsonValue((*updated_obj)[std::string_view("authoring")]);
         (*result_obj)[std::string_view("document")] = std::move(document);
         return result;
+    }
+
+    yyjson::value SchedulerService::CompileRepositoryEntryAuthoring(
+        int64_t              entry_id,
+        const yyjson::value& request)
+    {
+        TaskAuthoringCapability             capability;
+        Repository::Dto::RepositoryEntryDto entry;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (!initialized_ || !task_repository_store_)
+            {
+                return MakeRepositoryResponseError(
+                    "notInitialized",
+                    "Scheduler profile has not been initialized");
+            }
+        }
+
+        auto& settings = plugin_manager_.GetSettingsManager();
+        auto  entry_json = settings.GetTaskRepositoryEntryJson("0", entry_id);
+        if (entry_json.is_null() || !entry_json.is_object())
+        {
+            return MakeRepositoryResponseError(
+                "notFound",
+                "Repository entry was not found");
+        }
+
+        try
+        {
+            entry =
+                yyjson::cast<Repository::Dto::RepositoryEntryDto>(entry_json);
+        }
+        catch (const yyjson::bad_cast&)
+        {
+            return MakeRepositoryResponseError(
+                "invalidJson",
+                "Repository entry could not be parsed");
+        }
+
+        DasGuid task_guid{};
+        try
+        {
+            task_guid = Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                entry.task_type_guid);
+        }
+        catch (const std::exception&)
+        {
+            return MakeRepositoryResponseError(
+                "invalidGuid",
+                "Repository entry contains an invalid task GUID");
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto* authoring = capability_registry_.FindAuthoring(task_guid);
+            if (!authoring)
+            {
+                return MakeRepositoryResponseError(
+                    "authoringCapabilityMissing",
+                    "Repository entry task type does not declare authoring "
+                    "capability");
+            }
+            capability = *authoring;
+        }
+
+        DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
+        auto session_result = CreateAuthoringSessionWithContext(
+            plugin_manager_,
+            capability,
+            MakeRepositoryAuthoringContextJson(
+                entry_id,
+                entry.accepted_properties,
+                entry_json),
+            session);
+        if (DAS::IsFailed(session_result) || !session)
+        {
+            return MakeRepositoryResponseError(
+                "sessionCreateFailed",
+                "Failed to create repository authoring session");
+        }
+
+        auto request_json = WrapJsonValue(CloneJsonValue(request));
+        DasPtr<Das::ExportInterface::IDasJson> compile_json;
+        auto                                   compile_result =
+            session->Compile(request_json.Get(), compile_json.Put());
+        if (DAS::IsFailed(compile_result) || !compile_json)
+        {
+            return MakeRepositoryResponseError(
+                "providerFailed",
+                "Repository authoring provider failed to compile document");
+        }
+
+        return ProjectRepositoryCompilePreview(
+            entry_id,
+            ReadJsonInterface(compile_json.Get()));
     }
 
     // ----------------------------------------------------------------

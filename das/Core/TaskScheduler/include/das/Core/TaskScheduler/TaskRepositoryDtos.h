@@ -81,6 +81,7 @@ namespace Das::Core::TaskScheduler::Repository::Dto
 
     struct RepositoryCompileResultDto
     {
+        int64_t                     entry_id = 0;
         bool                        can_execute = false;
         RepositoryCompileSummaryDto summary;
         std::vector<yyjson::value>  diagnostics;
