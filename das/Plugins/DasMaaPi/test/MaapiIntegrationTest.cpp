@@ -7,17 +7,26 @@
 #include <das/Core/IPC/MainProcess/IpcContext.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
+#include <das/Core/TaskScheduler/RepositoryInvokeDtos.h>
+#include <das/Core/TaskScheduler/SchedulerService.h>
 #include <das/DasApi.h>
 #include <das/Plugins/DasMaaPi/MaaRuntime.h>
 #include <das/Plugins/DasMaaPi/MaapiDto.h>
+#include "../src/MaapiRunTaskComponent.h"
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace
 {
@@ -26,11 +35,27 @@ namespace
     using namespace Das::Plugins::DasMaaPi;
     using namespace Das::Plugins::DasMaaPi::Test;
     using Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY;
+    using Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY;
+
+    std::filesystem::path PluginRootDir()
+    {
+        return std::filesystem::path{IpcTestConfig::GetPluginDir()};
+    }
 
     std::filesystem::path PluginPackageDir()
     {
-        return std::filesystem::path{IpcTestConfig::GetPluginDir()}
-               / "DasMaaPi";
+        return PluginRootDir() / "DasMaaPi";
+    }
+
+    std::filesystem::path FlowControlManifestPath()
+    {
+        const auto package_manifest =
+            PluginRootDir() / "DasFlowControl" / "DasFlowControl.json";
+        if (std::filesystem::exists(package_manifest))
+        {
+            return package_manifest;
+        }
+        return PluginRootDir() / "DasFlowControl.json";
     }
 
     std::filesystem::path FixturePath(std::string_view name)
@@ -47,11 +72,76 @@ namespace
         return runtime_result ? std::move(runtime_result.value()) : nullptr;
     }
 
+    DasGuid GuidFromText(std::string_view guid_text)
+    {
+        return MakeDasGuid(std::string{guid_text});
+    }
+
+    std::string JsonStringLiteral(std::string_view value)
+    {
+        std::string result = "\"";
+        for (const char ch : value)
+        {
+            switch (ch)
+            {
+            case '\\':
+                result += "\\\\";
+                break;
+            case '"':
+                result += "\\\"";
+                break;
+            case '\n':
+                result += "\\n";
+                break;
+            case '\r':
+                result += "\\r";
+                break;
+            case '\t':
+                result += "\\t";
+                break;
+            default:
+                result += ch;
+                break;
+            }
+        }
+        result += "\"";
+        return result;
+    }
+
+    std::string SetInterfacePathChangeJson(
+        std::string_view interface_path,
+        int64_t          base_revision)
+    {
+        return "{\"baseRevision\":" + std::to_string(base_revision)
+               + ",\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
+                 "\"adapter.interfacePath\",\"value\":"
+               + JsonStringLiteral(interface_path) + "}}";
+    }
+
     DasPtr<Das::ExportInterface::IDasJson> ParseDasJson(std::string json)
     {
         DasPtr<Das::ExportInterface::IDasJson> result;
         EXPECT_EQ(ParseDasJsonFromString(json.c_str(), result.Put()), DAS_S_OK);
         return result;
+    }
+
+    yyjson::value ParseYyjson(std::string_view json)
+    {
+        auto parsed = Das::Utils::ParseYyjsonFromString(json);
+        EXPECT_TRUE(parsed.has_value());
+        return parsed ? std::move(*parsed) : Das::Utils::MakeYyjsonObject();
+    }
+
+    yyjson::value CloneJsonValue(const yyjson::value& value)
+    {
+        auto text = value.write(yyjson::WriteFlag::NoFlag);
+        return ParseYyjson(std::string_view(text.data(), text.size()));
+    }
+
+    std::string SerializeJson(const yyjson::value& value)
+    {
+        auto text = value.write(yyjson::WriteFlag::NoFlag);
+        return std::string(text.data(), text.size());
     }
 
     yyjson::value ReadJsonInterface(Das::ExportInterface::IDasJson* json)
@@ -76,6 +166,60 @@ namespace
             std::chrono::steady_clock::now().time_since_epoch().count();
         return std::filesystem::temp_directory_path()
                / ("das_maapi_integration_" + std::to_string(ticks));
+    }
+
+    yyjson::value MakeRepositoryCreateRequest()
+    {
+        yyjson::value request(Das::Utils::MakeYyjsonObject());
+        auto          obj = request.as_object();
+        (*obj)[std::string_view("pluginGuid")] =
+            std::string(kPluginGuidText);
+        (*obj)[std::string_view("taskTypeGuid")] =
+            std::string(kTaskGuidText);
+        (*obj)[std::string_view("displayName")] =
+            "Repository invoke MAAPI run";
+        return request;
+    }
+
+    Das::Core::ForeignInterfaceHost::TaskComponentsManifestDesc
+    MakeLocalMaapiRunManifest()
+    {
+        Das::Core::ForeignInterfaceHost::TaskComponentsManifestDesc manifest;
+        manifest.factories =
+            std::vector<std::string>{std::string(kRunTaskComponentFactoryGuidText)};
+
+        yyjson::value definition(Das::Utils::MakeYyjsonObject());
+        auto          definition_obj = definition.as_object();
+        (*definition_obj)[std::string_view("schemaVersion")] = 1;
+        (*definition_obj)[std::string_view("kind")] = "das.maapi.run";
+        (*definition_obj)[std::string_view("componentGuid")] =
+            std::string(kRunTaskComponentGuidText);
+        (*definition_obj)[std::string_view("settings")] =
+            Das::Utils::MakeYyjsonArray();
+        (*definition_obj)[std::string_view("inputs")] =
+            Das::Utils::MakeYyjsonArray();
+        (*definition_obj)[std::string_view("outputs")] =
+            Das::Utils::MakeYyjsonArray();
+        (*definition_obj)[std::string_view("signals")] =
+            Das::Utils::MakeYyjsonArray();
+        (*definition_obj)[std::string_view("config")] =
+            Das::Utils::MakeYyjsonObject();
+        (*definition_obj)[std::string_view("diagnostics")] =
+            Das::Utils::MakeYyjsonArray();
+
+        Das::Core::ForeignInterfaceHost::TaskComponentManifestEntryDesc entry;
+        entry.factory_guid = std::string(kRunTaskComponentFactoryGuidText);
+        entry.definition = std::move(definition);
+
+        std::unordered_map<
+            std::string,
+            Das::Core::ForeignInterfaceHost::TaskComponentManifestEntryDesc>
+            components;
+        components.emplace(
+            std::string(kRunTaskComponentGuidText),
+            std::move(entry));
+        manifest.components = std::move(components);
+        return manifest;
     }
 
     class MaapiIntegrationFixture : public ::testing::Test
@@ -153,6 +297,242 @@ namespace
         std::unique_ptr<Das::Core::IPC::RemoteObjectRegistry> registry_;
         std::unique_ptr<PluginManager>                        plugin_manager_;
     };
+
+    class DasMaaPiRepositoryInvokeFixture : public ::testing::Test
+    {
+    protected:
+        void SetUp() override
+        {
+            settings_dir_ = UniqueSettingsDir();
+            settings_manager_ =
+                std::make_unique<Das::Core::SettingsManager::SettingsManager>(
+                    settings_dir_);
+            ipc_sp_ =
+                Das::Core::IPC::MainProcess::CreateIpcContextShared(false);
+            scheduler_plugin_manager_ = std::make_unique<PluginManager>(
+                *settings_manager_,
+                Das::DasSharedRef<Das::Core::IPC::MainProcess::IIpcContext>(
+                    ipc_sp_));
+            auto scheduler_runtime = CreateCppRuntime();
+            ASSERT_NE(scheduler_runtime, nullptr);
+            ASSERT_EQ(
+                scheduler_plugin_manager_->Initialize(1, scheduler_runtime),
+                DAS_S_OK);
+            scheduler_registry_ =
+                std::make_unique<Das::Core::IPC::RemoteObjectRegistry>();
+            scheduler_plugin_manager_->SetRegistry(*scheduler_registry_);
+            scheduler_plugin_dir_ = settings_dir_ / "plugins";
+            std::filesystem::create_directories(scheduler_plugin_dir_);
+            const auto scheduler_maapi_dir =
+                scheduler_plugin_dir_ / "DasMaaPi";
+            std::filesystem::copy(
+                PluginPackageDir(),
+                scheduler_maapi_dir,
+                std::filesystem::copy_options::recursive
+                    | std::filesystem::copy_options::overwrite_existing);
+            ASSERT_TRUE(std::filesystem::exists(
+                scheduler_maapi_dir / "DasMaaPi.json"));
+            scheduler_ =
+                std::make_unique<Das::Core::TaskScheduler::SchedulerService>(
+                    *scheduler_plugin_manager_,
+                    Das::DasSharedRef<
+                        Das::Core::IPC::MainProcess::IIpcContext>(ipc_sp_));
+            ASSERT_EQ(
+                scheduler_->Initialize(scheduler_plugin_dir_, {}),
+                DAS_S_OK);
+
+            runtime_plugin_manager_ = std::make_unique<PluginManager>(
+                *settings_manager_,
+                Das::DasSharedRef<Das::Core::IPC::MainProcess::IIpcContext>(
+                    ipc_sp_));
+            auto component_runtime = CreateCppRuntime();
+            ASSERT_NE(component_runtime, nullptr);
+            ASSERT_EQ(
+                runtime_plugin_manager_->Initialize(1, component_runtime),
+                DAS_S_OK);
+            runtime_registry_ =
+                std::make_unique<Das::Core::IPC::RemoteObjectRegistry>();
+            runtime_plugin_manager_->SetRegistry(*runtime_registry_);
+            ASSERT_TRUE(std::filesystem::exists(FlowControlManifestPath()))
+                << FlowControlManifestPath().string();
+            ASSERT_EQ(
+                runtime_plugin_manager_->LoadPlugin(FlowControlManifestPath()),
+                DAS_S_OK);
+            ASSERT_EQ(
+                runtime_plugin_manager_->RegisterPluginObjects(
+                    FlowControlManifestPath()),
+                DAS_S_OK);
+            RegisterLocalMaapiRunFactory();
+        }
+
+        void TearDown() override
+        {
+            if (runtime_plugin_manager_)
+            {
+                runtime_plugin_manager_->Shutdown();
+            }
+            runtime_plugin_manager_.reset();
+            scheduler_.reset();
+            if (scheduler_plugin_manager_)
+            {
+                scheduler_plugin_manager_->Shutdown();
+            }
+            scheduler_plugin_manager_.reset();
+            runtime_registry_.reset();
+            scheduler_registry_.reset();
+            settings_manager_.reset();
+            std::filesystem::remove_all(settings_dir_);
+        }
+
+        void RegisterLocalMaapiRunFactory()
+        {
+            auto* factory = new MaapiRunTaskComponentFactory();
+            factory->AddRef();
+
+            Das::Core::ForeignInterfaceHost::FeatureInfo feature{};
+            feature.feature_type = DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY;
+            feature.interface_ptr = DasPtr<IDasBase>(
+                static_cast<IDasBase*>(
+                    static_cast<
+                        Das::PluginInterface::IDasTaskComponentFactory*>(
+                        factory)));
+
+            Das::Core::ForeignInterfaceHost::FeatureInfo* feature_ptr =
+                &feature;
+            ASSERT_EQ(
+                runtime_plugin_manager_->GetTaskComponentFactoryManager()
+                    .OnPluginLoaded(
+                        GuidFromText(kPluginGuidText),
+                        {&feature_ptr, 1},
+                        MakeLocalMaapiRunManifest()),
+                DAS_S_OK);
+        }
+
+        DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> CreateSession()
+        {
+            auto features = scheduler_plugin_manager_->GetFeaturesByType(
+                DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY);
+            EXPECT_EQ(features.size(), 1u);
+            DasPtr<Das::PluginInterface::IDasTaskAuthoringSessionFactory>
+                factory;
+            EXPECT_EQ(
+                features[0]->interface_ptr->QueryInterface(
+                    DasIidOf<
+                        Das::PluginInterface::
+                            IDasTaskAuthoringSessionFactory>(),
+                    reinterpret_cast<void**>(factory.Put())),
+                DAS_S_OK);
+            DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
+            EXPECT_EQ(
+                factory->CreateSession(
+                    GuidFromText(kTaskGuidText),
+                    nullptr,
+                    session.Put()),
+                DAS_S_OK);
+            return session;
+        }
+
+        yyjson::value CompileDirectExecutionInput(
+            std::string_view interface_path)
+        {
+            auto session = CreateSession();
+            auto change = ParseDasJson(
+                SetInterfacePathChangeJson(interface_path, 0));
+            DasPtr<Das::ExportInterface::IDasJson> apply_json;
+            EXPECT_EQ(session->ApplyChange(change.Get(), apply_json.Put()), DAS_S_OK);
+
+            auto request = ParseDasJson(R"({"purpose":"execution"})");
+            DasPtr<Das::ExportInterface::IDasJson> execution_json;
+            EXPECT_EQ(
+                session->Compile(request.Get(), execution_json.Put()),
+                DAS_S_OK);
+            auto execution = ReadJsonInterface(execution_json.Get());
+            auto execution_obj = execution.as_object();
+            EXPECT_TRUE(execution_obj.has_value());
+            auto execution_input =
+                (*execution_obj)[std::string_view("executionInput")];
+            EXPECT_TRUE(execution_input.is_object());
+            return CloneJsonValue(execution_input);
+        }
+
+        int64_t CreateRepositoryEntryForInterface(
+            std::string_view interface_path)
+        {
+            auto created =
+                scheduler_->CreateRepositoryEntry(MakeRepositoryCreateRequest());
+            auto created_obj = created.as_object();
+            EXPECT_TRUE(created_obj.has_value());
+            const auto entry_id =
+                (*created_obj)[std::string_view("entryId")]
+                    .as_sint()
+                    .value_or(-1);
+            EXPECT_GE(entry_id, 0);
+
+            auto change = ParseYyjson(
+                SetInterfacePathChangeJson(interface_path, 0));
+            auto applied =
+                scheduler_->ApplyRepositoryEntryAuthoringChange(entry_id, change);
+            auto applied_obj = applied.as_object();
+            EXPECT_TRUE(applied_obj.has_value());
+            EXPECT_TRUE(
+                (*applied_obj)[std::string_view("ok")]
+                    .as_bool()
+                    .value_or(false));
+            EXPECT_EQ(
+                (*applied_obj)[std::string_view("revision")]
+                    .as_sint()
+                    .value_or(-1),
+                1);
+            auto authoring =
+                (*applied_obj)[std::string_view("authoring")].as_object();
+            EXPECT_TRUE(authoring.has_value());
+            EXPECT_EQ(
+                (*authoring)[std::string_view("sourceFingerprint")]
+                    .as_string()
+                    .value_or(""),
+                std::string_view("SampleInterface:1.0.0"));
+            return entry_id;
+        }
+
+        Das::Core::TaskScheduler::RepositoryInvoke::
+            RepositoryInvokeCompileResult
+        CompileRepositoryInvokeSnapshot(int64_t entry_id)
+        {
+            Das::Core::TaskScheduler::RepositoryInvoke::Dto::
+                RepositoryTaskRefDto ref;
+            ref.entry_id = entry_id;
+            ref.expected_revision = 1;
+            ref.source_fingerprint = "SampleInterface:1.0.0";
+
+            Das::Core::TaskScheduler::RepositoryInvoke::
+                RepositoryInvokeSourceContext context;
+            context.source_entry_id = 200;
+            context.source_graph = ParseYyjson(
+                std::string("{\"nodes\":[{\"id\":\"maapi-run-node\",")
+                +
+                "\"label\":\"MAAPI repository run\",\"settings\":{"
+                "\"repositoryRef\":{\"kind\":\"taskRepositoryRef\","
+                "\"entryId\":"
+                + std::to_string(entry_id)
+                + ",\"expectedRevision\":1,\"sourceFingerprint\":"
+                  "\"SampleInterface:1.0.0\"}}}]}");
+
+            return scheduler_->ResolveRepositoryInvokeSnapshot(ref, context);
+        }
+
+        std::filesystem::path settings_dir_;
+        std::filesystem::path scheduler_plugin_dir_;
+        std::unique_ptr<Das::Core::SettingsManager::SettingsManager>
+            settings_manager_;
+        std::shared_ptr<Das::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
+        std::unique_ptr<Das::Core::IPC::RemoteObjectRegistry>
+            scheduler_registry_;
+        std::unique_ptr<Das::Core::IPC::RemoteObjectRegistry>
+            runtime_registry_;
+        std::unique_ptr<PluginManager> scheduler_plugin_manager_;
+        std::unique_ptr<PluginManager> runtime_plugin_manager_;
+        std::unique_ptr<Das::Core::TaskScheduler::SchedulerService> scheduler_;
+    };
 } // namespace
 
 TEST_F(MaapiIntegrationFixture, SampleInterfaceAuthoringCompileRuntimeDryRun)
@@ -218,4 +598,60 @@ TEST_F(MaapiIntegrationFixture, SampleInterfaceAuthoringCompileRuntimeDryRun)
     auto run_result = MaaRuntime::Run(parsed.envelope, fake, nullptr);
     EXPECT_EQ(run_result.das_result, DAS_S_OK);
     EXPECT_TRUE(fake.Contains("PostTask:StartDaily:{\"StartDaily\":{\"enabled\":true}}"));
+}
+
+TEST_F(
+    DasMaaPiRepositoryInvokeFixture,
+    RepositoryInvokeGraphCompileProducesMaapiRunSnapshot)
+{
+    const auto interface_path =
+        FixturePath("sample_interface.jsonc").generic_string();
+    const auto direct_execution_input =
+        CompileDirectExecutionInput(interface_path);
+    const auto entry_id = CreateRepositoryEntryForInterface(interface_path);
+
+    auto result = CompileRepositoryInvokeSnapshot(entry_id);
+
+    ASSERT_TRUE(result.ok);
+    ASSERT_TRUE(result.snapshot.has_value());
+    EXPECT_TRUE(result.diagnostics.empty());
+    EXPECT_EQ(result.snapshot->source_entry_id, entry_id);
+    EXPECT_EQ(result.snapshot->source_revision, 1);
+    EXPECT_EQ(
+        result.snapshot->source_fingerprint.value_or(""),
+        std::string_view("SampleInterface:1.0.0"));
+    EXPECT_EQ(result.snapshot->plugin_guid, std::string(kPluginGuidText));
+    EXPECT_EQ(result.snapshot->task_type_guid, std::string(kTaskGuidText));
+    EXPECT_EQ(
+        result.snapshot->component_guid,
+        std::string(kRunTaskComponentGuidText));
+    EXPECT_EQ(
+        SerializeJson(result.snapshot->execution_input),
+        SerializeJson(direct_execution_input));
+
+    auto preview = scheduler_->CompileRepositoryEntryAuthoring(
+        entry_id,
+        ParseYyjson(R"({"purpose":"preview"})"));
+    auto preview_obj = preview.as_object();
+    ASSERT_TRUE(preview_obj.has_value());
+    EXPECT_TRUE(
+        (*preview_obj)[std::string_view("canExecute")]
+            .as_bool()
+            .value_or(false));
+    EXPECT_FALSE(preview_obj->contains(std::string_view("executionInput")));
+    EXPECT_FALSE(preview_obj->contains(std::string_view("compiledSnapshot")));
+
+    auto definitions = runtime_plugin_manager_->GetTaskComponentFactoryManager()
+                           .EnumerateDefinitions();
+    const auto run_guid = GuidFromText(kRunTaskComponentGuidText);
+    auto found = std::ranges::find_if(
+        definitions,
+        [&run_guid](const auto& definition)
+        { return definition.component_guid == run_guid; });
+    ASSERT_NE(found, definitions.end());
+    auto definition_obj = found->definition.as_object();
+    ASSERT_TRUE(definition_obj.has_value());
+    EXPECT_EQ(
+        (*definition_obj)[std::string_view("kind")].as_string().value_or(""),
+        std::string_view("das.maapi.run"));
 }
