@@ -601,6 +601,55 @@ namespace Das::Core::TaskScheduler
             session);
     }
 
+    struct RepositoryProviderCompileResult
+    {
+        yyjson::value compile;
+        std::string   error_kind;
+        std::string   message;
+
+        bool Succeeded() const { return error_kind.empty(); }
+    };
+
+    static RepositoryProviderCompileResult CompileRepositoryEntryProvider(
+        Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager,
+        const TaskAuthoringCapability&                  capability,
+        int64_t                                         entry_id,
+        const Repository::Dto::RepositoryEntryDto&       entry,
+        const yyjson::value&                            entry_json,
+        const yyjson::value&                            request)
+    {
+        DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
+        auto session_result = CreateAuthoringSessionWithContext(
+            plugin_manager,
+            capability,
+            MakeRepositoryAuthoringContextJson(
+                entry_id,
+                entry.accepted_properties,
+                entry_json),
+            session);
+        if (DAS::IsFailed(session_result) || !session)
+        {
+            return {
+                {},
+                "sessionCreateFailed",
+                "Failed to create repository authoring session"};
+        }
+
+        auto request_json = WrapJsonValue(CloneJsonValue(request));
+        DasPtr<Das::ExportInterface::IDasJson> compile_json;
+        auto compile_result =
+            session->Compile(request_json.Get(), compile_json.Put());
+        if (DAS::IsFailed(compile_result) || !compile_json)
+        {
+            return {
+                {},
+                "providerFailed",
+                "Repository authoring provider failed to compile document"};
+        }
+
+        return {ReadJsonInterface(compile_json.Get()), {}, {}};
+    }
+
     static void MergeTaskComponentCatalog(
         Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager,
         yyjson::value&                                  document)
@@ -2228,36 +2277,23 @@ namespace Das::Core::TaskScheduler
             capability = *authoring;
         }
 
-        DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
-        auto session_result = CreateAuthoringSessionWithContext(
+        auto provider_compile = CompileRepositoryEntryProvider(
             plugin_manager_,
             capability,
-            MakeRepositoryAuthoringContextJson(
-                entry_id,
-                entry.accepted_properties,
-                entry_json),
-            session);
-        if (DAS::IsFailed(session_result) || !session)
+            entry_id,
+            entry,
+            entry_json,
+            request);
+        if (!provider_compile.Succeeded())
         {
             return MakeRepositoryResponseError(
-                "sessionCreateFailed",
-                "Failed to create repository authoring session");
-        }
-
-        auto request_json = WrapJsonValue(CloneJsonValue(request));
-        DasPtr<Das::ExportInterface::IDasJson> compile_json;
-        auto                                   compile_result =
-            session->Compile(request_json.Get(), compile_json.Put());
-        if (DAS::IsFailed(compile_result) || !compile_json)
-        {
-            return MakeRepositoryResponseError(
-                "providerFailed",
-                "Repository authoring provider failed to compile document");
+                provider_compile.error_kind,
+                provider_compile.message);
         }
 
         return ProjectRepositoryCompilePreview(
             entry_id,
-            ReadJsonInterface(compile_json.Get()));
+            provider_compile.compile);
     }
 
     // ----------------------------------------------------------------
