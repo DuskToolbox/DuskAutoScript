@@ -60,10 +60,14 @@ if(DAS_BUILD_TEST)
     add_executable(DasMaaPiTest
         src/AuthoringProjector.cpp
         src/MaaRuntime.cpp
+        src/MaapiAuthoringSession.cpp
+        src/MaapiAuthoringSessionFactory.cpp
+        src/MaapiTask.cpp
         src/PiCompiler.cpp
         src/PiCatalog.cpp
         src/PiParser.cpp
         src/PluginImpl.cpp
+        src/PluginUtils.cpp
         test/MaapiAuthoringTest.cpp
         test/MaapiCompileTest.cpp
         test/MaapiIntegrationTest.cpp

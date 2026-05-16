@@ -1,4 +1,4 @@
-#include "../src/PluginImpl.h"
+#include "../src/MaapiTask.h"
 #include "FakeMaaApiBoundary.h"
 
 #include <das/Plugins/DasMaaPi/MaaRuntime.h>

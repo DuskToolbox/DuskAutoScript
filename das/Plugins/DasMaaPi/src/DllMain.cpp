@@ -4,35 +4,28 @@
 
 #include <das/DasApi.h>
 #include <das/IDasBase.h>
+#include <das/Utils/CommonUtils.hpp>
 
-#include <Windows.h>
+// Bring PluginInterface types into global namespace for C API
+using Das::PluginInterface::IDasPluginPackage;
 
-BOOL APIENTRY DllMain(HMODULE h_module, DWORD reason, LPVOID reserved)
+DAS_C_API DasResult DasCoCreatePlugin(IDasBase** pp_out_plugin)
 {
-    (void)h_module;
-    (void)reason;
-    (void)reserved;
-    return TRUE;
-}
-
-extern "C" DAS_EXPORT DasResult DasCoCreatePlugin(IDasBase** pp_out_plugin)
-{
-    if (pp_out_plugin == nullptr)
-    {
-        return DAS_E_INVALID_POINTER;
-    }
-    *pp_out_plugin = nullptr;
-
+    DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(pp_out_plugin)
     try
     {
-        auto* plugin = new Das::Plugins::DasMaaPi::DasMaaPiPlugin{};
-        plugin->AddRef();
-        *pp_out_plugin =
-            static_cast<Das::PluginInterface::IDasPluginPackage*>(plugin);
+        const auto p_result = new Das::Plugins::DasMaaPi::DasMaaPiPlugin{};
+        *pp_out_plugin = p_result;
+        p_result->AddRef();
         return DAS_S_OK;
     }
     catch (const std::bad_alloc&)
     {
+        DAS_LOG_ERROR("Out of memory");
         return DAS_E_OUT_OF_MEMORY;
+    }
+    catch (...)
+    {
+        return DAS_E_INTERNAL_FATAL_ERROR;
     }
 }
