@@ -30,7 +30,7 @@ namespace
         std::string_view guid_text;
     };
 
-    constexpr std::array<OfficialFlowComponent, 6> kOfficialComponents{
+    constexpr std::array<OfficialFlowComponent, 7> kOfficialComponents{
         OfficialFlowComponent{
             "branch",
             "das.flow.branch",
@@ -55,6 +55,10 @@ namespace
             "goto",
             "das.flow.goto",
             "68F10006-0000-4000-8000-000000000006"},
+        OfficialFlowComponent{
+            "repositoryInvoke",
+            "das.flow.invokeRepository",
+            "68F10007-0000-4000-8000-000000000007"},
     };
 
     std::filesystem::path UniqueSettingsDir()
