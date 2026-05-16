@@ -2442,8 +2442,29 @@ void WriteFactoryPluginManifest(const std::filesystem::path& manifest_path)
         (*task_entry.as_object())[std::string_view("name")] = "factoryTask";
         (*task_entry.as_object())[std::string_view("description")] =
             "Scheduler test task";
-        (*task_entry.as_object())[std::string_view("descriptors")] =
-            yyjson::value(Das::Utils::MakeYyjsonArray());
+        {
+            yyjson::value descriptors(Das::Utils::MakeYyjsonArray());
+            {
+                yyjson::value desc(Das::Utils::MakeYyjsonObject());
+                (*desc.as_object())[std::string_view("name")] = "key1";
+                (*desc.as_object())[std::string_view("type")] =
+                    static_cast<int64_t>(
+                        Das::ExportInterface::DAS_TYPE_STRING);
+                (*desc.as_object())[std::string_view("defaultValue")] =
+                    "default";
+                descriptors.as_array()->emplace_back(std::move(desc));
+            }
+            {
+                yyjson::value desc(Das::Utils::MakeYyjsonObject());
+                (*desc.as_object())[std::string_view("name")] = "retryCount";
+                (*desc.as_object())[std::string_view("type")] =
+                    static_cast<int64_t>(Das::ExportInterface::DAS_TYPE_INT);
+                (*desc.as_object())[std::string_view("defaultValue")] = 3;
+                descriptors.as_array()->emplace_back(std::move(desc));
+            }
+            (*task_entry.as_object())[std::string_view("descriptors")] =
+                std::move(descriptors);
+        }
         {
             yyjson::value authoring(Das::Utils::MakeYyjsonObject());
             (*authoring.as_object())[std::string_view("factoryGuid")] =
@@ -3242,6 +3263,93 @@ TEST_F(SchedulerRuntimeBackedTest, SchedulerAuthoringCompilePreviewOnly)
     std::lock_guard<std::mutex> lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->compile_count, 1);
     EXPECT_TRUE(shared_state_->executed_instance_ids.empty());
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryCreateReturnsEntryFromDescriptorDefaults)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    yyjson::value request(Das::Utils::MakeYyjsonObject());
+    (*request.as_object())[std::string_view("pluginGuid")] =
+        FactoryPluginGuidString;
+    (*request.as_object())[std::string_view("taskTypeGuid")] =
+        FactoryTaskGuidString;
+    (*request.as_object())[std::string_view("displayName")] = "Daily run";
+    {
+        yyjson::value initial(Das::Utils::MakeYyjsonObject());
+        (*initial.as_object())[std::string_view("retryCount")] = 5;
+        (*request.as_object())[std::string_view("initialProperties")] =
+            std::move(initial);
+    }
+
+    auto created = scheduler_->CreateRepositoryEntry(request);
+    auto obj = created.as_object();
+    ASSERT_TRUE(obj.has_value());
+    EXPECT_EQ(
+        (*obj)[std::string_view("entryId")].as_sint().value_or(-1),
+        0);
+    EXPECT_EQ(
+        (*obj)[std::string_view("displayName")].as_string().value_or(""),
+        std::string_view("Daily run"));
+    EXPECT_EQ(
+        (*obj)[std::string_view("pluginGuid")].as_string().value_or(""),
+        std::string_view(FactoryPluginGuidString));
+    EXPECT_EQ(
+        (*obj)[std::string_view("taskTypeGuid")].as_string().value_or(""),
+        std::string_view(FactoryTaskGuidString));
+
+    auto authoring = (*obj)[std::string_view("authoring")].as_object();
+    ASSERT_TRUE(authoring.has_value());
+    EXPECT_EQ(
+        (*authoring)[std::string_view("revision")].as_sint().value_or(-1),
+        0);
+
+    auto accepted =
+        (*obj)[std::string_view("acceptedProperties")].as_object();
+    ASSERT_TRUE(accepted.has_value());
+    EXPECT_EQ(
+        (*accepted)[std::string_view("key1")].as_string().value_or(""),
+        std::string_view("default"));
+    EXPECT_EQ(
+        (*accepted)[std::string_view("retryCount")].as_sint().value_or(-1),
+        5);
+
+    auto availability = (*obj)[std::string_view("availability")].as_object();
+    ASSERT_TRUE(availability.has_value());
+    EXPECT_EQ(
+        (*availability)[std::string_view("state")].as_string().value_or(""),
+        std::string_view("available"));
+
+    auto persisted = settings_manager_->GetTaskRepositoryEntryJson("0", 0);
+    auto persisted_obj = persisted.as_object();
+    ASSERT_TRUE(persisted_obj.has_value());
+    EXPECT_EQ(
+        (*persisted_obj)[std::string_view("entryId")].as_sint().value_or(-1),
+        0);
+    auto persisted_props =
+        (*persisted_obj)[std::string_view("acceptedProperties")].as_object();
+    ASSERT_TRUE(persisted_props.has_value());
+    EXPECT_EQ(
+        (*persisted_props)[std::string_view("retryCount")]
+            .as_sint()
+            .value_or(-1),
+        5);
+
+    auto scheduler_state = scheduler_->Get();
+    EXPECT_EQ(
+        (*scheduler_state.as_object())[std::string_view("tasks")]
+            .as_array()
+            ->size(),
+        0u);
+
+    auto scheduler_index = settings_manager_->GetSchedulerIndexJson("0");
+    EXPECT_EQ(
+        (*scheduler_index.as_object())[std::string_view("taskOrder")]
+            .as_array()
+            ->size(),
+        0u);
 }
 
 TEST_F(
