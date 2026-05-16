@@ -161,7 +161,7 @@ namespace
             std::string{R"("taskComponents":)"}
             + TaskComponentsWithEntry(task_component_guid, component_entry)
             + R"(,"tasks":{")" + std::string{kTaskGuid} + R"(":)"
-            + std::string{task_entry} + "}}");
+            + std::string{task_entry} + "}");
     }
 
     void ExpectInvalidTaskComponents(

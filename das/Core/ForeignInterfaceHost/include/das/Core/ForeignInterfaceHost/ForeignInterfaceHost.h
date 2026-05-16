@@ -102,6 +102,12 @@ struct TaskAuthoringCapabilityDesc
     std::vector<std::string> supported_kinds;
 };
 
+/// Task component capability that can execute a compiled task descriptor.
+struct TaskExecutionComponentDesc
+{
+    DasGuid component_guid{};
+};
+
 /// Inline task component definition routed by a factory implementation GUID.
 struct TaskComponentManifestEntryDesc
 {
@@ -143,6 +149,7 @@ struct TaskDescriptor
     std::optional<std::string>                 game_name;
     std::vector<PluginSettingDesc>             descriptors;
     std::optional<TaskAuthoringCapabilityDesc> authoring;
+    std::optional<TaskExecutionComponentDesc>  execution_component;
 };
 
 void ParseTaskDescriptorFromJson(
@@ -198,6 +205,13 @@ DAS_CORE_FOREIGNINTERFACEHOST_NS_END
 template <>
 struct yyjson::field_name_rule<
     DAS::Core::ForeignInterfaceHost::TaskAuthoringCapabilityDesc>
+{
+    using type = yyjson::snake_to_camel_transform;
+};
+
+template <>
+struct yyjson::field_name_rule<
+    DAS::Core::ForeignInterfaceHost::TaskExecutionComponentDesc>
 {
     using type = yyjson::snake_to_camel_transform;
 };

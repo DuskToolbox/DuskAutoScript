@@ -665,6 +665,44 @@ void ParseTaskDescriptorFromJson(
             output.authoring = std::move(authoring);
         }
     }
+    if (obj.contains(std::string_view("executionComponent")))
+    {
+        auto execution_component_val =
+            obj[std::string_view("executionComponent")];
+        auto execution_component_obj = execution_component_val.as_object();
+        if (!execution_component_obj)
+        {
+            throw std::runtime_error(
+                "executionComponent: expected object");
+        }
+
+        if (!execution_component_obj->contains(
+                std::string_view("componentGuid")))
+        {
+            throw std::runtime_error(
+                "executionComponent.componentGuid: missing required string");
+        }
+
+        auto component_guid_text =
+            (*execution_component_obj)[std::string_view("componentGuid")]
+                .as_string();
+        if (!component_guid_text)
+        {
+            throw std::runtime_error(
+                "executionComponent.componentGuid: missing required string");
+        }
+
+        auto component_guid = TryMakeGuid(*component_guid_text);
+        if (!component_guid)
+        {
+            throw std::runtime_error(
+                "executionComponent.componentGuid: invalid component GUID");
+        }
+
+        TaskExecutionComponentDesc execution_component;
+        execution_component.component_guid = *component_guid;
+        output.execution_component = std::move(execution_component);
+    }
     if (obj.contains(std::string_view("descriptors")))
     {
         auto descriptors_field = obj[std::string_view("descriptors")];
