@@ -19,6 +19,8 @@ namespace
         "78B71988-2125-4A2B-8B78-02A804570101";
     constexpr std::string_view kAlternateTaskComponentGuid =
         "88B71988-2125-4A2B-8B78-02A804570102";
+    constexpr std::string_view kTaskGuid =
+        "B4F60C54-67DF-407A-B891-6D3C90CDB9A1";
 
     template <class T>
     concept HasStableNameField = requires(T value) { value.stable_name; };
@@ -37,6 +39,11 @@ namespace
     template <class T>
     concept HasComponentsField = requires(T value) { value.components; };
 
+    template <class T>
+    concept HasExecutionComponentField = requires(T value) {
+        value.execution_component;
+    };
+
     static_assert(
         !HasStableNameField<
             DAS::Core::ForeignInterfaceHost::TaskComponentManifestEntryDesc>);
@@ -51,6 +58,8 @@ namespace
             DAS::Core::ForeignInterfaceHost::TaskComponentManifestEntryDesc>);
     static_assert(
         !HasComponentsField<DAS::Core::ForeignInterfaceHost::TaskDescriptor>);
+    static_assert(HasExecutionComponentField<
+                  DAS::Core::ForeignInterfaceHost::TaskDescriptor>);
     static_assert(
         HasComponentsField<
             DAS::Core::ForeignInterfaceHost::TaskComponentsManifestDesc>);
@@ -130,6 +139,31 @@ namespace
                R"(":)" + std::string{entry} + "}}";
     }
 
+    std::string TaskEntryWithExecutionComponent(
+        std::string_view component_guid)
+    {
+        return std::string{
+                   R"({"pluginGuid":"65EDE9D8-09A8-4F01-B4AF-6614C5BA1C8E",)"
+                   R"("name":"repositoryBackedTask",)"
+                   R"("description":"Repository-backed task",)"
+                   R"("executionComponent":{"componentGuid":")"} +
+               std::string{component_guid} + R"("}})";
+    }
+
+    std::string MinimalExecutionComponentPluginJson(
+        std::string_view task_component_guid,
+        std::string_view task_entry)
+    {
+        const auto component_entry = EntryWithFactoryAndDefinition(
+            kTaskComponentFactoryGuid,
+            ValidDefinitionFor(task_component_guid));
+        return BasicPluginJsonWith(
+            std::string{R"("taskComponents":)"}
+            + TaskComponentsWithEntry(task_component_guid, component_entry)
+            + R"(,"tasks":{")" + std::string{kTaskGuid} + R"(":)"
+            + std::string{task_entry} + "}}");
+    }
+
     void ExpectInvalidTaskComponents(
         std::string_view task_components_json,
         std::string_view expected_reason)
@@ -145,6 +179,26 @@ namespace
             FAIL() << "Invalid taskComponents should fail";
         }
         catch (const std::runtime_error& e)
+        {
+            EXPECT_NE(
+                std::string{e.what()}.find(expected_reason),
+                std::string::npos)
+                << e.what();
+        }
+    }
+
+    void ExpectInvalidTaskDescriptor(
+        std::string_view manifest,
+        std::string_view expected_reason)
+    {
+        try
+        {
+            (void)JsonToStruct<
+                DAS::Core::ForeignInterfaceHost::PluginPackageDesc>(
+                std::string{manifest});
+            FAIL() << "Invalid task descriptor should fail";
+        }
+        catch (const std::exception& e)
         {
             EXPECT_NE(
                 std::string{e.what()}.find(expected_reason),
@@ -544,6 +598,38 @@ TEST(PluginPackageDescTest, TaskDescriptorAuthoringCapability)
     ASSERT_EQ(it->second.authoring->supported_kinds.size(), 2u);
     EXPECT_EQ(it->second.authoring->supported_kinds[0], "formSequence");
     EXPECT_EQ(it->second.authoring->supported_kinds[1], "graph");
+}
+
+TEST(PluginDescTaskExecutionComponentTest, ParsesExecutionComponentGuid)
+{
+    const auto manifest = MinimalExecutionComponentPluginJson(
+        kTaskComponentGuid,
+        TaskEntryWithExecutionComponent(kTaskComponentGuid));
+
+    const auto desc =
+        JsonToStruct<DAS::Core::ForeignInterfaceHost::PluginPackageDesc>(
+            manifest);
+    const auto task_guid = DAS::Core::ForeignInterfaceHost::MakeDasGuid(
+        std::string{kTaskGuid});
+
+    const auto it = desc.task_descriptors.find(task_guid);
+    ASSERT_NE(it, desc.task_descriptors.end());
+    ASSERT_TRUE(it->second.execution_component.has_value());
+    EXPECT_EQ(
+        it->second.execution_component->component_guid,
+        DAS::Core::ForeignInterfaceHost::MakeDasGuid(
+            std::string{kTaskComponentGuid}));
+}
+
+TEST(PluginDescTaskExecutionComponentTest, RejectsInvalidComponentGuid)
+{
+    const auto manifest = MinimalExecutionComponentPluginJson(
+        kTaskComponentGuid,
+        TaskEntryWithExecutionComponent("not-a-guid"));
+
+    ExpectInvalidTaskDescriptor(
+        manifest,
+        "executionComponent.componentGuid");
 }
 
 TEST(PluginDescTaskComponentsTest, ParsesTopLevelManifest)
