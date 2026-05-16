@@ -210,6 +210,10 @@ namespace Das::Core::TaskScheduler
         /// Find task instance by id (const).
         const TaskInstanceRecord* FindTaskInstance(int64_t task_id) const;
 
+        Repository::Dto::RepositoryAvailabilityDto
+        DeriveRepositoryAvailabilityLocked(
+            const Repository::Dto::RepositoryEntryDto& entry);
+
         // ----------------------------------------------------------------
         // Config-side persistence (OnTick nextExecutionTime)
         // ----------------------------------------------------------------
@@ -261,6 +265,14 @@ namespace Das::Core::TaskScheduler
         std::vector<TaskInstanceRecord> task_instances_;
 
         std::shared_ptr<TaskRepositoryStore> task_repository_store_;
+
+        struct RepositoryPluginAvailabilityState
+        {
+            std::string reason;
+            std::string message;
+        };
+        std::unordered_map<DasGuid, RepositoryPluginAvailabilityState>
+            repository_plugin_availability_;
 
         Das::PluginInterface::IDasTask*    current_task_ = nullptr;
         std::vector<std::filesystem::path> loaded_plugin_paths_;

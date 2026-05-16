@@ -21,9 +21,9 @@ namespace Das::Core::TaskScheduler::Repository::Dto
 
     struct RepositoryAvailabilityDto
     {
-        std::string                state;
-        std::optional<std::string> reason;
-        std::optional<std::string> message;
+        std::string state;
+        std::string reason;
+        std::string message;
     };
 
     struct RepositoryEntryDto
@@ -131,7 +131,6 @@ struct yyjson::caster<yyjson::value>
     }
 
 DAS_TASK_REPOSITORY_DTO_CASTER(RepositoryAuthoringMetadataDto);
-DAS_TASK_REPOSITORY_DTO_CASTER(RepositoryAvailabilityDto);
 DAS_TASK_REPOSITORY_DTO_CASTER(RepositoryEntryDto);
 DAS_TASK_REPOSITORY_DTO_CASTER(CreateRepositoryEntryRequestDto);
 DAS_TASK_REPOSITORY_DTO_CASTER(RenameRepositoryEntryRequestDto);
@@ -142,6 +141,46 @@ DAS_TASK_REPOSITORY_DTO_CASTER(RepositoryCompileSummaryDto);
 DAS_TASK_REPOSITORY_DTO_CASTER(RepositoryCompileResultDto);
 
 #undef DAS_TASK_REPOSITORY_DTO_CASTER
+
+template <>
+struct yyjson::caster<
+    Das::Core::TaskScheduler::Repository::Dto::RepositoryAvailabilityDto>
+{
+    template <yyjson::json_value Json>
+    static Das::Core::TaskScheduler::Repository::Dto::RepositoryAvailabilityDto
+    from_json(const Json& json)
+    {
+        auto object = json.as_object();
+        if (!object.has_value())
+        {
+            throw yyjson::bad_cast(
+                "Repository availability is not constructible from "
+                "non-object JSON");
+        }
+
+        auto string_or_empty =
+            [&object](std::string_view key) -> std::string
+        {
+            if (!object->contains(key))
+            {
+                return {};
+            }
+            auto value = (*object)[key].as_string();
+            if (!value)
+            {
+                return {};
+            }
+            return std::string(*value);
+        };
+
+        Das::Core::TaskScheduler::Repository::Dto::RepositoryAvailabilityDto
+            availability;
+        availability.state = string_or_empty("state");
+        availability.reason = string_or_empty("reason");
+        availability.message = string_or_empty("message");
+        return availability;
+    }
+};
 
 template <>
 struct yyjson::field_name_rule<

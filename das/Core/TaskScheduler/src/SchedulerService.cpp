@@ -74,6 +74,38 @@ namespace Das::Core::TaskScheduler
             return std::chrono::duration_cast<
                 std::chrono::steady_clock::duration>(delay);
         }
+
+        std::optional<PluginPackageDesc> ReadPluginManifestDesc(
+            const std::filesystem::path& manifest_path)
+        {
+            std::ifstream ifs(manifest_path);
+            if (!ifs.is_open())
+            {
+                return std::nullopt;
+            }
+
+            std::stringstream ss;
+            ss << ifs.rdbuf();
+            auto parsed = Das::Utils::ParseYyjsonFromString(
+                ss.str(),
+                yyjson::ReadFlag::AllowComments
+                    | yyjson::ReadFlag::AllowTrailingCommas);
+            if (!parsed)
+            {
+                return std::nullopt;
+            }
+
+            const auto& const_value = *parsed;
+            auto        obj = const_value.as_object();
+            if (!obj)
+            {
+                return std::nullopt;
+            }
+
+            PluginPackageDesc desc;
+            ParsePluginPackageDescFromJson(*obj, desc);
+            return desc;
+        }
     } // namespace
 
     // ----------------------------------------------------------------
@@ -598,6 +630,72 @@ namespace Das::Core::TaskScheduler
         return nullptr;
     }
 
+    Repository::Dto::RepositoryAvailabilityDto
+    SchedulerService::DeriveRepositoryAvailabilityLocked(
+        const Repository::Dto::RepositoryEntryDto& entry)
+    {
+        Repository::Dto::RepositoryAvailabilityDto availability;
+
+        DasGuid plugin_guid{};
+        DasGuid task_guid{};
+        try
+        {
+            plugin_guid = Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                entry.plugin_guid);
+            task_guid = Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                entry.task_type_guid);
+        }
+        catch (const std::exception&)
+        {
+            availability.state = "unavailable";
+            availability.reason = "pluginUnavailable";
+            availability.message =
+                "Repository entry contains an invalid plugin or task GUID";
+            return availability;
+        }
+
+        if (auto unavailable_plugin =
+                repository_plugin_availability_.find(plugin_guid);
+            unavailable_plugin != repository_plugin_availability_.end())
+        {
+            availability.state = "unavailable";
+            availability.reason = unavailable_plugin->second.reason;
+            availability.message = unavailable_plugin->second.message;
+            return availability;
+        }
+
+        if (plugin_manager_.FindPluginPackageByGuid(plugin_guid) == nullptr)
+        {
+            availability.state = "unavailable";
+            availability.reason = "pluginUnavailable";
+            availability.message =
+                "Plugin package is not loaded for the initialized profile";
+            return availability;
+        }
+
+        auto* task_record = capability_registry_.FindTask(task_guid);
+        if (!task_record || task_record->plugin_guid != plugin_guid)
+        {
+            availability.state = "unavailable";
+            availability.reason = "taskTypeUnavailable";
+            availability.message =
+                "Task type is not declared by the initialized plugin package";
+            return availability;
+        }
+
+        if (capability_registry_.FindAuthoring(task_guid) == nullptr)
+        {
+            availability.state = "unavailable";
+            availability.reason = "authoringCapabilityMissing";
+            availability.message =
+                "Task type does not declare an authoring capability";
+            return availability;
+        }
+
+        availability.state = "available";
+        return availability;
+    }
+
     // ----------------------------------------------------------------
     // Construction
     // ----------------------------------------------------------------
@@ -680,6 +778,7 @@ namespace Das::Core::TaskScheduler
                 task_instances_.clear();
                 task_repository_store_.reset();
                 capability_registry_.Clear();
+                repository_plugin_availability_.clear();
                 for (auto it = loaded_plugin_paths_.rbegin();
                      it != loaded_plugin_paths_.rend();
                      ++it)
@@ -712,6 +811,8 @@ namespace Das::Core::TaskScheduler
         // Temp vectors to accumulate loaded data outside the lock
         std::vector<std::filesystem::path>           temp_paths;
         std::vector<std::unique_ptr<TaskTypeRecord>> temp_types;
+        std::unordered_map<DasGuid, RepositoryPluginAvailabilityState>
+            temp_repository_plugin_availability;
 
         // Load allowed plugin packages
         for (const auto& entry : dir_iter)
@@ -723,6 +824,28 @@ namespace Das::Core::TaskScheduler
                 auto marker = entry.path() / (dirname + ".willBeDelete");
                 if (std::filesystem::exists(marker))
                 {
+                    auto banned_manifest_path = FindManifest(entry.path());
+                    if (!banned_manifest_path.empty())
+                    {
+                        try
+                        {
+                            if (auto desc =
+                                    ReadPluginManifestDesc(banned_manifest_path))
+                            {
+                                temp_repository_plugin_availability
+                                    [desc->guid] = {
+                                        "pluginUnavailable",
+                                        "Plugin package is marked for deletion"};
+                            }
+                        }
+                        catch (const std::exception& e)
+                        {
+                            DAS_CORE_LOG_WARN(
+                                "SchedulerService::Initialize: failed to "
+                                "parse banned plugin manifest: {}",
+                                e.what());
+                        }
+                    }
                     continue;
                 }
 
@@ -740,12 +863,8 @@ namespace Das::Core::TaskScheduler
 
             try
             {
-                std::ifstream     ifs(manifest_path);
-                std::stringstream ss;
-                ss << ifs.rdbuf();
-                auto content = ss.str();
-                auto json_data = Das::Utils::ParseYyjsonFromString(content);
-                if (!json_data)
+                auto desc_opt = ReadPluginManifestDesc(manifest_path);
+                if (!desc_opt)
                 {
                     DAS_CORE_LOG_WARN(
                         "SchedulerService::Initialize: failed to "
@@ -754,28 +873,7 @@ namespace Das::Core::TaskScheduler
                     continue;
                 }
 
-                PluginPackageDesc desc;
-                auto              obj = json_data->as_object();
-                if (obj)
-                {
-                    const auto& jo = *obj;
-                    // Parse name
-                    auto name_val = jo[std::string_view("name")];
-                    auto name_str = name_val.as_string();
-                    if (name_str)
-                    {
-                        desc.name = std::string(*name_str);
-                    }
-                    // Parse guid
-                    auto guid_val = jo[std::string_view("guid")];
-                    auto guid_str = guid_val.as_string();
-                    if (guid_str)
-                    {
-                        desc.guid =
-                            Das::Core::ForeignInterfaceHost::MakeDasGuid(
-                                std::string(*guid_str));
-                    }
-                }
+                PluginPackageDesc desc = std::move(*desc_opt);
 
                 if (std::find(
                         disabled_guids.begin(),
@@ -783,6 +881,9 @@ namespace Das::Core::TaskScheduler
                         desc.guid)
                     != disabled_guids.end())
                 {
+                    temp_repository_plugin_availability[desc.guid] = {
+                        "pluginUnavailable",
+                        "Plugin package is disabled for scheduler initialize"};
                     DAS_CORE_LOG_INFO(
                         "SchedulerService::Initialize: skipping "
                         "disabled plugin: {}",
@@ -793,6 +894,10 @@ namespace Das::Core::TaskScheduler
                 auto load_result = plugin_manager_.LoadPlugin(manifest_path);
                 if (DAS::IsFailed(load_result))
                 {
+                    temp_repository_plugin_availability[desc.guid] = {
+                        "pluginLoadFailed",
+                        "Plugin package failed to load during scheduler "
+                        "initialize"};
                     DAS_CORE_LOG_WARN(
                         "SchedulerService::Initialize: failed to "
                         "load plugin {}, result={}",
@@ -805,6 +910,10 @@ namespace Das::Core::TaskScheduler
                     plugin_manager_.RegisterPluginObjects(manifest_path);
                 if (DAS::IsFailed(register_result))
                 {
+                    temp_repository_plugin_availability[desc.guid] = {
+                        "pluginLoadFailed",
+                        "Plugin package failed to register during scheduler "
+                        "initialize"};
                     DAS_CORE_LOG_WARN(
                         "SchedulerService::Initialize: failed to register "
                         "plugin objects for {}, result={}",
@@ -1087,6 +1196,8 @@ namespace Das::Core::TaskScheduler
                 plugin_manager_.GetSettingsManager(),
                 "0");
             loaded_plugin_paths_ = std::move(temp_paths);
+            repository_plugin_availability_ =
+                std::move(temp_repository_plugin_availability);
             initialized_ = true;
         }
 
@@ -1413,6 +1524,14 @@ namespace Das::Core::TaskScheduler
 
         Repository::Dto::RepositoryGetResponseDto response;
         response.entries = store->ListEntries();
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            for (auto& entry : response.entries)
+            {
+                entry.availability =
+                    DeriveRepositoryAvailabilityLocked(entry);
+            }
+        }
         return CloneJsonValue(yyjson::object(response));
     }
 
