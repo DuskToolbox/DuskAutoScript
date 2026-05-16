@@ -36,6 +36,15 @@
 #include <utility>
 #include <vector>
 
+namespace Das::Plugins::DasMaaPi
+{
+    DasResult DispatchMaapiAgentComponentJson(
+        Das::PluginInterface::IDasComponent& component,
+        std::string_view                     function_name,
+        std::string_view                     request_json,
+        std::string&                         out_result_json);
+} // namespace Das::Plugins::DasMaaPi
+
 namespace
 {
     using namespace Das;
@@ -433,6 +442,31 @@ namespace
         ASSERT_EQ(runner.launches.size(), 1u);
     }
 
+    TEST(DasMaaPiAgentComponent, InternalJsonWrapperUsesDispatch)
+    {
+        FakeMaaApiBoundary fake;
+        FakeProcessRunner  runner;
+        AgentRuntimeService service(fake, runner);
+        MaapiAgentComponent component(service, TestContext());
+
+        std::string result_text;
+        ASSERT_EQ(
+            DispatchMaapiAgentComponentJson(
+                component,
+                "start",
+                StartRequestJson(),
+                result_text),
+            DAS_S_OK);
+
+        auto result_json = ParseYyjson(result_text);
+        auto root = result_json.as_object();
+        ASSERT_TRUE(root.has_value());
+        EXPECT_EQ(
+            (*root)[std::string_view("status")].as_string().value_or(""),
+            "succeeded");
+        ASSERT_EQ(runner.launches.size(), 1u);
+    }
+
     TEST(DasMaaPiAgentComponent, InvalidJsonReturnsStructuredDiagnostics)
     {
         FakeMaaApiBoundary fake;
@@ -601,5 +635,27 @@ namespace
         ASSERT_EQ(runner.launches.size(), 1u);
         EXPECT_FALSE(runner.launches[0].capture_output);
         EXPECT_EQ(runner.launches[0].max_output_tail_bytes, 512u);
+    }
+
+    TEST(DasMaaPiAgentTaskComponent, AgentTaskComponentIsNotLivePluginSurface)
+    {
+        const auto plugin_impl = ReadFile(
+            std::filesystem::path(__FILE__).parent_path().parent_path()
+            / "src" / "PluginImpl.cpp");
+        const auto cmake = ReadFile(
+            std::filesystem::path(__FILE__).parent_path().parent_path()
+            / "CMakeLists.txt");
+        const auto manifest = ReadFile(MaapiManifestPath());
+
+        EXPECT_EQ(
+            plugin_impl.find("MaapiAgentTaskComponent"),
+            std::string::npos);
+        EXPECT_EQ(
+            plugin_impl.find("MaapiAgentTaskComponentFactory"),
+            std::string::npos);
+        EXPECT_EQ(cmake.find("MaapiAgentTaskComponent"), std::string::npos);
+        EXPECT_EQ(
+            manifest.find("das.maapi.agentRuntime"),
+            std::string::npos);
     }
 } // namespace
