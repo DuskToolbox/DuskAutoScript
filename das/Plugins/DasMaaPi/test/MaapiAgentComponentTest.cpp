@@ -3,8 +3,6 @@
 #include "../src/MaaHandle.h"
 #include "../src/MaapiAgentComponent.h"
 #include "../src/MaapiAgentComponentFactory.h"
-#include "../src/MaapiAgentTaskComponent.h"
-#include "../src/MaapiAgentTaskComponentFactory.h"
 #include "../src/PluginImpl.h"
 #include "FakeMaaApiBoundary.h"
 #include "IpcTestConfig.h"
@@ -179,29 +177,11 @@ namespace
         return raw ? std::string(raw) : std::string{};
     }
 
-    DasPtr<ExportInterface::IDasJson> ParseJson(std::string_view json)
-    {
-        DasPtr<ExportInterface::IDasJson> result;
-        EXPECT_EQ(
-            ParseDasJsonFromString(std::string(json).c_str(), result.Put()),
-            DAS_S_OK);
-        return result;
-    }
-
     yyjson::value ParseYyjson(std::string_view json)
     {
         auto parsed = Das::Utils::ParseYyjsonFromString(json);
         EXPECT_TRUE(parsed.has_value());
         return parsed ? std::move(*parsed) : Das::Utils::MakeYyjsonObject();
-    }
-
-    yyjson::value ReadJson(ExportInterface::IDasJson* json)
-    {
-        DasPtr<IDasReadOnlyString> text;
-        EXPECT_EQ(json->ToString(0, text.Put()), DAS_S_OK);
-        const char* raw = nullptr;
-        EXPECT_EQ(text->GetUtf8(&raw), DAS_S_OK);
-        return ParseYyjson(raw ? raw : "{}");
     }
 
     std::string ReadFile(const std::filesystem::path& path)
@@ -217,47 +197,6 @@ namespace
     {
         return std::filesystem::path{IpcTestConfig::GetPluginDir()}
                / "DasMaaPi" / "DasMaaPi.json";
-    }
-
-    bool ArrayContainsId(
-        const yyjson::writer::array_ref& array,
-        std::string_view         id)
-    {
-        return std::any_of(
-            array.begin(),
-            array.end(),
-            [id](const yyjson::value& item)
-            {
-                auto obj = item.as_object();
-                return obj
-                       && (*obj)[std::string_view("id")].as_string()
-                              .value_or("")
-                              == id;
-            });
-    }
-
-    yyjson::value AgentTaskComponentDefinition()
-    {
-        auto manifest = ParseYyjson(ReadFile(MaapiManifestPath()));
-        auto root = manifest.as_object();
-        EXPECT_TRUE(root.has_value());
-        auto task_components =
-            (*root)[std::string_view("taskComponents")].as_object();
-        EXPECT_TRUE(task_components.has_value());
-        auto components =
-            (*task_components)[std::string_view("components")].as_object();
-        EXPECT_TRUE(components.has_value());
-        auto entry =
-            (*components)[std::string(kAgentTaskComponentGuidText)].as_object();
-        EXPECT_TRUE(entry.has_value());
-        auto definition =
-            (*entry)[std::string_view("definition")].as_object();
-        EXPECT_TRUE(definition.has_value());
-        const auto serialized =
-            (*entry)[std::string_view("definition")].write(
-                yyjson::WriteFlag::NoFlag);
-        return ParseYyjson(
-            std::string_view(serialized.data(), serialized.size()));
     }
 
     std::string StartRequestJson()
@@ -491,150 +430,6 @@ namespace
             (*root)[std::string_view("diagnostics")].as_array();
         ASSERT_TRUE(diagnostics.has_value());
         ASSERT_FALSE(diagnostics->empty());
-    }
-
-    TEST(DasMaaPiAgentTaskComponentFactory, CreatesComponentByStableGuid)
-    {
-        MaapiAgentTaskComponentFactory factory;
-        const auto component_guid = GuidFrom(kAgentTaskComponentGuidText);
-
-        DasPtr<Das::PluginInterface::IDasTaskComponent> component;
-        ASSERT_EQ(
-            factory.CreateComponent(component_guid, component.Put()),
-            DAS_S_OK);
-
-        DasGuid actual_guid{};
-        ASSERT_EQ(component->GetGuid(&actual_guid), DAS_S_OK);
-        EXPECT_EQ(actual_guid, component_guid);
-    }
-
-    TEST(
-        DasMaaPiAgentTaskComponentFactory,
-        CreatedTaskComponentStartsThroughRuntimeRefContext)
-    {
-        FakeMaaApiBoundary fake;
-        FakeProcessRunner  runner;
-        ScopedRuntimeHooks hooks(fake, runner);
-
-        ScopedResource resource(fake, fake.CreateResource());
-        ScopedController controller(
-            fake,
-            fake.CreateController(
-                ControllerSpec{.name = "Android", .type = "Adb"}));
-        ScopedTasker tasker(fake, fake.CreateTasker());
-        ScopedMaaContextRegistration runtime(
-            RuntimeRefDto{
-                .kind = "maapiRuntimeSession",
-                .session_id = "runtime-1"},
-            AgentRuntimeMaaContext{
-                .resource = resource.get(),
-                .controller = controller.get(),
-                .tasker = tasker.get()});
-
-        MaapiAgentTaskComponentFactory factory;
-        const auto component_guid = GuidFrom(kAgentTaskComponentGuidText);
-        DasPtr<Das::PluginInterface::IDasTaskComponent> component;
-        ASSERT_EQ(
-            factory.CreateComponent(component_guid, component.Put()),
-            DAS_S_OK);
-
-        auto input = ParseJson(RuntimeRefStartRequestJson());
-        DasPtr<ExportInterface::IDasJson> result;
-        ASSERT_EQ(
-            component->Do(nullptr, nullptr, nullptr, input.Get(), result.Put()),
-            DAS_S_OK);
-
-        auto result_json = ReadJson(result.Get());
-        auto root = result_json.as_object();
-        ASSERT_TRUE(root.has_value());
-        EXPECT_EQ(
-            (*root)[std::string_view("status")].as_string().value_or(""),
-            "succeeded");
-        ASSERT_EQ(runner.launches.size(), 1u);
-        EXPECT_EQ(fake.last_bound_agent_resource, resource.get());
-        EXPECT_EQ(fake.last_registered_agent_resource_sink, resource.get());
-        EXPECT_EQ(fake.last_registered_agent_controller_sink, controller.get());
-        EXPECT_EQ(fake.last_registered_agent_tasker_sink, tasker.get());
-    }
-
-    TEST(DasMaaPiAgentTaskComponent, ManifestDefinitionUsesStablePortIds)
-    {
-        auto definition_value = AgentTaskComponentDefinition();
-        auto definition = definition_value.as_object();
-        ASSERT_TRUE(definition.has_value());
-
-        EXPECT_EQ(
-            (*definition)[std::string_view("kind")].as_string().value_or(""),
-            "das.maapi.agentRuntime");
-        EXPECT_EQ(
-            (*definition)[std::string_view("componentGuid")].as_string()
-                .value_or(""),
-            kAgentTaskComponentGuidText);
-
-        auto settings =
-            (*definition)[std::string_view("settings")].as_array();
-        ASSERT_TRUE(settings.has_value());
-        EXPECT_TRUE(ArrayContainsId(*settings, "tcpCompatMode"));
-        EXPECT_TRUE(ArrayContainsId(*settings, "captureOutput"));
-        EXPECT_TRUE(ArrayContainsId(*settings, "stopTimeoutMs"));
-        EXPECT_TRUE(ArrayContainsId(*settings, "maxOutputTailBytes"));
-
-        auto inputs = (*definition)[std::string_view("inputs")].as_array();
-        ASSERT_TRUE(inputs.has_value());
-        EXPECT_TRUE(ArrayContainsId(*inputs, "operation"));
-        EXPECT_TRUE(ArrayContainsId(*inputs, "runtimeRef"));
-        EXPECT_TRUE(ArrayContainsId(*inputs, "interfaceDirectory"));
-        EXPECT_TRUE(ArrayContainsId(*inputs, "agents"));
-        EXPECT_TRUE(ArrayContainsId(*inputs, "piEnv"));
-        EXPECT_TRUE(ArrayContainsId(*inputs, "sessionId"));
-
-        auto outputs = (*definition)[std::string_view("outputs")].as_array();
-        ASSERT_TRUE(outputs.has_value());
-        EXPECT_TRUE(ArrayContainsId(*outputs, "agentSessionId"));
-        EXPECT_TRUE(ArrayContainsId(*outputs, "agents"));
-        EXPECT_TRUE(ArrayContainsId(*outputs, "runningAgentCount"));
-        EXPECT_TRUE(ArrayContainsId(*outputs, "stdoutTail"));
-        EXPECT_TRUE(ArrayContainsId(*outputs, "stderrTail"));
-
-        auto signals = (*definition)[std::string_view("signals")].as_array();
-        ASSERT_TRUE(signals.has_value());
-        EXPECT_TRUE(ArrayContainsId(*signals, "succeeded"));
-        EXPECT_TRUE(ArrayContainsId(*signals, "failed"));
-    }
-
-    TEST(DasMaaPiAgentTaskComponent, DoMergesSettingsAndInputThenRunsService)
-    {
-        FakeMaaApiBoundary fake;
-        FakeProcessRunner  runner;
-        AgentRuntimeService service(fake, runner);
-        MaapiAgentTaskComponent component(service, TestContext());
-
-        auto settings = ParseJson(R"({
-          "captureOutput": false,
-          "stopTimeoutMs": 9000,
-          "maxOutputTailBytes": 512
-        })");
-        auto input = ParseJson(StartRequestJson());
-
-        DasPtr<ExportInterface::IDasJson> result;
-        ASSERT_EQ(
-            component.Do(
-                nullptr,
-                nullptr,
-                settings.Get(),
-                input.Get(),
-                result.Put()),
-            DAS_S_OK);
-
-        auto result_json = ReadJson(result.Get());
-        auto root = result_json.as_object();
-        ASSERT_TRUE(root.has_value());
-        EXPECT_EQ(
-            (*root)[std::string_view("status")].as_string().value_or(""),
-            "succeeded");
-        ASSERT_EQ(runner.launches.size(), 1u);
-        EXPECT_FALSE(runner.launches[0].capture_output);
-        EXPECT_EQ(runner.launches[0].max_output_tail_bytes, 512u);
     }
 
     TEST(DasMaaPiAgentTaskComponent, AgentTaskComponentIsNotLivePluginSurface)

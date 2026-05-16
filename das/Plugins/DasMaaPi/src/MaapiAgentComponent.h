@@ -7,6 +7,8 @@
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasComponent.Implements.hpp>
 
 #include <memory>
+#include <string>
+#include <string_view>
 
 DAS_DEFINE_CLASS_IN_NAMESPACE(
     Das::Plugins::DasMaaPi,
@@ -51,6 +53,12 @@ namespace Plugins::DasMaaPi
             nullptr;
         AgentRuntime::AgentRuntimeMaaContext context_{};
     };
+
+    DasResult DispatchMaapiAgentComponentJson(
+        PluginInterface::IDasComponent& component,
+        std::string_view                function_name,
+        std::string_view                request_json,
+        std::string&                    out_result_json);
 } // namespace Plugins::DasMaaPi
 DAS_NS_END
 

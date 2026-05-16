@@ -9,8 +9,6 @@ set(DAS_MAAPI_PLUGIN_SOURCES
     src/MaapiAgentRuntimeAdapter.cpp
     src/MaapiAgentComponent.cpp
     src/MaapiAgentComponentFactory.cpp
-    src/MaapiAgentTaskComponent.cpp
-    src/MaapiAgentTaskComponentFactory.cpp
     src/MaapiAuthoringSession.cpp
     src/MaapiAuthoringSessionFactory.cpp
     src/MaapiRunTaskComponent.cpp
@@ -101,8 +99,6 @@ if(DAS_BUILD_TEST)
         src/MaapiAgentRuntimeAdapter.cpp
         src/MaapiAgentComponent.cpp
         src/MaapiAgentComponentFactory.cpp
-        src/MaapiAgentTaskComponent.cpp
-        src/MaapiAgentTaskComponentFactory.cpp
         src/MaapiAuthoringSession.cpp
         src/MaapiAuthoringSessionFactory.cpp
         src/MaapiRunTaskComponent.cpp

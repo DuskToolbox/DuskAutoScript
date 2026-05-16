@@ -85,6 +85,78 @@ namespace Plugins::DasMaaPi
 
     MaapiAgentComponent::~MaapiAgentComponent() = default;
 
+    DasResult DispatchMaapiAgentComponentJson(
+        PluginInterface::IDasComponent& component,
+        std::string_view                function_name,
+        std::string_view                request_json,
+        std::string&                    out_result_json)
+    {
+        out_result_json.clear();
+
+        DasPtr<IDasReadOnlyString> function_name_text;
+        auto hr = CreateIDasReadOnlyStringFromUtf8WithLength(
+            function_name.data(),
+            function_name.size(),
+            function_name_text.Put());
+        if (DAS::IsFailed(hr))
+        {
+            return hr;
+        }
+
+        DasPtr<IDasReadOnlyString> request_text;
+        hr = CreateIDasReadOnlyStringFromUtf8WithLength(
+            request_json.data(),
+            request_json.size(),
+            request_text.Put());
+        if (DAS::IsFailed(hr))
+        {
+            return hr;
+        }
+
+        DasPtr<ExportInterface::IDasVariantVector> arguments;
+        hr = CreateIDasVariantVector(arguments.Put());
+        if (DAS::IsFailed(hr))
+        {
+            return hr;
+        }
+        hr = arguments->PushBackString(request_text.Get());
+        if (DAS::IsFailed(hr))
+        {
+            return hr;
+        }
+
+        DasPtr<ExportInterface::IDasVariantVector> result;
+        hr = component.Dispatch(
+            function_name_text.Get(),
+            arguments.Get(),
+            result.Put());
+        if (DAS::IsFailed(hr))
+        {
+            return hr;
+        }
+        if (!result || result->GetSize() != 1)
+        {
+            return DAS_E_INVALID_JSON;
+        }
+
+        DasPtr<IDasReadOnlyString> result_text;
+        hr = result->GetString(0, result_text.Put());
+        if (DAS::IsFailed(hr) || !result_text)
+        {
+            return DAS_E_INVALID_JSON;
+        }
+
+        const char* result_u8 = nullptr;
+        hr = result_text->GetUtf8(&result_u8);
+        if (DAS::IsFailed(hr) || result_u8 == nullptr)
+        {
+            return DAS_E_INVALID_JSON;
+        }
+
+        out_result_json = result_u8;
+        return DAS_S_OK;
+    }
+
     DasResult MaapiAgentComponent::GetGuid(DasGuid* p_out_guid)
     {
         if (p_out_guid == nullptr)
