@@ -28,6 +28,13 @@ namespace Das::Core::TaskScheduler
                 descriptors,
             Repository::Dto::RepositoryEntryDto& out_entry);
 
+        DasResult DeleteEntry(int64_t entry_id);
+
+        DasResult RenameEntry(
+            int64_t entry_id,
+            const Repository::Dto::RenameRepositoryEntryRequestDto& request,
+            Repository::Dto::RepositoryEntryDto& out_entry);
+
     private:
         Das::Core::SettingsManager::SettingsManager& settings_;
         std::string                                  profile_id_;

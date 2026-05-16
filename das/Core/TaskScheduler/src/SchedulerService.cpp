@@ -262,6 +262,27 @@ namespace Das::Core::TaskScheduler
         return true;
     }
 
+    static bool ParseRenameRepositoryEntryRequest(
+        const yyjson::value& request,
+        Repository::Dto::RenameRepositoryEntryRequestDto& out_request)
+    {
+        auto obj = request.as_object();
+        if (!obj)
+        {
+            return false;
+        }
+
+        auto display_name =
+            (*obj)[std::string_view("displayName")].as_string();
+        if (!display_name)
+        {
+            return false;
+        }
+
+        out_request.display_name = std::string(*display_name);
+        return true;
+    }
+
     static int64_t GetAuthoringRevision(const yyjson::value& task_json)
     {
         auto task_obj = task_json.as_object();
@@ -1466,6 +1487,58 @@ namespace Das::Core::TaskScheduler
             return MakeRepositoryResponseError(
                 RepositoryErrorKindFromResult(create_result),
                 "Failed to create repository entry");
+        }
+
+        return CloneJsonValue(yyjson::object(entry));
+    }
+
+    DasResult SchedulerService::DeleteRepositoryEntry(int64_t entry_id)
+    {
+        std::shared_ptr<TaskRepositoryStore> store;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (!initialized_ || !task_repository_store_)
+            {
+                return DAS_E_OBJECT_NOT_INIT;
+            }
+            store = task_repository_store_;
+        }
+
+        return store->DeleteEntry(entry_id);
+    }
+
+    yyjson::value SchedulerService::RenameRepositoryEntry(
+        int64_t              entry_id,
+        const yyjson::value& request)
+    {
+        Repository::Dto::RenameRepositoryEntryRequestDto rename_request;
+        if (!ParseRenameRepositoryEntryRequest(request, rename_request))
+        {
+            return MakeRepositoryResponseError(
+                "invalidJson",
+                "Repository rename request must include displayName string");
+        }
+
+        std::shared_ptr<TaskRepositoryStore> store;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (!initialized_ || !task_repository_store_)
+            {
+                return MakeRepositoryResponseError(
+                    "notInitialized",
+                    "Scheduler profile has not been initialized");
+            }
+            store = task_repository_store_;
+        }
+
+        Repository::Dto::RepositoryEntryDto entry;
+        auto rename_result =
+            store->RenameEntry(entry_id, rename_request, entry);
+        if (DAS::IsFailed(rename_result))
+        {
+            return MakeRepositoryResponseError(
+                RepositoryErrorKindFromResult(rename_result),
+                "Failed to rename repository entry");
         }
 
         return CloneJsonValue(yyjson::object(entry));

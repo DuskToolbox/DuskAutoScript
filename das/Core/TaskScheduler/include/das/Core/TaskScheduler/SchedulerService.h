@@ -137,6 +137,10 @@ namespace Das::Core::TaskScheduler
 
         yyjson::value GetTaskRepository();
         yyjson::value CreateRepositoryEntry(const yyjson::value& request);
+        DasResult     DeleteRepositoryEntry(int64_t entry_id);
+        yyjson::value RenameRepositoryEntry(
+            int64_t              entry_id,
+            const yyjson::value& request);
 
         /// Check whether the scheduler has been initialized.
         bool IsInitialized() const { return initialized_; }

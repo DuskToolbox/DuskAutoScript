@@ -210,4 +210,59 @@ namespace Das::Core::TaskScheduler
         out_entry = std::move(entry);
         return DAS_S_OK;
     }
+
+    DasResult TaskRepositoryStore::DeleteEntry(int64_t entry_id)
+    {
+        auto entry_json =
+            settings_.GetTaskRepositoryEntryJson(profile_id_, entry_id);
+        if (!entry_json.is_object())
+        {
+            return DAS_E_NOT_FOUND;
+        }
+
+        auto delete_result =
+            settings_.DeleteTaskRepositoryEntryJson(profile_id_, entry_id);
+        if (delete_result == DAS_S_FALSE)
+        {
+            return DAS_E_NOT_FOUND;
+        }
+        return delete_result;
+    }
+
+    DasResult TaskRepositoryStore::RenameEntry(
+        int64_t entry_id,
+        const Repository::Dto::RenameRepositoryEntryRequestDto& request,
+        Repository::Dto::RepositoryEntryDto& out_entry)
+    {
+        auto entry_json =
+            settings_.GetTaskRepositoryEntryJson(profile_id_, entry_id);
+        if (!entry_json.is_object())
+        {
+            return DAS_E_NOT_FOUND;
+        }
+
+        Repository::Dto::RepositoryEntryDto entry;
+        try
+        {
+            entry = yyjson::cast<Repository::Dto::RepositoryEntryDto>(
+                entry_json);
+        }
+        catch (const yyjson::bad_cast&)
+        {
+            return DAS_E_INVALID_JSON;
+        }
+
+        entry.display_name = request.display_name;
+        auto persist_result = settings_.UpdateTaskRepositoryEntryJson(
+            profile_id_,
+            entry_id,
+            CloneJsonValue(yyjson::object(entry)));
+        if (DAS::IsFailed(persist_result))
+        {
+            return persist_result;
+        }
+
+        out_entry = std::move(entry);
+        return DAS_S_OK;
+    }
 } // namespace Das::Core::TaskScheduler
