@@ -1825,9 +1825,36 @@ public:
         {
             std::lock_guard<std::mutex> lock(state_->mutex);
             (*result.as_object())[std::string_view("ok")] = state_->compile_ok;
+            (*result.as_object())[std::string_view("canExecute")] =
+                state_->compile_ok;
         }
         (*result.as_object())[std::string_view("executionInput")] =
             std::move(execution_input);
+        {
+            yyjson::value summary(Das::Utils::MakeYyjsonObject());
+            yyjson::value task_names(Das::Utils::MakeYyjsonArray());
+            (*task_names.as_array()).emplace_back("factoryTask");
+            (*summary.as_object())[std::string_view("taskNames")] =
+                std::move(task_names);
+            (*summary.as_object())[std::string_view("requiresAgentRuntime")] =
+                false;
+            (*result.as_object())[std::string_view("summary")] =
+                std::move(summary);
+        }
+        {
+            yyjson::value diagnostics(Das::Utils::MakeYyjsonArray());
+            yyjson::value diagnostic(Das::Utils::MakeYyjsonObject());
+            (*diagnostic.as_object())[std::string_view("severity")] = "info";
+            (*diagnostic.as_object())[std::string_view("code")] =
+                "fake.compile";
+            (*diagnostic.as_object())[std::string_view("message")] =
+                "Fake compile completed";
+            (*diagnostics.as_array()).emplace_back(std::move(diagnostic));
+            (*result.as_object())[std::string_view("diagnostics")] =
+                std::move(diagnostics);
+        }
+        (*result.as_object())[std::string_view("providerDebug")] =
+            "internal-only";
         auto wrapped =
             Das::MakeDasPtr<Das::Core::Utils::IDasJsonImpl>(std::move(result));
         *pp_out_result_json = wrapped.Get();
@@ -3602,6 +3629,68 @@ namespace
         ExpectNoRepositoryAuthoringProviderCalls(state);
     }
 } // namespace
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryCompilePreviewProjectsProviderResult)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto created = scheduler_->CreateRepositoryEntry(
+        MakeRepositoryCreateRequest("Compile repository entry", 8));
+    ASSERT_EQ(
+        (*created.as_object())[std::string_view("entryId")]
+            .as_sint()
+            .value_or(-1),
+        0);
+
+    yyjson::value request(Das::Utils::MakeYyjsonObject());
+    (*request.as_object())[std::string_view("purpose")] = "preview";
+    auto result =
+        scheduler_->CompileRepositoryEntryAuthoring(0, request);
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    EXPECT_EQ(
+        (*obj)[std::string_view("entryId")].as_sint().value_or(-1),
+        0);
+    EXPECT_TRUE(
+        (*obj)[std::string_view("canExecute")].as_bool().value_or(false));
+
+    auto summary = (*obj)[std::string_view("summary")].as_object();
+    ASSERT_TRUE(summary.has_value());
+    auto task_names = (*summary)[std::string_view("taskNames")].as_array();
+    ASSERT_TRUE(task_names.has_value());
+    ASSERT_EQ(task_names->size(), 1u);
+    EXPECT_EQ(
+        (*task_names)[0].as_string().value_or(""),
+        std::string_view("factoryTask"));
+    EXPECT_FALSE(
+        (*summary)[std::string_view("requiresAgentRuntime")]
+            .as_bool()
+            .value_or(true));
+
+    auto diagnostics =
+        (*obj)[std::string_view("diagnostics")].as_array();
+    ASSERT_TRUE(diagnostics.has_value());
+    ASSERT_EQ(diagnostics->size(), 1u);
+    auto diagnostic = (*diagnostics)[0].as_object();
+    ASSERT_TRUE(diagnostic.has_value());
+    EXPECT_EQ(
+        (*diagnostic)[std::string_view("code")].as_string().value_or(""),
+        std::string_view("fake.compile"));
+
+    EXPECT_FALSE(obj->contains(std::string_view("compile")));
+    EXPECT_FALSE(obj->contains(std::string_view("executionInput")));
+    EXPECT_FALSE(obj->contains(std::string_view("providerDebug")));
+
+    std::lock_guard<std::mutex> lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->compile_count, 1);
+    EXPECT_EQ(shared_state_->last_compile_purpose, "preview");
+    EXPECT_EQ(shared_state_->last_context_entry_id, 0);
+    EXPECT_FALSE(shared_state_->last_context_had_task_id);
+    EXPECT_EQ(shared_state_->last_props_key1_value, "default");
+    EXPECT_TRUE(shared_state_->executed_instance_ids.empty());
+}
 
 TEST_F(
     SchedulerRuntimeBackedTest,
