@@ -146,8 +146,7 @@ namespace Das::Core::TaskScheduler
             std::move(value));
     }
 
-    static yyjson::value ReadJsonInterface(
-        Das::ExportInterface::IDasJson* json)
+    static yyjson::value ReadJsonInterface(Das::ExportInterface::IDasJson* json)
     {
         if (!json)
         {
@@ -193,19 +192,17 @@ namespace Das::Core::TaskScheduler
         {
             return 0;
         }
-        auto auth_obj =
-            (*task_obj)[std::string_view("authoring")].as_object();
+        auto auth_obj = (*task_obj)[std::string_view("authoring")].as_object();
         if (!auth_obj || !auth_obj->contains(std::string_view("revision")))
         {
             return 0;
         }
-        auto revision =
-            (*auth_obj)[std::string_view("revision")].as_sint();
+        auto revision = (*auth_obj)[std::string_view("revision")].as_sint();
         return revision ? *revision : 0;
     }
 
     static yyjson::value MakeAuthoringContextJson(
-        int64_t task_id,
+        int64_t              task_id,
         const yyjson::value& properties,
         const yyjson::value& task_json)
     {
@@ -213,8 +210,7 @@ namespace Das::Core::TaskScheduler
         auto          obj = context.as_object();
         (*obj)[std::string_view("taskId")] = task_id;
         (*obj)[std::string_view("properties")] = CloneJsonValue(properties);
-        (*obj)[std::string_view("revision")] =
-            GetAuthoringRevision(task_json);
+        (*obj)[std::string_view("revision")] = GetAuthoringRevision(task_json);
 
         auto task_obj = task_json.as_object();
         if (task_obj && task_obj->contains(std::string_view("authoring")))
@@ -225,8 +221,7 @@ namespace Das::Core::TaskScheduler
         return context;
     }
 
-    static std::optional<int64_t> GetBaseRevision(
-        const yyjson::value& change)
+    static std::optional<int64_t> GetBaseRevision(const yyjson::value& change)
     {
         auto obj = change.as_object();
         if (!obj || !obj->contains(std::string_view("baseRevision")))
@@ -243,8 +238,8 @@ namespace Das::Core::TaskScheduler
 
     static std::string GetStringField(
         const yyjson::value& value,
-        std::string_view key,
-        std::string_view fallback)
+        std::string_view     key,
+        std::string_view     fallback)
     {
         auto obj = value.as_object();
         if (!obj || !obj->contains(key))
@@ -259,12 +254,37 @@ namespace Das::Core::TaskScheduler
         return std::string(*str);
     }
 
+    static bool IsExplicitFalse(const yyjson::value& value)
+    {
+        auto bool_value = value.as_bool();
+        return bool_value && !*bool_value;
+    }
+
+    static yyjson::value MakeExecutionCompileRequest()
+    {
+        yyjson::value request(Das::Utils::MakeYyjsonObject());
+        auto          obj = request.as_object();
+        (*obj)[std::string_view("purpose")] = "execution";
+        return request;
+    }
+
+    static yyjson::value ExtractExecutionInput(
+        const yyjson::value& compile_result)
+    {
+        auto obj = compile_result.as_object();
+        if (obj && obj->contains(std::string_view("executionInput")))
+        {
+            return CloneJsonValue((*obj)[std::string_view("executionInput")]);
+        }
+        return CloneJsonValue(compile_result);
+    }
+
     static DasResult CreateAuthoringSession(
-        Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager,
-        const TaskAuthoringCapability& capability,
-        int64_t task_id,
-        const yyjson::value& properties,
-        const yyjson::value& task_json,
+        Das::Core::ForeignInterfaceHost::PluginManager&         plugin_manager,
+        const TaskAuthoringCapability&                          capability,
+        int64_t                                                 task_id,
+        const yyjson::value&                                    properties,
+        const yyjson::value&                                    task_json,
         DasPtr<Das::PluginInterface::IDasTaskAuthoringSession>& session)
     {
         DasPtr<Das::PluginInterface::IDasTaskAuthoringSessionFactory> factory;
@@ -280,7 +300,7 @@ namespace Das::Core::TaskScheduler
             }
 
             DasPtr<Das::PluginInterface::IDasTaskAuthoringSessionFactory>
-                candidate;
+                 candidate;
             auto query_result = feature_info->interface_ptr->QueryInterface(
                 DasIidOf<
                     Das::PluginInterface::IDasTaskAuthoringSessionFactory>(),
@@ -321,9 +341,8 @@ namespace Das::Core::TaskScheduler
         Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager,
         yyjson::value&                                  document)
     {
-        auto definitions =
-            plugin_manager.GetTaskComponentFactoryManager()
-                .EnumerateDefinitions();
+        auto definitions = plugin_manager.GetTaskComponentFactoryManager()
+                               .EnumerateDefinitions();
         if (definitions.empty())
         {
             return;
@@ -385,8 +404,7 @@ namespace Das::Core::TaskScheduler
                 continue;
             }
             auto guid_text =
-                (*component_obj)[std::string_view("componentGuid")]
-                    .as_string();
+                (*component_obj)[std::string_view("componentGuid")].as_string();
             if (guid_text)
             {
                 existing_component_guids.emplace(*guid_text);
@@ -913,6 +931,13 @@ namespace Das::Core::TaskScheduler
                     rec.properties = Das::Utils::MakeYyjsonObject();
                 }
 
+                auto authoring_key = std::string_view("authoring");
+                if (inst_obj.contains(authoring_key)
+                    && inst_obj[authoring_key].is_object())
+                {
+                    rec.authoring = CloneJsonValue(inst_obj[authoring_key]);
+                }
+
                 // Link to available task type — note: FindTaskType
                 // searches temp_types (not yet committed), so we
                 // search it manually here
@@ -1129,6 +1154,37 @@ namespace Das::Core::TaskScheduler
                     yyjson::value(*ttr->game_name);
             }
 
+            if (auto* authoring =
+                    capability_registry_.FindAuthoring(ttr->task_guid))
+            {
+                type_ref[std::string_view("configurationMode")] =
+                    std::string_view("authoring");
+                type_ref[std::string_view("propertiesWritable")] = false;
+
+                yyjson::value authoring_obj(Das::Utils::MakeYyjsonObject());
+                auto          authoring_ref = authoring_obj.as_object();
+                (*authoring_ref)[std::string_view("factoryGuid")] =
+                    yyjson::value(
+                        GuidToString(authoring->authoring_factory_guid));
+
+                yyjson::value supported_kinds(Das::Utils::MakeYyjsonArray());
+                auto          supported_ref = supported_kinds.as_array();
+                for (const auto& kind : authoring->supported_kinds)
+                {
+                    supported_ref->emplace_back(yyjson::value(kind));
+                }
+                (*authoring_ref)[std::string_view("supportedKinds")] =
+                    std::move(supported_kinds);
+                type_ref[std::string_view("authoring")] =
+                    std::move(authoring_obj);
+            }
+            else
+            {
+                type_ref[std::string_view("configurationMode")] =
+                    std::string_view("properties");
+                type_ref[std::string_view("propertiesWritable")] = true;
+            }
+
             // Include descriptors
             auto desc_arr = Das::Utils::MakeYyjsonArray();
             auto desc_arr_ref = *desc_arr.as_array();
@@ -1165,6 +1221,17 @@ namespace Das::Core::TaskScheduler
                 yyjson::value(GuidToString(inst.task_guid));
             task_ref[std::string_view("pluginGuid")] =
                 yyjson::value(GuidToString(inst.plugin_guid));
+            const bool has_authoring =
+                capability_registry_.FindAuthoring(inst.task_guid) != nullptr;
+            task_ref[std::string_view("configurationMode")] =
+                has_authoring ? std::string_view("authoring")
+                              : std::string_view("properties");
+            task_ref[std::string_view("propertiesWritable")] = !has_authoring;
+            if (has_authoring && !inst.authoring.is_null())
+            {
+                task_ref[std::string_view("authoring")] =
+                    CloneJsonValue(inst.authoring);
+            }
 
             if (inst.availability == TaskAvailability::Available)
             {
@@ -1561,6 +1628,11 @@ namespace Das::Core::TaskScheduler
                 return DAS_E_FAIL;
             }
 
+            if (capability_registry_.FindAuthoring(inst->task_guid) != nullptr)
+            {
+                return DAS_E_ACCESS_DENIED;
+            }
+
             descriptors = inst->task_type->descriptors;
             // Deep copy properties
             if (!inst->properties.is_null())
@@ -1858,7 +1930,7 @@ namespace Das::Core::TaskScheduler
 
         auto request_json = WrapJsonValue(CloneJsonValue(request));
         DasPtr<Das::ExportInterface::IDasJson> document_json;
-        auto document_result =
+        auto                                   document_result =
             session->GetDocument(request_json.Get(), document_json.Put());
         if (DAS::IsFailed(document_result) || !document_json)
         {
@@ -1956,7 +2028,7 @@ namespace Das::Core::TaskScheduler
 
         auto change_json = WrapJsonValue(CloneJsonValue(change));
         DasPtr<Das::ExportInterface::IDasJson> apply_result_json;
-        auto apply_result =
+        auto                                   apply_result =
             session->ApplyChange(change_json.Get(), apply_result_json.Put());
         if (DAS::IsFailed(apply_result) || !apply_result_json)
         {
@@ -1977,9 +2049,8 @@ namespace Das::Core::TaskScheduler
 
         const auto next_revision = current_revision + 1;
         auto       task_obj = task_json.as_object();
-        (*task_obj)[std::string_view("properties")] =
-            CloneJsonValue((*accepted_obj)
-                               [std::string_view("acceptedProperties")]);
+        (*task_obj)[std::string_view("properties")] = CloneJsonValue(
+            (*accepted_obj)[std::string_view("acceptedProperties")]);
 
         yyjson::value authoring(Das::Utils::MakeYyjsonObject());
         auto          authoring_obj = authoring.as_object();
@@ -2016,8 +2087,50 @@ namespace Das::Core::TaskScheduler
             {
                 inst->properties =
                     CloneJsonValue((*task_obj)[std::string_view("properties")]);
+                inst->authoring =
+                    CloneJsonValue((*task_obj)[std::string_view("authoring")]);
             }
         }
+
+        yyjson::value document;
+        if (accepted_obj->contains(std::string_view("document"))
+            && (*accepted_obj)[std::string_view("document")].is_object())
+        {
+            document =
+                CloneJsonValue((*accepted_obj)[std::string_view("document")]);
+        }
+        else
+        {
+            DasPtr<Das::PluginInterface::IDasTaskAuthoringSession>
+                 refreshed_session;
+            auto refreshed_session_result = CreateAuthoringSession(
+                plugin_manager_,
+                capability,
+                task_id,
+                (*task_obj)[std::string_view("properties")],
+                task_json,
+                refreshed_session);
+            if (DAS::IsFailed(refreshed_session_result) || !refreshed_session)
+            {
+                return MakeAuthoringResponseError(
+                    "sessionCreateFailed",
+                    "Failed to refresh task authoring session");
+            }
+
+            auto refreshed_request = WrapJsonValue(CloneJsonValue(change));
+            DasPtr<Das::ExportInterface::IDasJson> document_json;
+            auto document_result = refreshed_session->GetDocument(
+                refreshed_request.Get(),
+                document_json.Put());
+            if (DAS::IsFailed(document_result) || !document_json)
+            {
+                return MakeAuthoringResponseError(
+                    "providerFailed",
+                    "Task authoring provider failed to refresh document");
+            }
+            document = ReadJsonInterface(document_json.Get());
+        }
+        MergeTaskComponentCatalog(plugin_manager_, document);
 
         yyjson::value result(Das::Utils::MakeYyjsonObject());
         auto          result_obj = result.as_object();
@@ -2028,6 +2141,7 @@ namespace Das::Core::TaskScheduler
             CloneJsonValue((*task_obj)[std::string_view("properties")]);
         (*result_obj)[std::string_view("authoring")] =
             CloneJsonValue((*task_obj)[std::string_view("authoring")]);
+        (*result_obj)[std::string_view("document")] = std::move(document);
         return result;
     }
 
@@ -2078,7 +2192,7 @@ namespace Das::Core::TaskScheduler
 
         auto request_json = WrapJsonValue(CloneJsonValue(request));
         DasPtr<Das::ExportInterface::IDasJson> compile_json;
-        auto compile_result =
+        auto                                   compile_result =
             session->Compile(request_json.Get(), compile_json.Put());
         if (DAS::IsFailed(compile_result) || !compile_json)
         {
@@ -2129,11 +2243,12 @@ namespace Das::Core::TaskScheduler
 
         // Select a runnable task instance under lock, then release lock
         // before calling plugin Do.
-        Das::PluginInterface::IDasTask*     task_ptr = nullptr;
-        TaskInstanceRecord*                 selected_inst = nullptr;
-        yyjson::value                       properties_copy;
-        int64_t                             selected_id = -1;
-        std::chrono::steady_clock::duration next_delay =
+        Das::PluginInterface::IDasTask*        task_ptr = nullptr;
+        TaskInstanceRecord*                    selected_inst = nullptr;
+        yyjson::value                          properties_copy;
+        std::optional<TaskAuthoringCapability> authoring_capability;
+        int64_t                                selected_id = -1;
+        std::chrono::steady_clock::duration    next_delay =
             std::chrono::seconds(1);
 
         int64_t now_unix = SystemClock::to_time_t(SystemClock::now());
@@ -2160,6 +2275,11 @@ namespace Das::Core::TaskScheduler
             task_ptr = selected_inst->task_instance.Get();
             properties_copy = selected_inst->properties;
             selected_id = selected_inst->id;
+            if (auto* authoring = capability_registry_.FindAuthoring(
+                    selected_inst->task_guid))
+            {
+                authoring_capability = *authoring;
+            }
 
             current_task_ = task_ptr;
 
@@ -2179,52 +2299,145 @@ namespace Das::Core::TaskScheduler
         }
 
         DasPtr<Das::ExportInterface::IDasJson> p_props_json;
-        try
+        bool                                   compile_failed = false;
+        if (authoring_capability)
         {
-            p_props_json = Das::MakeDasPtr<Das::Core::Utils::IDasJsonImpl>(
-                std::move(properties_copy));
-        }
-        catch (const std::bad_alloc&)
-        {
-            DAS_CORE_LOG_WARN(
-                "Failed to allocate IDasJson for task properties");
-        }
+            auto task_json =
+                plugin_manager_.GetSettingsManager().GetTaskInstanceJson(
+                    "0",
+                    selected_id);
 
-        // Call IDasTask::Do WITHOUT holding the mutex
-        auto do_result = task_ptr->Do(
-            stop_token_.Get(),
-            p_env_json ? p_env_json.Get() : nullptr,
-            p_props_json ? p_props_json.Get() : nullptr);
-
-        if (IsFailed(do_result))
-        {
-            DAS_CORE_LOG_WARN(
-                "SchedulerService::OnTick: task {} Do returned result={}",
+            DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
+            auto session_result = CreateAuthoringSession(
+                plugin_manager_,
+                *authoring_capability,
                 selected_id,
-                do_result);
+                properties_copy,
+                task_json,
+                session);
+            if (DAS::IsFailed(session_result) || !session)
+            {
+                compile_failed = true;
+                DAS_CORE_LOG_WARN(
+                    "SchedulerService::OnTick: task {} authoring session "
+                    "create failed, result={}",
+                    selected_id,
+                    session_result);
+            }
+            else
+            {
+                auto request_json =
+                    WrapJsonValue(MakeExecutionCompileRequest());
+                DasPtr<Das::ExportInterface::IDasJson> compile_json;
+                auto                                   compile_result =
+                    session->Compile(request_json.Get(), compile_json.Put());
+                if (DAS::IsFailed(compile_result) || !compile_json)
+                {
+                    compile_failed = true;
+                    DAS_CORE_LOG_WARN(
+                        "SchedulerService::OnTick: task {} authoring compile "
+                        "failed, result={}",
+                        selected_id,
+                        compile_result);
+                }
+                else
+                {
+                    auto compiled = ReadJsonInterface(compile_json.Get());
+                    auto compiled_obj = compiled.as_object();
+                    if (compiled_obj
+                        && IsExplicitFalse(
+                            (*compiled_obj)[std::string_view("ok")]))
+                    {
+                        compile_failed = true;
+                        DAS_CORE_LOG_WARN(
+                            "SchedulerService::OnTick: task {} authoring "
+                            "compile returned ok=false",
+                            selected_id);
+                    }
+                    else
+                    {
+                        try
+                        {
+                            p_props_json =
+                                Das::MakeDasPtr<Das::Core::Utils::IDasJsonImpl>(
+                                    ExtractExecutionInput(compiled));
+                        }
+                        catch (const std::bad_alloc&)
+                        {
+                            compile_failed = true;
+                            DAS_CORE_LOG_WARN(
+                                "Failed to allocate IDasJson for compiled "
+                                "task input");
+                        }
+                    }
+                }
+            }
+        }
+        else
+        {
+            try
+            {
+                p_props_json = Das::MakeDasPtr<Das::Core::Utils::IDasJsonImpl>(
+                    std::move(properties_copy));
+            }
+            catch (const std::bad_alloc&)
+            {
+                DAS_CORE_LOG_WARN(
+                    "Failed to allocate IDasJson for task properties");
+            }
+        }
+
+        if (!compile_failed)
+        {
+            // Call IDasTask::Do WITHOUT holding the mutex
+            auto do_result = task_ptr->Do(
+                stop_token_.Get(),
+                p_env_json ? p_env_json.Get() : nullptr,
+                p_props_json ? p_props_json.Get() : nullptr);
+
+            if (IsFailed(do_result))
+            {
+                DAS_CORE_LOG_WARN(
+                    "SchedulerService::OnTick: task {} Do returned result={}",
+                    selected_id,
+                    do_result);
+            }
         }
 
         // Refresh nextExecutionTime from the task
         int64_t                       refreshed_time = 0;
         bool                          has_refreshed_time = false;
         Das::ExportInterface::DasDate next_date{};
-        auto net_result = task_ptr->GetNextExecutionTime(&next_date);
-        if (IsOk(net_result))
+        if (compile_failed)
         {
-            refreshed_time = DasDateToUnix(next_date);
-            has_refreshed_time = true;
-        }
-        else
-        {
-            // GetNextExecutionTime failed: use sentinel to prevent hot loop
             refreshed_time = SENTINEL_FUTURE_TIMESTAMP;
             has_refreshed_time = true;
             DAS_CORE_LOG_WARN(
-                "SchedulerService::OnTick: task {} GetNextExecutionTime "
-                "failed (result={}), setting sentinel nextExecutionTime={}",
+                "SchedulerService::OnTick: task {} authoring compile failed, "
+                "setting sentinel nextExecutionTime={}",
                 selected_id,
-                net_result,
                 SENTINEL_FUTURE_TIMESTAMP);
+        }
+        else
+        {
+            auto net_result = task_ptr->GetNextExecutionTime(&next_date);
+            if (IsOk(net_result))
+            {
+                refreshed_time = DasDateToUnix(next_date);
+                has_refreshed_time = true;
+            }
+            else
+            {
+                // GetNextExecutionTime failed: use sentinel to prevent hot loop
+                refreshed_time = SENTINEL_FUTURE_TIMESTAMP;
+                has_refreshed_time = true;
+                DAS_CORE_LOG_WARN(
+                    "SchedulerService::OnTick: task {} GetNextExecutionTime "
+                    "failed (result={}), setting sentinel nextExecutionTime={}",
+                    selected_id,
+                    net_result,
+                    SENTINEL_FUTURE_TIMESTAMP);
+            }
         }
 
         // Re-acquire lock to update in-memory state only.

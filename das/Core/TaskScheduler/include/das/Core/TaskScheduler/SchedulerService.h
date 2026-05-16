@@ -69,6 +69,7 @@ namespace Das::Core::TaskScheduler
         std::string            unavailability_reason;
         std::optional<int64_t> next_execution_time;
         yyjson::value          properties;
+        yyjson::value          authoring;
         // Pointer to the task type record if available
         TaskTypeRecord*                        task_type = nullptr;
         DasPtr<Das::PluginInterface::IDasTask> task_instance;
