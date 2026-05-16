@@ -3594,6 +3594,27 @@ namespace
         ExpectProviderCallCountsUnchanged(state, before);
     }
 
+    void ExpectRepositoryCompileRejectedWithoutProviderCalls(
+        SchedulerService&                             scheduler,
+        const std::shared_ptr<FactoryTaskSharedState>& state,
+        std::string_view                              error_kind)
+    {
+        auto before = SnapshotProviderCallCounts(state);
+
+        yyjson::value request(Das::Utils::MakeYyjsonObject());
+        auto          compile =
+            scheduler.CompileRepositoryEntryAuthoring(0, request);
+        auto compile_obj = compile.as_object();
+        ASSERT_TRUE(compile_obj.has_value());
+        EXPECT_EQ(
+            (*compile_obj)[std::string_view("errorKind")]
+                .as_string()
+                .value_or(""),
+            error_kind);
+
+        ExpectProviderCallCountsUnchanged(state, before);
+    }
+
     void ExpectUnavailableRenameDeleteWithoutProviderCalls(
         SchedulerService&                             scheduler,
         const std::shared_ptr<FactoryTaskSharedState>& state,
@@ -4548,6 +4569,144 @@ TEST_F(
 
 TEST_F(
     SchedulerRuntimeBackedTest,
+    SchedulerRepositoryUnavailableMissingPluginCompileNoProviderCall)
+{
+    SeedRepositoryEntry(
+        *settings_manager_,
+        0,
+        MissingPluginGuidString,
+        FactoryTaskGuidString,
+        "Missing plugin compile entry");
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    ExpectRepositoryCompileRejectedWithoutProviderCalls(
+        *scheduler_,
+        shared_state_,
+        "pluginUnavailable");
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryUnavailableDisabledCompileNoProviderCall)
+{
+    SeedRepositoryEntry(
+        *settings_manager_,
+        0,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        "Disabled plugin compile entry");
+
+    ASSERT_EQ(
+        scheduler_->Initialize(plugin_dir_, {FactoryPluginGuid}),
+        DAS_S_OK);
+
+    ExpectRepositoryCompileRejectedWithoutProviderCalls(
+        *scheduler_,
+        shared_state_,
+        "pluginUnavailable");
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryBannedPluginCompileNoProviderCall)
+{
+    auto banned_dir = plugin_dir_ / "BannedPlugin";
+    std::filesystem::create_directories(banned_dir);
+    WriteFactoryPluginManifest(
+        banned_dir / "BannedPlugin.json",
+        BannedPluginGuidString);
+    {
+        std::ofstream marker(
+            banned_dir / "BannedPlugin.willBeDelete",
+            std::ios::trunc);
+        marker << "pending deletion";
+    }
+    SeedRepositoryEntry(
+        *settings_manager_,
+        0,
+        BannedPluginGuidString,
+        FactoryTaskGuidString,
+        "Banned plugin compile entry");
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    ExpectRepositoryCompileRejectedWithoutProviderCalls(
+        *scheduler_,
+        shared_state_,
+        "pluginUnavailable");
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryLoadFailedCompileNoProviderCall)
+{
+    WriteFactoryPluginManifest(
+        plugin_dir_ / "LoadFailedPlugin.json",
+        LoadFailedPluginGuidString,
+        FactoryTaskGuidString,
+        true,
+        "CSharp");
+    SeedRepositoryEntry(
+        *settings_manager_,
+        0,
+        LoadFailedPluginGuidString,
+        FactoryTaskGuidString,
+        "Load failed compile entry");
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    ExpectRepositoryCompileRejectedWithoutProviderCalls(
+        *scheduler_,
+        shared_state_,
+        "pluginLoadFailed");
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryUnavailableMissingTaskTypeCompileNoProviderCall)
+{
+    SeedRepositoryEntry(
+        *settings_manager_,
+        0,
+        FactoryPluginGuidString,
+        MissingTaskTypeGuidString,
+        "Missing task type compile entry");
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    ExpectRepositoryCompileRejectedWithoutProviderCalls(
+        *scheduler_,
+        shared_state_,
+        "taskTypeUnavailable");
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryUnavailableAuthoringCapabilityMissingCompileNoProviderCall)
+{
+    WriteFactoryPluginManifest(
+        manifest_path_,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        false);
+    SeedRepositoryEntry(
+        *settings_manager_,
+        0,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        "No authoring capability compile entry");
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    ExpectRepositoryCompileRejectedWithoutProviderCalls(
+        *scheduler_,
+        shared_state_,
+        "authoringCapabilityMissing");
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
     SchedulerRepositoryRunningAuthoringGetApplyNoProviderCall)
 {
     yyjson::value task0(Das::Utils::MakeYyjsonObject());
@@ -4573,6 +4732,42 @@ TEST_F(
     ASSERT_EQ(scheduler_->Enable(), DAS_S_OK);
 
     ExpectRepositoryAuthoringRejectedWithoutProviderCalls(
+        *scheduler_,
+        shared_state_,
+        "taskWorking");
+
+    ASSERT_EQ(scheduler_->Disable(), DAS_S_OK);
+    ASSERT_TRUE(
+        WaitForSchedulerStopped(*scheduler_, std::chrono::milliseconds(2000)));
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryRunningCompileNoProviderCall)
+{
+    yyjson::value task0(Das::Utils::MakeYyjsonObject());
+    (*task0.as_object())[std::string_view("id")] = 0;
+    (*task0.as_object())[std::string_view("taskGuid")] = FactoryTaskGuidString;
+    (*task0.as_object())[std::string_view("pluginGuid")] =
+        FactoryPluginGuidString;
+    (*task0.as_object())[std::string_view("nextExecutionTime")] =
+        4070908800;
+    (*task0.as_object())[std::string_view("properties")] =
+        yyjson::value(Das::Utils::MakeYyjsonObject());
+    WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    auto created = scheduler_->CreateRepositoryEntry(
+        MakeRepositoryCreateRequest("Running compile entry", 8));
+    ASSERT_EQ(
+        (*created.as_object())[std::string_view("entryId")]
+            .as_sint()
+            .value_or(-1),
+        0);
+
+    ASSERT_EQ(scheduler_->Enable(), DAS_S_OK);
+
+    ExpectRepositoryCompileRejectedWithoutProviderCalls(
         *scheduler_,
         shared_state_,
         "taskWorking");
@@ -4622,6 +4817,59 @@ TEST_F(
     ASSERT_EQ(scheduler_->Disable(), DAS_S_OK);
     ASSERT_EQ(scheduler_->Status(), SchedulerState::Stopping);
     ExpectRepositoryAuthoringRejectedWithoutProviderCalls(
+        *scheduler_,
+        shared_state_,
+        "taskWorking");
+
+    {
+        std::lock_guard<std::mutex> lock(shared_state_->mutex);
+        shared_state_->unblock_do = true;
+    }
+    shared_state_->cv.notify_all();
+    ASSERT_TRUE(
+        WaitForSchedulerStopped(*scheduler_, std::chrono::milliseconds(2000)));
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryStoppingCompileNoProviderCall)
+{
+    yyjson::value task0(Das::Utils::MakeYyjsonObject());
+    (*task0.as_object())[std::string_view("id")] = 0;
+    (*task0.as_object())[std::string_view("taskGuid")] = FactoryTaskGuidString;
+    (*task0.as_object())[std::string_view("pluginGuid")] =
+        FactoryPluginGuidString;
+    (*task0.as_object())[std::string_view("nextExecutionTime")] =
+        yyjson::value{};
+    (*task0.as_object())[std::string_view("properties")] =
+        yyjson::value(Das::Utils::MakeYyjsonObject());
+    WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    auto created = scheduler_->CreateRepositoryEntry(
+        MakeRepositoryCreateRequest("Stopping compile entry", 8));
+    ASSERT_EQ(
+        (*created.as_object())[std::string_view("entryId")]
+            .as_sint()
+            .value_or(-1),
+        0);
+
+    {
+        std::lock_guard<std::mutex> lock(shared_state_->mutex);
+        shared_state_->block_do = true;
+    }
+    ASSERT_EQ(scheduler_->Enable(), DAS_S_OK);
+    {
+        std::unique_lock<std::mutex> lock(shared_state_->mutex);
+        ASSERT_TRUE(shared_state_->cv.wait_for(
+            lock,
+            std::chrono::seconds(2),
+            [this] { return shared_state_->do_entered; }));
+    }
+
+    ASSERT_EQ(scheduler_->Disable(), DAS_S_OK);
+    ASSERT_EQ(scheduler_->Status(), SchedulerState::Stopping);
+    ExpectRepositoryCompileRejectedWithoutProviderCalls(
         *scheduler_,
         shared_state_,
         "taskWorking");
