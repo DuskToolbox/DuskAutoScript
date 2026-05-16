@@ -35,30 +35,47 @@ TEST(
     entry.availability.state = "available";
 
     auto serialized = yyjson::object(entry);
-    auto obj = serialized.as_object();
-    ASSERT_TRUE(obj.has_value());
 
-    EXPECT_TRUE(obj->contains(std::string_view("entryId")));
-    EXPECT_TRUE(obj->contains(std::string_view("displayName")));
-    EXPECT_TRUE(obj->contains(std::string_view("pluginGuid")));
-    EXPECT_TRUE(obj->contains(std::string_view("taskTypeGuid")));
-    EXPECT_TRUE(obj->contains(std::string_view("acceptedProperties")));
-    EXPECT_TRUE(obj->contains(std::string_view("sourceFingerprint")));
-    EXPECT_FALSE(obj->contains(std::string_view("entry_id")));
-    EXPECT_FALSE(obj->contains(std::string_view("display_name")));
+    EXPECT_TRUE(serialized.contains(std::string_view("entryId")));
+    EXPECT_TRUE(serialized.contains(std::string_view("displayName")));
+    EXPECT_TRUE(serialized.contains(std::string_view("pluginGuid")));
+    EXPECT_TRUE(serialized.contains(std::string_view("taskTypeGuid")));
+    EXPECT_TRUE(serialized.contains(std::string_view("acceptedProperties")));
+    EXPECT_FALSE(serialized.contains(std::string_view("entry_id")));
+    EXPECT_FALSE(serialized.contains(std::string_view("display_name")));
+
+    auto authoring_metadata =
+        serialized[std::string_view("authoring")].as_object();
+    ASSERT_TRUE(authoring_metadata.has_value());
+    EXPECT_TRUE(
+        authoring_metadata->contains(std::string_view("sourceFingerprint")));
 
     auto accepted =
-        (*obj)[std::string_view("acceptedProperties")].as_object();
+        serialized[std::string_view("acceptedProperties")].as_object();
     ASSERT_TRUE(accepted.has_value());
     EXPECT_TRUE(
         (*accepted)[std::string_view("providerFlag")].as_bool().value());
     EXPECT_EQ(
-        (*accepted)[std::string_view("providerText")]
-            .as_string()
-            .value(),
+        (*accepted)[std::string_view("providerText")].as_string().value(),
         std::string_view("kept-raw"));
 
-    auto round_tripped = yyjson::cast<RepositoryEntryDto>(serialized);
+    auto availability =
+        serialized[std::string_view("availability")].as_object();
+    ASSERT_TRUE(availability.has_value());
+    EXPECT_EQ(
+        (*availability)[std::string_view("state")].as_string().value(),
+        std::string_view("available"));
+
+    RepositoryAvailabilityDto availability_round_tripped;
+    ASSERT_NO_THROW(
+        availability_round_tripped =
+            yyjson::cast<RepositoryAvailabilityDto>(*availability));
+    EXPECT_EQ(availability_round_tripped.state, "available");
+
+    RepositoryEntryDto round_tripped;
+    SCOPED_TRACE(std::string(serialized.write()));
+    ASSERT_NO_THROW(
+        round_tripped = yyjson::cast<RepositoryEntryDto>(serialized));
     EXPECT_EQ(round_tripped.entry_id, 42);
     EXPECT_EQ(round_tripped.display_name, "MAA daily");
     EXPECT_EQ(round_tripped.plugin_guid, "plugin-guid");
@@ -71,18 +88,16 @@ TEST(
     EXPECT_TRUE(
         (*raw_payload)[std::string_view("providerFlag")].as_bool().value());
 
-    RepositoryAuthoringResultDto authoring;
-    authoring.entry_id = entry.entry_id;
-    authoring.authoring = entry.authoring;
-    authoring.accepted_properties = MakePayload();
-    authoring.document = MakePayload();
-    authoring.diagnostics.push_back(MakePayload());
+    RepositoryAuthoringResultDto authoring_result;
+    authoring_result.entry_id = entry.entry_id;
+    authoring_result.authoring = entry.authoring;
+    authoring_result.accepted_properties = MakePayload();
+    authoring_result.document = MakePayload();
+    authoring_result.diagnostics.push_back(MakePayload());
 
-    auto authoring_json = yyjson::object(authoring);
-    auto authoring_obj = authoring_json.as_object();
-    ASSERT_TRUE(authoring_obj.has_value());
-    EXPECT_TRUE(authoring_obj->contains(std::string_view("document")));
-    EXPECT_TRUE(authoring_obj->contains(std::string_view("diagnostics")));
+    auto authoring_json = yyjson::object(authoring_result);
+    EXPECT_TRUE(authoring_json.contains(std::string_view("document")));
+    EXPECT_TRUE(authoring_json.contains(std::string_view("diagnostics")));
 
     RepositoryCompileResultDto compile;
     compile.can_execute = true;
@@ -93,9 +108,7 @@ TEST(
     compile.debug_compile = MakePayload();
 
     auto compile_json = yyjson::object(compile);
-    auto compile_obj = compile_json.as_object();
-    ASSERT_TRUE(compile_obj.has_value());
-    EXPECT_TRUE(compile_obj->contains(std::string_view("canExecute")));
-    EXPECT_TRUE(compile_obj->contains(std::string_view("debugCompile")));
-    EXPECT_TRUE(compile_obj->contains(std::string_view("diagnostics")));
+    EXPECT_TRUE(compile_json.contains(std::string_view("canExecute")));
+    EXPECT_TRUE(compile_json.contains(std::string_view("debugCompile")));
+    EXPECT_TRUE(compile_json.contains(std::string_view("diagnostics")));
 }
