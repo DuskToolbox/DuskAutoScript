@@ -104,6 +104,9 @@ if(DAS_BUILD_TEST)
         GTest::gtest_main
         GTest::gtest
         DasCoreObjects)
+    if(WIN32)
+        target_link_libraries(DasMaaPiTest PRIVATE bcrypt)
+    endif()
     target_compile_definitions(DasMaaPiTest PRIVATE
         DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY)
 
