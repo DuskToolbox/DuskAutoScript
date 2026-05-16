@@ -202,6 +202,28 @@ TEST_F(SchedulerServiceTest, NoPluginLoadBeforeInitialize)
         0u);
 }
 
+TEST_F(SchedulerServiceTest, SchedulerRepositoryGetBeforeInitializeRejected)
+{
+    auto repository = scheduler_->GetTaskRepository();
+    auto obj = repository.as_object();
+    ASSERT_TRUE(obj.has_value());
+    EXPECT_EQ(
+        (*obj)[std::string_view("errorKind")].as_string().value_or(""),
+        std::string_view("notInitialized"));
+}
+
+TEST_F(SchedulerServiceTest, SchedulerRepositoryGetAfterInitializeEmpty)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto repository = scheduler_->GetTaskRepository();
+    auto obj = repository.as_object();
+    ASSERT_TRUE(obj.has_value());
+    auto entries = (*obj)[std::string_view("entries")].as_array();
+    ASSERT_TRUE(entries.has_value());
+    EXPECT_EQ(entries->size(), 0u);
+}
+
 TEST_F(SchedulerServiceTest, Enable_WithoutInitialize_ReturnsError)
 {
     auto result = scheduler_->Enable();
