@@ -21,12 +21,6 @@ if (${DAS_BUILD_TEST})
         target_compile_definitions(${IpcMultiProcessTest_NAME} PRIVATE WIN32_LEAN_AND_MEAN)
     endif()
 
-    # 与 DasCoreObjects 保持同步：AF_UNIX 模式下定义相同的编译宏
-    # 确保编译公共头 DefaultAsyncIpcTransport.h 时类型别名一致
-    if(WIN32 AND DAS_WINDOWS_USE_AF_UNIX)
-        target_compile_definitions(${IpcMultiProcessTest_NAME} PRIVATE DAS_WINDOWS_USE_AF_UNIX)
-    endif()
-
     # 添加包含目录 - IPC 核心头文件
     target_include_directories(${IpcMultiProcessTest_NAME} PRIVATE
         ${CMAKE_SOURCE_DIR}/das/Core/IPC/include
