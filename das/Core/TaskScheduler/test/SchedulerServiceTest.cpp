@@ -3649,7 +3649,146 @@ namespace
         EXPECT_TRUE(entries->empty());
         ExpectNoRepositoryAuthoringProviderCalls(state);
     }
+
+    std::string SerializeJsonForTest(const yyjson::value& json)
+    {
+        auto serialized = Das::Utils::SerializeYyjsonValue(json, false);
+        EXPECT_TRUE(serialized.has_value());
+        return serialized.value_or("{}");
+    }
+
+    yyjson::value ParseReadOnlyJsonForTest(IDasReadOnlyString* json)
+    {
+        const char* raw = nullptr;
+        EXPECT_EQ(json->GetUtf8(&raw), DAS_S_OK);
+
+        auto parsed = Das::Utils::ParseYyjsonFromString(
+            raw ? std::string_view(raw) : std::string_view{});
+        EXPECT_TRUE(parsed.has_value());
+        return parsed ? std::move(*parsed)
+                      : yyjson::value(Das::Utils::MakeYyjsonObject());
+    }
 } // namespace
+
+TEST_F(
+    SchedulerServiceImplTest,
+    SchedulerServiceImplRepositoryGetNullOutRejected)
+{
+    EXPECT_EQ(impl_->GetTaskRepository(nullptr), DAS_E_INVALID_POINTER);
+}
+
+TEST_F(
+    SchedulerServiceImplTest,
+    SchedulerServiceImplRepositoryGetReturnsSchedulerJson)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    DasPtr<IDasReadOnlyString> out;
+    ASSERT_EQ(impl_->GetTaskRepository(out.Put()), DAS_S_OK);
+    ASSERT_TRUE(out.Get() != nullptr);
+
+    auto parsed = ParseReadOnlyJsonForTest(out.Get());
+    auto obj = parsed.as_object();
+    ASSERT_TRUE(obj.has_value());
+    auto entries = (*obj)[std::string_view("entries")].as_array();
+    ASSERT_TRUE(entries.has_value());
+    EXPECT_TRUE(entries->empty());
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerServiceImplRepositoryCreateNullOutRejected)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    SchedulerServiceImpl impl(*scheduler_);
+
+    auto request_json =
+        SerializeJsonForTest(MakeRepositoryCreateRequest("Bridge entry", 7));
+    DasPtr<IDasReadOnlyString> request;
+    ASSERT_EQ(
+        CreateIDasReadOnlyStringFromUtf8(request_json.c_str(), request.Put()),
+        DAS_S_OK);
+
+    EXPECT_EQ(
+        impl.CreateRepositoryEntry(request.Get(), nullptr),
+        DAS_E_INVALID_POINTER);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerServiceImplRepositoryCreateNullBodyRejected)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    SchedulerServiceImpl        impl(*scheduler_);
+    DasPtr<IDasReadOnlyString> out;
+
+    EXPECT_EQ(
+        impl.CreateRepositoryEntry(nullptr, out.Put()),
+        DAS_E_INVALID_POINTER);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerServiceImplRepositoryCreateInvalidJsonRejected)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    SchedulerServiceImpl impl(*scheduler_);
+
+    DasPtr<IDasReadOnlyString> malformed;
+    ASSERT_EQ(
+        CreateIDasReadOnlyStringFromUtf8("not-json", malformed.Put()),
+        DAS_S_OK);
+    DasPtr<IDasReadOnlyString> out;
+    EXPECT_EQ(
+        impl.CreateRepositoryEntry(malformed.Get(), out.Put()),
+        DAS_E_INVALID_JSON);
+
+    DasPtr<IDasReadOnlyString> non_object;
+    ASSERT_EQ(
+        CreateIDasReadOnlyStringFromUtf8("[]", non_object.Put()),
+        DAS_S_OK);
+    out.Reset();
+    EXPECT_EQ(
+        impl.CreateRepositoryEntry(non_object.Get(), out.Put()),
+        DAS_E_INVALID_JSON);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerServiceImplRepositoryCreateReturnsCreatedEntryJson)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    SchedulerServiceImpl impl(*scheduler_);
+
+    auto request_json =
+        SerializeJsonForTest(MakeRepositoryCreateRequest("Bridge entry", 7));
+    DasPtr<IDasReadOnlyString> request;
+    ASSERT_EQ(
+        CreateIDasReadOnlyStringFromUtf8(request_json.c_str(), request.Put()),
+        DAS_S_OK);
+
+    DasPtr<IDasReadOnlyString> out;
+    ASSERT_EQ(
+        impl.CreateRepositoryEntry(request.Get(), out.Put()),
+        DAS_S_OK);
+    ASSERT_TRUE(out.Get() != nullptr);
+
+    auto parsed = ParseReadOnlyJsonForTest(out.Get());
+    auto obj = parsed.as_object();
+    ASSERT_TRUE(obj.has_value());
+    EXPECT_EQ(
+        (*obj)[std::string_view("entryId")].as_sint().value_or(-1),
+        0);
+    EXPECT_EQ(
+        (*obj)[std::string_view("displayName")].as_string().value_or(""),
+        std::string_view("Bridge entry"));
+    auto accepted =
+        (*obj)[std::string_view("acceptedProperties")].as_object();
+    ASSERT_TRUE(accepted.has_value());
+    EXPECT_EQ(
+        (*accepted)[std::string_view("retryCount")].as_sint().value_or(-1),
+        7);
+}
 
 TEST_F(
     SchedulerRuntimeBackedTest,
