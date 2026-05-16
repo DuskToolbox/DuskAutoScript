@@ -10,11 +10,13 @@ namespace Das::Plugins::DasMaaPi
     using MaaResourceHandle = std::uintptr_t;
     using MaaControllerHandle = std::uintptr_t;
     using MaaTaskerHandle = std::uintptr_t;
+    using MaaAgentClientHandle = std::uintptr_t;
     using MaaAsyncId = std::int64_t;
 
     inline constexpr MaaResourceHandle kInvalidMaaResourceHandle = 0;
     inline constexpr MaaControllerHandle kInvalidMaaControllerHandle = 0;
     inline constexpr MaaTaskerHandle kInvalidMaaTaskerHandle = 0;
+    inline constexpr MaaAgentClientHandle kInvalidMaaAgentClientHandle = 0;
     inline constexpr MaaAsyncId kInvalidMaaAsyncId = 0;
 
     enum class MaaTaskStatus : std::int32_t
@@ -98,6 +100,38 @@ namespace Das::Plugins::DasMaaPi
             MaaTaskerHandle tasker,
             MaaAsyncId      task_id) = 0;
         virtual MaaApiResult PostStop(MaaTaskerHandle tasker) = 0;
+
+        virtual MaaAgentClientHandle CreateAgentClientV2(
+            std::optional<std::string_view> identifier) = 0;
+        virtual MaaAgentClientHandle CreateAgentClientTcp(
+            std::uint16_t port) = 0;
+        virtual void DestroyAgentClient(
+            MaaAgentClientHandle client) noexcept = 0;
+        virtual std::optional<std::string> GetAgentClientIdentifier(
+            MaaAgentClientHandle client) = 0;
+        virtual MaaApiResult BindAgentClientResource(
+            MaaAgentClientHandle client,
+            MaaResourceHandle    resource) = 0;
+        virtual MaaApiResult RegisterAgentClientResourceSink(
+            MaaAgentClientHandle client,
+            MaaResourceHandle    resource) = 0;
+        virtual MaaApiResult RegisterAgentClientControllerSink(
+            MaaAgentClientHandle client,
+            MaaControllerHandle  controller) = 0;
+        virtual MaaApiResult RegisterAgentClientTaskerSink(
+            MaaAgentClientHandle client,
+            MaaTaskerHandle      tasker) = 0;
+        virtual MaaApiResult SetAgentClientTimeout(
+            MaaAgentClientHandle client,
+            std::int64_t         milliseconds) = 0;
+        virtual MaaApiResult ConnectAgentClient(
+            MaaAgentClientHandle client) = 0;
+        virtual bool DisconnectAgentClient(
+            MaaAgentClientHandle client) noexcept = 0;
+        virtual bool IsAgentClientConnected(
+            MaaAgentClientHandle client) = 0;
+        virtual bool IsAgentClientAlive(
+            MaaAgentClientHandle client) = 0;
     };
 
     IMaaApiBoundary& DefaultMaaApiBoundary();

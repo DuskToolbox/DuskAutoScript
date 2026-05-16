@@ -1,6 +1,8 @@
 #include <das/Plugins/DasMaaPi/MaaRuntime.h>
 #include <das/Utils/DasJsonCore.h>
 
+#include "MaaHandle.h"
+
 #ifndef DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY
 #include <MaaFramework/MaaAPI.h>
 #endif
@@ -187,6 +189,100 @@ namespace Das::Plugins::DasMaaPi
                 return MaaApiResult::Ok(id);
             }
 
+            MaaAgentClientHandle CreateAgentClientV2(
+                std::optional<std::string_view>) override
+            {
+                return kInvalidMaaAgentClientHandle;
+            }
+
+            MaaAgentClientHandle CreateAgentClientTcp(
+                std::uint16_t) override
+            {
+                return kInvalidMaaAgentClientHandle;
+            }
+
+            void DestroyAgentClient(
+                MaaAgentClientHandle) noexcept override
+            {
+            }
+
+            std::optional<std::string> GetAgentClientIdentifier(
+                MaaAgentClientHandle) override
+            {
+                return std::nullopt;
+            }
+
+            MaaApiResult BindAgentClientResource(
+                MaaAgentClientHandle,
+                MaaResourceHandle) override
+            {
+                return MaaApiResult::Failure(
+                    0,
+                    "Maa AgentClient boundary is not implemented");
+            }
+
+            MaaApiResult RegisterAgentClientResourceSink(
+                MaaAgentClientHandle,
+                MaaResourceHandle) override
+            {
+                return MaaApiResult::Failure(
+                    0,
+                    "Maa AgentClient boundary is not implemented");
+            }
+
+            MaaApiResult RegisterAgentClientControllerSink(
+                MaaAgentClientHandle,
+                MaaControllerHandle) override
+            {
+                return MaaApiResult::Failure(
+                    0,
+                    "Maa AgentClient boundary is not implemented");
+            }
+
+            MaaApiResult RegisterAgentClientTaskerSink(
+                MaaAgentClientHandle,
+                MaaTaskerHandle) override
+            {
+                return MaaApiResult::Failure(
+                    0,
+                    "Maa AgentClient boundary is not implemented");
+            }
+
+            MaaApiResult SetAgentClientTimeout(
+                MaaAgentClientHandle,
+                std::int64_t) override
+            {
+                return MaaApiResult::Failure(
+                    0,
+                    "Maa AgentClient boundary is not implemented");
+            }
+
+            MaaApiResult ConnectAgentClient(
+                MaaAgentClientHandle) override
+            {
+                return MaaApiResult::Failure(
+                    0,
+                    "Maa AgentClient boundary is not implemented");
+            }
+
+            bool DisconnectAgentClient(
+                MaaAgentClientHandle) noexcept override
+            {
+                return false;
+            }
+
+            bool IsAgentClientConnected(
+                MaaAgentClientHandle) override
+            {
+                return false;
+            }
+
+            bool IsAgentClientAlive(
+                MaaAgentClientHandle) override
+            {
+                return false;
+            }
+
         private:
             static std::string Lower(std::string value)
             {
@@ -283,49 +379,102 @@ namespace Das::Plugins::DasMaaPi
                     0,
                     "Real Maa boundary disabled in tests");
             }
+
+            MaaAgentClientHandle CreateAgentClientV2(
+                std::optional<std::string_view>) override
+            {
+                return kInvalidMaaAgentClientHandle;
+            }
+
+            MaaAgentClientHandle CreateAgentClientTcp(
+                std::uint16_t) override
+            {
+                return kInvalidMaaAgentClientHandle;
+            }
+
+            void DestroyAgentClient(
+                MaaAgentClientHandle) noexcept override
+            {
+            }
+
+            std::optional<std::string> GetAgentClientIdentifier(
+                MaaAgentClientHandle) override
+            {
+                return std::nullopt;
+            }
+
+            MaaApiResult BindAgentClientResource(
+                MaaAgentClientHandle,
+                MaaResourceHandle) override
+            {
+                return MaaApiResult::Failure(
+                    0,
+                    "Real Maa boundary disabled in tests");
+            }
+
+            MaaApiResult RegisterAgentClientResourceSink(
+                MaaAgentClientHandle,
+                MaaResourceHandle) override
+            {
+                return MaaApiResult::Failure(
+                    0,
+                    "Real Maa boundary disabled in tests");
+            }
+
+            MaaApiResult RegisterAgentClientControllerSink(
+                MaaAgentClientHandle,
+                MaaControllerHandle) override
+            {
+                return MaaApiResult::Failure(
+                    0,
+                    "Real Maa boundary disabled in tests");
+            }
+
+            MaaApiResult RegisterAgentClientTaskerSink(
+                MaaAgentClientHandle,
+                MaaTaskerHandle) override
+            {
+                return MaaApiResult::Failure(
+                    0,
+                    "Real Maa boundary disabled in tests");
+            }
+
+            MaaApiResult SetAgentClientTimeout(
+                MaaAgentClientHandle,
+                std::int64_t) override
+            {
+                return MaaApiResult::Failure(
+                    0,
+                    "Real Maa boundary disabled in tests");
+            }
+
+            MaaApiResult ConnectAgentClient(
+                MaaAgentClientHandle) override
+            {
+                return MaaApiResult::Failure(
+                    0,
+                    "Real Maa boundary disabled in tests");
+            }
+
+            bool DisconnectAgentClient(
+                MaaAgentClientHandle) noexcept override
+            {
+                return false;
+            }
+
+            bool IsAgentClientConnected(
+                MaaAgentClientHandle) override
+            {
+                return false;
+            }
+
+            bool IsAgentClientAlive(
+                MaaAgentClientHandle) override
+            {
+                return false;
+            }
         };
 #endif
-
-        template <typename Handle, void (IMaaApiBoundary::*Destroy)(Handle) noexcept>
-        class ScopedHandle
-        {
-        public:
-            ScopedHandle(IMaaApiBoundary& boundary, Handle handle)
-                : boundary_(&boundary), handle_(handle)
-            {
-            }
-
-            ScopedHandle(const ScopedHandle&) = delete;
-            ScopedHandle& operator=(const ScopedHandle&) = delete;
-
-            ScopedHandle(ScopedHandle&& other) noexcept
-                : boundary_(other.boundary_), handle_(other.handle_)
-            {
-                other.boundary_ = nullptr;
-                other.handle_ = 0;
-            }
-
-            ~ScopedHandle()
-            {
-                if (boundary_ && handle_ != 0)
-                {
-                    ((*boundary_).*Destroy)(handle_);
-                }
-            }
-
-            Handle get() const { return handle_; }
-
-        private:
-            IMaaApiBoundary* boundary_ = nullptr;
-            Handle           handle_ = 0;
-        };
-
-        using ScopedResource =
-            ScopedHandle<MaaResourceHandle, &IMaaApiBoundary::DestroyResource>;
-        using ScopedController =
-            ScopedHandle<MaaControllerHandle, &IMaaApiBoundary::DestroyController>;
-        using ScopedTasker =
-            ScopedHandle<MaaTaskerHandle, &IMaaApiBoundary::DestroyTasker>;
 
         IMaaApiBoundary* g_boundary_for_test = nullptr;
 
