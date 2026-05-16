@@ -3,6 +3,7 @@
 #include <cassert>
 
 #include <cpp_yyjson.hpp>
+#include <das/Plugins/DasMaaPi/AgentRuntimeDto.h>
 #include <das/Plugins/DasMaaPi/MaaApiBoundary.h>
 #include <das/Plugins/DasMaaPi/MaapiDto.h>
 #include <das/Plugins/DasMaaPi/PiDto.h>
@@ -25,23 +26,24 @@ namespace Das::Plugins::DasMaaPi
 
     struct MaaTaskExecutionDto
     {
-        std::string task_name;
-        std::string entry;
+        std::string   task_name;
+        std::string   entry;
         yyjson::value pipeline_override;
     };
 
     struct MaaExecutionPlanDto
     {
-        std::string                       interface_directory;
-        std::string                       controller_name;
-        ControllerSpec                    controller;
-        std::string                       resource_name;
-        std::vector<std::string>          resource_paths;
-        std::optional<std::string>        resource_hash;
-        bool                              fail_fast = true;
-        bool                              requires_agent_runtime = false;
-        PiEnvSnapshotDto                  pi_env;
-        std::vector<MaaTaskExecutionDto>  tasks;
+        std::string                             interface_directory;
+        std::string                             controller_name;
+        ControllerSpec                          controller;
+        std::string                             resource_name;
+        std::vector<std::string>                resource_paths;
+        std::optional<std::string>              resource_hash;
+        bool                                    fail_fast = true;
+        bool                                    requires_agent_runtime = false;
+        std::vector<AgentRuntime::AgentSpecDto> agents;
+        PiEnvSnapshotDto                        pi_env;
+        std::vector<MaaTaskExecutionDto>        tasks;
     };
 
     struct ExecutionEnvelopeDto
@@ -54,19 +56,19 @@ namespace Das::Plugins::DasMaaPi
 
     struct CompileSummaryDto
     {
-        bool                     can_execute = false;
+        bool                       can_execute = false;
         std::optional<std::string> controller_name;
         std::optional<std::string> resource_name;
-        std::vector<std::string> task_names;
-        bool                     requires_agent_runtime = false;
+        std::vector<std::string>   task_names;
+        bool                       requires_agent_runtime = false;
     };
 
     struct CompileResultDto
     {
-        bool                         ok = true;
-        bool                         can_execute = false;
-        CompileSummaryDto            summary;
-        std::vector<PiDiagnosticDto> diagnostics;
+        bool                                ok = true;
+        bool                                can_execute = false;
+        CompileSummaryDto                   summary;
+        std::vector<PiDiagnosticDto>        diagnostics;
         std::optional<ExecutionEnvelopeDto> execution_input;
     };
 } // namespace Das::Plugins::DasMaaPi

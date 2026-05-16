@@ -99,8 +99,7 @@ namespace
                 plugin_manager_->LoadPlugin(PluginPackageDir()),
                 DAS_S_OK);
             ASSERT_EQ(
-                plugin_manager_->RegisterPluginObjects(
-                    PluginPackageDir()),
+                plugin_manager_->RegisterPluginObjects(PluginPackageDir()),
                 DAS_S_OK);
         }
 
@@ -123,9 +122,8 @@ namespace
                 factory;
             EXPECT_EQ(
                 features[0]->interface_ptr->QueryInterface(
-                    DasIidOf<
-                        Das::PluginInterface::
-                            IDasTaskAuthoringSessionFactory>(),
+                    DasIidOf<Das::PluginInterface::
+                                 IDasTaskAuthoringSessionFactory>(),
                     reinterpret_cast<void**>(factory.Put())),
                 DAS_S_OK);
             auto context_json = ParseDasJson(std::move(context));
@@ -142,10 +140,11 @@ namespace
         yyjson::value Compile(std::string context, std::string purpose)
         {
             auto session = CreateSession(std::move(context));
-            auto request = ParseDasJson(
-                "{\"purpose\":\"" + purpose + "\"}");
+            auto request = ParseDasJson("{\"purpose\":\"" + purpose + "\"}");
             DasPtr<Das::ExportInterface::IDasJson> result_json;
-            EXPECT_EQ(session->Compile(request.Get(), result_json.Put()), DAS_S_OK);
+            EXPECT_EQ(
+                session->Compile(request.Get(), result_json.Put()),
+                DAS_S_OK);
             return ReadJsonInterface(result_json.Get());
         }
 
@@ -201,26 +200,27 @@ TEST_F(MaapiCompileFixture, CompileExecutionReturnsEnvelope)
     auto obj = result.as_object();
     ASSERT_TRUE(obj.has_value());
     ASSERT_TRUE(obj->contains(std::string_view("executionInput")));
-    auto envelope =
-        (*obj)[std::string_view("executionInput")].as_object();
+    auto envelope = (*obj)[std::string_view("executionInput")].as_object();
     ASSERT_TRUE(envelope.has_value());
     auto maapi = (*envelope)[std::string_view("maapi")].as_object();
     ASSERT_TRUE(maapi.has_value());
-    EXPECT_TRUE((*maapi)[std::string_view("failFast")].as_bool().value_or(false));
+    EXPECT_TRUE(
+        (*maapi)[std::string_view("failFast")].as_bool().value_or(false));
     EXPECT_EQ(
         (*maapi)[std::string_view("resourceHash")].as_string().value_or(""),
         "hash-expected");
 }
 
-TEST_F(MaapiCompileFixture, CompileExecutionIncludesTypedControllerSpecAndRawPiEnv)
+TEST_F(
+    MaapiCompileFixture,
+    CompileExecutionIncludesTypedControllerSpecAndRawPiEnv)
 {
     auto result = Compile(
         CompileContext(FixturePath("interface_compile.jsonc").generic_string()),
         "execution");
     auto obj = result.as_object();
     ASSERT_TRUE(obj.has_value());
-    auto envelope =
-        (*obj)[std::string_view("executionInput")].as_object();
+    auto envelope = (*obj)[std::string_view("executionInput")].as_object();
     ASSERT_TRUE(envelope.has_value());
     auto maapi = (*envelope)[std::string_view("maapi")].as_object();
     ASSERT_TRUE(maapi.has_value());
@@ -264,10 +264,10 @@ TEST_F(MaapiCompileFixture, PipelineOverrideMergesOptions)
         (*first_task)[std::string_view("pipelineOverride")].as_object();
     ASSERT_TRUE(pipeline.has_value());
     EXPECT_EQ(
-        (*(*pipeline)[std::string_view("Stage")].as_object())
-            [std::string_view("value")]
-                .as_string()
-                .value_or(""),
+        (*(*pipeline)[std::string_view("Stage")]
+              .as_object())[std::string_view("value")]
+            .as_string()
+            .value_or(""),
         "global-hard");
     EXPECT_TRUE(pipeline->contains(std::string_view("MedicineSmall")));
     EXPECT_TRUE(pipeline->contains(std::string_view("MedicineLarge")));
@@ -275,19 +275,31 @@ TEST_F(MaapiCompileFixture, PipelineOverrideMergesOptions)
     EXPECT_FALSE(pipeline->contains(std::string_view("Inactive")));
 }
 
-TEST_F(MaapiCompileFixture, AgentBoundaryBlocksExecution)
+TEST_F(MaapiCompileFixture, AgentBoundaryAllowsExecutionEnvelope)
 {
     auto result = Compile(
-        CompileContext(FixturePath("interface_v26_jsonc.jsonc").generic_string()),
+        CompileContext(
+            FixturePath("interface_v26_jsonc.jsonc").generic_string()),
         "execution");
     auto obj = result.as_object();
     ASSERT_TRUE(obj.has_value());
-    EXPECT_FALSE(
-        (*obj)[std::string_view("canExecute")].as_bool().value_or(true));
+    EXPECT_TRUE(
+        (*obj)[std::string_view("canExecute")].as_bool().value_or(false));
     auto summary = (*obj)[std::string_view("summary")].as_object();
     ASSERT_TRUE(summary.has_value());
     EXPECT_TRUE(
-        (*summary)[std::string_view("requiresAgentRuntime")]
-            .as_bool()
-            .value_or(false));
+        (*summary)[std::string_view("requiresAgentRuntime")].as_bool().value_or(
+            false));
+    auto envelope = (*obj)[std::string_view("executionInput")].as_object();
+    ASSERT_TRUE(envelope.has_value());
+    auto maapi = (*envelope)[std::string_view("maapi")].as_object();
+    ASSERT_TRUE(maapi.has_value());
+    auto agents = (*maapi)[std::string_view("agents")].as_array();
+    ASSERT_TRUE(agents.has_value());
+    ASSERT_EQ(agents->size(), 1u);
+    auto agent = (*agents)[0].as_object();
+    ASSERT_TRUE(agent.has_value());
+    EXPECT_EQ(
+        (*agent)[std::string_view("childExec")].as_string().value_or(""),
+        "agent.exe");
 }

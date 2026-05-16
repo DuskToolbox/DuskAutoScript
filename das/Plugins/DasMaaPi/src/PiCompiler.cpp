@@ -2,10 +2,12 @@
 #include <das/Utils/DasJsonCore.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <initializer_list>
 #include <map>
 #include <optional>
 #include <string_view>
+#include <vector>
 
 namespace Das::Plugins::DasMaaPi
 {
@@ -49,7 +51,7 @@ namespace Das::Plugins::DasMaaPi
 
         template <typename ObjectRef>
         std::optional<std::string> OptionalStringField(
-            const ObjectRef& obj,
+            const ObjectRef&                        obj,
             std::initializer_list<std::string_view> keys)
         {
             for (const auto key : keys)
@@ -61,6 +63,55 @@ namespace Das::Plugins::DasMaaPi
                 }
             }
             return std::nullopt;
+        }
+
+        template <typename ObjectRef>
+        std::optional<int32_t> OptionalInt32Field(
+            const ObjectRef&                        obj,
+            std::initializer_list<std::string_view> keys)
+        {
+            for (const auto key : keys)
+            {
+                if (!obj.contains(key))
+                {
+                    continue;
+                }
+                auto value = obj[key].as_sint();
+                if (value)
+                {
+                    return static_cast<int32_t>(*value);
+                }
+            }
+            return std::nullopt;
+        }
+
+        template <typename ObjectRef>
+        std::vector<std::string> StringArrayField(
+            const ObjectRef&                        obj,
+            std::initializer_list<std::string_view> keys)
+        {
+            for (const auto key : keys)
+            {
+                if (!obj.contains(key))
+                {
+                    continue;
+                }
+                auto array = obj[key].as_array();
+                if (!array)
+                {
+                    continue;
+                }
+                std::vector<std::string> result;
+                for (auto it = array->begin(); it != array->end(); ++it)
+                {
+                    if (it->is_string())
+                    {
+                        result.emplace_back(it->as_string().value_or(""));
+                    }
+                }
+                return result;
+            }
+            return {};
         }
 
         template <typename ObjectRef>
@@ -91,19 +142,74 @@ namespace Das::Plugins::DasMaaPi
                 return spec;
             }
 
-            spec.name =
-                OptionalStringField(*obj, "name").value_or(std::move(spec.name));
-            spec.type =
-                OptionalStringField(*obj, "type").value_or(std::move(spec.type));
+            spec.name = OptionalStringField(*obj, "name")
+                            .value_or(std::move(spec.name));
+            spec.type = OptionalStringField(*obj, "type")
+                            .value_or(std::move(spec.type));
             spec.read_path =
-                OptionalStringField(*obj, {"readPath", "read_path"}).value_or("");
+                OptionalStringField(*obj, {"readPath", "read_path"})
+                    .value_or("");
             spec.address = OptionalStringField(*obj, "address").value_or("");
-            spec.adb_path =
-                OptionalStringField(*obj, {"adbPath", "adb_path"}).value_or("adb");
+            spec.adb_path = OptionalStringField(*obj, {"adbPath", "adb_path"})
+                                .value_or("adb");
             spec.config_json = ControllerConfigJson(*obj);
             spec.agent_path =
-                OptionalStringField(*obj, {"agentPath", "agent_path"}).value_or("");
+                OptionalStringField(*obj, {"agentPath", "agent_path"})
+                    .value_or("");
             return spec;
+        }
+
+        template <typename ObjectRef>
+        AgentRuntime::AgentSpecDto NormalizeAgentSpec(const ObjectRef& obj)
+        {
+            AgentRuntime::AgentSpecDto spec;
+            spec.child_exec =
+                OptionalStringField(obj, {"child_exec", "childExec"})
+                    .value_or("");
+            spec.child_args =
+                StringArrayField(obj, {"child_args", "childArgs"});
+            spec.identifier = OptionalStringField(obj, "identifier");
+            if (auto timeout =
+                    OptionalInt32Field(obj, {"timeout_ms", "timeoutMs"}))
+            {
+                spec.timeout_ms = *timeout;
+            }
+            return spec;
+        }
+
+        template <typename ArrayRef>
+        void AppendAgentSpecs(
+            const ArrayRef&                          array,
+            std::vector<AgentRuntime::AgentSpecDto>& agents)
+        {
+            for (auto it = array.begin(); it != array.end(); ++it)
+            {
+                if (auto obj = it->as_object())
+                {
+                    agents.emplace_back(NormalizeAgentSpec(*obj));
+                }
+            }
+        }
+
+        std::vector<AgentRuntime::AgentSpecDto> NormalizeAgentSpecs(
+            const std::string& raw_agent_json)
+        {
+            std::vector<AgentRuntime::AgentSpecDto> agents;
+            auto raw = Das::Utils::ParseYyjsonFromString(raw_agent_json);
+            if (!raw)
+            {
+                return agents;
+            }
+            if (auto obj = raw->as_object())
+            {
+                agents.emplace_back(NormalizeAgentSpec(*obj));
+                return agents;
+            }
+            if (auto array = raw->as_array())
+            {
+                AppendAgentSpecs(*array, agents);
+            }
+            return agents;
         }
 
         void MergeObject(yyjson::value& target, const yyjson::value& source)
@@ -128,9 +234,8 @@ namespace Das::Plugins::DasMaaPi
             auto it = std::find_if(
                 catalog.controllers.begin(),
                 catalog.controllers.end(),
-                [&](const PiController& item) {
-                    return item.dto.name == name;
-                });
+                [&](const PiController& item)
+                { return item.dto.name == name; });
             return it == catalog.controllers.end() ? nullptr : &*it;
         }
 
@@ -141,9 +246,7 @@ namespace Das::Plugins::DasMaaPi
             auto it = std::find_if(
                 catalog.resources.begin(),
                 catalog.resources.end(),
-                [&](const PiResource& item) {
-                    return item.dto.name == name;
-                });
+                [&](const PiResource& item) { return item.dto.name == name; });
             return it == catalog.resources.end() ? nullptr : &*it;
         }
 
@@ -152,9 +255,7 @@ namespace Das::Plugins::DasMaaPi
             auto it = std::find_if(
                 catalog.tasks.begin(),
                 catalog.tasks.end(),
-                [&](const PiTask& item) {
-                    return item.dto.name == name;
-                });
+                [&](const PiTask& item) { return item.dto.name == name; });
             return it == catalog.tasks.end() ? nullptr : &*it;
         }
 
@@ -181,16 +282,16 @@ namespace Das::Plugins::DasMaaPi
         }
 
         bool IsActive(
-            const PiOption&      option,
-            std::string_view     controller,
-            std::string_view     resource)
+            const PiOption&  option,
+            std::string_view controller,
+            std::string_view resource)
         {
             return ContainsName(option.dto.controller, controller)
                    && ContainsName(option.dto.resource, resource);
         }
 
         std::string SwitchCaseName(
-            const PiOption&                option,
+            const PiOption&                 option,
             const MaapiPiOptionSettingsDto& selected)
         {
             if (!selected.bool_value)
@@ -202,12 +303,10 @@ namespace Das::Plugins::DasMaaPi
             const bool desired = *selected.bool_value;
             for (const auto& item : option.dto.cases)
             {
-                const bool truthy =
-                    item.name == "Yes" || item.name == "yes"
-                    || item.name == "Y" || item.name == "y";
-                const bool falsy =
-                    item.name == "No" || item.name == "no"
-                    || item.name == "N" || item.name == "n";
+                const bool truthy = item.name == "Yes" || item.name == "yes"
+                                    || item.name == "Y" || item.name == "y";
+                const bool falsy = item.name == "No" || item.name == "no"
+                                   || item.name == "N" || item.name == "n";
                 if ((desired && truthy) || (!desired && falsy))
                 {
                     return item.name;
@@ -217,7 +316,7 @@ namespace Das::Plugins::DasMaaPi
         }
 
         std::string ReplaceAll(
-            std::string text,
+            std::string                               text,
             const std::map<std::string, std::string>& values)
         {
             for (const auto& [key, value] : values)
@@ -234,8 +333,8 @@ namespace Das::Plugins::DasMaaPi
         }
 
         void MergeCaseOverrides(
-            yyjson::value&    pipeline,
-            const PiOption&   option,
+            yyjson::value&                  pipeline,
+            const PiOption&                 option,
             const std::vector<std::string>& selected_cases)
         {
             for (const auto& defined_case : option.dto.cases)
@@ -248,7 +347,8 @@ namespace Das::Plugins::DasMaaPi
                 {
                     continue;
                 }
-                auto raw = Das::Utils::ParseYyjsonFromString(option.raw.raw_json);
+                auto raw =
+                    Das::Utils::ParseYyjsonFromString(option.raw.raw_json);
                 if (!raw || !raw->is_object())
                 {
                     continue;
@@ -285,12 +385,12 @@ namespace Das::Plugins::DasMaaPi
         }
 
         void MergeSelectedOption(
-            CompileResultDto&              result,
-            yyjson::value&                 pipeline,
-            const PiCatalog&               catalog,
+            CompileResultDto&               result,
+            yyjson::value&                  pipeline,
+            const PiCatalog&                catalog,
             const MaapiPiOptionSettingsDto& selected,
-            std::string_view               controller,
-            std::string_view               resource)
+            std::string_view                controller,
+            std::string_view                resource)
         {
             const auto* option = FindOption(catalog, selected.option_name);
             if (!option)
@@ -362,7 +462,8 @@ namespace Das::Plugins::DasMaaPi
             return tasks;
         }
 
-        yyjson::value SerializeStringArray(const std::vector<std::string>& values)
+        yyjson::value SerializeStringArray(
+            const std::vector<std::string>& values)
         {
             yyjson::value arr(Array());
             for (const auto& value : values)
@@ -387,6 +488,34 @@ namespace Das::Plugins::DasMaaPi
             return controller;
         }
 
+        yyjson::value SerializeAgentSpec(const AgentRuntime::AgentSpecDto& spec)
+        {
+            yyjson::value agent(Object());
+            auto          obj = agent.as_object();
+            (*obj)[std::string_view("childExec")] = JsonString(spec.child_exec);
+            (*obj)[std::string_view("childArgs")] =
+                SerializeStringArray(spec.child_args);
+            if (spec.identifier)
+            {
+                (*obj)[std::string_view("identifier")] =
+                    JsonString(*spec.identifier);
+            }
+            (*obj)[std::string_view("timeoutMs")] =
+                static_cast<int64_t>(spec.timeout_ms);
+            return agent;
+        }
+
+        yyjson::value SerializeAgentSpecs(
+            const std::vector<AgentRuntime::AgentSpecDto>& agents)
+        {
+            yyjson::value result(Array());
+            for (const auto& agent : agents)
+            {
+                result.as_array()->emplace_back(SerializeAgentSpec(agent));
+            }
+            return result;
+        }
+
         yyjson::value SerializeDiagnostics(
             const std::vector<PiDiagnosticDto>& diagnostics)
         {
@@ -397,8 +526,7 @@ namespace Das::Plugins::DasMaaPi
                 auto          obj = item.as_object();
                 (*obj)[std::string_view("severity")] =
                     JsonString(diagnostic.severity);
-                (*obj)[std::string_view("code")] =
-                    JsonString(diagnostic.code);
+                (*obj)[std::string_view("code")] = JsonString(diagnostic.code);
                 (*obj)[std::string_view("message")] =
                     JsonString(diagnostic.message);
                 arr.as_array()->emplace_back(std::move(item));
@@ -437,6 +565,11 @@ namespace Das::Plugins::DasMaaPi
                 envelope.maapi.fail_fast;
             (*maapi_obj)[std::string_view("requiresAgentRuntime")] =
                 envelope.maapi.requires_agent_runtime;
+            if (!envelope.maapi.agents.empty())
+            {
+                (*maapi_obj)[std::string_view("agents")] =
+                    SerializeAgentSpecs(envelope.maapi.agents);
+            }
 
             yyjson::value env(Object());
             auto          env_obj = env.as_object();
@@ -461,8 +594,7 @@ namespace Das::Plugins::DasMaaPi
                 auto          item_obj = item.as_object();
                 (*item_obj)[std::string_view("taskName")] =
                     JsonString(task.task_name);
-                (*item_obj)[std::string_view("entry")] =
-                    JsonString(task.entry);
+                (*item_obj)[std::string_view("entry")] = JsonString(task.entry);
                 (*item_obj)[std::string_view("pipelineOverride")] =
                     CopyJsonValue(task.pipeline_override);
                 tasks.as_array()->emplace_back(std::move(item));
@@ -478,25 +610,23 @@ namespace Das::Plugins::DasMaaPi
         const PiCatalog&           catalog,
         std::string_view)
     {
-        CompileResultDto result;
+        CompileResultDto     result;
         ExecutionEnvelopeDto envelope;
         envelope.maapi.interface_directory =
             catalog.interface_directory.string();
-        envelope.maapi.fail_fast =
-            settings.adapter.execution_policy.fail_fast;
+        envelope.maapi.fail_fast = settings.adapter.execution_policy.fail_fast;
         envelope.maapi.requires_agent_runtime = !catalog.raw_agent_json.empty();
+        envelope.maapi.agents = NormalizeAgentSpecs(catalog.raw_agent_json);
         envelope.maapi.pi_env.project_version = catalog.version;
         result.summary.requires_agent_runtime =
             envelope.maapi.requires_agent_runtime;
 
-        const auto controller_name =
-            settings.pi.controller_name.value_or(
-                catalog.controllers.empty() ? std::string{}
-                                            : catalog.controllers.front().dto.name);
-        const auto resource_name =
-            settings.pi.resource_name.value_or(
-                catalog.resources.empty() ? std::string{}
-                                          : catalog.resources.front().dto.name);
+        const auto controller_name = settings.pi.controller_name.value_or(
+            catalog.controllers.empty() ? std::string{}
+                                        : catalog.controllers.front().dto.name);
+        const auto resource_name = settings.pi.resource_name.value_or(
+            catalog.resources.empty() ? std::string{}
+                                      : catalog.resources.front().dto.name);
         const auto* controller = FindController(catalog, controller_name);
         const auto* resource = FindResource(catalog, resource_name);
         if (!controller)
@@ -515,13 +645,14 @@ namespace Das::Plugins::DasMaaPi
                 "missing-resource",
                 "Selected resource is missing");
         }
-        if (envelope.maapi.requires_agent_runtime)
+        if (envelope.maapi.requires_agent_runtime
+            && envelope.maapi.agents.empty())
         {
             AddDiagnostic(
                 result,
                 "error",
-                "requires-agent-runtime",
-                "PI agent runtime is preserved but not executed in Phase 69");
+                "missing-agent",
+                "PI agent runtime is required but no valid agent spec exists");
         }
         if (!controller || !resource)
         {
@@ -607,11 +738,9 @@ namespace Das::Plugins::DasMaaPi
         result.ok = std::none_of(
             result.diagnostics.begin(),
             result.diagnostics.end(),
-            [](const PiDiagnosticDto& diagnostic) {
-                return diagnostic.severity == "error";
-            });
-        result.can_execute = result.ok && !envelope.maapi.tasks.empty()
-                             && !envelope.maapi.requires_agent_runtime;
+            [](const PiDiagnosticDto& diagnostic)
+            { return diagnostic.severity == "error"; });
+        result.can_execute = result.ok && !envelope.maapi.tasks.empty();
         result.summary.can_execute = result.can_execute;
         if (result.ok)
         {

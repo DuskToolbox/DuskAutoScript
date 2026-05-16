@@ -1,3 +1,4 @@
+#include "../src/AgentProcessRunner.h"
 #include "../src/MaapiTask.h"
 #include "FakeMaaApiBoundary.h"
 
@@ -7,16 +8,22 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <memory>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace
 {
     using namespace Das;
     using namespace Das::Plugins::DasMaaPi;
+    using namespace Das::Plugins::DasMaaPi::AgentRuntime;
     using namespace Das::Plugins::DasMaaPi::Test;
 
     std::string JsonStringLiteral(std::string_view value)
@@ -70,31 +77,35 @@ namespace
             + std::string(fail_fast ? "true" : "false")
             + R"(,"requiresAgentRuntime":)"
             + std::string(requires_agent ? "true" : "false")
-            + R"(,"piEnv":{"controllerJson":)" + JsonStringLiteral(controller_json)
-            + R"(,"resourceJson":"{\"name\":\"Official\"}"},"tasks":)"
-            + tasks + "}}";
+            + std::string(
+                requires_agent
+                    ? R"(,"agents":[{"childExec":"agent.exe","childArgs":["--serve"],"timeoutMs":1000}])"
+                    : "")
+            + R"(,"piEnv":{"controllerJson":)"
+            + JsonStringLiteral(controller_json)
+            + R"(,"resourceJson":"{\"name\":\"Official\"}"},"tasks":)" + tasks
+            + "}}";
         auto parsed = Das::Utils::ParseYyjsonFromString(json);
         EXPECT_TRUE(parsed.has_value());
         return parsed ? std::move(*parsed) : Das::Utils::MakeYyjsonObject();
     }
 
     ExecutionEnvelopeDto Envelope(
-        bool fail_fast = true,
-        bool requires_agent = false,
+        bool        fail_fast = true,
+        bool        requires_agent = false,
         std::string tasks = R"([
           {"taskName":"DailyFarm","entry":"StartDaily","pipelineOverride":{"Stage":{"value":"one"}}},
           {"taskName":"Base","entry":"StartBase","pipelineOverride":{"Stage":{"value":"two"}}}
         ])",
         std::string controller_json = R"({"name":"Android","type":"Adb"})")
     {
-        auto parsed = ParseExecutionEnvelope(
-            EnvelopeValue(
-                fail_fast,
-                std::string(kPluginGuidText),
-                std::string(kTaskGuidText),
-                requires_agent,
-                std::move(tasks),
-                std::move(controller_json)));
+        auto parsed = ParseExecutionEnvelope(EnvelopeValue(
+            fail_fast,
+            std::string(kPluginGuidText),
+            std::string(kTaskGuidText),
+            requires_agent,
+            std::move(tasks),
+            std::move(controller_json)));
         EXPECT_EQ(parsed.result, DAS_S_OK);
         return std::move(parsed.envelope);
     }
@@ -139,12 +150,89 @@ namespace
             return DAS_S_OK;
         }
     };
+
+    struct FakeProcessState
+    {
+        bool                   running = true;
+        int                    wait_calls = 0;
+        int                    terminate_calls = 0;
+        std::optional<int32_t> exit_code;
+    };
+
+    class FakeProcess final : public IAgentProcess
+    {
+    public:
+        explicit FakeProcess(std::shared_ptr<FakeProcessState> state)
+            : state_(std::move(state))
+        {
+        }
+
+        AgentProcessSnapshot Snapshot() const override
+        {
+            return AgentProcessSnapshot{
+                .running = state_->running,
+                .pid = 6001,
+                .exit_code = state_->exit_code,
+                .stdout_tail = {},
+                .stderr_tail = {}};
+        }
+
+        bool WaitForExit(std::chrono::milliseconds) override
+        {
+            ++state_->wait_calls;
+            state_->running = false;
+            state_->exit_code = 0;
+            return true;
+        }
+
+        void Terminate() override
+        {
+            ++state_->terminate_calls;
+            state_->running = false;
+        }
+
+    private:
+        std::shared_ptr<FakeProcessState> state_;
+    };
+
+    class FakeProcessRunner final : public IAgentProcessRunner
+    {
+    public:
+        AgentProcessLaunchResult Launch(
+            const AgentProcessLaunchRequest& request) override
+        {
+            launches.push_back(request);
+            auto state = std::make_shared<FakeProcessState>();
+            processes.push_back(state);
+            return AgentProcessLaunchResult::Success(
+                std::make_unique<FakeProcess>(std::move(state)));
+        }
+
+        std::vector<AgentProcessLaunchRequest>         launches;
+        std::vector<std::shared_ptr<FakeProcessState>> processes;
+    };
+
+    class ScopedRuntimeHooks final
+    {
+    public:
+        ScopedRuntimeHooks(FakeMaaApiBoundary& fake, FakeProcessRunner& runner)
+        {
+            SetMaaApiBoundaryForTest(&fake);
+            SetAgentProcessRunnerForTest(&runner);
+        }
+
+        ~ScopedRuntimeHooks()
+        {
+            SetAgentProcessRunnerForTest(nullptr);
+            SetMaaApiBoundaryForTest(nullptr);
+        }
+    };
 } // namespace
 
 TEST(DasMaaPiRuntime, RuntimeCallSequenceAndCleanup)
 {
     FakeMaaApiBoundary fake;
-    auto result = MaaRuntime::Run(Envelope(), fake, nullptr);
+    auto               result = MaaRuntime::Run(Envelope(), fake, nullptr);
     EXPECT_EQ(result.das_result, DAS_S_OK);
     EXPECT_EQ(
         result.completed_tasks,
@@ -158,8 +246,10 @@ TEST(DasMaaPiRuntime, RuntimeCallSequenceAndCleanup)
     EXPECT_TRUE(fake.Contains("CreateTasker"));
     EXPECT_TRUE(fake.Contains("BindResource"));
     EXPECT_TRUE(fake.Contains("BindController"));
-    EXPECT_TRUE(fake.Contains("PostTask:StartDaily:{\"Stage\":{\"value\":\"one\"}}"));
-    EXPECT_TRUE(fake.Contains("PostTask:StartBase:{\"Stage\":{\"value\":\"two\"}}"));
+    EXPECT_TRUE(
+        fake.Contains("PostTask:StartDaily:{\"Stage\":{\"value\":\"one\"}}"));
+    EXPECT_TRUE(
+        fake.Contains("PostTask:StartBase:{\"Stage\":{\"value\":\"two\"}}"));
     EXPECT_TRUE(fake.Contains("DestroyTasker:3"));
     EXPECT_TRUE(fake.Contains("DestroyController:2"));
     EXPECT_TRUE(fake.Contains("DestroyResource:1"));
@@ -168,7 +258,7 @@ TEST(DasMaaPiRuntime, RuntimeCallSequenceAndCleanup)
 TEST(DasMaaPiRuntime, RuntimePassesTypedAdbCamelCaseControllerFields)
 {
     FakeMaaApiBoundary fake;
-    auto result = MaaRuntime::Run(
+    auto               result = MaaRuntime::Run(
         Envelope(
             true,
             false,
@@ -183,14 +273,16 @@ TEST(DasMaaPiRuntime, RuntimePassesTypedAdbCamelCaseControllerFields)
     EXPECT_EQ(fake.last_controller_spec->type, "Adb");
     EXPECT_EQ(fake.last_controller_spec->address, "127.0.0.1:5555");
     EXPECT_EQ(fake.last_controller_spec->adb_path, "C:/tools/adb.exe");
-    EXPECT_EQ(fake.last_controller_spec->config_json, R"({"touch":"maatouch"})");
+    EXPECT_EQ(
+        fake.last_controller_spec->config_json,
+        R"({"touch":"maatouch"})");
     EXPECT_EQ(fake.last_controller_spec->agent_path, "C:/maa/agent");
 }
 
 TEST(DasMaaPiRuntime, RuntimePassesTypedAdbSnakeCaseControllerFields)
 {
     FakeMaaApiBoundary fake;
-    auto result = MaaRuntime::Run(
+    auto               result = MaaRuntime::Run(
         Envelope(
             true,
             false,
@@ -210,7 +302,7 @@ TEST(DasMaaPiRuntime, RuntimePassesTypedAdbSnakeCaseControllerFields)
 TEST(DasMaaPiRuntime, RuntimePassesTypedDbgControllerReadPath)
 {
     FakeMaaApiBoundary fake;
-    auto result = MaaRuntime::Run(
+    auto               result = MaaRuntime::Run(
         Envelope(
             true,
             false,
@@ -276,8 +368,10 @@ TEST(DasMaaPiRuntime, RuntimeFailFastStopsRemainingTasksByDefault)
 
     auto result = MaaRuntime::Run(Envelope(true), fake, nullptr);
     EXPECT_EQ(result.das_result, DAS_E_FAIL);
-    EXPECT_TRUE(fake.Contains("PostTask:StartDaily:{\"Stage\":{\"value\":\"one\"}}"));
-    EXPECT_FALSE(fake.Contains("PostTask:StartBase:{\"Stage\":{\"value\":\"two\"}}"));
+    EXPECT_TRUE(
+        fake.Contains("PostTask:StartDaily:{\"Stage\":{\"value\":\"one\"}}"));
+    EXPECT_FALSE(
+        fake.Contains("PostTask:StartBase:{\"Stage\":{\"value\":\"two\"}}"));
 }
 
 TEST(DasMaaPiRuntime, RuntimeContinuePolicyPostsRemainingTasks)
@@ -287,8 +381,10 @@ TEST(DasMaaPiRuntime, RuntimeContinuePolicyPostsRemainingTasks)
 
     auto result = MaaRuntime::Run(Envelope(false), fake, nullptr);
     EXPECT_EQ(result.das_result, DAS_E_FAIL);
-    EXPECT_TRUE(fake.Contains("PostTask:StartDaily:{\"Stage\":{\"value\":\"one\"}}"));
-    EXPECT_TRUE(fake.Contains("PostTask:StartBase:{\"Stage\":{\"value\":\"two\"}}"));
+    EXPECT_TRUE(
+        fake.Contains("PostTask:StartDaily:{\"Stage\":{\"value\":\"one\"}}"));
+    EXPECT_TRUE(
+        fake.Contains("PostTask:StartBase:{\"Stage\":{\"value\":\"two\"}}"));
 }
 
 TEST(DasMaaPiRuntime, RuntimeStopTokenMapsToMaaStop)
@@ -300,7 +396,8 @@ TEST(DasMaaPiRuntime, RuntimeStopTokenMapsToMaaStop)
     EXPECT_EQ(result.das_result, DAS_E_FAIL);
     EXPECT_TRUE(result.stopped);
     EXPECT_TRUE(fake.Contains("PostStop"));
-    EXPECT_FALSE(fake.Contains("PostTask:StartDaily:{\"Stage\":{\"value\":\"one\"}}"));
+    EXPECT_FALSE(
+        fake.Contains("PostTask:StartDaily:{\"Stage\":{\"value\":\"one\"}}"));
 }
 
 TEST(DasMaaPiRuntime, DoRejectsMissingEnvelope)
@@ -311,34 +408,56 @@ TEST(DasMaaPiRuntime, DoRejectsMissingEnvelope)
 
 TEST(DasMaaPiRuntime, DoRejectsMalformedJsonEnvelope)
 {
-    auto json = ParseDasJson("\"not-an-object\"");
+    auto      json = ParseDasJson("\"not-an-object\"");
     MaapiTask task;
     EXPECT_EQ(task.Do(nullptr, nullptr, json.Get()), DAS_E_INVALID_JSON);
 }
 
 TEST(DasMaaPiRuntime, DoRejectsWrongGuid)
 {
-    auto json = ParseDasJson(
-        EnvelopeJson(
-            true,
-            "00000000-0000-0000-0000-000000000000",
-            std::string(kTaskGuidText)));
+    auto      json = ParseDasJson(EnvelopeJson(
+        true,
+        "00000000-0000-0000-0000-000000000000",
+        std::string(kTaskGuidText)));
     MaapiTask task;
     EXPECT_EQ(task.Do(nullptr, nullptr, json.Get()), DAS_E_INVALID_ARGUMENT);
 }
 
 TEST(DasMaaPiRuntime, DoRejectsMissingTasks)
 {
-    auto json = ParseDasJson(EnvelopeJson(true, std::string(kPluginGuidText), std::string(kTaskGuidText), false, "[]"));
+    auto      json = ParseDasJson(EnvelopeJson(
+        true,
+        std::string(kPluginGuidText),
+        std::string(kTaskGuidText),
+        false,
+        "[]"));
     MaapiTask task;
     EXPECT_EQ(task.Do(nullptr, nullptr, json.Get()), DAS_E_INVALID_ARGUMENT);
 }
 
-TEST(DasMaaPiRuntime, DoRejectsAgentRequiredEnvelope)
+TEST(DasMaaPiRuntime, DoRunsAgentRequiredEnvelopeThroughSharedRuntime)
 {
-    auto json = ParseDasJson(EnvelopeJson(true, std::string(kPluginGuidText), std::string(kTaskGuidText), true));
+    auto               json = ParseDasJson(EnvelopeJson(
+        true,
+        std::string(kPluginGuidText),
+        std::string(kTaskGuidText),
+        true));
+    FakeMaaApiBoundary fake;
+    FakeProcessRunner  runner;
+    ScopedRuntimeHooks hooks(fake, runner);
+
     MaapiTask task;
-    EXPECT_EQ(task.Do(nullptr, nullptr, json.Get()), DAS_E_NO_IMPLEMENTATION);
+    EXPECT_EQ(task.Do(nullptr, nullptr, json.Get()), DAS_S_OK);
+    ASSERT_EQ(runner.launches.size(), 1u);
+    EXPECT_EQ(
+        runner.launches[0].arguments,
+        (std::vector<std::string>{"--serve", "agent-client-id"}));
+    EXPECT_TRUE(fake.Contains("ConnectAgentClient"));
+    EXPECT_TRUE(fake.Contains("RegisterAgentClientTaskerSink"));
+    EXPECT_TRUE(
+        fake.Contains("PostTask:StartDaily:{\"Stage\":{\"value\":\"one\"}}"));
+    ASSERT_EQ(runner.processes.size(), 1u);
+    EXPECT_GT(runner.processes[0]->wait_calls, 0);
 }
 
 TEST(DasMaaPiRuntime, DoRunsValidNonAgentEnvelope)
@@ -346,10 +465,11 @@ TEST(DasMaaPiRuntime, DoRunsValidNonAgentEnvelope)
     FakeMaaApiBoundary fake;
     SetMaaApiBoundaryForTest(&fake);
 
-    auto json = ParseDasJson(EnvelopeJson());
+    auto      json = ParseDasJson(EnvelopeJson());
     MaapiTask task;
     EXPECT_EQ(task.Do(nullptr, nullptr, json.Get()), DAS_S_OK);
-    EXPECT_TRUE(fake.Contains("PostTask:StartDaily:{\"Stage\":{\"value\":\"one\"}}"));
+    EXPECT_TRUE(
+        fake.Contains("PostTask:StartDaily:{\"Stage\":{\"value\":\"one\"}}"));
 
     SetMaaApiBoundaryForTest(nullptr);
 }

@@ -11,11 +11,16 @@
 
 namespace Das::Plugins::DasMaaPi
 {
+    namespace AgentRuntime
+    {
+        class IAgentProcessRunner;
+    }
+
     struct MaaRuntimeDiagnostic
     {
-        std::string                severity;
-        std::string                code;
-        std::string                message;
+        std::string                 severity;
+        std::string                 code;
+        std::string                 message;
         std::optional<std::int64_t> provider_code;
     };
 
@@ -34,21 +39,21 @@ namespace Das::Plugins::DasMaaPi
         std::string          message;
     };
 
-    ParsedExecutionEnvelope ParseExecutionEnvelope(
-        const yyjson::value& value);
+    ParsedExecutionEnvelope ParseExecutionEnvelope(const yyjson::value& value);
 
-    DasResult ValidateExecutionEnvelope(
-        const ExecutionEnvelopeDto& envelope);
+    DasResult ValidateExecutionEnvelope(const ExecutionEnvelopeDto& envelope);
 
     class MaaRuntime
     {
     public:
         static MaaRuntimeResult Run(
-            const ExecutionEnvelopeDto&        envelope,
-            IMaaApiBoundary&                   boundary,
-            PluginInterface::IDasStopToken*    stop_token);
+            const ExecutionEnvelopeDto&     envelope,
+            IMaaApiBoundary&                boundary,
+            PluginInterface::IDasStopToken* stop_token);
     };
 
     void SetMaaApiBoundaryForTest(IMaaApiBoundary* boundary);
+    void SetAgentProcessRunnerForTest(
+        AgentRuntime::IAgentProcessRunner* runner);
     IMaaApiBoundary& MaaApiBoundaryForRuntime();
 } // namespace Das::Plugins::DasMaaPi

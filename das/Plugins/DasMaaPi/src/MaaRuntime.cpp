@@ -1,6 +1,8 @@
 #include <das/Plugins/DasMaaPi/MaaRuntime.h>
 #include <das/Utils/DasJsonCore.h>
 
+#include "AgentProcessRunner.h"
+#include "AgentRuntimeService.h"
 #include "MaaHandle.h"
 
 #ifndef DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY
@@ -10,10 +12,13 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <initializer_list>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace Das::Plugins::DasMaaPi
 {
@@ -38,7 +43,7 @@ namespace Das::Plugins::DasMaaPi
                 std::string_view  path) override
             {
                 auto* maa_resource = reinterpret_cast<MaaResource*>(resource);
-                auto id = MaaResourcePostBundle(
+                auto  id = MaaResourcePostBundle(
                     maa_resource,
                     std::string(path).c_str());
                 if (id == MaaInvalidId)
@@ -60,7 +65,9 @@ namespace Das::Plugins::DasMaaPi
             std::optional<std::string> GetResourceHash(
                 MaaResourceHandle resource) override
             {
-                std::unique_ptr<MaaStringBuffer, decltype(&MaaStringBufferDestroy)>
+                std::unique_ptr<
+                    MaaStringBuffer,
+                    decltype(&MaaStringBufferDestroy)>
                     buffer(MaaStringBufferCreate(), MaaStringBufferDestroy);
                 if (!buffer)
                 {
@@ -91,12 +98,12 @@ namespace Das::Plugins::DasMaaPi
                     {
                         return kInvalidMaaControllerHandle;
                     }
-                    const auto adb_path =
-                        spec.adb_path.empty() ? std::string("adb")
+                    const auto adb_path = spec.adb_path.empty()
+                                              ? std::string("adb")
                                               : spec.adb_path;
-                    const auto config =
-                        spec.config_json.empty() ? std::string("{}")
-                                                 : spec.config_json;
+                    const auto config = spec.config_json.empty()
+                                            ? std::string("{}")
+                                            : spec.config_json;
                     return reinterpret_cast<MaaControllerHandle>(
                         MaaAdbControllerCreate(
                             adb_path.c_str(),
@@ -134,7 +141,9 @@ namespace Das::Plugins::DasMaaPi
                         reinterpret_cast<MaaTasker*>(tasker),
                         reinterpret_cast<MaaResource*>(resource)))
                 {
-                    return MaaApiResult::Failure(0, "MaaTaskerBindResource failed");
+                    return MaaApiResult::Failure(
+                        0,
+                        "MaaTaskerBindResource failed");
                 }
                 return MaaApiResult::Ok();
             }
@@ -155,7 +164,7 @@ namespace Das::Plugins::DasMaaPi
             }
 
             MaaApiResult PostTask(
-                MaaTaskerHandle tasker,
+                MaaTaskerHandle  tasker,
                 std::string_view entry,
                 std::string_view pipeline_override) override
             {
@@ -165,14 +174,15 @@ namespace Das::Plugins::DasMaaPi
                     std::string(pipeline_override).c_str());
                 if (id == MaaInvalidId)
                 {
-                    return MaaApiResult::Failure(id, "MaaTaskerPostTask failed");
+                    return MaaApiResult::Failure(
+                        id,
+                        "MaaTaskerPostTask failed");
                 }
                 return MaaApiResult::Ok(id);
             }
 
-            MaaTaskStatus WaitTask(
-                MaaTaskerHandle tasker,
-                MaaAsyncId      task_id) override
+            MaaTaskStatus WaitTask(MaaTaskerHandle tasker, MaaAsyncId task_id)
+                override
             {
                 return static_cast<MaaTaskStatus>(MaaTaskerWait(
                     reinterpret_cast<MaaTasker*>(tasker),
@@ -181,11 +191,13 @@ namespace Das::Plugins::DasMaaPi
 
             MaaApiResult PostStop(MaaTaskerHandle tasker) override
             {
-                const auto id = MaaTaskerPostStop(
-                    reinterpret_cast<MaaTasker*>(tasker));
+                const auto id =
+                    MaaTaskerPostStop(reinterpret_cast<MaaTasker*>(tasker));
                 if (id == MaaInvalidId)
                 {
-                    return MaaApiResult::Failure(id, "MaaTaskerPostStop failed");
+                    return MaaApiResult::Failure(
+                        id,
+                        "MaaTaskerPostStop failed");
                 }
                 return MaaApiResult::Ok(id);
             }
@@ -193,8 +205,10 @@ namespace Das::Plugins::DasMaaPi
             MaaAgentClientHandle CreateAgentClientV2(
                 std::optional<std::string_view> identifier) override
             {
-                std::unique_ptr<MaaStringBuffer, decltype(&MaaStringBufferDestroy)>
-                    buffer(nullptr, MaaStringBufferDestroy);
+                std::unique_ptr<
+                    MaaStringBuffer,
+                    decltype(&MaaStringBufferDestroy)>
+                                       buffer(nullptr, MaaStringBufferDestroy);
                 const MaaStringBuffer* id_buffer = nullptr;
                 if (identifier)
                 {
@@ -230,7 +244,9 @@ namespace Das::Plugins::DasMaaPi
             std::optional<std::string> GetAgentClientIdentifier(
                 MaaAgentClientHandle client) override
             {
-                std::unique_ptr<MaaStringBuffer, decltype(&MaaStringBufferDestroy)>
+                std::unique_ptr<
+                    MaaStringBuffer,
+                    decltype(&MaaStringBufferDestroy)>
                     buffer(MaaStringBufferCreate(), MaaStringBufferDestroy);
                 if (!buffer)
                 {
@@ -341,15 +357,13 @@ namespace Das::Plugins::DasMaaPi
                     reinterpret_cast<MaaAgentClient*>(client));
             }
 
-            bool IsAgentClientConnected(
-                MaaAgentClientHandle client) override
+            bool IsAgentClientConnected(MaaAgentClientHandle client) override
             {
                 return MaaAgentClientConnected(
                     reinterpret_cast<MaaAgentClient*>(client));
             }
 
-            bool IsAgentClientAlive(
-                MaaAgentClientHandle client) override
+            bool IsAgentClientAlive(MaaAgentClientHandle client) override
             {
                 return MaaAgentClientAlive(
                     reinterpret_cast<MaaAgentClient*>(client));
@@ -362,12 +376,10 @@ namespace Das::Plugins::DasMaaPi
                     value.begin(),
                     value.end(),
                     value.begin(),
-                    [](unsigned char ch) {
-                        return static_cast<char>(std::tolower(ch));
-                    });
+                    [](unsigned char ch)
+                    { return static_cast<char>(std::tolower(ch)); });
                 return value;
             }
-
         };
 #else
         class ScopedMaaApiBoundary final : public IMaaApiBoundary
@@ -380,9 +392,8 @@ namespace Das::Plugins::DasMaaPi
 
             void DestroyResource(MaaResourceHandle) noexcept override {}
 
-            MaaApiResult LoadResource(
-                MaaResourceHandle,
-                std::string_view) override
+            MaaApiResult LoadResource(MaaResourceHandle, std::string_view)
+                override
             {
                 return MaaApiResult::Failure(
                     0,
@@ -395,8 +406,7 @@ namespace Das::Plugins::DasMaaPi
                 return std::nullopt;
             }
 
-            MaaControllerHandle CreateController(
-                const ControllerSpec&) override
+            MaaControllerHandle CreateController(const ControllerSpec&) override
             {
                 return kInvalidMaaControllerHandle;
             }
@@ -410,18 +420,16 @@ namespace Das::Plugins::DasMaaPi
 
             void DestroyTasker(MaaTaskerHandle) noexcept override {}
 
-            MaaApiResult BindResource(
-                MaaTaskerHandle,
-                MaaResourceHandle) override
+            MaaApiResult BindResource(MaaTaskerHandle, MaaResourceHandle)
+                override
             {
                 return MaaApiResult::Failure(
                     0,
                     "Real Maa boundary disabled in tests");
             }
 
-            MaaApiResult BindController(
-                MaaTaskerHandle,
-                MaaControllerHandle) override
+            MaaApiResult BindController(MaaTaskerHandle, MaaControllerHandle)
+                override
             {
                 return MaaApiResult::Failure(
                     0,
@@ -438,9 +446,7 @@ namespace Das::Plugins::DasMaaPi
                     "Real Maa boundary disabled in tests");
             }
 
-            MaaTaskStatus WaitTask(
-                MaaTaskerHandle,
-                MaaAsyncId) override
+            MaaTaskStatus WaitTask(MaaTaskerHandle, MaaAsyncId) override
             {
                 return MaaTaskStatus::Invalid;
             }
@@ -458,16 +464,12 @@ namespace Das::Plugins::DasMaaPi
                 return kInvalidMaaAgentClientHandle;
             }
 
-            MaaAgentClientHandle CreateAgentClientTcp(
-                std::uint16_t) override
+            MaaAgentClientHandle CreateAgentClientTcp(std::uint16_t) override
             {
                 return kInvalidMaaAgentClientHandle;
             }
 
-            void DestroyAgentClient(
-                MaaAgentClientHandle) noexcept override
-            {
-            }
+            void DestroyAgentClient(MaaAgentClientHandle) noexcept override {}
 
             std::optional<std::string> GetAgentClientIdentifier(
                 MaaAgentClientHandle) override
@@ -520,49 +522,119 @@ namespace Das::Plugins::DasMaaPi
                     "Real Maa boundary disabled in tests");
             }
 
-            MaaApiResult ConnectAgentClient(
-                MaaAgentClientHandle) override
+            MaaApiResult ConnectAgentClient(MaaAgentClientHandle) override
             {
                 return MaaApiResult::Failure(
                     0,
                     "Real Maa boundary disabled in tests");
             }
 
-            bool DisconnectAgentClient(
-                MaaAgentClientHandle) noexcept override
+            bool DisconnectAgentClient(MaaAgentClientHandle) noexcept override
             {
                 return false;
             }
 
-            bool IsAgentClientConnected(
-                MaaAgentClientHandle) override
+            bool IsAgentClientConnected(MaaAgentClientHandle) override
             {
                 return false;
             }
 
-            bool IsAgentClientAlive(
-                MaaAgentClientHandle) override
+            bool IsAgentClientAlive(MaaAgentClientHandle) override
             {
                 return false;
             }
         };
 #endif
 
-        IMaaApiBoundary* g_boundary_for_test = nullptr;
+        IMaaApiBoundary*                   g_boundary_for_test = nullptr;
+        AgentRuntime::IAgentProcessRunner* g_agent_runner_for_test = nullptr;
 
         void AddDiagnostic(
-            MaaRuntimeResult& result,
-            std::string       code,
-            std::string       message,
+            MaaRuntimeResult&           result,
+            std::string                 code,
+            std::string                 message,
             std::optional<std::int64_t> provider_code = std::nullopt,
-            std::string       severity = "error")
+            std::string                 severity = "error")
         {
-            result.diagnostics.emplace_back(MaaRuntimeDiagnostic{
-                .severity = std::move(severity),
-                .code = std::move(code),
-                .message = std::move(message),
-                .provider_code = provider_code});
+            result.diagnostics.emplace_back(
+                MaaRuntimeDiagnostic{
+                    .severity = std::move(severity),
+                    .code = std::move(code),
+                    .message = std::move(message),
+                    .provider_code = provider_code});
         }
+
+        void AddAgentDiagnostics(
+            MaaRuntimeResult&                          result,
+            const AgentRuntime::AgentRuntimeResultDto& agent_result)
+        {
+            for (const auto& diagnostic : agent_result.diagnostics)
+            {
+                AddDiagnostic(
+                    result,
+                    diagnostic.code,
+                    diagnostic.message,
+                    std::nullopt,
+                    diagnostic.severity);
+            }
+        }
+
+        AgentRuntime::PiEnvDto ToAgentPiEnv(const PiEnvSnapshotDto& env)
+        {
+            AgentRuntime::PiEnvDto result;
+            result.interface_version = env.interface_version;
+            result.client_name = env.client_name;
+            result.client_language = env.client_language;
+            result.project_version = env.project_version;
+            result.controller_json = env.controller_json;
+            result.resource_json = env.resource_json;
+            return result;
+        }
+
+        AgentRuntime::AgentRuntimeRequestDto BuildAgentStartRequest(
+            const ExecutionEnvelopeDto& envelope)
+        {
+            AgentRuntime::AgentRuntimeRequestDto request;
+            request.operation = "start";
+            request.interface_directory = envelope.maapi.interface_directory;
+            request.agents = envelope.maapi.agents;
+            request.pi_env = ToAgentPiEnv(envelope.maapi.pi_env);
+            return request;
+        }
+
+        class ScopedAgentRuntimeSession final
+        {
+        public:
+            void Arm(
+                AgentRuntime::AgentRuntimeService&   service,
+                std::string                          session_id,
+                AgentRuntime::AgentRuntimeOptionsDto options)
+            {
+                service_ = &service;
+                session_id_ = std::move(session_id);
+                options_ = options;
+            }
+
+            AgentRuntime::AgentRuntimeResultDto StopNow()
+            {
+                if (!service_ || !session_id_)
+                {
+                    return {};
+                }
+
+                auto result = service_->Stop(*session_id_, options_);
+                service_ = nullptr;
+                session_id_.reset();
+                return result;
+            }
+
+            ~ScopedAgentRuntimeSession() { (void)StopNow(); }
+
+        private:
+            AgentRuntime::AgentRuntimeService*   service_ = nullptr;
+            std::optional<std::string>           session_id_;
+            AgentRuntime::AgentRuntimeOptionsDto options_;
+        };
 
         bool StopRequested(PluginInterface::IDasStopToken* stop_token)
         {
@@ -592,7 +664,7 @@ namespace Das::Plugins::DasMaaPi
 
         template <typename ObjectRef>
         std::optional<std::string> OptionalStringField(
-            const ObjectRef& obj,
+            const ObjectRef&                        obj,
             std::initializer_list<std::string_view> keys)
         {
             for (const auto key : keys)
@@ -608,8 +680,8 @@ namespace Das::Plugins::DasMaaPi
 
         template <typename ObjectRef>
         std::optional<std::string> RequiredStringField(
-            const ObjectRef& obj,
-            std::string_view key,
+            const ObjectRef&         obj,
+            std::string_view         key,
             ParsedExecutionEnvelope& parsed)
         {
             auto result = OptionalStringField(obj, key);
@@ -656,11 +728,31 @@ namespace Das::Plugins::DasMaaPi
         bool BoolField(
             const ObjectRef& obj,
             std::string_view key,
-            bool default_value)
+            bool             default_value)
         {
             return obj.contains(key) && obj[key].is_bool()
                        ? obj[key].as_bool().value_or(default_value)
                        : default_value;
+        }
+
+        template <typename ObjectRef>
+        std::optional<int32_t> OptionalInt32Field(
+            const ObjectRef&                        obj,
+            std::initializer_list<std::string_view> keys)
+        {
+            for (const auto key : keys)
+            {
+                if (!obj.contains(key))
+                {
+                    continue;
+                }
+                auto value = obj[key].as_sint();
+                if (value)
+                {
+                    return static_cast<int32_t>(*value);
+                }
+            }
+            return std::nullopt;
         }
 
         template <typename ObjectRef>
@@ -685,29 +777,95 @@ namespace Das::Plugins::DasMaaPi
 
         template <typename ObjectRef>
         ControllerSpec ControllerSpecFromObject(
-            const ObjectRef&  obj,
-            std::string       default_name,
-            std::string       default_type)
+            const ObjectRef& obj,
+            std::string      default_name,
+            std::string      default_type)
         {
             ControllerSpec spec;
-            spec.name =
-                OptionalStringField(obj, "name").value_or(std::move(default_name));
-            spec.type =
-                OptionalStringField(obj, "type").value_or(std::move(default_type));
-            spec.read_path =
-                OptionalStringField(obj, {"readPath", "read_path"}).value_or("");
+            spec.name = OptionalStringField(obj, "name")
+                            .value_or(std::move(default_name));
+            spec.type = OptionalStringField(obj, "type")
+                            .value_or(std::move(default_type));
+            spec.read_path = OptionalStringField(obj, {"readPath", "read_path"})
+                                 .value_or("");
             spec.address = OptionalStringField(obj, "address").value_or("");
-            spec.adb_path =
-                OptionalStringField(obj, {"adbPath", "adb_path"}).value_or("adb");
+            spec.adb_path = OptionalStringField(obj, {"adbPath", "adb_path"})
+                                .value_or("adb");
             spec.config_json = ControllerConfigJson(obj);
             spec.agent_path =
-                OptionalStringField(obj, {"agentPath", "agent_path"}).value_or("");
+                OptionalStringField(obj, {"agentPath", "agent_path"})
+                    .value_or("");
             return spec;
         }
 
+        template <typename ObjectRef>
+        AgentRuntime::AgentSpecDto AgentSpecFromObject(const ObjectRef& obj)
+        {
+            AgentRuntime::AgentSpecDto spec;
+            spec.child_exec =
+                OptionalStringField(obj, {"childExec", "child_exec"})
+                    .value_or("");
+            spec.child_args = StringArrayField(obj, "childArgs");
+            if (spec.child_args.empty())
+            {
+                spec.child_args = StringArrayField(obj, "child_args");
+            }
+            spec.identifier = OptionalStringField(obj, "identifier");
+            if (auto timeout =
+                    OptionalInt32Field(obj, {"timeoutMs", "timeout_ms"}))
+            {
+                spec.timeout_ms = *timeout;
+            }
+            return spec;
+        }
+
+        template <typename ArrayRef>
+        void AddAgentSpecsFromArray(
+            const ArrayRef&                          array,
+            std::vector<AgentRuntime::AgentSpecDto>& agents)
+        {
+            for (auto it = array.begin(); it != array.end(); ++it)
+            {
+                if (auto agent = it->as_object())
+                {
+                    agents.emplace_back(AgentSpecFromObject(*agent));
+                }
+            }
+        }
+
+        template <typename ObjectRef>
+        void ReadAgentSpecs(
+            const ObjectRef&                         obj,
+            std::vector<AgentRuntime::AgentSpecDto>& agents)
+        {
+            if (obj.contains(std::string_view("agents")))
+            {
+                if (auto array = obj[std::string_view("agents")].as_array())
+                {
+                    AddAgentSpecsFromArray(*array, agents);
+                }
+                return;
+            }
+
+            if (!obj.contains(std::string_view("agent")))
+            {
+                return;
+            }
+            const auto& agent = obj[std::string_view("agent")];
+            if (auto single = agent.as_object())
+            {
+                agents.emplace_back(AgentSpecFromObject(*single));
+                return;
+            }
+            if (auto array = agent.as_array())
+            {
+                AddAgentSpecsFromArray(*array, agents);
+            }
+        }
+
         ControllerSpec ControllerSpecFromRawJson(
-            std::string       default_name,
-            std::string_view  controller_json)
+            std::string      default_name,
+            std::string_view controller_json)
         {
             if (controller_json.empty())
             {
@@ -738,6 +896,11 @@ namespace Das::Plugins::DasMaaPi
         g_boundary_for_test = boundary;
     }
 
+    void SetAgentProcessRunnerForTest(AgentRuntime::IAgentProcessRunner* runner)
+    {
+        g_agent_runner_for_test = runner;
+    }
+
     IMaaApiBoundary& MaaApiBoundaryForRuntime()
     {
         return g_boundary_for_test ? *g_boundary_for_test
@@ -747,7 +910,7 @@ namespace Das::Plugins::DasMaaPi
     ParsedExecutionEnvelope ParseExecutionEnvelope(const yyjson::value& value)
     {
         ParsedExecutionEnvelope parsed;
-        auto root = value.as_object();
+        auto                    root = value.as_object();
         if (!root)
         {
             parsed.result = DAS_E_INVALID_JSON;
@@ -813,6 +976,7 @@ namespace Das::Plugins::DasMaaPi
         plan.fail_fast = BoolField(*maapi, "failFast", true);
         plan.requires_agent_runtime =
             BoolField(*maapi, "requiresAgentRuntime", false);
+        ReadAgentSpecs(*maapi, plan.agents);
 
         if (maapi->contains(std::string_view("piEnv")))
         {
@@ -843,10 +1007,8 @@ namespace Das::Plugins::DasMaaPi
                 parsed.message = "controller must be an object";
                 return parsed;
             }
-            plan.controller = ControllerSpecFromObject(
-                *controller,
-                plan.controller_name,
-                "");
+            plan.controller =
+                ControllerSpecFromObject(*controller, plan.controller_name, "");
         }
         else
         {
@@ -893,9 +1055,8 @@ namespace Das::Plugins::DasMaaPi
             }
             if (task_obj->contains(std::string_view("pipelineOverride")))
             {
-                task.pipeline_override =
-                    CopyJsonValue(
-                        (*task_obj)[std::string_view("pipelineOverride")]);
+                task.pipeline_override = CopyJsonValue(
+                    (*task_obj)[std::string_view("pipelineOverride")]);
             }
             else
             {
@@ -919,9 +1080,10 @@ namespace Das::Plugins::DasMaaPi
         {
             return DAS_E_INVALID_ARGUMENT;
         }
-        if (envelope.maapi.requires_agent_runtime)
+        if (envelope.maapi.requires_agent_runtime
+            && envelope.maapi.agents.empty())
         {
-            return DAS_E_NO_IMPLEMENTATION;
+            return DAS_E_INVALID_ARGUMENT;
         }
         if (envelope.maapi.tasks.empty())
         {
@@ -936,7 +1098,7 @@ namespace Das::Plugins::DasMaaPi
         PluginInterface::IDasStopToken* stop_token)
     {
         MaaRuntimeResult result;
-        const auto validation = ValidateExecutionEnvelope(envelope);
+        const auto       validation = ValidateExecutionEnvelope(envelope);
         if (DAS::IsFailed(validation))
         {
             result.das_result = validation;
@@ -951,7 +1113,10 @@ namespace Das::Plugins::DasMaaPi
         if (resource.get() == kInvalidMaaResourceHandle)
         {
             result.das_result = DAS_E_FAIL;
-            AddDiagnostic(result, "create-resource-failed", "Maa resource creation failed");
+            AddDiagnostic(
+                result,
+                "create-resource-failed",
+                "Maa resource creation failed");
             return result;
         }
 
@@ -1006,11 +1171,15 @@ namespace Das::Plugins::DasMaaPi
         if (tasker.get() == kInvalidMaaTaskerHandle)
         {
             result.das_result = DAS_E_FAIL;
-            AddDiagnostic(result, "create-tasker-failed", "Maa tasker creation failed");
+            AddDiagnostic(
+                result,
+                "create-tasker-failed",
+                "Maa tasker creation failed");
             return result;
         }
 
-        auto bind_resource = boundary.BindResource(tasker.get(), resource.get());
+        auto bind_resource =
+            boundary.BindResource(tasker.get(), resource.get());
         if (!bind_resource.ok)
         {
             result.das_result = DAS_E_FAIL;
@@ -1033,6 +1202,42 @@ namespace Das::Plugins::DasMaaPi
                 bind_controller.message,
                 bind_controller.provider_code);
             return result;
+        }
+
+        AgentRuntime::BoostAgentProcessRunner default_agent_runner;
+        auto&                                 agent_runner =
+            g_agent_runner_for_test
+                ? *g_agent_runner_for_test
+                : static_cast<AgentRuntime::IAgentProcessRunner&>(
+                      default_agent_runner);
+        AgentRuntime::AgentRuntimeService agent_service(boundary, agent_runner);
+        ScopedAgentRuntimeSession         agent_session;
+        if (envelope.maapi.requires_agent_runtime)
+        {
+            auto agent_request = BuildAgentStartRequest(envelope);
+            auto agent_start = agent_service.Start(
+                agent_request,
+                AgentRuntime::AgentRuntimeMaaContext{
+                    .resource = resource.get(),
+                    .controller = controller.get(),
+                    .tasker = tasker.get()});
+            if (agent_start.status != "succeeded" || !agent_start.session_id)
+            {
+                result.das_result = DAS_E_FAIL;
+                AddAgentDiagnostics(result, agent_start);
+                if (result.diagnostics.empty())
+                {
+                    AddDiagnostic(
+                        result,
+                        "agent-runtime-start-failed",
+                        "PI agent runtime startup failed");
+                }
+                return result;
+            }
+            agent_session.Arm(
+                agent_service,
+                *agent_start.session_id,
+                agent_request.options);
         }
 
         for (const auto& task : envelope.maapi.tasks)
@@ -1080,6 +1285,32 @@ namespace Das::Plugins::DasMaaPi
             if (envelope.maapi.fail_fast)
             {
                 return result;
+            }
+        }
+
+        if (envelope.maapi.requires_agent_runtime)
+        {
+            auto agent_stop = agent_session.StopNow();
+            if (agent_stop.status == "failed")
+            {
+                result.das_result = DAS_E_FAIL;
+                AddAgentDiagnostics(result, agent_stop);
+                if (result.diagnostics.empty())
+                {
+                    AddDiagnostic(
+                        result,
+                        "agent-runtime-stop-failed",
+                        "PI agent runtime cleanup failed");
+                }
+            }
+            else if (agent_stop.signals.timed_out)
+            {
+                AddDiagnostic(
+                    result,
+                    "agent-runtime-stop-timeout",
+                    "PI agent runtime cleanup timed out",
+                    std::nullopt,
+                    "warning");
             }
         }
 
