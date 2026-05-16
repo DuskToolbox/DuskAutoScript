@@ -70,6 +70,13 @@ public:
         ExportInterface::IDasJson**     pp_out_result_json) override;
 
 private:
+    DasResult DoRepositoryInvoke(
+        PluginInterface::IDasStopToken* stop_token,
+        ExportInterface::IDasJson*      p_environment_json,
+        ExportInterface::IDasJson*      p_settings_json,
+        ExportInterface::IDasJson*      p_input_json,
+        ExportInterface::IDasJson**     pp_out_result_json);
+
     std::string                                      kind_;
     yyjson::value                                    settings_;
     DasPtr<PluginInterface::IDasTaskComponentHost>   host_;

@@ -247,7 +247,13 @@ namespace
         InvokeRepositoryTaskInputDto input;
         input.compiled_snapshot = std::move(snapshot);
         input.runtime_inputs = ParseJson(R"json({"callerValue": 9})json");
-        return yyjson::object(input);
+
+        auto serialized = yyjson::object(input);
+        auto text = serialized.write(yyjson::WriteFlag::NoFlag);
+        auto parsed = Das::Utils::ParseYyjsonFromString(
+            std::string_view(text.data(), text.size()));
+        EXPECT_TRUE(parsed.has_value());
+        return parsed ? std::move(*parsed) : yyjson::value{};
     }
 
     std::string_view DiagnosticCode(const yyjson::value& result)
