@@ -12,6 +12,16 @@ target_link_libraries(DasMaaPi PRIVATE
     DasCore
     DasBundledMaaFramework)
 
+if(TARGET DasBundledMaaFrameworkDll)
+    get_target_property(_das_maapi_framework_implib DasBundledMaaFrameworkDll IMPORTED_IMPLIB)
+    get_filename_component(_das_maapi_framework_lib_dir "${_das_maapi_framework_implib}" DIRECTORY)
+    set(_das_maapi_agent_client_implib "${_das_maapi_framework_lib_dir}/MaaAgentClient.lib")
+    if(NOT EXISTS "${_das_maapi_agent_client_implib}")
+        message(FATAL_ERROR "MaaAgentClient.lib not found next to MaaFramework.lib")
+    endif()
+    target_link_libraries(DasMaaPi PRIVATE "${_das_maapi_agent_client_implib}")
+endif()
+
 set(_das_maapi_package_dir "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/plugins/DasMaaPi")
 set(_das_maapi_archive_dir "${CMAKE_BINARY_DIR}/lib/$<CONFIG>/plugins/DasMaaPi")
 set_target_properties(DasMaaPi PROPERTIES

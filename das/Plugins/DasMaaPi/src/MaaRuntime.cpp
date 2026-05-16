@@ -4,6 +4,7 @@
 #include "MaaHandle.h"
 
 #ifndef DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY
+#include <MaaAgentClient/MaaAgentClientAPI.h>
 #include <MaaFramework/MaaAPI.h>
 #endif
 
@@ -190,97 +191,168 @@ namespace Das::Plugins::DasMaaPi
             }
 
             MaaAgentClientHandle CreateAgentClientV2(
-                std::optional<std::string_view>) override
+                std::optional<std::string_view> identifier) override
             {
-                return kInvalidMaaAgentClientHandle;
+                std::unique_ptr<MaaStringBuffer, decltype(&MaaStringBufferDestroy)>
+                    buffer(nullptr, MaaStringBufferDestroy);
+                const MaaStringBuffer* id_buffer = nullptr;
+                if (identifier)
+                {
+                    buffer.reset(MaaStringBufferCreate());
+                    if (!buffer
+                        || !MaaStringBufferSetEx(
+                            buffer.get(),
+                            identifier->data(),
+                            identifier->size()))
+                    {
+                        return kInvalidMaaAgentClientHandle;
+                    }
+                    id_buffer = buffer.get();
+                }
+                return reinterpret_cast<MaaAgentClientHandle>(
+                    MaaAgentClientCreateV2(id_buffer));
             }
 
             MaaAgentClientHandle CreateAgentClientTcp(
-                std::uint16_t) override
+                std::uint16_t port) override
             {
-                return kInvalidMaaAgentClientHandle;
+                return reinterpret_cast<MaaAgentClientHandle>(
+                    MaaAgentClientCreateTcp(port));
             }
 
             void DestroyAgentClient(
-                MaaAgentClientHandle) noexcept override
+                MaaAgentClientHandle client) noexcept override
             {
+                MaaAgentClientDestroy(
+                    reinterpret_cast<MaaAgentClient*>(client));
             }
 
             std::optional<std::string> GetAgentClientIdentifier(
-                MaaAgentClientHandle) override
+                MaaAgentClientHandle client) override
             {
-                return std::nullopt;
+                std::unique_ptr<MaaStringBuffer, decltype(&MaaStringBufferDestroy)>
+                    buffer(MaaStringBufferCreate(), MaaStringBufferDestroy);
+                if (!buffer)
+                {
+                    return std::nullopt;
+                }
+                if (!MaaAgentClientIdentifier(
+                        reinterpret_cast<MaaAgentClient*>(client),
+                        buffer.get()))
+                {
+                    return std::nullopt;
+                }
+                const char* value = MaaStringBufferGet(buffer.get());
+                return value ? std::optional<std::string>(value) : std::nullopt;
             }
 
             MaaApiResult BindAgentClientResource(
-                MaaAgentClientHandle,
-                MaaResourceHandle) override
+                MaaAgentClientHandle client,
+                MaaResourceHandle    resource) override
             {
-                return MaaApiResult::Failure(
-                    0,
-                    "Maa AgentClient boundary is not implemented");
+                if (!MaaAgentClientBindResource(
+                        reinterpret_cast<MaaAgentClient*>(client),
+                        reinterpret_cast<MaaResource*>(resource)))
+                {
+                    return MaaApiResult::Failure(
+                        0,
+                        "MaaAgentClientBindResource failed");
+                }
+                return MaaApiResult::Ok();
             }
 
             MaaApiResult RegisterAgentClientResourceSink(
-                MaaAgentClientHandle,
-                MaaResourceHandle) override
+                MaaAgentClientHandle client,
+                MaaResourceHandle    resource) override
             {
-                return MaaApiResult::Failure(
-                    0,
-                    "Maa AgentClient boundary is not implemented");
+                if (!MaaAgentClientRegisterResourceSink(
+                        reinterpret_cast<MaaAgentClient*>(client),
+                        reinterpret_cast<MaaResource*>(resource)))
+                {
+                    return MaaApiResult::Failure(
+                        0,
+                        "MaaAgentClientRegisterResourceSink failed");
+                }
+                return MaaApiResult::Ok();
             }
 
             MaaApiResult RegisterAgentClientControllerSink(
-                MaaAgentClientHandle,
-                MaaControllerHandle) override
+                MaaAgentClientHandle client,
+                MaaControllerHandle  controller) override
             {
-                return MaaApiResult::Failure(
-                    0,
-                    "Maa AgentClient boundary is not implemented");
+                if (!MaaAgentClientRegisterControllerSink(
+                        reinterpret_cast<MaaAgentClient*>(client),
+                        reinterpret_cast<MaaController*>(controller)))
+                {
+                    return MaaApiResult::Failure(
+                        0,
+                        "MaaAgentClientRegisterControllerSink failed");
+                }
+                return MaaApiResult::Ok();
             }
 
             MaaApiResult RegisterAgentClientTaskerSink(
-                MaaAgentClientHandle,
-                MaaTaskerHandle) override
+                MaaAgentClientHandle client,
+                MaaTaskerHandle      tasker) override
             {
-                return MaaApiResult::Failure(
-                    0,
-                    "Maa AgentClient boundary is not implemented");
+                if (!MaaAgentClientRegisterTaskerSink(
+                        reinterpret_cast<MaaAgentClient*>(client),
+                        reinterpret_cast<MaaTasker*>(tasker)))
+                {
+                    return MaaApiResult::Failure(
+                        0,
+                        "MaaAgentClientRegisterTaskerSink failed");
+                }
+                return MaaApiResult::Ok();
             }
 
             MaaApiResult SetAgentClientTimeout(
-                MaaAgentClientHandle,
-                std::int64_t) override
+                MaaAgentClientHandle client,
+                std::int64_t         milliseconds) override
             {
-                return MaaApiResult::Failure(
-                    0,
-                    "Maa AgentClient boundary is not implemented");
+                if (!MaaAgentClientSetTimeout(
+                        reinterpret_cast<MaaAgentClient*>(client),
+                        milliseconds))
+                {
+                    return MaaApiResult::Failure(
+                        0,
+                        "MaaAgentClientSetTimeout failed");
+                }
+                return MaaApiResult::Ok();
             }
 
             MaaApiResult ConnectAgentClient(
-                MaaAgentClientHandle) override
+                MaaAgentClientHandle client) override
             {
-                return MaaApiResult::Failure(
-                    0,
-                    "Maa AgentClient boundary is not implemented");
+                if (!MaaAgentClientConnect(
+                        reinterpret_cast<MaaAgentClient*>(client)))
+                {
+                    return MaaApiResult::Failure(
+                        0,
+                        "MaaAgentClientConnect failed");
+                }
+                return MaaApiResult::Ok();
             }
 
             bool DisconnectAgentClient(
-                MaaAgentClientHandle) noexcept override
+                MaaAgentClientHandle client) noexcept override
             {
-                return false;
+                return MaaAgentClientDisconnect(
+                    reinterpret_cast<MaaAgentClient*>(client));
             }
 
             bool IsAgentClientConnected(
-                MaaAgentClientHandle) override
+                MaaAgentClientHandle client) override
             {
-                return false;
+                return MaaAgentClientConnected(
+                    reinterpret_cast<MaaAgentClient*>(client));
             }
 
             bool IsAgentClientAlive(
-                MaaAgentClientHandle) override
+                MaaAgentClientHandle client) override
             {
-                return false;
+                return MaaAgentClientAlive(
+                    reinterpret_cast<MaaAgentClient*>(client));
             }
 
         private:

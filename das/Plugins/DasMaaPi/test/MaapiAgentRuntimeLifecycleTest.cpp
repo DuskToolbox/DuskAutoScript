@@ -3,6 +3,9 @@
 
 #include <gtest/gtest.h>
 
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -91,5 +94,38 @@ namespace
             "DisconnectAgentClient:1",
             "DestroyAgentClient:1"};
         EXPECT_EQ(fake.calls, expected);
+    }
+
+    TEST(DasMaaPiAgentClient, RealBoundarySourceCallsAgentClientApi)
+    {
+        const auto source_path =
+            std::filesystem::path(__FILE__).parent_path().parent_path()
+            / "src" / "MaaRuntime.cpp";
+        std::ifstream input(source_path);
+        ASSERT_TRUE(input.is_open()) << source_path.string();
+
+        std::ostringstream buffer;
+        buffer << input.rdbuf();
+        const auto source = buffer.str();
+
+        EXPECT_NE(source.find("MaaAgentClientCreateV2"), std::string::npos);
+        EXPECT_NE(source.find("MaaAgentClientCreateTcp"), std::string::npos);
+        EXPECT_NE(source.find("MaaAgentClientBindResource"), std::string::npos);
+        EXPECT_NE(
+            source.find("MaaAgentClientRegisterResourceSink"),
+            std::string::npos);
+        EXPECT_NE(
+            source.find("MaaAgentClientRegisterControllerSink"),
+            std::string::npos);
+        EXPECT_NE(
+            source.find("MaaAgentClientRegisterTaskerSink"),
+            std::string::npos);
+        EXPECT_NE(source.find("MaaAgentClientSetTimeout"), std::string::npos);
+        EXPECT_NE(source.find("MaaAgentClientConnect"), std::string::npos);
+        EXPECT_NE(source.find("MaaAgentClientDisconnect"), std::string::npos);
+        EXPECT_NE(source.find("MaaAgentClientDestroy"), std::string::npos);
+        EXPECT_EQ(
+            source.find("Maa AgentClient boundary is not implemented"),
+            std::string::npos);
     }
 } // namespace
