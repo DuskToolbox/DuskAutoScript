@@ -1514,6 +1514,19 @@ namespace Das::Core::TaskScheduler
 
     SchedulerState SchedulerService::Status() const { return state_.load(); }
 
+    std::optional<DasGuid> SchedulerService::FindTaskExecutionComponent(
+        const DasGuid& task_guid) const
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto* execution_component =
+            capability_registry_.FindExecutionComponent(task_guid);
+        if (execution_component == nullptr)
+        {
+            return std::nullopt;
+        }
+        return *execution_component;
+    }
+
     // ----------------------------------------------------------------
     // Get: merged scheduler state JSON
     // ----------------------------------------------------------------

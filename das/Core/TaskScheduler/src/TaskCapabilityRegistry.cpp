@@ -26,6 +26,11 @@ namespace Das::Core::TaskScheduler
             authoring.supported_kinds = descriptor.authoring->supported_kinds;
             record.authoring = std::move(authoring);
         }
+        if (descriptor.execution_component)
+        {
+            record.execution_component_guid =
+                descriptor.execution_component->component_guid;
+        }
 
         records_[task_guid] = std::move(record);
     }
@@ -50,5 +55,16 @@ namespace Das::Core::TaskScheduler
             return nullptr;
         }
         return &*record->authoring;
+    }
+
+    const DasGuid* TaskCapabilityRegistry::FindExecutionComponent(
+        const DasGuid& task_guid) const
+    {
+        auto* record = FindTask(task_guid);
+        if (!record || !record->execution_component_guid)
+        {
+            return nullptr;
+        }
+        return &*record->execution_component_guid;
     }
 }

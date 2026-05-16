@@ -154,6 +154,9 @@ namespace Das::Core::TaskScheduler
             int64_t              entry_id,
             const yyjson::value& request);
 
+        std::optional<DasGuid> FindTaskExecutionComponent(
+            const DasGuid& task_guid) const;
+
         /// Check whether the scheduler has been initialized.
         bool IsInitialized() const { return initialized_; }
 

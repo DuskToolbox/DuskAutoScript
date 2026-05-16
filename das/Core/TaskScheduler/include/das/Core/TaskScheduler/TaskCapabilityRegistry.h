@@ -24,6 +24,7 @@ namespace Das::Core::TaskScheduler
         DasGuid                                    plugin_guid{};
         uint64_t                                   task_feature_index = 0;
         std::optional<TaskAuthoringCapability>     authoring;
+        std::optional<DasGuid>                     execution_component_guid;
     };
 
     class TaskCapabilityRegistry
@@ -39,6 +40,8 @@ namespace Das::Core::TaskScheduler
 
         const TaskCapabilityRecord* FindTask(const DasGuid& task_guid) const;
         const TaskAuthoringCapability* FindAuthoring(
+            const DasGuid& task_guid) const;
+        const DasGuid* FindExecutionComponent(
             const DasGuid& task_guid) const;
 
     private:
