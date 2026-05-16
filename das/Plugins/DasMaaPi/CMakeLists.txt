@@ -118,6 +118,7 @@ if(DAS_BUILD_TEST)
         test/MaapiAgentRuntimeDtoTest.cpp
         test/MaapiAgentRuntimeLifecycleTest.cpp
         test/MaapiAgentComponentTest.cpp
+        test/MaapiRunTaskComponentTest.cpp
         test/MaapiPluginScaffoldTest.cpp
         test/MaapiPiParserTest.cpp
         test/MaapiRuntimeTest.cpp)
