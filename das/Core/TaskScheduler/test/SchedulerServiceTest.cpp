@@ -5220,6 +5220,8 @@ namespace
         std::atomic<bool> authoring_get_called{false};
         std::atomic<bool> authoring_apply_called{false};
         std::atomic<bool> authoring_compile_called{false};
+        std::atomic<bool> repository_get_called{false};
+        std::atomic<bool> repository_create_called{false};
         int64_t           last_authoring_task_id = -1;
 
         DasResult next_result{DAS_S_OK};
@@ -5280,6 +5282,20 @@ namespace
                 return cr;
             }
             return DAS_E_INVALID_POINTER;
+        }
+        DasResult GetTaskRepository(IDasReadOnlyString** pp) override
+        {
+            repository_get_called = true;
+            return WriteAuthoringJson(pp, R"({"entries":[]})");
+        }
+        DasResult CreateRepositoryEntry(
+            IDasReadOnlyString*,
+            IDasReadOnlyString** pp_out_json) override
+        {
+            repository_create_called = true;
+            return WriteAuthoringJson(
+                pp_out_json,
+                R"({"entryId":42,"displayName":"repository entry"})");
         }
         DasResult AddTask(const DasGuid&, int64_t* p_id) override
         {

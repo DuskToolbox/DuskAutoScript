@@ -183,6 +183,32 @@ namespace Das::Core::TaskScheduler
         return cr;
     }
 
+    DasResult
+    SchedulerServiceImpl::GetTaskRepository(IDasReadOnlyString** pp_out_json)
+    {
+        DAS_UTILS_CHECK_POINTER(pp_out_json)
+
+        auto result = svc_.GetTaskRepository();
+        return WriteJsonString(result, pp_out_json);
+    }
+
+    DasResult SchedulerServiceImpl::CreateRepositoryEntry(
+        IDasReadOnlyString*  p_request_json,
+        IDasReadOnlyString** pp_out_json)
+    {
+        DAS_UTILS_CHECK_POINTER(pp_out_json)
+
+        yyjson::value request;
+        auto parse_result = ParseObjectJsonString(p_request_json, request);
+        if (DAS::IsFailed(parse_result))
+        {
+            return parse_result;
+        }
+
+        auto result = svc_.CreateRepositoryEntry(request);
+        return WriteJsonString(result, pp_out_json);
+    }
+
     DasResult SchedulerServiceImpl::AddTask(
         const DasGuid& task_guid,
         int64_t*       p_out_task_id)

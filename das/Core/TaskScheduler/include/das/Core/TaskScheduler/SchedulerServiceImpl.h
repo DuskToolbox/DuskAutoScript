@@ -27,6 +27,10 @@ namespace Das::Core::TaskScheduler
         DasResult Stop() override;
         DasResult GetState(SchedulerState* p_out_state) const override;
         DasResult Get(IDasReadOnlyString** pp_out_json) override;
+        DasResult GetTaskRepository(IDasReadOnlyString** pp_out_json) override;
+        DasResult CreateRepositoryEntry(
+            IDasReadOnlyString*  p_request_json,
+            IDasReadOnlyString** pp_out_json) override;
         DasResult AddTask(const DasGuid& task_guid, int64_t* p_out_task_id)
             override;
         DasResult DeleteTask(int64_t task_id) override;

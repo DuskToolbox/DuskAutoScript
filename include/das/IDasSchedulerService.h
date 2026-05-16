@@ -43,6 +43,10 @@ DAS_INTERFACE IDasSchedulerService : public IDasBase
     DAS_METHOD Stop() = 0;
     DAS_METHOD GetState(SchedulerState * p_out_state) const = 0;
     DAS_METHOD Get(IDasReadOnlyString * *pp_out_json) = 0;
+    DAS_METHOD GetTaskRepository(IDasReadOnlyString** pp_out_json) = 0;
+    DAS_METHOD CreateRepositoryEntry(
+        IDasReadOnlyString*  p_request_json,
+        IDasReadOnlyString** pp_out_json) = 0;
     DAS_METHOD AddTask(const DasGuid& task_guid, int64_t* p_out_task_id) = 0;
     DAS_METHOD DeleteTask(int64_t task_id) = 0;
     DAS_METHOD UpdateTaskProperties(
