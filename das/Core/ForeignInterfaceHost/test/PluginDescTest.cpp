@@ -632,6 +632,32 @@ TEST(PluginDescTaskExecutionComponentTest, RejectsInvalidComponentGuid)
         "executionComponent.componentGuid");
 }
 
+TEST(
+    PluginDescTaskExecutionComponentTest,
+    RejectsMissingDeclaredComponentGuid)
+{
+    const auto manifest = MinimalExecutionComponentPluginJson(
+        kTaskComponentGuid,
+        TaskEntryWithExecutionComponent(kAlternateTaskComponentGuid));
+
+    ExpectInvalidTaskDescriptor(
+        manifest,
+        "executionComponent.componentGuid");
+}
+
+TEST(
+    PluginDescTaskExecutionComponentTest,
+    RejectsMissingTaskComponentsForExecutionComponent)
+{
+    const auto manifest = BasicPluginJsonWith(
+        R"("tasks":{")" + std::string{kTaskGuid} + R"(":)"
+        + TaskEntryWithExecutionComponent(kTaskComponentGuid) + "}");
+
+    ExpectInvalidTaskDescriptor(
+        manifest,
+        "executionComponent.componentGuid");
+}
+
 TEST(PluginDescTaskComponentsTest, ParsesTopLevelManifest)
 {
     constexpr auto test_string = R"(
