@@ -52,6 +52,18 @@ DAS_INTERFACE IDasSchedulerService : public IDasBase
         int64_t              entry_id,
         IDasReadOnlyString*  p_request_json,
         IDasReadOnlyString** pp_out_json) = 0;
+    DAS_METHOD GetRepositoryEntryAuthoringDocument(
+        int64_t              entry_id,
+        IDasReadOnlyString*  p_request_json,
+        IDasReadOnlyString** pp_out_json) = 0;
+    DAS_METHOD ApplyRepositoryEntryAuthoringChange(
+        int64_t              entry_id,
+        IDasReadOnlyString*  p_change_json,
+        IDasReadOnlyString** pp_out_json) = 0;
+    DAS_METHOD CompileRepositoryEntryAuthoring(
+        int64_t              entry_id,
+        IDasReadOnlyString*  p_request_json,
+        IDasReadOnlyString** pp_out_json) = 0;
     DAS_METHOD AddTask(const DasGuid& task_guid, int64_t* p_out_task_id) = 0;
     DAS_METHOD DeleteTask(int64_t task_id) = 0;
     DAS_METHOD UpdateTaskProperties(

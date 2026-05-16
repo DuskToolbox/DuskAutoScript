@@ -1963,7 +1963,8 @@ namespace Das::Core::TaskScheduler
         yyjson::value result(Das::Utils::MakeYyjsonObject());
         auto          obj = result.as_object();
         (*obj)[std::string_view("entryId")] = entry_id;
-        (*obj)[std::string_view("taskTypeGuid")] = entry.task_type_guid;
+        (*obj)[std::string_view("taskTypeGuid")] =
+            std::string(entry.task_type_guid);
         (*obj)[std::string_view("revision")] = entry.authoring.revision;
         (*obj)[std::string_view("authoring")] =
             CloneJsonValue((*entry_json.as_object())[std::string_view(
@@ -2115,15 +2116,17 @@ namespace Das::Core::TaskScheduler
             GetStringField(change, "kind", "unknown");
         (*authoring_obj)[std::string_view("sourceFingerprint")] =
             GetStringField(accepted, "sourceFingerprint", "");
-        if (accepted_obj->contains(std::string_view("migration")))
+        auto migration_state =
+            GetStringField(accepted, "migrationState", "");
+        if (!migration_state.empty())
         {
-            (*authoring_obj)[std::string_view("migration")] =
-                CloneJsonValue((*accepted_obj)[std::string_view("migration")]);
+            (*authoring_obj)[std::string_view("migrationState")] =
+                std::move(migration_state);
         }
         else
         {
-            (*authoring_obj)[std::string_view("migration")] =
-                Das::Utils::MakeYyjsonObject();
+            (*authoring_obj)[std::string_view("migrationState")] =
+                yyjson::value{};
         }
 
         yyjson::value updated_entry_json;

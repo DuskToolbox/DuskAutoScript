@@ -232,6 +232,62 @@ namespace Das::Core::TaskScheduler
         return WriteJsonString(result, pp_out_json);
     }
 
+    DasResult SchedulerServiceImpl::GetRepositoryEntryAuthoringDocument(
+        int64_t              entry_id,
+        IDasReadOnlyString*  p_request_json,
+        IDasReadOnlyString** pp_out_json)
+    {
+        DAS_UTILS_CHECK_POINTER(pp_out_json)
+
+        yyjson::value request;
+        auto parse_result = ParseObjectJsonString(p_request_json, request);
+        if (DAS::IsFailed(parse_result))
+        {
+            return parse_result;
+        }
+
+        auto result =
+            svc_.GetRepositoryEntryAuthoringDocument(entry_id, request);
+        return WriteJsonString(result, pp_out_json);
+    }
+
+    DasResult SchedulerServiceImpl::ApplyRepositoryEntryAuthoringChange(
+        int64_t              entry_id,
+        IDasReadOnlyString*  p_change_json,
+        IDasReadOnlyString** pp_out_json)
+    {
+        DAS_UTILS_CHECK_POINTER(pp_out_json)
+
+        yyjson::value change;
+        auto parse_result = ParseObjectJsonString(p_change_json, change);
+        if (DAS::IsFailed(parse_result))
+        {
+            return parse_result;
+        }
+
+        auto result =
+            svc_.ApplyRepositoryEntryAuthoringChange(entry_id, change);
+        return WriteJsonString(result, pp_out_json);
+    }
+
+    DasResult SchedulerServiceImpl::CompileRepositoryEntryAuthoring(
+        int64_t              entry_id,
+        IDasReadOnlyString*  p_request_json,
+        IDasReadOnlyString** pp_out_json)
+    {
+        DAS_UTILS_CHECK_POINTER(pp_out_json)
+
+        yyjson::value request;
+        auto parse_result = ParseObjectJsonString(p_request_json, request);
+        if (DAS::IsFailed(parse_result))
+        {
+            return parse_result;
+        }
+
+        auto result = svc_.CompileRepositoryEntryAuthoring(entry_id, request);
+        return WriteJsonString(result, pp_out_json);
+    }
+
     DasResult SchedulerServiceImpl::AddTask(
         const DasGuid& task_guid,
         int64_t*       p_out_task_id)

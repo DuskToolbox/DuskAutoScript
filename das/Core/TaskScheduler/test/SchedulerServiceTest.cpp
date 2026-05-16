@@ -5538,6 +5538,9 @@ namespace
         std::atomic<bool> repository_create_called{false};
         std::atomic<bool> repository_delete_called{false};
         std::atomic<bool> repository_rename_called{false};
+        std::atomic<bool> repository_authoring_get_called{false};
+        std::atomic<bool> repository_authoring_apply_called{false};
+        std::atomic<bool> repository_compile_called{false};
         int64_t           last_authoring_task_id = -1;
         int64_t           last_repository_entry_id = -1;
 
@@ -5630,6 +5633,39 @@ namespace
             return WriteAuthoringJson(
                 pp_out_json,
                 R"({"entryId":42,"displayName":"renamed repository entry"})");
+        }
+        DasResult GetRepositoryEntryAuthoringDocument(
+            int64_t entry_id,
+            IDasReadOnlyString*,
+            IDasReadOnlyString** pp_out_json) override
+        {
+            repository_authoring_get_called = true;
+            last_repository_entry_id = entry_id;
+            return WriteAuthoringJson(
+                pp_out_json,
+                R"({"entryId":42,"document":{"kind":"formSequence","revision":0}})");
+        }
+        DasResult ApplyRepositoryEntryAuthoringChange(
+            int64_t entry_id,
+            IDasReadOnlyString*,
+            IDasReadOnlyString** pp_out_json) override
+        {
+            repository_authoring_apply_called = true;
+            last_repository_entry_id = entry_id;
+            return WriteAuthoringJson(
+                pp_out_json,
+                R"({"ok":true,"entryId":42,"revision":1})");
+        }
+        DasResult CompileRepositoryEntryAuthoring(
+            int64_t entry_id,
+            IDasReadOnlyString*,
+            IDasReadOnlyString** pp_out_json) override
+        {
+            repository_compile_called = true;
+            last_repository_entry_id = entry_id;
+            return WriteAuthoringJson(
+                pp_out_json,
+                R"({"entryId":42,"canExecute":true,"summary":{},"diagnostics":[]})");
         }
         DasResult AddTask(const DasGuid&, int64_t* p_id) override
         {
