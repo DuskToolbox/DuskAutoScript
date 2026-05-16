@@ -1,8 +1,8 @@
 #include <das/Core/TaskScheduler/RepositoryInvokeGraph.h>
 
 #include <algorithm>
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 #include <map>
 #include <vector>
 
@@ -79,19 +79,21 @@ namespace Das::Core::TaskScheduler::RepositoryInvoke
             const std::vector<Frame>&         stack,
             const RepositoryDependencyEdge& closing_edge)
         {
-            const auto cycle_start =
-                std::ranges::find_if(
-                    stack,
-                    [&closing_edge](const auto& frame)
-                    {
-                        return frame.entry_id == closing_edge.target_entry_id;
-                    }) -
-                stack.begin();
+            const auto cycle_start_iterator = std::ranges::find_if(
+                stack,
+                [&closing_edge](const auto& frame)
+                {
+                    return frame.entry_id == closing_edge.target_entry_id;
+                });
 
             RepositoryAcyclicValidationResult result;
             result.ok = false;
 
-            for (auto index = static_cast<std::size_t>(cycle_start);
+            // The active stack stores incoming edges, so each cycle item uses
+            // the next frame's incoming edge as its outgoing source metadata.
+            for (auto index =
+                     static_cast<std::size_t>(
+                         cycle_start_iterator - stack.begin());
                  index < stack.size();
                  ++index)
             {
@@ -107,7 +109,7 @@ namespace Das::Core::TaskScheduler::RepositoryInvoke
             return result;
         }
 
-        RepositoryAcyclicValidationResult ValidateFromRoot(
+        RepositoryAcyclicValidationResult FindCycleFromRoot(
             int64_t              root_entry_id,
             const AdjacencyList& adjacency,
             ColorMap&            colors)
@@ -169,7 +171,7 @@ namespace Das::Core::TaskScheduler::RepositoryInvoke
                 continue;
             }
 
-            auto result = ValidateFromRoot(entry_id, adjacency, colors);
+            auto result = FindCycleFromRoot(entry_id, adjacency, colors);
             if (!result.ok)
             {
                 return result;

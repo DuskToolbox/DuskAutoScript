@@ -139,3 +139,28 @@ TEST(RepositoryInvokeGraphTest, IndirectCycleReturnsClosedPathWithSourceMetadata
     EXPECT_EQ(result.cycle_path[2].source_node_id, "node-3");
     EXPECT_EQ(result.cycle_path[2].source_node_label, "Invoke one");
 }
+
+TEST(RepositoryInvokeGraphTest, DisconnectedGraphReportsCycleComponent)
+{
+    const std::vector<RepositoryDependencyEdge> edges{
+        {.source_entry_id = 1, .target_entry_id = 2},
+        {.source_entry_id = 2, .target_entry_id = 3},
+        {
+            .source_entry_id = 10,
+            .target_entry_id = 11,
+            .source_node_label = "Invoke eleven",
+        },
+        {
+            .source_entry_id = 11,
+            .target_entry_id = 10,
+            .source_node_label = "Invoke ten",
+        },
+    };
+
+    const auto result = ValidateRepositoryInvokeAcyclic(edges);
+
+    ASSERT_FALSE(result.ok);
+    ASSERT_EQ(EntryIds(result.cycle_path), (std::vector<int64_t>{10, 11, 10}));
+    EXPECT_EQ(result.cycle_path[0].source_node_label, "Invoke eleven");
+    EXPECT_EQ(result.cycle_path[1].source_node_label, "Invoke ten");
+}
