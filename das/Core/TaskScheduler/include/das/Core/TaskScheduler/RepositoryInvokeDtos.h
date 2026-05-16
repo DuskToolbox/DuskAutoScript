@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace Das::Core::TaskScheduler::RepositoryInvoke::Dto
 {
@@ -29,6 +30,48 @@ namespace Das::Core::TaskScheduler::RepositoryInvoke::Dto
         std::string                task_type_guid;
         std::string                component_guid;
         yyjson::value              execution_input;
+    };
+
+    struct InvokeRepositoryTaskSettingsDto
+    {
+        RepositoryTaskRefDto repository_ref;
+        bool                 fail_on_revision_mismatch = true;
+    };
+
+    struct InvokeRepositoryTaskInputDto
+    {
+        std::optional<ChildExecutionSnapshotDto> compiled_snapshot;
+        yyjson::value                            runtime_inputs;
+    };
+
+    struct InvokeRepositoryTaskDiagnosticDto
+    {
+        std::string                severity;
+        std::string                code;
+        std::string                message;
+        std::optional<std::string> path;
+    };
+
+    struct InvokeRepositoryTaskOutputsDto
+    {
+        std::optional<std::string> child_status;
+        yyjson::value              child_outputs;
+    };
+
+    struct InvokeRepositoryTaskSignalsDto
+    {
+        bool succeeded = false;
+        bool failed = false;
+        bool cancelled = false;
+    };
+
+    struct InvokeRepositoryTaskResultDto
+    {
+        int32_t                                      version = 1;
+        std::string                                  status;
+        InvokeRepositoryTaskOutputsDto                 outputs;
+        std::vector<InvokeRepositoryTaskDiagnosticDto> diagnostics;
+        InvokeRepositoryTaskSignalsDto                 signals;
     };
 
     namespace Detail
@@ -67,6 +110,12 @@ namespace Das::Core::TaskScheduler::RepositoryInvoke::Dto
 
 DAS_REPOSITORY_INVOKE_DTO_CASTER(RepositoryTaskRefDto);
 DAS_REPOSITORY_INVOKE_DTO_CASTER(ChildExecutionSnapshotDto);
+DAS_REPOSITORY_INVOKE_DTO_CASTER(InvokeRepositoryTaskSettingsDto);
+DAS_REPOSITORY_INVOKE_DTO_CASTER(InvokeRepositoryTaskInputDto);
+DAS_REPOSITORY_INVOKE_DTO_CASTER(InvokeRepositoryTaskDiagnosticDto);
+DAS_REPOSITORY_INVOKE_DTO_CASTER(InvokeRepositoryTaskOutputsDto);
+DAS_REPOSITORY_INVOKE_DTO_CASTER(InvokeRepositoryTaskSignalsDto);
+DAS_REPOSITORY_INVOKE_DTO_CASTER(InvokeRepositoryTaskResultDto);
 
 #undef DAS_REPOSITORY_INVOKE_DTO_CASTER
 
@@ -80,6 +129,48 @@ struct yyjson::field_name_rule<
 template <>
 struct yyjson::field_name_rule<Das::Core::TaskScheduler::RepositoryInvoke::Dto::
                                    ChildExecutionSnapshotDto>
+{
+    using type = yyjson::snake_to_camel_transform;
+};
+
+template <>
+struct yyjson::field_name_rule<Das::Core::TaskScheduler::RepositoryInvoke::Dto::
+                                   InvokeRepositoryTaskSettingsDto>
+{
+    using type = yyjson::snake_to_camel_transform;
+};
+
+template <>
+struct yyjson::field_name_rule<Das::Core::TaskScheduler::RepositoryInvoke::Dto::
+                                   InvokeRepositoryTaskInputDto>
+{
+    using type = yyjson::snake_to_camel_transform;
+};
+
+template <>
+struct yyjson::field_name_rule<Das::Core::TaskScheduler::RepositoryInvoke::Dto::
+                                   InvokeRepositoryTaskDiagnosticDto>
+{
+    using type = yyjson::snake_to_camel_transform;
+};
+
+template <>
+struct yyjson::field_name_rule<Das::Core::TaskScheduler::RepositoryInvoke::Dto::
+                                   InvokeRepositoryTaskOutputsDto>
+{
+    using type = yyjson::snake_to_camel_transform;
+};
+
+template <>
+struct yyjson::field_name_rule<Das::Core::TaskScheduler::RepositoryInvoke::Dto::
+                                   InvokeRepositoryTaskSignalsDto>
+{
+    using type = yyjson::snake_to_camel_transform;
+};
+
+template <>
+struct yyjson::field_name_rule<Das::Core::TaskScheduler::RepositoryInvoke::Dto::
+                                   InvokeRepositoryTaskResultDto>
 {
     using type = yyjson::snake_to_camel_transform;
 };
