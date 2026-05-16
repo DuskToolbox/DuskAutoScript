@@ -185,6 +185,18 @@ namespace Das::Core::TaskScheduler
         return result;
     }
 
+    static yyjson::value MakeRepositoryResponseError(
+        std::string_view kind,
+        std::string_view message)
+    {
+        yyjson::value result(Das::Utils::MakeYyjsonObject());
+        auto          obj = result.as_object();
+        (*obj)[std::string_view("ok")] = false;
+        (*obj)[std::string_view("errorKind")] = std::string(kind);
+        (*obj)[std::string_view("message")] = std::string(message);
+        return result;
+    }
+
     static int64_t GetAuthoringRevision(const yyjson::value& task_json)
     {
         auto task_obj = task_json.as_object();
@@ -580,6 +592,7 @@ namespace Das::Core::TaskScheduler
                 // Re-initialize: clear existing runtime state
                 task_types_.clear();
                 task_instances_.clear();
+                task_repository_store_.reset();
                 capability_registry_.Clear();
                 for (auto it = loaded_plugin_paths_.rbegin();
                      it != loaded_plugin_paths_.rend();
@@ -984,6 +997,9 @@ namespace Das::Core::TaskScheduler
             std::lock_guard<std::mutex> lock(mutex_);
             task_types_ = std::move(temp_types);
             task_instances_ = std::move(temp_instances);
+            task_repository_store_ = std::make_unique<TaskRepositoryStore>(
+                plugin_manager_.GetSettingsManager(),
+                "0");
             loaded_plugin_paths_ = std::move(temp_paths);
             initialized_ = true;
         }
@@ -1293,6 +1309,21 @@ namespace Das::Core::TaskScheduler
 
         result_obj[std::string_view("tasks")] = std::move(tasks_arr);
         return result;
+    }
+
+    yyjson::value SchedulerService::GetTaskRepository()
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!initialized_ || !task_repository_store_)
+        {
+            return MakeRepositoryResponseError(
+                "notInitialized",
+                "Scheduler profile has not been initialized");
+        }
+
+        Repository::Dto::RepositoryGetResponseDto response;
+        response.entries = task_repository_store_->ListEntries();
+        return yyjson::object(response);
     }
 
     // ----------------------------------------------------------------

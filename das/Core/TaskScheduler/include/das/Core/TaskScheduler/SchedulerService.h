@@ -10,6 +10,7 @@
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/Core/TaskScheduler/TaskCapabilityRegistry.h>
+#include <das/Core/TaskScheduler/TaskRepositoryStore.h>
 #include <das/Core/Utils/IDasStopTokenImpl.h>
 #include <das/DasExport.h>
 #include <das/DasPtr.hpp>
@@ -134,6 +135,8 @@ namespace Das::Core::TaskScheduler
             int64_t              task_id,
             const yyjson::value& request);
 
+        yyjson::value GetTaskRepository();
+
         /// Check whether the scheduler has been initialized.
         bool IsInitialized() const { return initialized_; }
 
@@ -251,6 +254,8 @@ namespace Das::Core::TaskScheduler
 
         // Ordered queued task instances materialized from profile state
         std::vector<TaskInstanceRecord> task_instances_;
+
+        std::unique_ptr<TaskRepositoryStore> task_repository_store_;
 
         Das::PluginInterface::IDasTask*    current_task_ = nullptr;
         std::vector<std::filesystem::path> loaded_plugin_paths_;
