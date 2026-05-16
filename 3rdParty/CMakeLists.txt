@@ -642,12 +642,69 @@ if (NOT onnxruntime_FOUND)
         else ()
             message(FATAL_ERROR "Unsupported architecture.")
         endif ()
-    endif ()
+endif ()
 
-    target_link_libraries(Das3rdParty INTERFACE DasBundledOnnxRuntime)
+target_link_libraries(Das3rdParty INTERFACE DasBundledOnnxRuntime)
 else ()
     target_link_libraries(Das3rdParty INTERFACE onnxruntime::onnxruntime)
 endif ()
+
+function(_download_and_config_maaframework)
+    set(DAS_MAAFRAMEWORK_BINARY_VERSION "5.10.4" CACHE STRING "Bundled MaaFramework binary version")
+
+    if (NOT WIN32)
+        message(STATUS "MaaFramework bundled binary import skipped: only Windows x86_64 is supported for now.")
+        return()
+    endif()
+
+    if (NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+        message(STATUS "MaaFramework bundled binary import skipped: only Windows x86_64 is supported for now.")
+        return()
+    endif()
+
+    message(STATUS "Downloading prebuilt MaaFramework binary (VERSION = ${DAS_MAAFRAMEWORK_BINARY_VERSION})...")
+    FetchContent_Declare(
+        maaframework_binary
+        URL "https://github.com/MaaXYZ/MaaFramework/releases/download/v${DAS_MAAFRAMEWORK_BINARY_VERSION}/MAA-win-x86_64-v${DAS_MAAFRAMEWORK_BINARY_VERSION}.zip"
+        CONFIGURE_COMMAND ""
+        BUILD_COMMAND ""
+        INSTALL_COMMAND "")
+
+    if (NOT maaframework_binary_POPULATED)
+        FetchContent_Populate(maaframework_binary)
+    endif()
+
+    set(_maa_root "${maaframework_binary_SOURCE_DIR}")
+    set(_maa_include_dir "${_maa_root}/include")
+    set(_maa_implib "${_maa_root}/lib/MaaFramework.lib")
+    set(_maa_dll "${_maa_root}/bin/MaaFramework.dll")
+
+    if (NOT EXISTS "${_maa_include_dir}/MaaFramework/MaaAPI.h"
+        OR NOT EXISTS "${_maa_implib}"
+        OR NOT EXISTS "${_maa_dll}")
+        message(FATAL_ERROR "Unsupported MaaFramework archive layout: expected include/MaaFramework/MaaAPI.h, lib/MaaFramework.lib, and bin/MaaFramework.dll under ${_maa_root}")
+    endif()
+
+    add_library(DasBundledMaaFrameworkDll SHARED IMPORTED GLOBAL)
+    set_target_properties(
+        DasBundledMaaFrameworkDll
+        PROPERTIES
+        IMPORTED_LOCATION "${_maa_dll}"
+        IMPORTED_IMPLIB "${_maa_implib}"
+        INTERFACE_INCLUDE_DIRECTORIES "${_maa_include_dir}")
+
+    add_library(DasBundledMaaFramework INTERFACE IMPORTED GLOBAL)
+    set_target_properties(
+        DasBundledMaaFramework
+        PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${_maa_include_dir}"
+        INTERFACE_LINK_LIBRARIES DasBundledMaaFrameworkDll)
+
+    file(GLOB _maa_runtime_dlls "${_maa_root}/bin/*.dll")
+    das_add_auto_copy_dll_path("${_maa_runtime_dlls}")
+endfunction()
+
+_download_and_config_maaframework()
 
 message("================================================================")
 

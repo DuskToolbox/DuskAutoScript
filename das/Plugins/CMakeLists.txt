@@ -20,6 +20,10 @@ das_add_plugin_library(DasAdbCapture DAS_EX_PRIVATE_LIBS)
 das_add_plugin_library(DasAdbTouch DAS_EX_PRIVATE_LIBS)
 das_add_plugin_library(DasFlowControl DAS_EX_PRIVATE_LIBS)
 das_add_plugin_library(DasWindowsCapture DAS_EX_PRIVATE_LIBS)
+if(TARGET DasBundledMaaFramework)
+    das_add_plugin_library(DasMaaPi DAS_EX_PRIVATE_LIBS)
+    target_link_libraries(DasMaaPi PRIVATE DasBundledMaaFramework)
+endif()
 
 if(TARGET TaskSchedulerTest)
     add_dependencies(TaskSchedulerTest DasFlowControl DasAutoCopyPluginMetadataFile)
@@ -35,6 +39,40 @@ if(DAS_BUILD_TEST)
     if(EXPORT_LUA)
         add_subdirectory(LuaTestPlugin)
     endif()
+endif()
+
+if(DAS_BUILD_TEST AND TARGET DasMaaPi)
+    add_executable(DasMaaPiTest DasMaaPi/test/MaapiPluginScaffoldTest.cpp)
+    target_link_libraries(DasMaaPiTest PRIVATE
+        Das3rdParty
+        GTest::gtest_main
+        GTest::gtest
+        DasCoreObjects)
+
+    get_target_property(DAS_CORE_INCLUDE_DIRS DasCoreObjects INCLUDE_DIRECTORIES)
+    target_include_directories(DasMaaPiTest PRIVATE
+        ${DAS_CORE_INCLUDE_DIRS}
+        ${CMAKE_CURRENT_SOURCE_DIR}/DasMaaPi/include
+        ${CMAKE_SOURCE_DIR}/das/Core/ForeignInterfaceHost/include)
+
+    set_target_properties(DasMaaPiTest PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/Test
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_BINARY_DIR}/Test
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/Test
+        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_BINARY_DIR}/Test
+        RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL ${CMAKE_BINARY_DIR}/Test)
+
+    add_dependencies(DasMaaPiTest
+        DasMaaPi
+        DasAutoCopyDll
+        DasAutoCopyPluginMetadataFile)
+
+    das_get_test_runtime_environment(das_maapi_test_env)
+    gtest_discover_tests(
+        DasMaaPiTest
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/Test
+        PROPERTIES
+            ENVIRONMENT "${das_maapi_test_env}")
 endif()
 
 # IpcTestPlugin1 - IDasTouch Mock for IPC testing

@@ -1,0 +1,26 @@
+{
+  "name": "@CMAKE_SHARED_LIBRARY_PREFIX@DasMaaPi",
+  "author": "Dusk",
+  "version": "0.1",
+  "guid": "69F20000-0000-4000-8000-000000000001",
+  "description": "Official DAS MaaFramework ProjectInterface task plugin",
+  "supportedSystem": "Windows",
+  "language": "Cpp",
+  "pluginFilenameExtension": "dll",
+  "settings": {},
+  "tasks": {
+    "69F20001-0000-4000-8000-000000000001": {
+      "pluginGuid": "69F20000-0000-4000-8000-000000000001",
+      "name": "maa.projectInterface",
+      "description": "Run a MaaFramework ProjectInterface project through DAS task authoring",
+      "gameName": "MaaFramework",
+      "authoring": {
+        "factoryGuid": "69F20002-0000-4000-8000-000000000001",
+        "supportedKinds": [
+          "formSequence"
+        ]
+      },
+      "descriptors": []
+    }
+  }
+}
