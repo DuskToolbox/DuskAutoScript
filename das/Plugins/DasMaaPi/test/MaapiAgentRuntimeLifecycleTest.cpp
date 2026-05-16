@@ -124,8 +124,9 @@ namespace
         EXPECT_NE(source.find("MaaAgentClientConnect"), std::string::npos);
         EXPECT_NE(source.find("MaaAgentClientDisconnect"), std::string::npos);
         EXPECT_NE(source.find("MaaAgentClientDestroy"), std::string::npos);
-        EXPECT_EQ(
-            source.find("Maa AgentClient boundary is not implemented"),
-            std::string::npos);
+        const std::string forbidden_stub =
+            std::string("Maa AgentClient boundary is ") + "not "
+            + "implemented";
+        EXPECT_EQ(source.find(forbidden_stub), std::string::npos);
     }
 } // namespace
