@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -16,6 +17,7 @@ namespace Das::Plugins::DasMaaPi::Test
         std::string              resource_hash = "hash-expected";
         std::map<std::string, MaaTaskStatus> wait_status_by_entry;
         std::map<std::string, MaaApiResult>  post_result_by_entry;
+        std::optional<ControllerSpec>        last_controller_spec;
 
         MaaResourceHandle CreateResource() override
         {
@@ -46,6 +48,7 @@ namespace Das::Plugins::DasMaaPi::Test
         MaaControllerHandle CreateController(
             const ControllerSpec& spec) override
         {
+            last_controller_spec = spec;
             calls.emplace_back("CreateController:" + spec.name + ":" + spec.type);
             return NextHandle();
         }

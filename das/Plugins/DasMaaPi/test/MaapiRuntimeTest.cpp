@@ -7,13 +7,48 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <string>
+#include <string_view>
 
 namespace
 {
     using namespace Das;
     using namespace Das::Plugins::DasMaaPi;
     using namespace Das::Plugins::DasMaaPi::Test;
+
+    std::string JsonStringLiteral(std::string_view value)
+    {
+        std::string result = "\"";
+        for (const char ch : value)
+        {
+            switch (ch)
+            {
+            case '\\':
+                result += "\\\\";
+                break;
+            case '"':
+                result += "\\\"";
+                break;
+            case '\n':
+                result += "\\n";
+                break;
+            case '\r':
+                result += "\\r";
+                break;
+            case '\t':
+                result += "\\t";
+                break;
+            default:
+                result += ch;
+                break;
+            }
+        }
+        result += "\"";
+        return result;
+    }
 
     yyjson::value EnvelopeValue(
         bool        fail_fast = true,
@@ -23,7 +58,8 @@ namespace
         std::string tasks = R"([
           {"taskName":"DailyFarm","entry":"StartDaily","pipelineOverride":{"Stage":{"value":"one"}}},
           {"taskName":"Base","entry":"StartBase","pipelineOverride":{"Stage":{"value":"two"}}}
-        ])")
+        ])",
+        std::string controller_json = R"({"name":"Android","type":"Adb"})")
     {
         auto json =
             R"({"version":1,"pluginGuid":")" + plugin_guid
@@ -34,8 +70,8 @@ namespace
             + std::string(fail_fast ? "true" : "false")
             + R"(,"requiresAgentRuntime":)"
             + std::string(requires_agent ? "true" : "false")
-            + R"(,"piEnv":{"controllerJson":"{\"name\":\"Android\",\"type\":\"Adb\"}",)"
-              R"("resourceJson":"{\"name\":\"Official\"}"},"tasks":)"
+            + R"(,"piEnv":{"controllerJson":)" + JsonStringLiteral(controller_json)
+            + R"(,"resourceJson":"{\"name\":\"Official\"}"},"tasks":)"
             + tasks + "}}";
         auto parsed = Das::Utils::ParseYyjsonFromString(json);
         EXPECT_TRUE(parsed.has_value());
@@ -48,7 +84,8 @@ namespace
         std::string tasks = R"([
           {"taskName":"DailyFarm","entry":"StartDaily","pipelineOverride":{"Stage":{"value":"one"}}},
           {"taskName":"Base","entry":"StartBase","pipelineOverride":{"Stage":{"value":"two"}}}
-        ])")
+        ])",
+        std::string controller_json = R"({"name":"Android","type":"Adb"})")
     {
         auto parsed = ParseExecutionEnvelope(
             EnvelopeValue(
@@ -56,7 +93,8 @@ namespace
                 std::string(kPluginGuidText),
                 std::string(kTaskGuidText),
                 requires_agent,
-                std::move(tasks)));
+                std::move(tasks),
+                std::move(controller_json)));
         EXPECT_EQ(parsed.result, DAS_S_OK);
         return std::move(parsed.envelope);
     }
@@ -125,6 +163,83 @@ TEST(DasMaaPiRuntime, RuntimeCallSequenceAndCleanup)
     EXPECT_TRUE(fake.Contains("DestroyTasker:3"));
     EXPECT_TRUE(fake.Contains("DestroyController:2"));
     EXPECT_TRUE(fake.Contains("DestroyResource:1"));
+}
+
+TEST(DasMaaPiRuntime, RuntimePassesTypedAdbCamelCaseControllerFields)
+{
+    FakeMaaApiBoundary fake;
+    auto result = MaaRuntime::Run(
+        Envelope(
+            true,
+            false,
+            R"([{"taskName":"DailyFarm","entry":"StartDaily","pipelineOverride":{}}])",
+            R"({"name":"Android","type":"Adb","address":"127.0.0.1:5555","adbPath":"C:/tools/adb.exe","config":"{\"touch\":\"maatouch\"}","agentPath":"C:/maa/agent"})"),
+        fake,
+        nullptr);
+
+    EXPECT_EQ(result.das_result, DAS_S_OK);
+    ASSERT_TRUE(fake.last_controller_spec.has_value());
+    EXPECT_EQ(fake.last_controller_spec->name, "Android");
+    EXPECT_EQ(fake.last_controller_spec->type, "Adb");
+    EXPECT_EQ(fake.last_controller_spec->address, "127.0.0.1:5555");
+    EXPECT_EQ(fake.last_controller_spec->adb_path, "C:/tools/adb.exe");
+    EXPECT_EQ(fake.last_controller_spec->config_json, R"({"touch":"maatouch"})");
+    EXPECT_EQ(fake.last_controller_spec->agent_path, "C:/maa/agent");
+}
+
+TEST(DasMaaPiRuntime, RuntimePassesTypedAdbSnakeCaseControllerFields)
+{
+    FakeMaaApiBoundary fake;
+    auto result = MaaRuntime::Run(
+        Envelope(
+            true,
+            false,
+            R"([{"taskName":"DailyFarm","entry":"StartDaily","pipelineOverride":{}}])",
+            R"({"name":"Android","type":"Adb","address":"emulator-5554","adb_path":"adb-custom","config":"{}","agent_path":"relative/agent"})"),
+        fake,
+        nullptr);
+
+    EXPECT_EQ(result.das_result, DAS_S_OK);
+    ASSERT_TRUE(fake.last_controller_spec.has_value());
+    EXPECT_EQ(fake.last_controller_spec->address, "emulator-5554");
+    EXPECT_EQ(fake.last_controller_spec->adb_path, "adb-custom");
+    EXPECT_EQ(fake.last_controller_spec->config_json, "{}");
+    EXPECT_EQ(fake.last_controller_spec->agent_path, "relative/agent");
+}
+
+TEST(DasMaaPiRuntime, RuntimePassesTypedDbgControllerReadPath)
+{
+    FakeMaaApiBoundary fake;
+    auto result = MaaRuntime::Run(
+        Envelope(
+            true,
+            false,
+            R"([{"taskName":"DailyFarm","entry":"StartDaily","pipelineOverride":{}}])",
+            R"({"name":"Debug","type":"Dbg","readPath":"C:/maa/debug"})"),
+        fake,
+        nullptr);
+
+    EXPECT_EQ(result.das_result, DAS_S_OK);
+    ASSERT_TRUE(fake.last_controller_spec.has_value());
+    EXPECT_EQ(fake.last_controller_spec->type, "Dbg");
+    EXPECT_EQ(fake.last_controller_spec->read_path, "C:/maa/debug");
+}
+
+TEST(DasMaaPiRuntime, RuntimeSourceDoesNotExtractControllerFieldsFromRawJson)
+{
+    const auto source_path =
+        std::filesystem::path(__FILE__).parent_path().parent_path() / "src"
+        / "MaaRuntime.cpp";
+    std::ifstream input(source_path);
+    ASSERT_TRUE(input.is_open()) << source_path.string();
+
+    std::ostringstream buffer;
+    buffer << input.rdbuf();
+    const auto source = buffer.str();
+    EXPECT_EQ(source.find("StringField(spec.raw_json"), std::string::npos);
+    EXPECT_EQ(
+        source.find("ParseYyjsonFromString(spec.raw_json"),
+        std::string::npos);
 }
 
 TEST(DasMaaPiRuntime, RuntimeCleanupOnProviderFailure)

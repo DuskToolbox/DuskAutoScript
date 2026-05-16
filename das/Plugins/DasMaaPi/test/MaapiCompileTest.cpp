@@ -212,6 +212,42 @@ TEST_F(MaapiCompileFixture, CompileExecutionReturnsEnvelope)
         "hash-expected");
 }
 
+TEST_F(MaapiCompileFixture, CompileExecutionIncludesTypedControllerSpecAndRawPiEnv)
+{
+    auto result = Compile(
+        CompileContext(FixturePath("interface_compile.jsonc").generic_string()),
+        "execution");
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    auto envelope =
+        (*obj)[std::string_view("executionInput")].as_object();
+    ASSERT_TRUE(envelope.has_value());
+    auto maapi = (*envelope)[std::string_view("maapi")].as_object();
+    ASSERT_TRUE(maapi.has_value());
+
+    auto controller = (*maapi)[std::string_view("controller")].as_object();
+    ASSERT_TRUE(controller.has_value());
+    EXPECT_EQ(
+        (*controller)[std::string_view("name")].as_string().value_or(""),
+        "Android");
+    EXPECT_EQ(
+        (*controller)[std::string_view("type")].as_string().value_or(""),
+        "Adb");
+    EXPECT_EQ(
+        (*controller)[std::string_view("adbPath")].as_string().value_or(""),
+        "adb");
+    EXPECT_EQ(
+        (*controller)[std::string_view("configJson")].as_string().value_or(""),
+        "{}");
+
+    auto pi_env = (*maapi)[std::string_view("piEnv")].as_object();
+    ASSERT_TRUE(pi_env.has_value());
+    const auto raw_controller =
+        (*pi_env)[std::string_view("controllerJson")].as_string().value_or("");
+    EXPECT_NE(raw_controller.find(R"("name":"Android")"), std::string::npos);
+    EXPECT_NE(raw_controller.find(R"("type":"Adb")"), std::string::npos);
+}
+
 TEST_F(MaapiCompileFixture, PipelineOverrideMergesOptions)
 {
     auto result = Compile(
