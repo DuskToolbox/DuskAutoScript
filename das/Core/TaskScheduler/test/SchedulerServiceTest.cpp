@@ -6396,6 +6396,170 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryBody_NonObject)
     EXPECT_FALSE(fake_svc_->repository_create_called);
 }
 
+TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryDelete_Forwarded)
+{
+    auto req = MakeRequest(
+        "/api/v1/scheduler/0/repository/entries/123/delete",
+        "{}",
+        {{"profile", "0"}, {"entryId", "123"}});
+    auto body = ReleaseJson(controller_->RepositoryDelete(req));
+    auto root = body.as_object().value();
+
+    EXPECT_EQ(
+        root[std::string_view("code")].as_sint().value_or(DAS_E_FAIL),
+        DAS_S_OK);
+    EXPECT_TRUE(fake_svc_->repository_delete_called);
+    EXPECT_EQ(fake_svc_->last_repository_entry_id, 123);
+}
+
+TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryRename_Forwarded)
+{
+    auto req = MakeRequest(
+        "/api/v1/scheduler/0/repository/entries/42/rename",
+        R"({"displayName":"Renamed"})",
+        {{"profile", "0"}, {"entryId", "42"}});
+    auto body = ReleaseJson(controller_->RepositoryRename(req));
+    auto root = body.as_object().value();
+
+    EXPECT_EQ(
+        root[std::string_view("code")].as_sint().value_or(DAS_E_FAIL),
+        DAS_S_OK);
+    auto data = root[std::string_view("data")].as_object();
+    ASSERT_TRUE(data.has_value());
+    EXPECT_EQ(
+        (*data)[std::string_view("displayName")]
+            .as_string()
+            .value_or(""),
+        std::string_view("renamed repository entry"));
+    EXPECT_TRUE(fake_svc_->repository_rename_called);
+    EXPECT_EQ(fake_svc_->last_repository_entry_id, 42);
+    EXPECT_NE(
+        fake_svc_->last_repository_request_json.find("displayName"),
+        std::string::npos);
+}
+
+TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryProfileManagement_Rejected)
+{
+    auto delete_req = MakeRequest(
+        "/api/v1/scheduler/1/repository/entries/42/delete",
+        "{}",
+        {{"profile", "1"}, {"entryId", "42"}});
+    auto delete_body = ReleaseJson(controller_->RepositoryDelete(delete_req));
+    EXPECT_EQ(
+        (*delete_body.as_object())[std::string_view("code")]
+            .as_sint()
+            .value_or(DAS_S_OK),
+        DAS_E_INVALID_ARGUMENT);
+
+    auto rename_req = MakeRequest(
+        "/api/v1/scheduler/1/repository/entries/42/rename",
+        R"({"displayName":"Renamed"})",
+        {{"profile", "1"}, {"entryId", "42"}});
+    auto rename_body = ReleaseJson(controller_->RepositoryRename(rename_req));
+    EXPECT_EQ(
+        (*rename_body.as_object())[std::string_view("code")]
+            .as_sint()
+            .value_or(DAS_S_OK),
+        DAS_E_INVALID_ARGUMENT);
+
+    EXPECT_FALSE(fake_svc_->repository_delete_called);
+    EXPECT_FALSE(fake_svc_->repository_rename_called);
+}
+
+TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryEntryId_Rejected)
+{
+    auto delete_req = MakeRequest(
+        "/api/v1/scheduler/0/repository/entries/not-an-id/delete",
+        "{}",
+        {{"profile", "0"}, {"entryId", "not-an-id"}});
+    auto delete_body = ReleaseJson(controller_->RepositoryDelete(delete_req));
+    EXPECT_EQ(
+        (*delete_body.as_object())[std::string_view("code")]
+            .as_sint()
+            .value_or(DAS_S_OK),
+        DAS_E_INVALID_ARGUMENT);
+
+    auto rename_req = MakeRequest(
+        "/api/v1/scheduler/0/repository/entries/not-an-id/rename",
+        R"({"displayName":"Renamed"})",
+        {{"profile", "0"}, {"entryId", "not-an-id"}});
+    auto rename_body = ReleaseJson(controller_->RepositoryRename(rename_req));
+    EXPECT_EQ(
+        (*rename_body.as_object())[std::string_view("code")]
+            .as_sint()
+            .value_or(DAS_S_OK),
+        DAS_E_INVALID_ARGUMENT);
+
+    EXPECT_FALSE(fake_svc_->repository_delete_called);
+    EXPECT_FALSE(fake_svc_->repository_rename_called);
+}
+
+TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryRenameBody_InvalidJson)
+{
+    auto req = MakeRequest(
+        "/api/v1/scheduler/0/repository/entries/42/rename",
+        "{broken",
+        {{"profile", "0"}, {"entryId", "42"}});
+    auto body = ReleaseJson(controller_->RepositoryRename(req));
+    EXPECT_EQ(
+        (*body.as_object())[std::string_view("code")]
+            .as_sint()
+            .value_or(DAS_S_OK),
+        DAS_E_INVALID_JSON);
+    EXPECT_FALSE(fake_svc_->repository_rename_called);
+}
+
+TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryRenameBody_NonObject)
+{
+    auto req = MakeRequest(
+        "/api/v1/scheduler/0/repository/entries/42/rename",
+        "[]",
+        {{"profile", "0"}, {"entryId", "42"}});
+    auto body = ReleaseJson(controller_->RepositoryRename(req));
+    EXPECT_EQ(
+        (*body.as_object())[std::string_view("code")]
+            .as_sint()
+            .value_or(DAS_S_OK),
+        DAS_E_INVALID_ARGUMENT);
+    EXPECT_FALSE(fake_svc_->repository_rename_called);
+}
+
+TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryDelete_ServiceError)
+{
+    fake_svc_->next_result = DAS_E_FAIL;
+    auto req = MakeRequest(
+        "/api/v1/scheduler/0/repository/entries/42/delete",
+        "{}",
+        {{"profile", "0"}, {"entryId", "42"}});
+    auto body = ReleaseJson(controller_->RepositoryDelete(req));
+
+    EXPECT_EQ(
+        (*body.as_object())[std::string_view("code")]
+            .as_sint()
+            .value_or(DAS_S_OK),
+        DAS_E_FAIL);
+    EXPECT_TRUE(fake_svc_->repository_delete_called);
+    EXPECT_EQ(fake_svc_->last_repository_entry_id, 42);
+}
+
+TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryRename_ServiceError)
+{
+    fake_svc_->next_result = DAS_E_FAIL;
+    auto req = MakeRequest(
+        "/api/v1/scheduler/0/repository/entries/42/rename",
+        R"({"displayName":"Renamed"})",
+        {{"profile", "0"}, {"entryId", "42"}});
+    auto body = ReleaseJson(controller_->RepositoryRename(req));
+
+    EXPECT_EQ(
+        (*body.as_object())[std::string_view("code")]
+            .as_sint()
+            .value_or(DAS_S_OK),
+        DAS_E_FAIL);
+    EXPECT_TRUE(fake_svc_->repository_rename_called);
+    EXPECT_EQ(fake_svc_->last_repository_entry_id, 42);
+}
+
 // ── Non-initialize paths do not load scheduler plugins ──
 
 TEST_F(SchedulerControllerTest, NonInitializePaths_DelegateOnly)
