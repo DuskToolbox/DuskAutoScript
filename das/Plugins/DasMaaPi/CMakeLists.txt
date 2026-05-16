@@ -69,6 +69,7 @@ endforeach()
 if(DAS_BUILD_TEST)
     add_executable(DasMaaPiTest
         src/AgentRuntimeRequest.cpp
+        src/AgentRuntimeService.cpp
         src/AuthoringProjector.cpp
         src/MaaRuntime.cpp
         src/MaapiAuthoringSession.cpp
