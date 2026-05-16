@@ -35,7 +35,8 @@ struct TaskComponentDefinitionInfo
 class TaskComponentFactoryManager
 {
 public:
-    TaskComponentFactoryManager() = default;
+    TaskComponentFactoryManager();
+    ~TaskComponentFactoryManager();
 
     DasResult OnPluginLoaded(
         const DasGuid&                                   plugin_guid,
@@ -65,8 +66,9 @@ private:
         yyjson::value definition{};
     };
 
-    std::unordered_map<DasGuid, FactoryEntry>   factories_;
-    std::unordered_map<DasGuid, ComponentRoute> routes_;
+    DasPtr<Das::PluginInterface::IDasTaskComponentHost> host_;
+    std::unordered_map<DasGuid, FactoryEntry>            factories_;
+    std::unordered_map<DasGuid, ComponentRoute>          routes_;
 
     mutable std::shared_mutex mutex_;
 };

@@ -5,6 +5,7 @@
 #include <das/DasPtr.hpp>
 #include <das/Utils/CommonUtils.hpp>
 
+#include <atomic>
 #include <mutex>
 #include <unordered_set>
 
@@ -30,7 +31,74 @@ namespace
         result = value;
         return result;
     }
+
+    class TaskComponentHost final
+        : public Das::PluginInterface::IDasTaskComponentHost
+    {
+    public:
+        explicit TaskComponentHost(TaskComponentFactoryManager& manager)
+            : manager_(manager)
+        {
+        }
+
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out) override
+        {
+            if (pp_out == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (iid == DasIidOf<IDasBase>())
+            {
+                *pp_out = static_cast<IDasBase*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            if (iid
+                == DasIidOf<Das::PluginInterface::IDasTaskComponentHost>())
+            {
+                *pp_out =
+                    static_cast<Das::PluginInterface::IDasTaskComponentHost*>(
+                        this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            *pp_out = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult DAS_STD_CALL CreateTaskComponent(
+            const DasGuid&                            component_guid,
+            Das::PluginInterface::IDasTaskComponent** pp_out_component)
+            override
+        {
+            return manager_.CreateComponent(component_guid, pp_out_component);
+        }
+
+    private:
+        TaskComponentFactoryManager& manager_;
+        std::atomic<uint32_t>        ref_count_{0};
+    };
 } // namespace
+
+TaskComponentFactoryManager::TaskComponentFactoryManager()
+    : host_(new TaskComponentHost(*this))
+{
+}
+
+TaskComponentFactoryManager::~TaskComponentFactoryManager() = default;
 
 DasResult TaskComponentFactoryManager::OnPluginLoaded(
     const DasGuid&                                   plugin_guid,
@@ -75,6 +143,22 @@ DasResult TaskComponentFactoryManager::OnPluginLoaded(
                 "result={}",
                 static_cast<int>(get_guid_result));
             continue;
+        }
+
+        DasPtr<Das::PluginInterface::IDasTaskComponentHostAware> host_aware;
+        const auto host_aware_result = factory.As(host_aware);
+        if (DAS::IsOk(host_aware_result) && host_aware)
+        {
+            const auto set_host_result =
+                host_aware->SetTaskComponentHost(host_.Get());
+            if (DAS::IsFailed(set_host_result))
+            {
+                DAS_CORE_LOG_WARN(
+                    "Invalid task component factory feature: "
+                    "SetTaskComponentHost failed, result={}",
+                    static_cast<int>(set_host_result));
+                return set_host_result;
+            }
         }
 
         if (plugin_factories.contains(factory_guid))

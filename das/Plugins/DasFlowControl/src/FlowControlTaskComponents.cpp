@@ -160,8 +160,12 @@ namespace
     }
 } // namespace
 
-DasFlowControlTaskComponent::DasFlowControlTaskComponent(std::string_view kind)
-    : kind_(kind), settings_(Das::Utils::MakeYyjsonObject())
+DasFlowControlTaskComponent::DasFlowControlTaskComponent(
+    std::string_view kind,
+    DasPtr<PluginInterface::IDasTaskComponentHost> host)
+    : kind_(kind),
+      settings_(Das::Utils::MakeYyjsonObject()),
+      host_(std::move(host))
 {
 }
 
@@ -346,7 +350,7 @@ DasResult DasFlowControlTaskComponentFactory::CreateComponent(
 
     try
     {
-        auto* component = new DasFlowControlTaskComponent(spec->kind);
+        auto* component = new DasFlowControlTaskComponent(spec->kind, host_);
         component->AddRef();
         *pp_out_component =
             static_cast<PluginInterface::IDasTaskComponent*>(component);
@@ -356,6 +360,13 @@ DasResult DasFlowControlTaskComponentFactory::CreateComponent(
     {
         return DAS_E_OUT_OF_MEMORY;
     }
+}
+
+DasResult DasFlowControlTaskComponentFactory::SetTaskComponentHost(
+    PluginInterface::IDasTaskComponentHost* p_host)
+{
+    host_ = DasPtr<PluginInterface::IDasTaskComponentHost>(p_host);
+    return DAS_S_OK;
 }
 
 DAS_NS_END

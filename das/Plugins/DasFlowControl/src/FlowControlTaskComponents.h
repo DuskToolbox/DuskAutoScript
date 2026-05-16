@@ -7,6 +7,7 @@
 #include <das/Utils/CommonUtils.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponent.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentFactory.Implements.hpp>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentHostAware.Implements.hpp>
 
 #include <string>
 #include <string_view>
@@ -50,7 +51,9 @@ class DasFlowControlTaskComponent final
           DasFlowControlTaskComponent>
 {
 public:
-    explicit DasFlowControlTaskComponent(std::string_view kind);
+    DasFlowControlTaskComponent(
+        std::string_view kind,
+        DasPtr<PluginInterface::IDasTaskComponentHost> host);
 
     DAS_IMPL GetGuid(DasGuid* p_out_guid) override;
     DAS_IMPL GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override;
@@ -67,12 +70,13 @@ public:
         ExportInterface::IDasJson**     pp_out_result_json) override;
 
 private:
-    std::string   kind_;
-    yyjson::value settings_;
+    std::string                                      kind_;
+    yyjson::value                                    settings_;
+    DasPtr<PluginInterface::IDasTaskComponentHost>   host_;
 };
 
 class DasFlowControlTaskComponentFactory final
-    : public PluginInterface::DasTaskComponentFactoryImplBase<
+    : public PluginInterface::DasTaskComponentHostAwareImplBase<
           DasFlowControlTaskComponentFactory>
 {
 public:
@@ -82,6 +86,12 @@ public:
     DAS_IMPL CreateComponent(
         const DasGuid&                       component_guid,
         PluginInterface::IDasTaskComponent** pp_out_component) override;
+
+    DAS_IMPL SetTaskComponentHost(
+        PluginInterface::IDasTaskComponentHost* p_host) override;
+
+private:
+    DasPtr<PluginInterface::IDasTaskComponentHost> host_;
 };
 
 DAS_NS_END
