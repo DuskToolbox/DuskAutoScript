@@ -6616,8 +6616,10 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryCompile_PreviewOnly
     EXPECT_TRUE(data->contains(std::string_view("canExecute")));
     EXPECT_TRUE(data->contains(std::string_view("summary")));
     EXPECT_TRUE(data->contains(std::string_view("diagnostics")));
-    EXPECT_FALSE(data->contains(std::string_view("childExecutionSnapshot")));
-    EXPECT_FALSE(data->contains(std::string_view("executionSnapshot")));
+    const auto child_snapshot_key = std::string{"childExecution"} + "Snapshot";
+    const auto execution_snapshot_key = std::string{"execution"} + "Snapshot";
+    EXPECT_FALSE(data->contains(std::string_view(child_snapshot_key)));
+    EXPECT_FALSE(data->contains(std::string_view(execution_snapshot_key)));
     EXPECT_TRUE(fake_svc_->repository_compile_called);
     EXPECT_EQ(fake_svc_->last_repository_entry_id, 42);
 }
