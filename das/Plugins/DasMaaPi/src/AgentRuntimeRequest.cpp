@@ -343,10 +343,10 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
                     continue;
                 }
 
-                const auto text = std::string(value.as_string().value_or(""));
+                auto text = std::string(value.as_string().value_or(""));
                 if (IsKnownPiEnvKey(key))
                 {
-                    AssignKnownPiEnv(result.request.pi_env, key, text);
+                    AssignKnownPiEnv(result.request.pi_env, key, std::move(text));
                     continue;
                 }
 
@@ -374,7 +374,7 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
 
                 result.request.extra_pi_env.emplace_back(PiEnvVarDto{
                     .key = std::string(key),
-                    .value = text});
+                    .value = std::move(text)});
             }
         }
 
