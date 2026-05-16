@@ -19,7 +19,8 @@ namespace Das::Plugins::DasMaaPi
 
     void ApplySetValueChange(
         AcceptedSettingsDto& settings,
-        const yyjson::value& change);
+        const yyjson::value& change,
+        const PiCatalog*     catalog = nullptr);
 
     void ApplyPreset(
         AcceptedSettingsDto& settings,

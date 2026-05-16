@@ -273,7 +273,12 @@ namespace Plugins::DasMaaPi
                         : std::string_view{};
                 if (kind == "setValue")
                 {
-                    ApplySetValueChange(settings_, *request);
+                    std::vector<PiDiagnosticDto> diagnostics;
+                    auto catalog = TryParseCatalog(settings_, diagnostics);
+                    ApplySetValueChange(
+                        settings_,
+                        *request,
+                        catalog ? &*catalog : nullptr);
                 }
                 else if (kind == "applyPreset")
                 {

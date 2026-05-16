@@ -105,6 +105,102 @@ namespace
         return false;
     }
 
+    bool OptionArrayContains(
+        const yyjson::value& pi,
+        std::string_view     array_name,
+        std::string_view     option_name)
+    {
+        auto pi_obj = pi.as_object();
+        if (!pi_obj || !pi_obj->contains(array_name))
+        {
+            return false;
+        }
+        auto options = (*pi_obj)[array_name].as_array();
+        if (!options)
+        {
+            return false;
+        }
+        for (auto it = options->begin(); it != options->end(); ++it)
+        {
+            auto option = it->as_object();
+            if (option && option->contains(std::string_view("optionName"))
+                && (*option)[std::string_view("optionName")]
+                       .as_string()
+                       .value_or("")
+                       == option_name)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool TaskHasOption(
+        const yyjson::value& task,
+        std::string_view     option_name)
+    {
+        auto task_obj = task.as_object();
+        if (!task_obj || !task_obj->contains(std::string_view("options")))
+        {
+            return false;
+        }
+        auto options = (*task_obj)[std::string_view("options")].as_array();
+        if (!options)
+        {
+            return false;
+        }
+        for (auto it = options->begin(); it != options->end(); ++it)
+        {
+            auto option = it->as_object();
+            if (option && option->contains(std::string_view("optionName"))
+                && (*option)[std::string_view("optionName")]
+                       .as_string()
+                       .value_or("")
+                       == option_name)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    std::string TaskOptionInputValue(
+        const yyjson::value& task,
+        std::string_view     option_name,
+        std::string_view     input_name)
+    {
+        auto task_obj = task.as_object();
+        if (!task_obj || !task_obj->contains(std::string_view("options")))
+        {
+            return {};
+        }
+        auto options = (*task_obj)[std::string_view("options")].as_array();
+        if (!options)
+        {
+            return {};
+        }
+        for (auto it = options->begin(); it != options->end(); ++it)
+        {
+            auto option = it->as_object();
+            if (!option || !option->contains(std::string_view("optionName"))
+                || (*option)[std::string_view("optionName")]
+                           .as_string()
+                           .value_or("")
+                       != option_name
+                || !option->contains(std::string_view("inputValues")))
+            {
+                continue;
+            }
+            auto inputs = (*option)[std::string_view("inputValues")].as_object();
+            if (inputs && inputs->contains(input_name)
+                && (*inputs)[input_name].is_string())
+            {
+                return std::string((*inputs)[input_name].as_string().value_or(""));
+            }
+        }
+        return {};
+    }
+
     std::filesystem::path UniqueSettingsDir()
     {
         const auto ticks =
@@ -243,6 +339,125 @@ TEST_F(MaapiAuthoringFixture, ApplyPathSuccessRefreshesDocument)
     EXPECT_TRUE(ArrayHasFieldWithValuePath(document, "pi.options.retry"));
     EXPECT_TRUE(ArrayHasFieldWithValuePath(document, "pi.options.use-medicine"));
     EXPECT_TRUE(ArrayHasFieldWithValuePath(document, "pi.options.notify"));
+}
+
+TEST_F(MaapiAuthoringFixture, PiValuePathsPersistTasksAndOptions)
+{
+    auto interface_path = FixturePath("interface_authoring.jsonc").generic_string();
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto tasks_change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
+        "\"pi.tasks\",\"value\":[{\"taskName\":\"DailyFarm\","
+        "\"enabled\":true}]}}");
+    ASSERT_EQ(session->ApplyChange(tasks_change.Get(), result_json.Put()), DAS_S_OK);
+
+    auto stage_change = ParseDasJson(
+        "{\"baseRevision\":1,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
+        "\"pi.options.stage\",\"value\":{\"selectedCases\":[\"1-1\"]}}}");
+    ASSERT_EQ(session->ApplyChange(stage_change.Get(), result_json.Put()), DAS_S_OK);
+
+    auto retry_change = ParseDasJson(
+        "{\"baseRevision\":2,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
+        "\"pi.options.retry\",\"value\":{\"inputValues\":{\"times\":\"9\"}}}}");
+    ASSERT_EQ(session->ApplyChange(retry_change.Get(), result_json.Put()), DAS_S_OK);
+
+    auto medicine_change = ParseDasJson(
+        "{\"baseRevision\":3,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
+        "\"pi.options.use-medicine\",\"value\":[\"small\",\"large\"]}}");
+    ASSERT_EQ(
+        session->ApplyChange(medicine_change.Get(), result_json.Put()),
+        DAS_S_OK);
+
+    auto notify_change = ParseDasJson(
+        "{\"baseRevision\":4,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
+        "\"pi.options.notify\",\"value\":true}}");
+    ASSERT_EQ(session->ApplyChange(notify_change.Get(), result_json.Put()), DAS_S_OK);
+
+    auto result = ReadJsonInterface(result_json.Get());
+    auto accepted =
+        (*result.as_object())[std::string_view("acceptedProperties")]
+            .as_object();
+    ASSERT_TRUE(accepted.has_value());
+    auto pi = (*accepted)[std::string_view("pi")];
+    ASSERT_TRUE(OptionArrayContains(pi, "globalOptions", "stage"));
+
+    auto pi_obj = pi.as_object();
+    ASSERT_TRUE(pi_obj.has_value());
+    auto tasks = (*pi_obj)[std::string_view("tasks")].as_array();
+    ASSERT_TRUE(tasks.has_value());
+    ASSERT_EQ(tasks->size(), 1u);
+    auto task = (*tasks)[0].as_object();
+    ASSERT_TRUE(task.has_value());
+    EXPECT_EQ(
+        (*task)[std::string_view("taskName")].as_string().value_or(""),
+        "DailyFarm");
+
+    EXPECT_TRUE(TaskHasOption((*tasks)[0], "retry"));
+    EXPECT_EQ(TaskOptionInputValue((*tasks)[0], "retry", "times"), "9");
+    EXPECT_TRUE(TaskHasOption((*tasks)[0], "use-medicine"));
+    EXPECT_TRUE(TaskHasOption((*tasks)[0], "notify"));
+
+    auto delete_retry = ParseDasJson(
+        "{\"baseRevision\":5,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
+        "\"pi.options.retry\",\"value\":null}}");
+    ASSERT_EQ(session->ApplyChange(delete_retry.Get(), result_json.Put()), DAS_S_OK);
+    result = ReadJsonInterface(result_json.Get());
+    accepted =
+        (*result.as_object())[std::string_view("acceptedProperties")]
+            .as_object();
+    ASSERT_TRUE(accepted.has_value());
+    pi = (*accepted)[std::string_view("pi")];
+    tasks = (*pi.as_object())[std::string_view("tasks")].as_array();
+    ASSERT_TRUE(tasks.has_value());
+    ASSERT_EQ(tasks->size(), 1u);
+    EXPECT_FALSE(TaskHasOption((*tasks)[0], "retry"));
+}
+
+TEST_F(MaapiAuthoringFixture, PiValuePathCleanupRemovesOrphans)
+{
+    auto interface_path = FixturePath("interface_authoring.jsonc").generic_string();
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        + "\"},\"pi\":{\"orphanPaths\":[\"pi.options:legacy\","
+          "\"pi.tasks:MissingTask\"],\"globalOptions\":[{\"optionName\":"
+          "\"legacy\",\"kind\":\"select\",\"selectedCases\":[\"old\"]}],"
+          "\"tasks\":[{\"taskName\":\"MissingTask\",\"enabled\":true}]}}");
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto delete_option = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
+        "\"pi.options.legacy\",\"value\":null}}");
+    ASSERT_EQ(
+        session->ApplyChange(delete_option.Get(), result_json.Put()),
+        DAS_S_OK);
+
+    auto replace_tasks = ParseDasJson(
+        "{\"baseRevision\":1,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
+        "\"pi.tasks\",\"value\":[]}}");
+    ASSERT_EQ(
+        session->ApplyChange(replace_tasks.Get(), result_json.Put()),
+        DAS_S_OK);
+
+    auto result = ReadJsonInterface(result_json.Get());
+    auto accepted =
+        (*result.as_object())[std::string_view("acceptedProperties")]
+            .as_object();
+    ASSERT_TRUE(accepted.has_value());
+    auto pi = (*accepted)[std::string_view("pi")].as_object();
+    ASSERT_TRUE(pi.has_value());
+    auto global_options =
+        (*pi)[std::string_view("globalOptions")].as_array();
+    ASSERT_TRUE(global_options.has_value());
+    EXPECT_TRUE(global_options->empty());
+    auto tasks = (*pi)[std::string_view("tasks")].as_array();
+    ASSERT_TRUE(tasks.has_value());
+    EXPECT_TRUE(tasks->empty());
+    auto orphans = (*pi)[std::string_view("orphanPaths")].as_array();
+    ASSERT_TRUE(orphans.has_value());
+    EXPECT_TRUE(orphans->empty());
 }
 
 TEST_F(MaapiAuthoringFixture, PresetAndOrphansProjectIntoSettings)

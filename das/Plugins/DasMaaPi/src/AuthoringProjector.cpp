@@ -107,6 +107,40 @@ namespace Das::Plugins::DasMaaPi
             return result;
         }
 
+        std::vector<MaapiPiTaskSettingsDto> ParseTaskSettingsArray(
+            const auto&   obj,
+            std::string_view key)
+        {
+            std::vector<MaapiPiTaskSettingsDto> result;
+            if (!obj.contains(key))
+            {
+                return result;
+            }
+            auto arr = obj[key].as_array();
+            if (!arr)
+            {
+                return result;
+            }
+            for (auto it = arr->begin(); it != arr->end(); ++it)
+            {
+                auto task_obj = it->as_object();
+                if (!task_obj)
+                {
+                    continue;
+                }
+                MaapiPiTaskSettingsDto task;
+                task.task_name =
+                    OptionalString(*task_obj, "taskName").value_or("");
+                task.enabled = OptionalBool(*task_obj, "enabled", true);
+                task.options = ParseOptionSettingsArray(*task_obj, "options");
+                if (!task.task_name.empty())
+                {
+                    result.emplace_back(std::move(task));
+                }
+            }
+            return result;
+        }
+
         template <typename TObject>
         std::vector<std::string> StringArray(
             const TObject&   obj,
@@ -176,36 +210,8 @@ namespace Das::Plugins::DasMaaPi
                         ParseOptionSettingsArray(*pi, "resourceOptions");
                     settings.pi.controller_options =
                         ParseOptionSettingsArray(*pi, "controllerOptions");
-                    if (pi->contains(std::string_view("tasks")))
-                    {
-                        if (auto tasks =
-                                (*pi)[std::string_view("tasks")].as_array())
-                        {
-                            for (auto it = tasks->begin(); it != tasks->end();
-                                 ++it)
-                            {
-                                if (auto task_obj = it->as_object())
-                                {
-                                    MaapiPiTaskSettingsDto task;
-                                    task.task_name =
-                                        OptionalString(*task_obj, "taskName")
-                                            .value_or("");
-                                    task.enabled = OptionalBool(
-                                        *task_obj,
-                                        "enabled",
-                                        true);
-                                    task.options = ParseOptionSettingsArray(
-                                        *task_obj,
-                                        "options");
-                                    if (!task.task_name.empty())
-                                    {
-                                        settings.pi.tasks.emplace_back(
-                                            std::move(task));
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    settings.pi.tasks =
+                        ParseTaskSettingsArray(*pi, "tasks");
                 }
             }
             return settings;
@@ -291,6 +297,27 @@ namespace Das::Plugins::DasMaaPi
                         JsonString(option.option_name);
                     (*option_obj)[std::string_view("kind")] =
                         JsonString(option.kind);
+                    yyjson::value cases(Array());
+                    for (const auto& selected_case : option.selected_cases)
+                    {
+                        cases.as_array()->emplace_back(
+                            JsonString(selected_case));
+                    }
+                    (*option_obj)[std::string_view("selectedCases")] =
+                        std::move(cases);
+                    if (option.bool_value)
+                    {
+                        (*option_obj)[std::string_view("boolValue")] =
+                            *option.bool_value;
+                    }
+                    yyjson::value inputs(Object());
+                    for (const auto& [key, input_value] : option.input_values)
+                    {
+                        (*inputs.as_object())[std::string_view(key)] =
+                            JsonString(input_value);
+                    }
+                    (*option_obj)[std::string_view("inputValues")] =
+                        std::move(inputs);
                     options.as_array()->emplace_back(std::move(option_json));
                 }
                 (*obj)[std::string_view("options")] = std::move(options);
@@ -341,6 +368,348 @@ namespace Das::Plugins::DasMaaPi
                 [&](const PiTask& task) {
                     return task.dto.name == name;
                 });
+        }
+
+        bool ContainsName(
+            const std::vector<std::string>& values,
+            std::string_view                name)
+        {
+            return std::find(values.begin(), values.end(), name)
+                   != values.end();
+        }
+
+        const PiController* FindController(
+            const PiCatalog& catalog,
+            std::string_view name)
+        {
+            auto it = std::find_if(
+                catalog.controllers.begin(),
+                catalog.controllers.end(),
+                [&](const PiController& item) {
+                    return item.dto.name == name;
+                });
+            return it == catalog.controllers.end() ? nullptr : &*it;
+        }
+
+        const PiResource* FindResource(
+            const PiCatalog& catalog,
+            std::string_view name)
+        {
+            auto it = std::find_if(
+                catalog.resources.begin(),
+                catalog.resources.end(),
+                [&](const PiResource& item) {
+                    return item.dto.name == name;
+                });
+            return it == catalog.resources.end() ? nullptr : &*it;
+        }
+
+        const PiTask* FindTask(
+            const PiCatalog& catalog,
+            std::string_view name)
+        {
+            auto it = std::find_if(
+                catalog.tasks.begin(),
+                catalog.tasks.end(),
+                [&](const PiTask& item) {
+                    return item.dto.name == name;
+                });
+            return it == catalog.tasks.end() ? nullptr : &*it;
+        }
+
+        MaapiPiTaskSettingsDto* FindSelectedTask(
+            AcceptedSettingsDto& settings,
+            std::string_view     task_name)
+        {
+            auto it = std::find_if(
+                settings.pi.tasks.begin(),
+                settings.pi.tasks.end(),
+                [&](const MaapiPiTaskSettingsDto& item) {
+                    return item.task_name == task_name;
+                });
+            return it == settings.pi.tasks.end() ? nullptr : &*it;
+        }
+
+        std::vector<MaapiPiOptionSettingsDto>* FindTaskOptionContainer(
+            AcceptedSettingsDto& settings,
+            const PiCatalog&     catalog,
+            std::string_view     option_name)
+        {
+            for (auto& task : settings.pi.tasks)
+            {
+                const auto* catalog_task =
+                    FindTask(catalog, task.task_name);
+                if (catalog_task
+                    && ContainsName(catalog_task->dto.option, option_name))
+                {
+                    return &task.options;
+                }
+            }
+
+            auto catalog_task = std::find_if(
+                catalog.tasks.begin(),
+                catalog.tasks.end(),
+                [&](const PiTask& item) {
+                    return ContainsName(item.dto.option, option_name);
+                });
+            if (catalog_task == catalog.tasks.end())
+            {
+                return nullptr;
+            }
+
+            MaapiPiTaskSettingsDto selected;
+            selected.task_name = catalog_task->dto.name;
+            settings.pi.tasks.emplace_back(std::move(selected));
+            return &settings.pi.tasks.back().options;
+        }
+
+        void RemoveOption(
+            std::vector<MaapiPiOptionSettingsDto>& options,
+            std::string_view                       option_name)
+        {
+            std::erase_if(
+                options,
+                [&](const MaapiPiOptionSettingsDto& item) {
+                    return item.option_name == option_name;
+                });
+        }
+
+        void RemoveOptionEverywhere(
+            AcceptedSettingsDto& settings,
+            std::string_view     option_name)
+        {
+            RemoveOption(settings.pi.global_options, option_name);
+            RemoveOption(settings.pi.resource_options, option_name);
+            RemoveOption(settings.pi.controller_options, option_name);
+            for (auto& task : settings.pi.tasks)
+            {
+                RemoveOption(task.options, option_name);
+            }
+        }
+
+        void RemoveOrphanPath(
+            AcceptedSettingsDto& settings,
+            std::string_view     path)
+        {
+            std::erase_if(
+                settings.pi.orphan_paths,
+                [&](const std::string& item) {
+                    return item == path;
+                });
+        }
+
+        void RemoveOrphanPrefix(
+            AcceptedSettingsDto& settings,
+            std::string_view     prefix)
+        {
+            std::erase_if(
+                settings.pi.orphan_paths,
+                [&](const std::string& item) {
+                    return item.starts_with(prefix);
+                });
+        }
+
+        void UpsertOption(
+            std::vector<MaapiPiOptionSettingsDto>& options,
+            MaapiPiOptionSettingsDto               option)
+        {
+            auto it = std::find_if(
+                options.begin(),
+                options.end(),
+                [&](const MaapiPiOptionSettingsDto& item) {
+                    return item.option_name == option.option_name;
+                });
+            if (it == options.end())
+            {
+                options.emplace_back(std::move(option));
+                return;
+            }
+            *it = std::move(option);
+        }
+
+        std::optional<MaapiPiOptionSettingsDto> ParseOptionValue(
+            const PiOption&      option,
+            const yyjson::value& value)
+        {
+            if (value.is_null())
+            {
+                return std::nullopt;
+            }
+
+            MaapiPiOptionSettingsDto result;
+            result.option_name = option.dto.name;
+            result.kind = option.dto.type;
+
+            if (auto obj = value.as_object())
+            {
+                result.kind =
+                    OptionalString(*obj, "kind").value_or(result.kind);
+                result.selected_cases = StringArray(*obj, "selectedCases");
+                if (obj->contains(std::string_view("boolValue"))
+                    && (*obj)[std::string_view("boolValue")].is_bool())
+                {
+                    result.bool_value =
+                        (*obj)[std::string_view("boolValue")]
+                            .as_bool()
+                            .value_or(false);
+                }
+                if (obj->contains(std::string_view("inputValues")))
+                {
+                    if (auto inputs =
+                            (*obj)[std::string_view("inputValues")]
+                                .as_object())
+                    {
+                        for (auto input_it = inputs->begin();
+                             input_it != inputs->end();
+                             ++input_it)
+                        {
+                            if (input_it->second.is_string())
+                            {
+                                result.input_values.emplace(
+                                    input_it->first,
+                                    input_it->second.as_string().value_or(""));
+                            }
+                        }
+                    }
+                }
+                return result;
+            }
+
+            if (value.is_bool())
+            {
+                result.bool_value = value.as_bool().value_or(false);
+                return result;
+            }
+
+            if (value.is_string())
+            {
+                const auto text =
+                    std::string(value.as_string().value_or(""));
+                if (option.dto.type == "input"
+                    && !option.dto.inputs.empty())
+                {
+                    result.input_values.emplace(
+                        option.dto.inputs.front().name,
+                        text);
+                }
+                else
+                {
+                    result.selected_cases.emplace_back(text);
+                }
+                return result;
+            }
+
+            if (auto arr = value.as_array())
+            {
+                for (auto it = arr->begin(); it != arr->end(); ++it)
+                {
+                    if (it->is_string())
+                    {
+                        result.selected_cases.emplace_back(
+                            it->as_string().value_or(""));
+                    }
+                }
+                return result;
+            }
+
+            return result;
+        }
+
+        void ApplyOptionValueChange(
+            AcceptedSettingsDto& settings,
+            const PiCatalog&     catalog,
+            std::string_view     option_name,
+            const yyjson::value& value)
+        {
+            const auto* option = FindOption(catalog, option_name);
+            if (!option)
+            {
+                if (value.is_null())
+                {
+                    RemoveOptionEverywhere(settings, option_name);
+                    RemoveOrphanPath(
+                        settings,
+                        std::string{"pi.options:"}
+                            + std::string{option_name});
+                    RemoveOrphanPath(
+                        settings,
+                        std::string{"pi.options."}
+                            + std::string{option_name});
+                    return;
+                }
+                settings.pi.orphan_paths.emplace_back(
+                    std::string{"pi.options:"} + std::string{option_name});
+                return;
+            }
+
+            RemoveOrphanPath(
+                settings,
+                std::string{"pi.options:"} + std::string{option_name});
+            RemoveOrphanPath(
+                settings,
+                std::string{"pi.options."} + std::string{option_name});
+            if (value.is_null())
+            {
+                RemoveOptionEverywhere(settings, option_name);
+                return;
+            }
+
+            auto parsed = ParseOptionValue(*option, value);
+            if (!parsed)
+            {
+                RemoveOptionEverywhere(settings, option_name);
+                return;
+            }
+
+            RemoveOptionEverywhere(settings, option_name);
+            if (std::any_of(
+                    catalog.global_options.begin(),
+                    catalog.global_options.end(),
+                    [&](const PiOption& item) {
+                        return item.dto.name == option_name;
+                    }))
+            {
+                UpsertOption(
+                    settings.pi.global_options,
+                    std::move(*parsed));
+                return;
+            }
+
+            const auto controller_name =
+                settings.pi.controller_name.value_or(
+                    catalog.controllers.empty()
+                        ? std::string{}
+                        : catalog.controllers.front().dto.name);
+            if (const auto* controller =
+                    FindController(catalog, controller_name);
+                controller
+                && ContainsName(controller->dto.option, option_name))
+            {
+                UpsertOption(
+                    settings.pi.controller_options,
+                    std::move(*parsed));
+                return;
+            }
+
+            const auto resource_name =
+                settings.pi.resource_name.value_or(
+                    catalog.resources.empty()
+                        ? std::string{}
+                        : catalog.resources.front().dto.name);
+            if (const auto* resource = FindResource(catalog, resource_name);
+                resource && ContainsName(resource->dto.option, option_name))
+            {
+                UpsertOption(
+                    settings.pi.resource_options,
+                    std::move(*parsed));
+                return;
+            }
+
+            if (auto* task_options =
+                    FindTaskOptionContainer(settings, catalog, option_name))
+            {
+                UpsertOption(*task_options, std::move(*parsed));
+            }
         }
     } // namespace
 
@@ -603,7 +972,8 @@ namespace Das::Plugins::DasMaaPi
 
     void ApplySetValueChange(
         AcceptedSettingsDto& settings,
-        const yyjson::value& change)
+        const yyjson::value& change,
+        const PiCatalog*     catalog)
     {
         auto obj = change.as_object();
         if (!obj || !obj->contains(std::string_view("payload")))
@@ -649,6 +1019,90 @@ namespace Das::Plugins::DasMaaPi
             settings.pi.resource_name =
                 std::string(value.as_string().value_or(""));
             return;
+        }
+        if (path == "pi.presetName" && value.is_string())
+        {
+            settings.pi.preset_name =
+                std::string(value.as_string().value_or(""));
+            return;
+        }
+        if (path == "pi.tasks")
+        {
+            yyjson::value wrapper(Object());
+            (*wrapper.as_object())[std::string_view("tasks")] = value;
+            settings.pi.tasks =
+                ParseTaskSettingsArray(*wrapper.as_object(), "tasks");
+            RemoveOrphanPrefix(settings, "pi.tasks:");
+            return;
+        }
+        constexpr std::string_view kOptionPrefix = "pi.options.";
+        if (path.starts_with(kOptionPrefix) && catalog)
+        {
+            ApplyOptionValueChange(
+                settings,
+                *catalog,
+                std::string_view(path).substr(kOptionPrefix.size()),
+                value);
+            return;
+        }
+        constexpr std::string_view kTaskPrefix = "pi.tasks.";
+        constexpr std::string_view kTaskOptionSeparator = ".options.";
+        if (path.starts_with(kTaskPrefix) && catalog)
+        {
+            auto tail = std::string_view(path).substr(kTaskPrefix.size());
+            auto option_pos = tail.find(kTaskOptionSeparator);
+            if (option_pos != std::string_view::npos)
+            {
+                auto task_name = tail.substr(0, option_pos);
+                auto option_name = tail.substr(
+                    option_pos + kTaskOptionSeparator.size());
+                auto* task = FindSelectedTask(settings, task_name);
+                if (!task && HasTask(*catalog, task_name))
+                {
+                    MaapiPiTaskSettingsDto selected;
+                    selected.task_name = std::string(task_name);
+                    settings.pi.tasks.emplace_back(std::move(selected));
+                    task = &settings.pi.tasks.back();
+                }
+                if (task)
+                {
+                    if (value.is_null())
+                    {
+                        RemoveOption(task->options, option_name);
+                        return;
+                    }
+                    if (const auto* option = FindOption(*catalog, option_name))
+                    {
+                        auto parsed = ParseOptionValue(*option, value);
+                        if (parsed)
+                        {
+                            RemoveOption(task->options, option_name);
+                            UpsertOption(task->options, std::move(*parsed));
+                        }
+                    }
+                }
+                return;
+            }
+
+            constexpr std::string_view kEnabledSuffix = ".enabled";
+            if (tail.ends_with(kEnabledSuffix) && value.is_bool())
+            {
+                auto task_name =
+                    tail.substr(0, tail.size() - kEnabledSuffix.size());
+                auto* task = FindSelectedTask(settings, task_name);
+                if (!task && HasTask(*catalog, task_name))
+                {
+                    MaapiPiTaskSettingsDto selected;
+                    selected.task_name = std::string(task_name);
+                    settings.pi.tasks.emplace_back(std::move(selected));
+                    task = &settings.pi.tasks.back();
+                }
+                if (task)
+                {
+                    task->enabled = value.as_bool().value_or(true);
+                }
+                return;
+            }
         }
     }
 
