@@ -801,7 +801,6 @@ namespace Core
                 }
             }
 
-#ifdef DAS_IPC_USE_HTTP_TRANSPORT
             boost::asio::awaitable<void> IpcContext::HttpReceiveLoopCoroutine()
             {
                 DAS_CORE_LOG_INFO(
@@ -902,14 +901,6 @@ namespace Core
                     }
                 }
             }
-#endif // DAS_IPC_USE_HTTP_TRANSPORT
-
-#ifndef DAS_IPC_USE_HTTP_TRANSPORT
-            boost::asio::awaitable<void> IpcContext::HttpReceiveLoopCoroutine()
-            {
-                co_return;
-            }
-#endif
 
             void IpcContext::RequestStop()
             {
