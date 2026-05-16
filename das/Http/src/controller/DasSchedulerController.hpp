@@ -214,6 +214,32 @@ namespace Das::Http
             return Beast::HttpResponse::CreateSuccessResponse(parsed.value());
         }
 
+        Beast::HttpResponse RepositoryGet(const Beast::HttpRequest& request)
+        {
+            return DispatchRepositoryBody(
+                request,
+                "get",
+                [this](
+                    IDasReadOnlyString*,
+                    IDasReadOnlyString** pp_out)
+                { return scheduler_.GetTaskRepository(pp_out); });
+        }
+
+        Beast::HttpResponse RepositoryCreate(const Beast::HttpRequest& request)
+        {
+            return DispatchRepositoryBody(
+                request,
+                "create",
+                [this](
+                    IDasReadOnlyString* p_body,
+                    IDasReadOnlyString** pp_out)
+                {
+                    return scheduler_.CreateRepositoryEntry(
+                        p_body,
+                        pp_out);
+                });
+        }
+
         // ── Task instance mutations ──
 
         Beast::HttpResponse AddTask(const Beast::HttpRequest& request)
@@ -565,6 +591,104 @@ namespace Das::Http
                     (*obj)[std::string_view("message")]
                         .as_string()
                         .value_or("Task authoring request failed")};
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_FAIL,
+                    message,
+                    *parsed);
+            }
+
+            return Beast::HttpResponse::CreateSuccessResponse(*parsed);
+        }
+
+        template <typename Fn>
+        Beast::HttpResponse DispatchRepositoryBody(
+            const Beast::HttpRequest& request,
+            const std::string&        operation,
+            Fn&&                      fn)
+        {
+            auto profile = request.GetPathParameter("profile");
+            if (profile != "0")
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Profile ID must be 0 in v1.2");
+            }
+
+            if (request.Body().empty())
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Request body must be a JSON object");
+            }
+
+            auto parsed_body = Das::Utils::ParseYyjsonFromString(
+                request.Body());
+            if (!parsed_body)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_JSON,
+                    "Invalid repository request JSON");
+            }
+
+            if (!parsed_body->is_object())
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Request body must be a JSON object");
+            }
+
+            auto body_json = Das::Utils::SerializeYyjsonValue(*parsed_body);
+            if (!body_json)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_JSON,
+                    "Failed to serialize repository request body");
+            }
+
+            DasPtr<IDasReadOnlyString> p_body;
+            auto cr = CreateIDasReadOnlyStringFromUtf8(
+                body_json->c_str(),
+                p_body.Put());
+            if (DAS::IsFailed(cr))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    cr,
+                    "Failed to create repository request string");
+            }
+
+            DasPtr<IDasReadOnlyString> p_result;
+            auto result = fn(p_body.Get(), p_result.Put());
+            if (DAS::IsFailed(result))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    result,
+                    "Failed to dispatch repository " + operation);
+            }
+
+            const char* raw = nullptr;
+            auto        get_result = p_result->GetUtf8(&raw);
+            if (DAS::IsFailed(get_result) || raw == nullptr)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    get_result,
+                    "Failed to read repository " + operation + " result");
+            }
+
+            auto parsed = Das::Utils::ParseYyjsonFromString(raw);
+            if (!parsed)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_JSON,
+                    "Failed to parse repository " + operation + " result");
+            }
+
+            auto obj = parsed->as_object();
+            if (obj && obj->contains(std::string_view("errorKind")))
+            {
+                auto message = std::string{
+                    (*obj)[std::string_view("message")]
+                        .as_string()
+                        .value_or("Repository request failed")};
                 return Beast::HttpResponse::CreateErrorResponse(
                     DAS_E_FAIL,
                     message,
