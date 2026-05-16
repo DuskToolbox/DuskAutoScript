@@ -73,6 +73,7 @@ if(DAS_BUILD_TEST)
         test/MaapiCompileTest.cpp
         test/MaapiIntegrationTest.cpp
         test/MaapiAgentRuntimeDtoTest.cpp
+        test/MaapiAgentRuntimeLifecycleTest.cpp
         test/MaapiPluginScaffoldTest.cpp
         test/MaapiPiParserTest.cpp
         test/MaapiRuntimeTest.cpp)

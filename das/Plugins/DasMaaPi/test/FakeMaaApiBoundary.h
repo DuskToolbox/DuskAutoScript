@@ -18,6 +18,8 @@ namespace Das::Plugins::DasMaaPi::Test
         std::map<std::string, MaaTaskStatus> wait_status_by_entry;
         std::map<std::string, MaaApiResult>  post_result_by_entry;
         std::optional<ControllerSpec>        last_controller_spec;
+        std::optional<std::string>           last_agent_client_identifier;
+        std::optional<std::uint16_t>         last_agent_client_tcp_port;
 
         MaaResourceHandle CreateResource() override
         {
@@ -119,6 +121,111 @@ namespace Das::Plugins::DasMaaPi::Test
         {
             calls.emplace_back("PostStop");
             return MaaApiResult::Ok(NextId());
+        }
+
+        MaaAgentClientHandle CreateAgentClientV2(
+            std::optional<std::string_view> identifier) override
+        {
+            last_agent_client_identifier =
+                identifier ? std::optional<std::string>(*identifier)
+                           : std::nullopt;
+            calls.emplace_back(
+                "CreateAgentClientV2:"
+                + last_agent_client_identifier.value_or("<auto>"));
+            return NextHandle();
+        }
+
+        MaaAgentClientHandle CreateAgentClientTcp(
+            std::uint16_t port) override
+        {
+            last_agent_client_tcp_port = port;
+            calls.emplace_back(
+                "CreateAgentClientTcp:" + std::to_string(port));
+            return NextHandle();
+        }
+
+        void DestroyAgentClient(
+            MaaAgentClientHandle client) noexcept override
+        {
+            calls.emplace_back(
+                "DestroyAgentClient:" + std::to_string(client));
+        }
+
+        std::optional<std::string> GetAgentClientIdentifier(
+            MaaAgentClientHandle) override
+        {
+            calls.emplace_back("GetAgentClientIdentifier");
+            return "agent-client-id";
+        }
+
+        MaaApiResult BindAgentClientResource(
+            MaaAgentClientHandle,
+            MaaResourceHandle) override
+        {
+            calls.emplace_back("BindAgentClientResource");
+            return MaaApiResult::Ok();
+        }
+
+        MaaApiResult RegisterAgentClientResourceSink(
+            MaaAgentClientHandle,
+            MaaResourceHandle) override
+        {
+            calls.emplace_back("RegisterAgentClientResourceSink");
+            return MaaApiResult::Ok();
+        }
+
+        MaaApiResult RegisterAgentClientControllerSink(
+            MaaAgentClientHandle,
+            MaaControllerHandle) override
+        {
+            calls.emplace_back("RegisterAgentClientControllerSink");
+            return MaaApiResult::Ok();
+        }
+
+        MaaApiResult RegisterAgentClientTaskerSink(
+            MaaAgentClientHandle,
+            MaaTaskerHandle) override
+        {
+            calls.emplace_back("RegisterAgentClientTaskerSink");
+            return MaaApiResult::Ok();
+        }
+
+        MaaApiResult SetAgentClientTimeout(
+            MaaAgentClientHandle,
+            std::int64_t milliseconds) override
+        {
+            calls.emplace_back(
+                "SetAgentClientTimeout:" + std::to_string(milliseconds));
+            return MaaApiResult::Ok();
+        }
+
+        MaaApiResult ConnectAgentClient(
+            MaaAgentClientHandle) override
+        {
+            calls.emplace_back("ConnectAgentClient");
+            return MaaApiResult::Ok();
+        }
+
+        bool DisconnectAgentClient(
+            MaaAgentClientHandle client) noexcept override
+        {
+            calls.emplace_back(
+                "DisconnectAgentClient:" + std::to_string(client));
+            return true;
+        }
+
+        bool IsAgentClientConnected(
+            MaaAgentClientHandle) override
+        {
+            calls.emplace_back("IsAgentClientConnected");
+            return true;
+        }
+
+        bool IsAgentClientAlive(
+            MaaAgentClientHandle) override
+        {
+            calls.emplace_back("IsAgentClientAlive");
+            return true;
         }
 
         bool Contains(std::string_view expected) const
