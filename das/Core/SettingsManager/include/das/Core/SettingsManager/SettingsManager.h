@@ -12,6 +12,7 @@
 #include <shared_mutex>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 DAS_CORE_SETTINGS_MANAGER_NS_BEGIN
 
@@ -163,6 +164,9 @@ public:
     DasResult DeleteTaskRepositoryEntryJson(
         const std::string& profile_id,
         int64_t            entry_id);
+    std::vector<int64_t> ListTaskRepositoryEntryIds(
+        const std::string& profile_id) const;
+    int64_t AllocateNextTaskRepositoryEntryId(const std::string& profile_id);
 
     /// Register a callback to be invoked when settings change.
     void SetSettingsNotifyCallback(SettingsNotifyFunc func, void* user_data);

@@ -3,9 +3,14 @@
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/Utils/DasJsonCore.h>
 
+#include <algorithm>
+#include <charconv>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <sstream>
+#include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -91,6 +96,43 @@ namespace
         auto& cur_obj = cur.value();
         auto  key = path.substr(start);
         return cur_obj[std::string_view(key)];
+    }
+
+    std::optional<int64_t> TryParseTaskRepositoryEntryId(
+        std::string_view filename)
+    {
+        constexpr std::string_view prefix = "taskRepository";
+        constexpr std::string_view suffix = ".json";
+
+        if (!filename.starts_with(prefix) || !filename.ends_with(suffix))
+        {
+            return std::nullopt;
+        }
+
+        auto digits = filename.substr(
+            prefix.size(),
+            filename.size() - prefix.size() - suffix.size());
+        if (digits.empty())
+        {
+            return std::nullopt;
+        }
+        if (!std::all_of(
+                digits.begin(),
+                digits.end(),
+                [](char ch) { return ch >= '0' && ch <= '9'; }))
+        {
+            return std::nullopt;
+        }
+
+        int64_t id = 0;
+        auto [ptr, ec] =
+            std::from_chars(digits.data(), digits.data() + digits.size(), id);
+        if (ec != std::errc{} || ptr != digits.data() + digits.size())
+        {
+            return std::nullopt;
+        }
+
+        return id;
     }
 } // namespace
 
@@ -1173,6 +1215,62 @@ DasResult SettingsManager::DeleteTaskRepositoryEntryJson(
         DAS_CORE_LOG_EXCEPTION(ex);
         return DAS_E_INVALID_FILE;
     }
+}
+
+std::vector<int64_t> SettingsManager::ListTaskRepositoryEntryIds(
+    const std::string& profile_id) const
+{
+    std::vector<int64_t> ids;
+
+    try
+    {
+        auto profile_dir = GetProfileDir(profile_id);
+        if (!std::filesystem::exists(profile_dir)
+            || !std::filesystem::is_directory(profile_dir))
+        {
+            return ids;
+        }
+
+        for (const auto& entry :
+             std::filesystem::directory_iterator(profile_dir))
+        {
+            if (!entry.is_regular_file())
+            {
+                continue;
+            }
+
+            auto id =
+                TryParseTaskRepositoryEntryId(entry.path().filename().string());
+            if (id.has_value())
+            {
+                ids.push_back(*id);
+            }
+        }
+    }
+    catch (const std::filesystem::filesystem_error& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+    }
+
+    std::sort(ids.begin(), ids.end());
+    return ids;
+}
+
+int64_t SettingsManager::AllocateNextTaskRepositoryEntryId(
+    const std::string& profile_id)
+{
+    auto* cell =
+        GetOrCreateCell("profile/" + profile_id + "/taskRepository/allocate");
+
+    std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
+
+    auto ids = ListTaskRepositoryEntryIds(profile_id);
+    if (ids.empty())
+    {
+        return 0;
+    }
+
+    return ids.back() + 1;
 }
 
 // --- Path helpers ---
