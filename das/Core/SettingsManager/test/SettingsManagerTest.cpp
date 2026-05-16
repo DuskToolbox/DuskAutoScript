@@ -606,7 +606,56 @@ namespace
             false);
     }
 
-    TEST_F(SettingsManagerTest, AuthoringPersistence_TaskInstanceSiblingMetadata)
+    TEST_F(SettingsManagerTest, TaskRepository_ReadWriteDeleteIsolation)
+    {
+        Das::Core::SettingsManager::SettingsManager sm(test_dir_);
+        sm.CreateProfile("0");
+
+        yyjson::value entry(Das::Utils::MakeYyjsonObject());
+        (*entry.as_object())[std::string_view("entryId")] = 12;
+        (*entry.as_object())[std::string_view("displayName")] =
+            "repository-entry";
+        (*entry.as_object())[std::string_view("pluginGuid")] = "plugin-guid";
+        (*entry.as_object())[std::string_view("taskTypeGuid")] =
+            "task-type-guid";
+
+        auto result = sm.UpdateTaskRepositoryEntryJson("0", 12, entry);
+        EXPECT_EQ(result, DAS_S_OK);
+
+        auto repository_file = test_dir_ / "0" / "taskRepository12.json";
+        EXPECT_TRUE(std::filesystem::exists(repository_file));
+        EXPECT_FALSE(
+            std::filesystem::exists(test_dir_ / "0" / "taskId12.json"));
+        EXPECT_FALSE(
+            std::filesystem::exists(test_dir_ / "0" / "scheduler.json"));
+
+        auto loaded = sm.GetTaskRepositoryEntryJson("0", 12);
+        EXPECT_EQ(
+            (*loaded.as_object())[std::string_view("entryId")]
+                .as_sint()
+                .value(),
+            12);
+        EXPECT_EQ(
+            std::string((*loaded.as_object())[std::string_view("displayName")]
+                            .as_string()
+                            .value()),
+            "repository-entry");
+
+        auto profile = sm.GetProfileJson("0");
+        EXPECT_FALSE((*profile.as_object())
+                         .contains(std::string_view("taskRepository")));
+
+        result = sm.DeleteTaskRepositoryEntryJson("0", 12);
+        EXPECT_EQ(result, DAS_S_OK);
+        EXPECT_FALSE(std::filesystem::exists(repository_file));
+
+        result = sm.DeleteTaskRepositoryEntryJson("0", 12);
+        EXPECT_EQ(result, DAS_S_FALSE);
+    }
+
+    TEST_F(
+        SettingsManagerTest,
+        AuthoringPersistence_TaskInstanceSiblingMetadata)
     {
         Das::Core::SettingsManager::SettingsManager sm(test_dir_);
         sm.CreateProfile("0");
@@ -624,8 +673,7 @@ namespace
         {
             yyjson::value authoring(Das::Utils::MakeYyjsonObject());
             (*authoring.as_object())[std::string_view("revision")] = 4;
-            (*authoring.as_object())[std::string_view("kind")] =
-                "formSequence";
+            (*authoring.as_object())[std::string_view("kind")] = "formSequence";
             (*authoring.as_object())[std::string_view("sourceFingerprint")] =
                 "fake-source";
             (*authoring.as_object())[std::string_view("migration")] =
@@ -645,8 +693,7 @@ namespace
         EXPECT_FALSE(obj->contains(std::string_view("operations")));
         EXPECT_FALSE(obj->contains(std::string_view("authoringDocument")));
 
-        auto authoring =
-            (*obj)[std::string_view("authoring")].as_object();
+        auto authoring = (*obj)[std::string_view("authoring")].as_object();
         ASSERT_TRUE(authoring.has_value());
         EXPECT_EQ(
             (*authoring)[std::string_view("revision")].as_sint().value_or(-1),
