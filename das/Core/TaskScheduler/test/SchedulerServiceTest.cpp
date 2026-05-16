@@ -1500,6 +1500,7 @@ struct FactoryTaskSharedState
     int64_t                 last_context_revision = -1;
     std::string             last_props_key1_value;
     std::string             last_compile_purpose;
+    bool                    apply_ok = true;
     bool                    compile_ok = true;
 };
 
@@ -1750,6 +1751,10 @@ public:
         {
             std::lock_guard<std::mutex> lock(state_->mutex);
             ++state_->apply_change_count;
+            if (!state_->apply_ok)
+            {
+                return DAS_E_FAIL;
+            }
         }
 
         yyjson::value result(Das::Utils::MakeYyjsonObject());
@@ -3380,6 +3385,22 @@ namespace
         return request;
     }
 
+    yyjson::value MakeRepositoryAuthoringChange(
+        std::optional<int64_t> base_revision,
+        std::string_view       kind = "setValue")
+    {
+        yyjson::value change(Das::Utils::MakeYyjsonObject());
+        if (base_revision)
+        {
+            (*change.as_object())[std::string_view("baseRevision")] =
+                *base_revision;
+        }
+        (*change.as_object())[std::string_view("kind")] = std::string(kind);
+        (*change.as_object())[std::string_view("payload")] =
+            yyjson::value(Das::Utils::MakeYyjsonObject());
+        return change;
+    }
+
     void SeedRepositoryEntry(
         Das::Core::SettingsManager::SettingsManager& settings,
         int64_t                                      entry_id,
@@ -3647,6 +3668,211 @@ TEST_F(
     EXPECT_EQ(shared_state_->last_context_task_id, -1);
     EXPECT_EQ(shared_state_->last_context_revision, 0);
     EXPECT_EQ(shared_state_->last_props_key1_value, "default");
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryAuthoringApplyPersistsAcceptedSettingsAndRevision)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    auto created = scheduler_->CreateRepositoryEntry(
+        MakeRepositoryCreateRequest("Apply repository entry", 8));
+    ASSERT_EQ(
+        (*created.as_object())[std::string_view("entryId")]
+            .as_sint()
+            .value_or(-1),
+        0);
+
+    auto change = MakeRepositoryAuthoringChange(0);
+    auto result = scheduler_->ApplyRepositoryEntryAuthoringChange(0, change);
+    auto result_obj = result.as_object();
+    ASSERT_TRUE(result_obj.has_value());
+    EXPECT_TRUE((*result_obj)[std::string_view("ok")].as_bool().value_or(false));
+    EXPECT_EQ(
+        (*result_obj)[std::string_view("entryId")].as_sint().value_or(-1),
+        0);
+    EXPECT_EQ(
+        (*result_obj)[std::string_view("revision")].as_sint().value_or(-1),
+        1);
+    auto accepted =
+        (*result_obj)[std::string_view("acceptedProperties")].as_object();
+    ASSERT_TRUE(accepted.has_value());
+    EXPECT_EQ(
+        (*accepted)[std::string_view("key1")].as_string().value_or(""),
+        std::string_view("accepted"));
+    auto document = (*result_obj)[std::string_view("document")].as_object();
+    ASSERT_TRUE(document.has_value());
+    EXPECT_EQ(
+        (*document)[std::string_view("kind")].as_string().value_or(""),
+        std::string_view("formSequence"));
+
+    auto persisted = settings_manager_->GetTaskRepositoryEntryJson("0", 0);
+    auto persisted_obj = persisted.as_object();
+    ASSERT_TRUE(persisted_obj.has_value());
+    auto persisted_props =
+        (*persisted_obj)[std::string_view("acceptedProperties")].as_object();
+    ASSERT_TRUE(persisted_props.has_value());
+    EXPECT_EQ(
+        (*persisted_props)[std::string_view("key1")]
+            .as_string()
+            .value_or(""),
+        std::string_view("accepted"));
+    auto authoring =
+        (*persisted_obj)[std::string_view("authoring")].as_object();
+    ASSERT_TRUE(authoring.has_value());
+    EXPECT_EQ(
+        (*authoring)[std::string_view("revision")].as_sint().value_or(-1),
+        1);
+    EXPECT_EQ(
+        (*authoring)[std::string_view("kind")].as_string().value_or(""),
+        std::string_view("setValue"));
+    EXPECT_EQ(
+        (*authoring)[std::string_view("sourceFingerprint")]
+            .as_string()
+            .value_or(""),
+        std::string_view("fake-source"));
+
+    std::lock_guard<std::mutex> lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->apply_change_count, 1);
+    EXPECT_GE(shared_state_->get_document_count, 1);
+    EXPECT_EQ(shared_state_->last_context_entry_id, 0);
+    EXPECT_FALSE(shared_state_->last_context_had_task_id);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryAuthoringApplyStaleBaseRevisionReturnsConflict)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    auto created = scheduler_->CreateRepositoryEntry(
+        MakeRepositoryCreateRequest("Stale revision entry", 8));
+    ASSERT_EQ(
+        (*created.as_object())[std::string_view("entryId")]
+            .as_sint()
+            .value_or(-1),
+        0);
+
+    auto persisted = settings_manager_->GetTaskRepositoryEntryJson("0", 0);
+    auto authoring =
+        (*persisted.as_object())[std::string_view("authoring")].as_object();
+    ASSERT_TRUE(authoring.has_value());
+    (*authoring)[std::string_view("revision")] = 3;
+    ASSERT_EQ(
+        settings_manager_->UpdateTaskRepositoryEntryJson("0", 0, persisted),
+        DAS_S_OK);
+
+    auto change = MakeRepositoryAuthoringChange(2);
+    auto result = scheduler_->ApplyRepositoryEntryAuthoringChange(0, change);
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    EXPECT_EQ(
+        (*obj)[std::string_view("errorKind")].as_string().value_or(""),
+        std::string_view("revisionConflict"));
+    EXPECT_EQ(
+        (*obj)[std::string_view("currentRevision")].as_sint().value_or(-1),
+        3);
+    ExpectNoRepositoryAuthoringProviderCalls(shared_state_);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryAuthoringApplyMissingBaseRevisionReturnsConflict)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    auto created = scheduler_->CreateRepositoryEntry(
+        MakeRepositoryCreateRequest("Missing base revision entry", 8));
+    ASSERT_EQ(
+        (*created.as_object())[std::string_view("entryId")]
+            .as_sint()
+            .value_or(-1),
+        0);
+
+    auto change = MakeRepositoryAuthoringChange(std::nullopt);
+    auto result = scheduler_->ApplyRepositoryEntryAuthoringChange(0, change);
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    EXPECT_EQ(
+        (*obj)[std::string_view("errorKind")].as_string().value_or(""),
+        std::string_view("revisionConflict"));
+    EXPECT_EQ(
+        (*obj)[std::string_view("currentRevision")].as_sint().value_or(-1),
+        0);
+    ExpectNoRepositoryAuthoringProviderCalls(shared_state_);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryAuthoringApplyProviderFailureDoesNotPersist)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    auto created = scheduler_->CreateRepositoryEntry(
+        MakeRepositoryCreateRequest("Provider failure entry", 8));
+    ASSERT_EQ(
+        (*created.as_object())[std::string_view("entryId")]
+            .as_sint()
+            .value_or(-1),
+        0);
+    {
+        std::lock_guard<std::mutex> lock(shared_state_->mutex);
+        shared_state_->apply_ok = false;
+    }
+
+    auto change = MakeRepositoryAuthoringChange(0);
+    auto result = scheduler_->ApplyRepositoryEntryAuthoringChange(0, change);
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    EXPECT_EQ(
+        (*obj)[std::string_view("errorKind")].as_string().value_or(""),
+        std::string_view("providerFailed"));
+
+    auto persisted = settings_manager_->GetTaskRepositoryEntryJson("0", 0);
+    auto authoring =
+        (*persisted.as_object())[std::string_view("authoring")].as_object();
+    ASSERT_TRUE(authoring.has_value());
+    EXPECT_EQ(
+        (*authoring)[std::string_view("revision")].as_sint().value_or(-1),
+        0);
+    auto persisted_props =
+        (*persisted.as_object())[std::string_view("acceptedProperties")]
+            .as_object();
+    ASSERT_TRUE(persisted_props.has_value());
+    EXPECT_EQ(
+        (*persisted_props)[std::string_view("key1")]
+            .as_string()
+            .value_or(""),
+        std::string_view("default"));
+
+    std::lock_guard<std::mutex> lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->apply_change_count, 1);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryAuthoringApplyPersistenceFailureReturnsError)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    auto created = scheduler_->CreateRepositoryEntry(
+        MakeRepositoryCreateRequest("Persistence failure entry", 8));
+    ASSERT_EQ(
+        (*created.as_object())[std::string_view("entryId")]
+            .as_sint()
+            .value_or(-1),
+        0);
+
+    auto entry_path = settings_dir_ / "0" / "taskRepository0.json";
+    std::filesystem::remove(entry_path);
+    std::filesystem::create_directory(entry_path);
+
+    auto change = MakeRepositoryAuthoringChange(0);
+    auto result = scheduler_->ApplyRepositoryEntryAuthoringChange(0, change);
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    EXPECT_EQ(
+        (*obj)[std::string_view("errorKind")].as_string().value_or(""),
+        std::string_view("persistenceFailed"));
+
+    std::lock_guard<std::mutex> lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->apply_change_count, 1);
 }
 
 TEST_F(
