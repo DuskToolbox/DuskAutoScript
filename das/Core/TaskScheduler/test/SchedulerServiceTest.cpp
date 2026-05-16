@@ -3668,6 +3668,26 @@ namespace
         return parsed ? std::move(*parsed)
                       : yyjson::value(Das::Utils::MakeYyjsonObject());
     }
+
+    void CreateRepositoryEntryThroughBridgeForTest(
+        SchedulerServiceImpl& impl,
+        std::string_view      display_name,
+        int64_t               retry_count = 3)
+    {
+        auto request_json = SerializeJsonForTest(
+            MakeRepositoryCreateRequest(display_name, retry_count));
+        DasPtr<IDasReadOnlyString> request;
+        ASSERT_EQ(
+            CreateIDasReadOnlyStringFromUtf8(
+                request_json.c_str(),
+                request.Put()),
+            DAS_S_OK);
+
+        DasPtr<IDasReadOnlyString> out;
+        ASSERT_EQ(
+            impl.CreateRepositoryEntry(request.Get(), out.Put()),
+            DAS_S_OK);
+    }
 } // namespace
 
 TEST_F(
@@ -3909,6 +3929,179 @@ TEST_F(
     EXPECT_EQ(
         (*obj)[std::string_view("displayName")].as_string().value_or(""),
         std::string_view("After rename"));
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerServiceImplRepositoryAuthoringNullOutRejected)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    SchedulerServiceImpl impl(*scheduler_);
+
+    DasPtr<IDasReadOnlyString> request;
+    ASSERT_EQ(CreateIDasReadOnlyStringFromUtf8("{}", request.Put()), DAS_S_OK);
+
+    auto change_json =
+        SerializeJsonForTest(MakeRepositoryAuthoringChange(0));
+    DasPtr<IDasReadOnlyString> change;
+    ASSERT_EQ(
+        CreateIDasReadOnlyStringFromUtf8(change_json.c_str(), change.Put()),
+        DAS_S_OK);
+
+    EXPECT_EQ(
+        impl.GetRepositoryEntryAuthoringDocument(0, request.Get(), nullptr),
+        DAS_E_INVALID_POINTER);
+    EXPECT_EQ(
+        impl.ApplyRepositoryEntryAuthoringChange(0, change.Get(), nullptr),
+        DAS_E_INVALID_POINTER);
+    EXPECT_EQ(
+        impl.CompileRepositoryEntryAuthoring(0, request.Get(), nullptr),
+        DAS_E_INVALID_POINTER);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerServiceImplRepositoryAuthoringNullBodyRejected)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    SchedulerServiceImpl        impl(*scheduler_);
+    DasPtr<IDasReadOnlyString> out;
+
+    EXPECT_EQ(
+        impl.GetRepositoryEntryAuthoringDocument(0, nullptr, out.Put()),
+        DAS_E_INVALID_POINTER);
+    out.Reset();
+    EXPECT_EQ(
+        impl.ApplyRepositoryEntryAuthoringChange(0, nullptr, out.Put()),
+        DAS_E_INVALID_POINTER);
+    out.Reset();
+    EXPECT_EQ(
+        impl.CompileRepositoryEntryAuthoring(0, nullptr, out.Put()),
+        DAS_E_INVALID_POINTER);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerServiceImplRepositoryAuthoringInvalidJsonRejected)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    SchedulerServiceImpl impl(*scheduler_);
+
+    DasPtr<IDasReadOnlyString> malformed;
+    ASSERT_EQ(
+        CreateIDasReadOnlyStringFromUtf8("{bad", malformed.Put()),
+        DAS_S_OK);
+    DasPtr<IDasReadOnlyString> out;
+    EXPECT_EQ(
+        impl.GetRepositoryEntryAuthoringDocument(0, malformed.Get(), out.Put()),
+        DAS_E_INVALID_JSON);
+    out.Reset();
+    EXPECT_EQ(
+        impl.ApplyRepositoryEntryAuthoringChange(0, malformed.Get(), out.Put()),
+        DAS_E_INVALID_JSON);
+    out.Reset();
+    EXPECT_EQ(
+        impl.CompileRepositoryEntryAuthoring(0, malformed.Get(), out.Put()),
+        DAS_E_INVALID_JSON);
+
+    DasPtr<IDasReadOnlyString> non_object;
+    ASSERT_EQ(
+        CreateIDasReadOnlyStringFromUtf8("[]", non_object.Put()),
+        DAS_S_OK);
+    out.Reset();
+    EXPECT_EQ(
+        impl.GetRepositoryEntryAuthoringDocument(
+            0,
+            non_object.Get(),
+            out.Put()),
+        DAS_E_INVALID_JSON);
+    out.Reset();
+    EXPECT_EQ(
+        impl.ApplyRepositoryEntryAuthoringChange(
+            0,
+            non_object.Get(),
+            out.Put()),
+        DAS_E_INVALID_JSON);
+    out.Reset();
+    EXPECT_EQ(
+        impl.CompileRepositoryEntryAuthoring(0, non_object.Get(), out.Put()),
+        DAS_E_INVALID_JSON);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerServiceImplRepositoryAuthoringAndCompileReturnJson)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    SchedulerServiceImpl impl(*scheduler_);
+    CreateRepositoryEntryThroughBridgeForTest(impl, "Authoring bridge", 9);
+
+    DasPtr<IDasReadOnlyString> request;
+    ASSERT_EQ(CreateIDasReadOnlyStringFromUtf8("{}", request.Put()), DAS_S_OK);
+    DasPtr<IDasReadOnlyString> document_out;
+    ASSERT_EQ(
+        impl.GetRepositoryEntryAuthoringDocument(
+            0,
+            request.Get(),
+            document_out.Put()),
+        DAS_S_OK);
+    auto document = ParseReadOnlyJsonForTest(document_out.Get());
+    auto document_obj = document.as_object();
+    ASSERT_TRUE(document_obj.has_value());
+    EXPECT_EQ(
+        (*document_obj)[std::string_view("entryId")].as_sint().value_or(-1),
+        0);
+    EXPECT_TRUE(
+        (*document_obj)[std::string_view("document")].as_object().has_value());
+
+    auto change_json =
+        SerializeJsonForTest(MakeRepositoryAuthoringChange(0));
+    DasPtr<IDasReadOnlyString> change;
+    ASSERT_EQ(
+        CreateIDasReadOnlyStringFromUtf8(change_json.c_str(), change.Put()),
+        DAS_S_OK);
+    DasPtr<IDasReadOnlyString> apply_out;
+    ASSERT_EQ(
+        impl.ApplyRepositoryEntryAuthoringChange(
+            0,
+            change.Get(),
+            apply_out.Put()),
+        DAS_S_OK);
+    auto apply = ParseReadOnlyJsonForTest(apply_out.Get());
+    auto apply_obj = apply.as_object();
+    ASSERT_TRUE(apply_obj.has_value());
+    EXPECT_TRUE((*apply_obj)[std::string_view("ok")].as_bool().value_or(false));
+    EXPECT_EQ(
+        (*apply_obj)[std::string_view("revision")].as_sint().value_or(-1),
+        1);
+
+    yyjson::value compile_request(Das::Utils::MakeYyjsonObject());
+    (*compile_request.as_object())[std::string_view("purpose")] = "preview";
+    auto compile_json = SerializeJsonForTest(compile_request);
+    DasPtr<IDasReadOnlyString> compile_request_string;
+    ASSERT_EQ(
+        CreateIDasReadOnlyStringFromUtf8(
+            compile_json.c_str(),
+            compile_request_string.Put()),
+        DAS_S_OK);
+    DasPtr<IDasReadOnlyString> compile_out;
+    ASSERT_EQ(
+        impl.CompileRepositoryEntryAuthoring(
+            0,
+            compile_request_string.Get(),
+            compile_out.Put()),
+        DAS_S_OK);
+
+    auto compile = ParseReadOnlyJsonForTest(compile_out.Get());
+    auto compile_obj = compile.as_object();
+    ASSERT_TRUE(compile_obj.has_value());
+    EXPECT_EQ(
+        (*compile_obj)[std::string_view("entryId")].as_sint().value_or(-1),
+        0);
+    EXPECT_TRUE(
+        (*compile_obj)[std::string_view("canExecute")]
+            .as_bool()
+            .value_or(false));
 }
 
 TEST_F(
