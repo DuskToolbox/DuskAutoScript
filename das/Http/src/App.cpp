@@ -346,6 +346,16 @@ namespace Das::Http
             [scheduler_controller](const Das::Http::Beast::HttpRequest& req)
             { return scheduler_controller->RepositoryCreate(req); });
         components.router->Post(
+            DAS_HTTP_API_PREFIX
+            "scheduler/{profile}/repository/entries/{entryId}/delete",
+            [scheduler_controller](const Das::Http::Beast::HttpRequest& req)
+            { return scheduler_controller->RepositoryDelete(req); });
+        components.router->Post(
+            DAS_HTTP_API_PREFIX
+            "scheduler/{profile}/repository/entries/{entryId}/rename",
+            [scheduler_controller](const Das::Http::Beast::HttpRequest& req)
+            { return scheduler_controller->RepositoryRename(req); });
+        components.router->Post(
             DAS_HTTP_API_PREFIX "scheduler/{profile}/{taskGuid}/put",
             [scheduler_controller](const Das::Http::Beast::HttpRequest& req)
             { return scheduler_controller->AddTask(req); });

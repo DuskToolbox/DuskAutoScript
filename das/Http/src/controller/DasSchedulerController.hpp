@@ -12,6 +12,7 @@
 #include <das/Utils/fmt.h>
 #include <das/_autogen/idl/abi/IDasGuidVector.h>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -235,6 +236,65 @@ namespace Das::Http
                     IDasReadOnlyString** pp_out)
                 {
                     return scheduler_.CreateRepositoryEntry(
+                        p_body,
+                        pp_out);
+                });
+        }
+
+        // Repository management HTTP contract.
+        // Method/path:
+        //   POST /api/v1/scheduler/{profile}/repository/entries/{entryId}/delete
+        //   POST /api/v1/scheduler/{profile}/repository/entries/{entryId}/rename
+        // request body: delete ignores body; rename requires a JSON object.
+        // success response: delete returns the standard empty success envelope;
+        // rename returns SchedulerService's repository entry JSON in data.
+        // errorKind classes: taskNotFound, pluginUnavailable,
+        // taskTypeUnavailable, pluginLoadFailed, persistenceFailure.
+        // HTTP thread boundary: controller validates profile/path/body and
+        // delegates only to IDasSchedulerService; repository storage/provider
+        // behavior stays behind SchedulerService.
+        Beast::HttpResponse RepositoryDelete(const Beast::HttpRequest& request)
+        {
+            auto profile = request.GetPathParameter("profile");
+            if (profile != "0")
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Profile ID must be 0 in v1.2");
+            }
+
+            auto entry_id =
+                ParseRepositoryEntryId(request.GetPathParameter("entryId"));
+            if (!entry_id)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Invalid repository entry ID format");
+            }
+
+            auto result = scheduler_.DeleteRepositoryEntry(*entry_id);
+            if (DAS::IsFailed(result))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    result,
+                    "Failed to delete repository entry");
+            }
+
+            return Beast::HttpResponse::CreateSuccessResponse();
+        }
+
+        Beast::HttpResponse RepositoryRename(const Beast::HttpRequest& request)
+        {
+            return DispatchRepositoryEntryBody(
+                request,
+                "rename",
+                [this](
+                    int64_t entry_id,
+                    IDasReadOnlyString* p_body,
+                    IDasReadOnlyString** pp_out)
+                {
+                    return scheduler_.RenameRepositoryEntry(
+                        entry_id,
                         p_body,
                         pp_out);
                 });
@@ -505,6 +565,30 @@ namespace Das::Http
         }
 
     private:
+        static std::optional<int64_t> ParseRepositoryEntryId(
+            const std::string& entry_id_str)
+        {
+            if (entry_id_str.empty())
+            {
+                return std::nullopt;
+            }
+
+            try
+            {
+                size_t  pos = 0;
+                int64_t entry_id = std::stoll(entry_id_str, &pos);
+                if (pos != entry_id_str.size())
+                {
+                    return std::nullopt;
+                }
+                return entry_id;
+            }
+            catch (const std::exception&)
+            {
+                return std::nullopt;
+            }
+        }
+
         template <typename Fn>
         Beast::HttpResponse DispatchAuthoring(
             const Beast::HttpRequest& request,
@@ -591,6 +675,113 @@ namespace Das::Http
                     (*obj)[std::string_view("message")]
                         .as_string()
                         .value_or("Task authoring request failed")};
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_FAIL,
+                    message,
+                    *parsed);
+            }
+
+            return Beast::HttpResponse::CreateSuccessResponse(*parsed);
+        }
+
+        template <typename Fn>
+        Beast::HttpResponse DispatchRepositoryEntryBody(
+            const Beast::HttpRequest& request,
+            const std::string&        operation,
+            Fn&&                      fn)
+        {
+            auto profile = request.GetPathParameter("profile");
+            if (profile != "0")
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Profile ID must be 0 in v1.2");
+            }
+
+            auto entry_id =
+                ParseRepositoryEntryId(request.GetPathParameter("entryId"));
+            if (!entry_id)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Invalid repository entry ID format");
+            }
+
+            if (request.Body().empty())
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Request body must be a JSON object");
+            }
+
+            auto parsed_body = Das::Utils::ParseYyjsonFromString(
+                request.Body());
+            if (!parsed_body)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_JSON,
+                    "Invalid repository request JSON");
+            }
+
+            if (!parsed_body->is_object())
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Request body must be a JSON object");
+            }
+
+            auto body_json = Das::Utils::SerializeYyjsonValue(*parsed_body);
+            if (!body_json)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_JSON,
+                    "Failed to serialize repository request body");
+            }
+
+            DasPtr<IDasReadOnlyString> p_body;
+            auto cr = CreateIDasReadOnlyStringFromUtf8(
+                body_json->c_str(),
+                p_body.Put());
+            if (DAS::IsFailed(cr))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    cr,
+                    "Failed to create repository request string");
+            }
+
+            DasPtr<IDasReadOnlyString> p_result;
+            auto result = fn(*entry_id, p_body.Get(), p_result.Put());
+            if (DAS::IsFailed(result))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    result,
+                    "Failed to dispatch repository " + operation);
+            }
+
+            const char* raw = nullptr;
+            auto        get_result = p_result->GetUtf8(&raw);
+            if (DAS::IsFailed(get_result) || raw == nullptr)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    get_result,
+                    "Failed to read repository " + operation + " result");
+            }
+
+            auto parsed = Das::Utils::ParseYyjsonFromString(raw);
+            if (!parsed)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_JSON,
+                    "Failed to parse repository " + operation + " result");
+            }
+
+            auto obj = parsed->as_object();
+            if (obj && obj->contains(std::string_view("errorKind")))
+            {
+                auto message = std::string{
+                    (*obj)[std::string_view("message")]
+                        .as_string()
+                        .value_or("Repository request failed")};
                 return Beast::HttpResponse::CreateErrorResponse(
                     DAS_E_FAIL,
                     message,
