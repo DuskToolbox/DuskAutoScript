@@ -172,13 +172,11 @@ namespace Core
                     *proxy_factory_,
                     registry_);
 
-                // 创建 transport（使用 IpcRunLoop 的 io_context）
-                // 使用 CreateUninitialized 创建未初始化的对象，延迟到 Run()
-                // 时异步连接
-                async_transport_ =
-                    DefaultAsyncIpcTransport::CreateUninitialized(
-                        run_loop_.GetIoContext());
-                async_transport_->SetSharedMemoryPool(&*shared_memory_);
+                // transport 由 ConnectionManager 拥有，transport_ref_
+                // 借用引用 Pipe 模式：CreateUninitialized → InitializeAsync
+                // → RegisterAnyTransport → GetAnyTransportRef HTTP 模式：
+                // HttpIpcClient::Connect → RegisterAnyTransport →
+                // GetAnyTransportRef
 
                 // 创建并初始化 IpcCommandHandler
                 command_handler_ = IpcCommandHandler::Create(registry_);
@@ -194,7 +192,7 @@ namespace Core
 
                 // 设置 HandshakeHandler 的客户端连接回调
                 // 握手完成后，同步 session_id 到 IpcCommandHandler 和
-                // IpcRunLoop，并注册 transport 到 ConnectionManager
+                // IpcRunLoop
                 handshake_handler_->SetOnClientConnected(
                     [this](const ConnectedClient& client)
                     {
@@ -208,39 +206,6 @@ namespace Core
                         {
                             proxy_factory_->GetObjectManager().SetSessionId(
                                 client.session_id);
-                        }
-
-                        // 注册 Host 的 transport 到 ConnectionManager，以便
-                        // PostSend 可以将响应路由到 MainProcess（session_id =
-                        // 1）
-                        if (async_transport_)
-                        {
-                            if (run_loop_.connection_manager_)
-                            {
-                                auto& conn_mgr =
-                                    run_loop_.GetConnectionManager();
-                                // MainProcess 的 session_id 始终为
-                                // 1（我们发送的目标）
-                                uint16_t main_process_session_id = 1;
-                                auto     result = conn_mgr.RegisterTransport(
-                                    main_process_session_id,
-                                    async_transport_.get());
-                                if (result != DAS_S_OK)
-                                {
-                                    DAS_CORE_LOG_ERROR(
-                                        "Failed to register transport to "
-                                        "ConnectionManager: result={}",
-                                        result);
-                                }
-                                else
-                                {
-                                    DAS_CORE_LOG_INFO(
-                                        "Host transport registered to "
-                                        "ConnectionManager for MainProcess "
-                                        "session_id={}",
-                                        main_process_session_id);
-                                }
-                            }
                         }
 
                         is_connected_ = true;
@@ -375,11 +340,9 @@ namespace Core
                 //    确保 io_context 已停止，这样 AsyncMutex 析构时走安全路径
                 run_loop_.RequestStop();
 
-                // 4. 关闭 transport（会导致 ReceiveCoroutine() 抛出
-                // operation_aborted）
-                //    unique_ptr 析构会自动调用 Cleanup()
-                //    此时 io_context 已停止，AsyncMutex 析构是安全的
-                async_transport_.reset();
+                // 4. transport 现在由 ConnectionManager 拥有，
+                //    清空借用指针即可
+                transport_ref_ = nullptr;
 
                 // 4b. 关闭 HTTP 客户端（如果存在）
                 http_client_.reset();
@@ -501,133 +464,19 @@ namespace Core
                 // 这样连接操作会在 io_context 开始运行后执行
                 if (use_http_transport_)
                 {
-                    // HTTP/WebSocket 模式：通过工厂方法创建已连接的客户端
                     boost::asio::post(
                         io,
                         [this, &io]()
                         {
                             boost::asio::co_spawn(
                                 io,
-                                [this]() -> boost::asio::awaitable<void>
-                                {
-                                    try
-                                    {
-                                        DAS_CORE_LOG_INFO(
-                                            "Host: HTTP connecting to "
-                                            "{}:{}",
-                                            http_host_,
-                                            http_port_);
-
-                                        // RAII 工厂：返回已连接+已握手的客户端
-                                        auto connect_result =
-                                            co_await HttpIpcClient::Connect(
-                                                run_loop_.GetIoContext(),
-                                                http_host_,
-                                                http_port_,
-                                                host_pid_);
-
-                                        // 检查连接结果
-                                        if (auto* err = std::get_if<DasResult>(
-                                                &connect_result))
-                                        {
-                                            DAS_CORE_LOG_ERROR(
-                                                "HTTP connect "
-                                                "failed: {}",
-                                                *err);
-                                            run_loop_.RequestStop();
-                                            co_return;
-                                        }
-
-                                        http_client_ = std::move(
-                                            std::get<
-                                                std::unique_ptr<HttpIpcClient>>(
-                                                connect_result));
-                                        session_id_ =
-                                            http_client_->GetSessionId();
-
-                                        DAS_CORE_LOG_INFO(
-                                            "HTTP connected: "
-                                            "session_id = {}",
-                                            session_id_);
-
-                                        // 同步 session_id 到各组件
-                                        if (command_handler_)
-                                        {
-                                            command_handler_->SetSessionId(
-                                                session_id_);
-                                        }
-                                        run_loop_.SetSessionId(session_id_);
-                                        if (proxy_factory_)
-                                        {
-                                            proxy_factory_->GetObjectManager()
-                                                .SetSessionId(session_id_);
-                                        }
-
-                                        // 注册 HTTP transport 到
-                                        // ConnectionManager
-                                        auto http_transport =
-                                            http_client_->ReleaseTransport();
-                                        if (http_transport
-                                            && run_loop_.connection_manager_)
-                                        {
-                                            // 保存非拥有指针供后续使用
-                                            http_transport_ =
-                                                http_transport.get();
-
-                                            auto& conn_mgr =
-                                                run_loop_
-                                                    .GetConnectionManager();
-                                            uint16_t main_session_id = 1;
-                                            auto     reg_result =
-                                                conn_mgr.RegisterAnyTransport(
-                                                    main_session_id,
-                                                    std::move(*http_transport));
-                                            if (reg_result != DAS_S_OK)
-                                            {
-                                                DAS_CORE_LOG_ERROR(
-                                                    "Failed to register "
-                                                    "HTTP transport: "
-                                                    "{}",
-                                                    reg_result);
-                                            }
-                                            else
-                                            {
-                                                DAS_CORE_LOG_INFO(
-                                                    "HTTP transport "
-                                                    "registered for "
-                                                    "MainProcess "
-                                                    "session_id={}",
-                                                    main_session_id);
-                                            }
-                                        }
-
-                                        is_connected_ = true;
-
-                                        // 启动 HTTP 接收循环
-                                        co_await HttpReceiveLoopCoroutine();
-                                    }
-                                    catch (const boost::system::system_error& e)
-                                    {
-                                        DAS_CORE_LOG_ERROR(
-                                            "Host HTTP: system_error: "
-                                            "{}",
-                                            ToString(e.what()));
-                                        run_loop_.RequestStop();
-                                    }
-                                    catch (const std::exception& e)
-                                    {
-                                        DAS_CORE_LOG_ERROR(
-                                            "Host HTTP: exception: {}",
-                                            ToString(e.what()));
-                                        run_loop_.RequestStop();
-                                    }
-                                },
+                                ConnectHttp(),
                                 boost::asio::detached);
                         });
                 }
                 else
                 {
-                    // Named Pipe 模式（现有逻辑）
+                    // Named Pipe 模式
                     boost::asio::post(
                         io,
                         [this, &io]()
@@ -647,9 +496,15 @@ namespace Core
                                             "  write: {}",
                                             host_write_queue_);
 
-                                        // 1. 异步连接（使用
-                                        // InitializeAsync）
-                                        auto result = co_await async_transport_
+                                        // 1. 创建并异步连接 transport
+                                        auto pipe_transport =
+                                            DefaultAsyncIpcTransport::
+                                                CreateUninitialized(
+                                                    run_loop_.GetIoContext());
+                                        pipe_transport->SetSharedMemoryPool(
+                                            &*shared_memory_);
+
+                                        auto result = co_await pipe_transport
                                                           ->InitializeAsync(
                                                               host_read_queue_,
                                                               host_write_queue_,
@@ -665,11 +520,24 @@ namespace Core
                                             co_return;
                                         }
 
+                                        // 2. 将所有权转移至
+                                        // ConnectionManager，借用引用
+                                        auto& conn_mgr =
+                                            run_loop_.GetConnectionManager();
+                                        uint16_t main_process_session_id = 1;
+                                        conn_mgr.RegisterAnyTransport(
+                                            main_process_session_id,
+                                            std::move(*pipe_transport));
+                                        pipe_transport.reset();
+                                        transport_ref_ =
+                                            &conn_mgr.GetAnyTransportRef(
+                                                main_process_session_id);
+
                                         DAS_CORE_LOG_INFO(
                                             "Host: connected, starting "
                                             "receive loop");
 
-                                        // 2. 连接成功，启动接收循环协程
+                                        // 3. 启动接收循环协程
                                         co_await ReceiveLoopCoroutine();
                                     }
                                     catch (const boost::system::system_error& e)
@@ -710,9 +578,10 @@ namespace Core
                     {
                         DAS_CORE_LOG_INFO(
                             "ReceiveLoopCoroutine: waiting for message...");
-                        // 使用 transport 的协程接口接收（IOCP 异步，协程挂起）
+                        // 使用 AnyTransport 的协程接口接收（IOCP
+                        // 异步，协程挂起）
                         auto result =
-                            co_await async_transport_->ReceiveCoroutine();
+                            co_await transport_ref_->ReceiveCoroutine();
                         DAS_CORE_LOG_INFO(
                             "ReceiveLoopCoroutine: received result, index={}",
                             result.index());
@@ -757,12 +626,28 @@ namespace Core
                             }
                             else
                             {
-                                // REQUEST/EVENT: 在 IO 线程处理（控制平面
-                                // handler）
-                                co_await run_loop_.DispatchToHandlerCoroutine(
-                                    header,
-                                    body,
-                                    *async_transport_);
+                                // REQUEST/EVENT: 尝试提取
+                                // DefaultAsyncIpcTransport 引用分发到
+                                // handler；HTTP/Unix 模式推入 inbound_queue
+                                auto* pipe_ptr =
+                                    std::get_if<DefaultAsyncIpcTransport>(
+                                        &transport_ref_->variant());
+
+                                if (pipe_ptr)
+                                {
+                                    co_await run_loop_
+                                        .DispatchToHandlerCoroutine(
+                                            header,
+                                            body,
+                                            *pipe_ptr);
+                                }
+                                else
+                                {
+                                    InboundMessage msg;
+                                    msg.header = header;
+                                    msg.body = std::move(body);
+                                    inbound_queue_.Push(std::move(msg));
+                                }
                             }
                         }
                         else
@@ -801,104 +686,86 @@ namespace Core
                 }
             }
 
-            boost::asio::awaitable<void> IpcContext::HttpReceiveLoopCoroutine()
+            boost::asio::awaitable<void> IpcContext::ConnectHttp()
             {
-                DAS_CORE_LOG_INFO(
-                    "HttpReceiveLoopCoroutine: starting, "
-                    "run_loop_.IsRunning()={}",
-                    run_loop_.IsRunning());
-
-                auto* transport = http_transport_;
-                if (!transport)
+                try
                 {
-                    DAS_CORE_LOG_ERROR(
-                        "HttpReceiveLoopCoroutine: transport is null");
-                    co_return;
-                }
+                    DAS_CORE_LOG_INFO(
+                        "Host: HTTP connecting to {}:{}",
+                        http_host_,
+                        http_port_);
 
-                while (run_loop_.IsRunning())
-                {
-                    try
+                    auto connect_result = co_await HttpIpcClient::Connect(
+                        run_loop_.GetIoContext(),
+                        http_host_,
+                        http_port_,
+                        host_pid_);
+
+                    if (auto* err = std::get_if<DasResult>(&connect_result))
                     {
-                        auto result = co_await transport->ReceiveCoroutine();
-
-                        if (!run_loop_.IsRunning())
-                        {
-                            co_return;
-                        }
-
-                        if (result.index() == 0)
-                        {
-                            DasResult error = std::get<0>(result);
-                            if (error != DAS_S_OK)
-                            {
-                                DAS_CORE_LOG_ERROR(
-                                    "HTTP receive failed: {}",
-                                    error);
-                            }
-                            co_return;
-                        }
-
-                        auto&& [header, body] = std::get<1>(result);
-
-                        // IO 线程消息分流
-                        if ((header.GetHeaderFlags()
-                             & HeaderFlags::CONTROL_PLANE)
-                            != 0)
-                        {
-                            if (header.GetMessageType()
-                                == MessageType::RESPONSE)
-                            {
-                                CallKey call_key{
-                                    header.GetSourceSessionId(),
-                                    header.GetCallId()};
-                                run_loop_.CompletePendingCall(
-                                    call_key,
-                                    DAS_S_OK,
-                                    std::move(body),
-                                    header.GetFlags());
-                            }
-                            else
-                            {
-                                co_await run_loop_.DispatchToHandlerCoroutine(
-                                    header,
-                                    body,
-                                    *transport);
-                            }
-                        }
-                        else
-                        {
-                            InboundMessage msg;
-                            msg.header = header;
-                            msg.body = std::move(body);
-                            auto push_result =
-                                inbound_queue_.Push(std::move(msg));
-                            if (push_result != DAS_S_OK)
-                            {
-                                DAS_CORE_LOG_ERROR(
-                                    "HttpReceiveLoopCoroutine: failed "
-                                    "to push, result={}",
-                                    push_result);
-                            }
-                        }
-                    }
-                    catch (const boost::system::system_error& e)
-                    {
-                        if (e.code() == boost::asio::error::operation_aborted
-                            || e.code() == boost::asio::error::eof)
-                        {
-                            DAS_CORE_LOG_DEBUG(
-                                "HTTP receive loop stopped: {}",
-                                ToString(e.what()));
-                        }
-                        else
-                        {
-                            DAS_CORE_LOG_ERROR(
-                                "HTTP receive error: {}",
-                                ToString(e.what()));
-                        }
+                        DAS_CORE_LOG_ERROR("HTTP connect failed: {}", *err);
+                        run_loop_.RequestStop();
                         co_return;
                     }
+
+                    http_client_ = std::move(
+                        std::get<std::unique_ptr<HttpIpcClient>>(
+                            connect_result));
+                    session_id_ = http_client_->GetSessionId();
+
+                    DAS_CORE_LOG_INFO(
+                        "HTTP connected: session_id={}",
+                        session_id_);
+
+                    // 同步 session_id 到各组件
+                    if (command_handler_)
+                    {
+                        command_handler_->SetSessionId(session_id_);
+                    }
+                    run_loop_.SetSessionId(session_id_);
+                    if (proxy_factory_)
+                    {
+                        proxy_factory_->GetObjectManager().SetSessionId(
+                            session_id_);
+                    }
+
+                    // 将 HTTP transport 转移至 ConnectionManager，借用引用
+                    auto http_transport = http_client_->ReleaseTransport();
+                    if (http_transport)
+                    {
+                        auto&    conn_mgr = run_loop_.GetConnectionManager();
+                        uint16_t main_session_id = 1;
+                        conn_mgr.RegisterAnyTransport(
+                            main_session_id,
+                            std::move(*http_transport));
+                        http_transport.reset();
+                        transport_ref_ =
+                            &conn_mgr.GetAnyTransportRef(main_session_id);
+
+                        DAS_CORE_LOG_INFO(
+                            "HTTP transport registered for "
+                            "MainProcess session_id={}",
+                            main_session_id);
+
+                        // 启动统一接收循环
+                        co_await ReceiveLoopCoroutine();
+                    }
+
+                    is_connected_ = true;
+                }
+                catch (const boost::system::system_error& e)
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "Host HTTP: system_error: {}",
+                        ToString(e.what()));
+                    run_loop_.RequestStop();
+                }
+                catch (const std::exception& e)
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "Host HTTP: exception: {}",
+                        ToString(e.what()));
+                    run_loop_.RequestStop();
                 }
             }
 
@@ -909,19 +776,10 @@ namespace Core
                     proxy_factory_->BeginShutdown();
                 }
 
-                // 1. 先关闭 transport（自己持有的）
-                //    这会导致 ReceiveCoroutine() 抛出
-                //    operation_aborted，接收协程退出
-                if (async_transport_)
-                {
-                    async_transport_.reset();
-                }
-
-                // 1b. 关闭 HTTP 客户端 transport
-                if (http_transport_)
-                {
-                    http_transport_->Cleanup();
-                }
+                // 1. 清空 transport 借用指针
+                //    ConnectionManager 拥有的 transport 会在
+                //    run_loop_ 析构时自动清理
+                transport_ref_ = nullptr;
 
                 // 2. 然后请求 runloop 停止
                 run_loop_.RequestStop();

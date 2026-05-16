@@ -120,6 +120,12 @@ public:
         return transport_;
     }
 
+    [[nodiscard]]
+    VariantType& variant() noexcept
+    {
+        return transport_;
+    }
+
 private:
     VariantType transport_;
 };

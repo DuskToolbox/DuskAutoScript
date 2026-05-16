@@ -37,6 +37,8 @@ struct ConnectionManager::Impl
         direct_transports_;
     // AnyTransport 注册（支持 Named Pipe 和 HTTP/WS 传输器）
     std::unordered_map<uint16_t, AnyTransport> any_transports_;
+    // AnyTransport 非拥有引用（IpcContext 持有 transport 的场景）
+    std::unordered_map<uint16_t, AnyTransport*> any_transport_refs_;
     // 共享内存池（每个连接一个，按 remote_id 索引）
     std::unordered_map<uint16_t, std::unique_ptr<SharedMemoryPool>> shm_pools_;
     mutable std::shared_mutex connections_mutex_;
@@ -64,6 +66,7 @@ ConnectionManager::~ConnectionManager()
     impl_->host_launchers_.clear();
     impl_->direct_transports_.clear();
     impl_->any_transports_.clear();
+    impl_->any_transport_refs_.clear();
 }
 
 DasResult ConnectionManager::RegisterConnection(
@@ -398,6 +401,21 @@ DasResult ConnectionManager::RegisterAnyTransport(
     return DAS_S_OK;
 }
 
+DasResult ConnectionManager::RegisterAnyTransportRef(
+    uint16_t      session_id,
+    AnyTransport* transport)
+{
+    if (!transport)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+    impl_->any_transport_refs_[session_id] = transport;
+    DAS_CORE_LOG_INFO("AnyTransport ref registered: session_id={}", session_id);
+    return DAS_S_OK;
+}
+
 DasPtr<HostLauncher> ConnectionManager::GetLauncher(uint16_t session_id) const
 {
     std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
@@ -463,6 +481,19 @@ DefaultAsyncIpcTransport* ConnectionManager::GetTransport(
     return launcher_it->second->GetTransport();
 }
 
+AnyTransport& ConnectionManager::GetAnyTransportRef(uint16_t session_id)
+{
+    std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+    auto it = impl_->any_transports_.find(session_id);
+    if (it == impl_->any_transports_.end())
+    {
+        throw std::runtime_error(
+            "GetAnyTransportRef: AnyTransport not found for session_id = "
+            + std::to_string(session_id));
+    }
+    return it->second;
+}
+
 AnyTransport* ConnectionManager::GetAnyTransport(uint16_t session_id)
 {
     std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
@@ -470,6 +501,11 @@ AnyTransport* ConnectionManager::GetAnyTransport(uint16_t session_id)
     if (it != impl_->any_transports_.end())
     {
         return &it->second;
+    }
+    auto ref_it = impl_->any_transport_refs_.find(session_id);
+    if (ref_it != impl_->any_transport_refs_.end())
+    {
+        return ref_it->second;
     }
     return nullptr;
 }

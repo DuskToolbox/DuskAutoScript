@@ -2,9 +2,9 @@
 #define DAS_CORE_IPC_HOST_IPC_CONTEXT_H
 
 #include <atomic>
+#include <das/Core/IPC/AnyTransport.h>
 #include <das/Core/IPC/BusinessThread.h>
 #include <das/Core/IPC/CurrentIpcContextScope.h>
-#include <das/Core/IPC/DefaultAsyncIpcTransport.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/Host/HandshakeHandler.h>
 #include <das/Core/IPC/Host/IIpcContext.h>
@@ -145,8 +145,8 @@ namespace Core
             private:
                 boost::asio::awaitable<void> ReceiveLoopCoroutine();
 
-                /// HTTP/WebSocket 接收循环协程
-                boost::asio::awaitable<void> HttpReceiveLoopCoroutine();
+                /// HTTP/WebSocket 连接协程（连接、注册 transport、启动接收）
+                boost::asio::awaitable<void> ConnectHttp();
 
                 void StartParentProcessMonitor();
                 void StopParentProcessMonitor();
@@ -178,15 +178,12 @@ namespace Core
                 /// 共享内存池（optional，因为 shm_name 在构造函数体中计算）
                 std::optional<SharedMemoryPool> shared_memory_;
 
-                /// 异步传输层（unique_ptr，因为 Transport 构造函数是私有的，
-                /// 只能通过 CreateUninitialized 工厂方法创建，无法原地构造）
-                std::unique_ptr<DefaultAsyncIpcTransport> async_transport_;
+                /// ConnectionManager 拥有的 AnyTransport 的非拥有借用指针
+                /// （生命周期与 ConnectionManager 一致，安全）
+                AnyTransport* transport_ref_ = nullptr;
 
-                /// HTTP/WebSocket 客户端（HTTP 传输模式）
+                /// HTTP/WebSocket 客户端（HTTP 传输模式，仅连接阶段使用）
                 std::unique_ptr<HttpIpcClient> http_client_;
-
-                /// HTTP 传输层非拥有指针（所有权已转移至 ConnectionManager）
-                HttpIpcTransport* http_transport_ = nullptr;
 
                 /// HTTP 连接参数（从 connect_url 解析）
                 std::string http_host_;

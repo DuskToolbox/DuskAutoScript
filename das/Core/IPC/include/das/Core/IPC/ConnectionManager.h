@@ -163,6 +163,32 @@ public:
     DasResult RegisterAnyTransport(uint16_t session_id, AnyTransport&& t);
 
     /**
+     * @brief 注册 AnyTransport 非拥有引用（用于 IpcContext 持有 transport
+     * 的场景）
+     *
+     * @param session_id 会话 ID
+     * @param transport AnyTransport 指针（非拥有，调用方保证生命周期）
+     * @return DasResult DAS_S_OK 成功
+     */
+    DasResult RegisterAnyTransportRef(
+        uint16_t      session_id,
+        AnyTransport* transport);
+
+    /**
+     * @brief 获取 ConnectionManager 拥有的 AnyTransport 引用
+     *
+     * ConnectionManager 通过 RegisterAnyTransport(session_id,
+     * AnyTransport&&) 拥有 transport。此方法返回该 transport 的引用，
+     * 供 IpcContext 借用（生命周期由 ConnectionManager 保证）。
+     *
+     * @param session_id 目标会话 ID
+     * @return AnyTransport& transport 引用
+     * @throws std::runtime_error 如果 transport 未找到
+     */
+    [[nodiscard]]
+    AnyTransport& GetAnyTransportRef(uint16_t session_id) DAS_LIFETIMEBOUND;
+
+    /**
      * @brief 更新连接的活跃状态
      *
      * @param session_id 目标会话ID
