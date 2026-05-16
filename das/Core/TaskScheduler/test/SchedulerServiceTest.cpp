@@ -1494,6 +1494,9 @@ struct FactoryTaskSharedState
     int                     apply_change_count = 0;
     int                     compile_count = 0;
     int                     decoy_authoring_create_count = 0;
+    int64_t                 last_context_entry_id = -1;
+    int64_t                 last_context_task_id = -1;
+    bool                    last_context_had_task_id = false;
     int64_t                 last_context_revision = -1;
     std::string             last_props_key1_value;
     std::string             last_compile_purpose;
@@ -1917,6 +1920,10 @@ public:
             return DAS_E_FAIL;
         }
         int64_t revision = -1;
+        int64_t entry_id = -1;
+        int64_t task_id = -1;
+        bool    had_task_id = false;
+        std::string key1_value;
         if (p_context_json)
         {
             DasPtr<IDasReadOnlyString> key;
@@ -1926,11 +1933,72 @@ public:
             {
                 p_context_json->GetIntByName(key.Get(), &revision);
             }
+
+            key.Reset();
+            if (DAS_S_OK
+                    == CreateIDasReadOnlyStringFromUtf8("entryId", key.Put())
+                && key)
+            {
+                p_context_json->GetIntByName(key.Get(), &entry_id);
+            }
+
+            key.Reset();
+            if (DAS_S_OK
+                    == CreateIDasReadOnlyStringFromUtf8("taskId", key.Put())
+                && key)
+            {
+                had_task_id =
+                    DAS_S_OK == p_context_json->GetIntByName(
+                                    key.Get(),
+                                    &task_id);
+            }
+
+            key.Reset();
+            if (DAS_S_OK
+                    == CreateIDasReadOnlyStringFromUtf8(
+                        "properties",
+                        key.Put())
+                && key)
+            {
+                DasPtr<Das::ExportInterface::IDasJson> properties;
+                if (DAS_S_OK
+                        == p_context_json->GetObjectRefByName(
+                            key.Get(),
+                            properties.Put())
+                    && properties)
+                {
+                    DasPtr<IDasReadOnlyString> prop_key;
+                    if (DAS_S_OK
+                            == CreateIDasReadOnlyStringFromUtf8(
+                                "key1",
+                                prop_key.Put())
+                        && prop_key)
+                    {
+                        DasPtr<IDasReadOnlyString> prop_value;
+                        if (DAS_S_OK
+                                == properties->GetStringByName(
+                                    prop_key.Get(),
+                                    prop_value.Put())
+                            && prop_value)
+                        {
+                            const char* raw = nullptr;
+                            if (DAS_S_OK == prop_value->GetUtf8(&raw) && raw)
+                            {
+                                key1_value = raw;
+                            }
+                        }
+                    }
+                }
+            }
         }
         {
             std::lock_guard<std::mutex> lock(state_->mutex);
             ++state_->authoring_session_count;
+            state_->last_context_entry_id = entry_id;
+            state_->last_context_task_id = task_id;
+            state_->last_context_had_task_id = had_task_id;
             state_->last_context_revision = revision;
+            state_->last_props_key1_value = std::move(key1_value);
         }
 
         auto* session = new FakeAuthoringSession(state_);
@@ -3524,6 +3592,61 @@ TEST_F(
             .as_array()
             ->size(),
         0u);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryAuthoringGetReusesProviderSession)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto created = scheduler_->CreateRepositoryEntry(
+        MakeRepositoryCreateRequest("Authoring repository entry", 8));
+    auto created_obj = created.as_object();
+    ASSERT_TRUE(created_obj.has_value());
+    ASSERT_EQ(
+        (*created_obj)[std::string_view("entryId")].as_sint().value_or(-1),
+        0);
+
+    yyjson::value request(Das::Utils::MakeYyjsonObject());
+    auto document_response =
+        scheduler_->GetRepositoryEntryAuthoringDocument(0, request);
+    auto response_obj = document_response.as_object();
+    ASSERT_TRUE(response_obj.has_value());
+    EXPECT_EQ(
+        (*response_obj)[std::string_view("entryId")].as_sint().value_or(-1),
+        0);
+    EXPECT_EQ(
+        (*response_obj)[std::string_view("revision")].as_sint().value_or(-1),
+        0);
+    auto document =
+        (*response_obj)[std::string_view("document")].as_object();
+    ASSERT_TRUE(document.has_value());
+    EXPECT_EQ(
+        (*document)[std::string_view("kind")].as_string().value_or(""),
+        std::string_view("formSequence"));
+
+    auto persisted = settings_manager_->GetTaskRepositoryEntryJson("0", 0);
+    auto persisted_obj = persisted.as_object();
+    ASSERT_TRUE(persisted_obj.has_value());
+    auto persisted_authoring =
+        (*persisted_obj)[std::string_view("authoring")].as_object();
+    ASSERT_TRUE(persisted_authoring.has_value());
+    EXPECT_EQ(
+        (*persisted_authoring)[std::string_view("revision")]
+            .as_sint()
+            .value_or(-1),
+        0);
+
+    std::lock_guard<std::mutex> lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->authoring_session_count, 1);
+    EXPECT_EQ(shared_state_->decoy_authoring_create_count, 0);
+    EXPECT_EQ(shared_state_->get_document_count, 1);
+    EXPECT_EQ(shared_state_->last_context_entry_id, 0);
+    EXPECT_FALSE(shared_state_->last_context_had_task_id);
+    EXPECT_EQ(shared_state_->last_context_task_id, -1);
+    EXPECT_EQ(shared_state_->last_context_revision, 0);
+    EXPECT_EQ(shared_state_->last_props_key1_value, "default");
 }
 
 TEST_F(
