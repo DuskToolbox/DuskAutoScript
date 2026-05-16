@@ -44,18 +44,23 @@ endif()
 if(DAS_BUILD_TEST AND TARGET DasMaaPi)
     add_executable(DasMaaPiTest
         DasMaaPi/src/AuthoringProjector.cpp
+        DasMaaPi/src/MaaRuntime.cpp
         DasMaaPi/src/PiCompiler.cpp
         DasMaaPi/src/PiCatalog.cpp
         DasMaaPi/src/PiParser.cpp
+        DasMaaPi/src/PluginImpl.cpp
         DasMaaPi/test/MaapiAuthoringTest.cpp
         DasMaaPi/test/MaapiCompileTest.cpp
         DasMaaPi/test/MaapiPluginScaffoldTest.cpp
-        DasMaaPi/test/MaapiPiParserTest.cpp)
+        DasMaaPi/test/MaapiPiParserTest.cpp
+        DasMaaPi/test/MaapiRuntimeTest.cpp)
     target_link_libraries(DasMaaPiTest PRIVATE
         Das3rdParty
         GTest::gtest_main
         GTest::gtest
         DasCoreObjects)
+    target_compile_definitions(DasMaaPiTest PRIVATE
+        DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY)
 
     get_target_property(DAS_CORE_INCLUDE_DIRS DasCoreObjects INCLUDE_DIRECTORIES)
     target_include_directories(DasMaaPiTest PRIVATE

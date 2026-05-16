@@ -1,0 +1,803 @@
+#include <das/Plugins/DasMaaPi/MaaRuntime.h>
+#include <das/Utils/DasJsonCore.h>
+
+#ifndef DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY
+#include <MaaFramework/MaaAPI.h>
+#endif
+
+#include <algorithm>
+#include <cctype>
+#include <memory>
+#include <string>
+#include <utility>
+
+namespace Das::Plugins::DasMaaPi
+{
+    namespace
+    {
+#ifndef DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY
+        class ScopedMaaApiBoundary final : public IMaaApiBoundary
+        {
+        public:
+            MaaResourceHandle CreateResource() override
+            {
+                return reinterpret_cast<MaaResourceHandle>(MaaResourceCreate());
+            }
+
+            void DestroyResource(MaaResourceHandle resource) noexcept override
+            {
+                MaaResourceDestroy(reinterpret_cast<MaaResource*>(resource));
+            }
+
+            MaaApiResult LoadResource(
+                MaaResourceHandle resource,
+                std::string_view  path) override
+            {
+                auto* maa_resource = reinterpret_cast<MaaResource*>(resource);
+                auto id = MaaResourcePostBundle(
+                    maa_resource,
+                    std::string(path).c_str());
+                if (id == MaaInvalidId)
+                {
+                    return MaaApiResult::Failure(
+                        id,
+                        "MaaResourcePostBundle failed");
+                }
+                const auto status = MaaResourceWait(maa_resource, id);
+                if (status != MaaStatus_Succeeded)
+                {
+                    return MaaApiResult::Failure(
+                        status,
+                        "Maa resource load failed");
+                }
+                return MaaApiResult::Ok(id);
+            }
+
+            std::optional<std::string> GetResourceHash(
+                MaaResourceHandle resource) override
+            {
+                std::unique_ptr<MaaStringBuffer, decltype(&MaaStringBufferDestroy)>
+                    buffer(MaaStringBufferCreate(), MaaStringBufferDestroy);
+                if (!buffer)
+                {
+                    return std::nullopt;
+                }
+                if (!MaaResourceGetHash(
+                        reinterpret_cast<MaaResource*>(resource),
+                        buffer.get()))
+                {
+                    return std::nullopt;
+                }
+                const char* value = MaaStringBufferGet(buffer.get());
+                return value ? std::optional<std::string>(value) : std::nullopt;
+            }
+
+            MaaControllerHandle CreateController(
+                const ControllerSpec& spec) override
+            {
+                auto type = Lower(spec.type);
+                if (type == "dbg" || type == "debug")
+                {
+                    const auto read_path =
+                        StringField(spec.raw_json, "readPath")
+                            .value_or(
+                                StringField(spec.raw_json, "read_path")
+                                    .value_or(""));
+                    return reinterpret_cast<MaaControllerHandle>(
+                        MaaDbgControllerCreate(read_path.c_str()));
+                }
+                if (type == "adb")
+                {
+                    const auto address =
+                        StringField(spec.raw_json, "address").value_or("");
+                    if (address.empty())
+                    {
+                        return kInvalidMaaControllerHandle;
+                    }
+                    const auto adb_path =
+                        StringField(spec.raw_json, "adbPath")
+                            .value_or(
+                                StringField(spec.raw_json, "adb_path")
+                                    .value_or("adb"));
+                    const auto config =
+                        StringField(spec.raw_json, "config").value_or("{}");
+                    const auto agent_path =
+                        StringField(spec.raw_json, "agentPath")
+                            .value_or(
+                                StringField(spec.raw_json, "agent_path")
+                                    .value_or(""));
+                    return reinterpret_cast<MaaControllerHandle>(
+                        MaaAdbControllerCreate(
+                            adb_path.c_str(),
+                            address.c_str(),
+                            MaaAdbScreencapMethod_Default,
+                            MaaAdbInputMethod_Default,
+                            config.c_str(),
+                            agent_path.c_str()));
+                }
+                return kInvalidMaaControllerHandle;
+            }
+
+            void DestroyController(
+                MaaControllerHandle controller) noexcept override
+            {
+                MaaControllerDestroy(
+                    reinterpret_cast<MaaController*>(controller));
+            }
+
+            MaaTaskerHandle CreateTasker() override
+            {
+                return reinterpret_cast<MaaTaskerHandle>(MaaTaskerCreate());
+            }
+
+            void DestroyTasker(MaaTaskerHandle tasker) noexcept override
+            {
+                MaaTaskerDestroy(reinterpret_cast<MaaTasker*>(tasker));
+            }
+
+            MaaApiResult BindResource(
+                MaaTaskerHandle   tasker,
+                MaaResourceHandle resource) override
+            {
+                if (!MaaTaskerBindResource(
+                        reinterpret_cast<MaaTasker*>(tasker),
+                        reinterpret_cast<MaaResource*>(resource)))
+                {
+                    return MaaApiResult::Failure(0, "MaaTaskerBindResource failed");
+                }
+                return MaaApiResult::Ok();
+            }
+
+            MaaApiResult BindController(
+                MaaTaskerHandle     tasker,
+                MaaControllerHandle controller) override
+            {
+                if (!MaaTaskerBindController(
+                        reinterpret_cast<MaaTasker*>(tasker),
+                        reinterpret_cast<MaaController*>(controller)))
+                {
+                    return MaaApiResult::Failure(
+                        0,
+                        "MaaTaskerBindController failed");
+                }
+                return MaaApiResult::Ok();
+            }
+
+            MaaApiResult PostTask(
+                MaaTaskerHandle tasker,
+                std::string_view entry,
+                std::string_view pipeline_override) override
+            {
+                const auto id = MaaTaskerPostTask(
+                    reinterpret_cast<MaaTasker*>(tasker),
+                    std::string(entry).c_str(),
+                    std::string(pipeline_override).c_str());
+                if (id == MaaInvalidId)
+                {
+                    return MaaApiResult::Failure(id, "MaaTaskerPostTask failed");
+                }
+                return MaaApiResult::Ok(id);
+            }
+
+            MaaTaskStatus WaitTask(
+                MaaTaskerHandle tasker,
+                MaaAsyncId      task_id) override
+            {
+                return static_cast<MaaTaskStatus>(MaaTaskerWait(
+                    reinterpret_cast<MaaTasker*>(tasker),
+                    static_cast<MaaTaskId>(task_id)));
+            }
+
+            MaaApiResult PostStop(MaaTaskerHandle tasker) override
+            {
+                const auto id = MaaTaskerPostStop(
+                    reinterpret_cast<MaaTasker*>(tasker));
+                if (id == MaaInvalidId)
+                {
+                    return MaaApiResult::Failure(id, "MaaTaskerPostStop failed");
+                }
+                return MaaApiResult::Ok(id);
+            }
+
+        private:
+            static std::string Lower(std::string value)
+            {
+                std::transform(
+                    value.begin(),
+                    value.end(),
+                    value.begin(),
+                    [](unsigned char ch) {
+                        return static_cast<char>(std::tolower(ch));
+                    });
+                return value;
+            }
+
+            static std::optional<std::string> StringField(
+                const std::string& json,
+                std::string_view   key)
+            {
+                if (json.empty())
+                {
+                    return std::nullopt;
+                }
+                auto parsed = Das::Utils::ParseYyjsonFromString(json);
+                auto obj = parsed ? parsed->as_object() : std::nullopt;
+                if (!obj || !obj->contains(key) || !(*obj)[key].is_string())
+                {
+                    return std::nullopt;
+                }
+                return std::string((*obj)[key].as_string().value_or(""));
+            }
+        };
+#else
+        class ScopedMaaApiBoundary final : public IMaaApiBoundary
+        {
+        public:
+            MaaResourceHandle CreateResource() override
+            {
+                return kInvalidMaaResourceHandle;
+            }
+
+            void DestroyResource(MaaResourceHandle) noexcept override {}
+
+            MaaApiResult LoadResource(
+                MaaResourceHandle,
+                std::string_view) override
+            {
+                return MaaApiResult::Failure(
+                    0,
+                    "Real Maa boundary disabled in tests");
+            }
+
+            std::optional<std::string> GetResourceHash(
+                MaaResourceHandle) override
+            {
+                return std::nullopt;
+            }
+
+            MaaControllerHandle CreateController(
+                const ControllerSpec&) override
+            {
+                return kInvalidMaaControllerHandle;
+            }
+
+            void DestroyController(MaaControllerHandle) noexcept override {}
+
+            MaaTaskerHandle CreateTasker() override
+            {
+                return kInvalidMaaTaskerHandle;
+            }
+
+            void DestroyTasker(MaaTaskerHandle) noexcept override {}
+
+            MaaApiResult BindResource(
+                MaaTaskerHandle,
+                MaaResourceHandle) override
+            {
+                return MaaApiResult::Failure(
+                    0,
+                    "Real Maa boundary disabled in tests");
+            }
+
+            MaaApiResult BindController(
+                MaaTaskerHandle,
+                MaaControllerHandle) override
+            {
+                return MaaApiResult::Failure(
+                    0,
+                    "Real Maa boundary disabled in tests");
+            }
+
+            MaaApiResult PostTask(
+                MaaTaskerHandle,
+                std::string_view,
+                std::string_view) override
+            {
+                return MaaApiResult::Failure(
+                    0,
+                    "Real Maa boundary disabled in tests");
+            }
+
+            MaaTaskStatus WaitTask(
+                MaaTaskerHandle,
+                MaaAsyncId) override
+            {
+                return MaaTaskStatus::Invalid;
+            }
+
+            MaaApiResult PostStop(MaaTaskerHandle) override
+            {
+                return MaaApiResult::Failure(
+                    0,
+                    "Real Maa boundary disabled in tests");
+            }
+        };
+#endif
+
+        template <typename Handle, void (IMaaApiBoundary::*Destroy)(Handle) noexcept>
+        class ScopedHandle
+        {
+        public:
+            ScopedHandle(IMaaApiBoundary& boundary, Handle handle)
+                : boundary_(&boundary), handle_(handle)
+            {
+            }
+
+            ScopedHandle(const ScopedHandle&) = delete;
+            ScopedHandle& operator=(const ScopedHandle&) = delete;
+
+            ScopedHandle(ScopedHandle&& other) noexcept
+                : boundary_(other.boundary_), handle_(other.handle_)
+            {
+                other.boundary_ = nullptr;
+                other.handle_ = 0;
+            }
+
+            ~ScopedHandle()
+            {
+                if (boundary_ && handle_ != 0)
+                {
+                    ((*boundary_).*Destroy)(handle_);
+                }
+            }
+
+            Handle get() const { return handle_; }
+
+        private:
+            IMaaApiBoundary* boundary_ = nullptr;
+            Handle           handle_ = 0;
+        };
+
+        using ScopedResource =
+            ScopedHandle<MaaResourceHandle, &IMaaApiBoundary::DestroyResource>;
+        using ScopedController =
+            ScopedHandle<MaaControllerHandle, &IMaaApiBoundary::DestroyController>;
+        using ScopedTasker =
+            ScopedHandle<MaaTaskerHandle, &IMaaApiBoundary::DestroyTasker>;
+
+        IMaaApiBoundary* g_boundary_for_test = nullptr;
+
+        void AddDiagnostic(
+            MaaRuntimeResult& result,
+            std::string       code,
+            std::string       message,
+            std::optional<std::int64_t> provider_code = std::nullopt,
+            std::string       severity = "error")
+        {
+            result.diagnostics.emplace_back(MaaRuntimeDiagnostic{
+                .severity = std::move(severity),
+                .code = std::move(code),
+                .message = std::move(message),
+                .provider_code = provider_code});
+        }
+
+        bool StopRequested(PluginInterface::IDasStopToken* stop_token)
+        {
+            bool requested = false;
+            return stop_token
+                   && DAS::IsOk(stop_token->StopRequested(&requested))
+                   && requested;
+        }
+
+        std::string SerializeJson(const yyjson::value& value)
+        {
+            auto serialized = Das::Utils::SerializeYyjsonValue(value);
+            return serialized.value_or("{}");
+        }
+
+        template <typename ObjectRef>
+        std::optional<std::string> OptionalStringField(
+            const ObjectRef& obj,
+            std::string_view key)
+        {
+            if (!obj.contains(key) || !obj[key].is_string())
+            {
+                return std::nullopt;
+            }
+            return std::string(obj[key].as_string().value_or(""));
+        }
+
+        template <typename ObjectRef>
+        std::optional<std::string> RequiredStringField(
+            const ObjectRef& obj,
+            std::string_view key,
+            ParsedExecutionEnvelope& parsed)
+        {
+            auto result = OptionalStringField(obj, key);
+            if (!result)
+            {
+                parsed.result = DAS_E_INVALID_ARGUMENT;
+                parsed.message = "Missing string field: " + std::string(key);
+            }
+            return result;
+        }
+
+        yyjson::value CloneJson(const yyjson::value& value)
+        {
+            auto serialized = SerializeJson(value);
+            auto parsed = Das::Utils::ParseYyjsonFromString(serialized);
+            return parsed ? std::move(*parsed) : Das::Utils::MakeYyjsonObject();
+        }
+
+        template <typename ObjectRef>
+        std::vector<std::string> StringArrayField(
+            const ObjectRef& obj,
+            std::string_view key)
+        {
+            std::vector<std::string> result;
+            if (!obj.contains(key))
+            {
+                return result;
+            }
+            auto array = obj[key].as_array();
+            if (!array)
+            {
+                return result;
+            }
+            for (auto it = array->begin(); it != array->end(); ++it)
+            {
+                if (it->is_string())
+                {
+                    result.emplace_back(it->as_string().value_or(""));
+                }
+            }
+            return result;
+        }
+
+        template <typename ObjectRef>
+        bool BoolField(
+            const ObjectRef& obj,
+            std::string_view key,
+            bool default_value)
+        {
+            return obj.contains(key) && obj[key].is_bool()
+                       ? obj[key].as_bool().value_or(default_value)
+                       : default_value;
+        }
+    } // namespace
+
+    IMaaApiBoundary& DefaultMaaApiBoundary()
+    {
+        static ScopedMaaApiBoundary boundary;
+        return boundary;
+    }
+
+    void SetMaaApiBoundaryForTest(IMaaApiBoundary* boundary)
+    {
+        g_boundary_for_test = boundary;
+    }
+
+    IMaaApiBoundary& MaaApiBoundaryForRuntime()
+    {
+        return g_boundary_for_test ? *g_boundary_for_test
+                                   : DefaultMaaApiBoundary();
+    }
+
+    ParsedExecutionEnvelope ParseExecutionEnvelope(const yyjson::value& value)
+    {
+        ParsedExecutionEnvelope parsed;
+        auto root = value.as_object();
+        if (!root)
+        {
+            parsed.result = DAS_E_INVALID_JSON;
+            parsed.message = "Execution envelope must be a JSON object";
+            return parsed;
+        }
+
+        if (root->contains(std::string_view("version"))
+            && (*root)[std::string_view("version")].is_sint())
+        {
+            parsed.envelope.version = static_cast<int32_t>(
+                (*root)[std::string_view("version")].as_sint().value_or(1));
+        }
+        parsed.envelope.plugin_guid =
+            RequiredStringField(*root, "pluginGuid", parsed).value_or("");
+        if (DAS::IsFailed(parsed.result))
+        {
+            return parsed;
+        }
+        parsed.envelope.task_type_guid =
+            RequiredStringField(*root, "taskTypeGuid", parsed).value_or("");
+        if (DAS::IsFailed(parsed.result))
+        {
+            return parsed;
+        }
+
+        if (!root->contains(std::string_view("maapi")))
+        {
+            parsed.result = DAS_E_INVALID_ARGUMENT;
+            parsed.message = "Missing maapi execution plan";
+            return parsed;
+        }
+        auto maapi = (*root)[std::string_view("maapi")].as_object();
+        if (!maapi)
+        {
+            parsed.result = DAS_E_INVALID_ARGUMENT;
+            parsed.message = "maapi must be an object";
+            return parsed;
+        }
+
+        auto& plan = parsed.envelope.maapi;
+        plan.interface_directory =
+            RequiredStringField(*maapi, "interfaceDirectory", parsed)
+                .value_or("");
+        if (DAS::IsFailed(parsed.result))
+        {
+            return parsed;
+        }
+        plan.controller_name =
+            RequiredStringField(*maapi, "controllerName", parsed).value_or("");
+        if (DAS::IsFailed(parsed.result))
+        {
+            return parsed;
+        }
+        plan.resource_name =
+            RequiredStringField(*maapi, "resourceName", parsed).value_or("");
+        if (DAS::IsFailed(parsed.result))
+        {
+            return parsed;
+        }
+        plan.resource_paths = StringArrayField(*maapi, "resourcePaths");
+        plan.resource_hash = OptionalStringField(*maapi, "resourceHash");
+        plan.fail_fast = BoolField(*maapi, "failFast", true);
+        plan.requires_agent_runtime =
+            BoolField(*maapi, "requiresAgentRuntime", false);
+
+        if (maapi->contains(std::string_view("piEnv")))
+        {
+            if (auto env = (*maapi)[std::string_view("piEnv")].as_object())
+            {
+                plan.pi_env.interface_version =
+                    OptionalStringField(*env, "interfaceVersion").value_or("2");
+                plan.pi_env.client_name =
+                    OptionalStringField(*env, "clientName").value_or("DAS");
+                plan.pi_env.client_language =
+                    OptionalStringField(*env, "clientLanguage").value_or("cpp");
+                plan.pi_env.project_version =
+                    OptionalStringField(*env, "projectVersion").value_or("");
+                plan.pi_env.controller_json =
+                    OptionalStringField(*env, "controllerJson").value_or("");
+                plan.pi_env.resource_json =
+                    OptionalStringField(*env, "resourceJson").value_or("");
+            }
+        }
+
+        if (!maapi->contains(std::string_view("tasks")))
+        {
+            parsed.result = DAS_E_INVALID_ARGUMENT;
+            parsed.message = "Missing task list";
+            return parsed;
+        }
+        auto tasks = (*maapi)[std::string_view("tasks")].as_array();
+        if (!tasks)
+        {
+            parsed.result = DAS_E_INVALID_ARGUMENT;
+            parsed.message = "tasks must be an array";
+            return parsed;
+        }
+        for (auto it = tasks->begin(); it != tasks->end(); ++it)
+        {
+            auto task_obj = it->as_object();
+            if (!task_obj)
+            {
+                parsed.result = DAS_E_INVALID_ARGUMENT;
+                parsed.message = "task item must be an object";
+                return parsed;
+            }
+
+            MaaTaskExecutionDto task;
+            task.task_name =
+                RequiredStringField(*task_obj, "taskName", parsed).value_or("");
+            if (DAS::IsFailed(parsed.result))
+            {
+                return parsed;
+            }
+            task.entry =
+                RequiredStringField(*task_obj, "entry", parsed).value_or("");
+            if (DAS::IsFailed(parsed.result))
+            {
+                return parsed;
+            }
+            if (task_obj->contains(std::string_view("pipelineOverride")))
+            {
+                task.pipeline_override =
+                    CloneJson((*task_obj)[std::string_view("pipelineOverride")]);
+            }
+            else
+            {
+                task.pipeline_override = Das::Utils::MakeYyjsonObject();
+            }
+            plan.tasks.emplace_back(std::move(task));
+        }
+
+        parsed.result = ValidateExecutionEnvelope(parsed.envelope);
+        return parsed;
+    }
+
+    DasResult ValidateExecutionEnvelope(const ExecutionEnvelopeDto& envelope)
+    {
+        if (envelope.plugin_guid != kPluginGuidText
+            || envelope.task_type_guid != kTaskGuidText)
+        {
+            return DAS_E_INVALID_ARGUMENT;
+        }
+        if (envelope.version != 1)
+        {
+            return DAS_E_INVALID_ARGUMENT;
+        }
+        if (envelope.maapi.requires_agent_runtime)
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+        if (envelope.maapi.tasks.empty())
+        {
+            return DAS_E_INVALID_ARGUMENT;
+        }
+        return DAS_S_OK;
+    }
+
+    MaaRuntimeResult MaaRuntime::Run(
+        const ExecutionEnvelopeDto&     envelope,
+        IMaaApiBoundary&                boundary,
+        PluginInterface::IDasStopToken* stop_token)
+    {
+        MaaRuntimeResult result;
+        const auto validation = ValidateExecutionEnvelope(envelope);
+        if (DAS::IsFailed(validation))
+        {
+            result.das_result = validation;
+            AddDiagnostic(
+                result,
+                "invalid-envelope",
+                "Execution envelope is not supported by the MAAPI runtime");
+            return result;
+        }
+
+        ScopedResource resource(boundary, boundary.CreateResource());
+        if (resource.get() == kInvalidMaaResourceHandle)
+        {
+            result.das_result = DAS_E_FAIL;
+            AddDiagnostic(result, "create-resource-failed", "Maa resource creation failed");
+            return result;
+        }
+
+        for (const auto& path : envelope.maapi.resource_paths)
+        {
+            auto load = boundary.LoadResource(resource.get(), path);
+            if (!load.ok)
+            {
+                result.das_result = DAS_E_FAIL;
+                AddDiagnostic(
+                    result,
+                    "load-resource-failed",
+                    load.message,
+                    load.provider_code);
+                return result;
+            }
+        }
+
+        if (envelope.maapi.resource_hash)
+        {
+            auto actual_hash = boundary.GetResourceHash(resource.get());
+            if (actual_hash && *actual_hash != *envelope.maapi.resource_hash)
+            {
+                AddDiagnostic(
+                    result,
+                    "resource-hash-mismatch",
+                    "Maa resource hash does not match the PI envelope",
+                    std::nullopt,
+                    "warning");
+            }
+        }
+
+        ControllerSpec controller_spec{
+            .name = envelope.maapi.controller_name,
+            .type = [&] {
+                auto parsed = Das::Utils::ParseYyjsonFromString(
+                    envelope.maapi.pi_env.controller_json);
+                auto obj = parsed ? parsed->as_object() : std::nullopt;
+                return obj && obj->contains(std::string_view("type"))
+                           ? std::string(
+                               (*obj)[std::string_view("type")]
+                                   .as_string()
+                                   .value_or(""))
+                           : std::string{};
+            }(),
+            .raw_json = envelope.maapi.pi_env.controller_json};
+        ScopedController controller(
+            boundary,
+            boundary.CreateController(controller_spec));
+        if (controller.get() == kInvalidMaaControllerHandle)
+        {
+            result.das_result = DAS_E_FAIL;
+            AddDiagnostic(
+                result,
+                "create-controller-failed",
+                "Maa controller creation failed");
+            return result;
+        }
+
+        ScopedTasker tasker(boundary, boundary.CreateTasker());
+        if (tasker.get() == kInvalidMaaTaskerHandle)
+        {
+            result.das_result = DAS_E_FAIL;
+            AddDiagnostic(result, "create-tasker-failed", "Maa tasker creation failed");
+            return result;
+        }
+
+        auto bind_resource = boundary.BindResource(tasker.get(), resource.get());
+        if (!bind_resource.ok)
+        {
+            result.das_result = DAS_E_FAIL;
+            AddDiagnostic(
+                result,
+                "bind-resource-failed",
+                bind_resource.message,
+                bind_resource.provider_code);
+            return result;
+        }
+
+        auto bind_controller =
+            boundary.BindController(tasker.get(), controller.get());
+        if (!bind_controller.ok)
+        {
+            result.das_result = DAS_E_FAIL;
+            AddDiagnostic(
+                result,
+                "bind-controller-failed",
+                bind_controller.message,
+                bind_controller.provider_code);
+            return result;
+        }
+
+        for (const auto& task : envelope.maapi.tasks)
+        {
+            if (StopRequested(stop_token))
+            {
+                boundary.PostStop(tasker.get());
+                result.stopped = true;
+                result.das_result = DAS_E_FAIL;
+                AddDiagnostic(
+                    result,
+                    "stop-requested",
+                    "DAS stop token requested Maa tasker stop");
+                return result;
+            }
+
+            auto post = boundary.PostTask(
+                tasker.get(),
+                task.entry,
+                SerializeJson(task.pipeline_override));
+            if (!post.ok)
+            {
+                result.das_result = DAS_E_FAIL;
+                AddDiagnostic(
+                    result,
+                    "post-task-failed",
+                    post.message,
+                    post.provider_code);
+                return result;
+            }
+
+            const auto status = boundary.WaitTask(tasker.get(), post.id);
+            if (status == MaaTaskStatus::Succeeded)
+            {
+                result.completed_tasks.emplace_back(task.task_name);
+                continue;
+            }
+
+            result.das_result = DAS_E_FAIL;
+            AddDiagnostic(
+                result,
+                "task-failed",
+                "Maa task failed: " + task.task_name,
+                static_cast<std::int64_t>(status));
+            if (envelope.maapi.fail_fast)
+            {
+                return result;
+            }
+        }
+
+        return result;
+    }
+} // namespace Das::Plugins::DasMaaPi
