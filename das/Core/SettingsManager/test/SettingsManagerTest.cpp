@@ -653,6 +653,78 @@ namespace
         EXPECT_EQ(result, DAS_S_FALSE);
     }
 
+    TEST_F(SettingsManagerTest, TaskRepository_ListSortedIdsIgnoresMalformed)
+    {
+        Das::Core::SettingsManager::SettingsManager sm(test_dir_);
+        sm.CreateProfile("0");
+
+        yyjson::value entry2(Das::Utils::MakeYyjsonObject());
+        (*entry2.as_object())[std::string_view("entryId")] = 2;
+        ASSERT_EQ(sm.UpdateTaskRepositoryEntryJson("0", 2, entry2), DAS_S_OK);
+
+        yyjson::value entry10(Das::Utils::MakeYyjsonObject());
+        (*entry10.as_object())[std::string_view("entryId")] = 10;
+        ASSERT_EQ(sm.UpdateTaskRepositoryEntryJson("0", 10, entry10), DAS_S_OK);
+
+        yyjson::value task(Das::Utils::MakeYyjsonObject());
+        (*task.as_object())[std::string_view("id")] = 2;
+        ASSERT_EQ(sm.UpdateTaskInstanceJson("0", 2, task), DAS_S_OK);
+
+        {
+            std::ofstream ofs{test_dir_ / "0" / "taskRepository.json"};
+            ofs << "{}";
+        }
+        {
+            std::ofstream ofs{test_dir_ / "0" / "taskRepositoryabc.json"};
+            ofs << "{}";
+        }
+        {
+            std::ofstream ofs{test_dir_ / "0" / "taskRepository-1.json"};
+            ofs << "{}";
+        }
+        {
+            std::ofstream ofs{test_dir_ / "0" / "taskRepository4.tmp"};
+            ofs << "{}";
+        }
+
+        auto ids = sm.ListTaskRepositoryEntryIds("0");
+        EXPECT_EQ(ids, (std::vector<int64_t>{2, 10}));
+    }
+
+    TEST_F(
+        SettingsManagerTest,
+        TaskRepository_AllocateIgnoresSchedulerAndReusesDeletedHighest)
+    {
+        Das::Core::SettingsManager::SettingsManager sm(test_dir_);
+        sm.CreateProfile("0");
+
+        yyjson::value scheduler(Das::Utils::MakeYyjsonObject());
+        (*scheduler.as_object())[std::string_view("nextTaskId")] = 99;
+        (*scheduler.as_object())[std::string_view("taskOrder")] =
+            Das::Utils::MakeYyjsonArray();
+        ASSERT_EQ(sm.UpdateSchedulerIndexJson("0", scheduler), DAS_S_OK);
+
+        yyjson::value task(Das::Utils::MakeYyjsonObject());
+        (*task.as_object())[std::string_view("id")] = 0;
+        ASSERT_EQ(sm.UpdateTaskInstanceJson("0", 0, task), DAS_S_OK);
+
+        EXPECT_EQ(sm.AllocateNextTaskRepositoryEntryId("0"), 0);
+
+        for (int64_t entry_id : {0, 1, 2})
+        {
+            yyjson::value entry(Das::Utils::MakeYyjsonObject());
+            (*entry.as_object())[std::string_view("entryId")] = entry_id;
+            ASSERT_EQ(
+                sm.UpdateTaskRepositoryEntryJson("0", entry_id, entry),
+                DAS_S_OK);
+        }
+
+        EXPECT_EQ(sm.AllocateNextTaskRepositoryEntryId("0"), 3);
+
+        ASSERT_EQ(sm.DeleteTaskRepositoryEntryJson("0", 2), DAS_S_OK);
+        EXPECT_EQ(sm.AllocateNextTaskRepositoryEntryId("0"), 2);
+    }
+
     TEST_F(
         SettingsManagerTest,
         AuthoringPersistence_TaskInstanceSiblingMetadata)
