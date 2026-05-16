@@ -4,10 +4,50 @@
 #include <gtest/gtest.h>
 
 #include <string_view>
+#include <type_traits>
 
 namespace
 {
     using namespace Das::Core::TaskScheduler::RepositoryInvoke::Dto;
+
+    template <typename T>
+    constexpr bool UsesRepositoryInvokeLowerCamelRule =
+        std::is_same_v<
+            typename yyjson::field_name_rule<T>::type,
+            yyjson::snake_to_camel_transform>;
+
+    static_assert(
+        UsesRepositoryInvokeLowerCamelRule<RepositoryTaskRefDto>);
+    static_assert(
+        UsesRepositoryInvokeLowerCamelRule<ChildExecutionSnapshotDto>);
+    static_assert(
+        UsesRepositoryInvokeLowerCamelRule<InvokeRepositoryTaskSettingsDto>);
+    static_assert(
+        UsesRepositoryInvokeLowerCamelRule<InvokeRepositoryTaskInputDto>);
+    static_assert(
+        UsesRepositoryInvokeLowerCamelRule<InvokeRepositoryTaskDiagnosticDto>);
+    static_assert(
+        UsesRepositoryInvokeLowerCamelRule<InvokeRepositoryTaskOutputsDto>);
+    static_assert(
+        UsesRepositoryInvokeLowerCamelRule<InvokeRepositoryTaskSignalsDto>);
+    static_assert(
+        UsesRepositoryInvokeLowerCamelRule<InvokeRepositoryTaskResultDto>);
+
+    static_assert(std::is_same_v<
+                  decltype(ChildExecutionSnapshotDto::execution_input),
+                  yyjson::value>);
+    static_assert(std::is_same_v<
+                  decltype(InvokeRepositoryTaskInputDto::runtime_inputs),
+                  yyjson::value>);
+    static_assert(std::is_same_v<
+                  decltype(InvokeRepositoryTaskOutputsDto::child_outputs),
+                  yyjson::value>);
+    static_assert(std::is_same_v<
+                  decltype(InvokeRepositoryTaskResultDto::diagnostics),
+                  std::vector<InvokeRepositoryTaskDiagnosticDto>>);
+    static_assert(std::is_same_v<
+                  decltype(InvokeRepositoryTaskResultDto::signals),
+                  InvokeRepositoryTaskSignalsDto>);
 
     yyjson::value ParseJson(std::string_view json)
     {

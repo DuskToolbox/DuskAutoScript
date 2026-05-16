@@ -67,8 +67,8 @@ namespace Das::Core::TaskScheduler::RepositoryInvoke::Dto
 
     struct InvokeRepositoryTaskResultDto
     {
-        int32_t                                      version = 1;
-        std::string                                  status;
+        int32_t                                        version = 1;
+        std::string                                    status;
         InvokeRepositoryTaskOutputsDto                 outputs;
         std::vector<InvokeRepositoryTaskDiagnosticDto> diagnostics;
         InvokeRepositoryTaskSignalsDto                 signals;
@@ -120,57 +120,49 @@ DAS_REPOSITORY_INVOKE_DTO_CASTER(InvokeRepositoryTaskResultDto);
 #undef DAS_REPOSITORY_INVOKE_DTO_CASTER
 
 template <>
-struct yyjson::field_name_rule<
-    Das::Core::TaskScheduler::RepositoryInvoke::Dto::RepositoryTaskRefDto>
+struct yyjson::field_name_rule<Das::Core::TaskScheduler::RepositoryInvoke::Dto::RepositoryTaskRefDto>
 {
     using type = yyjson::snake_to_camel_transform;
 };
 
 template <>
-struct yyjson::field_name_rule<Das::Core::TaskScheduler::RepositoryInvoke::Dto::
-                                   ChildExecutionSnapshotDto>
+struct yyjson::field_name_rule<Das::Core::TaskScheduler::RepositoryInvoke::Dto::ChildExecutionSnapshotDto>
 {
     using type = yyjson::snake_to_camel_transform;
 };
 
 template <>
-struct yyjson::field_name_rule<Das::Core::TaskScheduler::RepositoryInvoke::Dto::
-                                   InvokeRepositoryTaskSettingsDto>
+struct yyjson::field_name_rule<Das::Core::TaskScheduler::RepositoryInvoke::Dto::InvokeRepositoryTaskSettingsDto>
 {
     using type = yyjson::snake_to_camel_transform;
 };
 
 template <>
-struct yyjson::field_name_rule<Das::Core::TaskScheduler::RepositoryInvoke::Dto::
-                                   InvokeRepositoryTaskInputDto>
+struct yyjson::field_name_rule<Das::Core::TaskScheduler::RepositoryInvoke::Dto::InvokeRepositoryTaskInputDto>
 {
     using type = yyjson::snake_to_camel_transform;
 };
 
 template <>
-struct yyjson::field_name_rule<Das::Core::TaskScheduler::RepositoryInvoke::Dto::
-                                   InvokeRepositoryTaskDiagnosticDto>
+struct yyjson::field_name_rule<Das::Core::TaskScheduler::RepositoryInvoke::Dto::InvokeRepositoryTaskDiagnosticDto>
 {
     using type = yyjson::snake_to_camel_transform;
 };
 
 template <>
-struct yyjson::field_name_rule<Das::Core::TaskScheduler::RepositoryInvoke::Dto::
-                                   InvokeRepositoryTaskOutputsDto>
+struct yyjson::field_name_rule<Das::Core::TaskScheduler::RepositoryInvoke::Dto::InvokeRepositoryTaskOutputsDto>
 {
     using type = yyjson::snake_to_camel_transform;
 };
 
 template <>
-struct yyjson::field_name_rule<Das::Core::TaskScheduler::RepositoryInvoke::Dto::
-                                   InvokeRepositoryTaskSignalsDto>
+struct yyjson::field_name_rule<Das::Core::TaskScheduler::RepositoryInvoke::Dto::InvokeRepositoryTaskSignalsDto>
 {
     using type = yyjson::snake_to_camel_transform;
 };
 
 template <>
-struct yyjson::field_name_rule<Das::Core::TaskScheduler::RepositoryInvoke::Dto::
-                                   InvokeRepositoryTaskResultDto>
+struct yyjson::field_name_rule<Das::Core::TaskScheduler::RepositoryInvoke::Dto::InvokeRepositoryTaskResultDto>
 {
     using type = yyjson::snake_to_camel_transform;
 };
