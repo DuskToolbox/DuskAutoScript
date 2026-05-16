@@ -46,9 +46,13 @@ namespace
         std::optional<RepositoryEntryDto> entry;
         std::optional<std::string>        execution_component_guid =
             std::string(kComponentGuid);
+        bool             provider_ok = true;
+        std::string      compile_result_json =
+            R"json({"ok":true,"executionInput":{"key1":"compiled"}})json";
         int                               load_count = 0;
         int                               capability_count = 0;
         int                               compile_count = 0;
+        std::string                       last_compile_purpose;
 
         RepositoryInvokeCompileServices Bind()
         {
@@ -73,10 +77,25 @@ namespace
             services.compile_authoring =
                 [this](
                     const RepositoryEntryDto&,
-                    const yyjson::value&) -> RepositoryInvokeProviderCompileResult
+                    const yyjson::value& request)
+                    -> RepositoryInvokeProviderCompileResult
             {
                 ++compile_count;
-                return RepositoryInvokeProviderCompileResult{};
+                auto request_obj = request.as_object();
+                if (request_obj
+                    && request_obj->contains(std::string_view("purpose")))
+                {
+                    last_compile_purpose =
+                        std::string(
+                            (*request_obj)[std::string_view("purpose")]
+                                .as_string()
+                                .value_or(""));
+                }
+
+                RepositoryInvokeProviderCompileResult result;
+                result.ok = provider_ok;
+                result.compile_result = ParseJson(compile_result_json);
+                return result;
             };
             return services;
         }
@@ -183,4 +202,95 @@ TEST(RepositoryInvokeCompilerTest, ExecutionComponentMissingStopsBeforeCompile)
     EXPECT_EQ(FirstDiagnostic(result).code, "execution-component-missing");
     EXPECT_EQ(fake.capability_count, 1);
     EXPECT_EQ(fake.compile_count, 0);
+}
+
+TEST(RepositoryInvokeCompilerTest, ExecutionCompileBuildsChildSnapshot)
+{
+    FakeCompilerServices fake;
+    fake.entry = MakeAvailableEntry();
+    fake.compile_result_json = R"json({
+        "ok": true,
+        "executionInput": {
+            "key1": "compiled",
+            "providerPrivate": {"keepExactKey": true}
+        }
+    })json";
+    auto ref = MakeRef();
+    ref.expected_revision = 7;
+    ref.source_fingerprint = "source-a";
+    auto services = fake.Bind();
+
+    auto result = ResolveRepositoryInvokeSnapshot(services, ref);
+
+    ASSERT_TRUE(result.ok);
+    ASSERT_TRUE(result.snapshot.has_value());
+    EXPECT_TRUE(result.diagnostics.empty());
+    EXPECT_EQ(fake.compile_count, 1);
+    EXPECT_EQ(fake.last_compile_purpose, "execution");
+
+    const auto& snapshot = *result.snapshot;
+    EXPECT_EQ(snapshot.source_entry_id, 42);
+    EXPECT_EQ(snapshot.source_revision, 7);
+    EXPECT_EQ(snapshot.source_fingerprint, "source-a");
+    EXPECT_EQ(snapshot.plugin_guid, kPluginGuid);
+    EXPECT_EQ(snapshot.task_type_guid, kTaskGuid);
+    EXPECT_EQ(snapshot.component_guid, kComponentGuid);
+
+    auto execution_input = snapshot.execution_input.as_object();
+    ASSERT_TRUE(execution_input.has_value());
+    EXPECT_EQ(
+        (*execution_input)[std::string_view("key1")].as_string().value_or(""),
+        std::string_view("compiled"));
+    auto private_payload =
+        (*execution_input)[std::string_view("providerPrivate")].as_object();
+    ASSERT_TRUE(private_payload.has_value());
+    EXPECT_TRUE(
+        (*private_payload)[std::string_view("keepExactKey")]
+            .as_bool()
+            .value_or(false));
+}
+
+TEST(RepositoryInvokeCompilerTest, ProviderFailedReturnsDiagnostic)
+{
+    FakeCompilerServices fake;
+    fake.entry = MakeAvailableEntry();
+    fake.provider_ok = false;
+    auto services = fake.Bind();
+
+    auto result = ResolveRepositoryInvokeSnapshot(services, MakeRef());
+
+    EXPECT_FALSE(result.ok);
+    EXPECT_FALSE(result.snapshot.has_value());
+    EXPECT_EQ(FirstDiagnostic(result).code, "provider-compile-failed");
+    EXPECT_EQ(fake.compile_count, 1);
+}
+
+TEST(RepositoryInvokeCompilerTest, ProviderFailedWhenCompileReturnsOkFalse)
+{
+    FakeCompilerServices fake;
+    fake.entry = MakeAvailableEntry();
+    fake.compile_result_json = R"json({"ok":false})json";
+    auto services = fake.Bind();
+
+    auto result = ResolveRepositoryInvokeSnapshot(services, MakeRef());
+
+    EXPECT_FALSE(result.ok);
+    EXPECT_FALSE(result.snapshot.has_value());
+    EXPECT_EQ(FirstDiagnostic(result).code, "provider-compile-failed");
+    EXPECT_EQ(fake.compile_count, 1);
+}
+
+TEST(RepositoryInvokeCompilerTest, MissingExecutionInputReturnsDiagnostic)
+{
+    FakeCompilerServices fake;
+    fake.entry = MakeAvailableEntry();
+    fake.compile_result_json = R"json({"ok":true,"summary":{}})json";
+    auto services = fake.Bind();
+
+    auto result = ResolveRepositoryInvokeSnapshot(services, MakeRef());
+
+    EXPECT_FALSE(result.ok);
+    EXPECT_FALSE(result.snapshot.has_value());
+    EXPECT_EQ(FirstDiagnostic(result).code, "execution-input-missing");
+    EXPECT_EQ(fake.compile_count, 1);
 }
