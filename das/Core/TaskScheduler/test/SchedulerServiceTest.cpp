@@ -1474,6 +1474,8 @@ constexpr char FactoryAuthoringFactoryGuidString[] =
     "FECAC0D5-E038-4FDB-A6E9-EFCE10BCAE5A";
 constexpr char FactoryTaskComponentFactoryGuidString[] =
     "2B9CE776-E95F-47F1-BD31-180B9238A94C";
+constexpr char FactoryExecutionComponentGuidString[] =
+    "68F10001-0000-4000-8000-000000000001";
 constexpr char MissingPluginGuidString[] =
     "99999999-0000-4000-8000-000000000001";
 constexpr char BannedPluginGuidString[] =
@@ -2493,7 +2495,8 @@ void WriteFactoryPluginManifest(
     std::string_view             plugin_guid = FactoryPluginGuidString,
     std::string_view             task_guid = FactoryTaskGuidString,
     bool                         include_authoring = true,
-    std::string_view             language = "Cpp")
+    std::string_view             language = "Cpp",
+    std::string_view             execution_component_guid = {})
 {
     yyjson::value manifest(Das::Utils::MakeYyjsonObject());
     (*manifest.as_object())[std::string_view("name")] = "FactoryPlugin";
@@ -2602,6 +2605,14 @@ void WriteFactoryPluginManifest(
                 std::move(supported);
             (*task_entry.as_object())[std::string_view("authoring")] =
                 std::move(authoring);
+        }
+        if (!execution_component_guid.empty())
+        {
+            yyjson::value execution_component(Das::Utils::MakeYyjsonObject());
+            (*execution_component.as_object())[std::string_view(
+                "componentGuid")] = std::string(execution_component_guid);
+            (*task_entry.as_object())[std::string_view(
+                "executionComponent")] = std::move(execution_component);
         }
         yyjson::value tasks_obj(Das::Utils::MakeYyjsonObject());
         (*tasks_obj.as_object())[std::string_view(task_guid)] =
@@ -3222,6 +3233,44 @@ TEST_F(
     EXPECT_EQ(shared_state_->decoy_authoring_create_count, 0);
     EXPECT_EQ(shared_state_->get_document_count, 1);
     EXPECT_EQ(shared_state_->last_context_revision, 0);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerExecutionComponentCapabilityRegistry)
+{
+    WriteFactoryPluginManifest(
+        manifest_path_,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        true,
+        "Cpp",
+        FactoryExecutionComponentGuidString);
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto execution_component =
+        scheduler_->FindTaskExecutionComponent(FactoryTaskGuid);
+    ASSERT_TRUE(execution_component.has_value());
+    EXPECT_EQ(
+        *execution_component,
+        Das::Core::ForeignInterfaceHost::MakeDasGuid(
+            FactoryExecutionComponentGuidString));
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerExecutionComponentCapabilityMissingReturnsEmpty)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto execution_component =
+        scheduler_->FindTaskExecutionComponent(FactoryTaskGuid);
+    EXPECT_FALSE(execution_component.has_value());
+
+    int64_t task_id = -1;
+    EXPECT_EQ(scheduler_->AddTask(FactoryTaskGuid, &task_id), DAS_S_OK);
+    EXPECT_GE(task_id, 0);
 }
 
 TEST_F(
