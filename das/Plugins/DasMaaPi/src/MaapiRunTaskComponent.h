@@ -7,6 +7,7 @@
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponent.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentFactory.Implements.hpp>
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -50,6 +51,7 @@ namespace Plugins::DasMaaPi
         std::string                code;
         std::string                message;
         std::optional<std::string> path;
+        std::optional<std::int64_t> provider_code;
     };
 
     struct MaapiRunTaskOutputsDto

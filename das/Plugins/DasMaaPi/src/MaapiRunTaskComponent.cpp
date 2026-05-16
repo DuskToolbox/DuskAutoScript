@@ -5,6 +5,7 @@
 #include "PluginUtils.h"
 
 #include <das/DasString.hpp>
+#include <das/Plugins/DasMaaPi/MaaRuntime.h>
 #include <das/Plugins/DasMaaPi/MaapiDto.h>
 #include <das/Utils/DasJsonCore.h>
 
@@ -26,15 +27,66 @@ namespace Plugins::DasMaaPi
 
         yyjson::value MakeRunResult(
             std::string status,
+            MaapiRunTaskOutputsDto outputs = {},
             std::vector<MaapiRunTaskDiagnosticDto> diagnostics = {})
         {
             MaapiRunTaskResultDto result;
             result.status = std::move(status);
+            result.outputs = std::move(outputs);
             result.diagnostics = std::move(diagnostics);
             result.signals.succeeded = result.status == "completed";
             result.signals.failed = result.status == "failed";
             result.signals.cancelled = result.status == "cancelled";
             return MakeOwnedJson(yyjson::object(result));
+        }
+
+        MaapiRunTaskDiagnosticDto Diagnostic(
+            std::string code,
+            std::string message,
+            std::optional<std::string> path = std::nullopt)
+        {
+            return MaapiRunTaskDiagnosticDto{
+                .severity = "error",
+                .code = std::move(code),
+                .message = std::move(message),
+                .path = std::move(path),
+                .provider_code = std::nullopt};
+        }
+
+        std::optional<yyjson::value> ExtractExecutionEnvelopeInput(
+            ExportInterface::IDasJson* p_input_json)
+        {
+            auto input = ReadJson(p_input_json);
+            if (!input)
+            {
+                return std::nullopt;
+            }
+
+            if (auto object = input->as_object();
+                object
+                && object->contains(std::string_view("executionInput")))
+            {
+                return MakeOwnedJson(
+                    (*object)[std::string_view("executionInput")]);
+            }
+            return MakeOwnedJson(*input);
+        }
+
+        std::vector<MaapiRunTaskDiagnosticDto> RuntimeDiagnostics(
+            const MaaRuntimeResult& result)
+        {
+            std::vector<MaapiRunTaskDiagnosticDto> diagnostics;
+            diagnostics.reserve(result.diagnostics.size());
+            for (const auto& diagnostic : result.diagnostics)
+            {
+                diagnostics.push_back(MaapiRunTaskDiagnosticDto{
+                    .severity = diagnostic.severity,
+                    .code = diagnostic.code,
+                    .message = diagnostic.message,
+                    .path = std::nullopt,
+                    .provider_code = diagnostic.provider_code});
+            }
+            return diagnostics;
         }
 
         DasResult ReturnJson(
@@ -92,10 +144,10 @@ namespace Plugins::DasMaaPi
     }
 
     DasResult MaapiRunTaskComponent::Do(
-        PluginInterface::IDasStopToken*,
+        PluginInterface::IDasStopToken* stop_token,
         ExportInterface::IDasJson*,
         ExportInterface::IDasJson*,
-        ExportInterface::IDasJson*,
+        ExportInterface::IDasJson* p_input_json,
         ExportInterface::IDasJson** pp_out_result_json)
     {
         if (pp_out_result_json == nullptr)
@@ -104,14 +156,60 @@ namespace Plugins::DasMaaPi
         }
         *pp_out_result_json = nullptr;
 
+        auto execution_input = ExtractExecutionEnvelopeInput(p_input_json);
+        if (!execution_input)
+        {
+            return ReturnJson(
+                MakeRunResult(
+                    "failed",
+                    {},
+                    {Diagnostic(
+                        "invalid-envelope",
+                        "MAAPI run requires a compiled execution envelope.",
+                        "executionInput")}),
+                pp_out_result_json);
+        }
+
+        auto parsed = ParseExecutionEnvelope(*execution_input);
+        if (DAS::IsFailed(parsed.result))
+        {
+            return ReturnJson(
+                MakeRunResult(
+                    "failed",
+                    {},
+                    {Diagnostic(
+                        "invalid-envelope",
+                        parsed.message.empty()
+                            ? "Compiled execution envelope is invalid."
+                            : parsed.message,
+                        "executionInput")}),
+                pp_out_result_json);
+        }
+
+        auto runtime_result = MaaRuntime::Run(
+            parsed.envelope,
+            MaaApiBoundaryForRuntime(),
+            stop_token);
+
+        MaapiRunTaskOutputsDto outputs;
+        outputs.completed_tasks = runtime_result.completed_tasks;
+        outputs.stopped = runtime_result.stopped;
+
+        std::string status = "completed";
+        if (runtime_result.stopped)
+        {
+            status = "cancelled";
+        }
+        else if (DAS::IsFailed(runtime_result.das_result))
+        {
+            status = "failed";
+        }
+
         return ReturnJson(
             MakeRunResult(
-                "failed",
-                {MaapiRunTaskDiagnosticDto{
-                    .severity = "error",
-                    .code = "not-implemented",
-                    .message = "MAAPI run execution is not implemented.",
-                    .path = std::nullopt}}),
+                std::move(status),
+                std::move(outputs),
+                RuntimeDiagnostics(runtime_result)),
             pp_out_result_json);
     }
 
