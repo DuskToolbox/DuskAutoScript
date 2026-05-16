@@ -1710,6 +1710,13 @@ namespace Das::Core::TaskScheduler
         Repository::Dto::RepositoryAvailabilityDto availability;
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            if (state_.load() == SchedulerState::Running
+                || state_.load() == SchedulerState::Stopping)
+            {
+                return MakeRepositoryResponseError(
+                    "taskWorking",
+                    "Scheduler is running or stopping");
+            }
             if (!initialized_ || !task_repository_store_)
             {
                 return MakeRepositoryResponseError(
