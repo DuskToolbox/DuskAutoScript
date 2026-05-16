@@ -5543,6 +5543,7 @@ namespace
         std::atomic<bool> repository_compile_called{false};
         int64_t           last_authoring_task_id = -1;
         int64_t           last_repository_entry_id = -1;
+        std::string       last_repository_request_json;
 
         DasResult next_result{DAS_S_OK};
 
@@ -5606,13 +5607,22 @@ namespace
         DasResult GetTaskRepository(IDasReadOnlyString** pp) override
         {
             repository_get_called = true;
+            if (DAS::IsFailed(next_result))
+            {
+                return next_result;
+            }
             return WriteAuthoringJson(pp, R"({"entries":[]})");
         }
         DasResult CreateRepositoryEntry(
-            IDasReadOnlyString*,
+            IDasReadOnlyString* p_request_json,
             IDasReadOnlyString** pp_out_json) override
         {
             repository_create_called = true;
+            RecordRequestJson(p_request_json);
+            if (DAS::IsFailed(next_result))
+            {
+                return next_result;
+            }
             return WriteAuthoringJson(
                 pp_out_json,
                 R"({"entryId":42,"displayName":"repository entry"})");
@@ -5625,44 +5635,64 @@ namespace
         }
         DasResult RenameRepositoryEntry(
             int64_t entry_id,
-            IDasReadOnlyString*,
+            IDasReadOnlyString* p_request_json,
             IDasReadOnlyString** pp_out_json) override
         {
             repository_rename_called = true;
             last_repository_entry_id = entry_id;
+            RecordRequestJson(p_request_json);
+            if (DAS::IsFailed(next_result))
+            {
+                return next_result;
+            }
             return WriteAuthoringJson(
                 pp_out_json,
                 R"({"entryId":42,"displayName":"renamed repository entry"})");
         }
         DasResult GetRepositoryEntryAuthoringDocument(
             int64_t entry_id,
-            IDasReadOnlyString*,
+            IDasReadOnlyString* p_request_json,
             IDasReadOnlyString** pp_out_json) override
         {
             repository_authoring_get_called = true;
             last_repository_entry_id = entry_id;
+            RecordRequestJson(p_request_json);
+            if (DAS::IsFailed(next_result))
+            {
+                return next_result;
+            }
             return WriteAuthoringJson(
                 pp_out_json,
                 R"({"entryId":42,"document":{"kind":"formSequence","revision":0}})");
         }
         DasResult ApplyRepositoryEntryAuthoringChange(
             int64_t entry_id,
-            IDasReadOnlyString*,
+            IDasReadOnlyString* p_request_json,
             IDasReadOnlyString** pp_out_json) override
         {
             repository_authoring_apply_called = true;
             last_repository_entry_id = entry_id;
+            RecordRequestJson(p_request_json);
+            if (DAS::IsFailed(next_result))
+            {
+                return next_result;
+            }
             return WriteAuthoringJson(
                 pp_out_json,
                 R"({"ok":true,"entryId":42,"revision":1})");
         }
         DasResult CompileRepositoryEntryAuthoring(
             int64_t entry_id,
-            IDasReadOnlyString*,
+            IDasReadOnlyString* p_request_json,
             IDasReadOnlyString** pp_out_json) override
         {
             repository_compile_called = true;
             last_repository_entry_id = entry_id;
+            RecordRequestJson(p_request_json);
+            if (DAS::IsFailed(next_result))
+            {
+                return next_result;
+            }
             return WriteAuthoringJson(
                 pp_out_json,
                 R"({"entryId":42,"canExecute":true,"summary":{},"diagnostics":[]})");
@@ -5747,6 +5777,21 @@ namespace
             }
             return cr;
         }
+
+        void RecordRequestJson(IDasReadOnlyString* p_json)
+        {
+            last_repository_request_json.clear();
+            if (!p_json)
+            {
+                return;
+            }
+
+            const char* raw = nullptr;
+            if (DAS::IsOk(p_json->GetUtf8(&raw)) && raw)
+            {
+                last_repository_request_json = raw;
+            }
+        }
     };
 
     /// Build a Beast::HttpRequest with path parameters set.
@@ -5766,6 +5811,11 @@ namespace
             req.SetPathParameter(k, v);
         }
         return req;
+    }
+
+    yyjson::value ReleaseJson(Das::Http::Beast::HttpResponse&& response)
+    {
+        return *Das::Utils::ParseYyjsonFromString(response.Release().body());
     }
 
 } // namespace
@@ -6218,6 +6268,132 @@ TEST_F(SchedulerControllerTest, SchedulerControllerAuthoringErrorKind_Data)
         std::string_view("revisionConflict"));
 
     error_svc->Release();
+}
+
+TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryGet_Forwarded)
+{
+    auto req = MakeRequest(
+        "/api/v1/scheduler/0/repository/get",
+        "{}",
+        {{"profile", "0"}});
+    auto body = ReleaseJson(controller_->RepositoryGet(req));
+    auto root = body.as_object().value();
+
+    EXPECT_EQ(
+        root[std::string_view("code")].as_sint().value_or(DAS_E_FAIL),
+        DAS_S_OK);
+    auto data = root[std::string_view("data")].as_object();
+    ASSERT_TRUE(data.has_value());
+    EXPECT_TRUE(data->contains(std::string_view("entries")));
+    EXPECT_TRUE(fake_svc_->repository_get_called);
+    EXPECT_FALSE(fake_svc_->repository_create_called);
+}
+
+TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryCreate_Forwarded)
+{
+    auto req = MakeRequest(
+        "/api/v1/scheduler/0/repository/entries",
+        R"({"pluginGuid":"AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE","taskTypeGuid":"11111111-2222-3333-4444-555555555555"})",
+        {{"profile", "0"}});
+    auto body = ReleaseJson(controller_->RepositoryCreate(req));
+    auto root = body.as_object().value();
+
+    EXPECT_EQ(
+        root[std::string_view("code")].as_sint().value_or(DAS_E_FAIL),
+        DAS_S_OK);
+    auto data = root[std::string_view("data")].as_object();
+    ASSERT_TRUE(data.has_value());
+    EXPECT_EQ(
+        (*data)[std::string_view("entryId")].as_sint().value_or(-1),
+        42);
+    EXPECT_TRUE(fake_svc_->repository_create_called);
+    EXPECT_NE(
+        fake_svc_->last_repository_request_json.find("pluginGuid"),
+        std::string::npos);
+}
+
+TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryProfile_Rejected)
+{
+    auto get_req = MakeRequest(
+        "/api/v1/scheduler/1/repository/get",
+        "{}",
+        {{"profile", "1"}});
+    auto get_body = ReleaseJson(controller_->RepositoryGet(get_req));
+    EXPECT_EQ(
+        (*get_body.as_object())[std::string_view("code")]
+            .as_sint()
+            .value_or(DAS_S_OK),
+        DAS_E_INVALID_ARGUMENT);
+
+    auto create_req = MakeRequest(
+        "/api/v1/scheduler/1/repository/entries",
+        "{}",
+        {{"profile", "1"}});
+    auto create_body = ReleaseJson(controller_->RepositoryCreate(create_req));
+    EXPECT_EQ(
+        (*create_body.as_object())[std::string_view("code")]
+            .as_sint()
+            .value_or(DAS_S_OK),
+        DAS_E_INVALID_ARGUMENT);
+
+    EXPECT_FALSE(fake_svc_->repository_get_called);
+    EXPECT_FALSE(fake_svc_->repository_create_called);
+}
+
+TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryBody_InvalidJson)
+{
+    auto get_req = MakeRequest(
+        "/api/v1/scheduler/0/repository/get",
+        "{broken",
+        {{"profile", "0"}});
+    auto get_body = ReleaseJson(controller_->RepositoryGet(get_req));
+    EXPECT_EQ(
+        (*get_body.as_object())[std::string_view("code")]
+            .as_sint()
+            .value_or(DAS_S_OK),
+        DAS_E_INVALID_JSON);
+
+    auto create_req = MakeRequest(
+        "/api/v1/scheduler/0/repository/entries",
+        "{broken",
+        {{"profile", "0"}});
+    auto create_body = ReleaseJson(controller_->RepositoryCreate(create_req));
+    EXPECT_EQ(
+        (*create_body.as_object())[std::string_view("code")]
+            .as_sint()
+            .value_or(DAS_S_OK),
+        DAS_E_INVALID_JSON);
+
+    EXPECT_FALSE(fake_svc_->repository_get_called);
+    EXPECT_FALSE(fake_svc_->repository_create_called);
+}
+
+TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryBody_NonObject)
+{
+    auto get_req = MakeRequest(
+        "/api/v1/scheduler/0/repository/get",
+        "[]",
+        {{"profile", "0"}});
+    auto get_body = ReleaseJson(controller_->RepositoryGet(get_req));
+    EXPECT_EQ(
+        (*get_body.as_object())[std::string_view("code")]
+            .as_sint()
+            .value_or(DAS_S_OK),
+        DAS_E_INVALID_ARGUMENT);
+
+    auto create_req = MakeRequest(
+        "/api/v1/scheduler/0/repository/entries",
+        "[]",
+        {{"profile", "0"}});
+    auto create_body = ReleaseJson(controller_->RepositoryCreate(create_req));
+    EXPECT_EQ(
+        (*create_body.as_object())[std::string_view("code")]
+            .as_sint()
+            .value_or(DAS_S_OK),
+        DAS_E_INVALID_ARGUMENT);
+
+    EXPECT_FALSE(fake_svc_->repository_get_called);
+    EXPECT_FALSE(fake_svc_->repository_create_called);
 }
 
 // ── Non-initialize paths do not load scheduler plugins ──
