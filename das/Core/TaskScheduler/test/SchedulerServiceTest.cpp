@@ -1494,6 +1494,9 @@ struct FactoryTaskSharedState
     int                     apply_change_count = 0;
     int                     compile_count = 0;
     int                     decoy_authoring_create_count = 0;
+    bool                    block_do = false;
+    bool                    do_entered = false;
+    bool                    unblock_do = false;
     int64_t                 last_context_entry_id = -1;
     int64_t                 last_context_task_id = -1;
     bool                    last_context_had_task_id = false;
@@ -1604,8 +1607,14 @@ public:
             std::lock_guard<std::mutex> lock(state_->mutex);
             state_->executed_instance_ids.push_back(instance_id_);
             state_->last_props_key1_value = std::move(key1_value);
+            state_->do_entered = true;
         }
         state_->cv.notify_all();
+
+        std::unique_lock<std::mutex> lock(state_->mutex);
+        state_->cv.wait(
+            lock,
+            [this] { return !state_->block_do || state_->unblock_do; });
         return DAS_S_OK;
     }
 
@@ -3492,6 +3501,72 @@ namespace
         EXPECT_EQ(state->decoy_authoring_create_count, 0);
     }
 
+    struct ProviderCallCounts
+    {
+        int authoring_session_count = 0;
+        int get_document_count = 0;
+        int apply_change_count = 0;
+        int compile_count = 0;
+        int decoy_authoring_create_count = 0;
+    };
+
+    ProviderCallCounts SnapshotProviderCallCounts(
+        const std::shared_ptr<FactoryTaskSharedState>& state)
+    {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        return ProviderCallCounts{
+            state->authoring_session_count,
+            state->get_document_count,
+            state->apply_change_count,
+            state->compile_count,
+            state->decoy_authoring_create_count};
+    }
+
+    void ExpectProviderCallCountsUnchanged(
+        const std::shared_ptr<FactoryTaskSharedState>& state,
+        const ProviderCallCounts&                      before)
+    {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        EXPECT_EQ(state->authoring_session_count, before.authoring_session_count);
+        EXPECT_EQ(state->get_document_count, before.get_document_count);
+        EXPECT_EQ(state->apply_change_count, before.apply_change_count);
+        EXPECT_EQ(state->compile_count, before.compile_count);
+        EXPECT_EQ(
+            state->decoy_authoring_create_count,
+            before.decoy_authoring_create_count);
+    }
+
+    void ExpectRepositoryAuthoringRejectedWithoutProviderCalls(
+        SchedulerService&                             scheduler,
+        const std::shared_ptr<FactoryTaskSharedState>& state,
+        std::string_view                              error_kind)
+    {
+        auto before = SnapshotProviderCallCounts(state);
+
+        yyjson::value request(Das::Utils::MakeYyjsonObject());
+        auto document =
+            scheduler.GetRepositoryEntryAuthoringDocument(0, request);
+        auto document_obj = document.as_object();
+        ASSERT_TRUE(document_obj.has_value());
+        EXPECT_EQ(
+            (*document_obj)[std::string_view("errorKind")]
+                .as_string()
+                .value_or(""),
+            error_kind);
+
+        auto change = MakeRepositoryAuthoringChange(5);
+        auto apply = scheduler.ApplyRepositoryEntryAuthoringChange(0, change);
+        auto apply_obj = apply.as_object();
+        ASSERT_TRUE(apply_obj.has_value());
+        EXPECT_EQ(
+            (*apply_obj)[std::string_view("errorKind")]
+                .as_string()
+                .value_or(""),
+            error_kind);
+
+        ExpectProviderCallCountsUnchanged(state, before);
+    }
+
     void ExpectUnavailableRenameDeleteWithoutProviderCalls(
         SchedulerService&                             scheduler,
         const std::shared_ptr<FactoryTaskSharedState>& state,
@@ -4242,6 +4317,233 @@ TEST_F(
     (void)scheduler_->GetTaskRepository();
 
     ExpectNoRepositoryAuthoringProviderCalls(shared_state_);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryUnavailableMissingPluginAuthoringNoProviderCall)
+{
+    SeedRepositoryEntry(
+        *settings_manager_,
+        0,
+        MissingPluginGuidString,
+        FactoryTaskGuidString,
+        "Missing plugin authoring entry");
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    ExpectRepositoryAuthoringRejectedWithoutProviderCalls(
+        *scheduler_,
+        shared_state_,
+        "pluginUnavailable");
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryUnavailableDisabledAuthoringNoProviderCall)
+{
+    SeedRepositoryEntry(
+        *settings_manager_,
+        0,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        "Disabled plugin authoring entry");
+
+    ASSERT_EQ(
+        scheduler_->Initialize(plugin_dir_, {FactoryPluginGuid}),
+        DAS_S_OK);
+
+    ExpectRepositoryAuthoringRejectedWithoutProviderCalls(
+        *scheduler_,
+        shared_state_,
+        "pluginUnavailable");
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryBannedPluginAuthoringNoProviderCall)
+{
+    auto banned_dir = plugin_dir_ / "BannedPlugin";
+    std::filesystem::create_directories(banned_dir);
+    WriteFactoryPluginManifest(
+        banned_dir / "BannedPlugin.json",
+        BannedPluginGuidString);
+    {
+        std::ofstream marker(
+            banned_dir / "BannedPlugin.willBeDelete",
+            std::ios::trunc);
+        marker << "pending deletion";
+    }
+    SeedRepositoryEntry(
+        *settings_manager_,
+        0,
+        BannedPluginGuidString,
+        FactoryTaskGuidString,
+        "Banned plugin authoring entry");
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    ExpectRepositoryAuthoringRejectedWithoutProviderCalls(
+        *scheduler_,
+        shared_state_,
+        "pluginUnavailable");
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryLoadFailedAuthoringNoProviderCall)
+{
+    WriteFactoryPluginManifest(
+        plugin_dir_ / "LoadFailedPlugin.json",
+        LoadFailedPluginGuidString,
+        FactoryTaskGuidString,
+        true,
+        "CSharp");
+    SeedRepositoryEntry(
+        *settings_manager_,
+        0,
+        LoadFailedPluginGuidString,
+        FactoryTaskGuidString,
+        "Load failed authoring entry");
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    ExpectRepositoryAuthoringRejectedWithoutProviderCalls(
+        *scheduler_,
+        shared_state_,
+        "pluginLoadFailed");
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryUnavailableMissingTaskTypeAuthoringNoProviderCall)
+{
+    SeedRepositoryEntry(
+        *settings_manager_,
+        0,
+        FactoryPluginGuidString,
+        MissingTaskTypeGuidString,
+        "Missing task type authoring entry");
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    ExpectRepositoryAuthoringRejectedWithoutProviderCalls(
+        *scheduler_,
+        shared_state_,
+        "taskTypeUnavailable");
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryUnavailableAuthoringCapabilityMissingAuthoringNoProviderCall)
+{
+    WriteFactoryPluginManifest(
+        manifest_path_,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        false);
+    SeedRepositoryEntry(
+        *settings_manager_,
+        0,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        "No authoring capability authoring entry");
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    ExpectRepositoryAuthoringRejectedWithoutProviderCalls(
+        *scheduler_,
+        shared_state_,
+        "authoringCapabilityMissing");
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryRunningAuthoringGetApplyNoProviderCall)
+{
+    yyjson::value task0(Das::Utils::MakeYyjsonObject());
+    (*task0.as_object())[std::string_view("id")] = 0;
+    (*task0.as_object())[std::string_view("taskGuid")] = FactoryTaskGuidString;
+    (*task0.as_object())[std::string_view("pluginGuid")] =
+        FactoryPluginGuidString;
+    (*task0.as_object())[std::string_view("nextExecutionTime")] =
+        4070908800;
+    (*task0.as_object())[std::string_view("properties")] =
+        yyjson::value(Das::Utils::MakeYyjsonObject());
+    WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    auto created = scheduler_->CreateRepositoryEntry(
+        MakeRepositoryCreateRequest("Running authoring entry", 8));
+    ASSERT_EQ(
+        (*created.as_object())[std::string_view("entryId")]
+            .as_sint()
+            .value_or(-1),
+        0);
+
+    ASSERT_EQ(scheduler_->Enable(), DAS_S_OK);
+
+    ExpectRepositoryAuthoringRejectedWithoutProviderCalls(
+        *scheduler_,
+        shared_state_,
+        "taskWorking");
+
+    ASSERT_EQ(scheduler_->Disable(), DAS_S_OK);
+    ASSERT_TRUE(
+        WaitForSchedulerStopped(*scheduler_, std::chrono::milliseconds(2000)));
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryStoppingAuthoringGetApplyNoProviderCall)
+{
+    yyjson::value task0(Das::Utils::MakeYyjsonObject());
+    (*task0.as_object())[std::string_view("id")] = 0;
+    (*task0.as_object())[std::string_view("taskGuid")] = FactoryTaskGuidString;
+    (*task0.as_object())[std::string_view("pluginGuid")] =
+        FactoryPluginGuidString;
+    (*task0.as_object())[std::string_view("nextExecutionTime")] =
+        yyjson::value{};
+    (*task0.as_object())[std::string_view("properties")] =
+        yyjson::value(Das::Utils::MakeYyjsonObject());
+    WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    auto created = scheduler_->CreateRepositoryEntry(
+        MakeRepositoryCreateRequest("Stopping authoring entry", 8));
+    ASSERT_EQ(
+        (*created.as_object())[std::string_view("entryId")]
+            .as_sint()
+            .value_or(-1),
+        0);
+
+    {
+        std::lock_guard<std::mutex> lock(shared_state_->mutex);
+        shared_state_->block_do = true;
+    }
+    ASSERT_EQ(scheduler_->Enable(), DAS_S_OK);
+    {
+        std::unique_lock<std::mutex> lock(shared_state_->mutex);
+        ASSERT_TRUE(shared_state_->cv.wait_for(
+            lock,
+            std::chrono::seconds(2),
+            [this] { return shared_state_->do_entered; }));
+    }
+
+    ASSERT_EQ(scheduler_->Disable(), DAS_S_OK);
+    ASSERT_EQ(scheduler_->Status(), SchedulerState::Stopping);
+    ExpectRepositoryAuthoringRejectedWithoutProviderCalls(
+        *scheduler_,
+        shared_state_,
+        "taskWorking");
+
+    {
+        std::lock_guard<std::mutex> lock(shared_state_->mutex);
+        shared_state_->unblock_do = true;
+    }
+    shared_state_->cv.notify_all();
+    ASSERT_TRUE(
+        WaitForSchedulerStopped(*scheduler_, std::chrono::milliseconds(2000)));
 }
 
 TEST_F(
