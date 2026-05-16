@@ -2155,6 +2155,13 @@ namespace Das::Core::TaskScheduler
         Repository::Dto::RepositoryEntryDto entry;
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            if (state_.load() == SchedulerState::Running
+                || state_.load() == SchedulerState::Stopping)
+            {
+                return MakeRepositoryResponseError(
+                    "taskWorking",
+                    "Scheduler is running or stopping");
+            }
             if (!initialized_ || !task_repository_store_)
             {
                 return MakeRepositoryResponseError(
@@ -2199,6 +2206,17 @@ namespace Das::Core::TaskScheduler
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            auto availability = DeriveRepositoryAvailabilityLocked(entry);
+            if (availability.state != "available")
+            {
+                return MakeRepositoryResponseError(
+                    availability.reason.empty() ? "unavailable"
+                                                : availability.reason,
+                    availability.message.empty()
+                        ? "Repository entry is unavailable"
+                        : availability.message);
+            }
+
             auto* authoring = capability_registry_.FindAuthoring(task_guid);
             if (!authoring)
             {
