@@ -1,0 +1,82 @@
+{
+  "interface_version": 2,
+  "name": "AuthoringFixture",
+  "version": "1.0",
+  "controller": [
+    {
+      "name": "Android",
+      "type": "Adb"
+    }
+  ],
+  "resource": [
+    {
+      "name": "Official",
+      "path": "resource"
+    }
+  ],
+  "task": [
+    {
+      "name": "DailyFarm",
+      "entry": "StartDaily",
+      "default_check": true,
+      "option": ["stage", "retry", "use-medicine", "notify"]
+    }
+  ],
+  "global_option": ["stage"],
+  "option": {
+    "stage": {
+      "type": "select",
+      "cases": [
+        {
+          "name": "1-1"
+        }
+      ]
+    },
+    "retry": {
+      "type": "input",
+      "inputs": [
+        {
+          "name": "times",
+          "default": "3",
+          "pipeline_type": "int"
+        }
+      ]
+    },
+    "use-medicine": {
+      "type": "checkbox",
+      "cases": [
+        {
+          "name": "small"
+        },
+        {
+          "name": "large"
+        }
+      ]
+    },
+    "notify": {
+      "type": "switch",
+      "cases": [
+        {
+          "name": "yes"
+        },
+        {
+          "name": "no"
+        }
+      ]
+    }
+  },
+  "preset": [
+    {
+      "name": "DailyPreset",
+      "task": [
+        {
+          "name": "DailyFarm",
+          "enabled": true,
+          "option": {
+            "stage": "1-1"
+          }
+        }
+      ]
+    }
+  ]
+}

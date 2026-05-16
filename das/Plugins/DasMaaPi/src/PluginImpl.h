@@ -1,6 +1,7 @@
 #ifndef DAS_PLUGINS_DASMAAPI_PLUGINIMPL_H
 #define DAS_PLUGINS_DASMAAPI_PLUGINIMPL_H
 
+#include <das/Plugins/DasMaaPi/AuthoringProjector.h>
 #include <das/Plugins/DasMaaPi/MaapiDto.h>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasPluginPackage.Implements.hpp>
@@ -73,6 +74,9 @@ namespace Plugins::DasMaaPi
               MaapiAuthoringSession>
     {
     public:
+        MaapiAuthoringSession() = default;
+        explicit MaapiAuthoringSession(AcceptedSettingsDto settings);
+
         DAS_IMPL GetDocument(
             ExportInterface::IDasJson*  p_request_json,
             ExportInterface::IDasJson** pp_out_document_json) override;
@@ -82,6 +86,10 @@ namespace Plugins::DasMaaPi
         DAS_IMPL Compile(
             ExportInterface::IDasJson*  p_request_json,
             ExportInterface::IDasJson** pp_out_result_json) override;
+
+    private:
+        AcceptedSettingsDto settings_{};
+        int64_t             revision_ = 0;
     };
 
     class MaapiAuthoringSessionFactory final

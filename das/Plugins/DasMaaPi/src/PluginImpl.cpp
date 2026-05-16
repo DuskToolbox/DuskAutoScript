@@ -3,9 +3,11 @@
 #include "PluginImpl.h"
 
 #include <das/DasApi.h>
+#include <das/Plugins/DasMaaPi/PiParser.h>
 
 #include <array>
 #include <new>
+#include <optional>
 
 DAS_NS_BEGIN
 namespace Plugins::DasMaaPi
@@ -21,6 +23,121 @@ namespace Plugins::DasMaaPi
             }
             DasPtr<ExportInterface::IDasJson> result;
             ParseDasJsonFromString(serialized->c_str(), result.Put());
+            return result;
+        }
+
+        yyjson::value JsonString(std::string_view value)
+        {
+            return yyjson::value(std::string(value));
+        }
+
+        std::optional<yyjson::value> ReadJson(
+            ExportInterface::IDasJson* json)
+        {
+            if (!json)
+            {
+                return std::nullopt;
+            }
+            DasPtr<IDasReadOnlyString> text;
+            if (DAS::IsFailed(json->ToString(0, text.Put())) || !text)
+            {
+                return std::nullopt;
+            }
+            const char* raw = nullptr;
+            if (DAS::IsFailed(text->GetUtf8(&raw)) || raw == nullptr)
+            {
+                return std::nullopt;
+            }
+            return Utils::ParseYyjsonFromString(raw);
+        }
+
+        std::optional<PiCatalog> TryParseCatalog(
+            const AcceptedSettingsDto&          settings,
+            std::vector<PiDiagnosticDto>&       diagnostics)
+        {
+            if (!settings.adapter.interface_path
+                || settings.adapter.interface_path->empty())
+            {
+                return std::nullopt;
+            }
+
+            auto result = ParseProjectInterface(
+                {.interface_path = *settings.adapter.interface_path});
+            diagnostics.insert(
+                diagnostics.end(),
+                result.catalog.diagnostics.begin(),
+                result.catalog.diagnostics.end());
+            if (!result.ok)
+            {
+                return std::nullopt;
+            }
+            return std::move(result.catalog);
+        }
+
+        yyjson::value BuildDocument(
+            const AcceptedSettingsDto&          settings,
+            int64_t                             revision,
+            std::vector<PiDiagnosticDto>&       diagnostics)
+        {
+            auto catalog = TryParseCatalog(settings, diagnostics);
+            return ProjectAuthoringDocument(
+                settings,
+                catalog ? &*catalog : nullptr,
+                diagnostics,
+                revision);
+        }
+
+        yyjson::value BuildApplyResult(
+            const AcceptedSettingsDto&          settings,
+            int64_t                             revision,
+            std::vector<PiDiagnosticDto>        diagnostics)
+        {
+            auto catalog = TryParseCatalog(settings, diagnostics);
+            yyjson::value result(Das::Utils::MakeYyjsonObject());
+            auto          obj = result.as_object();
+            (*obj)[std::string_view("acceptedProperties")] =
+                SerializeAcceptedSettings(settings);
+            (*obj)[std::string_view("migration")] =
+                Das::Utils::MakeYyjsonObject();
+
+            if (catalog)
+            {
+                (*obj)[std::string_view("sourceFingerprint")] =
+                    JsonString(catalog->name + ":" + catalog->version);
+            }
+            else
+            {
+                (*obj)[std::string_view("sourceFingerprint")] =
+                    "maapi-unparsed";
+            }
+
+            (*obj)[std::string_view("document")] =
+                ProjectAuthoringDocument(
+                    settings,
+                    catalog ? &*catalog : nullptr,
+                    diagnostics,
+                    revision);
+
+            yyjson::value diagnostics_json(Das::Utils::MakeYyjsonArray());
+            for (const auto& diagnostic : diagnostics)
+            {
+                yyjson::value item(Das::Utils::MakeYyjsonObject());
+                auto          item_obj = item.as_object();
+                (*item_obj)[std::string_view("severity")] =
+                    JsonString(diagnostic.severity);
+                (*item_obj)[std::string_view("code")] =
+                    JsonString(diagnostic.code);
+                (*item_obj)[std::string_view("message")] =
+                    JsonString(diagnostic.message);
+                if (diagnostic.source)
+                {
+                    (*item_obj)[std::string_view("source")] =
+                        JsonString(*diagnostic.source);
+                }
+                diagnostics_json.as_array()->emplace_back(std::move(item));
+            }
+            (*obj)[std::string_view("diagnostics")] =
+                std::move(diagnostics_json);
             return result;
         }
     } // namespace
@@ -94,6 +211,11 @@ namespace Plugins::DasMaaPi
         return DAS_E_NO_IMPLEMENTATION;
     }
 
+    MaapiAuthoringSession::MaapiAuthoringSession(AcceptedSettingsDto settings)
+        : settings_(std::move(settings))
+    {
+    }
+
     DasResult MaapiAuthoringSession::GetDocument(
         ExportInterface::IDasJson*,
         ExportInterface::IDasJson** pp_out_document_json)
@@ -102,14 +224,15 @@ namespace Plugins::DasMaaPi
         {
             return DAS_E_INVALID_POINTER;
         }
-        auto wrapped = WrapJson(MakeAdapterOnlyDocument());
+        std::vector<PiDiagnosticDto> diagnostics;
+        auto wrapped = WrapJson(BuildDocument(settings_, revision_, diagnostics));
         *pp_out_document_json = wrapped.Get();
         (*pp_out_document_json)->AddRef();
         return DAS_S_OK;
     }
 
     DasResult MaapiAuthoringSession::ApplyChange(
-        ExportInterface::IDasJson*,
+        ExportInterface::IDasJson* p_request_json,
         ExportInterface::IDasJson** pp_out_result_json)
     {
         if (!pp_out_result_json)
@@ -117,23 +240,50 @@ namespace Plugins::DasMaaPi
             return DAS_E_INVALID_POINTER;
         }
 
-        yyjson::value result(Das::Utils::MakeYyjsonObject());
-        yyjson::value accepted(Das::Utils::MakeYyjsonObject());
-        yyjson::value adapter(Das::Utils::MakeYyjsonObject());
-        yyjson::value execution_policy(Das::Utils::MakeYyjsonObject());
-        (*execution_policy.as_object())[std::string_view("failFast")] = true;
-        (*adapter.as_object())[std::string_view("executionPolicy")] =
-            std::move(execution_policy);
-        (*accepted.as_object())[std::string_view("adapter")] =
-            std::move(adapter);
+        if (auto request = ReadJson(p_request_json))
+        {
+            if (auto obj = request->as_object())
+            {
+                const auto kind =
+                    obj->contains(std::string_view("kind"))
+                        ? (*obj)[std::string_view("kind")]
+                              .as_string()
+                              .value_or("")
+                        : std::string_view{};
+                if (kind == "setValue")
+                {
+                    ApplySetValueChange(settings_, *request);
+                }
+                else if (kind == "applyPreset")
+                {
+                    std::vector<PiDiagnosticDto> diagnostics;
+                    auto catalog = TryParseCatalog(settings_, diagnostics);
+                    if (catalog
+                        && obj->contains(std::string_view("payload")))
+                    {
+                        if (auto payload =
+                                (*obj)[std::string_view("payload")]
+                                    .as_object())
+                        {
+                            if (payload->contains(
+                                    std::string_view("presetName")))
+                            {
+                                ApplyPreset(
+                                    settings_,
+                                    *catalog,
+                                    (*payload)[std::string_view("presetName")]
+                                        .as_string()
+                                        .value_or(""));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        ++revision_;
 
-        auto obj = result.as_object();
-        (*obj)[std::string_view("acceptedProperties")] = std::move(accepted);
-        (*obj)[std::string_view("sourceFingerprint")] =
-            "maapi-adapter-scaffold";
-        (*obj)[std::string_view("migration")] = Das::Utils::MakeYyjsonObject();
-
-        auto wrapped = WrapJson(std::move(result));
+        auto wrapped =
+            WrapJson(BuildApplyResult(settings_, revision_, {}));
         *pp_out_result_json = wrapped.Get();
         (*pp_out_result_json)->AddRef();
         return DAS_S_OK;
@@ -163,14 +313,20 @@ namespace Plugins::DasMaaPi
 
     DasResult MaapiAuthoringSessionFactory::CreateSession(
         const DasGuid&,
-        ExportInterface::IDasJson*,
+        ExportInterface::IDasJson* p_context_json,
         PluginInterface::IDasTaskAuthoringSession** pp_out_session)
     {
         if (!pp_out_session)
         {
             return DAS_E_INVALID_POINTER;
         }
-        auto* session = new MaapiAuthoringSession();
+        AcceptedSettingsDto settings;
+        if (auto context = ReadJson(p_context_json))
+        {
+            settings = ParseAcceptedSettings(*context);
+        }
+
+        auto* session = new MaapiAuthoringSession(std::move(settings));
         session->AddRef();
         *pp_out_session = session;
         return DAS_S_OK;
