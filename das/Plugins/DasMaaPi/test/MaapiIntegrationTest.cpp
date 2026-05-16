@@ -15,6 +15,8 @@
 #include "../src/MaapiRunTaskComponent.h"
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
+#include <das/_autogen/idl/abi/IDasTaskComponent.h>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasStopToken.Implements.hpp>
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -24,6 +26,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -36,6 +39,9 @@ namespace
     using namespace Das::Plugins::DasMaaPi::Test;
     using Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY;
     using Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY;
+
+    constexpr std::string_view kRepositoryInvokeComponentGuidText =
+        "68F10007-0000-4000-8000-000000000007";
 
     std::filesystem::path PluginRootDir()
     {
@@ -144,6 +150,11 @@ namespace
         return std::string(text.data(), text.size());
     }
 
+    DasPtr<Das::ExportInterface::IDasJson> WrapYyjson(yyjson::value value)
+    {
+        return ParseDasJson(SerializeJson(value));
+    }
+
     yyjson::value ReadJsonInterface(Das::ExportInterface::IDasJson* json)
     {
         DasPtr<IDasReadOnlyString> text;
@@ -179,6 +190,28 @@ namespace
         (*obj)[std::string_view("displayName")] =
             "Repository invoke MAAPI run";
         return request;
+    }
+
+    yyjson::value MakeRepositoryInvokeInput(
+        const Das::Core::TaskScheduler::RepositoryInvoke::Dto::
+            ChildExecutionSnapshotDto& snapshot)
+    {
+        Das::Core::TaskScheduler::RepositoryInvoke::Dto::
+            ChildExecutionSnapshotDto snapshot_copy;
+        snapshot_copy.version = snapshot.version;
+        snapshot_copy.source_entry_id = snapshot.source_entry_id;
+        snapshot_copy.source_revision = snapshot.source_revision;
+        snapshot_copy.source_fingerprint = snapshot.source_fingerprint;
+        snapshot_copy.plugin_guid = snapshot.plugin_guid;
+        snapshot_copy.task_type_guid = snapshot.task_type_guid;
+        snapshot_copy.component_guid = snapshot.component_guid;
+        snapshot_copy.execution_input = CloneJsonValue(snapshot.execution_input);
+
+        Das::Core::TaskScheduler::RepositoryInvoke::Dto::
+            InvokeRepositoryTaskInputDto input;
+        input.compiled_snapshot = std::move(snapshot_copy);
+        input.runtime_inputs = Das::Utils::MakeYyjsonObject();
+        return CloneJsonValue(yyjson::object(input));
     }
 
     Das::Core::ForeignInterfaceHost::TaskComponentsManifestDesc
@@ -222,6 +255,35 @@ namespace
         return manifest;
     }
 
+    class ChildRequestedStopToken final
+        : public PluginInterface::DasStopTokenImplBase<ChildRequestedStopToken>
+    {
+    public:
+        DasResult StopRequested(bool* p_out_stop_requested) override
+        {
+            if (p_out_stop_requested == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *p_out_stop_requested = call_count_++ > 0;
+            return DAS_S_OK;
+        }
+
+    private:
+        int call_count_ = 0;
+    };
+
+    class ScopedBoundaryHook final
+    {
+    public:
+        explicit ScopedBoundaryHook(FakeMaaApiBoundary& boundary)
+        {
+            SetMaaApiBoundaryForTest(&boundary);
+        }
+
+        ~ScopedBoundaryHook() { SetMaaApiBoundaryForTest(nullptr); }
+    };
+
     class MaapiIntegrationFixture : public ::testing::Test
     {
     protected:
@@ -264,7 +326,8 @@ namespace
             {
                 plugin_manager_->Shutdown();
             }
-            std::filesystem::remove_all(settings_dir_);
+            std::error_code ec;
+            std::filesystem::remove_all(settings_dir_, ec);
         }
 
         DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> CreateSession()
@@ -381,7 +444,8 @@ namespace
             runtime_registry_.reset();
             scheduler_registry_.reset();
             settings_manager_.reset();
-            std::filesystem::remove_all(settings_dir_);
+            std::error_code ec;
+            std::filesystem::remove_all(settings_dir_, ec);
         }
 
         void RegisterLocalMaapiRunFactory()
@@ -520,6 +584,18 @@ namespace
             return scheduler_->ResolveRepositoryInvokeSnapshot(ref, context);
         }
 
+        DasPtr<Das::PluginInterface::IDasTaskComponent>
+        CreateRuntimeComponent(std::string_view guid_text)
+        {
+            DasPtr<Das::PluginInterface::IDasTaskComponent> component;
+            EXPECT_EQ(
+                runtime_plugin_manager_->GetTaskComponentFactoryManager()
+                    .CreateComponent(GuidFromText(guid_text), component.Put()),
+                DAS_S_OK);
+            EXPECT_NE(component.Get(), nullptr);
+            return component;
+        }
+
         std::filesystem::path settings_dir_;
         std::filesystem::path scheduler_plugin_dir_;
         std::unique_ptr<Das::Core::SettingsManager::SettingsManager>
@@ -654,4 +730,120 @@ TEST_F(
     EXPECT_EQ(
         (*definition_obj)[std::string_view("kind")].as_string().value_or(""),
         std::string_view("das.maapi.run"));
+}
+
+TEST_F(
+    DasMaaPiRepositoryInvokeFixture,
+    RepositoryInvokeRuntimeExecutesMaapiRunSnapshotWithoutRepositoryReads)
+{
+    const auto interface_path =
+        FixturePath("sample_interface.jsonc").generic_string();
+    const auto entry_id = CreateRepositoryEntryForInterface(interface_path);
+    auto       compile = CompileRepositoryInvokeSnapshot(entry_id);
+    ASSERT_TRUE(compile.ok);
+    ASSERT_TRUE(compile.snapshot.has_value());
+
+    const auto repository_file =
+        settings_dir_ / "0"
+        / ("taskRepository" + std::to_string(entry_id) + ".json");
+    ASSERT_TRUE(std::filesystem::exists(repository_file));
+    ASSERT_TRUE(std::filesystem::remove(repository_file));
+
+    FakeMaaApiBoundary fake;
+    fake.resource_hash = "sample-hash";
+    ScopedBoundaryHook hook(fake);
+
+    auto component = CreateRuntimeComponent(kRepositoryInvokeComponentGuidText);
+    auto input = WrapYyjson(MakeRepositoryInvokeInput(*compile.snapshot));
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    ASSERT_EQ(
+        component->Do(
+            nullptr,
+            nullptr,
+            nullptr,
+            input.Get(),
+            result_json.Put()),
+        DAS_S_OK);
+
+    auto result = ReadJsonInterface(result_json.Get());
+    auto result_obj = result.as_object();
+    ASSERT_TRUE(result_obj.has_value());
+    EXPECT_EQ(
+        (*result_obj)[std::string_view("status")].as_string().value_or(""),
+        std::string_view("completed"));
+    auto outputs = (*result_obj)[std::string_view("outputs")].as_object();
+    ASSERT_TRUE(outputs.has_value());
+    EXPECT_EQ(
+        (*outputs)[std::string_view("childStatus")].as_string().value_or(""),
+        std::string_view("completed"));
+    auto child_outputs =
+        (*outputs)[std::string_view("childOutputs")].as_object();
+    ASSERT_TRUE(child_outputs.has_value());
+    auto completed_tasks =
+        (*child_outputs)[std::string_view("completedTasks")].as_array();
+    ASSERT_TRUE(completed_tasks.has_value());
+    ASSERT_EQ(completed_tasks->size(), 1u);
+    EXPECT_EQ((*completed_tasks)[0].as_string().value_or(""), "Daily");
+    auto signals = (*result_obj)[std::string_view("signals")].as_object();
+    ASSERT_TRUE(signals.has_value());
+    EXPECT_TRUE(
+        (*signals)[std::string_view("succeeded")].as_bool().value_or(false));
+    EXPECT_TRUE(fake.Contains(
+        "PostTask:StartDaily:{\"StartDaily\":{\"enabled\":true}}"));
+    EXPECT_FALSE(std::filesystem::exists(repository_file));
+}
+
+TEST_F(
+    DasMaaPiRepositoryInvokeFixture,
+    RepositoryInvokeRuntimeCancellationPropagatesToMaapiRun)
+{
+    const auto interface_path =
+        FixturePath("sample_interface.jsonc").generic_string();
+    const auto entry_id = CreateRepositoryEntryForInterface(interface_path);
+    auto       compile = CompileRepositoryInvokeSnapshot(entry_id);
+    ASSERT_TRUE(compile.ok);
+    ASSERT_TRUE(compile.snapshot.has_value());
+
+    FakeMaaApiBoundary fake;
+    fake.resource_hash = "sample-hash";
+    ScopedBoundaryHook hook(fake);
+    ChildRequestedStopToken stop_token;
+
+    auto component = CreateRuntimeComponent(kRepositoryInvokeComponentGuidText);
+    auto input = WrapYyjson(MakeRepositoryInvokeInput(*compile.snapshot));
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    ASSERT_EQ(
+        component->Do(
+            &stop_token,
+            nullptr,
+            nullptr,
+            input.Get(),
+            result_json.Put()),
+        DAS_S_OK);
+
+    auto result = ReadJsonInterface(result_json.Get());
+    auto result_obj = result.as_object();
+    ASSERT_TRUE(result_obj.has_value());
+    EXPECT_EQ(
+        (*result_obj)[std::string_view("status")].as_string().value_or(""),
+        std::string_view("cancelled"));
+    auto outputs = (*result_obj)[std::string_view("outputs")].as_object();
+    ASSERT_TRUE(outputs.has_value());
+    EXPECT_EQ(
+        (*outputs)[std::string_view("childStatus")].as_string().value_or(""),
+        std::string_view("cancelled"));
+    auto child_outputs =
+        (*outputs)[std::string_view("childOutputs")].as_object();
+    ASSERT_TRUE(child_outputs.has_value());
+    EXPECT_TRUE(
+        (*child_outputs)[std::string_view("stopped")]
+            .as_bool()
+            .value_or(false));
+    auto signals = (*result_obj)[std::string_view("signals")].as_object();
+    ASSERT_TRUE(signals.has_value());
+    EXPECT_TRUE(
+        (*signals)[std::string_view("cancelled")].as_bool().value_or(false));
+    EXPECT_TRUE(fake.Contains("PostStop"));
+    EXPECT_FALSE(fake.Contains(
+        "PostTask:StartDaily:{\"StartDaily\":{\"enabled\":true}}"));
 }
