@@ -72,10 +72,15 @@ endforeach()
 
 if(DAS_BUILD_TEST)
     add_executable(DasMaaPiTest
+        src/AgentProcessRunner.cpp
         src/AgentRuntimeRequest.cpp
         src/AgentRuntimeService.cpp
         src/AuthoringProjector.cpp
         src/MaaRuntime.cpp
+        src/MaapiAgentComponent.cpp
+        src/MaapiAgentComponentFactory.cpp
+        src/MaapiAgentTaskComponent.cpp
+        src/MaapiAgentTaskComponentFactory.cpp
         src/MaapiAuthoringSession.cpp
         src/MaapiAuthoringSessionFactory.cpp
         src/MaapiTask.cpp
@@ -89,6 +94,7 @@ if(DAS_BUILD_TEST)
         test/MaapiIntegrationTest.cpp
         test/MaapiAgentRuntimeDtoTest.cpp
         test/MaapiAgentRuntimeLifecycleTest.cpp
+        test/MaapiAgentComponentTest.cpp
         test/MaapiPluginScaffoldTest.cpp
         test/MaapiPiParserTest.cpp
         test/MaapiRuntimeTest.cpp)
