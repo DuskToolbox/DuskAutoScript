@@ -26,19 +26,25 @@ namespace
     using Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK;
     using Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY;
 
-    std::filesystem::path PluginDir()
+    std::filesystem::path PluginPackageDir()
     {
-        return std::filesystem::path{IpcTestConfig::GetPluginDir()};
+        return std::filesystem::path{IpcTestConfig::GetPluginDir()}
+               / "DasMaaPi";
     }
 
     std::filesystem::path MaapiManifestPath()
     {
-        return PluginDir() / "DasMaaPi.json";
+        return PluginPackageDir() / "DasMaaPi.json";
     }
 
     std::filesystem::path MaapiLibPath()
     {
-        return PluginDir() / "libDasMaaPi.dll";
+        return PluginPackageDir() / "libDasMaaPi.dll";
+    }
+
+    std::filesystem::path MaaFrameworkDllPath()
+    {
+        return PluginPackageDir() / "MaaFramework.dll";
     }
 
     DasPtr<IForeignLanguageRuntime> CreateCppRuntime()
@@ -127,8 +133,10 @@ namespace
 
 TEST(MaapiPluginScaffoldTest, ArtifactsUseOfficialPluginContract)
 {
+    ASSERT_TRUE(std::filesystem::is_directory(PluginPackageDir()));
     ASSERT_TRUE(std::filesystem::exists(MaapiManifestPath()));
     ASSERT_TRUE(std::filesystem::exists(MaapiLibPath()));
+    ASSERT_TRUE(std::filesystem::exists(MaaFrameworkDllPath()));
 
     std::ifstream manifest_file(MaapiManifestPath());
     ASSERT_TRUE(manifest_file.is_open());
@@ -147,9 +155,9 @@ TEST_F(
     MaapiPluginScaffoldFixture,
     PluginManagerLoadsTaskAndAuthoringFactoryFeatures)
 {
-    ASSERT_EQ(plugin_manager_->LoadPlugin(MaapiManifestPath()), DAS_S_OK);
+    ASSERT_EQ(plugin_manager_->LoadPlugin(PluginPackageDir()), DAS_S_OK);
     ASSERT_EQ(
-        plugin_manager_->RegisterPluginObjects(MaapiManifestPath()),
+        plugin_manager_->RegisterPluginObjects(PluginPackageDir()),
         DAS_S_OK);
 
     const auto plugin_guid = MakeDasGuid(std::string(kPluginGuidText));
@@ -195,9 +203,9 @@ TEST_F(
 
 TEST_F(MaapiPluginScaffoldFixture, AdapterOnlyDocumentBeforeProjectSelection)
 {
-    ASSERT_EQ(plugin_manager_->LoadPlugin(MaapiManifestPath()), DAS_S_OK);
+    ASSERT_EQ(plugin_manager_->LoadPlugin(PluginPackageDir()), DAS_S_OK);
     ASSERT_EQ(
-        plugin_manager_->RegisterPluginObjects(MaapiManifestPath()),
+        plugin_manager_->RegisterPluginObjects(PluginPackageDir()),
         DAS_S_OK);
 
     auto authoring_features = plugin_manager_->GetFeaturesByType(

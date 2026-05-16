@@ -21,8 +21,7 @@ das_add_plugin_library(DasAdbTouch DAS_EX_PRIVATE_LIBS)
 das_add_plugin_library(DasFlowControl DAS_EX_PRIVATE_LIBS)
 das_add_plugin_library(DasWindowsCapture DAS_EX_PRIVATE_LIBS)
 if(TARGET DasBundledMaaFramework)
-    das_add_plugin_library(DasMaaPi DAS_EX_PRIVATE_LIBS)
-    target_link_libraries(DasMaaPi PRIVATE DasBundledMaaFramework)
+    add_subdirectory(DasMaaPi)
 endif()
 
 if(TARGET TaskSchedulerTest)
@@ -39,61 +38,6 @@ if(DAS_BUILD_TEST)
     if(EXPORT_LUA)
         add_subdirectory(LuaTestPlugin)
     endif()
-endif()
-
-if(DAS_BUILD_TEST AND TARGET DasMaaPi)
-    add_executable(DasMaaPiTest
-        DasMaaPi/src/AuthoringProjector.cpp
-        DasMaaPi/src/MaaRuntime.cpp
-        DasMaaPi/src/PiCompiler.cpp
-        DasMaaPi/src/PiCatalog.cpp
-        DasMaaPi/src/PiParser.cpp
-        DasMaaPi/src/PluginImpl.cpp
-        DasMaaPi/test/MaapiAuthoringTest.cpp
-        DasMaaPi/test/MaapiCompileTest.cpp
-        DasMaaPi/test/MaapiIntegrationTest.cpp
-        DasMaaPi/test/MaapiPluginScaffoldTest.cpp
-        DasMaaPi/test/MaapiPiParserTest.cpp
-        DasMaaPi/test/MaapiRuntimeTest.cpp)
-    target_link_libraries(DasMaaPiTest PRIVATE
-        Das3rdParty
-        GTest::gtest_main
-        GTest::gtest
-        DasCoreObjects)
-    target_compile_definitions(DasMaaPiTest PRIVATE
-        DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY)
-
-    get_target_property(DAS_CORE_INCLUDE_DIRS DasCoreObjects INCLUDE_DIRECTORIES)
-    target_include_directories(DasMaaPiTest PRIVATE
-        ${DAS_CORE_INCLUDE_DIRS}
-        ${CMAKE_CURRENT_SOURCE_DIR}/DasMaaPi/include
-        ${CMAKE_SOURCE_DIR}/das/Core/ForeignInterfaceHost/include)
-
-    set_target_properties(DasMaaPiTest PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/Test
-        RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_BINARY_DIR}/Test
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/Test
-        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_BINARY_DIR}/Test
-        RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL ${CMAKE_BINARY_DIR}/Test)
-
-    add_dependencies(DasMaaPiTest
-        DasMaaPi
-        DasAutoCopyDll
-        DasAutoCopyPluginMetadataFile)
-
-    add_custom_command(
-        TARGET DasMaaPiTest
-        PRE_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            ${CMAKE_CURRENT_SOURCE_DIR}/DasMaaPi/test/fixtures
-            ${CMAKE_BINARY_DIR}/Test/DasMaaPi/test/fixtures)
-
-    das_get_test_runtime_environment(das_maapi_test_env)
-    gtest_discover_tests(
-        DasMaaPiTest
-        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/Test
-        PROPERTIES
-            ENVIRONMENT "${das_maapi_test_env}")
 endif()
 
 # IpcTestPlugin1 - IDasTouch Mock for IPC testing

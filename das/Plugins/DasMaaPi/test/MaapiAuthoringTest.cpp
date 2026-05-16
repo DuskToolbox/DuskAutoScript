@@ -23,14 +23,15 @@ namespace
     using namespace Das::Plugins::DasMaaPi;
     using Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY;
 
-    std::filesystem::path PluginDir()
+    std::filesystem::path PluginPackageDir()
     {
-        return std::filesystem::path{IpcTestConfig::GetPluginDir()};
+        return std::filesystem::path{IpcTestConfig::GetPluginDir()}
+               / "DasMaaPi";
     }
 
     std::filesystem::path MaapiManifestPath()
     {
-        return PluginDir() / "DasMaaPi.json";
+        return PluginPackageDir() / "DasMaaPi.json";
     }
 
     std::filesystem::path FixturePath(std::string_view name)

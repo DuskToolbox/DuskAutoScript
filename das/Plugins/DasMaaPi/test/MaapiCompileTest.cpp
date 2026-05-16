@@ -23,9 +23,10 @@ namespace
     using namespace Das::Plugins::DasMaaPi;
     using Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY;
 
-    std::filesystem::path PluginDir()
+    std::filesystem::path PluginPackageDir()
     {
-        return std::filesystem::path{IpcTestConfig::GetPluginDir()};
+        return std::filesystem::path{IpcTestConfig::GetPluginDir()}
+               / "DasMaaPi";
     }
 
     std::filesystem::path FixturePath(std::string_view name)
@@ -95,11 +96,11 @@ namespace
                 std::make_unique<Das::Core::IPC::RemoteObjectRegistry>();
             plugin_manager_->SetRegistry(*registry_);
             ASSERT_EQ(
-                plugin_manager_->LoadPlugin(PluginDir() / "DasMaaPi.json"),
+                plugin_manager_->LoadPlugin(PluginPackageDir()),
                 DAS_S_OK);
             ASSERT_EQ(
                 plugin_manager_->RegisterPluginObjects(
-                    PluginDir() / "DasMaaPi.json"),
+                    PluginPackageDir()),
                 DAS_S_OK);
         }
 

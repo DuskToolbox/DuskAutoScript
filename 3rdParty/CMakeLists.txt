@@ -701,7 +701,11 @@ function(_download_and_config_maaframework)
         INTERFACE_LINK_LIBRARIES DasBundledMaaFrameworkDll)
 
     file(GLOB _maa_runtime_dlls "${_maa_root}/bin/*.dll")
-    das_add_auto_copy_dll_path("${_maa_runtime_dlls}")
+    set(DAS_MAAFRAMEWORK_RUNTIME_DLLS
+        "${_maa_runtime_dlls}"
+        CACHE INTERNAL
+        "MaaFramework runtime DLLs copied into plugin packages"
+        FORCE)
 endfunction()
 
 _download_and_config_maaframework()
