@@ -300,6 +300,60 @@ namespace Das::Http
                 });
         }
 
+        Beast::HttpResponse RepositoryAuthoringGet(
+            const Beast::HttpRequest& request)
+        {
+            return DispatchRepositoryEntryBody(
+                request,
+                "authoring get",
+                [this](
+                    int64_t entry_id,
+                    IDasReadOnlyString* p_body,
+                    IDasReadOnlyString** pp_out)
+                {
+                    return scheduler_.GetRepositoryEntryAuthoringDocument(
+                        entry_id,
+                        p_body,
+                        pp_out);
+                });
+        }
+
+        Beast::HttpResponse RepositoryAuthoringApply(
+            const Beast::HttpRequest& request)
+        {
+            return DispatchRepositoryEntryBody(
+                request,
+                "authoring apply",
+                [this](
+                    int64_t entry_id,
+                    IDasReadOnlyString* p_body,
+                    IDasReadOnlyString** pp_out)
+                {
+                    return scheduler_.ApplyRepositoryEntryAuthoringChange(
+                        entry_id,
+                        p_body,
+                        pp_out);
+                });
+        }
+
+        Beast::HttpResponse RepositoryAuthoringCompile(
+            const Beast::HttpRequest& request)
+        {
+            return DispatchRepositoryEntryBody(
+                request,
+                "authoring compile",
+                [this](
+                    int64_t entry_id,
+                    IDasReadOnlyString* p_body,
+                    IDasReadOnlyString** pp_out)
+                {
+                    return scheduler_.CompileRepositoryEntryAuthoring(
+                        entry_id,
+                        p_body,
+                        pp_out);
+                });
+        }
+
         // ── Task instance mutations ──
 
         Beast::HttpResponse AddTask(const Beast::HttpRequest& request)
