@@ -3792,6 +3792,127 @@ TEST_F(
 
 TEST_F(
     SchedulerRuntimeBackedTest,
+    SchedulerServiceImplRepositoryDeleteDelegatesResult)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    SchedulerServiceImpl impl(*scheduler_);
+
+    auto request_json =
+        SerializeJsonForTest(MakeRepositoryCreateRequest("Delete me", 4));
+    DasPtr<IDasReadOnlyString> request;
+    ASSERT_EQ(
+        CreateIDasReadOnlyStringFromUtf8(request_json.c_str(), request.Put()),
+        DAS_S_OK);
+    DasPtr<IDasReadOnlyString> created;
+    ASSERT_EQ(
+        impl.CreateRepositoryEntry(request.Get(), created.Put()),
+        DAS_S_OK);
+
+    EXPECT_EQ(impl.DeleteRepositoryEntry(0), DAS_S_OK);
+    EXPECT_EQ(impl.DeleteRepositoryEntry(0), DAS_E_NOT_FOUND);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerServiceImplRepositoryRenameNullOutRejected)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    SchedulerServiceImpl impl(*scheduler_);
+
+    auto rename_json =
+        SerializeJsonForTest(MakeRepositoryRenameRequest("No output"));
+    DasPtr<IDasReadOnlyString> rename;
+    ASSERT_EQ(
+        CreateIDasReadOnlyStringFromUtf8(rename_json.c_str(), rename.Put()),
+        DAS_S_OK);
+
+    EXPECT_EQ(
+        impl.RenameRepositoryEntry(0, rename.Get(), nullptr),
+        DAS_E_INVALID_POINTER);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerServiceImplRepositoryRenameNullBodyRejected)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    SchedulerServiceImpl        impl(*scheduler_);
+    DasPtr<IDasReadOnlyString> out;
+
+    EXPECT_EQ(
+        impl.RenameRepositoryEntry(0, nullptr, out.Put()),
+        DAS_E_INVALID_POINTER);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerServiceImplRepositoryRenameInvalidJsonRejected)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    SchedulerServiceImpl impl(*scheduler_);
+
+    DasPtr<IDasReadOnlyString> malformed;
+    ASSERT_EQ(
+        CreateIDasReadOnlyStringFromUtf8("{bad", malformed.Put()),
+        DAS_S_OK);
+    DasPtr<IDasReadOnlyString> out;
+    EXPECT_EQ(
+        impl.RenameRepositoryEntry(0, malformed.Get(), out.Put()),
+        DAS_E_INVALID_JSON);
+
+    DasPtr<IDasReadOnlyString> non_object;
+    ASSERT_EQ(
+        CreateIDasReadOnlyStringFromUtf8("[]", non_object.Put()),
+        DAS_S_OK);
+    out.Reset();
+    EXPECT_EQ(
+        impl.RenameRepositoryEntry(0, non_object.Get(), out.Put()),
+        DAS_E_INVALID_JSON);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerServiceImplRepositoryRenameReturnsUpdatedEntryJson)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    SchedulerServiceImpl impl(*scheduler_);
+
+    auto request_json =
+        SerializeJsonForTest(MakeRepositoryCreateRequest("Before rename", 6));
+    DasPtr<IDasReadOnlyString> request;
+    ASSERT_EQ(
+        CreateIDasReadOnlyStringFromUtf8(request_json.c_str(), request.Put()),
+        DAS_S_OK);
+    DasPtr<IDasReadOnlyString> created;
+    ASSERT_EQ(
+        impl.CreateRepositoryEntry(request.Get(), created.Put()),
+        DAS_S_OK);
+
+    auto rename_json =
+        SerializeJsonForTest(MakeRepositoryRenameRequest("After rename"));
+    DasPtr<IDasReadOnlyString> rename;
+    ASSERT_EQ(
+        CreateIDasReadOnlyStringFromUtf8(rename_json.c_str(), rename.Put()),
+        DAS_S_OK);
+
+    DasPtr<IDasReadOnlyString> out;
+    ASSERT_EQ(
+        impl.RenameRepositoryEntry(0, rename.Get(), out.Put()),
+        DAS_S_OK);
+
+    auto parsed = ParseReadOnlyJsonForTest(out.Get());
+    auto obj = parsed.as_object();
+    ASSERT_TRUE(obj.has_value());
+    EXPECT_EQ(
+        (*obj)[std::string_view("entryId")].as_sint().value_or(-1),
+        0);
+    EXPECT_EQ(
+        (*obj)[std::string_view("displayName")].as_string().value_or(""),
+        std::string_view("After rename"));
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
     SchedulerRepositoryCompilePreviewProjectsProviderResult)
 {
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
