@@ -23,10 +23,7 @@ namespace
             g_is_current_business_thread = true;
         }
 
-        ~ScopedBusinessThreadMarker()
-        {
-            g_is_current_business_thread = false;
-        }
+        ~ScopedBusinessThreadMarker() { g_is_current_business_thread = false; }
 
         ScopedBusinessThreadMarker(const ScopedBusinessThreadMarker&) = delete;
         ScopedBusinessThreadMarker& operator=(
@@ -34,10 +31,7 @@ namespace
     };
 } // namespace
 
-bool IsCurrentBusinessThread() noexcept
-{
-    return g_is_current_business_thread;
-}
+bool IsCurrentBusinessThread() noexcept { return g_is_current_business_thread; }
 
 BusinessThread::BusinessThread(
     IpcMessageQueue<InboundMessage>& inbound,
@@ -86,7 +80,7 @@ void BusinessThread::Run()
     DAS_CORE_LOG_INFO("BusinessThread::Run() started");
 
     ScopedBusinessThreadMarker business_thread_marker;
-    ScopedCurrentIpcContext scope(&resolve_context_);
+    ScopedCurrentIpcContext    scope(&resolve_context_);
 
     proxy_factory_.GetObjectManager().SetBusinessThreadId(
         std::this_thread::get_id());

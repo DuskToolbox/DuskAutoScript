@@ -10,19 +10,19 @@
 #include <atomic>
 #include <chrono>
 #include <exception>
-#include <future>
 #include <functional>
+#include <future>
 #include <memory>
 #include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
+using Das::DasPtr;
 using DAS::Core::ForeignInterfaceHost::ClearActiveErrorLensManager;
 using DAS::Core::ForeignInterfaceHost::ErrorLensManager;
 using DAS::Core::ForeignInterfaceHost::SetActiveErrorLensManager;
 using DAS::Core::IPC::MainProcess::IIpcContext;
-using Das::DasPtr;
 using Das::PluginInterface::DasErrorLensImplBase;
 using Das::PluginInterface::IDasErrorLens;
 using namespace std::chrono_literals;
@@ -59,10 +59,7 @@ namespace
 
         uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
 
-        uint32_t DAS_STD_CALL Release() override
-        {
-            return --ref_count_;
-        }
+        uint32_t DAS_STD_CALL Release() override { return --ref_count_; }
 
         DasResult DAS_STD_CALL
         QueryInterface(const DasGuid& iid, void** pp_object) override
@@ -111,16 +108,14 @@ namespace
     class FakeErrorLens final : public DasErrorLensImplBase<FakeErrorLens>
     {
     public:
-        std::vector<DasGuid>                     supported_iids;
+        std::vector<DasGuid>                       supported_iids;
         std::unordered_map<DasResult, std::string> messages;
-        std::atomic<int>                         get_error_message_calls{0};
-        DasResult                                miss_result =
-            DAS_E_OUT_OF_RANGE;
+        std::atomic<int>                           get_error_message_calls{0};
+        DasResult   miss_result = DAS_E_OUT_OF_RANGE;
         std::string last_locale;
 
         DasResult DAS_STD_CALL GetSupportedIids(
-            Das::ExportInterface::IDasReadOnlyGuidVector** pp_out_iids)
-            override
+            Das::ExportInterface::IDasReadOnlyGuidVector** pp_out_iids) override
         {
             DasPtr<Das::ExportInterface::IDasGuidVector> writable_iids;
             const auto create_result = ::CreateIDasGuidVector(
@@ -285,7 +280,7 @@ namespace
         const auto provider_guid = MakeTestGuid(1);
         auto*      lens = FakeErrorLens::MakeRaw();
         lens->messages[DAS_E_FAIL] = "plugin failure text";
-        auto lens_guard = RegisterLens(lens, provider_guid);
+        auto         lens_guard = RegisterLens(lens, provider_guid);
         FakeTypeInfo type_info{provider_guid};
 
         DasResult   result = DAS_E_FAIL;
@@ -309,9 +304,9 @@ namespace
 
     TEST_F(GlobalErrorMessagesTest, PluginMissFallsBackToPredefined)
     {
-        const auto provider_guid = MakeTestGuid(2);
-        auto*      lens = FakeErrorLens::MakeRaw();
-        auto       lens_guard = RegisterLens(lens, provider_guid);
+        const auto   provider_guid = MakeTestGuid(2);
+        auto*        lens = FakeErrorLens::MakeRaw();
+        auto         lens_guard = RegisterLens(lens, provider_guid);
         FakeTypeInfo type_info{provider_guid};
 
         DasResult   result = DAS_E_FAIL;
@@ -336,9 +331,9 @@ namespace
     {
         constexpr DasResult kUnknownErrorCode =
             static_cast<DasResult>(-12345678);
-        const auto provider_guid = MakeTestGuid(3);
-        auto*      lens = FakeErrorLens::MakeRaw();
-        auto       lens_guard = RegisterLens(lens, provider_guid);
+        const auto   provider_guid = MakeTestGuid(3);
+        auto*        lens = FakeErrorLens::MakeRaw();
+        auto         lens_guard = RegisterLens(lens, provider_guid);
         FakeTypeInfo type_info{provider_guid};
 
         DasResult   result = DAS_E_FAIL;
@@ -364,7 +359,7 @@ namespace
         const auto provider_guid = MakeTestGuid(4);
         auto*      lens = FakeErrorLens::MakeRaw();
         lens->messages[DAS_E_FAIL] = "localized plugin text";
-        auto lens_guard = RegisterLens(lens, provider_guid);
+        auto         lens_guard = RegisterLens(lens, provider_guid);
         FakeTypeInfo type_info{provider_guid};
 
         DasPtr<IDasReadOnlyString> expected_locale_string;
@@ -393,7 +388,7 @@ namespace
         const auto provider_guid = MakeTestGuid(5);
         auto*      lens = FakeErrorLens::MakeRaw();
         lens->messages[DAS_E_FAIL] = "business thread plugin text";
-        auto lens_guard = RegisterLens(lens, provider_guid);
+        auto         lens_guard = RegisterLens(lens, provider_guid);
         FakeTypeInfo type_info{provider_guid};
 
         DasResult result = DAS_E_FAIL;
@@ -411,16 +406,18 @@ namespace
         EXPECT_EQ(lens->get_error_message_calls.load(), 1);
     }
 
-    TEST_F(GlobalErrorMessagesTest, NonBusinessThreadReturnsUnexpectedThreadDetected)
+    TEST_F(
+        GlobalErrorMessagesTest,
+        NonBusinessThreadReturnsUnexpectedThreadDetected)
     {
         const auto provider_guid = MakeTestGuid(6);
         auto*      lens = FakeErrorLens::MakeRaw();
         lens->messages[DAS_E_FAIL] = "must not be read";
-        auto lens_guard = RegisterLens(lens, provider_guid);
+        auto         lens_guard = RegisterLens(lens, provider_guid);
         FakeTypeInfo type_info{provider_guid};
 
         DasPtr<IDasReadOnlyString> out_message;
-        const auto result =
+        const auto                 result =
             ::DasGetErrorMessage(&type_info, DAS_E_FAIL, out_message.Put());
 
         EXPECT_EQ(result, DAS_E_UNEXPECTED_THREAD_DETECTED);
