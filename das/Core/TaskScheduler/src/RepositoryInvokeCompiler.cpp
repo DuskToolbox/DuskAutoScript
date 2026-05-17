@@ -32,7 +32,8 @@ namespace Das::Core::TaskScheduler::RepositoryInvoke
         bool IsAvailable(
             const Repository::Dto::RepositoryAvailabilityDto& availability)
         {
-            return availability.state.empty() || availability.state == "available";
+            return availability.state.empty()
+                   || availability.state == "available";
         }
 
         yyjson::value CloneJsonValue(const yyjson::value& value)
@@ -125,10 +126,10 @@ namespace Das::Core::TaskScheduler::RepositoryInvoke
 
         template <typename ObjectRef>
         void AddEdgeFromRepositoryRef(
-            const ObjectRef&                  ref,
-            int64_t                           source_entry_id,
-            const std::optional<std::string>& source_node_id,
-            const std::optional<std::string>& source_node_label,
+            const ObjectRef&                       ref,
+            int64_t                                source_entry_id,
+            const std::optional<std::string>&      source_node_id,
+            const std::optional<std::string>&      source_node_label,
             std::vector<RepositoryDependencyEdge>& edges)
         {
             auto kind = GetStringField(ref, "kind");
@@ -153,10 +154,10 @@ namespace Das::Core::TaskScheduler::RepositoryInvoke
 
         template <typename JsonValue>
         void ExtractEdgesRecursive(
-            int64_t                         inherited_source_entry_id,
-            const JsonValue&                value,
-            std::optional<std::string>      inherited_node_id,
-            std::optional<std::string>      inherited_node_label,
+            int64_t                                inherited_source_entry_id,
+            const JsonValue&                       value,
+            std::optional<std::string>             inherited_node_id,
+            std::optional<std::string>             inherited_node_label,
             std::vector<RepositoryDependencyEdge>& edges)
         {
             if (auto array = value.as_array())
@@ -190,8 +191,7 @@ namespace Das::Core::TaskScheduler::RepositoryInvoke
             {
                 source_node_id = inherited_node_id;
             }
-            auto source_node_label =
-                FirstStringField(*object, "label", "name");
+            auto source_node_label = FirstStringField(*object, "label", "name");
             if (!source_node_label)
             {
                 source_node_label = inherited_node_label;
@@ -338,10 +338,9 @@ namespace Das::Core::TaskScheduler::RepositoryInvoke
 
         auto provider_result =
             services.compile_authoring(*entry, MakeExecutionCompileRequest());
-        auto compile_obj = provider_result.compile_result.as_object();
+        auto       compile_obj = provider_result.compile_result.as_object();
         const bool provider_returned_false =
-            compile_obj
-            && compile_obj->contains(std::string_view("ok"))
+            compile_obj && compile_obj->contains(std::string_view("ok"))
             && IsExplicitFalse((*compile_obj)[std::string_view("ok")]);
         if (!provider_result.ok || provider_returned_false)
         {
@@ -372,8 +371,7 @@ namespace Das::Core::TaskScheduler::RepositoryInvoke
         snapshot.source_revision = entry->authoring.revision;
         if (!entry->authoring.source_fingerprint.empty())
         {
-            snapshot.source_fingerprint =
-                entry->authoring.source_fingerprint;
+            snapshot.source_fingerprint = entry->authoring.source_fingerprint;
         }
         snapshot.plugin_guid = entry->plugin_guid;
         snapshot.task_type_guid = entry->task_type_guid;
@@ -382,7 +380,8 @@ namespace Das::Core::TaskScheduler::RepositoryInvoke
         return Succeed(std::move(snapshot));
     }
 
-    std::vector<RepositoryDependencyEdge> ExtractRepositoryInvokeDependencyEdges(
+    std::vector<RepositoryDependencyEdge>
+    ExtractRepositoryInvokeDependencyEdges(
         int64_t              source_entry_id,
         const yyjson::value& source_graph)
     {

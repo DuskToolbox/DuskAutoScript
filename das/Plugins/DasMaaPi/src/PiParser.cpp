@@ -13,9 +13,8 @@ namespace Das::Plugins::DasMaaPi
 {
     namespace
     {
-        constexpr auto kJsoncFlags =
-            yyjson::ReadFlag::AllowComments |
-            yyjson::ReadFlag::AllowTrailingCommas;
+        constexpr auto kJsoncFlags = yyjson::ReadFlag::AllowComments
+                                     | yyjson::ReadFlag::AllowTrailingCommas;
 
         std::string ReadTextFile(const std::filesystem::path& path)
         {
@@ -57,7 +56,7 @@ namespace Das::Plugins::DasMaaPi
 
         template <typename TObject>
         std::vector<std::string> UnknownFields(
-            const TObject&              obj,
+            const TObject&                     obj,
             std::initializer_list<char const*> known)
         {
             std::set<std::string_view> known_set(known.begin(), known.end());
@@ -75,8 +74,8 @@ namespace Das::Plugins::DasMaaPi
 
         template <typename TObject>
         std::optional<std::string> OptionalString(
-            const TObject&    obj,
-            std::string_view  key)
+            const TObject&   obj,
+            std::string_view key)
         {
             if (!obj.contains(key) || !obj[key].is_string())
             {
@@ -86,9 +85,7 @@ namespace Das::Plugins::DasMaaPi
         }
 
         template <typename TObject>
-        std::string RequiredString(
-            const TObject&   obj,
-            std::string_view key)
+        std::string RequiredString(const TObject& obj, std::string_view key)
         {
             return OptionalString(obj, key).value_or(std::string{});
         }
@@ -153,7 +150,7 @@ namespace Das::Plugins::DasMaaPi
 
         template <typename TObject>
         PiRawMetadata MakeRaw(
-            const TObject&              obj,
+            const TObject&                     obj,
             std::initializer_list<char const*> known)
         {
             return PiRawMetadata{RawJson(obj), UnknownFields(obj, known)};
@@ -161,8 +158,8 @@ namespace Das::Plugins::DasMaaPi
 
         template <typename TObject>
         PiController ParseController(
-            const TObject&                obj,
-            const std::filesystem::path&  base)
+            const TObject&               obj,
+            const std::filesystem::path& base)
         {
             PiController result;
             FillNamed(result.dto, obj);
@@ -199,8 +196,8 @@ namespace Das::Plugins::DasMaaPi
 
         template <typename TObject>
         PiResource ParseResource(
-            const TObject&                obj,
-            const std::filesystem::path&  base)
+            const TObject&               obj,
+            const std::filesystem::path& base)
         {
             PiResource result;
             FillNamed(result.dto, obj);
@@ -383,17 +380,16 @@ namespace Das::Plugins::DasMaaPi
                     }
                 }
             }
-            result.raw = MakeRaw(
-                obj,
-                {"name", "label", "description", "icon", "task"});
+            result.raw =
+                MakeRaw(obj, {"name", "label", "description", "icon", "task"});
             return result;
         }
 
         void AddDiagnostic(
-            PiCatalog&                  catalog,
-            std::string                 severity,
-            std::string                 code,
-            std::string                 message,
+            PiCatalog&                   catalog,
+            std::string                  severity,
+            std::string                  code,
+            std::string                  message,
             const std::filesystem::path& source)
         {
             PiDiagnosticDto diagnostic;
@@ -419,9 +415,8 @@ namespace Das::Plugins::DasMaaPi
                 auto existing = std::find_if(
                     catalog.options.begin(),
                     catalog.options.end(),
-                    [&](const PiOption& item) {
-                        return item.dto.name == option.dto.name;
-                    });
+                    [&](const PiOption& item)
+                    { return item.dto.name == option.dto.name; });
                 if (existing == catalog.options.end())
                 {
                     catalog.options.emplace_back(std::move(option));
@@ -446,9 +441,9 @@ namespace Das::Plugins::DasMaaPi
         }
 
         void ParseTranslations(
-            PiCatalog&                 catalog,
+            PiCatalog&                   catalog,
             const std::filesystem::path& source,
-            std::string_view            language,
+            std::string_view             language,
             const std::filesystem::path& path)
         {
             const auto content = ReadTextFile(path);
@@ -475,7 +470,7 @@ namespace Das::Plugins::DasMaaPi
                 return;
             }
             std::map<std::string, std::string> translations;
-            auto obj = parsed->as_object();
+            auto                               obj = parsed->as_object();
             for (auto it = obj->begin(); it != obj->end(); ++it)
             {
                 if (it->second.is_string())
@@ -489,17 +484,17 @@ namespace Das::Plugins::DasMaaPi
         }
 
         void ParseDocument(
-            PiCatalog&                 catalog,
-            yyjson::value&             document,
-            const std::filesystem::path& source,
-            bool                       is_import,
-            bool                       load_languages,
+            PiCatalog&                       catalog,
+            yyjson::value&                   document,
+            const std::filesystem::path&     source,
+            bool                             is_import,
+            bool                             load_languages,
             std::set<std::filesystem::path>& import_stack);
 
         void ParseImport(
-            PiCatalog&                  catalog,
-            const std::filesystem::path& import_path,
-            bool                        load_languages,
+            PiCatalog&                       catalog,
+            const std::filesystem::path&     import_path,
+            bool                             load_languages,
             std::set<std::filesystem::path>& import_stack)
         {
             const auto normalized =
@@ -550,11 +545,11 @@ namespace Das::Plugins::DasMaaPi
         }
 
         void ParseDocument(
-            PiCatalog&                  catalog,
-            yyjson::value&              document,
-            const std::filesystem::path& source,
-            bool                        is_import,
-            bool                        load_languages,
+            PiCatalog&                       catalog,
+            yyjson::value&                   document,
+            const std::filesystem::path&     source,
+            bool                             is_import,
+            bool                             load_languages,
             std::set<std::filesystem::path>& import_stack)
         {
             auto top = document.as_object();
@@ -602,8 +597,8 @@ namespace Das::Plugins::DasMaaPi
 
                 if (!top->contains(std::string_view("interface_version"))
                     || (*top)[std::string_view("interface_version")]
-                           .as_sint()
-                           .value_or(0)
+                               .as_sint()
+                               .value_or(0)
                            != 2)
                 {
                     AddDiagnostic(
@@ -655,22 +650,27 @@ namespace Das::Plugins::DasMaaPi
                 if (auto arr =
                         (*top)[std::string_view("controller")].as_array())
                 {
-                    AppendParsedArray(*arr, [&](auto& obj) {
-                        catalog.controllers.emplace_back(
-                            ParseController(obj, base));
-                    });
+                    AppendParsedArray(
+                        *arr,
+                        [&](auto& obj)
+                        {
+                            catalog.controllers.emplace_back(
+                                ParseController(obj, base));
+                        });
                 }
             }
 
             if (top->contains(std::string_view("resource")))
             {
-                if (auto arr =
-                        (*top)[std::string_view("resource")].as_array())
+                if (auto arr = (*top)[std::string_view("resource")].as_array())
                 {
-                    AppendParsedArray(*arr, [&](auto& obj) {
-                        catalog.resources.emplace_back(
-                            ParseResource(obj, base));
-                    });
+                    AppendParsedArray(
+                        *arr,
+                        [&](auto& obj)
+                        {
+                            catalog.resources.emplace_back(
+                                ParseResource(obj, base));
+                        });
                 }
             }
 
@@ -678,19 +678,21 @@ namespace Das::Plugins::DasMaaPi
             {
                 if (auto arr = (*top)[std::string_view("group")].as_array())
                 {
-                    AppendParsedArray(*arr, [&](auto& obj) {
-                        auto group = ParseGroup(obj);
-                        const auto existing = std::find_if(
-                            catalog.groups.begin(),
-                            catalog.groups.end(),
-                            [&](const PiGroup& item) {
-                                return item.dto.name == group.dto.name;
-                            });
-                        if (existing == catalog.groups.end())
+                    AppendParsedArray(
+                        *arr,
+                        [&](auto& obj)
                         {
-                            catalog.groups.emplace_back(std::move(group));
-                        }
-                    });
+                            auto       group = ParseGroup(obj);
+                            const auto existing = std::find_if(
+                                catalog.groups.begin(),
+                                catalog.groups.end(),
+                                [&](const PiGroup& item)
+                                { return item.dto.name == group.dto.name; });
+                            if (existing == catalog.groups.end())
+                            {
+                                catalog.groups.emplace_back(std::move(group));
+                            }
+                        });
                 }
             }
 
@@ -698,9 +700,10 @@ namespace Das::Plugins::DasMaaPi
             {
                 if (auto arr = (*top)[std::string_view("task")].as_array())
                 {
-                    AppendParsedArray(*arr, [&](auto& obj) {
-                        catalog.tasks.emplace_back(ParseTask(obj));
-                    });
+                    AppendParsedArray(
+                        *arr,
+                        [&](auto& obj)
+                        { catalog.tasks.emplace_back(ParseTask(obj)); });
                 }
             }
 
@@ -717,16 +720,16 @@ namespace Das::Plugins::DasMaaPi
             {
                 if (auto arr = (*top)[std::string_view("preset")].as_array())
                 {
-                    AppendParsedArray(*arr, [&](auto& obj) {
-                        catalog.presets.emplace_back(ParsePreset(obj));
-                    });
+                    AppendParsedArray(
+                        *arr,
+                        [&](auto& obj)
+                        { catalog.presets.emplace_back(ParsePreset(obj)); });
                 }
             }
 
             if (!is_import && top->contains(std::string_view("global_option")))
             {
-                for (const auto& name :
-                     ReadStringArray(*top, "global_option"))
+                for (const auto& name : ReadStringArray(*top, "global_option"))
                 {
                     if (const auto* option = FindOption(catalog, name))
                     {
@@ -771,7 +774,8 @@ namespace Das::Plugins::DasMaaPi
     {
         PiParseResult result;
         result.catalog.interface_path =
-            std::filesystem::absolute(request.interface_path).lexically_normal();
+            std::filesystem::absolute(request.interface_path)
+                .lexically_normal();
         result.catalog.interface_directory =
             result.catalog.interface_path.parent_path();
 
@@ -812,9 +816,8 @@ namespace Das::Plugins::DasMaaPi
         result.ok = std::none_of(
             result.catalog.diagnostics.begin(),
             result.catalog.diagnostics.end(),
-            [](const PiDiagnosticDto& diagnostic) {
-                return diagnostic.severity == "error";
-            });
+            [](const PiDiagnosticDto& diagnostic)
+            { return diagnostic.severity == "error"; });
         return result;
     }
 } // namespace Das::Plugins::DasMaaPi

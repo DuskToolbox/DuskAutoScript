@@ -28,17 +28,16 @@ namespace
 
     struct OcrLineInfo
     {
-        std::string              text;
+        std::string                   text;
         Das::ExportInterface::DasRect box{};
-        double                   score{};
-        uint32_t                 char_count{};
-        std::vector<OcrCharInfo> chars;
+        double                        score{};
+        uint32_t                      char_count{};
+        std::vector<OcrCharInfo>      chars;
     };
 
     auto ElapsedMs(Clock::time_point start) -> double
     {
-        return std::chrono::duration<double, std::milli>(
-                   Clock::now() - start)
+        return std::chrono::duration<double, std::milli>(Clock::now() - start)
             .count();
     }
 
@@ -73,7 +72,7 @@ namespace
             return;
         }
 
-        auto fields = parsed->as_object();
+        auto       fields = parsed->as_object();
         const auto status =
             (*fields)[std::string_view("image_status")].as_string();
         const auto original =
@@ -110,8 +109,7 @@ namespace
         return raw;
     }
 
-    auto ReadOcrLine(Das::ExportInterface::IDasOcrResult* result)
-        -> OcrLineInfo
+    auto ReadOcrLine(Das::ExportInterface::IDasOcrResult* result) -> OcrLineInfo
     {
         OcrLineInfo line{};
         if (!result)
@@ -142,8 +140,7 @@ namespace
         return line;
     }
 
-    auto CollectOcrLines(
-        Das::ExportInterface::IDasOcrResultVector* results)
+    auto CollectOcrLines(Das::ExportInterface::IDasOcrResultVector* results)
         -> std::vector<OcrLineInfo>
     {
         std::vector<OcrLineInfo> lines;
@@ -176,16 +173,12 @@ namespace
         std::vector<DebugDrawBox> boxes;
         for (const auto& line : lines)
         {
-            boxes.push_back(DebugDrawBox{
-                line.box,
-                DebugAnnotationColor::Green,
-                "line"});
+            boxes.push_back(
+                DebugDrawBox{line.box, DebugAnnotationColor::Green, "line"});
             for (const auto& ch : line.chars)
             {
-                boxes.push_back(DebugDrawBox{
-                    ch.rect,
-                    DebugAnnotationColor::Yellow,
-                    ""});
+                boxes.push_back(
+                    DebugDrawBox{ch.rect, DebugAnnotationColor::Yellow, ""});
             }
         }
         return boxes;
@@ -220,8 +213,7 @@ namespace
         return obj;
     }
 
-    auto LinesJsonArray(const std::vector<OcrLineInfo>& lines)
-        -> yyjson::value
+    auto LinesJsonArray(const std::vector<OcrLineInfo>& lines) -> yyjson::value
     {
         auto arr = DAS::Utils::MakeYyjsonArray();
         for (const auto& line : lines)
@@ -232,8 +224,8 @@ namespace
     }
 
     auto CommonResultJson(
-        DasResult                       result,
-        const DebugImageWriteResult&    image_result) -> yyjson::value
+        DasResult                    result,
+        const DebugImageWriteResult& image_result) -> yyjson::value
     {
         auto obj = DAS::Utils::MakeYyjsonObject();
         (*obj.as_object())[std::string_view("das_result")] =
@@ -245,14 +237,15 @@ namespace
     }
 
     void SubmitOcrEvent(
-        std::string                     params_json,
-        std::string                     result_json,
-        const DebugImageWriteResult&    image_result,
-        double                          elapsed_ms)
+        std::string                  params_json,
+        std::string                  result_json,
+        const DebugImageWriteResult& image_result,
+        double                       elapsed_ms)
     {
-        auto event =
-            MakeDebugEvent("ocr_recognize", std::move(params_json),
-                           std::move(result_json));
+        auto event = MakeDebugEvent(
+            "ocr_recognize",
+            std::move(params_json),
+            std::move(result_json));
         event.elapsed_ms = elapsed_ms;
         event.image_filename = image_result.image_filename;
         static_cast<void>(DebugRuntime::SubmitEvent(event));

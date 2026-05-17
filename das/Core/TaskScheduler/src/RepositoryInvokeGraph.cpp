@@ -62,7 +62,7 @@ namespace Das::Core::TaskScheduler::RepositoryInvoke
         }
 
         RepositoryCyclePathItem MakeCyclePathItem(
-            int64_t entry_id,
+            int64_t                         entry_id,
             const RepositoryDependencyEdge* outgoing_edge)
         {
             RepositoryCyclePathItem item;
@@ -76,30 +76,27 @@ namespace Das::Core::TaskScheduler::RepositoryInvoke
         }
 
         RepositoryAcyclicValidationResult BuildCycleResult(
-            const std::vector<Frame>&         stack,
+            const std::vector<Frame>&       stack,
             const RepositoryDependencyEdge& closing_edge)
         {
             const auto cycle_start_iterator = std::ranges::find_if(
                 stack,
                 [&closing_edge](const auto& frame)
-                {
-                    return frame.entry_id == closing_edge.target_entry_id;
-                });
+                { return frame.entry_id == closing_edge.target_entry_id; });
 
             RepositoryAcyclicValidationResult result;
             result.ok = false;
 
             // The active stack stores incoming edges, so each cycle item uses
             // the next frame's incoming edge as its outgoing source metadata.
-            for (auto index =
-                     static_cast<std::size_t>(
-                         cycle_start_iterator - stack.begin());
+            for (auto index = static_cast<std::size_t>(
+                     cycle_start_iterator - stack.begin());
                  index < stack.size();
                  ++index)
             {
-                const auto* outgoing_edge =
-                    index + 1 < stack.size() ? stack[index + 1].incoming_edge
-                                             : &closing_edge;
+                const auto* outgoing_edge = index + 1 < stack.size()
+                                                ? stack[index + 1].incoming_edge
+                                                : &closing_edge;
                 result.cycle_path.push_back(
                     MakeCyclePathItem(stack[index].entry_id, outgoing_edge));
             }
@@ -123,9 +120,9 @@ namespace Das::Core::TaskScheduler::RepositoryInvoke
                 auto& frame = stack.back();
 
                 const auto adjacency_iterator = adjacency.find(frame.entry_id);
-                if (adjacency_iterator == adjacency.end() ||
-                    frame.next_edge_index >=
-                        adjacency_iterator->second.size())
+                if (adjacency_iterator == adjacency.end()
+                    || frame.next_edge_index
+                           >= adjacency_iterator->second.size())
                 {
                     colors[frame.entry_id] = Color::Black;
                     stack.pop_back();

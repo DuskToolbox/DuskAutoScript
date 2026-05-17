@@ -29,8 +29,7 @@ namespace
 
     auto ElapsedMs(Clock::time_point start) -> double
     {
-        return std::chrono::duration<double, std::milli>(
-                   Clock::now() - start)
+        return std::chrono::duration<double, std::milli>(Clock::now() - start)
             .count();
     }
 
@@ -56,7 +55,7 @@ namespace
 
     auto SizeJson(Das::ExportInterface::IDasImage* image) -> yyjson::value
     {
-        auto obj = DAS::Utils::MakeYyjsonObject();
+        auto                          obj = DAS::Utils::MakeYyjsonObject();
         Das::ExportInterface::DasSize size{};
         if (image && image->GetSize(&size) == DAS_S_OK)
         {
@@ -84,8 +83,8 @@ namespace
     }
 
     void AddImageFields(
-        yyjson::value&                    obj,
-        const DebugImageWriteResult&      image_result)
+        yyjson::value&               obj,
+        const DebugImageWriteResult& image_result)
     {
         const auto image_json = BuildImageJson(image_result);
         auto       parsed = DAS::Utils::ParseYyjsonFromString(image_json);
@@ -94,7 +93,7 @@ namespace
             return;
         }
 
-        auto fields = parsed->as_object();
+        auto       fields = parsed->as_object();
         const auto status =
             (*fields)[std::string_view("image_status")].as_string();
         const auto original =
@@ -159,10 +158,11 @@ namespace
                 continue;
             }
 
-            boxes.push_back(DebugDrawBox{
-                match.rect,
-                DebugAnnotationColor::Green,
-                ScoreLabel(match.score)});
+            boxes.push_back(
+                DebugDrawBox{
+                    match.rect,
+                    DebugAnnotationColor::Green,
+                    ScoreLabel(match.score)});
         }
         return boxes;
     }
@@ -192,8 +192,8 @@ namespace
     }
 
     auto CommonResultJson(
-        DasResult                       result,
-        const DebugImageWriteResult&    image_result) -> yyjson::value
+        DasResult                    result,
+        const DebugImageWriteResult& image_result) -> yyjson::value
     {
         auto obj = DAS::Utils::MakeYyjsonObject();
         (*obj.as_object())[std::string_view("das_result")] =
@@ -205,14 +205,16 @@ namespace
     }
 
     void SubmitCvEvent(
-        const char*                     event_type,
-        std::string                     params_json,
-        std::string                     result_json,
-        const DebugImageWriteResult&    image_result,
-        double                          elapsed_ms)
+        const char*                  event_type,
+        std::string                  params_json,
+        std::string                  result_json,
+        const DebugImageWriteResult& image_result,
+        double                       elapsed_ms)
     {
-        auto event = MakeDebugEvent(event_type, std::move(params_json),
-                                    std::move(result_json));
+        auto event = MakeDebugEvent(
+            event_type,
+            std::move(params_json),
+            std::move(result_json));
         event.elapsed_ms = elapsed_ms;
         event.image_filename = image_result.image_filename;
         static_cast<void>(DebugRuntime::SubmitEvent(event));
@@ -238,8 +240,7 @@ public:
         Das::ExportInterface::IDasImage*                p_image,
         Das::ExportInterface::IDasImage*                p_template,
         Das::ExportInterface::DasTemplateMatchType      type,
-        Das::ExportInterface::IDasTemplateMatchResult** pp_out_result)
-        override
+        Das::ExportInterface::IDasTemplateMatchResult** pp_out_result) override
     {
         if (!inner_)
         {
@@ -339,20 +340,19 @@ public:
             pp_out_results);
         const auto elapsed = ElapsedMs(start);
 
-        uint32_t raw_match_count = 0;
+        uint32_t                       raw_match_count = 0;
         std::vector<TemplateMatchInfo> matches;
         if (!DAS::IsFailed(result) && pp_out_results && *pp_out_results)
         {
             uint32_t count = 0;
-            static_cast<void>((*pp_out_results)->GetRawMatchCount(
-                &raw_match_count));
+            static_cast<void>(
+                (*pp_out_results)->GetRawMatchCount(&raw_match_count));
             if ((*pp_out_results)->GetCount(&count) == DAS_S_OK)
             {
                 matches.reserve(count);
                 for (uint32_t i = 0; i < count; ++i)
                 {
-                    Das::DasPtr<
-                        Das::ExportInterface::IDasTemplateMatchResult>
+                    Das::DasPtr<Das::ExportInterface::IDasTemplateMatchResult>
                         match;
                     if ((*pp_out_results)->GetAt(i, match.Put()) == DAS_S_OK)
                     {
@@ -513,8 +513,7 @@ Das::ExportInterface::IDasCv* MaybeDecorateCvRaw(
         return p_raw;
     }
 
-    const std::string service_name =
-        p_service_name ? p_service_name : "cv";
+    const std::string service_name = p_service_name ? p_service_name : "cv";
     return DebugDecorator<Das::ExportInterface::IDasCv>::MakeRaw(
         p_raw,
         service_name);

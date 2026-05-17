@@ -26,10 +26,10 @@ namespace FakeMainProcess
      */
     struct KillParentSharedData
     {
-        uint32_t host_pid;        // DasHost 的 PID（由测试框架写入）
-        uint32_t host_pid_ready;  // host_pid 已写入标志（1 = 已写入）
-        uint32_t handshake_done;  // 握手完成标志（1 = 完成）
-        uint32_t reserved;        // 保留对齐
+        uint32_t host_pid;       // DasHost 的 PID（由测试框架写入）
+        uint32_t host_pid_ready; // host_pid 已写入标志（1 = 已写入）
+        uint32_t handshake_done; // 握手完成标志（1 = 完成）
+        uint32_t reserved;       // 保留对齐
     };
 
     /**
@@ -40,7 +40,8 @@ namespace FakeMainProcess
      * 2. Test 启动 FakeMain
      * 3. FakeMain 创建 FakeMainReadySignal(signal_name) - 不持有锁
      * 4. FakeMain 调用 AcquireAndRelease() - 等待获取锁，然后释放
-     * 5. Test 调用 SignalHolder::ReleaseAndWait() - 释放锁，等待 FakeMain 获取并释放
+     * 5. Test 调用 SignalHolder::ReleaseAndWait() - 释放锁，等待 FakeMain
+     * 获取并释放
      */
     class FakeMainReadySignal
     {
@@ -54,7 +55,7 @@ namespace FakeMainProcess
         static void Cleanup(const std::string& signal_name);
 
     private:
-        std::string signal_name_;
+        std::string                                       signal_name_;
         std::unique_ptr<boost::interprocess::named_mutex> mutex_;
     };
 
@@ -73,9 +74,9 @@ namespace FakeMainProcess
         bool ReleaseAndWait(std::chrono::milliseconds timeout_ms);
 
     private:
-        std::string signal_name_;
+        std::string                                       signal_name_;
         std::unique_ptr<boost::interprocess::named_mutex> mutex_;
-        bool holds_lock_;
+        bool                                              holds_lock_;
     };
 
     /**
@@ -108,7 +109,7 @@ namespace FakeMainProcess
          * @return true 共享内存已创建
          */
         static bool WaitForSharedMemoryReady(
-            const std::string& shm_name,
+            const std::string&        shm_name,
             std::chrono::milliseconds timeout_ms);
 
         /**
@@ -116,7 +117,9 @@ namespace FakeMainProcess
          * @param shm_name 共享内存名称
          * @param host_pid DasHost 的 PID
          */
-        static void WriteHostPid(const std::string& shm_name, uint32_t host_pid);
+        static void WriteHostPid(
+            const std::string& shm_name,
+            uint32_t           host_pid);
 
         /**
          * @brief 等待握手完成（由测试框架调用）
@@ -125,7 +128,7 @@ namespace FakeMainProcess
          * @return true 握手完成
          */
         static bool WaitForHandshakeDone(
-            const std::string& shm_name,
+            const std::string&        shm_name,
             std::chrono::milliseconds timeout_ms);
 
         /**
@@ -134,9 +137,9 @@ namespace FakeMainProcess
         static void Cleanup(const std::string& shm_name);
 
     private:
-        std::string shm_name_;
-        boost::interprocess::managed_shared_memory* shm_;
-        KillParentSharedData* data_;
+        std::string                                       shm_name_;
+        boost::interprocess::managed_shared_memory*       shm_;
+        KillParentSharedData*                             data_;
         std::unique_ptr<boost::interprocess::named_mutex> mutex_;
     };
 
@@ -144,7 +147,8 @@ namespace FakeMainProcess
     int         RunFakeMainProcessMode(const std::string& signal_name);
 
     // 固定的共享内存名称（用于 KillParent 测试传递 host_pid）
-    constexpr const char* KILL_PARENT_SHM_NAME = "C74D684A-D1F2-49E7-9CC0-428D5CFB02DE";
+    constexpr const char* KILL_PARENT_SHM_NAME =
+        "C74D684A-D1F2-49E7-9CC0-428D5CFB02DE";
 
 } // namespace FakeMainProcess
 

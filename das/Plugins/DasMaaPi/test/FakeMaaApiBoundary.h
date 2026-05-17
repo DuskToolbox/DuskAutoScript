@@ -13,15 +13,14 @@ namespace Das::Plugins::DasMaaPi::Test
     class FakeMaaApiBoundary final : public IMaaApiBoundary
     {
     public:
-        std::vector<std::string> calls;
-        std::string              resource_hash = "hash-expected";
+        std::vector<std::string>             calls;
+        std::string                          resource_hash = "hash-expected";
         std::map<std::string, MaaTaskStatus> wait_status_by_entry;
         std::map<std::string, MaaApiResult>  post_result_by_entry;
         std::optional<ControllerSpec>        last_controller_spec;
         std::optional<std::string>           last_agent_client_identifier;
         std::optional<std::uint16_t>         last_agent_client_tcp_port;
-        std::vector<std::string>             agent_client_identifiers{
-            "agent-client-id"};
+        std::vector<std::string> agent_client_identifiers{"agent-client-id"};
         MaaApiResult bind_agent_client_resource_result = MaaApiResult::Ok();
         MaaApiResult register_agent_client_resource_sink_result =
             MaaApiResult::Ok();
@@ -34,7 +33,7 @@ namespace Das::Plugins::DasMaaPi::Test
         std::optional<MaaResourceHandle> last_bound_agent_resource;
         std::optional<MaaResourceHandle> last_registered_agent_resource_sink;
         std::optional<MaaControllerHandle>
-            last_registered_agent_controller_sink;
+                                       last_registered_agent_controller_sink;
         std::optional<MaaTaskerHandle> last_registered_agent_tasker_sink;
 
         MaaResourceHandle CreateResource() override
@@ -48,16 +47,14 @@ namespace Das::Plugins::DasMaaPi::Test
             calls.emplace_back("DestroyResource:" + std::to_string(resource));
         }
 
-        MaaApiResult LoadResource(
-            MaaResourceHandle,
-            std::string_view path) override
+        MaaApiResult LoadResource(MaaResourceHandle, std::string_view path)
+            override
         {
             calls.emplace_back("LoadResource:" + std::string(path));
             return MaaApiResult::Ok(NextId());
         }
 
-        std::optional<std::string> GetResourceHash(
-            MaaResourceHandle) override
+        std::optional<std::string> GetResourceHash(MaaResourceHandle) override
         {
             calls.emplace_back("GetResourceHash");
             return resource_hash;
@@ -67,13 +64,15 @@ namespace Das::Plugins::DasMaaPi::Test
             const ControllerSpec& spec) override
         {
             last_controller_spec = spec;
-            calls.emplace_back("CreateController:" + spec.name + ":" + spec.type);
+            calls.emplace_back(
+                "CreateController:" + spec.name + ":" + spec.type);
             return NextHandle();
         }
 
         void DestroyController(MaaControllerHandle controller) noexcept override
         {
-            calls.emplace_back("DestroyController:" + std::to_string(controller));
+            calls.emplace_back(
+                "DestroyController:" + std::to_string(controller));
         }
 
         MaaTaskerHandle CreateTasker() override
@@ -87,17 +86,14 @@ namespace Das::Plugins::DasMaaPi::Test
             calls.emplace_back("DestroyTasker:" + std::to_string(tasker));
         }
 
-        MaaApiResult BindResource(
-            MaaTaskerHandle,
-            MaaResourceHandle) override
+        MaaApiResult BindResource(MaaTaskerHandle, MaaResourceHandle) override
         {
             calls.emplace_back("BindResource");
             return MaaApiResult::Ok();
         }
 
-        MaaApiResult BindController(
-            MaaTaskerHandle,
-            MaaControllerHandle) override
+        MaaApiResult BindController(MaaTaskerHandle, MaaControllerHandle)
+            override
         {
             calls.emplace_back("BindController");
             return MaaApiResult::Ok();
@@ -120,9 +116,7 @@ namespace Das::Plugins::DasMaaPi::Test
             return MaaApiResult::Ok(NextId());
         }
 
-        MaaTaskStatus WaitTask(
-            MaaTaskerHandle,
-            MaaAsyncId task_id) override
+        MaaTaskStatus WaitTask(MaaTaskerHandle, MaaAsyncId task_id) override
         {
             calls.emplace_back("WaitTask:" + std::to_string(task_id));
             if (auto it = wait_status_by_entry.find(last_entry_);
@@ -151,20 +145,16 @@ namespace Das::Plugins::DasMaaPi::Test
             return NextHandle();
         }
 
-        MaaAgentClientHandle CreateAgentClientTcp(
-            std::uint16_t port) override
+        MaaAgentClientHandle CreateAgentClientTcp(std::uint16_t port) override
         {
             last_agent_client_tcp_port = port;
-            calls.emplace_back(
-                "CreateAgentClientTcp:" + std::to_string(port));
+            calls.emplace_back("CreateAgentClientTcp:" + std::to_string(port));
             return NextHandle();
         }
 
-        void DestroyAgentClient(
-            MaaAgentClientHandle client) noexcept override
+        void DestroyAgentClient(MaaAgentClientHandle client) noexcept override
         {
-            calls.emplace_back(
-                "DestroyAgentClient:" + std::to_string(client));
+            calls.emplace_back("DestroyAgentClient:" + std::to_string(client));
         }
 
         std::optional<std::string> GetAgentClientIdentifier(
@@ -223,8 +213,7 @@ namespace Das::Plugins::DasMaaPi::Test
             return set_agent_client_timeout_result;
         }
 
-        MaaApiResult ConnectAgentClient(
-            MaaAgentClientHandle) override
+        MaaApiResult ConnectAgentClient(MaaAgentClientHandle) override
         {
             calls.emplace_back("ConnectAgentClient");
             return connect_agent_client_result;
@@ -238,15 +227,13 @@ namespace Das::Plugins::DasMaaPi::Test
             return true;
         }
 
-        bool IsAgentClientConnected(
-            MaaAgentClientHandle) override
+        bool IsAgentClientConnected(MaaAgentClientHandle) override
         {
             calls.emplace_back("IsAgentClientConnected");
             return true;
         }
 
-        bool IsAgentClientAlive(
-            MaaAgentClientHandle) override
+        bool IsAgentClientAlive(MaaAgentClientHandle) override
         {
             calls.emplace_back("IsAgentClientAlive");
             return true;

@@ -152,7 +152,8 @@ struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::AgentRuntime::PiEnvDto>
 };
 
 template <>
-struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::AgentRuntime::PiEnvVarDto>
+struct yyjson::field_name_rule<
+    Das::Plugins::DasMaaPi::AgentRuntime::PiEnvVarDto>
 {
     using type = yyjson::snake_to_camel_transform;
 };

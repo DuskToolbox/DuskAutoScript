@@ -7,8 +7,7 @@
 
 namespace
 {
-    using Das::Core::TaskScheduler::RepositoryInvoke::
-        RepositoryDependencyEdge;
+    using Das::Core::TaskScheduler::RepositoryInvoke::RepositoryDependencyEdge;
     using Das::Core::TaskScheduler::RepositoryInvoke::
         ValidateRepositoryInvokeAcyclic;
 
@@ -20,27 +19,20 @@ namespace
     }
 
     std::vector<int64_t> EntryIds(
-        const std::vector<
-            Das::Core::TaskScheduler::RepositoryInvoke::
-                RepositoryCyclePathItem>& path)
+        const std::vector<Das::Core::TaskScheduler::RepositoryInvoke::
+                              RepositoryCyclePathItem>& path)
     {
         std::vector<int64_t> ids;
         ids.reserve(path.size());
         std::ranges::transform(
             path,
             std::back_inserter(ids),
-            [](const auto& item)
-            {
-                return item.entry_id;
-            });
+            [](const auto& item) { return item.entry_id; });
         return ids;
     }
 } // namespace
 
-TEST(RepositoryInvokeGraphTest, AcyclicEmptyGraphPasses)
-{
-    ExpectAcyclic({});
-}
+TEST(RepositoryInvokeGraphTest, AcyclicEmptyGraphPasses) { ExpectAcyclic({}); }
 
 TEST(RepositoryInvokeGraphTest, AcyclicSingleChainPasses)
 {
@@ -104,7 +96,9 @@ TEST(RepositoryInvokeGraphTest, DirectCycleReturnsClosedPathWithSourceLabel)
     EXPECT_EQ(result.cycle_path.front().source_node_label, "Invoke self");
 }
 
-TEST(RepositoryInvokeGraphTest, IndirectCycleReturnsClosedPathWithSourceMetadata)
+TEST(
+    RepositoryInvokeGraphTest,
+    IndirectCycleReturnsClosedPathWithSourceMetadata)
 {
     const std::vector<RepositoryDependencyEdge> edges{
         {

@@ -19,13 +19,11 @@ namespace
 DebugInputFactoryDecorator::DebugInputFactoryDecorator(
     Das::DasPtr<Das::PluginInterface::IDasInputFactory> inner,
     const char*                                         p_factory_name)
-    : inner_(std::move(inner)),
-      factory_name_(SafeName(p_factory_name))
+    : inner_(std::move(inner)), factory_name_(SafeName(p_factory_name))
 {
 }
 
-DasResult DAS_STD_CALL
-DebugInputFactoryDecorator::GetGuid(DasGuid* p_out_guid)
+DasResult DAS_STD_CALL DebugInputFactoryDecorator::GetGuid(DasGuid* p_out_guid)
 {
     if (!inner_)
     {
@@ -34,8 +32,7 @@ DebugInputFactoryDecorator::GetGuid(DasGuid* p_out_guid)
     return inner_->GetGuid(p_out_guid);
 }
 
-DasResult DAS_STD_CALL
-DebugInputFactoryDecorator::GetRuntimeClassName(
+DasResult DAS_STD_CALL DebugInputFactoryDecorator::GetRuntimeClassName(
     IDasReadOnlyString** pp_out_name)
 {
     if (!inner_)

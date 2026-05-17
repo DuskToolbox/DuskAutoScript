@@ -3,4 +3,4 @@
 
 #include <das/Core/TaskScheduler/SchedulerService.h>
 
-#endif  // DAS_CORE_TASKSCHEDULER_H
+#endif // DAS_CORE_TASKSCHEDULER_H

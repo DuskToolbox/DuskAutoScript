@@ -78,7 +78,7 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
     }
 
     ScopedMaaContextRegistration::ScopedMaaContextRegistration(
-        RuntimeRefDto           runtime_ref,
+        RuntimeRefDto          runtime_ref,
         AgentRuntimeMaaContext context)
         : runtime_ref_(std::move(runtime_ref))
     {
@@ -93,10 +93,7 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
         active_ = true;
     }
 
-    ScopedMaaContextRegistration::~ScopedMaaContextRegistration()
-    {
-        Reset();
-    }
+    ScopedMaaContextRegistration::~ScopedMaaContextRegistration() { Reset(); }
 
     ScopedMaaContextRegistration::ScopedMaaContextRegistration(
         ScopedMaaContextRegistration&& other) noexcept

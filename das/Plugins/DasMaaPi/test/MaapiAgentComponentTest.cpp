@@ -1,7 +1,7 @@
-#include "../src/AgentRuntimeService.h"
-#include "../src/AgentRuntimeMaaContextResolver.h"
-#include "../src/MaaHandle.h"
 #include "../src/MaapiAgentComponent.h"
+#include "../src/AgentRuntimeMaaContextResolver.h"
+#include "../src/AgentRuntimeService.h"
+#include "../src/MaaHandle.h"
 #include "../src/MaapiAgentComponentFactory.h"
 #include "../src/PluginImpl.h"
 #include "FakeMaaApiBoundary.h"
@@ -105,7 +105,7 @@ namespace
                 std::make_unique<FakeProcess>(std::move(state)));
         }
 
-        std::vector<AgentProcessLaunchRequest> launches;
+        std::vector<AgentProcessLaunchRequest>         launches;
         std::vector<std::shared_ptr<FakeProcessState>> states;
     };
 
@@ -136,9 +136,7 @@ namespace
     DasGuid GuidFrom(std::string_view text)
     {
         DasGuid guid{};
-        EXPECT_EQ(
-            DasMakeDasGuid(std::string(text).c_str(), &guid),
-            DAS_S_OK);
+        EXPECT_EQ(DasMakeDasGuid(std::string(text).c_str(), &guid), DAS_S_OK);
         return guid;
     }
 
@@ -164,8 +162,7 @@ namespace
         return args;
     }
 
-    std::string ReadFirstString(
-        ExportInterface::IDasVariantVector* result)
+    std::string ReadFirstString(ExportInterface::IDasVariantVector* result)
     {
         EXPECT_NE(result, nullptr);
         EXPECT_EQ(result->GetSize(), 1);
@@ -195,8 +192,8 @@ namespace
 
     std::filesystem::path MaapiManifestPath()
     {
-        return std::filesystem::path{IpcTestConfig::GetPluginDir()}
-               / "DasMaaPi" / "DasMaaPi.json";
+        return std::filesystem::path{IpcTestConfig::GetPluginDir()} / "DasMaaPi"
+               / "DasMaaPi.json";
     }
 
     std::string StartRequestJson()
@@ -255,7 +252,9 @@ namespace
         }
 
         Das::PluginInterface::DasPluginFeature extra{};
-        EXPECT_EQ(plugin.EnumFeature(expected.size(), &extra), DAS_E_OUT_OF_RANGE);
+        EXPECT_EQ(
+            plugin.EnumFeature(expected.size(), &extra),
+            DAS_E_OUT_OF_RANGE);
     }
 
     TEST(DasMaaPiAgentPlugin, CreateFeatureInterfaceReturnsAllFeatureTypes)
@@ -271,8 +270,7 @@ namespace
         ASSERT_EQ(
             plugin.CreateFeatureInterface(1, authoring_base.Put()),
             DAS_S_OK);
-        DasPtr<Das::PluginInterface::IDasTaskAuthoringSessionFactory>
-            authoring;
+        DasPtr<Das::PluginInterface::IDasTaskAuthoringSessionFactory> authoring;
         EXPECT_EQ(authoring_base.As(authoring), DAS_S_OK);
 
         DasPtr<IDasBase> component_base;
@@ -316,12 +314,12 @@ namespace
         FakeProcessRunner  runner;
         ScopedRuntimeHooks hooks(fake, runner);
 
-        ScopedResource resource(fake, fake.CreateResource());
+        ScopedResource   resource(fake, fake.CreateResource());
         ScopedController controller(
             fake,
             fake.CreateController(
                 ControllerSpec{.name = "Android", .type = "Adb"}));
-        ScopedTasker tasker(fake, fake.CreateTasker());
+        ScopedTasker                 tasker(fake, fake.CreateTasker());
         ScopedMaaContextRegistration runtime(
             RuntimeRefDto{
                 .kind = "maapiRuntimeSession",
@@ -360,8 +358,8 @@ namespace
 
     TEST(DasMaaPiAgentComponent, DispatchUsesOneJsonStringInAndOut)
     {
-        FakeMaaApiBoundary fake;
-        FakeProcessRunner  runner;
+        FakeMaaApiBoundary  fake;
+        FakeProcessRunner   runner;
         AgentRuntimeService service(fake, runner);
         MaapiAgentComponent component(service, TestContext());
 
@@ -383,8 +381,8 @@ namespace
 
     TEST(DasMaaPiAgentComponent, InternalJsonWrapperUsesDispatch)
     {
-        FakeMaaApiBoundary fake;
-        FakeProcessRunner  runner;
+        FakeMaaApiBoundary  fake;
+        FakeProcessRunner   runner;
         AgentRuntimeService service(fake, runner);
         MaapiAgentComponent component(service, TestContext());
 
@@ -408,8 +406,8 @@ namespace
 
     TEST(DasMaaPiAgentComponent, InvalidJsonReturnsStructuredDiagnostics)
     {
-        FakeMaaApiBoundary fake;
-        FakeProcessRunner  runner;
+        FakeMaaApiBoundary  fake;
+        FakeProcessRunner   runner;
         AgentRuntimeService service(fake, runner);
         MaapiAgentComponent component(service, TestContext());
 
@@ -426,8 +424,7 @@ namespace
         EXPECT_EQ(
             (*root)[std::string_view("status")].as_string().value_or(""),
             "failed");
-        auto diagnostics =
-            (*root)[std::string_view("diagnostics")].as_array();
+        auto diagnostics = (*root)[std::string_view("diagnostics")].as_array();
         ASSERT_TRUE(diagnostics.has_value());
         ASSERT_FALSE(diagnostics->empty());
     }
@@ -435,8 +432,8 @@ namespace
     TEST(DasMaaPiAgentTaskComponent, AgentTaskComponentIsNotLivePluginSurface)
     {
         const auto plugin_impl = ReadFile(
-            std::filesystem::path(__FILE__).parent_path().parent_path()
-            / "src" / "PluginImpl.cpp");
+            std::filesystem::path(__FILE__).parent_path().parent_path() / "src"
+            / "PluginImpl.cpp");
         const auto cmake = ReadFile(
             std::filesystem::path(__FILE__).parent_path().parent_path()
             / "CMakeLists.txt");
@@ -449,8 +446,6 @@ namespace
             plugin_impl.find("MaapiAgentTaskComponentFactory"),
             std::string::npos);
         EXPECT_EQ(cmake.find("MaapiAgentTaskComponent"), std::string::npos);
-        EXPECT_EQ(
-            manifest.find("das.maapi.agentRuntime"),
-            std::string::npos);
+        EXPECT_EQ(manifest.find("das.maapi.agentRuntime"), std::string::npos);
     }
 } // namespace

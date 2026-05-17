@@ -6,8 +6,8 @@
 
 #include <Das.ExportInterface.IDasVariantVector.hpp>
 #include <das/DasString.hpp>
-#include <das/Plugins/DasMaaPi/MaapiDto.h>
 #include <das/Plugins/DasMaaPi/MaaRuntime.h>
+#include <das/Plugins/DasMaaPi/MaapiDto.h>
 
 #include <string>
 
@@ -17,8 +17,8 @@ namespace Plugins::DasMaaPi
     namespace
     {
         DasResult WriteStringResult(
-            std::string_view                       json,
-            ExportInterface::IDasVariantVector**   pp_out_result)
+            std::string_view                     json,
+            ExportInterface::IDasVariantVector** pp_out_result)
         {
             if (pp_out_result == nullptr)
             {
@@ -66,12 +66,13 @@ namespace Plugins::DasMaaPi
     MaapiAgentComponent::MaapiAgentComponent()
         : owned_runner_(
               std::make_unique<AgentRuntime::BoostAgentProcessRunner>()),
-          owned_service_(std::make_unique<AgentRuntime::AgentRuntimeService>(
-              MaaApiBoundaryForRuntime(),
-              AgentProcessRunnerForRuntime()
-                  ? *AgentProcessRunnerForRuntime()
-                  : static_cast<AgentRuntime::IAgentProcessRunner&>(
-                        *owned_runner_))),
+          owned_service_(
+              std::make_unique<AgentRuntime::AgentRuntimeService>(
+                  MaaApiBoundaryForRuntime(),
+                  AgentProcessRunnerForRuntime()
+                      ? *AgentProcessRunnerForRuntime()
+                      : static_cast<AgentRuntime::IAgentProcessRunner&>(
+                            *owned_runner_))),
           service_(owned_service_.get())
     {
     }
@@ -195,11 +196,10 @@ namespace Plugins::DasMaaPi
             || function_name == nullptr)
         {
             return WriteResult(
-                MakeAgentAdapterFailure(
-                    {MakeAgentAdapterDiagnostic(
-                        "invalid-function-name",
-                        "Dispatch function name must be a UTF-8 string",
-                        "functionName")}),
+                MakeAgentAdapterFailure({MakeAgentAdapterDiagnostic(
+                    "invalid-function-name",
+                    "Dispatch function name must be a UTF-8 string",
+                    "functionName")}),
                 pp_out_result);
         }
 
@@ -208,12 +208,11 @@ namespace Plugins::DasMaaPi
         if (arg_count != 1)
         {
             return WriteResult(
-                MakeAgentAdapterFailure(
-                    {MakeAgentAdapterDiagnostic(
-                        "invalid-argument-count",
-                        "Dispatch requires exactly one UTF-8 JSON string "
-                        "argument",
-                        "arguments")}),
+                MakeAgentAdapterFailure({MakeAgentAdapterDiagnostic(
+                    "invalid-argument-count",
+                    "Dispatch requires exactly one UTF-8 JSON string "
+                    "argument",
+                    "arguments")}),
                 pp_out_result);
         }
 
@@ -222,11 +221,10 @@ namespace Plugins::DasMaaPi
             || !request_text)
         {
             return WriteResult(
-                MakeAgentAdapterFailure(
-                    {MakeAgentAdapterDiagnostic(
-                        "invalid-argument-type",
-                        "Dispatch argument 0 must be a UTF-8 JSON string",
-                        "arguments.0")}),
+                MakeAgentAdapterFailure({MakeAgentAdapterDiagnostic(
+                    "invalid-argument-type",
+                    "Dispatch argument 0 must be a UTF-8 JSON string",
+                    "arguments.0")}),
                 pp_out_result);
         }
 
@@ -235,11 +233,10 @@ namespace Plugins::DasMaaPi
             || request_json == nullptr)
         {
             return WriteResult(
-                MakeAgentAdapterFailure(
-                    {MakeAgentAdapterDiagnostic(
-                        "invalid-argument-string",
-                        "Dispatch argument 0 could not be read as UTF-8",
-                        "arguments.0")}),
+                MakeAgentAdapterFailure({MakeAgentAdapterDiagnostic(
+                    "invalid-argument-string",
+                    "Dispatch argument 0 could not be read as UTF-8",
+                    "arguments.0")}),
                 pp_out_result);
         }
 

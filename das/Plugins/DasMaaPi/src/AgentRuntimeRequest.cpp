@@ -38,7 +38,10 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
 
         bool IsValidCommand(std::string_view command)
         {
-            return std::find(kValidCommands.begin(), kValidCommands.end(), command)
+            return std::find(
+                       kValidCommands.begin(),
+                       kValidCommands.end(),
+                       command)
                    != kValidCommands.end();
         }
 
@@ -54,12 +57,13 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
             std::string                message,
             std::optional<std::string> path = std::nullopt)
         {
-            result.diagnostics.push_back(AgentDiagnosticDto{
-                .severity = std::move(severity),
-                .code = std::move(code),
-                .message = std::move(message),
-                .agent_id = std::nullopt,
-                .path = std::move(path)});
+            result.diagnostics.push_back(
+                AgentDiagnosticDto{
+                    .severity = std::move(severity),
+                    .code = std::move(code),
+                    .message = std::move(message),
+                    .agent_id = std::nullopt,
+                    .path = std::move(path)});
         }
 
         void RefreshOk(ParsedAgentRuntimeRequest& result)
@@ -97,7 +101,7 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
                 return std::nullopt;
             }
             const auto& value = obj[key];
-            auto parsed = value.as_sint();
+            auto        parsed = value.as_sint();
             if (!parsed)
             {
                 return std::nullopt;
@@ -132,9 +136,8 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
             return std::any_of(
                 kKnownPiEnvFields.begin(),
                 kKnownPiEnvFields.end(),
-                [key](const PiEnvKnownField& field) {
-                    return field.env_key == key || field.camel_key == key;
-                });
+                [key](const PiEnvKnownField& field)
+                { return field.env_key == key || field.camel_key == key; });
         }
 
         void AssignKnownPiEnv(
@@ -159,8 +162,7 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
                 env.client_language = std::move(value);
             }
             else if (
-                key == "PI_CLIENT_MAAFW_VERSION"
-                || key == "clientMaafwVersion")
+                key == "PI_CLIENT_MAAFW_VERSION" || key == "clientMaafwVersion")
             {
                 env.client_maafw_version = std::move(value);
             }
@@ -180,8 +182,8 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
 
         template <typename ObjectRef>
         void ParseOptionsInto(
-            const ObjectRef&          obj,
-            AgentRuntimeOptionsDto&   options)
+            const ObjectRef&        obj,
+            AgentRuntimeOptionsDto& options)
         {
             if (auto value = OptionalBool(obj, "tcpCompatMode"))
             {
@@ -233,8 +235,7 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
             {
                 return std::nullopt;
             }
-            auto runtime_ref =
-                obj[std::string_view("runtimeRef")].as_object();
+            auto runtime_ref = obj[std::string_view("runtimeRef")].as_object();
             if (!runtime_ref)
             {
                 return std::nullopt;
@@ -251,8 +252,7 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
         AgentSpecDto ParseAgentSpec(const ObjectRef& obj)
         {
             AgentSpecDto spec;
-            spec.child_exec =
-                OptionalString(obj, "childExec").value_or("");
+            spec.child_exec = OptionalString(obj, "childExec").value_or("");
             spec.child_args = ParseStringArray(obj, "childArgs");
             spec.identifier = OptionalString(obj, "identifier");
             if (auto timeout = OptionalInt32(obj, "timeoutMs"))
@@ -278,9 +278,7 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
         }
 
         template <typename ObjectRef>
-        void ParseAgents(
-            const ObjectRef&          obj,
-            AgentRuntimeRequestDto&   request)
+        void ParseAgents(const ObjectRef& obj, AgentRuntimeRequestDto& request)
         {
             if (obj.contains(std::string_view("agents")))
             {
@@ -310,9 +308,7 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
         }
 
         template <typename ObjectRef>
-        void ParsePiEnv(
-            const ObjectRef&             obj,
-            ParsedAgentRuntimeRequest&   result)
+        void ParsePiEnv(const ObjectRef& obj, ParsedAgentRuntimeRequest& result)
         {
             if (!obj.contains(std::string_view("piEnv")))
             {
@@ -346,7 +342,10 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
                 auto text = std::string(value.as_string().value_or(""));
                 if (IsKnownPiEnvKey(key))
                 {
-                    AssignKnownPiEnv(result.request.pi_env, key, std::move(text));
+                    AssignKnownPiEnv(
+                        result.request.pi_env,
+                        key,
+                        std::move(text));
                     continue;
                 }
 
@@ -372,17 +371,18 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
                     continue;
                 }
 
-                result.request.extra_pi_env.emplace_back(PiEnvVarDto{
-                    .key = std::string(key),
-                    .value = std::move(text)});
+                result.request.extra_pi_env.emplace_back(
+                    PiEnvVarDto{
+                        .key = std::string(key),
+                        .value = std::move(text)});
             }
         }
 
         template <typename ObjectRef>
         ParsedAgentRuntimeRequest ParseRequestObject(
-            const ObjectRef&                  obj,
-            AgentRuntimeOptionsDto            base_options,
-            std::optional<std::string_view>   dispatch_command)
+            const ObjectRef&                obj,
+            AgentRuntimeOptionsDto          base_options,
+            std::optional<std::string_view> dispatch_command)
         {
             ParsedAgentRuntimeRequest result;
             result.request.options = base_options;
@@ -526,7 +526,7 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
         }
 
         AgentRuntimeOptionsDto ParseSettingsOptions(
-            std::string_view settings_json,
+            std::string_view           settings_json,
             ParsedAgentRuntimeRequest& result)
         {
             AgentRuntimeOptionsDto options;
@@ -585,8 +585,7 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
                 auto obj = item.as_object();
                 (*obj)[std::string_view("severity")] =
                     JsonString(diagnostic.severity);
-                (*obj)[std::string_view("code")] =
-                    JsonString(diagnostic.code);
+                (*obj)[std::string_view("code")] = JsonString(diagnostic.code);
                 (*obj)[std::string_view("message")] =
                     JsonString(diagnostic.message);
                 if (diagnostic.agent_id)
@@ -647,9 +646,8 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
         {
             if (!value.empty())
             {
-                env.emplace_back(PiEnvVarDto{
-                    .key = std::move(key),
-                    .value = value});
+                env.emplace_back(
+                    PiEnvVarDto{.key = std::move(key), .value = value});
             }
         }
     } // namespace
@@ -683,7 +681,10 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
             return result;
         }
 
-        return ParseRequestObject(*root, AgentRuntimeOptionsDto{}, std::nullopt);
+        return ParseRequestObject(
+            *root,
+            AgentRuntimeOptionsDto{},
+            std::nullopt);
     }
 
     ParsedAgentRuntimeRequest NormalizeAgentRuntimeDispatch(
@@ -724,7 +725,8 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
         std::string_view input_json)
     {
         ParsedAgentRuntimeRequest settings_result;
-        auto base_options = ParseSettingsOptions(settings_json, settings_result);
+        auto                      base_options =
+            ParseSettingsOptions(settings_json, settings_result);
         if (!settings_result.diagnostics.empty())
         {
             RefreshOk(settings_result);
@@ -806,8 +808,7 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
         (*signals_obj)[std::string_view("failed")] = result.signals.failed;
         (*signals_obj)[std::string_view("cancelled")] =
             result.signals.cancelled;
-        (*signals_obj)[std::string_view("timedOut")] =
-            result.signals.timed_out;
+        (*signals_obj)[std::string_view("timedOut")] = result.signals.timed_out;
         (*obj)[std::string_view("signals")] = std::move(signals);
         return root;
     }
@@ -824,15 +825,12 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
         const AgentRuntimeRequestDto& request)
     {
         std::vector<PiEnvVarDto> result;
-        const auto& env = request.pi_env;
+        const auto&              env = request.pi_env;
         AppendEnv(result, "PI_INTERFACE_VERSION", env.interface_version);
         AppendEnv(result, "PI_CLIENT_NAME", env.client_name);
         AppendEnv(result, "PI_CLIENT_VERSION", env.client_version);
         AppendEnv(result, "PI_CLIENT_LANGUAGE", env.client_language);
-        AppendEnv(
-            result,
-            "PI_CLIENT_MAAFW_VERSION",
-            env.client_maafw_version);
+        AppendEnv(result, "PI_CLIENT_MAAFW_VERSION", env.client_maafw_version);
         AppendEnv(result, "PI_VERSION", env.project_version);
         AppendEnv(result, "PI_CONTROLLER", env.controller_json);
         AppendEnv(result, "PI_RESOURCE", env.resource_json);

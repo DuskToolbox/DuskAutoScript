@@ -28,10 +28,8 @@ namespace Das::Plugins::DasMaaPi
         }
 
         template <typename TObject>
-        bool OptionalBool(
-            const TObject&   obj,
-            std::string_view key,
-            bool             fallback)
+        bool
+        OptionalBool(const TObject& obj, std::string_view key, bool fallback)
         {
             if (!obj.contains(key) || !obj[key].is_bool())
             {
@@ -46,7 +44,7 @@ namespace Das::Plugins::DasMaaPi
             std::string_view key);
 
         std::vector<MaapiPiOptionSettingsDto> ParseOptionSettingsArray(
-            const auto&   obj,
+            const auto&      obj,
             std::string_view key)
         {
             std::vector<MaapiPiOptionSettingsDto> result;
@@ -108,7 +106,7 @@ namespace Das::Plugins::DasMaaPi
         }
 
         std::vector<MaapiPiTaskSettingsDto> ParseTaskSettingsArray(
-            const auto&   obj,
+            const auto&      obj,
             std::string_view key)
         {
             std::vector<MaapiPiTaskSettingsDto> result;
@@ -201,8 +199,7 @@ namespace Das::Plugins::DasMaaPi
                         OptionalString(*pi, "controllerName");
                     settings.pi.resource_name =
                         OptionalString(*pi, "resourceName");
-                    settings.pi.preset_name =
-                        OptionalString(*pi, "presetName");
+                    settings.pi.preset_name = OptionalString(*pi, "presetName");
                     settings.pi.orphan_paths = StringArray(*pi, "orphanPaths");
                     settings.pi.global_options =
                         ParseOptionSettingsArray(*pi, "globalOptions");
@@ -210,8 +207,7 @@ namespace Das::Plugins::DasMaaPi
                         ParseOptionSettingsArray(*pi, "resourceOptions");
                     settings.pi.controller_options =
                         ParseOptionSettingsArray(*pi, "controllerOptions");
-                    settings.pi.tasks =
-                        ParseTaskSettingsArray(*pi, "tasks");
+                    settings.pi.tasks = ParseTaskSettingsArray(*pi, "tasks");
                 }
             }
             return settings;
@@ -221,8 +217,7 @@ namespace Das::Plugins::DasMaaPi
         {
             yyjson::value diag(Object());
             auto          obj = diag.as_object();
-            (*obj)[std::string_view("severity")] =
-                JsonString(item.severity);
+            (*obj)[std::string_view("severity")] = JsonString(item.severity);
             (*obj)[std::string_view("code")] = JsonString(item.code);
             (*obj)[std::string_view("message")] = JsonString(item.message);
             if (item.path)
@@ -243,8 +238,7 @@ namespace Das::Plugins::DasMaaPi
             {
                 yyjson::value candidate(Object());
                 auto          obj = candidate.as_object();
-                (*obj)[std::string_view("name")] =
-                    JsonString(item.dto.name);
+                (*obj)[std::string_view("name")] = JsonString(item.dto.name);
                 if (item.dto.label)
                 {
                     (*obj)[std::string_view("label")] =
@@ -345,8 +339,7 @@ namespace Das::Plugins::DasMaaPi
                 (*obj)[std::string_view("selectedCases")] = std::move(cases);
                 if (option.bool_value)
                 {
-                    (*obj)[std::string_view("boolValue")] =
-                        *option.bool_value;
+                    (*obj)[std::string_view("boolValue")] = *option.bool_value;
                 }
                 yyjson::value inputs(Object());
                 for (const auto& [key, input_value] : option.input_values)
@@ -365,9 +358,7 @@ namespace Das::Plugins::DasMaaPi
             return std::any_of(
                 catalog.tasks.begin(),
                 catalog.tasks.end(),
-                [&](const PiTask& task) {
-                    return task.dto.name == name;
-                });
+                [&](const PiTask& task) { return task.dto.name == name; });
         }
 
         bool ContainsName(
@@ -385,9 +376,8 @@ namespace Das::Plugins::DasMaaPi
             auto it = std::find_if(
                 catalog.controllers.begin(),
                 catalog.controllers.end(),
-                [&](const PiController& item) {
-                    return item.dto.name == name;
-                });
+                [&](const PiController& item)
+                { return item.dto.name == name; });
             return it == catalog.controllers.end() ? nullptr : &*it;
         }
 
@@ -398,22 +388,16 @@ namespace Das::Plugins::DasMaaPi
             auto it = std::find_if(
                 catalog.resources.begin(),
                 catalog.resources.end(),
-                [&](const PiResource& item) {
-                    return item.dto.name == name;
-                });
+                [&](const PiResource& item) { return item.dto.name == name; });
             return it == catalog.resources.end() ? nullptr : &*it;
         }
 
-        const PiTask* FindTask(
-            const PiCatalog& catalog,
-            std::string_view name)
+        const PiTask* FindTask(const PiCatalog& catalog, std::string_view name)
         {
             auto it = std::find_if(
                 catalog.tasks.begin(),
                 catalog.tasks.end(),
-                [&](const PiTask& item) {
-                    return item.dto.name == name;
-                });
+                [&](const PiTask& item) { return item.dto.name == name; });
             return it == catalog.tasks.end() ? nullptr : &*it;
         }
 
@@ -424,9 +408,8 @@ namespace Das::Plugins::DasMaaPi
             auto it = std::find_if(
                 settings.pi.tasks.begin(),
                 settings.pi.tasks.end(),
-                [&](const MaapiPiTaskSettingsDto& item) {
-                    return item.task_name == task_name;
-                });
+                [&](const MaapiPiTaskSettingsDto& item)
+                { return item.task_name == task_name; });
             return it == settings.pi.tasks.end() ? nullptr : &*it;
         }
 
@@ -437,8 +420,7 @@ namespace Das::Plugins::DasMaaPi
         {
             for (auto& task : settings.pi.tasks)
             {
-                const auto* catalog_task =
-                    FindTask(catalog, task.task_name);
+                const auto* catalog_task = FindTask(catalog, task.task_name);
                 if (catalog_task
                     && ContainsName(catalog_task->dto.option, option_name))
                 {
@@ -449,9 +431,8 @@ namespace Das::Plugins::DasMaaPi
             auto catalog_task = std::find_if(
                 catalog.tasks.begin(),
                 catalog.tasks.end(),
-                [&](const PiTask& item) {
-                    return ContainsName(item.dto.option, option_name);
-                });
+                [&](const PiTask& item)
+                { return ContainsName(item.dto.option, option_name); });
             if (catalog_task == catalog.tasks.end())
             {
                 return nullptr;
@@ -469,9 +450,8 @@ namespace Das::Plugins::DasMaaPi
         {
             std::erase_if(
                 options,
-                [&](const MaapiPiOptionSettingsDto& item) {
-                    return item.option_name == option_name;
-                });
+                [&](const MaapiPiOptionSettingsDto& item)
+                { return item.option_name == option_name; });
         }
 
         void RemoveOptionEverywhere(
@@ -493,9 +473,7 @@ namespace Das::Plugins::DasMaaPi
         {
             std::erase_if(
                 settings.pi.orphan_paths,
-                [&](const std::string& item) {
-                    return item == path;
-                });
+                [&](const std::string& item) { return item == path; });
         }
 
         void RemoveOrphanPrefix(
@@ -504,9 +482,8 @@ namespace Das::Plugins::DasMaaPi
         {
             std::erase_if(
                 settings.pi.orphan_paths,
-                [&](const std::string& item) {
-                    return item.starts_with(prefix);
-                });
+                [&](const std::string& item)
+                { return item.starts_with(prefix); });
         }
 
         void UpsertOption(
@@ -516,9 +493,8 @@ namespace Das::Plugins::DasMaaPi
             auto it = std::find_if(
                 options.begin(),
                 options.end(),
-                [&](const MaapiPiOptionSettingsDto& item) {
-                    return item.option_name == option.option_name;
-                });
+                [&](const MaapiPiOptionSettingsDto& item)
+                { return item.option_name == option.option_name; });
             if (it == options.end())
             {
                 options.emplace_back(std::move(option));
@@ -548,16 +524,14 @@ namespace Das::Plugins::DasMaaPi
                 if (obj->contains(std::string_view("boolValue"))
                     && (*obj)[std::string_view("boolValue")].is_bool())
                 {
-                    result.bool_value =
-                        (*obj)[std::string_view("boolValue")]
-                            .as_bool()
-                            .value_or(false);
+                    result.bool_value = (*obj)[std::string_view("boolValue")]
+                                            .as_bool()
+                                            .value_or(false);
                 }
                 if (obj->contains(std::string_view("inputValues")))
                 {
                     if (auto inputs =
-                            (*obj)[std::string_view("inputValues")]
-                                .as_object())
+                            (*obj)[std::string_view("inputValues")].as_object())
                     {
                         for (auto input_it = inputs->begin();
                              input_it != inputs->end();
@@ -583,10 +557,8 @@ namespace Das::Plugins::DasMaaPi
 
             if (value.is_string())
             {
-                const auto text =
-                    std::string(value.as_string().value_or(""));
-                if (option.dto.type == "input"
-                    && !option.dto.inputs.empty())
+                const auto text = std::string(value.as_string().value_or(""));
+                if (option.dto.type == "input" && !option.dto.inputs.empty())
                 {
                     result.input_values.emplace(
                         option.dto.inputs.front().name,
@@ -629,12 +601,10 @@ namespace Das::Plugins::DasMaaPi
                     RemoveOptionEverywhere(settings, option_name);
                     RemoveOrphanPath(
                         settings,
-                        std::string{"pi.options:"}
-                            + std::string{option_name});
+                        std::string{"pi.options:"} + std::string{option_name});
                     RemoveOrphanPath(
                         settings,
-                        std::string{"pi.options."}
-                            + std::string{option_name});
+                        std::string{"pi.options."} + std::string{option_name});
                     return;
                 }
                 settings.pi.orphan_paths.emplace_back(
@@ -665,25 +635,20 @@ namespace Das::Plugins::DasMaaPi
             if (std::any_of(
                     catalog.global_options.begin(),
                     catalog.global_options.end(),
-                    [&](const PiOption& item) {
-                        return item.dto.name == option_name;
-                    }))
+                    [&](const PiOption& item)
+                    { return item.dto.name == option_name; }))
             {
-                UpsertOption(
-                    settings.pi.global_options,
-                    std::move(*parsed));
+                UpsertOption(settings.pi.global_options, std::move(*parsed));
                 return;
             }
 
-            const auto controller_name =
-                settings.pi.controller_name.value_or(
-                    catalog.controllers.empty()
-                        ? std::string{}
-                        : catalog.controllers.front().dto.name);
+            const auto controller_name = settings.pi.controller_name.value_or(
+                catalog.controllers.empty()
+                    ? std::string{}
+                    : catalog.controllers.front().dto.name);
             if (const auto* controller =
                     FindController(catalog, controller_name);
-                controller
-                && ContainsName(controller->dto.option, option_name))
+                controller && ContainsName(controller->dto.option, option_name))
             {
                 UpsertOption(
                     settings.pi.controller_options,
@@ -691,17 +656,13 @@ namespace Das::Plugins::DasMaaPi
                 return;
             }
 
-            const auto resource_name =
-                settings.pi.resource_name.value_or(
-                    catalog.resources.empty()
-                        ? std::string{}
-                        : catalog.resources.front().dto.name);
+            const auto resource_name = settings.pi.resource_name.value_or(
+                catalog.resources.empty() ? std::string{}
+                                          : catalog.resources.front().dto.name);
             if (const auto* resource = FindResource(catalog, resource_name);
                 resource && ContainsName(resource->dto.option, option_name))
             {
-                UpsertOption(
-                    settings.pi.resource_options,
-                    std::move(*parsed));
+                UpsertOption(settings.pi.resource_options, std::move(*parsed));
                 return;
             }
 
@@ -730,8 +691,7 @@ namespace Das::Plugins::DasMaaPi
         return ParseAcceptedObject(*obj);
     }
 
-    yyjson::value SerializeAcceptedSettings(
-        const AcceptedSettingsDto& settings)
+    yyjson::value SerializeAcceptedSettings(const AcceptedSettingsDto& settings)
     {
         yyjson::value result(Object());
         auto          obj = result.as_object();
@@ -757,8 +717,7 @@ namespace Das::Plugins::DasMaaPi
         yyjson::value policy(Object());
         (*policy.as_object())[std::string_view("failFast")] =
             settings.adapter.execution_policy.fail_fast;
-        (*adapter_obj)[std::string_view("executionPolicy")] =
-            std::move(policy);
+        (*adapter_obj)[std::string_view("executionPolicy")] = std::move(policy);
         (*obj)[std::string_view("adapter")] = std::move(adapter);
 
         yyjson::value pi(Object());
@@ -922,9 +881,8 @@ namespace Das::Plugins::DasMaaPi
                     std::find_if(
                         catalog->global_options.begin(),
                         catalog->global_options.end(),
-                        [&](const PiOption& item) {
-                            return item.dto.name == option.dto.name;
-                        })
+                        [&](const PiOption& item)
+                        { return item.dto.name == option.dto.name; })
                             == catalog->global_options.end()
                         ? "task"
                         : "global";
@@ -955,8 +913,7 @@ namespace Das::Plugins::DasMaaPi
             diagnostic.path = orphan;
             AddDiagnosticJson(diagnostics_json, diagnostic);
         }
-        (*obj)[std::string_view("diagnostics")] =
-            std::move(diagnostics_json);
+        (*obj)[std::string_view("diagnostics")] = std::move(diagnostics_json);
 
         yyjson::value migration(Object());
         yyjson::value orphan_paths(Array());
@@ -1054,8 +1011,8 @@ namespace Das::Plugins::DasMaaPi
             if (option_pos != std::string_view::npos)
             {
                 auto task_name = tail.substr(0, option_pos);
-                auto option_name = tail.substr(
-                    option_pos + kTaskOptionSeparator.size());
+                auto option_name =
+                    tail.substr(option_pos + kTaskOptionSeparator.size());
                 auto* task = FindSelectedTask(settings, task_name);
                 if (!task && HasTask(*catalog, task_name))
                 {
@@ -1114,9 +1071,7 @@ namespace Das::Plugins::DasMaaPi
         const auto preset = std::find_if(
             catalog.presets.begin(),
             catalog.presets.end(),
-            [&](const PiPreset& item) {
-                return item.dto.name == preset_name;
-            });
+            [&](const PiPreset& item) { return item.dto.name == preset_name; });
         if (preset == catalog.presets.end())
         {
             settings.pi.orphan_paths.emplace_back(

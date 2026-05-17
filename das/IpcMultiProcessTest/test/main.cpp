@@ -20,9 +20,7 @@ int main(int argc, char* argv[])
         "Run as fake main process for KillParent test")(
         "signal-name",
         boost::program_options::value<std::string>(),
-        "Signal name for cross-process sync")(
-        "help",
-        "Show this help message");
+        "Signal name for cross-process sync")("help", "Show this help message");
 
     boost::program_options::variables_map vm;
     // 使用 allow_unregistered() 允许未知参数（如 gtest 的 --gtest_list_tests）

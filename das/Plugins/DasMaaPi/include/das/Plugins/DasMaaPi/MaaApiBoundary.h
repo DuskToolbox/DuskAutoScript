@@ -13,11 +13,11 @@ namespace Das::Plugins::DasMaaPi
     using MaaAgentClientHandle = std::uintptr_t;
     using MaaAsyncId = std::int64_t;
 
-    inline constexpr MaaResourceHandle kInvalidMaaResourceHandle = 0;
-    inline constexpr MaaControllerHandle kInvalidMaaControllerHandle = 0;
-    inline constexpr MaaTaskerHandle kInvalidMaaTaskerHandle = 0;
+    inline constexpr MaaResourceHandle    kInvalidMaaResourceHandle = 0;
+    inline constexpr MaaControllerHandle  kInvalidMaaControllerHandle = 0;
+    inline constexpr MaaTaskerHandle      kInvalidMaaTaskerHandle = 0;
     inline constexpr MaaAgentClientHandle kInvalidMaaAgentClientHandle = 0;
-    inline constexpr MaaAsyncId kInvalidMaaAsyncId = 0;
+    inline constexpr MaaAsyncId           kInvalidMaaAsyncId = 0;
 
     enum class MaaTaskStatus : std::int32_t
     {
@@ -84,7 +84,7 @@ namespace Das::Plugins::DasMaaPi
             MaaControllerHandle controller) noexcept = 0;
 
         virtual MaaTaskerHandle CreateTasker() = 0;
-        virtual void DestroyTasker(MaaTaskerHandle tasker) noexcept = 0;
+        virtual void         DestroyTasker(MaaTaskerHandle tasker) noexcept = 0;
         virtual MaaApiResult BindResource(
             MaaTaskerHandle   tasker,
             MaaResourceHandle resource) = 0;
@@ -93,7 +93,7 @@ namespace Das::Plugins::DasMaaPi
             MaaControllerHandle controller) = 0;
 
         virtual MaaApiResult PostTask(
-            MaaTaskerHandle tasker,
+            MaaTaskerHandle  tasker,
             std::string_view entry,
             std::string_view pipeline_override) = 0;
         virtual MaaTaskStatus WaitTask(
@@ -128,10 +128,8 @@ namespace Das::Plugins::DasMaaPi
             MaaAgentClientHandle client) = 0;
         virtual bool DisconnectAgentClient(
             MaaAgentClientHandle client) noexcept = 0;
-        virtual bool IsAgentClientConnected(
-            MaaAgentClientHandle client) = 0;
-        virtual bool IsAgentClientAlive(
-            MaaAgentClientHandle client) = 0;
+        virtual bool IsAgentClientConnected(MaaAgentClientHandle client) = 0;
+        virtual bool IsAgentClientAlive(MaaAgentClientHandle client) = 0;
     };
 
     IMaaApiBoundary& DefaultMaaApiBoundary();

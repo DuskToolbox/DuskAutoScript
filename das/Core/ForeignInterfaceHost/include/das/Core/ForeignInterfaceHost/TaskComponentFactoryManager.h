@@ -67,8 +67,8 @@ private:
     };
 
     DasPtr<Das::PluginInterface::IDasTaskComponentHost> host_;
-    std::unordered_map<DasGuid, FactoryEntry>            factories_;
-    std::unordered_map<DasGuid, ComponentRoute>          routes_;
+    std::unordered_map<DasGuid, FactoryEntry>           factories_;
+    std::unordered_map<DasGuid, ComponentRoute>         routes_;
 
     mutable std::shared_mutex mutex_;
 };

@@ -47,10 +47,10 @@ namespace Plugins::DasMaaPi
 {
     struct MaapiRunTaskDiagnosticDto
     {
-        std::string                severity;
-        std::string                code;
-        std::string                message;
-        std::optional<std::string> path;
+        std::string                 severity;
+        std::string                 code;
+        std::string                 message;
+        std::optional<std::string>  path;
         std::optional<std::int64_t> provider_code;
     };
 
@@ -69,9 +69,9 @@ namespace Plugins::DasMaaPi
 
     struct MaapiRunTaskResultDto
     {
-        int32_t                              version = 1;
-        std::string                          status;
-        MaapiRunTaskOutputsDto               outputs;
+        int32_t                                version = 1;
+        std::string                            status;
+        MaapiRunTaskOutputsDto                 outputs;
         std::vector<MaapiRunTaskDiagnosticDto> diagnostics;
         MaapiRunTaskSignalsDto                 signals;
     };
@@ -112,7 +112,8 @@ namespace Plugins::DasMaaPi
 DAS_NS_END
 
 template <>
-struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::MaapiRunTaskDiagnosticDto>
+struct yyjson::field_name_rule<
+    Das::Plugins::DasMaaPi::MaapiRunTaskDiagnosticDto>
 {
     using type = yyjson::snake_to_camel_transform;
 };

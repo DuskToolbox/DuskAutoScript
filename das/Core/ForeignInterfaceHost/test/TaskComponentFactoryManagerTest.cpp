@@ -399,8 +399,8 @@ namespace
                 pp_out_name);
         }
 
-        DasResult DAS_STD_CALL SetTaskComponentHost(
-            IDasTaskComponentHost* p_host) override
+        DasResult DAS_STD_CALL
+        SetTaskComponentHost(IDasTaskComponentHost* p_host) override
         {
             ++set_host_call_count;
             host = DasPtr<IDasTaskComponentHost>(p_host);

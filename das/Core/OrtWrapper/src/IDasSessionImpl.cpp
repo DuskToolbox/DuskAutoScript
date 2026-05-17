@@ -40,7 +40,7 @@ DasResult IDasSessionImpl::Run(
     try
     {
         uint32_t input_count = 0;
-        auto cr = input_names->GetCount(&input_count);
+        auto     cr = input_names->GetCount(&input_count);
         if (DAS::IsFailed(cr))
         {
             DAS_CORE_LOG_ERROR(
@@ -136,7 +136,8 @@ DasResult IDasSessionImpl::Run(
             for (uint32_t i = 0; i < output_count; ++i)
             {
                 DAS::DasPtr<IDasReadOnlyString> p_name;
-                const auto get_name_result = output_names->GetAt(i, p_name.Put());
+                const auto                      get_name_result =
+                    output_names->GetAt(i, p_name.Put());
                 if (DAS::IsFailed(get_name_result) || !p_name)
                 {
                     DAS_CORE_LOG_ERROR(
@@ -158,9 +159,7 @@ DasResult IDasSessionImpl::Run(
             {
                 for (const auto& name : output_names_)
                 {
-                    io_binding.BindOutput(
-                        name.c_str(),
-                        allocator_.GetInfo());
+                    io_binding.BindOutput(name.c_str(), allocator_.GetInfo());
                 }
             }
             return DAS_S_OK;

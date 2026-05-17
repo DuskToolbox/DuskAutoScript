@@ -9,13 +9,13 @@ namespace Das::Plugins::DasMaaPi
 {
     AcceptedSettingsDto ParseAcceptedSettings(const yyjson::value& value);
     yyjson::value       SerializeAcceptedSettings(
-              const AcceptedSettingsDto& settings);
+        const AcceptedSettingsDto& settings);
 
     yyjson::value ProjectAuthoringDocument(
-        const AcceptedSettingsDto&             settings,
-        const PiCatalog*                       catalog,
-        const std::vector<PiDiagnosticDto>&    diagnostics,
-        int64_t                                revision);
+        const AcceptedSettingsDto&          settings,
+        const PiCatalog*                    catalog,
+        const std::vector<PiDiagnosticDto>& diagnostics,
+        int64_t                             revision);
 
     void ApplySetValueChange(
         AcceptedSettingsDto& settings,

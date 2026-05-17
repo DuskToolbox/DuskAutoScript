@@ -106,8 +106,10 @@ namespace
         return serialized.value_or(fallback);
     }
 
-    auto DoubleField(yyjson::value& value, std::string_view key, double fallback)
-        -> double
+    auto DoubleField(
+        yyjson::value&   value,
+        std::string_view key,
+        double           fallback) -> double
     {
         auto object = value.as_object();
         if (!object || !object->contains(key))
@@ -144,8 +146,7 @@ namespace
         event.timestamp = StringField(*parsed, "timestamp", event.timestamp);
         event.params_json = JsonField(*parsed, "params", event.params_json);
         event.result_json = JsonField(*parsed, "result", event.result_json);
-        event.elapsed_ms =
-            DoubleField(*parsed, "elapsed_ms", event.elapsed_ms);
+        event.elapsed_ms = DoubleField(*parsed, "elapsed_ms", event.elapsed_ms);
         event.image_filename =
             StringField(*parsed, "image_filename", event.image_filename);
         return event;
@@ -164,8 +165,7 @@ namespace
             JsonOrEmptyObject(event.params_json);
         (*obj.as_object())[std::string_view("result")] =
             JsonOrEmptyObject(event.result_json);
-        (*obj.as_object())[std::string_view("elapsed_ms")] =
-            event.elapsed_ms;
+        (*obj.as_object())[std::string_view("elapsed_ms")] = event.elapsed_ms;
         (*obj.as_object())[std::string_view("thread_id")] =
             CurrentThreadIdString();
         (*obj.as_object())[std::string_view("process_pid")] =
@@ -195,18 +195,14 @@ namespace
 } // namespace
 
 DebugWriterImpl::DebugWriterImpl(std::filesystem::path debug_dir)
-    : debug_dir_(std::move(debug_dir)),
-      jsonl_path_(debug_dir_ / "debug.jsonl")
+    : debug_dir_(std::move(debug_dir)), jsonl_path_(debug_dir_ / "debug.jsonl")
 {
     std::filesystem::create_directories(debug_dir_);
     worker_ = std::thread([this]() { WorkerLoop(); });
     worker_started_ = true;
 }
 
-DebugWriterImpl::~DebugWriterImpl()
-{
-    Shutdown();
-}
+DebugWriterImpl::~DebugWriterImpl() { Shutdown(); }
 
 DasResult DebugWriterImpl::LogEntry(IDasReadOnlyString* p_event_json)
 {
@@ -244,10 +240,7 @@ DasResult DebugWriterImpl::Enqueue(QueueItem item)
     std::unique_lock lock{mutex_};
     cv_.wait(
         lock,
-        [this]()
-        {
-            return stopping_ || queue_.size() < kMaxQueuedEvents;
-        });
+        [this]() { return stopping_ || queue_.size() < kMaxQueuedEvents; });
     if (stopping_)
     {
         return DAS_E_OBJECT_NOT_INIT;
@@ -266,9 +259,7 @@ void DebugWriterImpl::WorkerLoop()
         uint64_t  step = 0;
         {
             std::unique_lock lock{mutex_};
-            cv_.wait(
-                lock,
-                [this]() { return stopping_ || !queue_.empty(); });
+            cv_.wait(lock, [this]() { return stopping_ || !queue_.empty(); });
             if (stopping_ && queue_.empty())
             {
                 return;
@@ -336,9 +327,7 @@ DasResult DebugWriterImpl::WriteOne(const QueueItem& item, uint64_t step)
 DasResult DebugWriterImpl::Flush()
 {
     std::unique_lock lock{mutex_};
-    cv_.wait(
-        lock,
-        [this]() { return queue_.empty() && !writer_active_; });
+    cv_.wait(lock, [this]() { return queue_.empty() && !writer_active_; });
     const auto result = worker_error_;
     worker_error_ = DAS_S_OK;
     return result;
@@ -372,7 +361,7 @@ DasResult RegisterDebugWriterService(
 
     auto writer = Das::DasPtr<DebugWriterImpl>::Attach(
         DebugWriterImpl::MakeRaw(DebugRuntime::DebugDir()));
-    auto  result = ipc_context.RegisterServiceByName(
+    auto result = ipc_context.RegisterServiceByName(
         writer.Get(),
         DasIidOf<Das::ExportInterface::IDasDebugWriter>(),
         kDebugWriterServiceName);

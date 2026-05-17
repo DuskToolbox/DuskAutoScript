@@ -56,5 +56,5 @@ namespace Das::Plugins::DasMaaPi
     void SetAgentProcessRunnerForTest(
         AgentRuntime::IAgentProcessRunner* runner);
     AgentRuntime::IAgentProcessRunner* AgentProcessRunnerForRuntime();
-    IMaaApiBoundary& MaaApiBoundaryForRuntime();
+    IMaaApiBoundary&                   MaaApiBoundaryForRuntime();
 } // namespace Das::Plugins::DasMaaPi

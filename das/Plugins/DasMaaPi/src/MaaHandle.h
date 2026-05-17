@@ -15,9 +15,7 @@ namespace Das::Plugins::DasMaaPi
     public:
         ScopedMaaHandle() noexcept = default;
 
-        ScopedMaaHandle(
-            IMaaApiBoundary& boundary,
-            Handle           handle) noexcept
+        ScopedMaaHandle(IMaaApiBoundary& boundary, Handle handle) noexcept
             : boundary_(&boundary), handle_(handle)
         {
         }
@@ -46,10 +44,7 @@ namespace Das::Plugins::DasMaaPi
 
         Handle get() const noexcept { return handle_; }
 
-        explicit operator bool() const noexcept
-        {
-            return handle_ != Invalid;
-        }
+        explicit operator bool() const noexcept { return handle_ != Invalid; }
 
         Handle release() noexcept
         {
@@ -65,13 +60,11 @@ namespace Das::Plugins::DasMaaPi
             }
 
             IMaaApiBoundary* boundary = std::exchange(boundary_, nullptr);
-            const Handle handle = std::exchange(handle_, Invalid);
+            const Handle     handle = std::exchange(handle_, Invalid);
             ((*boundary).*Destroy)(handle);
         }
 
-        void reset(
-            IMaaApiBoundary& boundary,
-            Handle           handle) noexcept
+        void reset(IMaaApiBoundary& boundary, Handle handle) noexcept
         {
             reset();
             boundary_ = &boundary;
@@ -153,7 +146,7 @@ namespace Das::Plugins::DasMaaPi
             }
 
             IMaaApiBoundary* boundary = std::exchange(boundary_, nullptr);
-            const auto handle =
+            const auto       handle =
                 std::exchange(handle_, kInvalidMaaAgentClientHandle);
 
             // AgentClient cleanup policy is fixed: disconnect before destroy.

@@ -9,9 +9,9 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <condition_variable>
-#include <cctype>
 #include <deque>
 #include <exception>
 #include <filesystem>
@@ -33,8 +33,8 @@ namespace
 {
     struct ImageJob
     {
-        cv::Mat original;
-        cv::Mat annotated;
+        cv::Mat               original;
+        cv::Mat               annotated;
         std::filesystem::path original_path;
         std::filesystem::path annotated_path;
     };
@@ -60,7 +60,7 @@ namespace
     auto TimestampForFilename() -> std::string
     {
         static std::atomic<uint64_t> counter{0};
-        const auto now = std::chrono::system_clock::now();
+        const auto                   now = std::chrono::system_clock::now();
         const auto time = std::chrono::system_clock::to_time_t(now);
         const auto millis =
             std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -75,9 +75,8 @@ namespace
 #endif
 
         std::ostringstream stream;
-        stream << std::put_time(&utc, "%Y%m%d_%H%M%S") << '_'
-               << std::setw(3) << std::setfill('0') << millis << '_'
-               << counter.fetch_add(1);
+        stream << std::put_time(&utc, "%Y%m%d_%H%M%S") << '_' << std::setw(3)
+               << std::setfill('0') << millis << '_' << counter.fetch_add(1);
         return stream.str();
     }
 
@@ -103,8 +102,8 @@ namespace
         return result;
     }
 
-    auto ExpectedChannelCount(
-        Das::ExportInterface::DasImagePixelFormat format) -> int32_t
+    auto ExpectedChannelCount(Das::ExportInterface::DasImagePixelFormat format)
+        -> int32_t
     {
         switch (format)
         {
@@ -138,7 +137,7 @@ namespace
     }
 
     auto ConvertToBgr(
-        const cv::Mat&                         src,
+        const cv::Mat&                            src,
         Das::ExportInterface::DasImagePixelFormat format) -> cv::Mat
     {
         if (src.empty())
@@ -200,10 +199,11 @@ namespace
     auto CaptureViaPublicAbi(Das::ExportInterface::IDasImage* p_image)
         -> std::shared_ptr<DebugImageSnapshot>
     {
-        Das::ExportInterface::DasSize size{};
-        int32_t                       channels = 0;
+        Das::ExportInterface::DasSize             size{};
+        int32_t                                   channels = 0;
         Das::ExportInterface::DasImagePixelFormat format{};
-        if (p_image->GetSize(&size) < 0 || p_image->GetChannelCount(&channels) < 0
+        if (p_image->GetSize(&size) < 0
+            || p_image->GetChannelCount(&channels) < 0
             || p_image->GetPixelFormat(&format) < 0 || size.width <= 0
             || size.height <= 0 || channels <= 0 || channels > 4)
         {
@@ -247,9 +247,7 @@ namespace
         return snapshot;
     }
 
-    void DrawBoxes(
-        cv::Mat&                         image,
-        const std::vector<DebugDrawBox>& annotations)
+    void DrawBoxes(cv::Mat& image, const std::vector<DebugDrawBox>& annotations)
     {
         for (const auto& annotation : annotations)
         {
@@ -356,7 +354,7 @@ namespace
     }
 
     void DrawAnnotations(
-        cv::Mat&                      image,
+        cv::Mat&                     image,
         const DebugImageAnnotations& annotations)
     {
         DrawBoxes(image, annotations.boxes);
@@ -364,9 +362,8 @@ namespace
         DrawLines(image, annotations.lines);
     }
 
-    auto WriteImageFile(
-        const std::filesystem::path& path,
-        const cv::Mat&               image) -> DasResult
+    auto WriteImageFile(const std::filesystem::path& path, const cv::Mat& image)
+        -> DasResult
     {
         const auto parent = path.parent_path();
         if (!parent.empty())
@@ -414,12 +411,16 @@ namespace
         }
         catch (const std::bad_alloc& ex)
         {
-            DAS_CORE_LOG_ERROR("Debug image worker out of memory: {}", ex.what());
+            DAS_CORE_LOG_ERROR(
+                "Debug image worker out of memory: {}",
+                ex.what());
             return DAS_E_OUT_OF_MEMORY;
         }
         catch (const cv::Exception& ex)
         {
-            DAS_CORE_LOG_ERROR("Debug image worker OpenCV error: {}", ex.what());
+            DAS_CORE_LOG_ERROR(
+                "Debug image worker OpenCV error: {}",
+                ex.what());
             return DAS_E_OPENCV_ERROR;
         }
         catch (const std::exception& ex)
@@ -444,7 +445,8 @@ namespace
                 std::unique_lock lock{state.mutex};
                 state.cv.wait(
                     lock,
-                    [&state]() { return state.stopping || !state.queue.empty(); });
+                    [&state]()
+                    { return state.stopping || !state.queue.empty(); });
                 if (state.stopping && state.queue.empty())
                 {
                     return;
@@ -531,7 +533,10 @@ DebugImageWriteResult SaveOriginalAndAnnotated(
 {
     DebugImageAnnotations all_annotations{};
     all_annotations.boxes = annotations;
-    return SaveOriginalAndAnnotated(step_name, std::move(snapshot), all_annotations);
+    return SaveOriginalAndAnnotated(
+        step_name,
+        std::move(snapshot),
+        all_annotations);
 }
 
 DebugImageWriteResult SaveOriginalAndAnnotated(
@@ -548,19 +553,19 @@ DebugImageWriteResult SaveOriginalAndAnnotated(
     const auto safe_step = SanitizeStepName(step_name);
     const auto timestamp = TimestampForFilename();
     result.original_image_filename = timestamp + "_" + safe_step + ".png";
-    result.image_filename =
-        "annotated_" + timestamp + "_" + safe_step + ".png";
+    result.image_filename = "annotated_" + timestamp + "_" + safe_step + ".png";
     result.image_status = "available";
 
     auto annotated = snapshot->bgr_image.clone();
     DrawAnnotations(annotated, annotations);
 
     const auto img_dir = DebugRuntime::DebugDir() / "img";
-    EnqueueImageJob(ImageJob{
-        snapshot->bgr_image.clone(),
-        std::move(annotated),
-        img_dir / result.original_image_filename,
-        img_dir / result.image_filename});
+    EnqueueImageJob(
+        ImageJob{
+            snapshot->bgr_image.clone(),
+            std::move(annotated),
+            img_dir / result.original_image_filename,
+            img_dir / result.image_filename});
 
     return result;
 }
@@ -568,8 +573,7 @@ DebugImageWriteResult SaveOriginalAndAnnotated(
 std::string BuildImageJson(const DebugImageWriteResult& result)
 {
     auto obj = DAS::Utils::MakeYyjsonObject();
-    (*obj.as_object())[std::string_view("image_status")] =
-        result.image_status;
+    (*obj.as_object())[std::string_view("image_status")] = result.image_status;
     (*obj.as_object())[std::string_view("original_image_filename")] =
         result.original_image_filename;
     (*obj.as_object())[std::string_view("image_filename")] =
@@ -580,7 +584,7 @@ std::string BuildImageJson(const DebugImageWriteResult& result)
 
 DasResult DrainImageJobs()
 {
-    auto& state = WorkerState();
+    auto&            state = WorkerState();
     std::unique_lock lock{state.mutex};
     state.cv.wait(
         lock,
@@ -615,7 +619,7 @@ void ShutdownImageWorker()
 
 bool IsImageWorkerRunningForTest()
 {
-    auto& state = WorkerState();
+    auto&           state = WorkerState();
     std::lock_guard lock{state.mutex};
     return state.running;
 }

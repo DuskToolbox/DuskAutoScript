@@ -61,8 +61,8 @@ DAS_IMPL DasAdbTouchPlugin::EnumFeature(
 }
 
 DAS_IMPL DasAdbTouchPlugin::CreateFeatureInterface(
-    uint64_t index,
-    IDasBase**   pp_out_interface)
+    uint64_t   index,
+    IDasBase** pp_out_interface)
 {
     if (pp_out_interface == nullptr)
     {

@@ -1962,10 +1962,10 @@ public:
             ++state_->decoy_authoring_create_count;
             return DAS_E_FAIL;
         }
-        int64_t revision = -1;
-        int64_t entry_id = -1;
-        int64_t task_id = -1;
-        bool    had_task_id = false;
+        int64_t     revision = -1;
+        int64_t     entry_id = -1;
+        int64_t     task_id = -1;
+        bool        had_task_id = false;
         std::string key1_value;
         if (p_context_json)
         {
@@ -1991,16 +1991,13 @@ public:
                 && key)
             {
                 had_task_id =
-                    DAS_S_OK == p_context_json->GetIntByName(
-                                    key.Get(),
-                                    &task_id);
+                    DAS_S_OK
+                    == p_context_json->GetIntByName(key.Get(), &task_id);
             }
 
             key.Reset();
             if (DAS_S_OK
-                    == CreateIDasReadOnlyStringFromUtf8(
-                        "properties",
-                        key.Put())
+                    == CreateIDasReadOnlyStringFromUtf8("properties", key.Put())
                 && key)
             {
                 DasPtr<Das::ExportInterface::IDasJson> properties;
@@ -2577,8 +2574,7 @@ void WriteFactoryPluginManifest(
                 yyjson::value desc(Das::Utils::MakeYyjsonObject());
                 (*desc.as_object())[std::string_view("name")] = "key1";
                 (*desc.as_object())[std::string_view("type")] =
-                    static_cast<int64_t>(
-                        Das::ExportInterface::DAS_TYPE_STRING);
+                    static_cast<int64_t>(Das::ExportInterface::DAS_TYPE_STRING);
                 (*desc.as_object())[std::string_view("defaultValue")] =
                     "default";
                 descriptors.as_array()->emplace_back(std::move(desc));
@@ -2609,10 +2605,11 @@ void WriteFactoryPluginManifest(
         if (!execution_component_guid.empty())
         {
             yyjson::value execution_component(Das::Utils::MakeYyjsonObject());
-            (*execution_component.as_object())[std::string_view(
-                "componentGuid")] = std::string(execution_component_guid);
-            (*task_entry.as_object())[std::string_view(
-                "executionComponent")] = std::move(execution_component);
+            (*execution_component
+                  .as_object())[std::string_view("componentGuid")] =
+                std::string(execution_component_guid);
+            (*task_entry.as_object())[std::string_view("executionComponent")] =
+                std::move(execution_component);
         }
         yyjson::value tasks_obj(Das::Utils::MakeYyjsonObject());
         (*tasks_obj.as_object())[std::string_view(task_guid)] =
@@ -3504,8 +3501,7 @@ namespace
         {
             yyjson::value authoring(Das::Utils::MakeYyjsonObject());
             (*authoring.as_object())[std::string_view("revision")] = 5;
-            (*authoring.as_object())[std::string_view("kind")] =
-                "formSequence";
+            (*authoring.as_object())[std::string_view("kind")] = "formSequence";
             (*authoring.as_object())[std::string_view("sourceFingerprint")] =
                 "seed-source";
             (*authoring.as_object())[std::string_view("migrationState")] =
@@ -3551,17 +3547,13 @@ namespace
             (*entry_obj)[std::string_view("availability")].as_object();
         ASSERT_TRUE(availability.has_value());
         EXPECT_EQ(
-            (*availability)[std::string_view("state")]
-                .as_string()
-                .value_or(""),
+            (*availability)[std::string_view("state")].as_string().value_or(""),
             std::string_view("unavailable"));
         EXPECT_EQ(
-            (*availability)[std::string_view("reason")]
-                .as_string()
-                .value_or(""),
+            (*availability)[std::string_view("reason")].as_string().value_or(
+                ""),
             reason);
-        auto message =
-            (*availability)[std::string_view("message")].as_string();
+        auto message = (*availability)[std::string_view("message")].as_string();
         ASSERT_TRUE(message.has_value());
         EXPECT_FALSE(message->empty());
     }
@@ -3603,7 +3595,9 @@ namespace
         const ProviderCallCounts&                      before)
     {
         std::lock_guard<std::mutex> lock(state->mutex);
-        EXPECT_EQ(state->authoring_session_count, before.authoring_session_count);
+        EXPECT_EQ(
+            state->authoring_session_count,
+            before.authoring_session_count);
         EXPECT_EQ(state->get_document_count, before.get_document_count);
         EXPECT_EQ(state->apply_change_count, before.apply_change_count);
         EXPECT_EQ(state->compile_count, before.compile_count);
@@ -3613,21 +3607,20 @@ namespace
     }
 
     void ExpectRepositoryAuthoringRejectedWithoutProviderCalls(
-        SchedulerService&                             scheduler,
+        SchedulerService&                              scheduler,
         const std::shared_ptr<FactoryTaskSharedState>& state,
-        std::string_view                              error_kind)
+        std::string_view                               error_kind)
     {
         auto before = SnapshotProviderCallCounts(state);
 
         yyjson::value request(Das::Utils::MakeYyjsonObject());
-        auto document =
+        auto          document =
             scheduler.GetRepositoryEntryAuthoringDocument(0, request);
         auto document_obj = document.as_object();
         ASSERT_TRUE(document_obj.has_value());
         EXPECT_EQ(
-            (*document_obj)[std::string_view("errorKind")]
-                .as_string()
-                .value_or(""),
+            (*document_obj)[std::string_view("errorKind")].as_string().value_or(
+                ""),
             error_kind);
 
         auto change = MakeRepositoryAuthoringChange(5);
@@ -3635,40 +3628,37 @@ namespace
         auto apply_obj = apply.as_object();
         ASSERT_TRUE(apply_obj.has_value());
         EXPECT_EQ(
-            (*apply_obj)[std::string_view("errorKind")]
-                .as_string()
-                .value_or(""),
+            (*apply_obj)[std::string_view("errorKind")].as_string().value_or(
+                ""),
             error_kind);
 
         ExpectProviderCallCountsUnchanged(state, before);
     }
 
     void ExpectRepositoryCompileRejectedWithoutProviderCalls(
-        SchedulerService&                             scheduler,
+        SchedulerService&                              scheduler,
         const std::shared_ptr<FactoryTaskSharedState>& state,
-        std::string_view                              error_kind)
+        std::string_view                               error_kind)
     {
         auto before = SnapshotProviderCallCounts(state);
 
         yyjson::value request(Das::Utils::MakeYyjsonObject());
-        auto          compile =
-            scheduler.CompileRepositoryEntryAuthoring(0, request);
+        auto compile = scheduler.CompileRepositoryEntryAuthoring(0, request);
         auto compile_obj = compile.as_object();
         ASSERT_TRUE(compile_obj.has_value());
         EXPECT_EQ(
-            (*compile_obj)[std::string_view("errorKind")]
-                .as_string()
-                .value_or(""),
+            (*compile_obj)[std::string_view("errorKind")].as_string().value_or(
+                ""),
             error_kind);
 
         ExpectProviderCallCountsUnchanged(state, before);
     }
 
     void ExpectUnavailableRenameDeleteWithoutProviderCalls(
-        SchedulerService&                             scheduler,
+        SchedulerService&                              scheduler,
         const std::shared_ptr<FactoryTaskSharedState>& state,
-        const std::filesystem::path&                  settings_dir,
-        std::string_view                              reason)
+        const std::filesystem::path&                   settings_dir,
+        std::string_view                               reason)
     {
         auto entry = SingleRepositoryEntry(scheduler.GetTaskRepository());
         ExpectRepositoryAvailability(entry, reason);
@@ -3788,7 +3778,7 @@ TEST_F(
     SchedulerServiceImplRepositoryCreateNullBodyRejected)
 {
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
-    SchedulerServiceImpl        impl(*scheduler_);
+    SchedulerServiceImpl       impl(*scheduler_);
     DasPtr<IDasReadOnlyString> out;
 
     EXPECT_EQ(
@@ -3837,22 +3827,17 @@ TEST_F(
         DAS_S_OK);
 
     DasPtr<IDasReadOnlyString> out;
-    ASSERT_EQ(
-        impl.CreateRepositoryEntry(request.Get(), out.Put()),
-        DAS_S_OK);
+    ASSERT_EQ(impl.CreateRepositoryEntry(request.Get(), out.Put()), DAS_S_OK);
     ASSERT_TRUE(out.Get() != nullptr);
 
     auto parsed = ParseReadOnlyJsonForTest(out.Get());
     auto obj = parsed.as_object();
     ASSERT_TRUE(obj.has_value());
-    EXPECT_EQ(
-        (*obj)[std::string_view("entryId")].as_sint().value_or(-1),
-        0);
+    EXPECT_EQ((*obj)[std::string_view("entryId")].as_sint().value_or(-1), 0);
     EXPECT_EQ(
         (*obj)[std::string_view("displayName")].as_string().value_or(""),
         std::string_view("Bridge entry"));
-    auto accepted =
-        (*obj)[std::string_view("acceptedProperties")].as_object();
+    auto accepted = (*obj)[std::string_view("acceptedProperties")].as_object();
     ASSERT_TRUE(accepted.has_value());
     EXPECT_EQ(
         (*accepted)[std::string_view("retryCount")].as_sint().value_or(-1),
@@ -3905,7 +3890,7 @@ TEST_F(
     SchedulerServiceImplRepositoryRenameNullBodyRejected)
 {
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
-    SchedulerServiceImpl        impl(*scheduler_);
+    SchedulerServiceImpl       impl(*scheduler_);
     DasPtr<IDasReadOnlyString> out;
 
     EXPECT_EQ(
@@ -3965,16 +3950,12 @@ TEST_F(
         DAS_S_OK);
 
     DasPtr<IDasReadOnlyString> out;
-    ASSERT_EQ(
-        impl.RenameRepositoryEntry(0, rename.Get(), out.Put()),
-        DAS_S_OK);
+    ASSERT_EQ(impl.RenameRepositoryEntry(0, rename.Get(), out.Put()), DAS_S_OK);
 
     auto parsed = ParseReadOnlyJsonForTest(out.Get());
     auto obj = parsed.as_object();
     ASSERT_TRUE(obj.has_value());
-    EXPECT_EQ(
-        (*obj)[std::string_view("entryId")].as_sint().value_or(-1),
-        0);
+    EXPECT_EQ((*obj)[std::string_view("entryId")].as_sint().value_or(-1), 0);
     EXPECT_EQ(
         (*obj)[std::string_view("displayName")].as_string().value_or(""),
         std::string_view("After rename"));
@@ -3990,8 +3971,7 @@ TEST_F(
     DasPtr<IDasReadOnlyString> request;
     ASSERT_EQ(CreateIDasReadOnlyStringFromUtf8("{}", request.Put()), DAS_S_OK);
 
-    auto change_json =
-        SerializeJsonForTest(MakeRepositoryAuthoringChange(0));
+    auto change_json = SerializeJsonForTest(MakeRepositoryAuthoringChange(0));
     DasPtr<IDasReadOnlyString> change;
     ASSERT_EQ(
         CreateIDasReadOnlyStringFromUtf8(change_json.c_str(), change.Put()),
@@ -4013,7 +3993,7 @@ TEST_F(
     SchedulerServiceImplRepositoryAuthoringNullBodyRejected)
 {
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
-    SchedulerServiceImpl        impl(*scheduler_);
+    SchedulerServiceImpl       impl(*scheduler_);
     DasPtr<IDasReadOnlyString> out;
 
     EXPECT_EQ(
@@ -4103,8 +4083,7 @@ TEST_F(
     EXPECT_TRUE(
         (*document_obj)[std::string_view("document")].as_object().has_value());
 
-    auto change_json =
-        SerializeJsonForTest(MakeRepositoryAuthoringChange(0));
+    auto change_json = SerializeJsonForTest(MakeRepositoryAuthoringChange(0));
     DasPtr<IDasReadOnlyString> change;
     ASSERT_EQ(
         CreateIDasReadOnlyStringFromUtf8(change_json.c_str(), change.Put()),
@@ -4148,9 +4127,8 @@ TEST_F(
         (*compile_obj)[std::string_view("entryId")].as_sint().value_or(-1),
         0);
     EXPECT_TRUE(
-        (*compile_obj)[std::string_view("canExecute")]
-            .as_bool()
-            .value_or(false));
+        (*compile_obj)[std::string_view("canExecute")].as_bool().value_or(
+            false));
 }
 
 TEST_F(
@@ -4162,20 +4140,16 @@ TEST_F(
     auto created = scheduler_->CreateRepositoryEntry(
         MakeRepositoryCreateRequest("Compile repository entry", 8));
     ASSERT_EQ(
-        (*created.as_object())[std::string_view("entryId")]
-            .as_sint()
-            .value_or(-1),
+        (*created.as_object())[std::string_view("entryId")].as_sint().value_or(
+            -1),
         0);
 
     yyjson::value request(Das::Utils::MakeYyjsonObject());
     (*request.as_object())[std::string_view("purpose")] = "preview";
-    auto result =
-        scheduler_->CompileRepositoryEntryAuthoring(0, request);
+    auto result = scheduler_->CompileRepositoryEntryAuthoring(0, request);
     auto obj = result.as_object();
     ASSERT_TRUE(obj.has_value());
-    EXPECT_EQ(
-        (*obj)[std::string_view("entryId")].as_sint().value_or(-1),
-        0);
+    EXPECT_EQ((*obj)[std::string_view("entryId")].as_sint().value_or(-1), 0);
     EXPECT_TRUE(
         (*obj)[std::string_view("canExecute")].as_bool().value_or(false));
 
@@ -4188,12 +4162,10 @@ TEST_F(
         (*task_names)[0].as_string().value_or(""),
         std::string_view("factoryTask"));
     EXPECT_FALSE(
-        (*summary)[std::string_view("requiresAgentRuntime")]
-            .as_bool()
-            .value_or(true));
+        (*summary)[std::string_view("requiresAgentRuntime")].as_bool().value_or(
+            true));
 
-    auto diagnostics =
-        (*obj)[std::string_view("diagnostics")].as_array();
+    auto diagnostics = (*obj)[std::string_view("diagnostics")].as_array();
     ASSERT_TRUE(diagnostics.has_value());
     ASSERT_EQ(diagnostics->size(), 1u);
     auto diagnostic = (*diagnostics)[0].as_object();
@@ -4232,9 +4204,8 @@ TEST_F(
     auto created = scheduler_->CreateRepositoryEntry(
         MakeRepositoryCreateRequest("Repository invoke graph child", 8));
     ASSERT_EQ(
-        (*created.as_object())[std::string_view("entryId")]
-            .as_sint()
-            .value_or(-1),
+        (*created.as_object())[std::string_view("entryId")].as_sint().value_or(
+            -1),
         0);
 
     RepositoryInvoke::Dto::RepositoryTaskRefDto ref;
@@ -4281,9 +4252,7 @@ TEST_F(
     auto runtime_input_text =
         serialized_runtime_input.write(yyjson::WriteFlag::NoFlag);
     auto runtime_input_json = Das::Utils::ParseYyjsonFromString(
-        std::string_view(
-            runtime_input_text.data(),
-            runtime_input_text.size()));
+        std::string_view(runtime_input_text.data(), runtime_input_text.size()));
     ASSERT_TRUE(runtime_input_json.has_value());
     auto runtime_input_obj = runtime_input_json->as_object();
     ASSERT_TRUE(runtime_input_obj.has_value());
@@ -4291,17 +4260,13 @@ TEST_F(
         runtime_input_obj->contains(std::string_view("compiledSnapshot")));
 
     auto compiled_snapshot =
-        (*runtime_input_obj)[std::string_view("compiledSnapshot")]
-            .as_object();
+        (*runtime_input_obj)[std::string_view("compiledSnapshot")].as_object();
     ASSERT_TRUE(compiled_snapshot.has_value());
     auto execution_input =
-        (*compiled_snapshot)[std::string_view("executionInput")]
-            .as_object();
+        (*compiled_snapshot)[std::string_view("executionInput")].as_object();
     ASSERT_TRUE(execution_input.has_value());
     EXPECT_EQ(
-        (*execution_input)[std::string_view("key1")]
-            .as_string()
-            .value_or(""),
+        (*execution_input)[std::string_view("key1")].as_string().value_or(""),
         std::string_view("compiled"));
 
     std::lock_guard<std::mutex> lock(shared_state_->mutex);
@@ -4328,9 +4293,8 @@ TEST_F(
     auto created = scheduler_->CreateRepositoryEntry(
         MakeRepositoryCreateRequest("Repository invoke child", 8));
     ASSERT_EQ(
-        (*created.as_object())[std::string_view("entryId")]
-            .as_sint()
-            .value_or(-1),
+        (*created.as_object())[std::string_view("entryId")].as_sint().value_or(
+            -1),
         0);
 
     RepositoryInvoke::Dto::RepositoryTaskRefDto ref;
@@ -4353,9 +4317,7 @@ TEST_F(
     auto execution_input = result.snapshot->execution_input.as_object();
     ASSERT_TRUE(execution_input.has_value());
     EXPECT_EQ(
-        (*execution_input)[std::string_view("key1")]
-            .as_string()
-            .value_or(""),
+        (*execution_input)[std::string_view("key1")].as_string().value_or(""),
         std::string_view("compiled"));
 
     std::lock_guard<std::mutex> lock(shared_state_->mutex);
@@ -4388,9 +4350,7 @@ TEST_F(
     auto created = scheduler_->CreateRepositoryEntry(request);
     auto obj = created.as_object();
     ASSERT_TRUE(obj.has_value());
-    EXPECT_EQ(
-        (*obj)[std::string_view("entryId")].as_sint().value_or(-1),
-        0);
+    EXPECT_EQ((*obj)[std::string_view("entryId")].as_sint().value_or(-1), 0);
     EXPECT_EQ(
         (*obj)[std::string_view("displayName")].as_string().value_or(""),
         std::string_view("Daily run"));
@@ -4407,8 +4367,7 @@ TEST_F(
         (*authoring)[std::string_view("revision")].as_sint().value_or(-1),
         0);
 
-    auto accepted =
-        (*obj)[std::string_view("acceptedProperties")].as_object();
+    auto accepted = (*obj)[std::string_view("acceptedProperties")].as_object();
     ASSERT_TRUE(accepted.has_value());
     EXPECT_EQ(
         (*accepted)[std::string_view("key1")].as_string().value_or(""),
@@ -4433,9 +4392,8 @@ TEST_F(
         (*persisted_obj)[std::string_view("acceptedProperties")].as_object();
     ASSERT_TRUE(persisted_props.has_value());
     EXPECT_EQ(
-        (*persisted_props)[std::string_view("retryCount")]
-            .as_sint()
-            .value_or(-1),
+        (*persisted_props)[std::string_view("retryCount")].as_sint().value_or(
+            -1),
         5);
 
     auto scheduler_state = scheduler_->Get();
@@ -4468,7 +4426,7 @@ TEST_F(
         0);
 
     yyjson::value request(Das::Utils::MakeYyjsonObject());
-    auto document_response =
+    auto          document_response =
         scheduler_->GetRepositoryEntryAuthoringDocument(0, request);
     auto response_obj = document_response.as_object();
     ASSERT_TRUE(response_obj.has_value());
@@ -4478,8 +4436,7 @@ TEST_F(
     EXPECT_EQ(
         (*response_obj)[std::string_view("revision")].as_sint().value_or(-1),
         0);
-    auto document =
-        (*response_obj)[std::string_view("document")].as_object();
+    auto document = (*response_obj)[std::string_view("document")].as_object();
     ASSERT_TRUE(document.has_value());
     EXPECT_EQ(
         (*document)[std::string_view("kind")].as_string().value_or(""),
@@ -4492,9 +4449,8 @@ TEST_F(
         (*persisted_obj)[std::string_view("authoring")].as_object();
     ASSERT_TRUE(persisted_authoring.has_value());
     EXPECT_EQ(
-        (*persisted_authoring)[std::string_view("revision")]
-            .as_sint()
-            .value_or(-1),
+        (*persisted_authoring)[std::string_view("revision")].as_sint().value_or(
+            -1),
         0);
 
     std::lock_guard<std::mutex> lock(shared_state_->mutex);
@@ -4516,16 +4472,16 @@ TEST_F(
     auto created = scheduler_->CreateRepositoryEntry(
         MakeRepositoryCreateRequest("Apply repository entry", 8));
     ASSERT_EQ(
-        (*created.as_object())[std::string_view("entryId")]
-            .as_sint()
-            .value_or(-1),
+        (*created.as_object())[std::string_view("entryId")].as_sint().value_or(
+            -1),
         0);
 
     auto change = MakeRepositoryAuthoringChange(0);
     auto result = scheduler_->ApplyRepositoryEntryAuthoringChange(0, change);
     auto result_obj = result.as_object();
     ASSERT_TRUE(result_obj.has_value());
-    EXPECT_TRUE((*result_obj)[std::string_view("ok")].as_bool().value_or(false));
+    EXPECT_TRUE(
+        (*result_obj)[std::string_view("ok")].as_bool().value_or(false));
     EXPECT_EQ(
         (*result_obj)[std::string_view("entryId")].as_sint().value_or(-1),
         0);
@@ -4551,9 +4507,7 @@ TEST_F(
         (*persisted_obj)[std::string_view("acceptedProperties")].as_object();
     ASSERT_TRUE(persisted_props.has_value());
     EXPECT_EQ(
-        (*persisted_props)[std::string_view("key1")]
-            .as_string()
-            .value_or(""),
+        (*persisted_props)[std::string_view("key1")].as_string().value_or(""),
         std::string_view("accepted"));
     auto authoring =
         (*persisted_obj)[std::string_view("authoring")].as_object();
@@ -4585,9 +4539,8 @@ TEST_F(
     auto created = scheduler_->CreateRepositoryEntry(
         MakeRepositoryCreateRequest("Stale revision entry", 8));
     ASSERT_EQ(
-        (*created.as_object())[std::string_view("entryId")]
-            .as_sint()
-            .value_or(-1),
+        (*created.as_object())[std::string_view("entryId")].as_sint().value_or(
+            -1),
         0);
 
     auto persisted = settings_manager_->GetTaskRepositoryEntryJson("0", 0);
@@ -4620,9 +4573,8 @@ TEST_F(
     auto created = scheduler_->CreateRepositoryEntry(
         MakeRepositoryCreateRequest("Missing base revision entry", 8));
     ASSERT_EQ(
-        (*created.as_object())[std::string_view("entryId")]
-            .as_sint()
-            .value_or(-1),
+        (*created.as_object())[std::string_view("entryId")].as_sint().value_or(
+            -1),
         0);
 
     auto change = MakeRepositoryAuthoringChange(std::nullopt);
@@ -4646,9 +4598,8 @@ TEST_F(
     auto created = scheduler_->CreateRepositoryEntry(
         MakeRepositoryCreateRequest("Provider failure entry", 8));
     ASSERT_EQ(
-        (*created.as_object())[std::string_view("entryId")]
-            .as_sint()
-            .value_or(-1),
+        (*created.as_object())[std::string_view("entryId")].as_sint().value_or(
+            -1),
         0);
     {
         std::lock_guard<std::mutex> lock(shared_state_->mutex);
@@ -4675,9 +4626,7 @@ TEST_F(
             .as_object();
     ASSERT_TRUE(persisted_props.has_value());
     EXPECT_EQ(
-        (*persisted_props)[std::string_view("key1")]
-            .as_string()
-            .value_or(""),
+        (*persisted_props)[std::string_view("key1")].as_string().value_or(""),
         std::string_view("default"));
 
     std::lock_guard<std::mutex> lock(shared_state_->mutex);
@@ -4692,9 +4641,8 @@ TEST_F(
     auto created = scheduler_->CreateRepositoryEntry(
         MakeRepositoryCreateRequest("Persistence failure entry", 8));
     ASSERT_EQ(
-        (*created.as_object())[std::string_view("entryId")]
-            .as_sint()
-            .value_or(-1),
+        (*created.as_object())[std::string_view("entryId")].as_sint().value_or(
+            -1),
         0);
 
     auto entry_path = settings_dir_ / "0" / "taskRepository0.json";
@@ -4740,8 +4688,7 @@ TEST_F(
     auto repository = scheduler_->GetTaskRepository();
     auto repository_obj = repository.as_object();
     ASSERT_TRUE(repository_obj.has_value());
-    auto entries =
-        (*repository_obj)[std::string_view("entries")].as_array();
+    auto entries = (*repository_obj)[std::string_view("entries")].as_array();
     ASSERT_TRUE(entries.has_value());
     ASSERT_EQ(entries->size(), 2u);
     EXPECT_EQ(
@@ -4775,9 +4722,8 @@ TEST_F(
     auto still_persisted_obj = still_persisted.as_object();
     ASSERT_TRUE(still_persisted_obj.has_value());
     EXPECT_EQ(
-        (*still_persisted_obj)[std::string_view("entryId")]
-            .as_sint()
-            .value_or(-1),
+        (*still_persisted_obj)[std::string_view("entryId")].as_sint().value_or(
+            -1),
         0);
 
     EXPECT_EQ(scheduler_->Enable(), DAS_E_OBJECT_NOT_INIT);
@@ -4885,9 +4831,8 @@ TEST_F(
         (*renamed_obj)[std::string_view("authoring")].as_object();
     ASSERT_TRUE(renamed_authoring.has_value());
     EXPECT_EQ(
-        (*renamed_authoring)[std::string_view("revision")]
-            .as_sint()
-            .value_or(-1),
+        (*renamed_authoring)[std::string_view("revision")].as_sint().value_or(
+            -1),
         7);
     EXPECT_EQ(
         (*renamed_authoring)[std::string_view("sourceFingerprint")]
@@ -4899,9 +4844,8 @@ TEST_F(
     auto duplicate_obj = duplicate.as_object();
     ASSERT_TRUE(duplicate_obj.has_value());
     EXPECT_EQ(
-        (*duplicate_obj)[std::string_view("displayName")]
-            .as_string()
-            .value_or(""),
+        (*duplicate_obj)[std::string_view("displayName")].as_string().value_or(
+            ""),
         std::string_view("Duplicate name"));
 
     auto repository = scheduler_->GetTaskRepository();
@@ -5367,8 +5311,7 @@ TEST_F(
     (*task0.as_object())[std::string_view("taskGuid")] = FactoryTaskGuidString;
     (*task0.as_object())[std::string_view("pluginGuid")] =
         FactoryPluginGuidString;
-    (*task0.as_object())[std::string_view("nextExecutionTime")] =
-        4070908800;
+    (*task0.as_object())[std::string_view("nextExecutionTime")] = 4070908800;
     (*task0.as_object())[std::string_view("properties")] =
         yyjson::value(Das::Utils::MakeYyjsonObject());
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
@@ -5377,9 +5320,8 @@ TEST_F(
     auto created = scheduler_->CreateRepositoryEntry(
         MakeRepositoryCreateRequest("Running authoring entry", 8));
     ASSERT_EQ(
-        (*created.as_object())[std::string_view("entryId")]
-            .as_sint()
-            .value_or(-1),
+        (*created.as_object())[std::string_view("entryId")].as_sint().value_or(
+            -1),
         0);
 
     ASSERT_EQ(scheduler_->Enable(), DAS_S_OK);
@@ -5403,8 +5345,7 @@ TEST_F(
     (*task0.as_object())[std::string_view("taskGuid")] = FactoryTaskGuidString;
     (*task0.as_object())[std::string_view("pluginGuid")] =
         FactoryPluginGuidString;
-    (*task0.as_object())[std::string_view("nextExecutionTime")] =
-        4070908800;
+    (*task0.as_object())[std::string_view("nextExecutionTime")] = 4070908800;
     (*task0.as_object())[std::string_view("properties")] =
         yyjson::value(Das::Utils::MakeYyjsonObject());
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
@@ -5413,9 +5354,8 @@ TEST_F(
     auto created = scheduler_->CreateRepositoryEntry(
         MakeRepositoryCreateRequest("Running compile entry", 8));
     ASSERT_EQ(
-        (*created.as_object())[std::string_view("entryId")]
-            .as_sint()
-            .value_or(-1),
+        (*created.as_object())[std::string_view("entryId")].as_sint().value_or(
+            -1),
         0);
 
     ASSERT_EQ(scheduler_->Enable(), DAS_S_OK);
@@ -5449,9 +5389,8 @@ TEST_F(
     auto created = scheduler_->CreateRepositoryEntry(
         MakeRepositoryCreateRequest("Stopping authoring entry", 8));
     ASSERT_EQ(
-        (*created.as_object())[std::string_view("entryId")]
-            .as_sint()
-            .value_or(-1),
+        (*created.as_object())[std::string_view("entryId")].as_sint().value_or(
+            -1),
         0);
 
     {
@@ -5502,9 +5441,8 @@ TEST_F(
     auto created = scheduler_->CreateRepositoryEntry(
         MakeRepositoryCreateRequest("Stopping compile entry", 8));
     ASSERT_EQ(
-        (*created.as_object())[std::string_view("entryId")]
-            .as_sint()
-            .value_or(-1),
+        (*created.as_object())[std::string_view("entryId")].as_sint().value_or(
+            -1),
         0);
 
     {
@@ -5814,7 +5752,7 @@ namespace
             return WriteAuthoringJson(pp, R"({"entries":[]})");
         }
         DasResult CreateRepositoryEntry(
-            IDasReadOnlyString* p_request_json,
+            IDasReadOnlyString*  p_request_json,
             IDasReadOnlyString** pp_out_json) override
         {
             repository_create_called = true;
@@ -5834,8 +5772,8 @@ namespace
             return next_result;
         }
         DasResult RenameRepositoryEntry(
-            int64_t entry_id,
-            IDasReadOnlyString* p_request_json,
+            int64_t              entry_id,
+            IDasReadOnlyString*  p_request_json,
             IDasReadOnlyString** pp_out_json) override
         {
             repository_rename_called = true;
@@ -5850,8 +5788,8 @@ namespace
                 R"({"entryId":42,"displayName":"renamed repository entry"})");
         }
         DasResult GetRepositoryEntryAuthoringDocument(
-            int64_t entry_id,
-            IDasReadOnlyString* p_request_json,
+            int64_t              entry_id,
+            IDasReadOnlyString*  p_request_json,
             IDasReadOnlyString** pp_out_json) override
         {
             repository_authoring_get_called = true;
@@ -5866,8 +5804,8 @@ namespace
                 R"({"entryId":42,"document":{"kind":"formSequence","revision":0}})");
         }
         DasResult ApplyRepositoryEntryAuthoringChange(
-            int64_t entry_id,
-            IDasReadOnlyString* p_request_json,
+            int64_t              entry_id,
+            IDasReadOnlyString*  p_request_json,
             IDasReadOnlyString** pp_out_json) override
         {
             repository_authoring_apply_called = true;
@@ -5882,8 +5820,8 @@ namespace
                 R"({"ok":true,"entryId":42,"revision":1})");
         }
         DasResult CompileRepositoryEntryAuthoring(
-            int64_t entry_id,
-            IDasReadOnlyString* p_request_json,
+            int64_t              entry_id,
+            IDasReadOnlyString*  p_request_json,
             IDasReadOnlyString** pp_out_json) override
         {
             repository_compile_called = true;
@@ -6503,9 +6441,7 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryCreate_Forwarded)
         DAS_S_OK);
     auto data = root[std::string_view("data")].as_object();
     ASSERT_TRUE(data.has_value());
-    EXPECT_EQ(
-        (*data)[std::string_view("entryId")].as_sint().value_or(-1),
-        42);
+    EXPECT_EQ((*data)[std::string_view("entryId")].as_sint().value_or(-1), 42);
     EXPECT_TRUE(fake_svc_->repository_create_called);
     EXPECT_NE(
         fake_svc_->last_repository_request_json.find("pluginGuid"),
@@ -6520,9 +6456,8 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryProfile_Rejected)
         {{"profile", "1"}});
     auto get_body = ReleaseJson(controller_->RepositoryGet(get_req));
     EXPECT_EQ(
-        (*get_body.as_object())[std::string_view("code")]
-            .as_sint()
-            .value_or(DAS_S_OK),
+        (*get_body.as_object())[std::string_view("code")].as_sint().value_or(
+            DAS_S_OK),
         DAS_E_INVALID_ARGUMENT);
 
     auto create_req = MakeRequest(
@@ -6531,9 +6466,8 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryProfile_Rejected)
         {{"profile", "1"}});
     auto create_body = ReleaseJson(controller_->RepositoryCreate(create_req));
     EXPECT_EQ(
-        (*create_body.as_object())[std::string_view("code")]
-            .as_sint()
-            .value_or(DAS_S_OK),
+        (*create_body.as_object())[std::string_view("code")].as_sint().value_or(
+            DAS_S_OK),
         DAS_E_INVALID_ARGUMENT);
 
     EXPECT_FALSE(fake_svc_->repository_get_called);
@@ -6548,9 +6482,8 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryBody_InvalidJson)
         {{"profile", "0"}});
     auto get_body = ReleaseJson(controller_->RepositoryGet(get_req));
     EXPECT_EQ(
-        (*get_body.as_object())[std::string_view("code")]
-            .as_sint()
-            .value_or(DAS_S_OK),
+        (*get_body.as_object())[std::string_view("code")].as_sint().value_or(
+            DAS_S_OK),
         DAS_E_INVALID_JSON);
 
     auto create_req = MakeRequest(
@@ -6559,9 +6492,8 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryBody_InvalidJson)
         {{"profile", "0"}});
     auto create_body = ReleaseJson(controller_->RepositoryCreate(create_req));
     EXPECT_EQ(
-        (*create_body.as_object())[std::string_view("code")]
-            .as_sint()
-            .value_or(DAS_S_OK),
+        (*create_body.as_object())[std::string_view("code")].as_sint().value_or(
+            DAS_S_OK),
         DAS_E_INVALID_JSON);
 
     EXPECT_FALSE(fake_svc_->repository_get_called);
@@ -6576,9 +6508,8 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryBody_NonObject)
         {{"profile", "0"}});
     auto get_body = ReleaseJson(controller_->RepositoryGet(get_req));
     EXPECT_EQ(
-        (*get_body.as_object())[std::string_view("code")]
-            .as_sint()
-            .value_or(DAS_S_OK),
+        (*get_body.as_object())[std::string_view("code")].as_sint().value_or(
+            DAS_S_OK),
         DAS_E_INVALID_ARGUMENT);
 
     auto create_req = MakeRequest(
@@ -6587,9 +6518,8 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryBody_NonObject)
         {{"profile", "0"}});
     auto create_body = ReleaseJson(controller_->RepositoryCreate(create_req));
     EXPECT_EQ(
-        (*create_body.as_object())[std::string_view("code")]
-            .as_sint()
-            .value_or(DAS_S_OK),
+        (*create_body.as_object())[std::string_view("code")].as_sint().value_or(
+            DAS_S_OK),
         DAS_E_INVALID_ARGUMENT);
 
     EXPECT_FALSE(fake_svc_->repository_get_called);
@@ -6627,9 +6557,7 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryRename_Forwarded)
     auto data = root[std::string_view("data")].as_object();
     ASSERT_TRUE(data.has_value());
     EXPECT_EQ(
-        (*data)[std::string_view("displayName")]
-            .as_string()
-            .value_or(""),
+        (*data)[std::string_view("displayName")].as_string().value_or(""),
         std::string_view("renamed repository entry"));
     EXPECT_TRUE(fake_svc_->repository_rename_called);
     EXPECT_EQ(fake_svc_->last_repository_entry_id, 42);
@@ -6638,7 +6566,9 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryRename_Forwarded)
         std::string::npos);
 }
 
-TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryProfileManagement_Rejected)
+TEST_F(
+    SchedulerControllerTest,
+    SchedulerControllerRepositoryProfileManagement_Rejected)
 {
     auto delete_req = MakeRequest(
         "/api/v1/scheduler/1/repository/entries/42/delete",
@@ -6646,9 +6576,8 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryProfileManagement_R
         {{"profile", "1"}, {"entryId", "42"}});
     auto delete_body = ReleaseJson(controller_->RepositoryDelete(delete_req));
     EXPECT_EQ(
-        (*delete_body.as_object())[std::string_view("code")]
-            .as_sint()
-            .value_or(DAS_S_OK),
+        (*delete_body.as_object())[std::string_view("code")].as_sint().value_or(
+            DAS_S_OK),
         DAS_E_INVALID_ARGUMENT);
 
     auto rename_req = MakeRequest(
@@ -6657,9 +6586,8 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryProfileManagement_R
         {{"profile", "1"}, {"entryId", "42"}});
     auto rename_body = ReleaseJson(controller_->RepositoryRename(rename_req));
     EXPECT_EQ(
-        (*rename_body.as_object())[std::string_view("code")]
-            .as_sint()
-            .value_or(DAS_S_OK),
+        (*rename_body.as_object())[std::string_view("code")].as_sint().value_or(
+            DAS_S_OK),
         DAS_E_INVALID_ARGUMENT);
 
     EXPECT_FALSE(fake_svc_->repository_delete_called);
@@ -6674,9 +6602,8 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryEntryId_Rejected)
         {{"profile", "0"}, {"entryId", "not-an-id"}});
     auto delete_body = ReleaseJson(controller_->RepositoryDelete(delete_req));
     EXPECT_EQ(
-        (*delete_body.as_object())[std::string_view("code")]
-            .as_sint()
-            .value_or(DAS_S_OK),
+        (*delete_body.as_object())[std::string_view("code")].as_sint().value_or(
+            DAS_S_OK),
         DAS_E_INVALID_ARGUMENT);
 
     auto rename_req = MakeRequest(
@@ -6685,16 +6612,17 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryEntryId_Rejected)
         {{"profile", "0"}, {"entryId", "not-an-id"}});
     auto rename_body = ReleaseJson(controller_->RepositoryRename(rename_req));
     EXPECT_EQ(
-        (*rename_body.as_object())[std::string_view("code")]
-            .as_sint()
-            .value_or(DAS_S_OK),
+        (*rename_body.as_object())[std::string_view("code")].as_sint().value_or(
+            DAS_S_OK),
         DAS_E_INVALID_ARGUMENT);
 
     EXPECT_FALSE(fake_svc_->repository_delete_called);
     EXPECT_FALSE(fake_svc_->repository_rename_called);
 }
 
-TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryRenameBody_InvalidJson)
+TEST_F(
+    SchedulerControllerTest,
+    SchedulerControllerRepositoryRenameBody_InvalidJson)
 {
     auto req = MakeRequest(
         "/api/v1/scheduler/0/repository/entries/42/rename",
@@ -6702,14 +6630,15 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryRenameBody_InvalidJ
         {{"profile", "0"}, {"entryId", "42"}});
     auto body = ReleaseJson(controller_->RepositoryRename(req));
     EXPECT_EQ(
-        (*body.as_object())[std::string_view("code")]
-            .as_sint()
-            .value_or(DAS_S_OK),
+        (*body.as_object())[std::string_view("code")].as_sint().value_or(
+            DAS_S_OK),
         DAS_E_INVALID_JSON);
     EXPECT_FALSE(fake_svc_->repository_rename_called);
 }
 
-TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryRenameBody_NonObject)
+TEST_F(
+    SchedulerControllerTest,
+    SchedulerControllerRepositoryRenameBody_NonObject)
 {
     auto req = MakeRequest(
         "/api/v1/scheduler/0/repository/entries/42/rename",
@@ -6717,14 +6646,15 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryRenameBody_NonObjec
         {{"profile", "0"}, {"entryId", "42"}});
     auto body = ReleaseJson(controller_->RepositoryRename(req));
     EXPECT_EQ(
-        (*body.as_object())[std::string_view("code")]
-            .as_sint()
-            .value_or(DAS_S_OK),
+        (*body.as_object())[std::string_view("code")].as_sint().value_or(
+            DAS_S_OK),
         DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(fake_svc_->repository_rename_called);
 }
 
-TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryDelete_ServiceError)
+TEST_F(
+    SchedulerControllerTest,
+    SchedulerControllerRepositoryDelete_ServiceError)
 {
     fake_svc_->next_result = DAS_E_FAIL;
     auto req = MakeRequest(
@@ -6734,15 +6664,16 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryDelete_ServiceError
     auto body = ReleaseJson(controller_->RepositoryDelete(req));
 
     EXPECT_EQ(
-        (*body.as_object())[std::string_view("code")]
-            .as_sint()
-            .value_or(DAS_S_OK),
+        (*body.as_object())[std::string_view("code")].as_sint().value_or(
+            DAS_S_OK),
         DAS_E_FAIL);
     EXPECT_TRUE(fake_svc_->repository_delete_called);
     EXPECT_EQ(fake_svc_->last_repository_entry_id, 42);
 }
 
-TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryRename_ServiceError)
+TEST_F(
+    SchedulerControllerTest,
+    SchedulerControllerRepositoryRename_ServiceError)
 {
     fake_svc_->next_result = DAS_E_FAIL;
     auto req = MakeRequest(
@@ -6752,15 +6683,16 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryRename_ServiceError
     auto body = ReleaseJson(controller_->RepositoryRename(req));
 
     EXPECT_EQ(
-        (*body.as_object())[std::string_view("code")]
-            .as_sint()
-            .value_or(DAS_S_OK),
+        (*body.as_object())[std::string_view("code")].as_sint().value_or(
+            DAS_S_OK),
         DAS_E_FAIL);
     EXPECT_TRUE(fake_svc_->repository_rename_called);
     EXPECT_EQ(fake_svc_->last_repository_entry_id, 42);
 }
 
-TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryAuthoringGet_Forwarded)
+TEST_F(
+    SchedulerControllerTest,
+    SchedulerControllerRepositoryAuthoringGet_Forwarded)
 {
     auto req = MakeRequest(
         "/api/v1/scheduler/0/repository/entries/42/authoring/get",
@@ -6779,7 +6711,9 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryAuthoringGet_Forwar
     EXPECT_EQ(fake_svc_->last_repository_entry_id, 42);
 }
 
-TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryAuthoringApply_Forwarded)
+TEST_F(
+    SchedulerControllerTest,
+    SchedulerControllerRepositoryAuthoringApply_Forwarded)
 {
     auto req = MakeRequest(
         "/api/v1/scheduler/0/repository/entries/42/authoring/apply",
@@ -6798,7 +6732,9 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryAuthoringApply_Forw
         std::string::npos);
 }
 
-TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryCompile_PreviewOnly)
+TEST_F(
+    SchedulerControllerTest,
+    SchedulerControllerRepositoryCompile_PreviewOnly)
 {
     auto req = MakeRequest(
         "/api/v1/scheduler/0/repository/entries/42/authoring/compile",
@@ -6824,7 +6760,9 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryCompile_PreviewOnly
     EXPECT_EQ(fake_svc_->last_repository_entry_id, 42);
 }
 
-TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryAuthoringProfile_Rejected)
+TEST_F(
+    SchedulerControllerTest,
+    SchedulerControllerRepositoryAuthoringProfile_Rejected)
 {
     auto get_req = MakeRequest(
         "/api/v1/scheduler/1/repository/entries/42/authoring/get",
@@ -6832,9 +6770,8 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryAuthoringProfile_Re
         {{"profile", "1"}, {"entryId", "42"}});
     auto get_body = ReleaseJson(controller_->RepositoryAuthoringGet(get_req));
     EXPECT_EQ(
-        (*get_body.as_object())[std::string_view("code")]
-            .as_sint()
-            .value_or(DAS_S_OK),
+        (*get_body.as_object())[std::string_view("code")].as_sint().value_or(
+            DAS_S_OK),
         DAS_E_INVALID_ARGUMENT);
 
     auto apply_req = MakeRequest(
@@ -6844,9 +6781,8 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryAuthoringProfile_Re
     auto apply_body =
         ReleaseJson(controller_->RepositoryAuthoringApply(apply_req));
     EXPECT_EQ(
-        (*apply_body.as_object())[std::string_view("code")]
-            .as_sint()
-            .value_or(DAS_S_OK),
+        (*apply_body.as_object())[std::string_view("code")].as_sint().value_or(
+            DAS_S_OK),
         DAS_E_INVALID_ARGUMENT);
 
     auto compile_req = MakeRequest(
@@ -6866,7 +6802,9 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryAuthoringProfile_Re
     EXPECT_FALSE(fake_svc_->repository_compile_called);
 }
 
-TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryAuthoringEntryId_Rejected)
+TEST_F(
+    SchedulerControllerTest,
+    SchedulerControllerRepositoryAuthoringEntryId_Rejected)
 {
     auto get_req = MakeRequest(
         "/api/v1/scheduler/0/repository/entries/bad/authoring/get",
@@ -6874,9 +6812,8 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryAuthoringEntryId_Re
         {{"profile", "0"}, {"entryId", "bad"}});
     auto get_body = ReleaseJson(controller_->RepositoryAuthoringGet(get_req));
     EXPECT_EQ(
-        (*get_body.as_object())[std::string_view("code")]
-            .as_sint()
-            .value_or(DAS_S_OK),
+        (*get_body.as_object())[std::string_view("code")].as_sint().value_or(
+            DAS_S_OK),
         DAS_E_INVALID_ARGUMENT);
 
     auto apply_req = MakeRequest(
@@ -6886,9 +6823,8 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryAuthoringEntryId_Re
     auto apply_body =
         ReleaseJson(controller_->RepositoryAuthoringApply(apply_req));
     EXPECT_EQ(
-        (*apply_body.as_object())[std::string_view("code")]
-            .as_sint()
-            .value_or(DAS_S_OK),
+        (*apply_body.as_object())[std::string_view("code")].as_sint().value_or(
+            DAS_S_OK),
         DAS_E_INVALID_ARGUMENT);
 
     auto compile_req = MakeRequest(
@@ -6908,7 +6844,9 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryAuthoringEntryId_Re
     EXPECT_FALSE(fake_svc_->repository_compile_called);
 }
 
-TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryAuthoringBody_InvalidJson)
+TEST_F(
+    SchedulerControllerTest,
+    SchedulerControllerRepositoryAuthoringBody_InvalidJson)
 {
     auto get_req = MakeRequest(
         "/api/v1/scheduler/0/repository/entries/42/authoring/get",
@@ -6916,9 +6854,8 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryAuthoringBody_Inval
         {{"profile", "0"}, {"entryId", "42"}});
     auto get_body = ReleaseJson(controller_->RepositoryAuthoringGet(get_req));
     EXPECT_EQ(
-        (*get_body.as_object())[std::string_view("code")]
-            .as_sint()
-            .value_or(DAS_S_OK),
+        (*get_body.as_object())[std::string_view("code")].as_sint().value_or(
+            DAS_S_OK),
         DAS_E_INVALID_JSON);
 
     auto apply_req = MakeRequest(
@@ -6928,9 +6865,8 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryAuthoringBody_Inval
     auto apply_body =
         ReleaseJson(controller_->RepositoryAuthoringApply(apply_req));
     EXPECT_EQ(
-        (*apply_body.as_object())[std::string_view("code")]
-            .as_sint()
-            .value_or(DAS_S_OK),
+        (*apply_body.as_object())[std::string_view("code")].as_sint().value_or(
+            DAS_S_OK),
         DAS_E_INVALID_JSON);
 
     auto compile_req = MakeRequest(
@@ -6950,7 +6886,9 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryAuthoringBody_Inval
     EXPECT_FALSE(fake_svc_->repository_compile_called);
 }
 
-TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryAuthoringBody_NonObject)
+TEST_F(
+    SchedulerControllerTest,
+    SchedulerControllerRepositoryAuthoringBody_NonObject)
 {
     auto get_req = MakeRequest(
         "/api/v1/scheduler/0/repository/entries/42/authoring/get",
@@ -6958,9 +6896,8 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryAuthoringBody_NonOb
         {{"profile", "0"}, {"entryId", "42"}});
     auto get_body = ReleaseJson(controller_->RepositoryAuthoringGet(get_req));
     EXPECT_EQ(
-        (*get_body.as_object())[std::string_view("code")]
-            .as_sint()
-            .value_or(DAS_S_OK),
+        (*get_body.as_object())[std::string_view("code")].as_sint().value_or(
+            DAS_S_OK),
         DAS_E_INVALID_ARGUMENT);
 
     auto apply_req = MakeRequest(
@@ -6970,9 +6907,8 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryAuthoringBody_NonOb
     auto apply_body =
         ReleaseJson(controller_->RepositoryAuthoringApply(apply_req));
     EXPECT_EQ(
-        (*apply_body.as_object())[std::string_view("code")]
-            .as_sint()
-            .value_or(DAS_S_OK),
+        (*apply_body.as_object())[std::string_view("code")].as_sint().value_or(
+            DAS_S_OK),
         DAS_E_INVALID_ARGUMENT);
 
     auto compile_req = MakeRequest(
@@ -6992,7 +6928,9 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryAuthoringBody_NonOb
     EXPECT_FALSE(fake_svc_->repository_compile_called);
 }
 
-TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryCompile_ServiceError)
+TEST_F(
+    SchedulerControllerTest,
+    SchedulerControllerRepositoryCompile_ServiceError)
 {
     fake_svc_->next_result = DAS_E_FAIL;
     auto req = MakeRequest(
@@ -7002,9 +6940,8 @@ TEST_F(SchedulerControllerTest, SchedulerControllerRepositoryCompile_ServiceErro
     auto body = ReleaseJson(controller_->RepositoryAuthoringCompile(req));
 
     EXPECT_EQ(
-        (*body.as_object())[std::string_view("code")]
-            .as_sint()
-            .value_or(DAS_S_OK),
+        (*body.as_object())[std::string_view("code")].as_sint().value_or(
+            DAS_S_OK),
         DAS_E_FAIL);
     EXPECT_TRUE(fake_svc_->repository_compile_called);
     EXPECT_EQ(fake_svc_->last_repository_entry_id, 42);

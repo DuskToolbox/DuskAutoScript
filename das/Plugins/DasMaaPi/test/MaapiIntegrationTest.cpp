@@ -1,5 +1,6 @@
 #include "FakeMaaApiBoundary.h"
 
+#include "../src/MaapiRunTaskComponent.h"
 #include <IpcTestConfig.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
@@ -12,7 +13,6 @@
 #include <das/DasApi.h>
 #include <das/Plugins/DasMaaPi/MaaRuntime.h>
 #include <das/Plugins/DasMaaPi/MaapiDto.h>
-#include "../src/MaapiRunTaskComponent.h"
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
@@ -183,12 +183,9 @@ namespace
     {
         yyjson::value request(Das::Utils::MakeYyjsonObject());
         auto          obj = request.as_object();
-        (*obj)[std::string_view("pluginGuid")] =
-            std::string(kPluginGuidText);
-        (*obj)[std::string_view("taskTypeGuid")] =
-            std::string(kTaskGuidText);
-        (*obj)[std::string_view("displayName")] =
-            "Repository invoke MAAPI run";
+        (*obj)[std::string_view("pluginGuid")] = std::string(kPluginGuidText);
+        (*obj)[std::string_view("taskTypeGuid")] = std::string(kTaskGuidText);
+        (*obj)[std::string_view("displayName")] = "Repository invoke MAAPI run";
         return request;
     }
 
@@ -205,7 +202,8 @@ namespace
         snapshot_copy.plugin_guid = snapshot.plugin_guid;
         snapshot_copy.task_type_guid = snapshot.task_type_guid;
         snapshot_copy.component_guid = snapshot.component_guid;
-        snapshot_copy.execution_input = CloneJsonValue(snapshot.execution_input);
+        snapshot_copy.execution_input =
+            CloneJsonValue(snapshot.execution_input);
 
         Das::Core::TaskScheduler::RepositoryInvoke::Dto::
             InvokeRepositoryTaskInputDto input;
@@ -218,8 +216,8 @@ namespace
     MakeLocalMaapiRunManifest()
     {
         Das::Core::ForeignInterfaceHost::TaskComponentsManifestDesc manifest;
-        manifest.factories =
-            std::vector<std::string>{std::string(kRunTaskComponentFactoryGuidText)};
+        manifest.factories = std::vector<std::string>{
+            std::string(kRunTaskComponentFactoryGuidText)};
 
         yyjson::value definition(Das::Utils::MakeYyjsonObject());
         auto          definition_obj = definition.as_object();
@@ -305,18 +303,19 @@ namespace
             registry_ =
                 std::make_unique<Das::Core::IPC::RemoteObjectRegistry>();
             plugin_manager_->SetRegistry(*registry_);
-            ASSERT_TRUE(std::filesystem::exists(
-                PluginPackageDir() / "DasMaaPi.json"));
-            ASSERT_TRUE(std::filesystem::exists(
-                PluginPackageDir() / "libDasMaaPi.dll"));
-            ASSERT_TRUE(std::filesystem::exists(
-                PluginPackageDir() / "MaaFramework.dll"));
+            ASSERT_TRUE(
+                std::filesystem::exists(PluginPackageDir() / "DasMaaPi.json"));
+            ASSERT_TRUE(
+                std::filesystem::exists(
+                    PluginPackageDir() / "libDasMaaPi.dll"));
+            ASSERT_TRUE(
+                std::filesystem::exists(
+                    PluginPackageDir() / "MaaFramework.dll"));
             ASSERT_EQ(
                 plugin_manager_->LoadPlugin(PluginPackageDir()),
                 DAS_S_OK);
             ASSERT_EQ(
-                plugin_manager_->RegisterPluginObjects(
-                    PluginPackageDir()),
+                plugin_manager_->RegisterPluginObjects(PluginPackageDir()),
                 DAS_S_OK);
         }
 
@@ -339,9 +338,8 @@ namespace
                 factory;
             EXPECT_EQ(
                 features[0]->interface_ptr->QueryInterface(
-                    DasIidOf<
-                        Das::PluginInterface::
-                            IDasTaskAuthoringSessionFactory>(),
+                    DasIidOf<Das::PluginInterface::
+                                 IDasTaskAuthoringSessionFactory>(),
                     reinterpret_cast<void**>(factory.Put())),
                 DAS_S_OK);
             DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
@@ -386,20 +384,19 @@ namespace
             scheduler_plugin_manager_->SetRegistry(*scheduler_registry_);
             scheduler_plugin_dir_ = settings_dir_ / "plugins";
             std::filesystem::create_directories(scheduler_plugin_dir_);
-            const auto scheduler_maapi_dir =
-                scheduler_plugin_dir_ / "DasMaaPi";
+            const auto scheduler_maapi_dir = scheduler_plugin_dir_ / "DasMaaPi";
             std::filesystem::copy(
                 PluginPackageDir(),
                 scheduler_maapi_dir,
                 std::filesystem::copy_options::recursive
                     | std::filesystem::copy_options::overwrite_existing);
-            ASSERT_TRUE(std::filesystem::exists(
-                scheduler_maapi_dir / "DasMaaPi.json"));
+            ASSERT_TRUE(
+                std::filesystem::exists(scheduler_maapi_dir / "DasMaaPi.json"));
             scheduler_ =
                 std::make_unique<Das::Core::TaskScheduler::SchedulerService>(
                     *scheduler_plugin_manager_,
-                    Das::DasSharedRef<
-                        Das::Core::IPC::MainProcess::IIpcContext>(ipc_sp_));
+                    Das::DasSharedRef<Das::Core::IPC::MainProcess::IIpcContext>(
+                        ipc_sp_));
             ASSERT_EQ(
                 scheduler_->Initialize(scheduler_plugin_dir_, {}),
                 DAS_S_OK);
@@ -455,11 +452,9 @@ namespace
 
             Das::Core::ForeignInterfaceHost::FeatureInfo feature{};
             feature.feature_type = DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY;
-            feature.interface_ptr = DasPtr<IDasBase>(
-                static_cast<IDasBase*>(
-                    static_cast<
-                        Das::PluginInterface::IDasTaskComponentFactory*>(
-                        factory)));
+            feature.interface_ptr = DasPtr<IDasBase>(static_cast<IDasBase*>(
+                static_cast<Das::PluginInterface::IDasTaskComponentFactory*>(
+                    factory)));
 
             Das::Core::ForeignInterfaceHost::FeatureInfo* feature_ptr =
                 &feature;
@@ -481,9 +476,8 @@ namespace
                 factory;
             EXPECT_EQ(
                 features[0]->interface_ptr->QueryInterface(
-                    DasIidOf<
-                        Das::PluginInterface::
-                            IDasTaskAuthoringSessionFactory>(),
+                    DasIidOf<Das::PluginInterface::
+                                 IDasTaskAuthoringSessionFactory>(),
                     reinterpret_cast<void**>(factory.Put())),
                 DAS_S_OK);
             DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
@@ -500,10 +494,12 @@ namespace
             std::string_view interface_path)
         {
             auto session = CreateSession();
-            auto change = ParseDasJson(
-                SetInterfacePathChangeJson(interface_path, 0));
+            auto change =
+                ParseDasJson(SetInterfacePathChangeJson(interface_path, 0));
             DasPtr<Das::ExportInterface::IDasJson> apply_json;
-            EXPECT_EQ(session->ApplyChange(change.Get(), apply_json.Put()), DAS_S_OK);
+            EXPECT_EQ(
+                session->ApplyChange(change.Get(), apply_json.Put()),
+                DAS_S_OK);
 
             auto request = ParseDasJson(R"({"purpose":"execution"})");
             DasPtr<Das::ExportInterface::IDasJson> execution_json;
@@ -522,30 +518,28 @@ namespace
         int64_t CreateRepositoryEntryForInterface(
             std::string_view interface_path)
         {
-            auto created =
-                scheduler_->CreateRepositoryEntry(MakeRepositoryCreateRequest());
+            auto created = scheduler_->CreateRepositoryEntry(
+                MakeRepositoryCreateRequest());
             auto created_obj = created.as_object();
             EXPECT_TRUE(created_obj.has_value());
             const auto entry_id =
-                (*created_obj)[std::string_view("entryId")]
-                    .as_sint()
-                    .value_or(-1);
+                (*created_obj)[std::string_view("entryId")].as_sint().value_or(
+                    -1);
             EXPECT_GE(entry_id, 0);
 
-            auto change = ParseYyjson(
-                SetInterfacePathChangeJson(interface_path, 0));
-            auto applied =
-                scheduler_->ApplyRepositoryEntryAuthoringChange(entry_id, change);
+            auto change =
+                ParseYyjson(SetInterfacePathChangeJson(interface_path, 0));
+            auto applied = scheduler_->ApplyRepositoryEntryAuthoringChange(
+                entry_id,
+                change);
             auto applied_obj = applied.as_object();
             EXPECT_TRUE(applied_obj.has_value());
             EXPECT_TRUE(
-                (*applied_obj)[std::string_view("ok")]
-                    .as_bool()
-                    .value_or(false));
+                (*applied_obj)[std::string_view("ok")].as_bool().value_or(
+                    false));
             EXPECT_EQ(
-                (*applied_obj)[std::string_view("revision")]
-                    .as_sint()
-                    .value_or(-1),
+                (*applied_obj)[std::string_view("revision")].as_sint().value_or(
+                    -1),
                 1);
             auto authoring =
                 (*applied_obj)[std::string_view("authoring")].as_object();
@@ -560,7 +554,7 @@ namespace
 
         Das::Core::TaskScheduler::RepositoryInvoke::
             RepositoryInvokeCompileResult
-        CompileRepositoryInvokeSnapshot(int64_t entry_id)
+            CompileRepositoryInvokeSnapshot(int64_t entry_id)
         {
             Das::Core::TaskScheduler::RepositoryInvoke::Dto::
                 RepositoryTaskRefDto ref;
@@ -573,10 +567,9 @@ namespace
             context.source_entry_id = 200;
             context.source_graph = ParseYyjson(
                 std::string("{\"nodes\":[{\"id\":\"maapi-run-node\",")
-                +
-                "\"label\":\"MAAPI repository run\",\"settings\":{"
-                "\"repositoryRef\":{\"kind\":\"taskRepositoryRef\","
-                "\"entryId\":"
+                + "\"label\":\"MAAPI repository run\",\"settings\":{"
+                  "\"repositoryRef\":{\"kind\":\"taskRepositoryRef\","
+                  "\"entryId\":"
                 + std::to_string(entry_id)
                 + ",\"expectedRevision\":1,\"sourceFingerprint\":"
                   "\"SampleInterface:1.0.0\"}}}]}");
@@ -584,8 +577,8 @@ namespace
             return scheduler_->ResolveRepositoryInvokeSnapshot(ref, context);
         }
 
-        DasPtr<Das::PluginInterface::IDasTaskComponent>
-        CreateRuntimeComponent(std::string_view guid_text)
+        DasPtr<Das::PluginInterface::IDasTaskComponent> CreateRuntimeComponent(
+            std::string_view guid_text)
         {
             DasPtr<Das::PluginInterface::IDasTaskComponent> component;
             EXPECT_EQ(
@@ -603,8 +596,7 @@ namespace
         std::shared_ptr<Das::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
         std::unique_ptr<Das::Core::IPC::RemoteObjectRegistry>
             scheduler_registry_;
-        std::unique_ptr<Das::Core::IPC::RemoteObjectRegistry>
-            runtime_registry_;
+        std::unique_ptr<Das::Core::IPC::RemoteObjectRegistry> runtime_registry_;
         std::unique_ptr<PluginManager> scheduler_plugin_manager_;
         std::unique_ptr<PluginManager> runtime_plugin_manager_;
         std::unique_ptr<Das::Core::TaskScheduler::SchedulerService> scheduler_;
@@ -626,7 +618,8 @@ TEST_F(MaapiIntegrationFixture, SampleInterfaceAuthoringCompileRuntimeDryRun)
             .value_or(""),
         std::string_view("formSequence"));
 
-    auto interface_path = FixturePath("sample_interface.jsonc").generic_string();
+    auto interface_path =
+        FixturePath("sample_interface.jsonc").generic_string();
     auto change = ParseDasJson(
         "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
         "\"adapter.interfacePath\",\"value\":\""
@@ -648,13 +641,15 @@ TEST_F(MaapiIntegrationFixture, SampleInterfaceAuthoringCompileRuntimeDryRun)
 
     auto preview_request = ParseDasJson(R"({"purpose":"preview"})");
     DasPtr<Das::ExportInterface::IDasJson> preview_json;
-    ASSERT_EQ(session->Compile(preview_request.Get(), preview_json.Put()), DAS_S_OK);
+    ASSERT_EQ(
+        session->Compile(preview_request.Get(), preview_json.Put()),
+        DAS_S_OK);
     auto preview = ReadJsonInterface(preview_json.Get());
-    EXPECT_TRUE(
-        (*preview.as_object())[std::string_view("canExecute")]
-            .as_bool()
-            .value_or(false));
-    EXPECT_FALSE(preview.as_object()->contains(std::string_view("executionInput")));
+    EXPECT_TRUE((*preview.as_object())[std::string_view("canExecute")]
+                    .as_bool()
+                    .value_or(false));
+    EXPECT_FALSE(
+        preview.as_object()->contains(std::string_view("executionInput")));
 
     auto execution_request = ParseDasJson(R"({"purpose":"execution"})");
     DasPtr<Das::ExportInterface::IDasJson> execution_json;
@@ -673,7 +668,8 @@ TEST_F(MaapiIntegrationFixture, SampleInterfaceAuthoringCompileRuntimeDryRun)
     fake.resource_hash = "sample-hash";
     auto run_result = MaaRuntime::Run(parsed.envelope, fake, nullptr);
     EXPECT_EQ(run_result.das_result, DAS_S_OK);
-    EXPECT_TRUE(fake.Contains("PostTask:StartDaily:{\"StartDaily\":{\"enabled\":true}}"));
+    EXPECT_TRUE(fake.Contains(
+        "PostTask:StartDaily:{\"StartDaily\":{\"enabled\":true}}"));
 }
 
 TEST_F(
@@ -711,16 +707,15 @@ TEST_F(
     auto preview_obj = preview.as_object();
     ASSERT_TRUE(preview_obj.has_value());
     EXPECT_TRUE(
-        (*preview_obj)[std::string_view("canExecute")]
-            .as_bool()
-            .value_or(false));
+        (*preview_obj)[std::string_view("canExecute")].as_bool().value_or(
+            false));
     EXPECT_FALSE(preview_obj->contains(std::string_view("executionInput")));
     EXPECT_FALSE(preview_obj->contains(std::string_view("compiledSnapshot")));
 
     auto definitions = runtime_plugin_manager_->GetTaskComponentFactoryManager()
                            .EnumerateDefinitions();
     const auto run_guid = GuidFromText(kRunTaskComponentGuidText);
-    auto found = std::ranges::find_if(
+    auto       found = std::ranges::find_if(
         definitions,
         [&run_guid](const auto& definition)
         { return definition.component_guid == run_guid; });
@@ -757,12 +752,8 @@ TEST_F(
     auto input = WrapYyjson(MakeRepositoryInvokeInput(*compile.snapshot));
     DasPtr<Das::ExportInterface::IDasJson> result_json;
     ASSERT_EQ(
-        component->Do(
-            nullptr,
-            nullptr,
-            nullptr,
-            input.Get(),
-            result_json.Put()),
+        component
+            ->Do(nullptr, nullptr, nullptr, input.Get(), result_json.Put()),
         DAS_S_OK);
 
     auto result = ReadJsonInterface(result_json.Get());
@@ -806,19 +797,15 @@ TEST_F(
 
     FakeMaaApiBoundary fake;
     fake.resource_hash = "sample-hash";
-    ScopedBoundaryHook hook(fake);
+    ScopedBoundaryHook      hook(fake);
     ChildRequestedStopToken stop_token;
 
     auto component = CreateRuntimeComponent(kRepositoryInvokeComponentGuidText);
     auto input = WrapYyjson(MakeRepositoryInvokeInput(*compile.snapshot));
     DasPtr<Das::ExportInterface::IDasJson> result_json;
     ASSERT_EQ(
-        component->Do(
-            &stop_token,
-            nullptr,
-            nullptr,
-            input.Get(),
-            result_json.Put()),
+        component
+            ->Do(&stop_token, nullptr, nullptr, input.Get(), result_json.Put()),
         DAS_S_OK);
 
     auto result = ReadJsonInterface(result_json.Get());
@@ -836,9 +823,8 @@ TEST_F(
         (*outputs)[std::string_view("childOutputs")].as_object();
     ASSERT_TRUE(child_outputs.has_value());
     EXPECT_TRUE(
-        (*child_outputs)[std::string_view("stopped")]
-            .as_bool()
-            .value_or(false));
+        (*child_outputs)[std::string_view("stopped")].as_bool().value_or(
+            false));
     auto signals = (*result_obj)[std::string_view("signals")].as_object();
     ASSERT_TRUE(signals.has_value());
     EXPECT_TRUE(

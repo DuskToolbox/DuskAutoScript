@@ -241,8 +241,7 @@ TEST_F(QueryMainProcessInterfaceE2ETest, QueryRegisteredName_ReturnsValidObject)
     ASSERT_EQ(reg_result, DAS_S_OK);
 
     // Query by name
-    auto result =
-        QueryMainProcessInterfaceByName("greeting_service");
+    auto result = QueryMainProcessInterfaceByName("greeting_service");
     ASSERT_EQ(result.GetErrorCode(), DAS_S_OK);
     ASSERT_NE(result.GetValue(), nullptr);
 
@@ -263,8 +262,7 @@ TEST_F(QueryMainProcessInterfaceE2ETest, QueryUnknownName_ReturnsObjectNotFound)
     ScopedCurrentIpcContext scope(
         static_cast<MainProcess::IpcContext*>(concrete_ctx_.get()));
 
-    auto result =
-        QueryMainProcessInterfaceByName("nonexistent_service");
+    auto result = QueryMainProcessInterfaceByName("nonexistent_service");
     EXPECT_EQ(result.GetErrorCode(), DAS_E_IPC_OBJECT_NOT_FOUND);
     EXPECT_EQ(result.GetValue(), nullptr);
 }

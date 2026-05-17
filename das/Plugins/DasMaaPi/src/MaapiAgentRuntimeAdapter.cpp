@@ -81,24 +81,22 @@ namespace Das::Plugins::DasMaaPi
             {
                 if (!request.runtime_ref)
                 {
-                    return MakeAgentAdapterFailure(
-                        {MakeAgentAdapterDiagnostic(
-                            "missing-runtime-ref",
-                            "start requires runtimeRef when the adapter has no "
-                            "injected Maa runtime context",
-                            "runtimeRef")});
+                    return MakeAgentAdapterFailure({MakeAgentAdapterDiagnostic(
+                        "missing-runtime-ref",
+                        "start requires runtimeRef when the adapter has no "
+                        "injected Maa runtime context",
+                        "runtimeRef")});
                 }
 
                 auto resolved =
                     AgentRuntime::ResolveMaaContext(*request.runtime_ref);
                 if (!resolved)
                 {
-                    return MakeAgentAdapterFailure(
-                        {MakeAgentAdapterDiagnostic(
-                            "runtime-ref-not-found",
-                            "runtimeRef does not reference an active Maa "
-                            "runtime session",
-                            "runtimeRef")});
+                    return MakeAgentAdapterFailure({MakeAgentAdapterDiagnostic(
+                        "runtime-ref-not-found",
+                        "runtimeRef does not reference an active Maa "
+                        "runtime session",
+                        "runtimeRef")});
                 }
                 resolved_context = *resolved;
             }
@@ -113,13 +111,12 @@ namespace Das::Plugins::DasMaaPi
             return service.Status(*request.session_id);
         }
 
-        return MakeAgentAdapterFailure(
-            {MakeAgentAdapterDiagnostic(
-                "invalid-command",
-                IsStartStopStatus(request.operation)
-                    ? "Agent runtime command is not supported by this adapter"
-                    : "Agent runtime operation is not supported",
-                "operation")});
+        return MakeAgentAdapterFailure({MakeAgentAdapterDiagnostic(
+            "invalid-command",
+            IsStartStopStatus(request.operation)
+                ? "Agent runtime command is not supported by this adapter"
+                : "Agent runtime operation is not supported",
+            "operation")});
     }
 
     std::string JsonFromDasJson(ExportInterface::IDasJson* json)

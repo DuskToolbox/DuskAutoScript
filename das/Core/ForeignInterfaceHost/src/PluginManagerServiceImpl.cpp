@@ -514,20 +514,17 @@ DasResult PluginManagerServiceImpl::CreateCaptureManager(
         if (capture_name)
         {
             const char* p_resolved_name = nullptr;
-            if (capture_name->GetUtf8(&p_resolved_name) >= 0
-                && p_resolved_name)
+            if (capture_name->GetUtf8(&p_resolved_name) >= 0 && p_resolved_name)
             {
                 p_capture_name_utf8 = p_resolved_name;
             }
         }
 
-        auto* p_decorated_capture =
-            Das::Core::Debug::MaybeDecorateCapture(
-                p_raw_capture,
-                p_capture_name_utf8);
-        auto capture =
-            DAS::DasPtr<Das::PluginInterface::IDasCapture>::Attach(
-                p_decorated_capture);
+        auto* p_decorated_capture = Das::Core::Debug::MaybeDecorateCapture(
+            p_raw_capture,
+            p_capture_name_utf8);
+        auto capture = DAS::DasPtr<Das::PluginInterface::IDasCapture>::Attach(
+            p_decorated_capture);
 
         capture_mgr->AddInstance(std::move(capture_name), std::move(capture));
     }

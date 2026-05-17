@@ -31,18 +31,16 @@ extern "C++"
     constexpr const DasGuid& DasIidOf<
         Das::Core::Debug::DebugDecorator<Das::PluginInterface::IDasInput>>()
     {
-        return DasIidHolder<
-            Das::Core::Debug::DebugDecorator<
-                Das::PluginInterface::IDasInput>>::iid;
+        return DasIidHolder<Das::Core::Debug::DebugDecorator<
+            Das::PluginInterface::IDasInput>>::iid;
     }
 
     template <>
     constexpr const DasGuid& DasIidOf<
         Das::Core::Debug::DebugDecorator<Das::PluginInterface::IDasInput>*>()
     {
-        return DasIidHolder<
-            Das::Core::Debug::DebugDecorator<
-                Das::PluginInterface::IDasInput>>::iid;
+        return DasIidHolder<Das::Core::Debug::DebugDecorator<
+            Das::PluginInterface::IDasInput>>::iid;
     }
 }
 
@@ -75,10 +73,10 @@ namespace
     }
 
     auto SerializeSwipeParams(
-        const std::string&               input_name,
-        Das::PluginInterface::DasPoint   from,
-        Das::PluginInterface::DasPoint   to,
-        int32_t                          duration_ms) -> std::string
+        const std::string&             input_name,
+        Das::PluginInterface::DasPoint from,
+        Das::PluginInterface::DasPoint to,
+        int32_t                        duration_ms) -> std::string
     {
         auto obj = DAS::Utils::MakeYyjsonObject();
         auto from_obj = DAS::Utils::MakeYyjsonObject();
@@ -130,12 +128,8 @@ namespace
         }
 
         DebugImageAnnotations annotations{};
-        annotations.points.push_back(DebugDrawPoint{
-            x,
-            y,
-            6,
-            DebugAnnotationColor::Red,
-            "click"});
+        annotations.points.push_back(
+            DebugDrawPoint{x, y, 6, DebugAnnotationColor::Red, "click"});
         return SaveOriginalAndAnnotated(
             "input_click_" + input_name,
             std::move(snapshot),
@@ -154,14 +148,15 @@ namespace
         }
 
         DebugImageAnnotations annotations{};
-        annotations.lines.push_back(DebugDrawLine{
-            from.x,
-            from.y,
-            to.x,
-            to.y,
-            2,
-            DebugAnnotationColor::Blue,
-            "swipe"});
+        annotations.lines.push_back(
+            DebugDrawLine{
+                from.x,
+                from.y,
+                to.x,
+                to.y,
+                2,
+                DebugAnnotationColor::Blue,
+                "swipe"});
         return SaveOriginalAndAnnotated(
             "input_swipe_" + input_name,
             std::move(snapshot),
@@ -179,8 +174,7 @@ public:
     DebugDecorator(
         Das::PluginInterface::IDasInput* p_inner,
         const char*                      p_input_name)
-        : inner_(Das::DasPtr<Das::PluginInterface::IDasInput>::Attach(
-              p_inner)),
+        : inner_(Das::DasPtr<Das::PluginInterface::IDasInput>::Attach(p_inner)),
           input_name_(SafeName(p_input_name))
     {
     }
@@ -242,10 +236,12 @@ public:
         Das::PluginInterface::IDasInput* p_inner_input,
         Das::PluginInterface::IDasTouch* p_inner_touch,
         const char*                      p_input_name)
-        : inner_input_(Das::DasPtr<Das::PluginInterface::IDasInput>::Attach(
-              p_inner_input)),
-          inner_touch_(Das::DasPtr<Das::PluginInterface::IDasTouch>::Attach(
-              p_inner_touch)),
+        : inner_input_(
+              Das::DasPtr<Das::PluginInterface::IDasInput>::Attach(
+                  p_inner_input)),
+          inner_touch_(
+              Das::DasPtr<Das::PluginInterface::IDasTouch>::Attach(
+                  p_inner_touch)),
           input_name_(SafeName(p_input_name))
     {
     }
@@ -260,9 +256,8 @@ public:
 
         if (iid == DasIidOf<IDasBase>())
         {
-            *pp_out_object = static_cast<IDasBase*>(
-                static_cast<IDasTypeInfo*>(
-                    static_cast<Das::PluginInterface::IDasInput*>(this)));
+            *pp_out_object = static_cast<IDasBase*>(static_cast<IDasTypeInfo*>(
+                static_cast<Das::PluginInterface::IDasInput*>(this)));
         }
         else if (iid == DasIidOf<IDasTypeInfo>())
         {

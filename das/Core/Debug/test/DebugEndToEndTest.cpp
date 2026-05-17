@@ -15,8 +15,8 @@
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTouch.Implements.hpp>
 #include <gtest/gtest.h>
 
-#include "../src/DebugWriterImpl.h"
 #include "../../OcvWrapper/src/CvCpuImpl.h"
+#include "../src/DebugWriterImpl.h"
 
 DAS_DISABLE_WARNING_BEGIN
 DAS_IGNORE_OPENCV_WARNING
@@ -76,8 +76,8 @@ namespace Das::Core::Debug::Test
         {
             const auto stamp =
                 std::chrono::steady_clock::now().time_since_epoch().count();
-            auto path = std::filesystem::current_path()
-                / "debug-test-output"
+            auto path =
+                std::filesystem::current_path() / "debug-test-output"
                 / (std::string{test_name} + "-" + std::to_string(stamp));
             std::filesystem::remove_all(path);
             return path;
@@ -213,8 +213,8 @@ namespace Das::Core::Debug::Test
 
                 if (iid == DasIidOf<IDasBase>())
                 {
-                    *pp_out_object = static_cast<IDasBase*>(
-                        static_cast<IDasTypeInfo*>(
+                    *pp_out_object =
+                        static_cast<IDasBase*>(static_cast<IDasTypeInfo*>(
                             static_cast<Das::PluginInterface::IDasInput*>(
                                 this)));
                 }
@@ -326,8 +326,9 @@ namespace Das::Core::Debug::Test
                 {
                     return DAS_E_OUT_OF_RANGE;
                 }
-                *p_box = index == 0 ? Das::ExportInterface::DasRect{6, 6, 9, 10}
-                                    : Das::ExportInterface::DasRect{17, 6, 9, 10};
+                *p_box = index == 0
+                             ? Das::ExportInterface::DasRect{6, 6, 9, 10}
+                             : Das::ExportInterface::DasRect{17, 6, 9, 10};
                 return DAS_S_OK;
             }
 
@@ -395,8 +396,7 @@ namespace Das::Core::Debug::Test
         public:
             DAS_IMPL Recognize(
                 Das::ExportInterface::IDasImage*,
-                Das::ExportInterface::IDasOcrResultVector** pp_results)
-                override
+                Das::ExportInterface::IDasOcrResultVector** pp_results) override
             {
                 if (!pp_results)
                 {
@@ -410,7 +410,7 @@ namespace Das::Core::Debug::Test
         auto ReadLines(const std::filesystem::path& path)
             -> std::vector<std::string>
         {
-            std::ifstream input{path};
+            std::ifstream            input{path};
             std::vector<std::string> lines;
             std::string              line;
             while (std::getline(input, line))
@@ -478,12 +478,10 @@ namespace Das::Core::Debug::Test
                 Das::DasPtr<Das::ExportInterface::IDasImage>::Attach(
                     raw_capture_image);
 
-            auto* decorated_input = MaybeDecorateInput(
-                FakeTouch::MakeRaw(),
-                "end_to_end_touch");
-            auto input =
-                Das::DasPtr<Das::PluginInterface::IDasInput>::Attach(
-                    decorated_input);
+            auto* decorated_input =
+                MaybeDecorateInput(FakeTouch::MakeRaw(), "end_to_end_touch");
+            auto input = Das::DasPtr<Das::PluginInterface::IDasInput>::Attach(
+                decorated_input);
             ASSERT_EQ(input->Click(8, 9), DAS_S_OK);
 
             Das::DasPtr<Das::PluginInterface::IDasTouch> touch;
@@ -495,12 +493,10 @@ namespace Das::Core::Debug::Test
                     120),
                 DAS_S_OK);
 
-            auto* decorated_cv = MaybeDecorateCvRaw(
-                OcvWrapper::CvCpuImpl::MakeRaw(),
-                "cv.cpu");
+            auto* decorated_cv =
+                MaybeDecorateCvRaw(OcvWrapper::CvCpuImpl::MakeRaw(), "cv.cpu");
             auto cv =
-                Das::DasPtr<Das::ExportInterface::IDasCv>::Attach(
-                    decorated_cv);
+                Das::DasPtr<Das::ExportInterface::IDasCv>::Attach(decorated_cv);
             auto image = MakeImage();
             auto templ = MakeTemplate();
 
@@ -516,15 +512,16 @@ namespace Das::Core::Debug::Test
                     &raw_matches),
                 DAS_S_OK);
             auto matches =
-                Das::DasPtr<
-                    Das::ExportInterface::IDasTemplateMatchResults>::Attach(
-                    raw_matches);
+                Das::DasPtr<Das::ExportInterface::IDasTemplateMatchResults>::
+                    Attach(raw_matches);
 
             Das::ExportInterface::DasColorRange range{
                 {0, 0, 0, 0},
                 {255, 255, 255, 255}};
             Das::ExportInterface::IDasImage* raw_mask = nullptr;
-            ASSERT_EQ(cv->ColorFilter(image.Get(), &range, &raw_mask), DAS_S_OK);
+            ASSERT_EQ(
+                cv->ColorFilter(image.Get(), &range, &raw_mask),
+                DAS_S_OK);
             auto mask =
                 Das::DasPtr<Das::ExportInterface::IDasImage>::Attach(raw_mask);
 
@@ -541,9 +538,8 @@ namespace Das::Core::Debug::Test
 
             auto* decorated_ocr =
                 MaybeDecorateOcrRaw(FakeOcr::MakeRaw(), "ocr");
-            auto ocr =
-                Das::DasPtr<Das::ExportInterface::IDasOcr>::Attach(
-                    decorated_ocr);
+            auto ocr = Das::DasPtr<Das::ExportInterface::IDasOcr>::Attach(
+                decorated_ocr);
             Das::ExportInterface::IDasOcrResultVector* raw_ocr_results =
                 nullptr;
             ASSERT_EQ(ocr->Recognize(image.Get(), &raw_ocr_results), DAS_S_OK);
@@ -572,7 +568,8 @@ namespace Das::Core::Debug::Test
             {
                 return;
             }
-            EXPECT_TRUE(std::filesystem::exists(dir / "img" / std::string{*filename}))
+            EXPECT_TRUE(
+                std::filesystem::exists(dir / "img" / std::string{*filename}))
                 << *filename;
         }
 
@@ -629,16 +626,16 @@ namespace Das::Core::Debug::Test
             auto object = value.as_object();
             ASSERT_TRUE(object);
 
-            for (const auto key : {
-                     std::string_view{"step"},
-                     std::string_view{"type"},
-                     std::string_view{"timestamp"},
-                     std::string_view{"params"},
-                     std::string_view{"result"},
-                     std::string_view{"elapsed_ms"},
-                     std::string_view{"thread_id"},
-                     std::string_view{"process_pid"},
-                     std::string_view{"image_filename"}})
+            for (const auto key :
+                 {std::string_view{"step"},
+                  std::string_view{"type"},
+                  std::string_view{"timestamp"},
+                  std::string_view{"params"},
+                  std::string_view{"result"},
+                  std::string_view{"elapsed_ms"},
+                  std::string_view{"thread_id"},
+                  std::string_view{"process_pid"},
+                  std::string_view{"image_filename"}})
             {
                 EXPECT_TRUE(object->contains(key)) << key;
             }
@@ -652,10 +649,7 @@ namespace Das::Core::Debug::Test
                     dir,
                     *result,
                     "original_image_filename");
-                ExpectImageFileIfPresent(
-                    dir,
-                    *result,
-                    "image_filename");
+                ExpectImageFileIfPresent(dir, *result, "image_filename");
             }
         }
     }
@@ -669,9 +663,8 @@ namespace Das::Core::Debug::Test
         auto* maybe_capture =
             MaybeDecorateCapture(raw_capture, "disabled_capture");
         EXPECT_EQ(maybe_capture, raw_capture);
-        auto capture =
-            Das::DasPtr<Das::PluginInterface::IDasCapture>::Attach(
-                maybe_capture);
+        auto capture = Das::DasPtr<Das::PluginInterface::IDasCapture>::Attach(
+            maybe_capture);
         Das::ExportInterface::IDasImage* raw_image = nullptr;
         ASSERT_EQ(capture->Capture(&raw_image), DAS_S_OK);
         auto image =
@@ -683,15 +676,13 @@ namespace Das::Core::Debug::Test
             maybe_input,
             static_cast<Das::PluginInterface::IDasInput*>(raw_input));
         auto input =
-            Das::DasPtr<Das::PluginInterface::IDasInput>::Attach(
-                maybe_input);
+            Das::DasPtr<Das::PluginInterface::IDasInput>::Attach(maybe_input);
         ASSERT_EQ(input->Click(1, 2), DAS_S_OK);
 
         auto* raw_cv = OcvWrapper::CvCpuImpl::MakeRaw();
         auto* maybe_cv = MaybeDecorateCvRaw(raw_cv, "cv.cpu");
         EXPECT_EQ(maybe_cv, raw_cv);
-        auto cv =
-            Das::DasPtr<Das::ExportInterface::IDasCv>::Attach(maybe_cv);
+        auto cv = Das::DasPtr<Das::ExportInterface::IDasCv>::Attach(maybe_cv);
         auto templ = MakeTemplate();
         Das::ExportInterface::IDasTemplateMatchResults* raw_matches = nullptr;
         ASSERT_EQ(
@@ -704,8 +695,7 @@ namespace Das::Core::Debug::Test
                 &raw_matches),
             DAS_S_OK);
         auto matches =
-            Das::DasPtr<
-                Das::ExportInterface::IDasTemplateMatchResults>::Attach(
+            Das::DasPtr<Das::ExportInterface::IDasTemplateMatchResults>::Attach(
                 raw_matches);
 
         auto* raw_ocr = FakeOcr::MakeRaw();
@@ -726,7 +716,7 @@ namespace Das::Core::Debug::Test
 
     TEST_F(DebugEndToEndTest, DebugPluginTransparent_SourceAudit)
     {
-        const auto root = FindSourceRoot();
+        const auto                               root = FindSourceRoot();
         const std::vector<std::filesystem::path> plugin_dirs{
             root / "das" / "Plugins" / "DasWindowsCapture",
             root / "das" / "Plugins" / "DasAdbCapture",
@@ -747,7 +737,7 @@ namespace Das::Core::Debug::Test
                 {
                     continue;
                 }
-                std::ifstream input(entry.path(), std::ios::binary);
+                std::ifstream     input(entry.path(), std::ios::binary);
                 const std::string content{
                     std::istreambuf_iterator<char>{input},
                     std::istreambuf_iterator<char>{}};

@@ -25,15 +25,15 @@ namespace
 
     struct FakeProcessState
     {
-        uint32_t               pid = 0;
-        bool                   running = true;
-        bool                   terminated = false;
-        int                    wait_calls = 0;
-        int                    terminate_calls = 0;
-        int                    wait_failures_remaining = 0;
-        std::optional<int32_t> exit_code;
-        std::string            stdout_text;
-        std::string            stderr_text;
+        uint32_t                  pid = 0;
+        bool                      running = true;
+        bool                      terminated = false;
+        int                       wait_calls = 0;
+        int                       terminate_calls = 0;
+        int                       wait_failures_remaining = 0;
+        std::optional<int32_t>    exit_code;
+        std::string               stdout_text;
+        std::string               stderr_text;
         std::vector<std::string>* call_log = nullptr;
     };
 
@@ -42,7 +42,8 @@ namespace
     public:
         explicit FakeProcess(std::shared_ptr<FakeProcessState> state)
             : state_(std::move(state))
-        {}
+        {
+        }
 
         AgentProcessSnapshot Snapshot() const override
         {
@@ -112,13 +113,13 @@ namespace
             return AgentProcessLaunchResult::Success(std::move(process));
         }
 
-        std::vector<AgentProcessLaunchRequest> launches;
+        std::vector<AgentProcessLaunchRequest>         launches;
         std::vector<std::shared_ptr<FakeProcessState>> processes;
-        std::optional<std::size_t>             fail_launch_index;
-        std::string                            next_stdout;
-        std::string                            next_stderr;
-        int                                    next_wait_failures = 0;
-        std::vector<std::string>*              call_log = nullptr;
+        std::optional<std::size_t>                     fail_launch_index;
+        std::string                                    next_stdout;
+        std::string                                    next_stderr;
+        int                                            next_wait_failures = 0;
+        std::vector<std::string>*                      call_log = nullptr;
     };
 
     AgentRuntimeMaaContext TestContext()
@@ -143,12 +144,10 @@ namespace
         request.pi_env.client_name = "DAS";
         request.pi_env.client_version = "0.1";
         request.pi_env.project_version = "project";
-        request.extra_pi_env.push_back(PiEnvVarDto{
-            .key = "PI_TRACE",
-            .value = "1"});
-        request.extra_pi_env.push_back(PiEnvVarDto{
-            .key = "PATH",
-            .value = "must-not-launch"});
+        request.extra_pi_env.push_back(
+            PiEnvVarDto{.key = "PI_TRACE", .value = "1"});
+        request.extra_pi_env.push_back(
+            PiEnvVarDto{.key = "PATH", .value = "must-not-launch"});
         return request;
     }
 
@@ -184,7 +183,7 @@ namespace
         FakeMaaApiBoundary fake;
 
         {
-            ScopedResource resource(fake, fake.CreateResource());
+            ScopedResource   resource(fake, fake.CreateResource());
             ScopedController controller(
                 fake,
                 fake.CreateController(
@@ -207,9 +206,9 @@ namespace
         FakeMaaApiBoundary fake;
 
         {
-            ScopedResource resource(fake, kInvalidMaaResourceHandle);
-            ScopedController controller(fake, kInvalidMaaControllerHandle);
-            ScopedTasker tasker(fake, kInvalidMaaTaskerHandle);
+            ScopedResource    resource(fake, kInvalidMaaResourceHandle);
+            ScopedController  controller(fake, kInvalidMaaControllerHandle);
+            ScopedTasker      tasker(fake, kInvalidMaaTaskerHandle);
             ScopedAgentClient client(fake, kInvalidMaaAgentClientHandle);
         }
 
@@ -220,7 +219,8 @@ namespace
     {
         FakeMaaApiBoundary fake;
 
-        const auto client = fake.CreateAgentClientV2(std::string_view("agent-1"));
+        const auto client =
+            fake.CreateAgentClientV2(std::string_view("agent-1"));
         EXPECT_NE(client, kInvalidMaaAgentClientHandle);
         EXPECT_EQ(fake.GetAgentClientIdentifier(client), "agent-client-id");
         EXPECT_TRUE(fake.BindAgentClientResource(client, 10).ok);
@@ -264,8 +264,8 @@ namespace
     TEST(DasMaaPiAgentClient, RealBoundarySourceCallsAgentClientApi)
     {
         const auto source_path =
-            std::filesystem::path(__FILE__).parent_path().parent_path()
-            / "src" / "MaaRuntime.cpp";
+            std::filesystem::path(__FILE__).parent_path().parent_path() / "src"
+            / "MaaRuntime.cpp";
         std::ifstream input(source_path);
         ASSERT_TRUE(input.is_open()) << source_path.string();
 
@@ -295,10 +295,12 @@ namespace
         EXPECT_EQ(source.find(forbidden_stub), std::string::npos);
     }
 
-    TEST(DasMaaPiAgentRuntimeStart, StartsSingleAgentWithIdentifierArgCwdAndPiEnv)
+    TEST(
+        DasMaaPiAgentRuntimeStart,
+        StartsSingleAgentWithIdentifierArgCwdAndPiEnv)
     {
-        FakeMaaApiBoundary fake;
-        FakeProcessRunner  runner;
+        FakeMaaApiBoundary  fake;
+        FakeProcessRunner   runner;
         AgentRuntimeService service(fake, runner);
 
         auto result = service.Start(StartRequest(), TestContext());
@@ -318,7 +320,9 @@ namespace
         EXPECT_EQ(
             runner.launches[0].arguments,
             (std::vector<std::string>{"./agent/main.py", "agent-client-id"}));
-        EXPECT_NE(FindEnv(runner.launches[0].environment, "PI_CLIENT_NAME"), nullptr);
+        EXPECT_NE(
+            FindEnv(runner.launches[0].environment, "PI_CLIENT_NAME"),
+            nullptr);
         EXPECT_NE(FindEnv(runner.launches[0].environment, "PI_TRACE"), nullptr);
         EXPECT_EQ(FindEnv(runner.launches[0].environment, "PATH"), nullptr);
         EXPECT_TRUE(HasCall(fake.calls, "BindAgentClientResource"));
@@ -355,8 +359,8 @@ namespace
 
     TEST(DasMaaPiAgentRuntimeEnvironment, RejectsNonPiEnvAtLaunchBoundary)
     {
-        FakeMaaApiBoundary fake;
-        FakeProcessRunner  runner;
+        FakeMaaApiBoundary  fake;
+        FakeProcessRunner   runner;
         AgentRuntimeService service(fake, runner);
 
         auto result = service.Start(StartRequest(), TestContext());
@@ -367,10 +371,12 @@ namespace
         EXPECT_NE(FindEnv(runner.launches[0].environment, "PI_TRACE"), nullptr);
     }
 
-    TEST(DasMaaPiAgentRuntimeStart, ResolvesRelativeChildExecFromInterfaceDirectory)
+    TEST(
+        DasMaaPiAgentRuntimeStart,
+        ResolvesRelativeChildExecFromInterfaceDirectory)
     {
-        FakeMaaApiBoundary fake;
-        FakeProcessRunner  runner;
+        FakeMaaApiBoundary  fake;
+        FakeProcessRunner   runner;
         AgentRuntimeService service(fake, runner);
 
         auto result = service.Start(
@@ -386,8 +392,8 @@ namespace
 
     TEST(DasMaaPiAgentRuntimeStart, RejectsEmptyChildExecBeforeLaunch)
     {
-        FakeMaaApiBoundary fake;
-        FakeProcessRunner  runner;
+        FakeMaaApiBoundary  fake;
+        FakeProcessRunner   runner;
         AgentRuntimeService service(fake, runner);
 
         auto result = service.Start(
@@ -405,7 +411,7 @@ namespace
         FakeMaaApiBoundary fake;
         fake.connect_agent_client_result =
             MaaApiResult::Failure(7, "connect failed");
-        FakeProcessRunner runner;
+        FakeProcessRunner   runner;
         AgentRuntimeService service(fake, runner);
 
         auto result = service.Start(StartRequest(), TestContext());
@@ -417,12 +423,14 @@ namespace
         EXPECT_FALSE(result.session_id.has_value());
     }
 
-    TEST(DasMaaPiAgentRuntimeStart, SinkRegistrationFailureTerminatesLaunchedChild)
+    TEST(
+        DasMaaPiAgentRuntimeStart,
+        SinkRegistrationFailureTerminatesLaunchedChild)
     {
         FakeMaaApiBoundary fake;
         fake.register_agent_client_tasker_sink_result =
             MaaApiResult::Failure(9, "tasker sink failed");
-        FakeProcessRunner runner;
+        FakeProcessRunner   runner;
         AgentRuntimeService service(fake, runner);
 
         auto result = service.Start(StartRequest(), TestContext());
@@ -441,7 +449,7 @@ namespace
         runner.next_stdout = "0123456789";
         runner.next_stderr = "abcdefghij";
         AgentRuntimeService service(fake, runner);
-        auto request = StartRequest();
+        auto                request = StartRequest();
         request.options.max_output_tail_bytes = 4;
 
         auto started = service.Start(request, TestContext());
@@ -457,8 +465,8 @@ namespace
 
     TEST(DasMaaPiAgentRuntimeStatus, ReportsExitedProcessFromSessionTable)
     {
-        FakeMaaApiBoundary fake;
-        FakeProcessRunner  runner;
+        FakeMaaApiBoundary  fake;
+        FakeProcessRunner   runner;
         AgentRuntimeService service(fake, runner);
 
         auto started = service.Start(StartRequest(), TestContext());
@@ -482,7 +490,7 @@ namespace
         FakeProcessRunner  runner;
         runner.next_wait_failures = 1;
         AgentRuntimeService service(fake, runner);
-        auto request = StartRequest();
+        auto                request = StartRequest();
         request.options.stop_timeout_ms = 1;
 
         auto started = service.Start(request, TestContext());
@@ -511,7 +519,7 @@ namespace
 
         {
             AgentRuntimeService service(fake, runner);
-            auto request = StartRequest();
+            auto                request = StartRequest();
             request.options.stop_timeout_ms = 1;
 
             auto started = service.Start(request, TestContext());
@@ -530,12 +538,12 @@ namespace
         const auto destroy = CallIndex(fake.calls, "DestroyAgentClient:1");
         const auto first_wait = CallIndex(fake.calls, "WaitForExit");
         const auto terminate = CallIndex(fake.calls, "Terminate");
-        const auto second_wait =
-            static_cast<std::size_t>(std::find(
-                                         fake.calls.begin() + first_wait + 1,
-                                         fake.calls.end(),
-                                         "WaitForExit")
-                                     - fake.calls.begin());
+        const auto second_wait = static_cast<std::size_t>(
+            std::find(
+                fake.calls.begin() + first_wait + 1,
+                fake.calls.end(),
+                "WaitForExit")
+            - fake.calls.begin());
 
         ASSERT_LT(second_wait, fake.calls.size());
         EXPECT_LT(disconnect, destroy);
@@ -544,11 +552,13 @@ namespace
         EXPECT_LT(terminate, second_wait);
     }
 
-    TEST(DasMaaPiAgentRuntimeProcess, RealRunnerUsesBoostProcessV2AndPerChildEnvironment)
+    TEST(
+        DasMaaPiAgentRuntimeProcess,
+        RealRunnerUsesBoostProcessV2AndPerChildEnvironment)
     {
         const auto source_path =
-            std::filesystem::path(__FILE__).parent_path().parent_path()
-            / "src" / "AgentProcessRunner.cpp";
+            std::filesystem::path(__FILE__).parent_path().parent_path() / "src"
+            / "AgentProcessRunner.cpp";
         std::ifstream input(source_path);
         ASSERT_TRUE(input.is_open()) << source_path.string();
 
@@ -556,7 +566,9 @@ namespace
         buffer << input.rdbuf();
         const auto source = buffer.str();
 
-        EXPECT_NE(source.find("boost::process::v2::process"), std::string::npos);
+        EXPECT_NE(
+            source.find("boost::process::v2::process"),
+            std::string::npos);
         EXPECT_NE(
             source.find("boost::process::v2::process_start_dir"),
             std::string::npos);

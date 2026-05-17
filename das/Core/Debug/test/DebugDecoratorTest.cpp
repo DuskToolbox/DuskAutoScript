@@ -31,8 +31,8 @@ namespace Das::Core::Debug::Test
         {
             const auto stamp =
                 std::chrono::steady_clock::now().time_since_epoch().count();
-            auto path = std::filesystem::current_path()
-                / "debug-test-output"
+            auto path =
+                std::filesystem::current_path() / "debug-test-output"
                 / (std::string{test_name} + "-" + std::to_string(stamp));
             std::filesystem::remove_all(path);
             return path;
@@ -72,9 +72,9 @@ namespace Das::Core::Debug::Test
         auto ReadLines(const std::filesystem::path& path)
             -> std::vector<std::string>
         {
-            std::ifstream input{path};
+            std::ifstream            input{path};
             std::vector<std::string> lines;
-            std::string line;
+            std::string              line;
             while (std::getline(input, line))
             {
                 lines.emplace_back(std::move(line));
@@ -95,9 +95,7 @@ namespace Das::Core::Debug::Test
             mat.setTo(cv::Scalar{32, 64, 128});
             auto* image =
                 OcvWrapper::CpuImageImpl<OcvWrapper::Storage::OwningStorage>::
-                    MakeFromCpuMat(
-                        mat,
-                        ExportInterface::DAS_PIXEL_FORMAT_BGR);
+                    MakeFromCpuMat(mat, ExportInterface::DAS_PIXEL_FORMAT_BGR);
             DasPtr<ExportInterface::IDasImage> image_guard(image);
             return CaptureImageSnapshot(image);
         }
@@ -182,7 +180,7 @@ namespace Das::Core::Debug::Test
         DebugRuntime::Shutdown();
         DebugRuntime::ResetForTest();
 
-        const auto override_dir = UniqueTempDir("DebugDirOverride");
+        const auto          override_dir = UniqueTempDir("DebugDirOverride");
         DebugRuntimeOptions override_options{};
         override_options.debug_dir = override_dir;
         ASSERT_EQ(DebugRuntime::Initialize(override_options), DAS_S_OK);
@@ -218,7 +216,7 @@ namespace Das::Core::Debug::Test
         DebugWriterJsonlTest_AssignsMonotonicStepsAndRequiredSchema)
     {
         const auto dir = UniqueTempDir("WriterJsonlSchema");
-        auto* writer = DebugWriterImpl::MakeRaw(dir);
+        auto*      writer = DebugWriterImpl::MakeRaw(dir);
 
         DasU8StringOnStack first{
             "{\"type\":\"first\",\"timestamp\":\"2026-05-07T01:02:03Z\","
@@ -257,7 +255,7 @@ namespace Das::Core::Debug::Test
         DebugWriterJsonlTest_HostSenderUsesDebugWriterByName)
     {
         const auto dir = UniqueTempDir("WriterByName");
-        auto ctx = RegisterWriterForRuntime(dir);
+        auto       ctx = RegisterWriterForRuntime(dir);
 
         DAS::Core::IPC::ScopedCurrentIpcContext scope(
             static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(ctx.get()));
@@ -274,12 +272,10 @@ namespace Das::Core::Debug::Test
         ctx->UnregisterServiceByName("debug.writer");
     }
 
-    TEST_F(
-        DebugRuntimeFixture,
-        DebugWriterJsonlTest_FlushWritesQueuedMetadata)
+    TEST_F(DebugRuntimeFixture, DebugWriterJsonlTest_FlushWritesQueuedMetadata)
     {
         const auto dir = UniqueTempDir("FlushWritesMetadata");
-        auto ctx = RegisterWriterForRuntime(dir);
+        auto       ctx = RegisterWriterForRuntime(dir);
 
         auto event = MakeDebugEvent("flush_metadata", "{}", "{}");
         ASSERT_EQ(DebugRuntime::SubmitEvent(event), DAS_S_OK);
@@ -297,8 +293,8 @@ namespace Das::Core::Debug::Test
         DebugRuntimeFlushTest_DrainsMetadataAndImageJobsBeforeAssertions)
     {
         const auto dir = UniqueTempDir("FlushDrainsImageJobs");
-        auto ctx = RegisterWriterForRuntime(dir);
-        auto snapshot = MakeSnapshot();
+        auto       ctx = RegisterWriterForRuntime(dir);
+        auto       snapshot = MakeSnapshot();
         DebugRuntime::SetLatestImage(snapshot);
 
         DebugDrawBox box{};
@@ -316,8 +312,9 @@ namespace Das::Core::Debug::Test
         EXPECT_TRUE(std::filesystem::exists(dir / "debug.jsonl"));
         EXPECT_TRUE(
             std::filesystem::exists(dir / "img" / image_result.image_filename));
-        EXPECT_TRUE(std::filesystem::exists(
-            dir / "img" / image_result.original_image_filename));
+        EXPECT_TRUE(
+            std::filesystem::exists(
+                dir / "img" / image_result.original_image_filename));
 
         ctx->UnregisterServiceByName("debug.writer");
     }
@@ -330,19 +327,20 @@ namespace Das::Core::Debug::Test
         InitializeEnabledRuntime(dir);
         auto snapshot = MakeSnapshot();
 
-        const auto image_result =
-            SaveOriginalAndAnnotated(
-                "ocr_result",
-                snapshot,
-                std::vector<DebugDrawBox>{});
+        const auto image_result = SaveOriginalAndAnnotated(
+            "ocr_result",
+            snapshot,
+            std::vector<DebugDrawBox>{});
         ASSERT_EQ(image_result.image_status, "available");
-        EXPECT_EQ(image_result.image_filename.find("hello_secret_text"),
-                  std::string::npos);
+        EXPECT_EQ(
+            image_result.image_filename.find("hello_secret_text"),
+            std::string::npos);
         EXPECT_EQ(
             image_result.original_image_filename.find("hello_secret_text"),
             std::string::npos);
-        EXPECT_NE(image_result.image_filename.find("annotated_"),
-                  std::string::npos);
+        EXPECT_NE(
+            image_result.image_filename.find("annotated_"),
+            std::string::npos);
 
         ASSERT_EQ(DrainImageJobs(), DAS_S_OK);
     }
@@ -352,11 +350,10 @@ namespace Das::Core::Debug::Test
         DebugImageWorkerTest_UnsupportedImageWritesNotAvailableStatus)
     {
         const auto snapshot = CaptureImageSnapshot(nullptr);
-        const auto image_result =
-            SaveOriginalAndAnnotated(
-                "unsupported",
-                snapshot,
-                std::vector<DebugDrawBox>{});
+        const auto image_result = SaveOriginalAndAnnotated(
+            "unsupported",
+            snapshot,
+            std::vector<DebugDrawBox>{});
         EXPECT_EQ(image_result.image_status, "not_available");
         ExpectContains(BuildImageJson(image_result), "\"not_available\"");
     }
@@ -366,15 +363,14 @@ namespace Das::Core::Debug::Test
         DebugRuntimeShutdownTest_ShutdownDrainsAndClearsLatestImage)
     {
         const auto dir = UniqueTempDir("ShutdownDrain");
-        auto ctx = RegisterWriterForRuntime(dir);
-        auto snapshot = MakeSnapshot();
+        auto       ctx = RegisterWriterForRuntime(dir);
+        auto       snapshot = MakeSnapshot();
         DebugRuntime::SetLatestImage(snapshot);
 
-        const auto image_result =
-            SaveOriginalAndAnnotated(
-                "shutdown_drain",
-                snapshot,
-                std::vector<DebugDrawBox>{});
+        const auto image_result = SaveOriginalAndAnnotated(
+            "shutdown_drain",
+            snapshot,
+            std::vector<DebugDrawBox>{});
         auto event = MakeDebugEvent(
             "shutdown_drain",
             "{}",

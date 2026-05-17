@@ -17,8 +17,7 @@ namespace
 
     constexpr char kPluginGuid[] = "12345678-9ABC-4DEF-8123-456789ABCDEF";
     constexpr char kTaskGuid[] = "87654321-CBA9-4FED-9123-FEDCBA987654";
-    constexpr char kComponentGuid[] =
-        "68F10001-0000-4000-8000-000000000001";
+    constexpr char kComponentGuid[] = "68F10001-0000-4000-8000-000000000001";
 
     yyjson::value ParseJson(std::string_view json)
     {
@@ -47,13 +46,13 @@ namespace
         std::optional<RepositoryEntryDto> entry;
         std::optional<std::string>        execution_component_guid =
             std::string(kComponentGuid);
-        bool             provider_ok = true;
-        std::string      compile_result_json =
+        bool        provider_ok = true;
+        std::string compile_result_json =
             R"json({"ok":true,"executionInput":{"key1":"compiled"}})json";
-        int                               load_count = 0;
-        int                               capability_count = 0;
-        int                               compile_count = 0;
-        std::string                       last_compile_purpose;
+        int         load_count = 0;
+        int         capability_count = 0;
+        int         compile_count = 0;
+        std::string last_compile_purpose;
 
         RepositoryInvokeCompileServices Bind()
         {
@@ -69,17 +68,14 @@ namespace
                 return entry;
             };
             services.find_execution_component =
-                [this](const RepositoryEntryDto&)
-                    -> std::optional<std::string>
+                [this](const RepositoryEntryDto&) -> std::optional<std::string>
             {
                 ++capability_count;
                 return execution_component_guid;
             };
             services.compile_authoring =
-                [this](
-                    const RepositoryEntryDto&,
-                    const yyjson::value& request)
-                    -> RepositoryInvokeProviderCompileResult
+                [this](const RepositoryEntryDto&, const yyjson::value& request)
+                -> RepositoryInvokeProviderCompileResult
             {
                 ++compile_count;
                 auto request_obj = request.as_object();
@@ -87,10 +83,9 @@ namespace
                     && request_obj->contains(std::string_view("purpose")))
                 {
                     last_compile_purpose =
-                        std::string(
-                            (*request_obj)[std::string_view("purpose")]
-                                .as_string()
-                                .value_or(""));
+                        std::string((*request_obj)[std::string_view("purpose")]
+                                        .as_string()
+                                        .value_or(""));
                 }
 
                 RepositoryInvokeProviderCompileResult result;
@@ -258,9 +253,8 @@ TEST(RepositoryInvokeCompilerTest, ExecutionCompileBuildsChildSnapshot)
         (*execution_input)[std::string_view("providerPrivate")].as_object();
     ASSERT_TRUE(private_payload.has_value());
     EXPECT_TRUE(
-        (*private_payload)[std::string_view("keepExactKey")]
-            .as_bool()
-            .value_or(false));
+        (*private_payload)[std::string_view("keepExactKey")].as_bool().value_or(
+            false));
 }
 
 TEST(RepositoryInvokeCompilerTest, ProviderFailedReturnsDiagnostic)
@@ -352,7 +346,8 @@ TEST(RepositoryInvokeCompilerTest, DirectCycleReturnsDiagnosticBeforeSnapshot)
     })json");
     auto services = fake.Bind();
 
-    auto result = ResolveRepositoryInvokeSnapshot(services, MakeRef(42), context);
+    auto result =
+        ResolveRepositoryInvokeSnapshot(services, MakeRef(42), context);
 
     EXPECT_FALSE(result.ok);
     EXPECT_FALSE(result.snapshot.has_value());
@@ -396,7 +391,8 @@ TEST(RepositoryInvokeCompilerTest, IndirectCycleReturnsFullCyclePath)
     })json");
     auto services = fake.Bind();
 
-    auto result = ResolveRepositoryInvokeSnapshot(services, MakeRef(2), context);
+    auto result =
+        ResolveRepositoryInvokeSnapshot(services, MakeRef(2), context);
 
     EXPECT_FALSE(result.ok);
     EXPECT_FALSE(result.snapshot.has_value());

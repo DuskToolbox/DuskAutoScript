@@ -29,31 +29,31 @@ public:
     DasResult DAS_STD_CALL Flush() override;
 
     DasResult Submit(const DebugEvent& event) override;
-    void Shutdown() override;
+    void      Shutdown() override;
 
 private:
     struct QueueItem
     {
-        DebugEvent event;
+        DebugEvent  event;
         std::string raw_json;
         bool        has_raw_json{false};
     };
 
     DasResult Enqueue(QueueItem item);
-    void WorkerLoop();
+    void      WorkerLoop();
     DasResult WriteOne(const QueueItem& item, uint64_t step);
 
-    std::filesystem::path debug_dir_;
-    std::filesystem::path jsonl_path_;
-    std::mutex            mutex_;
+    std::filesystem::path   debug_dir_;
+    std::filesystem::path   jsonl_path_;
+    std::mutex              mutex_;
     std::condition_variable cv_;
-    std::deque<QueueItem> queue_;
-    bool                  stopping_{false};
-    bool                  worker_started_{false};
-    bool                  writer_active_{false};
-    DasResult             worker_error_{DAS_S_OK};
-    uint64_t              next_step_{1};
-    std::thread           worker_;
+    std::deque<QueueItem>   queue_;
+    bool                    stopping_{false};
+    bool                    worker_started_{false};
+    bool                    writer_active_{false};
+    DasResult               worker_error_{DAS_S_OK};
+    uint64_t                next_step_{1};
+    std::thread             worker_;
 };
 
 DasResult RegisterDebugWriterService(

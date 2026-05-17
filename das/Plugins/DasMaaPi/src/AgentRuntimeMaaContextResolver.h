@@ -17,9 +17,10 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
     class ScopedMaaContextRegistration final
     {
     public:
-        // Registers borrowed Maa handles; the RAII owner must outlive this guard.
+        // Registers borrowed Maa handles; the RAII owner must outlive this
+        // guard.
         ScopedMaaContextRegistration(
-            RuntimeRefDto           runtime_ref,
+            RuntimeRefDto          runtime_ref,
             AgentRuntimeMaaContext context);
         ~ScopedMaaContextRegistration();
 

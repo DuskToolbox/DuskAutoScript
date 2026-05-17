@@ -29,13 +29,13 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/IPC/AsyncOperationImpl.h>
 #include <das/Core/IPC/DasAsyncSender.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/Utils/StdExecution.h>
-#include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/IDasAsyncLoadPluginOperation.h>
 #include <gtest/gtest.h>
 
@@ -238,8 +238,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_TaskAuthoringFactory)
     ASSERT_EQ(load_result, DAS_S_OK);
     ASSERT_NE(proxy, nullptr);
 
-    DAS::DasPtr<IDasBase> raw_proxy =
-        DAS::DasPtr<IDasBase>::Attach(proxy);
+    DAS::DasPtr<IDasBase> raw_proxy = DAS::DasPtr<IDasBase>::Attach(proxy);
     DAS::PluginInterface::DasPluginPackage plugin_package;
     ASSERT_EQ(raw_proxy.As(plugin_package.Put()), DAS_S_OK);
 
@@ -276,20 +275,20 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_TaskAuthoringFactory)
     DAS::DasPtr<IDasJson> apply_result;
     ASSERT_EQ(session->ApplyChange(nullptr, apply_result.Put()), DAS_S_OK);
     auto apply_json = ToYyjson(apply_result.Get());
-    EXPECT_TRUE(
-        apply_json.as_object()->contains(
-            std::string_view("acceptedProperties")));
+    EXPECT_TRUE(apply_json.as_object()->contains(
+        std::string_view("acceptedProperties")));
 
     DAS::DasPtr<IDasJson> compile_result;
     ASSERT_EQ(session->Compile(nullptr, compile_result.Put()), DAS_S_OK);
     auto compile_json = ToYyjson(compile_result.Get());
     EXPECT_TRUE(
-        (*compile_json.as_object())[std::string_view("ok")]
-            .as_bool()
-            .value_or(false));
+        (*compile_json.as_object())[std::string_view("ok")].as_bool().value_or(
+            false));
 }
 
-TEST_F(IpcMultiProcessTestIntegration, CrossProcess_DasMaaPiTaskAuthoringFactory)
+TEST_F(
+    IpcMultiProcessTestIntegration,
+    CrossProcess_DasMaaPiTaskAuthoringFactory)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
@@ -326,8 +325,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_DasMaaPiTaskAuthoringFactory
     ASSERT_EQ(load_result, DAS_S_OK);
     ASSERT_NE(proxy, nullptr);
 
-    DAS::DasPtr<IDasBase> raw_proxy =
-        DAS::DasPtr<IDasBase>::Attach(proxy);
+    DAS::DasPtr<IDasBase> raw_proxy = DAS::DasPtr<IDasBase>::Attach(proxy);
     DAS::PluginInterface::DasPluginPackage plugin_package;
     ASSERT_EQ(raw_proxy.As(plugin_package.Put()), DAS_S_OK);
 
@@ -354,8 +352,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_DasMaaPiTaskAuthoringFactory
     IDasTaskAuthoringSession* session_raw = nullptr;
     ASSERT_EQ(
         factory->CreateSession(
-            DAS::Core::ForeignInterfaceHost::MakeDasGuid(
-                kDasMaaPiTaskGuidText),
+            DAS::Core::ForeignInterfaceHost::MakeDasGuid(kDasMaaPiTaskGuidText),
             nullptr,
             &session_raw),
         DAS_S_OK);
@@ -409,8 +406,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_TaskComponentFactory)
     ASSERT_EQ(load_result, DAS_S_OK);
     ASSERT_NE(proxy, nullptr);
 
-    DAS::DasPtr<IDasBase> raw_proxy =
-        DAS::DasPtr<IDasBase>::Attach(proxy);
+    DAS::DasPtr<IDasBase> raw_proxy = DAS::DasPtr<IDasBase>::Attach(proxy);
     DAS::PluginInterface::DasPluginPackage plugin_package;
     ASSERT_EQ(raw_proxy.As(plugin_package.Put()), DAS_S_OK);
 
@@ -446,9 +442,8 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_TaskComponentFactory)
         component->ApplySettingsChange(nullptr, settings_result.Put()),
         DAS_S_OK);
     auto settings_json = ToYyjson(settings_result.Get());
-    EXPECT_TRUE(
-        settings_json.as_object()->contains(
-            std::string_view("acceptedSettings")));
+    EXPECT_TRUE(settings_json.as_object()->contains(
+        std::string_view("acceptedSettings")));
 
     DAS::DasPtr<IDasJson> do_result;
     ASSERT_EQ(
@@ -456,9 +451,8 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_TaskComponentFactory)
         DAS_S_OK);
     auto do_json = ToYyjson(do_result.Get());
     EXPECT_EQ(
-        (*do_json.as_object())[std::string_view("status")]
-            .as_string()
-            .value_or(""),
+        (*do_json.as_object())[std::string_view("status")].as_string().value_or(
+            ""),
         std::string_view("completed"));
 }
 
@@ -2118,8 +2112,8 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LuaDirectorLifecycleTest)
     // 7. 等待 Lua GC 触发 __gc → Release 回调
     //    事件驱动通知链路（对照 Java 版 Java GC → finalize → callback）：
     //    Lua GC → __gc 元方法 → Director Release → ref_count=0 → 析构
-    //    → (LuaTestPlugin.dispatch_callback) → callback Dispatch("lifecycle_callback")
-    //    → LifecycleCallbackComponent.Dispatch()
+    //    → (LuaTestPlugin.dispatch_callback) → callback
+    //    Dispatch("lifecycle_callback") → LifecycleCallbackComponent.Dispatch()
     //    → ctx_->PostCallback(completion_signal_)
     //    → CompletionSignal.Do() → done = true
     std::atomic<bool> done{false};

@@ -129,8 +129,7 @@ namespace
         return result;
     }
 
-    std::optional<yyjson::value> ReadDasJson(
-        ExportInterface::IDasJson* p_json)
+    std::optional<yyjson::value> ReadDasJson(ExportInterface::IDasJson* p_json)
     {
         if (p_json == nullptr)
         {
@@ -145,8 +144,7 @@ namespace
         }
 
         const char* json_u8 = nullptr;
-        if (DAS::IsFailed(json_string->GetUtf8(&json_u8))
-            || json_u8 == nullptr)
+        if (DAS::IsFailed(json_string->GetUtf8(&json_u8)) || json_u8 == nullptr)
         {
             return std::nullopt;
         }
@@ -168,9 +166,9 @@ namespace
     }
 
     yyjson::value MakeRepositoryInvokeResult(
-        std::string_view status,
+        std::string_view           status,
         std::optional<std::string> child_status,
-        yyjson::value child_outputs,
+        yyjson::value              child_outputs,
         std::vector<RepositoryInvokeDto::InvokeRepositoryTaskDiagnosticDto>
             diagnostics = {})
     {
@@ -205,7 +203,7 @@ namespace
     }
 
     DasResult ReturnJson(
-        yyjson::value                    value,
+        yyjson::value                     value,
         ExportInterface::IDasJson** const pp_out_result_json)
     {
         auto wrapped = WrapJson(std::move(value));
@@ -266,10 +264,9 @@ namespace
 } // namespace
 
 DasFlowControlTaskComponent::DasFlowControlTaskComponent(
-    std::string_view kind,
+    std::string_view                               kind,
     DasPtr<PluginInterface::IDasTaskComponentHost> host)
-    : kind_(kind),
-      settings_(Das::Utils::MakeYyjsonObject()),
+    : kind_(kind), settings_(Das::Utils::MakeYyjsonObject()),
       host_(std::move(host))
 {
 }
@@ -410,9 +407,8 @@ DasResult DasFlowControlTaskComponent::DoRepositoryInvoke(
     RepositoryInvokeDto::ChildExecutionSnapshotDto snapshot;
     try
     {
-        snapshot =
-            yyjson::cast<RepositoryInvokeDto::ChildExecutionSnapshotDto>(
-                snapshot_json);
+        snapshot = yyjson::cast<RepositoryInvokeDto::ChildExecutionSnapshotDto>(
+            snapshot_json);
     }
     catch (const std::exception&)
     {
@@ -441,7 +437,7 @@ DasResult DasFlowControlTaskComponent::DoRepositoryInvoke(
             pp_out_result_json);
     }
 
-    DasGuid child_component_guid{};
+    DasGuid    child_component_guid{};
     const auto guid_result =
         DasMakeDasGuid(snapshot.component_guid.c_str(), &child_component_guid);
     if (DAS::IsFailed(guid_result))
@@ -454,7 +450,7 @@ DasResult DasFlowControlTaskComponent::DoRepositoryInvoke(
     }
 
     DasPtr<PluginInterface::IDasTaskComponent> child_component;
-    const auto create_result =
+    const auto                                 create_result =
         host_->CreateTaskComponent(child_component_guid, child_component.Put());
     if (DAS::IsFailed(create_result) || !child_component)
     {
@@ -476,7 +472,7 @@ DasResult DasFlowControlTaskComponent::DoRepositoryInvoke(
     }
 
     DasPtr<ExportInterface::IDasJson> child_result;
-    const auto do_result = child_component->Do(
+    const auto                        do_result = child_component->Do(
         stop_token,
         p_environment_json,
         p_settings_json,
@@ -532,8 +528,8 @@ DasResult DasFlowControlTaskComponent::Do(
     PluginInterface::IDasStopToken* stop_token,
     ExportInterface::IDasJson*      p_environment_json,
     ExportInterface::IDasJson*      p_settings_json,
-    ExportInterface::IDasJson*  p_input_json,
-    ExportInterface::IDasJson** pp_out_result_json)
+    ExportInterface::IDasJson*      p_input_json,
+    ExportInterface::IDasJson**     pp_out_result_json)
 {
     if (pp_out_result_json == nullptr)
     {

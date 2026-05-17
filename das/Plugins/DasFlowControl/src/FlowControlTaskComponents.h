@@ -52,7 +52,7 @@ class DasFlowControlTaskComponent final
 {
 public:
     DasFlowControlTaskComponent(
-        std::string_view kind,
+        std::string_view                               kind,
         DasPtr<PluginInterface::IDasTaskComponentHost> host);
 
     DAS_IMPL GetGuid(DasGuid* p_out_guid) override;
@@ -77,9 +77,9 @@ private:
         ExportInterface::IDasJson*      p_input_json,
         ExportInterface::IDasJson**     pp_out_result_json);
 
-    std::string                                      kind_;
-    yyjson::value                                    settings_;
-    DasPtr<PluginInterface::IDasTaskComponentHost>   host_;
+    std::string                                    kind_;
+    yyjson::value                                  settings_;
+    DasPtr<PluginInterface::IDasTaskComponentHost> host_;
 };
 
 class DasFlowControlTaskComponentFactory final

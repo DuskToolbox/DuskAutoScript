@@ -2,9 +2,7 @@
 
 namespace Das::Plugins::DasMaaPi
 {
-    const PiOption* FindOption(
-        const PiCatalog& catalog,
-        std::string_view name)
+    const PiOption* FindOption(const PiCatalog& catalog, std::string_view name)
     {
         for (const auto& option : catalog.options)
         {

@@ -94,9 +94,8 @@ namespace
         {
             auto field = it->as_object();
             if (field && field->contains(std::string_view("valuePath"))
-                && (*field)[std::string_view("valuePath")]
-                       .as_string()
-                       .value_or("")
+                && (*field)[std::string_view("valuePath")].as_string().value_or(
+                       "")
                        == value_path)
             {
                 return true;
@@ -125,8 +124,8 @@ namespace
             auto option = it->as_object();
             if (option && option->contains(std::string_view("optionName"))
                 && (*option)[std::string_view("optionName")]
-                       .as_string()
-                       .value_or("")
+                           .as_string()
+                           .value_or("")
                        == option_name)
             {
                 return true;
@@ -135,9 +134,7 @@ namespace
         return false;
     }
 
-    bool TaskHasOption(
-        const yyjson::value& task,
-        std::string_view     option_name)
+    bool TaskHasOption(const yyjson::value& task, std::string_view option_name)
     {
         auto task_obj = task.as_object();
         if (!task_obj || !task_obj->contains(std::string_view("options")))
@@ -154,8 +151,8 @@ namespace
             auto option = it->as_object();
             if (option && option->contains(std::string_view("optionName"))
                 && (*option)[std::string_view("optionName")]
-                       .as_string()
-                       .value_or("")
+                           .as_string()
+                           .value_or("")
                        == option_name)
             {
                 return true;
@@ -191,11 +188,13 @@ namespace
             {
                 continue;
             }
-            auto inputs = (*option)[std::string_view("inputValues")].as_object();
+            auto inputs =
+                (*option)[std::string_view("inputValues")].as_object();
             if (inputs && inputs->contains(input_name)
                 && (*inputs)[input_name].is_string())
             {
-                return std::string((*inputs)[input_name].as_string().value_or(""));
+                return std::string(
+                    (*inputs)[input_name].as_string().value_or(""));
             }
         }
         return {};
@@ -230,7 +229,9 @@ namespace
             registry_ =
                 std::make_unique<Das::Core::IPC::RemoteObjectRegistry>();
             plugin_manager_->SetRegistry(*registry_);
-            ASSERT_EQ(plugin_manager_->LoadPlugin(MaapiManifestPath()), DAS_S_OK);
+            ASSERT_EQ(
+                plugin_manager_->LoadPlugin(MaapiManifestPath()),
+                DAS_S_OK);
             ASSERT_EQ(
                 plugin_manager_->RegisterPluginObjects(MaapiManifestPath()),
                 DAS_S_OK);
@@ -255,9 +256,8 @@ namespace
                 factory;
             EXPECT_EQ(
                 features[0]->interface_ptr->QueryInterface(
-                    DasIidOf<
-                        Das::PluginInterface::
-                            IDasTaskAuthoringSessionFactory>(),
+                    DasIidOf<Das::PluginInterface::
+                                 IDasTaskAuthoringSessionFactory>(),
                     reinterpret_cast<void**>(factory.Put())),
                 DAS_S_OK);
             auto context_json = ParseDasJson(std::move(context));
@@ -293,8 +293,7 @@ TEST_F(MaapiAuthoringFixture, ApplyPathFailurePersistsDiagnostics)
     auto result = ReadJsonInterface(result_json.Get());
     auto obj = result.as_object();
     ASSERT_TRUE(obj.has_value());
-    auto accepted =
-        (*obj)[std::string_view("acceptedProperties")].as_object();
+    auto accepted = (*obj)[std::string_view("acceptedProperties")].as_object();
     ASSERT_TRUE(accepted.has_value());
     auto adapter = (*accepted)[std::string_view("adapter")].as_object();
     ASSERT_TRUE(adapter.has_value());
@@ -302,8 +301,7 @@ TEST_F(MaapiAuthoringFixture, ApplyPathFailurePersistsDiagnostics)
         (*adapter)[std::string_view("interfacePath")].as_string().value_or(""),
         missing_path);
 
-    auto diagnostics =
-        (*obj)[std::string_view("diagnostics")].as_array();
+    auto diagnostics = (*obj)[std::string_view("diagnostics")].as_array();
     ASSERT_TRUE(diagnostics.has_value());
     EXPECT_FALSE(diagnostics->empty());
 
@@ -315,7 +313,8 @@ TEST_F(MaapiAuthoringFixture, ApplyPathFailurePersistsDiagnostics)
 TEST_F(MaapiAuthoringFixture, ApplyPathSuccessRefreshesDocument)
 {
     auto session = CreateSession();
-    auto interface_path = FixturePath("interface_authoring.jsonc").generic_string();
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
     auto change = ParseDasJson(
         "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
         "\"adapter.interfacePath\",\"value\":\""
@@ -327,9 +326,7 @@ TEST_F(MaapiAuthoringFixture, ApplyPathSuccessRefreshesDocument)
     auto obj = result.as_object();
     ASSERT_TRUE(obj.has_value());
     EXPECT_EQ(
-        (*obj)[std::string_view("sourceFingerprint")]
-            .as_string()
-            .value_or(""),
+        (*obj)[std::string_view("sourceFingerprint")].as_string().value_or(""),
         "AuthoringFixture:1.0");
 
     auto document = (*obj)[std::string_view("document")];
@@ -337,32 +334,40 @@ TEST_F(MaapiAuthoringFixture, ApplyPathSuccessRefreshesDocument)
     EXPECT_TRUE(ArrayHasFieldWithValuePath(document, "pi.resourceName"));
     EXPECT_TRUE(ArrayHasFieldWithValuePath(document, "pi.options.stage"));
     EXPECT_TRUE(ArrayHasFieldWithValuePath(document, "pi.options.retry"));
-    EXPECT_TRUE(ArrayHasFieldWithValuePath(document, "pi.options.use-medicine"));
+    EXPECT_TRUE(
+        ArrayHasFieldWithValuePath(document, "pi.options.use-medicine"));
     EXPECT_TRUE(ArrayHasFieldWithValuePath(document, "pi.options.notify"));
 }
 
 TEST_F(MaapiAuthoringFixture, PiValuePathsPersistTasksAndOptions)
 {
-    auto interface_path = FixturePath("interface_authoring.jsonc").generic_string();
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
     auto session = CreateSession(
         "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
 
     DasPtr<Das::ExportInterface::IDasJson> result_json;
-    auto tasks_change = ParseDasJson(
+    auto                                   tasks_change = ParseDasJson(
         "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
         "\"pi.tasks\",\"value\":[{\"taskName\":\"DailyFarm\","
         "\"enabled\":true}]}}");
-    ASSERT_EQ(session->ApplyChange(tasks_change.Get(), result_json.Put()), DAS_S_OK);
+    ASSERT_EQ(
+        session->ApplyChange(tasks_change.Get(), result_json.Put()),
+        DAS_S_OK);
 
     auto stage_change = ParseDasJson(
         "{\"baseRevision\":1,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
         "\"pi.options.stage\",\"value\":{\"selectedCases\":[\"1-1\"]}}}");
-    ASSERT_EQ(session->ApplyChange(stage_change.Get(), result_json.Put()), DAS_S_OK);
+    ASSERT_EQ(
+        session->ApplyChange(stage_change.Get(), result_json.Put()),
+        DAS_S_OK);
 
     auto retry_change = ParseDasJson(
         "{\"baseRevision\":2,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
         "\"pi.options.retry\",\"value\":{\"inputValues\":{\"times\":\"9\"}}}}");
-    ASSERT_EQ(session->ApplyChange(retry_change.Get(), result_json.Put()), DAS_S_OK);
+    ASSERT_EQ(
+        session->ApplyChange(retry_change.Get(), result_json.Put()),
+        DAS_S_OK);
 
     auto medicine_change = ParseDasJson(
         "{\"baseRevision\":3,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
@@ -374,7 +379,9 @@ TEST_F(MaapiAuthoringFixture, PiValuePathsPersistTasksAndOptions)
     auto notify_change = ParseDasJson(
         "{\"baseRevision\":4,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
         "\"pi.options.notify\",\"value\":true}}");
-    ASSERT_EQ(session->ApplyChange(notify_change.Get(), result_json.Put()), DAS_S_OK);
+    ASSERT_EQ(
+        session->ApplyChange(notify_change.Get(), result_json.Put()),
+        DAS_S_OK);
 
     auto result = ReadJsonInterface(result_json.Get());
     auto accepted =
@@ -403,11 +410,12 @@ TEST_F(MaapiAuthoringFixture, PiValuePathsPersistTasksAndOptions)
     auto delete_retry = ParseDasJson(
         "{\"baseRevision\":5,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
         "\"pi.options.retry\",\"value\":null}}");
-    ASSERT_EQ(session->ApplyChange(delete_retry.Get(), result_json.Put()), DAS_S_OK);
+    ASSERT_EQ(
+        session->ApplyChange(delete_retry.Get(), result_json.Put()),
+        DAS_S_OK);
     result = ReadJsonInterface(result_json.Get());
-    accepted =
-        (*result.as_object())[std::string_view("acceptedProperties")]
-            .as_object();
+    accepted = (*result.as_object())[std::string_view("acceptedProperties")]
+                   .as_object();
     ASSERT_TRUE(accepted.has_value());
     pi = (*accepted)[std::string_view("pi")];
     tasks = (*pi.as_object())[std::string_view("tasks")].as_array();
@@ -418,7 +426,8 @@ TEST_F(MaapiAuthoringFixture, PiValuePathsPersistTasksAndOptions)
 
 TEST_F(MaapiAuthoringFixture, PiValuePathCleanupRemovesOrphans)
 {
-    auto interface_path = FixturePath("interface_authoring.jsonc").generic_string();
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
     auto session = CreateSession(
         "{\"adapter\":{\"interfacePath\":\"" + interface_path
         + "\"},\"pi\":{\"orphanPaths\":[\"pi.options:legacy\","
@@ -427,7 +436,7 @@ TEST_F(MaapiAuthoringFixture, PiValuePathCleanupRemovesOrphans)
           "\"tasks\":[{\"taskName\":\"MissingTask\",\"enabled\":true}]}}");
 
     DasPtr<Das::ExportInterface::IDasJson> result_json;
-    auto delete_option = ParseDasJson(
+    auto                                   delete_option = ParseDasJson(
         "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
         "\"pi.options.legacy\",\"value\":null}}");
     ASSERT_EQ(
@@ -448,8 +457,7 @@ TEST_F(MaapiAuthoringFixture, PiValuePathCleanupRemovesOrphans)
     ASSERT_TRUE(accepted.has_value());
     auto pi = (*accepted)[std::string_view("pi")].as_object();
     ASSERT_TRUE(pi.has_value());
-    auto global_options =
-        (*pi)[std::string_view("globalOptions")].as_array();
+    auto global_options = (*pi)[std::string_view("globalOptions")].as_array();
     ASSERT_TRUE(global_options.has_value());
     EXPECT_TRUE(global_options->empty());
     auto tasks = (*pi)[std::string_view("tasks")].as_array();
@@ -462,7 +470,8 @@ TEST_F(MaapiAuthoringFixture, PiValuePathCleanupRemovesOrphans)
 
 TEST_F(MaapiAuthoringFixture, PresetAndOrphansProjectIntoSettings)
 {
-    auto interface_path = FixturePath("interface_authoring.jsonc").generic_string();
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
     auto session = CreateSession(
         "{\"adapter\":{\"interfacePath\":\"" + interface_path
         + "\"},\"pi\":{\"orphanPaths\":[\"pi.tasks:MissingTask\"]}}");
@@ -476,8 +485,7 @@ TEST_F(MaapiAuthoringFixture, PresetAndOrphansProjectIntoSettings)
     auto obj = result.as_object();
     ASSERT_TRUE(obj.has_value());
 
-    auto accepted =
-        (*obj)[std::string_view("acceptedProperties")].as_object();
+    auto accepted = (*obj)[std::string_view("acceptedProperties")].as_object();
     ASSERT_TRUE(accepted.has_value());
     auto pi = (*accepted)[std::string_view("pi")].as_object();
     ASSERT_TRUE(pi.has_value());
@@ -495,11 +503,9 @@ TEST_F(MaapiAuthoringFixture, PresetAndOrphansProjectIntoSettings)
 
     auto document = (*obj)[std::string_view("document")].as_object();
     ASSERT_TRUE(document.has_value());
-    auto migration =
-        (*document)[std::string_view("migration")].as_object();
+    auto migration = (*document)[std::string_view("migration")].as_object();
     ASSERT_TRUE(migration.has_value());
-    auto orphans =
-        (*migration)[std::string_view("orphanPaths")].as_array();
+    auto orphans = (*migration)[std::string_view("orphanPaths")].as_array();
     ASSERT_TRUE(orphans.has_value());
     ASSERT_EQ(orphans->size(), 1u);
     EXPECT_EQ((*orphans)[0].as_string().value_or(""), "pi.tasks:MissingTask");

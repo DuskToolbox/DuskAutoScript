@@ -21,10 +21,9 @@ DasResult ForeignInterfaceHost::InputFactoryManager::Register(
     try
     {
         DasPtr<Das::PluginInterface::IDasInputFactory> factory{p_factory};
-        auto p_decorated_factory =
-            Das::Core::Debug::MaybeDecorateInputFactory(
-                std::move(factory),
-                nullptr);
+        auto p_decorated_factory = Das::Core::Debug::MaybeDecorateInputFactory(
+            std::move(factory),
+            nullptr);
         if (!p_decorated_factory)
         {
             return DAS_E_INVALID_POINTER;

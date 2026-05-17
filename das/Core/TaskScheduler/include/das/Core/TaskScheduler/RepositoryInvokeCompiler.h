@@ -16,30 +16,30 @@ namespace Das::Core::TaskScheduler::RepositoryInvoke
 {
     struct RepositoryInvokeCompileDiagnostic
     {
-        std::string severity = "error";
-        std::string code;
-        std::string message;
-        std::optional<std::string> path;
-        std::optional<int64_t>     current_revision;
-        std::optional<int64_t>     expected_revision;
-        std::optional<std::string> current_source_fingerprint;
-        std::optional<std::string> expected_source_fingerprint;
+        std::string                          severity = "error";
+        std::string                          code;
+        std::string                          message;
+        std::optional<std::string>           path;
+        std::optional<int64_t>               current_revision;
+        std::optional<int64_t>               expected_revision;
+        std::optional<std::string>           current_source_fingerprint;
+        std::optional<std::string>           expected_source_fingerprint;
         std::vector<RepositoryCyclePathItem> cycle_path;
     };
 
     struct RepositoryInvokeProviderCompileResult
     {
-        bool                                      ok = false;
-        yyjson::value                            compile_result;
+        bool                                           ok = false;
+        yyjson::value                                  compile_result;
         std::vector<RepositoryInvokeCompileDiagnostic> diagnostics;
     };
 
     struct RepositoryInvokeCompileResult
     {
-        bool ok = false;
-        std::optional<Dto::ChildExecutionSnapshotDto> snapshot;
+        bool                                           ok = false;
+        std::optional<Dto::ChildExecutionSnapshotDto>  snapshot;
         std::vector<RepositoryInvokeCompileDiagnostic> diagnostics;
-        std::vector<RepositoryCyclePathItem> cycle_path;
+        std::vector<RepositoryCyclePathItem>           cycle_path;
     };
 
     struct RepositoryInvokeSourceContext
@@ -58,7 +58,7 @@ namespace Das::Core::TaskScheduler::RepositoryInvoke
             find_execution_component;
         std::function<RepositoryInvokeProviderCompileResult(
             const Repository::Dto::RepositoryEntryDto& entry,
-            const yyjson::value& request)>
+            const yyjson::value&                       request)>
             compile_authoring;
     };
 
@@ -71,7 +71,8 @@ namespace Das::Core::TaskScheduler::RepositoryInvoke
         const Dto::RepositoryTaskRefDto&       repository_ref,
         const RepositoryInvokeSourceContext&   source_context);
 
-    std::vector<RepositoryDependencyEdge> ExtractRepositoryInvokeDependencyEdges(
+    std::vector<RepositoryDependencyEdge>
+    ExtractRepositoryInvokeDependencyEdges(
         int64_t              source_entry_id,
         const yyjson::value& source_graph);
 

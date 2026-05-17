@@ -12,8 +12,19 @@ public:
     virtual int GetValue() const noexcept = 0;
 };
 
-DAS_DEFINE_CLASS_GUID_HOLDER(ITestInterface, 0x12345678, 0x9abc, 0xdef0, 0x11,
-    0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88)
+DAS_DEFINE_CLASS_GUID_HOLDER(
+    ITestInterface,
+    0x12345678,
+    0x9abc,
+    0xdef0,
+    0x11,
+    0x22,
+    0x33,
+    0x44,
+    0x55,
+    0x66,
+    0x77,
+    0x88)
 
 // 用于测试 apply_impl_base 的接口（有 Apply 方法）
 class ITestApplyInterface : public IDasBase
@@ -22,8 +33,19 @@ public:
     DAS_METHOD Apply(int x) = 0;
 };
 
-DAS_DEFINE_CLASS_GUID_HOLDER(ITestApplyInterface, 0xAABBCCDD, 0xEEFF, 0x0011,
-    0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99)
+DAS_DEFINE_CLASS_GUID_HOLDER(
+    ITestApplyInterface,
+    0xAABBCCDD,
+    0xEEFF,
+    0x0011,
+    0x22,
+    0x33,
+    0x44,
+    0x55,
+    0x66,
+    0x77,
+    0x88,
+    0x99)
 
 namespace
 {
@@ -87,15 +109,12 @@ namespace
     {
     private:
         std::atomic<uint32_t> ref_count_{0};
-        int                    value_;
+        int                   value_;
 
     public:
         explicit TestQIObject(int v = 42) : value_(v) {}
 
-        uint32_t AddRef() override
-        {
-            return ++ref_count_;
-        }
+        uint32_t AddRef() override { return ++ref_count_; }
         uint32_t Release() override
         {
             auto result = --ref_count_;
@@ -106,10 +125,7 @@ namespace
             }
             return result;
         }
-        uint32_t GetRefCount() const noexcept
-        {
-            return ref_count_;
-        }
+        uint32_t   GetRefCount() const noexcept { return ref_count_; }
         DAS_METHOD QueryInterface(const DasGuid& iid, void** pp_object) override
         {
             if (pp_object == nullptr)
@@ -132,10 +148,7 @@ namespace
             AddRef();
             return DAS_S_OK;
         }
-        int GetValue() const noexcept override
-        {
-            return value_;
-        }
+        int GetValue() const noexcept override { return value_; }
     };
 
     // === Task 1 TDD 测试 ===
@@ -144,13 +157,13 @@ namespace
     // QI 已 AddRef，Attach 不再加
     TEST(DasPtrAsTest, AsDasPtrRefUsesAttach)
     {
-        auto* raw = new TestQIObject(42);
+        auto*                       raw = new TestQIObject(42);
         DAS::DasPtr<ITestInterface> ptr(raw);
         // DasPtr 构造 AddRef -> ref_count = 1
         ASSERT_EQ(raw->GetRefCount(), 1);
 
         DAS::DasPtr<IDasBase> base_ptr;
-        const DasResult result = ptr.As(base_ptr);
+        const DasResult       result = ptr.As(base_ptr);
 
         EXPECT_EQ(result, DAS_S_OK);
         EXPECT_NE(base_ptr.Get(), nullptr);
@@ -165,11 +178,11 @@ namespace
     // Test 2: As(Other**) 不额外 AddRef（QI 已 AddRef）
     TEST(DasPtrAsTest, AsRawPtrOutNoExtraAddRef)
     {
-        auto* raw = new TestQIObject(42);
+        auto*                       raw = new TestQIObject(42);
         DAS::DasPtr<ITestInterface> ptr(raw);
         ASSERT_EQ(raw->GetRefCount(), 1);
 
-        IDasBase* base_raw = nullptr;
+        IDasBase*       base_raw = nullptr;
         const DasResult result = ptr.As(&base_raw);
 
         EXPECT_EQ(result, DAS_S_OK);
@@ -185,7 +198,7 @@ namespace
     // Test 3: As(const DasGuid&) 不对原始 ptr_ AddRef，由 QI 返回对象自带引用
     TEST(DasPtrAsTest, AsGuidReturnsQIResultWithRef)
     {
-        auto* raw = new TestQIObject(42);
+        auto*                       raw = new TestQIObject(42);
         DAS::DasPtr<ITestInterface> ptr(raw);
         ASSERT_EQ(raw->GetRefCount(), 1);
 
@@ -203,11 +216,11 @@ namespace
     // Test 4: As(const DasGuid&) QI 失败返回 nullptr
     TEST(DasPtrAsTest, AsGuidQIFailureReturnsNullptr)
     {
-        auto* raw = new TestQIObject(42);
+        auto*                       raw = new TestQIObject(42);
         DAS::DasPtr<ITestInterface> ptr(raw);
 
         DasGuid unknown_guid = {0xDEAD, 0xBEEF, 0xCAFE, {}};
-        auto* iface = ptr.As<ITestInterface>(unknown_guid);
+        auto*   iface = ptr.As<ITestInterface>(unknown_guid);
         EXPECT_EQ(iface, nullptr);
         // QI 失败不 AddRef，ref_count 不变
         EXPECT_EQ(raw->GetRefCount(), 1);
@@ -233,16 +246,19 @@ namespace
     // DasPtr::As(DasPtr&) 使用 Attach 不双重 AddRef
     TEST(DasPtrAsTest, ApplyImplBaseHeapQIAddRefs)
     {
-        using ApplyWrapper =
-            DAS::Utils::Details::apply_impl_base<false, ITestApplyInterface,
-                std::function<DasResult(int)>, DasResult, int>::apply_impl;
+        using ApplyWrapper = DAS::Utils::Details::apply_impl_base<
+            false,
+            ITestApplyInterface,
+            std::function<DasResult(int)>,
+            DasResult,
+            int>::apply_impl;
 
         auto* raw = new ApplyWrapper([](int x) { return DAS_S_OK; });
         // RefCounter 初始值 0, DasPtr 构造 AddRef -> ref_count = 1
         DAS::DasPtr<ITestApplyInterface> ptr(raw);
 
         DAS::DasPtr<IDasBase> base_ptr;
-        const DasResult result = ptr.As(base_ptr);
+        const DasResult       result = ptr.As(base_ptr);
 
         EXPECT_EQ(result, DAS_S_OK);
         EXPECT_NE(base_ptr.Get(), nullptr);
@@ -257,16 +273,19 @@ namespace
     // Test 7: apply_impl_base<true> 栈对象 QI 成功不崩溃
     TEST(DasPtrAsTest, ApplyImplBaseStackQIDoesNotCrash)
     {
-        using ApplyWrapper =
-            DAS::Utils::Details::apply_impl_base<true, ITestApplyInterface,
-                std::function<DasResult(int)>, DasResult, int>::apply_impl;
+        using ApplyWrapper = DAS::Utils::Details::apply_impl_base<
+            true,
+            ITestApplyInterface,
+            std::function<DasResult(int)>,
+            DasResult,
+            int>::apply_impl;
 
-        auto lambda = [](int x) { return DAS_S_OK; };
+        auto         lambda = [](int x) { return DAS_S_OK; };
         ApplyWrapper stack_obj(std::ref(lambda));
 
-        void* result = nullptr;
-        const DasResult qi_result = stack_obj.QueryInterface(
-            DasIidOf<ITestApplyInterface>(), &result);
+        void*           result = nullptr;
+        const DasResult qi_result =
+            stack_obj.QueryInterface(DasIidOf<ITestApplyInterface>(), &result);
 
         EXPECT_EQ(qi_result, DAS_S_OK);
         EXPECT_NE(result, nullptr);
@@ -278,16 +297,19 @@ namespace
     // Test 8: apply_impl_base<false> QI 到不同接口（IDasBase）不崩溃
     TEST(DasPtrAsTest, ApplyImplBaseHeapQIToBaseInterface)
     {
-        using ApplyWrapper =
-            DAS::Utils::Details::apply_impl_base<false, ITestApplyInterface,
-                std::function<DasResult(int)>, DasResult, int>::apply_impl;
+        using ApplyWrapper = DAS::Utils::Details::apply_impl_base<
+            false,
+            ITestApplyInterface,
+            std::function<DasResult(int)>,
+            DasResult,
+            int>::apply_impl;
 
         auto* raw = new ApplyWrapper([](int x) { return DAS_S_OK; });
         DAS::DasPtr<ITestApplyInterface> ptr(raw);
 
         // QI 到 IDasBase（不同的接口）
         DAS::DasPtr<IDasBase> base_ptr;
-        const DasResult result = ptr.As(base_ptr);
+        const DasResult       result = ptr.As(base_ptr);
 
         EXPECT_EQ(result, DAS_S_OK);
         EXPECT_NE(base_ptr.Get(), nullptr);

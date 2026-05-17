@@ -14,7 +14,7 @@ public:
     virtual ~IDebugSink() = default;
     virtual DasResult Submit(const DebugEvent& event) = 0;
     virtual DasResult Flush() = 0;
-    virtual void Shutdown() {}
+    virtual void      Shutdown() {}
 };
 
 class IDebugDrain
@@ -22,7 +22,7 @@ class IDebugDrain
 public:
     virtual ~IDebugDrain() = default;
     virtual DasResult Flush() = 0;
-    virtual void Shutdown() {}
+    virtual void      Shutdown() {}
 };
 
 DAS_CORE_DEBUG_NS_END

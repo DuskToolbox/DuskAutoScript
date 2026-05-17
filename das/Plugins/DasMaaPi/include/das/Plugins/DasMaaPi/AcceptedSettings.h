@@ -4,8 +4,8 @@
 
 #include <cpp_yyjson.hpp>
 
-#include <optional>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -26,30 +26,30 @@ namespace Das::Plugins::DasMaaPi
 
     struct MaapiPiOptionSettingsDto
     {
-        std::string                         option_name;
-        std::string                         kind;
-        std::vector<std::string>            selected_cases;
-        std::map<std::string, std::string>  input_values;
-        std::optional<bool>                 bool_value;
+        std::string                        option_name;
+        std::string                        kind;
+        std::vector<std::string>           selected_cases;
+        std::map<std::string, std::string> input_values;
+        std::optional<bool>                bool_value;
     };
 
     struct MaapiPiTaskSettingsDto
     {
-        std::string task_name;
-        bool        enabled = true;
+        std::string                           task_name;
+        bool                                  enabled = true;
         std::vector<MaapiPiOptionSettingsDto> options;
     };
 
     struct MaapiPiSettingsDto
     {
-        std::optional<std::string>       controller_name;
-        std::optional<std::string>       resource_name;
-        std::optional<std::string>       preset_name;
+        std::optional<std::string>            controller_name;
+        std::optional<std::string>            resource_name;
+        std::optional<std::string>            preset_name;
         std::vector<MaapiPiOptionSettingsDto> global_options;
         std::vector<MaapiPiOptionSettingsDto> resource_options;
         std::vector<MaapiPiOptionSettingsDto> controller_options;
-        std::vector<MaapiPiTaskSettingsDto> tasks;
-        std::vector<std::string>         orphan_paths;
+        std::vector<MaapiPiTaskSettingsDto>   tasks;
+        std::vector<std::string>              orphan_paths;
     };
 
     struct AcceptedSettingsDto

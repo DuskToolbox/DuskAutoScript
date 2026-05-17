@@ -77,10 +77,8 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
         class BoostAgentProcess final : public IAgentProcess
         {
         public:
-            explicit BoostAgentProcess(
-                const AgentProcessLaunchRequest& request)
-                : stdout_pipe_(io_context_),
-                  stderr_pipe_(io_context_),
+            explicit BoostAgentProcess(const AgentProcessLaunchRequest& request)
+                : stdout_pipe_(io_context_), stderr_pipe_(io_context_),
                   max_output_tail_bytes_(request.max_output_tail_bytes)
             {
                 auto env_values = BuildProcessEnvironment(request.environment);
@@ -89,35 +87,30 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
 
                 if (request.capture_output)
                 {
-                    process_ =
-                        std::make_unique<boost::process::v2::process>(
-                            io_context_,
-                            request.executable.string(),
-                            request.arguments,
-                            boost::process::v2::process_start_dir(
-                                request.working_directory.string()),
-                            boost::process::v2::process_stdio{
-                                {},
-                                stdout_pipe_,
-                                stderr_pipe_},
-                            std::move(child_environment));
+                    process_ = std::make_unique<boost::process::v2::process>(
+                        io_context_,
+                        request.executable.string(),
+                        request.arguments,
+                        boost::process::v2::process_start_dir(
+                            request.working_directory.string()),
+                        boost::process::v2::process_stdio{
+                            {},
+                            stdout_pipe_,
+                            stderr_pipe_},
+                        std::move(child_environment));
                     StartReadStdout();
                     StartReadStderr();
                 }
                 else
                 {
-                    process_ =
-                        std::make_unique<boost::process::v2::process>(
-                            io_context_,
-                            request.executable.string(),
-                            request.arguments,
-                            boost::process::v2::process_start_dir(
-                                request.working_directory.string()),
-                            boost::process::v2::process_stdio{
-                                {},
-                                nullptr,
-                                nullptr},
-                            std::move(child_environment));
+                    process_ = std::make_unique<boost::process::v2::process>(
+                        io_context_,
+                        request.executable.string(),
+                        request.arguments,
+                        boost::process::v2::process_start_dir(
+                            request.working_directory.string()),
+                        boost::process::v2::process_stdio{{}, nullptr, nullptr},
+                        std::move(child_environment));
                 }
 
                 pid_ = static_cast<uint32_t>(process_->id());
@@ -241,21 +234,21 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
                 exited_.notify_all();
             }
 
-            boost::asio::io_context                 io_context_;
-            boost::asio::readable_pipe              stdout_pipe_;
-            boost::asio::readable_pipe              stderr_pipe_;
+            boost::asio::io_context                      io_context_;
+            boost::asio::readable_pipe                   stdout_pipe_;
+            boost::asio::readable_pipe                   stderr_pipe_;
             std::unique_ptr<boost::process::v2::process> process_;
-            std::thread                             io_thread_;
-            mutable std::mutex                      mutex_;
-            std::condition_variable                 exited_;
-            std::array<char, 4096>                  stdout_buffer_{};
-            std::array<char, 4096>                  stderr_buffer_{};
-            std::size_t                             max_output_tail_bytes_ = 0;
-            bool                                    running_ = true;
-            std::optional<uint32_t>                 pid_;
-            std::optional<int32_t>                  exit_code_;
-            std::string                             stdout_tail_;
-            std::string                             stderr_tail_;
+            std::thread                                  io_thread_;
+            mutable std::mutex                           mutex_;
+            std::condition_variable                      exited_;
+            std::array<char, 4096>                       stdout_buffer_{};
+            std::array<char, 4096>                       stderr_buffer_{};
+            std::size_t             max_output_tail_bytes_ = 0;
+            bool                    running_ = true;
+            std::optional<uint32_t> pid_;
+            std::optional<int32_t>  exit_code_;
+            std::string             stdout_tail_;
+            std::string             stderr_tail_;
         };
     } // namespace
 

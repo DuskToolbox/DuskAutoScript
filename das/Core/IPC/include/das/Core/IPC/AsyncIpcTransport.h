@@ -31,7 +31,8 @@ inline constexpr size_t LARGE_MESSAGE_THRESHOLD = 65536;
 // === 编译期平台选择 ===
 // 具体实现由平台特定文件提供：
 // - Win32AsyncIpcTransport (Windows, 默认)
-// - UnixAsyncIpcTransport (Linux/macOS；Windows 上可通过 AfUnixAvailable() 运行时检测)
+// - UnixAsyncIpcTransport (Linux/macOS；Windows 上可通过 AfUnixAvailable()
+// 运行时检测)
 
 #ifdef DAS_WINDOWS
 class Win32AsyncIpcTransport;

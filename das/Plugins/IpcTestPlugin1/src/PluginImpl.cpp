@@ -429,8 +429,7 @@ DasResult IpcTaskAuthoringSessionImpl::ApplyChange(
     auto result = Utils::MakeYyjsonObject();
     auto obj = *result.as_object();
     auto accepted = Utils::MakeYyjsonObject();
-    (*accepted.as_object())[std::string_view("ipcAuthoringValue")] =
-        "accepted";
+    (*accepted.as_object())[std::string_view("ipcAuthoringValue")] = "accepted";
     obj[std::string_view("acceptedProperties")] = std::move(accepted);
     obj[std::string_view("sourceFingerprint")] = "ipc-test-authoring";
     obj[std::string_view("migration")] = Utils::MakeYyjsonObject();
@@ -606,8 +605,9 @@ DasResult IpcTestPlugin1::CreateFeatureInterface(
     {
         auto* factory = new IpcTaskAuthoringSessionFactoryImpl();
         factory->AddRef();
-        *pp_out_interface = static_cast<
-            PluginInterface::IDasTaskAuthoringSessionFactory*>(factory);
+        *pp_out_interface =
+            static_cast<PluginInterface::IDasTaskAuthoringSessionFactory*>(
+                factory);
     }
     else
     {

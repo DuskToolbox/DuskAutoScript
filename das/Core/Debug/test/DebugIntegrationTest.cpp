@@ -118,9 +118,8 @@ namespace Das::Core::Debug::Test
         {
             const auto stamp =
                 std::chrono::steady_clock::now().time_since_epoch().count();
-            return std::filesystem::current_path()
-                / "debug-integration-output"
-                / (std::string{test_name} + "-" + std::to_string(stamp));
+            return std::filesystem::current_path() / "debug-integration-output"
+                   / (std::string{test_name} + "-" + std::to_string(stamp));
         }
 
         void SetDasDebug(const char* value)
@@ -172,9 +171,9 @@ namespace Das::Core::Debug::Test
         auto ReadLines(const std::filesystem::path& path)
             -> std::vector<std::string>
         {
-            std::ifstream input{path};
+            std::ifstream            input{path};
             std::vector<std::string> lines;
-            std::string line;
+            std::string              line;
             while (std::getline(input, line))
             {
                 lines.emplace_back(std::move(line));
@@ -194,8 +193,8 @@ namespace Das::Core::Debug::Test
             {
                 found = found || line.find(needle) != std::string::npos;
             }
-            EXPECT_TRUE(found) << "Missing " << needle << " in "
-                               << path.string();
+            EXPECT_TRUE(found)
+                << "Missing " << needle << " in " << path.string();
         }
 
         auto CountPngFiles(const std::filesystem::path& dir) -> size_t
@@ -223,9 +222,7 @@ namespace Das::Core::Debug::Test
             mat.setTo(cv::Scalar{20, 40, 80});
             auto* image =
                 OcvWrapper::CpuImageImpl<OcvWrapper::Storage::OwningStorage>::
-                    MakeFromCpuMat(
-                        mat,
-                        ExportInterface::DAS_PIXEL_FORMAT_BGR);
+                    MakeFromCpuMat(mat, ExportInterface::DAS_PIXEL_FORMAT_BGR);
             DasPtr<ExportInterface::IDasImage> image_guard =
                 DasPtr<ExportInterface::IDasImage>::Attach(image);
             return CaptureImageSnapshot(image);
@@ -283,9 +280,8 @@ namespace Das::Core::Debug::Test
                 cv::Mat mat = cv::Mat::zeros(32, 48, CV_8UC3);
                 mat.setTo(cv::Scalar{30, 60, 90});
                 auto* image = OcvWrapper::CpuImageImpl<
-                    OcvWrapper::Storage::OwningStorage>::MakeFromCpuMat(
-                    mat,
-                    ExportInterface::DAS_PIXEL_FORMAT_BGR);
+                    OcvWrapper::Storage::OwningStorage>::
+                    MakeFromCpuMat(mat, ExportInterface::DAS_PIXEL_FORMAT_BGR);
                 *pp_out_image = image;
                 ++capture_count;
                 return DAS_S_OK;
@@ -385,8 +381,8 @@ namespace Das::Core::Debug::Test
 
                 if (iid == DasIidOf<IDasBase>())
                 {
-                    *pp_out_object = static_cast<IDasBase*>(
-                        static_cast<IDasTypeInfo*>(
+                    *pp_out_object =
+                        static_cast<IDasBase*>(static_cast<IDasTypeInfo*>(
                             static_cast<PluginInterface::IDasInput*>(this)));
                 }
                 else if (iid == DasIidOf<IDasTypeInfo>())
@@ -462,8 +458,7 @@ namespace Das::Core::Debug::Test
         };
 
         class FakeInputFactory final
-            : public PluginInterface::DasInputFactoryImplBase<
-                  FakeInputFactory>
+            : public PluginInterface::DasInputFactoryImplBase<FakeInputFactory>
         {
         public:
             explicit FakeInputFactory(
@@ -511,8 +506,8 @@ namespace Das::Core::Debug::Test
                 {
                     auto* touch = FakeTouch::MakeRaw();
                     last_touch = touch;
-                    last_input = static_cast<PluginInterface::IDasInput*>(
-                        touch);
+                    last_input =
+                        static_cast<PluginInterface::IDasInput*>(touch);
                     *pp_out_input = last_input;
                     return DAS_S_OK;
                 }
@@ -561,7 +556,7 @@ namespace Das::Core::Debug::Test
             }
 
         private:
-            std::filesystem::path settings_dir_;
+            std::filesystem::path                       settings_dir_;
             DAS::Core::SettingsManager::SettingsManager settings_manager_;
             std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
             ForeignInterfaceHost::PluginManager plugin_manager_;
@@ -589,8 +584,7 @@ namespace Das::Core::Debug::Test
         {
         };
 
-        class DebugCaptureInputDisabledNoopTest
-            : public DebugIntegrationFixture
+        class DebugCaptureInputDisabledNoopTest : public DebugIntegrationFixture
         {
         };
 
@@ -603,10 +597,10 @@ namespace Das::Core::Debug::Test
         EnabledWrapsSuccessfulCaptureBeforeAddInstance)
     {
         const auto dir = UniqueTempDir("CaptureManagerEnabled");
-        auto ctx = RegisterWriterForRuntime(dir);
+        auto       ctx = RegisterWriterForRuntime(dir);
 
         PluginManagerHarness harness;
-        auto* raw_factory = FakeCaptureFactory::MakeRaw();
+        auto*                raw_factory = FakeCaptureFactory::MakeRaw();
         DasPtr<PluginInterface::IDasCaptureFactory> factory_guard =
             DasPtr<PluginInterface::IDasCaptureFactory>::Attach(raw_factory);
         harness.PluginManager().RegisterTestFeature(
@@ -618,7 +612,9 @@ namespace Das::Core::Debug::Test
             harness.PluginManager(),
             dir);
         ExportInterface::IDasCaptureManager* p_raw_manager = nullptr;
-        ASSERT_EQ(service.CreateCaptureManager(nullptr, &p_raw_manager), DAS_S_OK);
+        ASSERT_EQ(
+            service.CreateCaptureManager(nullptr, &p_raw_manager),
+            DAS_S_OK);
         auto manager =
             DasPtr<ExportInterface::IDasCaptureManager>::Attach(p_raw_manager);
 
@@ -641,12 +637,10 @@ namespace Das::Core::Debug::Test
         ctx->UnregisterServiceByName("debug.writer");
     }
 
-    TEST_F(
-        DebugInputFactoryTest,
-        EnabledCreateInstanceReturnsDecoratedInput)
+    TEST_F(DebugInputFactoryTest, EnabledCreateInstanceReturnsDecoratedInput)
     {
         const auto dir = UniqueTempDir("InputFactoryEnabled");
-        auto ctx = RegisterWriterForRuntime(dir);
+        auto       ctx = RegisterWriterForRuntime(dir);
         DebugRuntime::SetLatestImage(MakeSnapshot());
 
         auto* raw_factory = FakeInputFactory::MakeRaw(false);
@@ -661,7 +655,9 @@ namespace Das::Core::Debug::Test
         EXPECT_NE(stored_factory.Get(), raw_factory);
 
         PluginInterface::IDasInput* p_raw_input = nullptr;
-        ASSERT_EQ(stored_factory->CreateInstance(nullptr, &p_raw_input), DAS_S_OK);
+        ASSERT_EQ(
+            stored_factory->CreateInstance(nullptr, &p_raw_input),
+            DAS_S_OK);
         auto input = DasPtr<PluginInterface::IDasInput>::Attach(p_raw_input);
         EXPECT_NE(input.Get(), raw_factory->last_input);
 
@@ -678,7 +674,7 @@ namespace Das::Core::Debug::Test
         EnabledCreateInstanceNullSuccessReturnsInvalidPointer)
     {
         const auto dir = UniqueTempDir("InputFactoryNullSuccess");
-        auto ctx = RegisterWriterForRuntime(dir);
+        auto       ctx = RegisterWriterForRuntime(dir);
 
         auto* raw_factory = FakeInputFactory::MakeRaw(false, true);
         DasPtr<PluginInterface::IDasInputFactory> factory_guard =
@@ -702,11 +698,11 @@ namespace Das::Core::Debug::Test
     TEST_F(DebugInputFactoryTest, EnabledGetObjectByFeatureWrapsDirectFactory)
     {
         const auto dir = UniqueTempDir("InputFactoryDirectFeature");
-        auto ctx = RegisterWriterForRuntime(dir);
+        auto       ctx = RegisterWriterForRuntime(dir);
         DebugRuntime::SetLatestImage(MakeSnapshot());
 
         PluginManagerHarness harness;
-        auto* raw_factory = FakeInputFactory::MakeRaw(false);
+        auto*                raw_factory = FakeInputFactory::MakeRaw(false);
         DasPtr<PluginInterface::IDasInputFactory> factory_guard =
             DasPtr<PluginInterface::IDasInputFactory>::Attach(raw_factory);
         harness.PluginManager().RegisterTestFeature(
@@ -741,13 +737,13 @@ namespace Das::Core::Debug::Test
     TEST_F(DebugTouchDecoratorTest, PreservesIDasTouchAndLogsSwipe)
     {
         const auto dir = UniqueTempDir("TouchDecoratorEnabled");
-        auto ctx = RegisterWriterForRuntime(dir);
+        auto       ctx = RegisterWriterForRuntime(dir);
         DebugRuntime::SetLatestImage(MakeSnapshot());
 
         auto* raw_touch = FakeTouch::MakeRaw();
         auto* raw_input = static_cast<PluginInterface::IDasInput*>(raw_touch);
         auto* decorated_raw = MaybeDecorateInput(raw_input, "fake_touch");
-        auto decorated_input =
+        auto  decorated_input =
             DasPtr<PluginInterface::IDasInput>::Attach(decorated_raw);
 
         DasPtr<PluginInterface::IDasTouch> decorated_touch;
@@ -766,7 +762,7 @@ namespace Das::Core::Debug::Test
 
     TEST_F(DebugPluginTransparentTest, NoPluginSourceReferencesDebug)
     {
-        const auto root = FindSourceRoot();
+        const auto                               root = FindSourceRoot();
         const std::vector<std::filesystem::path> plugin_dirs{
             root / "das" / "Plugins" / "DasWindowsCapture",
             root / "das" / "Plugins" / "DasAdbCapture",
@@ -788,7 +784,7 @@ namespace Das::Core::Debug::Test
                     continue;
                 }
 
-                std::ifstream input(entry.path(), std::ios::binary);
+                std::ifstream     input(entry.path(), std::ios::binary);
                 const std::string content{
                     std::istreambuf_iterator<char>{input},
                     std::istreambuf_iterator<char>{}};
@@ -820,7 +816,9 @@ namespace Das::Core::Debug::Test
         EXPECT_EQ(stored_factory.Get(), raw_input_factory);
 
         PluginInterface::IDasInput* p_raw_input = nullptr;
-        ASSERT_EQ(stored_factory->CreateInstance(nullptr, &p_raw_input), DAS_S_OK);
+        ASSERT_EQ(
+            stored_factory->CreateInstance(nullptr, &p_raw_input),
+            DAS_S_OK);
         auto input = DasPtr<PluginInterface::IDasInput>::Attach(p_raw_input);
         EXPECT_EQ(input.Get(), raw_input_factory->last_input);
         ASSERT_EQ(input->Click(3, 4), DAS_S_OK);
@@ -839,7 +837,9 @@ namespace Das::Core::Debug::Test
             harness.PluginManager(),
             dir);
         ExportInterface::IDasCaptureManager* p_raw_manager = nullptr;
-        ASSERT_EQ(service.CreateCaptureManager(nullptr, &p_raw_manager), DAS_S_OK);
+        ASSERT_EQ(
+            service.CreateCaptureManager(nullptr, &p_raw_manager),
+            DAS_S_OK);
         auto capture_manager =
             DasPtr<ExportInterface::IDasCaptureManager>::Attach(p_raw_manager);
 

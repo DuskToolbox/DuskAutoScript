@@ -31,14 +31,14 @@ class DebugInputFactoryDecorator final
 public:
     DebugInputFactoryDecorator(
         Das::DasPtr<Das::PluginInterface::IDasInputFactory> inner,
-        const char*                                          p_factory_name);
+        const char*                                         p_factory_name);
 
     DasResult DAS_STD_CALL GetGuid(DasGuid* p_out_guid) override;
     DasResult DAS_STD_CALL
     GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override;
     DasResult DAS_STD_CALL CreateInstance(
-        IDasReadOnlyString*                 p_json_config,
-        Das::PluginInterface::IDasInput**   pp_out_input) override;
+        IDasReadOnlyString*               p_json_config,
+        Das::PluginInterface::IDasInput** pp_out_input) override;
 
 private:
     Das::DasPtr<Das::PluginInterface::IDasInputFactory> inner_;

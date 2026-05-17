@@ -159,8 +159,7 @@ struct yyjson::caster<
                 "non-object JSON");
         }
 
-        auto string_or_empty =
-            [&object](std::string_view key) -> std::string
+        auto string_or_empty = [&object](std::string_view key) -> std::string
         {
             if (!object->contains(key))
             {

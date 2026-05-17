@@ -9,10 +9,7 @@
 class MockDasObject : public IDasBase
 {
 public:
-    uint32_t DAS_STD_CALL AddRef() override
-    {
-        return ++ref_count_;
-    }
+    uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
 
     uint32_t DAS_STD_CALL Release() override
     {
@@ -29,7 +26,11 @@ public:
         return DAS_E_NO_INTERFACE;
     }
 
-    [[nodiscard]] uint32_t RefCount() const { return ref_count_.load(); }
+    [[nodiscard]]
+    uint32_t RefCount() const
+    {
+        return ref_count_.load();
+    }
 
 private:
     std::atomic<uint32_t> ref_count_{0};

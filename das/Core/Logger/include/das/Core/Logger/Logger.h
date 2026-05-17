@@ -53,7 +53,7 @@ DAS_NS_BEGIN
 namespace Core
 {
     extern const std::shared_ptr<spdlog::logger> g_logger;
-    extern DAS_API const char* const                     g_logger_name;
+    extern DAS_API const char* const             g_logger_name;
 
     class TraceScope
     {

@@ -34,7 +34,7 @@ DasResult WindowsCapturePlugin::EnumFeature(
 }
 
 DasResult WindowsCapturePlugin::CreateFeatureInterface(
-    size_t index,
+    size_t     index,
     IDasBase** pp_out_interface)
 {
     DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(pp_out_interface);

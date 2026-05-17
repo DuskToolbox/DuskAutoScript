@@ -30,18 +30,16 @@ extern "C++"
     constexpr const DasGuid& DasIidOf<
         Das::Core::Debug::DebugDecorator<Das::PluginInterface::IDasCapture>>()
     {
-        return DasIidHolder<
-            Das::Core::Debug::DebugDecorator<
-                Das::PluginInterface::IDasCapture>>::iid;
+        return DasIidHolder<Das::Core::Debug::DebugDecorator<
+            Das::PluginInterface::IDasCapture>>::iid;
     }
 
     template <>
     constexpr const DasGuid& DasIidOf<
         Das::Core::Debug::DebugDecorator<Das::PluginInterface::IDasCapture>*>()
     {
-        return DasIidHolder<
-            Das::Core::Debug::DebugDecorator<
-                Das::PluginInterface::IDasCapture>>::iid;
+        return DasIidHolder<Das::Core::Debug::DebugDecorator<
+            Das::PluginInterface::IDasCapture>>::iid;
     }
 }
 
@@ -64,8 +62,8 @@ namespace
     }
 
     auto SerializeCaptureResult(
-        DasResult                        result,
-        const DebugImageWriteResult&     image_result) -> std::string
+        DasResult                    result,
+        const DebugImageWriteResult& image_result) -> std::string
     {
         auto obj = DAS::Utils::MakeYyjsonObject();
         (*obj.as_object())[std::string_view("result_code")] =
@@ -96,8 +94,8 @@ public:
     DebugDecorator(
         Das::PluginInterface::IDasCapture* p_inner,
         const char*                        p_capture_name)
-        : inner_(Das::DasPtr<Das::PluginInterface::IDasCapture>::Attach(
-              p_inner)),
+        : inner_(
+              Das::DasPtr<Das::PluginInterface::IDasCapture>::Attach(p_inner)),
           capture_name_(SafeName(p_capture_name))
     {
     }

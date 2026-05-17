@@ -111,7 +111,7 @@ struct TaskExecutionComponentDesc
 /// Inline task component definition routed by a factory implementation GUID.
 struct TaskComponentManifestEntryDesc
 {
-    std::optional<std::string> factory_guid;
+    std::optional<std::string>   factory_guid;
     std::optional<yyjson::value> definition;
 };
 
@@ -128,7 +128,8 @@ struct TaskComponentsValidationResult
 {
     std::vector<std::string> rejection_reasons;
 
-    [[nodiscard]] bool IsValid() const
+    [[nodiscard]]
+    bool IsValid() const
     {
         return rejection_reasons.empty();
     }

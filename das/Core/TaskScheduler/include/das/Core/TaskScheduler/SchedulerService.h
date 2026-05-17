@@ -9,8 +9,8 @@
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
-#include <das/Core/TaskScheduler/TaskCapabilityRegistry.h>
 #include <das/Core/TaskScheduler/RepositoryInvokeCompiler.h>
+#include <das/Core/TaskScheduler/TaskCapabilityRegistry.h>
 #include <das/Core/TaskScheduler/TaskRepositoryStore.h>
 #include <das/Core/Utils/IDasStopTokenImpl.h>
 #include <das/DasExport.h>

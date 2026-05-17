@@ -37,9 +37,9 @@ namespace Das::Plugins::DasMaaPi
 
     struct PiResourceDto : PiNamedDto
     {
-        std::vector<std::string> path;
-        std::vector<std::string> controller;
-        std::vector<std::string> option;
+        std::vector<std::string>   path;
+        std::vector<std::string>   controller;
+        std::vector<std::string>   option;
         std::optional<std::string> hash;
     };
 

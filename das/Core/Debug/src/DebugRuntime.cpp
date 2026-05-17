@@ -24,13 +24,13 @@ namespace
 {
     struct RuntimeState
     {
-        std::mutex                         mutex;
-        bool                               initialized{false};
-        bool                               enabled{false};
-        std::filesystem::path              debug_dir{"logs/debug"};
+        std::mutex                                mutex;
+        bool                                      initialized{false};
+        bool                                      enabled{false};
+        std::filesystem::path                     debug_dir{"logs/debug"};
         std::vector<std::shared_ptr<IDebugSink>>  sinks;
         std::vector<std::shared_ptr<IDebugDrain>> drains;
-        std::shared_ptr<DebugImageSnapshot>        latest_image;
+        std::shared_ptr<DebugImageSnapshot>       latest_image;
     };
 
     RuntimeState& State()
@@ -42,8 +42,9 @@ namespace
     auto ResolveDebugDir(const std::filesystem::path& configured)
         -> std::filesystem::path
     {
-        const auto path =
-            configured.empty() ? std::filesystem::path{"logs/debug"} : configured;
+        const auto path = configured.empty()
+                              ? std::filesystem::path{"logs/debug"}
+                              : configured;
         return std::filesystem::absolute(path).lexically_normal();
     }
 
@@ -93,8 +94,7 @@ namespace
             JsonOrEmptyObject(event.params_json);
         (*obj.as_object())[std::string_view("result")] =
             JsonOrEmptyObject(event.result_json);
-        (*obj.as_object())[std::string_view("elapsed_ms")] =
-            event.elapsed_ms;
+        (*obj.as_object())[std::string_view("elapsed_ms")] = event.elapsed_ms;
         (*obj.as_object())[std::string_view("image_filename")] =
             event.image_filename;
         auto serialized = DAS::Utils::SerializeYyjsonValue(obj);
@@ -103,7 +103,7 @@ namespace
 
     DasResult SubmitEventByName(const DebugEvent& event)
     {
-        IDasBase* p_base = nullptr;
+        IDasBase*  p_base = nullptr;
         const auto query_result =
             DasQueryMainProcessInterfaceByName("debug.writer", &p_base);
         if (query_result < 0)
@@ -126,7 +126,7 @@ namespace
 
     DasResult FlushByName()
     {
-        IDasBase* p_base = nullptr;
+        IDasBase*  p_base = nullptr;
         const auto query_result =
             DasQueryMainProcessInterfaceByName("debug.writer", &p_base);
         if (query_result < 0)
@@ -148,7 +148,7 @@ namespace
     bool IsRemoteWriterAbsent(DasResult result)
     {
         return result == DAS_E_OBJECT_NOT_INIT
-            || result == DAS_E_IPC_OBJECT_NOT_FOUND;
+               || result == DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 
 } // namespace
@@ -168,7 +168,7 @@ DebugEvent MakeDebugEvent(
 
 DasResult DebugRuntime::Initialize(const DebugRuntimeOptions& options)
 {
-    auto& state = State();
+    auto&           state = State();
     std::lock_guard lock{state.mutex};
 
     if (state.initialized)
@@ -200,7 +200,7 @@ DasResult DebugRuntime::Initialize(const DebugRuntimeOptions& options)
 
 bool DebugRuntime::IsEnabled()
 {
-    auto& state = State();
+    auto&           state = State();
     std::lock_guard lock{state.mutex};
     return state.enabled;
 }
@@ -214,7 +214,7 @@ DasResult DebugRuntime::SubmitEvent(const DebugEvent& event)
 {
     std::vector<std::shared_ptr<IDebugSink>> sinks;
     {
-        auto& state = State();
+        auto&           state = State();
         std::lock_guard lock{state.mutex};
         if (!state.enabled)
         {
@@ -244,7 +244,7 @@ void DebugRuntime::RegisterSink(std::shared_ptr<IDebugSink> sink)
         return;
     }
 
-    auto& state = State();
+    auto&           state = State();
     std::lock_guard lock{state.mutex};
     state.sinks.emplace_back(std::move(sink));
 }
@@ -256,28 +256,28 @@ void DebugRuntime::RegisterDrain(std::shared_ptr<IDebugDrain> drain)
         return;
     }
 
-    auto& state = State();
+    auto&           state = State();
     std::lock_guard lock{state.mutex};
     state.drains.emplace_back(std::move(drain));
 }
 
 void DebugRuntime::SetLatestImage(std::shared_ptr<DebugImageSnapshot> image)
 {
-    auto& state = State();
+    auto&           state = State();
     std::lock_guard lock{state.mutex};
     state.latest_image = std::move(image);
 }
 
 std::shared_ptr<DebugImageSnapshot> DebugRuntime::GetLatestImage()
 {
-    auto& state = State();
+    auto&           state = State();
     std::lock_guard lock{state.mutex};
     return state.latest_image;
 }
 
 void DebugRuntime::ClearLatestImage()
 {
-    auto& state = State();
+    auto&           state = State();
     std::lock_guard lock{state.mutex};
     state.latest_image.reset();
 }
@@ -287,7 +287,7 @@ DasResult DebugRuntime::Flush()
     std::vector<std::shared_ptr<IDebugSink>>  sinks;
     std::vector<std::shared_ptr<IDebugDrain>> drains;
     {
-        auto& state = State();
+        auto&           state = State();
         std::lock_guard lock{state.mutex};
         if (!state.enabled)
         {
@@ -338,7 +338,7 @@ void DebugRuntime::Shutdown()
     std::vector<std::shared_ptr<IDebugSink>>  sinks;
     std::vector<std::shared_ptr<IDebugDrain>> drains;
     {
-        auto& state = State();
+        auto&           state = State();
         std::lock_guard lock{state.mutex};
         sinks = state.sinks;
         drains = state.drains;
@@ -367,7 +367,7 @@ void DebugRuntime::Shutdown()
 
 void DebugRuntime::ResetForTest()
 {
-    auto& state = State();
+    auto&           state = State();
     std::lock_guard lock{state.mutex};
     state.initialized = false;
     state.enabled = false;

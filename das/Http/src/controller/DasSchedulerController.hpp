@@ -220,9 +220,7 @@ namespace Das::Http
             return DispatchRepositoryBody(
                 request,
                 "get",
-                [this](
-                    IDasReadOnlyString*,
-                    IDasReadOnlyString** pp_out)
+                [this](IDasReadOnlyString*, IDasReadOnlyString** pp_out)
                 { return scheduler_.GetTaskRepository(pp_out); });
         }
 
@@ -231,20 +229,16 @@ namespace Das::Http
             return DispatchRepositoryBody(
                 request,
                 "create",
-                [this](
-                    IDasReadOnlyString* p_body,
-                    IDasReadOnlyString** pp_out)
-                {
-                    return scheduler_.CreateRepositoryEntry(
-                        p_body,
-                        pp_out);
-                });
+                [this](IDasReadOnlyString* p_body, IDasReadOnlyString** pp_out)
+                { return scheduler_.CreateRepositoryEntry(p_body, pp_out); });
         }
 
         // Repository management HTTP contract.
         // Method/path:
-        //   POST /api/v1/scheduler/{profile}/repository/entries/{entryId}/delete
-        //   POST /api/v1/scheduler/{profile}/repository/entries/{entryId}/rename
+        //   POST
+        //   /api/v1/scheduler/{profile}/repository/entries/{entryId}/delete
+        //   POST
+        //   /api/v1/scheduler/{profile}/repository/entries/{entryId}/rename
         // request body: delete ignores body; rename requires a JSON object.
         // success response: delete returns the standard empty success envelope;
         // rename returns SchedulerService's repository entry JSON in data.
@@ -289,8 +283,8 @@ namespace Das::Http
                 request,
                 "rename",
                 [this](
-                    int64_t entry_id,
-                    IDasReadOnlyString* p_body,
+                    int64_t              entry_id,
+                    IDasReadOnlyString*  p_body,
                     IDasReadOnlyString** pp_out)
                 {
                     return scheduler_.RenameRepositoryEntry(
@@ -307,8 +301,8 @@ namespace Das::Http
                 request,
                 "authoring get",
                 [this](
-                    int64_t entry_id,
-                    IDasReadOnlyString* p_body,
+                    int64_t              entry_id,
+                    IDasReadOnlyString*  p_body,
                     IDasReadOnlyString** pp_out)
                 {
                     return scheduler_.GetRepositoryEntryAuthoringDocument(
@@ -325,8 +319,8 @@ namespace Das::Http
                 request,
                 "authoring apply",
                 [this](
-                    int64_t entry_id,
-                    IDasReadOnlyString* p_body,
+                    int64_t              entry_id,
+                    IDasReadOnlyString*  p_body,
                     IDasReadOnlyString** pp_out)
                 {
                     return scheduler_.ApplyRepositoryEntryAuthoringChange(
@@ -343,8 +337,8 @@ namespace Das::Http
                 request,
                 "authoring compile",
                 [this](
-                    int64_t entry_id,
-                    IDasReadOnlyString* p_body,
+                    int64_t              entry_id,
+                    IDasReadOnlyString*  p_body,
                     IDasReadOnlyString** pp_out)
                 {
                     return scheduler_.CompileRepositoryEntryAuthoring(
@@ -573,8 +567,8 @@ namespace Das::Http
                 request,
                 "get",
                 [this](
-                    int64_t task_id,
-                    IDasReadOnlyString* p_body,
+                    int64_t              task_id,
+                    IDasReadOnlyString*  p_body,
                     IDasReadOnlyString** pp_out)
                 {
                     return scheduler_.GetTaskAuthoringDocument(
@@ -590,8 +584,8 @@ namespace Das::Http
                 request,
                 "apply",
                 [this](
-                    int64_t task_id,
-                    IDasReadOnlyString* p_body,
+                    int64_t              task_id,
+                    IDasReadOnlyString*  p_body,
                     IDasReadOnlyString** pp_out)
                 {
                     return scheduler_.ApplyTaskAuthoringChange(
@@ -607,8 +601,8 @@ namespace Das::Http
                 request,
                 "compile",
                 [this](
-                    int64_t task_id,
-                    IDasReadOnlyString* p_body,
+                    int64_t              task_id,
+                    IDasReadOnlyString*  p_body,
                     IDasReadOnlyString** pp_out)
                 {
                     return scheduler_.CompileTaskAuthoring(
@@ -686,7 +680,7 @@ namespace Das::Http
             }
 
             DasPtr<IDasReadOnlyString> p_body;
-            auto cr = CreateIDasReadOnlyStringFromUtf8(
+            auto                       cr = CreateIDasReadOnlyStringFromUtf8(
                 body_json->c_str(),
                 p_body.Put());
             if (DAS::IsFailed(cr))
@@ -726,9 +720,8 @@ namespace Das::Http
             if (obj && obj->contains(std::string_view("errorKind")))
             {
                 auto message = std::string{
-                    (*obj)[std::string_view("message")]
-                        .as_string()
-                        .value_or("Task authoring request failed")};
+                    (*obj)[std::string_view("message")].as_string().value_or(
+                        "Task authoring request failed")};
                 return Beast::HttpResponse::CreateErrorResponse(
                     DAS_E_FAIL,
                     message,
@@ -768,8 +761,8 @@ namespace Das::Http
                     "Request body must be a JSON object");
             }
 
-            auto parsed_body = Das::Utils::ParseYyjsonFromString(
-                request.Body());
+            auto parsed_body =
+                Das::Utils::ParseYyjsonFromString(request.Body());
             if (!parsed_body)
             {
                 return Beast::HttpResponse::CreateErrorResponse(
@@ -793,7 +786,7 @@ namespace Das::Http
             }
 
             DasPtr<IDasReadOnlyString> p_body;
-            auto cr = CreateIDasReadOnlyStringFromUtf8(
+            auto                       cr = CreateIDasReadOnlyStringFromUtf8(
                 body_json->c_str(),
                 p_body.Put());
             if (DAS::IsFailed(cr))
@@ -833,9 +826,8 @@ namespace Das::Http
             if (obj && obj->contains(std::string_view("errorKind")))
             {
                 auto message = std::string{
-                    (*obj)[std::string_view("message")]
-                        .as_string()
-                        .value_or("Repository request failed")};
+                    (*obj)[std::string_view("message")].as_string().value_or(
+                        "Repository request failed")};
                 return Beast::HttpResponse::CreateErrorResponse(
                     DAS_E_FAIL,
                     message,
@@ -866,8 +858,8 @@ namespace Das::Http
                     "Request body must be a JSON object");
             }
 
-            auto parsed_body = Das::Utils::ParseYyjsonFromString(
-                request.Body());
+            auto parsed_body =
+                Das::Utils::ParseYyjsonFromString(request.Body());
             if (!parsed_body)
             {
                 return Beast::HttpResponse::CreateErrorResponse(
@@ -891,7 +883,7 @@ namespace Das::Http
             }
 
             DasPtr<IDasReadOnlyString> p_body;
-            auto cr = CreateIDasReadOnlyStringFromUtf8(
+            auto                       cr = CreateIDasReadOnlyStringFromUtf8(
                 body_json->c_str(),
                 p_body.Put());
             if (DAS::IsFailed(cr))
@@ -931,9 +923,8 @@ namespace Das::Http
             if (obj && obj->contains(std::string_view("errorKind")))
             {
                 auto message = std::string{
-                    (*obj)[std::string_view("message")]
-                        .as_string()
-                        .value_or("Repository request failed")};
+                    (*obj)[std::string_view("message")].as_string().value_or(
+                        "Repository request failed")};
                 return Beast::HttpResponse::CreateErrorResponse(
                     DAS_E_FAIL,
                     message,

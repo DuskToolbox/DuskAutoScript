@@ -14,9 +14,9 @@
  * No mocks. All objects are real.
  */
 
+#include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/IPC/CurrentIpcContextScope.h>
 #include <das/Core/IPC/MainProcess/IpcContext.h>
-#include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/DasApi.h>
 #include <das/DasString.hpp>
 #include <das/DasSwigApi.h>

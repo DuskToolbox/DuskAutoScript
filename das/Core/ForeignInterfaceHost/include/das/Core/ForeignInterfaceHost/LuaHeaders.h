@@ -8,9 +8,10 @@
 // the Lua source tree).  Without this, the C++ compiler will mangle
 // Lua API symbols (e.g. luaL_newstate → _Z13luaL_newstatev), causing
 // link failures against the C-compiled static library.
-extern "C" {
-#include "lua.h"
+extern "C"
+{
 #include "lauxlib.h"
+#include "lua.h"
 #include "lualib.h"
 }
 

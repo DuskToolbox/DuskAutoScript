@@ -262,10 +262,12 @@ TEST_F(
         kRunTaskComponentKind);
 }
 
-TEST_F(MaapiPluginScaffoldFixture, ManifestDoesNotExposeAgentRuntimeTaskComponent)
+TEST_F(
+    MaapiPluginScaffoldFixture,
+    ManifestDoesNotExposeAgentRuntimeTaskComponent)
 {
-    auto manifest = ReadManifestJson();
-    const auto text = manifest.write(yyjson::WriteFlag::NoFlag);
+    auto              manifest = ReadManifestJson();
+    const auto        text = manifest.write(yyjson::WriteFlag::NoFlag);
     const std::string manifest_text(text.data(), text.size());
 
     EXPECT_EQ(

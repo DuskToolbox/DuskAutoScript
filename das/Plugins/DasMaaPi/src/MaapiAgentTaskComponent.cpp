@@ -32,7 +32,7 @@ namespace Plugins::DasMaaPi
         yyjson::value CloneJson(const yyjson::value& value)
         {
             const auto serialized = value.write(yyjson::WriteFlag::NoFlag);
-            auto parsed = Das::Utils::ParseYyjsonFromString(
+            auto       parsed = Das::Utils::ParseYyjsonFromString(
                 std::string_view(serialized.data(), serialized.size()));
             return parsed ? std::move(*parsed) : Das::Utils::MakeYyjsonObject();
         }
@@ -49,12 +49,13 @@ namespace Plugins::DasMaaPi
     MaapiAgentTaskComponent::MaapiAgentTaskComponent()
         : owned_runner_(
               std::make_unique<AgentRuntime::BoostAgentProcessRunner>()),
-          owned_service_(std::make_unique<AgentRuntime::AgentRuntimeService>(
-              MaaApiBoundaryForRuntime(),
-              AgentProcessRunnerForRuntime()
-                  ? *AgentProcessRunnerForRuntime()
-                  : static_cast<AgentRuntime::IAgentProcessRunner&>(
-                        *owned_runner_))),
+          owned_service_(
+              std::make_unique<AgentRuntime::AgentRuntimeService>(
+                  MaaApiBoundaryForRuntime(),
+                  AgentProcessRunnerForRuntime()
+                      ? *AgentProcessRunnerForRuntime()
+                      : static_cast<AgentRuntime::IAgentProcessRunner&>(
+                            *owned_runner_))),
           service_(owned_service_.get()),
           settings_(Das::Utils::MakeYyjsonObject())
     {
@@ -63,8 +64,7 @@ namespace Plugins::DasMaaPi
     MaapiAgentTaskComponent::MaapiAgentTaskComponent(
         AgentRuntime::AgentRuntimeService&   service,
         AgentRuntime::AgentRuntimeMaaContext context)
-        : service_(&service),
-          context_(context),
+        : service_(&service), context_(context),
           settings_(Das::Utils::MakeYyjsonObject())
     {
     }
@@ -107,7 +107,7 @@ namespace Plugins::DasMaaPi
         if (p_request_json != nullptr)
         {
             const auto request_text = JsonFromDasJson(p_request_json);
-            auto parsed = Das::Utils::ParseYyjsonFromString(request_text);
+            auto       parsed = Das::Utils::ParseYyjsonFromString(request_text);
             if (!parsed || !parsed->is_object())
             {
                 return DAS_E_INVALID_JSON;
@@ -155,9 +155,10 @@ namespace Plugins::DasMaaPi
             return DAS_S_OK;
         }
 
-        const auto settings_json = p_settings_json != nullptr
-                                       ? JsonFromDasJson(p_settings_json)
-                                       : JsonFromDasJson(WrapJson(CloneJson(settings_)).Get());
+        const auto settings_json =
+            p_settings_json != nullptr
+                ? JsonFromDasJson(p_settings_json)
+                : JsonFromDasJson(WrapJson(CloneJson(settings_)).Get());
         const auto input_json = JsonFromDasJson(p_input_json);
         const auto parsed = AgentRuntime::MergeAgentRuntimeSettingsAndInput(
             settings_json,

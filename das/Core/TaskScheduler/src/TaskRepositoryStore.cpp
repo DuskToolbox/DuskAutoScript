@@ -16,7 +16,7 @@ namespace Das::Core::TaskScheduler
         }
 
         static bool MatchesDescriptorType(
-            const yyjson::value&                     value,
+            const yyjson::value&          value,
             Das::ExportInterface::DasType descriptor_type)
         {
             switch (descriptor_type)
@@ -83,7 +83,7 @@ namespace Das::Core::TaskScheduler
         }
 
         static DasResult MergeInitialProperties(
-            yyjson::value& accepted_properties,
+            yyjson::value&       accepted_properties,
             const yyjson::value& initial_properties,
             const std::vector<
                 Das::Core::ForeignInterfaceHost::PluginSettingDesc>&
@@ -103,12 +103,9 @@ namespace Das::Core::TaskScheduler
             auto accepted_obj = accepted_properties.as_object();
             for (auto it = initial_obj->begin(); it != initial_obj->end(); ++it)
             {
-                const std::string property_name{
-                    std::string_view(it->first)};
-                auto property_value = CloneJsonValue(it->second);
-                auto*       descriptor = FindDescriptor(
-                    descriptors,
-                    property_name);
+                const std::string property_name{std::string_view(it->first)};
+                auto              property_value = CloneJsonValue(it->second);
+                auto* descriptor = FindDescriptor(descriptors, property_name);
                 if (!descriptor)
                 {
                     return DAS_E_NOT_FOUND;
@@ -171,16 +168,16 @@ namespace Das::Core::TaskScheduler
 
     DasResult TaskRepositoryStore::CreateEntry(
         const Repository::Dto::CreateRepositoryEntryRequestDto& request,
-        std::string_view descriptor_name,
-        const std::vector<
-            Das::Core::ForeignInterfaceHost::PluginSettingDesc>& descriptors,
+        std::string_view                                        descriptor_name,
+        const std::vector<Das::Core::ForeignInterfaceHost::PluginSettingDesc>&
+                                             descriptors,
         Repository::Dto::RepositoryEntryDto& out_entry)
     {
         Repository::Dto::RepositoryEntryDto entry;
         entry.entry_id =
             settings_.AllocateNextTaskRepositoryEntryId(profile_id_);
-        entry.display_name = request.display_name.value_or(
-            std::string(descriptor_name));
+        entry.display_name =
+            request.display_name.value_or(std::string(descriptor_name));
         entry.plugin_guid = request.plugin_guid;
         entry.task_type_guid = request.task_type_guid;
         entry.authoring.revision = 0;
@@ -230,9 +227,9 @@ namespace Das::Core::TaskScheduler
     }
 
     DasResult TaskRepositoryStore::RenameEntry(
-        int64_t entry_id,
+        int64_t                                                 entry_id,
         const Repository::Dto::RenameRepositoryEntryRequestDto& request,
-        Repository::Dto::RepositoryEntryDto& out_entry)
+        Repository::Dto::RepositoryEntryDto&                    out_entry)
     {
         auto entry_json =
             settings_.GetTaskRepositoryEntryJson(profile_id_, entry_id);
@@ -244,8 +241,8 @@ namespace Das::Core::TaskScheduler
         Repository::Dto::RepositoryEntryDto entry;
         try
         {
-            entry = yyjson::cast<Repository::Dto::RepositoryEntryDto>(
-                entry_json);
+            entry =
+                yyjson::cast<Repository::Dto::RepositoryEntryDto>(entry_json);
         }
         catch (const yyjson::bad_cast&)
         {
@@ -282,8 +279,7 @@ namespace Das::Core::TaskScheduler
         auto entry_obj = entry_json.as_object();
         (*entry_obj)[std::string_view("acceptedProperties")] =
             CloneJsonValue(accepted_properties);
-        (*entry_obj)[std::string_view("authoring")] =
-            CloneJsonValue(authoring);
+        (*entry_obj)[std::string_view("authoring")] = CloneJsonValue(authoring);
 
         auto persist_result = settings_.UpdateTaskRepositoryEntryJson(
             profile_id_,

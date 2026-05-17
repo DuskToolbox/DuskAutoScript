@@ -51,7 +51,7 @@ namespace Das::Core::TaskScheduler
             }
 
             DasOutPtr<IDasReadOnlyString> result(pp_out_json);
-            auto cr = CreateIDasReadOnlyStringFromUtf8(
+            auto                          cr = CreateIDasReadOnlyStringFromUtf8(
                 serialized->c_str(),
                 result.Put());
             if (DAS::IsOk(cr))
@@ -183,8 +183,8 @@ namespace Das::Core::TaskScheduler
         return cr;
     }
 
-    DasResult
-    SchedulerServiceImpl::GetTaskRepository(IDasReadOnlyString** pp_out_json)
+    DasResult SchedulerServiceImpl::GetTaskRepository(
+        IDasReadOnlyString** pp_out_json)
     {
         DAS_UTILS_CHECK_POINTER(pp_out_json)
 

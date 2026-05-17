@@ -27,8 +27,8 @@ namespace
 
 TEST(DasMaaPiParse, ParseJsoncV26PreservesUnknowns)
 {
-    auto result =
-        ParseProjectInterface({.interface_path = FixturePath("interface_v26_jsonc.jsonc")});
+    auto result = ParseProjectInterface(
+        {.interface_path = FixturePath("interface_v26_jsonc.jsonc")});
 
     ASSERT_TRUE(result.ok);
     EXPECT_EQ(result.catalog.name, "DasFixture");
@@ -56,8 +56,8 @@ TEST(DasMaaPiParse, ParseJsoncV26PreservesUnknowns)
 
 TEST(DasMaaPiCatalog, ResolveRelativePathsAndImportCatalog)
 {
-    auto result =
-        ParseProjectInterface({.interface_path = FixturePath("interface_v26_jsonc.jsonc")});
+    auto result = ParseProjectInterface(
+        {.interface_path = FixturePath("interface_v26_jsonc.jsonc")});
 
     ASSERT_TRUE(result.ok);
     const auto fixture_dir = FixturePath("").lexically_normal();
@@ -88,17 +88,14 @@ TEST(DasMaaPiCatalog, ResolveRelativePathsAndImportCatalog)
         std::find_if(
             result.catalog.tasks.begin(),
             result.catalog.tasks.end(),
-            [](const PiTask& task) {
-                return task.dto.name == "ImportedTask";
-            }),
+            [](const PiTask& task) { return task.dto.name == "ImportedTask"; }),
         result.catalog.tasks.end());
     EXPECT_NE(
         std::find_if(
             result.catalog.groups.begin(),
             result.catalog.groups.end(),
-            [](const PiGroup& group) {
-                return group.dto.name == "ImportedGroup";
-            }),
+            [](const PiGroup& group)
+            { return group.dto.name == "ImportedGroup"; }),
         result.catalog.groups.end());
 
     const auto* stage = RequireOption(result.catalog, "stage");
@@ -109,8 +106,8 @@ TEST(DasMaaPiCatalog, ResolveRelativePathsAndImportCatalog)
 
 TEST(DasMaaPiCatalog, NormalizeOptionsAndPreserveAgentConfig)
 {
-    auto result =
-        ParseProjectInterface({.interface_path = FixturePath("interface_v26_jsonc.jsonc")});
+    auto result = ParseProjectInterface(
+        {.interface_path = FixturePath("interface_v26_jsonc.jsonc")});
 
     ASSERT_TRUE(result.ok);
     ASSERT_FALSE(result.catalog.raw_agent_json.empty());
@@ -140,9 +137,8 @@ TEST(DasMaaPiCatalog, NormalizeOptionsAndPreserveAgentConfig)
     const auto daily = std::find_if(
         result.catalog.presets.begin(),
         result.catalog.presets.end(),
-        [](const PiPreset& preset) {
-            return preset.dto.name == "DailyPreset";
-        });
+        [](const PiPreset& preset)
+        { return preset.dto.name == "DailyPreset"; });
     ASSERT_NE(daily, result.catalog.presets.end());
     ASSERT_EQ(daily->dto.task.size(), 1u);
     EXPECT_NE(

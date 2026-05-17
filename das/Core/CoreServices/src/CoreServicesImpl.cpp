@@ -83,7 +83,8 @@ DasResult CoreServicesImpl::ShutdownCoreRuntime() noexcept
     }
     catch (...)
     {
-        DAS_CORE_LOG_ERROR("CoreServices shutdown failed with unknown exception");
+        DAS_CORE_LOG_ERROR(
+            "CoreServices shutdown failed with unknown exception");
         return DAS_E_FAIL;
     }
 }
@@ -166,10 +167,7 @@ DasResult CoreServicesImpl::GetSchedulerService(IDasSchedulerService** pp_out)
     return DAS_S_OK;
 }
 
-DasResult CoreServicesImpl::Shutdown()
-{
-    return ShutdownCoreRuntime();
-}
+DasResult CoreServicesImpl::Shutdown() { return ShutdownCoreRuntime(); }
 
 DAS_CORE_CORE_SERVICES_NS_END
 

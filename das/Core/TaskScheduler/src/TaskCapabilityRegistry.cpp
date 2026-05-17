@@ -7,7 +7,7 @@ namespace Das::Core::TaskScheduler
     void TaskCapabilityRegistry::AddTaskDescriptor(
         const DasGuid& plugin_guid,
         const DasGuid& task_guid,
-        uint64_t task_feature_index,
+        uint64_t       task_feature_index,
         const Das::Core::ForeignInterfaceHost::TaskDescriptor& descriptor)
     {
         TaskCapabilityRecord record;

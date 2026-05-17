@@ -20,14 +20,14 @@ namespace Plugins::DasMaaPi
         yyjson::value MakeOwnedJson(yyjson::value value)
         {
             const auto serialized = value.write(yyjson::WriteFlag::NoFlag);
-            auto parsed = Das::Utils::ParseYyjsonFromString(
+            auto       parsed = Das::Utils::ParseYyjsonFromString(
                 std::string_view(serialized.data(), serialized.size()));
             return parsed ? std::move(*parsed) : Das::Utils::MakeYyjsonObject();
         }
 
         yyjson::value MakeRunResult(
-            std::string status,
-            MaapiRunTaskOutputsDto outputs = {},
+            std::string                            status,
+            MaapiRunTaskOutputsDto                 outputs = {},
             std::vector<MaapiRunTaskDiagnosticDto> diagnostics = {})
         {
             MaapiRunTaskResultDto result;
@@ -41,8 +41,8 @@ namespace Plugins::DasMaaPi
         }
 
         MaapiRunTaskDiagnosticDto Diagnostic(
-            std::string code,
-            std::string message,
+            std::string                code,
+            std::string                message,
             std::optional<std::string> path = std::nullopt)
         {
             return MaapiRunTaskDiagnosticDto{
@@ -63,8 +63,7 @@ namespace Plugins::DasMaaPi
             }
 
             if (auto object = input->as_object();
-                object
-                && object->contains(std::string_view("executionInput")))
+                object && object->contains(std::string_view("executionInput")))
             {
                 return MakeOwnedJson(
                     (*object)[std::string_view("executionInput")]);
@@ -79,12 +78,13 @@ namespace Plugins::DasMaaPi
             diagnostics.reserve(result.diagnostics.size());
             for (const auto& diagnostic : result.diagnostics)
             {
-                diagnostics.push_back(MaapiRunTaskDiagnosticDto{
-                    .severity = diagnostic.severity,
-                    .code = diagnostic.code,
-                    .message = diagnostic.message,
-                    .path = std::nullopt,
-                    .provider_code = diagnostic.provider_code});
+                diagnostics.push_back(
+                    MaapiRunTaskDiagnosticDto{
+                        .severity = diagnostic.severity,
+                        .code = diagnostic.code,
+                        .message = diagnostic.message,
+                        .path = std::nullopt,
+                        .provider_code = diagnostic.provider_code});
             }
             return diagnostics;
         }
@@ -147,7 +147,7 @@ namespace Plugins::DasMaaPi
         PluginInterface::IDasStopToken* stop_token,
         ExportInterface::IDasJson*,
         ExportInterface::IDasJson*,
-        ExportInterface::IDasJson* p_input_json,
+        ExportInterface::IDasJson*  p_input_json,
         ExportInterface::IDasJson** pp_out_result_json)
     {
         if (pp_out_result_json == nullptr)

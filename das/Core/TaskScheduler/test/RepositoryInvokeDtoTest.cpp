@@ -11,13 +11,11 @@ namespace
     using namespace Das::Core::TaskScheduler::RepositoryInvoke::Dto;
 
     template <typename T>
-    constexpr bool UsesRepositoryInvokeLowerCamelRule =
-        std::is_same_v<
-            typename yyjson::field_name_rule<T>::type,
-            yyjson::snake_to_camel_transform>;
+    constexpr bool UsesRepositoryInvokeLowerCamelRule = std::is_same_v<
+        typename yyjson::field_name_rule<T>::type,
+        yyjson::snake_to_camel_transform>;
 
-    static_assert(
-        UsesRepositoryInvokeLowerCamelRule<RepositoryTaskRefDto>);
+    static_assert(UsesRepositoryInvokeLowerCamelRule<RepositoryTaskRefDto>);
     static_assert(
         UsesRepositoryInvokeLowerCamelRule<ChildExecutionSnapshotDto>);
     static_assert(
@@ -121,9 +119,7 @@ TEST(RepositoryInvokeDtoTest, ChildSnapshotPreservesRawExecutionInput)
         (*execution_input)[std::string_view("maapiPrivateField")].as_object();
     ASSERT_TRUE(private_payload.has_value());
     EXPECT_TRUE(
-        (*private_payload)[std::string_view("keepExactKey")]
-            .as_bool()
-            .value());
+        (*private_payload)[std::string_view("keepExactKey")].as_bool().value());
 
     ChildExecutionSnapshotDto round_tripped;
     ASSERT_NO_THROW(
@@ -137,11 +133,10 @@ TEST(RepositoryInvokeDtoTest, ChildSnapshotPreservesRawExecutionInput)
 
     auto raw_payload = round_tripped.execution_input.as_object();
     ASSERT_TRUE(raw_payload.has_value());
-    EXPECT_TRUE(
-        (*(*raw_payload)[std::string_view("maapiPrivateField")].as_object())
-            [std::string_view("keepExactKey")]
-                .as_bool()
-            .value());
+    EXPECT_TRUE((*(*raw_payload)[std::string_view("maapiPrivateField")]
+                      .as_object())[std::string_view("keepExactKey")]
+                    .as_bool()
+                    .value());
 }
 
 TEST(RepositoryInvokeDtoTest, SettingsRoundTripContainsRepositoryRef)
@@ -164,12 +159,8 @@ TEST(RepositoryInvokeDtoTest, SettingsRoundTripContainsRepositoryRef)
 
     auto ref = serialized[std::string_view("repositoryRef")].as_object();
     ASSERT_TRUE(ref.has_value());
-    EXPECT_EQ(
-        (*ref)[std::string_view("entryId")].as_int().value(),
-        77);
-    EXPECT_EQ(
-        (*ref)[std::string_view("expectedRevision")].as_int().value(),
-        8);
+    EXPECT_EQ((*ref)[std::string_view("entryId")].as_int().value(), 77);
+    EXPECT_EQ((*ref)[std::string_view("expectedRevision")].as_int().value(), 8);
 
     InvokeRepositoryTaskSettingsDto round_tripped;
     ASSERT_NO_THROW(
@@ -204,9 +195,7 @@ TEST(RepositoryInvokeDtoTest, InputRoundTripCarriesSnapshotAndRuntimeInputs)
         serialized[std::string_view("compiledSnapshot")].as_object();
     ASSERT_TRUE(snapshot.has_value());
     EXPECT_EQ(
-        (*snapshot)[std::string_view("componentGuid")]
-            .as_string()
-            .value(),
+        (*snapshot)[std::string_view("componentGuid")].as_string().value(),
         std::string_view("component-guid"));
 
     auto runtime_inputs =
@@ -226,7 +215,9 @@ TEST(RepositoryInvokeDtoTest, InputRoundTripCarriesSnapshotAndRuntimeInputs)
         round_tripped = yyjson::cast<InvokeRepositoryTaskInputDto>(serialized));
     ASSERT_TRUE(round_tripped.compiled_snapshot.has_value());
     EXPECT_EQ(round_tripped.compiled_snapshot->source_entry_id, 77);
-    EXPECT_EQ(round_tripped.compiled_snapshot->component_guid, "component-guid");
+    EXPECT_EQ(
+        round_tripped.compiled_snapshot->component_guid,
+        "component-guid");
     auto round_tripped_runtime = round_tripped.runtime_inputs.as_object();
     ASSERT_TRUE(round_tripped_runtime.has_value());
     EXPECT_EQ(
@@ -243,11 +234,12 @@ TEST(RepositoryInvokeDtoTest, ResultEnvelopeRoundTripUsesTypedFixedFields)
     result.outputs.child_status = "childFailed";
     result.outputs.child_outputs =
         ParseJson(R"json({"childResult": {"rawOutputKey": 5}})json");
-    result.diagnostics.push_back(InvokeRepositoryTaskDiagnosticDto{
-        .severity = "error",
-        .code = "revisionMismatch",
-        .message = "Repository entry revision did not match",
-        .path = "settings.repositoryRef"});
+    result.diagnostics.push_back(
+        InvokeRepositoryTaskDiagnosticDto{
+            .severity = "error",
+            .code = "revisionMismatch",
+            .message = "Repository entry revision did not match",
+            .path = "settings.repositoryRef"});
     result.signals.failed = true;
 
     auto serialized = yyjson::object(result);
@@ -267,8 +259,7 @@ TEST(RepositoryInvokeDtoTest, ResultEnvelopeRoundTripUsesTypedFixedFields)
     ASSERT_TRUE(child_outputs.has_value());
     EXPECT_TRUE(child_outputs->contains(std::string_view("childResult")));
 
-    auto diagnostics =
-        serialized[std::string_view("diagnostics")].as_array();
+    auto diagnostics = serialized[std::string_view("diagnostics")].as_array();
     ASSERT_TRUE(diagnostics.has_value());
     ASSERT_EQ(diagnostics->size(), 1u);
     auto diagnostic = (*diagnostics)[0].as_object();

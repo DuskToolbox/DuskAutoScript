@@ -72,8 +72,9 @@ namespace
 
     DasPtr<ExportInterface::IDasJson> ExecutionInput()
     {
-        return ParseJson(std::string(R"json({"executionInput":)json")
-                         + EnvelopeJson() + "}");
+        return ParseJson(
+            std::string(R"json({"executionInput":)json") + EnvelopeJson()
+            + "}");
     }
 
     std::string DiagnosticCode(const yyjson::value& result)
@@ -83,8 +84,7 @@ namespace
         {
             return {};
         }
-        auto diagnostics =
-            (*obj)[std::string_view("diagnostics")].as_array();
+        auto diagnostics = (*obj)[std::string_view("diagnostics")].as_array();
         if (!diagnostics || diagnostics->empty())
         {
             return {};
@@ -127,11 +127,11 @@ namespace
 
 TEST(DasMaaPiRunTaskComponent, DoRunsCompiledEnvelopeThroughMaaRuntime)
 {
-    FakeMaaApiBoundary fake;
-    ScopedBoundaryHook hook(fake);
+    FakeMaaApiBoundary    fake;
+    ScopedBoundaryHook    hook(fake);
     MaapiRunTaskComponent component;
 
-    auto input = ExecutionInput();
+    auto                              input = ExecutionInput();
     DasPtr<ExportInterface::IDasJson> result;
     ASSERT_EQ(
         component.Do(nullptr, nullptr, nullptr, input.Get(), result.Put()),
@@ -145,14 +145,12 @@ TEST(DasMaaPiRunTaskComponent, DoRunsCompiledEnvelopeThroughMaaRuntime)
         "completed");
     auto outputs = (*obj)[std::string_view("outputs")].as_object();
     ASSERT_TRUE(outputs.has_value());
-    auto completed =
-        (*outputs)[std::string_view("completedTasks")].as_array();
+    auto completed = (*outputs)[std::string_view("completedTasks")].as_array();
     ASSERT_TRUE(completed.has_value());
     ASSERT_EQ(completed->size(), 2u);
     EXPECT_EQ((*completed)[0].as_string().value_or(""), "DailyFarm");
     EXPECT_EQ((*completed)[1].as_string().value_or(""), "Base");
-    auto diagnostics =
-        (*obj)[std::string_view("diagnostics")].as_array();
+    auto diagnostics = (*obj)[std::string_view("diagnostics")].as_array();
     ASSERT_TRUE(diagnostics.has_value());
     EXPECT_TRUE(diagnostics->empty());
     auto signals = (*obj)[std::string_view("signals")].as_object();
@@ -189,20 +187,15 @@ TEST(DasMaaPiRunTaskComponent, DoRejectsInvalidEnvelopeWithDiagnostic)
 
 TEST(DasMaaPiRunTaskComponent, DoMapsStoppedRuntimeToCancelledSignal)
 {
-    FakeMaaApiBoundary fake;
-    ScopedBoundaryHook hook(fake);
+    FakeMaaApiBoundary    fake;
+    ScopedBoundaryHook    hook(fake);
     MaapiRunTaskComponent component;
-    RequestedStopToken stop_token;
+    RequestedStopToken    stop_token;
 
-    auto input = ExecutionInput();
+    auto                              input = ExecutionInput();
     DasPtr<ExportInterface::IDasJson> result;
     ASSERT_EQ(
-        component.Do(
-            &stop_token,
-            nullptr,
-            nullptr,
-            input.Get(),
-            result.Put()),
+        component.Do(&stop_token, nullptr, nullptr, input.Get(), result.Put()),
         DAS_S_OK);
 
     auto json = ReadResult(result.Get());

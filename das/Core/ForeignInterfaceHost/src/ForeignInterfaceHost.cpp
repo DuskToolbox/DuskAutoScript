@@ -399,8 +399,7 @@ namespace Details
 
 namespace
 {
-    yyjson::value CopyJsonValue(
-        const yyjson::writer::const_value_ref& value)
+    yyjson::value CopyJsonValue(const yyjson::writer::const_value_ref& value)
     {
         yyjson::value result;
         result = value;
@@ -481,9 +480,9 @@ namespace
 
     std::vector<std::string> ValidateTaskExecutionComponents(
         const std::unordered_map<DasGuid, TaskDescriptor>& task_descriptors,
-        const std::optional<TaskComponentsManifestDesc>& task_components)
+        const std::optional<TaskComponentsManifestDesc>&   task_components)
     {
-        std::vector<std::string> reasons;
+        std::vector<std::string>    reasons;
         std::unordered_set<DasGuid> declared_components;
 
         if (task_components.has_value() && task_components->components)
@@ -512,20 +511,22 @@ namespace
                 task_guid);
             if (!task_components.has_value() || !task_components->components)
             {
-                reasons.emplace_back(DAS_FMT_NS::format(
-                    "{}: component GUID must be declared in "
-                    "taskComponents.components",
-                    path));
+                reasons.emplace_back(
+                    DAS_FMT_NS::format(
+                        "{}: component GUID must be declared in "
+                        "taskComponents.components",
+                        path));
                 continue;
             }
 
             if (!declared_components.contains(
                     descriptor.execution_component->component_guid))
             {
-                reasons.emplace_back(DAS_FMT_NS::format(
-                    "{}: component GUID must be declared in "
-                    "taskComponents.components",
-                    path));
+                reasons.emplace_back(
+                    DAS_FMT_NS::format(
+                        "{}: component GUID must be declared in "
+                        "taskComponents.components",
+                        path));
             }
         }
 
@@ -560,9 +561,7 @@ namespace
             auto components_obj = components_val.as_object();
             if (components_obj)
             {
-                std::unordered_map<
-                    std::string,
-                    TaskComponentManifestEntryDesc>
+                std::unordered_map<std::string, TaskComponentManifestEntryDesc>
                     components;
                 for (const auto& [key, value] : *components_obj)
                 {
@@ -570,9 +569,8 @@ namespace
                     auto entry_obj = value.as_object();
                     if (entry_obj)
                     {
-                        entry.factory_guid = OptionalStringFromObject(
-                            *entry_obj,
-                            "factoryGuid");
+                        entry.factory_guid =
+                            OptionalStringFromObject(*entry_obj, "factoryGuid");
                         if (entry_obj->contains(std::string_view("definition")))
                         {
                             entry.definition = CopyJsonValue(
@@ -725,8 +723,7 @@ void ParseTaskDescriptorFromJson(
         auto execution_component_obj = execution_component_val.as_object();
         if (!execution_component_obj)
         {
-            throw std::runtime_error(
-                "executionComponent: expected object");
+            throw std::runtime_error("executionComponent: expected object");
         }
 
         if (!execution_component_obj->contains(
@@ -781,7 +778,7 @@ TaskComponentsValidationResult ValidateTaskComponents(
     const TaskComponentsManifestDesc& task_components)
 {
     TaskComponentsValidationResult result;
-    std::unordered_set<DasGuid>     declared_factories;
+    std::unordered_set<DasGuid>    declared_factories;
 
     if (!task_components.factories.has_value())
     {
@@ -796,9 +793,10 @@ TaskComponentsValidationResult ValidateTaskComponents(
             auto factory_guid = TryMakeGuid(factories[i]);
             if (!factory_guid)
             {
-                result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
-                    "taskComponents.factories[{}]: invalid factory GUID",
-                    i));
+                result.rejection_reasons.emplace_back(
+                    DAS_FMT_NS::format(
+                        "taskComponents.factories[{}]: invalid factory GUID",
+                        i));
                 continue;
             }
             declared_factories.insert(*factory_guid);
@@ -818,59 +816,66 @@ TaskComponentsValidationResult ValidateTaskComponents(
         const auto component_guid = TryMakeGuid(component_key);
         if (!component_guid)
         {
-            result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
-                "{}: invalid component GUID key",
-                component_path));
+            result.rejection_reasons.emplace_back(
+                DAS_FMT_NS::format(
+                    "{}: invalid component GUID key",
+                    component_path));
         }
 
         std::optional<DasGuid> entry_factory_guid;
         if (!entry.factory_guid.has_value() || entry.factory_guid->empty())
         {
-            result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
-                "{}.factoryGuid: missing required string",
-                component_path));
+            result.rejection_reasons.emplace_back(
+                DAS_FMT_NS::format(
+                    "{}.factoryGuid: missing required string",
+                    component_path));
         }
         else
         {
             entry_factory_guid = TryMakeGuid(*entry.factory_guid);
             if (!entry_factory_guid)
             {
-                result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
-                    "{}.factoryGuid: invalid factory GUID",
-                    component_path));
+                result.rejection_reasons.emplace_back(
+                    DAS_FMT_NS::format(
+                        "{}.factoryGuid: invalid factory GUID",
+                        component_path));
             }
             else if (
                 task_components.factories.has_value()
                 && !declared_factories.contains(*entry_factory_guid))
             {
-                result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
-                    "{}.factoryGuid: undeclared factory GUID",
-                    component_path));
+                result.rejection_reasons.emplace_back(
+                    DAS_FMT_NS::format(
+                        "{}.factoryGuid: undeclared factory GUID",
+                        component_path));
             }
         }
 
         if (!entry.definition.has_value())
         {
-            result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
-                "{}.definition: missing required object",
-                component_path));
+            result.rejection_reasons.emplace_back(
+                DAS_FMT_NS::format(
+                    "{}.definition: missing required object",
+                    component_path));
             continue;
         }
 
         auto definition_obj = entry.definition->as_object();
         if (!definition_obj)
         {
-            result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
-                "{}.definition: expected object",
-                component_path));
+            result.rejection_reasons.emplace_back(
+                DAS_FMT_NS::format(
+                    "{}.definition: expected object",
+                    component_path));
             continue;
         }
 
         if (!definition_obj->contains(std::string_view("componentGuid")))
         {
-            result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
-                "{}.definition.componentGuid: missing required string",
-                component_path));
+            result.rejection_reasons.emplace_back(
+                DAS_FMT_NS::format(
+                    "{}.definition.componentGuid: missing required string",
+                    component_path));
         }
         else
         {
@@ -879,9 +884,10 @@ TaskComponentsValidationResult ValidateTaskComponents(
                     .as_string();
             if (!definition_component_guid)
             {
-                result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
-                    "{}.definition.componentGuid: missing required string",
-                    component_path));
+                result.rejection_reasons.emplace_back(
+                    DAS_FMT_NS::format(
+                        "{}.definition.componentGuid: missing required string",
+                        component_path));
             }
             else
             {
@@ -889,17 +895,19 @@ TaskComponentsValidationResult ValidateTaskComponents(
                     TryMakeGuid(*definition_component_guid);
                 if (!parsed_definition_guid)
                 {
-                    result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
-                        "{}.definition.componentGuid: invalid component GUID",
-                        component_path));
+                    result.rejection_reasons.emplace_back(
+                        DAS_FMT_NS::format(
+                            "{}.definition.componentGuid: invalid component GUID",
+                            component_path));
                 }
                 else if (
                     component_guid
                     && *parsed_definition_guid != *component_guid)
                 {
-                    result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
-                        "{}.definition.componentGuid: must match component key",
-                        component_path));
+                    result.rejection_reasons.emplace_back(
+                        DAS_FMT_NS::format(
+                            "{}.definition.componentGuid: must match component key",
+                            component_path));
                 }
             }
         }
@@ -907,33 +915,37 @@ TaskComponentsValidationResult ValidateTaskComponents(
         if (!definition_obj->contains(std::string_view("schemaVersion"))
             || (*definition_obj)[std::string_view("schemaVersion")].is_null())
         {
-            result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
-                "{}.definition.schemaVersion: missing required field",
-                component_path));
+            result.rejection_reasons.emplace_back(
+                DAS_FMT_NS::format(
+                    "{}.definition.schemaVersion: missing required field",
+                    component_path));
         }
 
         if (!definition_obj->contains(std::string_view("kind"))
             || !(*definition_obj)[std::string_view("kind")].as_string())
         {
-            result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
-                "{}.definition.kind: missing required string",
-                component_path));
+            result.rejection_reasons.emplace_back(
+                DAS_FMT_NS::format(
+                    "{}.definition.kind: missing required string",
+                    component_path));
         }
 
         if (!definition_obj->contains(std::string_view("inputs"))
             || !(*definition_obj)[std::string_view("inputs")].is_array())
         {
-            result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
-                "{}.definition.inputs: expected array",
-                component_path));
+            result.rejection_reasons.emplace_back(
+                DAS_FMT_NS::format(
+                    "{}.definition.inputs: expected array",
+                    component_path));
         }
 
         if (!definition_obj->contains(std::string_view("outputs"))
             || !(*definition_obj)[std::string_view("outputs")].is_array())
         {
-            result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
-                "{}.definition.outputs: expected array",
-                component_path));
+            result.rejection_reasons.emplace_back(
+                DAS_FMT_NS::format(
+                    "{}.definition.outputs: expected array",
+                    component_path));
         }
 
         if (definition_obj->contains(std::string_view("config")))
@@ -941,9 +953,10 @@ TaskComponentsValidationResult ValidateTaskComponents(
             auto config = (*definition_obj)[std::string_view("config")];
             if (!config.is_object())
             {
-                result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
-                    "{}.definition.config: expected object",
-                    component_path));
+                result.rejection_reasons.emplace_back(
+                    DAS_FMT_NS::format(
+                        "{}.definition.config: expected object",
+                        component_path));
             }
         }
 
@@ -953,9 +966,10 @@ TaskComponentsValidationResult ValidateTaskComponents(
                 (*definition_obj)[std::string_view("diagnostics")];
             if (!diagnostics.is_array())
             {
-                result.rejection_reasons.emplace_back(DAS_FMT_NS::format(
-                    "{}.definition.diagnostics: expected array",
-                    component_path));
+                result.rejection_reasons.emplace_back(
+                    DAS_FMT_NS::format(
+                        "{}.definition.diagnostics: expected array",
+                        component_path));
             }
         }
     }
@@ -1164,8 +1178,7 @@ void ParsePluginPackageDescFromJson(
         auto task_components_obj = task_components_val.as_object();
         if (!task_components_obj)
         {
-            throw std::runtime_error(
-                "taskComponents: expected object");
+            throw std::runtime_error("taskComponents: expected object");
         }
 
         TaskComponentsManifestDesc task_components;
@@ -1174,9 +1187,10 @@ void ParsePluginPackageDescFromJson(
         auto validation = ValidateTaskComponents(task_components);
         if (!validation.IsValid())
         {
-            throw std::runtime_error(DAS_FMT_NS::format(
-                "Invalid taskComponents manifest: {}",
-                JoinReasons(validation.rejection_reasons)));
+            throw std::runtime_error(
+                DAS_FMT_NS::format(
+                    "Invalid taskComponents manifest: {}",
+                    JoinReasons(validation.rejection_reasons)));
         }
 
         output.task_components = std::move(task_components);
@@ -1204,15 +1218,15 @@ void ParsePluginPackageDescFromJson(
         }
     }
 
-    auto task_execution_component_validation =
-        ValidateTaskExecutionComponents(
-            output.task_descriptors,
-            output.task_components);
+    auto task_execution_component_validation = ValidateTaskExecutionComponents(
+        output.task_descriptors,
+        output.task_components);
     if (!task_execution_component_validation.empty())
     {
-        throw std::runtime_error(DAS_FMT_NS::format(
-            "Invalid task descriptor manifest: {}",
-            JoinReasons(task_execution_component_validation)));
+        throw std::runtime_error(
+            DAS_FMT_NS::format(
+                "Invalid task descriptor manifest: {}",
+                JoinReasons(task_execution_component_validation)));
     }
 }
 

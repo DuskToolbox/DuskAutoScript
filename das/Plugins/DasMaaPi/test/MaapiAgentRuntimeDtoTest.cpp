@@ -92,7 +92,9 @@ TEST(DasMaaPiAgentRuntimeDto, ParsesStartRequestFromLowerCamelJson)
     EXPECT_EQ(request.interface_directory, "E:/maa/project");
     ASSERT_EQ(request.agents.size(), 1u);
     EXPECT_EQ(request.agents[0].child_exec, "python");
-    EXPECT_EQ(request.agents[0].child_args, (std::vector<std::string>{"./agent/main.py"}));
+    EXPECT_EQ(
+        request.agents[0].child_args,
+        (std::vector<std::string>{"./agent/main.py"}));
     EXPECT_FALSE(request.agents[0].identifier.has_value());
     EXPECT_EQ(request.agents[0].timeout_ms, 9000);
     EXPECT_EQ(request.pi_env.interface_version, "v2.6.0");
@@ -114,14 +116,15 @@ TEST(DasMaaPiAgentRuntimeDto, SerializesStructuredResultEnvelopeLowerCamel)
     AgentRuntimeResultDto result;
     result.status = "succeeded";
     result.session_id = "session-1";
-    result.agents.push_back(AgentStateDto{
-        .agent_id = "agent-0",
-        .state = "running",
-        .identifier = "ipc-id",
-        .pid = 1234,
-        .exit_code = std::nullopt,
-        .stdout_tail = "out",
-        .stderr_tail = "err"});
+    result.agents.push_back(
+        AgentStateDto{
+            .agent_id = "agent-0",
+            .state = "running",
+            .identifier = "ipc-id",
+            .pid = 1234,
+            .exit_code = std::nullopt,
+            .stdout_tail = "out",
+            .stderr_tail = "err"});
     result.outputs.agent_session_id = "session-1";
     result.outputs.running_agent_count = 1;
     result.signals.succeeded = true;
@@ -130,7 +133,9 @@ TEST(DasMaaPiAgentRuntimeDto, SerializesStructuredResultEnvelopeLowerCamel)
     auto value = ParseJson(json);
     auto obj = value.as_object();
     ASSERT_TRUE(obj.has_value());
-    EXPECT_EQ((*obj)[std::string_view("sessionId")].as_string().value_or(""), "session-1");
+    EXPECT_EQ(
+        (*obj)[std::string_view("sessionId")].as_string().value_or(""),
+        "session-1");
     EXPECT_FALSE(obj->contains(std::string_view("session_id")));
 
     auto agents = (*obj)[std::string_view("agents")].as_array();
@@ -138,13 +143,21 @@ TEST(DasMaaPiAgentRuntimeDto, SerializesStructuredResultEnvelopeLowerCamel)
     ASSERT_EQ(agents->size(), 1u);
     auto agent = agents->begin()->as_object();
     ASSERT_TRUE(agent.has_value());
-    EXPECT_EQ((*agent)[std::string_view("agentId")].as_string().value_or(""), "agent-0");
-    EXPECT_EQ((*agent)[std::string_view("stdoutTail")].as_string().value_or(""), "out");
+    EXPECT_EQ(
+        (*agent)[std::string_view("agentId")].as_string().value_or(""),
+        "agent-0");
+    EXPECT_EQ(
+        (*agent)[std::string_view("stdoutTail")].as_string().value_or(""),
+        "out");
 
     auto outputs = (*obj)[std::string_view("outputs")].as_object();
     ASSERT_TRUE(outputs.has_value());
-    EXPECT_EQ((*outputs)[std::string_view("agentSessionId")].as_string().value_or(""), "session-1");
-    EXPECT_EQ((*outputs)[std::string_view("runningAgentCount")].as_sint().value_or(0), 1);
+    EXPECT_EQ(
+        (*outputs)[std::string_view("agentSessionId")].as_string().value_or(""),
+        "session-1");
+    EXPECT_EQ(
+        (*outputs)[std::string_view("runningAgentCount")].as_sint().value_or(0),
+        1);
 }
 
 TEST(DasMaaPiAgentRuntimeDto, RejectsInvalidDispatchCommandWithDiagnostics)
@@ -200,7 +213,9 @@ TEST(DasMaaPiAgentRuntimeDto, NormalizesSingleAgentObjectToAgentArray)
     ASSERT_TRUE(parsed.ok) << DiagnosticText(parsed.diagnostics);
     ASSERT_EQ(parsed.request.agents.size(), 1u);
     EXPECT_EQ(parsed.request.agents[0].child_exec, "./agent.exe");
-    EXPECT_EQ(parsed.request.agents[0].child_args, (std::vector<std::string>{"--verbose"}));
+    EXPECT_EQ(
+        parsed.request.agents[0].child_args,
+        (std::vector<std::string>{"--verbose"}));
     ASSERT_TRUE(parsed.request.agents[0].identifier.has_value());
     EXPECT_EQ(*parsed.request.agents[0].identifier, "provided-id");
 }
@@ -262,12 +277,12 @@ TEST(DasMaaPiAgentRuntimeDto, FiltersLaunchEnvironmentToKnownAndExtraPiKeys)
     ASSERT_NE(FindEnv(env, "PI_CLIENT_VERSION"), nullptr);
     ASSERT_NE(FindEnv(env, "PI_CUSTOM_TRACE"), nullptr);
     EXPECT_EQ(FindEnv(env, "PATH"), nullptr);
-    EXPECT_TRUE(std::any_of(
-        parsed.diagnostics.begin(),
-        parsed.diagnostics.end(),
-        [](const AgentDiagnosticDto& diagnostic) {
-            return diagnostic.code == "ignored-non-pi-env";
-        }));
+    EXPECT_TRUE(
+        std::any_of(
+            parsed.diagnostics.begin(),
+            parsed.diagnostics.end(),
+            [](const AgentDiagnosticDto& diagnostic)
+            { return diagnostic.code == "ignored-non-pi-env"; }));
 }
 
 TEST(DasMaaPiAgentRuntimeDto, BoundsUnknownPiEnvironmentExtensions)
@@ -286,10 +301,10 @@ TEST(DasMaaPiAgentRuntimeDto, BoundsUnknownPiEnvironmentExtensions)
 
     EXPECT_FALSE(parsed.ok);
     ASSERT_FALSE(parsed.diagnostics.empty());
-    EXPECT_TRUE(std::any_of(
-        parsed.diagnostics.begin(),
-        parsed.diagnostics.end(),
-        [](const AgentDiagnosticDto& diagnostic) {
-            return diagnostic.code == "too-many-extra-pi-env";
-        }));
+    EXPECT_TRUE(
+        std::any_of(
+            parsed.diagnostics.begin(),
+            parsed.diagnostics.end(),
+            [](const AgentDiagnosticDto& diagnostic)
+            { return diagnostic.code == "too-many-extra-pi-env"; }));
 }

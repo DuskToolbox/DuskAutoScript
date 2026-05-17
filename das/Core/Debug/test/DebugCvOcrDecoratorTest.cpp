@@ -17,9 +17,9 @@
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasTensorVector.Implements.hpp>
 #include <gtest/gtest.h>
 
-#include "../src/DebugWriterImpl.h"
 #include "../../OcvWrapper/src/CvCpuImpl.h"
 #include "../../OrtWrapper/src/AiCpuImpl.h"
+#include "../src/DebugWriterImpl.h"
 
 DAS_DISABLE_WARNING_BEGIN
 DAS_IGNORE_OPENCV_WARNING
@@ -46,8 +46,8 @@ namespace Das::Core::Debug::Test
         {
             const auto stamp =
                 std::chrono::steady_clock::now().time_since_epoch().count();
-            auto path = std::filesystem::current_path()
-                / "debug-test-output"
+            auto path =
+                std::filesystem::current_path() / "debug-test-output"
                 / (std::string{test_name} + "-" + std::to_string(stamp));
             std::filesystem::remove_all(path);
             return path;
@@ -97,7 +97,7 @@ namespace Das::Core::Debug::Test
         auto ReadLines(const std::filesystem::path& path)
             -> std::vector<std::string>
         {
-            std::ifstream input{path};
+            std::ifstream            input{path};
             std::vector<std::string> lines;
             std::string              line;
             while (std::getline(input, line))
@@ -138,8 +138,7 @@ namespace Das::Core::Debug::Test
             return false;
         }
 
-        auto MakePatternImage()
-            -> Das::DasPtr<Das::ExportInterface::IDasImage>
+        auto MakePatternImage() -> Das::DasPtr<Das::ExportInterface::IDasImage>
         {
             cv::Mat image = cv::Mat::zeros(32, 32, CV_8UC3);
             cv::Mat templ(8, 8, CV_8UC3, cv::Scalar{10, 20, 30});
@@ -209,8 +208,7 @@ namespace Das::Core::Debug::Test
                 {
                     return DAS_E_INVALID_POINTER;
                 }
-                *pp_out_data =
-                    reinterpret_cast<unsigned char*>(data_.data());
+                *pp_out_data = reinterpret_cast<unsigned char*>(data_.data());
                 return DAS_S_OK;
             }
 
@@ -274,8 +272,7 @@ namespace Das::Core::Debug::Test
             }
 
             DAS_IMPL GetBinaryBuffer(
-                Das::ExportInterface::IDasBinaryBuffer** pp_out_buffer)
-                override
+                Das::ExportInterface::IDasBinaryBuffer** pp_out_buffer) override
             {
                 if (!pp_out_buffer)
                 {
@@ -311,7 +308,7 @@ namespace Das::Core::Debug::Test
             }
 
             DAS_IMPL GetAt(
-                uint32_t                         index,
+                uint32_t                           index,
                 Das::ExportInterface::IDasTensor** pp_out_value) override
             {
                 if (!pp_out_value)
@@ -356,8 +353,7 @@ namespace Das::Core::Debug::Test
             }
         };
 
-        class FakeAI final
-            : public Das::ExportInterface::DasAIImplBase<FakeAI>
+        class FakeAI final : public Das::ExportInterface::DasAIImplBase<FakeAI>
         {
         public:
             DAS_IMPL CreateSession(
@@ -437,7 +433,7 @@ namespace Das::Core::Debug::Test
             }
 
             DAS_IMPL GetCharBox(
-                uint32_t index,
+                uint32_t                       index,
                 Das::ExportInterface::DasRect* p_box) override
             {
                 if (!p_box)
@@ -515,8 +511,7 @@ namespace Das::Core::Debug::Test
         public:
             DAS_IMPL Recognize(
                 Das::ExportInterface::IDasImage*,
-                Das::ExportInterface::IDasOcrResultVector** pp_results)
-                override
+                Das::ExportInterface::IDasOcrResultVector** pp_results) override
             {
                 if (!pp_results)
                 {
@@ -548,7 +543,9 @@ namespace Das::Core::Debug::Test
         ASSERT_EQ(DAS::Core::OcvWrapper::RegisterCvServices(*ctx), DAS_S_OK);
 
         IDasBase* base = nullptr;
-        ASSERT_EQ(DasQueryMainProcessInterfaceByName("cv.cpu", &base), DAS_S_OK);
+        ASSERT_EQ(
+            DasQueryMainProcessInterfaceByName("cv.cpu", &base),
+            DAS_S_OK);
         auto base_guard = Das::DasPtr<IDasBase>::Attach(base);
 
         Das::DasPtr<Das::ExportInterface::IDasCv> cv;
@@ -621,7 +618,7 @@ namespace Das::Core::Debug::Test
             DAS_S_OK);
         auto ocr = Das::DasPtr<Das::ExportInterface::IDasOcr>::Attach(raw_ocr);
 
-        auto image = MakeOcrImage();
+        auto                                       image = MakeOcrImage();
         Das::ExportInterface::IDasOcrResultVector* raw_results = nullptr;
         ASSERT_EQ(ocr->Recognize(image.Get(), &raw_results), DAS_S_OK);
         auto results =
@@ -674,8 +671,9 @@ namespace Das::Core::Debug::Test
             Das::DasPtr<Das::ExportInterface::IDasOcr>::Attach(maybe_ocr);
 
         Das::ExportInterface::IDasOcrResultVector* raw_ocr_results = nullptr;
-        ASSERT_EQ(ocr->Recognize(MakeOcrImage().Get(), &raw_ocr_results),
-                  DAS_S_OK);
+        ASSERT_EQ(
+            ocr->Recognize(MakeOcrImage().Get(), &raw_ocr_results),
+            DAS_S_OK);
         auto ocr_results =
             Das::DasPtr<Das::ExportInterface::IDasOcrResultVector>::Attach(
                 raw_ocr_results);

@@ -26,8 +26,8 @@ namespace Das::Core::Debug::Test
         {
             const auto stamp =
                 std::chrono::steady_clock::now().time_since_epoch().count();
-            auto path = std::filesystem::current_path()
-                / "debug-test-output"
+            auto path =
+                std::filesystem::current_path() / "debug-test-output"
                 / (std::string{test_name} + "-" + std::to_string(stamp));
             std::filesystem::remove_all(path);
             return path;
@@ -76,7 +76,7 @@ namespace Das::Core::Debug::Test
             -> Das::DasPtr<Das::ExportInterface::IDasImage>
         {
             cv::Mat mat = cv::Mat::zeros(height, width, CV_8UC3);
-            auto* image =
+            auto*   image =
                 OcvWrapper::CpuImageImpl<OcvWrapper::Storage::OwningStorage>::
                     MakeFromCpuMat(
                         mat,
@@ -85,9 +85,9 @@ namespace Das::Core::Debug::Test
         }
 
         void ExpectBgrPixel(
-            const cv::Mat& image,
-            int            x,
-            int            y,
+            const cv::Mat&   image,
+            int              x,
+            int              y,
             const cv::Vec3b& expected)
         {
             ASSERT_FALSE(image.empty());
@@ -105,7 +105,7 @@ namespace Das::Core::Debug::Test
         const auto dir = UniqueTempDir("TemplateMatchAllWritesPng");
         InitializeEnabledRuntime(dir);
 
-        auto snapshot = CaptureImageSnapshot(MakeImage().Get());
+        auto         snapshot = CaptureImageSnapshot(MakeImage().Get());
         DebugDrawBox box{};
         box.rect = {4, 4, 20, 16};
         box.color = DebugAnnotationColor::Green;

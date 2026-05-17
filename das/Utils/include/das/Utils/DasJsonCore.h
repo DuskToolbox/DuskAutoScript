@@ -85,8 +85,7 @@ inline std::optional<std::string> SerializeYyjsonValue(
         {
 #if YYJSON_VERSION_HEX >= 0x000700
             flags =
-                yyjson::WriteFlag::Pretty |
-                yyjson::WriteFlag::PrettyTwoSpaces;
+                yyjson::WriteFlag::Pretty | yyjson::WriteFlag::PrettyTwoSpaces;
 #else
             flags = yyjson::WriteFlag::Pretty;
 #endif

@@ -61,9 +61,9 @@ struct DebugImageAnnotations
 
 struct DebugImageSnapshot
 {
-    bool                                available{false};
-    std::string                         image_status{"not_available"};
-    cv::Mat                             bgr_image;
+    bool                                      available{false};
+    std::string                               image_status{"not_available"};
+    cv::Mat                                   bgr_image;
     Das::ExportInterface::DasImagePixelFormat pixel_format{
         Das::ExportInterface::DAS_PIXEL_FORMAT_UNKNOWN};
 };
@@ -79,9 +79,9 @@ std::shared_ptr<DebugImageSnapshot> CaptureImageSnapshot(
     Das::ExportInterface::IDasImage* p_image);
 
 DebugImageWriteResult SaveOriginalAndAnnotated(
-    const std::string&                         step_name,
-    std::shared_ptr<const DebugImageSnapshot>  snapshot,
-    const std::vector<DebugDrawBox>&           annotations);
+    const std::string&                        step_name,
+    std::shared_ptr<const DebugImageSnapshot> snapshot,
+    const std::vector<DebugDrawBox>&          annotations);
 
 DebugImageWriteResult SaveOriginalAndAnnotated(
     const std::string&                        step_name,
@@ -91,8 +91,8 @@ DebugImageWriteResult SaveOriginalAndAnnotated(
 std::string BuildImageJson(const DebugImageWriteResult& result);
 
 DasResult DrainImageJobs();
-void ShutdownImageWorker();
-bool IsImageWorkerRunningForTest();
+void      ShutdownImageWorker();
+bool      IsImageWorkerRunningForTest();
 
 DAS_CORE_DEBUG_NS_END
 

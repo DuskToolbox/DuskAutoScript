@@ -34,8 +34,8 @@ namespace Plugins::DasMaaPi
     public:
         MaapiAgentComponent();
         MaapiAgentComponent(
-            AgentRuntime::AgentRuntimeService&      service,
-            AgentRuntime::AgentRuntimeMaaContext    context);
+            AgentRuntime::AgentRuntimeService&   service,
+            AgentRuntime::AgentRuntimeMaaContext context);
         ~MaapiAgentComponent() override;
 
         DAS_IMPL GetGuid(DasGuid* p_out_guid) override;
@@ -49,8 +49,7 @@ namespace Plugins::DasMaaPi
     private:
         std::unique_ptr<AgentRuntime::BoostAgentProcessRunner> owned_runner_;
         std::unique_ptr<AgentRuntime::AgentRuntimeService>     owned_service_;
-        AgentRuntime::AgentRuntimeService*                     service_ =
-            nullptr;
+        AgentRuntime::AgentRuntimeService*   service_ = nullptr;
         AgentRuntime::AgentRuntimeMaaContext context_{};
     };
 

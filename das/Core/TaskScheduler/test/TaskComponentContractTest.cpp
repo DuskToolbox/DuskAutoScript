@@ -1,9 +1,9 @@
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
-#include <das/Core/TaskScheduler/RepositoryInvokeDtos.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
+#include <das/Core/TaskScheduler/RepositoryInvokeDtos.h>
 #include <das/Core/Utils/DasJsonImpl.h>
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasComponent.h>
@@ -27,11 +27,11 @@ namespace
 {
     using Das::DasPtr;
     using Das::Core::ForeignInterfaceHost::PluginManager;
-    using Das::PluginInterface::IDasTaskComponent;
     using Das::Core::TaskScheduler::RepositoryInvoke::Dto::
         ChildExecutionSnapshotDto;
     using Das::Core::TaskScheduler::RepositoryInvoke::Dto::
         InvokeRepositoryTaskInputDto;
+    using Das::PluginInterface::IDasTaskComponent;
 
     struct OfficialFlowComponent
     {
@@ -223,8 +223,7 @@ namespace
         obj[std::string_view("inputs")] = Das::Utils::MakeYyjsonArray();
         obj[std::string_view("outputs")] = Das::Utils::MakeYyjsonArray();
         obj[std::string_view("config")] = Das::Utils::MakeYyjsonObject();
-        obj[std::string_view("diagnostics")] =
-            Das::Utils::MakeYyjsonArray();
+        obj[std::string_view("diagnostics")] = Das::Utils::MakeYyjsonArray();
         return definition;
     }
 
@@ -244,7 +243,9 @@ namespace
             std::string,
             Das::Core::ForeignInterfaceHost::TaskComponentManifestEntryDesc>
             components;
-        components.emplace(std::string{kFakeChildComponentGuid}, std::move(entry));
+        components.emplace(
+            std::string{kFakeChildComponentGuid},
+            std::move(entry));
         manifest.components = std::move(components);
         return manifest;
     }
@@ -259,8 +260,7 @@ namespace
         snapshot.source_revision = 7;
         snapshot.source_fingerprint = "source-hash";
         snapshot.plugin_guid = std::string{kFakeChildPluginGuid};
-        snapshot.task_type_guid =
-            "68F19997-0000-4000-8000-000000000001";
+        snapshot.task_type_guid = "68F19997-0000-4000-8000-000000000001";
         snapshot.component_guid = std::string{component_guid};
         snapshot.execution_input = ParseJson(R"json({
             "childInput": "from-snapshot",
@@ -296,16 +296,13 @@ namespace
         {
             return {};
         }
-        return (*diagnostic)[std::string_view("code")]
-            .as_string()
-            .value_or("");
+        return (*diagnostic)[std::string_view("code")].as_string().value_or("");
     }
 
     class FakeStopToken final : public Das::PluginInterface::IDasStopToken
     {
     public:
-        explicit FakeStopToken(bool requested = false)
-            : requested_(requested)
+        explicit FakeStopToken(bool requested = false) : requested_(requested)
         {
         }
 
@@ -458,10 +455,10 @@ namespace
 
         DasResult DAS_STD_CALL
         Do(Das::PluginInterface::IDasStopToken* stop_token,
-           Das::ExportInterface::IDasJson*     p_environment_json,
-           Das::ExportInterface::IDasJson*     p_settings_json,
-           Das::ExportInterface::IDasJson*     p_input_json,
-           Das::ExportInterface::IDasJson**    pp_out_result_json) override
+           Das::ExportInterface::IDasJson*      p_environment_json,
+           Das::ExportInterface::IDasJson*      p_settings_json,
+           Das::ExportInterface::IDasJson*      p_input_json,
+           Das::ExportInterface::IDasJson**     pp_out_result_json) override
         {
             if (pp_out_result_json == nullptr)
             {
@@ -531,8 +528,7 @@ namespace
                 return DAS_S_OK;
             }
             if (iid
-                == DasIidOf<
-                    Das::PluginInterface::IDasTaskComponentFactory>())
+                == DasIidOf<Das::PluginInterface::IDasTaskComponentFactory>())
             {
                 *pp_out = static_cast<
                     Das::PluginInterface::IDasTaskComponentFactory*>(this);
@@ -651,13 +647,10 @@ namespace
 
             Das::Core::ForeignInterfaceHost::FeatureInfo feature{};
             feature.feature_type =
-                Das::PluginInterface::
-                    DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY;
-            feature.interface_ptr = DasPtr<IDasBase>(
-                static_cast<IDasBase*>(
-                    static_cast<
-                        Das::PluginInterface::IDasTaskComponentFactory*>(
-                        factory)));
+                Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY;
+            feature.interface_ptr = DasPtr<IDasBase>(static_cast<IDasBase*>(
+                static_cast<Das::PluginInterface::IDasTaskComponentFactory*>(
+                    factory)));
 
             Das::Core::ForeignInterfaceHost::FeatureInfo* feature_ptr =
                 &feature;
@@ -681,7 +674,9 @@ namespace
 
 } // namespace
 
-TEST_F(TaskComponentContractTest, DasFlowControlManifestDefinitionsComeFromManager)
+TEST_F(
+    TaskComponentContractTest,
+    DasFlowControlManifestDefinitionsComeFromManager)
 {
     auto definitions = plugin_manager_->GetTaskComponentFactoryManager()
                            .EnumerateDefinitions();
@@ -716,8 +711,8 @@ TEST_F(
     TaskComponentContractTest,
     RepositoryInvokeFinalCatalogHidesMaapiAgentRuntime)
 {
-    auto definitions = plugin_manager_->GetTaskComponentFactoryManager()
-                           .EnumerateDefinitions();
+    auto       definitions = plugin_manager_->GetTaskComponentFactoryManager()
+                                 .EnumerateDefinitions();
     const auto repository_invoke_guid =
         GuidFromText(kRepositoryInvokeComponentGuid);
     auto repository_invoke = std::ranges::find_if(
@@ -747,18 +742,18 @@ TEST_F(
     auto components =
         (*task_components)[std::string_view("components")].as_object();
     ASSERT_TRUE(components.has_value());
-    auto run_entry =
-        (*components)[kMaapiRunTaskComponentGuid].as_object();
+    auto run_entry = (*components)[kMaapiRunTaskComponentGuid].as_object();
     ASSERT_TRUE(run_entry.has_value());
-    auto definition =
-        (*run_entry)[std::string_view("definition")].as_object();
+    auto definition = (*run_entry)[std::string_view("definition")].as_object();
     ASSERT_TRUE(definition.has_value());
     EXPECT_EQ(
         StringField(*definition, "kind"),
         std::string_view("das.maapi.run"));
 }
 
-TEST_F(TaskComponentContractTest, DasFlowControlFeatureFactoryCreatesManifestComponents)
+TEST_F(
+    TaskComponentContractTest,
+    DasFlowControlFeatureFactoryCreatesManifestComponents)
 {
     auto runtime = CreateCppRuntime();
     ASSERT_NE(runtime, nullptr);
@@ -780,8 +775,7 @@ TEST_F(TaskComponentContractTest, DasFlowControlFeatureFactoryCreatesManifestCom
             break;
         }
         if (feature
-            == Das::PluginInterface::
-                DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY)
+            == Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY)
         {
             found_factory_feature = true;
             task_component_feature_index = index;
@@ -901,8 +895,8 @@ TEST_F(TaskComponentContractTest, BranchDoReturnsTrueAndFalseSignals)
 
 TEST_F(TaskComponentContractTest, RepositoryInvokeExecutesCompiledSnapshotChild)
 {
-    auto state = std::make_shared<RecordingChildState>();
-    auto* child_factory = RegisterRecordingChildFactory(state);
+    auto      state = std::make_shared<RecordingChildState>();
+    auto*     child_factory = RegisterRecordingChildFactory(state);
     const int create_count_before = child_factory->create_call_count;
 
     auto component = CreateComponent(kRepositoryInvokeComponentGuid);
@@ -932,9 +926,8 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeExecutesCompiledSnapshotChild)
     auto child_input_obj = child_input.as_object();
     ASSERT_TRUE(child_input_obj.has_value());
     EXPECT_EQ(
-        (*child_input_obj)[std::string_view("childInput")]
-            .as_string()
-            .value_or(""),
+        (*child_input_obj)[std::string_view("childInput")].as_string().value_or(
+            ""),
         std::string_view("from-snapshot"));
 
     auto json = ToJson(result.Get());
@@ -946,9 +939,7 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeExecutesCompiledSnapshotChild)
     auto outputs = (*obj)[std::string_view("outputs")].as_object();
     ASSERT_TRUE(outputs.has_value());
     EXPECT_EQ(
-        (*outputs)[std::string_view("childStatus")]
-            .as_string()
-            .value_or(""),
+        (*outputs)[std::string_view("childStatus")].as_string().value_or(""),
         std::string_view("completed"));
     auto child_outputs =
         (*outputs)[std::string_view("childOutputs")].as_object();
@@ -978,9 +969,8 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeRequiresCompiledSnapshot)
 
     auto json = ToJson(result.Get());
     EXPECT_EQ(
-        (*json.as_object())[std::string_view("status")]
-            .as_string()
-            .value_or(""),
+        (*json.as_object())[std::string_view("status")].as_string().value_or(
+            ""),
         std::string_view("failed"));
     EXPECT_EQ(DiagnosticCode(json), "missing-compiled-snapshot");
 }
@@ -1090,11 +1080,11 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeRejectsInvalidSnapshotVersion)
 
 TEST_F(TaskComponentContractTest, RepositoryInvokeHonorsAlreadyRequestedStop)
 {
-    auto state = std::make_shared<RecordingChildState>();
-    auto* child_factory = RegisterRecordingChildFactory(state);
+    auto      state = std::make_shared<RecordingChildState>();
+    auto*     child_factory = RegisterRecordingChildFactory(state);
     const int create_count_before = child_factory->create_call_count;
 
-    auto component = CreateComponent(kRepositoryInvokeComponentGuid);
+    auto          component = CreateComponent(kRepositoryInvokeComponentGuid);
     FakeStopToken stop_token(true);
     auto input = Wrap(MakeRepositoryInvokeInput(kFakeChildComponentGuid));
 

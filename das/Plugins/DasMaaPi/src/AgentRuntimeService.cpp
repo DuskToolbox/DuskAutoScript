@@ -25,7 +25,7 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
             return options.max_output_tail_bytes <= 0
                        ? 0U
                        : static_cast<std::size_t>(
-                           options.max_output_tail_bytes);
+                             options.max_output_tail_bytes);
         }
 
         std::string Tail(std::string text, std::size_t max_bytes)
@@ -82,8 +82,8 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
             result.signals.failed = result.status != "succeeded";
             result.signals.timed_out = timed_out;
             result.outputs.agent_session_id = result.session_id;
-            result.outputs.running_agent_count = static_cast<int32_t>(
-                std::count_if(
+            result.outputs.running_agent_count =
+                static_cast<int32_t>(std::count_if(
                     result.agents.begin(),
                     result.agents.end(),
                     [](const AgentStateDto& agent)
@@ -164,13 +164,13 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
             std::lock_guard lock(mutex_);
 
             std::vector<SessionAgent> staged_agents;
-            const auto session_id =
+            const auto                session_id =
                 "agent-session-" + std::to_string(next_session_id_++);
             const auto env = FilterLaunchEnvironment(request);
 
             for (std::size_t index = 0; index < request.agents.size(); ++index)
             {
-                const auto& spec = request.agents[index];
+                const auto&  spec = request.agents[index];
                 SessionAgent agent;
                 agent.agent_id = "agent-" + std::to_string(index);
 
@@ -358,7 +358,7 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
             const AgentRuntimeOptionsDto& options)
         {
             std::lock_guard lock(mutex_);
-            auto it = sessions_.find(std::string(session_id));
+            auto            it = sessions_.find(std::string(session_id));
             if (it == sessions_.end())
             {
                 return MissingSession(session_id);
@@ -375,17 +375,13 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
             }
             session.timed_out = session.timed_out || timed_out;
             session.stopped = true;
-            return BuildResult(
-                session,
-                "succeeded",
-                {},
-                session.timed_out);
+            return BuildResult(session, "succeeded", {}, session.timed_out);
         }
 
         AgentRuntimeResultDto Status(std::string_view session_id)
         {
             std::lock_guard lock(mutex_);
-            auto it = sessions_.find(std::string(session_id));
+            auto            it = sessions_.find(std::string(session_id));
             if (it == sessions_.end())
             {
                 return MissingSession(session_id);
@@ -403,17 +399,11 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
                 {
                     agent.client.reset();
                     agent.cleaned = true;
-                    agent.final_state = BuildAgentState(
-                        agent,
-                        session.options,
-                        "exited");
+                    agent.final_state =
+                        BuildAgentState(agent, session.options, "exited");
                 }
             }
-            return BuildResult(
-                session,
-                "succeeded",
-                {},
-                session.timed_out);
+            return BuildResult(session, "succeeded", {}, session.timed_out);
         }
 
     private:
@@ -453,18 +443,18 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
         }
 
         AgentRuntimeResultDto FailStart(
-            std::vector<SessionAgent>& staged_agents,
-            SessionAgent*              current_agent,
+            std::vector<SessionAgent>&    staged_agents,
+            SessionAgent*                 current_agent,
             const AgentRuntimeOptionsDto& options,
             AgentDiagnosticDto            diagnostic)
         {
             LogError(diagnostic.message);
             std::vector<AgentStateDto> states;
-            bool timed_out = false;
+            bool                       timed_out = false;
             for (auto& agent : staged_agents)
             {
-                timed_out = CleanupAgent(agent, options, "stopped", true)
-                            || timed_out;
+                timed_out =
+                    CleanupAgent(agent, options, "stopped", true) || timed_out;
                 states.push_back(agent.final_state);
             }
             if (current_agent != nullptr)
@@ -483,10 +473,10 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
         }
 
         bool CleanupAgent(
-            SessionAgent&                agent,
+            SessionAgent&                 agent,
             const AgentRuntimeOptionsDto& options,
-            std::string_view             final_state,
-            bool                         force_terminate)
+            std::string_view              final_state,
+            bool                          force_terminate)
         {
             if (agent.cleaned)
             {
@@ -521,8 +511,8 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
         }
 
         AgentStateDto BuildAgentState(
-            const SessionAgent&          agent,
-            const AgentRuntimeOptionsDto& options,
+            const SessionAgent&             agent,
+            const AgentRuntimeOptionsDto&   options,
             std::optional<std::string_view> forced_state = std::nullopt) const
         {
             AgentProcessSnapshot snapshot;
@@ -555,14 +545,15 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
                 .pid = snapshot.pid,
                 .exit_code = snapshot.exit_code,
                 .stdout_tail = Tail(std::move(snapshot.stdout_tail), max_bytes),
-                .stderr_tail = Tail(std::move(snapshot.stderr_tail), max_bytes)};
+                .stderr_tail =
+                    Tail(std::move(snapshot.stderr_tail), max_bytes)};
         }
 
         AgentRuntimeResultDto BuildResult(
-            const SessionEntry&              session,
-            std::string                      status,
-            std::vector<AgentDiagnosticDto>  diagnostics = {},
-            bool                             timed_out = false) const
+            const SessionEntry&             session,
+            std::string                     status,
+            std::vector<AgentDiagnosticDto> diagnostics = {},
+            bool                            timed_out = false) const
         {
             std::vector<AgentStateDto> states;
             states.reserve(session.agents.size());
@@ -608,11 +599,11 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
             }
         }
 
-        IMaaApiBoundary&     boundary_;
-        IAgentProcessRunner& runner_;
-        std::mutex           mutex_;
+        IMaaApiBoundary&                    boundary_;
+        IAgentProcessRunner&                runner_;
+        std::mutex                          mutex_;
         std::map<std::string, SessionEntry> sessions_;
-        std::uint64_t next_session_id_ = 1;
+        std::uint64_t                       next_session_id_ = 1;
     };
 
     AgentRuntimeService::AgentRuntimeService(

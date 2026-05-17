@@ -256,8 +256,8 @@ class IpcTaskComponentFactoryImpl final
 {
 public:
     DAS_IMPL CreateComponent(
-        const DasGuid&                         component_guid,
-        PluginInterface::IDasTaskComponent**   pp_out_component) override;
+        const DasGuid&                       component_guid,
+        PluginInterface::IDasTaskComponent** pp_out_component) override;
 };
 
 /**

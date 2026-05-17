@@ -25,9 +25,9 @@ namespace Das::Plugins::DasMaaPi
     AgentRuntime::AgentRuntimeResultDto MakeAgentAdapterCancelled();
 
     AgentRuntime::AgentRuntimeResultDto ExecuteAgentRuntimeRequest(
-        AgentRuntime::AgentRuntimeService&              service,
-        const AgentRuntime::AgentRuntimeMaaContext&     context,
-        const AgentRuntime::ParsedAgentRuntimeRequest&  parsed);
+        AgentRuntime::AgentRuntimeService&             service,
+        const AgentRuntime::AgentRuntimeMaaContext&    context,
+        const AgentRuntime::ParsedAgentRuntimeRequest& parsed);
 
     std::string JsonFromDasJson(ExportInterface::IDasJson* json);
 
