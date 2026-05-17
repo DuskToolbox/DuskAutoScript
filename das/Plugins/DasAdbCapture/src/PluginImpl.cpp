@@ -6,6 +6,7 @@
 #define DAS_BUILD_SHARED
 
 #include "AdbCaptureFactoryImpl.h"
+#include "ErrorLensImpl.h"
 #include "PluginImpl.h"
 
 #include <array>
@@ -34,7 +35,7 @@ DasResult AdbCapturePlugin::EnumFeature(
 }
 
 DasResult AdbCapturePlugin::CreateFeatureInterface(
-    size_t index,
+    size_t     index,
     IDasBase** pp_out_interface)
 {
     DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(pp_out_interface);
@@ -50,9 +51,14 @@ DasResult AdbCapturePlugin::CreateFeatureInterface(
         p_result->AddRef();
         return DAS_S_OK;
     }
-        // Error lens 暂时用不到，先不启用
     case 1:
-        [[fallthrough]];
+    {
+        const auto p_result =
+            MakeDasPtr<PluginInterface::IDasErrorLens, AdbCaptureErrorLens>();
+        *pp_out_interface = p_result.Get();
+        p_result->AddRef();
+        return DAS_S_OK;
+    }
     default:
         *pp_out_interface = nullptr;
         return DAS_E_OUT_OF_RANGE;

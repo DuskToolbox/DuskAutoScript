@@ -1,4 +1,5 @@
 #include "ErrorLensImpl.h"
+#include "AdbCaptureImpl.h"
 #include "PluginImpl.h"
 
 #include <das/DasApi.h>
@@ -28,7 +29,32 @@ DasResult ReturnPointerInMap(T& it, Out** pp_out_object)
 
 DAS_NS_ANONYMOUS_DETAILS_END
 
-AdbCaptureErrorLens::AdbCaptureErrorLens() { DAS::AdbCaptureAddRef(); }
+AdbCaptureErrorLens::AdbCaptureErrorLens()
+{
+    DAS::AdbCaptureAddRef();
+    AddSupportedIid(DasIidOf<AdbCapture>());
+
+    const auto register_default_message =
+        [this](DasResult error_code, const char* message)
+    {
+        DasPtr<IDasReadOnlyString> message_ptr;
+        const auto                 create_result =
+            ::CreateIDasReadOnlyStringFromUtf8(message, message_ptr.Put());
+        if (IsFailed(create_result))
+        {
+            DAS_LOG_ERROR("Failed to create AdbCapture ErrorLens message");
+            return;
+        }
+        RegisterErrorCode(error_code, p_default_locale_name, message_ptr);
+    };
+
+    register_default_message(
+        CAPTURE_DATA_TOO_LESS,
+        "ADB capture data is shorter than expected.");
+    register_default_message(
+        UNSUPPORTED_COLOR_FORMAT,
+        "ADB capture color format is not supported.");
+}
 
 AdbCaptureErrorLens::~AdbCaptureErrorLens() { DAS::AdbCaptureRelease(); }
 
@@ -55,6 +81,9 @@ DasResult AdbCaptureErrorLens::GetErrorMessage(
     DasResult            error_code,
     IDasReadOnlyString** out_string)
 {
+    DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(out_string);
+    *out_string = nullptr;
+
     DasPtr locale_name_ptr{locale_name};
     if (const auto locale_it = map_.find(locale_name_ptr);
         locale_it != map_.end())
@@ -67,21 +96,18 @@ DasResult AdbCaptureErrorLens::GetErrorMessage(
         }
     }
 
-    const auto& error_code_map = map_.at(p_default_locale_name);
-    if (const auto it = error_code_map.find(error_code);
-        it != error_code_map.end())
+    if (const auto default_locale_it = map_.find(p_default_locale_name);
+        default_locale_it != map_.end())
     {
-        return Details::ReturnPointerInMap(it, out_string);
+        const auto& error_code_map = default_locale_it->second;
+        if (const auto it = error_code_map.find(error_code);
+            it != error_code_map.end())
+        {
+            return Details::ReturnPointerInMap(it, out_string);
+        }
     }
 
-    const auto error_message =
-        DAS::fmt::format("No explanation for error code {}", error_code);
-    DasPtr<IDasReadOnlyString> error_message_ptr{};
-    ::CreateIDasReadOnlyStringFromUtf8(
-        error_message.c_str(),
-        error_message_ptr.Put());
-    *out_string = error_message_ptr.Get();
-    return DAS_S_OK;
+    return DAS_E_OUT_OF_RANGE;
 }
 
 DasResult AdbCaptureErrorLens::RegisterErrorCode(
@@ -114,17 +140,5 @@ DAS_DEFINE_VARIABLE(AdbCaptureErrorLens::p_default_locale_name) = []()
     ::CreateIDasStringFromUtf8(default_locale_name, result.Put());
     return result;
 }();
-
-DAS_DEFINE_VARIABLE(
-    AdbCaptureErrorLens::error_code_not_found_explanation_generator) =
-    +[](DasResult error_code, IDasReadOnlyString** pp_out_explanation)
-{
-    constexpr auto& template_string = DAS_UTILS_STRINGUTILS_DEFINE_U8STR(
-        "No explanation found for error code {} .");
-
-    auto result = DAS::fmt::format(template_string, error_code);
-    ::CreateIDasReadOnlyStringFromUtf8(result.c_str(), pp_out_explanation);
-    return result;
-};
 
 DAS_NS_END
