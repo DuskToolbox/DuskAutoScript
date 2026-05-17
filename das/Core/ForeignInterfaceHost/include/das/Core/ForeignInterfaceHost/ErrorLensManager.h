@@ -7,16 +7,40 @@
 #include <das/Utils/Expected.h>
 #include <das/_autogen/idl/abi/IDasErrorLens.h>
 #include <das/_autogen/idl/abi/IDasGuidVector.h>
+#include <shared_mutex>
+#include <span>
 #include <unordered_map>
+#include <vector>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
+
+struct FeatureInfo;
 
 class ErrorLensManager
 {
 private:
-    std::unordered_map<DasGuid, DasPtr<PluginInterface::IDasErrorLens>> map_{};
+    struct Route
+    {
+        DasGuid                                plugin_guid{};
+        DasPtr<PluginInterface::IDasErrorLens> lens{};
+    };
+
+    std::unordered_map<DasGuid, Route>                routes_{};
+    std::unordered_map<DasGuid, std::vector<DasGuid>> plugin_routes_{};
+    mutable std::shared_mutex                         mutex_;
+
+    DasResult RegisterRoutes(
+        const DasGuid*                  p_plugin_guid,
+        std::span<const DasGuid>        guids,
+        PluginInterface::IDasErrorLens* p_error_lens);
 
 public:
+    DasResult OnPluginLoaded(
+        const DasGuid&                plugin_guid,
+        std::span<FeatureInfo* const> error_lens_features);
+
+    DasResult OnPluginUnloading(const DasGuid& plugin_guid);
+
     DasResult Register(
         Das::ExportInterface::IDasReadOnlyGuidVector* p_guid_vector,
         PluginInterface::IDasErrorLens*               p_error_lens);
@@ -31,6 +55,10 @@ public:
         DasResult           error_code) const
         -> DAS::Utils::Expected<DasPtr<IDasReadOnlyString>>;
 };
+
+void              SetActiveErrorLensManager(ErrorLensManager* p_manager);
+void              ClearActiveErrorLensManager(ErrorLensManager* p_manager);
+ErrorLensManager* GetActiveErrorLensManager();
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
 

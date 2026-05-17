@@ -39,8 +39,7 @@ namespace
         DasResult            get_error_message_result = DAS_E_OUT_OF_RANGE;
 
         DasResult GetSupportedIids(
-            Das::ExportInterface::IDasReadOnlyGuidVector** pp_out_iids)
-            override
+            Das::ExportInterface::IDasReadOnlyGuidVector** pp_out_iids) override
         {
             DasPtr<Das::ExportInterface::IDasGuidVector> writable_iids;
             const auto create_result = ::CreateIDasGuidVector(
@@ -83,8 +82,7 @@ namespace
     {
         FeatureInfo feat{};
         feat.feature_type = DAS_PLUGIN_FEATURE_ERROR_LENS;
-        feat.interface_ptr =
-            DasPtr<IDasBase>(static_cast<IDasBase*>(&lens));
+        feat.interface_ptr = DasPtr<IDasBase>(static_cast<IDasBase*>(&lens));
         return feat;
     }
 
@@ -156,10 +154,8 @@ namespace
         std::thread lookup_thread(
             [&]
             {
-                static_cast<void>(mgr.GetErrorMessage(
-                    provider_guid,
-                    nullptr,
-                    DAS_E_FAIL));
+                static_cast<void>(
+                    mgr.GetErrorMessage(provider_guid, nullptr, DAS_E_FAIL));
             });
 
         ASSERT_EQ(entered_future.wait_for(1s), std::future_status::ready);
