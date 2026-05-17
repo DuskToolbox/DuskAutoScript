@@ -419,13 +419,31 @@ namespace Das::Http
         components.notification_hub = hub;
 
         // Wire notify callbacks through COM interfaces → WebSocket broadcast
+        // Core layer sends {"code","msg","data"}; we inject "api" here.
         components.settings_service->SetSettingsNotifyCallback(
             [](const char* json_event, void* user_data)
             {
                 auto* hub = static_cast<Das::Http::NotificationHub*>(user_data);
-                if (hub && json_event)
+                if (!hub || !json_event)
                 {
-                    hub->Broadcast(std::string(json_event));
+                    return;
+                }
+                auto parsed = Das::Utils::ParseYyjsonFromString(json_event);
+                if (!parsed)
+                {
+                    return;
+                }
+                auto obj_opt = parsed->as_object();
+                if (obj_opt)
+                {
+                    obj_opt.value()[std::string_view("api")] =
+                        std::string_view("api/v1/settings/get");
+                }
+                auto serialized =
+                    Das::Utils::SerializeYyjsonValue(*parsed, false);
+                if (serialized)
+                {
+                    hub->Broadcast(std::move(*serialized));
                 }
             },
             hub.get());
@@ -433,9 +451,26 @@ namespace Das::Http
             [](const char* json_state, void* user_data)
             {
                 auto* hub = static_cast<Das::Http::NotificationHub*>(user_data);
-                if (hub && json_state)
+                if (!hub || !json_state)
                 {
-                    hub->Broadcast(std::string(json_state));
+                    return;
+                }
+                auto parsed = Das::Utils::ParseYyjsonFromString(json_state);
+                if (!parsed)
+                {
+                    return;
+                }
+                auto obj_opt = parsed->as_object();
+                if (obj_opt)
+                {
+                    obj_opt.value()[std::string_view("api")] =
+                        std::string_view("api/v1/scheduler/get");
+                }
+                auto serialized =
+                    Das::Utils::SerializeYyjsonValue(*parsed, false);
+                if (serialized)
+                {
+                    hub->Broadcast(std::move(*serialized));
                 }
             },
             hub.get());

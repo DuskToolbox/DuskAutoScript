@@ -632,13 +632,20 @@ DasResult SettingsManager::UpdatePluginSettingsJson(
 
     if (DAS::IsOk(result))
     {
+        auto payload = Das::Utils::MakeYyjsonObject();
+        auto pobj = *payload.as_object();
+        pobj[std::string_view("type")] = std::string_view("settings_changed");
+        pobj[std::string_view("profile")] = std::string_view(profile_id);
+        pobj[std::string_view("guid")] = std::string_view(guid);
+        pobj[std::string_view("field")] = std::string_view("");
+        pobj[std::string_view("value")] = data;
+
         auto event = Das::Utils::MakeYyjsonObject();
         auto obj = *event.as_object();
-        obj[std::string_view("type")] = std::string_view("settings_changed");
-        obj[std::string_view("profile")] = std::string_view(profile_id);
-        obj[std::string_view("guid")] = std::string_view(guid);
-        obj[std::string_view("field")] = std::string_view("");
-        obj[std::string_view("value")] = data;
+        obj[std::string_view("code")] = static_cast<int64_t>(DAS_S_OK);
+        obj[std::string_view("msg")] = std::string_view("");
+        obj[std::string_view("data")] = payload;
+
         auto serialized = Das::Utils::SerializeYyjsonValue(event, false);
         if (serialized && settings_notify_)
         {
@@ -769,14 +776,21 @@ DasResult SettingsManager::UpdatePluginSettingsFieldJson(
             cell->snapshot = std::move(current);
 
             // Notify WebSocket clients of settings change
+            auto payload = Das::Utils::MakeYyjsonObject();
+            auto pobj = *payload.as_object();
+            pobj[std::string_view("type")] =
+                std::string_view("settings_changed");
+            pobj[std::string_view("profile")] = std::string_view(profile_id);
+            pobj[std::string_view("guid")] = std::string_view(guid);
+            pobj[std::string_view("field")] = std::string_view(field_name);
+            pobj[std::string_view("value")] = value;
+
             auto event = Das::Utils::MakeYyjsonObject();
             auto obj = *event.as_object();
-            obj[std::string_view("type")] =
-                std::string_view("settings_changed");
-            obj[std::string_view("profile")] = std::string_view(profile_id);
-            obj[std::string_view("guid")] = std::string_view(guid);
-            obj[std::string_view("field")] = std::string_view(field_name);
-            obj[std::string_view("value")] = value;
+            obj[std::string_view("code")] = static_cast<int64_t>(DAS_S_OK);
+            obj[std::string_view("msg")] = std::string_view("");
+            obj[std::string_view("data")] = payload;
+
             auto serialized = Das::Utils::SerializeYyjsonValue(event, false);
             if (serialized && settings_notify_)
             {

@@ -123,6 +123,25 @@ namespace Das::Http::Beast::JsonUtils
         return response;
     }
 
+    // 创建 WebSocket 通知消息（类似 ApiResponse 格式，供 App.cpp 注入 api
+    // 字段后广播）
+    inline JsonValue CreateWsNotification(
+        DasResult          code,
+        const std::string& msg,
+        const JsonValue&   data)
+    {
+        auto response = Das::Utils::MakeYyjsonObject();
+        auto obj_opt = response.as_object();
+        if (obj_opt)
+        {
+            auto& obj = obj_opt.value();
+            obj["code"] = static_cast<int64_t>(code);
+            obj["msg"] = std::string{msg};
+            obj["data"] = data;
+        }
+        return response;
+    }
+
     // 创建错误响应
     inline JsonValue CreateErrorResponse(
         DasResult          error_code,
