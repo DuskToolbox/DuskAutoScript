@@ -5,6 +5,7 @@
 #include <boost/beast/core.hpp>
 #include <boost/beast/websocket.hpp>
 #include <cstring>
+#include <das/Core/IPC/AsyncMutex.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/Logger/Logger.h>
@@ -20,7 +21,9 @@ DAS_CORE_IPC_NS_BEGIN
 struct HttpIpcTransport::Impl
 {
     explicit Impl(boost::asio::ip::tcp::socket&& socket)
-        : ws_(std::move(socket))
+        : ws_(std::move(socket)), send_mutex(
+                                      static_cast<boost::asio::io_context&>(
+                                          ws_.get_executor().context()))
     {
         // 设置二进制模式（IPC 使用二进制帧）
         ws_.binary(true);
@@ -33,7 +36,9 @@ struct HttpIpcTransport::Impl
 
     explicit Impl(
         boost::beast::websocket::stream<boost::asio::ip::tcp::socket>&& ws)
-        : ws_(std::move(ws))
+        : ws_(std::move(ws)), send_mutex(
+                                  static_cast<boost::asio::io_context&>(
+                                      ws_.get_executor().context()))
     {
         // 确保二进制模式
         ws_.binary(true);
@@ -69,6 +74,7 @@ struct HttpIpcTransport::Impl
     }
 
     boost::beast::websocket::stream<boost::asio::ip::tcp::socket> ws_;
+    AsyncMutex                                                    send_mutex;
     bool is_connected = true;
 };
 
@@ -99,6 +105,14 @@ boost::asio::awaitable<DasResult> HttpIpcTransport::SendCoroutine(
         co_return DAS_E_IPC_CONNECTION_LOST;
     }
 
+    // Lock() 返回 bool：true=cancelled，false=正常获取锁
+    bool cancelled = co_await impl_->send_mutex.Lock();
+    if (cancelled)
+    {
+        co_return DAS_E_IPC_CONNECTION_LOST;
+    }
+
+    DasResult result = DAS_S_OK;
     try
     {
         // 构建 buffer: header (32 bytes) + body
@@ -130,10 +144,11 @@ boost::asio::awaitable<DasResult> HttpIpcTransport::SendCoroutine(
         auto msg = DAS_FMT_NS::format("SendCoroutine: {}", ToString(e.what()));
         DAS_CORE_LOG_ERROR("{}", msg.c_str());
         impl_->is_connected = false;
-        co_return DAS_E_IPC_SEND_FAILED;
+        result = DAS_E_IPC_SEND_FAILED;
     }
 
-    co_return DAS_S_OK;
+    impl_->send_mutex.Unlock();
+    co_return result;
 }
 
 boost::asio::awaitable<std::variant<DasResult, AsyncIpcMessage>>

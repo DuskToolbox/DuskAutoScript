@@ -24,7 +24,8 @@ class SharedMemoryPool;
  * 消息格式: 单个 WebSocket 二进制帧 = [IPCMessageHeader(32B)][body(body_size)]
  *
  * 与 Named Pipe 版本的区别:
- * - 无需 AsyncMutex（WebSocket 协议层保证帧有序）
+ * - 使用 AsyncMutex 保证并发写入安全（boost::beast::websocket::stream
+ *   不允许并发 async_write）
  * - 无需 SharedMemoryPool（大消息直接作为完整帧发送）
  * - 无平台特定依赖（不依赖 Windows.h 或 unistd.h）
  */
