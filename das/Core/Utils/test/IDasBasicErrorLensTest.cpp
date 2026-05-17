@@ -36,7 +36,9 @@ namespace
         EXPECT_EQ(::CreateIDasBasicErrorLens(lens.Put()), DAS_S_OK);
 
         DasPtr<Das::ExportInterface::IDasGuidVector> supported_iids;
-        EXPECT_EQ(lens->GetWritableSupportedIids(supported_iids.Put()), DAS_S_OK);
+        EXPECT_EQ(
+            lens->GetWritableSupportedIids(supported_iids.Put()),
+            DAS_S_OK);
         EXPECT_EQ(supported_iids->PushBack(MakeTestGuid(1)), DAS_S_OK);
         return lens;
     }

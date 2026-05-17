@@ -13,6 +13,7 @@ DasResult DasBasicErrorLensImpl::GetSupportedIids(
     DAS_UTILS_CHECK_POINTER(pp_out_iids)
 
     *pp_out_iids = &suppored_guid_vector_;
+    suppored_guid_vector_.AddRef();
 
     return DAS_S_OK;
 }
@@ -44,19 +45,26 @@ DasResult DasBasicErrorLensImpl::GetErrorMessage(
 {
     DAS_UTILS_CHECK_POINTER(out_string)
 
+    *out_string = nullptr;
+
     DasPtr locale_name_holder{locale_name};
 
     const auto locale_it = map_.find(locale_name_holder);
     if (locale_it != map_.end())
     {
-        return Details::FindErrorMessage(
+        const auto fem_result = Details::FindErrorMessage(
             locale_it->second,
             error_code,
             *out_string);
+        if (fem_result != DAS_E_OUT_OF_RANGE)
+        {
+            return fem_result;
+        }
     }
-    for (const auto& [loacle_name, error_message_map] : map_)
+    for (const auto& entry : map_)
     {
-        const auto fem_result = Details::FindErrorMessage(
+        const auto& error_message_map = entry.second;
+        const auto  fem_result = Details::FindErrorMessage(
             error_message_map,
             error_code,
             *out_string);
@@ -68,7 +76,7 @@ DasResult DasBasicErrorLensImpl::GetErrorMessage(
 
         return fem_result;
     }
-    return DAS_S_OK;
+    return DAS_E_OUT_OF_RANGE;
 }
 
 DasResult DasBasicErrorLensImpl::RegisterErrorMessage(
@@ -95,6 +103,7 @@ DasResult DasBasicErrorLensImpl::GetWritableSupportedIids(
     DAS_UTILS_CHECK_POINTER(pp_out_iids)
 
     *pp_out_iids = &suppored_guid_vector_;
+    suppored_guid_vector_.AddRef();
 
     return DAS_S_OK;
 }
