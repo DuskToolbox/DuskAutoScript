@@ -6,6 +6,7 @@
   "description": "Official DAS MaaFramework ProjectInterface task plugin",
   "supportedSystem": "Windows",
   "language": "Cpp",
+  "loadMode": "ipc",
   "pluginFilenameExtension": "dll",
   "settings": {},
   "tasks": {
