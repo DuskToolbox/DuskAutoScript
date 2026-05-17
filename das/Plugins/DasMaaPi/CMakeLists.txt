@@ -1,25 +1,6 @@
-set(DAS_MAAPI_PLUGIN_SOURCES
-    src/AgentProcessRunner.cpp
-    src/AgentRuntimeMaaContextResolver.cpp
-    src/AgentRuntimeRequest.cpp
-    src/AgentRuntimeService.cpp
-    src/AuthoringProjector.cpp
-    src/DllMain.cpp
-    src/MaaRuntime.cpp
-    src/MaapiAgentRuntimeAdapter.cpp
-    src/MaapiAgentComponent.cpp
-    src/MaapiAgentComponentFactory.cpp
-    src/MaapiAuthoringSession.cpp
-    src/MaapiAuthoringSessionFactory.cpp
-    src/MaapiRunTaskComponent.cpp
-    src/MaapiTask.cpp
-    src/PiCatalog.cpp
-    src/PiCompiler.cpp
-    src/PiParser.cpp
-    src/PluginImpl.cpp
-    src/PluginUtils.cpp)
+aux_source_directory(src DAS_MAAPI_SOURCES)
 
-add_library(DasMaaPi SHARED ${DAS_MAAPI_PLUGIN_SOURCES})
+add_library(DasMaaPi SHARED ${DAS_MAAPI_SOURCES})
 target_include_directories(DasMaaPi PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_options(DasMaaPi PRIVATE
@@ -44,24 +25,10 @@ if(TARGET DasBundledMaaFrameworkDll)
     target_link_libraries(DasMaaPi PRIVATE "${_das_maapi_agent_client_implib}")
 endif()
 
-set(_das_maapi_package_dir "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/plugins/DasMaaPi")
-set(_das_maapi_archive_dir "${CMAKE_BINARY_DIR}/lib/$<CONFIG>/plugins/DasMaaPi")
 set_target_properties(DasMaaPi PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${_das_maapi_package_dir}"
-    LIBRARY_OUTPUT_DIRECTORY "${_das_maapi_package_dir}"
-    ARCHIVE_OUTPUT_DIRECTORY "${_das_maapi_archive_dir}"
-    RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/bin/Debug/plugins/DasMaaPi"
-    LIBRARY_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/bin/Debug/plugins/DasMaaPi"
-    ARCHIVE_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/lib/Debug/plugins/DasMaaPi"
-    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/bin/Release/plugins/DasMaaPi"
-    LIBRARY_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/bin/Release/plugins/DasMaaPi"
-    ARCHIVE_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/lib/Release/plugins/DasMaaPi"
-    RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/bin/RelWithDebInfo/plugins/DasMaaPi"
-    LIBRARY_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/bin/RelWithDebInfo/plugins/DasMaaPi"
-    ARCHIVE_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/lib/RelWithDebInfo/plugins/DasMaaPi"
-    RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}/bin/MinSizeRel/plugins/DasMaaPi"
-    LIBRARY_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}/bin/MinSizeRel/plugins/DasMaaPi"
-    ARCHIVE_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}/lib/MinSizeRel/plugins/DasMaaPi")
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/plugins/DasMaaPi"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/plugins/DasMaaPi"
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib/$<CONFIG>/plugins/DasMaaPi")
 
 configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/DasMaaPi.json
@@ -89,35 +56,14 @@ foreach(_das_maapi_runtime_dll IN LISTS DAS_MAAFRAMEWORK_RUNTIME_DLLS)
 endforeach()
 
 if(DAS_BUILD_TEST)
+    set(DAS_MAAPI_TEST_PLUGIN_SOURCES ${DAS_MAAPI_SOURCES})
+    list(FILTER DAS_MAAPI_TEST_PLUGIN_SOURCES EXCLUDE REGEX "DllMain\.cpp$")
+
+    aux_source_directory(test DAS_MAAPI_TEST_SOURCES)
+
     add_executable(DasMaaPiTest
-        src/AgentProcessRunner.cpp
-        src/AgentRuntimeMaaContextResolver.cpp
-        src/AgentRuntimeRequest.cpp
-        src/AgentRuntimeService.cpp
-        src/AuthoringProjector.cpp
-        src/MaaRuntime.cpp
-        src/MaapiAgentRuntimeAdapter.cpp
-        src/MaapiAgentComponent.cpp
-        src/MaapiAgentComponentFactory.cpp
-        src/MaapiAuthoringSession.cpp
-        src/MaapiAuthoringSessionFactory.cpp
-        src/MaapiRunTaskComponent.cpp
-        src/MaapiTask.cpp
-        src/PiCompiler.cpp
-        src/PiCatalog.cpp
-        src/PiParser.cpp
-        src/PluginImpl.cpp
-        src/PluginUtils.cpp
-        test/MaapiAuthoringTest.cpp
-        test/MaapiCompileTest.cpp
-        test/MaapiIntegrationTest.cpp
-        test/MaapiAgentRuntimeDtoTest.cpp
-        test/MaapiAgentRuntimeLifecycleTest.cpp
-        test/MaapiAgentComponentTest.cpp
-        test/MaapiRunTaskComponentTest.cpp
-        test/MaapiPluginScaffoldTest.cpp
-        test/MaapiPiParserTest.cpp
-        test/MaapiRuntimeTest.cpp)
+        ${DAS_MAAPI_TEST_PLUGIN_SOURCES}
+        ${DAS_MAAPI_TEST_SOURCES})
     target_link_libraries(DasMaaPiTest PRIVATE
         Das3rdParty
         GTest::gtest_main
@@ -136,11 +82,7 @@ if(DAS_BUILD_TEST)
         ${CMAKE_SOURCE_DIR}/das/Core/ForeignInterfaceHost/include)
 
     set_target_properties(DasMaaPiTest PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/Test
-        RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_BINARY_DIR}/Test
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/Test
-        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_BINARY_DIR}/Test
-        RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL ${CMAKE_BINARY_DIR}/Test)
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/Test)
 
     add_dependencies(DasMaaPiTest
         DasMaaPi
