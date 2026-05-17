@@ -9,8 +9,10 @@
 #include <das/DasApi.h>
 #include <das/DasSharedRef.hpp>
 #include <das/Utils/DasJsonCore.h>
+#include <das/_autogen/idl/abi/IDasErrorLens.h>
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasErrorLens.Implements.hpp>
 #include <gtest/gtest.h>
 #include <spdlog/details/log_msg.h>
 #include <spdlog/sinks/base_sink.h>
@@ -664,6 +666,192 @@ namespace
         DasGuid               factory_guid_;
         std::atomic<uint32_t> ref_count_{0};
     };
+
+    class PluginManagerErrorLens final
+        : public DasErrorLensImplBase<PluginManagerErrorLens>
+    {
+    public:
+        explicit PluginManagerErrorLens(DasGuid provider_guid)
+            : supported_iids_{provider_guid}
+        {
+        }
+
+        DasResult DAS_STD_CALL GetSupportedIids(
+            Das::ExportInterface::IDasReadOnlyGuidVector** pp_out_iids)
+            override
+        {
+            DasPtr<Das::ExportInterface::IDasGuidVector> writable_iids;
+            const auto create_result = ::CreateIDasGuidVector(
+                supported_iids_.data(),
+                supported_iids_.size(),
+                writable_iids.Put());
+            if (DAS::IsFailed(create_result))
+            {
+                return create_result;
+            }
+
+            return writable_iids->ToConst(pp_out_iids);
+        }
+
+        DasResult DAS_STD_CALL GetErrorMessage(
+            IDasReadOnlyString*,
+            DasResult,
+            IDasReadOnlyString** pp_out_message) override
+        {
+            if (pp_out_message != nullptr)
+            {
+                *pp_out_message = nullptr;
+            }
+            return DAS_E_OUT_OF_RANGE;
+        }
+
+    private:
+        std::vector<DasGuid> supported_iids_;
+    };
+
+    class ErrorLensPluginPackage final : public IDasPluginPackage
+    {
+    public:
+        explicit ErrorLensPluginPackage(DasGuid provider_guid)
+            : provider_guid_(provider_guid)
+        {
+        }
+
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out_object) override
+        {
+            if (pp_out_object == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (iid == DAS_IID_BASE)
+            {
+                *pp_out_object = static_cast<IDasBase*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            if (iid == DAS_IID_PLUGIN_PACKAGE)
+            {
+                *pp_out_object = static_cast<IDasPluginPackage*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            *pp_out_object = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult DAS_STD_CALL
+        EnumFeature(uint64_t index, DasPluginFeature* p_out_feature) override
+        {
+            if (p_out_feature == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (index != 0)
+            {
+                return DAS_S_FALSE;
+            }
+            *p_out_feature = DAS_PLUGIN_FEATURE_ERROR_LENS;
+            return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL
+        CreateFeatureInterface(uint64_t index, IDasBase** pp_out) override
+        {
+            if (pp_out == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out = nullptr;
+            if (index != 0)
+            {
+                return DAS_E_NOT_FOUND;
+            }
+
+            auto* lens = PluginManagerErrorLens::MakeRaw(provider_guid_);
+            *pp_out = static_cast<IDasBase*>(static_cast<IDasErrorLens*>(lens));
+            return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL CanUnloadNow(bool* can_unload_now) override
+        {
+            if (can_unload_now == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *can_unload_now = true;
+            return DAS_S_OK;
+        }
+
+    private:
+        DasGuid               provider_guid_;
+        std::atomic<uint32_t> ref_count_{0};
+    };
+
+    class ErrorLensRuntime final : public IForeignLanguageRuntime
+    {
+    public:
+        explicit ErrorLensRuntime(DasGuid provider_guid)
+            : provider_guid_(provider_guid)
+        {
+        }
+
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out_object) override
+        {
+            if (pp_out_object == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (iid == DAS_IID_BASE)
+            {
+                *pp_out_object = static_cast<IDasBase*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            *pp_out_object = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        auto LoadPlugin(const std::filesystem::path& path)
+            -> DAS::Utils::Expected<DasPtr<IDasBase>> override
+        {
+            loaded_paths.push_back(path);
+            auto* package = new ErrorLensPluginPackage(provider_guid_);
+            package->AddRef();
+            return DasPtr<IDasBase>::Attach(static_cast<IDasBase*>(package));
+        }
+
+        std::vector<std::filesystem::path> loaded_paths;
+
+    private:
+        DasGuid               provider_guid_;
+        std::atomic<uint32_t> ref_count_{0};
+    };
 } // anonymous namespace
 
 // ============================================================
@@ -1185,6 +1373,105 @@ TEST_F(PluginManagerFeatureTest, GetFeaturesByTypeReturnsTaskComponentFactory)
     EXPECT_EQ(span[0]->feature_type, DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY);
     EXPECT_EQ(span[0]->plugin_guid, plugin_guid);
     EXPECT_EQ(span[0]->iid, DasIidOf<IDasTaskComponentFactory>());
+}
+
+TEST_F(PluginManagerFeatureTest, GetFeaturesByTypeReturnsErrorLens)
+{
+    DasGuid plugin_guid{};
+    plugin_guid.data1 = 0x6805;
+    pm_->RegisterTestFeature(
+        DAS_PLUGIN_FEATURE_ERROR_LENS,
+        plugin_guid,
+        nullptr);
+
+    auto span = pm_->GetFeaturesByType(DAS_PLUGIN_FEATURE_ERROR_LENS);
+    ASSERT_EQ(span.size(), 1u);
+    EXPECT_EQ(span[0]->feature_type, DAS_PLUGIN_FEATURE_ERROR_LENS);
+    EXPECT_EQ(span[0]->plugin_guid, plugin_guid);
+    EXPECT_EQ(span[0]->iid, DasIidOf<IDasErrorLens>());
+}
+
+class PluginManagerErrorLensLifecycleTest : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        test_dir_ = std::filesystem::current_path()
+                    / ("error_lens_plugin_test_"
+                       + std::to_string(std::random_device{}()));
+        std::filesystem::create_directories(test_dir_);
+        settings_dir_ = test_dir_ / "settings";
+
+        settings_manager_ =
+            std::make_unique<DAS::Core::SettingsManager::SettingsManager>(
+                settings_dir_);
+        ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+        pm_ = std::make_unique<PluginManager>(
+            *settings_manager_,
+            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp_));
+
+        provider_guid_ = MakeTaskComponentTestGuid(0x68130031);
+        auto* runtime = new ErrorLensRuntime(provider_guid_);
+        runtime->AddRef();
+        runtime_guard_ = DasPtr<IForeignLanguageRuntime>::Attach(runtime);
+
+        ASSERT_EQ(pm_->Initialize(1, runtime_guard_), DAS_S_OK);
+    }
+
+    void TearDown() override
+    {
+        pm_->Shutdown();
+        runtime_guard_.Reset();
+        std::filesystem::remove_all(test_dir_);
+    }
+
+    std::filesystem::path test_dir_;
+    std::filesystem::path settings_dir_;
+    std::unique_ptr<DAS::Core::SettingsManager::SettingsManager>
+                                                              settings_manager_;
+    std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
+    std::unique_ptr<PluginManager>                            pm_;
+    DasPtr<IForeignLanguageRuntime>                           runtime_guard_;
+    DasGuid provider_guid_{};
+};
+
+TEST_F(
+    PluginManagerErrorLensLifecycleTest,
+    ErrorLensLifecycleRegistersRoutes)
+{
+    const auto manifest_path = test_dir_ / "ErrorLensPlugin.json";
+    WriteMinimalManifest(
+        manifest_path,
+        "00000000-0000-0000-0000-006813003202",
+        "ErrorLensPlugin");
+
+    ASSERT_EQ(pm_->LoadPlugin(manifest_path), DAS_S_OK);
+
+    DasPtr<IDasErrorLens> lens;
+    EXPECT_EQ(
+        pm_->GetErrorLensManager().FindInterface(provider_guid_, lens.Put()),
+        DAS_S_OK);
+    EXPECT_NE(lens.Get(), nullptr);
+}
+
+TEST_F(
+    PluginManagerErrorLensLifecycleTest,
+    ErrorLensLifecycleUnregistersRoutes)
+{
+    const auto manifest_path = test_dir_ / "UnloadErrorLensPlugin.json";
+    WriteMinimalManifest(
+        manifest_path,
+        "00000000-0000-0000-0000-006813003302",
+        "UnloadErrorLensPlugin");
+
+    ASSERT_EQ(pm_->LoadPlugin(manifest_path), DAS_S_OK);
+    ASSERT_EQ(pm_->UnloadPlugin(manifest_path), DAS_S_OK);
+
+    DasPtr<IDasErrorLens> lens;
+    EXPECT_EQ(
+        pm_->GetErrorLensManager().FindInterface(provider_guid_, lens.Put()),
+        DAS_E_NO_INTERFACE);
 }
 
 // ============================================================
