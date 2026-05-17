@@ -4,6 +4,7 @@
 #include <das/Core/ForeignInterfaceHost/ComponentFactoryManager.h>
 #include <das/Core/ForeignInterfaceHost/Config.h>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
+#include <das/Core/ForeignInterfaceHost/ErrorLensManager.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
 #include <das/Core/ForeignInterfaceHost/TaskComponentFactoryManager.h>
@@ -82,7 +83,7 @@ public:
         Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>
             ipc_context);
 
-    ~PluginManager() = default;
+    ~PluginManager();
 
     /**
      * @brief 获取关联的 SettingsManager 引用
@@ -242,6 +243,8 @@ public:
 
     TaskComponentFactoryManager& GetTaskComponentFactoryManager();
 
+    ErrorLensManager& GetErrorLensManager();
+
     /**
      * @brief Inject a feature directly into the type index for testing.
      * Only for use in unit tests that need to simulate loaded features
@@ -325,6 +328,7 @@ private:
                                 feature_type_index_;
     ComponentFactoryManager     component_factory_mgr_;
     TaskComponentFactoryManager task_component_factory_mgr_;
+    ErrorLensManager            error_lens_mgr_;
 
     // IPC 相关成员
     Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context_;

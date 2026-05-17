@@ -677,8 +677,7 @@ namespace
         }
 
         DasResult DAS_STD_CALL GetSupportedIids(
-            Das::ExportInterface::IDasReadOnlyGuidVector** pp_out_iids)
-            override
+            Das::ExportInterface::IDasReadOnlyGuidVector** pp_out_iids) override
         {
             DasPtr<Das::ExportInterface::IDasGuidVector> writable_iids;
             const auto create_result = ::CreateIDasGuidVector(
@@ -1220,7 +1219,11 @@ class PluginManagerFeatureTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        settings_dir_ = UniqueSettingsDir();
+        test_dir_ = std::filesystem::current_path()
+                    / ("plugin_manager_feature_test_"
+                       + std::to_string(std::random_device{}()));
+        std::filesystem::create_directories(test_dir_);
+        settings_dir_ = test_dir_ / "settings";
         settings_manager_ =
             std::make_unique<DAS::Core::SettingsManager::SettingsManager>(
                 settings_dir_);
@@ -1230,38 +1233,75 @@ protected:
             *settings_manager_,
             Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
                 ipc_sp));
-        auto runtime = CreateCppRuntime();
-        ASSERT_NE(runtime, nullptr) << "Failed to create Cpp runtime";
-        ASSERT_EQ(pm_->Initialize(1, runtime), DAS_S_OK);
 
         registry_ = std::make_unique<RemoteObjectRegistry>();
         pm_->SetRegistry(*registry_);
-
-        auto plugin_path = GetTestPluginPath();
-        ASSERT_EQ(pm_->LoadPlugin(plugin_path), DAS_S_OK)
-            << "Failed to load IpcTestPlugin1.dll";
-
-        plugin_path_ = plugin_path;
     }
 
     void TearDown() override
     {
         pm_->Shutdown();
-        std::filesystem::remove_all(settings_dir_);
+        runtime_guard_.Reset();
+        std::filesystem::remove_all(test_dir_);
+    }
+
+    void InitializeCppRuntime()
+    {
+        if (initialized_)
+        {
+            return;
+        }
+
+        auto runtime = CreateCppRuntime();
+        ASSERT_NE(runtime, nullptr) << "Failed to create Cpp runtime";
+        ASSERT_EQ(pm_->Initialize(1, runtime), DAS_S_OK);
+        initialized_ = true;
+    }
+
+    void InitializeErrorLensRuntime(DasGuid provider_guid)
+    {
+        if (initialized_)
+        {
+            return;
+        }
+
+        auto* runtime = new ErrorLensRuntime(provider_guid);
+        runtime->AddRef();
+        runtime_guard_ = DasPtr<IForeignLanguageRuntime>::Attach(runtime);
+        ASSERT_EQ(pm_->Initialize(1, runtime_guard_), DAS_S_OK);
+        initialized_ = true;
+    }
+
+    void LoadIpcTestPlugin()
+    {
+        if (!plugin_path_.empty())
+        {
+            return;
+        }
+
+        InitializeCppRuntime();
+        auto plugin_path = GetTestPluginPath();
+        ASSERT_EQ(pm_->LoadPlugin(plugin_path), DAS_S_OK)
+            << "Failed to load IpcTestPlugin1.dll";
+        plugin_path_ = plugin_path;
     }
 
     void RegisterObjects()
     {
+        LoadIpcTestPlugin();
         ASSERT_EQ(pm_->RegisterPluginObjects(plugin_path_), DAS_S_OK)
             << "RegisterPluginObjects failed";
     }
 
+    std::filesystem::path test_dir_;
     std::unique_ptr<DAS::Core::SettingsManager::SettingsManager>
                                           settings_manager_;
     std::unique_ptr<PluginManager>        pm_;
     std::unique_ptr<RemoteObjectRegistry> registry_;
     std::filesystem::path                 plugin_path_;
     std::filesystem::path                 settings_dir_;
+    DasPtr<IForeignLanguageRuntime>       runtime_guard_;
+    bool                                  initialized_ = false;
 };
 
 TEST_F(PluginManagerFeatureTest, GetFeaturesByTypeReturnsInputFactory)
@@ -1391,55 +1431,10 @@ TEST_F(PluginManagerFeatureTest, GetFeaturesByTypeReturnsErrorLens)
     EXPECT_EQ(span[0]->iid, DasIidOf<IDasErrorLens>());
 }
 
-class PluginManagerErrorLensLifecycleTest : public ::testing::Test
+TEST_F(PluginManagerFeatureTest, ErrorLensLifecycleRegistersRoutes)
 {
-protected:
-    void SetUp() override
-    {
-        test_dir_ = std::filesystem::current_path()
-                    / ("error_lens_plugin_test_"
-                       + std::to_string(std::random_device{}()));
-        std::filesystem::create_directories(test_dir_);
-        settings_dir_ = test_dir_ / "settings";
-
-        settings_manager_ =
-            std::make_unique<DAS::Core::SettingsManager::SettingsManager>(
-                settings_dir_);
-        ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
-        pm_ = std::make_unique<PluginManager>(
-            *settings_manager_,
-            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-                ipc_sp_));
-
-        provider_guid_ = MakeTaskComponentTestGuid(0x68130031);
-        auto* runtime = new ErrorLensRuntime(provider_guid_);
-        runtime->AddRef();
-        runtime_guard_ = DasPtr<IForeignLanguageRuntime>::Attach(runtime);
-
-        ASSERT_EQ(pm_->Initialize(1, runtime_guard_), DAS_S_OK);
-    }
-
-    void TearDown() override
-    {
-        pm_->Shutdown();
-        runtime_guard_.Reset();
-        std::filesystem::remove_all(test_dir_);
-    }
-
-    std::filesystem::path test_dir_;
-    std::filesystem::path settings_dir_;
-    std::unique_ptr<DAS::Core::SettingsManager::SettingsManager>
-                                                              settings_manager_;
-    std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
-    std::unique_ptr<PluginManager>                            pm_;
-    DasPtr<IForeignLanguageRuntime>                           runtime_guard_;
-    DasGuid provider_guid_{};
-};
-
-TEST_F(
-    PluginManagerErrorLensLifecycleTest,
-    ErrorLensLifecycleRegistersRoutes)
-{
+    const auto provider_guid = MakeTaskComponentTestGuid(0x68130031);
+    InitializeErrorLensRuntime(provider_guid);
     const auto manifest_path = test_dir_ / "ErrorLensPlugin.json";
     WriteMinimalManifest(
         manifest_path,
@@ -1450,15 +1445,15 @@ TEST_F(
 
     DasPtr<IDasErrorLens> lens;
     EXPECT_EQ(
-        pm_->GetErrorLensManager().FindInterface(provider_guid_, lens.Put()),
+        pm_->GetErrorLensManager().FindInterface(provider_guid, lens.Put()),
         DAS_S_OK);
     EXPECT_NE(lens.Get(), nullptr);
 }
 
-TEST_F(
-    PluginManagerErrorLensLifecycleTest,
-    ErrorLensLifecycleUnregistersRoutes)
+TEST_F(PluginManagerFeatureTest, ErrorLensLifecycleUnregistersRoutes)
 {
+    const auto provider_guid = MakeTaskComponentTestGuid(0x68130031);
+    InitializeErrorLensRuntime(provider_guid);
     const auto manifest_path = test_dir_ / "UnloadErrorLensPlugin.json";
     WriteMinimalManifest(
         manifest_path,
@@ -1470,7 +1465,7 @@ TEST_F(
 
     DasPtr<IDasErrorLens> lens;
     EXPECT_EQ(
-        pm_->GetErrorLensManager().FindInterface(provider_guid_, lens.Put()),
+        pm_->GetErrorLensManager().FindInterface(provider_guid, lens.Put()),
         DAS_E_NO_INTERFACE);
 }
 

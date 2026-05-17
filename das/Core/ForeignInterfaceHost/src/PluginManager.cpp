@@ -76,6 +76,11 @@ PluginManager::PluginManager(
 {
 }
 
+PluginManager::~PluginManager()
+{
+    ClearActiveErrorLensManager(&error_lens_mgr_);
+}
+
 DasResult PluginManager::Initialize(
     uint16_t                        session_id,
     DasPtr<IForeignLanguageRuntime> runtime)
@@ -95,6 +100,7 @@ DasResult PluginManager::Initialize(
     {
         runtime_ = std::move(runtime);
     }
+    SetActiveErrorLensManager(&error_lens_mgr_);
 
     DAS_CORE_LOG_INFO(
         "PluginManager initialized with session_id={}",
@@ -140,6 +146,7 @@ DasResult PluginManager::Shutdown()
         }
 
         // 通知 ComponentFactoryManager 释放工厂引用
+        error_lens_mgr_.OnPluginUnloading(guid);
         component_factory_mgr_.OnPluginUnloading(guid);
         task_component_factory_mgr_.OnPluginUnloading(guid);
     }
@@ -149,6 +156,7 @@ DasResult PluginManager::Shutdown()
     loaded_plugins_.clear();
     runtime_.Reset();
     session_id_ = 0;
+    ClearActiveErrorLensManager(&error_lens_mgr_);
 
     DAS_CORE_LOG_INFO("PluginManager shutdown complete");
     return DAS_S_OK;
@@ -377,6 +385,22 @@ DasResult PluginManager::LoadPlugin(
             }
 
             {
+                auto error_lens_features = CollectFeaturePointers(
+                    loaded_plugins_[guid],
+                    Das::PluginInterface::DAS_PLUGIN_FEATURE_ERROR_LENS);
+                const auto register_result =
+                    error_lens_mgr_.OnPluginLoaded(guid, error_lens_features);
+                if (DAS::IsFailed(register_result))
+                {
+                    error_lens_mgr_.OnPluginUnloading(guid);
+                    component_factory_mgr_.OnPluginUnloading(guid);
+                    path_to_guid_.erase(path_str);
+                    loaded_plugins_.erase(guid);
+                    return register_result;
+                }
+            }
+
+            {
                 auto task_component_factories = CollectFeaturePointers(
                     loaded_plugins_[guid],
                     Das::PluginInterface::
@@ -388,6 +412,7 @@ DasResult PluginManager::LoadPlugin(
                         loaded_plugins_[guid].desc->task_components);
                 if (DAS::IsFailed(register_result))
                 {
+                    error_lens_mgr_.OnPluginUnloading(guid);
                     task_component_factory_mgr_.OnPluginUnloading(guid);
                     component_factory_mgr_.OnPluginUnloading(guid);
                     path_to_guid_.erase(path_str);
@@ -465,6 +490,7 @@ DasResult PluginManager::UnloadPlugin(const std::filesystem::path& path)
 
     // 进程内路径：先从 feature_type_index_ 中移除指针（在 erase
     // loaded_plugins_ 之前）
+    error_lens_mgr_.OnPluginUnloading(guid);
     component_factory_mgr_.OnPluginUnloading(guid);
     task_component_factory_mgr_.OnPluginUnloading(guid);
 
@@ -889,6 +915,11 @@ TaskComponentFactoryManager& PluginManager::GetTaskComponentFactoryManager()
     return task_component_factory_mgr_;
 }
 
+ErrorLensManager& PluginManager::GetErrorLensManager()
+{
+    return error_lens_mgr_;
+}
+
 void PluginManager::RegisterTestFeature(
     Das::PluginInterface::DasPluginFeature type,
     const DasGuid&                         plugin_guid,
@@ -1098,17 +1129,14 @@ DasResult PluginManager::LoadPluginViaIpc(
             component_factory_mgr_.OnPluginLoaded(guid, plugin_factories);
         }
 
-        auto task_component_factories = CollectFeaturePointers(
+        auto error_lens_features = CollectFeaturePointers(
             loaded_plugins_[guid],
-            Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY);
-        task_component_registration_result =
-            task_component_factory_mgr_.OnPluginLoaded(
-                guid,
-                task_component_factories,
-                loaded_plugins_[guid].desc->task_components);
-        if (DAS::IsFailed(task_component_registration_result))
+            Das::PluginInterface::DAS_PLUGIN_FEATURE_ERROR_LENS);
+        const auto error_lens_registration_result =
+            error_lens_mgr_.OnPluginLoaded(guid, error_lens_features);
+        if (DAS::IsFailed(error_lens_registration_result))
         {
-            task_component_factory_mgr_.OnPluginUnloading(guid);
+            error_lens_mgr_.OnPluginUnloading(guid);
             component_factory_mgr_.OnPluginUnloading(guid);
             path_to_guid_.erase(manifest_path.string());
             loaded_plugins_.erase(guid);
@@ -1118,6 +1146,35 @@ DasResult PluginManager::LoadPluginViaIpc(
             {
                 failed_launcher = host_it->second;
                 host_launchers_.erase(host_it);
+            }
+            task_component_registration_result = error_lens_registration_result;
+        }
+
+        if (DAS::IsOk(task_component_registration_result))
+        {
+            auto task_component_factories = CollectFeaturePointers(
+                loaded_plugins_[guid],
+                Das::PluginInterface::
+                    DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY);
+            task_component_registration_result =
+                task_component_factory_mgr_.OnPluginLoaded(
+                    guid,
+                    task_component_factories,
+                    loaded_plugins_[guid].desc->task_components);
+            if (DAS::IsFailed(task_component_registration_result))
+            {
+                error_lens_mgr_.OnPluginUnloading(guid);
+                task_component_factory_mgr_.OnPluginUnloading(guid);
+                component_factory_mgr_.OnPluginUnloading(guid);
+                path_to_guid_.erase(manifest_path.string());
+                loaded_plugins_.erase(guid);
+
+                auto host_it = host_launchers_.find(guid);
+                if (host_it != host_launchers_.end())
+                {
+                    failed_launcher = host_it->second;
+                    host_launchers_.erase(host_it);
+                }
             }
         }
     }
@@ -1158,6 +1215,7 @@ DasResult PluginManager::UnloadPluginIpc(
     // 从索引中移除（必须在 Stop 之前，Stop 可能触发断连回调）
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        error_lens_mgr_.OnPluginUnloading(guid);
         component_factory_mgr_.OnPluginUnloading(guid);
         task_component_factory_mgr_.OnPluginUnloading(guid);
         path_to_guid_.erase(plugin.plugin_path.string());
@@ -1189,6 +1247,7 @@ void PluginManager::CleanupPluginByGuid(DasGuid plugin_guid)
     auto plugin_it = loaded_plugins_.find(plugin_guid);
     if (plugin_it != loaded_plugins_.end())
     {
+        error_lens_mgr_.OnPluginUnloading(plugin_guid);
         component_factory_mgr_.OnPluginUnloading(plugin_guid);
         task_component_factory_mgr_.OnPluginUnloading(plugin_guid);
         path_to_guid_.erase(plugin_it->second.plugin_path.string());
