@@ -1,5 +1,6 @@
 #include <das/Core/ForeignInterfaceHost/DasStringImpl.h>
 #include <das/Core/ForeignInterfaceHost/ErrorLensManager.h>
+#include <das/Core/IPC/BusinessThread.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/i18n/GlobalLocale.h>
 #include <das/DasApi.h>
@@ -71,11 +72,37 @@ DAS_C_API DasResult DasGetErrorMessage(
     DAS_UTILS_CHECK_POINTER(p_type_info)
     DAS_UTILS_CHECK_POINTER(pp_out_error_message)
 
+    if (!DAS::Core::IPC::IsCurrentBusinessThread())
+    {
+        return DAS_E_UNEXPECTED_THREAD_DETECTED;
+    }
+
     DasGuid    type_guid{};
     const auto get_guid_result = p_type_info->GetGuid(&type_guid);
     if (Das::IsFailed(get_guid_result))
     {
         return ::DasGetPredefinedErrorMessage(error_code, pp_out_error_message);
+    }
+
+    auto* active_manager =
+        DAS::Core::ForeignInterfaceHost::GetActiveErrorLensManager();
+    if (active_manager != nullptr)
+    {
+        DasPtr<IDasReadOnlyString> locale_name;
+        const auto get_locale_result = ::DasGetDefaultLocale(locale_name.Put());
+        if (Das::IsOk(get_locale_result) && locale_name)
+        {
+            auto plugin_message = active_manager->GetErrorMessage(
+                type_guid,
+                locale_name.Get(),
+                error_code);
+            if (plugin_message && plugin_message.value())
+            {
+                *pp_out_error_message = plugin_message.value().Get();
+                (*pp_out_error_message)->AddRef();
+                return DAS_S_OK;
+            }
+        }
     }
 
     return ::DasGetPredefinedErrorMessage(error_code, pp_out_error_message);

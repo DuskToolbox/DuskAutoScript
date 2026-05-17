@@ -14,6 +14,9 @@ class DistributedObjectManager;
 class ProxyFactory;
 class RemoteObjectRegistry;
 
+[[nodiscard]]
+bool IsCurrentBusinessThread() noexcept;
+
 /**
  * @brief 业务线程类
  *

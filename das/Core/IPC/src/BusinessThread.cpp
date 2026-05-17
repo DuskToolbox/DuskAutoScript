@@ -11,6 +11,34 @@
 
 DAS_CORE_IPC_NS_BEGIN
 
+namespace
+{
+    thread_local bool g_is_current_business_thread = false;
+
+    class ScopedBusinessThreadMarker
+    {
+    public:
+        ScopedBusinessThreadMarker() noexcept
+        {
+            g_is_current_business_thread = true;
+        }
+
+        ~ScopedBusinessThreadMarker()
+        {
+            g_is_current_business_thread = false;
+        }
+
+        ScopedBusinessThreadMarker(const ScopedBusinessThreadMarker&) = delete;
+        ScopedBusinessThreadMarker& operator=(
+            const ScopedBusinessThreadMarker&) = delete;
+    };
+} // namespace
+
+bool IsCurrentBusinessThread() noexcept
+{
+    return g_is_current_business_thread;
+}
+
 BusinessThread::BusinessThread(
     IpcMessageQueue<InboundMessage>& inbound,
     IpcRunLoop&                      run_loop,
@@ -57,6 +85,7 @@ void BusinessThread::Run()
 {
     DAS_CORE_LOG_INFO("BusinessThread::Run() started");
 
+    ScopedBusinessThreadMarker business_thread_marker;
     ScopedCurrentIpcContext scope(&resolve_context_);
 
     proxy_factory_.GetObjectManager().SetBusinessThreadId(
