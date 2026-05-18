@@ -28,12 +28,11 @@ namespace Das::Http
         {
             try
             {
-                auto* impl = new DasAutoFlushJsonImpl(
+                cached_json_ = new DasAutoFlushJsonImpl(
                     settings_service_,
                     profile_id_,
                     plugin_guid_,
                     whitelist_);
-                cached_json_.Attach(impl);
             }
             catch (const std::bad_alloc& ex)
             {

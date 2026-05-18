@@ -292,6 +292,7 @@ target_link_libraries(DasCore PRIVATE ${DAS_FOREIGN_LANGUAGE_LIB_LIST})
 
 if(${DAS_BUILD_TEST})
 #复制 Python 测试插件到 build 目录（测试工作目录是   build / Test）
+    file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/Test/plugins)
     file(COPY ${CMAKE_SOURCE_DIR}/das/Plugins/PythonTestPlugin
         DESTINATION ${CMAKE_BINARY_DIR}/Test/plugins)
 
