@@ -288,8 +288,8 @@ if (DAS_USE_BUNDLED_OPENCV)
     _download_and_config_opencv()
 
 else ()
-    find_package(OpenCV 4.8)
-
+    set(DAS_OPENCV_VERSION 4.8)
+    find_package(OpenCV ${DAS_OPENCV_VERSION})
     if (OpenCV_FOUND)
         target_link_libraries(Das3rdParty INTERFACE ${OpenCV_LIBS})
     else ()
@@ -507,7 +507,7 @@ set(CPPYYJSON_PFR_TARGET Boost::headers CACHE STRING "Boost.PFR target for yyjso
 FetchContent_Declare(
     cpp_yyjson
     GIT_REPOSITORY https://github.com/BombaxCeiba/yyjson-cpp
-    GIT_TAG        da86ae3f44654863b992dffd96513cb427ff569d
+    GIT_TAG        bff11d4b98680f84dac9da58ee79a4665f7ca4ce
     GIT_SHALLOW    TRUE
     GIT_SUBMODULES "" # Skip benchmark vendor submodules (simdjson, etc.) not needed for core library
 )
