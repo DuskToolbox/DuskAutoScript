@@ -2,8 +2,13 @@
 
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/ip/tcp.hpp>
+
+DAS_DISABLE_WARNING_BEGIN
+DAS_IGNORE_BEAST_WARNING
 #include <boost/beast/core.hpp>
 #include <boost/beast/websocket.hpp>
+DAS_DISABLE_WARNING_END
+
 #include <cstring>
 #include <das/Core/IPC/AsyncMutex.h>
 #include <das/Core/IPC/IpcErrors.h>

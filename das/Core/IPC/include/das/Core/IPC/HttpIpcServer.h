@@ -2,10 +2,15 @@
 #define DAS_CORE_IPC_HTTP_IPC_SERVER_H
 
 #include <boost/asio/ip/tcp.hpp>
-#include <boost/beast/core.hpp>
-#include <boost/beast/websocket.hpp>
 #include <das/Core/IPC/Config.h>
 #include <das/IDasBase.h>
+
+DAS_DISABLE_WARNING_BEGIN
+DAS_IGNORE_BEAST_WARNING
+#include <boost/beast/core.hpp>
+#include <boost/beast/websocket.hpp>
+DAS_DISABLE_WARNING_END
+
 #include <functional>
 #include <memory>
 #include <string>

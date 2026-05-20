@@ -70,9 +70,15 @@
 
 #define DAS_IGNORE_SOL2_WARNING DAS_PRAGMA(warning(disable : 4265))
 
+#define DAS_IGNORE_BEAST_WARNING DAS_PRAGMA(warning(disable : 4267))
+
 #define DAS_IGNORE_STDEXEC_PARAMETERS                                          \
     DAS_IGNORE_UNUSED_PARAMETER                                                \
     DAS_PRAGMA(warning(disable : 4324 4456))
+
+#define DAS_IGNORE_BOOST_PROCESS_WARNING                                       \
+    DAS_IGNORE_UNUSED_PARAMETER                                                \
+    DAS_PRAGMA(warning(disable : 4245))
 
 #elif defined(__clang__)
 #define DAS_DISABLE_WARNING_BEGIN DAS_PRAGMA(clang diagnostic push)
@@ -86,10 +92,13 @@
     DAS_PRAGMA(clang diagnostic ignored "-Wc11-extensions")
 
 #define DAS_IGNORE_SOL2_WARNING                                                \
-    DAS_PRAGMA(clang diagnostic ignored                                       \
-               "-Wdelete-abstract-non-virtual-dtor")
+    DAS_PRAGMA(clang diagnostic ignored "-Wdelete-abstract-non-virtual-dtor")
+
+#define DAS_IGNORE_BEAST_WARNING
 
 #define DAS_IGNORE_STDEXEC_PARAMETERS DAS_IGNORE_UNUSED_PARAMETER
+
+#define DAS_IGNORE_BOOST_PROCESS_WARNING DAS_IGNORE_UNUSED_PARAMETER
 
 #elif defined(__GNUC__)
 #define DAS_DISABLE_WARNING_BEGIN DAS_PRAGMA(GCC diagnostic push)
@@ -105,9 +114,13 @@
 #define DAS_IGNORE_SOL2_WARNING                                                \
     DAS_PRAGMA(GCC diagnostic ignored "-Wdelete-non-virtual-dtor")
 
+#define DAS_IGNORE_BEAST_WARNING
+
 #define DAS_IGNORE_STDEXEC_PARAMETERS                                          \
     DAS_IGNORE_UNUSED_PARAMETER DAS_PRAGMA(                                    \
         GCC diagnostic ignored "-Wempty-body")
+
+#define DAS_IGNORE_BOOST_PROCESS_WARNING DAS_IGNORE_UNUSED_PARAMETER
 #endif
 
 #ifdef _MSC_VER

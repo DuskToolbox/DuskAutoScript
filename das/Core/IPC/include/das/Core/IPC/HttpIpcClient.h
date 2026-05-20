@@ -7,6 +7,7 @@
 #include <das/Core/IPC/IpcErrors.h>
 #include <memory>
 #include <string>
+#include <variant>
 
 DAS_CORE_IPC_NS_BEGIN
 

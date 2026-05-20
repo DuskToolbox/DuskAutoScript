@@ -21,10 +21,8 @@
 #include "ErrorLensImpl.h"
 #include "PluginImpl.h"
 
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable : 4100) // Unreferenced parameter in boost::process::v2
-#endif
+DAS_DISABLE_WARNING_BEGIN
+DAS_IGNORE_BOOST_PROCESS_WARNING
 
 #include <algorithm>
 #include <atomic>
@@ -47,9 +45,7 @@
 #include <system_error>
 #include <vector>
 
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
+DAS_DISABLE_WARNING_END
 
 DAS_NS_BEGIN
 

@@ -3,10 +3,15 @@
 
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/use_awaitable.hpp>
+#include <das/Core/IPC/Config.h>
+
+DAS_DISABLE_WARNING_BEGIN
+DAS_IGNORE_BEAST_WARNING
 #include <boost/beast/core.hpp>
 #include <boost/beast/websocket.hpp>
+DAS_DISABLE_WARNING_END
+
 #include <das/Core/IPC/AsyncIpcTransport.h>
-#include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <memory>
 #include <string>

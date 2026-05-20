@@ -15,6 +15,9 @@
 #include <utility>
 #include <vector>
 
+DAS_DISABLE_WARNING_BEGIN
+DAS_IGNORE_BOOST_PROCESS_WARNING
+
 #include <boost/asio.hpp>
 #include <boost/process/v2/environment.hpp>
 #include <boost/process/v2/process.hpp>
@@ -22,6 +25,8 @@
 #include <boost/process/v2/stdio.hpp>
 #include <boost/system/error_code.hpp>
 #include <boost/system/system_error.hpp>
+
+DAS_DISABLE_WARNING_END
 
 namespace Das::Plugins::DasMaaPi::AgentRuntime
 {
