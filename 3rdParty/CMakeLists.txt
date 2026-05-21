@@ -200,6 +200,8 @@ function(_download_and_config_opencv)
     set(DAS_OPENCV_VERSION "4.10.0")
     message(STATUS "Downloading OpenCV source. VERSION = ${DAS_OPENCV_VERSION}")
 
+    set(CMAKE_POLICY_DEFAULT_CMP0069 "NEW")
+
     set(BUILD_SHARED_LIBS OFF)
     set(CMAKE_POSITION_INDEPENDENT_CODE ON)
     if (NOT MSVC)
@@ -269,6 +271,7 @@ endfunction()
 if (DAS_USE_BUNDLED_OPENCV)
     if (${DAS_USE_BUNDLED_EIGEN})
         message(STATUS "Downloading Eigen3.4...")
+        set(CMAKE_POLICY_DEFAULT_CMP0069 "NEW")
         set(BUILD_TESTING OFF)
         set(EIGEN_BUILD_DOC OFF)
         FetchContent_Declare(DasEigen3
