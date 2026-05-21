@@ -865,7 +865,7 @@ namespace Core
 
                 // Create proxy using unified GetOrCreateProxy (cache +
                 // RegisterRemoteObject)
-                DasPtr<IDasBase> proxy = proxy_factory_->GetOrCreateProxy(
+                auto [create_result, proxy] = proxy_factory_->GetOrCreateProxy(
                     run_loop_,
                     business_thread_,
                     object_id,
@@ -874,9 +874,10 @@ namespace Core
                 if (!proxy)
                 {
                     DAS_CORE_LOG_ERROR(
-                        "Failed to create proxy for interface_id = 0x{:08X}",
+                        "Failed to create proxy, result = {}, interface_id = 0x{:08X}",
+                        create_result,
                         interface_hash);
-                    return DAS_E_NO_INTERFACE;
+                    return create_result;
                 }
 
                 *out_object.Put() = proxy.Get();
@@ -961,7 +962,7 @@ namespace Core
                     RemoteObjectRegistry::ComputeInterfaceId(resolved_iid);
 
                 // Create proxy using unified GetOrCreateProxy
-                DasPtr<IDasBase> proxy = proxy_factory_->GetOrCreateProxy(
+                auto [create_result, proxy] = proxy_factory_->GetOrCreateProxy(
                     run_loop_,
                     business_thread_,
                     object_id,
@@ -970,10 +971,11 @@ namespace Core
                 if (!proxy)
                 {
                     DAS_CORE_LOG_ERROR(
-                        "Failed to create proxy for name = {}, interface_hash = 0x{:08X}",
+                        "Failed to create proxy for name = {}, result = {}, interface_hash = 0x{:08X}",
                         name,
+                        create_result,
                         interface_hash);
-                    return DAS_E_NO_INTERFACE;
+                    return create_result;
                 }
 
                 *out_object.Put() = proxy.Get();

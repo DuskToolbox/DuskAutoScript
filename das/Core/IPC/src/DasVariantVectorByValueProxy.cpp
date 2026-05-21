@@ -130,19 +130,13 @@ DasResult DasVariantVectorByValueProxy::EnsureDataLoaded(uint16_t method_id)
     }
     else
     {
-        // External thread path
+        // External thread path: AwaitResponseSender 的 start() 会调用
+        // PostSend(带回调)，在 IO 线程注册 pending call 后再发送
         constexpr auto kTimeout = std::chrono::milliseconds{30000};
-        GetRunLoop().RegisterPendingCall(call_key);
 
-        DasResult send_result = GetRunLoop().PostSend(header, std::move(body));
-        if (send_result != DAS_S_OK)
-        {
-            DAS_CORE_LOG_ERROR("PostSend failed, result = {}", send_result);
-            return send_result;
-        }
-
-        AwaitResponseSender sender{&GetRunLoop(), call_key, kTimeout};
-        auto                result = stdexec::sync_wait(std::move(sender));
+        AwaitResponseSender sender{
+            &GetRunLoop(), header, std::move(body), call_key, kTimeout};
+        auto result = stdexec::sync_wait(std::move(sender));
         if (!result)
         {
             DAS_CORE_LOG_ERROR("sync_wait failed for call_id = {}", call_id);
@@ -311,7 +305,7 @@ DasResult DasVariantVectorByValueProxy::EnsureDataLoaded(uint16_t method_id)
                 return runtime_result;
             }
 
-            DasPtr<IDasBase> proxy = GetProxyFactory().GetOrCreateProxy(
+            auto [create_result, proxy] = GetProxyFactory().GetOrCreateProxy(
                 GetRunLoop(),
                 GetBusinessThread(),
                 entry.object_id,
@@ -319,6 +313,14 @@ DasResult DasVariantVectorByValueProxy::EnsureDataLoaded(uint16_t method_id)
             if (proxy)
             {
                 entry.base_ptr = std::move(proxy);
+            }
+            else
+            {
+                DAS_CORE_LOG_ERROR(
+                    "EnsureDataLoaded: GetOrCreateProxy failed, result = {}",
+                    create_result);
+                cache_.clear();
+                return create_result;
             }
         }
     }

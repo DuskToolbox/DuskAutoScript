@@ -24,7 +24,7 @@ namespace
     }
 } // namespace
 
-DasPtr<IDasBase> CreateProxyByInterfaceIdWithFallback(
+std::pair<DasResult, DasPtr<IDasBase>> CreateProxyByInterfaceIdWithFallback(
     uint32_t                      interface_id,
     const ObjectId&               object_id,
     IpcRunLoop&                   run_loop,
@@ -52,7 +52,7 @@ DasPtr<IDasBase> CreateProxyByInterfaceIdWithFallback(
             proxy_factory);
         if (manual_proxy != nullptr)
         {
-            return DasPtr<IDasBase>::Attach(manual_proxy);
+            return {DAS_S_OK, DasPtr<IDasBase>::Attach(manual_proxy)};
         }
     }
 
@@ -65,10 +65,10 @@ DasPtr<IDasBase> CreateProxyByInterfaceIdWithFallback(
 
     if (proxy != nullptr)
     {
-        return DasPtr<IDasBase>::Attach(proxy);
+        return {DAS_S_OK, DasPtr<IDasBase>::Attach(proxy)};
     }
 
-    return nullptr;
+    return {DAS_E_NO_INTERFACE, nullptr};
 }
 
 void RegisterManualProxyFactory(

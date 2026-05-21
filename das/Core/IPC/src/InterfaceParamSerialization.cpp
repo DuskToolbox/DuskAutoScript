@@ -108,7 +108,7 @@ DasResult DeserializeInInterfaceParam(
 
     // Remote object: create proxy via cache (autogen first, then manual
     // fallback)
-    DasPtr<IDasBase> proxy = proxy_factory.GetOrCreateProxy(
+    auto [create_result, proxy] = proxy_factory.GetOrCreateProxy(
         run_loop,
         business_thread,
         id,
@@ -118,9 +118,10 @@ DasResult DeserializeInInterfaceParam(
     {
         DAS_CORE_LOG_ERROR(
             "DeserializeInInterfaceParam: GetOrCreateProxy failed, "
-            "interface_id = 0x{:08X}",
+            "result = {}, interface_id = 0x{:08X}",
+            create_result,
             interface_id);
-        return DAS_E_IPC_DESERIALIZATION_FAILED;
+        return create_result;
     }
 
     *out_ptr = proxy.Get();

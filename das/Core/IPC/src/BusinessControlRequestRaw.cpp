@@ -57,23 +57,14 @@ DasResult SendBusinessControlRequestRaw(
     }
     else
     {
-        // External thread: register pending_call BEFORE PostSend
-        // so the entry exists when the async lambda might fail
+        // External thread: AwaitResponseSender 的 start() 会调用
+        // PostSend(带回调)，在 IO 线程注册 pending call 后再发送
         constexpr auto kTimeout = std::chrono::milliseconds{30000};
-        run_loop.RegisterPendingCall(call_key);
 
         std::vector<uint8_t> body_vec(body, body + body_size);
-        DasResult send_result = run_loop.PostSend(header, std::move(body_vec));
-        if (send_result != DAS_S_OK)
-        {
-            DAS_CORE_LOG_ERROR(
-                "SendBusinessControlRequestRaw: PostSend failed, result = {}",
-                send_result);
-            return send_result;
-        }
-
-        AwaitResponseSender sender{&run_loop, call_key, kTimeout};
-        auto                result = stdexec::sync_wait(std::move(sender));
+        AwaitResponseSender sender{
+            &run_loop, header, std::move(body_vec), call_key, kTimeout};
+        auto result = stdexec::sync_wait(std::move(sender));
         if (!result)
         {
             DAS_CORE_LOG_ERROR(

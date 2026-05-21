@@ -172,7 +172,7 @@ public:
             return result;
         }
 
-        DasPtr<IDasBase> proxy = proxy_factory_.GetOrCreateProxy(
+        auto [create_result, proxy] = proxy_factory_.GetOrCreateProxy(
             GetRunLoop(),
             GetBusinessThread(),
             new_obj_id,
@@ -180,7 +180,7 @@ public:
 
         if (!proxy)
         {
-            return DAS_E_NO_INTERFACE;
+            return create_result;
         }
 
         *pp_object = proxy.Get();

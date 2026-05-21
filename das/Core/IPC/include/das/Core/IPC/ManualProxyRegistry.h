@@ -6,7 +6,9 @@
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/DasPtr.hpp>
+#include <das/IDasBase.h>
 #include <unordered_map>
+#include <utility>
 
 DAS_CORE_IPC_NS_BEGIN
 
@@ -19,7 +21,7 @@ using ManualProxyFactory =
 
 // Try manual registry first for interfaces that need custom IPC semantics,
 // then fall back to the generated proxy factory.
-DasPtr<IDasBase> CreateProxyByInterfaceIdWithFallback(
+std::pair<DasResult, DasPtr<IDasBase>> CreateProxyByInterfaceIdWithFallback(
     uint32_t                      interface_id,
     const ObjectId&               object_id,
     IpcRunLoop&                   run_loop,

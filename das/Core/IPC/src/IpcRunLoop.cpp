@@ -322,6 +322,29 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
     }
 }
 
+std::pair<ValidatedIPCMessageHeader, CallKey>
+IpcRunLoop::PrepareAsyncSendHeader(
+    const ValidatedIPCMessageHeader& request_header)
+{
+    uint16_t                call_id = AllocateCallId();
+    const IPCMessageHeader& raw = request_header.Raw();
+
+    CallKey call_key{
+        .source_session_id = raw.target_session_id, .call_id = call_id};
+
+    auto validated_header = IPCMessageHeaderBuilder()
+                                .SetMessageType(MessageType::REQUEST)
+                                .SetInterfaceId(raw.interface_id)
+                                .SetHeaderFlags(raw.header_flags)
+                                .SetBodySize(raw.body_size)
+                                .SetCallId(call_id)
+                                .SetSourceSessionId(local_session_id_)
+                                .SetTargetSessionId(raw.target_session_id)
+                                .Build();
+
+    return {validated_header, call_key};
+}
+
 std::pair<DasResult, CallKey> IpcRunLoop::PrepareSendRequestWithTransport(
     DefaultAsyncIpcTransport*        transport,
     const ValidatedIPCMessageHeader& request_header,
@@ -528,37 +551,6 @@ uint32_t IpcRunLoop::GetNearestDeadlineMs() const
         static_cast<uint32_t>(ms.count()));
 }
 
-void IpcRunLoop::RegisterPendingCompletion(
-    CallKey                               call_key,
-    std::chrono::steady_clock::time_point deadline,
-    PendingCallCompletion                 on_complete)
-{
-    {
-        std::unique_lock<std::mutex> lock(pending_mutex_);
-        auto                         it = pending_calls_.find(call_key);
-        if (it != pending_calls_.end())
-        {
-            it->second.deadline = deadline;
-            it->second.on_complete = std::move(on_complete);
-            return;
-        }
-    }
-
-    if (on_complete)
-    {
-        on_complete(DAS_E_IPC_TIMEOUT, {}, 0);
-    }
-}
-
-void IpcRunLoop::RegisterPendingCall(CallKey call_key)
-{
-    std::unique_lock<std::mutex> lock(pending_mutex_);
-    pending_calls_[call_key] = PendingCallState{
-        .call_key = call_key,
-        .deadline = std::chrono::steady_clock::time_point::max(),
-        .on_complete = nullptr};
-}
-
 bool IpcRunLoop::IsRunning() const { return running_.load(); }
 
 void IpcRunLoop::SetSessionId(uint16_t session_id)
@@ -618,8 +610,10 @@ DasResult IpcRunLoop::PostToBusinessThread(IDasAsyncCallback* callback) noexcept
 }
 
 DasResult IpcRunLoop::PostSend(
-    const ValidatedIPCMessageHeader& header,
-    std::vector<uint8_t>&&           body)
+    const ValidatedIPCMessageHeader&      header,
+    std::vector<uint8_t>&&                body,
+    PendingCallCompletion                 on_complete,
+    std::chrono::steady_clock::time_point deadline)
 {
     if (!io_context_)
     {
@@ -629,8 +623,26 @@ DasResult IpcRunLoop::PostSend(
 
     boost::asio::post(
         *io_context_,
-        [this, header, body = std::move(body)]() mutable
+        [this,
+         header,
+         body = std::move(body),
+         on_complete = std::move(on_complete),
+         deadline]() mutable
         {
+            bool has_completion = false;
+            if (on_complete)
+            {
+                has_completion = true;
+                CallKey call_key{
+                    header.GetTargetSessionId(), header.GetCallId()};
+                std::unique_lock<std::mutex> lock(pending_mutex_);
+                pending_calls_[call_key] = PendingCallState{
+                    .call_key = call_key,
+                    .deadline = deadline,
+                    .on_complete = std::move(on_complete),
+                    .response_flags = 0};
+            }
+
             // Get launcher first to extend transport lifetime during async
             // send. DasPtr prevents HostLauncher destruction while coroutine
             // is running (heartbeat thread may erase from host_launchers_).
@@ -656,7 +668,31 @@ DasResult IpcRunLoop::PostSend(
                 DAS_CORE_LOG_ERROR(
                     "PostSend: no transport for session = {}",
                     header.GetTargetSessionId());
-                NotifySendFailure(header, DAS_E_IPC_NO_CONNECTIONS);
+
+                if (has_completion)
+                {
+                    CallKey call_key{
+                        header.GetTargetSessionId(), header.GetCallId()};
+                    PendingCallCompletion cb;
+                    {
+                        std::unique_lock<std::mutex> lock(pending_mutex_);
+                        auto it = pending_calls_.find(call_key);
+                        if (it != pending_calls_.end()
+                            && it->second.on_complete)
+                        {
+                            cb = std::move(it->second.on_complete);
+                            pending_calls_.erase(it);
+                        }
+                    }
+                    if (cb)
+                    {
+                        cb(DAS_E_IPC_NO_CONNECTIONS, {}, uint16_t{0});
+                    }
+                }
+                else
+                {
+                    NotifySendFailure(header, DAS_E_IPC_NO_CONNECTIONS);
+                }
                 return;
             }
 
@@ -668,18 +704,36 @@ DasResult IpcRunLoop::PostSend(
                  transport,
                  launcher,
                  header,
+                 has_completion,
                  body =
                      std::move(body)]() mutable -> boost::asio::awaitable<void>
                 {
+                    auto complete_send_failure =
+                        [this, header, has_completion](DasResult error)
+                    {
+                        if (has_completion)
+                        {
+                            CompletePendingCall(
+                                CallKey{
+                                    header.GetTargetSessionId(),
+                                    header.GetCallId()},
+                                error,
+                                {},
+                                uint16_t{0});
+                        }
+                        else
+                        {
+                            NotifySendFailure(header, error);
+                        }
+                    };
+
                     try
                     {
                         auto* live_transport =
                             launcher ? launcher->GetTransport() : transport;
                         if (!live_transport || !live_transport->IsConnected())
                         {
-                            NotifySendFailure(
-                                header,
-                                DAS_E_IPC_CONNECTION_LOST);
+                            complete_send_failure(DAS_E_IPC_CONNECTION_LOST);
                             co_return;
                         }
 
@@ -689,7 +743,7 @@ DasResult IpcRunLoop::PostSend(
                             body.size());
                         if (result != DAS_S_OK)
                         {
-                            NotifySendFailure(header, result);
+                            complete_send_failure(result);
                         }
                     }
                     catch (const std::exception& e)
@@ -697,7 +751,7 @@ DasResult IpcRunLoop::PostSend(
                         DAS_CORE_LOG_ERROR(
                             "PostSend: exception: {}",
                             ToString(e.what()));
-                        NotifySendFailure(header, DAS_E_IPC_SEND_FAILED);
+                        complete_send_failure(DAS_E_IPC_SEND_FAILED);
                     }
                 },
                 boost::asio::detached);

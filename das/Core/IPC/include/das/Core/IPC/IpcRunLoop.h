@@ -100,16 +100,18 @@ struct PendingCallState
 /**
  * @brief AwaitResponseSender 的 OperationState
  *
- * start() 时注册 on_complete 到 PendingCallState，
- * 由事件循环驱动完成（零轮询）。
+ * start() 时调用 PostSend（带回调），由事件循环驱动完成（零轮询）。
+ * pending_calls_ 的注册在 IO 线程上完成，并且发生在发送之前。
  */
 template <class Receiver>
 struct AwaitResponseOperation
 {
-    IpcRunLoop*               loop_;
-    CallKey                   call_key_;
-    std::chrono::milliseconds timeout_;
-    Receiver                  rcvr_;
+    IpcRunLoop*                      loop_;
+    ValidatedIPCMessageHeader        header_;
+    std::vector<uint8_t>             body_;
+    CallKey                          call_key_;
+    std::chrono::milliseconds        timeout_;
+    Receiver                         rcvr_;
 };
 
 // tag_invoke 实现在 IpcRunLoop 完整定义之后（见文件末尾），避免 clang
@@ -128,9 +130,11 @@ struct AwaitResponseSender
         stdexec::completion_signatures<stdexec::set_value_t(
             std::tuple<DasResult, std::vector<uint8_t>, uint16_t>)>;
 
-    IpcRunLoop*               loop_;
-    CallKey                   call_key_;
-    std::chrono::milliseconds timeout_;
+    IpcRunLoop*                      loop_;
+    ValidatedIPCMessageHeader        header_;
+    std::vector<uint8_t>             body_;
+    CallKey                          call_key_;
+    std::chrono::milliseconds        timeout_;
 
     template <class Receiver>
     friend auto tag_invoke(
@@ -138,7 +142,12 @@ struct AwaitResponseSender
         AwaitResponseSender self,
         Receiver            rcvr) noexcept -> AwaitResponseOperation<Receiver>
     {
-        return {self.loop_, self.call_key_, self.timeout_, std::move(rcvr)};
+        return {self.loop_,
+                self.header_,
+                std::move(self.body_),
+                self.call_key_,
+                self.timeout_,
+                std::move(rcvr)};
     }
 };
 
@@ -301,14 +310,21 @@ public:
      *
      * 线程安全，任何线程可调用。
      * 将发送任务投递到 IO 线程执行。
+     * 如果提供了 on_complete，IO 线程会在发送前注册 pending call，
+     * 避免响应先于 pending call completion 挂载而到达。
      *
      * @param header 消息头
      * @param body 消息体（会被 move）
+     * @param on_complete 可选的完成回调（非空时注册 pending call）
+     * @param deadline 超时截止时间（仅 on_complete 非空时有效）
      * @return DasResult 投递结果
      */
     DasResult PostSend(
         const ValidatedIPCMessageHeader& header,
-        std::vector<uint8_t>&&           body);
+        std::vector<uint8_t>&&           body,
+        PendingCallCompletion            on_complete = nullptr,
+        std::chrono::steady_clock::time_point deadline =
+            std::chrono::steady_clock::time_point::max());
 
     /**
      * @brief 投递发送任务到 IO 线程（指定 transport，IO 线程调用）
@@ -344,19 +360,6 @@ public:
      * runtime domain without exposing DOM/Registry to the caller.
      */
     DasResult PostToBusinessThread(IDasAsyncCallback* callback) noexcept;
-
-    /**
-     * @brief Register a pending call entry (on_complete filled later by
-     * AwaitResponseSender)
-     *
-     * Creates a new entry in pending_calls_ with on_complete=nullptr.
-     * Used by external-thread SendRequest: RegisterPendingCall -> create
-     * AwaitResponseSender -> sync_wait. The sender's start_t calls
-     * RegisterPendingCompletion to fill in the on_complete callback.
-     *
-     * @param call_key CallKey (source_session_id, call_id)
-     */
-    void RegisterPendingCall(CallKey call_key);
 
     /**
      * @brief 注册 HostLauncher 并启动接收循环
@@ -441,9 +444,22 @@ public:
     /**
      * @brief 调度超时检查定时器
      *
-     * 寏隔一段时间检查 pending senders 是否超时。
+     * 寐隔一段时间检查 pending senders 是否超时。
      */
     void ScheduleTimeoutCheck();
+
+    /**
+     * @brief 为异步发送准备请求头和 CallKey（不发送、不注册 pending call）
+     *
+     * 分配 call_id，构建完整的 ValidatedIPCMessageHeader。
+     * AwaitResponseSender::start() 随后会通过 PostSend 在 IO 线程上
+     * 先注册 completion，再执行发送。
+     *
+     * @param request_header 原始请求头模板
+     * @return pair<ValidatedIPCMessageHeader, CallKey>
+     */
+    std::pair<ValidatedIPCMessageHeader, CallKey> PrepareAsyncSendHeader(
+        const ValidatedIPCMessageHeader& request_header);
 
     /**
      * @brief 使用指定 transport 准备发送请求
@@ -494,21 +510,6 @@ public:
      * @return 距离最近 deadline 的毫秒数，最小为 1
      */
     uint32_t GetNearestDeadlineMs() const;
-
-    /**
-     * @brief 注册 pending call 的完成回调（内部使用）
-     *
-     * 由 AwaitResponseOperation::start() 调用，将 on_complete
-     * 回调和 deadline 设置到 PendingCallState 中。
-     *
-     * @param call_key CallKey (source_session_id, call_id)
-     * @param deadline 超时截止时间
-     * @param on_complete 完成回调
-     */
-    void RegisterPendingCompletion(
-        CallKey                               call_key,
-        std::chrono::steady_clock::time_point deadline,
-        PendingCallCompletion                 on_complete);
 
     //=========================================================================
     // 成员变量
@@ -621,7 +622,7 @@ void tag_invoke(
     stdexec::start_t,
     AwaitResponseOperation<Receiver>& self) noexcept
 {
-    // 错误路径：loop_ 为 nullptr 表示 PrepareSendRequest 已失败
+    // 错误路径：loop_ 为 nullptr 表示构造时已检测到错误
     if (!self.loop_)
     {
         auto error_code = static_cast<DasResult>(self.call_key_.call_id);
@@ -633,10 +634,11 @@ void tag_invoke(
 
     auto deadline = std::chrono::steady_clock::now() + self.timeout_;
 
-    // 注册完成回调到 PendingCallState
-    self.loop_->RegisterPendingCompletion(
-        self.call_key_,
-        deadline,
+    // PostSend 带回调：IO 线程内注册 pending_calls_ 后再发送，
+    // 消除响应早于 completion 挂载的竞态。
+    static_cast<void>(self.loop_->PostSend(
+        self.header_,
+        std::move(self.body_),
         [rcvr = std::move(self.rcvr_)](
             DasResult            result,
             std::vector<uint8_t> response,
@@ -645,7 +647,8 @@ void tag_invoke(
             stdexec::set_value(
                 std::move(rcvr),
                 std::make_tuple(result, std::move(response), response_flags));
-        });
+        },
+        deadline));
 }
 
 //=============================================================================
@@ -663,25 +666,21 @@ inline stdexec::sender auto IpcRunLoop::SendMessageAsync(
     {
         return AwaitResponseSender{
             nullptr,
+            ValidatedIPCMessageHeader{},
+            {},
             CallKey{0, static_cast<uint16_t>(DAS_E_INVALID_ARGUMENT)},
             std::chrono::milliseconds{0}};
     }
 
-    auto [send_result, call_key] = PrepareSendRequestWithTransport(
-        transport,
-        request_header,
-        body,
-        body_size);
+    // 分配 call_id 并构建完整的请求头（不发送、不注册 pending call）
+    auto [validated_header, call_key] = PrepareAsyncSendHeader(request_header);
 
-    if (send_result != DAS_S_OK)
-    {
-        return AwaitResponseSender{
-            nullptr,
-            CallKey{0, static_cast<uint16_t>(send_result)},
-            std::chrono::milliseconds{0}};
-    }
+    // 构造 body vector，AwaitResponseSender::start() 会通过 PostSend
+    // 在 IO 线程上注册 pending call 并发送
+    std::vector<uint8_t> body_vec(body, body + body_size);
 
-    return AwaitResponseSender{this, call_key, timeout};
+    return AwaitResponseSender{
+        this, validated_header, std::move(body_vec), call_key, timeout};
 }
 
 DAS_CORE_IPC_NS_END

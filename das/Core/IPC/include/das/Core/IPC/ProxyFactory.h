@@ -12,6 +12,7 @@
 #include <memory>
 #include <mutex>
 #include <unordered_map>
+#include <utility>
 
 #include <das/Core/IPC/Config.h>
 #include <das/DasConfig.h>
@@ -87,9 +88,9 @@ public:
      * @param business_thread BusinessThread weak_ptr（传递给 proxy 构造函数）
      * @param object_id 对象 ID
      * @param interface_id 接口 ID
-     * @return DasPtr<IDasBase> Proxy 实例智能指针，失败返回空 DasPtr
+     * @return pair<DasResult, DasPtr<IDasBase>> 错误码 + Proxy 实例
      */
-    DasPtr<IDasBase> GetOrCreateProxy(
+    std::pair<DasResult, DasPtr<IDasBase>> GetOrCreateProxy(
         IpcRunLoop&                   run_loop,
         std::weak_ptr<BusinessThread> business_thread,
         const ObjectId&               object_id,

@@ -641,7 +641,7 @@ namespace Core
 
                 // Create proxy using unified GetOrCreateProxy (cache +
                 // RegisterRemoteObject)
-                DasPtr<IDasBase> proxy = proxy_factory_->GetOrCreateProxy(
+                auto [create_result, proxy] = proxy_factory_->GetOrCreateProxy(
                     runloop_,
                     business_thread_,
                     object_id,
@@ -650,13 +650,10 @@ namespace Core
                 if (!proxy)
                 {
                     DAS_CORE_LOG_ERROR(
-                        "CreateRemoteProxy: failed to create proxy "
-                        "for object_id={{session:{}, gen:{}, local:{}}}, interface_hash=0x{:08X}",
-                        object_id.session_id,
-                        object_id.generation,
-                        object_id.local_id,
+                        "CreateRemoteProxy: failed to create proxy, result = {}, interface_hash=0x{:08X}",
+                        create_result,
                         interface_hash);
-                    return DAS_E_NO_INTERFACE;
+                    return create_result;
                 }
 
                 *out_proxy.Put() = proxy.Get();

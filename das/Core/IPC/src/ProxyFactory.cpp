@@ -38,7 +38,7 @@ bool ProxyFactory::IsShuttingDown() const noexcept
     return runtime_state_ && runtime_state_->IsShuttingDown();
 }
 
-DasPtr<IDasBase> ProxyFactory::GetOrCreateProxy(
+std::pair<DasResult, DasPtr<IDasBase>> ProxyFactory::GetOrCreateProxy(
     IpcRunLoop&                   run_loop,
     std::weak_ptr<BusinessThread> business_thread,
     const ObjectId&               object_id,
@@ -46,13 +46,13 @@ DasPtr<IDasBase> ProxyFactory::GetOrCreateProxy(
 {
     if (IsShuttingDown())
     {
-        return nullptr;
+        return {DAS_E_IPC_DISCONNECTED, nullptr};
     }
 
     std::unique_lock<std::mutex> lock(proxy_cache_mutex_);
     if (IsShuttingDown())
     {
-        return nullptr;
+        return {DAS_E_IPC_DISCONNECTED, nullptr};
     }
 
     uint64_t key = EncodeObjectId(object_id);
@@ -66,7 +66,7 @@ DasPtr<IDasBase> ProxyFactory::GetOrCreateProxy(
             if (entry.runtime_ptr != nullptr && entry.interface_ptr != nullptr
                 && entry.runtime_ptr->TryAddRefForCache())
             {
-                return DasPtr<IDasBase>::Attach(entry.interface_ptr);
+                return {DAS_S_OK, DasPtr<IDasBase>::Attach(entry.interface_ptr)};
             }
 
             it->second.interfaces.erase(view_it);
@@ -78,7 +78,7 @@ DasPtr<IDasBase> ProxyFactory::GetOrCreateProxy(
     }
 
     // Cache miss: 工厂返回 DasPtr，存 ProxyCacheEntry，move 出去
-    DasPtr<IDasBase> proxy = CreateProxyByInterfaceIdWithFallback(
+    auto [create_result, proxy] = CreateProxyByInterfaceIdWithFallback(
         interface_id,
         object_id,
         run_loop,
@@ -87,12 +87,17 @@ DasPtr<IDasBase> ProxyFactory::GetOrCreateProxy(
 
     if (!proxy)
     {
-        return nullptr;
+        DAS_CORE_LOG_ERROR(
+            "CreateProxyByInterfaceIdWithFallback failed. "
+            "result={}, interface_id=0x{:08X}",
+            create_result,
+            interface_id);
+        return {create_result, nullptr};
     }
 
     if (IsShuttingDown())
     {
-        return nullptr;
+        return {DAS_E_IPC_DISCONNECTED, nullptr};
     }
 
     IPCProxyBase* runtime_ptr = nullptr;
@@ -101,22 +106,32 @@ DasPtr<IDasBase> ProxyFactory::GetOrCreateProxy(
         reinterpret_cast<void**>(&runtime_ptr));
     if (DAS::IsFailed(tag_result) || runtime_ptr == nullptr)
     {
+        DAS_CORE_LOG_ERROR(
+            "QueryInterface(IPCProxyBase) failed. "
+            "tag_result={}, interface_id=0x{:08X}",
+            tag_result,
+            interface_id);
         lock.unlock();
-        return nullptr;
+        return {tag_result, nullptr};
     }
     static_cast<void>(runtime_ptr->ReleaseRuntimeTagRef());
 
     DasResult register_result = object_manager_.RegisterRemoteObject(object_id);
     if (DAS::IsFailed(register_result))
     {
+        DAS_CORE_LOG_ERROR(
+            "RegisterRemoteObject failed. "
+            "result={}, interface_id=0x{:08X}",
+            register_result,
+            interface_id);
         lock.unlock();
-        return nullptr;
+        return {register_result, nullptr};
     }
 
     proxy_cache_[key].interfaces[interface_id] =
         ProxyCacheEntry(runtime_ptr, proxy.Get());
     // move 出去，调用方拥有唯一强引用
-    return proxy;
+    return {DAS_S_OK, std::move(proxy)};
 }
 
 bool ProxyFactory::HasProxy(const ObjectId& object_id) const
