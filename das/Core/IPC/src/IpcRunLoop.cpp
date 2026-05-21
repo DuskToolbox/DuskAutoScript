@@ -330,7 +330,8 @@ IpcRunLoop::PrepareAsyncSendHeader(
     const IPCMessageHeader& raw = request_header.Raw();
 
     CallKey call_key{
-        .source_session_id = raw.target_session_id, .call_id = call_id};
+        .source_session_id = raw.target_session_id,
+        .call_id = call_id};
 
     auto validated_header = IPCMessageHeaderBuilder()
                                 .SetMessageType(MessageType::REQUEST)
@@ -609,6 +610,130 @@ DasResult IpcRunLoop::PostToBusinessThread(IDasAsyncCallback* callback) noexcept
     return DAS_S_OK;
 }
 
+boost::asio::awaitable<void> IpcRunLoop::DoSendCoroutine(
+    DefaultAsyncIpcTransport* transport,
+    DasPtr<HostLauncher>      launcher,
+    ValidatedIPCMessageHeader header,
+    std::vector<uint8_t>      body)
+{
+    try
+    {
+        auto* live_transport = launcher ? launcher->GetTransport() : transport;
+        if (!live_transport || !live_transport->IsConnected())
+        {
+            NotifySendFailure(header, DAS_E_IPC_CONNECTION_LOST);
+            co_return;
+        }
+
+        auto result = co_await live_transport->SendCoroutine(
+            header,
+            body.data(),
+            body.size());
+        if (result != DAS_S_OK)
+        {
+            NotifySendFailure(header, result);
+        }
+    }
+    catch (const std::exception& e)
+    {
+        DAS_CORE_LOG_ERROR(
+            "DoSendCoroutine: exception: {}",
+            ToString(e.what()));
+        NotifySendFailure(header, DAS_E_IPC_SEND_FAILED);
+    }
+}
+
+boost::asio::awaitable<void> IpcRunLoop::SendToSessionCoroutine(
+    ValidatedIPCMessageHeader             header,
+    std::vector<uint8_t>                  body,
+    PendingCallCompletion                 on_complete,
+    std::chrono::steady_clock::time_point deadline)
+{
+    const bool has_completion = static_cast<bool>(on_complete);
+
+    auto complete_send_failure =
+        [this, &header, has_completion](DasResult error)
+    {
+        if (has_completion)
+        {
+            CompletePendingCall(
+                CallKey{header.GetTargetSessionId(), header.GetCallId()},
+                error,
+                {},
+                uint16_t{0});
+        }
+        else
+        {
+            NotifySendFailure(header, error);
+        }
+    };
+
+    // Register pending call on IO thread (before send) to avoid
+    // response arriving before registration.
+    if (on_complete)
+    {
+        CallKey call_key{header.GetTargetSessionId(), header.GetCallId()};
+        std::unique_lock<std::mutex> lock(pending_mutex_);
+        pending_calls_[call_key] = PendingCallState{
+            .call_key = call_key,
+            .deadline = deadline,
+            .on_complete = std::move(on_complete),
+            .response_flags = 0};
+    }
+
+    auto launcher =
+        connection_manager_->GetLauncher(header.GetTargetSessionId());
+
+    DefaultAsyncIpcTransport* transport = nullptr;
+    if (launcher)
+    {
+        transport = launcher->GetTransport();
+    }
+
+    // Fallback: direct transport (Host mode, lifetime managed by
+    // IpcContext outliving the io_context event loop)
+    if (!transport)
+    {
+        transport =
+            connection_manager_->GetTransport(header.GetTargetSessionId());
+    }
+
+    if (!transport)
+    {
+        DAS_CORE_LOG_ERROR(
+            "PostSend: no transport for session = {}",
+            header.GetTargetSessionId());
+        complete_send_failure(DAS_E_IPC_NO_CONNECTIONS);
+        co_return;
+    }
+
+    try
+    {
+        auto* live_transport = launcher ? launcher->GetTransport() : transport;
+        if (!live_transport || !live_transport->IsConnected())
+        {
+            complete_send_failure(DAS_E_IPC_CONNECTION_LOST);
+            co_return;
+        }
+
+        auto result = co_await live_transport->SendCoroutine(
+            header,
+            body.data(),
+            body.size());
+        if (result != DAS_S_OK)
+        {
+            complete_send_failure(result);
+        }
+    }
+    catch (const std::exception& e)
+    {
+        DAS_CORE_LOG_ERROR(
+            "SendToSessionCoroutine: exception: {}",
+            ToString(e.what()));
+        complete_send_failure(DAS_E_IPC_SEND_FAILED);
+    }
+}
+
 DasResult IpcRunLoop::PostSend(
     const ValidatedIPCMessageHeader&      header,
     std::vector<uint8_t>&&                body,
@@ -621,141 +746,14 @@ DasResult IpcRunLoop::PostSend(
         return DAS_E_IPC_NOT_INITIALIZED;
     }
 
-    boost::asio::post(
+    boost::asio::co_spawn(
         *io_context_,
-        [this,
-         header,
-         body = std::move(body),
-         on_complete = std::move(on_complete),
-         deadline]() mutable
-        {
-            bool has_completion = false;
-            if (on_complete)
-            {
-                has_completion = true;
-                CallKey call_key{
-                    header.GetTargetSessionId(), header.GetCallId()};
-                std::unique_lock<std::mutex> lock(pending_mutex_);
-                pending_calls_[call_key] = PendingCallState{
-                    .call_key = call_key,
-                    .deadline = deadline,
-                    .on_complete = std::move(on_complete),
-                    .response_flags = 0};
-            }
-
-            // Get launcher first to extend transport lifetime during async
-            // send. DasPtr prevents HostLauncher destruction while coroutine
-            // is running (heartbeat thread may erase from host_launchers_).
-            auto launcher =
-                connection_manager_->GetLauncher(header.GetTargetSessionId());
-
-            DefaultAsyncIpcTransport* transport = nullptr;
-            if (launcher)
-            {
-                transport = launcher->GetTransport();
-            }
-
-            // Fallback: direct transport (Host mode, lifetime managed by
-            // IpcContext outliving the io_context event loop)
-            if (!transport)
-            {
-                transport = connection_manager_->GetTransport(
-                    header.GetTargetSessionId());
-            }
-
-            if (!transport)
-            {
-                DAS_CORE_LOG_ERROR(
-                    "PostSend: no transport for session = {}",
-                    header.GetTargetSessionId());
-
-                if (has_completion)
-                {
-                    CallKey call_key{
-                        header.GetTargetSessionId(), header.GetCallId()};
-                    PendingCallCompletion cb;
-                    {
-                        std::unique_lock<std::mutex> lock(pending_mutex_);
-                        auto it = pending_calls_.find(call_key);
-                        if (it != pending_calls_.end()
-                            && it->second.on_complete)
-                        {
-                            cb = std::move(it->second.on_complete);
-                            pending_calls_.erase(it);
-                        }
-                    }
-                    if (cb)
-                    {
-                        cb(DAS_E_IPC_NO_CONNECTIONS, {}, uint16_t{0});
-                    }
-                }
-                else
-                {
-                    NotifySendFailure(header, DAS_E_IPC_NO_CONNECTIONS);
-                }
-                return;
-            }
-
-            // launcher (possibly null for Host mode) is captured to keep
-            // HostLauncher and its transport alive for the coroutine duration
-            boost::asio::co_spawn(
-                *io_context_,
-                [this,
-                 transport,
-                 launcher,
-                 header,
-                 has_completion,
-                 body =
-                     std::move(body)]() mutable -> boost::asio::awaitable<void>
-                {
-                    auto complete_send_failure =
-                        [this, header, has_completion](DasResult error)
-                    {
-                        if (has_completion)
-                        {
-                            CompletePendingCall(
-                                CallKey{
-                                    header.GetTargetSessionId(),
-                                    header.GetCallId()},
-                                error,
-                                {},
-                                uint16_t{0});
-                        }
-                        else
-                        {
-                            NotifySendFailure(header, error);
-                        }
-                    };
-
-                    try
-                    {
-                        auto* live_transport =
-                            launcher ? launcher->GetTransport() : transport;
-                        if (!live_transport || !live_transport->IsConnected())
-                        {
-                            complete_send_failure(DAS_E_IPC_CONNECTION_LOST);
-                            co_return;
-                        }
-
-                        auto result = co_await live_transport->SendCoroutine(
-                            header,
-                            body.data(),
-                            body.size());
-                        if (result != DAS_S_OK)
-                        {
-                            complete_send_failure(result);
-                        }
-                    }
-                    catch (const std::exception& e)
-                    {
-                        DAS_CORE_LOG_ERROR(
-                            "PostSend: exception: {}",
-                            ToString(e.what()));
-                        complete_send_failure(DAS_E_IPC_SEND_FAILED);
-                    }
-                },
-                boost::asio::detached);
-        });
+        SendToSessionCoroutine(
+            header,
+            std::move(body),
+            std::move(on_complete),
+            deadline),
+        boost::asio::detached);
 
     return DAS_S_OK;
 }
@@ -777,50 +775,18 @@ DasResult IpcRunLoop::PostSendWithTransport(
         return DAS_E_IPC_INVALID_ARGUMENT;
     }
 
-    // Get launcher to extend transport lifetime during async send.
-    // DasPtr prevents HostLauncher destruction while coroutine is running
-    // (heartbeat thread may erase from host_launchers_).
-    // May be null for Host mode (direct transport, lifetime managed by
-    // IpcContext).
     auto launcher =
         connection_manager_
             ? connection_manager_->GetLauncher(header.GetTargetSessionId())
             : nullptr;
 
-    // launcher is captured (possibly null) to keep HostLauncher and its
-    // transport alive for the coroutine duration
     boost::asio::co_spawn(
         *io_context_,
-        [this, transport, launcher, header, body = std::move(body)]() mutable
-            -> boost::asio::awaitable<void>
-        {
-            try
-            {
-                auto* live_transport =
-                    launcher ? launcher->GetTransport() : transport;
-                if (!live_transport || !live_transport->IsConnected())
-                {
-                    NotifySendFailure(header, DAS_E_IPC_CONNECTION_LOST);
-                    co_return;
-                }
-
-                auto result = co_await live_transport->SendCoroutine(
-                    header,
-                    body.data(),
-                    body.size());
-                if (result != DAS_S_OK)
-                {
-                    NotifySendFailure(header, result);
-                }
-            }
-            catch (const std::exception& e)
-            {
-                DAS_CORE_LOG_ERROR(
-                    "PostSendWithTransport: exception: {}",
-                    ToString(e.what()));
-                NotifySendFailure(header, DAS_E_IPC_SEND_FAILED);
-            }
-        },
+        DoSendCoroutine(
+            transport,
+            std::move(launcher),
+            header,
+            std::move(body)),
         boost::asio::detached);
 
     return DAS_S_OK;

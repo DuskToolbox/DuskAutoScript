@@ -106,12 +106,12 @@ struct PendingCallState
 template <class Receiver>
 struct AwaitResponseOperation
 {
-    IpcRunLoop*                      loop_;
-    ValidatedIPCMessageHeader        header_;
-    std::vector<uint8_t>             body_;
-    CallKey                          call_key_;
-    std::chrono::milliseconds        timeout_;
-    Receiver                         rcvr_;
+    IpcRunLoop*               loop_;
+    ValidatedIPCMessageHeader header_;
+    std::vector<uint8_t>      body_;
+    CallKey                   call_key_;
+    std::chrono::milliseconds timeout_;
+    Receiver                  rcvr_;
 };
 
 // tag_invoke 实现在 IpcRunLoop 完整定义之后（见文件末尾），避免 clang
@@ -130,11 +130,11 @@ struct AwaitResponseSender
         stdexec::completion_signatures<stdexec::set_value_t(
             std::tuple<DasResult, std::vector<uint8_t>, uint16_t>)>;
 
-    IpcRunLoop*                      loop_;
-    ValidatedIPCMessageHeader        header_;
-    std::vector<uint8_t>             body_;
-    CallKey                          call_key_;
-    std::chrono::milliseconds        timeout_;
+    IpcRunLoop*               loop_;
+    ValidatedIPCMessageHeader header_;
+    std::vector<uint8_t>      body_;
+    CallKey                   call_key_;
+    std::chrono::milliseconds timeout_;
 
     template <class Receiver>
     friend auto tag_invoke(
@@ -142,12 +142,13 @@ struct AwaitResponseSender
         AwaitResponseSender self,
         Receiver            rcvr) noexcept -> AwaitResponseOperation<Receiver>
     {
-        return {self.loop_,
-                self.header_,
-                std::move(self.body_),
-                self.call_key_,
-                self.timeout_,
-                std::move(rcvr)};
+        return {
+            self.loop_,
+            self.header_,
+            std::move(self.body_),
+            self.call_key_,
+            self.timeout_,
+            std::move(rcvr)};
     }
 };
 
@@ -320,9 +321,9 @@ public:
      * @return DasResult 投递结果
      */
     DasResult PostSend(
-        const ValidatedIPCMessageHeader& header,
-        std::vector<uint8_t>&&           body,
-        PendingCallCompletion            on_complete = nullptr,
+        const ValidatedIPCMessageHeader&      header,
+        std::vector<uint8_t>&&                body,
+        PendingCallCompletion                 on_complete = nullptr,
         std::chrono::steady_clock::time_point deadline =
             std::chrono::steady_clock::time_point::max());
 
@@ -611,6 +612,37 @@ private:
     void NotifySendFailure(
         const ValidatedIPCMessageHeader& header,
         DasResult                        error_code);
+
+    /// @brief 通过协程发送 IPC 消息（内部共用实现）
+    ///
+    /// 封装 SendCoroutine 调用、连接检查和错误处理。
+    /// launcher 用于延长 transport 生命周期（心跳线程可能并发销毁
+    /// HostLauncher）。
+    ///
+    /// @param transport 目标传输层（fallback，Host 模式下使用）
+    /// @param launcher HostLauncher（可能为空，用于保持 transport 存活）
+    /// @param header 消息头
+    /// @param body 消息体
+    boost::asio::awaitable<void> DoSendCoroutine(
+        DefaultAsyncIpcTransport* transport,
+        DasPtr<HostLauncher>      launcher,
+        ValidatedIPCMessageHeader header,
+        std::vector<uint8_t>      body);
+
+    /// @brief 按 session_id 查找 transport 并发送（由 PostSend 委托）
+    ///
+    /// 从 ConnectionManager 查找 launcher/transport，发送前注册
+    /// pending call（IO 线程内完成，消除响应早于注册的竞态）。
+    ///
+    /// @param header 消息头
+    /// @param body 消息体
+    /// @param on_complete 可选的完成回调（非空时注册 pending call）
+    /// @param deadline 超时截止时间
+    boost::asio::awaitable<void> SendToSessionCoroutine(
+        ValidatedIPCMessageHeader             header,
+        std::vector<uint8_t>                  body,
+        PendingCallCompletion                 on_complete,
+        std::chrono::steady_clock::time_point deadline);
 };
 
 //=============================================================================
@@ -680,7 +712,11 @@ inline stdexec::sender auto IpcRunLoop::SendMessageAsync(
     std::vector<uint8_t> body_vec(body, body + body_size);
 
     return AwaitResponseSender{
-        this, validated_header, std::move(body_vec), call_key, timeout};
+        this,
+        validated_header,
+        std::move(body_vec),
+        call_key,
+        timeout};
 }
 
 DAS_CORE_IPC_NS_END
