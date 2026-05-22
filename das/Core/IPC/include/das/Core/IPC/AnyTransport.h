@@ -6,6 +6,7 @@
 #include <das/Core/IPC/UnixAsyncIpcTransport.h>
 
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/io_context.hpp>
 #include <functional>
 #include <optional>
 #include <string>
@@ -38,6 +39,25 @@ public:
     explicit AnyTransport(Win32AsyncIpcTransport&& t);
     explicit AnyTransport(UnixAsyncIpcTransport&& t);
     explicit AnyTransport(HttpIpcTransport&& t);
+
+    using CreateAsyncResult =
+        std::tuple<DasResult, std::optional<AnyTransport>>;
+
+    static boost::asio::awaitable<CreateAsyncResult> CreateAsync(
+        boost::asio::io_context& io_context DAS_LIFETIMEBOUND,
+        const std::string&                  read_endpoint,
+        const std::string&                  write_endpoint,
+        bool                                is_server,
+        size_t                              max_message_size = 65536);
+
+    static AnyTransport CreateUninitialized(
+        boost::asio::io_context& io_context DAS_LIFETIMEBOUND);
+
+    boost::asio::awaitable<DasResult> InitializeAsync(
+        const std::string& read_endpoint,
+        const std::string& write_endpoint,
+        bool               is_server,
+        size_t             max_message_size = 65536);
 
     ~AnyTransport();
     AnyTransport(AnyTransport&&) noexcept;
