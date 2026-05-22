@@ -159,16 +159,10 @@ namespace Das::Core::TaskScheduler
         return ClampNextDelay(std::chrono::seconds(earliest_due - now_unix));
     }
 
-    static yyjson::value CloneJsonValue(const yyjson::value& value)
+    template <typename Json>
+    static yyjson::value CloneJsonValue(const Json& value)
     {
-        auto serialized = value.write(yyjson::WriteFlag::NoFlag);
-        auto parsed = Das::Utils::ParseYyjsonFromString(
-            std::string_view(serialized.data(), serialized.size()));
-        if (parsed)
-        {
-            return std::move(*parsed);
-        }
-        return Das::Utils::MakeYyjsonObject();
+        return Das::Utils::CloneYyjsonValue(value);
     }
 
     static DasPtr<Das::ExportInterface::IDasJson> WrapJsonValue(
@@ -1294,20 +1288,7 @@ namespace Das::Core::TaskScheduler
                 if (inst_obj.contains(props_key)
                     && inst_obj[props_key].is_object())
                 {
-                    auto props_serialized =
-                        inst_obj[props_key].write(yyjson::WriteFlag::NoFlag);
-                    auto props_parsed = Das::Utils::ParseYyjsonFromString(
-                        std::string_view(
-                            props_serialized.data(),
-                            props_serialized.size()));
-                    if (props_parsed)
-                    {
-                        rec.properties = std::move(*props_parsed);
-                    }
-                    else
-                    {
-                        rec.properties = Das::Utils::MakeYyjsonObject();
-                    }
+                    rec.properties = CloneJsonValue(inst_obj[props_key]);
                 }
                 else
                 {
@@ -1664,25 +1645,10 @@ namespace Das::Core::TaskScheduler
                 task_ref[std::string_view("nextExecutionTime")] = nullptr;
             }
 
-            // Serialize properties and re-parse to create an owning copy
             if (!inst.properties.is_null())
             {
-                auto props_serialized =
-                    inst.properties.write(yyjson::WriteFlag::NoFlag);
-                auto props_parsed = Das::Utils::ParseYyjsonFromString(
-                    std::string_view(
-                        props_serialized.data(),
-                        props_serialized.size()));
-                if (props_parsed)
-                {
-                    task_ref[std::string_view("properties")] =
-                        std::move(*props_parsed);
-                }
-                else
-                {
-                    task_ref[std::string_view("properties")] =
-                        Das::Utils::MakeYyjsonObject();
-                }
+                task_ref[std::string_view("properties")] =
+                    CloneJsonValue(inst.properties);
             }
             else
             {
@@ -2543,8 +2509,18 @@ namespace Das::Core::TaskScheduler
                                               std::decay_t<decltype(val)>,
                                               std::monostate>)
                             {
-                                props_obj->operator[](
-                                    std::string_view(desc.name)) = val;
+                                auto property = props_obj->operator[](
+                                    std::string_view(desc.name));
+                                if constexpr (std::is_same_v<
+                                                  std::decay_t<decltype(val)>,
+                                                  std::string>)
+                                {
+                                    property = std::string(val);
+                                }
+                                else
+                                {
+                                    property = val;
+                                }
                             }
                         },
                         desc.default_value);
@@ -2562,25 +2538,10 @@ namespace Das::Core::TaskScheduler
             yyjson::value(GuidToString(rec.plugin_guid));
         inst_obj[std::string_view("nextExecutionTime")] = nullptr;
 
-        // Serialize properties and re-parse to create an owning copy
         if (!rec.properties.is_null())
         {
-            auto props_serialized =
-                rec.properties.write(yyjson::WriteFlag::NoFlag);
-            auto props_parsed = Das::Utils::ParseYyjsonFromString(
-                std::string_view(
-                    props_serialized.data(),
-                    props_serialized.size()));
-            if (props_parsed)
-            {
-                inst_obj[std::string_view("properties")] =
-                    std::move(*props_parsed);
-            }
-            else
-            {
-                inst_obj[std::string_view("properties")] =
-                    Das::Utils::MakeYyjsonObject();
-            }
+            inst_obj[std::string_view("properties")] =
+                CloneJsonValue(rec.properties);
         }
         else
         {
@@ -2682,17 +2643,7 @@ namespace Das::Core::TaskScheduler
                     if (!(*oit).is_int()
                         || static_cast<int64_t>(*oit) != task_id)
                     {
-                        // Create owning copy of the value
-                        auto serialized =
-                            (*oit).write(yyjson::WriteFlag::NoFlag);
-                        auto parsed = Das::Utils::ParseYyjsonFromString(
-                            std::string_view(
-                                serialized.data(),
-                                serialized.size()));
-                        if (parsed)
-                        {
-                            new_arr_ref.emplace_back(std::move(*parsed));
-                        }
+                        new_arr_ref.emplace_back(CloneJsonValue(*oit));
                     }
                 }
                 si_obj->operator[](std::string_view("taskOrder")) =
@@ -2793,21 +2744,9 @@ namespace Das::Core::TaskScheduler
             }
 
             descriptors = inst->task_type->descriptors;
-            // Deep copy properties
             if (!inst->properties.is_null())
             {
-                auto serialized =
-                    inst->properties.write(yyjson::WriteFlag::NoFlag);
-                auto parsed = Das::Utils::ParseYyjsonFromString(
-                    std::string_view(serialized.data(), serialized.size()));
-                if (parsed)
-                {
-                    current_properties = std::move(*parsed);
-                }
-                else
-                {
-                    current_properties = Das::Utils::MakeYyjsonObject();
-                }
+                current_properties = CloneJsonValue(inst->properties);
             }
             else
             {
@@ -2878,15 +2817,8 @@ namespace Das::Core::TaskScheduler
             {
                 const auto& prop_name = it->first;
                 const auto& prop_val = it->second;
-                // Deep copy the property value
-                auto serialized = prop_val.write(yyjson::WriteFlag::NoFlag);
-                auto parsed = Das::Utils::ParseYyjsonFromString(
-                    std::string_view(serialized.data(), serialized.size()));
-                if (parsed)
-                {
-                    cur_obj->operator[](std::string_view(prop_name)) =
-                        std::move(*parsed);
-                }
+                cur_obj->operator[](std::string_view(prop_name)) =
+                    CloneJsonValue(prop_val);
             }
         }
 
@@ -2899,18 +2831,8 @@ namespace Das::Core::TaskScheduler
         }
         {
             auto inst_obj = instance_json.as_object();
-            // Serialize current_properties and re-parse for owning copy
-            auto props_serialized =
-                current_properties.write(yyjson::WriteFlag::NoFlag);
-            auto props_parsed = Das::Utils::ParseYyjsonFromString(
-                std::string_view(
-                    props_serialized.data(),
-                    props_serialized.size()));
-            if (props_parsed)
-            {
-                inst_obj->operator[](std::string_view("properties")) =
-                    std::move(*props_parsed);
-            }
+            inst_obj->operator[](std::string_view("properties")) =
+                CloneJsonValue(current_properties);
         }
         auto persist_result =
             settings.UpdateTaskInstanceJson("0", task_id, instance_json);

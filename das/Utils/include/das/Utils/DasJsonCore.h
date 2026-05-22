@@ -99,6 +99,27 @@ inline std::optional<std::string> SerializeYyjsonValue(
     }
 }
 
+/// Deep-copy a yyjson writer value without serializing and parsing it again.
+inline yyjson::value CloneYyjsonValue(yyjson::writer::const_value_ref source)
+{
+    return yyjson::value(source);
+}
+
+inline yyjson::value CloneYyjsonValue(yyjson::reader::const_value_ref source)
+{
+    return yyjson::value(source);
+}
+
+/// Convenience overload for yyjson writer values such as value/object/array refs.
+template <typename Json>
+    requires requires(const Json& source) {
+        yyjson::writer::const_value_ref(source);
+    }
+inline yyjson::value CloneYyjsonValue(const Json& source)
+{
+    return CloneYyjsonValue(yyjson::writer::const_value_ref(source));
+}
+
 /// Create an empty JSON object ({}).
 inline yyjson::value MakeYyjsonObject()
 {

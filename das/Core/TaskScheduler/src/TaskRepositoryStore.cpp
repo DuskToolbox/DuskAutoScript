@@ -1,4 +1,5 @@
 #include <das/Core/TaskScheduler/TaskRepositoryStore.h>
+#include <das/Utils/DasJsonCore.h>
 
 #include <algorithm>
 #include <type_traits>
@@ -8,11 +9,10 @@ namespace Das::Core::TaskScheduler
 {
     namespace
     {
-        static yyjson::value CloneJsonValue(const yyjson::value& value)
+        template <typename Json>
+        static yyjson::value CloneJsonValue(const Json& value)
         {
-            auto serialized = value.write(yyjson::WriteFlag::NoFlag);
-            return yyjson::read(
-                std::string_view(serialized.data(), serialized.size()));
+            return Das::Utils::CloneYyjsonValue(value);
         }
 
         static bool MatchesDescriptorType(
@@ -74,8 +74,18 @@ namespace Das::Core::TaskScheduler
                                           std::decay_t<decltype(value)>,
                                           std::monostate>)
                         {
-                            props_obj->operator[](std::string_view(desc.name)) =
-                                value;
+                            auto property = props_obj->operator[](
+                                std::string_view(desc.name));
+                            if constexpr (std::is_same_v<
+                                              std::decay_t<decltype(value)>,
+                                              std::string>)
+                            {
+                                property = std::string(value);
+                            }
+                            else
+                            {
+                                property = value;
+                            }
                         }
                     },
                     desc.default_value);

@@ -36,16 +36,10 @@ namespace Das::Core::TaskScheduler::RepositoryInvoke
                    || availability.state == "available";
         }
 
-        yyjson::value CloneJsonValue(const yyjson::value& value)
+        template <typename Json>
+        yyjson::value CloneJsonValue(const Json& value)
         {
-            auto serialized = value.write(yyjson::WriteFlag::NoFlag);
-            auto parsed = Das::Utils::ParseYyjsonFromString(
-                std::string_view(serialized.data(), serialized.size()));
-            if (parsed)
-            {
-                return std::move(*parsed);
-            }
-            return Das::Utils::MakeYyjsonObject();
+            return Das::Utils::CloneYyjsonValue(value);
         }
 
         yyjson::value MakeExecutionCompileRequest()

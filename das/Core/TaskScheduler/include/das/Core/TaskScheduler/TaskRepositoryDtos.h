@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <cpp_yyjson.hpp>
+#include <das/Utils/DasJsonCore.h>
 
 namespace Das::Core::TaskScheduler::Repository::Dto
 {
@@ -111,9 +112,7 @@ struct yyjson::caster<yyjson::value>
     template <yyjson::json_value Json>
     static yyjson::value from_json(const Json& json)
     {
-        auto serialized = json.write();
-        return yyjson::read(
-            std::string_view(serialized.data(), serialized.size()));
+        return Das::Utils::CloneYyjsonValue(json);
     }
 };
 

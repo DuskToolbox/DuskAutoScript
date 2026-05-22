@@ -31,10 +31,7 @@ namespace Plugins::DasMaaPi
 
         yyjson::value CloneJson(const yyjson::value& value)
         {
-            const auto serialized = value.write(yyjson::WriteFlag::NoFlag);
-            auto       parsed = Das::Utils::ParseYyjsonFromString(
-                std::string_view(serialized.data(), serialized.size()));
-            return parsed ? std::move(*parsed) : Das::Utils::MakeYyjsonObject();
+            return Das::Utils::CloneYyjsonValue(value);
         }
 
         bool StopRequested(PluginInterface::IDasStopToken* stop_token)

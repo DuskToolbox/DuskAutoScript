@@ -19,10 +19,7 @@ namespace Plugins::DasMaaPi
     {
         yyjson::value MakeOwnedJson(yyjson::value value)
         {
-            const auto serialized = value.write(yyjson::WriteFlag::NoFlag);
-            auto       parsed = Das::Utils::ParseYyjsonFromString(
-                std::string_view(serialized.data(), serialized.size()));
-            return parsed ? std::move(*parsed) : Das::Utils::MakeYyjsonObject();
+            return Das::Utils::CloneYyjsonValue(value);
         }
 
         yyjson::value MakeRunResult(
