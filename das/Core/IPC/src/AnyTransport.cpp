@@ -1,6 +1,44 @@
 #include <das/Core/IPC/AnyTransport.h>
 
+#include <type_traits>
+
 DAS_CORE_IPC_NS_BEGIN
+
+namespace
+{
+    template <typename Transport>
+    concept HasPublicCleanup = requires(Transport& transport)
+    {
+        transport.Cleanup();
+    };
+
+    template <typename Transport>
+    void CleanupTransport(Transport& transport)
+    {
+        if constexpr (HasPublicCleanup<Transport>)
+        {
+            transport.Cleanup();
+        }
+        else
+        {
+#ifdef DAS_WINDOWS
+            if constexpr (std::is_same_v<Transport, Win32AsyncIpcTransport>)
+            {
+                if (!transport.IsConnected())
+                {
+                    return;
+                }
+            }
+#endif
+            auto& io_context = transport.GetIoContext();
+            auto  replacement = Transport::CreateUninitialized(io_context);
+            if (replacement)
+            {
+                transport = std::move(*replacement);
+            }
+        }
+    }
+} // namespace
 
 AnyTransport::AnyTransport(Win32AsyncIpcTransport&& t)
     : transport_(std::move(t))
@@ -39,6 +77,11 @@ std::string AnyTransport::GetEndpointName() const
     return std::visit(
         [](const auto& t) { return t.GetEndpointName(); },
         transport_);
+}
+
+void AnyTransport::Cleanup()
+{
+    std::visit([](auto& t) { CleanupTransport(t); }, transport_);
 }
 
 boost::asio::awaitable<DasResult> AnyTransport::SendCoroutine(

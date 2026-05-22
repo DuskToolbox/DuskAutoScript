@@ -6,6 +6,10 @@
 #include <das/Core/IPC/UnixAsyncIpcTransport.h>
 
 #include <boost/asio/awaitable.hpp>
+#include <functional>
+#include <optional>
+#include <string>
+#include <tuple>
 #include <variant>
 
 DAS_CORE_IPC_NS_BEGIN
@@ -47,6 +51,7 @@ public:
     void                     SetSharedMemoryPool(SharedMemoryPool* pool);
     [[nodiscard]]
     std::string GetEndpointName() const;
+    void        Cleanup();
 
     boost::asio::awaitable<DasResult> SendCoroutine(
         const ValidatedIPCMessageHeader& header,
@@ -129,6 +134,10 @@ public:
 private:
     VariantType transport_;
 };
+
+using AnyTransportRef = std::reference_wrapper<AnyTransport>;
+using TransportLookupResult =
+    std::tuple<DasResult, std::optional<AnyTransportRef>>;
 
 DAS_CORE_IPC_NS_END
 
