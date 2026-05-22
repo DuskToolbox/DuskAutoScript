@@ -37,7 +37,10 @@ JSON 结构:
         [--languages Python Java Lua ...] \
         [--lua-output-dir <dir>] \
         [--lua-name <name>] \
-        [--lua-open-module-name <name>]
+        [--lua-open-module-name <name>] \
+        [--node-output-dir <dir>] \
+        [--node-package-name <name>] \
+        [--node-addon-name <name>]
 """
 
 import argparse
@@ -99,7 +102,7 @@ def main() -> int:
         "--languages",
         nargs="*",
         default=[],
-        help="Target languages (Python, Java, CSharp, Lua)",
+        help="Target languages (Python, Java, CSharp, Lua, Node)",
     )
 
     # Lua (可选，仅在 languages 包含 Lua 时由 cmake 传入)
@@ -111,11 +114,25 @@ def main() -> int:
         help="Lua C API open module name for luaopen_<name>",
     )
 
+    # Node/NAPI (optional, non-SWIG reduce stage)
+    parser.add_argument("--node-output-dir", default="", help="Node/NAPI output directory")
+    parser.add_argument(
+        "--node-package-name",
+        default="",
+        help="Public JavaScript package identity, for example das-core",
+    )
+    parser.add_argument(
+        "--node-addon-name",
+        default="",
+        help="Native addon basename, for example das_core_napi",
+    )
+
     args = parser.parse_args()
 
-    # 判断是否需要 SWIG (有任何非 Lua 语言)
+    # 判断是否需要 SWIG (只有 SWIG-backed 语言需要；Lua/Node 是 reduce-only)
+    swig_languages = {"python", "java", "csharp"}
     _need_swig = args.swig_output_dir and any(
-        lang.lower() != "lua" for lang in args.languages
+        lang.lower() in swig_languages for lang in args.languages
     )
 
     # 构建 per-IDL task 配置（仅包含 map 阶段参数）
@@ -194,6 +211,34 @@ def main() -> int:
         reduce_config["lua_open_module_name"] = args.lua_open_module_name
         reduce_config["lua_idl_dir"] = args.idl_dir
         reduce_config["lua_idl_files"] = args.idl_files
+
+    has_node = any(lang.lower() == "node" for lang in args.languages)
+    node_reduce_requested = has_node or any(
+        [args.node_output_dir, args.node_package_name, args.node_addon_name]
+    )
+    if node_reduce_requested:
+        missing_node_args = [
+            name
+            for name, value in [
+                ("--node-output-dir", args.node_output_dir),
+                ("--node-package-name", args.node_package_name),
+                ("--node-addon-name", args.node_addon_name),
+            ]
+            if not value
+        ]
+        if missing_node_args:
+            print(
+                "error: Node reduce config requires "
+                + ", ".join(missing_node_args),
+                file=sys.stderr,
+            )
+            return 2
+
+        reduce_config["node_output_dir"] = args.node_output_dir
+        reduce_config["node_package_name"] = args.node_package_name
+        reduce_config["node_addon_name"] = args.node_addon_name
+        reduce_config["node_idl_dir"] = args.idl_dir
+        reduce_config["node_idl_files"] = args.idl_files
 
     # 组装最终 JSON
     config = {"tasks": tasks}

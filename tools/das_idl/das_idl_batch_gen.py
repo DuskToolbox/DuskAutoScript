@@ -503,6 +503,16 @@ JSON 配置格式:
             all_outputs.append(f"{lua_output_dir}/{lua_name}_lua_export.cpp")
             all_outputs.append(f"{lua_output_dir}/{lua_name}_lua_export.lua")
 
+        # 追加 Node/NAPI 聚合文件路径（由 reduce 阶段的 das_napi_export.py 产出）
+        node_output_dir = reduce_config.get("node_output_dir")
+        node_addon_name = reduce_config.get("node_addon_name")
+
+        if node_output_dir and node_addon_name:
+            node_stem = f"{node_addon_name}_export"
+            all_outputs.append(f"{node_output_dir}/{node_stem}.cpp")
+            all_outputs.append(f"{node_output_dir}/{node_stem}.d.ts")
+            all_outputs.append(f"{node_output_dir}/{node_stem}.js")
+
         # 输出到 stdout（每行一个路径），去重并排序，统一使用正斜杠
         for f in sorted(set(all_outputs)):
             print(f.replace("\\", "/"))
