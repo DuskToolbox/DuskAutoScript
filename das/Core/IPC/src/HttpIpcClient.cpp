@@ -37,7 +37,7 @@ HttpIpcClient::Connect(
     const std::string&       port,
     uint32_t                 my_pid)
 {
-    // ── Phase 1: TCP connect + create WebSocket transport ──
+    // ── Phase 1: TCP connect + WebSocket upgrade ──
     boost::asio::ip::tcp::resolver resolver(io_context);
     auto                           endpoints =
         co_await resolver.async_resolve(host, port, boost::asio::use_awaitable);
@@ -48,7 +48,14 @@ HttpIpcClient::Connect(
         endpoints,
         boost::asio::use_awaitable);
 
-    auto transport = std::make_unique<HttpIpcTransport>(std::move(socket));
+    boost::beast::websocket::stream<boost::asio::ip::tcp::socket> ws(
+        std::move(socket));
+    co_await ws.async_handshake(
+        host + ":" + port,
+        "/ipc/v1/transport",
+        boost::asio::use_awaitable);
+
+    auto transport = std::make_unique<HttpIpcTransport>(std::move(ws));
     if (!transport->IsConnected())
     {
         DAS_CORE_LOG_ERROR("WebSocket connect failed to {}:{}", host, port);

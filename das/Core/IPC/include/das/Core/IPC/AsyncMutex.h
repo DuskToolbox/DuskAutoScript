@@ -72,6 +72,11 @@ public:
 
     ~AsyncMutex()
     {
+        if (!state_)
+        {
+            return;
+        }
+
         if (!io_ctx_.get().stopped())
         {
             boost::asio::post(

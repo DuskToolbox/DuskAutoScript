@@ -201,13 +201,16 @@ boost::asio::awaitable<DasResult> AnyTransport::InitializeAsync(
     bool               is_server,
     size_t             max_message_size)
 {
-    return std::visit(
+    const std::string read_endpoint_copy = read_endpoint;
+    const std::string write_endpoint_copy = write_endpoint;
+
+    co_return co_await std::visit(
         [&](auto& transport)
         {
             return InitializeTransport(
                 transport,
-                read_endpoint,
-                write_endpoint,
+                read_endpoint_copy,
+                write_endpoint_copy,
                 is_server,
                 max_message_size);
         },
@@ -250,9 +253,11 @@ boost::asio::awaitable<DasResult> AnyTransport::SendCoroutine(
     const uint8_t*                   body,
     size_t                           body_size)
 {
-    return std::visit(
-        [header, body, body_size](auto& t)
-        { return t.SendCoroutine(header, body, body_size); },
+    const ValidatedIPCMessageHeader header_copy = header;
+
+    co_return co_await std::visit(
+        [&header_copy, body, body_size](auto& t)
+        { return t.SendCoroutine(header_copy, body, body_size); },
         transport_);
 }
 
