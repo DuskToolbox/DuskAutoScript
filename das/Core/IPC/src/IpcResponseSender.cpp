@@ -1,5 +1,4 @@
 #include <das/Core/IPC/Config.h>
-#include <das/Core/IPC/DefaultAsyncIpcTransport.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcResponseSender.h>
 #include <das/Core/IPC/IpcRunLoop.h>
@@ -9,8 +8,8 @@
 
 DAS_CORE_IPC_NS_BEGIN
 
-IpcResponseSender::IpcResponseSender(DefaultAsyncIpcTransport& transport)
-    : transport_(&transport)
+IpcResponseSender::IpcResponseSender(AnyTransport& transport)
+    : transport_(std::ref(transport))
 {
 }
 
@@ -20,9 +19,9 @@ IpcResponseSender::IpcResponseSender(IpcRunLoop& run_loop)
 }
 
 IpcResponseSender::IpcResponseSender(
-    DefaultAsyncIpcTransport& transport,
-    IpcRunLoop&               run_loop)
-    : transport_(&transport), run_loop_(&run_loop)
+    AnyTransport& transport,
+    IpcRunLoop&   run_loop)
+    : transport_(std::ref(transport)), run_loop_(&run_loop)
 {
 }
 
@@ -38,7 +37,7 @@ DasResult IpcResponseSender::SendResponse(
             body.size());
         std::vector<uint8_t> body_copy(body);
         return run_loop_->PostSendWithTransport(
-            transport_,
+            transport_->get(),
             validated_header,
             std::move(body_copy));
     }
@@ -68,7 +67,7 @@ DasResult IpcResponseSender::SendResponse(
             "SendResponse: routing through send queue, body_size = {}",
             body.size());
         return run_loop_->PostSendWithTransport(
-            transport_,
+            transport_->get(),
             validated_header,
             std::move(body));
     }
@@ -98,7 +97,7 @@ boost::asio::awaitable<DasResult> IpcResponseSender::SendResponseAsync(
             body.size());
         std::vector<uint8_t> body_copy(body);
         DasResult            result = run_loop_->PostSendWithTransport(
-            transport_,
+            transport_->get(),
             validated_header,
             std::move(body_copy));
         co_return result;
@@ -129,7 +128,7 @@ boost::asio::awaitable<DasResult> IpcResponseSender::SendResponseAsync(
             "SendResponseAsync: routing through send queue, body_size = {}",
             body.size());
         DasResult result = run_loop_->PostSendWithTransport(
-            transport_,
+            transport_->get(),
             validated_header,
             std::move(body));
         co_return result;

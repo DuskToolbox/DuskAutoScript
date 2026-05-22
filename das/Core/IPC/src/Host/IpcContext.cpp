@@ -6,7 +6,6 @@
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/CurrentIpcContextScope.h>
 #include <das/Core/IPC/DasProxyBase.h>
-#include <das/Core/IPC/DefaultAsyncIpcTransport.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/HandshakeSerialization.h>
 #include <das/Core/IPC/Host/HandshakeHandler.h>
@@ -172,11 +171,8 @@ namespace Core
                     *proxy_factory_,
                     registry_);
 
-                // transport 由 ConnectionManager 拥有，transport_ref_
-                // 借用引用 Pipe 模式：CreateUninitialized → InitializeAsync
-                // → RegisterAnyTransport → GetAnyTransportRef HTTP 模式：
-                // HttpIpcClient::Connect → RegisterAnyTransport →
-                // GetAnyTransportRef
+                // transport 由 ConnectionManager 拥有，接收循环通过
+                // FindTransport 在需要时解析 AnyTransport 引用。
 
                 // 创建并初始化 IpcCommandHandler
                 command_handler_ = IpcCommandHandler::Create(registry_);
@@ -340,11 +336,7 @@ namespace Core
                 //    确保 io_context 已停止，这样 AsyncMutex 析构时走安全路径
                 run_loop_.RequestStop();
 
-                // 4. transport 现在由 ConnectionManager 拥有，
-                //    清空借用指针即可
-                transport_ref_ = nullptr;
-
-                // 4b. 关闭 HTTP 客户端（如果存在）
+                // 4. 关闭 HTTP 客户端（如果存在）
                 http_client_.reset();
 
                 // 5. IpcRunLoop 是值成员，析构时自动清理
@@ -498,14 +490,13 @@ namespace Core
 
                                         // 1. 创建并异步连接 transport
                                         auto pipe_transport =
-                                            DefaultAsyncIpcTransport::
-                                                CreateUninitialized(
-                                                    run_loop_.GetIoContext());
-                                        pipe_transport->SetSharedMemoryPool(
+                                            AnyTransport::CreateUninitialized(
+                                                run_loop_.GetIoContext());
+                                        pipe_transport.SetSharedMemoryPool(
                                             &*shared_memory_);
 
                                         auto result = co_await pipe_transport
-                                                          ->InitializeAsync(
+                                                          .InitializeAsync(
                                                               host_read_queue_,
                                                               host_write_queue_,
                                                               host_is_server_);
@@ -527,11 +518,7 @@ namespace Core
                                         uint16_t main_process_session_id = 1;
                                         conn_mgr.RegisterAnyTransport(
                                             main_process_session_id,
-                                            std::move(*pipe_transport));
-                                        pipe_transport.reset();
-                                        transport_ref_ =
-                                            &conn_mgr.GetAnyTransportRef(
-                                                main_process_session_id);
+                                            std::move(pipe_transport));
 
                                         DAS_CORE_LOG_INFO(
                                             "Host: connected, starting "
@@ -578,10 +565,20 @@ namespace Core
                     {
                         DAS_CORE_LOG_INFO(
                             "ReceiveLoopCoroutine: waiting for message...");
-                        // 使用 AnyTransport 的协程接口接收（IOCP
-                        // 异步，协程挂起）
-                        auto result =
-                            co_await transport_ref_->ReceiveCoroutine();
+                        auto& conn_mgr = run_loop_.GetConnectionManager();
+                        constexpr uint16_t main_process_session_id = 1;
+                        auto [lookup_result, maybe_transport] =
+                            conn_mgr.FindTransport(main_process_session_id);
+                        if (DAS::IsFailed(lookup_result) || !maybe_transport)
+                        {
+                            DAS_CORE_LOG_ERROR(
+                                "ReceiveLoopCoroutine: transport lookup failed, result={}",
+                                lookup_result);
+                            co_return;
+                        }
+
+                        AnyTransport& transport = maybe_transport->get();
+                        auto result = co_await transport.ReceiveCoroutine();
                         DAS_CORE_LOG_INFO(
                             "ReceiveLoopCoroutine: received result, index={}",
                             result.index());
@@ -626,28 +623,10 @@ namespace Core
                             }
                             else
                             {
-                                // REQUEST/EVENT: 尝试提取
-                                // DefaultAsyncIpcTransport 引用分发到
-                                // handler；HTTP/Unix 模式推入 inbound_queue
-                                auto* pipe_ptr =
-                                    std::get_if<DefaultAsyncIpcTransport>(
-                                        &transport_ref_->variant());
-
-                                if (pipe_ptr)
-                                {
-                                    co_await run_loop_
-                                        .DispatchToHandlerCoroutine(
-                                            header,
-                                            body,
-                                            *pipe_ptr);
-                                }
-                                else
-                                {
-                                    InboundMessage msg;
-                                    msg.header = header;
-                                    msg.body = std::move(body);
-                                    inbound_queue_.Push(std::move(msg));
-                                }
+                                co_await run_loop_.DispatchToHandlerCoroutine(
+                                    header,
+                                    body,
+                                    transport);
                             }
                         }
                         else
@@ -739,8 +718,6 @@ namespace Core
                             main_session_id,
                             std::move(*http_transport));
                         http_transport.reset();
-                        transport_ref_ =
-                            &conn_mgr.GetAnyTransportRef(main_session_id);
 
                         DAS_CORE_LOG_INFO(
                             "HTTP transport registered for "
@@ -776,12 +753,8 @@ namespace Core
                     proxy_factory_->BeginShutdown();
                 }
 
-                // 1. 清空 transport 借用指针
-                //    ConnectionManager 拥有的 transport 会在
-                //    run_loop_ 析构时自动清理
-                transport_ref_ = nullptr;
-
-                // 2. 然后请求 runloop 停止
+                // 1. 请求 runloop 停止；ConnectionManager 拥有的 transport 会在
+                //    run_loop_ 析构时自动清理。
                 run_loop_.RequestStop();
             }
 

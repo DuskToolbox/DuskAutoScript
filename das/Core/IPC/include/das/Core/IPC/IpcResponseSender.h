@@ -3,12 +3,13 @@
 
 #include <boost/asio/awaitable.hpp>
 #include <cstdint>
+#include <optional>
+#include <das/Core/IPC/AnyTransport.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <vector>
 
 #include <das/Core/IPC/Config.h>
-#include <das/Core/IPC/DefaultAsyncIpcTransport.h>
 #include <das/DasConfig.h>
 
 DAS_CORE_IPC_NS_BEGIN
@@ -37,8 +38,7 @@ public:
      * SendResponseAsync 直接通过 transport 发送（绕过队列）。
      * 仅用于无法获取 IpcRunLoop 的场景。
      */
-    explicit IpcResponseSender(
-        DefaultAsyncIpcTransport& transport DAS_LIFETIMEBOUND);
+    explicit IpcResponseSender(AnyTransport& transport DAS_LIFETIMEBOUND);
 
     /**
      * @brief 构造函数（业务线程模式，仅 run_loop）
@@ -60,8 +60,8 @@ public:
      * 防止多个 async_write 并发写入同一管道。
      */
     IpcResponseSender(
-        DefaultAsyncIpcTransport& transport DAS_LIFETIMEBOUND,
-        IpcRunLoop& run_loop                DAS_LIFETIMEBOUND);
+        AnyTransport& transport DAS_LIFETIMEBOUND,
+        IpcRunLoop&   run_loop  DAS_LIFETIMEBOUND);
 
     /**
      * @brief 同步发送响应（业务线程版本）
@@ -117,8 +117,8 @@ public:
         std::vector<uint8_t>&&           body);
 
 private:
-    DefaultAsyncIpcTransport* transport_ = nullptr; // IO 线程模式
-    IpcRunLoop*               run_loop_ = nullptr;  // 业务线程模式
+    std::optional<AnyTransportRef> transport_; // IO 线程模式
+    IpcRunLoop*                    run_loop_ = nullptr; // 业务线程模式
 };
 
 DAS_CORE_IPC_NS_END

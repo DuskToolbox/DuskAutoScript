@@ -18,9 +18,8 @@
 #include <das/IDasAsyncOperation.h>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
+#include <optional>
 #include <thread>
-
-#include <das/Core/IPC/DefaultAsyncIpcTransport.h>
 
 // 获取当前进程 PID 的跨平台方法
 #ifdef _WIN32
@@ -79,7 +78,7 @@ struct HostLauncher::Impl
 
     boost::asio::io_context& io_ctx; // 引用，由外部管理生命周期
     std::unique_ptr<boost::process::v2::process> process;
-    std::unique_ptr<DefaultAsyncIpcTransport>    async_transport;
+    std::optional<AnyTransport>                  async_transport;
     uint32_t                                     pid = 0;
     uint16_t                                     session_id = 0;
     uint16_t              next_call_id = 1; // V3: 16-bit call_id
@@ -216,6 +215,17 @@ namespace
         uint16_t                          session_id_{0};
         DasPtr<IDasAsyncCompletedHandler> handler_;
     };
+
+    void CleanupTransport(std::optional<AnyTransport>& transport)
+    {
+        if (!transport)
+        {
+            return;
+        }
+
+        transport->Cleanup();
+        transport.reset();
+    }
 
 } // anonymous namespace
 
@@ -428,10 +438,7 @@ void HostLauncher::Stop()
         }
     }
 
-    if (impl_->async_transport)
-    {
-        impl_->async_transport.reset();
-    }
+    CleanupTransport(impl_->async_transport);
 
     if (impl_->process)
     {
@@ -471,9 +478,19 @@ uint16_t HostLauncher::GetSessionId() const { return impl_->session_id; }
 
 boost::asio::io_context& HostLauncher::GetIoContext() { return impl_->io_ctx; }
 
-DefaultAsyncIpcTransport* HostLauncher::GetTransport()
+TransportLookupResult HostLauncher::GetTransport()
 {
-    return impl_->async_transport.get();
+    if (!impl_->async_transport)
+    {
+        return {DAS_E_IPC_NOT_INITIALIZED, std::nullopt};
+    }
+
+    if (!impl_->async_transport->IsConnected())
+    {
+        return {DAS_E_IPC_CONNECTION_LOST, std::nullopt};
+    }
+
+    return {DAS_S_OK, std::ref(*impl_->async_transport)};
 }
 
 DasResult HostLauncher::StartAsync(
@@ -555,10 +572,7 @@ void HostLauncher::TerminateIfRunning()
         (void)impl_->process.release();
     }
 
-    if (impl_->async_transport)
-    {
-        impl_->async_transport.reset();
-    }
+    CleanupTransport(impl_->async_transport);
 
     impl_->is_running = false;
     impl_->session_id = 0;
@@ -579,10 +593,17 @@ uint32_t HostLauncher::Release()
 
 DasResult HostLauncher::QueryInterface(const DasGuid& iid, void** pp)
 {
+    if (iid == DasIidOf<IInternalHost>())
+    {
+        AddRef();
+        *pp = static_cast<IInternalHost*>(this);
+        return DAS_S_OK;
+    }
+
     if (iid == DasIidOf<IDasBase>())
     {
         AddRef();
-        *pp = static_cast<IDasBase*>(this);
+        *pp = static_cast<IDasBase*>(static_cast<IHostLauncher*>(this));
         return DAS_S_OK;
     }
     return DAS_E_NO_INTERFACE;
@@ -691,7 +712,7 @@ DasResult HostLauncher::ConnectToHost(uint32_t timeout_ms)
 
         auto future = boost::asio::co_spawn(
             impl_->io_ctx,
-            DefaultAsyncIpcTransport::CreateAsync(
+            AnyTransport::CreateAsync(
                 impl_->io_ctx,
                 host_to_plugin_pipe,
                 plugin_to_host_pipe,
@@ -707,17 +728,17 @@ DasResult HostLauncher::ConnectToHost(uint32_t timeout_ms)
             return DAS_E_IPC_TIMEOUT;
         }
 
-        auto transport = future.get();
-        if (!transport.has_value())
+        auto [transport_result, maybe_transport] = future.get();
+        if (DAS::IsFailed(transport_result) || !maybe_transport)
         {
             std::string err_msg = DAS_FMT_NS::format(
                 "Failed to create Host IPC transport: error={}",
-                transport.error());
+                transport_result);
             DAS_CORE_LOG_ERROR(err_msg.c_str());
-            return transport.error();
+            return transport_result;
         }
 
-        impl_->async_transport = std::move(*transport);
+        impl_->async_transport = std::move(*maybe_transport);
     }
     catch (const boost::system::system_error& e)
     {
@@ -1255,23 +1276,24 @@ boost::asio::awaitable<DasResult> HostLauncher::ConnectToHostAsync()
 
     try
     {
-        auto transport_result = co_await DefaultAsyncIpcTransport::CreateAsync(
+        auto [transport_result, maybe_transport] =
+            co_await AnyTransport::CreateAsync(
             impl_->io_ctx,
             host_to_plugin_pipe,
             plugin_to_host_pipe,
             true, // is_server = true (MainProcess creates pipes)
             65536);
 
-        if (!transport_result.has_value())
+        if (DAS::IsFailed(transport_result) || !maybe_transport)
         {
             std::string err_msg = DAS_FMT_NS::format(
                 "Failed to create Host IPC transport: error = {}",
-                transport_result.error());
+                transport_result);
             DAS_CORE_LOG_ERROR(err_msg.c_str());
-            co_return transport_result.error();
+            co_return transport_result;
         }
 
-        impl_->async_transport = std::move(*transport_result);
+        impl_->async_transport = std::move(*maybe_transport);
     }
     catch (const boost::system::system_error& e)
     {

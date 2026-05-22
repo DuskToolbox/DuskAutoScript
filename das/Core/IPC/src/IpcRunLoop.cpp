@@ -25,7 +25,6 @@
 
 #include <das/Core/IPC/DasReadOnlyStringStub.h>
 #include <das/Core/IPC/DasVariantVectorByValueStub.h>
-#include <das/Core/IPC/DefaultAsyncIpcTransport.h>
 #include <das/Core/IPC/QueryInterfaceStub.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 
@@ -190,7 +189,7 @@ IMessageHandler* IpcRunLoop::GetHandler(
 boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
     const ValidatedIPCMessageHeader& header,
     const std::vector<uint8_t>&      body,
-    DefaultAsyncIpcTransport&        transport)
+    AnyTransport&                    transport)
 {
     DAS_CORE_LOG_INFO(
         "DispatchToHandlerCoroutine: interface_id={}, call_id={}, header_flags={}, body_size={}",
@@ -211,13 +210,13 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
 
         // Route through send queue instead of direct ForwardMessage
         // to prevent concurrent async_write on the same pipe
-        auto* fwd_transport =
-            connection_manager_->GetTransport(header.GetTargetSessionId());
-        if (fwd_transport)
+        auto [lookup_result, maybe_transport] =
+            connection_manager_->FindTransport(header.GetTargetSessionId());
+        if (!DAS::IsFailed(lookup_result) && maybe_transport)
         {
             std::vector<uint8_t> fwd_body(body.begin(), body.end());
             auto                 fwd_result = PostSendWithTransport(
-                fwd_transport,
+                maybe_transport->get(),
                 header,
                 std::move(fwd_body));
             if (fwd_result != DAS_S_OK)
@@ -231,8 +230,9 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerCoroutine(
         else
         {
             DAS_CORE_LOG_ERROR(
-                "Forward failed: no transport for target={}",
-                header.GetTargetSessionId());
+                "Forward failed: no transport for target={}, result={}",
+                header.GetTargetSessionId(),
+                lookup_result);
         }
 
         co_return;
@@ -348,18 +348,11 @@ IpcRunLoop::PrepareAsyncSendHeader(
 }
 
 std::pair<DasResult, CallKey> IpcRunLoop::PrepareSendRequestWithTransport(
-    DefaultAsyncIpcTransport*        transport,
+    AnyTransport&                    transport,
     const ValidatedIPCMessageHeader& request_header,
     const uint8_t*                   body,
     size_t                           body_size)
 {
-    if (!transport)
-    {
-        return {
-            DAS_E_INVALID_ARGUMENT,
-            CallKey{.source_session_id = 0, .call_id = 0}};
-    }
-
     uint16_t call_id = AllocateCallId();
 
     const IPCMessageHeader& raw = request_header.Raw();
@@ -394,7 +387,7 @@ std::pair<DasResult, CallKey> IpcRunLoop::PrepareSendRequestWithTransport(
     {
         auto future = boost::asio::co_spawn(
             *io_context_,
-            transport->SendCoroutine(validated_header, body, body_size),
+            transport.SendCoroutine(validated_header, body, body_size),
             boost::asio::use_future);
 
         DasResult send_result = future.get();
@@ -612,21 +605,20 @@ DasResult IpcRunLoop::PostToBusinessThread(IDasAsyncCallback* callback) noexcept
 }
 
 boost::asio::awaitable<void> IpcRunLoop::DoSendCoroutine(
-    DefaultAsyncIpcTransport* transport,
-    DasPtr<HostLauncher>      launcher,
+    AnyTransportRef           transport_ref,
     ValidatedIPCMessageHeader header,
     std::vector<uint8_t>      body)
 {
     try
     {
-        auto* live_transport = launcher ? launcher->GetTransport() : transport;
-        if (!live_transport || !live_transport->IsConnected())
+        AnyTransport& transport = transport_ref.get();
+        if (!transport.IsConnected())
         {
             NotifySendFailure(header, DAS_E_IPC_CONNECTION_LOST);
             co_return;
         }
 
-        auto result = co_await live_transport->SendCoroutine(
+        auto result = co_await transport.SendCoroutine(
             header,
             body.data(),
             body.size());
@@ -682,42 +674,42 @@ boost::asio::awaitable<void> IpcRunLoop::SendToSessionCoroutine(
             .response_flags = 0};
     }
 
-    auto launcher =
-        connection_manager_->GetLauncher(header.GetTargetSessionId());
+    const uint16_t target_session_id = header.GetTargetSessionId();
+    DasPtr<IInternalHost> host =
+        connection_manager_->GetInternalHost(target_session_id);
 
-    DefaultAsyncIpcTransport* transport = nullptr;
-    if (launcher)
+    DasResult lookup_result = DAS_E_IPC_OBJECT_NOT_FOUND;
+    std::optional<AnyTransportRef> maybe_transport;
+    if (host)
     {
-        transport = launcher->GetTransport();
+        std::tie(lookup_result, maybe_transport) = host->GetTransport();
+    }
+    else
+    {
+        std::tie(lookup_result, maybe_transport) =
+            connection_manager_->FindTransport(target_session_id);
     }
 
-    // Fallback: direct transport (Host mode, lifetime managed by
-    // IpcContext outliving the io_context event loop)
-    if (!transport)
-    {
-        transport =
-            connection_manager_->GetTransport(header.GetTargetSessionId());
-    }
-
-    if (!transport)
+    if (DAS::IsFailed(lookup_result) || !maybe_transport)
     {
         DAS_CORE_LOG_ERROR(
-            "PostSend: no transport for session = {}",
-            header.GetTargetSessionId());
+            "PostSend: no transport for session = {}, result = {}",
+            target_session_id,
+            lookup_result);
         complete_send_failure(DAS_E_IPC_NO_CONNECTIONS);
         co_return;
     }
 
     try
     {
-        auto* live_transport = launcher ? launcher->GetTransport() : transport;
-        if (!live_transport || !live_transport->IsConnected())
+        AnyTransport& transport = maybe_transport->get();
+        if (!transport.IsConnected())
         {
             complete_send_failure(DAS_E_IPC_CONNECTION_LOST);
             co_return;
         }
 
-        auto result = co_await live_transport->SendCoroutine(
+        auto result = co_await transport.SendCoroutine(
             header,
             body.data(),
             body.size());
@@ -760,7 +752,7 @@ DasResult IpcRunLoop::PostSend(
 }
 
 DasResult IpcRunLoop::PostSendWithTransport(
-    DefaultAsyncIpcTransport*        transport,
+    AnyTransport&                    transport,
     const ValidatedIPCMessageHeader& header,
     std::vector<uint8_t>&&           body)
 {
@@ -770,22 +762,10 @@ DasResult IpcRunLoop::PostSendWithTransport(
         return DAS_E_IPC_NOT_INITIALIZED;
     }
 
-    if (!transport)
-    {
-        DAS_CORE_LOG_ERROR("PostSendWithTransport: transport is null");
-        return DAS_E_IPC_INVALID_ARGUMENT;
-    }
-
-    auto launcher =
-        connection_manager_
-            ? connection_manager_->GetLauncher(header.GetTargetSessionId())
-            : nullptr;
-
     boost::asio::co_spawn(
         *io_context_,
         DoSendCoroutine(
-            transport,
-            std::move(launcher),
+            std::ref(transport),
             header,
             std::move(body)),
         boost::asio::detached);
@@ -910,13 +890,16 @@ DasResult IpcRunLoop::RegisterHostLauncher(DasPtr<HostLauncher> launcher)
 
     uint16_t session_id = launcher->GetSessionId();
 
-    auto* transport = launcher->GetTransport();
-    if (!transport)
+    DasPtr<IInternalHost> host = launcher;
+    auto [lookup_result, maybe_transport] = host->GetTransport();
+    if (DAS::IsFailed(lookup_result) || !maybe_transport)
     {
         DAS_CORE_LOG_ERROR(
-            "HostLauncher has no Transport: session_id={}",
-            session_id);
-        return DAS_E_IPC_NO_CONNECTIONS;
+            "HostLauncher has no Transport: session_id={}, result={}",
+            session_id,
+            lookup_result);
+        return DAS::IsFailed(lookup_result) ? lookup_result
+                                            : DAS_E_IPC_NO_CONNECTIONS;
     }
 
     // Register with ConnectionManager
@@ -935,10 +918,7 @@ DasResult IpcRunLoop::RegisterHostLauncher(DasPtr<HostLauncher> launcher)
         return result;
     }
 
-    // Start async receive for this Transport
-    // 注意：从 ConnectionManager 获取 DasPtr 副本，协程会捕获它来保持 transport
-    // 存活
-    StartAsyncReceiveForTransport(session_id, conn_mgr.GetLauncher(session_id));
+    StartAsyncReceiveForInternalHost(session_id, std::move(host));
 
     DAS_CORE_LOG_INFO("HostLauncher registered: session_id={}", session_id);
     return DAS_S_OK;
@@ -988,254 +968,6 @@ DasResult IpcRunLoop::RegisterInternalHost(DasPtr<IInternalHost> host)
 
     DAS_CORE_LOG_INFO("Internal host registered: session_id={}", session_id);
     return DAS_S_OK;
-}
-
-DasResult IpcRunLoop::RegisterDirectTransport(
-    uint16_t                 session_id,
-    Win32AsyncIpcTransport&& t)
-{
-    if (!t.IsConnected())
-    {
-        DAS_CORE_LOG_ERROR(
-            "RegisterDirectTransport: transport is not connected");
-        return DAS_E_INVALID_ARGUMENT;
-    }
-
-    if (!connection_manager_)
-    {
-        DAS_CORE_LOG_ERROR("ConnectionManager not initialized");
-        return DAS_E_IPC_NOT_INITIALIZED;
-    }
-
-    auto&     conn_mgr = GetConnectionManager();
-    DasResult result = conn_mgr.RegisterAnyTransport(session_id, std::move(t));
-    if (DAS::IsFailed(result))
-    {
-        DAS_CORE_LOG_ERROR(
-            "RegisterDirectTransport: failed to register, session_id={}, result={}",
-            session_id,
-            result);
-        return result;
-    }
-
-    auto* owned_transport = conn_mgr.GetAnyTransport(session_id);
-    boost::asio::co_spawn(
-        *io_context_,
-        DirectTransportReceiveLoop(session_id, owned_transport),
-        boost::asio::detached);
-    return DAS_S_OK;
-}
-
-DasResult IpcRunLoop::RegisterDirectTransport(
-    uint16_t                session_id,
-    UnixAsyncIpcTransport&& t)
-{
-    if (!t.IsConnected())
-    {
-        DAS_CORE_LOG_ERROR(
-            "RegisterDirectTransport: transport is not connected");
-        return DAS_E_INVALID_ARGUMENT;
-    }
-
-    if (!connection_manager_)
-    {
-        DAS_CORE_LOG_ERROR("ConnectionManager not initialized");
-        return DAS_E_IPC_NOT_INITIALIZED;
-    }
-
-    auto&     conn_mgr = GetConnectionManager();
-    DasResult result = conn_mgr.RegisterAnyTransport(session_id, std::move(t));
-    if (DAS::IsFailed(result))
-    {
-        DAS_CORE_LOG_ERROR(
-            "RegisterDirectTransport: failed to register, session_id={}, result={}",
-            session_id,
-            result);
-        return result;
-    }
-
-    auto* owned_transport = conn_mgr.GetAnyTransport(session_id);
-    boost::asio::co_spawn(
-        *io_context_,
-        DirectTransportReceiveLoop(session_id, owned_transport),
-        boost::asio::detached);
-    return DAS_S_OK;
-}
-
-DasResult IpcRunLoop::RegisterDirectTransport(
-    uint16_t           session_id,
-    HttpIpcTransport&& t)
-{
-    if (!t.IsConnected())
-    {
-        DAS_CORE_LOG_ERROR(
-            "RegisterDirectTransport: transport is not connected");
-        return DAS_E_INVALID_ARGUMENT;
-    }
-
-    if (!connection_manager_)
-    {
-        DAS_CORE_LOG_ERROR("ConnectionManager not initialized");
-        return DAS_E_IPC_NOT_INITIALIZED;
-    }
-
-    auto&     conn_mgr = GetConnectionManager();
-    DasResult result = conn_mgr.RegisterAnyTransport(session_id, std::move(t));
-    if (DAS::IsFailed(result))
-    {
-        DAS_CORE_LOG_ERROR(
-            "RegisterDirectTransport: failed to register, session_id={}, result={}",
-            session_id,
-            result);
-        return result;
-    }
-
-    auto* owned_transport = conn_mgr.GetAnyTransport(session_id);
-    boost::asio::co_spawn(
-        *io_context_,
-        DirectTransportReceiveLoop(session_id, owned_transport),
-        boost::asio::detached);
-    return DAS_S_OK;
-}
-
-boost::asio::awaitable<void> IpcRunLoop::DirectTransportReceiveLoop(
-    uint16_t      session_id,
-    AnyTransport* owned_transport)
-{
-    while (running_.load())
-    {
-        if (!owned_transport->IsConnected())
-        {
-            DAS_CORE_LOG_DEBUG(
-                "Direct transport disconnected, exiting: session_id={}",
-                session_id);
-            co_return;
-        }
-
-        try
-        {
-            auto result = co_await owned_transport->ReceiveCoroutine();
-
-            if (!running_.load())
-            {
-                co_return;
-            }
-
-            if (result.index() == 0)
-            {
-                DasResult error_code = std::get<0>(result);
-                if (error_code != DAS_S_OK)
-                {
-                    DAS_CORE_LOG_ERROR(
-                        "Direct transport receive failed: session_id={}, error={}",
-                        session_id,
-                        error_code);
-                }
-                co_return;
-            }
-
-            auto&& [header, body] = std::get<1>(result);
-
-            DAS_CORE_LOG_INFO(
-                "DirectTransport receive: session_id={}, msg_type={}, interface_id={}, call_id={}",
-                session_id,
-                static_cast<int>(header.Raw().message_type),
-                header.Raw().interface_id,
-                header.Raw().call_id);
-
-            if ((header.GetHeaderFlags() & HeaderFlags::CONTROL_PLANE) != 0)
-            {
-                if (header.GetMessageType() == MessageType::RESPONSE)
-                {
-                    CallKey call_key{
-                        header.GetSourceSessionId(),
-                        header.GetCallId()};
-                    CompletePendingCall(
-                        call_key,
-                        DAS_S_OK,
-                        std::move(body),
-                        header.GetFlags());
-                }
-                else
-                {
-                    InboundMessage msg;
-                    msg.header = header;
-                    msg.body = std::move(body);
-                    if (inbound_queue_)
-                    {
-                        auto push_result = inbound_queue_->Push(std::move(msg));
-                        if (push_result != DAS_S_OK)
-                        {
-                            DAS_CORE_LOG_ERROR(
-                                "DirectTransport: failed to push to inbound_queue: session_id={}, result={}",
-                                session_id,
-                                push_result);
-                        }
-                    }
-                }
-            }
-            else
-            {
-                if (connection_manager_
-                    && header.GetTargetSessionId() != local_session_id_)
-                {
-                    auto* fwd_transport = connection_manager_->GetTransport(
-                        header.GetTargetSessionId());
-                    if (fwd_transport)
-                    {
-                        std::vector<uint8_t> fwd_body(body.begin(), body.end());
-                        PostSendWithTransport(
-                            fwd_transport,
-                            header,
-                            std::move(fwd_body));
-                    }
-                    co_return;
-                }
-
-                if (header.GetMessageType() == MessageType::RESPONSE)
-                {
-                    CallKey call_key{
-                        header.GetSourceSessionId(),
-                        header.GetCallId()};
-                    CompletePendingCall(
-                        call_key,
-                        DAS_S_OK,
-                        std::move(body),
-                        header.GetFlags());
-                }
-                else
-                {
-                    InboundMessage msg;
-                    msg.header = header;
-                    msg.body = std::move(body);
-                    if (inbound_queue_)
-                    {
-                        inbound_queue_->Push(std::move(msg));
-                    }
-                }
-            }
-        }
-        catch (const boost::system::system_error& e)
-        {
-            if (e.code() == boost::asio::error::operation_aborted)
-            {
-                co_return;
-            }
-            DAS_CORE_LOG_ERROR(
-                "DirectTransport receive error: session_id={}, {}",
-                session_id,
-                e.what());
-            co_return;
-        }
-        catch (const std::exception& e)
-        {
-            DAS_CORE_LOG_ERROR(
-                "DirectTransport receive exception: session_id={}, {}",
-                session_id,
-                e.what());
-            co_return;
-        }
-    }
 }
 
 void IpcRunLoop::StartAsyncReceiveForInternalHost(
@@ -1352,20 +1084,10 @@ boost::asio::awaitable<void> IpcRunLoop::InternalHostReceiveLoop(
                 }
                 else
                 {
-                    InboundMessage msg;
-                    msg.header = header;
-                    msg.body = std::move(body);
-                    if (inbound_queue_)
-                    {
-                        auto push_result = inbound_queue_->Push(std::move(msg));
-                        if (push_result != DAS_S_OK)
-                        {
-                            DAS_CORE_LOG_ERROR(
-                                "InternalHost: failed to push control-plane message: session_id={}, result={}",
-                                session_id,
-                                push_result);
-                        }
-                    }
+                    co_await DispatchToHandlerCoroutine(
+                        header,
+                        body,
+                        transport);
                 }
             }
             else
@@ -1373,13 +1095,14 @@ boost::asio::awaitable<void> IpcRunLoop::InternalHostReceiveLoop(
                 if (connection_manager_
                     && header.GetTargetSessionId() != local_session_id_)
                 {
-                    auto* fwd_transport = connection_manager_->GetTransport(
-                        header.GetTargetSessionId());
-                    if (fwd_transport)
+                    auto [target_result, target_transport] =
+                        connection_manager_->FindTransport(
+                            header.GetTargetSessionId());
+                    if (!DAS::IsFailed(target_result) && target_transport)
                     {
                         std::vector<uint8_t> fwd_body(body.begin(), body.end());
                         auto                 fwd_result = PostSendWithTransport(
-                            fwd_transport,
+                            target_transport->get(),
                             header,
                             std::move(fwd_body));
                         if (fwd_result != DAS_S_OK)
@@ -1392,21 +1115,10 @@ boost::asio::awaitable<void> IpcRunLoop::InternalHostReceiveLoop(
                     }
                     else
                     {
-                        auto [target_result, target_transport] =
-                            connection_manager_->FindTransport(
-                                header.GetTargetSessionId());
-                        if (DAS::IsFailed(target_result) || !target_transport)
-                        {
-                            DAS_CORE_LOG_ERROR(
-                                "InternalHost forward failed: no transport for target={}",
-                                header.GetTargetSessionId());
-                        }
-                        else
-                        {
-                            DAS_CORE_LOG_ERROR(
-                                "InternalHost forward found AnyTransport target={}, but AnyTransport send migration is not active yet",
-                                header.GetTargetSessionId());
-                        }
+                        DAS_CORE_LOG_ERROR(
+                            "InternalHost forward failed: no transport for target={}, result={}",
+                            header.GetTargetSessionId(),
+                            target_result);
                     }
                     co_return;
                 }
@@ -1462,297 +1174,6 @@ boost::asio::awaitable<void> IpcRunLoop::InternalHostReceiveLoop(
             co_return;
         }
     }
-}
-
-void IpcRunLoop::StartAsyncReceiveForTransport(
-    uint16_t             session_id,
-    DasPtr<HostLauncher> launcher)
-{
-    if (!launcher)
-    {
-        DAS_CORE_LOG_WARN(
-            "Launcher is null, skipping receive loop: session_id={}",
-            session_id);
-        return;
-    }
-
-    auto* transport = launcher->GetTransport();
-    if (!transport || !transport->IsConnected())
-    {
-        DAS_CORE_LOG_WARN(
-            "Transport not connected, skipping receive loop: session_id={}",
-            session_id);
-        return;
-    }
-
-    // Spawn receive coroutine
-    // 注意：捕获 launcher 的 DasPtr 来保持 transport 存活
-    // 当协程运行时，launcher 及其 transport 不会被销毁
-    boost::asio::co_spawn(
-        *io_context_,
-        [this, session_id, launcher]() -> boost::asio::awaitable<void>
-        {
-            std::optional<int> retry_error_code;
-            while (running_.load())
-            {
-                retry_error_code.reset();
-
-                try
-                {
-                    // 从 launcher 获取 transport（安全，因为 launcher 被 DasPtr
-                    // 持有）
-                    auto* transport = launcher->GetTransport();
-                    if (!transport)
-                    {
-                        DAS_CORE_LOG_DEBUG(
-                            "Transport became null, exiting: session_id={}",
-                            session_id);
-                        co_return;
-                    }
-
-                    // Use the transport's coroutine interface
-                    auto result = co_await transport->ReceiveCoroutine();
-
-                    if (!running_.load())
-                    {
-                        co_return;
-                    }
-
-                    if (result.index() == 0)
-                    {
-                        // Error case
-                        DasResult error_code = std::get<0>(result);
-                        if (error_code != DAS_S_OK)
-                        {
-                            DAS_CORE_LOG_ERROR(
-                                "Receive failed with error: session_id = {}, error = {}",
-                                session_id,
-                                error_code);
-                        }
-                        co_return;
-                    }
-
-                    // Successfully received message
-                    auto&& [header, body] = std::get<1>(result);
-
-                    DAS_CORE_LOG_INFO(
-                        "Client ReceiveLoop: session_id={}, msg_type={}, interface_id={}, call_id={}, header_flags={}",
-                        session_id,
-                        static_cast<int>(header.Raw().message_type),
-                        header.Raw().interface_id,
-                        header.Raw().call_id,
-                        static_cast<int>(header.Raw().header_flags));
-
-                    // IO 线程消息分流：按 header_flags 决定处理方式
-                    if ((header.GetHeaderFlags() & HeaderFlags::CONTROL_PLANE)
-                        != 0)
-                    {
-                        // 控制平面消息：在 IO 线程直接处理
-                        if (header.GetMessageType() == MessageType::RESPONSE)
-                        {
-                            // V3: 使用 (source_session_id, call_id) 匹配响应
-                            CallKey call_key{
-                                header.GetSourceSessionId(),
-                                header.GetCallId()};
-                            DAS_CORE_LOG_INFO(
-                                "Client: RESPONSE (control plane) received for source_session_id={}, call_id={}",
-                                call_key.source_session_id,
-                                call_key.call_id);
-                            CompletePendingCall(
-                                call_key,
-                                DAS_S_OK,
-                                std::move(body),
-                                header.GetFlags());
-                        }
-                        else
-                        {
-                            // REQUEST/EVENT: 在 IO 线程处理（控制平面 handler）
-                            co_await DispatchToHandlerCoroutine(
-                                header,
-                                body,
-                                *transport);
-                        }
-                    }
-                    else
-                    {
-                        // 业务消息转发：跨 Host 消息需要转发到目标
-                        if (connection_manager_
-                            && header.GetTargetSessionId() != local_session_id_)
-                        {
-                            auto* fwd_transport =
-                                connection_manager_->GetTransport(
-                                    header.GetTargetSessionId());
-                            if (fwd_transport)
-                            {
-                                DAS_CORE_LOG_INFO(
-                                    "Forwarding business message: "
-                                    "target={}, source={}, type={}, "
-                                    "interface_id={}",
-                                    header.GetTargetSessionId(),
-                                    header.GetSourceSessionId(),
-                                    static_cast<int>(header.GetMessageType()),
-                                    header.GetInterfaceId());
-
-                                // Route through send queue to prevent
-                                // concurrent async_write
-                                std::vector<uint8_t> fwd_body(
-                                    body.begin(),
-                                    body.end());
-                                auto fwd_result = PostSendWithTransport(
-                                    fwd_transport,
-                                    header,
-                                    std::move(fwd_body));
-
-                                if (fwd_result != DAS_S_OK)
-                                {
-                                    DAS_CORE_LOG_ERROR(
-                                        "Business message forward failed: "
-                                        "target={}, result={}",
-                                        header.GetTargetSessionId(),
-                                        fwd_result);
-                                }
-                            }
-                            else
-                            {
-                                DAS_CORE_LOG_ERROR(
-                                    "Business message forward failed: "
-                                    "no transport for target={}",
-                                    header.GetTargetSessionId());
-                            }
-                            co_return;
-                        }
-
-                        // 业务 RESPONSE 快速路径：直接在 IO 线程完成 pending
-                        // call，避免经过 BusinessThread 的额外调度开销
-                        if (header.GetMessageType() == MessageType::RESPONSE)
-                        {
-                            CallKey call_key{
-                                header.GetSourceSessionId(),
-                                header.GetCallId()};
-                            std::unique_lock<std::mutex> lock(pending_mutex_);
-                            auto it = pending_calls_.find(call_key);
-                            if (it != pending_calls_.end()
-                                && it->second.on_complete)
-                            {
-                                lock.unlock();
-                                DAS_CORE_LOG_INFO(
-                                    "Business RESPONSE fast path: "
-                                    "source_session_id={}, call_id={}",
-                                    call_key.source_session_id,
-                                    call_key.call_id);
-                                CompletePendingCall(
-                                    call_key,
-                                    DAS_S_OK,
-                                    std::move(body),
-                                    header.GetFlags());
-                                // 已在 IO 线程完成，跳过 inbound_queue_
-                            }
-                            else
-                            {
-                                lock.unlock();
-                                // 无匹配的 pending call，仍投递到
-                                // inbound_queue_ 供 PumpUntilResponse 消费
-                                InboundMessage msg;
-                                msg.header = header;
-                                msg.body = std::move(body);
-                                auto push_result =
-                                    inbound_queue_->Push(std::move(msg));
-                                if (push_result != DAS_S_OK)
-                                {
-                                    DAS_CORE_LOG_ERROR(
-                                        "Client ReceiveLoop: failed to push to inbound_queue: session_id={}, interface_id={}, result={}",
-                                        session_id,
-                                        header.GetInterfaceId(),
-                                        push_result);
-                                }
-                            }
-                        }
-                        else
-                        {
-                            // REQUEST/EVENT: 投递到 inbound_queue
-                            if (!inbound_queue_)
-                            {
-                                DAS_CORE_LOG_WARN(
-                                    "Client ReceiveLoop: inbound_queue_ is null, dropping message: session_id={}, interface_id={}",
-                                    session_id,
-                                    header.GetInterfaceId());
-                            }
-                            else
-                            {
-                                InboundMessage msg;
-                                msg.header = header;
-                                msg.body = std::move(body);
-                                auto push_result =
-                                    inbound_queue_->Push(std::move(msg));
-                                if (push_result != DAS_S_OK)
-                                {
-                                    DAS_CORE_LOG_ERROR(
-                                        "Client ReceiveLoop: failed to push to inbound_queue: session_id={}, interface_id={}, result={}",
-                                        session_id,
-                                        header.GetInterfaceId(),
-                                        push_result);
-                                }
-                            }
-                        }
-                    }
-                }
-                catch (const boost::system::system_error& e)
-                {
-                    // operation_aborted: normal stop
-                    if (e.code() == boost::asio::error::operation_aborted)
-                    {
-                        DAS_CORE_LOG_DEBUG(
-                            "Receive loop stopped - operation aborted: session_id={}",
-                            session_id);
-                        co_return;
-                    }
-                    // EOF: pipe closed
-                    else if (e.code() == boost::asio::error::eof)
-                    {
-                        DAS_CORE_LOG_DEBUG(
-                            "Receive loop stopped - EOF reached: session_id={}",
-                            session_id);
-                        co_return;
-                    }
-                    // ERROR_NO_DATA (536): waiting for pipe connection
-                    else if (e.code().value() == 536)
-                    {
-                        // Store error code for retry outside catch block
-                        retry_error_code = e.code().value();
-                    }
-                    else
-                    {
-                        DAS_CORE_LOG_ERROR(
-                            "Receive failed with system error: session_id={}, error={}",
-                            session_id,
-                            ToString(e.what()));
-                        co_return;
-                    }
-                }
-                catch (const std::exception& e)
-                {
-                    DAS_CORE_LOG_ERROR(
-                        "Receive failed with exception: session_id={}, error={}",
-                        session_id,
-                        ToString(e.what()));
-                    co_return;
-                }
-
-                // Handle retry outside catch block (co_await not allowed in
-                // catch)
-                if (retry_error_code.has_value())
-                {
-                    DAS_CORE_LOG_DEBUG(
-                        "Waiting for client to connect: session_id={}",
-                        session_id);
-                    auto timer = boost::asio::steady_timer(*io_context_);
-                    timer.expires_after(std::chrono::milliseconds(100));
-                    co_await timer.async_wait(boost::asio::use_awaitable);
-                    // continue loop to retry receive
-                }
-            }
-        },
-        boost::asio::detached);
 }
 
 DAS_CORE_IPC_NS_END

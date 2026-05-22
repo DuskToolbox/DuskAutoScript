@@ -178,10 +178,6 @@ namespace Core
                 /// 共享内存池（optional，因为 shm_name 在构造函数体中计算）
                 std::optional<SharedMemoryPool> shared_memory_;
 
-                /// ConnectionManager 拥有的 AnyTransport 的非拥有借用指针
-                /// （生命周期与 ConnectionManager 一致，安全）
-                AnyTransport* transport_ref_ = nullptr;
-
                 /// HTTP/WebSocket 客户端（HTTP 传输模式，仅连接阶段使用）
                 std::unique_ptr<HttpIpcClient> http_client_;
 

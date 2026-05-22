@@ -28,8 +28,6 @@
 #include <boost/asio/steady_timer.hpp>
 
 #include <das/Core/IPC/AnyTransport.h>
-#include <das/Core/IPC/AsyncIpcTransport.h>
-#include <das/Core/IPC/DefaultAsyncIpcTransport.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/IpcResponseSender.h>
@@ -260,7 +258,7 @@ public:
      */
     [[nodiscard]]
     stdexec::sender auto SendMessageAsync(
-        DefaultAsyncIpcTransport* transport DAS_LIFETIMEBOUND,
+        AnyTransport&                       transport DAS_LIFETIMEBOUND,
         const ValidatedIPCMessageHeader&    request_header,
         const uint8_t*                      body,
         size_t                              body_size,
@@ -341,7 +339,7 @@ public:
      * @return DasResult 投递结果
      */
     DasResult PostSendWithTransport(
-        DefaultAsyncIpcTransport*        transport,
+        AnyTransport&                    transport,
         const ValidatedIPCMessageHeader& header,
         std::vector<uint8_t>&&           body);
 
@@ -385,26 +383,6 @@ public:
      */
     DasResult RegisterInternalHost(DasPtr<IInternalHost> host);
 
-    /**
-     * @brief 直接注册 Transport（无 HostLauncher）
-     *
-     * HTTP/WebSocket 传输模式下，Host 进程独立连接，无需 HostLauncher。
-     * 注册到 ConnectionManager 并启动异步接收协程。
-     *
-     * @param session_id 会话 ID
-     * @param transport 要注册的 transport（调用方管理生命周期）
-     * @return DasResult DAS_S_OK 成功
-     */
-    DasResult RegisterDirectTransport(
-        uint16_t                 session_id,
-        Win32AsyncIpcTransport&& t);
-    DasResult RegisterDirectTransport(
-        uint16_t                session_id,
-        UnixAsyncIpcTransport&& t);
-    DasResult RegisterDirectTransport(
-        uint16_t           session_id,
-        HttpIpcTransport&& t);
-
     friend class ::Das::Core::IPC::Host::HandshakeHandler;
 
     // AwaitResponseOperation 需要访问内部方法
@@ -425,24 +403,11 @@ public:
     boost::asio::awaitable<void> DispatchToHandlerCoroutine(
         const ValidatedIPCMessageHeader& header,
         const std::vector<uint8_t>&      body,
-        DefaultAsyncIpcTransport&        transport);
+        AnyTransport&                    transport);
 
     //=========================================================================
     // 事件驱动方法（内部使用）
     //=========================================================================
-
-    /**
-     * @brief 为指定 Transport 启动异步接收循环
-     *
-     * 在 RegisterHostLauncher 后调用，为该 Transport 启动接收协程。
-     * 协程会捕获 launcher 的 DasPtr 以保持 transport 存活。
-     *
-     * @param session_id 会话 ID
-     * @param launcher HostLauncher 的 DasPtr
-     */
-    void StartAsyncReceiveForTransport(
-        uint16_t             session_id,
-        DasPtr<HostLauncher> launcher);
 
     /**
      * @brief 为内部 Host 启动异步接收循环
@@ -465,16 +430,6 @@ public:
     boost::asio::awaitable<void> InternalHostReceiveLoop(
         uint16_t              session_id,
         DasPtr<IInternalHost> host);
-
-    /**
-     * @brief 直接传输层的接收协程循环
-     *
-     * @param session_id 会话 ID
-     * @param transport AnyTransport 指针（非拥有）
-     */
-    boost::asio::awaitable<void> DirectTransportReceiveLoop(
-        uint16_t      session_id,
-        AnyTransport* transport);
 
     /**
      * @brief 调度超时检查定时器
@@ -506,7 +461,7 @@ public:
      * @return pair<DasResult, CallKey>: 结果码和分配的 CallKey
      */
     std::pair<DasResult, CallKey> PrepareSendRequestWithTransport(
-        DefaultAsyncIpcTransport*        transport,
+        AnyTransport&                    transport,
         const ValidatedIPCMessageHeader& request_header,
         const uint8_t*                   body,
         size_t                           body_size);
@@ -650,16 +605,11 @@ private:
     /// @brief 通过协程发送 IPC 消息（内部共用实现）
     ///
     /// 封装 SendCoroutine 调用、连接检查和错误处理。
-    /// launcher 用于延长 transport 生命周期（心跳线程可能并发销毁
-    /// HostLauncher）。
-    ///
-    /// @param transport 目标传输层（fallback，Host 模式下使用）
-    /// @param launcher HostLauncher（可能为空，用于保持 transport 存活）
+    /// @param transport 目标传输层
     /// @param header 消息头
     /// @param body 消息体
     boost::asio::awaitable<void> DoSendCoroutine(
-        DefaultAsyncIpcTransport* transport,
-        DasPtr<HostLauncher>      launcher,
+        AnyTransportRef           transport,
         ValidatedIPCMessageHeader header,
         std::vector<uint8_t>      body);
 
@@ -722,21 +672,13 @@ void tag_invoke(
 //=============================================================================
 
 inline stdexec::sender auto IpcRunLoop::SendMessageAsync(
-    DefaultAsyncIpcTransport*        transport,
+    AnyTransport&                    transport,
     const ValidatedIPCMessageHeader& request_header,
     const uint8_t*                   body,
     size_t                           body_size,
     std::chrono::milliseconds        timeout)
 {
-    if (!transport)
-    {
-        return AwaitResponseSender{
-            nullptr,
-            ValidatedIPCMessageHeader{},
-            {},
-            CallKey{0, static_cast<uint16_t>(DAS_E_INVALID_ARGUMENT)},
-            std::chrono::milliseconds{0}};
-    }
+    (void)transport;
 
     // 分配 call_id 并构建完整的请求头（不发送、不注册 pending call）
     auto [validated_header, call_key] = PrepareAsyncSendHeader(request_header);

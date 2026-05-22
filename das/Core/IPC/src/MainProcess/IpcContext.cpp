@@ -475,14 +475,19 @@ namespace Core
                 }
 
                 auto& conn_mgr = runloop_.GetConnectionManager();
-                auto* transport = conn_mgr.GetTransport(session_id);
-                if (!transport)
+                auto [lookup_result, maybe_transport] =
+                    conn_mgr.FindTransport(session_id);
+                if (DAS::IsFailed(lookup_result) || !maybe_transport)
                 {
                     DAS_CORE_LOG_ERROR(
-                        "LoadPluginAsync: No Transport found for session_id = {}",
-                        session_id);
-                    return DAS_E_IPC_OBJECT_NOT_FOUND;
+                        "LoadPluginAsync: No Transport found for session_id = {}, result = {}",
+                        session_id,
+                        lookup_result);
+                    return DAS::IsFailed(lookup_result)
+                               ? lookup_result
+                               : DAS_E_IPC_OBJECT_NOT_FOUND;
                 }
+                AnyTransport& transport = maybe_transport->get();
 
                 // 2. 构建 LOAD_PLUGIN 请求
                 std::string plugin_path(u8_plugin_path);

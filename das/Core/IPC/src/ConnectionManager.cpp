@@ -4,7 +4,6 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
-#include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/Handshake.h>
@@ -20,7 +19,6 @@
 #include <unordered_map>
 #include <vector>
 
-#include <das/Core/IPC/DefaultAsyncIpcTransport.h>
 #include <das/Core/IPC/HttpIpcTransport.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 
@@ -29,15 +27,8 @@ DAS_CORE_IPC_NS_BEGIN
 struct ConnectionManager::Impl
 {
     std::unordered_map<uint16_t, ConnectionInfo> connections_;
-    // 存储 HostLauncher 的引用
-    std::unordered_map<uint16_t, DasPtr<HostLauncher>> host_launchers_;
-    // MainProcess-managed connected hosts such as HttpHost.
+    // MainProcess-managed connected hosts such as HostLauncher or HttpHost.
     std::unordered_map<uint16_t, DasPtr<IInternalHost>> hosts_;
-    // 直接传输层注册（用于 Host 模式，无需 HostLauncher）
-    std::unordered_map<
-        uint16_t,
-        std::reference_wrapper<DefaultAsyncIpcTransport>>
-        direct_transports_;
     // AnyTransport 注册（支持 Named Pipe 和 HTTP/WS 传输器）
     std::unordered_map<uint16_t, AnyTransport> any_transports_;
     // 共享内存池（每个连接一个，按 remote_id 索引）
@@ -64,9 +55,7 @@ ConnectionManager::~ConnectionManager()
         CleanupConnectionResources(remote_id);
     }
     impl_->connections_.clear();
-    impl_->host_launchers_.clear();
     impl_->hosts_.clear();
-    impl_->direct_transports_.clear();
     impl_->any_transports_.clear();
 }
 
@@ -82,7 +71,6 @@ DasResult ConnectionManager::RegisterConnection(
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch())
             .count());
-    info.launcher = nullptr;
     info.host = nullptr;
     info.shm_pool = nullptr;
 
@@ -183,8 +171,6 @@ DasResult ConnectionManager::GetConnection(
     out_info.plugin_id = it->second.plugin_id;
     out_info.is_alive = it->second.is_alive;
     out_info.last_heartbeat_ms = it->second.last_heartbeat_ms;
-    out_info.launcher =
-        nullptr; // DasPtr 字段不复制，调用者应使用 GetLauncher()
     out_info.host = nullptr;
     out_info.shm_pool = it->second.shm_pool;
     return DAS_S_OK;
@@ -199,17 +185,15 @@ DasResult ConnectionManager::RegisterHostLauncher(
         return DAS_E_INVALID_ARGUMENT;
     }
 
+    DasPtr<IInternalHost> host = launcher;
     std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
-
-    // 存储到 host_launchers_ map
-    impl_->host_launchers_[session_id] = launcher;
+    impl_->hosts_[session_id] = host;
 
     // 如果连接已存在，更新信息（shm_pool 已由 RegisterConnection 设置）
     auto it = impl_->connections_.find(session_id);
     if (it != impl_->connections_.end())
     {
-        it->second.launcher = launcher;
-        it->second.host = nullptr;
+        it->second.host = host;
         it->second.is_alive = true;
         it->second.last_heartbeat_ms = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -227,8 +211,7 @@ DasResult ConnectionManager::RegisterHostLauncher(
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now().time_since_epoch())
                 .count());
-        info.launcher = launcher;
-        info.host = nullptr;
+        info.host = host;
         info.shm_pool = nullptr;
 
         // 创建 per-connection SharedMemoryPool（deterministic name from session
@@ -305,7 +288,6 @@ DasResult ConnectionManager::RegisterInternalHost(
     if (it != impl_->connections_.end())
     {
         it->second.host = host;
-        it->second.launcher = nullptr;
         it->second.is_alive = true;
         it->second.last_heartbeat_ms = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -323,7 +305,6 @@ DasResult ConnectionManager::RegisterInternalHost(
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now().time_since_epoch())
                 .count());
-        info.launcher = nullptr;
         info.host = host;
         info.shm_pool = nullptr;
         impl_->connections_[session_id] = std::move(info);
@@ -337,87 +318,19 @@ DasResult ConnectionManager::UnregisterHostLauncher(uint16_t session_id)
 {
     std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
 
-    auto it = impl_->host_launchers_.find(session_id);
-    if (it == impl_->host_launchers_.end())
+    auto it = impl_->hosts_.find(session_id);
+    if (it == impl_->hosts_.end())
     {
         DAS_CORE_LOG_ERROR(
-            "HostLauncher not found for session_id = {}",
+            "Internal host not found for session_id = {}",
             session_id);
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 
-    impl_->host_launchers_.erase(it);
     impl_->hosts_.erase(session_id);
     impl_->connections_.erase(session_id);
 
     DAS_CORE_LOG_INFO("HostLauncher unregistered: session_id={}", session_id);
-    return DAS_S_OK;
-}
-
-DasResult ConnectionManager::RegisterTransport(
-    uint16_t                  session_id,
-    DefaultAsyncIpcTransport* transport)
-{
-    if (!transport)
-    {
-        return DAS_E_INVALID_ARGUMENT;
-    }
-
-    std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
-
-    // 直接存储到 direct_transports_ map
-    impl_->direct_transports_.emplace(session_id, std::ref(*transport));
-
-    // Host side: 打开已存在的 SHM pool（deterministic name）
-    // On Host side: main_session_id = remote_id, host_session_id = local_id_
-    std::string       shm_name = "das_shm_" + std::to_string(session_id) + "_"
-                                 + std::to_string(impl_->local_id_);
-    SharedMemoryPool* pool_ptr = nullptr;
-    try
-    {
-        auto pool = SharedMemoryPool::Open(shm_name);
-        pool_ptr = pool.get();
-        impl_->shm_pools_[session_id] = std::move(pool);
-    }
-    catch (const std::exception& e)
-    {
-        DAS_CORE_LOG_WARN(
-            "Failed to open SHM pool for session {}: {}",
-            session_id,
-            e.what());
-        pool_ptr = nullptr;
-    }
-
-    // 同时创建/更新 ConnectionInfo 保持一致性
-    auto it = impl_->connections_.find(session_id);
-    if (it != impl_->connections_.end())
-    {
-        it->second.is_alive = true;
-        it->second.last_heartbeat_ms = static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now().time_since_epoch())
-                .count());
-        it->second.shm_pool = pool_ptr;
-    }
-    else
-    {
-        ConnectionInfo info{};
-        info.host_id = session_id;
-        info.plugin_id = 0;
-        info.is_alive = true;
-        info.last_heartbeat_ms = static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now().time_since_epoch())
-                .count());
-        info.launcher = nullptr;
-        info.host = nullptr;
-        info.shm_pool = pool_ptr;
-        impl_->connections_[session_id] = std::move(info);
-    }
-
-    DAS_CORE_LOG_INFO(
-        "Transport registered directly: session_id={}",
-        session_id);
     return DAS_S_OK;
 }
 
@@ -481,69 +394,24 @@ DasResult ConnectionManager::RegisterAnyTransport(
     return DAS_S_OK;
 }
 
-DasPtr<HostLauncher> ConnectionManager::GetLauncher(uint16_t session_id) const
-{
-    std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
-
-    auto it = impl_->host_launchers_.find(session_id);
-    if (it == impl_->host_launchers_.end())
-    {
-        return nullptr;
-    }
-    return it->second;
-}
-
-DefaultAsyncIpcTransport* ConnectionManager::GetTransport(
+DasPtr<IInternalHost> ConnectionManager::GetInternalHost(
     uint16_t session_id) const
 {
     std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
 
-    // 首先检查直接传输层注册（Host 模式）
-    auto direct_it = impl_->direct_transports_.find(session_id);
-    if (direct_it != impl_->direct_transports_.end())
+    auto it = impl_->hosts_.find(session_id);
+    if (it != impl_->hosts_.end())
     {
-        return &direct_it->second.get();
+        return it->second;
     }
 
-    // 检查 AnyTransport 注册
+    auto conn_it = impl_->connections_.find(session_id);
+    if (conn_it != impl_->connections_.end())
     {
-        auto any_it = impl_->any_transports_.find(session_id);
-        if (any_it != impl_->any_transports_.end())
-        {
-            return any_it->second.Visit(
-                [](DefaultAsyncIpcTransport& t) -> DefaultAsyncIpcTransport*
-                { return &t; },
-                [](UnixAsyncIpcTransport&) -> DefaultAsyncIpcTransport*
-                { return nullptr; },
-                [](HttpIpcTransport&) -> DefaultAsyncIpcTransport*
-                { return nullptr; });
-        }
+        return conn_it->second.host;
     }
 
-    // 从 host_launchers_ 获取 launcher
-    auto launcher_it = impl_->host_launchers_.find(session_id);
-    if (launcher_it == impl_->host_launchers_.end())
-    {
-        // 检查 connections_（兼容路径）
-        auto conn_it = impl_->connections_.find(session_id);
-        if (conn_it == impl_->connections_.end())
-        {
-            DAS_CORE_LOG_WARN(
-                "Connection not found for session_id = {}",
-                session_id);
-            return nullptr;
-        }
-
-        // 如果有 launcher，从 launcher 获取 transport
-        if (conn_it->second.launcher)
-        {
-            return conn_it->second.launcher->GetTransport();
-        }
-        return nullptr;
-    }
-
-    // 从 HostLauncher 获取 Transport
-    return launcher_it->second->GetTransport();
+    return nullptr;
 }
 
 AnyTransport& ConnectionManager::GetAnyTransportRef(uint16_t session_id)
@@ -557,18 +425,6 @@ AnyTransport& ConnectionManager::GetAnyTransportRef(uint16_t session_id)
             + std::to_string(session_id));
     }
     return it->second;
-}
-
-AnyTransport* ConnectionManager::GetAnyTransport(uint16_t session_id)
-{
-    std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
-    auto it = impl_->any_transports_.find(session_id);
-    if (it != impl_->any_transports_.end())
-    {
-        return &it->second;
-    }
-    return nullptr;
-    return nullptr;
 }
 
 TransportLookupResult ConnectionManager::FindTransport(uint16_t session_id)
@@ -679,7 +535,7 @@ void ConnectionManager::StartHeartbeatThread()
                 {
                     uint16_t             session_id;
                     uint32_t             pid;
-                    DasPtr<HostLauncher> launcher;
+                    DasPtr<IInternalHost> host;
                 };
 
                 std::vector<TimedOutConnection> timed_out;
@@ -703,13 +559,12 @@ void ConnectionManager::StartHeartbeatThread()
                             toc.session_id = session_id;
                             toc.pid = 0;
 
-                            auto launcher_it =
-                                impl_->host_launchers_.find(session_id);
-                            if (launcher_it != impl_->host_launchers_.end())
+                            auto host_it = impl_->hosts_.find(session_id);
+                            if (host_it != impl_->hosts_.end())
                             {
-                                toc.launcher = launcher_it->second;
-                                toc.pid = toc.launcher->GetPid();
-                                impl_->host_launchers_.erase(launcher_it);
+                                toc.host = host_it->second;
+                                toc.pid = toc.host->GetPid();
+                                impl_->hosts_.erase(host_it);
                             }
 
                             CleanupConnectionResources(session_id);
@@ -732,11 +587,11 @@ void ConnectionManager::StartHeartbeatThread()
                 // 阶段 2: 锁外通知 PluginManager 和 terminate 进程
                 for (auto& toc : timed_out)
                 {
-                    if (toc.launcher)
+                    if (toc.host)
                     {
-                        toc.launcher->NotifyHeartbeatTimeout();
-                        toc.launcher->ClearCallbacks();
-                        toc.launcher->TerminateIfRunning();
+                        toc.host->NotifyHeartbeatTimeout();
+                        toc.host->ClearCallbacks();
+                        toc.host->TerminateIfRunning();
                     }
                 }
             }
@@ -765,14 +620,15 @@ DasResult ConnectionManager::SendHeartbeatToAll()
 
     for (const auto& [session_id, info] : impl_->connections_)
     {
-        if (!info.is_alive || !info.launcher)
+        if (!info.is_alive || !info.host)
         {
             continue;
         }
 
-        auto  launcher = info.launcher;
-        auto* transport = launcher ? launcher->GetTransport() : nullptr;
-        if (!transport || !transport->IsConnected())
+        auto host = info.host;
+        auto [lookup_result, maybe_transport] = host->GetTransport();
+        if (DAS::IsFailed(lookup_result) || !maybe_transport
+            || !maybe_transport->get().IsConnected())
         {
             continue;
         }
@@ -800,32 +656,36 @@ DasResult ConnectionManager::SendHeartbeatToAll()
         // 这样心跳发送和正常消息处理都在同一个 io_context
         // 上，避免跨线程并发问题
         boost::asio::post(
-            launcher->GetIoContext(),
-            [launcher,
+            host->GetIoContext(),
+            [host,
              header = validated_header,
              heartbeat_copy = heartbeat,
              session_id]() mutable
             {
-                auto* transport = launcher ? launcher->GetTransport() : nullptr;
-                if (!transport || !transport->IsConnected())
+                auto [lookup_result, maybe_transport] = host->GetTransport();
+                if (DAS::IsFailed(lookup_result) || !maybe_transport
+                    || !maybe_transport->get().IsConnected())
                 {
                     return;
                 }
 
                 // 使用协程异步发送心跳
+                AnyTransport& transport = maybe_transport->get();
                 boost::asio::co_spawn(
-                    transport->GetIoContext(),
-                    [launcher, header, heartbeat_copy, session_id]() mutable
+                    transport.GetIoContext(),
+                    [host, header, heartbeat_copy, session_id]() mutable
                         -> boost::asio::awaitable<void>
                     {
-                        auto* transport =
-                            launcher ? launcher->GetTransport() : nullptr;
-                        if (!transport || !transport->IsConnected())
+                        auto [lookup_result, maybe_transport] =
+                            host->GetTransport();
+                        if (DAS::IsFailed(lookup_result) || !maybe_transport
+                            || !maybe_transport->get().IsConnected())
                         {
                             co_return;
                         }
 
-                        auto result = co_await transport->SendCoroutine(
+                        auto result = co_await maybe_transport->get()
+                                          .SendCoroutine(
                             header,
                             reinterpret_cast<const uint8_t*>(&heartbeat_copy),
                             sizeof(heartbeat_copy));
@@ -865,13 +725,14 @@ boost::asio::awaitable<DasResult> ConnectionManager::ForwardMessage(
     size_t                           body_size)
 {
     // 1. 查找目标 Transport
-    auto* transport = GetTransport(target_session_id);
-    if (!transport)
+    auto [lookup_result, maybe_transport] = FindTransport(target_session_id);
+    if (DAS::IsFailed(lookup_result) || !maybe_transport)
     {
         DAS_CORE_LOG_ERROR(
-            "Forward failed: target_session_id={} not found",
-            target_session_id);
-        co_return DAS_E_IPC_OBJECT_NOT_FOUND;
+            "Forward failed: target_session_id={} not found, result={}",
+            target_session_id,
+            lookup_result);
+        co_return lookup_result;
     }
 
     // 2. 获取本地 session_id
@@ -889,8 +750,9 @@ boost::asio::awaitable<DasResult> ConnectionManager::ForwardMessage(
                               .Build();
 
     // 4. 发送消息
+    AnyTransport& transport = maybe_transport->get();
     auto result =
-        co_await transport->SendCoroutine(forward_header, body, body_size);
+        co_await transport.SendCoroutine(forward_header, body, body_size);
 
     if (result != DAS_S_OK)
     {
@@ -915,10 +777,7 @@ DasResult ConnectionManager::CleanupConnectionResources(uint16_t remote_id)
     // 清理内部 Host
     impl_->hosts_.erase(remote_id);
 
-    // 清理直接传输层
-    impl_->direct_transports_.erase(remote_id);
-
-    // 清理 AnyTransport
+    // 清理 AnyTransport before SHM because transports may borrow SHM state.
     impl_->any_transports_.erase(remote_id);
 
     // 清理 SHM pool（unique_ptr 自动析构）
@@ -935,11 +794,10 @@ DasResult ConnectionManager::CleanupConnectionResources(uint16_t remote_id)
 
     ConnectionInfo& info = it->second;
 
-    // 清理顺序：launcher 释放 -> HostLauncher 析构 -> 自动清理
+    // 清理顺序：host 释放 -> internal host 析构 -> 自动清理
     // 注意：B3.1 规范 - Child 仅释放引用，不删除资源（Host 负责删除）
 
     info.shm_pool = nullptr;
-    info.launcher = nullptr;
     info.host = nullptr;
     info.is_alive = false;
 

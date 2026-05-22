@@ -6,7 +6,6 @@
 #include <boost/interprocess/ipc/message_queue.hpp>
 #include <cstdint>
 #include <das/Core/IPC/AnyTransport.h>
-#include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/IInternalHost.h>
 #include <das/Core/IPC/IpcErrors.h>
@@ -36,8 +35,8 @@ class IpcRunLoop;
  *   - Host: 关闭并可能删除资源
  *   - Child: 仅释放引用，不删除资源
  *
- * ConnectionManager 持有 IHostLauncher 引用（DasPtr），
- * Transport 由 HostLauncher 永久持有。
+ * ConnectionManager 持有 IInternalHost 引用（DasPtr），
+ * Transport 由具体 internal host 或 Host-side any_transports_ 拥有。
  */
 struct ConnectionInfo
 {
@@ -45,7 +44,6 @@ struct ConnectionInfo
     uint16_t             plugin_id;
     bool                 is_alive;
     uint64_t             last_heartbeat_ms;
-    DasPtr<HostLauncher> launcher; ///< HostLauncher 实例（DasPtr 持有引用）
     DasPtr<IInternalHost> host; ///< Internal host owner for managed transports
     SharedMemoryPool*    shm_pool = nullptr; ///< 共享内存池（非拥有指针）
 };
@@ -53,12 +51,11 @@ struct ConnectionInfo
 /**
  * @brief 连接管理器
  *
- * 由 IpcRunLoop 持有，负责管理 HostLauncher 实例。
- * ConnectionManager 持有 DasPtr<IHostLauncher>，Transport 由 HostLauncher
- * 拥有。
+ * 由 IpcRunLoop 持有，负责管理 internal host 实例和 Host-side local
+ * transports。
  *
- * 心跳超时清理：释放 DasPtr -> 引用计数归零 -> HostLauncher 析构 -> 自动清理
- * Host 进程
+ * 心跳超时清理：释放 DasPtr -> 引用计数归零 -> internal host 析构 -> 自动清理
+ * Host 资源
  *
  * RAII 模式：构造函数初始化，析构自动清理
  */
@@ -122,33 +119,7 @@ public:
      */
     DasResult UnregisterHostLauncher(uint16_t session_id);
 
-    /**
-     * @brief 获取 HostLauncher
-     *
-     * @param session_id 目标会话ID
-     * @return DasPtr<HostLauncher> HostLauncher 指针，不存在返回 nullptr
-     */
-    DasPtr<HostLauncher> GetLauncher(uint16_t session_id) const;
-
-    /**
-     * @brief 获取连接的传输层（委托给 HostLauncher::GetTransport()）
-     *
-     * 生命周期标记：返回的指针在 ConnectionManager 析构后失效
-     *
-     * @param session_id 目标会话ID
-     * @return DefaultAsyncIpcTransport* 传输层指针（不持有所有权），不存在返回
-     * nullptr
-     */
-    DefaultAsyncIpcTransport* DAS_LIFETIMEBOUND
-    GetTransport(uint16_t session_id) const;
-
-    /**
-     * @brief 获取 AnyTransport
-     *
-     * @param session_id 目标会话ID
-     * @return AnyTransport 指针，不存在返回 nullptr
-     */
-    AnyTransport* GetAnyTransport(uint16_t session_id);
+    DasPtr<IInternalHost> GetInternalHost(uint16_t session_id) const;
 
     /**
      * @brief Find a transport at nullable lookup boundaries.
@@ -157,21 +128,6 @@ public:
      * returns an empty optional.
      */
     TransportLookupResult FindTransport(uint16_t session_id);
-
-    /**
-     * @brief 注册传输层（轻量级注册，无需 HostLauncher）
-     *
-     * [Host 专用] MainProcess 不应调用此方法，应使用 RegisterHostLauncher。
-     * Host 进程没有 HostLauncher，只有 transport，因此使用此方法注册到
-     * MainProcess 的连接。
-     *
-     * @param session_id MainProcess 的 session_id（通常为 1）
-     * @param transport 传输层指针（非拥有，调用方保证生命周期）
-     * @return DasResult DAS_S_OK 成功
-     */
-    DasResult RegisterTransport(
-        uint16_t                  session_id,
-        DefaultAsyncIpcTransport* transport);
 
     DasResult RegisterAnyTransport(
         uint16_t                 session_id,

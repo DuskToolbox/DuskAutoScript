@@ -17,8 +17,8 @@
 #include <string>
 
 #include <boost/asio/awaitable.hpp>
-#include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/Config.h>
+#include <das/Core/IPC/IInternalHost.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
 
 // Forward declaration for io_context
@@ -29,7 +29,7 @@ namespace boost::asio
 
 DAS_CORE_IPC_NS_BEGIN
 
-class HostLauncher final : public IHostLauncher
+class HostLauncher final : public IHostLauncher, public IInternalHost
 {
 public:
     using OnRegisterCallback = std::function<DasResult()>;
@@ -54,7 +54,7 @@ public:
         OnRegisterCallback       on_register = nullptr);
     ~HostLauncher() override;
 
-    void ClearCallbacks()
+    void ClearCallbacks() override
     {
         on_register_ = nullptr;
         on_process_exit_ = nullptr;
@@ -93,7 +93,7 @@ public:
      * 内部调用 on_heartbeat_timeout_ 回调（传递 associated_guid_）。
      * 回调在调用线程上同步执行。
      */
-    void NotifyHeartbeatTimeout();
+    void NotifyHeartbeatTimeout() override;
 
     /**
      * @brief 终止 Host 进程（不发送 GOODBYE）
@@ -102,7 +102,7 @@ public:
      * 与 Stop() 不同，此方法不会尝试优雅关闭。
      * 进程句柄被释放以避免阻塞。
      */
-    void TerminateIfRunning();
+    void TerminateIfRunning() override;
 
     HostLauncher(const HostLauncher&) = delete;
     HostLauncher& operator=(const HostLauncher&) = delete;
@@ -127,9 +127,9 @@ public:
     [[nodiscard]]
     uint16_t GetSessionId() const override;
 
-    boost::asio::io_context& GetIoContext() DAS_LIFETIMEBOUND;
+    boost::asio::io_context& GetIoContext() DAS_LIFETIMEBOUND override;
 
-    DefaultAsyncIpcTransport* DAS_LIFETIMEBOUND GetTransport();
+    TransportLookupResult GetTransport() override;
 
     uint32_t  AddRef() override;
     uint32_t  Release() override;
