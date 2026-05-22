@@ -617,7 +617,7 @@ namespace Core
 
             uint16_t IpcContext::FindAvailableSessionId()
             {
-                uint16_t start_id = next_session_id_.load();
+                uint16_t start_id = session_id_cursor_.load();
                 uint16_t current_id = start_id;
 
                 do
@@ -636,11 +636,11 @@ namespace Core
 
                         if (!is_reserved)
                         {
-                            next_session_id_.store(
+                            session_id_cursor_.store(
                                 (current_id + 1) % (65536 - 1));
-                            if (next_session_id_.load() <= 1)
+                            if (session_id_cursor_.load() <= 1)
                             {
-                                next_session_id_.store(2);
+                                session_id_cursor_.store(2);
                             }
                             return current_id;
                         }

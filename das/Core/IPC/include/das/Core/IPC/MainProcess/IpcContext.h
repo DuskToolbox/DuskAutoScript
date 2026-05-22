@@ -155,7 +155,7 @@ namespace Core
                 /// HTTP accepted session IDs allocated by this context.
                 std::unordered_set<uint16_t> http_session_ids_;
 
-                std::atomic<uint16_t> next_session_id_{2};
+                std::atomic<uint16_t> session_id_cursor_{2};
                 mutable std::mutex    allocated_ids_mutex_;
                 std::bitset<65536>    allocated_ids_{};
                 static const uint16_t reserved_session_ids_[3];
