@@ -140,16 +140,6 @@ public:
     DasResult RegisterAnyTransport(uint16_t session_id, AnyTransport&& t);
 
     /**
-     * @brief 注册 AnyTransport 非拥有引用（用于 IpcContext 持有 transport
-     * 的场景）
-     *
-     * @param session_id 会话 ID
-     * @param transport AnyTransport 指针（非拥有，调用方保证生命周期）
-     * @return DasResult DAS_S_OK 成功
-     */
-    AnyTransport& GetAnyTransportRef(uint16_t session_id) DAS_LIFETIMEBOUND;
-
-    /**
      * @brief 更新连接的活跃状态
      *
      * @param session_id 目标会话ID

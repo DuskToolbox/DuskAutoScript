@@ -414,19 +414,6 @@ DasPtr<IInternalHost> ConnectionManager::GetInternalHost(
     return nullptr;
 }
 
-AnyTransport& ConnectionManager::GetAnyTransportRef(uint16_t session_id)
-{
-    std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
-    auto it = impl_->any_transports_.find(session_id);
-    if (it == impl_->any_transports_.end())
-    {
-        throw std::runtime_error(
-            "GetAnyTransportRef: AnyTransport not found for session_id = "
-            + std::to_string(session_id));
-    }
-    return it->second;
-}
-
 TransportLookupResult ConnectionManager::FindTransport(uint16_t session_id)
 {
     DasPtr<IInternalHost> host;

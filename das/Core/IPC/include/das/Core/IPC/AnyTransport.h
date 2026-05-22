@@ -145,18 +145,6 @@ public:
             transport_);
     }
 
-    [[nodiscard]]
-    const VariantType& variant() const noexcept
-    {
-        return transport_;
-    }
-
-    [[nodiscard]]
-    VariantType& variant() noexcept
-    {
-        return transport_;
-    }
-
 private:
     VariantType transport_;
 };
