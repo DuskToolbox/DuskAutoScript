@@ -202,9 +202,7 @@ class ModuleFunctionDef:
 
 @dataclass
 class ModuleDef:
-    """模块定义"""
-    name: str
-    module_name: str = ""  # 来自 [module_name = "value"] 属性，缺省等于 name
+    """匿名 module-level 函数容器"""
     functions: list = field(default_factory=list)  # ModuleFunctionDef 列表
     namespace: str = ""
 
@@ -619,7 +617,7 @@ class Parser:
                     attributes[name] = self.advance().value
                 self.expect(TokenType.RPAREN)
             elif self.match(TokenType.EQUALS):
-                # 支持 name = value 语法（如 module_name = "DasCore"）
+                # 支持 name = value 语法
                 self.advance()
                 if self.match(TokenType.STRING):
                     attributes[name] = self.advance().value
@@ -1085,32 +1083,36 @@ class Parser:
         """解析模块定义
 
         支持的语法:
-            module DasCoreApi [module_name = "DasCore"] {
+            module {
                 [export] void DasLogError(DasReadOnlyString msg);
                 [export, c_abi] DasResult DasQueryInterface(const DasGuid& iid, [out] IDasBase** pp_object);
             }
 
-        属性可以出现在 module 关键字之前（由 _parse_structure 解析传入 pre_attributes）
-        或模块名之后的 [...] 中。
+        module 仅作为匿名 module-level function 容器，不接受名称或属性。
         """
         if pre_attributes is None:
             pre_attributes = {}
 
+        if pre_attributes:
+            raise SyntaxError(
+                "Module-level attributes are not supported; use module { ... }"
+            )
+
         self.expect(TokenType.MODULE)
-        name = self.expect(TokenType.IDENTIFIER).value
 
-        # 解析名称后的可选属性 [module_name = "DasCore"]
-        post_attributes = {}
+        if self.match(TokenType.IDENTIFIER):
+            name = self.current().value
+            raise SyntaxError(
+                f"Named modules were removed; use module {{ ... }} "
+                f"instead of module {name} {{ ... }} at line {self.current().line}"
+            )
+
         if self.match(TokenType.LBRACKET):
-            post_attributes = self.parse_attributes()
+            raise SyntaxError(
+                "Module-level attributes are not supported; use module { ... }"
+            )
 
-        # 合并属性：名称后的属性优先
-        attributes = {**pre_attributes, **post_attributes}
-
-        # 获取 module_name 属性，默认等于 name
-        module_name = attributes.get('module_name', name)
-
-        module = ModuleDef(name=name, module_name=module_name, namespace=self._current_namespace)
+        module = ModuleDef(namespace=self._current_namespace)
 
         self.expect(TokenType.LBRACE)
 
@@ -1124,7 +1126,7 @@ class Parser:
             module.functions.append(func)
 
         if self.match(TokenType.EOF):
-            raise SyntaxError(f"Unexpected end of file while parsing module '{name}'")
+            raise SyntaxError("Unexpected end of file while parsing module block")
 
         self.expect(TokenType.RBRACE)
 
