@@ -815,6 +815,18 @@ function(das_add_idl_export)
             )
         endforeach()
 
+        if(WIN32)
+            add_custom_command(
+                TARGET ${_NODE_LIB_NAME}
+                POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    $<TARGET_RUNTIME_DLLS:${_NODE_LIB_NAME}>
+                    $<TARGET_FILE_DIR:${_NODE_LIB_NAME}>
+                COMMAND_EXPAND_LISTS
+                COMMENT "[das_add_idl_export] Copying Node addon runtime DLLs"
+            )
+        endif()
+
         set(${DAS_IDL_EXPORT_NAME}_NODE_OUTPUT_DIR ${_NODE_OUTPUT_DIR} PARENT_SCOPE)
     endif()
 
