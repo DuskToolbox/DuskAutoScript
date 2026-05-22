@@ -178,6 +178,87 @@ class TestNapiBatchConfig(unittest.TestCase):
                 any("das_core_napi_napi_export" in item for item in outputs)
             )
 
+    def test_batch_execution_generates_node_reduce_outputs(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            node_dir = temp / "node"
+
+            result = self._run_gen_config(
+                temp,
+                "--languages",
+                "Node",
+                "--node-output-dir",
+                str(node_dir),
+                "--node-package-name",
+                "das-core",
+                "--node-addon-name",
+                "das_core_napi",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            batch_result = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT_DIR / "das_idl_batch_gen.py"),
+                    "--config",
+                    str(temp / "batch.json"),
+                    "--workers",
+                    "1",
+                ],
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(batch_result.returncode, 0, batch_result.stderr)
+            self.assertIn("Node NAPI Binding", batch_result.stdout)
+            cpp = node_dir / "das_core_napi_export.cpp"
+            dts = node_dir / "das_core_napi_export.d.ts"
+            js = node_dir / "das_core_napi_export.js"
+            self.assertTrue(cpp.exists())
+            self.assertTrue(dts.exists())
+            self.assertTrue(js.exists())
+            self.assertIn("NODE_API_MODULE(das_core_napi, Init)", cpp.read_text(encoding="utf-8"))
+            self.assertIn("// Package: das-core", dts.read_text(encoding="utf-8"))
+            self.assertIn("das_core_napi.node", js.read_text(encoding="utf-8"))
+
+    def test_batch_execution_rejects_incomplete_node_reduce_config(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+
+            result = self._run_gen_config(
+                temp,
+                "--languages",
+                "Node",
+                "--node-output-dir",
+                str(temp / "node"),
+                "--node-package-name",
+                "das-core",
+                "--node-addon-name",
+                "das_core_napi",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            config_path = temp / "batch.json"
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            del config["reduce"]["node_package_name"]
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+
+            batch_result = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT_DIR / "das_idl_batch_gen.py"),
+                    "--config",
+                    str(config_path),
+                    "--workers",
+                    "1",
+                ],
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertNotEqual(batch_result.returncode, 0)
+            self.assertIn("node_package_name", batch_result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
