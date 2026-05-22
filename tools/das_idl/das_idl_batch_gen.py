@@ -760,6 +760,86 @@ JSON 配置格式:
                         reduce_phases.append(("Lua Binding", 0.0, "error", str(e)))
                         batch_result = 1
 
+        # ====== 执行 Node/NAPI 聚合 ======
+        node_fields = {
+            "node_output_dir": reduce_config.get("node_output_dir"),
+            "node_package_name": reduce_config.get("node_package_name"),
+            "node_addon_name": reduce_config.get("node_addon_name"),
+            "node_idl_dir": reduce_config.get("node_idl_dir"),
+            "node_idl_files": reduce_config.get("node_idl_files", []),
+        }
+        node_reduce_requested = any(node_fields.values())
+
+        if node_reduce_requested and batch_result == 0:
+            missing_node_fields = [
+                name for name, value in node_fields.items() if not value
+            ]
+            if missing_node_fields:
+                print(
+                    "错误: Node reduce config missing "
+                    + ", ".join(missing_node_fields),
+                    file=sys.stderr,
+                )
+                batch_result = 1
+            else:
+                node_script = Path(__file__).parent / "das_napi_export.py"
+                if node_script.exists():
+                    cmd = [
+                        sys.executable,
+                        str(node_script),
+                        "--idl-dir",
+                        node_fields["node_idl_dir"],
+                        "--output",
+                        node_fields["node_output_dir"],
+                        "--package-name",
+                        node_fields["node_package_name"],
+                        "--addon-name",
+                        node_fields["node_addon_name"],
+                        "--idl-files",
+                        *node_fields["node_idl_files"],
+                    ]
+
+                    try:
+                        t0 = time.time()
+                        result = subprocess.run(
+                            cmd,
+                            capture_output=True,
+                            text=True,
+                            timeout=60,
+                        )
+                        dt = time.time() - t0
+
+                        if result.returncode == 0:
+                            reduce_phases.append(
+                                (
+                                    "Node NAPI Binding",
+                                    dt,
+                                    "ok",
+                                    result.stdout.strip(),
+                                )
+                            )
+                        else:
+                            reduce_phases.append(
+                                (
+                                    "Node NAPI Binding",
+                                    dt,
+                                    "failed",
+                                    result.stderr.strip(),
+                                )
+                            )
+                            batch_result = result.returncode or 1
+                    except Exception as e:
+                        reduce_phases.append(
+                            ("Node NAPI Binding", 0.0, "error", str(e))
+                        )
+                        batch_result = 1
+                else:
+                    print(
+                        f"错误: Node reduce script missing: {node_script}",
+                        file=sys.stderr,
+                    )
+                    batch_result = 1
+
     # ====== 打印 Reduce 阶段汇总 ======
     if reduce_phases:
         print(f"\nReduce Phase Timeline")
