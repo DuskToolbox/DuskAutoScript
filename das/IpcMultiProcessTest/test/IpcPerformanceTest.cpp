@@ -19,23 +19,31 @@
 #include <Das.PluginInterface.IDasPluginPackage.hpp>
 
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/process/v2/process.hpp>
+#include <boost/process/v2/start_dir.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <das/Core/IPC/AsyncOperationImpl.h>
 #include <das/Core/IPC/DasAsyncSender.h>
 #include <das/Core/IPC/HostLauncher.h>
+#include <das/Core/IPC/HttpIpcServer.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
+#include <das/Core/IPC/MainProcess/IpcContext.h>
 #include <das/Core/Utils/StdExecution.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/IDasAsyncLoadPluginOperation.h>
 #include <filesystem>
 #include <gtest/gtest.h>
+#include <optional>
 #include <spdlog/spdlog.h>
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
 using namespace Das::PluginInterface;
 using namespace Das::ExportInterface;
@@ -67,6 +75,260 @@ private:
     spdlog::level::level_enum original_level_;
 };
 
+namespace
+{
+    class SessionOnlyHostLauncher final
+        : public DAS::Core::IPC::IHostLauncher
+    {
+    public:
+        SessionOnlyHostLauncher(uint16_t session_id, uint32_t pid)
+            : session_id_(session_id), pid_(pid)
+        {
+        }
+
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override { return --ref_count_; }
+
+        DasResult DAS_STD_CALL QueryInterface(
+            const DasGuid& iid,
+            void**         pp_object) override
+        {
+            if (!pp_object)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+
+            *pp_object = nullptr;
+            if (iid == DasIidOf<IDasBase>())
+            {
+                AddRef();
+                *pp_object = static_cast<IDasBase*>(
+                    static_cast<DAS::Core::IPC::IHostLauncher*>(this));
+                return DAS_S_OK;
+            }
+
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult StartAsync(
+            const std::string&,
+            IDasAsyncHandshakeOperation**) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult Start(
+            const std::string&,
+            uint16_t&,
+            uint32_t) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        void Stop() override {}
+
+        [[nodiscard]]
+        bool IsRunning() const override
+        {
+            return true;
+        }
+
+        [[nodiscard]]
+        uint32_t GetPid() const override
+        {
+            return pid_;
+        }
+
+        [[nodiscard]]
+        uint16_t GetSessionId() const override
+        {
+            return session_id_;
+        }
+
+    private:
+        uint16_t              session_id_ = 0;
+        uint32_t              pid_ = 0;
+        std::atomic<uint32_t> ref_count_{1};
+    };
+
+    class HostProcessGuard
+    {
+    public:
+        HostProcessGuard(
+            const std::string&              exe_path,
+            const std::vector<std::string>& args)
+        {
+            process_.emplace(
+                io_context_,
+                exe_path,
+                args,
+                boost::process::v2::process_start_dir(
+                    std::filesystem::path(exe_path).parent_path().string()));
+        }
+
+        ~HostProcessGuard() { Stop(); }
+
+        HostProcessGuard(const HostProcessGuard&) = delete;
+        HostProcessGuard& operator=(const HostProcessGuard&) = delete;
+
+        uint32_t GetPid() const
+        {
+            return process_
+                       ? static_cast<uint32_t>(process_->id())
+                       : static_cast<uint32_t>(0);
+        }
+
+        bool IsRunning()
+        {
+            if (!process_)
+            {
+                return false;
+            }
+
+            boost::system::error_code ec;
+            return process_->running(ec);
+        }
+
+        void Stop()
+        {
+            if (!process_)
+            {
+                return;
+            }
+
+            boost::system::error_code ec;
+            if (process_->running(ec))
+            {
+                process_->terminate(ec);
+            }
+            process_.reset();
+        }
+
+    private:
+        boost::asio::io_context                    io_context_;
+        std::optional<boost::process::v2::process> process_;
+    };
+
+    class ForwardingReadOnlyString final : public IDasReadOnlyString
+    {
+    public:
+        explicit ForwardingReadOnlyString(
+            DAS::DasPtr<IDasReadOnlyString> target)
+            : target_(std::move(target))
+        {
+        }
+
+        DasResult DAS_STD_CALL GetUtf8(const char** out_string) override
+        {
+            if (!out_string)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (!target_)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+
+            const char* remote_text = nullptr;
+            DasResult result = target_->GetUtf8(&remote_text);
+            if (DAS::IsFailed(result))
+            {
+                return result;
+            }
+            utf8_cache_ = remote_text ? remote_text : "";
+            *out_string = utf8_cache_.c_str();
+            return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL
+        GetUtf16(const char16_t** out_string, size_t* out_string_size) noexcept
+            override
+        {
+            if (!out_string || !out_string_size)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (!target_)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+
+            const char16_t* remote_text = nullptr;
+            size_t          remote_size = 0;
+            DasResult result = target_->GetUtf16(&remote_text, &remote_size);
+            if (DAS::IsFailed(result))
+            {
+                return result;
+            }
+
+            if (remote_size > 0 && remote_text == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+
+            if (remote_size > 0)
+            {
+                utf16_cache_.assign(remote_text, remote_text + remote_size);
+            }
+            else
+            {
+                utf16_cache_.clear();
+            }
+            *out_string = utf16_cache_.data();
+            *out_string_size = utf16_cache_.size();
+            return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL GetW(const wchar_t**) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        const int32_t* CBegin() override { return nullptr; }
+        const int32_t* CEnd() override { return nullptr; }
+
+        DasResult DAS_STD_CALL QueryInterface(
+            const DasGuid& iid,
+            void**         pp_object) override
+        {
+            if (!pp_object)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+
+            *pp_object = nullptr;
+            if (iid == DasIidOf<IDasBase>()
+                || iid == DasIidOf<IDasReadOnlyString>())
+            {
+                AddRef();
+                *pp_object = static_cast<IDasReadOnlyString*>(this);
+                return DAS_S_OK;
+            }
+
+            return DAS_E_NO_INTERFACE;
+        }
+
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+    private:
+        DAS::DasPtr<IDasReadOnlyString> target_;
+        std::string                     utf8_cache_;
+        std::u16string                  utf16_cache_;
+        std::atomic<uint32_t>           ref_count_{1};
+    };
+} // namespace
+
 // ====== Fixture ======
 
 /**
@@ -92,8 +354,34 @@ protected:
         host_exe_path_ = IpcTestConfig::GetDasHostPath();
 
         // 2. 创建 IPC 上下文（禁用心跳以提高性能测量准确性）
-        ctx_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(
-            /*enable_heartbeat=*/!IpcTestConfig::ShouldDisableHeartbeat());
+        const auto* test_info =
+            ::testing::UnitTest::GetInstance()->current_test_info();
+        const bool use_http_context =
+            test_info != nullptr
+            && std::string_view(test_info->name())
+                   == "MixedTransport_HttpAndIpcHostToHostPerformance";
+        const bool enable_heartbeat =
+            use_http_context ? false
+                             : !IpcTestConfig::ShouldDisableHeartbeat();
+
+        if (use_http_context)
+        {
+            http_port_ = FindFreeLoopbackPort();
+            DAS::Core::IPC::HttpIpcServer::Config http_config;
+            http_config.listen_address = "127.0.0.1";
+            http_config.listen_port = http_port_;
+
+            ctx_ = std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext>(
+                new DAS::Core::IPC::MainProcess::IpcContext(
+                    enable_heartbeat,
+                    http_config),
+                DAS::Core::IPC::MainProcess::DestroyIpcContext);
+        }
+        else
+        {
+            ctx_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(
+                /*enable_heartbeat=*/enable_heartbeat);
+        }
         if (!ctx_)
         {
             throw std::runtime_error("Failed to create IpcContext");
@@ -417,6 +705,74 @@ protected:
         return DAS::DasPtr<DAS::PluginInterface::IDasComponent>(component_raw);
     }
 
+    DAS::DasPtr<IDasBase> LoadPluginPackageForHost(
+        DAS::Core::IPC::IHostLauncher* launcher,
+        const std::string&             plugin_path,
+        size_t                         attempts)
+    {
+        for (size_t attempt = 0; attempt < attempts; ++attempt)
+        {
+            DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
+            DasResult result = ctx_->LoadPluginAsync(
+                launcher,
+                plugin_path.c_str(),
+                op.Put(),
+                IpcTestConfig::GetPluginLoadTimeout());
+            if (DAS::IsOk(result))
+            {
+                auto opt = DAS::Core::IPC::wait(
+                    GetContext(),
+                    DAS::Core::IPC::async_op(GetContext(), std::move(op)));
+                if (opt.has_value())
+                {
+                    auto& [load_result, proxy] = *opt;
+                    if (DAS::IsOk(load_result) && proxy)
+                    {
+                        return DAS::DasPtr<IDasBase>::Attach(proxy);
+                    }
+                }
+            }
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+
+        return {};
+    }
+
+    DAS::DasPtr<IDasComponentFactory> GetComponentFactoryFromPackage(
+        IDasBase* package_proxy,
+        uint64_t  feature_index)
+    {
+        if (!package_proxy)
+        {
+            return {};
+        }
+
+        DAS::DasPtr<IDasBase> package_base(package_proxy);
+        DasPluginPackage      plugin_package;
+        if (DAS::IsFailed(package_base.As(plugin_package.Put())))
+        {
+            return {};
+        }
+
+        IDasBase* factory_base_raw = nullptr;
+        if (DAS::IsFailed(plugin_package->CreateFeatureInterface(
+                feature_index,
+                &factory_base_raw)))
+        {
+            return {};
+        }
+        DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+
+        DAS::DasPtr<IDasComponentFactory> factory;
+        if (DAS::IsFailed(factory_base.As(factory.Put())))
+        {
+            return {};
+        }
+
+        return factory;
+    }
+
     // ====== 参数构造辅助函数 ======
 
     /**
@@ -465,11 +821,21 @@ protected:
         return params;
     }
 
+    uint16_t FindFreeLoopbackPort()
+    {
+        boost::asio::io_context io_context;
+        boost::asio::ip::tcp::acceptor acceptor(
+            io_context,
+            {boost::asio::ip::make_address("127.0.0.1"), 0});
+        return acceptor.local_endpoint().port();
+    }
+
     // ====== 成员变量 ======
 
     std::string                                               host_exe_path_;
     std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ctx_;
     std::thread                                               run_thread_;
+    uint16_t                                                  http_port_ = 0;
 };
 
 // ====== 辅助函数 ======
@@ -1345,6 +1711,175 @@ TEST_F(IpcPerformanceTest, ReverseIPC_QueryMainProcessString)
         min_val,
         max_val,
         throughput);
+}
+
+TEST_F(IpcPerformanceTest, MixedTransport_HttpAndIpcHostToHostPerformance)
+{
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHost.exe not found";
+    }
+
+    ASSERT_GT(http_port_, static_cast<uint16_t>(0))
+        << "SetUp did not create an HTTP-enabled MainProcess context";
+
+    auto ipc_launcher = StartSingleHost();
+    ASSERT_NE(ipc_launcher.Get(), nullptr) << "Failed to start IPC Host";
+
+    const uint16_t ipc_session = ipc_launcher->GetSessionId();
+    ASSERT_GT(ipc_session, static_cast<uint16_t>(0));
+    const uint16_t expected_http_session =
+        static_cast<uint16_t>(ipc_session + 1);
+
+    std::vector<std::string> http_host_args{
+        "--connect-url",
+        DAS_FMT_NS::format("ws://127.0.0.1:{}", http_port_),
+        "--log-level",
+        "warn"};
+    HostProcessGuard http_host(host_exe_path_, http_host_args);
+    ASSERT_TRUE(http_host.IsRunning());
+
+    SessionOnlyHostLauncher http_launcher(
+        expected_http_session,
+        http_host.GetPid());
+
+    std::string ipc_plugin_path;
+    std::string http_plugin_path;
+    try
+    {
+        ipc_plugin_path = IpcTestConfig::GetTestPluginJsonPath(
+            "IpcTestPlugin1");
+        http_plugin_path = IpcTestConfig::GetTestPluginJsonPath(
+            "IpcTestPlugin2");
+    }
+    catch (const std::exception& e)
+    {
+        GTEST_SKIP() << "Plugin JSON not found: " << e.what();
+    }
+
+    auto http_package = LoadPluginPackageForHost(
+        &http_launcher,
+        http_plugin_path,
+        /*attempts=*/100);
+    ASSERT_NE(http_package.Get(), nullptr)
+        << "HTTP Host plugin load failed; expected session "
+        << expected_http_session;
+
+    auto http_factory =
+        GetComponentFactoryFromPackage(http_package.Get(), /*feature_index=*/0);
+    ASSERT_NE(http_factory.Get(), nullptr);
+
+    DAS::DasPtr<IDasReadOnlyString> http_remote_name;
+    ASSERT_EQ(http_factory->GetRuntimeClassName(http_remote_name.Put()), DAS_S_OK);
+    ASSERT_NE(http_remote_name.Get(), nullptr);
+
+    auto ipc_package = LoadPluginPackageForHost(
+        ipc_launcher.Get(),
+        ipc_plugin_path,
+        /*attempts=*/1);
+    ASSERT_NE(ipc_package.Get(), nullptr);
+
+    auto ipc_factory =
+        GetComponentFactoryFromPackage(ipc_package.Get(), /*feature_index=*/1);
+    ASSERT_NE(ipc_factory.Get(), nullptr);
+
+    DAS::PluginInterface::IDasComponent* component_raw = nullptr;
+    ASSERT_EQ(
+        ipc_factory->CreateInstance(DasIidOf<IDasComponent>(), &component_raw),
+        DAS_S_OK);
+    DAS::DasPtr<IDasComponent> component(component_raw);
+    ASSERT_NE(component.Get(), nullptr);
+
+    DAS::ExportInterface::DasVariantVector empty_params;
+    ASSERT_EQ(CreateIDasVariantVector(empty_params.Put()), DAS_S_OK);
+
+    DasReadOnlyString method_name{"queryMainProcessString"};
+
+    auto invoke_mixed_dispatch = [&](double* latency_us) -> DasResult
+    {
+        DAS::DasPtr<IDasReadOnlyString> forwarding_service =
+            DAS::DasPtr<IDasReadOnlyString>::Attach(
+                new ForwardingReadOnlyString(http_remote_name));
+
+        DasResult call_result = ctx_->RegisterService(
+            forwarding_service.Get(),
+            DasIidOf<IDasReadOnlyString>());
+        if (DAS::IsFailed(call_result))
+        {
+            return call_result;
+        }
+
+        DAS::ExportInterface::DasVariantVector dispatch_result;
+        auto start = std::chrono::steady_clock::now();
+        call_result = component->Dispatch(
+            method_name.Get(),
+            empty_params.Get(),
+            dispatch_result.Put());
+        auto end = std::chrono::steady_clock::now();
+
+        DasResult unregister_result =
+            ctx_->UnregisterService(DasIidOf<IDasReadOnlyString>());
+        if (DAS::IsFailed(unregister_result) && DAS::IsOk(call_result))
+        {
+            call_result = unregister_result;
+        }
+
+        if (latency_us)
+        {
+            *latency_us =
+                std::chrono::duration<double, std::micro>(end - start)
+                    .count();
+        }
+
+        return call_result;
+    };
+
+    constexpr size_t kWarmup = 50;
+    constexpr size_t kIterations = 500;
+
+    for (size_t i = 0; i < kWarmup; ++i)
+    {
+        ASSERT_EQ(invoke_mixed_dispatch(nullptr), DAS_S_OK);
+    }
+
+    SuppressLogDuringBenchmark log_guard;
+
+    std::vector<double> latencies;
+    latencies.reserve(kIterations);
+
+    for (size_t i = 0; i < kIterations; ++i)
+    {
+        double latency_us = 0.0;
+        DasResult result = invoke_mixed_dispatch(&latency_us);
+        ASSERT_EQ(result, DAS_S_OK);
+        latencies.push_back(latency_us);
+    }
+
+    double mean = das::benchmark::CalculateMean(latencies);
+    double p50 = das::benchmark::CalculatePercentile(latencies, 50);
+    double p95 = das::benchmark::CalculatePercentile(latencies, 95);
+    double p99 = das::benchmark::CalculatePercentile(latencies, 99);
+    auto [min_it, max_it] =
+        std::minmax_element(latencies.begin(), latencies.end());
+    double min_val = *min_it;
+    double max_val = *max_it;
+    double total_s = mean * kIterations / 1e6;
+    double throughput = static_cast<double>(kIterations) / total_s;
+
+    PrintBenchmarkResult(
+        "MixedTransport_HttpAndIpcHostToHostPerformance",
+        kIterations,
+        "queryMainProcessString dispatch, refreshed forwarding service",
+        mean,
+        p50,
+        p95,
+        p99,
+        min_val,
+        max_val,
+        throughput);
+
+    http_host.Stop();
+    ipc_launcher->Stop();
 }
 
 // ====== Task 7c: RemoteProxy_IsSupported_FirstCall ======
