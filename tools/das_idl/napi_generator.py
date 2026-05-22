@@ -218,6 +218,12 @@ def _sanitize_identifier(name: str) -> str:
     return "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in name)
 
 
+def _generated_header_name(abi_header_name: str) -> str:
+    if abi_header_name.endswith(".h"):
+        return f"{abi_header_name[:-2]}.generated.h"
+    return f"{abi_header_name}.generated.h"
+
+
 class NapiGenerator:
     def __init__(
         self,
@@ -257,9 +263,14 @@ class NapiGenerator:
             "",
             '#include "das/IDasBase.h"',
             '#include "das/DasString.hpp"',
+            '#include "das/DasApi.h"',
         ]
         for header in self.idl_header_names:
             lines.append(f'#include "das/_autogen/idl/abi/{header}"')
+        for header in self.idl_header_names:
+            lines.append(
+                f'#include "das/_autogen/idl/header/{_generated_header_name(header)}"'
+            )
         lines.extend(
             [
                 "",

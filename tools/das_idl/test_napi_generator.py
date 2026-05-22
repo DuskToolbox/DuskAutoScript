@@ -63,6 +63,7 @@ class TestNapiGenerator(unittest.TestCase):
         self.assertIn('#include <napi.h>', artifacts.cpp)
         self.assertIn('#include "das/IDasBase.h"', artifacts.cpp)
         self.assertIn('#include "das/DasString.hpp"', artifacts.cpp)
+        self.assertIn('#include "das/DasApi.h"', artifacts.cpp)
         self.assertIn("NODE_API_MODULE(das_core_napi, Init)", artifacts.cpp)
         self.assertIn("require(path.join(__dirname, 'das_core_napi.node'))", artifacts.js)
         self.assertIn("Failed to load DAS native addon das_core_napi.node", artifacts.js)
@@ -320,6 +321,10 @@ class TestNapiExportCli(unittest.TestCase):
             self.assertFalse((output_dir / "das_core_napi_napi_export.cpp").exists())
             self.assertIn(
                 '#include "das/_autogen/idl/abi/Core.h"',
+                cpp.read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                '#include "das/_autogen/idl/header/Core.generated.h"',
                 cpp.read_text(encoding="utf-8"),
             )
             self.assertIn("DAS_S_OK", dts.read_text(encoding="utf-8"))

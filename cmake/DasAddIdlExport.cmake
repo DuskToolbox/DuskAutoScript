@@ -106,6 +106,8 @@ endif()
 #   SWIG_INCLUDE_DIRS     - 额外的 SWIG 包含目录列表（可选，如 ${CMAKE_SOURCE_DIR}/include/ 等）
 #   DEPENDS_ON            - SWIG 导出库依赖的其他目标列表（可选，如 DasCore）
 #   LUA_OPEN_MODULE_NAME  - Lua C API open symbol suffix, required when LANGUAGES contains Lua
+#   NODE_PACKAGE_NAME     - Node public package identity, required when LANGUAGES contains Node
+#   NODE_ADDON_NAME       - Node native addon basename, required when LANGUAGES contains Node
 #
 # 输出变量 (通过 PARENT_SCOPE 输出):
 #   ${NAME}_GENERATED_FILES        - 所有生成的文件列表
@@ -123,7 +125,7 @@ function(das_add_idl_export)
     cmake_parse_arguments(
         DAS_IDL_EXPORT                          # 前缀
         ""                                      # 选项 (无值参数)
-        "NAME;IDL_DIR;OUTPUT_DIR;NAMESPACE;GENERATE_IPC_PROXY;GENERATE_IPC_STUB;IPC_CACHE_DIR;SWIG_MODULE_NAME;EXPORT_MACRO;EXPORT_C_MACRO;LUA_OPEN_MODULE_NAME"  # 单值参数
+        "NAME;IDL_DIR;OUTPUT_DIR;NAMESPACE;GENERATE_IPC_PROXY;GENERATE_IPC_STUB;IPC_CACHE_DIR;SWIG_MODULE_NAME;EXPORT_MACRO;EXPORT_C_MACRO;LUA_OPEN_MODULE_NAME;NODE_PACKAGE_NAME;NODE_ADDON_NAME"  # 单值参数
         "IDL_FILES;LANGUAGES;USER_SWIG_FILES;GENERATED_FILES;GENERATED_ABI_FILES;GENERATED_WRAPPER_FILES;GENERATED_SWIG_FILES;GENERATED_IPC_FILES;SWIG_OPTIONS_Python;SWIG_OPTIONS_Java;SWIG_OPTIONS_CSharp;SWIG_INCLUDE_DIRS;DEPENDS_ON"  # 多值参数
         ${ARGN}
     )
@@ -186,10 +188,15 @@ function(das_add_idl_export)
     # ====== 判断是否需要 SWIG ======
     set(_NEED_SWIG FALSE)
     if(DAS_IDL_EXPORT_LANGUAGES)
-        list(LENGTH DAS_IDL_EXPORT_LANGUAGES _LANG_COUNT)
-        if(_LANG_COUNT GREATER 0)
-            set(_NEED_SWIG TRUE)
-        endif()
+        foreach(_LANG ${DAS_IDL_EXPORT_LANGUAGES})
+            string(TOLOWER "${_LANG}" _LANG_LOWER)
+            if(_LANG_LOWER STREQUAL "python"
+                OR _LANG_LOWER STREQUAL "java"
+                OR _LANG_LOWER STREQUAL "csharp")
+                set(_NEED_SWIG TRUE)
+                break()
+            endif()
+        endforeach()
     endif()
 
     # ====== 确保 Python 虚拟环境已设置 ======
@@ -234,6 +241,27 @@ function(das_add_idl_export)
 
     if(_HAS_LUA AND NOT DAS_IDL_EXPORT_LUA_OPEN_MODULE_NAME)
         message(FATAL_ERROR "[das_add_idl_export] LUA_OPEN_MODULE_NAME is required when LANGUAGES contains Lua")
+    endif()
+
+    # 检测 LANGUAGES 中是否包含 Node（大小写不敏感），设置 Node 输出目录
+    set(_HAS_NODE FALSE)
+    set(_NODE_OUTPUT_DIR "")
+    foreach(_LANG ${DAS_IDL_EXPORT_LANGUAGES})
+        string(TOLOWER "${_LANG}" _LANG_LOWER)
+        if(_LANG_LOWER STREQUAL "node")
+            set(_HAS_NODE TRUE)
+            set(_NODE_OUTPUT_DIR "${DAS_IDL_EXPORT_OUTPUT_DIR}/_autogen/idl/node")
+            file(MAKE_DIRECTORY ${_NODE_OUTPUT_DIR})
+            break()
+        endif()
+    endforeach()
+
+    if(_HAS_NODE AND NOT DAS_IDL_EXPORT_NODE_PACKAGE_NAME)
+        message(FATAL_ERROR "[das_add_idl_export] NODE_PACKAGE_NAME is required when LANGUAGES contains Node")
+    endif()
+
+    if(_HAS_NODE AND NOT DAS_IDL_EXPORT_NODE_ADDON_NAME)
+        message(FATAL_ERROR "[das_add_idl_export] NODE_ADDON_NAME is required when LANGUAGES contains Node")
     endif()
 
     # 使用 Python 脚本生成 JSON，替代 file(CONFIGURE OUTPUT ...) 以避免内容比对导致的不更新问题
@@ -285,6 +313,15 @@ function(das_add_idl_export)
             --lua-output-dir "${_LUA_OUTPUT_DIR}"
             --lua-name "${DAS_IDL_EXPORT_NAME}"
             --lua-open-module-name "${DAS_IDL_EXPORT_LUA_OPEN_MODULE_NAME}"
+        )
+    endif()
+
+    # Node/NAPI 输出目录（仅在 LANGUAGES 包含 Node 时设置）
+    if(_NODE_OUTPUT_DIR)
+        list(APPEND _GEN_CONFIG_ARGS
+            --node-output-dir "${_NODE_OUTPUT_DIR}"
+            --node-package-name "${DAS_IDL_EXPORT_NODE_PACKAGE_NAME}"
+            --node-addon-name "${DAS_IDL_EXPORT_NODE_ADDON_NAME}"
         )
     endif()
 
@@ -468,6 +505,7 @@ function(das_add_idl_export)
     set(_ALL_IPC_FILES "")
     set(_ALL_HEADER_FILES "")
     set(_ALL_LUA_FILES "")
+    set(_ALL_NODE_FILES "")
     set(_ALL_GENERATED_FILES ${_DYNAMIC_OUTPUT_LIST})
 
     foreach(_FILE ${_DYNAMIC_OUTPUT_LIST})
@@ -483,6 +521,8 @@ function(das_add_idl_export)
             list(APPEND _ALL_HEADER_FILES "${_FILE}")
         elseif(_FILE MATCHES "/lua/")
             list(APPEND _ALL_LUA_FILES "${_FILE}")
+        elseif(_FILE MATCHES "/node/")
+            list(APPEND _ALL_NODE_FILES "${_FILE}")
         endif()
     endforeach()
 
@@ -513,6 +553,9 @@ function(das_add_idl_export)
                 set(_LANG_NAME "CSharp")
             elseif(_LANG_LOWER STREQUAL "lua")
                 # Lua uses sol2 path, not SWIG — handled separately below
+                continue()
+            elseif(_LANG_LOWER STREQUAL "node")
+                # Node uses NAPI reduce path, not SWIG — handled separately below
                 continue()
             else()
                 message(WARNING "[das_add_idl_export] Unsupported language: ${_LANG}")
@@ -717,6 +760,64 @@ function(das_add_idl_export)
         set(${DAS_IDL_EXPORT_NAME}_LUA_OUTPUT_DIR ${_LUA_OUTPUT_DIR} PARENT_SCOPE)
     endif()
 
+    # ====== Node/NAPI 导出（非 SWIG 路径） ======
+    # Node 生成由 batch pipeline 的 reduce 阶段统一处理。
+    # 此处仅创建可由 Node 加载的 MODULE 目标。
+
+    if(_HAS_NODE)
+        message(STATUS "[das_add_idl_export] Creating Node/NAPI export module (via batch pipeline)")
+
+        find_package(NodeApi REQUIRED)
+
+        set(_NODE_CPP_FILE "${_NODE_OUTPUT_DIR}/${DAS_IDL_EXPORT_NODE_ADDON_NAME}_export.cpp")
+        set(_NODE_LIB_NAME "${DAS_IDL_EXPORT_NAME}NodeExport")
+        get_filename_component(_NODE_GENERATED_INCLUDE_ROOT "${DAS_IDL_EXPORT_OUTPUT_DIR}" DIRECTORY)
+
+        set_source_files_properties("${_NODE_CPP_FILE}" PROPERTIES GENERATED TRUE)
+
+        add_library(${_NODE_LIB_NAME} MODULE "${_NODE_CPP_FILE}")
+        add_dependencies(${_NODE_LIB_NAME} ${_GENERATED_TARGET})
+
+        target_include_directories(${_NODE_LIB_NAME} PRIVATE
+            "${CMAKE_SOURCE_DIR}/include"
+            "${_NODE_GENERATED_INCLUDE_ROOT}"
+            "${DAS_IDL_EXPORT_OUTPUT_DIR}"
+            "${_ABI_OUTPUT_DIR}"
+            "${_HEADER_OUTPUT_DIR}"
+        )
+
+        target_link_libraries(${_NODE_LIB_NAME} PRIVATE
+            NodeApi::Headers
+            NodeApi::NodeAddonApi
+            NodeApi::NodeLib
+        )
+
+        if(DAS_IDL_EXPORT_DEPENDS_ON)
+            target_link_libraries(${_NODE_LIB_NAME} PRIVATE ${DAS_IDL_EXPORT_DEPENDS_ON})
+        endif()
+
+        target_compile_definitions(${_NODE_LIB_NAME} PRIVATE NAPI_VERSION=8)
+
+        set_target_properties(${_NODE_LIB_NAME} PROPERTIES
+            PREFIX ""
+            SUFFIX ".node"
+            OUTPUT_NAME "${DAS_IDL_EXPORT_NODE_ADDON_NAME}"
+            LIBRARY_OUTPUT_DIRECTORY "${_NODE_OUTPUT_DIR}"
+            RUNTIME_OUTPUT_DIRECTORY "${_NODE_OUTPUT_DIR}"
+            ARCHIVE_OUTPUT_DIRECTORY "${_NODE_OUTPUT_DIR}"
+        )
+
+        foreach(_NODE_CONFIG DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
+            set_target_properties(${_NODE_LIB_NAME} PROPERTIES
+                "LIBRARY_OUTPUT_DIRECTORY_${_NODE_CONFIG}" "${_NODE_OUTPUT_DIR}"
+                "RUNTIME_OUTPUT_DIRECTORY_${_NODE_CONFIG}" "${_NODE_OUTPUT_DIR}"
+                "ARCHIVE_OUTPUT_DIRECTORY_${_NODE_CONFIG}" "${_NODE_OUTPUT_DIR}"
+            )
+        endforeach()
+
+        set(${DAS_IDL_EXPORT_NAME}_NODE_OUTPUT_DIR ${_NODE_OUTPUT_DIR} PARENT_SCOPE)
+    endif()
+
     # ====== 构建导出宏列表 ======
     set(_EXPORT_DEFINITIONS "")
     if(DAS_IDL_EXPORT_LANGUAGES)
@@ -730,6 +831,8 @@ function(das_add_idl_export)
                 list(APPEND _EXPORT_DEFINITIONS "DAS_EXPORT_CSHARP")
             elseif(_LANG_LOWER STREQUAL "lua")
                 list(APPEND _EXPORT_DEFINITIONS "DAS_EXPORT_LUA")
+            elseif(_LANG_LOWER STREQUAL "node")
+                list(APPEND _EXPORT_DEFINITIONS "DAS_EXPORT_NODE")
             endif()
         endforeach()
     endif()
