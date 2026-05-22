@@ -36,7 +36,8 @@ JSON 结构:
         [--namespace <ns>] \
         [--languages Python Java Lua ...] \
         [--lua-output-dir <dir>] \
-        [--lua-name <name>]
+        [--lua-name <name>] \
+        [--lua-open-module-name <name>]
 """
 
 import argparse
@@ -104,6 +105,11 @@ def main() -> int:
     # Lua (可选，仅在 languages 包含 Lua 时由 cmake 传入)
     parser.add_argument("--lua-output-dir", default="", help="Lua output directory")
     parser.add_argument("--lua-name", default="", help="Lua module name")
+    parser.add_argument(
+        "--lua-open-module-name",
+        default="",
+        help="Lua C API open module name for luaopen_<name>",
+    )
 
     args = parser.parse_args()
 
@@ -161,9 +167,31 @@ def main() -> int:
 
     # 构建 reduce 阶段全局配置
     reduce_config = {}
-    if args.lua_output_dir and args.lua_name:
+    has_lua = any(lang.lower() == "lua" for lang in args.languages)
+    lua_reduce_requested = has_lua or any(
+        [args.lua_output_dir, args.lua_name, args.lua_open_module_name]
+    )
+    if lua_reduce_requested:
+        missing_lua_args = [
+            name
+            for name, value in [
+                ("--lua-output-dir", args.lua_output_dir),
+                ("--lua-name", args.lua_name),
+                ("--lua-open-module-name", args.lua_open_module_name),
+            ]
+            if not value
+        ]
+        if missing_lua_args:
+            print(
+                "error: Lua reduce config requires "
+                + ", ".join(missing_lua_args),
+                file=sys.stderr,
+            )
+            return 2
+
         reduce_config["lua_output_dir"] = args.lua_output_dir
         reduce_config["lua_name"] = args.lua_name
+        reduce_config["lua_open_module_name"] = args.lua_open_module_name
         reduce_config["lua_idl_dir"] = args.idl_dir
         reduce_config["lua_idl_files"] = args.idl_files
 

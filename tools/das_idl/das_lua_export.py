@@ -11,6 +11,7 @@ Usage:
         --idl-dir /path/to/idl \\
         --output /path/to/output \\
         --name DasCore \\
+        --open-module-name DasCoreApi \\
         --idl-files IDasBase.idl IDasLogger.idl ...
 """
 
@@ -93,6 +94,7 @@ def generate_cpp_file(
     doc: IdlDocument,
     interfaces: List[InterfaceDef],
     name: str,
+    open_module_name: str,
     abi_dir: str,
     export_c_macro: str,
 ) -> str:
@@ -110,6 +112,7 @@ def generate_cpp_file(
         doc: Merged IdlDocument with resolved types.
         interfaces: List of InterfaceDef objects (from doc.interfaces).
         name: Export library base name (e.g., "DasCore").
+        open_module_name: Module suffix for the exported luaopen_<name> symbol.
         abi_dir: Path to the ABI header directory for checking existence.
         export_c_macro: Export macro for luaopen entry point (e.g. "DAS_C_API").
 
@@ -232,7 +235,14 @@ def generate_cpp_file(
         parts.append('')
 
     # ── luaopen entry point ────────────────────────────────────────────
-    parts.append(gen._generate_luaopen_function(doc, abilable_interfaces, export_c_macro))
+    parts.append(
+        gen._generate_luaopen_function(
+            doc,
+            abilable_interfaces,
+            export_c_macro,
+            open_module_name,
+        )
+    )
     parts.append('')
 
     # ── Restore warning state ──────────────────────────────────────────
@@ -265,6 +275,11 @@ def main() -> int:
         '--name',
         default='DasCore',
         help='Base name for generated files (default: DasCore)',
+    )
+    parser.add_argument(
+        '--open-module-name',
+        required=True,
+        help='Module suffix for generated luaopen_<name> symbol',
     )
     parser.add_argument(
         '--idl-files',
@@ -310,7 +325,15 @@ def main() -> int:
     abi_dir = os.path.normpath(os.path.join(args.output, '..', 'abi'))
 
     # Generate C++ source
-    cpp_code = generate_cpp_file(gen, merged_doc, interfaces, args.name, abi_dir, args.export_c_macro)
+    cpp_code = generate_cpp_file(
+        gen,
+        merged_doc,
+        interfaces,
+        args.name,
+        args.open_module_name,
+        abi_dir,
+        args.export_c_macro,
+    )
 
     # Filter interfaces for Lua stub — only those available from ABI headers.
     available_interface_names = _collect_abi_interface_names(abi_dir)

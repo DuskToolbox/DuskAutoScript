@@ -72,6 +72,9 @@ if(EXPORT_LUA)
     list(APPEND _LANGUAGES "Lua")
 endif()
 
+set(DAS_CORE_LUA_OPEN_MODULE_NAME DasCoreApi)
+set(DAS_CORE_LUA_OPEN_FUNCTION_NAME "luaopen_${DAS_CORE_LUA_OPEN_MODULE_NAME}")
+
 #获取 idl / 目录下所有.idl 文件名
 file(GLOB _IDL_FILES "${CMAKE_SOURCE_DIR}/idl/*.idl")
 set(_IDL_FILE_NAMES "")
@@ -97,6 +100,7 @@ das_add_idl_export(
     SWIG_OPTIONS_Java -package org.das
     EXPORT_MACRO DAS_API
     EXPORT_C_MACRO DAS_C_API
+    LUA_OPEN_MODULE_NAME ${DAS_CORE_LUA_OPEN_MODULE_NAME}
     SWIG_INCLUDE_DIRS
     "${CMAKE_SOURCE_DIR}/include/"
     "${CMAKE_BINARY_DIR}/das/include"
@@ -182,6 +186,11 @@ endif()
 #应用导出宏定义
 if(DAS_EXPORT_MACRO_LIST)
     target_compile_definitions(DasCoreObjects PUBLIC ${DAS_EXPORT_MACRO_LIST})
+endif()
+
+if(EXPORT_LUA)
+    target_compile_definitions(DasCoreObjects PRIVATE
+        DAS_LUA_OPEN_FUNCTION_NAME="${DAS_CORE_LUA_OPEN_FUNCTION_NAME}")
 endif()
 
 #Python Stable ABI 配置

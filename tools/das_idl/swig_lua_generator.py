@@ -1767,10 +1767,13 @@ public:
         )
 
     def _generate_luaopen_function(
-        self, doc: IdlDocument, interfaces: List[InterfaceDef],
+        self,
+        doc: IdlDocument,
+        interfaces: List[InterfaceDef],
         export_c_macro: str,
+        open_module_name: str,
     ) -> str:
-        """生成 DLL 入口函数 luaopen_<module_name>。
+        """生成 DLL 入口函数。
 
         该函数是 Lua require 系统的入口点，
         负责依次注册所有类型、枚举和模块函数。
@@ -1778,24 +1781,27 @@ public:
         Args:
             doc: 经 resolve_types() 标注后的 IDL 文档。
             interfaces: 经 resolve_types() 标注后的 InterfaceDef 列表。
+            open_module_name: 显式构建配置传入的 C open symbol 名称后缀。
 
         Returns:
-            luaopen_<module_name> 函数的完整 C++ 定义字符串。
+            Lua C open 函数的完整 C++ 定义字符串。
 
         Raises:
-            ValueError: 当 IDL 文档中未定义 module 声明时。
+            ValueError: 当 open_module_name 为空时。
         """
-        # 确定模块名（必须从 IDL module 声明获取，不使用硬编码默认值）
-        if not doc.modules or not doc.modules[0].module_name:
+        if not open_module_name:
             raise ValueError(
-                "luaopen 函数需要模块名，但 IDL 文档中未定义 module 声明。"
-                "请在 IDL 文件中添加 module 块，例如: module MyModuleName { }"
+                "luaopen 函数需要显式 open_module_name。"
+                "请通过 CMake LUA_OPEN_MODULE_NAME / das_lua_export.py "
+                "--open-module-name 传入。"
             )
-        module_name = doc.modules[0].module_name
+
+        open_function_name = 'luaopen_'
+        open_function_name += open_module_name
 
         lines = []
         lines.append(
-            f'{export_c_macro} int luaopen_{module_name}(lua_State* L) {{'
+            f'{export_c_macro} int {open_function_name}(lua_State* L) {{'
         )
         lines.append('    sol::state_view lua(L);')
         lines.append('')

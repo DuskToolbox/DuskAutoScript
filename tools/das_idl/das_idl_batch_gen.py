@@ -700,42 +700,55 @@ JSON 配置格式:
         # ====== 执行 Lua 聚合 ======
         lua_output_dir = reduce_config.get("lua_output_dir")
         lua_name = reduce_config.get("lua_name")
+        lua_open_module_name = reduce_config.get("lua_open_module_name")
         lua_idl_dir = reduce_config.get("lua_idl_dir")
         lua_idl_files = reduce_config.get("lua_idl_files", [])
         # --export-c-macro 从 tasks[0] 获取（所有 task 共享同一值）
         lua_export_c_macro = tasks[0].get("--export-c-macro") if tasks else None
 
         if lua_output_dir and lua_name and batch_result == 0:
-            lua_script = Path(__file__).parent / "das_lua_export.py"
-            if lua_script.exists():
-                cmd = [
-                    sys.executable,
-                    str(lua_script),
-                    "--idl-dir", lua_idl_dir,
-                    "--output", lua_output_dir,
-                    "--name", lua_name,
-                    "--export-c-macro", lua_export_c_macro or "DAS_C_API",
-                    "--idl-files", *lua_idl_files,
-                ]
+            if not lua_open_module_name:
+                print(
+                    "错误: Lua reduce config missing lua_open_module_name",
+                    file=sys.stderr,
+                )
+                batch_result = 1
+            else:
+                lua_script = Path(__file__).parent / "das_lua_export.py"
+                if lua_script.exists():
+                    cmd = [
+                        sys.executable,
+                        str(lua_script),
+                        "--idl-dir", lua_idl_dir,
+                        "--output", lua_output_dir,
+                        "--name", lua_name,
+                        "--open-module-name", lua_open_module_name,
+                        "--export-c-macro", lua_export_c_macro or "DAS_C_API",
+                        "--idl-files", *lua_idl_files,
+                    ]
 
-                try:
-                    t0 = time.time()
-                    result = subprocess.run(
-                        cmd,
-                        capture_output=True,
-                        text=True,
-                        timeout=60
-                    )
-                    dt = time.time() - t0
+                    try:
+                        t0 = time.time()
+                        result = subprocess.run(
+                            cmd,
+                            capture_output=True,
+                            text=True,
+                            timeout=60,
+                        )
+                        dt = time.time() - t0
 
-                    if result.returncode == 0:
-                        reduce_phases.append(("Lua Binding", dt, "ok", result.stdout.strip()))
-                    else:
-                        reduce_phases.append(("Lua Binding", dt, "failed", result.stderr.strip()))
+                        if result.returncode == 0:
+                            reduce_phases.append(
+                                ("Lua Binding", dt, "ok", result.stdout.strip())
+                            )
+                        else:
+                            reduce_phases.append(
+                                ("Lua Binding", dt, "failed", result.stderr.strip())
+                            )
+                            batch_result = 1
+                    except Exception as e:
+                        reduce_phases.append(("Lua Binding", 0.0, "error", str(e)))
                         batch_result = 1
-                except Exception as e:
-                    reduce_phases.append(("Lua Binding", 0.0, "error", str(e)))
-                    batch_result = 1
 
     # ====== 打印 Reduce 阶段汇总 ======
     if reduce_phases:

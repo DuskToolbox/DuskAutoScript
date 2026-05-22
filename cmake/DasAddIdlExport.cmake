@@ -105,6 +105,7 @@ endif()
 #   SWIG_OPTIONS_CSharp   - CSharp 的 SWIG 编译选项（可选）
 #   SWIG_INCLUDE_DIRS     - 额外的 SWIG 包含目录列表（可选，如 ${CMAKE_SOURCE_DIR}/include/ 等）
 #   DEPENDS_ON            - SWIG 导出库依赖的其他目标列表（可选，如 DasCore）
+#   LUA_OPEN_MODULE_NAME  - Lua C API open symbol suffix, required when LANGUAGES contains Lua
 #
 # 输出变量 (通过 PARENT_SCOPE 输出):
 #   ${NAME}_GENERATED_FILES        - 所有生成的文件列表
@@ -122,7 +123,7 @@ function(das_add_idl_export)
     cmake_parse_arguments(
         DAS_IDL_EXPORT                          # 前缀
         ""                                      # 选项 (无值参数)
-        "NAME;IDL_DIR;OUTPUT_DIR;NAMESPACE;GENERATE_IPC_PROXY;GENERATE_IPC_STUB;IPC_CACHE_DIR;SWIG_MODULE_NAME;EXPORT_MACRO;EXPORT_C_MACRO"  # 单值参数
+        "NAME;IDL_DIR;OUTPUT_DIR;NAMESPACE;GENERATE_IPC_PROXY;GENERATE_IPC_STUB;IPC_CACHE_DIR;SWIG_MODULE_NAME;EXPORT_MACRO;EXPORT_C_MACRO;LUA_OPEN_MODULE_NAME"  # 单值参数
         "IDL_FILES;LANGUAGES;USER_SWIG_FILES;GENERATED_FILES;GENERATED_ABI_FILES;GENERATED_WRAPPER_FILES;GENERATED_SWIG_FILES;GENERATED_IPC_FILES;SWIG_OPTIONS_Python;SWIG_OPTIONS_Java;SWIG_OPTIONS_CSharp;SWIG_INCLUDE_DIRS;DEPENDS_ON"  # 多值参数
         ${ARGN}
     )
@@ -231,6 +232,10 @@ function(das_add_idl_export)
         endif()
     endforeach()
 
+    if(_HAS_LUA AND NOT DAS_IDL_EXPORT_LUA_OPEN_MODULE_NAME)
+        message(FATAL_ERROR "[das_add_idl_export] LUA_OPEN_MODULE_NAME is required when LANGUAGES contains Lua")
+    endif()
+
     # 使用 Python 脚本生成 JSON，替代 file(CONFIGURE OUTPUT ...) 以避免内容比对导致的不更新问题
     set(_GEN_CONFIG_SCRIPT "${CMAKE_SOURCE_DIR}/tools/das_idl/gen_batch_config.py")
 
@@ -279,6 +284,7 @@ function(das_add_idl_export)
         list(APPEND _GEN_CONFIG_ARGS
             --lua-output-dir "${_LUA_OUTPUT_DIR}"
             --lua-name "${DAS_IDL_EXPORT_NAME}"
+            --lua-open-module-name "${DAS_IDL_EXPORT_LUA_OPEN_MODULE_NAME}"
         )
     endif()
 

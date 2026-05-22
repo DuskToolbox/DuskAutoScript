@@ -28,13 +28,17 @@ DAS_DISABLE_WARNING_END
 #include <windows.h>
 #endif
 
+#ifndef DAS_LUA_OPEN_FUNCTION_NAME
+#error "DAS_LUA_OPEN_FUNCTION_NAME must be defined when DAS_EXPORT_LUA is enabled"
+#endif
+
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
 DAS_NS_LUAHOST_BEGIN
 
 namespace
 {
-    // luaopen_DasCoreApi function signature
+    // Lua C module open function signature
     using LuaOpenFunction = int(lua_State*);
 
     // DLL filename for the Lua export library
@@ -42,8 +46,8 @@ namespace
     // MinGW prefixes shared libraries with "lib"
     constexpr const char* kLuaExportDllNameMingw = "libDasCoreLuaExport.dll";
 
-    // luaopen function symbol name
-    constexpr const char* kLuaOpenFunctionName = "luaopen_DasCoreApi";
+    // luaopen function symbol name, supplied by CMake from the generator input.
+    constexpr const char* kLuaOpenFunctionName = DAS_LUA_OPEN_FUNCTION_NAME;
 
     // ExtractDasBasePointer helper function symbol name
     constexpr const char* kExtractBasePointerName = "ExtractDasBasePointer";
@@ -255,7 +259,7 @@ auto LuaRuntime::LoadPlugin(const std::filesystem::path& path)
             return tl::make_unexpected(DAS_E_INVALID_FILE);
         }
 
-        // ── 3. Get luaopen_DasCoreApi function pointer ──────────────────
+        // ── 3. Get luaopen function pointer ─────────────────────────────
         if (!export_lib_.has(kLuaOpenFunctionName))
         {
             DAS_CORE_LOG_ERROR(
@@ -274,7 +278,7 @@ auto LuaRuntime::LoadPlugin(const std::filesystem::path& path)
             return tl::make_unexpected(DAS_E_SYMBOL_NOT_FOUND);
         }
 
-        // ── 4. Call luaopen_DasCoreApi — register all Director types ────
+        // ── 4. Call luaopen — register all Director types ───────────────
         int luaopen_result = luaopen_func(lua_state_);
         DAS_CORE_LOG_INFO(
             "[LuaRuntime::LoadPlugin] {} returned {}",
