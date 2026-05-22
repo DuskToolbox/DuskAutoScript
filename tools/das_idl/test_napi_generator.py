@@ -137,12 +137,12 @@ class TestNapiGenerator(unittest.TestCase):
             """
             module {
                 [export, c_abi] DasResult OutScalar([out] uint32_t* p_out_value);
-                [export, c_abi] DasResult InOutScalar([inout] uint32_t* p_value);
+                [export, c_abi] DasResult InOutObject([inout] IDasBase** pp_value);
             }
             """
         )
 
-        for name in ("OutScalar", "InOutScalar"):
+        for name in ("OutScalar", "InOutObject"):
             support = classify_module_function(_function(doc, name))
             with self.subTest(name=name):
                 self.assertFalse(support.supported)
