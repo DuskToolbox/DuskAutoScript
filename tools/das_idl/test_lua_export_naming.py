@@ -8,6 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from das_idl_parser import parse_idl
+from das_lua_export import _merge_documents
 from swig_lua_generator import LuaSwigGenerator
 
 
@@ -56,9 +57,7 @@ class TestLuaExportNaming(unittest.TestCase):
             )
 
     def test_luaopen_function_uses_explicit_open_module_name(self):
-        doc = parse_idl(
-            'module IdlApi [module_name = "IdlModuleName"] { void Init(); }'
-        )
+        doc = parse_idl("module { void Init(); }")
 
         generated = LuaSwigGenerator()._generate_luaopen_function(
             doc,
@@ -68,7 +67,20 @@ class TestLuaExportNaming(unittest.TestCase):
         )
 
         self.assertIn("DAS_C_API int luaopen_CMakeOpenName(lua_State* L)", generated)
-        self.assertNotIn("luaopen_IdlModuleName", generated)
+        self.assertNotIn("luaopen_Idl", generated)
+
+    def test_merge_documents_preserves_anonymous_module_functions(self):
+        first = parse_idl("module { void First(); }")
+        second = parse_idl("module { void Second(); }")
+
+        merged = _merge_documents([first, second])
+
+        module_functions = [
+            func.name
+            for module in merged.modules
+            for func in module.functions
+        ]
+        self.assertEqual(module_functions, ["First", "Second"])
 
 
 if __name__ == "__main__":
