@@ -1,15 +1,19 @@
 #ifndef DAS_CORE_IPC_ANY_TRANSPORT_H
 #define DAS_CORE_IPC_ANY_TRANSPORT_H
 
-#include <das/Core/IPC/DefaultAsyncIpcTransport.h>
+#include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/HttpIpcTransport.h>
 #include <das/Core/IPC/UnixAsyncIpcTransport.h>
+#ifdef DAS_WINDOWS
+#include <das/Core/IPC/Win32AsyncIpcTransport.h>
+#endif
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
 #include <functional>
 #include <optional>
 #include <string>
+#include <type_traits>
 #include <tuple>
 #include <variant>
 
@@ -36,7 +40,9 @@ public:
     using VariantType = std::variant<UnixAsyncIpcTransport, HttpIpcTransport>;
 #endif
 
+#ifdef DAS_WINDOWS
     explicit AnyTransport(Win32AsyncIpcTransport&& t);
+#endif
     explicit AnyTransport(UnixAsyncIpcTransport&& t);
     explicit AnyTransport(HttpIpcTransport&& t);
 

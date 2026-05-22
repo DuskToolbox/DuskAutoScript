@@ -12,7 +12,7 @@
 
 #include "FakeMainProcess.h"
 
-#include <das/Core/IPC/DefaultAsyncIpcTransport.h>
+#include <das/Core/IPC/AnyTransport.h>
 #include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/Host/HostConfig.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
@@ -23,6 +23,7 @@
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/use_future.hpp>
+#include <optional>
 #include <thread>
 
 #ifdef _WIN32
@@ -460,8 +461,8 @@ namespace FakeMainProcess
             h2m_pipe);
 
         // 5. 创建 io_context 和工作线程（RAII 管理）
-        IoThreadGuard                                             io_guard;
-        std::unique_ptr<DAS::Core::IPC::DefaultAsyncIpcTransport> transport;
+        IoThreadGuard                         io_guard;
+        std::optional<DAS::Core::IPC::AnyTransport> transport;
 
         try
         {
@@ -471,7 +472,7 @@ namespace FakeMainProcess
             // 这与 HostLauncher::ConnectToHost() 的参数顺序一致
             auto future = boost::asio::co_spawn(
                 io_guard.context(),
-                DAS::Core::IPC::DefaultAsyncIpcTransport::CreateAsync(
+                DAS::Core::IPC::AnyTransport::CreateAsync(
                     io_guard.context(),
                     h2m_pipe,
                     m2h_pipe,
@@ -479,17 +480,17 @@ namespace FakeMainProcess
                     65536),
                 boost::asio::use_future);
 
-            auto result = future.get();
+            auto [result, maybe_transport] = future.get();
 
-            if (!result.has_value())
+            if (result != DAS_S_OK || !maybe_transport)
             {
                 DAS_CORE_LOG_ERROR(
                     "[FakeMain] Failed to create transport: error={}",
-                    result.error());
+                    result);
                 return 1;
             }
 
-            transport = std::move(*result);
+            transport = std::move(*maybe_transport);
             DAS_CORE_LOG_INFO("[FakeMain] Pipes created successfully");
         }
         catch (const std::exception& e)

@@ -126,10 +126,11 @@ namespace
     }
 } // namespace
 
-AnyTransport::AnyTransport(Win32AsyncIpcTransport&& t)
-    : transport_(std::move(t))
+#ifdef DAS_WINDOWS
+AnyTransport::AnyTransport(Win32AsyncIpcTransport&& t) : transport_(std::move(t))
 {
 }
+#endif
 AnyTransport::AnyTransport(UnixAsyncIpcTransport&& t) : transport_(std::move(t))
 {
 }
