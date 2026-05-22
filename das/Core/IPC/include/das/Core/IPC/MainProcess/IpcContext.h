@@ -22,6 +22,7 @@
 #include <memory>
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
 
 DAS_NS_BEGIN
 namespace Core
@@ -151,9 +152,8 @@ namespace Core
                 /// mode)
                 std::unique_ptr<HttpIpcServer> http_server_;
 
-                /// HTTP/WebSocket transports keyed by session_id
-                std::unordered_map<uint16_t, std::unique_ptr<HttpIpcTransport>>
-                    http_transports_;
+                /// HTTP accepted session IDs allocated by this context.
+                std::unordered_set<uint16_t> http_session_ids_;
 
                 std::atomic<uint16_t> next_session_id_{2};
                 mutable std::mutex    allocated_ids_mutex_;
@@ -163,6 +163,8 @@ namespace Core
                 uint16_t FindAvailableSessionId();
                 void     MarkSessionIdAsAllocated(uint16_t session_id);
                 void     MarkSessionIdAsFree(uint16_t session_id);
+                void     TrackHttpSessionId(uint16_t session_id);
+                void     ReleaseHttpSessionId(uint16_t session_id);
 
                 /// RegisterService 的实际实现（在 BusinessThread 上执行）
                 DasResult RegisterServiceImpl(

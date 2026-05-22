@@ -1,4 +1,6 @@
 #include <IpcProxyFactory.h>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
 #include <boost/asio/post.hpp>
 #include <cassert>
 #include <cstring>
@@ -10,6 +12,7 @@
 #include <das/Core/IPC/DasProxyBase.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/HostLauncher.h>
+#include <das/Core/IPC/HttpHost.h>
 #include <das/Core/IPC/HttpIpcTransport.h>
 #include <das/Core/IPC/InternalCallbackHandler.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
@@ -17,6 +20,7 @@
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/LoadPluginAsyncOperationImpl.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
+#include <das/Core/IPC/MainProcess/InboundHostHandshakeHandler.h>
 #include <das/Core/IPC/MainProcess/IpcContext.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
@@ -163,6 +167,13 @@ namespace Core
                             boost::asio::ip::tcp::socket>> ws,
                         const std::string& endpoint_name) -> DasResult
                 {
+                    if (!ws)
+                    {
+                        DAS_CORE_LOG_ERROR(
+                            "HTTP accept callback received null WebSocket");
+                        return DAS_E_INVALID_ARGUMENT;
+                    }
+
                     const uint16_t session_id = AllocateSessionId();
                     if (session_id == 0)
                     {
@@ -171,30 +182,92 @@ namespace Core
                         return DAS_E_IPC_SESSION_ALLOC_FAILED;
                     }
 
+                    bool http_session_tracked = false;
                     // Create HttpIpcTransport from the upgraded WebSocket
                     // stream
                     try
                     {
-                        auto transport =
-                            std::make_unique<HttpIpcTransport>(std::move(*ws));
+                        TrackHttpSessionId(session_id);
+                        http_session_tracked = true;
 
-                        // Store transport to keep the connection alive until
-                        // the HTTP Host handshake path owns it.
-                        http_transports_[session_id] = std::move(transport);
+                        AnyTransport transport{
+                            HttpIpcTransport(std::move(*ws))};
+                        DasPtr<IInternalHost> host =
+                            DasPtr<IInternalHost>::Attach(
+                                new HttpHost(session_id, std::move(transport)));
+
+                        boost::asio::co_spawn(
+                            runloop_.GetIoContext(),
+                            [this, session_id, host, endpoint_name]() mutable
+                                -> boost::asio::awaitable<void>
+                            {
+                                auto [lookup_result, maybe_transport] =
+                                    host->GetTransport();
+                                if (DAS::IsFailed(lookup_result)
+                                    || !maybe_transport)
+                                {
+                                    DAS_CORE_LOG_ERROR(
+                                        "HTTP Host transport lookup failed before handshake: session_id={}, result={}",
+                                        session_id,
+                                        lookup_result);
+                                    host->Stop();
+                                    ReleaseHttpSessionId(session_id);
+                                    co_return;
+                                }
+
+                                InboundHostHandshakeHandler handler(
+                                    maybe_transport->get(),
+                                    session_id);
+                                DasResult handshake_result =
+                                    co_await handler.Run();
+                                if (DAS::IsFailed(handshake_result))
+                                {
+                                    DAS_CORE_LOG_ERROR(
+                                        "HTTP Host handshake failed: session_id={}, endpoint={}, result={}",
+                                        session_id,
+                                        endpoint_name,
+                                        handshake_result);
+                                    host->Stop();
+                                    ReleaseHttpSessionId(session_id);
+                                    co_return;
+                                }
+
+                                DasResult register_result =
+                                    runloop_.RegisterInternalHost(host);
+                                if (DAS::IsFailed(register_result))
+                                {
+                                    DAS_CORE_LOG_ERROR(
+                                        "HTTP Host registration failed: session_id={}, endpoint={}, result={}",
+                                        session_id,
+                                        endpoint_name,
+                                        register_result);
+                                    host->Stop();
+                                    ReleaseHttpSessionId(session_id);
+                                    co_return;
+                                }
+
+                                DAS_CORE_LOG_INFO(
+                                    "Host connected via HTTP: session_id={}, endpoint={}",
+                                    session_id,
+                                    endpoint_name);
+                            },
+                            boost::asio::detached);
                     }
                     catch (const std::exception& e)
                     {
-                        ReleaseSessionId(session_id);
+                        if (http_session_tracked)
+                        {
+                            ReleaseHttpSessionId(session_id);
+                        }
+                        else
+                        {
+                            ReleaseSessionId(session_id);
+                        }
                         DAS_CORE_LOG_ERROR(
-                            "Failed to create HTTP IPC transport: {}",
+                            "Failed to schedule HTTP Host handshake: {}",
                             ToString(e.what()));
                         return DAS_E_IPC_NOT_INITIALIZED;
                     }
-
-                    DAS_CORE_LOG_INFO(
-                        "Host connected via HTTP: session_id={}, endpoint={}",
-                        session_id,
-                        endpoint_name);
 
                     return DAS_S_OK;
                 };
@@ -247,17 +320,16 @@ namespace Core
                     business_thread_.reset();
                 }
 
-                // 3. 停止 HTTP server 和清理 HTTP transports
+                // 3. 停止 HTTP server 并释放已分配的 HTTP session_id
                 if (http_server_)
                 {
                     http_server_->Stop();
                 }
-                for (const auto& [session_id, transport] : http_transports_)
+                for (const auto session_id : http_session_ids_)
                 {
-                    (void)transport;
                     ReleaseSessionId(session_id);
                 }
-                http_transports_.clear();
+                http_session_ids_.clear();
 
                 // 4. 停止 IO 线程
                 runloop_.RequestStop();
@@ -620,6 +692,19 @@ namespace Core
             {
                 std::lock_guard<std::mutex> lock(allocated_ids_mutex_);
                 MarkSessionIdAsFree(session_id);
+            }
+
+            void IpcContext::TrackHttpSessionId(uint16_t session_id)
+            {
+                http_session_ids_.insert(session_id);
+            }
+
+            void IpcContext::ReleaseHttpSessionId(uint16_t session_id)
+            {
+                if (http_session_ids_.erase(session_id) > 0)
+                {
+                    ReleaseSessionId(session_id);
+                }
             }
 
             DasResult IpcContext::CreateRemoteProxy(
