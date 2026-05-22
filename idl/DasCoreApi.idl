@@ -12,7 +12,7 @@ defines DasLogLevel {
     DAS_LOG_LEVEL_OFF = 6,
 }
 
-module DasCoreApi {
+module {
 
 //=============================================================================
 // JSON

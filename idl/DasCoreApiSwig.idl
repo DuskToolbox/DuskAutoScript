@@ -2,7 +2,7 @@
 // 生成 DasCoreApiSwig.generated.h，供 DasSwigApi.h include
 // [export] 仅导出函数签名，[swig_ret] 会使 header generator 转为 DasRet 返回类型
 
-module DasCoreApiSwig {
+module {
 
 //=============================================================================
 // Logging (DasReadOnlyString 版本，供 SWIG 绑定使用)

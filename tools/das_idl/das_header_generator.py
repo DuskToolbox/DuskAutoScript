@@ -18,7 +18,6 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from das_idl_parser import (
     ErrorCodeDef,
-    ModuleDef,
     ModuleFunctionDef,
     ParameterDef,
     TypeInfo,
@@ -202,7 +201,7 @@ def generate_header(
 
     # module → function declarations
     for mod in doc.modules:
-        lines.append(f"// Module: {mod.name}")
+        lines.append("// Module-level functions")
         for func in mod.functions:
             if func.attributes.get("c_abi"):
                 # [c_abi]: C ABI → keep original signature with all params

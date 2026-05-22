@@ -10,7 +10,6 @@ from das_idl_parser import (
     IdlDocument,
     ErrorCodeDef,
     ErrorCodeValue,
-    ModuleDef,
     ModuleFunctionDef,
     InterfaceDef,
     MethodDef,

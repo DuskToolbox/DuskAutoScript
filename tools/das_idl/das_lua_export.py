@@ -62,7 +62,6 @@ def _merge_documents(documents: List[IdlDocument]) -> IdlDocument:
     merged = IdlDocument()
     seen_interface_names: set = set()
     seen_enum_names: set = set()
-    seen_module_names: set = set()
 
     for doc in documents:
         for iface in doc.interfaces:
@@ -82,9 +81,7 @@ def _merge_documents(documents: List[IdlDocument]) -> IdlDocument:
             merged.error_codes.append(ec)
 
         for mod in doc.modules:
-            if mod.module_name not in seen_module_names:
-                merged.modules.append(mod)
-                seen_module_names.add(mod.module_name)
+            merged.modules.append(mod)
 
     return merged
 
