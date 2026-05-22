@@ -107,13 +107,12 @@ class TestModuleParsing(unittest.TestCase):
 
     def test_basic_module(self):
         """解析包含一个函数的基本 module 块"""
-        doc = parse_idl("module MyApi { void Hello(); }")
+        doc = parse_idl("module { void Hello(); }")
         self.assertEqual(len(doc.modules), 1)
         mod = doc.modules[0]
         self.assertIsInstance(mod, ModuleDef)
-        self.assertEqual(mod.name, "MyApi")
-        # module_name 默认等于 name
-        self.assertEqual(mod.module_name, "MyApi")
+        self.assertFalse(hasattr(mod, "name"))
+        self.assertFalse(hasattr(mod, "module_name"))
         self.assertEqual(mod.namespace, "")
         self.assertEqual(len(mod.functions), 1)
         func = mod.functions[0]
@@ -124,7 +123,7 @@ class TestModuleParsing(unittest.TestCase):
     def test_module_with_attributes(self):
         """函数带 [export] 和 [c_abi] 属性"""
         doc = parse_idl(
-            "module Api { [export] void LogMsg(const char* msg); "
+            "module { [export] void LogMsg(const char* msg); "
             "[export, c_abi] DasResult Query(int id); }"
         )
         mod = doc.modules[0]
@@ -140,19 +139,25 @@ class TestModuleParsing(unittest.TestCase):
         self.assertTrue(f2.attributes.get("export"))
         self.assertTrue(f2.attributes.get("c_abi"))
 
-    def test_module_with_module_name(self):
-        """module_name 属性覆盖默认名称"""
-        doc = parse_idl(
-            'module DasCoreApi [module_name = "DasCore"] { void Init(); }'
-        )
-        mod = doc.modules[0]
-        self.assertEqual(mod.name, "DasCoreApi")
-        self.assertEqual(mod.module_name, "DasCore")
+    def test_rejects_named_module(self):
+        """旧的 module Name 语法必须显式拒绝"""
+        with self.assertRaisesRegex(SyntaxError, r"Named modules.*module \{"):
+            parse_idl("module OldName { void Hello(); }")
+
+    def test_rejects_pre_module_name_attribute(self):
+        """module 前的 [module_name] 属性必须显式拒绝"""
+        with self.assertRaisesRegex(SyntaxError, r"Module-level attributes"):
+            parse_idl('[module_name = "Old"] module { void Init(); }')
+
+    def test_rejects_post_module_name_attribute(self):
+        """module 后的 [module_name] 属性必须显式拒绝"""
+        with self.assertRaisesRegex(SyntaxError, r"Module-level attributes"):
+            parse_idl('module [module_name = "Old"] { void Init(); }')
 
     def test_module_with_out_parameters(self):
         """module 函数包含 [out] 参数"""
         doc = parse_idl(
-            "module Api { DasResult GetObj([out] int** pp_obj); }"
+            "module { DasResult GetObj([out] int** pp_obj); }"
         )
         func = doc.modules[0].functions[0]
         self.assertEqual(len(func.parameters), 1)
@@ -165,7 +170,7 @@ class TestModuleParsing(unittest.TestCase):
     def test_module_multiple_functions(self):
         """module 包含多个函数"""
         doc = parse_idl(
-            "module Multi { void Init(); void Shutdown(); int GetCount(); }"
+            "module { void Init(); void Shutdown(); int GetCount(); }"
         )
         mod = doc.modules[0]
         self.assertEqual(len(mod.functions), 3)
@@ -175,7 +180,7 @@ class TestModuleParsing(unittest.TestCase):
 
     def test_module_empty_block(self):
         """空 module 块（无函数）"""
-        doc = parse_idl("module EmptyApi {}")
+        doc = parse_idl("module {}")
         self.assertEqual(len(doc.modules), 1)
         self.assertEqual(len(doc.modules[0].functions), 0)
 
@@ -201,7 +206,7 @@ class TestMixedIdl(unittest.TestCase):
         """同一文件中 errorcode + module + interface"""
         idl = """
         errorcode DasResult { DAS_S_OK = 0, DAS_E_FAIL = 1, }
-        module DasApi { [export] void LogError(const char* msg); }
+        module { [export] void LogError(const char* msg); }
         [uuid("AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")] interface IBar : IDasBase {
             int GetValue();
         }
@@ -211,7 +216,6 @@ class TestMixedIdl(unittest.TestCase):
         self.assertEqual(len(doc.modules), 1)
         self.assertEqual(len(doc.interfaces), 1)
         self.assertEqual(doc.error_codes[0].name, "DasResult")
-        self.assertEqual(doc.modules[0].name, "DasApi")
         self.assertEqual(doc.interfaces[0].name, "IBar")
 
     def test_multiple_errorcodes(self):
@@ -229,13 +233,13 @@ class TestMixedIdl(unittest.TestCase):
     def test_multiple_modules(self):
         """多个 module 定义"""
         idl = """
-        module Mod1 { void F1(); }
-        module Mod2 { void F2(); }
+        module { void F1(); }
+        module { void F2(); }
         """
         doc = parse_idl(idl)
         self.assertEqual(len(doc.modules), 2)
-        self.assertEqual(doc.modules[0].name, "Mod1")
-        self.assertEqual(doc.modules[1].name, "Mod2")
+        self.assertEqual(doc.modules[0].functions[0].name, "F1")
+        self.assertEqual(doc.modules[1].functions[0].name, "F2")
 
 
 class TestForbiddenVoidPointerPointer(unittest.TestCase):
@@ -256,7 +260,7 @@ class TestForbiddenVoidPointerPointer(unittest.TestCase):
     def test_rejects_module_void_pointer_pointer_out_param(self):
         """module 函数参数中出现 void** 时直接报错"""
         idl = """
-        module Api {
+        module {
             DasResult Query([out] void** pp_out);
         }
         """
@@ -293,7 +297,7 @@ class TestForbiddenVoidPointerPointer(unittest.TestCase):
 
     def test_allows_plain_void_return(self):
         """普通 void 返回值仍然合法"""
-        doc = parse_idl("module Api { void Shutdown(); }")
+        doc = parse_idl("module { void Shutdown(); }")
         func = doc.modules[0].functions[0]
         self.assertEqual(func.return_type.base_type, "void")
         self.assertEqual(func.return_type.pointer_level, 0)
@@ -389,7 +393,7 @@ class TestTypeInfoMetadata(unittest.TestCase):
         self.assertEqual(type_info.resolved_qualified_name, "Das::ExportInterface::IDasJson")
 
     def test_compound_primitive_metadata(self):
-        doc = parse_idl("module Api { void GetData([out] unsigned char** pp_out); }")
+        doc = parse_idl("module { void GetData([out] unsigned char** pp_out); }")
         type_info = doc.modules[0].functions[0].parameters[0].type_info
 
         self.assertEqual(type_info.source_type, "unsigned char")
@@ -399,7 +403,7 @@ class TestTypeInfoMetadata(unittest.TestCase):
         self.assertEqual(type_info.type_kind, TypeKind.BASIC)
 
     def test_const_reference_metadata(self):
-        doc = parse_idl("module Api { DasResult Find(const DasGuid& guid); }")
+        doc = parse_idl("module { DasResult Find(const DasGuid& guid); }")
         type_info = doc.modules[0].functions[0].parameters[0].type_info
 
         self.assertEqual(type_info.source_type, "DasGuid")
@@ -422,7 +426,7 @@ class TestStrictTypeResolution(unittest.TestCase):
 
     def test_unresolved_qualified_module_type_is_relaxed(self):
         idl = """
-        module DasCoreApi {
+        module {
             [export, c_abi] DasResult CreateExternal(
                 [out] Das::External::IMissing** pp_out);
             [export] Das::External::IMissing GetExternal();
@@ -446,7 +450,7 @@ class TestStrictTypeResolution(unittest.TestCase):
 
     def test_module_relaxation_does_not_hide_strict_interface_miss(self):
         idl = """
-        module DasCoreApi {
+        module {
             [export, c_abi] DasResult CreateExternal(
                 [out] Das::External::IMissing** pp_out);
         }
@@ -576,13 +580,12 @@ class TestNamespaceScoped(unittest.TestCase):
         """namespace 内的 module 块"""
         idl = """
         namespace DAS {
-            module DasCoreApi { [export] void Init(); }
+            module { [export] void Init(); }
         }
         """
         doc = parse_idl(idl)
         self.assertEqual(len(doc.modules), 1)
         mod = doc.modules[0]
-        self.assertEqual(mod.name, "DasCoreApi")
         self.assertEqual(mod.namespace, "DAS")
         self.assertEqual(mod.functions[0].namespace, "DAS")
 
@@ -591,7 +594,7 @@ class TestNamespaceScoped(unittest.TestCase):
         idl = """
         namespace DAS::Core {
             errorcode CoreResult { OK = 0, ERROR = 1, }
-            module CoreApi { void DoStuff(); }
+            module { void DoStuff(); }
         }
         """
         doc = parse_idl(idl)
@@ -617,7 +620,7 @@ class TestResolveTypesWithNewTypes(unittest.TestCase):
     def test_resolve_types_no_crash_with_module(self):
         """resolve_types 处理 module 不崩溃"""
         idl = """
-        module Api {
+        module {
             [export] DasResult GetResult();
             [export] void SetName(const char* name);
         }
@@ -635,7 +638,7 @@ class TestResolveTypesWithNewTypes(unittest.TestCase):
         """resolve_types 正确标注 module 函数参数的 TypeInfo"""
         idl = """
         enum Color { Red = 0, Green = 1, Blue = 2, }
-        module Paint {
+        module {
             void SetColor(Color c);
         }
         """
@@ -651,7 +654,7 @@ class TestResolveTypesWithNewTypes(unittest.TestCase):
         errorcode DasResult { DAS_S_OK = 0, }
         enum Status { Active = 0, Inactive = 1, }
         struct Point { double x; double y; }
-        module Api { Status GetStatus(); }
+        module { Status GetStatus(); }
         [uuid("00000000-0000-0000-0000-000000000001")] interface IFoo : IDasBase {
             DasResult DoWork();
         }
