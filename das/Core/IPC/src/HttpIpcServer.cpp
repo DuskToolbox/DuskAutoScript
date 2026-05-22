@@ -4,6 +4,7 @@
 #include <boost/asio/socket_base.hpp>
 #include <das/Core/Logger/Logger.h>
 #include <das/Utils/fmt.h>
+#include <memory>
 #include <stdexcept>
 
 DAS_CORE_IPC_NS_BEGIN
@@ -95,6 +96,10 @@ struct HttpIpcServer::Impl
                     return;
                 }
 
+                // Keep the socket alive until async_read_header completes.
+                auto socket_ptr =
+                    std::make_shared<tcp::socket>(std::move(socket));
+
                 // Read HTTP header to detect WebSocket upgrade
                 auto buffer = std::make_shared<boost::beast::flat_buffer>();
                 auto parser =
@@ -104,10 +109,10 @@ struct HttpIpcServer::Impl
                 auto self = this;
 
                 boost::beast::http::async_read_header(
-                    socket,
+                    *socket_ptr,
                     *buffer,
                     *parser,
-                    [self, socket = std::move(socket), buffer, parser](
+                    [self, socket_ptr, buffer, parser](
                         boost::beast::error_code ec,
                         std::size_t) mutable
                     {
@@ -121,7 +126,9 @@ struct HttpIpcServer::Impl
                         if (websocket::is_upgrade(req)
                             && req.target() == kUpgradePath)
                         {
-                            self->UpgradeWebSocket(std::move(socket), req);
+                            self->UpgradeWebSocket(
+                                std::move(*socket_ptr),
+                                req);
                         }
                         // Non-matching requests are dropped
                     });
