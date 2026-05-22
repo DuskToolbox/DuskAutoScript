@@ -9,6 +9,7 @@
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/HostLauncher.h>
+#include <das/Core/IPC/IInternalHost.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
@@ -30,6 +31,8 @@ struct ConnectionManager::Impl
     std::unordered_map<uint16_t, ConnectionInfo> connections_;
     // 存储 HostLauncher 的引用
     std::unordered_map<uint16_t, DasPtr<HostLauncher>> host_launchers_;
+    // MainProcess-managed connected hosts such as HttpHost.
+    std::unordered_map<uint16_t, DasPtr<IInternalHost>> hosts_;
     // 直接传输层注册（用于 Host 模式，无需 HostLauncher）
     std::unordered_map<
         uint16_t,
@@ -62,6 +65,7 @@ ConnectionManager::~ConnectionManager()
     }
     impl_->connections_.clear();
     impl_->host_launchers_.clear();
+    impl_->hosts_.clear();
     impl_->direct_transports_.clear();
     impl_->any_transports_.clear();
 }
@@ -79,6 +83,7 @@ DasResult ConnectionManager::RegisterConnection(
             std::chrono::steady_clock::now().time_since_epoch())
             .count());
     info.launcher = nullptr;
+    info.host = nullptr;
     info.shm_pool = nullptr;
 
     // 创建 per-connection SharedMemoryPool（deterministic name from session
@@ -180,6 +185,7 @@ DasResult ConnectionManager::GetConnection(
     out_info.last_heartbeat_ms = it->second.last_heartbeat_ms;
     out_info.launcher =
         nullptr; // DasPtr 字段不复制，调用者应使用 GetLauncher()
+    out_info.host = nullptr;
     out_info.shm_pool = it->second.shm_pool;
     return DAS_S_OK;
 }
@@ -203,6 +209,7 @@ DasResult ConnectionManager::RegisterHostLauncher(
     if (it != impl_->connections_.end())
     {
         it->second.launcher = launcher;
+        it->second.host = nullptr;
         it->second.is_alive = true;
         it->second.last_heartbeat_ms = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -221,6 +228,7 @@ DasResult ConnectionManager::RegisterHostLauncher(
                 std::chrono::steady_clock::now().time_since_epoch())
                 .count());
         info.launcher = launcher;
+        info.host = nullptr;
         info.shm_pool = nullptr;
 
         // 创建 per-connection SharedMemoryPool（deterministic name from session
@@ -252,6 +260,79 @@ DasResult ConnectionManager::RegisterHostLauncher(
     return DAS_S_OK;
 }
 
+DasResult ConnectionManager::RegisterInternalHost(
+    uint16_t              session_id,
+    DasPtr<IInternalHost> host)
+{
+    if (!host)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    if (host->GetSessionId() != session_id)
+    {
+        DAS_CORE_LOG_ERROR(
+            "Internal host session mismatch: requested={}, host={}",
+            session_id,
+            host->GetSessionId());
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    auto [lookup_result, maybe_transport] = host->GetTransport();
+    if (DAS::IsFailed(lookup_result) || !maybe_transport)
+    {
+        DAS_CORE_LOG_ERROR(
+            "Internal host has no transport: session_id={}, result={}",
+            session_id,
+            lookup_result);
+        return DAS_E_IPC_NO_CONNECTIONS;
+    }
+
+    if (!maybe_transport->get().IsConnected())
+    {
+        DAS_CORE_LOG_ERROR(
+            "Internal host transport is not connected: session_id={}",
+            session_id);
+        return DAS_E_IPC_NO_CONNECTIONS;
+    }
+
+    std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+
+    impl_->hosts_[session_id] = host;
+    impl_->shm_pools_.erase(session_id);
+
+    auto it = impl_->connections_.find(session_id);
+    if (it != impl_->connections_.end())
+    {
+        it->second.host = host;
+        it->second.launcher = nullptr;
+        it->second.is_alive = true;
+        it->second.last_heartbeat_ms = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+        it->second.shm_pool = nullptr;
+    }
+    else
+    {
+        ConnectionInfo info{};
+        info.host_id = session_id;
+        info.plugin_id = 0;
+        info.is_alive = true;
+        info.last_heartbeat_ms = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+        info.launcher = nullptr;
+        info.host = host;
+        info.shm_pool = nullptr;
+        impl_->connections_[session_id] = std::move(info);
+    }
+
+    DAS_CORE_LOG_INFO("Internal host registered: session_id={}", session_id);
+    return DAS_S_OK;
+}
+
 DasResult ConnectionManager::UnregisterHostLauncher(uint16_t session_id)
 {
     std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
@@ -266,6 +347,7 @@ DasResult ConnectionManager::UnregisterHostLauncher(uint16_t session_id)
     }
 
     impl_->host_launchers_.erase(it);
+    impl_->hosts_.erase(session_id);
     impl_->connections_.erase(session_id);
 
     DAS_CORE_LOG_INFO("HostLauncher unregistered: session_id={}", session_id);
@@ -328,6 +410,7 @@ DasResult ConnectionManager::RegisterTransport(
                 std::chrono::steady_clock::now().time_since_epoch())
                 .count());
         info.launcher = nullptr;
+        info.host = nullptr;
         info.shm_pool = pool_ptr;
         impl_->connections_[session_id] = std::move(info);
     }
@@ -486,6 +569,49 @@ AnyTransport* ConnectionManager::GetAnyTransport(uint16_t session_id)
     }
     return nullptr;
     return nullptr;
+}
+
+TransportLookupResult ConnectionManager::FindTransport(uint16_t session_id)
+{
+    DasPtr<IInternalHost> host;
+
+    {
+        std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+
+        auto host_it = impl_->hosts_.find(session_id);
+        if (host_it != impl_->hosts_.end())
+        {
+            host = host_it->second;
+        }
+        else
+        {
+            auto conn_it = impl_->connections_.find(session_id);
+            if (conn_it != impl_->connections_.end() && conn_it->second.host)
+            {
+                host = conn_it->second.host;
+            }
+        }
+
+        if (!host)
+        {
+            auto any_it = impl_->any_transports_.find(session_id);
+            if (any_it != impl_->any_transports_.end())
+            {
+                return {
+                    DAS_S_OK,
+                    std::optional<AnyTransportRef>{
+                        std::ref(any_it->second)}};
+            }
+        }
+    }
+
+    if (host)
+    {
+        return host->GetTransport();
+    }
+
+    DAS_CORE_LOG_WARN("Transport not found for session_id = {}", session_id);
+    return {DAS_E_IPC_OBJECT_NOT_FOUND, std::nullopt};
 }
 
 DasResult ConnectionManager::SetConnectionAlive(
@@ -786,6 +912,9 @@ boost::asio::awaitable<DasResult> ConnectionManager::ForwardMessage(
 
 DasResult ConnectionManager::CleanupConnectionResources(uint16_t remote_id)
 {
+    // 清理内部 Host
+    impl_->hosts_.erase(remote_id);
+
     // 清理直接传输层
     impl_->direct_transports_.erase(remote_id);
 
@@ -811,6 +940,7 @@ DasResult ConnectionManager::CleanupConnectionResources(uint16_t remote_id)
 
     info.shm_pool = nullptr;
     info.launcher = nullptr;
+    info.host = nullptr;
     info.is_alive = false;
 
     return DAS_S_OK;

@@ -8,6 +8,7 @@
 #include <das/Core/IPC/AnyTransport.h>
 #include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/HostLauncher.h>
+#include <das/Core/IPC/IInternalHost.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <das/IDasBase.h>
@@ -45,6 +46,7 @@ struct ConnectionInfo
     bool                 is_alive;
     uint64_t             last_heartbeat_ms;
     DasPtr<HostLauncher> launcher; ///< HostLauncher 实例（DasPtr 持有引用）
+    DasPtr<IInternalHost> host; ///< Internal host owner for managed transports
     SharedMemoryPool*    shm_pool = nullptr; ///< 共享内存池（非拥有指针）
 };
 
@@ -102,6 +104,17 @@ public:
         DasPtr<HostLauncher> launcher);
 
     /**
+     * @brief Register a MainProcess-managed internal host.
+     *
+     * Internal hosts own their transport. HTTP accepted hosts intentionally do
+     * not allocate shared memory, so their ConnectionInfo::shm_pool remains
+     * nullptr.
+     */
+    DasResult RegisterInternalHost(
+        uint16_t              session_id,
+        DasPtr<IInternalHost> host);
+
+    /**
      * @brief 取消注册 HostLauncher
      *
      * @param session_id 目标会话ID
@@ -136,6 +149,14 @@ public:
      * @return AnyTransport 指针，不存在返回 nullptr
      */
     AnyTransport* GetAnyTransport(uint16_t session_id);
+
+    /**
+     * @brief Find a transport at nullable lookup boundaries.
+     *
+     * DAS_S_OK means the optional reference is engaged. Any failed result
+     * returns an empty optional.
+     */
+    TransportLookupResult FindTransport(uint16_t session_id);
 
     /**
      * @brief 注册传输层（轻量级注册，无需 HostLauncher）
