@@ -6,6 +6,7 @@
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/HostLauncher.h>
+#include <das/Core/IPC/IInternalHost.h>
 #include <das/Core/IPC/IMessageHandler.h>
 #include <das/Core/IPC/InternalCallbackHandler.h>
 #include <das/Core/IPC/IpcErrors.h>
@@ -943,6 +944,52 @@ DasResult IpcRunLoop::RegisterHostLauncher(DasPtr<HostLauncher> launcher)
     return DAS_S_OK;
 }
 
+DasResult IpcRunLoop::RegisterInternalHost(DasPtr<IInternalHost> host)
+{
+    if (!host)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    if (!connection_manager_)
+    {
+        DAS_CORE_LOG_ERROR("ConnectionManager not initialized");
+        return DAS_E_IPC_NOT_INITIALIZED;
+    }
+
+    const uint16_t session_id = host->GetSessionId();
+    auto [lookup_result, maybe_transport] = host->GetTransport();
+    if (DAS::IsFailed(lookup_result) || !maybe_transport)
+    {
+        DAS_CORE_LOG_ERROR(
+            "Internal host has no transport: session_id={}, result={}",
+            session_id,
+            lookup_result);
+        return DAS::IsFailed(lookup_result) ? lookup_result
+                                            : DAS_E_IPC_NO_CONNECTIONS;
+    }
+
+    if (!maybe_transport->get().IsConnected())
+    {
+        DAS_CORE_LOG_ERROR(
+            "Internal host transport is not connected: session_id={}",
+            session_id);
+        return DAS_E_IPC_NO_CONNECTIONS;
+    }
+
+    auto&     conn_mgr = GetConnectionManager();
+    DasResult result = conn_mgr.RegisterInternalHost(session_id, host);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+
+    StartAsyncReceiveForInternalHost(session_id, std::move(host));
+
+    DAS_CORE_LOG_INFO("Internal host registered: session_id={}", session_id);
+    return DAS_S_OK;
+}
+
 DasResult IpcRunLoop::RegisterDirectTransport(
     uint16_t                 session_id,
     Win32AsyncIpcTransport&& t)
@@ -1184,6 +1231,232 @@ boost::asio::awaitable<void> IpcRunLoop::DirectTransportReceiveLoop(
         {
             DAS_CORE_LOG_ERROR(
                 "DirectTransport receive exception: session_id={}, {}",
+                session_id,
+                e.what());
+            co_return;
+        }
+    }
+}
+
+void IpcRunLoop::StartAsyncReceiveForInternalHost(
+    uint16_t              session_id,
+    DasPtr<IInternalHost> host)
+{
+    if (!host)
+    {
+        DAS_CORE_LOG_WARN(
+            "Internal host is null, skipping receive loop: session_id={}",
+            session_id);
+        return;
+    }
+
+    if (!io_context_)
+    {
+        DAS_CORE_LOG_ERROR(
+            "Cannot start internal host receive loop without io_context: session_id={}",
+            session_id);
+        return;
+    }
+
+    boost::asio::co_spawn(
+        *io_context_,
+        InternalHostReceiveLoop(session_id, std::move(host)),
+        boost::asio::detached);
+}
+
+boost::asio::awaitable<void> IpcRunLoop::InternalHostReceiveLoop(
+    uint16_t              session_id,
+    DasPtr<IInternalHost> host)
+{
+    while (running_.load())
+    {
+        if (!host)
+        {
+            DAS_CORE_LOG_DEBUG(
+                "Internal host became null, exiting: session_id={}",
+                session_id);
+            co_return;
+        }
+
+        if (!connection_manager_)
+        {
+            DAS_CORE_LOG_ERROR(
+                "Internal host receive loop has no ConnectionManager: session_id={}",
+                session_id);
+            co_return;
+        }
+
+        auto [lookup_result, maybe_transport] =
+            connection_manager_->FindTransport(session_id);
+        if (DAS::IsFailed(lookup_result) || !maybe_transport)
+        {
+            DAS_CORE_LOG_ERROR(
+                "Internal host transport lookup failed: session_id={}, result={}",
+                session_id,
+                lookup_result);
+            co_return;
+        }
+
+        AnyTransport& transport = maybe_transport->get();
+        if (!transport.IsConnected())
+        {
+            DAS_CORE_LOG_DEBUG(
+                "Internal host transport disconnected, exiting: session_id={}",
+                session_id);
+            co_return;
+        }
+
+        try
+        {
+            auto result = co_await transport.ReceiveCoroutine();
+
+            if (!running_.load())
+            {
+                co_return;
+            }
+
+            if (result.index() == 0)
+            {
+                DasResult error_code = std::get<0>(result);
+                if (error_code != DAS_S_OK)
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "Internal host receive failed: session_id={}, error={}",
+                        session_id,
+                        error_code);
+                }
+                co_return;
+            }
+
+            auto&& [header, body] = std::get<1>(result);
+
+            DAS_CORE_LOG_INFO(
+                "InternalHost receive: session_id={}, msg_type={}, interface_id={}, call_id={}",
+                session_id,
+                static_cast<int>(header.Raw().message_type),
+                header.Raw().interface_id,
+                header.Raw().call_id);
+
+            if ((header.GetHeaderFlags() & HeaderFlags::CONTROL_PLANE) != 0)
+            {
+                if (header.GetMessageType() == MessageType::RESPONSE)
+                {
+                    CallKey call_key{
+                        header.GetSourceSessionId(),
+                        header.GetCallId()};
+                    CompletePendingCall(
+                        call_key,
+                        DAS_S_OK,
+                        std::move(body),
+                        header.GetFlags());
+                }
+                else
+                {
+                    InboundMessage msg;
+                    msg.header = header;
+                    msg.body = std::move(body);
+                    if (inbound_queue_)
+                    {
+                        auto push_result = inbound_queue_->Push(std::move(msg));
+                        if (push_result != DAS_S_OK)
+                        {
+                            DAS_CORE_LOG_ERROR(
+                                "InternalHost: failed to push control-plane message: session_id={}, result={}",
+                                session_id,
+                                push_result);
+                        }
+                    }
+                }
+            }
+            else
+            {
+                if (connection_manager_
+                    && header.GetTargetSessionId() != local_session_id_)
+                {
+                    auto* fwd_transport = connection_manager_->GetTransport(
+                        header.GetTargetSessionId());
+                    if (fwd_transport)
+                    {
+                        std::vector<uint8_t> fwd_body(body.begin(), body.end());
+                        auto                 fwd_result = PostSendWithTransport(
+                            fwd_transport,
+                            header,
+                            std::move(fwd_body));
+                        if (fwd_result != DAS_S_OK)
+                        {
+                            DAS_CORE_LOG_ERROR(
+                                "InternalHost forward failed: target={}, result={}",
+                                header.GetTargetSessionId(),
+                                fwd_result);
+                        }
+                    }
+                    else
+                    {
+                        auto [target_result, target_transport] =
+                            connection_manager_->FindTransport(
+                                header.GetTargetSessionId());
+                        if (DAS::IsFailed(target_result) || !target_transport)
+                        {
+                            DAS_CORE_LOG_ERROR(
+                                "InternalHost forward failed: no transport for target={}",
+                                header.GetTargetSessionId());
+                        }
+                        else
+                        {
+                            DAS_CORE_LOG_ERROR(
+                                "InternalHost forward found AnyTransport target={}, but AnyTransport send migration is not active yet",
+                                header.GetTargetSessionId());
+                        }
+                    }
+                    co_return;
+                }
+
+                if (header.GetMessageType() == MessageType::RESPONSE)
+                {
+                    CallKey call_key{
+                        header.GetSourceSessionId(),
+                        header.GetCallId()};
+                    CompletePendingCall(
+                        call_key,
+                        DAS_S_OK,
+                        std::move(body),
+                        header.GetFlags());
+                }
+                else
+                {
+                    InboundMessage msg;
+                    msg.header = header;
+                    msg.body = std::move(body);
+                    if (inbound_queue_)
+                    {
+                        auto push_result = inbound_queue_->Push(std::move(msg));
+                        if (push_result != DAS_S_OK)
+                        {
+                            DAS_CORE_LOG_ERROR(
+                                "InternalHost: failed to push inbound message: session_id={}, result={}",
+                                session_id,
+                                push_result);
+                        }
+                    }
+                }
+            }
+        }
+        catch (const boost::system::system_error& e)
+        {
+            if (e.code() == boost::asio::error::operation_aborted)
+            {
+                co_return;
+            }
+            DAS_CORE_LOG_ERROR(
+                "InternalHost receive error: session_id={}, {}",
+                session_id,
+                e.what());
+            co_return;
+        }
+        catch (const std::exception& e)
+        {
+            DAS_CORE_LOG_ERROR(
+                "InternalHost receive exception: session_id={}, {}",
                 session_id,
                 e.what());
             co_return;

@@ -40,6 +40,7 @@ DAS_CORE_IPC_NS_BEGIN
 class IMessageHandler;
 class IAwaitableMessageHandler;
 class ConnectionManager;
+class IInternalHost;
 class IpcRunLoop; // Forward declaration for templates
 class ProxyFactory;
 class RemoteObjectRegistry;
@@ -374,6 +375,17 @@ public:
     DasResult RegisterHostLauncher(DasPtr<HostLauncher> launcher);
 
     /**
+     * @brief 注册内部 Host 并启动接收循环
+     *
+     * 用于 MainProcess 管理的已连接 host，例如后续 HTTP accept path 创建的
+     * HttpHost。不会创建新的 IO 线程，接收协程运行在现有 io_context_ 上。
+     *
+     * @param host IInternalHost 实例（DasPtr 保持 transport owner 存活）
+     * @return DasResult DAS_S_OK 成功
+     */
+    DasResult RegisterInternalHost(DasPtr<IInternalHost> host);
+
+    /**
      * @brief 直接注册 Transport（无 HostLauncher）
      *
      * HTTP/WebSocket 传输模式下，Host 进程独立连接，无需 HostLauncher。
@@ -431,6 +443,28 @@ public:
     void StartAsyncReceiveForTransport(
         uint16_t             session_id,
         DasPtr<HostLauncher> launcher);
+
+    /**
+     * @brief 为内部 Host 启动异步接收循环
+     *
+     * 协程会捕获 host 的 DasPtr 以保持 AnyTransport owner 跨 co_await 存活。
+     *
+     * @param session_id 会话 ID
+     * @param host IInternalHost 的 DasPtr
+     */
+    void StartAsyncReceiveForInternalHost(
+        uint16_t              session_id,
+        DasPtr<IInternalHost> host);
+
+    /**
+     * @brief 内部 Host 的接收协程循环
+     *
+     * @param session_id 会话 ID
+     * @param host IInternalHost 的 DasPtr
+     */
+    boost::asio::awaitable<void> InternalHostReceiveLoop(
+        uint16_t              session_id,
+        DasPtr<IInternalHost> host);
 
     /**
      * @brief 直接传输层的接收协程循环
