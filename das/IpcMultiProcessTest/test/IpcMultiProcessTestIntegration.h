@@ -26,6 +26,7 @@
 
 // Boost 头文件（用于进程启动测试）
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/tcp.hpp>
 #include <boost/process/v2/pid.hpp>
 #include <boost/process/v2/process.hpp>
 #include <boost/process/v2/start_dir.hpp>
@@ -34,8 +35,10 @@
 #include <atomic>
 #include <chrono>
 #include <das/Core/IPC/DasAsyncSender.h>
+#include <das/Core/IPC/HttpIpcServer.h>
 #include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
+#include <das/Core/IPC/MainProcess/IpcContext.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
@@ -57,8 +60,33 @@ protected:
         DAS_CORE_LOG_INFO("DasHost path: {}", host_exe_path_);
 
         // 创建 IPC 上下文
-        ctx_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(
-            /*enable_heartbeat=*/!IpcTestConfig::ShouldDisableHeartbeat());
+        const auto* test_info =
+            ::testing::UnitTest::GetInstance()->current_test_info();
+        const bool use_http_context =
+            test_info != nullptr
+            && std::string_view(test_info->name())
+                   == "MixedTransport_HttpAndIpcHostToHostCall";
+
+        if (use_http_context)
+        {
+            http_port_ = FindFreeLoopbackPort();
+            DAS::Core::IPC::HttpIpcServer::Config http_config;
+            http_config.listen_address = "127.0.0.1";
+            http_config.listen_port = http_port_;
+
+            ctx_ = std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext>(
+                new DAS::Core::IPC::MainProcess::IpcContext(
+                    /*enable_heartbeat=*/
+                    !IpcTestConfig::ShouldDisableHeartbeat(),
+                    http_config),
+                DAS::Core::IPC::MainProcess::DestroyIpcContext);
+        }
+        else
+        {
+            ctx_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(
+                /*enable_heartbeat=*/
+                !IpcTestConfig::ShouldDisableHeartbeat());
+        }
         if (!ctx_)
         {
             throw std::runtime_error("Failed to create IpcContext");
@@ -151,8 +179,18 @@ protected:
         return DAS_S_OK;
     }
 
+    uint16_t FindFreeLoopbackPort()
+    {
+        boost::asio::io_context io_context;
+        boost::asio::ip::tcp::acceptor acceptor(
+            io_context,
+            {boost::asio::ip::make_address("127.0.0.1"), 0});
+        return acceptor.local_endpoint().port();
+    }
+
     std::string                                               host_exe_path_;
     std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ctx_;
     DAS::DasPtr<DAS::Core::IPC::IHostLauncher>                launcher_;
     std::thread                                               run_thread_;
+    uint16_t                                                  http_port_ = 0;
 };
