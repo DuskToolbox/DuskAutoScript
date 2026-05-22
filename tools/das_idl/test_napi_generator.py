@@ -1,4 +1,6 @@
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -242,6 +244,86 @@ class TestNapiGenerator(unittest.TestCase):
         )
 
         self.assertEqual(from_class, from_helper)
+
+
+class TestNapiExportCli(unittest.TestCase):
+    def test_napi_cli_requires_all_names(self):
+        script = Path(__file__).parent / "das_napi_export.py"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--idl-dir",
+                    str(temp),
+                    "--output",
+                    str(temp / "out"),
+                    "--idl-files",
+                    "Core.idl",
+                ],
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--package-name", result.stderr)
+        self.assertIn("--addon-name", result.stderr)
+
+    def test_napi_cli_merges_idl_and_uses_addon_export_stem(self):
+        script = Path(__file__).parent / "das_napi_export.py"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            idl_dir = temp / "idl"
+            output_dir = temp / "out"
+            idl_dir.mkdir()
+            (idl_dir / "Result.idl").write_text(
+                "errorcode DasResult { DAS_S_OK = 0, }",
+                encoding="utf-8",
+            )
+            (idl_dir / "Core.idl").write_text(
+                """
+                module {
+                    [export, c_abi] void DasLogInfoU8(const char* p_string);
+                }
+                """,
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--idl-dir",
+                    str(idl_dir),
+                    "--output",
+                    str(output_dir),
+                    "--package-name",
+                    "das-core",
+                    "--addon-name",
+                    "das_core_napi",
+                    "--idl-files",
+                    "Result.idl",
+                    "Core.idl",
+                ],
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            cpp = output_dir / "das_core_napi_export.cpp"
+            dts = output_dir / "das_core_napi_export.d.ts"
+            js = output_dir / "das_core_napi_export.js"
+            self.assertTrue(cpp.exists())
+            self.assertTrue(dts.exists())
+            self.assertTrue(js.exists())
+            self.assertFalse((output_dir / "das_core_napi_napi_export.cpp").exists())
+            self.assertIn(
+                '#include "das/_autogen/idl/abi/Core.h"',
+                cpp.read_text(encoding="utf-8"),
+            )
+            self.assertIn("DAS_S_OK", dts.read_text(encoding="utf-8"))
+            self.assertIn("DasLogInfoU8", js.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
