@@ -20,7 +20,6 @@ struct HttpIpcServer::Impl
     Config                   config;
     OnHostConnected          on_connected;
     std::atomic<bool>        running{false};
-    std::atomic<uint16_t>    next_session_id{2};
 
     Impl(boost::asio::io_context& ioc, Config cfg, OnHostConnected cb)
         : io_context(ioc), acceptor(ioc), config(std::move(cfg)),
@@ -157,22 +156,16 @@ struct HttpIpcServer::Impl
                     return;
                 }
 
-                uint16_t session_id = self->next_session_id.fetch_add(1);
-
                 auto endpoint_name = fmt::format(
                     "{}:{}",
                     self->config.listen_address,
                     self->config.listen_port);
 
-                DAS_CORE_LOG_INFO(
-                    "Host connected: session_id = {}, endpoint = {}",
-                    session_id,
-                    endpoint_name);
+                DAS_CORE_LOG_INFO("Host connected: endpoint = {}", endpoint_name);
 
                 if (self->on_connected)
                 {
                     self->on_connected(
-                        session_id,
                         std::move(ws),
                         endpoint_name);
                 }

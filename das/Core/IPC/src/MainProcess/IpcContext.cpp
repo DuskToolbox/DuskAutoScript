@@ -159,18 +159,37 @@ namespace Core
 
                 auto on_connected =
                     [this](
-                        uint16_t                           session_id,
                         std::unique_ptr<boost::beast::websocket::stream<
                             boost::asio::ip::tcp::socket>> ws,
                         const std::string& endpoint_name) -> DasResult
                 {
+                    const uint16_t session_id = AllocateSessionId();
+                    if (session_id == 0)
+                    {
+                        DAS_CORE_LOG_ERROR(
+                            "HTTP accept failed to allocate session_id");
+                        return DAS_E_IPC_SESSION_ALLOC_FAILED;
+                    }
+
                     // Create HttpIpcTransport from the upgraded WebSocket
                     // stream
-                    auto transport =
-                        std::make_unique<HttpIpcTransport>(std::move(*ws));
+                    try
+                    {
+                        auto transport =
+                            std::make_unique<HttpIpcTransport>(std::move(*ws));
 
-                    // Store transport to keep the connection alive
-                    http_transports_[session_id] = std::move(transport);
+                        // Store transport to keep the connection alive until
+                        // the HTTP Host handshake path owns it.
+                        http_transports_[session_id] = std::move(transport);
+                    }
+                    catch (const std::exception& e)
+                    {
+                        ReleaseSessionId(session_id);
+                        DAS_CORE_LOG_ERROR(
+                            "Failed to create HTTP IPC transport: {}",
+                            ToString(e.what()));
+                        return DAS_E_IPC_NOT_INITIALIZED;
+                    }
 
                     DAS_CORE_LOG_INFO(
                         "Host connected via HTTP: session_id={}, endpoint={}",
@@ -232,6 +251,11 @@ namespace Core
                 if (http_server_)
                 {
                     http_server_->Stop();
+                }
+                for (const auto& [session_id, transport] : http_transports_)
+                {
+                    (void)transport;
+                    ReleaseSessionId(session_id);
                 }
                 http_transports_.clear();
 

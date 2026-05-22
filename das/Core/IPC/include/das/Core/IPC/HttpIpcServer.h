@@ -18,11 +18,9 @@ DAS_DISABLE_WARNING_END
 DAS_CORE_IPC_NS_BEGIN
 
 // Callback type: Called when a Host completes WebSocket upgrade
-// session_id: the assigned session ID for this connection
 // ws: the WebSocket stream (ownership transferred to HttpIpcTransport)
 // endpoint_name: descriptive endpoint string for logging
 using OnHostConnected = std::function<DasResult(
-    uint16_t session_id,
     std::unique_ptr<
         boost::beast::websocket::stream<boost::asio::ip::tcp::socket>> ws,
     const std::string& endpoint_name)>;
