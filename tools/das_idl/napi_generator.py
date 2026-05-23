@@ -415,6 +415,7 @@ class NapiGenerator:
         lines: list[str] = [
             "// DAS Node/NAPI bindings (auto-generated - DO NOT MODIFY)",
             '#include <napi.h>',
+            "#include <limits>",
             "#include <memory>",
             "#include <string>",
             "#include <utility>",
@@ -526,15 +527,81 @@ class NapiGenerator:
         if _doc_needs_binary_buffer_conversion(doc):
             lines.extend(
                 [
+                    "enum class BinaryBufferOwnershipMode {",
+                    "    AdoptOwned,",
+                    "    BorrowAddRef,",
+                    "};",
+                    "",
+                    "struct BinaryBufferViewHolder {",
+                    "    explicit BinaryBufferViewHolder(",
+                    "        DAS::DasPtr<IDasBinaryBuffer> in_buffer)",
+                    "        : buffer(std::move(in_buffer)) {}",
+                    "",
+                    "    DAS::DasPtr<IDasBinaryBuffer> buffer;",
+                    "};",
+                    "",
+                    "DAS::DasPtr<IDasBinaryBuffer> HoldIDasBinaryBuffer(",
+                    "    IDasBinaryBuffer* raw,",
+                    "    BinaryBufferOwnershipMode ownership) {",
+                    "    if (raw == nullptr) {",
+                    "        return {};",
+                    "    }",
+                    "    if (ownership == BinaryBufferOwnershipMode::AdoptOwned) {",
+                    "        return DAS::DasPtr<IDasBinaryBuffer>::Attach(raw);",
+                    "    }",
+                    "    return DAS::DasPtr<IDasBinaryBuffer>(raw);",
+                    "}",
+                    "",
                     "Napi::Value ConvertIDasBinaryBufferToBuffer(",
                     "    Napi::Env env,",
                     "    DAS::DasPtr<IDasBinaryBuffer> buffer) {",
                     "    if (!buffer) {",
                     "        throw Napi::TypeError::New(env, \"IDasBinaryBuffer pointer must not be null\");",
                     "    }",
-                    "    throw Napi::Error::New(",
+                    "    uint64_t byte_size = 0;",
+                    "    const DasResult size_result = buffer->GetSize(&byte_size);",
+                    "    if (size_result < 0) {",
+                    "        ThrowDasException(env, size_result, \"IDasBinaryBuffer.GetSize failed\");",
+                    "        return env.Undefined();",
+                    "    }",
+                    "    if (byte_size > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {",
+                    "        throw Napi::RangeError::New(env, \"IDasBinaryBuffer size exceeds host size_t range\");",
+                    "    }",
+                    "    unsigned char* data = nullptr;",
+                    "    const DasResult data_result = buffer->GetData(&data);",
+                    "    if (data_result < 0) {",
+                    "        ThrowDasException(env, data_result, \"IDasBinaryBuffer.GetData failed\");",
+                    "        return env.Undefined();",
+                    "    }",
+                    "    if (data == nullptr) {",
+                    "        throw Napi::TypeError::New(env, \"IDasBinaryBuffer data pointer must not be null\");",
+                    "    }",
+                    "    auto holder = std::make_unique<BinaryBufferViewHolder>(std::move(buffer));",
+                    "    auto* holder_raw = holder.get();",
+                    "    auto node_buffer = Napi::Buffer<unsigned char>::New(",
                     "        env,",
-                    "        \"IDasBinaryBuffer Buffer conversion is deferred to Phase 74 Plan 04\");",
+                    "        data,",
+                    "        static_cast<size_t>(byte_size),",
+                    "        [](",
+                    "            Napi::Env finalizer_env,",
+                    "            unsigned char* finalizer_data,",
+                    "            BinaryBufferViewHolder* finalizer_holder) {",
+                    "            (void)finalizer_env;",
+                    "            (void)finalizer_data;",
+                    "            delete finalizer_holder;",
+                    "        },",
+                    "        holder_raw);",
+                    "    holder.release();",
+                    "    return node_buffer;",
+                    "}",
+                    "",
+                    "Napi::Value ConvertIDasBinaryBufferToBuffer(",
+                    "    Napi::Env env,",
+                    "    IDasBinaryBuffer* raw,",
+                    "    BinaryBufferOwnershipMode ownership) {",
+                    "    return ConvertIDasBinaryBufferToBuffer(",
+                    "        env,",
+                    "        HoldIDasBinaryBuffer(raw, ownership));",
                     "}",
                     "",
                 ]
@@ -1095,11 +1162,7 @@ class NapiGenerator:
         value_type = _value_type_for_out_param(param)
         value_name = f"{_sanitize_identifier(param.name)}_value"
         if _is_binary_buffer_interface(value_type):
-            return self._generate_cpp_owned_interface_out_value(
-                param,
-                value_type,
-                f"ConvertIDasBinaryBufferToBuffer(env, std::move({_sanitize_identifier(param.name)}_owned))",
-            )
+            return self._generate_cpp_binary_buffer_out_value(param)
         if _is_readonly_string_interface_pointer(value_type):
             return self._generate_cpp_owned_interface_out_value(
                 param,
@@ -1134,6 +1197,20 @@ class NapiGenerator:
             raise AssertionError(f"unsupported out value type {type_simple_name(value_type)}")
         del method
         return [], self._cpp_return_expression(value_name, mapped)
+
+    def _generate_cpp_binary_buffer_out_value(
+        self,
+        param: ParameterDef,
+    ) -> tuple[list[str], str]:
+        value_name = f"{_sanitize_identifier(param.name)}_value"
+        return [
+            f"    if ({value_name} == nullptr) {{",
+            f'        throw Napi::Error::New(env, "native method returned null {param.name}");',
+            "    }",
+        ], (
+            "ConvertIDasBinaryBufferToBuffer("
+            f"env, {value_name}, BinaryBufferOwnershipMode::AdoptOwned)"
+        )
 
     def _generate_cpp_owned_interface_out_value(
         self,
@@ -1397,11 +1474,23 @@ class NapiGenerator:
         lines = [
             "// DAS Node/NAPI declarations (auto-generated - DO NOT MODIFY)",
             f"// Package: {self.package_name}",
-            '/// <reference types="node" />',
             "",
+        ]
+        if _doc_needs_binary_buffer_conversion(doc):
+            lines.extend(
+                [
+                    "export interface Buffer extends Uint8Array {",
+                    "  readonly buffer: ArrayBufferLike;",
+                    "}",
+                    "",
+                ]
+            )
+        lines.extend(
+            [
             "export type DasResult = number & { readonly __dasResultBrand?: unique symbol };",
             "export const DasResult: Readonly<{",
-        ]
+            ]
+        )
         for error_code in doc.error_codes:
             for value in error_code.values:
                 lines.append(f"  {value.name}: {value.value};")

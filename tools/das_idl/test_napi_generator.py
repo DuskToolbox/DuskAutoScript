@@ -459,7 +459,7 @@ class TestNapiGenerator(unittest.TestCase):
             artifacts.cpp,
         )
         self.assertIn(
-            "return ConvertIDasBinaryBufferToBuffer(env, std::move(pp_out_buffer_owned));",
+            "return ConvertIDasBinaryBufferToBuffer(env, pp_out_buffer_value, BinaryBufferOwnershipMode::AdoptOwned);",
             artifacts.cpp,
         )
         self.assertNotIn("IDasBinaryBufferWrapper::WrapAdopted(env, std::move(pp_out_buffer_owned))", artifacts.cpp)
@@ -542,7 +542,10 @@ class TestNapiGenerator(unittest.TestCase):
             'output.Set("buffer", ConvertIDasBinaryBufferToBuffer(env, pp_out_buffer_value, BinaryBufferOwnershipMode::AdoptOwned));',
             artifacts.cpp,
         )
-        self.assertNotIn("IDasBinaryBufferWrapper::WrapAdopted", artifacts.cpp)
+        self.assertNotIn(
+            "IDasBinaryBufferWrapper::WrapAdopted(env, std::move(pp_out_buffer_owned))",
+            artifacts.cpp,
+        )
 
     def test_napi_phase74_dts_declares_buffer_without_package_workflow(self):
         artifacts = generate_napi_artifacts(
