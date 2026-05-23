@@ -339,6 +339,61 @@ class TestNapiGenerator(unittest.TestCase):
         self.assertNotIn("GetBinaryBuffer():", artifacts.dts)
         self.assertNotIn("getSizeEz", artifacts.js)
 
+    def test_napi_phase74_cpp_generates_owned_object_wrappers(self):
+        artifacts = generate_napi_artifacts(
+            _phase74_contract_doc(),
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+
+        self.assertIn("class DasInterfaceWrapperBase", artifacts.cpp)
+        self.assertIn("public Napi::ObjectWrap<WrapperT>", artifacts.cpp)
+        self.assertIn("DAS::DasPtr<InterfaceT> native_", artifacts.cpp)
+        self.assertIn("enum class OwnershipMode", artifacts.cpp)
+        self.assertIn("WrapAdopted", artifacts.cpp)
+        self.assertIn("WrapBorrowed", artifacts.cpp)
+        self.assertIn("DAS::DasPtr<InterfaceT>::Attach(raw)", artifacts.cpp)
+        self.assertIn("EnsureAlive", artifacts.cpp)
+        self.assertIn('"DAS interface wrapper has been disposed"', artifacts.cpp)
+        self.assertIn("void Finalize(Napi::Env env) override", artifacts.cpp)
+        self.assertIn("class IDasImageWrapper final", artifacts.cpp)
+        self.assertIn("class IDasComponentWrapper final", artifacts.cpp)
+        self.assertIn("IDasImageWrapper::WrapAdopted", artifacts.cpp)
+        self.assertIn("IDasComponentWrapper::WrapAdopted", artifacts.cpp)
+
+    def test_napi_phase74_public_surface_hides_com_refcounting(self):
+        artifacts = generate_napi_artifacts(
+            _phase74_contract_doc(),
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+
+        public_text = "\n".join([artifacts.dts, artifacts.js])
+        self.assertIn("dispose(): void;", artifacts.dts)
+        self.assertIn("dispose() {", artifacts.js)
+        self.assertNotRegex(public_text, r"\bAddRef\b")
+        self.assertNotRegex(public_text, r"\bRelease\b")
+        self.assertNotRegex(public_text, r"\bQueryInterface\b")
+
+    def test_napi_phase74_static_from_uses_internal_query_interface(self):
+        artifacts = generate_napi_artifacts(
+            _phase74_contract_doc(),
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+
+        self.assertIn("static from(base: IDasBase): IDasComponent;", artifacts.dts)
+        self.assertIn("static from(base) {", artifacts.js)
+        self.assertIn("native.IDasComponent_from(base._native)", artifacts.js)
+        self.assertIn("Napi::Value IDasComponent_from", artifacts.cpp)
+        self.assertIn("ExtractIDasBaseFromWrapper", artifacts.cpp)
+        self.assertIn("base->QueryInterface(DasIidOf<IDasComponent>()", artifacts.cpp)
+        self.assertIn(
+            "DAS::DasPtr<IDasComponent>::Attach(static_cast<IDasComponent*>(cast_object))",
+            artifacts.cpp,
+        )
+        self.assertIn("IDasComponentWrapper::WrapAdopted", artifacts.cpp)
+
     def test_napi_phase74_out_field_names_are_cleaned(self):
         artifacts = generate_napi_artifacts(
             _phase74_contract_doc(),
