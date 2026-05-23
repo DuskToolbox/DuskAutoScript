@@ -3,12 +3,14 @@
 
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHostEnum.h>
+#include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
 #include <das/DasPtr.hpp>
 #include <das/IDasBase.h>
 #include <das/Utils/Expected.h>
 
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
@@ -36,6 +38,14 @@ public:
     virtual auto LoadPlugin(const RuntimeLoadRequest& request)
         -> DAS::Utils::Expected<RuntimeLoadResult> = 0;
 };
+
+DAS_API auto CreateLocalRuntimeProvider(
+    DAS::DasPtr<IForeignLanguageRuntime> runtime)
+    -> DAS::Utils::Expected<std::unique_ptr<IRuntimeProvider>>;
+
+DAS_API auto CreateLocalRuntimeProvider(
+    const ForeignLanguageRuntimeFactoryDesc& desc)
+    -> DAS::Utils::Expected<std::unique_ptr<IRuntimeProvider>>;
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
 

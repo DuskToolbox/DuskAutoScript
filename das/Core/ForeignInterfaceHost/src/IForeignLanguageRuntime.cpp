@@ -41,6 +41,8 @@ auto CreateForeignLanguageRuntime(
 #endif // DAS_EXPORT_LUA
     case Cpp:
         return CppHost::CreateForeignLanguageRuntime(desc_base);
+    case Node:
+        goto on_no_interface;
     default:
         throw DAS::Utils::UnexpectedEnumException::FromEnum(desc_base.language);
     }
