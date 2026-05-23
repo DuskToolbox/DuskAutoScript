@@ -1006,5 +1006,21 @@ class TestNapiExportCli(unittest.TestCase):
             self.assertIn("DasLogInfoU8", js.read_text(encoding="utf-8"))
 
 
+class TestNodeHostBootstrapScript(unittest.TestCase):
+    def test_package_local_bootstrap_contract_is_pinned(self):
+        script = Path(__file__).parent / "node_host" / "das-node-host.cjs"
+
+        self.assertTrue(script.exists())
+        text = script.read_text(encoding="utf-8")
+        self.assertIn("'use strict';", text)
+        self.assertIn("require(path.join(__dirname, 'das_core_napi_export.js'))", text)
+        self.assertIn("--dry-run-parse", text)
+        self.assertIn("--main-pid", text)
+        self.assertIn("--connect-url", text)
+        self.assertIn("startHostIpc", text)
+        self.assertNotIn("shutdownPlugin", text)
+        self.assertNotIn("onPluginShutdown", text)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -168,6 +168,7 @@ class TestNapiBatchConfig(unittest.TestCase):
             self.assertCountEqual(
                 node_outputs,
                 [
+                    f"{node_dir}/das-node-host.cjs".replace("\\", "/"),
                     f"{node_dir}/das_core_napi_export.cpp".replace("\\", "/"),
                     f"{node_dir}/das_core_napi_export.d.ts".replace("\\", "/"),
                     f"{node_dir}/das_core_napi_export.js".replace("\\", "/"),
@@ -214,12 +215,15 @@ class TestNapiBatchConfig(unittest.TestCase):
             cpp = node_dir / "das_core_napi_export.cpp"
             dts = node_dir / "das_core_napi_export.d.ts"
             js = node_dir / "das_core_napi_export.js"
+            host_script = node_dir / "das-node-host.cjs"
             self.assertTrue(cpp.exists())
             self.assertTrue(dts.exists())
             self.assertTrue(js.exists())
+            self.assertTrue(host_script.exists())
             self.assertIn("NODE_API_MODULE(das_core_napi, Init)", cpp.read_text(encoding="utf-8"))
             self.assertIn("// Package: das-core", dts.read_text(encoding="utf-8"))
             self.assertIn("das_core_napi.node", js.read_text(encoding="utf-8"))
+            self.assertIn("--dry-run-parse", host_script.read_text(encoding="utf-8"))
 
     def test_batch_execution_rejects_incomplete_node_reduce_config(self):
         with tempfile.TemporaryDirectory() as temp_dir:
