@@ -297,19 +297,16 @@ DasResult PluginManager::LoadPlugin(
                         DAS_CORE_LOG_WARN(
                             "Failed to parse manifest for {}",
                             path_str);
+                        manifest_parse_result = DAS_E_INVALID_JSON;
                     }
                 }
                 catch (const std::exception& e)
                 {
-                    const std::string reason = e.what();
                     DAS_CORE_LOG_WARN(
                         "Failed to parse manifest for {}: {}",
                         path_str,
-                        reason);
-                    if (reason.find("taskComponents") != std::string::npos)
-                    {
-                        manifest_parse_result = DAS_E_INVALID_JSON;
-                    }
+                        e.what());
+                    manifest_parse_result = DAS_E_INVALID_JSON;
                 }
             }
         }
