@@ -217,12 +217,17 @@ namespace
             -> DAS::Utils::Expected<DasPtr<IDasBase>> override
         {
             loaded_paths.push_back(path);
+            if (DAS::IsFailed(load_error))
+            {
+                return tl::make_unexpected(load_error);
+            }
             auto* package = new CapturingPluginPackage();
             package->AddRef();
             return DasPtr<IDasBase>::Attach(static_cast<IDasBase*>(package));
         }
 
         std::vector<std::filesystem::path> loaded_paths;
+        DasResult                          load_error = DAS_S_OK;
 
     private:
         std::atomic<uint32_t> ref_count_{0};
@@ -1582,6 +1587,59 @@ TEST_F(PluginManagerGuidTest, RuntimeLoadResult_CarriesObjectAndOwnerSession)
 
     EXPECT_NE(result.object.Get(), nullptr);
     EXPECT_EQ(result.owner_session_id, 23);
+}
+
+TEST_F(PluginManagerGuidTest, LocalRuntimeProvider_LoadsViaRuntimePath)
+{
+    auto* raw_runtime = new CapturingRuntime();
+    auto  runtime = DasPtr<IForeignLanguageRuntime>(raw_runtime);
+    auto  provider = CreateLocalRuntimeProvider(std::move(runtime));
+    ASSERT_TRUE(provider);
+
+    RuntimeLoadRequest request{};
+    request.manifest_path = std::filesystem::path{"plugins/TestPlugin.json"};
+    request.runtime_path = std::filesystem::path{"plugins"};
+    request.plugin_guid = MakeTaskComponentTestGuid(0x75040002);
+    request.language = ForeignInterfaceLanguage::Cpp;
+    request.load_mode = LoadMode::InProcess;
+    request.main_process_owner_session_id = 41;
+
+    auto result = provider.value()->LoadPlugin(request);
+
+    ASSERT_TRUE(result);
+    EXPECT_EQ(raw_runtime->loaded_paths.size(), 1u);
+    EXPECT_EQ(raw_runtime->loaded_paths.front(), request.runtime_path);
+    EXPECT_NE(result->object.Get(), nullptr);
+    EXPECT_EQ(result->owner_session_id, 41);
+}
+
+TEST_F(PluginManagerGuidTest, LocalRuntimeProvider_PropagatesRuntimeError)
+{
+    auto* raw_runtime = new CapturingRuntime();
+    raw_runtime->load_error = DAS_E_FILE_NOT_FOUND;
+    auto runtime = DasPtr<IForeignLanguageRuntime>(raw_runtime);
+    auto provider = CreateLocalRuntimeProvider(std::move(runtime));
+    ASSERT_TRUE(provider);
+
+    RuntimeLoadRequest request{};
+    request.runtime_path = std::filesystem::path{"missing.json"};
+    request.main_process_owner_session_id = 41;
+
+    auto result = provider.value()->LoadPlugin(request);
+
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error(), DAS_E_FILE_NOT_FOUND);
+}
+
+TEST_F(PluginManagerGuidTest, LocalRuntimeProvider_NodeReturnsNoImplementation)
+{
+    ForeignLanguageRuntimeFactoryDesc desc{};
+    desc.language = ForeignInterfaceLanguage::Node;
+
+    auto provider = CreateLocalRuntimeProvider(desc);
+
+    ASSERT_FALSE(provider);
+    EXPECT_EQ(provider.error(), DAS_E_NO_IMPLEMENTATION);
 }
 
 TEST_F(PluginManagerGuidTest, SetHostExePath)
