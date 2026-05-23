@@ -235,6 +235,33 @@ TEST(PluginPackageDescTest, FromBasicJson)
     EXPECT_EQ(plugin_desc.guid, guid);
 }
 
+TEST(PluginPackageDescTest, Language_ExactNodeString)
+{
+    const auto desc =
+        JsonToStruct<DAS::Core::ForeignInterfaceHost::PluginPackageDesc>(
+            BasicPluginJsonWith(R"("language": "Node")"));
+
+    EXPECT_EQ(
+        desc.language,
+        DAS::Core::ForeignInterfaceHost::ForeignInterfaceLanguage::Node);
+}
+
+TEST(PluginPackageDescTest, Language_LowercaseNodeFails)
+{
+    try
+    {
+        (void)JsonToStruct<
+            DAS::Core::ForeignInterfaceHost::PluginPackageDesc>(
+            BasicPluginJsonWith(R"("language": "node")"));
+        FAIL() << "Lowercase node language should fail";
+    }
+    catch (const std::runtime_error& e)
+    {
+        EXPECT_NE(std::string{e.what()}.find("language"), std::string::npos)
+            << e.what();
+    }
+}
+
 TEST(PluginPackageDescTest, LoadMode_MissingDefaultsToInProcess)
 {
     const auto desc =
