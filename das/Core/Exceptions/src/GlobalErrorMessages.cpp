@@ -36,6 +36,8 @@ namespace Details
             {DAS_E_PYTHON_ERROR, "Python error"},
             {DAS_E_JAVA_ERROR, "Java error"},
             {DAS_E_CSHARP_ERROR, "C# error"},
+            {DAS_E_JAVASCRIPT_ERROR, "JavaScript error"},
+            {DAS_E_JAVASCRIPT_NO_IMPLEMENTATION, "JavaScript callback not implemented"},
             {DAS_E_OPENCV_ERROR, "OpenCV error"},
             {DAS_E_ONNX_RUNTIME_ERROR, "ONNX runtime error"},
             {DAS_E_INTERNAL_FATAL_ERROR, "Internal fatal error"},
