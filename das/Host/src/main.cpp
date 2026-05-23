@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
 #include <das/Core/IPC/HandshakeSerialization.h>
+#include <das/Core/IPC/Host/HostCommandHandlers.h>
 #include <das/Core/IPC/Host/IIpcContext.h>
 #include <das/Core/IPC/IDistributedObjectManager.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
@@ -49,348 +50,124 @@ namespace
 
     static DAS::DasPtr<DAS::Core::ForeignInterfaceHost::IForeignLanguageRuntime>
         g_runtime;
-}
 
-// 注册 LOAD_PLUGIN 处理器
-void RegisterLoadPluginHandler(DAS::Core::IPC::Host::IIpcContext* ctx)
-{
-    ctx->RegisterCommandHandler(
-        static_cast<uint32_t>(DAS::Core::IPC::IpcCommandType::LOAD_PLUGIN),
-        [ctx](
-            const DAS::Core::IPC::ValidatedIPCMessageHeader& header,
-            std::span<const uint8_t>                         payload,
-            DAS::Core::IPC::IpcCommandResponse& response) -> DasResult
+    auto LoadPluginWithNativeRuntime(const std::filesystem::path& manifest_path)
+        -> DAS::Utils::Expected<DAS::DasPtr<IDasBase>>
+    {
+        std::ifstream json_file(manifest_path);
+        if (!json_file.is_open())
         {
-            (void)header;
+            std::string msg = DAS_FMT_NS::format(
+                "无法打开 manifest 文件: {}",
+                manifest_path.string());
+            DAS_LOG_ERROR(msg.c_str());
+            return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+        }
 
-            std::string manifest_path;
-            size_t      offset = 0;
-            if (!DAS::Core::IPC::DeserializeString(
-                    payload,
-                    offset,
-                    manifest_path))
-            {
-                response.error_code = DAS_E_IPC_INVALID_MESSAGE_BODY;
-                return DAS_E_IPC_INVALID_MESSAGE_BODY;
-            }
-
-            std::ifstream json_file(manifest_path);
-            if (!json_file.is_open())
-            {
-                std::string msg = DAS_FMT_NS::format(
-                    "无法打开 manifest 文件: {}",
-                    manifest_path);
-                DAS_LOG_ERROR(msg.c_str());
-                response.error_code = DAS_E_IPC_PLUGIN_LOAD_FAILED;
-                response.response_data.clear();
-                return DAS_E_IPC_PLUGIN_LOAD_FAILED;
-            }
-
-            std::string manifest_content(
-                (std::istreambuf_iterator<char>(json_file)),
-                std::istreambuf_iterator<char>());
-            auto manifest_json_opt =
-                Das::Utils::ParseYyjsonFromString(manifest_content);
-            if (!manifest_json_opt)
-            {
-                std::string msg = DAS_FMT_NS::format(
-                    "解析 manifest JSON 失败: {}",
-                    manifest_path);
-                DAS_LOG_ERROR(msg.c_str());
-                response.error_code = DAS_E_IPC_PLUGIN_LOAD_FAILED;
-                response.response_data.clear();
-                return DAS_E_IPC_PLUGIN_LOAD_FAILED;
-            }
-            yyjson::value manifest_json = std::move(*manifest_json_opt);
-
-            std::string plugin_language;
-            {
-                auto manifest_obj = manifest_json.as_object();
-                if (!manifest_obj)
-                {
-                    std::string msg =
-                        "提取插件信息失败: manifest root is not an object";
-                    DAS_LOG_ERROR(msg.c_str());
-                    response.error_code = DAS_E_IPC_PLUGIN_LOAD_FAILED;
-                    response.response_data.clear();
-                    return DAS_E_IPC_PLUGIN_LOAD_FAILED;
-                }
-                auto language_val =
-                    (*manifest_obj)[std::string_view("language")];
-                auto language_str = language_val.as_string();
-                if (!language_str)
-                {
-                    std::string msg =
-                        "提取插件信息失败: manifest missing 'language' field";
-                    DAS_LOG_ERROR(msg.c_str());
-                    response.error_code = DAS_E_IPC_PLUGIN_LOAD_FAILED;
-                    response.response_data.clear();
-                    return DAS_E_IPC_PLUGIN_LOAD_FAILED;
-                }
-                plugin_language = std::string(*language_str);
-            }
-
-            std::string lang_lower;
-            std::transform(
-                plugin_language.begin(),
-                plugin_language.end(),
-                std::back_inserter(lang_lower),
-                [](unsigned char c) { return std::tolower(c); });
-
-            if (!g_runtime)
-            {
-                DAS::Core::ForeignInterfaceHost::
-                    ForeignLanguageRuntimeFactoryDesc desc;
-
-                if (lang_lower == "python")
-                {
-                    desc.language = DAS::Core::ForeignInterfaceHost::
-                        ForeignInterfaceLanguage::Python;
-                }
-                else if (lang_lower == "java")
-                {
-                    desc.language = DAS::Core::ForeignInterfaceHost::
-                        ForeignInterfaceLanguage::Java;
-                }
-                else if (lang_lower == "lua")
-                {
-                    desc.language = DAS::Core::ForeignInterfaceHost::
-                        ForeignInterfaceLanguage::Lua;
-                }
-                else
-                {
-                    desc.language = DAS::Core::ForeignInterfaceHost::
-                        ForeignInterfaceLanguage::Cpp;
-                }
-
-                auto result = DAS::Core::ForeignInterfaceHost::
-                    CreateForeignLanguageRuntime(desc);
-                if (result.has_value())
-                {
-                    g_runtime = std::move(result.value());
-                    std::string msg = DAS_FMT_NS::format(
-                        "Runtime initialized: {}",
-                        plugin_language);
-                    DAS_LOG_INFO(msg.c_str());
-                }
-                else
-                {
-                    std::string msg = DAS_FMT_NS::format(
-                        "Failed to create runtime: {}",
-                        plugin_language);
-                    DAS_LOG_ERROR(msg.c_str());
-                    response.error_code = DAS_E_IPC_PLUGIN_LOAD_FAILED;
-                    response.response_data.clear();
-                    return DAS_E_IPC_PLUGIN_LOAD_FAILED;
-                }
-            }
-
-            std::string msg =
-                DAS_FMT_NS::format("Loading plugin: {}", manifest_path);
-            DAS_LOG_INFO(msg.c_str());
-
-            auto result = g_runtime->LoadPlugin(manifest_path);
-            if (!result.has_value())
-            {
-                std::string err_msg =
-                    DAS_FMT_NS::format("Plugin load failed: {}", manifest_path);
-                DAS_LOG_ERROR(err_msg.c_str());
-                response.error_code = DAS_E_IPC_PLUGIN_LOAD_FAILED;
-                response.response_data.clear();
-                return DAS_E_IPC_PLUGIN_LOAD_FAILED;
-            }
-
-            auto plugin_ptr = result.value();
-
-            // 直接注册 IDasBase*（实际为 IDasPluginPackage），
-            // 主进程通过 QueryInterface → EnumFeature → CreateFeatureInterface
-            // 远程获取
-            DAS::Core::IPC::ObjectId object_id;
-            DasResult                reg_result =
-                ctx->RegisterLocalObject(plugin_ptr.Get(), object_id);
-
-            if (DAS::IsFailed(reg_result))
-            {
-                std::string msg = DAS_FMT_NS::format(
-                    "[LOAD_PLUGIN] 对象注册失败: {}",
-                    static_cast<uint32_t>(reg_result));
-                DAS_LOG_ERROR(msg.c_str());
-                response.error_code = reg_result;
-                response.response_data.clear();
-                return reg_result;
-            }
-
-            response.error_code = DAS_S_OK;
-
-            response.response_data.push_back(object_id.session_id & 0xFF);
-            response.response_data.push_back(
-                (object_id.session_id >> 8) & 0xFF);
-            response.response_data.push_back(object_id.generation & 0xFF);
-            response.response_data.push_back(
-                (object_id.generation >> 8) & 0xFF);
-            response.response_data.push_back(object_id.local_id & 0xFF);
-            response.response_data.push_back((object_id.local_id >> 8) & 0xFF);
-            response.response_data.push_back((object_id.local_id >> 16) & 0xFF);
-            response.response_data.push_back((object_id.local_id >> 24) & 0xFF);
-
-            const DasGuid iid = DAS_IID_PLUGIN_PACKAGE;
-            response.response_data.insert(
-                response.response_data.end(),
-                reinterpret_cast<const uint8_t*>(&iid),
-                reinterpret_cast<const uint8_t*>(&iid) + sizeof(DasGuid));
-
-            response.response_data.push_back(object_id.session_id & 0xFF);
-            response.response_data.push_back(
-                (object_id.session_id >> 8) & 0xFF);
-
-            uint16_t version = 1;
-            response.response_data.push_back(version & 0xFF);
-            response.response_data.push_back((version >> 8) & 0xFF);
-
-            std::string log_msg = DAS_FMT_NS::format(
-                "[LOAD_PLUGIN] 插件已加载, object_id={{session:{}, gen:{}, local:{}}}",
-                object_id.session_id,
-                object_id.generation,
-                object_id.local_id);
-            DAS_LOG_INFO(log_msg.c_str());
-            return DAS_S_OK;
-        });
-}
-
-// 注册 QUERY_INTERFACE 处理器
-void RegisterQueryInterfaceHandler(DAS::Core::IPC::Host::IIpcContext* ctx)
-{
-    ctx->RegisterCommandHandler(
-        static_cast<uint32_t>(DAS::Core::IPC::IpcCommandType::QUERY_INTERFACE),
-        [ctx](
-            const DAS::Core::IPC::ValidatedIPCMessageHeader& header,
-            std::span<const uint8_t>                         payload,
-            DAS::Core::IPC::IpcCommandResponse& response) -> DasResult
+        std::string manifest_content(
+            (std::istreambuf_iterator<char>(json_file)),
+            std::istreambuf_iterator<char>());
+        auto manifest_json_opt =
+            Das::Utils::ParseYyjsonFromString(manifest_content);
+        if (!manifest_json_opt)
         {
-            (void)header;
+            std::string msg = DAS_FMT_NS::format(
+                "解析 manifest JSON 失败: {}",
+                manifest_path.string());
+            DAS_LOG_ERROR(msg.c_str());
+            return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+        }
+        yyjson::value manifest_json = std::move(*manifest_json_opt);
 
-            if (payload.size()
-                < sizeof(DAS::Core::IPC::ObjectId) + sizeof(DasGuid))
+        std::string plugin_language;
+        {
+            auto manifest_obj = manifest_json.as_object();
+            if (!manifest_obj)
             {
-                std::string qi_log_msg = DAS_FMT_NS::format(
-                    "[QUERY_INTERFACE] payload too small: {}",
-                    payload.size());
-                DAS_LOG_ERROR(qi_log_msg.c_str());
-                response.error_code = DAS_E_IPC_INVALID_MESSAGE_BODY;
-                response.response_data.clear();
-                return DAS_E_IPC_INVALID_MESSAGE_BODY;
+                std::string msg =
+                    "提取插件信息失败: manifest root is not an object";
+                DAS_LOG_ERROR(msg.c_str());
+                return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+            }
+            auto language_val = (*manifest_obj)[std::string_view("language")];
+            auto language_str = language_val.as_string();
+            if (!language_str)
+            {
+                std::string msg =
+                    "提取插件信息失败: manifest missing 'language' field";
+                DAS_LOG_ERROR(msg.c_str());
+                return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+            }
+            plugin_language = std::string(*language_str);
+        }
+
+        std::string lang_lower;
+        std::transform(
+            plugin_language.begin(),
+            plugin_language.end(),
+            std::back_inserter(lang_lower),
+            [](unsigned char c) { return std::tolower(c); });
+
+        if (!g_runtime)
+        {
+            DAS::Core::ForeignInterfaceHost::
+                ForeignLanguageRuntimeFactoryDesc desc;
+
+            if (lang_lower == "python")
+            {
+                desc.language = DAS::Core::ForeignInterfaceHost::
+                    ForeignInterfaceLanguage::Python;
+            }
+            else if (lang_lower == "java")
+            {
+                desc.language = DAS::Core::ForeignInterfaceHost::
+                    ForeignInterfaceLanguage::Java;
+            }
+            else if (lang_lower == "lua")
+            {
+                desc.language = DAS::Core::ForeignInterfaceHost::
+                    ForeignInterfaceLanguage::Lua;
+            }
+            else
+            {
+                desc.language = DAS::Core::ForeignInterfaceHost::
+                    ForeignInterfaceLanguage::Cpp;
             }
 
-            size_t offset = 0;
-
-            // 1. 反序列化 ObjectId
-            DAS::Core::IPC::ObjectId object_id;
-            std::memcpy(&object_id, payload.data() + offset, sizeof(object_id));
-            offset += sizeof(object_id);
-
-            // 2. 反序列化 DasGuid
-            DasGuid iid;
-            std::memcpy(&iid, payload.data() + offset, sizeof(iid));
-            offset += sizeof(iid);
-
-            // 3. 查找真实对象（LookupObject 内部 AddRef）
-            DAS::DasPtr<IDasBase> raw_obj;
-            DasResult             lookup_result =
-                ctx->GetObjectManager().LookupObject(object_id, raw_obj.Put());
-            if (DAS::IsFailed(lookup_result))
+            auto result =
+                DAS::Core::ForeignInterfaceHost::CreateForeignLanguageRuntime(
+                    desc);
+            if (result.has_value())
             {
-                std::string qi_log_msg = DAS_FMT_NS::format(
-                    "[QUERY_INTERFACE] LookupObject failed: session={}, local={}, result={}",
-                    object_id.session_id,
-                    object_id.local_id,
-                    lookup_result);
-                DAS_LOG_ERROR(qi_log_msg.c_str());
-                response.error_code = lookup_result;
-                response.response_data.clear();
-                return lookup_result;
+                g_runtime = std::move(result.value());
+                std::string msg = DAS_FMT_NS::format(
+                    "Runtime initialized: {}",
+                    plugin_language);
+                DAS_LOG_INFO(msg.c_str());
             }
-
-            // 4. 调用真实对象的 QueryInterface
-            DAS::DasPtr<IDasBase> new_obj;
-            DasResult             qi_result =
-                raw_obj->QueryInterface(iid, new_obj.PutVoid());
-            if (DAS::IsFailed(qi_result))
+            else
             {
-                std::string qi_log_msg = DAS_FMT_NS::format(
-                    "[QUERY_INTERFACE] QueryInterface returned: {}",
-                    qi_result);
-                DAS_LOG_INFO(qi_log_msg.c_str());
-                response.error_code = qi_result;
-
-                // 返回失败结果：int32(result) + uint32(0) + uint64(0)
-                int32_t fail_result = static_cast<int32_t>(qi_result);
-                response.response_data.clear();
-                response.response_data.insert(
-                    response.response_data.end(),
-                    reinterpret_cast<const uint8_t*>(&fail_result),
-                    reinterpret_cast<const uint8_t*>(&fail_result)
-                        + sizeof(fail_result));
-                uint32_t zero32 = 0;
-                response.response_data.insert(
-                    response.response_data.end(),
-                    reinterpret_cast<const uint8_t*>(&zero32),
-                    reinterpret_cast<const uint8_t*>(&zero32) + sizeof(zero32));
-                uint64_t zero64 = 0;
-                response.response_data.insert(
-                    response.response_data.end(),
-                    reinterpret_cast<const uint8_t*>(&zero64),
-                    reinterpret_cast<const uint8_t*>(&zero64) + sizeof(zero64));
-                return qi_result;
+                std::string msg = DAS_FMT_NS::format(
+                    "Failed to create runtime: {}",
+                    plugin_language);
+                DAS_LOG_ERROR(msg.c_str());
+                return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
             }
+        }
 
-            // 5. 注册新接口指针为本地对象
-            DAS::Core::IPC::ObjectId new_obj_id;
-            DasResult                reg_result =
-                ctx->RegisterLocalObject(new_obj.Get(), new_obj_id);
-            if (DAS::IsFailed(reg_result))
-            {
-                response.error_code = reg_result;
-                response.response_data.clear();
-                return reg_result;
-            }
+        auto result = g_runtime->LoadPlugin(manifest_path);
+        if (!result.has_value())
+        {
+            std::string err_msg = DAS_FMT_NS::format(
+                "Plugin load failed: {}",
+                manifest_path.string());
+            DAS_LOG_ERROR(err_msg.c_str());
+            return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+        }
 
-            // 6. 构造响应：int32(result) + uint32(interface_id) +
-            // uint64(encoded
-            //    object_id)
-            uint32_t interface_id = DAS::Core::IPC::ComputeInterfaceId(iid);
-            uint64_t encoded_id = DAS::Core::IPC::EncodeObjectId(new_obj_id);
-
-            response.error_code = DAS_S_OK;
-            response.response_data.clear();
-
-            int32_t ok_result = static_cast<int32_t>(DAS_S_OK);
-            response.response_data.insert(
-                response.response_data.end(),
-                reinterpret_cast<const uint8_t*>(&ok_result),
-                reinterpret_cast<const uint8_t*>(&ok_result)
-                    + sizeof(ok_result));
-            response.response_data.insert(
-                response.response_data.end(),
-                reinterpret_cast<const uint8_t*>(&interface_id),
-                reinterpret_cast<const uint8_t*>(&interface_id)
-                    + sizeof(interface_id));
-            response.response_data.insert(
-                response.response_data.end(),
-                reinterpret_cast<const uint8_t*>(&encoded_id),
-                reinterpret_cast<const uint8_t*>(&encoded_id)
-                    + sizeof(encoded_id));
-
-            std::string qi_log_msg = DAS_FMT_NS::format(
-                "[QUERY_INTERFACE] success: iid_hash=0x{:08X}, new_obj_id={{session:{}, gen:{}, local:{}}}",
-                interface_id,
-                new_obj_id.session_id,
-                new_obj_id.generation,
-                new_obj_id.local_id);
-            DAS_LOG_INFO(qi_log_msg.c_str());
-
-            return DAS_S_OK;
-        });
-}
+        return result.value();
+    }
+} // namespace
 
 int main(int argc, char* argv[])
 {
@@ -538,8 +315,20 @@ int main(int argc, char* argv[])
 
         g_ipc_context = ctx.get();
 
-        RegisterLoadPluginHandler(ctx.get());
-        RegisterQueryInterfaceHandler(ctx.get());
+        DAS::Core::IPC::Host::HostCommandHandlerOptions handler_options{};
+        handler_options.load_plugin = LoadPluginWithNativeRuntime;
+        const DasResult handler_result =
+            DAS::Core::IPC::Host::RegisterHostCommandHandlers(
+                ctx.get(),
+                std::move(handler_options));
+        if (DAS::IsFailed(handler_result))
+        {
+            std::string err_msg = DAS_FMT_NS::format(
+                "Failed to register host command handlers: {}",
+                handler_result);
+            DAS_LOG_ERROR(err_msg.c_str());
+            return EXIT_FAILURE;
+        }
 
         // 运行 IPC 事件循环
         DasResult result = ctx->Run();

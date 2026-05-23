@@ -363,8 +363,8 @@ namespace Das::IPC::Test
         {
             loader_called = true;
             EXPECT_EQ(path, manifest_path);
-            return DAS::DasPtr<IDasBase>{
-                static_cast<IDasBase*>(new HostCommandHandlerTestPackage)};
+            return DAS::DasPtr<IDasBase>::Attach(
+                static_cast<IDasBase*>(new HostCommandHandlerTestPackage));
         };
 
         ASSERT_EQ(RegisterHostCommandHandlers(&ctx, std::move(options)), DAS_S_OK);
