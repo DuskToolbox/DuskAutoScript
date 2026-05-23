@@ -379,9 +379,11 @@ TEST(NodeRuntimeRemoteHost, LoadDelegatesToRemoteHostWithLaunchDesc)
     EXPECT_EQ(capture.manifest_path, manifest_path);
     EXPECT_EQ(capture.plugin_guid.data1, 0x75070003u);
     EXPECT_EQ(capture.executable, executable.string());
-    ASSERT_GE(capture.args.size(), 1u);
+    ASSERT_EQ(capture.args.size(), 3u);
     EXPECT_EQ(
         capture.args.front(),
         (package.Root() / "das-node-host.cjs").string());
+    EXPECT_EQ(capture.args[1], "--main-pid");
+    EXPECT_FALSE(capture.args[2].empty());
     EXPECT_EQ(capture.working_directory, package.Root().string());
 }

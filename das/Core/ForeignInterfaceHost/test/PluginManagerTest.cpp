@@ -1844,16 +1844,65 @@ TEST_F(PluginManagerGuidTest, LoadPlugin_NodeManifestRoutesThroughNodeRuntime)
     EXPECT_EQ(remote_state.load_count, 1);
     EXPECT_EQ(remote_state.manifest_path, manifest_path);
     EXPECT_EQ(remote_state.executable, node_exe_path.string());
-    ASSERT_GE(remote_state.args.size(), 1u);
+    ASSERT_EQ(remote_state.args.size(), 3u);
     EXPECT_EQ(
         remote_state.args.front(),
         (test_dir / "das-node-host.cjs").string());
+    EXPECT_EQ(remote_state.args[1], "--main-pid");
+    EXPECT_FALSE(remote_state.args[2].empty());
     EXPECT_EQ(remote_state.working_directory, test_dir.string());
 
     std::vector<FeatureInfo> features;
     ASSERT_EQ(pm_->GetPluginFeatures(manifest_path, features), DAS_S_OK);
     ASSERT_EQ(features.size(), 1u);
     EXPECT_EQ(features.front().session_id, 117);
+
+    std::filesystem::remove_all(test_dir);
+}
+
+TEST_F(PluginManagerGuidTest, LoadPlugin_LowercaseNodeManifestIsRejected)
+{
+    auto test_dir =
+        std::filesystem::current_path() / "test_plugin_lowercase_node_route";
+    std::filesystem::remove_all(test_dir);
+    std::filesystem::create_directories(test_dir);
+
+    const auto manifest_path = test_dir / "node_plugin.json";
+    auto       manifest = Das::Utils::MakeYyjsonObject();
+    {
+        auto obj = *manifest.as_object();
+        obj[std::string_view("guid")] =
+            "00000000-0000-0000-0000-000000750904";
+        obj[std::string_view("name")] = "LowercaseNodePlugin";
+        obj[std::string_view("language")] = "node";
+        obj[std::string_view("description")] = "test";
+        obj[std::string_view("author")] = "test";
+        obj[std::string_view("version")] = "1.0";
+        obj[std::string_view("supportedSystem")] = "win";
+        obj[std::string_view("pluginFilenameExtension")] = "js";
+        obj[std::string_view("settings")] = Das::Utils::MakeYyjsonArray();
+    }
+    {
+        std::ofstream ofs(manifest_path);
+        ofs << *Das::Utils::SerializeYyjsonValue(manifest, false);
+    }
+
+    CapturingRemoteHostState remote_state;
+    pm_->SetRemotePluginHostFactoryForTest(
+        [&remote_state]()
+        {
+            return std::make_unique<CapturingRemoteHost>(
+                remote_state,
+                118,
+                std::vector<DasPluginFeature>{
+                    DAS_PLUGIN_FEATURE_CAPTURE_FACTORY});
+        });
+
+    auto result = pm_->LoadPlugin(manifest_path);
+
+    EXPECT_EQ(result, DAS_E_INVALID_JSON);
+    EXPECT_EQ(remote_state.load_count, 0);
+    EXPECT_EQ(pm_->GetLoadedPluginCount(), 0u);
 
     std::filesystem::remove_all(test_dir);
 }
