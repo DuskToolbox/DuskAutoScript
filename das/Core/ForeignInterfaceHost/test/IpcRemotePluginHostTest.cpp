@@ -1,3 +1,4 @@
+#include <das/Core/ForeignInterfaceHost/NativeIpcRuntime.h>
 #include <das/Core/ForeignInterfaceHost/RemotePluginHost.h>
 
 #include <boost/asio/io_context.hpp>
@@ -7,6 +8,7 @@
 #include <das/DasString.hpp>
 #include <das/IDasAsyncLoadPluginOperation.h>
 #include <gtest/gtest.h>
+#include <tl/expected.hpp>
 
 #include <chrono>
 #include <filesystem>
@@ -416,6 +418,57 @@ namespace
         request.timeout = std::chrono::milliseconds{4321};
         return request;
     }
+
+    class CapturingRemotePluginHost final : public IRemotePluginHost
+    {
+    public:
+        auto LoadPlugin(const RemotePluginLoadRequest& request)
+            -> DAS::Utils::Expected<RuntimeLoadResult> override
+        {
+            ++load_count;
+            observed_manifest_path = request.manifest_path;
+            observed_plugin_guid = request.plugin_guid;
+            observed_timeout = request.timeout;
+            observed_arg_count = request.launch_desc.arg_count;
+
+            const char* executable = nullptr;
+            if (request.launch_desc.p_executable_path)
+            {
+                request.launch_desc.p_executable_path->GetUtf8(&executable);
+            }
+            observed_executable = executable ? executable : "";
+
+            observed_args.clear();
+            for (size_t i = 0; i < request.launch_desc.arg_count; ++i)
+            {
+                const char* arg = nullptr;
+                request.launch_desc.pp_args[i]->GetUtf8(&arg);
+                observed_args.emplace_back(arg ? arg : "");
+            }
+
+            if (DAS::IsFailed(load_error))
+            {
+                return tl::make_unexpected(load_error);
+            }
+
+            auto* object = new FakeBaseObject();
+            object->AddRef();
+            RuntimeLoadResult result{};
+            result.object = DAS::DasPtr<IDasBase>::Attach(object);
+            result.owner_session_id = owner_session_id;
+            return result;
+        }
+
+        int load_count = 0;
+        uint16_t owner_session_id = 88;
+        DasResult load_error = DAS_S_OK;
+        std::filesystem::path observed_manifest_path;
+        DasGuid observed_plugin_guid{};
+        std::chrono::milliseconds observed_timeout{0};
+        size_t observed_arg_count = 0;
+        std::string observed_executable;
+        std::vector<std::string> observed_args;
+    };
 } // namespace
 
 TEST(IpcRemotePluginHostContract, RequestUsesHostLaunchDescAndRuntimeResult)
@@ -517,4 +570,52 @@ TEST(IpcRemotePluginHostLifecycle, LoadFailureAfterStartStopsLauncher)
     EXPECT_EQ(result.error(), DAS_E_FILE_NOT_FOUND);
     EXPECT_EQ(launcher->start_with_desc_count, 1);
     EXPECT_EQ(launcher->stop_count, 1);
+}
+
+TEST(NativeIpcRuntime, DelegatesDasHostLaunchToRemotePluginHost)
+{
+    auto remote = std::make_unique<CapturingRemotePluginHost>();
+    auto* raw_remote = remote.get();
+    NativeIpcRuntime runtime{
+        std::filesystem::path{"DasHost.exe"},
+        std::move(remote),
+        std::chrono::milliseconds{2468}};
+
+    RuntimeLoadRequest request{};
+    request.manifest_path = std::filesystem::path{"plugins/Native.json"};
+    request.plugin_guid = MakeRemotePluginHostGuid(0x75050004);
+
+    auto result = runtime.LoadPlugin(request);
+
+    ASSERT_TRUE(result);
+    EXPECT_NE(result->object.Get(), nullptr);
+    EXPECT_EQ(result->owner_session_id, raw_remote->owner_session_id);
+    EXPECT_EQ(raw_remote->load_count, 1);
+    EXPECT_EQ(
+        raw_remote->observed_manifest_path,
+        std::filesystem::path{"plugins/Native.json"});
+    EXPECT_EQ(raw_remote->observed_plugin_guid.data1, 0x75050004u);
+    EXPECT_EQ(raw_remote->observed_timeout, std::chrono::milliseconds{2468});
+    EXPECT_EQ(raw_remote->observed_executable, "DasHost.exe");
+    ASSERT_EQ(raw_remote->observed_args.size(), 2u);
+    EXPECT_EQ(raw_remote->observed_args[0], "--main-pid");
+    EXPECT_FALSE(raw_remote->observed_args[1].empty());
+}
+
+TEST(NativeIpcRuntime, FactoryCreatesNativeProvider)
+{
+    auto remote = std::make_unique<CapturingRemotePluginHost>();
+    auto provider = CreateNativeIpcRuntimeProvider(
+        std::filesystem::path{"DasHost.exe"},
+        std::move(remote));
+
+    ASSERT_TRUE(provider);
+    RuntimeLoadRequest request{};
+    request.manifest_path = std::filesystem::path{"plugins/Native.json"};
+    request.plugin_guid = MakeRemotePluginHostGuid(0x75050005);
+
+    auto result = provider.value()->LoadPlugin(request);
+
+    ASSERT_TRUE(result);
+    EXPECT_EQ(result->owner_session_id, 88);
 }
