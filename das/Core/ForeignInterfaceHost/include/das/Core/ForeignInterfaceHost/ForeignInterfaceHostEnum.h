@@ -11,7 +11,8 @@ enum class ForeignInterfaceLanguage
     CSharp,
     Java,
     Cpp,
-    Lua
+    Lua,
+    Node
 };
 
 enum class LoadMode

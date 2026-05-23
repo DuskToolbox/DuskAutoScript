@@ -1028,6 +1028,20 @@ void ParsePluginPackageDescFromJson(
             {
                 output.language = ForeignInterfaceLanguage::Lua;
             }
+            else if (lang_str == "Node")
+            {
+                output.language = ForeignInterfaceLanguage::Node;
+            }
+            else
+            {
+                throw std::runtime_error(
+                    DAS_FMT_NS::format("Invalid language value: {}", lang_str));
+            }
+        }
+        else
+        {
+            throw std::runtime_error(
+                "Expected numeric or string language value");
         }
     }
 

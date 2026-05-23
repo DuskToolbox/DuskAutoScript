@@ -86,6 +86,24 @@ namespace
         return result;
     }
 
+    std::string BasicPluginJsonWithLanguage(std::string_view language)
+    {
+        return std::string{R"(
+    {
+        "name": "TestPlugin",
+        "author": "test",
+        "version": "1.0",
+        "guid": "35BF38D4-7760-42EA-8A9C-9F2BF7C3CBDA",
+        "description": "test",
+        "supportedSystem": "Windows",
+        "language": ")"}
+               + std::string{language} + R"(",
+        "pluginFilenameExtension": "dll",
+        "settings": []
+    }
+    )";
+    }
+
     template <class T>
     T JsonToStruct(
         const std::string& string,
@@ -239,7 +257,7 @@ TEST(PluginPackageDescTest, Language_ExactNodeString)
 {
     const auto desc =
         JsonToStruct<DAS::Core::ForeignInterfaceHost::PluginPackageDesc>(
-            BasicPluginJsonWith(R"("language": "Node")"));
+            BasicPluginJsonWithLanguage("Node"));
 
     EXPECT_EQ(
         desc.language,
@@ -252,7 +270,7 @@ TEST(PluginPackageDescTest, Language_LowercaseNodeFails)
     {
         (void)JsonToStruct<
             DAS::Core::ForeignInterfaceHost::PluginPackageDesc>(
-            BasicPluginJsonWith(R"("language": "node")"));
+            BasicPluginJsonWithLanguage("node"));
         FAIL() << "Lowercase node language should fail";
     }
     catch (const std::runtime_error& e)
