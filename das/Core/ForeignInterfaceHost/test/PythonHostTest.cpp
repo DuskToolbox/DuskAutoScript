@@ -32,7 +32,7 @@ TEST(PythonHostIntegration, CreatePythonRuntime_Success)
 
     ForeignLanguageRuntimeFactoryDesc desc{};
     desc.language = ForeignInterfaceLanguage::Python;
-    auto result = CreateForeignLanguageRuntime(desc);
+    auto result = PythonHost::CreateForeignLanguageRuntime(desc);
     ASSERT_TRUE(result.has_value())
         << "CreateForeignLanguageRuntime should succeed for Python";
     EXPECT_NE(result.value().Get(), nullptr)
@@ -46,7 +46,7 @@ TEST(PythonHostIntegration, CreatePythonRuntime_InvalidLanguage)
 
     ForeignLanguageRuntimeFactoryDesc desc{};
     desc.language = ForeignInterfaceLanguage::Java; // 错误的语言
-    auto result = CreateForeignLanguageRuntime(desc);
+    auto result = PythonHost::CreateForeignLanguageRuntime(desc);
     EXPECT_FALSE(result.has_value())
         << "CreateForeignLanguageRuntime should fail for Java in PythonHost test";
     // 注意：错误码可能是 DAS_E_NO_IMPLEMENTATION 或其他
