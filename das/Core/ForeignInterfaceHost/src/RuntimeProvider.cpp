@@ -1,5 +1,7 @@
 #include <das/Core/ForeignInterfaceHost/RuntimeProvider.h>
 
+#include <das/Core/ForeignInterfaceHost/NativeIpcRuntime.h>
+
 #include <tl/expected.hpp>
 
 #include <memory>
@@ -64,6 +66,25 @@ auto CreateLocalRuntimeProvider(const ForeignLanguageRuntimeFactoryDesc& desc)
     }
 
     return CreateLocalRuntimeProvider(std::move(runtime.value()));
+}
+
+auto CreateNativeIpcRuntimeProvider(
+    std::filesystem::path              host_exe_path,
+    std::unique_ptr<IRemotePluginHost> remote_plugin_host)
+    -> DAS::Utils::Expected<std::unique_ptr<IRuntimeProvider>>
+{
+    if (host_exe_path.empty())
+    {
+        return tl::make_unexpected(DAS_E_NO_IMPLEMENTATION);
+    }
+    if (!remote_plugin_host)
+    {
+        return tl::make_unexpected(DAS_E_INVALID_POINTER);
+    }
+
+    return std::make_unique<NativeIpcRuntime>(
+        std::move(host_exe_path),
+        std::move(remote_plugin_host));
 }
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END

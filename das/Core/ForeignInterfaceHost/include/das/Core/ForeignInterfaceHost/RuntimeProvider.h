@@ -14,6 +14,8 @@
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
+class IRemotePluginHost;
+
 struct RuntimeLoadRequest
 {
     std::filesystem::path manifest_path;
@@ -45,6 +47,11 @@ DAS_API auto CreateLocalRuntimeProvider(
 
 DAS_API auto CreateLocalRuntimeProvider(
     const ForeignLanguageRuntimeFactoryDesc& desc)
+    -> DAS::Utils::Expected<std::unique_ptr<IRuntimeProvider>>;
+
+DAS_API auto CreateNativeIpcRuntimeProvider(
+    std::filesystem::path              host_exe_path,
+    std::unique_ptr<IRemotePluginHost> remote_plugin_host)
     -> DAS::Utils::Expected<std::unique_ptr<IRuntimeProvider>>;
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
