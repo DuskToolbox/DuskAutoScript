@@ -72,6 +72,18 @@ def _phase74_contract_doc():
             uint32_t height;
         }
 
+        struct DasColorValue {
+            uint8_t c1;
+            uint8_t c2;
+            uint8_t c3;
+            uint8_t c4;
+        }
+
+        struct DasColorRange {
+            DasColorValue lower;
+            DasColorValue upper;
+        }
+
         [uuid("00000000-0000-0000-0000-000000000001")]
         interface IDasBinaryBuffer : IDasBase {
             [binary_buffer] DasResult GetData([out] unsigned char** pp_out_data);
@@ -83,11 +95,18 @@ def _phase74_contract_doc():
             DasResult IsSupported(const DasGuid& component_iid);
         }
 
+        [uuid("00000000-0000-0000-0000-000000000005")]
+        interface IDasPropertyOwner : IDasBase {
+            [get, set] double score;
+            [get, set] IDasReadOnlyString title;
+        }
+
         [uuid("00000000-0000-0000-0000-000000000003")]
         interface IDasImage : IDasBase {
             DasResult GetSize([out] DasSize* p_out_size);
             DasResult GetMode([out] DasMode* p_out_mode);
             DasResult GetName([out] IDasReadOnlyString** pp_out_name);
+            DasResult SetName(IDasReadOnlyString* p_name);
             DasResult GetDimensions(
                 [out] uint32_t* p_out_width,
                 [out] uint32_t* out_height);
@@ -99,6 +118,9 @@ def _phase74_contract_doc():
             DasResult SetComponent(IDasComponent* p_component);
             DasResult GetBinaryBuffer([out] IDasBinaryBuffer** pp_out_buffer);
             DasResult GetComponent([out] IDasComponent** pp_out_component);
+            DasResult SetColorRange(const DasColorRange* p_range);
+            DasResult GetColorRange([out] DasColorRange* p_out_range);
+            DasResult GetLastResult([out] DasResult* p_out_result);
             DasResult Flush();
         }
 
@@ -337,6 +359,31 @@ class TestNapiGenerator(unittest.TestCase):
 
         self.assertEqual(from_class, from_helper)
 
+    def test_napi_cpp_imports_idl_namespaces_for_abi_types(self):
+        doc = parse_idl(
+            """
+            namespace Das::ExportInterface {
+                [uuid("12345678-1234-1234-1234-123456789012")]
+                interface IDasNamespaced : IDasBase {
+                    DasResult Run();
+                }
+            }
+            """
+        )
+
+        artifacts = generate_napi_artifacts(
+            doc,
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+
+        self.assertIn("using namespace Das::ExportInterface;", artifacts.cpp)
+        self.assertIn(": public IDasNamespaced, public NapiDirectorBase", artifacts.cpp)
+        self.assertIn(
+            "DasInterfaceWrapperBase<IDasNamespacedWrapper, IDasNamespaced>",
+            artifacts.cpp,
+        )
+
     def test_napi_phase74_declarations_are_exception_first(self):
         artifacts = generate_napi_artifacts(
             _phase74_contract_doc(),
@@ -348,6 +395,9 @@ class TestNapiGenerator(unittest.TestCase):
         self.assertIn("readonly result: DasResult;", artifacts.dts)
         self.assertIn("readonly code: DasResult;", artifacts.dts)
         self.assertIn("constructor(result: DasResult, message?: string);", artifacts.dts)
+        self.assertIn("export interface DasColorRange", artifacts.dts)
+        self.assertIn("lower: DasColorValue;", artifacts.dts)
+        self.assertIn("upper: DasColorValue;", artifacts.dts)
         self.assertIn("class DasException extends Error", artifacts.js)
         self.assertIn("this.name = 'DasException';", artifacts.js)
         self.assertIn("this.result = result;", artifacts.js)
@@ -370,10 +420,14 @@ class TestNapiGenerator(unittest.TestCase):
         self.assertIn("getSize(): DasSize;", artifacts.dts)
         self.assertIn("getMode(): number;", artifacts.dts)
         self.assertIn("getName(): string;", artifacts.dts)
+        self.assertIn("setName(pName: string): DasResult;", artifacts.dts)
         self.assertIn("clip(pRect: DasRect): IDasImage;", artifacts.dts)
         self.assertIn("setComponent(pComponent: IDasComponent): DasResult;", artifacts.dts)
         self.assertIn("getBinaryBuffer(): Buffer;", artifacts.dts)
         self.assertIn("getComponent(): IDasComponent;", artifacts.dts)
+        self.assertIn("setColorRange(pRange: DasColorRange): DasResult;", artifacts.dts)
+        self.assertIn("getColorRange(): DasColorRange;", artifacts.dts)
+        self.assertIn("getLastResult(): DasResult;", artifacts.dts)
         self.assertIn("flush(): DasResult;", artifacts.dts)
         self.assertIn("getMutableView(offset: bigint): Buffer;", artifacts.dts)
         self.assertIn(
@@ -413,12 +467,16 @@ class TestNapiGenerator(unittest.TestCase):
         )
         self.assertIn("DasRect p_rect_value{};", artifacts.cpp)
         self.assertIn("p_rect_value.x", artifacts.cpp)
+        self.assertIn("DasColorRange p_range_value{};", artifacts.cpp)
+        self.assertIn("p_range_value.lower.c1", artifacts.cpp)
+        self.assertIn("const DasResult p_name_utf8_result = p_name->GetUtf8(&p_name_utf8);", artifacts.cpp)
         self.assertIn("IDasComponentWrapper::UnwrapHandle(env, info[1])", artifacts.cpp)
         self.assertIn(
             "const DasResult result = native->Clip(&p_rect_value, &pp_out_image_value);",
             artifacts.cpp,
         )
         self.assertIn("const DasResult result = native->SetComponent(p_component_value);", artifacts.cpp)
+        self.assertIn("const DasResult result = native->SetColorRange(&p_range_value);", artifacts.cpp)
         self.assertIn("const DasResult result = native->Flush();", artifacts.cpp)
 
     def test_napi_phase74_cpp_converts_out_values_after_success(self):
@@ -446,6 +504,14 @@ class TestNapiGenerator(unittest.TestCase):
         )
         self.assertIn(
             'output.Set("height", Napi::Number::New(env, static_cast<double>(out_height_value)));',
+            artifacts.cpp,
+        )
+        self.assertIn(
+            'p_out_range_object.Set("lower", p_out_range_object_lower);',
+            artifacts.cpp,
+        )
+        self.assertIn(
+            'p_out_range_object_lower.Set("c1", Napi::Number::New(env, static_cast<double>(p_out_range_value.lower.c1)));',
             artifacts.cpp,
         )
 
@@ -626,6 +692,39 @@ class TestNapiGenerator(unittest.TestCase):
         )
         self.assertIn("IDasComponentWrapper::WrapAdopted", artifacts.cpp)
 
+    def test_napi_phase74_js_declares_base_interfaces_before_derived(self):
+        doc = parse_idl(
+            """
+            errorcode DasResult {
+                DAS_S_OK = 0,
+            }
+
+            [uuid("00000000-0000-0000-0000-000000000011")]
+            interface IDasChild : IDasParent {
+                DasResult Child();
+            }
+
+            [uuid("00000000-0000-0000-0000-000000000010")]
+            interface IDasParent : IDasBase {
+                DasResult Parent();
+            }
+            """
+        )
+        artifacts = generate_napi_artifacts(
+            doc,
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+
+        self.assertLess(
+            artifacts.js.index("class IDasParent extends IDasBase"),
+            artifacts.js.index("class IDasChild extends IDasParent"),
+        )
+        self.assertLess(
+            artifacts.dts.index("export class IDasParent extends IDasBase"),
+            artifacts.dts.index("export class IDasChild extends IDasParent"),
+        )
+
     def test_napi_phase74_director_generates_native_com_class(self):
         artifacts = generate_napi_artifacts(
             _phase74_contract_doc(),
@@ -650,6 +749,12 @@ class TestNapiGenerator(unittest.TestCase):
         self.assertIn('exports.Set("createINapiDasComponent"', artifacts.cpp)
         self.assertIn("native.createINapiDasComponent(callbacks)", artifacts.js)
         self.assertNotIn("? native.createINapiDasComponent", artifacts.js)
+
+        property_director = _cpp_class_block(artifacts.cpp, "INapiDasPropertyOwner")
+        self.assertIn("DasResult Getscore(double* p_out) override", property_director)
+        self.assertIn("DasResult Setscore(double value) override", property_director)
+        self.assertIn("DasResult Gettitle(IDasReadOnlyString** p_out) override", property_director)
+        self.assertIn("DasResult Settitle(IDasReadOnlyString* value) override", property_director)
 
     def test_napi_phase74_director_dispatch_is_lazy_and_lower_camel(self):
         artifacts = generate_napi_artifacts(

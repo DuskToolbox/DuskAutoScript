@@ -239,6 +239,17 @@ def _wrapped_interface_names(doc: IdlDocument) -> list[str]:
     return names
 
 
+def _idl_namespaces(doc: IdlDocument) -> list[str]:
+    namespaces = {
+        item.namespace
+        for collection in (doc.interfaces, doc.structs, doc.enums, doc.error_codes)
+        for item in collection
+        if item.namespace
+    }
+    namespaces.update(module.namespace for module in doc.modules if module.namespace)
+    return sorted(namespaces)
+
+
 def public_js_name(idl_name: str) -> str:
     """Convert public IDL PascalCase/camel names to lower camel JavaScript names."""
     if not idl_name:
@@ -298,7 +309,7 @@ def _cpp_storage_type(type_info: TypeInfo) -> str:
     )
 
 
-def _ts_type_for_struct_field(type_name: str) -> str:
+def _ts_type_for_struct_field(type_name: str, doc: IdlDocument | None = None) -> str:
     if type_name in _SIGNED_64_TYPES or type_name in _UNSIGNED_64_TYPES:
         return "bigint"
     if type_name in _SIGNED_32_TYPES or type_name in _UNSIGNED_32_TYPES:
@@ -307,6 +318,8 @@ def _ts_type_for_struct_field(type_name: str) -> str:
         return "number"
     if type_name in _BOOL_TYPES:
         return "boolean"
+    if doc is not None and _find_struct(doc, TypeInfo(type_name)) is not None:
+        return type_simple_name(TypeInfo(type_name))
     return "unknown"
 
 
@@ -373,7 +386,7 @@ def _method_ts_return(method: MethodDef) -> str:
 
 def _doc_needs_binary_buffer_conversion(doc: IdlDocument) -> bool:
     for interface in doc.interfaces:
-        for method in interface.methods:
+        for method in _interface_declared_methods(interface):
             for param in _method_out_params(method):
                 if _is_binary_buffer_interface(_value_type_for_out_param(param)):
                     return True
@@ -405,6 +418,80 @@ def _interface_chain(interface: InterfaceDef, doc: IdlDocument) -> list[str]:
     return chain
 
 
+def _interfaces_base_first(doc: IdlDocument) -> list[InterfaceDef]:
+    interfaces = _interface_by_name(doc)
+    ordered: list[InterfaceDef] = []
+    visiting: set[str] = set()
+    emitted: set[str] = set()
+
+    def visit(interface: InterfaceDef) -> None:
+        if interface.name in emitted:
+            return
+        if interface.name in visiting:
+            return
+        visiting.add(interface.name)
+        base_name = interface.base_interface
+        if base_name and base_name != "IDasBase":
+            base = interfaces.get(base_name)
+            if base is not None:
+                visit(base)
+        visiting.remove(interface.name)
+        emitted.add(interface.name)
+        ordered.append(interface)
+
+    for interface in doc.interfaces:
+        visit(interface)
+    return ordered
+
+
+def _property_accessor_methods(interface: InterfaceDef) -> list[MethodDef]:
+    methods: list[MethodDef] = []
+    for prop in interface.properties:
+        value_type = replace(prop.type_info, is_const=False, is_reference=False)
+        if value_type.type_kind == TypeKind.INTERFACE and not value_type.is_pointer:
+            value_type = replace(value_type, is_pointer=True, pointer_level=1)
+        if prop.has_getter:
+            out_type = replace(
+                value_type,
+                is_pointer=True,
+                pointer_level=value_type.pointer_level + 1,
+            )
+            methods.append(
+                MethodDef(
+                    name=f"Get{prop.name}",
+                    return_type=TypeInfo("DasResult"),
+                    parameters=[
+                        ParameterDef(
+                            name="p_out",
+                            type_info=out_type,
+                            direction=ParamDirection.OUT,
+                        )
+                    ],
+                    namespace=interface.namespace,
+                )
+            )
+        if prop.has_setter:
+            methods.append(
+                MethodDef(
+                    name=f"Set{prop.name}",
+                    return_type=TypeInfo("DasResult"),
+                    parameters=[
+                        ParameterDef(
+                            name="value",
+                            type_info=value_type,
+                            direction=ParamDirection.IN,
+                        )
+                    ],
+                    namespace=interface.namespace,
+                )
+            )
+    return methods
+
+
+def _interface_declared_methods(interface: InterfaceDef) -> list[MethodDef]:
+    return [*interface.methods, *_property_accessor_methods(interface)]
+
+
 def _interface_methods_including_bases(
     interface: InterfaceDef,
     doc: IdlDocument,
@@ -414,7 +501,7 @@ def _interface_methods_including_bases(
     for interface_name in reversed(_interface_chain(interface, doc)):
         current = interfaces.get(interface_name)
         if current is not None:
-            methods.extend(current.methods)
+            methods.extend(_interface_declared_methods(current))
     return methods
 
 
@@ -481,6 +568,14 @@ class NapiGenerator:
                 "",
                 "namespace {",
                 "",
+            ]
+        )
+        for namespace in _idl_namespaces(doc):
+            lines.append(f"using namespace {namespace};")
+        if _idl_namespaces(doc):
+            lines.append("")
+        lines.extend(
+            [
                 "Napi::Value MakeUnsupported(",
                 "    const Napi::CallbackInfo& info,",
                 "    const char* name,",
@@ -1230,17 +1325,33 @@ class NapiGenerator:
         param: ParameterDef,
         doc: IdlDocument,
     ) -> tuple[list[str], str]:
-        del doc
         name = _sanitize_identifier(param.name)
         capture_name = f"{name}_copy"
         mapped = _map_type(param.type_info)
         if mapped is not None:
-            if mapped.category in {"utf8_string", "readonly_string"}:
+            if mapped.category == "utf8_string":
                 return [
                     f"        if ({name} == nullptr) {{",
                     "            return DAS_E_INVALID_POINTER;",
                     "        }",
                     f"        std::string {capture_name}{{{name}}};",
+                ], capture_name
+            if mapped.category == "readonly_string":
+                utf8_name = f"{name}_utf8"
+                result_name = f"{name}_utf8_result"
+                return [
+                    f"        if ({name} == nullptr) {{",
+                    "            return DAS_E_INVALID_POINTER;",
+                    "        }",
+                    f"        const char* {utf8_name} = nullptr;",
+                    f"        const DasResult {result_name} = {name}->GetUtf8(&{utf8_name});",
+                    f"        if ({result_name} < 0) {{",
+                    f"            return {result_name};",
+                    "        }",
+                    f"        if ({utf8_name} == nullptr) {{",
+                    "            return DAS_E_INVALID_POINTER;",
+                    "        }",
+                    f"        std::string {capture_name}{{{utf8_name}}};",
                 ], capture_name
             return [
                 f"        const {_cpp_storage_type(param.type_info)} {capture_name} = {name};",
@@ -1316,15 +1427,13 @@ class NapiGenerator:
             struct = _find_struct(doc, param.type_info)
             if struct is None:
                 raise AssertionError(f"missing struct {type_simple_name(param.type_info)}")
-            lines = [f"                Napi::Object {arg_name} = Napi::Object::New(env);"]
-            for field in struct.fields:
-                mapped_field = _map_type(TypeInfo(field.type_name))
-                if mapped_field is None:
-                    raise AssertionError(f"unsupported struct field type {field.type_name}")
-                lines.append(
-                    f'                {arg_name}.Set("{public_js_name(field.name)}", '
-                    f"{self._cpp_return_expression(f'{capture_name}.{field.name}', mapped_field)});"
-                )
+            lines = self._generate_cpp_struct_to_js_object(
+                doc,
+                struct,
+                capture_name,
+                arg_name,
+                indent="                ",
+            )
             lines.append(f"                js_args.push_back({arg_name});")
             return lines
 
@@ -1345,6 +1454,44 @@ class NapiGenerator:
             ]
 
         raise AssertionError(f"unsupported director JS argument {param.name}")
+
+    def _generate_cpp_struct_to_js_object(
+        self,
+        doc: IdlDocument,
+        struct: StructDef,
+        value_expr: str,
+        object_name: str,
+        *,
+        indent: str,
+    ) -> list[str]:
+        lines = [f"{indent}Napi::Object {object_name} = Napi::Object::New(env);"]
+        for field in struct.fields:
+            field_type = TypeInfo(field.type_name)
+            field_value_expr = f"{value_expr}.{field.name}"
+            field_js_name = public_js_name(field.name)
+            mapped = _map_type(field_type)
+            if mapped is not None:
+                lines.append(
+                    f'{indent}{object_name}.Set("{field_js_name}", '
+                    f"{self._cpp_return_expression(field_value_expr, mapped)});"
+                )
+                continue
+
+            nested_struct = _find_struct(doc, field_type)
+            if nested_struct is None:
+                raise AssertionError(f"unsupported struct field type {field.type_name}")
+            nested_object_name = f"{object_name}_{_sanitize_identifier(field.name)}"
+            lines.extend(
+                self._generate_cpp_struct_to_js_object(
+                    doc,
+                    nested_struct,
+                    field_value_expr,
+                    nested_object_name,
+                    indent=indent,
+                )
+            )
+            lines.append(f'{indent}{object_name}.Set("{field_js_name}", {nested_object_name});')
+        return lines
 
     def _generate_cpp_director_result_conversion(
         self,
@@ -1463,6 +1610,7 @@ class NapiGenerator:
             if struct is None:
                 raise AssertionError(f"missing struct {type_simple_name(value_type)}")
             object_name = f"{_sanitize_identifier(param.name)}_object"
+            struct_target = f"(*{_sanitize_identifier(param.name)})"
             lines = [
                 f"{indent}if (!{value_expr}.IsObject()) {{",
                 f'{indent}    LogDirectorError("{method_label}", "{label} must be object");',
@@ -1476,9 +1624,10 @@ class NapiGenerator:
                     self._generate_cpp_director_assign_value(
                         TypeInfo(field.type_name),
                         field_value,
-                        f"{target}.{field.name}",
+                        f"{struct_target}.{field.name}",
                         f"{label}.{public_js_name(field.name)}",
                         method_label,
+                        doc,
                         indent=indent,
                     )
                 )
@@ -1490,6 +1639,7 @@ class NapiGenerator:
             target,
             label,
             method_label,
+            doc,
             indent=indent,
         )
 
@@ -1500,12 +1650,38 @@ class NapiGenerator:
         target_expr: str,
         label: str,
         method_label: str,
+        doc: IdlDocument,
         *,
         indent: str,
     ) -> list[str]:
         mapped = _map_type(value_type)
         if mapped is None:
-            raise AssertionError(f"unsupported director output type {type_simple_name(value_type)}")
+            nested_struct = _find_struct(doc, value_type)
+            if nested_struct is None:
+                raise AssertionError(f"unsupported director output type {type_simple_name(value_type)}")
+            object_name = f"{_sanitize_identifier(label)}_object"
+            lines = [
+                f"{indent}if (!{value_expr}.IsObject()) {{",
+                f'{indent}    LogDirectorError("{method_label}", "{label} must be object");',
+                f"{indent}    return kNapiDirectorJavaScriptError;",
+                f"{indent}}}",
+                f"{indent}Napi::Object {object_name} = {value_expr}.As<Napi::Object>();",
+            ]
+            for field in nested_struct.fields:
+                field_label = f"{label}.{public_js_name(field.name)}"
+                field_value = f'{object_name}.Get("{public_js_name(field.name)}")'
+                lines.extend(
+                    self._generate_cpp_director_assign_value(
+                        TypeInfo(field.type_name),
+                        field_value,
+                        f"{target_expr}.{field.name}",
+                        field_label,
+                        method_label,
+                        doc,
+                        indent=indent,
+                    )
+                )
+            return lines
 
         if mapped.category == "das_guid":
             return [
@@ -1515,7 +1691,7 @@ class NapiGenerator:
                 f"{indent}}}",
                 f"{indent}{target_expr} = ReadDasGuid(env, {value_expr});",
             ]
-        if mapped.category in {"int32", "enum"}:
+        if mapped.category in {"int32", "enum", "das_result"}:
             return [
                 f"{indent}if (!{value_expr}.IsNumber()) {{",
                 f'{indent}    LogDirectorError("{method_label}", "{label} must be number");',
@@ -1621,7 +1797,7 @@ class NapiGenerator:
         lines.append("")
         lines.extend(self._generate_cpp_from_function(interface))
         lines.append("")
-        for method in interface.methods:
+        for method in _interface_declared_methods(interface):
             js_name = public_js_name(method.name)
             wrapper_name = f"{_sanitize_identifier(interface.name)}_{_sanitize_identifier(js_name)}"
             unsupported_reason = self._unsupported_interface_method_reason(method, doc)
@@ -1743,7 +1919,9 @@ class NapiGenerator:
         for field in struct.fields:
             field_type = TypeInfo(field.type_name)
             if _map_type(field_type) is None:
-                return f"struct field {struct.name}.{field.name} has unsupported type {field.type_name}"
+                nested_reason = self._unsupported_struct_reason(field_type, doc)
+                if nested_reason:
+                    return nested_reason
         return ""
 
     def _generate_supported_cpp_interface_method(
@@ -1818,7 +1996,7 @@ class NapiGenerator:
             struct = _find_struct(doc, param.type_info)
             if struct is None:
                 raise AssertionError(f"missing struct {type_simple_name(param.type_info)}")
-            lines = self._generate_cpp_struct_conversion(index, param, struct)
+            lines = self._generate_cpp_struct_conversion(index, param, struct, doc)
             if param.type_info.is_pointer:
                 return lines, f"&{name}_value"
             return lines, f"{name}_value"
@@ -1837,6 +2015,7 @@ class NapiGenerator:
         index: int,
         param: ParameterDef,
         struct: StructDef,
+        doc: IdlDocument,
     ) -> list[str]:
         name = _sanitize_identifier(param.name)
         object_name = f"{name}_object"
@@ -1856,8 +2035,10 @@ class NapiGenerator:
                     param,
                     object_name,
                     value_name,
+                    _sanitize_identifier(value_name),
                     field.name,
                     field.type_name,
+                    doc,
                 )
             )
         return lines
@@ -1866,16 +2047,47 @@ class NapiGenerator:
         self,
         param: ParameterDef,
         object_name: str,
-        value_name: str,
+        target_expr: str,
+        variable_prefix: str,
         field_name: str,
         field_type_name: str,
+        doc: IdlDocument,
     ) -> list[str]:
         field_js_name = public_js_name(field_name)
         field_expr = f'{object_name}.Get("{field_js_name}")'
         field_label = f"{param.name}.{field_js_name}"
         mapped = _map_type(TypeInfo(field_type_name))
         if mapped is None:
-            raise AssertionError(f"unsupported struct field type {field_type_name}")
+            nested_struct = _find_struct(doc, TypeInfo(field_type_name))
+            if nested_struct is None:
+                raise AssertionError(f"unsupported struct field type {field_type_name}")
+            nested_object_name = f"{variable_prefix}_{_sanitize_identifier(field_name)}_object"
+            nested_target = f"{target_expr}.{field_name}"
+            nested_prefix = f"{variable_prefix}_{_sanitize_identifier(field_name)}"
+            lines = [
+                f"    if (!{field_expr}.IsObject()) {{",
+                "        throw Napi::TypeError::New(",
+                "            env,",
+                f'            "{field_label} must be object");',
+                "    }",
+                f"    Napi::Object {nested_object_name} = {field_expr}.As<Napi::Object>();",
+            ]
+            for nested_field in nested_struct.fields:
+                lines.extend(
+                    self._generate_cpp_struct_field_conversion(
+                        param,
+                        nested_object_name,
+                        nested_target,
+                        nested_prefix,
+                        nested_field.name,
+                        nested_field.type_name,
+                        doc,
+                    )
+                )
+            return lines
+
+        field_target = f"{target_expr}.{field_name}"
+        field_variable_prefix = f"{variable_prefix}_{_sanitize_identifier(field_name)}"
 
         lines = [
             f"    if (!{field_expr}.Is{self._napi_type_check(mapped)}()) {{",
@@ -1885,8 +2097,8 @@ class NapiGenerator:
             "    }",
         ]
         if mapped.category == "int64":
-            lossless_name = f"{value_name}_{field_name}_lossless"
-            raw_name = f"{value_name}_{field_name}_raw"
+            lossless_name = f"{field_variable_prefix}_lossless"
+            raw_name = f"{field_variable_prefix}_raw"
             lines.append(f"    bool {lossless_name} = false;")
             lines.append(
                 f"    const int64_t {raw_name} = {field_expr}.As<Napi::BigInt>().Int64Value(&{lossless_name});"
@@ -1897,11 +2109,11 @@ class NapiGenerator:
             )
             lines.append("    }")
             lines.append(
-                f"    {value_name}.{field_name} = static_cast<{field_type_name}>({raw_name});"
+                f"    {field_target} = static_cast<{field_type_name}>({raw_name});"
             )
         elif mapped.category == "uint64":
-            lossless_name = f"{value_name}_{field_name}_lossless"
-            raw_name = f"{value_name}_{field_name}_raw"
+            lossless_name = f"{field_variable_prefix}_lossless"
+            raw_name = f"{field_variable_prefix}_raw"
             lines.append(f"    bool {lossless_name} = false;")
             lines.append(
                 f"    const uint64_t {raw_name} = {field_expr}.As<Napi::BigInt>().Uint64Value(&{lossless_name});"
@@ -1912,26 +2124,26 @@ class NapiGenerator:
             )
             lines.append("    }")
             lines.append(
-                f"    {value_name}.{field_name} = static_cast<{field_type_name}>({raw_name});"
+                f"    {field_target} = static_cast<{field_type_name}>({raw_name});"
             )
-        elif mapped.category in {"int32", "enum"}:
+        elif mapped.category in {"int32", "enum", "das_result"}:
             lines.append(
-                f"    {value_name}.{field_name} = static_cast<{field_type_name}>("
+                f"    {field_target} = static_cast<{field_type_name}>("
             )
             lines.append(f"        {field_expr}.As<Napi::Number>().Int32Value());")
         elif mapped.category == "uint32":
             lines.append(
-                f"    {value_name}.{field_name} = static_cast<{field_type_name}>("
+                f"    {field_target} = static_cast<{field_type_name}>("
             )
             lines.append(f"        {field_expr}.As<Napi::Number>().Uint32Value());")
         elif mapped.category == "number":
             lines.append(
-                f"    {value_name}.{field_name} = static_cast<{field_type_name}>("
+                f"    {field_target} = static_cast<{field_type_name}>("
             )
             lines.append(f"        {field_expr}.As<Napi::Number>().DoubleValue());")
         elif mapped.category == "boolean":
             lines.append(
-                f"    {value_name}.{field_name} = {field_expr}.As<Napi::Boolean>().Value();"
+                f"    {field_target} = {field_expr}.As<Napi::Boolean>().Value();"
             )
         else:
             raise AssertionError(f"unsupported struct field category {mapped.category}")
@@ -2006,15 +2218,13 @@ class NapiGenerator:
             if struct is None:
                 raise AssertionError(f"missing struct {type_simple_name(value_type)}")
             object_name = f"{_sanitize_identifier(param.name)}_object"
-            lines = [f"    Napi::Object {object_name} = Napi::Object::New(env);"]
-            for field in struct.fields:
-                mapped = _map_type(TypeInfo(field.type_name))
-                if mapped is None:
-                    raise AssertionError(f"unsupported struct field type {field.type_name}")
-                lines.append(
-                    f'    {object_name}.Set("{public_js_name(field.name)}", '
-                    f"{self._cpp_return_expression(f'{value_name}.{field.name}', mapped)});"
-                )
+            lines = self._generate_cpp_struct_to_js_object(
+                doc,
+                struct,
+                value_name,
+                object_name,
+                indent="    ",
+            )
             return lines, object_name
 
         mapped = _map_type(value_type)
@@ -2156,7 +2366,7 @@ class NapiGenerator:
             lines.append(
                 f"    const {_cpp_storage_type(param.type_info)} {name}_value = static_cast<{_cpp_storage_type(param.type_info)}>({name}_raw);"
             )
-        elif mapped.category in {"int32", "enum"}:
+        elif mapped.category in {"int32", "enum", "das_result"}:
             lines.append(
                 f"    const {_cpp_storage_type(param.type_info)} {name}_value = static_cast<{_cpp_storage_type(param.type_info)}>("
             )
@@ -2281,7 +2491,7 @@ class NapiGenerator:
                 f'    exports.Set("create{director_name}", Napi::Function::New(env, create{director_name}));'
             )
         for interface in doc.interfaces:
-            for method in interface.methods:
+            for method in _interface_declared_methods(interface):
                 js_name = public_js_name(method.name)
                 wrapper_name = f"{_sanitize_identifier(interface.name)}_{_sanitize_identifier(js_name)}"
                 lines.append(
@@ -2347,7 +2557,7 @@ class NapiGenerator:
             lines.append("")
 
         for struct in doc.structs:
-            lines.extend(self._generate_dts_struct(struct))
+            lines.extend(self._generate_dts_struct(struct, doc))
             lines.append("")
 
         lines.extend(
@@ -2366,7 +2576,7 @@ class NapiGenerator:
                     "",
                 ]
             )
-        for interface in doc.interfaces:
+        for interface in _interfaces_base_first(doc):
             lines.extend(self._generate_dts_interface(interface))
             lines.append("")
             lines.extend(self._generate_dts_director(interface, doc))
@@ -2382,10 +2592,10 @@ class NapiGenerator:
             lines.append("")
         return "\n".join(lines)
 
-    def _generate_dts_struct(self, struct: StructDef) -> list[str]:
+    def _generate_dts_struct(self, struct: StructDef, doc: IdlDocument) -> list[str]:
         lines = [f"export interface {struct.name} {{"]
         for field in struct.fields:
-            lines.append(f"  {public_js_name(field.name)}: {_ts_type_for_struct_field(field.type_name)};")
+            lines.append(f"  {public_js_name(field.name)}: {_ts_type_for_struct_field(field.type_name, doc)};")
         lines.append("}")
         return lines
 
@@ -2395,7 +2605,7 @@ class NapiGenerator:
         lines = [f"export class {interface.name}{extends} {{"]
         lines.append(f"  static from(base: IDasBase): {interface.name};")
         lines.append("  dispose(): void;")
-        for method in interface.methods:
+        for method in _interface_declared_methods(interface):
             js_name = public_js_name(method.name)
             lines.append(
                 f"  {js_name}({_method_ts_params(method)}): {_method_ts_return(method)};"
@@ -2475,7 +2685,7 @@ class NapiGenerator:
         if not any(interface.name == "IDasBase" for interface in doc.interfaces):
             lines.extend(self._generate_js_base_class())
             lines.append("")
-        for interface in doc.interfaces:
+        for interface in _interfaces_base_first(doc):
             lines.extend(self._generate_js_interface(interface))
             lines.append("")
             lines.extend(self._generate_js_director(interface))
@@ -2575,7 +2785,7 @@ class NapiGenerator:
                 "  }",
             ]
         )
-        for method in interface.methods:
+        for method in _interface_declared_methods(interface):
             js_name = public_js_name(method.name)
             native_name = f"{interface.name}_{js_name}"
             in_params = _method_in_params(method)
