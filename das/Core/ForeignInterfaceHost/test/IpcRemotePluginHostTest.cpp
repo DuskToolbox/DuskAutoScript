@@ -283,7 +283,7 @@ namespace
         {
             auto* object = new FakeBaseObject();
             object->AddRef();
-            load_operation_ = DAS::DasPtr<FakeLoadPluginOperation>::Attach(
+            load_operation_ = DAS::DasPtr<FakeLoadPluginOperation>(
                 new FakeLoadPluginOperation(
                     DAS::DasPtr<IDasBase>::Attach(object)));
         }
@@ -472,7 +472,7 @@ TEST(IpcRemotePluginHostContract, LifecycleCallbacksAreOptionalHooks)
 
 TEST(IpcRemotePluginHostLifecycle, LoadStartsHostAndReturnsOwnerSession)
 {
-    auto launcher = DAS::DasPtr<FakeHostLauncher>::Attach(
+    auto launcher = DAS::DasPtr<FakeHostLauncher>(
         new FakeHostLauncher());
     auto context = std::make_shared<FakeIpcContext>(launcher);
     IpcRemotePluginHost host{
@@ -501,7 +501,7 @@ TEST(IpcRemotePluginHostLifecycle, LoadStartsHostAndReturnsOwnerSession)
 
 TEST(IpcRemotePluginHostLifecycle, LoadFailureAfterStartStopsLauncher)
 {
-    auto launcher = DAS::DasPtr<FakeHostLauncher>::Attach(
+    auto launcher = DAS::DasPtr<FakeHostLauncher>(
         new FakeHostLauncher());
     auto context = std::make_shared<FakeIpcContext>(launcher);
     context->load_async_result = DAS_E_FILE_NOT_FOUND;

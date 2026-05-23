@@ -3,7 +3,9 @@
 
 #include <das/Core/ForeignInterfaceHost/Config.h>
 #include <das/Core/ForeignInterfaceHost/RuntimeProvider.h>
+#include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
+#include <das/DasSharedRef.hpp>
 
 #include <chrono>
 #include <filesystem>
@@ -28,6 +30,20 @@ public:
 
     virtual auto LoadPlugin(const RemotePluginLoadRequest& request)
         -> DAS::Utils::Expected<RuntimeLoadResult> = 0;
+};
+
+class IpcRemotePluginHost final : public IRemotePluginHost
+{
+public:
+    explicit IpcRemotePluginHost(
+        DAS::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>
+            ipc_context);
+
+    auto LoadPlugin(const RemotePluginLoadRequest& request)
+        -> DAS::Utils::Expected<RuntimeLoadResult> override;
+
+private:
+    DAS::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context_;
 };
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
