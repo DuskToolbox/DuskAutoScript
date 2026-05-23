@@ -2,6 +2,7 @@
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Core/ForeignInterfaceHost/PluginResourceIndex.h>
+#include <das/Core/ForeignInterfaceHost/RemotePluginHost.h>
 #include <das/Core/ForeignInterfaceHost/RuntimeProvider.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
@@ -26,10 +27,12 @@ DAS_DISABLE_WARNING_END
 
 #include <algorithm>
 #include <atomic>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <random>
 
 using namespace DAS::Core::ForeignInterfaceHost;
@@ -91,6 +94,56 @@ namespace
         auto name = "das_test_settings_" + std::to_string(rd()) + "_"
                     + std::to_string(counter.fetch_add(1));
         return std::filesystem::current_path() / name;
+    }
+
+    class ScopedEnvVar
+    {
+    public:
+        ScopedEnvVar(const char* name, std::optional<std::string> value)
+            : name_{name}
+        {
+            const char* current = std::getenv(name_.c_str());
+            if (current)
+            {
+                original_ = std::string{current};
+            }
+            Set(std::move(value));
+        }
+
+        ScopedEnvVar(const ScopedEnvVar&) = delete;
+        ScopedEnvVar& operator=(const ScopedEnvVar&) = delete;
+
+        ~ScopedEnvVar() { Set(std::move(original_)); }
+
+    private:
+        void Set(std::optional<std::string> value)
+        {
+#ifdef _WIN32
+            _putenv_s(name_.c_str(), value ? value->c_str() : "");
+#else
+            if (value)
+            {
+                setenv(name_.c_str(), value->c_str(), 1);
+            }
+            else
+            {
+                unsetenv(name_.c_str());
+            }
+#endif
+        }
+
+        std::string                name_;
+        std::optional<std::string> original_;
+    };
+
+    std::string ReadUtf8String(IDasReadOnlyString* value)
+    {
+        const char* raw = nullptr;
+        if (!value || value->GetUtf8(&raw) != DAS_S_OK || !raw)
+        {
+            return {};
+        }
+        return raw;
     }
 
     std::filesystem::path GetTestPluginPath()
@@ -280,6 +333,60 @@ namespace
 
     private:
         uint16_t owner_session_id_ = 0;
+        std::vector<DasPluginFeature> features_;
+    };
+
+    struct CapturingRemoteHostState
+    {
+        int                      load_count = 0;
+        std::filesystem::path    manifest_path;
+        std::string              executable;
+        std::vector<std::string> args;
+        std::string              working_directory;
+    };
+
+    class CapturingRemoteHost final : public IRemotePluginHost
+    {
+    public:
+        CapturingRemoteHost(
+            CapturingRemoteHostState&     state,
+            uint16_t                      owner_session_id,
+            std::vector<DasPluginFeature> features)
+            : state_{state},
+              owner_session_id_{owner_session_id},
+              features_{std::move(features)}
+        {
+        }
+
+        auto LoadPlugin(const RemotePluginLoadRequest& request)
+            -> DAS::Utils::Expected<RuntimeLoadResult> override
+        {
+            state_.load_count += 1;
+            state_.manifest_path = request.manifest_path;
+            state_.executable =
+                ReadUtf8String(request.launch_desc.p_executable_path);
+            state_.working_directory =
+                ReadUtf8String(request.launch_desc.p_working_directory);
+            state_.args.clear();
+            for (size_t i = 0; i < request.launch_desc.arg_count; ++i)
+            {
+                state_.args.push_back(
+                    ReadUtf8String(request.launch_desc.pp_args[i]));
+            }
+
+            auto* package = new CapturingPluginPackage(features_);
+            package->AddRef();
+
+            RuntimeLoadResult result{};
+            result.object =
+                DasPtr<IDasBase>::Attach(static_cast<IDasBase*>(package));
+            result.owner_session_id = owner_session_id_;
+            return result;
+        }
+
+    private:
+        CapturingRemoteHostState&     state_;
+        uint16_t                      owner_session_id_ = 0;
         std::vector<DasPluginFeature> features_;
     };
 
@@ -1680,6 +1787,73 @@ TEST_F(
     ASSERT_EQ(pm_->GetPluginFeatures(manifest_path, features), DAS_S_OK);
     ASSERT_EQ(features.size(), 1u);
     EXPECT_EQ(features.front().session_id, 94);
+
+    std::filesystem::remove_all(test_dir);
+}
+
+TEST_F(PluginManagerGuidTest, LoadPlugin_NodeManifestRoutesThroughNodeRuntime)
+{
+    constexpr auto kNodeHostEnv = "DAS_NODE_HOST_EXE_PATH";
+    auto test_dir =
+        std::filesystem::current_path() / "test_plugin_node_runtime_route";
+    std::filesystem::create_directories(test_dir);
+
+    const auto manifest_path = test_dir / "node_plugin.json";
+    const auto node_exe_path = test_dir / "fake-node.exe";
+    {
+        std::ofstream{node_exe_path} << "\n";
+        std::ofstream{test_dir / "das-node-host.cjs"} << "\n";
+        std::ofstream{test_dir / "das_core_napi_export.js"} << "\n";
+        std::ofstream{test_dir / "das_core_napi.node"} << "\n";
+    }
+
+    auto manifest = Das::Utils::MakeYyjsonObject();
+    {
+        auto obj = *manifest.as_object();
+        obj[std::string_view("guid")] =
+            "00000000-0000-0000-0000-000000750703";
+        obj[std::string_view("name")] = "NodeProviderRoutePlugin";
+        obj[std::string_view("language")] = "Node";
+        obj[std::string_view("description")] = "test";
+        obj[std::string_view("author")] = "test";
+        obj[std::string_view("version")] = "1.0";
+        obj[std::string_view("supportedSystem")] = "win";
+        obj[std::string_view("pluginFilenameExtension")] = "js";
+        obj[std::string_view("settings")] = Das::Utils::MakeYyjsonArray();
+    }
+    {
+        std::ofstream ofs(manifest_path);
+        ofs << *Das::Utils::SerializeYyjsonValue(manifest, false);
+    }
+
+    ScopedEnvVar env{kNodeHostEnv, node_exe_path.string()};
+    CapturingRemoteHostState remote_state;
+    pm_->SetRemotePluginHostFactoryForTest(
+        [&remote_state]()
+        {
+            return std::make_unique<CapturingRemoteHost>(
+                remote_state,
+                117,
+                std::vector<DasPluginFeature>{
+                    DAS_PLUGIN_FEATURE_CAPTURE_FACTORY});
+        });
+
+    auto result = pm_->LoadPlugin(manifest_path);
+
+    EXPECT_EQ(result, DAS_S_OK);
+    EXPECT_EQ(remote_state.load_count, 1);
+    EXPECT_EQ(remote_state.manifest_path, manifest_path);
+    EXPECT_EQ(remote_state.executable, node_exe_path.string());
+    ASSERT_GE(remote_state.args.size(), 1u);
+    EXPECT_EQ(
+        remote_state.args.front(),
+        (test_dir / "das-node-host.cjs").string());
+    EXPECT_EQ(remote_state.working_directory, test_dir.string());
+
+    std::vector<FeatureInfo> features;
+    ASSERT_EQ(pm_->GetPluginFeatures(manifest_path, features), DAS_S_OK);
+    ASSERT_EQ(features.size(), 1u);
+    EXPECT_EQ(features.front().session_id, 117);
 
     std::filesystem::remove_all(test_dir);
 }

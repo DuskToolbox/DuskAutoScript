@@ -1,9 +1,11 @@
 #include <das/Core/ForeignInterfaceHost/NodeRuntime.h>
 
+#include <das/Core/ForeignInterfaceHost/RemotePluginHost.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -11,6 +13,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #ifdef _WIN32
 #include <stdlib.h>
@@ -126,6 +129,94 @@ namespace
             [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
         return value;
     }
+
+    class RemoteHostBaseObject final : public IDasBase
+    {
+    public:
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out_object) override
+        {
+            if (pp_out_object == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (iid == DAS_IID_BASE)
+            {
+                *pp_out_object = static_cast<IDasBase*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            *pp_out_object = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+    private:
+        std::atomic<uint32_t> ref_count_{0};
+    };
+
+    struct RemoteHostCapture
+    {
+        int                   load_count = 0;
+        std::filesystem::path manifest_path;
+        DasGuid               plugin_guid{};
+        std::string           executable;
+        std::vector<std::string> args;
+        std::string              working_directory;
+    };
+
+    class CapturingRemotePluginHost final : public IRemotePluginHost
+    {
+    public:
+        CapturingRemotePluginHost(
+            RemoteHostCapture& capture,
+            uint16_t           owner_session_id)
+            : capture_{capture}, owner_session_id_{owner_session_id}
+        {
+        }
+
+        auto LoadPlugin(const RemotePluginLoadRequest& request)
+            -> DAS::Utils::Expected<RuntimeLoadResult> override
+        {
+            capture_.load_count += 1;
+            capture_.manifest_path = request.manifest_path;
+            capture_.plugin_guid = request.plugin_guid;
+            capture_.executable =
+                ReadUtf8(request.launch_desc.p_executable_path);
+            capture_.working_directory =
+                ReadUtf8(request.launch_desc.p_working_directory);
+            capture_.args.clear();
+            for (size_t i = 0; i < request.launch_desc.arg_count; ++i)
+            {
+                capture_.args.push_back(
+                    ReadUtf8(request.launch_desc.pp_args[i]));
+            }
+
+            auto* object = new RemoteHostBaseObject();
+            object->AddRef();
+
+            RuntimeLoadResult result{};
+            result.object =
+                DAS::DasPtr<IDasBase>::Attach(static_cast<IDasBase*>(object));
+            result.owner_session_id = owner_session_id_;
+            return result;
+        }
+
+    private:
+        RemoteHostCapture& capture_;
+        uint16_t           owner_session_id_ = 0;
+    };
 } // namespace
 
 TEST(NodeRuntimeResolver, UnsetEnvironmentUsesBareNodeLookup)
@@ -257,4 +348,40 @@ TEST(NodeRuntimePackage, BuildHostLaunchDescUsesPackageLocalScriptAndHostArgs)
     EXPECT_EQ(ReadUtf8(desc.pp_args[1]), "--main-pid");
     EXPECT_FALSE(ReadUtf8(desc.pp_args[2]).empty());
     EXPECT_EQ(ReadUtf8(desc.p_working_directory), package.Root().string());
+}
+
+TEST(NodeRuntimeRemoteHost, LoadDelegatesToRemoteHostWithLaunchDesc)
+{
+    TempNodePackage package;
+    const auto      executable = package.CreatePackageFiles();
+    const auto      manifest_path = package.CreateFile("node-plugin.json");
+    ScopedEnvVar    env{kEnvName, executable.string()};
+    RemoteHostCapture capture;
+
+    NodeRuntime runtime{std::make_unique<CapturingRemotePluginHost>(
+        capture,
+        82)};
+
+    RuntimeLoadRequest request{};
+    request.manifest_path = manifest_path;
+    request.runtime_path = manifest_path;
+    request.plugin_guid.data1 = 0x75070003;
+    request.language = ForeignInterfaceLanguage::Node;
+    request.load_mode = LoadMode::Ipc;
+    request.main_process_owner_session_id = 1;
+
+    auto result = runtime.LoadPlugin(request);
+
+    ASSERT_TRUE(result);
+    EXPECT_EQ(result->owner_session_id, 82);
+    EXPECT_NE(result->object.Get(), nullptr);
+    EXPECT_EQ(capture.load_count, 1);
+    EXPECT_EQ(capture.manifest_path, manifest_path);
+    EXPECT_EQ(capture.plugin_guid.data1, 0x75070003u);
+    EXPECT_EQ(capture.executable, executable.string());
+    ASSERT_GE(capture.args.size(), 1u);
+    EXPECT_EQ(
+        capture.args.front(),
+        (package.Root() / "das-node-host.cjs").string());
+    EXPECT_EQ(capture.working_directory, package.Root().string());
 }
