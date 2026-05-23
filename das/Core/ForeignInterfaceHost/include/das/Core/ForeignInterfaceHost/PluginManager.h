@@ -290,15 +290,6 @@ private:
     LoadedPlugin* FindPluginByGuid(const DasGuid& guid);
 
     /**
-     * @brief 通过 IPC 委托 Host 进程加载插件
-     * @note 必须在 mutex_ 锁外调用（内部使用 sync_wait 可能阻塞 30 秒）
-     */
-    DasResult LoadPluginViaIpc(
-        const std::filesystem::path&       manifest_path,
-        const DasGuid&                     plugin_guid,
-        std::shared_ptr<PluginPackageDesc> desc);
-
-    /**
      * @brief 通过 IPC 卸载插件（关闭 Host 进程）
      * @note 必须在 mutex_ 锁外调用（Stop 可能阻塞等待进程退出）
      */
@@ -327,6 +318,8 @@ private:
     uint16_t                                     session_id_ = 0;
     DasPtr<IForeignLanguageRuntime>              runtime_;
     std::unique_ptr<IRuntimeProvider>            runtime_provider_;
+    bool                                         runtime_provider_override_ =
+        false;
     Core::IPC::RemoteObjectRegistry*             registry_ = nullptr;
     std::unordered_map<DasGuid, LoadedPlugin>    loaded_plugins_;
     std::unordered_map<std::string, DasGuid>     path_to_guid_;
