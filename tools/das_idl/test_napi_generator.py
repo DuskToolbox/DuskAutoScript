@@ -74,6 +74,7 @@ def _phase74_contract_doc():
 
         [uuid("00000000-0000-0000-0000-000000000001")]
         interface IDasBinaryBuffer : IDasBase {
+            [binary_buffer] DasResult GetData([out] unsigned char** pp_out_data);
             DasResult GetSize([out] uint64_t* p_out_size);
         }
 
@@ -99,6 +100,15 @@ def _phase74_contract_doc():
             DasResult GetBinaryBuffer([out] IDasBinaryBuffer** pp_out_buffer);
             DasResult GetComponent([out] IDasComponent** pp_out_component);
             DasResult Flush();
+        }
+
+        [uuid("00000000-0000-0000-0000-000000000004")]
+        interface IDasMemory : IDasBase {
+            DasResult GetMutableView(uint64_t offset, [out] IDasBinaryBuffer** pp_out_buffer);
+            DasResult GetViewAndStatus(
+                uint64_t offset,
+                [out] uint32_t* p_out_status,
+                [out] IDasBinaryBuffer** pp_out_buffer);
         }
 
         module {
@@ -349,9 +359,15 @@ class TestNapiGenerator(unittest.TestCase):
         self.assertIn("getBinaryBuffer(): Buffer;", artifacts.dts)
         self.assertIn("getComponent(): IDasComponent;", artifacts.dts)
         self.assertIn("flush(): DasResult;", artifacts.dts)
+        self.assertIn("getMutableView(offset: bigint): Buffer;", artifacts.dts)
+        self.assertIn(
+            "getViewAndStatus(offset: bigint): { status: number; buffer: Buffer; };",
+            artifacts.dts,
+        )
         self.assertIn("export interface INapiDasImageCallbacks", artifacts.dts)
         self.assertIn("getSize?: () => DasSize;", artifacts.dts)
         self.assertIn("getBinaryBuffer?: () => Buffer;", artifacts.dts)
+        self.assertIn("getMutableView?: (offset: bigint) => Buffer;", artifacts.dts)
 
         self.assertIn("getSize(...args)", artifacts.js)
         self.assertIn("getBinaryBuffer(...args)", artifacts.js)
@@ -467,8 +483,77 @@ class TestNapiGenerator(unittest.TestCase):
         self.assertIn("void Finalize(Napi::Env env) override", artifacts.cpp)
         self.assertIn("class IDasImageWrapper final", artifacts.cpp)
         self.assertIn("class IDasComponentWrapper final", artifacts.cpp)
+        self.assertIn("class IDasMemoryWrapper final", artifacts.cpp)
         self.assertIn("IDasImageWrapper::WrapAdopted", artifacts.cpp)
         self.assertIn("IDasComponentWrapper::WrapAdopted", artifacts.cpp)
+
+    def test_napi_phase74_binary_buffer_uses_zero_copy_holder(self):
+        artifacts = generate_napi_artifacts(
+            _phase74_contract_doc(),
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+
+        self.assertIn("enum class BinaryBufferOwnershipMode", artifacts.cpp)
+        self.assertIn("struct BinaryBufferViewHolder", artifacts.cpp)
+        self.assertIn("DAS::DasPtr<IDasBinaryBuffer> buffer;", artifacts.cpp)
+        self.assertIn(
+            "DAS::DasPtr<IDasBinaryBuffer>::Attach(raw)",
+            artifacts.cpp,
+        )
+        self.assertIn("DAS::DasPtr<IDasBinaryBuffer>(raw)", artifacts.cpp)
+        self.assertIn("buffer->GetSize(&byte_size)", artifacts.cpp)
+        self.assertIn("buffer->GetData(&data)", artifacts.cpp)
+        self.assertIn("std::numeric_limits<size_t>::max()", artifacts.cpp)
+        self.assertIn("Napi::Buffer<unsigned char>::New(", artifacts.cpp)
+        self.assertIn("delete finalizer_holder;", artifacts.cpp)
+
+        helper_start = artifacts.cpp.index("struct BinaryBufferViewHolder")
+        helper_end = artifacts.cpp.index("class DasInterfaceWrapperBase")
+        helper_text = artifacts.cpp[helper_start:helper_end]
+        self.assertNotIn("IDasImage", helper_text)
+        self.assertNotIn("IDasMemory", helper_text)
+        self.assertNotIn("delete data", helper_text)
+        self.assertNotIn("delete finalizer_data", helper_text)
+        self.assertNotIn("free(data", helper_text)
+        self.assertNotIn("free(finalizer_data", helper_text)
+
+        forbidden_copy_fallbacks = (
+            "NewOrCopy",
+            "Buffer::Copy",
+            "napi_create_buffer_copy",
+        )
+        for pattern in forbidden_copy_fallbacks:
+            with self.subTest(pattern=pattern):
+                self.assertNotIn(pattern, artifacts.cpp)
+
+    def test_napi_phase74_binary_buffer_routes_use_explicit_ownership(self):
+        artifacts = generate_napi_artifacts(
+            _phase74_contract_doc(),
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+
+        self.assertIn(
+            "return ConvertIDasBinaryBufferToBuffer(env, pp_out_buffer_value, BinaryBufferOwnershipMode::AdoptOwned);",
+            artifacts.cpp,
+        )
+        self.assertIn(
+            'output.Set("buffer", ConvertIDasBinaryBufferToBuffer(env, pp_out_buffer_value, BinaryBufferOwnershipMode::AdoptOwned));',
+            artifacts.cpp,
+        )
+        self.assertNotIn("IDasBinaryBufferWrapper::WrapAdopted", artifacts.cpp)
+
+    def test_napi_phase74_dts_declares_buffer_without_package_workflow(self):
+        artifacts = generate_napi_artifacts(
+            _phase74_contract_doc(),
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+
+        self.assertIn("export interface Buffer extends Uint8Array", artifacts.dts)
+        self.assertIn("getBinaryBuffer(): Buffer;", artifacts.dts)
+        self.assertNotIn('/// <reference types="node" />', artifacts.dts)
 
     def test_napi_phase74_public_surface_hides_com_refcounting(self):
         artifacts = generate_napi_artifacts(
