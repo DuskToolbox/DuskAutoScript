@@ -380,6 +380,44 @@ def _doc_needs_binary_buffer_conversion(doc: IdlDocument) -> bool:
     return False
 
 
+def _doc_has_error_code(doc: IdlDocument, name: str) -> bool:
+    for error_code in doc.error_codes:
+        for value in error_code.values:
+            if value.name == name:
+                return True
+    return False
+
+
+def _interface_by_name(doc: IdlDocument) -> dict[str, InterfaceDef]:
+    return {interface.name: interface for interface in doc.interfaces}
+
+
+def _interface_chain(interface: InterfaceDef, doc: IdlDocument) -> list[str]:
+    interfaces = _interface_by_name(doc)
+    chain = [interface.name]
+    base_name = interface.base_interface
+    while base_name and base_name != "IDasBase":
+        chain.append(base_name)
+        base = interfaces.get(base_name)
+        if base is None:
+            break
+        base_name = base.base_interface
+    return chain
+
+
+def _interface_methods_including_bases(
+    interface: InterfaceDef,
+    doc: IdlDocument,
+) -> list[MethodDef]:
+    interfaces = _interface_by_name(doc)
+    methods: list[MethodDef] = []
+    for interface_name in reversed(_interface_chain(interface, doc)):
+        current = interfaces.get(interface_name)
+        if current is not None:
+            methods.extend(current.methods)
+    return methods
+
+
 class NapiGenerator:
     def __init__(
         self,
@@ -415,10 +453,17 @@ class NapiGenerator:
         lines: list[str] = [
             "// DAS Node/NAPI bindings (auto-generated - DO NOT MODIFY)",
             '#include <napi.h>',
+            "#include <atomic>",
+            "#include <condition_variable>",
+            "#include <cstdio>",
+            "#include <functional>",
             "#include <limits>",
             "#include <memory>",
+            "#include <mutex>",
             "#include <string>",
+            "#include <thread>",
             "#include <utility>",
+            "#include <vector>",
             "",
             '#include "das/IDasBase.h"',
             '#include "das/DasPtr.hpp"',
@@ -614,6 +659,17 @@ class NapiGenerator:
             lines.extend(self._generate_cpp_wrapper_class(interface_name))
             lines.append("")
 
+        lines.extend(self._generate_cpp_director_base(doc))
+        lines.append("")
+
+        for interface in doc.interfaces:
+            if interface.name == "IDasBase":
+                continue
+            lines.extend(self._generate_cpp_director_class(interface, doc))
+            lines.append("")
+            lines.extend(self._generate_cpp_director_create_function(interface))
+            lines.append("")
+
         lines.extend(self._generate_cpp_base_extractor(doc))
         lines.append("")
 
@@ -758,6 +814,707 @@ class NapiGenerator:
             "        : Base(info) {}",
             "};",
         ]
+
+    def _generate_cpp_director_base(self, doc: IdlDocument) -> list[str]:
+        js_error = (
+            "DAS_E_JAVASCRIPT_ERROR"
+            if _doc_has_error_code(doc, "DAS_E_JAVASCRIPT_ERROR")
+            else "DAS_E_FAIL"
+        )
+        missing_callback = (
+            "DAS_E_JAVASCRIPT_NO_IMPLEMENTATION"
+            if _doc_has_error_code(doc, "DAS_E_JAVASCRIPT_NO_IMPLEMENTATION")
+            else "DAS_E_NO_IMPLEMENTATION"
+        )
+        return [
+            f"constexpr DasResult kNapiDirectorJavaScriptError = {js_error};",
+            f"constexpr DasResult kNapiDirectorMissingCallbackResult = {missing_callback};",
+            "",
+            "struct NapiDirectorCallData {",
+            "    using Invoke = std::function<DasResult(Napi::Env)>;",
+            "",
+            "    explicit NapiDirectorCallData(Invoke in_invoke)",
+            "        : invoke(std::move(in_invoke)) {}",
+            "",
+            "    Invoke invoke;",
+            "    std::mutex mutex;",
+            "    std::condition_variable complete;",
+            "    bool done{false};",
+            "    DasResult result{kNapiDirectorJavaScriptError};",
+            "",
+            "    void Run(Napi::Env env) {",
+            "        Finish(invoke(env));",
+            "    }",
+            "",
+            "    void Finish(DasResult in_result) {",
+            "        {",
+            "            std::lock_guard<std::mutex> lock(mutex);",
+            "            result = in_result;",
+            "            done = true;",
+            "        }",
+            "        complete.notify_one();",
+            "    }",
+            "",
+            "    DasResult Wait() {",
+            "        std::unique_lock<std::mutex> lock(mutex);",
+            "        complete.wait(lock, [this] { return done; });",
+            "        return result;",
+            "    }",
+            "};",
+            "",
+            "class NapiDirectorBase {",
+            "protected:",
+            "    using DirectorInvoke = std::function<DasResult(Napi::Env, Napi::Function)>;",
+            "",
+            "    NapiDirectorBase(Napi::Env env, Napi::Object callbacks)",
+            "        : env_(env),",
+            "          callbacks_(Napi::Persistent(callbacks)),",
+            "          node_thread_id_(std::this_thread::get_id()) {",
+            "        callbacks_.SuppressDestruct();",
+            "        Napi::Function trampoline = Napi::Function::New(",
+            "            env,",
+            "            [](const Napi::CallbackInfo& finalizer_info) {",
+            "                (void)finalizer_info;",
+            "            });",
+            "        tsfn_ = Napi::ThreadSafeFunction::New(",
+            "            env,",
+            "            trampoline,",
+            '            "DAS NapiDirector upcall",',
+            "            0,",
+            "            1);",
+            "    }",
+            "",
+            "    virtual ~NapiDirectorBase() {",
+            "        // Finalizers and destructors release native references only; they never call JS callbacks.",
+            "        callbacks_.Reset();",
+            "        if (tsfn_) {",
+            "            tsfn_.Release();",
+            "        }",
+            "    }",
+            "",
+            "    bool IsNodeThread() const {",
+            "        return std::this_thread::get_id() == node_thread_id_;",
+            "    }",
+            "",
+            "    Napi::Object CallbackThis() const {",
+            "        return callbacks_.Value();",
+            "    }",
+            "",
+            "    bool hasCallbackMethod(const char* method_name) const {",
+            "        Napi::HandleScope scope(env_);",
+            "        Napi::Value method = callbacks_.Value().Get(method_name);",
+            "        return method.IsFunction();",
+            "    }",
+            "",
+            "    DasResult DispatchDirectorCall(",
+            "        const char* method_name,",
+            "        DirectorInvoke invoke) {",
+            "        UpcallGuard guard(this);",
+            "        if (!guard.acquired()) {",
+            '            LogDirectorError(method_name, "reentrant JavaScript director upcall rejected");',
+            "            return kNapiDirectorJavaScriptError;",
+            "        }",
+            "        if (IsNodeThread()) {",
+            "            return DispatchDirect(method_name, std::move(invoke));",
+            "        }",
+            "        return DispatchThreadSafe(method_name, std::move(invoke));",
+            "    }",
+            "",
+            "    DasResult DispatchDirect(",
+            "        const char* method_name,",
+            "        DirectorInvoke invoke) {",
+            "        Napi::HandleScope scope(env_);",
+            "        if (!hasCallbackMethod(method_name)) {",
+            "            LogMissingCallback(method_name);",
+            "            return kNapiDirectorMissingCallbackResult;",
+            "        }",
+            "        try {",
+            "            Napi::Value method = callbacks_.Value().Get(method_name);",
+            "            Napi::Function callback = method.As<Napi::Function>();",
+            "            return invoke(env_, callback);",
+            "        } catch (const Napi::Error& error) {",
+            "            LogJavaScriptException(method_name, error);",
+            "            return kNapiDirectorJavaScriptError;",
+            "        } catch (const std::exception& error) {",
+            "            LogDirectorError(method_name, error.what());",
+            "            return kNapiDirectorJavaScriptError;",
+            "        } catch (...) {",
+            '            LogDirectorError(method_name, "unknown native exception during JavaScript director upcall");',
+            "            return kNapiDirectorJavaScriptError;",
+            "        }",
+            "    }",
+            "",
+            "    DasResult DispatchThreadSafe(",
+            "        const char* method_name,",
+            "        DirectorInvoke invoke) {",
+            "        auto call = std::make_shared<NapiDirectorCallData>(",
+            "            [this, method_name, invoke = std::move(invoke)](Napi::Env env) mutable {",
+            "                (void)env;",
+            "                return DispatchDirect(method_name, std::move(invoke));",
+            "            });",
+            "        napi_status status = tsfn_.BlockingCall(",
+            "            call.get(),",
+            "            [](Napi::Env env, Napi::Function, NapiDirectorCallData* call) {",
+            "                call->Run(env);",
+            "            });",
+            "        if (status != napi_ok) {",
+            '            LogDirectorError(method_name, "failed to marshal JavaScript director upcall to Node thread");',
+            "            return kNapiDirectorJavaScriptError;",
+            "        }",
+            "        return call->Wait();",
+            "    }",
+            "",
+            "    void LogMissingCallback(const char* method_name) const {",
+            "        std::fprintf(",
+            "            stderr,",
+            '            "[DAS NapiDirector] missing JavaScript callback: %s\\n",',
+            "            method_name);",
+            "    }",
+            "",
+            "    void LogDirectorError(const char* method_name, const char* message) const {",
+            "        std::fprintf(",
+            "            stderr,",
+            '            "[DAS NapiDirector] %s failed: %s\\n",',
+            "            method_name,",
+            "            message ? message : \"unknown error\");",
+            "    }",
+            "",
+            "    void LogJavaScriptException(const char* method_name, const Napi::Error& error) const {",
+            "        std::fprintf(",
+            "            stderr,",
+            '            "[DAS NapiDirector] %s threw: %s\\n",',
+            "            method_name,",
+            "            error.Message().c_str());",
+            '        Napi::Value stack = error.Value().As<Napi::Object>().Get("stack");',
+            "        if (stack.IsString()) {",
+            "            const std::string stack_text = stack.As<Napi::String>().Utf8Value();",
+            "            std::fprintf(stderr, \"[DAS NapiDirector] stack: %s\\n\", stack_text.c_str());",
+            "        }",
+            "    }",
+            "",
+            "    class UpcallGuard {",
+            "    public:",
+            "        explicit UpcallGuard(NapiDirectorBase* director)",
+            "            : director_(director) {",
+            "            bool expected = false;",
+            "            acquired_ = director_->upcall_active_.compare_exchange_strong(",
+            "                expected,",
+            "                true,",
+            "                std::memory_order_acq_rel);",
+            "        }",
+            "",
+            "        ~UpcallGuard() {",
+            "            if (acquired_) {",
+            "                director_->upcall_active_.store(false, std::memory_order_release);",
+            "            }",
+            "        }",
+            "",
+            "        bool acquired() const { return acquired_; }",
+            "",
+            "    private:",
+            "        NapiDirectorBase* director_;",
+            "        bool acquired_{false};",
+            "    };",
+            "",
+            "private:",
+            "    Napi::Env env_;",
+            "    Napi::ObjectReference callbacks_;",
+            "    std::thread::id node_thread_id_;",
+            "    Napi::ThreadSafeFunction tsfn_;",
+            "    std::atomic_bool upcall_active_{false};",
+            "};",
+        ]
+
+    def _generate_cpp_director_class(
+        self,
+        interface: InterfaceDef,
+        doc: IdlDocument,
+    ) -> list[str]:
+        director_name = self._director_name(interface.name)
+        lines = [
+            f"class {director_name} final",
+            f"    : public {interface.name}, public NapiDirectorBase {{",
+            "public:",
+            f"    {director_name}(Napi::Env env, Napi::Object callbacks)",
+            "        : NapiDirectorBase(env, callbacks) {}",
+            "",
+            "    std::atomic<uint32_t> ref_count_{1};",
+            "",
+            "    uint32_t AddRef() override {",
+            "        return ref_count_.fetch_add(1, std::memory_order_relaxed) + 1;",
+            "    }",
+            "",
+            "    uint32_t Release() override {",
+            "        const uint32_t count = ref_count_.fetch_sub(1, std::memory_order_acq_rel) - 1;",
+            "        if (count == 0) {",
+            "            delete this;",
+            "        }",
+            "        return count;",
+            "    }",
+            "",
+            "    DasResult QueryInterface(const DasGuid& iid, void** pp_object) override {",
+            "        if (pp_object == nullptr) {",
+            "            return DAS_E_INVALID_POINTER;",
+            "        }",
+        ]
+        for interface_name in _interface_chain(interface, doc):
+            lines.extend(
+                [
+                    f"        if (iid == DasIidOf<{interface_name}>()) {{",
+                    f"            *pp_object = static_cast<{interface_name}*>(this);",
+                    "            AddRef();",
+                    "            return DAS_S_OK;",
+                    "        }",
+                ]
+            )
+        lines.extend(
+            [
+                "        if (iid == DAS_IID_BASE) {",
+                "            *pp_object = static_cast<IDasBase*>(this);",
+                "            AddRef();",
+                "            return DAS_S_OK;",
+                "        }",
+                "        *pp_object = nullptr;",
+                "        return DAS_E_NO_INTERFACE;",
+                "    }",
+            ]
+        )
+        for method in _interface_methods_including_bases(interface, doc):
+            lines.append("")
+            lines.extend(self._generate_cpp_director_method(method, doc))
+        lines.append("};")
+        return lines
+
+    def _generate_cpp_director_create_function(
+        self,
+        interface: InterfaceDef,
+    ) -> list[str]:
+        director_name = self._director_name(interface.name)
+        wrapper_name = _cpp_wrapper_name(interface.name)
+        return [
+            f"Napi::Value create{director_name}(const Napi::CallbackInfo& info) {{",
+            "    Napi::Env env = info.Env();",
+            "    if (info.Length() != 1 || !info[0].IsObject()) {",
+            f'        throw Napi::TypeError::New(env, "{director_name} expects a callback object");',
+            "    }",
+            f"    auto* director = new {director_name}(env, info[0].As<Napi::Object>());",
+            f"    return {wrapper_name}::WrapAdopted(env, director);",
+            "}",
+        ]
+
+    def _generate_cpp_director_method(
+        self,
+        method: MethodDef,
+        doc: IdlDocument,
+    ) -> list[str]:
+        method_label = public_js_name(method.name)
+        param_decls = [
+            f"{_cpp_type(param.type_info)} {_sanitize_identifier(param.name)}"
+            for param in method.parameters
+        ]
+        lines = [
+            f"    DasResult {method.name}({', '.join(param_decls)}) override {{",
+        ]
+        out_params = _method_out_params(method)
+        for param in out_params:
+            name = _sanitize_identifier(param.name)
+            lines.extend(
+                [
+                    f"        if ({name} == nullptr) {{",
+                    "            return DAS_E_INVALID_POINTER;",
+                    "        }",
+                ]
+            )
+            if _value_type_for_out_param(param).type_kind == TypeKind.INTERFACE:
+                lines.append(f"        *{name} = nullptr;")
+
+        capture_names: list[str] = ["this"]
+        for param in _method_in_params(method):
+            capture_lines, capture_name = self._generate_cpp_director_capture(
+                param,
+                doc,
+            )
+            lines.extend(capture_lines)
+            capture_names.append(capture_name)
+        for param in out_params:
+            capture_names.append(_sanitize_identifier(param.name))
+
+        capture_list = ", ".join(capture_names)
+        lines.extend(
+            [
+                f'        return DispatchDirectorCall("{method_label}",',
+                f"            [{capture_list}](Napi::Env env, Napi::Function callback) mutable -> DasResult {{",
+                "                std::vector<napi_value> js_args;",
+            ]
+        )
+        for param in _method_in_params(method):
+            lines.extend(self._generate_cpp_director_js_arg(param, doc))
+        lines.extend(
+            [
+                "                Napi::Value js_result = callback.Call(CallbackThis(), js_args);",
+            ]
+        )
+        lines.extend(
+            self._generate_cpp_director_result_conversion(
+                method,
+                doc,
+                method_label,
+            )
+        )
+        lines.extend(
+            [
+                "            });",
+                "    }",
+            ]
+        )
+        return lines
+
+    def _generate_cpp_director_capture(
+        self,
+        param: ParameterDef,
+        doc: IdlDocument,
+    ) -> tuple[list[str], str]:
+        del doc
+        name = _sanitize_identifier(param.name)
+        capture_name = f"{name}_copy"
+        mapped = _map_type(param.type_info)
+        if mapped is not None:
+            if mapped.category in {"utf8_string", "readonly_string"}:
+                return [
+                    f"        if ({name} == nullptr) {{",
+                    "            return DAS_E_INVALID_POINTER;",
+                    "        }",
+                    f"        std::string {capture_name}{{{name}}};",
+                ], capture_name
+            return [
+                f"        const {_cpp_storage_type(param.type_info)} {capture_name} = {name};",
+            ], capture_name
+
+        if param.type_info.type_kind == TypeKind.STRUCT:
+            if param.type_info.is_pointer:
+                return [
+                    f"        if ({name} == nullptr) {{",
+                    "            return DAS_E_INVALID_POINTER;",
+                    "        }",
+                    f"        const {type_simple_name(param.type_info)} {capture_name} = *{name};",
+                ], capture_name
+            return [
+                f"        const {type_simple_name(param.type_info)} {capture_name} = {name};",
+            ], capture_name
+
+        if param.type_info.type_kind == TypeKind.INTERFACE:
+            interface_name = type_simple_name(param.type_info)
+            capture_name = f"{name}_hold"
+            return [
+                f"        if ({name} == nullptr) {{",
+                "            return DAS_E_INVALID_POINTER;",
+                "        }",
+                f"        DAS::DasPtr<{interface_name}> {capture_name}({name});",
+            ], capture_name
+
+        raise AssertionError(f"unsupported director input parameter {param.name}")
+
+    def _generate_cpp_director_js_arg(
+        self,
+        param: ParameterDef,
+        doc: IdlDocument,
+    ) -> list[str]:
+        name = _sanitize_identifier(param.name)
+        capture_name = f"{name}_copy"
+        arg_name = f"{name}_arg"
+        mapped = _map_type(param.type_info)
+        if mapped is not None:
+            if mapped.category == "das_guid":
+                return [
+                    f"                Napi::Value {arg_name} = WriteDasGuid(env, {capture_name});",
+                    f"                js_args.push_back({arg_name});",
+                ]
+            if mapped.category in {"int32", "uint32", "number", "enum", "das_result"}:
+                return [
+                    f"                Napi::Value {arg_name} = Napi::Number::New(env, static_cast<double>({capture_name}));",
+                    f"                js_args.push_back({arg_name});",
+                ]
+            if mapped.category == "boolean":
+                return [
+                    f"                Napi::Value {arg_name} = Napi::Boolean::New(env, {capture_name} != 0);",
+                    f"                js_args.push_back({arg_name});",
+                ]
+            if mapped.category == "int64":
+                return [
+                    f"                Napi::Value {arg_name} = Napi::BigInt::New(env, static_cast<int64_t>({capture_name}));",
+                    f"                js_args.push_back({arg_name});",
+                ]
+            if mapped.category == "uint64":
+                return [
+                    f"                Napi::Value {arg_name} = Napi::BigInt::New(env, static_cast<uint64_t>({capture_name}));",
+                    f"                js_args.push_back({arg_name});",
+                ]
+            if mapped.category in {"utf8_string", "readonly_string"}:
+                return [
+                    f"                Napi::Value {arg_name} = Napi::String::New(env, {capture_name});",
+                    f"                js_args.push_back({arg_name});",
+                ]
+            raise AssertionError(f"unsupported director mapped input {param.name}")
+
+        if param.type_info.type_kind == TypeKind.STRUCT:
+            struct = _find_struct(doc, param.type_info)
+            if struct is None:
+                raise AssertionError(f"missing struct {type_simple_name(param.type_info)}")
+            lines = [f"                Napi::Object {arg_name} = Napi::Object::New(env);"]
+            for field in struct.fields:
+                mapped_field = _map_type(TypeInfo(field.type_name))
+                if mapped_field is None:
+                    raise AssertionError(f"unsupported struct field type {field.type_name}")
+                lines.append(
+                    f'                {arg_name}.Set("{public_js_name(field.name)}", '
+                    f"{self._cpp_return_expression(f'{capture_name}.{field.name}', mapped_field)});"
+                )
+            lines.append(f"                js_args.push_back({arg_name});")
+            return lines
+
+        if param.type_info.type_kind == TypeKind.INTERFACE:
+            interface_name = type_simple_name(param.type_info)
+            capture_name = f"{name}_hold"
+            if _is_binary_buffer_interface(param.type_info):
+                return [
+                    f"                Napi::Value {arg_name} = ConvertIDasBinaryBufferToBuffer(",
+                    "                    env,",
+                    f"                    {capture_name}.Get(),",
+                    "                    BinaryBufferOwnershipMode::BorrowAddRef);",
+                    f"                js_args.push_back({arg_name});",
+                ]
+            return [
+                f"                Napi::Value {arg_name} = {_cpp_wrapper_name(interface_name)}::WrapBorrowed(env, {capture_name}.Get());",
+                f"                js_args.push_back({arg_name});",
+            ]
+
+        raise AssertionError(f"unsupported director JS argument {param.name}")
+
+    def _generate_cpp_director_result_conversion(
+        self,
+        method: MethodDef,
+        doc: IdlDocument,
+        method_label: str,
+    ) -> list[str]:
+        out_params = _method_out_params(method)
+        if not out_params:
+            return [
+                "                if (!js_result.IsNumber()) {",
+                f'                    LogDirectorError("{method_label}", "callback must return DasResult");',
+                "                    return kNapiDirectorJavaScriptError;",
+                "                }",
+                "                return static_cast<DasResult>(js_result.As<Napi::Number>().Int32Value());",
+            ]
+        if len(out_params) == 1:
+            return self._generate_cpp_director_assign_out_param(
+                out_params[0],
+                "js_result",
+                method_label,
+                doc,
+                indent="                ",
+            ) + ["                return DAS_S_OK;"]
+
+        lines = [
+            "                if (!js_result.IsObject()) {",
+            f'                    LogDirectorError("{method_label}", "callback must return an object");',
+            "                    return kNapiDirectorJavaScriptError;",
+            "                }",
+            "                Napi::Object js_output = js_result.As<Napi::Object>();",
+        ]
+        for param in out_params:
+            field_name = clean_out_field_name(param.name)
+            value_name = f"{_sanitize_identifier(param.name)}_js_value"
+            lines.append(
+                f'                Napi::Value {value_name} = js_output.Get("{field_name}");'
+            )
+            lines.extend(
+                self._generate_cpp_director_assign_out_param(
+                    param,
+                    value_name,
+                    method_label,
+                    doc,
+                    indent="                ",
+                )
+            )
+        lines.append("                return DAS_S_OK;")
+        return lines
+
+    def _generate_cpp_director_assign_out_param(
+        self,
+        param: ParameterDef,
+        value_expr: str,
+        method_label: str,
+        doc: IdlDocument,
+        *,
+        indent: str,
+    ) -> list[str]:
+        value_type = _value_type_for_out_param(param)
+        target = f"*{_sanitize_identifier(param.name)}"
+        label = clean_out_field_name(param.name)
+
+        if _is_binary_buffer_interface(value_type) or _is_binary_buffer_like(value_type):
+            return [
+                f'{indent}LogDirectorError("{method_label}", "IDasBinaryBuffer callback returns are not supported");',
+                f"{indent}return kNapiDirectorJavaScriptError;",
+            ]
+
+        if _is_readonly_string_interface_pointer(value_type):
+            created_name = f"{_sanitize_identifier(param.name)}_created"
+            storage_name = f"{_sanitize_identifier(param.name)}_string"
+            return [
+                f"{indent}if (!{value_expr}.IsString()) {{",
+                f'{indent}    LogDirectorError("{method_label}", "{label} must be string");',
+                f"{indent}    return kNapiDirectorJavaScriptError;",
+                f"{indent}}}",
+                f"{indent}const std::string {storage_name} = {value_expr}.As<Napi::String>().Utf8Value();",
+                f"{indent}IDasReadOnlyString* {created_name} = nullptr;",
+                f"{indent}const DasResult {created_name}_result = CreateIDasReadOnlyStringFromUtf8(",
+                f"{indent}    {storage_name}.c_str(), &{created_name});",
+                f"{indent}if ({created_name}_result < 0 || {created_name} == nullptr) {{",
+                f'{indent}    LogDirectorError("{method_label}", "failed to create IDasReadOnlyString callback return");',
+                f"{indent}    return kNapiDirectorJavaScriptError;",
+                f"{indent}}}",
+                f"{indent}{target} = {created_name};",
+            ]
+
+        if value_type.type_kind == TypeKind.INTERFACE:
+            interface_name = type_simple_name(value_type)
+            native_name = f"{_sanitize_identifier(param.name)}_native"
+            return [
+                f"{indent}if (!{value_expr}.IsObject()) {{",
+                f'{indent}    LogDirectorError("{method_label}", "{label} must be an interface wrapper");',
+                f"{indent}    return kNapiDirectorJavaScriptError;",
+                f"{indent}}}",
+                f"{indent}auto* {native_name} = {_cpp_wrapper_name(interface_name)}::UnwrapHandle(env, {value_expr});",
+                f"{indent}{native_name}->AddRef();",
+                f"{indent}{target} = {native_name};",
+            ]
+
+        if value_type.type_kind == TypeKind.STRUCT:
+            struct = _find_struct(doc, value_type)
+            if struct is None:
+                raise AssertionError(f"missing struct {type_simple_name(value_type)}")
+            object_name = f"{_sanitize_identifier(param.name)}_object"
+            lines = [
+                f"{indent}if (!{value_expr}.IsObject()) {{",
+                f'{indent}    LogDirectorError("{method_label}", "{label} must be object");',
+                f"{indent}    return kNapiDirectorJavaScriptError;",
+                f"{indent}}}",
+                f"{indent}Napi::Object {object_name} = {value_expr}.As<Napi::Object>();",
+            ]
+            for field in struct.fields:
+                field_value = f'{object_name}.Get("{public_js_name(field.name)}")'
+                lines.extend(
+                    self._generate_cpp_director_assign_value(
+                        TypeInfo(field.type_name),
+                        field_value,
+                        f"{target}.{field.name}",
+                        f"{label}.{public_js_name(field.name)}",
+                        method_label,
+                        indent=indent,
+                    )
+                )
+            return lines
+
+        return self._generate_cpp_director_assign_value(
+            value_type,
+            value_expr,
+            target,
+            label,
+            method_label,
+            indent=indent,
+        )
+
+    def _generate_cpp_director_assign_value(
+        self,
+        value_type: TypeInfo,
+        value_expr: str,
+        target_expr: str,
+        label: str,
+        method_label: str,
+        *,
+        indent: str,
+    ) -> list[str]:
+        mapped = _map_type(value_type)
+        if mapped is None:
+            raise AssertionError(f"unsupported director output type {type_simple_name(value_type)}")
+
+        if mapped.category == "das_guid":
+            return [
+                f"{indent}if (!{value_expr}.IsString()) {{",
+                f'{indent}    LogDirectorError("{method_label}", "{label} must be string");',
+                f"{indent}    return kNapiDirectorJavaScriptError;",
+                f"{indent}}}",
+                f"{indent}{target_expr} = ReadDasGuid(env, {value_expr});",
+            ]
+        if mapped.category in {"int32", "enum"}:
+            return [
+                f"{indent}if (!{value_expr}.IsNumber()) {{",
+                f'{indent}    LogDirectorError("{method_label}", "{label} must be number");',
+                f"{indent}    return kNapiDirectorJavaScriptError;",
+                f"{indent}}}",
+                f"{indent}{target_expr} = static_cast<{_cpp_storage_type(value_type)}>({value_expr}.As<Napi::Number>().Int32Value());",
+            ]
+        if mapped.category == "uint32":
+            return [
+                f"{indent}if (!{value_expr}.IsNumber()) {{",
+                f'{indent}    LogDirectorError("{method_label}", "{label} must be number");',
+                f"{indent}    return kNapiDirectorJavaScriptError;",
+                f"{indent}}}",
+                f"{indent}{target_expr} = static_cast<{_cpp_storage_type(value_type)}>({value_expr}.As<Napi::Number>().Uint32Value());",
+            ]
+        if mapped.category == "number":
+            return [
+                f"{indent}if (!{value_expr}.IsNumber()) {{",
+                f'{indent}    LogDirectorError("{method_label}", "{label} must be number");',
+                f"{indent}    return kNapiDirectorJavaScriptError;",
+                f"{indent}}}",
+                f"{indent}{target_expr} = static_cast<{_cpp_storage_type(value_type)}>({value_expr}.As<Napi::Number>().DoubleValue());",
+            ]
+        if mapped.category == "boolean":
+            bool_expr = f"{value_expr}.As<Napi::Boolean>().Value()"
+            if type_simple_name(value_type) == "DasBool":
+                bool_expr = f"{bool_expr} ? DAS_TRUE : DAS_FALSE"
+            return [
+                f"{indent}if (!{value_expr}.IsBoolean()) {{",
+                f'{indent}    LogDirectorError("{method_label}", "{label} must be boolean");',
+                f"{indent}    return kNapiDirectorJavaScriptError;",
+                f"{indent}}}",
+                f"{indent}{target_expr} = {bool_expr};",
+            ]
+        if mapped.category == "int64":
+            lossless = f"{_sanitize_identifier(label)}_lossless"
+            raw = f"{_sanitize_identifier(label)}_raw"
+            return [
+                f"{indent}if (!{value_expr}.IsBigInt()) {{",
+                f'{indent}    LogDirectorError("{method_label}", "{label} must be bigint");',
+                f"{indent}    return kNapiDirectorJavaScriptError;",
+                f"{indent}}}",
+                f"{indent}bool {lossless} = false;",
+                f"{indent}const int64_t {raw} = {value_expr}.As<Napi::BigInt>().Int64Value(&{lossless});",
+                f"{indent}if (!{lossless}) {{",
+                f'{indent}    LogDirectorError("{method_label}", "{label} bigint is out of int64 range");',
+                f"{indent}    return kNapiDirectorJavaScriptError;",
+                f"{indent}}}",
+                f"{indent}{target_expr} = static_cast<{_cpp_storage_type(value_type)}>({raw});",
+            ]
+        if mapped.category == "uint64":
+            lossless = f"{_sanitize_identifier(label)}_lossless"
+            raw = f"{_sanitize_identifier(label)}_raw"
+            return [
+                f"{indent}if (!{value_expr}.IsBigInt()) {{",
+                f'{indent}    LogDirectorError("{method_label}", "{label} must be bigint");',
+                f"{indent}    return kNapiDirectorJavaScriptError;",
+                f"{indent}}}",
+                f"{indent}bool {lossless} = false;",
+                f"{indent}const uint64_t {raw} = {value_expr}.As<Napi::BigInt>().Uint64Value(&{lossless});",
+                f"{indent}if (!{lossless}) {{",
+                f'{indent}    LogDirectorError("{method_label}", "{label} bigint is out of uint64 range");',
+                f"{indent}    return kNapiDirectorJavaScriptError;",
+                f"{indent}}}",
+                f"{indent}{target_expr} = static_cast<{_cpp_storage_type(value_type)}>({raw});",
+            ]
+        raise AssertionError(f"unsupported director output category {mapped.category}")
 
     def _generate_cpp_base_extractor(self, doc: IdlDocument) -> list[str]:
         lines = [
@@ -1449,6 +2206,13 @@ class NapiGenerator:
                 f'    exports.Set("{from_name}", Napi::Function::New(env, {from_name}));'
             )
         for interface in doc.interfaces:
+            if interface.name == "IDasBase":
+                continue
+            director_name = self._director_name(interface.name)
+            lines.append(
+                f'    exports.Set("create{director_name}", Napi::Function::New(env, create{director_name}));'
+            )
+        for interface in doc.interfaces:
             for method in interface.methods:
                 js_name = public_js_name(method.name)
                 wrapper_name = f"{_sanitize_identifier(interface.name)}_{_sanitize_identifier(js_name)}"
@@ -1537,7 +2301,7 @@ class NapiGenerator:
         for interface in doc.interfaces:
             lines.extend(self._generate_dts_interface(interface))
             lines.append("")
-            lines.extend(self._generate_dts_director(interface))
+            lines.extend(self._generate_dts_director(interface, doc))
             lines.append("")
 
         for func in _iter_module_functions(doc):
@@ -1571,11 +2335,11 @@ class NapiGenerator:
         lines.append("}")
         return lines
 
-    def _generate_dts_director(self, interface: InterfaceDef) -> list[str]:
+    def _generate_dts_director(self, interface: InterfaceDef, doc: IdlDocument) -> list[str]:
         director_name = self._director_name(interface.name)
         callbacks_name = f"{director_name}Callbacks"
         lines = [f"export interface {callbacks_name} {{"]
-        for method in interface.methods:
+        for method in _interface_methods_including_bases(interface, doc):
             js_name = public_js_name(method.name)
             lines.append(
                 f"  {js_name}?: ({_method_ts_params(method)}) => {_method_ts_return(method)};"
@@ -1790,7 +2554,7 @@ class NapiGenerator:
                 "    if (callbacks === null || typeof callbacks !== 'object') {",
                 f"      throw new TypeError('{director_name} expects a callback object');",
                 "    }",
-                f"    super(native.create{director_name} ? native.create{director_name}(callbacks) : callbacks);",
+                f"    super(native.create{director_name}(callbacks));",
                 "    this.callbacks = callbacks;",
                 "  }",
                 "}",
