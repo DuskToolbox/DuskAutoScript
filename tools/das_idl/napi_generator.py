@@ -3,14 +3,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Iterable, Sequence
 
 from das_idl_parser import (
     IdlDocument,
+    InterfaceDef,
+    MethodDef,
     ModuleFunctionDef,
     ParameterDef,
     ParamDirection,
+    StructDef,
     TypeInfo,
     TypeKind,
 )
@@ -224,6 +227,104 @@ def _generated_header_name(abi_header_name: str) -> str:
     return f"{abi_header_name}.generated.h"
 
 
+def public_js_name(idl_name: str) -> str:
+    """Convert public IDL PascalCase/camel names to lower camel JavaScript names."""
+    if not idl_name:
+        return idl_name
+    if "_" not in idl_name:
+        return f"{idl_name[0].lower()}{idl_name[1:]}"
+    parts = [part for part in idl_name.split("_") if part]
+    if not parts:
+        return idl_name
+    first = f"{parts[0][0].lower()}{parts[0][1:]}" if parts[0] else ""
+    return first + "".join(f"{part[0].upper()}{part[1:]}" for part in parts[1:])
+
+
+def clean_out_field_name(param_name: str) -> str:
+    """Strip common DAS ABI out prefixes and lower-camel the public field name."""
+    for prefix in ("pp_out_", "p_out_", "out_"):
+        if param_name.startswith(prefix):
+            return public_js_name(param_name[len(prefix):])
+    return public_js_name(param_name)
+
+
+def _value_type_for_out_param(param: ParameterDef) -> TypeInfo:
+    type_info = param.type_info
+    pointer_level = max(type_info.pointer_level - 1, 0)
+    return replace(
+        type_info,
+        is_pointer=pointer_level > 0,
+        pointer_level=pointer_level,
+    )
+
+
+def _is_binary_buffer_interface(type_info: TypeInfo) -> bool:
+    return (
+        type_simple_name(type_info) == "IDasBinaryBuffer"
+        and type_info.type_kind == TypeKind.INTERFACE
+    )
+
+
+def _ts_type_for_struct_field(type_name: str) -> str:
+    if type_name in _SIGNED_64_TYPES or type_name in _UNSIGNED_64_TYPES:
+        return "bigint"
+    if type_name in _SIGNED_32_TYPES or type_name in _UNSIGNED_32_TYPES:
+        return "number"
+    if type_name in _FLOAT_TYPES:
+        return "number"
+    if type_name in _BOOL_TYPES:
+        return "boolean"
+    return "unknown"
+
+
+def _ts_type_for_out_param(param: ParameterDef) -> str:
+    value_type = _value_type_for_out_param(param)
+    if _is_binary_buffer_interface(value_type):
+        return "Buffer"
+    if value_type.type_kind == TypeKind.INTERFACE:
+        return type_simple_name(value_type)
+    if value_type.type_kind == TypeKind.STRUCT:
+        return type_simple_name(value_type)
+
+    mapped = _map_type(value_type)
+    if mapped is not None:
+        return mapped.ts_type
+    return "unknown"
+
+
+def _method_in_params(method: MethodDef) -> list[ParameterDef]:
+    return [param for param in method.parameters if param.direction == ParamDirection.IN]
+
+
+def _method_out_params(method: MethodDef) -> list[ParameterDef]:
+    return [param for param in method.parameters if param.direction == ParamDirection.OUT]
+
+
+def _method_ts_params(method: MethodDef) -> str:
+    params = []
+    for param in _method_in_params(method):
+        mapped = _map_type(param.type_info)
+        params.append(f"{public_js_name(param.name)}: {mapped.ts_type if mapped else 'unknown'}")
+    return ", ".join(params)
+
+
+def _method_ts_return(method: MethodDef) -> str:
+    out_params = _method_out_params(method)
+    if len(out_params) == 1:
+        return _ts_type_for_out_param(out_params[0])
+    if len(out_params) > 1:
+        fields = [
+            f"{clean_out_field_name(param.name)}: {_ts_type_for_out_param(param)};"
+            for param in out_params
+        ]
+        return "{ " + " ".join(fields) + " }"
+
+    mapped_return = _map_type(method.return_type, for_return=True)
+    if mapped_return is not None and mapped_return.category != "void":
+        return mapped_return.ts_type
+    return "void"
+
+
 class NapiGenerator:
     def __init__(
         self,
@@ -259,9 +360,11 @@ class NapiGenerator:
         lines: list[str] = [
             "// DAS Node/NAPI bindings (auto-generated - DO NOT MODIFY)",
             '#include <napi.h>',
+            "#include <memory>",
             "#include <string>",
             "",
             '#include "das/IDasBase.h"',
+            '#include "das/DasPtr.hpp"',
             '#include "das/DasString.hpp"',
             '#include "das/DasApi.h"',
         ]
@@ -284,6 +387,27 @@ class NapiGenerator:
                 "    throw Napi::Error::New(",
                 "        env,",
                 "        std::string{name} + \" is unsupported: \" + reason);",
+                "}",
+                "",
+                "Napi::Object MakeDasException(",
+                "    Napi::Env env,",
+                "    DasResult result,",
+                "    const std::string& message) {",
+                "    Napi::Error error = Napi::Error::New(env, message);",
+                "    Napi::Object exception = error.Value();",
+                "    exception.Set(\"name\", \"DasException\");",
+                "    exception.Set(\"result\", Napi::Number::New(env, static_cast<double>(result)));",
+                "    exception.Set(\"code\", Napi::Number::New(env, static_cast<double>(result)));",
+                "    return exception;",
+                "}",
+                "",
+                "void ThrowDasException(",
+                "    Napi::Env env,",
+                "    DasResult result,",
+                "    const std::string& message) {",
+                "    Napi::Object exception = MakeDasException(env, result, message);",
+                "    Napi::Error error(env, exception);",
+                "    error.ThrowAsJavaScriptException();",
                 "}",
                 "",
                 "DasGuid ReadDasGuid(Napi::Env env, const Napi::Value& input) {",
@@ -328,6 +452,10 @@ class NapiGenerator:
             ]
         )
 
+        for interface in doc.interfaces:
+            lines.extend(self._generate_cpp_interface_stubs(interface, doc))
+            lines.append("")
+
         for func in _iter_module_functions(doc):
             if support[func.name].supported:
                 lines.extend(self._generate_supported_cpp_function(func))
@@ -346,6 +474,86 @@ class NapiGenerator:
             ]
         )
         return "\n".join(lines)
+
+    def _generate_cpp_interface_stubs(
+        self,
+        interface: InterfaceDef,
+        doc: IdlDocument,
+    ) -> list[str]:
+        lines: list[str] = []
+        for method in interface.methods:
+            js_name = public_js_name(method.name)
+            wrapper_name = f"{_sanitize_identifier(interface.name)}_{_sanitize_identifier(js_name)}"
+            lines.extend(
+                [
+                    f"Napi::Value {wrapper_name}(const Napi::CallbackInfo& info) {{",
+                    "    Napi::Env env = info.Env();",
+                    "    const DasResult result = DAS_E_NO_IMPLEMENTATION;",
+                    "    if (result < 0) {",
+                    f'        ThrowDasException(env, result, "{interface.name}.{js_name} failed");',
+                    "        return env.Undefined();",
+                    "    }",
+                ]
+            )
+            lines.extend(self._generate_cpp_method_success_return(method, doc))
+            lines.append("}")
+            lines.append("")
+        return lines
+
+    def _generate_cpp_method_success_return(
+        self,
+        method: MethodDef,
+        doc: IdlDocument,
+    ) -> list[str]:
+        del doc
+        out_params = _method_out_params(method)
+        if not out_params:
+            return [
+                "    return Napi::Number::New(env, static_cast<double>(result));",
+            ]
+        if len(out_params) == 1:
+            return self._generate_cpp_placeholder_value(out_params[0], "    ")
+
+        lines = ["    Napi::Object output = Napi::Object::New(env);"]
+        for param in out_params:
+            field_name = clean_out_field_name(param.name)
+            value_lines = self._generate_cpp_placeholder_value(param, "    ")
+            value_expr = value_lines[-1].strip()
+            if value_expr.startswith("return "):
+                value_expr = value_expr[len("return "):].rstrip(";")
+            lines.extend(value_lines[:-1])
+            lines.append(f'    output.Set("{field_name}", {value_expr});')
+        lines.append("    return output;")
+        return lines
+
+    def _generate_cpp_placeholder_value(
+        self,
+        param: ParameterDef,
+        indent: str,
+    ) -> list[str]:
+        value_type = _value_type_for_out_param(param)
+        if value_type.type_kind == TypeKind.STRUCT:
+            object_name = f"{_sanitize_identifier(param.name)}_object"
+            lines = [f"{indent}Napi::Object {object_name} = Napi::Object::New(env);"]
+            for field_name in ("width", "height"):
+                lines.append(
+                    f'{indent}{object_name}.Set("{field_name}", Napi::Number::New(env, 0));'
+                )
+            lines.append(f"{indent}return {object_name};")
+            return lines
+        if _is_binary_buffer_interface(value_type):
+            return [f"{indent}return Napi::Buffer<unsigned char>::New(env, nullptr, 0);"]
+        if value_type.type_kind == TypeKind.INTERFACE:
+            return [f"{indent}return env.Undefined();"]
+
+        mapped = _map_type(value_type)
+        if mapped is None:
+            return [f"{indent}return env.Undefined();"]
+        if mapped.ts_type == "bigint":
+            return [f"{indent}return Napi::BigInt::New(env, static_cast<uint64_t>(0));"]
+        if mapped.ts_type == "boolean":
+            return [f"{indent}return Napi::Boolean::New(env, false);"]
+        return [f"{indent}return Napi::Number::New(env, 0);"]
 
     def _generate_supported_cpp_function(self, func: ModuleFunctionDef) -> list[str]:
         wrapper_name = f"Wrap_{_sanitize_identifier(func.name)}"
@@ -549,6 +757,13 @@ class NapiGenerator:
             lines.append("")
 
         lines.append('    exports.Set("guid", Napi::Function::New(env, Guid));')
+        for interface in doc.interfaces:
+            for method in interface.methods:
+                js_name = public_js_name(method.name)
+                wrapper_name = f"{_sanitize_identifier(interface.name)}_{_sanitize_identifier(js_name)}"
+                lines.append(
+                    f'    exports.Set("{wrapper_name}", Napi::Function::New(env, {wrapper_name}));'
+                )
         for func in _iter_module_functions(doc):
             wrapper_name = f"Wrap_{_sanitize_identifier(func.name)}"
             if func.name not in support:
@@ -568,6 +783,7 @@ class NapiGenerator:
         lines = [
             "// DAS Node/NAPI declarations (auto-generated - DO NOT MODIFY)",
             f"// Package: {self.package_name}",
+            '/// <reference types="node" />',
             "",
             "export type DasResult = number & { readonly __dasResultBrand?: unique symbol };",
             "export const DasResult: Readonly<{",
@@ -577,11 +793,26 @@ class NapiGenerator:
                 lines.append(f"  {value.name}: {value.value};")
         lines.extend(["}>;", ""])
 
+        lines.extend(
+            [
+                "export class DasException extends Error {",
+                "  readonly result: DasResult;",
+                "  readonly code: DasResult;",
+                "  constructor(result: DasResult, message?: string);",
+                "}",
+                "",
+            ]
+        )
+
         for enum in doc.enums:
             lines.append(f"export const {enum.name}: Readonly<{{")
             for value in enum.values:
                 lines.append(f"  {value.name}: {value.value};")
             lines.append("}>;")
+            lines.append("")
+
+        for struct in doc.structs:
+            lines.extend(self._generate_dts_struct(struct))
             lines.append("")
 
         lines.extend(
@@ -591,14 +822,19 @@ class NapiGenerator:
                 "",
             ]
         )
-        for interface in doc.interfaces:
-            director_name = self._director_name(interface.name)
-            lines.append(
-                f"export class {director_name} {{"
+        if not any(interface.name == "IDasBase" for interface in doc.interfaces):
+            lines.extend(
+                [
+                    "export class IDasBase {",
+                    "  dispose(): void;",
+                    "}",
+                    "",
+                ]
             )
-            lines.append("  /** director support is deferred to Phase 74 */")
-            lines.append("  constructor(...args: never[]);")
-            lines.append("}")
+        for interface in doc.interfaces:
+            lines.extend(self._generate_dts_interface(interface))
+            lines.append("")
+            lines.extend(self._generate_dts_director(interface))
             lines.append("")
 
         for func in _iter_module_functions(doc):
@@ -610,6 +846,42 @@ class NapiGenerator:
                 lines.append(f"export function {func.name}(...args: never[]): never;")
             lines.append("")
         return "\n".join(lines)
+
+    def _generate_dts_struct(self, struct: StructDef) -> list[str]:
+        lines = [f"export interface {struct.name} {{"]
+        for field in struct.fields:
+            lines.append(f"  {public_js_name(field.name)}: {_ts_type_for_struct_field(field.type_name)};")
+        lines.append("}")
+        return lines
+
+    def _generate_dts_interface(self, interface: InterfaceDef) -> list[str]:
+        base = interface.base_interface or "IDasBase"
+        extends = f" extends {base}" if interface.name != "IDasBase" else ""
+        lines = [f"export class {interface.name}{extends} {{"]
+        lines.append(f"  static from(base: IDasBase): {interface.name};")
+        lines.append("  dispose(): void;")
+        for method in interface.methods:
+            js_name = public_js_name(method.name)
+            lines.append(
+                f"  {js_name}({_method_ts_params(method)}): {_method_ts_return(method)};"
+            )
+        lines.append("}")
+        return lines
+
+    def _generate_dts_director(self, interface: InterfaceDef) -> list[str]:
+        director_name = self._director_name(interface.name)
+        callbacks_name = f"{director_name}Callbacks"
+        lines = [f"export interface {callbacks_name} {{"]
+        for method in interface.methods:
+            js_name = public_js_name(method.name)
+            lines.append(
+                f"  {js_name}?: ({_method_ts_params(method)}) => {_method_ts_return(method)};"
+            )
+        lines.append("}")
+        lines.append(f"export class {director_name} extends {interface.name} {{")
+        lines.append(f"  constructor(callbacks: {callbacks_name});")
+        lines.append("}")
+        return lines
 
     def _dts_supported_signature(self, func: ModuleFunctionDef) -> str:
         params = []
@@ -655,29 +927,40 @@ class NapiGenerator:
             "  return native.guid(value);",
             "}",
             "",
+            "class DasException extends Error {",
+            "  constructor(result, message) {",
+            "    super(message || `DAS call failed with result ${result}`);",
+            "    this.name = 'DasException';",
+            "    this.result = result;",
+            "    this.code = result;",
+            "  }",
+            "}",
+            "",
         ]
+        if not any(interface.name == "IDasBase" for interface in doc.interfaces):
+            lines.extend(self._generate_js_base_class())
+            lines.append("")
         for interface in doc.interfaces:
-            director_name = self._director_name(interface.name)
-            lines.append(f"class {director_name} {{")
-            lines.append("  constructor() {")
-            lines.append(
-                f"    throw new Error('{director_name} director support is deferred to Phase 74');"
-            )
-            lines.append("  }")
-            lines.append("}")
+            lines.extend(self._generate_js_interface(interface))
+            lines.append("")
+            lines.extend(self._generate_js_director(interface))
             lines.append("")
 
         lines.extend(
             [
                 "module.exports = {",
                 "  DasResult: native.DasResult,",
+                "  DasException,",
             ]
         )
         for enum in doc.enums:
             lines.append(f"  {enum.name}: native.{enum.name},")
         lines.append("  guid,")
+        if not any(interface.name == "IDasBase" for interface in doc.interfaces):
+            lines.append("  IDasBase,")
         for interface in doc.interfaces:
             director_name = self._director_name(interface.name)
+            lines.append(f"  {interface.name},")
             lines.append(f"  {director_name},")
         for func in _iter_module_functions(doc):
             if support[func.name].supported:
@@ -690,6 +973,78 @@ class NapiGenerator:
         lines.append("};")
         lines.append("")
         return "\n".join(lines)
+
+    def _generate_js_base_class(self) -> list[str]:
+        return [
+            "class IDasBase {",
+            "  constructor(nativeHandle) {",
+            "    this._native = nativeHandle;",
+            "  }",
+            "  dispose() {",
+            "    if (this._native && native.IDasBase_dispose) {",
+            "      native.IDasBase_dispose(this._native);",
+            "    }",
+            "    this._native = null;",
+            "  }",
+            "}",
+        ]
+
+    def _generate_js_interface(self, interface: InterfaceDef) -> list[str]:
+        base = interface.base_interface or "IDasBase"
+        extends = f" extends {base}" if interface.name != "IDasBase" else ""
+        lines = [f"class {interface.name}{extends} {{"]
+        lines.extend(
+            [
+                "  constructor(nativeHandle) {",
+            ]
+        )
+        if interface.name != "IDasBase":
+            lines.append("    super(nativeHandle);")
+        else:
+            lines.append("    this._native = nativeHandle;")
+        lines.extend(
+            [
+                "  }",
+                "  dispose() {",
+                f"    if (this._native && native.{interface.name}_dispose) {{",
+                f"      native.{interface.name}_dispose(this._native);",
+                "    }",
+                "    this._native = null;",
+                "  }",
+                "  static from(base) {",
+                f"    return new {interface.name}(native.{interface.name}_from(base));",
+                "  }",
+            ]
+        )
+        for method in interface.methods:
+            js_name = public_js_name(method.name)
+            native_name = f"{interface.name}_{js_name}"
+            lines.extend(
+                [
+                    f"  {js_name}(...args) {{",
+                    f"    return native.{native_name}(this._native, ...args);",
+                    "  }",
+                ]
+            )
+        lines.append("}")
+        return lines
+
+    def _generate_js_director(self, interface: InterfaceDef) -> list[str]:
+        director_name = self._director_name(interface.name)
+        lines = [f"class {director_name} extends {interface.name} {{"]
+        lines.extend(
+            [
+                "  constructor(callbacks) {",
+                "    if (callbacks === null || typeof callbacks !== 'object') {",
+                f"      throw new TypeError('{director_name} expects a callback object');",
+                "    }",
+                f"    super(native.create{director_name} ? native.create{director_name}(callbacks) : callbacks);",
+                "    this.callbacks = callbacks;",
+                "  }",
+                "}",
+            ]
+        )
+        return lines
 
     def _director_name(self, interface_name: str) -> str:
         if interface_name.startswith("IDas"):

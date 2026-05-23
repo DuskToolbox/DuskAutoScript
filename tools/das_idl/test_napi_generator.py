@@ -251,7 +251,8 @@ class TestNapiGenerator(unittest.TestCase):
                 self.assertIn(reason, artifacts.dts)
                 self.assertIn(reason, artifacts.js)
         self.assertIn("class INapiDasFuture", artifacts.dts)
-        self.assertIn("director support is deferred to Phase 74", artifacts.dts)
+        self.assertIn("export class IDasFuture", artifacts.dts)
+        self.assertIn("export interface INapiDasFutureCallbacks", artifacts.dts)
         self.assertIn("INapiDasFuture", artifacts.js)
 
     def test_napi_generated_text_avoids_forbidden_patterns(self):
