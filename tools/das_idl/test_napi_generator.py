@@ -134,6 +134,14 @@ def _cpp_function_block(cpp, function_name):
     return cpp[start:next_start]
 
 
+def _cpp_class_block(cpp, class_name):
+    start = cpp.index(f"class {class_name}")
+    next_start = cpp.find("\nclass ", start + 1)
+    if next_start == -1:
+        return cpp[start:]
+    return cpp[start:next_start]
+
+
 class TestNapiGenerator(unittest.TestCase):
     def test_napi_artifacts_share_export_names(self):
         artifacts = generate_napi_artifacts(
@@ -617,6 +625,120 @@ class TestNapiGenerator(unittest.TestCase):
             artifacts.cpp,
         )
         self.assertIn("IDasComponentWrapper::WrapAdopted", artifacts.cpp)
+
+    def test_napi_phase74_director_generates_native_com_class(self):
+        artifacts = generate_napi_artifacts(
+            _phase74_contract_doc(),
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+        director = _cpp_class_block(artifacts.cpp, "INapiDasComponent")
+
+        self.assertIn("class INapiDasComponent final", director)
+        self.assertIn(": public IDasComponent, public NapiDirectorBase", director)
+        self.assertIn("std::atomic<uint32_t> ref_count_{1};", director)
+        self.assertIn("uint32_t AddRef() override", director)
+        self.assertIn("uint32_t Release() override", director)
+        self.assertIn(
+            "DasResult QueryInterface(const DasGuid& iid, void** pp_object) override",
+            director,
+        )
+        self.assertIn("if (iid == DasIidOf<IDasComponent>())", director)
+        self.assertIn("if (iid == DAS_IID_BASE)", director)
+        self.assertIn("DasResult IsSupported(const DasGuid& component_iid) override", director)
+        self.assertIn("Napi::Value createINapiDasComponent", artifacts.cpp)
+        self.assertIn('exports.Set("createINapiDasComponent"', artifacts.cpp)
+        self.assertIn("native.createINapiDasComponent(callbacks)", artifacts.js)
+        self.assertNotIn("? native.createINapiDasComponent", artifacts.js)
+
+    def test_napi_phase74_director_dispatch_is_lazy_and_lower_camel(self):
+        artifacts = generate_napi_artifacts(
+            _phase74_contract_doc(),
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+        director_base = _cpp_class_block(artifacts.cpp, "NapiDirectorBase")
+
+        self.assertIn("bool hasCallbackMethod(const char* method_name)", director_base)
+        self.assertIn("return kNapiDirectorMissingCallbackResult;", director_base)
+        self.assertIn(
+            "constexpr DasResult kNapiDirectorMissingCallbackResult = DAS_E_JAVASCRIPT_NO_IMPLEMENTATION;",
+            artifacts.cpp,
+        )
+        self.assertIn('DispatchDirectorCall("isSupported"', artifacts.cpp)
+        self.assertIn('callbacks_.Value().Get(method_name)', artifacts.cpp)
+        self.assertIn('export interface INapiDasComponentCallbacks', artifacts.dts)
+        self.assertIn("isSupported?: (componentIid: DasGuid) => DasResult;", artifacts.dts)
+        constructor_start = artifacts.cpp.index(
+            "INapiDasComponent(Napi::Env env, Napi::Object callbacks)"
+        )
+        constructor_end = artifacts.cpp.index("std::atomic<uint32_t> ref_count_{1};", constructor_start)
+        constructor_text = artifacts.cpp[constructor_start:constructor_end]
+        self.assertNotIn('Get("isSupported")', constructor_text)
+        self.assertNotIn("requiredCallbacks", artifacts.cpp)
+        self.assertNotIn("all callbacks", artifacts.cpp)
+
+    def test_napi_phase74_director_missing_callback_falls_back_without_js_code(self):
+        doc = parse_idl(
+            """
+            errorcode DasResult {
+                DAS_S_OK = 0,
+                DAS_E_NO_IMPLEMENTATION = -1073750005,
+            }
+
+            [uuid("12345678-1234-1234-1234-123456789012")]
+            interface IDasFallback : IDasBase {
+                DasResult Run();
+            }
+            """
+        )
+        artifacts = generate_napi_artifacts(
+            doc,
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+
+        self.assertIn(
+            "constexpr DasResult kNapiDirectorMissingCallbackResult = DAS_E_NO_IMPLEMENTATION;",
+            artifacts.cpp,
+        )
+
+    def test_napi_phase74_director_has_direct_and_tsfn_dispatch_paths(self):
+        artifacts = generate_napi_artifacts(
+            _phase74_contract_doc(),
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+
+        self.assertIn("std::thread::id node_thread_id_;", artifacts.cpp)
+        self.assertIn("std::this_thread::get_id() == node_thread_id_", artifacts.cpp)
+        self.assertIn("Napi::ThreadSafeFunction::New", artifacts.cpp)
+        self.assertIn("tsfn_.BlockingCall", artifacts.cpp)
+        self.assertIn("std::condition_variable complete;", artifacts.cpp)
+        self.assertIn("call->Wait()", artifacts.cpp)
+        self.assertIn("DispatchDirect(method_name, std::move(invoke))", artifacts.cpp)
+        self.assertIn("DispatchThreadSafe(method_name, std::move(invoke))", artifacts.cpp)
+
+    def test_napi_phase74_director_logs_exceptions_and_guards_recursion(self):
+        artifacts = generate_napi_artifacts(
+            _phase74_contract_doc(),
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+        director_base = _cpp_class_block(artifacts.cpp, "NapiDirectorBase")
+
+        self.assertIn(
+            "constexpr DasResult kNapiDirectorJavaScriptError = DAS_E_JAVASCRIPT_ERROR;",
+            artifacts.cpp,
+        )
+        self.assertIn("class UpcallGuard", director_base)
+        self.assertIn("upcall_active_.compare_exchange_strong", director_base)
+        self.assertIn("return kNapiDirectorJavaScriptError;", director_base)
+        self.assertIn("void LogJavaScriptException", director_base)
+        self.assertIn("[DAS NapiDirector]", director_base)
+        self.assertIn('error.Value().As<Napi::Object>().Get("stack")', director_base)
+        self.assertIn("finalizer", director_base)
+        self.assertNotIn("callback.Call", _cpp_class_block(artifacts.cpp, "DasInterfaceWrapperBase"))
 
     def test_napi_phase74_out_field_names_are_cleaned(self):
         artifacts = generate_napi_artifacts(
