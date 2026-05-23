@@ -2,6 +2,7 @@
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Core/ForeignInterfaceHost/PluginResourceIndex.h>
+#include <das/Core/ForeignInterfaceHost/RuntimeProvider.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/Logger/Logger.h>
@@ -1547,6 +1548,40 @@ TEST_F(PluginManagerGuidTest, LoadPlugin_CppWithLoadModeIpc_GoesIpcPath)
     EXPECT_EQ(result, DAS_E_NO_IMPLEMENTATION);
 
     std::filesystem::remove_all(test_dir);
+}
+
+TEST_F(PluginManagerGuidTest, RuntimeLoadRequest_CarriesRoutingInputs)
+{
+    RuntimeLoadRequest request{};
+    request.manifest_path = std::filesystem::path{"plugins/TestPlugin.json"};
+    request.runtime_path = std::filesystem::path{"plugins"};
+    request.plugin_guid = MakeTaskComponentTestGuid(0x75040001);
+    request.language = ForeignInterfaceLanguage::Cpp;
+    request.load_mode = LoadMode::Ipc;
+    request.main_process_owner_session_id = 17;
+
+    EXPECT_EQ(
+        request.manifest_path,
+        std::filesystem::path{"plugins/TestPlugin.json"});
+    EXPECT_EQ(request.runtime_path, std::filesystem::path{"plugins"});
+    EXPECT_EQ(request.plugin_guid.data1, 0x75040001u);
+    EXPECT_EQ(request.language, ForeignInterfaceLanguage::Cpp);
+    EXPECT_EQ(request.load_mode, LoadMode::Ipc);
+    EXPECT_EQ(request.main_process_owner_session_id, 17);
+}
+
+TEST_F(PluginManagerGuidTest, RuntimeLoadResult_CarriesObjectAndOwnerSession)
+{
+    auto* package = new CapturingPluginPackage();
+    package->AddRef();
+
+    RuntimeLoadResult result{};
+    result.object =
+        DasPtr<IDasBase>::Attach(static_cast<IDasBase*>(package));
+    result.owner_session_id = 23;
+
+    EXPECT_NE(result.object.Get(), nullptr);
+    EXPECT_EQ(result.owner_session_id, 23);
 }
 
 TEST_F(PluginManagerGuidTest, SetHostExePath)
