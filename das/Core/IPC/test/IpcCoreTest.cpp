@@ -105,6 +105,38 @@ namespace Das::IPC::Test
         EXPECT_EQ(config.events.p_on_before_shutdown_context, nullptr);
     }
 
+    TEST_F(IpcCoreTestBase, HostShutdownReasonUsesGeneratedEnumAbi)
+    {
+        using Das::Core::IPC::Host::HOST_SHUTDOWN_REASON_FORCE_DWORD;
+        using Das::Core::IPC::Host::HOST_SHUTDOWN_REASON_GOODBYE;
+        using Das::Core::IPC::Host::HOST_SHUTDOWN_REASON_PARENT_PROCESS_EXITED;
+        using Das::Core::IPC::Host::HOST_SHUTDOWN_REASON_REQUEST_STOP;
+        using Das::Core::IPC::Host::
+            HOST_SHUTDOWN_REASON_TRANSPORT_DISCONNECTED;
+        using Das::Core::IPC::Host::HostShutdownReason;
+        using Das::Core::IPC::Host::OnBeforeShutdown;
+
+        EXPECT_TRUE(std::is_enum_v<HostShutdownReason>);
+        EXPECT_EQ(sizeof(HostShutdownReason), sizeof(uint32_t));
+
+        uint32_t raw_reason = HOST_SHUTDOWN_REASON_GOODBYE;
+        EXPECT_EQ(raw_reason, 0u);
+        raw_reason = HOST_SHUTDOWN_REASON_TRANSPORT_DISCONNECTED;
+        EXPECT_EQ(raw_reason, 1u);
+        raw_reason = HOST_SHUTDOWN_REASON_PARENT_PROCESS_EXITED;
+        EXPECT_EQ(raw_reason, 2u);
+        raw_reason = HOST_SHUTDOWN_REASON_REQUEST_STOP;
+        EXPECT_EQ(raw_reason, 3u);
+        raw_reason = HOST_SHUTDOWN_REASON_FORCE_DWORD;
+        EXPECT_EQ(raw_reason, 0x7FFFFFFFu);
+
+        using ExpectedCallback = DasResult(DAS_STD_CALL*)(
+            void*,
+            HostShutdownReason,
+            uint32_t);
+        EXPECT_TRUE((std::is_same_v<OnBeforeShutdown, ExpectedCallback>));
+    }
+
     TEST_F(IpcCoreTestBase, HostLaunchDescRemainsCAbiFriendly)
     {
         using Das::Core::IPC::HostLaunchDesc;
