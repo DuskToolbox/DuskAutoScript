@@ -740,6 +740,20 @@ class TestNapiGenerator(unittest.TestCase):
         self.assertIn("finalizer", director_base)
         self.assertNotIn("callback.Call", _cpp_class_block(artifacts.cpp, "DasInterfaceWrapperBase"))
 
+    def test_napi_phase74_director_converts_buffer_callback_returns(self):
+        artifacts = generate_napi_artifacts(
+            _phase74_contract_doc(),
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+
+        self.assertIn("class NapiDirectorBinaryBuffer final : public IDasBinaryBuffer", artifacts.cpp)
+        self.assertIn("std::vector<unsigned char> data_;", artifacts.cpp)
+        self.assertIn("*pp_out_data = data_.data();", artifacts.cpp)
+        self.assertIn("if (!js_result.IsBuffer())", artifacts.cpp)
+        self.assertIn("auto* pp_out_buffer_native = new NapiDirectorBinaryBuffer", artifacts.cpp)
+        self.assertIn("*pp_out_buffer = pp_out_buffer_native;", artifacts.cpp)
+
     def test_napi_phase74_out_field_names_are_cleaned(self):
         artifacts = generate_napi_artifacts(
             _phase74_contract_doc(),

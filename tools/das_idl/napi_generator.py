@@ -649,6 +649,62 @@ class NapiGenerator:
                     "        HoldIDasBinaryBuffer(raw, ownership));",
                     "}",
                     "",
+                    "class NapiDirectorBinaryBuffer final : public IDasBinaryBuffer {",
+                    "public:",
+                    "    explicit NapiDirectorBinaryBuffer(Napi::Buffer<unsigned char> buffer)",
+                    "        : data_(buffer.Data(), buffer.Data() + buffer.Length()) {}",
+                    "",
+                    "    uint32_t AddRef() override {",
+                    "        return ref_count_.fetch_add(1, std::memory_order_relaxed) + 1;",
+                    "    }",
+                    "",
+                    "    uint32_t Release() override {",
+                    "        const uint32_t count = ref_count_.fetch_sub(1, std::memory_order_acq_rel) - 1;",
+                    "        if (count == 0) {",
+                    "            delete this;",
+                    "        }",
+                    "        return count;",
+                    "    }",
+                    "",
+                    "    DasResult QueryInterface(const DasGuid& iid, void** pp_object) override {",
+                    "        if (pp_object == nullptr) {",
+                    "            return DAS_E_INVALID_POINTER;",
+                    "        }",
+                    "        if (iid == DasIidOf<IDasBinaryBuffer>()) {",
+                    "            *pp_object = static_cast<IDasBinaryBuffer*>(this);",
+                    "            AddRef();",
+                    "            return DAS_S_OK;",
+                    "        }",
+                    "        if (iid == DAS_IID_BASE) {",
+                    "            *pp_object = static_cast<IDasBase*>(this);",
+                    "            AddRef();",
+                    "            return DAS_S_OK;",
+                    "        }",
+                    "        *pp_object = nullptr;",
+                    "        return DAS_E_NO_INTERFACE;",
+                    "    }",
+                    "",
+                    "    DasResult GetData(unsigned char** pp_out_data) override {",
+                    "        if (pp_out_data == nullptr) {",
+                    "            return DAS_E_INVALID_POINTER;",
+                    "        }",
+                    "        *pp_out_data = data_.data();",
+                    "        return DAS_S_OK;",
+                    "    }",
+                    "",
+                    "    DasResult GetSize(uint64_t* p_out_size) override {",
+                    "        if (p_out_size == nullptr) {",
+                    "            return DAS_E_INVALID_POINTER;",
+                    "        }",
+                    "        *p_out_size = static_cast<uint64_t>(data_.size());",
+                    "        return DAS_S_OK;",
+                    "    }",
+                    "",
+                    "private:",
+                    "    std::atomic<uint32_t> ref_count_{1};",
+                    "    std::vector<unsigned char> data_;",
+                    "};",
+                    "",
                 ]
             )
 
@@ -1352,9 +1408,21 @@ class NapiGenerator:
         target = f"*{_sanitize_identifier(param.name)}"
         label = clean_out_field_name(param.name)
 
-        if _is_binary_buffer_interface(value_type) or _is_binary_buffer_like(value_type):
+        if _is_binary_buffer_interface(value_type):
+            native_name = f"{_sanitize_identifier(param.name)}_native"
             return [
-                f'{indent}LogDirectorError("{method_label}", "IDasBinaryBuffer callback returns are not supported");',
+                f"{indent}if (!{value_expr}.IsBuffer()) {{",
+                f'{indent}    LogDirectorError("{method_label}", "{label} must be Buffer");',
+                f"{indent}    return kNapiDirectorJavaScriptError;",
+                f"{indent}}}",
+                f"{indent}auto* {native_name} = new NapiDirectorBinaryBuffer(",
+                f"{indent}    {value_expr}.As<Napi::Buffer<unsigned char>>());",
+                f"{indent}{target} = {native_name};",
+            ]
+
+        if _is_binary_buffer_like(value_type):
+            return [
+                f'{indent}LogDirectorError("{method_label}", "raw binary buffer callback returns are not supported");',
                 f"{indent}return kNapiDirectorJavaScriptError;",
             ]
 
