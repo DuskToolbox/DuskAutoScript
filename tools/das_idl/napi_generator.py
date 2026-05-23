@@ -277,6 +277,27 @@ def _is_binary_buffer_interface(type_info: TypeInfo) -> bool:
     )
 
 
+def _find_struct(doc: IdlDocument, type_info: TypeInfo) -> StructDef | None:
+    name = type_simple_name(type_info)
+    namespace = type_info.resolved_namespace
+    for struct in doc.structs:
+        if struct.name != name:
+            continue
+        if not namespace or struct.namespace == namespace:
+            return struct
+    return None
+
+
+def _cpp_storage_type(type_info: TypeInfo) -> str:
+    return _cpp_type(
+        replace(
+            type_info,
+            is_const=False,
+            is_reference=False,
+        )
+    )
+
+
 def _ts_type_for_struct_field(type_name: str) -> str:
     if type_name in _SIGNED_64_TYPES or type_name in _UNSIGNED_64_TYPES:
         return "bigint"
@@ -293,14 +314,28 @@ def _ts_type_for_out_param(param: ParameterDef) -> str:
     value_type = _value_type_for_out_param(param)
     if _is_binary_buffer_interface(value_type):
         return "Buffer"
-    if value_type.type_kind == TypeKind.INTERFACE:
-        return type_simple_name(value_type)
-    if value_type.type_kind == TypeKind.STRUCT:
-        return type_simple_name(value_type)
-
     mapped = _map_type(value_type)
     if mapped is not None:
         return mapped.ts_type
+    if value_type.type_kind == TypeKind.STRUCT:
+        return type_simple_name(value_type)
+    if value_type.type_kind == TypeKind.INTERFACE:
+        return type_simple_name(value_type)
+    return "unknown"
+
+
+def _ts_type_for_in_param(param: ParameterDef) -> str:
+    mapped = _map_type(param.type_info)
+    if mapped is not None:
+        return mapped.ts_type
+    if param.type_info.type_kind == TypeKind.STRUCT:
+        return type_simple_name(param.type_info)
+    if (
+        param.type_info.type_kind == TypeKind.INTERFACE
+        and param.type_info.is_pointer
+        and param.type_info.pointer_level == 1
+    ):
+        return type_simple_name(param.type_info)
     return "unknown"
 
 
@@ -315,8 +350,7 @@ def _method_out_params(method: MethodDef) -> list[ParameterDef]:
 def _method_ts_params(method: MethodDef) -> str:
     params = []
     for param in _method_in_params(method):
-        mapped = _map_type(param.type_info)
-        params.append(f"{public_js_name(param.name)}: {mapped.ts_type if mapped else 'unknown'}")
+        params.append(f"{public_js_name(param.name)}: {_ts_type_for_in_param(param)}")
     return ", ".join(params)
 
 
@@ -335,6 +369,15 @@ def _method_ts_return(method: MethodDef) -> str:
     if mapped_return is not None and mapped_return.category != "void":
         return mapped_return.ts_type
     return "void"
+
+
+def _doc_needs_binary_buffer_conversion(doc: IdlDocument) -> bool:
+    for interface in doc.interfaces:
+        for method in interface.methods:
+            for param in _method_out_params(method):
+                if _is_binary_buffer_interface(_value_type_for_out_param(param)):
+                    return True
+    return False
 
 
 class NapiGenerator:
@@ -462,8 +505,40 @@ class NapiGenerator:
                 "    return WriteDasGuid(env, parsed);",
                 "}",
                 "",
+                "Napi::Value ConvertDasReadOnlyStringToString(",
+                "    Napi::Env env,",
+                "    IDasReadOnlyString* value) {",
+                "    if (value == nullptr) {",
+                "        throw Napi::TypeError::New(env, \"DAS string pointer must not be null\");",
+                "    }",
+                "    const char* utf8 = nullptr;",
+                "    const DasResult result = value->GetUtf8(&utf8);",
+                "    if (result < 0 || utf8 == nullptr) {",
+                "        ThrowDasException(env, result, \"IDasReadOnlyString.GetUtf8 failed\");",
+                "        return env.Undefined();",
+                "    }",
+                "    return Napi::String::New(env, utf8);",
+                "}",
+                "",
             ]
         )
+
+        if _doc_needs_binary_buffer_conversion(doc):
+            lines.extend(
+                [
+                    "Napi::Value ConvertIDasBinaryBufferToBuffer(",
+                    "    Napi::Env env,",
+                    "    DAS::DasPtr<IDasBinaryBuffer> buffer) {",
+                    "    if (!buffer) {",
+                    "        throw Napi::TypeError::New(env, \"IDasBinaryBuffer pointer must not be null\");",
+                    "    }",
+                    "    throw Napi::Error::New(",
+                    "        env,",
+                    "        \"IDasBinaryBuffer Buffer conversion is deferred to Phase 74 Plan 04\");",
+                    "}",
+                    "",
+                ]
+            )
 
         lines.extend(self._generate_cpp_wrapper_base())
         lines.append("")
@@ -657,23 +732,23 @@ class NapiGenerator:
         for method in interface.methods:
             js_name = public_js_name(method.name)
             wrapper_name = f"{_sanitize_identifier(interface.name)}_{_sanitize_identifier(js_name)}"
-            lines.extend(
-                [
-                    f"Napi::Value {wrapper_name}(const Napi::CallbackInfo& info) {{",
-                    "    Napi::Env env = info.Env();",
-                    "    if (info.Length() < 1) {",
-                    "        throw Napi::TypeError::New(env, \"DAS method expects a native wrapper handle\");",
-                    "    }",
-                    f"    auto* native = {_cpp_wrapper_name(interface.name)}::UnwrapHandle(env, info[0]);",
-                    "    (void)native;",
-                    "    const DasResult result = DAS_E_NO_IMPLEMENTATION;",
-                    "    if (result < 0) {",
-                    f'        ThrowDasException(env, result, "{interface.name}.{js_name} failed");',
-                    "        return env.Undefined();",
-                    "    }",
-                ]
-            )
-            lines.extend(self._generate_cpp_method_success_return(method, doc))
+            unsupported_reason = self._unsupported_interface_method_reason(method, doc)
+            if unsupported_reason:
+                lines.extend(
+                    [
+                        f"Napi::Value {wrapper_name}(const Napi::CallbackInfo& info) {{",
+                        f'    return MakeUnsupported(info, "{interface.name}.{js_name}", "{_escape_cpp_string(unsupported_reason)}");',
+                    ]
+                )
+            else:
+                lines.extend(
+                    self._generate_supported_cpp_interface_method(
+                        interface,
+                        method,
+                        wrapper_name,
+                        doc,
+                    )
+                )
             lines.append("}")
             lines.append("")
         return lines
@@ -716,60 +791,364 @@ class NapiGenerator:
             "}",
         ]
 
+    def _unsupported_interface_method_reason(
+        self,
+        method: MethodDef,
+        doc: IdlDocument,
+    ) -> str:
+        mapped_return = _map_type(method.return_type, for_return=True)
+        if mapped_return is None or mapped_return.category != "das_result":
+            return "interface wrapper methods currently require DasResult returns"
+
+        for param in method.parameters:
+            if param.direction == ParamDirection.INOUT:
+                return "inout parameters are not supported by NAPI wrapper methods"
+            if param.direction == ParamDirection.IN:
+                reason = self._unsupported_in_param_reason(param, doc)
+            elif param.direction == ParamDirection.OUT:
+                reason = self._unsupported_out_param_reason(param, doc)
+            else:
+                reason = f"unsupported parameter direction {param.direction.value}"
+            if reason:
+                return reason
+        return ""
+
+    def _unsupported_in_param_reason(self, param: ParameterDef, doc: IdlDocument) -> str:
+        if _map_type(param.type_info) is not None:
+            return ""
+        if param.type_info.type_kind == TypeKind.STRUCT:
+            if _find_struct(doc, param.type_info) is None:
+                return f"struct type {type_simple_name(param.type_info)} is not available"
+            return self._unsupported_struct_reason(param.type_info, doc)
+        if (
+            param.type_info.type_kind == TypeKind.INTERFACE
+            and param.type_info.is_pointer
+            and param.type_info.pointer_level == 1
+        ):
+            return ""
+        return _unsupported_reason_for_type(param.type_info)
+
+    def _unsupported_out_param_reason(self, param: ParameterDef, doc: IdlDocument) -> str:
+        if not param.type_info.is_pointer:
+            return "out parameters must be pointers"
+        value_type = _value_type_for_out_param(param)
+        if _is_binary_buffer_interface(value_type):
+            return ""
+        if _map_type(value_type) is not None:
+            return ""
+        if value_type.type_kind == TypeKind.STRUCT:
+            if _find_struct(doc, value_type) is None:
+                return f"struct type {type_simple_name(value_type)} is not available"
+            return self._unsupported_struct_reason(value_type, doc)
+        if value_type.type_kind == TypeKind.INTERFACE:
+            return ""
+        return _unsupported_reason_for_type(value_type, for_return=True)
+
+    def _unsupported_struct_reason(self, type_info: TypeInfo, doc: IdlDocument) -> str:
+        struct = _find_struct(doc, type_info)
+        if struct is None:
+            return f"struct type {type_simple_name(type_info)} is not available"
+        for field in struct.fields:
+            field_type = TypeInfo(field.type_name)
+            if _map_type(field_type) is None:
+                return f"struct field {struct.name}.{field.name} has unsupported type {field.type_name}"
+        return ""
+
+    def _generate_supported_cpp_interface_method(
+        self,
+        interface: InterfaceDef,
+        method: MethodDef,
+        wrapper_name: str,
+        doc: IdlDocument,
+    ) -> list[str]:
+        in_params = _method_in_params(method)
+        out_params = _method_out_params(method)
+        lines = [
+            f"Napi::Value {wrapper_name}(const Napi::CallbackInfo& info) {{",
+            "    Napi::Env env = info.Env();",
+            f"    if (info.Length() != {1 + len(in_params)}) {{",
+            "        throw Napi::TypeError::New(",
+            "            env,",
+            f'            "{interface.name}.{public_js_name(method.name)} expects {len(in_params)} argument(s)");',
+            "    }",
+            f"    auto* native = {_cpp_wrapper_name(interface.name)}::UnwrapHandle(env, info[0]);",
+        ]
+
+        call_args_by_param: dict[str, str] = {}
+        cleanup_lines: list[str] = []
+        for offset, param in enumerate(in_params, start=1):
+            conversion_lines, call_arg = self._generate_cpp_method_in_param(
+                offset,
+                param,
+                doc,
+                cleanup_lines,
+            )
+            lines.extend(conversion_lines)
+            call_args_by_param[param.name] = call_arg
+
+        for param in out_params:
+            declaration_lines, call_arg = self._generate_cpp_out_declaration(param)
+            lines.extend(declaration_lines)
+            call_args_by_param[param.name] = call_arg
+
+        call_args = [call_args_by_param[param.name] for param in method.parameters]
+        lines.append(
+            f"    const DasResult result = native->{method.name}({', '.join(call_args)});"
+        )
+        lines.extend(cleanup_lines)
+        lines.extend(
+            [
+                "    if (result < 0) {",
+                f'        ThrowDasException(env, result, "{interface.name}.{public_js_name(method.name)} failed");',
+                "        return env.Undefined();",
+                "    }",
+            ]
+        )
+        lines.extend(self._generate_cpp_method_success_return(method, doc))
+        return lines
+
+    def _generate_cpp_method_in_param(
+        self,
+        index: int,
+        param: ParameterDef,
+        doc: IdlDocument,
+        cleanup_lines: list[str],
+    ) -> tuple[list[str], str]:
+        mapped = _map_type(param.type_info)
+        if mapped is not None:
+            return (
+                self._generate_param_conversion(index, param, mapped, cleanup_lines),
+                self._call_argument(param, mapped),
+            )
+
+        name = _sanitize_identifier(param.name)
+        if param.type_info.type_kind == TypeKind.STRUCT:
+            struct = _find_struct(doc, param.type_info)
+            if struct is None:
+                raise AssertionError(f"missing struct {type_simple_name(param.type_info)}")
+            lines = self._generate_cpp_struct_conversion(index, param, struct)
+            if param.type_info.is_pointer:
+                return lines, f"&{name}_value"
+            return lines, f"{name}_value"
+
+        if param.type_info.type_kind == TypeKind.INTERFACE:
+            interface_name = type_simple_name(param.type_info)
+            lines = [
+                f"    {interface_name}* {name}_value = {_cpp_wrapper_name(interface_name)}::UnwrapHandle(env, info[{index}]);",
+            ]
+            return lines, f"{name}_value"
+
+        raise AssertionError(f"unsupported method input parameter {param.name}")
+
+    def _generate_cpp_struct_conversion(
+        self,
+        index: int,
+        param: ParameterDef,
+        struct: StructDef,
+    ) -> list[str]:
+        name = _sanitize_identifier(param.name)
+        object_name = f"{name}_object"
+        value_name = f"{name}_value"
+        lines = [
+            f"    if (!info[{index}].IsObject()) {{",
+            "        throw Napi::TypeError::New(",
+            "            env,",
+            f'            "{param.name} must be object");',
+            "    }",
+            f"    Napi::Object {object_name} = info[{index}].As<Napi::Object>();",
+            f"    {type_simple_name(param.type_info)} {value_name}{{}};",
+        ]
+        for field in struct.fields:
+            lines.extend(
+                self._generate_cpp_struct_field_conversion(
+                    param,
+                    object_name,
+                    value_name,
+                    field.name,
+                    field.type_name,
+                )
+            )
+        return lines
+
+    def _generate_cpp_struct_field_conversion(
+        self,
+        param: ParameterDef,
+        object_name: str,
+        value_name: str,
+        field_name: str,
+        field_type_name: str,
+    ) -> list[str]:
+        field_js_name = public_js_name(field_name)
+        field_expr = f'{object_name}.Get("{field_js_name}")'
+        field_label = f"{param.name}.{field_js_name}"
+        mapped = _map_type(TypeInfo(field_type_name))
+        if mapped is None:
+            raise AssertionError(f"unsupported struct field type {field_type_name}")
+
+        lines = [
+            f"    if (!{field_expr}.Is{self._napi_type_check(mapped)}()) {{",
+            "        throw Napi::TypeError::New(",
+            "            env,",
+            f'            "{field_label} must be {mapped.js_check}");',
+            "    }",
+        ]
+        if mapped.category == "int64":
+            lossless_name = f"{value_name}_{field_name}_lossless"
+            raw_name = f"{value_name}_{field_name}_raw"
+            lines.append(f"    bool {lossless_name} = false;")
+            lines.append(
+                f"    const int64_t {raw_name} = {field_expr}.As<Napi::BigInt>().Int64Value(&{lossless_name});"
+            )
+            lines.append(f"    if (!{lossless_name}) {{")
+            lines.append(
+                "        throw Napi::RangeError::New(env, \"bigint value is out of int64 range\");"
+            )
+            lines.append("    }")
+            lines.append(
+                f"    {value_name}.{field_name} = static_cast<{field_type_name}>({raw_name});"
+            )
+        elif mapped.category == "uint64":
+            lossless_name = f"{value_name}_{field_name}_lossless"
+            raw_name = f"{value_name}_{field_name}_raw"
+            lines.append(f"    bool {lossless_name} = false;")
+            lines.append(
+                f"    const uint64_t {raw_name} = {field_expr}.As<Napi::BigInt>().Uint64Value(&{lossless_name});"
+            )
+            lines.append(f"    if (!{lossless_name}) {{")
+            lines.append(
+                "        throw Napi::RangeError::New(env, \"bigint value is out of uint64 range\");"
+            )
+            lines.append("    }")
+            lines.append(
+                f"    {value_name}.{field_name} = static_cast<{field_type_name}>({raw_name});"
+            )
+        elif mapped.category in {"int32", "enum"}:
+            lines.append(
+                f"    {value_name}.{field_name} = static_cast<{field_type_name}>("
+            )
+            lines.append(f"        {field_expr}.As<Napi::Number>().Int32Value());")
+        elif mapped.category == "uint32":
+            lines.append(
+                f"    {value_name}.{field_name} = static_cast<{field_type_name}>("
+            )
+            lines.append(f"        {field_expr}.As<Napi::Number>().Uint32Value());")
+        elif mapped.category == "number":
+            lines.append(
+                f"    {value_name}.{field_name} = static_cast<{field_type_name}>("
+            )
+            lines.append(f"        {field_expr}.As<Napi::Number>().DoubleValue());")
+        elif mapped.category == "boolean":
+            lines.append(
+                f"    {value_name}.{field_name} = {field_expr}.As<Napi::Boolean>().Value();"
+            )
+        else:
+            raise AssertionError(f"unsupported struct field category {mapped.category}")
+        return lines
+
+    def _generate_cpp_out_declaration(
+        self,
+        param: ParameterDef,
+    ) -> tuple[list[str], str]:
+        value_type = _value_type_for_out_param(param)
+        name = f"{_sanitize_identifier(param.name)}_value"
+        if value_type.type_kind == TypeKind.INTERFACE:
+            return [f"    {_cpp_type(value_type)} {name} = nullptr;"], f"&{name}"
+        return [f"    {_cpp_storage_type(value_type)} {name}{{}};"], f"&{name}"
+
     def _generate_cpp_method_success_return(
         self,
         method: MethodDef,
         doc: IdlDocument,
     ) -> list[str]:
-        del doc
         out_params = _method_out_params(method)
         if not out_params:
             return [
                 "    return Napi::Number::New(env, static_cast<double>(result));",
             ]
         if len(out_params) == 1:
-            return self._generate_cpp_placeholder_value(out_params[0], "    ")
+            value_lines, value_expr = self._generate_cpp_out_value_expression(
+                out_params[0],
+                method,
+                doc,
+            )
+            return [*value_lines, f"    return {value_expr};"]
 
         lines = ["    Napi::Object output = Napi::Object::New(env);"]
         for param in out_params:
             field_name = clean_out_field_name(param.name)
-            value_lines = self._generate_cpp_placeholder_value(param, "    ")
-            value_expr = value_lines[-1].strip()
-            if value_expr.startswith("return "):
-                value_expr = value_expr[len("return "):].rstrip(";")
-            lines.extend(value_lines[:-1])
+            value_lines, value_expr = self._generate_cpp_out_value_expression(
+                param,
+                method,
+                doc,
+            )
+            lines.extend(value_lines)
             lines.append(f'    output.Set("{field_name}", {value_expr});')
         lines.append("    return output;")
         return lines
 
-    def _generate_cpp_placeholder_value(
+    def _generate_cpp_out_value_expression(
         self,
         param: ParameterDef,
-        indent: str,
-    ) -> list[str]:
+        method: MethodDef,
+        doc: IdlDocument,
+    ) -> tuple[list[str], str]:
         value_type = _value_type_for_out_param(param)
-        if value_type.type_kind == TypeKind.STRUCT:
-            object_name = f"{_sanitize_identifier(param.name)}_object"
-            lines = [f"{indent}Napi::Object {object_name} = Napi::Object::New(env);"]
-            for field_name in ("width", "height"):
-                lines.append(
-                    f'{indent}{object_name}.Set("{field_name}", Napi::Number::New(env, 0));'
-                )
-            lines.append(f"{indent}return {object_name};")
-            return lines
+        value_name = f"{_sanitize_identifier(param.name)}_value"
         if _is_binary_buffer_interface(value_type):
-            return [f"{indent}return Napi::Buffer<unsigned char>::New(env, nullptr, 0);"]
+            return self._generate_cpp_owned_interface_out_value(
+                param,
+                value_type,
+                f"ConvertIDasBinaryBufferToBuffer(env, std::move({_sanitize_identifier(param.name)}_owned))",
+            )
+        if _is_readonly_string_interface_pointer(value_type):
+            return self._generate_cpp_owned_interface_out_value(
+                param,
+                value_type,
+                f"ConvertDasReadOnlyStringToString(env, {_sanitize_identifier(param.name)}_owned.Get())",
+            )
         if value_type.type_kind == TypeKind.INTERFACE:
-            return [f"{indent}return env.Undefined();"]
+            wrapper_name = _cpp_wrapper_name(type_simple_name(value_type))
+            return self._generate_cpp_owned_interface_out_value(
+                param,
+                value_type,
+                f"{wrapper_name}::WrapAdopted(env, std::move({_sanitize_identifier(param.name)}_owned))",
+            )
+        if value_type.type_kind == TypeKind.STRUCT:
+            struct = _find_struct(doc, value_type)
+            if struct is None:
+                raise AssertionError(f"missing struct {type_simple_name(value_type)}")
+            object_name = f"{_sanitize_identifier(param.name)}_object"
+            lines = [f"    Napi::Object {object_name} = Napi::Object::New(env);"]
+            for field in struct.fields:
+                mapped = _map_type(TypeInfo(field.type_name))
+                if mapped is None:
+                    raise AssertionError(f"unsupported struct field type {field.type_name}")
+                lines.append(
+                    f'    {object_name}.Set("{public_js_name(field.name)}", '
+                    f"{self._cpp_return_expression(f'{value_name}.{field.name}', mapped)});"
+                )
+            return lines, object_name
 
         mapped = _map_type(value_type)
         if mapped is None:
-            return [f"{indent}return env.Undefined();"]
-        if mapped.ts_type == "bigint":
-            return [f"{indent}return Napi::BigInt::New(env, static_cast<uint64_t>(0));"]
-        if mapped.ts_type == "boolean":
-            return [f"{indent}return Napi::Boolean::New(env, false);"]
-        return [f"{indent}return Napi::Number::New(env, 0);"]
+            raise AssertionError(f"unsupported out value type {type_simple_name(value_type)}")
+        del method
+        return [], self._cpp_return_expression(value_name, mapped)
+
+    def _generate_cpp_owned_interface_out_value(
+        self,
+        param: ParameterDef,
+        value_type: TypeInfo,
+        expression: str,
+    ) -> tuple[list[str], str]:
+        value_name = f"{_sanitize_identifier(param.name)}_value"
+        owned_name = f"{_sanitize_identifier(param.name)}_owned"
+        return [
+            f"    if ({value_name} == nullptr) {{",
+            f'        throw Napi::Error::New(env, "native method returned null {param.name}");',
+            "    }",
+            f"    auto {owned_name} = DAS::DasPtr<{type_simple_name(value_type)}>::Attach({value_name});",
+        ], expression
 
     def _generate_supported_cpp_function(self, func: ModuleFunctionDef) -> list[str]:
         wrapper_name = f"Wrap_{_sanitize_identifier(func.name)}"
@@ -860,7 +1239,7 @@ class NapiGenerator:
             )
             lines.append("    }")
             lines.append(
-                f"    const {mapped.cpp_type} {name}_value = static_cast<{mapped.cpp_type}>({name}_raw);"
+                f"    const {_cpp_storage_type(param.type_info)} {name}_value = static_cast<{_cpp_storage_type(param.type_info)}>({name}_raw);"
             )
         elif mapped.category == "uint64":
             lines.append(f"    bool {name}_lossless = false;")
@@ -873,21 +1252,21 @@ class NapiGenerator:
             )
             lines.append("    }")
             lines.append(
-                f"    const {mapped.cpp_type} {name}_value = static_cast<{mapped.cpp_type}>({name}_raw);"
+                f"    const {_cpp_storage_type(param.type_info)} {name}_value = static_cast<{_cpp_storage_type(param.type_info)}>({name}_raw);"
             )
         elif mapped.category in {"int32", "enum"}:
             lines.append(
-                f"    const {mapped.cpp_type} {name}_value = static_cast<{mapped.cpp_type}>("
+                f"    const {_cpp_storage_type(param.type_info)} {name}_value = static_cast<{_cpp_storage_type(param.type_info)}>("
             )
             lines.append(f"        info[{index}].As<Napi::Number>().Int32Value());")
         elif mapped.category == "uint32":
             lines.append(
-                f"    const {mapped.cpp_type} {name}_value = static_cast<{mapped.cpp_type}>("
+                f"    const {_cpp_storage_type(param.type_info)} {name}_value = static_cast<{_cpp_storage_type(param.type_info)}>("
             )
             lines.append(f"        info[{index}].As<Napi::Number>().Uint32Value());")
         elif mapped.category == "number":
             lines.append(
-                f"    const {mapped.cpp_type} {name}_value = static_cast<{mapped.cpp_type}>("
+                f"    const {_cpp_storage_type(param.type_info)} {name}_value = static_cast<{_cpp_storage_type(param.type_info)}>("
             )
             lines.append(f"        info[{index}].As<Napi::Number>().DoubleValue());")
         elif mapped.category == "boolean":
@@ -1278,10 +1657,35 @@ class NapiGenerator:
         for method in interface.methods:
             js_name = public_js_name(method.name)
             native_name = f"{interface.name}_{js_name}"
+            in_params = _method_in_params(method)
+            if not in_params:
+                lines.extend(
+                    [
+                        f"  {js_name}(...args) {{",
+                        f"    return native.{native_name}(this._ensureAlive(), ...args);",
+                        "  }",
+                    ]
+                )
+                continue
+
+            js_params = [public_js_name(param.name) for param in in_params]
+            native_args = []
+            for param, js_param in zip(in_params, js_params):
+                if (
+                    param.type_info.type_kind == TypeKind.INTERFACE
+                    and param.type_info.is_pointer
+                    and param.type_info.pointer_level == 1
+                    and not _is_readonly_string_interface_pointer(param.type_info)
+                ):
+                    native_args.append(f"{js_param}._ensureAlive()")
+                else:
+                    native_args.append(js_param)
+            arg_list = ", ".join(js_params)
+            native_arg_list = ", ".join(["this._ensureAlive()", *native_args])
             lines.extend(
                 [
-                    f"  {js_name}(...args) {{",
-                    f"    return native.{native_name}(this._ensureAlive(), ...args);",
+                    f"  {js_name}({arg_list}) {{",
+                    f"    return native.{native_name}({native_arg_list});",
                     "  }",
                 ]
             )
