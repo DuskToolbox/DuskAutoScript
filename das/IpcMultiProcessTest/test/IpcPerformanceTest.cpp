@@ -126,6 +126,14 @@ namespace
             return DAS_E_NO_IMPLEMENTATION;
         }
 
+        DasResult StartWithDesc(
+            const DAS::Core::IPC::HostLaunchDesc*,
+            uint32_t,
+            uint16_t*) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
         void Stop() override {}
 
         [[nodiscard]]

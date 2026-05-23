@@ -11,14 +11,24 @@
 
 #include <das/Core/IPC/Config.h>
 #include <das/DasApi.h>
+#include <das/DasString.hpp>
 #include <das/IDasAsyncHandshakeOperation.h>
 #include <das/IDasBase.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
 
 DAS_CORE_IPC_NS_BEGIN
+
+struct HostLaunchDesc
+{
+    IDasReadOnlyString*        p_executable_path;
+    IDasReadOnlyString* const* pp_args;
+    size_t                    arg_count;
+    IDasReadOnlyString*        p_working_directory;
+};
 
 DAS_INTERFACE IHostLauncher : public IDasBase
 {
@@ -33,6 +43,11 @@ public:
         const std::string& host_exe_path,
         uint16_t&          out_session_id,
         uint32_t           timeout_ms) = 0;
+
+    virtual DasResult StartWithDesc(
+        const HostLaunchDesc* p_desc,
+        uint32_t              timeout_ms,
+        uint16_t*             p_out_session_id) = 0;
 
     virtual void Stop() = 0;
 

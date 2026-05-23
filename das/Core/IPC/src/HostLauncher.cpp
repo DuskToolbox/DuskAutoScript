@@ -227,6 +227,36 @@ namespace
         transport.reset();
     }
 
+    DasResult ReadUtf8String(
+        IDasReadOnlyString* p_string,
+        std::string&        out_value)
+    {
+        if (!p_string)
+        {
+            return DAS_E_INVALID_ARGUMENT;
+        }
+
+        const char* p_utf8 = nullptr;
+        const auto  result = p_string->GetUtf8(&p_utf8);
+        if (DAS::IsFailed(result) || !p_utf8)
+        {
+            return DAS_E_INVALID_ARGUMENT;
+        }
+
+        out_value = p_utf8;
+        return DAS_S_OK;
+    }
+
+    std::string DefaultWorkingDirectoryFor(const std::string& exe_path)
+    {
+        const auto parent = std::filesystem::path(exe_path).parent_path();
+        if (!parent.empty())
+        {
+            return parent.string();
+        }
+        return std::filesystem::current_path().string();
+    }
+
 } // anonymous namespace
 
 HostLauncher::HostLauncher(
@@ -267,8 +297,82 @@ DasResult HostLauncher::Start(
     args.push_back("--main-pid");
     args.push_back(std::to_string(main_pid));
 
-    // 启动进程
-    DasResult result = LaunchProcess(host_exe_path, args);
+    return StartLaunchSequence(
+        host_exe_path,
+        args,
+        std::nullopt,
+        out_session_id,
+        timeout_ms);
+}
+
+DasResult HostLauncher::StartWithDesc(
+    const HostLaunchDesc* p_desc,
+    uint32_t              timeout_ms,
+    uint16_t*             p_out_session_id)
+{
+    if (!p_desc || !p_out_session_id || !p_desc->p_executable_path)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    if (p_desc->arg_count > 0 && !p_desc->pp_args)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    std::string exe_path;
+    auto        result = ReadUtf8String(p_desc->p_executable_path, exe_path);
+    if (DAS::IsFailed(result) || exe_path.empty())
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    std::vector<std::string> args;
+    args.reserve(p_desc->arg_count);
+    for (size_t i = 0; i < p_desc->arg_count; ++i)
+    {
+        if (!p_desc->pp_args[i])
+        {
+            return DAS_E_INVALID_ARGUMENT;
+        }
+
+        std::string arg;
+        result = ReadUtf8String(p_desc->pp_args[i], arg);
+        if (DAS::IsFailed(result))
+        {
+            return DAS_E_INVALID_ARGUMENT;
+        }
+        args.push_back(std::move(arg));
+    }
+
+    std::optional<std::string> working_directory;
+    if (p_desc->p_working_directory)
+    {
+        std::string value;
+        result = ReadUtf8String(p_desc->p_working_directory, value);
+        if (DAS::IsFailed(result) || value.empty())
+        {
+            return DAS_E_INVALID_ARGUMENT;
+        }
+        working_directory = std::move(value);
+    }
+
+    return StartLaunchSequence(
+        exe_path,
+        args,
+        working_directory,
+        *p_out_session_id,
+        timeout_ms);
+}
+
+DasResult HostLauncher::StartLaunchSequence(
+    const std::string&              exe_path,
+    const std::vector<std::string>& args,
+    const std::optional<std::string>& working_directory,
+    uint16_t&                       out_session_id,
+    uint32_t                        timeout_ms)
+{
+    DasResult result = LaunchProcess(exe_path, args, working_directory);
     if (result != DAS_S_OK)
     {
         return result;
@@ -611,16 +715,20 @@ DasResult HostLauncher::QueryInterface(const DasGuid& iid, void** pp)
 
 DasResult HostLauncher::LaunchProcess(
     const std::string&              exe_path,
-    const std::vector<std::string>& args)
+    const std::vector<std::string>& args,
+    const std::optional<std::string>& working_directory)
 {
     try
     {
+        const auto launch_working_directory =
+            working_directory.value_or(DefaultWorkingDirectoryFor(exe_path));
+
         impl_->process = std::make_unique<boost::process::v2::process>(
             impl_->io_ctx,
             exe_path,
             args,
             boost::process::v2::process_start_dir(
-                std::filesystem::path(exe_path).parent_path().string()));
+                launch_working_directory));
 
         impl_->pid = static_cast<uint32_t>(impl_->process->id());
         impl_->is_running = true;

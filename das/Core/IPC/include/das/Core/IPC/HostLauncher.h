@@ -14,7 +14,9 @@
 #include <das/IDasBase.h>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
+#include <vector>
 
 #include <boost/asio/awaitable.hpp>
 #include <das/Core/IPC/Config.h>
@@ -116,6 +118,11 @@ public:
         uint16_t&          out_session_id,
         uint32_t           timeout_ms) override;
 
+    DasResult StartWithDesc(
+        const HostLaunchDesc* p_desc,
+        uint32_t              timeout_ms,
+        uint16_t*             p_out_session_id) override;
+
     void Stop() override;
 
     [[nodiscard]]
@@ -138,7 +145,15 @@ public:
 private:
     DasResult LaunchProcess(
         const std::string&              exe_path,
-        const std::vector<std::string>& args);
+        const std::vector<std::string>& args,
+        const std::optional<std::string>& working_directory = std::nullopt);
+
+    DasResult StartLaunchSequence(
+        const std::string&              exe_path,
+        const std::vector<std::string>& args,
+        const std::optional<std::string>& working_directory,
+        uint16_t&                       out_session_id,
+        uint32_t                        timeout_ms);
 
     DasResult WaitForHostReady(uint32_t timeout_ms);
     DasResult ConnectToHost(uint32_t timeout_ms);
