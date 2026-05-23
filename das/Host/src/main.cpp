@@ -500,14 +500,16 @@ int main(int argc, char* argv[])
 
         // 创建 IPC Context
         DAS::Core::IPC::Host::IpcContextConfig config{};
+        std::string                             connect_url_storage;
 
         if (vm.count("connect-url"))
         {
-            config.connect_url = vm["connect-url"].as<std::string>();
+            connect_url_storage = vm["connect-url"].as<std::string>();
+            config.connect_url = connect_url_storage.c_str();
             DAS_LOG_INFO(
                 std::format(
                     "Host process running in HTTP mode, connect URL: {}",
-                    config.connect_url)
+                    connect_url_storage)
                     .c_str());
         }
         else if (vm.count("main-pid"))

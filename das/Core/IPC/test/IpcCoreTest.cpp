@@ -15,8 +15,10 @@
  */
 
 #include <gtest/gtest.h>
+#include <das/Core/IPC/Host/IIpcContext.h>
+#include <type_traits>
 
-namespace DAS::IPC::Test
+namespace Das::IPC::Test
 {
 
     // ====== IPC Test Environment ======
@@ -81,4 +83,21 @@ namespace DAS::IPC::Test
         EXPECT_TRUE(true) << "Test framework is functional";
     }
 
-} // namespace DAS::IPC::Test
+    TEST_F(IpcCoreTestBase, HostIpcContextConfigRemainsCAbiFriendly)
+    {
+        using Das::Core::IPC::Host::IpcContextConfig;
+        using Das::Core::IPC::Host::IpcContextEvents;
+
+        EXPECT_TRUE(std::is_standard_layout_v<IpcContextEvents>);
+        EXPECT_TRUE(std::is_trivially_copyable_v<IpcContextEvents>);
+        EXPECT_TRUE(std::is_standard_layout_v<IpcContextConfig>);
+        EXPECT_TRUE(std::is_trivially_copyable_v<IpcContextConfig>);
+
+        IpcContextConfig config{};
+        EXPECT_EQ(config.main_process_queue_name, nullptr);
+        EXPECT_EQ(config.connect_url, nullptr);
+        EXPECT_EQ(config.events.on_before_shutdown, nullptr);
+        EXPECT_EQ(config.events.p_on_before_shutdown_context, nullptr);
+    }
+
+} // namespace Das::IPC::Test

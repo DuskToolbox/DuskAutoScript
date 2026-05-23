@@ -148,6 +148,9 @@ namespace Core
                 /// HTTP/WebSocket 连接协程（连接、注册 transport、启动接收）
                 boost::asio::awaitable<void> ConnectHttp();
 
+                void InvokeOnBeforeShutdown(HostShutdownReason reason);
+                void RequestShutdown(HostShutdownReason reason);
+
                 void StartParentProcessMonitor();
                 void StopParentProcessMonitor();
 
@@ -200,6 +203,7 @@ namespace Core
 
                 std::thread       parent_monitor_thread_;
                 std::atomic<bool> parent_monitor_running_{false};
+                std::atomic<bool> before_shutdown_invoked_{false};
             };
 
         } // namespace Host

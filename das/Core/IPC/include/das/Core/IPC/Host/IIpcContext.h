@@ -5,6 +5,7 @@
 #include <das/Core/Utils/StdExecution.h>
 #include <das/DasApi.h>
 #include <das/IDasAsyncCallback.h>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -24,9 +25,28 @@ namespace Core
 
         namespace Host
         {
+            enum class HostShutdownReason : uint32_t
+            {
+                Goodbye = 0,
+                TransportDisconnected = 1,
+                ParentProcessExited = 2,
+                RequestStop = 3,
+            };
+
+            typedef DasResult(DAS_STD_CALL* OnBeforeShutdown)(
+                void*              p_context,
+                HostShutdownReason reason,
+                uint32_t           timeout_ms);
+
+            struct IpcContextEvents
+            {
+                OnBeforeShutdown on_before_shutdown = nullptr;
+                void* p_on_before_shutdown_context = nullptr;
+            };
+
             struct IpcContextConfig
             {
-                const char* main_process_queue_name;
+                const char* main_process_queue_name = nullptr;
 
                 // 主进程 PID
                 // - 0: 独立模式，Host 自行生成 session_id
@@ -35,7 +55,9 @@ namespace Core
 
                 // HTTP/WebSocket 连接 URL（例如 "ws://localhost:9527"）
                 // 非空时启用 HTTP 传输模式，替代 Named Pipe
-                std::string connect_url;
+                const char* connect_url = nullptr;
+
+                IpcContextEvents events{};
             };
 
             struct IIpcContext;

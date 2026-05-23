@@ -103,6 +103,13 @@ namespace
 
     // 父进程存活检测间隔（毫秒）
     constexpr uint32_t PARENT_PROCESS_CHECK_INTERVAL_MS = 1000;
+
+    constexpr uint32_t BEFORE_SHUTDOWN_TIMEOUT_MS = 2000;
+
+    bool HasText(const char* value) noexcept
+    {
+        return value != nullptr && value[0] != '\0';
+    }
 } // namespace
 
 DAS_NS_BEGIN
@@ -122,7 +129,7 @@ namespace Core
                 host_pid_ =
                     static_cast<uint32_t>(boost::process::v2::current_pid());
 
-                if (config_.main_pid == 0 && config_.connect_url.empty())
+                if (config_.main_pid == 0 && !HasText(config_.connect_url))
                 {
                     throw std::invalid_argument(
                         "IpcContext: main_pid 不能为 0 且 connect_url 为空，"
@@ -218,14 +225,7 @@ namespace Core
                             "IpcContext: 收到 GOODBYE，请求退出");
                         DAS_LOG_INFO(msg.c_str());
 
-                        if (proxy_factory_)
-                        {
-                            proxy_factory_->BeginShutdown();
-                        }
-                        if (run_loop_.IsRunning())
-                        {
-                            run_loop_.RequestStop();
-                        }
+                        RequestShutdown(HostShutdownReason::Goodbye);
                     });
 
                 // 注册消息处理器
@@ -269,7 +269,7 @@ namespace Core
                     command_handler_.Get());
 
                 // HTTP/WebSocket transport mode
-                if (!config_.connect_url.empty())
+                if (HasText(config_.connect_url))
                 {
                     DAS_CORE_LOG_INFO(
                         "IpcContext: HTTP/WebSocket transport mode enabled");
@@ -382,7 +382,8 @@ namespace Core
                                 DAS_LOG_INFO(msg.c_str());
 
                                 // 请求 RunLoop 停止
-                                run_loop_.RequestStop();
+                                RequestShutdown(
+                                    HostShutdownReason::ParentProcessExited);
                                 break;
                             }
 
@@ -574,6 +575,8 @@ namespace Core
                             DAS_CORE_LOG_ERROR(
                                 "ReceiveLoopCoroutine: transport lookup failed, result={}",
                                 lookup_result);
+                            RequestShutdown(
+                                HostShutdownReason::TransportDisconnected);
                             co_return;
                         }
 
@@ -595,6 +598,8 @@ namespace Core
                             {
                                 DAS_CORE_LOG_ERROR("Receive failed: {}", error);
                             }
+                            RequestShutdown(
+                                HostShutdownReason::TransportDisconnected);
                             co_return;
                         }
 
@@ -653,12 +658,19 @@ namespace Core
                             DAS_CORE_LOG_DEBUG(
                                 "Receive loop stopped: {}",
                                 ToString(e.what()));
+                            if (e.code() == boost::asio::error::eof)
+                            {
+                                RequestShutdown(
+                                    HostShutdownReason::TransportDisconnected);
+                            }
                         }
                         else
                         {
                             DAS_CORE_LOG_ERROR(
                                 "Receive error: {}",
                                 ToString(e.what()));
+                            RequestShutdown(
+                                HostShutdownReason::TransportDisconnected);
                         }
                         co_return;
                     }
@@ -748,6 +760,8 @@ namespace Core
 
             void IpcContext::RequestStop()
             {
+                InvokeOnBeforeShutdown(HostShutdownReason::RequestStop);
+
                 if (proxy_factory_)
                 {
                     proxy_factory_->BeginShutdown();
@@ -756,6 +770,49 @@ namespace Core
                 // 1. 请求 runloop 停止；ConnectionManager 拥有的 transport 会在
                 //    run_loop_ 析构时自动清理。
                 run_loop_.RequestStop();
+            }
+
+            void IpcContext::InvokeOnBeforeShutdown(
+                HostShutdownReason reason)
+            {
+                if (before_shutdown_invoked_.exchange(
+                        true,
+                        std::memory_order_acq_rel))
+                {
+                    return;
+                }
+
+                const auto& events = config_.events;
+                if (!events.on_before_shutdown)
+                {
+                    return;
+                }
+
+                const DasResult result = events.on_before_shutdown(
+                    events.p_on_before_shutdown_context,
+                    reason,
+                    BEFORE_SHUTDOWN_TIMEOUT_MS);
+                if (DAS::IsFailed(result))
+                {
+                    DAS_CORE_LOG_WARN(
+                        "IpcContext: OnBeforeShutdown returned error={}",
+                        result);
+                }
+            }
+
+            void IpcContext::RequestShutdown(HostShutdownReason reason)
+            {
+                InvokeOnBeforeShutdown(reason);
+
+                if (proxy_factory_)
+                {
+                    proxy_factory_->BeginShutdown();
+                }
+
+                if (run_loop_.IsRunning())
+                {
+                    run_loop_.RequestStop();
+                }
             }
 
             bool IpcContext::IsConnected() const { return is_connected_; }
