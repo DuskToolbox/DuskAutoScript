@@ -117,6 +117,12 @@ namespace
     class CapturingPluginPackage final : public IDasPluginPackage
     {
     public:
+        explicit CapturingPluginPackage(
+            std::vector<DasPluginFeature> features = {})
+            : features_{std::move(features)}
+        {
+        }
+
         uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
 
         uint32_t DAS_STD_CALL Release() override
@@ -154,9 +160,19 @@ namespace
             return DAS_E_NO_INTERFACE;
         }
 
-        DasResult DAS_STD_CALL EnumFeature(uint64_t, DasPluginFeature*) override
+        DasResult DAS_STD_CALL
+        EnumFeature(uint64_t index, DasPluginFeature* p_out_feature) override
         {
-            return DAS_S_FALSE;
+            if (p_out_feature == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (index >= features_.size())
+            {
+                return DAS_S_FALSE;
+            }
+            *p_out_feature = features_[index];
+            return DAS_S_OK;
         }
 
         DasResult DAS_STD_CALL
@@ -176,6 +192,7 @@ namespace
         }
 
     private:
+        std::vector<DasPluginFeature> features_;
         std::atomic<uint32_t> ref_count_{0};
     };
 
@@ -236,8 +253,11 @@ namespace
     class CapturingRuntimeProvider final : public IRuntimeProvider
     {
     public:
-        explicit CapturingRuntimeProvider(uint16_t owner_session_id)
-            : owner_session_id_{owner_session_id}
+        explicit CapturingRuntimeProvider(
+            uint16_t                     owner_session_id,
+            std::vector<DasPluginFeature> features = {})
+            : owner_session_id_{owner_session_id},
+              features_{std::move(features)}
         {
         }
 
@@ -246,7 +266,7 @@ namespace
         {
             requests.push_back(request);
 
-            auto* package = new CapturingPluginPackage();
+            auto* package = new CapturingPluginPackage(features_);
             package->AddRef();
 
             RuntimeLoadResult result{};
@@ -260,6 +280,7 @@ namespace
 
     private:
         uint16_t owner_session_id_ = 0;
+        std::vector<DasPluginFeature> features_;
     };
 
     void WriteMinimalManifest(
@@ -1609,6 +1630,56 @@ TEST_F(PluginManagerGuidTest, LoadPlugin_UsesInjectedRuntimeProvider)
     EXPECT_EQ(raw_provider->requests.front().manifest_path, manifest_path);
     EXPECT_EQ(raw_provider->requests.front().runtime_path, manifest_path);
     EXPECT_EQ(raw_provider->requests.front().main_process_owner_session_id, 1);
+
+    std::filesystem::remove_all(test_dir);
+}
+
+TEST_F(
+    PluginManagerGuidTest,
+    LoadPlugin_IpcModeUsesProviderOwnerSessionForFeatureIndex)
+{
+    auto test_dir =
+        std::filesystem::current_path() / "test_plugin_provider_ipc_mode";
+    std::filesystem::create_directories(test_dir);
+    auto manifest_path = test_dir / "test_plugin_provider_ipc_mode.json";
+
+    auto manifest = Das::Utils::MakeYyjsonObject();
+    {
+        auto obj = *manifest.as_object();
+        obj[std::string_view("guid")] =
+            "00000000-0000-0000-0000-000000750702";
+        obj[std::string_view("name")] = "ProviderIpcModePlugin";
+        obj[std::string_view("language")] = "Cpp";
+        obj[std::string_view("loadMode")] = "ipc";
+        obj[std::string_view("description")] = "test";
+        obj[std::string_view("author")] = "test";
+        obj[std::string_view("version")] = "1.0";
+        obj[std::string_view("supportedSystem")] = "win";
+        obj[std::string_view("pluginFilenameExtension")] = "dll";
+        obj[std::string_view("settings")] = Das::Utils::MakeYyjsonArray();
+    }
+    {
+        std::ofstream ofs(manifest_path);
+        ofs << *Das::Utils::SerializeYyjsonValue(manifest, false);
+    }
+
+    auto provider = std::make_unique<CapturingRuntimeProvider>(
+        94,
+        std::vector<DasPluginFeature>{
+            DAS_PLUGIN_FEATURE_CAPTURE_FACTORY});
+    auto* raw_provider = provider.get();
+    pm_->SetRuntimeProviderForTest(std::move(provider));
+
+    auto result = pm_->LoadPlugin(manifest_path);
+
+    EXPECT_EQ(result, DAS_S_OK);
+    ASSERT_EQ(raw_provider->requests.size(), 1u);
+    EXPECT_EQ(raw_provider->requests.front().load_mode, LoadMode::Ipc);
+
+    std::vector<FeatureInfo> features;
+    ASSERT_EQ(pm_->GetPluginFeatures(manifest_path, features), DAS_S_OK);
+    ASSERT_EQ(features.size(), 1u);
+    EXPECT_EQ(features.front().session_id, 94);
 
     std::filesystem::remove_all(test_dir);
 }
