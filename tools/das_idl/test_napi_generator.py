@@ -1,4 +1,5 @@
 import subprocess
+import shutil
 import sys
 import tempfile
 import unittest
@@ -1039,6 +1040,21 @@ class TestNapiExportCli(unittest.TestCase):
 
 
 class TestNodeHostBootstrapScript(unittest.TestCase):
+    def _run_script_package(self, wrapper_text, *args):
+        script = Path(__file__).parent / "node_host" / "das-node-host.cjs"
+        with tempfile.TemporaryDirectory() as tmp:
+            package_dir = Path(tmp)
+            shutil.copy2(script, package_dir / "das-node-host.cjs")
+            (package_dir / "das_core_napi_export.js").write_text(
+                wrapper_text,
+                encoding="utf-8",
+            )
+            return subprocess.run(
+                ["node", str(package_dir / "das-node-host.cjs"), *args],
+                capture_output=True,
+                text=True,
+            )
+
     def test_package_local_bootstrap_contract_is_pinned(self):
         script = Path(__file__).parent / "node_host" / "das-node-host.cjs"
 
@@ -1050,8 +1066,67 @@ class TestNodeHostBootstrapScript(unittest.TestCase):
         self.assertIn("--main-pid", text)
         self.assertIn("--connect-url", text)
         self.assertIn("startHostIpc", text)
+        self.assertIn("packageRoot: __dirname", text)
+        self.assertIn("wrapperPath: path.join(__dirname, 'das_core_napi_export.js')", text)
+        self.assertIn("addonPath: path.join(__dirname, 'das_core_napi.node')", text)
         self.assertNotIn("shutdownPlugin", text)
         self.assertNotIn("onPluginShutdown", text)
+
+    def test_dry_run_parse_does_not_call_native_bootstrap(self):
+        wrapper_text = """
+'use strict';
+
+module.exports = new Proxy({}, {
+  get() {
+    throw new Error('native bootstrap must not be touched during dry-run parse');
+  },
+});
+"""
+        result = self._run_script_package(
+            wrapper_text,
+            "--dry-run-parse",
+            "--main-pid",
+            "12345",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_non_dry_run_passes_package_relative_bootstrap_paths(self):
+        wrapper_text = """
+'use strict';
+
+const path = require('node:path');
+
+module.exports = {
+  startHostIpc(options) {
+    if (options.mainPid !== 12345) {
+      throw new Error(`unexpected mainPid: ${options.mainPid}`);
+    }
+    if (options.connectUrl !== 'ws://localhost:9527') {
+      throw new Error(`unexpected connectUrl: ${options.connectUrl}`);
+    }
+    if (options.packageRoot !== __dirname) {
+      throw new Error(`unexpected packageRoot: ${options.packageRoot}`);
+    }
+    if (options.wrapperPath !== path.join(__dirname, 'das_core_napi_export.js')) {
+      throw new Error(`unexpected wrapperPath: ${options.wrapperPath}`);
+    }
+    if (options.addonPath !== path.join(__dirname, 'das_core_napi.node')) {
+      throw new Error(`unexpected addonPath: ${options.addonPath}`);
+    }
+    return 0;
+  },
+};
+"""
+        result = self._run_script_package(
+            wrapper_text,
+            "--main-pid",
+            "12345",
+            "--connect-url",
+            "ws://localhost:9527",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == "__main__":
