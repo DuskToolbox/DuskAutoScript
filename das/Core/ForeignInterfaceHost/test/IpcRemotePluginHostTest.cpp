@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <memory>
 #include <type_traits>
+#include <utility>
 
 using namespace DAS::Core::ForeignInterfaceHost;
 
@@ -28,8 +29,7 @@ TEST(IpcRemotePluginHostContract, RequestUsesHostLaunchDescAndRuntimeResult)
                   decltype(RemotePluginLoadRequest::launch_desc),
                   DAS::Core::IPC::HostLaunchDesc>);
     static_assert(std::is_same_v<
-                  decltype(IRemotePluginHost::LoadPlugin(
-                      std::declval<IRemotePluginHost&>(),
+                  decltype(std::declval<IRemotePluginHost&>().LoadPlugin(
                       std::declval<const RemotePluginLoadRequest&>())),
                   DAS::Utils::Expected<RuntimeLoadResult>>);
 
@@ -73,4 +73,3 @@ TEST(IpcRemotePluginHostContract, LifecycleCallbacksAreOptionalHooks)
     EXPECT_TRUE(process_exit_called);
     EXPECT_TRUE(heartbeat_cleanup_called);
 }
-
