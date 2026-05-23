@@ -15,7 +15,12 @@
  */
 
 #include <gtest/gtest.h>
+#include <boost/asio/io_context.hpp>
+#include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/Host/IIpcContext.h>
+#include <das/Core/IPC/MainProcess/IHostLauncher.h>
+#include <das/DasPtr.hpp>
+#include <das/DasString.hpp>
 #include <type_traits>
 
 namespace Das::IPC::Test
@@ -98,6 +103,81 @@ namespace Das::IPC::Test
         EXPECT_EQ(config.connect_url, nullptr);
         EXPECT_EQ(config.events.on_before_shutdown, nullptr);
         EXPECT_EQ(config.events.p_on_before_shutdown_context, nullptr);
+    }
+
+    TEST_F(IpcCoreTestBase, HostLaunchDescRemainsCAbiFriendly)
+    {
+        using Das::Core::IPC::HostLaunchDesc;
+        using Das::Core::IPC::IHostLauncher;
+
+        EXPECT_TRUE(std::is_standard_layout_v<HostLaunchDesc>);
+        EXPECT_TRUE(std::is_trivially_copyable_v<HostLaunchDesc>);
+        EXPECT_TRUE(
+            (std::is_same_v<
+                decltype(HostLaunchDesc::p_executable_path),
+                IDasReadOnlyString*>));
+        EXPECT_TRUE(
+            (std::is_same_v<
+                decltype(HostLaunchDesc::pp_args),
+                IDasReadOnlyString* const*>));
+        EXPECT_TRUE(
+            (std::is_same_v<decltype(HostLaunchDesc::arg_count), size_t>));
+        EXPECT_TRUE(
+            (std::is_same_v<
+                decltype(HostLaunchDesc::p_working_directory),
+                IDasReadOnlyString*>));
+
+        using StartWithDescSignature = DasResult (IHostLauncher::*)(
+            const HostLaunchDesc*,
+            uint32_t,
+            uint16_t*);
+        StartWithDescSignature method = &IHostLauncher::StartWithDesc;
+        EXPECT_NE(method, nullptr);
+
+        HostLaunchDesc desc{};
+        EXPECT_EQ(desc.p_executable_path, nullptr);
+        EXPECT_EQ(desc.pp_args, nullptr);
+        EXPECT_EQ(desc.arg_count, 0u);
+        EXPECT_EQ(desc.p_working_directory, nullptr);
+    }
+
+    TEST_F(IpcCoreTestBase, HostLaunchDescRejectsInvalidPointers)
+    {
+        boost::asio::io_context       io_context;
+        Das::Core::IPC::HostLauncher launcher(io_context, 1, nullptr);
+        uint16_t                     session_id = 0;
+
+        EXPECT_EQ(
+            launcher.StartWithDesc(nullptr, 1, &session_id),
+            DAS_E_INVALID_ARGUMENT);
+
+        Das::Core::IPC::HostLaunchDesc desc{};
+        EXPECT_EQ(
+            launcher.StartWithDesc(&desc, 1, &session_id),
+            DAS_E_INVALID_ARGUMENT);
+        EXPECT_EQ(
+            launcher.StartWithDesc(&desc, 1, nullptr),
+            DAS_E_INVALID_ARGUMENT);
+
+        DAS::DasPtr<IDasReadOnlyString> executable;
+        ASSERT_EQ(
+            CreateIDasReadOnlyStringFromUtf8(
+                "missing-host-executable",
+                executable.Put()),
+            DAS_S_OK);
+
+        desc.p_executable_path = executable.Get();
+        desc.arg_count = 1;
+        desc.pp_args = nullptr;
+        EXPECT_EQ(
+            launcher.StartWithDesc(&desc, 1, &session_id),
+            DAS_E_INVALID_ARGUMENT);
+
+        IDasReadOnlyString* args[] = {nullptr};
+        desc.pp_args = args;
+        EXPECT_EQ(
+            launcher.StartWithDesc(&desc, 1, &session_id),
+            DAS_E_INVALID_ARGUMENT);
     }
 
 } // namespace Das::IPC::Test
