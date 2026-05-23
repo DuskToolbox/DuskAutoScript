@@ -225,7 +225,7 @@ namespace Core
                             "IpcContext: 收到 GOODBYE，请求退出");
                         DAS_LOG_INFO(msg.c_str());
 
-                        RequestShutdown(HostShutdownReason::Goodbye);
+                        RequestShutdown(HOST_SHUTDOWN_REASON_GOODBYE);
                     });
 
                 // 注册消息处理器
@@ -383,7 +383,7 @@ namespace Core
 
                                 // 请求 RunLoop 停止
                                 RequestShutdown(
-                                    HostShutdownReason::ParentProcessExited);
+                                    HOST_SHUTDOWN_REASON_PARENT_PROCESS_EXITED);
                                 break;
                             }
 
@@ -576,7 +576,7 @@ namespace Core
                                 "ReceiveLoopCoroutine: transport lookup failed, result={}",
                                 lookup_result);
                             RequestShutdown(
-                                HostShutdownReason::TransportDisconnected);
+                                HOST_SHUTDOWN_REASON_TRANSPORT_DISCONNECTED);
                             co_return;
                         }
 
@@ -599,7 +599,7 @@ namespace Core
                                 DAS_CORE_LOG_ERROR("Receive failed: {}", error);
                             }
                             RequestShutdown(
-                                HostShutdownReason::TransportDisconnected);
+                                HOST_SHUTDOWN_REASON_TRANSPORT_DISCONNECTED);
                             co_return;
                         }
 
@@ -661,7 +661,7 @@ namespace Core
                             if (e.code() == boost::asio::error::eof)
                             {
                                 RequestShutdown(
-                                    HostShutdownReason::TransportDisconnected);
+                                    HOST_SHUTDOWN_REASON_TRANSPORT_DISCONNECTED);
                             }
                         }
                         else
@@ -670,7 +670,7 @@ namespace Core
                                 "Receive error: {}",
                                 ToString(e.what()));
                             RequestShutdown(
-                                HostShutdownReason::TransportDisconnected);
+                                HOST_SHUTDOWN_REASON_TRANSPORT_DISCONNECTED);
                         }
                         co_return;
                     }
@@ -760,7 +760,7 @@ namespace Core
 
             void IpcContext::RequestStop()
             {
-                InvokeOnBeforeShutdown(HostShutdownReason::RequestStop);
+                InvokeOnBeforeShutdown(HOST_SHUTDOWN_REASON_REQUEST_STOP);
 
                 if (proxy_factory_)
                 {

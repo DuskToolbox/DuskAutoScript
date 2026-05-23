@@ -25,12 +25,13 @@ namespace Core
 
         namespace Host
         {
-            enum class HostShutdownReason : uint32_t
+            enum HostShutdownReason
             {
-                Goodbye = 0,
-                TransportDisconnected = 1,
-                ParentProcessExited = 2,
-                RequestStop = 3,
+                HOST_SHUTDOWN_REASON_GOODBYE = 0,
+                HOST_SHUTDOWN_REASON_TRANSPORT_DISCONNECTED = 1,
+                HOST_SHUTDOWN_REASON_PARENT_PROCESS_EXITED = 2,
+                HOST_SHUTDOWN_REASON_REQUEST_STOP = 3,
+                HOST_SHUTDOWN_REASON_FORCE_DWORD = 0x7FFFFFFF,
             };
 
             typedef DasResult(DAS_STD_CALL* OnBeforeShutdown)(
