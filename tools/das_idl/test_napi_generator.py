@@ -55,6 +55,18 @@ def _phase74_contract_doc():
             DAS_E_JAVASCRIPT_NO_IMPLEMENTATION = -1073750043,
         }
 
+        enum DasMode {
+            DAS_MODE_FAST = 1,
+            DAS_MODE_SAFE = 2,
+        }
+
+        struct DasRect {
+            int32_t x;
+            int32_t y;
+            uint32_t width;
+            uint32_t height;
+        }
+
         struct DasSize {
             uint32_t width;
             uint32_t height;
@@ -67,12 +79,14 @@ def _phase74_contract_doc():
 
         [uuid("00000000-0000-0000-0000-000000000002")]
         interface IDasComponent : IDasBase {
-            DasResult IsSupported(const DasGuid& iid);
+            DasResult IsSupported(const DasGuid& component_iid);
         }
 
         [uuid("00000000-0000-0000-0000-000000000003")]
         interface IDasImage : IDasBase {
             DasResult GetSize([out] DasSize* p_out_size);
+            DasResult GetMode([out] DasMode* p_out_mode);
+            DasResult GetName([out] IDasReadOnlyString** pp_out_name);
             DasResult GetDimensions(
                 [out] uint32_t* p_out_width,
                 [out] uint32_t* out_height);
@@ -80,6 +94,8 @@ def _phase74_contract_doc():
                 [out] uint32_t* p_out_count,
                 [out] IDasComponent** pp_out_component,
                 [out] uint32_t* out_status);
+            DasResult Clip(const DasRect* p_rect, [out] IDasImage** pp_out_image);
+            DasResult SetComponent(IDasComponent* p_component);
             DasResult GetBinaryBuffer([out] IDasBinaryBuffer** pp_out_buffer);
             DasResult GetComponent([out] IDasComponent** pp_out_component);
             DasResult Flush();
@@ -326,6 +342,10 @@ class TestNapiGenerator(unittest.TestCase):
         self.assertIn("static from(base: IDasBase): IDasImage;", artifacts.dts)
         self.assertIn("dispose(): void;", artifacts.dts)
         self.assertIn("getSize(): DasSize;", artifacts.dts)
+        self.assertIn("getMode(): number;", artifacts.dts)
+        self.assertIn("getName(): string;", artifacts.dts)
+        self.assertIn("clip(pRect: DasRect): IDasImage;", artifacts.dts)
+        self.assertIn("setComponent(pComponent: IDasComponent): DasResult;", artifacts.dts)
         self.assertIn("getBinaryBuffer(): Buffer;", artifacts.dts)
         self.assertIn("getComponent(): IDasComponent;", artifacts.dts)
         self.assertIn("flush(): DasResult;", artifacts.dts)
@@ -338,6 +358,95 @@ class TestNapiGenerator(unittest.TestCase):
         self.assertNotIn("GetSize():", artifacts.dts)
         self.assertNotIn("GetBinaryBuffer():", artifacts.dts)
         self.assertNotIn("getSizeEz", artifacts.js)
+
+    def test_napi_phase74_cpp_calls_native_wrapper_methods(self):
+        artifacts = generate_napi_artifacts(
+            _phase74_contract_doc(),
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+
+        self.assertNotIn("const DasResult result = DAS_E_NO_IMPLEMENTATION;", artifacts.cpp)
+        self.assertIn("DasSize p_out_size_value{};", artifacts.cpp)
+        self.assertIn("const DasResult result = native->GetSize(&p_out_size_value);", artifacts.cpp)
+        self.assertIn("DasMode p_out_mode_value{};", artifacts.cpp)
+        self.assertIn("const DasResult result = native->GetMode(&p_out_mode_value);", artifacts.cpp)
+        self.assertIn("IDasReadOnlyString* pp_out_name_value = nullptr;", artifacts.cpp)
+        self.assertIn("const DasResult result = native->GetName(&pp_out_name_value);", artifacts.cpp)
+        self.assertIn("uint32_t p_out_width_value{};", artifacts.cpp)
+        self.assertIn("uint32_t out_height_value{};", artifacts.cpp)
+        self.assertIn(
+            "const DasResult result = native->GetDimensions(&p_out_width_value, &out_height_value);",
+            artifacts.cpp,
+        )
+        self.assertIn("DasRect p_rect_value{};", artifacts.cpp)
+        self.assertIn("p_rect_value.x", artifacts.cpp)
+        self.assertIn("IDasComponentWrapper::UnwrapHandle(env, info[1])", artifacts.cpp)
+        self.assertIn(
+            "const DasResult result = native->Clip(&p_rect_value, &pp_out_image_value);",
+            artifacts.cpp,
+        )
+        self.assertIn("const DasResult result = native->SetComponent(p_component_value);", artifacts.cpp)
+        self.assertIn("const DasResult result = native->Flush();", artifacts.cpp)
+
+    def test_napi_phase74_cpp_converts_out_values_after_success(self):
+        artifacts = generate_napi_artifacts(
+            _phase74_contract_doc(),
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+
+        failure_check = 'ThrowDasException(env, result, "IDasImage.getSize failed");'
+        struct_read = 'p_out_size_object.Set("width", Napi::Number::New(env, static_cast<double>(p_out_size_value.width)))'
+        self.assertLess(artifacts.cpp.index(failure_check), artifacts.cpp.index(struct_read))
+        self.assertIn(
+            'p_out_size_object.Set("height", Napi::Number::New(env, static_cast<double>(p_out_size_value.height)));',
+            artifacts.cpp,
+        )
+        self.assertIn(
+            'return Napi::Number::New(env, static_cast<double>(p_out_mode_value));',
+            artifacts.cpp,
+        )
+        self.assertIn("return ConvertDasReadOnlyStringToString(env, pp_out_name_owned.Get());", artifacts.cpp)
+        self.assertIn(
+            'output.Set("width", Napi::Number::New(env, static_cast<double>(p_out_width_value)));',
+            artifacts.cpp,
+        )
+        self.assertIn(
+            'output.Set("height", Napi::Number::New(env, static_cast<double>(out_height_value)));',
+            artifacts.cpp,
+        )
+
+    def test_napi_phase74_cpp_adopts_interface_outs_and_routes_binary_buffers(self):
+        artifacts = generate_napi_artifacts(
+            _phase74_contract_doc(),
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+
+        self.assertIn("IDasImage* pp_out_image_value = nullptr;", artifacts.cpp)
+        self.assertIn("if (pp_out_image_value == nullptr) {", artifacts.cpp)
+        self.assertIn(
+            "auto pp_out_image_owned = DAS::DasPtr<IDasImage>::Attach(pp_out_image_value);",
+            artifacts.cpp,
+        )
+        self.assertIn(
+            "return IDasImageWrapper::WrapAdopted(env, std::move(pp_out_image_owned));",
+            artifacts.cpp,
+        )
+        self.assertIn(
+            "auto pp_out_component_owned = DAS::DasPtr<IDasComponent>::Attach(pp_out_component_value);",
+            artifacts.cpp,
+        )
+        self.assertIn(
+            "return IDasComponentWrapper::WrapAdopted(env, std::move(pp_out_component_owned));",
+            artifacts.cpp,
+        )
+        self.assertIn(
+            "return ConvertIDasBinaryBufferToBuffer(env, std::move(pp_out_buffer_owned));",
+            artifacts.cpp,
+        )
+        self.assertNotIn("IDasBinaryBufferWrapper::WrapAdopted(env, std::move(pp_out_buffer_owned))", artifacts.cpp)
 
     def test_napi_phase74_cpp_generates_owned_object_wrappers(self):
         artifacts = generate_napi_artifacts(
