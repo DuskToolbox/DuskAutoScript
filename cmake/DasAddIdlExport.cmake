@@ -264,6 +264,15 @@ function(das_add_idl_export)
         message(FATAL_ERROR "[das_add_idl_export] NODE_ADDON_NAME is required when LANGUAGES contains Node")
     endif()
 
+    if(_HAS_NODE)
+        set(_NODE_HOST_SCRIPT "${CMAKE_SOURCE_DIR}/tools/das_idl/node_host/das-node-host.cjs")
+        if(NOT EXISTS "${_NODE_HOST_SCRIPT}")
+            message(FATAL_ERROR "[das_add_idl_export] Node host script not found: ${_NODE_HOST_SCRIPT}")
+        endif()
+        list(APPEND _DAS_IDL_MODULE_TOOLS "${_NODE_HOST_SCRIPT}")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_NODE_HOST_SCRIPT}")
+    endif()
+
     # 使用 Python 脚本生成 JSON，替代 file(CONFIGURE OUTPUT ...) 以避免内容比对导致的不更新问题
     set(_GEN_CONFIG_SCRIPT "${CMAKE_SOURCE_DIR}/tools/das_idl/gen_batch_config.py")
 

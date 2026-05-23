@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
 from pathlib import Path
 from typing import Sequence
@@ -13,6 +14,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 from das_idl_parser import IdlDocument, parse_idl_file
 from napi_generator import generate_napi_artifacts
 from shared_utils import idl_path_to_header_name
+
+NODE_HOST_SCRIPT_NAME = "das-node-host.cjs"
+NODE_HOST_SCRIPT_SOURCE = Path(__file__).parent / "node_host" / NODE_HOST_SCRIPT_NAME
 
 
 def _merge_documents(documents: Sequence[IdlDocument]) -> IdlDocument:
@@ -69,6 +73,17 @@ def _write_output(output_dir: Path, file_name: str, text: str) -> None:
     if target.parent != output_root:
         raise ValueError(f"refusing to write outside output directory: {target}")
     target.write_text(text, encoding="utf-8")
+    print(f"Generated: {target}")
+
+
+def _copy_output(output_dir: Path, source: Path, file_name: str) -> None:
+    target = (output_dir / file_name).resolve()
+    output_root = output_dir.resolve()
+    if target.parent != output_root:
+        raise ValueError(f"refusing to write outside output directory: {target}")
+    if not source.exists():
+        raise FileNotFoundError(source)
+    shutil.copyfile(source, target)
     print(f"Generated: {target}")
 
 
@@ -143,6 +158,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _write_output(output_dir, f"{addon_name}_export.cpp", artifacts.cpp)
         _write_output(output_dir, f"{addon_name}_export.d.ts", artifacts.dts)
         _write_output(output_dir, f"{addon_name}_export.js", artifacts.js)
+        _copy_output(output_dir, NODE_HOST_SCRIPT_SOURCE, NODE_HOST_SCRIPT_NAME)
     except OSError as exc:
         print(f"Error writing NAPI output: {exc}", file=sys.stderr)
         return 4
