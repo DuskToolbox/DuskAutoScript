@@ -233,6 +233,35 @@ namespace
         std::atomic<uint32_t> ref_count_{0};
     };
 
+    class CapturingRuntimeProvider final : public IRuntimeProvider
+    {
+    public:
+        explicit CapturingRuntimeProvider(uint16_t owner_session_id)
+            : owner_session_id_{owner_session_id}
+        {
+        }
+
+        auto LoadPlugin(const RuntimeLoadRequest& request)
+            -> DAS::Utils::Expected<RuntimeLoadResult> override
+        {
+            requests.push_back(request);
+
+            auto* package = new CapturingPluginPackage();
+            package->AddRef();
+
+            RuntimeLoadResult result{};
+            result.object =
+                DasPtr<IDasBase>::Attach(static_cast<IDasBase*>(package));
+            result.owner_session_id = owner_session_id_;
+            return result;
+        }
+
+        std::vector<RuntimeLoadRequest> requests;
+
+    private:
+        uint16_t owner_session_id_ = 0;
+    };
+
     void WriteMinimalManifest(
         const std::filesystem::path& path,
         const std::string&           guid,
@@ -1551,6 +1580,35 @@ TEST_F(PluginManagerGuidTest, LoadPlugin_CppWithLoadModeIpc_GoesIpcPath)
     // No IPC context set -> IPC path returns DAS_E_NO_IMPLEMENTATION
     auto result = pm_->LoadPlugin(test_dir);
     EXPECT_EQ(result, DAS_E_NO_IMPLEMENTATION);
+
+    std::filesystem::remove_all(test_dir);
+}
+
+TEST_F(PluginManagerGuidTest, LoadPlugin_UsesInjectedRuntimeProvider)
+{
+    auto test_dir =
+        std::filesystem::current_path() / "test_plugin_runtime_provider";
+    std::filesystem::create_directories(test_dir);
+    auto manifest_path = test_dir / "test_plugin_runtime_provider.json";
+    WriteMinimalManifest(
+        manifest_path,
+        "{00000000-0000-0000-0000-000000750701}",
+        "ProviderRoutedPlugin");
+
+    auto provider = std::make_unique<CapturingRuntimeProvider>(73);
+    auto* raw_provider = provider.get();
+    pm_->SetRuntimeProviderForTest(std::move(provider));
+
+    IDasPluginPackage* raw_package = nullptr;
+    auto result = pm_->LoadPlugin(manifest_path, &raw_package);
+    auto package = DasPtr<IDasPluginPackage>::Attach(raw_package);
+
+    EXPECT_EQ(result, DAS_S_OK);
+    ASSERT_NE(package.Get(), nullptr);
+    ASSERT_EQ(raw_provider->requests.size(), 1u);
+    EXPECT_EQ(raw_provider->requests.front().manifest_path, manifest_path);
+    EXPECT_EQ(raw_provider->requests.front().runtime_path, manifest_path);
+    EXPECT_EQ(raw_provider->requests.front().main_process_owner_session_id, 1);
 
     std::filesystem::remove_all(test_dir);
 }
