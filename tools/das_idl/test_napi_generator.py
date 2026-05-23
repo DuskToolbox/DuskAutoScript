@@ -1076,11 +1076,7 @@ class TestNodeHostBootstrapScript(unittest.TestCase):
         wrapper_text = """
 'use strict';
 
-module.exports = new Proxy({}, {
-  get() {
-    throw new Error('native bootstrap must not be touched during dry-run parse');
-  },
-});
+throw new Error('native wrapper must not be loaded during dry-run parse');
 """
         result = self._run_script_package(
             wrapper_text,

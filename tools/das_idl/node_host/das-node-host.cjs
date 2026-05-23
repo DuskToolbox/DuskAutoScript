@@ -2,8 +2,6 @@
 
 const path = require('node:path');
 
-const das = require(path.join(__dirname, 'das_core_napi_export.js'));
-
 function readValue(rawArgs, index, optionName) {
   const value = rawArgs[index + 1];
   if (!value || value.startsWith('--')) {
@@ -57,19 +55,28 @@ function parseArgs(rawArgs = process.argv.slice(2)) {
   return options;
 }
 
+function loadNativeBootstrap() {
+  const das = require(path.join(__dirname, 'das_core_napi_export.js'));
+  if (typeof das.startHostIpc !== 'function') {
+    throw new Error('DAS native addon does not export startHostIpc');
+  }
+  return das;
+}
+
 function main(rawArgs = process.argv.slice(2)) {
   const options = parseArgs(rawArgs);
   if (options.dryRunParse) {
     return 0;
   }
 
-  if (typeof das.startHostIpc !== 'function') {
-    throw new Error('DAS native addon does not export startHostIpc');
-  }
+  const das = loadNativeBootstrap();
 
   const result = das.startHostIpc({
     mainPid: options.mainPid,
     connectUrl: options.connectUrl,
+    packageRoot: __dirname,
+    wrapperPath: path.join(__dirname, 'das_core_napi_export.js'),
+    addonPath: path.join(__dirname, 'das_core_napi.node'),
   });
 
   return typeof result === 'number' ? result : 0;
@@ -86,6 +93,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  loadNativeBootstrap,
   main,
   parseArgs,
 };
