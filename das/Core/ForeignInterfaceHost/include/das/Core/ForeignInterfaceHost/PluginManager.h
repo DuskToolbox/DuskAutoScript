@@ -7,6 +7,7 @@
 #include <das/Core/ForeignInterfaceHost/ErrorLensManager.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
+#include <das/Core/ForeignInterfaceHost/RuntimeProvider.h>
 #include <das/Core/ForeignInterfaceHost/TaskComponentFactoryManager.h>
 #include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
@@ -18,6 +19,7 @@
 #include <das/IDasBase.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <filesystem>
+#include <memory>
 #include <mutex>
 #include <span>
 #include <string>
@@ -112,6 +114,11 @@ public:
      * @brief 设置语言运行时
      */
     DasResult SetRuntime(DasPtr<IForeignLanguageRuntime> runtime);
+
+    /**
+     * @brief Inject a runtime provider for focused PluginManager tests.
+     */
+    void SetRuntimeProviderForTest(std::unique_ptr<IRuntimeProvider> provider);
 
     /**
      * @brief 设置远程对象注册表引用
@@ -319,6 +326,7 @@ private:
     mutable std::mutex                           mutex_;
     uint16_t                                     session_id_ = 0;
     DasPtr<IForeignLanguageRuntime>              runtime_;
+    std::unique_ptr<IRuntimeProvider>            runtime_provider_;
     Core::IPC::RemoteObjectRegistry*             registry_ = nullptr;
     std::unordered_map<DasGuid, LoadedPlugin>    loaded_plugins_;
     std::unordered_map<std::string, DasGuid>     path_to_guid_;

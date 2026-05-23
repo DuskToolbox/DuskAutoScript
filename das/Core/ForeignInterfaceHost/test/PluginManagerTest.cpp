@@ -1592,7 +1592,7 @@ TEST_F(PluginManagerGuidTest, LoadPlugin_UsesInjectedRuntimeProvider)
     auto manifest_path = test_dir / "test_plugin_runtime_provider.json";
     WriteMinimalManifest(
         manifest_path,
-        "{00000000-0000-0000-0000-000000750701}",
+        "00000000-0000-0000-0000-000000750701",
         "ProviderRoutedPlugin");
 
     auto provider = std::make_unique<CapturingRuntimeProvider>(73);

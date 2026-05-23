@@ -99,6 +99,12 @@ DasResult PluginManager::Initialize(
     if (runtime)
     {
         runtime_ = std::move(runtime);
+        auto provider = CreateLocalRuntimeProvider(runtime_);
+        if (!provider)
+        {
+            return provider.error();
+        }
+        runtime_provider_ = std::move(provider.value());
     }
     SetActiveErrorLensManager(&error_lens_mgr_);
 
@@ -166,7 +172,27 @@ DasResult PluginManager::SetRuntime(DasPtr<IForeignLanguageRuntime> runtime)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     runtime_ = std::move(runtime);
+    if (runtime_)
+    {
+        auto provider = CreateLocalRuntimeProvider(runtime_);
+        if (!provider)
+        {
+            return provider.error();
+        }
+        runtime_provider_ = std::move(provider.value());
+    }
+    else
+    {
+        runtime_provider_.reset();
+    }
     return DAS_S_OK;
+}
+
+void PluginManager::SetRuntimeProviderForTest(
+    std::unique_ptr<IRuntimeProvider> provider)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    runtime_provider_ = std::move(provider);
 }
 
 void PluginManager::SetRegistry(Core::IPC::RemoteObjectRegistry& registry)
@@ -197,7 +223,7 @@ DasResult PluginManager::LoadPlugin(
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
-        if (!runtime_)
+        if (!runtime_ && !runtime_provider_)
         {
             DAS_CORE_LOG_ERROR("No runtime set for loading plugins");
             return DAS_E_OBJECT_NOT_INIT;
@@ -215,11 +241,10 @@ DasResult PluginManager::LoadPlugin(
         {
             DAS_CORE_LOG_WARN("Plugin already loaded: {}", path_str);
             auto it = loaded_plugins_.find(path_to_guid_[path_str]);
-            if (out_package && it != loaded_plugins_.end()
+            if (pp_out_package && it != loaded_plugins_.end()
                 && it->second.package)
             {
-                *out_package.Put() = it->second.package.Get();
-                out_package->AddRef();
+                out_package.Set(it->second.package.Get());
                 out_package.Keep();
             }
             return DAS_S_FALSE;
@@ -290,21 +315,38 @@ DasResult PluginManager::LoadPlugin(
         && desc->load_mode != LoadMode::Ipc)
     {
         // 进程内路径（白名单内语言且未显式指定 IPC 模式）
-        auto result = runtime_->LoadPlugin(runtime_path);
-        if (!result)
+        if (!runtime_provider_)
+        {
+            return DAS_E_OBJECT_NOT_INIT;
+        }
+
+        RuntimeLoadRequest request{};
+        request.manifest_path = manifest_path;
+        request.runtime_path = runtime_path;
+        request.plugin_guid = desc->guid;
+        request.language = desc->language;
+        request.load_mode = desc->load_mode;
+        request.main_process_owner_session_id = session_id_;
+
+        auto load_result = runtime_provider_->LoadPlugin(request);
+        if (!load_result)
         {
             DAS_CORE_LOG_ERROR(
                 "Failed to load plugin {}: error={}",
                 path_str,
-                static_cast<int>(result.error()));
-            return result.error();
+                static_cast<int>(load_result.error()));
+            return load_result.error();
+        }
+        if (!load_result->object)
+        {
+            return DAS_E_INVALID_POINTER;
         }
 
         LoadedPlugin plugin;
         plugin.plugin_path = identity_path;
 
         DasPtr<Das::PluginInterface::IDasPluginPackage> package;
-        auto qi_result = (*result)->QueryInterface(
+        auto qi_result = load_result->object->QueryInterface(
             DAS_IID_PLUGIN_PACKAGE,
             reinterpret_cast<void**>(package.Put()));
         if (DAS::IsFailed(qi_result))
@@ -332,7 +374,7 @@ DasResult PluginManager::LoadPlugin(
             feature_info.feature_index = index;
             feature_info.feature_type = feature;
             feature_info.iid = GetIidForFeature(feature);
-            feature_info.session_id = session_id_;
+            feature_info.session_id = load_result->owner_session_id;
             feature_info.plugin_name = identity_path.stem().string();
             feature_info.plugin_guid = desc->guid;
 
@@ -421,10 +463,9 @@ DasResult PluginManager::LoadPlugin(
                 }
             }
 
-            if (out_package && loaded_plugins_[guid].package)
+            if (pp_out_package && loaded_plugins_[guid].package)
             {
-                *out_package.Put() = loaded_plugins_[guid].package.Get();
-                out_package->AddRef();
+                out_package.Set(loaded_plugins_[guid].package.Get());
             }
         }
 
