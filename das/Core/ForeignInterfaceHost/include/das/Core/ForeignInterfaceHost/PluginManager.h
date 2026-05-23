@@ -19,6 +19,7 @@
 #include <das/IDasBase.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <span>
@@ -119,6 +120,12 @@ public:
      * @brief Inject a runtime provider for focused PluginManager tests.
      */
     void SetRuntimeProviderForTest(std::unique_ptr<IRuntimeProvider> provider);
+
+    /**
+     * @brief Inject a remote host factory for focused runtime-provider tests.
+     */
+    void SetRemotePluginHostFactoryForTest(
+        std::function<std::unique_ptr<IRemotePluginHost>()> factory);
 
     /**
      * @brief 设置远程对象注册表引用
@@ -320,6 +327,8 @@ private:
     std::unique_ptr<IRuntimeProvider>            runtime_provider_;
     bool                                         runtime_provider_override_ =
         false;
+    std::function<std::unique_ptr<IRemotePluginHost>()>
+        remote_plugin_host_factory_;
     Core::IPC::RemoteObjectRegistry*             registry_ = nullptr;
     std::unordered_map<DasGuid, LoadedPlugin>    loaded_plugins_;
     std::unordered_map<std::string, DasGuid>     path_to_guid_;

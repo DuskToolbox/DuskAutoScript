@@ -32,6 +32,15 @@ struct RuntimeLoadResult
     uint16_t              owner_session_id = 0;
 };
 
+struct RuntimeProviderFactoryDesc
+{
+    ForeignInterfaceLanguage language{};
+    LoadMode                 load_mode{LoadMode::InProcess};
+    DAS::DasPtr<IForeignLanguageRuntime> local_runtime;
+    std::filesystem::path                native_host_exe_path;
+    std::unique_ptr<IRemotePluginHost>   remote_plugin_host;
+};
+
 class IRuntimeProvider
 {
 public:
@@ -52,6 +61,13 @@ DAS_API auto CreateLocalRuntimeProvider(
 DAS_API auto CreateNativeIpcRuntimeProvider(
     std::filesystem::path              host_exe_path,
     std::unique_ptr<IRemotePluginHost> remote_plugin_host)
+    -> DAS::Utils::Expected<std::unique_ptr<IRuntimeProvider>>;
+
+DAS_API auto CreateNodeRuntimeProvider(
+    std::unique_ptr<IRemotePluginHost> remote_plugin_host)
+    -> DAS::Utils::Expected<std::unique_ptr<IRuntimeProvider>>;
+
+DAS_API auto CreateRuntimeProvider(RuntimeProviderFactoryDesc desc)
     -> DAS::Utils::Expected<std::unique_ptr<IRuntimeProvider>>;
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END

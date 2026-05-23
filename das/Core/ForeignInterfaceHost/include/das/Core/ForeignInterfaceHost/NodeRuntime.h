@@ -2,12 +2,15 @@
 #define DAS_CORE_FOREIGNINTERFACEHOST_NODERUNTIME_H
 
 #include <das/Core/ForeignInterfaceHost/Config.h>
+#include <das/Core/ForeignInterfaceHost/RemotePluginHost.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/Utils/Expected.h>
 
 #include <filesystem>
+#include <chrono>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -42,10 +45,13 @@ struct NodeHostLaunchDesc
     DAS::DasPtr<IDasReadOnlyString> working_directory;
 };
 
-class NodeRuntime final
+class NodeRuntime final : public IRuntimeProvider
 {
 public:
     explicit NodeRuntime(std::filesystem::path package_dir);
+    explicit NodeRuntime(
+        std::unique_ptr<IRemotePluginHost> remote_plugin_host,
+        std::chrono::milliseconds timeout = std::chrono::seconds{30});
 
     static auto ResolveNodeExecutable()
         -> DAS::Utils::Expected<std::filesystem::path>;
@@ -56,8 +62,13 @@ public:
     auto BuildHostLaunchDesc() const
         -> DAS::Utils::Expected<NodeHostLaunchDesc>;
 
+    auto LoadPlugin(const RuntimeLoadRequest& request)
+        -> DAS::Utils::Expected<RuntimeLoadResult> override;
+
 private:
     std::filesystem::path package_dir_;
+    std::unique_ptr<IRemotePluginHost> remote_plugin_host_;
+    std::chrono::milliseconds          timeout_{std::chrono::seconds{30}};
 };
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END

@@ -66,6 +66,26 @@ namespace
         }
         return DAS_S_OK;
     }
+
+    auto ResolvePackageDirFromRequest(const RuntimeLoadRequest& request)
+        -> std::filesystem::path
+    {
+        auto package_dir = request.manifest_path.empty()
+                         ? request.runtime_path
+                         : request.manifest_path;
+        if (package_dir.empty())
+        {
+            return {};
+        }
+
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(package_dir, ec)
+            || package_dir.extension() == ".json")
+        {
+            package_dir = package_dir.parent_path();
+        }
+        return package_dir;
+    }
 } // namespace
 
 NodeHostLaunchDesc::NodeHostLaunchDesc(NodeHostLaunchDesc&& other) noexcept
@@ -109,6 +129,13 @@ void NodeHostLaunchDesc::RefreshPointers() noexcept
 
 NodeRuntime::NodeRuntime(std::filesystem::path package_dir)
     : package_dir_{std::move(package_dir)}
+{
+}
+
+NodeRuntime::NodeRuntime(
+    std::unique_ptr<IRemotePluginHost> remote_plugin_host,
+    std::chrono::milliseconds          timeout)
+    : remote_plugin_host_{std::move(remote_plugin_host)}, timeout_{timeout}
 {
 }
 
@@ -208,6 +235,36 @@ auto NodeRuntime::BuildHostLaunchDesc() const
     result.working_directory = std::move(working_directory.value());
     result.RefreshPointers();
     return result;
+}
+
+auto NodeRuntime::LoadPlugin(const RuntimeLoadRequest& request)
+    -> DAS::Utils::Expected<RuntimeLoadResult>
+{
+    if (!remote_plugin_host_)
+    {
+        return tl::make_unexpected(DAS_E_OBJECT_NOT_INIT);
+    }
+
+    auto package_dir = ResolvePackageDirFromRequest(request);
+    if (package_dir.empty())
+    {
+        return tl::make_unexpected(DAS_E_INVALID_ARGUMENT);
+    }
+
+    NodeRuntime resolver{std::move(package_dir)};
+    auto        launch = resolver.BuildHostLaunchDesc();
+    if (!launch)
+    {
+        return tl::make_unexpected(launch.error());
+    }
+
+    RemotePluginLoadRequest remote_request{};
+    remote_request.launch_desc = launch->launch_desc;
+    remote_request.manifest_path = request.manifest_path;
+    remote_request.plugin_guid = request.plugin_guid;
+    remote_request.timeout = timeout_;
+
+    return remote_plugin_host_->LoadPlugin(remote_request);
 }
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END

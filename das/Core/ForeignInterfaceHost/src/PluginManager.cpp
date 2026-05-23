@@ -74,6 +74,11 @@ PluginManager::PluginManager(
     Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context)
     : settings_manager_(settings_manager), ipc_context_{std::move(ipc_context)}
 {
+    remote_plugin_host_factory_ =
+        [this]()
+    {
+        return std::make_unique<IpcRemotePluginHost>(ipc_context_);
+    };
 }
 
 PluginManager::~PluginManager()
@@ -199,6 +204,13 @@ void PluginManager::SetRuntimeProviderForTest(
     runtime_provider_override_ = true;
 }
 
+void PluginManager::SetRemotePluginHostFactoryForTest(
+    std::function<std::unique_ptr<IRemotePluginHost>()> factory)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    remote_plugin_host_factory_ = std::move(factory);
+}
+
 void PluginManager::SetRegistry(Core::IPC::RemoteObjectRegistry& registry)
 {
     registry_ = &registry;
@@ -309,12 +321,6 @@ DasResult PluginManager::LoadPlugin(
     }
 
     // 阶段2: 锁外执行加载，所有 runtime 都返回统一 load result
-    static const std::unordered_set<ForeignInterfaceLanguage>
-        kInProcessLanguages = {
-            ForeignInterfaceLanguage::Cpp,
-            ForeignInterfaceLanguage::Python,
-        };
-
     RuntimeLoadRequest request{};
     request.manifest_path = manifest_path;
     request.runtime_path = runtime_path;
@@ -325,32 +331,36 @@ DasResult PluginManager::LoadPlugin(
 
     std::unique_ptr<IRuntimeProvider> scoped_provider;
     IRuntimeProvider*                 provider = nullptr;
-    const bool use_in_process_provider =
-        kInProcessLanguages.contains(desc->language)
-        && desc->load_mode != LoadMode::Ipc;
 
-    if (runtime_provider_override_ || use_in_process_provider)
+    if (runtime_provider_override_)
     {
         provider = runtime_provider_.get();
     }
     else
     {
-        if (host_exe_path_.empty())
+        RuntimeProviderFactoryDesc provider_desc{};
+        provider_desc.language = desc->language;
+        provider_desc.load_mode = desc->load_mode;
+        provider_desc.local_runtime = runtime_;
+        provider_desc.native_host_exe_path = host_exe_path_;
+        if (remote_plugin_host_factory_)
         {
-            DAS_CORE_LOG_ERROR(
-                "Cannot load plugin '{}' via IPC: no Host exe path set",
-                path_str);
-            return DAS_E_NO_IMPLEMENTATION;
+            provider_desc.remote_plugin_host = remote_plugin_host_factory_();
         }
 
-        auto native_provider = CreateNativeIpcRuntimeProvider(
-            host_exe_path_,
-            std::make_unique<IpcRemotePluginHost>(ipc_context_));
-        if (!native_provider)
+        auto selected_provider =
+            CreateRuntimeProvider(std::move(provider_desc));
+        if (!selected_provider)
         {
-            return native_provider.error();
+            if (selected_provider.error() == DAS_E_NO_IMPLEMENTATION)
+            {
+                DAS_CORE_LOG_ERROR(
+                    "No runtime provider for plugin '{}'",
+                    path_str);
+            }
+            return selected_provider.error();
         }
-        scoped_provider = std::move(native_provider.value());
+        scoped_provider = std::move(selected_provider.value());
         provider = scoped_provider.get();
     }
 
