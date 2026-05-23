@@ -27,8 +27,10 @@
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/IPC/AsyncOperationImpl.h>
 #include <das/Core/IPC/DasAsyncSender.h>
@@ -37,9 +39,28 @@
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/Utils/StdExecution.h>
 #include <das/IDasAsyncLoadPluginOperation.h>
+#include <fstream>
 #include <gtest/gtest.h>
 #include <optional>
 #include <vector>
+
+DAS_DISABLE_WARNING_BEGIN
+DAS_IGNORE_BOOST_PROCESS_WARNING
+
+#include <boost/process/v2/environment.hpp>
+
+DAS_DISABLE_WARNING_END
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#define DAS_IPC_TEST_CURRENT_PROCESS_ID() GetCurrentProcessId()
+#else
+#include <unistd.h>
+#define DAS_IPC_TEST_CURRENT_PROCESS_ID() getpid()
+#endif
 
 using namespace Das::PluginInterface;
 using namespace Das::ExportInterface;
@@ -326,6 +347,113 @@ namespace
 
         return DAS::DasPtr<IDasComponent>(component_raw);
     }
+
+    std::filesystem::path ResolveNodeExecutableForIntegration()
+    {
+        constexpr auto kNodeHostExecutableEnv = "DAS_NODE_HOST_EXE_PATH";
+        if (const char* env = std::getenv(kNodeHostExecutableEnv);
+            env != nullptr && env[0] != '\0')
+        {
+            return std::filesystem::path{env};
+        }
+
+        const auto resolved =
+            boost::process::v2::environment::find_executable("node");
+        if (resolved.empty())
+        {
+            return {};
+        }
+        return std::filesystem::path{resolved.string()};
+    }
+
+    std::filesystem::path BuildRootFromHostExePath(
+        const std::string& host_exe_path)
+    {
+        const auto absolute_host =
+            std::filesystem::absolute(std::filesystem::path{host_exe_path});
+        const auto config_dir = absolute_host.parent_path();
+        const auto bin_dir = config_dir.parent_path();
+        return bin_dir.parent_path();
+    }
+
+    std::filesystem::path NodePackageRootFromHostExePath(
+        const std::string& host_exe_path)
+    {
+        return BuildRootFromHostExePath(host_exe_path)
+             / "das/include/das/_autogen/idl/node";
+    }
+
+    bool HasGeneratedNodeHostPackage(
+        const std::filesystem::path& package_root)
+    {
+        return std::filesystem::is_regular_file(
+                   package_root / "das-node-host.cjs")
+            && std::filesystem::is_regular_file(
+                   package_root / "das_core_napi_export.js")
+            && std::filesystem::is_regular_file(
+                   package_root / "das_core_napi.node");
+    }
+
+    class TemporaryNodePackageFixture
+    {
+    public:
+        explicit TemporaryNodePackageFixture(
+            std::filesystem::path package_root)
+            : package_root_{std::move(package_root)}
+        {
+            const auto stamp =
+                std::chrono::steady_clock::now().time_since_epoch().count();
+            const auto base_name =
+                "das-node-host-load-plugin-" + std::to_string(stamp);
+            manifest_path_ = package_root_ / (base_name + ".json");
+            entry_path_ = package_root_ / (base_name + ".cjs");
+
+            {
+                std::ofstream entry{entry_path_};
+                entry << "'use strict';\n"
+                         "module.exports = { createPlugin() { return {}; } };\n";
+            }
+            {
+                std::ofstream manifest{manifest_path_};
+                manifest << R"({
+    "guid": "75090001-0000-4000-8000-000000000001",
+    "name": "NodeHostLoadPluginSmoke",
+    "language": "Node",
+    "description": "minimal Node host LOAD_PLUGIN smoke fixture",
+    "author": "test",
+    "version": "1.0",
+    "supportedSystem": "win",
+    "pluginFilenameExtension": "cjs",
+    "entry": ")"
+                         << entry_path_.filename().string() << R"(",
+    "settings": []
+})";
+            }
+        }
+
+        TemporaryNodePackageFixture(const TemporaryNodePackageFixture&) =
+            delete;
+        TemporaryNodePackageFixture& operator=(
+            const TemporaryNodePackageFixture&) = delete;
+
+        ~TemporaryNodePackageFixture()
+        {
+            std::error_code ec;
+            std::filesystem::remove(manifest_path_, ec);
+            std::filesystem::remove(entry_path_, ec);
+        }
+
+        [[nodiscard]]
+        const std::filesystem::path& ManifestPath() const
+        {
+            return manifest_path_;
+        }
+
+    private:
+        std::filesystem::path package_root_;
+        std::filesystem::path manifest_path_;
+        std::filesystem::path entry_path_;
+    };
 } // namespace
 
 TEST_F(IpcMultiProcessTestIntegration, HostLauncherStart)
@@ -345,6 +473,141 @@ TEST_F(IpcMultiProcessTestIntegration, HostLauncherStart)
     EXPECT_GT(launcher_->GetPid(), 0u);
     EXPECT_GT(session_id, static_cast<uint16_t>(0));
     EXPECT_EQ(session_id, launcher_->GetSessionId());
+}
+
+TEST_F(IpcMultiProcessTestIntegration, NodeHostLauncherStart)
+{
+    const auto node_executable = ResolveNodeExecutableForIntegration();
+    if (node_executable.empty()
+        || !std::filesystem::is_regular_file(node_executable))
+    {
+        GTEST_SKIP() << "Node executable not found";
+    }
+
+    const auto node_package_root =
+        NodePackageRootFromHostExePath(host_exe_path_);
+    if (!HasGeneratedNodeHostPackage(node_package_root))
+    {
+        GTEST_SKIP()
+            << "Generated Node host package missing from: "
+            << node_package_root.string();
+    }
+
+    const auto host_script = node_package_root / "das-node-host.cjs";
+    DasReadOnlyString executable_string{node_executable.string().c_str()};
+    DasReadOnlyString script_arg{host_script.string().c_str()};
+    DasReadOnlyString main_pid_name{"--main-pid"};
+    const auto        main_pid_value = std::to_string(
+        static_cast<uint32_t>(DAS_IPC_TEST_CURRENT_PROCESS_ID()));
+    DasReadOnlyString main_pid_arg{main_pid_value.c_str()};
+    DasReadOnlyString working_directory{node_package_root.string().c_str()};
+
+    std::array<IDasReadOnlyString*, 3> args{
+        script_arg.Get(),
+        main_pid_name.Get(),
+        main_pid_arg.Get()};
+
+    DAS::Core::IPC::HostLaunchDesc desc{};
+    desc.p_executable_path = executable_string.Get();
+    desc.pp_args = args.data();
+    desc.arg_count = args.size();
+    desc.p_working_directory = working_directory.Get();
+
+    ScopedHostStop guard{launcher_};
+    uint16_t       session_id = 0;
+    const auto     result = launcher_->StartWithDesc(
+        &desc,
+        IpcTestConfig::GetHostStartTimeoutMs(),
+        &session_id);
+
+    ASSERT_EQ(result, DAS_S_OK);
+    EXPECT_TRUE(launcher_->IsRunning());
+    EXPECT_GT(launcher_->GetPid(), 0u);
+    EXPECT_GT(session_id, static_cast<uint16_t>(0));
+    EXPECT_EQ(session_id, launcher_->GetSessionId());
+}
+
+TEST_F(IpcMultiProcessTestIntegration, NodeHostLoadPluginQueryInterface)
+{
+    const auto node_executable = ResolveNodeExecutableForIntegration();
+    if (node_executable.empty()
+        || !std::filesystem::is_regular_file(node_executable))
+    {
+        GTEST_SKIP() << "Node executable not found";
+    }
+
+    const auto node_package_root =
+        NodePackageRootFromHostExePath(host_exe_path_);
+    if (!HasGeneratedNodeHostPackage(node_package_root))
+    {
+        GTEST_SKIP()
+            << "Generated Node host package missing from: "
+            << node_package_root.string();
+    }
+
+    TemporaryNodePackageFixture fixture{node_package_root};
+
+    const auto host_script = node_package_root / "das-node-host.cjs";
+    DasReadOnlyString executable_string{node_executable.string().c_str()};
+    DasReadOnlyString script_arg{host_script.string().c_str()};
+    DasReadOnlyString main_pid_name{"--main-pid"};
+    const auto        main_pid_value = std::to_string(
+        static_cast<uint32_t>(DAS_IPC_TEST_CURRENT_PROCESS_ID()));
+    DasReadOnlyString main_pid_arg{main_pid_value.c_str()};
+    DasReadOnlyString working_directory{node_package_root.string().c_str()};
+
+    std::array<IDasReadOnlyString*, 3> args{
+        script_arg.Get(),
+        main_pid_name.Get(),
+        main_pid_arg.Get()};
+
+    DAS::Core::IPC::HostLaunchDesc desc{};
+    desc.p_executable_path = executable_string.Get();
+    desc.pp_args = args.data();
+    desc.arg_count = args.size();
+    desc.p_working_directory = working_directory.Get();
+
+    ScopedHostStop guard{launcher_};
+    uint16_t       session_id = 0;
+    auto           result = launcher_->StartWithDesc(
+        &desc,
+        IpcTestConfig::GetHostStartTimeoutMs(),
+        &session_id);
+    ASSERT_EQ(result, DAS_S_OK);
+    ASSERT_TRUE(launcher_->IsRunning());
+    ASSERT_GT(session_id, static_cast<uint16_t>(0));
+
+    DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
+    result = ctx_->LoadPluginAsync(
+        launcher_.Get(),
+        fixture.ManifestPath().string().c_str(),
+        op.Put(),
+        IpcTestConfig::GetPluginLoadTimeout());
+    ASSERT_EQ(result, DAS_S_OK);
+
+    auto opt = DAS::Core::IPC::wait(
+        GetContext(),
+        DAS::Core::IPC::async_op(GetContext(), std::move(op)));
+    ASSERT_TRUE(opt.has_value()) << "Node LOAD_PLUGIN wait failed";
+
+    auto& [load_result, proxy] = *opt;
+    ASSERT_EQ(load_result, DAS_S_OK);
+    ASSERT_NE(proxy, nullptr);
+
+    DAS::DasPtr<IDasBase> raw_proxy =
+        DAS::DasPtr<IDasBase>::Attach(proxy);
+    DAS::PluginInterface::DasPluginPackage plugin_package;
+    ASSERT_EQ(raw_proxy.As(plugin_package.Put()), DAS_S_OK)
+        << "Node LOAD_PLUGIN proxy must QI to IDasPluginPackage";
+
+    bool can_unload = false;
+    EXPECT_EQ(plugin_package->CanUnloadNow(&can_unload), DAS_S_OK);
+    EXPECT_TRUE(can_unload);
+
+    DAS::PluginInterface::DasPluginFeature feature{};
+    EXPECT_EQ(
+        plugin_package->EnumFeature(0, &feature),
+        DAS_E_OUT_OF_RANGE);
 }
 
 TEST_F(IpcMultiProcessTestIntegration, MultipleStartStop)
