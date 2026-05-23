@@ -44,6 +44,54 @@ def _sample_doc():
     )
 
 
+def _phase74_contract_doc():
+    return parse_idl(
+        """
+        errorcode DasResult {
+            DAS_S_OK = 0,
+            DAS_S_FALSE = 1,
+            DAS_E_INVALID_ARGUMENT = -1073750038,
+            DAS_E_JAVASCRIPT_ERROR = -1073750042,
+            DAS_E_JAVASCRIPT_NO_IMPLEMENTATION = -1073750043,
+        }
+
+        struct DasSize {
+            uint32_t width;
+            uint32_t height;
+        }
+
+        [uuid("00000000-0000-0000-0000-000000000001")]
+        interface IDasBinaryBuffer : IDasBase {
+            DasResult GetSize([out] uint64_t* p_out_size);
+        }
+
+        [uuid("00000000-0000-0000-0000-000000000002")]
+        interface IDasComponent : IDasBase {
+            DasResult IsSupported(const DasGuid& iid);
+        }
+
+        [uuid("00000000-0000-0000-0000-000000000003")]
+        interface IDasImage : IDasBase {
+            DasResult GetSize([out] DasSize* p_out_size);
+            DasResult GetDimensions(
+                [out] uint32_t* p_out_width,
+                [out] uint32_t* out_height);
+            DasResult GetMixed(
+                [out] uint32_t* p_out_count,
+                [out] IDasComponent** pp_out_component,
+                [out] uint32_t* out_status);
+            DasResult GetBinaryBuffer([out] IDasBinaryBuffer** pp_out_buffer);
+            DasResult GetComponent([out] IDasComponent** pp_out_component);
+            DasResult Flush();
+        }
+
+        module {
+            [export, c_abi] DasResult DasSetIpcTimeout(uint32_t timeout_ms);
+        }
+        """
+    )
+
+
 def _function(doc, name):
     for module in doc.modules:
         for func in module.functions:
@@ -245,6 +293,85 @@ class TestNapiGenerator(unittest.TestCase):
         )
 
         self.assertEqual(from_class, from_helper)
+
+    def test_napi_phase74_declarations_are_exception_first(self):
+        artifacts = generate_napi_artifacts(
+            _phase74_contract_doc(),
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+
+        self.assertIn("export class DasException extends Error", artifacts.dts)
+        self.assertIn("readonly result: DasResult;", artifacts.dts)
+        self.assertIn("readonly code: DasResult;", artifacts.dts)
+        self.assertIn("constructor(result: DasResult, message?: string);", artifacts.dts)
+        self.assertIn("class DasException extends Error", artifacts.js)
+        self.assertIn("this.name = 'DasException';", artifacts.js)
+        self.assertIn("this.result = result;", artifacts.js)
+        self.assertIn("this.code = result;", artifacts.js)
+
+        public_text = "\n".join([artifacts.dts, artifacts.js])
+        self.assertNotRegex(public_text, r"\{\s*hr\s*,\s*value\s*\}")
+        self.assertNotRegex(public_text, r"\b[A-Za-z0-9_]+Ez\b")
+
+    def test_napi_phase74_wrapper_and_director_names_are_lower_camel(self):
+        artifacts = generate_napi_artifacts(
+            _phase74_contract_doc(),
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+
+        self.assertIn("export class IDasImage", artifacts.dts)
+        self.assertIn("static from(base: IDasBase): IDasImage;", artifacts.dts)
+        self.assertIn("dispose(): void;", artifacts.dts)
+        self.assertIn("getSize(): DasSize;", artifacts.dts)
+        self.assertIn("getBinaryBuffer(): Buffer;", artifacts.dts)
+        self.assertIn("getComponent(): IDasComponent;", artifacts.dts)
+        self.assertIn("flush(): DasResult;", artifacts.dts)
+        self.assertIn("export interface INapiDasImageCallbacks", artifacts.dts)
+        self.assertIn("getSize?: () => DasSize;", artifacts.dts)
+        self.assertIn("getBinaryBuffer?: () => Buffer;", artifacts.dts)
+
+        self.assertIn("getSize(...args)", artifacts.js)
+        self.assertIn("getBinaryBuffer(...args)", artifacts.js)
+        self.assertNotIn("GetSize():", artifacts.dts)
+        self.assertNotIn("GetBinaryBuffer():", artifacts.dts)
+        self.assertNotIn("getSizeEz", artifacts.js)
+
+    def test_napi_phase74_out_field_names_are_cleaned(self):
+        artifacts = generate_napi_artifacts(
+            _phase74_contract_doc(),
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+
+        self.assertIn(
+            "getDimensions(): { width: number; height: number; };",
+            artifacts.dts,
+        )
+        self.assertIn(
+            "getMixed(): { count: number; component: IDasComponent; status: number; };",
+            artifacts.dts,
+        )
+        self.assertIn('"width"', artifacts.cpp)
+        self.assertIn('"component"', artifacts.cpp)
+        self.assertNotIn("p_out_width:", artifacts.dts)
+        self.assertNotIn("pp_out_component:", artifacts.dts)
+        self.assertNotIn("out_status:", artifacts.dts)
+
+    def test_napi_phase74_cpp_has_das_exception_helpers(self):
+        artifacts = generate_napi_artifacts(
+            _phase74_contract_doc(),
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+
+        self.assertIn("Napi::Object MakeDasException", artifacts.cpp)
+        self.assertIn("void ThrowDasException", artifacts.cpp)
+        self.assertIn('exception.Set("name", "DasException")', artifacts.cpp)
+        self.assertIn('exception.Set("result"', artifacts.cpp)
+        self.assertIn('exception.Set("code"', artifacts.cpp)
+        self.assertIn("ThrowDasException(env, result", artifacts.cpp)
 
 
 class TestNapiExportCli(unittest.TestCase):
