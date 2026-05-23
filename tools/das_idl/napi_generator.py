@@ -227,6 +227,18 @@ def _generated_header_name(abi_header_name: str) -> str:
     return f"{abi_header_name}.generated.h"
 
 
+def _cpp_wrapper_name(interface_name: str) -> str:
+    return f"{_sanitize_identifier(interface_name)}Wrapper"
+
+
+def _wrapped_interface_names(doc: IdlDocument) -> list[str]:
+    names: list[str] = []
+    if not any(interface.name == "IDasBase" for interface in doc.interfaces):
+        names.append("IDasBase")
+    names.extend(interface.name for interface in doc.interfaces)
+    return names
+
+
 def public_js_name(idl_name: str) -> str:
     """Convert public IDL PascalCase/camel names to lower camel JavaScript names."""
     if not idl_name:
@@ -362,6 +374,7 @@ class NapiGenerator:
             '#include <napi.h>',
             "#include <memory>",
             "#include <string>",
+            "#include <utility>",
             "",
             '#include "das/IDasBase.h"',
             '#include "das/DasPtr.hpp"',
@@ -452,8 +465,22 @@ class NapiGenerator:
             ]
         )
 
+        lines.extend(self._generate_cpp_wrapper_base())
+        lines.append("")
+
+        for interface_name in _wrapped_interface_names(doc):
+            lines.extend(self._generate_cpp_wrapper_class(interface_name))
+            lines.append("")
+
+        lines.extend(self._generate_cpp_base_extractor(doc))
+        lines.append("")
+
+        if not any(interface.name == "IDasBase" for interface in doc.interfaces):
+            lines.extend(self._generate_cpp_dispose_function("IDasBase"))
+            lines.append("")
+
         for interface in doc.interfaces:
-            lines.extend(self._generate_cpp_interface_stubs(interface, doc))
+            lines.extend(self._generate_cpp_interface_helpers(interface, doc))
             lines.append("")
 
         for func in _iter_module_functions(doc):
@@ -475,12 +502,158 @@ class NapiGenerator:
         )
         return "\n".join(lines)
 
-    def _generate_cpp_interface_stubs(
+    def _generate_cpp_wrapper_base(self) -> list[str]:
+        return [
+            "template <typename WrapperT, typename InterfaceT>",
+            "class DasInterfaceWrapperBase : public Napi::ObjectWrap<WrapperT> {",
+            "public:",
+            "    enum class OwnershipMode {",
+            "        AdoptOwned,",
+            "        BorrowAddRef,",
+            "    };",
+            "",
+            "    explicit DasInterfaceWrapperBase(const Napi::CallbackInfo& info)",
+            "        : Napi::ObjectWrap<WrapperT>(info) {}",
+            "",
+            "    static Napi::FunctionReference& Constructor() {",
+            "        static Napi::FunctionReference constructor;",
+            "        return constructor;",
+            "    }",
+            "",
+            "    static void Register(Napi::Env env, const char* class_name) {",
+            "        Napi::Function constructor = WrapperT::DefineClass(",
+            "            env,",
+            "            class_name,",
+            "            {",
+            "                WrapperT::InstanceMethod(\"dispose\", &WrapperT::DisposeMethod),",
+            "            });",
+            "        Constructor() = Napi::Persistent(constructor);",
+            "        Constructor().SuppressDestruct();",
+            "    }",
+            "",
+            "    static Napi::Object WrapAdopted(Napi::Env env, InterfaceT* raw) {",
+            "        return Wrap(env, raw, OwnershipMode::AdoptOwned);",
+            "    }",
+            "",
+            "    static Napi::Object WrapAdopted(",
+            "        Napi::Env env,",
+            "        DAS::DasPtr<InterfaceT> native) {",
+            "        return Wrap(env, std::move(native));",
+            "    }",
+            "",
+            "    static Napi::Object WrapBorrowed(Napi::Env env, InterfaceT* raw) {",
+            "        return Wrap(env, raw, OwnershipMode::BorrowAddRef);",
+            "    }",
+            "",
+            "    static InterfaceT* UnwrapHandle(",
+            "        Napi::Env env,",
+            "        const Napi::Value& value) {",
+            "        if (!value.IsObject()) {",
+            "            throw Napi::TypeError::New(env, \"DAS native wrapper handle expected\");",
+            "        }",
+            "        Napi::Object object = value.As<Napi::Object>();",
+            "        if (!object.InstanceOf(Constructor().Value())) {",
+            "            throw Napi::TypeError::New(env, \"DAS native wrapper handle expected\");",
+            "        }",
+            "        return WrapperT::Unwrap(object)->EnsureAlive(env);",
+            "    }",
+            "",
+            "    InterfaceT* EnsureAlive(Napi::Env env) {",
+            "        if (!native_) {",
+            "            throw Napi::Error::New(env, \"DAS interface wrapper has been disposed\");",
+            "        }",
+            "        return native_.Get();",
+            "    }",
+            "",
+            "    Napi::Value DisposeMethod(const Napi::CallbackInfo& info) {",
+            "        Dispose();",
+            "        return info.Env().Undefined();",
+            "    }",
+            "",
+            "    void Dispose() noexcept { native_.Reset(); }",
+            "",
+            "    void Finalize(Napi::Env env) override {",
+            "        (void)env;",
+            "        Dispose();",
+            "    }",
+            "",
+            "protected:",
+            "    DAS::DasPtr<InterfaceT> native_;",
+            "",
+            "private:",
+            "    static Napi::Object Wrap(",
+            "        Napi::Env env,",
+            "        InterfaceT* raw,",
+            "        OwnershipMode ownership) {",
+            "        if (ownership == OwnershipMode::AdoptOwned) {",
+            "            return WrapAdopted(env, DAS::DasPtr<InterfaceT>::Attach(raw));",
+            "        }",
+            "        return Wrap(env, DAS::DasPtr<InterfaceT>(raw));",
+            "    }",
+            "",
+            "    static Napi::Object Wrap(",
+            "        Napi::Env env,",
+            "        DAS::DasPtr<InterfaceT> native) {",
+            "        if (!native) {",
+            "            throw Napi::TypeError::New(env, \"DAS native pointer must not be null\");",
+            "        }",
+            "        Napi::Object object = Constructor().New({});",
+            "        auto* wrapper = WrapperT::Unwrap(object);",
+            "        wrapper->native_ = std::move(native);",
+            "        return object;",
+            "    }",
+            "};",
+        ]
+
+    def _generate_cpp_wrapper_class(self, interface_name: str) -> list[str]:
+        wrapper_name = _cpp_wrapper_name(interface_name)
+        return [
+            f"class {wrapper_name} final",
+            f"    : public DasInterfaceWrapperBase<{wrapper_name}, {interface_name}> {{",
+            "public:",
+            f"    using Base = DasInterfaceWrapperBase<{wrapper_name}, {interface_name}>;",
+            f"    explicit {wrapper_name}(const Napi::CallbackInfo& info)",
+            "        : Base(info) {}",
+            "};",
+        ]
+
+    def _generate_cpp_base_extractor(self, doc: IdlDocument) -> list[str]:
+        lines = [
+            "IDasBase* ExtractIDasBaseFromWrapper(",
+            "    Napi::Env env,",
+            "    const Napi::Value& value) {",
+            "    if (!value.IsObject()) {",
+            "        throw Napi::TypeError::New(env, \"DAS interface wrapper expected\");",
+            "    }",
+            "    Napi::Object object = value.As<Napi::Object>();",
+        ]
+        for interface_name in _wrapped_interface_names(doc):
+            wrapper_name = _cpp_wrapper_name(interface_name)
+            lines.extend(
+                [
+                    f"    if (object.InstanceOf({wrapper_name}::Constructor().Value())) {{",
+                    f"        return static_cast<IDasBase*>({wrapper_name}::Unwrap(object)->EnsureAlive(env));",
+                    "    }",
+                ]
+            )
+        lines.extend(
+            [
+                "    throw Napi::TypeError::New(env, \"DAS interface wrapper expected\");",
+                "}",
+            ]
+        )
+        return lines
+
+    def _generate_cpp_interface_helpers(
         self,
         interface: InterfaceDef,
         doc: IdlDocument,
     ) -> list[str]:
         lines: list[str] = []
+        lines.extend(self._generate_cpp_dispose_function(interface.name))
+        lines.append("")
+        lines.extend(self._generate_cpp_from_function(interface))
+        lines.append("")
         for method in interface.methods:
             js_name = public_js_name(method.name)
             wrapper_name = f"{_sanitize_identifier(interface.name)}_{_sanitize_identifier(js_name)}"
@@ -488,6 +661,11 @@ class NapiGenerator:
                 [
                     f"Napi::Value {wrapper_name}(const Napi::CallbackInfo& info) {{",
                     "    Napi::Env env = info.Env();",
+                    "    if (info.Length() < 1) {",
+                    "        throw Napi::TypeError::New(env, \"DAS method expects a native wrapper handle\");",
+                    "    }",
+                    f"    auto* native = {_cpp_wrapper_name(interface.name)}::UnwrapHandle(env, info[0]);",
+                    "    (void)native;",
                     "    const DasResult result = DAS_E_NO_IMPLEMENTATION;",
                     "    if (result < 0) {",
                     f'        ThrowDasException(env, result, "{interface.name}.{js_name} failed");',
@@ -499,6 +677,44 @@ class NapiGenerator:
             lines.append("}")
             lines.append("")
         return lines
+
+    def _generate_cpp_dispose_function(self, interface_name: str) -> list[str]:
+        wrapper_name = _cpp_wrapper_name(interface_name)
+        function_name = f"{_sanitize_identifier(interface_name)}_dispose"
+        return [
+            f"Napi::Value {function_name}(const Napi::CallbackInfo& info) {{",
+            "    Napi::Env env = info.Env();",
+            "    if (info.Length() != 1 || !info[0].IsObject()) {",
+            "        throw Napi::TypeError::New(env, \"dispose expects a native wrapper handle\");",
+            "    }",
+            f"    if (!info[0].As<Napi::Object>().InstanceOf({wrapper_name}::Constructor().Value())) {{",
+            "        throw Napi::TypeError::New(env, \"dispose expects a native wrapper handle\");",
+            "    }",
+            f"    {wrapper_name}::Unwrap(info[0].As<Napi::Object>())->Dispose();",
+            "    return env.Undefined();",
+            "}",
+        ]
+
+    def _generate_cpp_from_function(self, interface: InterfaceDef) -> list[str]:
+        interface_name = _sanitize_identifier(interface.name)
+        wrapper_name = _cpp_wrapper_name(interface.name)
+        return [
+            f"Napi::Value {interface_name}_from(const Napi::CallbackInfo& info) {{",
+            "    Napi::Env env = info.Env();",
+            "    if (info.Length() != 1) {",
+            "        throw Napi::TypeError::New(env, \"from(base) expects one argument\");",
+            "    }",
+            "    IDasBase* base = ExtractIDasBaseFromWrapper(env, info[0]);",
+            "    void* cast_object = nullptr;",
+            f"    const DasResult result = base->QueryInterface(DasIidOf<{interface.name}>(), &cast_object);",
+            "    if (result < 0 || cast_object == nullptr) {",
+            f'        ThrowDasException(env, result, "{interface.name}.from failed");',
+            "        return env.Undefined();",
+            "    }",
+            f"    auto owned_target = DAS::DasPtr<{interface.name}>::Attach(static_cast<{interface.name}*>(cast_object));",
+            f"    return {wrapper_name}::WrapAdopted(env, std::move(owned_target));",
+            "}",
+        ]
 
     def _generate_cpp_method_success_return(
         self,
@@ -737,8 +953,17 @@ class NapiGenerator:
     ) -> list[str]:
         lines = [
             "Napi::Object Init(Napi::Env env, Napi::Object exports) {",
-            "    Napi::Object result_constants = Napi::Object::New(env);",
         ]
+        for interface_name in _wrapped_interface_names(doc):
+            lines.append(
+                f'    {_cpp_wrapper_name(interface_name)}::Register(env, "{interface_name}");'
+            )
+        lines.extend(
+            [
+            "",
+            "    Napi::Object result_constants = Napi::Object::New(env);",
+            ]
+        )
         for error_code in doc.error_codes:
             for value in error_code.values:
                 lines.append(
@@ -757,6 +982,16 @@ class NapiGenerator:
             lines.append("")
 
         lines.append('    exports.Set("guid", Napi::Function::New(env, Guid));')
+        for interface_name in _wrapped_interface_names(doc):
+            dispose_name = f"{_sanitize_identifier(interface_name)}_dispose"
+            lines.append(
+                f'    exports.Set("{dispose_name}", Napi::Function::New(env, {dispose_name}));'
+            )
+        for interface in doc.interfaces:
+            from_name = f"{_sanitize_identifier(interface.name)}_from"
+            lines.append(
+                f'    exports.Set("{from_name}", Napi::Function::New(env, {from_name}));'
+            )
         for interface in doc.interfaces:
             for method in interface.methods:
                 js_name = public_js_name(method.name)
@@ -980,6 +1215,12 @@ class NapiGenerator:
             "  constructor(nativeHandle) {",
             "    this._native = nativeHandle;",
             "  }",
+            "  _ensureAlive() {",
+            "    if (!this._native) {",
+            "      throw new Error('DAS interface wrapper has been disposed');",
+            "    }",
+            "    return this._native;",
+            "  }",
             "  dispose() {",
             "    if (this._native && native.IDasBase_dispose) {",
             "      native.IDasBase_dispose(this._native);",
@@ -1005,6 +1246,21 @@ class NapiGenerator:
         lines.extend(
             [
                 "  }",
+            ]
+        )
+        if interface.name == "IDasBase":
+            lines.extend(
+                [
+                    "  _ensureAlive() {",
+                    "    if (!this._native) {",
+                    "      throw new Error('DAS interface wrapper has been disposed');",
+                    "    }",
+                    "    return this._native;",
+                    "  }",
+                ]
+            )
+        lines.extend(
+            [
                 "  dispose() {",
                 f"    if (this._native && native.{interface.name}_dispose) {{",
                 f"      native.{interface.name}_dispose(this._native);",
@@ -1012,7 +1268,10 @@ class NapiGenerator:
                 "    this._native = null;",
                 "  }",
                 "  static from(base) {",
-                f"    return new {interface.name}(native.{interface.name}_from(base));",
+                "    if (!base || typeof base !== 'object' || !base._native) {",
+                "      throw new Error('DAS interface wrapper has been disposed');",
+                "    }",
+                f"    return new {interface.name}(native.{interface.name}_from(base._native));",
                 "  }",
             ]
         )
@@ -1022,7 +1281,7 @@ class NapiGenerator:
             lines.extend(
                 [
                     f"  {js_name}(...args) {{",
-                    f"    return native.{native_name}(this._native, ...args);",
+                    f"    return native.{native_name}(this._ensureAlive(), ...args);",
                     "  }",
                 ]
             )
